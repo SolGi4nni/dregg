@@ -23,8 +23,16 @@ appended past the host, NO narrowing. The emit order is the live order:
 
 This is the byte source of the ADDITIVE Rust artifact `circuit/descriptors/rotation-wide-registry-
 staged.tsv` the per-family wide-roundtrip slice consumes — NOTHING on the live 1-felt wire path changes
-(`v3RegistryCapOpen` / the live TSV / FP / VK are UNTOUCHED). The wide transfer single-line TSV
-(`EmitWideTransferProbe.lean`) stays beside this, byte-identical (row 0).
+(`v3RegistryCapOpen` / the live TSV / FP / VK are UNTOUCHED).
+
+⚑ This paragraph used to end "The wide transfer single-line TSV (`EmitWideTransferProbe.lean`) stays
+beside this, byte-identical (row 0)." That had stopped being true: row 0 took the availability
+hardening, the two membership-claim PIs, the gentian capacity-floor refuse weld and the E1
+compaction, while the single-line probe took none of them — 1782 cols / 68 PIs here against 1819 / 66
+there, with 560 of the probe's 619 constraints appearing nowhere in row 0. The probe, its driver
+`EmitWideTransferProbe.lean`, its Rust const and its producer were DELETED on 2026-07-31; it had no
+production consumer, and its two tests were the only prove+verify roundtrip and the only 8-felt
+collision tooth for transfer — both aimed at a member no verifier resolves.
 
 SCRATCH executable: `lake env lean --run EmitWideRegistryProbe.lean`.
 -/

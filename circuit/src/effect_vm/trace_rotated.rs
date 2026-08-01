@@ -4511,7 +4511,8 @@ pub fn transfer_caveat_manifest() -> RotatedCaveatManifest {
 // BEFORE first-row + AFTER last-row 8-felt commits.
 //
 // The geometry (v2 flag-day, derived from `NUM_PRE_LIMBS = 178` via `wide_carriers_for_limbs`;
-// the emitted twin is `circuit/descriptors/rotation-wide-transfer-staged.tsv`):
+// the emitted twin was `circuit/descriptors/rotation-wide-transfer-staged.tsv`, DELETED
+// 2026-07-31 as a diverged fork; the deployed twin is `rotation-wide-registry-staged.tsv` row 0):
 //   * BEFORE wide carriers: base `WIDE_BEFORE_CBASE = 1647`, carrier `k` at `1647 + 8·k .. +7`
 //     (60 carriers → cols 1647..2126); carrier 59 (cols 2119..2126) = the BEFORE 8-felt commit.
 //   * AFTER  wide carriers: base `WIDE_AFTER_CBASE  = 2127`, carrier `k` at `2127 + 8·k .. +7`
@@ -4658,40 +4659,14 @@ fn fill_wide_block(row: &mut [BabyBear], cbase: usize, limb_base: usize) {
     );
 }
 
-/// **THE WIDE TRANSFER trace generator (`transferVmDescriptor2R24Wide`, faithful 8-felt commit).**
-///
-/// Widens the LIVE `GRAD_ROT_WIDTH`-wide rotated transfer trace
-/// ([`generate_rotated_effect_vm_trace`]) to the committed `WIDE_WIDTH` wide descriptor: it
-/// appends the BEFORE/AFTER `WIDE_NUM_CARRIERS`×8 wide commitment carriers (re-absorbing the
-/// rotated limbs the 1-felt block already lays) and the 16 wide commit PIs. The
-/// live 1-felt carriers/PIs (cols < `GRAD_ROT_WIDTH`) are CARRIED UNCHANGED — this is purely
-/// additive. Returns `(trace, dpis)` ready for `prove_vm_descriptor2` against the wide descriptor.
-pub fn generate_rotated_transfer_wide(
-    initial_state: &CellState,
-    effects: &[Effect],
-    before_w: &RotatedBlockWitness,
-    after_w: &RotatedBlockWitness,
-    caveat: &RotatedCaveatManifest,
-) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
-    // The live 1647-wide graduated rotated trace plus the 46-PI base vector.
-    let (mut trace, base_pis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
-    if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
-        return Err(format!(
-            "wide transfer generator: base PI vector {} != {} (transfer carries the bare rotated \
-             vector + the 4 dsl rc PIs — a record/grow-gate pin would mis-shape the wide append)",
-            base_pis.len(),
-            ROT_PI_COUNT + DFA_RC_LEN
-        ));
-    }
-
-    // Widen each row + append the 16 wide PIs via the generic widener (transfer's host width is
-    // `GRAD_ROT_WIDTH`, so the carriers land at `WIDE_BEFORE_CBASE`).
-    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
-    debug_assert_eq!(trace[0].len(), WIDE_WIDTH);
-    debug_assert_eq!(dpis.len(), WIDE_PI_COUNT);
-    Ok((trace, dpis))
-}
+// ⚑ DELETED 2026-07-31 — `generate_rotated_transfer_wide` (34 lines), the trace generator for the
+// committed one-row descriptor `transferVmDescriptor2R24Wide`
+// (`circuit/descriptors/rotation-wide-transfer-staged.tsv`, also deleted). It had NO callers outside
+// two tests that went with it. The descriptor it produced traces for was a diverged fork of
+// `WIDE_REGISTRY_STAGED_TSV` row 0 — the deployed transfer member is availability-hardened,
+// membership-teeth-advanced, gentian-refuse-welded and E1-compacted, none of which the fork was. The
+// live wide producer is `generate_rotated_effect_vm_descriptor_and_trace_wide` (the dispatcher the
+// SDK and executor actually reach); this was a parallel one that only ever fed itself.
 
 /// **THE GENERIC WIDE WIDENER (parametric in the host width / carrier base).** Given a fully-laid
 /// rotated base trace (its `BEFORE_BASE`/`AFTER_BASE` limb blocks final, including any grow-gate root
@@ -7285,116 +7260,11 @@ mod tests {
     use crate::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
     use std::collections::BTreeSet;
 
-    /// DIAGNOSTIC: every wide chip lookup tuple in the wide transfer descriptor is self-consistent
-    /// after `fill_chip_lanes` — for each `TID_P2` lookup, `out0..out7 == chip_absorb_all_lanes(
-    /// arity, in0..in15)` evaluated off the row. A mismatch pinpoints a carrier-base / seeding bug
-    /// WITHOUT the slow prove. Checks BOTH an active row (0) and a padding row (40).
-    #[test]
-    fn wide_chip_lookups_are_self_consistent_after_lane_fill() {
-        use crate::descriptor_ir2::{
-            CHIP_RATE, EffectVmDescriptor2, TID_P2, VmConstraint2, chip_absorb_all_lanes,
-            eval_lean_expr, fill_chip_lanes, parse_vm_descriptor2,
-        };
-        use crate::effect_vm_descriptors::WIDE_TRANSFER_STAGED_TSV;
-        let json = {
-            let line = WIDE_TRANSFER_STAGED_TSV.lines().next().unwrap();
-            line.splitn(3, '\t').nth(2).unwrap()
-        };
-        let desc: EffectVmDescriptor2 = parse_vm_descriptor2(json).unwrap();
-
-        // Build a transfer wide trace via the generator over a hand-made witness (no dregg_turn).
-        let limbs: Vec<BabyBear> = (0..NUM_PRE_LIMBS as u32)
-            .map(|i| BabyBear::new(i + 1))
-            .collect();
-        let bw = RotatedBlockWitness::new(limbs.clone(), BabyBear::new(99)).unwrap();
-        let aw = RotatedBlockWitness::new(limbs, BabyBear::new(199)).unwrap();
-        let st = CellState::new(100_000, 0);
-        let effects = vec![Effect::Transfer {
-            amount: 50,
-            direction: 1,
-        }];
-        let (mut trace, _dpis) =
-            generate_rotated_transfer_wide(&st, &effects, &bw, &aw, &empty_caveat_manifest())
-                .unwrap();
-
-        // `generate_rotated_transfer_wide` builds the old-geometry row first, just like every
-        // family producer.  The production dispatcher then applies the Lean-emitted S2 deletion
-        // before pairing it with the committed descriptor.  Exercise that same boundary here:
-        // the checked-in TSV is the authoritative `compactS2` object, not the 2607-column
-        // intermediate row.
-        assert_eq!(trace[0].len(), WIDE_WIDTH, "pre-compaction wide geometry");
-        // The single-line PLAIN probe has the base-cohort geometry bb=188/lane=737.  Its live
-        // registry transfer namesake is availability-shifted to bb=198/lane=747, so that row is
-        // deliberately NOT its compaction source.  `mintVmDescriptor2R24` is the Lean-emitted
-        // table's same-geometry bb=188/lane=737 representative for this pre-availability probe.
-        compact_s2_columns(&mut trace, "mintVmDescriptor2R24")
-            .expect("Lean-emitted base-cohort S2 geometry compacts the plain wide-transfer row");
-        assert_eq!(
-            desc.trace_width,
-            WIDE_WIDTH - crate::effect_vm::s2_compact_generated::S2_DELETED_COLS,
-            "committed descriptor deletes exactly the dead S2 stratum"
-        );
-        assert_eq!(
-            trace[0].len(),
-            desc.trace_width,
-            "compacted producer row matches committed descriptor geometry"
-        );
-
-        let wide_lookup_count = 2 * WIDE_NUM_CARRIERS;
-        let poseidon_lookup_count = desc
-            .constraints
-            .iter()
-            .filter(|constraint| {
-                matches!(constraint, VmConstraint2::Lookup(lookup) if lookup.table == TID_P2)
-            })
-            .count();
-        let wide_lookup_start = poseidon_lookup_count
-            .checked_sub(wide_lookup_count)
-            .expect("descriptor must contain both complete wide carrier chains");
-
-        let check_row = |row: &mut Vec<BabyBear>, label: &str| {
-            fill_chip_lanes(&desc, row);
-            let mut checked = 0;
-            let mut poseidon_ordinal = 0;
-            for (ci, k) in desc.constraints.iter().enumerate() {
-                let VmConstraint2::Lookup(l) = k else {
-                    continue;
-                };
-                if l.table != TID_P2 {
-                    continue;
-                }
-                let this_ordinal = poseidon_ordinal;
-                poseidon_ordinal += 1;
-                if this_ordinal < wide_lookup_start {
-                    continue;
-                }
-                let ev = |e| -> BabyBear { eval_lean_expr(e, row) };
-                let arity = ev(&l.tuple[0]).as_u32() as usize;
-                // The emitted wideAppend wrapper appends the two complete carrier chains as the
-                // final 120 Poseidon lookups. Table-1 tuples are
-                // `[arity, 16 padded inputs, 8 outputs]`.
-                let output_base = 1 + CHIP_RATE;
-                assert_eq!(l.tuple.len(), output_base + 8);
-                checked += 1;
-                let ins: [BabyBear; CHIP_RATE] = core::array::from_fn(|i| ev(&l.tuple[1 + i]));
-                let expect = chip_absorb_all_lanes(arity, &ins);
-                for j in 0..8 {
-                    let got = ev(&l.tuple[output_base + j]);
-                    assert_eq!(
-                        got, expect[j],
-                        "{label}: wide lookup {ci} (arity {arity}) out{j} mismatch (carrier not chip-faithful)"
-                    );
-                }
-            }
-            assert_eq!(
-                checked, wide_lookup_count,
-                "{label}: expected every BEFORE/AFTER wide carrier lookup to be checked"
-            );
-        };
-        // an ACTIVE row (0) and a PADDING row (40 of the 64-tall trace) — both must be chip-faithful.
-        check_row(&mut trace[0], "row0");
-        check_row(&mut trace[40], "row40(padding)");
-    }
+    // ⚑ DELETED 2026-07-31 — `wide_chip_lookups_are_self_consistent_after_lane_fill`, together with
+    // its subject `generate_rotated_transfer_wide` and the committed one-row descriptor it parsed
+    // (`WIDE_TRANSFER_STAGED_TSV` / `circuit/descriptors/rotation-wide-transfer-staged.tsv`). The
+    // descriptor was a diverged fork of `WIDE_REGISTRY_STAGED_TSV` row 0 with no production
+    // consumer, and the producer had no callers outside this module and one deleted flip test.
 
     /// The rotated descriptor resolvers cover EXACTLY the registry's 36 cohort members:
     /// every name the resolvers can return is in the registry, and every registry member is

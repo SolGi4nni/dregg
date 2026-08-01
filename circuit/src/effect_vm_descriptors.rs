@@ -1219,19 +1219,47 @@ fn weld_umem_into_descriptor_with_suffix(
     welded
 }
 
-/// **THE FAITHFUL 8-FELT WIDE TRANSFER descriptor (STAGED-ADDITIVE slice).** The
-/// `v3RegistryWide` transfer member (`wideAppend transferV3 bb (bb+51)`, width 816 / PI 54) —
-/// the byte source of the first wide prove+verify roundtrip. Emitted from the verified Lean
-/// `EffectVmEmitRotationWide.v3RegistryWide` (`metatheory/EmitWideTransferProbe.lean`), a `key\t
-/// name\tjson` single line. ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` is UNTOUCHED — this
-/// is the parallel wide path beside it. The wide carriers (cols 608..815) re-absorb the SAME
-/// rotated limbs the 1-felt block lays into a genuine 8-felt (~124-bit) commitment, published on
-/// PIs 38..53.
-pub const WIDE_TRANSFER_STAGED_TSV: &str =
-    include_str!("../descriptors/rotation-wide-transfer-staged.tsv");
+// ⚑ DELETED 2026-07-31 — `WIDE_TRANSFER_STAGED_TSV` /
+// `circuit/descriptors/rotation-wide-transfer-staged.tsv` (one row, 136 KB, key
+// `transferVmDescriptor2R24Wide`), together with its Lean driver
+// `metatheory/EmitWideTransferProbe.lean` and its producer
+// `trace_rotated::generate_rotated_transfer_wide`.
+//
+// It was a committed FORK of `WIDE_REGISTRY_STAGED_TSV` row 0 that had already diverged: the
+// deployed row 0 is availability-hardened, carries the two membership-claim PIs, carries the
+// gentian capacity-floor refuse weld and is E1-compacted; the fork was NONE of those (width
+// 1819 / 66 PIs vs the deployed 1782 / 68, and 560 of its 619 constraints appear nowhere in the
+// deployed member). `EmitWideRegistryProbe.lean` still described it as "byte-identical (row 0)".
+//
+// It had ZERO production consumers — three test sites read it, and its producer had no callers
+// outside those tests. Two of those tests were the only prove+verify roundtrip and the only
+// 8-felt high-position collision tooth for transfer, so BOTH pointed at a descriptor no verifier
+// resolves and a producer nothing ships. That is the reason to delete rather than keep: the fork
+// was absorbing transfer's collision tooth and thereby ensuring it never pointed at the deployed
+// face. Removing it does not lower assurance on the deployed member — it stops a dead object from
+// reading as coverage of one. Re-pointing that tooth at the deployed row 0 (which needs the
+// avail-shifted, refuse-welded producer, not `generate_rotated_transfer_wide`) is now a visible,
+// nameable gap instead of an invisible one.
 
-/// **THE FAITHFUL 8-FELT WIDE REGISTRY (STAGED-ADDITIVE slice 2).** A member-for-member, name-stable
-/// COVER of the live V3 registry (`rotation-v3-staged-registry.tsv`, 57 members) made 8-felt-wide:
+/// **THE DEPLOYED 8-FELT REGISTRY.** ⚑ READ THIS FIRST IF THE WORD `staged` HAS CONFUSED YOU. This
+/// is the registry the deployed light client and executor actually resolve members from
+/// (`turn/src/executor/proof_verify.rs::verify_one_cohort_run`,
+/// `sdk/src/full_turn_proof.rs::verify_effect_vm_rotated_inner`), and — with
+/// [`WIDE_UMEM_WELD_REGISTRY_TSV`] — it IS the VK-epoch identity
+/// (`dregg_epoch::local_manifest`'s `registry_fp` is exactly these two fingerprints).
+///
+/// The `staged` in the filename and the "ADDITIVE / parallel path beside the live 1-felt registry"
+/// language below are LEFT OVER FROM BEFORE THE WIDE FLAG DAY and are now backwards. `staged` once
+/// meant "beside the deployed 1-felt V3 registry"; the wide flag day repointed every deployed
+/// producer and verifier here, so the set named `staged` became the deployed one and
+/// `V3_STAGED_REGISTRY_TSV` — the set the word was contrasting against — became the retired
+/// stratum that no production verify path reads. The word survived its own contrast class and then
+/// inverted. Nothing branches on it (no code parses `staged` out of a filename or a member name),
+/// so it costs a reader a lookup and nothing else; it dies at the next re-emit that renames the
+/// files, not before.
+///
+/// A member-for-member, name-stable
+/// COVER of the V3 registry (`rotation-v3-staged-registry.tsv`, 57 members) made 8-felt-wide:
 /// each live member wrapped through the proven `wideAppend host bb (bb+51)` at its real per-member
 /// BEFORE-limb base `bb` (the underlying v1 FACE width). The `key\tname\tjson` per line (key = the
 /// live registry key, e.g. `burnVmDescriptor2R24`), emitted from the verified Lean
@@ -1239,8 +1267,11 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 /// (`transferCapOpenTB` / `heapWrite` / `supplyMint`), in the LIVE order
 /// (`metatheory/EmitWideRegistryProbe.lean`). `grantCapWriteCapOpen` is reconciled OUT (it is not a
 /// live `V3_STAGED_REGISTRY_TSV` member). ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK
-/// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) is
-/// the v12 TEETH-EXPOSING advance of `WIDE_TRANSFER_STAGED_TSV` (+2 claim PIs / +2 teeth columns).
+/// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) carries the
+/// two `(sender_leaf, authorized_root)` membership-claim PIs and their teeth columns, and is pinned
+/// ABSOLUTELY at 1782 cols / 68 PIs by `WIDE_MEMBER_GEOMETRY` + the row-0 PI pin. (It used to be
+/// described as "the advance of `WIDE_TRANSFER_STAGED_TSV`" — that single-line fork was DELETED
+/// 2026-07-31; it had diverged and no verifier resolved it.)
 /// The wide carriers land PAST each member's host width, re-absorbing the SAME rotated limbs the
 /// 1-felt block lays into a genuine 8-felt (~124-bit) commitment, carrying the 16 wide commit PIs =
 /// the 8-felt before/after anchors. The committed width is NO LONGER host + the 960-column
@@ -3738,8 +3769,9 @@ mod tests {
     /// **THE WIDE REGISTRY drift + coverage pin (STAGED-ADDITIVE slice 2).** The 57-member faithful
     /// 8-felt wide registry TSV is fingerprint-stable (the Lean `EmitWideRegistryProbe.lean` is the
     /// byte source), parses member-for-member, and is name-stable against the live 1-felt registry
-    /// (the flip is a name-stable repoint). The transfer member (row 0) is the v12 TEETH-EXPOSING
-    /// advance (+2 claim PIs / +2 teeth columns) of the single-line `WIDE_TRANSFER_STAGED_TSV`.
+    /// (the flip is a name-stable repoint). The transfer member (row 0) is pinned ABSOLUTELY —
+    /// width by `WIDE_MEMBER_GEOMETRY`, PI count by the row-0 pin — replacing a relative pin against
+    /// the single-line `WIDE_TRANSFER_STAGED_TSV` fork DELETED 2026-07-31.
     /// ADDITIVE: pins the wide path WITHOUT touching the live `V3_STAGED_REGISTRY_*`.
     #[test]
     fn wide_registry_parses_and_is_name_stable() {
@@ -3942,55 +3974,25 @@ mod tests {
                 "{key}: wide PI count {} carries the 16 wide-commit PIs",
                 d.public_input_count
             );
+            // ⚑ Row 0 (transfer) is the AVAIL-HARDENED, membership-teeth, gentian-refuse-welded
+            // face and carries 68 PIs: the 46-PI rotated vector + 2 `(sender_leaf,
+            // authorized_root)` membership claims + the 16 wide-commit anchors. Pinned ABSOLUTELY
+            // here, against the same independent-literal discipline as `WIDE_MEMBER_GEOMETRY`.
+            //
+            // ⚠ This used to be a RELATIVE pin — `d.public_input_count == plain.public_input_count
+            // + 2` and a five-term width equation `plain + avail_pad + 2 teeth + refuse_extent −
+            // |E1 kill-set|` — computed against a committed single-row FORK of this member
+            // (`WIDE_TRANSFER_STAGED_TSV` / `rotation-wide-transfer-staged.tsv`, DELETED
+            // 2026-07-31). The fork was the PRE-HARDENING face: no availability shift, no gentian
+            // floor refuse, and never E1-compacted, so it was a THIRD geometry that no verifier
+            // resolved and nothing re-emitted. The equation therefore re-derived the deployed
+            // member from a stale copy of itself, and its worked example (`1647 + 10 + 2 + 45 − 94
+            // = 1610`) was 172 columns out of date at deletion. An absolute pin against a literal
+            // is a gate; a relation to a fork of the same object is not.
             if i == 0 {
-                // v12 big-bang: row 0 is the TEETH-EXPOSING advance of the plain wide transfer
-                // (`CarrierComposed.transferV3MembershipWide` — the 2 `(sender_leaf,
-                // authorized_root)` claim PIs at 50..51 ahead of the anchors, teeth columns past
-                // the carriers). The single-line `WIDE_TRANSFER_STAGED_TSV` stays the PLAIN wide
-                // transfer, so byte-identity is retired for the exact +2/+2 advance relation.
-                let plain = parse_vm_descriptor2(
-                    WIDE_TRANSFER_STAGED_TSV
-                        .lines()
-                        .next()
-                        .unwrap()
-                        .splitn(3, '\t')
-                        .nth(2)
-                        .unwrap(),
-                )
-                .expect("plain wide transfer parses");
                 assert_eq!(
-                    d.public_input_count,
-                    plain.public_input_count + 2,
-                    "wide registry row 0 (transfer) = the plain wide transfer + 2 membership claim PIs"
-                );
-                // The plain single-line `WIDE_TRANSFER_STAGED_TSV` is the BARE transfer: neither
-                // availability-hardened, nor teeth-advanced, nor refuse-welded, and NOT E1-compacted
-                // (the S2 flag-day took it 2607 → 1647; the E1 cutover re-emitted only the two
-                // registries). The registry row 0 is the AVAIL-HARDENED membership-teeth transfer
-                // AND (being a bare cohort route) carries the gentian floor-refuse weld, and it IS
-                // E1-compacted. So the structural relation now carries the compaction term:
-                //   row0 = plain + TRANSFER_AVAIL_PAD + 2 teeth + refuse_extent − |E1 kill-set|
-                //        = 1647 + 10 + 2 + 45 − 94 = 1610.
-                // The member extends exactly to cover the last floor column — `floor_col(NB−1) + 1`,
-                // i.e. 45 columns past its own anchor, NOT a padded `3·REFUSE_STRIDE = 48`. Every
-                // term is derived from its own source (the weld's constants, the Lean-emitted
-                // `E1_COMPACT_TABLE`), so a stride / pad / kill-set change moves this tooth with it.
-                // The PI relation stays `plain + 2`: neither the refuse weld nor E1 compaction adds
-                // or removes a public input.
-                use crate::effect_vm::bare_floor_refuse_weld as wrefuse;
-                let refuse_extent = wrefuse::floor_col(wrefuse::CAPACITY_TAGS.len() - 1) + 1
-                    - crate::effect_vm::trace_rotated::GRAD_ROT_WIDTH;
-                let avail_pad = crate::effect_vm::trace_rotated::TRANSFER_AVAIL_PAD;
-                let e1_killed: usize = crate::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
-                    .iter()
-                    .find(|(k, _)| *k == key)
-                    .map(|(_, runs)| runs.iter().map(|(a, b)| b - a).sum())
-                    .expect("wide registry row 0 (transfer) is in the E1 kill-set table");
-                assert_eq!(
-                    d.trace_width,
-                    plain.trace_width + avail_pad + 2 + refuse_extent - e1_killed,
-                    "wide registry row 0 (transfer) = the plain wide transfer + the availability pad \
-                     + 2 teeth columns + the gentian floor-refuse extent − the E1 kill-set"
+                    d.public_input_count, 68,
+                    "{key}: wide row 0 PI count drifted off its pin"
                 );
             }
         }

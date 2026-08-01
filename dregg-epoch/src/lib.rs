@@ -70,11 +70,10 @@ pub const EPOCH_WIRE_VERSION: u32 = 1;
 /// `[EPOCH_MIN_COMPATIBLE_WIRE, EPOCH_WIRE_VERSION]`.
 pub const EPOCH_MIN_COMPATIBLE_WIRE: u32 = 1;
 
-/// The human-readable cohort name of the descriptor set. This is a NAME for
-/// the epoch (the machine-checkable identity is [`EpochManifest::registry_fp`],
-/// which the handshake actually compares); the tag is what an operator says out
-/// loud. See `docs/HANDOFF-v13-VK-EPOCH.md`.
-pub const DESCRIPTOR_SET_COHORT: &str = "v13-geom";
+/// The number of leading hex characters of [`EpochManifest::registry_fp`] the
+/// human-readable [`EpochManifest::descriptor_set_tag`] carries. Long enough to
+/// name an epoch out loud, short enough to say.
+pub const DESCRIPTOR_SET_TAG_FP_CHARS: usize = 8;
 
 /// The full set of slot-caveat tags THIS binary knows how to re-evaluate — the
 /// vocabulary a light client can verify off-AIR. Built by referencing each
@@ -125,10 +124,22 @@ pub struct EpochManifest {
     /// deployed proof path no longer resolves from — an S2-class wide flag-day
     /// was INVISIBLE to the handshake while the bare TSV stayed byte-stable.)
     pub registry_fp: String,
-    /// The human-readable cohort name plus the effect-VM geometry it was built
-    /// with (width + rotation register count), e.g. `"v13-geom/w188/r24"`. The
-    /// geometry is folded in from the real constants so a geometry-widen is
-    /// visible in the tag as well as in `registry_fp`.
+    /// The human-readable epoch name: the effect-VM geometry it was built with
+    /// (width + rotation register count) plus the first
+    /// [`DESCRIPTOR_SET_TAG_FP_CHARS`] of `registry_fp`, e.g.
+    /// `"w188/r24/fp8efec5f7"`. Every component is DERIVED — the geometry from
+    /// the real circuit constants, the epoch name from the load-bearing identity
+    /// itself — so the tag rotates on every flag day and CANNOT go stale.
+    ///
+    /// ⚠ This used to lead with a hand-typed `DESCRIPTOR_SET_COHORT` cohort name
+    /// (`"v13-geom"`, written 2026-07-13 at `WIDE_REGISTRY_STAGED_FP`
+    /// `872fcb0d…`). `check_compatibility` never compared this field, and the
+    /// only test over it re-derived the literal from its own const — a pin
+    /// against its own definition. So the name sat at `v13` through the S2
+    /// flag-day regen, the E1 cutover, the heapWrite VK epoch, the last-row
+    /// anchor closure and the nine-lane flag day, while the fingerprint it was
+    /// supposed to name moved to `8efec5f7…`. Nothing could report it. Deriving
+    /// it is the fix: there is no longer a copy to go stale.
     pub descriptor_set_tag: String,
     /// The slot-caveat tags this binary knows how to re-evaluate.
     pub known_caveat_tags: BTreeSet<u32>,
@@ -140,9 +151,13 @@ pub struct EpochManifest {
 
 /// Build the local binary's manifest from the real baked constants.
 pub fn local_manifest() -> EpochManifest {
+    let registry_fp = format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}");
     EpochManifest {
-        registry_fp: format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}"),
-        descriptor_set_tag: format!("{DESCRIPTOR_SET_COHORT}/w{EFFECT_VM_WIDTH}/r{ROTATION_R}"),
+        descriptor_set_tag: format!(
+            "w{EFFECT_VM_WIDTH}/r{ROTATION_R}/fp{}",
+            &registry_fp[..DESCRIPTOR_SET_TAG_FP_CHARS]
+        ),
+        registry_fp,
         known_caveat_tags: known_caveat_tags(),
         wire_version: EPOCH_WIRE_VERSION,
         min_compatible: EPOCH_MIN_COMPATIBLE_WIRE,
@@ -325,17 +340,31 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_set_tag_folds_in_the_real_geometry() {
+    fn descriptor_set_tag_is_derived_and_cannot_go_stale() {
         let m = local_manifest();
         // The geometry constants are DERIVED, not hardcoded: a geometry-widen
-        // (width move) shows up in the human tag as well as in registry_fp.
-        assert_eq!(
-            m.descriptor_set_tag,
-            format!("v13-geom/w{EFFECT_VM_WIDTH}/r{ROTATION_R}")
-        );
+        // (width move) shows up in the human tag as well as in registry_fp. The
+        // literal below is the INDEPENDENT source (the circuit's own constants
+        // are the other), so a width/rotation drift reds here.
         assert_eq!(EFFECT_VM_WIDTH, 188);
         assert_eq!(ROTATION_R, 24);
-        assert_eq!(m.descriptor_set_tag, "v13-geom/w188/r24");
+        // ⚑ THE POINT OF THIS TEST. The epoch name is a PREFIX OF `registry_fp`,
+        // not a copy of a hand-typed cohort string. There is no second place for
+        // it to be written, so it cannot disagree with the epoch it names — the
+        // failure this replaces (`v13-geom` frozen across five flag days while
+        // the fingerprint moved) is now unrepresentable rather than untested.
+        let fp_seg = m
+            .descriptor_set_tag
+            .rsplit('/')
+            .next()
+            .and_then(|s| s.strip_prefix("fp"))
+            .expect("the tag ends in an `fp<hex>` segment");
+        assert_eq!(fp_seg, &m.registry_fp[..DESCRIPTOR_SET_TAG_FP_CHARS]);
+        assert_eq!(
+            fp_seg,
+            &WIDE_REGISTRY_STAGED_FP[..DESCRIPTOR_SET_TAG_FP_CHARS]
+        );
+        assert_eq!(m.descriptor_set_tag, format!("w188/r24/fp{fp_seg}"));
     }
 
     // ---- The handshake: every arm non-vacuous, the matching case succeeds ----

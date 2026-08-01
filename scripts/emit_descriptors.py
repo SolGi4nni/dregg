@@ -129,7 +129,6 @@ EMITTERS = [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",  # v1: name-keyed
     "EmitAllJsonV2.lean",                    # ir2: defName-keyed (V2_DESCRIPTORS)
     "EmitRotationV3.lean",                   # rotation v3-staged artifacts + registry tsv
-    "EmitWideTransferProbe.lean",            # ADDITIVE: the faithful 8-felt wide transfer descriptor
     "EmitWideRegistryProbe.lean",            # ADDITIVE: the 57-member faithful 8-felt wide registry (covers live V3)
     "EmitBilateralLegs.lean",                # bilateral-aggregation legs
     "EmitCrossCellConservation.lean",        # turn-wide cross-cell Σδ=0 conservation AIR (foolable gap #6)
@@ -2028,9 +2027,10 @@ ROTATION_SINGLE = {
     "rotationCaveatProbeVmDescriptor2": (2, "dregg-effectvm-rotation-caveat-v3-staged-r24.json"),
 }
 ROTATION_TSV = "rotation-v3-staged-registry.tsv"
-# ADDITIVE: the faithful 8-felt wide transfer descriptor (a single `key\tname\tjson` line,
-# `EmitWideTransferProbe.lean`). Beside the live 1-felt registry — the live TSV is untouched.
-WIDE_TRANSFER_TSV = "rotation-wide-transfer-staged.tsv"
+# ⚑ DELETED 2026-07-31: `WIDE_TRANSFER_TSV` / `rotation-wide-transfer-staged.tsv` and its driver
+# `EmitWideTransferProbe.lean`. The single-line probe was a diverged fork of `WIDE_REGISTRY_TSV`
+# row 0 (no availability hardening, no membership-claim PIs, no gentian floor refuse, never
+# E1-compacted) with no production consumer.
 # ADDITIVE: the 57-member faithful 8-felt wide registry, a member-for-member name-stable cover of the
 # live V3 registry (`key\tname\tjson` per line, `EmitWideRegistryProbe.lean`, trailing newline). The
 # per-family wide-roundtrip slice consumes it.
@@ -2053,15 +2053,6 @@ def split_rotation(stdout: str, written):
             sys.exit(f"emit_descriptors: rotation key {key!r} has no routing")
     # the registry tsv is the v3rot cohort, one line each, trailing newline.
     write_file(ROTATION_TSV, "\n".join(v3rot) + "\n", written)
-
-
-def split_wide(stdout: str, written):
-    """The wide transfer emitter prints ONE `key\tname\tjson` line — the staged wide TSV verbatim
-    (no trailing newline, matching the single-line checked-in artifact)."""
-    line = stdout.rstrip("\n")
-    if not line.startswith("transferVmDescriptor2R24Wide\t"):
-        sys.exit(f"emit_descriptors: wide emitter produced unexpected line: {line[:80]!r}")
-    write_file(WIDE_TRANSFER_TSV, line, written)
 
 
 def _parse_e1_intervals(spec: str) -> list[tuple[int, int]]:
@@ -2533,8 +2524,6 @@ def main():
             split_ir2(out, dn2file, written)
         elif lean.endswith("EmitRotationV3.lean"):
             split_rotation(out, written)
-        elif lean.endswith("EmitWideTransferProbe.lean"):
-            split_wide(out, written)
         elif lean.endswith("EmitWideRegistryProbe.lean"):
             split_wide_registry(out, written)
         elif lean.endswith("EmitBilateralLegs.lean"):
