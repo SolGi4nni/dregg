@@ -77,6 +77,8 @@ import Dregg2.Circuit.Emit.UnforcedPiPins
 -- See Dregg2.Circuit.Emit.LastRowFrameHardening.{satisfied2_of_hardened, hardened_gate_binds_on_last_row}.
 import Dregg2.Circuit.Emit.LastRowFrameHardening
 import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
+-- ⚑ THE OWNER FREEZE (E10) — see `emitCompact` below and `OwnerFreezeWire`'s header.
+import Dregg2.Circuit.Emit.OwnerFreezeWire
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.CapOpenEmit (v3RegistryCapOpenWide v3RegistryCapOpenWriteWide)
@@ -157,7 +159,20 @@ def emitCompact (key : String) (d0 : EffectVmDescriptor2) : IO Unit := do
   -- ⚑ THE FIELDS-CANONICITY WELD, applied to the UNCOMPACTED member so the S2/E1 compactions see
   -- its 112 aux columns as LIVE and renumber them with everything else. Emitting it after
   -- compaction would name pre-compaction column indices — the avail-shift trap, one level up.
-  let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d0
+  -- ⚑ THE OWNER FREEZE (E10), applied at the SAME point and for the same reason: the eight
+  -- BEFORE↔AFTER `B_PUBKEY_OCTET` welds must name UNCOMPACTED block columns so S2/E1 renumber them
+  -- with everything else. The wide registry is a member-for-member cover of live V3 and its
+  -- fingerprint is half the VK's `registry_fp` (`dregg-epoch/src/lib.rs:155`), so welding only the
+  -- narrow registry would leave the identical owner-forgery route open through the wide cover.
+  -- ⚠ UNRUN as authored (2026-08-01): `EffectVmEmitRotationWide.lean` was RED mid-187-widening
+  -- (`wideAppend_pins` / `v3RegistryWide_binds` axiom-hygiene FAIL), so this emitter could not be
+  -- elaborated, let alone executed. Structurally it can only ADD live columns, never remove them,
+  -- so the S2 kill-set can only shrink and `transitionCeilingOk` is untouched (the weld is a
+  -- `.base (.gate …)`, not a `.transition`) — and if that reasoning is wrong the emit FAILS CLOSED
+  -- with `compactForEmit`'s refusal rather than minting bad bytes. CHECK THIS LINE FIRST if the
+  -- wide regen refuses.
+  let d := Dregg2.Circuit.Emit.OwnerFreezeWire.ownerFreezeWire d0
+  let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d
   match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
   | .ok (cm, bb, lb) =>
     let ks := deadColsE1Fast cm (e1Ceiling key cm)

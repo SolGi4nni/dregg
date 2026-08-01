@@ -82,6 +82,8 @@ import Dregg2.Circuit.Emit.RotWideCompactE1
 -- THE UNFORCED-PIN SUBTRACTION: drop every `.piBinding` whose column nothing else reads.
 import Dregg2.Circuit.Emit.UnforcedPiPins
 import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
+-- ⚑ THE OWNER FREEZE (E10) — see `main` below and `OwnerFreezeWire`'s header.
+import Dregg2.Circuit.Emit.OwnerFreezeWire
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
 open Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
@@ -171,6 +173,11 @@ def isUMemOp : Dregg2.Circuit.DescriptorIR2.VmConstraint2 → Bool
 
 def main : IO Unit := do
   for (key, d) in weldedWideRegistryRefusedFirst do
+    -- ⚑ THE OWNER FREEZE (E10) — the eight BEFORE↔AFTER `B_PUBKEY_OCTET` welds, applied to the
+    -- UNCOMPACTED member so S2/E1 renumber their columns. `UMEM_WELD_TABLE_FP` is the other half of
+    -- the VK's `registry_fp`, so this cover carries the weld too. ⚠ UNRUN as authored (2026-08-01):
+    -- `EffectVmEmitRotationWide.lean` was RED mid-187-widening. See `EmitWideRegistryProbe`'s note.
+    let d := Dregg2.Circuit.Emit.OwnerFreezeWire.ownerFreezeWire d
     let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d
     match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
     | .ok (cm, _, _) =>
