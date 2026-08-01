@@ -149,6 +149,345 @@ let wasm_bindgen = (function(exports) {
     exports.CardWorld = CardWorld;
 
     /**
+     * **Today's Descent, running as verifiable turns in the tab.** Owns the beacon-drawn day's
+     * [`Scene`] + a `spween-dregg` [`Driver`] at `NodeTarget::Local` (in-process, NO networking).
+     * Each [`Self::advance`] runs the stock gate-checked `select_choice` and flushes the resulting
+     * cell writes as ONE cap-gated verified turn, appending its receipt; [`Self::verify`] replays
+     * that chain against a fresh, identically-seeded day — the "stranger checks the run" tooth.
+     */
+    class DescentWorld {
+        static __wrap(ptr) {
+            const obj = Object.create(DescentWorld.prototype);
+            obj.__wbg_ptr = ptr;
+            DescentWorldFinalization.register(obj, obj.__wbg_ptr, obj);
+            return obj;
+        }
+        __destroy_into_raw() {
+            const ptr = this.__wbg_ptr;
+            this.__wbg_ptr = 0;
+            DescentWorldFinalization.unregister(this);
+            return ptr;
+        }
+        free() {
+            const ptr = this.__destroy_into_raw();
+            wasm.__wbg_descentworld_free(ptr, 0);
+        }
+        /**
+         * **Advance the run by taking move `index` — as ONE verified turn.** Runs the stock
+         * `select_choice` (checks the gate, runs the effects, navigates) and flushes the buffered
+         * cell writes as a single cap-gated turn, appending its receipt.
+         *
+         * Returns the full [`Self::state_json`] object with `ok` set, plus `error?` on a refusal.
+         * FAIL-CLOSED: a gated (condition-not-met) or out-of-range move — or a move on an already-
+         * ended run — returns `{ ok: false, error }` and NOTHING commits (the state fields still
+         * describe the last good, committed state). A blow you could not survive, or pressing past a
+         * warden still standing, is refused here — this is the permadeath trial's teeth biting.
+         * @param {number} index
+         * @returns {string}
+         */
+        advance(index) {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_advance(this.__wbg_ptr, index);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The day-cell's current committed state commitment (hex) — the `post_state_hash` of the
+         * last committed turn (genesis if no move has been taken yet). It MOVES on every advance and
+         * pins exactly one committed history — the stranger's check surface.
+         * @returns {string}
+         */
+        commitmentHex() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_commitmentHex(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The current room ("passage") name — `gate` at the start, `downed` in the defeat room,
+         * empty once the run has ended.
+         * @returns {string}
+         */
+        currentRoom() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_currentRoom(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The number of connecting corridor rooms between the key room and the hoard gate (a beacon
+         * draw — the day's depth).
+         * @returns {number}
+         */
+        deepeningRooms() {
+            const ret = wasm.descentworld_deepeningRooms(this.__wbg_ptr);
+            return ret >>> 0;
+        }
+        /**
+         * How deep the run has reached (the committed `depth` counter — the survived-depth signal).
+         * @returns {bigint}
+         */
+        depth() {
+            const ret = wasm.descentworld_depth(this.__wbg_ptr);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * **Open TODAY'S descent by VERIFYING a fetched drand `quicknet` reveal, in the tab.**
+         * `round` + `signature_hex` are the day's fetched `(round, signature)`; this builds the real
+         * [`DailyBeacon`], runs the BLS pairing check against the pinned `quicknet` group key
+         * (`DailyBeacon::seed` verifies before deriving), folds the verified output through
+         * [`daily_seed`], and draws the day. FAIL-CLOSED: a forged / mutated signature, a wrong
+         * round, or a wrong group key does not verify → a `JsError` and NO world (you cannot open a
+         * forged day, and cannot grind a favourable one). This is the "unpredictable-until-revealed"
+         * tooth carried to the browser.
+         * @param {bigint} round
+         * @param {string} signature_hex
+         * @returns {DescentWorld}
+         */
+        static fromBeacon(round, signature_hex) {
+            const ptr0 = passStringToWasm0(signature_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.descentworld_fromBeacon(round, ptr0, len0);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return DescentWorld.__wrap(ret[0]);
+        }
+        /**
+         * The gold carried (the committed `gold` slot). Reaching the hoard sets it to
+         * [`HOARD_GOLD`] — the win value.
+         * @returns {bigint}
+         */
+        gold() {
+            const ret = wasm.descentworld_gold(this.__wbg_ptr);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * The player's current HP (the committed `hp` slot). A blow that would drop it below the
+         * floor is refused by the gate at [`Self::advance`].
+         * @returns {bigint}
+         */
+        hp() {
+            const ret = wasm.descentworld_hp(this.__wbg_ptr);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * **Whether the run fell to the warden** — the committed `downed` flag is set (the
+         * fall-to-defeat move routed into the terminal defeat passage). This is the in-tab
+         * permadeath signal: a genuinely lost run. (The cross-day hardcore-character death that
+         * PERSISTS is the offering/store leg, not this private-play leg.)
+         * @returns {boolean}
+         */
+        isDead() {
+            const ret = wasm.descentworld_isDead(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * Whether the run has ended (won at the hoard, lost in the defeat room, or turned back at
+         * the door).
+         * @returns {boolean}
+         */
+        isEnded() {
+            const ret = wasm.descentworld_isEnded(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * **Whether the run reached the WIN** — ended holding the hoard (`gold == HOARD_GOLD`). This
+         * is exactly the leaderboard's win condition, read locally.
+         * @returns {boolean}
+         */
+        isWon() {
+            const ret = wasm.descentworld_isWon(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * The moves at the current room as JSON: `[{index, text, available}]`. `available` is the
+         * condition-gated availability the stock runtime computes against the committed cell state
+         * (e.g. "Press past the felled warden" is unavailable while `warden_hp > 0`; "Fall to the
+         * warden's blow" only becomes available at `hp <= 20`). The UI renders an unavailable move
+         * disabled; an [`Self::advance`] on it is refused in-band regardless (fail-closed at the
+         * turn — the executor is the sole referee).
+         * @returns {string}
+         */
+        movesJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_movesJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * **Open TODAY'S descent from an already-verified beacon output.** `epoch_hex` is the
+         * 32-byte hex committed epoch value (a verified drand round's output — `H(signature)`); the
+         * day's seed is [`daily_seed`] of it, and the day's world is [`daily_scene`] of the seed.
+         * The genesis turn (the gate's entry effects: `hp = 50`, `warden_hp = <beacon draw>`)
+         * commits before any move. FAIL-CLOSED: bad hex / wrong length / a scene that will not
+         * deploy is a `JsError` and NO world is minted.
+         *
+         * Use this when the browser fetched + verified the drand round elsewhere (the pairing check
+         * is a pure function of public data) and holds only the committed output. For the in-tab
+         * verify-the-reveal path, use [`Self::from_beacon`].
+         * @param {string} epoch_hex
+         */
+        constructor(epoch_hex) {
+            const ptr0 = passStringToWasm0(epoch_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.descentworld_new(ptr0, len0);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            this.__wbg_ptr = ret[0];
+            DescentWorldFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        }
+        /**
+         * Read a committed narrative var off the day's cell (`hp` / `warden_hp` / `depth` / `gold` /
+         * `downed` / `heals_used` / …). Unset compiled vars read `0`, as the executor sees them.
+         * @param {string} name
+         * @returns {bigint}
+         */
+        readVar(name) {
+            const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.descentworld_readVar(this.__wbg_ptr, ptr0, len0);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * The current room's narrative prose — the text to render. Empty once the run has ended.
+         * @returns {string}
+         */
+        roomProse() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_roomProse(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The committed daily seed this world was drawn from (hex) — the day's fingerprint. Everyone
+         * who derives the same seed regenerates this byte-identical world.
+         * @returns {string}
+         */
+        seedHex() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_seedHex(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The run's current committed state as JSON:
+         * `{ room, hp, wardenHp, depth, gold, downed, alive, dead, won, ended, turns, commitmentHex }`.
+         * Every field reads straight off the committed day-cell — the same values a re-executor
+         * reproduces.
+         * @returns {string}
+         */
+        stateJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_stateJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The day's display title (the beacon-drawn theme's title, e.g. "The Sunken Descent").
+         * @returns {string}
+         */
+        title() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.descentworld_title(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The number of real verified turns so far (the genesis turn plus one per committed move) —
+         * the audit-tape length. Proves each advance was a real verified turn, not a local poke.
+         * @returns {number}
+         */
+        turns() {
+            const ret = wasm.descentworld_turns(this.__wbg_ptr);
+            return ret >>> 0;
+        }
+        /**
+         * **Verify the whole run by replay** — the un-retconnable "stranger checks the run" check.
+         * Re-drives a FRESH, identically-seeded day through the recorded move sequence and confirms
+         * it reproduces the exact committed state at every step, AND that the receipt chain links
+         * cleanly (`spween-dregg`'s `verify` — both teeth). A forged (ineligible) move is refused by
+         * the executor on replay; a tampered receipt breaks the chain. Both a WON run and a LOST run
+         * (downed into the defeat passage) are honest records that re-verify here. Returns `true`
+         * iff the run is authentic.
+         * @returns {boolean}
+         */
+        verify() {
+            const ret = wasm.descentworld_verify(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * The warden's current HP (the committed `warden_hp` slot). The stair opens only once it
+         * reaches `0` (the `{ warden_hp <= 0 }`-gated "press past" move).
+         * @returns {bigint}
+         */
+        wardenHp() {
+            const ret = wasm.descentworld_wardenHp(this.__wbg_ptr);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * The warden's starting HP for the day (a beacon draw; 60 demands the field-dressing to win).
+         * @returns {bigint}
+         */
+        wardenStartHp() {
+            const ret = wasm.descentworld_wardenStartHp(this.__wbg_ptr);
+            return BigInt.asUintN(64, ret);
+        }
+    }
+    if (Symbol.dispose) DescentWorld.prototype[Symbol.dispose] = DescentWorld.prototype.free;
+    exports.DescentWorld = DescentWorld;
+
+    /**
      * The in-tab document-collaboration surface. One `DocCollabWorld` owns one runtime with one
      * **doc-cell** (agent 0) whose committed umem-heap `heap_root` IS the published document's
      * commitment. It drives the WHOLE Pijul flow — fork → diverge → stitch → a first-class conflict
@@ -926,6 +1265,258 @@ let wasm_bindgen = (function(exports) {
     exports.KvStoreWorld = KvStoreWorld;
 
     /**
+     * The browser-owned Lean-native Descent session.
+     *
+     * The first action that actually lands binds `actor`; a refusal cannot claim the run.
+     * Afterwards every action must carry the same actor identity.
+     */
+    class NativeDescentWorld {
+        static __wrap(ptr) {
+            const obj = Object.create(NativeDescentWorld.prototype);
+            obj.__wbg_ptr = ptr;
+            NativeDescentWorldFinalization.register(obj, obj.__wbg_ptr, obj);
+            return obj;
+        }
+        __destroy_into_raw() {
+            const ptr = this.__wbg_ptr;
+            this.__wbg_ptr = 0;
+            NativeDescentWorldFinalization.unregister(this);
+            return ptr;
+        }
+        free() {
+            const ptr = this.__destroy_into_raw();
+            wasm.__wbg_nativedescentworld_free(ptr, 0);
+        }
+        /**
+         * Candidate native affordances for `viewer`, as JSON.
+         *
+         * The Offering computes eligibility from the real native state. Once another actor has
+         * claimed the run, every row is disabled for this viewer. The executor remains the final
+         * referee even for rows decorated `enabled: true`.
+         * @param {string} viewer
+         * @returns {string}
+         */
+        actionsJson(viewer) {
+            let deferred2_0;
+            let deferred2_1;
+            try {
+                const ptr0 = passStringToWasm0(viewer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ret = wasm.nativedescentworld_actionsJson(this.__wbg_ptr, ptr0, len0);
+                deferred2_0 = ret[0];
+                deferred2_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+            }
+        }
+        /**
+         * The actor bound by the first landed move, or `undefined` while unclaimed.
+         * @returns {string | undefined}
+         */
+        actor() {
+            const ret = wasm.nativedescentworld_actor(this.__wbg_ptr);
+            let v1;
+            if (ret[0] !== 0) {
+                v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+                wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+            }
+            return v1;
+        }
+        /**
+         * Submit exactly one `{turn, arg}` native action for the host-authenticated `actor`.
+         *
+         * A landed call advances the journal by exactly one revision and returns its full current
+         * state. A refused call returns `{ok:false, error,...}` and preserves actor, revision, and
+         * root. The label/enabled decoration is not trusted input; the Offering parses the exact
+         * verb and argument and the installed executor decides whether it lands. This low-level
+         * method binds the supplied opaque identity; the embedding host is responsible for proving
+         * that the browser controls that identity.
+         * @param {string} turn
+         * @param {number} arg
+         * @param {string} actor
+         * @returns {string}
+         */
+        advance(turn, arg, actor) {
+            let deferred3_0;
+            let deferred3_1;
+            try {
+                const ptr0 = passStringToWasm0(turn, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len0 = WASM_VECTOR_LEN;
+                const ptr1 = passStringToWasm0(actor, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+                const len1 = WASM_VECTOR_LEN;
+                const ret = wasm.nativedescentworld_advance(this.__wbg_ptr, ptr0, len0, arg, ptr1, len1);
+                deferred3_0 = ret[0];
+                deferred3_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+            }
+        }
+        /**
+         * **Open a Descent whose banked relics mint under TODAY'S REVEALED DAY, verified in the
+         * tab.** `round` + `signature_hex` are the day's fetched drand `quicknet` pair; this builds
+         * the real [`DailyBeacon`], runs the BLS pairing check against the pinned group key
+         * (`DailyBeacon::seed` verifies before it derives), and binds the run day-seed to it.
+         *
+         * This is the browser half of the same tooth [`crate::bindings_descent::DescentWorld::
+         * from_beacon`] carries for the procgen daily: FAIL-CLOSED — a forged, mutated, or
+         * wrong-round signature does not verify, so there is no world and no day. The ordinary
+         * [`new`](Self::new) constructor is the seed-derived (reproducible, and therefore
+         * PRE-COMPUTABLE) path, right for a practice world and wrong for a run whose relic ids are
+         * supposed to be unpredictable until the round matures.
+         * @param {number} seed
+         * @param {bigint} round
+         * @param {string} signature_hex
+         * @returns {NativeDescentWorld}
+         */
+        static fromBeacon(seed, round, signature_hex) {
+            const ptr0 = passStringToWasm0(signature_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.nativedescentworld_fromBeacon(seed, round, ptr0, len0);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return NativeDescentWorld.__wrap(ret[0]);
+        }
+        /**
+         * Restore an untrusted portable record by exact re-execution.
+         *
+         * No serialized state is installed directly. A fresh Offering session replays every
+         * command and must reproduce the full event/receipt/state/root/checkpoint/completion
+         * envelope byte-for-byte.
+         * @param {string} record_json
+         * @returns {NativeDescentWorld}
+         */
+        static fromRecordJson(record_json) {
+            const ptr0 = passStringToWasm0(record_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.nativedescentworld_fromRecordJson(ptr0, len0);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return NativeDescentWorld.__wrap(ret[0]);
+        }
+        /**
+         * Whether a terminal native `flee` settlement has landed.
+         * @returns {boolean}
+         */
+        isComplete() {
+            const ret = wasm.nativedescentworld_isComplete(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * Whether that terminal settlement banked the complete native relic set.
+         * @returns {boolean}
+         */
+        isCrowned() {
+            const ret = wasm.nativedescentworld_isCrowned(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * Open a deterministic Lean-native Descent.
+         *
+         * `seed` is normalized by the Offering exactly as it is on the other frontends. The
+         * deployed genesis is unclaimed; the first landed action binds its actor.
+         * @param {number} seed
+         */
+        constructor(seed) {
+            const ret = wasm.nativedescentworld_new(seed);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            this.__wbg_ptr = ret[0];
+            NativeDescentWorldFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        }
+        /**
+         * Export the versioned portable action/receipt/state/root record.
+         *
+         * Export is local only: it does not publish the run or submit it to a leaderboard.
+         * @returns {string}
+         */
+        recordJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.nativedescentworld_recordJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * Number of landed actions. The genesis receipt is reported separately by verification,
+         * so a new world has revision zero.
+         * @returns {number}
+         */
+        revision() {
+            const ret = wasm.nativedescentworld_revision(this.__wbg_ptr);
+            return ret >>> 0;
+        }
+        /**
+         * The actor-bound, hash-chained journal head.
+         * @returns {string}
+         */
+        rootHex() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.nativedescentworld_rootHex(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * Current exact native state, journal head, checkpoint, and completion as JSON.
+         * @returns {string}
+         */
+        stateJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.nativedescentworld_stateJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * Re-execute the complete live record. This is replay verification, not a succinct proof.
+         * @returns {boolean}
+         */
+        verify() {
+            const ret = wasm.nativedescentworld_verify(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * Re-execute the complete live record and return a structured verification report.
+         * @returns {string}
+         */
+        verifyJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.nativedescentworld_verifyJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+    }
+    if (Symbol.dispose) NativeDescentWorld.prototype[Symbol.dispose] = NativeDescentWorld.prototype.free;
+    exports.NativeDescentWorld = NativeDescentWorld;
+
+    /**
      * The real `collective-choice` vote, driven from the browser tab over its own embedded
      * verified executor. One `PollWorld` owns one runtime with one poll (tally-board) cell and
      * one factory-shaped ballot cell per voter; each `cast` is a genuine cap-gated verified turn
@@ -1694,9 +2285,9 @@ let wasm_bindgen = (function(exports) {
 
     /**
      * Assemble the canonical `SignedTurn` submission envelope — the exact bytes the
-     * node's `POST /api/turns/submit-signed` decodes with
-     * `postcard::from_bytes::<dregg_sdk::SignedTurn>` — from an encoded `Turn` and a
-     * 32-byte Ed25519 seed.
+     * node's `POST /api/turns/submit-signed` consumes with its strict postcard
+     * decoder (exactly one `dregg_sdk::SignedTurn`, with no trailing bytes) — from an
+     * encoded `Turn` and a 32-byte Ed25519 seed.
      *
      * This routes envelope assembly through the SDK's canonical
      * [`AgentCipherclerk::sign_turn`] instead of the extension hand-rolling the
@@ -2148,13 +2739,23 @@ let wasm_bindgen = (function(exports) {
     exports.cipherclerk_private_transfer = cipherclerk_private_transfer;
 
     /**
-     * DFA compile/eval stub. In full: delegates to dregg_dfa::compiler + air.
-     * For inspector <dregg-dfa> + relay/pubsub. Returns placeholder shape today.
-     * @param {string} _pattern_json
+     * DFA compile — delegates to the REAL in-tree `dregg_dfa` compiler (the same
+     * `Pattern → NFA → DFA` product path the router + AIR consume). `dregg-dfa` is
+     * an unconditional wasm dependency (see `Cargo.toml`; already used by
+     * `route_table_commitment` above), so no feature gate is needed — a `dfa`
+     * feature toggling this runtime path while the dep is always linked would be a
+     * reflexive gate (forbidden by FEATURE-HYGIENE). For the inspector `<dregg-dfa>`.
+     *
+     * Input (`pattern_json`) selects the pattern; empty/absent ⇒ a real default
+     * demo (`docs/*` path-prefix), so this is NEVER a silent zeroed stub:
+     *   `{"literal":"GET /health"}`           — exact byte-sequence match
+     *   `{"pathPrefix":"docs/"}`              — URL `prefix/*` wildcard
+     *   `{"pattern":<serialized dregg_dfa::Pattern>, "samples":["docs/a","x"]}`
+     * @param {string} pattern_json
      * @returns {any}
      */
-    function compile_dfa(_pattern_json) {
-        const ptr0 = passStringToWasm0(_pattern_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    function compile_dfa(pattern_json) {
+        const ptr0 = passStringToWasm0(pattern_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.compile_dfa(ptr0, len0);
         if (ret[2]) {
@@ -2928,35 +3529,46 @@ let wasm_bindgen = (function(exports) {
     exports.deploy_lower = deploy_lower;
 
     /**
-     * Derive an Ed25519 keypair from a BIP39 mnemonic using the dregg BLAKE3 derivation path.
+     * Derive an Ed25519 keypair from a BIP39 mnemonic at the dregg derivation path.
      *
-     * This uses the same BLAKE3-based derivation as `dregg-sdk`'s `mnemonic_to_seed` +
-     * `derive_keypair`. The Ed25519 public key is computed in-WASM via ed25519-dalek.
+     * Routes through [`derive_identity_keypair`] — i.e. through `dregg_sdk::mnemonic` — so the
+     * key this returns is byte-identical to the one `dregg id import` and
+     * `dreggnet-web`'s `/identity/restore` produce for the same words.
      *
      * Returns an object `{ public_key: Vec<u8>(32), secret_key: Vec<u8>(32) }`.
      *
      * # Arguments
-     * * `mnemonic` - A 24-word BIP39 mnemonic string.
-     * * `passphrase` - Optional passphrase (use empty string for none).
+     * * `mnemonic` - A 24-word BIP39 mnemonic string (checksum is CHECKED).
+     * * `passphrase` - BIP39 passphrase; pass an empty string for none.
+     * * `path` - Derivation path. Omit / pass `null` for [`DERIVATION_PATH`] (`"dregg/0"`).
+     *   ⚑ Previously this argument did not exist and `extension/src/custody.ts` passed a third
+     *   `DREGG_KEY_PATH` argument that wasm-bindgen silently DROPPED; the path is now honored,
+     *   and a caller that passes nothing still gets `"dregg/0"` (so `sdk-ts`'s two-argument call
+     *   is unchanged).
      *
      * # Errors
-     * Returns an error if the mnemonic is invalid.
+     * **REFUSES** rather than deriving anything for a phrase that is not exactly 24 words, uses
+     * a word outside the 2048-word BIP39 English list, or fails its own SHA-256 checksum. One
+     * mistyped word is a checksum failure, and getting an error there is the whole point: the
+     * alternative is being silently handed a different, empty identity.
      *
      * # Security
-     * Intermediate seed material is wrapped in `Zeroizing` to scrub linear-memory
-     * residues on drop. The returned secret/public key bytes are necessarily
-     * copied into a JS object by `serde_wasm_bindgen`; callers in background
-     * workers should overwrite or drop those buffers when done.
+     * Intermediate seed material is zeroized. The returned secret/public key bytes are
+     * necessarily copied into a JS object by `serde_wasm_bindgen`; callers in background
+     * workers should overwrite or drop those buffers when done (`custody.ts::zeroize`).
      * @param {string} mnemonic
      * @param {string} passphrase
+     * @param {string | null} [path]
      * @returns {any}
      */
-    function derive_keypair_from_mnemonic(mnemonic, passphrase) {
+    function derive_keypair_from_mnemonic(mnemonic, passphrase, path) {
         const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(passphrase, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.derive_keypair_from_mnemonic(ptr0, len0, ptr1, len1);
+        var ptr2 = isLikeNone(path) ? 0 : passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.derive_keypair_from_mnemonic(ptr0, len0, ptr1, len1, ptr2, len2);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -2968,9 +3580,24 @@ let wasm_bindgen = (function(exports) {
      * Derive stealth keys from a mnemonic + passphrase.
      *
      * Returns JSON: { spend_pubkey, spend_privkey, view_pubkey, view_privkey }
-     * All keys are 32-byte arrays. The public keys are BLAKE3 derivations of the
-     * private keys (matching the SDK's deterministic derivation). The extension uses
-     * these with its own Ed25519/X25519 library for the full DH protocol.
+     * All keys are 32-byte arrays.
+     *
+     * ⚑ **This was the SECOND copy of the phrase-hash bug.** It computed the 64-byte KDF seed
+     * itself — `blake3::hash(mnemonic.as_bytes())` as the entropy, no BIP39 validation, no
+     * checksum — so the stealth keys a phrase named here were not the ones
+     * `AgentCipherclerk::from_mnemonic` names for the same words. It now takes the 32-byte
+     * Ed25519 signing seed from [`crate::derive_identity_keypair`] (the one derivation in this
+     * crate) and applies the SAME two context strings
+     * `dregg_sdk::cipherclerk::AgentCipherclerk::derive_stealth_keys` applies to
+     * `signing_key.to_bytes()` — which is that same seed. So the *private* halves now agree with
+     * the SDK exactly.
+     *
+     * ⚑ **Named divergence, deliberately NOT changed here.** `spend_pubkey` below is
+     * `blake3::hash(spend_privkey)`, whereas `dregg_cell_crypto::StealthKeys::meta_address()`
+     * makes it a real **Ed25519** public key. That is a pre-existing, *documented* handoff (the
+     * extension derives the Ed25519 spend key from the private half with its own library), not
+     * the silent split this commit closes — changing it would move a value the extension already
+     * consumes. It is called out so it is a known seam rather than a discovery.
      * @param {string} mnemonic
      * @param {string} passphrase
      * @returns {any}
@@ -3190,6 +3817,28 @@ let wasm_bindgen = (function(exports) {
     exports.export_runtime_snapshot_stub = export_runtime_snapshot_stub;
 
     /**
+     * **The whole private match, folded IN THE TAB.** Runs the full Phase-3 recursion fold on
+     * two membership-proven plays and returns the light-client-verified `WholeChainProof`
+     * bytes. COMPILES for wasm32; the RUN is the honest boundary — the plonky3 recursion is
+     * heavy (minutes-to-hours, and wasm32 is single-threaded in a 32-bit address space). For
+     * the fast, definitely-in-tab path, use [`prove_tug_play_on_device`].
+     * @param {string} hand_json
+     * @param {bigint} card_a
+     * @param {bigint} card_b
+     * @returns {any}
+     */
+    function foldTugMatchOnDevice(hand_json, card_a, card_b) {
+        const ptr0 = passStringToWasm0(hand_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.foldTugMatchOnDevice(ptr0, len0, card_a, card_b);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.foldTugMatchOnDevice = foldTugMatchOnDevice;
+
+    /**
      * Run the full garbled circuit comparison protocol (both parties in-process for demo).
      *
      * Proves `prover_value >= verifier_threshold` without the prover learning the threshold
@@ -3230,6 +3879,31 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.generate_demo_stark_proof = generate_demo_stark_proof;
+
+    /**
+     * **Generate a fresh 24-word BIP39 phrase** — 256 bits of `getrandom` entropy plus its
+     * 8-bit SHA-256 checksum, over `dregg_sdk::wordlist::WORDLIST`.
+     *
+     * ⚑ This export exists to RETIRE a reimplementation. `extension/src/background.ts` carried
+     * its own entropy → words encoder in TypeScript (plus its own copy of the wordlist,
+     * `extension/bip39_english.txt`) because it probed for `wasm.generate_mnemonic` and the wasm
+     * never exported it — so the JS branch was not a fallback, it was the only path. The
+     * probe now succeeds and the SDK is what runs.
+     * @returns {string}
+     */
+    function generate_mnemonic() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.generate_mnemonic();
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    exports.generate_mnemonic = generate_mnemonic;
 
     /**
      * Generate a predicate proof for a private attribute.
@@ -4147,6 +4821,28 @@ let wasm_bindgen = (function(exports) {
     exports.propose_block = propose_block;
 
     /**
+     * **The multiway-tug per-play membership proof, minted IN THE TAB.** `hand_json` is the
+     * owner's private hand (`[[card, nonce], ...]`); `card_id` is the played card. Returns
+     * the membership `Ir2ProofEnvelope` JSON (feed it to [`verify_tug_play_on_device`]) plus
+     * the bound leaf/root, the proof size, and generation time. The private openings of the
+     * rest of the hand never leave the device. FAIL-CLOSED: an empty/malformed hand or a card
+     * not in the hand is a `JsError` and NO proof.
+     * @param {string} hand_json
+     * @param {bigint} card_id
+     * @returns {any}
+     */
+    function proveTugPlayOnDevice(hand_json, card_id) {
+        const ptr0 = passStringToWasm0(hand_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.proveTugPlayOnDevice(ptr0, len0, card_id);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.proveTugPlayOnDevice = proveTugPlayOnDevice;
+
+    /**
      * Generate a blinded ring membership proof for an agent in a set.
      *
      * Proves that an agent (identified by `agent_id_hex`) is a member of the ring
@@ -4181,7 +4877,7 @@ let wasm_bindgen = (function(exports) {
      *
      * This is NOT a tier flip on a single-turn EffectVM proof. It runs the
      * canonical γ.2 aggregator
-     * (`dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle`) over two
+     * (`dregg_turn_prover::aggregate_bilateral_prover::prove_aggregated_bundle`) over two
      * per-cell `WitnessedReceipt`s — alice's OUTGOING transfer + bob's INCOMING
      * transfer, both projected from the SAME canonical Turn's bilateral schedule —
      * emitting a real outer STARK over `BilateralAggregationAir`. The bundle is
@@ -4786,6 +5482,39 @@ let wasm_bindgen = (function(exports) {
     exports.spend_note = spend_note;
 
     /**
+     * **The deterministic sprite SVG for an asset, IN THE TAB.** `kind` is `"gear"` or
+     * `"card"`; `asset_id_hex` is the 32-byte [`AssetId`] as hex (an optional `0x` prefix is
+     * accepted). Returns the composed vector SVG string — **same asset ⇒ byte-identical SVG**.
+     * FAIL-CLOSED: a bad kind / non-hex / wrong-length id is a `JsError` and NO sprite.
+     * @param {string} kind
+     * @param {string} asset_id_hex
+     * @returns {string}
+     */
+    function spriteSvg(kind, asset_id_hex) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(asset_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.spriteSvg(ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    exports.spriteSvg = spriteSvg;
+
+    /**
      * Submit a conditional turn (executes only when condition is proven).
      * @param {number} handle
      * @param {number} agent_index
@@ -4896,6 +5625,39 @@ let wasm_bindgen = (function(exports) {
         }
     }
     exports.tamper_demo_stark_proof = tamper_demo_stark_proof;
+
+    /**
+     * **The derived trait vector for an asset, IN THE TAB** — the JSON companion to
+     * [`sprite_svg`]. Returns `{ kind, rarity: { name, tier }, fingerprint, axes: {…} }` — the
+     * same trait vector that composes the SVG, re-derivable by anyone from the asset id.
+     * FAIL-CLOSED on a bad kind / non-hex / wrong-length id.
+     * @param {string} kind
+     * @param {string} asset_id_hex
+     * @returns {string}
+     */
+    function traitsJson(kind, asset_id_hex) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(asset_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.traitsJson(ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    exports.traitsJson = traitsJson;
 
     /**
      * **AMEND** the source named `name` to `new_content` — advance the SAME `dregg://`
@@ -5191,6 +5953,47 @@ let wasm_bindgen = (function(exports) {
         }
     }
     exports.unseal_intent_body = unseal_intent_body;
+
+    /**
+     * **Whether these 24 words are a valid BIP39 phrase** — word count, wordlist membership,
+     * and the SHA-256 checksum, via `dregg_sdk::mnemonic::validate_mnemonic`.
+     *
+     * ⚑ This export ARMS a guard that was fail-open. `extension/src/passkey.ts::enroll` reads
+     * `if (this.wasm.validate_mnemonic && !this.wasm.validate_mnemonic(mnemonic))` — with the
+     * export absent the `&&` short-circuited and passkey custody would enroll ANY string as a
+     * phrase. The precise reason for a rejection is available from
+     * [`derive_keypair_from_mnemonic`]'s error; this returns the boolean
+     * `extension/src/custody.ts::CustodyWasm` declares.
+     * @param {string} mnemonic
+     * @returns {boolean}
+     */
+    function validate_mnemonic(mnemonic) {
+        const ptr0 = passStringToWasm0(mnemonic, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.validate_mnemonic(ptr0, len0);
+        return ret !== 0;
+    }
+    exports.validate_mnemonic = validate_mnemonic;
+
+    /**
+     * **Verify a multiway-tug on-device play proof.** Runs the SAME migrated consumer
+     * contract the light client's membership arm uses: fail-closed `descriptor_by_name`
+     * dispatch on the envelope's name, postcard-decode the `Ir2BatchProof`, and check it with
+     * the deployed `verify_vm_descriptor2`. A dispatch miss, malformed blob, or failed check
+     * all yield `valid: false`.
+     * @param {string} proof_json
+     * @returns {any}
+     */
+    function verifyTugPlayOnDevice(proof_json) {
+        const ptr0 = passStringToWasm0(proof_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.verifyTugPlayOnDevice(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.verifyTugPlayOnDevice = verifyTugPlayOnDevice;
 
     /**
      * Verify a bearer capability proof.
@@ -5621,30 +6424,59 @@ let wasm_bindgen = (function(exports) {
      * cell's committed `root`, re-witnessing nothing.
      *
      * Reproduces the canonical heap path fold (`dregg_circuit::heap_root`): the leaf is
-     * the arity-2 Poseidon2 digest `hash[heap_addr(coll, key), value]`; it folds up a
-     * depth-`HEAP_TREE_DEPTH` tree against `siblings_csv` per `directions_csv` (bit `0`
-     * = the running node is the left child → `hash_fact(cur, sib)`; `1` = right →
-     * `hash_fact(sib, cur)`), and the recomputed root must equal `root`.
+     * the arity-3 indexed-Merkle-tree Poseidon2 digest
+     * `hash[heap_addr(coll, key), value, next_addr]` (`HeapLeaf::preimage` — the ONE
+     * place that schema is written); it folds up a depth-`HEAP_TREE_DEPTH` tree against
+     * `siblings_csv` per `directions_csv` (bit `0` = the running node is the left child
+     * → `hash_fact(cur, sib)`; `1` = right → `hash_fact(sib, cur)`), and the recomputed
+     * root must equal `root`.
      *
-     * All field elements are decimal `BabyBear` felts (`< 2^31`): `root`/`value`/each
-     * sibling. `siblings_csv` and `directions_csv` are comma-separated, each of length
-     * exactly `HEAP_TREE_DEPTH` (16) — a wrong length is REFUSED (fail-closed). A
-     * tampered value, a wrong `(coll, key)`, or a forged path recomputes a different
-     * root and returns `false`.
+     * `next_addr` is the IMT POINTER committed inside the leaf: the address of the
+     * next-larger present slot, or the terminal `SENTINEL_MAX` for the largest one. It
+     * is part of the committed leaf, so an opening MUST carry it — the heap tree
+     * retired its stored MAX sentinel leaf in favour of this pointer (2026-07-12,
+     * `919b2b0b8d`), and a verifier that assumes `SENTINEL_MAX` can only ever check the
+     * largest slot in the heap. The pointer is not secret: it is the same `MAP_NEXT`
+     * felt the deployed AIR absorbs, and the server already reveals the sibling path.
+     *
+     * All field elements are decimal `BabyBear` felts (`< 2^31`): `root`/`value`/
+     * `next_addr`/each sibling. `siblings_csv` and `directions_csv` are comma-separated,
+     * each of length exactly `HEAP_TREE_DEPTH` (16) — a wrong length is REFUSED
+     * (fail-closed). A tampered value or a forged path recomputes a different root and returns
+     * `false`.
+     *
+     * ⚠ A WRONG `(coll, key)` DOES NOT. This doc said it did until 2026-08-01, and that was FALSE:
+     * `verify_slot_opening` DERIVES the address from `(coll, key)` through the one-felt `heap_addr`,
+     * so it cannot distinguish two keys that share an address.
+     *
+     * ⚑ Measured against the real producer: commit `(1, 2)`, then ask about `(1, 2013265923)` —
+     * **verify returns TRUE**, at cost zero, one addition. A 43,968-fold search (~0.1 s) also yields
+     * an in-range pair. This is ADMIT-A-FALSE-VALUE, strictly worse than the halt the builder-side
+     * refusal closed, and it is **uncontained**: the 2026-07-28 repair closed the builder half only.
+     *
+     * ⓘ Mitigating today: `HeapSlotOpening` has no production minter — every caller passes
+     * `openings: &[]`. This is a live verifier without a live producer.
+     *
+     * ⓘ The two stale shipped callers of the **6-arg pre-IMT signature** are dealt with as of
+     * 2026-08-01: `portal/dist/cell.html` now passes `o.next` and REFUSES an opening that omits it;
+     * `extension/dregg_wasm.js` (with its untracked `dregg_wasm_bg.wasm`, a self-consistent pre-IMT
+     * pair — 6-arg glue over an 8-param export, against this function's 9) is regenerated from this
+     * source. See the commit for what re-emits.
      * @param {number} root
      * @param {number} coll
      * @param {number} key
      * @param {number} value
+     * @param {number} next_addr
      * @param {string} siblings_csv
      * @param {string} directions_csv
      * @returns {boolean}
      */
-    function verify_slot_opening(root, coll, key, value, siblings_csv, directions_csv) {
+    function verify_slot_opening(root, coll, key, value, next_addr, siblings_csv, directions_csv) {
         const ptr0 = passStringToWasm0(siblings_csv, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(directions_csv, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.verify_slot_opening(root, coll, key, value, ptr0, len0, ptr1, len1);
+        const ret = wasm.verify_slot_opening(root, coll, key, value, next_addr, ptr0, len0, ptr1, len1);
         return ret !== 0;
     }
     exports.verify_slot_opening = verify_slot_opening;
@@ -5889,6 +6721,9 @@ let wasm_bindgen = (function(exports) {
     const CardWorldFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_cardworld_free(ptr, 1));
+    const DescentWorldFinalization = (typeof FinalizationRegistry === 'undefined')
+        ? { register: () => {}, unregister: () => {} }
+        : new FinalizationRegistry(ptr => wasm.__wbg_descentworld_free(ptr, 1));
     const DocCollabWorldFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_doccollabworld_free(ptr, 1));
@@ -5901,6 +6736,9 @@ let wasm_bindgen = (function(exports) {
     const KvStoreWorldFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_kvstoreworld_free(ptr, 1));
+    const NativeDescentWorldFinalization = (typeof FinalizationRegistry === 'undefined')
+        ? { register: () => {}, unregister: () => {} }
+        : new FinalizationRegistry(ptr => wasm.__wbg_nativedescentworld_free(ptr, 1));
     const PollWorldFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_pollworld_free(ptr, 1));

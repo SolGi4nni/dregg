@@ -765,9 +765,12 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
 /// All field elements are decimal `BabyBear` felts (`< 2^31`): `root`/`value`/
 /// `next_addr`/each sibling. `siblings_csv` and `directions_csv` are comma-separated,
 /// each of length exactly `HEAP_TREE_DEPTH` (16) — a wrong length is REFUSED
-/// (fail-closed). A tampered value, ⚠ FALSE — corrected 2026-08-01. This said a wrong `(coll, key)` "recomputes a different root
-/// and returns `false`". It does not: `verify_slot_opening` DERIVES the address from `(coll, key)`
-/// through the one-felt `heap_addr`, so it cannot distinguish two keys that share an address.
+/// (fail-closed). A tampered value or a forged path recomputes a different root and returns
+/// `false`.
+///
+/// ⚠ A WRONG `(coll, key)` DOES NOT. This doc said it did until 2026-08-01, and that was FALSE:
+/// `verify_slot_opening` DERIVES the address from `(coll, key)` through the one-felt `heap_addr`,
+/// so it cannot distinguish two keys that share an address.
 ///
 /// ⚑ Measured against the real producer: commit `(1, 2)`, then ask about `(1, 2013265923)` —
 /// **verify returns TRUE**, at cost zero, one addition. A 43,968-fold search (~0.1 s) also yields
@@ -775,10 +778,13 @@ pub fn produce_external_history_envelope(k: usize, step: u64) -> Result<String, 
 /// refusal closed, and it is **uncontained**: the 2026-07-28 repair closed the builder half only.
 ///
 /// ⓘ Mitigating today: `HeapSlotOpening` has no production minter — every caller passes
-/// `openings: &[]`. This is a live verifier without a live producer. ⚠ But `portal/dist/cell.html`
-/// and `extension/dregg_wasm.js` call the **6-arg pre-IMT signature** — stale shipped artifacts
-/// verifying the wrong leaf preimage.
-/// forged path recomputes a different root and returns `false`.
+/// `openings: &[]`. This is a live verifier without a live producer.
+///
+/// ⓘ The two stale shipped callers of the **6-arg pre-IMT signature** are dealt with as of
+/// 2026-08-01: `portal/dist/cell.html` now passes `o.next` and REFUSES an opening that omits it;
+/// `extension/dregg_wasm.js` (with its untracked `dregg_wasm_bg.wasm`, a self-consistent pre-IMT
+/// pair — 6-arg glue over an 8-param export, against this function's 9) is regenerated from this
+/// source. See the commit for what re-emits.
 #[wasm_bindgen]
 pub fn verify_slot_opening(
     root: u32,

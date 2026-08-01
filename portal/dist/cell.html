@@ -55,7 +55,11 @@
 </main>
 
 <!-- the per-field heap openings, if the server supplies a proof envelope.
-     Absent on the plain read API → fields stay the server's claim (honest). -->
+     Absent on the plain read API → fields stay the server's claim (honest).
+     Shape per entry (deos_view::web::openings_json — the ONE producer):
+       {i, root, coll, key, value, next, sibs, dirs}
+     `next` is the committed IMT pointer inside the leaf digest; an entry without it
+     is REFUSED by verifyFields, never folded as if the leaf were arity-2. -->
 <script type="application/json" id="deos-openings">[]</script>
 
 <script type="module">
@@ -133,7 +137,21 @@ function verifyFields(){
     var span=document.querySelector('.deos-bind[data-bind-index="'+o.i+'"]');
     var mark=document.querySelector('.fv-mark[data-fv="'+o.i+'"]');
     if(!span) return; total++;
-    var good=false; try{ good=M.verify_slot_opening(o.root,o.coll,o.key,o.value,o.sibs,o.dirs); }catch(e){ good=false; }
+    // ⚑ THE IMT POINTER IS PART OF THE COMMITTED LEAF, so an opening that omits it is
+    // not checkable — REFUSE it rather than fold a leaf the chain never committed.
+    // This call carried the pre-IMT 6-arg shape (no `o.next`) until 2026-08-01, against a
+    // `verify_slot_opening` that has taken `next_addr` since the heap tree retired its
+    // stored MAX sentinel leaf (2026-07-12, 919b2b0b8d): `o.sibs` landed in `next_addr`
+    // and `directions_csv` arrived undefined. The canonical generator of this page's
+    // sibling (deos-view/src/web.rs `render_trustless_cell_document`) passes `o.next`;
+    // this hand-written page did not, and nothing could see it because the island below
+    // is a literal `[]`.
+    var good=false;
+    if(typeof o.next!=="number"){
+      good=false;
+    } else {
+      try{ good=M.verify_slot_opening(o.root,o.coll,o.key,o.value,o.next,o.sibs,o.dirs); }catch(e){ good=false; }
+    }
     // ⚑ OPENED, NOT VERIFIED. The root these openings check against comes from the same
     // server response as the values, and nothing the light client ran touches it, so this
     // mark CANNOT go false for a hostile server. It gets amber and the word "opened".

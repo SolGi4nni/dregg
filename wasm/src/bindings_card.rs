@@ -437,10 +437,27 @@ impl InspectorWorld {
     /// The affordance set the inspector card publishes — one per writable bound slot, each a
     /// real `SetField` effect on that slot (the `effect_template` `deos-reflect` cap-gates).
     /// Their names are the `data-turn` payloads the rendered buttons fire.
+    ///
+    /// ⚑ `Requirement::Public`, and the OLD GATE decides it — not a preference. `b3ef43204`
+    /// retyped this signature `AuthRequired -> Requirement` and left the body minting
+    /// `AuthRequired::None`, which does not compile; nothing saw it because `wasm` is in the
+    /// root `exclude` list. The faithful completion is whichever `Requirement` reproduces what
+    /// this value MEANT to the gate that consumed it, and that gate is on record: before the
+    /// split, `deos_reflect::Affordance::required` was documented "the gate is
+    /// `is_attenuation(held, required)` … **a `None` requirement is always satisfiable**"
+    /// (deos-reflect/src/affordances.rs @ b3ef43204^) — deos-reflect is one of the TWO
+    /// implementations that read `None` as ungated, not one of the three that read it as root.
+    /// `Requirement::Public` is that predicate exactly (`satisfied_by` ≡ `true`);
+    /// `Requirement::Root` would be the OTHER convention, i.e. re-gating a card's own buttons
+    /// to the lattice top on the strength of a variant name.
+    ///
+    /// (This card holds `AuthRequired::None` itself, so both spellings paint the same three
+    /// buttons TODAY — which is exactly why picking by rendered output would prove nothing and
+    /// the consumer's own documented reading has to decide it.)
     fn affordance_specs(&self) -> Vec<(String, Requirement)> {
         AFFORDANCES
             .iter()
-            .map(|(name, _)| (name.to_string(), AuthRequired::None))
+            .map(|(name, _)| (name.to_string(), Requirement::Public))
             .collect()
     }
 

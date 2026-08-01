@@ -1373,6 +1373,7 @@ name = "dregg-circuit"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-codec",
  "dregg-dsl",
  "getrandom 0.3.4",
  "itertools 0.14.0",
@@ -1430,6 +1431,7 @@ dependencies = [
  "p3-fri",
  "p3-lookup",
  "p3-matrix",
+ "p3-maybe-rayon",
  "p3-merkle-tree",
  "p3-poseidon2",
  "p3-poseidon2-circuit-air",
@@ -1446,6 +1448,13 @@ dependencies = [
  "tracing",
  "wgpu",
  "zeroize",
+]
+
+[[package]]
+name = "dregg-codec"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -3978,6 +3987,9 @@ dependencies = [
 name = "p3-maybe-rayon"
 version = "0.5.1"
 source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "p3-mds"
@@ -4686,9 +4698,9 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 
 [[package]]
 name = "rayon"
-version = "1.10.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b418a60154510ca1a002a752ca9714984e21e4241e804d32555251faf8b78ffa"
+checksum = "fb39b166781f92d482534ef4b4b1b2568f42613b53e5b6c160e24cfbfa30926d"
 dependencies = [
  "either",
  "rayon-core",

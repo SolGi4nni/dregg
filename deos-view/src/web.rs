@@ -1499,8 +1499,11 @@ pub enum TrustlessAttestation<'a> {
 /// matching the `data-bind-index` the renderer emits). It is the sparse-Merkle opening of
 /// the slot `(coll, key)` → `value` against the cell's committed heap `root`, the exact
 /// fold `dregg_circuit::heap_root` commits with. The tab runs the wasm
-/// `verify_slot_opening(root, coll, key, value, siblings, directions)` over it; a genuine
-/// opening flips the field span to verified, a tampered one is refused.
+/// `verify_slot_opening(root, coll, key, value, next_addr, siblings, directions)` over it
+/// — ⚠ this line named the **pre-IMT 6-arg** shape until 2026-08-01, while the emitted
+/// bootstrap below has passed `o.next` since the arity-3 leaf landed; the struct's own
+/// `next` field is the pointer it omitted. A genuine opening flips the field span to
+/// opened, a tampered one is refused.
 ///
 /// All values are decimal `BabyBear` felts (`< 2^31`). `siblings`/`directions` are the
 /// depth-`HEAP_TREE_DEPTH` (16) path (bottom-up): `directions[i]` is `0` if the running
