@@ -140,12 +140,74 @@
 //!   That is a campaign, not a line; until it exists, this bullet is the honest statement of coverage.
 //! * **`metatheory/`** is skipped entirely — that is where the algebra is SUPPOSED to live.
 //!
+//! ## ⚑ RED AND UNOWNED FOR 25 HOURS — what a COUNT cannot tell you (2026-07-31)
+//!
+//! This gate went red at `81ee5492d` (2026-07-30 20:04:39) and was still red a day later. Two
+//! commits that edit THIS FILE landed inside that window — `300591cfc` (21:30, the Mina toy-AIR
+//! de-duplication) and `fd507d99b` (23:14) — and neither noticed, because neither ran it. Two
+//! other lanes DID hit the red, each investigated it, and each correctly concluded "not mine"
+//! and moved on. Meanwhile every brief written that day asserted the gate was green.
+//!
+//! **The count was RIGHT in all three rows.** What failed was the DIAGNOSTIC. A row that says
+//! `283 -> 287` names a file and a delta, and there was no supported way to ask WHICH four sites
+//! moved: reconstructing it took a standalone re-compile of this file's classifier plus a
+//! 40-revision walk of each file's history. A lane that owns an unrelated change will always,
+//! and correctly, decide that is not its job. **A red that cannot be attributed is a red that
+//! will not be owned** — so the repair belongs in the MESSAGE, not in the ledger:
+//!
+//! * a `GREW` row now prints the grown file's authored sites: a by-kind histogram (a growth of
+//!   four is usually a SINGLETON variant, findable at a glance) and, at or under 40 sites, every
+//!   line, with `#[cfg(test)]` membership marked;
+//! * `LAW1_EXPLAIN` now lists the SYMBOLIC and CLOSURE dialects too. It listed only dialects
+//!   (3)+(4), so a maintainer auditing `descriptor_ir2.rs`'s 287 saw 169 lines and could not
+//!   reconcile the listing with the number — the 118 `assert_zero`-family sites were invisible;
+//! * the failure message carries the recipe that finds the origin COMMIT without a bisect.
+//!   `LAW1_EXPLAIN` resolves through `Path::join`, so an ABSOLUTE path wins and
+//!   `git show <rev>:<file> > /tmp/at-rev.rs` feeds it directly.
+//!
+//! ⚑ **THE STRICTNESS DID NOT MOVE.** No exemption was added, no dialect dropped, no classifier
+//! loosened; `authored()` is byte-for-byte the same predicate. The three rows were re-pinned to
+//! their MEASURED values with the origin commit and the nature of every site written into the
+//! row — see the three `RE-PINNED 2026-07-31` blocks in `BASELINE`, which is where a reader six
+//! weeks out has to be able to find them.
+//!
+//! ## The TRANSPORT class — a real over-count, NAMED rather than silently forgiven
+//!
+//! Five of those eleven sites are one shape, and it is worth a name because it will recur:
+//!
+//! ```text
+//! WindowExpr::Add(a, b) => LeanExpr::Add(Box::new(f(a)?), Box::new(f(b)?))
+//! ```
+//!
+//! Every argument was DESTRUCTURED from the same algebra one line earlier; the operator, the
+//! arity and the columns are all fixed by the node being read. Nothing ORIGINATES — which is
+//! precisely this gate's own authoring-vs-lowering test — yet `classify_site` scores it
+//! `Construct`, because it looks only at the syntactic position of the CONSTRUCTED node and the
+//! source type (`WindowExpr`) is not in `IR_TYPES`. So the arm counts +1 authored and +0
+//! lowering. This is a genuine over-count and it is not the same thing as
+//! `custom_leaf_lowering.rs`, which maps `Binary` to `x·(x−1)` and therefore really does choose
+//! algebra in Rust.
+//!
+//! **It is named here and NOT auto-detected, deliberately.** Every syntactic rule tried against
+//! the real specimens either under-fires (variant-name equality frees `Add`/`Mul`/`Const` but
+//! not `Loc -> Var`, leaving the row red at 284 and the rule looking principled while doing
+//! nothing) or needs an argument-provenance analysis — "every argument is a binding of this
+//! arm's pattern or a recursive call" — which is a real mini-parser inside the one gate whose
+//! wrongness is most expensive. A classifier that stops over-matching by also under-matching is
+//! worse than the false positive it fixes, and a buggy classifier in the LAW gate is worse than
+//! a number that is right for a boring reason. If a third transport shows up, THAT is the
+//! moment to build the provenance analysis — with these five as its fixtures.
+//!
 //! ## If this test fails
 //! You (or an agent) hand-authored a constraint in Rust. That is the violation itself — do NOT add your
 //! file to the baseline to make it green. Emit it from Lean instead (`metatheory/Dregg2/Circuit/Emit/*.lean`
 //! -> `emitVmJson2` -> `descriptors/by-name/*.json` -> `descriptor_by_name` -> `prove_vm_descriptor2`; see
 //! `EffectVmEmitTurnChainBinding.lean` + `metatheory/EmitTurnChain.lean` for the worked end-to-end example).
-//! Lower the baseline when you retire algebra; raise it only with a recorded reason in GOAL-STARK-KILL.md.
+//! Lower the baseline when you retire algebra. RAISING a row needs a reason written INTO THE ROW —
+//! the origin commit, and what each new site is if it is not AIR. In the row, not in a companion
+//! document: the 2026-07-31 red was investigated three times because the reasons for the numbers
+//! were nowhere near the numbers, and a reason a reader has to go find is a reason nobody reads.
+//! A silent re-print to green is the move CLAUDE.md was written against; it turns a law into a habit.
 //! `LAW1_PRINT_BASELINE=1 cargo test -p dregg-circuit-prove --test law1_enforcement_gate -- --nocapture`
 //! prints the current ledger in source form, so a legitimate SHRINK is a copy-paste.
 //!
@@ -451,6 +513,20 @@ const MARKERS: &[&str] = &[
     "eval: Box::new",
 ];
 
+/// One site, as reported by `count_sites_explained` — the unit a `GREW` row prints so the
+/// reader is not left with a delta and a bisect. Covers ALL FIVE dialects: the explain path
+/// used to record only (3)+(4), which made `descriptor_ir2.rs`'s 118 `assert_zero`-family
+/// sites invisible in a listing that claimed to explain its 287.
+#[derive(Debug, Clone)]
+struct SiteRecord {
+    line: usize,
+    /// `ConstraintExpr::Binary`, `.assert_zero(..)`, `eval: Box::new(..)`.
+    what: String,
+    site: Site,
+    /// Attribution only — a test-only site is authored exactly like any other.
+    cfg_test: bool,
+}
+
 #[derive(Default, Debug, Clone, Copy)]
 struct Counts {
     /// (1) plonky3 symbolic builder calls.
@@ -604,18 +680,20 @@ fn count_sites(raw: &str) -> Counts {
     count_sites_explained(raw, None)
 }
 
-/// `explain` collects `(line, "Type::Variant", Site)` so a maintainer can audit WHY a file
-/// scores what it scores:
+/// `explain` collects a `SiteRecord` per site — ALL FIVE dialects — so a maintainer can audit
+/// WHY a file scores what it scores:
 /// `LAW1_EXPLAIN=circuit/src/foo.rs cargo test -p dregg-circuit-prove --test law1_enforcement_gate -- --nocapture`
-fn count_sites_explained(
-    raw: &str,
-    mut explain: Option<&mut Vec<(usize, String, Site)>>,
-) -> Counts {
+///
+/// The path resolves through `Path::join`, so an ABSOLUTE path wins over the repo root — which
+/// is what lets `git show <rev>:<file> > /tmp/at-rev.rs` be scored directly, and is the whole
+/// difference between finding a growth's origin commit in one loop and bisecting for it.
+fn count_sites_explained(raw: &str, mut explain: Option<&mut Vec<SiteRecord>>) -> Counts {
     let code = blank_noncode(raw);
     let b = code.as_bytes();
     let mut c = Counts::default();
     let regions = cfg_test_regions(b);
     let in_cfg_test = |p: usize| regions.iter().any(|&(s, e)| p >= s && p < e);
+    let line_of = |p: usize| b[..p].iter().filter(|&&x| x == b'\n').count() + 1;
 
     // (1) `x.assert_zero(..)` on any receiver — this is the form the previous revision
     // missed on `b.assert_zero(&Head::..)`, which is param-compose's ENTIRE AIR.
@@ -627,6 +705,16 @@ fn count_sites_explained(
     }
     c.symbolic += sym.len();
     c.cfg_test += sym.iter().filter(|&&p| in_cfg_test(p)).count();
+    if let Some(ex) = explain.as_deref_mut() {
+        for &p in &sym {
+            ex.push(SiteRecord {
+                line: line_of(p),
+                what: format!(".{}(..)", String::from_utf8_lossy(&b[p..ident_at(b, p)])),
+                site: Site::Construct,
+                cfg_test: in_cfg_test(p),
+            });
+        }
+    }
 
     // (2) closures.
     {
@@ -639,6 +727,14 @@ fn count_sites_explained(
                     c.closures += 1;
                     if in_cfg_test(p) {
                         c.cfg_test += 1;
+                    }
+                    if let Some(ex) = explain.as_deref_mut() {
+                        ex.push(SiteRecord {
+                            line: line_of(p),
+                            what: "eval: Box::new(..)".to_string(),
+                            site: Site::Construct,
+                            cfg_test: in_cfg_test(p),
+                        });
                     }
                 }
             }
@@ -670,18 +766,21 @@ fn count_sites_explained(
                     Site::Pattern => c.ir_lowered += 1,
                 }
                 if let Some(ex) = explain.as_deref_mut() {
-                    let line = b[..i].iter().filter(|&&x| x == b'\n').count() + 1;
-                    ex.push((
-                        line,
-                        String::from_utf8_lossy(&b[i..vend]).into_owned(),
+                    ex.push(SiteRecord {
+                        line: line_of(i),
+                        what: String::from_utf8_lossy(&b[i..vend]).into_owned(),
                         site,
-                    ));
+                        cfg_test: in_cfg_test(i),
+                    });
                 }
                 i = vend;
                 continue;
             }
         }
         i = end.max(i + 1);
+    }
+    if let Some(ex) = explain.as_deref_mut() {
+        ex.sort_by_key(|r| r.line);
     }
     c
 }
@@ -835,7 +934,24 @@ const BASELINE: &[(&str, usize)] = &[
     // — so the row-local algebra now has exactly one interpreter instead of two. The row is
     // re-pinned to the measurement rather than left at its old allowance: 15 sites of unused slack
     // in a ratchet is 15 hand-authored constraints a later lane can add without the gate noticing.
-    ("circuit/src/descriptor_ir2.rs", 283),
+    //
+    // ⚑ RE-PINNED 2026-07-31, 283 -> 287. ORIGIN: `81ee5492d` (2026-07-30 20:04, the last-row
+    // anchor-forge flag day), which is where this gate went RED and stayed red for a day. The
+    // four sites are the four arms of the `window_body_as_local` that commit added:
+    //     WindowExpr::Loc(c)      => LeanExpr::Var(*c)
+    //     WindowExpr::Const(k)    => LeanExpr::Const(*k)
+    //     WindowExpr::Add(a, b)   => LeanExpr::Add(..)
+    //     WindowExpr::Mul(a, b)   => LeanExpr::Mul(..)
+    // WHY THIS IS NOT AIR: it is the TRANSPORT class (module docs). The Lean emitters lower a
+    // row-local body TWO ways that denote the same polynomial over the same columns —
+    // `Base(Gate(b))` on the transition domain, `WindowGate { b, on_transition: false }` on the
+    // whole domain — and that flag day moved 6923 gates to the second spelling. This function
+    // reads the second back as the first so `row_local_body` can hand every witness-side decoder
+    // one shape. Operator, arity and columns are all fixed by the node destructured a character
+    // earlier; no algebra ORIGINATES here, which is this gate's own authoring-vs-lowering test.
+    // The classifier scores it `Construct` only because `WindowExpr` is not in `IR_TYPES`, so the
+    // arm counts +1 authored and +0 lowering. Pinned to the measurement, not to slack.
+    ("circuit/src/descriptor_ir2.rs", 287),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),
@@ -864,7 +980,22 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit/src/effect_vm/transfer_avail_weld.rs", 1),
     ("circuit/src/effect_vm/transfer_fee_avail_weld.rs", 1),
     ("circuit/src/effect_vm/vault_weld.rs", 5),
-    ("circuit/src/effect_vm_descriptors.rs", 18),
+    // ⚑ RE-PINNED 2026-07-31, 18 -> 24. ORIGIN: `7da5ac1ea` ("fields nonet + cap-open TB").
+    // ALL SIX new sites are inside `#[cfg(test)]` — the file's cfg-test subset went 2 -> 8 while
+    // its production half did not move — and they are two objects:
+    //   * 2 x `LeanExpr::Var(col)` built as the EXPECTED half of an `assert_eq!` against the
+    //     `proof_bind` READ OUT OF the emitted descriptor (`d.constraints.iter().find_map(..)`).
+    //     That is a differential: a Rust expectation compared against a Lean emission in the same
+    //     file, which is the law working, not a constraint.
+    //   * `VmConstraint2::ProofBind(ProofBindSpec { guard: Const(1), commit: Var, vk: Var })`
+    //     plus its 3 leaves — a SYNTHETIC descriptor fixture handed to `custom_commit_version` to
+    //     prove that classifier fails CLOSED on a 12-slot exposure window and on a bare anchor
+    //     pair with no declaration. It is an input to a Rust decider, never seen by a prover, and
+    //     it decides no acceptance.
+    // Neither belongs in Lean and neither is AIR. They are COUNTED because `#[cfg(test)]`-inside-
+    // `src/` is counted on purpose (module docs), and that strictness is not being relaxed to
+    // absorb them — the row moves, the rule does not.
+    ("circuit/src/effect_vm_descriptors.rs", 24),
     ("circuit/src/lean_descriptor_air.rs", 47),
     ("circuit/src/membership_descriptor_4ary.rs", 1),
     ("circuit/src/membership_descriptor_general.rs", 39),
@@ -887,7 +1018,16 @@ const BASELINE: &[(&str, usize)] = &[
     //    param-compose's own test corpus now rides the emitted descriptor. Their rows are gone
     //    from this BASELINE in that same change (the stale-entry check below requires it).
     ("perf/src/lib.rs", 28),  // ⚑ a hand-built VmConstraint2::{MapOp,UMemOp} descriptor.
-    ("sdk/src/full_turn_proof.rs", 2),
+    // ⚑ RE-PINNED 2026-07-31, 2 -> 3. ORIGIN: `912b13375` ("cap-remove: the AIR binding is
+    // intact — four teeth had gone blind to it six hours earlier"). One `#[cfg(test)]` site:
+    // `VmConstraint2::Base(VmConstraint::Gate(row_local_body(k)?.into_owned()))`, which re-
+    // expresses the DEPLOYED descriptor into the other row domain and requires the cap-root weld
+    // decoder to give the same 16 answers either way — the tooth for the blindness `81ee5492d`
+    // caused. The body is TRANSPORTED verbatim out of the Lean-emitted constraint (same class as
+    // `descriptor_ir2::window_body_as_local` above); the only thing Rust picks is the wrapper.
+    // Net +1 and not +2 because that same commit turned an authored `LeanExpr::Var` into a
+    // `matches!` pattern, which the classifier correctly stopped counting.
+    ("sdk/src/full_turn_proof.rs", 3),
     ("tests/src/dsl_pipeline.rs", 8),
     ("turn/src/executor/membership_verifier.rs", 2),
     ("turn/src/umem.rs", 8),
@@ -934,6 +1074,67 @@ fn print_baseline(found: &BTreeMap<String, Counts>) {
     );
 }
 
+/// The site listing a `GREW` row carries, so the reader can find WHICH sites moved instead of
+/// re-deriving them.
+///
+/// ⚑ WHY THIS EXISTS. This gate was red from `81ee5492d` (2026-07-30 20:04) for a full day with
+/// nobody owning it, and the reason is in the old message: `283 -> 287` is a file and a delta and
+/// nothing else. Two lanes hit it, investigated, and each correctly concluded "not mine" —
+/// because attributing four sites inside 287 meant re-compiling this file's classifier standalone
+/// and walking 40 revisions. That is not a thing a lane doing unrelated work will do, so the red
+/// went unowned. A ratchet that cannot say what moved does not get repaired; it gets stepped over.
+fn grew_site_report(root: &Path, rel: &str) -> String {
+    let Ok(raw) = std::fs::read_to_string(root.join(rel)) else {
+        return String::new();
+    };
+    let mut ex = Vec::new();
+    count_sites_explained(&raw, Some(&mut ex));
+    ex.retain(|r| r.site == Site::Construct);
+
+    // By-kind, commonest first. A growth of a handful is almost always a SINGLETON variant, so
+    // the tail of this histogram is usually the answer on its own.
+    let mut hist: BTreeMap<&str, usize> = BTreeMap::new();
+    for r in &ex {
+        *hist.entry(r.what.as_str()).or_default() += 1;
+    }
+    let mut kinds: Vec<(&str, usize)> = hist.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+
+    let mut s = String::new();
+    s.push_str(
+        "\n       -> AUTHORED sites by kind. Diff this against the SAME listing at the baseline's\n          \
+         revision (recipe below) and the moved sites fall out; a lone singleton usually IS them:\n          ",
+    );
+    s.push_str(
+        &kinds
+            .iter()
+            .map(|(k, n)| format!("{k} x{n}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    s.push('\n');
+    if ex.len() <= 40 {
+        s.push_str("       -> and where every one of them is:\n");
+        for r in &ex {
+            s.push_str(&format!(
+                "          {:>6}  {}{}\n",
+                r.line,
+                r.what,
+                if r.cfg_test { "   [#[cfg(test)]]" } else { "" }
+            ));
+        }
+    }
+    s.push_str(&format!(
+        "       -> full listing, authored AND lowering:\n          \
+         LAW1_EXPLAIN={rel} cargo test -p dregg-circuit-prove --test law1_enforcement_gate -- --nocapture\n       \
+         -> which COMMIT grew it, WITHOUT a bisect (LAW1_EXPLAIN takes an absolute path):\n          \
+         for r in $(git log --format=%h -40 -- {rel}); do git show $r:{rel} > /tmp/at-rev.rs; \\\n            \
+         echo -n \"$r \"; LAW1_EXPLAIN=/tmp/at-rev.rs cargo test -p dregg-circuit-prove \\\n            \
+         --test law1_enforcement_gate -- --nocapture 2>/dev/null | grep -m1 'authored='; done\n"
+    ));
+    s
+}
+
 /// The ratchet itself: a NEW file fails, a listed file that GREW fails, shrinking is always
 /// allowed (that is the direction of the law), and a ledger line for a file that no longer
 /// exists fails so the debt cannot be inflated by rot. Parameterised so the teeth below run
@@ -957,8 +1158,11 @@ fn ratchet(
                 c.symbolic, c.closures, c.ir_constructed, c.cfg_test_note()
             )),
             Some(allowed) if n > *allowed => violations.push(format!(
-                "  GREW: {rel} ({allowed} -> {n} sites)\n\
-                      -> new hand-authored constraints. Emit them from Lean."
+                "  GREW: {rel} ({allowed} -> {n} sites)\n       \
+                 -> new hand-authored constraints. Emit them from Lean.\n       \
+                 -> if they are NOT constraint algebra, the row moves only WITH a written reason\n          \
+                 naming the origin commit and why each site is not AIR. Never a silent re-print.{}",
+                grew_site_report(root, rel)
             )),
             _ => {}
         }
@@ -977,19 +1181,31 @@ fn ratchet(
 #[test]
 fn law1_no_new_rust_authored_constraints() {
     if let Ok(f) = std::env::var("LAW1_EXPLAIN") {
+        // `join` lets an ABSOLUTE path win, which is what makes `git show <rev>:<file>` scorable.
         let raw = std::fs::read_to_string(repo_root().join(&f)).expect("LAW1_EXPLAIN path");
         let mut ex = Vec::new();
         let c = count_sites_explained(&raw, Some(&mut ex));
-        println!("{f}: {c:?}");
-        for (line, what, site) in ex {
+        // `authored=` is the greppable field: the origin-hunting loop in a GREW row reads it.
+        println!(
+            "{f}: authored={} (symbolic {}, closure {}, IR {}), lowering {}, cfg_test {}",
+            c.authored(),
+            c.symbolic,
+            c.closures,
+            c.ir_constructed,
+            c.ir_lowered,
+            c.cfg_test
+        );
+        for r in ex {
             println!(
-                "  {:>6}  {}  {what}",
-                line,
-                if site == Site::Construct {
+                "  {:>6}  {}  {}{}",
+                r.line,
+                if r.site == Site::Construct {
                     "AUTHORED "
                 } else {
                     "lowering "
-                }
+                },
+                r.what,
+                if r.cfg_test { "   [#[cfg(test)]]" } else { "" }
             );
         }
     }
@@ -1319,6 +1535,117 @@ mod teeth {
         );
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A `GREW` row must NAME THE SITES, not just the delta — the repair for the 2026-07-31
+    /// red-and-unowned day. Pinned as a tooth because a diagnostic is exactly the kind of thing
+    /// that rots into decoration: nothing else in this file fails if the listing goes empty, and
+    /// the next reader would silently be back to a number and a bisect.
+    #[test]
+    fn a_grew_row_names_the_sites_not_just_the_delta() {
+        let tmp = std::env::temp_dir().join(format!("law1-grew-{}", std::process::id()));
+        let src = tmp.join("evilcrate/src");
+        std::fs::create_dir_all(&src).expect("tmp tree");
+        // Three dialects at once, so the listing is checked to cover the SYMBOLIC one too —
+        // the explain path used to record only the IR dialects, which is how a maintainer
+        // auditing descriptor_ir2.rs's 287 got a 169-line listing that could not be reconciled.
+        std::fs::write(
+            src.join("grown.rs"),
+            "use p3_air::AirBuilder;\n\
+             pub fn build(b: &mut B) {\n\
+             \x20   b.assert_zero(&Head::lin(1, 0));\n\
+             \x20   b.push(ConstraintExpr::Binary { col: 4 });\n\
+             }\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+             \x20   fn t(b: &mut B) { b.push(LeanExpr::Var(9)); }\n\
+             }\n",
+        )
+        .expect("write grown");
+
+        let found = scan_tree(&tmp);
+        let key = "evilcrate/src/grown.rs";
+        let v = ratchet(&tmp, &found, &[(key, 1)]);
+        let msg = v.join("\n");
+        assert!(
+            msg.contains("GREW") && msg.contains(key),
+            "the row fires: {msg}"
+        );
+        // The by-kind histogram reaches all three dialects present.
+        for kind in [
+            ".assert_zero(..)",
+            "ConstraintExpr::Binary",
+            "LeanExpr::Var",
+        ] {
+            assert!(
+                msg.contains(kind),
+                "a GREW row must name the site KINDS; `{kind}` missing from:\n{msg}"
+            );
+        }
+        // ...and the per-site listing carries LINE NUMBERS, which is what turns "which four
+        // moved?" into a read instead of a 40-revision walk.
+        for line in ["     3", "     4", "     8"] {
+            assert!(
+                msg.contains(line),
+                "a GREW row must name the site LINES; `{line}` missing from:\n{msg}"
+            );
+        }
+        // A test-only site is MARKED, never subtracted.
+        assert!(
+            msg.contains("#[cfg(test)]"),
+            "test-only sites are attributed in the listing:\n{msg}"
+        );
+        // And the reader is told how to find the origin commit without bisecting.
+        assert!(
+            msg.contains("LAW1_EXPLAIN") && msg.contains("git log"),
+            "a GREW row must carry the origin-hunting recipe:\n{msg}"
+        );
+
+        // A NEW-file row and a STALE row are unaffected — the listing is attached to GREW only.
+        assert!(
+            !ratchet(&tmp, &found, &[])
+                .iter()
+                .any(|s| s.contains("assert_zero(..) x")),
+            "the histogram belongs to GREW, not to the NEW row"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// The explain path must see ALL FIVE dialects, not just the IR ones. It saw only (3)+(4)
+    /// until 2026-07-31, so `LAW1_EXPLAIN` on any `AirBuilder` file printed a listing that
+    /// silently omitted every `assert_zero`-family and closure site it was counting.
+    #[test]
+    fn the_explain_listing_reconciles_with_the_count() {
+        let src = r#"
+            fn prod<AB: AirBuilder>(b: &mut AB) {
+                b.assert_zero(x);
+                b.when_transition().assert_eq(a, c);
+                b.push(ConstraintExpr::Binary { col: 3 });
+                let g = Gadget { eval: Box::new(|row, _, pi| row[0]) };
+                match k { ConstraintExpr::Gated { .. } => (), _ => () }
+            }
+        "#;
+        let mut ex = Vec::new();
+        let c = count_sites_explained(src, Some(&mut ex));
+        let authored = ex.iter().filter(|r| r.site == Site::Construct).count();
+        let lowered = ex.iter().filter(|r| r.site == Site::Pattern).count();
+        assert_eq!(
+            authored,
+            c.authored(),
+            "every AUTHORED site must appear in the listing: {c:?} vs {ex:?}"
+        );
+        assert_eq!(lowered, c.ir_lowered, "and every lowering site too: {c:?}");
+        assert!(
+            ex.iter().any(|r| r.what == ".assert_zero(..)")
+                && ex.iter().any(|r| r.what == ".when_transition(..)")
+                && ex.iter().any(|r| r.what == "eval: Box::new(..)"),
+            "the symbolic and closure dialects are listed by name: {ex:?}"
+        );
+        // Sorted by line, so the listing reads like the file.
+        assert!(
+            ex.windows(2).all(|w| w[0].line <= w[1].line),
+            "the listing is in source order: {ex:?}"
+        );
     }
 
     #[test]
