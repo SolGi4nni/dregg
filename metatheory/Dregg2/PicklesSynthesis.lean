@@ -50,6 +50,14 @@ never `EffectVmEmitV2`):
       `WitnessBuilder`; every row satisfies its `KimchiVerify` constraint body ON THE ASSEMBLED GRID,
       σ holds on that grid (falsifiably), and the point/scalar semantics are cross-checked against
       `PastaCurve`'s independent Jacobian formulas. Proved pure-Rust by `pickles-stepfragment-harness`
+  * `Dregg2.Circuit.Emit.KimchiRenderPublicInput` — the PUBLIC-INPUT path of `place`, which every rung
+      above ran at `pubSize = 0` (measured 2026-08-01: all nine committed fixtures carried
+      `public_input_size: 0`, so the leading public rows, the `External i ↦ {i,0}` cells and the
+      `pubSize + gateIndex` offset were identity everywhere and had never been proved). Two circuits
+      with `pubSize > 0` — 3 words, and 67 at Step's measured `PRIMARY_LEN` (mina-rust
+      `ProofConstants`) — pinned here (`place`'s public rows ARE kimchi's `[1,0,0,0,0]` Pub gates; the
+      public cells wire into the circuit; σ is a permutation with `pubSize > 0`) and proved pure-Rust
+      by `pickles-publicinput-harness`, both polarities plus a σ control and a non-vacuity control
   * `Dregg2.Bridge.PicklesR3BranchDataDiff`   — R3: the branch_data prefix-mask pack (vs devnet block)
   * `Dregg2.Bridge.PicklesStatementDiff`      — R3: the WHOLE Wrap statement packing byte-exact
   * `Dregg2.Bridge.PicklesStepStatementDiff`  — R3: the Step per-proof layout + `fq=Type2/Fq` field-key
@@ -74,6 +82,7 @@ import Dregg2.Circuit.Emit.KimchiRenderEndoMul
 import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Circuit.Emit.KimchiComposeMSM
 import Dregg2.Circuit.Emit.KimchiComposeStepFragment
+import Dregg2.Circuit.Emit.KimchiRenderPublicInput
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff

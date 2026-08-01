@@ -1,0 +1,79 @@
+# pickles-publicinput-harness — PROVE a Lean-synthesized circuit with a NON-EMPTY PUBLIC INPUT.
+#
+# ⚑ THE HOLE THIS CLOSES. Measured 2026-08-01: all nine committed circuit fixtures across the five
+# sibling pickles harnesses carry `public_input_size: 0`. `KimchiPlacement.place` takes `pubSize` as
+# its FIRST argument and has a whole branch for it — the leading `pubSize` Generic rows, the
+# `External i ↦ {i,0}` cells prepended to `circuitPositions`, and the `pubSize + gateIndex` row
+# offset of every circuit gate — and none of it had ever been inside a circuit a prover accepted.
+# At `pubSize = 0` all three collapse to identity. `step_main` has a public input: mina-rust's
+# `ProofConstants` table measures Step at `PRIMARY_LEN = 67` and Wrap at 40.
+#
+# WHAT IT DOES. Reads the Lean-emitted circuit JSON (gate typ/wires/coeffs, the 15-wide witness grid,
+# AND the public vector) that `Dregg2.Circuit.Emit.KimchiRenderPublicInput` emits, builds the
+# pure-Rust kimchi objects, and PROVES + VERIFIES through the SAME `proof-systems` (tag 0.3.0) front
+# door mina-rust uses. The `#[test]` gate:
+#   (1) ACCEPT      — instance A (5·7=35) and instance B (3·11=33) of the SAME circuit both
+#                     verify()==true. The circuit is the relation; the public input picks the instance.
+#   (2) PI BINDS    — A's honest proof verified against B's public input is REJECTED, and each single
+#                     public word flipped on its own is REJECTED. The proof commits to the claim.
+#   (3) PI IS WIRED — flip the public CELL (0,0) *and* tell the verifier the new value, so the public
+#                     row's own constraint `w₀[0] = p₀` still holds: REJECTED, by the copy-permutation
+#                     ⟨0,0⟩↦⟨3,0⟩ and nothing else.
+#   (4) CONTROL     — the same flip on `pi_nowire` (identical but gate 0 reads a fresh `external 3`,
+#                     so ⟨0,0⟩ self-wires) is ACCEPTED. So (3) is the placement WIRE.
+#   (5) NON-VACUITY — flipping ⟨0,3⟩, a cell IN a public row that the public gate does not read and σ
+#                     does not wire, is ACCEPTED. A public row constrains column 0 and nothing else.
+#   (6) SCALE       — `pi_wide`: `public_input_size = 67` (step_main's measured PRIMARY_LEN), 134
+#                     rows, every public word folded into one accumulator. Accept + a public-word
+#                     tamper REJECTED + the same non-vacuity control ACCEPTED.
+# The gate-satisfaction preflight is disabled (`disable_gates_checks=true`) so a tamper is rejected by
+# the PROOF (the permutation argument's z-polynomial / the public-input polynomial), not a debug assert.
+#
+# ⚠ House Law #1: the CIRCUIT (gates/coeffs/witness/placement AND the public vector) is Lean-authored;
+# `proof-systems` is the Rust PROVER that RUNS it. No OCaml, no Node, no o1js in this path.
+#
+# Standalone: deliberately NOT a member of the breadstuffs workspace. An EMPTY `[workspace]` table is
+# the only mechanism that detaches a nested package (a path-prefix member match in the root manifest
+# silently wins over `exclude`). Same shape and the same reason as every sibling pickles harness.
+#
+# REGENERATE the fixtures (only when the Lean render changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiRenderPublicInput \
+#     && lake env lean --run Dregg2/Circuit/Emit/EmitPublicInputJson.lean \
+#     && cp /tmp/pickles-publicinput/*.json fixtures/pickles-publicinput-harness/fixtures/
+#   (`place` is quadratic; the 134-row pi_wide emit takes minutes. It is offline — the harness never
+#   runs Lean.)
+#
+# RUN the tests (or `scripts/pickles-harnesses.sh`, which runs this and every sibling):
+#   cargo test --release --manifest-path metatheory/fixtures/pickles-publicinput-harness/Cargo.toml
+
+[package]
+name = "pickles-publicinput-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# `[[bin]]` (not `examples/`) so `scripts/check-dark-modules.py` sees a declaration for src/main.rs.
+# `cargo test` compiles this bin in test mode and runs its `#[test]` functions.
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

@@ -70,6 +70,48 @@ GATES=(
   "check-guard-modules-red|60|python3 scripts/check-guard-modules.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
+  # A SCHEMA EPOCH THAT MOVED AND SAID SO NOWHERE. `docs/VK-REGEN-LOG.md` is how a reader
+  # reconstructs what each `CANONICAL_STATE_SCHEMA_EPOCH` re-genesised. On 2026-08-01 its last
+  # row read "Schema epoch UNCHANGED at 20" while `persist/src/lib.rs` read 21 — `6441705e8`
+  # bumped it and ran no emit — and the constant moved TWICE MORE the same day (`a62c48c7b`
+  # 19 → 20 with no row at all, `6342defa2` 21 → 22).
+  # ⚑ THE PLACEMENT IS THE FINDING, not the comparison. In the words of the lane that found it:
+  # "an epoch is a Rust constant ANY COMMIT CAN BUMP, while ONLY the emit script appends to that
+  # log — a gate that runs inside the emit path REPRODUCES THE BLIND SPOT EXACTLY." So this is
+  # keyed on the CONSTANT and lives outside `emit_descriptors.py` entirely, with a second body one
+  # altitude closer still (`dregg_persist::schema_epoch_log_row`, which reds for a lane that edits
+  # the constant and runs `cargo test -p dregg-persist` without ever thinking about a descriptor;
+  # leg 6 welds it, so deleting it reds here).
+  # It also reads the SCHEMA EPOCH LEDGER against an INDEPENDENT source — `git log -p --
+  # persist/src/lib.rs` — so a bump is caught by two legs that share no input, rather than by one
+  # constant compared against its own definition.
+  # ⚠ FAIL-CLOSED. An unparseable epoch cell, a missing column, a missing ledger, a missing
+  # constant and a blind reader are each RED. A log with no `epoch:N` row is the shape this exists
+  # to refuse: otherwise one malformed row silently disables the whole gate.
+  # ⚠ NEVER fix a red here by widening what is compared. The constant moving IS a re-genesis;
+  # the fix is an event row + a ledger row saying what re-genesised, what re-emits, and what now
+  # refuses to load. ~0.4s, no cargo, no Lean, no node.
+  # The `-red` row is not optional — the headline is a NEGATIVE assertion. It drives all three
+  # directions on SCRATCH COPIES (bump with no row → red, add the row → green, truncate/garble/
+  # delete the column → red), the ledger and monotonicity legs, a blinded reader against its own
+  # floors, and — the leg that makes it a measurement rather than an injection — a RECONSTRUCTION
+  # OF THE TREE AT `6441705e8`, where it must catch the bump that motivated it. A gate that cannot
+  # catch its own origin story is decoration. It mutates nothing in the shared tree.
+  "schema-epoch-log|120|python3 scripts/check-schema-epoch-log.py"
+  "schema-epoch-log-red|120|python3 scripts/check-schema-epoch-log.py --self-test"
+  # `emit_descriptors.py --verify-provenance`'s workflow leg resolves every path a `.github/
+  # workflows/*.yml` step invokes, and `working-directory:` decides WHERE it resolves. That
+  # scope LEAKED until 2026-08-01 — the reset baseline was taken from the first `- ` anywhere in
+  # the file, which in `ci.yml` is `- cron:` under `on: schedule:` at a shallower indent than any
+  # step, so the key was never reset again in that file. Both failure modes at once, and the
+  # quiet one was worse: EIGHT false `WORKFLOW-GHOST` reds against `metatheory/scripts/*` that no
+  # fix could clear (permanent noise trains readers to skip the check), and FIFTEEN static,
+  # checkable invocations deferred as "not static" and never checked at all. Neither was visible
+  # in the output. Repaired: 36 → 50 sites checked, 30 → 16 not-checkable, 0 ghosts.
+  # This row is the scope's own can-it-go-red run, on SYNTHETIC workflows in a temp dir — four of
+  # its five cases were verified to FAIL against the pre-repair parser (the fifth is a forward
+  # guard on the new stack-popping and says so). ~0s, no git, no Lean, no cargo.
+  "workflow-wd-scope-red|60|python3 scripts/emit_descriptors.py --self-test-workflow-scope"
   "no-degraded-felt|120|bash scripts/check-no-degraded-felt.sh"
   "emitter-routing|120|bash scripts/check-emitter-routing.sh"
   "anchored-lc-committee|60|bash scripts/check-anchored-lc-committee.sh"
@@ -422,6 +464,35 @@ GATES=(
   # assertion, which passes just as happily when the reader is broken.
   "mina-npm-coverage|120|bash scripts/check-mina-npm-coverage.sh"
   "mina-npm-coverage-red|120|bash scripts/check-mina-npm-coverage.sh --self-test"
+  # THE SIX PICKLES PROVE+BIND HARNESSES, which ran in NO CI SCRIPT AT ALL until 2026-08-01.
+  # `grep -rn pickles scripts/ .github/` returned the oracle runner, two workspace-closure
+  # allowlist rows and one unrelated path — and not one of `metatheory/fixtures/pickles-*-harness/`.
+  # Those crates ARE the accept/tamper-reject evidence for every Lean-synthesized circuit result in
+  # the Pickles-in-Lean epoch (R4a's first provable Lean-placed circuit, the Poseidon permutation vs
+  # the o1js gold, four curve gates, the first cross-gate copy wire, the 132-row step_main fragment,
+  # and now the public-input path), and every one of them went red only when a person typed a
+  # command. Same class as `check-guard-modules.py` one layer over: Rust harnesses instead of Lean
+  # guards, and the same fix — an enumerator that RATCHETS so the next one cannot be added unwired.
+  # ⚑ THE CHEAP ROW IS THE COVERAGE RATCHET, and it is not decoration: it globs
+  # `pickles-*-harness/` off disk and reds on a directory nobody declared (the unwired-harness class
+  # itself), on a declared directory that vanished, on a harness that DROPS BELOW its recorded
+  # `#[test]` floor (a lost property), on zero committed fixtures, and on a fixture that exists but
+  # is UNTRACKED (a green on a file HEAD does not carry proves nothing about the commit). ~1s, no
+  # cargo. It is NOT a substitute for running them — that is the `--all` row below, and neither is a
+  # substitute for the other.
+  # ⚠ The full run is under --all because each harness is DELIBERATELY its own workspace (it pins
+  # `o1-labs/proof-systems` at a tag the breadstuffs workspace patches away), so each carries its own
+  # cold build of kimchi + arkworks: MEASURED 4m49s for the first, then seconds. Warm it is minutes;
+  # cold on a fresh box it is ~30, which is a budget question, not an everyday one.
+  # The `-red` row is not optional: the headline is a NEGATIVE assertion ("no pickles harness is
+  # failing"), which passes just as happily when the runner is broken. It drives all five ratchet
+  # legs on SCRATCH GIT TREES in a temp dir plus a CONTROL (an untouched copy must be green, or every
+  # red is free) — and its last leg is the one that matters: it corrupts ONE public-input word in a
+  # scratch copy of a committed fixture and requires `cargo test --release` to exit NON-ZERO, so what
+  # is proved is that a broken Lean emit reaches a failing exit code THROUGH THE PROVER, not merely
+  # that the script can print the word RED. The shared tree is never mutated.
+  "pickles-harness-ratchet|120|bash scripts/pickles-harnesses.sh --static"
+  "pickles-harness-ratchet-red|1800|bash scripts/pickles-harnesses.sh --self-test"
   # A CLAIM THE CODE DOES NOT CARRY. Every row above this one checks an ARTIFACT — a
   # target, a manifest, a fence, a caller, a row. None of them reads PROSE, and prose was
   # the carrier of six separate wounds on 2026-07-30 alone, every one found by a person
@@ -474,6 +545,16 @@ GATES_ALL=(
   # patterns are still checked, every pass, by tier 0's pre-flight); `SELFTEST_ALL=1`
   # re-runs those too. ⚑ This is the row that was 4 HOURS of budget in the cheap set.
   "mina-attestation-red|14400|bash scripts/check-mina-attestation.sh --self-test"
+  # THE PICKLES HARNESSES, RUN. `cargo test --release` per crate: every accept, every tamper-reject
+  # and every non-vacuity control actually proved by `proof-systems` 0.3.0 against the committed
+  # Lean-emitted fixtures. It also floors the reported pass COUNT per harness, because a `cargo test`
+  # that exits 0 having compiled nothing is exactly the green this whole file refuses.
+  # ⚠ Each crate cold-builds kimchi + arkworks into its OWN target/ (they are separate workspaces by
+  # design — they pin a proof-systems tag the breadstuffs workspace patches away). MEASURED 4m49s
+  # cold for the first; warm, the whole set is minutes. The cheap coverage ratchet is in the everyday
+  # table above and reds if a harness is added, deleted or loses a property; THIS row is what makes
+  # the properties themselves checkable.
+  "pickles-harnesses|5400|bash scripts/pickles-harnesses.sh"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
