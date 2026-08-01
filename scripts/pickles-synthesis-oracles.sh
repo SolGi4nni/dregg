@@ -6,17 +6,19 @@
 # emitted gates/placement/statement-packing against o1js 2.15.0 and a live kimchi-verified devnet block
 # — so the diffs are re-checkable on demand, not one-shot elaboration-time `#guard`s.
 #
-# ⚑ OWNERSHIP. The oracle scripts live under `bridge/mina-zkapp/scripts/` (a sibling's partition) and
-# are READ-ONLY here — this wrapper only INVOKES them; it does not edit them or the bridge package.json.
-# Wiring them into the bridge's own npm gate tier (and out of `npm-scripts-allow.tsv`) is that partition's
-# call; this script gives them a CI-runnable home without touching it.
+# ⚑ SHARED HARNESS. Three of the diffs now route their byte-walk through `bridge/mina-zkapp/scripts/
+# diff-oracle.mjs` — the one differential-oracle harness (a REFERENCE producer + a CANDIDATE producer +
+# an ordered {name,value} vector diff + exit-red-on-divergence + a RED-PATH self-test). Step 0 runs the
+# harness engine's standalone `--self-test` (proves the diff reports RED on corruption for all three
+# shapes), and the MIGRATED oracles are invoked with `--self-test` so each one MEASURES its own red path
+# (green diff + corruption-bites) in this same run. A diff that cannot go red is documented-not-detected.
 #
-# EXIT: 0 iff every green-or-bust oracle exits 0; non-zero (and the first RED named) otherwise.
+# EXIT: 0 iff every green-or-bust step exits 0; non-zero (and the first RED named) otherwise.
 # Each oracle `process.exit(1)`s on any byte divergence, so a bent gate coeff / mis-placed wire /
 # permuted statement field turns this command RED.
 #
-# USAGE:  scripts/pickles-synthesis-oracles.sh            # run all
-#         scripts/pickles-synthesis-oracles.sh --no-ts    # skip the .ts oracles (no tsc build)
+# USAGE:  scripts/pickles-synthesis-oracles.sh            # run all (harness self-test + every oracle)
+#         scripts/pickles-synthesis-oracles.sh --no-ts    # skip the .ts oracles (no ts-node)
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,6 +39,11 @@ TS_ORACLES=(
   "pickles-step-statement-oracle.ts"   # R3: Step per-proof layout + fq=Type2/Fq field-key
 )
 
+# Oracles migrated to the shared diff-oracle.mjs harness — invoked with `--self-test` so each MEASURES
+# its own red path (corrupted candidate → exit 1) alongside the live green diff.
+MIGRATED="custom-gate-diff.mjs pickles-placement-oracle.mjs pickles-r3-branchdata-oracle.ts"
+is_migrated() { case " $MIGRATED " in *" $1 "*) return 0;; *) return 1;; esac; }
+
 fails=0
 run_one() { # name, cmd...
   local name="$1"; shift
@@ -53,14 +60,23 @@ run_one() { # name, cmd...
 echo "== Pickles-synthesis byte-diff oracles (green-or-bust) =="
 echo
 
+# Step 0: the shared harness engine's OWN red-path proof — corruption must make the diff report RED for
+# every shape (gates|statement|field). If this is GREEN the migrated oracles' `--self-test`s are trustworthy.
+run_one "diff-oracle.mjs --self-test (harness engine red-path)" node "scripts/diff-oracle.mjs" --self-test
+
 for o in "${MJS_ORACLES[@]}"; do
-  run_one "$o" node "scripts/$o"
+  if is_migrated "$o"; then
+    run_one "$o" node "scripts/$o" --self-test
+  else
+    run_one "$o" node "scripts/$o"
+  fi
 done
 
-# The .ts oracles are TRANSPILE-ONLY scripts (their headers say `Run: npx tsx <file>`): they carry
-# intentional literal-vs-literal falsification controls (e.g. `67 === 66`, the branch_data naive-tag
-# mistake) that full `tsc` rejects as TS2367 but that are exactly the RED path at runtime. So they run
-# under `ts-node --transpile-only --esm` (no type-check), NOT `npm run build`.
+# The .ts oracles are TRANSPILE-ONLY scripts: the non-migrated ones still carry intentional literal-vs-
+# literal falsification controls (e.g. `t2q === LEAN_T2Q_SAMPLE`) that full `tsc` rejects as TS2367 but
+# that are exactly the RED path at runtime, so they run under `ts-node --transpile-only --esm` (no type-
+# check), NOT `npm run build`. The MIGRATED .ts oracle (branchdata) no longer needs the literal control —
+# its red path is the harness `--self-test` — but it still runs under ts-node (it imports the .mjs harness).
 TSNODE="$ZK/node_modules/.bin/ts-node"
 if [ "$RUN_TS" = 1 ]; then
   if [ ! -x "$TSNODE" ]; then
@@ -68,7 +84,11 @@ if [ "$RUN_TS" = 1 ]; then
     fails=$((fails + 1))
   else
     for o in "${TS_ORACLES[@]}"; do
-      run_one "$o" "$TSNODE" --transpile-only --esm "scripts/$o"
+      if is_migrated "$o"; then
+        run_one "$o" "$TSNODE" --transpile-only --esm "scripts/$o" --self-test
+      else
+        run_one "$o" "$TSNODE" --transpile-only --esm "scripts/$o"
+      fi
     done
   fi
 else
