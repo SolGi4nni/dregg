@@ -187,10 +187,15 @@ fn webgen_renders_the_doc_surface_anti_drift() {
     assert!(js.contains("export const AFFORDANCES = Object.freeze("));
     assert!(js.contains("\"doc\": Object.freeze("));
     assert!(js.contains("name: \"edit\","));
-    assert!(js.contains("requiredRights: \"Either\","));
+    // WIRE CHANGE: the generated JS carries the stable `Requirement` label
+    // ("signature"/"either"/"root"), not the `AuthRequired` Debug shape.
+    assert!(js.contains("requiredRights: \"either\","));
     assert!(js.contains("effectKind: \"SetField\","));
     assert!(js.contains("fireEndpoint: \"/doc-affordances/fire/edit\","));
     assert!(js.contains("name: \"admin\","));
+    // The admin tier publishes "root" — it used to publish "None", which read as
+    // "ungated" to half the workspace.
+    assert!(js.contains("requiredRights: \"root\","));
     assert!(js.contains("effectKind: \"GrantCapability\","));
     assert!(js.contains("fireEndpoint: \"/doc-affordances/fire/admin\","));
 }
