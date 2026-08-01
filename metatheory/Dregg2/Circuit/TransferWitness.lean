@@ -128,10 +128,11 @@ variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ) (cmb :
 SATISFY the full-state circuit. Reuses `transfer_circuit_full_complete` via `recKExec_iff_spec`. THIS
 is "running the kernel IS generating a valid witness", for the REAL full-state circuit. -/
 theorem execute_produces_satisfying_witness
-    (hRest : StateCommit.RestHashIffFrame RH)
-    {k k' : RecordKernelState} {t : Turn} (h : recKExec k t = some k') :
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    {k k' : RecordKernelState} {t : Turn}
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k) (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k') (h : recKExec k t = some k') :
     StateCommit.satisfiedS cmb compress (StateCommit.encodeS CH RH cmb compress compressN k t k') :=
-  StateCommit.transfer_circuit_full_complete CH RH cmb compress compressN hRest k t k'
+  StateCommit.transfer_circuit_full_complete CH RH cmb compress compressN hRest k t k' hfin hfin'
     ((Transfer.recKExec_iff_spec k t k').mp h)
 
 /-- **`satisfying_witness_proves_full_state` — the verify→accept direction (soundness).** ANY witness
@@ -142,13 +143,14 @@ projection. Reuses `transfer_circuit_full_sound`; carries the standard Poseidon-
 theorem satisfying_witness_proves_full_state
     (hC : StateCommit.compressInjective compress)
     (hN : StateCommit.compressNInjective compressN) (hL : StateCommit.cellLeafInjective CH)
-    (hRest : StateCommit.RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hwf : StateCommit.AccountsWF k) (hwf' : StateCommit.AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k) (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (h : StateCommit.satisfiedS cmb compress (StateCommit.encodeS CH RH cmb compress compressN k t k')) :
     Transfer.TransferSpec k t k' :=
   StateCommit.transfer_circuit_full_sound CH RH cmb compress compressN hC hN hL hRest k t k'
-    hwf hwf' h
+    hwf hwf' hfin hfin' h
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS (the bytes the Rust prover proves).
 

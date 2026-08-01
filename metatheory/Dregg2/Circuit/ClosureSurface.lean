@@ -88,6 +88,7 @@ open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.CircuitSoundnessAssembled
 open Dregg2.Circuit.StateCommit
   (compressInjective compressNInjective cellLeafInjective RestHashIffFrame recStateCommit)
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
 open Dregg2.Circuit.ActionDispatch (fullActionStep actionTag)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull (FullActionA)
@@ -105,7 +106,7 @@ Poseidon, with `S_live.commit_binds = recStateCommit_binds_kernel` proven from t
 
 /-- **`S_live` — the live full-kernel commitment surface (`.commit = recStateCommit`).** Built from the
 abstract CR carriers (the realizable Poseidon/Merkle hash floor: `compressInjective cmb/compress`,
-`compressNInjective compressN`, `cellLeafInjective CH`, `RestHashIffFrame RH`). `S_live.commit k t`
+`compressNInjective compressN`, `cellLeafInjective CH`, `RestHashIffFrameFin RH`). `S_live.commit k t`
 unfolds to `recStateCommit … k t = cmb (cellDigest …) (RH …)`, the root binding the WHOLE kernel; the
 binding `S_live.commit_binds` is `recStateCommit_binds_kernel` over these carriers (proven in
 `StateCommit`, repackaged by `CommitSurface.commit_binds`). No narrower wire commitment, so NO
@@ -115,7 +116,7 @@ def S_live
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH) : CommitSurface where
+    (hRest : RestHashIffFrameFin RH) : CommitSurface where
   CH := CH; RH := RH; cmb := cmb; compress := compress; compressN := compressN
   cmbInj := hCmb; compInj := hCompress; compNInj := hCompressN; leafInj := hLeaf; restFrame := hRest
 
@@ -127,7 +128,7 @@ seam between the surface and the full-state commitment — they are the same fun
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH) (k : RecordKernelState) (t : Dregg2.Exec.Turn) :
+    (hRest : RestHashIffFrameFin RH) (k : RecordKernelState) (t : Dregg2.Exec.Turn) :
     (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit k t
       = recStateCommit CH RH cmb compress compressN k t := rfl
 
@@ -176,7 +177,7 @@ theorem transfer_descriptorRefines_closed
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
     {permOut : List ℤ → List ℤ}
@@ -212,7 +213,7 @@ theorem cellSeal_descriptorRefines_closed
     {cmb compress : ℤ → ℤ → ℤ} {compressN0 : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN0} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : RestHashIffFrameFin RH}
     (compressN : List Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem
       → Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem)
     (hN : Dregg2.Circuit.StateCommit.compressNInjective compressN)
@@ -249,7 +250,7 @@ theorem revoke_descriptorRefines_closed
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : RestHashIffFrameFin RH}
     (pre post : RecChainedState) (holder tt : CellId) (pc : PublishedCommit)
     (hdec : StateDecode
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pc pre post)

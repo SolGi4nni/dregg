@@ -355,7 +355,7 @@ hidden.) -/
 theorem conserves_from_verification
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
     (hroot : verify agg.root = true)
@@ -379,7 +379,7 @@ the prefix-completeness gap (TIER3 LANE 2c). -/
 theorem anchored_conserves_from_verification
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) (expectedGenesis : ℤ)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
     (hroot : verify agg.root = true)

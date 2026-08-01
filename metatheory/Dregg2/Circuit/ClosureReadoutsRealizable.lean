@@ -117,7 +117,7 @@ variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
 variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
 variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-variable {hRest : RestHashIffFrame RH}
+variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 
 local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
 
@@ -178,7 +178,7 @@ theorem closureReadouts_uninstantiable
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
@@ -200,7 +200,7 @@ theorem closureReadouts_uninstantiable_concrete
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH} {State : Type}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
@@ -224,7 +224,7 @@ structure ClosureReadoutsLive
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (State : Type)
     (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     (cnCellSeal : List Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem
@@ -457,7 +457,7 @@ def ClosureReadoutsLive.of
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
@@ -513,7 +513,7 @@ theorem closedLogExtract_all_genuine_live
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
@@ -603,7 +603,7 @@ theorem lightclient_unfoolable_closed_final_live
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}

@@ -243,6 +243,8 @@ theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
     (hash : List ℤ → ℤ) (hReceiptCR : Poseidon2SpongeCR hash)
     (S : CommitSurface) (pc : PublishedCommit8)
     {pre post pre' post' : RecChainedState}
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable pre.kernel)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable pre'.kernel)
     (h : StateDecode8 permW hW hash S pc pre post)
     (h' : StateDecode8 permW hW hash S pc pre' post') :
     pre = pre' ∨ WireColl permW (kernelPayload S pre.kernel pc.turn)
@@ -261,7 +263,7 @@ theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
   have hkcommit : S.commit pre.kernel pc.turn = S.commit pre'.kernel pc.turn := by
     simpa [kernelPayload] using congrArg List.head? hpayload
   have hk : pre.kernel = pre'.kernel :=
-    S.commit_binds pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hkcommit
+    S.commit_binds pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hfin hfin' hkcommit
   have hlog : pre.log = pre'.log := receiptRoot_binds hash hReceiptCR hroot
   cases pre
   cases pre'
@@ -282,6 +284,8 @@ theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
     (hash : List ℤ → ℤ) (hReceiptCR : Poseidon2SpongeCR hash)
     (S : CommitSurface) (pc : PublishedCommit8)
     {pre post pre' post' : RecChainedState}
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable post.kernel)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable post'.kernel)
     (h : StateDecode8 permW hW hash S pc pre post)
     (h' : StateDecode8 permW hW hash S pc pre' post') :
     post = post' ∨ WireColl permW (kernelPayload S post.kernel pc.turn)
@@ -300,7 +304,7 @@ theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
   have hkcommit : S.commit post.kernel pc.turn = S.commit post'.kernel pc.turn := by
     simpa [kernelPayload] using congrArg List.head? hpayload
   have hk : post.kernel = post'.kernel :=
-    S.commit_binds post.kernel post'.kernel pc.turn h.postWF h'.postWF hkcommit
+    S.commit_binds post.kernel post'.kernel pc.turn h.postWF h'.postWF hfin hfin' hkcommit
   have hlog : post.log = post'.log := receiptRoot_binds hash hReceiptCR hroot
   cases post
   cases post'

@@ -32,6 +32,7 @@ open Dregg2.Circuit.Lookup
 open Dregg2.Exec
 open Dregg2.Circuit.Transfer
 open Dregg2.Circuit.StateCommit
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
 open Dregg2.Exec.CircuitEmit
 
 /-! ## §1 — Relational refinement (the framework). -/
@@ -104,29 +105,33 @@ the realizable Poseidon-CR portals + `AccountsWF` on the two endpoints (the reac
 `StateCommit` proves preserved). -/
 theorem circuit_refines_spec
     (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH) :
+    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrameFin RH) :
     Refines
-      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧ circuitStep CH RH cmb compress compressN k t k')
+      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧ FiniteRepresentable k ∧ FiniteRepresentable k'
+        ∧ circuitStep CH RH cmb compress compressN k t k')
       specStep :=
   fun k t k' h =>
     transfer_circuit_full_sound CH RH cmb compress compressN
-      hCompress hCompressN hLeaf hRest k t k' h.1 h.2.1 h.2.2
+      hCompress hCompressN hLeaf hRest k t k' h.1 h.2.1 h.2.2.1 h.2.2.2.1 h.2.2.2.2
 
 /-- **`spec_refines_circuit` — COMPLETENESS as refinement.** Every spec step is circuit-accepted: all
 protocol-acceptable behaviours are circuit-acceptable (`spec ⊑ circuit`). Needs only the rest-hash
 characterization (completeness builds the digests; it never inverts a hash). -/
-theorem spec_refines_circuit (hRest : RestHashIffFrame RH) :
-    Refines specStep (circuitStep CH RH cmb compress compressN) :=
-  fun k t k' h => transfer_circuit_full_complete CH RH cmb compress compressN hRest k t k' h
+theorem spec_refines_circuit (hRest : RestHashIffFrameFin RH) :
+    Refines (fun k t k' => FiniteRepresentable k ∧ FiniteRepresentable k' ∧ specStep k t k')
+      (circuitStep CH RH cmb compress compressN) :=
+  fun k t k' h => transfer_circuit_full_complete CH RH cmb compress compressN hRest k t k'
+    h.1 h.2.1 h.2.2
 
 /-- **`circuit_refines_exec` — the headline.** Composing soundness with `spec ⟺ executor`: every
 well-formed circuit-accepted step is a genuine EXECUTABLE protocol step. The circuit's algebraic
 statement is a sound refinement of the dynamic behaviour the kernel actually runs. -/
 theorem circuit_refines_exec
     (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH) :
+    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrameFin RH) :
     Refines
-      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧ circuitStep CH RH cmb compress compressN k t k')
+      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧ FiniteRepresentable k ∧ FiniteRepresentable k'
+        ∧ circuitStep CH RH cmb compress compressN k t k')
       execStep :=
   Refines.trans (circuit_refines_spec CH RH cmb compress compressN hCompress hCompressN hLeaf hRest)
     exec_equiv_spec.toRefines'
@@ -154,13 +159,14 @@ forged" guarantee descends from the declarative spec all the way to the arithmet
 by refinement. This is the l4v technique paying off on the crown-jewel circuit. -/
 theorem circuit_conserves
     (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH)
+    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrameFin RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hsat : circuitStep CH RH cmb compress compressN k t k') :
     Conserves k t k' :=
   (circuit_refines_spec CH RH cmb compress compressN hCompress hCompressN hLeaf hRest).preserves
-    specStep_conserves k t k' ⟨hwf, hwf', hsat⟩
+    specStep_conserves k t k' ⟨hwf, hwf', hfin, hfin', hsat⟩
 
 /-! ## §5 — Emitted wire form: the polynomial gates the Rust prover checks. -/
 
@@ -217,15 +223,16 @@ theorem circuitLArith_refines_emitted (k : RecordKernelState) (t : Turn) (k' : R
 Needs `StateCommitSat` separately for the full `circuitStep` soundness theorem. -/
 theorem circuitL_refines_spec
     (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH) :
+    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrameFin RH) :
     Refines
-      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧
+      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧ FiniteRepresentable k ∧ FiniteRepresentable k' ∧
         circuitLArithStep CH RH cmb compress compressN k t k' ∧
         StateCommitSat cmb compress (encodeS CH RH cmb compress compressN k t k'))
       specStep :=
-  fun k t k' ⟨hwf, hwf', hL, hroot⟩ =>
+  fun k t k' ⟨hwf, hwf', hfin, hfin', hL, hroot⟩ =>
     circuit_refines_spec CH RH cmb compress compressN hCompress hCompressN hLeaf hRest k t k'
-      ⟨hwf, hwf', ⟨circuitL_refines_arith CH RH cmb compress compressN k t k' hL, hroot⟩⟩
+      ⟨hwf, hwf', hfin, hfin',
+        ⟨circuitL_refines_arith CH RH cmb compress compressN k t k' hL, hroot⟩⟩
 
 end Circuit
 

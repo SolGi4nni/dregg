@@ -513,7 +513,7 @@ theorem coordinated_emitted_refines_spec
     (covenantH : CoordinatedCaveat → KernelState → KernelState → ℤ)
     (bindH : (bt : BiTurn) → SharedBinding bt → ℤ)
     (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH)
+    (hLeaf : cellLeafInjective CH) (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (pub : CoordinatedPublicInputs) (sA sB : RecChainedState) (step : BilateralStep)
     (sA' sB' : RecChainedState)
     (hwfA : AccountsWF sA.kernel) (hwfB : AccountsWF sB.kernel)

@@ -53,6 +53,7 @@ open Dregg2.Exec (CellId FieldName Value Turn RecordKernelState balOf balanceFie
 open Dregg2.Exec.EffectTransfer
 open Dregg2.Circuit.CommitDifferential (effectVmCommit)
 open Dregg2.Circuit.StateCommit
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
 open Dregg2.Circuit.Transfer
 open Dregg2.Crypto.ProbCrypto (winProb)
 open Dregg2.Circuit.CollisionReduce (CellCollision SpongeCollision CompressCollision)
@@ -918,13 +919,14 @@ theorem recStateCommit_binds_kernel_faithful (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
-    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
+    (hRest : RestHashIffFrameFin RH) (k k' : RecordKernelState) (t : Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
     k = k' ∨ FaithfulBreak fold8 permW cmb compress compressN := by
   rcases recStateCommit_binds_kernel_orBreak (CH_faithful8 fold8 permW ctx)
-      cmb compress compressN RH hRest k k' t hwf hwf' hroot with hk | hb
+      cmb compress compressN RH hRest k k' t hwf hwf' hfin hfin' hroot with hk | hb
   · exact Or.inl hk
   · exact Or.inr (stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN hb)
 
@@ -934,7 +936,7 @@ def KernelEquivocation (fold8 : AuthorityFold8) (permW : List Int → List Int)
     (ctx : RotatedContextProvider)
     (cmb compress : Int → Int → Int) (compressN : List Int → Int)
     (RH : RecordKernelState → Int) (k k' : RecordKernelState) (t : Turn) : Prop :=
-  AccountsWF k ∧ AccountsWF k' ∧ k ≠ k' ∧
+  AccountsWF k ∧ AccountsWF k' ∧ FiniteRepresentable k ∧ FiniteRepresentable k' ∧ k ≠ k' ∧
     recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t
 
@@ -942,12 +944,12 @@ theorem kernelEquivocation_reduces (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
-    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
+    (hRest : RestHashIffFrameFin RH) (k k' : RecordKernelState) (t : Turn)
     (heqv : KernelEquivocation fold8 permW ctx cmb compress compressN RH k k' t) :
     FaithfulBreak fold8 permW cmb compress compressN := by
-  rcases heqv with ⟨hwf, hwf', hne, hroot⟩
+  rcases heqv with ⟨hwf, hwf', hfin, hfin', hne, hroot⟩
   rcases recStateCommit_binds_kernel_faithful fold8 permW hW ctx cmb compress compressN RH hRest
-      k k' t hwf hwf' hroot with hk | hb
+      k k' t hwf hwf' hfin hfin' hroot with hk | hb
   · exact absurd hk hne
   · exact hb
 
@@ -961,10 +963,11 @@ theorem recStateCommit_binds_kernel_faithful_on_adversary_failure (fold8 : Autho
     (k k' : RecordKernelState) (t : Turn)
     (hNo : ¬ KernelEquivocation fold8 permW ctx cmb compress compressN RH k k' t)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) : k = k' := by
   by_contra hne
-  exact hNo ⟨hwf, hwf', hne, hroot⟩
+  exact hNo ⟨hwf, hwf', hfin, hfin', hne, hroot⟩
 
 theorem kernelEquivocation_refl_false (fold8 : AuthorityFold8) (permW : List Int → List Int)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
@@ -972,21 +975,22 @@ theorem kernelEquivocation_refl_false (fold8 : AuthorityFold8) (permW : List Int
     (k : RecordKernelState) (t : Turn) :
     ¬ KernelEquivocation fold8 permW ctx cmb compress compressN RH k k t := by
   intro h
-  exact h.2.2.1 rfl
+  exact h.2.2.2.2.1 rfl
 
 /-- Faithful nonce binding in reduction form. -/
 theorem commit_binds_nonce_faithful (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
-    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn) (agent : CellId)
+    (hRest : RestHashIffFrameFin RH) (k k' : RecordKernelState) (t : Turn) (agent : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
     nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨
       FaithfulBreak fold8 permW cmb compress compressN := by
   rcases recStateCommit_binds_kernel_faithful fold8 permW hW ctx cmb compress compressN RH hRest
-      k k' t hwf hwf' hroot with hk | hb
+      k k' t hwf hwf' hfin hfin' hroot with hk | hb
   · exact Or.inl (congrArg (fun s => nonceOf (s.cell agent)) hk)
   · exact Or.inr hb
 
@@ -996,14 +1000,15 @@ theorem nonce_difference_reduces (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
-    (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn) (agent : CellId)
+    (hRest : RestHashIffFrameFin RH) (k k' : RecordKernelState) (t : Turn) (agent : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hnonce : nonceOf (k.cell agent) ≠ nonceOf (k'.cell agent))
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
     FaithfulBreak fold8 permW cmb compress compressN := by
   rcases commit_binds_nonce_faithful fold8 permW hW ctx cmb compress compressN RH hRest
-      k k' t agent hwf hwf' hroot with hn | hb
+      k k' t agent hwf hwf' hfin hfin' hroot with hn | hb
   · exact absurd hn hnonce
   · exact hb
 
@@ -1020,7 +1025,7 @@ structure FaithfulCommitSurface where
   compress : Int → Int → Int
   compressN : List Int → Int
   RH : RecordKernelState → Int
-  restFrame : RestHashIffFrame RH
+  restFrame : RestHashIffFrameFin RH
 
 noncomputable def FaithfulCommitSurface.commit (S : FaithfulCommitSurface)
     (k : RecordKernelState) (t : Turn) : Int :=
@@ -1031,24 +1036,30 @@ abbrev FaithfulCommitSurface.Break (S : FaithfulCommitSurface) : Prop :=
 
 theorem FaithfulCommitSurface.commit_binds_kernel (S : FaithfulCommitSurface)
     (k k' : RecordKernelState) (t : Turn) (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : S.commit k t = S.commit k' t) : k = k' ∨ S.Break :=
   recStateCommit_binds_kernel_faithful S.fold8 S.permW S.width8 S.ctx
     S.cmb S.compress S.compressN S.RH
-    S.restFrame k k' t hwf hwf' hroot
+    S.restFrame k k' t hwf hwf' hfin hfin' hroot
 
 theorem FaithfulCommitSurface.commit_binds_nonce (S : FaithfulCommitSurface)
     (k k' : RecordKernelState) (t : Turn) (agent : CellId)
-    (hwf : AccountsWF k) (hwf' : AccountsWF k') (hroot : S.commit k t = S.commit k' t) :
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hroot : S.commit k t = S.commit k' t) :
     nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨ S.Break :=
   commit_binds_nonce_faithful S.fold8 S.permW S.width8 S.ctx
     S.cmb S.compress S.compressN S.RH S.restFrame
-    k k' t agent hwf hwf' hroot
+    k k' t agent hwf hwf' hfin hfin' hroot
 
 /-- A verified sequence at the faithful surface.  The executor supplies `nonceMono` from its
 never-rolled-back prologue; the commitment theorem supplies binding modulo explicit collisions. -/
 structure FaithfulCommitChain (S : FaithfulCommitSurface) (agent : CellId) (t : Turn) where
   seq : Nat → RecordKernelState
   wf : ∀ i, AccountsWF (seq i)
+  /-- ⚑ every state in the chain has FINITE per-cell support — the new structural side condition of
+  the commitment binding after the 2026-07-31 rest-frame cutover (`Circuit.RestFrameFin`). -/
+  finrep : ∀ i, FiniteRepresentable (seq i)
   nonceMono : ∀ {i j : Nat}, i < j → nonceOf ((seq i).cell agent) < nonceOf ((seq j).cell agent)
 
 noncomputable def FaithfulCommitChain.commitAt {S : FaithfulCommitSurface} {agent : CellId}
@@ -1071,12 +1082,13 @@ theorem no_replay_faithful {S : FaithfulCommitSurface} {agent : CellId} {t : Tur
     rcases Nat.lt_or_gt_of_ne hij with hlt | hgt
     · exact nonce_difference_reduces S.fold8 S.permW S.width8 S.ctx
         S.cmb S.compress S.compressN S.RH S.restFrame
-        (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) (ne_of_lt (C.nonceMono hlt)) hroot
+        (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) (C.finrep i) (C.finrep j)
+        (ne_of_lt (C.nonceMono hlt)) hroot
     · have hn : nonceOf ((C.seq i).cell agent) ≠ nonceOf ((C.seq j).cell agent) :=
         ne_of_gt (C.nonceMono hgt)
       exact nonce_difference_reduces S.fold8 S.permW S.width8 S.ctx
         S.cmb S.compress S.compressN S.RH S.restFrame
-        (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) hn hroot
+        (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) (C.finrep i) (C.finrep j) hn hroot
 
 /-- Exact recovery on the satisfiable local adversary-failure event.  It quantifies only the pairs
 the supplied chain opens, never global nonexistence of finite-hash collisions. -/
@@ -1097,7 +1109,7 @@ theorem no_replay_faithful_on_adversary_failure {S : FaithfulCommitSurface}
     intro hs
     apply hnonce
     exact congrArg (fun k => nonceOf (k.cell agent)) hs
-  exact hNo i j ⟨C.wf i, C.wf j, hstate, hroot⟩
+  exact hNo i j ⟨C.wf i, C.wf j, C.finrep i, C.finrep j, hstate, hroot⟩
 
 /-! ### Full transfer soundness, with collisions returned instead of injectivity assumed. -/
 
@@ -1109,8 +1121,9 @@ theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
-    (hRest : RestHashIffFrame RH) (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (hRest : RestHashIffFrameFin RH) (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : satisfiedS cmb compress
       (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k')) :
     TransferSpec k t k' ∨ FaithfulBreak fold8 permW cmb compress compressN := by
@@ -1164,7 +1177,7 @@ theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
   have hRHeq : RH k = RH k' :=
     (srestframe_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hrestgate
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs,
-    hDE, hDEA, hHeaps, hNR, hRR, hCR⟩ := (hRest k k').mp hRHeq
+    hDE, hDEA, hHeaps, hNR, hRR, hCR⟩ := (hRest k k' hfin hfin').mp hRHeq
   have hfdeq : frameDigest (CH_faithful8 fold8 permW ctx) compressN k (frameCarrier k t) =
       frameDigest (CH_faithful8 fold8 permW ctx) compressN k' (frameCarrier k t) :=
     (sframereuse_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hframegate

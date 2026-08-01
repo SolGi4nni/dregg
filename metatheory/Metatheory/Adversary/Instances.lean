@@ -747,7 +747,7 @@ structure DeployedControl where
 def assuranceApexDynamics
     (UC : UCodec) (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH) : GovernedDynamics where
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH) : GovernedDynamics where
   Control := @DeployedControl Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag
     _ _ AProof
   Outcome := @DeployedControl Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag
@@ -784,7 +784,7 @@ committed turn — as an application of `governed_holds` to `assuranceApexDynami
 theorem deployed_system_secure_via_schema
     (UC : UCodec) (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (c : @DeployedControl Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag
       _ _ AProof)
     (hacc : (assuranceApexDynamics verify CH RH cmb compress compressN UC hCmb hCompress hCompressN
@@ -804,7 +804,7 @@ the whole accept floor. -/
 theorem apex_accept_satisfiable_of_floor
     (UC : UCodec) (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (c : @DeployedControl Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag
       _ _ AProof)
     (hacc : (assuranceApexDynamics verify CH RH cmb compress compressN UC hCmb hCompress hCompressN

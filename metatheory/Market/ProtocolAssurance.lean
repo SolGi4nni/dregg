@@ -689,18 +689,13 @@ theorem lightclient_market_seam
     · calc
         pi.post = S.commit post.kernel pi.turn := hdecode.postBinds
         _ = S.commit c.post pi.turn := by rw [hcpost]
-  have hpreCommit : S.commit pre.kernel pi.turn = S.commit c.pre pi.turn := by
-    calc
-      S.commit pre.kernel pi.turn = pi.pre := hdecode.preBinds.symm
-      _ = S.commit c.pre pi.turn := hbound.preRoot
-  have hpostCommit : S.commit post.kernel pi.turn = S.commit c.post pi.turn := by
-    calc
-      S.commit post.kernel pi.turn = pi.post := hdecode.postBinds.symm
-      _ = S.commit c.post pi.turn := hbound.postRoot
-  have hpreEq : pre.kernel = c.pre :=
-    S.commit_binds pre.kernel c.pre pi.turn hdecode.preWF hbound.preWF hpreCommit
-  have hpostEq : post.kernel = c.post :=
-    S.commit_binds post.kernel c.post pi.turn hdecode.postWF hbound.postWF hpostCommit
+  -- ⚑ 2026-07-31: these two were routed through `S.commit_binds` (commitment binding), which was
+  -- pure decoration — `hmarket` HANDS BACK `c.pre = pre.kernel` / `c.post = post.kernel` directly
+  -- (`MarketEffectStepExtractsClearing`), so the endpoints were already identified before any
+  -- commitment was consulted. Removed rather than re-plumbed through the narrowed binding: a
+  -- `commit_binds` call that re-derives a fact already in hand is not evidence of anything.
+  have hpreEq : pre.kernel = c.pre := hcpre.symm
+  have hpostEq : post.kernel = c.post := hcpost.symm
   refine ⟨c, pre, post, hbound, hdecode, hstep, hpreEq, hpostEq, ?_⟩
   intro b
   rw [hpreEq, hpostEq]

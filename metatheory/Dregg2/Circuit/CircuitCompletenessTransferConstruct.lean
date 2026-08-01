@@ -101,7 +101,7 @@ theorem transfer_descriptorComplete_reduced
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (turn : BoundaryTurn)
     (hpreWF : AccountsWF pre.kernel) (hpostWF : AccountsWF post.kernel)

@@ -65,6 +65,7 @@ that forbidden "ghost-in-disguise" would carry the whole answer; here the answer
 -- `Mathlib.Tactic` umbrella, which is now a specific-tactic import.
 import Mathlib.Data.Finset.Sort
 import Dregg2.Circuit.Transfer
+import Dregg2.Circuit.RestFrameFin
 
 namespace Dregg2.Circuit.StateCommit
 
@@ -491,9 +492,11 @@ theorem transfer_circuit_full_sound
     (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (h : satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k')) :
     TransferSpec k t k' := by
   obtain ⟨hsat, _hcommit⟩ := h
@@ -533,7 +536,7 @@ theorem transfer_circuit_full_sound
     hsat cSMovedBind (by unfold stateCircuit; simp)
   -- rest hash equal ⇒ the non-cell fields (incl. heaps) equal (RestHashIffFrame.→).
   have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb compress compressN k t k').mp hrestgate
-  have hframe16 := (hRest k k').mp hRHeq
+  have hframe16 := (hRest k k' hfin hfin').mp hRHeq
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs,
     hDE, hDEA, hHeaps, hNR, hRR, hCR⟩ := hframe16
   -- frame digests equal ⇒ untouched cells equal (FrameDigestBindsCells).
@@ -645,29 +648,58 @@ theorem cellDigest_binds_cells
 
 #assert_axioms cellDigest_binds_cells
 
-/-- **`recStateCommit_binds_kernel` (THE WHOLE-KERNEL recovery).** Equal full-state roots (same turn)
-force the WHOLE `RecordKernelState` equal — all 16 fields, not just the digest children. The non-cell
-15 come from `RH k = RH k'` via `RestHashIffFrame` (which lists exactly `accounts … heaps`); `accounts`
-is among them, so the frame carriers coincide, and `cellDigest_binds_cells` then recovers `cell`.
-Structure eta assembles the field equalities into `k = k'`. This is the binding the unfoolability
-case needs to recover STATE continuity (not merely commitment-equality) from a verified root — under
-the SAME standard Poseidon CR set (`compressInjective cmb/compress`, `compressNInjective`,
-`cellLeafInjective`, `RestHashIffFrame`) + the PROVED-preserved `AccountsWF` structural invariant. -/
+/-- **Sanity: `RestHashIffFrameFin` is a genuine WEAKENING of `RestHashIffFrame`, not a lookalike.**
+If (per impossibile — `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`) the full
+carrier held, the finite-support one follows for free; the restriction only ever makes the obligation
+EASIER to satisfy. `RestHashIffFrame` unfolds to exactly `∀ k k', RH k = RH k' ↔ (18-conjunct)`,
+defeq to `RestHashIffFrameFin`'s body, so this is immediate. Kept as the machine-checked weld between
+the two shapes: if either body ever drifts, this breaks. -/
+theorem restHashIffFrameFin_of_full (hFull : RestHashIffFrame RH) :
+    Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH := fun k k' _ _ => hFull k k'
+
+/-- **★ `recStateCommit_binds_kernel` (THE WHOLE-KERNEL recovery), over FINITE-SUPPORT states.**
+Equal full-state roots (same turn) force the WHOLE `RecordKernelState` equal — all 16 fields, not
+just the digest children. The non-cell 17 come from `RH k = RH k'` via `RestHashIffFrameFin` (which
+lists exactly `accounts … heaps` and the three accumulator roots); `accounts` is among them, so the
+frame carriers coincide, and `cellDigest_binds_cells` then recovers `cell`. Structure eta assembles
+the field equalities into `k = k'`. This is the binding the unfoolability case needs to recover STATE
+continuity (not merely commitment-equality) from a verified root.
+
+⚑ **REWRITTEN IN PLACE 2026-07-31 — the fifth carrier changed and TWO hypotheses are new.** It was
+
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k') … (hwf : AccountsWF k) (hwf' : AccountsWF k')
+
+and `RestHashIffFrame RH` is refuted for EVERY `RH` at EVERY width by Cantor
+(`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`), so the theorem — and everything
+built on it, `CircuitSoundness.CommitSurface` included — was VACUOUS at all parameters. It now takes
+`RestFrameFin.RestHashIffFrameFin RH`, which HAS instances, plus `FiniteRepresentable` on both
+states, which is what pays for the smaller domain. In place rather than beside, so there is one shape
+and not two.
+
+⚠ **WHAT IT NO LONGER SAYS**: nothing about kernels with infinite per-cell support
+(`RestFrameFin.not_finiteRepresentable_of_lifecycle_ne_zero` exhibits an `AccountsWF` one). The
+remaining floors are the four hash-injectivity carriers, still refuted at deployed BabyBear width by
+an INDEPENDENT pigeonhole argument, and repaired by a different campaign (keyed-CR advantage
+bounds). -/
 theorem recStateCommit_binds_kernel
     (hCmb : compressInjective cmb)
     (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k k' : RecordKernelState) (t : Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) :
     k = k' := by
   obtain ⟨hcd, hRHeq⟩ := recStateCommit_binds CH RH cmb compress compressN hCmb k k' t hroot
-  -- the 15 non-cell fields from RH (RestHashIffFrame is `RH k = RH k' ↔ (k'.* = k.*)`).
+  -- the 17 non-cell fields from RH (`RestHashIffFrameFin` is `RH k = RH k' ↔ (k'.* = k.*)`, gated).
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps,
-    hNR, hRR, hCR⟩ := (hRest k k').mp hRHeq
+    hNR, hRR, hCR⟩ := (hRest k k' hfin hfin').mp hRHeq
   -- the cell map from the cell-digest (needs equal `accounts` for matching carriers).
   have hcell : k.cell = k'.cell :=
     cellDigest_binds_cells CH compress compressN hCompress hCompressN hLeaf k k' t hwf hwf'
@@ -686,8 +718,10 @@ are full-state-circuit-acceptable. The frame gates hold because `k'`'s frame is 
 (`List.map_congr_left` on the untouched cells ⇒ equal ordered leaf lists ⇒ equal sponge, +
 `RestHashIffFrame.←`); the root decomposes definitionally (`cellDigest` IS the Merkle node). -/
 theorem transfer_circuit_full_complete
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hspec : TransferSpec k t k') :
     satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   have hexec : recKExec k t = some k' := (recKExec_iff_spec k t k').mpr hspec
@@ -708,7 +742,7 @@ theorem transfer_circuit_full_complete
   have e9  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTSrcLive  (by decide)
   have e10 := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDstLive  (by decide)
   -- frame-gate facts.
-  have hRHeq : RH k = RH k' := (hRest k k').mpr
+  have hRHeq : RH k = RH k' := (hRest k k' hfin hfin').mpr
     ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps, hNR, hRR,
       hCR⟩
   have hcellc : ∀ c ∈ frameCarrier k t, CH c (k.cell c) = CH c (k'.cell c) := by
@@ -770,15 +804,17 @@ post-state changes a non-`cell` component (here: `nullifiers`) makes `satisfiedS
 rest-frame gate forces `RH k = RH k'`, and `RestHashIffFrame.→` then forces the nullifier sets equal
 — contradiction. A silent nullifier rewrite (a double-spend laundering) is FORBIDDEN BY CONSTRUCTION. -/
 theorem stateCircuit_rejects_field_tamper
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hfield : k'.nullifiers ≠ k.nullifiers) :
     ¬ satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   rintro ⟨hsat, _⟩
   have hrestgate : cSRestFrame.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSRestFrame (by unfold stateCircuit; simp)
   have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb compress compressN k t k').mp hrestgate
-  have hframe16 := (hRest k k').mp hRHeq
+  have hframe16 := (hRest k k' hfin hfin').mp hRHeq
   obtain ⟨_, _, _, hNul, _⟩ := hframe16
   exact hfield hNul
 

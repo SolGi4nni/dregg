@@ -26,11 +26,23 @@ toy, or hypothetical — under which their hypothesis list is inhabited. `apexCo
 below is the crisp form: the apex's own binder list, taken as a bundle, is refuted outright, so any
 application of either theorem has `False` in scope and its conclusion carries no information.
 
-⚑ AND IT PROPAGATES. `CircuitSoundness.CommitSurface` carries the SAME five as FIELDS
-(`cmbInj`/`compInj`/`compNInj`/`leafInj`/`restFrame`), so that structure has no inhabitant either —
-which is why `AssuranceCaseGrounded.deployed_system_secure_grounded{,_v2}` (which takes both
-`S : CommitSurface` AND the five binders, and is advertised as the capstone resting on "strictly the
-crypto floor + honest-prover realizer data") is vacuous twice over.
+⚑ IT USED TO PROPAGATE TO `CommitSurface`. ⛑ **CORRECTED 2026-07-31.**
+`CircuitSoundness.CommitSurface` carried the SAME five as FIELDS
+(`cmbInj`/`compInj`/`compNInj`/`leafInj`/`restFrame`), so that structure had no inhabitant either.
+Its fifth field is now `RestFrameFin.RestHashIffFrameFin RH` — the identical 18-conjunct body
+restricted to FINITELY-REPRESENTABLE states — which IS satisfiable
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, a closed proof), and that
+file constructs a CLOSED inhabitant of the whole bundle at the unbounded reference sponge. So
+`apexCommitFloor_unsatisfiable` below is still TRUE and still applies to
+`AssuranceCase.deployed_system_secure` / `unfoolability_guarantee`'s binder LIST (§1 is about the
+five hypotheses, and `hRest : RestHashIffFrame RH` is still one of them) — but it NO LONGER APPLIES
+TO `CommitSurface`, which is a different object than it was.
+
+⚠ Say what that did and did not buy. `CommitSurface` moved from *uninhabited at EVERY parameter, by
+cardinality, unrepairable by any widening* to *uninhabited at DEPLOYED BabyBear width, by pigeonhole,
+repairable by the keyed-CR advantage-bound campaign*. §2's LEGS 1-4 are untouched and still refute
+the other four fields at deployed width, so `AssuranceCaseGrounded.deployed_system_secure_grounded{,_v2}`
+remains vacuous at deployed parameters — once over now, not twice.
 
 ## What this file is NOT
 

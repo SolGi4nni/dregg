@@ -27,10 +27,32 @@ runtime producer's descriptor (refuse-first) and this verifier twin (refuse-last
 honest umem-welded turn proved against one layout and verified against the other
 (`OodEvaluationMismatch`). Refuse-first makes them coincide.
 
-This is the byte source of the ADDITIVE Rust artifact
-`circuit/descriptors/rotation-wide-umem-welded-registry-staged.tsv` (pinned by
-`WIDE_UMEM_WELD_REGISTRY_FP`). NOTHING on the live wire changes — the deployed bare wide registry /
-FP / VK are UNTOUCHED, `umem_witness_enabled` stays false.
+## ⚑ THE MEMBER LINES ARE NO LONGER A CHECKED-IN ARTIFACT (2026-07-31)
+
+`circuit/descriptors/rotation-wide-umem-welded-registry-staged.tsv` is DELETED. It was 10,049,999
+bytes carrying, over and above the (separately FP-pinned) bare wide registry, exactly one row of
+integers per member: the umem domain and where the `umemOp` sits. Every consumer parsed it back into
+an `EffectVmDescriptor2` and the deployed PROVER never opened it at all — it composes the same object
+at runtime (`sdk/src/full_turn_proof.rs`'s `weld_umem_into_wide_descriptor`). So the verifier now
+DERIVES its member the same way the prover does.
+
+The member lines are STILL PRINTED, and `scripts/emit_descriptors.py` still consumes them — as the
+REALITY GATE. It re-derives each welded member from the bare wide member + the contract row and
+refuses the emit unless the two agree structurally, member for member. Nothing lands on disk from
+them. What lands is `circuit/src/effect_vm/umem_weld_generated.rs`, built from the companion lines:
+
+  `umemweld\t<key>\t<domain code>\t<umemOp index>\t<traceWidth>\t<piCount>\t<#constraints>\t<name>`
+
+printed EXACTLY as `EmitWideRegistryProbe.lean` prints its `s2compact` / `e1compact` companions.
+Those six numbers are every degree of freedom `weldUMemIntoWide` (+ the canonicity-block ordering)
+adds on top of the bare host, so the Rust derivation is pinned to THIS emit on every one of them —
+the parity the deleted 10 MB used to carry, at ~9 KB.
+
+NOTHING on the live wire changes — the deployed bare wide registry / FP / VK are UNTOUCHED,
+`umem_witness_enabled` stays false. `WIDE_UMEM_WELD_REGISTRY_FP` disappears, which reshapes
+`dregg_epoch::local_manifest`'s `registry_fp`: a HANDSHAKE flag day (un-rebuilt peers get
+`RegistryFpMismatch`), not a chain one — the descriptors are identical by construction, so no VK
+rotates and no AIR changes.
 
 SCRATCH executable: `lake env lean --run EmitWideUMemWeldRegistryProbe.lean`.
 -/
@@ -141,6 +163,12 @@ def e1Ceiling (key : String) (cm : EffectVmDescriptor2) : Nat :=
   cm.traceWidth - 7
     - (if bareCohortKeys.contains key then 3 * Dregg2.Deos.BareCohortFloorRefuseDeployed.REFUSE_STRIDE else 0)
 
+/-- Is this constraint the welded universal-memory op? (The predicate the contract row's splice index
+is located by — see the module header.) -/
+def isUMemOp : Dregg2.Circuit.DescriptorIR2.VmConstraint2 → Bool
+  | .umemOp _ => true
+  | _ => false
+
 def main : IO Unit := do
   for (key, d) in weldedWideRegistryRefusedFirst do
     let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d
@@ -159,6 +187,23 @@ def main : IO Unit := do
         -- THE UNFORCED-PIN SUBTRACTION — see `UnforcedPiPins` (weakening + no-op + fixpoint).
         let pinned := Dregg2.Circuit.Emit.UnforcedPiPins.dropUnforcedPins hardened
         IO.println s!"{key}\t{pinned.name}\t{emitVmJson2 pinned}"
+        -- THE DERIVATION CONTRACT ROW (module header). The `umemOp` index is LOCATED, never
+        -- recomputed from a shape constant: `fieldsCanonical9Wire` is applied to the ALREADY-welded
+        -- member, so the canonicity block lands PAST the op, and the four order-preserving passes
+        -- above (S2 / E1 / hardenLastRow / dropUnforcedPins) can move the index. Whatever it ends up
+        -- being HERE is what the Rust derivation splices at — no Rust arithmetic reproduces it.
+        match pinned.constraints.findIdx? isUMemOp with
+        | some i =>
+          IO.println <| "umemweld\t" ++ key
+            ++ "\t" ++ toString (Dregg2.Circuit.DescriptorIR2.domainCode (wideKeyUMemDomain key))
+            ++ "\t" ++ toString i
+            ++ "\t" ++ toString pinned.traceWidth
+            ++ "\t" ++ toString pinned.piCount
+            ++ "\t" ++ toString pinned.constraints.length
+            ++ "\t" ++ pinned.name
+        | none => throw (IO.userError
+            s!"welded {key} carries NO umemOp — the weld did not land and the derivation contract \
+               is unrepresentable; the emit fails closed")
       else throw (IO.userError
           s!"E1-compact REFUSED for welded {key} — transitionCeilingOk failed (a `.transition` \
              reads a face column ≥ 90); the emit fails closed")

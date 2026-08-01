@@ -170,7 +170,7 @@ theorem lightclient_unfoolable_circuit_sound
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
@@ -216,7 +216,7 @@ theorem closedWitness_of_readouts
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
@@ -246,7 +246,7 @@ theorem lightclient_unfoolable_circuit_sound_of_readouts
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}

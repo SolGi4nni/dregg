@@ -45,6 +45,7 @@ open Dregg2.Circuit
 open Dregg2.Exec
 open Dregg2.Circuit.CollisionReduce
 open Dregg2.Circuit.StateCommit
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
 open Dregg2.Circuit.CircuitSoundness (CommitSurface PublishedCommit StateDecode)
 
 /-! ## §0 — the break events.
@@ -201,9 +202,10 @@ turn, both `AccountsWF`) force the WHOLE `RecordKernelState` equal — or a conc
 of the four commitment primitives. The original's `hCmb/hCompress/hCompressN/hLeaf` are GONE; only
 the non-hash `RestHashIffFrame` premise remains. -/
 theorem recStateCommit_binds_kernel_orBreak
-    (hRest : RestHashIffFrame RH)
+    (hRest : RestHashIffFrameFin RH)
     (k k' : RecordKernelState) (t : Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) :
     OrBreak (StateBreakP CH cmb compress compressN) (k = k') := by
@@ -211,7 +213,7 @@ theorem recStateCommit_binds_kernel_orBreak
   rintro ⟨hcd, hRHeq⟩
   -- the 18 non-cell fields from RH (verbatim original — RestHashIffFrame is not a collision event).
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA,
-    hHeaps, hNR, hRR, hCR⟩ := (hRest k k').mp hRHeq
+    hHeaps, hNR, hRR, hCR⟩ := (hRest k k' hfin hfin').mp hRHeq
   -- the cell map from layer 3's twin.
   refine OrBreak.imp ?_
     (cellDigest_binds_cells_orBreak CH cmb compress compressN k k' t hwf hwf' hAcc.symm hcd)
@@ -226,13 +228,15 @@ theorem recStateCommit_binds_kernel_orBreak
 its four injectivity hypotheses, from `¬ StateBreakP` instead. -/
 theorem recStateCommit_binds_kernel_of_no_break
     (hNo : ¬ StateBreakP CH cmb compress compressN)
-    (hRest : RestHashIffFrame RH)
+    (hRest : RestHashIffFrameFin RH)
     (k k' : RecordKernelState) (t : Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) : k = k' :=
   OrBreak.resolve hNo
-    (recStateCommit_binds_kernel_orBreak CH cmb compress compressN RH hRest k k' t hwf hwf' hroot)
+    (recStateCommit_binds_kernel_orBreak CH cmb compress compressN RH hRest k k' t hwf hwf'
+      hfin hfin' hroot)
 
 end Raw
 
@@ -260,28 +264,31 @@ collision of one of `S`'s four hash carriers. Uses NO `S.*Inj` field (only the c
 theorem commit_binds_orBreak (S : CommitSurface) (k k' : RecordKernelState)
     (t : Dregg2.Exec.Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : S.commit k t = S.commit k' t) :
     OrBreak (StateBreak S) (k = k') :=
   recStateCommit_binds_kernel_orBreak S.CH S.cmb S.compress S.compressN S.RH S.restFrame
-    k k' t hwf hwf' h
+    k k' t hwf hwf' hfin hfin' h
 
 /-- **Twin of `stateDecode_pre_faithful` (CircuitSoundness.lean:202).** Two pre-states decoding the
 SAME published commitment have EQUAL kernels — or a concrete `StateBreak`. Pure commitment binding,
 no admissibility, NO injectivity. -/
 theorem stateDecode_pre_faithful_orBreak (S : CommitSurface) (pc : PublishedCommit)
     {pre post pre' post' : RecChainedState}
+    (hfin : FiniteRepresentable pre.kernel) (hfin' : FiniteRepresentable pre'.kernel)
     (h : StateDecode S pc pre post) (h' : StateDecode S pc pre' post') :
     OrBreak (StateBreak S) (pre.kernel = pre'.kernel) :=
-  commit_binds_orBreak S pre.kernel pre'.kernel pc.turn h.preWF h'.preWF
+  commit_binds_orBreak S pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hfin hfin'
     (h.preBinds ▸ h'.preBinds ▸ rfl)
 
 /-- **Twin of `stateDecode_post_faithful` (CircuitSoundness.lean:211).** Two post-states decoding
 the SAME published commitment have EQUAL kernels — or a concrete `StateBreak`. -/
 theorem stateDecode_post_faithful_orBreak (S : CommitSurface) (pc : PublishedCommit)
     {pre post pre' post' : RecChainedState}
+    (hfin : FiniteRepresentable post.kernel) (hfin' : FiniteRepresentable post'.kernel)
     (h : StateDecode S pc pre post) (h' : StateDecode S pc pre' post') :
     OrBreak (StateBreak S) (post.kernel = post'.kernel) :=
-  commit_binds_orBreak S post.kernel post'.kernel pc.turn h.postWF h'.postWF
+  commit_binds_orBreak S post.kernel post'.kernel pc.turn h.postWF h'.postWF hfin hfin'
     (h.postBinds ▸ h'.postBinds ▸ rfl)
 
 /-! ## §6 — non-vacuity, direction 1: `resolve` recovers the injective originals. -/
@@ -303,16 +310,18 @@ conclusion verbatim — the `_of_no_stateBreak` form of `CommitSurface.commit_bi
 theorem commit_binds_of_no_stateBreak (S : CommitSurface) (hNo : ¬ StateBreak S)
     (k k' : RecordKernelState) (t : Dregg2.Exec.Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : S.commit k t = S.commit k' t) : k = k' :=
-  OrBreak.resolve hNo (commit_binds_orBreak S k k' t hwf hwf' h)
+  OrBreak.resolve hNo (commit_binds_orBreak S k k' t hwf hwf' hfin hfin' h)
 
 /-- **The originals are strictly subsumed:** `CommitSurface.commit_binds` re-derived from the twin
 alone (the surface's own injectivity refutes the break, `resolve` hands back the good branch). -/
 theorem commit_binds_recovered (S : CommitSurface) (k k' : RecordKernelState)
     (t : Dregg2.Exec.Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : S.commit k t = S.commit k' t) : k = k' :=
-  commit_binds_of_no_stateBreak S (surface_no_stateBreak S) k k' t hwf hwf' h
+  commit_binds_of_no_stateBreak S (surface_no_stateBreak S) k k' t hwf hwf' hfin hfin' h
 
 /-! ## §7 — non-vacuity, direction 2 (FIRE): the break branch actually fires on a lossy hash.
 

@@ -302,8 +302,10 @@ and that is the exact, named residual rather than a hidden hypothesis.) -/
 theorem root_tooth_pins_kernel
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH) (s s' : ChainStep)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH) (s s' : ChainStep)
     (hwf : AccountsWF s.post.kernel) (hwf' : AccountsWF s'.pre.kernel)
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable s.post.kernel)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable s'.pre.kernel)
     (hturn : s.turn = s'.turn)
     (htooth : ChainStep.newRoot CH RH cmb compress compressN s
                 = ChainStep.oldRoot CH RH cmb compress compressN s') :
@@ -316,7 +318,7 @@ theorem root_tooth_pins_kernel
   have hlimbs := hCompressN _ _ htooth
   simp only [List.cons.injEq, and_true] at hlimbs
   exact recStateCommit_binds_kernel CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
-          s.post.kernel s'.pre.kernel s'.turn hwf hwf' hlimbs.1
+          s.post.kernel s'.pre.kernel s'.turn hwf hwf' hfin hfin' hlimbs.1
 
 /-- **`root_tooth_pins_log` (THE NON-OMISSION KEYSTONE — the rotated commit binds the receipt log).**
 The §2 repair, now at the aggregation seam: an agreeing root tooth at a matched turn-context forces the
@@ -441,8 +443,10 @@ theorem kernelChained_conserves (g : RecChainedState) (steps : List ChainStep)
     rw [show lastStateOf g (s :: rest) = lastStateOf s.post rest from rfl, htail, hstep, hpre]
 
 /-- **`SeamStruct steps`** — the per-seam STRUCTURAL facts (NOT continuity, NOT roots): at every
-adjacent pair the turn-contexts match AND both seam kernels are `AccountsWF`. These are exactly the
-two non-cryptographic side facts `root_tooth_pins_kernel` consumes beyond the tooth itself: turn-match
+adjacent pair the turn-contexts match AND both seam kernels are `AccountsWF` AND both are FINITELY
+REPRESENTABLE (⚑ the last two are NEW, 2026-07-31: `root_tooth_pins_kernel` now runs through the
+finite-support rest frame — `Circuit.RestFrameFin`). These are exactly the
+non-cryptographic side facts `root_tooth_pins_kernel` consumes beyond the tooth itself: turn-match
 holds under the accumulator's NoOp-padding (`ivc_turn_chain.rs:325`), and `AccountsWF` is the
 structural invariant every `recKExec` PRESERVES (`StateCommit.recKExec_preserves_AccountsWF`). The
 TOOTH itself is NOT here — it comes from `ChainBound`, which a verified `bindingProof` supplies. So
@@ -451,7 +455,9 @@ def SeamStruct : List ChainStep → Prop
   | []            => True
   | [_]           => True
   | s :: s' :: rest =>
-      (s.turn = s'.turn ∧ AccountsWF s.post.kernel ∧ AccountsWF s'.pre.kernel)
+      (s.turn = s'.turn ∧ AccountsWF s.post.kernel ∧ AccountsWF s'.pre.kernel
+        ∧ Dregg2.Circuit.RestFrameFin.FiniteRepresentable s.post.kernel
+        ∧ Dregg2.Circuit.RestFrameFin.FiniteRepresentable s'.pre.kernel)
       ∧ SeamStruct (s' :: rest)
 
 /-- **`kernelChained_of_verified` (THE DERIVATION — state continuity FROM verification).** From the
@@ -465,7 +471,7 @@ under the CR floor, with only the genesis pin + structural envelope as honest in
 theorem kernelChained_of_verified
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (g : RecChainedState) :
     ∀ steps : List ChainStep,
       KernelGenesisPin g steps →
@@ -476,11 +482,11 @@ theorem kernelChained_of_verified
   | [s], hgen, _, _ => ⟨hgen, trivial⟩
   | s :: s' :: rest, hgen, hbound, hstruct => by
     obtain ⟨htooth, hboundrest⟩ := hbound
-    obtain ⟨⟨hturn, hwf, hwf'⟩, hstructrest⟩ := hstruct
+    obtain ⟨⟨hturn, hwf, hwf', hfin, hfin'⟩, hstructrest⟩ := hstruct
     -- the seam `s.post.kernel = s'.pre.kernel` is DERIVED from the verified `ChainBound` tooth.
     have hseam : s.post.kernel = s'.pre.kernel :=
       root_tooth_pins_kernel CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
-        s s' hwf hwf' hturn htooth
+        s s' hwf hwf' hfin hfin' hturn htooth
     refine ⟨hgen, ?_⟩
     -- recurse on the tail from `s.post`; the next genesis pin is the derived seam (`s'.pre = s.post`).
     exact kernelChained_of_verified hCmb hCompress hCompressN hLeaf hRest s.post (s' :: rest)
@@ -497,7 +503,7 @@ now follows from the VERIFIED root, not from the prover's honesty about state co
 theorem verified_history_conserves
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (g : RecChainedState) (steps : List ChainStep)
     (hgen : KernelGenesisPin g steps)
     (hbound : ChainBound CH RH cmb compress compressN steps)

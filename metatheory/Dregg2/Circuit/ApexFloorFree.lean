@@ -33,12 +33,19 @@ DISCARDED. Nothing in the closed apex chain reads it.
 
 `descriptorRefines`, `StateDecode`, `WitnessDecodes` and every apex over them are stated at
 `S : CommitSurface`, and `CommitSurface` carries FIVE commitment floors as FIELDS
-(`cmbInj`/`compInj`/`compNInj`/`leafInj`/`restFrame`). `Verify.ApexPremiseVacuity` proves that bundle
+(`cmbInj`/`compInj`/`compNInj`/`leafInj`/`restFrame`). `Verify.ApexPremiseVacuity` proved that bundle
 UNSATISFIABLE at EVERY parameter — not at deployed BabyBear, at every width — because
-`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` kills `restFrame` for every
+`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` killed `restFrame` for every
 `RH : RecordKernelState → ℤ` by Cantor (`bal : CellId → AssetId → ℤ` is a function space, `ℤ` is
-countable). **`CommitSurface` HAS NO INHABITANT**, so an apex quantified over one is vacuous whether or
-not it also carries `Poseidon2SpongeCR`.
+countable). **`CommitSurface` HAD NO INHABITANT**, so an apex quantified over one was vacuous whether
+or not it also carried `Poseidon2SpongeCR`.
+
+⛑ **PARTLY REPAIRED 2026-07-31, and this file's split survives it.** `restFrame` is now
+`RestFrameFin.RestHashIffFrameFin RH` and the bundle HAS a closed inhabitant at the reference sponge
+(`Verify.RestFrameFiniteSupportSuccessor` §6). The remaining four fields are still refuted at DEPLOYED
+BabyBear width, so a `CommitSurface`-quantified theorem is still vacuous where the system stands, and
+everything below still stands as written — but the reason is now a pigeonhole with a named repair
+campaign, not a cardinality impossibility.
 
 ⚑ That is why the repair here is not "delete a binder". A theorem stated at `(S : CommitSurface)` cannot
 be given a refutability pole AT ALL: `(S : CommitSurface) → ¬ P S` is true for free. The `False`-`kstep`
@@ -72,13 +79,19 @@ published-effect refinement rung ⟹ there EXIST kernel endpoints, a genuine `ks
 between them, and `pi.pre`/`pi.post` ARE `C` of those endpoints.
 
 ⚠ It does NOT claim those endpoints are UNIQUE. Uniqueness is `stateDecode_pre_faithful` /
-`stateDecode_post_faithful`, the only consumers of `CommitSurface.commit_binds`, and they genuinely need
-the commitment to BIND — the five refuted floors. So the split this file lands is:
+`stateDecode_post_faithful`, the only consumers of `CommitSurface.commit_binds`. So the split this file
+lands is:
 
   * **EXISTENCE of a real transition behind an accepted proof — floor-free, surface-free, TRUE.**
-  * **UNIQUENESS of the state behind a published root — still refuted** (`ApexPremiseVacuity`), and
-    unavailable until the rest-hash is refined to finite support
-    (`Verify.RestFrameFiniteSupportSuccessor`).
+  * **UNIQUENESS of the state behind a published root — ⛑ NO LONGER REFUTED, and narrowed twice.**
+    Since 2026-07-31 the rest-hash IS refined to finite support
+    (`Circuit.RestFrameFin`, adopted by `StateCommit.recStateCommit_binds_kernel` and
+    `CommitSurface.restFrame`), the surface has a closed inhabitant at the reference sponge, and
+    `stateDecode_pre_faithful` FIRES and REFUSES a forgery
+    (`Verify.RestFrameFiniteSupportSuccessor` §6). It holds for kernels with FINITE per-cell support,
+    at the UNBOUNDED reference pole. Two residuals, both named: `FiniteRepresentable` at an
+    executor-reached kernel needs `FinKernelState`'s undischarged per-effect `hpres`; and the four
+    hash-injectivity fields are still refuted at deployed BabyBear width.
 
 Nothing that stood on the old apex falls, and the demonstration is IN SITU rather than a fresh
 theorem here (see §4 for why a fresh one is impossible): `ClosureAll.lightclient_unfoolable_closed`,
@@ -198,10 +211,12 @@ there EXIST kernel endpoints whose `C`-commitments ARE `pi.pre`/`pi.post` and be
 second at every parameter — and neither was doing work here: `hCR` was consumed only to discharge
 `descriptorRefines`'s dead antecedent, and the surface bundle only for its `commit` projection.
 
-⚠ **WHAT THIS NO LONGER CLAIMS.** Nothing here says the endpoints are UNIQUE. A light client applying
-THIS theorem learns "an accepted proof stands over a real kernel transition whose endpoints commit to
-the published roots", NOT "the published root determines the state". The second half is
-`stateDecode_pre_faithful`/`_post_faithful` over `CommitSurface.commit_binds` and is genuinely open. -/
+⚠ **WHAT THIS THEOREM DOES NOT CLAIM.** Nothing HERE says the endpoints are UNIQUE. A light client
+applying THIS theorem learns "an accepted proof stands over a real kernel transition whose endpoints
+commit to the published roots", NOT "the published root determines the state". The second half is
+`stateDecode_pre_faithful`/`_post_faithful` over `CommitSurface.commit_binds` — as of 2026-07-31 that
+half is no longer refuted, but it is a SEPARATE theorem over a NARROWER domain (finitely-supported
+kernels, reference-pole surface); see this file's header. -/
 theorem lightclient_unfoolable_free
     (C : CommitMap) (hash : List ℤ → ℤ) (R : Registry) [StarkSound hash R]
     (kstep : EffectIdx → RecChainedState → RecChainedState → Prop)

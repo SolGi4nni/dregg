@@ -413,7 +413,7 @@ theorem transfer_descriptorComplete
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     -- the realizable prover floor: from the move it builds the satisfying trace publishing the kernel's
     -- own commitment, plus the spec-determined boundary CellStates + the trace rows. The dual of

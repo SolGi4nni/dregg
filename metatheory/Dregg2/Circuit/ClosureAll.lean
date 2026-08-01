@@ -152,7 +152,7 @@ variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
 variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
 variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-variable {hRest : RestHashIffFrame RH}
+variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ}
 
 /-- The live commitment surface, with the section's CR carriers. -/
@@ -1702,7 +1702,7 @@ theorem closedLogExtract_transfer
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} (hash : List ℤ → ℤ)
     (extract : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
       (t : Dregg2.Circuit.DescriptorIR2.VmTrace)

@@ -113,6 +113,8 @@ example :
     ∀ (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
       (start fin : RecChainedState) (c : TurnDecodeChain hash S start fin),
       TurnDecodeChainLog hash S LH c →
+      (∀ d ∈ c.steps, Dregg2.Circuit.RestFrameFin.FiniteRepresentable d.pre.kernel
+        ∧ Dregg2.Circuit.RestFrameFin.FiniteRepresentable d.post.kernel) →
       NoLogSeamColl LH (fun d : DecodedStep S => d.post.log)
         (fun d : DecodedStep S => d.pre.log) c.steps →
       List.IsChain (fun a b => a.post = b.pre) c.steps :=
@@ -283,28 +285,27 @@ proves it and a silent residual is how a "drained" bundle stays vacuous through 
    impossible claim, the three seam theorems are out of `logHashInjective`'s proof closure, and the
    bundle's own data is realizable by an honest prover at any accumulator.
 
-2. **Draining `CommitSurface`'s four gated floors would NOT by itself re-inhabit it — and that is now
-   a THEOREM, not a caution.** Its FIFTH field `restFrame : RestHashIffFrame RH` is invisible to BOTH
-   instruments, and `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` proves it FALSE
-   for EVERY `RH : RecordKernelState → ℤ` at EVERY width — by Cantor, because two of the components
-   the rest-hash must separate are FUNCTION SPACES (`bal : CellId → AssetId → ℤ`,
-   `Caps = Label → List Cap`, all three indices `ℕ`), so the domain has size at least `2 ^ ℵ₀` while
-   `ℤ` is countable. That is STRICTLY stronger than every gated floor in the campaign, which are false
-   only at deployed BabyBear width; widening the digest — the repair for the CR floors — does nothing
-   here, and there is no instance to be per-instance at. The `example` below discharges the
-   consequence: `CommitSurface` has NO inhabitant, so this cutover's `∀ S`-quantified inhabitants are
-   still vacuous through `S`, exactly as §1 says. Anyone porting `CommitSurface` must shed `restFrame`
-   in the SAME pass as the four; the structural repair is the one that class always wants and
-   `Verify/InjSpelledFloors` already names — digest the FINITE support actually touched (the
-   `accounts : Finset CellId` rows), never the whole function. -/
+2. **⚑ RESOLVED 2026-07-31 — the fifth field is SHED, and this note is kept as the record of what it
+   cost.** The text here used to read: *"Draining `CommitSurface`'s four gated floors would NOT by
+   itself re-inhabit it — and that is now a THEOREM, not a caution"*, and it carried an
+   `example (S : CommitSurface) : False` proving the bundle uninhabited from
+   `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` applied to `S.restFrame`.
 
-/-- ⚑ **`CommitSurface` HAS NO INHABITANT AT ALL** — one application of the cardinality refutation to
-the surface's own `restFrame` field. So the residual named above is not a suspicion: every theorem in
-this tree quantified over a `CommitSurface` is vacuous today, and the `∀ S`-shaped inhabitants of §1
-and §5 are honest about exactly that. Unnamed for the same reason as those: a NAMED declaration whose
-type mentions `CommitSurface` is a `bundle-user` carrier and `#floor_ratchet` gates it. -/
-example (S : CommitSurface) : False :=
-  Dregg2.Circuit.RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality S.RH S.restFrame
+   That example is DELETED because it is now FALSE, which is the whole point. The fifth field is
+   `restFrame : RestFrameFin.RestHashIffFrameFin RH` — the same 18-conjunct body restricted to
+   FINITELY-REPRESENTABLE states — and
+   `Verify.RestFrameFiniteSupportSuccessor` builds a CLOSED inhabitant of the whole structure at the
+   reference sponge. The prediction in this note was CORRECT and was followed: `restFrame` was shed in
+   the SAME pass, by exactly the repair named here (digest the finite support actually touched).
+
+   ⚠ **What did NOT change: the four gated floors.** `cmbInj`/`compInj`/`compNInj`/`leafInj` are
+   still `compressInjective`/`compressNInjective`/`cellLeafInjective`, still REFUTED at deployed
+   BabyBear width by pigeonhole, and `#floor_ratchet` still counts `CommitSurface` as a floor bundle
+   — correctly. So the inhabitant that exists is at the UNBOUNDED reference pole, not a deployed
+   object, and §1/§5's inhabitants stay `example`s for exactly the old reason. What moved is that the
+   bundle went from uninhabited at EVERY parameter (a cardinality impossibility, unrepairable by any
+   widening) to uninhabited only at DEPLOYED width (a pigeonhole, repairable by the keyed-CR
+   advantage-bound campaign already live in `HashFloorHonesty`/`Poseidon2KeyedBridge`). -/
 
 /-! (end §7) -/
 

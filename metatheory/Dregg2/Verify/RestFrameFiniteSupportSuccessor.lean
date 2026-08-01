@@ -81,48 +81,29 @@ open Dregg2.Circuit.StateCommit (satisfiedS encodeS stateCircuit cSRestFrame sre
 
 set_option autoImplicit false
 
-/-! ## §1 — the successor obligation, STATED.
+/-! ## §1 — the successor obligation, ADOPTED (no longer declared here).
 
-`FiniteRepresentable` is the missing well-formedness side condition: exactly the invariant
-`AccountsWF` already supplies for `cell`, generalized to the other nine per-cell/per-label
-side-tables `RestHashIffFrame` also binds. `RestHashIffFrameFin` is then `RestHashIffFrame`'s body,
-UNCHANGED, gated by it — the entire repair is a SMALLER DOMAIN, not a different conclusion. -/
+⚑ **MOVED 2026-07-31.** `FiniteRepresentable` and `RestHashIffFrameFin` were DECLARED in this file
+when it was a de-risking study. They are now the LIVE obligation — `StateCommit.recStateCommit_binds_kernel`
+and `CircuitSoundness.CommitSurface.restFrame` both take them — so they had to move BELOW
+`StateCommit` in the import graph, and they live in `Dregg2.Circuit.RestFrameFin`. This file's copies
+are DELETED rather than kept in sync: two shapes that agree today are two shapes that will disagree
+later, and a duplicated `RestHashIffFrameFin` is precisely the kind of pair that would silently
+diverge from the one the apex actually carries.
 
-/-- **`FiniteRepresentable k`** — `k` is the `denote`-image of some `FinKernelState`: every
-per-cell/per-label side-table (`bal`, `caps`, `slotCaveats`, `lifecycle`, `deathCert`, `delegate`,
-`delegations`, `delegationEpoch`, `delegationEpochAt`, `heaps`) has FINITE support, sorted-nodup
-encoded by `FinKernelState` — the touched-row `Finset` view `Verify.InjSpelledFloors` prescribes.
-Every REACHABLE `RecordKernelState` satisfies this in principle
-(`FinKernelState.denote_surjective_on_reachable`, GIVEN the per-effect commuting square that lane
-owns as an explicit, still-undischarged hypothesis); an ARBITRARY one need not —
-`RestFrameCardinalityFloor.balFam` is built entirely from states this predicate excludes (for an
-infinite `s : Set Nat`, `balFam s` has infinite `bal`-support and is not `FiniteRepresentable`). -/
-def FiniteRepresentable (k : RecordKernelState) : Prop := ∃ f : FinKernelState, denote f = k
+`RestFrameFin` also carries the piece this file could only assert in prose: an `AccountsWF` kernel
+that is NOT `FiniteRepresentable` (`not_finiteRepresentable_of_lifecycle_ne_zero`), so the domain
+restriction is a machine-checked fact rather than a claim about `balFam`. -/
 
-theorem finiteRepresentable_of_denote (f : FinKernelState) : FiniteRepresentable (denote f) :=
-  ⟨f, rfl⟩
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin
+  finiteRepresentable_of_denote not_finiteRepresentable_of_lifecycle_ne_zero)
 
-/-- **`RestHashIffFrameFin` — THE F1 SUCCESSOR.** Token-for-token `StateCommit.RestHashIffFrame`'s
-18-conjunct body (same order, same direction, same `∀ k k' : RecordKernelState` binder — so a call
-site changes by ADDING two hypotheses, never by changing shape), gated on both states being
-`FiniteRepresentable`. -/
-def RestHashIffFrameFin (RH : RecordKernelState → ℤ) : Prop :=
-  ∀ k k' : RecordKernelState, FiniteRepresentable k → FiniteRepresentable k' →
-    (RH k = RH k' ↔
-      (k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
-        ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked ∧ k'.commitments = k.commitments
-        ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
-        ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
-        ∧ k'.delegationEpoch = k.delegationEpoch ∧ k'.delegationEpochAt = k.delegationEpochAt
-        ∧ k'.heaps = k.heaps ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot
-        ∧ k'.commitmentsRoot = k.commitmentsRoot))
-
-/-- **Sanity: the successor is a genuine WEAKENING, not a lookalike.** If (per impossibile) the full
-carrier `RestHashIffFrame RH` held, the restricted `RestHashIffFrameFin RH` would follow for free —
-the restriction only ever makes the obligation EASIER to satisfy. `RestHashIffFrame` unfolds to
-exactly `∀ k k', RH k = RH k' ↔ (18-conjunct)`, defeq to the body above, so this is immediate. -/
+/-- The genuine-weakening weld (`RestHashIffFrame → RestHashIffFrameFin`) now lives beside the full
+carrier, as `StateCommit.restHashIffFrameFin_of_full`; re-pinned here so this file's ladder still
+reads top-to-bottom. -/
 theorem finFrame_of_full (RH : RecordKernelState → ℤ) (hFull : RestHashIffFrame RH) :
-    RestHashIffFrameFin RH := fun k k' _ _ => hFull k k'
+    RestHashIffFrameFin RH :=
+  Dregg2.Circuit.StateCommit.restHashIffFrameFin_of_full RH hFull
 
 /-! ## §2 — SATISFIABLE, unconditionally. -/
 
@@ -284,22 +265,198 @@ into "the successor is satisfiable AT THE STATES THE 234 THEOREMS ARE ACTUALLY A
 
 **Summed price, in three buckets:**
 1. ~230 mechanical binder-list widenings + threading (RestHashIffFrame sites) — low effort, no new
-   math, contingent on (3).
+   math, contingent on (3) TO APPLY AT REAL STATES (but see §5b: not to LAND).
 2. ~13 new small files generalizing the same pattern to the `RestIffNo*` family — mechanical but
-   unwritten, contingent on (3).
+   unwritten, contingent on (3) in the same sense.
 3. ~17-25 per-effect `hpres` proofs (`FinKernelState`'s undischarged honesty gate) — genuine new
    engineering, the load-bearing cost, and a PREREQUISITE for (1) and (2) to apply to any REAL
    (post-genesis) state rather than only to the abstract witnesses this file exhibits.
 Independent of all three: the width-bound legs (1-4) remain refuted at deployed BabyBear parameters
 regardless, so even a completed port does not revive `deployed_system_secure`/
 `unfoolability_guarantee` on its own.
+
+## §5b — ⚑ THE PRICING ABOVE WAS CORRECT AND WAS READ WRONG. Measured 2026-07-31.
+
+The three buckets are real and none of them is retracted. But the sentence a reader takes away —
+*"~230 binder positions, 13 uncounted siblings, and 17-25 handler commuting squares"* — was quoted as
+the cost of **RE-INHABITING `CommitSurface`**, and it is not. It is the cost of porting EVERY
+`RestHashIffFrame` consumer in the tree, which is a different and much larger job.
+
+**What re-inhabiting the bundle actually took, measured by doing it:**
+
+  * ONE field-type change (`restFrame`), exactly as §5 predicted;
+  * `StateCommit.recStateCommit_binds_kernel` rewritten IN PLACE (`hRest` weakened, `hfin`/`hfin'`
+    added beside `hwf`/`hwf'`), and the same two hypotheses threaded to the ~9 declarations that
+    apply it or `CommitSurface.commit_binds` — `CircuitSoundness` (3), `StateCommitReduce` (6),
+    `CrossTurnFreshness` (the `TurnChain.finrep` field + 5), `Freshness` (4),
+    `CommitFaithfulRegrounded` (7 — a SECOND bundle, ported in the same pass),
+    `HistoryAggregation` (`SeamStruct` + 3), `CouncilCommit` (3), `Market.WideCommitBoundary` (2);
+  * ZERO of bucket (3). No `hpres`, no `finStep`, no per-effect commuting square.
+
+**Why bucket (3) is not a prerequisite for landing.** `hpres` is what would let a call site DISCHARGE
+`FiniteRepresentable k` for an executor-reached `k`. Landing the successor only requires that the
+hypothesis be STATEABLE and the surface CONSTRUCTIBLE — and `restHashIffFrameFin_satisfiable` above
+is a CLOSED theorem, so the surface is constructible today (§6). Bucket (3) is the cost of making the
+uniqueness half apply to a RUNNING chain, which is exactly where it now sits and is named.
+
+⚠ **So the honest sequencing is the reverse of the one the pricing implied.** Doing (3) first would
+have been 1000-3000 lines of per-effect proof feeding an obligation nothing yet consumed. Landing the
+cutover first makes (3) the ONLY thing between a constructed reference surface and a deployed claim
+about a live chain — a named, single, load-bearing residual instead of a diffuse one.
 -/
 
+/-! ## §6 — ★ THE CONSTRUCTED INHABITANT: `CommitSurface` has a value, for the first time.
+
+`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes the apex's five-field bundle at
+EVERY parameter, and `CircuitSoundness.CommitSurface` carried the same five as FIELDS — so it had no
+inhabitant, so every theorem quantified over one was vacuous and (worse) UNREFUTABLE:
+`(S : CommitSurface) → ¬ P S` is true for free.
+
+That is no longer the case. The five fields are now discharged by CLOSED proofs at the reference
+sponge — four from `Poseidon2SpongeCR Reference.refSponge` (`refSponge_CR`, itself closed) and the
+fifth from `restHashIffFrameFin_satisfiable` above. Nothing below carries a hypothesis.
+
+⚑ **WHY THESE ARE `example`s AND NOT NAMED THEOREMS.** A declaration whose TYPE mentions
+`CommitSurface` is a `#floor_ratchet` `bundle-user` carrier and the gate hard-errors on any new one —
+CORRECTLY, because the bundle's four injectivity fields are still refuted at DEPLOYED BabyBear width.
+Naming these would be claiming a deployed object; they are reference-pole objects. This is the same
+discipline `TurnDecodeChainLogBundleCutoverCheck` §1/§5 adopted, for the same reason. The build
+elaborating them IS the check. -/
+
+section Inhabitant
+
+open Dregg2.Circuit.CircuitSoundness (CommitSurface StateDecode PublishedCommit
+  stateDecode_pre_faithful)
+open Dregg2.Circuit.FinBindsKernel (CH_fin CH_fin_injective finInit_accountsWF)
+open Dregg2.Circuit.Freshness (spongeCompress spongeCompress_inj)
+open Dregg2.Circuit.StateCommit (AccountsWF recStateCommit)
+open Dregg2.Circuit.Poseidon2Binding (compressNInjective_of_poseidon2CR)
+open Dregg2.Exec (RecChainedState)
+
+/-- ★ **A CLOSED INHABITANT OF `CommitSurface`.** Every field is discharged; no hypothesis is
+carried. `cmb`/`compress` are 2-element sponges over the reference sponge, `compressN` IS it, `CH` is
+`CH_fin`, `RH` is `RH_fin` — and `restFrame` is `restHashIffFrameFin_satisfiable`, the field that had
+no possible value before today.
+
+⚠ **REFERENCE POLE, NOT DEPLOYED.** `Reference.refSponge` is `Encodable.encode`, which is genuinely
+injective and genuinely NOT BabyBear-bounded. A BabyBear-bounded inhabitant is IMPOSSIBLE and always
+was — `ApexPremiseVacuity.apexCommitFloorSansRest_false_at_babyBear` refutes the four injectivity
+fields at deployed width by pigeonhole, independent of anything in this file. What changed is the
+KIND of impossibility: from "no inhabitant at any parameter, by cardinality, unrepairable by
+widening" to "no inhabitant at deployed width, by pigeonhole, repaired by the keyed-CR
+advantage-bound campaign". -/
+noncomputable example : CommitSurface where
+  CH        := CH_fin Reference.refSponge
+  RH        := RH_fin Reference.refSponge
+  cmb       := spongeCompress Reference.refSponge
+  compress  := spongeCompress Reference.refSponge
+  compressN := Reference.refSponge
+  cmbInj    := spongeCompress_inj Reference.refSponge Reference.refSponge_CR
+  compInj   := spongeCompress_inj Reference.refSponge Reference.refSponge_CR
+  compNInj  := compressNInjective_of_poseidon2CR Reference.refSponge_CR
+  leafInj   := CH_fin_injective Reference.refSponge Reference.refSponge_CR
+  restFrame := restHashIffFrameFin_satisfiable
+
+/-- **★ UNIQUENESS FIRES, AND IT BITES.** Over the constructed surface, a forged pre-state that
+claims the SAME published root as `denote finInit` is REFUSED. This is `stateDecode_pre_faithful`
+applied at a real instance — the theorem that was unrefutable-and-vacuous yesterday, doing work.
+
+The two `FiniteRepresentable` hypotheses are supplied honestly: `denote finInit` by construction,
+the forgery by assumption (a forger who cannot produce a finitely-supported state is outside the
+claim, which is exactly what §5b names as the remaining residual). Stated over an ARBITRARY
+`S : CommitSurface` on purpose — the surface above is what makes that quantifier non-empty, and the
+refusal itself needs no property of `S` beyond the bundle it already carries. -/
+example (S : CommitSurface) (t : Turn) (forged : RecChainedState)
+    (hwf : AccountsWF forged.kernel) (hfin : FiniteRepresentable forged.kernel)
+    (hne : forged.kernel ≠ denote finInit)
+    (hclaim : S.commit forged.kernel t = S.commit (denote finInit) t) : False := by
+  have hdec₁ : StateDecode S ⟨S.commit (denote finInit) t, S.commit (denote finInit) t, t⟩
+      ⟨denote finInit, []⟩ ⟨denote finInit, []⟩ :=
+    ⟨rfl, rfl, finInit_accountsWF, finInit_accountsWF⟩
+  have hdec₂ : StateDecode S ⟨S.commit (denote finInit) t, S.commit (denote finInit) t, t⟩
+      forged forged :=
+    ⟨hclaim.symm, hclaim.symm, hwf, hwf⟩
+  exact hne (stateDecode_pre_faithful S _ (finiteRepresentable_of_denote finInit) hfin
+    hdec₁ hdec₂).symm
+
+/-! ### ⚑ THE `FiniteRepresentable` HYPOTHESES ARE LOAD-BEARING — the binding is FALSE without them.
+
+A narrowed theorem whose narrowing does no work would be the same disease one level down. It does
+work: at the constructed surface there are TWO DISTINCT `AccountsWF` kernels with the SAME root.
+Both stamp every cell's `lifecycle` non-zero, so both are outside `FiniteRepresentable`
+(`RestFrameFin.not_finiteRepresentable_of_lifecycle_ne_zero`), and `RH_fin` sends every non-image
+state to `0` — so the rest-hash cannot separate them and the cell digests agree by construction. -/
+
+/-- Every cell stamped `lifecycle = 1`; `accounts = ∅` and every cell the default, so `AccountsWF`. -/
+def lifeAll : RecordKernelState where
+  accounts  := ∅
+  cell      := fun _ => default
+  caps      := fun _ => []
+  lifecycle := fun _ => 1
+
+/-- The same, with cell `0` stamped `2` instead — DISTINCT from `lifeAll`, same `accounts`/`cell`. -/
+def lifeAll' : RecordKernelState where
+  accounts  := ∅
+  cell      := fun _ => default
+  caps      := fun _ => []
+  lifecycle := fun c => if c = 0 then 2 else 1
+
+theorem lifeAll_wf : AccountsWF lifeAll := fun _ _ => rfl
+theorem lifeAll'_wf : AccountsWF lifeAll' := fun _ _ => rfl
+
+theorem lifeAll_ne : lifeAll ≠ lifeAll' := by
+  intro h
+  have := congrFun (congrArg RecordKernelState.lifecycle h) 0
+  simp [lifeAll, lifeAll'] at this
+
+theorem lifeAll_not_finrep : ¬ FiniteRepresentable lifeAll :=
+  not_finiteRepresentable_of_lifecycle_ne_zero lifeAll (fun c => by
+    show (1 : Nat) ≠ 0
+    decide)
+
+theorem lifeAll'_not_finrep : ¬ FiniteRepresentable lifeAll' :=
+  not_finiteRepresentable_of_lifecycle_ne_zero lifeAll' (fun c => by
+    show (if c = 0 then 2 else 1) ≠ 0
+    split <;> decide)
+
+/-- Both states are off the `denote` image, so the reference rest-hash collapses them to `0`. -/
+theorem RH_fin_lifeAll_eq :
+    RH_fin Reference.refSponge lifeAll = RH_fin Reference.refSponge lifeAll' := by
+  have h1 : ¬ ∃ f : FinKernelState, denote f = lifeAll := lifeAll_not_finrep
+  have h2 : ¬ ∃ f : FinKernelState, denote f = lifeAll' := lifeAll'_not_finrep
+  unfold RH_fin
+  rw [dif_neg h1, dif_neg h2]
+
+/-- **⚑ THE LOAD-BEARING TOOTH.** At the constructed surface's own primitives, two DISTINCT
+`AccountsWF` kernels share a full-state root. So `recStateCommit_binds_kernel` / `commit_binds`
+WITHOUT their `FiniteRepresentable` hypotheses would be FALSE — the narrowing is not decoration, and
+the theorem it produced is not the old one with extra ink. -/
+theorem finrep_load_bearing (t : Turn) :
+    lifeAll ≠ lifeAll' ∧
+      Dregg2.Circuit.StateCommit.recStateCommit (CH_fin Reference.refSponge)
+          (RH_fin Reference.refSponge)
+          (spongeCompress Reference.refSponge) (spongeCompress Reference.refSponge)
+          Reference.refSponge lifeAll t
+        = Dregg2.Circuit.StateCommit.recStateCommit (CH_fin Reference.refSponge)
+          (RH_fin Reference.refSponge)
+          (spongeCompress Reference.refSponge) (spongeCompress Reference.refSponge)
+          Reference.refSponge lifeAll' t := by
+  refine ⟨lifeAll_ne, ?_⟩
+  show Dregg2.Circuit.StateCommit.recStateCommit _ _ _ _ _ _ _
+     = Dregg2.Circuit.StateCommit.recStateCommit _ _ _ _ _ _ _
+  unfold Dregg2.Circuit.StateCommit.recStateCommit
+  rw [RH_fin_lifeAll_eq]
+  rfl
+
+end Inhabitant
 #assert_axioms finFrame_of_full
 #assert_axioms restHashIffFrameFin_satisfiable
 #assert_axioms restHashIffFrameFin_fires
 #assert_axioms restHashIffFrameFin_refutable
 #assert_axioms restHashIffFrameFin_not_provable
 #assert_axioms stateCircuit_rejects_field_tamper_fin
+#assert_axioms lifeAll_not_finrep
+#assert_axioms lifeAll'_not_finrep
+#assert_axioms finrep_load_bearing
 
 end Dregg2.Verify.RestFrameFiniteSupportSuccessor

@@ -669,7 +669,7 @@ theorem unfoolability_guarantee
     (hroot : verify agg.root = true)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (hgen : KernelGenesisPin g steps) (hstruct : SeamStruct steps) :
     AggregateAttests AProof CH RH cmb compress compressN agg g steps
       ∧ recTotal (lastStateOf g steps).kernel = recTotal g.kernel :=
@@ -904,7 +904,7 @@ theorem deployed_system_secure
     (hroot : verify agg.root = true)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (hgen : KernelGenesisPin g steps) (hstruct : SeamStruct steps) :
     -- A:
     (∀ e ∈ forestEdgesG f, capAuthConferred (attenuate e.1 e.2) ⊆ capAuthConferred e.2)

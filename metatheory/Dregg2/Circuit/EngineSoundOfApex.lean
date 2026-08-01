@@ -90,6 +90,7 @@ open Dregg2.Circuit.ClosureFinal (ClosedWitness lightclient_unfoolable_circuit_s
 open Dregg2.Circuit.ClosureSurface (S_live)
 open Dregg2.Circuit.StateCommit
   (compressInjective compressNInjective cellLeafInjective RestHashIffFrame)
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Distributed.HistoryAggregation (ChainStep)
 open Dregg2.Circuit.RecursiveAggregation (Aggregate EngineSound)
@@ -110,7 +111,7 @@ variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
 variable (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
 variable (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-variable (hRest : RestHashIffFrame RH)
+variable (hRest : RestHashIffFrameFin RH)
 variable (hash : List ℤ → ℤ) (LH : List Dregg2.Exec.Turn → ℤ)
 variable [inst : StarkSound hash Rfix]
 
@@ -254,7 +255,7 @@ variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
 variable (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
 variable (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-variable (hRest : RestHashIffFrame RH)
+variable (hRest : RestHashIffFrameFin RH)
 variable (hash : List ℤ → ℤ) (LH : List Dregg2.Exec.Turn → ℤ)
 variable [inst : StarkSound hash Rfix]
 

@@ -136,7 +136,7 @@ example {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
     (_hCR : Poseidon2SpongeCR hash)
     {pc : PublishedCommit} {pubLogPre pubLogPost : ℤ} {pre post : RecChainedState}
@@ -173,7 +173,7 @@ example : ∀ {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
     {pc : PublishedCommit} {pubLogPre pubLogPost : ℤ} {pre post : RecChainedState},
     StateDecodeLog (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)

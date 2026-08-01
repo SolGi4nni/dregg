@@ -145,7 +145,7 @@ theorem transfer_descriptorRefines_closedLog
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
@@ -184,7 +184,7 @@ theorem cellSeal_descriptorRefines_closedLog
     {cmb compress : ℤ → ℤ → ℤ} {compressN0 : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN0} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (compressN : List Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem
       → Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem)
@@ -223,7 +223,7 @@ theorem cellSeal_descriptorRefines_closedLog_sat
     {cmb compress : ℤ → ℤ → ℤ} {compressN0 : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN0} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
@@ -270,7 +270,7 @@ theorem revoke_descriptorRefines_closedLog
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (pre post : RecChainedState) (holder tt : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
@@ -295,7 +295,7 @@ theorem revoke_descriptorRefines_closedLog
 
 The three closed-with-log rungs carry EXACTLY:
   * the Poseidon/Merkle CR set (`compressInjective cmb/compress`, `compressNInjective compressN`,
-    `cellLeafInjective CH`, `RestHashIffFrame RH`) — bundled in `S_live`, the SAME set `ClosureSurface`
+    `cellLeafInjective CH`, `RestFrameFin.RestHashIffFrameFin RH`) — bundled in `S_live`, the SAME set `ClosureSurface`
     carries (the kernel faithfulness floor);
   * `logHashInjective LH` — the log-CR carrier (in `StateDecodeLog.hLogInj`), now CONSUMED to FORCE the
     `.log` advance (it was un-bound in `ClosureSurface`);

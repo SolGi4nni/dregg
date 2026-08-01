@@ -134,7 +134,7 @@ theorem deployed_system_secure_grounded
     (hroot : verify agg.root = true)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (hgen : KernelGenesisPin g steps) (hstruct : SeamStruct steps) :
     -- A:
     (∀ e ∈ forestEdgesG f, capAuthConferred (attenuate e.1 e.2) ⊆ capAuthConferred e.2)
@@ -206,7 +206,7 @@ theorem deployed_system_secure_grounded_v2
     (hroot : verify agg.root = true)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (hgen : KernelGenesisPin g steps) (hstruct : SeamStruct steps) :
     -- A:
     (∀ e ∈ forestEdgesG f, capAuthConferred (attenuate e.1 e.2) ⊆ capAuthConferred e.2)

@@ -295,7 +295,7 @@ variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
 variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
 variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-variable {hRest : RestHashIffFrame RH}
+variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ}
 
 local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest

@@ -170,15 +170,17 @@ theorem finalized_commit_binds_revoked
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k k' : RecordKernelState) (t : Dregg2.Exec.Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) :
     k.revoked = k'.revoked := by
   have hk : k = k' :=
     recStateCommit_binds_kernel CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest k k' t hwf hwf' hroot
+      hCmb hCompress hCompressN hLeaf hRest k k' t hwf hwf' hfin hfin' hroot
   rw [hk]
 
 /-! ## §4 — THE SETTLEMENT SOUNDNESS THEOREM (the COMPOSE).
@@ -213,7 +215,7 @@ theorem settlement_soundness
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
@@ -254,7 +256,7 @@ theorem settlement_soundness_single_machine
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)

@@ -329,9 +329,11 @@ theorem substitution_win_of_root_attack {Guardian : Type} (D : RosterDeployment 
     (compressN : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (n : ℕ) (t : D.Tag) (k k' : RecordKernelState) (turn : Turn) (r r' : List Guardian)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hcommit : councilCommitOf D.idCell k = D.hash t r)
     (hcommit' : councilCommitOf D.idCell k' = D.hash t r')
     (hroot : recStateCommit CH RH cmb compress compressN k turn
@@ -340,7 +342,7 @@ theorem substitution_win_of_root_attack {Guardian : Type} (D : RosterDeployment 
     (rosterSubstitutionGame D).wins n t ((k, k'), (r, r')) :=
   ⟨hcommit, hcommit',
    recStateCommit_recovers_council CH RH cmb compress compressN
-     hCmb hCompress hCompressN hLeaf hRest k k' turn D.idCell hwf hwf' hroot,
+     hCmb hCompress hCompressN hLeaf hRest k k' turn D.idCell hwf hwf' hfin hfin' hroot,
    hne⟩
 
 /-! ## §4 — THE REDUCTION: a council substituter IS a roster collision finder. -/

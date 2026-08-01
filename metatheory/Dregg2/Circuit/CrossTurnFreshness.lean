@@ -41,6 +41,7 @@ namespace Dregg2.Circuit.CrossTurnFreshness
 open Dregg2.Circuit
 open Dregg2.Circuit.CircuitSoundness (CommitSurface)
 open Dregg2.Circuit.StateCommit
+open Dregg2.Circuit.RestFrameFin (FiniteRepresentable)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull (FullActionA)
 open Dregg2.Exec.EffectTransfer (nonceOf)
@@ -55,26 +56,33 @@ kernel" to "the commitment is injective in the nonce". -/
 /-- The agent (turn-author) cell's stored replay nonce, read off a kernel state. -/
 def agentNonce (k : RecordKernelState) (agent : CellId) : Int := nonceOf (k.cell agent)
 
-/-- **`commit_inj_nonce` — the commitment is INJECTIVE in the agent nonce.** Two `AccountsWF` kernels
-whose full-state commitments agree (at the same turn) have the SAME agent nonce. Immediate from
-`CommitSurface.commit_binds` (equal commit ⟹ equal kernel ⟹ equal `cell agent` ⟹ equal nonce). This
-is the load-bearing fact: a commitment cannot hide a different nonce. -/
+/-- **`commit_inj_nonce` — the commitment is INJECTIVE in the agent nonce.** Two `AccountsWF`,
+FINITELY-REPRESENTABLE kernels whose full-state commitments agree (at the same turn) have the SAME
+agent nonce. Immediate from `CommitSurface.commit_binds` (equal commit ⟹ equal kernel ⟹ equal
+`cell agent` ⟹ equal nonce). This is the load-bearing fact: a commitment cannot hide a different
+nonce.
+
+⚑ **NARROWED 2026-07-31 with `CommitSurface.commit_binds`** — `hfin`/`hfin'` are new, and sit beside
+`hwf`/`hwf'`. See `RestFrameFin` for why (the predecessor was applicable to any kernel and vacuous at
+every parameter). -/
 theorem commit_inj_nonce (S : CommitSurface) (k k' : RecordKernelState) (t : Turn)
     (agent : CellId) (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : S.commit k t = S.commit k' t) :
     agentNonce k agent = agentNonce k' agent := by
-  have hk : k = k' := S.commit_binds k k' t hwf hwf' h
+  have hk : k = k' := S.commit_binds k k' t hwf hwf' hfin hfin' h
   subst hk; rfl
 
-/-- **`commit_neq_of_nonce_neq` — the contrapositive (the replay teeth).** If two `AccountsWF`
-kernels carry DIFFERENT agent nonces, their full-state commitments DIFFER. A monotone-advancing
-nonce therefore drives a commitment that never returns. -/
+/-- **`commit_neq_of_nonce_neq` — the contrapositive (the replay teeth).** If two `AccountsWF`,
+finitely-representable kernels carry DIFFERENT agent nonces, their full-state commitments DIFFER. A
+monotone-advancing nonce therefore drives a commitment that never returns. -/
 theorem commit_neq_of_nonce_neq (S : CommitSurface) (k k' : RecordKernelState) (t : Turn)
     (agent : CellId) (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hne : agentNonce k agent ≠ agentNonce k' agent) :
     S.commit k t ≠ S.commit k' t := by
   intro h
-  exact hne (commit_inj_nonce S k k' t agent hwf hwf' h)
+  exact hne (commit_inj_nonce S k k' t agent hwf hwf' hfin hfin' h)
 
 /-! ## §2 — the turn-chain model: a sequence of states with a strictly-increasing agent nonce.
 
@@ -128,18 +136,21 @@ nonce, the live commitment NEVER returns to an earlier value. -/
 commitments at turns `i` and `j` DIFFER. (The nonces differ by strict monotonicity, and the
 commitment is injective in the nonce.) This is the formal "the commitment never cycles". -/
 theorem TurnChain.commit_no_repeat {S : CommitSurface} {agent : CellId} {t : Turn}
-    (C : TurnChain S agent t) {i j : Nat} (hne : i ≠ j) :
+    (C : TurnChain S agent t) (hfin : ∀ n, FiniteRepresentable (C.seq n))
+    {i j : Nat} (hne : i ≠ j) :
     C.commitAt i ≠ C.commitAt j := by
   -- WLOG `i < j` (else swap); the nonces differ, so the commitments differ.
   rcases Nat.lt_or_ge i j with hlt | hge
   · have hnonce : agentNonce (C.seq i) agent ≠ agentNonce (C.seq j) agent :=
       ne_of_lt (C.nonce_mono_lt hlt)
-    exact commit_neq_of_nonce_neq S (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) hnonce
+    exact commit_neq_of_nonce_neq S (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j)
+      (hfin i) (hfin j) hnonce
   · have hji : j < i := lt_of_le_of_ne hge (fun h => hne h.symm)
     have hnonce : agentNonce (C.seq j) agent ≠ agentNonce (C.seq i) agent :=
       ne_of_lt (C.nonce_mono_lt hji)
     intro h
-    exact commit_neq_of_nonce_neq S (C.seq j) (C.seq i) t agent (C.wf j) (C.wf i) hnonce h.symm
+    exact commit_neq_of_nonce_neq S (C.seq j) (C.seq i) t agent (C.wf j) (C.wf i)
+      (hfin j) (hfin i) hnonce h.symm
 
 /-! ## §4 — the NO-REPLAY theorem: a proof is applicable at most once.
 
@@ -162,12 +173,13 @@ matches of the SAME anchor force the SAME turn — there is no second moment at 
 proof re-matches. This is exactly "commit-chain + nonce-monotone ⟹ each proof applicable at most
 once". -/
 theorem no_replay {S : CommitSurface} {agent : CellId} {t : Turn}
-    (C : TurnChain S agent t) {i j : Nat} {preCommit : ℤ}
+    (C : TurnChain S agent t) (hfin : ∀ n, FiniteRepresentable (C.seq n))
+    {i j : Nat} {preCommit : ℤ}
     (hi : LiveCommitMatches C i preCommit) (hj : LiveCommitMatches C j preCommit) :
     i = j := by
   by_contra hne
   -- both match the same anchor ⇒ the two live commitments are equal ⇒ contradicts no-repeat.
-  exact C.commit_no_repeat hne (by rw [hi, hj] : C.commitAt i = C.commitAt j)
+  exact C.commit_no_repeat hfin hne (by rw [hi, hj] : C.commitAt i = C.commitAt j)
 
 /-- **`replay_rejected_after_apply` — the mutation-confirm, stated forward.** Suppose a proof's
 pre-anchor matched at turn `i` (`LiveCommitMatches C i preCommit`). Then at EVERY strictly-later turn
@@ -175,11 +187,12 @@ pre-anchor matched at turn `i` (`LiveCommitMatches C i preCommit`). Then at EVER
 replay of the SAME proof is rejected (`¬ LiveCommitMatches C j preCommit`). The live commitment
 `≠ pre` once it has advanced. -/
 theorem replay_rejected_after_apply {S : CommitSurface} {agent : CellId} {t : Turn}
-    (C : TurnChain S agent t) {i j : Nat} {preCommit : ℤ}
+    (C : TurnChain S agent t) (hfin : ∀ n, FiniteRepresentable (C.seq n))
+    {i j : Nat} {preCommit : ℤ}
     (hi : LiveCommitMatches C i preCommit) (hlt : i < j) :
     ¬ LiveCommitMatches C j preCommit := by
   intro hj
-  exact (Nat.ne_of_lt hlt) (no_replay C hi hj)
+  exact (Nat.ne_of_lt hlt) (no_replay C hfin hi hj)
 
 /-! ## §4b — the nonce-monotone bridge to the deployed prologue (the CAS realization check).
 
@@ -1255,12 +1268,13 @@ abstract chain onto the real `runTurn`-driven sequence — the payoff the nonce-
 theorem deployed_no_replay (S : CommitSurface) (agent : CellId) (t : Turn)
     (seq : Nat → RecChainedState)
     (wf : ∀ i, AccountsWF (seq i).kernel)
+    (finrep : ∀ i, FiniteRepresentable (seq i).kernel)
     (advance : ∀ i, agentNonce (seq i).kernel agent < agentNonce (seq (i + 1)).kernel agent)
     {i j : Nat} {preCommit : ℤ}
     (hi : LiveCommitMatches (acceptedSeq_to_TurnChain S agent t seq wf advance) i preCommit)
     (hj : LiveCommitMatches (acceptedSeq_to_TurnChain S agent t seq wf advance) j preCommit) :
     i = j :=
-  no_replay (acceptedSeq_to_TurnChain S agent t seq wf advance) hi hj
+  no_replay (acceptedSeq_to_TurnChain S agent t seq wf advance) finrep hi hj
 
 /-! ## §4e — THE FOREST-DRIVEN DEPLOYED NO-REPLAY (the whole-executor close — hypothesis DISCHARGED).
 
@@ -1298,6 +1312,7 @@ theorem deployed_forest_no_replay (S : CommitSurface) (agent : CellId) (t : Turn
     (seq : Nat → RecChainedState) (ctxs : Nat → Admission.AdmCtx) (hdrs : Nat → Admission.TurnHdr)
     (fwd : Nat → FullForest.FullForestA)
     (wf : ∀ i, AccountsWF (seq i).kernel)
+    (finrep : ∀ i, FiniteRepresentable (seq i).kernel)
     (hagent : ∀ i, (hdrs i).agent = agent)
     (hadm : ∀ i, Admission.admissible (ctxs i) (hdrs i) (seq i) = true)
     (hstep : ∀ i, Admission.runTurn (ctxs i) (hdrs i) (seq i)
@@ -1311,7 +1326,7 @@ theorem deployed_forest_no_replay (S : CommitSurface) (agent : CellId) (t : Turn
           (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)) j preCommit) :
     i = j :=
   no_replay (acceptedSeq_to_TurnChain S agent t seq wf
-    (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)) hi hj
+    (forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)) finrep hi hj
 
 /-! ## §5 — NON-VACUITY: the no-replay machinery has TEETH (a real chain exists, both polarities).
 
@@ -1319,34 +1334,75 @@ A concrete monotone chain (the identity-balance kernel with `nonce = i`) inhabit
 `no_replay` is not vacuously true; and `commit_no_repeat` distinguishes two indices. We exhibit the
 chain abstractly over an arbitrary `CommitSurface` (the CR facts are bundled in `S`). -/
 
-/-- A concrete witness chain: the kernel at turn `i` is a base kernel with the agent's nonce set to
-`i`. `AccountsWF` and strict monotonicity hold by construction, so `TurnChain` is INHABITED. -/
-def witnessChain (S : CommitSurface) (agent : CellId) (t : Turn)
-    (base : RecordKernelState) (hwf : AccountsWF base) (hin : agent ∈ base.accounts) :
+/-! ### The witness chain, built at the FINITE level so `finrep` is PROVED, not carried.
+
+⚑ The old `witnessChain` took an ARBITRARY `base : RecordKernelState`, which cannot discharge the
+new `FiniteRepresentable` obligation (an arbitrary kernel need not have finite support —
+`RestFrameFin.not_finiteRepresentable_of_lifecycle_ne_zero`). Rather than weaken the tooth by making
+the tree's own non-vacuity witness CONDITIONAL — exactly the disarmed-gate move — the chain is
+REBUILT over `FinKernelState`, so every state in it is a `denote` image BY CONSTRUCTION and the
+obligation is `⟨_, rfl⟩`.
+
+⚑ And it is a HYPOTHESIS, not a `TurnChain` FIELD, deliberately: a field would mint a new
+`CommitSurface`-typed projection `TurnChain.finrep`, which `#floor_ratchet` correctly flags as a
+fresh carrier of a bundle whose four injectivity fields are still refuted at deployed width. MEASURED
+— the gate fired on exactly that, on the first attempt. -/
+
+/-- `setNonce` always produces a `.record`, hence never the `CanonMap` default `Value.int 0`. This is
+what lets the agent cell be stored in a canonical (no-default-stored) finite map. -/
+theorem setNonce_ne_default (v : Dregg2.Exec.Value) (n : Int) :
+    EffectTransfer.setNonce v n ≠ Dregg2.Exec.Value.int 0 := by
+  cases v <;> simp [EffectTransfer.setNonce]
+
+/-- A one-entry canonical cell map (`c ↦ v`, every other cell the kernel default `Value.int 0`). -/
+def singletonCell (c : CellId) (v : Dregg2.Exec.Value) (hv : v ≠ Dregg2.Exec.Value.int 0) :
+    FinKernelState.CanonMap CellId Dregg2.Exec.Value (Dregg2.Exec.Value.int 0) :=
+  ⟨⟨[(c, v)], by simp⟩, by
+    intro p hp
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+    subst hp; exact hv⟩
+
+/-- The FINITE witness state at turn `i`: one live cell (`agent`) whose stored `Value` carries nonce
+`i`. Everything else is the empty finite kernel. -/
+def witnessFin (agent : CellId) (v : Dregg2.Exec.Value) (i : Nat) : FinKernelState.FinKernelState :=
+  { FinKernelState.finInit with
+    accounts := {agent}
+    cell := singletonCell agent (EffectTransfer.setNonce v (Int.ofNat i)) (setNonce_ne_default v _) }
+
+/-- The witness state reads back the stamped nonce at the agent cell. -/
+theorem witnessFin_agentNonce (agent : CellId) (v : Dregg2.Exec.Value) (i : Nat) :
+    agentNonce (FinKernelState.denote (witnessFin agent v i)) agent = Int.ofNat i := by
+  show nonceOf (FinKernelState.CanonMap.get _ agent) = _
+  simp only [witnessFin, singletonCell, FinKernelState.CanonMap.get, FinKernelState.SortedMap.get,
+    FinKernelState.SortedMap.lookup, FinKernelState.lookupList, if_pos rfl, Option.getD_some]
+  exact EffectTransfer.setNonce_nonceOf v _
+
+/-- **A concrete witness chain, INHABITING `TurnChain`** — `wf` and the strict nonce advance, with every
+state a `denote` image BY CONSTRUCTION so the new `FiniteRepresentable` hypothesis of `no_replay` /
+`replay_rejected_after_apply` is DISCHARGED (`finiteRepresentable_of_denote`), not carried. So the
+no-replay teeth stay unconditional. -/
+def witnessChain (S : CommitSurface) (agent : CellId) (t : Turn) (v : Dregg2.Exec.Value) :
     TurnChain S agent t where
-  seq i := { base with cell := fun c =>
-    if c = agent then EffectTransfer.setNonce (base.cell agent) (Int.ofNat i) else base.cell c }
+  seq i := FinKernelState.denote (witnessFin agent v i)
   wf i := by
     intro c hc
-    -- `c ∉ accounts`; `accounts` unchanged, so `c ≠ agent` (agent IS a member), and `cell c = base.cell c`.
-    have hacc : ({ base with cell := _ } : RecordKernelState).accounts = base.accounts := rfl
-    rw [hacc] at hc
-    have hca : c ≠ agent := fun he => hc (he ▸ hin)
-    show (if c = agent then _ else base.cell c) = default
-    rw [if_neg hca]; exact hwf c hc
+    have hca : c ≠ agent := by
+      intro he; exact hc (by simp [witnessFin, FinKernelState.denote, he])
+    show FinKernelState.CanonMap.get _ c = default
+    simp only [witnessFin, singletonCell, FinKernelState.CanonMap.get, FinKernelState.SortedMap.get,
+      FinKernelState.SortedMap.lookup, FinKernelState.lookupList, if_neg (Ne.symm hca),
+      Option.getD_none]
+    rfl
   monotone i := by
-    show nonceOf (if agent = agent then EffectTransfer.setNonce (base.cell agent) (Int.ofNat i) else base.cell agent)
-       < nonceOf (if agent = agent then EffectTransfer.setNonce (base.cell agent) (Int.ofNat (i + 1)) else base.cell agent)
-    rw [if_pos rfl, if_pos rfl, EffectTransfer.setNonce_nonceOf, EffectTransfer.setNonce_nonceOf]
+    rw [witnessFin_agentNonce, witnessFin_agentNonce]
     exact Int.ofNat_lt.mpr (by omega)
 
 /-- **NON-VACUITY (positive):** the witness chain's nonce at index `i` is exactly `i` — the chain is
 genuinely monotone, not constant. -/
 theorem witnessChain_nonce (S : CommitSurface) (agent : CellId) (t : Turn)
-    (base : RecordKernelState) (hwf : AccountsWF base) (hin : agent ∈ base.accounts) (i : Nat) :
-    agentNonce ((witnessChain S agent t base hwf hin).seq i) agent = Int.ofNat i := by
-  show nonceOf (if agent = agent then EffectTransfer.setNonce (base.cell agent) (Int.ofNat i) else base.cell agent) = _
-  rw [if_pos rfl, EffectTransfer.setNonce_nonceOf]
+    (v : Dregg2.Exec.Value) (i : Nat) :
+    agentNonce ((witnessChain S agent t v).seq i) agent = Int.ofNat i :=
+  witnessFin_agentNonce agent v i
 
 /-- **MUTATION-CONFIRM — a replayed proof IS rejected once the commitment advances.** Over a real
 `witnessChain`, a proof whose pre-anchor matched at turn `i` (`LiveCommitMatches`) is REJECTED at every
@@ -1354,12 +1410,12 @@ strictly-later turn `j > i`: the live commitment has advanced (the nonce ticked)
 the CAS gate is closed. This is `replay_rejected_after_apply` discharged on an inhabited chain — the
 defense has teeth, it is not vacuous. -/
 theorem witnessChain_replay_rejected (S : CommitSurface) (agent : CellId) (t : Turn)
-    (base : RecordKernelState) (hwf : AccountsWF base) (hin : agent ∈ base.accounts)
-    (i j : Nat) (preCommit : ℤ)
-    (hi : LiveCommitMatches (witnessChain S agent t base hwf hin) i preCommit)
+    (v : Dregg2.Exec.Value) (i j : Nat) (preCommit : ℤ)
+    (hi : LiveCommitMatches (witnessChain S agent t v) i preCommit)
     (hlt : i < j) :
-    ¬ LiveCommitMatches (witnessChain S agent t base hwf hin) j preCommit :=
-  replay_rejected_after_apply _ hi hlt
+    ¬ LiveCommitMatches (witnessChain S agent t v) j preCommit :=
+  replay_rejected_after_apply _ (fun _ => Dregg2.Circuit.RestFrameFin.finiteRepresentable_of_denote _)
+    hi hlt
 
 /-! ### §5b — MUTATION-CONFIRM: the THIRD nonce-reset vector is CLOSED (`makeSovereign` keeps the nonce).
 

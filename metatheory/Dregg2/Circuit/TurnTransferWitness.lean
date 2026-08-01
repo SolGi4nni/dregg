@@ -286,29 +286,33 @@ concretely) they compose into one end-to-end committed turn. Reuses `transfer_ci
 twice; carries the standard Poseidon-CR portals + `AccountsWF` on the three boundary kernels. -/
 theorem turn_witness_proves_both_steps
     (hC : compressInjective compress) (hN : compressNInjective compressN)
-    (hL : cellLeafInjective CH) (hRest : RestHashIffFrame RH)
+    (hL : cellLeafInjective CH) (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k₀ : RecordKernelState) (t₀ : Turn) (k₁ : RecordKernelState)
     (t₁ : Turn) (k₂ : RecordKernelState)
     (hwf0 : AccountsWF k₀) (hwf1 : AccountsWF k₁) (hwf2 : AccountsWF k₂)
+    (hfin0 : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k₀) (hfin1 : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k₁) (hfin2 : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k₂)
     (hstep0 : satisfiedS cmb compress (encodeS CH RH cmb compress compressN k₀ t₀ k₁))
     (hstep1 : satisfiedS cmb compress (encodeS CH RH cmb compress compressN k₁ t₁ k₂)) :
     Transfer.TransferSpec k₀ t₀ k₁ ∧ Transfer.TransferSpec k₁ t₁ k₂ :=
-  ⟨transfer_circuit_full_sound CH RH cmb compress compressN hC hN hL hRest k₀ t₀ k₁ hwf0 hwf1 hstep0,
-   transfer_circuit_full_sound CH RH cmb compress compressN hC hN hL hRest k₁ t₁ k₂ hwf1 hwf2 hstep1⟩
+  ⟨transfer_circuit_full_sound CH RH cmb compress compressN hC hN hL hRest k₀ t₀ k₁ hwf0 hwf1
+      hfin0 hfin1 hstep0,
+   transfer_circuit_full_sound CH RH cmb compress compressN hC hN hL hRest k₁ t₁ k₂ hwf1 hwf2
+      hfin1 hfin2 hstep1⟩
 
 /-- **`turn_execute_produces_both_steps` — the whole-turn execute→prove direction.** A fully-committing
 two-step chain (`recKExec k₀ t₀ = some k₁`, `recKExec k₁ t₁ = some k₂`) makes BOTH per-step full-state
 witnesses SATISFY the per-step circuit — so running the chained executor IS generating a valid
 whole-turn witness, for the REAL composed circuit. Reuses `transfer_circuit_full_complete` per step. -/
 theorem turn_execute_produces_both_steps
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     {k₀ k₁ k₂ : RecordKernelState} {t₀ t₁ : Turn}
+    (hfin0 : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k₀) (hfin1 : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k₁) (hfin2 : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k₂)
     (h0 : recKExec k₀ t₀ = some k₁) (h1 : recKExec k₁ t₁ = some k₂) :
     satisfiedS cmb compress (encodeS CH RH cmb compress compressN k₀ t₀ k₁)
       ∧ satisfiedS cmb compress (encodeS CH RH cmb compress compressN k₁ t₁ k₂) :=
-  ⟨transfer_circuit_full_complete CH RH cmb compress compressN hRest k₀ t₀ k₁
+  ⟨transfer_circuit_full_complete CH RH cmb compress compressN hRest k₀ t₀ k₁ hfin0 hfin1
       ((Transfer.recKExec_iff_spec k₀ t₀ k₁).mp h0),
-   transfer_circuit_full_complete CH RH cmb compress compressN hRest k₁ t₁ k₂
+   transfer_circuit_full_complete CH RH cmb compress compressN hRest k₁ t₁ k₂ hfin1 hfin2
       ((Transfer.recKExec_iff_spec k₁ t₁ k₂).mp h1)⟩
 
 /-! ## §8 — EMISSION: the whole-turn circuit serializes to the Rust wire form.

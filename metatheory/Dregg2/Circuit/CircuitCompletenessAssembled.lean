@@ -489,7 +489,7 @@ theorem descriptorComplete_transfer
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
       hash compressN) :
@@ -764,7 +764,7 @@ theorem lightclient_complete_transfer
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
     {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
     {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : RestHashIffFrame RH}
+    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     [StarkComplete hash RfixBare]
     (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)

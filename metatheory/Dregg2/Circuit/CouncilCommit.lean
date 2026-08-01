@@ -129,15 +129,17 @@ theorem recStateCommit_recovers_council
     (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k k' : RecordKernelState) (t : Turn) (idCell : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hroot : recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t) :
     councilCommitOf idCell k = councilCommitOf idCell k' := by
   have hk : k = k' :=
     recStateCommit_binds_kernel CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest k k' t hwf hwf' hroot
+      hCmb hCompress hCompressN hLeaf hRest k k' t hwf hwf' hfin hfin' hroot
   unfold councilCommitOf
   rw [hk]
 
@@ -183,11 +185,13 @@ theorem recStateCommit_recovers_council_roster
     (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     {rosterHash : List Guardian → Int} (hRoster : RosterCR rosterHash)
     (k k' : RecordKernelState) (t : Turn) (idCell : CellId)
     (roster roster' : List Guardian)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hcommit  : councilCommitOf idCell k  = rosterHash roster)
     (hcommit' : councilCommitOf idCell k' = rosterHash roster')
     (hroot : recStateCommit CH RH cmb compress compressN k t
@@ -195,7 +199,7 @@ theorem recStateCommit_recovers_council_roster
     roster = roster' := by
   have hcc : councilCommitOf idCell k = councilCommitOf idCell k' :=
     recStateCommit_recovers_council CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest k k' t idCell hwf hwf' hroot
+      hCmb hCompress hCompressN hLeaf hRest k k' t idCell hwf hwf' hfin hfin' hroot
   exact hRoster roster roster' (by rw [← hcommit, hcc, hcommit'])
 
 #assert_axioms recStateCommit_recovers_council_roster
@@ -216,15 +220,17 @@ theorem recStateCommit_distinguishes_council
     (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hLeaf : cellLeafInjective CH)
-    (hRest : RestHashIffFrame RH)
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (k k' : RecordKernelState) (t : Turn) (idCell : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
     (hne : councilCommitOf idCell k ≠ councilCommitOf idCell k') :
     recStateCommit CH RH cmb compress compressN k t
       ≠ recStateCommit CH RH cmb compress compressN k' t := by
   intro hroot
   exact hne (recStateCommit_recovers_council CH RH cmb compress compressN
-    hCmb hCompress hCompressN hLeaf hRest k k' t idCell hwf hwf' hroot)
+    hCmb hCompress hCompressN hLeaf hRest k k' t idCell hwf hwf' hfin hfin' hroot)
 
 #assert_axioms recStateCommit_distinguishes_council
 
