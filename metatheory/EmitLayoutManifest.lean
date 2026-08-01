@@ -28,6 +28,9 @@ SCRATCH executable: `lake env lean --run EmitLayoutManifest.lean`
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 import Dregg2.Circuit.Emit.RotatedLayout
 import Dregg2.Circuit.Emit.RotWideCompactS2
+-- The key-nonet range widths (`KEY_LANE_BITS` / `KEY_TOP_BITS`) are exported below so the Rust
+-- producer and the descriptor-drift check read the SAME two numbers the Lean envelope emits.
+import Dregg2.Circuit.Emit.KeyCanonicity9Emit
 
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
 open Dregg2.Circuit.Emit.EffectVmEmit (EFFECT_VM_WIDTH)
@@ -80,6 +83,20 @@ def s2LaneSpan : Nat :=
 
 -- REALITY GATES: the deleted carrier band IS the state-commit carrier plus the whole chain band,
 -- and `isDeadCol` (the computable form the emit gates ran on) agrees at both lane-band edges.
+--
+-- ⚑⚑ THESE TWO ARE RED AT THE 2026-08-01 KEY-NONET FLAG DAY, AND THAT IS THE GATE WORKING.
+-- `rotatedNumPreLimbs` went 184 → 187, so `B_STATE_COMMIT` is 188 (was 185) and `bNumChain` is 62
+-- (was 61). `RotWideCompactS2.s2CarrierCols` still reads `(List.range 62).map (base + 185 + ·)`
+-- and `s2DeadCols`/`isDeadCol` still carry `247 / 432 / 494 / 868 / 992` as BARE LITERALS —
+-- deliberately, because `omega` treats a `def` as an opaque atom. Those literals must become
+-- `63 / 188 / 251 / 439 / 502 / 882 / 1008`. Until they do, the S2-compact emit deletes the WRONG
+-- COLUMNS: it would strip pre-limbs 185/186/187 (contract_hash's ninth lane, the OWNER KEY's ninth
+-- lane, and the iroot) and leave three real carriers behind.
+--
+-- ⚠ THIS IS EXACTLY THE 178 → 184 SCAR REPEATING. That flag day left `B_CHAIN_BASE = 180` behind
+-- as a hand-written Rust literal, the producer wrote chain digests over four pre-limbs plus
+-- iroot/state_commit, and every rotated member was UNSAT. Same class, same band, one file over.
+-- DO NOT weaken or delete these two guards to get green; fix `RotWideCompactS2.lean`.
 #guard s2CarrierOff == B_STATE_COMMIT
 #guard s2CarrierSpan == bNumChain + 1
 #guard Dregg2.Circuit.Emit.RotWideCompactS2.isDeadCol 0 100000 (100000 + s2LaneSpan - 1) == true
@@ -89,7 +106,7 @@ def s2LaneSpan : Nat :=
 def items : List Item :=
   [ { name := "EFFECT_VM_WIDTH", value := EFFECT_VM_WIDTH,
       doc := "the v1 EffectVM face width — the base every rotated member graduates from" }
-  , { name := "NUM_PRE_LIMBS", value := rotated184.numPreLimbs,
+  , { name := "NUM_PRE_LIMBS", value := rotated187.numPreLimbs,
       doc := "pre-iroot limbs in one rotated block — projected from the verified RotatedLayout" }
   , { name := "B_SPAN", value := B_SPAN,
       doc := "one rotated state block's span (BEFORE and AFTER each occupy B_SPAN columns)" }
@@ -178,6 +195,26 @@ def items : List Item :=
       doc := "in-block base of the contract_hash carrier octet (app-PI octet base 1 of [89, 97, 105])" }
   , { name := "B_PUBKEY_OCTET", value := B_PUBKEY_OCTET,
       doc := "in-block base of the public_key carrier octet (app-PI octet base 2 of [89, 97, 105])" }
+    -- ⚑ THE CARRIER-OCTET NINTH LANES (key-nonet flag day 2026-08-01). Eight BabyBear lanes carry
+    -- 247.26 bits against a 32-byte carrier's 256, and the deployed packer drops bits 6-7 of every
+    -- fourth byte outright — among Ed25519 keys a key and its NEGATION pack to one octet. These
+    -- three columns are the ninth lane of each carrier octet, and they are ABSORBED pre-limbs, so
+    -- `wireCommitR` folds them into `state_commit`. A producer that does not fill them makes every
+    -- honest turn UNSAT; a producer that fills them from an 8-lane packer re-opens the wound.
+  , { name := "B_CHILD_VK_NINTH_LANE", value := B_CHILD_VK_NINTH_LANE,
+      doc := "ninth lane of the child_vk carrier NONET (KeyLanes9.keyToLanes9 lane 8)" }
+  , { name := "B_CONTRACT_HASH_NINTH_LANE", value := B_CONTRACT_HASH_NINTH_LANE,
+      doc := "ninth lane of the contract_hash carrier NONET (KeyLanes9.keyToLanes9 lane 8)" }
+  , { name := "B_PUBKEY_NINTH_LANE", value := B_PUBKEY_NINTH_LANE,
+      doc := "ninth lane of the OWNER-KEY carrier NONET. The eight-lane octet at B_PUBKEY_OCTET \
+              cannot injectively hold 32 bytes; this column is what makes the committed nonet \
+              determine exactly one key (Emit.KeyCanonicity9Emit.keyCanon9_determines_the_owner_key_deployed)." }
+  , { name := "KEY_LANE_BITS", value := Dregg2.Circuit.Emit.KeyCanonicity9Emit.KEY_LANE_BITS,
+      doc := "range width of nonet lanes 0..7 (2^29 < p, so no lane reduces)" }
+  , { name := "KEY_TOP_BITS", value := Dregg2.Circuit.Emit.KeyCanonicity9Emit.KEY_TOP_BITS,
+      doc := "range width of nonet lane 8. NARROWER by construction: 2^256 / (2^29)^8 = 2^24. A \
+              uniform 29-bit check on lane 8 admits [0,...,0,2^24], which decodes byte-for-byte to \
+              the all-zero key — see keyCanon9_rejects_the_forged_nonet." }
   ]
 
 /-- Emit one Rust `pub const`. -/
@@ -205,16 +242,16 @@ def renderNatArray (xs : List Nat) : String :=
 indices into it. Reordering groups in Lean cannot silently retarget a Rust consumer because the
 name→index declarations are generated in the same pass. -/
 def renderGroupTable : String :=
-  let rows := String.intercalate ",\n" (rotated184.groupTable.map (fun row => "    " ++ renderNatArray row)) ++ ","
-  let names := String.intercalate "\n" <| rotated184.groups.zipIdx.map (fun p =>
+  let rows := String.intercalate ",\n" (rotated187.groupTable.map (fun row => "    " ++ renderNatArray row)) ++ ","
+  let names := String.intercalate "\n" <| rotated187.groups.zipIdx.map (fun p =>
     s!"pub const {groupRustName p.1.1}: Felt8Group = ROTATED_GROUP_TABLE[{p.2}];")
   s!"/// One faithful-8 group: lane 0 followed by seven completion columns.\n\
 pub type Felt8Group = [usize; 8];\n\n\
-/// Every named group, emitted verbatim from `rotated184.groupTable`.\n\
-pub const ROTATED_GROUP_TABLE: [Felt8Group; {rotated184.groupTable.length}] = [\n{rows}\n];\n\n\
+/// Every named group, emitted verbatim from `rotated187.groupTable`.\n\
+pub const ROTATED_GROUP_TABLE: [Felt8Group; {rotated187.groupTable.length}] = [\n{rows}\n];\n\n\
 {names}\n\n\
 /// Compatibility/readability alias used by the Rust disjointness tooth.\n\
-pub const ALL_FELT8_GROUPS: [Felt8Group; {rotated184.groupTable.length}] = ROTATED_GROUP_TABLE;\n"
+pub const ALL_FELT8_GROUPS: [Felt8Group; {rotated187.groupTable.length}] = ROTATED_GROUP_TABLE;\n"
 
 /-- The NON-GROUP regions of the verified tiling, emitted as data. The Rust disjointness tooth used
 to hand-list these beside the generated group table (`[176, 177]` pads, `113..168` field lanes) — so
@@ -222,23 +259,28 @@ it re-stated the 178 layout and went red on the flag day for the one region it w
 Lean. It now assembles its occupancy from these, which keeps it an artifact-integrity check on the
 EMITTED table (a dropped or duplicated region still fails) without carrying a coordinate copy. -/
 def renderRegions : String :=
-  let singles := renderNatArray rotated184.singles
-  let octets := renderNatArray rotated184.octets
-  let fields := renderNatArray rotated184.fieldsOctet
-  let pads := renderNatArray rotated184.pads
-  let cellsC := renderNatArray rotated184.cellsCompletion
+  let singles := renderNatArray rotated187.singles
+  let octets := renderNatArray rotated187.octets
+  let ninths := renderNatArray rotated187.octetNinthLanes
+  let fields := renderNatArray rotated187.fieldsOctet
+  let pads := renderNatArray rotated187.pads
+  let cellsC := renderNatArray rotated187.cellsCompletion
   s!"/// The scalar limbs that carry no faithful-8 completion group.\n\
-pub const ROTATED_SINGLES: [usize; {rotated184.singles.length}] = {singles};\n\n\
+pub const ROTATED_SINGLES: [usize; {rotated187.singles.length}] = {singles};\n\n\
 /// The carrier-material octet BASES (each occupies `base .. base + 8`).\n\
-pub const ROTATED_OCTET_BASES: [usize; {rotated184.octets.length}] = {octets};\n\n\
+pub const ROTATED_OCTET_BASES: [usize; {rotated187.octets.length}] = {octets};\n\n\
+/// The NINTH lane of each carrier octet, positionally parallel to `ROTATED_OCTET_BASES`. \
+NOT adjacent to its octet: never reconstruct with a stride. Each is an ABSORBED pre-limb, so \
+`wireCommitR` folds it into `state_commit` — which is the whole point.\n\
+pub const ROTATED_OCTET_NINTH_LANES: [usize; {rotated187.octetNinthLanes.length}] = {ninths};\n\n\
 /// Every `fields[0..8]` completion lane column, in layout order (lanes 1..8 of each of the 8 \
 slots — deliberately NON-CONTIGUOUS: the ninth lane of slot `j` is `176 + j`).\n\
-pub const ROTATED_FIELDS_LANE_COLS: [usize; {rotated184.fieldsOctet.length}] = {fields};\n\n\
+pub const ROTATED_FIELDS_LANE_COLS: [usize; {rotated187.fieldsOctet.length}] = {fields};\n\n\
 /// The legacy cells-completion slot (empty since `cells` became a named group).\n\
-pub const ROTATED_CELLS_COMPLETION: [usize; {rotated184.cellsCompletion.length}] = {cellsC};\n\n\
+pub const ROTATED_CELLS_COMPLETION: [usize; {rotated187.cellsCompletion.length}] = {cellsC};\n\n\
 /// Unoccupied pad columns. EMPTY at the nine-lane geometry — the two former pads (176, 177) were \
 consumed by the fields nonet.\n\
-pub const ROTATED_PADS: [usize; {rotated184.pads.length}] = {pads};\n"
+pub const ROTATED_PADS: [usize; {rotated187.pads.length}] = {pads};\n"
 
 /-- **THE NONET PROJECTION, AS DATA.** `RotatedLayout.fieldLaneCol slot lane` for all 8 slots × 9
 lanes. Its own docstring says "Consumers must read THIS, never `113 + 8·slot` — the nonet is

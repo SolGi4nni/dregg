@@ -72,25 +72,31 @@ The fields wrap was cheap because its 112 aux columns rode the appendix, past ev
 never enters the `wireCommitR` absorption chain, so it is a free felt carrying nothing — `state_commit`
 would still bind only 232 bits of the key. The ninth lane must be an ABSORBED PRE-LIMB.
 
-  * the pre-limb region is **184/184 full** (`ROTATED_PADS` is `[usize; 0]`; the two former pads were
-    eaten by the fields nonet), so `rotatedNumPreLimbs` must GROW;
-  * ⚑ and it must grow to **187, not 185**. `B_SPAN := n + 3 + (n − 4) / 3` is `Nat` floor division
+  * the pre-limb region was **184/184 full** (`ROTATED_PADS` is `[usize; 0]`; the two former pads were
+    eaten by the fields nonet), so `rotatedNumPreLimbs` had to GROW;
+  * ⚑ and it had to grow to **187, not 185**. `B_SPAN := n + 3 + (n − 4) / 3` is `Nat` floor division
     while the real carrier chain is `chunk31`, whose `chunkCount (n+3) = chunkCount n + 1`. At
     `n = 185` the formula gives 60 and the chain needs 61 — the block is silently under-allocated by
     one carrier column. The invariant nobody wrote down is `rotatedNumPreLimbs ≡ 1 (mod 3)`.
     `184 → 187` buys exactly three limbs: one ninth lane each for `public_key`, `child_vk` and
     `contract_hash`, all three of which are 8-lane and all three of which this counting kills.
-  * growing the pre-limbs moves every `state_commit`, so `CANONICAL_STATE_SCHEMA_EPOCH` goes
-    15 → 16 and the chain re-genesises. That bump was already spent once today (14 → 15, the
-    note-value alias), and the correct reading of that is that the rebuild is already happening.
+  * growing the pre-limbs moves every `state_commit`, so `persist`'s
+    `CANONICAL_STATE_SCHEMA_EPOCH` must be bumped and the chain re-genesised. (Do not transcribe a
+    remembered epoch number: read the constant.)
 
-**This file does not land that geometry.** It authors the encoder, its injectivity, its canonicity
-characterization, the exhibit, and (in the companion) the emitted envelope at the DEPLOYED owner-key
-columns — `B_PUBKEY_OCTET` at stride `B_SPAN`, tied by `deployedKeyCols_octet_is_absorbed` to the
-pre-limbs `wireCommitR` folds — with the ninth lane's in-block offset the one remaining parameter.
-⚑ Corrected 2026-08-01: the companion used to quantify over the whole column map, so its capstone
-"determines the owner key" determined whatever nine columns it was handed; eight of the nine were
-never in doubt. The geometry change is the only thing left, and it is named rather than deferred.
+✅ **LANDED 2026-08-01 — `rotatedNumPreLimbs` IS 187.** `RotatedLayout.rotated187` allocates the
+three ninth lanes at in-block limbs 184 (`child_vk`), 185 (`contract_hash`) and 186
+(**`public_key`**), `Legal.octetNonets` makes an octet without a ninth lane unconstructable, and
+`EffectVmEmitRotationV3.preLimbsAt` now folds all 187 — so the owner key's ninth lane is inside the
+list `wireCommitR` absorbs. The companion's `deployedKeyCanon9Cols` has NO free column left but the
+face width, `deployed_nonet_is_absorbed` proves all nine lanes are absorbed pre-limbs, and
+`keyCanon9_determines_the_owner_key_deployed` states the capstone against `preLimbsAt` entries
+rather than bare columns.
+
+⚠ **WHAT THIS FILE STILL DOES NOT REACH.** The envelope is authored, proved and geometrically
+placed; it is NOT yet appended to any live member's constraint list, no descriptor has been
+re-emitted, no VK rotated and no chain re-genesised. A Rust `key_limbs9` producer must fill limb 186
+(and 184/185) or every honest turn is UNSAT. State that rung exactly and do not round it up.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `native_decide`.

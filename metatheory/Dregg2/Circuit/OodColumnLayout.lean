@@ -269,7 +269,16 @@ theorem transferV3_columnLayout_law (t : VmTrace) (ζ : BabyBear)
 -- DFA route-commitment carrier into the published caveat commitment. Both are LOOKUPS, so the
 -- arithmetic layout is UNCHANGED at 155 — which is itself the check that the fold added absorption
 -- and not a new algebraic gate.
-#guard transferV3.constraints.length == 297
+--
+-- ⚑ 297 -> 299 at the 2026-08-01 KEY-NONET flag day (`rotatedNumPreLimbs` 184 -> 187). The three
+-- carrier octets got their ninth lane, so each rotated block's absorption walk gained ONE 3-wide
+-- body site (62 -> 63 sites per block, 136 -> 138 appendix sites). Both new constraints are chip
+-- SITES, i.e. lookups, so the arithmetic layout is UNCHANGED at 155 — which is itself the check
+-- that the widening added absorption and not a new algebraic gate. Contrast the 178 -> 184 row
+-- above, where +8 of the delta WAS arithmetic (the eight fields lane-8 completion freezes): the
+-- key nonet's lanes are welded by no `colEq` at all, which is the hole `zzz_e10_freeze_owner_
+-- falsifier` exercises and which this flag day does NOT close.
+#guard transferV3.constraints.length == 299
 #guard (oodArithList transferV3).length == 155
 #guard (oodArithList transferV3).length < transferV3.constraints.length
 

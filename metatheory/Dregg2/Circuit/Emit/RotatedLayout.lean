@@ -13,7 +13,8 @@ THE CURE: make the layout a first-class object with an explicit machine-checked 
 `groupCol` projection is the SINGLE SOURCE the emit reads its positions from. A flag-day becomes a new
 `def` + `native_decide`; an ill-aligned / overlapping layout becomes UNCONSTRUCTABLE.
 
-`rotated184` is the current geometry (178 until the 2026-07-31 ninth-lane flag day). `EffectVmEmitRotationV3` projects its group columns from this
+`rotated187` is the current geometry (178 until 2026-07-31's fields-nonet flag day, 184 until
+2026-08-01's KEY-nonet flag day). `EffectVmEmitRotationV3` projects its group columns from this
 object; `EmitLayoutManifest.lean` emits its `groupTable` to Rust; and both Rust producers plus the
 circuit trace generator consume that generated table. The concrete integers therefore live here once.
 -/
@@ -38,6 +39,12 @@ structure RotatedLayout where
   singles         : List Nat                    -- scalars with no completion group
   groups          : List (GroupName × LayoutGroup)  -- the faithful-8-felt roots, name-tagged
   octets          : List Nat                    -- octet BASES (each occupies base .. base+8)
+  /-- ⚑ **KEY-NONET FLAG DAY 2026-08-01.** The NINTH lane of each carrier octet, positionally
+      parallel to `octets`. A carrier octet holds 32 bytes in eight ≤30-bit lanes and therefore
+      cannot be injective (`Dregg2.Circuit.KeyLanes9`); the ninth lane is what makes it a nonet, and
+      it must be an ABSORBED PRE-LIMB (a column outside `preLimbsAt` never enters `wireCommitR`, so
+      `state_commit` would still bind only the eight). -/
+  octetNinthLanes : List Nat
   fieldsOctet     : List Nat                    -- the 64 fields[0..7] completion lanes (8 slots x lanes 1..8)
   cellsCompletion : List Nat                    -- legacy slot, now empty (cells is a named group)
   pads            : List Nat
@@ -48,6 +55,7 @@ def RotatedLayout.occupied (L : RotatedLayout) : List Nat :=
   L.singles
     ++ L.groups.flatMap (fun p => p.2.lane0 :: p.2.completion)
     ++ L.octets.flatMap (fun b => (List.range 8).map (· + b))
+    ++ L.octetNinthLanes
     ++ L.fieldsOctet
     ++ L.cellsCompletion
     ++ L.pads
@@ -59,6 +67,14 @@ def RotatedLayout.groupCol (L : RotatedLayout) (name : GroupName) (i : Fin 8) : 
   | some p => if (i : Nat) = 0 then some p.2.lane0 else p.2.completion[(i : Nat) - 1]?
   | none   => none
 
+/-- **THE CARRIER-OCTET NONET PROJECTION** — the single source a consumer reads lane `lane` of the
+`o`-th carrier octet from. Lanes 0..7 are the contiguous octet window `base .. base+7`; lane 8 is
+the flag-day ninth-lane column, which is NOT adjacent to them and must never be reconstructed with a
+stride. `none` = the octet does not exist. -/
+def RotatedLayout.octetLaneCol (L : RotatedLayout) (o : Nat) (lane : Fin 9) : Option Nat :=
+  if (lane : Nat) = 8 then L.octetNinthLanes[o]?
+  else (L.octets[o]?).map (· + (lane : Nat))
+
 /-- **THE LEGALITY OBLIGATIONS** — all decidable, so a concrete layout discharges them by
     `native_decide`, and an illegal layout cannot be constructed. -/
 structure Legal (L : RotatedLayout) : Prop where
@@ -68,6 +84,10 @@ structure Legal (L : RotatedLayout) : Prop where
   groupNames  : (L.groups.map Prod.fst).Nodup
   /-- Every semantic group exists, so a consumer projection can never fall through `Option.getD`. -/
   groupCoverage : ∀ name : GroupName, name ∈ L.groups.map Prod.fst
+  /-- ⚑ **EVERY CARRIER OCTET IS A NONET.** One ninth lane per octet base, positionally. A layout
+      that grows an octet without allocating its ninth lane — the shape that let the deployed owner
+      key ride eight lanes at 247.26 bits against 256 — is UNCONSTRUCTABLE. -/
+  octetNonets : L.octetNinthLanes.length = L.octets.length
   /-- Disjointness: no two things write the same column. THE invariant that was a comment. -/
   disjoint    : L.occupied.Nodup
   /-- Bounds: every occupied column is a real pre-iroot limb. -/
@@ -108,12 +128,33 @@ lanes is 128 columns against the nonet's 72: `numPreLimbs` 184 → 240, which **
 Poseidon2 absorptions per row** — to buy the same property the nonet already has, since both are
 injective and the anchor's strength is the sponge's either way. And `Limbs16` cannot hold lane 0:
 a 16-bit lane cannot carry the kernel's 32-bit u64-lane `lo32`, which `field_to_u64` and every
-escrow/discharge/vault weld read. Nine is not a compromise here; it is the better encoding. -/
-def rotatedNumPreLimbs : Nat := 184
+escrow/discharge/vault weld read. Nine is not a compromise here; it is the better encoding.
 
-/-- The CURRENT deployed rotated geometry (184 pre-iroot limbs). This enumeration is a complete
-tiling of `0..183` (every column once, no pads). -/
-def rotated184 : RotatedLayout where
+⚑⚑ **KEY-NONET FLAG DAY 2026-08-01: 184 → 187.** The same pigeonhole, at the three CARRIER OCTETS
+(`child_vk` 89, `contract_hash` 97, `public_key` 105). The deployed packer
+(`canonical_32_to_felts_8`) puts 32 bytes into eight lanes at `8+8+8+6 = 30` bits and DROPS bits 6-7
+of bytes 3, 7, …, 31 — sixteen source bits — so it is not injective *trivially*, not merely by
+counting; and among valid Ed25519 keys the collision cost is ZERO, because bit 7 of byte 31 is the
+SIGN BIT and lies in the unread set, so a key and its negation pack to one octet and the negation is
+a keypair the attacker holds the private half of. `Dregg2.Circuit.KeyLanes9.keyToLanes9` is the
+base-`2^29` NONET that closes it (image EXACTLY `2^256`, injective by a machine-checked left
+inverse), and each of the three octets needs a ninth column.
+
+⚑ **AND IT GROWS BY THREE, NOT BY ONE.** `EffectVmEmitRotationV3.B_SPAN := n + 3 + (n − 4) / 3` is
+`Nat` FLOOR division, while the real carrier chain is `chunk31`'s `chunkCount`, which steps every
+three limbs and rounds UP. They agree exactly when `n ≡ 1 (mod 3)` — the invariant nobody had
+written down. At `n = 185` the formula yields 60 carriers where `chunkCount` needs 61 and the block
+is silently ONE CARRIER COLUMN SHORT; 186 is worse (62 vs 60) and also fails `bodyAligned`
+(`182 % 3 = 2`). 187 is the next legal extent, `(187 − 4) % 3 = 0`, and it buys exactly the three
+ninth lanes the three carrier octets demand. Downstream: `B_SPAN` 247 → 251, `B_IROOT` 184 → 187,
+`B_STATE_COMMIT` 185 → 188, the chain band `186..246` → `189..250` (61 → 62 carriers),
+`CANON9_REGION_OFF` 539 → 547, `APPENDIX_SPAN` 651 → 659, `CAVEAT_REGION_OFF` 494 → 502. Every
+column `0..183` keeps its meaning; 184/185/186 are NEW. -/
+def rotatedNumPreLimbs : Nat := 187
+
+/-- The CURRENT deployed rotated geometry (187 pre-iroot limbs). This enumeration is a complete
+tiling of `0..186` (every column once, no pads). -/
+def rotated187 : RotatedLayout where
   numPreLimbs := rotatedNumPreLimbs
   singles := [1, 2, 3,                       -- r0/r1/r2 = bal_lo/nonce/bal_hi (cells lane-0 is a group)
               4, 5, 6, 7, 8, 9, 10, 11,      -- r3..r10 = fields[0..7] lane-0 (welded)
@@ -137,6 +178,12 @@ def rotated184 : RotatedLayout where
     -- accounts tree (the grow-gate's object). A layout slot is not a binding — read the WRITER.
     (.cells,       ⟨0, [169, 170, 171, 172, 173, 174, 175]⟩)]
   octets := [89, 97, 105]                    -- child_vk, contract_hash, pubkey octet bases
+  -- ⚑ THE KEY-NONET FLAG DAY'S THREE NEW COLUMNS, positionally parallel to `octets`: child_vk's
+  -- ninth lane is 184, contract_hash's is 185, and the OWNER KEY's is 186. All three are past the
+  -- old extent, so nothing below 184 moves; all three are `< numPreLimbs`, so all three are
+  -- ABSORBED by `wireCommitR` and reach `state_commit` (which is the entire point — an appendix
+  -- column would leave the anchor binding 232 bits of a 256-bit key).
+  octetNinthLanes := [184, 185, 186]
   -- ⚑ 56 → 64. Lanes 1..7 of each `fields[slot]` keep their historical window `113 + 7·slot .. +6`
   -- (113..168, UNMOVED); the NINTH lane of slot `j` is the new column `176 + j` (176..183). The
   -- first two of those were the layout's only free pads; the remaining six are the extent bump.
@@ -156,29 +203,30 @@ def fieldLaneCol (slot : Fin 8) (lane : Fin 9) : Nat :=
   else if lane.1 = 8 then 176 + slot.1
   else 113 + 7 * slot.1 + (lane.1 - 1)
 
-/-- The current layout is LEGAL — every semantic group exists exactly once at width eight, and the
-    complete tiling is disjoint, in-bounds, and body-aligned. -/
-theorem rotated184_legal : Legal rotated184 where
+/-- The current layout is LEGAL — every semantic group exists exactly once at width eight, every
+    carrier octet is a NONET, and the complete tiling is disjoint, in-bounds, and body-aligned. -/
+theorem rotated187_legal : Legal rotated187 where
   groupWidth  := by native_decide
   groupNames  := by native_decide
   groupCoverage := by intro name; cases name <;> native_decide
+  octetNonets := by native_decide
   disjoint    := by native_decide
   inBounds    := by native_decide
   bodyAligned := by native_decide
 
-/-- STRONGER than `Nodup`: the layout occupies EXACTLY 184 columns. With `disjoint` + `inBounds` this
-    forces a complete tiling of `0..183` — no gaps, no reuse, no wasted column, and (unlike 178) no
+/-- STRONGER than `Nodup`: the layout occupies EXACTLY 187 columns. With `disjoint` + `inBounds` this
+    forces a complete tiling of `0..186` — no gaps, no reuse, no wasted column, and (as at 184) no
     pads left over. -/
-theorem rotated184_complete : rotated184.occupied.length = 184 := by native_decide
+theorem rotated187_complete : rotated187.occupied.length = 187 := by native_decide
 
-/-- **THE FLAG DAY SHIFTED NOTHING.** Every column the 178-geometry occupied still means the same
-thing: the 178 old columns are exactly `occupied \ {178,…,183}`, and the two old pads plus the six
-new columns are exactly the eight ninth lanes. Stated as the two set facts a reader can check. -/
-theorem rotated184_ninth_lanes :
+/-- **THE FIELDS-NONET FLAG DAY (178 → 184) SHIFTED NOTHING**, and still does not: the ninth lane of
+`fields[j]` is `176 + j`, all eight in `176..183`, every one at or above the old 178 extent's two
+free pads. -/
+theorem fields_ninth_lanes :
     (List.range 8).map (fun j => fieldLaneCol ⟨j % 8, by omega⟩ 8) = [176, 177, 178, 179, 180, 181, 182, 183] := by
   native_decide
 
-theorem rotated184_ninth_lanes_are_new :
+theorem fields_ninth_lanes_are_new :
     ∀ c ∈ (List.range 8).map (fun j => fieldLaneCol ⟨j % 8, by omega⟩ 8), 176 ≤ c := by
   native_decide
 
@@ -186,7 +234,7 @@ theorem rotated184_ninth_lanes_are_new :
 72 of them (8 slots × 9 lanes) are pairwise distinct — the invariant that was a comment. -/
 theorem fieldLaneCol_occupied :
     ∀ p ∈ (List.range 8).flatMap (fun j => (List.range 9).map (fun l =>
-      fieldLaneCol ⟨j % 8, by omega⟩ ⟨l % 9, by omega⟩)), p ∈ rotated184.occupied := by
+      fieldLaneCol ⟨j % 8, by omega⟩ ⟨l % 9, by omega⟩)), p ∈ rotated187.occupied := by
   native_decide
 
 theorem fieldLaneCol_nodup :
@@ -194,11 +242,61 @@ theorem fieldLaneCol_nodup :
       fieldLaneCol ⟨j % 8, by omega⟩ ⟨l % 9, by omega⟩))).Nodup := by
   native_decide
 
+/-! ### ⚑ THE KEY-NONET FLAG DAY (184 → 187), as facts rather than as prose. -/
+
+/-- **THE THREE NEW COLUMNS, AND WHERE THEY GO.** `child_vk`'s ninth lane is 184,
+`contract_hash`'s is 185, and the OWNER KEY's is 186 — read out of the layout's own
+`octetNinthLanes`, not re-spelled. -/
+theorem octet_ninth_lanes :
+    (List.range 3).map (fun o => (rotated187.octetLaneCol o 8).getD 0) = [184, 185, 186] := by
+  native_decide
+
+/-- **THE OWNER KEY'S NINTH LANE.** `KeyCanonicity9Emit.deployedKeyCols` is instantiated at exactly
+this in-block offset; `EffectVmEmitRotationV3.B_PUBKEY_NINTH_LANE` projects it. -/
+theorem pubkey_octet_lane_cols :
+    (List.range 9).map (fun l => (rotated187.octetLaneCol 2 ⟨l % 9, by omega⟩).getD 0)
+      = [105, 106, 107, 108, 109, 110, 111, 112, 186] := by
+  native_decide
+
+/-- **THE THREE NEW COLUMNS ARE NEW.** Every ninth lane is at or past the old 184-column extent, so
+no column that had a meaning at 184 acquires a second one. -/
+theorem octet_ninth_lanes_are_new :
+    ∀ c ∈ rotated187.octetNinthLanes, 184 ≤ c ∧ c < rotatedNumPreLimbs := by
+  native_decide
+
+/-- ⚑ **AND THEY ARE ABSORBED** — every ninth lane is a PRE-LIMB (`< numPreLimbs`), so it enters
+`preLimbsAt`, is folded by `wireCommitR`, and reaches `state_commit`. An appendix column would
+satisfy every other obligation in this file and bind NOTHING. -/
+theorem octet_ninth_lanes_absorbed :
+    ∀ c ∈ rotated187.octetNinthLanes, c ∈ List.range rotated187.numPreLimbs := by
+  native_decide
+
+/-- Every column the carrier-octet nonet projection names is an occupied column, and the 27 of them
+(3 octets × 9 lanes) are pairwise distinct. -/
+theorem octetLaneCol_occupied :
+    ∀ p ∈ (List.range 3).flatMap (fun o => (List.range 9).map (fun l =>
+      (rotated187.octetLaneCol o ⟨l % 9, by omega⟩).getD 0)), p ∈ rotated187.occupied := by
+  native_decide
+
+theorem octetLaneCol_nodup :
+    ((List.range 3).flatMap (fun o => (List.range 9).map (fun l =>
+      (rotated187.octetLaneCol o ⟨l % 9, by omega⟩).getD 0))).Nodup := by
+  native_decide
+
+/-- ⚑ **THE COUNTING INVARIANT, WRITTEN DOWN AT LAST.** `EffectVmEmitRotationV3.B_SPAN`'s
+`(n − 4) / 3` is floor division; `chunk31`'s `chunkCount` rounds up. They agree exactly on
+`n ≡ 1 (mod 3)`, and `Legal.bodyAligned` is that congruence. 185 and 186 are BOTH illegal — 185
+would have left the block one carrier column short while every `#guard` in the emit still passed. -/
+theorem the_extent_is_one_mod_three : rotatedNumPreLimbs % 3 = 1 := by native_decide
+
+theorem neither_185_nor_186_is_body_aligned :
+    (185 - 4) % 3 ≠ 0 ∧ (186 - 4) % 3 ≠ 0 ∧ (187 - 4) % 3 = 0 := by native_decide
+
 /-- Sanity: the projection agrees with the raw group data (nullifier lane 0 = limb 26, lane 1 = 68). A
-    Phase-2 bridge theorem will pin each emit `*GroupCol` to exactly `rotated184.groupCol`. -/
-example : rotated184.groupCol .nullifier 0 = some 26 := by native_decide
-example : rotated184.groupCol .nullifier 1 = some 68 := by native_decide
-example : rotated184.groupCol .fields 1 = some 66 := by native_decide  -- the non-contiguous case
+    Phase-2 bridge theorem will pin each emit `*GroupCol` to exactly `rotated187.groupCol`. -/
+example : rotated187.groupCol .nullifier 0 = some 26 := by native_decide
+example : rotated187.groupCol .nullifier 1 = some 68 := by native_decide
+example : rotated187.groupCol .fields 1 = some 66 := by native_decide  -- the non-contiguous case
 
 /-- **EMIT-READY group table** — each group as `[lane0, completion_1 .. completion_7]`, in exactly the
     shape the Rust `[[usize; 8]; N]` layout wants. `EmitLayoutManifest.lean` exports this value into
@@ -207,14 +305,14 @@ def RotatedLayout.groupTable (L : RotatedLayout) : List (List Nat) :=
   L.groups.map (fun p => p.2.lane0 :: p.2.completion)
 
 /-- The emit-ready table for the current geometry, with its length pinned (10 faithful-8-felt groups). -/
-theorem rotated184_groupTable_len : rotated184.groupTable.length = 10 := by native_decide
+theorem rotated187_groupTable_len : rotated187.groupTable.length = 10 := by native_decide
 
 /-- Every emitted row has the Rust type's exact width. This is a `Legal` obligation, not an emitter
     convention that could fail only after generation. -/
-theorem rotated184_groupTable_row_width :
-    ∀ row ∈ rotated184.groupTable, row.length = 8 := by native_decide
+theorem rotated187_groupTable_row_width :
+    ∀ row ∈ rotated187.groupTable, row.length = 8 := by native_decide
 
 /-- Ten faithful-8 groups contribute exactly 80 occupied columns. -/
-theorem rotated184_groupTable_flatten_len : rotated184.groupTable.flatten.length = 80 := by native_decide
+theorem rotated187_groupTable_flatten_len : rotated187.groupTable.flatten.length = 80 := by native_decide
 
 end Dregg2.Circuit.Emit

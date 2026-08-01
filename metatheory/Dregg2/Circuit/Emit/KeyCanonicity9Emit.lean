@@ -59,37 +59,54 @@ table simply does not contain the row.
 
 ## ⚑ WHAT RUNG THIS REACHES — say it exactly
 
-**AUTHORED AND PROVED. NOT EMITTED INTO ANY MEMBER, AND NOT CONSUMED BY ANY VERIFIER.**
+**AUTHORED, PROVED, AND GEOMETRICALLY PLACED. NOT APPENDED TO ANY LIVE MEMBER'S CONSTRAINT LIST,
+NOT RE-EMITTED INTO ANY DESCRIPTOR, AND NOT CONSUMED BY ANY VERIFIER.**
 
-⚑ **CORRECTED 2026-08-01 — the forcing and the capstone used to quantify over an arbitrary
-`col : KeyColMap`.** Only lane 8's column is unknown; the other eight are `B_PUBKEY_OCTET` at stride
+⚑ **CORRECTED 2026-08-01 (a) — the forcing and the capstone used to quantify over an arbitrary
+`col : KeyColMap`.** Only lane 8's column was unknown; the other eight are `B_PUBKEY_OCTET` at stride
 `B_SPAN`, which `deployedKeyCols` already recorded and four `#guard`s already knew. A theorem named
 "determines the owner key" that quantifies over the column map determines whatever nine columns it
 is handed — strictly weaker on the column axis than this file's own template
 (`FieldsCanonicity9Emit.canon9_forces_canonical` takes a face width and reads the concrete
-`laneColAt`), while the write-up presented the abstraction as scrupulousness. Now only `lane8Off` is
-a parameter, `§1.1` ties lanes 0..7 to the ABSORBED pre-limbs `wireCommitR` folds
-(`deployedKeyCols_octet_is_absorbed`), and the capstone states the ℤ-equalities at those limbs. The
-old shape was not merely unproved on that axis but REFUTABLE: with the block span free, `span := 0`
-put both blocks' lanes on the BEFORE octet.
+`laneColAt`), while the write-up presented the abstraction as scrupulousness. `§1.1` ties lanes 0..7
+to the ABSORBED pre-limbs `wireCommitR` folds (`deployedKeyCols_octet_is_absorbed`). The old shape
+was not merely unproved on that axis but REFUTABLE: with the block span free, `span := 0` put both
+blocks' lanes on the BEFORE octet.
 
-The ninth lane's column still DOES NOT EXIST in the deployed layout and is still not invented here
-— `lane8_is_absorbed_iff` is that blocker as a theorem rather than as prose:
+✅ **LANDED 2026-08-01 (b) — THE NINTH LANE NOW EXISTS.** `rotatedNumPreLimbs` went **184 → 187**
+and `RotatedLayout.rotated187.octetNinthLanes = [184, 185, 186]` allocates one ninth lane per carrier
+octet; the owner key's is in-block limb **186**. So `lane8Off` is no longer a parameter either:
 
-  * an appendix column (where the fields aux region lives) is not in `preLimbsAt`, so it never enters
-    the `wireCommitR` absorption chain — a ninth lane there is a free felt and `state_commit` would
-    still bind only 232 bits of the key. **The ninth lane must be an absorbed PRE-LIMB.**
-  * the pre-limb region is 184/184 full (`ROTATED_PADS = []`), so `rotatedNumPreLimbs` must grow, and
-    it must grow to **187, not 185**: `B_SPAN := n + 3 + (n − 4) / 3` is floor division while the
-    real carrier chain is `chunk31`'s `chunkCount`, which steps every three limbs — at 185 the block
-    is silently under-allocated by one carrier column. The unwritten invariant is
-    `rotatedNumPreLimbs ≡ 1 (mod 3)`, and 187 buys exactly the three ninth lanes the counting demands
-    (`public_key`, `child_vk`, `contract_hash`).
-  * that moves every `state_commit`: **a re-genesis**, `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16.
+  * `deployedKeyCanon9Cols w := deployedKeyCols w B_PUBKEY_NINTH_LANE` leaves nothing free but the
+    face width, which genuinely differs member to member;
+  * `deployed_nonet_is_absorbed` proves ALL NINE lanes are entries of `preLimbColsAt`, i.e. of the
+    list `wireCommitR` folds into `state_commit`. An appendix column would have satisfied every
+    other obligation here and bound nothing — `lane8_is_absorbed_iff` is that criterion as an IFF,
+    and it was FALSE at every offset of the 184-limb geometry;
+  * `keyCanon9_determines_the_owner_key_deployed` is the capstone stated against `preLimbsAt`
+    entries rather than bare columns, so it is a sentence about what the consensus anchor binds;
+  * `the_ninth_lane_offset_is_load_bearing` + `lane8_offset_plus_one_is_not_absorbed` are the
+    mutation: **+1** lands on `B_IROOT` (not a pre-limb, so the lane leaves the absorbed region and
+    the wrap would bind 232 bits while proving identically); **−1** lands on `contract_hash`'s ninth
+    lane (an alias, which `Legal.disjoint` refuses).
 
-Those files (`RotatedLayout.lean`, `EffectVmEmitRotationV3.lean`) were owned by a concurrent lane and
-are not edited here. What is left to do is exactly that geometry move plus a Rust `key_limbs9`
-producer; everything upstream of it is discharged below.
+**Why 187 and not 185.** `B_SPAN := n + 3 + (n − 4) / 3` is `Nat` FLOOR division while the real
+carrier chain is `chunk31`'s `chunkCount`, which rounds UP. They agree exactly on `n ≡ 1 (mod 3)`.
+At 185 the formula says 60 carriers where the chain needs 61 — the block is silently one column
+short and every other `#guard` still passes. `EffectVmEmitRotationV3` now pins the formula against
+the LITERAL `rotV3SitesAt` walk so that failure cannot be silent again.
+
+**What this flag day breaks, and what must be redone.** Every `state_commit` moves, so this is a
+**RE-GENESIS**: bump `persist`'s `CANONICAL_STATE_SCHEMA_EPOCH` (read the constant; do not
+transcribe a remembered number) so a pre-flip image REFUSES TO LOAD rather than reinterpreting its
+limbs. `B_IROOT` 184 → 187, `B_STATE_COMMIT` 185 → 188, the chain band `186..246` → `189..250`,
+`B_SPAN` 247 → 251, `CAVEAT_REGION_OFF` 494 → 502, `CANON9_REGION_OFF` 539 → 547, `APPENDIX_SPAN`
+651 → 659, appendix sites 136 → 138, `CUSTOM_COMMIT_TEETH_COL` 1791 → 1813. Re-emit every v3
+descriptor, `layout_generated.rs`, the staged registry TSVs and every VK; re-pin every hand-carried
+Rust literal in `trace_rotated.rs` / `exact_nullifier_aafi_rotated_trace.rs` /
+`shielded_ring_clearing_air.rs` / `rotation_witness.rs` / `cell/src/commitment.rs`; add `29` to
+`CUSTOM_RANGE_WIDTHS`; and write a Rust `key_limbs9` producer that FILLS limb 186 (and 184/185) —
+without it every honest turn is UNSAT, and with an 8-lane packer behind it the wound is re-opened.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `native_decide`.
@@ -105,7 +122,8 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit (rotatedNumPreLimbs)
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (rangeTidW)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN B_PUBKEY_OCTET preLimbsAt)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN B_PUBKEY_OCTET B_PUBKEY_NINTH_LANE
+  preLimbsAt)
 open Dregg2.Circuit.FieldLanes9 (Bytes32)
 open Dregg2.Circuit.KeyLanes9 (K KTOP Nonet CanonicalKey9 LanesRanged TopLaneRanged UniformRanged
   keyToLanes9 keyLanes9ToBytes keyToLanes9_injective canonicalKey9_iff_in_image forgedKeyNonet
@@ -171,22 +189,34 @@ theorem deployedKeyCols_lane8_col (w lane8Off : Nat) (blk : Fin 2) :
     deployedKeyCols w lane8Off blk 8 = w + blk.1 * B_SPAN + lane8Off := by
   simp [deployedKeyCols]
 
--- The eight offsets that ARE already fixed, against the committed layout constant (the Rust twin is
--- `trace_rotated::B_PUBKEY_OCTET = 105`, generated from `EmitLayoutManifest`). Re-typed by hand
--- against a committed artifact: the literals ARE the review. At today's `188`-wide bare v1 face and
--- `B_SPAN = 247` the BEFORE block's octet is `293..300` and the AFTER block's is `540..547`.
+/-- ⚑ **THE DEPLOYED NINTH-LANE OFFSET.** No longer a parameter and no longer an illustration: the
+2026-08-01 key-nonet flag day took `rotatedNumPreLimbs` 184 → 187 and allocated in-block limb 186 to
+the owner key's ninth lane. Read from `EffectVmEmitRotationV3`, which reads it from the verified
+`RotatedLayout.octetLaneCol`; this file re-spells nothing. -/
+abbrev deployedLane8Off : Nat := B_PUBKEY_NINTH_LANE
+
+/-- **THE FULLY DEPLOYED COLUMN MAP** — nothing left free but the face width `w`, which is the one
+thing that genuinely differs member to member. -/
+def deployedKeyCanon9Cols (w : Nat) : KeyColMap := deployedKeyCols w deployedLane8Off
+
+-- The nine offsets, against the committed layout constants (Rust twins
+-- `trace_rotated::B_PUBKEY_OCTET = 105` and `::B_PUBKEY_NINTH_LANE = 186`, both generated from
+-- `EmitLayoutManifest`). Re-typed by hand against a committed artifact: the literals ARE the review.
+-- At today's `188`-wide bare v1 face and `B_SPAN = 251` the BEFORE nonet is `293..300` + `374` and
+-- the AFTER nonet is `544..551` + `625`.
 #guard B_PUBKEY_OCTET == 105
-#guard (List.finRange 8).map (fun l => deployedKeyCols 188 184 0 ⟨l.1, by omega⟩)
+#guard deployedLane8Off == 186
+#guard (List.finRange 8).map (fun l => deployedKeyCanon9Cols 188 0 ⟨l.1, by omega⟩)
   == [293, 294, 295, 296, 297, 298, 299, 300]
-#guard (List.finRange 8).map (fun l => deployedKeyCols 188 184 1 ⟨l.1, by omega⟩)
-  == [540, 541, 542, 543, 544, 545, 546, 547]
--- ⚠ The `184` above is NOT a proposed allocation — it is an ILLUSTRATIVE ninth-lane offset used
--- only to exercise the shape, and today's in-block offset 184 is occupied by the carrier band. The
--- real one comes from the `rotatedNumPreLimbs 184 → 187` move (header §"WHAT RUNG"), which this file
--- does not land. What the guard below actually checks is the shape claim that survives that move:
--- for a ninth-lane offset inside the span and off the octet, the two blocks' nonets are disjoint.
-#guard ((List.finRange 9).map (deployedKeyCols 188 184 0)
-   ++ (List.finRange 9).map (deployedKeyCols 188 184 1)).Nodup
+#guard deployedKeyCanon9Cols 188 0 8 == 374
+#guard (List.finRange 8).map (fun l => deployedKeyCanon9Cols 188 1 ⟨l.1, by omega⟩)
+  == [544, 545, 546, 547, 548, 549, 550, 551]
+#guard deployedKeyCanon9Cols 188 1 8 == 625
+-- ⚑ THE OCTET DID NOT MOVE. `293..300` is byte-for-byte the BEFORE window the 184-limb geometry
+-- had; what moved is the AFTER block (`540..547` → `544..551`, because `B_SPAN` 247 → 251) and the
+-- whole absorption tail. Every `state_commit` therefore changes: this is a RE-GENESIS.
+#guard ((List.finRange 9).map (deployedKeyCanon9Cols 188 0)
+   ++ (List.finRange 9).map (deployedKeyCanon9Cols 188 1)).Nodup
 
 /-! ### ⚑ §1.1 — THE COLUMNS ARE THE ABSORBED OWNER-KEY LIMBS, from two sources that are not each
 other.
@@ -233,12 +263,12 @@ theorem octet_cols_are_absorbed (w lane8Off : Nat) (blk : Fin 2) {l : Fin 9} (hl
   simp only [B_PUBKEY_OCTET, rotatedNumPreLimbs]
   omega
 
-/-- ⚑ **AND THE NINTH LANE STILL HAS NOWHERE TO GO — the header's blocker, as a theorem.** The
-ninth-lane column is absorbed exactly when `lane8Off < rotatedNumPreLimbs`; the pre-limb region is
-184/184 occupied (`rotated184.pads = []`, the `#guard` below), so today every choice is either an
-ALIAS of a committed limb or a free felt outside `wireCommitR` — and in the second case
-`state_commit` still binds only 232 bits of the key, which is the wound this wrap exists to close.
-No `lane8Off` is admissible until `rotatedNumPreLimbs` grows. -/
+/-- ⚑ **WHERE THE NINTH LANE MAY LIVE — the criterion, as an IFF.** The ninth-lane column is
+absorbed exactly when `lane8Off < rotatedNumPreLimbs`. Everything else is a free felt outside
+`wireCommitR`, and in that case `state_commit` binds only the eight lanes — 232 bits of a 256-bit
+key, which is the wound this wrap exists to close. At the 184-limb geometry NO offset satisfied it:
+the pre-limb region was 184/184 occupied, so every choice was either an alias of a committed limb or
+an appendix column. That is why the flag day had to move the EXTENT and not just add a lookup. -/
 theorem lane8_is_absorbed_iff (w lane8Off : Nat) (blk : Fin 2) :
     deployedKeyCols w lane8Off blk 8 ∈ preLimbColsAt (w + blk.1 * B_SPAN)
       ↔ lane8Off < rotatedNumPreLimbs := by
@@ -248,18 +278,69 @@ theorem lane8_is_absorbed_iff (w lane8Off : Nat) (blk : Fin 2) :
   · rintro ⟨k, hk, hEq⟩; omega
   · intro h; exact ⟨lane8Off, h, rfl⟩
 
-#guard rotatedNumPreLimbs == 184
-#guard Dregg2.Circuit.Emit.rotated184.pads == []
-#guard (preLimbColsAt 188).length == 184
--- The octet window really is inside the absorbed region, at both blocks.
-#guard ((List.finRange 8).map (fun l => deployedKeyCols 188 184 0 ⟨l.1, by omega⟩)).all
+/-- ⚑ **AND THE DEPLOYED OFFSET SATISFIES IT.** Limb 186 is a pre-limb, so the owner key's ninth
+lane is an entry of the very list `wireCommitR` folds. This is the sentence the whole flag day
+exists to make true; it was FALSE at every offset of the 184-limb geometry. -/
+theorem deployed_lane8_is_absorbed (w : Nat) (blk : Fin 2) :
+    deployedKeyCanon9Cols w blk 8 ∈ preLimbColsAt (w + blk.1 * B_SPAN) :=
+  (lane8_is_absorbed_iff w deployedLane8Off blk).mpr (by decide)
+
+/-- **ALL NINE LANES ARE ABSORBED.** Not eight and a rider: the whole nonet is inside the domain
+`state_commit` is a fold of. -/
+theorem deployed_nonet_is_absorbed (w : Nat) (blk : Fin 2) (l : Fin 9) :
+    deployedKeyCanon9Cols w blk l ∈ preLimbColsAt (w + blk.1 * B_SPAN) := by
+  rcases Nat.lt_or_ge l.1 8 with h | h
+  · exact octet_cols_are_absorbed w deployedLane8Off blk h
+  · have : l = 8 := by apply Fin.ext; have := l.isLt; omega
+    subst this
+    exact deployed_lane8_is_absorbed w blk
+
+/-- ⚑⚑ **THE MUTATION, BOTH DIRECTIONS.** The ninth lane's offset is load-bearing to ±1, and it
+fails in two DIFFERENT ways — which is why the allocation is a choice and not an accident.
+
+  * `+1` is `B_IROOT` (`= rotatedNumPreLimbs = 187`), which is NOT a pre-limb. The nonet's ninth
+    lane would sit outside `preLimbsAt`, `wireCommitR` would never fold it, and the emitted lookup
+    would range-check a felt the anchor does not see — the wrap would look identical, prove
+    identical, and bind 232 bits.
+  * `−1` is `contract_hash`'s ninth lane (185). The pubkey nonet would ALIAS another octet's nonet,
+    so two 32-byte carriers would share a committed column and neither would be injective. The
+    layout's `disjoint` obligation is what refuses that, and `RotatedLayout.octetLaneCol_nodup`
+    exhibits the 27 projected columns as pairwise distinct.
+
+Stated as facts a reader can check, not as prose. -/
+theorem the_ninth_lane_offset_is_load_bearing :
+    deployedLane8Off < rotatedNumPreLimbs
+      ∧ ¬ (deployedLane8Off + 1 < rotatedNumPreLimbs)
+      ∧ deployedLane8Off + 1 = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
+      ∧ deployedLane8Off - 1
+          = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_CONTRACT_HASH_NINTH_LANE := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+/-- The `+1` half as the membership it actually breaks: perturb the offset by one and the ninth lane
+LEAVES the absorbed region, at every face width and both blocks. -/
+theorem lane8_offset_plus_one_is_not_absorbed (w : Nat) (blk : Fin 2) :
+    deployedKeyCols w (deployedLane8Off + 1) blk 8 ∉ preLimbColsAt (w + blk.1 * B_SPAN) := by
+  intro h
+  exact absurd ((lane8_is_absorbed_iff w (deployedLane8Off + 1) blk).mp h) (by decide)
+
+#guard rotatedNumPreLimbs == 187
+#guard Dregg2.Circuit.Emit.rotated187.pads == []
+#guard (preLimbColsAt 188).length == 187
+-- The whole NONET really is inside the absorbed region, at both blocks — nine columns, not eight.
+#guard ((List.finRange 9).map (deployedKeyCanon9Cols 188 0)).all
   (fun c => (preLimbColsAt 188).contains c)
-#guard ((List.finRange 8).map (fun l => deployedKeyCols 188 184 1 ⟨l.1, by omega⟩)).all
+#guard ((List.finRange 9).map (deployedKeyCanon9Cols 188 1)).all
   (fun c => (preLimbColsAt (188 + B_SPAN)).contains c)
+-- ...and the perturbed offset is NOT: the mutation, computably.
+#guard !(preLimbColsAt 188).contains (deployedKeyCols 188 (deployedLane8Off + 1) 0 8)
 
 #assert_axioms deployedKeyCols_octet_is_absorbed
 #assert_axioms octet_cols_are_absorbed
 #assert_axioms lane8_is_absorbed_iff
+#assert_axioms deployed_lane8_is_absorbed
+#assert_axioms deployed_nonet_is_absorbed
+#assert_axioms the_ninth_lane_offset_is_load_bearing
+#assert_axioms lane8_offset_plus_one_is_not_absorbed
 
 /-! ## §2 — the emitted constraints. -/
 
@@ -276,10 +357,10 @@ def keyCanon9ConstraintsAt (col : KeyColMap) : List VmConstraint2 :=
   (List.finRange 2).flatMap fun blk => keyLookupsAt col blk
 
 -- 2 × 9 = 18 lookups, ZERO gates.
-#guard (keyCanon9ConstraintsAt (deployedKeyCols 188 184)).length == 18
-#guard ((keyCanon9ConstraintsAt (deployedKeyCols 188 184)).filter (fun c => match c with
+#guard (keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).length == 18
+#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
   | .lookup _ => true | _ => false)).length == 18
-#guard ((keyCanon9ConstraintsAt (deployedKeyCols 188 184)).filter (fun c => match c with
+#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
   | .base (.gate _) => true | _ => false)).length == 0
 
 /-- **THE WRAP.** `traceWidth`-, `piCount`-, table-, site- and range-INVARIANT. -/
@@ -555,6 +636,112 @@ theorem keyCanon9_rejects_the_forged_nonet {hash : List ℤ → ℤ} {w lane8Off
   rw [deployedKeyCols_lane8_col, hforged] at htop
   simp only [KEY_TOP_BITS] at htop
   norm_num at htop
+
+/-! ## §5 — ⚑ THE DEPLOYED INSTANCE. Nothing is a parameter here but the face width.
+
+`§3`'s theorems already name `deployedKeyCols`; what was still free was `lane8Off`, because at the
+184-limb geometry NO offset was admissible. The 2026-08-01 key-nonet flag day allocated in-block
+limb 186, so this section restates the forcing, the capstone and the refusal with EVERY column
+fixed — and states them against `preLimbsAt`, i.e. against the list `wireCommitR` folds into
+`state_commit`, rather than against bare column indices. -/
+
+/-- The in-block PRE-LIMB offset of nonet lane `l`: the octet window for lanes 0..7, the flag-day
+ninth lane for lane 8. Every value is `< rotatedNumPreLimbs`, which is what makes the statements
+below statements about the ANCHOR'S DOMAIN. -/
+def keyLimbOff (l : Fin 9) : Nat :=
+  if l.1 < 8 then B_PUBKEY_OCTET + l.1 else deployedLane8Off
+
+theorem keyLimbOff_lt (l : Fin 9) : keyLimbOff l < rotatedNumPreLimbs := by
+  rcases Nat.lt_or_ge l.1 8 with h | h
+  · simp only [keyLimbOff, if_pos h, B_PUBKEY_OCTET, rotatedNumPreLimbs]; omega
+  · have : l = 8 := by apply Fin.ext; have := l.isLt; omega
+    subst this
+    decide
+
+#guard (List.finRange 9).map keyLimbOff == [105, 106, 107, 108, 109, 110, 111, 112, 186]
+
+/-- **EVERY LANE READS AN ABSORBED LIMB.** Column `deployedKeyCanon9Cols w blk l` IS entry
+`keyLimbOff l` of `preLimbsAt` — the tie `§1.1` proved for lanes 0..7, now closed for all nine. -/
+theorem deployedKeyCanon9Cols_is_absorbed_limb (w : Nat) (a : Assignment) (blk : Fin 2)
+    (l : Fin 9) :
+    a (deployedKeyCanon9Cols w blk l)
+      = (preLimbsAt (w + blk.1 * B_SPAN) a).getD (keyLimbOff l) 0 := by
+  rcases Nat.lt_or_ge l.1 8 with h | h
+  · simp only [keyLimbOff, if_pos h, deployedKeyCanon9Cols]
+    exact deployedKeyCols_octet_is_absorbed w deployedLane8Off a blk h
+  · have hl : l = 8 := by apply Fin.ext; have := l.isLt; omega
+    subst hl
+    simp only [keyLimbOff, deployedKeyCanon9Cols]
+    rw [deployedKeyCols_lane8_col, preLimbsAt_getD _ _ _ (by decide)]
+    norm_num
+
+/-- **THE FORCING, FULLY DEPLOYED.** No column is a parameter. -/
+theorem keyCanon9_forces_canonical_deployed {hash : List ℤ → ℤ} {w : Nat}
+    {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash (keyCanonical9At (deployedKeyCanon9Cols w) d) minit mfin maddrs t)
+    (h29 : t.tf (rangeTidW KEY_LANE_BITS) = rangeRows KEY_LANE_BITS)
+    (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
+    {i : Nat} (hi : i < t.rows.length) (blk : Fin 2) :
+    CanonicalKey9 (fun l => ((envAt t i).loc (deployedKeyCanon9Cols w blk l)).toNat) :=
+  (lane_bounds_atCols hsat h29 h24 hi blk).2
+
+/-- **⚑ THE DEPLOYED CAPSTONE.** Under the emitted envelope, the NINE absorbed pre-limbs the owner
+key rides — the octet `B_PUBKEY_OCTET .. +7` and the flag-day ninth lane, all of them entries of the
+list `wireCommitR` folds into `state_commit` — are the nine-lane encoding of EXACTLY ONE 32-byte
+key. Compared with `keyCanon9_determines_the_owner_key` this fixes the last free column AND states
+lane 8 as a member of `preLimbsAt` rather than as a bare column, so the sentence is about what the
+consensus anchor binds and not about where this file chose to look. -/
+theorem keyCanon9_determines_the_owner_key_deployed {hash : List ℤ → ℤ} {w : Nat}
+    {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash (keyCanonical9At (deployedKeyCanon9Cols w) d) minit mfin maddrs t)
+    (h29 : t.tf (rangeTidW KEY_LANE_BITS) = rangeRows KEY_LANE_BITS)
+    (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
+    {i : Nat} (hi : i < t.rows.length) (blk : Fin 2) :
+    ∃! b : Bytes32, ∀ l : Fin 9,
+      ((keyToLanes9 b l : Nat) : ℤ)
+        = (preLimbsAt (w + blk.1 * B_SPAN) (envAt t i).loc).getD (keyLimbOff l) 0 := by
+  obtain ⟨hnn, hcanon⟩ := lane_bounds_atCols hsat h29 h24 hi blk
+  obtain ⟨b, hb⟩ := (canonicalKey9_iff_in_image _).mp hcanon
+  have hlane : ∀ l : Fin 9,
+      ((keyToLanes9 b l : Nat) : ℤ) = (envAt t i).loc (deployedKeyCanon9Cols w blk l) := by
+    intro l
+    rw [show keyToLanes9 b l = ((envAt t i).loc (deployedKeyCanon9Cols w blk l)).toNat from
+      congrFun hb l]
+    exact Int.toNat_of_nonneg (hnn l)
+  refine ⟨b, fun l => ?_, ?_⟩
+  · rw [hlane l]
+    exact deployedKeyCanon9Cols_is_absorbed_limb w (envAt t i).loc blk l
+  · intro b' hb'
+    apply keyToLanes9_injective
+    funext l
+    have hz : ((keyToLanes9 b' l : Nat) : ℤ) = ((keyToLanes9 b l : Nat) : ℤ) := by
+      rw [hb' l, hlane l]
+      exact (deployedKeyCanon9Cols_is_absorbed_limb w (envAt t i).loc blk l).symm
+    exact_mod_cast hz
+
+/-- **⚑ THE EXHIBIT, AT THE DEPLOYED COLUMNS AND AGAINST THE ABSORBED LIMB.** A witness whose owner
+key's NINTH ABSORBED PRE-LIMB carries `2^24` — the vector that passes a uniform nine-lane `< 2^29`
+check and still decodes to the all-zero key — does not satisfy the welded member on any row. The
+hypothesis is stated as an entry of `preLimbsAt`, so it is a hypothesis about the datum
+`state_commit` folds. -/
+theorem keyCanon9_rejects_the_forged_nonet_deployed {hash : List ℤ → ℤ} {w : Nat}
+    {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
+    {i : Nat} (hi : i < t.rows.length) (blk : Fin 2)
+    (hforged : (preLimbsAt (w + blk.1 * B_SPAN) (envAt t i).loc).getD deployedLane8Off 0
+      = 16777216) :
+    ¬ Satisfied2 hash (keyCanonical9At (deployedKeyCanon9Cols w) d) minit mfin maddrs t := by
+  refine keyCanon9_rejects_the_forged_nonet (w := w) (lane8Off := deployedLane8Off) h24 hi blk ?_
+  rw [← hforged, preLimbsAt_getD _ _ _ (by decide)]
+
+#assert_axioms keyLimbOff_lt
+#assert_axioms deployedKeyCanon9Cols_is_absorbed_limb
+#assert_axioms keyCanon9_forces_canonical_deployed
+#assert_axioms keyCanon9_determines_the_owner_key_deployed
+#assert_axioms keyCanon9_rejects_the_forged_nonet_deployed
 
 /-- The exhibit's lane 8 really is the top-lane ceiling, one above the largest admissible value. -/
 theorem forged_lane8_is_the_ceiling :
