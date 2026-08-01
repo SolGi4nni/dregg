@@ -5574,26 +5574,36 @@ fn build_traces(
             } else {
                 (BabyBear::ZERO, 0)
             };
-            row.push(BabyBear::new(addr));
-            row.push(init_v);
-            row.push(fin_v);
-            row.push(BabyBear::new(fin_s));
-            row.push(if is_real {
+            // ⚑ WRITTEN BY NAME, not by push order. Until the `Ir2Air::MemBoundary` arm was
+            // deleted these `MB_*` constants had a second reader — the AIR — and the two agreed by
+            // both naming the same offsets. The AIR's author is now
+            // `Dregg2/Circuit/Emit/MemBoundaryTableEmit.lean`, which reads columns by ITS OWN
+            // `MB_*` (`#guard`-pinned to these numbers), so this producer is the last thing in
+            // Rust that knows what column 3 means. Writing positionally would have left that
+            // knowledge in the ORDER of six `push` calls and the constants dead; writing by index
+            // keeps it stated. `the_emitted_columns_round_trip_the_declared_address_list` is what
+            // checks the two sides still agree.
+            row.resize(MB_AGAP + 1, BabyBear::ZERO);
+            row[MB_ADDR] = BabyBear::new(addr);
+            row[MB_INIT_VAL] = init_v;
+            row[MB_FIN_VAL] = fin_v;
+            row[MB_FIN_SERIAL] = BabyBear::new(fin_s);
+            row[MB_IS_REAL] = if is_real {
                 BabyBear::ONE
             } else {
                 BabyBear::ZERO
-            });
-            row.push(BabyBear::new(
+            };
+            row[MB_ADDR_MULT] = BabyBear::new(
                 (*addr_mult.get(&addr).unwrap_or(&0) % (BABYBEAR_P as u64)) as u32
                     * (is_real as u32),
-            ));
+            );
             // agap: bound on real→real transitions; zero elsewhere.
             let agap = if i + 1 < mem_boundary.addrs.len() {
                 mem_boundary.addrs[i + 1] - addr - 1
             } else {
                 0
             };
-            row.push(BabyBear::new(agap));
+            row[MB_AGAP] = BabyBear::new(agap);
             fill_decomp(agap, MEM_GAP_BITS, &mut row, &mut byte_hist);
             // addr_chk = is_real·addr.
             let achk = if is_real { addr } else { 0 };
