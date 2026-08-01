@@ -49,6 +49,7 @@ use crate::card_editor::{
     BindProps, ButtonProps, EditError, OnClick, TextProps, ViewEdit, ViewPatch, ViewTree,
 };
 use crate::program_doc::ProgramSource;
+use dregg_cell::Requirement;
 
 /// The model slot whose value is the count of backlinks the viewer sees — the
 /// [`ViewTree::Bind`] the renderer re-reads, advanced by a real `SetField` turn when the
@@ -101,7 +102,7 @@ pub struct LinksCard {
     /// The authority the card's driver holds (the cap a view-edit is checked against).
     held: AuthRequired,
     /// The authority a reshape on THIS card requires (`held` must satisfy it).
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
     /// The author every view-patch is attributed to (the blame identity).
     author: Author,
 }
@@ -119,7 +120,7 @@ impl LinksCard {
         viewer: AuthRequired,
         author: Author,
         held: AuthRequired,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
     ) -> Self {
         let (backlinks, total) = build_backlinks(focus, cells, &viewer);
         let initial = links_view(focus, &viewer, &backlinks, total).to_json();
@@ -196,7 +197,7 @@ impl LinksCard {
 
     /// Whether the card is authorized to advance / reshape itself (the cap tooth).
     fn authorized(&self) -> bool {
-        dregg_cell::is_attenuation(&self.held, &self.edit_authority)
+        self.edit_authority.satisfied_by(&self.held)
     }
 
     /// Fire a real `SetField` turn setting the card's [`LINK_COUNT_SLOT`] to the count of

@@ -90,6 +90,7 @@ pub mod card;
 // =============================================================================
 
 use dregg_cell::Cell;
+use dregg_cell::{Credential, Requirement};
 
 /// The protocol-proven sealed-escrow capacity, re-exported as this app's escrow.
 /// These are the genuine, witnessed primitives (`open` seals terms into the
@@ -803,11 +804,11 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///     buyer can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the observer ⊂ buyer ⊂ seller ladder.
-pub const OBSERVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const OBSERVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The buyer rights tier (sig-or-proof — fund + view). See [`OBSERVER_RIGHTS`].
-pub const BUYER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const BUYER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The seller rights tier (root — ship, settle + all). See [`OBSERVER_RIGHTS`].
-pub const SELLER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const SELLER_RIGHTS: Requirement = Requirement::Root;
 
 /// The **life-of-cell escrow program** the executor re-enforces on every touching turn — the
 /// canonical method-dispatched [`escrow_cell_program`] (`Always`-case TRUSTLINE/MAILBOX/LIFECYCLE
@@ -950,7 +951,7 @@ pub fn escrow_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
                 .gated(fund)
                 .gated(ship)
                 .gated(settle)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

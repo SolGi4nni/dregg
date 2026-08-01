@@ -68,6 +68,7 @@ use dregg_app_framework::{
 use dregg_cell::interface::{ArgsSchema, InterfaceDescriptor, MethodSig, Semantics, method_symbol};
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::program::{CellProgram, StateConstraint, TransitionCase, TransitionGuard};
+use dregg_cell::{Credential, Requirement};
 use dregg_turn::Turn;
 use dregg_turn::action::Action;
 use dregg_types::CellId;
@@ -129,12 +130,12 @@ pub const VERSION_SLOT: usize = 0;
 pub fn interface_descriptor() -> InterfaceDescriptor {
     let sig_mutator = |name: &str, args: u8| MethodSig {
         args_schema: ArgsSchema::Fixed(args),
-        auth_required: AuthRequired::Signature,
+        auth_required: Requirement::AtLeast(Credential::Signature),
         ..MethodSig::replayable(method_symbol(name))
     };
     let serviced_read = |name: &str, args: u8| MethodSig {
         args_schema: ArgsSchema::Fixed(args),
-        auth_required: AuthRequired::None,
+        auth_required: Requirement::Root,
         semantics: Semantics::Serviced,
         ..MethodSig::replayable(method_symbol(name))
     };
@@ -439,7 +440,7 @@ mod tests {
         assert!(matches!(
             refused,
             BotServiceError::Refused(InvokeRefused::Unauthorized {
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 ..
             })
         ));

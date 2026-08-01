@@ -76,6 +76,7 @@ use dregg_cell::FactoryDescriptor;
 
 use crate::affordance::AffordanceSurface;
 use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
+use dregg_cell::{Credential, Requirement};
 
 // =============================================================================
 // FactoryRegistry
@@ -542,8 +543,8 @@ impl StarbridgeAppContext {
     /// # let (view_effect, admin_effect) = (emit([1u8; 32]), emit([2u8; 32]));
     /// ctx.register_affordance_surface(
     ///     AffordanceSurface::named(doc, "doc")
-    ///         .declare(CellAffordance::new("view", AuthRequired::Signature, view_effect))
-    ///         .declare(CellAffordance::new("admin", AuthRequired::None, admin_effect)),
+    ///         .declare(CellAffordance::new("view", Requirement::AtLeast(Credential::Signature), view_effect))
+    ///         .declare(CellAffordance::new("admin", Requirement::Root, admin_effect)),
     /// );
     ///
     /// // The host serves it, keyed by the backing cell.
@@ -728,7 +729,7 @@ mod tests {
         let doc = dregg_types::CellId::from_bytes([42u8; 32]);
         let surface = AffordanceSurface::named(doc, "doc").declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::EmitEvent {
                 cell: doc,
                 event: Event {

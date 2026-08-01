@@ -58,9 +58,8 @@
 //!   libservo `WebView`'s dispatch of a gated request. The gate that decides
 //!   *whether the turn may fire at all* is the real `is_attenuation`, in-band.
 
-use dregg_cell::is_attenuation;
 use dregg_cell::state::CellState;
-use dregg_cell::AuthRequired;
+use dregg_cell::{AuthRequired, Credential, Requirement};
 use dregg_turn::Effect;
 use dregg_types::CellId;
 
@@ -93,12 +92,12 @@ pub struct CellAffordance {
     /// The operation name — the affordance's identity within its surface (the deos
     /// analogue of `hx-post="/comment"`). Unique per [`AffordanceSurface`].
     pub name: String,
-    /// The authority a viewer must HOLD to see/fire this affordance. The gate is
-    /// `is_attenuation(held, required)` = `required ⊆ held` — the viewer must hold
-    /// AT LEAST this much authority. A `view` affordance requires a narrow right
-    /// (any authenticated reader holds it); an `admin` affordance requires the
-    /// broad root right (only a powerful holder clears it).
-    pub required_rights: AuthRequired,
+    /// The authority a viewer must HOLD to see/fire this affordance, as a
+    /// [`Requirement`] — the intent is on the face of the value. A `view` affordance
+    /// is `AtLeast(Signature)` (any authenticated reader clears it); an `admin`
+    /// affordance is [`Requirement::Root`] (ONLY a holder of the lattice top clears
+    /// it); a genuinely ungated one is [`Requirement::Public`].
+    pub required_rights: Requirement,
     /// The effect this affordance would FIRE — a real [`dregg_turn::Effect`], the
     /// genuine turn the `TurnExecutor` runs (a `SetField` for an edit, an
     /// `EmitEvent` for a comment, a `GrantCapability` for an admin grant). NOT a
@@ -112,7 +111,7 @@ impl CellAffordance {
     /// `effect_template` (a real [`dregg_turn::Effect`]).
     pub fn new(
         name: impl Into<String>,
-        required_rights: AuthRequired,
+        required_rights: Requirement,
         effect_template: Effect,
     ) -> Self {
         CellAffordance {
@@ -124,13 +123,15 @@ impl CellAffordance {
 
     /// Is this affordance authorized for a holder of `held` authority?
     ///
-    /// THE cap-gate, and it is the REAL one: `is_attenuation(held, required)` =
-    /// `required ⊆ held` (the proven attenuation lattice). True iff the holder's
-    /// authority is at least as broad as this affordance demands. This is the same
-    /// predicate `delegate.rs` runs to admit a child surface and `rehydrate.rs` runs
-    /// to compose a reshare — NOT a parallel role check.
+    /// THE cap-gate, and it is the ONE decision function —
+    /// [`Requirement::satisfied_by`], the same call every other affordance gate in
+    /// the workspace makes. `AtLeast(c)` is the proven attenuation lattice
+    /// (`required ⊆ held`, the predicate `delegate.rs` runs to admit a child surface
+    /// and `rehydrate.rs` runs to compose a reshare); `Root` admits only a holder of
+    /// the lattice top; `Public` admits everyone; `Never` admits nobody. NOT a
+    /// parallel role check and NOT a local re-derivation.
     pub fn authorized_for(&self, held: &SurfaceCapability) -> bool {
-        is_attenuation(&held.window.rights, &self.required_rights)
+        self.required_rights.satisfied_by(&held.window.rights)
     }
 
     /// A stable, `Eq`-able summary of the effect-template (its variant + the cells
@@ -595,7 +596,7 @@ pub enum FireError {
         /// The affordance the actor tried to fire.
         affordance: String,
         /// The authority it required (which the actor did not hold).
-        required: AuthRequired,
+        required: Requirement,
     },
     /// The actor HOLDS the rights and the height is in the window, but the
     /// `old → new` TRANSITION is not the one this button reacts to (`pre(old)`,
@@ -992,33 +993,33 @@ mod tests {
     }
 
     /// The canonical four-affordance DOC-cell surface used across the tests + the
-    /// demo: {view, comment, edit, admin} on a clean three-tier rights chain
-    /// `Signature ⊂ Either ⊂ None` — view at tier-1, comment+edit at tier-2, admin
-    /// at tier-3. Each carries a REAL effect-template.
+    /// demo: {view, comment, edit, admin} on a clean three-tier chain
+    /// `AtLeast(Signature) ⊂ AtLeast(Either) ⊂ Root` — view at tier-1, comment+edit
+    /// at tier-2, admin at tier-3. Each carries a REAL effect-template.
     fn doc_surface(doc: CellId) -> AffordanceSurface {
         AffordanceSurface::new(doc)
             // view: the weakest meaningful right — any authenticated reader.
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc), // a read logs an access event (a real turn)
             ))
             // comment: the editor tier (Either ⊃ Signature).
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(doc),
             ))
             // edit: the editor tier too — writes a state field.
             .declare(CellAffordance::new(
                 "edit",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 set_field(doc, 1),
             ))
-            // admin: the broad root tier (None) — grants a capability.
+            // admin: the root tier (`Requirement::Root`) — grants a capability.
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 grant_cap(doc, cid(99)),
             ))
     }
@@ -1043,7 +1044,11 @@ mod tests {
         // Anti-toy: the effect_template IS a real dregg_turn::Effect — the genuine
         // turn the executor would run, not a stub.
         let doc = cid(1);
-        let edit = CellAffordance::new("edit", AuthRequired::Either, set_field(doc, 3));
+        let edit = CellAffordance::new(
+            "edit",
+            Requirement::AtLeast(Credential::Either),
+            set_field(doc, 3),
+        );
         assert_eq!(
             edit.effect_summary(),
             EffectSummary::SetField {
@@ -1055,28 +1060,83 @@ mod tests {
         assert!(matches!(edit.effect_template, Effect::SetField { .. }));
     }
 
-    #[test]
-    fn the_cap_gate_is_the_real_is_attenuation() {
-        // THE gate: authorized_for == is_attenuation(held, required) == required ⊆
-        // held. A viewer holding Signature clears a view (req Signature) but NOT an
-        // admin (req None / root). This is the SAME predicate the firmament runs.
-        let doc = cid(1);
-        let view = CellAffordance::new("view", AuthRequired::Signature, emit_event(doc));
-        let admin = CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99)));
+    /// Every `Requirement` shape, for the exhaustive oracle sweep.
+    fn all_requirements() -> Vec<Requirement> {
+        vec![
+            Requirement::Public,
+            Requirement::AtLeast(Credential::Signature),
+            Requirement::AtLeast(Credential::Proof),
+            Requirement::AtLeast(Credential::Either),
+            Requirement::AtLeast(Credential::Custom { vk_hash: [3u8; 32] }),
+            Requirement::Root,
+            Requirement::Never,
+        ]
+    }
 
-        // The gate agrees with is_attenuation by construction, both polarities.
-        assert!(view.authorized_for(&viewer_held()));
+    /// Every authority a holder can carry.
+    fn all_held() -> Vec<AuthRequired> {
+        vec![
+            AuthRequired::None,
+            AuthRequired::Signature,
+            AuthRequired::Proof,
+            AuthRequired::Either,
+            AuthRequired::Impossible,
+            AuthRequired::Custom { vk_hash: [3u8; 32] },
+        ]
+    }
+
+    #[test]
+    fn the_cap_gate_is_exactly_the_one_requirement_decision_function() {
+        // THE ORACLE. This crate's gate must return what `Requirement::satisfied_by`
+        // returns — for EVERY requirement shape against EVERY holding, not just the
+        // pair a demo happens to exercise. A local special-case in `authorized_for`
+        // (the historic `None => true`) is exactly what this kills.
+        let doc = cid(1);
+        for required in all_requirements() {
+            for held in all_held() {
+                let aff = CellAffordance::new("op", required.clone(), emit_event(doc));
+                let gate = aff.authorized_for(&SurfaceCapability::root(cid(70), held.clone()));
+                assert_eq!(
+                    gate,
+                    required.satisfied_by(&held),
+                    "the surface gate diverged from Requirement::satisfied_by \
+                     for required={required:?} held={held:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_public_and_never_admit_independently_known_holder_sets() {
+        // The oracle above is an equality against the shared function; this one
+        // states the ANSWER independently, so a change to BOTH sides still fails.
+        let doc = cid(1);
+        let admitted = |req: Requirement| -> Vec<AuthRequired> {
+            let aff = CellAffordance::new("op", req, emit_event(doc));
+            all_held()
+                .into_iter()
+                .filter(|h| aff.authorized_for(&SurfaceCapability::root(cid(71), h.clone())))
+                .collect()
+        };
+
+        // `Root` admits EXACTLY the lattice top — a Signature holder does NOT clear
+        // it. (This is the behaviour the four "tier-3 — only a root holder of None
+        // clears it" declarations always claimed and the v2 gate never delivered.)
+        assert_eq!(admitted(Requirement::Root), vec![AuthRequired::None]);
+        // `Public` admits everyone, including a holder of nothing usable.
+        assert_eq!(admitted(Requirement::Public), all_held());
+        // `Never` admits nobody, not even root.
+        assert!(admitted(Requirement::Never).is_empty());
+        // `AtLeast(Signature)` admits the top and Signature-or-wider — NOT Proof
+        // (incomparable), NOT Impossible, NOT a Custom identity.
         assert_eq!(
-            view.authorized_for(&viewer_held()),
-            is_attenuation(&viewer_held().window.rights, &AuthRequired::Signature)
+            admitted(Requirement::AtLeast(Credential::Signature)),
+            vec![
+                AuthRequired::None,
+                AuthRequired::Signature,
+                AuthRequired::Either
+            ]
         );
-        assert!(!admin.authorized_for(&viewer_held()));
-        assert_eq!(
-            admin.authorized_for(&viewer_held()),
-            is_attenuation(&viewer_held().window.rights, &AuthRequired::None)
-        );
-        // The admin (root) holder clears the admin affordance.
-        assert!(admin.authorized_for(&admin_held()));
     }
 
     // ── Property 2: the per-viewer projection — progressive attenuation. Two
@@ -1175,7 +1235,7 @@ mod tests {
             refused.unwrap_err(),
             FireError::Unauthorized {
                 affordance: "admin".to_string(),
-                required: AuthRequired::None,
+                required: Requirement::Root,
             }
         );
 
@@ -1452,21 +1512,17 @@ mod tests {
         // unique within a surface.
         let doc = cid(91);
         let surface = AffordanceSurface::new(doc)
+            .declare(CellAffordance::new("x", Requirement::Root, emit_event(doc)))
             .declare(CellAffordance::new(
                 "x",
-                AuthRequired::None,
-                emit_event(doc),
-            ))
-            .declare(CellAffordance::new(
-                "x",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 set_field(doc, 0),
             ));
         assert_eq!(surface.affordances.len(), 1);
         // The SECOND declaration won.
         assert_eq!(
             surface.get("x").unwrap().required_rights,
-            AuthRequired::Signature
+            Requirement::AtLeast(Credential::Signature)
         );
         assert_eq!(
             surface.get("x").unwrap().effect_summary(),
@@ -1558,7 +1614,11 @@ mod tests {
     /// transition AND inside `[10, 20]`.
     fn vote_btn(cell: CellId) -> ReactiveAffordance {
         ReactiveAffordance::new(
-            CellAffordance::new("vote", AuthRequired::Either, set_field(cell, TALLY_SLOT)),
+            CellAffordance::new(
+                "vote",
+                Requirement::AtLeast(Credential::Either),
+                set_field(cell, TALLY_SLOT),
+            ),
             vote_gate(),
             10,
             20,
@@ -1569,7 +1629,7 @@ mod tests {
     /// quorum-crossing transition AND inside `[10, 30]`.
     fn resolve_btn(cell: CellId) -> ReactiveAffordance {
         ReactiveAffordance::new(
-            CellAffordance::new("resolve", AuthRequired::None, set_field(cell, STATUS_SLOT)),
+            CellAffordance::new("resolve", Requirement::Root, set_field(cell, STATUS_SLOT)),
             resolve_gate(),
             10,
             30,
@@ -1852,7 +1912,11 @@ mod tests {
     /// A secret-ballot "view tally" affordance anyone with `Signature` may fire —
     /// IF their frustum permits it.
     fn tally_view(doc: CellId) -> CellAffordance {
-        CellAffordance::new("tally", AuthRequired::Signature, emit_event(doc))
+        CellAffordance::new(
+            "tally",
+            Requirement::AtLeast(Credential::Signature),
+            emit_event(doc),
+        )
     }
 
     #[test]
@@ -1907,10 +1971,10 @@ mod tests {
         // second dimension). An observer at `Signature` permitting an `admin`
         // (req `None` / root) affordance is NOT shown it.
         let doc = cid(38);
-        let admin = CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99)));
+        let admin = CellAffordance::new("admin", Requirement::Root, grant_cap(doc, cid(99)));
         let surface = AffordanceSurface::new(doc).declare(CellAffordance::new(
             "admin",
-            AuthRequired::None,
+            Requirement::Root,
             grant_cap(doc, cid(99)),
         ));
 
@@ -1949,17 +2013,25 @@ mod tests {
         // Two confidential affordances, each tied to a cell slot whose read-cap
         // entitlement gates its disclosure: "view-salary" → slot 5,
         // "view-notes" → slot 3.
-        let salary = CellAffordance::new("view-salary", AuthRequired::Signature, emit_event(doc));
-        let notes = CellAffordance::new("view-notes", AuthRequired::Signature, emit_event(doc));
+        let salary = CellAffordance::new(
+            "view-salary",
+            Requirement::AtLeast(Credential::Signature),
+            emit_event(doc),
+        );
+        let notes = CellAffordance::new(
+            "view-notes",
+            Requirement::AtLeast(Credential::Signature),
+            emit_event(doc),
+        );
         let surface = AffordanceSurface::new(doc)
             .declare(CellAffordance::new(
                 "view-salary",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "view-notes",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             ));
 

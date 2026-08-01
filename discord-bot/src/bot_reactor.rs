@@ -51,6 +51,7 @@ use crate::cipherclerk::UserCipherclerk;
 use crate::deos_drive::{
     self, CMD_SEQ_SLOT, COMMAND_METHOD, DriveRequest, build_op_action, command_cell, decode_command,
 };
+use dregg_cell::{Credential, Requirement};
 
 /// **The bot's command reactor** — a [`Reactor`] that watches the on-chain
 /// command cell and reacts to each committed op with the bot's custodial dregg
@@ -108,7 +109,7 @@ impl Reactor for BotCommandReactor {
             effects: action.effects,
             // The reaction acts on the user's own cell custodially — it requires
             // (and the bot holds) the user's signature.
-            auth_required: AuthRequired::Signature,
+            auth_required: Requirement::AtLeast(Credential::Signature),
         })
     }
 }

@@ -160,6 +160,7 @@ use dregg_app_framework::{
     TransitionGuard, TurnReceipt, canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
 use dregg_cell::program::SimpleStateConstraint;
+use dregg_cell::{Credential, Requirement};
 
 pub use dregg_app_framework::field_from_bytes;
 
@@ -936,11 +937,11 @@ pub fn build_bounty_state_publish_action(
 ///     `grant_consumer` (admit members) on top of everything a publisher can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the consumer ⊂ publisher ⊂ owner ladder.
-pub const CONSUMER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const CONSUMER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The publisher rights tier (sig-or-proof — publish + consume + view). See [`CONSUMER_RIGHTS`].
-pub const PUBLISHER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const PUBLISHER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The owner rights tier (root — grant publishers/consumers + all). See [`CONSUMER_RIGHTS`].
-pub const OWNER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const OWNER_RIGHTS: Requirement = Requirement::Root;
 
 /// The **life-of-cell queue invariants** the executor re-enforces on every touching
 /// turn — exactly the descriptor's `state_constraints` (`WriteOnce` capacity/owner,
@@ -1083,7 +1084,7 @@ pub fn subscription_deos_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedEx
                 .gated(consume)
                 .affordance(grant_publisher)
                 .affordance(grant_consumer)
-                .publish(CONSUMER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

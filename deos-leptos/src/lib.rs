@@ -115,6 +115,7 @@ pub mod server;
 pub mod transclusion_demo;
 
 use dregg_cell::state::CellState;
+use dregg_cell::{Credential, Requirement};
 use dregg_turn::Effect;
 use dregg_types::CellId;
 use starbridge_web_surface::affordance::RecordPredicate;
@@ -205,7 +206,11 @@ pub fn vote_gate() -> TransitionGate {
 /// `SetField` on the tally slot. The Rust twin of the Lean `voteBtn`.
 pub fn vote_btn(cell: CellId) -> ReactiveAffordance {
     ReactiveAffordance::new(
-        CellAffordance::new("vote", AuthRequired::Either, set_field(cell, TALLY_SLOT, 0)),
+        CellAffordance::new(
+            "vote",
+            Requirement::AtLeast(Credential::Either),
+            set_field(cell, TALLY_SLOT, 0),
+        ),
         vote_gate(),
         10,
         20,
@@ -391,12 +396,12 @@ pub fn council_surface(cell: CellId) -> AffordanceSurface {
     AffordanceSurface::new(cell)
         .declare(CellAffordance::new(
             "vote",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             set_field(cell, TALLY_SLOT, 0),
         ))
         .declare(CellAffordance::new(
             "tally",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             // a read logs an access event — modeled here as a SetField no-op slot.
             set_field(cell, STATUS_SLOT, PENDING),
         ))

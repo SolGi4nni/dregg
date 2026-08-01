@@ -49,6 +49,7 @@ use dregg_app_framework::{
 };
 use dregg_cell::state::{CellState, FieldElement};
 use dregg_cell::{CellProgram, StateConstraint};
+use dregg_cell::{Credential, Requirement};
 use dregg_turn::action::{Effect, Event};
 
 /// Slot 0 of the proposal cell carries its `status`.
@@ -123,7 +124,7 @@ fn main() {
     let approve = GatedAffordance::new(
         CellAffordance::new(
             "approve",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             Effect::SetField {
                 cell: proposal,
                 index: STATUS_SLOT as u64,
@@ -134,7 +135,7 @@ fn main() {
     );
     let comment = CellAffordance::new(
         "comment",
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
         Effect::EmitEvent {
             cell: proposal,
             event: Event {

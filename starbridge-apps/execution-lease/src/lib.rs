@@ -73,6 +73,7 @@ use dregg_cell::obligation_standing::{
     Discharge, ObligationError, ObligationState, ObligationTerms, decode_i64, discharge,
     encode_i64, open_obligation,
 };
+use dregg_cell::{Credential, Requirement};
 
 /// The deos-view CARD: the lease dashboard as a renderer-independent view-tree.
 pub mod card;
@@ -623,9 +624,9 @@ pub fn pay_rent(
 ///     rent and request `advance` (drive its durable execution);
 ///   * the PROVIDER holds [`AuthRequired::None`]/root — it owns the slot (it can
 ///     `lapse` a delinquent lease + everything the agent can do).
-pub const AGENT_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const AGENT_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The provider rights tier (root). See [`AGENT_RIGHTS`].
-pub const PROVIDER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const PROVIDER_RIGHTS: Requirement = Requirement::Root;
 
 /// The `advance` **live-state precondition** — the lease must be LIVE (not
 /// lapsed): `LAPSED_SLOT == 0`. So an `advance` button is DARK on a lapsed lease
@@ -690,7 +691,7 @@ pub fn lease_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
                 .gated(advance)
                 .affordance(pay)
                 .affordance(lapse)
-                .publish(AGENT_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

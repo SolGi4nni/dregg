@@ -57,6 +57,8 @@ use deos_matrix::chat_card::ChatCard;
 use deos_matrix::chat_view::{chat_view_json, CHAT_DRAFT_KEY, CHAT_SEND_TURN, CHAT_TURNS_SLOT};
 
 use super::surface::{CockpitSurface, SurfaceId};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// The card's authoring JS: a `deos.ui.*` view-tree — a title, a `bind` re-reading
 /// the live cell's counter slot, and a `+1` button firing the `bump` affordance.
@@ -108,7 +110,10 @@ pub fn build_card_surface(
     // tooth in deos-js checks every fire against `held` before it reaches the
     // executor (the live World's executor is the second gate).
     let held = AuthRequired::Signature;
-    let affordances = vec![("bump".to_string(), AuthRequired::Signature)];
+    let affordances = vec![(
+        "bump".to_string(),
+        Requirement::AtLeast(Credential::Signature),
+    )];
 
     // Attach a counter applet to the LIVE cockpit World — the card's substance is
     // `agent`'s real cell; a fire lands on the ledger the inspector reads.
@@ -183,8 +188,14 @@ pub fn build_inspector_card_surface(
     // in-band and the reflective `project_for(held)` never even surfaces it as a
     // button. The fire commits THROUGH `World::commit_turn` onto the live ledger.
     let affordances = vec![
-        ("bump".to_string(), AuthRequired::Signature),
-        ("escalate".to_string(), AuthRequired::Proof),
+        (
+            "bump".to_string(),
+            Requirement::AtLeast(Credential::Signature),
+        ),
+        (
+            "escalate".to_string(),
+            Requirement::AtLeast(Credential::Proof),
+        ),
     ];
 
     // Attach an applet to the LIVE cockpit World, focused on `focus` — the card's
@@ -529,7 +540,7 @@ impl ModeCard {
                     host,
                     Author(0xC0),
                     viewer.clone(),
-                    AuthRequired::Signature,
+                    Requirement::AtLeast(Credential::Signature),
                 );
                 deos_js::composer_card::composer_view(&card)
             }
@@ -694,8 +705,14 @@ impl ModeCard {
                 // cap tooth is genuinely exercised: `project_for(viewer)` never surfaces it
                 // as a button for a Signature holder (the over-reach is refused in-band).
                 let specs = vec![
-                    ("bump".to_string(), AuthRequired::Signature),
-                    ("escalate".to_string(), AuthRequired::Proof),
+                    (
+                        "bump".to_string(),
+                        Requirement::AtLeast(Credential::Signature),
+                    ),
+                    (
+                        "escalate".to_string(),
+                        Requirement::AtLeast(Credential::Proof),
+                    ),
                 ];
                 deos_js::inspector_card::inspector_view_for(focus, ledger, &specs, viewer)
             }
@@ -1659,7 +1676,10 @@ pub fn build_mode_card_surface_with_state(
     // The card's affordance surface over the focused cell: `bump` (Signature — held,
     // admitted) advances a state slot so a fired button visibly moves a bound row. The
     // fire commits THROUGH `World::commit_turn` onto the live ledger.
-    let affordances = vec![("bump".to_string(), AuthRequired::Signature)];
+    let affordances = vec![(
+        "bump".to_string(),
+        Requirement::AtLeast(Credential::Signature),
+    )];
 
     // GENERATE the card's view-tree from the live ledger + the threaded cockpit state BEFORE
     // attaching (the builder reads the World through a shared borrow; the attach takes the
@@ -1696,7 +1716,7 @@ pub fn build_mode_card_surface_with_state(
         manifest,
         Author(0xED),
         held.clone(),
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
 
     // Share the live attached applet so the rendered buttons + the binds both drive the
@@ -1794,7 +1814,10 @@ pub fn build_first_card_surface(
     // The card's affordance surface over the stranger's home cell: `bump` (Signature —
     // held, admitted) advances the home cell's counter slot so the `+1` visibly moves the
     // bound row. The fire commits THROUGH `World::commit_turn` onto the live ledger.
-    let affordances = vec![("bump".to_string(), AuthRequired::Signature)];
+    let affordances = vec![(
+        "bump".to_string(),
+        Requirement::AtLeast(Credential::Signature),
+    )];
 
     // THE STARTER VIEW — hand-authored (NOT regenerated from the ledger): a welcoming
     // title, a live `bind` on the home cell's counter slot, and a `+1` button firing `bump`.
@@ -1858,7 +1881,7 @@ pub fn build_first_card_surface(
         manifest,
         Author(0xF1),
         held.clone(),
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
 
     // Share the live attached applet so the rendered button + the bind both drive the SAME
@@ -2846,7 +2869,7 @@ mod tests {
                     name: "transfer".into(),
                     symbol: [2u8; 32],
                     arity: Some(1),
-                    required: AuthRequired::Signature,
+                    required: Requirement::AtLeast(Credential::Signature),
                     semantics: Semantics::Replayable,
                     authorized: true,
                 },
@@ -2854,7 +2877,7 @@ mod tests {
                     name: "admin".into(),
                     symbol: [3u8; 32],
                     arity: None,
-                    required: AuthRequired::Proof,
+                    required: Requirement::AtLeast(Credential::Proof),
                     semantics: Semantics::Serviced,
                     authorized: false,
                 },

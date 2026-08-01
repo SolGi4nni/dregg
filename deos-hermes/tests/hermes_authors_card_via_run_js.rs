@@ -39,6 +39,7 @@ use deos_js::JsRuntime;
 use deos_js::card_editor::{BindProps, TextProps, ViewTree};
 use deos_js::portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 use dregg_sdk::{AgentCipherclerk, AgentRuntime, HeldToken};
 
@@ -82,7 +83,7 @@ fn counter_manifest() -> AppletManifest {
         seed_fields: vec![(0usize, 0u64)],
         affordances: vec![AffordanceSpec {
             name: "inc".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         held: AuthRequired::Signature,
@@ -155,7 +156,7 @@ fn an_agent_authors_a_card_via_run_js_decided_js() {
             50,
             card,
             manifest,
-            /*edit_authority=*/ AuthRequired::Signature,
+            /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
             AGENT_EDITVIEW_JS,
         );
 
@@ -246,7 +247,7 @@ fn an_agent_authors_a_card_via_run_js_decided_js() {
             52,
             card,
             manifest,
-            /*edit_authority=*/ AuthRequired::Proof,
+            /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
             overreach_js,
         );
 

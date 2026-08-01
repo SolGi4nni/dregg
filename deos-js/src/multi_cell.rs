@@ -62,6 +62,8 @@ use dregg_turn::TurnReceipt;
 use dregg_types::CellId;
 
 use crate::applet::Slot;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// A single leg of a multi-cell story. Each leg names the cell(s) it touches (so the
 /// scope tooth can refuse a leg reaching past `held_cells`) and carries the authority
@@ -81,7 +83,7 @@ pub enum Step {
         /// The genesis model fields written into the new cell's state.
         seed_fields: Vec<(Slot, FieldElement)>,
         /// The authority minting requires (the cap tooth checks `held ⊒ required`).
-        required: AuthRequired,
+        required: Requirement,
     },
     /// **Set a field** on a cell — a real `SetField` verified turn writing `slot :=
     /// value` on `cell`. `cell` must be in the author's scope (a SetField on a foreign
@@ -95,7 +97,7 @@ pub enum Step {
         /// [`crate::applet::pack_u64`]).
         value: FieldElement,
         /// The authority the write requires.
-        required: AuthRequired,
+        required: Requirement,
     },
     /// **Grant a capability** from one of the author's cells TO a peer cell. The
     /// `from` cell must be in the author's scope (you may only grant from a cell you
@@ -113,13 +115,13 @@ pub enum Step {
         /// is cap-checked against `held` (no granting authority you lack).
         cap: CapabilityRef,
         /// The authority issuing the grant requires.
-        required: AuthRequired,
+        required: Requirement,
     },
 }
 
 impl Step {
     /// The authority this step requires (what the cap tooth checks against `held`).
-    fn required(&self) -> &AuthRequired {
+    fn required(&self) -> &Requirement {
         match self {
             Step::MintCard { required, .. }
             | Step::SetField { required, .. }
@@ -367,7 +369,7 @@ impl MultiCellAuthor {
         let mut projected_scope: BTreeSet<CellId> = self.held_cells.clone();
         for (i, step) in steps.iter().enumerate() {
             // 1a. authority tooth: required ⊑ held.
-            if !dregg_cell::is_attenuation(&self.held, step.required()) {
+            if !step.required().satisfied_by(&self.held) {
                 return Err(ComposeError::OverReach {
                     step: i,
                     reason: format!(
@@ -600,28 +602,28 @@ mod tests {
                 public_key: pk(2),
                 token_id: tok(2),
                 seed_fields: vec![(0, pack_u64(7))],
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
             },
             // leg 2: SET a field on the JUST-MINTED card (in-scope after the mint).
             Step::SetField {
                 cell: new_card,
                 slot: 1,
                 value: pack_u64(42),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
             },
             // leg 3: SET a field on the AUTHOR's own cell (a third write, in-scope).
             Step::SetField {
                 cell: author_id,
                 slot: 2,
                 value: pack_u64(99),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
             },
             // leg 4: GRANT a cap FROM the author TO the peer (the outward reach).
             Step::GrantCap {
                 from: author_id,
                 to: peer,
                 cap: bearer_cap(new_card, AuthRequired::Signature),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
             },
         ];
 
@@ -680,14 +682,14 @@ mod tests {
                 cell: author_id,
                 slot: 0,
                 value: pack_u64(1),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
             },
             // leg 2: OVER-REACH — a write on a foreign vessel's cell (out of scope).
             Step::SetField {
                 cell: foreign,
                 slot: 0,
                 value: pack_u64(2),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
             },
         ];
 
@@ -729,7 +731,7 @@ mod tests {
             cell: author_id,
             slot: 0,
             value: pack_u64(5),
-            required: AuthRequired::Either, // wider than held Signature ⇒ over-reach.
+            required: Requirement::AtLeast(Credential::Either), // wider than held Signature ⇒ over-reach.
         }];
 
         let err = author
@@ -758,7 +760,7 @@ mod tests {
             to: peer,
             // Granting `Either` (wider than held Signature) ⇒ refused.
             cap: bearer_cap(author_id, AuthRequired::Either),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
         }];
 
         let err = author

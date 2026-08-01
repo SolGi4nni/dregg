@@ -22,6 +22,8 @@ use deos_js::applet::{pack_u64, Affordance, Applet};
 use deos_js::js::{set_current_applet, take_current_applet};
 use deos_js::JsRuntime;
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// The card a resident could mount in the cockpit dock (⌘K → Open Card). Its `view_source`
 /// IS the program — stored in the cell, fired as verified turns. I keep this verbatim as
@@ -48,7 +50,7 @@ fn dreggons_ledger_applet(seed: u8) -> Applet {
 
     let append = Affordance {
         name: "append".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let links = model.field_u64(0);
             vec![(0usize, pack_u64(links + arg.max(0) as u64))]
@@ -61,7 +63,7 @@ fn dreggons_ledger_applet(seed: u8) -> Applet {
     // checkable.
     let rewrite = Affordance {
         name: "rewrite".into(),
-        required: AuthRequired::Proof,
+        required: Requirement::AtLeast(Credential::Proof),
         apply: Box::new(|_model, _arg| vec![(0usize, pack_u64(0))]),
     };
 

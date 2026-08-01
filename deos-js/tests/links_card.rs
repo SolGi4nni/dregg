@@ -17,6 +17,7 @@ use deos_js::card_editor::{ViewPatch, ViewTree};
 use deos_js::links_card::LINK_COUNT_SLOT;
 use deos_js::LinksCard;
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 use dregg_types::CellId;
 
@@ -26,7 +27,7 @@ fn substance(seed: u8) -> Applet {
     pk[0] = seed;
     let noop = Affordance {
         name: "noop".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|_m, _a| vec![(0usize, pack_u64(0))]),
     };
     Applet::mint(pk, [0u8; 32], &[], vec![noop], AuthRequired::Signature)
@@ -51,7 +52,7 @@ fn links_card(viewer: AuthRequired) -> LinksCard {
         viewer,
         Author(5),
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     )
 }
 
@@ -185,7 +186,7 @@ fn a_cell_outside_the_ring_has_an_honest_empty_readout() {
         AuthRequired::None,
         Author(5),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     assert!(
         card.is_empty(),

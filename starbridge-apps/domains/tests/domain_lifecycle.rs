@@ -8,6 +8,7 @@
 //! real signed turn through the executor (whose `Monotonic` verification tooth makes
 //! the gated `verify` fire go dark once proven).
 
+use dregg_app_framework::AuthRequired;
 use dregg_app_framework::{AgentCipherclerk, AppCipherclerk, EmbeddedExecutor};
 use dregg_auth::credential::RootKey;
 use starbridge_domains::cap::{DomainCap, mint_domains_cap};
@@ -110,7 +111,8 @@ fn deos_verify_flips_state_once_through_the_executor() {
         executor.cell_state(executor.cell_id()).unwrap().fields[VERIFICATION_STATE_SLOT as usize];
     assert_eq!(field_to_u64(&before), VerificationState::Pending.code());
 
-    fire_verify(&app, &OWNER_RIGHTS, &cipherclerk, &executor).expect("the verify fire commits");
+    fire_verify(&app, &AuthRequired::None, &cipherclerk, &executor)
+        .expect("the verify fire commits");
 
     let after =
         executor.cell_state(executor.cell_id()).unwrap().fields[VERIFICATION_STATE_SLOT as usize];
@@ -122,7 +124,7 @@ fn deos_verify_flips_state_once_through_the_executor() {
 
     // Verified → the not-yet-verified precondition is DARK: a second fire refuses.
     assert!(
-        fire_verify(&app, &OWNER_RIGHTS, &cipherclerk, &executor).is_err(),
+        fire_verify(&app, &AuthRequired::None, &cipherclerk, &executor).is_err(),
         "the verify gate darkens once the domain is proven (flips once)"
     );
 }

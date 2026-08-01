@@ -19,6 +19,7 @@
 use deos_js::card_editor::{CardEditor, EditError, ViewPatch, ViewTree};
 use deos_js::portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 
 /// A card whose view is a structured view-tree (the shape `deos-view` paints), with a
@@ -43,7 +44,7 @@ fn counter_card_manifest() -> AppletManifest {
         seed_fields: vec![(0usize, 0u64)],
         affordances: vec![AffordanceSpec {
             name: "inc".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         held: AuthRequired::Signature,
@@ -63,7 +64,7 @@ fn authorized_editor() -> CardEditor {
         manifest,
         Author(7),
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     )
 }
 
@@ -200,7 +201,7 @@ fn add_affordance_adds_a_fireable_turn_that_travels_in_the_cell() {
     let weld_receipt = editor
         .add_affordance(AffordanceSpec {
             name: "dec".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::SubFromSlot { slot: 0 },
         })
         .expect("the affordance weld is admitted");
@@ -276,7 +277,7 @@ fn agent_authors_an_authorized_cards_ui_as_a_receipted_patch() {
         manifest,
         Author(99), // the AGENT is the author of its patches
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     );
 
     // THE AGENT'S GESTURE — add a "reset" button to another card's UI, live.
@@ -320,7 +321,7 @@ fn agent_cannot_author_a_card_outside_its_held() {
         manifest,
         Author(99),
         /*held=*/ AuthRequired::Signature,
-        /*edit_authority=*/ AuthRequired::Proof,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
     );
 
     let view_before = editor.view_source();

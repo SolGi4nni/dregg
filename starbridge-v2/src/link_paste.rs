@@ -55,6 +55,7 @@ use crate::cell_transclusion::{
     EmbedVisibility, EmbeddedCellView, WholeCellTransclusion, WholeCellTransclusionError,
 };
 use crate::reflect;
+use dregg_cell::{Credential, Requirement};
 
 /// A parsed `dregg://<cell>` reference — the round-trip target of [`uri_for`] /
 /// [`parse_uri`]. A thin newtype over the cell the URI denotes (the content-addressed
@@ -419,22 +420,22 @@ mod tests {
         AffordanceSurface::new(source)
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(source),
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(source),
             ))
             .declare(CellAffordance::new(
                 "edit",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(source),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 grant_cap(source, cid(99)),
             ))
     }

@@ -42,6 +42,7 @@ use crate::applet::{pack_u64, Affordance, Applet, Slot};
 use crate::card_editor::{CardEditor, EditError, ViewEdit, ViewPatch, ViewTree};
 use crate::portable::{AffordanceSpec, AppletManifest, ApplyOp};
 use crate::program_doc::ProgramSource;
+use dregg_cell::Requirement;
 
 /// The model slot the seed card's counter lives in (a real field the card's `inc`
 /// affordance bumps — proves the card is a live, fireable applet, not a static blob).
@@ -58,7 +59,7 @@ pub struct SharedCard {
     manifest: AppletManifest,
     /// The authority a gesture on this card requires (the authoring cap tooth a
     /// principal's `held` must satisfy to author).
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
 }
 
 /// One principal's live fork of the shared card — its own [`CardEditor`] (bounded by
@@ -154,7 +155,7 @@ impl SharedCard {
     /// one text node + one `inc` button bound to a real affordance) and capture it as
     /// the manifest both principals fork from. `edit_authority` is the authoring cap a
     /// fork's `held` must satisfy.
-    pub fn seed(edit_authority: AuthRequired) -> Self {
+    pub fn seed(edit_authority: Requirement) -> Self {
         let seed_view = ViewTree::VStack {
             children: vec![
                 ViewTree::Text {
@@ -177,7 +178,12 @@ impl SharedCard {
                 required: edit_authority.clone(),
                 op: ApplyOp::AddToSlot { slot: COUNT_SLOT },
             }],
-            held: edit_authority.clone(),
+            // The seed applet is mounted at ROOT: it must clear its own affordances
+            // so the seeded card is immediately fireable by its author. This used to
+            // read `edit_authority`, which made the cap tooth `is_attenuation(X, X)` —
+            // true by construction. The two are now different types, so the held
+            // authority has to be named.
+            held: AuthRequired::None,
             view_source: seed_view.to_json(),
         };
         SharedCard {
@@ -200,7 +206,7 @@ impl SharedCard {
     /// real common ancestor → disjoint edits fold clean, an overlap is a
     /// [`dregg_doc::ConflictRegion`]). `edit_authority` is the authoring cap a fork's
     /// `held` must satisfy (carried alongside the seed in the envelope).
-    pub fn seed_from_source(edit_authority: AuthRequired, seed_view_source: &str) -> Self {
+    pub fn seed_from_source(edit_authority: Requirement, seed_view_source: &str) -> Self {
         let manifest = AppletManifest {
             seed_fields: vec![(COUNT_SLOT, 0)],
             affordances: vec![AffordanceSpec {
@@ -208,7 +214,7 @@ impl SharedCard {
                 required: edit_authority.clone(),
                 op: ApplyOp::AddToSlot { slot: COUNT_SLOT },
             }],
-            held: edit_authority.clone(),
+            held: AuthRequired::None,
             view_source: seed_view_source.to_string(),
         };
         SharedCard {
@@ -309,8 +315,8 @@ mod tests {
     use super::*;
 
     /// The authoring authority the shared card requires, and a principal that holds it.
-    fn authority() -> AuthRequired {
-        AuthRequired::None
+    fn authority() -> Requirement {
+        Requirement::Root
     }
 
     /// Principal A's identity. Principal B's identity. Distinct authors → distinct
@@ -322,8 +328,8 @@ mod tests {
     fn two_principals_clean_merge_keeps_both_edits() {
         // ONE shared card; TWO principals each take a fork bounded by their own held.
         let card = SharedCard::seed(authority());
-        let mut a = card.fork_for(ALICE, authority());
-        let mut b = card.fork_for(BOB, authority());
+        let mut a = card.fork_for(ALICE, AuthRequired::None);
+        let mut b = card.fork_for(BOB, AuthRequired::None);
 
         // A RELABELS the card's title (a real receipted patch on A's own view doc).
         let edit_a = drive_view(
@@ -390,8 +396,8 @@ mod tests {
     fn two_principals_true_conflict_surfaces_a_resolvable_region() {
         // ONE shared card; TWO principals each fork it.
         let card = SharedCard::seed(authority());
-        let mut a = card.fork_for(ALICE, authority());
-        let mut b = card.fork_for(BOB, authority());
+        let mut a = card.fork_for(ALICE, AuthRequired::None);
+        let mut b = card.fork_for(BOB, AuthRequired::None);
 
         // BOTH relabel the SAME node, differently — the canonical overlapping edit.
         drive_view(
@@ -438,7 +444,7 @@ mod tests {
         // card's `edit_authority` is narrower-or-equal to the principal's `held`).
         // A holds `None` and clears it; B holds only the stricter `Signature` and so
         // is refused in-band — no patch, no receipt (the cap-bounded tooth).
-        let card = SharedCard::seed(AuthRequired::None);
+        let card = SharedCard::seed(Requirement::Root);
         // A HOLDS the required (broadest) authority; B holds only a narrower one.
         let mut a = card.fork_for(ALICE, AuthRequired::None);
         let mut b = card.fork_for(BOB, AuthRequired::Signature);

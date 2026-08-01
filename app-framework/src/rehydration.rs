@@ -41,6 +41,7 @@ use dregg_cell::{AuthRequired, is_attenuation};
 use dregg_types::CellId;
 
 use crate::affordance::{AffordanceSurface, CellAffordance};
+use dregg_cell::{Credential, Requirement};
 
 // =============================================================================
 // Rehydration — the DERIVED liveness-type
@@ -467,17 +468,17 @@ mod tests {
         AffordanceSurface::named(doc, "doc")
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(doc),
             ))
     }

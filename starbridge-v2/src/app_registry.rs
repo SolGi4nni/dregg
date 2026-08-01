@@ -46,6 +46,7 @@ use dregg_types::CellId;
 use crate::app_worldspine::{default_domain_token, AppWorldSpine, SeedField, WorldFireError};
 #[cfg(feature = "embedded-executor")]
 use crate::world::World;
+use dregg_cell::Requirement;
 #[cfg(feature = "embedded-executor")]
 use std::cell::RefCell;
 #[cfg(feature = "embedded-executor")]
@@ -293,7 +294,7 @@ fn gallery_card_fire(
     let cell = spine.app_cell();
     if method == g::service::METHOD_SUBMIT {
         let seal = dregg_app_framework::field_from_u64(0xA17);
-        spine.commit("submit", &g::ARTIST_RIGHTS, &g::ARTIST_RIGHTS, |live| {
+        spine.commit("submit", &AuthRequired::None, &g::ARTIST_RIGHTS, |live| {
             let slot = g::next_free_submit_slot(live).unwrap_or_else(|| g::submit_slot(0));
             g::submit_effects(cell, slot, &seal)
         })
@@ -318,7 +319,7 @@ fn bounty_card_fire(
     use starbridge_bounty_board as b;
     let cell = spine.app_cell();
     if method == b::service::METHOD_CLAIM {
-        spine.commit("claim", &b::WORKER_RIGHTS, &b::WORKER_RIGHTS, |_live| {
+        spine.commit("claim", &AuthRequired::None, &b::WORKER_RIGHTS, |_live| {
             b::claim_effects(cell, "worker")
         })
     } else {
@@ -343,10 +344,15 @@ fn auction_card_fire(
     let cell = spine.app_cell();
     if method == a::service::METHOD_COMMIT_BID {
         let seal = dregg_app_framework::field_from_u64(0xB1D);
-        spine.commit("commit_bid", &a::BIDDER_RIGHTS, &a::BIDDER_RIGHTS, |live| {
-            let slot = a::next_free_commit_slot(live).unwrap_or_else(|| a::commit_slot(0));
-            a::commit_bid_effects(cell, slot, &seal)
-        })
+        spine.commit(
+            "commit_bid",
+            &AuthRequired::None,
+            &a::BIDDER_RIGHTS,
+            |live| {
+                let slot = a::next_free_commit_slot(live).unwrap_or_else(|| a::commit_slot(0));
+                a::commit_bid_effects(cell, slot, &seal)
+            },
+        )
     } else {
         Err(WorldFireError::World {
             reason: format!(
@@ -370,7 +376,7 @@ fn lease_card_fire(
     use starbridge_execution_lease as el;
     let cell = spine.app_cell();
     if method == el::service::METHOD_ADVANCE {
-        spine.commit("advance", &el::AGENT_RIGHTS, &el::AGENT_RIGHTS, |live| {
+        spine.commit("advance", &AuthRequired::None, &el::AGENT_RIGHTS, |live| {
             let live_step = el::field_to_u64(&live.fields[el::STEP_SLOT as usize]);
             el::advance_effects(cell, live_step + 1, el::field_from_u64(0xDADA))
         })
@@ -724,7 +730,7 @@ impl AppRegistry {
                         // verified turn writing the next free WriteOnce submission slot.
                         starbridge_gallery::fire_submit(
                             app,
-                            &starbridge_gallery::ARTIST_RIGHTS,
+                            &AuthRequired::Either,
                             dregg_app_framework::field_from_u64(0xA17),
                             sub.cipherclerk(),
                             sub.executor(),
@@ -759,7 +765,7 @@ impl AppRegistry {
                         let seal = dregg_app_framework::field_from_u64(0xA17);
                         let receipt = spine.commit(
                             "submit",
-                            &g::ARTIST_RIGHTS,
+                            &AuthRequired::None,
                             &g::ARTIST_RIGHTS,
                             |live| {
                                 let slot = g::next_free_submit_slot(live)
@@ -783,7 +789,7 @@ impl AppRegistry {
                         // A BIDDER commits a sealed bid in the COMMIT phase.
                         starbridge_sealed_auction::fire_commit_bid(
                             app,
-                            &starbridge_sealed_auction::BIDDER_RIGHTS,
+                            &AuthRequired::Either,
                             dregg_app_framework::field_from_u64(0xB1D),
                             sub.cipherclerk(),
                             sub.executor(),
@@ -816,7 +822,7 @@ impl AppRegistry {
                         let seal = dregg_app_framework::field_from_u64(0xB1D);
                         let receipt = spine.commit(
                             "commit_bid",
-                            &a::BIDDER_RIGHTS,
+                            &AuthRequired::None,
                             &a::BIDDER_RIGHTS,
                             |live| {
                                 let slot = a::next_free_commit_slot(live)
@@ -841,7 +847,7 @@ impl AppRegistry {
                         // the bounty state machine (OPEN -> CLAIMED).
                         starbridge_bounty_board::fire_claim(
                             app,
-                            &starbridge_bounty_board::WORKER_RIGHTS,
+                            &AuthRequired::Either,
                             "worker",
                             sub.cipherclerk(),
                             sub.executor(),
@@ -877,7 +883,7 @@ impl AppRegistry {
                         // re-enforced by World's executor).
                         let receipt = spine.commit(
                             "claim",
-                            &b::WORKER_RIGHTS,
+                            &AuthRequired::None,
                             &b::WORKER_RIGHTS,
                             |_live| b::claim_effects(app_cell, "worker"),
                         )?;
@@ -902,7 +908,7 @@ impl AppRegistry {
                         starbridge_tussle::fire_commit_move(
                             app,
                             figure,
-                            &starbridge_tussle::FIGHTER_RIGHTS,
+                            &AuthRequired::Either,
                             &starbridge_tussle::REST_POSE,
                             0x33,
                             sub.cipherclerk(),
@@ -955,7 +961,7 @@ impl AppRegistry {
                         let seal = t::MoveCommit::new(figure_id, t::REST_POSE, 0x33).seal();
                         let receipt = spine.commit(
                             "commit_move",
-                            &t::FIGHTER_RIGHTS,
+                            &AuthRequired::None,
                             &t::FIGHTER_RIGHTS,
                             |_live| {
                                 vec![
@@ -1012,7 +1018,7 @@ impl AppRegistry {
                         let board = &app.cells()[0];
                         o::deos::fire_worker_step(
                             board,
-                            &o::deos::WORKER_RIGHTS,
+                            &AuthRequired::Either,
                             o::WorkerSlot::A,
                             1,
                             sub.cipherclerk(),
@@ -1063,7 +1069,7 @@ impl AppRegistry {
                         // computes).
                         let receipt = spine.commit(
                             "worker_step",
-                            &o::deos::WORKER_RIGHTS,
+                            &AuthRequired::None,
                             &o::deos::WORKER_RIGHTS,
                             |live| {
                                 let spend_slot = o::WorkerSlot::A.spend_slot() as usize;
@@ -1105,7 +1111,7 @@ impl AppRegistry {
                         // A RECORDER appends one claim to the log.
                         p::fire_append_entry(
                             app,
-                            &p::RECORDER_RIGHTS,
+                            &AuthRequired::Either,
                             sub.cipherclerk(),
                             sub.executor(),
                             &dregg_app_framework::field_from_u64(0xC1A1),
@@ -1145,7 +1151,7 @@ impl AppRegistry {
                         let claim = dregg_app_framework::field_from_u64(0xC1A1);
                         let receipt = spine.commit(
                             "append_entry",
-                            &p::RECORDER_RIGHTS,
+                            &AuthRequired::None,
                             &p::RECORDER_RIGHTS,
                             |live| p::append_effects(log, live, &claim),
                         )?;
@@ -1174,7 +1180,7 @@ impl AppRegistry {
                         // officer clearance (which dominates every charter compartment).
                         c::fire_advance_step(
                             app,
-                            &c::OPERATOR_RIGHTS,
+                            &AuthRequired::None,
                             c::officer_label(),
                             sub.cipherclerk(),
                             sub.executor(),
@@ -1229,7 +1235,7 @@ impl AppRegistry {
                         let review_compartment = c::WorkflowPhase::CHARTER[0].compartment_label();
                         let receipt = spine.commit(
                             "advance_step",
-                            &c::OPERATOR_RIGHTS,
+                            &AuthRequired::None,
                             &c::OPERATOR_RIGHTS,
                             |_live| {
                                 c::advance_effects(cell, 1, c::officer_label(), review_compartment)
@@ -1252,7 +1258,7 @@ impl AppRegistry {
                         // A PROVIDER bids on the posted job.
                         j::fire_bid(
                             app,
-                            &j::PROVIDER_RIGHTS,
+                            &AuthRequired::None,
                             "provider-gpu",
                             750,
                             sub.cipherclerk(),
@@ -1298,7 +1304,7 @@ impl AppRegistry {
                         // + price (the SAME `bid_effects` the framework path fires).
                         let receipt = spine.commit(
                             "bid",
-                            &j::PROVIDER_RIGHTS,
+                            &AuthRequired::None,
                             &j::PROVIDER_RIGHTS,
                             |_live| j::bid_effects(job, REGISTRY_COMPUTE_PROVIDER, 750),
                         )?;
@@ -1319,7 +1325,7 @@ impl AppRegistry {
                         // A BUYER funds the listed item.
                         e::fire_fund(
                             app,
-                            &e::BUYER_RIGHTS,
+                            &AuthRequired::Either,
                             "buyer-bob",
                             500,
                             sub.cipherclerk(),
@@ -1360,7 +1366,7 @@ impl AppRegistry {
                         // COMMIT `fund` through World: LISTED → FUNDED, escrowing the
                         // buyer's amount (the SAME `fund_effects` the framework path fires).
                         let receipt =
-                            spine.commit("fund", &e::BUYER_RIGHTS, &e::BUYER_RIGHTS, |_live| {
+                            spine.commit("fund", &AuthRequired::None, &e::BUYER_RIGHTS, |_live| {
                                 e::fund_effects(escrow, "buyer-bob", 500)
                             })?;
                         Ok((spine, receipt))
@@ -1384,7 +1390,7 @@ impl AppRegistry {
                     |app, sub| {
                         use starbridge_nameservice as n;
                         // The OWNER renews the name (advances EXPIRY by one rent epoch).
-                        n::fire_renew(app, &n::OWNER_RIGHTS, sub.cipherclerk(), sub.executor())
+                        n::fire_renew(app, &AuthRequired::None, sub.cipherclerk(), sub.executor())
                     },
                     |app, world| {
                         use starbridge_nameservice as n;
@@ -1430,7 +1436,7 @@ impl AppRegistry {
                         // World's live state (Monotonic(EXPIRY) holds) — the SAME advance
                         // `fire_renew` computes.
                         let receipt =
-                            spine.commit("renew", &n::OWNER_RIGHTS, &n::OWNER_RIGHTS, |live| {
+                            spine.commit("renew", &AuthRequired::None, &n::OWNER_RIGHTS, |live| {
                                 let live_expiry = field_tail_u64(&live.fields[n::EXPIRY_SLOT]);
                                 let new_expiry =
                                     live_expiry.saturating_add(n::DEFAULT_RENT_EPOCH_BLOCKS);
@@ -1472,7 +1478,7 @@ impl AppRegistry {
                         .collect();
                         v::fire_record_tally(
                             app,
-                            &v::ADMINISTRATOR_RIGHTS,
+                            &AuthRequired::None,
                             v::VOTE_YES,
                             &counted,
                             sub.cipherclerk(),
@@ -1520,7 +1526,7 @@ impl AppRegistry {
                         let tally_slot = v::tally_slot_for_choice(v::VOTE_YES);
                         let receipt = spine.commit(
                             "record_tally",
-                            &v::ADMINISTRATOR_RIGHTS,
+                            &AuthRequired::None,
                             &v::ADMINISTRATOR_RIGHTS,
                             |live| {
                                 let live_tally = field_tail_u64(&live.fields[tally_slot]);
@@ -1557,7 +1563,7 @@ impl AppRegistry {
                         // A WRITER puts a 1-unit object under the prefix.
                         s::fire_put(
                             app,
-                            &s::WRITER_RIGHTS,
+                            &AuthRequired::Either,
                             sub.cipherclerk(),
                             sub.executor(),
                             "uploads/first",
@@ -1616,7 +1622,7 @@ impl AppRegistry {
                         let key = "uploads/first";
                         let blob_hash = s::object_key_field(key);
                         let receipt =
-                            spine.commit("put", &s::WRITER_RIGHTS, &s::WRITER_RIGHTS, |live| {
+                            spine.commit("put", &AuthRequired::None, &s::WRITER_RIGHTS, |live| {
                                 let live_spent =
                                     field_tail_u64(&live.fields[s::VOLUME_SPENT_SLOT as usize]);
                                 let new_spent = live_spent.saturating_add(1);
@@ -1639,7 +1645,7 @@ impl AppRegistry {
                         // A PUBLISHER publishes one message onto the feed.
                         s::fire_publish(
                             app,
-                            &s::PUBLISHER_RIGHTS,
+                            &AuthRequired::Either,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
@@ -1682,7 +1688,7 @@ impl AppRegistry {
                         let payload = dregg_app_framework::field_from_u64(0xF33D);
                         let receipt = spine.commit(
                             "publish",
-                            &s::PUBLISHER_RIGHTS,
+                            &AuthRequired::None,
                             &s::PUBLISHER_RIGHTS,
                             |live| {
                                 let live_head =
@@ -1711,7 +1717,7 @@ impl AppRegistry {
                         let board = app.cells()[0].cell();
                         w::fire_dispatch(
                             app,
-                            &w::LEAD_RIGHTS,
+                            &AuthRequired::None,
                             sub.cipherclerk(),
                             sub.executor(),
                             w::Worker::A,
@@ -1759,7 +1765,7 @@ impl AppRegistry {
                         // epoch off World's ledger, debit cost 1, advance the epoch (the
                         // SAME `dispatch_effects` the framework path fires).
                         let receipt =
-                            spine.commit("dispatch", &w::LEAD_RIGHTS, &w::LEAD_RIGHTS, |live| {
+                            spine.commit("dispatch", &AuthRequired::None, &w::LEAD_RIGHTS, |live| {
                                 let spend_slot = w::Worker::A.spend_slot() as usize;
                                 let live_spent = field_tail_u64(&live.fields[spend_slot]);
                                 let live_epoch =
@@ -1789,7 +1795,7 @@ impl AppRegistry {
                     |app, sub| {
                         use starbridge_tool_access_delegation as t;
                         // A WORKER invokes the tool once.
-                        t::fire_invoke(app, &t::WORKER_RIGHTS, sub.cipherclerk(), sub.executor())
+                        t::fire_invoke(app, &AuthRequired::Either, sub.cipherclerk(), sub.executor())
                     },
                     |app, world| {
                         use starbridge_tool_access_delegation as t;
@@ -1828,7 +1834,7 @@ impl AppRegistry {
                         // denies). Read the live call counter, tick it (Monotonic holds).
                         let receipt = spine.commit(
                             "invoke_tool",
-                            &t::WORKER_RIGHTS,
+                            &AuthRequired::None,
                             &t::WORKER_RIGHTS,
                             |live| {
                                 let live_calls =
@@ -1880,7 +1886,7 @@ impl AppRegistry {
                         // Monotonic(STEP) bites a rewind).
                         el::fire_advance(
                             app,
-                            &el::AGENT_RIGHTS,
+                            &AuthRequired::Signature,
                             sub.cipherclerk(),
                             sub.executor(),
                             el::field_from_u64(0xDADA),
@@ -1936,7 +1942,7 @@ impl AppRegistry {
                         // the SAME advance `fire_advance` computes.
                         let receipt = spine.commit(
                             "advance",
-                            &el::AGENT_RIGHTS,
+                            &AuthRequired::None,
                             &el::AGENT_RIGHTS,
                             |live| {
                                 let live_step = el::field_to_u64(&live.fields[el::STEP_SLOT as usize]);
@@ -1963,7 +1969,7 @@ impl AppRegistry {
                         use starbridge_supply_chain_provenance as sc;
                         sc::fire_accept_custody(
                             app,
-                            &sc::CUSTODIAN_RIGHTS,
+                            &AuthRequired::Either,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
@@ -2020,7 +2026,7 @@ impl AppRegistry {
                         let receipt = spine.commit_as(
                             custodian,
                             "accept_custody",
-                            &sc::CUSTODIAN_RIGHTS,
+                            &AuthRequired::None,
                             &sc::CUSTODIAN_RIGHTS,
                             vec![],
                             |live| {
@@ -2075,7 +2081,7 @@ impl AppRegistry {
                     },
                     |app, sub| {
                         use starbridge_identity as id;
-                        id::fire_issue(app, &id::ISSUER_RIGHTS, sub.cipherclerk(), sub.executor())
+                        id::fire_issue(app, &AuthRequired::None, sub.cipherclerk(), sub.executor())
                     },
                     |app, world| {
                         use starbridge_identity as id;
@@ -2126,7 +2132,7 @@ impl AppRegistry {
                         let receipt = spine.commit_as(
                             signer,
                             "issue",
-                            &id::ISSUER_RIGHTS,
+                            &AuthRequired::None,
                             &id::ISSUER_RIGHTS,
                             vec![witness],
                             |live| {
@@ -2172,7 +2178,7 @@ impl AppRegistry {
                         use starbridge_governed_namespace as gn;
                         gn::fire_propose(
                             app,
-                            &gn::COMMITTEE_RIGHTS,
+                            &AuthRequired::Either,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
@@ -2232,7 +2238,7 @@ impl AppRegistry {
                         let receipt = spine.commit_as(
                             signer,
                             "propose_table_update",
-                            &gn::COMMITTEE_RIGHTS,
+                            &AuthRequired::None,
                             &gn::COMMITTEE_RIGHTS,
                             vec![witness],
                             |live| {
@@ -2330,7 +2336,7 @@ impl AppRegistry {
                         let receipt = spine.commit(
                             "propose",
                             &AuthRequired::None,
-                            &AuthRequired::None,
+                            &dregg_cell::Requirement::Root,
                             |_live| {
                                 vec![
                                     dregg_app_framework::Effect::SetField {

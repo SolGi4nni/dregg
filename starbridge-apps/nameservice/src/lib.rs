@@ -90,6 +90,7 @@ use dregg_app_framework::{
     WitnessedPredicate, WitnessedPredicateKind, canonical_program_vk, field_from_bytes,
     field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 /// The nameservice as a SERVICE CELL on the `invoke()` front door (the
 /// cells-as-service-objects face): a `register`/`release`/`resolve` registry
@@ -844,9 +845,9 @@ pub fn resolve_target(uri: &str) -> FieldElement {
 ///     the name) on top of resolving.
 ///
 /// So `Signature ⊂ None` IS the resolver ⊂ owner ladder — a two-tier name authority.
-pub const RESOLVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const RESOLVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The owner rights tier (root — transfer/renew/revoke/set_target + resolve). See [`RESOLVER_RIGHTS`].
-pub const OWNER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const OWNER_RIGHTS: Requirement = Requirement::Root;
 
 /// **The owner-lifecycle method names on a NAME cell** — the deos affordance
 /// vocabulary [`name_app`] exposes and the `fire_*` helpers route. Held as shared
@@ -1008,7 +1009,7 @@ pub fn name_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
                 .gated(renew)
                 .gated(revoke)
                 .gated(set_target)
-                .publish(RESOLVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

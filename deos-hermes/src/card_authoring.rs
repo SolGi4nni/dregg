@@ -37,6 +37,7 @@ use dregg_doc::Author;
 
 use crate::acp::{PermissionOutcome, ToolCallRequest};
 use crate::bridge::HermesGateway;
+use dregg_cell::Requirement;
 
 /// The outcome of a `create_card` / `edit_card` call: the gateway verdict on the
 /// *tool-call* (the accountability turn) plus what the authoring did inside the
@@ -124,7 +125,7 @@ impl CardAuthoringTool {
         public_key: [u8; 32],
         token_id: [u8; 32],
         manifest: AppletManifest,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
         initial: Option<ViewPatch>,
     ) -> AuthorCardOutcome {
         // (1) THE ACCOUNTABILITY TURN — the `create_card` tool-call routes through the
@@ -181,7 +182,7 @@ impl CardAuthoringTool {
         now: i64,
         card: deos_js::Applet,
         manifest: AppletManifest,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
         patch: ViewPatch,
     ) -> AuthorCardOutcome {
         // (1) THE ACCOUNTABILITY TURN.

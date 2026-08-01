@@ -21,6 +21,8 @@ use dregg_cell::AuthRequired;
 
 use deos_view::tree::ViewNode;
 use deos_view::AppletView;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// A two-slot applet: slot 0 = "a", slot 1 = "b". `incA` adds `arg` to slot 0 ONLY
 /// (slot 1 untouched); `incB` adds to slot 1 only. Both Signature-gated and held.
@@ -29,7 +31,7 @@ fn two_slot_applet(seed: u8) -> Applet {
     pk[0] = seed;
     let inc_a = Affordance {
         name: "incA".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]
@@ -37,7 +39,7 @@ fn two_slot_applet(seed: u8) -> Applet {
     };
     let inc_b = Affordance {
         name: "incB".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(1);
             vec![(1usize, pack_u64(cur + arg.max(0) as u64))]

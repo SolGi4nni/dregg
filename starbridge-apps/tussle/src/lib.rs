@@ -962,6 +962,7 @@ use dregg_app_framework::{
     Effect, EmbeddedExecutor, Event, FireExecuteError, GatedAffordance, InspectorDescriptor,
     StarbridgeAppContext, TurnReceipt, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 /// FIGURE cell slot: the frame PHASE code (`Commit`/`Reveal`/`Resolved`). A scalar `u64`
 /// lane distinct from the joint `sym` slots (0..[`N_JOINTS`]) and the position/score
@@ -997,11 +998,11 @@ pub const FIGURE_B_TOKEN: [u8; 32] = *b"starbridge-tussle-figure-b-seed!";
 ///     its OWN figure (the sealed pose, then the open) AND view;
 ///   - the REFEREE holds [`AuthRequired::None`]/root — it can `resolve_frame` (advance the
 ///     phase to `Resolved`, folding contact) on top of everything a fighter can do.
-pub const SPECTATOR_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const SPECTATOR_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The fighter rights tier (sig-or-proof — commit + reveal a move on its own figure + view).
-pub const FIGHTER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const FIGHTER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The referee rights tier (root — resolve the frame + all). See [`SPECTATOR_RIGHTS`].
-pub const REFEREE_RIGHTS: AuthRequired = AuthRequired::None;
+pub const REFEREE_RIGHTS: Requirement = Requirement::Root;
 
 // ---------------------------------------------------------------------------
 // The figure-cell verb vocabulary — the affordance names the deos surface, the
@@ -1175,7 +1176,7 @@ fn figure_cell(figure: CellId, label: &'static str) -> DeosCell {
         .gated(commit)
         .gated(reveal)
         .gated(resolve)
-        .publish(SPECTATOR_RIGHTS)
+        .publish(AuthRequired::Signature)
 }
 
 /// **Seed a FIGURE cell** so the gated fires have live state + the typed `sym` tooth bites:

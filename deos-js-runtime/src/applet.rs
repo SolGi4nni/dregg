@@ -8,6 +8,7 @@
 //! `boa` runtime in [`crate::runtime`] is a thin bridge onto this surface, so a cell's
 //! attached JS commits verified turns exactly as a static `{turn,arg}` button does.
 
+use dregg_cell::Requirement;
 use dregg_cell::{AuthRequired, Cell, Permissions};
 use dregg_sdk::embed::{DreggEngine, EngineConfig};
 use dregg_turn::builder::{ActionBuilder, TurnBuilder};
@@ -30,7 +31,7 @@ pub use deos_js_core::{pack_u64, unpack_u64, ApplyOp, CellModel, Slot};
 #[derive(Clone, Debug)]
 pub struct Affordance {
     pub name: String,
-    pub required: AuthRequired,
+    pub required: Requirement,
     pub op: ApplyOp,
 }
 
@@ -195,7 +196,7 @@ impl CellApplet {
     }
 
     /// The registered affordance names + the authority each requires.
-    pub fn affordance_specs(&self) -> Vec<(String, AuthRequired)> {
+    pub fn affordance_specs(&self) -> Vec<(String, Requirement)> {
         self.affordances
             .iter()
             .map(|a| (a.name.clone(), a.required.clone()))
@@ -223,7 +224,7 @@ impl CellApplet {
             .ok_or_else(|| FireError::UnknownAffordance(affordance.to_string()))?;
 
         // (2) the REAL cap tooth, in-band.
-        if !dregg_cell::is_attenuation(&self.held, &aff.required) {
+        if !aff.required.satisfied_by(&self.held) {
             return Err(FireError::Unauthorized(affordance.to_string()));
         }
 

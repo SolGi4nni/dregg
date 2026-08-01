@@ -73,6 +73,7 @@ use dregg_app_framework::{
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, canonical_program_vk,
     field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 use dregg_turn::action::WitnessBlob;
 use dregg_turn::executor::{single_member_authorized_root, single_member_membership_proof};
 
@@ -616,10 +617,10 @@ pub fn build_set_standing_action(
 ///     the executor additionally gates on `SenderAuthorized` membership.
 ///
 /// So `Signature ⊂ None` IS the subject ⊂ governance ladder.
-pub const SUBJECT_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const SUBJECT_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The governance rights tier (root — move standing + all a subject can do). See
 /// [`SUBJECT_RIGHTS`].
-pub const GOVERNANCE_RIGHTS: AuthRequired = AuthRequired::None;
+pub const GOVERNANCE_RIGHTS: Requirement = Requirement::Root;
 
 /// The `consume` **live-state precondition** — the account must have BUDGET
 /// REMAINING (`consumed < ceiling`, i.e. `consumed <= ceiling - 1`). A real
@@ -708,7 +709,7 @@ pub fn guard_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
                 .gated(consume)
                 // Published at the SUBJECT tier (`Signature`) — the role that holds
                 // the account and the narrowest cap-only affordance (`view`).
-                .publish(SUBJECT_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }
@@ -1204,7 +1205,10 @@ mod tests {
         assert_eq!(gated, vec!["consume".to_string()]);
 
         assert_eq!(account.cell(), cipherclerk.cell_id());
-        assert_eq!(account.published_authority(), Some(&SUBJECT_RIGHTS));
+        assert_eq!(
+            account.published_authority(),
+            Some(&AuthRequired::Signature)
+        );
     }
 
     #[test]

@@ -38,6 +38,7 @@
 //!    of cells and returns a [`Demonstration`] report whose every field is a real
 //!    observation of the running organs — the test below asserts the whole braid.
 
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::{content, merge, AtomId, Author, ConflictRegion, History, Patch, Rendered};
 
 /// A structured report of what the end-to-end document-language demonstration actually
@@ -222,15 +223,19 @@ pub fn xanadu_demonstration() -> Demonstration {
     let c_surface = AffordanceSurface::new(c_cell)
         .declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             view_evt.clone(),
         ))
         .declare(CellAffordance::new(
             "comment",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             view_evt.clone(),
         ))
-        .declare(CellAffordance::new("edit", AuthRequired::Either, view_evt));
+        .declare(CellAffordance::new(
+            "edit",
+            Requirement::AtLeast(Credential::Either),
+            view_evt,
+        ));
     // The embed lineage: a strong (Either) authority ceiling over C.
     let lineage = SurfaceCapability::root(c_cell, AuthRequired::Either);
 

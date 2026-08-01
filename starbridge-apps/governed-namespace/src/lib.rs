@@ -168,6 +168,7 @@ use dregg_app_framework::{
     WitnessedPredicateKind, canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32,
     symbol,
 };
+use dregg_cell::{Credential, Requirement};
 use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
 use dregg_turn::action::WitnessBlob;
 use dregg_turn::executor::{single_member_authorized_root, single_member_membership_proof};
@@ -1582,11 +1583,11 @@ pub mod committee_board {
 /// committee tier maps onto `Either` because a member acts as themselves (a signature)
 /// OR via a proof on the constitutional propose/vote turns; commit-authority maps onto
 /// `None`/root because the threshold aggregate, not any individual, is what enacts.
-pub const VIEWER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const VIEWER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The committee-member rights tier (sig-or-proof — propose + vote + register + view). See [`VIEWER_RIGHTS`].
-pub const COMMITTEE_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const COMMITTEE_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The committee-aggregate / admin rights tier (root — the commit authority + all). See [`VIEWER_RIGHTS`].
-pub const ADMIN_RIGHTS: AuthRequired = AuthRequired::None;
+pub const ADMIN_RIGHTS: Requirement = Requirement::Root;
 
 /// The `propose_table_update` **live-state precondition** — there must be NO in-flight
 /// proposal (`pending_proposal_root == 0`). A real [`CellProgram`] read against the
@@ -1734,7 +1735,7 @@ pub fn governance_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor)
                 .affordance(commit)
                 .gated(propose)
                 .gated(vote)
-                .publish(VIEWER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

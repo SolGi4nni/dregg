@@ -165,7 +165,7 @@ pub use obligation_standing::{
     ObligationState as StandingObligationState, ObligationTerms as StandingObligationTerms,
     discharge, is_obligation, open_obligation,
 };
-pub use permissions::{Action, AuthKind, AuthRequired, Permissions};
+pub use permissions::{Action, AuthKind, AuthRequired, Credential, Permissions, Requirement};
 #[allow(deprecated)]
 pub use preconditions::PreconditionClause;
 pub use preconditions::{

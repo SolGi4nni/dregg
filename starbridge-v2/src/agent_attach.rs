@@ -34,6 +34,7 @@ use dregg_turn::action::Effect;
 use deos_js::{AttachedApplet, WorldSink};
 
 use crate::world::{CommitOutcome, World};
+use dregg_cell::Requirement;
 
 /// A `deos_js::WorldSink` over the cockpit's live `Rc<RefCell<World>>`.
 ///
@@ -106,7 +107,7 @@ pub fn attach_agent(
     sink: WorldSinkAdapter,
     agent: CellId,
     held: AuthRequired,
-    affordances: Vec<(String, AuthRequired)>,
+    affordances: Vec<(String, Requirement)>,
 ) -> AttachedApplet {
     AttachedApplet::attach(Box::new(sink), agent, held, affordances, AGENT_COUNTER_SLOT)
 }

@@ -51,6 +51,7 @@ use dregg_turn::action::WitnessBlob;
 // BINARIES via `#[path = "../src/deos.rs"]` (see lib.rs / Cargo.toml — the
 // package-cycle workaround), so `crate` is the test crate, and the pure polis
 // library is reached by its external name.
+use dregg_cell::{Credential, Requirement};
 use starbridge_polis::{
     STATE_SLOT,
     constitution::{self, ConstitutionParams},
@@ -84,14 +85,14 @@ pub fn embedded_executor_at(cipherclerk: &AppCipherclerk, height: u64) -> Embedd
 /// The OBSERVER tier (cap-only read — the narrowest). A holder of `Signature` or
 /// broader may `view_*`. Maps onto: council member, amendment proposer, worker,
 /// identity device. Mirrors supply-chain's `VERIFIER_RIGHTS`.
-pub const OBSERVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const OBSERVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The PARTICIPANT tier (sig-or-proof — a gated machine-advancing step + read). A
 /// holder of `Either` or broader. Maps onto: council approver, mandate invoker.
-pub const PARTICIPANT_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const PARTICIPANT_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The AUTHORITY tier (root — the decisive transition; the broadest). Only a holder of
 /// the full `None` authority. Maps onto: council ratifier, constitution amender,
 /// mandate grantor (revoke), identity recovery authority (rotate).
-pub const AUTHORITY_RIGHTS: AuthRequired = AuthRequired::None;
+pub const AUTHORITY_RIGHTS: Requirement = Requirement::Root;
 
 /// Read a [`dregg_app_framework::FieldElement`] as the big-endian u64 in its last 8
 /// bytes (the comparison the field's slot caveats use), for the state-parameterized fires.
@@ -227,7 +228,7 @@ pub fn council_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
                 .affordance(view)
                 .gated(approve)
                 .gated(certify)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }
@@ -378,7 +379,7 @@ pub fn amendment_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) 
             DeosCell::new(amendment, "amendment-proposal")
                 .affordance(view)
                 .gated(ratify)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }
@@ -539,7 +540,7 @@ pub fn constitution_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecuto
             DeosCell::new(constitution, "constitution")
                 .affordance(view)
                 .gated(amend)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }
@@ -718,7 +719,7 @@ pub fn mandate_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
                 .affordance(view)
                 .gated(invoke)
                 .gated(revoke)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }
@@ -903,7 +904,7 @@ pub fn identity_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
                 .affordance(view)
                 .gated(attest)
                 .gated(rotate)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

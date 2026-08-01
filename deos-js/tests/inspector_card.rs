@@ -15,6 +15,7 @@ use deos_js::applet::{pack_u64, Affordance, Applet};
 use deos_js::card_editor::{ViewPatch, ViewTree};
 use deos_js::InspectorCard;
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 
 /// A focused cell: slot 0 holds a counter (seeded to 1 so the RawFields face surfaces it as a
@@ -24,7 +25,7 @@ fn counter_card(seed: u8) -> Applet {
     pk[0] = seed;
     let inc = Affordance {
         name: "inc".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]
@@ -46,7 +47,7 @@ fn focused_inspector() -> InspectorCard {
         counter_card(0xAB),
         Author(42),
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     )
 }
 
@@ -194,7 +195,7 @@ fn an_unauthorized_reshape_is_refused_in_band() {
         counter_card(0xCD),
         Author(7),
         /*held=*/ AuthRequired::Signature,
-        /*edit_authority=*/ AuthRequired::Proof,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
     );
     let before = card.view_source();
     let err = card.edit_view(ViewPatch::AddText {

@@ -21,6 +21,8 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{parse_view_tree, AppletView};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -38,7 +40,7 @@ fn substance(seed: u8) -> Applet {
     pk[0] = seed;
     let noop = Affordance {
         name: "noop".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|_m, _a| vec![(0usize, pack_u64(0))]),
     };
     Applet::mint(pk, [0u8; 32], &[], vec![noop], AuthRequired::Signature)
@@ -76,7 +78,7 @@ fn bake_body() {
             substance(0xD1),
             Author(7),
             AuthRequired::None,
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
         );
         // Observe a few turns so the feed scrolls with real rows.
         card.observe(feed_entry(1, "turn committed", 0xAA))
@@ -92,7 +94,7 @@ fn bake_body() {
             substance(0xD1),
             Author(7),
             AuthRequired::None,
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
         );
         card2
             .observe(feed_entry(1, "turn committed", 0xAA))
@@ -134,7 +136,7 @@ fn bake_body() {
             ledger,
             Author(9),
             AuthRequired::None,
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
         );
         // Drop the borrow before reusing `cell` is moot — `cell` only loaned the ledger.
         card.observe(agent_action(1, "set field[0]", 0xAA))
@@ -154,7 +156,7 @@ fn bake_body() {
             cell2.ledger(),
             Author(9),
             AuthRequired::None,
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
         );
         card2
             .edit_view(ViewPatch::Relabel {
@@ -192,7 +194,7 @@ fn bake_body() {
             AuthRequired::None,
             Author(5),
             AuthRequired::None,
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
         );
         card.publish_count().expect("publish the visible count");
         let source0 = card.view_source();
@@ -204,7 +206,7 @@ fn bake_body() {
             AuthRequired::None,
             Author(5),
             AuthRequired::None,
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
         );
         card2
             .edit_view(ViewPatch::Relabel {

@@ -60,6 +60,8 @@ use deos_js::applet::{pack_u64, unpack_u64};
 use deos_js::{AffordanceSpec, Applet, AppletManifest, ApplyOp, PortableApplet};
 use dregg_cell::AuthRequired;
 
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 use dregg_turn::umem::{self, UKey, UProjection, UVal};
 
 /// The agent's working-set lives across a few low model slots of its cell:
@@ -80,12 +82,12 @@ fn agent_manifest() -> AppletManifest {
         affordances: vec![
             AffordanceSpec {
                 name: "think".to_string(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot { slot: THOUGHT_SLOT },
             },
             AffordanceSpec {
                 name: "mark".to_string(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetSlot {
                     slot: SCRATCH_SLOT,
                     value: 1,

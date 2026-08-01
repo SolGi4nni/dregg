@@ -27,6 +27,7 @@ use dregg_turn::builder::{ActionBuilder, TurnBuilder};
 use dregg_turn::TurnReceipt;
 use dregg_types::CellId;
 
+use dregg_cell::Requirement;
 use starbridge_web_surface::transclusion::{Provenance, TranscludedField};
 use starbridge_web_surface::web_of_cells::{DreggUri, WebOfCells};
 
@@ -42,7 +43,7 @@ pub use deos_js_core::{pack_u64, unpack_u64, ApplyFn, CellModel, Slot};
 /// `required` is the authority the fire must satisfy (the cap tooth).
 pub struct Affordance {
     pub name: String,
-    pub required: AuthRequired,
+    pub required: Requirement,
     /// Pure: live model → the (slot, new-value) writes this affordance produces.
     /// `arg` is the JS-supplied argument (e.g. the increment amount).
     pub apply: ApplyFn,
@@ -263,8 +264,8 @@ impl Applet {
 
     /// The registered affordance specs (name + the authority each requires) — the
     /// cap-gated message surface the reflective `affordances(viewer)` projects.
-    pub fn affordance_specs(&self) -> Vec<(String, AuthRequired)> {
-        let mut specs: Vec<(String, AuthRequired)> = self
+    pub fn affordance_specs(&self) -> Vec<(String, Requirement)> {
+        let mut specs: Vec<(String, Requirement)> = self
             .affordances
             .values()
             .map(|a| (a.name.clone(), a.required.clone()))
@@ -326,7 +327,7 @@ impl Applet {
             .ok_or_else(|| FireError::UnknownAffordance(affordance.to_string()))?;
 
         // (2) CAP TOOTH — the REAL is_attenuation, in-band. Refused ⇒ nothing committed.
-        if !dregg_cell::is_attenuation(&self.held, &aff.required) {
+        if !aff.required.satisfied_by(&self.held) {
             return Err(FireError::Unauthorized {
                 affordance: affordance.to_string(),
             });

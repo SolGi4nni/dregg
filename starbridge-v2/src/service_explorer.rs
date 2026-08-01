@@ -44,6 +44,7 @@ use dregg_turn::turn::{Turn, TurnReceipt};
 
 use crate::reflect::{self, Inspectable};
 use crate::world::{CommitOutcome, World};
+use dregg_cell::{Credential, Requirement};
 
 /// One **method the cell publishes**, as the explorer shows it for a viewer.
 ///
@@ -63,7 +64,7 @@ pub struct MethodEntry {
     /// `None` for variadic) — the explorer uses it to size the args input.
     pub arity: Option<u8>,
     /// What the caller must HOLD to invoke this method.
-    pub required: AuthRequired,
+    pub required: Requirement,
     /// Replayable (desugars to its underlying effects, invokable here) vs
     /// Serviced (its answer rides the OFE cross-cell-read — the named seam).
     pub semantics: Semantics,
@@ -172,7 +173,7 @@ impl ServiceExplorer {
                 name: method_name(descriptor, m),
                 symbol: m.symbol,
                 arity: arity_of(m),
-                required: m.auth_required.clone(),
+                required: Requirement::from_interface_auth(&m.auth_required),
                 semantics: m.semantics,
                 authorized: authority_satisfies(&viewer_rights, &m.auth_required),
             })
@@ -561,7 +562,7 @@ mod tests {
                 .find(|m| m.symbol == method_symbol(name))
                 .unwrap_or_else(|| panic!("method {name} discovered"));
             assert_eq!(entry.semantics, Semantics::Replayable);
-            assert_eq!(entry.required, AuthRequired::None);
+            assert_eq!(entry.required, Requirement::Root);
             assert!(entry.is_invokable());
             assert!(entry.authorized, "None is satisfied by any viewer");
         }

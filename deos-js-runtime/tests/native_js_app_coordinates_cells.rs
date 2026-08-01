@@ -14,6 +14,8 @@ use deos_js_runtime::applet::{Affordance, ApplyOp};
 use deos_js_runtime::world::{read_view_blob, VIEW_VERSION_SLOT};
 use deos_js_runtime::{CellWorld, FireError, NativeRuntime};
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// Each verified turn the world stamps pays this fee (see `CellWorld::commit`).
 const FEE: i64 = 10_000;
@@ -40,7 +42,7 @@ fn app_world() -> (CellWorld, dregg_types::CellId) {
         &[(0usize, 0u64)],
         vec![Affordance {
             name: "put".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         AuthRequired::Signature,
@@ -237,12 +239,12 @@ fn pure_js_app_overreach_on_a_held_cell_is_refused() {
         vec![
             Affordance {
                 name: "put".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot { slot: 0 },
             },
             Affordance {
                 name: "wipe".into(),
-                required: AuthRequired::Proof,
+                required: Requirement::AtLeast(Credential::Proof),
                 op: ApplyOp::SetSlot { slot: 0, value: 0 },
             },
         ],

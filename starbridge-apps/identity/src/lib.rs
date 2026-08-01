@@ -91,6 +91,8 @@ use dregg_app_framework::{
     GatedAffordance, InspectorDescriptor, StarbridgeAppContext, StateConstraint, TurnReceipt,
     canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::Credential as AuthCredential;
+use dregg_cell::Requirement;
 use dregg_turn::action::WitnessBlob;
 use dregg_turn::executor::membership_verifier::{
     single_member_authorized_root, single_member_membership_proof,
@@ -704,11 +706,11 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///     and `revoke` (mutate the issuer cell) on top of everything below.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the holder/verifier ⊂ presenter ⊂ issuer ladder.
-pub const VERIFIER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const VERIFIER_RIGHTS: Requirement = Requirement::AtLeast(AuthCredential::Signature);
 /// The presenter rights tier (sig-or-proof — present + verify). See [`VERIFIER_RIGHTS`].
-pub const PRESENTER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const PRESENTER_RIGHTS: Requirement = Requirement::AtLeast(AuthCredential::Either);
 /// The issuer rights tier (root — issue, revoke, +all). See [`VERIFIER_RIGHTS`].
-pub const ISSUER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const ISSUER_RIGHTS: Requirement = Requirement::Root;
 
 // NOTE: the seeded issuer cell now carries the FULL floor [`issuer_program`] (all four
 // caveats, `SenderAuthorized` included) — the now-real `MerkleMembership` verifier means the
@@ -868,7 +870,7 @@ pub fn identity_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -
                 .affordance(present)
                 .gated(issue)
                 .gated(revoke)
-                .publish(VERIFIER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

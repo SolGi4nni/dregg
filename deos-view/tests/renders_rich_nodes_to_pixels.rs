@@ -26,6 +26,7 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{parse_view_tree, AppletView, ViewNode};
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -42,12 +43,12 @@ fn out_dir() -> PathBuf {
 fn rich_card() -> Applet {
     let select = Affordance {
         name: "select".into(),
-        required: AuthRequired::None,
+        required: Requirement::Root,
         apply: Box::new(|_model, arg| vec![(1usize, pack_u64(arg.max(0) as u64))]),
     };
     let inc = Affordance {
         name: "inc".into(),
-        required: AuthRequired::None,
+        required: Requirement::Root,
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]

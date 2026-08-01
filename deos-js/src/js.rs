@@ -130,7 +130,7 @@ impl JsTarget {
         }
     }
     /// The registered affordance specs (name + required authority).
-    pub fn affordance_specs(&self) -> Vec<(String, dregg_cell::AuthRequired)> {
+    pub fn affordance_specs(&self) -> Vec<(String, dregg_cell::Requirement)> {
         match self {
             JsTarget::Embedded(a) => a.affordance_specs(),
             JsTarget::Attached(a) => a.affordance_specs(),
@@ -267,7 +267,7 @@ impl ComposeOutcome {
 #[derive(Clone, Debug)]
 pub struct ServerAffordanceDef {
     pub name: String,
-    pub required: dregg_cell::AuthRequired,
+    pub required: dregg_cell::Requirement,
     pub effects: Vec<dregg_turn::action::Effect>,
     /// The forked instance this affordance is scoped to (`None` ⇒ the root surface).
     pub instance: Option<dregg_types::CellId>,
@@ -587,7 +587,7 @@ const PRELUDE: &str = r#"
                 return __deos_editor_set_field(String(cardId), slot | 0, value | 0) | 0;
             },
             // addAffordance(cardId, spec) — weld a fireable affordance into the card's
-            // program. spec: {name, required:"none"/"signature"/"proof"/"either",
+            // program. spec: {name, required:"public"/"root"/"signature"/"proof"/"either",
             //   op:"add"/"sub"/"set"/"track", slot, value}. ("track": slot := max(arg,0)
             //   — the fire's arg IS the new value, the census-mirroring write verb.)
             // Returns 1 on commit, -1 on refusal.
@@ -1489,6 +1489,25 @@ fn parse_auth_label(label: &str) -> Result<dregg_cell::AuthRequired, String> {
     }
 }
 
+/// Parse a REQUIREMENT label from JS — what an affordance/step DEMANDS, as opposed to
+/// [`parse_auth_label`]'s HELD authority.
+///
+/// `"none"` is REFUSED here rather than reinterpreted: on the requirement side it
+/// meant "ungated" to two crates and "root only" to three. JS must say `"public"` or
+/// `"root"`.
+fn parse_required_label(label: &str) -> Result<dregg_cell::Requirement, String> {
+    use dregg_cell::{Credential, Requirement};
+    match label.to_lowercase().as_str() {
+        "public" => Ok(Requirement::Public),
+        "root" => Ok(Requirement::Root),
+        "signature" | "sig" => Ok(Requirement::AtLeast(Credential::Signature)),
+        "proof" => Ok(Requirement::AtLeast(Credential::Proof)),
+        "either" => Ok(Requirement::AtLeast(Credential::Either)),
+        "never" | "impossible" => Ok(Requirement::Never),
+        other => Err(format!("unknown requirement label '{other}'")),
+    }
+}
+
 // ── THE CARD EDITOR natives (the authoring surface) — `deos.editor.*` ──────────────
 //
 // Each authors the thread-local [`CardEditor`] (installed by the host under its own
@@ -1674,8 +1693,9 @@ fn parse_affordance_spec(spec_json: &str) -> Result<AffordanceSpec, String> {
     if name.is_empty() {
         return Err("affordance spec needs a name".into());
     }
-    let required = parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"))
-        .map_err(|e| format!("affordance spec: {e}"))?;
+    let required =
+        parse_required_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("root"))
+            .map_err(|e| format!("affordance spec: {e}"))?;
     let slot = v.get("slot").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
     let value = v.get("value").and_then(|x| x.as_u64()).unwrap_or(0);
     let op = match v.get("op").and_then(|x| x.as_str()).unwrap_or("add") {
@@ -1791,7 +1811,7 @@ unsafe extern "C" fn native_server_define_affordance(
             return Err("defineAffordance needs a name".into());
         }
         let required =
-            parse_auth_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("none"))
+            parse_required_label(v.get("required").and_then(|x| x.as_str()).unwrap_or("root"))
                 .map_err(|e| format!("defineAffordance: {e}"))?;
         let effects = match v.get("effects").and_then(|x| x.as_array()) {
             Some(arr) => arr
@@ -2175,7 +2195,7 @@ unsafe extern "C" fn native_server_get_field(
 /// Decode one compose leg (`{op, ...}`) from the brain's JSON into a [`ComposeStep`].
 fn parse_compose_step(v: &serde_json::Value) -> Result<ComposeStep, String> {
     let op = v.get("op").and_then(|x| x.as_str()).unwrap_or("");
-    let required = parse_auth_label(
+    let required = parse_required_label(
         v.get("required")
             .and_then(|x| x.as_str())
             .unwrap_or("signature"),
@@ -2344,6 +2364,7 @@ mod auth_label_tests {
     //! never silently mint `AuthRequired::None` (the old `_ => None` fail-open).
     use super::*;
     use dregg_cell::AuthRequired;
+    use dregg_cell::{Credential, Requirement};
 
     #[test]
     fn known_labels_parse_unchanged() {
@@ -2373,20 +2394,27 @@ mod auth_label_tests {
         // The old behavior minted `required: None` (anyone may fire) from a typo.
         let err = parse_affordance_spec(r#"{"name":"withdraw","required":"signatur"}"#)
             .expect_err("typo'd required must refuse the spec");
-        assert!(err.contains("unknown authority label"), "err: {err}");
+        assert!(err.contains("unknown requirement label"), "err: {err}");
+        // And the once-ambiguous `"none"` is REFUSED too, not reinterpreted.
+        assert!(
+            parse_affordance_spec(r#"{"name":"withdraw","required":"none"}"#).is_err(),
+            "`none` is not a requirement spelling — it meant both `public` and `root`"
+        );
         // The legit flow is untouched: absent `required` defaults to the documented
-        // "none", and a spelled-out label parses.
+        // "root", and a spelled-out label parses. NOTE the default moved from the
+        // ambiguous "none" (which meant "public" to two crates and "root" to three)
+        // to the explicit "root" — and `parse_required_label("none")` now REFUSES.
         assert_eq!(
             parse_affordance_spec(r#"{"name":"peek"}"#)
                 .unwrap()
                 .required,
-            AuthRequired::None
+            Requirement::Root
         );
         assert_eq!(
             parse_affordance_spec(r#"{"name":"withdraw","required":"signature"}"#)
                 .unwrap()
                 .required,
-            AuthRequired::Signature
+            Requirement::AtLeast(Credential::Signature)
         );
     }
 

@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use crate::applet::{pack_u64, Applet, Slot};
 use crate::portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 use crate::program_doc::ProgramSource;
+use dregg_cell::Requirement;
 
 /// The heap slot the card editor uses to witness an authoring gesture that does not
 /// itself mutate a model field (a view-patch or affordance-weld). Bumping it via a real
@@ -416,7 +417,7 @@ pub struct CardEditor {
     held: AuthRequired,
     /// The authority a gesture on THIS card requires (the authoring cap tooth). The
     /// editor's `held` must satisfy it ([`dregg_cell::is_attenuation`]).
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
     /// The author every patch this editor appends is attributed to (the blame identity).
     author: Author,
 }
@@ -431,7 +432,7 @@ impl CardEditor {
         manifest: AppletManifest,
         author: Author,
         held: AuthRequired,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
     ) -> Self {
         let view = ProgramSource::seed(author, &manifest.view_source);
         CardEditor {
@@ -477,7 +478,7 @@ impl CardEditor {
 
     /// Whether the editor is authorized to author this card (the authoring cap tooth).
     fn authorized(&self) -> bool {
-        dregg_cell::is_attenuation(&self.held, &self.edit_authority)
+        self.edit_authority.satisfied_by(&self.held)
     }
 
     /// Fire a real `SetField` provenance turn bumping the card's authorship slot — how a

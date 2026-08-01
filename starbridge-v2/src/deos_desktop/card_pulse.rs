@@ -174,7 +174,10 @@ impl DeosDesktop {
             sink,
             cell,
             AuthRequired::Signature,
-            vec![("bump".to_string(), AuthRequired::Signature)],
+            vec![(
+                "bump".to_string(),
+                dregg_cell::Requirement::AtLeast(dregg_cell::Credential::Signature),
+            )],
         );
         let shared: SharedAttached = Rc::new(RefCell::new(attached));
         let tree = counter_card_tree();

@@ -65,6 +65,8 @@ use deos_js::signals::BindingId;
 use deos_js::{Applet, JsRuntime};
 use deos_view::{parse_view_tree, AppletView, SharedApplet, ViewNode};
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 use dregg_types::CellId;
 
 /// The status panel's model slots — the live values its `bind` rows re-read off the
@@ -190,7 +192,7 @@ pub fn status_panel_manifest() -> AppletManifest {
         affordances: vec![
             AffordanceSpec {
                 name: "refresh".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot {
                     slot: STATUS_SLOT_REFRESHES,
                 },
@@ -201,14 +203,14 @@ pub fn status_panel_manifest() -> AppletManifest {
             // finally track the World instead of painting the frozen seeds forever.
             AffordanceSpec {
                 name: STATUS_AFF_SET_CELLS.into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetSlotFromArg {
                     slot: STATUS_SLOT_CELLS,
                 },
             },
             AffordanceSpec {
                 name: STATUS_AFF_SET_RECEIPTS.into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetSlotFromArg {
                     slot: STATUS_SLOT_RECEIPTS,
                 },
@@ -335,7 +337,7 @@ pub fn agent_rewrite_status_panel(rt: &mut JsRuntime) -> Result<RewriteResult, S
         manifest,
         AGENT_AUTHOR,
         AuthRequired::Signature,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
 
     let (result, editor) = rt.run_authoring(editor, AGENT_REWRITE_JS)?;
@@ -674,7 +676,7 @@ pub fn world_board_manifest(cells: u64, receipts: u64, sum: u64) -> AppletManife
         affordances: vec![
             AffordanceSpec {
                 name: "refresh".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot {
                     slot: BOARD_SLOT_REFRESHES,
                 },
@@ -684,14 +686,14 @@ pub fn world_board_manifest(cells: u64, receipts: u64, sum: u64) -> AppletManife
             // the live World once it is mounted as a pane (see `pulse_panes`).
             AffordanceSpec {
                 name: STATUS_AFF_SET_CELLS.into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetSlotFromArg {
                     slot: BOARD_SLOT_CELLS,
                 },
             },
             AffordanceSpec {
                 name: STATUS_AFF_SET_RECEIPTS.into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetSlotFromArg {
                     slot: BOARD_SLOT_RECEIPTS,
                 },
@@ -725,7 +727,7 @@ pub fn world_board_editor(cells: u64, receipts: u64, sum: u64) -> CardEditor {
         manifest,
         AGENT_AUTHOR,
         AuthRequired::Signature,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     )
 }
 

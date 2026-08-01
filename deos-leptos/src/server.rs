@@ -61,6 +61,7 @@ use dregg_turn::{Effect, TurnReceipt};
 use dregg_types::CellId;
 
 use crate::gate::{fe, fe_u64, CellSlots, PENDING, RESOLVED, STATUS_SLOT, TALLY_SLOT};
+use dregg_cell::{Credential, Requirement};
 
 /// The inclusive reactive WINDOW the `vote`/`resolve` buttons light within (the same
 /// `[10, 20]` window the prototype's [`crate::vote_btn`] uses). The window tooth is a
@@ -243,7 +244,7 @@ impl DeosExecutorCell {
                 let btn = ReactiveAffordance::new(
                     CellAffordance::new(
                         "vote",
-                        AuthRequired::Either,
+                        Requirement::AtLeast(Credential::Either),
                         Effect::SetField {
                             cell: self.cell_id,
                             index: TALLY_SLOT as u64,
@@ -263,7 +264,7 @@ impl DeosExecutorCell {
                 let btn = ReactiveAffordance::new(
                     CellAffordance::new(
                         "resolve",
-                        AuthRequired::Either,
+                        Requirement::AtLeast(Credential::Either),
                         Effect::SetField {
                             cell: self.cell_id,
                             index: STATUS_SLOT as u64,

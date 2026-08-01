@@ -45,6 +45,7 @@ use dregg_doc::{AtomId, Author, BlameLine, PatchId, Provenance, Status};
 
 use crate::card_editor::{ButtonProps, EditError, OnClick, TextProps, ViewPatch, ViewTree};
 use crate::program_doc::ProgramSource;
+use dregg_cell::{Credential, Requirement};
 
 pub use dregg_doc::composition::CellId as ChildCellId;
 
@@ -184,7 +185,7 @@ pub struct ComposerCard {
     /// against (the authoring tooth).
     held: AuthRequired,
     /// The authority a view-edit on THIS card requires (the authoring cap tooth).
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
     /// The author every gesture + view-patch is attributed to (the blame identity).
     author: Author,
 }
@@ -198,7 +199,7 @@ impl ComposerCard {
         host: ChildCellId,
         author: Author,
         held: AuthRequired,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
     ) -> Self {
         let layout = LayoutGraph::new();
         let initial = composer_view_for(host, &layout).to_json();
@@ -404,7 +405,7 @@ impl ComposerCard {
 
     /// Whether the composer is authorized to reshape its own view (the authoring cap tooth).
     fn authorized(&self) -> bool {
-        dregg_cell::is_attenuation(&self.held, &self.edit_authority)
+        self.edit_authority.satisfied_by(&self.held)
     }
 
     /// **EDIT THE VIEW FROM WITHIN — the keystone.** Apply a structural reshape (relabel a
@@ -767,7 +768,7 @@ mod tests {
             cell(0xD0C),
             Author(7),
             /*held=*/ AuthRequired::None,
-            /*edit_authority=*/ AuthRequired::Signature,
+            /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
         )
     }
 
@@ -936,7 +937,7 @@ mod tests {
             cell(0xBAD),
             Author(7),
             /*held=*/ AuthRequired::Signature,
-            /*edit_authority=*/ AuthRequired::Proof,
+            /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
         );
         let before = card.view_source();
         let err = card.edit_view(ViewPatch::AddText {

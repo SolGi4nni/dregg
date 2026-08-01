@@ -43,6 +43,7 @@
 use deos_js_runtime::{seal_commitment, CellWorld, FireError, NativeRuntime};
 use dregg_cell::interface::{method_symbol, ArgsSchema, InterfaceDescriptor, MethodSig, Semantics};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 
 /// Each verified turn the world stamps burns this fee from the acting cell.
 const FEE: i64 = 10_000;

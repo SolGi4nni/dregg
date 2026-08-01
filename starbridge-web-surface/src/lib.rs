@@ -165,7 +165,7 @@ pub mod world;
 // Re-export the REAL dregg cap types so downstream code names the genuine model,
 // not a parallel one. A web surface IS a firmament `Capability`; its rights are
 // the real `AuthRequired` lattice; its identity is the real `CellId`.
-pub use dregg_cell::{is_attenuation, AuthRequired};
+pub use dregg_cell::{is_attenuation, AuthRequired, Credential, Requirement};
 pub use dregg_firmament::{Capability, SurfaceBacking, Target};
 pub use dregg_types::{AttestedRoot, CellId};
 

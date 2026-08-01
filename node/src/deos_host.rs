@@ -34,6 +34,7 @@ use dregg_turn::action::Effect;
 use deos_js::{AttachedApplet, JsRuntime, WorldSink};
 
 use crate::state::NodeState;
+use dregg_cell::Requirement;
 
 /// One program to run on the persistent SpiderMonkey host thread: the bound World (a node
 /// `NodeState` + the tokio handle), the server cell to attach AS, its held authority, the
@@ -245,7 +246,7 @@ pub async fn host_server_program(
     {
         let mut s = state.write().await;
 
-        let root_specs: Vec<(String, AuthRequired)> = surface
+        let root_specs: Vec<(String, dregg_cell::Requirement)> = surface
             .affordances
             .iter()
             .filter(|d| d.instance.is_none())
@@ -254,7 +255,7 @@ pub async fn host_server_program(
         s.deos_server_surfaces.insert(server_cell, root_specs);
 
         for fork in &surface.forks {
-            let fork_specs: Vec<(String, AuthRequired)> = surface
+            let fork_specs: Vec<(String, dregg_cell::Requirement)> = surface
                 .affordances
                 .iter()
                 .filter(|d| d.instance == Some(fork.cell))

@@ -55,6 +55,7 @@
 
 use std::collections::BTreeSet;
 
+use dregg_cell::{Credential, Requirement};
 use starbridge_web_surface as web_aff;
 use web_aff::affordance::{AffordanceSurface, CellAffordance};
 use web_aff::delegate::SurfaceCapability;
@@ -485,22 +486,22 @@ mod tests {
         AffordanceSurface::new(source)
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(source),
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(source),
             ))
             .declare(CellAffordance::new(
                 "edit",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(source),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 grant_cap(source, cid(99)),
             ))
     }
@@ -707,12 +708,12 @@ mod tests {
         let own = AffordanceSurface::new(host)
             .declare(CellAffordance::new(
                 "doc-view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(host),
             ))
             .declare(CellAffordance::new(
                 "doc-edit",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(host),
             ));
         let doc = ComposedCellDocument::new(host, own)

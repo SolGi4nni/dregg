@@ -64,6 +64,7 @@ use dregg_app_framework::{
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, canonical_program_vk,
     field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 pub use dregg_app_framework::{FieldElement, field_from_bytes};
 
@@ -479,9 +480,9 @@ pub fn build_revoke_action(
 ///
 /// So `Either ⊂ None` IS the worker ⊂ grantor ladder (the narrow worker tier is strictly
 /// contained in the grantor's root authority).
-pub const WORKER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const WORKER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The grantor rights tier (root — mint/grant the invoke cap + all). See [`WORKER_RIGHTS`].
-pub const GRANTOR_RIGHTS: AuthRequired = AuthRequired::None;
+pub const GRANTOR_RIGHTS: Requirement = Requirement::Root;
 
 /// The permissions a mandate's invoke capability carries (a `SelfCell` cap a worker holds;
 /// handed forward NARROWED, never widened — the `derive_no_amplify` shape). Matches the
@@ -618,7 +619,7 @@ pub fn tad_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
             // would cap every rehydration below `view_grant`'s `Either` tier, so the
             // worker could never reacquire its own read across the membrane. The worker
             // tier is the correct lineage (the delegated agent reacquires the mandate).
-            .publish(WORKER_RIGHTS),
+            .publish(AuthRequired::Either),
     )
     .build()
 }
@@ -1034,7 +1035,7 @@ mod tests {
         // narrowest role that holds the mandate AND the narrowest cap-only affordance tier
         // (`view_grant`, Either), so a snapshot is reacquirable by the worker.
         assert_eq!(mandate.cell(), cipherclerk.cell_id());
-        assert_eq!(mandate.published_authority(), Some(&WORKER_RIGHTS));
+        assert_eq!(mandate.published_authority(), Some(&AuthRequired::Either));
     }
 
     #[test]

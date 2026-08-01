@@ -38,6 +38,7 @@ use starbridge_v2::client;
 #[cfg(feature = "gpui-ui")]
 use starbridge_v2::{cockpit, login};
 
+use dregg_cell::AuthRequired;
 #[cfg(feature = "embedded-executor")]
 use starbridge_v2::{demo, reflect, world};
 
@@ -4329,8 +4330,14 @@ fn render_agent_attach_headless(out: &str, w: f32, h: f32, fork: bool) -> anyhow
     let agent = user;
     let held = dregg_cell::AuthRequired::Signature;
     let affordances = vec![
-        ("bump".to_string(), dregg_cell::AuthRequired::Signature),
-        ("escalate".to_string(), dregg_cell::AuthRequired::Proof),
+        (
+            "bump".to_string(),
+            dregg_cell::Requirement::AtLeast(dregg_cell::Credential::Signature),
+        ),
+        (
+            "escalate".to_string(),
+            dregg_cell::Requirement::AtLeast(dregg_cell::Credential::Proof),
+        ),
     ];
 
     // 2. Attach the agent's deos-js runtime to the LIVE World (or a fork). The SAME
@@ -4477,7 +4484,10 @@ fn render_card_pane_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()> {
     let held = dregg_cell::AuthRequired::Signature;
     // The card's affordance surface: `bump` (Signature — held, admitted). The cap tooth
     // in deos-js checks every fire against `held` before it reaches the executor.
-    let affordances = vec![("bump".to_string(), dregg_cell::AuthRequired::Signature)];
+    let affordances = vec![(
+        "bump".to_string(),
+        dregg_cell::Requirement::AtLeast(dregg_cell::Credential::Signature),
+    )];
 
     let pre_height = live.borrow().height();
     let pre_field = live
@@ -5171,7 +5181,7 @@ fn voting_card_fire(
         let slot = v::tally_slot_for_choice(v::VOTE_YES);
         spine.commit(
             "record_tally",
-            &v::ADMINISTRATOR_RIGHTS,
+            &AuthRequired::None,
             &v::ADMINISTRATOR_RIGHTS,
             |live| {
                 let t = field_tail_u64_le(&live.fields[slot]);
@@ -5309,7 +5319,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
                 spine
                     .commit(
                         "record_tally",
-                        &v::ADMINISTRATOR_RIGHTS,
+                        &AuthRequired::None,
                         &v::ADMINISTRATOR_RIGHTS,
                         |st| {
                             let t = field_tail_u64_le(&st.fields[slot]);
@@ -5379,7 +5389,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
                 .commit_as(
                     signer,
                     "propose_table_update",
-                    &gn::COMMITTEE_RIGHTS,
+                    &AuthRequired::None,
                     &gn::COMMITTEE_RIGHTS,
                     vec![witness],
                     |st| {
@@ -5436,7 +5446,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         // Advance CLAIMED -> SUBMITTED so the stage gauge climbs past the seeded claim
         // (the escrowed-reward gauge is already full at the seeded 1000/1000).
         spine
-            .commit("submit", &b::WORKER_RIGHTS, &b::WORKER_RIGHTS, |_st| {
+            .commit("submit", &AuthRequired::None, &b::WORKER_RIGHTS, |_st| {
                 b::submit_effects(bcell, "ipfs://bafy-the-registry-work")
             })
             .map_err(|e| anyhow::anyhow!("bounty-board submit refused: {e}"))?;
@@ -5639,7 +5649,7 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         let deliveries = 8u64;
         for _ in 0..deliveries {
             spine
-                .commit("advance", &el::AGENT_RIGHTS, &el::AGENT_RIGHTS, |st| {
+                .commit("advance", &AuthRequired::None, &el::AGENT_RIGHTS, |st| {
                     let step =
                         field_tail_u64_le(&st.fields[el::STEP_SLOT as usize]).saturating_add(1);
                     let paid = field_tail_u64_le(&st.fields[el::PERIODS_PAID_SLOT as usize])
@@ -5704,7 +5714,7 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         // ship (FUNDED -> SHIPPED): the seller commits the sealed delivery (WriteOnce
         // DELIVERY_HASH + StrictMonotonic STATE).
         spine
-            .commit("ship", &e::SELLER_RIGHTS, &e::SELLER_RIGHTS, |_st| {
+            .commit("ship", &AuthRequired::None, &e::SELLER_RIGHTS, |_st| {
                 e::ship_effects(cell, &dregg_app_framework::field_from_u64(0x5417))
             })
             .map_err(|err| anyhow::anyhow!("escrow-market ship refused: {err}"))?;
@@ -5712,7 +5722,7 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         // settle (SHIPPED -> SETTLED): release the escrow IN FULL — the FLASHWELL
         // AffineEq(RELEASED + REFUNDED == ESCROWED) conservation (released = escrowed).
         spine
-            .commit("settle", &e::SELLER_RIGHTS, &e::SELLER_RIGHTS, |st| {
+            .commit("settle", &AuthRequired::None, &e::SELLER_RIGHTS, |st| {
                 let escrowed = field_tail_u64_le(&st.fields[e::ESCROWED_SLOT]);
                 e::settle_effects(cell, escrowed, 0)
             })
@@ -5759,7 +5769,7 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         // is an identity over three SLOTS, not a conservation of moved value.
         let payee = j::party_id(starbridge_v2::app_registry::REGISTRY_COMPUTE_PROVIDER);
         spine
-            .commit("settle", &j::REQUESTER_RIGHTS, &j::REQUESTER_RIGHTS, |st| {
+            .commit("settle", &AuthRequired::None, &j::REQUESTER_RIGHTS, |st| {
                 let budget = field_tail_u64_le(&st.fields[j::BUDGET_SLOT]);
                 let bid = field_tail_u64_le(&st.fields[j::BID_SLOT]);
                 j::settle_effects(cell, payee, bid, budget.saturating_sub(bid))

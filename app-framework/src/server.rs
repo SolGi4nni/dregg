@@ -54,6 +54,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::auth::AdminToken;
 use crate::persistence::JsonPersistence;
+use dregg_cell::{Credential, Requirement};
 
 // =============================================================================
 // AppConfig
@@ -379,7 +380,7 @@ impl AppServer {
     /// # let doc = cipherclerk.cell_id();
     /// # let view_fx = Effect::EmitEvent { cell: doc, event: Event { topic: [1u8; 32], data: vec![] } };
     /// let surface = AffordanceSurface::named(doc, "doc")
-    ///     .declare(CellAffordance::new("view", AuthRequired::Signature, view_fx));
+    ///     .declare(CellAffordance::new("view", Requirement::AtLeast(Credential::Signature), view_fx));
     ///
     /// // The descriptor's endpoint labels are computed against the SAME prefix the
     /// // router is nested at, so what the surface advertises is where it is served.

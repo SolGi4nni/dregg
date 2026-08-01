@@ -21,6 +21,7 @@ use dregg_app_framework::{
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
     canonical_program_vk, clearance_graph_root, field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 // Re-export the field primitives so differential tests (and downstream callers) can build the
 // same `FieldElement` corpus the admission predicates consume, without depending directly on
@@ -623,11 +624,11 @@ pub fn build_init_gateway_action(
 ///     `init_gateway` / re-key on top of everything a writer can do).
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the reader ⊂ writer ⊂ mandate-holder ladder.
-pub const READER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const READER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The writer rights tier (sig-or-proof — put + get + list). See [`READER_RIGHTS`].
-pub const WRITER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const WRITER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The mandate-holder rights tier (root — init/re-key + all). See [`READER_RIGHTS`].
-pub const MANDATE_RIGHTS: AuthRequired = AuthRequired::None;
+pub const MANDATE_RIGHTS: Requirement = Requirement::Root;
 
 /// The **life-of-cell gateway invariants** the executor re-enforces on every touching
 /// turn — exactly the factory descriptor's flat `state_constraints` (`WriteOnce`
@@ -789,7 +790,7 @@ pub fn gateway_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             .gated(get)
             .affordance(list)
             .gated(put)
-            .publish(READER_RIGHTS),
+            .publish(AuthRequired::Signature),
     )
     .build()
 }

@@ -26,6 +26,7 @@ use deos_js_runtime::applet::{Affordance, ApplyOp};
 use deos_js_runtime::{CellWorld, FireError, NativeRuntime};
 use dregg_cell::interface::{method_symbol, ArgsSchema, InterfaceDescriptor, MethodSig, Semantics};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 
 /// The lowest writable register index — slot 0 is the store version, per the Rust kvstore's
 /// `VERSION_SLOT`/`REG_MIN`.
@@ -73,20 +74,20 @@ fn kvstore_world() -> (CellWorld, dregg_types::CellId) {
             // register named by args[0]. This is the keystone power-up.
             Affordance {
                 name: "put".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetRegisterFromArgs,
             },
             // delete(reg): clear the register named by args[0] (write 0).
             Affordance {
                 name: "delete".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SetSlot { slot: 0, value: 0 },
             },
             // get(reg): a Serviced read — never fired as a turn (the interface refuses it).
             // Body present only so the method name has an entry; the bridge stops it first.
             Affordance {
                 name: "get".into(),
-                required: AuthRequired::None,
+                required: Requirement::Root,
                 op: ApplyOp::SetSlotFromArg { slot: 0 },
             },
         ],
@@ -220,7 +221,7 @@ fn typed_method_cap_gate_comes_from_the_published_interface() {
         &[],
         vec![Affordance {
             name: "put".into(),
-            required: AuthRequired::Proof,
+            required: Requirement::AtLeast(Credential::Proof),
             op: ApplyOp::SetRegisterFromArgs,
         }],
         AuthRequired::Proof,

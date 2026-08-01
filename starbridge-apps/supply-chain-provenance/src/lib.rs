@@ -97,6 +97,7 @@ use dregg_app_framework::{
 };
 use dregg_cell::program::SimpleStateConstraint;
 use dregg_cell::state::STATE_SLOTS;
+use dregg_cell::{Credential, Requirement};
 
 pub use dregg_app_framework::field_from_bytes;
 
@@ -869,11 +870,11 @@ pub fn build_forged_handoff_action(
 ///     everything a custodian can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the verifier ⊂ custodian ⊂ manufacturer ladder.
-pub const VERIFIER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const VERIFIER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The custodian rights tier (sig-or-proof — accept custody + view). See [`VERIFIER_RIGHTS`].
-pub const CUSTODIAN_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const CUSTODIAN_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The manufacturer/owner rights tier (root — mint, grant the custody cap, +all). See [`VERIFIER_RIGHTS`].
-pub const MANUFACTURER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const MANUFACTURER_RIGHTS: Requirement = Requirement::Root;
 
 /// The permissions an item's custody capability carries (a `SelfCell` cap a
 /// custodian holds; handed forward NARROWED, never widened — the Lean
@@ -1013,7 +1014,7 @@ pub fn item_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> De
             .gated(accept)
             .gated(mint)
             .affordance(grant)
-            .publish(VERIFIER_RIGHTS),
+            .publish(AuthRequired::Signature),
     )
     .build()
 }

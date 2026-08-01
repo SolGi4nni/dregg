@@ -88,6 +88,7 @@ use super::chrome::{
 };
 use super::spotter::{SpotterEntry, SpotterTarget};
 use super::{DeosDesktop, WinKindTag};
+use dregg_cell::AuthRequired;
 
 /// The registry id of the compute-exchange shelf app — the floor's job-market
 /// substrate (its crate's program + effect-builders are what every offer cell runs).
@@ -364,7 +365,7 @@ impl ExchangeFloorState {
         let receipt = spine
             .commit(
                 job::service::METHOD_POST,
-                &job::REQUESTER_RIGHTS,
+                &AuthRequired::None,
                 &job::REQUESTER_RIGHTS,
                 |_live| post_effects(cell, requester, budget),
             )
@@ -394,7 +395,7 @@ impl ExchangeFloorState {
             .spine
             .commit(
                 job::service::METHOD_BID,
-                &job::PROVIDER_RIGHTS,
+                &AuthRequired::None,
                 &job::PROVIDER_RIGHTS,
                 |_live| job::bid_effects(target, provider, price),
             )
@@ -431,7 +432,7 @@ impl ExchangeFloorState {
             .spine
             .commit(
                 job::service::METHOD_SETTLE,
-                &job::REQUESTER_RIGHTS,
+                &AuthRequired::None,
                 &job::REQUESTER_RIGHTS,
                 |live| {
                     let budget = field_tail_u64(&live.fields[job::BUDGET_SLOT]);

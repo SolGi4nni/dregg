@@ -50,7 +50,7 @@
 
 use std::path::Path;
 
-use dregg_cell::AuthRequired;
+use dregg_cell::{AuthRequired, Requirement};
 use dregg_turn::action::{Effect, Event};
 use dregg_types::CellId;
 
@@ -69,8 +69,10 @@ use crate::deos_app::{DeosApp, DeosCell};
 pub struct AffordanceSpec {
     /// The affordance name (the deos analogue of `hx-post="/comment"`).
     pub name: String,
-    /// The rights tier a viewer must HOLD (a label: `none`/`root`, `either`,
-    /// `signature`/`sig`, `proof`). Resolved to a real [`AuthRequired`].
+    /// The rights tier a viewer must HOLD (a label: `public`, `root`, `either`,
+    /// `signature`/`sig`, `proof`, `never`). Resolved to a real [`Requirement`].
+    /// There is deliberately no `none` label — it used to mean BOTH `public` and
+    /// `root` depending on the reader.
     pub required_rights: String,
     /// The effect this affordance fires (the verified turn the executor runs).
     pub effect: AffordanceEffect,
@@ -189,9 +191,13 @@ impl CellSpec {
             deos_cell = deos_cell.affordance(aff.into_affordance(cell)?);
         }
         if let Some(label) = self.publish_at {
-            let rights =
-                parse_rights(&label).ok_or_else(|| ScaffoldError::UnknownRights(label.clone()))?;
-            deos_cell = deos_cell.publish(rights);
+            // The publish LINEAGE is a HELD authority (what a bearer obtains on
+            // enliven), not a requirement — it goes through the held-side parser.
+            // Routing it through `parse_rights` was the same conflation this type
+            // split exists to kill.
+            let authority = crate::affordance_endpoint::parse_auth_required(&label)
+                .ok_or_else(|| ScaffoldError::UnknownRights(label.clone()))?;
+            deos_cell = deos_cell.publish(authority);
         }
         Ok(deos_cell)
     }
@@ -504,8 +510,8 @@ impl From<std::io::Error> for ScaffoldError {
 /// Parse an [`AuthRequired`] tier from a (case-insensitive) label — the same mapping
 /// the affordance endpoint's header resolver uses, shared so a spec and a request
 /// speak the same tier vocabulary.
-fn parse_rights(label: &str) -> Option<AuthRequired> {
-    crate::affordance_endpoint::parse_auth_required(label)
+fn parse_rights(label: &str) -> Option<Requirement> {
+    crate::affordance_endpoint::parse_requirement(label)
 }
 
 /// Hash a topic label to the 32-byte event topic (a deterministic, namespaced
@@ -533,7 +539,7 @@ mod tests {
                 CellSpec::new("book")
                     .affordance(AffordanceSpec::view("read", "signature"))
                     .affordance(AffordanceSpec::emit("sign", "either", "signed"))
-                    .affordance(AffordanceSpec::edit("set_title", "none", 0))
+                    .affordance(AffordanceSpec::edit("set_title", "root", 0))
                     .publish("signature"),
             )
             .discoverable(vec!["social".into()])
@@ -585,8 +591,8 @@ mod tests {
     fn multiple_cells_get_distinct_backing_ids() {
         let (cclerk, executor) = agent();
         let app = AppSpec::new("multi")
-            .cell(CellSpec::new("self").affordance(AffordanceSpec::view("a", "none")))
-            .cell(CellSpec::new("other").affordance(AffordanceSpec::view("b", "none")))
+            .cell(CellSpec::new("self").affordance(AffordanceSpec::view("a", "root")))
+            .cell(CellSpec::new("other").affordance(AffordanceSpec::view("b", "root")))
             .into_app(cclerk.clone(), executor)
             .unwrap();
         assert_eq!(app.cells().len(), 2);
@@ -640,7 +646,7 @@ mod tests {
         assert!(
             files
                 .lib_rs
-                .contains("AffordanceSpec::edit(\"set_title\", \"none\", 0)")
+                .contains("AffordanceSpec::edit(\"set_title\", \"root\", 0)")
         );
         assert!(files.lib_rs.contains(".publish(\"signature\")"));
         assert!(

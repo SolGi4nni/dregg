@@ -25,8 +25,8 @@
 
 use starbridge_web_surface::{
     rehydrate_affordances, AffordanceSnapshot, AffordanceSurface, AuthRequired, CellAffordance,
-    CellId, DreggUri, Effect, EffectSummary, FireError, InteractionLog, Membrane, Rehydration,
-    Sturdyref, SurfaceCapability, WebOfCells,
+    CellId, Credential, DreggUri, Effect, EffectSummary, FireError, InteractionLog, Membrane,
+    Rehydration, Requirement, Sturdyref, SurfaceCapability, WebOfCells,
 };
 
 fn cid(b: u8) -> CellId {
@@ -88,28 +88,28 @@ fn grant_cap(from: CellId, to: CellId) -> Effect {
 
 /// The canonical DOC-cell affordance surface: {view, comment, edit, admin} on the
 /// clean three-tier rights chain `Signature ⊂ Either ⊂ None` — view at tier-1,
-/// comment+edit at tier-2 (the editor tier), admin at tier-3 (root). Each carries a
+/// comment+edit at tier-2 (the editor tier), admin at tier-3 (`Requirement::Root`). Each carries a
 /// REAL `dregg_turn::Effect` template.
 fn doc_surface(doc: CellId, admin_grantee: CellId) -> AffordanceSurface {
     AffordanceSurface::new(doc)
         .declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             emit_event(doc),
         ))
         .declare(CellAffordance::new(
             "comment",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             emit_event(doc),
         ))
         .declare(CellAffordance::new(
             "edit",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             set_field(doc, 1),
         ))
         .declare(CellAffordance::new(
             "admin",
-            AuthRequired::None,
+            Requirement::Root,
             grant_cap(doc, admin_grantee),
         ))
 }
@@ -391,7 +391,7 @@ fn main() {
     say!("      → the anti-ghost tooth: an unauthorized fire is refused by the SAME");
     say!("        is_attenuation gate, in-band — never an out-of-band role check.\n");
     check!(
-        matches!(refused, Err(FireError::Unauthorized { ref required, .. }) if *required == AuthRequired::None),
+        matches!(refused, Err(FireError::Unauthorized { ref required, .. }) if *required == Requirement::Root),
         "the viewer's admin fire is refused (Unauthorized)"
     );
     // The viewer CAN fire what it holds (`view`) — yielding the real EmitEvent turn.

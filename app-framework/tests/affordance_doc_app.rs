@@ -37,6 +37,7 @@ use dregg_app_framework::{
     CapabilityRef, CellAffordance, CellId, ConstantsModule, Effect, EmbeddedExecutor, Event,
     HELD_RIGHTS_HEADER, StarbridgeAppContext,
 };
+use dregg_cell::{Credential, Requirement};
 
 // ── the example app: a doc cell with four cap-gated affordances ───────────────
 
@@ -100,22 +101,22 @@ fn doc_app(doc: CellId) -> AffordanceSurface {
     AffordanceSurface::named(doc, "doc")
         .declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             emit_event(doc),
         ))
         .declare(CellAffordance::new(
             "comment",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             emit_event(doc),
         ))
         .declare(CellAffordance::new(
             "edit",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             set_body(doc),
         ))
         .declare(CellAffordance::new(
             "admin",
-            AuthRequired::None,
+            Requirement::Root,
             grant_cap(doc, admin_grant_recipient()),
         ))
 }

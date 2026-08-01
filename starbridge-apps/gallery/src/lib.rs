@@ -60,6 +60,7 @@ use dregg_app_framework::{
     StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, TurnReceipt,
     canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 /// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
 pub mod card;
@@ -488,11 +489,11 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 ///     of everything an artist can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the visitor ⊂ artist ⊂ curator ladder.
-pub const VISITOR_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const VISITOR_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The artist rights tier (sig-or-proof — submit + reveal + view). See [`VISITOR_RIGHTS`].
-pub const ARTIST_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const ARTIST_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The curator rights tier (root — close + curate + all). See [`VISITOR_RIGHTS`].
-pub const CURATOR_RIGHTS: AuthRequired = AuthRequired::None;
+pub const CURATOR_RIGHTS: Requirement = Requirement::Root;
 
 /// The **life-of-cell gallery program** the executor re-enforces on every touching
 /// turn — the canonical method-dispatched [`gallery_cell_program`]. This is the SAME
@@ -640,7 +641,7 @@ pub fn gallery_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
                 .gated(close)
                 .gated(reveal)
                 .gated(curate)
-                .publish(VISITOR_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

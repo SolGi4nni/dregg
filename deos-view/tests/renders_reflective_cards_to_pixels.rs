@@ -117,7 +117,7 @@ fn bake_composer(hr: &mut HeadlessRender, out: &PathBuf) -> (PathBuf, PathBuf) {
         deos_js::composer_card::ChildCellId(0xD0C),
         Author(42),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     // Compose a document from cells (the gestures = real composition patches).
     card.add_embed(
@@ -167,7 +167,7 @@ fn bake_objects(hr: &mut HeadlessRender, out: &PathBuf) -> (PathBuf, PathBuf) {
         [0xCA; 32],
         Author(42),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     let source0 = card.view_source();
     assert!(
@@ -211,7 +211,7 @@ fn bake_graph(hr: &mut HeadlessRender, out: &PathBuf) -> (PathBuf, PathBuf) {
         [0xC9; 32],
         Author(42),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     let source0 = card.view_source();
     assert!(

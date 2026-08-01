@@ -66,6 +66,7 @@ use dregg_cell::Cell;
 use dregg_cell::allowance::{
     AllowanceError, AllowanceState, AllowanceTerms, Spend, open_allowance, spend,
 };
+use dregg_cell::{Credential, Requirement};
 
 /// The spend cap on the proven rate-limited-allowance capacity (`cell/src/allowance.rs`).
 /// Threshold budget alerts (50/80/100%) over the proven `SpendCap`.
@@ -438,9 +439,9 @@ pub fn pay_charge(
 ///   * the ACCOUNT holder holds [`AuthRequired::Signature`] — it can be `charge`d and can
 ///     `seal` its period's invoice;
 ///   * the PROVIDER holds root — it owns the account (it can everything the holder can).
-pub const ACCOUNT_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const ACCOUNT_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The provider rights tier (root). See [`ACCOUNT_RIGHTS`].
-pub const PROVIDER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const PROVIDER_RIGHTS: Requirement = Requirement::Root;
 
 /// **The billing account as a composed [`DeosApp`]** — the whole interaction surface on the
 /// deos bones. The billing cell is the account's own cell (`cipherclerk.cell_id()`).
@@ -474,7 +475,7 @@ pub fn billing_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
             DeosCell::new(account, "billing")
                 .affordance(charge)
                 .affordance(seal)
-                .publish(ACCOUNT_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

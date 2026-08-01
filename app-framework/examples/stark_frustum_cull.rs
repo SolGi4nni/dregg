@@ -78,7 +78,7 @@ fn gallery_spec() -> AppSpec {
             CellSpec::new("gallery")
                 .affordance(AffordanceSpec::emit("view", "signature", "frame-viewed"))
                 .affordance(AffordanceSpec::edit("curate", "either", 1))
-                .affordance(AffordanceSpec::emit("admin", "none", "gallery-admin"))
+                .affordance(AffordanceSpec::emit("admin", "root", "gallery-admin"))
                 .publish("signature"),
         )
         .discoverable(vec!["gallery".into()])

@@ -110,6 +110,7 @@ use dregg_app_framework::{
 };
 
 use dregg_cell::Cell;
+use dregg_cell::{Credential, Requirement};
 
 /// The bind-cap bridge: a `dregg-auth` credential verifying under the registry's
 /// trusted root as granting the binding authority for a domain.
@@ -550,9 +551,9 @@ pub fn build_revoke_action(cipherclerk: &AppCipherclerk, revoked_seq: u64) -> Ac
 ///   and nothing else.
 ///
 /// So `Signature ⊂ None` IS the resolver ⊂ owner ladder — a two-tier domain authority.
-pub const OWNER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const OWNER_RIGHTS: Requirement = Requirement::Root;
 /// The resolver (read) rights tier — see [`OWNER_RIGHTS`].
-pub const RESOLVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const RESOLVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 
 /// The owner-lifecycle + read method names on a domain cell — the deos affordance
 /// vocabulary [`domain_app`] exposes and the `fire_*` helpers route. Shared constants
@@ -655,7 +656,7 @@ pub fn domain_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
                 .affordance(resolve)
                 // Published at the RESOLVER tier (`Signature`) — the narrowest tier
                 // that holds the binding (a gateway reacquires the verified target).
-                .publish(RESOLVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

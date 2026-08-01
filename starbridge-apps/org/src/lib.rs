@@ -84,6 +84,7 @@ use dregg_app_framework::{
 };
 
 use dregg_cell::Cell;
+use dregg_cell::{Credential, Requirement};
 
 /// The role-cap bridge: role → permission → attenuated dregg-auth credential.
 pub mod cap;
@@ -435,11 +436,11 @@ pub fn build_found_org_action(cipherclerk: &AppCipherclerk, org: &Org) -> Action
 /// So `Either ⊂ Signature ⊂ None` IS the member ⊂ admin ⊂ owner ladder. (The
 /// coarse cap-graph tier here; the FINE gate is the role-cap [`cap::authorize`],
 /// which refuses a viewer's `members:manage` context unforgeably.)
-pub const OWNER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const OWNER_RIGHTS: Requirement = Requirement::Root;
 /// The admin rights tier (`MembersManage`). See [`OWNER_RIGHTS`].
-pub const ADMIN_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const ADMIN_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The member rights tier (accept + read). See [`OWNER_RIGHTS`].
-pub const MEMBER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const MEMBER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 
 /// The `transfer` **live-state precondition** — the org must have at least two
 /// members (`MEMBER_COUNT >= 2`): you cannot transfer ownership in a one-person
@@ -525,7 +526,7 @@ pub fn org_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
                 .gated(transfer)
                 // Published at the MEMBER tier (`Either`) — the narrowest role that
                 // holds the org (a member reacquires the team across the membrane).
-                .publish(MEMBER_RIGHTS),
+                .publish(AuthRequired::Either),
         )
         .build()
 }

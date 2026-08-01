@@ -37,6 +37,7 @@ use dregg_turn::TurnReceipt;
 use dregg_types::CellId;
 
 use crate::applet::{pack_u64, unpack_u64, Affordance, FireError, Slot};
+use dregg_cell::Requirement;
 
 /// The committed-heap collection the home cell's view-tree blob lives under — the SAME
 /// `VIEWTREE_COLL` `deos-view::mount` chunks the hosted view-tree into, so a `viewPatch`
@@ -297,7 +298,7 @@ impl CellWorld {
     /// `MethodSig` via the verified DFA `route_method` (an undeclared method is fail-closed
     /// [`FireError::MethodNotRouted`], a [`Semantics::Serviced`] method is
     /// [`FireError::ServicedSeam`]); without one, from the bare affordance's own `required`.
-    fn required_for(&self, entry: &CellEntry, method: &str) -> Result<AuthRequired, FireError> {
+    fn required_for(&self, entry: &CellEntry, method: &str) -> Result<Requirement, FireError> {
         match &entry.interface {
             Some(iface) => {
                 let sym = method_symbol(method);
@@ -307,7 +308,9 @@ impl CellWorld {
                 if m.semantics == Semantics::Serviced {
                     return Err(FireError::ServicedSeam(method.to_string()));
                 }
-                Ok(m.auth_required.clone())
+                // `MethodSig::auth_required` is still `AuthRequired`; the ONE named
+                // bridge states the reading (a HOLD requirement, so `None` = root).
+                Ok(Requirement::from_interface_auth(&m.auth_required))
             }
             None => entry
                 .affordances
@@ -444,7 +447,7 @@ impl CellWorld {
             .ok_or_else(|| FireError::UnknownAffordance(affordance.to_string()))?;
 
         // (4) the REAL cap tooth, in-band, against the cap held FOR THIS cell.
-        if !dregg_cell::is_attenuation(&entry.held, &required) {
+        if !required.satisfied_by(&entry.held) {
             return Err(FireError::Unauthorized(affordance.to_string()));
         }
 
@@ -584,7 +587,7 @@ impl CellWorld {
         let entry = self.entry(auction)?;
         let id = entry.id;
         let required = self.required_for(entry, "commit")?;
-        if !dregg_cell::is_attenuation(&entry.held, &required) {
+        if !required.satisfied_by(&entry.held) {
             return Err(FireError::Unauthorized("commit".to_string()));
         }
 
@@ -642,7 +645,7 @@ impl CellWorld {
         let entry = self.entry(auction)?;
         let id = entry.id;
         let required = self.required_for(entry, "reveal")?;
-        if !dregg_cell::is_attenuation(&entry.held, &required) {
+        if !required.satisfied_by(&entry.held) {
             return Err(FireError::Unauthorized("reveal".to_string()));
         }
 

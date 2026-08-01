@@ -16,6 +16,7 @@
 use deos_reflect::present::{PresentationBody, PresentationKind};
 use deos_reflect::substance::{hex_encode, FieldValue};
 use deos_reflect::{reflect_cell, AffordanceSurface, Frustum, OcapGraph, ReflectedCell};
+use dregg_cell::Requirement;
 use dregg_cell::{AuthRequired, Ledger};
 use dregg_turn::action::Effect;
 use dregg_types::{parse_hex32, CellId};
@@ -353,7 +354,7 @@ fn face_body_json(body: &PresentationBody) -> String {
 /// receives a strictly smaller set — the frustum's affordance half.
 pub fn cell_affordances_json(
     cell: &CellId,
-    specs: &[(String, AuthRequired)],
+    specs: &[(String, Requirement)],
     held: &AuthRequired,
 ) -> String {
     let mut surface = AffordanceSurface::new(*cell);
@@ -373,22 +374,11 @@ pub fn cell_affordances_json(
             format!(
                 "{{\"name\":\"{}\",\"required\":\"{}\"}}",
                 esc(&a.name),
-                auth_label(&a.required)
+                a.required.label()
             )
         })
         .collect();
     format!("[{}]", visible.join(","))
-}
-
-fn auth_label(a: &AuthRequired) -> &'static str {
-    match a {
-        AuthRequired::None => "none",
-        AuthRequired::Signature => "signature",
-        AuthRequired::Proof => "proof",
-        AuthRequired::Either => "either",
-        AuthRequired::Impossible => "impossible",
-        AuthRequired::Custom { .. } => "custom",
-    }
 }
 
 // ── spotter — fuzzy search over every object's faces ──────────────────────────────

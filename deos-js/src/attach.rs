@@ -35,6 +35,7 @@ use dregg_turn::action::Effect;
 use dregg_types::CellId;
 
 use crate::applet::{CellModel, FireError, Slot};
+use dregg_cell::Requirement;
 
 /// The host's live World, reduced to exactly what an attached applet needs: a
 /// witnessed read surface (the crawl) and a commit primitive (the fire).
@@ -102,13 +103,13 @@ pub trait WorldSink {
 #[derive(Clone, Debug)]
 pub struct AttachedAffordance {
     pub name: String,
-    pub required: AuthRequired,
+    pub required: Requirement,
     pub effects: Vec<Effect>,
 }
 
 impl AttachedAffordance {
     /// A counter-bump affordance (no explicit effects — the spike's default shape).
-    pub fn counter(name: impl Into<String>, required: AuthRequired) -> Self {
+    pub fn counter(name: impl Into<String>, required: Requirement) -> Self {
         AttachedAffordance {
             name: name.into(),
             required,
@@ -119,7 +120,7 @@ impl AttachedAffordance {
     /// An affordance carrying arbitrary effects (the generalized shape).
     pub fn with_effects(
         name: impl Into<String>,
-        required: AuthRequired,
+        required: Requirement,
         effects: Vec<Effect>,
     ) -> Self {
         AttachedAffordance {
@@ -172,7 +173,7 @@ impl AttachedApplet {
         sink: Box<dyn WorldSink>,
         agent: CellId,
         held: AuthRequired,
-        affordances: Vec<(String, AuthRequired)>,
+        affordances: Vec<(String, Requirement)>,
         counter_slot: Slot,
     ) -> Self {
         let affordances = affordances
@@ -231,8 +232,8 @@ impl AttachedApplet {
 
     /// The registered affordance specs (name + required authority) — the cap-gated
     /// message surface the reflective `affordances(viewer)` projects.
-    pub fn affordance_specs(&self) -> Vec<(String, AuthRequired)> {
-        let mut specs: Vec<(String, AuthRequired)> = self
+    pub fn affordance_specs(&self) -> Vec<(String, Requirement)> {
+        let mut specs: Vec<(String, Requirement)> = self
             .affordances
             .iter()
             .map(|a| (a.name.clone(), a.required.clone()))
@@ -294,7 +295,7 @@ impl AttachedApplet {
 
         // (2) CAP TOOTH — the REAL is_attenuation, in-band. Refused ⇒ nothing committed,
         // and (crucially on a LIVE world) nothing reaches the executor at all.
-        if !dregg_cell::is_attenuation(&self.held, &aff.required) {
+        if !aff.required.satisfied_by(&self.held) {
             return Err(FireError::Unauthorized {
                 affordance: affordance.to_string(),
             });
@@ -420,7 +421,7 @@ pub enum ComposeStep {
         /// The funding stipend the minted cell carries (to pay its own self-stamp fees).
         funding: u64,
         /// The authority minting requires (the cap tooth checks `held ⊒ required`).
-        required: AuthRequired,
+        required: Requirement,
     },
     /// **Set a field** on a cell in the agent's scope — a real `SetField` verified turn.
     /// `cell` must be held (a SetField on a foreign vessel's cell is the scope over-reach).
@@ -432,7 +433,7 @@ pub enum ComposeStep {
         /// The new value (a u64 packed into a field element).
         value: u64,
         /// The authority the write requires.
-        required: AuthRequired,
+        required: Requirement,
     },
     /// **Grant a capability** over one of the agent's held cells TO a peer. The `from` cell
     /// must be in the agent's scope (you may only grant FROM a cell you hold); `to` may be
@@ -446,12 +447,12 @@ pub enum ComposeStep {
         /// The authority handed over (cap-checked against `held` — no granting what you lack).
         granted: AuthRequired,
         /// The authority issuing the grant requires.
-        required: AuthRequired,
+        required: Requirement,
     },
 }
 
 impl ComposeStep {
-    fn required(&self) -> &AuthRequired {
+    fn required(&self) -> &Requirement {
         match self {
             ComposeStep::MintCard { required, .. }
             | ComposeStep::SetField { required, .. }
@@ -623,7 +624,7 @@ impl AttachedComposer {
         let mut projected: BTreeSet<CellId> = self.held_cells.clone();
         for (i, step) in steps.iter().enumerate() {
             // 1a. authority tooth: required ⊑ held.
-            if !dregg_cell::is_attenuation(&self.held, step.required()) {
+            if !step.required().satisfied_by(&self.held) {
                 return Err(ComposeError::OverReach {
                     step: i,
                     reason: format!(

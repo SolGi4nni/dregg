@@ -47,6 +47,7 @@ use crate::backend::{actuations_with, Actuation, SurfaceBackend};
 use crate::gate::{gate_actuation_nodes, reactive_membrane_enabled};
 use crate::tree::{disclose, resolve_mounts, Disclosure, MountSource, ViewNode};
 use dregg_cell::state::CellState;
+use dregg_cell::{Credential, Requirement};
 use starbridge_web_surface::{AffordanceSurface, EvalContext, ReactiveAffordance, Viewer};
 
 /// A [`MountSource`] that hosts nothing — the default for a surface with no `host` nodes (every
@@ -268,7 +269,7 @@ mod tests {
     fn vote_affordance(cell: CellId) -> CellAffordance {
         CellAffordance::new(
             "vote",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             Effect::SetField {
                 cell,
                 index: TALLY_SLOT as u64,

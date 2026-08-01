@@ -379,8 +379,8 @@ pub use webgen::{ConstantsModule, Slot};
 // to construct factory descriptors.
 pub use dregg_cell::{
     AuthRequired, CapGrant, CapTarget, CapTemplate, CellMode, CellProgram, ChildVkStrategy,
-    FactoryDescriptor, FieldConstraint, ProvingSystemId, StateConstraint, VerifierFingerprint,
-    VkComponents, canonical_vk_v2,
+    Credential, FactoryDescriptor, FieldConstraint, ProvingSystemId, Requirement, StateConstraint,
+    VerifierFingerprint, VkComponents, canonical_vk_v2,
 };
 // Re-export the types needed to build non-trivial CellProgram::Cases — previously
 // every app had to add dregg-cell to its own Cargo.toml just to get these.

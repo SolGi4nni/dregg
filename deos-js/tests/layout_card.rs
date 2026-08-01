@@ -17,6 +17,7 @@
 use deos_js::card_editor::ViewTree;
 use deos_js::{LayoutCard, LayoutModel, LayoutPatch};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 
 /// A layout card seeded with the real cockpit arrangement, authorized to reshape itself
@@ -26,7 +27,7 @@ fn layout_card() -> LayoutCard {
         [0xA7; 32],
         Author(42),
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     )
 }
 
@@ -183,7 +184,7 @@ fn an_unauthorized_reshape_is_refused_in_band() {
         [0xCD; 32],
         Author(7),
         /*held=*/ AuthRequired::Signature,
-        /*edit_authority=*/ AuthRequired::Proof,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
     );
     let before = card.view_source();
     let err = card.reshape(LayoutPatch::MoveSurface {

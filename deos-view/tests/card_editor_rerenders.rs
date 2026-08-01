@@ -22,6 +22,8 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{parse_view_tree, AppletView};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -48,7 +50,7 @@ fn counter_card_manifest() -> AppletManifest {
         seed_fields: vec![(0usize, 0u64)],
         affordances: vec![AffordanceSpec {
             name: "inc".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         held: AuthRequired::Signature,
@@ -108,8 +110,8 @@ fn body() {
         card,
         manifest,
         Author(7),
-        AuthRequired::None,      // the editor holds a single-custody mandate
-        AuthRequired::Signature, // the card's authoring authority
+        AuthRequired::None, // the editor holds a single-custody mandate
+        Requirement::AtLeast(Credential::Signature), // the card's authoring authority
     );
     let edit = editor
         .edit_view(ViewPatch::AddButton {

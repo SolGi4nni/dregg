@@ -51,6 +51,7 @@ use dregg_turn::Effect;
 
 use crate::acp::{PermissionOutcome, ToolCallRequest};
 use crate::bridge::HermesGateway;
+use dregg_cell::Requirement;
 
 /// The slot the spike's counter applet writes (slot 0 = the model's scalar).
 const COUNTER_SLOT: usize = 0;
@@ -462,7 +463,7 @@ impl RunJsAuthoringTool {
         now: i64,
         card: Applet,
         manifest: AppletManifest,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
         script: &str,
     ) -> RunJsAuthorOutcome {
         // (1) THE ACCOUNTABILITY TURN — the `run_js` tool-call routes through the
@@ -538,7 +539,7 @@ impl RunJsAuthoringTool {
         public_key: [u8; 32],
         token_id: [u8; 32],
         manifest: AppletManifest,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
         script: &str,
     ) -> RunJsAuthorOutcome {
         let card = PortableApplet::mint(public_key, token_id, &manifest);

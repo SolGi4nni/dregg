@@ -16,6 +16,8 @@ use deos_js::applet::{pack_u64, Affordance, Applet};
 use deos_js::card_editor::{ViewPatch, ViewTree};
 use deos_js::{AgentAction, AgentCard};
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 use dregg_doc::Author;
 use dregg_types::CellId;
 
@@ -26,7 +28,7 @@ fn agent_card() -> (AgentCard, CellId) {
     pk[0] = 0xA9;
     let noop = Affordance {
         name: "noop".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|_m, _a| vec![(0usize, pack_u64(0))]),
     };
     let mut card_cell = Applet::mint(pk, [0u8; 32], &[], vec![noop], AuthRequired::Signature);
@@ -45,7 +47,7 @@ fn agent_card() -> (AgentCard, CellId) {
         {
             let noop2 = Affordance {
                 name: "noop".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 apply: Box::new(|_m, _a| vec![(0usize, pack_u64(0))]),
             };
             Applet::mint(pk, [0u8; 32], &[], vec![noop2], AuthRequired::Signature)
@@ -54,7 +56,7 @@ fn agent_card() -> (AgentCard, CellId) {
         ledger_snapshot,
         Author(9),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     (card, peer)
 }
@@ -207,7 +209,7 @@ fn a_confined_agent_shows_an_empty_mandate_honestly() {
         Applet::mint([0x55; 32], [0u8; 32], &[], vec![], AuthRequired::None).ledger(),
         Author(2),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     assert_eq!(card.reach(), 0, "a confined agent reaches no peer");
     let blob: String = card

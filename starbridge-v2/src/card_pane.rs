@@ -66,6 +66,8 @@ use gpui_component::{h_flex, v_flex, ActiveTheme};
 use deos_js::signals::{BindingId, BindingRegistry, Slot, SourceEvent};
 use deos_js::AttachedApplet;
 use deos_view::{disclose, parse_view_tree, pill_display, Disclosure, ViewNode};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 use dregg_types::CellId;
 
 /// A shared, interior-mutable handle on the LIVE attached applet. The card reads the
@@ -1341,7 +1343,7 @@ mod tests {
         pk[0] = seed;
         let inc_a = Affordance {
             name: "incA".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             apply: Box::new(|model, arg| {
                 let cur = model.field_u64(0);
                 vec![(0usize, pack_u64(cur + arg.max(0) as u64))]

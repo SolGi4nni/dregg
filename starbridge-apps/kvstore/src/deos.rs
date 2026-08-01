@@ -19,6 +19,7 @@ use dregg_app_framework::{
     Event, FieldElement, FireExecuteError, StarbridgeAppContext, TurnReceipt, field_from_u64,
     symbol,
 };
+use dregg_cell::{Credential, Requirement};
 use dregg_types::CellId;
 
 // =============================================================================
@@ -29,12 +30,12 @@ use dregg_types::CellId;
 /// reader can `view` the store (read the live version) and nothing else. The store
 /// cell is published at this tier (an indexer on another federation reacquires the
 /// store's version across the membrane).
-pub const READER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const READER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 
 /// The WRITER rights tier ([`AuthRequired::Either`] — sig-or-proof) — a writer can
 /// `put`/`delete` (mutate a register + bump the version) AND read. So
 /// `Signature ⊂ Either` IS the reader ⊂ writer ladder.
-pub const WRITER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const WRITER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 
 // =============================================================================
 // The deos-native surface — the STORE as a composed `DeosApp`
@@ -105,7 +106,7 @@ pub fn kvstore_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
                 .affordance(view)
                 .affordance(put)
                 .affordance(delete)
-                .publish(READER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

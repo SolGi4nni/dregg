@@ -26,6 +26,7 @@ use gpui::AppContext;
 use deos_view::headless::HeadlessRender;
 use deos_view::mount::{cell_id_from_hex, cell_id_hex, view_tree_from_cell_heap, write_view_blob};
 use deos_view::{resolve_mounts, AppletView, MountSource, ViewNode};
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -56,7 +57,7 @@ fn host_cell(seed: u8) -> Applet {
     pk[0] = seed;
     let inc = Affordance {
         name: "inc".into(),
-        required: AuthRequired::None,
+        required: Requirement::Root,
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]

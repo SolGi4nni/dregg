@@ -3316,7 +3316,7 @@ pub async fn get_server_affordances(
         .map(|a| {
             serde_json::json!({
                 "name": a.name,
-                "required": auth_label_str(&a.required),
+                "required": a.required.label(),
             })
         })
         .collect();

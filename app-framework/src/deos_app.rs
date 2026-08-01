@@ -38,9 +38,9 @@
 //!     .federation(FederationId([0xAB; 32]))
 //!     // one cell exposing its affordances; published into the web-of-cells:
 //!     .cell(DeosCell::new(doc, "doc")
-//!         .affordance(CellAffordance::new("view",  AuthRequired::Signature, view_fx))
-//!         .affordance(CellAffordance::new("edit",  AuthRequired::Either,    edit_fx))
-//!         .affordance(CellAffordance::new("admin", AuthRequired::None,      admin_fx))
+//!         .affordance(CellAffordance::new("view",  Requirement::AtLeast(Credential::Signature), view_fx))
+//!         .affordance(CellAffordance::new("edit",  Requirement::AtLeast(Credential::Either),    edit_fx))
+//!         .affordance(CellAffordance::new("admin", Requirement::Root,      admin_fx))
 //!         .publish(AuthRequired::Signature)) // exported as a sturdyref at this authority
 //!     .discoverable(vec!["docs".into()])     // auto-registers in the nameservice
 //!     .build();
@@ -100,6 +100,7 @@ use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
 use crate::discovery::{NameRegistration, NameserviceClient};
 use crate::rehydration::{InteractionLog, Membrane, RehydrateError, RehydratedSurface, Sturdyref};
 use crate::starbridge::StarbridgeAppContext;
+use dregg_cell::{Credential, Requirement};
 
 // =============================================================================
 // DeosCell — one cell exposing affordances, optionally published
@@ -180,7 +181,7 @@ impl DeosCell {
     /// # let approve_effect = Effect::SetField { cell: proposal, index: 0, value: approved };
     /// let cell = DeosCell::new(proposal, "proposal")
     ///     .gated(GatedAffordance::new(
-    ///         CellAffordance::new("approve", AuthRequired::Either, approve_effect),
+    ///         CellAffordance::new("approve", Requirement::AtLeast(Credential::Either), approve_effect),
     ///         CellProgram::Predicate(vec![StateConstraint::FieldEquals { index: 0, value: pending }]),
     ///     ));
     /// // The button exists on the gated (cap∧state) surface, not the cap-only one.
@@ -683,7 +684,7 @@ impl DeosApp {
                     .map(|g| {
                         json!({
                             "name": g.name(),
-                            "requiredRights": format!("{:?}", g.affordance.required_rights),
+                            "requiredRights": g.affordance.required_rights.label(),
                             "effectKind": g.affordance.effect_summary().variant_tag(),
                             "stateGate": describe_state_gate(&g.state_cond),
                             "fireEndpoint": format!("{prefix}/gated/fire/{}", g.name()),
@@ -975,17 +976,17 @@ mod tests {
                 DeosCell::new(doc, "doc")
                     .affordance(CellAffordance::new(
                         "view",
-                        AuthRequired::Signature,
+                        Requirement::AtLeast(Credential::Signature),
                         emit_event(doc),
                     ))
                     .affordance(CellAffordance::new(
                         "edit",
-                        AuthRequired::Either,
+                        Requirement::AtLeast(Credential::Either),
                         set_field(doc, 1),
                     ))
                     .affordance(CellAffordance::new(
                         "admin",
-                        AuthRequired::None,
+                        Requirement::Root,
                         emit_event(doc),
                     ))
                     .publish(AuthRequired::Signature),
@@ -1050,7 +1051,9 @@ mod tests {
         let affs = doc["affordances"].as_array().unwrap();
         assert_eq!(affs.len(), 3);
         let edit = affs.iter().find(|a| a["name"] == "edit").unwrap();
-        assert_eq!(edit["requiredRights"], "Either");
+        // The stable requirement label (WIRE CHANGE: was the `AuthRequired` Debug
+        // shape `"Either"`; is now the `Requirement` label the endpoint parses back).
+        assert_eq!(edit["requiredRights"], "either");
         assert_eq!(edit["effectKind"], "SetField");
         assert_eq!(edit["fireEndpoint"], "/doc/fire/edit");
     }
@@ -1124,7 +1127,7 @@ mod tests {
                 DeosCell::new(doc, "doc")
                     .affordance(CellAffordance::new(
                         "view",
-                        AuthRequired::Signature,
+                        Requirement::AtLeast(Credential::Signature),
                         emit_event(doc),
                     ))
                     .publish(AuthRequired::Signature),
@@ -1188,7 +1191,7 @@ mod tests {
         let app = DeosApp::builder("d", cclerk.clone(), executor.clone())
             .cell(DeosCell::new(doc, "doc").affordance(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             )))
             .build();

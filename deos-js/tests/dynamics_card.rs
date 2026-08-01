@@ -16,6 +16,7 @@ use deos_js::card_editor::{ViewPatch, ViewTree};
 use deos_js::dynamics_card::FEED_LEN_SLOT;
 use deos_js::{DynamicsCard, FeedEntry};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 
 /// A bare substance cell for the feed card (one no-op affordance; the card registers its own
@@ -25,7 +26,7 @@ fn substance(seed: u8) -> Applet {
     pk[0] = seed;
     let noop = Affordance {
         name: "noop".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|_m, _a| vec![(0usize, pack_u64(0))]),
     };
     Applet::mint(pk, [0u8; 32], &[], vec![noop], AuthRequired::Signature)
@@ -36,7 +37,7 @@ fn feed_card() -> DynamicsCard {
         substance(0xD1),
         Author(7),
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     )
 }
 
@@ -167,7 +168,7 @@ fn an_unauthorized_card_refuses_observe_and_reshape_in_band() {
         card_cell,
         Author(1),
         AuthRequired::Signature,
-        AuthRequired::Proof,
+        Requirement::AtLeast(Credential::Proof),
     );
     let before = card.view_source();
     assert!(

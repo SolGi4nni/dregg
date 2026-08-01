@@ -47,15 +47,16 @@ use dregg_app_framework::{
 };
 
 use crate::{EPOCH_SLOT, field_from_bytes};
+use dregg_cell::{Credential, Requirement};
 
 /// The AUDITOR rights tier (cap-only read — the narrowest). A holder of `Signature` or broader may
 /// `view_audit`. Mirrors the supply-chain `VERIFIER_RIGHTS`.
-pub const AUDITOR_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const AUDITOR_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The WORKER rights tier (sig-or-proof — `worker_step` + read). A holder of `Either` or broader.
-pub const WORKER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const WORKER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The COORDINATOR rights tier (root — `delegate_mandate`, `worker_step`, read; the broadest). Only a
 /// holder of the full `None` authority may delegate a mandate.
-pub const COORDINATOR_RIGHTS: AuthRequired = AuthRequired::None;
+pub const COORDINATOR_RIGHTS: Requirement = Requirement::Root;
 
 /// The `worker_step` **live-state precondition** — the board must be OPEN (`EPOCH >= 1`). A real
 /// [`dregg_app_framework::CellProgram`] read against the cell's current state, so a worker's step
@@ -206,7 +207,7 @@ pub fn orchestration_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecut
     let delegate = CellAffordance::new(
         "delegate_mandate",
         COORDINATOR_RIGHTS,
-        delegate_mandate_effect(board, CellId::from_bytes([0xAA; 32]), WORKER_RIGHTS),
+        delegate_mandate_effect(board, CellId::from_bytes([0xAA; 32]), AuthRequired::Either),
     );
 
     DeosApp::builder("agent-orchestration", cipherclerk.clone(), executor.clone())
@@ -221,7 +222,7 @@ pub fn orchestration_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecut
                 .affordance(view_audit)
                 .gated(worker_step)
                 .affordance(delegate)
-                .publish(AUDITOR_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }
@@ -281,20 +282,20 @@ mod tests {
         use dregg_cell::is_attenuation;
         // an auditor (Signature) is ⊑ a worker (Either) is ⊑ a coordinator (None).
         assert!(
-            is_attenuation(&WORKER_RIGHTS, &AUDITOR_RIGHTS),
+            AUDITOR_RIGHTS.satisfied_by(&AuthRequired::Either),
             "auditor ⊑ worker"
         );
         assert!(
-            is_attenuation(&COORDINATOR_RIGHTS, &WORKER_RIGHTS),
+            WORKER_RIGHTS.satisfied_by(&AuthRequired::None),
             "worker ⊑ coordinator"
         );
         assert!(
-            is_attenuation(&COORDINATOR_RIGHTS, &AUDITOR_RIGHTS),
+            AUDITOR_RIGHTS.satisfied_by(&AuthRequired::None),
             "auditor ⊑ coordinator"
         );
         // and NOT the other way — a worker is not broad enough to be a coordinator.
         assert!(
-            !is_attenuation(&WORKER_RIGHTS, &COORDINATOR_RIGHTS),
+            !COORDINATOR_RIGHTS.satisfied_by(&AuthRequired::Either),
             "coordinator ⊄ worker (strict)"
         );
     }
@@ -345,7 +346,7 @@ mod tests {
     fn delegate_mandate_carries_a_real_cap_grant() {
         let board = CellId::from_bytes([7u8; 32]);
         let worker = CellId::from_bytes([9u8; 32]);
-        let eff = delegate_mandate_effect(board, worker, WORKER_RIGHTS);
+        let eff = delegate_mandate_effect(board, worker, AuthRequired::Either);
         match eff {
             Effect::GrantCapability { to, cap, .. } => {
                 assert_eq!(to, worker);

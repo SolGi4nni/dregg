@@ -40,6 +40,7 @@ use dregg_app_framework::{
     symbol,
 };
 
+use dregg_cell::{Credential, Requirement};
 use std::collections::HashSet;
 
 // Re-export the field type so differential tests can build the same clearance-label corpus the
@@ -601,9 +602,9 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///     can do.
 ///
 /// So `Signature ⊂ None` IS the observer ⊂ operator ladder.
-pub const OBSERVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const OBSERVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The operator rights tier (root — advance the workflow cursor + view). See [`OBSERVER_RIGHTS`].
-pub const OPERATOR_RIGHTS: AuthRequired = AuthRequired::None;
+pub const OPERATOR_RIGHTS: Requirement = Requirement::Root;
 
 /// The `advance_step` **live-state precondition** — the cursor must NOT yet be AT the
 /// charter terminal (`STEP_CURSOR <= CHARTER_TERMINAL - 1`, i.e. `STEP_CURSOR < CHARTER_TERMINAL`).

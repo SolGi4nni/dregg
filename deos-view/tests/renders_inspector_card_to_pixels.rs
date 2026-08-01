@@ -25,6 +25,7 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{parse_view_tree, AppletView};
+use dregg_cell::{Credential, Requirement};
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -36,7 +37,7 @@ fn counter_card() -> Applet {
     pk[0] = 0xBE;
     let inc = Affordance {
         name: "inc".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]
@@ -75,7 +76,7 @@ fn inspector_proof_body() {
         counter_card(),
         Author(42),
         /*held=*/ AuthRequired::None,
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
     );
     let source_before = card.view_source();
     // The RawFields face's section title is "What this holds" and the Affordances face carries
@@ -163,7 +164,7 @@ fn inspector_proof_body() {
         counter_card(),
         Author(42),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
 
     let edit_a = card2

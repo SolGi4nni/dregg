@@ -5,7 +5,7 @@
 use deos_reflect::{
     Affordance, AffordanceSurface, Frustum, OcapGraph, PresentationKind, ReflectedCell,
 };
-use dregg_cell::{AuthRequired, Cell, Ledger};
+use dregg_cell::{AuthRequired, Cell, Credential, Ledger, Requirement};
 use dregg_turn::action::Effect;
 use dregg_types::CellId;
 
@@ -162,19 +162,22 @@ fn affordance_surface_projects_per_viewer() {
     let leaf = cell(0x10, 100);
     let leaf_id = leaf.id();
 
-    // A surface with two affordances: a public `view` (None — open to everyone) and
-    // a privileged `admin` (Proof). The attenuation lattice: `None` (held) is the
-    // BROADEST authority and satisfies any requirement; a `Signature` holder satisfies
-    // `Signature`/`None` requirements but NOT a `Proof` one (incomparable).
+    // A surface with two affordances: a genuinely PUBLIC `view` and a privileged
+    // `admin` (`AtLeast(Proof)`). This declaration is the reason `Requirement` has a
+    // `Public` constructor at all: it used to be spelled `AuthRequired::None`, which
+    // every `starbridge-apps` `*_RIGHTS` constant used for the OPPOSITE meaning (the
+    // root-only admin tier). The held side is still the `AuthRequired` lattice, where
+    // `None` (held) is the BROADEST authority; a `Signature` holder satisfies a
+    // `Signature` requirement but NOT a `Proof` one (incomparable).
     let surface = AffordanceSurface::new(leaf_id)
         .declare(Affordance::new(
             "view",
-            AuthRequired::None,
+            Requirement::Public,
             Effect::IncrementNonce { cell: leaf_id },
         ))
         .declare(Affordance::new(
             "admin",
-            AuthRequired::Proof,
+            Requirement::AtLeast(Credential::Proof),
             Effect::SetField {
                 cell: leaf_id,
                 index: 0,
@@ -182,7 +185,7 @@ fn affordance_surface_projects_per_viewer() {
             },
         ));
 
-    // A holder of `Proof` sees BOTH (Proof satisfies Proof; None is open to all).
+    // A holder of `Proof` sees BOTH (Proof ⊆ Proof; `Public` is open to all).
     let proof_holder = surface.visible_names(&AuthRequired::Proof);
     assert!(proof_holder.contains(&"view".to_string()));
     assert!(proof_holder.contains(&"admin".to_string()));

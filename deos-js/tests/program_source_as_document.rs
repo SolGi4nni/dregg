@@ -18,6 +18,8 @@ use deos_js::portable::{AppletManifest, PortableApplet};
 use deos_js::program_doc::{GadgetCite, ProgramSource, TranscludedFragment};
 use deos_js::{AffordanceSpec, ApplyOp};
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 use dregg_doc::{Author, Segment};
 
 /// A counter gadget's manifest, with a multi-line JS `view_source` (so line-granular
@@ -28,17 +30,17 @@ fn counter_manifest(view_source: &str) -> AppletManifest {
         affordances: vec![
             AffordanceSpec {
                 name: "inc".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot { slot: 0 },
             },
             AffordanceSpec {
                 name: "dec".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SubFromSlot { slot: 0 },
             },
             AffordanceSpec {
                 name: "reset".into(),
-                required: AuthRequired::Proof,
+                required: Requirement::AtLeast(Credential::Proof),
                 op: ApplyOp::SetSlot { slot: 0, value: 0 },
             },
         ],

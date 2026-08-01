@@ -154,6 +154,7 @@ use dregg_cell::vault::{
     ShareVaultError, ShareVaultState, deposit_shares, is_share_vault, open_share_vault,
     withdraw_shares,
 };
+use dregg_cell::{Credential, Requirement};
 use std::collections::HashMap;
 
 /// The public key of the fund custodian cells (the vault host + its budget custody
@@ -886,11 +887,11 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///     — it can `settle` (split the budget) on top of everything a provider can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the observer ⊂ provider ⊂ requester ladder.
-pub const OBSERVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const OBSERVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The provider rights tier (sig-or-proof — bid + view). See [`OBSERVER_RIGHTS`].
-pub const PROVIDER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const PROVIDER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The requester rights tier (root — settle + all). See [`OBSERVER_RIGHTS`].
-pub const REQUESTER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const REQUESTER_RIGHTS: Requirement = Requirement::Root;
 
 /// The **life-of-cell job program** the executor re-enforces on every touching turn
 /// — the canonical method-dispatched [`job_cell_program`] (`Always`-case
@@ -1012,7 +1013,7 @@ pub fn job_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> Deo
                 .affordance(view)
                 .gated(bid)
                 .gated(settle)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

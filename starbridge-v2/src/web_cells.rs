@@ -91,6 +91,7 @@ use dregg_cell::CellId;
 use crate::affordance::FireOutcome;
 use crate::reflect;
 use crate::world::World;
+use dregg_cell::{Credential, Requirement};
 
 /// One **addressable cell** in the web of cells — a `dregg://` row the browser
 /// lists. Every field is a real read of the attested fetch / the ledger-drawn
@@ -778,26 +779,26 @@ fn affordance_surface_for(cell: CellId, viewer: CellId) -> WebAffordanceSurface 
         // event (a real EmitEvent turn).
         .declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             emit_event(cell),
         ))
         // comment: tier-2 (the editor tier holds Either) → an EmitEvent turn.
         .declare(CellAffordance::new(
             "comment",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             emit_event(cell),
         ))
         // edit: tier-2 → writes a state field (a real SetField turn).
         .declare(CellAffordance::new(
             "edit",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             set_field(cell, 1),
         ))
-        // admin: tier-3 (only a root holder of None clears it) → hands out a
+        // admin: tier-3 (`Requirement::Root` — ONLY a root holder clears it) → hands out a
         // capability (a real GrantCapability turn).
         .declare(CellAffordance::new(
             "admin",
-            AuthRequired::None,
+            Requirement::Root,
             grant_cap(cell, viewer),
         ))
 }

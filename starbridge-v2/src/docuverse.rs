@@ -45,11 +45,12 @@
 //!   declare), carrying REAL [`Effect`] templates over the source cell. It is NOT read
 //!   off the cell's committed [`dregg_cell::Permissions`], and that is deliberate:
 //!   `Permissions::access = None` means "**no** authorization needed" (wide open),
-//!   while an affordance's `required_rights = None` means "only a holder of the ROOT
-//!   authority clears it" — the two lattices are oriented oppositely, and mapping one
-//!   onto the other would silently inverse every tier. Deriving a per-cell surface from
-//!   committed state needs a real published-surface field on the cell; that is the seam,
-//!   and it is not papered over here.
+//!   while an affordance requiring the root tier is [`dregg_cell::Requirement::Root`] —
+//!   the two are oriented oppositely, and mapping one onto the other would silently
+//!   inverse every tier. They no longer share a TYPE (that is what `Requirement` is
+//!   for), so the mapping cannot be written by accident; deriving a per-cell surface
+//!   from committed state still needs a real published-surface field on the cell, and
+//!   that is the seam this note names.
 //! * The federation attesting these origins is this desktop's own
 //!   [`WebOfCells`] quorum, not the World's validator set. The attestation chain
 //!   (content → commitment → receipt → receipt-stream root → quorum-signed root) is
@@ -69,6 +70,7 @@ use dregg_cell::Cell;
 
 use crate::link_paste::{uri_for, LinkPasteDoc, ResolveStatus};
 use crate::world::World;
+use dregg_cell::{Credential, Requirement};
 
 /// The quorum size of the docuverse's attesting federation. Three signers, deterministic
 /// keys — the same shape every other `WebOfCells` in this crate builds, so a published
@@ -398,22 +400,22 @@ pub fn declared_surface_of(source: CellId, viewer: CellId) -> AffordanceSurface 
     AffordanceSurface::new(source)
         .declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             emit_event(source),
         ))
         .declare(CellAffordance::new(
             "comment",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             emit_event(source),
         ))
         .declare(CellAffordance::new(
             "edit",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             set_field(source),
         ))
         .declare(CellAffordance::new(
             "admin",
-            AuthRequired::None,
+            Requirement::Root,
             grant_cap(source, viewer),
         ))
 }

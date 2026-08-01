@@ -94,7 +94,7 @@ fn bake_layout(hr: &mut HeadlessRender, out: &PathBuf) -> (PathBuf, PathBuf) {
         [0x1A; 32],
         Author(42),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     // The layout card's `view_source` is the editable arrangement DATA (the LayoutModel);
     // the RENDERABLE projection is its view-tree (a section per mode + a row per surface),

@@ -17,6 +17,8 @@ use deos_js::applet::{pack_u64, Affordance, Applet};
 use deos_js::js::{set_current_applet, take_current_applet};
 use deos_js::JsRuntime;
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// Build a "counter" applet: slot 0 holds the count; affordances `inc`/`dec` mutate it
 /// via verified turns; `reset` requires Signature (the driver does NOT hold it).
@@ -28,7 +30,7 @@ fn counter_applet(seed: u8) -> Applet {
     // inc/dec require `Signature` — which the driver HOLDS, so they fire.
     let inc = Affordance {
         name: "inc".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]
@@ -36,7 +38,7 @@ fn counter_applet(seed: u8) -> Applet {
     };
     let dec = Affordance {
         name: "dec".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur.saturating_sub(arg.max(0) as u64)))]
@@ -47,7 +49,7 @@ fn counter_applet(seed: u8) -> Applet {
     // proof. This is the genuine attenuation lattice (`is_attenuation`), not a flag.
     let reset = Affordance {
         name: "reset".into(),
-        required: AuthRequired::Proof,
+        required: Requirement::AtLeast(Credential::Proof),
         apply: Box::new(|_model, _arg| vec![(0usize, pack_u64(0))]),
     };
 

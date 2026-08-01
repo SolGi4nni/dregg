@@ -102,6 +102,7 @@ use dregg_app_framework::{
     StateConstraint, Turn, TurnReceipt, canonical_program_vk, field_from_bytes, field_from_u64,
     hex_encode_32, pay_effects, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 // The four modern app-framework axes this app demonstrates (the unified template):
 //   - the FactoryDescriptor + DeosApp composition surface (this file: `bounty_app`,
@@ -494,11 +495,11 @@ pub fn state_field(state: u64) -> FieldElement {
 ///     (settle a SUBMITTED bounty) on top of everything a worker can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the watcher ⊂ worker ⊂ poster ladder.
-pub const WATCHER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const WATCHER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The worker rights tier (sig-or-proof — claim + submit + view). See [`WATCHER_RIGHTS`].
-pub const WORKER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const WORKER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The poster/owner rights tier (root — payout + all). See [`WATCHER_RIGHTS`].
-pub const POSTER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const POSTER_RIGHTS: Requirement = Requirement::Root;
 
 /// The `claim` **live-state precondition** — the bounty must be POSTED/OPEN
 /// (`STATE == STATE_OPEN`). A real [`CellProgram`] read against the cell's current state,
@@ -637,7 +638,7 @@ pub fn bounty_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
                 .gated(claim)
                 .gated(submit)
                 .gated(payout)
-                .publish(WATCHER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

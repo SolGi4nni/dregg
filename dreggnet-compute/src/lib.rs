@@ -204,10 +204,13 @@ impl ComputeSession {
     /// requester (who posted) holds [`REQUESTER_RIGHTS`] (settle + all), the claiming worker holds
     /// [`PROVIDER_RIGHTS`] (claim + view), anyone else is an observer ([`AuthRequired::Signature`]).
     fn cap_for(&self, actor: &DreggIdentity) -> AuthRequired {
+        // A HELD tier, named on the `AuthRequired` lattice. It used to borrow the
+        // app's `*_RIGHTS` constants, which are REQUIREMENTS — a different type now,
+        // so the held value is spelled out (same lattice rungs as before).
         if self.requester.as_ref() == Some(actor) {
-            REQUESTER_RIGHTS
+            AuthRequired::None
         } else if self.worker.as_ref() == Some(actor) {
-            PROVIDER_RIGHTS
+            AuthRequired::Either
         } else {
             AuthRequired::Signature
         }
@@ -342,7 +345,10 @@ impl ComputeOffering {
             return Outcome::Refused("a claim price must be non-negative".into());
         }
         let price = input.arg as u64;
-        let held = PROVIDER_RIGHTS;
+        // The HELD authority the claimer wields (the provider tier on the
+        // `AuthRequired` lattice). It used to be spelled `PROVIDER_RIGHTS`, which is a
+        // REQUIREMENT — the two are different types now, so the held value is named.
+        let held = AuthRequired::Either;
 
         if s.is_claimed() {
             // THE ANTI-DOUBLE-CLAIM TOOTH — the job is already claimed (STATE == BID), so the

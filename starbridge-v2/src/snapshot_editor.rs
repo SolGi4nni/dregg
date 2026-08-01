@@ -56,6 +56,7 @@ use crate::cap_inspector::AttenuationDial;
 use crate::presentable::{Gadget, GadgetInput, GadgetValidation, PresentationKind};
 use crate::surface::{SurfaceCapability, SurfaceId};
 use crate::ui_snapshot::UiSnapshot;
+use dregg_cell::{Credential, Requirement};
 use dregg_types::CellId;
 
 // ===========================================================================
@@ -576,12 +577,12 @@ mod tests {
         AffordanceSurface::new(backing)
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature, // narrow — any signer clears it
+                Requirement::AtLeast(Credential::Signature), // narrow — any signer clears it
                 Effect::IncrementNonce { cell: backing },
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::Either, // wide — only a root-ish holder clears it
+                Requirement::AtLeast(Credential::Either), // wide — only a root-ish holder clears it
                 Effect::IncrementNonce { cell: backing },
             ))
     }

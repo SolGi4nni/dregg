@@ -30,6 +30,8 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{build_live_view, AppletView, FacesView};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -40,7 +42,7 @@ fn counter_applet(seed: u8) -> Applet {
     pk[0] = seed;
     let inc = Affordance {
         name: "inc".into(),
-        required: AuthRequired::Signature,
+        required: Requirement::AtLeast(Credential::Signature),
         apply: Box::new(|model, arg| {
             let cur = model.field_u64(0);
             vec![(0usize, pack_u64(cur + arg.max(0) as u64))]

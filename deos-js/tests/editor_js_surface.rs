@@ -23,6 +23,8 @@ use deos_js::card_editor::{CardEditor, ViewTree};
 use deos_js::js::JsRuntime;
 use deos_js::portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 use dregg_doc::Author;
 
 /// A card whose view is a structured view-tree (the shape deos-view paints): a title +
@@ -47,7 +49,7 @@ fn counter_card_manifest() -> AppletManifest {
         seed_fields: vec![(0usize, 0u64)],
         affordances: vec![AffordanceSpec {
             name: "inc".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         held: AuthRequired::Signature,
@@ -61,7 +63,7 @@ fn editor_with(
     pk0: u8,
     author: Author,
     held: AuthRequired,
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
 ) -> CardEditor {
     let manifest = counter_card_manifest();
     let mut pk = [0u8; 32];
@@ -187,7 +189,7 @@ fn editor_js_body() {
         0xCD,
         Author(99),
         AuthRequired::Signature,
-        AuthRequired::Proof,
+        Requirement::AtLeast(Credential::Proof),
     );
     let js_d = r#"
         var card = deos.editor.card();
@@ -228,7 +230,7 @@ fn editor_js_body() {
         0xA6,
         Author(99),
         AuthRequired::None,
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
     );
     let js_e = r#"
         // The agent's snippet: build its OWN card UI from inside the image.

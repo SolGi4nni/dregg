@@ -51,6 +51,7 @@ use dregg_cell::AuthRequired;
 use crate::affordance::{AffordanceSurface, FireError, FireExecuteError, GatedSurface};
 use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
 use crate::server::{ErrorResponse, api_error};
+use dregg_cell::{Credential, Requirement};
 
 /// Resolves the **held authority** a request carries — the `held` side of the
 /// affordance gate `required ⊆ held`.
@@ -90,8 +91,10 @@ impl HeldRightsResolver for HeaderHeldRights {
     }
 }
 
-/// Parse an [`AuthRequired`] tier from a (case-insensitive) string label. Shared by
-/// the header resolver; returns `None` for unrecognized labels.
+/// Parse a HELD [`AuthRequired`] tier from a (case-insensitive) string label — what
+/// a caller claims to already hold. Used by the header resolver; returns `None` for
+/// unrecognized labels. `"none"`/`"root"` both name the lattice TOP, which is the
+/// correct reading on the HELD side.
 pub fn parse_auth_required(raw: &str) -> Option<AuthRequired> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "none" | "root" => Some(AuthRequired::None),
@@ -99,6 +102,24 @@ pub fn parse_auth_required(raw: &str) -> Option<AuthRequired> {
         "signature" | "sig" => Some(AuthRequired::Signature),
         "proof" => Some(AuthRequired::Proof),
         "impossible" => Some(AuthRequired::Impossible),
+        _ => None,
+    }
+}
+
+/// Parse a [`Requirement`] from a (case-insensitive) string label — what an
+/// affordance DEMANDS.
+///
+/// Note what is missing: `"none"`. On the requirement side that label meant
+/// "ungated" to two crates and "root only" to three, so it is REFUSED rather than
+/// reinterpreted — a descriptor carrying it must say `"public"` or `"root"`.
+pub fn parse_requirement(raw: &str) -> Option<Requirement> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "public" => Some(Requirement::Public),
+        "root" => Some(Requirement::Root),
+        "either" => Some(Requirement::AtLeast(Credential::Either)),
+        "signature" | "sig" => Some(Requirement::AtLeast(Credential::Signature)),
+        "proof" => Some(Requirement::AtLeast(Credential::Proof)),
+        "never" | "impossible" => Some(Requirement::Never),
         _ => None,
     }
 }
@@ -124,7 +145,7 @@ pub fn parse_auth_required(raw: &str) -> Option<AuthRequired> {
 ///
 /// let surface = AffordanceSurface::named(doc, "doc").declare(CellAffordance::new(
 ///     "view",
-///     AuthRequired::Signature,
+///     Requirement::AtLeast(Credential::Signature),
 ///     Effect::EmitEvent {
 ///         cell: doc,
 ///         event: Event { topic: [1u8; 32], data: vec![] },
@@ -480,17 +501,17 @@ mod tests {
         let surface = AffordanceSurface::named(doc, "doc")
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(doc),
             ));
         (cclerk, executor, surface)

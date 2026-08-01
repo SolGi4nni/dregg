@@ -74,6 +74,7 @@ use dregg_app_framework::{
     GatedAffordance, InspectorDescriptor, StarbridgeAppContext, StateConstraint, TurnReceipt,
     canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
+use dregg_cell::{Credential, Requirement};
 
 pub use dregg_app_framework::field_from_bytes;
 
@@ -471,11 +472,11 @@ pub fn build_drain_action(
 ///     `grant_worker` (hand a worker an attenuated slice) on top of everything a worker can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the observer ⊂ worker ⊂ lead ladder.
-pub const OBSERVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const OBSERVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The worker rights tier (sig-or-proof — ack + view). See [`OBSERVER_RIGHTS`].
-pub const WORKER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const WORKER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The lead/operator rights tier (root — open, dispatch, grant, +all). See [`OBSERVER_RIGHTS`].
-pub const LEAD_RIGHTS: AuthRequired = AuthRequired::None;
+pub const LEAD_RIGHTS: Requirement = Requirement::Root;
 
 /// The permissions a worker's attenuated capability carries (a `SelfCell` slice the lead
 /// hands forward NARROWED, never widened — the Lean `derive_no_amplify`). Matches the
@@ -633,7 +634,7 @@ pub fn board_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> D
                 .gated(dispatch)
                 .gated(open)
                 .affordance(grant)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

@@ -207,8 +207,13 @@ impl Cockpit {
         self.layout_card = Some(deos_js::LayoutCard::open(
             LAYOUT_CARD_PK,
             deos_js::Author(LAYOUT_CARD_AUTHOR),
-            held.clone(),
-            /*edit_authority=*/ held,
+            held,
+            // The card's authoring REQUIREMENT — a distinct type from the operator's
+            // held authority above, which is the point: `AtLeast(Signature)` is
+            // cleared by that `Signature` hand, and the two can no longer be the same
+            // value by accident.
+            /*edit_authority=*/
+            dregg_cell::Requirement::AtLeast(dregg_cell::Credential::Signature),
         ));
     }
 

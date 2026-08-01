@@ -48,6 +48,7 @@ use crate::affordance::{
 use crate::reflect::{self, Inspectable};
 use crate::surface::{SurfaceCapability, SurfaceId};
 use crate::world::World;
+use dregg_cell::{Credential, Requirement};
 
 /// What object the inspect→act loop is focused on. Today a [`Cell`](InspectFocus::Cell);
 /// the variants extend to `Cap`/`Receipt`/etc. — the loop's shape is identical, only
@@ -80,7 +81,7 @@ pub struct Message {
     pub name: String,
     /// The authority the viewer must HOLD over the object to send it
     /// (`required ⊆ held`). The cap badge is computed against this.
-    pub required: AuthRequired,
+    pub required: Requirement,
     /// The REAL effect this send would run, summarized (`SetField` / `EmitEvent` /
     /// `GrantCapability` …) — the genuine turn the executor would commit. Drawn from
     /// the affordance's real [`dregg_turn::Effect`] template, never a stub.
@@ -356,7 +357,7 @@ fn message_surface_for(cell: CellId, viewer: CellId) -> AffordanceSurface {
         //       event (a real EmitEvent turn — the object acknowledges the read).
         .declare(CellAffordance::new(
             "peek",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::EmitEvent {
                 cell,
                 event: Event::new([1u8; 32], vec![]),
@@ -366,26 +367,26 @@ fn message_surface_for(cell: CellId, viewer: CellId) -> AffordanceSurface {
         //        minimal observable self-mutation, perfect for the closing inspect).
         .declare(CellAffordance::new(
             "touch",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::IncrementNonce { cell },
         ))
         // write: tier-2 (the editor tier holds Either) → writes state slot 1 (a real
         //        SetField turn the re-inspection reflects as a new `state[1]` field).
         .declare(CellAffordance::new(
             "write",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             Effect::SetField {
                 cell,
                 index: 1,
                 value: [7u8; 32],
             },
         ))
-        // grant: tier-3 (only a root holder of None clears it) → hands out a capability
+        // grant: tier-3 (`Requirement::Root` — ONLY a root holder clears it) → hands out a capability
         //        reaching `viewer` (a real GrantCapability turn the no-amplification gate
         //        checks).
         .declare(CellAffordance::new(
             "grant",
-            AuthRequired::None,
+            Requirement::Root,
             crate::world::grant_capability(cell, viewer, cell, 1),
         ))
 }
@@ -509,22 +510,25 @@ mod tests {
         assert_eq!(msg(&ia, "write").effect, "SetField(slot 1)");
         assert_eq!(msg(&ia, "grant").effect, "GrantCapability");
 
-        // THE CAP BADGE: the EDITOR (Either) may send all four — peek/touch/write
-        // (Signature/Either ⊆ Either) and grant (None = ALWAYS allowed: the cap-gate
-        // permits it, and the EXECUTOR's no-amplification rule gates the real grant).
-        assert!(msg(&ia, "peek").authorized, "Signature ⊆ Either");
+        // THE CAP BADGE: the EDITOR (Either) may send peek/touch/write
+        // (`AtLeast(Signature)`/`AtLeast(Either)` ⊆ Either) but NOT `grant`.
+        //
+        // BEHAVIOUR CHANGED HERE. `grant` is declared `Requirement::Root` — "only a
+        // root holder clears it", which is exactly what its declaration comment three
+        // hundred lines up always said. It used to be spelled `AuthRequired::None`,
+        // and this crate's gate special-cased that value to `true`, so the badge lit
+        // GRANT for every viewer and only the executor's no-amplification rule stood
+        // between a reader and a capability hand-out. It no longer lights.
+        assert!(msg(&ia, "peek").authorized, "AtLeast(Signature) ⊆ Either");
         assert!(msg(&ia, "touch").authorized);
-        assert!(msg(&ia, "write").authorized, "Either ⊆ Either");
+        assert!(msg(&ia, "write").authorized, "AtLeast(Either) ⊆ Either");
         assert!(
-            msg(&ia, "grant").authorized,
-            "None = always allowed (gated in the executor, not the cap-gate)"
+            !msg(&ia, "grant").authorized,
+            "Root is cleared by the lattice top alone — an Either editor is not root"
         );
 
         // The authorized subset is exactly the cleared messages, sorted.
-        assert_eq!(
-            ia.authorized_messages(),
-            vec!["grant", "peek", "touch", "write"]
-        );
+        assert_eq!(ia.authorized_messages(), vec!["peek", "touch", "write"]);
 
         // The rendered text is non-empty + names the messages (a non-empty gpui tree).
         assert!(ia
@@ -539,14 +543,15 @@ mod tests {
         let mut w = World::new();
         let cell = w.genesis_cell(0x11, 500);
 
-        // A reader (Signature) clears the tier-1 messages (peek/touch) AND grant
-        // (None = always allowed for any viewer); only write (Either) is shown-but-refused.
+        // A reader (Signature) clears the tier-1 messages (peek/touch) only: `write`
+        // demands `AtLeast(Either)` and `grant` demands `Root`. BEHAVIOUR CHANGED —
+        // `grant` used to be authorized for this reader too (see the sibling test).
         let ia = InspectAct::build(&w, InspectFocus::Cell(cell), cell, AuthRequired::Signature);
-        assert_eq!(ia.authorized_messages(), vec!["grant", "peek", "touch"]);
-        assert!(!msg(&ia, "write").authorized, "Either ⊄ Signature");
+        assert_eq!(ia.authorized_messages(), vec!["peek", "touch"]);
+        assert!(!msg(&ia, "write").authorized, "AtLeast(Either) ⊄ Signature");
         assert!(
-            msg(&ia, "grant").authorized,
-            "None = always allowed, even for a Signature viewer"
+            !msg(&ia, "grant").authorized,
+            "Root is not cleared by a Signature reader"
         );
         // The full vocabulary is still shown — the refused message is visible.
         assert_eq!(ia.messages.len(), 4);

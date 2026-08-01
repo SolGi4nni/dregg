@@ -55,6 +55,7 @@ use crate::card_editor::{
     ViewTree,
 };
 use crate::program_doc::ProgramSource;
+use dregg_cell::Requirement;
 
 /// The heap slot the inspector card bumps to leave a provenance receipt for a *structural*
 /// authoring gesture (a view-patch, which does not itself write a model field). Bumping it
@@ -80,7 +81,7 @@ pub struct InspectorCard {
     held: AuthRequired,
     /// The authority a view-edit on THIS card requires (the authoring cap tooth). `held` must
     /// satisfy it ([`dregg_cell::is_attenuation`]).
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
     /// The author every view-patch is attributed to (the blame identity).
     author: Author,
 }
@@ -111,7 +112,7 @@ impl InspectorCard {
         card: Applet,
         author: Author,
         held: AuthRequired,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
     ) -> Self {
         let initial = generate_view(&card, &held).to_json();
         let view = ProgramSource::seed(author, &initial);
@@ -171,7 +172,7 @@ impl InspectorCard {
 
     /// Whether the inspector is authorized to reshape itself (the authoring cap tooth).
     fn authorized(&self) -> bool {
-        dregg_cell::is_attenuation(&self.held, &self.edit_authority)
+        self.edit_authority.satisfied_by(&self.held)
     }
 
     /// Fire a real `SetField` provenance turn bumping the card's authorship slot — how a
@@ -364,7 +365,7 @@ pub fn inspector_view_over_attached(attached: &AttachedApplet, held: &AuthRequir
 pub fn inspector_view_for(
     id: CellId,
     ledger: &Ledger,
-    affordance_specs: &[(String, AuthRequired)],
+    affordance_specs: &[(String, Requirement)],
     held: &AuthRequired,
 ) -> ViewTree {
     let mut children: Vec<ViewTree> = Vec::new();

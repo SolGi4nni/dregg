@@ -41,7 +41,7 @@
 //!
 //! gpui-free and `cargo test`-able.
 
-use dregg_cell::{is_attenuation, AuthRequired};
+use dregg_cell::{AuthRequired, Credential, Requirement};
 use dregg_turn::action::Effect;
 use dregg_types::CellId;
 
@@ -64,11 +64,11 @@ pub struct CellAffordance {
     /// analogue of `hx-post="/comment"`).
     pub name: String,
     /// The authority a viewer must HOLD over the surface's window cap to see/fire
-    /// this affordance. The gate is `is_attenuation(held_rights, required)` =
-    /// `required ⊆ held` — the viewer must hold AT LEAST this much authority. A
-    /// `view` affordance requires a narrow right (any reader holds it); an `admin`
-    /// affordance requires the broad root right (only a powerful holder clears it).
-    pub required_rights: AuthRequired,
+    /// this affordance, as a [`Requirement`] — the intent is on the face of the
+    /// value. A `view` affordance is `AtLeast(Signature)` (any reader clears it); an
+    /// `admin` affordance is [`Requirement::Root`] (ONLY a holder of the lattice top
+    /// clears it); a genuinely ungated one is [`Requirement::Public`].
+    pub required_rights: Requirement,
     /// The effect this affordance FIRES — a real [`dregg_turn::Effect`], the turn
     /// the embedded `TurnExecutor` runs. NOT a stub.
     pub effect_template: Effect,
@@ -79,7 +79,7 @@ impl CellAffordance {
     /// `effect_template` (a real [`dregg_turn::Effect`]).
     pub fn new(
         name: impl Into<String>,
-        required_rights: AuthRequired,
+        required_rights: Requirement,
         effect_template: Effect,
     ) -> Self {
         CellAffordance {
@@ -91,26 +91,19 @@ impl CellAffordance {
 
     /// Is this affordance authorized for a holder of the window cap `held`?
     ///
-    /// THE cap-gate, the REAL one: `is_attenuation(held.rights, required)` =
-    /// `required ⊆ held` (the proven attenuation lattice). True iff the holder's
-    /// authority over the window is at least as broad as this affordance demands.
-    /// The SAME predicate the shell runs to admit a window op and the cap crown
-    /// proves — NOT a parallel role check.
+    /// THE cap-gate, and it is the ONE decision function —
+    /// [`Requirement::satisfied_by`], the same call every other affordance gate in
+    /// the workspace makes.
+    ///
+    /// This method used to special-case `AuthRequired::None => true` on the grounds
+    /// that `None` means "no authorization needed" in `dregg_cell::Permissions`,
+    /// while `starbridge-web-surface` and `app-framework` read the SAME value as the
+    /// lattice top (root-only). Both readings were defensible and they were
+    /// opposite — so the value no longer exists here: [`Requirement::Public`] and
+    /// [`Requirement::Root`] are separate constructors and there is nothing left to
+    /// special-case.
     pub fn authorized_for(&self, held: &SurfaceCapability) -> bool {
-        // A `None` requirement is "always allowed, no authorization needed"
-        // (`cell/src/permissions.rs`): EVERY holder clears it. The `is_attenuation`
-        // lattice models `None` as the TOP (widest), so `is_attenuation(held, None)`
-        // would WRONGLY reject any holder whose rights are not exactly `None` — the
-        // cap-badge inversion (HORIZONLOG). Special-case the always-satisfiable
-        // requirement: a `None`-gated message is sendable by anyone; the real
-        // guarantee (e.g. grant's non-amplification) fires in the EXECUTOR, not here.
-        if matches!(
-            self.required_rights,
-            dregg_cell::permissions::AuthRequired::None
-        ) {
-            return true;
-        }
-        is_attenuation(held.rights(), &self.required_rights)
+        self.required_rights.satisfied_by(held.rights())
     }
 
     /// A stable, `Eq`-able summary of the effect-template (variant + touched
@@ -234,7 +227,7 @@ pub enum FireError {
     /// lack the rights for is REFUSED by the REAL `is_attenuation`, never run.
     Unauthorized {
         affordance: String,
-        required: AuthRequired,
+        required: Requirement,
     },
 }
 
@@ -521,6 +514,121 @@ mod tests {
         )
     }
 
+    /// **THE CROSS-IMPLEMENTATION ORACLE.** The workspace ships more than one
+    /// affordance cap-gate over the SAME requirement value and the SAME held
+    /// authority. There is exactly one right answer per pair, so every gate must
+    /// return it. This test is the refutable detector for two gates drifting apart:
+    /// it drives each impl with the same `(requirement, held)` cross-product and
+    /// demands identical verdicts.
+    #[test]
+    fn every_affordance_gate_agrees_on_the_same_requirement_and_holding() {
+        use starbridge_web_surface::affordance as web;
+        use starbridge_web_surface::delegate::SurfaceCapability as WebCap;
+
+        let backing = cid(0x60);
+        let noop = || Effect::IncrementNonce { cell: backing };
+
+        for required in all_requirements() {
+            for held in all_held() {
+                // (1) starbridge-v2 — this crate's gate.
+                let v2 = CellAffordance::new("op", required.clone(), noop())
+                    .authorized_for(&window_cap(backing, held.clone()));
+                // (2) starbridge-web-surface — the crate v2 links for the web shell.
+                let ws = web::CellAffordance::new("op", required.clone(), noop())
+                    .authorized_for(&WebCap::root(backing, held.clone()));
+
+                // …and both must equal the ONE decision function. Two gates that
+                // agree with each other but not with `satisfied_by` is still a leak.
+                let truth = required.satisfied_by(&held);
+                assert_eq!(
+                    v2, ws,
+                    "gates disagree for required={required:?} held={held:?}: \
+                     starbridge-v2={v2} starbridge-web-surface={ws}"
+                );
+                assert_eq!(
+                    v2, truth,
+                    "both gates agree but diverge from Requirement::satisfied_by \
+                     for required={required:?} held={held:?}"
+                );
+            }
+        }
+    }
+
+    /// Every `Requirement` shape, for the exhaustive oracle sweep.
+    fn all_requirements() -> Vec<Requirement> {
+        vec![
+            Requirement::Public,
+            Requirement::AtLeast(Credential::Signature),
+            Requirement::AtLeast(Credential::Proof),
+            Requirement::AtLeast(Credential::Either),
+            Requirement::AtLeast(Credential::Custom { vk_hash: [3u8; 32] }),
+            Requirement::Root,
+            Requirement::Never,
+        ]
+    }
+
+    /// Every authority a holder can carry.
+    fn all_held() -> Vec<AuthRequired> {
+        vec![
+            AuthRequired::None,
+            AuthRequired::Signature,
+            AuthRequired::Proof,
+            AuthRequired::Either,
+            AuthRequired::Impossible,
+            AuthRequired::Custom { vk_hash: [3u8; 32] },
+        ]
+    }
+
+    #[test]
+    fn the_cap_gate_is_exactly_the_one_requirement_decision_function() {
+        // THE ORACLE. This crate's gate must return what `Requirement::satisfied_by`
+        // returns — for EVERY requirement shape against EVERY holding. The historic
+        // `AuthRequired::None => true` special case lived HERE; this is what would
+        // have caught it, and what kills its return.
+        let backing = cid(0x61);
+        for required in all_requirements() {
+            for held in all_held() {
+                let aff = CellAffordance::new(
+                    "op",
+                    required.clone(),
+                    Effect::IncrementNonce { cell: backing },
+                );
+                let gate = aff.authorized_for(&window_cap(backing, held.clone()));
+                assert_eq!(
+                    gate,
+                    required.satisfied_by(&held),
+                    "the v2 gate diverged from Requirement::satisfied_by \
+                     for required={required:?} held={held:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_public_and_never_admit_independently_known_holder_sets() {
+        // The oracle above is an equality against the shared function; this one
+        // states the ANSWER independently, so a change to BOTH sides still fails.
+        let backing = cid(0x62);
+        let admitted = |req: Requirement| -> Vec<AuthRequired> {
+            let aff = CellAffordance::new("op", req, Effect::IncrementNonce { cell: backing });
+            all_held()
+                .into_iter()
+                .filter(|h| aff.authorized_for(&window_cap(backing, h.clone())))
+                .collect()
+        };
+        assert_eq!(admitted(Requirement::Root), vec![AuthRequired::None]);
+        assert_eq!(admitted(Requirement::Public), all_held());
+        assert!(admitted(Requirement::Never).is_empty());
+        assert_eq!(
+            admitted(Requirement::AtLeast(Credential::Signature)),
+            vec![
+                AuthRequired::None,
+                AuthRequired::Signature,
+                AuthRequired::Either
+            ]
+        );
+    }
+
     #[test]
     fn projection_is_progressive_attenuation() {
         // The gate is `is_attenuation(held, required)` = `required ⊆ held` = the
@@ -532,12 +640,12 @@ mod tests {
         let surf = AffordanceSurface::new(backing)
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature, // a narrow requirement — any signer clears it
+                Requirement::AtLeast(Credential::Signature), // a narrow requirement — any signer clears it
                 Effect::IncrementNonce { cell: backing },
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::Either, // requires the WIDER authority
+                Requirement::AtLeast(Credential::Either), // requires the WIDER authority
                 Effect::EmitEvent {
                     cell: backing,
                     event: dregg_turn::action::Event::new([0u8; 32], vec![]),
@@ -560,7 +668,7 @@ mod tests {
         let backing = cid(0x20);
         let surf = AffordanceSurface::new(backing).declare(CellAffordance::new(
             "admin",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             Effect::IncrementNonce { cell: backing },
         ));
         // A narrow window cap (Signature) CANNOT fire the `admin` affordance
@@ -571,7 +679,7 @@ mod tests {
             err,
             FireError::Unauthorized {
                 affordance: "admin".to_string(),
-                required: AuthRequired::Either
+                required: Requirement::AtLeast(Credential::Either)
             }
         );
         // An unknown affordance name is its own refusal.
@@ -595,7 +703,7 @@ mod tests {
         // since Signature ⊆ Either).
         let surf = AffordanceSurface::new(actor).declare(CellAffordance::new(
             "pay",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::Transfer {
                 from: actor,
                 to: sink,
@@ -638,7 +746,7 @@ mod tests {
         let sink = world.genesis_cell(0x41, 0);
         let surf = AffordanceSurface::new(actor).declare(CellAffordance::new(
             "overspend",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::Transfer {
                 from: actor,
                 to: sink,
@@ -671,12 +779,12 @@ mod tests {
         let surf = AffordanceSurface::new(backing)
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 Effect::IncrementNonce { cell: backing },
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 Effect::IncrementNonce { cell: backing },
             ));
         // The snapshot is tiny: it carries only the cell + the names (the frustum),
@@ -699,7 +807,7 @@ mod tests {
         // STILL exists (the live surface is the source of truth, not the snapshot).
         let shrunk = AffordanceSurface::new(backing).declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::IncrementNonce { cell: backing },
         ));
         // The OLD snapshot still names `admin`, but the live (shrunk) surface no

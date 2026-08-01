@@ -30,6 +30,7 @@ use dregg_cell::{AuthRequired, Cell};
 use serde::{Deserialize, Serialize};
 
 use crate::applet::{pack_u64, Affordance, Applet, Slot};
+use dregg_cell::Requirement;
 
 /// The heap collection id reserved for the applet's program blob. Disjoint from any
 /// model/heap collection an applet would use for data.
@@ -55,7 +56,7 @@ pub use deos_js_core::ApplyOp;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AffordanceSpec {
     pub name: String,
-    pub required: AuthRequired,
+    pub required: Requirement,
     pub op: ApplyOp,
 }
 

@@ -32,6 +32,7 @@ use deos_hermes::{GrantRegistry, HermesGateway, ToolCallRequest};
 use deos_js::card_editor::{BindProps, TextProps, ViewPatch, ViewTree};
 use deos_js::portable::{AffordanceSpec, AppletManifest, ApplyOp, PortableApplet};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_doc::Author;
 use dregg_sdk::{AgentCipherclerk, AgentRuntime, HeldToken};
 
@@ -72,7 +73,7 @@ fn counter_manifest() -> AppletManifest {
         seed_fields: vec![(0usize, 0u64)],
         affordances: vec![AffordanceSpec {
             name: "inc".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         held: AuthRequired::Signature,
@@ -107,7 +108,7 @@ fn agent_creates_a_card_authoring_its_first_button_as_a_receipted_patch() {
         pk,
         [0u8; 32],
         counter_manifest(),
-        /*edit_authority=*/ AuthRequired::Signature,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
         Some(ViewPatch::AddButton {
             label: "+1".into(),
             turn: "inc".into(),
@@ -239,7 +240,7 @@ fn agent_cannot_author_a_card_outside_its_held_refused_in_band() {
         52,
         card,
         manifest,
-        /*edit_authority=*/ AuthRequired::Proof,
+        /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
         ViewPatch::AddButton {
             label: "+1".into(),
             turn: "inc".into(),

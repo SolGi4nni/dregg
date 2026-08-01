@@ -78,7 +78,7 @@ use dregg_cell::program::CellProgram;
 use dregg_turn::Turn;
 use dregg_types::CellId;
 
-use crate::deos::{WORKER_RIGHTS, delegate_mandate_effect};
+use crate::deos::delegate_mandate_effect;
 use crate::{
     Tool, WorkerSlot, coordinator_program, identity_field, open_board_effects, worker_step_effects,
 };
@@ -252,7 +252,10 @@ impl BoardService {
         let effects = vec![delegate_mandate_effect(
             self.cell,
             worker_cell,
-            WORKER_RIGHTS,
+            // The GRANTED capability authority is a HELD value (what the worker
+            // obtains), not the affordance's requirement — different types now, so
+            // the lattice value is named here rather than borrowed from the tier.
+            dregg_cell::AuthRequired::Either,
         )];
         self.invoke(
             cipherclerk,

@@ -77,6 +77,7 @@ use dregg_app_framework::{
     field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 
+use dregg_cell::{Credential, Requirement};
 use dregg_intent::verified_settle::{
     VerifiedLedger, VerifiedLeg, VerifiedSettleError, settle_ring_verified,
 };
@@ -660,11 +661,11 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 ///     top of everything a bidder can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the observer ⊂ bidder ⊂ auctioneer ladder.
-pub const OBSERVER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const OBSERVER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The bidder rights tier (sig-or-proof — commit + reveal + view). See [`OBSERVER_RIGHTS`].
-pub const BIDDER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const BIDDER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The auctioneer rights tier (root — close + resolve + all). See [`OBSERVER_RIGHTS`].
-pub const AUCTIONEER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const AUCTIONEER_RIGHTS: Requirement = Requirement::Root;
 
 /// The method-dispatched auction program installed by [`seed_auction`] on its
 /// pre-existing local cell. It is exactly the same program factory birth installs
@@ -813,7 +814,7 @@ pub fn auction_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) ->
                 .gated(close_commit)
                 .gated(reveal)
                 .gated(resolve)
-                .publish(OBSERVER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

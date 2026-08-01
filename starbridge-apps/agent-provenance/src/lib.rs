@@ -67,6 +67,7 @@ use dregg_app_framework::{
     field_from_u64, hex_encode_32, symbol,
 };
 use dregg_cell::state::STATE_SLOTS;
+use dregg_cell::{Credential, Requirement};
 
 // The four modern app-framework axes this app demonstrates (the unified template):
 //   - the FactoryDescriptor + CellProgram floor (AX1: `provenance_factory_descriptor`,
@@ -609,11 +610,11 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 ///   - the OWNER / ADMIN holds [`AuthRequired::None`]/root — everything a recorder can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the verifier ⊂ recorder ⊂ owner ladder.
-pub const VERIFIER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const VERIFIER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The recorder rights tier (sig-or-proof — append + view). See [`VERIFIER_RIGHTS`].
-pub const RECORDER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const RECORDER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The owner/admin rights tier (root — all). See [`VERIFIER_RIGHTS`].
-pub const OWNER_RIGHTS: AuthRequired = AuthRequired::None;
+pub const OWNER_RIGHTS: Requirement = Requirement::Root;
 
 /// The `append_entry` **live-state precondition** — the log must be INITIALIZED
 /// (`HEAD >= 0`, i.e. a genesis entry has been seeded). A real [`CellProgram`] read
@@ -689,7 +690,7 @@ pub fn provenance_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor)
             DeosCell::new(cell, "log")
                 .affordance(view)
                 .gated(append)
-                .publish(VERIFIER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .build()
 }

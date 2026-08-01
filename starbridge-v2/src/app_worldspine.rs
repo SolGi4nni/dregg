@@ -42,13 +42,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use dregg_app_framework::{
-    symbol, AuthRequired, CellProgram, Effect, FireExecuteError, Turn, TurnReceipt,
+    symbol, AuthRequired, CellProgram, Effect, FireExecuteError, Requirement, Turn, TurnReceipt,
 };
 use dregg_cell::state::FieldElement;
 use dregg_turn::action::WitnessBlob;
 use dregg_types::CellId;
 
 use crate::world::{open_permissions, CommitOutcome, World};
+use dregg_cell::Credential;
 
 /// The token-domain id the app framework's `EmbeddedExecutor` derives its primary
 /// cell over: `blake3("default")` (the `"default"` domain `AppSubstrate::new` uses).
@@ -182,7 +183,8 @@ impl AppWorldSpine {
     /// **Commit one affordance fire through the live `World`.**
     ///
     /// 1. the CAP tooth runs IN-BAND first: `held` must satisfy `required_rights`
-    ///    ([`dregg_cell::is_attenuation`]). An unheld fire is [`WorldFireError::Gate`]
+    ///    ([`Requirement::satisfied_by`] — the SAME decision function every other
+    ///    affordance gate calls). An unheld fire is [`WorldFireError::Gate`]
     ///    and NOTHING is committed (anti-ghost), exactly like the framework path.
     /// 2. the effect-set is computed against `World`'s LIVE state by `effects` (so an
     ///    accumulating fire — the gallery's next-free-slot — reads the cockpit ledger,
@@ -201,14 +203,15 @@ impl AppWorldSpine {
         &self,
         method: &str,
         held: &AuthRequired,
-        required_rights: &AuthRequired,
+        required_rights: &Requirement,
         effects: F,
     ) -> Result<TurnReceipt, WorldFireError>
     where
         F: FnOnce(&dregg_cell::state::CellState) -> Vec<Effect>,
     {
-        // Tooth 1 (CAP): the REAL is_attenuation, in-band. Refused ⇒ nothing committed.
-        if !dregg_cell::is_attenuation(held, required_rights) {
+        // Tooth 1 (CAP): the ONE requirement decision function, in-band. Refused ⇒
+        // nothing committed.
+        if !required_rights.satisfied_by(held) {
             return Err(WorldFireError::Gate(FireExecuteError::Gate(
                 dregg_app_framework::FireError::Unauthorized {
                     affordance: method.to_string(),
@@ -273,15 +276,16 @@ impl AppWorldSpine {
         sender: [u8; 32],
         method: &str,
         held: &AuthRequired,
-        required_rights: &AuthRequired,
+        required_rights: &Requirement,
         witness_blobs: Vec<WitnessBlob>,
         effects: F,
     ) -> Result<TurnReceipt, WorldFireError>
     where
         F: FnOnce(&dregg_cell::state::CellState) -> Vec<Effect>,
     {
-        // Tooth 1 (CAP): the REAL is_attenuation, in-band. Refused ⇒ nothing committed.
-        if !dregg_cell::is_attenuation(held, required_rights) {
+        // Tooth 1 (CAP): the ONE requirement decision function, in-band. Refused ⇒
+        // nothing committed.
+        if !required_rights.satisfied_by(held) {
             return Err(WorldFireError::Gate(FireExecuteError::Gate(
                 dregg_app_framework::FireError::Unauthorized {
                     affordance: method.to_string(),
@@ -399,7 +403,7 @@ mod tests {
             .commit(
                 "write_slot",
                 &AuthRequired::None,
-                &AuthRequired::Either,
+                &Requirement::AtLeast(dregg_cell::Credential::Either),
                 |_live| {
                     let mut v = [0u8; 32];
                     v[31] = 42;
@@ -452,11 +456,11 @@ mod tests {
         );
         let receipts_before = world.borrow().receipts().len();
 
-        // held = Signature does NOT satisfy required = None (root) — refused in-band.
+        // held = Signature does NOT satisfy `Requirement::Root` — refused in-band.
         let refused = spine.commit(
             "write_slot",
             &AuthRequired::Signature,
-            &AuthRequired::None,
+            &Requirement::Root,
             |_live| {
                 vec![Effect::SetField {
                     cell: app_cell,

@@ -59,7 +59,7 @@ use starbridge_web_surface::transclusion::{
 };
 use starbridge_web_surface::web_of_cells::{DreggUri, WebOfCells};
 
-use dregg_cell::{AuthRequired, CellId};
+use dregg_cell::{AuthRequired, CellId, Credential, Requirement};
 
 use crate::affordance::{AffordanceSurface, CellAffordance};
 use crate::deos_app::DeosCell;
@@ -101,7 +101,7 @@ impl TranscludeAffordance {
     /// the citation), transcluding the finalized field at `source`.
     pub fn new(
         name: impl Into<String>,
-        required_rights: AuthRequired,
+        required_rights: Requirement,
         effect_template: dregg_turn::action::Effect,
         source: DreggUri,
     ) -> Self {
@@ -124,7 +124,7 @@ impl TranscludeAffordance {
 
     /// The cap-gate authority a viewer must HOLD to see/fire this affordance (the
     /// `required ⊆ held` ceiling — the framework's REAL `is_attenuation`).
-    pub fn required_rights(&self) -> &AuthRequired {
+    pub fn required_rights(&self) -> &Requirement {
         &self.affordance.required_rights
     }
 
@@ -310,7 +310,7 @@ pub enum TranscludeProjectError {
         /// The affordance the viewer could not see.
         affordance: String,
         /// The authority it required (which the viewer did not hold).
-        required: AuthRequired,
+        required: Requirement,
         /// The authority the viewer actually held.
         held: AuthRequired,
     },
@@ -426,14 +426,14 @@ mod tests {
         let doc = cid(10);
         let t = TranscludeAffordance::new(
             "peer-heading",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             cite_event(doc),
             uri.clone(),
         );
         let (cell, t) = DeosCell::new(doc, "doc")
             .affordance(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 cite_event(doc),
             ))
             .transclude(t);
@@ -479,7 +479,7 @@ mod tests {
         let (web, _uri) = published_source(2, b"<p>real published doc</p>");
         let absent = TranscludeAffordance::new(
             "missing-peer",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             cite_event(cid(20)),
             DreggUri::new(cid(222)), // never published
         );
@@ -515,7 +515,7 @@ mod tests {
         // the quote's SOURCE lineage is a strong (Either) authority over the source.
         let t = TranscludeAffordance::new(
             "peer-body",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             cite_event(doc),
             uri.clone(),
         );
@@ -559,7 +559,7 @@ mod tests {
         // The affordance requires `None` (root) to be seen — only a powerful holder.
         let t = TranscludeAffordance::new(
             "admin-only-peer",
-            AuthRequired::None,
+            Requirement::Root,
             cite_event(doc),
             uri.clone(),
         );
@@ -579,7 +579,9 @@ mod tests {
             }
             other => panic!("expected an Unauthorized (cap-gate) refusal, got {other:?}"),
         }
-        // The affordance's own gate agrees, both polarities (it IS is_attenuation):
+        // The wrapper's own gate agrees, both polarities — and it DELEGATES to the
+        // carried `CellAffordance`, it does not re-derive (the framework oracle in
+        // `affordance.rs` sweeps that equality over the whole cross-product).
         assert!(!t.authorized_for(&AuthRequired::Signature));
         assert!(t.authorized_for(&AuthRequired::None));
     }
@@ -592,7 +594,7 @@ mod tests {
         let doc = cid(50);
         let t = TranscludeAffordance::new(
             "peer",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             cite_event(doc),
             uri.clone(),
         );

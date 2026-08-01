@@ -40,6 +40,8 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{parse_view_tree, AppletView};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -70,7 +72,7 @@ fn counter_card_manifest() -> AppletManifest {
         seed_fields: vec![(0usize, 0u64)],
         affordances: vec![AffordanceSpec {
             name: "inc".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot { slot: 0 },
         }],
         held: AuthRequired::Signature,
@@ -85,7 +87,7 @@ fn card_applet(seed: u8, manifest: &AppletManifest) -> Applet {
 }
 
 /// Adopt a freshly-minted counter card for authoring under the given authority.
-fn editor_for(seed: u8, held: AuthRequired, edit_authority: AuthRequired) -> CardEditor {
+fn editor_for(seed: u8, held: AuthRequired, edit_authority: Requirement) -> CardEditor {
     let manifest = counter_card_manifest();
     let card = card_applet(seed, &manifest);
     CardEditor::adopt(card, manifest, AGENT, held, edit_authority)
@@ -138,7 +140,11 @@ fn body() {
     // `deos.editor.editView` to add a button + relabel the title. Real SpiderMonkey.
     let mut rt = JsRuntime::new().expect("boot SpiderMonkey (process-global, once)");
 
-    let editor = editor_for(0xC0, AuthRequired::None, AuthRequired::Signature);
+    let editor = editor_for(
+        0xC0,
+        Requirement::Root,
+        Requirement::AtLeast(Credential::Signature),
+    );
     // The agent's actual snippet — its hands rewriting its own card's UI:
     let agent_js = r#"
         // The agent decides to make its counter card clickable + clearer.
@@ -285,7 +291,11 @@ fn body() {
     // ── THE CAP TOOTH: an UNAUTHORIZED edit is REFUSED in-band ───────────────────────
     // The agent holds Signature, but this card's authoring requires Proof — an over-reach.
     // `editView` returns null, no patch lands, no turn commits, the view is untouched.
-    let overreach_editor = editor_for(0xCD, AuthRequired::Signature, AuthRequired::Proof);
+    let overreach_editor = editor_for(
+        0xCD,
+        Requirement::AtLeast(Credential::Signature),
+        Requirement::AtLeast(Credential::Proof),
+    );
     let overreach_js = r#"
         var card = deos.editor.card();
         // OVER-REACH: this card needs Proof, the agent holds only Signature.

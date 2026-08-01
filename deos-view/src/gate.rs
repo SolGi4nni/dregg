@@ -48,6 +48,7 @@
 
 use crate::tree::{HaloHandle, MenuItem, ViewNode};
 use dregg_cell::state::CellState;
+use dregg_cell::{Credential, Requirement};
 use starbridge_web_surface::{EvalContext, ReactiveAffordance, Viewer};
 
 /// **The FULL four-conjunct actuation gate** — `is_attenuation ∧ disclosure ∧
@@ -275,7 +276,7 @@ mod tests {
         ReactiveAffordance::new(
             CellAffordance::new(
                 "vote",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 Effect::SetField {
                     cell,
                     index: TALLY_SLOT as u64,

@@ -1,6 +1,7 @@
 //! The moldable inspector, trust/inspect-act/workspace/wonder/lanes panels + the ⤳ SHARE surface, with their action verbs.
 
 use super::*;
+use dregg_cell::{Credential, Requirement};
 
 impl Cockpit {
     /// The cell the Inspect surface is focused on — the inspector's camera-aim read
@@ -1979,7 +1980,7 @@ impl Cockpit {
         AffordanceSurface::new(cell)
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature, // tier-1: any signer
+                Requirement::AtLeast(Credential::Signature), // tier-1: any signer
                 Effect::EmitEvent {
                     cell,
                     event: Event::new([1u8; 32], vec![]),
@@ -1987,7 +1988,7 @@ impl Cockpit {
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either, // tier-2: the editor tier
+                Requirement::AtLeast(Credential::Either), // tier-2: the editor tier
                 Effect::EmitEvent {
                     cell,
                     event: Event::new([2u8; 32], vec![]),
@@ -1995,7 +1996,7 @@ impl Cockpit {
             ))
             .declare(CellAffordance::new(
                 "edit",
-                AuthRequired::Either, // tier-2: a real SetField write
+                Requirement::AtLeast(Credential::Either), // tier-2: a real SetField write
                 Effect::SetField {
                     cell,
                     index: 1,
@@ -2004,7 +2005,7 @@ impl Cockpit {
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None, // tier-3: only the root holder clears it
+                Requirement::Root, // tier-3: only the root holder clears it
                 Effect::IncrementNonce { cell },
             ))
     }

@@ -20,6 +20,7 @@
 
 use deos_js_core::{pack_u64, ApplyOp};
 use dregg_cell::AuthRequired;
+use dregg_cell::Requirement;
 
 // The two engines derive the applet cell id from these; seeding them identically makes the
 // two cells identical, so any divergence is the ApplyOp lowering, nothing else.
@@ -73,7 +74,7 @@ fn sm_run() -> Vec<u64> {
         .into_iter()
         .map(|(name, op)| Affordance {
             name: name.to_string(),
-            required: AuthRequired::None,
+            required: Requirement::Root,
             // The SM engine lowers ApplyOp to a live closure — through the SHARED
             // `deos_js_core::ApplyOp::into_closure` (which routes to `apply`).
             apply: op.into_closure(),
@@ -97,7 +98,7 @@ fn boa_run() -> Vec<u64> {
         .into_iter()
         .map(|(name, op)| Affordance {
             name: name.to_string(),
-            required: AuthRequired::None,
+            required: Requirement::Root,
             // The boa engine lowers ApplyOp through `slot`/`write` — the SAME core
             // arithmetic `apply` reaches.
             op,

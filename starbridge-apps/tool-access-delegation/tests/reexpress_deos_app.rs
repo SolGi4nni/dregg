@@ -26,6 +26,7 @@ use dregg_app_framework::{
     RehydrateError, Rehydration,
 };
 
+use dregg_cell::Requirement;
 use starbridge_tool_access_delegation::{
     CALLS_MADE_SLOT, grant_invoke_effect, seed_mandate, tad_app,
 };
@@ -356,7 +357,7 @@ fn grant_carries_the_real_grant_capability_effect() {
     let _ = (
         CellAffordance::new(
             "x",
-            AuthRequired::None,
+            Requirement::Root,
             Effect::EmitEvent {
                 cell: mandate,
                 event: Event {

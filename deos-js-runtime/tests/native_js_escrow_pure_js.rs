@@ -61,6 +61,7 @@ use deos_js_runtime::applet::{Affordance, ApplyOp};
 use deos_js_runtime::{CellWorld, FireError, NativeRuntime};
 use dregg_cell::interface::{method_symbol, ArgsSchema, InterfaceDescriptor, MethodSig, Semantics};
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 
 /// Each verified turn the world stamps pays this fee (see `CellWorld::commit`). Fees are
 /// burned (they leave the acting cell and are not credited elsewhere), so conservation is
@@ -117,12 +118,12 @@ fn escrow_affordances() -> Vec<Affordance> {
     vec![
         Affordance {
             name: "arm".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::SetSlotFromArg { slot: AMOUNT_SLOT },
         },
         Affordance {
             name: "settle".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::SetSlot {
                 slot: STATE_SLOT,
                 value: SETTLED,
@@ -130,7 +131,7 @@ fn escrow_affordances() -> Vec<Affordance> {
         },
         Affordance {
             name: "reclaim".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::SetSlot {
                 slot: STATE_SLOT,
                 value: RECLAIMED,
@@ -138,7 +139,7 @@ fn escrow_affordances() -> Vec<Affordance> {
         },
         Affordance {
             name: "status".into(),
-            required: AuthRequired::None,
+            required: Requirement::Root,
             op: ApplyOp::SetSlotFromArg { slot: 0 },
         },
     ]

@@ -9,6 +9,8 @@
 use deos_js_runtime::applet::{Affordance, ApplyOp, CellApplet};
 use deos_js_runtime::NativeRuntime;
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// A "counter" cell surface: slot 0 is the count; `inc`/`dec` mutate it (require
 /// `Signature`, which the driver holds); `reset` requires `Proof` (incomparable to
@@ -24,17 +26,17 @@ fn counter_applet() -> CellApplet {
         vec![
             Affordance {
                 name: "inc".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot { slot: 0 },
             },
             Affordance {
                 name: "dec".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SubFromSlot { slot: 0 },
             },
             Affordance {
                 name: "reset".into(),
-                required: AuthRequired::Proof,
+                required: Requirement::AtLeast(Credential::Proof),
                 op: ApplyOp::SetSlot { slot: 0, value: 0 },
             },
         ],

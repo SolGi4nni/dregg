@@ -45,10 +45,9 @@ fn open_board(executor: &EmbeddedExecutor, board: CellId, budget: u64) {
 
 #[test]
 fn the_three_tiers_are_the_attenuation_ladder() {
-    use dregg_cell::is_attenuation;
-    assert!(is_attenuation(&WORKER_RIGHTS, &AUDITOR_RIGHTS));
-    assert!(is_attenuation(&COORDINATOR_RIGHTS, &WORKER_RIGHTS));
-    assert!(!is_attenuation(&WORKER_RIGHTS, &COORDINATOR_RIGHTS));
+    assert!(AUDITOR_RIGHTS.satisfied_by(&AuthRequired::Either));
+    assert!(WORKER_RIGHTS.satisfied_by(&AuthRequired::None));
+    assert!(!COORDINATOR_RIGHTS.satisfied_by(&AuthRequired::Either));
 }
 
 // =============================================================================

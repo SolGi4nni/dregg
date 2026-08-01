@@ -49,7 +49,7 @@
 //! `required ⊆ held`.
 
 use dregg_cell::state::CellState;
-use dregg_cell::{AuthRequired, CellProgram, is_attenuation};
+use dregg_cell::{AuthRequired, CellProgram, Credential, Requirement, is_attenuation};
 use dregg_turn::action::Effect;
 use dregg_types::CellId;
 
@@ -76,12 +76,12 @@ pub struct CellAffordance {
     /// The operation name — the affordance's identity within its surface (the deos
     /// analogue of `hx-post="/comment"`). Unique per [`AffordanceSurface`].
     pub name: String,
-    /// The authority a viewer must HOLD to see/fire this affordance. The gate is
-    /// `is_attenuation(held, required)` = `required ⊆ held` — the viewer must hold
-    /// AT LEAST this much authority. A `view` affordance requires a narrow right
-    /// (any authenticated reader holds it); an `admin` affordance requires the
-    /// broad root right (only a powerful holder clears it).
-    pub required_rights: AuthRequired,
+    /// The authority a viewer must HOLD to see/fire this affordance, as a
+    /// [`Requirement`] — the intent is on the face of the value. A `view` affordance
+    /// is `AtLeast(Signature)` (any authenticated reader clears it); an `admin`
+    /// affordance is [`Requirement::Root`] (ONLY a holder of the lattice top clears
+    /// it); a genuinely ungated one is [`Requirement::Public`].
+    pub required_rights: Requirement,
     /// The effect this affordance would FIRE — a real [`dregg_turn::Effect`], the
     /// genuine turn the executor runs. NOT a stub: firing the affordance yields
     /// exactly this effect, ready to hand to the [`EmbeddedExecutor`].
@@ -93,7 +93,7 @@ impl CellAffordance {
     /// `effect_template` (a real [`dregg_turn::Effect`]).
     pub fn new(
         name: impl Into<String>,
-        required_rights: AuthRequired,
+        required_rights: Requirement,
         effect_template: Effect,
     ) -> Self {
         CellAffordance {
@@ -105,13 +105,15 @@ impl CellAffordance {
 
     /// Is this affordance authorized for a holder of `held` authority?
     ///
-    /// THE cap-gate, and it is the REAL one: `is_attenuation(held, required)` =
-    /// `required ⊆ held` (the proven attenuation lattice). True iff the holder's
-    /// authority is at least as broad as this affordance demands. This is the same
-    /// predicate the firmament runs to admit a child surface — NOT a parallel role
-    /// check.
+    /// THE cap-gate, and it is the ONE decision function —
+    /// [`Requirement::satisfied_by`], the same call every other affordance gate in
+    /// the workspace makes. `AtLeast(c)` is the proven attenuation lattice
+    /// (`required ⊆ held`, the predicate the firmament runs to admit a child
+    /// surface); `Root` admits only a holder of the lattice top; `Public` admits
+    /// everyone; `Never` admits nobody. NOT a parallel role check, and NOT a local
+    /// re-derivation that can drift from the other gates.
     pub fn authorized_for(&self, held: &AuthRequired) -> bool {
-        is_attenuation(held, &self.required_rights)
+        self.required_rights.satisfied_by(held)
     }
 
     /// A stable, `Eq`-able summary of the effect-template (its variant + the cells
@@ -255,7 +257,7 @@ pub enum FireError {
         /// The affordance the actor tried to fire.
         affordance: String,
         /// The authority it required (which the actor did not hold).
-        required: AuthRequired,
+        required: Requirement,
         /// The authority the actor actually held.
         held: AuthRequired,
     },
@@ -480,7 +482,10 @@ impl AffordanceSurface {
             .iter()
             .map(|a| AffordanceElement {
                 name: a.name.clone(),
-                required_rights: format!("{:?}", a.required_rights),
+                // The stable label (`"public"`/`"signature"`/…/`"root"`), which
+                // `affordance_endpoint::parse_requirement` round-trips — not the Debug
+                // shape, which is not a wire contract.
+                required_rights: a.required_rights.label().to_string(),
                 effect_kind: a.effect_summary().variant_tag().to_string(),
                 fire_endpoint: format!("{prefix}/fire/{}", a.name),
             })
@@ -1005,22 +1010,22 @@ mod tests {
         AffordanceSurface::named(doc, "doc")
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "edit",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 set_field(doc, 1),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 grant_cap(doc, cid(99)),
             ))
     }
@@ -1035,7 +1040,11 @@ mod tests {
     #[test]
     fn an_affordance_carries_a_real_effect_template() {
         let doc = cid(1);
-        let edit = CellAffordance::new("edit", AuthRequired::Either, set_field(doc, 3));
+        let edit = CellAffordance::new(
+            "edit",
+            Requirement::AtLeast(Credential::Either),
+            set_field(doc, 3),
+        );
         assert_eq!(
             edit.effect_summary(),
             EffectSummary::SetField {
@@ -1046,25 +1055,85 @@ mod tests {
         assert!(matches!(edit.effect_template, Effect::SetField { .. }));
     }
 
-    #[test]
-    fn the_cap_gate_is_the_real_is_attenuation() {
-        let doc = cid(1);
-        let view = CellAffordance::new("view", AuthRequired::Signature, emit_event(doc));
-        let admin = CellAffordance::new("admin", AuthRequired::None, grant_cap(doc, cid(99)));
+    /// Every `Requirement` shape, for the exhaustive oracle sweep.
+    fn all_requirements() -> Vec<Requirement> {
+        vec![
+            Requirement::Public,
+            Requirement::AtLeast(Credential::Signature),
+            Requirement::AtLeast(Credential::Proof),
+            Requirement::AtLeast(Credential::Either),
+            Requirement::AtLeast(Credential::Custom { vk_hash: [3u8; 32] }),
+            Requirement::Root,
+            Requirement::Never,
+        ]
+    }
 
-        // The gate agrees with is_attenuation by construction, both polarities.
-        assert!(view.authorized_for(&VIEWER));
+    /// Every authority a holder can carry.
+    fn all_held() -> Vec<AuthRequired> {
+        vec![
+            AuthRequired::None,
+            AuthRequired::Signature,
+            AuthRequired::Proof,
+            AuthRequired::Either,
+            AuthRequired::Impossible,
+            AuthRequired::Custom { vk_hash: [3u8; 32] },
+        ]
+    }
+
+    #[test]
+    fn the_cap_gate_is_exactly_the_one_requirement_decision_function() {
+        // THE ORACLE. This crate's gate must return what `Requirement::satisfied_by`
+        // returns — for EVERY requirement shape against EVERY holding, not just the
+        // pair a demo happens to exercise. A local special-case in `authorized_for`
+        // (the historic `None => true`) is exactly what this kills.
+        let doc = cid(1);
+        for required in all_requirements() {
+            for held in all_held() {
+                let aff = CellAffordance::new("op", required.clone(), emit_event(doc));
+                let gate = aff.authorized_for(&held);
+                assert_eq!(
+                    gate,
+                    required.satisfied_by(&held),
+                    "the framework gate diverged from Requirement::satisfied_by \
+                     for required={required:?} held={held:?}"
+                );
+                // The transclusion wrapper is the SAME gate, not a second one.
+                let quoted = crate::transclude_affordance::TranscludeAffordance::over(
+                    aff.clone(),
+                    starbridge_web_surface::web_of_cells::DreggUri::new(doc),
+                );
+                assert_eq!(
+                    quoted.authorized_for(&held),
+                    gate,
+                    "TranscludeAffordance must delegate, not re-derive"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn root_public_and_never_admit_independently_known_holder_sets() {
+        // The oracle above is an equality against the shared function; this one
+        // states the ANSWER independently, so a change to BOTH sides still fails.
+        let doc = cid(1);
+        let admitted = |req: Requirement| -> Vec<AuthRequired> {
+            let aff = CellAffordance::new("op", req, emit_event(doc));
+            all_held()
+                .into_iter()
+                .filter(|h| aff.authorized_for(h))
+                .collect()
+        };
+        assert_eq!(admitted(Requirement::Root), vec![AuthRequired::None]);
+        assert_eq!(admitted(Requirement::Public), all_held());
+        assert!(admitted(Requirement::Never).is_empty());
         assert_eq!(
-            view.authorized_for(&VIEWER),
-            is_attenuation(&VIEWER, &AuthRequired::Signature)
+            admitted(Requirement::AtLeast(Credential::Signature)),
+            vec![
+                AuthRequired::None,
+                AuthRequired::Signature,
+                AuthRequired::Either
+            ]
         );
-        assert!(!admin.authorized_for(&VIEWER));
-        assert_eq!(
-            admin.authorized_for(&VIEWER),
-            is_attenuation(&VIEWER, &AuthRequired::None)
-        );
-        // The admin (root) holder clears the admin affordance.
-        assert!(admin.authorized_for(&ADMIN));
     }
 
     // ── per-viewer projection — progressive attenuation ──
@@ -1151,7 +1220,7 @@ mod tests {
             refused.unwrap_err(),
             FireError::Unauthorized {
                 affordance: "admin".to_string(),
-                required: AuthRequired::None,
+                required: Requirement::Root,
                 held: AuthRequired::Signature,
             }
         );
@@ -1186,20 +1255,16 @@ mod tests {
     fn declare_replaces_by_name() {
         let doc = cid(91);
         let surface = AffordanceSurface::new(doc)
+            .declare(CellAffordance::new("x", Requirement::Root, emit_event(doc)))
             .declare(CellAffordance::new(
                 "x",
-                AuthRequired::None,
-                emit_event(doc),
-            ))
-            .declare(CellAffordance::new(
-                "x",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 set_field(doc, 0),
             ));
         assert_eq!(surface.affordances.len(), 1);
         assert_eq!(
             surface.get("x").unwrap().required_rights,
-            AuthRequired::Signature
+            Requirement::AtLeast(Credential::Signature)
         );
         assert_eq!(
             surface.get("x").unwrap().effect_summary(),
@@ -1222,7 +1287,7 @@ mod tests {
         let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [9u8; 32]);
         let executor = EmbeddedExecutor::new(&cclerk, "default");
         let surface = AffordanceSurface::named(cclerk.cell_id(), "self-doc").declare(
-            CellAffordance::new("view", AuthRequired::None, emit_event(cclerk.cell_id())),
+            CellAffordance::new("view", Requirement::Root, emit_event(cclerk.cell_id())),
         );
 
         let receipt = surface
@@ -1247,7 +1312,7 @@ mod tests {
         let executor = EmbeddedExecutor::new(&cclerk, "default");
         let surface = AffordanceSurface::new(cclerk.cell_id()).declare(CellAffordance::new(
             "bump",
-            AuthRequired::None,
+            Requirement::Root,
             emit_event(cclerk.cell_id()),
         ));
 
@@ -1278,12 +1343,12 @@ mod tests {
         let surface = AffordanceSurface::new(cell)
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 grant_cap(cell, cid(99)),
             ))
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(cell),
             ));
 
@@ -1322,12 +1387,23 @@ mod tests {
         assert_eq!(desc.elements.len(), 4);
 
         let edit = desc.elements.iter().find(|e| e.name == "edit").unwrap();
-        assert_eq!(edit.required_rights, "Either");
+        // The stable label the endpoint publishes and `parse_requirement` reads back.
+        assert_eq!(edit.required_rights, "either");
+        assert_eq!(
+            crate::affordance_endpoint::parse_requirement(&edit.required_rights),
+            Some(Requirement::AtLeast(Credential::Either))
+        );
         assert_eq!(edit.effect_kind, "SetField");
         assert_eq!(edit.fire_endpoint, "/doc-affordances/fire/edit");
 
         let admin = desc.elements.iter().find(|e| e.name == "admin").unwrap();
-        assert_eq!(admin.required_rights, "None");
+        // BEHAVIOUR/WIRE CHANGE: the admin tier publishes "root", not "None". The old
+        // spelling meant "ungated" to two readers and "root only" to three.
+        assert_eq!(admin.required_rights, "root");
+        assert_eq!(
+            crate::affordance_endpoint::parse_requirement(&admin.required_rights),
+            Some(Requirement::Root)
+        );
         assert_eq!(admin.effect_kind, "GrantCapability");
         assert_eq!(admin.fire_endpoint, "/doc-affordances/fire/admin");
     }
@@ -1376,7 +1452,7 @@ mod tests {
         GatedAffordance::new(
             CellAffordance::new(
                 "approve",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 set_field(cell, STATUS_SLOT),
             ),
             pending_cond(),
@@ -1485,7 +1561,11 @@ mod tests {
         // `projectGatedFor_all_fireable` + `projectGatedFor_state_reactive`.
         let doc = cid(6);
         let view = GatedAffordance::new(
-            CellAffordance::new("view", AuthRequired::Signature, emit_event(doc)),
+            CellAffordance::new(
+                "view",
+                Requirement::AtLeast(Credential::Signature),
+                emit_event(doc),
+            ),
             CellProgram::None, // admits every state
         );
         let surface = GatedSurface::named(doc, "council")
@@ -1530,7 +1610,7 @@ mod tests {
         // The proposal is the agent's OWN cell (so the embedded ledger has it); fire a
         // status bump that lands the cell in a state the program admits.
         let btn = GatedAffordance::new(
-            CellAffordance::new("approve", AuthRequired::None, set_field(cell, STATUS_SLOT)),
+            CellAffordance::new("approve", Requirement::Root, set_field(cell, STATUS_SLOT)),
             pending_cond(),
         );
         let pending = proposal_state(PENDING);

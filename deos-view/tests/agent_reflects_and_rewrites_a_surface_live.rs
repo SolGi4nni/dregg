@@ -44,6 +44,8 @@ use gpui::AppContext;
 
 use deos_view::headless::HeadlessRender;
 use deos_view::{parse_view_tree, AppletView};
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 static LILEX: &[u8] = include_bytes!("../assets/fonts/Lilex-Regular.ttf");
 static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
@@ -99,7 +101,7 @@ fn status_panel_manifest() -> AppletManifest {
         ],
         affordances: vec![AffordanceSpec {
             name: "refresh".into(),
-            required: AuthRequired::Signature,
+            required: Requirement::AtLeast(Credential::Signature),
             op: ApplyOp::AddToSlot {
                 slot: SLOT_REFRESHES,
             },
@@ -116,7 +118,7 @@ fn panel_applet(seed: u8, manifest: &AppletManifest) -> Applet {
 }
 
 /// Adopt a freshly-minted status panel for authoring under the given authority.
-fn editor_for(seed: u8, held: AuthRequired, edit_authority: AuthRequired) -> CardEditor {
+fn editor_for(seed: u8, held: AuthRequired, edit_authority: Requirement) -> CardEditor {
     let manifest = status_panel_manifest();
     let card = panel_applet(seed, &manifest);
     CardEditor::adopt(card, manifest, AGENT, held, edit_authority)
@@ -163,7 +165,11 @@ fn body() {
     // ── THE AGENT REFLECTS-ON, THEN REWRITES — its hands on a REAL cockpit surface ────
     let mut rt = JsRuntime::new().expect("boot SpiderMonkey (process-global, once)");
 
-    let editor = editor_for(0xC0, AuthRequired::None, AuthRequired::Signature);
+    let editor = editor_for(
+        0xC0,
+        Requirement::Root,
+        Requirement::AtLeast(Credential::Signature),
+    );
     let agent_js = r#"
         // (0) REFLECT-ON — read the live surface's OWN view-tree before touching it.
         // The agent did NOT build this surface; it is reading a real cockpit panel.
@@ -310,7 +316,11 @@ fn body() {
 
     // ── THE CAP TOOTH: an over-reach is REFUSED in-band ──────────────────────────────
     // This panel's authoring requires Proof; the agent holds only Signature.
-    let overreach_editor = editor_for(0xCD, AuthRequired::Signature, AuthRequired::Proof);
+    let overreach_editor = editor_for(
+        0xCD,
+        Requirement::AtLeast(Credential::Signature),
+        Requirement::AtLeast(Credential::Proof),
+    );
     let overreach_js = r#"
         var card = deos.editor.card();
         // The agent can still REFLECT (read) — reflection is unprivileged.

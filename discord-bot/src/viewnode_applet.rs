@@ -59,6 +59,8 @@ use deos_view::discord::{DiscordCard, parse_affordance_id, render_card};
 
 use crate::cipherclerk::UserCipherclerk;
 use crate::embeds;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// A model slot (a cell-state index). The card's bound values read these.
 type Slot = usize;
@@ -117,7 +119,7 @@ impl CardModel {
 /// cap-gated verified turn. `apply` is a *pure* function of the live model producing the
 /// (slot, new-value) writes; `required` is the authority the press must satisfy.
 struct CardAffordance {
-    required: AuthRequired,
+    required: Requirement,
     apply: Box<dyn Fn(&CardModel, i64) -> Vec<(Slot, FieldElement)> + Send>,
 }
 
@@ -218,7 +220,7 @@ impl CardApplet {
         affordances.insert(
             "bump".to_string(),
             CardAffordance {
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 apply: Box::new(|model, arg| {
                     let cur = model.field_u64(COUNT) as i64;
                     let next = (cur + arg).max(0) as u64;
@@ -231,7 +233,7 @@ impl CardApplet {
         affordances.insert(
             "reset".to_string(),
             CardAffordance {
-                required: AuthRequired::None,
+                required: Requirement::Root,
                 apply: Box::new(|_model, _arg| vec![(COUNT, pack_u64(0))]),
             },
         );

@@ -53,6 +53,7 @@ use crate::affordance::{
     AffordanceIntent, AffordanceSurface, EffectSummary, FireError, FireExecuteError,
 };
 use crate::cipherclerk::{AppCipherclerk, EmbeddedExecutor};
+use dregg_cell::{Credential, Requirement};
 
 /// An **optimistic affordance fire** — applied locally NOW, settled at the verified
 /// boundary.
@@ -224,12 +225,12 @@ mod tests {
         let surface = AffordanceSurface::named(cell, "live")
             .declare(CellAffordance::new(
                 "move",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(cell),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(cell),
             ));
         (cclerk, executor, surface)
@@ -285,7 +286,7 @@ mod tests {
         let ghost = CellId::from_bytes([200u8; 32]); // not in the ledger
         let surface = AffordanceSurface::named(ghost, "ghost").declare(CellAffordance::new(
             "move",
-            AuthRequired::None,
+            Requirement::Root,
             emit_event(ghost),
         ));
 
@@ -312,7 +313,7 @@ mod tests {
         let cell = cclerk.cell_id();
         let surface = surface.declare(CellAffordance::new(
             "edit",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             emit_event(cell),
         ));
         let refused = OptimisticFire::predict(&surface, "edit", cell, &VIEWER);

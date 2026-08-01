@@ -22,6 +22,7 @@ use dregg_app_framework::{
 };
 use dregg_cell::state::FieldElement;
 use dregg_cell::{CellProgram, StateConstraint};
+use dregg_cell::{Credential, Requirement};
 
 const STATUS_SLOT: usize = 0;
 const PENDING: u64 = 1;
@@ -69,7 +70,7 @@ fn board() -> (AppCipherclerk, EmbeddedExecutor, DeosCell) {
     let approve = GatedAffordance::new(
         CellAffordance::new(
             "approve",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             Effect::SetField {
                 cell: proposal,
                 index: STATUS_SLOT as u64,
@@ -80,7 +81,7 @@ fn board() -> (AppCipherclerk, EmbeddedExecutor, DeosCell) {
     );
     let comment = CellAffordance::new(
         "comment",
-        AuthRequired::Signature,
+        Requirement::AtLeast(Credential::Signature),
         Effect::EmitEvent {
             cell: proposal,
             event: Event {

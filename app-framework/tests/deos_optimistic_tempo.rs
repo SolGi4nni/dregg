@@ -24,6 +24,7 @@ use dregg_app_framework::{
     AffordanceSpec, AgentCipherclerk, AppCipherclerk, AppSpec, AuthRequired, CellAffordance,
     CellId, CellSpec, DeosApp, DeosCell, Effect, EmbeddedExecutor, Event, FireError, Settlement,
 };
+use dregg_cell::Requirement;
 
 fn agent() -> (AppCipherclerk, EmbeddedExecutor) {
     let cclerk = AppCipherclerk::new(AgentCipherclerk::new(), [0x69; 32]);
@@ -39,7 +40,7 @@ fn whiteboard(cclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> DeosApp {
         .cell(
             CellSpec::new("board")
                 .affordance(AffordanceSpec::emit("stroke", "either", "stroke"))
-                .affordance(AffordanceSpec::emit("clear", "none", "cleared")),
+                .affordance(AffordanceSpec::emit("clear", "root", "cleared")),
         )
         .into_app(cclerk.clone(), executor.clone())
         .expect("whiteboard spec is valid")
@@ -108,7 +109,7 @@ fn settle_rolls_back_when_the_boundary_rejects() {
     let ghost = CellId::from_bytes([0xEE; 32]); // not in the ledger
     let board = DeosCell::new(ghost, "ghost-board").affordance(CellAffordance::new(
         "stroke",
-        AuthRequired::None,
+        Requirement::Root,
         Effect::EmitEvent {
             cell: ghost,
             event: Event {

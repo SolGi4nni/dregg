@@ -28,6 +28,7 @@ use dregg_app_framework::{
     RehydrateError, Rehydration,
 };
 
+use dregg_cell::Requirement;
 use starbridge_supply_chain_provenance::{
     CUSTODIAN_SLOT, GENESIS_PREV, Handoff, custody_chain_digests, custody_chain_is_connected,
     grant_custody_effect, identity_field, item_app, seed_item, verify_chain,
@@ -424,7 +425,7 @@ fn grant_custody_carries_the_real_grant_capability_effect() {
     let _ = (
         CellAffordance::new(
             "x",
-            AuthRequired::None,
+            Requirement::Root,
             Effect::EmitEvent {
                 cell: item,
                 event: Event {

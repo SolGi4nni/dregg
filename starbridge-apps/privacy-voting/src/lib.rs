@@ -77,6 +77,7 @@ use dregg_app_framework::{
 };
 use dregg_cell::count_ge_set_commitment;
 use dregg_cell::program::SimpleStateConstraint;
+use dregg_cell::{Credential, Requirement};
 use dregg_turn::action::{WitnessBlob, WitnessKind};
 
 /// The deos-view CARD: the app's UI as a renderer-independent `deos.ui.*` view-tree.
@@ -708,11 +709,11 @@ pub fn register(ctx: &StarbridgeAppContext) -> ([u8; 32], [u8; 32]) {
 ///     `record_tally` and `close_poll` on top of everything a voter can do.
 ///
 /// So `Signature ⊂ Either ⊂ None` IS the viewer ⊂ voter ⊂ administrator ladder.
-pub const VIEWER_RIGHTS: AuthRequired = AuthRequired::Signature;
+pub const VIEWER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Signature);
 /// The voter rights tier (sig-or-proof — cast a vote + view). See [`VIEWER_RIGHTS`].
-pub const VOTER_RIGHTS: AuthRequired = AuthRequired::Either;
+pub const VOTER_RIGHTS: Requirement = Requirement::AtLeast(Credential::Either);
 /// The administrator rights tier (root — record tallies + close the poll + all). See [`VIEWER_RIGHTS`].
-pub const ADMINISTRATOR_RIGHTS: AuthRequired = AuthRequired::None;
+pub const ADMINISTRATOR_RIGHTS: Requirement = Requirement::Root;
 
 /// The fixed blinding token the in-test/seeded BALLOT companion cell is derived under (the
 /// production ballot uses the voter's own blinding token via the factory). The derived id
@@ -855,7 +856,7 @@ pub fn voting_app(cipherclerk: &AppCipherclerk, executor: &EmbeddedExecutor) -> 
                 .affordance(view)
                 .gated(record_tally)
                 .gated(close_poll)
-                .publish(VIEWER_RIGHTS),
+                .publish(AuthRequired::Signature),
         )
         .cell(
             DeosCell::new(ballot, "ballot")

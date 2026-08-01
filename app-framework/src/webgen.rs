@@ -30,6 +30,7 @@
 //! The generated file is deterministic: the same `ConstantsModule` always
 //! renders byte-identical output, so the drift check is a plain string compare.
 
+use dregg_cell::{Credential, Requirement};
 use std::fmt::Write as _;
 
 /// A named numeric slot constant (`pub const FOO_SLOT: u8 = 3` ⇒
@@ -474,7 +475,7 @@ mod tests {
         let surface = AffordanceSurface::named(doc, "doc")
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 Effect::EmitEvent {
                     cell: doc,
                     event: Event {
@@ -485,7 +486,7 @@ mod tests {
             ))
             .declare(CellAffordance::new(
                 "edit",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 Effect::SetField {
                     cell: doc,
                     index: 1,
@@ -509,11 +510,13 @@ mod tests {
         // Each element carries its required rights, effect kind, and fire endpoint —
         // from the Rust source of truth (anti-drift).
         assert!(a.contains("name: \"view\","));
-        assert!(a.contains("requiredRights: \"Signature\","));
+        // WIRE CHANGE: the generated JS now carries the stable `Requirement` label
+        // (`"signature"`/`"either"`/`"root"`), not the `AuthRequired` Debug shape.
+        assert!(a.contains("requiredRights: \"signature\","));
         assert!(a.contains("effectKind: \"EmitEvent\","));
         assert!(a.contains("fireEndpoint: \"/doc-affordances/fire/view\","));
         assert!(a.contains("name: \"edit\","));
-        assert!(a.contains("requiredRights: \"Either\","));
+        assert!(a.contains("requiredRights: \"either\","));
         assert!(a.contains("effectKind: \"SetField\","));
         assert!(a.contains("fireEndpoint: \"/doc-affordances/fire/edit\","));
         // The projection endpoint is named.

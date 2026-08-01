@@ -58,6 +58,7 @@ use dregg_cell::AuthRequired;
 use dregg_turn::action::{Effect, Event};
 use dregg_types::CellId;
 
+use dregg_cell::{Credential, Requirement};
 use starbridge_web_surface::affordance::{
     AffordanceIntent, AffordanceSurface, CellAffordance, EffectSummary, FireError,
 };
@@ -223,19 +224,19 @@ impl DeosCellSurface {
             // view: any authenticated member — a read logs an access event.
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(cell, *blake3::hash(b"deos-council-view").as_bytes()),
             ))
             // approve: the council tier (Either ⊃ Signature) — writes the status slot.
             .declare(CellAffordance::new(
                 "approve",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 set_field(cell, status_slot, *blake3::hash(b"approved").as_bytes()),
             ))
             // admin: the broad root tier (None) — only an owner clears it.
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(cell, *blake3::hash(b"deos-council-admin").as_bytes()),
             ))
     }

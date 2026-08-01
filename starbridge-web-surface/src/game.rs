@@ -93,7 +93,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dregg_cell::is_attenuation;
-use dregg_cell::AuthRequired;
+use dregg_cell::{AuthRequired, Credential, Requirement};
 use dregg_turn::{Effect, Event};
 use dregg_types::CellId;
 
@@ -787,7 +787,7 @@ impl Board {
                     };
                     surface = surface.declare(CellAffordance::new(
                         move_name(&unit.name, dest),
-                        side_rights(side),
+                        side_requirement(side),
                         effect,
                     ));
                 }
@@ -826,7 +826,7 @@ impl Board {
             };
             surface = surface.declare(CellAffordance::new(
                 capture_name(&obj.name),
-                side_rights(side),
+                side_requirement(side),
                 Effect::EmitEvent {
                     cell: obj.cell,
                     event,
@@ -1555,6 +1555,19 @@ pub fn side_rights(side: Side) -> AuthRequired {
     AuthRequired::Custom {
         vk_hash: VisionDeck::vk_hash_for(side),
     }
+}
+
+/// The same side identity in REQUIREMENT position — what an affordance demands a
+/// viewer HOLD, as a [`Requirement`] rather than an [`AuthRequired`].
+///
+/// `AtLeast(Custom { vk_hash })` is cleared by a holder of that exact vision-deck
+/// identity (and by a root holder); the OPPOSING side's identity is incomparable
+/// and refused. It is deliberately not expressible as `Public` or `Root`, which is
+/// the whole point of the split (`dregg_cell::Requirement`).
+pub fn side_requirement(side: Side) -> Requirement {
+    Requirement::AtLeast(Credential::Custom {
+        vk_hash: VisionDeck::vk_hash_for(side),
+    })
 }
 
 /// Pack a [`Coord`] into a field element ([u8; 32]) — the value a move's REAL

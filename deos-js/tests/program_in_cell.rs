@@ -16,6 +16,8 @@ use deos_js::js::{set_current_applet, take_current_applet};
 use deos_js::portable::{read_program_blob, AppletManifest, PortableApplet, PROGRAM_COLL};
 use deos_js::{AffordanceSpec, ApplyOp, JsRuntime};
 use dregg_cell::AuthRequired;
+use dregg_cell::Credential;
+use dregg_cell::Requirement;
 
 /// The portable manifest of a "counter" applet: slot 0 is the count; `inc`/`dec` mutate
 /// it (require Signature, which the driver holds); `reset` requires Proof (incomparable,
@@ -34,17 +36,17 @@ fn counter_manifest() -> AppletManifest {
         affordances: vec![
             AffordanceSpec {
                 name: "inc".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::AddToSlot { slot: 0 },
             },
             AffordanceSpec {
                 name: "dec".into(),
-                required: AuthRequired::Signature,
+                required: Requirement::AtLeast(Credential::Signature),
                 op: ApplyOp::SubFromSlot { slot: 0 },
             },
             AffordanceSpec {
                 name: "reset".into(),
-                required: AuthRequired::Proof,
+                required: Requirement::AtLeast(Credential::Proof),
                 op: ApplyOp::SetSlot { slot: 0, value: 0 },
             },
         ],

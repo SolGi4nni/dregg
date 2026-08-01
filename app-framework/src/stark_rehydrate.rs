@@ -70,6 +70,7 @@ use dregg_types::CellId;
 
 use crate::affordance::AffordanceSurface;
 use crate::rehydration::{Membrane, RehydrateError, RehydratedSurface, Rehydration};
+use dregg_cell::{Credential, Requirement};
 
 /// The rotated participant leg the snapshot carries: the real `Ir2BatchProof` + the
 /// descriptor it satisfies + the 38-PI vector it attests. Re-exported from the circuit
@@ -427,17 +428,17 @@ mod tests {
         AffordanceSurface::named(doc, "doc")
             .declare(CellAffordance::new(
                 "view",
-                AuthRequired::Signature,
+                Requirement::AtLeast(Credential::Signature),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "comment",
-                AuthRequired::Either,
+                Requirement::AtLeast(Credential::Either),
                 emit_event(doc),
             ))
             .declare(CellAffordance::new(
                 "admin",
-                AuthRequired::None,
+                Requirement::Root,
                 emit_event(doc),
             ))
     }

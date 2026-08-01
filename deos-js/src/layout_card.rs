@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 use crate::applet::{pack_u64, Affordance, Applet, Slot};
 use crate::card_editor::{ButtonProps, EditError, OnClick, TextProps, ViewEdit, ViewTree};
 use crate::program_doc::ProgramSource;
+use dregg_cell::{Credential, Requirement};
 
 /// The heap slot the layout card bumps to leave a provenance receipt for a *structural*
 /// reshape (a layout-patch, which does not itself write a model field). Disjoint from the
@@ -340,7 +341,7 @@ pub struct LayoutCard {
     held: AuthRequired,
     /// The authority a reshape on THIS card requires (the authoring cap tooth). `held` must
     /// satisfy it ([`dregg_cell::is_attenuation`]).
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
     /// The author every reshape patch is attributed to (the blame identity).
     author: Author,
 }
@@ -354,7 +355,7 @@ impl LayoutCard {
         card_pk: [u8; 32],
         author: Author,
         held: AuthRequired,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
     ) -> Self {
         Self::with_model(
             LayoutModel::cockpit_default(),
@@ -372,7 +373,7 @@ impl LayoutCard {
         card_pk: [u8; 32],
         author: Author,
         held: AuthRequired,
-        edit_authority: AuthRequired,
+        edit_authority: Requirement,
     ) -> Self {
         let card = Applet::mint(card_pk, [0u8; 32], &[], Vec::new(), held.clone());
         let initial = model.to_json();
@@ -419,7 +420,7 @@ impl LayoutCard {
 
     /// Whether the card is authorized to reshape the layout (the authoring cap tooth).
     fn authorized(&self) -> bool {
-        dregg_cell::is_attenuation(&self.held, &self.edit_authority)
+        self.edit_authority.satisfied_by(&self.held)
     }
 
     /// Fire a real `SetField` provenance turn bumping the card's authorship slot — how a
@@ -550,7 +551,7 @@ mod tests {
             [0xCB; 32],
             Author(42),
             /*held=*/ AuthRequired::None,
-            /*edit_authority=*/ AuthRequired::Signature,
+            /*edit_authority=*/ Requirement::AtLeast(Credential::Signature),
         )
     }
 
@@ -798,7 +799,7 @@ mod tests {
             [0xBA; 32],
             Author(7),
             /*held=*/ AuthRequired::Signature,
-            /*edit_authority=*/ AuthRequired::Proof,
+            /*edit_authority=*/ Requirement::AtLeast(Credential::Proof),
         );
         let before = card.view_source();
         let err = card.reshape(LayoutPatch::MoveSurface {

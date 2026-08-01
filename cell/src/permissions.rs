@@ -71,6 +71,177 @@ impl AuthRequired {
     }
 }
 
+/// A **credential rung** — an authorization a holder can actually PRESENT, and the
+/// only thing [`Requirement::AtLeast`] may demand.
+///
+/// This is deliberately NOT [`AuthRequired`]. The two degenerate rungs of that
+/// lattice are meaningless as the payload of an "at least this much" demand, and
+/// spelling them there is exactly how the affordance layer got two opposite
+/// readings of the same value:
+///
+/// * [`AuthRequired::None`] is the lattice **TOP**. `AtLeast(None)` would be
+///   satisfied only by a holder of `None` itself — i.e. it is [`Requirement::Root`]
+///   wearing a name that reads like "no requirement".
+/// * [`AuthRequired::Impossible`] is the lattice **BOTTOM**, narrower than
+///   everything, so `AtLeast(Impossible)` is satisfied by *every* holder — i.e. it
+///   is [`Requirement::Public`] wearing a name that reads like "never".
+///
+/// Neither is spellable here. `Public`, `Root` and `Never` are their own
+/// constructors on [`Requirement`], so the reading is on the face of the value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Credential {
+    /// An Ed25519 signature from the target's key.
+    Signature,
+    /// A ZK proof against the target's verification key.
+    Proof,
+    /// Either a signature OR a proof.
+    Either,
+    /// An app-defined witnessed predicate identified by `vk_hash` (see
+    /// [`AuthRequired::Custom`]).
+    Custom { vk_hash: [u8; 32] },
+}
+
+impl Credential {
+    /// The [`AuthRequired`] lattice element this credential denotes — the value the
+    /// attenuation comparison (`is_narrower_or_equal`) is run against.
+    pub fn as_auth_required(&self) -> AuthRequired {
+        match self {
+            Credential::Signature => AuthRequired::Signature,
+            Credential::Proof => AuthRequired::Proof,
+            Credential::Either => AuthRequired::Either,
+            Credential::Custom { vk_hash } => AuthRequired::Custom { vk_hash: *vk_hash },
+        }
+    }
+
+    /// The credential rung an [`AuthRequired`] denotes, or `None` for the two
+    /// degenerate ends of the lattice (`AuthRequired::None` = TOP,
+    /// `AuthRequired::Impossible` = BOTTOM) — which are [`Requirement::Root`] and
+    /// [`Requirement::Public`] respectively and must be named as such.
+    pub fn of_auth_required(auth: &AuthRequired) -> Option<Credential> {
+        match auth {
+            AuthRequired::Signature => Some(Credential::Signature),
+            AuthRequired::Proof => Some(Credential::Proof),
+            AuthRequired::Either => Some(Credential::Either),
+            AuthRequired::Custom { vk_hash } => Some(Credential::Custom { vk_hash: *vk_hash }),
+            AuthRequired::None | AuthRequired::Impossible => None,
+        }
+    }
+}
+
+/// **What a holder must HOLD to be admitted** — the requirement side of the
+/// authorization lattice, as its own type.
+///
+/// # Why this is not `AuthRequired`
+///
+/// [`AuthRequired`] answers "what must be PRESENTED to mutate this cell", and in
+/// that role [`AuthRequired::None`] correctly means *ungated*
+/// ([`Permissions::access`] defaults to it). The affordance layer reused the same
+/// enum to answer a DIFFERENT question — "how much authority must a viewer already
+/// hold" — where the comparison is `is_attenuation(held, required)` and `None` is
+/// the lattice TOP, i.e. the value only a root holder clears. One enum, two
+/// opposite readings of one variant, and the workspace split on which it meant.
+///
+/// `Requirement` makes the confusion unrepresentable rather than merely fixed:
+/// `Public` and `Root` are separate constructors and `AtLeast` cannot carry either.
+///
+/// The single decision function is [`Requirement::satisfied_by`]; every gate in the
+/// workspace must return exactly what it returns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Requirement {
+    /// **Ungated.** Every holder is admitted, including one holding nothing at all.
+    /// (The guarantee that still applies to the resulting action — conservation,
+    /// non-amplification, a cell's own `Permissions` — is enforced by the executor,
+    /// not by this gate.)
+    Public,
+    /// The holder must hold **at least** this credential on the attenuation lattice:
+    /// `required ⊆ held`, i.e. `credential.as_auth_required().is_narrower_or_equal(held)`.
+    /// Incomparable authorities do NOT clear it (a `Proof` holder does not clear
+    /// `AtLeast(Signature)`) — this is the real lattice, not a numeric rank.
+    AtLeast(Credential),
+    /// **Root only.** Satisfied by a holder of the lattice TOP
+    /// ([`AuthRequired::None`]) and by nobody else.
+    Root,
+    /// **Nothing clears it.** Fail-closed; no holder is ever admitted.
+    Never,
+}
+
+impl Requirement {
+    /// **THE decision function.** Is a holder of `held` authority admitted by this
+    /// requirement?
+    ///
+    /// Every affordance cap-gate in the workspace is this function; a gate that
+    /// computes its own answer is a gate that can drift from the other four.
+    pub fn satisfied_by(&self, held: &AuthRequired) -> bool {
+        match self {
+            Requirement::Public => true,
+            // `is_attenuation(held, required)` = `required.is_narrower_or_equal(held)`.
+            Requirement::AtLeast(credential) => {
+                credential.as_auth_required().is_narrower_or_equal(held)
+            }
+            Requirement::Root => matches!(held, AuthRequired::None),
+            Requirement::Never => false,
+        }
+    }
+
+    /// **The one bridge from a surface that has NOT migrated.**
+    ///
+    /// [`crate::interface::MethodSig::auth_required`] is documented as "what a caller
+    /// must hold to invoke this method" — the HOLD reading, so `None` there is the
+    /// lattice TOP (root), not "ungated". That descriptor is committed shape and is
+    /// still typed `AuthRequired`; this is the single named site that reads it as a
+    /// requirement, so the reading is stated once rather than re-guessed per caller.
+    ///
+    /// It is deliberately NOT a `From` impl: an implicit conversion is how the two
+    /// readings got mixed in the first place. Migrating `MethodSig` onto `Requirement`
+    /// retires this function.
+    pub fn from_interface_auth(auth: &AuthRequired) -> Requirement {
+        match auth {
+            AuthRequired::None => Requirement::Root,
+            AuthRequired::Impossible => Requirement::Never,
+            other => Requirement::AtLeast(
+                Credential::of_auth_required(other).expect("None/Impossible are handled above"),
+            ),
+        }
+    }
+
+    /// A short stable label (`"public"`, `"signature"`, `"proof"`, `"either"`,
+    /// `"custom"`, `"root"`, `"never"`) — the wire/UI spelling, and the inverse of
+    /// [`Requirement::parse_label`].
+    pub fn label(&self) -> &'static str {
+        match self {
+            Requirement::Public => "public",
+            Requirement::AtLeast(Credential::Signature) => "signature",
+            Requirement::AtLeast(Credential::Proof) => "proof",
+            Requirement::AtLeast(Credential::Either) => "either",
+            Requirement::AtLeast(Credential::Custom { .. }) => "custom",
+            Requirement::Root => "root",
+            Requirement::Never => "never",
+        }
+    }
+
+    /// Parse a [`Requirement::label`]. `None` for an unknown label — and note there
+    /// is deliberately no `"none"` spelling: the old string meant either `public` or
+    /// `root` depending on who read it, so a descriptor carrying it must be rewritten
+    /// rather than reinterpreted.
+    pub fn parse_label(label: &str) -> Option<Requirement> {
+        match label {
+            "public" => Some(Requirement::Public),
+            "signature" => Some(Requirement::AtLeast(Credential::Signature)),
+            "proof" => Some(Requirement::AtLeast(Credential::Proof)),
+            "either" => Some(Requirement::AtLeast(Credential::Either)),
+            "root" => Some(Requirement::Root),
+            "never" => Some(Requirement::Never),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Requirement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// The kind of authorization actually provided.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthKind {
@@ -242,4 +413,108 @@ pub enum Action {
     IncrementNonce,
     Delegate,
     Access,
+}
+
+#[cfg(test)]
+mod requirement_tests {
+    use super::*;
+
+    /// Every `AuthRequired` a holder can carry — the exhaustive domain the gate
+    /// oracles sweep.
+    pub(crate) const ALL_HELD: [AuthRequired; 6] = [
+        AuthRequired::None,
+        AuthRequired::Signature,
+        AuthRequired::Proof,
+        AuthRequired::Either,
+        AuthRequired::Impossible,
+        AuthRequired::Custom { vk_hash: [9u8; 32] },
+    ];
+
+    #[test]
+    fn public_and_root_are_the_two_opposite_readings_and_they_differ() {
+        // The entire reason this type exists: `AuthRequired::None` in requirement
+        // position meant BOTH of these. They are not the same predicate — a
+        // `Signature` holder clears one and not the other.
+        let sig = AuthRequired::Signature;
+        assert!(Requirement::Public.satisfied_by(&sig));
+        assert!(!Requirement::Root.satisfied_by(&sig));
+
+        // And they differ on every holding EXCEPT the lattice top itself.
+        for held in ALL_HELD {
+            let public = Requirement::Public.satisfied_by(&held);
+            let root = Requirement::Root.satisfied_by(&held);
+            assert!(public, "Public admits everyone, including {held:?}");
+            assert_eq!(
+                root,
+                held == AuthRequired::None,
+                "Root admits exactly the lattice top, not {held:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn at_least_is_the_attenuation_lattice_not_a_numeric_rank() {
+        let sig = Requirement::AtLeast(Credential::Signature);
+        let either = Requirement::AtLeast(Credential::Either);
+
+        // Signature ⊆ Signature, Signature ⊆ Either, Signature ⊆ None(top).
+        assert!(sig.satisfied_by(&AuthRequired::Signature));
+        assert!(sig.satisfied_by(&AuthRequired::Either));
+        assert!(sig.satisfied_by(&AuthRequired::None));
+        // INCOMPARABLE: a Proof holder does NOT clear a Signature requirement.
+        assert!(!sig.satisfied_by(&AuthRequired::Proof));
+        assert!(!Requirement::AtLeast(Credential::Proof).satisfied_by(&AuthRequired::Signature));
+        // Either ⊄ Signature — the wider demand is refused by the narrower holder.
+        assert!(!either.satisfied_by(&AuthRequired::Signature));
+        // An `Impossible` holder clears nothing.
+        assert!(!sig.satisfied_by(&AuthRequired::Impossible));
+        assert!(!either.satisfied_by(&AuthRequired::Impossible));
+    }
+
+    #[test]
+    fn never_admits_nobody_not_even_root() {
+        for held in ALL_HELD {
+            assert!(
+                !Requirement::Never.satisfied_by(&held),
+                "Never must refuse {held:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn at_least_cannot_express_public_or_root_because_credential_excludes_them() {
+        // The unrepresentability, stated as a test: the two degenerate lattice ends
+        // have NO `Credential`, so `AtLeast` cannot be handed either of them.
+        assert_eq!(Credential::of_auth_required(&AuthRequired::None), None);
+        assert_eq!(
+            Credential::of_auth_required(&AuthRequired::Impossible),
+            None
+        );
+        // Every other rung round-trips.
+        for held in ALL_HELD {
+            match Credential::of_auth_required(&held) {
+                Some(c) => assert_eq!(c.as_auth_required(), held),
+                None => assert!(matches!(
+                    held,
+                    AuthRequired::None | AuthRequired::Impossible
+                )),
+            }
+        }
+    }
+
+    #[test]
+    fn labels_round_trip_and_there_is_no_none_spelling() {
+        for req in [
+            Requirement::Public,
+            Requirement::AtLeast(Credential::Signature),
+            Requirement::AtLeast(Credential::Proof),
+            Requirement::AtLeast(Credential::Either),
+            Requirement::Root,
+            Requirement::Never,
+        ] {
+            assert_eq!(Requirement::parse_label(req.label()), Some(req.clone()));
+        }
+        // The ambiguous old spelling is refused, not reinterpreted.
+        assert_eq!(Requirement::parse_label("none"), None);
+    }
 }

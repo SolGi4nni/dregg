@@ -28,6 +28,7 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use dregg_perf::regime;
 
 use dregg_cell::AuthRequired;
+use dregg_cell::{Credential, Requirement};
 use dregg_turn::action::Effect;
 use starbridge_v2::affordance::{AffordanceSurface, CellAffordance};
 use starbridge_v2::shell::Shell;
@@ -87,12 +88,12 @@ fn bench_ui_projection(c: &mut Criterion) {
     let surf = AffordanceSurface::new(backing)
         .declare(CellAffordance::new(
             "view",
-            AuthRequired::Signature,
+            Requirement::AtLeast(Credential::Signature),
             Effect::IncrementNonce { cell: backing },
         ))
         .declare(CellAffordance::new(
             "admin",
-            AuthRequired::Either,
+            Requirement::AtLeast(Credential::Either),
             Effect::IncrementNonce { cell: backing },
         ));
     group.bench_function("affordance_project", |b| {

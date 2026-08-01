@@ -50,7 +50,7 @@ fn vault_spec() -> AppSpec {
             CellSpec::new("vault")
                 .affordance(AffordanceSpec::emit("balance", "signature", "balance-read"))
                 .affordance(AffordanceSpec::edit("spend", "either", 1))
-                .affordance(AffordanceSpec::emit("admin", "none", "admin-acted"))
+                .affordance(AffordanceSpec::emit("admin", "root", "admin-acted"))
                 .publish("signature"),
         )
         .discoverable(vec!["vault".into()])

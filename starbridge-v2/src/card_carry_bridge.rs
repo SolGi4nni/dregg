@@ -61,6 +61,7 @@ use dregg_cell::AuthRequired;
 use deos_matrix::MembraneEnvelope;
 
 use crate::distributed_card::{self, CardForkEnvelope, DistributedCardError};
+use dregg_cell::Requirement;
 
 /// **Seal a driven card-fork and wrap it into a card-carry membrane** — the
 /// originator's send half. Drives nothing itself: the caller drives its fork first
@@ -76,7 +77,7 @@ use crate::distributed_card::{self, CardForkEnvelope, DistributedCardError};
 pub fn seal_card_fork_to_membrane(
     card: &SharedCard,
     fork: &CardFork,
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
 ) -> MembraneEnvelope {
     let (bytes, root) = distributed_card::seal_fork(card, fork, edit_authority);
     deos_matrix::card_fork_membrane(&bytes, root)

@@ -42,6 +42,7 @@
 use deos_js::card_editor::Author;
 use deos_js::{CardFork, CardStitch, EditError, SharedCard};
 use dregg_cell::AuthRequired;
+use dregg_cell::Requirement;
 use serde::{Deserialize, Serialize};
 
 /// **A card-fork made portable — the card crossing an instance boundary.**
@@ -62,7 +63,7 @@ pub struct CardForkEnvelope {
     pub seed_view_source: String,
     /// The authoring authority a fork's `held` must satisfy to author the card (the
     /// cap tooth). [`AuthRequired`] is serde; carried verbatim.
-    pub edit_authority: AuthRequired,
+    pub edit_authority: Requirement,
     /// This principal's blame identity (`dregg_doc::Author(pub u64)`), carried as the
     /// raw `u64` (the type is not serde-derived, but it is just a `u64`).
     pub who: u64,
@@ -75,7 +76,7 @@ impl CardForkEnvelope {
     /// Build a portable envelope from a live card-fork (the card's shared seed, this
     /// principal's driven view, its author + the authoring authority). The originator
     /// calls this (via [`seal_fork`]) to make its fork cross the boundary.
-    pub fn of(card: &SharedCard, fork: &CardFork, edit_authority: AuthRequired) -> Self {
+    pub fn of(card: &SharedCard, fork: &CardFork, edit_authority: Requirement) -> Self {
         CardForkEnvelope {
             seed_view_source: card.seed_view_source().to_string(),
             edit_authority,
@@ -133,7 +134,7 @@ impl CardForkEnvelope {
 pub fn seal_fork(
     card: &SharedCard,
     fork: &CardFork,
-    edit_authority: AuthRequired,
+    edit_authority: Requirement,
 ) -> (Vec<u8>, [u8; 32]) {
     let env = CardForkEnvelope::of(card, fork, edit_authority);
     let root = env.fork_root();
