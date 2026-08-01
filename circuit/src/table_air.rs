@@ -421,6 +421,20 @@ pub const BYTE_TABLE_AIR_JSON: &str =
 pub const MEM_BOUNDARY_TABLE_AIR_JSON: &str =
     include_str!("../descriptors/table-airs/dregg-ir2-mem-boundary-v1.json");
 
+/// The memory op-log table AIR, emitted by `Dregg2.Circuit.Emit.MemoryTableEmit.memoryTable`.
+///
+/// The flat OP LOG of the IR-v2 memory argument: one row per memory operation, carrying the
+/// positional serial chain, the read discipline, the serial-gap range check, both `ir2_mem_check`
+/// Blum legs and the `ir2_mem_addrs` closure QUERY (the boundary is the server). Its algebra used
+/// to be the `Ir2Air::Memory` arm; those lines are deleted.
+///
+/// ⚑ The Lean file REFUTES one of the three claims that arm asserted in comments: the gap gate
+/// DEFINES `prev_serial = serial − 1 − gap` in the field rather than bounding it, so a claimed
+/// prior serial of `p − 5` at serial 1 satisfies every gate. The refusal lives in the
+/// `ir2_mem_check` multiset, not here.
+pub const MEMORY_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-memory-v1.json");
+
 /// The decoded map-absent table AIR. Panics on a malformed artifact — the artifact is
 /// `include_str!`d, so a failure here is a build-time defect, not a runtime input.
 pub fn map_absent_table_air() -> LeanTableAir {
@@ -471,6 +485,22 @@ pub fn mem_boundary_table_air_shared() -> Arc<LeanTableAir> {
         Arc::new(
             parse_table_air(MEM_BOUNDARY_TABLE_AIR_JSON)
                 .expect("the checked-in memory-boundary table AIR must decode"),
+        )
+    }))
+}
+
+/// The decoded memory op-log table AIR.
+pub fn memory_table_air() -> LeanTableAir {
+    (*memory_table_air_shared()).clone()
+}
+
+/// The decoded memory op-log table AIR, parsed ONCE per process.
+pub fn memory_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(MEMORY_TABLE_AIR_JSON)
+                .expect("the checked-in memory table AIR must decode"),
         )
     }))
 }
@@ -709,6 +739,72 @@ mod tests {
             matches!(send.tuple[2], WindowExpr::Const(0)),
             "the init image is published at serial ZERO — the anchor the whole Blum chain \
              bottoms out in"
+        );
+    }
+
+    /// The memory op-log emission decodes at the deployed shape. The counts are derived here from
+    /// the layout constants (one 30-bit decomposition of `decomp_cols(30)` columns) rather than
+    /// transcribed from the Lean `#guard`, so the two sides are independent.
+    #[test]
+    fn the_memory_emission_decodes_at_the_deployed_shape() {
+        let t = memory_table_air();
+        assert_eq!(t.name, "dregg-ir2-memory-v1");
+
+        // Width: 8 named columns + the gap's limb block.
+        let dc = crate::descriptor_ir2::decomp_cols_pub(30);
+        assert_eq!(dc, 10);
+        assert_eq!(t.width, 8 + dc);
+        assert_eq!(t.width, 18);
+
+        // Gates: 2 booleans + the real prefix + the serial anchor + the serial increment + the
+        // read discipline + the gap definition + one decomposition (2 top bits + top recomp +
+        // whole recomp).
+        assert_eq!(t.gates.len(), 2 + 1 + 1 + 1 + 1 + 1 + 4);
+        assert_eq!(t.gates.len(), 11);
+        assert_eq!(t.gate_count_sel(RowSel::All), 8);
+        assert_eq!(t.gate_count_sel(RowSel::Transition), 2);
+        assert_eq!(t.gate_count_sel(RowSel::First), 1);
+        assert_eq!(t.gate_count_sel(RowSel::Last), 0);
+
+        // Interactions: 7 full limbs, the op log, the two Blum legs, the closure query.
+        assert_eq!(t.bus_count_on("ir2_byte"), 7);
+        assert_eq!(t.bus_count_on("ir2_mem_log"), 1);
+        assert_eq!(t.bus_count_on("ir2_mem_check"), 2);
+        assert_eq!(t.bus_count_on("ir2_mem_addrs"), 1);
+        assert_eq!(t.interactions.len(), 11);
+    }
+
+    /// ⚑ THE TWO SIDES OF `ir2_mem_addrs`, pinned from the CLIENT end. The op log QUERIES the
+    /// declared-address table; the boundary SERVES it. Both halves are asserted here against the
+    /// two decoded emissions at once, because a swap on either side leaves every gate green.
+    #[test]
+    fn the_op_log_queries_the_address_table_the_boundary_serves() {
+        let mem = memory_table_air();
+        let bnd = mem_boundary_table_air();
+        assert_eq!(mem.bus_count_op("ir2_mem_addrs", BusOp::Query), 1);
+        assert_eq!(mem.bus_count_op("ir2_mem_addrs", BusOp::Provide), 0);
+        assert_eq!(bnd.bus_count_op("ir2_mem_addrs", BusOp::Provide), 1);
+        assert_eq!(bnd.bus_count_op("ir2_mem_addrs", BusOp::Query), 0);
+
+        // The op PUBLISHES its own image at its own serial and CONSUMES the prior one it claims.
+        assert_eq!(mem.bus_count_op("ir2_mem_check", BusOp::Send), 1);
+        assert_eq!(mem.bus_count_op("ir2_mem_check", BusOp::Receive), 1);
+        let send = mem
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_mem_check" && i.op == BusOp::Send)
+            .expect("one publish");
+        // (addr, value, serial) — the SERIAL column, not the claimed prior one.
+        assert_eq!(send.tuple.len(), 3);
+        assert!(matches!(send.tuple[2], WindowExpr::Loc(5)));
+        let recv = mem
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_mem_check" && i.op == BusOp::Receive)
+            .expect("one consume");
+        assert!(
+            matches!(recv.tuple[2], WindowExpr::Loc(3)),
+            "the CLAIMED prior serial"
         );
     }
 

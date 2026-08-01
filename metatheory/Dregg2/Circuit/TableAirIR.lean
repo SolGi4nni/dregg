@@ -190,6 +190,30 @@ def TableGate.holdsAt (g : TableGate) (env : VmRowEnv) (isFirst isLast : Bool) :
 def TableAir.RowHolds (t : TableAir) (env : VmRowEnv) (isFirst isLast : Bool) : Prop :=
   ∀ g ∈ t.gates, g.holdsAt env isFirst isLast
 
+/-- ⚑ **A GATE'S VERDICT ON A CONCRETE WINDOW IS DECIDABLE**, and that is what lets an emitter
+exhibit BOTH poles against the EMITTED gate list rather than against a hand-transcribed copy of it.
+
+Without this, a false-pole witness has to be stated over a `structure` of ℤ facts that re-writes
+the gate equations by hand — and a re-transcription is exactly the step a cutover is supposed to
+delete. Written as a `match` on the literal constructors (not via `unfold` + `split`) so the
+instance REDUCES in the kernel, which is what `decide` needs. -/
+instance TableGate.instDecidableHoldsAt (g : TableGate) (env : VmRowEnv) (f l : Bool) :
+    Decidable (g.holdsAt env f l) :=
+  match g with
+  | ⟨.all, body⟩ =>
+      inferInstanceAs (Decidable (body.eval env ≡ 0 [ZMOD 2013265921]))
+  | ⟨.first, body⟩ =>
+      inferInstanceAs (Decidable (f = true → body.eval env ≡ 0 [ZMOD 2013265921]))
+  | ⟨.last, body⟩ =>
+      inferInstanceAs (Decidable (l = true → body.eval env ≡ 0 [ZMOD 2013265921]))
+  | ⟨.transition, body⟩ =>
+      inferInstanceAs (Decidable (l = false → body.eval env ≡ 0 [ZMOD 2013265921]))
+
+/-- …and therefore so is the whole row verdict, over the emitted gate list. -/
+instance TableAir.instDecidableRowHolds (t : TableAir) (env : VmRowEnv) (f l : Bool) :
+    Decidable (t.RowHolds env f l) :=
+  inferInstanceAs (Decidable (∀ g ∈ t.gates, g.holdsAt env f l))
+
 /-- The gates hold on EVERY row of a trace of `n` row windows: window `i` is FIRST iff `i = 0`
 and LAST iff `i + 1 = n`. -/
 def TableAir.Holds (t : TableAir) (rows : List VmRowEnv) : Prop :=

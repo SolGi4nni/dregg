@@ -416,9 +416,13 @@ const BUS_P2_1: &str = "ir2_p2_narrow";
 /// The arbitrary-full-state permutation bus used to replay multi-block sponge transitions.
 const BUS_P2_STATE16: &str = "ir2_p2_state16";
 const BUS_BYTE: &str = "ir2_byte";
+// ⓘ `BUS_MEM_LOG` still has a Rust reader — `Ir2Air::Main`'s `mem_op` send — so the name is a
+// genuine coupling between this file and `MemoryTableEmit.lean`'s receive. `BUS_MEM_CHECK` and
+// `BUS_MEM_ADDRS` had exactly two readers, the `Memory` and `MemBoundary` arms, and BOTH are now
+// Lean-authored: no Rust object needs those names any more, so they are deleted rather than kept
+// as constants nothing reads (unlike the `MEM_*` COLUMN offsets, which the witness producer still
+// needs and which are therefore written by name below).
 const BUS_MEM_LOG: &str = "ir2_mem_log";
-const BUS_MEM_CHECK: &str = "ir2_mem_check";
-const BUS_MEM_ADDRS: &str = "ir2_mem_addrs";
 const BUS_MAP_LOG: &str = "ir2_map_log";
 const BUS_FACT: &str = "ir2_fact";
 const BUS_UMEM_LOG: &str = "ir2_umem_log";
@@ -2058,6 +2062,32 @@ pub fn mem_boundary_rows_for(
         .ok_or_else(|| "descriptor assembles no memory boundary table".to_string())
 }
 
+/// The HONEST memory OP-LOG rows the deployed prover would assemble for this descriptor, trace and
+/// declared address list — `build_traces`' own output, not a re-derivation. Sibling of
+/// [`mem_boundary_rows_for`], for the same reason: a differential must mutate a genuine row,
+/// because a hand-built one would be a second author of the layout.
+pub fn mem_rows_for(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    mem_boundary: &MemBoundaryWitness,
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let traces = build_traces(
+        desc,
+        &layout,
+        presence,
+        base_trace,
+        mem_boundary,
+        &[],
+        &UMemBoundaryWitness::default(),
+        true,
+    )?;
+    traces
+        .memory
+        .ok_or_else(|| "descriptor assembles no memory table".to_string())
+}
+
 /// `i64`-valued convenience wrapper over [`ir2_eval_accepts`] so callers (the faithfulness
 /// differential) need not depend on `p3-baby-bear` directly: the `(row, pi)` integers are lifted
 /// to canonical BabyBear felts (the same `i64_to_babybear` lowering the descriptor evaluator
@@ -2627,8 +2657,6 @@ pub enum Ir2Air {
     /// same permutation constraints and width as [`Ir2Air::Chip`], but serve only the fixed
     /// `[16, input_state16, output_state16]` bus; it is absent from every legacy descriptor.
     ChipState16,
-    /// The memory access table (Blum discipline + the read/write multiset legs).
-    Memory,
     /// The map-ops table (in-row sorted-Poseidon2 openings).
     MapOps,
     /// ⚑ **A WHOLE Lean-authored TABLE AIR, interpreted** — the shared auxiliary instances whose
@@ -2655,6 +2683,12 @@ pub enum Ir2Air {
     ///   SERVES. The Lean file proves what the deleted arm asserted in a parenthesis — the
     ///   declared addresses are distinct AS FELTS, and the magnitude gate (not the gap gate) is
     ///   what buys it.
+    /// * **memory** (`MemoryTableEmit.lean` → `dregg-ir2-memory-v1.json`) — the flat OP LOG: the
+    ///   positional serial chain, read discipline, the serial-gap range check, both Blum legs and
+    ///   the `ir2_mem_addrs` closure QUERY. ⚑ The Lean file REFUTES the third sentence the deleted
+    ///   arm asserted: the gap gate DEFINES `prev_serial = serial − 1 − gap` in the field and does
+    ///   NOT bound it, so a felt `p − 5` claimed at serial 1 satisfies every gate. What refuses it
+    ///   is the `ir2_mem_check` multiset, which is a different object.
     LeanTable(Arc<LeanTableAir>),
     /// The UNIVERSAL memory table (the one Blum multiset over `Domain × κ`).
     UMemory,
@@ -2697,7 +2731,6 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
             Ir2Air::Chip | Ir2Air::ChipState16 => CHIP_WIDTH,
-            Ir2Air::Memory => MEM_WIDTH,
             Ir2Air::MapOps => MAP_WIDTH,
             Ir2Air::LeanTable(t) => t.width,
             Ir2Air::UMemory => UM_WIDTH,
@@ -3501,81 +3534,6 @@ where
                         local[CHIP_MULT].into() * is_fact,
                     );
                 }
-            }
-
-            // ----------------------------------------------------------------
-            Ir2Air::Memory => {
-                let is_real: AB::Expr = local[MEM_IS_REAL].into();
-                let kind: AB::Expr = local[MEM_KIND].into();
-                builder.assert_zero(is_real.clone() * (is_real.clone() - AB::Expr::ONE));
-                builder.assert_zero(kind.clone() * (kind.clone() - AB::Expr::ONE));
-                // Real rows form a prefix.
-                builder.when_transition().assert_zero(
-                    (AB::Expr::ONE - local[MEM_IS_REAL].into()) * next[MEM_IS_REAL].into(),
-                );
-                // Positional serials: 1, 2, 3, … (Lean: op i carries serial i+1).
-                builder
-                    .when_first_row()
-                    .assert_zero(local[MEM_SERIAL].into() - AB::Expr::ONE);
-                builder.when_transition().assert_zero(
-                    next[MEM_SERIAL].into() - local[MEM_SERIAL].into() - AB::Expr::ONE,
-                );
-                // Read discipline: a read returns exactly its claimed previous value.
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - kind)
-                        * (local[MEM_VALUE].into() - local[MEM_PREV_VALUE].into()),
-                );
-                // prev_serial < serial (Disciplined): gap = is_real·(serial − 1 − prev_serial)
-                // and gap ∈ [0, 2^30) by byte decomposition.
-                builder.assert_zero(
-                    local[MEM_GAP].into()
-                        - is_real.clone()
-                            * (local[MEM_SERIAL].into()
-                                - AB::Expr::ONE
-                                - local[MEM_PREV_SERIAL].into()),
-                );
-                let limbs: Vec<AB::Var> =
-                    local[MEM_GAP_LIMB0..MEM_GAP_LIMB0 + decomp_cols(MEM_GAP_BITS)].to_vec();
-                eval_decomp(builder, local[MEM_GAP].into(), &limbs, MEM_GAP_BITS);
-
-                // The table carries EXACTLY the gathered log (memTableFaithful).
-                let mem_log = PermutationCheckBus::new(BUS_MEM_LOG);
-                mem_log.receive(
-                    builder,
-                    [
-                        local[MEM_ADDR].into(),
-                        local[MEM_VALUE].into(),
-                        local[MEM_PREV_VALUE].into(),
-                        local[MEM_PREV_SERIAL].into(),
-                        local[MEM_KIND].into(),
-                    ],
-                    is_real.clone(),
-                );
-                // The Blum multiset legs: every op consumes its claimed prior tuple and
-                // publishes its own (reads republish their value — Lean writeSetFrom).
-                let mem_check = PermutationCheckBus::new(BUS_MEM_CHECK);
-                mem_check.send(
-                    builder,
-                    [
-                        local[MEM_ADDR].into(),
-                        local[MEM_VALUE].into(),
-                        local[MEM_SERIAL].into(),
-                    ],
-                    is_real.clone(),
-                );
-                mem_check.receive(
-                    builder,
-                    [
-                        local[MEM_ADDR].into(),
-                        local[MEM_PREV_VALUE].into(),
-                        local[MEM_PREV_SERIAL].into(),
-                    ],
-                    is_real.clone(),
-                );
-                // Address closure: every op address is a declared boundary address.
-                let addrs = LookupBus::new(BUS_MEM_ADDRS);
-                addrs.lookup_key(builder, [local[MEM_ADDR].into()], is_real);
             }
 
             // ----------------------------------------------------------------
@@ -5477,21 +5435,32 @@ fn build_traces(
         let mut mem_rows: Vec<Vec<BabyBear>> = Vec::with_capacity(mem_height);
         for i in 0..mem_height {
             let serial = (i + 1) as u32;
-            let mut row = vec![BabyBear::ZERO; MEM_ADDR];
             let (tuple, is_real): ([BabyBear; 5], bool) = if i < mem_log.len() {
                 (mem_log[i], true)
             } else {
                 ([BabyBear::ZERO; 5], false)
             };
-            row.extend_from_slice(&tuple);
-            row.push(BabyBear::new(serial));
-            row.push(if is_real {
+            // ⚑ WRITTEN BY NAME, not by push order — the same reason `4805cb6bb` gave for the
+            // boundary producer. Since the `Ir2Air::Memory` arm was deleted, this is the LAST
+            // thing in Rust that knows what column 3 of an op-log row means; the AIR's author is
+            // `Dregg2/Circuit/Emit/MemoryTableEmit.lean`, which reads columns by its OWN `MEM_*`
+            // defs (`#guard`-pinned to these numbers). Positional pushes would leave that
+            // knowledge in the ORDER of eight calls and the constants dead.
+            // `the_emitted_columns_round_trip_the_memory_op_log` checks the two sides agree.
+            let mut row = vec![BabyBear::ZERO; MEM_GAP + 1];
+            row[MEM_ADDR] = tuple[MEM_ADDR];
+            row[MEM_VALUE] = tuple[MEM_VALUE];
+            row[MEM_PREV_VALUE] = tuple[MEM_PREV_VALUE];
+            row[MEM_PREV_SERIAL] = tuple[MEM_PREV_SERIAL];
+            row[MEM_KIND] = tuple[MEM_KIND];
+            row[MEM_SERIAL] = BabyBear::new(serial);
+            row[MEM_IS_REAL] = if is_real {
                 BabyBear::ONE
             } else {
                 BabyBear::ZERO
-            });
+            };
             let gap = if is_real {
-                let prev = tuple[3].as_u32();
+                let prev = tuple[MEM_PREV_SERIAL].as_u32();
                 if prev >= serial {
                     return Err(format!(
                         "memory op {i}: claimed prev serial {prev} not before own serial {serial}"
@@ -5506,7 +5475,7 @@ fn build_traces(
                     "memory op {i}: serial gap {gap} >= 2^{MEM_GAP_BITS}"
                 ));
             }
-            row.push(BabyBear::new(gap));
+            row[MEM_GAP] = BabyBear::new(gap);
             fill_decomp(gap, MEM_GAP_BITS, &mut row, &mut byte_hist);
             debug_assert_eq!(row.len(), MEM_WIDTH);
             mem_rows.push(row);
@@ -6700,7 +6669,10 @@ fn instance_airs(
         airs.push(Ir2Air::LeanTable(crate::table_air::byte_table_air_shared()));
     }
     if presence.memory {
-        airs.push(Ir2Air::Memory);
+        // The Lean-authored memory op-log table AIR — `Emit/MemoryTableEmit.lean`.
+        airs.push(Ir2Air::LeanTable(
+            crate::table_air::memory_table_air_shared(),
+        ));
         // The Lean-authored memory-boundary table AIR — `Emit/MemBoundaryTableEmit.lean`.
         airs.push(Ir2Air::LeanTable(
             crate::table_air::mem_boundary_table_air_shared(),
@@ -8024,7 +7996,6 @@ mod tests {
                     Ir2Air::Main { .. } => "main",
                     Ir2Air::Chip => "chip",
                     Ir2Air::ChipState16 => "chip_state16",
-                    Ir2Air::Memory => "memory",
                     Ir2Air::MapOps => "map_ops",
                     // The label is the Lean author's own emitted name, so a second table AIR
                     // gets its own row here without touching this match.
@@ -8032,6 +8003,7 @@ mod tests {
                         "dregg-ir2-map-absent-v1" => "map_absent",
                         "dregg-ir2-byte-v1" => "byte",
                         "dregg-ir2-mem-boundary-v1" => "boundary",
+                        "dregg-ir2-memory-v1" => "memory",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }

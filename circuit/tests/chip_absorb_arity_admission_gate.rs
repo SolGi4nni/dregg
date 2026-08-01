@@ -57,6 +57,17 @@
 //! field and are parsed out of it. Descriptors are decoded with the DEPLOYED
 //! `parse_vm_descriptor2`, never a second JSON reader.
 //!
+//! ⚑ **The Lean-authored TABLE AIRs are in scope too, and were NOT until 2026-08-01.**
+//! `circuit/descriptors/table-airs/*.json` advertise `"ir": 2` like every other emission, but they
+//! are a different object (`"kind": "table_air"`) and `parse_vm_descriptor2` refuses them — so from
+//! the moment the first one landed, this gate reported each as *"advertises `ir: 2` and the
+//! deployed parser refuses"* and went RED, while auditing NONE of their chip tuples. Both halves
+//! were wrong in the same direction: the corpus that had grown was the one the gate stopped
+//! reading. They are now decoded with the DEPLOYED `parse_table_air` and their chip-bus
+//! interactions run through the SAME admission and lane checks as a descriptor `Lookup` — one
+//! implementation, so a table AIR cannot be audited by a laxer copy. That matters most for
+//! `dregg-ir2-map-absent-v1`, whose 17 `ir2_p2` queries are the live in-circuit double-spend gate.
+//!
 //! ⚠ **One directory is excluded and it is named here**: `circuit/tests/fixtures/
 //! chip-arity-gate-redproof/`, which holds the pre-`57105f387` arity-9 descriptor this gate's own
 //! red-proof runs against. `redproof_fixture_is_red` asserts the exclusion is not hiding a green:
@@ -65,6 +76,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use dregg_circuit::descriptor_ir2::WindowExpr;
 use dregg_circuit::descriptor_ir2::{
     CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, TID_P2, TID_P2_NARROW,
     TID_P2_STATE16, VmConstraint2, chip_absorb_all_lanes, chip_air_row_accepts,
@@ -73,6 +85,7 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::plonky3_prover::POSEIDON2_WIDTH;
+use dregg_circuit::table_air::{LeanTableAir, parse_table_air};
 
 // ============================================================================
 // §1 — the three maps, each DERIVED
@@ -204,9 +217,10 @@ fn read_head(path: &Path, n: usize) -> Option<String> {
 
 /// Walk `root` and collect every emitted descriptor: `.json` files that parse as IR-v2, plus every
 /// descriptor embedded in a tab field of a staged registry `.tsv`.
-fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>) {
+fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>, Vec<FoundTable>) {
     let mut found = Vec::new();
     let mut unparsable = Vec::new();
+    let mut tables = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&dir) else {
@@ -231,6 +245,20 @@ fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>) {
                 let Ok(text) = std::fs::read_to_string(&p) else {
                     continue;
                 };
+                // ⚑ A Lean-authored TABLE AIR advertises `"ir": 2` too, and is a DIFFERENT object.
+                // Route it to the deployed table decoder rather than letting the descriptor parser
+                // refuse it — a refusal here reads as "the gate found something" while actually
+                // meaning "the gate stopped reading this corpus".
+                if looks_like_table_air(&head) {
+                    match parse_table_air(&text) {
+                        Ok(t) => tables.push(FoundTable {
+                            origin: rel(root, &p),
+                            table: t,
+                        }),
+                        Err(e) => unparsable.push(format!("{}: {e}", rel(root, &p))),
+                    }
+                    continue;
+                }
                 match parse_vm_descriptor2(&text) {
                     Ok(desc) => found.push(Found {
                         origin: rel(root, &p),
@@ -263,8 +291,21 @@ fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>) {
         }
     }
     found.sort_by(|a, b| a.origin.cmp(&b.origin));
+    tables.sort_by(|a, b| a.origin.cmp(&b.origin));
     unparsable.sort();
-    (found, unparsable)
+    (found, unparsable, tables)
+}
+
+/// Does this JSON head declare the TABLE-AIR wire kind? Matched on the emitted key so a descriptor
+/// can never be mistaken for one; `parse_table_air` re-checks it and refuses otherwise.
+fn looks_like_table_air(head: &str) -> bool {
+    head.contains("\"kind\":\"table_air\"") || head.contains("\"kind\": \"table_air\"")
+}
+
+/// A decoded Lean-authored table AIR and where it came from.
+struct FoundTable {
+    origin: String,
+    table: LeanTableAir,
 }
 
 fn rel(root: &Path, p: &Path) -> String {
@@ -294,13 +335,102 @@ fn populated(e: &LeanExpr) -> bool {
     !matches!(e, LeanExpr::Const(0))
 }
 
+/// The input-lane count of a chip tuple on each BUS. The three strings are the deployed `BUS_*`
+/// constants (`descriptor_ir2.rs`), read here rather than re-derived: a table AIR names its buses
+/// by string because the buses cross-cut the five-table `TableId` roster.
+fn chip_input_lanes_for_bus(bus: &str) -> Option<usize> {
+    match bus {
+        "ir2_p2" | "ir2_p2_narrow" => Some(CHIP_RATE),
+        "ir2_p2_state16" => Some(POSEIDON2_WIDTH),
+        _ => None,
+    }
+}
+
+/// One chip-bus tuple, reduced to what §3 actually checks: the arity TAG (iff it is a wire
+/// constant), the bus's input-lane count, and per lane whether the emitter routed a value in.
+///
+/// ⚑ Both corpora reduce to this — a descriptor `Lookup` over `LeanExpr`, and a Lean TABLE AIR
+/// interaction over `WindowExpr` — so the admission and lane checks have exactly ONE
+/// implementation. A second copy for the table AIRs is how one of them ends up laxer.
+struct ChipTuple {
+    at: String,
+    lanes: usize,
+    arity: Option<i64>,
+    /// Per input lane: whether it is POPULATED, and how it renders in a finding.
+    lane: Vec<(bool, String)>,
+}
+
 struct Verdict {
     violations: Vec<String>,
     lookups: usize,
     descriptors: usize,
+    /// Chip tuples audited on Lean-authored TABLE AIRs (a subset of `lookups`).
+    table_lookups: usize,
 }
 
-fn audit(found: &[Found], admitted: &BTreeSet<u32>) -> Verdict {
+/// The admission + per-lane checks, for ONE chip tuple from either corpus.
+fn check_chip_tuple(
+    v: &mut Verdict,
+    genuine: &[Vec<bool>],
+    dropped: &[Vec<bool>],
+    admitted: &BTreeSet<u32>,
+    t: &ChipTuple,
+) {
+    v.lookups += 1;
+    let at = &t.at;
+
+    // -- The arity must be a wire CONSTANT. The chip's whole domain separation is the arity TAG;
+    //    an arity chosen by the witness is not gateable and not separated.
+    let Some(c) = t.arity else {
+        v.violations.push(format!(
+            "{at}: chip lookup arity is a witness expression, not a constant — \
+             the chip's domain separation IS the arity tag"
+        ));
+        return;
+    };
+    if !(0..=CHIP_RATE as i64).contains(&c) {
+        v.violations.push(format!(
+            "{at}: arity {c} is outside 0..={CHIP_RATE} — the tuple has only \
+             {CHIP_RATE} input lanes to seed"
+        ));
+        return;
+    }
+    let a = c as u32;
+
+    // -- 1. ADMISSION. Derived from the AIR, never restated.
+    if !admitted.contains(&a) {
+        v.violations.push(format!(
+            "{at}: arity {a} is NOT ADMITTED by the chip AIR (derived admitted set: \
+             {admitted:?}) — this descriptor is UNPROVABLE, no witness exists"
+        ));
+        // Still report the lane damage below: the two modes are independent findings.
+    }
+
+    // -- 2/3. Per-lane: AIR-pinned, and generator-dropped.
+    for i in 0..t.lanes {
+        let Some((pop, render)) = t.lane.get(i) else {
+            break;
+        };
+        if !pop {
+            continue;
+        }
+        if !genuine[a as usize][i] {
+            v.violations.push(format!(
+                "{at}: lane in{i} carries {render} but the chip AIR PINS in{i} to zero at \
+                 arity {a} — unsatisfiable"
+            ));
+        }
+        if dropped[a as usize][i] {
+            v.violations.push(format!(
+                "{at}: lane in{i} carries {render} but the deployed absorb DROPS in{i} at \
+                 arity {a} — the value never enters the preimage, and the descriptor \
+                 looks like it worked"
+            ));
+        }
+    }
+}
+
+fn audit(found: &[Found], tables: &[FoundTable], admitted: &BTreeSet<u32>) -> Verdict {
     // Derived once, consulted per lookup. Both are only ever indexed at an arity §3 has already
     // bounded by `CHIP_RATE`, so the generator leg stops at its own domain edge.
     let genuine: Vec<Vec<bool>> = (0..=SWEEP_CEILING).map(derive_air_genuine_lanes).collect();
@@ -310,6 +440,7 @@ fn audit(found: &[Found], admitted: &BTreeSet<u32>) -> Verdict {
         violations: Vec::new(),
         lookups: 0,
         descriptors: found.len(),
+        table_lookups: 0,
     };
     for f in found {
         for (ci, k) in f.desc.constraints.iter().enumerate() {
@@ -319,57 +450,47 @@ fn audit(found: &[Found], admitted: &BTreeSet<u32>) -> Verdict {
             let Some(lanes) = chip_input_lanes(l.table) else {
                 continue;
             };
-            v.lookups += 1;
-            let at = format!("{} [{}] constraint {ci}", f.origin, f.desc.name);
-
-            // -- The arity must be a wire CONSTANT. The chip's whole domain separation is the
-            //    arity TAG; an arity chosen by the witness is not gateable and not separated.
-            let Some(LeanExpr::Const(c)) = l.tuple.first() else {
-                v.violations.push(format!(
-                    "{at}: chip lookup arity is a witness expression, not a constant — \
-                     the chip's domain separation IS the arity tag"
-                ));
+            let t = ChipTuple {
+                at: format!("{} [{}] constraint {ci}", f.origin, f.desc.name),
+                lanes,
+                arity: match l.tuple.first() {
+                    Some(LeanExpr::Const(c)) => Some(*c),
+                    _ => None,
+                },
+                lane: l
+                    .tuple
+                    .iter()
+                    .skip(1)
+                    .map(|e| (populated(e), format!("{e:?}")))
+                    .collect(),
+            };
+            check_chip_tuple(&mut v, &genuine, &dropped, admitted, &t);
+        }
+    }
+    // ⚑ The SAME checks over the Lean-authored TABLE AIRs, whose chip absorbs were dark until
+    // 2026-08-01 (see the module doc). Their tuples are `WindowExpr` rather than `LeanExpr`; only
+    // the two leaf predicates differ, and both reduce into the shared `ChipTuple` above.
+    for f in tables {
+        for (ii, i) in f.table.interactions.iter().enumerate() {
+            let Some(lanes) = chip_input_lanes_for_bus(&i.bus) else {
                 continue;
             };
-            let c = *c;
-            if !(0..=CHIP_RATE as i64).contains(&c) {
-                v.violations.push(format!(
-                    "{at}: arity {c} is outside 0..={CHIP_RATE} — the tuple has only \
-                     {CHIP_RATE} input lanes to seed"
-                ));
-                continue;
-            }
-            let a = c as u32;
-
-            // -- 1. ADMISSION. Derived from the AIR, never restated.
-            if !admitted.contains(&a) {
-                v.violations.push(format!(
-                    "{at}: arity {a} is NOT ADMITTED by the chip AIR (derived admitted set: \
-                     {admitted:?}) — this descriptor is UNPROVABLE, no witness exists"
-                ));
-                // Still report the lane damage below: the two modes are independent findings.
-            }
-
-            // -- 2/3. Per-lane: AIR-pinned, and generator-dropped.
-            for i in 0..lanes {
-                let Some(e) = l.tuple.get(1 + i) else { break };
-                if !populated(e) {
-                    continue;
-                }
-                if !genuine[a as usize][i] {
-                    v.violations.push(format!(
-                        "{at}: lane in{i} carries {e:?} but the chip AIR PINS in{i} to zero at \
-                         arity {a} — unsatisfiable"
-                    ));
-                }
-                if dropped[a as usize][i] {
-                    v.violations.push(format!(
-                        "{at}: lane in{i} carries {e:?} but the deployed absorb DROPS in{i} at \
-                         arity {a} — the value never enters the preimage, and the descriptor \
-                         looks like it worked"
-                    ));
-                }
-            }
+            v.table_lookups += 1;
+            let t = ChipTuple {
+                at: format!("{} [{}] interaction {ii}", f.origin, f.table.name),
+                lanes,
+                arity: match i.tuple.first() {
+                    Some(WindowExpr::Const(c)) => Some(*c),
+                    _ => None,
+                },
+                lane: i
+                    .tuple
+                    .iter()
+                    .skip(1)
+                    .map(|e| (!matches!(e, WindowExpr::Const(0)), format!("{e:?}")))
+                    .collect(),
+            };
+            check_chip_tuple(&mut v, &genuine, &dropped, admitted, &t);
         }
     }
     v
@@ -481,13 +602,16 @@ fn every_emitted_descriptor_asks_the_chip_for_an_admitted_arity() {
         .map(PathBuf::from)
         .unwrap_or_else(repo_root);
     let admitted = derive_admitted_arities();
-    let (found, unparsable) = collect_descriptors(&root);
-    let v = audit(&found, &admitted);
+    let (found, unparsable, tables) = collect_descriptors(&root);
+    let v = audit(&found, &tables, &admitted);
 
     println!(
-        "scanned {} descriptors ({} chip lookups) under {}",
+        "scanned {} descriptors + {} Lean table AIRs ({} chip tuples, {} of them on table AIRs) \
+         under {}",
         v.descriptors,
+        tables.len(),
         v.lookups,
+        v.table_lookups,
         root.display()
     );
     let mut hist: std::collections::BTreeMap<(usize, i64), usize> = Default::default();
@@ -566,15 +690,19 @@ fn redproof_dir() -> PathBuf {
 #[test]
 fn redproof_fixture_is_red() {
     let admitted = derive_admitted_arities();
-    let (found, unparsable) = collect_descriptors(&redproof_dir());
+    let (found, unparsable, tables) = collect_descriptors(&redproof_dir());
     assert!(unparsable.is_empty(), "{unparsable:?}");
+    assert!(
+        tables.is_empty(),
+        "the red-proof fixture holds no table AIR"
+    );
     assert_eq!(found.len(), 1, "expected exactly the pre-fix golden");
     assert_eq!(
         found[0].desc.name,
         "dregg-blinded-membership-4ary-wide-general::v1"
     );
 
-    let v = audit(&found, &admitted);
+    let v = audit(&found, &tables, &admitted);
     for s in &v.violations {
         println!("RED · {s}");
     }
@@ -622,7 +750,7 @@ fn the_corrected_descriptor_is_green() {
         origin: path.display().to_string(),
         desc,
     }];
-    let v = audit(&found, &admitted);
+    let v = audit(&found, &[], &admitted);
     assert!(
         v.violations.is_empty(),
         "the CORRECTED descriptor is red — {:?}",
@@ -665,6 +793,7 @@ fn each_mode_bites_on_its_own() {
             origin: "modeA".into(),
             desc: mk(4, 4),
         }],
+        &[],
         &admitted,
     );
     for s in &a.violations {
@@ -683,6 +812,7 @@ fn each_mode_bites_on_its_own() {
             origin: "modeB".into(),
             desc: mk(5, 0),
         }],
+        &[],
         &admitted,
     );
     for s in &b.violations {
@@ -700,6 +830,7 @@ fn each_mode_bites_on_its_own() {
             origin: "control".into(),
             desc: mk(16, 15),
         }],
+        &[],
         &admitted,
     );
     assert!(

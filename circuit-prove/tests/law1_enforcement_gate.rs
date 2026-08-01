@@ -973,7 +973,16 @@ const BASELINE: &[(&str, usize)] = &[
     // -> `circuit/descriptors/table-airs/dregg-ir2-byte-v1.json`). The arm's two filtered
     // `assert_zero`s and its `table_entry` leg are gone; the interpreter gained a `RowSel` factor
     // and a `BusOp::Provide` case, which are lowering, not authoring.
-    ("circuit/src/descriptor_ir2.rs", 281),
+    // LOWERED 281 -> 265 on 2026-08-01 (third pass): the `Ir2Air::Memory` arm — the flat memory OP
+    // LOG, i.e. the positional serial chain, the read discipline, the serial-gap range check, both
+    // `ir2_mem_check` Blum legs and the `ir2_mem_addrs` closure query — was DELETED and replaced by
+    // a fourth `Ir2Air::LeanTable` instance (`Dregg2/Circuit/Emit/MemoryTableEmit.lean` ->
+    // `circuit/descriptors/table-airs/dregg-ir2-memory-v1.json`). The `Memory` VARIANT is gone from
+    // the enum entirely, not just its body. ⓘ Two bus-name constants (`BUS_MEM_CHECK`,
+    // `BUS_MEM_ADDRS`) went with it: their only readers were the `Memory` and `MemBoundary` arms
+    // and both are Lean-authored now. The `MEM_*` COLUMN offsets did NOT go — the witness producer
+    // is the last thing in Rust that knows what column 3 means, so it writes its row BY NAME.
+    ("circuit/src/descriptor_ir2.rs", 265),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

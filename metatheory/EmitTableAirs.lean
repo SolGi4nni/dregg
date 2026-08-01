@@ -14,6 +14,7 @@ their `#guard` shape pins and byte golden); this file only SERIALIZES them.
 import Dregg2.Circuit.Emit.MapAbsentTableEmit
 import Dregg2.Circuit.Emit.ByteTableEmit
 import Dregg2.Circuit.Emit.MemBoundaryTableEmit
+import Dregg2.Circuit.Emit.MemoryTableEmit
 
 open Dregg2.Circuit.TableAirIR (TableAir emitTableAirJson)
 
@@ -21,9 +22,10 @@ open Dregg2.Circuit.TableAirIR (TableAir emitTableAirJson)
 def tableAirs : List (String × TableAir) :=
   [ ("dregg-ir2-map-absent-v1.json",   Dregg2.Circuit.Emit.MapAbsentTableEmit.mapAbsentTable)
   , ("dregg-ir2-byte-v1.json",         Dregg2.Circuit.Emit.ByteTableEmit.byteTable)
-  , ("dregg-ir2-mem-boundary-v1.json", Dregg2.Circuit.Emit.MemBoundaryTableEmit.memBoundaryTable) ]
+  , ("dregg-ir2-mem-boundary-v1.json", Dregg2.Circuit.Emit.MemBoundaryTableEmit.memBoundaryTable)
+  , ("dregg-ir2-memory-v1.json",       Dregg2.Circuit.Emit.MemoryTableEmit.memoryTable) ]
 
-#guard tableAirs.length == 3
+#guard tableAirs.length == 4
 
 def main : IO Unit := do
   for (file, t) in tableAirs do
