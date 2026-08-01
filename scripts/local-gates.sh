@@ -43,6 +43,31 @@ GATES=(
   "independence-controls|300|bash scripts/check-independence-controls.sh"
   "ratchet-darkness|120|bash scripts/check-ratchet-darkness.sh"
   "lean-orphans|120|bash scripts/check-lean-orphans.sh"
+  # A metatheory/Dregg2 module that CARRIES a differential guard (#guard / #assert_axioms /
+  # #assert_namespace_axioms) but is UNROOTED (built by no default lake target, so its guard
+  # never runs) or SORRY-carrying (its guard runs vacuously below a hole). Strictly stronger
+  # than `lean-orphans`: that gate WAVES THROUGH an orphan if it is in lean-orphans-allow.txt
+  # ("the exclusion is deliberate"); this one does NOT — a module that CLAIMS something
+  # checkable and is deliberately never built is a deliberate SILENT CLAIM. Born 2026-08-01 from
+  # `Dregg2.Bridge.MinaWrapFtEval0Weld`: a `#guard`-backed headline ("six gate bodies reproduce
+  # the linearization constant term") with a GAMMA_CHAL `sorry` FROM ITS BIRTH COMMIT, in NO
+  # lake target, so the guard NEVER RAN and the headline was never machine-checked — and the
+  # guard also sat below a real gateLinConst defect. Two silences stacked.
+  # ⚑ Census at HEAD: 77 unrooted + 1 sorry (Dregg2.Bignum.LedgerBalance's named completeness
+  # pole) = 78, recorded in scripts/guard-modules-baseline.txt as a BURNDOWN LEDGER (not an
+  # acceptance list). The gate reds on any (kind, module) NOT in the baseline (the next silent
+  # claim stands out against green) and on a STALE row (a rooted/discharged module must retire
+  # its own row — the census only ratchets DOWN). It PRINTS the full census every run. Pure text,
+  # no Lean toolchain, ~2s (a git-archive HEAD extract keeps it churn-safe on a shared tree).
+  # ⚠ It does NOT catch a TAUTOLOGICAL guard (#guard 1==1) — that is SEMANTIC vacuity, a harder
+  # residual than the SYNTACTIC (never-built / built-below-a-hole) class this closes.
+  # The `-red` row is not optional: the headline is a NEGATIVE assertion, which passes just as
+  # happily on a broken reader. Its synthetic-tree red-proof checks the unrooted arm, the sorry
+  # arm, the control (a clean rooted guard is NOT flagged), the admit-identifier/sorryAx-name-
+  # literal false-positive guards, both ratchet directions (new -> red, stale -> red), and that
+  # an empty (blinded) scan trips every non-vacuity floor. The working tree is never touched.
+  "check-guard-modules|180|python3 scripts/check-guard-modules.py --rev HEAD"
+  "check-guard-modules-red|60|python3 scripts/check-guard-modules.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
   "no-degraded-felt|120|bash scripts/check-no-degraded-felt.sh"
@@ -87,12 +112,20 @@ GATES=(
   # the reason above — it must RUN the chip.
   # ⚠ NEVER fix a red here by widening the admitted set. It is the chip's S-box budget; a bad
   # arity changes in `metatheory/` and re-emits.
-  # ⓘ RED ON LANDING, on one real finding: `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1`
-  # asks for arity 8 and arity 14, neither admitted — the SOLE emitted hidden-span descriptor, and
-  # it is unprovable. Its `GuardedHidingSpanWideBlindEmit.lean` header reasons "arity 14 ≤
-  # CHIP_RATE = 16", which is the wrong predicate; `chipLookupTupleN` takes the arity to BE
-  # `ins.length` and the only Lean-side condition anywhere is `ins.length ≤ CHIP_RATE`. Fix: pad
-  # `spanIns` 8 → 11 and `commitStage2WideIns` 14 → 16 in Lean, re-guard the golden, re-emit.
+  # ⓘ GREEN since 2026-08-01. It landed RED on one real finding —
+  # `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1` asked for arity 8 and arity 14, neither
+  # admitted; the SOLE emitted hidden-span descriptor, and unprovable. That is repaired: `spanIns`
+  # padded 8 → 11 and `commitStage2WideIns` 14 → 16 in Lean, golden re-guarded, re-emitted (two
+  # bytes: the arity tags), and the descriptor now PROVES at the deployed prover for the first time
+  # (`circuit/tests/guarded_hiding_span_prove.rs`).
+  # ⚠ It also landed with a defect of its OWN which meant it reported nothing in either direction:
+  # all six of its tests aborted at arity 17 on `chip_absorb_all_lanes`'s `arity <= CHIP_RATE`
+  # assertion, because the lane-drop sweep reused `SWEEP_CEILING = 4·CHIP_RATE`. The generator legs
+  # now stop at `DROP_SWEEP_CEILING = CHIP_RATE`, which is the absorb's actual domain; the admission
+  # leg still sweeps past it, since `chip_air_row_accepts` is total there.
+  # ⚑ The root cause was one level up and is also closed: `chipLookupTupleN`/`ChipTableSoundN` now
+  # carry `ChipArityAdmitted` as a CHECKED side condition, so an emitter at a non-admitted arity
+  # FAILS TO ELABORATE instead of proving vacuously against `ins.length ≤ CHIP_RATE`.
   # The `-red` row is not optional: the headline is a NEGATIVE assertion. It drives the gate
   # against a checked-in reconstruction of the PRE-`57105f387` descriptor (extracted from that
   # commit's parent, out of the Lean emitter's own byte-pinned golden — not a fixture anybody
