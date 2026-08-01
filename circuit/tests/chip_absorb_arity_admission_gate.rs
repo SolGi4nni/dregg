@@ -1,0 +1,678 @@
+//! # THE CHIP-ABSORB ARITY GATE — a Lean emitter cannot ask the chip for an arity it does not admit
+//!
+//! ## The wound
+//!
+//! `57105f387` found that the wide **blinded** membership descriptor had been **unprovable from
+//! the day it was written**. Its blinding tooth emitted a `TID_P2` lookup at **arity 9**; the chip
+//! AIR carries its admitted arities as a degree-7 product over the arity column, and 9 is not a
+//! root of it, so **no witness exists** — for that constraint, at that row, ever. Nothing reported
+//! this. It surfaced only when somebody tried to prove against the descriptor, which for a staged
+//! descriptor may be never.
+//!
+//! And a second, quieter mode rode along: at arity 9 the deployed witness generator's `seed456`
+//! blend is LOW (it is high only at 7, 11 and 16), so lane 4 receives the **arity tag** and lanes
+//! 5 and 6 receive **zero** — three of the eight member lanes the emitter handed the chip never
+//! entered the preimage at all. An arity that silently discards its inputs is *worse* than one
+//! that is refused, because the descriptor looks like it worked.
+//!
+//! ## What this gate does
+//!
+//! Three things, in the order that matters.
+//!
+//! **1. It DERIVES the admitted set by running the chip.** There is no list of admitted arities in
+//! this file, and there must never be — a constant re-typed beside its own definition is
+//! decoration, not a gate. [`dregg_circuit::descriptor_ir2::chip_air_row_accepts`] builds the
+//! honest chip row the DEPLOYED witness generator emits (`chip_absorb_row`, the very function
+//! `build_traces` calls) and runs the DEPLOYED `Ir2Air::Chip` constraint evaluator over it. An
+//! arity is admitted iff that row satisfies the AIR. The sweep is exhaustive over every arity a
+//! chip tuple can carry, and the gate independently refuses an arity outside that range, so there
+//! is no gap between "swept" and "decided".
+//!
+//! **2. It DERIVES the per-lane genuineness map the same way**, by probing the AIR with a unit
+//! input in each lane: the AIR's "inputs beyond the arity are ZERO" pins make a non-zero in a
+//! pinned lane unsatisfiable, and the probe reports exactly that.
+//!
+//! **3. It DERIVES the lane-DROP map from a genuinely independent source** — the deployed absorb
+//! `chip_absorb_all_lanes`, i.e. the witness generator's own behaviour, with the AIR nowhere in
+//! sight. A lane is dropped at an arity iff perturbing it changes no output lane. The two maps are
+//! then required to agree in the dangerous direction (`AIR permits ⟹ generator uses`), which is
+//! the "two independently-derived sources" the repo's own doctrine asks for, and the descriptor
+//! scan uses BOTH: a populated lane must be neither AIR-pinned nor generator-dropped.
+//!
+//! ⓘ **Say what the drop check does and does not add, at today's chip.** `lane_maps_agree_…`
+//! passes, which is exactly the statement that *at every ADMITTED arity, a dropped lane is also a
+//! pinned lane* — so on the admitted set the drop check finds nothing the pin check would miss,
+//! and that is a property of this chip, not a guarantee. Where it earns its keep is off the
+//! admitted set, and that is where the wound was: at arity 9 (and at 8 and 14) it is the check
+//! that distinguishes **refused** from **silently discarded**, which are different bugs and want
+//! different fixes. It also stands as the tripwire for the day the seeding blend and the pins stop
+//! agreeing — the failure mode `lane_maps_agree_…` exists to catch and nothing else would.
+//!
+//! ## What it scans
+//!
+//! Every emitted descriptor on disk: `circuit/descriptors/`, its `by-name/` registry, the
+//! Lean-emitted trees, the benchmark generators, the mirror-gate canaries, the drift-taxonomy
+//! fixtures — discovered by walking the tree rather than by a hand list, so a new registry cannot
+//! be born outside the gate. The **staged registry TSVs** carry whole descriptors inside a tab
+//! field and are parsed out of it. Descriptors are decoded with the DEPLOYED
+//! `parse_vm_descriptor2`, never a second JSON reader.
+//!
+//! ⚠ **One directory is excluded and it is named here**: `circuit/tests/fixtures/
+//! chip-arity-gate-redproof/`, which holds the pre-`57105f387` arity-9 descriptor this gate's own
+//! red-proof runs against. `redproof_fixture_is_red` asserts the exclusion is not hiding a green:
+//! pointed straight at that directory the gate MUST fail.
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use dregg_circuit::descriptor_ir2::{
+    CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, TID_P2, TID_P2_NARROW,
+    TID_P2_STATE16, VmConstraint2, chip_absorb_all_lanes, chip_air_row_accepts,
+    parse_vm_descriptor2,
+};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::lean_descriptor_air::LeanExpr;
+use dregg_circuit::plonky3_prover::POSEIDON2_WIDTH;
+
+// ============================================================================
+// §1 — the three maps, each DERIVED
+// ============================================================================
+
+/// How far above `CHIP_RATE` the admission sweep looks. A chip tuple carries `CHIP_RATE` input
+/// lanes, so an arity above that is refused structurally (§3) and never reaches the derived set;
+/// the sweep runs past it anyway so the gate can *report* that nothing is admitted up there
+/// rather than assume it.
+const SWEEP_CEILING: u32 = 4 * CHIP_RATE as u32;
+
+/// **The admitted set, derived.** For each candidate arity, hand the deployed AIR the honest
+/// all-zero-input chip row at that arity and ask whether its constraints vanish.
+fn derive_admitted_arities() -> BTreeSet<u32> {
+    let zeros = [BabyBear::ZERO; CHIP_RATE];
+    (0..=SWEEP_CEILING)
+        .filter(|&a| chip_air_row_accepts(a, &zeros))
+        .collect()
+}
+
+/// **The AIR's genuine-lane map, derived.** Lane `i` is genuine at arity `a` iff the honest row
+/// carrying a non-zero in lane `i` (and nothing else) still satisfies the AIR. Where the AIR pins
+/// the lane to zero, it cannot.
+fn derive_air_genuine_lanes(a: u32) -> Vec<bool> {
+    (0..CHIP_RATE)
+        .map(|i| {
+            let mut ins = [BabyBear::ZERO; CHIP_RATE];
+            ins[i] = BabyBear::ONE;
+            chip_air_row_accepts(a, &ins)
+        })
+        .collect()
+}
+
+/// **The witness generator's lane-drop map, derived — and the AIR is not consulted.** Lane `i` is
+/// DROPPED at arity `a` iff perturbing it leaves every exposed output lane of the deployed absorb
+/// unchanged, i.e. the value the emitter handed the chip never entered the preimage.
+///
+/// Three independent probe values are used. `chip_absorb_all_lanes` exposes 8 of the 16 lanes of
+/// the final permutation state, so a *seeded* lane could in principle collide with the baseline on
+/// all eight; three distinct probes puts that at ~2^-744, and the map is cross-checked against the
+/// AIR-derived one in [`lane_maps_agree_in_the_dangerous_direction`] regardless.
+fn derive_dropped_lanes(a: u32) -> Vec<bool> {
+    const PROBES: [u32; 3] = [1, 2, 0x0123_4567];
+    let baseline = chip_absorb_all_lanes(a as usize, &[BabyBear::ZERO; CHIP_RATE]);
+    (0..CHIP_RATE)
+        .map(|i| {
+            PROBES.iter().all(|&p| {
+                let mut ins = [BabyBear::ZERO; CHIP_RATE];
+                ins[i] = BabyBear::new(p);
+                chip_absorb_all_lanes(a as usize, &ins) == baseline
+            })
+        })
+        .collect()
+}
+
+// ============================================================================
+// §2 — the descriptor corpus
+// ============================================================================
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crate dir has a parent")
+        .to_path_buf()
+}
+
+/// Directories the walk never enters: build output, VCS, vendored/third-party trees, and the one
+/// deliberate carve-out (this gate's own red-proof fixture, asserted red by `redproof_fixture_is_red`).
+const PRUNE: &[&str] = &[
+    "target",
+    ".git",
+    "node_modules",
+    ".lake",
+    "vendor",
+    ".cache",
+    "chip-arity-gate-redproof",
+];
+
+/// A parsed descriptor plus where it came from, for the report.
+struct Found {
+    origin: String,
+    desc: EffectVmDescriptor2,
+}
+
+/// A cheap prefilter so the walk can look at every `.json` in the tree without reading all of it:
+/// an IR-v2 descriptor declares `"ir": 2` in its first object.
+fn looks_like_ir2(head: &str) -> bool {
+    let Some(p) = head.find("\"ir\"") else {
+        return false;
+    };
+    head[p + 4..]
+        .trim_start()
+        .strip_prefix(':')
+        .map(|r| r.trim_start().starts_with('2'))
+        .unwrap_or(false)
+}
+
+fn read_head(path: &Path, n: usize) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let end = bytes.len().min(n);
+    Some(String::from_utf8_lossy(&bytes[..end]).into_owned())
+}
+
+/// Walk `root` and collect every emitted descriptor: `.json` files that parse as IR-v2, plus every
+/// descriptor embedded in a tab field of a staged registry `.tsv`.
+fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>) {
+    let mut found = Vec::new();
+    let mut unparsable = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                if PRUNE.contains(&name.as_str()) || name.starts_with('.') {
+                    continue;
+                }
+                stack.push(p);
+            } else if ft.is_file() && name.ends_with(".json") {
+                let Some(head) = read_head(&p, 8192) else {
+                    continue;
+                };
+                if !looks_like_ir2(&head) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
+                match parse_vm_descriptor2(&text) {
+                    Ok(desc) => found.push(Found {
+                        origin: rel(root, &p),
+                        desc,
+                    }),
+                    // A file that ADVERTISES `"ir": 2` and will not decode is itself a finding —
+                    // the gate must not silently narrow its own corpus.
+                    Err(e) => unparsable.push(format!("{}: {e}", rel(root, &p))),
+                }
+            } else if ft.is_file() && name.ends_with(".tsv") {
+                let Ok(text) = std::fs::read_to_string(&p) else {
+                    continue;
+                };
+                for (ln, line) in text.lines().enumerate() {
+                    for field in line.split('\t') {
+                        let f = field.trim();
+                        if !f.starts_with('{') || !looks_like_ir2(f) {
+                            continue;
+                        }
+                        match parse_vm_descriptor2(f) {
+                            Ok(desc) => found.push(Found {
+                                origin: format!("{}:{}", rel(root, &p), ln + 1),
+                                desc,
+                            }),
+                            Err(e) => unparsable.push(format!("{}:{} {e}", rel(root, &p), ln + 1)),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found.sort_by(|a, b| a.origin.cmp(&b.origin));
+    unparsable.sort();
+    (found, unparsable)
+}
+
+fn rel(root: &Path, p: &Path) -> String {
+    p.strip_prefix(root).unwrap_or(p).display().to_string()
+}
+
+// ============================================================================
+// §3 — the check, per chip lookup
+// ============================================================================
+
+/// The input-lane count of a chip tuple on each bus. All three shapes are `[arity, inputs…, …]`,
+/// so the lanes live at `tuple[1 ..= lanes]` uniformly.
+fn chip_input_lanes(table: usize) -> Option<usize> {
+    match table {
+        // `[arity, in0..in15, out0..out7]` and `[arity, in0..in15, out0]`.
+        TID_P2 | TID_P2_NARROW => Some(CHIP_RATE),
+        // `[arity, state16, next_state16]` — the raw full-width permutation relation.
+        TID_P2_STATE16 => Some(POSEIDON2_WIDTH),
+        _ => None,
+    }
+}
+
+/// A lane is POPULATED unless the emitter wrote the literal constant zero into it. Fail-closed on
+/// purpose: an expression that merely happens to evaluate to zero at run time is still an emitter
+/// routing a value into a lane, and a gate that reasons about run-time values is not a gate.
+fn populated(e: &LeanExpr) -> bool {
+    !matches!(e, LeanExpr::Const(0))
+}
+
+struct Verdict {
+    violations: Vec<String>,
+    lookups: usize,
+    descriptors: usize,
+}
+
+fn audit(found: &[Found], admitted: &BTreeSet<u32>) -> Verdict {
+    // Derived once, consulted per lookup.
+    let genuine: Vec<Vec<bool>> = (0..=SWEEP_CEILING).map(derive_air_genuine_lanes).collect();
+    let dropped: Vec<Vec<bool>> = (0..=SWEEP_CEILING).map(derive_dropped_lanes).collect();
+
+    let mut v = Verdict {
+        violations: Vec::new(),
+        lookups: 0,
+        descriptors: found.len(),
+    };
+    for f in found {
+        for (ci, k) in f.desc.constraints.iter().enumerate() {
+            let VmConstraint2::Lookup(l) = k else {
+                continue;
+            };
+            let Some(lanes) = chip_input_lanes(l.table) else {
+                continue;
+            };
+            v.lookups += 1;
+            let at = format!("{} [{}] constraint {ci}", f.origin, f.desc.name);
+
+            // -- The arity must be a wire CONSTANT. The chip's whole domain separation is the
+            //    arity TAG; an arity chosen by the witness is not gateable and not separated.
+            let Some(LeanExpr::Const(c)) = l.tuple.first() else {
+                v.violations.push(format!(
+                    "{at}: chip lookup arity is a witness expression, not a constant — \
+                     the chip's domain separation IS the arity tag"
+                ));
+                continue;
+            };
+            let c = *c;
+            if !(0..=CHIP_RATE as i64).contains(&c) {
+                v.violations.push(format!(
+                    "{at}: arity {c} is outside 0..={CHIP_RATE} — the tuple has only \
+                     {CHIP_RATE} input lanes to seed"
+                ));
+                continue;
+            }
+            let a = c as u32;
+
+            // -- 1. ADMISSION. Derived from the AIR, never restated.
+            if !admitted.contains(&a) {
+                v.violations.push(format!(
+                    "{at}: arity {a} is NOT ADMITTED by the chip AIR (derived admitted set: \
+                     {admitted:?}) — this descriptor is UNPROVABLE, no witness exists"
+                ));
+                // Still report the lane damage below: the two modes are independent findings.
+            }
+
+            // -- 2/3. Per-lane: AIR-pinned, and generator-dropped.
+            for i in 0..lanes {
+                let Some(e) = l.tuple.get(1 + i) else { break };
+                if !populated(e) {
+                    continue;
+                }
+                if !genuine[a as usize][i] {
+                    v.violations.push(format!(
+                        "{at}: lane in{i} carries {e:?} but the chip AIR PINS in{i} to zero at \
+                         arity {a} — unsatisfiable"
+                    ));
+                }
+                if dropped[a as usize][i] {
+                    v.violations.push(format!(
+                        "{at}: lane in{i} carries {e:?} but the deployed absorb DROPS in{i} at \
+                         arity {a} — the value never enters the preimage, and the descriptor \
+                         looks like it worked"
+                    ));
+                }
+            }
+        }
+    }
+    v
+}
+
+// ============================================================================
+// §4 — the gate
+// ============================================================================
+
+#[test]
+fn admitted_arity_set_is_derived_from_the_chip() {
+    let admitted = derive_admitted_arities();
+    println!("chip AIR admitted arities (DERIVED by probing Ir2Air::Chip): {admitted:?}");
+    for a in 0..=SWEEP_CEILING {
+        let g = derive_air_genuine_lanes(a);
+        let d = derive_dropped_lanes(a);
+        if admitted.contains(&a) {
+            let air_ok: Vec<usize> = (0..CHIP_RATE).filter(|&i| g[i]).collect();
+            let drp: Vec<usize> = (0..CHIP_RATE).filter(|&i| d[i]).collect();
+            println!("  arity {a:2}: AIR-genuine lanes {air_ok:?} · absorb-dropped lanes {drp:?}");
+        }
+    }
+    assert!(
+        !admitted.is_empty(),
+        "the probe found NO admitted arity — the probe is broken, not the chip"
+    );
+    assert!(
+        admitted.len() < (SWEEP_CEILING as usize + 1),
+        "the probe admitted EVERY arity — it is not reading the admission constraint"
+    );
+    // PROSE ↔ MACHINE cross-check, and nothing downstream reads it: `57105f387`'s commit message
+    // and `descriptor_ir2.rs`'s chip comment both state {0,2,3,4,7,11,16}. The audit in
+    // `every_emitted_descriptor_asks_the_chip_for_an_admitted_arity` consumes the DERIVED set.
+    let documented: BTreeSet<u32> = [0, 2, 3, 4, 7, 11, 16].into_iter().collect();
+    assert_eq!(
+        admitted, documented,
+        "the chip AIR's admitted set has MOVED away from what the tree says it is — \
+         update the prose (and every emitter), do not widen this assertion"
+    );
+    // Nothing is admitted above the tuple's own lane count, so §3's structural refusal of
+    // `arity > CHIP_RATE` closes no honest door.
+    assert!(
+        admitted.iter().all(|&a| a <= CHIP_RATE as u32),
+        "an arity above CHIP_RATE is admitted — the structural bound in §3 would refuse it"
+    );
+}
+
+#[test]
+fn lane_maps_agree_in_the_dangerous_direction() {
+    // Two independently-derived sources: the AIR's zero-pins, and the deployed absorb's behaviour.
+    // The DANGEROUS disagreement is a lane the AIR permits and the generator throws away — that is
+    // a value an emitter may route, that binds nothing. The reverse (the generator seeds a lane
+    // the AIR pins to zero) is inert: the pin means no descriptor can put anything there.
+    let mut bad = Vec::new();
+    let mut inert = Vec::new();
+    for a in 0..=SWEEP_CEILING {
+        let g = derive_air_genuine_lanes(a);
+        let d = derive_dropped_lanes(a);
+        for i in 0..CHIP_RATE {
+            if g[i] && d[i] {
+                bad.push(format!(
+                    "arity {a} lane in{i}: AIR permits it, the absorb DROPS it"
+                ));
+            }
+            if !g[i] && !d[i] {
+                inert.push((a, i));
+            }
+        }
+    }
+    println!(
+        "AIR-pinned-but-seeded (inert, the safe direction): {} lane/arity pairs",
+        inert.len()
+    );
+    assert!(bad.is_empty(), "SILENT-DROP HOLE:\n  {}", bad.join("\n  "));
+}
+
+/// Files that advertise `"ir": 2` and that the DEPLOYED parser refuses. Each is a stub fixture
+/// belonging to a DIFFERENT gate (`scripts/check-mirror-gates.sh`, whose canary trees exist to be
+/// mutated), carries no chip lookup, and is not an emitted descriptor. The list is a **RATCHET**:
+/// a stale entry — one that has been repaired, deleted, or has grown into a real descriptor — is a
+/// FAILURE, so an exemption cannot outlive its reason. Anything not on it is a finding: the gate
+/// must never narrow its own corpus quietly.
+const UNPARSABLE_EXEMPT: &[(&str, &str)] = &[
+    (
+        "scripts/mirror-gates/canary/clean/circuit-prove/tests/welded_local_golden.json",
+        "mirror-gate canary stub: 4-field toy, no public_input_count, no constraints",
+    ),
+    (
+        "scripts/mirror-gates/canary/clean/circuit/descriptors/by-name/canary.json",
+        "mirror-gate canary stub: the clean side of the canary pair",
+    ),
+    (
+        "scripts/mirror-gates/canary/mirrors/G1__drifted_local_golden/circuit-prove/tests/drifted_local_golden.json",
+        "mirror-gate canary stub: DELIBERATELY drifted — that is the canary",
+    ),
+];
+
+#[test]
+fn every_emitted_descriptor_asks_the_chip_for_an_admitted_arity() {
+    // The walk root is overridable ONLY so the gate's own blindness floor can be demonstrated
+    // (`scripts/check-chip-absorb-arity.sh --self-test` points it at an empty directory and
+    // requires this test to FAIL). Unset — every real run — it is the repo.
+    let root = std::env::var_os("DREGG_CHIP_ARITY_GATE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(repo_root);
+    let admitted = derive_admitted_arities();
+    let (found, unparsable) = collect_descriptors(&root);
+    let v = audit(&found, &admitted);
+
+    println!(
+        "scanned {} descriptors ({} chip lookups) under {}",
+        v.descriptors,
+        v.lookups,
+        root.display()
+    );
+    let mut hist: std::collections::BTreeMap<(usize, i64), usize> = Default::default();
+    for f in &found {
+        for k in &f.desc.constraints {
+            if let VmConstraint2::Lookup(l) = k
+                && chip_input_lanes(l.table).is_some()
+                && let Some(LeanExpr::Const(c)) = l.tuple.first()
+            {
+                *hist.entry((l.table, *c)).or_default() += 1;
+            }
+        }
+    }
+    println!("(table, arity) -> lookups: {hist:?}");
+
+    // Everything is reported in ONE verdict — a gate that stops at its first finding measures less
+    // than it claims to, and the counts below are what a reader needs.
+    let mut report: Vec<String> = Vec::new();
+
+    // A corpus that collapses to nothing is the failure mode this whole file exists to catch, so
+    // the gate refuses to report clean on a dead reader.
+    if v.descriptors < 100 || v.lookups < 1000 {
+        report.push(format!(
+            "THE WALK COLLAPSED: {} descriptors, {} chip lookups — a gate that reads nothing \
+             reports clean",
+            v.descriptors, v.lookups
+        ));
+    }
+    for u in &unparsable {
+        let path = u.split(':').next().unwrap_or(u);
+        if !UNPARSABLE_EXEMPT.iter().any(|(p, _)| *p == path) {
+            report.push(format!(
+                "advertises \"ir\": 2 and the deployed parser refuses — {u}"
+            ));
+        }
+    }
+    for (p, why) in UNPARSABLE_EXEMPT {
+        if !unparsable.iter().any(|u| u.starts_with(p)) {
+            report.push(format!(
+                "STALE EXEMPTION (ratchet): {p} now parses, is gone, or moved — drop the row \
+                 (it was exempt because: {why})"
+            ));
+        }
+    }
+    report.extend(v.violations.iter().cloned());
+
+    assert!(
+        report.is_empty(),
+        "{} finding(s) from the chip-absorb arity gate:\n  {}",
+        report.len(),
+        report.join("\n  ")
+    );
+}
+
+// ============================================================================
+// §5 — both directions, on the real bug
+// ============================================================================
+
+/// The path the gate deliberately excludes from its tree walk. Pointed straight at it, the gate
+/// MUST go red — otherwise the exclusion is hiding a green and the walk's clean verdict means
+/// nothing.
+fn redproof_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chip-arity-gate-redproof")
+}
+
+/// **ANTI-VACUITY: the gate catches the bug that motivated it, at the state it was in.**
+///
+/// The fixture is the wide blinded membership descriptor **as it stood before `57105f387`**,
+/// reconstructed from that commit's parent — specifically from the byte-pinned emitted-wire golden
+/// the pre-fix Lean emitter carried for itself
+/// (`57105f387^:metatheory/Dregg2/Circuit/Emit/BlindedMembershipWideEmit.lean`, the
+/// `#eval repr (emitVmJson2 blindedMembershipWideDesc)` literal). It is not a fixture anybody
+/// invented for this test; it is what the emitter emitted.
+///
+/// The gate must report BOTH modes on it: arity 9 inadmissible, and lanes 4/5/6 dropped.
+#[test]
+fn redproof_fixture_is_red() {
+    let admitted = derive_admitted_arities();
+    let (found, unparsable) = collect_descriptors(&redproof_dir());
+    assert!(unparsable.is_empty(), "{unparsable:?}");
+    assert_eq!(found.len(), 1, "expected exactly the pre-fix golden");
+    assert_eq!(
+        found[0].desc.name,
+        "dregg-blinded-membership-4ary-wide-general::v1"
+    );
+
+    let v = audit(&found, &admitted);
+    for s in &v.violations {
+        println!("RED · {s}");
+    }
+    assert!(
+        v.violations
+            .iter()
+            .any(|s| s.contains("arity 9 is NOT ADMITTED")),
+        "the gate did not catch the inadmissible arity 9 it exists to catch: {:?}",
+        v.violations
+    );
+    for lane in [4usize, 5, 6] {
+        assert!(
+            v.violations
+                .iter()
+                .any(|s| s.contains(&format!("DROPS in{lane} at arity 9"))),
+            "the gate did not catch the SILENT DROP of lane in{lane} at arity 9: {:?}",
+            v.violations
+        );
+    }
+    // Lanes 0..3 and 7..8 carry the rest of the leaf + the blinding felt; the AIR pins every input
+    // lane at an inadmissible arity, so all nine populated lanes are reported.
+    assert!(
+        v.violations
+            .iter()
+            .filter(|s| s.contains("PINS in"))
+            .count()
+            == 9,
+        "expected all 9 populated lanes reported as AIR-pinned at arity 9, got {:?}",
+        v.violations
+    );
+}
+
+/// **The GREEN direction, on the SAME descriptor.** `57105f387` re-emitted
+/// `dregg-blinded-membership-4ary-wide-general::v1` from Lean at arity 11 (`cur8 ‖ r ‖ 0 ‖ 0`).
+/// That descriptor is on disk at HEAD and the gate passes it — so the red above is the defect
+/// being detected, not the gate refusing everything it is shown.
+#[test]
+fn the_corrected_descriptor_is_green() {
+    let admitted = derive_admitted_arities();
+    let path = repo_root().join("circuit/descriptors/by-name/blinded-membership-4ary-wide.json");
+    let text = std::fs::read_to_string(&path).expect("the corrected golden is on disk");
+    let desc = parse_vm_descriptor2(&text).expect("it parses");
+    assert_eq!(desc.name, "dregg-blinded-membership-4ary-wide-general::v1");
+    let found = vec![Found {
+        origin: path.display().to_string(),
+        desc,
+    }];
+    let v = audit(&found, &admitted);
+    assert!(
+        v.violations.is_empty(),
+        "the CORRECTED descriptor is red — {:?}",
+        v.violations
+    );
+    assert!(
+        v.lookups >= 4,
+        "it should carry the fold + the blinding tooth"
+    );
+}
+
+/// A synthetic tooth for each of the two modes independently, so neither can pass on the other's
+/// evidence: an admitted arity with a populated lane the generator drops, and an inadmissible
+/// arity with clean lanes.
+#[test]
+fn each_mode_bites_on_its_own() {
+    let admitted = derive_admitted_arities();
+    let mk = |arity: i64, populated_lane: usize| {
+        let mut tuple = vec![LeanExpr::Const(0); CHIP_TUPLE_LEN];
+        tuple[0] = LeanExpr::Const(arity);
+        tuple[1 + populated_lane] = LeanExpr::Var(0);
+        EffectVmDescriptor2 {
+            name: "synthetic".into(),
+            trace_width: 1,
+            public_input_count: 0,
+            tables: Vec::new(),
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: TID_P2,
+                tuple,
+            })],
+            hash_sites: Vec::new(),
+            ranges: Vec::new(),
+        }
+    };
+
+    // MODE A — arity 4 IS admitted, and lane in4 is exactly where the arity tag goes. A populated
+    // in4 is both AIR-pinned and generator-dropped.
+    let a = audit(
+        &[Found {
+            origin: "modeA".into(),
+            desc: mk(4, 4),
+        }],
+        &admitted,
+    );
+    for s in &a.violations {
+        println!("RED · {s}");
+    }
+    assert!(a.violations.iter().all(|s| !s.contains("NOT ADMITTED")));
+    assert!(
+        a.violations
+            .iter()
+            .any(|s| s.contains("DROPS in4 at arity 4"))
+    );
+
+    // MODE B — arity 5 is not admitted at all, lane in0 populated.
+    let b = audit(
+        &[Found {
+            origin: "modeB".into(),
+            desc: mk(5, 0),
+        }],
+        &admitted,
+    );
+    for s in &b.violations {
+        println!("RED · {s}");
+    }
+    assert!(
+        b.violations
+            .iter()
+            .any(|s| s.contains("arity 5 is NOT ADMITTED"))
+    );
+
+    // The control: arity 16 with a populated lane in15 is the deployed node8 row, and clean.
+    let c = audit(
+        &[Found {
+            origin: "control".into(),
+            desc: mk(16, 15),
+        }],
+        &admitted,
+    );
+    assert!(
+        c.violations.is_empty(),
+        "the control went red: {:?}",
+        c.violations
+    );
+}

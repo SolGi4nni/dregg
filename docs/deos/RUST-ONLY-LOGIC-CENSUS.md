@@ -179,7 +179,7 @@ load-bearing types.
 4-ary Poseidon2 Merkle (`circuit/src/merkle_types.rs:13`, depth 16), the cap-reshape tree
 (`CanonicalCapTree`, `circuit/src/cap_root.rs:279`; `compute_capability_root:647`,
 `membership_witness:746`), the heap tree (`circuit/src/heap_root.rs`), and in-circuit nullifier
-non-membership (`circuit/src/non_membership.rs`, `circuit/src/membership_adjacency_air.rs`).
+non-membership (`circuit/src/non_membership.rs`, `circuit/src/adjacency_witness.rs`).
 
 **Lean-status.** The Poseidon2 permutation is an **ABSTRACT CARRIER**: `compress`/`compressN` are
 uninterpreted with only a `collisionHard : Prop` law (`metatheory/Dregg2/Crypto/Primitives.lean`),

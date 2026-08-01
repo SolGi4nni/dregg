@@ -4545,6 +4545,126 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
     perm_lanes(st)
 }
 
+/// **THE honest chip absorb row — ONE source, shared by the prover and the admission probe.**
+///
+/// `build_traces` commits exactly this row for each distinct `(arity, in0..in15)` absorb key in a
+/// descriptor's chip histogram, and [`chip_air_row_accepts`] hands the SAME row to the deployed
+/// `Ir2Air::Chip` evaluator. It is factored out precisely so that a gate asking "does the chip
+/// admit this arity?" cannot answer out of a re-typed copy of the witness generator's rules: it
+/// answers by RUNNING the generator and then running the AIR.
+///
+/// `tuple` is the `[arity, in0..in15, out0..out7]` chip key (`CHIP_TUPLE_LEN` wide); only the
+/// `[arity, in0..in15]` prefix is read — the eight output lanes are DERIVED here from the genuine
+/// permutation, never trusted from the consumer's tuple, so the AIR's `out[i] == lane[i]`
+/// equalities hold by construction. `narrow_mult` is the row's `BUS_P2_1` service count.
+pub(crate) fn chip_absorb_row(tuple: &[u32], mult: u64, narrow_mult: u64) -> Vec<BabyBear> {
+    let arity_u = tuple[CHIP_ARITY];
+    let big_row = arity_u == 7;
+    let wide_row = arity_u as usize == CHIP_WIDE_ARITY;
+    let node8_row = arity_u as usize == CHIP_NODE8_ARITY;
+    // `seed456`: lanes 4/5/6 carry genuine in4/in5/in6 (rate-8 leaf, wide step, OR node8).
+    let seed456 = big_row || wide_row || node8_row;
+    let mut row = vec![BabyBear::ZERO; CHIP_AUX0];
+    // Copy only the [arity, in0..in15] prefix from the tuple; the out0..out7 lanes are
+    // DERIVED below from the genuine permutation (never trusted from the consumer's
+    // tuple), so the AIR's `out[i] == lane[i]` equality constraints hold by construction.
+    for j in 0..=CHIP_RATE {
+        row[j] = BabyBear::new(tuple[j]);
+    }
+    row[CHIP_MULT] = BabyBear::new((mult % (BABYBEAR_P as u64)) as u32);
+    row[CHIP_IS_FACT] = BabyBear::ZERO;
+    row[CHIP_BIG] = if big_row {
+        BabyBear::ONE
+    } else {
+        BabyBear::ZERO
+    };
+    row[CHIP_WIDE] = if wide_row {
+        BabyBear::ONE
+    } else {
+        BabyBear::ZERO
+    };
+    row[CHIP_NODE8] = if node8_row {
+        BabyBear::ONE
+    } else {
+        BabyBear::ZERO
+    };
+    // Seed-source columns, mirroring the AIR's S4/S5/S6 blend (is_fact = 0 here).
+    if seed456 {
+        row[CHIP_S4] = BabyBear::new(tuple[CHIP_IN0 + 4]);
+        row[CHIP_S5] = BabyBear::new(tuple[CHIP_IN0 + 5]);
+        row[CHIP_S6] = BabyBear::new(tuple[CHIP_IN0 + 6]);
+    } else {
+        row[CHIP_S4] = BabyBear::new(arity_u); // arity tag
+        row[CHIP_S5] = BabyBear::ZERO; // is_fact·FACT_MARK = 0
+        row[CHIP_S6] = BabyBear::ZERO; // is_fact = 0
+    }
+    // Seed the permutation from the SAME source columns the AIR reads.
+    let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
+    st[..4].copy_from_slice(&row[CHIP_IN0..CHIP_IN0 + 4]);
+    st[4] = row[CHIP_S4];
+    st[5] = row[CHIP_S5];
+    st[6] = row[CHIP_S6];
+    // Carrier/limb tail (lanes 7..15): genuine inputs on the wide (7..10) + node8 (7..15)
+    // rows, pinned 0 on every narrow arity (the tuple's in7.. are zero there), matching the
+    // AIR seeding. node8 (arity 16) seeds all 16 lanes = WIDTH.
+    st[7..CHIP_NODE8_ARITY].copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_NODE8_ARITY]);
+    // Fill the 8 exposed output lanes from the genuine final permutation state.
+    let lanes = perm_lanes(st);
+    row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
+    let (aux, _digest) = perm_aux(st);
+    row.extend(aux);
+    row.push(BabyBear::new((narrow_mult % (BABYBEAR_P as u64)) as u32));
+    row
+}
+
+/// **THE CHIP-ADMISSION PROBE — the deployed AIR answering about its own admitted arities.**
+///
+/// Builds the honest chip row the DEPLOYED witness generator emits for the absorb
+/// `(arity, inputs)` — literally [`chip_absorb_row`], the function `build_traces` calls — and
+/// runs the DEPLOYED `Ir2Air::Chip` constraint evaluator over it. Returns `true` iff every Chip
+/// constraint vanishes on that row.
+///
+/// This is what makes the admitted arity set DERIVABLE rather than restatable. The chip AIR
+/// carries its admission as a degree-7 product over the arity column and its per-lane
+/// "inputs beyond the arity are ZERO" pins as further products; nothing in the AIR names the
+/// admitted values as a list, and nothing outside it should either. Two questions this answers,
+/// both by execution:
+///
+///  * **is arity `a` admitted at all?** — `chip_air_row_accepts(a, [0; CHIP_RATE])`. An
+///    inadmissible `a` leaves the admission product non-zero and no witness can rescue it, so the
+///    descriptor that asks for it is UNPROVABLE (`guarded-hiding-span-…-blind5-v1` asks for 8 and
+///    14; the pre-`57105f387` wide blinded tooth asked for 9).
+///  * **does lane `i` genuinely enter the preimage at arity `a`?** —
+///    `chip_air_row_accepts(a, e_i)` for the unit input `e_i`. If the AIR pins lane `i` to zero at
+///    that arity, a non-zero there is unsatisfiable and this is `false`.
+///
+/// Row-local only, exactly like [`ir2_eval_accepts`]: the chip's bus sends are the cross-table
+/// multiset leg and are swallowed. That is the whole of the Chip arm's own algebra — the
+/// admission product, the `big`/`wide`/`node8` selector gates, the input-lane pins, the S4/S5/S6
+/// seed blend and the full Poseidon2 permutation with its output-lane equalities.
+pub fn chip_air_row_accepts(arity: u32, inputs: &[BabyBear]) -> bool {
+    let mut tuple = vec![0u32; CHIP_TUPLE_LEN];
+    tuple[CHIP_ARITY] = arity;
+    for i in 0..CHIP_RATE {
+        tuple[CHIP_IN0 + i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO).as_u32();
+    }
+    let row: Vec<P3BabyBear> = chip_absorb_row(&tuple, 1, 0)
+        .iter()
+        .map(|&x| to_p3(x))
+        .collect();
+    let mut builder = Ir2RowLocalBuilder {
+        local: &row,
+        next: &row,
+        public_values: &[],
+        empty_prep: p3_air::RowWindow::from_two_rows(&[], &[]),
+        row: 0,
+        height: 1,
+        failed: false,
+    };
+    Ir2Air::Chip.eval(&mut builder);
+    !builder.failed
+}
+
 /// **Phase B-GATE generic chip-lane fill.** For every declared `TID_P2` chip lookup, read the
 /// absorb's INPUT values off the row, compute the genuine permutation lanes 1..7
 /// (`chip_absorb_lanes`), and write them into the lookup's lane columns (the last
@@ -6330,68 +6450,13 @@ fn build_traces(
         let mut chip_rows: Vec<Vec<BabyBear>> = Vec::new();
         for (tuple, mult) in &chip_hist {
             // tuple = [arity, in0..in15, out0..out7] (CHIP_TUPLE_LEN = 25 wide).
-            let arity_u = tuple[CHIP_ARITY];
-            let big_row = arity_u == 7;
-            let wide_row = arity_u as usize == CHIP_WIDE_ARITY;
-            let node8_row = arity_u as usize == CHIP_NODE8_ARITY;
-            // `seed456`: lanes 4/5/6 carry genuine in4/in5/in6 (rate-8 leaf, wide step, OR node8).
-            let seed456 = big_row || wide_row || node8_row;
-            let mut row = vec![BabyBear::ZERO; CHIP_AUX0];
-            // Copy only the [arity, in0..in15] prefix from the tuple; the out0..out7 lanes are
-            // DERIVED below from the genuine permutation (never trusted from the consumer's
-            // tuple), so the AIR's `out[i] == lane[i]` equality constraints hold by construction.
-            for j in 0..=CHIP_RATE {
-                row[j] = BabyBear::new(tuple[j]);
-            }
-            row[CHIP_MULT] = BabyBear::new((*mult % (BABYBEAR_P as u64)) as u32);
-            row[CHIP_IS_FACT] = BabyBear::ZERO;
-            row[CHIP_BIG] = if big_row {
-                BabyBear::ONE
-            } else {
-                BabyBear::ZERO
-            };
-            row[CHIP_WIDE] = if wide_row {
-                BabyBear::ONE
-            } else {
-                BabyBear::ZERO
-            };
-            row[CHIP_NODE8] = if node8_row {
-                BabyBear::ONE
-            } else {
-                BabyBear::ZERO
-            };
-            // Seed-source columns, mirroring the AIR's S4/S5/S6 blend (is_fact = 0 here).
-            if seed456 {
-                row[CHIP_S4] = BabyBear::new(tuple[CHIP_IN0 + 4]);
-                row[CHIP_S5] = BabyBear::new(tuple[CHIP_IN0 + 5]);
-                row[CHIP_S6] = BabyBear::new(tuple[CHIP_IN0 + 6]);
-            } else {
-                row[CHIP_S4] = BabyBear::new(arity_u); // arity tag
-                row[CHIP_S5] = BabyBear::ZERO; // is_fact·FACT_MARK = 0
-                row[CHIP_S6] = BabyBear::ZERO; // is_fact = 0
-            }
-            // Seed the permutation from the SAME source columns the AIR reads.
-            let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
-            st[..4].copy_from_slice(&row[CHIP_IN0..CHIP_IN0 + 4]);
-            st[4] = row[CHIP_S4];
-            st[5] = row[CHIP_S5];
-            st[6] = row[CHIP_S6];
-            // Carrier/limb tail (lanes 7..15): genuine inputs on the wide (7..10) + node8 (7..15)
-            // rows, pinned 0 on every narrow arity (the tuple's in7.. are zero there), matching the
-            // AIR seeding. node8 (arity 16) seeds all 16 lanes = WIDTH.
-            st[7..CHIP_NODE8_ARITY]
-                .copy_from_slice(&row[CHIP_IN0 + 7..CHIP_IN0 + CHIP_NODE8_ARITY]);
-            // Fill the 8 exposed output lanes from the genuine final permutation state.
-            let lanes = perm_lanes(st);
-            row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
-            let (aux, _digest) = perm_aux(st);
-            row.extend(aux);
             // CHIP_MULT_NARROW: how many single-output sites this row serves on BUS_P2_1 (0 for the
             // deployed wide-only path — the narrow bus balances at 0 and the wide path is unchanged).
-            row.push(BabyBear::new(
-                (narrow_hist.get(tuple).copied().unwrap_or(0) % (BABYBEAR_P as u64)) as u32,
+            chip_rows.push(chip_absorb_row(
+                tuple,
+                *mult,
+                narrow_hist.get(tuple).copied().unwrap_or(0),
             ));
-            chip_rows.push(row);
         }
         for (&(l, r, out), mult) in &fact_hist {
             let mut row = vec![BabyBear::ZERO; CHIP_AUX0];

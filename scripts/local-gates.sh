@@ -69,6 +69,38 @@ GATES=(
   "feature-t3-ratchet|60|bash scripts/feature-t3-sweep.sh --self-test"
   "ci-invariants-structural|900|bash scripts/ci-invariants.sh structural"
   "descriptor-drift|900|bash scripts/check-descriptor-drift.sh"
+  # A Lean emitter asking the poseidon2 chip for an arity the chip AIR does not admit. The
+  # descriptor it produces CAN NEVER BE SATISFIED, and nothing said so: `57105f387` found the wide
+  # blinded membership tooth had been asking for arity 9 SINCE THE DAY IT WAS WRITTEN, and it
+  # surfaced only because somebody finally tried to prove against it — which for a staged
+  # descriptor may be never. There is a second mode and it is worse: at an arity outside
+  # {7,11,16} the deployed witness generator puts the ARITY TAG in lane 4 and zero in 5/6, so
+  # inputs the emitter handed the chip never enter the preimage. Refused is loud; discarded looks
+  # like it worked.
+  # ⚑ THE ADMITTED SET IS NOT WRITTEN DOWN ANYWHERE IN THE GATE, and must not be: the AIR carries
+  # it as a degree-7 product over the arity column, and a constant re-typed beside its own
+  # definition is decoration. The gate hands the DEPLOYED `Ir2Air::Chip` evaluator the honest chip
+  # row the DEPLOYED witness generator builds, at each candidate arity, and reads the verdict; it
+  # derives the per-lane pin map the same way and the lane-DROP map from a second, independent
+  # source (the deployed absorb). 368 descriptors / 35 121 chip lookups across every registry,
+  # `by-name/`, the Lean-emitted trees and the staged registry TSVs. Rust, not python, for exactly
+  # the reason above — it must RUN the chip.
+  # ⚠ NEVER fix a red here by widening the admitted set. It is the chip's S-box budget; a bad
+  # arity changes in `metatheory/` and re-emits.
+  # ⓘ RED ON LANDING, on one real finding: `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1`
+  # asks for arity 8 and arity 14, neither admitted — the SOLE emitted hidden-span descriptor, and
+  # it is unprovable. Its `GuardedHidingSpanWideBlindEmit.lean` header reasons "arity 14 ≤
+  # CHIP_RATE = 16", which is the wrong predicate; `chipLookupTupleN` takes the arity to BE
+  # `ins.length` and the only Lean-side condition anywhere is `ins.length ≤ CHIP_RATE`. Fix: pad
+  # `spanIns` 8 → 11 and `commitStage2WideIns` 14 → 16 in Lean, re-guard the golden, re-emit.
+  # The `-red` row is not optional: the headline is a NEGATIVE assertion. It drives the gate
+  # against a checked-in reconstruction of the PRE-`57105f387` descriptor (extracted from that
+  # commit's parent, out of the Lean emitter's own byte-pinned golden — not a fixture anybody
+  # invented) and requires BOTH modes to fire; requires the same descriptor GREEN after its
+  # arity-11 repair; and points the corpus walk at an empty directory so a dead reader cannot read
+  # as clean. It mutates nothing in the shared tree.
+  "chip-absorb-arity|1200|bash scripts/check-chip-absorb-arity.sh"
+  "chip-absorb-arity-red|1200|bash scripts/check-chip-absorb-arity.sh --self-test"
   "wasm-freshness|120|bash scripts/check-wasm-freshness.sh"
   "effect-payload-shape|900|bash scripts/check-effect-payload-shape.sh"
   # An em-dash in a string a PLAYER reads. Paired with its own can-it-go-red run, the way
