@@ -1254,8 +1254,14 @@ fn canonicity_splice_of(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> us
 /// (`metatheory/EmitWideRegistryProbe.lean`). `grantCapWriteCapOpen` is reconciled OUT (it is not a
 /// live `V3_STAGED_REGISTRY_TSV` member). ADDITIVE: the live 1-felt `V3_STAGED_REGISTRY_TSV` / FP / VK
 /// are UNTOUCHED — this is the parallel wide path beside them. The transfer row (row 0) carries the
-/// two `(sender_leaf, authorized_root)` membership-claim PIs and their teeth columns, and is pinned
-/// ABSOLUTELY at 1782 cols / 68 PIs by `WIDE_MEMBER_GEOMETRY` + the row-0 PI pin. (It used to be
+/// two `(sender_leaf, authorized_root)` membership-claim PI SLOTS and their teeth columns, and is
+/// pinned ABSOLUTELY at 1782 cols / 68 PIs by `WIDE_MEMBER_GEOMETRY`.
+/// ⚑ This said "+ the row-0 PI pin" until 2026-08-01. There is NO such pin: measured on these very
+/// bytes, PI 50 and 51 have no `pi_binding`, and the teeth columns (1735/1736) are read by no
+/// constraint. The slots are carried; the binding is not. Same for `mintVmDescriptor2R24` PI 46,
+/// whose `prmCol 0` (col 68) is not referenced at all. Five of the seven carriers ARE pinned and
+/// forced (custom 46/54, sovereign 58, factory 47, hatchery 55) — membership and bridge are the
+/// two outliers, and `carrier_forgery_forge.rs` is RED on exactly those two. (It used to be
 /// described as "the advance of `WIDE_TRANSFER_STAGED_TSV`" — that single-line fork was DELETED
 /// 2026-07-31; it had diverged and no verifier resolved it.)
 /// The wide carriers land PAST each member's host width, re-absorbing the SAME rotated limbs the

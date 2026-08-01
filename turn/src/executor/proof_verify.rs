@@ -1444,8 +1444,30 @@ impl TurnExecutor {
         // PAST the per-family base shape, spliced ahead of the 16 wide anchors; the producer
         // (the wide dispatcher's registry-tail block / the record-pin KEY_COMMIT rider) fills
         // them from the committed trace, and HERE the executor reconstructs the SAME values from
-        // the TRUSTED before-cell — so a proof whose bound teeth columns disagree with the
-        // trusted cell makes the anchored PIs diverge ⇒ UNSAT ⇒ reject:
+        // the TRUSTED before-cell.
+        //
+        // ⚑ WHAT ACTUALLY ENFORCES THIS, MEASURED 2026-08-01 ON THE EMITTED BYTES — read this
+        // before citing the line below it. This block used to claim "a proof whose BOUND TEETH
+        // COLUMNS disagree with the trusted cell makes the anchored PIs diverge ⇒ UNSAT". That is
+        // FALSE for the membership pair: `transferVmDescriptor2R24` carries **no `pi_binding` for
+        // PI 50 or 51 at all** (68 PIs, 29 pins, 50/51 among the 39 unpinned), and its two teeth
+        // COLUMNS — 1735/1736, i.e. `trace_width − refuse_weld_widen(45) − 2/−1` — are referenced
+        // by NOTHING: no gate, no lookup, no range, no hash site, no pin. The producer fills both
+        // (`trace_rotated.rs:7236`) and splices the same values into the PI vector, but the AIR is
+        // blind to both. `carrier_forgery_forge.rs:143` is RED on exactly this (`pi_pin(desc, 50)
+        // == None`), and `ivc_turn_chain.rs:4734` passes `None` for the column check with the
+        // comment "parametric until the regen pins them" — the tree agrees; only this line did not.
+        //
+        // So the mechanism that binds the membership pair here is the FIAT-SHAMIR TRANSCRIPT over
+        // public values, NOT an AIR pin: `verify_vm_descriptor2` hands `public_inputs` to
+        // `verify_batch` as the main instance's public values, so a proof produced against a
+        // different pair will not verify against the vector this executor reconstructs. That is a
+        // strictly weaker property and its scope must not be overstated: it binds PROVER-TO-THIS-
+        // VERIFIER AGREEMENT, and nothing more. It does NOT tie PI 50/51 to committed state, so a
+        // PURE LIGHT CLIENT — which has no trusted before-cell to reconstruct from — accepts an
+        // arbitrary pair. That is `MembershipBackingAttack §A/§A′`, live, and the in-AIR welds
+        // (`CarrierOctetGates.withMembershipPubkeyCompress` / `effFieldsReadOpenV3`) remain the
+        // named `MembershipAuthRootEdge` seams. Do not re-describe this as an AIR binding.
         //   * the committed transfer row (`transferV3MembershipWide`, 68): the membership-teeth
         //     pair from `sender_membership_teeth` (the trusted cell's owner-key compress + its
         //     declared `SenderAuthorized { PublicRoot }` slot felt; ZERO pair when no caveat);

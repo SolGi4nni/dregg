@@ -6834,10 +6834,22 @@ fn cap_write_wide_plan(effect: &Effect) -> Option<(bool, bool)> {
 ///
 ///   * the committed transfer row (`CarrierComposed.transferV3MembershipWide`, 68): the
 ///     membership-teeth pair `(sender_leaf, authorized_root)` — 2 constant teeth columns past the
-///     carriers (row-0-pinned) + 2 claim PIs spliced ahead of the 16 wide anchors. The values come
+///     carriers + 2 claim PIs spliced ahead of the 16 wide anchors. The values come
 ///     from `membership_teeth` (the caller's BEFORE-cell derivation — `compress_member` over the
 ///     owner key + the `SenderAuthorized { PublicRoot }` slot felt); `None` fills the ZERO pair,
 ///     exactly the no-caveat sentinel the fold's membership arm refuses to bind.
+///     ⚑ This said "(row-0-pinned)" until 2026-08-01 and that was FALSE. Measured on the emitted
+///     bytes: `transferVmDescriptor2R24` has NO `pi_binding` for PI 50 or 51, and the two teeth
+///     columns it fills below (1735/1736 = `trace_width − refuse_weld_widen(45) − 2/−1`) are
+///     referenced by NO constraint of any kind. This arm writes them; the AIR never reads them.
+///     `carrier_forgery_forge.rs:143` is RED on precisely that, and `ivc_turn_chain.rs:4734`
+///     admits the claim column-free ("parametric until the regen pins them"). Creating the pin is
+///     necessary but NOT sufficient — a pin on an unread column is deleted again by
+///     `UnforcedPiPins.dropUnforcedPins`, which is correct. The column has to become FORCED first,
+///     and the two Lean gates that would do it (`CarrierOctetGates.withMembershipPubkeyCompress`,
+///     `effFieldsReadOpenV3`) are UNCONDITIONAL, so wiring either as-is is UNSAT on every
+///     no-caveat transfer — i.e. on the dominant path — because of the ZERO sentinel three lines
+///     up. A selector is the missing gadget, not a bigger budget.
 ///   * the committed makeSovereign row (`CarrierComposed.makeSovereignV3DeployedWide`, 78): the 4
 ///     KEY_COMMIT teeth + the 32-column chip appendix, filled IN the record-pin arm
 ///     ([`append_sovereign_key_commit_rider`] — derived from the committed pubkey octet, so the

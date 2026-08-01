@@ -623,7 +623,42 @@ theorem ehPublish_binds (w : Nat) (env : VmRowEnv) (isFirst : Bool)
 guards that passed BECAUSE their circuit was unsatisfiable. So the appended families are exhibited
 as SATISFIED on a concrete honest row, with no hypotheses — and the tag gate is separately shown
 NOT to accept everything. If a later edit makes the block unsatisfiable, these go red before the
-refusal rungs go quietly vacuous. -/
+refusal rungs go quietly vacuous.
+
+⚑⚑ READ THIS BEFORE WIRING — the sentence above OVERSTATES its own controls, audited 2026-08-01.
+"the appended families are exhibited as SATISFIED" is true of THREE of the five families, and the
+two it omits are the two that carry the soundness:
+
+  * there is NO control for `ehAbsorbs` and NONE for `ehContinuity`. CONTROL A / A′ / B / C cover
+    `ehTagGateBody`, `ehSeed`, `ehPublish` only.
+  * worse, `ehHonestRow` below sets every intermediate carrier to ZERO (`if c < w + 57 then 0`), so
+    the row exhibited as honest would FAIL the six chip lookups against any sound table whose
+    permutation output on the IV is nonzero. It is not a witness that the absorb chain is
+    satisfiable; nothing here shows that it is.
+
+Two further gaps of the same kind, so the whole ladder is priced in one place:
+
+  * NO theorem in this file mentions `Satisfied2`. There is no statement of the form
+    `Satisfied2 hash (withEffectsHashPin g) … → …`, so nothing connects any rung to the deployed
+    satisfaction predicate. Contrast `CarrierOctetGates`, every one of whose forcing lemmas is
+    stated over `Satisfied2` and is TRACE-FORCED from `rowConstraints`.
+  * `ehChain_back`'s hypotheses quantify over `∀ s : Nat`, but `ehAbsorbs` emits `EH_STEPS = 6`
+    lookups. For `s ≥ 6` the inputs name `ehCarrierCol w (s-1)` past `traceWidth`, so `hA`/`hB`
+    cannot be discharged from ANY satisfying assignment of `withEffectsHashPin g`. The rung is not
+    vacuous — you can cook an assignment — but it does not reach the emitted object.
+
+`ehHop` IS real: pair-specific `IsCollW`, floor-free, no `∃`-pigeonhole. The geometry (`EH_SPAN =
+65`) and the shape guards in §7 are machine-checked. Everything ABOVE `ehHop` is either a
+membership-plus-unfold lemma (`ehContinuity_step`, `ehPublish_binds` are `P → P` in substance) or
+is stated with hypotheses the descriptor cannot supply.
+
+⚑ CONSEQUENCE FOR THE WIRING, which is the point of writing it down: wiring this installs 65
+columns × 56 members and 27 constraints per member behind a VK rotation, and the pins it returns
+through `UnforcedPiPins.dropUnforcedPins` (mint's PI 46, six of custom's octet limbs) return
+because `ehFreshCols` absorbs `prmCol 0..7` into THIS fold. So the census would record them as
+FORCED while the thing doing the forcing has no `Satisfied2` statement. That is a bookkeeping win,
+not a security one, and it is exactly the laundered vacuity the anti-vacuity law forbids. Close the
+`Satisfied2` gap and the two missing controls FIRST; the VK epoch is not the blocker here. -/
 
 /-- An honest row, by plain arithmetic (no choice, no classical `dif`): selector `sel::TRANSFER = 1`
 fires one-hot, the tag reads that selector index, the accumulator enters at the IV, the extension
