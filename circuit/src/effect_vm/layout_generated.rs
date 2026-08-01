@@ -15,13 +15,13 @@
 pub const EFFECT_VM_WIDTH: usize = 188;
 
 /// pre-iroot limbs in one rotated block — projected from the verified RotatedLayout
-pub const NUM_PRE_LIMBS: usize = 184;
+pub const NUM_PRE_LIMBS: usize = 187;
 
 /// one rotated state block's span (BEFORE and AFTER each occupy B_SPAN columns)
-pub const B_SPAN: usize = 247;
+pub const B_SPAN: usize = 251;
 
 /// column offset from a member's face to its AFTER block (= B_SPAN)
-pub const AFTER_BLOCK_OFF: usize = 247;
+pub const AFTER_BLOCK_OFF: usize = 251;
 
 /// the caveat region's span
 pub const C_SPAN: usize = 45;
@@ -39,7 +39,7 @@ pub const C_RC_CARRIER: usize = 43;
 pub const C_COMMIT: usize = 44;
 
 /// in-appendix base of the FIELDS-CANONICITY region (= 2*B_SPAN + C_SPAN, past both blocks and the caveat region). Its 7 aux columns per (block, slot) are what makes Canonical9's NoWrap leg expressible; the producer MUST fill them or every honest turn is UNSAT.
-pub const CANON9_REGION_OFF: usize = 539;
+pub const CANON9_REGION_OFF: usize = 547;
 
 /// aux columns one (block, slot) canonicity gadget uses, in order: r, q0, q1, v0, v0b, v1, v1b
 pub const CANON9_PER_SLOT: usize = 7;
@@ -48,10 +48,10 @@ pub const CANON9_PER_SLOT: usize = 7;
 pub const CANON9_SPAN: usize = 112;
 
 /// 2*B_SPAN + C_SPAN + CANON9_SPAN — the rotated appendix appended to the v1 face
-pub const APPENDIX_SPAN: usize = 651;
+pub const APPENDIX_SPAN: usize = 659;
 
 /// poseidon2-chip SITES the rotated appendix contributes (2 blocks + the caveat region incl. the rc fold). Graduation appends 7 lane columns per site, so this is the multiplier the Rust host width uses — it was a hand-carried arithmetic literal in trace_rotated.rs and it drifted.
-pub const ROT_APPENDIX_SITES: usize = 136;
+pub const ROT_APPENDIX_SITES: usize = 138;
 
 /// committed record/authority digest limb
 pub const B_RECORD_DIGEST: usize = 24;
@@ -102,25 +102,25 @@ pub const B_PERMS_COMPLETION: usize = 38;
 pub const B_VK_COMPLETION: usize = 45;
 
 /// the iroot limb (pre-iroot limbs end here)
-pub const B_IROOT: usize = 184;
+pub const B_IROOT: usize = 187;
 
 /// the state-commitment limb
-pub const B_STATE_COMMIT: usize = 185;
+pub const B_STATE_COMMIT: usize = 188;
 
 /// in-block base of the chained-absorption carriers — READ OFF `rotV3SitesAt`'s first emitted site, so the producer writes the columns the descriptors bind. Rust carried this by hand and it rotted across the 178 -> 184 flag day (180 vs 186): the producer overwrote four pre-limbs plus iroot/state_commit and every rotated member was UNSAT.
-pub const B_CHAIN_BASE: usize = 186;
+pub const B_CHAIN_BASE: usize = 189;
 
 /// chain carriers per block: they fill `[B_CHAIN_BASE, B_SPAN)` exactly
-pub const B_NUM_CHAIN: usize = 61;
+pub const B_NUM_CHAIN: usize = 62;
 
 /// in-block offset of the first S2-deleted column (the 1-felt state_commit digest)
-pub const S2_CARRIER_OFF: usize = 185;
+pub const S2_CARRIER_OFF: usize = 188;
 
 /// one S2-deleted carrier band's width (state_commit digest + B_NUM_CHAIN chain carriers)
-pub const S2_CARRIER_SPAN: usize = 62;
+pub const S2_CARRIER_SPAN: usize = 63;
 
 /// the S2-deleted graduated chip-lane band's width (7 lanes per deleted block site)
-pub const S2_LANE_SPAN: usize = 868;
+pub const S2_LANE_SPAN: usize = 882;
 
 /// state register index of the first committed field (fields[0]); the AFTER-block field octet holds register r(FIELD_BASE+i) at octet index i, so octet_index(r) = r - FIELD_BASE
 pub const FIELD_BASE: usize = 3;
@@ -140,10 +140,25 @@ pub const B_CONTRACT_HASH_OCTET: usize = 97;
 /// in-block base of the public_key carrier octet (app-PI octet base 2 of [89, 97, 105])
 pub const B_PUBKEY_OCTET: usize = 105;
 
+/// ninth lane of the child_vk carrier NONET (KeyLanes9.keyToLanes9 lane 8)
+pub const B_CHILD_VK_NINTH_LANE: usize = 184;
+
+/// ninth lane of the contract_hash carrier NONET (KeyLanes9.keyToLanes9 lane 8)
+pub const B_CONTRACT_HASH_NINTH_LANE: usize = 185;
+
+/// ninth lane of the OWNER-KEY carrier NONET. The eight-lane octet at B_PUBKEY_OCTET cannot injectively hold 32 bytes; this column is what makes the committed nonet determine exactly one key (Emit.KeyCanonicity9Emit.keyCanon9_determines_the_owner_key_deployed).
+pub const B_PUBKEY_NINTH_LANE: usize = 186;
+
+/// range width of nonet lanes 0..7 (2^29 < p, so no lane reduces)
+pub const KEY_LANE_BITS: usize = 29;
+
+/// range width of nonet lane 8. NARROWER by construction: 2^256 / (2^29)^8 = 2^24. A uniform 29-bit check on lane 8 admits [0,...,0,2^24], which decodes byte-for-byte to the all-zero key — see keyCanon9_rejects_the_forged_nonet.
+pub const KEY_TOP_BITS: usize = 24;
+
 /// One faithful-8 group: lane 0 followed by seven completion columns.
 pub type Felt8Group = [usize; 8];
 
-/// Every named group, emitted verbatim from `rotated184.groupTable`.
+/// Every named group, emitted verbatim from `rotated187.groupTable`.
 pub const ROTATED_GROUP_TABLE: [Felt8Group; 10] = [
     [24, 12, 13, 14, 15, 16, 17, 18],
     [25, 52, 53, 54, 55, 56, 57, 58],
@@ -176,6 +191,9 @@ pub const ROTATED_SINGLES: [usize; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 29,
 
 /// The carrier-material octet BASES (each occupies `base .. base + 8`).
 pub const ROTATED_OCTET_BASES: [usize; 3] = [89, 97, 105];
+
+/// The NINTH lane of each carrier octet, positionally parallel to `ROTATED_OCTET_BASES`. NOT adjacent to its octet: never reconstruct with a stride. Each is an ABSORBED pre-limb, so `wireCommitR` folds it into `state_commit` — which is the whole point.
+pub const ROTATED_OCTET_NINTH_LANES: [usize; 3] = [184, 185, 186];
 
 /// Every `fields[0..8]` completion lane column, in layout order (lanes 1..8 of each of the 8 slots — deliberately NON-CONTIGUOUS: the ninth lane of slot `j` is `176 + j`).
 pub const ROTATED_FIELDS_LANE_COLS: [usize; 64] = [

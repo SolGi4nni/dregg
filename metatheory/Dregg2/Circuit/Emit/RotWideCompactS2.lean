@@ -186,23 +186,32 @@ wide chain absorbs them; they stay.
 ⚑ The band literals here stay LITERAL rather than `B_STATE_COMMIT`/`B_SPAN`: every proof in §2 is
 discharged by `omega`, which treats a `def` as an opaque atom and so cannot see that
 `B_SPAN - B_STATE_COMMIT = 62`. The `#guard`-shaped pins below hold them to the flag day. -/
-def s2CarrierCols (base : Nat) : List Nat := (List.range 62).map (base + 185 + ·)
+-- ⚑ RE-TYPED FOR 187, AND THE RE-TYPING IS THE REVIEW. These are deliberately literal (`omega`
+-- treats a `def` as an opaque atom here), which means they do NOT follow the layout — they must be
+-- moved by hand every epoch, and a missed one does not go RED, it goes WRONG: at 187 the old
+-- `185 / 247 / 432 / 494 / 868` band names contract_hash's ninth lane, THE OWNER KEY'S NINTH LANE
+-- and the iroot, and would delete four real carriers. The detector is
+-- `EmitLayoutManifest.lean:100-101` (`s2CarrierOff == B_STATE_COMMIT`,
+-- `s2CarrierSpan == bNumChain + 1`) — two genuinely independent readings, and it is what caught
+-- this. 185->188 (B_STATE_COMMIT), 62->63 carriers, 247->251 (B_SPAN), 432->439, 494->502,
+-- 868->882 (126*7), 992->1008.
+def s2CarrierCols (base : Nat) : List Nat := (List.range 63).map (base + 188 + ·)
 
 /-- ALL columns the S2 deletion removes from a member whose rotated BEFORE block sits at `bb`
 (AFTER at `bb + 247` = `B_SPAN`) and whose S2 chip-lane region starts at `laneBase`: the two
 62-column carrier bands plus the contiguous `124 × 7 = 868` graduated lane columns. 992 columns. -/
 def s2DeadCols (bb laneBase : Nat) : List Nat :=
-  s2CarrierCols bb ++ s2CarrierCols (bb + 247) ++ (List.range 868).map (laneBase + ·)
+  s2CarrierCols bb ++ s2CarrierCols (bb + 251) ++ (List.range 882).map (laneBase + ·)
 
-theorem s2DeadCols_length (bb laneBase : Nat) : (s2DeadCols bb laneBase).length = 992 := by
+theorem s2DeadCols_length (bb laneBase : Nat) : (s2DeadCols bb laneBase).length = 1008 := by
   simp [s2DeadCols, s2CarrierCols]
 
 /-- O(1) membership in the dead-column set (the list `s2DeadCols` is the SPEC; this is the
 computable form the emit-time gates and the index map run on). -/
 def isDeadCol (bb laneBase c : Nat) : Bool :=
-  (decide (bb + 185 ≤ c) && decide (c < bb + 247))
-    || (decide (bb + 432 ≤ c) && decide (c < bb + 494))
-    || (decide (laneBase ≤ c) && decide (c < laneBase + 868))
+  (decide (bb + 188 ≤ c) && decide (c < bb + 251))
+    || (decide (bb + 439 ≤ c) && decide (c < bb + 502))
+    || (decide (laneBase ≤ c) && decide (c < laneBase + 882))
 
 theorem isDeadCol_eq_mem (bb laneBase c : Nat) :
     isDeadCol bb laneBase c = true ↔ c ∈ s2DeadCols bb laneBase := by
@@ -211,8 +220,8 @@ theorem isDeadCol_eq_mem (bb laneBase c : Nat) :
     decide_eq_true_eq]
   constructor
   · rintro ((⟨h1, h2⟩ | ⟨h1, h2⟩) | ⟨h1, h2⟩)
-    · exact Or.inl (Or.inl ⟨c - (bb + 185), by omega, by omega⟩)
-    · exact Or.inl (Or.inr ⟨c - (bb + 247 + 185), by omega, by omega⟩)
+    · exact Or.inl (Or.inl ⟨c - (bb + 188), by omega, by omega⟩)
+    · exact Or.inl (Or.inr ⟨c - (bb + 251 + 188), by omega, by omega⟩)
     · exact Or.inr ⟨c - laneBase, by omega, by omega⟩
   · rintro ((⟨i, hi, rfl⟩ | ⟨i, hi, rfl⟩) | ⟨i, hi, rfl⟩)
     · exact Or.inl (Or.inl ⟨by omega, by omega⟩)
@@ -301,7 +310,10 @@ def planOk : List (VmHashSite × Nat) → Bool
       && (overrideColsOf s lb).Nodup
       && (inputColsOf s).all (fun c => !laterOv.contains c && !(overrideColsOf s lb).contains c)
       && s.inputs.all colOnlyInput
-      && decide (s.inputs.length ≤ CHIP_RATE)
+      -- ⚑ ADMITTED, not merely `≤ CHIP_RATE`: this is the compaction's own fail-closed gate, and
+      -- the expanded trace's chip table has to be `ChipTableSoundN`, whose rows now carry an
+      -- admitted arity. `≤ CHIP_RATE` would let the compaction bless a site the chip AIR refuses.
+      && decide (ChipArityAdmitted s.inputs.length)
       && planOk rest
 
 /-- One surviving constraint is compatible with the deletion: it reads no dead column, and if
@@ -568,8 +580,8 @@ def expandTrace (permOut : List ℤ → List ℤ) (bb laneBase : Nat) (t : VmTra
       else t.tf tid }
 
 /-- `planOk` pins every site's input tuple inside the chip rate. -/
-theorem planOk_fit (plan : List (VmHashSite × Nat)) (hok : planOk plan = true) :
-    ∀ p ∈ plan, p.1.inputs.length ≤ CHIP_RATE := by
+theorem planOk_admitted (plan : List (VmHashSite × Nat)) (hok : planOk plan = true) :
+    ∀ p ∈ plan, ChipArityAdmitted p.1.inputs.length := by
   induction plan with
   | nil => intro p hp; cases hp
   | cons q rest ih =>
@@ -593,7 +605,7 @@ theorem expandTrace_chipSoundN (permOut : List ℤ → List ℤ) (bb laneBase : 
   · obtain ⟨aX, _, hrow⟩ := List.mem_flatMap.mp hnew
     obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hrow
     refine ⟨insVals aX p.1, ?_, rfl⟩
-    have := planOk_fit _ hplan p hp
+    have := planOk_admitted _ hplan p hp
     simpa [insVals] using this
 
 /-! ## §7a — per-kind transport: a mapped constraint holding on the compact row IS the original

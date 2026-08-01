@@ -78,13 +78,13 @@ const _: () = {
     // `circuit/descriptors/`.
     assert!(V3_TRACE_WIDTH == 2442);
     assert!(BEFORE_PAYLOAD_BASE == 2442);
-    assert!(AFTER_PAYLOAD_BASE == 2627);
-    assert!(ROTATED_HOST_WIDTH == 2812);
-    assert!(BEFORE_CARRIER_BASE == 2812);
-    assert!(AFTER_CARRIER_BASE == 3308);
-    assert!(BEFORE_COMMIT_BASE == 3300);
-    assert!(AFTER_COMMIT_BASE == 3796);
-    assert!(ROTATED_TRACE_WIDTH == 3804);
+    assert!(AFTER_PAYLOAD_BASE == 2630); // 187 epoch: payload width 185 -> 188
+    assert!(ROTATED_HOST_WIDTH == 2818); // 187 epoch: 2630 + 188
+    assert!(BEFORE_CARRIER_BASE == 2818);
+    assert!(AFTER_CARRIER_BASE == 3322);
+    assert!(BEFORE_COMMIT_BASE == 3314);
+    assert!(AFTER_COMMIT_BASE == 3818);
+    assert!(ROTATED_TRACE_WIDTH == 3826);
     assert!(ROTATED_PUBLIC_INPUT_COUNT == 76);
     // The one genuinely CROSS-SOURCE relation here (two independently-derived constants, not a
     // definition restated): this file's payload width and the emitted rotated layout must agree.

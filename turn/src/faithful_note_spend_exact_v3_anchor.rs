@@ -46,7 +46,7 @@ const _: () = {
     // ROTATED_PAYLOAD_WIDTH - NULLIFIER_OFFSETS.len()` — which IS the definition of
     // `STABLE_FRAME_CELLS` in `exact_nullifier_aafi_rotated_trace`, so the cross-crate pin became
     // `x == x`. 178 → 184 moves it 171 → 177.
-    assert!(STABLE_FRAME_CELLS == 177);
+    assert!(STABLE_FRAME_CELLS == 180);
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

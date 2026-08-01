@@ -333,9 +333,9 @@ const _: () = {
     // ENDPOINT_COMMIT_CARRIER: usize = ENDPOINT_WIDE_CARRIERS - 1;`, and `POST_WIDE_CARRIER_BASE +
     // ENDPOINT_WIDE_BLOCK_SPAN == ENDPOINT_TRACE_WIDTH` sat beside that constant's definition.
     // Both were `x == x` and could not fail at any geometry.
-    assert!(ENDPOINT_WIDE_CARRIERS == 62);
-    assert!(ENDPOINT_COMMIT_CARRIER == 61);
-    assert!(ENDPOINT_WIDE_BLOCK_SPAN == 496);
+    assert!(ENDPOINT_WIDE_CARRIERS == 63);
+    assert!(ENDPOINT_COMMIT_CARRIER == 62);
+    assert!(ENDPOINT_WIDE_BLOCK_SPAN == 504);
     assert!(POST_WIDE_CARRIER_BASE + ENDPOINT_WIDE_BLOCK_SPAN == ENDPOINT_TRACE_WIDTH);
 };
 

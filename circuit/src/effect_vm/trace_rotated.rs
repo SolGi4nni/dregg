@@ -3224,16 +3224,16 @@ pub const CAP_OPEN_TB_PI_COUNT: usize = CAP_OPEN_TB_PI_BASE + 1; // 47
 // relations; see the `NUM_PRE_LIMBS`-derived wide block below.)
 const _: () = {
     assert!(
-        CAP_OPEN_BASE == 1819,
-        "cap-open rides the graduated rotated base (1647 -> 1691 nine-lane -> 1707 dsl-rc carrier -> 1819 fields-canonicity)"
+        CAP_OPEN_BASE == 1841,
+        "cap-open rides the graduated rotated base (1647 -> 1691 nine-lane -> 1707 dsl-rc carrier -> 1819 fields-canonicity -> 1841 KEY NONET at 187 limbs: APPENDIX +8, sites +2)"
     );
     assert!(
         CAP_OPEN_SPAN == 329,
         "Phase H-CAP-8 native 8-felt membership span"
     );
     assert!(
-        CAP_OPEN_WIDTH == 2148,
-        "cap-open READ host width = 1819 + 329"
+        CAP_OPEN_WIDTH == 2170,
+        "cap-open READ host width = 1841 + 329 (was 1819 + 329 at 184 limbs)"
     );
     assert!(
         CAP_OPEN_AFTER_SPINE_SPAN == 143,
@@ -3245,7 +3245,7 @@ const _: () = {
     // above dangling over an assertion about something else. It is the only line in this block that
     // ties the Rust constants to a committed descriptor byte, so losing it lost the whole point.
     assert!(
-        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2291,
+        CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN == 2313,
         "cap-WRITE narrow width"
     );
     // The TB PI geometry. `CAP_OPEN_TB_WIDTH` gets NO pin here on purpose: it is now *defined* as
@@ -4566,27 +4566,27 @@ pub const WIDE_COMMIT_CARRIER: usize = WIDE_NUM_CARRIERS - 1; // 59
 // `EffectVmEmitRotationWide.lean`.)
 const _: () = {
     assert!(
-        NUM_PRE_LIMBS == 184,
-        "wide geometry v2 is pinned to 184 pre-iroot limbs (the NINE-LANE epoch: 178 + 6, consuming pads 176/177 plus 178..183)"
+        NUM_PRE_LIMBS == 187,
+        "wide geometry v2 is pinned to 187 pre-iroot limbs (the KEY NONET epoch: 184 + 3, giving the owner key its ninth lane at limb 186 — the Ed25519 sign bit. 185/186 were traps: B_SPAN's floor division vs chunkCount needs n = 1 mod 3)"
     );
     assert!(
-        WIDE_NUM_CARRIERS == 62,
-        "184 limbs need 62 wide carriers (head + 60 body + iroot)"
+        WIDE_NUM_CARRIERS == 63,
+        "187 limbs need 63 wide carriers (head + 61 body + iroot); the extra body group absorbs limbs 184..186, the last of which IS the owner nonet's ninth lane"
     );
     assert!(
-        WIDE_COMMIT_CARRIER == 61,
-        "the final (commitment) carrier is 61"
+        WIDE_COMMIT_CARRIER == 62,
+        "the final (commitment) carrier is 62"
     );
     // ⚑ LITERALS, deliberately. These read `== WIDE_NUM_CARRIERS * 8` and `== 2 *
     // WIDE_CARRIER_BLOCK_SPAN` for one day — verbatim restatements of the two definitions ~20 lines
     // up, so both were `x == x` and neither could ever fail.
     assert!(
-        WIDE_CARRIER_BLOCK_SPAN == 496,
-        "one wide carrier block spans 496 columns (62 carriers × 8)"
+        WIDE_CARRIER_BLOCK_SPAN == 504,
+        "one wide carrier block spans 504 columns (63 carriers × 8)"
     );
     assert!(
-        WIDE_CARRIER_APPENDIX == 992,
-        "the two-block wide appendix spans 992 columns"
+        WIDE_CARRIER_APPENDIX == 1008,
+        "the two-block wide appendix spans 1008 columns"
     );
     // The AFTER block's commit carrier ends FLUSH at the allocated width (no slack, no overrun).
     assert!(WIDE_AFTER_CBASE + 8 * WIDE_COMMIT_CARRIER + 8 == WIDE_WIDTH);

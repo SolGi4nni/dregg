@@ -78,7 +78,7 @@ const _: () = {
     // when it was "re-expressed as the relation it was checking" — but `pub const
     // STAGED_TRACE_WIDTH: usize = ROTATED_TRACE_WIDTH;` is that relation, 26 lines up, so the
     // assertion became `x == x` and stopped gating anything. 178 → 184 moves it 3760 → 3804.
-    assert!(STAGED_TRACE_WIDTH == 3804);
+    assert!(STAGED_TRACE_WIDTH == 3826);
     assert!(STAGED_PUBLIC_INPUT_COUNT == 76);
     assert!(OUTER_PUBLIC_INPUTS == 16);
 };
