@@ -118,3 +118,19 @@ dregg-atlas/site/screenshots/
 
 # i think this comes from o1js
 .fullchain 
+
+# ⚑ BUILT WASM ENGINES ARE REGENERATED, NEVER KEPT.
+#
+# On 2026-08-01 three untracked engine trees were found shipping alongside the source:
+# `portal/dist/pkg` (a 2026-07-02 PRE-IMT engine, which is why a stale 6-arg call in
+# `portal/dist/cell.html` looked locally consistent), `site/dist` (Jul-27, refused BOTH the old and
+# the new envelope), and `wasm/pkg-mwt` (Jul-14, pre-IMT). 311 MB of verifiers that could not be
+# right, none of them tracked, none of them regenerated when the engine changed.
+#
+# ⚠ The failure mode is specific: an untracked built artifact makes a STALE CALLER look correct,
+# because the caller and the engine were stale together. `289720ca8` (Jul 26) identified one of these
+# blobs by name and nothing regenerated it for five days.
+#
+# Rebuild: site/dist -> scripts/build-pages-dist.sh · portal/dist/pkg, wasm/pkg* -> build.sh wasm
+site/dist/
+wasm/pkg-mwt/
