@@ -18,7 +18,8 @@
 //!
 //!   1. the affordance resolves (an unknown direction = no turn);
 //!   2. the **cap tooth runs in-band** — the held authority must satisfy the
-//!      affordance's `required` ([`dregg_cell::is_attenuation`]); an under-authorized
+//!      affordance's `required` ([`dregg_cell::Requirement::satisfied_by`], the same
+//!      attenuation lattice); an under-authorized
 //!      press commits NOTHING (the anti-ghost tooth);
 //!   3. the writes are a pure function of the LIVE model (the cell state);
 //!   4. a real verified turn executes on the embedded executor, leaving a genuine
@@ -37,7 +38,7 @@
 //! (lost on restart) rather than committed to the live devnet node. Driving the turn
 //! all the way to the node's executor (so the receipt is the node's own) is the same
 //! dispatch seam every bot op touches the executor at — the gate that decides *whether
-//! the turn may fire at all* is the real `is_attenuation`, in-band, HERE.
+//! the turn may fire at all* is the real cap tooth, in-band, HERE.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
@@ -48,7 +49,7 @@ use serenity::all::{
 };
 
 use dregg_cell::state::{FieldElement, STATE_SLOTS};
-use dregg_cell::{AuthRequired, Cell, Ledger, Permissions, is_attenuation};
+use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
 use dregg_sdk::embed::{DreggEngine, EngineConfig};
 use dregg_turn::TurnReceipt;
 use dregg_turn::builder::{ActionBuilder, TurnBuilder};
@@ -145,7 +146,7 @@ impl std::fmt::Display for FireError {
             }
             FireError::Unauthorized { affordance } => write!(
                 f,
-                "`{affordance}` was REFUSED by the real `is_attenuation` cap-gate (never run)"
+                "`{affordance}` was REFUSED by the real cap-gate (never run)"
             ),
             FireError::Executor(r) => write!(f, "the verified executor rejected the turn: {r}"),
         }
@@ -327,7 +328,7 @@ impl CardApplet {
     /// executor (the same shape [`deos_js::applet::Applet::fire`] commits):
     ///
     /// 1. resolve the affordance (unknown = no turn);
-    /// 2. CAP TOOTH in-band — `held` must satisfy `required` ([`is_attenuation`]); refused
+    /// 2. CAP TOOTH in-band — `held` must satisfy `required` ([`Requirement::satisfied_by`]); refused
     ///    ⇒ nothing committed;
     /// 3. writes = pure function of the live model;
     /// 4. build + execute the verified turn (the affordance name is the action method, the
@@ -339,8 +340,16 @@ impl CardApplet {
             .get(affordance)
             .ok_or_else(|| FireError::UnknownAffordance(affordance.to_string()))?;
 
-        // (2) the real `is_attenuation`, in-band. Refused ⇒ nothing committed.
-        if !is_attenuation(&self.held, &aff.required) {
+        // (2) THE REAL CAP TOOTH, in-band. Refused ⇒ nothing committed.
+        //
+        // `Requirement::satisfied_by`, not a bare `is_attenuation`: `aff.required` is a
+        // `Requirement`, and the whole reason that type exists is that `AuthRequired::None`
+        // in requirement position was read as "ungated" by two gates and "root only" by
+        // three. Handing a `Requirement` to a function typed over the raw lattice would
+        // reintroduce exactly the ambiguity — and would not have compiled, which is the
+        // only reason it was caught: this crate is EXCLUDED from the root workspace, so
+        // `cargo check --workspace` never reaches it.
+        if !aff.required.satisfied_by(&self.held) {
             return Err(FireError::Unauthorized {
                 affordance: affordance.to_string(),
             });
@@ -464,7 +473,7 @@ impl CardApplets {
     }
 
     /// **Fire `turn(arg)` on the user's card and re-render** — the parse→fire→re-render
-    /// loop's core. The cap gate is the real `is_attenuation`, in-band; an under-authorized
+    /// loop's core. The cap gate is the real attenuation lattice, in-band; an under-authorized
     /// or unknown press is [`Err`] (never committed).
     pub fn fire_and_render(
         &self,

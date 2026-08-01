@@ -175,7 +175,15 @@ impl ServiceExplorer {
                 arity: arity_of(m),
                 required: Requirement::from_interface_auth(&m.auth_required),
                 semantics: m.semantics,
-                authorized: authority_satisfies(&viewer_rights, &m.auth_required),
+                // ⚑ DERIVED FROM `required`, NOT RE-DERIVED FROM THE RAW FIELD. For one
+                // commit these two lines read the SAME `AuthRequired` through OPPOSITE
+                // conventions — the label said root-only, the gate beside it admitted
+                // everyone — and a committed test pinned both. Computing the gate from the
+                // labelled value makes that class of disagreement unrepresentable here:
+                // there is now one reading, and the row cannot describe a rule it is not
+                // enforcing.
+                authorized: Requirement::from_interface_auth(&m.auth_required)
+                    .satisfied_by(&viewer_rights),
             })
             .collect();
 
@@ -283,7 +291,7 @@ impl ServiceExplorer {
         }
 
         // (cap-gate) — the method's declared authority vs the viewer's held rights.
-        if !authority_satisfies(&viewer_rights, &sig.auth_required) {
+        if !Requirement::from_interface_auth(&sig.auth_required).satisfied_by(&viewer_rights) {
             return InvokeOutcome::Refused {
                 reason: format!(
                     "method `{method}` requires {:?}; the viewer's authority {:?} does not \
@@ -387,22 +395,6 @@ impl ServiceExplorer {
 
 // ── pure helpers (each names the real component) ──────────────────────────────
 
-/// Does `held` authority satisfy a method's declared `required`? Mirrors the
-/// `dregg_app_framework::invoke::InvokeAuthority::satisfies` tiers and the
-/// executor's auth-tier semantics, expressed over the [`AuthRequired`] lattice
-/// the cockpit threads (the viewer's held rights). `None` is always satisfiable;
-/// `Impossible` never; the wider-or-equal relation is the proven attenuation
-/// order (`required ⊆ held`).
-fn authority_satisfies(held: &AuthRequired, required: &AuthRequired) -> bool {
-    use dregg_cell::is_attenuation;
-    match required {
-        AuthRequired::None => true,
-        AuthRequired::Impossible => false,
-        // `required ⊆ held`: the held rights dominate (attenuate to) the required.
-        _ => is_attenuation(held, required),
-    }
-}
-
 /// The fixed arity a method declares (`Some(n)` for `Fixed(n)`, `None` for
 /// `Variadic`) — the explorer uses it to size the args input.
 fn arity_of(m: &MethodSig) -> Option<u8> {
@@ -457,7 +449,7 @@ impl ServiceExplorer {
                 by_executor: false,
             };
         }
-        if !authority_satisfies(&viewer_rights, &sig.auth_required) {
+        if !Requirement::from_interface_auth(&sig.auth_required).satisfied_by(&viewer_rights) {
             return InvokeOutcome::Refused {
                 reason: format!(
                     "method `{method}` requires {:?}; the viewer's authority {:?} does not \
@@ -562,9 +554,23 @@ mod tests {
                 .find(|m| m.symbol == method_symbol(name))
                 .unwrap_or_else(|| panic!("method {name} discovered"));
             assert_eq!(entry.semantics, Semantics::Replayable);
-            assert_eq!(entry.required, Requirement::Root);
+            // ⚑ THIS PAIR PINNED A CONTRADICTION FOR ONE COMMIT. It read
+            // `assert_eq!(entry.required, Requirement::Root)` beside
+            // `assert!(entry.authorized, "None is satisfied by any viewer")` — the row is
+            // labelled ROOT-ONLY and simultaneously admits this non-root viewer, and it
+            // passed, because the label and the gate re-derived the same `AuthRequired`
+            // through opposite conventions. A green test asserting both halves of a
+            // contradiction is worse than no test: it reads as coverage.
+            //
+            // An auto-derived replayable method is UNGATED (`MethodSig::replayable` calls
+            // its `None` the "baseline"), so the two assertions now agree by construction —
+            // `authorized` is computed FROM `required`.
+            assert_eq!(entry.required, Requirement::Public);
             assert!(entry.is_invokable());
-            assert!(entry.authorized, "None is satisfied by any viewer");
+            assert!(
+                entry.authorized,
+                "a Public method admits this viewer — and the label says Public, not Root"
+            );
         }
 
         // The rendered text names the interface + the methods (a non-empty tree).
@@ -755,32 +761,55 @@ mod tests {
         assert_eq!(w.receipts().len(), 0);
     }
 
+    /// THE ORACLE — and it now covers the case whose absence hid a live contradiction.
+    ///
+    /// This replaced a local `authority_satisfies` that duplicated `Requirement`'s lattice.
+    /// The duplicate was not the defect; the defect was that this oracle NEVER TESTED A
+    /// NON-ROOT HOLDER AGAINST AN UNGATED REQUIREMENT. Every case below used to route
+    /// through `AuthRequired` in requirement position, where `None` reads as "ungated" —
+    /// so when the LABEL beside the gate started reading the same `None` as "root only",
+    /// nothing here could see the two had split. The first assertion is that missing case.
     #[test]
-    fn authority_satisfies_the_attenuation_lattice() {
-        assert!(authority_satisfies(
-            &AuthRequired::None,
-            &AuthRequired::None
-        ));
-        assert!(authority_satisfies(
-            &AuthRequired::Either,
-            &AuthRequired::Signature
-        ));
-        assert!(authority_satisfies(
-            &AuthRequired::None,
-            &AuthRequired::Either
-        ));
-        assert!(!authority_satisfies(
-            &AuthRequired::Signature,
-            &AuthRequired::Either
-        ));
-        assert!(!authority_satisfies(
-            &AuthRequired::Impossible,
-            &AuthRequired::Signature
-        ));
-        // Impossible required is never satisfied even by None.
-        assert!(!authority_satisfies(
-            &AuthRequired::None,
-            &AuthRequired::Impossible
-        ));
+    fn the_requirement_gate_is_the_attenuation_lattice_including_the_ungated_case() {
+        use dregg_cell::permissions::Credential;
+
+        // ⚑ THE CASE THAT WAS MISSING. An auto-derived replayable method is `Public`, and a
+        // viewer holding a NARROW right clears it. Under the one-commit `None => Root`
+        // reading this row was labelled root-only while still being invokable by this very
+        // viewer — the contradiction, in one assertion.
+        let public = Requirement::from_interface_auth(&AuthRequired::None);
+        assert_eq!(
+            public,
+            Requirement::Public,
+            "an interface `None` is UNGATED, not root"
+        );
+        assert!(public.satisfied_by(&AuthRequired::Signature));
+        assert!(public.satisfied_by(&AuthRequired::Either));
+        assert!(public.satisfied_by(&AuthRequired::None));
+
+        // ROOT is the other reading of the same byte, and it must NOT be reachable from the
+        // interface field. Kept adjacent so the two can never be conflated again silently.
+        assert!(Requirement::Root.satisfied_by(&AuthRequired::None));
+        assert!(!Requirement::Root.satisfied_by(&AuthRequired::Either));
+
+        // The ordinary lattice, unchanged: `required ⊆ held`.
+        let sig = Requirement::AtLeast(Credential::Signature);
+        assert!(
+            sig.satisfied_by(&AuthRequired::Either),
+            "Either dominates Signature"
+        );
+        assert!(sig.satisfied_by(&AuthRequired::None), "None is the top");
+        assert!(!sig.satisfied_by(&AuthRequired::Impossible));
+
+        let either = Requirement::AtLeast(Credential::Either);
+        assert!(
+            !either.satisfied_by(&AuthRequired::Signature),
+            "Signature does not dominate Either"
+        );
+
+        // `Never` refuses everyone, including the top.
+        let never = Requirement::from_interface_auth(&AuthRequired::Impossible);
+        assert_eq!(never, Requirement::Never);
+        assert!(!never.satisfied_by(&AuthRequired::None));
     }
 }

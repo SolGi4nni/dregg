@@ -37,10 +37,10 @@ use crate::runtime::DreggRuntime;
 use deos_reflect::substance::FieldValue;
 use deos_reflect::{AffordanceSurface, ReflectedCell};
 use dregg_cell::AuthRequired;
+use dregg_cell::Requirement;
 use dregg_cell::count_ge_set_commitment;
 use dregg_cell::interface::{ArgsSchema, InterfaceDescriptor, MethodSig, Semantics, method_symbol};
 use dregg_cell::program::SimpleStateConstraint;
-use dregg_cell::{Credential, Requirement};
 
 /// Pack a `u64` into a 32-byte field element's u64 lane. Byte-identical to
 /// `deos_js::applet::pack_u64` (the native applet's slot encoding). the canonical u64 lane (`dregg_cell::field_from_u64`, big-endian bytes `24..32`) — the lane the
@@ -796,17 +796,17 @@ fn kv_interface_descriptor() -> InterfaceDescriptor {
     InterfaceDescriptor::new(vec![
         MethodSig {
             args_schema: ArgsSchema::Fixed(2),
-            auth_required: Requirement::AtLeast(Credential::Signature),
+            auth_required: AuthRequired::Signature,
             ..MethodSig::replayable(method_symbol("put"))
         },
         MethodSig {
             args_schema: ArgsSchema::Fixed(1),
-            auth_required: Requirement::AtLeast(Credential::Signature),
+            auth_required: AuthRequired::Signature,
             ..MethodSig::replayable(method_symbol("delete"))
         },
         MethodSig {
             args_schema: ArgsSchema::Fixed(1),
-            auth_required: Requirement::Root,
+            auth_required: AuthRequired::None,
             semantics: Semantics::Serviced,
             ..MethodSig::replayable(method_symbol("get"))
         },

@@ -196,7 +196,29 @@ impl Requirement {
     /// retires this function.
     pub fn from_interface_auth(auth: &AuthRequired) -> Requirement {
         match auth {
-            AuthRequired::None => Requirement::Root,
+            // ⚑ `None` IS `Public` HERE, NOT `Root`, AND THE FIELD DECIDES IT — NOT THE
+            // LATTICE. This mapping was `Root` for one commit (b3ef43204) and produced a
+            // live contradiction two lines apart in `service_explorer.rs`: the LABEL said
+            // root-only while the GATE beside it admitted everyone, with a committed test
+            // pinning both. Caught by the wave audit.
+            //
+            // The deciding evidence is the field's own definition, not a preference.
+            // `MethodSig::auth_required` (cell/src/interface.rs:141) is "what a caller must
+            // hold to invoke this method", and `MethodSig::replayable` — the constructor for
+            // EVERY auto-derived method-guard — sets it to `None` and calls that the
+            // "baseline". A baseline is a floor. Reading it as the lattice TOP would make
+            // every auto-derived method root-only, which is the opposite of what the
+            // constructor that writes it means, and would have silently re-gated the whole
+            // interface surface.
+            //
+            // This is why the ambiguity was worth a type: `AuthRequired::None` genuinely
+            // means "ungated" in one field and "the widest authority" in another, and no
+            // single conversion is right for both. `from_interface_auth` is named for, and
+            // has only ever been called on, the INTERFACE field (two call sites:
+            // starbridge-v2 service_explorer, deos-js-runtime world). It is not a general
+            // `AuthRequired -> Requirement` cast and must not become one — an affordance's
+            // `required_rights` takes the opposite reading and has its own path.
+            AuthRequired::None => Requirement::Public,
             AuthRequired::Impossible => Requirement::Never,
             other => Requirement::AtLeast(
                 Credential::of_auth_required(other).expect("None/Impossible are handled above"),
