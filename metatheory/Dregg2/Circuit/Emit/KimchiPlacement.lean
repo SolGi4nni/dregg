@@ -155,20 +155,82 @@ def circuitPositions (pubSize : Nat) (gates : List PGate) : List (PVar × Cell) 
     ++ (gates.zip (List.range gates.length)).flatMap
         (fun ggi => rowPositions (pubSize + ggi.2) ggi.1.permVars)
 
-/-- The distinct variables, in first-appearance order. -/
-def distinctVars (poss : List (PVar × Cell)) : List PVar :=
-  (poss.map (·.1)).dedup
-
-/-- The (deduplicated) cells of variable `v` — its equivalence class (`Hash_set.of_list data`). -/
+/-- The (deduplicated) cells of variable `v` — its equivalence class (`Hash_set.of_list data`).
+**This is the SPEC** of the variable→cells direction: one filter of the whole position list per
+query. `permPairs` answers the same question for EVERY variable at once out of `varBuckets`; the
+two are pinned equal in §3b. -/
 def classCells (poss : List (PVar × Cell)) (v : PVar) : List Cell :=
   ((poss.filter (fun p => p.1 == v)).map (·.2)).dedup
 
-/-- **The whole permutation**, as a `Cell → Cell` association list: every class's cycle pairs. -/
+/-- The distinct variables, as `List.dedup` orders them — **SPEC**; `distinctVars` computes the same
+list in one pass. `List.dedup = pwFilter (· ≠ ·)` keeps an element only when it does not RECUR
+later, so the order is that of each variable's LAST occurrence
+(`[1,2,3,1,2,4].dedup = [3,1,2,4]`), not first-appearance. -/
+def distinctVarsSpec (poss : List (PVar × Cell)) : List PVar :=
+  (poss.map (·.1)).dedup
+
+/-! ### §3a — THE INDEX: what makes `place` linear instead of quadratic.
+
+`place` asks three questions, and each was answered by a SCAN of a whole list per query:
+
+  * *which variables are there* — `List.dedup`, O(P²) in the position count;
+  * *which cells does variable `v` own* — `classCells`, one `filter` of all P positions per
+    variable, so O(V·P);
+  * *what does cell `c` wire to* — `permLookup`, a `find?` over ALL σ pairs, called `7·nRows` times,
+    so O(nRows·P) — the dominant term.
+
+MEASURED at the step_main-fragment scale rung (`KimchiComposeStepFragment`, commit `3c3f61b24`):
+`place` took 170 / 1941 / 25707 ms at 454 / 1674 / 4058 rows — a fitted exponent of **1.95**, i.e.
+genuinely quadratic, extrapolating to ~48 min at `step_main`'s ~17,806 rows.
+
+The fix is an INDEX built ONCE per circuit and read in O(1): a `varIx`-keyed bucket array for the
+variable→cells direction and a row-keyed bucket array for the cell→successor direction. Both are
+`Array`+`List` (NOT `Std.HashMap`) deliberately: `Array.replicate`/`Array.modify`/`Array.getD` all
+reduce in the KERNEL, so §6's `by decide` byte pins against o1js still hold on the same
+definitions the interpreter runs. Nothing about the emitted object changes — §3b pins that. -/
+
+/-- Bucket index of a variable: `external n ↦ 2n`, `internal n ↦ 2n+1`. Injective, so one array
+indexed by it separates every variable with no collision to resolve. -/
+def varIx : PVar → Nat
+  | .external n => 2 * n
+  | .internal n => 2 * n + 1
+
+/-- One past the largest `varIx` present — the bucket-array size (so it is O(#variables), not O(id
+space); a sparse allocation would only cost empty buckets, never correctness). -/
+def varIxBound (poss : List (PVar × Cell)) : Nat :=
+  poss.foldl (fun m p => Nat.max m (varIx p.1 + 1)) 0
+
+/-- **THE VARIABLE → CELLS INDEX**, one pass: bucket `varIx v` holds `v`'s cells in RECORDING order
+(fold the reversed list and cons, so the first-recorded cell ends up at the head — the same order
+`classCells`' `filter` produces). -/
+def varBuckets (poss : List (PVar × Cell)) : Array (List Cell) :=
+  poss.reverse.foldl (fun a p => a.modify (varIx p.1) (p.2 :: ·))
+    (Array.replicate (varIxBound poss) [])
+
+/-- The distinct variables, in `distinctVarsSpec`'s (= `List.dedup`'s) order, in ONE pass: scan
+right-to-left with a `varIx`-indexed seen-array and cons the FIRST sighting from the right — which
+is exactly each variable's LAST occurrence, prepended so the surviving order is preserved. -/
+def distinctVars (poss : List (PVar × Cell)) : List PVar :=
+  (poss.reverse.foldl
+      (fun (st : Array Bool × List PVar) p =>
+        let i := varIx p.1
+        if st.1.getD i false then st else (st.1.set! i true, p.1 :: st.2))
+      (Array.replicate (varIxBound poss) false, [])).2
+
+/-- **The whole permutation**, as a `Cell → Cell` association list: every class's cycle pairs.
+Reads each class out of `varBuckets` instead of re-filtering the position list per variable. -/
 def permPairs (poss : List (PVar × Cell)) : List (Cell × Cell) :=
-  (distinctVars poss).flatMap (fun v => cyclePairs (classCells poss v))
+  let bs := varBuckets poss
+  (distinctVars poss).flatMap (fun v => cyclePairs ((bs.getD (varIx v) []).dedup))
+
+/-- **SPEC** of `permPairs`: the scanning definition, kept as the differential reference §3b pins
+`permPairs` against (and as the readable statement of what the index computes). -/
+def permPairsSpec (poss : List (PVar × Cell)) : List (Cell × Cell) :=
+  (distinctVarsSpec poss).flatMap (fun v => cyclePairs (classCells poss v))
 
 /-- `permutation pos` (`:1202-1203`): the next cell in `pos`'s cycle, or `pos` itself if `pos` is
-in no class (an unwired column / advice cell). -/
+in no class (an unwired column / advice cell). **SPEC** of the cell→successor direction — a scan of
+all pairs; `place` uses `pairsByRow`/`placedWiresAt` instead. -/
 def permLookup (pairs : List (Cell × Cell)) (c : Cell) : Cell :=
   match pairs.find? (fun p => p.1 == c) with
   | some p => p.2
@@ -176,15 +238,45 @@ def permLookup (pairs : List (Cell × Cell)) (c : Cell) : Cell :=
 
 /-! ## §4 — the placement pass. -/
 
-/-- A row's 7 wired cells: `Array.init K_PERMUTS (fun col => permutation {row; col})` (`:1210-1211`). -/
+/-- A row's 7 wired cells: `Array.init K_PERMUTS (fun col => permutation {row; col})` (`:1210-1211`).
+**SPEC** of one row's wiring; `place` uses `placedWiresAt`. -/
 def placedWires (pairs : List (Cell × Cell)) (absRow : Nat) : List Cell :=
   (List.range K_PERMUTS).map (fun col => permLookup pairs ⟨absRow, col⟩)
+
+/-- **THE CELL → SUCCESSOR INDEX**, bucketed by SOURCE ROW, one pass. Bucket `r` holds the σ pairs
+whose source cell lies in row `r`, in list order (so `find?`'s first-match semantics is preserved —
+though sources are in fact unique: every `(row,col)` carries at most one variable). A pair whose
+source row is ≥ `nRows` is dropped by `Array.modify`'s out-of-bounds no-op, and such a row is never
+queried. -/
+def pairsByRow (nRows : Nat) (pairs : List (Cell × Cell)) : Array (List (Cell × Cell)) :=
+  pairs.reverse.foldl (fun a p => a.modify p.1.row (p :: ·)) (Array.replicate nRows [])
+
+/-- `placedWires` against the row index. Every pair in bucket `absRow` has source row `absRow`, so
+testing the COLUMN alone is the same test as testing the whole cell — over a bucket of at most
+`K_PERMUTS = 7` entries instead of the whole pair list. -/
+def placedWiresAt (rowIdx : Array (List (Cell × Cell))) (absRow : Nat) : List Cell :=
+  let bs := rowIdx.getD absRow []
+  (List.range K_PERMUTS).map (fun col =>
+    match bs.find? (fun p => p.1.col == col) with
+    | some p => p.2
+    | none => (⟨absRow, col⟩ : Cell))
 
 /-- **THE PLACEMENT PASS.** `finalize_and_get_gates` (`:1156-1253`): public-input Generic rows first
 (`coeffs=[1,0,0,0,0]`), then the circuit gates, each carrying its 7 placed `{row,col}` wires. This
 is the object whose `wires` field is byte-diffed against o1js. -/
 def place (pubSize : Nat) (gates : List PGate) : List PlacedGate :=
-  let pairs := permPairs (circuitPositions pubSize gates)
+  let rowIdx := pairsByRow (pubSize + gates.length) (permPairs (circuitPositions pubSize gates))
+  (List.range pubSize).map
+      (fun i => { kind := .generic, wires := placedWiresAt rowIdx i, coeffs := [1, 0, 0, 0, 0] })
+    ++ (gates.zip (List.range gates.length)).map
+        (fun ggi => { kind := ggi.1.kind
+                    , wires := placedWiresAt rowIdx (pubSize + ggi.2)
+                    , coeffs := ggi.1.coeffs })
+
+/-- **SPEC** of `place`: the scanning definition, `permLookup` over the whole pair list per cell.
+The differential reference §3b pins `place` against. -/
+def placeSpec (pubSize : Nat) (gates : List PGate) : List PlacedGate :=
+  let pairs := permPairsSpec (circuitPositions pubSize gates)
   (List.range pubSize).map
       (fun i => { kind := .generic, wires := placedWires pairs i, coeffs := [1, 0, 0, 0, 0] })
     ++ (gates.zip (List.range gates.length)).map
@@ -194,6 +286,58 @@ def place (pubSize : Nat) (gates : List PGate) : List PlacedGate :=
 
 /-- The flat list of every emitted wire cell — the domain of the sigma permutation. -/
 def allWires (placed : List PlacedGate) : List Cell := (placed.map (·.wires)).flatten
+
+/-! ### §4a — THE INDEX CHANGES NOTHING (the differential pin, and it can go red).
+
+The optimization above is only legitimate if `place` still emits the SAME object. §6's `by decide`
+byte pins cover 1–2 rows; these `#guard`s cover a circuit big enough for the index to matter, with
+classes that span rows, both `varIx` parities populated, unwired holes, repeated variables inside a
+row — **and a non-zero `public_input_size`**, the path `3c3f61b24` named as never exercised. -/
+
+/-- A synthetic multi-row circuit for the index differential: rotating `external`/`internal`
+variables with holes, so classes vary in size, span rows, and both `varIx` parities are used. -/
+def idxProbeGates (n : Nat) : List PGate :=
+  (List.range n).map (fun r =>
+    { kind := .generic
+    , permVars := (List.range K_PERMUTS).map (fun c =>
+        if (r + c) % 5 == 0 then none
+        else if (r + c) % 3 == 0 then some (.internal ((r * 2 + c) % 7))
+        else some (.external ((r * 3 + c * 5) % 11)))
+    , coeffs := [] })
+
+/-- A ONE-CELL mutation of the probe: row 7's column 1 variable moved to a different id. -/
+def idxProbeMisplaced (n : Nat) : List PGate :=
+  (idxProbeGates n).zip (List.range n) |>.map (fun gi =>
+    if gi.2 == 7 then { gi.1 with permVars := gi.1.permVars.set 1 (some (.external 10)) } else gi.1)
+
+-- The probe is non-degenerate: real classes, both parities, cross-row cycles.
+#guard (idxProbeGates 60).length == 60
+#guard (distinctVars (circuitPositions 0 (idxProbeGates 60))).length == 18
+#guard ((permPairs (circuitPositions 0 (idxProbeGates 60))).filter
+          (fun pr => pr.1.row != pr.2.row)).length == 336
+
+-- ⚑ THE INDEX IS FAITHFUL. Every stage — the distinct-variable list, the σ pair list, and the
+-- placed gates themselves — is EQUAL to the scanning spec, at `public_input_size` 0 AND 3.
+#guard distinctVars (circuitPositions 0 (idxProbeGates 60))
+        == distinctVarsSpec (circuitPositions 0 (idxProbeGates 60))
+#guard permPairs (circuitPositions 0 (idxProbeGates 60))
+        == permPairsSpec (circuitPositions 0 (idxProbeGates 60))
+#guard place 0 (idxProbeGates 60) == placeSpec 0 (idxProbeGates 60)
+#guard distinctVars (circuitPositions 3 (idxProbeGates 60))
+        == distinctVarsSpec (circuitPositions 3 (idxProbeGates 60))
+#guard permPairs (circuitPositions 3 (idxProbeGates 60))
+        == permPairsSpec (circuitPositions 3 (idxProbeGates 60))
+#guard place 3 (idxProbeGates 60) == placeSpec 3 (idxProbeGates 60)
+
+-- ⚑ IT CAN GO RED, twice over.
+-- (a) The `==` is DISCRIMINATING: move ONE variable one slot and indexed and scanning placement
+--     disagree — so the equalities above are not "any two traversals of anything".
+#guard (place 0 (idxProbeGates 60) == placeSpec 0 (idxProbeMisplaced 60)) == false
+#guard (place 0 (idxProbeMisplaced 60) == placeSpec 0 (idxProbeGates 60)) == false
+-- (b) `varIx` is INJECTIVE — the ONE property the bucket array rests on. A collision would MERGE
+--     two variables' equivalence classes and silently wire cells that must not be wired.
+#guard (((List.range 24).map (fun n => varIx (.external n))
+          ++ (List.range 24).map (fun n => varIx (.internal n))).dedup).length == 48
 
 /-! ## §5 — the internal-variable model (R3's residual, the witness-generation recipe).
 

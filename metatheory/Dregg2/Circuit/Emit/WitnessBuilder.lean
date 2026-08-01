@@ -70,12 +70,42 @@ abbrev GateWitness := List CellVal
 /-- Read cell `{row,col}` from a column-major grid `g` (`g[col][row]`); `0` if out of range. -/
 def gridAt (g : List (List Int)) (c : Cell) : Int := (g.getD c.col []).getD c.row 0
 
+/-! ### The grid engine, and the index that makes it linear.
+
+MEASURED at the step_main-fragment scale rung (`KimchiComposeStepFragment`, commit `3c3f61b24`):
+`compose` took 514 / 6075 / 83808 ms at 454 / 1674 / 4058 rows — a fitted exponent of **2.01**,
+extrapolating to ~2.6 h at `step_main`'s ~17,806 rows. The cause was one `find?` over the WHOLE
+placement list for each of the `numCols × numRows` grid cells: O(cells · placements).
+
+`cellIndex` buckets the placement list by ROW in one pass, so a cell reads a bucket of ~`numCols`
+entries instead of all of them. It is `Array`+`List`, NOT `Std.HashMap`, deliberately:
+`Array.replicate`/`Array.modify`/`Array.getD` reduce in the KERNEL, so §3's `by decide` σ theorems
+still hold on the same definitions the interpreter runs. -/
+
+/-- **THE CELL → VALUE INDEX.** The placement list bucketed by row, in ONE pass: bucket `r` holds the
+    placements of row `r` in LIST ORDER (fold the reversed list and cons), so `find?`'s FIRST-WINS
+    semantics is preserved exactly — including a prepended override. A placement whose row is ≥
+    `numRows` is dropped by `Array.modify`'s out-of-bounds no-op, and such a row is never read. -/
+def cellIndex (numRows : Nat) (ps : List CellVal) : Array (List CellVal) :=
+  ps.reverse.foldl (fun a p => a.modify p.1.row (p :: ·)) (Array.replicate numRows [])
+
 /-- **THE GRID ENGINE.** Assemble a `numCols × numRows` column-major grid from a flat placement list:
     each `{row,col}` takes its placed value (FIRST placement wins on a repeat — so a variable-consistent
     front-end that lists a cell once per class is well-defined, and a prepended override is honoured),
     an unplaced cell is `0`. This is the `(List.range numCols).map (…(List.range numRows).map…)`
-    assembly the five render modules each repeat, hoisted once. -/
+    assembly the five render modules each repeat, hoisted once. Every placement in bucket `row` has
+    that row, so testing the COLUMN alone is the same test as testing the whole cell. -/
 def toGrid (numCols numRows : Nat) (ps : List CellVal) : List (List Int) :=
+  let idx := cellIndex numRows ps
+  (List.range numCols).map (fun col =>
+    (List.range numRows).map (fun row =>
+      match (idx.getD row []).find? (fun p => p.1.col == col) with
+      | some p => p.2
+      | none => 0))
+
+/-- **SPEC** of `toGrid`: the scanning definition — one `find?` over the whole placement list per
+    cell. Kept as the differential reference `toGrid` is pinned against below. -/
+def toGridSpec (numCols numRows : Nat) (ps : List CellVal) : List (List Int) :=
   (List.range numCols).map (fun col =>
     (List.range numRows).map (fun row =>
       match ps.find? (fun p => p.1 == (⟨row, col⟩ : Cell)) with
@@ -86,6 +116,34 @@ def toGrid (numCols numRows : Nat) (ps : List CellVal) : List (List Int) :=
     assembly needs: concatenate the gate contributions, lay them into the grid ONCE. -/
 def compose (numCols numRows : Nat) (gs : List GateWitness) : List (List Int) :=
   toGrid numCols numRows gs.flatten
+
+/-! ### The index changes nothing (the differential pin, and it can go red).
+
+§2's `poseidonWitnessBuilt == poseidonWitness` already routes 180 cells through `toGrid` and pins
+them byte-identical to the hand-rolled render module. These add what that module cannot reach: a
+placement list long enough for the index to matter, cells placed OUTSIDE the grid, and every cell
+placed TWICE with different values — so `toGrid`'s FIRST-WINS rule is observable, and reversing the
+list (which flips which placement wins) is the RED control. -/
+
+/-- 15 placements per row over `n` rows, columns spread `mod 17` (so some land outside the 15-column
+    grid), then the whole list REPEATED with different values. -/
+def gridProbeCells (n : Nat) : List CellVal :=
+  let base := (List.range n).flatMap (fun r =>
+    (List.range 15).map (fun c => ((⟨r, (c * 7 + r) % 17⟩ : Cell), (Int.ofNat (r * 15 + c)))))
+  base ++ base.map (fun p => (p.1, p.2 + 1000))
+
+-- ⚑ THE INDEX IS FAITHFUL — indexed and scanning grids are equal, cell for cell, including a
+-- prepended override and a placement whose row is off the grid entirely.
+#guard toGrid 15 40 (gridProbeCells 40) == toGridSpec 15 40 (gridProbeCells 40)
+#guard toGrid 15 40 (((⟨3, 2⟩ : Cell), (-99 : Int)) :: ((⟨99, 0⟩ : Cell), (5 : Int))
+                       :: gridProbeCells 40)
+        == toGridSpec 15 40 (((⟨3, 2⟩ : Cell), (-99 : Int)) :: ((⟨99, 0⟩ : Cell), (5 : Int))
+                               :: gridProbeCells 40)
+
+-- ⚑ IT CAN GO RED. Reversing the placement list flips WHICH duplicate wins; if the index did not
+-- preserve first-wins order the two would agree. They must not.
+#guard (toGrid 15 40 (gridProbeCells 40) == toGridSpec 15 40 (gridProbeCells 40).reverse) == false
+#guard (toGrid 15 40 (gridProbeCells 40).reverse == toGridSpec 15 40 (gridProbeCells 40)) == false
 
 /-- Place a 3-lane field state `[v0,v1,v2]` into row `row`, columns `colBase, colBase+1, colBase+2`
     (a Poseidon `round_to_cols` block; also the generic "3 lanes of one EC coordinate" primitive). -/
