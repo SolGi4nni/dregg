@@ -23,8 +23,12 @@
 //! run cannot see a revert — on a 64-bit host the two spellings are the same bytes — which is
 //! exactly why this file must run on `wasm32`:
 //!
-//!   `wasm-pack test --node wasm -- --test cross_target_preimage_widths`
+//!   `wasm-pack test --node wasm --test cross_target_preimage_widths`
 //!   `cargo test -p dregg-wasm --test cross_target_preimage_widths`   (host leg)
+//!
+//! ⚠ The cargo filter goes BEFORE `--`. `wasm-pack test … -- --test <name>` (the spelling in a
+//! sibling test file's header) reaches `wasm-bindgen-test-runner`, not cargo, and errors with
+//! "unexpected argument '--test' found".
 //!
 //! Both legs assert the SAME constants, so the pair is the real gate: agreement across the two
 //! targets is the property, and a revert breaks the wasm32 leg while leaving the host leg green.
