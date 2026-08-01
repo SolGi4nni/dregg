@@ -1,5 +1,169 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 1 — `hash_bytes` COLLIDED TWO WAYS FOR FREE, and the reason it was deferred was FALSE
+
+`hash_bytes` was `hash_many(BabyBear::from_bytes_packed(data))`. **Two independent `O(1)`
+collisions**, neither a search:
+
+1. **the NUL-append** — the packer zero-filled the final partial 4-byte chunk while `hash_many`
+   tagged `state[4]` with the **FELT** count, so `hash_bytes(b"foo") == hash_bytes(b"foo\0")`;
+2. **the mod-`p` chunk alias, AT EQUAL LENGTH** — chunks were `u32 % p`, `p = 0x78000001 < 2^32`,
+   so `01 00 00 78` collided with `00 00 00 00`. **53.1%** of `u32` chunks had a `+p` sibling.
+   *(This one was not in the brief, and a length tag alone would not have closed it — the repair
+   had to change the RADIX.)*
+
+⚑ **THE DEFERRAL'S PREMISE WAS FALSE, and that is the transferable finding.** It was left because
+*"`hash_bytes` is an in-AIR recompute (authority-digest gadget, the `fields_root` anchor), so the
+primitive is emit-owned."* Measured across `metatheory/`: **no emitted AIR recomputes a byte
+packing.** Every Lean hash carrier is felt- or `Nat`-domain; the "in-AIR `hash_bytes` recompute" at
+`authority_digest_weld.rs:54` is a felt-domain chip lookup over two floor felts; and
+`InAirAuthorityDigestSelector.lean:42` calls the byte-sponge version *"the named,
+genuinely-VK-affecting remaining work"* — **not built**. There is no Lean twin of the packing
+anywhere. A doc-comment naming a gadget is not evidence the gadget exists.
+
+**LANDED** (`1f1962946`): `Dregg2.Circuit.BytesLanes` — the designated `Limbs16` codec at VARIABLE
+length (four base-`2^16` BYTE-count lanes, then little-endian `u16` pairs; `2^16 << p` so no lane
+reduces). `lanesToBytes_bytesToLanes` is a TOTAL decoder and a machine-checked LEFT INVERSE;
+`bytesToLanes_injective` its corollary. Not a hash bound. `from_bytes_packed` DELETED in both
+copies. Old-admits/new-rejects for both collisions in Lean and Rust, and **at the named consumer**:
+serving a grain `/var` card as `value ‖ "\0"` used to VERIFY under the honest root and is now
+REFUSED (`sandstorm-bridge/tests/var_nul_append_inclusion_forgery.rs`).
+
+**FLAG DAY:** `CANONICAL_STATE_SCHEMA_EPOCH` 18 → 19, a **re-genesis and NOT a VK rotation** (see
+the measurement above). `ZKORACLE_MAX_BODY_LIMBS` holds at 1024; its BYTE capacity halves to 2040.
+
+⚠ **THE RESIDUAL, SAID AT ITS OWN BOUND.** The squeeze is still **one felt** — `log2 p = 30.907`,
+so a *searched* collision is **`2^15.45`**, milliseconds. That is the `Digest1` shape the codec
+design bans by name, it is a **different defect**, and **neither fix reaches the other**. Its owner
+is the `HeapLeaf` `addr`/`value` + `MapOp` value widening (a constraint change). `hash_bytes_8`
+(`2^123.63`) is added for sinks that can take eight felts; two tests pin the residual as a ledger.
+
+### ⚑ STILL OPEN — the OWNER-KEY OCTET, and its price RE-VERIFIED
+
+`KeyLanes9` / `keyToLanes9` is **authored, proved, and `#assert_axioms`-clean** — injective, total
+decoder, machine-checked left inverse — and `KeyCanonicity9Emit` proves its two-leg envelope is
+EXACTLY the image. **Not landed**, and the blocker is a geometry flag day, re-checked today and
+CONFIRMED: `rotatedNumPreLimbs` **184 → 187** (the unwritten invariant is `n ≡ 1 (mod 3)`, so 185
+is illegal and 187 buys exactly the three ninth lanes `public_key`/`child_vk`/`contract_hash`
+need), `B_SPAN` **247 → 251**, a descriptor re-emit and a VK rotation. ⚠ The epoch figure in
+`faithful8.rs` read "15 → 16" and was **stale by four** — corrected to 19 → 20.
+
+**Not started today because the tree was not mine to break**: three `lean`/`lake` and nine `cargo`
+processes from sibling lanes were live, `metatheory/` was RED from a half-applied edit at
+`EffectVmEmitV2.lean:113`, and 16 emit files were mid-cutover. Measured surface for whoever takes
+it: **63 `#guard` pins** across ~16 Lean files, and a small Rust surface — three octet writers
+(`turn/src/rotation_witness.rs:648`, `cell/src/commitment.rs:1361`,
+`circuit/src/effect_vm/trace_rotated.rs:5102`, all `Faithful8::from_canonical_key(..).write_octet`)
+plus a `layout_generated.rs` regen.
+
+⚠ **Two brief claims were STALE**: the four packing copies **do** have a cross-check test
+(`commit/tests/key_octet_f2_twins_and_the_hole.rs`, landed 2026-08-01) — but nothing would catch a
+FIFTH copy; and `metatheory/Dregg2.lean:1034` still says "NO cross-check test".
+
+## ⚑⚑⚑⚑ AUGUST 1 — A $0 PERMANENT CONSENSUS HALT: the present-cell key was ONE FELT, and a fail-closed repair had already turned a collision into an abort
+
+**~2^15.5 offline hash evaluations plus TWO ordinary cell creations stopped every node's finality
+executor, permanently. Measured at 61 951 evaluations, 1.99 s.** `cells_root` now keys by the
+sixteen-`u16` injective encoding (`2^256`, on the nose) and the collision is UNREACHABLE, not merely
+refused.
+
+### The two decisions that composed into a halt
+
+`turn/src/rotation_witness.rs::cells_root` keyed each present-cell existence leaf by
+`heap_addr(CELLS_COLLECTION, hash_bytes(id))` — **one BabyBear felt**, `log2 p = 30.907`, per
+32-byte `CellId`. On its own that was a *conflation* (wound #23's residual, explicitly named and
+explicitly deferred to "the `MapOp` key epoch").
+
+Then on **2026-07-28** `heap_root::assert_addr_unique` began *panicking* — release-active — on a
+repeated leaf address instead of silently deduping. **That was the right call**: a dedup makes a
+colliding cell's REMOVAL invisible to the signed anchor, so the root both presents and denies it.
+But shipping a fail-closed refusal over an **attacker-collidable key** converted a silent
+double-spend into a **liveness kill**, and nothing was watching that composition.
+
+### Why it cost nothing to mount — every clause verified at source, and it is CHEAPER than first briefed
+
+| clause | verified |
+|---|---|
+| the key is ONE felt | `heap_addr` → `hash_many(&[coll, key])`, `HeapLeaf.addr: BabyBear` |
+| the panic is release-active | `assert_addr_unique` is `assert!`/`panic!`, **not** `debug_assert` |
+| the grind is OFFLINE | `CellId::derive_raw` = `blake3::derive_key("dregg-cell-id-v1", pk ‖ token_id)` |
+| creation is UNAUTHORIZED | `apply_create_cell` checks **only** `balance == 0` — no capability (`authorize.rs` puts `CreateCell` in the no-permission bucket), no token registry, no rate limit, and **no possession check on `public_key`** |
+| it runs EVERY turn | `state_commit::consensus_ctx` → pre-state and post-state on every turn, every node |
+
+⚡ **Cheaper than the brief claimed**: the attacker needs no keypairs at all. `token_id` alone is a
+free 32-byte grinding domain, so one owned cell to act from is the entire prerequisite.
+
+⚡ **And "forever" is not the ledger being poisoned.** The poisoning turn is already inside a
+FINALIZED block when execution runs, so the panic is caught as a `JoinError`, classified
+`FatalIntegrity` (`node/src/blocklace_sync.rs`), and the handler logs *"finality executor
+permanently stopped"* and returns **without acknowledging the block**. The cursor never advances;
+restart replays the same block and stops again — deterministically, on every node. Under
+`WitnessMode::Symbolic` the anchor is skipped, the pair becomes durable, and the literal
+poisoned-ledger form holds too.
+
+### The repair: an INJECTION, not a wider hash — and the two numbers do not transfer
+
+* A **hash node** needs collision resistance — birthday over its image. Eight BabyBear lanes:
+  `8 · log2 p = 247.26` bits of image, **2^123.63** collision. That is what `57105f387` bought for
+  the membership tree, and this root's eight lanes still carry it.
+* A **key** needs **injectivity**. No collision bound gives that, and **no 8-lane encoding of 32
+  bytes exists at all**: `P^8 = 2^247.26 < 2^256`, pigeonhole — proved in Lean as
+  `MapOpWideKeyPigeonhole.no_injection_bytes32_to_canonKey8` (*no* function, not *no known* one).
+
+`cells_root` is now the `FLI2`/`FLN2`/`FLE2` exact tagged-linked-leaf accumulator its four siblings
+already were, keyed by `raw_to_u16_le` — `65536^16 = 2^256` **on the nose** (`card_key16`,
+`u16_limbs_admit_a_bijection`). `ExactAafiError::Duplicate` now requires two byte-identical ids,
+which `Ledger`'s `HashMap<CellId, _>` cannot hold.
+
+⚑ **THE WIDE OBJECT WAS ALREADY PROVED AND ALREADY ON DISK.** `MapOpWideKeyPigeonhole.lean` says
+it in as many words: *"the kind-D residual is REGISTRATION of an object on disk, not authoring a
+wider one."* This commit is that registration — no new Lean, no new AIR, Law #1 untouched.
+
+### THE TOOTH IS EXHIBITED, NOT DESCRIBED
+
+`turn/tests/cells_root_key_collision_halt_tooth.rs` (4/4): a deterministic offline birthday grind
+over `token_id` finds a real colliding pair in **61 951 evaluations, 1.99 s**; the retired producer
+(transcribed verbatim, calling the DEPLOYED `compute_canonical_heap_root_8_entries`) **panics
+`heap_root.rs:299`**; the deployed producer commits the same ledger and the anchor computes.
+Anti-vacuity is the load-bearing half: the ids are **decoded back out** of the committed limbs
+(`u16_le_to_raw ∘ raw_to_u16_le = id`, plus a per-byte flip sweep), because *"the keys differ"* is
+exactly what an unbroken but collidable hash also gives. And the soundness property the deleted
+dedup destroyed is re-asserted: removing ANY cell — including a member of the colliding pair —
+MOVES the root.
+
+### FLAG DAY — a re-genesis, and NOT a VK rotation
+
+**`CANONICAL_STATE_SCHEMA_EPOCH` 19 → 20.** Every persisted `pre_state_hash`/`post_state_hash` and
+every `TurnReceipt` carrying them is invalid — the cells group is limb 0 ‖ 169..=175 of the rotated
+block, so the anchor moves on **every** turn, including turns that create no cell. Executor
+signatures and federation receipt QCs over those anchors do not re-verify and are not migrated; a
+store written under ≤19 refuses to load. (The 18 slot was allocated to this change and then two sibling epochs interleaved while it was in flight; it lands at 20.)
+
+**NO VK rotates and NO descriptor is re-emitted, and that is a verified claim rather than a
+convenience.** Three independent checks: (1) no lookup in the createCell/factory/spawn descriptors
+recomputes this key — their map-ops key on a bare witness felt (`create_hash[0]`), a different
+object; (2) the rotated trace generator OVERWRITES the whole cells group with its own in-circuit
+accounts tree, which every production caller feeds `before_accounts = &[]`; (3) nothing anywhere
+opens `cells_root` — `proof_verify.rs` says outright that the verifier does not reconstruct it. A
+VK binds the AIR, and no column, constraint or PI count moved. **There is therefore no
+`VK-REGEN-LOG` row: that log records descriptor installs, and this is not one.**
+
+### What this does NOT close — say it out loud
+
+The **per-cell heap** tree (`CellState::heap_map`, rotated limb 28) is still addressed by the same
+one-felt `heap_addr`, and so is the wasm light-client `verify_slot_opening` that recomputes it.
+That tree **is** opened in-circuit — `heapWriteVmDescriptor2R24` recomputes `heap_addr` in-row — so
+widening it IS a VK rotation and a descriptor re-emit. Same class, different lane, still open.
+
+### Also landed
+
+`turn/src/state_commit.rs` carried a note claiming `compute_canonical_heap_root_8` *"DEDUPES leaves
+… silently, with no error"*, citing a line number that had not existed since 2026-07-28. It
+described the OPPOSITE of deployed behaviour — a reader reasoning from it would have concluded
+"silent soundness loss" while the tree was hard-aborting. Rewritten with both retired readings named.
+The lanes→`Faithful8` conversion existed as **four byte-identical private copies**; there is now one
+(`exact_nullifier_aafi::exact_root_faithful8`).
+
 ## ⚑⚑⚑⚑ AUGUST 1 — THE MEMBERSHIP TREE WAS 31 BITS WIDE AND FORGEABLE IN 0.44 SECONDS
 **Every node of the deployed `MerkleMembership` tree was ONE BabyBear felt. The tree is now 8-felt `node8`, and the one-felt path is DELETED.**
 
