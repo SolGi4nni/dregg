@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -94,3 +94,18 @@ name = "Bfv"
 [[lean_lib]]
 name = "PicklesSynthesis"
 globs = ["Dregg2.PicklesSynthesis"]
+
+# MinaBridgeGuards — the CI home for the Mina→dregg wrap-recursion welds (the P4 recursion-boundary
+# evidence). Root module `Dregg2.MinaBridgeGuards` (./Dregg2/MinaBridgeGuards.lean) is a pure re-export
+# aggregate importing the six `MinaWrap*`/`TickShifts` welds. Before this, those six built only under
+# `lake env lean <file>` and were reachable from NO `defaultTargets` library, so their `#guard`/
+# `#assert_axioms` replay/refutation goldens against real block 539508 never ran in a plain `lake build`
+# — the exact gating-defaults-to-silence wound `MinaWrapFtEval0Weld` was born from
+# (`scripts/check-guard-modules.py`). Making it its own lean_lib + a defaultTarget roots them WITHOUT
+# touching the `Dregg2.lean` import block (swept by sibling lanes), mirroring PicklesSynthesis.
+# The soundness de-vacuum modules (CaveatCommitBindsOrCollides/RotatedCommitBindsOrCollides) are STILL
+# DEFERRED: their cone pulls `Dregg2.Circuit.Emit.EffectVmEmitV2`, which is RED at HEAD mid-ChipArity
+# cutover (type mismatch + sorryAx axiom-hygiene, sibling repair in flight) — root them once V2 lands.
+[[lean_lib]]
+name = "MinaBridgeGuards"
+globs = ["Dregg2.MinaBridgeGuards"]

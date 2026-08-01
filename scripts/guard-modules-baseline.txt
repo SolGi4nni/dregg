@@ -25,13 +25,7 @@
 # ── UNROOTED (guard runs in no default lake target) ──────────────────────────
 unrooted Dregg2.Apps.ColonistJob   # also-orphan-allow
 unrooted Dregg2.Bridge.HoldingWeightedTally   # also-orphan-allow
-unrooted Dregg2.Bridge.MinaWrapChallengesWeld   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Bridge.MinaWrapDeferred   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Bridge.MinaWrapDeferredWeld   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Bridge.MinaWrapFtEval0Weld   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Bridge.MinaWrapPublicInput   # UNTRACKED-ORPHAN — root first
 unrooted Dregg2.Bridge.MinaWrapSgWeld   # also-orphan-allow
-unrooted Dregg2.Bridge.TickShifts   # UNTRACKED-ORPHAN — root first
 unrooted Dregg2.Circuit.DeltaProto   # also-orphan-allow
 unrooted Dregg2.Circuit.EffectsAsDataProto   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.AdjacencyMembershipRefine   # also-orphan-allow
