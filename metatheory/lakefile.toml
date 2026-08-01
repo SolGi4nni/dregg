@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -81,3 +81,16 @@ name = "Market"
 # Root module `Bfv` (./Bfv.lean) aggregates Bfv/* and pins the namespace kernel-clean.
 [[lean_lib]]
 name = "Bfv"
+
+# PicklesSynthesis — the CI home for the Pickles-in-Lean SYNTHESIS rung (R1–R4a). Root module
+# `Dregg2.PicklesSynthesis` (./Dregg2/PicklesSynthesis.lean) is a pure re-export aggregate importing
+# the six clean-cone Pickles modules (KimchiCustomGates/Placement/Render + the three Pickles*Diff
+# statement modules). Before this, those six built only under `lake env lean <file>` and were reachable
+# from NO `defaultTargets` library, so their `#assert_axioms`/`by decide` o1js/chain differentials
+# never ran in a plain `lake build` (gating-defaults-to-silence). Making it its own lean_lib + a
+# defaultTarget roots them WITHOUT touching the `Dregg2.lean` import block (swept by sibling lanes).
+# The de-vacuum modules (CaveatCommitBindsOrCollides/RotatedCommitBindsOrCollides) are DEFERRED — their
+# cone goes through the ChipArity-churned EffectVmEmitV2, which a sibling lane holds; NOT imported here.
+[[lean_lib]]
+name = "PicklesSynthesis"
+globs = ["Dregg2.PicklesSynthesis"]

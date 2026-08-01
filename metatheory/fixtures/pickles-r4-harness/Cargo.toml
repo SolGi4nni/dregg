@@ -1,0 +1,58 @@
+# pickles-r4-harness — the R4a PROVE+VERIFY+BIND test for the Pickles-in-Lean synthesis rung.
+#
+# Standalone: deliberately NOT a member of the breadstuffs workspace. An EMPTY `[workspace]` table is
+# the only mechanism that detaches a nested package (a path-prefix member match in the root manifest
+# silently wins over `exclude` — cargo's `is_excluded` is `!explicit_member && excluded`). Same shape
+# as the sibling `kimchi-extractors` / `pickles-extractors` fixture crates, and for the same reason:
+# these pin `o1-labs/proof-systems` at a DIFFERENT rev than the workspace's `emberian/proof-systems`
+# patch, so folding them in would force a version unification that breaks the pinned kimchi.
+#
+# WHAT IT DOES. Reads the gate-list + witness JSON that `Dregg2.Circuit.Emit.KimchiRender` (Lean)
+# emits — committed under `fixtures/` — builds the pure-Rust kimchi `Vec<CircuitGate>` + `[Vec<Fp>;15]`
+# witness, and PROVES + VERIFIES it through the SAME `proof-systems` front door mina-rust uses. The
+# `#[test]` functions are the committed R4a gate: `verify()==true` on the good witness, BOTH tamper
+# polarities REJECTED (a gate-constraint flip and a copy-permutation-wire flip), and a no-copy CONTROL
+# that ACCEPTS the same flip (proving the placement wire — not something else — is what binds).
+#
+# ⚠ House Law #1: the CIRCUIT is Lean-authored (`KimchiPlacement.place` + `KimchiRender` coeffs/witness);
+# `proof-systems` is the Rust PROVER that RUNS it. No OCaml, no Node, no o1js in this path.
+#
+# REGENERATE the fixtures (only when the Lean render changes):
+#   cd metatheory && lake build PicklesSynthesis \
+#     && lake env lean --run Dregg2/Circuit/Emit/KimchiRender.lean \
+#     && cp /tmp/pickles-r4/{binding,nocopy,caseA,caseB}.json fixtures/pickles-r4-harness/... (see README)
+#
+# RUN the test (one command):
+#   cargo test --manifest-path metatheory/fixtures/pickles-r4-harness/Cargo.toml -- --nocapture
+
+[package]
+name = "pickles-r4-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# `[[bin]]` (not `examples/`) so `scripts/check-dark-modules.py` sees a declaration for src/main.rs.
+# `cargo test` compiles this bin in test mode and runs its `#[test]` functions.
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
