@@ -51,7 +51,9 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
    transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites boundaryLast_pins
    gate_modEq_iff not_modEq_zero_of_canon eqToModEq)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_of_injective)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+  (CellState absorbedCols absorbed_determined_by_commit_of_injective
+   absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
@@ -203,13 +205,25 @@ theorem introduceVm_rejects_nonce_freeze (env : VmRowEnv)
 
 /-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
-theorem introduceVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- The whole-block anti-ghost, UNCONDITIONAL: two `introduce` rows publishing the SAME `state_commit`
+EITHER have identical absorbed after-blocks OR exhibit a genuine deployed-sponge collision at the pair
+`transferCollFind` names. Inherited from the cured keystone core (hash sites identical to transfer's).
+
+⚑ CUT OVER 2026-08-01 off `Poseidon2SpongeCR`, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+PROVES FALSE at deployed BabyBear parameters — the old `_of_injective` form was vacuous where the prover
+runs. The replacement was ALREADY PROVED and already used by the sibling effects
+(`EffectVmEmitCreateCell`, `Exercise`, `SetVK`, `Refusal`, `ReceiptArchive`, `IncrementNonce`); this
+declaration was simply left behind. Formally weaker as a disjunction, but it HOLDS of the deployed
+sponge, which the old one did not. A consumer wanting the bare equality applies
+`Poseidon2Binding.spongeColl_refutable_of_injective` — no local `_of_CR` twin is minted, so this is a
+NET carrier decrease and not a `#floor_ratchet` accrual. -/
+theorem introduceVm_commit_binds_block_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ introduceHashSites)
     (hs₂ : siteHoldsAll hash e₂ introduceHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
