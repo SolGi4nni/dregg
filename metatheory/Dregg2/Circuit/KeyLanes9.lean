@@ -635,9 +635,18 @@ theorem key_octet_verdict :
 
 /-! ### Lean-COMPUTED protocol vectors.
 
-⚑ These are COMPUTED by Lean, not transcribed from a Rust run. There is no Rust twin of
-`keyToLanes9` yet — the encoder does not exist on the wire, which is exactly the residual §0's
-docblock prices. -/
+⚑ These are COMPUTED by Lean, not transcribed from a Rust run.
+
+⚠ **CORRECTED 2026-08-01.** This paragraph used to end "There is no Rust twin of `keyToLanes9`
+yet — the encoder does not exist on the wire". **That is false and was false when read.**
+`commit/src/typed.rs::canonical_32_to_lanes_9` says in its own doc comment that it is "The Rust
+mirror of `Dregg2.Circuit.KeyLanes9.keyToLanes9`", with the decoder `lanes_9_to_canonical_32`
+beside it and three siblings (`storage/src/commitment.rs`, `cell::commitment`, and the
+`commit/tests/key_octet_f2_twins_and_the_hole.rs` harness that diffs all four). What `KeyLanes9`
+lacks is not a twin but an APPLIED emit face: `Emit/KeyCanonicity9Emit.keyCanonical9At` is written,
+proved and geometrically placed, and is appended to NO live member's constraint list — that file
+says so itself. A stale "does not exist" line is worse than no line, because the next reader
+prices a build that is already done. -/
 
 def lanes9Of (b : Bytes32) : List Nat := List.ofFn (keyToLanes9 b)
 def lanes8Of (b : Bytes32) : List Nat := List.ofFn (keyToLanes8 b)
