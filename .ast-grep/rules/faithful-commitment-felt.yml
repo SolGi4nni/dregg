@@ -70,10 +70,28 @@ files:
   - "cell/src/revoked_set.rs"
   - "cell/src/shielded_note_set.rs"
   - "node/src/turn_proving.rs"
+# ⚑ THE RULE IS NAME-BOUND, SO IT MUST NAME EVERY ALIAS (widened 2026-08-01).
+#
+# `fold_bytes32_to_bb` is not the only spelling of this arithmetic. Two functions elsewhere in
+# the tree have BYTE-IDENTICAL bodies under different names —
+#
+#   circuit/src/cap_root.rs:269           pub fn fold_bytes32(b)  -> hash_many(bytes32_to_8_limbs(b))
+#   circuit/src/openable_fields_root.rs   pub fn fold_value32(b)  -> hash_many(bytes32_to_8_limbs(b))
+#
+# — and for this rule's entire life they were INVISIBLE TO IT even inside files it already
+# scanned. Measured: `cell/src/commitment.rs:561` is `cap_root::fold_bytes32(cap.target)`, the
+# cap-tree leaf's target field in the DEPLOYED canonical state commitment, sitting in a scoped
+# file with the gate reporting PASS. A gate that greps one identifier polices a NAME, not the
+# class; the class is "32 bytes squeezed to one felt in a commitment position", and every name
+# that spells it has to be listed here or the next rename is a fresh blind spot.
 rule:
   any:
     - pattern: fold_bytes32_to_bb($_)
     - pattern: $$$::fold_bytes32_to_bb($_)
+    - pattern: fold_bytes32($_)
+    - pattern: $$$::fold_bytes32($_)
+    - pattern: fold_value32($_)
+    - pattern: $$$::fold_value32($_)
 message: >-
   Degraded felt in a state-commitment position: `fold_bytes32_to_bb` folds 32
   bytes -> ONE BabyBear (~31-bit). A committed component must bind its source at

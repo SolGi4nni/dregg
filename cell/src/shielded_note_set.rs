@@ -35,14 +35,37 @@
 //! double-spend / commitment duplicate gate). The ONLY committed observable is the
 //! felt-domain [`Self::root8`].
 //!
-//! # Root width — 8 felts, retiring the ~31-bit #15 entry point
+//! # Root width — 8 felts over an EXACT (injective) leaf
 //!
-//! Like every sibling, [`Self::root8`] is a `CanonicalHeapTree8` (sorted-Poseidon2)
-//! **8-felt (~124-bit) Faithful8** root. The sort-key felt is the lossy ~31-bit
-//! `fold_bytes32_to_bb(commitment)` (as for all siblings), but the ROOT is 8 felts —
-//! so wiring this root8() into the committed carrier (L1) and sourcing it as
-//! `piCOMMITTED` (L4) retires the ~31-bit width of the wire-supplied `merkle_root`
-//! that opens #15.
+//! [`Self::root8`] is the exact tagged-LINKED-LEAF (indexed-Merkle) append-at-free-index
+//! root, `FSI2 ‖ addr17 ‖ value4 ‖ next17` at depth 16, arity 4, eight BabyBear lanes —
+//! the same object the three sibling accumulators committed to on 2026-07-31, under its
+//! own domain triple.
+//!
+//! ⚑ **WHAT THIS REPLACED (2026-08-01), AND WHY IT WAS THE WORST OF THE FOUR.** Until
+//! today this folded `HeapLeaf::entry(fold_bytes32_to_bb(commitment), ZERO)` through a
+//! `CanonicalHeapTree8`. `fold_bytes32_to_bb` is an **onto `F_p`-linear form** over the
+//! mod-`p` limb split (its own doc: "NOT collision-resistant — `O(1)`, and `O(1)` even
+//! for a CHOSEN TARGET"), so the address was a ~31-bit image of the 32-byte commitment
+//! that an attacker SOLVES for rather than searches. The three siblings at least carried
+//! a cleartext value column beside it; this leaf's value column is **ZERO by design**
+//! (hiding), so the degraded address was the leaf's ENTIRE content — two distinct
+//! shielded note commitments were **literally the same leaf**, and the set's only
+//! committed observable could not tell them apart. It was the last of the four still on
+//! the retired encoding, and the only one where the fold stood alone.
+//!
+//! The new leaf carries the address as a tag plus sixteen little-endian `u16` limbs
+//! (`2^256` on the nose, no reduction) and a full-width `next_addr` pointer, so it is
+//! injective in the commitment *and* keeps the IMT absence bracket a non-membership
+//! opening straddles. **The hiding property is unchanged**: the value column is four
+//! zero `u16` limbs — the same "no cleartext value" the design's R1 shape requires.
+//!
+//! ⓘ **Nothing re-emits and no VK rotates.** `root8()` is not yet in the AIR-bound
+//! `V9RotationContext` carrier (L1 below is still open) and `accumulator_leaf` had no
+//! call site outside this module's own tests, so this changes a value that no circuit,
+//! descriptor or signed anchor reads today. What DOES change: any persisted
+//! shielded-accumulator root recorded before this commit no longer reproduces —
+//! re-genesis, as ever.
 //!
 //! # ⚑ HONEST L0 SCOPE — what this does and does NOT yet do
 //!
@@ -71,9 +94,54 @@
 
 use std::collections::BTreeMap;
 
+use dregg_circuit::Faithful8;
+use dregg_circuit::exact_nullifier_aafi::{ExactLinkedDomains, exact_linked_append_root8};
+use dregg_circuit::field::BabyBear;
 use serde::{Deserialize, Serialize};
 
 use crate::note::{NoteError, ShieldedNoteCommitment};
+
+/// Depth of the exact shielded-note tree (`4^16 = 2^32` leaves) — the same fixed
+/// geometry as the three sibling accumulators, so the root shape is protocol data
+/// rather than a function of the current set size.
+pub const EXACT_SHIELDED_TREE_DEPTH: usize = dregg_circuit::exact_nullifier_aafi::TREE_DEPTH;
+/// Number of BabyBear lanes in every hashed node and root.
+pub const EXACT_SHIELDED_ROOT_LANES: usize = dregg_circuit::exact_nullifier_aafi::ROOT_LANES;
+
+/// The shielded-side exact tagged-linked-leaf domain triple: `FSI2`/`FSN2`/`FSE2`.
+///
+/// Deliberately DISTINCT from the create side's `FCI2`/`FCN2`/`FCE2`
+/// ([`crate::commitment_set::EXACT_COMMITMENT_LINKED_DOMAINS`]), the spend side's
+/// `FNI2`/`FNN2`/`FNE2` and the revocation side's `FRI2`/`FRN2`/`FRE2`. A shielded output
+/// commitment, a cleartext created commitment, a spent nullifier and a revoked credential
+/// are four different statements about four different sets; a shared domain would let one
+/// tree's leaf digest — or its EMPTY root — be replayed as another's.
+///
+/// The separation matters most HERE: a shielded leaf's value column is all zeros, which is
+/// exactly the shape a `CommitmentSet` leaf for a zero-valued note would have, so without a
+/// distinct leaf tag the two trees' leaf digests would coincide on a shared commitment.
+pub const EXACT_SHIELDED_LINKED_DOMAINS: ExactLinkedDomains = ExactLinkedDomains {
+    leaf: 0x4653_4932,  // `FSI2`
+    node: 0x4653_4e32,  // `FSN2`
+    empty: 0x4653_4532, // `FSE2`
+};
+
+/// The hiding leaf's value column, in the exact encoding: **zero**, which
+/// [`dregg_circuit::exact_nullifier_aafi::exact_linked_append_root8`] carries as four zero
+/// `u16` limbs. A shielded note MUST NOT reveal its value, so unlike the three sibling
+/// accumulators there is no cleartext value to place here — the value lives inside the
+/// hiding commitment, never as a leaf field (DESIGN §3 R1, "with no cleartext value column").
+const HIDING_VALUE: u64 = 0;
+
+fn faithful8_from_exact_lanes(lanes: [BabyBear; EXACT_SHIELDED_ROOT_LANES]) -> Faithful8 {
+    let mut bytes = [0u8; 32];
+    for (lane, felt) in lanes.iter().enumerate() {
+        bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
+    // These are already canonical permutation outputs, so `from_bytes32`
+    // recovers the same eight lanes exactly.
+    Faithful8::from_bytes32(&bytes)
+}
 
 /// A stored accumulator entry: the entry's **append sequence** (`seq`) — the
 /// gap-#5 AAFI (append-at-free-index) order column. AAFI roots are
@@ -214,23 +282,18 @@ impl ShieldedNoteSet {
         Ok(set)
     }
 
-    /// The circuit-faithful accumulator leaves **in append order** — the
-    /// canonical tau sequence of [`Self::accumulator_leaf`]s an AAFI
-    /// (append-at-free-index) fold consumes. Each leaf at rank `r` here is the
-    /// one an AAFI replay appends at physical slot `r + 1` (slot 0 is the MIN
-    /// sentinel), mirroring `CanonicalHeapTree8::insert_witness_aafi`'s
-    /// `next_free_index` semantics. The sorted-compacted [`Self::root8`] is
-    /// untouched by this — same leaf SET, append positions instead of sorted.
-    pub fn aafi_leaves(&self) -> Vec<dregg_circuit::heap_root::HeapLeaf> {
-        self.iter_in_append_order()
-            .map(|(c, _)| Self::accumulator_leaf(&c))
-            .collect()
-    }
+    // ⚑ `aafi_leaves` — the `Vec<HeapLeaf>` view built from `accumulator_leaf` — is DELETED
+    // (2026-08-01), together with `accumulator_leaf` itself. Both were the retired
+    // `fold_bytes32_to_bb`-addressed encoding, and neither had a call site outside this
+    // module's own tests. Keeping a `HeapLeaf` view "so downstream forwards remain valid"
+    // would mean two leaf shapes for one accumulator, which is how the encoding drifts back.
+    // The replacement view is [`Self::exact_dense_leaves`], indexed by PHYSICAL SLOT rather
+    // than append rank (slot 0 is the `BOT` sentinel, append rank `r` sits at slot `r + 1`),
+    // which is what the exact fold actually hashes.
 
     /// The physical AAFI slot the NEXT append would occupy: `len() + 1` (slot 0
-    /// is the MIN sentinel) — the store-side mirror of
-    /// [`dregg_circuit::heap_root::CanonicalHeapTree8::next_free_index`] for a
-    /// tree replayed from [`Self::aafi_leaves`].
+    /// is the permanent `BOT` sentinel) — the store-side mirror of the append cursor for a
+    /// tree replayed from [`Self::exact_dense_leaves`].
     pub fn aafi_next_free_index(&self) -> usize {
         self.commitments.len() + 1
     }
@@ -263,48 +326,56 @@ impl ShieldedNoteSet {
         removed
     }
 
-    /// The circuit-faithful node8 leaf for a single **hiding** shielded note
-    /// commitment: `addr` is the folded commitment felt
-    /// (`dregg_circuit::effect_vm::fold_bytes32_to_bb`, the SAME fold the sibling
-    /// accumulators apply to their key), and `value` is **ZERO** — a shielded
-    /// leaf is HIDING and carries no cleartext value column (contrast the sibling
-    /// leaves, which fold a cleartext `split_u64(value).0` there). This is the
-    /// DESIGN §3 R1 hiding-leaf shape `HeapLeaf::entry(fold(hiding_commitment), 0)`.
-    ///
-    /// The commitment is folded through the circuit's OWN `fold_bytes32_to_bb`
-    /// helper so the sort-key encoding cannot drift from the sibling accumulators;
-    /// the IMT `next_addr` pointer is relinked by the tree builder.
-    pub fn accumulator_leaf(commitment: &[u8; 32]) -> dregg_circuit::heap_root::HeapLeaf {
-        dregg_circuit::heap_root::HeapLeaf::entry(
-            dregg_circuit::effect_vm::fold_bytes32_to_bb(commitment),
-            // HIDING leaf: no cleartext value column.
-            dregg_circuit::field::BabyBear::ZERO,
-        )
+    /// The append-ordered `(commitment, value)` record list the exact root folds — the
+    /// value is [`HIDING_VALUE`] (zero) for every leaf, because a shielded leaf carries no
+    /// cleartext value column.
+    fn exact_append_records(&self) -> Vec<([u8; 32], u64)> {
+        self.iter_in_append_order()
+            .map(|(commitment, _)| (commitment, HIDING_VALUE))
+            .collect()
     }
 
-    /// **The faithful 8-felt (~124-bit) accumulator root of the shielded-note
-    /// set** — the value destined to become the committed rotated state's
-    /// shielded-note-root group (L1: a new carrier base limb) and, sourced as
-    /// `piCOMMITTED`, the committed root the shielded spend descriptor's
-    /// membership pin binds to (L4). A node that has accepted a shielded output
-    /// carries a DIFFERENT `root8` than one that has not.
+    /// **THE committed accumulator root of the shielded-note set** — the exact tagged
+    /// LINKED-LEAF (indexed-Merkle) append-at-free-index root, `FSI2 ‖ addr17 ‖ value4 ‖
+    /// next17` at depth 16, arity 4, eight BabyBear lanes. The SHIELDED dual of
+    /// [`crate::commitment_set::CommitmentSet::root8`], domain-separated from it and from
+    /// both the spend and revocation sides.
     ///
-    /// This is the native `CanonicalHeapTree8` (arity-16 sorted-Poseidon2, depth
-    /// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`]) root the sibling accumulators
-    /// use — built from [`Self::accumulator_leaf`] over every hiding commitment in
-    /// the set. The empty set folds to the native empty root
-    /// (`dregg_circuit::heap_root::empty_heap_root_8`).
-    pub fn root8(&self) -> dregg_circuit::Faithful8 {
-        let leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = self
-            .commitments
-            .keys()
-            .map(|c| Self::accumulator_leaf(c))
-            .collect();
-        dregg_circuit::heap_root::CanonicalHeapTree8::new(
-            leaves,
-            dregg_circuit::heap_root::HEAP_TREE_DEPTH,
-        )
-        .root8()
+    /// The address rides sixteen little-endian `u16` limbs of the raw 32-byte commitment
+    /// (`2^256`, no reduction), so the leaf is INJECTIVE in the commitment: no two distinct
+    /// shielded notes share it. That is the property the retired
+    /// `HeapLeaf::entry(fold_bytes32_to_bb(commitment), ZERO)` leaf did not have at any root
+    /// width — see the ⚑ block in the module docs.
+    ///
+    /// **Hiding is preserved.** The leaf's value column is [`HIDING_VALUE`] = 0 for every
+    /// entry, carried as four zero `u16` limbs; nothing about the note's value enters the
+    /// leaf. The four-zero column is why the leaf DOMAIN tag has to differ from the create
+    /// side's, and it does ([`EXACT_SHIELDED_LINKED_DOMAINS`]).
+    ///
+    /// A node that has accepted a shielded output carries a DIFFERENT root8 than one that
+    /// has not. The empty set folds to the domain's own empty-ladder root.
+    pub fn root8(&self) -> Faithful8 {
+        let records = self.exact_append_records();
+        let lanes = exact_linked_append_root8(EXACT_SHIELDED_LINKED_DOMAINS, &records).expect(
+            "the shielded commitment map's keys are unique by construction (a BTreeMap over \
+             all 32 raw bytes, and the tagged-key encoding is injective on them), and its \
+             length is bounded by the 4^16 tree capacity",
+        );
+        faithful8_from_exact_lanes(lanes)
+    }
+
+    /// The committed accumulator's **dense physical leaf vector** — exactly what
+    /// [`Self::root8`] hashes, indexed by physical slot. Slot 0 is the permanent `BOT`
+    /// sentinel; the record at append rank `r` sits at slot `r + 1`.
+    ///
+    /// Exposed because it is the readable form of the property the root has and its
+    /// predecessor did not: every leaf's `addr()` recovers the FULL 32-byte commitment and
+    /// every leaf's `next_addr()` is the next larger present address (the absence bracket),
+    /// so a test can assert the encoding ROUND-TRIPS rather than merely that two digests
+    /// differ.
+    pub fn exact_dense_leaves(&self) -> Vec<dregg_circuit::exact_nullifier_aafi::ExactLinkedLeaf> {
+        dregg_circuit::exact_nullifier_aafi::exact_linked_dense_leaves(&self.exact_append_records())
+            .expect("the shielded commitment map's keys are unique and within the 4^16 capacity")
     }
 }
 
@@ -372,16 +443,43 @@ mod tests {
         assert!(set.contains(&c));
     }
 
-    /// The empty set's faithful accumulator root is the NATIVE `CanonicalHeapTree8`
-    /// empty root — the value a producer must fill for a no-shielded-note accumulator.
+    /// The empty set's root is the EXACT tree's own empty fold under the shielded domain
+    /// triple, and — the part that matters — it is **distinct from every sibling
+    /// accumulator's empty root**.
+    ///
+    /// ⚑ This replaced an assertion against `heap_root::empty_heap_root_8()` (the retired
+    /// `CanonicalHeapTree8` empty root), which is no longer the object this accumulator
+    /// commits to. The domain-separation half is the load-bearing one: with a shared leaf
+    /// tag, an empty shielded root would be byte-identical to an empty create/spend/revoke
+    /// root and one tree's "I hold nothing" could be replayed as another's.
     #[test]
-    fn root8_empty_matches_native_empty_heap_root_8() {
+    fn root8_empty_is_the_shielded_domain_empty_and_not_a_siblings() {
         let set = ShieldedNoteSet::new();
-        assert_eq!(
-            set.root8(),
-            dregg_circuit::heap_root::empty_heap_root_8(),
-            "an empty shielded-note set must fold to the native empty node8 root"
+        let expected = faithful8_from_exact_lanes(
+            exact_linked_append_root8(EXACT_SHIELDED_LINKED_DOMAINS, &[]).unwrap(),
         );
+        assert_eq!(set.root8(), expected);
+
+        for (name, domains) in [
+            (
+                "create",
+                crate::commitment_set::EXACT_COMMITMENT_LINKED_DOMAINS,
+            ),
+            (
+                "spend",
+                crate::nullifier_set::EXACT_NULLIFIER_LINKED_DOMAINS,
+            ),
+            ("revoke", crate::revoked_set::EXACT_REVOKED_LINKED_DOMAINS),
+        ] {
+            let sibling =
+                faithful8_from_exact_lanes(exact_linked_append_root8(domains, &[]).unwrap());
+            assert_ne!(
+                set.root8(),
+                sibling,
+                "the empty shielded root must be domain-separated from the empty {name} root, \
+                 or one tree's empty commitment is replayable as another's"
+            );
+        }
     }
 
     /// A non-empty accumulator fills ALL 8 lanes of the root group: the
@@ -415,51 +513,101 @@ mod tests {
         );
     }
 
-    /// **Hiding-leaf encoding tooth:** `root8` over the set equals a
-    /// `CanonicalHeapTree8` built from the DESIGN §3 R1 hiding leaf
-    /// `HeapLeaf::entry(fold_bytes32_to_bb(commitment), ZERO)` — folded through
-    /// the circuit's OWN helper, so this is genuine byte-identity with the hiding
-    /// encoding, not a re-assertion of a private formula.
-    #[test]
-    fn root8_matches_hiding_leaf_encoding() {
-        use dregg_circuit::effect_vm::fold_bytes32_to_bb;
-        use dregg_circuit::field::BabyBear;
-        use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
-
-        let commitments = [make_commitment(7), make_commitment(42), make_commitment(99)];
-        let mut set = ShieldedNoteSet::new();
-        for c in &commitments {
-            set.insert(*c).unwrap();
+    /// Two DISTINCT 32-byte shielded commitments that the retired leaf encoding mapped to
+    /// the **identical** address, exhibited at `O(1)` with no search.
+    ///
+    /// `fold_bytes32_to_bb` is `Σ limbᵢ · MIX^i (mod p)` over `bytes32_to_8_limbs`, whose
+    /// limb `i` is `u32::from_le_bytes(b[4i..4i+4]) % p`. Since `2p < 2^32`, the chunk
+    /// values `v` and `v + p` reduce to the SAME limb — so flipping chunk 0 from `0` to `p`
+    /// and leaving the other 28 bytes alone produces a second commitment with a
+    /// byte-identical fold. One addition; no grind, no birthday bound.
+    fn retired_fold_collision_pair() -> (ShieldedNoteCommitment, ShieldedNoteCommitment) {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        for i in 4..32 {
+            a[i] = i as u8;
+            b[i] = i as u8;
         }
+        a[0..4].copy_from_slice(&0u32.to_le_bytes());
+        b[0..4].copy_from_slice(&dregg_circuit::field::BABYBEAR_P.to_le_bytes());
+        (ShieldedNoteCommitment(a), ShieldedNoteCommitment(b))
+    }
 
-        let hiding_leaves: Vec<HeapLeaf> = commitments
-            .iter()
-            .map(|c| HeapLeaf::entry(fold_bytes32_to_bb(&c.0), BabyBear::ZERO))
-            .collect();
-        let expected = CanonicalHeapTree8::new(hiding_leaves, HEAP_TREE_DEPTH).root8();
+    /// **THE FALSIFIER for the 2026-08-01 migration.** The pair above is a genuine `O(1)`
+    /// collision of the RETIRED address fold — asserted here, so the exhibit cannot rot into
+    /// a pair that merely happens to differ — and the LIVE `root8` separates them.
+    ///
+    /// Under the retired `HeapLeaf::entry(fold_bytes32_to_bb(c), ZERO)` leaf these two
+    /// shielded notes were literally the same leaf: same address, and a ZERO value column
+    /// carrying nothing to tell them apart. A set holding both committed as if it held one,
+    /// and dropping either left the committed root byte-identical.
+    #[test]
+    fn root8_separates_a_retired_fold_collision_pair() {
+        use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 
+        let (a, b) = retired_fold_collision_pair();
+        assert_ne!(a.0, b.0, "the pair must be DISTINCT 32-byte commitments");
         assert_eq!(
-            set.root8(),
-            expected,
-            "root8 must fold through the hiding (addr, ZERO) node8 leaf encoding"
+            fold_bytes32_to_bb(&a.0),
+            fold_bytes32_to_bb(&b.0),
+            "vacuity guard: the pair must genuinely collide under the RETIRED address fold, \
+             or this test proves nothing about the migration"
+        );
+
+        let mut only_a = ShieldedNoteSet::new();
+        only_a.insert(a).unwrap();
+
+        let mut both = ShieldedNoteSet::new();
+        both.insert(a).unwrap();
+        both.insert(b).unwrap();
+
+        assert_eq!(both.len(), 2, "both commitments are distinct set members");
+        assert_ne!(
+            only_a.root8(),
+            both.root8(),
+            "the exact tagged-key leaf must SEPARATE a pair the retired ~31-bit linear fold \
+             merged: a shielded note whose sibling collides must still move the committed root"
         );
     }
 
-    /// **The leaf carries NO cleartext value:** the shielded set's leaf is keyed
-    /// on the commitment alone with a ZERO value column, so it is DISTINCT from a
-    /// cleartext-value `CommitmentSet` leaf over the same commitment felt. This is
-    /// the hiding property the whole accumulator exists to preserve — the value
-    /// never enters the leaf.
+    /// **Hiding is preserved by the exact leaf:** every committed leaf's value column is
+    /// zero, so no cleartext value enters the commitment. This is the property the whole
+    /// accumulator exists to preserve (DESIGN §3 R1, "no cleartext value column") and it
+    /// survives the move off the folded address unchanged.
     #[test]
-    fn hiding_leaf_value_column_is_zero() {
-        use dregg_circuit::field::BabyBear;
+    fn every_exact_leaf_value_column_is_zero() {
+        let mut set = ShieldedNoteSet::new();
+        for seed in [3u8, 17, 200] {
+            set.insert(make_commitment(seed)).unwrap();
+        }
+        let leaves = set.exact_dense_leaves();
+        assert_eq!(leaves.len(), 4, "3 entries + the BOT sentinel at slot 0");
+        for (slot, leaf) in leaves.iter().enumerate() {
+            assert_eq!(
+                leaf.value(),
+                0,
+                "slot {slot}: a hiding shielded leaf must carry NO cleartext value"
+            );
+        }
+    }
 
-        let c = make_commitment(3);
-        let leaf = ShieldedNoteSet::accumulator_leaf(&c.0);
+    /// **The address round-trips**: the committed leaf recovers the FULL 32 bytes of the
+    /// commitment. This is what the retired fold could not do at any root width — it is the
+    /// difference between an injective encoding and a ~31-bit image.
+    #[test]
+    fn exact_leaf_address_recovers_all_thirty_two_bytes() {
+        use dregg_circuit::exact_nullifier_aafi::ExactTaggedKey;
+
+        let c = make_commitment(91);
+        let mut set = ShieldedNoteSet::new();
+        set.insert(c).unwrap();
+
+        let leaves = set.exact_dense_leaves();
+        let addr = leaves[1].addr();
         assert_eq!(
-            leaf.value,
-            BabyBear::ZERO,
-            "a hiding shielded leaf must carry NO cleartext value (value column = 0)"
+            addr,
+            ExactTaggedKey::from_raw(c.0),
+            "the committed address must be the raw 32 bytes, not a projection of them"
         );
     }
 
@@ -480,11 +628,25 @@ mod tests {
         );
     }
 
-    /// **CONTINUITY tooth:** turn N's *after*-root over `S ∪ {cm}` equals turn
-    /// N+1's *before*-root over the same set (insertion-order-independent — a
-    /// BTreeMap sorts).
+    /// **CONTINUITY tooth, restated at the encoding that is actually committed.**
+    ///
+    /// ⚑ **WHAT CHANGED AND WHY (2026-08-01).** This test used to build the same SET twice
+    /// in DIFFERENT insertion orders and assert the roots were equal, on the strength of the
+    /// retired sorted-compacted `CanonicalHeapTree8` being order-independent. The exact
+    /// append-at-free-index root is order-DEPENDENT **by construction** — the append order
+    /// IS the canonical tau sequence (INV-6), the same trade the three sibling accumulators
+    /// took on 2026-07-31 — so that assertion is now FALSE, and it should be: two different
+    /// append histories over the same set are two different states, and a root that could
+    /// not tell them apart would be hiding a reordering.
+    ///
+    /// The property that continuity actually needs is stated here instead, in two halves:
+    /// turn N's after-root equals turn N+1's before-root along the REAL carry (the set is
+    /// carried forward, not rebuilt), and a reconstruction from persisted records recovers
+    /// it from a hostile storage order — the latter is
+    /// `reconstruction_from_records_fixes_the_append_order`, and the seq column is what makes
+    /// it hold.
     #[test]
-    fn root8_is_cross_turn_continuous() {
+    fn root8_is_cross_turn_continuous_along_the_carry() {
         let base = [make_commitment(10), make_commitment(20)];
         let new_note = make_commitment(30);
 
@@ -495,17 +657,44 @@ mod tests {
         turn_n.insert(new_note).unwrap();
         let after_root_n = turn_n.root8();
 
-        let mut turn_n1 = ShieldedNoteSet::new();
-        turn_n1.insert(new_note).unwrap();
-        for c in base.iter().rev() {
-            turn_n1.insert(*c).unwrap();
-        }
-        let before_root_n1 = turn_n1.root8();
-
+        // Turn N+1's BEFORE state is turn N's AFTER state, carried forward.
+        let turn_n1 = turn_n.clone();
         assert_eq!(
-            after_root_n, before_root_n1,
-            "turn N after-root must equal turn N+1 before-root over the same \
-             commitment set (INV-2 continuity, insertion-order-independent)"
+            after_root_n,
+            turn_n1.root8(),
+            "turn N after-root must equal turn N+1 before-root along the carry (INV-2)"
+        );
+
+        // And it survives a round-trip through the durable record form, whatever order the
+        // store yields the records in.
+        let mut records: Vec<([u8; 32], u64)> = turn_n1.iter_in_append_order().collect();
+        records.sort_by_key(|(c, _)| *c);
+        let rebuilt = ShieldedNoteSet::from_records(records).unwrap();
+        assert_eq!(
+            after_root_n,
+            rebuilt.root8(),
+            "the persisted seq column must recover the committed root from a hostile \
+             storage order"
+        );
+
+        // NON-VACUITY: the root is genuinely order-dependent, so the two assertions above
+        // are not free. A different APPEND HISTORY over the identical set is a different
+        // committed state.
+        let mut reordered = ShieldedNoteSet::new();
+        reordered.insert(new_note).unwrap();
+        for c in base.iter().rev() {
+            reordered.insert(*c).unwrap();
+        }
+        assert_eq!(
+            reordered.iter().copied().collect::<Vec<_>>(),
+            turn_n1.iter().copied().collect::<Vec<_>>(),
+            "the two sets must hold the identical commitments"
+        );
+        assert_ne!(
+            after_root_n,
+            reordered.root8(),
+            "the AAFI root is order-DEPENDENT by construction; a root equal across two \
+             append histories would mean a reordering is invisible to the commitment"
         );
     }
 
@@ -542,11 +731,20 @@ mod tests {
             "vacuity guard: insertion order must differ from sorted-key order"
         );
 
-        let expected_leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = cms
-            .iter()
-            .map(|cm| ShieldedNoteSet::accumulator_leaf(&cm.0))
-            .collect();
-        assert_eq!(set.aafi_leaves(), expected_leaves);
+        // The dense physical leaf vector: slot 0 is the BOT sentinel, and append rank `r`
+        // sits at slot `r + 1` carrying the raw 32-byte commitment as its address.
+        use dregg_circuit::exact_nullifier_aafi::ExactTaggedKey;
+        let leaves = set.exact_dense_leaves();
+        assert_eq!(leaves.len(), cms.len() + 1);
+        assert_eq!(leaves[0].addr(), ExactTaggedKey::Bot);
+        for (rank, cm) in cms.iter().enumerate() {
+            assert_eq!(
+                leaves[rank + 1].addr(),
+                ExactTaggedKey::from_raw(cm.0),
+                "append rank {rank} must occupy physical slot {}",
+                rank + 1
+            );
+        }
     }
 
     /// **A8 tooth — reconstruction FIXES the append order:** records exported
@@ -574,7 +772,7 @@ mod tests {
             "reconstruction must recover the CANONICAL append order from the \
              persisted seq column, not the storage yield order"
         );
-        assert_eq!(rebuilt.aafi_leaves(), original.aafi_leaves());
+        assert_eq!(rebuilt.exact_dense_leaves(), original.exact_dense_leaves());
         for cm in &cms {
             assert_eq!(rebuilt.seq_of(cm), original.seq_of(cm));
         }

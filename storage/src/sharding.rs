@@ -64,10 +64,24 @@ impl ShardedQueue {
     }
 
     /// Route a message to its shard (deterministic by content hash).
+    ///
+    /// ⚑ **The modulus is taken in `u64`, before any `usize` narrowing** (fixed 2026-08-01).
+    /// The previous body was `(n as usize) % self.shard_count`: on `wasm32` `usize` is **32
+    /// bits**, so `n as usize` DISCARDED the high four of the eight digest bytes *before* the
+    /// modulus and routed the same content to a different shard than a native node did. The
+    /// shard index decides which `MerkleQueue` a leaf lands in and therefore what
+    /// [`compute_combined_root`] commits to — so a wasm and a native node holding identical
+    /// message sets published different committed roots, with no error on either side.
+    ///
+    /// ⚠ Still narrow, and NOT repaired here: only `content_hash[..8]` is read, so two
+    /// contents agreeing on their first 8 bytes route identically. That is harmless for
+    /// *routing* (any deterministic assignment is a valid partition and the leaf itself
+    /// carries the full hash), which is why it stays — but it is the reason this must not be
+    /// reused as a commitment key.
     fn shard_for(&self, content_hash: &[u8; 32]) -> usize {
-        // Use first 8 bytes as a u64, mod shard_count.
+        // First 8 bytes as a u64. Reduce IN u64 — `as usize` here would truncate on wasm32.
         let n = u64::from_le_bytes(content_hash[..8].try_into().unwrap());
-        (n as usize) % self.shard_count
+        (n % self.shard_count as u64) as usize
     }
 
     /// Enqueue to the appropriate shard (determined by content hash).

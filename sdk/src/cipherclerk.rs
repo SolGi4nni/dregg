@@ -4958,10 +4958,28 @@ impl AgentCipherclerk {
     }
 
     /// Derive a deterministic sibling hash for Merkle path construction.
+    ///
+    /// ⚑ **`level` and `sibling_idx` are absorbed as `u64`, NOT as `usize`** (fixed
+    /// 2026-08-01). `usize::to_le_bytes()` emits **4 bytes on `wasm32` and 8 on `x86_64`**, so
+    /// the previous body gave the BLAKE3 sponge a different preimage per target for the same
+    /// `(level, sibling_idx, key)` — and therefore a different sibling hash, a different
+    /// Merkle path and a different recomputed root. A wasm light client and a native prover
+    /// built provably different trees over identical inputs, with nothing red on either.
+    /// "Deterministic" in the line above was true per-target and false across them.
+    ///
+    /// This is the discipline `circuit-prove/src/ivc_turn_chain.rs` already states for the
+    /// IVC count lane ("BEFORE any `as usize` (which is 32 bits under `wasm32`, where a
+    /// `usize`-typed guard would have been truncated past)"): a `usize` may index, but it may
+    /// never reach a hash preimage or a committed width unwrapped.
+    ///
+    /// ⚠ The `% BABYBEAR_P` on the low four digest bytes below is a SEPARATE, unfixed
+    /// narrowing — a ~31-bit image of a 256-bit digest, aliasing `x` with `x + p` on 53.1% of
+    /// draws. It is not repaired here because the value's consumer is the Poseidon2 path
+    /// recompute whose felt width is descriptor-fixed; widening it is the map-key epoch.
     fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&level.to_le_bytes());
-        hasher.update(&sibling_idx.to_le_bytes());
+        hasher.update(&(level as u64).to_le_bytes());
+        hasher.update(&(sibling_idx as u64).to_le_bytes());
         hasher.update(key);
         let hash = hasher.finalize();
         let bytes = hash.as_bytes();

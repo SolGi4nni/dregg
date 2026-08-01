@@ -397,7 +397,7 @@ fn present_impl(
             // The original hashed `hash_fact(attr_symbol, [predicate_value, 0, 0])`, so with the
             // value flowing in as term[0], term1 = term2 = ZERO (NOT `predicate_value` — that would
             // bind hash_fact(attr, [value, value, 0]), a different fact).
-            let attr_symbol = blake3_to_babybear(req.attribute.as_bytes());
+            let attr_symbol = attribute_symbol_felt_30bit(req.attribute.as_bytes());
             let binding = FactTerms {
                 predicate_sym: attr_symbol,
                 term1: dregg_circuit::field::BabyBear::ZERO,
@@ -490,22 +490,77 @@ fn attestation_siblings(
 /// holder sent and compare against the commitment the STARK binds — the
 /// disclosure-tamper check. Prover and verifier MUST use this one function;
 /// a second copy on the verifier side would be a shadow to drift against.
+/// ⚑ **EACH TERM NOW RIDES NINE INJECTIVE LANES** (fixed 2026-08-01, domain bumped to `-v2`).
+///
+/// This used to map every 32-byte term through a private `blake3_to_babybear`:
+///
+/// ```text
+///   let h = blake3::hash(bytes);                                  // 32 bytes
+///   let val = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);       // 4 of them
+///   BabyBear::new(val & ((1u32 << 30) - 1))                       // 30 bits
+/// ```
+///
+/// — **30 bits per disclosed term**, and that felt was the term's ONLY binding in the
+/// commitment. Two disclosure sets differing in a term but agreeing on those 30 bits produced
+/// a byte-identical `WideHash`, so [`crate::verification`]'s disclosure-tamper check —
+/// "recompute from the cleartext the holder sent, compare against the commitment the STARK
+/// binds" — accepted the substituted cleartext. The terms are attacker-chosen attribute
+/// bytes, so the cost was a **2^15 birthday grind**, not a search anyone would notice. The
+/// width of the 8-felt `WideHash` above it was irrelevant: the waist was upstream of the
+/// sponge, which is the `finalSqueezeOnly_still_conflates` shape.
+///
+/// The replacement absorbs [`dregg_circuit::effect_vm::field_limbs9`] — the nine-lane
+/// base-`2^28` encoder whose injectivity on 32-byte values is a machine-checked Lean theorem
+/// (`Dregg2.Circuit.FieldLanes9.fieldToLanes9_injective`, with a total decoder and a proved
+/// left inverse). Nine and not eight is forced: `log₂ p = 30.907`, so eight lanes carry
+/// 247.26 bits against a 32-byte term's 256 and NO eight-lane chunking is injective —
+/// pigeonhole, before any code is read. With an injective preimage the commitment's strength
+/// is the Poseidon2 sponge's over eight output lanes, which is the object `WideHash` claims
+/// to be.
+///
+/// **Prover and verifier MUST use this one function**; a second copy on the verifier side
+/// would be a shadow to drift against.
+///
+/// ⓘ Breaking: the domain string moved `dregg-credentials-revealed` →
+/// `…-revealed-v2`, so every previously issued presentation's
+/// `revealed_facts_commitment` REFUSES rather than reinterpreting — a stale commitment
+/// cannot be read as a new-encoding one. Presentations re-emit. No VK rotates and no
+/// descriptor re-emits: this value is recomputed in Rust on both sides and carried as a
+/// public input, never recomputed in-AIR.
 pub(crate) fn compute_revealed_terms_commitment(
     terms: &[[u8; 32]],
 ) -> dregg_circuit::binding::WideHash {
-    // Hash each term into BabyBear, then fold via Poseidon2.
-    let mut hashes = Vec::with_capacity(terms.len());
+    // Nine lanes per term — injective, so no two disclosure sets share a preimage.
+    let mut lanes = Vec::with_capacity(terms.len() * 9);
     for term in terms {
-        hashes.push(blake3_to_babybear(term));
+        lanes.extend_from_slice(&dregg_circuit::effect_vm::field_limbs9(term));
     }
-    dregg_circuit::binding::WideHash::from_poseidon2("dregg-credentials-revealed", &hashes)
+    dregg_circuit::binding::WideHash::from_poseidon2("dregg-credentials-revealed-v2", &lanes)
 }
 
-fn blake3_to_babybear(bytes: &[u8]) -> dregg_circuit::field::BabyBear {
+/// The **attribute SYMBOL felt** — a 30-bit tag for an attribute NAME, used as
+/// `FactTerms::predicate_sym` and as the seed of [`sibling_hashes_for`].
+///
+/// ⚑ **NAMED RESIDUAL, and deliberately UNCHANGED (2026-08-01).** The arithmetic is
+/// byte-identical to what this was when it was also (wrongly) used to build the
+/// revealed-terms commitment: BLAKE3 the name, take four of the digest's thirty-two bytes,
+/// mask to thirty bits. That is a `2^30` image, i.e. a `2^15` birthday — two attribute names
+/// colliding here are the SAME predicate symbol in the fact binding.
+///
+/// It is not widened here for a reason that is a real constraint rather than a cost estimate:
+/// `predicate_sym` is a **single in-AIR column** (`predicate_arith_witness`'s
+/// `hash_fact(predicate_sym, terms)` row), so its width is descriptor geometry — widening it
+/// is a Lean-authored emit change plus a VK rotation, and this lane does not touch the emit
+/// driver. The commitment path above, which had no such constraint, is fixed.
+///
+/// ⚠ The `& ((1u32 << 30) - 1)` mask is *also* gratuitous — `BabyBear::new` already reduces
+/// mod `p ≈ 2^30.907`, so the mask throws away a further 0.9 bits for nothing. It is kept
+/// because changing it silently moves every derived symbol and this function is derived
+/// identically on both sides; it should move WITH the widening, not before it.
+fn attribute_symbol_felt_30bit(bytes: &[u8]) -> dregg_circuit::field::BabyBear {
     let h = blake3::hash(bytes);
     let b = h.as_bytes();
     let val = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
-    // BabyBear field is 31-bit; mask to stay in range.
     dregg_circuit::field::BabyBear::new(val & ((1u32 << 30) - 1))
 }
 
