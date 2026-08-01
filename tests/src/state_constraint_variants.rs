@@ -1308,12 +1308,12 @@ fn preimage_gate_rejects_wrong_preimage() {
 /// function and this test would fail in both directions).
 #[test]
 fn preimage_gate_poseidon2_real_gadget() {
-    use dregg_circuit::poseidon2::hash_bytes;
+    use dregg_circuit::poseidon2::hash_bytes_8;
 
     let preimages: [[u8; 32]; 3] = [[0u8; 32], [7u8; 32], [0xFEu8; 32]];
 
     for preimage in preimages {
-        let poseidon2_digest = dregg_cell::felt_to_bytes32(hash_bytes(&preimage));
+        let poseidon2_digest = dregg_cell::digest8_to_bytes32(hash_bytes_8(&preimage));
         let blake3_digest = *blake3::hash(&preimage).as_bytes();
 
         // The gadgets are genuinely DIFFERENT functions — the anti-stub
@@ -1346,7 +1346,7 @@ fn preimage_gate_poseidon2_real_gadget() {
             &state_raw_with(&[(0, poseidon2_digest)]),
             None,
             Some(&ctx),
-            "Poseidon2 PreimageGate opens on circuit hash_bytes",
+            "Poseidon2 PreimageGate opens on circuit hash_bytes_8",
         );
 
         // NEGATIVE (cross-kind, direction 1): a BLAKE3 commitment must NOT
@@ -1928,8 +1928,8 @@ fn renounced_accepts_when_sender_not_in_set() {
     };
     use dregg_circuit::poseidon2::hash_2_to_1;
     use dregg_turn::executor::membership_verifier::{
-        NeighborAdjStep, adjacency_commitment_bytes, adjacency_leaf_felt, prove_neighbor_adjacency,
-        registry_with_real_verifiers,
+        NeighborAdjStep, adjacency_commitment_bytes, adjacency_leaf_digest,
+        prove_neighbor_adjacency, registry_with_real_verifiers,
     };
 
     let candidate = [0x05u8; 32];
@@ -1938,11 +1938,14 @@ fn renounced_accepts_when_sender_not_in_set() {
     // Sorted 4-leaf set with lower/upper as the two MIDDLE (consecutive) leaves.
     let neighbors: [[u8; 32]; 4] = [[0x02u8; 32], lower, upper, [0x08u8; 32]];
 
-    let leaves: Vec<_> = neighbors.iter().map(adjacency_leaf_felt).collect();
+    let leaves: Vec<_> = neighbors.iter().map(adjacency_leaf_digest).collect();
     let mut levels: Vec<Vec<_>> = vec![leaves];
     while levels.last().unwrap().len() > 1 {
         let cur = levels.last().unwrap();
-        let next: Vec<_> = cur.chunks(2).map(|p| hash_2_to_1(p[0], p[1])).collect();
+        let next: Vec<_> = cur
+            .chunks(2)
+            .map(|p| dregg_circuit::adjacency_witness::adjacency_node8(&p[0], &p[1]))
+            .collect();
         levels.push(next);
     }
     let root_felt = *levels.last().unwrap().first().unwrap();

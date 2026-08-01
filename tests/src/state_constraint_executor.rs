@@ -795,8 +795,8 @@ fn executor_renounced_accepts_when_sender_not_in_set() {
     use dregg_circuit::poseidon2::hash_2_to_1;
     use dregg_turn::action::{WitnessBlob, WitnessKind};
     use dregg_turn::executor::membership_verifier::{
-        NeighborAdjStep, adjacency_commitment_bytes, adjacency_leaf_felt, prove_neighbor_adjacency,
-        registry_with_real_verifiers,
+        NeighborAdjStep, adjacency_commitment_bytes, adjacency_leaf_digest,
+        prove_neighbor_adjacency, registry_with_real_verifiers,
     };
 
     // Agent pk is controlled by make_cell_with_program(seed=11, …):
@@ -812,11 +812,14 @@ fn executor_renounced_accepts_when_sender_not_in_set() {
 
     // Build the binary Poseidon2 tree over compress(neighbor) leaves; the root
     // felt's LE bytes are the published set commitment.
-    let leaves: Vec<_> = neighbors.iter().map(adjacency_leaf_felt).collect();
+    let leaves: Vec<_> = neighbors.iter().map(adjacency_leaf_digest).collect();
     let mut levels: Vec<Vec<_>> = vec![leaves];
     while levels.last().unwrap().len() > 1 {
         let cur = levels.last().unwrap();
-        let next: Vec<_> = cur.chunks(2).map(|p| hash_2_to_1(p[0], p[1])).collect();
+        let next: Vec<_> = cur
+            .chunks(2)
+            .map(|p| dregg_circuit::adjacency_witness::adjacency_node8(&p[0], &p[1]))
+            .collect();
         levels.push(next);
     }
     let root_felt = *levels.last().unwrap().first().unwrap();
