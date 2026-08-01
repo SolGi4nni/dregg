@@ -2,7 +2,12 @@
 //!
 //! `docs/FAITHFUL-COMMITMENT-LAW.md`: every 32-byte component that flows into
 //! the deployed state commitment binds its SOURCE at the system's own soundness
-//! strength (~124-bit, the 8-felt encoding) — never a lossy 1-felt projection.
+//! strength — never a lossy 1-felt projection.
+//!
+//! ⚠ **SAY WHICH BOUND.** The law's floor reads "~124-bit"; it is `8 · log₂ p / 2 = 2^123.63`, a
+//! **birthday COLLISION** bound over a full 8-lane IMAGE of `2^247.26`. Image size and collision
+//! cost are the pair this tree keeps confusing, and quoting the flattering one is how a `2^15.5`
+//! object once claimed 124 bits — and how the `2^120` key octet below sat in the faithful list.
 //!
 //! The insidious failure mode the law names: **a bare `BabyBear` limb carries no
 //! evidence of faithful-vs-degraded.** A faithful 8-felt binding and a degraded
@@ -11,17 +16,24 @@
 //! bit-audit months later. The ast-grep gate (`scripts/check-no-degraded-felt.sh`)
 //! catches the *pattern* in the three known producers; THIS newtype is the
 //! *type-level* wall: a commitment-bearing octet sink takes `Faithful8`, and a
-//! `Faithful8` can only be built through a named faithful constructor — so a
-//! degraded felt in a commitment position is a **compile error**, everywhere,
-//! including files the gate has never heard of.
+//! `Faithful8` can only be built through a NAMED constructor — so a degraded
+//! felt in a commitment position is a **compile error**, everywhere, including
+//! files the gate has never heard of. ⚑ "Named" is the honest word and "faithful"
+//! was not: two of the named constructors are residuals, and the list below is
+//! split so that reading it cannot mislead.
 //!
 //! ## The constructor discipline
 //!
 //! The inner `[BabyBear; 8]` is **private**. The only ways in:
 //!
 //! * [`Faithful8::from_bytes32`] — the canonical full-32-byte limb split
-//!   ([`crate::effect_vm::bytes32_to_8_limbs`]): 8 × 4-byte little-endian limbs,
-//!   ~124-bit binding of the source bytes.
+//!   ([`crate::effect_vm::bytes32_to_8_limbs`]): 8 × 4-byte little-endian limbs.
+//!   ⚠ Full `2^247.26` IMAGE but collision cost **`0`** for an attacker-chosen
+//!   input (`v` and `v + p` alias, `2p < 2^32`); at strength only where the input
+//!   is a hash output, which is every deployed call site. This bullet used to say
+//!   "~124-bit binding of the source bytes" while the constructor's own doc, forty
+//!   lines down, said "NOT a ~124-bit binding of `b`". Both readings were in the
+//!   same file.
 //! * the **tree roots** — the cap/heap/fields sorted-Poseidon2 `node8` trees
 //!   return `Faithful8` directly from their root fold
 //!   ([`crate::cap_root::compute_capability_root_with_tombstones`],
@@ -31,19 +43,28 @@
 //! * the **wire-commit chain** — [`Faithful8::from_wire_commit`] /
 //!   [`Faithful8::from_wire_commit_chip`], the chained 8-felt rotated state
 //!   commitment (`poseidon2::wire_commit_8` / `wire_commit_8_chip`).
-//! * [`Faithful8::from_canonical_key`] — the 30-bit canonical key-commit octet
-//!   (the pubkey8 lane). NOT a 4-byte limb split: the packing is the KEY_COMMIT
-//!   canonical form (`dregg_commit::typed::canonical_32_to_felts_8` /
-//!   `dregg_cell::commitment::canonical_to_babybear_pi` — 8+8+8+6 = 30 bits per
-//!   limb, 240 bits total, faithful).
 //! * [`Faithful8::ZERO`] — the all-zero sentinel (absent carrier material, the
 //!   deployed `vk_hash == [0; 8]` revoke convention). Zero is not a projection
 //!   of anything; it is the committed "nothing here" value.
 //! * [`Faithful8::from_lossy_31bit_DANGER`] — the **greppable escape hatch** for
-//!   the named, allowlisted residuals (today: exactly the `fields[0..7]` r3..r10
-//!   Horner folds, pending the v13 epoch). Every call site is a v13 burn-down
-//!   list entry. Adding one without updating
-//!   `docs/FAITHFUL-COMMITMENT-LAW.md` is a review-time violation.
+//!   the named, allowlisted residuals. Every call site is a burn-down list entry, and
+//!   adding one without updating `docs/FAITHFUL-COMMITMENT-LAW.md` is a review-time
+//!   violation — ⚑ now a *test-time* one as well, see the gate below.
+//! * [`Faithful8::from_canonical_key`] — ⚑ **the 30-bit KEY_COMMIT pubkey8 pack, and it is
+//!   NOT a faithful constructor.** Reclassified 2026-08-01: its body IS
+//!   `from_lossy_31bit_DANGER` (reason [`KEY_COMMIT_30BIT_RESIDUAL`]), so it now sits on the
+//!   burn-down list rather than beside the tree roots. It had entered through the FRONT DOOR
+//!   with a doc reading "8+8+8+6 = 30 bits per limb, 240 bits total, faithful" — and 240 bits
+//!   of IMAGE is a `2^120` birthday COLLISION, against this tree's `2^123.63` floor. Below
+//!   floor on the generous reading, and the true figure is `0` bits: sixteen source bits are
+//!   never read, so a colliding key is one bit-flip. Full arithmetic on the constructor.
+//!
+//! ⚑ **THE BURN-DOWN LIST IS A GATE, NOT A CONVENTION** (2026-08-01).
+//! `circuit/tests/faithful8_key_octet_below_floor.rs` walks every `*.rs` in the workspace,
+//! collects the call sites of `from_lossy_31bit_DANGER` AND of `from_canonical_key`, and fails
+//! unless each one is named in the law doc's burn-down section — and unless each path the doc
+//! names still has a call. "Adding a `_DANGER` site without listing it is a review-time
+//! violation" was a rule no instrument could enforce; a documented wound is not a detected one.
 //!
 //! Reading OUT is unrestricted (`Deref<Target = [BabyBear; 8]>`, [`Faithful8::limbs`],
 //! `From<Faithful8> for [BabyBear; 8]`): the wall polices construction, not
@@ -63,7 +84,11 @@
 //! * [`Faithful8::from_bytes32`] **is** `bytes32_to_8_limbs` — family F1, `O(1)` aliasable for a
 //!   directly-chosen preimage (`v` and `v + p` collide for 53.1% of 4-byte chunks).
 //! * [`Faithful8::from_canonical_key`] **is** `canonical_32_to_felts_8` — family F2, 16 source
-//!   bits discarded.
+//!   bits discarded. IMAGE `2^240`; birthday COLLISION `2^120`, i.e. 3.63 bits below the
+//!   `2^123.63` floor; ACTUAL collision `0`, because every fiber holds `2^16` strings and — the
+//!   source being an Ed25519 public key whose x-sign is one of the discarded bits — `A` and `−A`
+//!   pack identically. ⚑ It no longer admits through the front door: as of 2026-08-01 its body
+//!   is the `_DANGER` hatch and it is on the burn-down list.
 //! * `Faithful8::from_field_limbs8` **was** `field_limbs8` — family F3, the constructor that fed
 //!   `fields[0..7]`, the only octet in the v9 commitment with no byte-exact companion and therefore
 //!   the one where an alias reached the signed anchor. ⚑ **GONE — deleted 2026-07-31, together with
@@ -120,6 +145,17 @@
 //! ```
 
 use crate::field::BabyBear;
+
+/// The `reason` string [`Faithful8::from_canonical_key`] passes to
+/// [`Faithful8::from_lossy_31bit_DANGER`] — i.e. the ONE entry on the burn-down list in
+/// `docs/FAITHFUL-COMMITMENT-LAW.md` as of 2026-08-01.
+///
+/// A residual's reason must name the residual AND its closure epoch, which is what makes the
+/// grep readable without opening the law doc. The gate
+/// (`circuit/tests/faithful8_key_octet_below_floor.rs`) asserts this string is quoted verbatim in
+/// the doc's burn-down section, so the two cannot drift.
+pub const KEY_COMMIT_30BIT_RESIDUAL: &str = "KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 \
+     sign bit among them) — floor is 2^123.63; closes at the ninth key lane, schema epoch 16";
 
 /// An **8-felt commitment octet** — 8 lanes wide, not 1.
 ///
@@ -180,17 +216,48 @@ impl Faithful8 {
     /// The 30-bit KEY-COMMIT octet (the `pubkey8` carrier lane): 8 limbs of `8+8+8+6 = 30` bits
     /// each over the canonical 32-byte key.
     ///
-    /// ⚠ **240 is the IMAGE size, not the binding.** This doc said "240 bits, faithful". The
-    /// packing discards bits 6-7 of every fourth byte, so **16 source bits are unbound** and a
-    /// colliding 32-byte STRING is free; only a colliding *meaningful* value costs anything
-    /// (~2^120 for a pubkey that must also be a valid group element). Second-preimage is `O(1)`
-    /// for a directly-chosen input. Deleted in the successor. The packing is owned by
+    /// ⚑ **THIS IS A NAMED RESIDUAL, NOT A FAITHFUL CONSTRUCTOR** (reclassified 2026-08-01). Its
+    /// body IS [`Faithful8::from_lossy_31bit_DANGER`], carrying
+    /// [`KEY_COMMIT_30BIT_RESIDUAL`] as the reason — so this octet is on the burn-down list in
+    /// `docs/FAITHFUL-COMMITMENT-LAW.md` instead of standing beside the tree roots. It kept its
+    /// NAME only because its two call sites
+    /// (`cell::commitment::compute_rotated_pre_limbs`, `turn::rotation_witness::produce`) are the
+    /// deployed producers and renaming them is a separate lane; the burn-down gate
+    /// (`circuit/tests/faithful8_key_octet_below_floor.rs`) therefore greps for BOTH names.
+    ///
+    /// ⚠ **SAY WHICH BOUND.** Three different numbers get called "240 bits" and only one of them
+    /// is a security level:
+    ///
+    /// * **IMAGE = `2^240`, exactly.** `lo | mid1<<8 | mid2<<16 | (hi & 0x3F)<<24` sweeps all of
+    ///   `[0, 2^30)` per lane, independently, and `2^30 < p` so nothing reduces. The image is
+    ///   `(2^30)^8` on the nose — `2^-7.26` of the `[0, p)^8` the octet's columns can hold.
+    /// * **COLLISION (birthday, unstructured search) = `2^120`.** That is already BELOW this
+    ///   tree's floor, which is `8 · log₂ p / 2 = 2^123.63` — the "~124-bit" figure the law quotes
+    ///   is itself a birthday bound over a full 8-lane image, and this octet misses it by 3.63
+    ///   bits. 240 bits of image is NOT at floor, which is the whole argument for the
+    ///   reclassification.
+    /// * **COLLISION (actual) = `0` — no search at all.** Every fiber has exactly `2^16` elements:
+    ///   bits 6-7 of bytes 3, 7, 11, 15, 19, 23, 27, 31 are never read. So a second preimage on a
+    ///   raw 32-byte string is one bit-flip.
+    ///
+    /// ⚑ And the "only a *meaningful* colliding value costs anything (~2^120)" escape this doc
+    /// used to offer is **FALSE FOR THIS KEY TYPE.** The source is `Cell::public_key`, an Ed25519
+    /// public key: RFC 8032 §5.1.2 puts the x-sign in **bit 7 of byte 31**, which is one of the
+    /// sixteen discarded bits. So a point `A` and its negation `−A` — both valid, both
+    /// decompressible, both the same order — differ in exactly that bit and pack to the
+    /// **identical octet**. A colliding *valid public key* is free too. Exhibited over the real
+    /// deployed packer and real curve points by
+    /// `circuit/tests/faithful8_key_octet_below_floor.rs`.
+    ///
+    /// What closes it is a NINTH key lane (`2^278` image, `2^139` birthday), which is
+    /// `rotatedNumPreLimbs` 184 → 187, `B_SPAN` 247 → 251, a descriptor re-emit, a VK rotation and
+    /// `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16. Not this lane's edit — this lane's edit is that the
+    /// wall stops calling it faithful while that is pending. The packing itself is owned by
     /// `dregg_commit::typed::canonical_32_to_felts_8` (byte-identical twin:
-    /// `dregg_cell::commitment::canonical_to_babybear_pi`); this constructor
-    /// takes its output and NAMES the lane so the wall stays greppable.
+    /// `dregg_cell::commitment::canonical_to_babybear_pi`) and is UNCHANGED here.
     #[inline]
     pub fn from_canonical_key(limbs: [BabyBear; 8]) -> Self {
-        Self(limbs)
+        Self::from_lossy_31bit_DANGER(KEY_COMMIT_30BIT_RESIDUAL, limbs)
     }
 
     // ⚑ `from_field_limbs8` — the v13 FIELDS-OCTET constructor — is DELETED (2026-07-31), and so is
@@ -212,11 +279,22 @@ impl Faithful8 {
     // error, which is the point of the wall.
 
     /// **THE GREPPABLE ESCAPE HATCH** for the NAMED degraded residuals
-    /// (`docs/FAITHFUL-COMMITMENT-LAW.md` — the v13 burn-down list). A call
+    /// (`docs/FAITHFUL-COMMITMENT-LAW.md` — the burn-down list). A call
     /// site of this constructor is an admission: these 8 limbs do NOT each
     /// bind a faithful source (e.g. eight independent ~31-bit Horner folds
-    /// riding in one octet). `reason` must name the residual and its closure
-    /// epoch. Every call site is reviewed against the law doc's allowlist.
+    /// riding in one octet, or — the current entry — a pack that never reads
+    /// sixteen of its source bits). `reason` must name the residual and its
+    /// closure epoch.
+    ///
+    /// ⚑ **Current list: ONE residual**, the KEY_COMMIT 30-bit pubkey8 pack
+    /// ([`KEY_COMMIT_30BIT_RESIDUAL`]), reached through
+    /// [`Faithful8::from_canonical_key`] from `cell::commitment::compute_rotated_pre_limbs` and
+    /// `turn::rotation_witness::produce`. The list was recorded as "EMPTY (v13 DONE)" until
+    /// 2026-08-01; it was empty only because the key octet had been let in the front door.
+    ///
+    /// Call sites are no longer merely "reviewed against the law doc's allowlist" — that was a
+    /// convention with no instrument. `circuit/tests/faithful8_key_octet_below_floor.rs` now
+    /// fails the suite on a site the doc does not name, and on a doc entry with no site.
     #[allow(non_snake_case)]
     #[inline]
     pub fn from_lossy_31bit_DANGER(reason: &'static str, limbs: [BabyBear; 8]) -> Self {
