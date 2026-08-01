@@ -40,7 +40,7 @@ use std::collections::HashMap;
 
 use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::exact_nullifier_aafi::{
-    ExactTaggedKey, exact_linked_append_root8, raw_to_u16_le, u16_le_to_raw,
+    ExactTaggedKey, exact_linked_append_root8, exact_root_faithful8, raw_to_u16_le, u16_le_to_raw,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{compute_canonical_heap_root_8_entries, heap_addr};
@@ -357,9 +357,37 @@ fn honest_traffic_commits_and_the_root_is_set_valued() {
         );
     }
 
+    // ⚑ AND THE SORT IS LOAD-BEARING, not decoration. The reversal above could pass vacuously if
+    // `HashMap` iteration happened to be order-stable for a fixed key set, so this asserts the
+    // property directly at the primitive: the exact accumulator is APPEND-ORDER DEPENDENT (physical
+    // slot = append rank), so feeding the same ids in a different order WITHOUT sorting yields a
+    // DIFFERENT root. That is precisely the consensus split an unsorted `cells_root` would be, and
+    // it is what `sort_unstable_by_key` in the producer prevents.
+    let sorted_records: Vec<([u8; 32], u64)> = {
+        let mut v: Vec<[u8; 32]> = ids.iter().map(|id| *id.as_bytes()).collect();
+        v.sort_unstable_by_key(|raw| ExactTaggedKey::from_raw(*raw));
+        v.into_iter().map(|raw| (raw, 1u64)).collect()
+    };
+    let mut shuffled_records = sorted_records.clone();
+    shuffled_records.reverse();
+    assert_ne!(
+        exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &sorted_records).unwrap(),
+        exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &shuffled_records).unwrap(),
+        "ANTI-VACUITY: the accumulator MUST be append-order dependent — if it were not, the \
+         producer's sort would be untested decoration and this file would prove nothing about it"
+    );
+    assert_eq!(
+        exact_root_faithful8(
+            exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &sorted_records).unwrap()
+        ),
+        root,
+        "and the deployed producer must commit the SORTED order — the one that is a function of \
+         the set"
+    );
+
     // The empty ledger commits the domain's empty-tree root, and NOT the zero digest.
     let empty = cells_root(&Ledger::new());
-    let expected_empty = dregg_circuit::exact_nullifier_aafi::exact_root_faithful8(
+    let expected_empty = exact_root_faithful8(
         exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &[]).expect("empty fold"),
     );
     assert_eq!(
