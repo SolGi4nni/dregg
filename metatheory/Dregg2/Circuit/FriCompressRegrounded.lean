@@ -81,7 +81,9 @@ import Dregg2.Crypto.RomMerkleOpening
 
 namespace Dregg2.Circuit.FriCompressRegrounded
 
-open Dregg2.Circuit.FriVerifier (CompressInjective merkleRecompute merkleVerify merkleRecompute_binds)
+-- `merkleRecompute_binds` was opened here and is DELETED (it was vacuous under `CompressInjective`;
+-- this module's `peelPath` extractor replaces it with no assumption on `compress`).
+open Dregg2.Circuit.FriVerifier (CompressInjective merkleRecompute merkleVerify)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_top winProb_bot winProb_le_of_imp negl_of_le)

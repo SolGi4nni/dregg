@@ -175,34 +175,35 @@ keep compiling. -/
 def RosterCR (rosterHash : List Guardian → Int) : Prop :=
   ∀ a b : List Guardian, rosterHash a = rosterHash b → a = b
 
-/-- **`recStateCommit_recovers_council_roster` (THE PAYOFF).** Under `RosterCR`, if the two states'
-identity cells commit to rosters via `rosterHash`, equal verified roots recover the SAME guardian
-ROSTER — not merely the same digest. So a verifier-only light client reads off the literal K-of-N
-guardian set that authorized, with no host trust. Stacks the named roster CR on the StateCommit CR
-set; no other assumption. -/
-theorem recStateCommit_recovers_council_roster
-    (hCmb : compressInjective cmb)
-    (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN)
-    (hLeaf : cellLeafInjective CH)
-    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
-    {rosterHash : List Guardian → Int} (hRoster : RosterCR rosterHash)
-    (k k' : RecordKernelState) (t : Turn) (idCell : CellId)
-    (roster roster' : List Guardian)
-    (hwf : AccountsWF k) (hwf' : AccountsWF k')
-    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k)
-    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable k')
-    (hcommit  : councilCommitOf idCell k  = rosterHash roster)
-    (hcommit' : councilCommitOf idCell k' = rosterHash roster')
-    (hroot : recStateCommit CH RH cmb compress compressN k t
-      = recStateCommit CH RH cmb compress compressN k' t) :
-    roster = roster' := by
-  have hcc : councilCommitOf idCell k = councilCommitOf idCell k' :=
-    recStateCommit_recovers_council CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest k k' t idCell hwf hwf' hfin hfin' hroot
-  exact hRoster roster roster' (by rw [← hcommit, hcc, hcommit'])
+/-! ⚑ `recStateCommit_recovers_council_roster` — DELETED (CR-floor sweep).
 
-#assert_axioms recStateCommit_recovers_council_roster
+It was the advertised LIGHT-CLIENT PAYOFF: "under `RosterCR`, equal verified roots recover the same
+guardian ROSTER, not merely the same digest — a verifier-only light client reads off the literal
+K-of-N guardian set with no host trust."
+
+It was VACUOUS. `RosterCR` is injectivity of the roster digest on the INFINITE `List Guardian` into a
+bounded range, and `CouncilRosterRegrounded` §1 PROVES IT FALSE at every deployed parameter
+(`rosterCR_false_of_finite_range`, `_blake3`, `_babyBear`). So the theorem said nothing about any
+real deployment, and `#assert_axioms` could not tell — the proof was kernel-clean; the HYPOTHESIS was
+the flaw. A statement of that shape is worse than an absent one: it read as the payoff.
+
+THE HONEST REPLACEMENT — and it is NOT merely a weaker restatement, it is the standard idiom:
+`CouncilRosterRegrounded.recStateCommit_recovers_council_roster_rom` carries **NO floor hypothesis
+and NO cost model**. Its assumptions are a query bound `Q`, `PolyBounded (Q² + 1)`, and the
+adversary's query-boundedness (`RomOpenEff`); its conclusion is `Negl (gameAdv …)` in the keyed ROM.
+A guardian SWAP that survives the light client's root recovery is NEGLIGIBLE. That is a theorem
+about every real deployment, which the deleted one was not about any.
+
+(The intermediate `…_advantage_bound` also exists and reduces to the collision game whose win
+relation mentions the deployed `councilCommitOf` on real kernel states; it carries an explicit
+UNDISCHARGED `Eff`. Prefer the `_rom` form — the `Eff` there is discharged into query-counting.)
+
+The `RosterCR` def above STAYS: its own falsity theorems name it, and deleting it would delete the
+proof that it is false. It is a tombstone with teeth.
+
+`recStateCommit_recovers_council` (the DIGEST-level lemma, §1 above) is untouched and genuine — it
+rests on no hash-injectivity floor. What a light client gets today is WHICH council, from the root
+alone. -/
 
 /-! ## §2 — THE TOOTH (refusal polarity): a guardian-set SWAP cannot keep the root.
 
@@ -334,7 +335,9 @@ structure CouncilCommitDeployTail : Prop where
   vk_regenerated_redeployed  : True
 
 #assert_axioms recStateCommit_recovers_council
-#assert_axioms recStateCommit_recovers_council_roster
+-- `recStateCommit_recovers_council_roster` was pinned here. It is DELETED (see §1): the pin was
+-- kernel-clean and the theorem was vacuous, which is precisely the pair `#assert_axioms` cannot
+-- distinguish — it audits the PROOF, never the HYPOTHESIS.
 #assert_axioms recStateCommit_distinguishes_council
 
 end Dregg2.Circuit.CouncilCommit

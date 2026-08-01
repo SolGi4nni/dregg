@@ -243,28 +243,29 @@ def merkleVerify [DecidableEq F] (compress : List F → List F → List F)
     (idx : Nat) (leaf : List F) (siblings : List (List F)) (root : List F) : Bool :=
   decide (merkleRecompute compress idx leaf siblings = root)
 
-/-- **The Merkle binding (anti-forgery) tooth.** Under `CompressInjective` (the
-Poseidon2-CR carrier), two leaves that recompute the SAME root at the SAME query
-index over the SAME sibling path are equal — an attacker cannot open a query to a
-forged value. Proven by induction on the path; rests ONLY on the named compress
-injectivity. -/
-theorem merkleRecompute_binds (compress : List F → List F → List F)
-    (hinj : CompressInjective compress) :
-    ∀ (siblings : List (List F)) (idx : Nat) (l1 l2 : List F),
-      merkleRecompute compress idx l1 siblings = merkleRecompute compress idx l2 siblings →
-      l1 = l2 := by
-  intro siblings
-  induction siblings with
-  | nil => intro idx l1 l2 h; simpa [merkleRecompute] using h
-  | cons s rest ih =>
-      intro idx l1 l2 h
-      unfold merkleRecompute at h
-      have hstep := ih (idx / 2) _ _ h
-      by_cases hb : idx % 2 = 0
-      · simp only [hb, if_true] at hstep
-        exact (hinj _ _ _ _ hstep).1
-      · simp only [hb, if_false] at hstep
-        exact (hinj _ _ _ _ hstep).2
+/-! ⚑ `merkleRecompute_binds` — DELETED (CR-floor sweep).
+
+It was the FRI anti-forgery tooth: "under `CompressInjective`, two leaves that recompute the same
+root at the same query index over the same sibling path are equal — an attacker cannot open a query
+to a forged value." Its docstring said it "rests ONLY on the named compress injectivity", and that
+was exactly the problem: `CompressInjective` is injectivity of a 2-to-1 compressing map into a
+bounded digest, refuted in-tree from cardinality alone (`FriCompressRegrounded` §1,
+`compressInjective_false_of_digest_width` — whose whole hypothesis is a finite field and a constant
+output length, so nothing about Poseidon2 rescues it). The tooth was vacuous at every deployed
+parameter.
+
+THE REPLACEMENT IS STRICTLY STRONGER THAN A RESTATEMENT, and this is the case worth reading:
+`FriCompressRegrounded.peelPath` is a CONSTRUCTIVE extractor that walks a forged opening and returns
+the FIRST genuine `compress` collision, proved by `peelPath_wins` over the same path recursion this
+induction used. So the injectivity STEP is not re-assumed under a nicer name — it is replaced by the
+extraction it was always standing in for, **with no assumption on `compress` at all**. Non-vacuity is
+checked empirically: a `compress` injective at level 0 but colliding at level 1 makes `peelPath`
+return exactly the level-1 collision, so the DESCENT branch is exercised, not merely the immediate
+hit.
+
+Consume `merkleRecompute_binds_rom` (keyed ROM, query-bounded, no floor) or
+`merkleRecompute_binds_advantage_bound`. `merkleRecompute` and `merkleVerify` above are untouched —
+they are the deployed computation, and nothing was wrong with them. -/
 
 /-- A single layer's opening: the FRI betas `beta`, the coset point `x`, the two
 codeword evaluations `e0` (at `+x`) and `e1` (at `−x`), and the Poseidon2 Merkle
