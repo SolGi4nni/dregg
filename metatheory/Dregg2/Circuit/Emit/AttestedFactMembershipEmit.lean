@@ -86,13 +86,17 @@ family, not a change here.
 Definitional descriptor + a byte-pinned `#guard` on its wire string + genuinely-proven, non-vacuous
 semantic lemmas. `#assert_axioms` ⊆ {}. NEW file; imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.Emit.AirNormalForm
 
 namespace Dregg2.Circuit.Emit.AttestedFactMembershipEmit
 
-open Dregg2.Circuit (Assignment)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment Constraint Expr)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
+open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LookupLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir lowerConstraint)
+open Dregg2.Circuit.Emit.AirNormalForm
+  (liftTuple wLinLoc gateBody gateBody_zero_iff normalFormOk)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTuple CHIP_RATE CHIP_OUT_LANES
    emitVmJson2)
@@ -164,15 +168,19 @@ def PI_COUNT : Nat := 3
 
 /-- Level-0 `child → parent`: arity-4 `Poseidon2Chip` lookup absorbing
 `[fact_hash, sib0a, sib0b, sib0c]`, binding out0 to `PARENT0`. -/
+def level0Leg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple (chipLookupTuple [.var FACT_HASH, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0 LEVEL0_LANES) }
 def level0Lookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FACT_HASH, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0 LEVEL0_LANES⟩
+  .lookup ⟨TableId.poseidon2, level0Leg.tuple.map emitExpr⟩
 
 /-- Level-1 `child → parent`: arity-4 `Poseidon2Chip` lookup absorbing `[cur1, sib1a, sib1b, sib1c]`,
 binding out0 to `PARENT1` (the `facts_root`). -/
+def level1Leg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple (chipLookupTuple [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1 LEVEL1_LANES) }
 def level1Lookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1 LEVEL1_LANES⟩
+  .lookup ⟨TableId.poseidon2, level1Leg.tuple.map emitExpr⟩
 
 /-- **THE COMMITMENT TOOTH (the join)** — an arity-4 `TID_P2` Poseidon2 lookup absorbing
 `[fact_hash, state_root, blinding, 0]`, binding out0 to `FACT_COMMITMENT`.
@@ -183,17 +191,24 @@ column indices the descriptor happens to use. That is the whole design: the same
 over a `fact_hash` that THIS descriptor proves is a member of `facts_root`, so a `fact_commitment`
 accepted here and accepted there is a commitment to a REAL fact of the token whose value satisfies
 the predicate. `fact_hash` and `blinding` never leave the witness. -/
+def commitLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+        FACT_COMMITMENT COMMIT_LANES) }
 def commitLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
-      FACT_COMMITMENT COMMIT_LANES⟩
+  .lookup ⟨TableId.poseidon2, commitLeg.tuple.map emitExpr⟩
 
 /-- The chain-continuity gate body: `CUR1 - PARENT0` (the next level's path input equals this
 level's parent). -/
-def contBody : EmittedExpr := .add (.var CUR1) (.mul (.const (-1)) (.var PARENT0))
+def contSrc : Constraint := ⟨.var CUR1, .var PARENT0⟩
+/-- …and the body the COMPILER renders for it. -/
+def contBody : EmittedExpr := gateBody contSrc
+/-- The same residual on the WINDOW rail, canonically rendered. -/
+def contWindow : Dregg2.Circuit.DescriptorIR2.WindowExpr := wLinLoc [(1, CUR1), (-1, PARENT0)] 0
 
 /-- The chain-continuity Base gate — a `when_transition` constraint (vacuous on the LAST row). -/
-def continuityGate : VmConstraint2 := .base (.gate contBody)
+def continuityGate : VmConstraint2 := lowerConstraint contSrc
 
 /-- **The last-row continuity fix** (`adjLastOrderFix` shape): a `.boundary VmRow.last` counterpart
 so the level-tie `CUR1 = PARENT0` holds on EVERY row. Without it the deployed single-logical-row
@@ -217,15 +232,30 @@ def stateRootPin : VmConstraint2 := .base (.piBinding VmRow.first STATE_ROOT STA
 PIs `[fact_commitment, facts_root, state_root]`; hidden witnesses for `fact_hash`, `blinding`, and
 the whole Merkle path. The chip table (`TID_P2`) is IMPLICITLY present (Presence-detected from the
 lookups), so `tables` is empty exactly as `blindedMembershipDesc` leaves it. -/
+def attestedFactMembershipAir : EffectAir :=
+  { legs := [ .lookup level0Leg
+            , .lookup level1Leg
+            , .lookup commitLeg
+            , .gate contSrc
+            , .pin ⟨VmRow.first, PARENT1, ROOT_PI⟩
+            , .pin ⟨VmRow.first, FACT_COMMITMENT, FACT_COMMITMENT_PI⟩
+            , .pin ⟨VmRow.first, STATE_ROOT, STATE_ROOT_PI⟩
+            , .window ⟨.last, contWindow⟩ ] }
+
+#guard attestedFactMembershipAir.mainRailOk == true
+
 def attestedFactMembershipDesc : EffectVmDescriptor2 :=
-  { name        := "dregg-attested-fact-membership::v1"
-  , traceWidth  := ATTESTED_WIDTH
-  , piCount     := PI_COUNT
-  , tables      := []
-  , constraints := [level0Lookup, level1Lookup, commitLookup, continuityGate, rootPin,
-                    factCommitmentPin, stateRootPin, continuityLastFix]
-  , hashSites   := []
-  , ranges      := [] }
+  lowerAir "dregg-attested-fact-membership::v1" ATTESTED_WIDTH PI_COUNT []
+    attestedFactMembershipAir
+
+/-- ⚑ The compiler's output IS that constraint list, by `rfl`. -/
+theorem attestedFactMembershipDesc_constraints :
+    attestedFactMembershipDesc.constraints
+      = [level0Lookup, level1Lookup, commitLookup, continuityGate, rootPin,
+         factCommitmentPin, stateRootPin, continuityLastFix] := rfl
+
+-- ⚑ THE CORPUS INVARIANT, DECIDED on this descriptor: every arithmetic body is canonical.
+#guard normalFormOk attestedFactMembershipDesc == true
 
 /-! ## §3 — the byte-pinned wire golden (the Rust decoder ingests THIS string).
 
@@ -233,15 +263,14 @@ Written verbatim to `circuit/descriptors/by-name/attested-fact-membership.json`;
 `parse_vm_descriptor2` ingests it. A drift on either side breaks THIS `#guard`. -/
 
 #guard emitVmJson2 attestedFactMembershipDesc ==
-  "{\"name\":\"dregg-attested-fact-membership::v1\",\"ir\":2,\"trace_width\":34,\"public_input_count\":3,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":2},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-attested-fact-membership::v1\",\"ir\":2,\"trace_width\":34,\"public_input_count\":3,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":2},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — genuinely-proven, non-vacuous semantic lemmas + shape pins + axiom hygiene. -/
 
 /-- The continuity gate body is zero EXACTLY when the levels chain (`CUR1 = PARENT0`). -/
 theorem continuity_body_zero_iff (a : Assignment) :
     contBody.eval a = 0 ↔ a CUR1 = a PARENT0 := by
-  simp only [contBody, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [contBody]; rw [gateBody_zero_iff]; simp [contSrc, Expr.eval]
 
 /-- The commitment chip tuple has the canonical chip width `1 + CHIP_RATE + CHIP_OUT_LANES` (arity
 tag, the rate-padded 4-input preimage, out0 = the fact commitment, and the 7 lanes). -/

@@ -44,12 +44,17 @@ Definitional descriptor + a byte-pinned `#guard` on its wire string + a genuinel
 shape lemma. `#assert_axioms` ⊆ {}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.ChipNarrowLookup
+import Dregg2.Circuit.Emit.AirNormalForm
 
 namespace Dregg2.Circuit.Emit.BlindedMembershipEmit
 
-open Dregg2.Circuit (Assignment)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment Constraint Expr)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
+open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LookupLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir lowerConstraint)
+open Dregg2.Circuit.Emit.AirNormalForm
+  (liftTuple wLinLoc gateBody gateBody_zero_iff normalFormOk)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTuple chipLookupTupleNarrow
    poseidon2narrow CHIP_RATE CHIP_OUT_LANES emitVmJson2 WindowExpr WindowConstraint)
@@ -99,31 +104,38 @@ def PI_COUNT : Nat := 2
 
 /-- Level-0 `child → parent`: arity-4 `Poseidon2Chip` lookup absorbing `[leaf, sib0a, sib0b, sib0c]`,
 binding out0 to `PARENT0`. -/
+def level0Leg : LookupLeg :=
+  { table := poseidon2narrow, tuple := liftTuple (chipLookupTupleNarrow [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0) }
 def level0Lookup : VmConstraint2 :=
-  .lookup ⟨poseidon2narrow,
-    chipLookupTupleNarrow [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0⟩
+  .lookup ⟨poseidon2narrow, level0Leg.tuple.map emitExpr⟩
 
 /-- Level-1 `child → parent`: arity-4 `Poseidon2Chip` lookup absorbing `[cur1, sib1a, sib1b, sib1c]`,
 binding out0 to `PARENT1` (the root). -/
+def level1Leg : LookupLeg :=
+  { table := poseidon2narrow, tuple := liftTuple (chipLookupTupleNarrow [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1) }
 def level1Lookup : VmConstraint2 :=
-  .lookup ⟨poseidon2narrow,
-    chipLookupTupleNarrow [.var CUR1, .var SIB1A, .var SIB1B, .var SIB1C] PARENT1⟩
+  .lookup ⟨poseidon2narrow, level1Leg.tuple.map emitExpr⟩
 
 /-- **The blinding tooth** — an arity-2 `TID_P2_NARROW` Poseidon2 lookup absorbing `[leaf_hash, blinding]`,
 binding out0 to `BLINDED_LEAF`. The in-circuit twin of `blinded_leaf = hash_2_to_1(leaf_hash,
 blinding_factor)` (`poseidon2_air.rs:720`). `leaf_hash` is the SAME `LEAF` column the Merkle path
 proves under `root`, so the published `blinded_leaf` commits to a genuine member. -/
+def blindLeg : LookupLeg :=
+  { table := poseidon2narrow, tuple := liftTuple (chipLookupTupleNarrow [.var LEAF, .var BLINDING] BLINDED_LEAF) }
 def blindLookup : VmConstraint2 :=
-  .lookup ⟨poseidon2narrow,
-    chipLookupTupleNarrow [.var LEAF, .var BLINDING] BLINDED_LEAF⟩
+  .lookup ⟨poseidon2narrow, blindLeg.tuple.map emitExpr⟩
 
 /-- The chain-continuity gate body: `CUR1 - PARENT0` (the next level's path input equals this level's
 parent — the emitted twin of `poseidon2_air.rs`'s chain-continuity constraint). -/
-def contBody : EmittedExpr := .add (.var CUR1) (.mul (.const (-1)) (.var PARENT0))
+def contSrc : Constraint := ⟨.var CUR1, .var PARENT0⟩
+/-- …and the body the COMPILER renders for it. -/
+def contBody : EmittedExpr := gateBody contSrc
+/-- The same residual on the WINDOW rail, canonically rendered. -/
+def contWindow : WindowExpr := wLinLoc [(1, CUR1), (-1, PARENT0)] 0
 
 /-- The chain-continuity Base gate — a `when_transition` constraint (vacuous on the LAST row). Binds
 `CUR1 = PARENT0` on rows `0..n-2`. -/
-def continuityGate : VmConstraint2 := .base (.gate contBody)
+def continuityGate : VmConstraint2 := lowerConstraint contSrc
 
 /-- **The last-row continuity fix** (`adjLastOrderFix` shape, commit `0f8d478b2`): a `.boundary
 VmRow.last` counterpart firing on the last row so the level-tie `CUR1 = PARENT0` holds on EVERY row
@@ -143,15 +155,28 @@ first-row PI pins, and the last-row continuity fix. The chip table (`TID_P2`) is
 (Presence-detected from the lookups), so `tables` is empty exactly as `merkleMembershipDesc` leaves
 it. The level-tie is enforced on EVERY row (transition `continuityGate` for rows `0..n-2`,
 `continuityLastFix` for the last row). -/
+def blindedMembershipAir : EffectAir :=
+  { legs := [ .lookup level0Leg
+            , .lookup level1Leg
+            , .lookup blindLeg
+            , .gate contSrc
+            , .pin ⟨VmRow.first, PARENT1, ROOT_PI⟩
+            , .pin ⟨VmRow.first, BLINDED_LEAF, BLINDED_LEAF_PI⟩
+            , .window ⟨.last, contWindow⟩ ] }
+
+#guard blindedMembershipAir.mainRailOk == true
+
 def blindedMembershipDesc : EffectVmDescriptor2 :=
-  { name        := "dregg-blinded-membership::v1"
-  , traceWidth  := BLINDED_WIDTH
-  , piCount     := PI_COUNT
-  , tables      := []
-  , constraints := [level0Lookup, level1Lookup, blindLookup, continuityGate, rootPin,
-                    blindedLeafPin, continuityLastFix]
-  , hashSites   := []
-  , ranges      := [] }
+  lowerAir "dregg-blinded-membership::v1" BLINDED_WIDTH PI_COUNT [] blindedMembershipAir
+
+/-- ⚑ The compiler's output IS that constraint list, by `rfl`. -/
+theorem blindedMembershipDesc_constraints :
+    blindedMembershipDesc.constraints
+      = [level0Lookup, level1Lookup, blindLookup, continuityGate, rootPin,
+         blindedLeafPin, continuityLastFix] := rfl
+
+-- ⚑ THE CORPUS INVARIANT, DECIDED on this descriptor: every arithmetic body is canonical.
+#guard normalFormOk blindedMembershipDesc == true
 
 /-! ## §3 — the byte-pinned wire golden (the Rust decoder ingests THIS string).
 
@@ -159,7 +184,7 @@ Written verbatim to `circuit/descriptors/by-name/blinded-membership.json`; `pars
 ingests it. A drift on either side breaks THIS `#guard`. -/
 
 #guard emitVmJson2 blindedMembershipDesc ==
-  "{\"name\":\"dregg-blinded-membership::v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-blinded-membership::v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":8,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — a genuinely-proven, non-vacuous semantic lemma + shape pins + axiom hygiene. -/
 
@@ -167,8 +192,7 @@ ingests it. A drift on either side breaks THIS `#guard`. -/
 they agree, FALSE otherwise. The Lean face of the chain-continuity the emitted `.gate` enforces. -/
 theorem continuity_body_zero_iff (a : Assignment) :
     contBody.eval a = 0 ↔ a CUR1 = a PARENT0 := by
-  simp only [contBody, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [contBody]; rw [gateBody_zero_iff]; simp [contSrc, Expr.eval]
 
 /-- The blinding chip tuple has the NARROW chip width `1 + CHIP_RATE + 1` (arity tag, the
 rate-padded 2-input preimage, out0 = the blinded leaf — the 7 lanes are gone). -/

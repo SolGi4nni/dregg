@@ -822,3 +822,242 @@ the JSON (and the VK epoch it implies), not a smaller fusion — and NOT bending
   it has no counterpart there and is the one thing a byte-golden cannot see.
 * **Nothing re-emits and nothing re-genesises.** The descriptor bytes, the VK epoch and the
   registry are untouched — which is the whole claim.
+
+---
+
+# ⚑ PHASE 3 EXECUTED — 2026-08-01. The compiler is now the SOURCE for a batch of deployed
+descriptors, and the corpus has a normal form.
+
+*NEW `Dregg2/Circuit/Emit/AirNormalForm.lean` (the invariant + its decidable verdict) and NEW
+`scripts/measure-descriptor-normal-form.py` (the measurement, committed so `N/76` is a command
+rather than a claim). Ten by-name emitters re-authored: their hand-written `VmConstraint2` list
+literals are DELETED and their descriptors are `EffectLower.lowerAir` of an `EffectAir` source.
+This section executes P2.5's own conclusion — "the deployed descriptors are the thing to RE-EMIT
+from the compiler, not to imitate".*
+
+## P3.1 — ⚑ THE CANONICAL NORMAL FORM, chosen and stated once
+
+`AirNormalForm.lean`'s header is the corpus invariant; this is its summary. Every arithmetic body
+of a compiler-authored descriptor — `.gate`, `.boundary`, `windowGate` — is what a polynomial HEAD
+lowers to:
+
+    body ::= atom | add(body, atom)          -- LEFT-nested spine, source order
+    atom ::= mul(const c, prod) | const k    -- EVERY term carries its coefficient
+    prod ::= leaf | mul(prod, leaf)          -- LEFT-nested; leaf = var / loc / nxt
+
+**The load-bearing decision: a unit coefficient renders `mul(const 1, x)`, never bare `x`.** Three
+reasons, in weight order:
+
+1. It is what `AirBuilder.headToExpr` produces, and P2.5 already measured the alternative — bending
+   the shared builder toward the bare form buys 8/76 → 21/76 while breaking the ten emitters whose
+   committed goldens ride the current form. Wrong direction of fit, and the goal explicitly forbids
+   touching `headToExpr` to chase bytes.
+2. **Uniformity is what makes the invariant DECIDABLE by a two-line predicate.** If bare leaves were
+   legal atoms, `add(var 5, var 6)` — a body whose coefficients were *dropped* — would be
+   indistinguishable from one that meant `1·x₅ + 1·x₆`. Every term carrying its coefficient is what
+   turns "is this the compiler's output" into a question a machine answers.
+3. ⚑ **The Rust interpreter is INDIFFERENT, and this was checked at the source, both legs.**
+   `LeanExpr::eval_expr` (`circuit/src/lean_descriptor_air.rs:127`) sends `Mul` to a field multiply
+   and `Const(1)` to `F::one()` — the evaluated polynomial is identical. `LeanExpr::degree` (`:116`)
+   is `Const => 0`, `Var => 1`, `Mul => sum`, so `mul(const 1, x)` has degree **1**, exactly as bare
+   `x` does; `WindowExpr::degree` (`descriptor_ir2.rs:742`) is the same function. `Ir2Air::Main`'s
+   `max_constraint_degree` returns `None` (`descriptor_ir2.rs:2829`) and lets p3's symbolic analysis
+   infer the bound from that same algebra. **So the FRI blowup, and therefore the VK geometry, do
+   not move.** The rendering costs bytes and nothing else.
+
+Three further rules the shape does not by itself say:
+
+* **No like-term combination, no reassociation, no reordering.** The head is exactly what
+  `exprToHead` built, in source order — so the emitted object stays a transcription of what the
+  author wrote and a source edit's byte-diff stays local.
+* **A zero head-constant is ELIDED; a zero-coefficient TERM the source wrote is NOT.** Dropping a
+  term removes a column reference, which is the fail-open direction and invisible to a byte-golden.
+* ⚑ **…but the normalizer does not INVENT one.** `EffectLowerCore.mulHead` now guards its two
+  constant cross-products on a nonzero constant. Unguarded, the one degree-2 gate in the batch
+  (`predicate-arith-neq`'s `DIFF · DIFF_INV = 1`) distributed to the genuine `1·DIFF·DIFF_INV`
+  **plus a spurious `0·DIFF` and `0·DIFF_INV`** — terms no source wrote, which would have landed in
+  the wire bytes of every product gate the compiler emits. `evalH_mulHead` still holds
+  unconditionally: the dropped branches are exactly the ones whose value is `0`.
+
+**What the invariant deliberately does NOT cover: LOOKUP TUPLES.** A tuple is not a polynomial
+asserted to vanish; it is the identity of the queried row, and the chip bus is keyed on the bare
+shape. `AirNormalForm.liftTuple` + `liftTuple_emit` let a descriptor feed its EXISTING
+`chipLookupTuple*` builder to the compiler and proves the round trip lands on the same bytes — which
+is why re-emission moved only these descriptors' GATE and BOUNDARY bytes.
+
+**And it is a gate, not a paragraph.** `AirNormalForm.normalFormOk : EffectVmDescriptor2 → Bool` is
+the decidable verdict, `#guard`-pinned at BOTH poles in `§4a` (a bare-unit body and a right-nested
+spine are REFUSED, with `demoBareUnit_same_polynomial` proving the refused body means the same
+thing) and once per re-emitted descriptor at its author. `headToExpr_isNormal` and
+`wHeadToWindow_isNormalW` make it true BY CONSTRUCTION on both rails, for every head.
+
+⚑ `AirBuilder.Head` is over COLUMNS and cannot name a next-row leaf, so a window/boundary body had
+no canonical renderer at all — a re-emitted descriptor mixing a Head-normalized gate with a
+hand-shaped boundary would have reproduced, inside the compiler's own output, exactly the
+inconsistency P2.5 measured in the hand-authored corpus. `AirNormalForm.WHead` closes that: same
+shape, same rules, leaves widened to `loc`/`nxt`, with `wHeadToWindow_eval` as its meaning bridge.
+
+## P3.2 — ⚑ WHAT IS NOW COMPILER-AUTHORED, and WHAT RE-EMITS. Say it loudly.
+
+**Ten deployed by-name descriptors.** For each, the `EffectVmDescriptor2` is now literally
+`EffectLower.lowerAir <name> <width> <piCount> [] <air>` and the hand-written `VmConstraint2`
+list-literal is **DELETED** (not kept beside — greenfield law). The gates are authored as
+EQUATIONS in `Circuit.Expr`; turning `lhs = rhs` into a canonical vanishing polynomial is the
+compiler's job, not the author's.
+
+| descriptor (`circuit/descriptors/by-name/…`) | Lean author | what moved |
+|---|---|---|
+| `merkle-membership-depth2.json` | `MerkleMembershipEmit` | gate + last-row boundary |
+| `attested-fact-membership.json` | `AttestedFactMembershipEmit` | gate + last-row boundary |
+| `blinded-membership.json` | `BlindedMembershipEmit` | gate + last-row boundary |
+| `presentation-freshness.json` | `PresentationEmit` | 2 gates + 2 last-row boundaries |
+| `predicate-arith.json` (`≥`) | `PredicatesArithmeticEmit` | 2 gates |
+| `predicate-arith-gt.json` | `PredicatesGtEmit` | 2 gates |
+| `predicate-arith-le.json` | `PredicatesLeEmit` | 2 gates |
+| `predicate-arith-lt.json` | `PredicatesLtEmit` | 2 gates |
+| `predicate-arith-neq.json` | `PredicatesNeqEmit` | 3 gates (one DEGREE-2) |
+| `predicate-arith-inrange.json` | `PredicatesInRangeEmit` | 3 gates |
+
+**Every moved artifact, named:**
+
+* **The 10 by-name JSONs above.** They are regenerated by `scripts/emit-descriptors.sh` from
+  `EmitByName.lean`; each descriptor's `#guard emitVmJson2 <desc> == "<literal>"` in its authoring
+  module is the byte pin, and those literals were replaced with the compiler's output.
+* **`circuit/descriptors/PROVENANCE.json`** — the `by_name_sha256` entry of each of the 10.
+* **Two Rust `GOLDEN_JSON` literals** that embed a descriptor's bytes verbatim rather than
+  `include_str!`-ing the artifact: `circuit-prove/tests/merkle_membership_emit_gate.rs:41` and
+  `circuit-prove/tests/presentation_emit_gate.rs:59`. Both updated.
+* **NOTHING ELSE.** Measured, not assumed: no `*_FP` constant in any of the five `RUST_FP_FILES`
+  (`effect_vm_descriptors.rs`, `cap_delegation_nonamp_descriptor.rs`, `cap_reshape_descriptor.rs`,
+  `bilateral_aggregation_air.rs`, `lean_descriptor_air.rs`) names any of these ten; every other
+  consumer reaches them through `descriptor_by_name.rs`'s `include_str!`, which re-reads the file.
+
+**Does a VK epoch follow? NO — and this is the one claim in the section that needed checking rather
+than assuming.** A descriptor's bytes feed the AIR fingerprint, and a fingerprint change re-keys the
+recursive VK. But **none of these ten is a member of the rotation registry** — they are the
+`descriptor_by_name` predicate-dispatch surface, not `rotation-v3-staged-registry.tsv`, and no
+`*_FP` constant pins them. What changes for a verifier is the *sha256 of the artifact it loads*,
+which `PROVENANCE.json` records and `--verify-provenance` checks. **A rebuild, not a re-genesis.**
+What now REFUSES to load: nothing silently — a stale copy of any of the ten fails
+`scripts/check-descriptor-drift.sh` (Lean re-derives and diffs) and `--verify-provenance` (sha
+mismatch), both loudly and by name.
+
+## P3.3 — ⚑ THE GATE THAT DID NOT WEAKEN: every `_zero_iff` re-established over the COMPILED object
+
+Re-emission changes bytes. It must not change semantics, and "the theorem still compiles" is not
+evidence of that unless the theorem is about the NEW object. The discipline used, at every one of
+the ten:
+
+1. **The theorem STATEMENT is literally unchanged.** `continuity_body_zero_iff`,
+   `c3_body_zero_iff`, `c5_body_zero_iff`, `c5Lo/​c5Hi_body_zero_iff`, `cNz_body_zero_imp_ne`,
+   `diffBind_body_zero_iff`, `bound_body_zero_iff` — every one reads exactly as before. What moved
+   is the DEFINITION of the body it quantifies over: from a hand-written `EmittedExpr` literal to
+   `AirNormalForm.gateBody <src>`, the compiler's rendering. A reader diffing the file sees the
+   obligation preserved and the object replaced, which is the direction that cannot hide a loss.
+2. **The proofs now run through the generic tooth.** `AirNormalForm.gateBody_zero_iff` says the
+   compiled body vanishes EXACTLY when the source equation holds, for every constraint — proved
+   once, from `headToExpr_eval` + `evalH_constraintHead`, instead of once per descriptor by `omega`
+   on a hand-written tree.
+3. **`<desc>_constraints : <desc>.constraints = [<the named constraints>] := rfl`** at each
+   descriptor. Not "equivalent" — the SAME TERM. So every downstream statement that quantifies over
+   `<desc>.constraints` (the refinement rungs in `MerkleMembershipRefine` / `MerkleMembershipRung2`,
+   the witness and forgery canaries) is, unchanged, a statement about the compiler's output.
+4. **`#guard normalFormOk <desc> == true`** at each descriptor — the corpus invariant decided on the
+   emitted object, a gate that goes red the moment a hand-shaped body re-enters.
+5. **The byte pin stayed a pin.** Each module keeps its `#guard emitVmJson2 <desc> == "<literal>"`.
+   The literal is the only thing that moved, and it moved to the compiler's output.
+
+⚠ **No descriptor was re-emitted whose obligations could not be re-established.** The ones left
+hand-written are named in P3.5, with the reason.
+
+## P3.4 — RE-MEASURED, with the script committed this time
+
+⚠ **Phase 2's byte-reachability number was produced by a script nobody committed**, so it could not
+be re-derived and this phase could not confirm it moved. `scripts/measure-descriptor-normal-form.py`
+is that measurement, committed — `N/76` is now a command. It implements the same predicate the Lean
+side decides (`AirNormalForm.isNormal` / `isNormalW`), in Python, over the checked-in artifacts.
+
+It answers TWO questions, and the difference matters:
+
+| | before Phase 3 | after Phase 3 |
+|---|---|---|
+| **whole invariant** — every `gate` + `boundary` + `window_gate` body canonical | **3 / 76** | **13 / 76** |
+| Phase 2's question — every `gate` body in builder normal form | **9 / 76** | **19 / 76** |
+| arithmetic bodies not canonical (whole invariant) | 18345 / 18821 | 18321 / 18821 |
+| gate bodies not in builder normal form (Phase 2's count) | 13515 / 13983 | 13496 / 13983 |
+
+⚠ **Phase 2 reported 8/76 for the second row; the committed script measures 9/76 at the same
+artifacts.** The extra descriptor is `accumulator-nonrev.json`, whose 24 gate bodies were already
+built through `AirBuilder`'s `cgH` and ARE in the normal form — the other eight reachable ones carry
+no `gate` constraint at all, so they pass vacuously. The discrepancy is a measurement artifact of
+the uncommitted script, not a change in the corpus; it is recorded rather than quietly overwritten,
+and it is precisely the reason the script is now in the tree.
+
+⚑ **The whole-invariant row (3 → 13) is the honest one to carry forward.** A re-emission normalizes
+gate AND boundary AND window bodies, so the gate-only question systematically over-reports
+reachability: `merkle-membership-depth2` had one non-canonical gate and one non-canonical boundary
+carrying the SAME polynomial, and only the second question sees both.
+
+**And the body counts barely moved (18345 → 18321), which is the honest shape of the residual.**
+The corpus is dominated by a handful of very large descriptors — the eight `pasta-rcb-sg-slice-*`
+(44 gates each), the BFV NTT butterfly family (19–31 each), `field-delta-result-range` (32),
+`blinded-membership-4ary-wide` / `merkle-membership-4ary-wide-general` (34 each) — and the batch
+deliberately took SMALL, TOOTHED descriptors first, where each conversion carries real refinement
+obligations to re-establish. Descriptor count is the meaningful axis here; body count is a
+reminder that the tail is where the volume lives.
+
+## P3.5 — the residual, SEMANTIC vs merely UNCONVERTED
+
+**Compiler-authored deployed descriptors: 11 of 76.** Ten from this phase plus
+`dfa-routing-table-exact-public-v1` (a sibling lane's fusion, deliberately untouched here).
+Authorship, not reachability — each one's `EffectVmDescriptor2` IS `lowerAir` of an `EffectAir`,
+with no hand-written `VmConstraint2` list to drift from.
+
+**The other 65 are UNCONVERTED, not unreachable.** Kind coverage is 76/76 (P2.4) and nothing in the
+source language blocks them; what each still needs is the per-descriptor work this phase did ten
+times — author the `EffectAir`, delete the literal, re-establish the obligations over the compiled
+object, move the golden. Three groups, by cost:
+
+1. **Zero-byte-cost (3), measured.** Exactly three by-name descriptors carry NO arithmetic body at
+   all — `bound-presentation`, `poseidon2-hash-arity2`, and
+   `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1` are pins and lookups only, so they are
+   already canonical and converting them is pure authorship with zero artifact churn. ⚠ The last of
+   the three had uncommitted sibling-lane edits in the shared tree during this phase and was left
+   alone for that reason, not a technical one. ⚠ And the tempting larger figure is wrong: eight
+   descriptors have no `gate` constraint, but five of those (`mina-fixture`, `turn-chain-binding`,
+   `bridge-action`, `shielded-whole-note-swap-substrate-v1`, `dfa-routing-table-exact-public-v1`)
+   carry `boundary` or `window_gate` bodies that DO re-render — the gate-only lens hides them, which
+   is the same over-report P3.4 records. `accumulator-nonrev` is the near-miss: its 24 gates are
+   already canonical (it was built through `AirBuilder`'s `cgH`) and only 8 of its 40 bodies move.
+
+2. **Byte-moving but mechanical (~50).** Everything whose gates are ordinary `Σ ±var + const`
+   residuals: the light-client AIRs, `dfa-routing`, `note-spend-leaf`, `quantified-absence`,
+   `field-delta-result-range`, the shielded family, the games/market descriptors. Each is the same
+   edit shape this phase applied ten times.
+3. **The large generated families (~15).** `pasta-rcb-*`, the BFV butterfly stages,
+   `merkle-membership-4ary-wide-general`, `blinded-membership-4ary-wide`. Their constraints are
+   built programmatically in Lean already; the conversion is a change of *combinator*, not of
+   authoring style, and it is where most of the 18 321 non-canonical bodies live.
+
+**⚑ SEMANTIC, and no amount of conversion closes them.** P2.6's three, unchanged by this phase and
+still the real frontier:
+
+1. **Transfer's collapsed guard.** `Inst/transfer.lean:99` commits the 6-conjunct `admitGuardA` as
+   ONE `propBit` asserted `= 1`; the deployed AIR computes the §11.7 15-bit borrow chain. A claim
+   versus a proof. The repair is a change to what the spec SAYS.
+2. **The commitment as a carried portal.** `EffectCommit2.lean:120,183` carries `digest`/`RH`/`LH`
+   abstractly where the deployed AIR builds `state_commit` from four in-circuit `H4` sites.
+   `EffectAir` still has no hash-site leg, deliberately — and it costs nothing on this set, because
+   no by-name descriptor uses one.
+3. **The single-row ENCODER.** `WindowLeg` lets a spec assert across two rows; `encodeE2` still
+   produces one `Assignment`. `TableAirIR.Coherent` is the shape of the missing hypothesis.
+
+None of the ten converted here touched any of those, which is why all ten converted cleanly: their
+gap was rendering, and rendering is exactly what a canonical normal form settles.
+
+⚠ **One known non-canonical compiler-authored descriptor, named:**
+`dfa-routing-table-exact-public-v1` is compiler-AUTHORED but its `window_gate` body is
+`add(nxt 0, mul(const -1, loc 2))` — a bare unit coefficient, because it was fused byte-exact
+against the pre-invariant deployed artifact. `normalFormOk` REFUSES it, correctly. Bringing it into
+the invariant is a one-line change (`wLin [(1, .nxt CURRENT), (-1, .loc NEXT)] 0`) plus its golden,
+and it was left to its owning lane rather than taken mid-flight.

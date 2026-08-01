@@ -78,13 +78,16 @@ non-vacuous semantic lemmas (`diffBind_body_zero_iff`, `bound_body_zero_iff`,
 `freshness_bound_sound` — each TRUE iff its identity holds / the gadget is sound). `#assert_axioms`
 ⊆ {} (pure `omega`). NEW file; imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.Emit.AirNormalForm
 
 namespace Dregg2.Circuit.Emit.PresentationEmit
 
-open Dregg2.Circuit (Assignment)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment Constraint Expr)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
+open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LookupLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir lowerConstraint)
+open Dregg2.Circuit.Emit.AirNormalForm (wLinLoc gateBody gateBody_zero_iff normalFormOk)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId rangeTableDef emitVmJson2 rangeRows)
 
@@ -148,24 +151,37 @@ def verifierPin : VmConstraint2 := .base (.piBinding VmRow.first VERIFIER PI_VER
 
 /-- The diff-binding body `DIFF − NOT_AFTER + VERIFIER` (`verify_freshness_binding` @338,
 `diff = not_after_height − verifier_height`). -/
-def diffBindBody : EmittedExpr :=
-  .add (.add (.var DIFF) (.mul (.const (-1)) (.var NOT_AFTER))) (.var VERIFIER)
+def diffBindSrc : Constraint :=
+  ⟨.var DIFF, .add (.var NOT_AFTER) (.mul (.const (-1)) (.var VERIFIER))⟩
+/-- …and the body the COMPILER renders for it. -/
+def diffBindBody : EmittedExpr := gateBody diffBindSrc
+/-- The same residual on the WINDOW rail (`.loc` leaves), canonically rendered — the last-row
+counterpart lowers through `windowToLocal?`, which is structure-preserving. -/
+def diffBindWindow : Dregg2.Circuit.DescriptorIR2.WindowExpr :=
+  wLinLoc [(1, DIFF), (-1, NOT_AFTER), (1, VERIFIER)] 0
 
 /-- The diff-binding gate (`diff = not_after − verifier`). -/
-def diffBindGate : VmConstraint2 := .base (.gate diffBindBody)
+def diffBindGate : VmConstraint2 := lowerConstraint diffBindSrc
 
 /-- The bound body `DIFF + HI − p/2` (the exact `diff ≤ p/2` gadget's linear leg: `hi = p/2 − diff`,
 i.e. `diff + hi = p/2`). -/
-def boundBody : EmittedExpr := .add (.add (.var DIFF) (.var HI)) (.const (-1006632960))
+def boundSrc : Constraint := ⟨.add (.var DIFF) (.var HI), .const 1006632960⟩
+/-- …and the body the COMPILER renders for it. -/
+def boundBody : EmittedExpr := gateBody boundSrc
+/-- The same residual on the WINDOW rail. -/
+def boundWindow : Dregg2.Circuit.DescriptorIR2.WindowExpr :=
+  wLinLoc [(1, DIFF), (1, HI)] (-1006632960)
 
 /-- The bound gate (`diff + hi = p/2`). -/
-def boundGate : VmConstraint2 := .base (.gate boundBody)
+def boundGate : VmConstraint2 := lowerConstraint boundSrc
 
 /-- Range lookup: `diff ∈ [0, 2^30)` (the wrapped-`diff`/expired tooth). -/
-def diffRangeLookup : VmConstraint2 := .lookup ⟨TableId.range, [.var DIFF]⟩
+def diffRangeLeg : LookupLeg := { table := TableId.range, tuple := [.var DIFF] }
+def diffRangeLookup : VmConstraint2 := .lookup ⟨TableId.range, diffRangeLeg.tuple.map emitExpr⟩
 
 /-- Range lookup: `hi ∈ [0, 2^30)` (the exact-`p/2` tooth: forces `diff ≤ p/2`, not `diff < 2^30`). -/
-def hiRangeLookup : VmConstraint2 := .lookup ⟨TableId.range, [.var HI]⟩
+def hiRangeLeg : LookupLeg := { table := TableId.range, tuple := [.var HI] }
+def hiRangeLookup : VmConstraint2 := .lookup ⟨TableId.range, hiRangeLeg.tuple.map emitExpr⟩
 
 /-- **The last-row freshness binding — `diffBindLast`.** The diff-binding body re-lowered as a
 `.base (.boundary VmRow.last …)` so it fires on the LAST row, where the transition-only `diffBindGate`
@@ -191,35 +207,53 @@ def presFreshLastFix : List VmConstraint2 := [diffBindLast, boundLast]
 /-- **`presentationFreshnessDesc`** — the presentation summary AIR + internalized freshness binding.
 `tables` declares the single shared range table (`bits = 30` feeds the assembler's `decomp_cols`);
 the byte table is Presence-detected from the range lookups, so no other table is declared. -/
+def presentationFreshnessAir : EffectAir :=
+  { tables := [rangeTableDef FRESH_BITS]
+  , legs   := (List.range SUMMARY_WIDTH).map (fun i => AirLeg.pin ⟨VmRow.first, i, i⟩) ++
+      [ .pin ⟨VmRow.first, VERIFIER, PI_VERIFIER⟩
+      , .gate diffBindSrc
+      , .gate boundSrc
+      , .lookup diffRangeLeg
+      , .lookup hiRangeLeg
+      , .window ⟨.last, diffBindWindow⟩
+      , .window ⟨.last, boundWindow⟩ ] }
+
+#guard presentationFreshnessAir.mainRailOk == true
+
 def presentationFreshnessDesc : EffectVmDescriptor2 :=
-  { name        := "dregg-presentation-freshness::summary-v1"
-  , traceWidth  := PRES_WIDTH
-  , piCount     := PI_COUNT
-  , tables      := [rangeTableDef FRESH_BITS]
-  , constraints := summaryPins ++
-      [verifierPin, diffBindGate, boundGate, diffRangeLookup, hiRangeLookup,
-       diffBindLast, boundLast]
-  , hashSites   := []
-  , ranges      := [] }
+  lowerAir "dregg-presentation-freshness::summary-v1" PRES_WIDTH PI_COUNT []
+    presentationFreshnessAir
+
+/-- ⚑ The compiler's output IS that constraint list, by `rfl` — the 19 generated summary pins
+included, so the programmatic pin family survives the cutover as compiler INPUT. -/
+theorem presentationFreshnessDesc_constraints :
+    presentationFreshnessDesc.constraints
+      = summaryPins ++
+          [verifierPin, diffBindGate, boundGate, diffRangeLookup, hiRangeLookup,
+           diffBindLast, boundLast] := rfl
+
+-- ⚑ THE CORPUS INVARIANT, DECIDED on this descriptor: every arithmetic body is canonical.
+#guard normalFormOk presentationFreshnessDesc == true
 
 /-! ## §3 — The byte-pinned wire golden (the Rust decoder ingests THIS string). -/
 
 #guard emitVmJson2 presentationFreshnessDesc ==
-  "{\"name\":\"dregg-presentation-freshness::summary-v1\",\"ir\":2,\"trace_width\":23,\"public_input_count\":20,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":19},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":21},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":21},\"r\":{\"t\":\"var\",\"v\":22}},\"r\":{\"t\":\"const\",\"v\":-1006632960}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":21},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":21},\"r\":{\"t\":\"var\",\"v\":22}},\"r\":{\"t\":\"const\",\"v\":-1006632960}}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-presentation-freshness::summary-v1\",\"ir\":2,\"trace_width\":23,\"public_input_count\":20,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":19},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":21}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":19}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":21}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"const\",\"v\":-1006632960}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":21}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":19}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":21}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"const\",\"v\":-1006632960}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — Genuinely-proven, non-vacuous semantic lemmas (the freshness teeth). -/
 
 /-- The diff-binding gate body is zero iff `diff = not_after − verifier`. -/
 theorem diffBind_body_zero_iff (a : Assignment) :
     diffBindBody.eval a = 0 ↔ a DIFF = a NOT_AFTER - a VERIFIER := by
-  simp only [diffBindBody, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [diffBindBody]; rw [gateBody_zero_iff]
+  simp only [diffBindSrc, Expr.eval]
+  omega
 
 /-- The bound gate body is zero iff `diff + hi = p/2`. -/
 theorem bound_body_zero_iff (a : Assignment) :
     boundBody.eval a = 0 ↔ a DIFF + a HI = HALF_P := by
-  simp only [boundBody, HALF_P, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [boundBody, HALF_P]; rw [gateBody_zero_iff]
+  simp only [boundSrc, Expr.eval]
 
 /-- **The exact-bound soundness of the two-range gadget.** Given both `diff` and `hi` in
 `[0, 2^30)` and `diff + hi = p/2` (as integers — the field equation forces the integer sum since

@@ -57,11 +57,20 @@ term lists plus the two constant cross-terms. `evalH_mulHead` is its semantic br
 `evalH_exprToHead` composes the four cases into "the head means what the expression meant". -/
 
 /-- Multiply two heads: distribute term×term, then each side's terms against the other's constant,
-then the constant product. -/
+then the constant product.
+
+⚑ **THE CONSTANT CROSS-PRODUCTS ARE GUARDED ON A NONZERO CONSTANT** (2026-08-01, the Phase-3
+re-emission). Unguarded, `(D) * (D_inv)` — two pure-term heads with constant `0` — distributed to
+THREE terms: the genuine `1·D·D_inv` plus `0·D` and `0·D_inv`, and those rendered into the wire
+bytes of every product gate the compiler emits. They are not the author's terms and they are not
+implied by the source: multiplying by a zero constant contributes nothing. Dropping them is NOT the
+zero-coefficient elision the corpus invariant forbids (`AirNormalForm` rule 3, which is about a term
+the SOURCE wrote); it is the normalizer declining to INVENT one. `evalH_mulHead` still holds
+unconditionally — the guarded branches are exactly the ones whose value is `0`. -/
 def mulHead (h o : Head) : Head :=
   { terms := (h.terms.flatMap fun t => o.terms.map fun u => ((t.1 * u.1, t.2 ++ u.2) : ℤ × List Nat))
-             ++ (h.terms.map fun t => ((t.1 * o.const, t.2) : ℤ × List Nat))
-             ++ (o.terms.map fun u => ((h.const * u.1, u.2) : ℤ × List Nat))
+             ++ (if o.const = 0 then [] else h.terms.map fun t => ((t.1 * o.const, t.2) : ℤ × List Nat))
+             ++ (if h.const = 0 then [] else o.terms.map fun u => ((h.const * u.1, u.2) : ℤ × List Nat))
   , const := h.const * o.const }
 
 private theorem sum_scaleR (a : Assignment) (k : ℤ) (ts : List (ℤ × List Nat)) :
@@ -102,10 +111,30 @@ private theorem sum_cross (a : Assignment) (ts us : List (ℤ × List Nat)) :
       List.map_cons, List.sum_cons]
     ring
 
-/-- **The multiplication bridge**: the distributed head means the product of the two heads. -/
+/-- The guarded right cross-product still sums to `Σ · k` — the dropped branch is exactly `k = 0`. -/
+private theorem sum_scaleR_guard (a : Assignment) (k : ℤ) (ts : List (ℤ × List Nat)) :
+    (((if k = 0 then ([] : List (ℤ × List Nat))
+        else ts.map fun t => ((t.1 * k, t.2) : ℤ × List Nat))).map (evalTerm a)).sum
+      = (ts.map (evalTerm a)).sum * k := by
+  by_cases hk : k = 0
+  · simp [hk]
+  · simp only [if_neg hk, sum_scaleR]
+
+/-- …and the guarded left cross-product. -/
+private theorem sum_scaleL_guard (a : Assignment) (k : ℤ) (ts : List (ℤ × List Nat)) :
+    (((if k = 0 then ([] : List (ℤ × List Nat))
+        else ts.map fun u => ((k * u.1, u.2) : ℤ × List Nat))).map (evalTerm a)).sum
+      = k * (ts.map (evalTerm a)).sum := by
+  by_cases hk : k = 0
+  · simp [hk]
+  · simp only [if_neg hk, sum_scaleL]
+
+/-- **The multiplication bridge**: the distributed head means the product of the two heads.
+UNCONDITIONAL — the zero-constant guards above drop only branches whose value is `0`. -/
 theorem evalH_mulHead (a : Assignment) (h o : Head) :
     evalH (mulHead h o) a = evalH h a * evalH o a := by
-  simp only [evalH, mulHead, List.map_append, List.sum_append, sum_cross, sum_scaleR, sum_scaleL]
+  simp only [evalH, mulHead, List.map_append, List.sum_append, sum_cross,
+    sum_scaleR_guard, sum_scaleL_guard]
   ring
 
 /-- **`exprToHead`** — normalize a framework gate expression into the `AirBuilder` head vocabulary. -/

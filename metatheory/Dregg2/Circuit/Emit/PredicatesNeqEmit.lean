@@ -29,17 +29,32 @@ DISJOINT constraint sets. Without it a prover proves `value ≠ threshold` on a 
 against an unrelated honest commitment. The `≠` layout carries `DIFF_INV` (col 4), so the weld cols
 begin at 6 (one past the `≤`/`>`/`<` siblings).
 
-`#assert_axioms` ⊆ {} on the gate lemmas. NEW file; imports read-only.
+## ⚑ COMPILER-SOURCED (2026-08-01, Phase 3 of `docs/LOGIC-COMPILER-ASSESSMENT.md`)
+
+The descriptor is `EffectLower.lowerAir` of the `EffectAir` in §2 — the hand-written
+`VmConstraint2` list literal is DELETED. Every gate is authored as an EQUATION and the compiler
+renders its canonical vanishing polynomial (`AirNormalForm`'s corpus invariant). ⚑ This is the
+descriptor with a DEGREE-2 gate, and it is why `EffectLowerCore.mulHead` now guards its constant
+cross-products on a nonzero constant: unguarded, `DIFF · DIFF_INV` distributed to the genuine
+`1·DIFF·DIFF_INV` PLUS a spurious `0·DIFF` and `0·DIFF_INV` — terms the source never wrote and
+which would have landed in the wire bytes of every product gate the compiler emits.
+RE-EMITS `circuit/descriptors/by-name/predicate-arith-neq.json` + its PROVENANCE sha.
+
+`#assert_axioms` ⊆ {} on the gate lemmas. Imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.Emit.AirNormalForm
 
 namespace Dregg2.Circuit.Emit.PredicatesNeqEmit
 
-open Dregg2.Circuit (Assignment)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment Constraint Expr)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 TableId emitVmJson2 chipLookupTuple CHIP_RATE CHIP_OUT_LANES)
+open Dregg2.Circuit.EffectAirIR (EffectAir LookupLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir lowerConstraint)
+open Dregg2.Circuit.Emit.AirNormalForm
+  (liftTuple gateBody gateBody_eval gateBody_zero_iff normalFormOk)
 
 set_option autoImplicit false
 
@@ -82,25 +97,35 @@ def PI_FACT_COMMITMENT : Nat := 1
 def c1ThresholdPin : VmConstraint2 := .base (.piBinding VmRow.first THRESHOLD PI_THRESHOLD)
 def c2FactPin : VmConstraint2 := .base (.piBinding VmRow.first FACT_COMMITMENT PI_FACT_COMMITMENT)
 
-def c3Body : EmittedExpr := .add (.var SLOT_A) (.mul (.const (-1)) (.var INPUT))
-def c3SlotGate : VmConstraint2 := .base (.gate c3Body)
+/-- **The C3 slot equation, as the SOURCE states it.** -/
+def c3Src : Constraint := ⟨.var SLOT_A, .var INPUT⟩
+/-- …and the body the COMPILER renders for it. -/
+def c3Body : EmittedExpr := gateBody c3Src
+def c3SlotGate : VmConstraint2 := lowerConstraint c3Src
 
 /-- The C5 diff-computation body `DIFF − SLOT_A + THRESHOLD` (`DIFF = SLOT_A − THRESHOLD`, i.e.
 `DIFF = value − threshold`). -/
-def c5Body : EmittedExpr :=
-  .add (.add (.var DIFF) (.mul (.const (-1)) (.var SLOT_A))) (.var THRESHOLD)
-def c5DiffGate : VmConstraint2 := .base (.gate c5Body)
+def c5Src : Constraint :=
+  ⟨.var DIFF, .add (.var SLOT_A) (.mul (.const (-1)) (.var THRESHOLD))⟩
+/-- …and the body the COMPILER renders for it. -/
+def c5Body : EmittedExpr := gateBody c5Src
+def c5DiffGate : VmConstraint2 := lowerConstraint c5Src
 
 /-- The CNZ nonzero-inverse body `DIFF · DIFF_INV − 1` (degree 2). Zero iff `DIFF · DIFF_INV = 1`,
 which forces `DIFF ≠ 0`. -/
-def cNzBody : EmittedExpr := .add (.mul (.var DIFF) (.var DIFF_INV)) (.const (-1))
-def cNzGate : VmConstraint2 := .base (.gate cNzBody)
+def cNzSrc : Constraint := ⟨.mul (.var DIFF) (.var DIFF_INV), .const 1⟩
+/-- …and the body the COMPILER renders for it — the ONE degree-2 gate in the batch. -/
+def cNzBody : EmittedExpr := gateBody cNzSrc
+def cNzGate : VmConstraint2 := lowerConstraint cNzSrc
 
 /-- **THE VALUE↔FACT WELD, leg 1** — `FACT_HASH = hash_fact(pred, [INPUT, term1, term2])`. -/
+def factHashLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
+                        .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES) }
 def factHashLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
-                     .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES⟩
+  .lookup ⟨TableId.poseidon2, factHashLeg.tuple.map emitExpr⟩
 
 /-- **THE VALUE↔FACT WELD, leg 2 (BLINDED)** — arity-4 fact-commitment chip lookup binding
 `FACT_COMMITMENT = Poseidon2_4to1([fact_hash, state_root, blinding, 0])`, tying the PI-pinned
@@ -109,40 +134,58 @@ commitment to the opened fact hash while leaving it rerandomizable by the privat
 The arity-4 chip absorb IS `hash_4_to_1`: `chip_absorb_lanes 4` takes the `seed456 = false` branch,
 seeding `st[0..4] = inputs` and `st[4] = arity = 4` — exactly `poseidon2.rs::hash_4_to_1`. The leg
 binds the production blinded commitment with ZERO change to the hash function. -/
+def factCommitLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+        FACT_COMMITMENT FACTCOMMIT_LANES) }
 def factCommitLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
-      FACT_COMMITMENT FACTCOMMIT_LANES⟩
+  .lookup ⟨TableId.poseidon2, factCommitLeg.tuple.map emitExpr⟩
 
 /-- **`predicateNeqDesc`** — the arithmetic `NotEqual(value, threshold)` descriptor, welded (the two
 Poseidon2 chip lookups are the only lookups; the nonzero tooth is the comparison judge). -/
+def predicateNeqAir : EffectAir :=
+  { legs := [ .pin ⟨VmRow.first, THRESHOLD, PI_THRESHOLD⟩
+            , .pin ⟨VmRow.first, FACT_COMMITMENT, PI_FACT_COMMITMENT⟩
+            , .gate c3Src
+            , .gate c5Src
+            , .gate cNzSrc
+            , .lookup factHashLeg
+            , .lookup factCommitLeg ] }
+
+#guard predicateNeqAir.mainRailOk == true
+
 def predicateNeqDesc : EffectVmDescriptor2 :=
-  { name        := "dregg-predicate-arith-neq::threshold-v1"
-  , traceWidth  := PRED_WIDTH
-  , piCount     := 2
-  , tables      := []
-  , constraints := [c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, cNzGate,
-                    factHashLookup, factCommitLookup]
-  , hashSites   := []
-  , ranges      := [] }
+  lowerAir "dregg-predicate-arith-neq::threshold-v1" PRED_WIDTH 2 [] predicateNeqAir
+
+/-- ⚑ The compiler's output IS that constraint list, by `rfl`. -/
+theorem predicateNeqDesc_constraints :
+    predicateNeqDesc.constraints
+      = [c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, cNzGate,
+         factHashLookup, factCommitLookup] := rfl
+
+-- ⚑ THE CORPUS INVARIANT, DECIDED on this descriptor: every arithmetic body is canonical.
+#guard normalFormOk predicateNeqDesc == true
 
 #guard emitVmJson2 predicateNeqDesc ==
-  "{\"name\":\"dregg-predicate-arith-neq::threshold-v1\",\"ir\":2,\"trace_width\":26,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"var\",\"v\":2}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":25},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-predicate-arith-neq::threshold-v1\",\"ir\":2,\"trace_width\":26,\"public_input_count\":2,\"tables\":[],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":3}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":2}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":25},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24}]}],\"hash_sites\":[],\"ranges\":[]}"
 
 theorem c3_body_zero_iff (a : Assignment) :
     c3Body.eval a = 0 ↔ a SLOT_A = a INPUT := by
-  simp only [c3Body, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [c3Body]; rw [gateBody_zero_iff]; simp [c3Src, Expr.eval]
 
 theorem c5_body_zero_iff (a : Assignment) :
     c5Body.eval a = 0 ↔ a DIFF = a SLOT_A - a THRESHOLD := by
-  simp only [c5Body, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [c5Body]; rw [gateBody_zero_iff]
+  simp only [c5Src, Expr.eval]
+  omega
 
 /-- The CNZ gate body is zero iff `DIFF · DIFF_INV = 1`; this IMPLIES `DIFF ≠ 0`. -/
 theorem cNz_body_zero_imp_ne (a : Assignment) :
     cNzBody.eval a = 0 → a DIFF ≠ 0 := by
-  simp only [cNzBody, EmittedExpr.eval]
+  simp only [cNzBody]
+  rw [gateBody_eval]
+  simp only [cNzSrc, Expr.eval]
   intro h hz
   rw [hz] at h
   simp at h

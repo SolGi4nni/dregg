@@ -16,18 +16,30 @@ bounds — col 4 and col 0 are no longer in DISJOINT constraint sets. Without it
 `value < threshold` on a value of its choosing against an unrelated honest commitment. Geometry
 identical to `≥`.
 
-`#assert_axioms` ⊆ {} on the gate lemmas. NEW file; imports read-only.
+## ⚑ COMPILER-SOURCED (2026-08-01, Phase 3 of `docs/LOGIC-COMPILER-ASSESSMENT.md`)
+
+The descriptor is `EffectLower.lowerAir` of the `EffectAir` in §2; the hand-written `VmConstraint2`
+list literal is DELETED. The two gates are authored as EQUATIONS (`SLOT_A = INPUT`,
+`DIFF = THRESHOLD − SLOT_A − 1`) and the compiler turns each into its canonical vanishing
+polynomial. RE-EMITS `circuit/descriptors/by-name/predicate-arith-lt.json` (+ PROVENANCE sha):
+the bare unit coefficients become `mul(const 1, ·)` per `AirNormalForm`'s corpus invariant. Same
+polynomial, same p3 symbolic degree, same VK geometry.
+
+`#assert_axioms` ⊆ {} on the gate lemmas. Imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.Emit.AirNormalForm
 
 namespace Dregg2.Circuit.Emit.PredicatesLtEmit
 
-open Dregg2.Circuit (Assignment)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment Constraint Expr)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId rangeTableDef emitVmJson2 rangeRows
    range_row_mem_iff chipLookupTuple CHIP_RATE CHIP_OUT_LANES)
+open Dregg2.Circuit.EffectAirIR (EffectAir LookupLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir lowerConstraint)
+open Dregg2.Circuit.Emit.AirNormalForm (liftTuple gateBody gateBody_zero_iff normalFormOk)
 
 set_option autoImplicit false
 
@@ -68,22 +80,31 @@ def DIFF_BITS : Nat := 29
 def c1ThresholdPin : VmConstraint2 := .base (.piBinding VmRow.first THRESHOLD PI_THRESHOLD)
 def c2FactPin : VmConstraint2 := .base (.piBinding VmRow.first FACT_COMMITMENT PI_FACT_COMMITMENT)
 
-def c3Body : EmittedExpr := .add (.var SLOT_A) (.mul (.const (-1)) (.var INPUT))
-def c3SlotGate : VmConstraint2 := .base (.gate c3Body)
+/-- **The C3 slot equation, as the SOURCE states it**: the compared slot IS the welded input. -/
+def c3Src : Constraint := ⟨.var SLOT_A, .var INPUT⟩
+/-- …and the body the compiler renders for it. -/
+def c3Body : EmittedExpr := gateBody c3Src
+def c3SlotGate : VmConstraint2 := lowerConstraint c3Src
 
-/-- The C5 diff-computation body `DIFF − THRESHOLD + SLOT_A + 1` (`DIFF = THRESHOLD − SLOT_A − 1`,
-i.e. `DIFF = threshold − value − 1` — the strict `<` shift). -/
-def c5Body : EmittedExpr :=
-  .add (.add (.add (.var DIFF) (.mul (.const (-1)) (.var THRESHOLD))) (.var SLOT_A)) (.const 1)
-def c5DiffGate : VmConstraint2 := .base (.gate c5Body)
+/-- **The C5 diff equation**: `DIFF = THRESHOLD − SLOT_A − 1` (i.e. `DIFF = threshold − value − 1`
+— the strict `<` shift). The compiler turns it into the vanishing residual
+`DIFF − THRESHOLD + SLOT_A + 1`. -/
+def c5Src : Constraint :=
+  ⟨.var DIFF, .add (.add (.var THRESHOLD) (.mul (.const (-1)) (.var SLOT_A))) (.const (-1))⟩
+def c5Body : EmittedExpr := gateBody c5Src
+def c5DiffGate : VmConstraint2 := lowerConstraint c5Src
 
-def c6RangeLookup : VmConstraint2 := .lookup ⟨TableId.range, [.var DIFF]⟩
+def c6RangeLeg : LookupLeg := { table := TableId.range, tuple := [.var DIFF] }
+def c6RangeLookup : VmConstraint2 := .lookup ⟨TableId.range, c6RangeLeg.tuple.map emitExpr⟩
 
 /-- **THE VALUE↔FACT WELD, leg 1** — `FACT_HASH = hash_fact(pred, [INPUT, term1, term2])`. -/
+def factHashLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
+                        .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES) }
 def factHashLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
-                     .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES⟩
+  .lookup ⟨TableId.poseidon2, factHashLeg.tuple.map emitExpr⟩
 
 /-- **THE VALUE↔FACT WELD, leg 2 (BLINDED)** — arity-4 fact-commitment chip lookup binding
 `FACT_COMMITMENT = Poseidon2_4to1([fact_hash, state_root, blinding, 0])`, tying the PI-pinned
@@ -92,35 +113,58 @@ commitment to the opened fact hash while leaving it rerandomizable by the privat
 The arity-4 chip absorb IS `hash_4_to_1`: `chip_absorb_lanes 4` takes the `seed456 = false` branch,
 seeding `st[0..4] = inputs` and `st[4] = arity = 4` — exactly `poseidon2.rs::hash_4_to_1`. The leg
 binds the production blinded commitment with ZERO change to the hash function. -/
+def factCommitLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+        FACT_COMMITMENT FACTCOMMIT_LANES) }
 def factCommitLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
-      FACT_COMMITMENT FACTCOMMIT_LANES⟩
+  .lookup ⟨TableId.poseidon2, factCommitLeg.tuple.map emitExpr⟩
 
-/-- **`predicateLtDesc`** — the arithmetic `LessThan(value, threshold)` descriptor, welded. -/
+/-- ⚑ **THE AIR SOURCE** — seven legs in emission order: the two PI pins, the slot gate, the diff
+gate, the C6 range lookup and the two weld legs. -/
+def predicateLtAir : EffectAir :=
+  { tables := [rangeTableDef DIFF_BITS]
+  , legs   := [ .pin ⟨VmRow.first, THRESHOLD, PI_THRESHOLD⟩
+              , .pin ⟨VmRow.first, FACT_COMMITMENT, PI_FACT_COMMITMENT⟩
+              , .gate c3Src
+              , .gate c5Src
+              , .lookup c6RangeLeg
+              , .lookup factHashLeg
+              , .lookup factCommitLeg ] }
+
+#guard predicateLtAir.mainRailOk == true
+
+/-- **`predicateLtDesc`** — the arithmetic `LessThan(value, threshold)` descriptor, welded,
+**COMPILED from `predicateLtAir`**. -/
 def predicateLtDesc : EffectVmDescriptor2 :=
-  { name        := "dregg-predicate-arith-lt::threshold-v1"
-  , traceWidth  := PRED_WIDTH
-  , piCount     := 2
-  , tables      := [rangeTableDef DIFF_BITS]
-  , constraints := [c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, c6RangeLookup,
-                    factHashLookup, factCommitLookup]
-  , hashSites   := []
-  , ranges      := [] }
+  lowerAir "dregg-predicate-arith-lt::threshold-v1" PRED_WIDTH 2 [] predicateLtAir
+
+/-- ⚑ The compiler's output IS that constraint list, by `rfl`. -/
+theorem predicateLtDesc_constraints :
+    predicateLtDesc.constraints
+      = [c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, c6RangeLookup,
+         factHashLookup, factCommitLookup] := rfl
+
+-- ⚑ THE CORPUS INVARIANT, DECIDED on this descriptor: every arithmetic body is canonical.
+#guard normalFormOk predicateLtDesc == true
 
 #guard emitVmJson2 predicateLtDesc ==
-  "{\"name\":\"dregg-predicate-arith-lt::threshold-v1\",\"ir\":2,\"trace_width\":25,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":24},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-predicate-arith-lt::threshold-v1\",\"ir\":2,\"trace_width\":25,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":3}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":24},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]}],\"hash_sites\":[],\"ranges\":[]}"
 
+/-- ⚑ RE-ESTABLISHED OVER THE COMPILED BODY (statement verbatim; only `c3Body`'s definition moved
+from a hand-written `EmittedExpr` to the compiler's rendering). -/
 theorem c3_body_zero_iff (a : Assignment) :
     c3Body.eval a = 0 ↔ a SLOT_A = a INPUT := by
-  simp only [c3Body, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [c3Body]; rw [gateBody_zero_iff]; simp [c3Src, Expr.eval]
 
-/-- The C5 gate body is zero iff `DIFF = THRESHOLD − SLOT_A − 1` (the strict `<` diff identity). -/
+/-- The C5 gate body is zero iff `DIFF = THRESHOLD − SLOT_A − 1` (the strict `<` diff identity).
+⚑ Re-established over the compiled body. -/
 theorem c5_body_zero_iff (a : Assignment) :
     c5Body.eval a = 0 ↔ a DIFF = a THRESHOLD - a SLOT_A - 1 := by
-  simp only [c5Body, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [c5Body]; rw [gateBody_zero_iff]
+  simp only [c5Src, Expr.eval]
+  omega
 
 #guard decide (c3Body.eval (fun i => if i = SLOT_A ∨ i = INPUT then 7 else 0) = 0)
 #guard decide (¬ (c3Body.eval (fun i => if i = SLOT_A then 7 else 0) = 0))

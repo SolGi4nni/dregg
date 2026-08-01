@@ -42,6 +42,15 @@ witness (diff out of range → the C6 range tooth), an inconsistent-but-in-range
 a `slot_a ≠ input` (the C3 slot identity), and a forged public `threshold` / `fact_commitment`
 (the C1 / C2 PI bindings).
 
+## ⚑ COMPILER-SOURCED (2026-08-01, Phase 3 of `docs/LOGIC-COMPILER-ASSESSMENT.md`)
+
+The descriptor is `EffectLower.lowerAir` of the `EffectAir` in §2 — the hand-written
+`VmConstraint2` list literal is DELETED, not kept beside. Every gate is authored as an EQUATION and
+the compiler renders its canonical vanishing polynomial (`AirNormalForm`'s corpus invariant: every
+term carries its coefficient, so a unit coefficient is `mul(const 1, x)` and never bare `x`).
+RE-EMITS `circuit/descriptors/by-name/predicate-arith.json` + its PROVENANCE sha. Same polynomial, same p3
+symbolic degree (`Const => 0`, `Mul => sum`), same VK geometry — only the rendering moved.
+
 ## Axiom hygiene
 
 Definitional descriptor + a byte-pinned `#guard` on its wire string + genuinely-proven,
@@ -49,16 +58,20 @@ non-vacuous semantic lemmas on the two gate bodies (`c3_body_zero_iff`, `c5_body
 each TRUE iff its slot/diff identity holds, FALSE otherwise). `#assert_axioms` ⊆ {} (pure
 `omega`). NEW file; imports read-only.
 -/
-import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.Emit.AirNormalForm
 
 namespace Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 
-open Dregg2.Circuit (Assignment)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit (Assignment Constraint Expr)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId rangeTableDef emitVmJson2 rangeRows
    range_row_mem_iff chipLookupTuple CHIP_RATE CHIP_OUT_LANES)
+open Dregg2.Circuit.EffectAirIR (EffectAir LookupLeg)
+open Dregg2.Circuit.Emit.EffectLower (lowerAir lowerConstraint)
+open Dregg2.Circuit.Emit.AirNormalForm (liftTuple gateBody gateBody_zero_iff normalFormOk)
+
 
 set_option autoImplicit false
 
@@ -154,30 +167,38 @@ def c2FactPin : VmConstraint2 := .base (.piBinding VmRow.first FACT_COMMITMENT P
 
 /-- The C3 slot-identity body `SLOT_A − INPUT` (a bare-`Input` compiled slot equals its input —
 `arithmetic.rs::add_slot_constraints`, the `CompiledOp::Input` arm `slot == input[i]`). -/
-def c3Body : EmittedExpr := .add (.var SLOT_A) (.mul (.const (-1)) (.var INPUT))
+def c3Src : Constraint := ⟨.var SLOT_A, .var INPUT⟩
+/-- …and the body the COMPILER renders for it. -/
+def c3Body : EmittedExpr := gateBody c3Src
 
 /-- **C3** — the slot-identity gate. -/
-def c3SlotGate : VmConstraint2 := .base (.gate c3Body)
+def c3SlotGate : VmConstraint2 := lowerConstraint c3Src
 
 /-- The C5 diff-computation body `DIFF − SLOT_A + THRESHOLD` (`arithmetic.rs` @578–595, the
 `ResultMinusThreshold` arm `diff − result_a + threshold == 0`). -/
-def c5Body : EmittedExpr :=
-  .add (.add (.var DIFF) (.mul (.const (-1)) (.var SLOT_A))) (.var THRESHOLD)
+def c5Src : Constraint :=
+  ⟨.var DIFF, .add (.var SLOT_A) (.mul (.const (-1)) (.var THRESHOLD))⟩
+/-- …and the body the COMPILER renders for it. -/
+def c5Body : EmittedExpr := gateBody c5Src
 
 /-- **C5** — the diff-computation gate. -/
-def c5DiffGate : VmConstraint2 := .base (.gate c5Body)
+def c5DiffGate : VmConstraint2 := lowerConstraint c5Src
 
 /-- **C6** — the diff range proof as a `Range` lookup: `diff ∈ [0, 2^29)` (`arithmetic.rs`
 @707–738, the bit-decomposition + high-bit-zero block, mapped to the idiomatic IR-v2 range
 table). The Rust assembler decomposes `DIFF` into `decomp_cols(29)` limbs on the byte bus. -/
-def c6RangeLookup : VmConstraint2 := .lookup ⟨TableId.range, [.var DIFF]⟩
+def c6RangeLeg : LookupLeg := { table := TableId.range, tuple := [.var DIFF] }
+def c6RangeLookup : VmConstraint2 := .lookup ⟨TableId.range, c6RangeLeg.tuple.map emitExpr⟩
 
 /-- **THE VALUE↔FACT WELD, leg 1** — arity-7 fact-hash chip lookup binding `FACT_HASH =
 hash_fact(pred, [INPUT, term1, term2])`, feeding the SAME `INPUT` column the range gadget bounds. -/
+def factHashLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
+                        .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES) }
 def factHashLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
-                     .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES⟩
+  .lookup ⟨TableId.poseidon2, factHashLeg.tuple.map emitExpr⟩
 
 /-- **THE VALUE↔FACT WELD, leg 2 (BLINDED)** — arity-4 fact-commitment chip lookup binding
 `FACT_COMMITMENT = Poseidon2_4to1([fact_hash, state_root, blinding, 0])`, tying the PI-pinned
@@ -189,28 +210,46 @@ The arity-4 chip absorb IS `hash_4_to_1`: `chip_absorb_lanes 4` takes the `seed4
 this leg binds the production blinded commitment with ZERO change to the hash function; only the
 arity tag the chip already carries distinguishes it from the arity-2 unblinded absorb (which is
 what domain-separates the two shapes and rules out a cross-arity collision). -/
+def factCommitLeg : LookupLeg :=
+  { table := TableId.poseidon2
+  , tuple := liftTuple
+      (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+        FACT_COMMITMENT FACTCOMMIT_LANES) }
 def factCommitLookup : VmConstraint2 :=
-  .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
-      FACT_COMMITMENT FACTCOMMIT_LANES⟩
+  .lookup ⟨TableId.poseidon2, factCommitLeg.tuple.map emitExpr⟩
 
-/-- **`predicateGeDesc`** — the arithmetic `GreaterThanOrEqual(value, threshold)` descriptor.
+/-! **`predicateGeDesc`** — the arithmetic `GreaterThanOrEqual(value, threshold)` descriptor.
 `tables` declares the range table (its `bits` feeds the assembler's `decomp_cols`); the byte
 table is Presence-detected from the range lookup, so no other table is declared. -/
+/-- ⚑ **THE AIR SOURCE** — the legs in emission order. -/
+def predicateGeAir : EffectAir :=
+  { tables := [rangeTableDef DIFF_BITS]
+  , legs   := [ .pin ⟨VmRow.first, THRESHOLD, PI_THRESHOLD⟩
+              , .pin ⟨VmRow.first, FACT_COMMITMENT, PI_FACT_COMMITMENT⟩
+              , .gate c3Src
+              , .gate c5Src
+              , .lookup c6RangeLeg
+              , .lookup factHashLeg
+              , .lookup factCommitLeg ] }
+
+#guard predicateGeAir.mainRailOk == true
+
+/-- **`predicateGeDesc`** — COMPILED from `predicateGeAir`. -/
 def predicateGeDesc : EffectVmDescriptor2 :=
-  { name        := "dregg-predicate-arith-ge::threshold-v1"
-  , traceWidth  := PRED_WIDTH
-  , piCount     := 2
-  , tables      := [rangeTableDef DIFF_BITS]
-  , constraints := [c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, c6RangeLookup,
-                    factHashLookup, factCommitLookup]
-  , hashSites   := []
-  , ranges      := [] }
+  lowerAir "dregg-predicate-arith-ge::threshold-v1" PRED_WIDTH 2 [] predicateGeAir
+
+/-- ⚑ The compiler's output IS that constraint list, by `rfl` — so every downstream
+statement over these names is a statement about the COMPILED object. -/
+theorem predicateGeDesc_constraints :
+    predicateGeDesc.constraints = [c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, c6RangeLookup, factHashLookup, factCommitLookup] := rfl
+
+-- ⚑ THE CORPUS INVARIANT, DECIDED on this descriptor: every arithmetic body is canonical.
+#guard normalFormOk predicateGeDesc == true
 
 /-! ## §3 — The byte-pinned wire golden (the Rust decoder ingests THIS string). -/
 
 #guard emitVmJson2 predicateGeDesc ==
-  "{\"name\":\"dregg-predicate-arith-ge::threshold-v1\",\"ir\":2,\"trace_width\":25,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"var\",\"v\":2}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":24},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-predicate-arith-ge::threshold-v1\",\"ir\":2,\"trace_width\":25,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":3}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":2}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":24},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — Genuinely-proven, non-vacuous semantic lemmas (the gate teeth).
 
@@ -220,16 +259,16 @@ C3 / C5 gates the emitted `.gate`s enforce row-for-row in the Rust Ir2 main AIR.
 /-- The C3 gate body is zero iff the slot equals its input (`SLOT_A = INPUT`). -/
 theorem c3_body_zero_iff (a : Assignment) :
     c3Body.eval a = 0 ↔ a SLOT_A = a INPUT := by
-  simp only [c3Body, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [c3Body]; rw [gateBody_zero_iff]; simp [c3Src, Expr.eval]
 
 /-- The C5 gate body is zero iff `diff = result_a − threshold` (`DIFF = SLOT_A − THRESHOLD`) —
 the diff-computation identity that, once `diff` is range-proved into `[0, 2^29)`, forces
 `SLOT_A ≥ THRESHOLD` (the predicate). -/
 theorem c5_body_zero_iff (a : Assignment) :
     c5Body.eval a = 0 ↔ a DIFF = a SLOT_A - a THRESHOLD := by
-  simp only [c5Body, EmittedExpr.eval]
-  constructor <;> intro h <;> omega
+  simp only [c5Body]; rw [gateBody_zero_iff]
+  simp only [c5Src, Expr.eval]
+  omega
 
 -- Non-vacuity witnesses: each gate ACCEPTS a satisfying assignment and REJECTS a violating one.
 #guard decide (c3Body.eval (fun i => if i = SLOT_A ∨ i = INPUT then 7 else 0) = 0)
