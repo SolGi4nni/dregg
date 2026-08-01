@@ -58,8 +58,10 @@ use dregg_circuit::effect_vm::layout_generated::{
     NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, ROTATED_FIELD_LANE_COL, VK_GROUP,
 };
 use dregg_circuit::effect_vm::split_u64;
+use dregg_circuit::exact_nullifier_aafi::{
+    ExactLinkedDomains, ExactTaggedKey, exact_linked_append_root8, exact_root_faithful8,
+};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::heap_root::compute_canonical_heap_root_8_entries;
 use dregg_circuit::poseidon2::{hash_bytes, hash_many};
 
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
@@ -74,8 +76,26 @@ pub const NUM_REGISTERS: usize = 24;
 /// `cells_root` completion lanes 169..=175 (FILLED HERE on every turn since wound #23 — kept off
 /// `revoked_root`'s 82..=88 group; the createCell/factory/spawn trace generator overwrites the whole
 /// group with the in-circuit accounts tree) + pads 176..=177, body `[4..177]` = 174 = 58×3 (clean).
-/// The collection id under which a present-cell existence leaf is keyed in the cells tree.
-const CELLS_COLLECTION: u32 = 0;
+/// The present-cell-set exact tagged-linked-leaf domain triple: `FLI2`/`FLN2`/`FLE2` (`L` for
+/// LEDGER — the set of present cells IS the ledger's key set).
+///
+/// Distinct from all four sibling accumulators — `FNI2`/`FNN2`/`FNE2` (nullifiers),
+/// `FCI2`/`FCN2`/`FCE2` (commitments), `FRI2`/`FRN2`/`FRE2` (revocations), `FSI2`/`FSN2`/`FSE2`
+/// (shielded notes) — so no tree's root, opening, or EMPTY root can be replayed as another's.
+///
+/// This triple REPLACES the `(collection_id, key)` addressing the cells tree used to ride: the
+/// retired `const CELLS_COLLECTION: u32 = 0` was the first input to `heap_addr(coll, key)`, and
+/// with the domain now carried by the sponge tag there is no collection felt left to name.
+pub const EXACT_CELLS_LINKED_DOMAINS: ExactLinkedDomains = ExactLinkedDomains {
+    leaf: 0x464c_4932,  // `FLI2`
+    node: 0x464c_4e32,  // `FLN2`
+    empty: 0x464c_4532, // `FLE2`
+};
+
+/// The existence value every present-cell leaf carries. The cells tree states PRESENCE and
+/// nothing else — the cell's contents are committed by its own rotated block, not here — so the
+/// value slot is the constant existence bit, exactly as it was under the retired heap fold.
+const CELL_PRESENT_VALUE: u64 = 1;
 
 /// One turn's rotated state-block witness for a single cell's before/after RecordKernelState.
 ///
@@ -293,46 +313,113 @@ pub fn empty_revoked_root_8() -> dregg_circuit::Faithful8 {
 /// **THE `cells_root` PRODUCER** — the turn-level boundary view over the present cells,
 /// as a FAITHFUL 8-felt root.
 ///
-/// The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 root over one existence
-/// leaf per present cell (`value = 1`, keyed by a felt digest of the cell id under
-/// `CELLS_COLLECTION`). Input-order independent (the underlying tree sorts by address — see
-/// `heap_root::root_is_input_order_independent`), so the root is a function of the SET of
-/// present cells, never the ledger's iteration order. The empty ledger yields the empty
-/// sorted-tree sentinel root (`compute_canonical_heap_root_8_entries(&[]) ==
-/// heap_root::empty_heap_root_8()`).
+/// The exact tagged-linked-leaf (`FLI2 ‖ addr17 ‖ value4 ‖ next17`) append-at-free-index root at
+/// depth 16, arity 4, eight BabyBear lanes — one existence leaf per present cell, keyed by the
+/// cell id's SIXTEEN little-endian `u16` limbs. Structurally identical to its four sibling
+/// accumulators (`nullifier_root`/`commitments_root`/`revoked_root`/the shielded set), which is
+/// the point: the cells tree was the last member of that group still keyed by a felt fold.
 ///
-/// ## Why this is 8 felts and not one (wound #23,
+/// The ids are sorted by their canonical `ExactTaggedKey` before the fold, so the physical slot
+/// order IS the key order and the root is a function of the SET of present cells — never
+/// `Ledger`'s `HashMap` iteration order, which is not even stable across nodes. The empty ledger
+/// yields the domain's empty-tree root (`exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS,
+/// &[])`), distinct from every sibling's empty root by the `FLI2`/`FLN2`/`FLE2` tags.
+///
+/// ## ⚑ WHAT THIS REPLACED: a $0 permanent consensus halt (closed 2026-08-01)
+///
+/// Until this commit the leaf ADDRESS was `heap_addr(CELLS_COLLECTION, hash_bytes(id))` — ONE
+/// BabyBear felt, ~30.9 bits, per 32-byte `CellId`. Since 2026-07-28
+/// `heap_root::assert_addr_unique` **panics** (release-active, correctly) rather than silently
+/// deduping a repeated address, because a dedup makes a cell's REMOVAL invisible to the anchor.
+/// Fail-closed was right; shipping it over an attacker-collidable key is what turned a silent
+/// double-spend into a **liveness kill**:
+///
+/// * `CellId::derive_raw` is `blake3::derive_key("dregg-cell-id-v1", public_key ‖ token_id)` over
+///   two attacker-chosen 32-byte arrays, so candidate ids are ground **entirely offline** — no
+///   chain interaction, no signature, no proof.
+/// * `Effect::CreateCell` validates only `balance == 0` (`executor/apply.rs`); `token_id` is used
+///   raw with no registry, no allowlist, no possession check on `public_key`, and no rate limit.
+///   `token_id` alone is therefore a free 32-byte grinding domain.
+/// * So ~2^15.5 offline folds and **two ordinary cell creations** put two cells on one address.
+///   `cells_root` is on the unconditional per-turn anchor path (`state_commit::consensus_ctx`),
+///   the panic is classified `FatalIntegrity`, and the finality executor stops permanently with
+///   the block unacknowledged — deterministically, on every node, across restarts.
+///
+/// ⚠ The repair is NOT to restore the dedup. It is to make the collision unreachable.
+///
+/// ## Why SIXTEEN `u16` LIMBS and not a wider hash — a key needs INJECTIVITY, not collision
+/// resistance
+///
+/// These are different jobs with different numbers and the two do not transfer:
+///
+/// * A **hash node** needs collision resistance, priced by the birthday bound over its image.
+///   Eight BabyBear lanes give `8·log₂ p = 247.26` bits of image and `2^123.63` collision — the
+///   figure `57105f387` bought for the membership tree, and the figure this root's EIGHT LANES
+///   still carry. Correct for a node.
+/// * A **key/encoding** needs injectivity: distinct ids must not share a leaf AT ALL, at any
+///   root width. No collision bound achieves that; only an injection does. And no 8-lane
+///   encoding of 32 bytes exists — `P^8 = 2^247.26 < 2^256` is pigeonhole, proved in Lean as
+///   `Dregg2.Circuit.MapOpWideKeyPigeonhole.no_injection_bytes32_to_canonKey8` (*no* function,
+///   not *no known* function) with `FieldLanes9.nine_lanes_is_the_minimum` beside it.
+///
+/// The sixteen-`u16` codec (`exact_nullifier_aafi::raw_to_u16_le`) is `65536^16 = 2^256` **on the
+/// nose** — `card_key16` / `u16_limbs_admit_a_bijection` in that same Lean file — so nothing
+/// reduces, nothing folds, and the encoding step loses exactly zero bits. Two distinct `CellId`s
+/// cannot share a leaf, so `ExactAafiError::Duplicate` is now unreachable by construction: it
+/// requires two byte-identical ids, which `Ledger`'s `HashMap<CellId, _>` cannot hold. The
+/// `.expect` below is therefore a statement about the container, not a surviving grind target.
+///
+/// ⚑ SUBSTRATE: this is a producer, not an AIR. Nothing in any circuit recomputes this key —
+/// the rotated trace generator OVERWRITES the whole cells group with its own in-circuit accounts
+/// tree (`trace_rotated.rs`, `insert_witness_aafi`), which production always feeds
+/// `before_accounts = &[]`, and no verifier opens `cells_root`
+/// (`executor/proof_verify.rs`: the anchor is taken from trusted storage, not reconstructed).
+/// So NO VK rotates and NO descriptor is re-emitted. The wide object being registered here was
+/// already Lean-proved and already on disk — `MapOpWideKeyPigeonhole` records that "the kind-D
+/// residual is REGISTRATION of an object on disk, not authoring a wider one." This is that
+/// registration. Law #1 is untouched: no Rust-authored constraint exists on this path.
+///
+/// ⚠ FLAG DAY: every `pre_state_hash`/`post_state_hash` moves. `CANONICAL_STATE_SCHEMA_EPOCH`
+/// 19 → 20; a store written under ≤19 REFUSES to load and re-genesises.
+///
+/// ## The width history, both halves (wound #23,
 /// `docs/WOUND-felt-width-boundaries-2026-07-19.md`)
 ///
-/// This root is limb 0 of the rotated block, i.e. a COMPONENT of the deployed consensus anchor
-/// (`state_commit::consensus_state_commitment` → `pre_state_hash`/`post_state_hash` on every
-/// receipt, which the executor signature signs and the federation receipt QC aggregates over).
-/// It used to be `compute_heap_root_entries -> BabyBear`: a 1-felt (~31-bit) fold riding as a
-/// bare limb inside the faithful 8-felt chain, three fields away from three siblings
-/// (`nullifier_root`/`commitments_root`/`revoked_root`) that were already `Faithful8`. Two
-/// different present-cell SETS colliding on that one felt gave ONE signed anchor for two
-/// different ledgers — a ~2^31 offline grind (`CellId::derive_raw` is BLAKE3 over
-/// attacker-chosen `(public_key, token_id)`). The fold is now wide at EVERY intermediate: each
-/// leaf is `HeapLeaf::digest8` (all 8 lanes of the arity-3 chip absorb) and each node is
-/// `heap_node8` (all 8 lanes of the arity-16 `node8` chip), so no ~31-bit waist survives
-/// anywhere in the tree — this is NOT a re-hash of the narrow root
-/// (`finalSqueezeOnly_still_conflates`, #12).
+/// This root is limb 0 of the rotated block ‖ completion lanes 169..=175, i.e. a COMPONENT of the
+/// deployed consensus anchor (`state_commit::consensus_state_commitment` →
+/// `pre_state_hash`/`post_state_hash` on every receipt, which the executor signature signs and
+/// the federation receipt QC aggregates over). Both halves of its width are now closed, and they
+/// were separate defects:
 ///
-/// ⚑ STILL NARROW, and NOT closed by this widening: the leaf ADDRESS is
-/// `heap_addr(CELLS_COLLECTION, hash_bytes(id))`, a ONE-felt digest of the 32-byte `CellId`.
-/// Two cell ids whose key folds collide produce literally the SAME leaf at ANY root width.
-/// That is the accumulator-KEY width class (kind D — #5/#9/#11/#20), which must ride the
-/// `MapOp` key epoch (`DescriptorIR2.lean`'s scalar `key : EmittedExpr`), not this one.
+/// * **The ROOT** was `compute_heap_root_entries -> BabyBear`: a 1-felt (~31-bit) fold riding as
+///   a bare limb inside the faithful 8-felt chain. Two different present-cell SETS colliding on
+///   that one felt gave ONE signed anchor for two different ledgers. Closed by wound #23 to a
+///   `node8` fold, and the eight lanes survive verbatim here — `exact_node_digest_in` is a
+///   `hash_many_8`, so every intermediate is 8 felts and the root keeps `2^123.63`.
+/// * **The KEY** was `heap_addr(CELLS_COLLECTION, hash_bytes(id))` — one felt per 32-byte
+///   `CellId`, so two ids whose folds collided produced literally the SAME leaf at any root
+///   width. Wound #23 explicitly did NOT reach it, and after `assert_addr_unique` began refusing
+///   such a pair it became the halt described above. That is the class closed here, by an
+///   injection rather than by a wider hash.
 pub fn cells_root(ledger: &Ledger) -> dregg_circuit::Faithful8 {
-    let mut entries: Vec<((BabyBear, BabyBear), BabyBear)> = Vec::new();
-    for (id, _) in ledger.iter() {
-        let key = hash_bytes(id.as_bytes());
-        entries.push((
-            (BabyBear::new(CELLS_COLLECTION), key),
-            BabyBear::ONE, // existence bit
-        ));
-    }
-    compute_canonical_heap_root_8_entries(&entries)
+    // Sorted by the canonical tagged key, so the physical slot order IS the key order and the
+    // root is a pure function of the SET. `Ledger` is a `HashMap`, whose iteration order is not
+    // stable within a process, let alone across nodes — an unsorted fold here would be a
+    // consensus split, not a nondeterminism nit.
+    let mut ids: Vec<[u8; 32]> = ledger.iter().map(|(id, _)| *id.as_bytes()).collect();
+    ids.sort_unstable_by_key(|raw| ExactTaggedKey::from_raw(*raw));
+
+    let records: Vec<([u8; 32], u64)> = ids
+        .into_iter()
+        .map(|raw| (raw, CELL_PRESENT_VALUE))
+        .collect();
+
+    let lanes = exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &records).expect(
+        "the sixteen-u16 cell-id key is INJECTIVE (2^256 on the nose), so a Duplicate here would \
+         require two byte-identical CellIds — which `Ledger`'s HashMap<CellId, Cell> cannot hold \
+         — and the ledger is bounded by the 4^16 tree capacity",
+    );
+    exact_root_faithful8(lanes)
 }
 
 /// **THE `iroot` PRODUCER** — the MMR root over the receipt log.
@@ -1125,10 +1212,20 @@ mod tests {
         let mut l3 = Ledger::new();
         l3.insert_cell(cell(1, 10)).unwrap();
         assert_ne!(cells_root(&l1), cells_root(&l3));
-        // the empty ledger is the empty-tree sentinel root — at FULL 8-felt width
+        // The empty ledger is the FLI2 accumulator's own empty-tree root, at full 8-felt width.
+        // ⚠ NOT `heap_root::empty_heap_root_8()`: since the 2026-08-01 key widening the cells tree
+        // is not a heap tree at all, and asserting the heap sentinel here would silently re-pin the
+        // retired shape.
         assert_eq!(
             cells_root(&Ledger::new()),
-            dregg_circuit::heap_root::empty_heap_root_8()
+            exact_root_faithful8(
+                exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &[]).unwrap()
+            )
+        );
+        assert_ne!(
+            cells_root(&Ledger::new()),
+            dregg_circuit::heap_root::empty_heap_root_8(),
+            "anti-vacuity: the retired heap sentinel must NOT be what the empty ledger commits"
         );
         // wound #23: the root is a genuine 8-felt octet, not a lane-0 squeeze wearing a wide
         // coat. A different cell set must move MORE than lane 0 (a lane-0-only difference would

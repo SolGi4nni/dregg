@@ -134,13 +134,7 @@ pub const EXACT_SHIELDED_LINKED_DOMAINS: ExactLinkedDomains = ExactLinkedDomains
 const HIDING_VALUE: u64 = 0;
 
 fn faithful8_from_exact_lanes(lanes: [BabyBear; EXACT_SHIELDED_ROOT_LANES]) -> Faithful8 {
-    let mut bytes = [0u8; 32];
-    for (lane, felt) in lanes.iter().enumerate() {
-        bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
-    }
-    // These are already canonical permutation outputs, so `from_bytes32`
-    // recovers the same eight lanes exactly.
-    Faithful8::from_bytes32(&bytes)
+    dregg_circuit::exact_nullifier_aafi::exact_root_faithful8(lanes)
 }
 
 /// A stored accumulator entry: the entry's **append sequence** (`seq`) — the

@@ -668,6 +668,24 @@ pub fn exact_linked_append_root8(
     Ok(exact_linked_fold_root8(domains, &digests))
 }
 
+/// **THE ONE PLACE an exact-accumulator `root8` becomes a [`Faithful8`].**
+///
+/// Every lane returned by [`exact_linked_append_root8`] is an output lane of the arity-`n`
+/// `hash_many_8` permutation and therefore already canonical (`< p`), so the byte round-trip
+/// through [`Faithful8::from_bytes32`] recovers the same eight lanes exactly — the mod-`p`
+/// reduction that constructor warns about is the identity on this input.
+///
+/// This existed as four byte-identical private copies (`nullifier_set`, `commitment_set`,
+/// `revoked_set`, `shielded_note_set`); four bodies that agree today are four bodies that
+/// disagree later, so there is now one.
+pub fn exact_root_faithful8(lanes: Digest8) -> crate::Faithful8 {
+    let mut bytes = [0u8; 32];
+    for (lane, felt) in lanes.iter().enumerate() {
+        bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
+    crate::Faithful8::from_bytes32(&bytes)
+}
+
 /// The exact 13-felt `FNS3 || root8 || count_u16_le[4]` preimage.
 pub fn exact_state_preimage(root: Digest8, count: u64) -> Vec<BabyBear> {
     let mut input = Vec::with_capacity(13);

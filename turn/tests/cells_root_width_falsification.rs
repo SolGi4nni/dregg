@@ -27,16 +27,26 @@
 //! the price of the wound: `CellId::derive_raw` is BLAKE3 over attacker-chosen
 //! `(public_key, token_id)`, so candidate ids are ground entirely offline.
 //!
-//! ## What this does NOT close (read before citing it)
+//! ## What this closed, and what a SECOND commit closed after it
 //!
-//! The widening makes the ROOT faithful at every intermediate (`HeapLeaf::digest8` leaves,
-//! `heap_node8` nodes — no ~31-bit waist anywhere in the fold, so this is not
-//! `finalSqueezeOnly_still_conflates`). It does NOT widen the tree's KEYS: a leaf address is
-//! `heap_addr(CELLS_COLLECTION, hash_bytes(id))`, one felt per 32-byte `CellId`. Two ids whose key
-//! folds collide give literally the SAME leaf at ANY root width — that is the accumulator-KEY class
-//! (kind D: #5/#9/#11/#20), which rides the `MapOp` key epoch. The search below therefore REFUSES a
-//! candidate whose key collides with the anchor cell's, so the fixture is a genuine root collision
-//! over distinct leaf sets and not a disguised key collision.
+//! The widening makes the ROOT faithful at every intermediate (no ~31-bit waist anywhere in the
+//! fold, so this is not `finalSqueezeOnly_still_conflates`). It did NOT widen the tree's KEYS: a
+//! leaf address was `heap_addr(CELLS_COLLECTION, hash_bytes(id))`, one felt per 32-byte `CellId`,
+//! so two ids whose key folds collided gave literally the SAME leaf at ANY root width — the
+//! accumulator-KEY class (kind D: #5/#9/#11/#20). The search below therefore REFUSES a candidate
+//! whose key collides with the anchor cell's, so the fixture here is a genuine ROOT collision over
+//! distinct leaf sets and not a disguised key collision.
+//!
+//! ⚑ **THAT KEY CLASS WAS CLOSED SEPARATELY ON 2026-08-01** — and it had become worse than a
+//! conflation in the meantime. Once `assert_addr_unique` began *refusing* a repeated address
+//! (2026-07-28, release-active) the one-felt key stopped conflating two ledgers and started
+//! *aborting* the anchor: ~2^15.5 offline folds plus two ordinary cell creations permanently
+//! halted every node's finality executor. `cells_root` is now the `FLI2` exact tagged-linked-leaf
+//! accumulator keyed by the id's sixteen `u16` limbs (`2^256`, injective). See
+//! `cells_root_key_collision_halt_tooth.rs` for the old-halts / new-survives exhibit.
+//!
+//! This file's own subject is UNAFFECTED by that: it prices the ROOT width against a legacy
+//! narrow-fold oracle it reconstructs locally, and both polarities still hold.
 
 use dregg_cell::commitment::{V9_NUM_PRE_LIMBS, V9RotationContext, compute_rotated_pre_limbs};
 use dregg_cell::{Cell, CellId, Ledger};
@@ -65,16 +75,21 @@ const AGENT_PK: [u8; 32] = [7u8; 32];
 /// PRE-FIX one-felt `cells_root` fold and are separated by the faithful 8-felt fold. Produced by
 /// [`search_cells_root_lane0_collision`]; the test below re-derives and re-checks both facts, so a
 /// stale fixture fails loudly rather than passing vacuously.
-/// Found 2026-07-24 after **7 323** offline narrow folds — no chain interaction, no proof, no
-/// signature, ~3 s in an unoptimized test build. (The analytic birthday price for a full 31-bit fold
-/// is ~2^16 samples; landing at 7.3k is either a lucky draw or a hint that the fold carried fewer
-/// than 31 effective bits. One sample proves neither — recorded as an observation, not a claim.)
+/// Regenerated 2026-08-01 after **27 369** offline narrow folds — no chain interaction, no proof,
+/// no signature, ~1 s in a release test build. (The analytic birthday price for a full 31-bit fold
+/// is ~2^15.5 ≈ 45k samples; 27k is an ordinary draw from that distribution. One sample is an
+/// observation, not a claim about the fold's effective width.)
+///
+/// ⚠ The previous fixture (4084 / 7322, narrow root 1 976 398 739) went stale when `hash_bytes`
+/// moved to the length-injective `bytes_to_lanes` preimage — the legacy oracle below keys on
+/// `hash_bytes`, so ANY change to it invalidates the seeds. That is what the FIXTURE STALE
+/// assertion is for; regenerate with the `#[ignore]`d search rather than weakening it.
 const COLLIDING_SEEDS: (u64, u64) = (SEED_A, SEED_B);
-const SEED_A: u64 = 4084;
-const SEED_B: u64 = 7322;
+const SEED_A: u64 = 3678;
+const SEED_B: u64 = 27368;
 /// The narrow-fold value both present-cell sets landed on — pinned so a fixture that silently stops
 /// colliding is a loud failure rather than a passing test over a non-collision.
-const COLLIDING_NARROW_ROOT: u32 = 1_976_398_739;
+const COLLIDING_NARROW_ROOT: u32 = 187_521_109;
 
 /// A cell built from a `u64` seed in the fixed token domain.
 fn seeded_cell(seed: u64) -> Cell {

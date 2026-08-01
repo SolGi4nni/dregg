@@ -488,45 +488,6 @@ impl PersistentStore {
     /// (`Emit/LexCompare8Emit.lean`, `Emit/HeapLeafWideEmit.lean`,
     /// `Circuit/MapAbsentImtGateWide.lean`). It is NOT fixed here.
     ///
-    /// # Epoch 18 — the present-cell-set KEY (2026-08-01)
-    ///
-    /// `turn::rotation_witness::cells_root` stopped keying present-cell existence leaves by
-    /// `heap_addr(CELLS_COLLECTION, hash_bytes(id))` — ONE ~30.9-bit BabyBear felt per 32-byte
-    /// `CellId` — and became the exact tagged-linked-leaf accumulator its four siblings already
-    /// were (`FLI2`/`FLN2`/`FLE2`, depth 16, arity 4, eight lanes), keyed by the id's sixteen
-    /// little-endian `u16` limbs: `2^256` **on the nose**, injective, nothing reduced.
-    ///
-    /// **WHY, and it was not a width nit.** `assert_addr_unique` (release-active since
-    /// 2026-07-28) *panics* on a repeated address rather than silently deduping. Correct — a
-    /// dedup makes a cell's removal invisible to the anchor — but shipping it over a key an
-    /// attacker can collide converted a silent double-spend into a **$0 permanent consensus
-    /// halt**: `CellId::derive_raw` is BLAKE3 over an attacker-chosen `(public_key, token_id)`,
-    /// `Effect::CreateCell` checks only `balance == 0` (no possession check, no token registry,
-    /// no rate limit — `token_id` alone is a free grinding domain), and `cells_root` is on the
-    /// unconditional per-turn anchor path. ~2^15.5 offline folds plus two ordinary cell creations
-    /// panicked every node's finality executor into `FatalIntegrity`, block unacknowledged,
-    /// deterministically, across restarts. An injective key makes the refusal UNREACHABLE
-    /// instead of merely fail-closed.
-    ///
-    /// **WHAT MUST BE RE-GENESISED AT 18:** every persisted `pre_state_hash` / `post_state_hash`
-    /// and every stored `TurnReceipt` carrying them — the cells-root group is limb 0 ‖ 169..=175
-    /// of the rotated block, so the anchor value moves on EVERY turn, including turns that create
-    /// no cell. Executor signatures and federation receipt QCs over those anchors do not
-    /// re-verify and are not migrated.
-    ///
-    /// **WHAT DOES *NOT* MOVE:** no VK rotates and no descriptor is re-emitted. Nothing in any
-    /// circuit recomputes this key — the rotated trace generator overwrites the whole cells group
-    /// with its own in-circuit accounts tree (which production always feeds `before_accounts =
-    /// &[]`), and no verifier opens `cells_root`. The wide object was already Lean-proved and
-    /// already on disk; this epoch REGISTERS a consumer of it, exactly as
-    /// `Circuit/MapOpWideKeyPigeonhole.lean` says the kind-D residual requires.
-    ///
-    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE.** The per-cell heap tree (`CellState::heap_map`,
-    /// rotated limb 28) still addresses by the one-felt `heap_addr`, and so does the wasm
-    /// light-client `verify_slot_opening` that recomputes it. That tree IS opened in-circuit
-    /// (`heapWriteVmDescriptor2R24` recomputes `heap_addr` in-row), so widening it is a VK
-    /// rotation and a descriptor re-emit — a different lane from this one.
-    ///
     /// # Epoch 19 — `hash_bytes`' PREIMAGE became injective (2026-08-01)
     ///
     /// `dregg_circuit::poseidon2::hash_bytes` was `hash_many(BabyBear::from_bytes_packed(data))`,
@@ -580,7 +541,46 @@ impl PersistentStore {
     /// collision in a 31-bit codomain. Its fix is the `HeapLeaf` `addr`/`value` widening and the
     /// `MapOp` value width in the emitted AIR (a constraint change), owned by that campaign.
     /// `poseidon2::hash_bytes_8` is the 8-felt companion (`2^123.63`) for sinks that can take it.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 19;
+    /// # Epoch 20 — the present-cell-set KEY (2026-08-01)
+    ///
+    /// `turn::rotation_witness::cells_root` stopped keying present-cell existence leaves by
+    /// `heap_addr(CELLS_COLLECTION, hash_bytes(id))` — ONE ~30.9-bit BabyBear felt per 32-byte
+    /// `CellId` — and became the exact tagged-linked-leaf accumulator its four siblings already
+    /// were (`FLI2`/`FLN2`/`FLE2`, depth 16, arity 4, eight lanes), keyed by the id's sixteen
+    /// little-endian `u16` limbs: `2^256` **on the nose**, injective, nothing reduced.
+    ///
+    /// **WHY, and it was not a width nit.** `assert_addr_unique` (release-active since
+    /// 2026-07-28) *panics* on a repeated address rather than silently deduping. Correct — a
+    /// dedup makes a cell's removal invisible to the anchor — but shipping it over a key an
+    /// attacker can collide converted a silent double-spend into a **$0 permanent consensus
+    /// halt**: `CellId::derive_raw` is BLAKE3 over an attacker-chosen `(public_key, token_id)`,
+    /// `Effect::CreateCell` checks only `balance == 0` (no possession check, no token registry,
+    /// no rate limit — `token_id` alone is a free grinding domain), and `cells_root` is on the
+    /// unconditional per-turn anchor path. ~2^15.5 offline folds plus two ordinary cell creations
+    /// panicked every node's finality executor into `FatalIntegrity`, block unacknowledged,
+    /// deterministically, across restarts. An injective key makes the refusal UNREACHABLE
+    /// instead of merely fail-closed.
+    ///
+    /// **WHAT MUST BE RE-GENESISED AT 20:** every persisted `pre_state_hash` / `post_state_hash`
+    /// and every stored `TurnReceipt` carrying them — the cells-root group is limb 0 ‖ 169..=175
+    /// of the rotated block, so the anchor value moves on EVERY turn, including turns that create
+    /// no cell. Executor signatures and federation receipt QCs over those anchors do not
+    /// re-verify and are not migrated.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no VK rotates and no descriptor is re-emitted. Nothing in any
+    /// circuit recomputes this key — the rotated trace generator overwrites the whole cells group
+    /// with its own in-circuit accounts tree (which production always feeds `before_accounts =
+    /// &[]`), and no verifier opens `cells_root`. The wide object was already Lean-proved and
+    /// already on disk; this epoch REGISTERS a consumer of it, exactly as
+    /// `Circuit/MapOpWideKeyPigeonhole.lean` says the kind-D residual requires.
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE.** The per-cell heap tree (`CellState::heap_map`,
+    /// rotated limb 28) still addresses by the one-felt `heap_addr`, and so does the wasm
+    /// light-client `verify_slot_opening` that recomputes it. That tree IS opened in-circuit
+    /// (`heapWriteVmDescriptor2R24` recomputes `heap_addr` in-row), so widening it is a VK
+    /// rotation and a descriptor re-emit — a different lane from this one.
+    ///
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 20;
 
     /// Open a persistent store backed by a file on disk.
     ///

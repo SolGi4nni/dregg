@@ -306,11 +306,7 @@ impl RevokedSet {
             "the revoked map's keys are unique by construction and its length is bounded by the \
              4^16 tree capacity",
         );
-        let mut bytes = [0u8; 32];
-        for (lane, felt) in lanes.iter().enumerate() {
-            bytes[lane * 4..lane * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
-        }
-        Faithful8::from_bytes32(&bytes)
+        dregg_circuit::exact_nullifier_aafi::exact_root_faithful8(lanes)
     }
 }
 

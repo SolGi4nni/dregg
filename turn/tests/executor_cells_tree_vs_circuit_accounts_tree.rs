@@ -11,13 +11,21 @@
 //! `pre_state_hash`/`post_state_hash` the executor signs and the federation receipt QC aggregates):
 //!
 //! ```text
-//! for (id, _) in ledger.iter() {
-//!     entries.push(((BabyBear::new(CELLS_COLLECTION), hash_bytes(id.as_bytes())), BabyBear::ONE));
-//! }
-//! compute_canonical_heap_root_8_entries(&entries)
-//!   // leaf = HeapLeaf::entry(heap_addr(CELLS_COLLECTION, hash_bytes(id)), 1)
-//!   // tree = CanonicalHeapTree8::new(..)  — sort by addr, dedup, relink, sorted-compact rebuild
+//! let mut ids: Vec<[u8; 32]> = ledger.iter().map(|(id, _)| *id.as_bytes()).collect();
+//! ids.sort_unstable_by_key(|raw| ExactTaggedKey::from_raw(*raw));
+//! exact_linked_append_root8(EXACT_CELLS_LINKED_DOMAINS, &ids.map(|raw| (raw, 1)))
+//!   // leaf = FLI2 ‖ addr17 ‖ value4 ‖ next17   — the id as SIXTEEN u16 limbs (2^256, injective)
+//!   // tree = exact tagged-linked-leaf, depth 16, arity 4, eight lanes
 //! ```
+//!
+//! ⚑ **THE DIVERGENCE GOT WIDER ON 2026-08-01, it did not close.** The executor side used to be
+//! `entry(heap_addr(CELLS_COLLECTION, hash_bytes(id)), 1)` folded by `CanonicalHeapTree8` — the
+//! same TYPE as the circuit's accounts tree under a different key domain. Its one-felt key was a
+//! $0 permanent consensus halt once `assert_addr_unique` began refusing collisions
+//! (`cells_root_key_collision_halt_tooth.rs`), so it is now an exact linked accumulator. The two
+//! objects are therefore no longer even the same kind of tree, and "thread the executor's real
+//! leaf set into the gate" is not merely ineffective (which test 3 showed) but unavailable —
+//! there is no `HeapLeaf` set to thread.
 //!
 //! **Circuit side** — `dregg_circuit::effect_vm::trace_rotated::
 //! generate_rotated_create_cell_trace_with_accounts_tree` (the limb-0 override the birth family's
@@ -44,12 +52,13 @@
 //!    commits on a birth turn is the SAME felts for two ledgers whose `cells_root` DIFFER, and is
 //!    not the producer's own committed `cells_root` group. The anchor's tree and the proof's tree
 //!    are not the same object under two encodings; the proof's is a free-floating prover object.
-//! 3. [`freshness_gate_admits_the_birth_of_an_ALREADY_PRESENT_cell`] — the `.absent` "no
+//! 3. [`freshness_gate_admits_the_birth_of_an_already_present_cell`] — the `.absent` "no
 //!    account-id collision" tooth admits a birth whose `CellId` is ALREADY in the ledger, both at
-//!    the deployed `before_accounts = &[]` and when the executor's REAL cells-tree leaf set is
+//!    the deployed `before_accounts = &[]` and when the RETIRED executor cells-tree leaf set is
 //!    threaded. The second half is the one that matters: the repair is NOT "thread the real leaf
-//!    set", because the key domains do not align — `heap_addr(CELLS, hash_bytes(id))` vs the raw
-//!    `create_hash[0]` param felt.
+//!    set", because the key domains never aligned — `heap_addr(CELLS, hash_bytes(id))` vs the raw
+//!    `create_hash[0]` param felt — and since the 2026-08-01 key widening there is no `HeapLeaf`
+//!    set on the executor side to thread at all.
 
 use dregg_cell::{Cell, CellId, Ledger};
 use dregg_circuit::effect_vm::layout_generated::CELLS_ROOT_GROUP;
@@ -58,17 +67,18 @@ use dregg_circuit::effect_vm::trace_rotated::{
     generate_rotated_create_cell_trace_with_accounts_tree,
 };
 use dregg_circuit::effect_vm::{CellState, Effect, bytes32_to_8_limbs};
-use dregg_circuit::field::BabyBear;
-use dregg_circuit::heap_root::{
-    CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf, compute_canonical_heap_root_8_entries, heap_addr,
+use dregg_circuit::exact_nullifier_aafi::{
+    ExactTaggedKey, exact_linked_append_root8, exact_root_faithful8,
 };
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf, heap_addr};
 use dregg_circuit::poseidon2::hash_bytes;
 use dregg_turn::rotation_witness as rw;
 
-/// The collection id present-cell existence leaves are keyed under — the value of the private
-/// `rotation_witness::CELLS_COLLECTION`, pinned by
-/// [`executor_cells_leaf_construction_is_the_deployed_one`].
-const CELLS_COLLECTION: u32 = 0;
+/// The value of the RETIRED private `rotation_witness::CELLS_COLLECTION`. It no longer keys
+/// anything the executor commits — it survives here only to reconstruct the retired leaf shape
+/// for test 3(b), which shows that even THAT leaf set did not repair the freshness gate.
+const RETIRED_CELLS_COLLECTION: u32 = 0;
 
 /// The token domain every cell here lives in.
 const TOKEN: [u8; 32] = [0u8; 32];
@@ -83,14 +93,20 @@ fn cell_from(pk: [u8; 32]) -> Cell {
     Cell::new(pk, TOKEN)
 }
 
-/// The executor's existence leaf for one present cell, spelled out from the deployed
-/// `cells_root` body. Pinned against the real producer below.
-fn executor_cells_leaves(ledger: &Ledger) -> Vec<HeapLeaf> {
+/// The RETIRED executor existence leaf for one present cell — `entry(heap_addr(CELLS_COLLECTION,
+/// hash_bytes(id)), 1)`, the shape `cells_root` folded until 2026-08-01. Reconstructed here (not
+/// read from the producer, which no longer builds `HeapLeaf`s at all) so test 3(b) stays runnable:
+/// its claim is that threading THIS leaf set into the freshness gate did not repair the encoding
+/// mismatch, and a claim about a retired shape needs the retired shape.
+fn retired_executor_cells_leaves(ledger: &Ledger) -> Vec<HeapLeaf> {
     ledger
         .iter()
         .map(|(id, _)| {
             HeapLeaf::entry(
-                heap_addr(BabyBear::new(CELLS_COLLECTION), hash_bytes(id.as_bytes())),
+                heap_addr(
+                    BabyBear::new(RETIRED_CELLS_COLLECTION),
+                    hash_bytes(id.as_bytes()),
+                ),
                 BabyBear::ONE,
             )
         })
@@ -149,37 +165,38 @@ fn trace_cells_group(row: &[BabyBear], base: usize) -> Vec<BabyBear> {
     CELLS_ROOT_GROUP.iter().map(|&p| row[base + p]).collect()
 }
 
-/// **THE QUOTE CHECK.** The leaf construction this file reasons about IS the deployed
-/// `rotation_witness::cells_root`: `entry(heap_addr(CELLS_COLLECTION, hash_bytes(id)), 1)` folded
-/// by `CanonicalHeapTree8`. Also pins `CELLS_COLLECTION == 0` (the constant is private).
+/// **THE QUOTE CHECK.** The construction this file reasons about IS the deployed
+/// `rotation_witness::cells_root`: the `FLI2`/`FLN2`/`FLE2` exact tagged-linked-leaf accumulator
+/// over the present-cell ids, sorted by canonical tagged key, each carrying the existence value 1.
 #[test]
 fn executor_cells_leaf_construction_is_the_deployed_one() {
     let mut ledger = Ledger::new();
     ledger.insert_cell(cell_from(AGENT_PK)).unwrap();
     ledger.insert_cell(cell_from(BORN_PK)).unwrap();
 
-    let rebuilt = CanonicalHeapTree8::new(executor_cells_leaves(&ledger), HEAP_TREE_DEPTH).root8();
-    assert_eq!(
-        rw::cells_root(&ledger).limbs(),
-        rebuilt,
-        "the executor's cells tree is entry(heap_addr(CELLS_COLLECTION=0, hash_bytes(id)), 1) \
-         folded by CanonicalHeapTree8 — if this fails the quote in this file's header is stale"
+    let mut ids: Vec<[u8; 32]> = ledger.iter().map(|(id, _)| *id.as_bytes()).collect();
+    ids.sort_unstable_by_key(|raw| ExactTaggedKey::from_raw(*raw));
+    let records: Vec<([u8; 32], u64)> = ids.into_iter().map(|raw| (raw, 1u64)).collect();
+    let rebuilt = exact_root_faithful8(
+        exact_linked_append_root8(rw::EXACT_CELLS_LINKED_DOMAINS, &records).expect("fold"),
     );
 
-    // And the same value through the raw-entries helper the producer actually calls.
-    let entries: Vec<((BabyBear, BabyBear), BabyBear)> = ledger
-        .iter()
-        .map(|(id, _)| {
-            (
-                (BabyBear::new(CELLS_COLLECTION), hash_bytes(id.as_bytes())),
-                BabyBear::ONE,
-            )
-        })
-        .collect();
     assert_eq!(
+        rw::cells_root(&ledger),
+        rebuilt,
+        "the executor's cells tree is the FLI2 exact linked accumulator over the tagged-key-sorted \
+         present-cell ids at existence value 1 — if this fails the quote in this file's header is \
+         stale"
+    );
+
+    // ANTI-VACUITY on the quote: the RETIRED heap construction must NOT reproduce it, or the
+    // assertion above would pass against either shape and pin neither.
+    let retired =
+        CanonicalHeapTree8::new(retired_executor_cells_leaves(&ledger), HEAP_TREE_DEPTH).root8();
+    assert_ne!(
         rw::cells_root(&ledger).limbs(),
-        compute_canonical_heap_root_8_entries(&entries).limbs(),
-        "cells_root == compute_canonical_heap_root_8_entries over the existence entries"
+        retired,
+        "the deployed producer must NOT still be the retired one-felt-key heap fold"
     );
 }
 
@@ -297,10 +314,10 @@ fn freshness_gate_admits_the_birth_of_an_already_present_cell() {
     // (b) THREADING THE REAL LEAF SET DOES NOT REPAIR IT. The executor's cells tree keys on
     //     `heap_addr(CELLS, hash_bytes(id))`; the gate's key is the raw `create_hash[0]` param
     //     felt. The present cell's leaf is invisible to `position_of(cell_key)`.
-    let real_leaves = executor_cells_leaves(&ledger);
+    let real_leaves = retired_executor_cells_leaves(&ledger);
     let real_tree = CanonicalHeapTree8::new(real_leaves.clone(), HEAP_TREE_DEPTH);
     let executor_addr = heap_addr(
-        BabyBear::new(CELLS_COLLECTION),
+        BabyBear::new(RETIRED_CELLS_COLLECTION),
         hash_bytes(born_id.as_bytes()),
     );
     assert!(

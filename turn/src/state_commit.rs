@@ -170,18 +170,24 @@ pub fn consensus_ctx(
 /// #23 that "still MOVES" holds at ~124 bits: before the completion group was
 /// filled, the entire absent anchor was a chip chain over ONE ~31-bit felt.
 ///
-/// ⚑ "STILL MOVES" IS FALSE FOR A COLLIDING PAIR, and the width fix does not
-/// reach it. `cells_root` keys each cell by `heap_addr(CELLS_COLLECTION,
-/// hash_bytes(id))` — ONE ~31-bit felt (`rotation_witness.rs:311`, and see the
-/// ⚑ on that fn) — and `compute_canonical_heap_root_8` DEDUPES leaves by that
-/// address (`circuit/src/heap_root.rs:832`, `leaves.dedup_by_key(|l|
-/// l.addr.as_u32())`), silently, with no error. So two cells whose key folds
-/// collide occupy ONE leaf: removing either one leaves the root UNCHANGED, and
-/// the removal IS a fixed point of the anchor. `CellId::derive_raw` is BLAKE3
-/// over attacker-chosen `(public_key, token_id)`, so a targeted second preimage
-/// against a chosen victim cell is a ~2^31 offline grind. The ~124-bit claim
-/// prices the root's WIDTH; it does not price the KEY, and the key is what
-/// decides whether a cell is in the set at all.
+/// ⚑ "STILL MOVES" HOLDS FOR EVERY PAIR since 2026-08-01, and it did not before.
+/// The note that stood here described TWO successive shapes and by the end was
+/// wrong about both, so it is worth stating what actually happened.
+///
+/// `cells_root` used to key each cell by `heap_addr(CELLS_COLLECTION,
+/// hash_bytes(id))` — ONE ~30.9-bit felt per 32-byte `CellId`. This doc then said
+/// `compute_canonical_heap_root_8` "DEDUPES leaves by that address, silently,
+/// with no error", concluding that a colliding cell's removal was a fixed point
+/// of the anchor. That dedup was DELETED on 2026-07-28 and replaced by
+/// `heap_root::assert_addr_unique`, a release-active panic — so from that day the
+/// consequence was not a silent soundness loss but a **hard liveness kill**:
+/// ~2^15.5 offline `CellId::derive_raw` folds plus two ordinary `CreateCell`
+/// effects panicked this function on the per-turn anchor path, permanently, on
+/// every node. Both readings are now retired: the key is the sixteen-`u16`
+/// injective encoding (`2^256` on the nose), so no two distinct cells can share a
+/// leaf, the removal of ANY cell moves the anchor, and the refusal is unreachable
+/// rather than merely fail-closed. See the ⚑ on `rotation_witness::cells_root`
+/// for the derivation and the flag day.
 pub fn consensus_state_commitment(
     ledger: &Ledger,
     agent: &CellId,
