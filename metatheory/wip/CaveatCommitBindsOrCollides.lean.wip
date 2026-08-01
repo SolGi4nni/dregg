@@ -1,0 +1,227 @@
+/-
+# `Dregg2.Circuit.Emit.CaveatCommitBindsOrCollides` — the caveat / DFA-route commitment, FLOOR-FREE.
+
+⚑ SITE 2 (caveat leg) of the light-client soundness-weld de-vacuuming (2026-07-31, following the
+`WireCommitBindsOrCollides` before-block work of `4ef5fb288`).
+
+`EffectVmEmitRotationCaveat.{caveatCommit,caveatCommitRc}_binds` bind the caveat manifest (and the
+appended DFA route-commitment carrier) under `Poseidon2SpongeCR hash`, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear width —
+so `rotV3_caveat_binds_manifest_and_rc` and the caveat leg of `rotV3_binds_published` were, like the
+before/after blocks before them, true-but-empty at deployment. The whole caveat leg was the ONE half
+of the wire-commit `_binds_or_collides` port that had NO floor-free analog anywhere in the tree (the
+1-felt `chainCommit`, the tail-LESS sibling of `wireCommitR`, had none — `wireCommitR8_binds_or_collides`
+is the WIDE carrier, not this chain).
+
+This module rebuilds the caveat bindings WITHOUT the floor, by the SAME `chainCollFind1` idiom the
+before block received (`WireCommitBindsOrCollides.wireCommitR_binds_or_collides`): the chain walk
+LOCATES the colliding sponge step as a TOTAL function, so an equivocation on the caveat commitment
+either FORCES the manifest (and the rc carrier) equal, or HANDS BACK the two distinct lists at which
+the deployed sponge actually collides (`Poseidon2Binding.SpongeColl`). No hypothesis on `hash`.
+
+`chainCommit` is `wireCommitR` MINUS the iroot tail: `chainFrom hash (hash (l.take 4)) (chunk31 (l.drop 4))`.
+So the extractor is `wireCommitRFind` with the snoc'd `[[ir]]` site removed — the `chainCollFind1` walk
+is already stated over an arbitrary chunk list, so it is REUSED verbatim; only the head-fallback and the
+chunk list change.
+
+BOTH POLARITIES, FLOOR-FREE (no `Function.Injective hash`, which is the refuted CR floor inj-spelled —
+`#floor_ratchet`'s `inj-spelled` class gates it): a forged manifest/rc that publishes the same caveat
+commit is refused UNLESS a genuine `SpongeColl` is exhibited (`*_forgery_exhibits_collision`), and on
+AGREEING claims the residual is FALSE (`*_refutable_on_agreement`), so the disjunction is not a free `True`.
+
+Discipline: sorry-free; total functions only (`Decidable` branch, no `Classical.choice`); no BabyBear
+arithmetic computed; the whole proof is the `wireCommitR_binds_or_collides` peel with the iroot site
+removed and the manifest/rc structural injectivity (`RotCaveatManifest.toList_injective`, `chunk31`
+flatten) resolving the equal-lists branch.
+-/
+import Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
+import Dregg2.Circuit.Emit.WireCommitBindsOrCollides
+
+namespace Dregg2.Circuit.Emit.CaveatCommitBindsOrCollides
+
+open Dregg2.Circuit.Emit.EffectVmEmitRotationR (chainFrom chunk31 chunk31_length chunk31_flatten)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationCaveat
+  (chainCommit caveatCommit caveatCommitRc RotCaveatManifest)
+open Dregg2.Circuit.Emit.WireCommitBindsOrCollides (chainCollFind1 chainCollFind1_spec chainCollFind1_diag)
+open Dregg2.Circuit.Poseidon2Binding (SpongeColl)
+
+set_option autoImplicit false
+
+/-! ## §1 — `chainCommit` (the tail-less 1-felt chain): LOCATE the colliding step, floor-free. -/
+
+/-- **⚑ THE `chainCommit` EXTRACTOR.** Run the chain walk over the two head+body decompositions
+(`head = hash (l.take 4)`, body `= chunk31 (l.drop 4)` — NO iroot tail). If the walk found a genuine
+collision, that is the answer; otherwise it proved the seeds and chunks agree, which — given the lists
+DIFFER — forces the collision to be at the 4-wide HEAD, so return the two head blocks. -/
+def chainCommitFind (hash : List ℤ → ℤ) (l l' : List ℤ) : List ℤ × List ℤ :=
+  let r := chainCollFind1 hash (hash (l.take 4)) (chunk31 (l.drop 4))
+    (hash (l'.take 4)) (chunk31 (l'.drop 4))
+  if SpongeColl hash r then r else (l.take 4, l'.take 4)
+
+/-- **`ChainColl hash l l'`** — the pair the extractor RETURNS on this equivocation is a genuine
+collision of the deployed sponge. The named disjunct the caveat consumers carry in place of the floor. -/
+def ChainColl (hash : List ℤ → ℤ) (l l' : List ℤ) : Prop :=
+  SpongeColl hash (chainCommitFind hash l l')
+
+/-- **⚑ THE EXTRACTOR IS CORRECT.** Two DISTINCT equal-length limb lists with the SAME `chainCommit`
+produce two DISTINCT lists with the SAME `hash` digest. -/
+theorem chainCommitFind_spec (hash : List ℤ → ℤ)
+    {l l' : List ℤ} (hlen : l.length = l'.length) (hne : l ≠ l')
+    (h : chainCommit hash l = chainCommit hash l') :
+    ChainColl hash l l' := by
+  unfold chainCommit at h
+  by_cases hif : SpongeColl hash (chainCollFind1 hash (hash (l.take 4)) (chunk31 (l.drop 4))
+      (hash (l'.take 4)) (chunk31 (l'.drop 4)))
+  · show SpongeColl hash (chainCommitFind hash l l')
+    rw [chainCommitFind, if_pos hif]
+    exact hif
+  · show SpongeColl hash (chainCommitFind hash l l')
+    rw [chainCommitFind, if_neg hif]
+    have hclen : (chunk31 (l.drop 4)).length = (chunk31 (l'.drop 4)).length := by
+      rw [chunk31_length, chunk31_length, List.length_drop, List.length_drop, hlen]
+    rcases chainCollFind1_spec hash hclen h with ⟨_hseed, hcs⟩ | hcoll
+    · -- the walk found nothing: seeds AND chunk lists agree, so the break is at the HEAD.
+      have hdrop : l.drop 4 = l'.drop 4 := by
+        have := congrArg List.flatten hcs
+        rwa [chunk31_flatten, chunk31_flatten] at this
+      refine ⟨fun htake => hne ?_, _hseed⟩
+      rw [← List.take_append_drop 4 l, ← List.take_append_drop 4 l', htake, hdrop]
+    · exact absurd hcoll hif
+
+/-- **★ THE `chainCommit` KEYSTONE — UNCONDITIONAL** (the false floor REMOVED): equal chained
+commits over equal-length limb lists EITHER force equal lists, OR exhibit a genuine sponge collision
+at the two lists `chainCommitFind` returns. -/
+theorem chainCommit_binds_or_collides (hash : List ℤ → ℤ)
+    {l l' : List ℤ} (hlen : l.length = l'.length)
+    (h : chainCommit hash l = chainCommit hash l') :
+    l = l' ∨ ChainColl hash l l' := by
+  by_cases hne : l = l'
+  · exact Or.inl hne
+  · exact Or.inr (chainCommitFind_spec hash hlen hne h)
+
+/-- On IDENTICAL inputs the extractor returns a diagonal pair, which is NOT a `SpongeColl`
+(it demands DISTINCT elements): `ChainColl hash l l` is FALSE at every hash. Floor-free canary — the
+collision disjunct cannot discharge itself for free. -/
+theorem chainCommitColl_refutable_on_agreement (hash : List ℤ → ℤ) (l : List ℤ) :
+    ¬ ChainColl hash l l := by
+  unfold ChainColl chainCommitFind
+  by_cases hc : SpongeColl hash (chainCollFind1 hash (hash (l.take 4)) (chunk31 (l.drop 4))
+      (hash (l.take 4)) (chunk31 (l.drop 4)))
+  · exact absurd (chainCollFind1_diag hash _ _) hc.1
+  · rw [if_neg hc]
+    rintro ⟨hne, _⟩
+    exact hne rfl
+
+/-! ## §2 — the caveat MANIFEST commitment, floor-free. -/
+
+/-- **`CaveatColl hash m m'`** — the manifest equivocation's residual: a genuine sponge collision at
+the manifests' `toList` decompositions. -/
+def CaveatColl (hash : List ℤ → ℤ) (m m' : RotCaveatManifest) : Prop :=
+  ChainColl hash m.toList m'.toList
+
+/-- **THE FLOOR-FREE CAVEAT KEYSTONE** — equal caveat commits EITHER force equal manifests (every
+entry's type tag, DOMAIN TAG, KEY, params, and the count bound), OR exhibit a genuine sponge collision.
+The `caveatCommit_binds` conclusion, with the refuted `Poseidon2SpongeCR` swapped for the named
+`CaveatColl` residual in the disjunction. -/
+theorem caveatCommit_binds_or_collides (hash : List ℤ → ℤ)
+    {m m' : RotCaveatManifest}
+    (h : caveatCommit hash m = caveatCommit hash m') :
+    m = m' ∨ CaveatColl hash m m' := by
+  have hlen : m.toList.length = m'.toList.length :=
+    (m.toList_length).trans (m'.toList_length).symm
+  rcases chainCommit_binds_or_collides hash hlen h with hlist | hcoll
+  · exact Or.inl (RotCaveatManifest.toList_injective hlist)
+  · exact Or.inr hcoll
+
+/-- **FORGED POLE, FLOOR-FREE.** A forged manifest publishing the same caveat commit on a DIFFERENT
+manifest HANDS BACK a genuine sponge collision — refused unless a real `SpongeColl` is exhibited. -/
+theorem caveatCommit_forgery_exhibits_collision (hash : List ℤ → ℤ)
+    {m m' : RotCaveatManifest} (hne : m ≠ m')
+    (h : caveatCommit hash m = caveatCommit hash m') :
+    CaveatColl hash m m' :=
+  (caveatCommit_binds_or_collides hash h).resolve_left hne
+
+/-- REFUTABILITY CANARY — on AGREEING manifests the residual is FALSE. -/
+theorem caveatCommitColl_refutable_on_agreement (hash : List ℤ → ℤ) (m : RotCaveatManifest) :
+    ¬ CaveatColl hash m m :=
+  chainCommitColl_refutable_on_agreement hash m.toList
+
+/-! ## §3 — the EXTENDED caveat + DFA-route commitment (`caveatCommitRc`), floor-free.
+
+`caveatCommitRc hash m rc = chainFrom hash (caveatCommit hash m) (chunk31 rc)` — the manifest fold,
+then the 4-felt DFA route-commitment carrier absorbed by the same `chunk31` chunking. Two nesting
+levels: the rc-chunk walk sits ON TOP of the manifest commitment as its seed. The residual is a nested
+disjunction — a collision inside the rc walk, or (its seed agreeing) the manifest-level `CaveatColl`. -/
+
+/-- **⚑ THE `caveatCommitRc` EXTRACTOR.** Walk the rc chunks with the two caveat commits as seeds; if
+that finds a collision, return it, else fall back to the manifest-level `chainCommitFind` (the seed
+equivocation lives in the manifest chain). -/
+def caveatRcFind (hash : List ℤ → ℤ) (m m' : RotCaveatManifest) (rc rc' : List ℤ) : List ℤ × List ℤ :=
+  let r := chainCollFind1 hash (caveatCommit hash m) (chunk31 rc) (caveatCommit hash m') (chunk31 rc')
+  if SpongeColl hash r then r else chainCommitFind hash m.toList m'.toList
+
+/-- **`CaveatRcColl hash m m' rc rc'`** — the extended equivocation's residual. -/
+def CaveatRcColl (hash : List ℤ → ℤ) (m m' : RotCaveatManifest) (rc rc' : List ℤ) : Prop :=
+  SpongeColl hash (caveatRcFind hash m m' rc rc')
+
+/-- **THE FLOOR-FREE rc KEYSTONE** — equal EXTENDED caveat commits (equal-length rc carriers) EITHER
+force equal manifests AND equal route-commitment carriers, OR exhibit a genuine sponge collision. This
+is the move-both anti-ghost tooth (`caveatCommitRc_binds`) with the refuted floor swapped for the named
+`CaveatRcColl` residual. -/
+theorem caveatCommitRc_binds_or_collides (hash : List ℤ → ℤ)
+    {m m' : RotCaveatManifest} {rc rc' : List ℤ} (hlen : rc.length = rc'.length)
+    (h : caveatCommitRc hash m rc = caveatCommitRc hash m' rc') :
+    (m = m' ∧ rc = rc') ∨ CaveatRcColl hash m m' rc rc' := by
+  unfold caveatCommitRc at h
+  by_cases hif : SpongeColl hash (chainCollFind1 hash (caveatCommit hash m) (chunk31 rc)
+      (caveatCommit hash m') (chunk31 rc'))
+  · refine Or.inr ?_
+    show SpongeColl hash (caveatRcFind hash m m' rc rc')
+    rw [caveatRcFind, if_pos hif]
+    exact hif
+  · have hclen : (chunk31 rc).length = (chunk31 rc').length := by
+      rw [chunk31_length, chunk31_length, hlen]
+    rcases chainCollFind1_spec hash hclen h with ⟨hseed, hcs⟩ | hcoll
+    · -- the rc walk found nothing: seeds (the caveat commits) agree, chunk lists agree.
+      have hrc : rc = rc' := by
+        have := congrArg List.flatten hcs
+        rwa [chunk31_flatten, chunk31_flatten] at this
+      rcases caveatCommit_binds_or_collides hash hseed with hm | hmcoll
+      · exact Or.inl ⟨hm, hrc⟩
+      · refine Or.inr ?_
+        show SpongeColl hash (caveatRcFind hash m m' rc rc')
+        rw [caveatRcFind, if_neg hif]
+        exact hmcoll
+    · exact absurd hcoll hif
+
+/-- **FORGED POLE, FLOOR-FREE.** A move-both adversary (rc carrier AND manifest moved together)
+publishing the same extended commit hands back a genuine sponge collision. -/
+theorem caveatCommitRc_forgery_exhibits_collision (hash : List ℤ → ℤ)
+    {m m' : RotCaveatManifest} {rc rc' : List ℤ} (hlen : rc.length = rc'.length)
+    (hne : ¬ (m = m' ∧ rc = rc'))
+    (h : caveatCommitRc hash m rc = caveatCommitRc hash m' rc') :
+    CaveatRcColl hash m m' rc rc' :=
+  (caveatCommitRc_binds_or_collides hash hlen h).resolve_left hne
+
+/-- REFUTABILITY CANARY — on AGREEING (manifest, rc) claims the residual is FALSE. -/
+theorem caveatCommitRcColl_refutable_on_agreement (hash : List ℤ → ℤ)
+    (m : RotCaveatManifest) (rc : List ℤ) :
+    ¬ CaveatRcColl hash m m rc rc := by
+  unfold CaveatRcColl caveatRcFind
+  by_cases hc : SpongeColl hash (chainCollFind1 hash (caveatCommit hash m) (chunk31 rc)
+      (caveatCommit hash m) (chunk31 rc))
+  · exact absurd (chainCollFind1_diag hash _ _) hc.1
+  · rw [if_neg hc]
+    exact chainCommitColl_refutable_on_agreement hash m.toList
+
+#assert_axioms chainCommitFind_spec
+#assert_axioms chainCommit_binds_or_collides
+#assert_axioms chainCommitColl_refutable_on_agreement
+#assert_axioms caveatCommit_binds_or_collides
+#assert_axioms caveatCommit_forgery_exhibits_collision
+#assert_axioms caveatCommitColl_refutable_on_agreement
+#assert_axioms caveatCommitRc_binds_or_collides
+#assert_axioms caveatCommitRc_forgery_exhibits_collision
+#assert_axioms caveatCommitRcColl_refutable_on_agreement
+
+end Dregg2.Circuit.Emit.CaveatCommitBindsOrCollides
