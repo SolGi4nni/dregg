@@ -1,8 +1,12 @@
 # The Faithful-Commitment Law
 
 **Every 32-byte component that flows into the deployed state commitment binds its
-SOURCE at the system's own soundness strength (~124-bit, the 8-felt encoding) —
-never a lossy 1-felt projection.**
+SOURCE at the system's own soundness strength — never a lossy 1-felt projection.**
+
+⚠ That strength is **`2^123.63` of COLLISION** (`8 · log₂ p / 2`, the birthday bound over a full
+8-lane image), not the `2^247.26` image size. This headline read "~124-bit, the 8-felt encoding"
+for its whole life without saying which of the two it meant, and the ambiguity is load-bearing —
+see *THE FLOOR, WITH THE BOUND NAMED* below, and the `2^120` object it let through.
 
 ## Why this is a law, not a preference
 
