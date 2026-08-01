@@ -1029,6 +1029,15 @@ pub struct DeosDesktop {
     /// interpolated into prose. Owned by the desktop (not per-window): the docuverse is
     /// the image's addressing surface, and closing a document does not un-publish a cell.
     docuverse: crate::docuverse::Docuverse,
+    /// **THE COMPOSITIONS** — per document cell, the hand-authored composition of LIVE
+    /// cells ([`crate::document_composer::LiveComposition`]): a real
+    /// `dregg_doc::composition::LayoutGraph` of embed-atoms + order-edges, every embed
+    /// admitted by the same ledger gate the docuverse runs. The compose gestures
+    /// ([`Self::compose_embed`] and friends) drive it and commit the rendered block into
+    /// the document cell's umem heap, so a composition is a fact on the ledger rather
+    /// than window state. Keyed by the HOST document cell (not the window), so the
+    /// composition survives closing and reopening the editor.
+    compositions: HashMap<CellId, crate::document_composer::LiveComposition>,
 }
 
 /// The paint-time per-cell receipt index behind [`DeosDesktop::receipt_index`].
@@ -1223,6 +1232,7 @@ impl DeosDesktop {
             receipt_index: RefCell::new(ReceiptIndexCache::default()),
             prov_walker_rows: RefCell::new(None),
             docuverse: crate::docuverse::Docuverse::new(),
+            compositions: HashMap::new(),
         };
         // Re-open any windows the persisted layout remembers (spatial persistence
         // for windows, not just icons — and now for window TYPE too).
@@ -2524,6 +2534,169 @@ impl DeosDesktop {
                 id_short(&into)
             ));
         }
+    }
+
+    // ── COMPOSE A DOCUMENT *FROM CELLS* (hyperdreggmedia authoring surface #7) ──
+    //
+    // The four composition gestures over
+    // [`crate::document_composer::LiveComposition`]: add an embed, place one at a
+    // fork, reorder, re-role, remove. Each is a real `dregg_doc::composition` patch on
+    // the document cell's layout, and each lands through the SAME seam
+    // [`Self::transclude_into`] uses — the composed block is spliced into the document
+    // prose, committed into the cell's umem heap, and the document's revision is bumped
+    // by a verified `SetField` turn. A refusal writes NOTHING.
+
+    /// **Land a composition gesture.** `apply` runs against `host`'s live composition
+    /// (with the live World in hand for the ledger gate); on `Ok` the freshly-rendered
+    /// block is spliced into the document prose, committed to the cell's umem heap, and
+    /// the revision bumped — one receipted turn per gesture. On `Err` NOTHING is
+    /// written and the refusal is narrated. Returns whether the gesture landed.
+    ///
+    /// The block is RE-RENDERED and spliced rather than appended: a reorder or a remove
+    /// changes the whole reading, and a stale block beside the live one would be exactly
+    /// the "two shapes that disagree later" this surface exists to avoid.
+    fn compose_gesture(
+        &mut self,
+        host: CellId,
+        what: &str,
+        apply: impl FnOnce(
+            &mut crate::document_composer::LiveComposition,
+            &crate::world::World,
+        ) -> Result<
+            crate::document_composer::Receipt,
+            crate::document_composer::EmbedRefusal,
+        >,
+    ) -> bool {
+        // (0) There must be an open document to compose INTO — checked first so a
+        //     refusal below cannot be confused with "no document here".
+        if !self.windows.contains_key(&(host, WinKindTag::DocEditor)) {
+            self.say(format!(
+                "COMPOSE: no open Document on {} — Open as Document first.",
+                id_short(&host)
+            ));
+            return false;
+        }
+
+        // (1) THE GESTURE, against the live World (cloned as an `Rc` handle first so the
+        //     ledger read and `&mut self.compositions` are not two borrows of `self`).
+        let world_handle = self.world.clone();
+        let author = self.author;
+        let outcome = {
+            let world = world_handle.borrow();
+            let comp = self
+                .compositions
+                .entry(host)
+                .or_insert_with(|| crate::document_composer::LiveComposition::new(host, author));
+            apply(comp, &world)
+        };
+        let receipt = match outcome {
+            Ok(r) => r,
+            Err(refusal) => {
+                // NOTHING is written: no layout patch survives, no prose splice, no heap
+                // commit, no revision turn. The document is byte-identical.
+                self.say(refusal.narration());
+                return false;
+            }
+        };
+
+        // (2) THE COMMITTED PROJECTION — splice the re-rendered block into the prose.
+        let block = self
+            .compositions
+            .get(&host)
+            .map(|c| c.block())
+            .unwrap_or_default();
+        let mut graph = None;
+        let mut spliced = false;
+        if let Some(ws) = self.windows.get_mut(&(host, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor { doc, buffer, .. } = &mut ws.kind {
+                let next = crate::document_composer::splice_block(buffer, &block);
+                *buffer = next.clone();
+                doc.edit(author, &next);
+                graph = Some(doc.history().replay());
+                spliced = true;
+            }
+        }
+        if !spliced {
+            self.say(format!(
+                "COMPOSE: the window on {} is keyed as a Document but is not one — nothing \
+                 composed.",
+                id_short(&host)
+            ));
+            return false;
+        }
+
+        // (3) THE TURN — the composition into the cell's umem-heap (its `heap_root`
+        //     boundary IS the commitment) + a verified revision bump.
+        let text = self.load_doc_buffer(host);
+        let graph = graph.unwrap_or_else(DocGraph::new);
+        let prose_ok = self.commit_doc_to_umem_heap(host, &graph, &text);
+        self.layout.set_doc_text(&id_hex(&host), &text);
+        self.saver.save(&self.layout);
+        let rev = self.cell_field_u64(&host, DOC_REV_SLOT) + 1;
+        let ok = prose_ok && self.commit_set_field(host, DOC_REV_SLOT, rev);
+        self.doc_resync.insert(host);
+        let live = self
+            .compositions
+            .get(&host)
+            .map(|c| c.children().len())
+            .unwrap_or(0);
+        self.say(format!(
+            "COMPOSE {what} on doc {} → layout patch #{} by @{} · {live} live child(ren) \
+             → umem heap_root {} (rev {rev}, height {}).",
+            id_short(&host),
+            receipt.patch.0,
+            receipt.author.0 & 0xffff,
+            if ok { "committed" } else { "rejected" },
+            self.world.borrow().height()
+        ));
+        ok
+    }
+
+    /// **ADD AN EMBED** — place a live `child` cell into `host`'s composition, in
+    /// `role`, appended after the current tail. Refuses an id the ledger does not hold.
+    fn compose_embed(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        role: crate::document_composer::Role,
+    ) -> bool {
+        self.compose_gesture(host, "embed", move |c, w| c.embed(w, child, role))
+    }
+
+    /// **ADD AN EMBED AT A FORK** — anchored after `after` (or the head if `None`),
+    /// without advancing the append tail. Two embeds at one anchor are a layout
+    /// antichain that [`Self::compose_reorder`] resolves into the author's chain.
+    fn compose_embed_at(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        after: Option<CellId>,
+        role: crate::document_composer::Role,
+    ) -> bool {
+        self.compose_gesture(host, "embed-at", move |c, w| {
+            c.embed_at(w, child, after, role)
+        })
+    }
+
+    /// **REORDER** — constrain `child` to follow `before` (or the head if `None`).
+    fn compose_reorder(&mut self, host: CellId, child: CellId, before: Option<CellId>) -> bool {
+        self.compose_gesture(host, "reorder", move |c, _w| c.reorder(child, before))
+    }
+
+    /// **SET A CHILD'S ROLE** — the citation is preserved, the role reads back changed.
+    fn compose_set_role(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        role: crate::document_composer::Role,
+    ) -> bool {
+        self.compose_gesture(host, "set-role", move |c, _w| c.set_role(child, role))
+    }
+
+    /// **REMOVE** — tombstone a live child: gone from the render, RETAINED in the
+    /// roster (and in the committed block) with its provenance.
+    fn compose_remove(&mut self, host: CellId, child: CellId) -> bool {
+        self.compose_gesture(host, "remove", move |c, _w| c.remove(child))
     }
 
     /// Read the current edit buffer of an open document window (the composed prose).
@@ -3944,6 +4117,94 @@ impl DeosDesktop {
     /// + verified turn) — what dragging a cell-icon onto a document does.
     pub fn bake_transclude(&mut self, src: CellId, into: CellId) {
         self.transclude_into(src, into);
+    }
+
+    // ── COMPOSE-FROM-CELLS bake+test hooks (authoring surface #7) ──
+    //
+    // Each returns whether the gesture LANDED (a real layout patch + a committed heap
+    // write + a verified revision turn), so a refusal is observable rather than a
+    // silent no-op. The composed children read back at FULL substrate width.
+
+    /// COMPOSE: embed live `child` into `host`'s composition in `role` (what dropping a
+    /// cell into the document's composition strip does). `false` if refused.
+    pub fn bake_compose_embed(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        role: crate::document_composer::Role,
+    ) -> bool {
+        self.compose_embed(host, child, role)
+    }
+
+    /// COMPOSE: embed `child` anchored after `after` (or the head if `None`) WITHOUT
+    /// advancing the tail — the gesture that lays out siblings as a fork.
+    pub fn bake_compose_embed_at(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        after: Option<CellId>,
+        role: crate::document_composer::Role,
+    ) -> bool {
+        self.compose_embed_at(host, child, after, role)
+    }
+
+    /// COMPOSE: constrain `child` to follow `before` (or the head if `None`).
+    pub fn bake_compose_reorder(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        before: Option<CellId>,
+    ) -> bool {
+        self.compose_reorder(host, child, before)
+    }
+
+    /// COMPOSE: change the role `child` plays in `host`'s composition.
+    pub fn bake_compose_set_role(
+        &mut self,
+        host: CellId,
+        child: CellId,
+        role: crate::document_composer::Role,
+    ) -> bool {
+        self.compose_set_role(host, child, role)
+    }
+
+    /// COMPOSE: tombstone `child` (gone from the render, retained in the roster).
+    pub fn bake_compose_remove(&mut self, host: CellId, child: CellId) -> bool {
+        self.compose_remove(host, child)
+    }
+
+    /// The LIVE composed children of `host`, in document order, as
+    /// `(cell, role, placed_by, live)` — full substrate width.
+    pub fn bake_composed_children(
+        &self,
+        host: CellId,
+    ) -> Vec<(CellId, crate::document_composer::Role, u64, bool)> {
+        self.compositions
+            .get(&host)
+            .map(|c| {
+                c.children()
+                    .into_iter()
+                    .map(|k| (k.cell, k.role, k.placed_by.0, k.live))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The full composition ROSTER of `host` — live children AND the tombstoned ones
+    /// (retained, provenanced, time-travellable).
+    pub fn bake_composition_roster(
+        &self,
+        host: CellId,
+    ) -> Vec<(CellId, crate::document_composer::Role, u64, bool)> {
+        self.compositions
+            .get(&host)
+            .map(|c| {
+                c.roster()
+                    .into_iter()
+                    .map(|k| (k.cell, k.role, k.placed_by.0, k.live))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Open the LINKS / BACKLINKS window on `cell` (what "Links & Backlinks" does).

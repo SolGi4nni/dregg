@@ -442,6 +442,355 @@ impl DocumentComposer {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE LIVE COMPOSITION — the composer pointed at the real World
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Everything above is the gpui-free logic core over `dregg_doc::composition`. What
+// follows is the adapter that makes it an AUTHORING SURFACE OF THE LIVE WORLD, built
+// to the same shape `crate::docuverse` gives the transclude gesture:
+//
+//   * a LEDGER GATE — an id the live World does not hold is never embedded
+//     ([`LiveComposition::embed`] mirrors `Docuverse::publish_live`);
+//   * a REFUSAL TYPE with a narration — nothing is written and the operator is told
+//     ([`EmbedRefusal`] mirrors `docuverse::TranscludeRefusal`);
+//   * a RENDERED BLOCK carrying full-width `dregg://` citations
+//     ([`LiveComposition::block`] mirrors `docuverse::transclusion_line`), which is
+//     what the desktop commits into the document cell's umem heap.
+//
+// ⚠ NAMED SEAM — THE CHILD POINTER IS 128 BITS. `dregg_doc::composition::CellId` is a
+// `u128`, while a substrate `dregg_types::CellId` is 32 bytes. [`child_id`] therefore
+// NARROWS: the layout's own child pointer is a 128-bit domain-separated digest of the
+// full id, so the LayoutGraph alone distinguishes cells only to a ~2^64 birthday bound
+// — far below this repo's ~124-bit bar. Two things follow, and neither is a fix:
+//
+//   1. [`LiveComposition`] keeps the FULL 32-byte id per child ([`LiveComposition::ids`])
+//      and is the authority for every citation it renders, so the bytes the desktop
+//      commits to the heap are full-width;
+//   2. [`LiveComposition::embed`] REFUSES a second cell that narrows onto a pointer
+//      already bound to a different full id ([`EmbedRefusal::ChildIdCollision`]), so a
+//      collision is a refusal rather than a silent aliasing of two cells.
+//
+// Neither closes the seam: a light client reading the LayoutGraph by itself still sees
+// 128 bits. The real fix is widening `dregg_doc::composition::CellId` to the substrate's
+// 32 bytes — a `dregg-doc` change touching every composition consumer, which is not this
+// module's to make. It is stated here rather than papered over.
+
+use crate::world::World;
+
+/// Why a composition gesture was REFUSED — the states in which the document's layout
+/// must be left exactly as it was (no patch, no heap write, no revision turn).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmbedRefusal {
+    /// The id names no cell of the live World. **The anti-forge tooth**: a well-formed
+    /// 32-byte id is not evidence of a cell, and `add_embed` would place any integer.
+    NotALiveCell {
+        /// The id that was dropped.
+        cell: dregg_types::CellId,
+    },
+    /// The cell is not currently a live child of this document, so there is nothing to
+    /// re-role / reorder / remove.
+    NotAChild {
+        /// The cell that was addressed.
+        cell: dregg_types::CellId,
+    },
+    /// Two DIFFERENT live cells narrow onto the same 128-bit layout child pointer (see
+    /// the module note). The second embed is refused rather than silently aliasing the
+    /// first — a composition never cites an ambiguous cell.
+    ChildIdCollision {
+        /// The cell being embedded.
+        cell: dregg_types::CellId,
+        /// The cell already bound to that pointer.
+        held: dregg_types::CellId,
+    },
+}
+
+impl EmbedRefusal {
+    /// The line the desktop narrates — an honest "nothing was written and here is why",
+    /// never a silent no-op. It never renders the refused id as a `dregg://` citation:
+    /// a refusal must not mint an address.
+    pub fn narration(&self) -> String {
+        match self {
+            EmbedRefusal::NotALiveCell { cell } => format!(
+                "COMPOSE REFUSED: {} is not a cell of this World — there is nothing to \
+                 embed. Nothing composed.",
+                crate::reflect::short_hex(&cell.0)
+            ),
+            EmbedRefusal::NotAChild { cell } => format!(
+                "COMPOSE REFUSED: {} is not a live child of this document — nothing to \
+                 reorder, re-role or remove.",
+                crate::reflect::short_hex(&cell.0)
+            ),
+            EmbedRefusal::ChildIdCollision { cell, held } => format!(
+                "COMPOSE REFUSED: {} narrows onto the same layout child pointer as {} — \
+                 the composition will not cite an ambiguous cell. Nothing composed.",
+                crate::reflect::short_hex(&cell.0),
+                crate::reflect::short_hex(&held.0)
+            ),
+        }
+    }
+}
+
+/// One composed child at FULL substrate width — what the desktop paints and commits.
+/// The `cell` here is the 32-byte id [`LiveComposition`] holds, not the layout's
+/// narrowed pointer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct LiveChild {
+    /// The embedded child cell, full width.
+    pub cell: dregg_types::CellId,
+    /// The role it currently plays.
+    pub role: Role,
+    /// Who placed it (the surviving provenance — a fact off the layout).
+    pub placed_by: Author,
+    /// Live in the rendered document, or tombstoned (retained + provenanced).
+    pub live: bool,
+}
+
+/// The domain-separated 128-bit narrowing of a substrate cell id onto the layout's
+/// child pointer. See the module's NAMED SEAM note: this is lossy by construction
+/// (256 → 128 bits) and [`LiveComposition`] carries the full id alongside.
+pub fn child_id(cell: &dregg_types::CellId) -> ChildCellId {
+    let mut h = blake3::Hasher::new();
+    h.update(b"dregg-desktop-composition-child-v1\0");
+    h.update(&cell.0);
+    let d = h.finalize();
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&d.as_bytes()[..16]);
+    ChildCellId(u128::from_le_bytes(b))
+}
+
+/// **A composition of LIVE cells** — a [`DocumentComposer`] whose every embed passed
+/// the live World's ledger gate, plus the full-width identity of each child.
+#[derive(Clone, Debug)]
+pub struct LiveComposition {
+    composer: DocumentComposer,
+    /// The full 32-byte identity behind each narrowed layout pointer — the authority
+    /// for every citation this composition renders (module NAMED SEAM note).
+    ids: std::collections::BTreeMap<ChildCellId, dregg_types::CellId>,
+}
+
+impl LiveComposition {
+    /// A fresh composition authored by `author` over the document cell `host`.
+    pub fn new(host: dregg_types::CellId, author: Author) -> Self {
+        LiveComposition {
+            composer: DocumentComposer::new(child_id(&host), author),
+            ids: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The underlying composer (read-only) — its layout, roster and receipts.
+    pub fn composer(&self) -> &DocumentComposer {
+        &self.composer
+    }
+
+    /// **THE LEDGER GATE** — `cell` must be a cell of the live World, and must not
+    /// collide with a child already bound. Returns the pointer to place at.
+    fn admit(&self, world: &World, cell: dregg_types::CellId) -> Result<ChildCellId, EmbedRefusal> {
+        if world.ledger().get(&cell).is_none() {
+            return Err(EmbedRefusal::NotALiveCell { cell });
+        }
+        let id = child_id(&cell);
+        match self.ids.get(&id) {
+            Some(held) if *held != cell => {
+                Err(EmbedRefusal::ChildIdCollision { cell, held: *held })
+            }
+            _ => Ok(id),
+        }
+    }
+
+    /// **ADD AN EMBED** of a LIVE cell, appended after the current tail. Refuses an id
+    /// the World does not hold (nothing is placed).
+    pub fn embed(
+        &mut self,
+        world: &World,
+        cell: dregg_types::CellId,
+        role: Role,
+    ) -> Result<Receipt, EmbedRefusal> {
+        let id = self.admit(world, cell)?;
+        self.ids.insert(id, cell);
+        Ok(self.composer.add_embed(id, role))
+    }
+
+    /// **ADD AN EMBED AT A FORK** — anchored after `after` (or the head if `None`),
+    /// without advancing the append tail. Two embeds at one anchor form a layout
+    /// antichain that [`LiveComposition::reorder`] resolves.
+    pub fn embed_at(
+        &mut self,
+        world: &World,
+        cell: dregg_types::CellId,
+        after: Option<dregg_types::CellId>,
+        role: Role,
+    ) -> Result<Receipt, EmbedRefusal> {
+        let id = self.admit(world, cell)?;
+        let anchor = match after {
+            Some(a) => Some(self.child_of(a)?),
+            None => None,
+        };
+        self.ids.insert(id, cell);
+        Ok(self.composer.add_embed_at(id, anchor, role))
+    }
+
+    /// The layout pointer of a cell that must currently be a LIVE child.
+    fn child_of(&self, cell: dregg_types::CellId) -> Result<ChildCellId, EmbedRefusal> {
+        let id = child_id(&cell);
+        match self.ids.get(&id) {
+            Some(held) if *held == cell && self.composer.live_atom(id).is_some() => Ok(id),
+            _ => Err(EmbedRefusal::NotAChild { cell }),
+        }
+    }
+
+    /// **REORDER** — constrain `child` to come after `before` (or after the head when
+    /// `before` is `None`). Collapses a layout fork into the author's chosen chain.
+    pub fn reorder(
+        &mut self,
+        child: dregg_types::CellId,
+        before: Option<dregg_types::CellId>,
+    ) -> Result<Receipt, EmbedRefusal> {
+        let c = self.child_of(child)?;
+        let child_atom = self
+            .composer
+            .live_atom(c)
+            .ok_or(EmbedRefusal::NotAChild { cell: child })?;
+        let before_atom = match before {
+            Some(b) => {
+                let bc = self.child_of(b)?;
+                self.composer
+                    .live_atom(bc)
+                    .ok_or(EmbedRefusal::NotAChild { cell: b })?
+            }
+            None => AtomId::ROOT,
+        };
+        Ok(self.composer.reorder(child_atom, before_atom))
+    }
+
+    /// **REMOVE** — tombstone a live child (retained + provenanced, never deleted).
+    pub fn remove(&mut self, cell: dregg_types::CellId) -> Result<Receipt, EmbedRefusal> {
+        let c = self.child_of(cell)?;
+        let atom = self
+            .composer
+            .live_atom(c)
+            .ok_or(EmbedRefusal::NotAChild { cell })?;
+        Ok(self.composer.remove(atom))
+    }
+
+    /// **SET A CHILD'S ROLE** — the citation is preserved, only the role reads back
+    /// changed.
+    pub fn set_role(
+        &mut self,
+        cell: dregg_types::CellId,
+        role: Role,
+    ) -> Result<Receipt, EmbedRefusal> {
+        let c = self.child_of(cell)?;
+        self.composer
+            .set_role(c, role)
+            .ok_or(EmbedRefusal::NotAChild { cell })
+    }
+
+    /// The LIVE children in document order, at full substrate width.
+    pub fn children(&self) -> Vec<LiveChild> {
+        self.composer
+            .children()
+            .into_iter()
+            .filter_map(|k| self.widen(k))
+            .collect()
+    }
+
+    /// The full ROSTER — live children plus the tombstoned ones (retained, provenanced,
+    /// time-travellable), at full substrate width.
+    pub fn roster(&self) -> Vec<LiveChild> {
+        self.composer
+            .roster()
+            .into_iter()
+            .filter_map(|k| self.widen(k))
+            .collect()
+    }
+
+    /// Restore a composed child's FULL id from the layout's narrowed pointer. `None`
+    /// for a pointer this composition never admitted (unreachable through the gate —
+    /// every placement inserts into `ids` first — and dropped rather than guessed).
+    fn widen(&self, k: ComposedChild) -> Option<LiveChild> {
+        Some(LiveChild {
+            cell: *self.ids.get(&k.cell)?,
+            role: k.role,
+            placed_by: k.placed_by,
+            live: k.live,
+        })
+    }
+
+    /// **THE COMPOSED BLOCK** — the composition rendered as document prose, carrying a
+    /// FULL-WIDTH `dregg://<64-hex>` citation per child plus its role and the author
+    /// who placed it. This is what the desktop splices into the document buffer and
+    /// commits to the cell's umem heap, so the composition is a fact on the ledger
+    /// rather than window state.
+    ///
+    /// Tombstoned children are rendered too, marked `tombstoned` — "retained, not
+    /// deleted" is then a COMMITTED fact a reader can check, not an in-memory claim.
+    pub fn block(&self) -> String {
+        let roster = self.roster();
+        let live = roster.iter().filter(|k| k.live).count();
+        let dead = roster.len() - live;
+        let mut out = format!("{BLOCK_OPEN} · {live} live · {dead} tombstoned}}\n");
+        for k in roster.iter().filter(|k| k.live) {
+            out.push_str(&format!(
+                "{{compose dregg://{} · role: {:?} · placed by @{}}}\n",
+                hex64(&k.cell),
+                k.role,
+                k.placed_by.0 & 0xffff
+            ));
+        }
+        for k in roster.iter().filter(|k| !k.live) {
+            out.push_str(&format!(
+                "{{compose-removed dregg://{} · role: {:?} · placed by @{} · tombstoned}}\n",
+                hex64(&k.cell),
+                k.role,
+                k.placed_by.0 & 0xffff
+            ));
+        }
+        out.push_str(BLOCK_CLOSE);
+        out.push('\n');
+        out
+    }
+}
+
+/// The opening delimiter of the composed block inside a document's prose.
+pub const BLOCK_OPEN: &str = "{composition";
+/// The closing delimiter of the composed block.
+pub const BLOCK_CLOSE: &str = "{/composition}";
+
+/// A cell id at full 64-hex width — the citation anchor a composed embed carries.
+fn hex64(cell: &dregg_types::CellId) -> String {
+    cell.0.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// **Splice a freshly-rendered composition `block` into `doc`'s prose**, replacing any
+/// previous block. The composition is a projection of the layout, not an append log: a
+/// reorder or a remove must REWRITE the region, never leave a stale reading beside the
+/// live one. Returns the new document text.
+pub fn splice_block(doc: &str, block: &str) -> String {
+    let head = match doc.find(BLOCK_OPEN) {
+        Some(i) => &doc[..i],
+        None => doc,
+    };
+    let tail = match doc.find(BLOCK_OPEN) {
+        Some(i) => match doc[i..].find(BLOCK_CLOSE) {
+            Some(j) => {
+                let end = i + j + BLOCK_CLOSE.len();
+                doc[end..].strip_prefix('\n').unwrap_or(&doc[end..])
+            }
+            None => "",
+        },
+        None => "",
+    };
+    let mut out = String::with_capacity(head.len() + block.len() + tail.len());
+    out.push_str(head);
+    if !head.is_empty() && !head.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(block);
+    out.push_str(tail);
+    out
+}
+
 /// The composed children read off a rendered fold, joined back to the layout for the
 /// embed-atom id + provenance (the fold's `Segment::Embedded` carries role / placed_by /
 /// resolved_cell; the atom id + the not-yet-needed live flag come from the graph).
