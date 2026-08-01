@@ -87,7 +87,12 @@ fn editor_js_body() {
 
     // ── (a) EDIT THE VIEW from a JS string — the keystone. ─────────────────────────
     // The editor is authorized (held=None admits the card's edit_authority=Signature).
-    let editor = editor_with(0xCA, Author(7), AuthRequired::None, AuthRequired::Signature);
+    let editor = editor_with(
+        0xCA,
+        Author(7),
+        AuthRequired::None,
+        Requirement::AtLeast(Credential::Signature),
+    );
     let js_a = r#"
         var card = deos.editor.card();            // the editor's own card id
         // add a "+1" button (fires the inc affordance) — a structural view PATCH.
@@ -129,7 +134,12 @@ fn editor_js_body() {
     );
 
     // ── (b) EDIT A FIELD from JS — a real verified turn. ───────────────────────────
-    let editor = editor_with(0xCB, Author(7), AuthRequired::None, AuthRequired::Signature);
+    let editor = editor_with(
+        0xCB,
+        Author(7),
+        AuthRequired::None,
+        Requirement::AtLeast(Credential::Signature),
+    );
     let js_b = r#"
         var card = deos.editor.card();
         var ok = deos.editor.setField(card, 0, 42);   // a real SetField turn
@@ -151,7 +161,12 @@ fn editor_js_body() {
     );
 
     // ── (c) ADD AN AFFORDANCE from JS — a new fireable turn. ───────────────────────
-    let editor = editor_with(0xCC, Author(7), AuthRequired::None, AuthRequired::Signature);
+    let editor = editor_with(
+        0xCC,
+        Author(7),
+        AuthRequired::None,
+        Requirement::AtLeast(Credential::Signature),
+    );
     let js_c = r#"
         var card = deos.editor.card();
         // weld a "dec" affordance (subtract from slot 0).
