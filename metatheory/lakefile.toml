@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -89,8 +89,8 @@ name = "Bfv"
 # from NO `defaultTargets` library, so their `#assert_axioms`/`by decide` o1js/chain differentials
 # never ran in a plain `lake build` (gating-defaults-to-silence). Making it its own lean_lib + a
 # defaultTarget roots them WITHOUT touching the `Dregg2.lean` import block (swept by sibling lanes).
-# The de-vacuum modules (CaveatCommitBindsOrCollides/RotatedCommitBindsOrCollides) are DEFERRED — their
-# cone goes through the ChipArity-churned EffectVmEmitV2, which a sibling lane holds; NOT imported here.
+# The de-vacuum modules (CaveatCommitBindsOrCollides/RotatedCommitBindsOrCollides) are NOT imported here
+# — they now have their own root, `CommitBindsGuards` (bottom of this file); the deferral is CLOSED.
 [[lean_lib]]
 name = "PicklesSynthesis"
 globs = ["Dregg2.PicklesSynthesis"]
@@ -103,9 +103,25 @@ globs = ["Dregg2.PicklesSynthesis"]
 # — the exact gating-defaults-to-silence wound `MinaWrapFtEval0Weld` was born from
 # (`scripts/check-guard-modules.py`). Making it its own lean_lib + a defaultTarget roots them WITHOUT
 # touching the `Dregg2.lean` import block (swept by sibling lanes), mirroring PicklesSynthesis.
-# The soundness de-vacuum modules (CaveatCommitBindsOrCollides/RotatedCommitBindsOrCollides) are STILL
-# DEFERRED: their cone pulls `Dregg2.Circuit.Emit.EffectVmEmitV2`, which is RED at HEAD mid-ChipArity
-# cutover (type mismatch + sorryAx axiom-hygiene, sibling repair in flight) — root them once V2 lands.
+# The soundness de-vacuum modules (CaveatCommitBindsOrCollides/RotatedCommitBindsOrCollides) got their
+# own root once `EffectVmEmitV2` went green — see `CommitBindsGuards` below.
 [[lean_lib]]
 name = "MinaBridgeGuards"
 globs = ["Dregg2.MinaBridgeGuards"]
+
+# CommitBindsGuards — the CI home for the FLOOR-FREE commitment-binding teeth (the 2026-07-31
+# light-client soundness-weld de-vacuuming). Root module `Dregg2.CommitBindsGuards`
+# (./Dregg2/CommitBindsGuards.lean) is a pure re-export aggregate importing the two `_or_collides`
+# modules: `Dregg2.Circuit.Emit.CaveatCommitBindsOrCollides` (caveat manifest + DFA rc carrier) and
+# `Dregg2.Circuit.RotatedCommitBindsOrCollides` (the PUBLISHED OLD_COMMIT/NEW_COMMIT rotated commit).
+# Both restate anti-ghost bindings WITHOUT the `Poseidon2SpongeCR` floor this tree PROVES FALSE at
+# deployed BabyBear width. `scripts/check-guard-modules.py` listed BOTH as `UNTRACKED-ORPHAN` — not
+# even in `lean-orphans-allow.txt` — so their thirteen `#assert_axioms` ran in NO plain `lake build`.
+# This was deferred twice above because the Rotated cone pulls `Dregg2.Circuit.Emit.EffectVmEmitV2`,
+# RED at HEAD mid-ChipArity cutover; `f81509ff6` (the `chipArity_le_rate hins` one-liner) fixed it, so
+# the deferral has outlived its reason. Verified GREEN at HEAD via `scripts/dregg-clean-build` (83s).
+# Its own lean_lib + defaultTarget, mirroring PicklesSynthesis/MinaBridgeGuards, roots them WITHOUT
+# touching the `Dregg2.lean` import block (swept by sibling lanes).
+[[lean_lib]]
+name = "CommitBindsGuards"
+globs = ["Dregg2.CommitBindsGuards"]

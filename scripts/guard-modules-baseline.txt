@@ -37,7 +37,6 @@ unrooted Dregg2.Circuit.Emit.BoundPresentationRefine   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.BoundPresentationRung2   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.BridgeActionEmit   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.BridgeActionRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.CaveatCommitBindsOrCollides   # UNTRACKED-ORPHAN — root first
 unrooted Dregg2.Circuit.Emit.CommittedThresholdEmit   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.CommittedThresholdRefine   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.DerivationEmit   # also-orphan-allow
@@ -82,7 +81,6 @@ unrooted Dregg2.Circuit.Emit.TemporalPredicateRefine   # also-orphan-allow
 unrooted Dregg2.Circuit.Emit.TurnAuthCapOpenWeld   # UNTRACKED-ORPHAN — root first
 unrooted Dregg2.Circuit.Emit.TurnAuthLamportEmit   # UNTRACKED-ORPHAN — root first
 unrooted Dregg2.Circuit.FriVerifierOracle   # also-orphan-allow
-unrooted Dregg2.Circuit.RotatedCommitBindsOrCollides   # UNTRACKED-ORPHAN — root first
 unrooted Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow   # also-orphan-allow
 unrooted Dregg2.Circuit.WrapSafetyStaticAnalyzer   # also-orphan-allow
 unrooted Dregg2.Claims   # also-orphan-allow
