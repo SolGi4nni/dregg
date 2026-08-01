@@ -960,7 +960,14 @@ const BASELINE: &[(&str, usize)] = &[
     // earlier; no algebra ORIGINATES here, which is this gate's own authoring-vs-lowering test.
     // The classifier scores it `Construct` only because `WindowExpr` is not in `IR_TYPES`, so the
     // arm counts +1 authored and +0 lowering. Pinned to the measurement, not to slack.
-    ("circuit/src/descriptor_ir2.rs", 287),
+    // LOWERED 287 -> 285 on 2026-08-01: the `Ir2Air::MapAbsent` arm — the live in-circuit
+    // double-spend gate, reached through `noteSpendVmDescriptor2R24`'s `nullifierFreshOp` — was
+    // DELETED and replaced by `Ir2Air::LeanTable`, which interprets a Lean emission
+    // (`Dregg2/Circuit/Emit/MapAbsentTableEmit.lean` -> `circuit/descriptors/table-airs/
+    // dregg-ir2-map-absent-v1.json`) instead of authoring the algebra. This is the direction of
+    // the law; the row moves DOWN with it so the retired algebra cannot quietly come back.
+    // `circuit/src/table_air.rs`, the new decoder, scores ZERO and therefore has no row at all.
+    ("circuit/src/descriptor_ir2.rs", 285),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

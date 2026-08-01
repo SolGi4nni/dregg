@@ -413,11 +413,25 @@ const AIR_SHAPE: DescriptorIr2AirShape = DescriptorIr2AirShape {
 const DESCRIPTOR_IR2_AIR_SOURCE: &[u8] = include_bytes!("../../circuit/src/descriptor_ir2.rs");
 const LEAN_DESCRIPTOR_AIR_SOURCE: &[u8] =
     include_bytes!("../../circuit/src/lean_descriptor_air.rs");
+// ⚑ THE TABLE-AIR LEG (added 2026-08-01 with the `Ir2Air::MapAbsent` cutover). The map-absent
+// instance's algebra no longer lives in `descriptor_ir2.rs`; it lives in a Lean-emitted artifact
+// that `table_air.rs` decodes. Without BOTH of these in the closure the constraints of the live
+// double-spend gate could change while this fingerprint stood still — a fail-open, and exactly
+// the class this closure exists to prevent. The artifact is hashed as well as the interpreter
+// because the interpreter is generic: it is the JSON that says what the AIR asserts.
+const TABLE_AIR_INTERPRETER_SOURCE: &[u8] = include_bytes!("../../circuit/src/table_air.rs");
+const MAP_ABSENT_TABLE_AIR_ARTIFACT: &[u8] =
+    include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json");
 const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
     ("circuit/src/descriptor_ir2.rs", DESCRIPTOR_IR2_AIR_SOURCE),
     (
         "circuit/src/lean_descriptor_air.rs",
         LEAN_DESCRIPTOR_AIR_SOURCE,
+    ),
+    ("circuit/src/table_air.rs", TABLE_AIR_INTERPRETER_SOURCE),
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json",
+        MAP_ABSENT_TABLE_AIR_ARTIFACT,
     ),
 ];
 
@@ -504,6 +518,13 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
     (
         "turn-prover/src/faithful_note_spend_exact_v3_verifier.rs",
         TURN_VERIFIER_WRAPPER_SOURCE,
+    ),
+    // The verifier rebuilds the batch AIR set from the descriptor, and that set now includes a
+    // Lean-emitted table AIR. Both the decoder and the emission are part of what the verifier IS.
+    ("circuit/src/table_air.rs", TABLE_AIR_INTERPRETER_SOURCE),
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json",
+        MAP_ABSENT_TABLE_AIR_ARTIFACT,
     ),
 ];
 

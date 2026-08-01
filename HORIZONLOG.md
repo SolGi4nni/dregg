@@ -1,5 +1,70 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 1 — the LIVE DOUBLE-SPEND GATE was a hand-written Rust AIR; it is now emitted from Lean
+
+`Ir2Air::MapAbsent` (`circuit/src/descriptor_ir2.rs`) was ~120 lines of `builder.assert_zero(..)` +
+`bus.lookup_key(..)` — the in-circuit non-membership gate a note spend rides through
+`noteSpendVmDescriptor2R24`'s `nullifierFreshOp`. Architectural law #1 says that object is authored
+in Lean and Rust only interprets. **It was not, and neither is any of the other seven shared table
+AIRs** (chip, byte, memory pair, map-ops, universal-memory pair). The reason is structural, not
+neglect: IR-v2 could describe the MAIN instance and nothing else.
+
+**The missing tool, built** (`Dregg2/Circuit/TableAirIR.lean`): a `TableAir` is a width, a list of
+gates, and a list of bus interactions **each carrying a MULTIPLICITY EXPRESSION**. That last field
+is the whole reason a table could not be described before — `Ir2Air::Main` hardcodes multiplicity
+`1` because a main row is unconditionally real, whereas a shared table is PADDED and its chip
+absorbs must ride at `is_real` or the LogUp balance is wrong. `EmittedExpr.var c` denotes column
+`c` **of this table's row**, which is the "sub-descriptor at a column offset" the route needed.
+
+**LANDED.** `Dregg2/Circuit/Emit/MapAbsentTableEmit.lean` emits the deployed gate — 70 gates, 53
+bus interactions, width 358, every count DERIVED from the layout and `#guard`-pinned, not
+transcribed. `circuit/src/table_air.rs` decodes it; `Ir2Air::LeanTable` walks it; **the
+`Ir2Air::MapAbsent` arm is DELETED.** The Lean file also proves the one mathematical claim the Rust
+only asserted in a comment: `canonSplit_unique` — the `is15 · lo27 = 0` tooth makes the canonical
+`(hi4, lo27)` split UNIQUE, which is what licenses reading the deployed comparators as integer `<`
+on felts — plus `lexLt_forces_lt` and its refutation witness.
+
+**Measured, not asserted.** `circuit/tests/mapabsent_lean_emission_differential.rs`: the key, the
+low address and the IMT pointer ROUND-TRIP out of the emitted columns of the prover's own honest
+row; a 358-column MUTATION SWEEP through the real deployed evaluator (two bumps, because `+1` on a
+boolean column that is honestly 0 lands on 1 and reports a live gate as dead — it did) shows every
+gated column still gated and names the undetected set as exactly the chip-lookup-bound digest
+columns; forged upper bracket, forged lower bracket and moved post-root are each refused by the
+emitted gates; an honest note spend proves and verifies. `ir2_degree_budget` — the per-table
+constraint-degree ledger — is UNCHANGED, `map_absent` included. ⚠ At the right resolution: what is claimed is *algebraically equal in the same order*, not byte-identical symbolic trees (the limb weights are literal `16^i` in Lean where the Rust accumulated them by repeated multiplication). That is why the flag day below is declared as a rotation and not as a no-op.
+
+⚑ **WHAT THIS DID NOT DO, and the phases are not backwards.** The key was **not** widened.
+`MA_KEY`/`MA_LO_ADDR`/`MA_LO_NEXT` are still one felt each — the 2^15.45-collision sort key
+`mapabsent_key_width_tooth.rs` measures. **So its tripwires are NOT flipped and must not be**: they
+pin the WIDTH wound, this change is the AUTHORSHIP fix, and they are different wounds. The order is
+forced rather than chosen: widening means changing these constraints, and doing that while they
+were Rust-authored would have written NEW Rust AIR, which law #1 forbids transitionally as well as
+finally. Emission first was the prerequisite, and it is done.
+
+⚑ **AND THE WIDENING IS BIGGER THAN THE BRIEF FOR IT SAID — the 8-lane wide tower is at a schema
+this repo has already refuted.** `MapOpWideKeyPigeonhole.no_injection_bytes32_to_canonKey8` proves
+`P^8 < 2^256`, and `arity17_conflates_two_addresses` gives the collision for EVERY hash with NO
+CR hypothesis. Every wide `.absent` theorem in the tree — `MapAbsentImtGateWide`,
+`MapOpWideKey{,Gate,Weld,RowBoundary,CanonDischarge}`, `SortedTree{Insert,NonMembership}Wide8`,
+`LexCompare8Emit`, `HeapLeafWideEmit` and 11 more — is stated at `Digest8Key = Lex (Fin 8 → ℤ)`.
+**`Digest9Key` does not exist** (zero hits tree-wide). So "wire up `HeapLeafWideEmit`" is not the
+fix: the arity-17 leaf is refuted for a 32-byte key, the target is 19 (9+1+9), and the 19-file
+tower must be ported to a `Fin 9` lex key that has no definition yet. Also measured: the KEY nonet
+(`KeyLanes9`, `Emit/KeyCanonicity9Emit.lean::keyCanonical9At`) is applied by **nothing**, while the
+FIELDS nonet is emitted and consumed — so the key nonet has no AIR face to range-bind against.
+⓵ Correcting a claim in circulation: `KeyLanes9` **does** have Rust twins (four:
+`commit/src/typed.rs::canonical_32_to_lanes_9` and three siblings). What it lacks is an emit face.
+
+**THE FLAG DAY.** `faithful_note_spend_exact_v3_identity::air_fingerprint()` is a hash over the AIR
+implementation SOURCES, and `circuit/src/descriptor_ir2.rs` changed, so it moves. Two files were
+added to that closure in the same commit — `circuit/src/table_air.rs` and the emitted artifact
+`circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json` — because **without them the closure
+was fail-open**: the constraints of the live double-spend gate now live in a JSON file that the
+fingerprint did not cover, so they could have changed while the identity stood still. No
+`circuit/descriptors/*.json` changed and no descriptor re-emits. Treat pre-cutover proof identities
+as non-interoperable: the AIR implementation genuinely changed.
+
+
 ## ⚑⚑⚑ AUGUST 1 — `hash_bytes` COLLIDED TWO WAYS FOR FREE, and the reason it was deferred was FALSE
 
 `hash_bytes` was `hash_many(BabyBear::from_bytes_packed(data))`. **Two independent `O(1)`

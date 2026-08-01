@@ -388,6 +388,11 @@ pub mod plonky3_recursion;
 /// `p3-uni-stark`), so the whole module is unconditional in the verify floor.
 pub mod descriptor_ir2;
 
+/// The decoder for a Lean-authored TABLE AIR — the shared auxiliary instances
+/// (`MapAbsent` first) whose algebra used to be hand-written Rust. Rust
+/// INTERPRETS; `Dregg2/Circuit/Emit/*TableEmit.lean` authors.
+pub mod table_air;
+
 /// Canonical fixed-record wire for the closed, typed DescriptorIR-v2 algebra.
 /// This is the semantic relation encoding; Lean-emitted JSON remains an
 /// internal parser/build-provenance artifact and is never hashed as protocol
