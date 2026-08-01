@@ -604,6 +604,14 @@ theorem mutFin_not_satisfied :
 
 /-! ## §8 — axiom tripwires. -/
 
+-- The FUSION's own pins: the compiler's emission against the deployed IR-v2 shape. `rfl` cannot
+-- carry a `sorry`, but a tripwire that omits the load-bearing statements is a tripwire nobody
+-- trips — these ARE the deployed descriptor's definition now.
+#assert_axioms dfaAir_mainRailOk
+#assert_axioms tableRoutingDesc_constraints
+#assert_axioms tableRoutingDesc_tables
+#assert_axioms tableRoutingDesc_ranges
+#assert_axioms tableRoutingDesc_shape
 #assert_axioms tableRouting_refines_classify
 #assert_axioms row_reads
 #assert_axioms routeWit_satisfies
