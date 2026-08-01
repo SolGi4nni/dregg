@@ -693,3 +693,127 @@ output rather than authored input. Byte reach across the whole set is **8/76**, 
 by the deployed set's own rendering inconsistency, not by the source language. Transfer moved by
 zero, which is correct: it was never blocked on syntax, and P1.3's four root causes reduce to
 three, all semantic.
+
+---
+
+# PHASE 3 — ⚑ THE FIRST RAIL FUSION (2026-08-01)
+
+**The gate: is a deployed descriptor now COMPILER-AUTHORED with the hand-written copy deleted, and
+did any byte move? YES, and NO.**
+
+## P3.1 — what changed
+
+`Dregg2/Circuit/Emit/DfaRoutingTableEmit.lean` §2 used to define the deployed
+`dregg-dfa-routing-table::exact-public-v1` family as a hand-written `EffectVmDescriptor2` literal:
+four `VmConstraint2` `def`s (`transitionLookup`, `continuityWindow`, `b1InitialPin`, `b2FinalPin`)
+and a `constraints := [...]` list. It now reads
+
+    def dfaAir (tbl : List (List Nat)) : EffectAir := { tables := …, legs := [.lookup …, .window …, .pin …, .pin …] }
+    def tableRoutingDesc (name : String) (tbl : List (List Nat)) : EffectVmDescriptor2 :=
+      EffectLower.lowerAir name TRT_WIDTH TRT_PI_COUNT [] (dfaAir tbl)
+
+**The four `VmConstraint2` `def`s and the literal record are DELETED** — 14 lines of deployed-IR
+authorship (the four `def`s with their docstrings) plus the 8-line hand-written
+`EffectVmDescriptor2` record, replaced by an 8-line `EffectAir` source block. What is hand-written in this
+file is now SOURCE (`AirLeg` / `RowSel` / `PiPinLeg` / a `WindowExpr` body); every `VmConstraint2`
+in the shipped descriptor is emitted by `lowerLookupLeg` / `lowerWindowLeg` / `lowerPiPinLeg`.
+
+Phase 2's `DfaRung.dfaLowered_eq_deployed : dfaLowered = demoRoutingDesc := rfl` is what made this
+safe — and it is DELETED too, along with the four theorems that restated the witness, the canary
+and the refinement on the second copy. With one object they would be `P = P`. ⚑ **A `rfl` between
+the compiler's output and a hand-written twin is evidence only while the twin exists; cashing it
+means deleting the twin, not keeping the theorem.**
+
+## P3.2 — the back end moved DOWN, and the import edge is the evidence
+
+`EffectLower.lean` imports `Inst/transfer.lean`, `EffectCommit2` and `WitnessExtract` for §4–§6's
+differential. A deployed descriptor cannot import that and stay cheap, and it must import the
+compiler to be defined by it. So the back end — the normalizer, `lowerConstraint`, the four leg
+lowerings, `refuseConstraints`, `assemble`, `lowerAir` — is now
+`Dregg2/Circuit/Emit/EffectLowerCore.lean` (`AirBuilder` + `EffectAirIR` + `DescriptorIR2`, nothing
+else), in the SAME namespace so no name moved and no consumer changed its `open`.
+
+    EffectLowerCore  →  DfaRoutingTableEmit  →  EffectLower
+    (the compiler)      (a deployed descriptor)   (the transfer differential)
+
+That edge is what makes the fusion STRUCTURAL rather than a claim: a descriptor below the compiler
+cannot hand-write its own constraints, because the constraints are the compiler's output type.
+
+## P3.3 — the gate, MEASURED
+
+* **Bytes: ZERO moved.** `emitVmJson2 demoRoutingDesc` — now the compiler's output — is checked by
+  the file's own `#guard` against the 587-byte golden transcribed from
+  `circuit/descriptors/by-name/dfa-routing-table-exact-public-v1.json`, and the golden equals the
+  committed file byte-for-byte: **sha256 `31bea51b322bb38fa7167eaf3ce69dd280728b012bdac6b9fd7b531b62e5c97a`**
+  on both sides (the file carries no trailing newline; the three hashes — Lean literal, file
+  newline-stripped, file as-is — agree). Nothing re-emits, nothing re-genesises, no VK rotates.
+* **Guards: all green.** Every `#guard` and `#assert_axioms` in `DfaRoutingTableEmit` and in the six
+  consumer modules elaborates. New pins replace the old unfolding: `tableRoutingDesc_constraints`
+  / `_tables` / `_ranges` / `_shape`, all `rfl`, are the compiler's emission checked against the
+  deployed IR-v2 shape transcribed from `circuit/src/descriptor_ir2.rs`. A change to a leg
+  lowering, to the leg ORDER, or to `assemble` goes RED there — one module above the compiler,
+  where the descriptor is deployed from.
+* **No new floor carrier**: `scripts/check-floor-baseline-preflight.sh` — OK, 23 floor names,
+  1967 baseline entries, no unbaselined carrier.
+
+## P3.4 — the honest fusion readout
+
+**Compiler-sourced deployed descriptors: 1 of 76.** Not 8. The 8/76 of P2.5 is BYTE-REACHABILITY —
+"the pass could emit these bytes" — and reachability is not authorship. Exactly one by-name
+descriptor is now DEFINED as `lowerAir`/`lowerEffect` output with its hand-written body deleted;
+the other 75 are still hand-authored `VmConstraint2` literals that a compiler run merely agrees
+with. ⚑ The number that matters for house law #1's endpoint is the authorship one, and it is 1/76.
+
+**Why this one was first.** It carries NO plain `gate` at all (lookup + window + two pins), so it
+asked nothing of `headToExpr` and fused at zero byte cost. That property is measurable directly off
+the committed artifacts, and doing so turns P2.5's byte-reach figure from a ladder number into a
+NAMED LIST — below.
+
+**Next cheapest — MEASURED, not guessed.** A descriptor fuses at ZERO byte cost exactly when it
+asks nothing of the `Head` normalizer, i.e. when it carries no `gate` constraint: lookups, window
+gates, boundaries and PI pins are all STRUCTURAL lowerings (`lowerLookupLeg` copies the tuple
+through `emitExpr`; `lowerWindowLeg`'s `.first`/`.last` uses `windowToLocal?`, not `exprToHead`).
+Counting `t` fields across all 76 committed `circuit/descriptors/by-name/*.json`:
+
+    kinds present:  gate 68 · pi_binding 69 · lookup 51 · boundary 37 · window_gate 29
+    GATE-FREE:      8 / 76   ← the zero-byte-cost fusion class, and it IS the 8/76 of P2.5
+
+The eight, with `(gate, boundary, window_gate, lookup, pi_binding, total)`:
+
+    dfa-routing-table-exact-public-v1     (0, 0,   1,    1,    2,    4)   ← FUSED, this phase
+    mina-fixture                          (0, 0,   2,    0,    2,    4)
+    poseidon2-hash-arity2                 (0, 0,   0,    1,    3,    4)
+    turn-chain-binding                    (0, 3,   6,    1,    4,   14)
+    bound-presentation                    (0, 0,   0,    1,   20,   21)
+    guarded-hiding-span-m0-wide-…-blind5  (0, 0,   0,    3,   24,   27)
+    bridge-action                         (0, 0,  26,    0,   26,   52)
+    shielded-whole-note-swap-substrate-v1 (0, 399, 0, 1105,  100, 1604)
+
+**So the other seven ARE the byte-reachable set, and their goldens survive.** Ordered by source
+size, the next three are `mina-fixture` (2 window gates + 2 pins — a two-leg `EffectAir`),
+`poseidon2-hash-arity2` (1 lookup + 3 pins), and `turn-chain-binding` (14 constraints across four
+kinds, the first to exercise `.first`/`.last` boundary legs at scale). `bridge-action` (52) and
+`bound-presentation` (21) are mechanical repeats. `shielded-whole-note-swap-substrate-v1` is 1604
+constraints and is the one that will need the source to GENERATE legs rather than list them — which
+is the next real capability question, not a transcription question.
+
+⚠ Everything OUTSIDE those eight moves bytes when fused, because its gate bodies re-render through
+`exprToHead`. 68 of 76 carry at least one `gate`. For those the greenfield answer is a re-emit of
+the JSON (and the VK epoch it implies), not a smaller fusion — and NOT bending the builder.
+
+## P3.5 — what a reader six weeks out needs to know broke
+
+* `DfaRoutingTableEmit.transitionLookup`, `.continuityWindow`, `.b1InitialPin`, `.b2FinalPin` — GONE.
+  Use `mem_transitionLookup` / `mem_continuityWindow` / `mem_b1InitialPin` / `mem_b2FinalPin`,
+  whose STATEMENTS now carry the emitted shape.
+* `simp only [tableRoutingDesc]` no longer unfolds to a constraint list. Use
+  `tableRoutingDesc_constraints` / `_tables` / `_ranges`. Updated in
+  `DfaRoutingSubsetTableCost`, `TinyAutomataCompose`, `TinyAutomataSatisfiable`.
+* `EffectLower.DfaRung.dfaAir` / `.dfaLowered` / `.dfaLowered_eq_deployed` / `.dfaLowered_json_eq_deployed`
+  / `.dfaLowered_witness` / `.dfaLowered_rejects_offtable` / `.dfaLowered_refines_classify` — GONE.
+  The source block is `DfaRoutingTableEmit.dfaAir`; the object is `demoRoutingDesc`; the theorems
+  are `routeWit_satisfies`, `badTrace_not_satisfied`, `tableRouting_refines_classify`.
+  §8b's refusal rung (`dfaAirServed` / `dfaLoweredServed_unsatisfiable` / `_ne_deployed`) SURVIVES —
+  it has no counterpart there and is the one thing a byte-golden cannot see.
+* **Nothing re-emits and nothing re-genesises.** The descriptor bytes, the VK epoch and the
+  registry are untouched — which is the whole claim.

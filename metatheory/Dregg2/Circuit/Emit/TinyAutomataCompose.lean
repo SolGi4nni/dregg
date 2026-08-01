@@ -148,7 +148,8 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Crypto.DfaAcceptanceAir (TableDfa classifyFrom)
 open Dregg2.Circuit.Emit.DfaRoutingTableEmit
   (CURRENT SYMBOL NEXT TRT_TID TRT_WIDTH TRT_PI_COUNT PI_INITIAL PI_FINAL
-   tableRoutingDesc transitionTableDef transitionLookup tableRouting_refines_classify)
+   tableRoutingDesc transitionTableDef tableRoutingDesc_tables tableRoutingDesc_constraints
+   tableRouting_refines_classify)
 
 set_option autoImplicit false
 
@@ -698,7 +699,7 @@ theorem tableRouting_forced_length {hash : List ℤ → ℤ} {minit : ℤ → �
     (hsat : Satisfied2Public hash (tableRoutingDesc name tbl) minit mfin maddrs t) :
     t.rows.length = tbl.length := by
   have h := forced_trace_length hsat (td := transitionTableDef tbl)
-    (by simp [tableRoutingDesc]) (rows := tbl) rfl
+    (by simp [tableRoutingDesc_tables]) (rows := tbl) rfl
   rwa [show (transitionTableDef tbl).id = TRT_TID from rfl,
     tableRouting_lookupCount name tbl, Nat.mul_one] at h
 
@@ -724,7 +725,7 @@ theorem tableRouting_traverses_each_declared_row_once
     (hsat : Satisfied2Public hash (tableRoutingDesc name tbl) minit mfin maddrs t) :
     (t.rows.map (fun a => [a CURRENT, a SYMBOL, a NEXT])).Perm (exactPublicTable tbl) := by
   have h := hsat.exact_lookup_perm (td := transitionTableDef tbl)
-    (by simp [tableRoutingDesc]) (rows := tbl) rfl
+    (by simp [tableRoutingDesc_tables]) (rows := tbl) rfl
   rwa [show (transitionTableDef tbl).id = TRT_TID from rfl, tableRouting_lookupLog] at h
 
 /-- NON-VACUITY of the area law: it FIRES on the deployed family's own satisfying witness

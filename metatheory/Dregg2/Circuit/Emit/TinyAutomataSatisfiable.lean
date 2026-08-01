@@ -100,8 +100,9 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Crypto.DfaAcceptanceAir (TableDfa classifyFrom)
 open Dregg2.Circuit.Emit.DfaRoutingTableEmit
   (CURRENT SYMBOL NEXT TRT_TID TRT_WIDTH TRT_PI_COUNT PI_INITIAL PI_FINAL
-   tableRoutingDesc transitionTableDef transitionLookup continuityWindow contWindowBody
-   b1InitialPin b2FinalPin hash0 envAt_loc envAt_nxt tableRouting_refines_classify)
+   tableRoutingDesc transitionTableDef contWindowBody tableRoutingDesc_constraints
+   tableRoutingDesc_tables tableRoutingDesc_ranges
+   hash0 envAt_loc envAt_nxt tableRouting_refines_classify)
 open Dregg2.Circuit.Emit.TinyAutomataCompose
 
 set_option autoImplicit false
@@ -356,7 +357,7 @@ theorem runWit_satisfies (d : TableDfa Nat Nat) (q : Nat) (w : List Nat) (hw : w
     have hi' : i < (runRows d q w).length := hi
     have hloc : (envAt (runWit d q w) i).loc = (runRows d q w)[i]'hi' :=
       envAt_loc (t := runWit d q w) hi
-    simp only [tableRoutingDesc, List.mem_cons, List.not_mem_nil, or_false] at hc
+    simp only [tableRoutingDesc_constraints, List.mem_cons, List.not_mem_nil, or_false] at hc
     rcases hc with rfl | rfl | rfl | rfl
     · -- the transition lookup: the row's triple is a DECLARED row, by construction
       show [(envAt (runWit d q w) i).loc CURRENT, (envAt (runWit d q w) i).loc SYMBOL,
@@ -404,7 +405,7 @@ theorem runWit_satisfies (d : TableDfa Nat Nat) (q : Nat) (w : List Nat) (hw : w
   rowHashes := by intro i _; trivial
   rowRanges := by
     intro i _ r hr
-    simp only [tableRoutingDesc, List.not_mem_nil] at hr
+    simp only [tableRoutingDesc_ranges, List.not_mem_nil] at hr
   memAddrsNodup := List.nodup_nil
   memClosed := by rw [trt_memLog]; simp
   memDisciplined := by rw [trt_memLog]; trivial
@@ -413,13 +414,13 @@ theorem runWit_satisfies (d : TableDfa Nat Nat) (q : Nat) (w : List Nat) (hw : w
   mapTableFaithful := by rw [trt_mapLog]; rfl
   publicTablesFaithful := by
     intro td htd
-    simp only [tableRoutingDesc, List.mem_singleton] at htd
+    simp only [tableRoutingDesc_tables, List.mem_singleton] at htd
     subst htd
     show runTf (runTable d q w) TRT_TID = exactPublicTable (runTable d q w)
     rfl
   publicLookupBalanced := by
     intro td htd
-    simp only [tableRoutingDesc, List.mem_singleton] at htd
+    simp only [tableRoutingDesc_tables, List.mem_singleton] at htd
     subst htd
     show (lookupLog (tableRoutingDesc name (runTable d q w)) (runWit d q w) TRT_TID).Perm
       (exactPublicTable (runTable d q w))

@@ -64,6 +64,7 @@ table-entry bound `hsmall : entries < p` and the PI canonicality bounds (`hq0`/`
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.Emit.EffectLowerCore
 import Dregg2.Crypto.DfaAcceptanceAir
 
 namespace Dregg2.Circuit.Emit.DfaRoutingTableEmit
@@ -73,6 +74,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRow VmRowEnv holdsVm_piFirst_true holdsVm_piLast_true)
 open Dregg2.Circuit.DescriptorIR2
+open Dregg2.Circuit.EffectAirIR (EffectAir)
 open Dregg2.Crypto.DfaAcceptanceAir
   (TableDfa Row classifyFrom symbols lastNext_eq_classifyFrom)
 
@@ -99,42 +101,93 @@ def TRT_PI_COUNT : Nat := 2
 /-- The declared transition table's id (`.custom 30`, wire id `35` — unclaimed in the tree). -/
 def TRT_TID : TableId := .custom 30
 
-/-! ## §2 — the constraints: ONE table-generic lookup + continuity + the two boundary pins. -/
+/-! ## §2 — ⚑ THE SOURCE, and the descriptor as the COMPILER'S OUTPUT.
+
+**2026-08-01 — THE FIRST RAIL FUSION.** Everything below the `EffectAir` block is EMITTED. There is
+no hand-written `VmConstraint2` list in this file any more: `tableRoutingDesc` is literally
+`EffectLower.lowerAir` applied to `dfaAir tbl`, and the four constraints the old `def`s spelled out
+(`transitionLookup`, `continuityWindow`, `b1InitialPin`, `b2FinalPin` — DELETED) are what the leg
+lowerings produce. What is authored here is the SOURCE: a declared table, one `.query` lookup, one
+`.transition` window, two boundary PI pins.
+
+The old shape and this one were proved the SAME TERM by `rfl` (`EffectLower.DfaRung.
+dfaLowered_eq_deployed`, Phase 2) — which is what made deleting the hand-written half safe rather
+than a re-authoring. Keeping both would have been two shapes that agree today. -/
 
 /-- The declared transition table: arity-3 rows `(state, symbol, next)`, its COMPLETE row list
 committed by the descriptor bytes (`exactPublicRows` — the verifier-known finite multiset). -/
 def transitionTableDef (tbl : List (List Nat)) : TableDef :=
   ⟨TRT_TID, "dfa_transition_table", 3, .exactPublicRows tbl⟩
 
-/-- **THE table-as-input transition tooth**: `(current, symbol, next)` is a ROW of the declared
-table. Table-generic — no per-automaton interpolant; enforced on EVERY row (lookups carry no
-transition-zerofier guard). -/
-def transitionLookup : VmConstraint2 :=
-  .lookup ⟨TRT_TID, [.var CURRENT, .var SYMBOL, .var NEXT]⟩
-
-/-- C2 continuity body: `Nxt(current) − Loc(next)`. -/
+/-- C2 continuity body: `Nxt(current) − Loc(next)`. Source-level: this is a `WindowLeg.body`. -/
 def contWindowBody : WindowExpr := .add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT))
 
-/-- The C2 continuity `WindowGate`, asserted on the transition (every row but the last). -/
-def continuityWindow : VmConstraint2 := .windowGate ⟨contWindowBody, true⟩
+/-- ⚑ **THE SOURCE.** The DFA-routing AIR in the widened `EffectAir` vocabulary
+(`Circuit/EffectAirIR.lean`), general over the transition table:
 
-/-- B1: first row `current_state == pi[initial_state]`. -/
-def b1InitialPin : VmConstraint2 := .base (.piBinding VmRow.first CURRENT PI_INITIAL)
+* the declared `exactPublicRows` table,
+* ONE unconditional `.query` lookup `(current, symbol, next)` — table-generic, no per-automaton
+  interpolant, and enforced on EVERY row (lookups carry no transition-zerofier guard),
+* one `.transition` continuity window reading the next row,
+* the two boundary PI pins (first `current`, last `next`).
 
-/-- B2: last row `next_state == pi[final_state]` (the classification). -/
-def b2FinalPin : VmConstraint2 := .base (.piBinding VmRow.last NEXT PI_FINAL)
+Nothing here is in the deployed IR's vocabulary — `AirLeg`, `RowSel` and `PiPinLeg` are the source
+language, and the `VmConstraint2`s are the compiler's business. -/
+def dfaAir (tbl : List (List Nat)) : EffectAir :=
+  { tables := [transitionTableDef tbl]
+  , legs   :=
+      [ .lookup { table := TRT_TID, tuple := [.var CURRENT, .var SYMBOL, .var NEXT] }
+      , .window ⟨.transition, contWindowBody⟩
+      , .pin ⟨VmRow.first, CURRENT, PI_INITIAL⟩
+      , .pin ⟨VmRow.last, NEXT, PI_FINAL⟩ ] }
 
-/-- **`tableRoutingDesc name tbl`** — the table-as-input DFA-routing descriptor family: the
-transition table declared as an `exactPublicRows` table, one table-generic transition lookup, the
-continuity window, and the two boundary pins. -/
+/-- The source block is main-rail expressible, decided on the emitted predicate — so no leg lowers
+to `EffectLower.refuseConstraints`. -/
+theorem dfaAir_mainRailOk (tbl : List (List Nat)) : (dfaAir tbl).mainRailOk = true := rfl
+
+#guard (dfaAir []).legs.length == 4
+#guard (dfaAir []).legCount == 5
+#guard (dfaAir []).pinsFit TRT_PI_COUNT == true
+
+/-- **`tableRoutingDesc name tbl` — COMPILER OUTPUT.** The table-as-input DFA-routing descriptor
+family, `EffectLower.lowerAir` of `dfaAir tbl`. Not modelled beside a hand-written twin; there is
+no twin.
+
+⚠ `lowerAir`, not `lowerEffect`: this descriptor is not a full-state effect and has no digest
+wires, so the framework's `PIBindsDigests` surface would emit a descriptor nobody deployed. The two
+entry points share the normalizer, the leg lowerings and the emission order and differ ONLY in that
+surface. -/
 def tableRoutingDesc (name : String) (tbl : List (List Nat)) : EffectVmDescriptor2 :=
-  { name        := name
-  , traceWidth  := TRT_WIDTH
-  , piCount     := TRT_PI_COUNT
-  , tables      := [transitionTableDef tbl]
-  , constraints := [transitionLookup, continuityWindow, b1InitialPin, b2FinalPin]
-  , hashSites   := []
-  , ranges      := [] }
+  Dregg2.Circuit.Emit.EffectLower.lowerAir name TRT_WIDTH TRT_PI_COUNT [] (dfaAir tbl)
+
+/-! ### §2a — ⚑ THE EMISSION PIN: what the compiler produces, against a hand-written expectation.
+
+`rfl`, and therefore a GATE rather than decoration: the right-hand sides are transcribed from the
+deployed IR-v2 shape (`circuit/src/descriptor_ir2.rs`'s `parse` arms), the left-hand sides are
+whatever the leg lowerings emit. A change to `lowerLookupLeg`/`lowerWindowLeg`/`lowerPiPinLeg`, to
+the leg ORDER, or to `assemble` moves one of these and it goes red here — one module above the
+compiler, where the descriptor is actually deployed from. They are also the unfolding lemmas the
+extraction proofs below and in the consumer modules use (`simp only [tableRoutingDesc_constraints]`
+in place of the old `simp only [tableRoutingDesc]`). -/
+
+theorem tableRoutingDesc_constraints (name : String) (tbl : List (List Nat)) :
+    (tableRoutingDesc name tbl).constraints =
+      [ .lookup ⟨TRT_TID, [.var CURRENT, .var SYMBOL, .var NEXT]⟩
+      , .windowGate ⟨contWindowBody, true⟩
+      , .base (.piBinding VmRow.first CURRENT PI_INITIAL)
+      , .base (.piBinding VmRow.last NEXT PI_FINAL) ] := rfl
+
+theorem tableRoutingDesc_tables (name : String) (tbl : List (List Nat)) :
+    (tableRoutingDesc name tbl).tables = [transitionTableDef tbl] := rfl
+
+theorem tableRoutingDesc_ranges (name : String) (tbl : List (List Nat)) :
+    (tableRoutingDesc name tbl).ranges = [] := rfl
+
+theorem tableRoutingDesc_shape (name : String) (tbl : List (List Nat)) :
+    (tableRoutingDesc name tbl).name = name
+      ∧ (tableRoutingDesc name tbl).traceWidth = TRT_WIDTH
+      ∧ (tableRoutingDesc name tbl).piCount = TRT_PI_COUNT
+      ∧ (tableRoutingDesc name tbl).hashSites = [] := ⟨rfl, rfl, rfl, rfl⟩
 
 /-! ## §3 — constraint presence + the pinned table contents. -/
 
@@ -143,16 +196,28 @@ section Extract
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
 variable {name : String} {tbl : List (List Nat)} {t : VmTrace}
 
-theorem mem_transitionLookup : transitionLookup ∈ (tableRoutingDesc name tbl).constraints :=
+/-- The transition tooth the lookup leg lowers to. -/
+theorem mem_transitionLookup :
+    (VmConstraint2.lookup ⟨TRT_TID, [.var CURRENT, .var SYMBOL, .var NEXT]⟩)
+      ∈ (tableRoutingDesc name tbl).constraints :=
   List.mem_cons_self
 
-theorem mem_continuityWindow : continuityWindow ∈ (tableRoutingDesc name tbl).constraints :=
+/-- The continuity gate the `.transition` window leg lowers to. -/
+theorem mem_continuityWindow :
+    (VmConstraint2.windowGate ⟨contWindowBody, true⟩) ∈ (tableRoutingDesc name tbl).constraints :=
   List.mem_cons_of_mem _ List.mem_cons_self
 
-theorem mem_b1InitialPin : b1InitialPin ∈ (tableRoutingDesc name tbl).constraints :=
+/-- B1: first row `current_state == pi[initial_state]`, as the first `.pin` leg lowers it. -/
+theorem mem_b1InitialPin :
+    (VmConstraint2.base (.piBinding VmRow.first CURRENT PI_INITIAL))
+      ∈ (tableRoutingDesc name tbl).constraints :=
   List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)
 
-theorem mem_b2FinalPin : b2FinalPin ∈ (tableRoutingDesc name tbl).constraints :=
+/-- B2: last row `next_state == pi[final_state]` (the classification), as the second `.pin` leg
+lowers it. -/
+theorem mem_b2FinalPin :
+    (VmConstraint2.base (.piBinding VmRow.last NEXT PI_FINAL))
+      ∈ (tableRoutingDesc name tbl).constraints :=
   List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))
 
 /-- `getD` on an in-bounds index is `getElem`. -/
@@ -172,7 +237,7 @@ prover-supplied `tf` at `TRT_TID` to the DESCRIPTOR-committed rows. -/
 theorem tf_pinned (hsat : Satisfied2Public hash (tableRoutingDesc name tbl) minit mfin maddrs t) :
     t.tf TRT_TID = exactPublicTable tbl := by
   have h := hsat.publicTablesFaithful (transitionTableDef tbl)
-    (by simp [tableRoutingDesc])
+    (by simp [tableRoutingDesc_tables])
   simpa [TableDef.publicContentsFaithful, transitionTableDef] using h
 
 /-- **Every row's `(current, symbol, next)` is a declared table row** — the transition lookup +
@@ -184,7 +249,7 @@ theorem row_triple (hsat : Satisfied2Public hash (tableRoutingDesc name tbl) min
   have hrow := hsat.rowConstraints i hi _ mem_transitionLookup
   rw [← tf_pinned hsat]
   have hl : (envAt t i).loc = t.rows[i]'hi := envAt_loc hi
-  simpa only [VmConstraint2.holdsAt, Lookup.holdsAt, transitionLookup, List.map,
+  simpa only [VmConstraint2.holdsAt, Lookup.holdsAt, List.map,
     EmittedExpr.eval, hl] using hrow
 
 /-- **Every row reads a genuine step-graph entry**: under `htbl` (every declared row is a graph
@@ -211,7 +276,7 @@ theorem window_forces (hsat : Satisfied2Public hash (tableRoutingDesc name tbl) 
     contWindowBody.eval (envAt t i) ≡ 0 [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints i hi _ mem_continuityWindow
   have hlf : (i + 1 == t.rows.length) = false := by simpa using hnl
-  simp only [VmConstraint2.holdsAt, continuityWindow, WindowConstraint.holdsAt, if_true] at hrc
+  simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true] at hrc
   exact hrc hlf
 
 /-- B1 fires on the first row (mod `p` — the field-faithful pin). -/
@@ -446,7 +511,7 @@ theorem routeWit_satisfies :
       have : i < 1 := by simpa [routeWitTrace] using hi
       omega
     subst hi0
-    simp only [demoRoutingDesc, tableRoutingDesc, List.mem_cons, List.not_mem_nil,
+    simp only [demoRoutingDesc, tableRoutingDesc_constraints, List.mem_cons, List.not_mem_nil,
       or_false] at hc
     rcases hc with rfl | rfl | rfl | rfl
     · show _ ∈ routeWitTrace.tf TRT_TID
@@ -460,7 +525,7 @@ theorem routeWit_satisfies :
     · have h := (holdsVm_piLast_true (envAt routeWitTrace 0) (0 == 0) NEXT PI_FINAL).mpr rfl
       exact h
   rowHashes := by intro i _; trivial
-  rowRanges := by intro i _ r hr; simp only [demoRoutingDesc, tableRoutingDesc,
+  rowRanges := by intro i _ r hr; simp only [demoRoutingDesc, tableRoutingDesc_ranges,
     List.not_mem_nil] at hr
   memAddrsNodup := List.nodup_nil
   memClosed := by rw [memLog_trt]; simp
@@ -470,13 +535,13 @@ theorem routeWit_satisfies :
   mapTableFaithful := by rw [mapLog_trt]; rfl
   publicTablesFaithful := by
     intro td htd
-    simp only [demoRoutingDesc, tableRoutingDesc, List.mem_singleton] at htd
+    simp only [demoRoutingDesc, tableRoutingDesc_tables, List.mem_singleton] at htd
     subst htd
     show routeWitTrace.tf TRT_TID = exactPublicTable demoTbl
     rfl
   publicLookupBalanced := by
     intro td htd
-    simp only [demoRoutingDesc, tableRoutingDesc, List.mem_singleton] at htd
+    simp only [demoRoutingDesc, tableRoutingDesc_tables, List.mem_singleton] at htd
     subst htd
     show (lookupLog demoRoutingDesc routeWitTrace TRT_TID).Perm (exactPublicTable demoTbl)
     have h : lookupLog demoRoutingDesc routeWitTrace TRT_TID = exactPublicTable demoTbl := by

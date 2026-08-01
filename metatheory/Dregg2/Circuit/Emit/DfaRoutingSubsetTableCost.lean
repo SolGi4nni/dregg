@@ -95,7 +95,7 @@ variable {name : String} {tbl : List (List Nat)} {t : VmTrace}
 theorem tf_pinned (hsat : Satisfied2Subset hash (tableRoutingDesc name tbl) minit mfin maddrs t) :
     t.tf TRT_TID = exactPublicTable tbl := by
   have h := hsat.publicTablesFaithful (transitionTableDef tbl)
-    (by simp [tableRoutingDesc])
+    (by simp [tableRoutingDesc_tables])
   simpa [TableDef.publicContentsFaithful, transitionTableDef] using h
 
 /-- Every row's `(current, symbol, next)` is a declared table row — MEMBERSHIP, on every row. -/
@@ -106,7 +106,7 @@ theorem row_triple (hsat : Satisfied2Subset hash (tableRoutingDesc name tbl) min
   have hrow := hsat.rowConstraints i hi _ mem_transitionLookup
   rw [← tf_pinned hsat]
   have hl : (envAt t i).loc = t.rows[i]'hi := envAt_loc hi
-  simpa only [VmConstraint2.holdsAt, Lookup.holdsAt, transitionLookup, List.map,
+  simpa only [VmConstraint2.holdsAt, Lookup.holdsAt, List.map,
     EmittedExpr.eval, hl] using hrow
 
 /-- Every row reads a genuine step-graph entry (exact ℤ equalities, no mod-`p` envelope). -/
@@ -132,7 +132,7 @@ theorem window_forces
     contWindowBody.eval (envAt t i) ≡ 0 [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints i hi _ mem_continuityWindow
   have hlf : (i + 1 == t.rows.length) = false := by simpa using hnl
-  simp only [VmConstraint2.holdsAt, continuityWindow, WindowConstraint.holdsAt, if_true] at hrc
+  simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true] at hrc
   exact hrc hlf
 
 /-- B1 fires on the first row. -/
