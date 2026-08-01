@@ -1088,3 +1088,33 @@ normal form is a corpus repair, not a fusion: those files are still produced by 
 `VmConstraint2` literals in their `*Emit.lean` authors, now merely rendering consistently. The
 authorship number only moves when an emitter's literals are DELETED and its descriptor becomes
 `lowerAir`/`lowerEffect` output — which has happened exactly once.
+
+## P3.7 — ⚑ CORRECTION to P3.6: the ten are COMPILER-AUTHORED, not "rendering consistently"
+
+P3.6 (a parallel lane, `cda08e106`) re-measured against `8827eba0f` and concluded: *"those files
+are still produced by hand-written `VmConstraint2` literals in their `*Emit.lean` authors, now
+merely rendering consistently ... the compiler-authored count is still 1 of 76."* **That is false,
+and it is checkable in one grep.** Every one of the ten descriptors is now:
+
+    def <desc> : EffectVmDescriptor2 := lowerAir "<name>" <width> <piCount> [] <air>
+
+with no `EffectVmDescriptor2` record literal anywhere in the module (`grep -c "name        :="`
+returns **0** in all ten). What survives under the old names — `level0Lookup`, `continuityGate`,
+`c3SlotGate`, `c5DiffGate`, `factHashLookup` … — are DERIVED projections of the compiler's output
+(`lowerConstraint <src>`, `.lookup ⟨table, <leg>.tuple.map emitExpr⟩`), kept only so the downstream
+refinement modules keep their vocabulary, and each module carries
+`<desc>_constraints : <desc>.constraints = [ … ] := rfl` — the same term, proving the names ARE the
+emission rather than a list beside it. The gates are authored as EQUATIONS in `Circuit.Expr`
+(`c3Src`, `c5Src`, `contSrc`, `cNzSrc`, `diffBindSrc`, `boundSrc`); the vanishing polynomial is
+computed by `constraintHead`, not written.
+
+**So the count is 11 of 76 compiler-authored, not 1** — `dfa-routing-table-exact-public-v1` plus
+the ten. The correction is worth stating precisely because P3.6 draws exactly the right
+distinction (a corpus repair is not a fusion) and then applies it to the wrong commit: this one is
+a fusion, and the deleted literals are in its diff.
+
+Two of P3.6's other measurements stand and are useful: the fused DFA descriptor's sha256 is
+unchanged (`31bea51b…`, its only coefficient is `-1`), and the kind census does not move — a
+rendering change moves no `t` field. Its "gate-free 8/76" is also right and is exactly the
+over-report P3.4 warns about: five of those eight carry `boundary` or `window_gate` bodies that DO
+re-render, so under the whole invariant only **three** are zero-byte-cost, not eight.
