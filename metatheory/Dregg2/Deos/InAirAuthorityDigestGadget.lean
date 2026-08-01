@@ -32,13 +32,15 @@ required-tag floor: `hash committedFloor` (`hash_many` over the decoded required
     sound over the integral domain ℤ) plus the OR-fold `floorCol = b0 + b1 − b0·b1` forces
     `floorCol = escrowBit [F0, F1]` — exactly `hdecode`, now proven arithmetic, NO crypto floor.
 
-Composed (`gentian_selector_forced_discharged`): the recompute-bind gate ties the chip output to the
-committed limb (`hash [F0, F1] = hash committedFloor`); the felt-domain CR floor `FloorDigestBinds`
-(equal digests ⟹ equal floors — the analog of `ConstraintBinding.DeclCommitBinds`) forces
-`[F0, F1] = committedFloor`; so the committed declaration's escrow requirement transfers to the
-witnessed floor, the decode lights `floorCol = 1`, and the selector-force gate forces `sel = 1` — with
-NO `hrecompute`/`hdecode`/`hverifier`. The four sealed-escrow conjuncts then bite
-(`gentian_settle_forced_discharged`).
+⚑ **THE COMPOSED KEYSTONE IS GONE (2026-08-01).** The composition that ran recompute + CR floor +
+decode into a forced selector — `gentian_selector_forced_discharged`, `gentian_settle_forced_discharged`
+and the two unsat teeth — is DELETED, because its CR step went through `FloorDigestBinds`, which the
+tree PROVES false at deployed parameters (`InAirAuthorityFloorRegrounded.floorDigestBinds_false_babyBear`).
+All four were vacuously true. See the §10–§11 tombstone below for the replacements to consume; the
+strongest is `Deos.CarrierBoundFloorGadget`, which keeps the Boolean impossibility AND kills the
+`hcommitLimb` dodge. What SURVIVES here is the part that never needed the false floor: the two
+discharges themselves — `recompute_discharged` (§8, on `ChipTableSound` alone) and `decode_discharged`
+(§9, pure gate arithmetic, NO crypto floor) — plus the descriptor and its membership lemmas.
 
 ## STAGED — built BESIDE the deployed, NOT flipped
 
@@ -49,17 +51,18 @@ Rust shadow: `circuit/src/effect_vm/authority_digest_weld.rs` (the decode/recomp
 
 ## Tag-agnostic reuse
 
-`isZero_from_gates` + the decode/OR-fold are parametric in the matched tag, and
-`gentian_selector_forced_discharged` is parametric in the committed floor; tags 18 (discharge) / 19
-(vault) / Custom / temporal reuse the coverage→selector half verbatim once their satisfaction gates
-land (`IN-AIR-AUTHORITY-DIGEST-GADGET.md` §7).
+`isZero_from_gates` + the decode/OR-fold are parametric in the matched tag; tags 18 (discharge) / 19
+(vault) / Custom / temporal reuse the decode half verbatim once their satisfaction gates land
+(`IN-AIR-AUTHORITY-DIGEST-GADGET.md` §7). The selector half now belongs to
+`Deos.CarrierBoundFloorGadget`.
 
 ## Axiom hygiene
 
-`#assert_all_clean` at the close. The named hypotheses are the two CR floors (`ChipTableSound`,
-`FloorDigestBinds`) and the wide-commit binding `hcommitLimb` — never an axiom; no core edit. The
-forcing reduces through the STABLE `Satisfied2.rowConstraints` interface and the deployed
-`chip_lookup_sound` lever.
+`#assert_all_clean` at the close. The one remaining named hypothesis is the chip-table faithfulness
+floor `ChipTableSound` (`recompute_discharged`); `decode_discharged` carries none. Never an axiom; no
+core edit. Both reduce through the STABLE `Satisfied2.rowConstraints` interface and the deployed
+`chip_lookup_sound` lever. `FloorDigestBinds` survives as a REFUTED def only — it is consumed by
+nothing in this file.
 -/
 import Dregg2.Deos.InAirAuthorityDigestSelector
 
@@ -360,131 +363,64 @@ theorem decode_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
           if_neg (show ¬(tagEscrowZ = (envAt t i).loc FLOOR0_COL
                         ∨ tagEscrowZ = (envAt t i).loc FLOOR1_COL) by omega)]; ring
 
-/-! ## §10 — THE DISCHARGED SELECTOR-FORCING KEYSTONE.
+/-! ## §10–§11 — TOMBSTONE: the four `FloorDigestBinds` consumers, DELETED as VACUOUS (2026-08-01).
 
-Composed: under ONLY the two CR floors (`ChipTableSound`, `FloorDigestBinds`) and the wide-commit
-binding `hcommitLimb` — NO `hrecompute`/`hdecode`/`hverifier` — a committed declaration whose
-Option-B floor digest requires the escrow tag FORCES the selector ON. -/
+DELETED here: `gentian_selector_forced_discharged` (the selector-forcing keystone),
+`gentian_settle_forced_discharged` (the four sealed-escrow conjuncts), and the two teeth
+`gentian_partial_unsat_discharged` / `gentian_phantom_unsat_discharged`. Each claimed a Boolean
+IMPOSSIBILITY — the capacity selector is FORCED `1` on a cell whose committed authority-digest limb is
+the Option-B digest of an escrow-requiring floor; a partial or phantom settle CANNOT satisfy the gadget
+descriptor — under `hCR : FloorDigestBinds hash`.
 
-/-- **THE GENTIAN SELECTOR-FORCING KEYSTONE, hypotheses DISCHARGED.** A satisfying gadget proof on a
-cell whose committed authority-digest limb is the felt-domain digest of a floor REQUIRING the escrow
-tag has its capacity selector forced `1` — for a PURE light client, under only the chip-table
-faithfulness + the felt-hash collision-resistance. The forger can dodge NEITHER by an alternate
-witnessed floor (the recompute lookup + recompute-bind + CR floor force it equal to the committed
-floor) NOR by `sel = 0` (the selector-force gate). -/
-theorem gentian_selector_forced_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
-    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (hsat : Satisfied2 hash (gentianGadgetDescriptor legA legB) minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hCR : FloorDigestBinds hash)
-    (committedFloor : List ℤ)
-    (hreq : tagEscrowZ ∈ committedFloor)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
-    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor) :
-    (envAt t i).loc ESCROW_SEL_COL = 1 := by
-  -- DISCHARGE hrecompute: the chip lookup forces the witnessed-digest column to the felt-floor digest.
-  have hwit := recompute_discharged hash legA legB hsat hChip i hi
-  -- the recompute-bind gate ties the witnessed digest to the committed limb (field-faithfully).
-  have hbind : (envAt t i).loc GENTIAN_WIT_DIGEST_COL = (envAt t i).loc gentianAuthDigestCol := by
-    have h := gadget_gate_holds hash legA legB hsat i hi hnl
-      (gentianRecomputeBindGate GENTIAN_WIT_DIGEST_COL gentianAuthDigestCol)
-      (gentianGate_mem_gadget legA legB _ (by simp [gentianGates]))
-      _ rfl
-    simp only [gentianRecomputeBindGate, EmittedExpr.eval] at h
-    exact canonEq ((gate_modEq_iff (by ring)).mp h) (hcanon _).1 (hcanon _).2 (hcanon _).1 (hcanon _).2
-  -- ⟹ the witnessed floor digest equals the committed floor digest.
-  have hdig : hash [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] = hash committedFloor := by
-    rw [← hwit, hbind, hcommitLimb]
-  -- CR ⟹ the witnessed floor IS the committed floor.
-  have hfloor : [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] = committedFloor :=
-    hCR _ _ hdig
-  -- the committed floor requires escrow ⟹ the witnessed floor does ⟹ the decode lights the bit.
-  have hwitreq : tagEscrowZ ∈ [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] := by
-    rw [hfloor]; exact hreq
-  -- DISCHARGE hdecode: the decode gates force floorCol = escrowBitZ floor = 1.
-  have hdec := decode_discharged hash legA legB hsat i hi hnl hcanon
-  have hfloorOne : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = 1 := by
-    rw [hdec]; unfold escrowBitZ; rw [if_pos hwitreq]
-  -- the selector-force gate forces sel = 1 (field-faithfully, under selector canonicality).
-  have hsel := gadget_gate_holds hash legA legB hsat i hi hnl
-    (gentianSelectorForceGate GENTIAN_FLOOR_ESCROW_COL ESCROW_SEL_COL)
-    (gentianGate_mem_gadget legA legB _ (by simp [gentianGates]))
-    _ rfl
-  simp only [gentianSelectorForceGate, EmittedExpr.eval, hfloorOne, one_mul] at hsel
-  exact canonEq ((gate_modEq_iff (by ring)).mp hsel) (hcanon _).1 (hcanon _).2 (by norm_num) (by norm_num)
+WHY THEY WENT. `FloorDigestBinds hash` is `Function.Injective hash` on the INFINITE `List ℤ` while the
+Option-B floor digest is ONE BabyBear felt. The tree PROVES that hypothesis false:
+`Deos.InAirAuthorityFloorRegrounded.floorDigestBinds_false_of_finite_range` (the counting core) and
+`Deos.InAirAuthorityFloorRegrounded.floorDigestBinds_false_babyBear` (the deployed form). So all four
+were VACUOUSLY TRUE at every deployed parameter — they constrained no real prover. ⚑ The refuting felt
+bound stood IN THEIR OWN SIGNATURES: `hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c <
+2013265921`, asserted about the very felts they digest. `#assert_axioms` never saw it — it audits the
+PROOF (kernel-clean, and these were) and never the HYPOTHESIS.
 
-/-! ## §11 — THE DISCHARGED SETTLE-FORCING + the teeth. -/
+The def `FloorDigestBinds` (§2) is KEPT. The two falsity theorems name it, and `Verify/FloorRatchet`
+fails closed on a sentinel floor with no visible in-tree refutation: the def is the tombstone WITH
+TEETH, the accrual stop against a fresh vacuous floor of the same shape.
 
-/-- **THE GENTIAN DISCHARGE (pure light client), hypotheses DISCHARGED.** The four sealed-escrow
-conjuncts are forced over the committed wide-bound field columns — driven by the IN-AIR selector
-forcing, with NO off-band verifier discipline and NO `hrecompute`/`hdecode`. -/
-theorem gentian_settle_forced_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
-    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (hsat : Satisfied2 hash (gentianGadgetDescriptor legA legB) minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hCR : FloorDigestBinds hash)
-    (committedFloor : List ℤ)
-    (hreq : tagEscrowZ ∈ committedFloor)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
-    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor) :
-    (envAt t i).loc (beforeFieldCol legA) ≡ stDeposited [ZMOD 2013265921] ∧
-    (envAt t i).loc (beforeFieldCol legB) ≡ stDeposited [ZMOD 2013265921] ∧
-    (envAt t i).loc (afterFieldCol legA)  ≡ stConsumed [ZMOD 2013265921] ∧
-    (envAt t i).loc (afterFieldCol legB)  ≡ stConsumed [ZMOD 2013265921] := by
-  have hsel := gentian_selector_forced_discharged hash legA legB hsat hChip hCR committedFloor hreq
-    i hi hnl hcanon hcommitLimb
-  have force : ∀ (col : Nat) (val : ℤ),
-      settleEscrowSatGate ESCROW_SEL_COL col val ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB →
-      (envAt t i).loc col ≡ val [ZMOD 2013265921] := by
-    intro col val hmem
-    have h0 := gadget_gate_holds hash legA legB hsat i hi hnl
-      (settleEscrowSatGate ESCROW_SEL_COL col val) (weldedGate_mem_gadget legA legB _ hmem)
-      (.mul (.var ESCROW_SEL_COL) (.add (.var col) (.const (-val)))) rfl
-    simp only [EmittedExpr.eval, hsel, one_mul] at h0
-    exact (gate_modEq_iff (by ring)).mp h0
-  refine ⟨?_, ?_, ?_, ?_⟩
-  · exact force (beforeFieldCol legA) stDeposited (by simp [settleEscrowSatGates])
-  · exact force (beforeFieldCol legB) stDeposited (by simp [settleEscrowSatGates])
-  · exact force (afterFieldCol legA) stConsumed (by simp [settleEscrowSatGates])
-  · exact force (afterFieldCol legB) stConsumed (by simp [settleEscrowSatGates])
+CONSUME INSTEAD — ⚑ THE ROM FORMS FIRST, and read why the ordering matters:
 
-/-- **THE NO-PARTIAL TOOTH (discharged).** A partial settle on a declared-escrow cell cannot satisfy
-the gadget descriptor — no `hrecompute`/`hdecode` needed. -/
-theorem gentian_partial_unsat_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
-    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (hsat : Satisfied2 hash (gentianGadgetDescriptor legA legB) minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) (hCR : FloorDigestBinds hash)
-    (committedFloor : List ℤ) (hreq : tagEscrowZ ∈ committedFloor)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
-    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor)
-    (hpartial : (envAt t i).loc (afterFieldCol legB) = stDeposited) :
-    False := by
-  have h := (gentian_settle_forced_discharged hash legA legB hsat hChip hCR committedFloor hreq
-    i hi hnl hcanon hcommitLimb).2.2.2
-  rw [hpartial] at h
-  simp only [stDeposited, stConsumed] at h
-  exact absurd h (by decide)
+  * ⚑ `Deos.InAirAuthorityFloorRegrounded` — the `…_binds_rom` pair. These are the ONLY genuinely
+    floor-free replacements: no injectivity carrier, no cost model, only query-boundedness and a
+    PolyBounded query count concluding `Negl`. They are ABSENT from `Verify/FloorRatchetBaseline` —
+    that absence IS the evidence they carry no floor. Prefer these.
 
-/-- **THE NO-PHANTOM TOOTH (discharged).** A phantom settle on a declared-escrow cell cannot satisfy
-the gadget descriptor. -/
-theorem gentian_phantom_unsat_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
-    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (hsat : Satisfied2 hash (gentianGadgetDescriptor legA legB) minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) (hCR : FloorDigestBinds hash)
-    (committedFloor : List ℤ) (hreq : tagEscrowZ ∈ committedFloor)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
-    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor)
-    (hphantom : (envAt t i).loc (beforeFieldCol legA) = stEmpty) :
-    False := by
-  have h := (gentian_settle_forced_discharged hash legA legB hsat hChip hCR committedFloor hreq
-    i hi hnl hcanon hcommitLimb).1
-  rw [hphantom] at h
-  simp only [stEmpty, stDeposited] at h
-  exact absurd h (by decide)
+  * `Deos.CarrierBoundFloorGadget` — `gentian_selector_forced_carrier`,
+    `gentian_settle_forced_carrier`, `gentian_forged_floor_unsat_carrier`,
+    `gentian_partial_unsat_carrier`, `gentian_phantom_unsat_carrier`. Boolean successors that KEEP the
+    impossibility shape, with no `FloorDigestBinds`, no recompute chip lookup and no separate digest
+    limb. They earn one real credit the deleted four never had: they discharge the
+    unforced-`hcommitLimb` dodge, because the floor is the row's caveat-manifest tags pinned to the
+    committed manifest by the EXISTING `caveatCommit_binds`, so a forged floor is REFUTED outright
+    (`gentian_forged_floor_unsat_carrier`) rather than assumed away.
+
+    ⚠ BUT THEY REST ON `Poseidon2SpongeCR`, WHICH THIS TREE ALSO REFUTES — by the same counting core
+    at the same modulus (`Circuit/HashFloorHonesty.lean:129 poseidon2SpongeCR_false_babyBear`). All
+    five are grandfathered floor carriers in `FloorRatchetBaseline`, sitting four lines from the
+    names deleted here. So they are a BETTER-SHAPED Boolean, not a floor-free one: strictly stronger
+    than what was deleted, and still vacuous at BabyBear. An earlier draft of this tombstone ranked
+    them "strongest first" without saying so, which would have sent a reader off one refuted floor
+    onto another.
+  * `Deos.InAirAuthorityFloorRegrounded` — `gentian_alternate_floor_advantage_bound` /
+    `gentian_settle_alternate_floor_advantage_bound`: the CR leg as an advantage bound off a real
+    alternate-floor game whose win relation reads the attacked value out of the deployed `VmTrace`
+    column, carrying an EXPLICIT undischarged `Eff`. Their DISCHARGED keyed-ROM successors
+    `gentian_alternate_floor_binds_rom` / `gentian_settle_alternate_floor_binds_rom` carry NO floor
+    hypothesis and no cost-model dodge — only a polynomial query budget and class membership,
+    concluding `Negl`.
+
+Both replacements re-ground the CR leg only; `ChipTableSound` (chip-table faithfulness) remains a
+separate named hypothesis with its own repair path, and the carrier path is what removes `hcommitLimb`.
+
+`Verify/FloorRatchetBaseline` still lists the four deleted names — a baseline name that is no longer a
+carrier reports as SLACK, which is the intended reading. -/
 
 /-! ## §12 — NON-VACUITY TEETH (`#guard`): the decode + the recompute lookup are real and BITE. -/
 
@@ -545,11 +481,7 @@ end Witnesses
   recompute_lookup_holds,
   recompute_discharged,
   isZero_from_gates,
-  decode_discharged,
-  gentian_selector_forced_discharged,
-  gentian_settle_forced_discharged,
-  gentian_partial_unsat_discharged,
-  gentian_phantom_unsat_discharged
+  decode_discharged
 ]
 
 end Dregg2.Deos.InAirAuthorityDigestGadget

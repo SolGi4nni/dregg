@@ -56,59 +56,79 @@ dequeue can append zero leaves to the claim (e.g. real window `[l1,l2,l3]`, clai
 `[l2,l3,0]`): check (1) passes (`root [l1,l2,l3,0] = root [l1,l2,l3]`, the padding alias) and
 check (2) then ADMITS `new_root = root [l2,l3,0] ≠ root [l2,l3]` — a NON-CANONICAL post-root for
 the same head-dequeue, diverging the verifier's tracked root from the live queue (subsequent
-honest proofs against it fail: a poisoning/DoS lever, not a theft lever). The soundness keystones
-below therefore carry an explicit `ZeroFree p.remaining` hypothesis, and `verifyDequeueStrict`
-models the ONE-LINE Rust hardening (`remaining_leaves` all-nonzero check) under which the pins
-are unconditional in the claim (`strict_dequeue_proof_pins`). Until Rust adopts it, the gap is
-the named hypothesis — never silent.
+honest proofs against it fail: a poisoning/DoS lever, not a theft lever). `verifyDequeueStrict`
+models the ONE-LINE Rust hardening (`remaining_leaves` all-nonzero check) that closes it, and
+`strict_claim_zero_free` proves the check supplies zero-freedom. Until Rust adopts it, the gap is
+named — never silent.
 
-## The keystones
+## ⚑ THE SOUNDNESS KEYSTONES ARE GONE FROM THIS FILE — READ THIS BEFORE CITING ANYTHING HERE
 
-  * `dequeue_proof_pins` — VERIFIER SOUNDNESS: an admitted proof against a root committing to
-    `head :: rest` PINS the transition: claimed entry = head, claimed remaining = rest, and
-    new_root = root rest. Any other claim would BE a hash collision.
-  * `dequeue_forgery_refused` — the `rotate_compromise_resistant` shape: under CR, a proof
-    claiming a different entry / post-list / post-root is REFUSED (`= false`).
+Every CR-conditioned pin this module used to carry — `dequeue_proof_pins`,
+`dequeue_forgery_refused`, `stale_proof_refused`, `dequeue_proof_unique`,
+`strict_dequeue_proof_pins`, `queueDequeueProven_pins_root_transition` / `_refuses_forgery` /
+`_refuses_stale`, and §7's `tagged_dequeue_proof_pins` / `tagged_kills_pad_alias` — was DELETED as
+VACUOUS. Their hypotheses `RootCR`/`LeafCR`/`PairCR`/`LenBindCR` are all injectivity of a
+compressing map into a bounded 256-bit digest, and this tree PROVES THEM FALSE at every deployed
+parameter (`Apps.QueueRootFloorRegrounded` §1a/§1b/§8: `rootCR_false_blake3`,
+`leafCR_false_of_compressing`, `pairCR_false_blake3`, `lenBindCR_false_blake3`), so each theorem was
+vacuously true where it was read as THE result. `#assert_axioms` was clean on all of them and could
+never have caught it: it audits the PROOF, never the HYPOTHESIS. Section-level tombstones below say
+what each claimed and which replacement to consume.
+
+**THE REPLACEMENTS, all in `Apps.QueueRootFloorRegrounded`, all already proved:**
+`dequeue_proof_pins_advantage_bound`, `queueDequeueProven_pins_root_transition_advantage_bound`,
+`dequeue_proof_unique_advantage_bound` — floor-free additive advantage bounds; and the ROM forms
+`dequeue_proof_pins_binds_rom`, `queueDequeueProven_pins_root_transition_binds_rom`,
+`dequeue_proof_unique_binds_rom` — the standard cryptographic idiom, carrying NO floor hypothesis
+and NO cost model, only query-boundedness and a `PolyBounded` query count, concluding `Negl`.
+Its reduction is a genuine root-vs-leaf DICHOTOMY (`forgery_wins_imp`: a forgery win is EITHER a
+real ROOT collision on two distinct zero-free windows OR a real LEAF collision) closed by a UNION
+BOUND (`forgery_adv_le`) — which is why ONE bound covers TWO floors.
+
+## What this module still carries (all floor-free)
+
+  * the verifier models themselves — `verifyDequeue` / `verifyDequeueAgainst` /
+    `verifyDequeueStrict`, Rust-verbatim, plus their factoring lemmas;
   * `honest_dequeue_verifies` (+ `_against`) — COMPLETENESS: the real head + the real remaining
-    list always verifies (and against the live root).
-  * `stale_proof_refused` — REPLAY: a structurally-valid proof does NOT verify against any root
-    committing to a DIFFERENT pending list (the `verify_dequeue_proof_against` form).
-  * `dequeue_proof_unique` — two admitted proofs against the same old-root pin the SAME
-    entry/remaining/new-root.
-  * THE WELD (§4): `dequeue_root_written` constrains the EXISTING `queueDequeue` (the committed
-    post-state's `message_root` IS the `newRoot` argument — the opaque parameter now has read-back
-    semantics), and `queueDequeueProven` is the GUARDED form (proof-checked against the live
-    `message_root` field, then the existing `queueDequeue`): tighten-only
-    (`queueDequeueProven_eq`, so every QueueFactory keystone lifts), and
-    `queueDequeueProven_pins_root_transition` — the admitted root pair is EXACTLY the modeled
-    root transition `root (leafHash head :: rest) → root rest`.
+    list always verifies, and against the live root. No crypto hypothesis;
+  * `strict_claim_zero_free` / `verifyDequeueStrict_sound` — the one-line hardening's real content;
+  * §3b `refRoot_pad_alias` / `padded_root_not_fully_injective` — the PADDING ALIAS exhibited: full
+    root injectivity is FALSE for the padded scheme, structurally, no hash assumption anywhere;
+  * THE WELD (§4): `dequeue_root_written` / `enqueue_root_written` (the committed post-state's
+    `message_root` IS the `newRoot` argument — the opaque parameter has read-back semantics),
+    `queueDequeueProven` and `queueDequeueProven_eq` (tighten-only, so every QueueFactory keystone
+    lifts), `_preserves_no_underflow`, `_commits_honest`;
+  * the carrier defs `RootCR`/`LeafCR`/`LeafNonzero`/`PairCR`/`LenBindCR`/`TagSep` and their
+    both-polarity witnesses — KEPT DELIBERATELY. The refutations name them, and
+    `Verify/FloorRatchet` fails closed on a sentinel floor with no visible in-tree refutation:
+    these are tombstones WITH TEETH, the accrual stop against new vacuous floors.
 
-Existing keystones are NOT touched: `QueueFactory.queueDequeue` keeps its statement; this module
-only ADDS theorems over it and a guarded form on top of it.
+Existing keystones are NOT touched: `QueueFactory.queueDequeue` keeps its statement.
 
-## §7 — THE HARDENING UPGRADE, PROVED (level tags + length binding ⇒ NO zero-free restriction)
+## §7 — THE LEVEL-TAGGED HARDENING: what survives, and why
 
-§7 models the LEVEL-TAGGED variant of `blake3_binary_root` — leaf nodes hashed under a leaf
-prefix (`tagLeaf` = blake3(0x00 ‖ leaf)), internal nodes under a node prefix (`combine` =
-blake3(0x01 ‖ l ‖ r)), and the root bound to the LIST LENGTH (`bindLen` = blake3(0x02 ‖ len ‖
-root)) — and PROVES the strengthened carrier needs NO zero-free restriction:
-`taggedRoot_injective` (injective on ALL leaf lists) under only the three per-domain CR carriers,
-with NO `ZeroFree` and NO `LeafNonzero` hypothesis anywhere (`tagged_dequeue_proof_pins`). The
-padding alias is killed by the length binding (`tagged_kills_pad_alias`; the prefix-free tags are
-what make the three carriers jointly dischargeable at ONE BLAKE3 instance — `TagSep` kills the
-single-leaf-passthrough/internal-node confusion the header item (2) names). The interim
-`verifyDequeueStrict` zero-check becomes unnecessary under the upgraded scheme.
+§7 models the LEVEL-TAGGED variant of `blake3_binary_root` — leaves under a leaf prefix (`tagLeaf`
+= blake3(0x00 ‖ leaf)), internal nodes under a node prefix (`combine` = blake3(0x01 ‖ l ‖ r)), the
+root bound to the LIST LENGTH (`bindLen` = blake3(0x02 ‖ len ‖ root)). `taggedRoot_injective` and
+`taggedRoot_RootCR` REMAIN — not because they are sound (they are vacuous at a bounded digest too)
+but because `QueueRootFloorRegrounded.tagged_carriers_false_at_bounded_root` consumes
+`taggedRoot_RootCR` AT TERM LEVEL to prove ⚑ THE HARDENING DOES NOT ESCAPE THE FINDING: if the
+tagged carriers held, `RootCR` would hold, and `RootCR` is false. Deleting the chain deletes that
+tooth. The upgrade fixes the PADDING ALIAS (structural, and it really does); it cannot fix the
+counting bug. Only the `Eff` parameter does.
 
-⚠ RUST ADOPTION IS A WIRE-AFFECTING CHANGE: switching `blake3_binary_root` to the tagged scheme
-changes EVERY queue `message_root` on the wire (and any stored roots) — it needs a coordinated
-root-format migration, NOT a drop-in patch. The Rust leg is HORIZONLOG'd (metatheory section),
-deliberately not done here.
+⚠ RUST NEVER ADOPTED IT, and adoption is a WIRE-AFFECTING CHANGE: switching `blake3_binary_root` to
+the tagged scheme changes EVERY queue `message_root` on the wire (and any stored roots) — a
+coordinated root-format migration, not a drop-in patch. The Rust leg is HORIZONLOG'd, not done here.
 
-l4v bar: `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every keystone; crypto
-enters ONLY as the named `RootCR`/`LeafCR`/`LeafNonzero` hypotheses (witnessed TRUE on a
-reference injective root and FALSE on a colliding one — never `True`-shaped). Non-vacuity both polarities, `#guard`-EXECUTED: honest proofs
-verify and commit; forged entry / tampered post-root / dropped leaf / stale root / zero-padded
-claim (strict) / non-owner all REFUSE.
+⚑ OPEN WORK LEFT BY THE DELETION: `tagged_kills_pad_alias` — the length binding kills the padding
+alias — is REAL DESIGN CONTENT and STRUCTURAL, not a hardness assumption. It went only because it
+was stated conditional on the refuted `LenBindCR`. RESTATING IT FLOOR-FREE IS NOT DONE. The concrete
+pole survives EXECUTED at `#guard`s (xiii)/(xiv).
+
+l4v bar: `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on everything that remains.
+Non-vacuity both polarities, `#guard`-EXECUTED: honest proofs verify and commit; forged entry /
+tampered post-root / dropped leaf / stale root / zero-padded claim (strict) / non-owner all REFUSE.
 -/
 import Dregg2.Apps.QueueFactory
 import Dregg2.Tactics
@@ -151,10 +171,11 @@ ZERO-FREE lists are STILL INFINITE (`zfRep n := List.replicate (n+1) 1`), while 
 bounded, so `exists_zeroFree_collision_of_finite_range` collides two of THEM. The restriction buys
 reality against `padded_root_not_fully_injective`; it buys nothing against counting.
 
-**The honest replacement is `Apps.QueueRootFloorRegrounded`** — `dequeue_proof_pins`'s
-advantage-bounded sibling, from a REAL root-collision/leaf-collision DICHOTOMY with a union bound (the
-win relation is the Rust-verbatim `verifyDequeue` accepting a forged claim against the live root),
-carrying explicit undischarged `Eff`s. This def is KEPT so the record and the teeth keep compiling. -/
+**The honest replacement is `Apps.QueueRootFloorRegrounded`** — `dequeue_proof_pins_advantage_bound`
+and the ROM `dequeue_proof_pins_binds_rom`, from a REAL root-collision/leaf-collision DICHOTOMY with a
+union bound (the win relation is the Rust-verbatim `verifyDequeue` accepting a forged claim against the
+live root), carrying explicit undischarged `Eff`s. Every consumer of this carrier in THIS file has been
+DELETED as vacuous; the def is KEPT so the record and the teeth keep compiling. -/
 def RootCR (root : List Int → Int) : Prop :=
   ∀ ls₁ ls₂ : List Int, ZeroFree ls₁ → ZeroFree ls₂ → root ls₁ = root ls₂ → ls₁ = ls₂
 
@@ -207,8 +228,11 @@ def verifyDequeueAgainst (root : List Int → Int) (leafHash : Entry → Int)
 
 /-- **`verifyDequeueStrict` — the ONE-LINE HARDENING Rust should adopt** (see header ⚠): also
 refuse any claimed remaining leaf equal to the zero padding value, closing the
-non-canonical-post-root alias. Under THIS verifier the soundness pins are unconditional in the
-claim (`strict_dequeue_proof_pins`). -/
+non-canonical-post-root alias. Under THIS verifier zero-freedom of the claim is a CHECKED fact
+(`strict_claim_zero_free`) rather than a hypothesis. ⚠ The pin that used to be stated on top of it,
+`strict_dequeue_proof_pins`, was DELETED as vacuous (it inherited `RootCR`/`LeafCR`); the strict
+verifier itself is NOT refuted and stands. For the pin, consume
+`Apps.QueueRootFloorRegrounded.dequeue_proof_pins_binds_rom`. -/
 def verifyDequeueStrict (root : List Int → Int) (leafHash : Entry → Int)
     (p : DequeueProof Entry) : Bool :=
   p.remaining.all (fun l => l != 0) && verifyDequeue root leafHash p
@@ -223,7 +247,11 @@ def honestDequeueProof (root : List Int → Int) (leafHash : Entry → Int)
     newRoot := root rest
     remaining := rest }
 
-/-! ## §3 — the dequeue-proof keystones. -/
+/-! ## §3 — the verifier's factoring lemmas and COMPLETENESS (all floor-free).
+
+⚠ The CR-conditioned SOUNDNESS keystones that used to live here are DELETED as vacuous — see the
+tombstones below for what each claimed and which `Apps.QueueRootFloorRegrounded` sibling to consume.
+What remains takes no crypto hypothesis at all. -/
 
 /-- **`verifyDequeue_factors`.** An admitted proof factors into the two root equations — the
 bridge every keystone reuses. -/
@@ -243,45 +271,41 @@ theorem verifyDequeueAgainst_factors {root : List Int → Int} {leafHash : Entry
   simp only [Bool.and_eq_true, beq_iff_eq] at h
   exact h
 
-/-- **VERIFIER SOUNDNESS (`dequeue_proof_pins`) — KEYSTONE.** If the checks pass under the named
-CR carriers and the pre-root commits to the (zero-free) window `leafHash head :: rest`, then the
-admitted proof PINS the transition: the claimed entry IS `head`, the claimed remaining IS `rest`,
-and the post-root commits to EXACTLY `rest`. Any other claimed entry or post-list implies a hash
-collision. (`hzfClaim` is the named residue of the Rust zero-pad gap — see header ⚠; the strict
-verifier discharges it, `strict_dequeue_proof_pins`.) -/
-theorem dequeue_proof_pins {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLC : LeafCR leafHash) (hLZ : LeafNonzero leafHash)
-    {p : DequeueProof Entry} {head : Entry} {rest : List Int}
-    (hzfClaim : ZeroFree p.remaining) (hzfReal : ZeroFree rest)
-    (hpre : p.oldRoot = root (leafHash head :: rest))
-    (hv : verifyDequeue root leafHash p = true) :
-    p.entry = head ∧ p.remaining = rest ∧ p.newRoot = root rest := by
-  obtain ⟨h1, h2⟩ := verifyDequeue_factors hv
-  have hlist : leafHash p.entry :: p.remaining = leafHash head :: rest :=
-    hRC _ _ (ZeroFree.cons (hLZ p.entry) hzfClaim) (ZeroFree.cons (hLZ head) hzfReal)
-      (h1.trans hpre)
-  injection hlist with hl hr
-  refine ⟨hLC _ _ hl, hr, ?_⟩
-  rw [← h2, hr]
+/-! ### DELETED — VACUOUS AT THE DEPLOYED ROOT: `dequeue_proof_pins`, `dequeue_forgery_refused`.
 
-/-- **FORGERY REFUSED (`dequeue_forgery_refused`) — the `rotate_compromise_resistant` shape.**
-Under the named CR, a proof claiming ANY other entry, post-list, or post-root than the real
-head-dequeue transition is REFUSED — an admitted forgery would BE a hash collision. -/
-theorem dequeue_forgery_refused {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLC : LeafCR leafHash) (hLZ : LeafNonzero leafHash)
-    {p : DequeueProof Entry} {head : Entry} {rest : List Int}
-    (hzfClaim : ZeroFree p.remaining) (hzfReal : ZeroFree rest)
-    (hpre : p.oldRoot = root (leafHash head :: rest))
-    (hne : p.entry ≠ head ∨ p.remaining ≠ rest ∨ p.newRoot ≠ root rest) :
-    verifyDequeue root leafHash p = false := by
-  cases hv : verifyDequeue root leafHash p with
-  | false => rfl
-  | true =>
-      obtain ⟨he, hr, hn⟩ := dequeue_proof_pins hRC hLC hLZ hzfClaim hzfReal hpre hv
-      rcases hne with h | h | h
-      · exact absurd he h
-      · exact absurd hr h
-      · exact absurd hn h
+THEY CLAIMED: under `RootCR root` + `LeafCR leafHash` + `LeafNonzero leafHash`, an admitted
+`verifyDequeue` against a pre-root committing to the zero-free window `leafHash head :: rest` PINS
+the transition (claimed entry = `head`, claimed remaining = `rest`, `newRoot = root rest`), and any
+claim differing in entry / post-list / post-root is REFUSED (`= false`) because an admitted forgery
+would BE a hash collision.
+
+WHY THEY WENT: `RootCR` is FALSE at the deployed `blake3_binary_root`
+(`Apps.QueueRootFloorRegrounded.rootCR_false_blake3`) and `LeafCR` is FALSE at `hash_entry`
+(`leafCR_false_of_compressing` — pigeonhole, 2²⁵⁶ < 2⁷⁰⁴ over the finite 88-byte preimage), so both
+theorems were VACUOUSLY TRUE at every deployed parameter: they read as THE dequeue-verifier
+soundness result while asserting nothing about any real queue. `#assert_axioms` cannot see this —
+it audits the PROOF (kernel-clean, and they were) and never the HYPOTHESIS.
+
+⚑ AND THE ZERO-FREE RESTRICTION DID NOT SAVE `RootCR` — the delicate part, so read the refutation
+rather than assuming it is the §3b padding alias: the ZERO-FREE lists are STILL INFINITE
+(`zfRep n := List.replicate (n+1) 1`, pairwise distinct and zero-free) into a bounded digest, so
+`exists_zeroFree_collision_of_finite_range` collides two of THEM, INSIDE the carrier's own
+restricted domain. The restriction buys reality against `padded_root_not_fully_injective`; it buys
+nothing against counting. `RootCR`/`LeafCR` themselves are KEPT above: the refutations name them,
+and `Verify/FloorRatchet` fails closed on a sentinel floor with no visible in-tree refutation.
+
+CONSUME INSTEAD: `Apps.QueueRootFloorRegrounded.dequeue_proof_pins_advantage_bound` (floor-free,
+the Boolean pin as an additive negligible advantage), and for the standard cryptographic idiom —
+NO floor hypothesis, NO cost model, only query-boundedness and a `PolyBounded` query count,
+concluding `Negl` — `Apps.QueueRootFloorRegrounded.dequeue_proof_pins_binds_rom`.
+
+⚑ WHY ONE BOUND COVERS BOTH FLOORS: the reduction is a genuine root-vs-leaf DICHOTOMY, not a
+single-hash bound. `QueueRootFloorRegrounded.forgery_wins_imp` proves a forgery win yields EITHER
+two DISTINCT zero-free windows sharing one root (a real ROOT collision, derived inside `RootCR`'s
+own zero-free domain — the live window is zero-free because it is a leaf image and leaves are
+nonzero) OR equal windows, which forces `remaining = rest` by cons-injectivity so the claim differs
+in the ENTRY while the leaves collide (a real LEAF collision). `forgery_adv_le` then closes it with
+a UNION BOUND over the shared instance space. That is why a single bound covers two floors. -/
 
 /-- **COMPLETENESS (`honest_dequeue_verifies`).** An honest dequeue — the real head, the real
 remaining list — ALWAYS verifies. No crypto hypothesis needed (the verifier recomputes the same
@@ -300,40 +324,24 @@ theorem honest_dequeue_verifies_against (root : List Int → Int) (leafHash : En
   rw [honest_dequeue_verifies]
   simp [honestDequeueProof]
 
-/-- **REPLAY REFUSED (`stale_proof_refused`) — the `verify_dequeue_proof_against` keystone.** A
-structurally-valid proof does NOT verify against any root committing to a DIFFERENT (zero-free)
-pending list: the live-root pin would force a collision. So a once-valid proof cannot be replayed
-after the queue advances. -/
-theorem stale_proof_refused {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLZ : LeafNonzero leafHash) {p : DequeueProof Entry}
-    (hzfClaim : ZeroFree p.remaining) {ls : List Int} (hzf : ZeroFree ls)
-    (hne : leafHash p.entry :: p.remaining ≠ ls)
-    (hv : verifyDequeue root leafHash p = true) :
-    verifyDequeueAgainst root leafHash p (root ls) = false := by
-  unfold verifyDequeueAgainst
-  have h1 := (verifyDequeue_factors hv).1
-  have hbeq : (p.oldRoot == root ls) = false := by
-    rw [beq_eq_false_iff_ne]
-    intro heq
-    exact hne (hRC _ _ (ZeroFree.cons (hLZ p.entry) hzfClaim) hzf (h1.trans heq))
-  rw [hbeq, Bool.false_and]
+/-! ### DELETED — VACUOUS AT THE DEPLOYED ROOT: `stale_proof_refused`, `dequeue_proof_unique`.
 
-/-- **UNIQUENESS (`dequeue_proof_unique`).** Two admitted proofs against the same pre-root pin
-the SAME entry, remaining list, and post-root — the pre-root leaves a prover no freedom at all. -/
-theorem dequeue_proof_unique {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLC : LeafCR leafHash) (hLZ : LeafNonzero leafHash)
-    {p₁ p₂ : DequeueProof Entry}
-    (hz₁ : ZeroFree p₁.remaining) (hz₂ : ZeroFree p₂.remaining)
-    (hold : p₁.oldRoot = p₂.oldRoot)
-    (h₁ : verifyDequeue root leafHash p₁ = true) (h₂ : verifyDequeue root leafHash p₂ = true) :
-    p₁.entry = p₂.entry ∧ p₁.remaining = p₂.remaining ∧ p₁.newRoot = p₂.newRoot := by
-  obtain ⟨a1, b1⟩ := verifyDequeue_factors h₁
-  obtain ⟨a2, b2⟩ := verifyDequeue_factors h₂
-  have hlist : leafHash p₁.entry :: p₁.remaining = leafHash p₂.entry :: p₂.remaining :=
-    hRC _ _ (ZeroFree.cons (hLZ p₁.entry) hz₁) (ZeroFree.cons (hLZ p₂.entry) hz₂)
-      (a1.trans (hold.trans a2.symm))
-  injection hlist with hl hr
-  exact ⟨hLC _ _ hl, hr, by rw [← b1, ← b2, hr]⟩
+THEY CLAIMED: REPLAY — under `RootCR` + `LeafNonzero`, a structurally-valid proof does NOT verify
+against any root committing to a DIFFERENT zero-free pending list, so a once-valid proof dies when
+the queue advances; and UNIQUENESS — under `RootCR` + `LeafCR` + `LeafNonzero`, two proofs admitted
+against the same pre-root pin the SAME entry, remaining list and post-root.
+
+WHY THEY WENT: the same disease as the §3 pins. `RootCR` is FALSE at `blake3_binary_root`
+(`QueueRootFloorRegrounded.rootCR_false_blake3`, and refuted INSIDE the zero-free domain by the
+infinite `zfRep` family — the restriction is no defence against counting), `LeafCR` FALSE at
+`hash_entry` by pigeonhole (`leafCR_false_of_compressing`). Both statements were therefore vacuous
+at every deployed parameter while reading as the replay and uniqueness results.
+
+CONSUME INSTEAD: `Apps.QueueRootFloorRegrounded.dequeue_proof_unique_advantage_bound` and its ROM
+form `dequeue_proof_unique_binds_rom` (no floor hypothesis, no cost model — query-boundedness plus a
+`PolyBounded` query count, concluding `Negl`). Same forger, same instance space, same root-vs-leaf
+dichotomy closed by a union bound (`forgery_wins_imp` / `forgery_adv_le`), so replay and uniqueness
+ride the one bound. -/
 
 /-! ### §3s — the STRICT verifier: the pins with NO hypothesis on the claim. -/
 
@@ -353,17 +361,23 @@ theorem verifyDequeueStrict_sound {root : List Int → Int} {leafHash : Entry �
   unfold verifyDequeueStrict at h
   exact (Bool.and_eq_true _ _ |>.mp h).2
 
-/-- **`strict_dequeue_proof_pins`.** Under the hardened verifier the soundness pins hold with NO
-zero-freedom hypothesis on the claim — the check supplies it. This is the precise payoff of the
-recommended one-line Rust hardening. -/
-theorem strict_dequeue_proof_pins {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLC : LeafCR leafHash) (hLZ : LeafNonzero leafHash)
-    {p : DequeueProof Entry} {head : Entry} {rest : List Int} (hzfReal : ZeroFree rest)
-    (hpre : p.oldRoot = root (leafHash head :: rest))
-    (hv : verifyDequeueStrict root leafHash p = true) :
-    p.entry = head ∧ p.remaining = rest ∧ p.newRoot = root rest :=
-  dequeue_proof_pins hRC hLC hLZ (strict_claim_zero_free hv) hzfReal hpre
-    (verifyDequeueStrict_sound hv)
+/-! ### DELETED — VACUOUS: `strict_dequeue_proof_pins`.
+
+IT CLAIMED: under the hardened `verifyDequeueStrict` the §3 soundness pins hold with NO
+zero-freedom hypothesis on the claim (the all-nonzero check supplies it) — the precise payoff of
+the recommended one-line Rust hardening.
+
+WHY IT WENT: it was `dequeue_proof_pins` with `strict_claim_zero_free` supplying one argument, so
+it carried that theorem's `RootCR` + `LeafCR` hypotheses verbatim, and both are FALSE at deployed
+parameters (`QueueRootFloorRegrounded.rootCR_false_blake3` / `leafCR_false_of_compressing`). The
+strict check removed a hypothesis about the CLAIM; it removed nothing about the FLOOR, which is
+where the vacuity lives.
+
+⚠ THE STRICT VERIFIER IS NOT REFUTED AND IS NOT DELETED: `verifyDequeueStrict`,
+`strict_claim_zero_free` and `verifyDequeueStrict_sound` all stand above, floor-free. The
+checked-zero-freedom fact and the one-line Rust hardening it models are real; only the
+CR-conditioned pin stacked on top was vacuous. For the pin, consume
+`Apps.QueueRootFloorRegrounded.dequeue_proof_pins_binds_rom`. -/
 
 /-! ## §3b — WHY the carrier is zero-free-restricted: the padding alias, EXHIBITED.
 
@@ -478,58 +492,34 @@ theorem queueDequeueProven_preserves_no_underflow {root : List Int → Int}
     qNoUnderflow k' e :=
   dequeue_preserves_no_underflow (queueDequeueProven_eq h) hpre
 
-/-- **THE WELD KEYSTONE (`queueDequeueProven_pins_root_transition`).** If the cell's live
-`message_root` commits to the (zero-free) pending window `leafHash head :: rest`, then a
-COMMITTED proven dequeue's root pair is EXACTLY the modeled root transition: the claimed entry
-IS `head`, the claimed remaining IS `rest`, and the committed post-state's `message_root` IS
-`root rest`. The opaque-`newRoot` disease instance, closed. -/
-theorem queueDequeueProven_pins_root_transition {root : List Int → Int}
-    {leafHash : Entry → Int} (hRC : RootCR root) (hLC : LeafCR leafHash)
-    (hLZ : LeafNonzero leafHash) {k k' : RecordKernelState} {e actor : CellId}
-    {p : DequeueProof Entry} {head : Entry} {rest : List Int}
-    (hzfClaim : ZeroFree p.remaining) (hzfReal : ZeroFree rest)
-    (hpre : fieldOf messageRootField (k.cell e) = root (leafHash head :: rest))
-    (h : queueDequeueProven root leafHash k e actor p = some k') :
-    p.entry = head ∧ p.remaining = rest ∧
-      fieldOf messageRootField (k'.cell e) = root rest := by
-  obtain ⟨hv, hd⟩ := queueDequeueProven_factors h
-  obtain ⟨hold, hver⟩ := verifyDequeueAgainst_factors hv
-  obtain ⟨he, hr, hn⟩ := dequeue_proof_pins hRC hLC hLZ hzfClaim hzfReal
-    (hold.trans hpre) hver
-  exact ⟨he, hr, by rw [dequeue_root_written hd, hn]⟩
+/-! ### DELETED — VACUOUS AT THE DEPLOYED ROOT: `queueDequeueProven_pins_root_transition`,
+`queueDequeueProven_refuses_forgery`, `queueDequeueProven_refuses_stale`.
 
-/-- **FORGERY FAIL-CLOSED on the weld.** Under the named CR, a proof claiming any entry other
-than the real head NEVER commits — refused before the state is touched. -/
-theorem queueDequeueProven_refuses_forgery {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLC : LeafCR leafHash) (hLZ : LeafNonzero leafHash)
-    {k : RecordKernelState} {e actor : CellId} {p : DequeueProof Entry}
-    {head : Entry} {rest : List Int}
-    (hzfClaim : ZeroFree p.remaining) (hzfReal : ZeroFree rest)
-    (hpre : fieldOf messageRootField (k.cell e) = root (leafHash head :: rest))
-    (hne : p.entry ≠ head) :
-    queueDequeueProven root leafHash k e actor p = none := by
-  unfold queueDequeueProven
-  rw [if_neg (fun hg => by
-    obtain ⟨hold, hver⟩ := verifyDequeueAgainst_factors hg
-    obtain ⟨he, _, _⟩ := dequeue_proof_pins hRC hLC hLZ hzfClaim hzfReal
-      (hold.trans hpre) hver
-    exact hne he)]
+THEY CLAIMED: THE WELD KEYSTONE — if the cell's live `message_root` commits to the zero-free
+pending window `leafHash head :: rest`, a COMMITTED proven dequeue's root pair is EXACTLY the
+modeled transition `root (leafHash head :: rest) → root rest`, read back out of the committed
+`message_root` field; plus the two fail-closed companions (a forged claimed head, or a claimed
+window differing from what the LIVE root commits to, never commits — `= none`, refused before the
+state is touched).
 
-/-- **REPLAY/STALE FAIL-CLOSED on the weld.** A proof whose claimed window differs from what the
-LIVE `message_root` commits to never commits — once the queue advances, old proofs are dead. -/
-theorem queueDequeueProven_refuses_stale {root : List Int → Int} {leafHash : Entry → Int}
-    (hRC : RootCR root) (hLZ : LeafNonzero leafHash)
-    {k : RecordKernelState} {e actor : CellId} {p : DequeueProof Entry}
-    (hzfClaim : ZeroFree p.remaining) {ls : List Int} (hzf : ZeroFree ls)
-    (hpre : fieldOf messageRootField (k.cell e) = root ls)
-    (hne : leafHash p.entry :: p.remaining ≠ ls) :
-    queueDequeueProven root leafHash k e actor p = none := by
-  unfold queueDequeueProven
-  rw [if_neg (fun hg => by
-    obtain ⟨hold, hver⟩ := verifyDequeueAgainst_factors hg
-    have h1 := (verifyDequeue_factors hver).1
-    exact hne (hRC _ _ (ZeroFree.cons (hLZ p.entry) hzfClaim) hzf
-      (h1.trans (hold.trans hpre))))]
+WHY THEY WENT: all three ran through `dequeue_proof_pins` / `RootCR`, and `RootCR` is FALSE at the
+deployed `blake3_binary_root` (`Apps.QueueRootFloorRegrounded.rootCR_false_blake3`; `LeafCR` FALSE
+too, `leafCR_false_of_compressing`). So the headline that reads "the opaque-`newRoot` disease
+instance, CLOSED" was VACUOUSLY TRUE at every deployed parameter — the weld pinned nothing there.
+
+⚠ THE WELD MECHANISM ITSELF SURVIVES INTACT AND FLOOR-FREE: `queueDequeueProven`,
+`queueDequeueProven_factors`, `queueDequeueProven_eq` (tighten-only, so every QueueFactory keystone
+still lifts), `queueDequeueProven_preserves_no_underflow`, `queueDequeueProven_commits_honest` and
+the read-back semantics `dequeue_root_written` / `enqueue_root_written` are all untouched. Only the
+CR-conditioned pins are gone.
+
+CONSUME INSTEAD: `Apps.QueueRootFloorRegrounded.queueDequeueProven_pins_root_transition_advantage_bound`
+— the same weld statement as an additive negligible advantage from BOTH floors, via the genuine
+root-vs-leaf dichotomy (`forgery_wins_imp`) closed by a UNION BOUND (`forgery_adv_le`), which is why
+one bound covers two floors — and its ROM form
+`Apps.QueueRootFloorRegrounded.queueDequeueProven_pins_root_transition_binds_rom`: no floor
+hypothesis, no cost model, only query-boundedness and a `PolyBounded` query count concluding
+`Negl`. -/
 
 /-- **COMPLETENESS on the weld.** The owner, holding the honest proof for the live window,
 ALWAYS commits when the queue is non-empty — the proof gate never blocks the honest dequeue. -/
@@ -546,11 +536,14 @@ theorem queueDequeueProven_commits_honest {root : List Int → Int} {leafHash : 
 
 /-! ## §5 — NON-VACUITY, both polarities, EXECUTED.
 
-The CR carriers witnessed TRUE (an injective reference root/leaf, so the CR-consuming keystones
-FIRE) and FALSE (a colliding root falsifies `RootCR`; the padded `refRoot` falsifies FULL
-injectivity — §3b); fast executable instances + a concrete queue world for `#guard`s: honest
-proofs verify and commit; forged entry / tampered post-root / dropped leaf / stale root /
-zero-padded claim (strict) / non-owner all refuse. -/
+The CR carriers witnessed TRUE (an injective reference root/leaf) and FALSE (a colliding root
+falsifies `RootCR`; the padded `refRoot` falsifies FULL injectivity — §3b), so the carriers are not
+`True`-shaped and `Apps.QueueRootFloorRegrounded`'s refutations of them are refutations of
+something. ⚠ NO CR-CONSUMING KEYSTONE REMAINS FOR THEM TO FIRE — those were deleted as vacuous;
+these witnesses now serve the record and the ratchet only. Fast executable instances + a concrete
+queue world for `#guard`s carry the behaviour EXECUTED and floor-free: honest proofs verify and
+commit; forged entry / tampered post-root / dropped leaf / stale root / zero-padded claim (strict) /
+non-owner all refuse. -/
 
 /-- Injective `Int → Nat` (sign interleaving) — the building block for the reference CR root. -/
 def intCode (i : Int) : Nat := if 0 ≤ i then 2 * i.toNat else 2 * (-i).toNat + 1
@@ -586,14 +579,13 @@ theorem demoLeaf_CR : LeafCR demoLeaf := by
 theorem demoLeaf_nonzero : LeafNonzero demoLeaf := by
   intro e; unfold demoLeaf; omega
 
-/-- The CR-consuming soundness keystone FIRES on the reference instances: a forged head entry
-(`9` against a window headed by `4`) is refused. -/
-example :
-    verifyDequeue demoRoot demoLeaf
-      { entry := 9, oldRoot := demoRoot [demoLeaf 4, demoLeaf 5],
-        newRoot := demoRoot [demoLeaf 5], remaining := [demoLeaf 5] } = false :=
-  dequeue_forgery_refused demoRoot_CR demoLeaf_CR demoLeaf_nonzero
-    (by decide) (by decide) rfl (Or.inl (by decide))
+/-! DELETED with `dequeue_forgery_refused`: the `example` that fired it on the reference instances
+(a forged head `9` against a window headed by `4`, refused). It was the deleted theorem's firing
+fixture and nothing else — its content survives EXECUTED and floor-free at `#guard` (ii) below,
+which refuses the identical forged claim on `tinyRoot`/`tinyLeaf` with no carrier anywhere. The
+positive/negative carrier witnesses `demoRoot_CR` / `badRoot_not_CR` / `demoLeaf_CR` /
+`demoLeaf_nonzero` are KEPT above: they are what shows the carriers are not `True`-shaped, which is
+exactly what the refutations in `Apps.QueueRootFloorRegrounded` need to be about something. -/
 
 /-- Fast executable instances for the `#guard` demos (the keystones use `demoRoot`/`demoLeaf`). -/
 def tinyLeaf (n : Nat) : Int := (n : Int) * 7 + 3
@@ -680,7 +672,15 @@ def qrWorld : RecordKernelState :=
 #guard (queueDequeueProven tinyRoot tinyLeaf qrWorld 0 0
           (honestDequeueProof tinyRoot tinyLeaf 4 [tinyLeaf 5])).isNone
 
-/-! ## §7 — THE HARDENING UPGRADE: level-tagged + length-bound root is injective on ALL lists.
+/-! ## §7 — THE LEVEL-TAGGED HARDENING (⚠ ITSELF REFUTED AT A BOUNDED DIGEST — read the header).
+
+`taggedRoot_injective` / `taggedRoot_RootCR` below are injectivity under `PairCR` + `LenBindCR`,
+and BOTH carriers are FALSE at a 256-bit digest (`Apps.QueueRootFloorRegrounded.pairCR_false_blake3`
+/ `lenBindCR_false_blake3`), jointly refuted by that file's `tagged_carriers_false_at_bounded_root`.
+They are KEPT ONLY because that refutation consumes `taggedRoot_RootCR` at TERM LEVEL — it is the
+tooth proving the hardening does not escape the finding. Do not cite them as soundness. The two
+CR-conditioned CONSUMERS that used to sit here (`tagged_dequeue_proof_pins`,
+`tagged_kills_pad_alias`) are DELETED; see the tombstone below.
 
 The model of the recommended `blake3_binary_root` replacement (header §7): leaves enter through
 `tagLeaf` (the 0x00-prefixed leaf hash), internal nodes through `combine` (the 0x01-prefixed
@@ -837,36 +837,39 @@ theorem taggedRoot_RootCR {tagLeaf : Int → Int} {combine : Int → Int → Int
     RootCR (taggedRoot tagLeaf combine bindLen) :=
   fun ls₁ ls₂ _ _ h => taggedRoot_injective hT hC hB ls₁ ls₂ h
 
-/-- **The upgrade payoff at the verifier — `tagged_dequeue_proof_pins`**: under the hardened
-root, verifier soundness holds with NO `ZeroFree` hypothesis on the claim, NO `ZeroFree` on the
-real window, and NO `LeafNonzero` carrier — the §3 pins, unconditional in the claim and free of
-the interim `verifyDequeueStrict` check. -/
-theorem tagged_dequeue_proof_pins {tagLeaf : Int → Int} {combine : Int → Int → Int}
-    {bindLen : Nat → Int → Int} {leafHash : Entry → Int}
-    (hT : Function.Injective tagLeaf) (hC : PairCR combine) (hB : LenBindCR bindLen)
-    (hLC : LeafCR leafHash)
-    {p : DequeueProof Entry} {head : Entry} {rest : List Int}
-    (hpre : p.oldRoot = taggedRoot tagLeaf combine bindLen (leafHash head :: rest))
-    (hv : verifyDequeue (taggedRoot tagLeaf combine bindLen) leafHash p = true) :
-    p.entry = head ∧ p.remaining = rest
-      ∧ p.newRoot = taggedRoot tagLeaf combine bindLen rest := by
-  obtain ⟨h1, h2⟩ := verifyDequeue_factors hv
-  have hlist : leafHash p.entry :: p.remaining = leafHash head :: rest :=
-    taggedRoot_injective hT hC hB _ _ (h1.trans hpre)
-  injection hlist with hl hr
-  exact ⟨hLC _ _ hl, hr, by rw [← h2, hr]⟩
+/-! ### DELETED — VACUOUS AT ANY BOUNDED DIGEST: `tagged_dequeue_proof_pins`,
+`tagged_kills_pad_alias` (and its `demo_tagged_separates_alias` fixture, §7b).
 
-/-- **The padding alias DIES** (the §3b/`refRoot_pad_alias` attack, killed): a trailing zero leaf
-changes the LENGTH, so the bound root differs — `[a,b,c]` and `[a,b,c,0]` can no longer share a
-root. (Length binding does the killing; the proof needs only the carriers.) -/
-theorem tagged_kills_pad_alias {tagLeaf : Int → Int} {combine : Int → Int → Int}
-    {bindLen : Nat → Int → Int}
-    (_hT : Function.Injective tagLeaf) (_hC : PairCR combine) (hB : LenBindCR bindLen) :
-    taggedRoot tagLeaf combine bindLen [1, 2, 3]
-      ≠ taggedRoot tagLeaf combine bindLen [1, 2, 3, 0] := by
-  intro h
-  obtain ⟨hlen, -⟩ := hB _ _ _ _ h
-  simp at hlen
+THEY CLAIMED: under the hardened level-tagged + length-bound root, verifier soundness holds with NO
+`ZeroFree` on the claim, NO `ZeroFree` on the real window and NO `LeafNonzero` carrier — the §3
+pins, unconditional in the claim and free of the interim `verifyDequeueStrict` check
+(`tagged_dequeue_proof_pins`); and the §3b padding alias DIES, `[1,2,3]` and `[1,2,3,0]` can no
+longer share a root because a trailing zero leaf changes the LENGTH (`tagged_kills_pad_alias`).
+
+WHY THEY WENT: `PairCR` and `LenBindCR` are FALSE at a 256-bit digest
+(`Apps.QueueRootFloorRegrounded.pairCR_false_blake3` / `lenBindCR_false_blake3` — the node combine
+compresses an infinite `Int × Int`, the length wrap an infinite `Nat × Int`), and the carrier
+conjunction is JOINTLY refuted by
+`Apps.QueueRootFloorRegrounded.tagged_carriers_false_at_bounded_root`. The hardening fixes the
+PADDING ALIAS — a structural bug, and it really does fix it — but it cannot fix the counting bug.
+Rust never adopted the tagged root either (switching `blake3_binary_root` is a wire-affecting
+root-format migration, not a patch), so this pair was vacuous AND undeployed.
+
+⚑ NAMED CASUALTY — DO NOT LOSE IT: `tagged_kills_pad_alias` was REAL DESIGN CONTENT. Binding the
+list LENGTH into the root is what kills the padding alias, and that is a STRUCTURAL fact, not a
+hardness assumption; it went only because it was stated conditional on the refuted `LenBindCR`.
+RESTATING IT FLOOR-FREE — length-separation directly, or over an `Eff`-parameterised binding — is a
+small separate piece of work and is NOT DONE HERE. The concrete pole does survive EXECUTED at
+`#guard`s (xiii)/(xiv) below, which exhibit exactly this separation on `tinyTagged` with no carrier
+anywhere, and `QueueRootFloorRegrounded` §8 records the design point in prose.
+
+⚑ STILL HERE, DELIBERATELY: `tLayer_inj`, `tRoot_inj`, `taggedRoot_injective` and
+`taggedRoot_RootCR` are vacuous at a bounded digest too, but `taggedRoot_RootCR` is consumed at
+TERM LEVEL by `QueueRootFloorRegrounded.tagged_carriers_false_at_bounded_root` — that refutation
+works by discharging `RootCR` from the tagged carriers and contradicting `rootCR_false_blake3`, so
+deleting the chain would delete the tooth that proves the hardening does not escape the finding.
+`tRoot_pad_alias` and `tag_separation_kills_passthrough` below carry no refuted floor at all
+(`TagSep` is not a census sentinel and is refuted nowhere in tree) and are untouched. -/
 
 /-- **The padding alias is STRUCTURAL in the un-bound fold** (NEG companion, ANY combiner): the
 bare layered fold still aliases `[1,2,3]` with `[1,2,3,0]` — tagging/CR alone cannot save the
@@ -925,12 +928,13 @@ def badBind (_ : Nat) (x : Int) : Int := x
 theorem badBind_not_CR : ¬ LenBindCR badBind := fun hbad =>
   absurd (hbad 0 5 1 5 rfl).1 (by decide)
 
-/-- The headline FIRES on the reference instances: the hardened root separates the §3b alias
-pair on ALL-lists injectivity (no zero-freedom invoked anywhere). -/
-theorem demo_tagged_separates_alias :
-    taggedRoot demoTagLeaf demoCombine demoBind [1, 2, 3]
-      ≠ taggedRoot demoTagLeaf demoCombine demoBind [1, 2, 3, 0] :=
-  tagged_kills_pad_alias demoTagLeaf_inj demoCombine_CR demoBind_CR
+/-! DELETED with `tagged_kills_pad_alias`: `demo_tagged_separates_alias`, which was that theorem
+applied to `demoTagLeaf`/`demoCombine`/`demoBind` and nothing else. Its content — the length-bound
+tagged scheme separating the §3b alias pair — survives EXECUTED at `#guard` (xiii)/(xiv) below,
+carrier-free. The witnesses it consumed (`demoTagLeaf_inj`, `demoCombine_CR`, `demoBind_CR`, and the
+FALSE pole `badBind_not_CR`) are KEPT: they are what shows `PairCR`/`LenBindCR` are not
+`True`-shaped, which is what makes `QueueRootFloorRegrounded.pairCR_false_blake3` /
+`lenBindCR_false_blake3` refutations of something. -/
 
 /-- Fast executable tagged instance for the `#guard` teeth (cheap length binding suffices to
 EXHIBIT the alias dying; the proved carriers above are the soundness side). -/
@@ -955,15 +959,10 @@ def tinyTagged (ls : List Int) : Int :=
 #assert_axioms leafImage_zero_free
 #assert_axioms verifyDequeue_factors
 #assert_axioms verifyDequeueAgainst_factors
-#assert_axioms dequeue_proof_pins
-#assert_axioms dequeue_forgery_refused
 #assert_axioms honest_dequeue_verifies
 #assert_axioms honest_dequeue_verifies_against
-#assert_axioms stale_proof_refused
-#assert_axioms dequeue_proof_unique
 #assert_axioms strict_claim_zero_free
 #assert_axioms verifyDequeueStrict_sound
-#assert_axioms strict_dequeue_proof_pins
 #assert_axioms refRoot_pad_alias
 #assert_axioms padded_root_not_fully_injective
 #assert_axioms dequeue_root_written
@@ -971,9 +970,6 @@ def tinyTagged (ls : List Int) : Int :=
 #assert_axioms queueDequeueProven_factors
 #assert_axioms queueDequeueProven_eq
 #assert_axioms queueDequeueProven_preserves_no_underflow
-#assert_axioms queueDequeueProven_pins_root_transition
-#assert_axioms queueDequeueProven_refuses_forgery
-#assert_axioms queueDequeueProven_refuses_stale
 #assert_axioms queueDequeueProven_commits_honest
 #assert_axioms intCode_injective
 #assert_axioms demoRoot_CR
@@ -987,13 +983,10 @@ def tinyTagged (ls : List Int) : Int :=
 #assert_axioms tRoot_inj
 #assert_axioms taggedRoot_injective
 #assert_axioms taggedRoot_RootCR
-#assert_axioms tagged_dequeue_proof_pins
-#assert_axioms tagged_kills_pad_alias
 #assert_axioms tRoot_pad_alias
 #assert_axioms tag_separation_kills_passthrough
 #assert_axioms demoCombine_CR
 #assert_axioms demoBind_CR
 #assert_axioms badBind_not_CR
-#assert_axioms demo_tagged_separates_alias
 
 end Dregg2.Apps.QueueRoot

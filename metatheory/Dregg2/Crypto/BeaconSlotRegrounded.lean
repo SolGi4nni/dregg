@@ -106,7 +106,7 @@ import Mathlib.Data.Fintype.Vector
 namespace Dregg2.Crypto.BeaconSlotRegrounded
 
 open Dregg2.Crypto.RandomnessBeacon
-  (Beacon HonestSlotCR honest_makes_unbiasable bias_breaks_honest_slot_cr beaconOfHash)
+  (Beacon HonestSlotCR bias_breaks_honest_slot_cr beaconOfHash)
 open Dregg2.Crypto.HermineHintMLWE (CommitReveal HashCR)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)

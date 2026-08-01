@@ -10,7 +10,8 @@ The genuine cryptographic primitive a Poseidon2 implementation rests on is much 
 collision-resistance of ONE FIXED-WIDTH permutation `P : State → State`, used as a per-block
 compression. The sponge over that permutation is a CONSTRUCTION, and the security of the construction
 is a THEOREM (the sponge / Merkle–Damgård domain-extension reduction), not a fresh assumption. This
-module discharges that theorem.
+module ONCE discharged that theorem — the discharge rode a premise the tree PROVES FALSE, so it is
+deleted; see the tombstone below and consume `Crypto/SpongeCompressionRegrounded.lean`.
 
 ## What is modelled (faithful to `circuit/src/poseidon2.rs::hash_many`)
 
@@ -36,27 +37,41 @@ abstracted as a `SpongeMachine`:
 with `step s a := perm (absorb s a)` the per-block compression and
 `spongeOf xs := squeeze (foldl step (init xs.length) (chunksOf xs))` the whole `hash_many`.
 
-## The reduction (a real proof, NOT a relabel)
+## ⚠ THE REDUCTION IS DELETED — it was VACUOUS at every deployed parameter
 
-`Poseidon2SpongeCR (spongeOf …)` is DISCHARGED from THREE separate pieces — two irreducible
-crypto carriers and one structural domain-separation fact, ALL stated explicitly:
+The construction is still modelled here, and the THREE carrier defs survive below:
 
-  1. **`CompressionCR M`** — IRREDUCIBLE PRIMITIVE: ONE permutation call, used as the per-block
-     compression `step = perm ∘ absorb`, is collision-resistant as a chaining function (equal next
-     FULL state ⇒ equal predecessor state AND equal absorbed block). Primitive #4 for a single `perm`.
+  1. **`CompressionCR M`** — ONE permutation call, used as the per-block compression
+     `step = perm ∘ absorb`, is collision-resistant as a chaining function (equal next FULL state ⇒
+     equal predecessor state AND equal absorbed block). ⚠ **REFUTED — see below.**
   2. **`SqueezeBindsReachable M`** — the truncation residual: the slot-0 squeeze is injective on
-     REACHABLE final sponge states (a digest collision without a final-state collision is exactly a
-     last-permutation truncation collision). The honest narrow-output bit.
+     REACHABLE final sponge states. The honest narrow-output bit.
   3. **`InitStepSeparated M`** — STRUCTURAL domain separation: an `init` output (rate slots 0,
-     capacity = length tag) is never a `step` output (a `perm` image). This is the length-prefix
-     domain separation that makes the construction prefix-free; it is a structural property of the
-     real `init`/`perm` (proved for the `Reference` machine by construction), NOT a crypto assumption.
+     capacity = length tag) is never a `step` output (a `perm` image); the length-prefix separation
+     that makes the construction prefix-free. A structural property of the real `init`/`perm`.
 
-`spongeCR_of_reduction`: a digest collision ⇒[2] final-state collision ⇒[1 + 3 MD peel] equal block
-lists ⇒[`chunksOf` flatten-invertible] equal inputs. The crypto content is exactly `CompressionCR` +
-`SqueezeBindsReachable`; `InitStepSeparated`, `chunksOf`, the induction are structural.
+What is GONE is everything that CONSUMED (1): `foldl_step_eq`, `finalState_inj`, the headline
+`spongeCR_of_reduction`, `realizedSpongeOfReduction`, and the two `Reference` witnesses that existed
+only to fire them. Tombstones at §2 / §3 / §4 / §5 say what each claimed.
 
-l4v bar: every theorem pins `{propext, Classical.choice, Quot.sound}` (`#assert_axioms`).
+⚠ `CompressionCR` is not merely unproven — it is PROVED FALSE, by
+`Crypto.SpongeCompressionRegrounded.compressionCR_false_of_finite_state [Nonempty State]
+[Finite State]`. Uncurried, `step : State × List ℤ → State` carries an INFINITE domain (`List ℤ`) into
+a fixed-width permutation state, which is precisely and only what `SpongeMachine` says a real `perm`
+acts on: no numeric bound, no field modulus, no parameter regime is needed to refute it. So every
+consumer was VACUOUSLY TRUE at deployed parameters, and `#assert_axioms` could never see it — it
+audits the PROOF (kernel-clean, and they all were) and never the HYPOTHESIS. The def is KEPT because
+its own falsity theorem names it, and `Verify/FloorRatchet.lean` keys the accrual stop on that name.
+
+**Consume `Crypto/SpongeCompressionRegrounded.lean` instead — the ROM-DISCHARGED forms first:**
+`foldl_step_eq_binds_rom` (:847), `finalState_inj_binds_rom` (:859), and the headline
+`spongeCR_of_reduction_binds_rom` (:874). Those carry NO floor hypothesis and NO cost model — only
+query-boundedness and a `PolyBounded` query count, concluding `Negl`. The `_advantage_bound` siblings
+(`foldl_step_eq_advantage_bound` :563, `finalState_inj_advantage_bound` :576,
+`spongeCR_of_reduction_advantage_bound` :604) state the same reductions carrying an EXPLICIT
+undischarged `Eff`, for the settings where the ROM is not available.
+
+l4v bar: every surviving theorem pins `{propext, Classical.choice, Quot.sound}` (`#assert_axioms`).
 -/
 import Dregg2.Circuit.Poseidon2Binding
 import Mathlib.Data.List.Basic
@@ -144,22 +159,28 @@ variable {State : Type}
 a chaining function: a collision in the next FULL state forces equal predecessor state AND equal
 absorbed block. THE irreducible primitive (one permutation call), primitive #4 for a single `perm`.
 
-⚠ **BROKEN AS NAMED — FALSE for ANY REAL SPONGE, so `foldl_step_eq`, `finalState_inj` and the headline
-`spongeCR_of_reduction` below are ALL VACUOUSLY TRUE at deployed parameters**
-(`Crypto.SpongeCompressionRegrounded.compressionCR_false_of_finite_state`;
-`docs/deos/VACUITY-SWEEP.md` FINDING 2). Uncurried, `step : State × List ℤ → State` has an INFINITE
-domain (`List ℤ`) and a FINITE codomain — and `[Finite State]` is the WHOLE hypothesis, needing no
-numeric bound, because a fixed-width permutation state IS a finite type. So the reduction that demotes
-the tower's `spongeCR` carrier from "an unbounded list-hash is injective" to "ONE permutation call is
-CR" transports nothing at a real sponge.
+⚠ **BROKEN AS NAMED — FALSE for ANY REAL SPONGE. Its four consumers (`foldl_step_eq`,
+`finalState_inj`, the headline `spongeCR_of_reduction`, `realizedSpongeOfReduction`) were VACUOUSLY
+TRUE at deployed parameters and are DELETED** — tombstones at §2/§3/§5. The refutation is
+`Crypto.SpongeCompressionRegrounded.compressionCR_false_of_finite_state` (`docs/deos/VACUITY-SWEEP.md`
+FINDING 2): uncurried, `step : State × List ℤ → State` has an INFINITE domain (`List ℤ`) and a FINITE
+codomain, and `[Finite State]` is the WHOLE hypothesis — no numeric bound needed, because a
+fixed-width permutation state IS a finite type. So the reduction that demoted the tower's `spongeCR`
+carrier from "an unbounded list-hash is injective" to "ONE permutation call is CR" transported nothing
+at a real sponge.
 
-**The honest replacement is `Crypto.SpongeCompressionRegrounded`** — `spongeCR_of_reduction`'s
-advantage-bounded sibling, via `peel`: a CONSTRUCTIVE extractor that walks the two `foldl step` chains
-from the last block inward and RETURNS the first divergence as an explicit `(state, block)` collision
-— this file's own `foldl_step_eq` induction run BACKWARDS (where that theorem CONSUMES `CompressionCR`,
-`peel` PRODUCES the collision a disagreement forces), with `InitStepSeparated` discharging the
-boundary exactly as it does here. Carries an explicit undischarged `Eff`. This def is KEPT so the
-record and the teeth keep compiling. -/
+**Consume `Crypto.SpongeCompressionRegrounded` instead**, ROM-discharged forms first
+(`foldl_step_eq_binds_rom` :847, `finalState_inj_binds_rom` :859, `spongeCR_of_reduction_binds_rom`
+:874 — query-boundedness + a `PolyBounded` query count ⇒ `Negl`, no floor and no cost model), with the
+`_advantage_bound` siblings (:563/:576/:604) where the ROM is unavailable. Both routes run through
+`peel`: a CONSTRUCTIVE extractor that walks the two `foldl step` chains from the last block inward and
+RETURNS the first divergence as an explicit `(state, block)` collision — the deleted `foldl_step_eq`
+induction run BACKWARDS, PRODUCING the collision that theorem merely CONSUMED, with
+`InitStepSeparated` discharging the boundary exactly as it did here.
+
+⚑ **This def is KEPT deliberately.** Deleting it would delete the falsity theorem that names it, and
+`Verify/FloorRatchet.lean` keys the accrual stop on the sentinel name: a refuted floor with a visible
+in-tree refutation is a tombstone WITH TEETH, and removing it is how new vacuous floors get in. -/
 def CompressionCR (M : SpongeMachine State) : Prop :=
   ∀ (s t : State) (a b : List ℤ), M.step s a = M.step t b → s = t ∧ a = b
 
@@ -175,75 +196,68 @@ of the real `init`/`perm` (the `Reference` machine proves it by construction), n
 def InitStepSeparated (M : SpongeMachine State) : Prop :=
   ∀ (n : ℕ) (s : State) (a : List ℤ), M.init n ≠ M.step s a
 
-/-! ## §2 — the MD induction: equal final states ⇒ equal block lists (⇒ equal inputs).
+/-! ## §2 — TOMBSTONE: the MD induction `foldl_step_eq` and `finalState_inj`, DELETED as VACUOUS.
 
-By double `reverseRecOn`: a matched final state forces (via `CompressionCR`) the last blocks equal and
-the predecessors equal, recursing. The empty-vs-nonempty boundary (`init` vs `step` output) is the
-case `InitStepSeparated` rules out — that is exactly where the length-prefix earns its keep. -/
+`foldl_step_eq (hC : CompressionCR M) (hSep : InitStepSeparated M)` claimed that two `foldl M.step`
+runs from starts in the `init`-image with equal results have equal block lists (nested `reverseRecOn`
+peeling one `CompressionCR` per block via `List.foldl_concat`; the asymmetric base cases, which equate
+an `init` output with a `step` output, closed by `InitStepSeparated` — exactly where the length-prefix
+earned its keep). `finalState_inj` composed that with `chunksOf_flatten` to get equal INPUTS from equal
+final sponge states: the FULL-state level, no truncation hardness yet.
 
-/-- Equal `foldl step` runs (from ANY inits in the `init`-image) have equal block lists. The crux: the
-asymmetric base cases equate an `init` with a `step` output, excluded by `InitStepSeparated`. Nested
-`reverseRecOn` peels the LAST block on each side, so `foldl_concat` exposes the terminal `step`. -/
-theorem foldl_step_eq (M : SpongeMachine State)
-    (hC : CompressionCR M) (hSep : InitStepSeparated M) :
-    ∀ (cs ds : List (List ℤ)) (m n : ℕ),
-      List.foldl M.step (M.init m) cs = List.foldl M.step (M.init n) ds →
-      M.init m = M.init n ∧ cs = ds := by
-  intro cs
-  induction cs using List.reverseRecOn with
-  | nil =>
-      intro ds m n h
-      induction ds using List.reverseRecOn with
-      | nil => exact ⟨h, rfl⟩
-      | append_singleton ds' e _ =>
-          -- LHS = init m ; RHS = step (foldl step (init n) ds') e — excluded by InitStepSeparated.
-          rw [List.foldl_concat] at h
-          exact absurd h (hSep m _ e)
-  | append_singleton cs c ih =>
-      intro ds m n h
-      induction ds using List.reverseRecOn with
-      | nil =>
-          -- LHS = step (...) c ; RHS = init n — excluded by InitStepSeparated (symmetric).
-          rw [List.foldl_concat] at h
-          exact absurd h.symm (hSep n _ c)
-      | append_singleton ds' e _ =>
-          -- both nonempty: peel both terminal steps via CompressionCR.
-          rw [List.foldl_concat, List.foldl_concat] at h
-          obtain ⟨hstate, hchunk⟩ := hC _ _ c e h
-          obtain ⟨hinit, hcs⟩ := ih ds' m n hstate
-          exact ⟨hinit, by rw [hcs, hchunk]⟩
+⚠ Both were VACUOUSLY TRUE at every deployed parameter. Their `hC : CompressionCR M` premise is
+PROVED FALSE by `Crypto.SpongeCompressionRegrounded.compressionCR_false_of_finite_state
+[Nonempty State] [Finite State]` — uncurried, `step : State × List ℤ → State` maps an INFINITE domain
+into a fixed-width, hence `Finite`, permutation state, and that instance is the WHOLE hypothesis.
+`#assert_axioms` pinned both proofs clean and never looked at the premise, so they read as the result
+while transporting nothing. The `CompressionCR` def is KEPT above, as the tombstone the falsity
+theorem names.
 
-/-- **`finalState_inj`** — equal final sponge states force equal inputs. Composes the MD block-list
-equality (`foldl_step_eq`) with the flatten-invertibility of `chunksOf`. Pure structural + the
-compression CR; no truncation hardness yet (this is the FULL-state level). -/
-theorem finalState_inj (M : SpongeMachine State)
-    (hC : CompressionCR M) (hSep : InitStepSeparated M) {xs ys : List ℤ}
-    (h : M.finalState xs = M.finalState ys) : xs = ys := by
-  unfold SpongeMachine.finalState at h
-  obtain ⟨_, hblocks⟩ := foldl_step_eq M hC hSep _ _ _ _ h
-  have : (M.chunksOf xs).flatten = (M.chunksOf ys).flatten := by rw [hblocks]
-  rwa [M.chunksOf_flatten, M.chunksOf_flatten] at this
+**CONSUME INSTEAD**, in `Crypto/SpongeCompressionRegrounded.lean` — the ROM-DISCHARGED forms:
+  * **`foldl_step_eq_binds_rom` (:847)** succeeds `foldl_step_eq`;
+  * **`finalState_inj_binds_rom` (:859)** succeeds `finalState_inj`.
+Neither carries a floor hypothesis or a cost model: query-boundedness plus a `PolyBounded` query count
+concluding `Negl`, over `mdPeelGame` / `finalStateCollisionGame` — the events these theorems claimed
+to make outright IMPOSSIBLE. Where the ROM is unavailable, `foldl_step_eq_advantage_bound` (:563) and
+`finalState_inj_advantage_bound` (:576) state the same reductions with an EXPLICIT undischarged `Eff`.
+Both routes go through `peel`/`peel_spec` — this induction run BACKWARDS as a CONSTRUCTIVE extractor
+that walks the two chains from the last block inward and RETURNS the first divergence as an explicit
+`(state, block)` compression collision, PRODUCING what this theorem merely CONSUMED. -/
 
-/-! ## §3 — THE REDUCTION: sponge CR ⟸ CompressionCR + SqueezeBindsReachable + InitStepSeparated. -/
+/-! ## §3 — TOMBSTONE: the headline `spongeCR_of_reduction`, DELETED as VACUOUS.
 
-/-- **`spongeCR_of_reduction`** — the headline. The variable-length sponge digest `M.spongeOf` is
-collision-resistant, REDUCED to: the per-permutation-call compression CR (`hC`), the slot-0 truncation
-residual (`hSq`), and the structural length-prefix domain separation (`hSep`). A real reduction: a
-digest collision is lifted (truncation residual) to a FINAL-STATE collision, which the MD induction
-peels into a compression collision; no fresh assumption beyond the two named carriers. -/
-theorem spongeCR_of_reduction (M : SpongeMachine State)
-    (hC : CompressionCR M) (hSq : SqueezeBindsReachable M) (hSep : InitStepSeparated M) :
-    Poseidon2SpongeCR M.spongeOf := by
-  intro xs ys h
-  exact finalState_inj M hC hSep (hSq xs ys h)
+`spongeCR_of_reduction (hC : CompressionCR M) (hSq : SqueezeBindsReachable M)
+(hSep : InitStepSeparated M) : Poseidon2SpongeCR M.spongeOf` was THIS FILE'S KEYSTONE and the tower's:
+the theorem that demoted the whole `StateCommit` commitment tower's `spongeCR` carrier from "an
+unbounded list-hash over `List ℤ` is injective" to "ONE permutation call is CR" — primitive #4 at the
+permutation rather than at the sponge. It lifted a digest collision through `hSq` to a FINAL-STATE
+collision and handed that to §2's MD induction.
 
-/-! ## §4 — non-vacuity: a REAL `SpongeMachine` whose carriers hold.
+⚠ It was VACUOUSLY TRUE at every deployed parameter, for the same reason as §2: `hC` is refuted at any
+fixed-width permutation state by `Crypto.SpongeCompressionRegrounded.compressionCR_false_of_finite_state`.
+A demotion that rides a FALSE premise demotes nothing — the tower never received the smaller carrier
+this claimed to hand it, and the crypto-ledger's "primitive #4 is now at the permutation" followed from
+a theorem with no content at the parameters anyone runs.
+
+**CONSUME INSTEAD: `Crypto/SpongeCompressionRegrounded.spongeCR_of_reduction_binds_rom` (:874)** — the
+ROM-DISCHARGED headline. No floor hypothesis and no cost model: a query-bounded adversary with a
+`PolyBounded` query count wins `spongeCollisionGame` — precisely the event this theorem claimed to
+make impossible — only with `Negl` probability. Where the ROM is unavailable,
+`spongeCR_of_reduction_advantage_bound` (:604) states the same reduction carrying an EXPLICIT
+undischarged `Eff` instead of a false floor. -/
+
+/-! ## §4 — the carriers' POSITIVE POLE: a `SpongeMachine` on which each one HOLDS.
 
 A concrete machine over `State := ℕ × List ℤ` (chaining nat × accumulated blocks), with an INJECTIVE
-"permutation" (the carriers HOLD), so every reduction above FIRES on a real instance — and the
-carriers are provably FALSE on a degenerate machine (a constant squeeze / a non-prefix-free init),
-witnessing they are not `True`. The genuine Poseidon2 leaves CR as the standing obligation; here we
-discharge with a provably-injective stand-in, exactly as `PortalFloor.Reference` does. -/
+"permutation", so each carrier above is INHABITED — `CompressionCR` included, which is what keeps
+`SpongeCompressionRegrounded.compressionCR_false_of_finite_state` a claim about FIXED-WIDTH state and
+not about an empty predicate (that file's header cites `refCompressionCR` for exactly this). The
+opposite pole is here too: the carriers are provably FALSE on a degenerate machine (a constant
+squeeze), witnessing they are not relabelled `True`.
+
+⚠ The reduction these once fired end-to-end is DELETED (§2/§3), and with it the two witnesses that
+existed only to fire it — `refSpongeCR` (§4 tombstone) and `refRealizedSpongeOfReduction` (§5). What
+survives here are the carrier poles, which stand on their own and are what the ratchet reads. -/
 
 namespace Reference
 
@@ -295,11 +309,17 @@ theorem refSqueezeBindsReachable : SqueezeBindsReachable refMachine := by
   simp only [SpongeMachine.spongeOf, refMachine] at h
   exact Encodable.encode_injective (by exact_mod_cast h)
 
-/-- The full reduction FIRES on the reference machine: its `spongeOf` is collision-resistant, derived
-through `spongeCR_of_reduction` from the three structurally-discharged carriers. Witnesses that the
-reduction is non-vacuous (the carriers are inhabitable and the theorem applies). -/
-theorem refSpongeCR : Poseidon2SpongeCR refMachine.spongeOf :=
-  spongeCR_of_reduction refMachine refCompressionCR refSqueezeBindsReachable refInitStepSeparated
+/-! ### TOMBSTONE: `refSpongeCR`, deleted with the reduction it witnessed.
+
+`refSpongeCR : Poseidon2SpongeCR refMachine.spongeOf` applied §3's `spongeCR_of_reduction` to the three
+structurally-discharged reference carriers. Its statement was TRUE (the toy state is infinite and
+`Encodable.encode` is injective) but its whole content was "the §3 reduction is non-vacuous on a
+concrete instance" — scaffolding of a deleted theorem, and re-proving it directly would mean
+re-materialising the deleted MD induction specialised to `refMachine`. It is gone with §3.
+
+The carrier poles it consumed — `refCompressionCR`, `refSqueezeBindsReachable`,
+`refInitStepSeparated` — are KEPT above: they are the standing evidence that each named carrier is
+inhabited, which is a fact about the DEFS and survives their consumers. -/
 
 /-! ### A degenerate machine that FALSIFIES `SqueezeBindsReachable` (the carriers are not `True`).
 
@@ -351,41 +371,33 @@ theorem badMachine_not_squeezeBinds : ¬ SqueezeBindsReachable badMachine := by
 
 end Reference
 
-/-! ## §5 — the bridge into the commitment tower: a `Poseidon2RealizedSponge` FROM the reduction.
+/-! ## §5 — TOMBSTONE: the bridge into the commitment tower, DELETED as VACUOUS.
 
-`Poseidon2Binding.Poseidon2RealizedSponge` is the bundle the whole `StateCommit` tower consumes; it
-carries `spongeCR` as a FIELD. Before this module that field was the IRREDUCIBLE sponge-level CR.
-`realizedSpongeOfReduction` now BUILDS that bundle from a `SpongeMachine` + the reduction, so the
-`spongeCR` the tower consumes is PROVED by `spongeCR_of_reduction` (the MD/permutation reduction)
-rather than assumed at the sponge level. The named obligation drops from "the unbounded list-hash is
-injective" to "ONE permutation call is CR (`CompressionCR`) + the slot-0 truncation residual
-(`SqueezeBindsReachable`)" — a strictly smaller, deeper carrier. -/
+`realizedSpongeOfReduction (M) (hC : CompressionCR M) (hSq : SqueezeBindsReachable M)
+(hSep : InitStepSeparated M) : Poseidon2RealizedSponge M.spongeOf` packaged `M.spongeOf` as the bundle
+the whole `StateCommit` tower consumes — tagged with the REAL `babyBearD4W16` p3 params, with the
+`spongeCR` FIELD filled by §3's `spongeCR_of_reduction` instead of assumed at the sponge level. It was
+the object that made the tower's named obligation READ as "ONE permutation call is CR
+(`CompressionCR`) + the slot-0 truncation residual" rather than "the unbounded list-hash is
+injective". `Reference.refRealizedSpongeOfReduction` was its end-to-end witness on the toy machine and
+is deleted with it, for the same reason as `refSpongeCR` in §4.
 
-/-- **`realizedSpongeOfReduction`** — package `M.spongeOf` as a `Poseidon2RealizedSponge` (tagged with
-the REAL `babyBearD4W16` p3 params), with its `spongeCR` field DISCHARGED by the permutation reduction.
-This is what makes `Poseidon2SpongeCR` DISCHARGEABLE (not primitive-at-the-sponge-level): the
-tower's `spongeCR` carrier is now a THEOREM over `CompressionCR` + `SqueezeBindsReachable`. -/
-def realizedSpongeOfReduction (M : SpongeMachine State)
-    (hC : CompressionCR M) (hSq : SqueezeBindsReachable M) (hSep : InitStepSeparated M) :
-    Poseidon2RealizedSponge M.spongeOf :=
-  { params := babyBearD4W16
-    params_are_real := rfl
-    spongeCR := spongeCR_of_reduction M hC hSq hSep }
+⚠ Since `hC` is refuted at any fixed-width state
+(`Crypto.SpongeCompressionRegrounded.compressionCR_false_of_finite_state`), this constructor was
+UNINHABITABLE at deployed parameters: it built a `Poseidon2RealizedSponge` only from an argument no
+real sponge can supply. That is the worst shape in the set — an OBJECT, not just a proposition,
+advertising a carrier reduction the tower could never actually take delivery of.
 
-/-- The reference machine yields a real `Poseidon2RealizedSponge` through the reduction — the bridge
-fires end-to-end on a concrete instance (non-vacuity of the whole §5 bridge). -/
-def Reference.refRealizedSpongeOfReduction : Poseidon2RealizedSponge Reference.refMachine.spongeOf :=
-  realizedSpongeOfReduction Reference.refMachine
-    Reference.refCompressionCR Reference.refSqueezeBindsReachable Reference.refInitStepSeparated
+**A tower consumer needing the digest-binding fact should take
+`Crypto/SpongeCompressionRegrounded.spongeCR_of_reduction_binds_rom` (:874)** — the ROM-discharged
+headline (query-boundedness + `PolyBounded` query count ⇒ `Negl`) — and carry the negligible-advantage
+statement rather than an injectivity FIELD. A `Poseidon2RealizedSponge` bundle whose `spongeCR` field
+is unconditional injectivity cannot be honestly filled at a real sponge by any route; that is a fact
+about `Poseidon2Binding`'s bundle shape, and it is where the next repair goes. -/
 
-#assert_axioms foldl_step_eq
-#assert_axioms finalState_inj
-#assert_axioms spongeCR_of_reduction
-#assert_axioms realizedSpongeOfReduction
 #assert_axioms Reference.refCompressionCR
 #assert_axioms Reference.refInitStepSeparated
 #assert_axioms Reference.refSqueezeBindsReachable
-#assert_axioms Reference.refSpongeCR
 #assert_axioms Reference.badMachine_not_squeezeBinds
 
 end Dregg2.Crypto.SpongeReduction

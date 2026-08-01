@@ -13,10 +13,14 @@ party / contribution / output types so a hash-based instantiation plugs in:
 1. **UNBIASABILITY.** The output is a deterministic function of the committed contribution multiset
    (`beacon_output_determined`), and — as long as ≥1 honest UNPREDICTABLE contribution is included — no
    coalition below the corruption threshold can steer it. We model the output as a hash-combine over the
-   contribution set and prove the honest slot is COLLISION-RESISTANT: fixing the adversary's (bounded)
-   contributions, distinct honest contributions give distinct outputs (`honest_makes_unbiasable`), so the
-   adversary that committed its part first cannot pin the output — the honest contribution moves it. A
-   "bias" (making the output insensitive to a distinct honest contribution) is exactly a hash collision
+   contribution set and model the honest slot as COLLISION-RESISTANT (`HonestSlotCR`). ⚑ The consumer
+   `honest_makes_unbiasable` (fixing the adversary's contributions, distinct honest contributions give
+   distinct outputs) is DELETED (2026-08-01) — `HonestSlotCR` is refuted at every compressing combine
+   (`BeaconSlotRegrounded.honestSlotCR_false_of_compressing`), so it was vacuous at deployed
+   parameters; the DISCHARGED successor is `BeaconSlotRegrounded.honest_makes_unbiasable_binds_rom`
+   (keyed-ROM floor PROVED), beneath it `honest_makes_unbiasable_advantage_bound`. What survives here
+   is the ¬-CONCLUDING direction: a "bias" (making the output insensitive to a distinct honest
+   contribution) is exactly a hash collision
    (`bias_breaks_honest_slot_cr`). ⚑ The old `HashCR`-conditioned exports (`honestSlotCR_of_hashcr`,
    `unbiasable_of_hashcr`) are DELETED (2026-07-24) — `HashCR` is refuted at every compressing combine
    (`hashCR_false_of_compressing`); the discharged successors are
@@ -78,8 +82,9 @@ nothing about honest-input entropy or unpredictability — so it is NOT a bespok
 hash-combine realization it is DISCHARGED by the imported standard `HashCR` (`honestSlotCR_of_hashcr`),
 being hash collision-resistance composed with multiset cons-cancellation.
 
-⚠ **BROKEN AS NAMED — FALSE for a compressing combine, so `honest_makes_unbiasable` below is VACUOUSLY
-TRUE at deployed parameters** (`Crypto.BeaconSlotRegrounded.honestSlotCR_false_of_compressing`;
+⚠ **BROKEN AS NAMED — FALSE for a compressing combine, which is why its consumer
+`honest_makes_unbiasable` was VACUOUSLY TRUE at deployed parameters and is now DELETED (2026-08-01;
+tombstone below)** (`Crypto.BeaconSlotRegrounded.honestSlotCR_false_of_compressing`;
 `docs/deos/VACUITY-SWEEP.md` FINDING 2). ⚑ Its falsity has a DIFFERENT SHAPE from its siblings and the
 replacement file proves and explains why: with `rest` fixed the slot is `Ct → O`, a map between two
 FIXED-WIDTH types, so there is no infinite domain for the counting core — the honest refutation is
@@ -93,8 +98,9 @@ pigeonhole on cardinalities under `|O| < |Ct|`, which IS the definition of a has
 hypothesis, false conclusion, both vacuous. Bottoming out at a standard floor is grounding only if the
 standard floor is SATISFIABLE.
 
-**The honest replacement is `Crypto.BeaconSlotRegrounded`** — `honest_makes_unbiasable`'s
-advantage-bounded sibling, from a REAL bias game via a data-dependent extractor running through
+**The honest replacement is `Crypto.BeaconSlotRegrounded`** — the deleted `honest_makes_unbiasable`'s
+advantage-bounded sibling `honest_makes_unbiasable_advantage_bound` (and its ROM-discharged successor
+`honest_makes_unbiasable_binds_rom`), from a REAL bias game via a data-dependent extractor running through
 `Multiset.cons_inj_left` (the same pure cancellation `honestSlotCR_of_hashcr` uses, now CARRYING the
 reduction instead of a false hypothesis), with an explicit undischarged `Eff`. This def is KEPT so the
 record and the teeth — including `bias_breaks_honest_slot_cr`, which the replacement fires THROUGH —
@@ -102,19 +108,45 @@ keep compiling. -/
 def HonestSlotCR (b : Beacon Ct O) : Prop :=
   ∀ (rest : Multiset Ct) (c c' : Ct), b.combine (c ::ₘ rest) = b.combine (c' ::ₘ rest) → c = c'
 
-/-- **UNBIASABILITY (the core).** Under `HonestSlotCR`, with the adversary's contributions `rest` fixed
-(it committed them first), an honest contribution the adversary cannot predict makes the output
-UNBIASABLE: distinct honest values `c ≠ c'` yield distinct outputs, so the adversary cannot force the
-output to any predetermined value — the included honest contribution moves it. -/
-theorem honest_makes_unbiasable (b : Beacon Ct O) (hcr : HonestSlotCR b)
-    (rest : Multiset Ct) (c c' : Ct) (hne : c ≠ c') :
-    b.combine (c ::ₘ rest) ≠ b.combine (c' ::ₘ rest) :=
-  fun h => hne (hcr rest c c' h)
+/-! ### ⚑ DELETED (2026-08-01) — `honest_makes_unbiasable`
+
+**What it claimed.** UNBIASABILITY, the core of property 1: under `HonestSlotCR`, with the
+adversary's contributions `rest` fixed (it committed them first), distinct honest values `c ≠ c'`
+yield distinct outputs — so the adversary cannot force the beacon to any predetermined value; the
+included honest contribution moves it.
+
+**Why it was vacuous.** Its `HonestSlotCR b` hypothesis is FALSE at the deployed combine —
+`Crypto.BeaconSlotRegrounded.honestSlotCR_false_of_compressing`, pigeonhole under `|O| < |Ct|`,
+which IS the definition of a hash-combine. The falsity has a different SHAPE from its siblings
+(with `rest` fixed the slot is `Ct → O`, two FIXED-WIDTH types, so the infinite-domain counting core
+does not apply — it is compression, not cardinality of a list domain). ⚠ And the "not bespoke, it
+DISCHARGES from the standard `HashCR`" defence in the `HonestSlotCR` docstring above rescues
+nothing: `HashCR` is itself one of the four floors `HashFloorHonesty` refutes, and
+`BeaconSlotRegrounded.honestSlotCR_discharge_hypothesis_is_false_of_finite_out` proves it at the
+exact `cr` this beacon is built from — false hypothesis, false conclusion. `#assert_axioms` audits
+the PROOF, never the HYPOTHESIS, so this read as the unbiasability result while asserting nothing
+about any beacon anyone runs.
+
+**Consume instead — `Crypto.BeaconSlotRegrounded`.** PREFER the ROM-DISCHARGED
+`honest_makes_unbiasable_binds_rom`: every query-bounded steering adversary's advantage is
+NEGLIGIBLE in the keyed ROM, carrying NO floor hypothesis and no cost model — only a polynomial
+query budget (`PolyBounded`) and query-class membership — over the PROVED floor `keyedRom_hard`.
+Beneath it, `honest_makes_unbiasable_advantage_bound` bounds the REAL bias game via the
+data-dependent `biasToCollisionFinder` (which runs through the same `Multiset.cons_inj_left`
+cancellation, now CARRYING the reduction instead of a false hypothesis), with an explicit
+undischarged `Eff`.
+
+`HonestSlotCR` is KEPT — the refutations name it, `Verify/FloorRatchet.lean` hard-errors on a
+carrier missing from its baseline, and the poles (`sumBeacon_cr`, `hashBeacon_honest_slot_cr`) and
+the tooth `bias_breaks_honest_slot_cr` still fire on it. A tombstone with teeth. -/
 
 /-- **A BIAS IS A COLLISION.** If some adversary makes the output INSENSITIVE to a distinct honest
 contribution (two distinct honest values `c ≠ c'` give the SAME output at the same `rest` — it "absorbed"
 the honest randomness), that witnesses a collision and BREAKS `HonestSlotCR`. The contrapositive of
-`honest_makes_unbiasable`: biasability is exactly a hash collision on the honest slot. -/
+the DELETED `honest_makes_unbiasable` (tombstone above): biasability is exactly a hash collision on
+the honest slot. This direction is KEPT — it CONCLUDES `¬ HonestSlotCR` rather than assuming it, so
+the refuted floor cannot make it vacuous, and `BeaconSlotRegrounded`'s §7 pole
+`brokenBeacon_not_honestSlotCR` fires THROUGH it. -/
 theorem bias_breaks_honest_slot_cr (b : Beacon Ct O)
     (rest : Multiset Ct) (c c' : Ct) (hne : c ≠ c')
     (hcol : b.combine (c ::ₘ rest) = b.combine (c' ::ₘ rest)) : ¬ HonestSlotCR b :=
@@ -204,7 +236,6 @@ theorem prediction_matching_two_reveals_breaks_hashcr {Idx Ct Adv O : Type*}
 end Unpredictability
 
 #assert_axioms beacon_output_determined
-#assert_axioms honest_makes_unbiasable
 #assert_axioms bias_breaks_honest_slot_cr
 #assert_axioms prediction_matching_two_reveals_breaks_hashcr
 
@@ -237,10 +268,12 @@ theorem sumBeacon_cr : HonestSlotCR sumBeacon := by
 
 /-- **UNBIASABILITY FIRES.** With the adversary's contribution fixed (`rest = {1}`), the honest values
 `5 ≠ 6` produce distinct outputs — the adversary cannot force a predetermined value; the honest
-contribution moves the beacon. -/
+contribution moves the beacon. (Formerly routed through the deleted `honest_makes_unbiasable`; it now
+applies the PROVED pole `sumBeacon_cr` directly, so the tooth fires on a SATISFIED instance of the
+carrier rather than through a consumer conditioned on the refuted one.) -/
 theorem sum_honest_unbiasable :
     sumBeacon.combine (5 ::ₘ ({1} : Multiset ℤ)) ≠ sumBeacon.combine (6 ::ₘ ({1} : Multiset ℤ)) :=
-  honest_makes_unbiasable sumBeacon sumBeacon_cr {1} 5 6 (by decide)
+  fun h => absurd (sumBeacon_cr {1} 5 6 h) (by decide)
 
 -- The output is the well-defined sum with the honest 5 included.
 #guard sumBeacon.combine (5 ::ₘ ({1} : Multiset ℤ)) = 6

@@ -49,17 +49,18 @@ Modeling convention (identical to the Transfer/EffectVmConstraints spikes):
    `H : List F → F` (we cannot and do not formalize Poseidon2's algebra — PORTAL-OK). We state
    the real constraint shape (a 4-leaf hash tree: `inter1/2/3` then root) and the two boundary
    pins (row-0 `state_before.commit = OLD_COMMIT`, last-row `state_after.commit = NEW_COMMIT`).
-   `state_commitment_binds_state`: **modulo collision-resistance of `H`** (carried as an
-   explicit hypothesis), a satisfying trace whose final commitment equals the PI `NEW_COMMIT`
-   has its committed state-tuple uniquely determined by the PI — i.e. the PI binds the actual
-   post-state, no second preimage. The collision-resistance Prop is an honest carried
-   assumption, never proved here.
+   ⚑ The binding CONSEQUENCE is NOT stated here any more: `state_commitment_binds_state` and
+   `state_commitment_no_silent_change` were conditioned on the refuted `CommitTreeInjective` and
+   are DELETED (2026-08-01, see the tombstone at the `CommitTreeInjective` site). The PI-binds-
+   the-post-state claim lives, DISCHARGED, as `CommitTreeRegrounded.state_commitment_binds_state_rom`
+   / `state_commitment_no_silent_change_rom` — negligible advantage for every query-bounded
+   equivocator over the PROVED keyed-ROM floor, not a Boolean uniqueness.
 
 ## In-circuit vs deferred ledger (updated by this file)
 * IN-CIRCUIT (now proven): SetField freezes non-target fields and pins the target field's
   delta (`setfield_targets_exactly_one_field`); balance_hi limb ∈ [0,2^30)
-  (`balance_hi_in_range`); state_commitment binds the post-state to the PI **modulo
-  collision-resistance** (`state_commitment_binds_state`).
+  (`balance_hi_in_range`). The state_commitment shape (`commitTree`, `StateCommitSat`) is stated
+  here; its BINDING is carried by `CommitTreeRegrounded`'s ROM bounds, not by this file.
 * STILL DEFERRED / GAP EXPOSED: SetField target-value *correctness* depends on the
   off-circuit honesty of the `aux[0]` old-value witness (`setfield_aux_honesty_gap`); the
   collision-resistance of Poseidon2 itself is a §8 portal assumption, not an in-circuit fact.
@@ -386,44 +387,43 @@ undischarged `Eff`. This def is KEPT so the record and the teeth keep compiling.
 def CommitTreeInjective (H : Hash) : Prop :=
   ∀ a b : List ℤ, commitTree H a = commitTree H b → a = b
 
-/--
-**THEOREM `state_commitment_binds_state`** (air.rs:2532–2595 transition + air.rs:2707–2711
-last-row boundary).
+/-! ## ⚑ DELETED (2026-08-01) — `state_commitment_binds_state`, `state_commitment_no_silent_change`
 
-Two traces whose `state_after.STATE_COMMIT` both satisfy the group-4 transition constraint and
-are both pinned by the last-row boundary to the SAME public input `NEW_COMMIT` MUST commit to the
-**same** post-state tuple — **modulo collision-resistance of `H`** (carried as the explicit
-hypothesis `CommitTreeInjective H`). I.e. the PI `NEW_COMMIT` binds the actual post-state: a
-prover cannot exhibit two different states with the published final commitment.
+**What they claimed.** `state_commitment_binds_state` (air.rs:2532–2595 transition + air.rs:2707–2711
+last-row boundary): two traces whose `state_after.STATE_COMMIT` satisfies the group-4 transition and
+is boundary-pinned to the SAME public input `NEW_COMMIT` commit to the same 12-column post-state
+tuple. `state_commitment_no_silent_change` (air.rs:2546–2594) was its corollary: equal published
+roots ⟹ equal committed tuples. **These two are exactly what made the published PI `NEW_COMMIT` bind
+the ACTUAL post-state.** That binding is no longer a Boolean fact of the AIR here; downstream it is
+now carried by a NEGLIGIBLE-ADVANTAGE bound on an equivocation game, and it must be read as one — a
+bounded-query adversary's chance, not an impossibility.
 
-This is the honest §8-portal statement: the AIR + boundary constraint give the binding, and the
-ONLY thing not proved in Lean is the hash's collision-resistance, which is supplied as a
-hypothesis (a portal assumption as proven).
--/
-theorem state_commitment_binds_state
-    (H : Hash) (hCR : CommitTreeInjective H)
-    (st st' : List ℤ) (newCommit : ℤ)
-    (hsat  : StateCommitSat H st  newCommit)   -- trace 1: commit = tree(st),  boundary pins to NEW_COMMIT
-    (hsat' : StateCommitSat H st' newCommit) :  -- trace 2: commit = tree(st'), boundary pins to NEW_COMMIT
-    st = st' := by
-  unfold StateCommitSat at hsat hsat'
-  -- both trees equal the same boundary-pinned PI, hence equal each other; injectivity finishes.
-  apply hCR
-  rw [← hsat, ← hsat']
+**Why they were vacuous.** Both were conditioned on `CommitTreeInjective H`, and that hypothesis is
+FALSE at every deployed parameter: `Spike.CommitTreeRegrounded.commitTreeInjective_false_babyBear`
+and `commitTreeInjective_false_blake3` refute it outright. The carrier is injectivity of
+`commitTree H` on the INFINITE `List ℤ` of committed columns while the root is ONE felt;
+`commitTree_bounded` proves the tree inherits `H`'s window (the 12-column branch IS an `H` output,
+the malformed-tuple fallback is `0`, in-window), which is what lets the refutation be stated on `H`
+rather than on the tree. Counting, not cryptanalysis. `#assert_axioms` audits the PROOF and never
+the HYPOTHESIS, so both theorems were kernel-clean and said nothing about any deployed circuit —
+which is worse than absent, because they read as the result.
 
-/--
-**THEOREM `state_commitment_no_silent_change`** (air.rs:2546–2594).
+**Consume instead — `Spike.CommitTreeRegrounded`.**
+* PREFER the ROM-DISCHARGED forms: `state_commitment_binds_state_rom` and
+  `state_commitment_no_silent_change_rom`. Every query-bounded equivocator of the published
+  `NEW_COMMIT` has NEGLIGIBLE advantage in the keyed ROM. They carry NO floor hypothesis and no cost
+  model — only a polynomial query budget (`PolyBounded`) and the adversary's membership in the query
+  class — over the PROVED floor `keyedRom_hard` (the birthday bound).
+* The advantage-bound layer beneath them: `state_commitment_binds_state_advantage_bound` and
+  `state_commitment_no_silent_change_advantage_bound`, from the REAL state-equivocation game
+  (`stateEquivocationGame` — the adversary exhibits two DISTINCT post-state tuples behind ONE
+  published root, which IS the attack these deleted theorems ruled out) via
+  `equivocationToCollisionFinder`, each carrying an EXPLICIT undischarged `Eff`.
 
-A satisfying group-4 row whose committed root equals the boundary PI determines the post-state
-commitment as a function of the post-state tuple: any change to the committed tuple changes the
-root (again modulo `CommitTreeInjective H`). Phrased contrapositively: equal published roots ⟹
-equal committed tuples. (A direct corollary, stated for the ledger.)
--/
-theorem state_commitment_no_silent_change
-    (H : Hash) (hCR : CommitTreeInjective H)
-    (st st' : List ℤ)
-    (hroot : commitTree H st = commitTree H st') :
-    st = st' := hCR st st' hroot
+`CommitTreeInjective` and `commitTree` are KEPT. The refutations above name the def, so deleting it
+would delete the proof that it is false, and `Verify/FloorRatchet.lean` hard-errors on a carrier
+missing from its baseline. It is a tombstone WITH TEETH: the accrual stop that keeps a new vacuous
+floor from appearing under this portal. -/
 
 /-!
 ## Verdict (extends the in-circuit-vs-deferred ledger)
@@ -440,11 +440,13 @@ theorem state_commitment_no_silent_change
   of the prior spike's lo-limb soundness, completing the post-state balance range proof for both
   limbs. Honest note in-proof: the lane is 30 bits (not 34); 30 is the soundness-mandated width
   because `2^30 < p` keeps the in-field recomposition unique and non-wrapping.
-* **state_commitment binding** → `state_commitment_binds_state` /
-  `state_commitment_no_silent_change` give the §8-portal SHAPE: the four-leaf Poseidon2 tree
-  (air.rs:2540–2543) plus the last-row boundary pin (air.rs:2707–2711) bind the published
-  `NEW_COMMIT` PI to the actual post-state, MODULO collision-resistance of the hash, which is
-  carried as an explicit hypothesis `CommitTreeInjective H` (PORTAL-OK, never proved here).
+* **state_commitment binding** → the SHAPE is here (`commitTree`, air.rs:2540–2543, plus the
+  last-row boundary pin at air.rs:2707–2711); the BINDING is NOT. The two consumers that asserted
+  it — `state_commitment_binds_state` / `state_commitment_no_silent_change` — were conditioned on
+  `CommitTreeInjective H`, which `CommitTreeRegrounded` PROVES FALSE at BabyBear and at blake3, and
+  are DELETED. Read `CommitTreeRegrounded.state_commitment_binds_state_rom` /
+  `state_commitment_no_silent_change_rom` instead: the published `NEW_COMMIT` binds the post-state
+  up to a NEGLIGIBLE equivocation advantage on the PROVED keyed-ROM floor.
 
 STILL DEFERRED (honest): the collision-resistance of Poseidon2 itself (§8 primitive, a carried
 assumption); SetField intended-value correctness (depends on off-circuit `aux[0]` honesty);

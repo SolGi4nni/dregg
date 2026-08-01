@@ -88,9 +88,12 @@ import Dregg2.Crypto.RomChainedReduction
 
 namespace Dregg2.Crypto.SpongeCompressionRegrounded
 
+-- ⚑ `foldl_step_eq`, `finalState_inj` and `spongeCR_of_reduction` were opened here and are now
+-- DELETED as vacuous (§1's `compressionCR_false_of_finite_state` is the refutation of their shared
+-- premise). Only the CARRIER defs remain to open; this file's `_binds_rom` / `_advantage_bound`
+-- theorems are their replacements, and never depended on them as terms.
 open Dregg2.Crypto.SpongeReduction
-  (SpongeMachine CompressionCR SqueezeBindsReachable InitStepSeparated foldl_step_eq finalState_inj
-   spongeCR_of_reduction)
+  (SpongeMachine CompressionCR SqueezeBindsReachable InitStepSeparated)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder collisionAdv not_injective_of_finite_range)
 open Dregg2.Crypto.ProbCrypto (winProb winProb_le_of_imp negl_of_le)
