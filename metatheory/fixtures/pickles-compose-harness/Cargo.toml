@@ -1,0 +1,62 @@
+# pickles-compose-harness — PROVE the FIRST MULTI-GATE COMPOSITION with a CROSS-GATE COPY WIRE.
+#
+# Sibling of `pickles-curvegate-harness` (single-gate circuits) and `pickles-poseidon-harness`. Every
+# prior rung proved ONE custom gate in isolation. This crate proves the property the whole `step_main`
+# assembly rests on: **a variable computed in one gate's row copied, via the copy-permutation (σ), into
+# another gate's row**. The circuit is a 2-step MSM accumulation — `var_base_mul` produces an output
+# point `[n]·T`, and a `complete_add` consumes that SAME point as its first input (`acc ← acc + [n]·T`),
+# the shared cell placed into one σ equivalence class by `Dregg2.Circuit.Emit.KimchiComposeMSM` (Lean).
+#
+# WHAT IT DOES. Reads the Lean-emitted circuit JSON (gate typ/wires/coeffs + the 15-wide witness grid),
+# builds the pure-Rust kimchi objects, and PROVES + VERIFIES through the SAME `proof-systems` (tag 0.3.0)
+# front door mina-rust uses. The `#[test]` gate:
+#   (1) HONEST: the composed circuit's good witness verify()==true;
+#   (2) WIRING BINDS: flipping the shared output point in the trailing Zero row (cell (col 0, row 3)) —
+#       a cell NO gate reads, in σ's cycle with the real MSM wire — is REJECTED. The rejection is the
+#       copy-permutation, nothing else;
+#   (3) NOT-ADJACENCY control: the SAME (col 0, row 3) flip on the UNWIRED circuit (row 3 not in the
+#       class) is ACCEPTED — so (2) is the WIRE, not the gate or a blanket reject;
+#   (4) NON-VACUITY control: flipping an unread advice cell (col 11, row 3) is ACCEPTED.
+# The gate-satisfaction preflight is disabled (`disable_gates_checks=true`) so a σ desync is rejected by
+# the PROOF (the permutation argument's z-polynomial), not a debug assert.
+#
+# House Law #1: the CIRCUIT (gates/coeffs/witness + cross-gate placement) is Lean-authored; `proof-
+# systems` is the Rust PROVER that RUNS it. No OCaml, no Node, no o1js in this path.
+#
+# REGENERATE the fixtures (only when the Lean render changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiComposeMSM \
+#     && lake env lean --run Dregg2/Circuit/Emit/EmitComposeMsmJson.lean \
+#     && cp /tmp/pickles-compose/*.json fixtures/pickles-compose-harness/fixtures/
+#
+# RUN the tests:
+#   cargo test --manifest-path metatheory/fixtures/pickles-compose-harness/Cargo.toml -- --nocapture
+
+[package]
+name = "pickles-compose-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

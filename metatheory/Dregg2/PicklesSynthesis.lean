@@ -66,6 +66,7 @@ import Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar
 import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul
 import Dregg2.Circuit.Emit.KimchiRenderEndoMul
 import Dregg2.Circuit.Emit.WitnessBuilder
+import Dregg2.Circuit.Emit.KimchiComposeMSM
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff
