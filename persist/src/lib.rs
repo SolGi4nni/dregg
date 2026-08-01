@@ -580,7 +580,48 @@ impl PersistentStore {
     /// (`heapWriteVmDescriptor2R24` recomputes `heap_addr` in-row), so widening it is a VK
     /// rotation and a descriptor re-emit — a different lane from this one.
     ///
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 20;
+    /// # Epoch 21 — the OWNER-KEY NONET (2026-08-01)
+    ///
+    /// The 32-byte → BabyBear-lane packer stopped being the `8+8+8+6 = 30` bits/limb **octet** and
+    /// became the base-`2^29` **nonet** (`dregg_commit::typed::canonical_32_to_lanes_9`, the Rust
+    /// twin of `Dregg2.Circuit.KeyLanes9.keyToLanes9`). Four byte-identical re-implementations
+    /// moved together: `dregg_commit::typed`, `dregg_cell::commitment`, `dregg_storage::commitment`,
+    /// and the copy inlined in `circuit/src/effect_vm/trace.rs`.
+    ///
+    /// **WHY, and it is not a width nit either.** `& 0x3F` discarded bits 6-7 of bytes 3, 7, …, 31
+    /// — sixteen source bits — so every input had `2^16 - 1` siblings with a bit-identical lane
+    /// vector, reachable by one XOR. Among the values that octet actually carried the collision
+    /// cost was **zero**, not `2^120`: an Ed25519 public key keeps its x-sign in bit 7 of byte 31,
+    /// one of the unread bits, so a key and its negation — a keypair whose private half is
+    /// `-a mod L`, fully attacker-controlled — packed to ONE octet. Range-checking eight lanes
+    /// could not have repaired it (`p^8 < 2^256`). The nonet's image is exactly `2^256` and its
+    /// injectivity is a Lean theorem with a total decoder and a machine-checked left inverse.
+    ///
+    /// **WHAT MUST BE RE-GENESISED AT 21:** every persisted `pre_state_hash` / `post_state_hash`
+    /// and every stored `TurnReceipt` carrying them. The packer feeds `compress_member` (every
+    /// membership-domain Merkle leaf, interior node and committed root) and `canonical_32_to_felts_4`
+    /// (the `turn_hash`, `previous_receipt_hash`, `federation_id` and `owner_cell_id` PI bindings),
+    /// so the anchor moves on EVERY turn. Executor signatures and federation receipt QCs over
+    /// those anchors do not re-verify and are **not migrated** — `enforce_canonical_state_schema_epoch`
+    /// refuses a store stamped 20 rather than reinterpreting it.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no chip arity, no table, no descriptor width, no PI count. The
+    /// membership absorb is still one `CHIP_NODE8_ARITY = 16` permutation (`9 + 7`, was `8 + 8`)
+    /// and the id fold is off-AIR — measured: the rotation emitter carries no federation-id term
+    /// and the boundary constraints only PIN the four aux columns to their PIs.
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE, and it is the load-bearing half.** `B_PUBKEY_OCTET`
+    /// is **eight columns wide in the deployed 184-limb geometry**, and the nonet's ninth lane has
+    /// no column to live in. The 187-limb layout that gives it one (in-block limb 186) is PROVED
+    /// and committed in Lean (`RotatedLayout.rotated187`, `94532b3a4`) and **not emitted**: the
+    /// emitter `metatheory/EmitLayoutManifest.lean` transitively imports
+    /// `Dregg2/Circuit/Emit/EffectVmEmitRotationWide.lean`, which is red on three `sorryAx`
+    /// axiom-hygiene failures under another lane's edit. So at epoch 21 the nonet reaches the
+    /// membership leaf and the id folds in full, and `state_commit` still binds only the low eight
+    /// lanes of the owner key. `circuit/tests/key_nonet_ninth_lane_reaches_the_anchor.rs` is the
+    /// gate that flips when the geometry is emitted; it is keyed on `NUM_PRE_LIMBS`, so it cannot
+    /// rot quietly the way the hand-carried `B_CHAIN_BASE` did across `178 → 184`.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 21;
 
     /// Open a persistent store backed by a file on disk.
     ///

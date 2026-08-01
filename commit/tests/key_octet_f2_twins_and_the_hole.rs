@@ -1,84 +1,88 @@
-//! # The KEY-OCTET 30-bit packer (family **F2**): its FOUR twins, its HOLE, and the floor.
+//! # The KEY-LANE encoder (family **F2**): its FOUR twins, pinned equal — and the HOLE, CLOSED.
 //!
 //! ## What this file is, at current resolution
 //!
-//! Three gates, and only the FIRST of them is a security property:
-//!
-//! 1. **`f2_*_twins_*`** — a real cross-check. Four byte-identical re-implementations of the
-//!    `8+8+8+6 = 30` bits/limb packing of a 32-byte canonical value into eight BabyBear lanes
-//!    exist in this tree, in four different crates, and until this file their byte-identity was
-//!    asserted **in prose only**, with no test between any pair. These tests pin them equal on an
-//!    adversarial corpus. Mutating any one of them by a single bit turns these red.
-//! 2. **`hole_f2_*`** — ⚠ **these DOCUMENT A HOLE; they do not guard one.** They are constructive:
-//!    given any 32-byte value they *build* a different 32-byte value with an identical octet, and
-//!    then carry that collision downstream through the membership-leaf compress and the four-felt
-//!    id fold. A reader who sees them green should read "the hole is still exactly where we said",
-//!    not "the packer is safe". They go red only if someone FIXES the encoder — at which point
-//!    they should be deleted, not repaired.
+//! 1. **`f2_*_twins_*`** — a real cross-check, and the load-bearing gate of this file. Four
+//!    byte-identical re-implementations of the 32-byte → BabyBear-lane packing exist in this tree,
+//!    in four different crates, and until this file their byte-identity was asserted **in prose
+//!    only**, with no test between any pair. These tests pin them equal on an adversarial corpus.
+//!    Mutating any one of them by a single bit turns these red — which is exactly what happened,
+//!    deliberately, when the 2026-08-01 flag day moved all four at once.
+//! 2. **`nonet_*`** — the encoder is now INJECTIVE and these are the properties that say so:
+//!    a total decoder that is a left inverse, no lane reducing, and the ex-collision pair
+//!    separated. ⚑ They replace the `hole_f2_*` tests, which were CONSTRUCTIVE exhibits of the
+//!    defect and whose own instruction was *"they go red only if someone FIXES the encoder — at
+//!    which point they should be deleted, not repaired."* Someone fixed the encoder.
 //! 3. **`floor_f2_*`** — the arithmetic, pinned, with the IMAGE and the COLLISION bound kept in
 //!    separate named constants because conflating them is this house's documented error
 //!    (`docs/FAITHFUL-COMMITMENT-LAW.md` line 128: *"Quoting the image size where the birthday
 //!    bound is meant is the house error"*).
 //!
-//! ## Its sibling, and what is NOT duplicated
+//! ## ⚑ WHAT CHANGED, 2026-08-01 — and what did NOT
 //!
-//! `circuit/tests/faithful8_key_octet_below_floor.rs` landed the same day from the wall lane and
-//! is the file that **demoted** `Faithful8::from_canonical_key` onto the `_DANGER` hatch. It owns
-//! the burn-down-list gate, the law-doc bound-quoting gate, and the Ed25519 exhibit (a key and its
-//! negation differ only in bit 7 of byte 31 — one of the sixteen unread bits — so the collision
-//! cost among *valid* public keys is `0`, not `2^120`). **Read it first; it is the finding.** The
-//! numbers here were checked against it and agree to the digit (247.2551 / 123.6276 / 240 / 120 /
-//! 3.6276). Do not edit `docs/FAITHFUL-COMMITMENT-LAW.md` casually — that file's gate parses it.
+//! The packing was `lo | mid1<<8 | mid2<<16 | ((hi & 0x3F) << 24)`, `8+8+8+6 = 30` bits over
+//! **eight** lanes. Bits 6-7 of bytes 3, 7, …, 31 were discarded: sixteen source bits, so every
+//! input had `2^16 - 1` siblings with an identical lane vector, reachable by one XOR. Among
+//! Ed25519 public keys the cost was `0`, the sign bit being one of them.
+//!
+//! It is now the base-`2^29` **NONET**: nine lanes, little-endian digits of the key read as one
+//! 256-bit number, `8 * 29 + 24 = 256` exactly, image exactly `2^256`, no lane reducing. Lean
+//! authority `Dregg2.Circuit.KeyLanes9.keyToLanes9` / `keyToLanes9_injective`.
+//!
+//! ⚠ **What did NOT change is where the ninth lane LANDS.** `B_PUBKEY_OCTET` is eight columns in
+//! the deployed 184-limb geometry, so the rotated pre-limb write still commits lanes 0..=7 and the
+//! signed anchor still binds 232 of 256 key bits. That residual is named
+//! `KEY_NONET_NINTH_LANE_UNBOUND` and measured in
+//! `circuit/tests/faithful8_key_octet_below_floor.rs`. **This file is about the ENCODER; do not
+//! read a green run here as "the owner key is bound".**
+//!
+//! ## Its sibling
+//!
+//! `circuit/tests/faithful8_key_octet_below_floor.rs` owns the burn-down-list gate, the law-doc
+//! bound-quoting gate, and the Ed25519 exhibit. **Read it first; it is the finding, and it is
+//! where the un-closed half is measured.**
 //!
 //! What is here and not there, because `dregg-circuit` cannot see `dregg-commit` or
 //! `dregg-storage` from its own test target:
 //!
 //! * the **twin cross-check** itself — the wall lane measures ONE packer, this measures FOUR
 //!   against each other;
-//! * the collision carried **downstream** through `compress_member` and both four-felt folds;
+//! * the encoder's injectivity carried **downstream** through `compress_member` and both
+//!   four-felt folds — i.e. that the fix reaches the membership leaf and the PI id bindings, not
+//!   just the raw lanes;
 //! * the pigeonhole as **exact integer arithmetic** (`p^8 < 2^256 <= p^9`, the Rust twin of
-//!   `FieldLanes9.nine_lanes_is_the_minimum`) rather than as a float comparison;
-//! * the image established as a **bit permutation** (GF(2) linearity + an injective, surjective
-//!   source-bit-to-lane-slot map) rather than by counting bits that fail to move the octet. Two
-//!   independent derivations of `240` is the point, not an accident.
+//!   `FieldLanes9.nine_lanes_is_the_minimum`) rather than as a float comparison. This is the
+//!   statement that made eight lanes unrepairable and nine the minimum, and it is unchanged.
 //!
 //! ## The four twins
 //!
 //! | # | site | returns |
 //! |---|------|---------|
-//! | 1 | `cell/src/commitment.rs::canonical_to_babybear_pi` | `[u32; 8]` |
-//! | 2 | `commit/src/typed.rs::canonical_32_to_felts_8` | `[BabyBear; 8]` |
-//! | 3 | `storage/src/commitment.rs::canonical_32_to_felts_8` | `[BabyBear; 8]` |
+//! | 1 | `cell/src/commitment.rs::canonical_to_babybear_nonet` | `[u32; 9]` |
+//! | 2 | `commit/src/typed.rs::canonical_32_to_lanes_9` | `[BabyBear; 9]` |
+//! | 3 | `storage/src/commitment.rs::canonical_32_to_lanes_9` | `[BabyBear; 9]` |
 //! | 4 | `circuit/src/effect_vm/trace.rs::canonical_id_to_felts_4` | inlines the packing, folds to 4 |
-//!
-//! `circuit/src/faithful8.rs::Faithful8::from_canonical_key` is a fifth *mention* but not a fifth
-//! implementation — it takes twin #2's output and names the lane. It is pinned here as a
-//! pass-through so that a future re-encoding inside the wall would also show up.
-//!
-//! ## Where the octet lands (why the hole is not academic)
-//!
-//! `turn/src/rotation_witness.rs:560-561` computes `canonical_32_to_felts_8(cell.public_key())`
-//! and writes it through `Faithful8::from_canonical_key` into `B_PUBKEY_OCTET` (in-block offset
-//! 105..112, both BEFORE and AFTER blocks). That is a pre-iroot limb, so it rides the
-//! `wireCommitR` absorption chain into `state_commit` and the signed consensus anchor.
-//! `commit/src/typed.rs:615::compress_member` runs the same packing into the membership leaf.
 //!
 //! ## Why this file lives in `dregg-commit`
 //!
-//! `dregg_commit::typed` is where the packing is owned (`circuit/src/faithful8.rs:188` names it as
-//! the owner). `dregg-cell` and `dregg-storage` are `[dev-dependencies]` here purely so all four
-//! twins are visible from one test target; nothing in `dregg-commit`'s library depends on them.
+//! `dregg_commit::typed` is where the packing is owned. `dregg-cell` and `dregg-storage` are
+//! `[dev-dependencies]` here purely so all four twins are visible from one test target; nothing in
+//! `dregg-commit`'s library depends on them.
 //!
 //! ## What this file deliberately does NOT claim
 //!
-//! Agreement among four copies of one map says **nothing** about whether the map is injective. It
-//! is not (gate 2 exhibits that constructively). These twins agreeing is the *floor* of what a
-//! reader should expect, not evidence of soundness.
+//! Agreement among four copies of one map says **nothing** about whether the map is injective —
+//! that is why gate 2 exists as a separate set of properties rather than as a corollary. And
+//! injectivity of the map says nothing about whether the anchor absorbs all nine of its lanes; see
+//! the ⚠ above.
 
 use dregg_circuit::Faithful8;
 use dregg_circuit::effect_vm::canonical_id_to_felts_4;
 use dregg_circuit::field::BABYBEAR_P;
-use dregg_commit::typed::{canonical_32_to_felts_4, canonical_32_to_felts_8, compress_member};
+use dregg_commit::typed::{
+    KEY_LANE_BITS, KEY_TOP_LANE_BITS, canonical_32_to_felts_4, canonical_32_to_lanes_9,
+    compress_member, lanes_9_to_canonical_32,
+};
 
 // ---------------------------------------------------------------------------
 // The corpus.
@@ -86,6 +90,28 @@ use dregg_commit::typed::{canonical_32_to_felts_4, canonical_32_to_felts_8, comp
 
 /// The byte indices whose TOP TWO BITS the `hi & 0x3F` mask discards: every fourth byte.
 const MASKED_BYTES: [usize; 8] = [3, 7, 11, 15, 19, 23, 27, 31];
+
+/// Flip the bits the RETIRED octet discarded, selected by `mask`: bit `2k` flips bit 6 of
+/// `MASKED_BYTES[k]`, bit `2k+1` flips bit 7.
+///
+/// ⚑ Each of the `2^16` masks used to name a distinct 32-byte string with the SAME eight-lane
+/// image — that was the fibre, and this function was the constructor that exhibited it. Under the
+/// nonet every one of those strings has its OWN lane vector, so the same function is now the
+/// generator of the hardest adversarial slice available: the pairs the previous encoder could not
+/// tell apart. It is kept for exactly that reason, and
+/// `nonet_separates_every_pair_the_retired_octet_merged` is where it earns its keep.
+fn flip_discarded_bits(x: &[u8; 32], mask: u16) -> [u8; 32] {
+    let mut out = *x;
+    for (k, byte) in MASKED_BYTES.iter().enumerate() {
+        if mask & (1u16 << (2 * k)) != 0 {
+            out[*byte] ^= 1u8 << 6;
+        }
+        if mask & (1u16 << (2 * k + 1)) != 0 {
+            out[*byte] ^= 1u8 << 7;
+        }
+    }
+    out
+}
 
 /// Deterministic, dependency-free PRNG (splitmix64). A test corpus must be reproducible from
 /// the source alone — a seeded `rand` would make a red un-rerunnable.
@@ -189,16 +215,16 @@ fn corpus() -> Vec<[u8; 32]> {
 // The four twins, called uniformly.
 // ---------------------------------------------------------------------------
 
-fn twin1_cell(x: &[u8; 32]) -> [u32; 8] {
-    dregg_cell::commitment::canonical_to_babybear_pi(x)
+fn twin1_cell(x: &[u8; 32]) -> [u32; 9] {
+    dregg_cell::commitment::canonical_to_babybear_nonet(x)
 }
 
-fn twin2_commit(x: &[u8; 32]) -> [u32; 8] {
-    canonical_32_to_felts_8(x).map(|f| f.as_u32())
+fn twin2_commit(x: &[u8; 32]) -> [u32; 9] {
+    canonical_32_to_lanes_9(x).map(|f| f.as_u32())
 }
 
-fn twin3_storage(x: &[u8; 32]) -> [u32; 8] {
-    dregg_storage::commitment::canonical_32_to_felts_8(x).map(|f| f.as_u32())
+fn twin3_storage(x: &[u8; 32]) -> [u32; 9] {
+    dregg_storage::commitment::canonical_32_to_lanes_9(x).map(|f| f.as_u32())
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +249,7 @@ fn f2_packer_twins_agree_across_cell_commit_and_storage() {
             a,
             b,
             "TWIN DRIFT at corpus[{idx}] ({}): \
-             cell::commitment::canonical_to_babybear_pi != commit::typed::canonical_32_to_felts_8\n\
+             cell::commitment::canonical_to_babybear_nonet != commit::typed::canonical_32_to_lanes_9\n\
              cell    = {a:?}\ncommit  = {b:?}",
             hex(x)
         );
@@ -231,7 +257,7 @@ fn f2_packer_twins_agree_across_cell_commit_and_storage() {
             b,
             c,
             "TWIN DRIFT at corpus[{idx}] ({}): \
-             commit::typed::canonical_32_to_felts_8 != storage::commitment::canonical_32_to_felts_8\n\
+             commit::typed::canonical_32_to_lanes_9 != storage::commitment::canonical_32_to_lanes_9\n\
              commit  = {b:?}\nstorage = {c:?}",
             hex(x)
         );
@@ -259,174 +285,174 @@ fn f2_packer_twins_agree_on_the_four_felt_fold_in_circuit_trace() {
 }
 
 #[test]
-fn f2_faithful8_wall_is_a_pass_through_not_a_fifth_encoding() {
-    // `Faithful8::from_canonical_key` NAMES the lane; it must not transform it. If a future
+fn f2_faithful8_wall_is_the_low_eight_lanes_and_nothing_else() {
+    // `Faithful8::from_key_nonet_low8` NAMES the lanes; it must not transform them. If a future
     // change makes the wall re-encode, the deployed `B_PUBKEY_OCTET` fill
-    // (`turn/src/rotation_witness.rs:561`) would silently stop matching every off-AIR
-    // reconstruction that calls the packer directly.
+    // (`turn/src/rotation_witness.rs`) would silently stop matching every off-AIR reconstruction
+    // that calls the packer directly.
     //
-    // ⚠ HONESTY, so nobody overweights this one: it is the WEAKEST test in the file, and it is
-    // close to a pin against its own definition — the constructor's body is a move today, so the
-    // assertion is nearly true by construction. It survived both encoder mutations that killed
-    // seven of the ten tests here, which is correct behaviour and also a warning about how much
-    // it can detect. Its one real job is the day someone puts arithmetic inside the wall: the
-    // 2026-08-01 demotion already re-routed this body through the `_DANGER` hatch, and this is
-    // what would have caught that re-routing if it had not been transparent.
+    // ⚠ HONESTY, so nobody overweights this one: it is the WEAKEST test in the file and it is
+    // close to a pin against its own definition — the constructor's body is a projection today,
+    // so the assertion is nearly true by construction. Its one real job is the day someone puts
+    // arithmetic inside the wall.
+    //
+    // ⚑ It is ALSO the place the un-closed half is visible in this file: the wall takes nine
+    // lanes and keeps eight. That is asserted, not commented.
     for x in corpus() {
-        let limbs = canonical_32_to_felts_8(&x);
+        let lanes = canonical_32_to_lanes_9(&x);
+        let walled = Faithful8::from_key_nonet_low8(lanes).limbs();
         assert_eq!(
-            Faithful8::from_canonical_key(limbs)
-                .limbs()
-                .map(|f| f.as_u32()),
-            limbs.map(|f| f.as_u32()),
-            "Faithful8::from_canonical_key transformed its input"
+            walled.map(|f| f.as_u32()),
+            [
+                lanes[0], lanes[1], lanes[2], lanes[3], lanes[4], lanes[5], lanes[6], lanes[7],
+            ]
+            .map(|f| f.as_u32()),
+            "Faithful8::from_key_nonet_low8 transformed its input"
+        );
+        assert_eq!(
+            walled.len(),
+            8,
+            "the wall is eight lanes wide — this is the residual, not a bug in the test"
         );
     }
 }
 
 #[test]
-fn f2_every_lane_is_a_thirty_bit_value_so_none_of_the_twins_ever_reduces() {
-    // The packing's own justification (`cell/src/commitment.rs` doc: "30-bit limbs guarantee a
-    // unique encoding without modular reduction collisions"). The claim about REDUCTION is true
-    // and this pins it. The claim of a "unique encoding" is FALSE and gate 2 exhibits why.
+fn f2_every_lane_is_below_the_radix_so_none_of_the_twins_ever_reduces() {
+    // The encoding's own justification: `2^29 < p`, so no lane is a `mod p` reduction and the
+    // nine lanes are genuine base-`2^29` digits. Unlike its predecessor's "unique encoding"
+    // claim, this one is true AND sufficient — see `nonet_round_trips_through_a_total_decoder`.
     for x in corpus() {
-        for (lane, value) in twin2_commit(&x).iter().enumerate() {
+        let lanes = twin2_commit(&x);
+        for (lane, value) in lanes.iter().enumerate() {
             assert!(
-                *value < (1u32 << 30),
-                "lane {lane} = {value} is not a 30-bit value for {}",
+                *value < (1u32 << KEY_LANE_BITS),
+                "lane {lane} = {value} is not a {KEY_LANE_BITS}-bit value for {}",
                 hex(&x)
             );
             assert!(*value < BABYBEAR_P, "lane {lane} = {value} exceeds p");
         }
+        assert!(
+            lanes[8] < (1u32 << KEY_TOP_LANE_BITS),
+            "the top lane {} exceeds its {KEY_TOP_LANE_BITS}-bit width for {}",
+            lanes[8],
+            hex(&x)
+        );
     }
 }
 
 // ---------------------------------------------------------------------------
-// GATE 2 — ⚠ THE HOLE, CONSTRUCTED. These tests DOCUMENT; they do not GUARD.
+// GATE 2 — THE ENCODER IS INJECTIVE. (These REPLACE the `hole_f2_*` exhibits.)
 // ---------------------------------------------------------------------------
-
-/// Flip the discarded bits selected by `mask`: bit `2k` of the mask flips bit 6 of
-/// `MASKED_BYTES[k]`, bit `2k+1` flips bit 7. Every one of the 2^16 masks names a distinct
-/// 32-byte string, and every one of them has the SAME eight-lane image.
-fn flip_discarded_bits(x: &[u8; 32], mask: u16) -> [u8; 32] {
-    let mut out = *x;
-    for (k, byte) in MASKED_BYTES.iter().enumerate() {
-        if mask & (1u16 << (2 * k)) != 0 {
-            out[*byte] ^= 1u8 << 6;
-        }
-        if mask & (1u16 << (2 * k + 1)) != 0 {
-            out[*byte] ^= 1u8 << 7;
-        }
-    }
-    out
-}
+//
+// ⚑ The `hole_f2_*` tests that stood here were CONSTRUCTIVE measurements of the defect: given any
+// 32-byte value they built a different one with an identical octet, and carried that collision
+// downstream through `compress_member` and both four-felt folds. Their own instruction read:
+//
+//     "They go red only if someone FIXES the encoder — at which point they should be deleted,
+//      not repaired."
+//
+// The encoder was fixed on 2026-08-01 and they are deleted, not repaired. `flip_discarded_bits`
+// and `MASKED_BYTES` survive here because the corpus still walks the byte positions the old mask
+// named — they are now just an adversarial slice with a historical name, and the structural walk
+// in gate 3 re-derives the read-set from scratch rather than trusting them.
 
 #[test]
-fn hole_f2_pack_collides_by_construction_on_every_input() {
-    // ⚠ GREEN HERE MEANS THE HOLE IS OPEN. This test is a MEASUREMENT of a defect.
-    //
-    // No search, no birthday, no grind: given ANY 32-byte value, one XOR produces a different
-    // 32-byte value with a bit-identical octet.
+fn nonet_round_trips_through_a_total_decoder() {
+    // What "injective" MEANS here, and the only form of it a Rust test can establish: a total
+    // decoder that is a left inverse on the whole corpus. `Dregg2.Circuit.KeyLanes9` proves
+    // `keyLanes9ToBytes_keyToLanes9` for ALL 32-byte values; this checks the Rust twin agrees
+    // wherever it is asked. A differential over a corpus, not a proof over a domain.
     for (idx, x) in corpus().iter().enumerate() {
-        let sibling = flip_discarded_bits(x, 0x0001); // flip bit 6 of byte 3 — one bit.
-        assert_ne!(
-            *x, sibling,
-            "corpus[{idx}]: the sibling construction did not change the input"
-        );
         assert_eq!(
-            twin2_commit(x),
-            twin2_commit(&sibling),
-            "corpus[{idx}] ({}): the one-bit sibling did NOT collide — the encoder was FIXED. \
-             Delete this test rather than repairing it, and retire the KEY_COMMIT burn-down rows \
-             in docs/FAITHFUL-COMMITMENT-LAW.md.",
+            lanes_9_to_canonical_32(canonical_32_to_lanes_9(x)),
+            *x,
+            "corpus[{idx}] ({}) did not round-trip",
             hex(x)
         );
     }
 }
 
 #[test]
-fn hole_f2_second_preimage_class_has_exactly_65536_members() {
-    // ⚠ GREEN HERE MEANS THE HOLE IS OPEN.
-    //
-    // The image is not merely non-injective: the fibre through any point is EXACTLY 2^16 distinct
-    // 32-byte strings and all of them are enumerable in constant time. This is the precise sense
-    // in which second preimage on the raw string costs O(1) and is not a "bound" at all.
-    let bases: [[u8; 32]; 3] = [
-        [0x00; 32],
-        [0xFF; 32],
-        SplitMix64(0xF2F2_F2F2).next_bytes32(),
-    ];
-
-    for base in bases {
-        let target = twin2_commit(&base);
-        let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
-        for mask in 0u32..=0xFFFF {
-            let sibling = flip_discarded_bits(&base, mask as u16);
-            assert_eq!(
-                twin2_commit(&sibling),
-                target,
-                "mask {mask:#06x} left the octet — the fibre is smaller than claimed"
-            );
-            assert!(
-                seen.insert(sibling),
-                "mask {mask:#06x} produced a duplicate string; the 16 flipped bits are not free"
-            );
-        }
-        assert_eq!(seen.len(), 1 << 16, "fibre size is not 2^16");
+fn nonet_separates_every_pair_the_retired_octet_merged() {
+    // The exact construction the deleted `hole_f2_pack_collides_by_construction_on_every_input`
+    // used, run against the encoder that replaced it. Every sibling it built is now SEPARATED.
+    // This is the refutation of the old test, kept as a test rather than as a claim.
+    for (idx, x) in corpus().iter().enumerate() {
+        let sibling = flip_discarded_bits(x, 0x0001); // flip bit 6 of byte 3 — one bit.
+        assert_ne!(*x, sibling);
+        assert_ne!(
+            twin2_commit(x),
+            twin2_commit(&sibling),
+            "corpus[{idx}] ({}): a one-bit sibling still collides — an 8-lane pack came back",
+            hex(x)
+        );
     }
+
+    // And the whole 2^16 fibre the old encoder had: every one of those strings is now distinct.
+    // 65536 encodings, all different, is the fibre collapsing to a point.
+    let base = [0xA5u8; 32];
+    let mut seen = std::collections::HashSet::new();
+    for mask in 0u32..=0xFFFF {
+        assert!(
+            seen.insert(twin2_commit(&flip_discarded_bits(&base, mask as u16))),
+            "mask {mask:#06x} collided — the old 2^16 fibre has not fully collapsed"
+        );
+    }
+    assert_eq!(seen.len(), 1 << 16);
 }
 
 #[test]
-fn hole_f2_collision_survives_the_membership_compress_and_the_four_felt_fold() {
-    // ⚠ GREEN HERE MEANS THE HOLE IS OPEN.
-    //
-    // The collision is not contained by the Poseidon2 layer above it — a hash of equal inputs is
-    // equal. Two distinct 32-byte keys therefore share:
-    //   * `compress_member`               — the membership-domain Merkle leaf
-    //                                       (`commit/src/typed.rs:615`, called from
-    //                                       `turn/src/executor/membership_verifier.rs:96`);
+fn nonet_injectivity_reaches_the_membership_leaf_and_both_four_felt_folds() {
+    // ⚑ THIS IS THE TEST THAT SAYS THE FIX REACHED THE CONSUMERS, and it is the direct inversion
+    // of `hole_f2_collision_survives_the_membership_compress_and_the_four_felt_fold`. The old
+    // collision was not contained by the Poseidon2 layer above it — a hash of equal inputs is
+    // equal — so it flowed into:
+    //   * `compress_member`             — the membership-domain Merkle leaf;
     //   * `canonical_32_to_felts_4` /
-    //     `canonical_id_to_felts_4`       — the federation-id / owner-cell-id PI binding
-    //                                       (`circuit/src/effect_vm/trace.rs:1146-1147`);
-    //   * `Faithful8::from_canonical_key` — the fill written to `B_PUBKEY_OCTET`
-    //                                       (`turn/src/rotation_witness.rs:560-561`), a pre-iroot
-    //                                       limb absorbed into `state_commit`.
+    //     `canonical_id_to_felts_4`     — the turn-hash / federation-id / owner-cell-id PI binding.
+    // All three now absorb NINE lanes, so all three separate the pair.
     let a = SplitMix64(0xDEAD_BEEF_0000_0001).next_bytes32();
-    let b = flip_discarded_bits(&a, 0xFFFF); // all 16 discarded bits flipped at once.
+    let b = flip_discarded_bits(&a, 0xFFFF); // all 16 formerly-discarded bits flipped at once.
     assert_ne!(a, b);
     assert_eq!(
         a.iter().zip(b.iter()).filter(|(p, q)| p != q).count(),
         8,
-        "the two strings should differ in all eight masked bytes"
+        "the two strings should differ in all eight formerly-masked bytes"
     );
 
-    // ⚑ `compress_member` was widened from ONE felt to EIGHT on 2026-08-01 (felt-width finding
-    // #9 — a 31-bit leaf domain is collided in 2^15.5). That fix is real and orthogonal: it
-    // repairs the OUTPUT width, while F2 is a defect in the INPUT. The full-width leaf still
-    // fails to separate this pair, because a hash of equal inputs is equal however wide it is.
-    assert_eq!(
+    assert_ne!(
         compress_member(&a).map(|f| f.as_u32()),
         compress_member(&b).map(|f| f.as_u32()),
-        "membership leaf separated the pair — compress_member no longer rides F2"
+        "the membership leaf still merges the pair — compress_member is not on the nonet"
     );
-    assert_eq!(
+    assert_ne!(
         canonical_32_to_felts_4(&a).map(|f| f.as_u32()),
         canonical_32_to_felts_4(&b).map(|f| f.as_u32()),
-        "the four-felt fold separated the pair"
+        "the four-felt fold still merges the pair"
     );
-    assert_eq!(
+    assert_ne!(
         canonical_id_to_felts_4(&a).map(|f| f.as_u32()),
         canonical_id_to_felts_4(&b).map(|f| f.as_u32()),
-        "the circuit-side four-felt id fold separated the pair"
+        "the circuit-side four-felt id fold still merges the pair"
     );
+
+    // ⚠ AND THE ONE THAT STILL MERGES, asserted so the file cannot be read as "all closed".
+    // The anchor write keeps lanes 0..=7; this pair differs only in bytes 3, 7, …, 31, of which
+    // byte 31 is in lane 8 — so whether it separates depends on which byte moved. Use a pair that
+    // differs ONLY above bit 232 to make the residual unambiguous.
+    let mut c = a;
+    c[31] ^= 1 << 7;
+    assert_ne!(a, c);
     assert_eq!(
-        Faithful8::from_canonical_key(canonical_32_to_felts_8(&a))
+        Faithful8::from_key_nonet_low8(canonical_32_to_lanes_9(&a))
             .limbs()
             .map(|f| f.as_u32()),
-        Faithful8::from_canonical_key(canonical_32_to_felts_8(&b))
+        Faithful8::from_key_nonet_low8(canonical_32_to_lanes_9(&c))
             .limbs()
             .map(|f| f.as_u32()),
-        "the pubkey-octet fill separated the pair"
+        "if the low-eight anchor write started separating a pair differing only in bit 255, the \
+         ninth lane landed — retire KEY_NONET_NINTH_LANE_UNBOUND and delete this assertion"
     );
 }
 
@@ -434,16 +460,18 @@ fn hole_f2_collision_survives_the_membership_compress_and_the_four_felt_fold() {
 // GATE 3 — the floor arithmetic. IMAGE and COLLISION BOUND are kept apart on purpose.
 // ---------------------------------------------------------------------------
 
-/// The number of source bits F2 retains, established structurally by
-/// [`floor_f2_retains_exactly_240_source_bits_as_a_bit_permutation`] rather than asserted.
-/// **This is an IMAGE size in bits. It is NOT a security bound.**
-const F2_IMAGE_BITS: f64 = 240.0;
+/// The number of source bits the DEPLOYED nonet retains, established structurally by
+/// [`floor_nonet_retains_all_256_source_bits_as_a_bit_permutation`] rather than asserted.
+/// **This is an IMAGE size in bits. It is NOT a security bound** — but at 256 it is the whole
+/// source, so for this encoder there is no encoding collision to bound at all.
+const NONET_IMAGE_BITS: f64 = 256.0;
 
-/// The birthday bound over an image of `2^F2_IMAGE_BITS`. **This is the COLLISION bound.**
-const F2_COLLISION_BOUND_BITS: f64 = F2_IMAGE_BITS / 2.0;
+/// What the RETIRED octet retained. Kept as a named constant so the comparison below is
+/// collision-against-collision and the two numbers cannot be confused for one another.
+const RETIRED_OCTET_IMAGE_BITS: f64 = 240.0;
 
 #[test]
-fn floor_f2_retains_exactly_240_source_bits_as_a_bit_permutation() {
+fn floor_nonet_retains_all_256_source_bits_as_a_bit_permutation() {
     // The packing is `lo | mid1<<8 | mid2<<16 | (hi & 0x3F)<<24` — an OR of DISJOINT bit ranges,
     // so it is GF(2)-linear and fully determined by its action on the 256 unit vectors. Walking
     // them establishes the image size EXACTLY, with integers, rather than by an entropy argument.
@@ -492,41 +520,46 @@ fn floor_f2_retains_exactly_240_source_bits_as_a_bit_permutation() {
             .collect();
         match set.len() {
             0 => discarded.push(b),
-            1 => retained.push((b, set[0].0 as u32 * 30 + set[0].1)),
+            1 => retained.push((b, set[0].0 as u32 * KEY_LANE_BITS as u32 + set[0].1)),
             n => panic!("source bit {b} reached {n} lanes"),
         }
     }
 
-    // (c) exactly 16 bits are lost, and they are exactly the ones the `& 0x3F` mask names.
-    let expected_discarded: Vec<usize> = MASKED_BYTES
+    // (c) NOTHING is lost. This is the assertion that inverted on 2026-08-01: the retired octet
+    // discarded the 16 bits `MASKED_BYTES` names, and the nonet discards none.
+    assert!(
+        discarded.is_empty(),
+        "the deployed encoder discards source bits {discarded:?} — an 8-lane pack came back"
+    );
+    let retired_would_have_discarded: Vec<usize> = MASKED_BYTES
         .iter()
         .flat_map(|byte| [byte * 8 + 6, byte * 8 + 7])
         .collect();
-    let mut sorted = discarded.clone();
-    sorted.sort_unstable();
-    let mut expected_sorted = expected_discarded.clone();
-    expected_sorted.sort_unstable();
     assert_eq!(
-        sorted, expected_sorted,
-        "the DISCARDED source bits are not the 16 the `hi & 0x3F` mask names"
+        retired_would_have_discarded.len(),
+        16,
+        "the retired octet's discarded set, kept for the record"
     );
-    assert_eq!(discarded.len(), 16);
 
-    // (d) the retained bits land injectively and surjectively on the 8 x 30 = 240 lane slots.
-    assert_eq!(retained.len(), 240, "retained source bit count");
+    // (d) the retained bits land injectively and surjectively on the 8 x 29 + 24 = 256 lane
+    // slots. Surjectivity is what says no slot is wasted; injectivity is what says no two source
+    // bits share one, which is exactly the property the mask destroyed.
+    assert_eq!(retained.len(), 256, "retained source bit count");
     let mut slots: Vec<u32> = retained.iter().map(|(_, s)| *s).collect();
     slots.sort_unstable();
     slots.dedup();
     assert_eq!(
         slots.len(),
-        240,
+        256,
         "two source bits share a lane slot — the map is not a permutation"
     );
     assert_eq!(*slots.first().unwrap(), 0);
-    assert_eq!(*slots.last().unwrap(), 239);
+    assert_eq!(*slots.last().unwrap(), 255);
 
-    // (e) hence the IMAGE is exactly 2^240, established, not assumed.
-    assert_eq!(F2_IMAGE_BITS, retained.len() as f64);
+    // (e) hence the IMAGE is exactly 2^256, established, not assumed — the source is 32 bytes, so
+    // the encoding step loses NOTHING and there is no encoding collision to quantify.
+    assert_eq!(NONET_IMAGE_BITS, retained.len() as f64);
+    assert!(NONET_IMAGE_BITS > RETIRED_OCTET_IMAGE_BITS);
 }
 
 #[test]
@@ -600,30 +633,61 @@ fn floor_f2_collision_bound_is_below_the_law_s_own_octet_collision_bound() {
         "8 lanes carry {law_octet_image_bits} bits of IMAGE against 256 bits of source"
     );
 
-    // F2 does not even reach that ceiling: it throws away 7.2551 bits of the available image
-    // before any encoding question is asked.
+    // ⚑ THE FINDING AS IT STOOD, kept because deleting it would delete the reason nine lanes
+    // exist. The retired octet did not even reach that ceiling: it threw away 7.2551 bits of the
+    // available image before any encoding question was asked, and its birthday COLLISION bound
+    // was 3.63 bits below the law's bar.
     assert!(
-        F2_IMAGE_BITS < law_octet_image_bits,
-        "F2 IMAGE {F2_IMAGE_BITS} vs available {law_octet_image_bits}"
+        RETIRED_OCTET_IMAGE_BITS < law_octet_image_bits,
+        "retired IMAGE {RETIRED_OCTET_IMAGE_BITS} vs available {law_octet_image_bits}"
     );
-
-    // ⚑ THE FINDING, in one comparison, both sides COLLISION bounds.
-    assert!(
-        F2_COLLISION_BOUND_BITS < law_octet_collision_bound_bits,
-        "F2 COLLISION bound 2^{F2_COLLISION_BOUND_BITS} is not below the law's \
-         2^{law_octet_collision_bound_bits}"
-    );
-    let deficit = law_octet_collision_bound_bits - F2_COLLISION_BOUND_BITS;
+    let retired_collision_bits = RETIRED_OCTET_IMAGE_BITS / 2.0;
+    assert_eq!(retired_collision_bits, 120.0);
+    let deficit = law_octet_collision_bound_bits - retired_collision_bits;
     assert!(
         (3.6..3.7).contains(&deficit),
-        "the F2 shortfall against the law's bar moved: {deficit} bits"
+        "the retired octet's shortfall against the law's bar moved: {deficit} bits"
     );
 
-    // And the number that actually matters for the deployed pubkey octet is neither of the two
-    // above: for a raw 32-byte STRING second preimage is O(1) (gate 2), and the 2^120 figure is
-    // the cost only when the colliding value must ALSO be a well-formed key. Stated here so a
-    // reader who quotes one number from this file quotes it with its qualifier.
-    assert_eq!(F2_COLLISION_BOUND_BITS, 120.0);
+    // ⚑ AND WHY THE REPLACEMENT IS NOT JUST "A BIGGER NUMBER". `law_octet_image_bits` is the
+    // most eight lanes could EVER carry, and it is 247.26 against a 256-bit source — so the whole
+    // eight-lane family is non-injective before masking is discussed, and "range-check the octet"
+    // could never have been the fix. The nonet's image is the source itself.
+    assert!(
+        law_octet_image_bits < NONET_IMAGE_BITS,
+        "if eight lanes ever carried 2^256 the ninth would be unnecessary"
+    );
+    assert_eq!(NONET_IMAGE_BITS, 256.0);
+
+    // ⚠ SAY WHICH BOUND, FOR THE FIX AS WELL AS FOR THE WOUND. Nine lanes have a CAPACITY of
+    // 9 * log2(p) = 278.16 bits. That is the CODOMAIN, not this encoding's image, and quoting it
+    // as a security level is the same error in the other direction — the tell is that it exceeds
+    // 256, which no map out of 32 bytes can. The honest sentence is: image exactly 2^256,
+    // INJECTIVE, so the encoding step contributes NO collision and the binding reduces to the
+    // sponge that absorbs the lanes.
+    let nine_lane_capacity = 9.0 * log2_p;
+    assert!((nine_lane_capacity - 278.162_015_366_926_0).abs() < 1e-9);
+    assert!(
+        nine_lane_capacity > 256.0,
+        "THE TELL: 2^{nine_lane_capacity} exceeds the source, so it is capacity, not image"
+    );
+
+    // ⚠ AND THE RESIDUAL, IN THE SAME UNITS, because this file must not be quotable as "closed".
+    // The rotated pre-limb write commits lanes 0..=7: 8 * 29 = 232 bits of image, birthday
+    // 2^116 — which is BELOW both the law's bar and the retired octet's own 2^120. The encoder is
+    // fixed; the anchor is not, and it is not until `NUM_PRE_LIMBS` reaches 187.
+    let anchor_image_bits = 8.0 * KEY_LANE_BITS as f64;
+    assert_eq!(anchor_image_bits, 232.0);
+    let anchor_collision_bits = anchor_image_bits / 2.0;
+    assert_eq!(anchor_collision_bits, 116.0);
+    assert!(
+        anchor_collision_bits < law_octet_collision_bound_bits,
+        "the anchor residual is below the law's bar and that is stated, not hidden"
+    );
+    assert!(
+        anchor_collision_bits < retired_collision_bits,
+        "and it is four bits below what the RETIRED octet bound at the same site"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -171,8 +171,10 @@ use crate::field::BabyBear;
 /// constant; let whoever reads it look up today's value. The gate
 /// (`circuit/tests/faithful8_key_octet_below_floor.rs`) asserts this string is quoted verbatim in
 /// the doc's burn-down section, so the two cannot drift.
-pub const KEY_COMMIT_30BIT_RESIDUAL: &str = "KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 \
-     sign bit among them) — floor is 2^123.63; closes at the ninth key lane, one bump of CANONICAL_STATE_SCHEMA_EPOCH";
+pub const KEY_NONET_NINTH_LANE_UNBOUND: &str = "KEY_COMMIT nonet lane 8 UNBOUND at the anchor: the encoder is injective (base-2^29 nonet, image \
+     2^256) but B_PUBKEY_OCTET is 8 columns wide in the deployed 184-limb geometry, so state_commit \
+     absorbs lanes 0..=7 only — 232 of 256 key bits, Ed25519 sign bit NOT among them. Closes when \
+     layout_generated.rs is regenerated at NUM_PRE_LIMBS = 187 and lane 8 lands on in-block limb 186";
 
 /// An **8-felt commitment octet** — 8 lanes wide, not 1.
 ///
@@ -291,12 +293,33 @@ impl Faithful8 {
     /// against nothing. The move is **one bump of that constant, whatever it reads when you land
     /// it** — go read it. Not this lane's edit — this lane's edit is that the wall stops
     /// calling it faithful while that is pending, and that the price is stated against the constant
-    /// rather than against a remembered one. The packing itself is owned by
-    /// `dregg_commit::typed::canonical_32_to_felts_8` (byte-identical twin:
-    /// `dregg_cell::commitment::canonical_to_babybear_pi`) and is UNCHANGED here.
+    /// rather than against a remembered one.
+    ///
+    /// ## ⚑ 2026-08-01 — the ENCODER moved; the COLUMN COUNT did not
+    ///
+    /// The packing is no longer the 30-bit octet. `dregg_commit::typed::canonical_32_to_lanes_9`
+    /// (twins in `dregg_cell::commitment`, `dregg_storage::commitment`, and inlined in
+    /// `circuit/src/effect_vm/trace.rs`) is the base-`2^29` **nonet**, injective, image exactly
+    /// `2^256`. **So the residual this constructor carries is no longer "the encoding loses 16
+    /// bits" — it is "the ninth lane has nowhere to go".** `B_PUBKEY_OCTET` is eight columns in
+    /// the deployed 184-limb geometry; the 187-limb layout that gives lane 8 in-block limb 186 is
+    /// proved and committed in Lean (`RotatedLayout.rotated187`) and NOT emitted.
+    ///
+    /// It therefore still routes to the hatch, under [`KEY_NONET_NINTH_LANE_UNBOUND`], and it must
+    /// keep routing there until that column exists. What changed is which sentence is true about
+    /// it, and the reason constant now says the true one.
+    ///
+    /// ⚠ Take the LOW eight lanes and no others. Do not "repair" this by re-chunking 256 bits into
+    /// 8 lanes to avoid the loss — that is what the predecessor did, and `p^8 < 2^256` refutes
+    /// every member of that family before a line of code is read.
     #[inline]
-    pub fn from_canonical_key(limbs: [BabyBear; 8]) -> Self {
-        Self::from_lossy_31bit_DANGER(KEY_COMMIT_30BIT_RESIDUAL, limbs)
+    pub fn from_key_nonet_low8(nonet: [BabyBear; 9]) -> Self {
+        Self::from_lossy_31bit_DANGER(
+            KEY_NONET_NINTH_LANE_UNBOUND,
+            [
+                nonet[0], nonet[1], nonet[2], nonet[3], nonet[4], nonet[5], nonet[6], nonet[7],
+            ],
+        )
     }
 
     // ⚑ `from_field_limbs8` — the v13 FIELDS-OCTET constructor — is DELETED (2026-07-31), and so is

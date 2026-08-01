@@ -31,7 +31,7 @@
 //! BLAKE3 scheme. The right binding is to use this function's output as a
 //! BabyBear public input on the circuit side — i.e. the STARK's `state_commit`
 //! public input must be derived from the canonical commitment, not invented
-//! independently. See [`canonical_to_babybear_pi`] for the bytes-to-felts
+//! independently. See [`canonical_to_babybear_nonet`] for the bytes-to-felts
 //! adapter.
 //!
 //! REVIEW[circuit-fix-coordination]: The circuit's `CellState::compute_commitment`
@@ -40,7 +40,7 @@
 //! constrained to equal the BabyBear-field encoding of the canonical commitment.
 //! A coordinating change in `circuit/` should introduce a
 //! `bind_to_canonical_commitment(canonical_bytes)` adapter that asserts equality
-//! between the Poseidon2 inner commitment and `canonical_to_babybear_pi(bytes)`,
+//! between the Poseidon2 inner commitment and `canonical_to_babybear_nonet(bytes)`,
 //! or replace the Poseidon2 commitment with the canonical scheme entirely.
 
 use crate::capability::CapabilitySet;
@@ -731,34 +731,45 @@ pub fn capability_ref_leaf_commitment(cap: &crate::capability::CapabilityRef) ->
     digest8_to_bytes32(cap_ref_to_leaf(cap).digest())
 }
 
-/// Convert a 32-byte canonical commitment into 8 BabyBear-shaped felts
-/// (encoded as little-endian u32 truncated to 30 bits to fit BabyBear range).
+/// Convert a 32-byte canonical commitment into **nine** BabyBear-shaped lanes: the base-`2^29`
+/// nonet, little-endian, the Rust twin of `Dregg2.Circuit.KeyLanes9.keyToLanes9`.
 ///
-/// The output is the binding input that a Poseidon2-based circuit can absorb
-/// to tie its state_commit public input back to the canonical scheme. The
-/// 30-bit truncation is intentional — BabyBear's modulus is 2^31 − 2^27 + 1,
-/// and 30-bit limbs guarantee a unique encoding without modular reduction
-/// collisions.
+/// ## What this replaced, 2026-08-01
 ///
-/// Returns `[u32; 8]` representing the 8 felts. The circuit side should
-/// constrain its declared state_commit equal to a fixed Poseidon2 hash of
-/// these 8 felts in some agreed-upon shape.
+/// `canonical_to_babybear_nonet` packed `8+8+8+6 = 30` bits into each of eight lanes and its doc
+/// said "30-bit limbs guarantee a unique encoding without modular reduction collisions". The
+/// second half of that sentence was true and the first was **false**, and the gap between them
+/// is the whole wound: no lane reduced, *and* `& 0x3F` discarded bits 6-7 of bytes 3, 7, …, 31.
+/// Sixteen source bits. Every input had `2^16 - 1` siblings with a bit-identical octet, reachable
+/// by one XOR — and because an Ed25519 public key carries its x-sign in bit 7 of byte 31, a key
+/// and its negation (a keypair whose private half is `-a mod L`) landed on ONE octet.
 ///
-/// REVIEW[circuit-fix-coordination]: this function defines the *contract*
-/// only — actual binding requires the circuit to absorb these 8 felts and
-/// emit a constrained equality to its own state_commit. Coordination needed
-/// with circuit-fix agent. See module-level docs.
-pub fn canonical_to_babybear_pi(canonical: &[u8; 32]) -> [u32; 8] {
-    let mut out = [0u32; 8];
-    for i in 0..8 {
-        let lo = canonical[i * 4] as u32;
-        let mid1 = canonical[i * 4 + 1] as u32;
-        let mid2 = canonical[i * 4 + 2] as u32;
-        let hi = canonical[i * 4 + 3] as u32;
-        // Pack 30 bits: 8+8+8+6 = 30
-        out[i] = lo | (mid1 << 8) | (mid2 << 16) | ((hi & 0x3F) << 24);
-    }
-    out
+/// Widening the mask would not have helped: `p^8 < 2^256`, so no eight-lane encoding of 32 bytes
+/// is injective. Nine is the minimum, `8 * 29 + 24 = 256` is exact, and the image is exactly
+/// `2^256`.
+///
+/// ⚠ **Where this lands is still eight columns.** `B_PUBKEY_OCTET` is 8 wide in the deployed
+/// 184-limb geometry; the ninth lane's home is in-block limb 186 in the *proved but un-emitted*
+/// 187-limb layout. Until `layout_generated.rs` is regenerated this encoder's ninth lane reaches
+/// the membership leaf and the id folds but **not** `state_commit`. See
+/// `circuit/tests/key_nonet_ninth_lane_reaches_the_anchor.rs`, which is the gate that flips.
+pub fn canonical_to_babybear_nonet(canonical: &[u8; 32]) -> [u32; 9] {
+    // Twin #1 of the base-2^29 nonet. The authoring site is
+    // `dregg_commit::typed::canonical_32_to_lanes_9`; this crate cannot see `dregg-commit`, so
+    // the arithmetic is re-typed and the two are pinned equal on an adversarial corpus by
+    // `commit/tests/key_octet_f2_twins_and_the_hole.rs`. Re-typing IS the review here: the
+    // 178 → 184 flag day rotted on a derived constant that was "improved" into a relation.
+    std::array::from_fn(|i| {
+        let bit = i * 29;
+        let mut acc: u64 = 0;
+        for k in 0..5usize {
+            if let Some(byte) = canonical.get(bit / 8 + k) {
+                acc |= u64::from(*byte) << (8 * k);
+            }
+        }
+        acc >>= bit % 8;
+        (acc & ((1u64 << 29) - 1)) as u32
+    })
 }
 
 // ============================================================================
@@ -1354,11 +1365,23 @@ pub fn compute_rotated_pre_limbs(
         dregg_circuit::Faithful8::from_bytes32(&contract_hash)
             .write_octet(&mut pre, B_CONTRACT_HASH_OCTET);
     }
-    // 105..=112: pubkey8 UNCONDITIONALLY — the operated cell's owner key in the 30-bit canonical form
-    // (`canonical_to_babybear_pi`, byte-identical to `dregg_commit::typed::canonical_32_to_felts_8`),
-    // the EXACT match to the executor's KEY_COMMIT teeth.
-    let pk8 = canonical_to_babybear_pi(cell.public_key()).map(BabyBear::new);
-    dregg_circuit::Faithful8::from_canonical_key(pk8).write_octet(&mut pre, B_PUBKEY_OCTET);
+    // 105..=112: the operated cell's owner key, LOW EIGHT LANES of the base-2^29 nonet
+    // (`canonical_to_babybear_nonet`, byte-identical to
+    // `dregg_commit::typed::canonical_32_to_lanes_9`), the EXACT match to the executor's
+    // KEY_COMMIT teeth and to the producer twin `dregg_turn::rotation_witness::produce`.
+    //
+    // ⚑ LANE 8 IS DROPPED HERE AND THAT IS THE OPEN HALF OF THE FLAG DAY. The encoder is
+    // injective; this WRITE is not, because `B_PUBKEY_OCTET` is eight columns wide in the
+    // deployed geometry and the ninth lane's home (in-block limb 186) exists only in the proved,
+    // un-emitted 187-limb layout. `Faithful8::from_key_nonet_low8` routes to the `_DANGER` hatch
+    // under `KEY_NONET_NINTH_LANE_UNBOUND` precisely so this site stays on the burn-down list.
+    //
+    // Do NOT "fix" this by reverting to the 30-bit octet because it carried 240 bits to this
+    // one's 232: both drop bit 7 of byte 31, so both merge an Ed25519 key with its negation, and
+    // the octet additionally put a second encoder in the tree. The gate that flips is
+    // `circuit/tests/key_nonet_ninth_lane_reaches_the_anchor.rs`, keyed on `NUM_PRE_LIMBS`.
+    let nonet = canonical_to_babybear_nonet(cell.public_key()).map(BabyBear::new);
+    dregg_circuit::Faithful8::from_key_nonet_low8(nonet).write_octet(&mut pre, B_PUBKEY_OCTET);
     pre
 }
 
@@ -1996,27 +2019,53 @@ mod tests {
         }
     }
 
-    /// canonical_to_babybear_pi: same input → same output (deterministic).
+    /// canonical_to_babybear_nonet: same input → same output (deterministic).
     #[test]
-    fn canonical_to_babybear_pi_deterministic() {
+    fn canonical_to_babybear_nonet_deterministic() {
         let bytes = [42u8; 32];
-        let a = canonical_to_babybear_pi(&bytes);
-        let b = canonical_to_babybear_pi(&bytes);
+        let a = canonical_to_babybear_nonet(&bytes);
+        let b = canonical_to_babybear_nonet(&bytes);
         assert_eq!(a, b);
     }
 
-    /// canonical_to_babybear_pi: different inputs → different outputs.
+    /// canonical_to_babybear_nonet: different inputs → different outputs.
     #[test]
-    fn canonical_to_babybear_pi_distinguishes() {
+    fn canonical_to_babybear_nonet_distinguishes() {
         let mut a = [0u8; 32];
         let mut b = [0u8; 32];
         b[0] = 1;
-        assert_ne!(canonical_to_babybear_pi(&a), canonical_to_babybear_pi(&b));
+        assert_ne!(
+            canonical_to_babybear_nonet(&a),
+            canonical_to_babybear_nonet(&b)
+        );
 
-        // High bit (within the 6-bit hi part of a limb) also distinguishes.
-        a[3] = 0x20;
-        b[3] = 0x10;
-        assert_ne!(canonical_to_babybear_pi(&a), canonical_to_babybear_pi(&b));
+        // ⚑ THE BITS THE RETIRED OCTET DISCARDED. `a[3] = 0x20 / b[3] = 0x10` is what this test
+        // used to check — both inside the 6-bit `hi` field, so it passed under the old packer too
+        // and said nothing about the wound. These are bits 6 and 7 of byte 3, two of the sixteen
+        // the `& 0x3F` mask threw away: under the octet this assertion was FALSE.
+        a[3] = 0x40;
+        b[3] = 0x80;
+        assert_ne!(
+            canonical_to_babybear_nonet(&a),
+            canonical_to_babybear_nonet(&b),
+            "bits 6/7 of byte 3 must move the lanes — an 8-lane pack came back"
+        );
+
+        // And the top of the last byte: bit 7 of byte 31 is the Ed25519 sign bit, source bit 255,
+        // the one that made a key and its negation indistinguishable.
+        let mut c = [0u8; 32];
+        let mut d = [0u8; 32];
+        d[31] = 0x80;
+        assert_ne!(
+            canonical_to_babybear_nonet(&c),
+            canonical_to_babybear_nonet(&d),
+            "the Ed25519 sign bit must move the lanes"
+        );
+        c[31] = 0x40;
+        assert_ne!(
+            canonical_to_babybear_nonet(&c),
+            canonical_to_babybear_nonet(&d)
+        );
     }
 
     /// Adversarial test (lifecycle): changing the cell's lifecycle state
@@ -2507,12 +2556,31 @@ mod tests {
     /// All output felts must fit within BabyBear's representable range
     /// (< 2^31). Our 30-bit packing should produce values < 2^30.
     #[test]
-    fn canonical_to_babybear_pi_in_range() {
+    fn canonical_to_babybear_nonet_in_range() {
+        // The all-ones key is the worst case for every lane at once.
         let bytes = [0xFFu8; 32];
-        let pi = canonical_to_babybear_pi(&bytes);
-        for &felt in &pi {
-            assert!(felt < (1u32 << 30), "felt {felt} exceeds 30-bit range");
+        let lanes = canonical_to_babybear_nonet(&bytes);
+        for (i, &felt) in lanes.iter().enumerate() {
+            // ⚠ The bound is 2^29, NOT 2^30. This assertion used to read `< 1 << 30` and it stayed
+            // green across the flag day for free — a check whose bound is looser than the thing it
+            // checks cannot go red. The nonet's radix is 2^29 and this is the leg-1 range lookup.
+            assert!(
+                felt < (1u32 << 29),
+                "lane {i} = {felt} exceeds the 2^29 radix"
+            );
+            assert!(
+                felt < dregg_circuit::field::BABYBEAR_P,
+                "lane {i} = {felt} would reduce mod p"
+            );
         }
+        // Leg 2, at a DIFFERENT width, and not a consequence of leg 1.
+        assert!(
+            lanes[8] < (1u32 << 24),
+            "the top lane {} exceeds its 24-bit width",
+            lanes[8]
+        );
+        // The all-ones key saturates lane 8 exactly: 2^24 - 1.
+        assert_eq!(lanes[8], (1u32 << 24) - 1);
     }
 
     // ---- v9 rotated commitment (G3) ----

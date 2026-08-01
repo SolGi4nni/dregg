@@ -97,7 +97,7 @@ pub use cell::{
 };
 pub use commitment::{
     CANONICAL_CAP_ROOT_CONTEXT, CANONICAL_COMMITMENT_CONTEXT, authority_residue_bytes,
-    canonical_to_babybear_pi, cap_ref_to_leaf, capability_ref_leaf_commitment,
+    canonical_to_babybear_nonet, cap_ref_to_leaf, capability_ref_leaf_commitment,
     compute_authority_digest_8, compute_authority_digest_felt, compute_canonical_capability_root,
     compute_canonical_capability_root_8, compute_canonical_capability_root_felt,
     compute_canonical_capability_root_wide, compute_canonical_state_commitment, digest8_to_bytes32,

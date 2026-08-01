@@ -565,21 +565,90 @@ pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
     felts
 }
 
-/// Pack arbitrary bytes into 8 BabyBear felts at 30 bits/limb (the fixed form
-/// used for 32-byte canonical commitments).
+/// The nonet's radix exponent: lanes 0..=7 are base-`2^29` digits. `2^29 = 536870912 < p`, so
+/// **no lane ever reduces** and the encoding is not a `mod p` map.
 ///
-/// Identical shape to `cell::commitment::canonical_to_babybear_pi` but returns
-/// `[BabyBear; 8]` directly. This is the bytes-to-felts adapter used by the
-/// runtime to derive the Poseidon2 form from a 32-byte canonical commitment.
-pub fn canonical_32_to_felts_8(canonical: &[u8; 32]) -> [BabyBear; 8] {
-    let mut out = [BabyBear::ZERO; 8];
-    for i in 0..8 {
-        let lo = canonical[i * 4] as u32;
-        let mid1 = canonical[i * 4 + 1] as u32;
-        let mid2 = canonical[i * 4 + 2] as u32;
-        let hi = canonical[i * 4 + 3] as u32;
-        // Pack 30 bits: 8+8+8+6 = 30
-        out[i] = BabyBear::new(lo | (mid1 << 8) | (mid2 << 16) | ((hi & 0x3F) << 24));
+/// ⚑ This mirrors `Dregg2.Circuit.KeyLanes9.K`. It is typed here because
+/// `layout_generated.rs` is still at the 184-limb geometry and does not yet export it; the
+/// emitter that will own it is `metatheory/EmitLayoutManifest.lean`. Until then the two numbers
+/// below are pinned to each other and to the 32-byte source by
+/// [`KEY_NONET_SPANS_THE_WHOLE_SOURCE`], and to the Lean by the KAT vectors in
+/// `circuit/tests/key_nonet_is_injective.rs`.
+pub const KEY_LANE_BITS: usize = 29;
+
+/// The top lane's width. `8 * 29 + 24 = 256` exactly, which is the whole content of
+/// `Dregg2.Circuit.KeyLanes9.K8_KTOP` (`K^8 * KTOP = 2^256`): the image is EXACTLY `2^256`, so
+/// there is no encoding collision to bound at all.
+pub const KEY_TOP_LANE_BITS: usize = 24;
+
+/// The pin. Two numbers that must sum to the source width — a lane widening that forgets the top
+/// lane, or a top lane that forgets the radix, cannot both survive this.
+const KEY_NONET_SPANS_THE_WHOLE_SOURCE: () = assert!(8 * KEY_LANE_BITS + KEY_TOP_LANE_BITS == 256);
+
+/// **THE ENCODER.** A 32-byte canonical value → nine BabyBear lanes, base `2^29`, little-endian.
+///
+/// The Rust mirror of `Dregg2.Circuit.KeyLanes9.keyToLanes9`: read the 32 bytes as one
+/// little-endian 256-bit number and take its nine base-`2^29` digits. Lanes 0..=7 are below
+/// `2^29`; lane 8 is below `2^24` because `2^256 / (2^29)^8 = 2^24`.
+///
+/// ## What it replaced, and why the replacement is not a widening
+///
+/// The deployed predecessor packed `lo | mid1<<8 | mid2<<16 | ((hi & 0x3F) << 24)` — `8+8+8+6 = 30`
+/// bits per limb over eight lanes. **`& 0x3F` discarded bits 6-7 of bytes 3, 7, …, 31: sixteen
+/// source bits, never read.** It was not "a 240-bit encoding with a 2^120 birthday bound"; among
+/// the values it actually carried its collision cost was **zero**, because an Ed25519 public key
+/// keeps its x-sign in bit 7 of byte 31 and the negation of a key — a keypair the attacker holds
+/// the private half of, `-a mod L` — packed to the identical octet.
+///
+/// Eight lanes could not have been repaired by range-checking them: `p^8 < 2^256`, so *every*
+/// eight-lane encoding of 32 bytes is non-injective before any masking question is asked
+/// (`FieldLanes9.nine_lanes_is_the_minimum`). Nine is the minimum and this is nine.
+///
+/// ## The claim, at its true resolution
+///
+/// `keyToLanes9_injective` is a **Lean** theorem, proved from a total decoder plus a
+/// machine-checked left inverse — not a hash bound, not a birthday bound. There is no formal
+/// semantics of Rust and this function is not extracted from that Lean, so what a caller gets here
+/// is a Rust encoder pinned to a verified spec by [`lanes_9_to_canonical_32`] round-trips and by
+/// Lean-computed KAT vectors. That is strictly stronger than anything the octet could say and
+/// strictly weaker than "verified". Say it at that resolution.
+pub fn canonical_32_to_lanes_9(canonical: &[u8; 32]) -> [BabyBear; 9] {
+    let () = KEY_NONET_SPANS_THE_WHOLE_SOURCE;
+    std::array::from_fn(|i| {
+        let bit = i * KEY_LANE_BITS;
+        // 29 bits starting at an offset of 0..=7 within a byte span at most 36 bits, so a
+        // five-byte window is always enough and always fits a u64.
+        let mut acc: u64 = 0;
+        for k in 0..5usize {
+            if let Some(byte) = canonical.get(bit / 8 + k) {
+                acc |= u64::from(*byte) << (8 * k);
+            }
+        }
+        acc >>= bit % 8;
+        BabyBear::new((acc & ((1u64 << KEY_LANE_BITS) - 1)) as u32)
+    })
+}
+
+/// **THE DECODER** — total, and the left inverse of [`canonical_32_to_lanes_9`] on every 32-byte
+/// value. The Rust mirror of `Dregg2.Circuit.KeyLanes9.keyLanes9ToBytes`.
+///
+/// Total on *every* lane vector, including vectors outside the encoder's image, which it reads
+/// modulo `2^256` exactly as the Lean does. That totality is what makes the canonicity envelope's
+/// exhibit expressible: `[0, …, 0, 2^24]` has every lane below `2^29`, so it passes a *uniform*
+/// nine-lane range check, and it decodes byte-for-byte to the all-zero key. The envelope's second
+/// leg — lane 8 below `2^24` — is what refuses it, and it is not a consequence of the first.
+pub fn lanes_9_to_canonical_32(lanes: [BabyBear; 9]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, lane) in lanes.iter().enumerate() {
+        let v = u64::from(lane.as_u32());
+        for k in 0..KEY_LANE_BITS {
+            if (v >> k) & 1 == 1 {
+                let bit = i * KEY_LANE_BITS + k;
+                if bit < 256 {
+                    out[bit / 8] |= 1 << (bit % 8);
+                }
+            }
+        }
     }
     out
 }
@@ -624,11 +693,21 @@ pub fn canonical_32_to_felts_8(canonical: &[u8; 32]) -> [BabyBear; 8] {
 /// deployed chip arity computes a two-permutation chain (non-{7,11,16} arities
 /// drop inputs 4..7; the intermediate capacity lanes are unexposed), so the
 /// in-AIR gate could never realize it.
+/// ## ⚑ 2026-08-01: the INPUT half, closed
+///
+/// This used to absorb `canonical_32_to_felts_8(pk) ‖ 0⁸` — the 30-bit octet. The output width
+/// was repaired first (finding #9, one felt → eight) and the input was still the map that read
+/// only 240 of 256 source bits, so the leaf domain separated no pair the packer merged: a hash of
+/// equal inputs is equal however wide it is. It now absorbs the base-`2^29` **nonet** ‖ `0⁷`.
+///
+/// The arity is UNCHANGED (`CHIP_NODE8_ARITY = 16`, one permutation, `9 + 7 = 16`), so this is a
+/// value move and not a chip-shape move: no new table, no new AIR instance, no descriptor width
+/// change. Every membership leaf, interior node and committed root moves — that is the
+/// re-genesis, and it is the point.
 pub fn compress_member(pk: &[u8; 32]) -> [BabyBear; 8] {
     use dregg_circuit::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
-    let limbs = canonical_32_to_felts_8(pk);
     let mut ins = [BabyBear::ZERO; 16];
-    ins[..8].copy_from_slice(&limbs);
+    ins[..9].copy_from_slice(&canonical_32_to_lanes_9(pk));
     chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins)
 }
 
@@ -638,14 +717,26 @@ pub fn compress_member(pk: &[u8; 32]) -> [BabyBear; 8] {
 /// bytes are known. Distinct from `canonical_32_to_felts_8` (which produces
 /// a raw 8-limb encoding without hashing): this output is suitable as a
 /// Poseidon2-domain commitment for absorbing into an AIR PI.
+/// ## ⚑ 2026-08-01: one absorb over NINE lanes, not four folds over eight
+///
+/// The old body ran four rate-4 `hash_4_to_1` compressions over the 30-bit octet. Two defects,
+/// and only the first is the flag day's: (i) the **input** was the octet, so any two values the
+/// packer merged folded to the identical four felts — for the `turn_hash` / `federation_id` /
+/// `owner_cell_id` PI bindings that is a `2^16`-degenerate binding available by one XOR; and
+/// (ii) no single one of the four outputs saw more than half the lanes.
+///
+/// Both go away by absorbing the whole nonet in ONE deployed `CHIP_NODE8_ARITY` permutation and
+/// projecting the first four output lanes — the same row [`compress_member`] rides, so the id
+/// fold and the membership leaf are now two projections of one absorb rather than two schemes.
+///
+/// ⚑ **This fold is OFF-AIR and stays off-AIR.** Measured, not assumed: the rotation emitter
+/// (`Dregg2/Circuit/Emit/EffectVmEmitRotationV3.lean`) contains no federation-id or owner-cell-id
+/// term, and `circuit/src/effect_vm/trace.rs` writes the four felts into row-0 aux columns that
+/// the boundary constraints merely PIN to `PI[FEDERATION_ID_BASE..+4]` — nothing recomputes the
+/// fold in-circuit. So this changes committed VALUES (a re-genesis) and no descriptor shape.
 pub fn canonical_32_to_felts_4(canonical: &[u8; 32]) -> [BabyBear; 4] {
-    let eight = canonical_32_to_felts_8(canonical);
-    // Two hash_4_to_1 compressions to fold 8 -> 4.
-    let a = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
-    let b = dregg_circuit::poseidon2::hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
-    let c = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
-    let d = dregg_circuit::poseidon2::hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
-    [a, b, c, d]
+    let eight = compress_member(canonical);
+    [eight[0], eight[1], eight[2], eight[3]]
 }
 
 /// Squeeze a single BabyBear from a domain-tagged sponge over felts.

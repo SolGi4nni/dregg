@@ -1943,23 +1943,39 @@ mod tests {
 
     // ─────────────────────────────────────────────────────────────────────
     // THE CHIP-NATIVE COMPRESS PARITY (big-bang membership re-alignment).
-    // executor compress == chip lane 0 == the Lean gate's `pubkeyCompress1Spec`
-    // (`CarrierOctetGates.lean::withMembershipPubkeyCompress`): lane 0 of the
-    // arity-16 `node8` absorb over `canonical_32_to_felts_8(pk) ‖ 0⁸`.
+    // executor compress == chip lane 0: lane 0 of the arity-16 `node8` absorb over
+    // `canonical_32_to_lanes_9(pk) ‖ 0⁷`. ⚠ The Lean gate's `pubkeyCompress1Spec` is still over
+    // the OCTET and is on no deployed descriptor — see the test's own doc.
     // ─────────────────────────────────────────────────────────────────────
 
     /// PARITY: the executor's membership compress IS the chip-native compress —
-    /// `chip_absorb_all_lanes(CHIP_NODE8_ARITY, pubkey8 ‖ 0⁸)[0]` over the
-    /// canonical 30-bit limbs — for edge and pseudo-random pubkeys. This is the
-    /// exact function the in-AIR gate forces on the sender-leaf tooth, so the
-    /// third edge (teeth == committed authority) can bind (fail-open law).
+    /// `chip_absorb_all_lanes(CHIP_NODE8_ARITY, nonet9 ‖ 0⁷)[0]` — for edge and pseudo-random
+    /// pubkeys.
+    ///
+    /// ## ⚑ 2026-08-01: the INPUT is the nonet, and what that means for the Lean gate
+    ///
+    /// This absorbed `canonical_32_to_felts_8(pk) ‖ 0⁸` until the key flag day. The arity is
+    /// unchanged (16 = 9 + 7, was 8 + 8) so the chip row is the same shape, but the VALUE moves,
+    /// which is why the epoch bumped.
+    ///
+    /// ⚠ `CarrierOctetGates.lean`'s `pubkeyCompress1Spec` still takes a `Digest8` — it computes
+    /// the compress over the eight COMMITTED COLUMNS. That is a real divergence from this
+    /// function, and it is harmless **today** only because `withMembershipPubkeyCompress` is on
+    /// NO deployed descriptor: `MembershipAuthRootEdge.lean:45-51` records that firing it over
+    /// `B_PUBKEY_OCTET` would bind the operated cell's OWNER while claiming the SENDER, so the
+    /// sender leg has "no CORRECT octet to bind" and the gate is a named seam, not a live weld.
+    /// **When that seam lands it must be authored over the NONET**, not the octet — otherwise the
+    /// in-AIR tooth and this function compute different leaves. Measured, not assumed; the
+    /// grep is `withMembershipPubkeyCompress` and it appears in no emitter.
     #[test]
     fn compress_parity_with_chip_native_node8_lane0() {
         use dregg_circuit::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
-        use dregg_commit::typed::canonical_32_to_felts_8;
+        use dregg_commit::typed::canonical_32_to_lanes_9;
 
         let mut cases: Vec<[u8; 32]> = vec![[0u8; 32], [0xFFu8; 32], [0x11u8; 32], {
-            // High bytes exercise the 30-bit (`& 0x3F`) limb truncation.
+            // High bytes exercise the top of every byte — under the RETIRED octet these were the
+            // bits `& 0x3F` threw away, so this case used to be blind on exactly the bits it was
+            // written to exercise.
             let mut b = [0u8; 32];
             for (i, x) in b.iter_mut().enumerate() {
                 *x = 0xC0 | (i as u8);
@@ -1978,9 +1994,9 @@ mod tests {
         }
 
         for pk in &cases {
-            let limbs = canonical_32_to_felts_8(pk);
+            let limbs = canonical_32_to_lanes_9(pk);
             let mut ins = [BabyBear::ZERO; 16];
-            ins[..8].copy_from_slice(&limbs);
+            ins[..9].copy_from_slice(&limbs);
             let chip_lane0 = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins)[0];
             // ⚑ THE WELD IS STATED AT LANE 0, and the widening did NOT move it: the membership
             // STARK now binds all eight lanes, and lane 0 is bit-identical to what the retired

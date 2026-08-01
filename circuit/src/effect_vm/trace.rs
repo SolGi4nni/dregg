@@ -16,28 +16,39 @@ use super::{
 /// Compress a 32-byte canonical id (federation id or cell id) into 4 BabyBear
 /// felts (γ.2 #131/#132 per-cell federation + owner binding).
 ///
-/// This is bit-identical to `dregg_commit::typed::canonical_32_to_felts_4`
-/// (30-bit-per-limb packing folded through four `hash_4_to_1` compressions),
+/// This is bit-identical to `dregg_commit::typed::canonical_32_to_felts_4`,
 /// re-implemented here so the `dregg-circuit` crate stays free of a
 /// `dregg-commit` dependency while still producing the same felts the
 /// off-AIR verifier (`turn::executor::proof_verify`) reconstructs. Any drift
 /// between the two would show up immediately as a PI-match rejection in the
-/// `federation_owner_binding_round_trip` test and the executor PI loop.
+/// `federation_owner_binding_round_trip` test and the executor PI loop — and,
+/// since that claim was never actually tested between the two functions,
+/// `commit/tests/key_octet_f2_twins_and_the_hole.rs` pins them directly.
+///
+/// ## ⚑ 2026-08-01 — twin #4 of the nonet
+///
+/// The inlined packing here was the 30-bit octet (`hi & 0x3F`, sixteen source bits discarded),
+/// and the four `hash_4_to_1` folds ran over it, so any two ids the packer merged produced the
+/// identical four felts: the `federation_id` / `owner_cell_id` PI binding was `2^16`-degenerate
+/// by construction, one XOR from any id. It is now one `CHIP_NODE8_ARITY` absorb over the
+/// base-`2^29` **nonet** `‖ 0⁷`, first four output lanes — the same permutation
+/// `dregg_commit::typed::compress_member` rides.
 pub fn canonical_id_to_felts_4(canonical: &[u8; 32]) -> [BabyBear; 4] {
-    let mut eight = [BabyBear::ZERO; 8];
-    for i in 0..8 {
-        let lo = canonical[i * 4] as u32;
-        let mid1 = canonical[i * 4 + 1] as u32;
-        let mid2 = canonical[i * 4 + 2] as u32;
-        let hi = canonical[i * 4 + 3] as u32;
-        // Pack 30 bits: 8 + 8 + 8 + 6 = 30.
-        eight[i] = BabyBear::new(lo | (mid1 << 8) | (mid2 << 16) | ((hi & 0x3F) << 24));
+    use crate::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
+    let mut ins = [BabyBear::ZERO; 16];
+    for (i, slot) in ins[..9].iter_mut().enumerate() {
+        let bit = i * 29;
+        let mut acc: u64 = 0;
+        for k in 0..5usize {
+            if let Some(byte) = canonical.get(bit / 8 + k) {
+                acc |= u64::from(*byte) << (8 * k);
+            }
+        }
+        acc >>= bit % 8;
+        *slot = BabyBear::new((acc & ((1u64 << 29) - 1)) as u32);
     }
-    let a = hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
-    let b = hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
-    let c = hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
-    let d = hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
-    [a, b, c, d]
+    let out = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins);
+    [out[0], out[1], out[2], out[3]]
 }
 
 /// The Effect-VM selector column index for one `Effect` — the single source of truth the

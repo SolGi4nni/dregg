@@ -513,27 +513,36 @@ pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
     felts
 }
 
-/// Pack a 32-byte canonical commitment into 8 BabyBear felts at 30 bits/limb.
-pub fn canonical_32_to_felts_8(canonical: &[u8; 32]) -> [BabyBear; 8] {
-    let mut out = [BabyBear::ZERO; 8];
-    for i in 0..8 {
-        let lo = canonical[i * 4] as u32;
-        let mid1 = canonical[i * 4 + 1] as u32;
-        let mid2 = canonical[i * 4 + 2] as u32;
-        let hi = canonical[i * 4 + 3] as u32;
-        out[i] = BabyBear::new(lo | (mid1 << 8) | (mid2 << 16) | ((hi & 0x3F) << 24));
-    }
-    out
+/// Pack a 32-byte canonical commitment into **nine** BabyBear lanes, base `2^29`, little-endian.
+///
+/// Twin #3 of the nonet; the authoring site and the full account of what it replaced are
+/// `dregg_commit::typed::canonical_32_to_lanes_9`. The predecessor packed `8+8+8+6 = 30` bits into
+/// eight lanes and discarded sixteen source bits. Pinned byte-equal to twins #1/#2/#4 by
+/// `commit/tests/key_octet_f2_twins_and_the_hole.rs`.
+pub fn canonical_32_to_lanes_9(canonical: &[u8; 32]) -> [BabyBear; 9] {
+    std::array::from_fn(|i| {
+        let bit = i * 29;
+        let mut acc: u64 = 0;
+        for k in 0..5usize {
+            if let Some(byte) = canonical.get(bit / 8 + k) {
+                acc |= u64::from(*byte) << (8 * k);
+            }
+        }
+        acc >>= bit % 8;
+        BabyBear::new((acc & ((1u64 << 29) - 1)) as u32)
+    })
 }
 
 /// Compress a 32-byte canonical commitment into 4 BabyBear felts via Poseidon2.
+///
+/// One `CHIP_NODE8_ARITY` absorb over the nonet `‖ 0⁷`, first four output lanes — byte-identical
+/// to `dregg_commit::typed::canonical_32_to_felts_4`, which is what its twin gate pins.
 pub fn canonical_32_to_felts_4(canonical: &[u8; 32]) -> [BabyBear; 4] {
-    let eight = canonical_32_to_felts_8(canonical);
-    let a = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[1], eight[2], eight[3]]);
-    let b = dregg_circuit::poseidon2::hash_4_to_1(&[eight[4], eight[5], eight[6], eight[7]]);
-    let c = dregg_circuit::poseidon2::hash_4_to_1(&[eight[0], eight[4], eight[2], eight[6]]);
-    let d = dregg_circuit::poseidon2::hash_4_to_1(&[eight[1], eight[5], eight[3], eight[7]]);
-    [a, b, c, d]
+    use dregg_circuit::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
+    let mut ins = [BabyBear::ZERO; 16];
+    ins[..9].copy_from_slice(&canonical_32_to_lanes_9(canonical));
+    let out = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins);
+    [out[0], out[1], out[2], out[3]]
 }
 
 /// Squeeze a single BabyBear from a domain-tagged sponge over felts.

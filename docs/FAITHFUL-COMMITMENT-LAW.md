@@ -389,18 +389,27 @@ file is still scanned. On its first run the gate went red on a sibling lane's
 which is both the reason the scope is written down here and the evidence that the walk works.
 
 <!-- BURN-DOWN-LIST-BEGIN -->
-- `cell/src/commitment.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `compute_rotated_pre_limbs` writes the
-  KEY_COMMIT octet at `B_PUBKEY_OCTET`, reaching the hatch through `from_canonical_key`. Closes at
-  the ninth key lane / one bump of `CANONICAL_STATE_SCHEMA_EPOCH`.
-- `circuit/src/faithful8.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `Faithful8::from_canonical_key`'s
+- `cell/src/commitment.rs` — `KEY_NONET_NINTH_LANE_UNBOUND` — `compute_rotated_pre_limbs` writes
+  the owner key at `B_PUBKEY_OCTET`, reaching the hatch through `from_key_nonet_low8`. Closes when
+  `layout_generated.rs` is regenerated at `NUM_PRE_LIMBS = 187`.
+- `circuit/src/faithful8.rs` — `KEY_NONET_NINTH_LANE_UNBOUND` — `Faithful8::from_key_nonet_low8`'s
   body, the routing itself. This is the entry that makes the other two visible; it goes when the
   constructor goes.
-- `turn/src/rotation_witness.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `produce`, the producer twin of
+- `turn/src/rotation_witness.rs` — `KEY_NONET_NINTH_LANE_UNBOUND` — `produce`, the producer twin of
   `compute_rotated_pre_limbs`.
+
+⚑ **What changed on 2026-08-01, and read it before quoting the old number.** These three entries
+used to be `KEY_COMMIT_30BIT_RESIDUAL` — "the encoding drops 16 source bits". **The encoding is
+fixed.** All four twins now run the base-`2^29` nonet (`canonical_32_to_lanes_9`), whose image is
+exactly `2^256` and whose injectivity is a Lean theorem with a machine-checked left inverse
+(`Dregg2.Circuit.KeyLanes9.keyToLanes9_injective`). What survives is a **geometry** residual, and
+it is strictly smaller and strictly different: the anchor absorbs only the low eight lanes because
+`B_PUBKEY_OCTET` is eight columns wide. The membership leaves and the four-felt id folds take all
+nine lanes today and are closed.
 
 Reason constants, quoted verbatim from `circuit/src/faithful8.rs`:
 
-> KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 sign bit among them) — floor is 2^123.63; closes at the ninth key lane, one bump of CANONICAL_STATE_SCHEMA_EPOCH
+> KEY_COMMIT nonet lane 8 UNBOUND at the anchor: the encoder is injective (base-2^29 nonet, image 2^256) but B_PUBKEY_OCTET is 8 columns wide in the deployed 184-limb geometry, so state_commit absorbs lanes 0..=7 only — 232 of 256 key bits, Ed25519 sign bit NOT among them. Closes when layout_generated.rs is regenerated at NUM_PRE_LIMBS = 187 and lane 8 lands on in-block limb 186
 <!-- BURN-DOWN-LIST-END -->
 
 The `fields[0..7]` pair that used to be the list is genuinely gone — closed by the nine-lane

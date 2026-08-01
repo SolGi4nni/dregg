@@ -641,11 +641,18 @@ pub fn produce(
         dregg_circuit::Faithful8::from_bytes32(&contract_hash)
             .write_octet(&mut pre_limbs, B_CONTRACT_HASH_OCTET);
     }
-    // 105..=112: pubkey8 UNCONDITIONALLY — the operated cell's owner key, the 30-bit canonical form
+    // 105..=112: the operated cell's owner key, LOW EIGHT LANES of the base-2^29 nonet — the form
     // that matches the executor's KEY_COMMIT teeth (byte-identical to the cell twin's
-    // `canonical_to_babybear_pi`).
-    let pk8 = dregg_commit::typed::canonical_32_to_felts_8(cell.public_key());
-    dregg_circuit::Faithful8::from_canonical_key(pk8).write_octet(&mut pre_limbs, B_PUBKEY_OCTET);
+    // `canonical_to_babybear_nonet`).
+    //
+    // ⚑ LANE 8 IS DROPPED HERE. See the twin at `cell::commitment::compute_rotated_pre_limbs` for
+    // the full note: the encoder is injective, this write is not, and it cannot be until
+    // `layout_generated.rs` is regenerated at `NUM_PRE_LIMBS = 187` so lane 8 has in-block limb
+    // 186 to be absorbed at. Routed through the `_DANGER` hatch under
+    // `KEY_NONET_NINTH_LANE_UNBOUND` so the burn-down gate keeps naming it.
+    let nonet = dregg_commit::typed::canonical_32_to_lanes_9(cell.public_key());
+    dregg_circuit::Faithful8::from_key_nonet_low8(nonet)
+        .write_octet(&mut pre_limbs, B_PUBKEY_OCTET);
 
     let iroot_val = iroot(receipt_hashes);
     let state_commit = wire_commit(&pre_limbs, iroot_val);
