@@ -641,7 +641,22 @@ There EXISTS a leaf_hash and a Merkle path (siblings, positions) such that:
 ### Security Properties
 
 - **Soundness:** Each level's hash is computed in-circuit via Poseidon2 `hash_4_to_1`. Position validity is constrained via degree-4 polynomial `pos*(pos-1)*(pos-2)*(pos-3)==0`. Hash binding uses Lagrange interpolation to select correct child ordering.
-- **Collision resistance:** Forging membership requires finding a Poseidon2 collision (~2^124 work)
+- **Collision resistance:** ⚠ **THIS LINE IS UNDER REVIEW AND SHOULD NOT BE CITED — 2026-08-01.**
+  It claimed *"forging membership requires finding a Poseidon2 collision (~2^124 work)"*. A design
+  review measured the deployed construction and the claim does not follow from it: `hash_4_to_1`
+  (`circuit/src/poseidon2.rs`) runs a genuine 16-wide permutation but **returns `state.state[0]` —
+  one felt** — and `generate_merkle_poseidon2_trace` (`circuit/src/dsl/membership.rs:40-76`) chains
+  that felt level to level, while the leaf `compress_member` (`commit/src/typed.rs:613-619`) is
+  `chip_absorb_all_lanes(16, ins)[0]`, discarding 7 of 8 output lanes. **Every node value in the
+  deployed tree is a single BabyBear felt (~31 bits).**
+  ⚑ "It is a hash image" does not rescue this: the bottleneck is the hash's **output width**, not its
+  input entropy — a perfect random oracle with a 31-bit codomain is still brute-forceable in 2^31
+  queries.
+  ⚠ **A replacement figure is deliberately NOT written here.** Getting this bound right deserves the
+  rigor the fields8→9 repair got, not a second guess in the same slot; the review that found it
+  declined to substitute one for that reason. The precedent for the fix already exists in-tree —
+  `cap_membership.rs`, `cap_root`, `nullifier_root`, `heap_root` and `commitments_root` all carry the
+  wide `Faithful8` / arity-16 `node8` pattern in this same rotated commitment.
 - **Two variants:** Round-by-round AIR (depth*TOTAL_ROUNDS rows, verifies every round) and simplified AIR (1 row per level, computes full hash in constraint)
 
 ### Composition Interface
