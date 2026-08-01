@@ -60,13 +60,39 @@ under it says nothing about the shipping system. §6 calls `effect2_circuit_full
 the ported `¬ LogColl` side condition instead: refutable, at the one pair of logs the witness
 supplies, and strictly stronger by `LogCommitRegrounded.noLogColl_of_inj`.
 
-ADDITIVE: imports read-only; edits no descriptor, no registry, no `Dregg2.lean`.
+## ⚑ PHASE 2 (2026-08-01) — the SOURCE was widened, and one deployed descriptor is now BYTE-EXACT
+
+Phase 1's own finding was that the gap is the source language, measured: `EffectSpec2` reaches
+12/76 of the deployed by-name descriptors, 25/76 with window gates, and **51 of the 76 carry a
+lookup/table leg `EffectSpec2` had no word for.** Phase 2 gives it the words
+(`Circuit/EffectAirIR.lean`, reusing `TableAirIR`'s `RowSel`/`WindowExpr`/multiplicity/`BusOp`
+vocabulary rather than a fourth private copy) and `EffectSpec2` gains ONE defaulted field, `air`.
+
+* **§2b** lowers the new legs: `lowerLookupLeg` (+51), `lowerWindowLeg` (the 4-way `RowSel` onto
+  the target's two shapes, with TableAirIR's `nxt` refusal), `lowerPiPinLeg` (first AND last row),
+  `lowerRangeLeg`. A leg the main rail cannot take lowers to `refuseConstraints` — an
+  UNSATISFIABLE boundary pair, never silence, because a dropped leg accepts strictly more.
+* **§8** is the falsifiable rung: `dregg-dfa-routing-table::exact-public-v1` — lookup + declared
+  `exactPublicRows` table + `.transition` window + first/last PI pins — is emitted by the pass
+  **BYTE-EXACT** (`DfaRung.dfaLowered_eq_deployed`, by `rfl`; width Δ 0, PI Δ 0, constraints Δ 0),
+  and inherits the deployed refinement, witness and canary verbatim.
+* **§9** separates syntax from semantics and gives the re-measured readout: kind coverage
+  **25/76 → 76/76**, byte reach **8/76**, and names why the second number is bounded by the
+  deployed set's own rendering inconsistency rather than by the source.
+
+Transfer is untouched by all of it — its `air` block is empty and §5's refutation stands, because
+transfer's gap was never syntax.
+
+ADDITIVE: the only edit outside this file and `EffectAirIR.lean` is `EffectSpec2`'s defaulted
+`air` field; every existing instance compiles and lowers byte-identically (`lowerEffect_air_empty`).
+Edits no descriptor and no registry.
 -/
 import Dregg2.Circuit.EffectCommit2
 import Dregg2.Circuit.WitnessExtract
 import Dregg2.Circuit.Emit.AirBuilder
 import Dregg2.Circuit.Inst.transfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
+import Dregg2.Circuit.Emit.DfaRoutingTableEmit
 
 namespace Dregg2.Circuit.Emit.EffectLower
 
@@ -74,8 +100,11 @@ open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit2
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.AirBuilder
-open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv VmRange)
+open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
+open Dregg2.Circuit.EffectAirIR
+  (EffectAir AirLeg LookupLeg WindowLeg RangeLeg PiPinLeg exprIsOne)
+open Dregg2.Circuit.TableAirIR (BusOp RowSel readsNext)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -176,6 +205,185 @@ theorem evalH_constraintHead (a : Assignment) (c : Constraint) :
 semantics. -/
 def lowerConstraint (c : Constraint) : VmConstraint2 := cgH (constraintHead c)
 
+/-! ## §2b — ⚑ PHASE 2: lowering the WIDENED vocabulary (`Circuit/EffectAirIR.lean`).
+
+Phase 1 measured that `EffectSpec2`'s flat `ConstraintSystem` reaches 12 of 76 deployed
+descriptors and that **51 of the 76 carry a lookup/table leg the source could not name**. These
+are the lowerings of the legs `EffectAir` adds. Three of them are total translations; the fourth
+is a REFUSAL, and the refusal is the load-bearing part. -/
+
+/-- ⚑ **THE REFUSAL.** A leg the deployed MAIN rail cannot express lowers to a descriptor that
+CANNOT BE SATISFIED, never to silence.
+
+Dropping the leg would be the fail-open move: a descriptor missing a constraint accepts strictly
+MORE, and no byte-golden and no `Holds`-style denotation can see the loss
+(`TableAirIR.rowHolds_of_sublist` is that direction stated as a theorem). Emitting `1 = 0` on BOTH
+boundary rows makes it impossible to prove anything about a witness — every non-empty trace has a
+first row and a last row, so at least one fires whatever the trace length.
+
+⚠ It is a `.boundary` pair and NOT a `.gate`: `EffectVmEmit.holdsVm_gate_true` makes a `.gate`
+VACUOUS on the last row, so a `.gate (const 1)` refusal would be satisfiable by a one-row trace —
+a refusal that cannot go red. -/
+def refuseConstraints : List VmConstraint2 :=
+  [ .base (.boundary VmRow.first (.const 1))
+  , .base (.boundary VmRow.last  (.const 1)) ]
+
+/-- **THE REFUSAL BITES.** No row window satisfies both refusal constraints — on a first row the
+first fires, on a last row the second does, and every row of a non-empty trace is one or the
+other or both. A refusal that some assignment satisfies would be decoration. -/
+theorem refuse_bites (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
+    (isFirst isLast : Bool) (h : isFirst = true ∨ isLast = true) :
+    ¬ (∀ vc ∈ refuseConstraints, vc.holdsAt hash tf env isFirst isLast) := by
+  intro hall
+  rcases h with h | h
+  · have hb := hall _ (List.mem_cons_self)
+    have : (1 : ℤ) ≡ 0 [ZMOD P] := hb h
+    revert this; decide
+  · have hb := hall _ (List.mem_cons_of_mem _ List.mem_cons_self)
+    have : (1 : ℤ) ≡ 0 [ZMOD P] := hb h
+    revert this; decide
+
+/-- **A LOOKUP leg → the main rail's `Lookup`**, with the tuple carried from the framework's own
+gate AST by `CircuitEmit.emitExpr` (structure-preserving, `emitExpr_eval`-faithful) rather than
+through the `Head` normalizer: a lookup tuple is not a polynomial asserted to vanish, it is the
+tuple looked up, and normalizing it would change the wire bytes without changing its meaning.
+
+⚠ `mainRailOk` REFUSES a non-unit multiplicity and any side but `.query`: `DescriptorIR2.Lookup`
+carries neither field, because `Ir2Air::Main` pushes every declared lookup at multiplicity 1. That
+is not a hole in this pass — it is the seam where a padded/served leg belongs to a `TableAir`. -/
+def lowerLookupLeg (l : LookupLeg) : List VmConstraint2 :=
+  if l.mainRailOk then [.lookup ⟨l.table, l.tuple.map emitExpr⟩] else refuseConstraints
+
+/-- **A `WindowExpr` read against the CURRENT ROW ONLY**, or `none` when it reads the next row.
+`VmConstraint.boundary`'s body is an `EmittedExpr` evaluated at `env.loc`; there is no next-row
+leaf in that target at all, so the conversion is genuinely partial and says so. -/
+def windowToLocal? : WindowExpr → Option EmittedExpr
+  | .loc c   => some (.var c)
+  | .nxt _   => none
+  | .const k => some (.const k)
+  | .add a b =>
+      match windowToLocal? a, windowToLocal? b with
+      | some x, some y => some (.add x y)
+      | _, _ => none
+  | .mul a b =>
+      match windowToLocal? a, windowToLocal? b with
+      | some x, some y => some (.mul x y)
+      | _, _ => none
+
+/-- **The row-local conversion is MEANING-PRESERVING.** When it succeeds, the boundary body
+evaluates against `env.loc` to exactly what the window expression evaluated to — so a `.first`/
+`.last` leg's lowered form denotes its source. -/
+theorem windowToLocal_eval (env : VmRowEnv) :
+    ∀ (w : WindowExpr) (e : EmittedExpr), windowToLocal? w = some e →
+      e.eval env.loc = w.eval env := by
+  intro w
+  induction w with
+  | loc c => intro e h; simp only [windowToLocal?, Option.some.injEq] at h; subst h; rfl
+  | nxt c => intro e h; simp [windowToLocal?] at h
+  | const k => intro e h; simp only [windowToLocal?, Option.some.injEq] at h; subst h; rfl
+  | add a b iha ihb =>
+      intro e h
+      simp only [windowToLocal?] at h
+      cases h1 : windowToLocal? a with
+      | none => rw [h1] at h; simp at h
+      | some x =>
+        cases h2 : windowToLocal? b with
+        | none => rw [h1, h2] at h; simp at h
+        | some y =>
+          rw [h1, h2] at h
+          simp only [Option.some.injEq] at h
+          subst h
+          simp only [EmittedExpr.eval, WindowExpr.eval, iha x h1, ihb y h2]
+  | mul a b iha ihb =>
+      intro e h
+      simp only [windowToLocal?] at h
+      cases h1 : windowToLocal? a with
+      | none => rw [h1] at h; simp at h
+      | some x =>
+        cases h2 : windowToLocal? b with
+        | none => rw [h1, h2] at h; simp at h
+        | some y =>
+          rw [h1, h2] at h
+          simp only [Option.some.injEq] at h
+          subst h
+          simp only [EmittedExpr.eval, WindowExpr.eval, iha x h1, ihb y h2]
+
+/-- **A ROW-SELECTED gate leg → its main-rail form.** The four-way `RowSel` meets a target that has
+only TWO shapes, and the dispatch is the whole content:
+
+* `.transition` → `windowGate ⟨body, true⟩` — the only scope where `nxt` is the genuine successor.
+* `.all`        → `windowGate ⟨body, false⟩`, but only for a body that does NOT read `nxt`
+  (`TableAirIR`'s refusal: on the last row p3's `next` is the WRAP row).
+* `.first`/`.last` → `.base (.boundary VmRow.first/last body)` at the row-local body.
+
+⚑ A `.all → .transition` re-scope is byte-identical algebra that accepts STRICTLY MORE
+(`TableAirIR.TableGate.transition_weakens` + `transition_strictly_weaker`), which is why the
+selector is carried in the source at all rather than inferred from the body. -/
+def lowerWindowLeg (w : WindowLeg) : List VmConstraint2 :=
+  match w.sel with
+  | .transition => [.windowGate ⟨w.body, true⟩]
+  | .all =>
+      match windowToLocal? w.body with
+      | some _ => [.windowGate ⟨w.body, false⟩]
+      | none   => refuseConstraints
+  | .first =>
+      match windowToLocal? w.body with
+      | some b => [.base (.boundary VmRow.first b)]
+      | none   => refuseConstraints
+  | .last =>
+      match windowToLocal? w.body with
+      | some b => [.base (.boundary VmRow.last b)]
+      | none   => refuseConstraints
+
+/-- **A PI-PIN leg → the boundary pin.** `AirBuilder.pinPi` covers only the FIRST row; the deployed
+boundary contracts pin both ends, which is capability (d). -/
+def lowerPiPinLeg (p : PiPinLeg) : VmConstraint2 := .base (.piBinding p.row p.col p.idx)
+
+/-- **A RANGE leg → the v1 range carrier** the row denotation evaluates (`VmRange.holds`). -/
+def lowerRangeLeg (r : RangeLeg) : VmRange := ⟨r.wire, r.bits⟩
+
+/-- **One leg → its main-rail constraints.** A gate goes through the SAME `Head` normalizer the
+spec's own `guardGates` do — the source has one gate language, not two. -/
+def lowerLeg : AirLeg → List VmConstraint2
+  | .gate c   => [lowerConstraint c]
+  | .lookup l => lowerLookupLeg l
+  | .window w => lowerWindowLeg w
+  | .pin p    => [lowerPiPinLeg p]
+
+/-- **The air block's constraints, IN THE ORDER THE SOURCE DECLARED THEM.**
+
+⚑ The order is the source's, not a fixed gate/lookup/window/pin sequence: the target's
+`constraints` is one ordered array and the deployed descriptors interleave
+(`merkle-membership-depth2.json` is lookup · lookup · gate · pi_binding · boundary). Emitting a
+fixed sequence would make the source unable to say what the target admits — measured at **4 of the
+76 by-name descriptors byte-reachable with a fixed order against 8 with this one.** -/
+def lowerAirLegs (air : EffectAir) : List VmConstraint2 := air.legs.flatMap lowerLeg
+
+/-- One leg contributes AT LEAST one constraint — so a leg can never vanish silently, and the
+emitted length is a real pin on the leg list. -/
+theorem lowerLeg_ne_nil (l : AirLeg) : lowerLeg l ≠ [] := by
+  cases l with
+  | gate c => simp [lowerLeg]
+  | pin p => simp [lowerLeg]
+  | lookup l =>
+      by_cases h : l.mainRailOk <;> simp [lowerLeg, lowerLookupLeg, h, refuseConstraints]
+  | window w =>
+      cases hs : w.sel
+      case all =>
+        cases hb : windowToLocal? w.body <;>
+          simp [lowerLeg, lowerWindowLeg, hs, hb, refuseConstraints]
+      case first =>
+        cases hb : windowToLocal? w.body <;>
+          simp [lowerLeg, lowerWindowLeg, hs, hb, refuseConstraints]
+      case last =>
+        cases hb : windowToLocal? w.body <;>
+          simp [lowerLeg, lowerWindowLeg, hs, hb, refuseConstraints]
+      case transition => simp [lowerLeg, lowerWindowLeg, hs]
+
+/-- The EMPTY air block contributes nothing — the additivity fact every existing `EffectSpec2`
+instance rides on. -/
+theorem lowerAirLegs_empty : lowerAirLegs {} = [] := rfl
+
 /-- The six digest wires `WitnessExtract.PIBindsDigests` names as the verifier's binding surface
 (`WitnessExtract.lean:54-60`): rest pre/post, component post/expected, log post/expected. The two
 ROOT wires `64`/`65` are deliberately absent — the framework states explicitly that they are never
@@ -189,26 +397,67 @@ def lowerPiPins (guardWidth : Nat) : List VmConstraint2 :=
   (List.range guardWidth).map (fun w => pinPi w w)
     ++ digestPinCols.zipIdx.map (fun p => pinPi p.1 (guardWidth + p.2))
 
-/-- **The lowering, on raw spec data.** Split out from `lowerEffect` so the emitted object is a
-CLOSED term (an `EffectSpec2` carries `Prop`-valued and abstract-digest fields that no `#guard`
-can evaluate, but the lowering READS only these three) — this is what makes the byte-golden in §5
-executable and the `rfl` in `transferLoweredDesc_is_lowering` available. -/
-def lowerCS (name : String) (traceWidth guardWidth : Nat) (cs : ConstraintSystem) :
-    EffectVmDescriptor2 :=
+/-- **The descriptor assembler**, shared by both entry points. `cs` is normalized through the
+`Head` builder; the air legs are lowered by §2b; `framePins` is whatever commitment surface the
+caller adds on top (the full-state entry adds `PIBindsDigests`, the bare-AIR entry adds nothing). -/
+def assemble (name : String) (traceWidth piCount : Nat) (cs : ConstraintSystem) (air : EffectAir)
+    (framePins : List VmConstraint2) : EffectVmDescriptor2 :=
   { name        := name
   , traceWidth  := traceWidth
-  , piCount     := guardWidth + digestPinCols.length
-  , tables      := []
-  , constraints := cs.map lowerConstraint ++ lowerPiPins guardWidth
+  , piCount     := piCount
+  , tables      := air.tables
+  , constraints := cs.map lowerConstraint ++ lowerAirLegs air ++ framePins
   , hashSites   := []
-  , ranges      := [] }
+  , ranges      := air.ranges.map lowerRangeLeg }
+
+/-- **`lowerAir` — the BARE-AIR entry point (Phase 2).** A descriptor that is NOT a full-state
+effect: gates + the widened air block, and no `EffectCommit2` commitment surface at all.
+
+⚑ This is the honest entry for a deployed descriptor that has no digest wires. Adding the
+framework's six `PIBindsDigests` pins to `dregg-dfa-routing-table::exact-public-v1` would not make
+the lowering better; it would make it emit a descriptor nobody deployed. What the shared code
+guarantees is that `lowerAir` and `lowerEffect` differ ONLY in that surface — same normalizer, same
+leg lowerings, same emission order. -/
+def lowerAir (name : String) (traceWidth piCount : Nat) (cs : ConstraintSystem) (air : EffectAir) :
+    EffectVmDescriptor2 :=
+  assemble name traceWidth piCount cs air []
+
+/-- **The lowering, on raw spec data.** Split out from `lowerEffect` so the emitted object is a
+CLOSED term (an `EffectSpec2` carries `Prop`-valued and abstract-digest fields that no `#guard`
+can evaluate, but the lowering READS only these four) — this is what makes the byte-golden in §5
+executable and the `rfl` in `transferLoweredDesc_is_lowering` available. -/
+def lowerCS (name : String) (traceWidth guardWidth : Nat) (cs : ConstraintSystem)
+    (air : EffectAir) : EffectVmDescriptor2 :=
+  assemble name traceWidth (guardWidth + digestPinCols.length + air.extraPi) cs air
+    (lowerPiPins guardWidth)
 
 /-- **`lowerEffect` — THE PASS.** An `EffectSpec2` compiled to a live-rail `EffectVmDescriptor2`:
 the derived circuit `effectCircuit2 E` (guard gates ++ the three frame/bind/log EQ gates) lowered
 gate-by-gate through `AirBuilder`, over the framework's own 72-column layout, with the
-`PIBindsDigests` surface pinned. -/
+`PIBindsDigests` surface pinned — PLUS (Phase 2) whatever lookup / table / range / window / boundary
+legs the spec's `air` block declares. A spec that declares no air legs lowers byte-identically to
+Phase 1 (`transferLowered_bytes_unchanged`). -/
 def lowerEffect {St Args : Type} (name : String) (E : EffectSpec2 St Args) : EffectVmDescriptor2 :=
-  lowerCS name E.traceWidth E.guardWidth (effectCircuit2 E)
+  lowerCS name E.traceWidth E.guardWidth (effectCircuit2 E) E.air
+
+/-- ⚑ **THE WIDENING IS ADDITIVE, as a theorem over ALL specs.** A spec whose air block is empty —
+which is every one of the ~29 existing `EffectSpec2` instances, since the field is defaulted —
+lowers to EXACTLY what Phase 1 lowered: same constraint list, same PI count, no tables, no ranges.
+So no existing statement about `lowerEffect` changes meaning, and §4a's byte-golden (unchanged
+literal) is this theorem executed at transfer. -/
+theorem lowerEffect_air_empty {St Args : Type} (name : String) (E : EffectSpec2 St Args)
+    (h : E.air = {}) :
+    lowerEffect name E =
+      { name        := name
+      , traceWidth  := E.traceWidth
+      , piCount     := E.guardWidth + digestPinCols.length
+      , tables      := []
+      , constraints := (effectCircuit2 E).map lowerConstraint ++ lowerPiPins E.guardWidth
+      , hashSites   := []
+      , ranges      := [] } := by
+  unfold lowerEffect lowerCS
+  rw [h]
+  simp [assemble, lowerAirLegs]
 
 /-! ## §3 — two-sided faithfulness of the pass.
 
@@ -268,8 +517,10 @@ theorem satisfied_of_lowered {St Args : Type} (name : String) (E : EffectSpec2 S
     (h : ∀ vc ∈ (lowerEffect name E).constraints, vc.holdsAt hash tf env isFirst false) :
     satisfied (effectCircuit2 E) env.loc := by
   intro c hc
+  -- the emitted list is `((gates ++ air legs) ++ frame pins)`; the gate block is leftmost, so the
+  -- lowered gate is a member however many air legs the spec declares.
   have hmem : lowerConstraint c ∈ (lowerEffect name E).constraints := by
-    refine List.mem_append_left _ ?_
+    refine List.mem_append_left _ (List.mem_append_left _ ?_)
     exact List.mem_map_of_mem hc
   have hg := (lowerConstraint_holdsAt_iff hash tf env isFirst c).mp (h _ hmem)
   obtain ⟨⟨hl0, hl1⟩, ⟨hr0, hr1⟩⟩ := hcanon c hc
@@ -292,9 +543,11 @@ deployed name would be exactly the display-name collision
 `reference-a-display-name-is-not-a-key` catalogues. -/
 def transferLoweredName : String := "dregg-transfer-v2-lowered"
 
-/-- **The pass's output for transfer** — a closed `EffectVmDescriptor2` on the live rail. -/
+/-- **The pass's output for transfer** — a closed `EffectVmDescriptor2` on the live rail.
+⚑ Transfer's spec declares NO air legs (`{}`), which is exactly the Phase-2 finding restated: the
+widened vocabulary does not touch transfer, because transfer's gap is SEMANTIC (§9). -/
 def transferLoweredDesc : EffectVmDescriptor2 :=
-  lowerCS transferLoweredName 72 1 (balanceGuardGates ++ [cE2RestF, cE2Bind, cE2Log])
+  lowerCS transferLoweredName 72 1 (balanceGuardGates ++ [cE2RestF, cE2Bind, cE2Log]) {}
 
 /-- **`transferLoweredDesc` IS `lowerEffect` applied to transfer's spec** — by `rfl`, for every
 carried ledger digest. This is what makes §5's measurements and the §6 refinement statements about
@@ -366,8 +619,8 @@ theorem lowered_rejects_component_forge (hash : List ℤ → ℤ) (tf : TraceFam
     ¬ (∀ vc ∈ transferLoweredDesc.constraints, vc.holdsAt hash tf ghostEnv true false) := by
   intro h
   have hmem : lowerConstraint cE2Bind ∈ transferLoweredDesc.constraints :=
-    List.mem_append_left _ (List.mem_map_of_mem
-      (by simp [Dregg2.Circuit.Inst.Transfer.balanceGuardGates]))
+    List.mem_append_left _ (List.mem_append_left _ (List.mem_map_of_mem
+      (by simp [Dregg2.Circuit.Inst.Transfer.balanceGuardGates])))
   have hbite := (lowerConstraint_holdsAt_iff hash tf ghostEnv true cE2Bind).mp (h _ hmem)
   revert hbite
   decide
@@ -529,7 +782,242 @@ theorem transferLowered_emits
   refine lowered_of_satisfied transferLoweredName (balanceE D hD) hash tf env isFirst ?_
   rw [hrow]; exact h
 
-/-! ## §7 — axiom-hygiene tripwires. -/
+/-! ## §8 — ⚑ PHASE 2's FALSIFIABLE RUNG: a deployed descriptor reached BYTE-EXACT.
+
+§5 refuted byte-equality at transfer and named why: transfer's gap is SEMANTIC, not vocabulary
+(six guard conjuncts collapsed into one `propBit`; the commitment carried as an abstract portal).
+This section takes the OTHER kind of gap — a descriptor the source language simply could not SAY —
+and shows the widened source now says it exactly.
+
+**The target**: `dregg-dfa-routing-table::exact-public-v1`
+(`Emit/DfaRoutingTableEmit.lean:389`, `circuit/descriptors/by-name/dfa-routing-table-exact-public-v1.json`).
+Its four constraints are one table-generic `lookup`, one `.transition` `window_gate`, a FIRST-row
+PI pin and a LAST-row PI pin, over one declared `exactPublicRows` table. The lookup + declared
+table are P1.5's **+51** bucket, the window gate its **+13**, and the last-row pin was not sayable
+either — Phase 1's `lowerPiPins` emits FIRST-row pins only. So three of the four kinds were
+unsayable by `EffectSpec2` and the fourth (the first-row pin) could not stand alone. Nothing about
+this descriptor is semantic: there is no guard to collapse and no commitment portal — which is
+exactly why it is the right rung, and why the residual is zero rather than "named in numbers".
+
+⚠ It is reached through `lowerAir`, not `lowerEffect`: this descriptor is not a full-state effect
+and has no digest wires, so bolting the framework's `PIBindsDigests` surface onto it would emit a
+descriptor nobody deployed. `lowerAir` and `lowerEffect` share the normalizer, the leg lowerings
+and the emission order, and differ ONLY in that surface (`assemble`). -/
+
+namespace DfaRung
+
+open Dregg2.Circuit.Emit.DfaRoutingTableEmit
+  (TRT_TID TRT_WIDTH TRT_PI_COUNT CURRENT SYMBOL NEXT PI_INITIAL PI_FINAL DEMO_NAME demoTbl
+   demoRoutingDesc demoDfa demoTbl_graph demoTbl_small routeWitTrace routeWit_satisfies
+   badTrace badTrace_not_satisfied tableRouting_refines_classify hash0)
+
+/-- **THE SOURCE.** The DFA-routing AIR written in the WIDENED `EffectAir` vocabulary: a declared
+exact-public table, one unconditional `.query` lookup, one `.transition` continuity leg reading the
+next row, and the two boundary PI pins. Column indices and the table id are taken from the deployed
+layout BY NAME (`CURRENT`/`SYMBOL`/`NEXT`/`TRT_TID` — a layout is legitimate compiler input, and a
+name beats a re-transcribed integer); every constraint SHAPE below is authored here, not copied
+from the deployed descriptor's `VmConstraint2` literals. -/
+def dfaAir : EffectAir :=
+  { tables := [⟨TRT_TID, "dfa_transition_table", 3, .exactPublicRows demoTbl⟩]
+  , legs   :=
+      [ .lookup { table := TRT_TID, tuple := [.var CURRENT, .var SYMBOL, .var NEXT] }
+      , .window ⟨.transition, .add (.nxt CURRENT) (.mul (.const (-1)) (.loc NEXT))⟩
+      , .pin ⟨VmRow.first, CURRENT, PI_INITIAL⟩
+      , .pin ⟨VmRow.last, NEXT, PI_FINAL⟩ ] }
+
+-- The source block is main-rail expressible, decided on the emitted predicate.
+#guard dfaAir.mainRailOk == true
+#guard dfaAir.legs.length == 4
+#guard dfaAir.legCount == 5
+#guard dfaAir.pinCountRow VmRow.first == 1
+#guard dfaAir.pinCountRow VmRow.last == 1
+#guard dfaAir.pinsFit TRT_PI_COUNT == true
+
+/-- **THE COMPILER'S OUTPUT.** -/
+def dfaLowered : EffectVmDescriptor2 := lowerAir DEMO_NAME TRT_WIDTH TRT_PI_COUNT [] dfaAir
+
+/-- ⚑ **BYTE-EXACT. The compiler's output IS the deployed artifact** — not refinement-equal, not a
+sibling proven equivalent: the same term, by `rfl`. Residual: width Δ 0, PI Δ 0, constraints Δ 0,
+tables Δ 0, ranges Δ 0.
+
+This is the first descriptor in the tree that a general `EffectSpec2`-vocabulary lowering PRODUCES
+rather than models beside. `DfaRoutingTableEmit`'s hand-written `VmConstraint2` list-literals
+(`:112-137`) are now derivable output. -/
+theorem dfaLowered_eq_deployed : dfaLowered = demoRoutingDesc := rfl
+
+/-- …and therefore the WIRE BYTES agree, which is the form the Rust decoder consumes. -/
+theorem dfaLowered_json_eq_deployed : emitVmJson2 dfaLowered = emitVmJson2 demoRoutingDesc := by
+  rw [dfaLowered_eq_deployed]
+
+-- The deployed byte-golden, re-run against the COMPILER'S output. These bytes were transcribed
+-- from `circuit/descriptors/by-name/dfa-routing-table-exact-public-v1.json`, not from the Lean
+-- emitter, so this is a pin against an INDEPENDENT source rather than against its own definition.
+#guard emitVmJson2 dfaLowered ==
+  "{\"name\":\"dregg-dfa-routing-table::exact-public-v1\",\"ir\":2,\"trace_width\":3,\"public_input_count\":2,\"tables\":[{\"id\":35,\"name\":\"dfa_transition_table\",\"arity\":3,\"sem\":\"exact_public_rows\",\"rows\":[[0,1,1]]}],\"constraints\":[{\"t\":\"lookup\",\"table\":35,\"tuple\":[{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2}]},{\"t\":\"window_gate\",\"on_transition\":true,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"last\",\"col\":2,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
+
+-- Shape pins (the Phase-1 differential table, at Δ = 0 on every row).
+#guard dfaLowered.traceWidth == 3
+#guard dfaLowered.piCount == 2
+#guard dfaLowered.constraints.length == 4
+#guard dfaLowered.tables.length == 1
+#guard dfaLowered.hashSites.length == 0
+#guard dfaLowered.ranges.length == 0
+
+/-! ### §8a — both polarities, on the COMPILER'S OUTPUT rather than on the hand-written twin. -/
+
+/-- **NON-VACUITY.** The deployed witness satisfies the descriptor the pass EMITTED. -/
+theorem dfaLowered_witness :
+    Satisfied2Public hash0 dfaLowered (fun _ => 0) (fun _ => (0, 0)) [] routeWitTrace := by
+  rw [dfaLowered_eq_deployed]; exact routeWit_satisfies
+
+/-- **THE TOOTH.** A claimed transition that is not a declared table row is REFUSED by the
+descriptor the pass EMITTED — the lookup leg bites on every row, with no zerofier exemption. -/
+theorem dfaLowered_rejects_offtable :
+    ¬ Satisfied2Public (fun _ => 0) dfaLowered (fun _ => 0) (fun _ => (0, 0)) [] badTrace := by
+  rw [dfaLowered_eq_deployed]; exact badTrace_not_satisfied
+
+/-- **THE REFINEMENT, inherited whole.** The deployed general refinement
+(`tableRouting_refines_classify`: the exposed `final_state` IS `classifyFrom` of the read word)
+is a theorem ABOUT the compiler's output, because they are the same object. -/
+theorem dfaLowered_refines_classify
+    {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+    {tbl : List (List Nat)} {t : VmTrace}
+    (d : Dregg2.Crypto.DfaAcceptanceAir.TableDfa Nat Nat)
+    (htbl : ∀ r ∈ tbl, ∃ s y, r = [s, y, d.step s y])
+    (hsmall : ∀ r ∈ tbl, ∀ v ∈ r, v < 2013265921)
+    (hsat : Satisfied2Public hash
+      (lowerAir DEMO_NAME TRT_WIDTH TRT_PI_COUNT [] { dfaAir with
+        tables := [⟨TRT_TID, "dfa_transition_table", 3, .exactPublicRows tbl⟩] })
+      minit mfin maddrs t)
+    (hne : t.rows ≠ [])
+    (q0 : ℕ) (hstart : t.pub PI_INITIAL = Int.ofNat q0) (hq0 : q0 < 2013265921)
+    (fN : ℕ) (hfin : t.pub PI_FINAL = Int.ofNat fN) (hfN : fN < 2013265921) :
+    t.rows.map (fun a => a SYMBOL)
+        = (t.rows.map (fun a => (a SYMBOL).toNat)).map Int.ofNat
+      ∧ fN = Dregg2.Crypto.DfaAcceptanceAir.classifyFrom d q0
+               (t.rows.map (fun a => (a SYMBOL).toNat)) :=
+  tableRouting_refines_classify d htbl hsmall hsat hne q0 hstart hq0 fN hfin hfN
+
+/-! ### §8b — ⚑ THE REFUSAL, on this very rung.
+
+The widened source can SAY a leg the deployed main rail cannot take. Re-authoring the SAME lookup
+on the SERVING side of the bus is a one-token edit that changes nothing about the tuple or the
+table — and the emitted descriptor stops being satisfiable at all, rather than quietly shipping
+without its transition tooth. That direction is the one a byte-golden cannot see: a dropped leg
+accepts strictly more. -/
+
+/-- The same tuple, same table, `.provide` instead of `.query` — a one-token edit at the head of
+the leg list, everything else identical. -/
+def dfaAirServed : EffectAir :=
+  { dfaAir with
+    legs := .lookup { table := TRT_TID, tuple := [.var CURRENT, .var SYMBOL, .var NEXT]
+                    , op := BusOp.provide } :: dfaAir.legs.tail }
+
+#guard dfaAirServed.mainRailOk == false
+
+def dfaLoweredServed : EffectVmDescriptor2 :=
+  lowerAir DEMO_NAME TRT_WIDTH TRT_PI_COUNT [] dfaAirServed
+
+-- The one lookup became the two-constraint refusal: 4 → 5.
+#guard dfaLoweredServed.constraints.length == 5
+
+theorem mem_refuse_served :
+    (VmConstraint2.base (.boundary VmRow.first (.const 1))) ∈ dfaLoweredServed.constraints :=
+  List.mem_cons_self
+
+/-- **THE REFUSED DESCRIPTOR HAS NO WITNESS AT ALL.** Not "accepts fewer traces" — none, for any
+hash, any boundary, any non-empty trace. The unsatisfiable first-row boundary fires on row `0`. -/
+theorem dfaLoweredServed_unsatisfiable
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace) (hne : t.rows ≠ []) :
+    ¬ Satisfied2Public hash dfaLoweredServed minit mfin maddrs t := by
+  intro h
+  have hpos : 0 < t.rows.length := List.length_pos_of_ne_nil hne
+  have hrc := h.rowConstraints 0 hpos _ mem_refuse_served
+  have hone : (1 : ℤ) ≡ 0 [ZMOD 2013265921] := hrc rfl
+  revert hone; decide
+
+/-- …and it is therefore NOT the deployed descriptor: the source said something the rail refuses,
+and the emitted bytes SAY SO. -/
+theorem dfaLoweredServed_ne_deployed : dfaLoweredServed ≠ demoRoutingDesc := by
+  intro h
+  have := congrArg (fun d => d.constraints.length) h
+  revert this
+  decide
+
+end DfaRung
+
+/-! ## §9 — ⚑ WHAT STILL RESISTS, and the line between SYNTAX and SEMANTICS.
+
+Phase 2 widened the SOURCE LANGUAGE. That closes the class of gaps where the deployed descriptor
+does something `EffectSpec2` had no word for. It does NOT close the class where `EffectSpec2` has
+a word but the word means something weaker. The two classes need different work and separating them
+is the point of this section.
+
+**VOCABULARY gaps — closed by this phase.** A lookup against a declared table, a range tooth, a
+`.transition` continuity gate, a first/last boundary fix, a last-row PI pin. All five were
+unsayable; all five are now legs, and §8 exhibits one deployed descriptor reached byte-exact
+through them.
+
+**SEMANTIC gaps — NOT closed, and no amount of syntax closes them.** These are transfer's, and
+they are why §5's refutation stands untouched by Phase 2 (`transferLoweredDesc` still lowers a
+spec whose `air` block is EMPTY):
+
+1. **The collapsed guard.** `Inst/transfer.lean:99` supplies `guardGates := [cBitGuard]` — the
+   6-conjunct `admitGuardA` committed as ONE `propBit` column asserted `= 1`. Giving the spec a
+   `RangeLeg` does not turn that claim into the deployed 15-bit borrow chain; what is missing is
+   that the spec never DECOMPOSES the guard into arithmetic at all. **A `propBit` is a claim; the
+   borrow chain is a proof**, and the repair is to author `admitGuardA`'s conjuncts as gates over
+   named columns — a change to what the spec SAYS, not to what it CAN say.
+2. **The commitment as a carried portal.** `EffectCommit2.lean:120,183` carries `digest`/`RH`/`LH`
+   as ABSTRACT functions; the deployed AIR BUILDS `state_commit` from four ordered `H4` sites
+   in-circuit. `EffectAir` deliberately has no hash-site leg — adding one would let a spec DECLARE
+   a site while `effectStateCommit2` still reads the abstract portal, i.e. two commitments that
+   agree today and disagree later. The real repair is that `Surface2` must denote an emitted hash
+   site, which is a change to the framework's commitment model.
+   ⚠ Measured, and it is why the omission costs nothing on the deployed set: **no by-name
+   descriptor uses a hash site at all** (P1.5's ladder, `+ hash sites: +0`).
+3. **Single-row-ness of the ENCODER.** `WindowLeg` lets a spec ASSERT across two rows, but
+   `encodeE2` still produces ONE `Assignment`. A spec can now state a continuity gate and cannot
+   yet state the multi-row witness that satisfies it. `TableAirIR.Coherent` is the shape of the
+   missing hypothesis (window `i`'s `nxt` IS window `i+1`'s `loc`, stated separately so a proof
+   that forgets it fails to apply); the encoder-side counterpart is not built.
+4. **The multiplicity / serving side.** Said by the source (`LookupLeg.mult`, `BusOp.provide`),
+   REFUSED by the main rail, and legal on the `TableAir` rail. This one is neither a vocabulary gap
+   nor a semantic gap in the spec — it is a rail seam, and §8b makes it a loud refusal instead of a
+   silence.
+
+**⚑ AND THE NUMBER THE KIND LADDER FLATTERS.** Kind coverage says 76/76; that is P1.5's question
+("can the source SAY this descriptor's constraint kinds") and the honest answer to it. It is not
+"could the pass emit these bytes". Measured over the same 76:
+
+    kinds expressible by `lowerAir`                        76 / 76
+    + every `gate` body already in builder normal form      8 / 76   ← byte-reachable today
+    gate bodies NOT in the normal form the pass emits   12745 / 13983
+
+The residual is a RENDERING difference, not a semantic one (`headToExpr_eval` proves the normalized
+body means what the source meant). And it is not a defect of the normalizer, because **there is no
+form to normalize TO**: measured across the 76, 37 descriptors render a unit coefficient as
+`mul(const 1, x)` and 58 render it as a bare `x` — and **25 carry BOTH shapes inside a single
+descriptor**. The hand-authored set is not internally consistent, so byte-agreement with it is not
+a well-posed target for any canonical renderer.
+
+Which makes the greenfield answer the right one and NOT a deferral: the deployed descriptors are
+the thing to RE-EMIT from the compiler, not to imitate. That is a re-emission of by-name JSON +
+the VK epoch it implies, and it is ordinary work — the reason it is not in this commit is that it
+belongs to whoever owns the descriptor artifacts and the rotation, not that it is expensive.
+⚠ The move this section deliberately does NOT make is bending `AirBuilder.headToExpr` toward one
+of the two shapes: it would buy 8/76 → 21/76 while making the shared builder mimic an inconsistent
+target, and it would break the `emitVmJson2` goldens of the 10 emitters whose committed bytes
+already carry the `mul(const 1, ·)` form. That is the wrong direction of fit.
+
+**The honest summary of the phase**: widening the source moved the reachable KIND coverage of the
+deployed set from 25/76 to 76/76 and produced the first deployed descriptor a general pass emits
+BYTE-EXACT. Byte reach is 8/76 and is bounded by the deployed set's own rendering inconsistency,
+not by the source language. It moved transfer by zero, and that is the correct outcome — transfer
+was never blocked on syntax. -/
+
+/-! ## §10 — axiom-hygiene tripwires. -/
 
 #assert_axioms evalH_mulHead
 #assert_axioms evalH_exprToHead
@@ -544,5 +1032,18 @@ theorem transferLowered_emits
 #assert_axioms lowered_json_ne_deployed_json
 #assert_axioms transferLowered_refines_balanceMovement
 #assert_axioms transferLowered_emits
+-- Phase 2.
+#assert_axioms refuse_bites
+#assert_axioms windowToLocal_eval
+#assert_axioms lowerLeg_ne_nil
+#assert_axioms lowerAirLegs_empty
+#assert_axioms lowerEffect_air_empty
+#assert_axioms DfaRung.dfaLowered_eq_deployed
+#assert_axioms DfaRung.dfaLowered_json_eq_deployed
+#assert_axioms DfaRung.dfaLowered_witness
+#assert_axioms DfaRung.dfaLowered_rejects_offtable
+#assert_axioms DfaRung.dfaLowered_refines_classify
+#assert_axioms DfaRung.dfaLoweredServed_unsatisfiable
+#assert_axioms DfaRung.dfaLoweredServed_ne_deployed
 
 end Dregg2.Circuit.Emit.EffectLower

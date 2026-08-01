@@ -524,3 +524,172 @@ no lookup, table, range, hash site, transition, boundary or window gate in commo
 `EffectSpec2` has no name for any of them. The spine is real, the pass is real, and the pass now
 PRODUCES a live-rail descriptor rather than modelling one. What it produces is a sound but
 arithmetic-free skeleton, and closing that is a source-language change.
+
+---
+
+# ⚑ PHASE 2 EXECUTED — 2026-08-01. The SOURCE was widened; one deployed descriptor is now BYTE-EXACT.
+
+*NEW `Dregg2/Circuit/EffectAirIR.lean` (the vocabulary) + `EffectSpec2` gains ONE defaulted field
+`air` + `Dregg2/Circuit/Emit/EffectLower.lean` extended. `lake build` green over the whole tree,
+`#assert_axioms`-clean on all 29 pinned theorems (25 in `EffectLower`, 4 in `EffectAirIR`) with 57 executed `#guard`s. This section executes P1.5's own conclusion —
+"widening the SOURCE is Phase 2; the `AirBuilder` sweep is bookkeeping".*
+
+## P2.1 — what was added, in the priority order the measurement demanded
+
+`EffectAirIR.EffectAir`, carried by `EffectSpec2.air := {}` (defaulted, so all ~29 existing
+instances compile unchanged and lower byte-identically — `lowerEffect_air_empty`, a theorem over
+ALL specs, not a spot check):
+
+| capability | the leg | measured demand |
+|---|---|---|
+| **(a) lookup + declared tables** | `AirLeg.lookup (LookupLeg)` + `EffectAir.tables` | **+51 / 76** |
+| (b) ranges | `EffectAir.ranges : List RangeLeg` | +0 on the by-name set; transfer's v1 carries 2 |
+| (c) window / row-selected gates | `AirLeg.window (WindowLeg)` = `TableAirIR.RowSel` × `WindowExpr` | +13 / 76 |
+| (d) boundary + last-row PI | `AirLeg.pin (PiPinLeg)` carrying `VmRow` | +0 alone, required by (a)+(c) descriptors |
+
+**It is `TableAirIR`'s vocabulary, reused, not re-derived** — `RowSel`, `WindowExpr`, the
+multiplicity EXPRESSION on a lookup, and `BusOp` (`.query`/`.provide`/`.receive`/`.send`), plus its
+refusal of a `nxt` read outside `.transition`.
+
+⚑ **The legs are ONE ORDERED LIST (`AirLeg`), not four parallel ones.** The target's `constraints`
+is a single ordered array and the deployed descriptors interleave (`merkle-membership-depth2.json`
+is lookup · lookup · gate · pi_binding · boundary); four parallel lists could only ever emit
+gates-then-lookups-then-windows-then-pins. Measured: **4/76 byte-reachable with parallel lists,
+8/76 with the ordered list.** This was caught by measuring the pass's own first design, and fixed
+in it — the same class of defect the phase exists to close, one level down.
+
+## P2.2 — ⚑ THE REFUSAL, which is the load-bearing half
+
+`EffectAir` can SAY strictly more than the deployed MAIN rail can take, and the three gaps are
+named rather than dropped:
+
+1. **Non-unit multiplicity.** `DescriptorIR2.Lookup` is `⟨table, tuple⟩` — no `mult` field, because
+   `Ir2Air::Main` pushes every lookup at multiplicity 1.
+2. **The serving side.** `.provide`/`.receive`/`.send` are the shared-TABLE side of a bus.
+3. **`nxt` outside `.transition`.** Under `.all` this is TableAirIR's refusal verbatim (p3's `next`
+   on the last row is the WRAP row); under `.first`/`.last` the reason is stronger and
+   rail-specific — those lower to `VmConstraint.boundary`, whose body reads `env.loc` only.
+
+A leg the rail cannot take lowers to `refuseConstraints` — the UNSATISFIABLE pair
+`boundary first (1) , boundary last (1)` — **never to silence.** Dropping the leg is the fail-open
+move: a descriptor missing a constraint accepts strictly MORE and no byte-golden can see the loss
+(`TableAirIR.rowHolds_of_sublist` is that direction as a theorem). It is a `.boundary` PAIR and not
+a `.gate` because `holdsVm_gate_true` makes a `.gate` vacuous on the last row, so `gate (const 1)`
+would be a refusal a one-row trace satisfies — a refusal that cannot go red.
+`EffectAir.mainRailOk` is the DECIDABLE verdict, `#guard`-pinned at both poles.
+
+## P2.3 — ⚑ THE FALSIFIABLE RUNG: byte-exact, Δ = 0 on every row
+
+**`dregg-dfa-routing-table::exact-public-v1`** (`circuit/descriptors/by-name/dfa-routing-table-exact-public-v1.json`,
+Lean-side `Emit/DfaRoutingTableEmit.lean:389`). Chosen because its gap was PURELY vocabulary: one
+table-generic `lookup` against a declared `exactPublicRows` table, one `.transition` `window_gate`,
+a FIRST-row and a LAST-row PI pin — every one in the +51/+13 buckets, and no guard to collapse and
+no commitment portal, i.e. nothing semantic.
+
+| | `lowerAir dfaAir` (the pass) | deployed | Δ |
+|---|---|---|---|
+| trace width | 3 | 3 | **0** |
+| PI count | 2 | 2 | **0** |
+| constraints | 4 | 4 | **0** |
+| tables / hash sites / ranges | 1 / 0 / 0 | 1 / 0 / 0 | **0** |
+| `emitVmJson2` bytes | — | — | **identical** |
+
+`DfaRung.dfaLowered_eq_deployed : dfaLowered = demoRoutingDesc` is **`rfl`** — the same term, not a
+sibling proven equivalent. The byte-golden is pinned against the literal transcribed from the
+checked-in JSON (an INDEPENDENT source, not the Lean emitter's own def). Both polarities ride on
+the compiler's output rather than on the hand-written twin: `dfaLowered_witness` (the deployed
+witness satisfies it), `dfaLowered_rejects_offtable` (an off-table transition is refused), and
+`dfaLowered_refines_classify` (the deployed GENERAL refinement — exposed `final_state` IS
+`classifyFrom` of the read word — is a theorem about the pass's output).
+
+⚠ Reached through `lowerAir`, not `lowerEffect`: this descriptor is not a full-state effect and has
+no digest wires, so bolting the framework's `PIBindsDigests` surface on would emit a descriptor
+nobody deployed. The two entry points share the normalizer, the leg lowerings and the emission
+order and differ ONLY in that surface (`assemble`).
+
+**And the refusal on this very rung.** Re-authoring the same lookup on the SERVING side is a
+one-token edit; the emitted descriptor then has 5 constraints instead of 4, is `≠` the deployed
+one, and `dfaLoweredServed_unsatisfiable` proves it has **no witness at all** — for any hash, any
+boundary, any non-empty trace.
+
+## P2.4 — the generality readout, RE-MEASURED by P1.5's method
+
+Method reproduced exactly (a descriptor is reachable iff every constraint kind it uses, plus
+tables / hash sites / ranges, is in the level's vocabulary). The first six rows are P1.5's,
+recomputed and **identical to the digit** — including the same named 12 — which is what makes the
+last row comparable:
+
+| emitter capability | reach | Δ |
+|---|---|---|
+| gate + first-row PI | 12 / 76 | +12 |
+| + last-row PI | 12 / 76 | +0 |
+| + boundary first/last | 12 / 76 | +0 |
+| + ranges | 12 / 76 | +0 |
+| + `windowGate` | 25 / 76 | +13 |
+| + lookup + tables | 76 / 76 | +51 |
+| + hash sites | 76 / 76 | +0 |
+| **PHASE 2 — `lowerAir`'s ACTUAL emission set** | **76 / 76** | **+51 from 25/76** |
+
+**Generality moved 25/76 → 76/76 (MEASURED, same method).** Zero of the 76 are now unreachable for
+want of a word.
+
+## P2.5 — ⚑ THE NUMBER THE KIND LADDER FLATTERS, and why it is not a deferral
+
+Kind coverage answers "can the source SAY this descriptor's kinds". It does not answer "could the
+pass emit these bytes". Measured over the same 76:
+
+    kinds expressible by `lowerAir`                        76 / 76
+    + every `gate` body already in builder normal form      8 / 76   ← BYTE-reachable today
+    gate bodies NOT in the normal form the pass emits   12745 / 13983
+
+The residual is a RENDERING difference, not a semantic one — `headToExpr_eval` proves the
+normalized body means what the source meant. **And there is no form to normalize TO**: across the
+76, **37 descriptors render a unit coefficient as `mul(const 1, x)`, 58 render it as a bare `x`,
+and 25 carry BOTH shapes inside one descriptor.** The hand-authored set is not internally
+consistent, so byte-agreement with it is not a well-posed target for any canonical renderer.
+
+So the greenfield answer is the right one and is not a hedge: **the deployed descriptors are the
+thing to RE-EMIT from the compiler, not to imitate** — a by-name JSON re-emission plus the VK epoch
+it implies, ordinary work, held out of this commit only because the descriptor artifacts and the
+rotation are another lane's, not because it is expensive.
+⚠ The move deliberately NOT made: bending `AirBuilder.headToExpr` toward one of the two shapes. It
+buys 8/76 → 21/76 (measured) while making the shared builder mimic an inconsistent target and
+breaking the goldens of the 10 emitters that already ride the current form. Wrong direction of fit.
+
+## P2.6 — what still resists: SYNTAX vs SEMANTICS, separated
+
+**Closed by this phase (vocabulary).** Lookups against declared tables, ranges, `.transition`
+continuity, first/last boundary fixes, last-row PI pins. All five were unsayable; §8 exhibits one
+deployed descriptor reached byte-exact through them.
+
+**NOT closed, and no amount of syntax closes them (semantics).** These are transfer's, which is why
+§5's byte-refutation stands untouched — `transferLoweredDesc` still lowers a spec whose `air` is
+EMPTY, and its numbers are unchanged at 72 / 7 / 11 against the live 1874 / 50 / 663:
+
+1. **The collapsed guard.** `Inst/transfer.lean:99` commits the 6-conjunct `admitGuardA` as ONE
+   `propBit` asserted `= 1`. A `RangeLeg` does not turn that into the deployed 15-bit borrow chain;
+   what is missing is that the spec never DECOMPOSES the guard into arithmetic. **A `propBit` is a
+   claim; the borrow chain is a proof.** The repair is a change to what the spec SAYS.
+2. **The commitment as a carried portal.** `EffectCommit2.lean:120,183` carries `digest`/`RH`/`LH`
+   as abstract functions; the deployed AIR builds `state_commit` from 4 ordered `H4` sites
+   in-circuit. `EffectAir` deliberately has NO hash-site leg — one would let a spec declare a site
+   while `effectStateCommit2` still reads the portal, i.e. two commitments that agree today and
+   disagree later. The repair is that `Surface2` must denote an emitted site. ⚠ Measured, and it is
+   why the omission costs nothing on the deployed set: **no by-name descriptor uses a hash site.**
+3. **Single-row-ness of the ENCODER.** `WindowLeg` lets a spec ASSERT across two rows, but
+   `encodeE2` still produces ONE `Assignment`. A spec can now state a continuity gate and cannot
+   yet state the multi-row witness satisfying it. `TableAirIR.Coherent` is the shape of the missing
+   hypothesis; the encoder-side counterpart is not built.
+4. **Multiplicity / serving side.** Sayable by the source, REFUSED by the main rail, legal on the
+   `TableAir` rail. Neither a vocabulary gap nor a spec-semantics gap — a rail seam, made a loud
+   refusal instead of a silence (P2.2).
+
+## P2.7 — the honest verdict
+
+Widening the source moved the reachable KIND coverage of the deployed set **25/76 → 76/76** and
+produced **the first deployed descriptor a general `EffectSpec2`-vocabulary pass emits BYTE-EXACT**
+— `DfaRoutingTableEmit`'s hand-written `VmConstraint2` list-literals (`:112-137`) are now derivable
+output rather than authored input. Byte reach across the whole set is **8/76**, and it is bounded
+by the deployed set's own rendering inconsistency, not by the source language. Transfer moved by
+zero, which is correct: it was never blocked on syntax, and P1.3's four root causes reduce to
+three, all semantic.

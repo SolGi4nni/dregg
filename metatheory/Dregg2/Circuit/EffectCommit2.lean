@@ -46,6 +46,7 @@ ADDITIVE: imports `EffectCommit`/`ListCommit`/`KeyedCommit`/`StateCommit` + the 
 edits none of them.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Circuit.EffectAirIR
 import Dregg2.Circuit.ListCommit
 import Dregg2.Circuit.KeyedCommit
 import Dregg2.Circuit.Spec.supplycreation
@@ -192,7 +193,19 @@ structure Surface2 where
   * `restFrame` — the declarative frame on the UNTOUCHED non-`cell` fields (an effect-specific Prop,
     e.g. `RestIffNoBal`'s 15-field conjunction); bound by the per-effect `RestIffNo*` portal.
   * the guard sub-system fields, VERBATIM v1 (`guardGates`/`guardProp`/`guardWidth`/`guardEncode`/
-    `guardLocal`/`guardWidth_le`). -/
+    `guardLocal`/`guardWidth_le`).
+  * `air` — ⚑ **PHASE 2 (2026-08-01): the widened AIR vocabulary** (`Circuit/EffectAirIR.lean`):
+    lookup legs, declared tables, ranges, row-selected/window gates, boundary PI pins. Phase 1
+    MEASURED that a spec carrying only `guardGates` reaches 12 of the 76 deployed by-name
+    descriptors, and that **51 of the 76 carry a lookup/table leg** the source could not name
+    (`docs/LOGIC-COMPILER-ASSESSMENT.md` §P1.5). Defaulted to the EMPTY block, so every existing
+    instance is unchanged and its `lowerEffect` image is byte-identical to Phase 1's.
+
+    ⚠ `air` is INERT in this file. It carries no `Prop` and enters neither `effectCircuit2` nor
+    `apex` nor `encodeE2` — a lookup leg's meaning is the assembled instance's LogUp balance, which
+    lives with the target IR. It is read by `Emit.EffectLower.lowerEffect`, which is where a leg
+    acquires a denotation. A spec that declares an air leg and is lowered by nothing has declared
+    nothing; that is stated here so no reader takes the field for a proof obligation. -/
 structure EffectSpec2 (St Args : Type) where
   view         : StateView St
   active       : ActiveComponent St Args
@@ -205,6 +218,9 @@ structure EffectSpec2 (St Args : Type) where
   guardLocal   : ∀ (a b : Assignment), (∀ w, w < guardWidth → a w = b w) →
                    (satisfied guardGates a ↔ satisfied guardGates b)
   guardWidth_le : guardWidth ≤ 64
+  /-- The AIR block beyond the flat guard gates (lookups / tables / ranges / windows / PI pins).
+  Empty by default; see the ⚠ above — it is inert until `EffectLower` lowers it. -/
+  air          : Dregg2.Circuit.EffectAirIR.EffectAir := {}
 
 /-! ## §4 — the derived apex (the full-state declarative spec, DERIVED not supplied). -/
 
