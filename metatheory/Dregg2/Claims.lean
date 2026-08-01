@@ -205,21 +205,24 @@ proved under the explicit `NonDegenerate` hypothesis (the residual — not an un
 
 /-! ## §12 — Spec.Coherence: the cross-subsystem weave (guard = authority meet).
 
-OPEN: pins parked pending olean rebuild. `Dregg2.Spec.Coherence` is fully proved in source
-and self-pins in its own module, but is not yet in this file's import closure. Re-enable
-once `Dregg2.Spec.Coherence.olean` exists. Listed as proved in `metatheory/CLAIMS.md`. -/
--- #assert_axioms Dregg2.Spec.guard_is_authority_conferral
--- #assert_axioms Dregg2.Spec.conferralGuard_admits_self
--- #assert_axioms Dregg2.Spec.introduce_passes_conferralGuard
--- #assert_axioms Dregg2.Spec.conservation_is_hyperedge_cg5
--- #assert_axioms Dregg2.Spec.hyperedge_conserves_crossCell
--- #assert_axioms Dregg2.Spec.lifecycle_revoke_is_authority_restrictive
--- #assert_axioms Dregg2.Spec.revoke_is_terminal_restrictive
--- #assert_axioms Dregg2.Spec.migrated_and_destroyed_both_revoke
--- #assert_axioms Dregg2.Spec.choreography_red_conserves
--- #assert_axioms Dregg2.Spec.choreography_red_conserves_sum
--- #assert_axioms Dregg2.Spec.guard_attenuate_narrows_is_meet
--- #assert_axioms Dregg2.Spec.authority_confers_narrows_is_meet
+⚑ THESE TWELVE PINS WERE COMMENTED OUT, and the stated reason was FALSE IN BOTH HALVES. It read
+"not yet in this file's import closure. Re-enable once `Dregg2.Spec.Coherence.olean` exists."
+But `Claims.lean:42` is `import Dregg2` and `Dregg2.lean:129` is `import Dregg2.Spec.Coherence`,
+so the module has been in the closure transitively all along — and the olean it waits on is on
+disk. A pin that is switched off is not a weaker gate, it is NO gate: nothing here could go red,
+so nothing here was checked. Restored. -/
+#assert_axioms Dregg2.Spec.guard_is_authority_conferral
+#assert_axioms Dregg2.Spec.conferralGuard_admits_self
+#assert_axioms Dregg2.Spec.introduce_passes_conferralGuard
+#assert_axioms Dregg2.Spec.conservation_is_hyperedge_cg5
+#assert_axioms Dregg2.Spec.hyperedge_conserves_crossCell
+#assert_axioms Dregg2.Spec.lifecycle_revoke_is_authority_restrictive
+#assert_axioms Dregg2.Spec.revoke_is_terminal_restrictive
+#assert_axioms Dregg2.Spec.migrated_and_destroyed_both_revoke
+#assert_axioms Dregg2.Spec.choreography_red_conserves
+#assert_axioms Dregg2.Spec.choreography_red_conserves_sum
+#assert_axioms Dregg2.Spec.guard_attenuate_narrows_is_meet
+#assert_axioms Dregg2.Spec.authority_confers_narrows_is_meet
 
 /-! ## §13 — Finality: the 4-tier lattice; conservation is tier-independent. -/
 #assert_axioms Dregg2.Finality.conservation_tier_independent
@@ -242,19 +245,20 @@ once `Dregg2.Spec.Coherence.olean` exists. Listed as proved in `metatheory/CLAIM
 
 /-! ## §16 — Upgrade: anti-brick set_program (version pin + signature fallback).
 
-The two anti-brick keystones are pinned. The eight Envelope-spine keystones are fully proved
-in source and self-pinned in `Dregg2/Upgrade.lean`, but not yet in this file's closure —
-parked (same reason as §12). Re-enable after rebuild. -/
+⚑ THE EIGHT ENVELOPE-SPINE PINS WERE COMMENTED OUT with the note "not yet in this file's closure —
+parked (same reason as §12)". That reason was SELF-REFUTING ON THE PAGE: the two lines directly
+below it pin `Dregg2.Upgrade` theorems and have always succeeded, so `Dregg2.Upgrade` was
+demonstrably reachable from here the whole time (`Dregg2.lean:35`). Restored. -/
 #assert_axioms Dregg2.Upgrade.upgrade_never_bricks
 #assert_axioms Dregg2.Upgrade.stale_version_falls_back_to_signature
--- #assert_axioms Dregg2.Upgrade.invariant_intro
--- #assert_axioms Dregg2.Upgrade.safety_preservation
--- #assert_axioms Dregg2.Upgrade.admit_preserves_safety
--- #assert_axioms Dregg2.Upgrade.self_improvement_is_safe
--- #assert_axioms Dregg2.Upgrade.genealogy_sound
--- #assert_axioms Dregg2.Upgrade.identity_vouch_unconditional
--- #assert_axioms Dregg2.Upgrade.upgradeGenealogy_sound
--- #assert_axioms Dregg2.Upgrade.signatureVouchUnbrickable
+#assert_axioms Dregg2.Upgrade.invariant_intro
+#assert_axioms Dregg2.Upgrade.safety_preservation
+#assert_axioms Dregg2.Upgrade.admit_preserves_safety
+#assert_axioms Dregg2.Upgrade.self_improvement_is_safe
+#assert_axioms Dregg2.Upgrade.genealogy_sound
+#assert_axioms Dregg2.Upgrade.identity_vouch_unconditional
+#assert_axioms Dregg2.Upgrade.upgradeGenealogy_sound
+#assert_axioms Dregg2.Upgrade.signatureVouchUnbrickable
 
 /-! ## §17 — Proof.Refine: Exec ⊑ Abstract refinement (full per-step simulation diagram CLOSED).
 
