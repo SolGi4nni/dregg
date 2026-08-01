@@ -21,16 +21,58 @@ entering as typeclass parameters / hypotheses, do not appear in `collectAxioms`)
 ## The assumption floor (EVERYTHING below rests on these, and NOTHING else)
 
 The guarantees are unconditional in the Lean kernel sense *modulo* a small, explicit set of
-cryptographic hardness / collision-resistance assumptions. These are the system's trust
-boundary; they enter as `Prop`-portals (typeclass fields / hypotheses), never as `axiom`:
+cryptographic hardness assumptions. These are the system's trust boundary; they enter as
+`Prop`-portals (typeclass fields / hypotheses), never as `axiom`.
+
+⚑ READ THIS BEFORE THE LIST — WHAT "NAMED, NOT AN `axiom`" DOES AND DOES NOT BUY. It is a
+statement about HYGIENE, and this section used to run it together with truth. A carrier stated as
+**injectivity** of a compressing or range-bounded hash is not merely unproven: it is FALSE at the
+deployed parameters, by counting, and every theorem conditioned on it is VACUOUSLY TRUE there.
+`#assert_axioms` cannot see that — it audits the PROOF, which is kernel-clean, and never the
+HYPOTHESIS. Three carriers this list previously advertised as the trust boundary are exactly that
+shape, and each is now REFUTED IN-TREE:
+`Apps.QueueRoot.RootCR` (`QueueRootFloorRegrounded.rootCR_false_blake3` — and refuted INSIDE its
+own zero-free restriction, via `exists_zeroFree_collision_of_finite_range`, so the restriction is
+respected rather than dodged), `Apps.QueueRoot.LenBindCR` (`lenBindCR_false_blake3`), and
+`Apps.PreRotation.KeySetCR` (`PreRotationKeySetRegrounded.keySetCR_false_blake3` / `_babyBear`).
+Their consumers are being DELETED, not caveated; the refuted defs themselves are KEPT so the
+refutations have a name to point at and `Verify.FloorRatchet` keeps its grip. No guarantee stated
+below carries any of the three as a hypothesis — they were named here as the FLOOR, which is a
+claim about what the case rests on, and that claim was wrong in the direction that flatters.
+
+So the SHAPE the hash floor actually has, wherever this case leans on one, is a KEYED COLLISION
+GAME at an EXPLICIT adversary class — `Crypto.FloorGames.HashCRHardQuant F Eff` — and, where it has
+been discharged, the keyed-ROM binding, whose successors carry NO floor hypothesis and NO cost
+model at all: only query-boundedness and a `PolyBounded` query count, concluding `Negl`. It is NOT
+adversary-independent injectivity, and NOT that same game at `⊤`, which is itself false wherever
+collisions exist (`FloorGames.hashCRHardQuant_top_false_of_compressing`). The two re-grounded sites
+that replace the queue/identity carriers named above:
+  * queue dequeue — `Apps.QueueRootFloorRegrounded.{dequeue_proof_pins_binds_rom,
+    queueDequeueProven_pins_root_transition_binds_rom, dequeue_proof_unique_binds_rom}` (§7b),
+    non-vacuity pinned by `dequeueRom_class_inhabited_pos`;
+  * identity pre-rotation — `Apps.PreRotationKeySetRegrounded.{rotate_compromise_resistant_binds_rom,
+    rotate_install_unique_binds_rom}` (§8), non-vacuity pinned by `rotationRom_class_inhabited_pos`.
+
+⚑ AND WHAT IS STILL CONDITIONAL, PLAINLY — this is not a repaired floor, it is a floor with a
+known shape and known holes. (a) The ROM successors are theorems IN the keyed random-oracle model;
+the floor is proved THERE, not about BLAKE3 or Poseidon2 as deployed. (b) The `*_advantage_bound`
+siblings (`QueueRootFloorRegrounded` §5, `PreRotationKeySetRegrounded` §5, and the same shape
+elsewhere) condition on `HashCRHardQuant _ Eff` with `Eff` an UNDISCHARGED PARAMETER — this tree
+has no cost model (`FloorGames` §8) and does not fake one. (c) Not every refuted site has a sibling
+yet. `LenBindCR`/`PairCR` are FALSE-PROVED but NOT game-re-grounded (`QueueRootFloorRegrounded` §8):
+they carried the PROPOSED level-tagged root hardening that Rust never adopted (a wire-affecting
+root-format change), and that hardening's one piece of genuine STRUCTURAL content —
+`tagged_kills_pad_alias`, the length binding kills the padding alias — went with the deletion
+because it was stated over the refuted carrier, and has NO floor-free restatement yet; only its
+concrete pole survives, EXECUTED at `#guard`. (d) The same counting argument applies to any
+remaining injectivity-shaped carrier by its shape alone, so the list below is where the case says
+what it leans on, not a certificate that each entry is satisfiable as stated.
 
   1. **Poseidon2-permutation collision-resistance** — the arithmetization-friendly hash; the
      sponge/Merkle/state-commitment/MMR collision-resistance is reduced to permutation-CR
-     (`Crypto.Poseidon2*`, `Crypto.Merkle`, the `recStateCommit` injectivity portal, the
-     receipt-index `Lightclient.MMR.mroot_binds_position`, and the sorted-set/queue
-     `Apps.QueueRoot.RootCR`/`LenBindCR` and identity-keyset `Apps.PreRotation.KeySetCR`
-     carriers — every one a named CR `Prop` over a `Poseidon2`/`BLAKE3` image, NOT an `axiom`).
-  2. **BLAKE3 collision-resistance** — the out-of-circuit content/transcript hash.
+     (`Crypto.Poseidon2*`, `Crypto.Merkle`, the `recStateCommit` injectivity portal, and the
+     receipt-index `Lightclient.MMR.mroot_binds_position`), carried in the game/ROM shape above.
+  2. **BLAKE3 collision-resistance** — the out-of-circuit content/transcript hash, likewise.
   3. **ed25519 EUF-CMA** — turn / strand-block signature unforgeability.
   4. **HMAC (PRF/MAC) unforgeability** — macaroon caveat-chain tags (`Authority.CaveatChain`).
   5. **AEAD confidentiality+integrity** — sealed-value / disclosure payloads.
@@ -1015,32 +1057,62 @@ authority + membership + lifecycle gates, fail-closed, balance-neutral exactly),
 ONE deployed heap-root scheme is `circuit::heap_root` (the cap-root generalization with the
 arity-3 indexed-Merkle-tree leaf `hash[addr, value, next_addr]`;
 `heap_root_cell_circuit_differential.rs` pins it against an independent rebuild AND pins the
-leaf schema itself, and the Lean gadget `Emit.EffectVmEmitHeapRoot` recomputes the SAME
-arity-2 ADDRESS image in-row with `heapRoot_binds_write` as the anti-ghost).
+leaf schema itself, and the Lean gadget `Emit.EffectVmEmitHeapRoot` recomputes the ADDRESS
+image `hash[coll,key]` in-row). Since the ember-authorized VK epoch of 2026-07-26 the address IS
+the only in-row recompute site — `heapSpliceSites = [siteHeapAddr]`
+(`Emit/EffectVmEmitHeapRoot.lean:189`), the arity-2 LEAF vestige `siteHeapLeaf` DELETED from all
+three committed registries (`Dregg2.lean:1044`, the flag-day record) — and the anti-ghost is
+correspondingly two objects: `heapSplice_addr_forced` on the address, and the splice `MapOp` itself
+on the new root (`DescriptorIR2.writesTo_functional` at the deployed `padImtSchema` denotation).
+The `heapRoot_binds_write` this paragraph used to name went with the retired prepend advance and
+resolves nowhere in the tree.
 
-⚑ STATED AT CURRENT RESOLUTION — the LEAF half of that sentence is NOT bound. On 2026-07-12
-(`919b2b0b8d`) `heap_root.rs` moved to an indexed Merkle tree: the leaf went arity 2 → 3 with
-the successor POINTER inside the digest, and the stored MAX sentinel LEAF was retired ("it
-survives only as the terminal `next_addr` pointer"). `EffectVmEmitHeapRoot.siteHeapLeaf` and
-`Substrate.Heap.leafOf` were NOT moved with it, and under the CR floor an arity-3 IMT root is
-NEVER an arity-2 `mapRoot` (`Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`) — so the Lean
-gadget does not describe the leaf the deployed tree commits, `ReconcileGatesAt` is empty at
-every deployed pre-root, and `MapOp.holdsAt` is refuted there. What IS bound today: the
-address image, and the leaf image against the DEPLOYED AIR's declared columns
-(`descriptor_ir2::map_leaf_input_cols`), by the Rust differential. The denotation cutover is
-`docs/DESIGN-mapop-denotation-move.md`; do not read this paragraph as covering the leaf until
-it lands.
+⛑ THE LEAF HALF IS BOUND — the denotation cutover LANDED 2026-07-30. The history, because it is
+the shape of the wound: on 2026-07-12 (`919b2b0b8d`) `heap_root.rs` moved to an indexed Merkle
+tree — the leaf went arity 2 → 3 with the successor POINTER inside the digest, and the stored MAX
+sentinel LEAF was retired ("it survives only as the terminal `next_addr` pointer") — and for
+eighteen days `EffectVmEmitHeapRoot.siteHeapLeaf` and `Substrate.Heap.leafOf` did NOT move with
+it. Under the CR floor an arity-3 IMT root is NEVER an arity-2 `mapRoot`
+(`Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`), so the Lean side did not describe the leaf
+the deployed tree commits: `ReconcileGatesAt` was empty at every deployed pre-root and
+`MapOp.holdsAt` was REFUTED there (`mapOpHoldsAt_unsat_at_imtRoot`) — not a weak description but a
+refutable one, taking the `.mapOp` arm of `Satisfied2` and every `AlgoStarkSound*` conclusion with
+it, on the ORDINARY path. The map-op denotation IS NOW `DeployedMapDenotation.padImtSchema
+DEPLOYED_SENTINEL` — arity-3 IMT leaves (`HeapLeaf::preimage`), the deployed `relink_next_addrs`
+pointers, sparse zero padding welded to `EMPTY_SUBTREE_ROOTS`
+(`Circuit/DescriptorIR2.lean:593-611`, "THE DENOTATION MOVED, 2026-07-30"; `Dregg2.lean:1044`,
+"THAT ⚠ IS DISCHARGED (2026-07-30)"; the design record is
+`docs/DESIGN-mapop-denotation-move.md`). The Rust differential's leaf-image pin against the
+DEPLOYED AIR's declared columns (`descriptor_ir2::map_leaf_input_cols`) survives as the second
+leg, no longer as the only one.
 
-What the wire carries vs what the circuit forces, stated exactly (the cap Phase-A staging):
-the turn carries `(addr, value, newRoot)` with `addr`/`newRoot` EXECUTOR-COMPUTED digests.
-`heapStepGuardedW_honest` proves the honest instance IS the model step (`heapStepGuarded`);
-the gadget forces `addr = hash[coll,key]`, its (retired-shape) `leaf = hash[addr,value]`, and the prepend
-advance in-row — but the DEPLOYED EffectVM row does not yet carry a `heap_root` register
-column of its own, the PI vector does not yet bind it, and the genuine sorted-TREE-update
-gates (membership-open / leaf-update / bracketed insert, the revocation-circuit shape) are
-the Phase-E lane. Until the rotation's relayout lands, `heap_root` is kernel-bound and
-scheme-pinned but NOT yet circuit-committed: a heap write today is attested by the kernel
-theorems, not by the per-turn proof.
+What the wire carries vs what the circuit forces, stated exactly: the turn carries
+`(addr, value, newRoot)` with `addr`/`newRoot` EXECUTOR-COMPUTED digests.
+`heapStepGuardedW_honest` proves the honest instance IS the model step (`heapStepGuarded`); the
+gadget forces `addr = hash[coll,key]` in-row, and the new root is forced by the SPLICE.
+
+⛑ THE PHASE-E RESIDUAL IS CLOSED. This paragraph used to end "`heap_root` is kernel-bound and
+scheme-pinned but NOT yet circuit-committed: a heap write today is attested by the kernel theorems,
+not by the per-turn proof", on two named grounds; both landed. (i) The DEPLOYED EffectVM row DOES
+carry a `heap_root` register column of its own — an 8-felt column GROUP, lane 0 at rotated limb
+`B_HEAP_ROOT = 28` plus the completion limbs 59..65, absorbed into the wide state commit
+(`Emit/EffectVmEmitRotationV3.lean:1951-1971`, `heapRootGroupCol`); that commit is the anchor the
+published proof binds (`Lightclient/NonOmissionAttack.lean:32-35`, `proof_verify.rs:349`), so the
+root is bound per turn rather than living in a witness column. (ii) The genuine sorted-TREE-update
+gate — membership-open of the addressed OLD leaf against the committed root, same-sibling new-root
+recompute — IS wired: `heapWriteV3` carries the `.write` `MapOp` `heapSpliceWriteOp`, realized by
+the deployed `Ir2Air::MapOps` AIR over `circuit/src/heap_root.rs`'s
+`CanonicalHeapTree::update_witness`, and the prepend accumulator advance (`siteHeapRootAdvance`) is
+REPLACED by it — col 87 cannot be doubly pinned
+(`Circuit/RotatedKernelRefinementExercise.lean:104-113`, "THE PHASE-E RESIDUAL — CLOSED (the splice
+wired)"). A root that is the right accumulator but the WRONG sorted-tree update is REJECTED
+(`heapWrite_sat_rejects_wrong_splice_root`, from `Satisfied2` itself via `writesTo_functional`;
+deployed-byte mutation-confirm `circuit/tests/heap_write_deployed_root_forced.rs`).
+
+⚠ WHAT REMAINS IS A ROUTING RESIDUAL, NOT A BINDING ONE: there is still no live
+`Effect::HeapWrite` variant routing to this descriptor (`turn/src/action.rs`), so `heapWriteV3` is
+registry-present / resolver-unreached, reached only by the exercise-inner heap-write path
+(`Circuit/RotatedKernelRefinementExercise.lean:113-116`) — orthogonal to the splice forcing.
 
 THE EXECUTOR-STATE BRIDGE (the universal-map rotation's long pole, NOW LANDED — `Exec.UniversalBridge`):
 the executor IS a memory program. `uproj` is the TOTAL projection of `RecordKernelState` (all 17 fields)
