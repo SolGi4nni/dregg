@@ -265,6 +265,40 @@ and the `lowest_128_bits`/`assert_n_bits` range gadgets — each a Lean emitter 
   already transcribed (a body a satisfying witness must meet).
 - **New:** every emitter's exact row/wire layout, matched to o1js.
 
+#### R2 — EARLIEST FALSIFIABLE SIGNAL, MEASURED 2026-08-01 (the FIRST Lean-emitted custom-gate rows)
+`[exists]` `metatheory/Dregg2/Circuit/Emit/KimchiCustomGates.lean` (kernel-clean, `#assert_axioms` ⊆
+{propext, choice, Quot.sound}; no `sorry`/`native_decide`) + `bridge/mina-zkapp/scripts/custom-gate-diff.mjs`
+(exit 0). The two smallest custom gates were emitted from Lean (`mkCompleteAdd`, `mkPoseidonRow`) and
+byte-diffed against o1js 2.15.0 `Provable.constraintSystem(f).gates`:
+- **`typ` MATCHES.** `KGateType.completeAdd`/`poseidon` ordinals `3`/`2` (`gate.rs` `#[repr(C)]`) ==
+  o1js `GateType` `'CompleteAdd'`/`'Poseidon'` (`mkCompleteAdd_ordinal`, `mkPoseidonRow_ordinal`, `rfl`).
+- **`coeffs` MATCHES, byte-exact.** `complete_add` emits `[]` == o1js `[]`. `poseidon` row `j` emits
+  `rcsN[5j..5j+4]` flattened (round-major, lane-minor) — **all 11 rows / 165 coefficients byte-exact**
+  against o1js's emitted `coeffs` (checked programmatically, o1js OCaml/wasm bindings vs `PastaPoseidon.rcsN`
+  from the pinned `proof-systems` crate — two INDEPENDENT sources). **No emission-side permutation:** the
+  `STATE_ORDER = [0,2,3,4,1]` shuffle is a VERIFIER-side READ in `KimchiVerify.poseidonConstraints`, NOT a
+  reorder of the emitted row. `poseidonRow0_matches_o1js` (`decide +kernel`) pins row 0; **red-proved** —
+  a one-digit corruption of any coefficient makes `decide` fail.
+- **`wires` DIVERGES, structurally and by design** — the ONE divergence. o1js emits `PERMUTS = 7`
+  placement cells `{row,col}` (the wiring pass' copy targets); a `KRow` holds VARIABLE INDICES for the
+  columns the gate constrains (11 for `completeAdd`), PRE-placement. The map var-index → placed `{row,col}`
+  is `KimchiPartition`'s named remainder — **an R1 (builder/placement) obligation, not an R2 defect.**
+- **Cost, REVISED (the byte target for the five is smaller than R2 assumed):** of the five custom gates,
+  **only `poseidon` carries coefficients** — `complete_add`, `varBaseMul`, `endoMul`, `endoMulScalar` all
+  emit `coeffs = []` (checker headers `KimchiVerify.lean:§9c.1`: "no coefficients"). So the coeff-fidelity
+  half of R2 is (a) DONE and byte-exact for the only coeff-bearing gate, and (b) trivially `[]` for the
+  other four. **R2's residual is therefore NOT coeff bytes** but: the multi-row LAYOUT of the accumulating
+  gates (`varBaseMul`/`endoMul` span several rows with `wNext` reads) and the WIRE placement — the latter
+  shared with R1. The four coeff-free gates are the same emitter shape as `complete_add` (typ + `[]` + the
+  column variables), differing only in which columns and row count. **R2 de-risks toward the low end**
+  (like R3's packing half); the variance now lives in R1's placement pass, which is where `wires` becomes
+  byte-comparable. Phase-A total estimate unchanged.
+- **Reuses:** `KRow` `[exists]` `KimchiTarget.lean`; `completeAddConstraints`/`poseidonConstraints`
+  `[exists]` `KimchiVerify.lean §9c.1` (the emitted `complete_add` row's satisfaction answers to the
+  imported checker: `mkCompleteAdd_checked`); `rcsN` `[exists]` `PastaPoseidon.lean`.
+- ⚠ **Phase A, NOT soundness.** This is byte-differential fidelity of the row (typ+coeffs) — NOT a proof
+  that the emitted gate is sound and NOT "machine-checked Pickles" (Phase B). `wires` is un-diffed until R1.
+
 ### R3 — ⚑ The byte-exact statement scaffolding (THE EPOCH-KILLER, §8)
 Emit the `spec.ml` packing (§3.3): the flat field order, the `Packed_bits` widths, the two me-only
 DIGEST fields, `branch_data`, the deferred-values + Per_proof + Step/Wrap statement public-input
