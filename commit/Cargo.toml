@@ -9,5 +9,18 @@ serde = { version = "1", features = ["derive"] }
 dregg-circuit = { path = "../circuit" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 
+[dev-dependencies]
+# `tests/key_octet_f2_twins_and_the_hole.rs` is the twin cross-check for the 30-bit KEY_COMMIT
+# packing (`typed::canonical_32_to_felts_8`), which is re-implemented byte-for-byte in FOUR
+# crates and whose byte-identity was asserted in PROSE only. The gate has to be able to CALL
+# all four, so the two copies that live outside this crate's dependency closure come in here
+# as dev-deps. Neither is used by the `dregg-commit` library — under resolver 3 a dev-dep's
+# features do not unify into a non-test build, so this adds nothing to any consumer's graph.
+#   * `dregg-cell`    -> `commitment::canonical_to_babybear_pi`
+#   * `dregg-storage` -> `commitment::canonical_32_to_felts_8`
+# (the fourth, `dregg_circuit::effect_vm::canonical_id_to_felts_4`, is already reachable).
+dregg-cell = { path = "../cell" }
+dregg-storage = { path = "../storage" }
+
 [lints]
 workspace = true
