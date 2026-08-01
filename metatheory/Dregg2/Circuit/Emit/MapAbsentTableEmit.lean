@@ -56,7 +56,8 @@ namespace Dregg2.Circuit.Emit.MapAbsentTableEmit
 open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.TableAirIR
   (BusOp BusInteraction TableAir TableGate emitTableAirJson
-   v k eSub eOneMinus gBool gAll decompGates decompQueries limbGeom decompCols)
+   v k eSub eOneMinus gBool gAll decompGates decompQueries limbGeom decompCols
+   canonHi canonLo canonDecompGates canonDecompQueries lexLtGates lexLtQueries)
 
 set_option autoImplicit false
 
@@ -150,64 +151,20 @@ def BUS_P2 : String := "ir2_p2"
 def BUS_BYTE : String := "ir2_byte"
 def BUS_MAP_LOG : String := "ir2_map_log"
 
-/-! ## §2 — The canonical-split / comparator gadgets, emitted.
+/-! ## §2 — The canonical-split / comparator gadgets.
 
-These are the Lean authors of `eval_canon_decomp` and `eval_lex_lt`. The byte-limb
-decomposition they both sit on (`eval_decomp`) is `TableAirIR`'s shared `decompGates` /
-`decompQueries`, instantiated here at `LO_BITS = 27`; the memory tables instantiate the SAME
-emitter at 30. They are parameterized by the column block so the same emitters serve the
-`MapOps` table when it follows `MapAbsent` off the hand-written path. -/
+⚠ **HOISTED, 2026-08-01 (third pass).** `canonHi`/`canonLo`/`canonDecompGates`/
+`canonDecompQueries`/`lexLtGates`/`lexLtQueries` — the Lean authors of the Rust
+`eval_canon_decomp` and `eval_lex_lt` — were defined HERE in the second pass. The universal-memory
+BOUNDARY is the second table to need them, so they now live in `TableAirIR` §6b: the same move §0
+records for `v`/`k`/`decompGates`, and for the same reason.
 
-/-- The 27-bit decomposition GATES at `limb0` (the shared emitter, at this table's width). -/
-def dGates (ve : WindowExpr) (limb0 : Nat) : List WindowExpr := decompGates LO_BITS ve limb0
-
-/-- The 27-bit decomposition byte QUERIES at `limb0`. -/
-def dQueries (limb0 : Nat) (mult : WindowExpr) : List BusInteraction :=
-  decompQueries LO_BITS BUS_BYTE limb0 mult
-
-/-- `hi4` of a canonical-decomposition block. -/
-def canonHi (b0 : Nat) : WindowExpr := v b0
-/-- `lo27 = value − hi4 · 2^27`. -/
-def canonLo (ve : WindowExpr) (b0 : Nat) : WindowExpr :=
-  eSub ve (.mul (v b0) (k HI_BASE))
-
-/-- The gates of one CANONICAL decomposition `value = hi4·2^27 + lo27` over the 13-column block
-at `b0` = `[hi4, lo27 limbs (10), is15, inv15]`, gated by `gate`.
-
-The last gate is **the uniqueness tooth**: `is15 · lo27 = 0`. With `hi4 ∈ [0,16)` by the nibble
-query and `lo27 ∈ [0, 2^27)` by the decomposition, `hi4 = 15` admits only `lo27 = 0`, so the only
-representable value at the top nibble is `p − 1` — the non-canonical alias `x + p` of any small
-`x` is UNSAT. That is what makes the comparators in §2c integer-faithful rather than
-representative-dependent. -/
-def canonDecompGates (ve : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List WindowExpr :=
-  dGates (canonLo ve b0) (b0 + 1) ++
-  [ gBool (b0 + 1 + DECOMP)
-  , .mul (eSub (v b0) (k HI_MAX)) (v (b0 + 1 + DECOMP))
-  , eSub (.mul (eSub (v b0) (k HI_MAX)) (v (b0 + 2 + DECOMP)))
-         (eSub gate (v (b0 + 1 + DECOMP)))
-  , .mul (v (b0 + 1 + DECOMP)) (canonLo ve b0) ]
-
-/-- The queries of one canonical decomposition: the `hi4` nibble, then the low limbs. -/
-def canonDecompQueries (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
-  ⟨BUS_BYTE, .query, mult, [v b0]⟩ :: dQueries (b0 + 1) mult
-
-/-- The gates of one lexicographic STRICT-LT `a < b` over canonical `(hi, lo)` pairs, on the
-13-column block at `b0` = `[s, dhi, dlo, dlo limbs (10)]`, gated by `gate`.
-
-`s = 1` ⇒ `bHi ≥ aHi + 1` (witness `dhi`, a nibble); `s = 0` ⇒ `bHi = aHi` and
-`bLo ≥ aLo + 1` (witness `dlo`, 27-bit). -/
-def lexLtGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExpr) :
-    List WindowExpr :=
-  gBool b0 :: dGates (v (b0 + 2)) (b0 + 3) ++
-  [ eSub (v (b0 + 1))
-         (.mul (.mul gate (v b0)) (eSub (eSub bHi aHi) (k 1)))
-  , .mul (.mul gate (eOneMinus (v b0))) (eSub bHi aHi)
-  , eSub (v (b0 + 2))
-         (.mul (.mul gate (eOneMinus (v b0))) (eSub (eSub bLo aLo) (k 1))) ]
-
-/-- The queries of one lex comparator: the `dhi` nibble, then the `dlo` limbs. -/
-def lexLtQueries (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
-  ⟨BUS_BYTE, .query, mult, [v (b0 + 1)]⟩ :: dQueries (b0 + 3) mult
+⚑ `lexLtGates` also SPLIT there, into `lexLtRowLocalGates ++ lexLtBranchGates`, because the
+boundary asserts the three BRANCH equations under `.transition` (the Rust `transition_only` flag)
+while this table asserts them under `.all`. A per-table copy would have re-derived the algebra
+beside a different filter, which `TableGate.transition_weakens` says is invisible to any check
+that reads the body alone. The list THIS file builds is unchanged — `lexLtGates` is still the
+concatenation — and the emitted artifact is byte-identical. -/
 
 /-! ## §3 — The chip tuples. -/
 
@@ -281,12 +238,12 @@ def mapAbsentGates : List TableGate := mapAbsentGateBodies.map gAll
 def mapAbsentInteractions : List BusInteraction :=
   -- the three canonical decompositions' nibble + limb queries (multiplicity 1, as deployed:
   -- `eval_canon_decomp` is the UNCOUNTED variant, so a pad row still queries).
-  canonDecompQueries MA_A_DEC0 (k 1) ++
-  canonDecompQueries MA_K_DEC0 (k 1) ++
-  canonDecompQueries MA_B_DEC0 (k 1) ++
+  canonDecompQueries BUS_BYTE MA_A_DEC0 (k 1) ++
+  canonDecompQueries BUS_BYTE MA_K_DEC0 (k 1) ++
+  canonDecompQueries BUS_BYTE MA_B_DEC0 (k 1) ++
   -- the two comparators' queries.
-  lexLtQueries MA_CMP_LO0 (k 1) ++
-  lexLtQueries MA_CMP_HI0 (k 1) ++
+  lexLtQueries BUS_BYTE MA_CMP_LO0 (k 1) ++
+  lexLtQueries BUS_BYTE MA_CMP_HI0 (k 1) ++
   -- the low leaf's arity-3 absorb, at multiplicity `is_real`.
   [⟨BUS_P2, .query, gReal, leafTuple MA_LO_ADDR MA_LO_VALUE MA_LO_NEXT MA_LO_LEAF⟩] ++
   -- the depth-many `node8` folds up ONE path to the committed root.
@@ -328,13 +285,9 @@ Counts derived from the layout, not transcribed: `1 + DEPTH + LANES + 3·9 + 2·
 #guard mapAbsentTable.busCountOp "ir2_p2" .query == 17
 #guard mapAbsentTable.busCountOp "ir2_map_log" .receive == 1
 
--- Each gadget's own contribution, so a regression names the gadget rather than the total.
-#guard (dGates (v 0) 100).length == 5
-#guard (dQueries 100 (k 1)).length == 6
-#guard (canonDecompGates (v 0) 100 (v 1)).length == 9
-#guard (canonDecompQueries 100 (k 1)).length == 7
-#guard (lexLtGates (v 0) (v 1) (v 2) (v 3) 100 (v 4)).length == 9
-#guard (lexLtQueries 100 (k 1)).length == 7
+-- Each gadget's own contribution, so a regression names the gadget rather than the total. ⓘ The
+-- canonical-split / comparator rows moved to `TableAirIR` §6b with the gadgets themselves; what is
+-- pinned HERE is the part this table authors.
 #guard (leafTuple 1 2 3 4).length == 25
 #guard (node8Tuple 10 20 30 40).length == 25
 #guard mapLogTuple.length == 19

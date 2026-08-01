@@ -220,6 +220,18 @@ def TableAir.Holds (t : TableAir) (rows : List VmRowEnv) : Prop :=
   ∀ i, ∀ h : i < rows.length,
     t.RowHolds rows[i] (decide (i = 0)) (decide (i + 1 = rows.length))
 
+/-- …and a WHOLE CONCRETE TRACE's verdict is decidable too, via `Nat.decidableBallLT`. This is what
+lets a multi-row false-pole witness — the shape every cross-row claim needs — be exhibited against
+the EMITTED gate list rather than against a transcription of it.
+
+⚠ `Coherent` is NOT decidable and deliberately has no instance: it equates two `Nat → ℤ`
+FUNCTIONS, which no `decide` can settle. A witness must discharge it by `rfl`/`funext`, which is
+the honest cost of the hypothesis rather than a gap in it. -/
+instance TableAir.instDecidableHolds (t : TableAir) (rows : List VmRowEnv) :
+    Decidable (t.Holds rows) :=
+  inferInstanceAs (Decidable (∀ i, ∀ h : i < rows.length,
+    t.RowHolds rows[i] (decide (i = 0)) (decide (i + 1 = rows.length))))
+
 /-- ⚑ **COHERENCE — the half `Holds` does not say, and without which every cross-row gate is
 worthless.** A `List VmRowEnv` carries an INDEPENDENT `nxt` per window; nothing in `Holds` ties
 window `i`'s `nxt` to window `i+1`'s `loc`. p3's trace does tie them (`next` is the row
@@ -435,13 +447,157 @@ def decompQueries (bits : Nat) (byteBus : String) (limb0 : Nat) (mult : WindowEx
   (List.range ((limbGeom bits).1 - 1)).map
     (fun i => ⟨byteBus, .query, mult, [v (limb0 + i)]⟩)
 
+/-! ### §6b — The CANONICAL-SPLIT and LEX-COMPARATOR gadgets, emitted.
+
+⚠ **HOISTED, and for the reason §6 already names.** These were `MapAbsentTableEmit`'s private
+emitters in the second pass. The universal-memory BOUNDARY is the second table to need them, and a
+per-table copy of a comparator is exactly the drift this file exists to prevent — the more so
+because the boundary asserts the SAME three branch equations under a DIFFERENT row selector, which
+is precisely the transcription a copy would get wrong invisibly (`TableGate.transition_weakens`).
+
+They are the Lean authors of the Rust `eval_canon_decomp` and `eval_lex_lt`, fixed at the deployed
+`KEY_LO_BITS = 27` geometry (both consumers use it; the memory tables use the §6 emitter at 30). -/
+
+/-- `KEY_LO_BITS`. -/
+def KEY_LO_BITS : Nat := 27
+/-- `KEY_HI_BASE = 2 ^ KEY_LO_BITS` — the canonical split base. -/
+def KEY_HI_BASE : ℤ := 134217728
+/-- `KEY_HI_MAX = 15`: `p − 1 = 15 · 2^27`, which is what makes the split UNIQUE. -/
+def KEY_HI_MAX : ℤ := 15
+/-- `MA_DECOMP_COLS` — `[hi4, lo27 limbs, is15, inv15]`. -/
+def CANON_COLS : Nat := 1 + decompCols KEY_LO_BITS + 2
+/-- `MA_CMP_COLS` — `[s, dhi, dlo, dlo limbs]`. -/
+def CMP_COLS : Nat := 3 + decompCols KEY_LO_BITS
+
+#guard CANON_COLS == 13
+#guard CMP_COLS == 13
+#guard KEY_HI_MAX * KEY_HI_BASE == 2013265921 - 1
+
+/-- `hi4` of a canonical-decomposition block. -/
+def canonHi (b0 : Nat) : WindowExpr := v b0
+/-- `lo27 = value − hi4 · 2^27`. -/
+def canonLo (ve : WindowExpr) (b0 : Nat) : WindowExpr :=
+  eSub ve (.mul (v b0) (k KEY_HI_BASE))
+
+/-- The gates of one CANONICAL decomposition `value = hi4·2^27 + lo27` over the 13-column block at
+`b0`, gated by `gate`. The last is the UNIQUENESS TOOTH `is15 · lo27 = 0`. -/
+def canonDecompGates (ve : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List WindowExpr :=
+  decompGates KEY_LO_BITS (canonLo ve b0) (b0 + 1) ++
+  [ gBool (b0 + 1 + decompCols KEY_LO_BITS)
+  , .mul (eSub (v b0) (k KEY_HI_MAX)) (v (b0 + 1 + decompCols KEY_LO_BITS))
+  , eSub (.mul (eSub (v b0) (k KEY_HI_MAX)) (v (b0 + 2 + decompCols KEY_LO_BITS)))
+         (eSub gate (v (b0 + 1 + decompCols KEY_LO_BITS)))
+  , .mul (v (b0 + 1 + decompCols KEY_LO_BITS)) (canonLo ve b0) ]
+
+/-- The queries of one canonical decomposition: the `hi4` nibble, then the low limbs. -/
+def canonDecompQueries (byteBus : String) (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+  ⟨byteBus, .query, mult, [v b0]⟩ :: decompQueries KEY_LO_BITS byteBus (b0 + 1) mult
+
+/-- The ROW-LOCAL half of a lex comparator block: the branch selector's boolean and the `dlo`
+range decomposition. Always `.all`-scoped in both consumers. -/
+def lexLtRowLocalGates (b0 : Nat) : List WindowExpr :=
+  gBool b0 :: decompGates KEY_LO_BITS (v (b0 + 2)) (b0 + 3)
+
+/-- ⚑ The three BRANCH equations of a lex comparator, split out from the row-local half because
+the two deployed consumers assert them under DIFFERENT selectors: `MapAbsent` compares two columns
+of ONE row (`.all`), the universal boundary compares a row against its SUCCESSOR (`.transition`,
+the Rust `transition_only` flag). Keeping them in one list would have forced the second consumer to
+re-derive the algebra beside a different filter. -/
+def lexLtBranchGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExpr) :
+    List WindowExpr :=
+  [ eSub (v (b0 + 1)) (.mul (.mul gate (v b0)) (eSub (eSub bHi aHi) (k 1)))
+  , .mul (.mul gate (eOneMinus (v b0))) (eSub bHi aHi)
+  , eSub (v (b0 + 2)) (.mul (.mul gate (eOneMinus (v b0))) (eSub (eSub bLo aLo) (k 1))) ]
+
+/-- The gates of one lexicographic STRICT-LT `a < b`, all at one selector — the `MapAbsent` shape.
+`s = 1` ⇒ `bHi ≥ aHi + 1` (witness `dhi`, a nibble); `s = 0` ⇒ `bHi = aHi` and `bLo ≥ aLo + 1`
+(witness `dlo`, 27-bit). -/
+def lexLtGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List WindowExpr :=
+  lexLtRowLocalGates b0 ++ lexLtBranchGates aHi aLo bHi bLo b0 gate
+
+/-- The queries of one lex comparator: the `dhi` nibble, then the `dlo` limbs. -/
+def lexLtQueries (byteBus : String) (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+  ⟨byteBus, .query, mult, [v (b0 + 1)]⟩ :: decompQueries KEY_LO_BITS byteBus (b0 + 3) mult
+
+-- Per-gadget contributions, so a regression names the gadget rather than a total.
+#guard (canonDecompGates (v 0) 100 (v 1)).length == 9
+#guard (canonDecompQueries "b" 100 (k 1)).length == 7
+#guard (lexLtRowLocalGates 100).length == 6
+#guard (lexLtBranchGates (v 0) (v 1) (v 2) (v 3) 100 (v 4)).length == 3
+#guard (lexLtGates (v 0) (v 1) (v 2) (v 3) 100 (v 4)).length == 9
+#guard (lexLtQueries "b" 100 (k 1)).length == 7
+
 -- Per-geometry contributions, so a regression names the width rather than the total.
 #guard (decompGates 30 (v 0) 100).length == 4
 #guard (decompQueries 30 "b" 100 (k 1)).length == 7
 #guard (decompGates 27 (v 0) 100).length == 5
 #guard (decompQueries 27 "b" 100 (k 1)).length == 6
 
-/-! ## §7 — Tripwires: the grammar golden, and both polarities of `RowHolds`. -/
+/-! ## §7 — ⚠ WHAT THIS TOOL STILL CANNOT EXPRESS: `ExactPublicTable`, PRICED.
+
+Ten of the eleven hand-written `Ir2Air` arms are expressible in the vocabulary above. **One is
+not**, and it is priced here rather than discovered mid-port. Measured at source
+(`descriptor_ir2.rs`), the arm is:
+
+```rust
+Ir2Air::ExactPublicTable { table_id, manifest } => {
+    let prep_row = builder.preprocessed().current_slice();
+    let entry: Vec<AB::Expr> = prep_row[..manifest.arity].iter().map(|&v| v.into()).collect();
+    let pinned: AB::Expr = prep_row[manifest.mult_col()].into();
+    let multiplicity: AB::Expr = local[0].into();
+    builder.assert_zero(multiplicity.clone() - pinned);
+    LookupBus::new(&exact_public_bus_name(*table_id)).table_entry(builder, entry, multiplicity);
+}
+```
+
+⚑ **The asymmetry is the whole point: that is ONE gate and ONE bus leg — the SMALLEST arm of the
+eleven — and it is the one that cannot be ported.** The cost is entirely in the IR, not in the
+constraint, which is why it is a tool project rather than a transcription and why starting it
+inside a burn-down of transcriptions would have been the wrong shape.
+
+**Four things are missing, in the order they bite.**
+
+1. **A PREPROCESSED-COLUMN LEAF.** `WindowExpr` has `loc`/`nxt` and no `prep c`. ⚠ And
+   `WindowExpr` is NOT this file's type — it is `DescriptorIR2`'s, shared with the MAIN
+   descriptor's `windowGate`. Adding a constructor there re-reds every match on it on both sides
+   (Lean: `eval`, `toJson`, `readsCol`, `readsNext`; Rust: `parse_window_expr`, `eval_expr`,
+   `degree`, `max_var`, `window_body_as_local`, `reads_next`), and — because `Ir2Air::Main` has NO
+   preprocessed trace — a `prep` leaf reaching a main descriptor must be REFUSED by a new
+   fail-closed check, or it panics inside the evaluator. ⓘ **A genuine design fork**, and it should
+   be decided before any of the rest: give `TableAir` its OWN expression type (duplicating the
+   grammar this file's §5 exists to avoid duplicating) or widen the shared one (poisoning the main
+   IR with a leaf it can never serve).
+
+2. **A WAY TO DECLARE THE PREPROCESSED MATRIX.** `check` bounds every column index against `width`;
+   a `prep` index lives in a DIFFERENT column space and needs its own declared bound. `TableAir`
+   therefore gains a field, the wire format gains a key, and **all six checked-in artifacts
+   re-emit** — with `air_fingerprint()` and `verifier_source_closure_fingerprint()` moving, since
+   both splice `TABLE_AIR_ARTIFACTS` whole.
+
+3. **PARAMETERIZATION, which the other ten do not need.** This is not one table: it is a FAMILY.
+   The arity, the multiplicity column and the bus name (`ir2_exact_public_{table_id}`) all come
+   from the DESCRIPTOR, one instance per declared `ExactPublicRows` table, with arity bounded by
+   `MAX_EXACT_PUBLIC_ARITY = 64`. So the emitted object is a SCHEMA — `arity → multCol → bus →
+   TableAir` — and `Ir2Air::LeanTable(Arc<LeanTableAir>)` must become a variant that carries the
+   Lean-authored algebra AND the manifest DATA (`preprocessed_trace` returns a `RowMajorMatrix<F>`
+   the manifest materializes; the Lean side authors no values). Emitting 64 fixed artifacts
+   instead is not a way out — the bus name still varies with `table_id`.
+
+4. **THE DIFFERENTIAL ORACLE GOES BLIND WITHOUT AN UPGRADE.** `table_air_gates_accept` builds an
+   EMPTY preprocessed window (`RowWindow::from_two_rows(&[], &[])`). Every mutation sweep in this
+   burn-down runs through it, so a `prep`-reading table would be swept against zeros — the
+   instrument would report a clean undetected set while seeing none of the columns the arm is
+   about. ⚑ That is the failure this repo's own doctrine names: a gate that cannot go red. The
+   oracle must take the preprocessed rows BEFORE the first `prep`-reading table is emitted, not
+   after.
+
+**Estimate, said as an estimate and not as a constraint:** one design decision (item 1), a wire
+flag day covering six artifacts and two fingerprints (item 2), an `Ir2Air` variant reshape plus a
+schema-instantiation path (item 3), and an oracle upgrade (item 4). None of it is a reason to leave
+a Rust-authored AIR standing — it is the shape of the work, and the work is the next item, not a
+deferral. -/
+
+/-! ## §8 — Tripwires: the grammar golden, and both polarities of `RowHolds`. -/
 
 /-- A tiny table exercising every node of the grammar: gates at three selectors, a next-row
 read, all four bus ops, a non-constant multiplicity. -/
