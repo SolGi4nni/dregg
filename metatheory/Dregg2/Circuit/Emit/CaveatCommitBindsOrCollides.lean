@@ -85,6 +85,12 @@ theorem chainCommitFind_spec (hash : List ℤ → ℤ)
         have := congrArg List.flatten hcs
         rwa [chunk31_flatten, chunk31_flatten] at this
       refine ⟨fun htake => hne ?_, _hseed⟩
+      -- `htake` is `SpongeColl`'s input-equality half at the returned diagonal pair
+      -- `(l.take 4, l'.take 4)`, i.e. `(l.take 4, l'.take 4).1 = (l.take 4, l'.take 4).2`.
+      -- Coerce those projections (defeq) to the bare list equation the `rw` matches — the
+      -- list-only analog of `WireCommitBindsOrCollides.wireCommitRFind_spec`'s `:144`, without
+      -- the iroot conjunct (`hne : l ≠ l'` here is a bare list inequality, not `(l,ir) ≠ (l',ir')`).
+      replace htake : List.take 4 l = List.take 4 l' := htake
       rw [← List.take_append_drop 4 l, ← List.take_append_drop 4 l', htake, hdrop]
     · exact absurd hcoll hif
 
