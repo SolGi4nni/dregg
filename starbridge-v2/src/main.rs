@@ -38,7 +38,6 @@ use starbridge_v2::client;
 #[cfg(feature = "gpui-ui")]
 use starbridge_v2::{cockpit, login};
 
-use dregg_cell::AuthRequired;
 #[cfg(feature = "embedded-executor")]
 use starbridge_v2::{demo, reflect, world};
 
@@ -5181,7 +5180,7 @@ fn voting_card_fire(
         let slot = v::tally_slot_for_choice(v::VOTE_YES);
         spine.commit(
             "record_tally",
-            &AuthRequired::None,
+            &starbridge_v2::app_registry::HELD_BY_A_ROOT_OPERATOR,
             &v::ADMINISTRATOR_RIGHTS,
             |live| {
                 let t = field_tail_u64_le(&live.fields[slot]);
@@ -5319,7 +5318,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
                 spine
                     .commit(
                         "record_tally",
-                        &AuthRequired::None,
+                        &starbridge_v2::app_registry::HELD_BY_A_ROOT_OPERATOR,
                         &v::ADMINISTRATOR_RIGHTS,
                         |st| {
                             let t = field_tail_u64_le(&st.fields[slot]);
@@ -5389,7 +5388,7 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
                 .commit_as(
                     signer,
                     "propose_table_update",
-                    &AuthRequired::None,
+                    &starbridge_v2::app_registry::HELD_BY_A_PARTICIPANT,
                     &gn::COMMITTEE_RIGHTS,
                     vec![witness],
                     |st| {
@@ -5446,9 +5445,12 @@ fn render_apps_showcase_headless(out: &str, w: f32, h: f32) -> anyhow::Result<()
         // Advance CLAIMED -> SUBMITTED so the stage gauge climbs past the seeded claim
         // (the escrowed-reward gauge is already full at the seeded 1000/1000).
         spine
-            .commit("submit", &AuthRequired::None, &b::WORKER_RIGHTS, |_st| {
-                b::submit_effects(bcell, "ipfs://bafy-the-registry-work")
-            })
+            .commit(
+                "submit",
+                &starbridge_v2::app_registry::HELD_BY_A_PARTICIPANT,
+                &b::WORKER_RIGHTS,
+                |_st| b::submit_effects(bcell, "ipfs://bafy-the-registry-work"),
+            )
             .map_err(|e| anyhow::anyhow!("bounty-board submit refused: {e}"))?;
         total_fired += 1;
         let card = app_card(id).ok_or_else(|| anyhow::anyhow!("'{id}' ships no wired card"))?;
@@ -5649,36 +5651,41 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         let deliveries = 8u64;
         for _ in 0..deliveries {
             spine
-                .commit("advance", &AuthRequired::None, &el::AGENT_RIGHTS, |st| {
-                    let step =
-                        field_tail_u64_le(&st.fields[el::STEP_SLOT as usize]).saturating_add(1);
-                    let paid = field_tail_u64_le(&st.fields[el::PERIODS_PAID_SLOT as usize])
-                        .saturating_add(1);
-                    vec![
-                        dregg_app_framework::Effect::SetField {
-                            cell,
-                            index: el::STEP_SLOT as u64,
-                            value: dregg_app_framework::field_from_u64(step),
-                        },
-                        dregg_app_framework::Effect::SetField {
-                            cell,
-                            index: el::STATE_DIGEST_SLOT as u64,
-                            value: dregg_app_framework::field_from_u64(0xD00D + step),
-                        },
-                        dregg_app_framework::Effect::SetField {
-                            cell,
-                            index: el::PERIODS_PAID_SLOT as u64,
-                            value: dregg_app_framework::field_from_u64(paid),
-                        },
-                        dregg_app_framework::Effect::EmitEvent {
-                            cell,
-                            event: dregg_app_framework::Event::new(
-                                dregg_app_framework::symbol("lease-advanced"),
-                                vec![dregg_app_framework::field_from_u64(step)],
-                            ),
-                        },
-                    ]
-                })
+                .commit(
+                    "advance",
+                    &starbridge_v2::app_registry::HELD_BY_AN_OBSERVER,
+                    &el::AGENT_RIGHTS,
+                    |st| {
+                        let step =
+                            field_tail_u64_le(&st.fields[el::STEP_SLOT as usize]).saturating_add(1);
+                        let paid = field_tail_u64_le(&st.fields[el::PERIODS_PAID_SLOT as usize])
+                            .saturating_add(1);
+                        vec![
+                            dregg_app_framework::Effect::SetField {
+                                cell,
+                                index: el::STEP_SLOT as u64,
+                                value: dregg_app_framework::field_from_u64(step),
+                            },
+                            dregg_app_framework::Effect::SetField {
+                                cell,
+                                index: el::STATE_DIGEST_SLOT as u64,
+                                value: dregg_app_framework::field_from_u64(0xD00D + step),
+                            },
+                            dregg_app_framework::Effect::SetField {
+                                cell,
+                                index: el::PERIODS_PAID_SLOT as u64,
+                                value: dregg_app_framework::field_from_u64(paid),
+                            },
+                            dregg_app_framework::Effect::EmitEvent {
+                                cell,
+                                event: dregg_app_framework::Event::new(
+                                    dregg_app_framework::symbol("lease-advanced"),
+                                    vec![dregg_app_framework::field_from_u64(step)],
+                                ),
+                            },
+                        ]
+                    },
+                )
                 .map_err(|e| anyhow::anyhow!("execution-lease advance refused: {e}"))?;
             total_fired += 1;
         }
@@ -5714,18 +5721,26 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         // ship (FUNDED -> SHIPPED): the seller commits the sealed delivery (WriteOnce
         // DELIVERY_HASH + StrictMonotonic STATE).
         spine
-            .commit("ship", &AuthRequired::None, &e::SELLER_RIGHTS, |_st| {
-                e::ship_effects(cell, &dregg_app_framework::field_from_u64(0x5417))
-            })
+            .commit(
+                "ship",
+                &starbridge_v2::app_registry::HELD_BY_A_ROOT_OPERATOR,
+                &e::SELLER_RIGHTS,
+                |_st| e::ship_effects(cell, &dregg_app_framework::field_from_u64(0x5417)),
+            )
             .map_err(|err| anyhow::anyhow!("escrow-market ship refused: {err}"))?;
         total_fired += 1;
         // settle (SHIPPED -> SETTLED): release the escrow IN FULL — the FLASHWELL
         // AffineEq(RELEASED + REFUNDED == ESCROWED) conservation (released = escrowed).
         spine
-            .commit("settle", &AuthRequired::None, &e::SELLER_RIGHTS, |st| {
-                let escrowed = field_tail_u64_le(&st.fields[e::ESCROWED_SLOT]);
-                e::settle_effects(cell, escrowed, 0)
-            })
+            .commit(
+                "settle",
+                &starbridge_v2::app_registry::HELD_BY_A_ROOT_OPERATOR,
+                &e::SELLER_RIGHTS,
+                |st| {
+                    let escrowed = field_tail_u64_le(&st.fields[e::ESCROWED_SLOT]);
+                    e::settle_effects(cell, escrowed, 0)
+                },
+            )
             .map_err(|err| anyhow::anyhow!("escrow-market settle refused: {err}"))?;
         total_fired += 1;
         let json = starbridge_escrow_market::card::escrow_card_json();
@@ -5769,11 +5784,16 @@ fn render_service_economy_headless(out: &str, w: f32, h: f32) -> anyhow::Result<
         // is an identity over three SLOTS, not a conservation of moved value.
         let payee = j::party_id(starbridge_v2::app_registry::REGISTRY_COMPUTE_PROVIDER);
         spine
-            .commit("settle", &AuthRequired::None, &j::REQUESTER_RIGHTS, |st| {
-                let budget = field_tail_u64_le(&st.fields[j::BUDGET_SLOT]);
-                let bid = field_tail_u64_le(&st.fields[j::BID_SLOT]);
-                j::settle_effects(cell, payee, bid, budget.saturating_sub(bid))
-            })
+            .commit(
+                "settle",
+                &starbridge_v2::app_registry::HELD_BY_A_ROOT_OPERATOR,
+                &j::REQUESTER_RIGHTS,
+                |st| {
+                    let budget = field_tail_u64_le(&st.fields[j::BUDGET_SLOT]);
+                    let bid = field_tail_u64_le(&st.fields[j::BID_SLOT]);
+                    j::settle_effects(cell, payee, bid, budget.saturating_sub(bid))
+                },
+            )
             .map_err(|err| anyhow::anyhow!("compute-exchange settle refused: {err}"))?;
         total_fired += 1;
         let json = starbridge_compute_exchange::card::job_card_json();

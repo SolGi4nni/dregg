@@ -59,6 +59,44 @@ use std::rc::Rc;
 /// about who the provider is would be invisible in both.
 pub const REGISTRY_COMPUTE_PROVIDER: &str = "provider-gpu";
 
+// ===========================================================================
+// THE HELD SIDE OF THE LATTICE — what a registry DRIVER actually holds.
+// ===========================================================================
+//
+// Every starbridge-app declares a three-rung `*_RIGHTS` ladder, and every rung is a
+// [`Requirement`] — the DEMAND side ("what must a holder hold"). Nothing named the
+// other side, so every call site that had to supply a `held: &AuthRequired` reached
+// for `AuthRequired::None`, which is the lattice TOP: the value that clears every
+// requirement including `Requirement::Root`. Twenty-eight sites did that, and the cap
+// tooth was therefore CONSTANT-TRUE across the whole registry — the shape was fixed by
+// the `Requirement` migration, but nothing could be refused.
+//
+// These three statics are the hold-side vocabulary the demand-side ladder was missing.
+// They are `static` (not `const`) so `&HELD_*` is genuinely `&'static AuthRequired` and
+// can sit in a `Copy` [`AppEntry`].
+//
+// ⚠ THE RUNGS ARE NOT A RANK. The lattice is `Signature ⊏ Either ⊏ None` and
+// `Proof ⊏ Either ⊏ None`, with `Signature` and `Proof` INCOMPARABLE — see
+// [`dregg_cell::AuthRequired::is_narrower_or_equal`]. A driver holding
+// [`HELD_BY_AN_OBSERVER`] does not clear an `AtLeast(Either)` requirement.
+
+/// **Root.** The lattice TOP: clears every requirement except [`Requirement::Never`].
+/// The authority of a party that OWNS the app instance — a gallery curator, an escrow
+/// seller, a nameservice owner, a poll administrator, the polis governance operator.
+/// Correct at exactly those sites and a silent hole at every other one.
+pub static HELD_BY_A_ROOT_OPERATOR: AuthRequired = AuthRequired::None;
+
+/// **Sig-or-proof.** Clears `AtLeast(Either)`, `AtLeast(Signature)` and `AtLeast(Proof)`;
+/// does NOT clear [`Requirement::Root`]. The authority of a party that ACTS INSIDE an app
+/// instance it does not own — an artist, a bidder, a worker, a fighter, a recorder, a
+/// custodian, a committee member.
+pub static HELD_BY_A_PARTICIPANT: AuthRequired = AuthRequired::Either;
+
+/// **Signature only.** Clears `AtLeast(Signature)` and nothing above it — not
+/// `AtLeast(Either)`, not `AtLeast(Proof)` (incomparable), not [`Requirement::Root`].
+/// The narrow read/step tier: the execution-lease AGENT, a visitor, an auditor.
+pub static HELD_BY_AN_OBSERVER: AuthRequired = AuthRequired::Signature;
+
 /// One **app substrate** — an [`AppCipherclerk`] + [`EmbeddedExecutor`] pair (the
 /// app framework's SDK surface every verified-turn fire routes through). A launched
 /// registry app owns one; its backing cell, its seeded program, and every turn it
@@ -131,6 +169,10 @@ pub struct LaunchedRegistryApp {
     /// each app's lifecycle is different (gallery `submit`, auction `commit_bid`,
     /// …).
     drive: DriveFn,
+    /// The authority the representative driver HOLDS — [`AppEntry::driver_rights`],
+    /// carried onto the launch so [`Self::drive`] and the World path cannot disagree
+    /// about who is firing.
+    driver_rights: &'static AuthRequired,
 }
 
 impl LaunchedRegistryApp {
@@ -140,18 +182,33 @@ impl LaunchedRegistryApp {
     }
 
     /// **Drive one representative affordance** — fire a real verified turn on the
-    /// live substrate. Returns the executor's OWN [`TurnReceipt`] (the proof the
-    /// turn committed). The fire WRITES to the substrate ledger; read the new state
-    /// back with [`AppSubstrate::cell_state`] (the inspector seam) to confirm the
+    /// live substrate, as the app's declared driver role
+    /// ([`AppEntry::driver_rights`]). Returns the executor's OWN [`TurnReceipt`] (the
+    /// proof the turn committed). The fire WRITES to the substrate ledger; read the new
+    /// state back with [`AppSubstrate::cell_state`] (the inspector seam) to confirm the
     /// shared ledger.
     pub fn drive(&self) -> Result<TurnReceipt, FireExecuteError> {
-        (self.drive)(&self.app, &self.substrate)
+        self.drive_as(self.driver_rights)
+    }
+
+    /// **Drive the representative affordance as a holder of `held`** — the same fire,
+    /// with the actor's authority supplied by the caller instead of taken from the
+    /// entry. An under-authorized `held` is refused by the affordance's cap tooth
+    /// ([`dregg_cell::Requirement::satisfied_by`]) with nothing submitted.
+    pub fn drive_as(&self, held: &AuthRequired) -> Result<TurnReceipt, FireExecuteError> {
+        (self.drive)(&self.app, &self.substrate, held)
+    }
+
+    /// The authority this launch's representative driver holds (the entry's declared
+    /// role — [`AppEntry::driver_rights`]).
+    pub fn driver_rights(&self) -> &'static AuthRequired {
+        self.driver_rights
     }
 }
 
 /// The per-app drive closure — fires one representative affordance through the
-/// substrate's cipherclerk + executor.
-type DriveFn = fn(&DeosApp, &AppSubstrate) -> Result<TurnReceipt, FireExecuteError>;
+/// substrate's cipherclerk + executor, as a holder of the supplied authority.
+type DriveFn = fn(&DeosApp, &AppSubstrate, &AuthRequired) -> Result<TurnReceipt, FireExecuteError>;
 
 /// Read a [`dregg_app_framework::FieldElement`] (a 32-byte big-endian field) as the
 /// `u64` in its last 8 bytes — the comparison the apps' slot caveats use, so a
@@ -282,8 +339,15 @@ pub fn app_card(id: &str) -> Option<AppCard> {
 
 /// gallery card fire — the `submit` button seals a submission into the next free
 /// WriteOnce board slot (read off World's LIVE state), the SAME verified turn the
-/// gallery `world_drive` fires. Later-phase methods (`close_submissions` / `reveal` /
-/// `curate`) are not live-fireable from the seeded SUBMISSION phase → surfaced refusal.
+/// gallery `world_drive` fires.
+///
+/// **The card fires as an ARTIST** ([`HELD_BY_A_PARTICIPANT`]), not as the curator: a
+/// card surface is somebody VISITING an instance, and the gallery's own ladder says an
+/// artist holds `Either`. So the CURATOR-tier buttons (`close_submissions` / `curate`,
+/// [`starbridge_gallery::CURATOR_RIGHTS`] = [`Requirement::Root`]) are refused by the
+/// CAP TOOTH here — a real [`WorldFireError::Gate`] naming what was required and what
+/// was held, not a hand-written string. `reveal` is artist-tier but out of phase from the
+/// seeded SUBMISSION state and stays a surfaced phase refusal.
 #[cfg(feature = "embedded-executor")]
 fn gallery_card_fire(
     spine: &AppWorldSpine,
@@ -294,10 +358,25 @@ fn gallery_card_fire(
     let cell = spine.app_cell();
     if method == g::service::METHOD_SUBMIT {
         let seal = dregg_app_framework::field_from_u64(0xA17);
-        spine.commit("submit", &AuthRequired::None, &g::ARTIST_RIGHTS, |live| {
-            let slot = g::next_free_submit_slot(live).unwrap_or_else(|| g::submit_slot(0));
-            g::submit_effects(cell, slot, &seal)
-        })
+        spine.commit(
+            "submit",
+            &HELD_BY_A_PARTICIPANT,
+            &g::ARTIST_RIGHTS,
+            |live| {
+                let slot = g::next_free_submit_slot(live).unwrap_or_else(|| g::submit_slot(0));
+                g::submit_effects(cell, slot, &seal)
+            },
+        )
+    } else if method == g::service::METHOD_CLOSE_SUBMISSIONS || method == g::service::METHOD_CURATE
+    {
+        // Curator tier. The card holds an artist's authority, so this is the cap tooth's
+        // refusal to make — nothing is built, nothing is committed.
+        spine.commit(
+            method,
+            &HELD_BY_A_PARTICIPANT,
+            &g::CURATOR_RIGHTS,
+            |_live| Vec::new(),
+        )
     } else {
         Err(WorldFireError::World {
             reason: format!(
@@ -309,7 +388,8 @@ fn gallery_card_fire(
 
 /// bounty-board card fire — the `claim` button advances the bounty state machine
 /// OPEN → CLAIMED (StrictMonotonic re-enforced by World's executor), the SAME verified
-/// turn the bounty `world_drive` fires.
+/// turn the bounty `world_drive` fires. **The card fires as a WORKER**
+/// ([`HELD_BY_A_PARTICIPANT`]) — the poster tier is root and is not this surface's.
 #[cfg(feature = "embedded-executor")]
 fn bounty_card_fire(
     spine: &AppWorldSpine,
@@ -319,9 +399,12 @@ fn bounty_card_fire(
     use starbridge_bounty_board as b;
     let cell = spine.app_cell();
     if method == b::service::METHOD_CLAIM {
-        spine.commit("claim", &AuthRequired::None, &b::WORKER_RIGHTS, |_live| {
-            b::claim_effects(cell, "worker")
-        })
+        spine.commit(
+            "claim",
+            &HELD_BY_A_PARTICIPANT,
+            &b::WORKER_RIGHTS,
+            |_live| b::claim_effects(cell, "worker"),
+        )
     } else {
         Err(WorldFireError::World {
             reason: format!(
@@ -333,7 +416,8 @@ fn bounty_card_fire(
 
 /// sealed-auction card fire — the `commit_bid` button seals a bid into the next free
 /// WriteOnce commit slot (read off World's LIVE state), the SAME verified turn the
-/// auction `world_drive` fires.
+/// auction `world_drive` fires. **The card fires as a BIDDER**
+/// ([`HELD_BY_A_PARTICIPANT`]) — the auctioneer tier is root and is not this surface's.
 #[cfg(feature = "embedded-executor")]
 fn auction_card_fire(
     spine: &AppWorldSpine,
@@ -346,7 +430,7 @@ fn auction_card_fire(
         let seal = dregg_app_framework::field_from_u64(0xB1D);
         spine.commit(
             "commit_bid",
-            &AuthRequired::None,
+            &HELD_BY_A_PARTICIPANT,
             &a::BIDDER_RIGHTS,
             |live| {
                 let slot = a::next_free_commit_slot(live).unwrap_or_else(|| a::commit_slot(0));
@@ -376,7 +460,9 @@ fn lease_card_fire(
     use starbridge_execution_lease as el;
     let cell = spine.app_cell();
     if method == el::service::METHOD_ADVANCE {
-        spine.commit("advance", &AuthRequired::None, &el::AGENT_RIGHTS, |live| {
+        // The lease AGENT tier is `AtLeast(Signature)` — the narrowest real credential,
+        // and the one an agent delivering checkpoints actually has.
+        spine.commit("advance", &HELD_BY_AN_OBSERVER, &el::AGENT_RIGHTS, |live| {
             let live_step = el::field_to_u64(&live.fields[el::STEP_SLOT as usize]);
             el::advance_effects(cell, live_step + 1, el::field_from_u64(0xDADA))
         })
@@ -401,8 +487,11 @@ fn lease_card_fire(
 ///   effect-builders + program, so the World path re-expresses the SAME turn the
 ///   framework path fires — only the ledger is the cockpit's now.
 #[cfg(feature = "embedded-executor")]
-type WorldDriveFn =
-    fn(&DeosApp, Rc<RefCell<World>>) -> Result<(AppWorldSpine, TurnReceipt), WorldFireError>;
+type WorldDriveFn = fn(
+    &DeosApp,
+    Rc<RefCell<World>>,
+    &AuthRequired,
+) -> Result<(AppWorldSpine, TurnReceipt), WorldFireError>;
 
 /// The per-app ctor — builds the [`DeosApp`] over a substrate.
 type CtorFn = fn(&AppCipherclerk, &EmbeddedExecutor) -> DeosApp;
@@ -422,7 +511,7 @@ type SeedFn = fn(&EmbeddedExecutor, &AppCipherclerk);
 /// SAME contract [`WorldDriveFn`] honours, minus the framework app.
 #[cfg(feature = "embedded-executor")]
 type ProgramWorldDriveFn =
-    fn(Rc<RefCell<World>>) -> Result<(AppWorldSpine, TurnReceipt), WorldFireError>;
+    fn(Rc<RefCell<World>>, &AuthRequired) -> Result<(AppWorldSpine, TurnReceipt), WorldFireError>;
 
 /// The framework backend of an [`AppEntry`] — a pre-built [`DeosApp`] over the app
 /// framework's [`AppSubstrate`]. Carries the REAL ctor + seed + drive (the
@@ -480,6 +569,23 @@ pub struct AppEntry {
     /// A one-line description of what the app does (what the user reads before
     /// launching).
     pub description: &'static str,
+    /// **The authority the representative driver HOLDS** — the single declaration of
+    /// who is firing this entry's representative affordance, read by BOTH the
+    /// framework-substrate path ([`AppEntry::launch`] → [`LaunchedRegistryApp::drive`])
+    /// and the cockpit-`World` path ([`AppEntry::launch_on_world`]).
+    ///
+    /// It is one field rather than two literals because the two paths were declaring
+    /// DIFFERENT actors for the same fire: every framework fire said
+    /// [`HELD_BY_A_PARTICIPANT`]/[`HELD_BY_AN_OBSERVER`] while the World fire beside it
+    /// said [`HELD_BY_A_ROOT_OPERATOR`], on the same app, in the same entry literal,
+    /// documented as "the SAME turn". With one field they cannot drift again.
+    ///
+    /// Six of the twenty entries genuinely hold root — the app's own representative
+    /// affordance IS the owner's (`Requirement::Root`: a nameservice OWNER renew, a
+    /// poll ADMINISTRATOR tally, a swarm LEAD dispatch, a mandate OPERATOR step, an
+    /// identity ISSUER issue, the polis governance operator's propose). The other
+    /// fourteen act inside an instance they do not own.
+    driver_rights: &'static AuthRequired,
     /// How this entry is realized (framework `DeosApp` or polis-style program).
     backend: AppBackend,
 }
@@ -492,6 +598,7 @@ impl AppEntry {
         id: &'static str,
         name: &'static str,
         description: &'static str,
+        driver_rights: &'static AuthRequired,
         ctor: CtorFn,
         seed: SeedFn,
         drive: DriveFn,
@@ -501,6 +608,7 @@ impl AppEntry {
             id,
             name,
             description,
+            driver_rights,
             backend: AppBackend::Framework(FrameworkBackend {
                 ctor,
                 seed,
@@ -518,14 +626,23 @@ impl AppEntry {
         id: &'static str,
         name: &'static str,
         description: &'static str,
+        driver_rights: &'static AuthRequired,
         program_world_drive: ProgramWorldDriveFn,
     ) -> Self {
         AppEntry {
             id,
             name,
             description,
+            driver_rights,
             backend: AppBackend::Program(program_world_drive),
         }
+    }
+
+    /// **The authority this entry's representative driver holds** — see
+    /// [`AppEntry::driver_rights`] (the field). Public so a host that fires as somebody
+    /// ELSE ([`AppEntry::launch_on_world_as`]) can see what the default actor is.
+    pub fn driver_rights(&self) -> &'static AuthRequired {
+        self.driver_rights
     }
 
     /// **Launch this app over the app-framework substrate** — build a fresh live
@@ -553,6 +670,7 @@ impl AppEntry {
             app,
             substrate,
             drive: fw.drive,
+            driver_rights: self.driver_rights,
         })
     }
 
@@ -575,11 +693,35 @@ impl AppEntry {
         federation: [u8; 32],
         world: Rc<RefCell<World>>,
     ) -> Result<LaunchedOnWorld, WorldFireError> {
+        self.launch_on_world_as(federation, world, self.driver_rights)
+    }
+
+    /// **Launch onto the live `World` AS A HOLDER OF `held`** — the same seed + the same
+    /// representative affordance, with the ACTOR supplied by the caller instead of taken
+    /// from [`AppEntry::driver_rights`].
+    ///
+    /// This is where the cap tooth can bite. The representative affordance's
+    /// `required_rights` is the app crate's own `*_RIGHTS` rung, and the fire runs
+    /// [`dregg_cell::Requirement::satisfied_by`] against `held` IN-BAND before any turn
+    /// is built — so an under-authorized `held` returns
+    /// [`WorldFireError::Gate`] with **nothing committed**: no receipt on
+    /// `World::receipts()`, no state advance. The app cell IS still seeded first (the
+    /// seed is genesis, not a turn), which is what makes the refusal observable: the
+    /// cell is there and the turn is not.
+    ///
+    /// [`AppEntry::launch_on_world`] is exactly this with `held = self.driver_rights`.
+    #[cfg(feature = "embedded-executor")]
+    pub fn launch_on_world_as(
+        &self,
+        federation: [u8; 32],
+        world: Rc<RefCell<World>>,
+        held: &AuthRequired,
+    ) -> Result<LaunchedOnWorld, WorldFireError> {
         match &self.backend {
             AppBackend::Framework(fw) => {
                 let substrate = AppSubstrate::new(federation);
                 let app = (fw.ctor)(substrate.cipherclerk(), substrate.executor());
-                let (spine, receipt) = (fw.world_drive)(&app, world)?;
+                let (spine, receipt) = (fw.world_drive)(&app, world, held)?;
                 Ok(LaunchedOnWorld {
                     id: self.id,
                     app: Some(app),
@@ -590,7 +732,7 @@ impl AppEntry {
             // A PROGRAM entry (polis) needs no `DeosApp`/`AppSubstrate` — it installs a
             // bare `CellProgram` onto `World` and fires one affordance directly.
             AppBackend::Program(program_world_drive) => {
-                let (spine, receipt) = (program_world_drive)(world)?;
+                let (spine, receipt) = (program_world_drive)(world, held)?;
                 Ok(LaunchedOnWorld {
                     id: self.id,
                     app: None,
@@ -721,22 +863,23 @@ impl AppRegistry {
                     "Sealed Gallery",
                     "A juried art gallery with sealed (commit-reveal) submissions — \
                          artists commit, the curator closes, artists reveal, the curator features.",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_gallery::gallery_app,
                     |exec, _cclerk| {
                         starbridge_gallery::seed_gallery(exec, "curator");
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         // An ARTIST seals a submission in the SUBMISSION phase — a real
                         // verified turn writing the next free WriteOnce submission slot.
                         starbridge_gallery::fire_submit(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             dregg_app_framework::field_from_u64(0xA17),
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_gallery as g;
                         // SEED the gallery cell onto the live World: the program (so World
                         // re-enforces the WriteOnce board + phase invariants) + the genesis
@@ -765,7 +908,7 @@ impl AppRegistry {
                         let seal = dregg_app_framework::field_from_u64(0xA17);
                         let receipt = spine.commit(
                             "submit",
-                            &AuthRequired::None,
+                            held,
                             &g::ARTIST_RIGHTS,
                             |live| {
                                 let slot = g::next_free_submit_slot(live)
@@ -781,21 +924,22 @@ impl AppRegistry {
                     "Sealed Auction",
                     "A sealed-bid (commit-reveal) auction — bidders commit hashed bids, \
                          the seller closes commits, bidders reveal, the seller resolves the winner.",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_sealed_auction::auction_app,
                     |exec, _cclerk| {
                         starbridge_sealed_auction::seed_auction(exec, "seller");
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         // A BIDDER commits a sealed bid in the COMMIT phase.
                         starbridge_sealed_auction::fire_commit_bid(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             dregg_app_framework::field_from_u64(0xB1D),
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_sealed_auction as a;
                         let app_cell = app.cells()[0].cell();
                         // SEED onto World: program + `seed_auction` baseline (seller bound,
@@ -822,7 +966,7 @@ impl AppRegistry {
                         let seal = dregg_app_framework::field_from_u64(0xB1D);
                         let receipt = spine.commit(
                             "commit_bid",
-                            &AuthRequired::None,
+                            held,
                             &a::BIDDER_RIGHTS,
                             |live| {
                                 let slot = a::next_free_commit_slot(live)
@@ -838,22 +982,23 @@ impl AppRegistry {
                     "Bounty Board",
                     "A bounty with an escrowed reward — a worker claims it, submits work, \
                          and the poster pays out (each step a cap-gated state-machine turn).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_bounty_board::bounty_app,
                     |exec, _cclerk| {
                         starbridge_bounty_board::seed_bounty(exec, "ship the registry", 1_000);
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         // A WORKER claims the open bounty — a real verified turn advancing
                         // the bounty state machine (OPEN -> CLAIMED).
                         starbridge_bounty_board::fire_claim(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             "worker",
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_bounty_board as b;
                         let app_cell = app.cells()[0].cell();
                         // SEED onto World: program + `seed_bounty` baseline (title hash,
@@ -883,7 +1028,7 @@ impl AppRegistry {
                         // re-enforced by World's executor).
                         let receipt = spine.commit(
                             "claim",
-                            &AuthRequired::None,
+                            held,
                             &b::WORKER_RIGHTS,
                             |_live| b::claim_effects(app_cell, "worker"),
                         )?;
@@ -895,27 +1040,28 @@ impl AppRegistry {
                     "Tussle",
                     "A two-figure simultaneous-move game — each player commits a sealed move, \
                          both reveal, the frame resolves (a typed set-membership reveal gate).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_tussle::tussle_app,
                     |exec, _cclerk| {
                         // Tussle backs its first figure on the executor's own cell.
                         let cell = exec.cell_id();
                         starbridge_tussle::seed_figure(exec, cell);
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         // A FIGHTER commits a sealed move on its figure (the executor's
                         // own cell) — a real verified turn writing the sealed-move slot.
                         let figure = sub.cell_id();
                         starbridge_tussle::fire_commit_move(
                             app,
                             figure,
-                            &AuthRequired::Either,
+                            held,
                             &starbridge_tussle::REST_POSE,
                             0x33,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_tussle as t;
                         // Tussle backs its first figure on the agent's OWN cell.
                         let figure = app.cells()[0].cell();
@@ -961,7 +1107,7 @@ impl AppRegistry {
                         let seal = t::MoveCommit::new(figure_id, t::REST_POSE, 0x33).seal();
                         let receipt = spine.commit(
                             "commit_move",
-                            &AuthRequired::None,
+                            held,
                             &t::FIGHTER_RIGHTS,
                             |_live| {
                                 vec![
@@ -1007,25 +1153,26 @@ impl AppRegistry {
                     "Agent Orchestration",
                     "A coordinator board with a shared per-worker spend budget — a worker fires one \
                          metered step, advancing the no-replay epoch (the Σspend ≤ budget gate bites).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_agent_orchestration::deos::orchestration_app,
                     |exec, _cclerk| {
                         use starbridge_agent_orchestration as o;
                         o::seed_board(exec, o::DEFAULT_CREATION_BUDGET, "coordinator");
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_agent_orchestration as o;
                         // A WORKER fires one metered step (worker A, cost 1).
                         let board = &app.cells()[0];
                         o::deos::fire_worker_step(
                             board,
-                            &AuthRequired::Either,
+                            held,
                             o::WorkerSlot::A,
                             1,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_agent_orchestration as o;
                         let board = app.cells()[0].cell();
                         // SEED the board onto World: `coordinator_program` (the
@@ -1069,7 +1216,7 @@ impl AppRegistry {
                         // computes).
                         let receipt = spine.commit(
                             "worker_step",
-                            &AuthRequired::None,
+                            held,
                             &o::deos::WORKER_RIGHTS,
                             |live| {
                                 let spend_slot = o::WorkerSlot::A.spend_slot() as usize;
@@ -1102,22 +1249,23 @@ impl AppRegistry {
                     "Agent Provenance",
                     "A hash-linked provenance log — a recorder appends one entry that chains to the \
                          prior tip (the link-hash chain the executor's WriteOnce board re-enforces).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_agent_provenance::provenance_app,
                     |exec, _cclerk| {
                         starbridge_agent_provenance::seed_log(exec, b"genesis");
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_agent_provenance as p;
                         // A RECORDER appends one claim to the log.
                         p::fire_append_entry(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                             &dregg_app_framework::field_from_u64(0xC1A1),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_agent_provenance as p;
                         let log = app.cells()[0].cell();
                         // SEED the log onto World: `provenance_cell_program` + the
@@ -1151,7 +1299,7 @@ impl AppRegistry {
                         let claim = dregg_app_framework::field_from_u64(0xC1A1);
                         let receipt = spine.commit(
                             "append_entry",
-                            &AuthRequired::None,
+                            held,
                             &p::RECORDER_RIGHTS,
                             |live| p::append_effects(log, live, &claim),
                         )?;
@@ -1163,6 +1311,7 @@ impl AppRegistry {
                     "Compartment Workflow Mandate",
                     "A clearance-gated workflow charter (review → redact → sign) — an officer advances \
                          one step, presenting a clearance that must dominate the entered step's compartment.",
+                    &HELD_BY_A_ROOT_OPERATOR,
                     starbridge_compartment_workflow_mandate::workflow_app,
                     |exec, _cclerk| {
                         use starbridge_compartment_workflow_mandate as c;
@@ -1174,19 +1323,19 @@ impl AppRegistry {
                             c::DEFAULT_STEP_SPEND_POLICY,
                         );
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_compartment_workflow_mandate as c;
                         // An OFFICER advances the first step (review), presenting the
                         // officer clearance (which dominates every charter compartment).
                         c::fire_advance_step(
                             app,
-                            &AuthRequired::None,
+                            held,
                             c::officer_label(),
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_compartment_workflow_mandate as c;
                         let cell = app.cells()[0].cell();
                         // SEED onto World: `cwm_cell_program` (the Cases program — the
@@ -1235,7 +1384,7 @@ impl AppRegistry {
                         let review_compartment = c::WorkflowPhase::CHARTER[0].compartment_label();
                         let receipt = spine.commit(
                             "advance_step",
-                            &AuthRequired::None,
+                            held,
                             &c::OPERATOR_RIGHTS,
                             |_live| {
                                 c::advance_effects(cell, 1, c::officer_label(), review_compartment)
@@ -1249,23 +1398,24 @@ impl AppRegistry {
                     "Compute Exchange",
                     "A compute-job market (post → bid → settle) — a provider bids on the posted job, \
                          advancing the job state machine (the settle conservation AffineEq waits downstream).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_compute_exchange::job_app,
                     |exec, _cclerk| {
                         starbridge_compute_exchange::seed_job(exec, "requester-corp", 1_000);
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_compute_exchange as j;
                         // A PROVIDER bids on the posted job.
                         j::fire_bid(
                             app,
-                            &AuthRequired::None,
+                            held,
                             "provider-gpu",
                             750,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_compute_exchange as j;
                         let job = app.cells()[0].cell();
                         // SEED onto World: `job_program` (Cases: post/bid/settle) + the
@@ -1304,7 +1454,7 @@ impl AppRegistry {
                         // + price (the SAME `bid_effects` the framework path fires).
                         let receipt = spine.commit(
                             "bid",
-                            &AuthRequired::None,
+                            held,
                             &j::PROVIDER_RIGHTS,
                             |_live| j::bid_effects(job, REGISTRY_COMPUTE_PROVIDER, 750),
                         )?;
@@ -1316,23 +1466,24 @@ impl AppRegistry {
                     "Escrow Market",
                     "A two-party escrow marketplace (list → fund → ship → settle) — a buyer funds the \
                          listed item into escrow (the settle release+refund=escrowed conservation waits downstream).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_escrow_market::escrow_app,
                     |exec, _cclerk| {
                         starbridge_escrow_market::seed_escrow(exec, "acme-corp", 1_000);
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_escrow_market as e;
                         // A BUYER funds the listed item.
                         e::fire_fund(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             "buyer-bob",
                             500,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_escrow_market as e;
                         let escrow = app.cells()[0].cell();
                         // SEED onto World: `escrow_program` (Cases: list/fund/ship/settle)
@@ -1366,7 +1517,7 @@ impl AppRegistry {
                         // COMMIT `fund` through World: LISTED → FUNDED, escrowing the
                         // buyer's amount (the SAME `fund_effects` the framework path fires).
                         let receipt =
-                            spine.commit("fund", &AuthRequired::None, &e::BUYER_RIGHTS, |_live| {
+                            spine.commit("fund", held, &e::BUYER_RIGHTS, |_live| {
                                 e::fund_effects(escrow, "buyer-bob", 500)
                             })?;
                         Ok((spine, receipt))
@@ -1377,6 +1528,7 @@ impl AppRegistry {
                     "Name Service",
                     "A registered-name record (owner / expiry / revocation) — the owner renews the name, \
                          advancing the expiry (the executor re-enforces Monotonic(EXPIRY) + WriteOnce(NAME)).",
+                    &HELD_BY_A_ROOT_OPERATOR,
                     starbridge_nameservice::name_app,
                     |exec, cclerk| {
                         use starbridge_nameservice as n;
@@ -1387,12 +1539,12 @@ impl AppRegistry {
                             n::DEFAULT_RENT_EPOCH_BLOCKS,
                         );
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_nameservice as n;
                         // The OWNER renews the name (advances EXPIRY by one rent epoch).
-                        n::fire_renew(app, &AuthRequired::None, sub.cipherclerk(), sub.executor())
+                        n::fire_renew(app, held, sub.cipherclerk(), sub.executor())
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_nameservice as n;
                         let name_cell = app.cells()[0].cell();
                         let owner = app.cipherclerk().public_key().0;
@@ -1436,7 +1588,7 @@ impl AppRegistry {
                         // World's live state (Monotonic(EXPIRY) holds) — the SAME advance
                         // `fire_renew` computes.
                         let receipt =
-                            spine.commit("renew", &AuthRequired::None, &n::OWNER_RIGHTS, |live| {
+                            spine.commit("renew", held, &n::OWNER_RIGHTS, |live| {
                                 let live_expiry = field_tail_u64(&live.fields[n::EXPIRY_SLOT]);
                                 let new_expiry =
                                     live_expiry.saturating_add(n::DEFAULT_RENT_EPOCH_BLOCKS);
@@ -1454,6 +1606,7 @@ impl AppRegistry {
                     "Privacy Voting",
                     "A public-tally poll — an administrator records one vote onto the poll's running tally \
                          (the executor re-enforces the poll invariants; the poll stays open until closed).",
+                    &HELD_BY_A_ROOT_OPERATOR,
                     starbridge_privacy_voting::voting_app,
                     |exec, cclerk| {
                         use starbridge_privacy_voting as v;
@@ -1466,7 +1619,7 @@ impl AppRegistry {
                         // re-launder exactly the forgery that commit closed.
                         let _ = v::seed_ballot(exec, cclerk, cclerk.cell_id());
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_privacy_voting as v;
                         // An ADMINISTRATOR records a YES vote onto the poll tally, EXHIBITING the
                         // ballot counted into it. The seed closure birthed exactly this cell.
@@ -1478,14 +1631,14 @@ impl AppRegistry {
                         .collect();
                         v::fire_record_tally(
                             app,
-                            &AuthRequired::None,
+                            held,
                             v::VOTE_YES,
                             &counted,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_privacy_voting as v;
                         // The poll cell is the agent's own cell (cells()[0]).
                         let poll = app.cells()[0].cell();
@@ -1526,7 +1679,7 @@ impl AppRegistry {
                         let tally_slot = v::tally_slot_for_choice(v::VOTE_YES);
                         let receipt = spine.commit(
                             "record_tally",
-                            &AuthRequired::None,
+                            held,
                             &v::ADMINISTRATOR_RIGHTS,
                             |live| {
                                 let live_tally = field_tail_u64(&live.fields[tally_slot]);
@@ -1547,6 +1700,7 @@ impl AppRegistry {
                     "Storage Gateway Mandate",
                     "A metered storage gateway (put / get / list under a volume ceiling) — a writer puts \
                          an object, debiting the volume meter (the executor re-enforces volume_spent ≤ ceiling).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_storage_gateway_mandate::gateway_app,
                     |exec, _cclerk| {
                         use starbridge_storage_gateway_mandate as s;
@@ -1558,19 +1712,19 @@ impl AppRegistry {
                             s::DEFAULT_READ_COMPARTMENT,
                         );
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_storage_gateway_mandate as s;
                         // A WRITER puts a 1-unit object under the prefix.
                         s::fire_put(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                             "uploads/first",
                             1,
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_storage_gateway_mandate as s;
                         let gateway = app.cells()[0].cell();
                         // SEED onto World: `gateway_program_with_clearance` (the Cases
@@ -1622,7 +1776,7 @@ impl AppRegistry {
                         let key = "uploads/first";
                         let blob_hash = s::object_key_field(key);
                         let receipt =
-                            spine.commit("put", &AuthRequired::None, &s::WRITER_RIGHTS, |live| {
+                            spine.commit("put", held, &s::WRITER_RIGHTS, |live| {
                                 let live_spent =
                                     field_tail_u64(&live.fields[s::VOLUME_SPENT_SLOT as usize]);
                                 let new_spent = live_spent.saturating_add(1);
@@ -1636,21 +1790,22 @@ impl AppRegistry {
                     "Subscription Feed",
                     "A publish/consume message feed under a capacity bound — a publisher publishes one \
                          message, advancing the head cursor + folding the message-commitment root.",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_subscription::subscription_deos_app,
                     |exec, _cclerk| {
                         starbridge_subscription::seed_feed(exec, 16, "owner");
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_subscription as s;
                         // A PUBLISHER publishes one message onto the feed.
                         s::fire_publish(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_subscription as s;
                         let feed = app.cells()[0].cell();
                         // SEED onto World: `feed_invariants_program` (the FLAT invariants
@@ -1688,7 +1843,7 @@ impl AppRegistry {
                         let payload = dregg_app_framework::field_from_u64(0xF33D);
                         let receipt = spine.commit(
                             "publish",
-                            &AuthRequired::None,
+                            held,
                             &s::PUBLISHER_RIGHTS,
                             |live| {
                                 let live_head =
@@ -1707,17 +1862,18 @@ impl AppRegistry {
                     "Swarm Orchestration",
                     "A swarm dispatch board with a per-worker spend budget — the lead dispatches one task \
                          to a worker, debiting its meter + advancing the no-replay epoch (Σspend ≤ budget bites).",
+                    &HELD_BY_A_ROOT_OPERATOR,
                     starbridge_swarm_orchestration::board_app,
                     |exec, _cclerk| {
                         starbridge_swarm_orchestration::seed_board(exec, "lead", 1_000);
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_swarm_orchestration as w;
                         // The LEAD dispatches one task (cost 1) to worker A.
                         let board = app.cells()[0].cell();
                         w::fire_dispatch(
                             app,
-                            &AuthRequired::None,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                             w::Worker::A,
@@ -1726,7 +1882,7 @@ impl AppRegistry {
                             "task-0",
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_swarm_orchestration as w;
                         let board = app.cells()[0].cell();
                         // SEED onto World: `coordinator_program` (AffineLe budget,
@@ -1765,7 +1921,7 @@ impl AppRegistry {
                         // epoch off World's ledger, debit cost 1, advance the epoch (the
                         // SAME `dispatch_effects` the framework path fires).
                         let receipt =
-                            spine.commit("dispatch", &AuthRequired::None, &w::LEAD_RIGHTS, |live| {
+                            spine.commit("dispatch", held, &w::LEAD_RIGHTS, |live| {
                                 let spend_slot = w::Worker::A.spend_slot() as usize;
                                 let live_spent = field_tail_u64(&live.fields[spend_slot]);
                                 let live_epoch =
@@ -1788,16 +1944,17 @@ impl AppRegistry {
                     "Tool Access Delegation",
                     "A rate-limited tool-access mandate — a worker invokes the tool once, ticking the \
                          call counter (the executor re-enforces calls_made ≤ rate_limit + the deadline gate).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_tool_access_delegation::tad_app,
                     |exec, _cclerk| {
                         starbridge_tool_access_delegation::seed_mandate(exec, "search-mcp", 8, 0);
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_tool_access_delegation as t;
                         // A WORKER invokes the tool once.
-                        t::fire_invoke(app, &AuthRequired::Either, sub.cipherclerk(), sub.executor())
+                        t::fire_invoke(app, held, sub.cipherclerk(), sub.executor())
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_tool_access_delegation as t;
                         let mandate = app.cells()[0].cell();
                         // SEED onto World: `tad_cell_program` (Cases: the `invoke_tool`
@@ -1834,7 +1991,7 @@ impl AppRegistry {
                         // denies). Read the live call counter, tick it (Monotonic holds).
                         let receipt = spine.commit(
                             "invoke_tool",
-                            &AuthRequired::None,
+                            held,
                             &t::WORKER_RIGHTS,
                             |live| {
                                 let live_calls =
@@ -1863,6 +2020,7 @@ impl AppRegistry {
                     "Durable execution leased as a payable resource (a fly.io-lite provider) — the \
                          provider delivers one checkpoint, advancing the lease's durable cursor (the \
                          executor re-enforces Monotonic(STEP); the metered rent is a conserving Transfer).",
+                    &HELD_BY_AN_OBSERVER,
                     starbridge_execution_lease::lease_app,
                     |exec, _cclerk| {
                         use starbridge_execution_lease as el;
@@ -1880,20 +2038,20 @@ impl AppRegistry {
                         );
                         el::seed_lease(exec, &terms, el::field_from_u64(1));
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_execution_lease as el;
                         // The PROVIDER delivers one durable checkpoint (the cursor advances;
                         // Monotonic(STEP) bites a rewind).
                         el::fire_advance(
                             app,
-                            &AuthRequired::Signature,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                             el::field_from_u64(0xDADA),
                             vec![],
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_execution_lease as el;
                         let lease = app.cells()[0].cell();
                         let provider = CellId::from_bytes([0xAB; 32]);
@@ -1942,7 +2100,7 @@ impl AppRegistry {
                         // the SAME advance `fire_advance` computes.
                         let receipt = spine.commit(
                             "advance",
-                            &AuthRequired::None,
+                            held,
                             &el::AGENT_RIGHTS,
                             |live| {
                                 let live_step = el::field_to_u64(&live.fields[el::STEP_SLOT as usize]);
@@ -1961,20 +2119,21 @@ impl AppRegistry {
                     "Supply-Chain Provenance",
                     "A custody-chain item (mint → handoff) — the incoming custodian accepts custody, \
                          advancing the actor-bound baton (the SenderInSlot(CUSTODIAN) tooth bites).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_supply_chain_provenance::item_app,
                     |exec, _cclerk| {
                         starbridge_supply_chain_provenance::seed_item(exec, "manufacturer");
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_supply_chain_provenance as sc;
                         sc::fire_accept_custody(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_supply_chain_provenance as sc;
                         let item = app.cells()[0].cell();
                         // The custodian IS the firing principal (the agent cell's pubkey =
@@ -2026,7 +2185,7 @@ impl AppRegistry {
                         let receipt = spine.commit_as(
                             custodian,
                             "accept_custody",
-                            &AuthRequired::None,
+                            held,
                             &sc::CUSTODIAN_RIGHTS,
                             vec![],
                             |live| {
@@ -2071,6 +2230,7 @@ impl AppRegistry {
                     "Identity / Credentials",
                     "A credential issuer (issue → revoke) — an authorized issuer issues one credential, \
                          advancing the issuance sequence (the SenderAuthorized membership tooth bites).",
+                    &HELD_BY_A_ROOT_OPERATOR,
                     starbridge_identity::identity_app,
                     |exec, cclerk| {
                         starbridge_identity::seed_issuer(
@@ -2079,11 +2239,11 @@ impl AppRegistry {
                             &starbridge_identity::kyc_schema(),
                         );
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_identity as id;
-                        id::fire_issue(app, &AuthRequired::None, sub.cipherclerk(), sub.executor())
+                        id::fire_issue(app, held, sub.cipherclerk(), sub.executor())
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_identity as id;
                         let issuer = app.cells()[0].cell();
                         // The authorized issuer IS the firing principal (agent pubkey =
@@ -2132,7 +2292,7 @@ impl AppRegistry {
                         let receipt = spine.commit_as(
                             signer,
                             "issue",
-                            &AuthRequired::None,
+                            held,
                             &id::ISSUER_RIGHTS,
                             vec![witness],
                             |live| {
@@ -2163,6 +2323,7 @@ impl AppRegistry {
                     "Governed Namespace",
                     "A constitutionally-governed route table (propose → vote → commit) — a committee \
                          member opens a proposal, advancing the pending root (the SenderAuthorized committee tooth bites).",
+                    &HELD_BY_A_PARTICIPANT,
                     starbridge_governed_namespace::governance_app,
                     |exec, _cclerk| {
                         use starbridge_governed_namespace as gn;
@@ -2174,16 +2335,16 @@ impl AppRegistry {
                             dregg_app_framework::field_from_bytes(b"genesis-route-table-root"),
                         );
                     },
-                    |app, sub| {
+                    |app, sub, held| {
                         use starbridge_governed_namespace as gn;
                         gn::fire_propose(
                             app,
-                            &AuthRequired::Either,
+                            held,
                             sub.cipherclerk(),
                             sub.executor(),
                         )
                     },
-                    |app, world| {
+                    |app, world, held| {
                         use starbridge_governed_namespace as gn;
                         let board = app.cells()[0].cell();
                         // The committee member IS the firing principal (agent pubkey =
@@ -2238,7 +2399,7 @@ impl AppRegistry {
                         let receipt = spine.commit_as(
                             signer,
                             "propose_table_update",
-                            &AuthRequired::None,
+                            held,
                             &gn::COMMITTEE_RIGHTS,
                             vec![witness],
                             |live| {
@@ -2291,7 +2452,8 @@ impl AppRegistry {
                     "A constitutional council (M-of-N proposal governance) — a member opens a \
                      proposal, advancing the council cell DRAFT → PROPOSED (the membership \
                      commitment pins + the staged-proposal WriteOnce tooth bite).",
-                    |world| {
+                    &HELD_BY_A_ROOT_OPERATOR,
+                    |world, held| {
                         use starbridge_polis::council;
                         // A small real charter: a 2-of-3 council over three synthetic
                         // member cells. The charter is content-addressed into the
@@ -2335,7 +2497,7 @@ impl AppRegistry {
                         let members_commit = charter.members_commitment();
                         let receipt = spine.commit(
                             "propose",
-                            &AuthRequired::None,
+                            held,
                             &dregg_cell::Requirement::Root,
                             |_live| {
                                 vec![
@@ -2397,6 +2559,20 @@ impl AppRegistry {
         world: Rc<RefCell<World>>,
     ) -> Option<Result<LaunchedOnWorld, WorldFireError>> {
         self.get(id).map(|e| e.launch_on_world(federation, world))
+    }
+
+    /// **Launch the app with id `id` onto the live `World` AS A HOLDER OF `held`** —
+    /// [`AppEntry::launch_on_world_as`] by id. `None` if no entry has that id.
+    #[cfg(feature = "embedded-executor")]
+    pub fn launch_on_world_as(
+        &self,
+        id: &str,
+        federation: [u8; 32],
+        world: Rc<RefCell<World>>,
+        held: &AuthRequired,
+    ) -> Option<Result<LaunchedOnWorld, WorldFireError>> {
+        self.get(id)
+            .map(|e| e.launch_on_world_as(federation, world, held))
     }
 }
 
@@ -2939,6 +3115,204 @@ mod tests {
             substance.get_u64(el::STEP_SLOT as usize),
             2,
             "the durable cursor advanced to 2 (the card's bind re-reads the live cell)"
+        );
+    }
+}
+
+// ===========================================================================
+// THE CAP TOOTH — can it refuse? (R4)
+// ===========================================================================
+//
+// The `Requirement` migration made `commit(m, &X, &X)` unwriteable by splitting the
+// held and required sides into different types. That fixed the SHAPE. It did not make
+// the gate able to refuse: all 28 surviving call sites passed `&AuthRequired::None` on
+// the held side, `None` is the lattice TOP, and so every requirement was satisfied at
+// every site. The tooth was constant-true across the whole registry.
+//
+// These are the teeth that can now bite. They are stated as a MINIMALITY property, not
+// a sufficiency one: it is not enough that each entry's declared driver rights CLEAR
+// its requirement (root clears everything, which is exactly how the hole was written).
+// The property is that the declared rung is the NARROWEST one that launches — so an
+// entry that goes back to declaring the top FAILS, because the rung below it would then
+// also succeed.
+#[cfg(all(test, feature = "embedded-executor"))]
+mod cap_tooth_tests {
+    use super::*;
+    use dregg_app_framework::FireError;
+
+    /// A `Proof` holder — a real credential, and one that clears NOTHING in this
+    /// registry: `AtLeast(Signature)` and `AtLeast(Either)` are both incomparable-or-
+    /// wider than `Proof` on the attenuation lattice, and `Root` is satisfied only by
+    /// the top. So it is under-authorized for all twenty entries at once.
+    static HELD_BY_AN_OUTSIDER: AuthRequired = AuthRequired::Proof;
+
+    /// Launch `entry` on a FRESH world as a holder of `held`, and report
+    /// `(refused_by_the_cap_tooth, receipts_left_behind)`.
+    fn launch_as(entry: &AppEntry, held: &AuthRequired) -> (bool, usize) {
+        let world = Rc::new(RefCell::new(World::new()));
+        let before = world.borrow().receipts().len();
+        let outcome = entry.launch_on_world_as([0x5Eu8; 32], Rc::clone(&world), held);
+        let refused = matches!(
+            outcome,
+            Err(WorldFireError::Gate(FireExecuteError::Gate(
+                FireError::Unauthorized { .. }
+            )))
+        );
+        let after = world.borrow().receipts().len();
+        (refused, after - before)
+    }
+
+    /// ⚑ **THE TOOTH REFUSES, AND NOTHING COMMITS.** Every entry in the standard
+    /// registry, launched by a holder whose credential clears none of the ladder, is
+    /// refused by the cap tooth IN-BAND — the turn is never built, so `World::receipts()`
+    /// is untouched (anti-ghost). Before the driver rights were threaded, every one of
+    /// these launches SUCCEEDED regardless of `held`, because each `world_drive` passed
+    /// the lattice top itself and ignored its caller.
+    #[test]
+    fn an_under_authorized_launch_is_refused_and_commits_nothing() {
+        let reg = AppRegistry::standard();
+        let mut refused = 0usize;
+        for entry in reg.entries() {
+            let (was_refused, receipts) = launch_as(entry, &HELD_BY_AN_OUTSIDER);
+            assert!(
+                was_refused,
+                "{}: a Proof holder cleared the cap tooth — the gate is not reading `held`",
+                entry.id
+            );
+            assert_eq!(
+                receipts, 0,
+                "{}: a refused launch left a receipt on World — the refusal is not in-band",
+                entry.id
+            );
+            refused += 1;
+        }
+        assert_eq!(refused, 20, "the standard registry is twenty entries");
+    }
+
+    /// ⚑ **THE DECLARED RUNG IS THE NARROWEST ONE THAT LAUNCHES.** This is the tooth
+    /// against re-widening. For each entry: its own `driver_rights` launches, and the
+    /// rung BELOW it is refused.
+    ///
+    ///   * root-declaring entries — a participant (`Either`) is REFUSED, which is only
+    ///     true if the entry's representative affordance genuinely requires
+    ///     [`Requirement::Root`]. An entry that passes root because it was the easy
+    ///     value fails here: a participant would have cleared it.
+    ///   * participant-declaring entries — an observer (`Signature`) is REFUSED.
+    ///   * the observer-declaring entry (execution-lease, `AtLeast(Signature)`) has no
+    ///     rung below it on this ladder; the outsider test above covers it.
+    #[test]
+    fn each_entry_declares_the_narrowest_authority_that_launches() {
+        let reg = AppRegistry::standard();
+        let (mut roots, mut participants, mut observers) = (0usize, 0usize, 0usize);
+        for entry in reg.entries() {
+            // The declared role launches.
+            let (refused_at_own, _) = launch_as(entry, entry.driver_rights());
+            assert!(
+                !refused_at_own,
+                "{}: its own declared driver rights do not clear its requirement",
+                entry.id
+            );
+            match entry.driver_rights() {
+                AuthRequired::None => {
+                    roots += 1;
+                    let (refused, receipts) = launch_as(entry, &HELD_BY_A_PARTICIPANT);
+                    assert!(
+                        refused,
+                        "{}: declares ROOT but a participant launches it — root is not \
+                         required here, it was the easy value",
+                        entry.id
+                    );
+                    assert_eq!(receipts, 0, "{}: refusal committed something", entry.id);
+                }
+                AuthRequired::Either => {
+                    participants += 1;
+                    let (refused, receipts) = launch_as(entry, &HELD_BY_AN_OBSERVER);
+                    assert!(
+                        refused,
+                        "{}: declares PARTICIPANT but an observer launches it",
+                        entry.id
+                    );
+                    assert_eq!(receipts, 0, "{}: refusal committed something", entry.id);
+                }
+                AuthRequired::Signature => observers += 1,
+                other => panic!("{}: unexpected driver rung {other:?}", entry.id),
+            }
+        }
+        // The split, pinned. Six entries genuinely act as the instance OWNER
+        // (compartment-workflow-mandate OPERATOR, nameservice OWNER, privacy-voting
+        // ADMINISTRATOR, swarm-orchestration LEAD, identity ISSUER, polis governance
+        // operator); thirteen act inside an instance they do not own; execution-lease's
+        // AGENT holds the narrow signature tier.
+        assert_eq!(roots, 6, "six entries legitimately hold root");
+        assert_eq!(participants, 13, "thirteen act at the participant tier");
+        assert_eq!(observers, 1, "execution-lease acts at the observer tier");
+    }
+
+    /// The refusal NAMES BOTH SIDES — required and held — so a refused launch is
+    /// diagnosable rather than an opaque "no". (A gate whose error says nothing is how a
+    /// widened gate stays unnoticed.)
+    #[test]
+    fn the_refusal_names_what_was_required_and_what_was_held() {
+        let reg = AppRegistry::standard();
+        let entry = reg.get("gallery").expect("gallery is wired");
+        let world = Rc::new(RefCell::new(World::new()));
+        match entry.launch_on_world_as([0x5Eu8; 32], Rc::clone(&world), &HELD_BY_AN_OBSERVER) {
+            Err(WorldFireError::Gate(FireExecuteError::Gate(FireError::Unauthorized {
+                affordance,
+                required,
+                held,
+            }))) => {
+                assert_eq!(affordance, "submit");
+                assert_eq!(required, starbridge_gallery::ARTIST_RIGHTS);
+                assert_eq!(held, AuthRequired::Signature);
+            }
+            Ok(_) => panic!(
+                "gallery ADMITTED a signature-only holder against ARTIST_RIGHTS \
+                 (AtLeast(Either)) — the cap tooth is not reading `held`"
+            ),
+            Err(other) => panic!("expected a named cap refusal, got {other:?}"),
+        }
+    }
+
+    /// The framework-substrate path and the World path fire as the SAME actor. They used
+    /// to disagree inside one entry literal — fourteen of the twenty declared a
+    /// participant/observer on the framework fire and root on the World fire beside it,
+    /// both documented as "the SAME turn". One field now feeds both, and
+    /// [`LaunchedRegistryApp::drive_as`] refuses an under-authorized actor on the
+    /// framework side too.
+    #[test]
+    fn both_paths_fire_as_the_declared_actor_and_both_refuse_an_outsider() {
+        let reg = AppRegistry::standard();
+        let mut checked = 0usize;
+        for entry in reg.entries() {
+            let Some(launched) = entry.launch([0x7Au8; 32]) else {
+                continue; // the polis PROGRAM entry has no framework-substrate path
+            };
+            assert_eq!(
+                launched.driver_rights(),
+                entry.driver_rights(),
+                "{}: the launch carries the entry's declared actor",
+                entry.id
+            );
+            match launched.drive_as(&HELD_BY_AN_OUTSIDER) {
+                Err(FireExecuteError::Gate(FireError::Unauthorized { .. })) => {}
+                other => panic!(
+                    "{}: the framework drive did not refuse an outsider on the CAP tooth: {other:?}",
+                    entry.id
+                ),
+            }
+            // ANTI-VACUITY: the refusal above is not because this drive refuses
+            // everybody — the declared actor still fires the representative turn.
+            assert!(
+                launched.drive().is_ok(),
+                "{}: the framework drive refuses its OWN declared actor",
+                entry.id
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked, 19,
+            "nineteen framework entries + the polis program entry"
         );
     }
 }
