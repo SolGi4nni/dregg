@@ -1262,29 +1262,43 @@ pub fn deleg_admit(g: DelegGrant, now: i64, tool: i64, old: i64, new: i64) -> Re
     }
 }
 
-/// The six trustline channel registers — the marshalling shape the `dregg_trustline_step` wire
-/// carries, mirroring `Dregg2.Apps.TrustlineCore.Channel` (which holds a `Line` plus the two
-/// hard-asset balances).
+/// The five settled-line registers — the marshalling shape the `dregg_trustline_step` wire
+/// carries, mirroring `Dregg2.Apps.TrustlineCore.SLine` (a `Line` plus the `settled` redemption
+/// register).
+///
+/// ⚑ `settled` IS LOAD-BEARING AND ITS ABSENCE WOULD WIDEN A MONEY CHECK. The deployed cell
+/// carries it (`node/src/trustline_service.rs:319-321`) and gates repay on `drawn − settled`
+/// (`:1155-1161`), which is STRICTLY TIGHTER than the plain `amt ≤ drawn`. A shape without it
+/// would admit every repay in `(drawn − settled, drawn]` that the node refuses today.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrustlineChannel {
     /// The extended line `N` — the attenuation bound. Immutable for the line's life.
     pub ceiling: u64,
     /// Outstanding drawn amount (the Stingray `Slice::spent`).
     pub drawn: u64,
+    /// Cumulative drawn value already redeemed to the holder. MONOTONE; `settled ≤ drawn`.
+    pub settled: u64,
     /// The holder's credit balance in the issuer-asset: `+drawn` at every well-formed state.
     pub holder_acct: i64,
     /// The issuer's signed well: `−drawn`. The draw is PRODUCTION here, never a mint.
     pub issuer_well: i64,
-    /// Issuer's hard-asset balance (the settlement target ledger).
-    pub issuer_hard: i64,
-    /// Holder's hard-asset balance.
-    pub holder_hard: i64,
     /// The committed draw-digest registry — the no-double-draw set. A digest is one-shot FOREVER;
     /// repayment does not resurrect it (`Dregg2.Apps.Trustline.repay_draws_fixed`).
     pub draws: Vec<[u8; 32]>,
 }
 
-/// One trustline verb. Mirrors the `op` selector of the `dregg_trustline_step` wire.
+impl TrustlineChannel {
+    /// Outstanding unsettled draw — the deployed repay/settle budget.
+    pub fn outstanding(&self) -> u64 {
+        self.drawn.saturating_sub(self.settled)
+    }
+}
+
+/// One trustline verb — the DEPLOYED verbs (`drawS` / `repayS` / `settleS`).
+///
+/// There is deliberately no verb for the fullReserve close. `trustline_service.rs:1424-1435`
+/// moves `outstanding` from the trustline ESCROW to the HOLDER; the Lean `settlePay` moves the
+/// opposite way over a different amount. No mapping is invented to make that arm look routed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrustlineOp {
     /// Exercise the line: burn `digest`, draw `amount`.
@@ -1294,18 +1308,17 @@ pub enum TrustlineOp {
         /// The amount to draw.
         amount: u64,
     },
-    /// Restore the line by `amount` (the digest registry is untouched).
+    /// Restore the line by `amount`, gated by the SETTLED FLOOR (`amount ≤ drawn − settled`).
+    /// The digest registry is untouched.
     Repay {
         /// The amount to repay.
         amount: u64,
     },
-    /// Settle `amount`: the holder pays hard asset to the issuer and the credit legs unwind.
-    SettlePay {
-        /// The amount to settle.
-        amount: u64,
+    /// March the redemption register up by `paid`, leaving `drawn` and the registry in place.
+    Settle {
+        /// The amount redeemed to the holder this epoch.
+        paid: u64,
     },
-    /// Close the line: settle the whole outstanding draw.
-    SettleAll,
 }
 
 /// Render a 32-byte digest as its FULL decimal (schoolbook base-256 → base-10).
@@ -1367,17 +1380,15 @@ pub fn trustline_step(
             (0u8, digest_to_decimal(&digest), amount.to_string())
         }
         TrustlineOp::Repay { amount } => (1u8, amount.to_string(), "0".to_string()),
-        TrustlineOp::SettlePay { amount } => (2u8, amount.to_string(), "0".to_string()),
-        TrustlineOp::SettleAll => (3u8, "0".to_string(), "0".to_string()),
+        TrustlineOp::Settle { paid } => (2u8, paid.to_string(), "0".to_string()),
     };
     let mut wire = format!(
-        "{opcode} {} {} {} {} {} {} {a1} {a2} {}",
+        "{opcode} {} {} {} {} {} {a1} {a2} {}",
         channel.ceiling,
         channel.drawn,
+        channel.settled,
         channel.holder_acct,
         channel.issuer_well,
-        channel.issuer_hard,
-        channel.holder_hard,
         channel.draws.len()
     );
     for d in &channel.draws {
@@ -1409,29 +1420,36 @@ pub fn trustline_step(
 /// Decode the post-state wire. The digest registry comes back as decimals; we re-associate them
 /// with the caller's `[u8; 32]` digests by decimal equality rather than re-deriving bytes from
 /// decimal, so a mismatch is a parse failure (fail-closed) and never a silently wrong digest.
+///
+/// ⚑ The index is built ONCE. The first version of this function ran a linear `find` that
+/// re-rendered `digest_to_decimal` per candidate per token — O(n²) renders, each itself a
+/// 32-byte schoolbook base conversion. That is bomb #6 (`coord/src/budget.rs` using a `Vec` as
+/// the anti-replay debit set) rebuilt at the FFI boundary, and
+/// `coord/tests/perf_growth.rs::budget_anti_replay_is_subquadratic_in_debit_count` exists
+/// precisely to keep it dead. n renders, then hash lookups.
 fn parse_trustline_reply(reply: &str, known: &[[u8; 32]]) -> Option<TrustlineChannel> {
     let t: Vec<&str> = reply.split_whitespace().collect();
-    if t.len() < 7 {
+    if t.len() < 6 {
         return None;
     }
-    let n: usize = t[6].parse().ok()?;
-    if t.len() != 7 + n {
+    let n: usize = t[5].parse().ok()?;
+    if t.len() != 6 + n {
         return None;
     }
+    let index: std::collections::HashMap<String, [u8; 32]> =
+        known.iter().map(|d| (digest_to_decimal(d), *d)).collect();
     let mut draws = Vec::with_capacity(n);
-    for tok in t.iter().skip(7) {
+    for tok in t.iter().skip(6) {
         // The post-state registry is the pre-state registry plus at most the digest just drawn, so
         // every decimal here must match one the caller already holds. Anything else is a wire fault.
-        let found = known.iter().find(|d| digest_to_decimal(d) == *tok)?;
-        draws.push(*found);
+        draws.push(*index.get(*tok)?);
     }
     Some(TrustlineChannel {
         ceiling: t[0].parse().ok()?,
         drawn: t[1].parse().ok()?,
-        holder_acct: t[2].parse().ok()?,
-        issuer_well: t[3].parse().ok()?,
-        issuer_hard: t[4].parse().ok()?,
-        holder_hard: t[5].parse().ok()?,
+        settled: t[2].parse().ok()?,
+        holder_acct: t[3].parse().ok()?,
+        issuer_well: t[4].parse().ok()?,
         draws,
     })
 }

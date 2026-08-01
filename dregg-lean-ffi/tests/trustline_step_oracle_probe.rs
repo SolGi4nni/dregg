@@ -68,10 +68,9 @@ fn fresh_line(ceiling: u64) -> TrustlineChannel {
     TrustlineChannel {
         ceiling,
         drawn: 0,
+        settled: 0,
         holder_acct: 0,
         issuer_well: 0,
-        issuer_hard: 0,
-        holder_hard: 0,
         draws: Vec::new(),
     }
 }
@@ -238,34 +237,72 @@ fn repay_restores_the_line_but_never_the_digest() {
     );
 }
 
+/// ⚑ THE SETTLED FLOOR — the tooth this export exists to carry, and the reason the wire
+/// dispatches the settled verbs rather than the two-register ones.
+///
+/// The deployed gate is `amt <= drawn - settled` (`node/src/trustline_service.rs:1155-1161`),
+/// STRICTLY TIGHTER than `amt <= drawn`. If this test ever passes with plain-repay semantics,
+/// the export has silently become a WEAKER gate than the node it replaces and every routed
+/// repay would widen a money check.
 #[test]
-fn settle_all_moves_hard_value_and_conserves_the_pair() {
+fn settled_credit_cannot_be_repaid_back() {
     if !lean_answers() {
         return;
     }
-    let mut line = fresh_line(100);
-    line.issuer_hard = 500;
-    line.holder_hard = 500;
     let drawn = trustline_step(
-        &line,
+        &fresh_line(100),
         TrustlineOp::Draw {
-            digest: digest(3),
+            digest: digest(4),
             amount: 30,
         },
     )
     .expect("verdict")
     .expect("commits");
-    let closed = trustline_step(&drawn, TrustlineOp::SettleAll)
+    let settled = trustline_step(&drawn, TrustlineOp::Settle { paid: 20 })
         .expect("verdict")
-        .expect("settleAll is total");
+        .expect("settling within the outstanding draw commits");
 
-    assert_eq!(closed.drawn, 0);
-    assert_eq!(closed.issuer_hard, 530);
-    assert_eq!(closed.holder_hard, 470);
+    // settleS marches the redemption register and leaves drawn and the registry in place.
+    assert_eq!(settled.settled, 20);
+    assert_eq!(settled.drawn, 30, "the deployed settle does NOT zero drawn");
+    assert_eq!(settled.outstanding(), 10);
     assert_eq!(
-        closed.issuer_hard + closed.holder_hard,
-        drawn.issuer_hard + drawn.holder_hard,
-        "settlement is a MOVE on the hard pair (Trustline.settlePay_conserves_hard)"
+        settled.draws.len(),
+        1,
+        "a settle epoch does not touch the registry"
+    );
+
+    // The boundary repay admits...
+    assert!(trustline_step(&settled, TrustlineOp::Repay { amount: 10 })
+        .expect("verdict")
+        .is_some());
+    // ...and ONE ABOVE IT REFUSES, even though 11 <= drawn (30). This is the whole point.
+    assert!(
+        trustline_step(&settled, TrustlineOp::Repay { amount: 11 })
+            .expect("verdict")
+            .is_none(),
+        "11 <= drawn(30) but > outstanding(10): the SETTLED FLOOR must refuse it. A pass here \
+         under a two-register model would mean the export widened the deployed check."
+    );
+    // Over-settle is gated the same way.
+    assert!(
+        trustline_step(&settled, TrustlineOp::Settle { paid: 11 })
+            .expect("verdict")
+            .is_none(),
+        "settling beyond the outstanding draw would redeem value never drawn"
+    );
+    // A digest burned before the settle epoch is still burned after it.
+    assert!(
+        trustline_step(
+            &settled,
+            TrustlineOp::Draw {
+                digest: digest(4),
+                amount: 1
+            }
+        )
+        .expect("verdict")
+        .is_none(),
+        "the forever-carrier law: a settle epoch never resurrects a burned digest"
     );
 }
 

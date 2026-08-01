@@ -111,7 +111,12 @@ open Dregg2.Apps.TrustlineCore
 -- Re-export the moved names so the two downstream modules that `open Dregg2.Apps.Trustline`
 -- UNQUALIFIED (`Dregg2/Distributed/CrashRecovery.lean:447`, `Dregg2/Verify/StripeReserve.lean:23`)
 -- keep resolving them.
-export Dregg2.Apps.TrustlineCore (Line draw repay Channel settlePay settleAll)
+-- ⚑ `export` aliases exactly the names listed — it does NOT carry a type's namespace with it.
+-- `export … (SLine)` alone leaves `SLine.init` unresolvable for a downstream file that only
+-- `open`s THIS namespace, so every member a consumer reaches unqualified must be listed too.
+export Dregg2.Apps.TrustlineCore
+  (Line draw repay Channel settlePay settleAll SLine drawS repayS settleS
+   Line.init Line.WF Line.remaining SLine.init SLine.WF SLine.outstanding)
 
 /-! ## §1 — The trustline state (the bilateral cell's registers).
 
@@ -538,45 +543,14 @@ the existing `drawn ≤ ceiling`; the inequality chain IS solvency (`solvency`):
 `amt ≤ drawn − settled` (`post_trustline_repay`'s `outstanding`), strictly tighter than §2's
 `amt ≤ drawn` — settled credit is hard money already paid out and cannot be repaid back. -/
 
-/-- A trustline with the settlement register: §1's `Line` + `settled` (`TL_SETTLED_SLOT`). -/
-structure SLine where
-  /-- The underlying line (the §1 registers). -/
-  tl : Line
-  /-- Cumulative drawn value already redeemed to the holder by epoch settlement. Monotone. -/
-  settled : Nat
-  deriving Repr, DecidableEq
-
-/-- Outstanding unsettled draw — the deployed repay/settle budget (`drawn − settled`). -/
-def SLine.outstanding (s : SLine) : Nat := s.tl.drawn - s.settled
-
-/-- Settled well-formedness: the line is WF and `settled ≤ drawn` (program tooth 4). -/
-def SLine.WF (s : SLine) : Prop := s.tl.WF ∧ s.settled ≤ s.tl.drawn
-
-instance (s : SLine) : Decidable s.WF := by
-  unfold SLine.WF; infer_instance
-
-/-- Birth of a settled line: fresh line, nothing settled. -/
-def SLine.init (n : Nat) : SLine := { tl := Line.init n, settled := 0 }
+-- `SLine` (the §1 `Line` + the `settled` redemption register), `SLine.{outstanding,WF,init}`,
+-- `drawS`, `repayS` and `settleS` MOVED to `Dregg2.Apps.TrustlineCore` §3b — they are what
+-- `@[export dregg_trustline_step]` DISPATCHES, because the deployed cell carries `settled` and
+-- gates repay on `drawn − settled`. An export over §2 alone would ADMIT every repay in
+-- `(drawn − settled, drawn]` that `node/src/trustline_service.rs:1155-1161` refuses today.
 
 /-- Birth is well-formed. -/
 theorem init_SWF (n : Nat) : (SLine.init n).WF := ⟨init_WF n, Nat.le_refl 0⟩
-
-/-- Draw on the settled line — the §2 gate unchanged (`settled` plays no part in draws:
-the deployed remaining is `line − drawn`, `resolve_trustline`). -/
-def drawS (s : SLine) (digest amt : Nat) : Option SLine :=
-  (draw s.tl digest amt).map fun tl' => { s with tl := tl' }
-
-/-- Repay with the SETTLED FLOOR (the deployed gate, `post_trustline_repay`): fail-closed
-beyond the outstanding `drawn − settled`. -/
-def repayS (s : SLine) (amt : Nat) : Option SLine :=
-  if amt ≤ s.outstanding then (repay s.tl amt).map fun tl' => { s with tl := tl' } else none
-
-/-- **`settleS` — the deployed settle** (`post_trustline_settle`): march `settled` up by the
-paid amount; `drawn` and the digest registry untouched. Fail-closed beyond the outstanding draw
-(the executor refuses `settled > drawn` — program tooth 4). The hard-asset leg lives on the
-channel (§12 `settleC`). -/
-def settleS (s : SLine) (paid : Nat) : Option SLine :=
-  if paid ≤ s.outstanding then some { s with settled := s.settled + paid } else none
 
 /-- Commit-shape lemma for `drawS`. -/
 theorem drawS_spec {s s' : SLine} {d amt : Nat} (h : drawS s d amt = some s') :
@@ -936,7 +910,10 @@ every reachable state" — here that claim is a theorem. -/
 
 /-- The rebalance-epoch slice the node rebuilds: `ceiling = line − settled`,
 `spent = drawn − settled`. -/
-def SLine.epochSlice (s : SLine) : Slice := ⟨s.tl.ceiling - s.settled, s.tl.drawn - s.settled⟩
+-- `_root_.` so it attaches to the EXPORTED `SLine` (which lives in `TrustlineCore`) and
+-- dot-notation resolves. It stays in this file because `Slice` is Stingray-side (Mathlib).
+def _root_.Dregg2.Apps.TrustlineCore.SLine.epochSlice (s : SLine) : Slice :=
+  ⟨s.tl.ceiling - s.settled, s.tl.drawn - s.settled⟩
 
 /-- **`epochSlice_remaining`** — the rebuild rule is FAITHFUL: the rebuilt epoch slice's
 remaining equals the cell's remaining line (`line − drawn`) at every well-formed state. -/
@@ -991,7 +968,8 @@ Faithfulness, both directions: reconstruction from the stored registers is exact
 (`view_determines_line`) — no information loss. -/
 
 /-- Reconstruct a `Line` from the registers the deployment stores (the derived view). -/
-def Line.ofView (ceiling drawn : Nat) (draws : List Nat) : Line :=
+def _root_.Dregg2.Apps.TrustlineCore.Line.ofView
+    (ceiling drawn : Nat) (draws : List Nat) : Line :=
   { ceiling := ceiling, drawn := drawn, draws := draws
   , holderAcct := (drawn : Int), issuerWell := -(drawn : Int) }
 
@@ -1017,7 +995,8 @@ theorem view_determines_line {t u : Line} (ht : t.WF) (hu : u.WF)
   rw [← derived_view_faithful ht, ← derived_view_faithful hu, hc, hd, hds]
 
 /-- The settled-line reconstruction (`TrustlinePosition` + the registry). -/
-def SLine.ofView (ceiling drawn settled : Nat) (draws : List Nat) : SLine :=
+def _root_.Dregg2.Apps.TrustlineCore.SLine.ofView
+    (ceiling drawn settled : Nat) (draws : List Nat) : SLine :=
   { tl := Line.ofView ceiling drawn draws, settled := settled }
 
 /-- `derived_view_faithful` lifted to the settled model. -/

@@ -138,35 +138,98 @@ def settlePay (c : Channel) (amt : Nat) : Option Channel :=
 always fires (`drawn ≤ drawn`). -/
 def settleAll (c : Channel) : Channel := (settlePay c c.tl.drawn).getD c
 
+/-! ## §3b — THE SETTLED REGISTER: the shape the node actually deploys.
+
+⚑ WHY THIS EXISTS, and why the export dispatches HERE and not on §2.
+
+The deployed trustline cell carries THREE registers — `line`, `drawn` and `settled`
+(`node/src/trustline_service.rs:319-321`) — and its repay gate is
+`amt ≤ drawn − settled` (`post_trustline_repay`, `trustline_service.rs:1155-1161`), which is
+STRICTLY TIGHTER than §2's `amt ≤ drawn`. Settled credit is hard money already paid out and
+cannot be repaid back.
+
+So routing the deployed repay onto §2's `repay` would ADMIT every amount in
+`(drawn − settled, drawn]` that is refused today — a WEAKENED CHECK on a hard-asset path, which
+is the one thing a routing pass may never do. §2 is not wrong; it is a smaller object. The
+export therefore dispatches the SETTLED verbs below, and §2 survives as the object they are
+built from and the theorems are lifted through.
+
+Likewise `settleS` — not `settlePay` — is the deployed settle: it marches the MONOTONE
+redemption register and leaves `drawn` in place. §3's `settlePay`/`settleAll` are the
+*pureCredit* axis point (the holder pays the issuer hard value and the credit legs unwind);
+the deployed fullReserve close moves escrow → HOLDER, the opposite direction over a different
+amount. There is no verb here for that, and none is invented. -/
+
+/-- A trustline with the settlement register: §1's `Line` + `settled` (`TL_SETTLED_SLOT`). -/
+structure SLine where
+  /-- The underlying line (the §1 registers). -/
+  tl : Line
+  /-- Cumulative drawn value already redeemed to the holder by epoch settlement. Monotone. -/
+  settled : Nat
+  deriving Repr, DecidableEq
+
+/-- Outstanding unsettled draw — the deployed repay/settle budget (`drawn − settled`). -/
+def SLine.outstanding (s : SLine) : Nat := s.tl.drawn - s.settled
+
+/-- Settled well-formedness: the line is WF and `settled ≤ drawn` (program tooth 4). -/
+def SLine.WF (s : SLine) : Prop := s.tl.WF ∧ s.settled ≤ s.tl.drawn
+
+instance (s : SLine) : Decidable s.WF := by
+  unfold SLine.WF; infer_instance
+
+/-- Birth of a settled line: fresh line, nothing settled. -/
+def SLine.init (n : Nat) : SLine := { tl := Line.init n, settled := 0 }
+
+/-- Draw on the settled line — the §2 gate unchanged (`settled` plays no part in draws:
+the deployed remaining is `line − drawn`, `resolve_trustline`). -/
+def drawS (s : SLine) (digest amt : Nat) : Option SLine :=
+  (draw s.tl digest amt).map fun tl' => { s with tl := tl' }
+
+/-- Repay with the SETTLED FLOOR (the deployed gate, `post_trustline_repay`): fail-closed
+beyond the outstanding `drawn − settled`. -/
+def repayS (s : SLine) (amt : Nat) : Option SLine :=
+  if amt ≤ s.outstanding then (repay s.tl amt).map fun tl' => { s with tl := tl' } else none
+
+/-- **`settleS` — the deployed settle** (`post_trustline_settle`): march `settled` up by the
+paid amount; `drawn` and the digest registry untouched. Fail-closed beyond the outstanding draw
+(the executor refuses `settled > drawn` — program tooth 4). -/
+def settleS (s : SLine) (paid : Nat) : Option SLine :=
+  if paid ≤ s.outstanding then some { s with settled := s.settled + paid } else none
+
 /-! ## §4 — the `@[export]` wire codec (Rust → Lean).
 
 Single-line, space-separated token stream. The FULL channel state travels both directions, because
 the anti-replay leg is the point: the `draws` registry must be DECIDED here, never summarised into
 a Rust-computed "is it fresh" bit.
 
-**Request** — `op` then the six channel registers, then two op arguments, then the digest registry
-as a length-prefixed run:
+⚑ IT DISPATCHES THE §3b SETTLED VERBS, NOT §2. The deployed cell carries `settled` and gates
+repay on `drawn − settled`; §2 has no such register, so a wire over §2 would ADMIT repays the
+node refuses today. See §3b for the full statement. There is deliberately NO verb here for the
+fullReserve close (escrow → holder): §3's `settlePay` moves the other way, and inventing a
+mapping to make the arm look routed is exactly the drift this file exists to end.
+
+**Request** — `op` then the five settled-line registers, then two op arguments, then the digest
+registry as a length-prefixed run:
 
 ```
-op  ceiling  drawn  holderAcct  issuerWell  issuerHard  holderHard  a1  a2  n  d1 … dn
+op  ceiling  drawn  settled  holderAcct  issuerWell  a1  a2  n  d1 … dn
 ```
 
 | `op` | meaning | `a1` | `a2` |
 |---|---|---|---|
-| `0` | `draw`      | digest | amount |
-| `1` | `repay`     | amount | (ignored) |
-| `2` | `settlePay` | amount | (ignored) |
-| `3` | `settleAll` | (ignored) | (ignored) |
+| `0` | `drawS`   | digest | amount |
+| `1` | `repayS`  | amount | (ignored) |
+| `2` | `settleS` | paid   | (ignored) |
 
-`ceiling`, `drawn`, `a1`, `a2`, `n` and each `dᵢ` are unsigned decimals; `holderAcct`, `issuerWell`,
-`issuerHard`, `holderHard` are SIGNED decimals. A digest is an arbitrary-precision `Nat`, so a
-32-byte hash marshals as its full 78-digit decimal with **no truncation** — Rust must not fold it to
-64 bits, or two distinct debits could collide into one burned digest.
+`ceiling`, `drawn`, `settled`, `a1`, `a2`, `n` and each `dᵢ` are unsigned decimals; `holderAcct`
+and `issuerWell` are SIGNED decimals. A digest is an arbitrary-precision `Nat`, so a 32-byte hash
+marshals as its full 78-digit decimal with **no truncation** — Rust must not fold it to 64 bits,
+or two distinct debits could collide into one burned digest.
 
-**Reply** — the six post-state registers followed by the post-state registry:
+**Reply** — the five post-state registers followed by the post-state registry:
 
 ```
-ceiling  drawn  holderAcct  issuerWell  issuerHard  holderHard  n  d1 … dn
+ceiling  drawn  settled  holderAcct  issuerWell  n  d1 … dn
 ```
 
 Three outcomes, deliberately distinguishable (the `DelegAdmit` discipline):
@@ -200,56 +263,54 @@ def parseDigests (n : Nat) (ts : List String) : Option (List Nat) :=
     | _, _ => none
   | Nat.succ _, [] => none
 
-/-- Render the post-state: six registers then the length-prefixed digest registry. -/
-def renderChannel (c : Channel) : String :=
+/-- Render the post-state: five registers then the length-prefixed digest registry. -/
+def renderSLine (s : SLine) : String :=
   let regs :=
-    toString c.tl.ceiling ++ " " ++ toString c.tl.drawn ++ " "
-      ++ toString c.tl.holderAcct ++ " " ++ toString c.tl.issuerWell ++ " "
-      ++ toString c.issuerHard ++ " " ++ toString c.holderHard
-  let ds := c.tl.draws.foldl (fun acc d => acc ++ " " ++ toString d) ""
-  regs ++ " " ++ toString c.tl.draws.length ++ ds
+    toString s.tl.ceiling ++ " " ++ toString s.tl.drawn ++ " " ++ toString s.settled ++ " "
+      ++ toString s.tl.holderAcct ++ " " ++ toString s.tl.issuerWell
+  let ds := s.tl.draws.foldl (fun acc d => acc ++ " " ++ toString d) ""
+  regs ++ " " ++ toString s.tl.draws.length ++ ds
 
-/-- Parse the request wire into `(op, channel, a1, a2)`; `none` on any malformation. -/
-def parseWire (s : String) : Option (Nat × Channel × Nat × Nat) :=
-  match tokens s with
-  | op :: ceiling :: drawn :: holderAcct :: issuerWell :: issuerHard :: holderHard
-      :: a1 :: a2 :: n :: rest =>
-    match parseNat? op, parseNat? ceiling, parseNat? drawn, parseInt? holderAcct,
-          parseInt? issuerWell, parseInt? issuerHard, parseInt? holderHard,
+/-- Parse the request wire into `(op, sline, a1, a2)`; `none` on any malformation. -/
+def parseWire (t : String) : Option (Nat × SLine × Nat × Nat) :=
+  match tokens t with
+  | op :: ceiling :: drawn :: settled :: holderAcct :: issuerWell :: a1 :: a2 :: n :: rest =>
+    match parseNat? op, parseNat? ceiling, parseNat? drawn, parseNat? settled,
+          parseInt? holderAcct, parseInt? issuerWell,
           parseNat? a1, parseNat? a2, parseNat? n with
-    | some op, some ceiling, some drawn, some holderAcct,
-      some issuerWell, some issuerHard, some holderHard,
+    | some op, some ceiling, some drawn, some settled,
+      some holderAcct, some issuerWell,
       some a1, some a2, some n =>
         match parseDigests n rest with
         | some ds =>
             some (op,
               { tl := { ceiling := ceiling, drawn := drawn, draws := ds
                       , holderAcct := holderAcct, issuerWell := issuerWell }
-              , issuerHard := issuerHard, holderHard := holderHard }, a1, a2)
+              , settled := settled }, a1, a2)
         | none => none
-    | _, _, _, _, _, _, _, _, _, _ => none
+    | _, _, _, _, _, _, _, _, _ => none
   | _ => none
 
-/-- Apply `op` to the channel. `none` is a REFUSAL (a verdict), distinct from a parse failure. -/
-def applyOp (op : Nat) (c : Channel) (a1 a2 : Nat) : Option Channel :=
+/-- Apply `op` to the settled line. `none` is a REFUSAL (a verdict), distinct from a parse
+failure. These are the DEPLOYED verbs — see §3b for why the export does not dispatch §2. -/
+def applyOp (op : Nat) (s : SLine) (a1 a2 : Nat) : Option SLine :=
   match op with
-  | 0 => (draw c.tl a1 a2).map fun tl' => { c with tl := tl' }
-  | 1 => (repay c.tl a1).map fun tl' => { c with tl := tl' }
-  | 2 => settlePay c a1
-  | 3 => some (settleAll c)
+  | 0 => drawS s a1 a2
+  | 1 => repayS s a1
+  | 2 => settleS s a1
   | _ => none
 
 /-- The whole `String → String` decision. Malformed wire ⇒ `""`; refusal ⇒ `"0"`; commit ⇒ the
 rendered post-state. An unknown `op` is a malformation, not a refusal — a caller that asks for a
 verb we do not have has NOT been told "no", it has been told nothing. -/
-def trustlineStepWire (s : String) : String :=
-  match parseWire s with
+def trustlineStepWire (t : String) : String :=
+  match parseWire t with
   | none => ""
-  | some (op, c, a1, a2) =>
-      if op > 3 then ""
-      else match applyOp op c a1 a2 with
+  | some (op, s, a1, a2) =>
+      if op > 2 then ""
+      else match applyOp op s a1 a2 with
         | none => "0"
-        | some c' => renderChannel c'
+        | some s' => renderSLine s'
 
 /-- **`@[export dregg_trustline_step]`** — the C-ABI entry Rust calls. The trustline draw / repay /
 settle verdict AND post-state are COMPUTED HERE; `coord`, `turn`, `node`, `narrator`, `cell` and
@@ -283,38 +344,63 @@ def demoChannel : Channel := { tl := demoLine, issuerHard := 0, holderHard := 0 
 -- A repay does NOT resurrect the burned digest: the line has room again, the digest still does not.
 #guard ((draw demoLine 7 40).bind (fun t => repay t 40) |>.bind (fun t => draw t 7 10)).isNone
 
--- SETTLE: the hard-asset pair is conserved and the counter clears.
+-- SETTLE (the §3 pureCredit axis point — NOT the deployed close; see §3b).
 #guard (settleAll demoChannel).tl.drawn == 0
 #guard ((draw demoLine 7 40).map (fun t => settleAll { tl := t, issuerHard := 0, holderHard := 0 })
           |>.map (·.issuerHard)) == some (40 : Int)
 
+/-! ### §5b — THE SETTLED FLOOR, both polarities.
+
+⚑ THIS IS THE TOOTH THE EXPORT EXISTS TO CARRY. `repayS` refuses inside `(drawn − settled, drawn]`
+where §2's `repay` ADMITS. If this pair ever agrees, the export has silently become a weaker gate
+than `node/src/trustline_service.rs:1155-1161` and every routed repay widens a money check. -/
+
+/-- Drawn 30, of which 20 already settled — outstanding 10. -/
+def demoSettled : SLine := { tl := (draw (Line.init 100) 7 30).getD (Line.init 100), settled := 20 }
+
+#guard demoSettled.outstanding == 10
+#guard decide demoSettled.WF
+-- The boundary repay admits…
+#guard (repayS demoSettled 10).isSome
+-- …and ONE ABOVE IT REFUSES, while the §2 gate would have admitted it. Both halves asserted.
+#guard (repayS demoSettled 11).isNone
+#guard (repay demoSettled.tl 11).isSome
+-- Settle is gated the same way, and leaves `drawn` and the registry alone.
+#guard (settleS demoSettled 11).isNone
+#guard ((settleS demoSettled 10).map (·.settled)) == some 30
+#guard ((settleS demoSettled 10).map (·.tl.drawn)) == some 30
+-- A burned digest stays burned across a settle epoch.
+#guard ((settleS demoSettled 10).bind (fun s => drawS s 7 1)).isNone
+
 -- THE WIRE, all three outcome shapes.
---                            op ceil drawn hAcct iWell iHard hHard  a1  a2  n
-#guard trustlineStepWire      "0  100    0     0     0     0     0    7  40  0"
-         == "100 40 40 -40 0 0 1 7"                       -- draw 40 on digest 7 — COMMITTED
-#guard trustlineStepWire      "0  100    0     0     0     0     0    7 101  0" == "0"
-                                                          -- over-line — REFUSED
-#guard trustlineStepWire      "0  100   40    40   -40     0     0    7  10  1 7" == "0"
-                                                          -- digest 7 replayed — REFUSED
-#guard trustlineStepWire      "1  100   40    40   -40     0     0   41   0  1 7" == "0"
-                                                          -- over-repay — REFUSED
-#guard trustlineStepWire      "1  100   40    40   -40     0     0   40   0  1 7"
-         == "100 0 0 0 0 0 1 7"                           -- repay 40 — digest STAYS burned
-#guard trustlineStepWire      "2  100   40    40   -40     0     0   40   0  1 7"
-         == "100 0 0 0 40 -40 1 7"                        -- settlePay 40 — hard asset MOVED
-#guard trustlineStepWire      "3  100   40    40   -40     0     0    0   0  1 7"
-         == "100 0 0 0 40 -40 1 7"                        -- settleAll — same, drawn cleared
+--                       op ceil drawn settled hAcct iWell  a1  a2  n
+#guard trustlineStepWire "0  100     0       0     0     0   7  40  0"
+         == "100 40 0 40 -40 1 7"                    -- draw 40 on digest 7 — COMMITTED
+#guard trustlineStepWire "0  100     0       0     0     0   7 101  0" == "0"   -- over-line
+#guard trustlineStepWire "0  100    40       0    40   -40   7  10  1 7" == "0" -- replay REFUSED
+#guard trustlineStepWire "1  100    40       0    40   -40  41   0  1 7" == "0" -- over-repay
+#guard trustlineStepWire "1  100    40       0    40   -40  40   0  1 7"
+         == "100 0 0 0 0 1 7"                        -- repay 40 — digest STAYS burned
+-- THE SETTLED FLOOR ON THE WIRE: outstanding is 10, so 11 REFUSES even though drawn is 30.
+#guard trustlineStepWire "1  100    30      20    30   -30  11   0  1 7" == "0"
+#guard trustlineStepWire "1  100    30      20    30   -30  10   0  1 7"
+         == "100 20 20 20 -20 1 7"
+-- settleS marches the redemption register and leaves `drawn` in place (the DEPLOYED shape).
+#guard trustlineStepWire "2  100    30      20    30   -30  10   0  1 7"
+         == "100 30 30 30 -30 1 7"
+#guard trustlineStepWire "2  100    30      20    30   -30  11   0  1 7" == "0"
 
 -- FAIL-CLOSED on every malformation: short, long, non-numeric, bad registry length, unknown op.
-#guard trustlineStepWire "0 100 0 0 0 0 0 7 40" == ""          -- short (no registry length)
-#guard trustlineStepWire "0 100 0 0 0 0 0 7 40 0 9" == ""      -- registry longer than declared
-#guard trustlineStepWire "0 100 0 0 0 0 0 7 40 1" == ""        -- registry shorter than declared
-#guard trustlineStepWire "0 100 0 0 0 0 0 seven 40 0" == ""    -- non-numeric
-#guard trustlineStepWire "0 -100 0 0 0 0 0 7 40 0" == ""       -- a NEGATIVE ceiling is not a Nat
-#guard trustlineStepWire "4 100 0 0 0 0 0 7 40 0" == ""        -- unknown op ⇒ NO VERDICT
+#guard trustlineStepWire "0 100 0 0 0 0 7 40" == ""            -- short (no registry length)
+#guard trustlineStepWire "0 100 0 0 0 0 7 40 0 9" == ""        -- registry longer than declared
+#guard trustlineStepWire "0 100 0 0 0 0 7 40 1" == ""          -- registry shorter than declared
+#guard trustlineStepWire "0 100 0 0 0 0 seven 40 0" == ""      -- non-numeric
+#guard trustlineStepWire "0 -100 0 0 0 0 7 40 0" == ""         -- a NEGATIVE ceiling is not a Nat
+#guard trustlineStepWire "0 100 0 -1 0 0 7 40 0" == ""         -- a NEGATIVE settled is not a Nat
+#guard trustlineStepWire "3 100 0 0 0 0 7 40 0" == ""          -- unknown op ⇒ NO VERDICT
 #guard trustlineStepWire "" == ""                              -- empty ⇒ NO VERDICT
 
 -- Signed registers round-trip through the wire (the wells carry negatives).
-#guard trustlineStepWire "1 100 40 40 -40 -5 5 40 0 1 7" == "100 0 0 0 -5 5 1 7"
+#guard trustlineStepWire "1 100 40 0 40 -40 40 0 1 7" == "100 0 0 0 0 1 7"
 
 end Dregg2.Apps.TrustlineCore
