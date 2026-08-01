@@ -537,10 +537,11 @@ and has no digest wires, so bolting the framework's `PIBindsDigests` surface ont
 descriptor nobody deployed. `lowerAir` and `lowerEffect` share the normalizer, the leg lowerings
 and the emission order, and differ ONLY in that surface (`assemble`).
 
-⚑ THE MODULE ORDER IS THE EVIDENCE. `EffectLowerCore` (the back end) now sits BELOW
-`DfaRoutingTableEmit`, which sits below this file. A deployed descriptor cannot import the compiler
-and still hand-write its own constraints; the import edge is what makes the fusion structural
-rather than a claim. -/
+⚑ THE MODULE ORDER IS WHAT MAKES THE FUSION POSSIBLE — precisely, and not more than that.
+`EffectLowerCore` (the back end) now sits BELOW `DfaRoutingTableEmit`, which sits below this file.
+The edge is what lets the descriptor BE the compiler's output at all; it does not by itself forbid
+hand-writing one beside it. What forbids that is the DELETION — there is no second `VmConstraint2`
+literal left to drift from, and `tableRoutingDesc_constraints` goes red if the emission moves. -/
 
 namespace DfaRung
 
