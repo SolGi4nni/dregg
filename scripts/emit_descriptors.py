@@ -822,6 +822,24 @@ def verify_provenance(strict: bool) -> None:
     check_set("by-name", prov.get("by_name_sha256", {}), {
         p.name: p for p in by_name.iterdir() if p.is_file()
     } if by_name.is_dir() else {})
+
+    # ⚑ EVERY OTHER SUBDIRECTORY, BY DISCOVERY — not by name.
+    #
+    # The two walks above are a top-level `iterdir()` plus ONE hardcoded subdirectory, so a new
+    # descriptor subdirectory is invisible to the provenance stamp until somebody remembers to add a
+    # line here. `table-airs/` (the Lean-emitted shared table AIRs, first consumer: the deployed
+    # double-spend gate) landed 2026-08-01 and was exactly that — constraints of a live gate sitting
+    # in a JSON the stamp did not hash.
+    #
+    # ⚠ This is the same shape as the hole that once let `by-name/predicate-arith.json` drift. Fixed
+    # by DISCOVERY: anything under `circuit/descriptors/` that is not already covered above is walked.
+    # A future subdirectory is stamped the day it appears, with nobody needing to remember.
+    covered_dirs = {"by-name"}
+    for sub in sorted(d for d in DESC.iterdir() if d.is_dir() and d.name not in covered_dirs):
+        key = f"{sub.name}_sha256"
+        check_set(sub.name, prov.get(key, {}), {
+            p.name: p for p in sub.iterdir() if p.is_file()
+        })
     check_set("fp-file", prov.get("fp_file_sha256", {}), {
         str(p.relative_to(ROOT)): p for p in RUST_FP_FILES if p.exists()
     })
