@@ -22,6 +22,8 @@ mina-core = { path = "../../../../mina-rust/crates/core" }
 ark-ec = { version = "0.5.0", features = ["std"] }
 ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
 ark-poly = { version = "0.5.0" }
+blake2 = "0.10"
+num-bigint = "0.4"
 kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
