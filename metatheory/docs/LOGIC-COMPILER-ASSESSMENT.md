@@ -375,3 +375,152 @@ descriptors; AirBuilder 7 import / 36 open / 15 call). The two-rail claim is ver
 serves only `EffectVmDescriptor2`. The "logic compiler is real but additive" claim is verified by the
 verbatim "standalone additive module; no integration imports are changed" in each `*DescriptorIR2`
 header.*
+
+---
+
+# ⚑ PHASE 1 EXECUTED — 2026-08-01. The pass exists; the rails did NOT fuse, and the reason is the SOURCE.
+
+*`Dregg2/Circuit/Emit/EffectLower.lean` (NEW, rooted in `Dregg2.lean`, `lake build` green,
+`#assert_axioms`-clean on all ten theorems). This section supersedes §7's Phase-1 sketch on one
+point: the sketch said retargeting `emittedEffect2` "is the single edit that fuses the two rails."
+It is not. The edit is real and is named precisely in P1.4 — but fusing the rails needs a change to
+`EffectSpec2` itself, and the sketch did not see that.*
+
+## P1.1 — what was built
+
+`lowerEffect : String → EffectSpec2 St Args → EffectVmDescriptor2` (`EffectLower.lean`), through
+`AirBuilder`, in three stages:
+
+- **`exprToHead`** — a real polynomial normalizer from `Circuit.Expr` (an arbitrary var/const/+/×
+  tree) into `AirBuilder.Head` (`Σ coeff·∏cols + const`). `mulHead` distributes; `evalH_mulHead`
+  and `evalH_exprToHead` are its proved semantics. This is the step the 63 hand-rolling emitters
+  skip by writing the normal form by hand.
+- **`lowerConstraint`** — `lhs = rhs` ↦ the residual head `lhs − rhs` emitted as `cgH`, so
+  `headToExpr_eval` (`AirBuilder.lean:158`) discharges the gate-bite obligation once instead of
+  per effect.
+- **`lowerEffect`** — descriptor assembly over the framework's own 72-column layout, with a PI
+  surface that REALIZES `WitnessExtract.PIBindsDigests` (`WitnessExtract.lean:54`) as actual
+  `piBinding` pins rather than leaving it a carried `Prop`.
+
+Two-sided faithfulness: `lowered_of_satisfied` is UNCONDITIONAL; `satisfied_of_lowered` carries the
+deployed canonicality envelope, because `VmConstraint.holdsVm` asserts `body ≡ 0 [ZMOD p]` while
+`Constraint.holds` is ℤ equality. That asymmetry is inherent to the rail change, not slack.
+
+## P1.2 — ⚑ THE DIFFERENTIAL: **REFINEMENT-EQUAL, NOT BYTE-EXACT.** Measured, both sides.
+
+`transferLoweredDesc` **is** `lowerEffect` applied to transfer's `EffectSpec2` — `rfl`
+(`transferLoweredDesc_is_lowering`), for every carried digest `D`. So the numbers below are about
+the general pass, not a lookalike.
+
+| | lowered (the pass's output) | `transferVmDescriptor` (bare v1 `def`) | LIVE `transferVmDescriptor2R24` |
+|---|---|---|---|
+| trace width | **72** | 188 | **1874** |
+| PI count | 7 | 42 | 50 |
+| constraints | **11** (4 gate + 7 pi) | 36 (15 gate + 14 transition + 7 pi) | **663** (340 lookup · 294 window · 14 transition · 15 pi) |
+| tables / hash sites / ranges | 0 / 0 / 0 | 0 / 4 / 2 | 6 / 0 / 0 |
+
+Sources: `#guard`s in `EffectLower.lean` §4a/§5 (executed); `circuit/descriptors/
+dregg-effectvm-transfer-v1.json`; the `transferVmDescriptor2R24` row of `circuit/descriptors/
+rotation-v3-staged-registry.tsv`. **Byte-equality is REFUTED as a theorem**
+(`lowered_json_ne_deployed_json`), not noted as a gap.
+
+**What DOES hold — and it is the real result.** `transferLowered_refines_balanceMovement`: a
+witness of the descriptor **the pass emitted** forces the complete declarative
+`BalanceMovementSpec` — the same apex the hand-authored rung reaches — via
+`effect2_circuit_full_sound`. Both polarities are toothed: `demoEnv_satisfies_lowered` (the
+premise is inhabited, PI pins included) and `lowered_rejects_component_forge` (the emitted gate
+REFUSES a forged component digest).
+
+⚑ **It deliberately does NOT route through `Inst.Transfer.transfer_full_sound`.** That carries
+`logHashInjective`, which `StateCommit.lean:251` PROVES FALSE at deployed BabyBear — a theorem
+under it is vacuous at deployment, and `check-floor-baseline-preflight` refused the first draft of
+this commit for exactly that. The keystone was PORTED (option (a), not the escape hatch) onto the
+`_or_collides` side condition `¬ LogColl S.LH s'.log (t :: s.log)` — named, refutable, at the ONE
+pair of logs the witness supplies — which `LogCommitRegrounded.noLogColl_of_inj` shows is implied
+by the old carrier, so the ported statement is strictly STRONGER. Remaining portals
+(`RestIffNoBal`, `Function.Injective D`, the canonicality envelope) are not on the refuted list.
+So: **the lowering is sound; it is not a replacement for the deployed AIR.**
+
+## P1.3 — ⚑ WHY, exactly. The gap is in `EffectSpec2`, not in the emitter.
+
+`EffectSpec2` cannot express the deployed descriptor because it never held the content:
+
+1. `Inst/transfer.lean:99` commits the whole 6-conjunct `admitGuardA` as ONE `propBit` column
+   ASSERTED `= 1`. The deployed AIR COMPUTES its guard (the §11.7 15-bit borrow chain).
+   **A `propBit` is a claim; the borrow chain is a proof.**
+2. The commitment is an ABSTRACT `digest`/`RH`/`LH` (`EffectCommit2.lean:120,183`) — a carried
+   portal, never an emitted hash site. The deployed AIR BUILDS `state_commit` from 4 ordered `H4`
+   sites in-circuit.
+3. `EffectSpec2` is SINGLE-ROW: no `transition`, no `boundary`, no `windowGate`.
+4. `EffectSpec2` has **no vocabulary at all** for lookups, tables, or ranges.
+
+None of these is a defect of `lowerEffect`. Each is absent from the source language.
+
+## P1.4 — the serializer retarget, named precisely (NOT done here)
+
+- **Boundary**: `emittedEffect2` (`EffectCommit2.lean:484`) and its four arity siblings —
+  `emittedEffect2Dual` (`EffectCommit2Dual.lean:314`), `…Triple` (`EffectCommit3.lean:321`),
+  `…Quad` (`EffectCommit4.lean:354`), `…Quint` (`EffectCommit5.lean:388`).
+- **Edit 1 — imports.** `EffectCommit2.lean` gains `import Dregg2.Circuit.Emit.AirBuilder`.
+  Verified acyclic: `DescriptorIR2.lean:39-46` imports `EffectVmEmit`/`Lookup`/`Heap`/
+  `MapMerkleRoot`/`DeployedMapDenotation`/`MemoryChecking`/`UniversalMemory` and reaches
+  `EffectCommit2` from none of them.
+- **Edit 2 — the body.** `emittedEffect2 name E : EffectVmDescriptor2 := lowerEffect name E`
+  (move `lowerEffect` in, or keep it in `EffectLower` and import it).
+- **Edit 3 — the theorem that DOWNGRADES.** `emitEffect2Faithful` (`EffectCommit2.lean:489`) is a
+  free `↔`. Its replacement is the §3 PAIR: `lowered_of_satisfied` (free) plus
+  `satisfied_of_lowered` (canonicality envelope). **The retarget costs a biconditional.** Any
+  write-up that reports the retarget without reporting this is over-claiming.
+- **Edit 4 — the 27 artifacts.** The `<x>Emitted : EmittedDescriptor` defs in `Inst/*.lean` and
+  `Witness/*.lean` change type to `EffectVmDescriptor2`; their `#guard <x>Emitted.name == …` pins
+  survive verbatim (the field exists on both records).
+- **Edit 5 — the registry.** `effectEmitRegistry` (`EffectEmitRegistry.lean:132`, 32-way name
+  dispatch) and `TurnEmit.defaultDescriptorLookup` (`TurnEmit.lean:166`) re-type. This is the
+  retarget's real scope: **the whole `TurnEmit` refinement spine currently sits on the retired
+  rail.**
+- **Edit 6 — the consumers.** ~20 statements of the form `satisfiedEmitted (emittedEffect2 …)`
+  (`WitnessExtractPerEffect.lean` ×11, `TurnEmit.lean`, `EffectRefinement.lean:87`,
+  `WitnessExtract.lean:192`, `EffectEmittedRefinement.lean:107`, `LogCommitCutoverCheck.lean:391`)
+  restate over `Satisfied2` / the row denotation.
+- **Edit 7 — Rust, and DELETE rather than keep both.** `circuit/src/lean_descriptor_air.rs`
+  becomes dead. It already is: all 10 `LeanDescriptorAir` references in `circuit/src/` are inside
+  that one file, against 59 files touching `descriptor_ir2`/`Ir2Air`. Greenfield law: delete it.
+
+## P1.5 — generality readout over the deployed set (this is what sizes Phase 2)
+
+Measured over all 76 checked-in `circuit/descriptors/by-name/*.json` by constraint kind. The
+capability ladder, cumulative:
+
+| emitter capability | reach | Δ |
+|---|---|---|
+| gate + first-row PI — **what `lowerEffect` emits today** | **12 / 76** | +12 |
+| + last-row PI | 12 / 76 | +0 |
+| + boundary first/last | 12 / 76 | +0 |
+| + ranges | 12 / 76 | +0 |
+| + `windowGate` | 25 / 76 | +13 |
+| + **lookup + tables** | **76 / 76** | **+51** |
+| + hash sites | 76 / 76 | +0 (**no by-name descriptor uses one**) |
+
+The 12 reachable today: the 10 automatafl descriptors, `field-delta-result-range.json`,
+`quantified-absence.json`. **51 of 76 carry a lookup/table leg** and 50 carry row-coupling
+(boundary / window / last-row PI).
+
+**The sizing conclusion, and it inverts §7's Phase 2.** §7 proposed "adopt `AirBuilder` across the
+74 hand-rolling emitters" as the next move. That is worth doing, but it is not what unblocks the
+compiler: the emitter side is mechanical in every one of these kinds, while **the source side
+cannot say them at all.** One capability — a lookup/table leg on `EffectSpec2` — moves reach from
+25/76 to 76/76. Widening the SOURCE is Phase 2; the `AirBuilder` sweep is bookkeeping that can run
+in parallel.
+
+Transfer is not in the by-name 76 at all (its live face is `EmitRotationV3.lean:135` →
+`AvailWireMembers.transferV3AvailWire`), and its 340 lookups + 294 window gates put it firmly in
+the +51 bucket.
+
+## P1.6 — the honest verdict on the prior lane's hypothesis
+
+*"The two rails are structurally disjoint"* — **CONFIRMED at transfer, and now with numbers.** They
+share a denotation target (`BalanceMovementSpec`) and nothing else: 11 constraints against 663, and
+no lookup, table, range, hash site, transition, boundary or window gate in common — because
+`EffectSpec2` has no name for any of them. The spine is real, the pass is real, and the pass now
+PRODUCES a live-rail descriptor rather than modelling one. What it produces is a sound but
+arithmetic-free skeleton, and closing that is a source-language change.
