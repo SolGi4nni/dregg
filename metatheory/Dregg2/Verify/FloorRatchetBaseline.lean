@@ -2216,7 +2216,31 @@ def manual : Array String := #[
   --     "no strength lost" witness for the composed whole-kernel keystone.
   "Dregg2.Circuit.StateCommitLeafRegrounded.noCellDigestColl_of_carriers",
   "Dregg2.Circuit.StateCommitLeafRegrounded.noRecStateCommitColl_of_carriers",
-  "Dregg2.Circuit.StateCommitLeafRegrounded.recStateCommit_binds_kernel_of_carriers"]
+  "Dregg2.Circuit.StateCommitLeafRegrounded.recStateCommit_binds_kernel_of_carriers",
+  -- ⚑ RAISE OF 2026-08-01, +5 — the light-client history drain, direction (b). Two distinct reasons.
+  --
+  -- ONE RECOVERY BRIDGE. `HistoryAggregation`'s nine keystones were re-stated floor-free as
+  -- `*_orBreak` twins; the injective ORIGINALS are retained and re-derived THROUGH those twins as
+  -- labelled `⚠ BRIDGE ONLY` (the `SystemRoots` / `ListCommitRegrounded` doctrine already recorded
+  -- above). `noSpongeColl_of_inj` is the `resolve` step of that derivation, and it must carry the
+  -- floor because it IS the strength relation: it is the machine-checked statement that the twin
+  -- gives back the original under the old hypothesis. Its own docstring says the premise is false at
+  -- deployed width. Deleting it would not remove a vacuity, it would remove the evidence that
+  -- nothing was weakened.
+  "Dregg2.Distributed.HistoryAggregation.noSpongeColl_of_inj",
+  --
+  -- FOUR CANARIES, which must carry floors or they cannot fire. `scripts/floor_ratchet_canary_key.lean`
+  -- proves the NEW baseline key (`name ⊣ floor-set`) can go red: two VIOLATIONS that must be named
+  -- (a baselined declaration acquiring a second floor — the 161-declaration case — and one swapping
+  -- its floor), and two CONTROLS that must NOT be named (one is the only evidence the pins match
+  -- anything at all; the other fires only if the subset rule regressed to equality, which would red
+  -- every pure drain). A gate that cannot go red is not a gate, so these are load-bearing.
+  -- ⚠ They are ALSO pinned in `FloorRatchet.canaryPins`, deliberately outside the emitter's reach —
+  -- a shrink-emit rewrites baseline rows, and a canary that a shrink can delete disarms silently.
+  "floor_ratchet_key_canary_acquires",
+  "floor_ratchet_key_canary_swapped",
+  "control_floor_ratchet_key_canary_unchanged",
+  "control_floor_ratchet_key_canary_drained"]
 
 /-- The grandfathered carriers. Only ever gets SHORTER. -/
 def grandfathered : Array String :=

@@ -94,11 +94,15 @@ def wellformed_attests_whole_history_KS :=
   @Dregg2.Distributed.HistoryAggregation.wellformed_attests_whole_history
 
 -- (7) VERIFIED HISTORY CONSERVES (the headline CRITICAL-3 closure).
+-- ⚑ REPOINTED 2026-08-01 to the FLOOR-FREE twin. The registered keystone used to be
+-- `verified_history_conserves`, whose four `compressInjective`/`compressNInjective`/`cellLeafInjective`
+-- premises are REFUTED at deployed BabyBear width — so the instrument was certifying a VACUOUS
+-- statement. The `_orBreak` form concludes the same conservation OR a concrete `StateBreakP`.
 @[load_bearing_keystone
     satisfiable := Dregg2.Distributed.HistoryAggregation.honest_kernelChained_conserves
     teeth := Dregg2.Distributed.HistoryAggregation.tooth_rejects_broken_order]
 def verified_history_conserves_KS :=
-  @Dregg2.Distributed.HistoryAggregation.verified_history_conserves
+  @Dregg2.Distributed.HistoryAggregation.verified_history_conserves_orBreak
 
 -- (8) KERNEL-CHAINED CONSERVES.
 @[load_bearing_keystone
@@ -108,11 +112,14 @@ def kernelChained_conserves_KS :=
   @Dregg2.Distributed.HistoryAggregation.kernelChained_conserves
 
 -- (9) ROOT-TOOTH PINS KERNEL (CR root-recovery to kernel equality).
+-- ⚑ REPOINTED 2026-08-01 to the FLOOR-FREE twin, same reason as (7): the injective form is vacuous at
+-- deployed width, so the light client "genuinely learns the adjacent kernels coincide" only against a
+-- hash nobody runs. `root_tooth_pins_kernel_orBreak` earns it at the real hash.
 @[load_bearing_keystone
     satisfiable := Dregg2.Distributed.HistoryAggregation.honest_chain_kernelChained
     teeth := Dregg2.Distributed.HistoryAggregation.tooth_rejects_broken_order]
 def root_tooth_pins_kernel_KS :=
-  @Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel
+  @Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_orBreak
 
 /-! ### the light-client UC reduction. -/
 

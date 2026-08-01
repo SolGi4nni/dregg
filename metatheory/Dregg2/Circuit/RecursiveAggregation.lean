@@ -352,6 +352,25 @@ closed: "trusting the aggregate trusts a no-mint/no-burn history" now follows fr
 from the prover's honesty about state continuity. (The receipt LOG — the one `RecChainedState`
 component the §8 root does not bind — blocks only the full `Run`, never conservation; named, not
 hidden.) -/
+theorem conserves_from_verification_orBreak
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
+    (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
+    (hroot : verify agg.root = true)
+    (hgen : KernelGenesisPin g steps)
+    (hstruct : SeamStruct steps) :
+    Dregg2.Circuit.CollisionReduce.OrBreak
+      (Dregg2.Circuit.StateCommitReduce.StateBreakP CH cmb compress compressN)
+      (recTotal (lastStateOf g steps).kernel = recTotal g.kernel) := by
+  have hatt := light_client_verifies_whole_history Proof verify CH RH cmb compress compressN
+    agg g steps es hroot
+  exact verified_history_conserves_orBreak CH RH cmb compress compressN hRest
+    g steps hgen hatt.ordered hstruct
+
+/-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** The four hash premises are REFUTED at deployed BabyBear
+width, so "the light client learns the whole history conserves value" held here only of hashes nobody
+runs. `conserves_from_verification_orBreak` above is the deployed-true form: the conservation, or a
+concrete `StateBreakP` — a named collision of one of the four commitment primitives. -/
 theorem conserves_from_verification
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
@@ -406,6 +425,23 @@ ROOT-FACE repair named ("`HistoryAggregation.stateRoot := rotatedCommit`") now C
 node cannot drop / forge / reorder / truncate a receipt at ANY step without breaking a published
 commit, and the light client sees it from the succinct aggregate alone. The receipt LOG — the one
 component the kernel-only §8 root did NOT bind — is now bound by the model the aggregate attests. -/
+theorem non_omission_from_verification_orBreak
+    (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
+    (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
+    (hroot : verify agg.root = true)
+    (hgen : LogGenesisPin g steps)
+    (hstruct : SeamStruct steps) :
+    Dregg2.Circuit.CollisionReduce.OrBreak
+      (Dregg2.Circuit.CollisionReduce.SpongeCollision compressN) (LogChained g steps) := by
+  have hatt := light_client_verifies_whole_history Proof verify CH RH cmb compress compressN
+    agg g steps es hroot
+  exact logChained_of_verified_orBreak CH RH cmb compress compressN g steps hgen hatt.ordered hstruct
+
+/-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `compressNInjective` is REFUTED at deployed width, so this
+form of the non-omission headline concluded from a false premise. `non_omission_from_verification_orBreak`
+above is what `verify agg.root = true` actually buys: the log chains across the whole history, or the
+omitting node EXHIBITS a `SpongeCollision compressN`. Note the NARROW break — this leg costs only the
+sponge, not the four-way `StateBreakP` the conservation leg pays. -/
 theorem non_omission_from_verification
     (hCompressN : compressNInjective compressN)
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
@@ -854,6 +890,9 @@ end Accumulator
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.anchored_tooth_bites_on_real_chain
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.attested_history_conserves
 -- the CRITICAL-3 closure: conservation-over-history DERIVED from `verify agg.root`, no StateChained:
+-- ⚑ the FLOOR-FREE twins (2026-08-01).
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.conserves_from_verification_orBreak
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification_orBreak
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.conserves_from_verification
 -- whole-history NON-OMISSION derived from `verify agg.root` (the rotated commit binds every receipt log):
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification

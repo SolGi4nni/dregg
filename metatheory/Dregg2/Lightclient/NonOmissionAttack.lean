@@ -97,7 +97,8 @@ open Dregg2.Lightclient.HistoryIndex
 open Dregg2.Circuit.RotationLayout (RotatedLimbs rotatedCommit rotatedCommit_binds_mmr demoLimbs)
 open Dregg2.Circuit.StateCommit (recStateCommit compressNInjective)
 open Dregg2.Distributed.HistoryAggregation (ChainStep stateRoot chainedCommit logRoot logRoot_injective
-  root_tooth_pins_log LogChained LogGenesisPin SeamStruct)
+  logRoot_binds_orBreak noSpongeColl_of_inj root_tooth_pins_log LogChained LogGenesisPin SeamStruct)
+open Dregg2.Circuit.CollisionReduce (OrBreak SpongeCollision spongeN_orBreak)
 open Dregg2.Circuit.RecursiveAggregation (Aggregate EngineSound non_omission_from_verification)
 
 /-! ## §1 — THE REPAIR, WELDED INTO THE MODEL: the chain now folds the rotated commit (binds the log).
@@ -112,7 +113,31 @@ adds the second. -/
 `chainedCommit`, which absorbs `logRoot … st.log`. Two steps sharing a turn whose `newRoot`s agree have
 EQUAL receipt logs — directly `HistoryAggregation.root_tooth_pins_log`, here for two `newRoot`s. A node
 that drops/forges/reorders a receipt MOVES the published commit; a pure light client, holding only that
-commit, now CATCHES it. (Contrast the pre-repair `newRoot_blind_to_log`, which this supersedes.) -/
+commit, now CATCHES it. (Contrast the pre-repair `newRoot_blind_to_log`, which this supersedes.)
+
+⚑ **DRAINED 2026-08-01 — and the drain is the whole point of this module.** The `_orBreak` form is
+FIRST because the `compressNInjective` form does not say what this module claims it says: at deployed
+BabyBear width that premise is REFUTED, so "a pure light client CATCHES it" held only of a sponge
+nobody runs. The reduction form is the catch that survives — the omitting node either fails to move
+the published commit (impossible) or HANDS OVER a concrete `SpongeCollision compressN`. -/
+theorem newRoot_binds_log_orBreak
+    (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+    (RH : Dregg2.Exec.RecordKernelState → ℤ)
+    (cmb : ℤ → ℤ → ℤ) (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (s s' : ChainStep) (ht : s.turn = s'.turn)
+    (h : ChainStep.newRoot CH RH cmb compress compressN s
+          = ChainStep.newRoot CH RH cmb compress compressN s') :
+    OrBreak (SpongeCollision compressN) (s.post.log = s'.post.log) := by
+  unfold ChainStep.newRoot chainedCommit at h
+  rw [ht] at h
+  refine OrBreak.bind (spongeN_orBreak compressN h) ?_
+  intro hlimbs
+  simp only [List.cons.injEq, and_true] at hlimbs
+  exact logRoot_binds_orBreak compressN hlimbs.2
+
+/-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `newRoot_binds_log_orBreak` above is the deployed-true
+form; this is its `resolve` under a premise that is false at deployed width. Retained so the strength
+relation is machine-checked, never a hypothesis on a keystone. -/
 theorem newRoot_binds_log
     (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
     (RH : Dregg2.Exec.RecordKernelState → ℤ)
@@ -121,12 +146,9 @@ theorem newRoot_binds_log
     (s s' : ChainStep) (ht : s.turn = s'.turn)
     (h : ChainStep.newRoot CH RH cmb compress compressN s
           = ChainStep.newRoot CH RH cmb compress compressN s') :
-    s.post.log = s'.post.log := by
-  unfold ChainStep.newRoot chainedCommit at h
-  rw [ht] at h
-  have hlimbs := hCompressN _ _ h
-  simp only [List.cons.injEq, and_true] at hlimbs
-  exact logRoot_injective compressN hCompressN hlimbs.2
+    s.post.log = s'.post.log :=
+  (newRoot_binds_log_orBreak CH RH cmb compress compressN s s' ht h).resolve
+    (noSpongeColl_of_inj compressN hCompressN)
 
 /-- **The kernel-digest LIMB alone admits omission — WHY the rotated commit needs the log root.** The
 FIRST limb `stateRoot … k t` (= `recStateCommit`, the kernel digest) is a function of the kernel and
@@ -311,6 +333,25 @@ The receipt-log binding is the rotated commit's second limb welded into the aggr
 (`root_tooth_pins_log`), discharged under the one CR floor (`compressNInjective`) — there is NO `hweld`
 hypothesis. This is `RecursiveAggregation.non_omission_from_verification`, the whole-history twin of §2's
 single-commit grounded non-omission. -/
+theorem light_client_whole_history_non_omission_orBreak
+    {Proof : Type} {verify : Proof → Bool}
+    {CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ}
+    {RH : Dregg2.Exec.RecordKernelState → ℤ}
+    {cmb : ℤ → ℤ → ℤ} {compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {agg : Aggregate Proof} {g : Dregg2.Exec.RecChainedState} {steps : List ChainStep}
+    (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
+    (hroot : verify agg.root = true)
+    (hgen : LogGenesisPin g steps) (hstruct : SeamStruct steps) :
+    OrBreak (SpongeCollision compressN) (LogChained g steps) :=
+  Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification_orBreak
+    Proof verify CH RH cmb compress compressN agg g steps es hroot hgen hstruct
+
+/-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** The §3-residual-CLOSED claim above it was closed only
+under a premise (`compressNInjective compressN`) that is REFUTED at the deployed BabyBear sponge —
+i.e. the residual was closed for a hash the node does not run.
+`light_client_whole_history_non_omission_orBreak` is the version that closes it at deployed
+parameters: the log chains across the whole attested history, or the omitting node hands the light
+client a `SpongeCollision compressN`. -/
 theorem light_client_whole_history_non_omission
     {Proof : Type} {verify : Proof → Bool}
     {CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ}
@@ -325,6 +366,9 @@ theorem light_client_whole_history_non_omission
   non_omission_from_verification Proof verify CH RH cmb compress compressN
     hCompressN agg g steps es hroot hgen hstruct
 
+-- ⚑ the FLOOR-FREE twins (2026-08-01).
+#assert_axioms newRoot_binds_log_orBreak
+#assert_axioms light_client_whole_history_non_omission_orBreak
 #assert_axioms newRoot_binds_log
 #assert_axioms light_client_whole_history_non_omission
 
