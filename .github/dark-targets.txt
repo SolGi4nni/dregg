@@ -352,6 +352,18 @@ never-run deos-hermes test narrator_model_provenance_live   # `zk-live` is an op
 # `settle_umem_stitch` — not the carry path; `deos-matrix` only names it in a comment.)
 # Both were measured green before arming.
 #
+# ── AND THREE MORE ARMED 2026-08-01, WHICH NEVER HAD ROWS HERE AT ALL ────────────────
+# `deos_desktop_composer_has_a_real_entry_point`, `deos_desktop_stitcher_is_the_conflict_surface`
+# and `deos_desktop_composes_a_doc_from_cells` landed AFTER the six above were armed,
+# carrying the same `#![cfg(all(feature = "gpui-ui", feature = "embedded-executor"))]`.
+# They were therefore never-run FROM BIRTH and were never triaged into this file at all —
+# `scripts/check-never-run-targets.py` reported all three as NEW NEVER-RUN, which is the
+# ratchet doing the one job no row could have done for it. All three are now ARMED in
+# `gpui-gated-desktop-teeth` (floor raised 6 -> 10 for their 1+1+2 tests), measured green
+# on the real feature set BEFORE arming. Recorded here rather than silently absent,
+# because the count a reader takes off this heading is otherwise wrong about what the
+# nightly actually covers.
+#
 # The SEVEN below are still the open CI-budget call, unchanged. Per-push execution was
 # NOT chosen for them; adding one to the nightly job is a one-line `--test` and a floor
 # bump.

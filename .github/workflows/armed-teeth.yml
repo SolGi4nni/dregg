@@ -704,6 +704,43 @@ jobs:
     #   * the desktop doc/heap and world-explorer integration targets beside it, which are
     #     gated the same way and were equally never executed.
     #
+    # ── THREE MORE ARMED 2026-08-01, and they were NEVER-RUN FROM BIRTH ──────────────
+    # These landed AFTER the six above were armed, carrying the same
+    # `#![cfg(all(feature = "gpui-ui", feature = "embedded-executor"))]`, so they went
+    # straight into the silent-zero state without ever passing through
+    # `.github/dark-targets.txt` — the sweep reported all three as NEW NEVER-RUN and
+    # nothing had ever executed one of them:
+    #   * `deos_desktop_composer_has_a_real_entry_point` (1) — the ENTRY-POINT tooth.
+    #     Every `DeosDesktop::compose_*` method was private and called only by its own
+    #     `bake_compose_*` test hook: a surface the suite proved works and the shipped
+    #     desktop could not perform. This drives the REAL `actions_for` context menu and
+    #     the REAL row dispatch, with no `bake_compose_*` anywhere in the file, and
+    #     asserts the no-document case DIMS the row rather than silently doing nothing.
+    #   * `deos_desktop_stitcher_is_the_conflict_surface` (1) — the cutover pin. The
+    #     desktop's inline branch/stitch/resolve code and `starbridge_v2::stitcher` were
+    #     two implementations of one thing; the inline copy is gone and the desktop now
+    #     calls the stitcher. It pins all nine painted `ConflictRow` strings, in paint
+    #     order, against a literal captured from the pre-cutover build, plus anti-vacuity
+    #     teeth (non-empty rows, both authors' provenance and readings, a live
+    #     resolution, and an EMPTY surface after the resolve).
+    #   * `deos_desktop_composes_a_doc_from_cells` (2) — the EMBED-ALGEBRA anti-forge
+    #     tooth, i.e. the transclude defect one algebra over. `ChildCellId` is an opaque
+    #     integer and `add_embed` will place ANY value, so a hand-authored embed of a
+    #     cell the World does not hold renders exactly like a real one. The desktop's
+    #     compose now runs the same ledger gate `docuverse::publish_live` runs, and this
+    #     asserts a forged id yields no patch, no heap write and no revision turn — and
+    #     that an honest compose leaves a receipt on the chain and a citation in the
+    #     committed heap. Its second test is the reorder/layout-fork leg.
+    # MEASURED GREEN BEFORE ARMING, and say exactly what was measured: these THREE were
+    # run under the real feature set (`cargo test -p starbridge-v2 --features native-full`
+    # + `RUST_MIN_STACK`, 2026-08-01) and reported `ok. 1 passed` / `ok. 1 passed` /
+    # `ok. 2 passed`, 0 failed. The floor moves 6 -> 10 on that 4, ON TOP OF the 6 measured
+    # 2026-07-31 for the six above — whose files are unchanged at HEAD since (one `#[test]`
+    # each, none `#[ignore]`d). The six were NOT re-run in this pass. That is safe in the
+    # only direction that matters: `ran=` sums PASSED counts only, so a regression in any of
+    # the six would already have breached the floor of 6, and raising it is strictly tighter.
+    # A lane that wants the whole set re-measured should run all nine and say so here.
+    #
     # ⚠ WHY SELF-HOSTED. `native-full` links gpui (metal/harfbuzz/cosmic-text/objc), libservo
     # via `web-shell`, and the multi-MB verified Lean archive through `dregg-turn`. A hosted
     # runner has ~14 GB of disk after reclaim and cannot finish this. hbox is registered with
@@ -738,9 +775,11 @@ jobs:
           set +e
           set -uo pipefail
 
-          # Measured 2026-07-31. A floor is a RATCHET: raise it when the set grows, NEVER
-          # lower one to make a red lane green.
-          FLOOR_DESKTOP_TESTS=6
+          # Measured 2026-07-31 at 6 (six targets, one test each). RAISED to 10 on
+          # 2026-08-01 when three more targets were armed: composer-entry-point (1) +
+          # stitcher-conflict-surface (1) + composes-a-doc-from-cells (2). A floor is a
+          # RATCHET: raise it when the set grows, NEVER lower one to make a red lane green.
+          FLOOR_DESKTOP_TESTS=10
 
           log=/tmp/gpui-teeth.log
           cargo test -p starbridge-v2 --features native-full \
@@ -750,6 +789,9 @@ jobs:
             --test deos_desktop_world_explorer_and_spotter \
             --test two_instance_multiplayer_session \
             --test branch_stitch_settlement_sound_multiplayer \
+            --test deos_desktop_composer_has_a_real_entry_point \
+            --test deos_desktop_stitcher_is_the_conflict_surface \
+            --test deos_desktop_composes_a_doc_from_cells \
             --no-fail-fast 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
 
