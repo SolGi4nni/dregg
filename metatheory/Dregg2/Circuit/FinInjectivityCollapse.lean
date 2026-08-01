@@ -90,25 +90,41 @@ theorem collapse_needs_CR : ¬ Poseidon2SpongeCR (fun _ => (0 : ℤ)) :=
 #assert_axioms finCommitSurface
 #assert_axioms collapse_needs_CR
 
-/-- **THE KERNEL BINDING AT THE CONSTRUCTED SURFACE, IN REDUCTION FORM.** Equal commitments force
-equal kernels — OR the adversary exhibited a CONCRETE collision of one of the surface's four hash
-carriers. `CommitSurface.commit_binds_orBreak` instantiated at `finCommitSurface`: NO
+/-- **THE KERNEL BINDING AT THE CONSTRUCTED SURFACE, IN EXTRACTOR FORM.** Equal commitments force
+equal kernels — OR the NAMED residual `CommitColl` holds at exactly those two kernels.
+`CommitSurface.commit_binds_or_collides` instantiated at `finCommitSurface`: NO
 `compressInjective`/`compressNInjective`/`cellLeafInjective` hypothesis, NO `Poseidon2SpongeCR`, and
-the only non-break residuals are `RestHashIffFrameFin` (R4-discharged on the reachable image) and the
-SATISFIABLE `AccountsWF`/`FiniteRepresentable` side conditions.
+the only non-residual obligations are `RestHashIffFrameFin` (R4-discharged on the reachable image) and
+the SATISFIABLE `AccountsWF`/`FiniteRepresentable` side conditions.
 
 ⚑ Was `finCommitSurface_binds` over `CommitSurface.commit_binds`, which consumed four refuted fields
-and was therefore VACUOUSLY TRUE at deployed parameters. -/
-theorem finCommitSurface_binds_orBreak (sponge : List ℤ → ℤ)
+and was therefore VACUOUSLY TRUE at deployed parameters; then `finCommitSurface_binds_orBreak` over
+`commit_binds_orBreak`, whose `OrBreak … .StateBreak` disjunct is FREE at every BabyBear-bounded
+sponge (`CommitSurface.orBreak_stateBreak_iff_True`) — vacuous a second time. The residual here names
+argument PAIRS, so it discriminates. -/
+theorem finCommitSurface_binds_or_collides (sponge : List ℤ → ℤ)
     (RH : Dregg2.Exec.RecordKernelState → ℤ) (hRest : RestHashIffFrameFin RH)
     (k k' : Dregg2.Exec.RecordKernelState) (t : Dregg2.Exec.Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : (finCommitSurface sponge RH hRest).commit k t
           = (finCommitSurface sponge RH hRest).commit k' t) :
-    OrBreak (finCommitSurface sponge RH hRest).StateBreak (k = k') :=
-  (finCommitSurface sponge RH hRest).commit_binds_orBreak k k' t hwf hwf' hfin hfin' h
+    k = k' ∨ (finCommitSurface sponge RH hRest).CommitColl k k' t :=
+  (finCommitSurface sponge RH hRest).commit_binds_or_collides k k' t hwf hwf' hfin hfin' h
 
-#assert_axioms finCommitSurface_binds_orBreak
+/-- The S3 form at the constructed surface. -/
+theorem finCommitSurface_binds_of_noColl (sponge : List ℤ → ℤ)
+    (RH : Dregg2.Exec.RecordKernelState → ℤ) (hRest : RestHashIffFrameFin RH)
+    (k k' : Dregg2.Exec.RecordKernelState) (t : Dregg2.Exec.Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hno : ¬ (finCommitSurface sponge RH hRest).CommitColl k k' t)
+    (h : (finCommitSurface sponge RH hRest).commit k t
+          = (finCommitSurface sponge RH hRest).commit k' t) :
+    k = k' :=
+  (finCommitSurface sponge RH hRest).commit_binds_of_noColl k k' t hwf hwf' hfin hfin' hno h
+
+#assert_axioms finCommitSurface_binds_or_collides
+#assert_axioms finCommitSurface_binds_of_noColl
 
 end Dregg2.Circuit.FinInjectivityCollapse

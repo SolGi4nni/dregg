@@ -238,15 +238,17 @@ collision floor `HashCRHardQuant (wideFamily D) Eff`).  The `pre = pre'` branch 
 residuals: the kernel commit and `hReceiptCR : Poseidon2SpongeCR hash` (the 1-felt receipt-root
 sponge — a NAMED, still-open residual, ~237 files of consumers, NOT part of this sweep).
 
-⚑ **THE KERNEL-COMMIT RESIDUAL IS NOW A THIRD DISJUNCT (2026-08-01).**  This used to read
-"`CommitSurface.commit_binds` (the kernel commit, UNCONDITIONAL)", and that word was the wound:
-`commit_binds` consumed the four `CommitSurface` injectivity FIELDS, each FALSE at deployed BabyBear
-width by pigeonhole, so the "unconditional" leg was VACUOUS and this theorem inherited it.
-`commit_binds` is DELETED; its floor-free replacement `CommitSurface.commit_binds_orBreak` hands back
-a CONCRETE `S.StateBreak` (a collision of `S`'s root combiner, node hash, frame sponge or cell leaf),
-and it now appears where it belongs — beside `WireColl`, as a PRICED residual rather than a silent
-premise.  The shape is: the endpoints agree, OR the deployed wide permutation equivocated, OR one of
-the kernel-surface hash carriers collided. -/
+⚑ **THE KERNEL-COMMIT RESIDUAL IS A THIRD DISJUNCT, AND IT NAMES A PAIR (2026-08-01, corrected the
+same day).**  This used to read "`CommitSurface.commit_binds` (the kernel commit, UNCONDITIONAL)", and
+that word was the wound: `commit_binds` consumed the four `CommitSurface` injectivity FIELDS, each
+FALSE at deployed BabyBear width by pigeonhole, so the "unconditional" leg was VACUOUS and this
+theorem inherited it.  The first repair made the third disjunct `S.StateBreak` — but that is a GLOBAL
+collision existential over the frame sponge, which pigeonhole SUPPLIES at every BabyBear-bounded
+sponge, so the whole disjunction became `True` and the theorem was vacuous a second time.  The third
+disjunct is now `S.CommitColl pre.kernel pre'.kernel pc.turn`: the kernel-surface primitives collide
+at the SPECIFIC argument pairs the binding visits — the same kind of object as `WireColl` beside it,
+priced rather than free.  The shape is: the endpoints agree, OR the deployed wide permutation
+equivocated at a named pair, OR the kernel surface collided at a named pair. -/
 theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW)
     (hash : List ℤ → ℤ) (hReceiptCR : Poseidon2SpongeCR hash)
@@ -258,7 +260,7 @@ theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
     (h' : StateDecode8 permW hW hash S pc pre' post') :
     pre = pre' ∨ WireColl permW (kernelPayload S pre.kernel pc.turn)
       (receiptRoot hash pre.log) (kernelPayload S pre'.kernel pc.turn)
-      (receiptRoot hash pre'.log) ∨ S.StateBreak := by
+      (receiptRoot hash pre'.log) ∨ S.CommitColl pre.kernel pre'.kernel pc.turn := by
   have hwide :
       wireCommitR8 permW (kernelPayload S pre.kernel pc.turn) (receiptRoot hash pre.log) =
         wireCommitR8 permW (kernelPayload S pre'.kernel pc.turn) (receiptRoot hash pre'.log) := by
@@ -270,8 +272,8 @@ theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
   · exact Or.inr (Or.inl hcoll)
   have hkcommit : S.commit pre.kernel pc.turn = S.commit pre'.kernel pc.turn := by
     simpa [kernelPayload] using congrArg List.head? hpayload
-  rcases S.commit_binds_orBreak pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hfin hfin' hkcommit
-    with hk | hbrk
+  rcases S.commit_binds_or_collides pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hfin hfin'
+    hkcommit with hk | hbrk
   swap
   · exact Or.inr (Or.inr hbrk)
   refine Or.inl ?_
@@ -289,8 +291,9 @@ REDUCTION `stateCommit_binds_advantage_bound` (§R).
 because the deployed `single_perm_compress` REFUTES it, so the theorem was VACUOUSLY TRUE at deployed
 parameters.  The `WireColl` disjunct is priced by §R's reduction; the `post = post'` branch is closed
 by the kernel commit and `hReceiptCR : Poseidon2SpongeCR hash` (the 1-felt receipt-root sponge
-residual, NOT part of this sweep).  The kernel commit's residual is the THIRD disjunct `S.StateBreak`
-— see the `pre` twin for why `CommitSurface.commit_binds` could not stay "unconditional". -/
+residual, NOT part of this sweep).  The kernel commit's residual is the THIRD disjunct
+`S.CommitColl` — see the `pre` twin for why `CommitSurface.commit_binds` could not stay
+"unconditional", and why the intermediate `S.StateBreak` disjunct was no better. -/
 theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW)
     (hash : List ℤ → ℤ) (hReceiptCR : Poseidon2SpongeCR hash)
@@ -302,7 +305,7 @@ theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
     (h' : StateDecode8 permW hW hash S pc pre' post') :
     post = post' ∨ WireColl permW (kernelPayload S post.kernel pc.turn)
       (receiptRoot hash post.log) (kernelPayload S post'.kernel pc.turn)
-      (receiptRoot hash post'.log) ∨ S.StateBreak := by
+      (receiptRoot hash post'.log) ∨ S.CommitColl post.kernel post'.kernel pc.turn := by
   have hwide :
       wireCommitR8 permW (kernelPayload S post.kernel pc.turn) (receiptRoot hash post.log) =
         wireCommitR8 permW (kernelPayload S post'.kernel pc.turn) (receiptRoot hash post'.log) := by
@@ -314,7 +317,7 @@ theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
   · exact Or.inr (Or.inl hcoll)
   have hkcommit : S.commit post.kernel pc.turn = S.commit post'.kernel pc.turn := by
     simpa [kernelPayload] using congrArg List.head? hpayload
-  rcases S.commit_binds_orBreak post.kernel post'.kernel pc.turn h.postWF h'.postWF hfin hfin'
+  rcases S.commit_binds_or_collides post.kernel post'.kernel pc.turn h.postWF h'.postWF hfin hfin'
     hkcommit with hk | hbrk
   swap
   · exact Or.inr (Or.inr hbrk)

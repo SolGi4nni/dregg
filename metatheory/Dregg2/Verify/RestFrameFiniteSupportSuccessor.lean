@@ -327,7 +327,7 @@ elaborating them IS the check. -/
 section Inhabitant
 
 open Dregg2.Circuit.CircuitSoundness (CommitSurface StateDecode PublishedCommit)
-open Dregg2.Circuit.StateCommitReduce (stateDecode_pre_faithful_orBreak)
+open Dregg2.Circuit.StateCommitReduce (stateDecode_pre_faithful_or_collides)
 open Dregg2.Circuit.FinBindsKernel (CH_fin CH_fin_injective finInit_accountsWF)
 open Dregg2.Circuit.Freshness (spongeCompress spongeCompress_inj)
 open Dregg2.Circuit.StateCommit (AccountsWF recStateCommit)
@@ -355,32 +355,36 @@ noncomputable example : CommitSurface where
   restFrame := restHashIffFrameFin_satisfiable
 
 /-- **★ UNIQUENESS FIRES, AND IT BITES.** Over the constructed surface, a forged pre-state that
-claims the SAME published root as `denote finInit` is REFUSED — UNLESS the forger exhibits a concrete
-`S.StateBreak` (a collision of `S`'s root combiner, node hash, frame sponge or cell leaf). This is
-`StateCommitReduce.stateDecode_pre_faithful_orBreak` applied at a real instance.
+claims the SAME published root as `denote finInit` is REFUSED — UNLESS the forger exhibits a collision
+of `S`'s primitives AT THE NAMED ARGUMENT PAIRS the binding visits (`S.CommitColl`). This is
+`StateCommitReduce.stateDecode_pre_faithful_or_collides` applied at a real instance.
 
 The two `FiniteRepresentable` hypotheses are supplied honestly: `denote finInit` by construction,
 the forgery by assumption (a forger who cannot produce a finitely-supported state is outside the
 claim, which is exactly what §5b names as the remaining residual). Stated over an ARBITRARY
 `S : CommitSurface` on purpose — the surface above is what makes that quantifier non-empty.
 
-⚑ **THE CONCLUSION IS `S.StateBreak`, NOT `False` (2026-08-01).** It was `False`, via
-`stateDecode_pre_faithful`, which rode `CommitSurface.commit_binds` and hence the four injectivity
-fields that are refuted at deployed width — so the refusal was VACUOUS there. The break disjunct is
-the honest content: at the reference sponge (`refSponge_CR` is CLOSED and the four collision events
-are all refutable from it) the break branch is impossible and the refusal is absolute; at deployed
-width it is exactly the collision the forger must exhibit. -/
+⚑ **THE CONCLUSION MOVED TWICE ON 2026-08-01, and only the second move was a repair.** It was
+`False`, via `stateDecode_pre_faithful`, which rode `CommitSurface.commit_binds` and hence the four
+injectivity fields that are refuted at deployed width — so the refusal was VACUOUS there. It then
+became `S.StateBreak`, described as "the honest content" — but `S.StateBreak`'s sponge leg is a GLOBAL
+collision existential, which `SpongeCollisionShirk.spongeCollision_of_fieldBounded` supplies at ANY
+BabyBear-bounded sponge, so at deployed width the conclusion was simply TRUE and the "refusal" refused
+nothing. `S.CommitColl` names the two kernels: at the reference sponge (`refSponge_CR` is CLOSED and
+the collision events are all refutable from it) the residual is impossible and the refusal is
+absolute; at deployed width it is exactly the collision the forger must exhibit AT THOSE POINTS. -/
 example (S : CommitSurface) (t : Turn) (forged : RecChainedState)
     (hwf : AccountsWF forged.kernel) (hfin : FiniteRepresentable forged.kernel)
     (hne : forged.kernel ≠ denote finInit)
-    (hclaim : S.commit forged.kernel t = S.commit (denote finInit) t) : S.StateBreak := by
+    (hclaim : S.commit forged.kernel t = S.commit (denote finInit) t) :
+    S.CommitColl (denote finInit) forged.kernel t := by
   have hdec₁ : StateDecode S ⟨S.commit (denote finInit) t, S.commit (denote finInit) t, t⟩
       ⟨denote finInit, []⟩ ⟨denote finInit, []⟩ :=
     ⟨rfl, rfl, finInit_accountsWF, finInit_accountsWF⟩
   have hdec₂ : StateDecode S ⟨S.commit (denote finInit) t, S.commit (denote finInit) t, t⟩
       forged forged :=
     ⟨hclaim.symm, hclaim.symm, hwf, hwf⟩
-  rcases stateDecode_pre_faithful_orBreak S _ (finiteRepresentable_of_denote finInit) hfin
+  rcases stateDecode_pre_faithful_or_collides S _ (finiteRepresentable_of_denote finInit) hfin
     hdec₁ hdec₂ with heq | hbrk
   · exact absurd heq.symm hne
   · exact hbrk

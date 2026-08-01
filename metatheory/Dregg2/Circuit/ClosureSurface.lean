@@ -11,17 +11,18 @@ deployed NARROW rotated-block wire commitment.
 This module instantiates the apex's `CommitSurface` at the FULL Lean commitment `recStateCommit`
 (`StateCommit.recStateCommit = cmb (cellDigest …) (RH …)`, the root that BINDS THE WHOLE KERNEL via
 `recStateCommit_binds_kernel`). Over THAT surface there is NO `wireCommit ↔ recStateCommit` seam: the
-surface root IS `recStateCommit`, so `CommitSurface.commit_binds_orBreak`
-(= `StateCommitReduceRaw.recStateCommit_binds_kernel_orBreak`) is the binding directly, no
+surface root IS `recStateCommit`, so `CommitSurface.commit_binds_of_noColl`
+(= `StateCommitReduceRaw.recStateCommit_binds_kernel_of_noCollFin`) is the binding directly, no
 reconciliation. `S_live` is exactly the surface `CircuitSoundness.CommitSurface`
 the VK epoch deploys.
 
 ## What instantiating at `recStateCommit` DOES discharge — and what it CANNOT (the honest finding)
 
-`CommitSurface.commit_binds_orBreak` (`recStateCommit_binds_kernel_orBreak`, NO injectivity carrier)
-gives FAITHFULNESS: the published root DETERMINES the full kernel (all 16 fields), unless the
-adversary exhibits a CONCRETE collision of one of the four carriers. So `StateDecode S_live pc pre
-post` pins `pre.kernel`/`post.kernel` to the published commitments uniquely-or-a-break — the apex's decode is
+`CommitSurface.commit_binds_of_noColl` (`recStateCommit_binds_kernel_of_noCollFin`, NO injectivity
+carrier) gives FAITHFULNESS: the published root DETERMINES the full kernel (all 16 fields), unless
+`S`'s primitives collide at the NAMED argument pairs the binding visits (`S.CommitColl`). So
+`StateDecode S_live pc pre post` pins `pre.kernel`/`post.kernel` to the published commitments
+uniquely-or-a-named-collision — the apex's decode is
 genuinely about the published endpoints, NOT arbitrary ones. THAT is the win `recStateCommit` buys, and
 the generic bridge `closedBridge_of_step` below uses it: from a per-effect `fullActionStep` between the
 DECODED endpoints, it produces `kstepAll`, with `StateDecode` certifying the endpoints are the published
@@ -70,7 +71,7 @@ The bridge adds NO floor beyond the named Poseidon/Merkle CR set + `StarkSound`:
     `compressInjective`/`compressNInjective`/`cellLeafInjective` parameters are INERT since
     2026-08-01 (the `CommitSurface` fields they filled are deleted as refuted); see `S_live`'s
     docstring for the measured cost of removing them and why this pass did not.
-  * The binding is `CommitSurface.commit_binds_orBreak` — no injectivity carrier, no new axiom.
+  * The binding is `CommitSurface.commit_binds_of_noColl` — no injectivity carrier, no new axiom.
   * The per-effect `<effect>Encodes` is the residual the rung ALREADY carried (it is NOT a new floor;
     it is the `WitnessDecodes`-class decode the apex already enumerates).
   * The `.log` residual is inside `<effect>Encodes` (`logAdv`) — NOT a new carried Prop; it is the
@@ -107,13 +108,17 @@ The apex's `CommitSurface` IS the five `recStateCommit` primitives + `RestHashIf
 So ANY `CommitSurface` value already has `.commit = recStateCommit` — there is no narrower deployed
 commitment to bridge to, hence NO surface seam. We expose `S_live` as the surface built from those
 primitives (mirroring exactly how the apex carries its `S`), with the binding
-`CommitSurface.commit_binds_orBreak` proved floor-free over them. -/
+`CommitSurface.commit_binds_of_noColl` proved floor-free over them. -/
 
 /-- **`S_live` — the live full-kernel commitment surface (`.commit = recStateCommit`).** Built from
 the five primitives plus `RestHashIffFrameFin RH`. `S_live.commit k t` unfolds to
 `recStateCommit … k t = cmb (cellDigest …) (RH …)`, the root binding the WHOLE kernel; the binding is
-`CommitSurface.commit_binds_orBreak` (equal roots ⟹ equal kernels, or a CONCRETE collision of one of
-the four carriers). No narrower wire commitment, so NO `wireCommit ↔ recStateCommit` seam.
+`CommitSurface.commit_binds_of_noColl` (equal roots ⟹ equal kernels, given that `S`'s primitives do
+not collide at the named argument pairs). No narrower wire commitment, so NO `wireCommit ↔
+recStateCommit` seam.
+
+⚠ The intermediate `commit_binds_orBreak` form this text used to cite is DELETED: its
+`OrBreak S.StateBreak` disjunct is free at every BabyBear-bounded sponge, so it said nothing.
 
 ⚑ **THE FOUR CR PARAMETERS ARE NOW INERT (2026-08-01), AND THAT IS A NAMED, MEASURED HALT — NOT A
 DESIGN CHOICE.** `hCmb`/`hCompress`/`hCompressN`/`hLeaf` had exactly one job: filling the four

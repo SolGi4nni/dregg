@@ -24,13 +24,17 @@ the task's headline names and closes the last question the task poses about them
 the agent cell's `Value` (`k.cell agent`), hashed into the commitment through the leaf hash `CH` (the
 deployed `compute_commitment`'s `hash_4_to_1(bal_lo, bal_hi, NONCE, field0)` — `cell_state.rs`). So
 "equal commitment ⟹ equal nonce" is `CrossTurnFreshness.commit_inj_nonce`, which rides
-`CommitSurface.commit_binds_orBreak` (= `recStateCommit_binds_kernel_orBreak`). A nonce difference
-under an equal commitment is therefore a CONCRETE Poseidon COLLISION — and since 2026-08-01 that is
-the literal conclusion, not a slogan: the theorem returns `OrBreak S.StateBreak (…)`, where
-`S.StateBreak` names a collision of the root combiner, the node hash, the frame sponge or the cell
-leaf. It used to ride the injective `commit_binds` under the bundled CR set
+`CommitSurface.commit_binds_of_noColl` (= `recStateCommit_binds_kernel_of_noCollFin`). A nonce
+difference under an equal commitment is therefore a CONCRETE Poseidon COLLISION AT NAMED POINTS — and
+that is the literal side condition, not a slogan: the theorem takes `¬ S.CommitColl k k' t`, which
+names the root combiner's, node hash's, frame sponge's and cell leaf's exact argument pairs.
+
+⚑ It has been wrong twice. It used to ride the injective `commit_binds` under the bundled CR set
 (`cmbInj`/`compInj`/`compNInj`/`leafInj`), all four of which are FALSE at deployed BabyBear width, so
-the "not an assumption" was true and the theorem was vacuous anyway.
+the "not an assumption" was true and the theorem was vacuous anyway. The first repair gave it an
+`OrBreak S.StateBreak` disjunct — but that disjunct's sponge leg is a GLOBAL collision existential
+which pigeonhole SUPPLIES at every BabyBear-bounded sponge, so it was free and the theorem was vacuous
+again. Only a claim about NAMED points discriminates.
 
 `§2` grounds that residual: the FOUR sponge-shaped CR fields (`cmb`, `compress` as 2-element sponges,
 `compressN` the frame sponge, `CH` the leaf) all reduce to a SINGLE `Poseidon2SpongeCR sponge` (via
@@ -42,8 +46,8 @@ pigeonhole), and `Poseidon2SpongeCR` is refuted at the same width
 premise bought nothing. `poseidon2CommitSurface` is now `spongeCommitSurface` and carries NO crypto
 floor. The live binding consumer is `CommitFaithfulRegrounded.commit_binds_nonce_faithful` /
 `no_replay_faithful`, which use the deployed residue-fold leaf and return concrete collision events;
-the parametric statements here carry an `OrBreak S.StateBreak` disjunct instead of a refuted
-premise.
+the parametric statements here carry the per-instance `¬ S.CommitColl` residual instead of a refuted
+premise or a free disjunct.
 
 THE ONE HONEST RESIDUAL, named precisely: `RestHashIffFrameFin RH` (the rest-hash binding of the 15
 non-`cell` components) is NOT reducible to a `List ℤ` sponge CR, because the state carries
@@ -51,8 +55,9 @@ FUNCTION-valued components (`caps : CellId → List Auth`, `delegations`) over a
 injective serialization to `List ℤ` exists. It is a STRUCTURAL/realizable carrier (a canonical rest
 hash IS injective on its inputs), same status as the encoder-injectivity fields — never an `axiom`,
 never a hole — but it is not a crypto assumption and not sponge-shaped. So the residual of the whole
-no-replay defense is: a CONCRETE `StateBreak` (the `OrBreak` disjunct — no assumed CR floor at all
-since 2026-08-01) + the PROVED nonce-monotone invariant, with `RestHashIffFrameFin` the single named
+no-replay defense is: `¬ S.CommitColl` at the chain's states (a REFUTABLE claim about named argument
+pairs — no assumed CR floor at all since 2026-08-01, and no free disjunct since the second pass that
+day) + the PROVED nonce-monotone invariant, with `RestHashIffFrameFin` the single named
 non-sponge-reducible structural carrier.
 
 ## Teeth (both load-bearing carriers bite)
@@ -72,8 +77,9 @@ executor — both real. The 2026-07-09 text warned that `poseidon2_no_replay` in
 those are now gone for a better reason than the one predicted: `RestHashIffFrame` was replaced by the
 SATISFIABLE finite-support successor `RestHashIffFrameFin` (2026-07-31), and `LeafRealization` only
 ever fed the `leafInj` FIELD, which is deleted. The theorem is `sponge_no_replay` and it carries no
-crypto floor — what it now carries is the honest `OrBreak S.StateBreak` disjunct: a replay requires a
-CONCRETE collision of the root combiner, node hash, frame sponge or cell leaf. ⚠ Still NOT closed:
+crypto floor — what it now carries is the per-instance `C.NoCommitColl` residual: a replay requires a
+CONCRETE collision of the root combiner, node hash, frame sponge or cell leaf AT THE NAMED ARGUMENT
+PAIRS the binding visits. ⚠ Still NOT closed:
 whether every executor-reached kernel is `FiniteRepresentable`
 (`FinKernelState.denote_surjective_on_reachable`, gated on the per-effect `hpres`). -/
 
@@ -104,28 +110,33 @@ strictly-monotone agent nonce (the deployed CAS discipline: each step's pre-anch
 post, and the never-rolled-back prologue ticks the nonce). Identically `CrossTurnFreshness.TurnChain`. -/
 abbrev CommitChain := CrossTurnFreshness.TurnChain
 
-/-- **`commit_binds_nonce`** — equal commitments force equal agent nonce, OR the adversary exhibited
-a CONCRETE collision of one of `S`'s four hash carriers (`S.StateBreak`). A nonce difference under an
-equal commitment IS that collision. Not assumed.
+/-- **`commit_binds_nonce`** — equal commitments force equal agent nonce, unless `S`'s commitment
+primitives collide at the NAMED argument pairs the binding visits (`S.CommitColl k k' t`). A nonce
+difference under an equal commitment IS that collision. Not assumed.
 
-⚑ **REDUCTION FORM 2026-08-01.** The predecessor concluded the equality outright, via the deleted
-`CommitSurface.commit_binds`, which consumed four `CommitSurface` injectivity fields that are FALSE
-at deployed BabyBear width — so it was VACUOUSLY TRUE. See `CrossTurnFreshness.commit_inj_nonce`. -/
+⚑ **EXTRACTOR FORM 2026-08-01 (second pass).** The predecessor concluded the equality outright, via
+the deleted `CommitSurface.commit_binds`, which consumed four `CommitSurface` injectivity fields FALSE
+at deployed BabyBear width — VACUOUSLY TRUE. The first repair wrapped it in `OrBreak S.StateBreak`,
+whose sponge leg is a GLOBAL collision existential pigeonhole supplies at every BabyBear-bounded
+sponge — vacuous again, by free disjunct. See `CrossTurnFreshness.commit_inj_nonce`. -/
 theorem commit_binds_nonce (S : CommitSurface) (k k' : RecordKernelState) (t : Turn)
     (agent : CellId) (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hno : ¬ S.CommitColl k k' t)
     (h : S.commit k t = S.commit k' t) :
-    OrBreak S.StateBreak (agentNonce k agent = agentNonce k' agent) :=
-  CrossTurnFreshness.commit_inj_nonce S k k' t agent hwf hwf' hfin hfin' h
+    agentNonce k agent = agentNonce k' agent :=
+  CrossTurnFreshness.commit_inj_nonce S k k' t agent hwf hwf' hfin hfin' hno h
 
-/-- **The replay teeth (contrapositive):** distinct agent nonces give distinct commitments, or a
-carrier collided. A monotone-advancing nonce therefore drives a commitment that never returns. -/
+/-- **The replay teeth (contrapositive):** distinct agent nonces give distinct commitments, unless the
+primitives collide at those named pairs. A monotone-advancing nonce therefore drives a commitment that
+never returns. -/
 theorem commit_neq_of_nonce_neq (S : CommitSurface) (k k' : RecordKernelState) (t : Turn)
     (agent : CellId) (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hno : ¬ S.CommitColl k k' t)
     (hne : agentNonce k agent ≠ agentNonce k' agent) :
-    OrBreak S.StateBreak (S.commit k t ≠ S.commit k' t) :=
-  CrossTurnFreshness.commit_neq_of_nonce_neq S k k' t agent hwf hwf' hfin hfin' hne
+    S.commit k t ≠ S.commit k' t :=
+  CrossTurnFreshness.commit_neq_of_nonce_neq S k k' t agent hwf hwf' hfin hfin' hno hne
 
 /-- **`nonce_monotone_along_chain`** — the agent nonce STRICTLY increases along any proper prefix of a
 `CommitChain`. -/
@@ -134,39 +145,41 @@ theorem nonce_monotone_along_chain {S : CommitSurface} {agent : CellId} {t : Tur
     agentNonce (C.seq i) agent < agentNonce (C.seq j) agent :=
   C.nonce_mono_lt hij
 
-/-- **`commit_no_repeat`** — the live-commitment sequence along a `CommitChain` never repeats, unless
-one of `S`'s hash carriers collided. -/
+/-- **`commit_no_repeat`** — the live-commitment sequence along a `CommitChain` never repeats, given
+the chain's per-instance residual `C.NoCommitColl`. -/
 theorem commit_no_repeat {S : CommitSurface} {agent : CellId} {t : Turn}
     (C : CommitChain S agent t) (hfin : ∀ n, FiniteRepresentable (C.seq n))
-    {i j : Nat} (hne : i ≠ j) :
-    OrBreak S.StateBreak (C.commitAt i ≠ C.commitAt j) :=
-  C.commit_no_repeat hfin hne
+    (hno : C.NoCommitColl) {i j : Nat} (hne : i ≠ j) :
+    C.commitAt i ≠ C.commitAt j :=
+  C.commit_no_repeat hfin hno hne
 
 /-- **`no_replay` — THE HEADLINE: a proof is applicable AT MOST ONCE.** If the CAS gate
 (`LiveCommitMatches`) matches a fixed pre-anchor at two turn indices `i`, `j` of a `CommitChain`, then
-`i = j` — OR the adversary exhibited a concrete collision of one of `S`'s four hash carriers. Because
-the nonce strictly advances and the commitment binds the nonce (mod that break), a consumed
-pre-anchor never re-matches — no replay.
+`i = j`. Because the nonce strictly advances and the commitment binds the nonce (given the chain's
+per-instance residual `hno`), a consumed pre-anchor never re-matches — no replay.
 
-⚑ **REDUCTION FORM 2026-08-01**: the `OrBreak` disjunct replaced a conclusion that was
-unconditional-but-vacuous (it rode the deleted `CommitSurface.commit_binds`). -/
+⚑ **EXTRACTOR FORM 2026-08-01 (second pass)**: `hno` replaced an `OrBreak S.StateBreak` disjunct that
+was FREE at deployed parameters, which in turn had replaced an unconditional conclusion that was
+vacuous (it rode the deleted `CommitSurface.commit_binds`). -/
 theorem no_replay {S : CommitSurface} {agent : CellId} {t : Turn}
     (C : CommitChain S agent t) (hfin : ∀ n, FiniteRepresentable (C.seq n))
+    (hno : C.NoCommitColl)
     {i j : Nat} {preCommit : ℤ}
     (hi : CrossTurnFreshness.LiveCommitMatches C i preCommit)
     (hj : CrossTurnFreshness.LiveCommitMatches C j preCommit) :
-    OrBreak S.StateBreak (i = j) :=
-  CrossTurnFreshness.no_replay C hfin hi hj
+    i = j :=
+  CrossTurnFreshness.no_replay C hfin hno hi hj
 
 /-- **`replay_rejected_after_apply`** — once a pre-anchor matched at turn `i`, every strictly-later
-turn `j > i` rejects the same proof (the live commitment has advanced and never returns), unless a
-carrier collided. -/
+turn `j > i` rejects the same proof (the live commitment has advanced and never returns), given the
+chain's per-instance residual. -/
 theorem replay_rejected_after_apply {S : CommitSurface} {agent : CellId} {t : Turn}
     (C : CommitChain S agent t) (hfin : ∀ n, FiniteRepresentable (C.seq n))
+    (hno : C.NoCommitColl)
     {i j : Nat} {preCommit : ℤ}
     (hi : CrossTurnFreshness.LiveCommitMatches C i preCommit) (hlt : i < j) :
-    OrBreak S.StateBreak (¬ CrossTurnFreshness.LiveCommitMatches C j preCommit) :=
-  CrossTurnFreshness.replay_rejected_after_apply C hfin hi hlt
+    ¬ CrossTurnFreshness.LiveCommitMatches C j preCommit :=
+  CrossTurnFreshness.replay_rejected_after_apply C hfin hno hi hlt
 
 /-- **`nonce_strictly_increases` — PROVED FROM THE DEPLOYED STEP RELATION.** Every accepted
 `Admission.runTurn` over the live forest body (`FullForest.execFullForestA`) STRICTLY advances the
@@ -197,6 +210,8 @@ theorem deployed_no_replay (S : CommitSurface) (agent : CellId) (t : Turn)
     (hadm : ∀ i, Admission.admissible (ctxs i) (hdrs i) (seq i) = true)
     (hstep : ∀ i, Admission.runTurn (ctxs i) (hdrs i) (seq i)
                     (fun s₀ => FullForest.execFullForestA s₀ (fwd i)) = some (seq (i + 1)))
+    (hno : (CrossTurnFreshness.acceptedSeq_to_TurnChain S agent t seq wf
+      (CrossTurnFreshness.forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep)).NoCommitColl)
     {i j : Nat} {preCommit : ℤ}
     (hi : CrossTurnFreshness.LiveCommitMatches
         (CrossTurnFreshness.acceptedSeq_to_TurnChain S agent t seq wf
@@ -206,8 +221,9 @@ theorem deployed_no_replay (S : CommitSurface) (agent : CellId) (t : Turn)
         (CrossTurnFreshness.acceptedSeq_to_TurnChain S agent t seq wf
           (CrossTurnFreshness.forest_advance_holds agent seq ctxs hdrs fwd hagent hadm hstep))
         j preCommit) :
-    OrBreak S.StateBreak (i = j) :=
-  CrossTurnFreshness.deployed_forest_no_replay S agent t seq ctxs hdrs fwd wf finrep hagent hadm hstep hi hj
+    i = j :=
+  CrossTurnFreshness.deployed_forest_no_replay S agent t seq ctxs hdrs fwd wf finrep hagent hadm
+    hstep hno hi hj
 
 /-! ## §2 — grounding the `commit_binds_nonce` residual in a SINGLE `Poseidon2SpongeCR`.
 
@@ -266,24 +282,26 @@ returns concrete collision events). For the parametric statement use `commit_bin
 which carries the `OrBreak S.StateBreak` disjunct instead of a refuted premise. -/
 
 /-- **`sponge_no_replay`** — NO REPLAY over the sponge-shaped surface: a fixed pre-anchor opens the
-CAS gate at most once, OR one of the surface's four hash carriers has a concrete collision. The
-non-break residual of the whole cross-turn freshness defense is the PROVED nonce-monotone invariant
-plus the structural `RestHashIffFrameFin` carrier.
+CAS gate at most once, given the chain's per-instance residual. The non-residual part of the whole
+cross-turn freshness defense is the PROVED nonce-monotone invariant plus the structural
+`RestHashIffFrameFin` carrier.
 
 ⚑ Was `poseidon2_no_replay`, and the rename is the honest part: it took
 `hCR : Poseidon2SpongeCR sponge`, refuted at deployed parameters, so its `i = j` conclusion was
-VACUOUSLY TRUE. It now concludes `i = j` OR a concrete collision, at any `sponge`. -/
+VACUOUSLY TRUE. The intermediate `OrBreak … .StateBreak` form was vacuous too — the disjunct is free
+at any BabyBear-bounded sponge. It now concludes `i = j` from a claim about NAMED points. -/
 theorem sponge_no_replay (sponge : List ℤ → ℤ)
     (CH : CellId → Value → ℤ)
     (RH : RecordKernelState → ℤ) (hRest : RestHashIffFrameFin RH)
     (agent : CellId) (t : Turn)
     (C : CommitChain (spongeCommitSurface sponge CH RH hRest) agent t)
     (hfin : ∀ n, FiniteRepresentable (C.seq n))
+    (hno : C.NoCommitColl)
     {i j : Nat} {preCommit : ℤ}
     (hi : CrossTurnFreshness.LiveCommitMatches C i preCommit)
     (hj : CrossTurnFreshness.LiveCommitMatches C j preCommit) :
-    OrBreak (spongeCommitSurface sponge CH RH hRest).StateBreak (i = j) :=
-  no_replay C hfin hi hj
+    i = j :=
+  no_replay C hfin hno hi hj
 
 /-! ## §3 — TEETH: both load-bearing carriers bite. -/
 
@@ -330,12 +348,13 @@ proof IS rejected once the commitment advances (`CrossTurnFreshness.witnessChain
 defense has teeth — it is not vacuous. -/
 theorem witnessChain_replay_rejected (S : CommitSurface) (agent : CellId) (t : Turn)
     (v : Value) (i j : Nat) (preCommit : ℤ)
+    (hno : (CrossTurnFreshness.witnessChain S agent t v).NoCommitColl)
     (hi : CrossTurnFreshness.LiveCommitMatches
       (CrossTurnFreshness.witnessChain S agent t v) i preCommit)
     (hlt : i < j) :
-    OrBreak S.StateBreak (¬ CrossTurnFreshness.LiveCommitMatches
-      (CrossTurnFreshness.witnessChain S agent t v) j preCommit) :=
-  CrossTurnFreshness.witnessChain_replay_rejected S agent t v i j preCommit hi hlt
+    ¬ CrossTurnFreshness.LiveCommitMatches
+      (CrossTurnFreshness.witnessChain S agent t v) j preCommit :=
+  CrossTurnFreshness.witnessChain_replay_rejected S agent t v i j preCommit hno hi hlt
 
 /-! ## §4 — axiom-hygiene tripwires. -/
 

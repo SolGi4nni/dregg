@@ -56,7 +56,7 @@ open Dregg2.Exec (Turn RecChainedState)
 open Dregg2.Circuit.StateCommit (logHashInjective)
 open Dregg2.Circuit.LogCommitRegrounded (LogColl)
 open Dregg2.Circuit.CircuitSoundness
-  (CommitSurface DecodedStep TurnDecodeChain TurnDecodeChainLog NoLogSeamColl
+  (CommitSurface DecodedStep TurnDecodeChain TurnDecodeChainLog NoLogSeamColl NoSeamCommitColl
    turnDecodeChainLog_seam_log_derived turnDecodeChainLog_seam_full_derived
    turnDecodeChainLog_rejects_forged_log)
 
@@ -110,25 +110,27 @@ example :
 /-- ⚙ CUTOVER CHECK — `turnDecodeChainLog_seam_full_derived`: the FULL-state seam (kernel ⊕ log) over
 the same per-instance condition.
 
-⚑ **PIN UPDATED 2026-08-01, deliberately, and this records why.** The conclusion gained an
-`OrBreak S.StateBreak` wrapper. That is a REAL weakening of the stated conclusion and the pin was
-RIGHT to catch it — but the predecessor's unconditional `IsChain` came from the KERNEL half, which
-ran on `CommitSurface.commit_binds`, which consumed four `CommitSurface` injectivity fields that are
-FALSE at deployed BabyBear width. So the old pin was pinning a claim with no deployed instances. The
-new shape — the whole state chains, OR a CONCRETE collision of one of `S`'s four hash carriers — is
-the first version of this tooth that is true at the deployed hash. The LOG half is unchanged and
-contributes no disjunct: it was already floor-free via `NoLogSeamColl` (the 2026-07-25 cutover this
-module owns). -/
+⚑ **PIN UPDATED TWICE ON 2026-08-01, and this records both moves.** (1) The conclusion gained an
+`OrBreak S.StateBreak` wrapper. That was a REAL weakening of the stated conclusion and the pin was
+RIGHT to catch it — the predecessor's unconditional `IsChain` came from the KERNEL half, which ran on
+`CommitSurface.commit_binds`, which consumed four `CommitSurface` injectivity fields that are FALSE at
+deployed BabyBear width, so the OLD pin was pinning a claim with no deployed instances. But the NEW
+shape was no better: `S.StateBreak`'s sponge leg is a GLOBAL collision existential that pigeonhole
+supplies at every BabyBear-bounded sponge, so the wrapper was free and the pin was then pinning
+something equivalent to `True`. (2) The wrapper is GONE and the KERNEL half now carries
+`NoSeamCommitColl S c.steps` — the exact per-adjacency shape the LOG half has carried since the
+2026-07-25 cutover this module owns. Both halves are now the same kind of claim: named pairs, refutable
+at a broken hash, satisfiable at an honest one; and the conclusion is unconditional again. -/
 example :
     ∀ (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
       (start fin : RecChainedState) (c : TurnDecodeChain hash S start fin),
       TurnDecodeChainLog hash S LH c →
       (∀ d ∈ c.steps, Dregg2.Circuit.RestFrameFin.FiniteRepresentable d.pre.kernel
         ∧ Dregg2.Circuit.RestFrameFin.FiniteRepresentable d.post.kernel) →
+      NoSeamCommitColl S c.steps →
       NoLogSeamColl LH (fun d : DecodedStep S => d.post.log)
         (fun d : DecodedStep S => d.pre.log) c.steps →
-      Dregg2.Circuit.CollisionReduce.OrBreak S.StateBreak
-        (List.IsChain (fun a b => a.post = b.pre) c.steps) :=
+      List.IsChain (fun a b => a.post = b.pre) c.steps :=
   @turnDecodeChainLog_seam_full_derived
 
 /-- ⚙ CUTOVER CHECK — `turnDecodeChainLog_rejects_forged_log`: the forged-intermediate-log rejection,
