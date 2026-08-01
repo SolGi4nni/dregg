@@ -1089,23 +1089,53 @@ impl World {
 
         // Will this commit attempt a DURABLE dual-write? (Only a `Full`-mode turn
         // on a persistent image does — a symbolic turn defers its witness and a
-        // fork/ephemeral world has no store.) If so, snapshot the pre-turn ledger
-        // BEFORE the engine mutates it, so a durable-write failure can UNWIND the
-        // in-RAM apply to a byte-identical pre-turn image (below). The clone is the
-        // price of a snapshot-based unwind; it is bounded to the durable path
-        // (whose commit cost is already dominated by the redb txn + fsync), and the
-        // executor's own journal already rolls back a turn that FAILS admission —
-        // this snapshot handles the distinct case of a turn that COMMITTED cleanly
-        // in RAM but could not be durably recorded.
+        // fork/ephemeral world has no store.) If so, ARM THE LEDGER'S OWN
+        // first-touch undo journal before the engine mutates it, so a
+        // durable-write failure can UNWIND the in-RAM apply to a byte-identical
+        // pre-turn image (below). The executor's own journal already rolls back a
+        // turn that FAILS admission — this handles the distinct case of a turn that
+        // COMMITTED cleanly in RAM but could not be durably recorded.
+        //
+        // O(TOUCHED), NOT O(LEDGER): this used to be `self.engine.ledger().clone()`
+        // — a whole-ledger deep copy (every `Cell`'s capability `Vec` + state) on
+        // EVERY durable turn, which made a one-`SetField` commit linear in the
+        // ledger no matter how cheap `dual_write` got. `begin_restore_point`
+        // records each cell's prior WHOLE image on that cell's FIRST mutation, so
+        // the unwind is exact over the same set the mutations came from — complete
+        // at the `Ledger` API rather than by ENUMERATION of a write-set. Every
+        // mutator the executor reaches for journals: `get_mut`, `update_with`,
+        // `insert_cell`, `create_cell`, `remove` — and therefore `make_sovereign`,
+        // which routes its hosted-set deletion through `remove`. The sovereign /
+        // registration / witness-sequence / migration-lock side-maps are captured
+        // whole at arm time (they are small and shallow).
+        //   ⚠ `Ledger::apply_delta` is the ONE mutator that writes `self.cells`
+        //   directly (`apply_delta_in_place`) and so does NOT feed the restore
+        //   point. It has no caller on this path — no caller outside `cell`'s own
+        //   tests, repo-wide — but it is a real hole in the restore point's
+        //   contract for any future caller. Reported, not patched here:
+        //   `cell/src/ledger.rs` belongs to another lane.
+        //   NOT restored (deliberately): `witness_subscribers`. The old whole-ledger
+        //   snapshot restore reinstated the pre-turn subscriber map, which would
+        //   resurrect senders dropped during the turn and discard ones added. It is
+        //   a live notification registry, not consensus state (the canonical root
+        //   does not fold it), so leaving it alone is the correct behavior.
+        //
+        // ⚠ Why NOT the executor's `last_write_set()`: it is derived from the
+        // executor's FOREST journal only. `TurnExecutor::execute` mutates the
+        // ledger in two windows the forest journal does not cover — PHASE 1 (the
+        // agent's fee debit + nonce increment, deliberately "NEVER rolled back")
+        // and PHASE 3 (fee distribution to proposer/treasury/fee-well). An unwind
+        // driven by that write-set would leave the agent's nonce advanced and the
+        // fee spent, so `Rejected` would NOT mean "nothing happened". The ledger's
+        // own restore point sees all three windows because it hooks the mutators.
         let will_dual_write = self.persist.is_some() && !self.witness_mode.is_symbolic();
-        let ledger_snapshot: Option<Ledger> = if will_dual_write {
-            Some(self.engine.ledger().clone())
-        } else {
-            None
-        };
+        if will_dual_write {
+            self.engine.ledger_mut().begin_restore_point();
+        }
         // `execute_turn` (below) advances the executor's per-agent receipt-chain
-        // head IN-LINE (`TurnExecutor::execute` inserts the new head), so the
-        // ledger snapshot alone does not unwind it. Capture the pre-turn head for
+        // head IN-LINE (`TurnExecutor::execute` inserts the new head), and that
+        // head lives on the EXECUTOR, not in the ledger — so the ledger restore
+        // point does not unwind it. Capture the pre-turn head for
         // the acting agent (`None` if this is their first turn) to restore on a
         // durable-write failure — otherwise `chain_head(agent)` leads a receipt
         // the disk never recorded.
@@ -1179,8 +1209,21 @@ impl World {
                     #[cfg(not(all(test, not(target_arch = "wasm32"))))]
                     let result =
                         p.dual_write(height, self.engine.ledger(), &write_set, &receipt, &turn);
+                    // TEST-ONLY COST WITNESS: how many prior cell images the unwind
+                    // buffer is holding at the moment the durable write resolves.
+                    // This is the whole point of the restore point — the number is
+                    // the turn's TOUCHED set, not the ledger's cell count. Read here
+                    // because `commit_restore_point` / `rollback_restore_point`
+                    // (below) both consume the journal.
+                    #[cfg(all(test, not(target_arch = "wasm32")))]
+                    record_unwind_retained(self.engine.ledger().pre_turn_touched_ledger().len());
                     match result {
-                        Ok(()) => self.persist = Some(p),
+                        Ok(()) => {
+                            self.persist = Some(p);
+                            // Durably recorded: ACCEPT the in-place mutations and
+                            // drop the undo journal (O(touched)).
+                            self.engine.ledger_mut().commit_restore_point();
+                        }
                         Err(e) => {
                             // FULL UNWIND — restore the pre-turn image so `Rejected`
                             // means NOTHING happened. `execute_turn` advanced TWO
@@ -1194,9 +1237,15 @@ impl World {
                             // holds and the image root is consistent again. `p` is
                             // dropped (NOT put back) → the image degrades to
                             // ephemeral, loudly named.
-                            if let Some(snapshot) = ledger_snapshot {
-                                *self.engine.ledger_mut() = snapshot;
-                            }
+                            //
+                            // The ledger half is the restore point armed above:
+                            // every cell this turn touched (in ANY of the
+                            // executor's three mutation windows — fee/nonce, the
+                            // call forest, fee distribution) goes back to its prior
+                            // whole image, a turn-CREATED cell is removed, a
+                            // MakeSovereign'd cell is reinstated hosted, and the
+                            // sovereign/migration side-maps are restored wholesale.
+                            self.engine.ledger_mut().rollback_restore_point();
                             self.engine
                                 .executor()
                                 .restore_last_receipt_hash(turn.agent, head_snapshot);
@@ -1324,6 +1373,13 @@ impl World {
                 }
             }
             Err(EmbedError::TurnRejected { reason, at_action }) => {
+                // DISARM, do not roll back. The executor already restored its own
+                // forest journal, and it DELIBERATELY keeps PHASE 1 (the agent's
+                // fee debit + nonce bump) on a rejected turn — that is the
+                // anti-DoS rule ("expensive-but-failing turns still pay"). Rolling
+                // the restore point back here would REFUND them, which is a
+                // behavior change, not an unwind.
+                self.engine.ledger_mut().commit_restore_point();
                 self.emit_dynamics(WorldEvent::TurnRejected {
                     agent: turn.agent,
                     reason: reason.clone(),
@@ -1331,6 +1387,8 @@ impl World {
                 CommitOutcome::Rejected { reason, at_action }
             }
             Err(other) => {
+                // Same as above: disarm without rolling back.
+                self.engine.ledger_mut().commit_restore_point();
                 let reason = other.to_string();
                 self.emit_dynamics(WorldEvent::TurnRejected {
                     agent: turn.agent,
@@ -2416,6 +2474,33 @@ fn take_injected_dual_write_failure() -> bool {
     })
 }
 
+// TEST-ONLY unwind-cost witness (compiled out of every non-test build). Records
+// how many prior cell images the durable turn's unwind buffer was holding when
+// the durable write resolved — the number gate (b) pins to the turn's TOUCHED set
+// instead of the ledger's cell count.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+thread_local! {
+    static UNWIND_RETAINED: StdCell<Option<usize>> = const { StdCell::new(None) };
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn record_unwind_retained(n: usize) {
+    UNWIND_RETAINED.with(|c| c.set(Some(n)));
+}
+
+/// The unwind buffer's retained-prior-image count for the most recent durable
+/// `commit_turn` on this thread; `None` if no durable commit has run since the
+/// last read (read-and-clear, so a test cannot pass on a stale reading from an
+/// earlier turn). A commit that armed NO restore point reads `Some(0)`, not
+/// `None` — `pre_turn_touched_ledger` yields an empty ledger when disarmed — so
+/// gate (b)'s `>= 1` clause, not the `None` case, is what catches a reverted
+/// arming. (Verified by mutation: `if false && will_dual_write` makes both
+/// sizes read `Some(0)` and the gate dies on that clause.)
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn take_unwind_retained() -> Option<usize> {
+    UNWIND_RETAINED.with(|c| c.take())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2663,6 +2748,400 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// ⚑ GATE (a), the CREATION arm. The unwind is no longer a whole-ledger
+    /// snapshot restore but the ledger's own first-touch undo journal, so the
+    /// two structural shapes — a turn that ADDS a leaf and a turn that DROPS
+    /// one — have to be exercised, not just the value-mutation shape the
+    /// transfer test above covers. A `CreateCell` whose durable write fails must
+    /// leave NO newborn: the leaf set, the canonical root, the cell count and the
+    /// `receipts.len() == height` invariant all go back to pre-turn.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn durable_write_failure_unwinds_a_cell_creation() {
+        let path = scratch_redb("x3-unwind-create");
+        let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), 1_700_000_000)
+            .expect("fresh open of an empty store");
+        assert!(w.is_durable());
+
+        let treasury = w.genesis_cell(0x11, 1_000_000);
+        let user = w.genesis_cell(0x33, 5_000);
+        // One honest durable turn first, so the pre-turn state is non-trivial.
+        let t1 = w.turn(treasury, vec![transfer(treasury, user, 100)]);
+        assert!(w.commit_turn(t1).is_committed());
+
+        let pre_height = w.height();
+        let pre_receipts = w.receipts().len();
+        let pre_head = w.chain_head(&treasury);
+        let pre_cells = w.cell_count();
+        let pre_ids: HashSet<CellId> = w.ledger().iter().map(|(id, _)| *id).collect();
+        let pre_nonce = w.ledger().get(&treasury).unwrap().state.nonce();
+        let pre_ledger_root = crate::persistence::canonical_ledger_root(w.engine.ledger());
+        let pre_root = w.state_root();
+
+        arm_next_dual_write_failure();
+        let t2 = w.turn(treasury, vec![create_cell(0x77)]);
+        let outcome = w.commit_turn(t2);
+        assert!(
+            !outcome.is_committed(),
+            "a durable-write failure must reject the create"
+        );
+
+        assert_eq!(w.cell_count(), pre_cells, "the newborn must be GONE");
+        let post_ids: HashSet<CellId> = w.ledger().iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            post_ids, pre_ids,
+            "the leaf SET must be identical to pre-turn"
+        );
+        assert_eq!(
+            w.ledger().get(&treasury).unwrap().state.nonce(),
+            pre_nonce,
+            "the agent's PHASE-1 nonce bump must be unwound too (the executor's own \
+             forest journal never covers it — only the ledger restore point does)"
+        );
+        assert_eq!(
+            crate::persistence::canonical_ledger_root(w.engine.ledger()),
+            pre_ledger_root,
+            "the whole ledger must be byte-identical to pre-turn"
+        );
+        assert_eq!(w.height(), pre_height, "height un-advanced");
+        assert_eq!(w.receipts().len(), pre_receipts, "no receipt appended");
+        assert_eq!(
+            w.receipts().len() as u64,
+            w.height(),
+            "THE INVARIANT: receipts.len() == height after the unwind"
+        );
+        assert_eq!(w.chain_head(&treasury), pre_head, "chain head restored");
+        assert_eq!(w.state_root(), pre_root, "the image root is restored");
+        assert_eq!(
+            w.compute_state_root(),
+            pre_root,
+            "recompute matches (no skew)"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// ⚑ GATE (a), the REMOVAL arm. `MakeSovereign` DROPS a cell from the hosted
+    /// set and installs a sovereign commitment for it — the one shape a
+    /// write-set-of-post-states unwind cannot express (an erasure is not a
+    /// post-state). A failed durable write must reinstate the cell hosted AND
+    /// drop the sovereign commitment; the canonical root covers only the hosted
+    /// half, so the sovereign half is asserted separately.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn durable_write_failure_unwinds_a_cell_removal() {
+        use dregg_turn::Effect;
+        let path = scratch_redb("x3-unwind-remove");
+        let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), 1_700_000_000)
+            .expect("fresh open of an empty store");
+        assert!(w.is_durable());
+
+        let treasury = w.genesis_cell(0x11, 1_000_000);
+        let user = w.genesis_cell(0x33, 5_000);
+        let leaver = w.genesis_cell(0x55, 0);
+        let t1 = w.turn(treasury, vec![transfer(treasury, user, 100)]);
+        assert!(w.commit_turn(t1).is_committed());
+
+        let pre_height = w.height();
+        let pre_receipts = w.receipts().len();
+        let pre_head = w.chain_head(&leaver);
+        let pre_cells = w.cell_count();
+        let pre_leaver = w.ledger().get(&leaver).cloned().expect("leaver is hosted");
+        let pre_ledger_root = crate::persistence::canonical_ledger_root(w.engine.ledger());
+        let pre_root = w.state_root();
+        assert!(
+            !w.ledger().is_sovereign(&leaver),
+            "the leaver is hosted, not sovereign, pre-turn"
+        );
+
+        arm_next_dual_write_failure();
+        let t2 = w.turn(leaver, vec![Effect::MakeSovereign { cell: leaver }]);
+        let outcome = w.commit_turn(t2);
+        assert!(
+            !outcome.is_committed(),
+            "a durable-write failure must reject the removal"
+        );
+
+        assert!(
+            w.ledger().contains(&leaver),
+            "the made-sovereign cell must be REINSTATED hosted"
+        );
+        assert_eq!(
+            w.ledger().get(&leaver),
+            Some(&pre_leaver),
+            "the reinstated cell is the exact pre-turn image, field for field"
+        );
+        assert!(
+            !w.ledger().is_sovereign(&leaver),
+            "the sovereign COMMITMENT the turn installed must be gone (the canonical \
+             root folds only hosted cells, so this dimension needs its own assert)"
+        );
+        assert_eq!(w.cell_count(), pre_cells, "the hosted leaf set is restored");
+        assert_eq!(
+            crate::persistence::canonical_ledger_root(w.engine.ledger()),
+            pre_ledger_root,
+            "the whole ledger must be byte-identical to pre-turn"
+        );
+        assert_eq!(w.height(), pre_height, "height un-advanced");
+        assert_eq!(w.receipts().len(), pre_receipts, "no receipt appended");
+        assert_eq!(
+            w.receipts().len() as u64,
+            w.height(),
+            "THE INVARIANT: receipts.len() == height after the unwind"
+        );
+        assert_eq!(w.chain_head(&leaver), pre_head, "chain head restored");
+        assert_eq!(w.state_root(), pre_root, "the image root is restored");
+        assert_eq!(
+            w.compute_state_root(),
+            pre_root,
+            "recompute matches (no skew)"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // =======================================================================
+    // LANE X3 — the durable commit path's O(ledger) tax. Gate (b): COST,
+    // measured through `World::commit_turn` (the SHIPPING entry), not through
+    // `WorldPersist::dual_write` (which the C4 gate measures and which never
+    // sees the unwind snapshot).
+    // =======================================================================
+
+    /// A deterministic open cell for index `i` — wider than the 256 distinct
+    /// cells the one-byte [`make_open_cell`] seed can address.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn wide_open_cell(i: usize, balance: i64) -> Cell {
+        let mut pk = [0u8; 32];
+        pk[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+        pk[31] = 0x5a;
+        let mut cell = Cell::with_balance(pk, [0u8; 32], balance);
+        cell.permissions = open_permissions();
+        cell
+    }
+
+    /// A unique throwaway redb path (no `tempfile` dep).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn scratch_redb(tag: &str) -> std::path::PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!("sbv2-{tag}-{pid}-{nanos}.redb"))
+    }
+
+    /// ⚠ A MEASUREMENT, NOT A GATE (`#[ignore]`d — run it by name). It exists
+    /// because the obvious gate — "a durable one-`SetField` turn through
+    /// `commit_turn` is flat in N" — is FALSE, and the whole-ledger unwind clone
+    /// this lane removed is NOT why. Both halves are measured, not argued.
+    ///
+    /// Debug build, loaded shared box, 2026-08-01. BEFORE the change:
+    ///
+    /// ```text
+    /// durable one-SetField COMMIT_TURN: N=32 36.3ms  N=512 1705.9ms  growth 47x
+    /// ```
+    ///
+    /// 47× for a 16× ledger — SUPERLINEAR. AFTER, decomposed on one run (so the
+    /// columns are comparable to each other; absolute values track box load):
+    ///
+    /// ```text
+    /// N=32 : commit_turn durable 96.9ms | ephemeral 86.1ms
+    ///        ledger.clone() 0.019ms | project_ledger 6.67ms | cells_root x4 6.70ms
+    /// N=512: commit_turn durable 2146ms | ephemeral 1675ms
+    ///        ledger.clone() 0.288ms | project_ledger 323ms  | cells_root x4 23.6ms
+    /// ```
+    ///
+    /// So at N=512 the clone was **0.288 ms of a 2146 ms commit — 0.013%**. It
+    /// grew 15.4× across a 16× ledger, i.e. exactly linear, exactly as expected,
+    /// and completely irrelevant to the total. Removing it is worth doing (it is
+    /// unbounded allocation on the hot path) but it never was the reason a
+    /// durable turn is linear.
+    ///
+    /// What IS large, and where it lives:
+    ///
+    /// * `History::record_commit` → `dregg_turn::umem::project_ledger` — 323 ms,
+    ///   15% of the commit, and it grew **48×** across a 16× ledger. A FULL umem
+    ///   projection of the post-state ledger is taken per step and retained
+    ///   forever in `History::boundaries`: O(N) time and O(N × steps) MEMORY, and
+    ///   that retained mass is the most plausible reason every other term here is
+    ///   superlinear too (~84% of the commit is not attributed to any single term
+    ///   measured above — stated as an open question, not a diagnosis). Its only
+    ///   consumer, `reify_to`, already has a `ReplayFallback`, so a
+    ///   diff-structured boundary in `starbridge-v2/src/replay.rs` is available.
+    /// * `dregg_turn::rotation_witness::cells_root` — 23.6 ms, ~1.1%. The
+    ///   consensus anchor folds the WHOLE present-cell set; `execute` computes it
+    ///   twice (pre/post state hash) and `record_commit` re-executes the turn, so
+    ///   a Full-mode commit pays it four times. Small today, but it is O(N) by
+    ///   DEFINITION, so it is the floor any later fix hits.
+    ///
+    /// Gate (b) is therefore pinned STRUCTURALLY, by
+    /// [`the_durable_unwind_buffer_is_o_touched_not_o_ledger`], on the term this
+    /// lane actually owns. A stopwatch gate here would be measuring `replay.rs`.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore]
+    fn x3_cost_decomposition() {
+        use std::time::Instant;
+        let mut durable_by_n: Vec<(usize, u128)> = Vec::new();
+        for n in [32usize, 512] {
+            // --- durable world ---------------------------------------------
+            let path = scratch_redb("x3-decomp");
+            let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), 1_700_000_000)
+                .expect("fresh open");
+            let mut ids = Vec::with_capacity(n);
+            let t0 = Instant::now();
+            for i in 0..n {
+                ids.push(w.genesis_install(wide_open_cell(i, 1_000)));
+            }
+            let genesis_ns = t0.elapsed().as_nanos() / n as u128;
+            let actor = ids[n / 2];
+            for k in 0..4u8 {
+                let t = w.turn(actor, vec![set_field(actor, 3, [k; 32])]);
+                assert!(w.commit_turn(t).is_committed());
+            }
+            let iters = 20u128;
+            let t0 = Instant::now();
+            for k in 0..iters {
+                let t = w.turn(actor, vec![set_field(actor, 3, [(k % 251) as u8; 32])]);
+                assert!(w.commit_turn(t).is_committed());
+            }
+            let durable_ns = t0.elapsed().as_nanos() / iters;
+            durable_by_n.push((n, durable_ns));
+            // The bare ledger clone, in isolation.
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(w.engine.ledger().clone());
+            }
+            let clone_ns = t0.elapsed().as_nanos() / iters;
+            // `project_ledger` (History's per-step umem boundary), in isolation.
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(dregg_turn::umem::project_ledger(w.engine.ledger()));
+            }
+            let project_ns = t0.elapsed().as_nanos() / iters;
+            // `cells_root` — the consensus anchor's present-cell-set fold. The
+            // executor computes it TWICE per `execute` (pre_state_hash +
+            // post_state_hash), and `record_commit` re-executes the turn on the
+            // recorder, so a Full-mode commit pays it FOUR times.
+            let t0 = Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(dregg_turn::rotation_witness::cells_root(w.engine.ledger()));
+            }
+            let cells_root_ns = t0.elapsed().as_nanos() / iters;
+            drop(w);
+            let _ = std::fs::remove_file(&path);
+
+            // --- ephemeral world (no persist ⇒ no clone, no dual_write) -----
+            let mut e = World::new();
+            let mut eids = Vec::with_capacity(n);
+            for i in 0..n {
+                eids.push(e.genesis_install(wide_open_cell(i, 1_000)));
+            }
+            let eactor = eids[n / 2];
+            for k in 0..4u8 {
+                let t = e.turn(eactor, vec![set_field(eactor, 3, [k; 32])]);
+                assert!(e.commit_turn(t).is_committed());
+            }
+            let t0 = Instant::now();
+            for k in 0..iters {
+                let t = e.turn(eactor, vec![set_field(eactor, 3, [(k % 251) as u8; 32])]);
+                assert!(e.commit_turn(t).is_committed());
+            }
+            let ephemeral_ns = t0.elapsed().as_nanos() / iters;
+
+            println!(
+                "N={n}: genesis {genesis_ns}ns/cell | durable commit_turn {durable_ns}ns | \
+                 ephemeral commit_turn {ephemeral_ns}ns | ledger.clone() {clone_ns}ns | \
+                 project_ledger {project_ns}ns | cells_root {cells_root_ns}ns (x4/commit \
+                 = {}ns)",
+                cells_root_ns * 4,
+            );
+        }
+        let (n0, t0) = durable_by_n[0];
+        let (n1, t1) = durable_by_n[1];
+        println!(
+            "durable one-SetField COMMIT_TURN growth: N={n0} {t0}ns -> N={n1} {t1}ns = {:.2}x \
+             (ledger {}x bigger)",
+            t1 as f64 / t0 as f64,
+            n1 / n0,
+        );
+    }
+
+    /// ⚑ GATE (b) — COST, pinned STRUCTURALLY rather than by a stopwatch.
+    ///
+    /// The claim this lane is actually accountable for: **the pre-turn image a
+    /// durable `commit_turn` retains for its unwind is the turn's TOUCHED set,
+    /// not the ledger.** `World::commit_turn` used to hold
+    /// `Some(self.engine.ledger().clone())` across the durable write — a whole
+    /// deep copy of every `Cell`, so the retained image was exactly N. It now
+    /// arms `Ledger::begin_restore_point`, whose journal holds one prior image
+    /// per cell the turn FIRST mutates.
+    ///
+    /// Asserted at two ledger sizes 16× apart: the retained count must be
+    /// IDENTICAL (independent of N) and small. A timing gate cannot see this —
+    /// the durable commit's O(N) is dominated by terms outside this lane (see
+    /// [`x3_cost_decomposition`]), so a stopwatch through `commit_turn` would
+    /// stay red no matter what the unwind does, and a stopwatch through
+    /// `dual_write` (the C4 gate) never sees the unwind at all.
+    ///
+    /// ⚠ ANTI-VACUITY, mutation-checked: with the arming removed
+    /// (`if false && will_dual_write`) both sizes read `Some(0)` — equal, and
+    /// trivially below the ledger — so the `>= 1` clause is the one carrying the
+    /// weight, and it does die. Equality alone would pass an unarmed path.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_durable_unwind_buffer_is_o_touched_not_o_ledger() {
+        /// One durable one-`SetField` commit on an `n`-cell world; returns
+        /// `(retained_prior_images, ledger_cell_count)`.
+        fn measure(n: usize) -> (usize, usize) {
+            let path = scratch_redb("x3-unwind-width");
+            let mut w = World::open_with_timestamp(&path, ComputronCosts::zero(), 1_700_000_000)
+                .expect("fresh open of an empty store");
+            let mut ids = Vec::with_capacity(n);
+            for i in 0..n {
+                ids.push(w.genesis_install(wide_open_cell(i, 1_000)));
+            }
+            let actor = ids[n / 2];
+            // Drain any reading from the genesis path, then run ONE durable turn.
+            let _ = take_unwind_retained();
+            let t = w.turn(actor, vec![set_field(actor, 3, [7u8; 32])]);
+            assert!(w.commit_turn(t).is_committed(), "the durable commit lands");
+            let retained = take_unwind_retained().expect(
+                "a durable commit MUST arm the ledger's restore point — `None` means the \
+                 unwind buffer is not the restore point (a snapshot came back?)",
+            );
+            let cells = w.cell_count();
+            drop(w);
+            let _ = std::fs::remove_file(&path);
+            (retained, cells)
+        }
+
+        const SMALL: usize = 16;
+        const LARGE: usize = 256;
+        let (small_retained, small_cells) = measure(SMALL);
+        let (large_retained, large_cells) = measure(LARGE);
+        println!(
+            "durable unwind buffer: N={small_cells} retains {small_retained} prior cell images; \
+             N={large_cells} retains {large_retained}"
+        );
+        assert_eq!(small_cells, SMALL);
+        assert_eq!(large_cells, LARGE);
+        assert!(
+            small_retained >= 1,
+            "the turn mutates at least the acting cell, so the unwind must retain its prior image"
+        );
+        assert_eq!(
+            small_retained, large_retained,
+            "the unwind buffer must be a function of the TURN, not the ledger: it retained \
+             {small_retained} prior images at N={SMALL} but {large_retained} at N={LARGE}"
+        );
+        assert!(
+            large_retained * 8 < LARGE,
+            "the unwind buffer ({large_retained}) must be far smaller than the ledger ({LARGE}) \
+             — a whole-ledger snapshot would retain {LARGE}"
+        );
     }
 
     #[test]
