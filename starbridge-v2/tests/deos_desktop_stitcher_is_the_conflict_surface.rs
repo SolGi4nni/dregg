@@ -44,6 +44,15 @@ static IBM_PLEX: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf
 /// The conflict surface the PRE-CUTOVER desktop painted for this exact scenario,
 /// captured verbatim. The post-cutover desktop — which reads the same rows off a live
 /// `Stitcher` — must reproduce it byte for byte.
+///
+/// ⚠ RE-TAKEN 2026-08-01, deliberately: the surface GAINED the typed-resolution row
+/// (last line). `Stitcher::custom_resolution` — "the reader wants neither side verbatim"
+/// — was reachable from nothing but the stitcher's own unit tests, so the surface that
+/// this literal pinned was missing one of the two capabilities the `Stitcher` cutover
+/// was worth doing for. Every pre-existing row is unchanged, which is what this pin is
+/// for; the added row is the feature. (The authorship/blame face this pass also added
+/// paints only once a settlement has landed on the held stitch, so it is absent here by
+/// construction — see `deos_desktop_typed_resolution_and_blame`, which drives it.)
 const PINNED_SURFACE: &[&str] = &[
     "CONFLICT (1 region, first-class state · held, NOT committed)",
     "binds both alts  213f8a0f…a65b",
@@ -54,6 +63,7 @@ const PINNED_SURFACE: &[&str] = &[
     "resolve: keep author 7d1af13da669692b's “Dogs are nice too.”",
     "resolve: order: author 7d1af13da669692a's then author 7d1af13da669692b's (keep both)",
     "resolve: order (swapped): author 7d1af13da669692b's then author 7d1af13da669692a's (keep both)",
+    "resolve (typed): region 0 · your own reading, neither side verbatim — base: you (@26922)",
 ];
 
 #[test]

@@ -255,7 +255,7 @@ use dregg_doc::{
 /// their provenance, the ready one-click resolutions, and the committed resolution
 /// turn all come from here. The desktop used to carry a second, inline copy of every
 /// one of those derivations.
-use crate::stitcher::{StitchChoice, Stitcher};
+use crate::stitcher::{Side, StitchChoice, Stitcher};
 use crate::world::{grant_capability, transfer, CommitOutcome, World};
 
 // The chrome kit + persistence types are re-exported so existing call sites
@@ -534,6 +534,32 @@ impl WinKind {
     }
 }
 
+/// Every role a composed child can play — the right-click menu offers each of them
+/// (minus the one the child already has) as a real `set_role` gesture.
+const COMPOSE_ROLES: [crate::document_composer::Role; 5] = [
+    crate::document_composer::Role::Section,
+    crate::document_composer::Role::Figure,
+    crate::document_composer::Role::Inline,
+    crate::document_composer::Role::Block,
+    crate::document_composer::Role::Citation,
+];
+
+/// The drift guard for [`COMPOSE_ROLES`]: a role added to
+/// [`crate::document_composer::Role`] must be added to that list too, or the menu would
+/// quietly stop offering it. This match is exhaustive, so the omission is a COMPILE
+/// ERROR here rather than a verb that silently disappears from the surface.
+#[allow(dead_code)]
+fn compose_role_index(r: crate::document_composer::Role) -> usize {
+    use crate::document_composer::Role as R;
+    match r {
+        R::Section => 0,
+        R::Figure => 1,
+        R::Inline => 2,
+        R::Block => 3,
+        R::Citation => 4,
+    }
+}
+
 // ── The actuation surface: every action available on a cell ───────────────────────
 
 /// One entry of a cell's right-click context menu — an action the user can "do it"
@@ -664,6 +690,28 @@ enum ActionKind {
     /// graph, re-rendered into the committed block on every later gesture. One real
     /// layout patch + one verified revision turn; a refusal writes nothing.
     ComposeInto { into: CellId },
+    /// **COMPOSE: place this cell in the target document AT THE HEAD** — the FORK
+    /// placement ([`crate::document_composer::LiveComposition::embed_at`]): anchored at
+    /// the head *without* advancing the append tail, so two cells placed this way are a
+    /// layout ANTICHAIN (neither leads the composed walk) which [`ActionKind::ComposeOrder`]
+    /// collapses into the author's chain. One layout patch + one verified revision turn.
+    ComposeAtHead { into: CellId },
+    /// **COMPOSE: order this cell after `before`** in the target document's composition
+    /// (after the head when `None`) — the additive order CONSTRAINT that resolves a
+    /// layout fork. A real layout patch + a verified revision turn.
+    ComposeOrder {
+        into: CellId,
+        before: Option<CellId>,
+    },
+    /// **COMPOSE: change the role this cell plays** in the target document's
+    /// composition. The citation is preserved; only the role reads back changed.
+    ComposeRole {
+        into: CellId,
+        role: crate::document_composer::Role,
+    },
+    /// **COMPOSE: drop this cell from the target document's composition** — tombstoned
+    /// (gone from the render, RETAINED in the roster with its provenance), never deleted.
+    ComposeDrop { into: CellId },
     /// Seal / unseal the cell (a lifecycle turn) — a window-control-ish actuation
     /// surfaced in the deep menu.
     ToggleSeal,
@@ -801,7 +849,24 @@ pub struct DeosDesktop {
     /// committed resolution patch id)`. A resolution is itself a receipted patch (the
     /// turn's receipt id); the conflict surface surfaces this so the user SEES the
     /// settlement landed as a real, content-addressed turn. `None` until one resolves.
+    ///
+    /// It is also the predicate for the conflict surface's AUTHORSHIP face: cleared when
+    /// a fresh stitch is held ([`Self::stitch_branch`]), so "a settlement has landed on
+    /// the stitch being painted right now" is exactly `Some(this cell)`.
     last_resolution: Option<(CellId, String, PatchId)>,
+    /// **The typed CUSTOM resolutions** — per document cell, the reading the operator
+    /// typed into the conflict surface's own editor when they wanted NEITHER alternative
+    /// verbatim. Committed through [`crate::stitcher::Stitcher::custom_resolution`] by
+    /// the surface's typed-resolution row; dropped when the merge publishes, so a later
+    /// conflict starts from its own base rather than a stale reading.
+    custom_resolutions: HashMap<CellId, String>,
+    /// The live typed-resolution editors (one `InputState` per document holding a
+    /// conflict), seeded with [`Self::custom_resolution_base`] — the reading a PICK
+    /// would leave — so what the operator edits is exactly what the resolution diffs
+    /// against. Typing folds into `custom_resolutions` on every `Change`.
+    custom_inputs: HashMap<CellId, Entity<InputState>>,
+    /// The typed-resolution editors' `Change` subscriptions (kept alive while held).
+    custom_subs: HashMap<CellId, Subscription>,
     /// Cells whose document text was changed OUTSIDE the editor widget (a transclude
     /// drop / a bake edit) and so the live `InputState` must be re-seeded from the
     /// cached buffer on the next render (those paths lack `&mut Window`, which
@@ -1190,6 +1255,9 @@ impl DeosDesktop {
             branch_inputs: HashMap::new(),
             branch_subs: HashMap::new(),
             last_resolution: None,
+            custom_resolutions: HashMap::new(),
+            custom_inputs: HashMap::new(),
+            custom_subs: HashMap::new(),
             doc_resync: std::collections::HashSet::new(),
             doc_explorers: HashMap::new(),
             world_explorers: HashMap::new(),
@@ -1663,6 +1731,7 @@ impl DeosDesktop {
             self.doc_resync.remove(&key.0);
             self.branch_inputs.remove(&key.0);
             self.branch_subs.remove(&key.0);
+            self.retire_custom_input(key.0);
         }
         if key.1 == WinKindTag::DocExplorer {
             self.doc_explorers.remove(&key.0);
@@ -2044,6 +2113,73 @@ impl DeosDesktop {
                 ));
             }
         }
+        // ── Compose: the REST of the composition algebra — place at a fork, order,
+        //    re-role, remove. These four had exactly one caller each (their own
+        //    `bake_compose_*` hook), so the shipped desktop could add a child and then
+        //    never touch it again. Each row below is the same `actuate` path the
+        //    compose-into row uses.
+        for into in &doc_targets {
+            let members = self.composed_members(*into);
+            let mine = members.iter().find(|(c, _)| *c == cell).map(|(_, r)| *r);
+            // The FORK placement: only for a cell that is not already a child (a second
+            // embed of the same cell is a no-op the layout would swallow silently).
+            v.push(MenuAction::new(
+                format!(
+                    "Compose into doc {} at the head (a fork sibling)",
+                    id_short(into)
+                ),
+                mine.is_none(),
+                A::ComposeAtHead { into: *into },
+            ));
+            let Some(role) = mine else {
+                // TAUGHT, not hidden: the verbs exist and say what unlocks them.
+                v.push(MenuAction::new(
+                    format!(
+                        "Order · re-role · remove in doc {} … (compose it in first)",
+                        id_short(into)
+                    ),
+                    false,
+                    A::OpenDoc,
+                ));
+                continue;
+            };
+            v.push(MenuAction::new(
+                format!("Order first in doc {}", id_short(into)),
+                true,
+                A::ComposeOrder {
+                    into: *into,
+                    before: None,
+                },
+            ));
+            for (sib, _) in members.iter().filter(|(c, _)| *c != cell) {
+                v.push(MenuAction::new(
+                    format!("Order after {} in doc {}", id_short(sib), id_short(into)),
+                    true,
+                    A::ComposeOrder {
+                        into: *into,
+                        before: Some(*sib),
+                    },
+                ));
+            }
+            for r in COMPOSE_ROLES {
+                if r == role {
+                    continue;
+                }
+                v.push(MenuAction::new(
+                    format!("Set role: {r:?} in doc {}", id_short(into)),
+                    true,
+                    A::ComposeRole {
+                        into: *into,
+                        role: r,
+                    },
+                ));
+            }
+            v.push(MenuAction::new(
+                format!("Remove from doc {} (tombstone · retained)", id_short(into)),
+                true,
+                A::ComposeDrop { into: *into },
+            ));
+        }
         v.push(MenuAction::sep());
         // ── Lifecycle ──
         v.push(MenuAction::new(
@@ -2396,6 +2532,18 @@ impl DeosDesktop {
                 // composition (the host is the document, the child is this cell).
                 self.compose_embed(*into, cell, crate::document_composer::Role::Section);
             }
+            ActionKind::ComposeAtHead { into } => {
+                self.compose_embed_at(*into, cell, None, crate::document_composer::Role::Section);
+            }
+            ActionKind::ComposeOrder { into, before } => {
+                self.compose_reorder(*into, cell, *before);
+            }
+            ActionKind::ComposeRole { into, role } => {
+                self.compose_set_role(*into, cell, *role);
+            }
+            ActionKind::ComposeDrop { into } => {
+                self.compose_remove(*into, cell);
+            }
             ActionKind::CascadeWindows => self.cascade_windows(),
             ActionKind::TileWindows => self.tile_windows(),
             ActionKind::CloseAllWindows => self.close_all_windows(),
@@ -2739,6 +2887,31 @@ impl DeosDesktop {
         self.compose_gesture(host, "remove", move |c, _w| c.remove(child))
     }
 
+    /// **THE CELLS THE ORDER / RE-ROLE / REMOVE GESTURES ACCEPT** on `host`'s
+    /// composition, each with the role it currently plays — read through the composer's
+    /// own `live_atom`, which is the exact precondition those three gestures gate on.
+    ///
+    /// ⚠ This is deliberately NOT `children()`. A cell sitting in an unresolved layout
+    /// FORK has no place in the composed walk yet (`children()` is empty for a
+    /// two-sibling antichain) and is still a perfectly good — indeed the only — target
+    /// for the order gesture that resolves the fork. Driving the menu off `children()`
+    /// would dim the one verb that gets the user out of the state they are in.
+    fn composed_members(&self, host: CellId) -> Vec<(CellId, crate::document_composer::Role)> {
+        let Some(comp) = self.compositions.get(&host) else {
+            return Vec::new();
+        };
+        let composer = comp.composer();
+        composer
+            .roster()
+            .into_iter()
+            // Keyed by ATOM, not by cell: a re-roled child keeps its cell in the roster
+            // twice (the tombstoned old-role atom and the live new-role one), and only
+            // the live atom carries the role the surface should offer to change.
+            .filter(|k| composer.live_atom(k.cell) == Some(k.atom))
+            .map(|k| (CellId(k.cell.0), k.role))
+            .collect()
+    }
+
     /// Read the current edit buffer of an open document window (the composed prose).
     fn load_doc_buffer(&self, cell: CellId) -> String {
         match self
@@ -3076,6 +3249,18 @@ impl DeosDesktop {
         }
         match outcome {
             Some((true, _)) => {
+                // A FRESH stitch is held: the previous merge's settlement is history, not
+                // a fact about this one. Clearing it keeps "a settlement has landed on the
+                // stitch on screen" exactly equal to `last_resolution == Some(this cell)`,
+                // which is what gates the surface's authorship face.
+                if self
+                    .last_resolution
+                    .as_ref()
+                    .is_some_and(|(c, _, _)| *c == cell)
+                {
+                    self.last_resolution = None;
+                }
+                self.retire_custom_input(cell);
                 let n = self
                     .doc_merged_conflict_count(cell)
                     .map(|n| n.to_string())
@@ -3178,6 +3363,46 @@ impl DeosDesktop {
                     label: choice.label.clone(),
                 });
             }
+            // ── THE TYPED RESOLUTION — the gesture the one-click menu cannot express:
+            //    the reader wants NEITHER side verbatim and writes their own reading
+            //    ([`Stitcher::custom_resolution`], still a receipted patch). Its base is
+            //    the `Side::A` reading, so the label names whose text the editor is
+            //    seeded from rather than leaving the operator to guess.
+            let base_author = view
+                .alternatives
+                .first()
+                .map(|a| self.author_label(a.provenance.author))
+                .unwrap_or_else(|| "the first reading".into());
+            rows.push(ConflictRow::Custom {
+                region: ri,
+                prefer: Side::A,
+                label: format!(
+                    "region {ri} · your own reading, neither side verbatim — base: {base_author}"
+                ),
+            });
+        }
+        // ── THE AUTHORSHIP FACE — who wrote the reading that SURVIVED the settlement
+        //    ([`Stitcher::blame`], atom-stable: the attribution rides with the content
+        //    through the merge instead of smearing onto whoever resolved). Painted only
+        //    once a settlement has landed on THIS held stitch: before that there is no
+        //    settled reading to attribute, and an always-on blame face would be
+        //    wallpaper rather than evidence.
+        if self
+            .last_resolution
+            .as_ref()
+            .is_some_and(|(c, _, _)| *c == cell)
+        {
+            rows.push(ConflictRow::Section(
+                "SETTLED SO FAR — who authored the surviving reading (atom-stable blame)".into(),
+            ));
+            for line in st.blame() {
+                if line.content.trim().is_empty() {
+                    continue;
+                }
+                rows.push(ConflictRow::Blame(
+                    self.conflict_alt_line(line.author, &line.content),
+                ));
+            }
         }
         rows
     }
@@ -3225,69 +3450,183 @@ impl DeosDesktop {
             self.say("RESOLVE: that conflict/choice is gone (already resolved?).");
             return;
         };
-        // Commit it as a real turn ON the held stitch, then re-read the antichain. The
-        // resolved document is folded out only when the stitch comes back CLEAN —
-        // otherwise the stitcher keeps holding it with the resolution already in.
+        // Commit it as a real turn ON the held stitch, then settle up.
         let mut receipt_out: Option<PatchId> = None;
-        let mut settled: Option<Doc> = None; // `Some` iff every region is resolved
-        let mut held_a_stitch = false;
         if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
             if let WinKind::DocEditor {
                 merged: Some(st), ..
             } = &mut ws.kind
             {
-                held_a_stitch = true;
                 receipt_out = Some(st.resolve(&choice).patch);
-                if !st.has_conflict() {
-                    settled = Some(Doc::from_history(st.history().clone(), g));
-                }
             }
         }
-        // The resolution patch's id IS the turn's receipt — surface it.
-        if let Some(receipt) = receipt_out {
-            self.last_resolution = Some((cell, choice.label.clone(), receipt));
-        }
-        if !held_a_stitch {
+        let Some(receipt) = receipt_out else {
             return;
+        };
+        self.after_resolution(cell, choice.label.clone(), receipt, g);
+    }
+
+    /// **RESOLVE IN THE READER'S OWN WORDS** — the gesture the one-click menu cannot
+    /// express. Neither alternative is what the reader wants, so they type a reading and
+    /// [`Stitcher::custom_resolution`] collapses the antichain to it: `prefer`'s side is
+    /// picked to linearize the region, then the typed text is diffed onto that reading at
+    /// the stitcher's own [`Granularity`]. Both halves are receipted patches — a typed
+    /// resolution is a real turn, not a buffer edit that stepped around the patch algebra.
+    ///
+    /// Returns whether a resolution was committed; an empty reading is REFUSED (it would
+    /// silently delete the document) and narrated rather than obeyed.
+    fn resolve_conflict_custom(&mut self, cell: CellId, region_idx: usize, prefer: Side) -> bool {
+        let author = self.author;
+        let g = if self.layout.prefs.word_granularity {
+            Granularity::Word
+        } else {
+            Granularity::Line
+        };
+        let typed = self
+            .custom_resolutions
+            .get(&cell)
+            .cloned()
+            .unwrap_or_default();
+        if typed.trim().is_empty() {
+            self.say(
+                "RESOLVE (typed): type your own reading first — an empty reading would \
+                 delete the document rather than settle it.",
+            );
+            return false;
         }
-        match settled {
-            Some(resolved) => {
-                // Fully resolved — publish: adopt the stitched history as the document's
-                // own, retire the branch, and commit the resolved prose to heap.
-                let text = resolved.text();
-                if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
-                    if let WinKind::DocEditor {
-                        doc,
-                        branch,
-                        merged,
-                        ..
-                    } = &mut ws.kind
-                    {
-                        *doc = resolved;
-                        *branch = None;
-                        *merged = None;
-                    }
-                }
-                self.retire_branch_input(cell);
-                self.edit_doc(cell, text);
-                self.say(format!(
-                    "RESOLVE doc {} → '{}' — conflict collapsed, merge PUBLISHED to heap \
-                     (the resolution is itself a receipted patch).",
-                    id_short(&cell),
-                    choice.label
-                ));
+        let mut receipt_out: Option<PatchId> = None;
+        if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor {
+                merged: Some(st), ..
+            } = &mut ws.kind
+            {
+                // The stitcher diffs the typed reading at the grain the desktop edits at,
+                // so a word-grained document is not silently re-cut by line.
+                *st = st.clone().with_granularity(g);
+                receipt_out = st
+                    .custom_resolution(region_idx, prefer, author, &typed)
+                    .map(|r| r.patch);
             }
-            None => {
-                // Still conflicted (more regions / concurrent resolutions) — the held
-                // stitcher already carries the resolution patch, so the remaining
-                // conflicts stay live with nothing to re-seat.
-                self.say(format!(
-                    "RESOLVE doc {} → '{}' applied; further conflict(s) remain (resolution \
-                     is closed under its own conflicts).",
-                    id_short(&cell),
-                    choice.label
-                ));
+        }
+        let Some(receipt) = receipt_out else {
+            self.say("RESOLVE (typed): that conflict region is gone (already resolved?).");
+            return false;
+        };
+        self.after_resolution(cell, "your own reading (typed)".into(), receipt, g);
+        true
+    }
+
+    /// **THE SETTLEMENT TAIL, SHARED BY EVERY RESOLUTION PATH** — one-click and typed
+    /// alike. The resolution patch's id IS the turn's receipt, so it is surfaced; and the
+    /// resolved document is folded out ONLY when the stitch comes back CLEAN. Otherwise
+    /// the stitcher keeps holding it with the resolution already in, and the remaining
+    /// regions stay live with nothing to re-seat.
+    fn after_resolution(&mut self, cell: CellId, label: String, receipt: PatchId, g: Granularity) {
+        self.last_resolution = Some((cell, label.clone(), receipt));
+        let settled: Option<Doc> = match self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        {
+            Some(WinKind::DocEditor {
+                merged: Some(st), ..
+            }) if !st.has_conflict() => Some(Doc::from_history(st.history().clone(), g)),
+            _ => None,
+        };
+        let Some(resolved) = settled else {
+            self.say(format!(
+                "RESOLVE doc {} → '{label}' applied; further conflict(s) remain (resolution \
+                 is closed under its own conflicts).",
+                id_short(&cell),
+            ));
+            return;
+        };
+        // Fully resolved — publish: adopt the stitched history as the document's own,
+        // retire the branch, and commit the resolved prose to heap.
+        let text = resolved.text();
+        if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+            if let WinKind::DocEditor {
+                doc,
+                branch,
+                merged,
+                ..
+            } = &mut ws.kind
+            {
+                *doc = resolved;
+                *branch = None;
+                *merged = None;
             }
+        }
+        self.retire_branch_input(cell);
+        self.retire_custom_input(cell);
+        self.edit_doc(cell, text);
+        self.say(format!(
+            "RESOLVE doc {} → '{label}' — conflict collapsed, merge PUBLISHED to heap \
+             (the resolution is itself a receipted patch).",
+            id_short(&cell),
+        ));
+    }
+
+    /// **THE READING A TYPED RESOLUTION STARTS FROM** — exactly what picking `prefer` on
+    /// region `region_idx` would leave, computed on a CLONE so the preview commits
+    /// nothing. The typed-resolution editor is seeded with this, so what the operator
+    /// edits is precisely what [`Stitcher::custom_resolution`] diffs against. `None` when
+    /// no stitch is held or the region is not a two-way fork.
+    fn custom_resolution_base(
+        &self,
+        cell: CellId,
+        region_idx: usize,
+        prefer: Side,
+    ) -> Option<String> {
+        let g = if self.layout.prefs.word_granularity {
+            Granularity::Word
+        } else {
+            Granularity::Line
+        };
+        let Some(WinKind::DocEditor {
+            merged: Some(st), ..
+        }) = self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        else {
+            return None;
+        };
+        let mut probe = st.clone();
+        probe.pick_and_resolve(region_idx, prefer, self.author)?;
+        Some(Doc::from_history(probe.history().clone(), g).text())
+    }
+
+    /// Hold the reading the operator typed for `cell`'s conflict (the live editor's
+    /// `Change` handler and the bake hook are the two callers — one path).
+    fn set_custom_resolution(&mut self, cell: CellId, text: &str) {
+        self.custom_resolutions.insert(cell, text.to_string());
+    }
+
+    /// Drop the typed-resolution editor + its reading (the conflict retired, published,
+    /// or replaced by a fresh stitch), so the next one re-seeds from its own base.
+    fn retire_custom_input(&mut self, cell: CellId) {
+        self.custom_inputs.remove(&cell);
+        self.custom_subs.remove(&cell);
+        self.custom_resolutions.remove(&cell);
+    }
+
+    /// **CLICK A ROW OF THE PAINTED CONFLICT SURFACE** — the one dispatch behind both
+    /// resolution buttons ([`Self::doc_resolve_button`] and the typed row's), addressed
+    /// by the row's index in [`Self::conflict_rows`] so a click means the same thing on
+    /// the painted surface and in a bake. Returns whether the row was actionable.
+    fn click_conflict_row(&mut self, cell: CellId, row_idx: usize) -> bool {
+        match self.conflict_rows(cell).get(row_idx) {
+            Some(ConflictRow::Choice { region, choice, .. }) => {
+                let (region, choice) = (*region, *choice);
+                self.resolve_conflict(cell, region, choice);
+                true
+            }
+            Some(ConflictRow::Custom { region, prefer, .. }) => {
+                let (region, prefer) = (*region, *prefer);
+                self.resolve_conflict_custom(cell, region, prefer)
+            }
+            _ => false,
         }
     }
 
@@ -4468,6 +4807,35 @@ impl DeosDesktop {
     pub fn bake_resolve_conflict(&mut self, cell: CellId, region_idx: usize, choice_idx: usize) {
         self.resolve_conflict(cell, region_idx, choice_idx);
         self.doc_resync.insert(cell);
+    }
+
+    /// **CLICK ROW `row_idx` OF THE PAINTED CONFLICT SURFACE** — the same dispatch the
+    /// rendered row's button runs ([`Self::click_conflict_row`]), addressed by the index
+    /// into [`Self::bake_conflict_surface`]. Returns whether the row was actionable, so a
+    /// test drives resolutions the way a user does: find the row you can read, click it.
+    pub fn bake_conflict_row_click(&mut self, cell: CellId, row_idx: usize) -> bool {
+        let acted = self.click_conflict_row(cell, row_idx);
+        self.doc_resync.insert(cell);
+        acted
+    }
+
+    /// The reading a TYPED resolution of region `region_idx` starts from (what picking
+    /// `prefer` would leave) — what the surface's typed-resolution editor is seeded with.
+    /// A bake/test hook; computed on a clone, committing nothing.
+    pub fn bake_custom_resolution_base(
+        &self,
+        cell: CellId,
+        region_idx: usize,
+        prefer: Side,
+    ) -> Option<String> {
+        self.custom_resolution_base(cell, region_idx, prefer)
+    }
+
+    /// Type `text` into `cell`'s typed-resolution editor — the SAME setter the live
+    /// widget's `Change` handler calls. A bake/test hook (the widget itself needs a
+    /// `&mut Window` a headless bake has no way to type into).
+    pub fn bake_type_custom_resolution(&mut self, cell: CellId, text: &str) {
+        self.set_custom_resolution(cell, text);
     }
 
     // ── Document Explorer bake+test hooks (the Pharo-moldable patch inspector) ──
@@ -5897,8 +6265,10 @@ impl DeosDesktop {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // A live co-author draft editor exists exactly while a branch is forked.
+        // A live co-author draft editor exists exactly while a branch is forked, and a
+        // live TYPED-RESOLUTION editor exactly while a conflict is held.
         self.ensure_branch_input(cell, window, cx);
+        self.ensure_custom_input(cell, window, cx);
 
         // (The held stitch is read as DATA by `conflict_rows` below; this only needs
         //  to know WHETHER one is held, so no per-frame clone of it happens here.)
@@ -5997,7 +6367,8 @@ impl DeosDesktop {
         // ── THE CONFLICT VIEW — first-class conflict states, side-by-side. ──
         //    PAINT ONLY: every string here is decided by `conflict_rows` (which reads
         //    the held `Stitcher`'s surface), so the bake reads what the user sees.
-        for row in self.conflict_rows(cell) {
+        let custom_input = self.custom_inputs.get(&cell).cloned();
+        for (row_idx, row) in self.conflict_rows(cell).into_iter().enumerate() {
             col = match &row {
                 ConflictRow::Section(s) => col.child(face_section(s)),
                 ConflictRow::Boundary(h) => col.child(face_row("binds both alts", h)),
@@ -6023,11 +6394,38 @@ impl DeosDesktop {
                 ),
                 // One-click resolution choices — each a ready, authored patch (its
                 // commit is the resolution turn's receipt).
-                ConflictRow::Choice {
-                    region,
-                    choice,
-                    label,
-                } => col.child(self.doc_resolve_button(cell, *region, *choice, label, cx)),
+                ConflictRow::Choice { label, .. } => {
+                    col.child(self.conflict_row_button(cell, row_idx, "resolve", label, cx))
+                }
+                // The TYPED resolution: a live editor seeded with the reading a pick
+                // would leave, plus the button that commits what the reader made of it.
+                ConflictRow::Custom { label, .. } => col
+                    .child(
+                        div()
+                            .id(gpui::SharedString::from(format!(
+                                "customres-{}-{row_idx}",
+                                id_hex(&cell)
+                            )))
+                            .ml_2()
+                            .min_h(px(48.0))
+                            .bg(gpui::rgb(0xfffdf4))
+                            .border_1()
+                            .border_color(gpui::rgb(0xb09070))
+                            .text_size(px(10.0))
+                            .when_some(custom_input.clone(), |this, input| {
+                                this.child(Input::new(&input).h_full())
+                            }),
+                    )
+                    .child(self.conflict_row_button(cell, row_idx, "resolve (typed)", label, cx)),
+                // The authorship of the reading that SURVIVED a settlement.
+                ConflictRow::Blame(line) => col.child(
+                    div()
+                        .ml_2()
+                        .px_1()
+                        .text_size(px(10.0))
+                        .text_color(gpui::rgb(0x406040))
+                        .child(line.clone()),
+                ),
             };
         }
 
@@ -6090,20 +6488,22 @@ impl DeosDesktop {
         .child(label.to_string())
     }
 
-    /// A one-click conflict-resolution button — commits exactly the chosen
-    /// [`crate::stitcher::StitchChoice`]'s ready patch onto the held stitch.
-    fn doc_resolve_button(
+    /// A conflict-surface resolution button — one-click choice or typed reading alike.
+    /// It carries the ROW INDEX and dispatches through [`Self::click_conflict_row`], so
+    /// the painted button and a bake click actuate the identical path (there is no second
+    /// dispatch that could drift from what the row says it does).
+    fn conflict_row_button(
         &self,
         cell: CellId,
-        region_idx: usize,
-        choice_idx: usize,
+        row_idx: usize,
+        verb: &str,
         label: &str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         bevel_raised(
             div()
                 .id(gpui::SharedString::from(format!(
-                    "docresolve-{}-{region_idx}-{choice_idx}",
+                    "docresolve-{}-{row_idx}",
                     id_hex(&cell)
                 )))
                 .ml_2()
@@ -6116,11 +6516,46 @@ impl DeosDesktop {
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _ev: &MouseDownEvent, _w, cx| {
-                this.resolve_conflict(cell, region_idx, choice_idx);
+                this.click_conflict_row(cell, row_idx);
                 cx.notify();
             }),
         )
-        .child(format!("resolve: {label}"))
+        .child(format!("{verb}: {label}"))
+    }
+
+    /// Ensure a live TYPED-RESOLUTION editor exists for `cell`'s held conflict — a real
+    /// editable `InputState` seeded with [`Self::custom_resolution_base`] (the reading a
+    /// `Side::A` pick would leave), so the operator edits the exact text the resolution
+    /// will diff against. Typing folds into `custom_resolutions` through the SAME setter
+    /// the bake hook drives. A no-op when no stitch is held.
+    fn ensure_custom_input(&mut self, cell: CellId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.custom_inputs.contains_key(&cell) {
+            return;
+        }
+        let Some(seed) = self.custom_resolution_base(cell, 0, Side::A) else {
+            return; // no held conflict — nothing to resolve by hand
+        };
+        self.set_custom_resolution(cell, &seed);
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .soft_wrap(true)
+                .placeholder("Your own reading of the contested region — neither side verbatim…")
+                .default_value(seed)
+        });
+        let sub = cx.subscribe_in(
+            &input,
+            window,
+            move |this, input, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let text = input.read(cx).value().to_string();
+                    this.set_custom_resolution(cell, &text);
+                    cx.notify();
+                }
+            },
+        );
+        self.custom_inputs.insert(cell, input);
+        self.custom_subs.insert(cell, sub);
     }
 
     // ── THE DOCUMENT EXPLORER — the Pharo-moldable inspector of a doc's patch substance ──
@@ -8849,6 +9284,17 @@ enum ConflictRow {
         choice: usize,
         label: String,
     },
+    /// The TYPED resolution for a region — the reader's own reading, neither side
+    /// verbatim, diffed from `prefer`'s reading into a receipted patch
+    /// ([`crate::stitcher::Stitcher::custom_resolution`]).
+    Custom {
+        region: usize,
+        prefer: Side,
+        label: String,
+    },
+    /// One line of the AUTHORSHIP face: the surviving reading, attributed to whoever
+    /// authored it ([`crate::stitcher::Stitcher::blame`]).
+    Blame(String),
 }
 
 impl ConflictRow {
@@ -8858,6 +9304,8 @@ impl ConflictRow {
             ConflictRow::Section(s) | ConflictRow::Region(s) | ConflictRow::Alt(s) => s.clone(),
             ConflictRow::Boundary(h) => format!("binds both alts  {h}"),
             ConflictRow::Choice { label, .. } => format!("resolve: {label}"),
+            ConflictRow::Custom { label, .. } => format!("resolve (typed): {label}"),
+            ConflictRow::Blame(line) => format!("blame  {line}"),
         }
     }
 }
