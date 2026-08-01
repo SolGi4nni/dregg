@@ -78,11 +78,26 @@ use dregg_circuit::plonky3_prover::POSEIDON2_WIDTH;
 // §1 — the three maps, each DERIVED
 // ============================================================================
 
-/// How far above `CHIP_RATE` the admission sweep looks. A chip tuple carries `CHIP_RATE` input
+/// How far above `CHIP_RATE` the ADMISSION sweep looks. A chip tuple carries `CHIP_RATE` input
 /// lanes, so an arity above that is refused structurally (§3) and never reaches the derived set;
 /// the sweep runs past it anyway so the gate can *report* that nothing is admitted up there
-/// rather than assume it.
+/// rather than assume it. [`chip_air_row_accepts`] is total on this range — it writes the arity
+/// into the tuple's arity column and asks the AIR, and the AIR simply refuses.
 const SWEEP_CEILING: u32 = 4 * CHIP_RATE as u32;
+
+/// ⚠ **The GENERATOR sweep stops at `CHIP_RATE`, and this is a domain fact, not a convenience.**
+/// [`chip_absorb_all_lanes`] is the deployed witness generator's absorb; it reads at most
+/// `CHIP_RATE` input lanes and **asserts** `arity <= CHIP_RATE` (`descriptor_ir2.rs:4523`). Asking
+/// it about arity 17 is not a question with a false answer, it is a question outside its domain —
+/// and asking anyway is how this gate spent its first day: every one of its six tests aborted at
+/// `a = 17` with that assertion, so the gate reported NOTHING, in either direction, including on
+/// the descriptor it was written for. A sweep bound that outruns the function under test turns a
+/// gate into a panic.
+///
+/// Nothing is lost by stopping here: §3 refuses `arity > CHIP_RATE` structurally, before any lane
+/// is consulted, and `admitted_arity_set_is_derived_from_the_chip` proves the admitted set lies
+/// entirely at or below `CHIP_RATE` — so no admitted arity goes un-swept.
+const DROP_SWEEP_CEILING: u32 = CHIP_RATE as u32;
 
 /// **The admitted set, derived.** For each candidate arity, hand the deployed AIR the honest
 /// all-zero-input chip row at that arity and ask whether its constraints vanish.
@@ -114,7 +129,18 @@ fn derive_air_genuine_lanes(a: u32) -> Vec<bool> {
 /// the final permutation state, so a *seeded* lane could in principle collide with the baseline on
 /// all eight; three distinct probes puts that at ~2^-744, and the map is cross-checked against the
 /// AIR-derived one in [`lane_maps_agree_in_the_dangerous_direction`] regardless.
+///
+/// ⚠ Defined only on `a <= DROP_SWEEP_CEILING` — see that constant. The guard is a hard refusal
+/// rather than a clamp: a caller that walks past the absorb's domain is asking a question the
+/// deployed generator does not answer, and it must say so here rather than have the assertion
+/// inside `chip_absorb_all_lanes` abort the whole test binary.
 fn derive_dropped_lanes(a: u32) -> Vec<bool> {
+    assert!(
+        a <= DROP_SWEEP_CEILING,
+        "the deployed absorb is undefined above arity {DROP_SWEEP_CEILING} (it asserts \
+         `arity <= CHIP_RATE`); sweep admission with SWEEP_CEILING, the generator with \
+         DROP_SWEEP_CEILING"
+    );
     const PROBES: [u32; 3] = [1, 2, 0x0123_4567];
     let baseline = chip_absorb_all_lanes(a as usize, &[BabyBear::ZERO; CHIP_RATE]);
     (0..CHIP_RATE)
@@ -275,9 +301,10 @@ struct Verdict {
 }
 
 fn audit(found: &[Found], admitted: &BTreeSet<u32>) -> Verdict {
-    // Derived once, consulted per lookup.
+    // Derived once, consulted per lookup. Both are only ever indexed at an arity §3 has already
+    // bounded by `CHIP_RATE`, so the generator leg stops at its own domain edge.
     let genuine: Vec<Vec<bool>> = (0..=SWEEP_CEILING).map(derive_air_genuine_lanes).collect();
-    let dropped: Vec<Vec<bool>> = (0..=SWEEP_CEILING).map(derive_dropped_lanes).collect();
+    let dropped: Vec<Vec<bool>> = (0..=DROP_SWEEP_CEILING).map(derive_dropped_lanes).collect();
 
     let mut v = Verdict {
         violations: Vec::new(),
@@ -357,13 +384,16 @@ fn admitted_arity_set_is_derived_from_the_chip() {
     let admitted = derive_admitted_arities();
     println!("chip AIR admitted arities (DERIVED by probing Ir2Air::Chip): {admitted:?}");
     for a in 0..=SWEEP_CEILING {
-        let g = derive_air_genuine_lanes(a);
-        let d = derive_dropped_lanes(a);
-        if admitted.contains(&a) {
-            let air_ok: Vec<usize> = (0..CHIP_RATE).filter(|&i| g[i]).collect();
-            let drp: Vec<usize> = (0..CHIP_RATE).filter(|&i| d[i]).collect();
-            println!("  arity {a:2}: AIR-genuine lanes {air_ok:?} · absorb-dropped lanes {drp:?}");
+        if !admitted.contains(&a) {
+            continue;
         }
+        let g = derive_air_genuine_lanes(a);
+        // Sound because the last assertion in this test proves every admitted arity is `<=
+        // CHIP_RATE` = `DROP_SWEEP_CEILING`, which is exactly the absorb's domain.
+        let d = derive_dropped_lanes(a);
+        let air_ok: Vec<usize> = (0..CHIP_RATE).filter(|&i| g[i]).collect();
+        let drp: Vec<usize> = (0..CHIP_RATE).filter(|&i| d[i]).collect();
+        println!("  arity {a:2}: AIR-genuine lanes {air_ok:?} · absorb-dropped lanes {drp:?}");
     }
     assert!(
         !admitted.is_empty(),
@@ -396,9 +426,11 @@ fn lane_maps_agree_in_the_dangerous_direction() {
     // The DANGEROUS disagreement is a lane the AIR permits and the generator throws away — that is
     // a value an emitter may route, that binds nothing. The reverse (the generator seeds a lane
     // the AIR pins to zero) is inert: the pin means no descriptor can put anything there.
+    // The generator's own domain edge — the dangerous disagreement can only be exhibited where the
+    // generator runs, and above `CHIP_RATE` the AIR admits nothing anyway.
     let mut bad = Vec::new();
     let mut inert = Vec::new();
-    for a in 0..=SWEEP_CEILING {
+    for a in 0..=DROP_SWEEP_CEILING {
         let g = derive_air_genuine_lanes(a);
         let d = derive_dropped_lanes(a);
         for i in 0..CHIP_RATE {

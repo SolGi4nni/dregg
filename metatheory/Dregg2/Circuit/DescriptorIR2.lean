@@ -175,6 +175,82 @@ lanes are CARRIED (made available + bound to the genuine permutation by the Rust
 NOT yet folded into any commitment. -/
 def CHIP_OUT_LANES : Nat := 8
 
+/-! ### THE ADMITTED ABSORB ARITIES — the chip's degree budget, and why `≤ CHIP_RATE` is a LIE.
+
+An emitter does not get to pick an arity. The deployed `Ir2Air::Chip` carries its admission as a
+single degree-7 product over the arity column (`circuit/src/descriptor_ir2.rs:3073`):
+
+    a·(a−2)·(a−3)·(a−4)·(a−7)·(a−11)·(a−16) = 0
+
+Seven roots is the S-box degree budget, and it is spent. A row whose arity tag is anything else
+leaves that product non-zero, so **no assignment satisfies the constraint — at that row, ever**;
+a descriptor asking for such an arity is UNPROVABLE, not merely inefficient. A second, quieter
+mode rides along: off the `seed456` blend (high only at 7, 11, 16) the deployed absorb routes the
+ARITY TAG into lane 4 and zero into lanes 5/6, so three of the lanes the emitter handed the chip
+never enter the preimage at all.
+
+⚠ **`ins.length ≤ CHIP_RATE` — the condition this file carried until now — is strictly weaker
+than that.** It admits 1, 5, 6, 8, 9, 10, 12, 13, 14, 15: ten arities the AIR refuses. Every
+lemma about a descriptor at one of those went through on a premise the deployed circuit cannot
+meet, so the descriptor read as verified while being unprovable. That is how
+`dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1` shipped with lookups at 8 and 14,
+and how the pre-`57105f387` blinded tooth shipped at 9. Both files reasoned "arity ≤ 16, fine".
+
+⚑ **This list is the chip's budget, and it is not negotiable from the emitter side.** Do NOT
+widen it to fit a descriptor: pad the absorb block up to the next admitted arity instead. Widening
+it here does not widen the AIR — it only re-opens the hole. -/
+
+/-- **The chip AIR's ADMITTED absorb arities** — the roots of the deployed degree-7 admission
+product (`circuit/src/descriptor_ir2.rs:3073`). Derived independently, by execution, in
+`circuit/tests/chip_absorb_arity_admission_gate.rs`, which probes the deployed constraint
+evaluator rather than reading this list. -/
+def CHIP_ADMITTED_ARITIES : List Nat := [0, 2, 3, 4, 7, 11, 16]
+
+/-- An absorb arity the deployed chip AIR admits. `abbrev`, so `decide` sees through it and the
+failure message shows the offending arity against the whole budget. -/
+abbrev ChipArityAdmitted (n : Nat) : Prop := n ∈ CHIP_ADMITTED_ARITIES
+
+/-- Admitted ⇒ it fits the tuple's input lanes. This is the ONE direction that holds: the old
+condition is a CONSEQUENCE of the new one, never a substitute for it. -/
+theorem chipArity_le_rate {n : Nat} (h : ChipArityAdmitted n) : n ≤ CHIP_RATE := by
+  simp only [ChipArityAdmitted, CHIP_ADMITTED_ARITIES, List.mem_cons, List.not_mem_nil,
+    or_false] at h
+  rcases h with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+/-- **The side-condition discharger.** Three ways an emitter can be shown to ask for an admitted
+arity, and no fourth:
+
+* `assumption` — the generic levers (`chip_lookup_sound_N` and every rung that restates its
+  tuple) carry the condition as a named hypothesis, so the site inherits it;
+* `of_decide_eq_true rfl` — the emitters. This reduces `ins.length` through the list SPINE, so it
+  fires even when the lane EXPRESSIONS are parametric (`leafInputs c`, `nodeInputs c lvl`): the
+  arity of a literal-spine absorb block does not depend on what is in the lanes. (`decide` itself
+  refuses a goal with free variables; the kernel reduction does not.)
+* otherwise it FAILS, loudly. A site where neither fires is a site whose arity is not statically
+  known — and an arity the emitter cannot name is an arity the chip cannot be shown to admit. -/
+macro "chip_arity_admitted" : tactic =>
+  `(tactic| first
+      | assumption
+      | exact of_decide_eq_true (Eq.refl true)
+      | fail "CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only \
+              CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 \
+              admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the \
+              constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the \
+              absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it \
+              is the chip's degree budget, and widening it here does not widen the AIR.")
+
+-- The budget is spent: seven roots, the S-box degree.
+#guard CHIP_ADMITTED_ARITIES.length == 7
+#guard CHIP_ADMITTED_ARITIES.all (· ≤ CHIP_RATE)
+-- The three arities this condition exists to refuse, named: 8 and 14 (`blind5-v1`, both teeth)
+-- and 9 (the pre-`57105f387` blinded tooth). Each is `≤ CHIP_RATE` — which is exactly why the
+-- old condition let them through.
+#guard !(ChipArityAdmitted 8 : Bool) && 8 ≤ CHIP_RATE
+#guard !(ChipArityAdmitted 9 : Bool) && 9 ≤ CHIP_RATE
+#guard !(ChipArityAdmitted 14 : Bool) && 14 ≤ CHIP_RATE
+-- The condition is STRICTLY stronger, not a rename: ten arities separate the two.
+#guard ((List.range (CHIP_RATE + 1)).filter (!ChipArityAdmitted ·)).length == 10
+
 /-- The canonical limb width for the shared range table: the two-limb signed-well discipline
 (the deployed balance limbs are 30-bit — `EffectVmEmitTransfer`'s `VmRange ⟨…, 30⟩` teeth). -/
 def BAL_LIMB_BITS : Nat := 30
@@ -1379,14 +1455,30 @@ def chipRowN (permOut : List ℤ → List ℤ) (ins : List ℤ) : List ℤ :=
   (ins.length : ℤ) :: padTo CHIP_RATE ins ++ permOut ins
 
 /-- The WIDE chip LOOKUP tuple: `(arity, padded input exprs, W digest columns)`. The `W` digest
-columns are read as variables `digestCols.map (.var)`; the wide soundness forces each one. -/
-def chipLookupTupleN (ins : List EmittedExpr) (digestCols : List Nat) : List EmittedExpr :=
+columns are read as variables `digestCols.map (.var)`; the wide soundness forces each one.
+
+⚑ **`hAdm` is the admitted-arity side condition, and it is why this is a checked constructor.**
+The arity tag IS `ins.length`, so an emitter that hands over an absorb block of a length the chip
+AIR refuses is building a tuple no assignment can satisfy. The condition is an `autoParam`: every
+honest site discharges it silently (see `chip_arity_admitted`), and a site at arity 8, 9 or 14
+**fails to elaborate** — the descriptor cannot be written down, rather than being written down and
+proved about vacuously. `hAdm` is a `Prop` and does not appear in the result, so the emitted wire
+bytes are untouched. -/
+def chipLookupTupleN (ins : List EmittedExpr) (digestCols : List Nat)
+    (hAdm : ChipArityAdmitted ins.length := by chip_arity_admitted) : List EmittedExpr :=
+  let _ := hAdm
   (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins ++ digestCols.map .var
 
 /-- A WIDE chip table is SOUND when every row is a genuine `(arity, padded inputs, W-felt output)`
-tuple of the permutation — the chip AIR's faithfulness at full squeeze width. -/
+tuple of the permutation — the chip AIR's faithfulness at full squeeze width.
+
+⚑ The arity condition is `ChipArityAdmitted`, NOT `≤ CHIP_RATE`, and that is a statement about the
+DEPLOYED table: the admission product refuses every other arity, so a table containing a row at
+arity 8 is not a table the deployed chip can ever serve. Modelling it as `≤ CHIP_RATE` let the
+model carry rows the circuit cannot hold, and every completeness/inhabitation claim built on such
+a table was a claim about a machine that does not exist. -/
 def ChipTableSoundN (permOut : List ℤ → List ℤ) (tbl : Table) : Prop :=
-  ∀ r ∈ tbl, ∃ ins : List ℤ, ins.length ≤ CHIP_RATE ∧ r = chipRowN permOut ins
+  ∀ r ∈ tbl, ∃ ins : List ℤ, ChipArityAdmitted ins.length ∧ r = chipRowN permOut ins
 
 /-- **THE WIDE LEVER (`chip_lookup_sound_N`).** Against a sound WIDE chip table, a wide chip lookup
 ENFORCES the FULL permutation output: the `W` digest columns carry the genuine `W`-felt squeezed
@@ -1397,11 +1489,11 @@ wide squeeze) is the parameter, mirroring the legacy lever's `hash`. -/
 theorem chip_lookup_sound_N (permOut : List ℤ → List ℤ) (tbl : Table)
     (hSound : ChipTableSoundN permOut tbl)
     (a : Assignment) (ins : List EmittedExpr) (digestCols : List Nat)
-    (hlen : ins.length ≤ CHIP_RATE)
-    (hmem : (chipLookupTupleN ins digestCols).map (·.eval a) ∈ tbl) :
+    (hAdm : ChipArityAdmitted ins.length)
+    (hmem : (chipLookupTupleN ins digestCols hAdm).map (·.eval a) ∈ tbl) :
     digestCols.map a = permOut (ins.map (·.eval a)) := by
   obtain ⟨ws, hwlen, hrow⟩ := hSound _ hmem
-  have hev : (chipLookupTupleN ins digestCols).map (·.eval a)
+  have hev : (chipLookupTupleN ins digestCols hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a)) ++ digestCols.map a := by
     simp [chipLookupTupleN, List.map_cons, List.map_append, map_eval_padToE, EmittedExpr.eval,
       List.map_map, Function.comp_def]
@@ -1414,10 +1506,10 @@ theorem chip_lookup_sound_N (permOut : List ℤ → List ℤ) (tbl : Table)
     have := Int.natCast_inj.mp hcast
     simpa [List.length_map] using this
   have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
-    simpa [List.length_map] using hlen
+    simpa [List.length_map] using chipArity_le_rate hAdm
   -- equal-length padded blocks ⇒ split the tail uniquely (inputs vs the W-felt output block)
   have hpads := List.append_inj htail
-    (by rw [padTo_length hlenm, padTo_length hwlen])
+    (by rw [padTo_length hlenm, padTo_length (chipArity_le_rate hwlen)])
   have hins : ins.map (·.eval a) = ws := padTo_inj hlens hpads.1
   -- the output block: `digestCols.map a = permOut ws`, then rewrite ws ↦ evaluated inputs
   have hd : digestCols.map a = permOut ws := hpads.2
