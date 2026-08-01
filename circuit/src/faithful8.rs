@@ -65,10 +65,19 @@
 //!
 //! ⚑ **THE BURN-DOWN LIST IS A GATE, NOT A CONVENTION** (2026-08-01).
 //! `circuit/tests/faithful8_key_octet_below_floor.rs` walks every `*.rs` in the workspace,
-//! collects the call sites of `from_lossy_31bit_DANGER` AND of `from_canonical_key`, and fails
-//! unless each one is named in the law doc's burn-down section — and unless each path the doc
-//! names still has a call. "Adding a `_DANGER` site without listing it is a review-time
-//! violation" was a rule no instrument could enforce; a documented wound is not a detected one.
+//! collects the call sites of `from_lossy_31bit_DANGER` and of every ROUTER (a constructor in
+//! THIS file whose body calls the hatch — `from_canonical_key` is one, derived from the source
+//! rather than transcribed), and fails unless each is named in the law doc's burn-down section,
+//! and unless each entry the doc carries still has a call. "Adding a `_DANGER` site without
+//! listing it is a review-time violation" was a rule no instrument could enforce; a documented
+//! wound is not a detected one.
+//!
+//! ⚑ **The key is the `(file, reason-constant)` pair, not the file path** — corrected the same day
+//! the gate was written. Keyed on paths, it caught a NEW file and was blind inside the three files
+//! it already listed, which are the two deployed producers and this one: precisely where the next
+//! degraded octet gets added. Consequences for a residual added here: its reason must be a `&str`
+//! constant declared in this file (an inline literal at the call site is refused), and the law
+//! doc's burn-down section must quote that constant's VALUE verbatim.
 //!
 //! Reading OUT is unrestricted (`Deref<Target = [BabyBear; 8]>`, [`Faithful8::limbs`],
 //! `From<Faithful8> for [BabyBear; 8]`): the wall polices construction, not
@@ -253,10 +262,20 @@ impl Faithful8 {
     /// deployed packer and real curve points by
     /// `circuit/tests/faithful8_key_octet_below_floor.rs`.
     ///
-    /// What closes it is a NINTH key lane (`2^278` image, `2^139` birthday), which is
-    /// `rotatedNumPreLimbs` 184 → 187, `B_SPAN` 247 → 251, a descriptor re-emit, a VK rotation and
-    /// `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16. Not this lane's edit — this lane's edit is that the
-    /// wall stops calling it faithful while that is pending. The packing itself is owned by
+    /// What closes it is a NINTH key lane — and ⚠ **say which bound for the FIX as well.** This
+    /// doc read "(`2^278` image, `2^139` birthday)" until 2026-08-01. Those are the CAPACITY of
+    /// nine BabyBear lanes, and `2^278.16 > 2^256` is the tell: a map out of 32 bytes has at most
+    /// `2^256` images. The encoding recommended is the base-`2^29` NONET
+    /// (`Dregg2.Circuit.KeyLanes9.keyToLanes9`): **image exactly `2^256`, INJECTIVE**
+    /// (`keyToLanes9_injective`, from a total decoder and a machine-checked left inverse), so the
+    /// encoding step loses **nothing**, there is no encoding collision to bound, and the binding
+    /// reduces to the sponge that absorbs the lanes. ⚠ Rung: proved in Lean, **not emitted and not
+    /// consumed by a verifier**.
+    ///
+    /// The geometry is `rotatedNumPreLimbs` 184 → 187, `B_SPAN` 247 → 251, a descriptor re-emit, a
+    /// VK rotation and `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16. Not this lane's edit — this lane's
+    /// edit is that the wall stops calling it faithful while that is pending. The packing itself is
+    /// owned by
     /// `dregg_commit::typed::canonical_32_to_felts_8` (byte-identical twin:
     /// `dregg_cell::commitment::canonical_to_babybear_pi`) and is UNCHANGED here.
     #[inline]

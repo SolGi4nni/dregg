@@ -57,8 +57,17 @@ The arithmetic, once:
 | `p` | `2013265921` | BabyBear, `2^31 − 2^27 + 1`; `log₂ p = 30.907` |
 | 8-lane IMAGE | `2^247.26` | `8 · log₂ p` — the size of `[0, p)^8` |
 | **8-lane COLLISION** | **`2^123.63`** | `8 · log₂ p / 2`, the birthday bound. ⚑ **THIS is the "~124-bit" floor.** |
-| 9-lane COLLISION | `2^139.08` | what a ninth lane buys |
+| 9-lane CAPACITY | `2^278.16` image / `2^139.08` birthday | ⚠ what nine lanes can HOLD — the CODOMAIN. **Not** the numbers of any encoding; see the row below and the tell beneath the table. |
 | 32-byte source | `2^256` | ⚑ `> 2^247.26`, so **no** 8-lane encoding of 32 bytes is injective, under any chunking |
+| base-`2^29` NONET | image **exactly `2^256`**, **INJECTIVE** | the nine-lane encoding actually recommended (`Dregg2.Circuit.KeyLanes9.keyToLanes9`; `keyToLanes9_injective`, total decoder + machine-checked left inverse). **No encoding collision exists**, so the encoding step loses nothing and the binding reduces to the sponge. |
+
+⚑ **The tell, and it is one comparison.** This document priced the ninth key lane at "`2^278.16`
+image" — a figure LARGER than `2^256`. A map out of 32 bytes has at most `2^256` images, so
+`2^278.16` cannot be one; it is the codomain's size. Quoting it as an image, in the very section
+below that forbids quoting the flattering number of a pair, is the house error reappearing inside
+its own correction. ⚠ **Say which bound, every time, in every string.** `2^278.16 / 2^139.08` are
+correct *as a capacity* and are wrong *as this encoding's strength* — the encoding is injective, so
+its encoding-collision cost is not a birthday number at all.
 
 Two consequences that were not being drawn:
 
@@ -316,15 +325,27 @@ producers write it: `cell::commitment::compute_rotated_pre_limbs` and
 hatch and put it on the list below — type- and doc-level only. **No encoder changed.** The octet
 is exactly as weak as it was this morning; it is now *listed* as weak.
 
-**What closes it: a NINTH key lane** (`2^278.16` image, `2^139.08` collision — clears the floor by
-15.5 bits). The pre-limb region is 184/184 full, so this is `rotatedNumPreLimbs` 184 → 187 (the
+**What closes it: a NINTH key lane**, and ⚠ **say which bound.** This sentence read "`2^278.16`
+image, `2^139.08` collision — clears the floor by 15.5 bits" until 2026-08-01. Those are the
+CAPACITY of nine BabyBear lanes, not the encoding's numbers, and `2^278.16 > 2^256` gives it away.
+The encoding recommended below — the base-`2^29` nonet — has **image exactly `2^256` and is
+INJECTIVE** (`Dregg2.Circuit.KeyLanes9.keyToLanes9`, `keyToLanes9_injective` from a total decoder
+`keyLanes9ToBytes` and a machine-checked left inverse; the fit `K^8 · KTOP = 2^256` is exact). So
+**the encoding step loses nothing — there is no encoding collision to bound — and the binding
+reduces to the sponge that absorbs the lanes.** Not "clears the floor by 15.5 bits": nothing about
+a birthday bound is being claimed.
+
+The geometry: the pre-limb region is 184/184 full, so this is `rotatedNumPreLimbs` 184 → 187 (the
 `≡ 1 (mod 3)` `chunk31` invariant forbids +1 or +2), `B_SPAN` 247 → 251, a descriptor re-emit, a VK
 rotation and `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16 — a re-genesis. The key octet, unlike the
 fields octet, is welded to nothing and read lane-wise by nobody, so the encoding can be replaced
-**wholesale** (a base-`2^29` nonet needs no `NoWrap` leg, no cube gate and no aux columns; the
-16 × u16 shape is already proved to land on `2^256` exactly). Related and wanting the same flag
-day: the E10 free-felt AFTER-owner limb (`circuit/tests/zzz_e10_freeze_owner_falsifier.rs`), which
-is a **missing constraint** and needs no collision at all.
+**wholesale**: the nonet needs no `NoWrap` leg, no cube gate and no aux columns, and its canonicity
+envelope is two legs and zero gates (eight lookups at 29 bits, one at 24 — `canonicalKey9_iff_in_image`
+proves the two together are exactly the image). ⚠ *Rung:* authored and proved in Lean, **not emitted
+into any member and not consumed by a verifier**; the column map is still a parameter because lane
+8's column does not exist. Related and wanting the same flag day: the E10 free-felt AFTER-owner limb
+(`circuit/tests/zzz_e10_freeze_owner_falsifier.rs`), which is a **missing constraint** and needs no
+collision at all.
 
 ### The `_DANGER` sites = the burn-down list — **NOT EMPTY**
 
@@ -335,11 +356,30 @@ only because the key octet had been let in the front door, so the emptiness was 
 list's definition rather than of the tree.
 
 ⚑ **This list is now a GATE.** `circuit/tests/faithful8_key_octet_below_floor.rs
-::the_burn_down_list_names_every_hatch_call_site` walks every `*.rs` in the workspace, collects the
+::the_burn_down_list_names_every_hatch_admission` walks every `*.rs` in the workspace, collects the
 non-comment call sites, and fails the suite unless the set below matches **exactly** — in both
 directions, so a closed residual cannot linger here either. "Adding a `_DANGER` site without
 listing it here is a review-time violation" was a rule with no instrument, and a documented wound
-is not a detected one. The paths between the markers are parsed; do not reformat them.
+is not a detected one.
+
+⚑ **The key is the `(file, reason-constant)` ADMISSION, not the file path** — corrected 2026-08-01,
+and the correction matters more than the gate did. The first version pushed a file path once and
+`break`-ed. It caught a *new* file with a hatch call, and it was **blind exactly where the next
+degraded octet gets added**: the three listed files are the two deployed producers and the wall
+itself, and a second, distinct residual added inside one of them passed 5/5. A gate whose stated
+purpose is "a documented wound is not a detected one" could not see the wound it guards. `(file,
+line)` would go red on every reflow and would be relaxed within a week; the reason constant survives
+a reformat and names what is being admitted.
+
+**Format, which is parsed — do not reformat it.** Each entry reads ``- `<path>` — `<REASON_CONST>`
+— why``; the first two code spans on the line are the key. Continuation lines carry no `- ` and are
+ignored. Two further rules the gate enforces:
+
+- a reason must be a `&str` **constant declared beside the hatch** in `circuit/src/faithful8.rs`
+  (an inline literal at the call site is refused — the grep and this document need one source);
+- the constant's **value** must be quoted **verbatim** in this section, so the two cannot drift.
+  The previous version asserted three hand-picked needles were somewhere in the document, which
+  left a second residual's reason unchecked entirely.
 
 `tests/` directories are scoped out, by the same sentence that scopes them out of the law itself
 ("Non-commitment uses of the fold are out of scope and sound: … and tests"). A test that CALLS the
@@ -349,11 +389,18 @@ file is still scanned. On its first run the gate went red on a sibling lane's
 which is both the reason the scope is written down here and the evidence that the walk works.
 
 <!-- BURN-DOWN-LIST-BEGIN -->
-- `cell/src/commitment.rs` — `compute_rotated_pre_limbs` writes the KEY_COMMIT octet at
-  `B_PUBKEY_OCTET`. Closes at the ninth key lane / schema epoch 16.
-- `circuit/src/faithful8.rs` — `Faithful8::from_canonical_key`'s body, the routing itself. This is
-  the entry that makes the other two visible; it goes when the constructor goes.
-- `turn/src/rotation_witness.rs` — `produce`, the producer twin of `compute_rotated_pre_limbs`.
+- `cell/src/commitment.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `compute_rotated_pre_limbs` writes the
+  KEY_COMMIT octet at `B_PUBKEY_OCTET`, reaching the hatch through `from_canonical_key`. Closes at
+  the ninth key lane / schema epoch 16.
+- `circuit/src/faithful8.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `Faithful8::from_canonical_key`'s
+  body, the routing itself. This is the entry that makes the other two visible; it goes when the
+  constructor goes.
+- `turn/src/rotation_witness.rs` — `KEY_COMMIT_30BIT_RESIDUAL` — `produce`, the producer twin of
+  `compute_rotated_pre_limbs`.
+
+Reason constants, quoted verbatim from `circuit/src/faithful8.rs`:
+
+> KEY_COMMIT 30-bit pubkey8 pack: image 2^240, collision 0 (16 source bits unread, Ed25519 sign bit among them) — floor is 2^123.63; closes at the ninth key lane, schema epoch 16
 <!-- BURN-DOWN-LIST-END -->
 
 The `fields[0..7]` pair that used to be the list is genuinely gone — closed by the nine-lane
