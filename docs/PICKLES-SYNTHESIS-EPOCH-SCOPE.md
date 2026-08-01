@@ -336,6 +336,46 @@ differs from its raw inputs — was emitted from Lean and DIFFED byte-exact agai
   bounded, and coupled to R1. Phase-A cost estimate UNCHANGED (R3 2–4; the packing sub-half is now
   de-risked toward the low end, `internal_vars` still carries the variance).
 
+#### R3 — FULL Wrap-STATEMENT diff, MEASURED 2026-08-01 (the whole packing, not one field)
+`[exists]` `metatheory/Dregg2/Bridge/PicklesStatementDiff.lean` (kernel-clean, `[propext, Quot.sound]`,
+built through the full lake graph) + `bridge/mina-zkapp/scripts/pickles-statement-oracle.ts` (exit 0).
+Extends the R3 branch_data signal from ONE Wrap-statement field to the WHOLE flat statement, diffed
+byte-exact against the SAME kimchi-verified devnet block 539508. The map, by slot:
+- **The two NON-identity packings, both now emit-and-diffed from Lean:**
+  - **slots 0–4, the `fp` block** `[cip, b, zeta_to_srs_length, zeta_to_domain_size, perm]` — carried as
+    `Shifted_value.Type1` over **Fp**. `FP_UNSHIFTED.map (type1OfField shift1Fp) = FP_WIRE` **by decide**:
+    all five reproduce `wrap_public_input[0..4]` from the block's own decoded UNSHIFTED
+    `step_deferred_values` (a second, independent decoded field). ⚑ **Value-field finding:** the shift
+    is over **Fp** (the deferred VALUE's field), not the Wrap circuit's native **Fq** — Type1-over-Fq
+    diverges on the real data (oracle-checked), so a port that keyed the shift on the circuit's native
+    field would misencode all five. The `·2⁻¹` halving and the shift are load-bearing (identity and a
+    subtract-only Type2-style pack both REJECTED).
+  - **slot 29, branch_data** — the prefix-mask pack, re-affirmed (`= 67`; naive tag emits `66`).
+- **The identity remainder, ORDER-pinned against the DECODED record (not a projection):** slots 5–9 =
+  `{beta, gamma, alpha, zeta, xi}` in `to_data` order (`composition_types.ml:863-864`, the 07-30
+  correction confirmed on real bytes); slot 10 = `sponge_digest_before_evaluations`; slots 13–28 = the
+  16 `bulletproof_challenges`; slots 30–39 = 0. The oracle diffs each against `step_deferred_values`,
+  a DIFFERENT json path than `wrap_public_input`, so the layout is validated not projected.
+- **Capstone (`lean_wrap_to_data_reproduces_wire_head`, decide):** Lean's `wrapFpBlock` (Type1-shifted)
+  `++ wrapChallengeBlock ++ wrapScalarChallengeBlock ++ [sponge]` of the decoded record reproduces
+  `wrap_public_input[0..10]` byte-exact, and `branchDataPack` reproduces slot 29 — the field ORDER and
+  BOTH packings tied to the live block in one object. Oracle reconstructs all 40 words from the decoded
+  fields and matches.
+- **Coverage: 38/40 Wrap slots diffed byte-exact against decoded fields (PACK 6 · identity 22 · const
+  10); 2/40 (me-only digests, slots 11–12) CITED to `MinaWrapPublicInput.word11Gold/word12Gold`
+  (Poseidon digests, not recomputed here). NO divergence found** — the full Wrap statement layout is
+  byte-confirmed from Lean.
+- **Two honest residuals, named not chased:** (1) `internal_vars` UNMOVED (R1's, as above). (2) The
+  **Step** statement has NO independent public-input oracle in this fixture — the block is a Wrap-proof
+  decode, and its `step_deferred_values` IS the Wrap statement's payload ABOUT the step proof, not a
+  step proof's own 40-word public input. The Step per-proof layout is ENUMERATED
+  (`composition_types.ml:1268-1318`: `fq(5)+digest(1)+challenge(2)+scalar(3)+bp(15)+bool(1)`, a
+  DIFFERENT order — no branch_data, digest early, trailing `should_finalize`, `fq` block Type2/Fq by the
+  value-field rule) and handed to a step-proof-decode lane. (3) ⚑ **Layout gap found:** Lean's
+  `wrapStatementLayout` sums to `WPUB = 38`; the wire is **40** — the 2-word delta is the
+  `Lookup_parameters.opt_spec` block (slots 38–39, both 0 with no lookup), which the Lean layout
+  under-counts. Recorded so a Step/Wrap assembler does not size the public input at 38.
+
 ### R4 — The circuit bodies + VK + a proof that VERIFIES
 Assemble R1–R3 into the step and wrap circuit bodies: emit `incrementally_verify_proof` +
 `finalize_other_proof` + me-only hashing + `step_main`/`wrap_main` orchestration `[read]`
