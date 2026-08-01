@@ -1904,8 +1904,14 @@ pub fn verify_revealed_facts_commitment(
 /// MUST NOT be used in production.
 pub fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(&level.to_le_bytes());
-    hasher.update(&sibling_idx.to_le_bytes());
+    // ⚑ `as u64`, NOT a bare `usize`. This crate is in the wasm32 bundle's graph, and
+    // `usize::to_le_bytes()` is 8 bytes on x86_64/aarch64 and 4 on wasm32 — so a native
+    // prover and a browser light client built provably different sibling felts, and
+    // therefore different Merkle trees, from identical inputs with nothing red. Measured
+    // 2026-08-01: `hash_index(1, 2, [0x11; 32])` = 1209911992 native, 1651138428 on wasm32.
+    // On a 64-bit host `usize as u64` is byte-identical, so no native felt changes.
+    hasher.update(&(level as u64).to_le_bytes());
+    hasher.update(&(sibling_idx as u64).to_le_bytes());
     hasher.update(key);
     let hash = hasher.finalize();
     let bytes = hash.as_bytes();

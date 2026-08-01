@@ -46,10 +46,16 @@ fn cclerk_bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
     poseidon2::hash_many(&limbs)
 }
 
+/// ⚠ A COPY of `dregg_bridge::present::hash_index`, kept because `dregg-bridge` is an
+/// OPTIONAL dependency of this crate (gated to `__legacy_tests`/`__wip_tests`) while this
+/// module is unconditional in `main.rs`. It must stay byte-identical to the original; the
+/// `as u64` below matched a 2026-08-01 width fix there and exists for the same reason.
 fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(&level.to_le_bytes());
-    hasher.update(&sibling_idx.to_le_bytes());
+    // `as u64`, not a bare `usize`: `usize::to_le_bytes()` is 8 bytes on x86_64/aarch64 and
+    // 4 on wasm32, so the bare form makes a preimage whose LENGTH depends on the target.
+    hasher.update(&(level as u64).to_le_bytes());
+    hasher.update(&(sibling_idx as u64).to_le_bytes());
     hasher.update(key);
     let hash = hasher.finalize();
     let bytes = hash.as_bytes();

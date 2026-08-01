@@ -249,6 +249,12 @@ features = ["Performance", "Window"]
 # tests). A dev-dependency is what this always meant to be.
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+# `tests/cross_target_preimage_widths.rs` pins `dregg_bridge::present::hash_index` — a BLAKE3
+# preimage that absorbed a bare `usize` and so built a different sibling felt on wasm32 than on
+# a 64-bit host. `dregg-bridge` is ALREADY in this graph (transitively, via dregg-intent), so
+# this adds no compilation the bundle was not already doing; it is a dev-dependency because the
+# shipped cdylib has no reason to name it.
+dregg-bridge = { path = "../bridge" }
 
 # standalone (excluded from the root workspace — see root Cargo.toml)
 [workspace]

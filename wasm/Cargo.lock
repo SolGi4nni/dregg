@@ -2067,6 +2067,7 @@ dependencies = [
  "clear_on_drop",
  "deos-reflect",
  "deos-view",
+ "dregg-bridge",
  "dregg-captp",
  "dregg-cell",
  "dregg-cell-crypto",

@@ -985,9 +985,24 @@ impl EncryptedDatabase {
             .enumerate()
             .map(|(row_idx, row)| {
                 // Derive per-row key from session secret + row index.
+                //
+                // ⚑ `as u64`, NOT a bare `usize` — this preimage is CROSS-TARGET. `usize` is
+                // 8 bytes on x86_64/aarch64 and 4 on wasm32, so `row_idx.to_le_bytes()` fed a
+                // DIFFERENT-LENGTH context here than in the browser and the two derived
+                // different keys for the same row. The row cipher is a bare XOR keystream with
+                // no tag, so a tab decrypting a natively-encrypted row got silent garbage
+                // felts, not an error — and row 0 diverged too, since it is the concat LENGTH
+                // that differs, not the digits. Measured 2026-08-01: a fixed row/nonce/secret
+                // folded to 3833918878 native and 1093993295 on wasm32. On a 64-bit host
+                // `usize as u64` is byte-identical, so this changes NO native key.
                 let row_key = blake3::derive_key(
                     "dregg-pir-download-all-row-key",
-                    &[session_secret.as_slice(), &row_idx.to_le_bytes(), &nonce].concat(),
+                    &[
+                        session_secret.as_slice(),
+                        &(row_idx as u64).to_le_bytes(),
+                        &nonce,
+                    ]
+                    .concat(),
                 );
 
                 // XOR-encrypt the row data (each BabyBear element as 4 bytes).
@@ -1026,11 +1041,14 @@ impl EncryptedDatabase {
     pub fn decrypt_row(&self, row_idx: usize, session_secret: &[u8; 32]) -> Option<Vec<BabyBear>> {
         let encrypted_row = self.encrypted_rows.get(row_idx)?;
 
+        // ⚑ `as u64` — the same cross-target width discipline as `encrypt` above. A bare
+        // `usize` here made a browser client and a native server derive different per-row
+        // keys for the same row.
         let row_key = blake3::derive_key(
             "dregg-pir-download-all-row-key",
             &[
                 session_secret.as_slice(),
-                &row_idx.to_le_bytes(),
+                &(row_idx as u64).to_le_bytes(),
                 &self.session_nonce,
             ]
             .concat(),
