@@ -264,6 +264,14 @@ fn f2_faithful8_wall_is_a_pass_through_not_a_fifth_encoding() {
     // change makes the wall re-encode, the deployed `B_PUBKEY_OCTET` fill
     // (`turn/src/rotation_witness.rs:561`) would silently stop matching every off-AIR
     // reconstruction that calls the packer directly.
+    //
+    // ⚠ HONESTY, so nobody overweights this one: it is the WEAKEST test in the file, and it is
+    // close to a pin against its own definition — the constructor's body is a move today, so the
+    // assertion is nearly true by construction. It survived both encoder mutations that killed
+    // seven of the ten tests here, which is correct behaviour and also a warning about how much
+    // it can detect. Its one real job is the day someone puts arithmetic inside the wall: the
+    // 2026-08-01 demotion already re-routed this body through the `_DANGER` hatch, and this is
+    // what would have caught that re-routing if it had not been transparent.
     for x in corpus() {
         let limbs = canonical_32_to_felts_8(&x);
         assert_eq!(
@@ -392,9 +400,13 @@ fn hole_f2_collision_survives_the_membership_compress_and_the_four_felt_fold() {
         "the two strings should differ in all eight masked bytes"
     );
 
+    // ⚑ `compress_member` was widened from ONE felt to EIGHT on 2026-08-01 (felt-width finding
+    // #9 — a 31-bit leaf domain is collided in 2^15.5). That fix is real and orthogonal: it
+    // repairs the OUTPUT width, while F2 is a defect in the INPUT. The full-width leaf still
+    // fails to separate this pair, because a hash of equal inputs is equal however wide it is.
     assert_eq!(
-        compress_member(&a).as_u32(),
-        compress_member(&b).as_u32(),
+        compress_member(&a).map(|f| f.as_u32()),
+        compress_member(&b).map(|f| f.as_u32()),
         "membership leaf separated the pair — compress_member no longer rides F2"
     );
     assert_eq!(
