@@ -142,7 +142,8 @@ def deployedChipTbl : Table := [chipRowN permOutDeployed deployedIns]
 theorem deployedChipTbl_sound : ChipTableSoundN permOutDeployed deployedChipTbl := by
   intro r hr
   simp only [deployedChipTbl, List.mem_singleton] at hr
-  exact ⟨deployedIns, by simp [deployedIns, CHIP_RATE], hr⟩
+  -- `deployedIns` is the full 16-lane `node8` block — an ADMITTED chip arity.
+  exact ⟨deployedIns, of_decide_eq_true (Eq.refl true), hr⟩
 
 /-! ## §4 — the faithful trace at the deployed tables, and the KEYSTONE construction. -/
 

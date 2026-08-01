@@ -75,7 +75,7 @@ theorem chipSoundN_implies_chipSound (permOut : List ℤ → List ℤ)
       -- impossible: `permOut ins` has length `CHIP_OUT_LANES = 8 ≠ 0`.
       rw [hpo] at hl; simp [CHIP_OUT_LANES] at hl
   | cons d lanes =>
-      refine ⟨ins, lanes, hins, ?_, ?_⟩
+      refine ⟨ins, lanes, chipArity_le_rate hins, ?_, ?_⟩
       · -- the tail length is `CHIP_OUT_LANES - 1`.
         have : (d :: lanes).length = CHIP_OUT_LANES := by rw [← hpo]; exact hl
         simp only [List.length_cons] at this

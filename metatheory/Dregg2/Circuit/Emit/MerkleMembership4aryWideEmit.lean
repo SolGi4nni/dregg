@@ -83,7 +83,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId Table chipLookupTupleN ChipTableSoundN
-   chip_lookup_sound_N CHIP_RATE emitVmJson2 WindowExpr WindowConstraint)
+   chip_lookup_sound_N CHIP_RATE emitVmJson2 WindowExpr WindowConstraint ChipArityAdmitted chipArity_le_rate)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
   (bitBinaryBody gArrangeList ev ek eadd emul eneg esub eoneMinus)
 open Dregg2.Circuit.Emit.MerkleMembership4aryEmit (membership4aryDesc)
@@ -374,12 +374,12 @@ theorem wideNodeFold_sound (absorb : List ℤ → Digest8) (tbl : Table)
     (hR : (chipLookupTupleN (wStageIns wC2 wC3) (wCols wH23)).map (·.eval a) ∈ tbl)
     (hP : (chipLookupTupleN (wStageIns wH01 wH23) (wCols wPAR)).map (·.eval a) ∈ tbl) :
     wVal a wPAR = wideFold4 absorb (wVal a wC0) (wVal a wC1) (wVal a wC2) (wVal a wC3) := by
-  have hlen : ∀ gL gR : Fin 8 → Nat, (wStageIns gL gR).length ≤ CHIP_RATE := by
-    intro gL gR
-    simp [wStageIns, wCols, List.length_map, List.length_append, List.length_finRange, CHIP_RATE]
-  have h1 := chip_lookup_sound_N (wPermOut absorb) tbl hChip a _ _ (hlen wC0 wC1) hL
-  have h2 := chip_lookup_sound_N (wPermOut absorb) tbl hChip a _ _ (hlen wC2 wC3) hR
-  have h3 := chip_lookup_sound_N (wPermOut absorb) tbl hChip a _ _ (hlen wH01 wH23) hP
+  -- 8 + 8 = 16 lanes: the admitted `node8` full-width compression arity. Literal spine.
+  have hadm : ∀ gL gR : Fin 8 → Nat, ChipArityAdmitted (wStageIns gL gR).length := by
+    intro gL gR; exact of_decide_eq_true (Eq.refl true)
+  have h1 := chip_lookup_sound_N (wPermOut absorb) tbl hChip a _ _ (hadm wC0 wC1) hL
+  have h2 := chip_lookup_sound_N (wPermOut absorb) tbl hChip a _ _ (hadm wC2 wC3) hR
+  have h3 := chip_lookup_sound_N (wPermOut absorb) tbl hChip a _ _ (hadm wH01 wH23) hP
   rw [wCols_map, wStageIns_eval] at h1 h2 h3
   have e1 : wVal a wH01 = absorb (pack8 (wVal a wC0) (wVal a wC1)) := List.ofFn_inj.mp h1
   have e2 : wVal a wH23 = absorb (pack8 (wVal a wC2) (wVal a wC3)) := List.ofFn_inj.mp h2

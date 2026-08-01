@@ -218,6 +218,13 @@ def publicPins : List PublicPin :=
 structure State16Step where
   input : List EmittedExpr
   outputCols : List Nat
+  /-- ⚑ **The state16 bus width, as a CHECKED construction obligation.** The lookup's arity tag IS
+  `input.length` (`chipLookupTupleN`), and the deployed chip AIR admits only
+  `{0, 2, 3, 4, 7, 11, 16}` — so a step built with anything but a full 16-lane state would emit a
+  chip row no witness can satisfy, silently. Carrying the width here means such a step cannot be
+  constructed at all. Both step kinds discharge it by reduction: an absorb input maps over
+  `List.range STATE_LANES` and a squeeze input maps over `stateCols`, whose spines are literal. -/
+  width : input.length = STATE_LANES := by exact of_decide_eq_true (Eq.refl true)
   deriving Repr
 
 def eadd (a b : EmittedExpr) : EmittedExpr := .add a b
@@ -250,9 +257,11 @@ then one final unmodified-state permutation whose first four lanes supply digest
 def spongePlan (stateBase : Nat) (preimage : List EmittedExpr) : List State16Step :=
   let chunks := chunks4 preimage
   let absorb := chunks.mapIdx fun stage chunk =>
-    ⟨absorbInputExpr stateBase preimage.length stage chunk, stateCols stateBase stage⟩
+    ⟨absorbInputExpr stateBase preimage.length stage chunk, stateCols stateBase stage,
+      by exact of_decide_eq_true (Eq.refl true)⟩
   let squeeze :=
-    ⟨(stateCols stateBase (chunks.length - 1)).map .var, stateCols stateBase chunks.length⟩
+    ⟨(stateCols stateBase (chunks.length - 1)).map .var, stateCols stateBase chunks.length,
+      by exact of_decide_eq_true (Eq.refl true)⟩
   absorb ++ [squeeze]
 
 def ownerPreimage : List EmittedExpr :=
@@ -437,7 +446,7 @@ def rangeTable (bits : Nat) : TableDef :=
 #guard (rangeTid 16).wireId == 85
 
 def state16Lookup (step : State16Step) : VmConstraint2 :=
-  .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols⟩
+  .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols step.width⟩
 
 def state16Lookups : List VmConstraint2 := allPermutationSteps.map state16Lookup
 

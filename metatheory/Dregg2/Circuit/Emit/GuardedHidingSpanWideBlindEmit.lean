@@ -28,21 +28,50 @@ HIDING surface — stayed one felt wide.
 
 The stage-2 blinded-commit tooth absorbs **5 fresh uniform blinding lanes** instead of one:
 
-    mid         = A16(span_digest8 ‖ C_T)                     -- unchanged (arity 16)
-    hole_commit = A14(mid ‖ [r₀,r₁,r₂,r₃,r₄] ‖ [0])           -- the WIDE-BLIND tooth (arity 14)
+    span_digest = A11(span lanes ‖ [0,0,0])                   -- arity 11
+    mid         = A16(span_digest8 ‖ C_T)                     -- arity 16
+    hole_commit = A16(mid ‖ [r₀,r₁,r₂,r₃,r₄] ‖ [0,0,0])       -- the WIDE-BLIND tooth (arity 16)
 
 `|R| = p⁵` with `p = 2^31 − 2^27 + 1` (BabyBear): `p⁵ ≈ 2^154.5`, so the keyed-ROM hiding bound
 `Q/|R| ≤ Q/2^154` is strong. Why 5 lanes and not 4: `p⁴ ≈ 2^123.6` — the "~124-bit" of the digest
 convention, but **below the 2^128 hiding floor** the finding names (hiding is a direct `Q/|R|`
 enumeration bound, not birthday-halved, so the space itself must clear 2^128). Five lanes clear
 it with margin at the cost of one column; the `#guard`s below pin `p^BLIND_LANES ≥ 2^128` so a
-future lane-count squeeze fails the build. Arity 14 ≤ `CHIP_RATE = 16`, domain-separated from the
-arity-8/10/16 rows by the chip's arity tag (the arity-10 M0 tooth and this arity-14 tooth can
-never confuse rows).
+future lane-count squeeze fails the build.
 
-Everything else is M0 verbatim: the span digest (arity 8), the stage-1 fold (arity 16), the
-three 8-felt PI groups `[C_T, hole_commit, guard_table_commitment]`, all folds absorbing whole
-8-lane groups with all 8 output lanes bound via `chipLookupTupleN` — no lane-0 squeeze anywhere.
+## ⚑ THE ARITY REPAIR (2026-08-01) — this descriptor was UNPROVABLE from the day it was written
+
+Until today this file absorbed the span lanes at **arity 8** and the wide-blind tooth at **arity
+14**, and justified it with "arity 14 ≤ `CHIP_RATE` = 16". **That is the wrong predicate.** The
+deployed `Ir2Air::Chip` carries its admission as a degree-7 product over the arity column
+(`circuit/src/descriptor_ir2.rs:3073`), whose roots are `{0, 2, 3, 4, 7, 11, 16}`. Neither 8 nor 14
+is a root, so *no assignment satisfies those two constraints* — this descriptor, the SOLE emitted
+hidden-span descriptor, had never proved and could never have proved. A second mode rode along: off
+the `seed456` blend (high only at 7, 11 and 16) the deployed absorb routes the ARITY TAG into lane 4
+and zero into lanes 5/6, so three of the eight span lanes and three of the mid lanes never entered
+the preimage at all.
+
+The repair pads each absorb block up to the next ADMITTED arity — 8 → 11 and 14 → 16 — and
+`chipLookupTupleN` now carries `ChipArityAdmitted` as a checked side condition, so this file cannot
+be written back into the old shape. The lane-pad values are literal zeros and the tuple was already
+zero-padded to `CHIP_RATE` by `padToE`, so **the emitted wire bytes change in exactly two places:
+the two arity tags.**
+
+⚠ **Say what the repair costs, because it costs something.** The old teeth were separated by their
+arity tags: 8 / 16 / 14, three distinct chip domains. Arity 16 is the only admitted arity that fits
+the stage-2 block (`8 + 5 = 13` lanes), and the stage-1 fold already uses all 16 lanes, so stage 1
+and stage 2 now share the arity-16 domain and their separation is carried by the lane layout alone.
+A row serves both teeth exactly when `span_digest8 ‖ C_T = MID ‖ r₀..r₄ ‖ [0,0,0]`, i.e. when the
+published `C_T` has the shape `(r₀..r₄, 0, 0, 0)` — three BabyBear lanes forced, ~2^93 to grind, and
+it costs whoever does it their own hiding (`C_T` is public and would carry the blinding vector). It
+does not touch `guardedHidingSpanWideBlind_two_openings_collide`, whose proof is `packCommitW_inj` /
+`pack8_inj` and pure list structure. A domain tag in the pad lanes was considered and REJECTED as
+decoration: stage 1 has no spare lane to tag, so the discriminating work falls on `C_T`'s shape
+either way and a tag would buy nothing while reading like it bought something.
+
+Everything else is M0 verbatim: the stage-1 fold, the three 8-felt PI groups
+`[C_T, hole_commit, guard_table_commitment]`, all folds absorbing whole 8-lane groups with all 8
+output lanes bound via `chipLookupTupleN` — no lane-0 squeeze anywhere.
 
 ## HONEST scope — what this construction does and does not buy
 
@@ -77,7 +106,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId Table chipLookupTupleN ChipTableSoundN
-   chip_lookup_sound_N CHIP_RATE emitVmJson2)
+   chip_lookup_sound_N CHIP_RATE emitVmJson2 ChipArityAdmitted)
 open Dregg2.Circuit.DeployedCapTree (Digest8 Coll8)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (pack8 pack8_inj)
 open Dregg2.Circuit.Emit.BlindedMembershipWideEmit (wCols wVal wCols_map wStageIns wStageIns_eval wPermOut)
@@ -98,6 +127,11 @@ def BLIND_LANES : Nat := 5
 
 /-- The blinding vector carrier: 5 BabyBear felts. -/
 abbrev Blind5 := Fin 5 → ℤ
+
+/-- The number of literal zero lanes each absorb block is padded with to reach its ADMITTED chip
+arity: the span block `8 + 3 = 11`, the wide-blind tooth `8 + 5 + 3 = 16`. Not a magic number —
+`#guard`s in §6 pin both sums, and pin that one lane less is REFUSED. -/
+def PAD_LANES : Nat := 3
 
 /-- The 8 HIDDEN hole-0 span symbol lanes (the private hole data, field-encoded). -/
 def gSPAN : Fin 8 → Nat := fun k => k.val
@@ -139,11 +173,20 @@ theorem bCols_map (a : Assignment) : bCols.map a = List.ofFn (bVal a) := by
 `absorb : List ℤ → Digest8` is the wide squeeze. Stage 1 is M0's `wideFoldPair` unchanged;
 stage 2 widens the blinding block from `[r, 0]` to `[r₀..r₄, 0]`. -/
 
-/-- Pack an 8-felt leaf with the 5 blinding lanes and the idiom's trailing `0` into the arity-14
-stage-2 absorb block `leaf8 ‖ r₀..r₄ ‖ [0]` — the wide-blind analogue of M0's `packCommit`
+/-- The span-digest absorb block: the 8 hidden span lanes padded to the ADMITTED arity 11. -/
+def packSpanW (s : Digest8) : List ℤ := List.ofFn s ++ [0, 0, 0]
+
+/-- The span pad carries no information — the length-8 prefix is the whole span. -/
+theorem packSpanW_inj {s₁ s₂ : Digest8} (h : packSpanW s₁ = packSpanW s₂) : s₁ = s₂ := by
+  unfold packSpanW at h
+  have hlen : (List.ofFn s₁).length = (List.ofFn s₂).length := by simp
+  exact List.ofFn_inj.mp (List.append_inj h hlen).1
+
+/-- Pack an 8-felt leaf with the 5 blinding lanes and the pad into the arity-16 stage-2 absorb
+block `leaf8 ‖ r₀..r₄ ‖ [0,0,0]` — the wide-blind analogue of M0's `packCommit`
 (`leaf8 ‖ [r, 0]`). -/
 def packCommitW (leaf : Digest8) (r : Blind5) : List ℤ :=
-  List.ofFn leaf ++ (List.ofFn r ++ [0])
+  List.ofFn leaf ++ (List.ofFn r ++ [0, 0, 0])
 
 /-- **`holeCommitWideOf`** — the wide-blind hole-commitment: fold the two 8-felt digest slots,
 then absorb the running digest with ALL 5 blinding lanes and the trailing `0`. Every input lane in
@@ -152,8 +195,8 @@ def holeCommitWideOf (absorb : List ℤ → Digest8) (spanD cT : Digest8) (r : B
   absorb (packCommitW (wideFoldPair absorb spanD cT) r)
 
 /-- `packCommitW` is injective in `(leaf, r)`: the length-8 prefix is the leaf, the next 5 lanes
-are the whole blinding vector, the fixed trailing `0` carries no information — `packCommit_inj`
-at arity 14. -/
+are the whole blinding vector, the fixed trailing pad carries no information — `packCommit_inj`
+at arity 16. -/
 theorem packCommitW_inj {l₁ l₂ : Digest8} {r₁ r₂ : Blind5}
     (h : packCommitW l₁ r₁ = packCommitW l₂ r₂) : l₁ = l₂ ∧ r₁ = r₂ := by
   unfold packCommitW at h
@@ -165,19 +208,22 @@ theorem packCommitW_inj {l₁ l₂ : Digest8} {r₁ r₂ : Blind5}
 
 /-! ## §3 — the three WIDE lookups (span digest, stage-1 fold, the WIDE-BLIND stage-2 tooth). -/
 
-/-- The 8 input expressions of the span-digest absorb: the 8 hidden span lanes. -/
-def spanIns : List EmittedExpr := (wCols gSPAN).map EmittedExpr.var
+/-- The 11 input expressions of the span-digest absorb: the 8 hidden span lanes, then the pad to
+the ADMITTED arity 11. -/
+def spanIns : List EmittedExpr :=
+  (wCols gSPAN).map EmittedExpr.var ++ [.const 0, .const 0, .const 0]
 
-/-- The span-digest absorb input list evaluates to exactly the 8-felt span lane vector. -/
-theorem spanIns_eval (a : Assignment) : spanIns.map (·.eval a) = List.ofFn (wVal a gSPAN) := by
+/-- The span-digest absorb input list evaluates to exactly the padded 8-felt span lane vector. -/
+theorem spanIns_eval (a : Assignment) : spanIns.map (·.eval a) = packSpanW (wVal a gSPAN) := by
   have hcomp : ((wCols gSPAN).map EmittedExpr.var).map (·.eval a) = (wCols gSPAN).map a := by
     rw [List.map_map]; rfl
-  simp only [spanIns, hcomp, wCols_map]
+  simp only [spanIns, List.map_append, hcomp, wCols_map, List.map_cons, List.map_nil,
+    EmittedExpr.eval, packSpanW]
 
-/-- The 14 input expressions of the stage-2 WIDE-BLIND absorb: the 8 `MID` lanes, then the 5
-blinding lanes, then the idiom's literal trailing `0`. -/
+/-- The 16 input expressions of the stage-2 WIDE-BLIND absorb: the 8 `MID` lanes, then the 5
+blinding lanes, then the pad to the ADMITTED arity 16. -/
 def commitStage2WideIns : List EmittedExpr :=
-  (wCols gMID).map EmittedExpr.var ++ (bCols.map EmittedExpr.var ++ [.const 0])
+  (wCols gMID).map EmittedExpr.var ++ (bCols.map EmittedExpr.var ++ [.const 0, .const 0, .const 0])
 
 /-- The stage-2 input list evaluates to exactly `packCommitW MID (bVal a)`. -/
 theorem commitStage2WideIns_eval (a : Assignment) :
@@ -189,7 +235,8 @@ theorem commitStage2WideIns_eval (a : Assignment) :
   simp only [commitStage2WideIns, List.map_append, hcomp, hcompb, wCols_map, bCols_map,
     List.map_cons, List.map_nil, EmittedExpr.eval, packCommitW]
 
-/-- **span digest**: `span_digest8 = A8(span lanes)` — arity 8, all 8 output lanes bound. -/
+/-- **span digest**: `span_digest8 = A11(span lanes ‖ 0,0,0)` — arity 11, all 8 output lanes
+bound. -/
 def spanDigestLookup : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2, chipLookupTupleN spanIns (wCols gDIGEST)⟩
 
@@ -197,9 +244,9 @@ def spanDigestLookup : VmConstraint2 :=
 def commitStage1Lookup : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2, chipLookupTupleN (wStageIns gDIGEST gCT) (wCols gMID)⟩
 
-/-- **commit stage 2 (THE WIDE-BLIND TOOTH)**: `hole_commit = A14(MID ‖ r₀..r₄ ‖ 0)` — the
+/-- **commit stage 2 (THE WIDE-BLIND TOOTH)**: `hole_commit = A16(MID ‖ r₀..r₄ ‖ 0,0,0)` — the
 blinded-commit tooth with the FULL 5-lane blinding block in the preimage, all 8 output lanes
-bound. arity 14 (domain-separated from M0's arity-10 tooth by the chip's arity tag). -/
+bound, at the ADMITTED arity 16. -/
 def commitStage2WideLookup : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2, chipLookupTupleN commitStage2WideIns (wCols gHOLE)⟩
 
@@ -219,7 +266,7 @@ def guardPins : List VmConstraint2 :=
 
 /-- **`guardedHidingSpanWideBlindDesc`** — THE emitted hidden-span descriptor: identical to the
 deleted narrow M0 form except the stage-2 blinded tooth absorbs the 5-lane blinding block
-(arity 14 vs the deleted arity 10) and the trace carries 4 more (hidden, never-pinned)
+(arity 16 vs the deleted arity 10) and the trace carries 4 more (hidden, never-pinned)
 columns. -/
 def guardedHidingSpanWideBlindDesc : EffectVmDescriptor2 :=
   { name        := "dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1"
@@ -234,7 +281,7 @@ def guardedHidingSpanWideBlindDesc : EffectVmDescriptor2 :=
 /-! ## §6 — the byte-pinned wire golden (the Rust decoder ingests THIS string). -/
 
 #guard emitVmJson2 guardedHidingSpanWideBlindDesc ==
-  "{\"name\":\"dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1\",\"ir\":2,\"trace_width\":53,\"public_input_count\":24,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":8},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":16},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33},{\"t\":\"var\",\"v\":34},{\"t\":\"var\",\"v\":35},{\"t\":\"var\",\"v\":36}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":14},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33},{\"t\":\"var\",\"v\":34},{\"t\":\"var\",\"v\":35},{\"t\":\"var\",\"v\":36},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":37},{\"t\":\"var\",\"v\":38},{\"t\":\"var\",\"v\":39},{\"t\":\"var\",\"v\":40},{\"t\":\"var\",\"v\":41},{\"t\":\"var\",\"v\":42},{\"t\":\"var\",\"v\":43},{\"t\":\"var\",\"v\":44}]},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":41,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":42,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":43,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":44,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":45,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":46,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":47,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":48,\"pi_index\":19},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":49,\"pi_index\":20},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":50,\"pi_index\":21},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":51,\"pi_index\":22},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":52,\"pi_index\":23}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1\",\"ir\":2,\"trace_width\":53,\"public_input_count\":24,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":11},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":16},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33},{\"t\":\"var\",\"v\":34},{\"t\":\"var\",\"v\":35},{\"t\":\"var\",\"v\":36}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":16},{\"t\":\"var\",\"v\":29},{\"t\":\"var\",\"v\":30},{\"t\":\"var\",\"v\":31},{\"t\":\"var\",\"v\":32},{\"t\":\"var\",\"v\":33},{\"t\":\"var\",\"v\":34},{\"t\":\"var\",\"v\":35},{\"t\":\"var\",\"v\":36},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26},{\"t\":\"var\",\"v\":27},{\"t\":\"var\",\"v\":28},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":37},{\"t\":\"var\",\"v\":38},{\"t\":\"var\",\"v\":39},{\"t\":\"var\",\"v\":40},{\"t\":\"var\",\"v\":41},{\"t\":\"var\",\"v\":42},{\"t\":\"var\",\"v\":43},{\"t\":\"var\",\"v\":44}]},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":41,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":42,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":43,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":44,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":45,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":46,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":47,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":48,\"pi_index\":19},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":49,\"pi_index\":20},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":50,\"pi_index\":21},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":51,\"pi_index\":22},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":52,\"pi_index\":23}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §7 — the blinding-space guard (the point of this file, machine-checked).
 
@@ -280,16 +327,26 @@ def rC : Blind5 := fun k => if k = 4 then 11 else 0
 #guard guardedHidingSpanWideBlindDesc.piCount == GHS_PI_COUNT
 #guard guardedHidingSpanWideBlindDesc.constraints.length == 27
 #guard guardedHidingSpanWideBlindDesc.tables.length == 0
--- span digest: an arity-8 wide absorb, all 8 output lanes bound.
+-- ⚑ EVERY absorb arity this descriptor asks for is ADMITTED by the deployed chip AIR. These are
+-- the guards the old shape could not have passed: at 8 and 14 the admission product is non-zero
+-- and no witness exists.
+#guard ChipArityAdmitted spanIns.length
+#guard ChipArityAdmitted (wStageIns gDIGEST gCT).length
+#guard ChipArityAdmitted commitStage2WideIns.length
+-- The pad is what buys admission, and it is MINIMAL in each case: one lane less is REFUSED.
+#guard spanIns.length == 8 + PAD_LANES
+#guard !(ChipArityAdmitted (spanIns.length - 1) : Bool)
+#guard !(ChipArityAdmitted (commitStage2WideIns.length - 1) : Bool)
+-- span digest: an arity-11 wide absorb, all 8 output lanes bound.
 #guard (chipLookupTupleN spanIns (wCols gDIGEST)).length == 1 + CHIP_RATE + 8
-#guard (chipLookupTupleN spanIns (wCols gDIGEST)).head? == some (.const 8)
+#guard (chipLookupTupleN spanIns (wCols gDIGEST)).head? == some (.const 11)
 -- commit stage 1: an arity-16 wide absorb, all 8 output lanes bound.
 #guard (chipLookupTupleN (wStageIns gDIGEST gCT) (wCols gMID)).length == 1 + CHIP_RATE + 8
 #guard (chipLookupTupleN (wStageIns gDIGEST gCT) (wCols gMID)).head? == some (.const 16)
--- commit stage 2 (the WIDE-BLIND tooth): arity 14 = 8 (MID) + 5 (blinding) + 1 (pad 0), all 8 bound.
+-- commit stage 2 (the WIDE-BLIND tooth): arity 16 = 8 (MID) + 5 (blinding) + 3 (pad 0), all 8 bound.
 #guard (chipLookupTupleN commitStage2WideIns (wCols gHOLE)).length == 1 + CHIP_RATE + 8
-#guard (chipLookupTupleN commitStage2WideIns (wCols gHOLE)).head? == some (.const 14)
-#guard commitStage2WideIns.length == 8 + BLIND_LANES + 1
+#guard (chipLookupTupleN commitStage2WideIns (wCols gHOLE)).head? == some (.const 16)
+#guard commitStage2WideIns.length == 8 + BLIND_LANES + PAD_LANES
 -- ALL 5 blinding lanes are real trace columns, and NONE is PI-bound (witness, never revealed):
 -- no blinding column appears among the pinned column groups.
 #guard bCols.length == BLIND_LANES
@@ -302,6 +359,7 @@ def rC : Blind5 := fun k => if k = 4 then 11 else 0
 #guard (wCols gMID).length == 8
 #guard (wCols gGUARD).length == 8
 
+#assert_axioms packSpanW_inj
 #assert_axioms packCommitW_inj
 #assert_axioms spanIns_eval
 #assert_axioms commitStage2WideIns_eval

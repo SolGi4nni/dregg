@@ -37,7 +37,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 TableId TraceFamily VmTrace Satisfied2
    ChipTableSoundN chipLookupTupleN chip_lookup_sound_N emitVmJson2
-   rangeTableDef)
+   rangeTableDef ChipArityAdmitted)
 
 set_option autoImplicit false
 set_option maxRecDepth 10000
@@ -192,9 +192,13 @@ def graphCoreLookup (stageBase stage outBase : Nat) : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2,
     chipLookupTupleN (stageFieldExprs stageBase stage) (List.range 8 |>.map (outBase + ·))⟩
 
-def hashLookup (inputs : List EmittedExpr) (outBase : Nat) : VmConstraint2 :=
+/-- A wide hash site. The admitted-arity side condition rides through to `chipLookupTupleN`, so a
+caller handing this an absorb block the chip AIR refuses fails to elaborate here rather than
+emitting an unprovable lookup. -/
+def hashLookup (inputs : List EmittedExpr) (outBase : Nat)
+    (hAdm : ChipArityAdmitted inputs.length := by chip_arity_admitted) : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2,
-    chipLookupTupleN inputs (List.range 8 |>.map (outBase + ·))⟩
+    chipLookupTupleN inputs (List.range 8 |>.map (outBase + ·)) hAdm⟩
 
 def hashLookups : List VmConstraint2 :=
   [ graphCoreLookup OLD_STAGE_BASE 6 OLD_CORE_BASE
@@ -545,9 +549,9 @@ theorem wide_hash_lookup_sound
     (hsat : Satisfied2 hash privateGraphRewriteDescriptor ppM0 ppF0 []
       (constTrace a pis tf))
     {inputs : List EmittedExpr} {outCols : List Nat}
-    (hlen : inputs.length ≤ 16)
+    (hlen : ChipArityAdmitted inputs.length)
     (hlookup : VmConstraint2.lookup
-      ⟨TableId.poseidon2, chipLookupTupleN inputs outCols⟩ ∈ hashLookups) :
+      ⟨TableId.poseidon2, chipLookupTupleN inputs outCols hlen⟩ ∈ hashLookups) :
     outCols.map a = permOut (inputs.map (·.eval a)) := by
   have hrow := hsat.rowConstraints 0 (by simp [constTrace]) _
     (hash_lookup_mem hlookup)

@@ -94,9 +94,10 @@ def a0 (t : VmTrace) : Assignment := (envAt t 0).loc
 theorem lookup_mem_at0
     (hsat : Satisfied2 hash guardedHidingSpanWideBlindDesc minit mfin maddrs t)
     (hne : t.rows ≠ []) {ins : List EmittedExpr} {cols : List Nat}
-    (hc : VmConstraint2.lookup ⟨TableId.poseidon2, chipLookupTupleN ins cols⟩
+    {hadm : ChipArityAdmitted ins.length}
+    (hc : VmConstraint2.lookup ⟨TableId.poseidon2, chipLookupTupleN ins cols hadm⟩
             ∈ guardedHidingSpanWideBlindDesc.constraints) :
-    (chipLookupTupleN ins cols).map (·.eval (a0 t)) ∈ t.tf .poseidon2 := by
+    (chipLookupTupleN ins cols hadm).map (·.eval (a0 t)) ∈ t.tf .poseidon2 := by
   have hpos : 0 < t.rows.length := List.length_pos_of_ne_nil hne
   have hrow := hsat.rowConstraints 0 hpos _ hc
   simpa only [VmConstraint2.holdsAt, Lookup.holdsAt, a0] using hrow
@@ -107,12 +108,11 @@ theorem span_digest_binds
     (hChip : ChipTableSoundN (wPermOut absorb) (t.tf .poseidon2))
     (hsat : Satisfied2 hash guardedHidingSpanWideBlindDesc minit mfin maddrs t)
     (hne : t.rows ≠ []) :
-    wVal (a0 t) gDIGEST = absorb (List.ofFn (wVal (a0 t) gSPAN)) := by
+    wVal (a0 t) gDIGEST = absorb (packSpanW (wVal (a0 t) gSPAN)) := by
   have hmem := lookup_mem_at0 hsat hne mem_spanDigestLookup
-  have hlen : spanIns.length ≤ CHIP_RATE := by
-    simp [spanIns, wCols, List.length_map, List.length_finRange, CHIP_RATE]
+  have hadm : ChipArityAdmitted spanIns.length := of_decide_eq_true (Eq.refl true)
   have h := chip_lookup_sound_N (wPermOut absorb) (t.tf .poseidon2) hChip (a0 t)
-    spanIns (wCols gDIGEST) hlen hmem
+    spanIns (wCols gDIGEST) hadm hmem
   rw [wCols_map, spanIns_eval] at h
   exact List.ofFn_inj.mp h
 
@@ -123,26 +123,23 @@ theorem mid_binds
     (hne : t.rows ≠ []) :
     wVal (a0 t) gMID = wideFoldPair absorb (wVal (a0 t) gDIGEST) (wVal (a0 t) gCT) := by
   have hmem := lookup_mem_at0 hsat hne mem_commitStage1Lookup
-  have hlen : (wStageIns gDIGEST gCT).length ≤ CHIP_RATE := by
-    simp [wStageIns, wCols, List.length_map, List.length_append, List.length_finRange, CHIP_RATE]
+  have hadm : ChipArityAdmitted (wStageIns gDIGEST gCT).length := of_decide_eq_true (Eq.refl true)
   have h := chip_lookup_sound_N (wPermOut absorb) (t.tf .poseidon2) hChip (a0 t)
-    (wStageIns gDIGEST gCT) (wCols gMID) hlen hmem
+    (wStageIns gDIGEST gCT) (wCols gMID) hadm hmem
   rw [wCols_map, wStageIns_eval] at h
   exact List.ofFn_inj.mp h
 
-/-- **The stage-2 WIDE-BLIND tooth binding.** `hole_commit = A14(MID ‖ r₀..r₄ ‖ 0)` — all 5
-blinding lanes in the preimage, every output lane bound. -/
+/-- **The stage-2 WIDE-BLIND tooth binding.** `hole_commit = A16(MID ‖ r₀..r₄ ‖ 0,0,0)` — all 5
+blinding lanes in the preimage, every output lane bound, at the ADMITTED arity 16. -/
 theorem hole_binds_mid
     (hChip : ChipTableSoundN (wPermOut absorb) (t.tf .poseidon2))
     (hsat : Satisfied2 hash guardedHidingSpanWideBlindDesc minit mfin maddrs t)
     (hne : t.rows ≠ []) :
     wVal (a0 t) gHOLE = absorb (packCommitW (wVal (a0 t) gMID) (bVal (a0 t))) := by
   have hmem := lookup_mem_at0 hsat hne mem_commitStage2WideLookup
-  have hlen : commitStage2WideIns.length ≤ CHIP_RATE := by
-    simp [commitStage2WideIns, bCols, wCols, List.length_map, List.length_append,
-      List.length_finRange, CHIP_RATE]
+  have hadm : ChipArityAdmitted commitStage2WideIns.length := of_decide_eq_true (Eq.refl true)
   have h := chip_lookup_sound_N (wPermOut absorb) (t.tf .poseidon2) hChip (a0 t)
-    commitStage2WideIns (wCols gHOLE) hlen hmem
+    commitStage2WideIns (wCols gHOLE) hadm hmem
   rw [wCols_map, commitStage2WideIns_eval] at h
   exact List.ofFn_inj.mp h
 
@@ -161,7 +158,7 @@ theorem guardedHidingSpanWideBlind_commit_binds
     (hChip : ChipTableSoundN (wPermOut absorb) (t.tf .poseidon2))
     (hsat : Satisfied2 hash guardedHidingSpanWideBlindDesc minit mfin maddrs t)
     (hne : t.rows ≠ []) :
-    wVal (a0 t) gDIGEST = absorb (List.ofFn (wVal (a0 t) gSPAN)) ∧
+    wVal (a0 t) gDIGEST = absorb (packSpanW (wVal (a0 t) gSPAN)) ∧
     wVal (a0 t) gHOLE
       = holeCommitWideOf absorb (wVal (a0 t) gDIGEST) (wVal (a0 t) gCT) (bVal (a0 t)) := by
   refine ⟨span_digest_binds absorb hChip hsat hne, ?_⟩
@@ -180,7 +177,9 @@ named collision. -/
 /-- **`guardedHidingSpanWideBlind_two_openings_collide`** — two `Satisfied2` witnesses over the
 SAME sound wide chip table, EQUAL published `hole_commit`, DISTINCT hidden
 `(span_digest8, C_T, blinding-vector)`: one of two SPECIFIC full-width `Coll8 absorb` collisions —
-on the arity-14 stage-2 preimage or the arity-16 stage-1 preimage — handed back as DATA. -/
+on the arity-16 stage-2 preimage or the arity-16 stage-1 preimage — handed back as DATA. The proof
+is `packCommitW_inj` / `pack8_inj` and pure list structure, so the 14 → 16 arity repair leaves it
+untouched: the two preimages are still distinguished by their LAYOUT, not by their tags. -/
 theorem guardedHidingSpanWideBlind_two_openings_collide
     {hash₁ hash₂ : List ℤ → ℤ} {minit₁ minit₂ : ℤ → ℤ} {mfin₁ mfin₂ : ℤ → ℤ × Nat}
     {maddrs₁ maddrs₂ : List ℤ} {t₁ t₂ : VmTrace}
@@ -245,7 +244,7 @@ theorem guardedHidingSpanWideBlind_refines_parse
     (lit0 lit1 s : List Value) (g : PredRE) (hGuard : derives s g = true) :
     (wVal (a0 t) gHOLE
         = holeCommitWideOf absorb (wVal (a0 t) gDIGEST) (wVal (a0 t) gCT) (bVal (a0 t))
-      ∧ wVal (a0 t) gDIGEST = absorb (List.ofFn (wVal (a0 t) gSPAN))) ∧
+      ∧ wVal (a0 t) gDIGEST = absorb (packSpanW (wVal (a0 t) gSPAN))) ∧
     (∃ d : Nat → List Value, guardedSafe (m0Template lit0 lit1 g) d
         ∧ render (m0Template lit0 lit1 g) d = lit0 ++ s ++ lit1) := by
   have hbind := guardedHidingSpanWideBlind_commit_binds absorb hChip hsat hne
@@ -328,7 +327,7 @@ theorem witTfW_chip_sound : ChipTableSoundN (wPermOut wZeroAbsorb) (witTraceW.tf
 /-- **The refinement FIRES on the witness**: `hole_commit` IS
 `holeCommitWideOf wZeroAbsorb span_digest8 C_T (blinding vector)`. -/
 theorem witness_commit_binds :
-    wVal (a0 witTraceW) gDIGEST = wZeroAbsorb (List.ofFn (wVal (a0 witTraceW) gSPAN)) ∧
+    wVal (a0 witTraceW) gDIGEST = wZeroAbsorb (packSpanW (wVal (a0 witTraceW) gSPAN)) ∧
     wVal (a0 witTraceW) gHOLE
       = holeCommitWideOf wZeroAbsorb (wVal (a0 witTraceW) gDIGEST) (wVal (a0 witTraceW) gCT)
           (bVal (a0 witTraceW)) :=
@@ -407,7 +406,7 @@ theorem witness_refines_parse :
     (wVal (a0 witTraceW) gHOLE
         = holeCommitWideOf wZeroAbsorb (wVal (a0 witTraceW) gDIGEST) (wVal (a0 witTraceW) gCT)
             (bVal (a0 witTraceW))
-      ∧ wVal (a0 witTraceW) gDIGEST = wZeroAbsorb (List.ofFn (wVal (a0 witTraceW) gSPAN))) ∧
+      ∧ wVal (a0 witTraceW) gDIGEST = wZeroAbsorb (packSpanW (wVal (a0 witTraceW) gSPAN))) ∧
     (∃ d : Nat → List Value, guardedSafe (m0Template [dataVal] [dataVal] noBraceRE) d
         ∧ render (m0Template [dataVal] [dataVal] noBraceRE) d = [dataVal] ++ s ++ [dataVal]) :=
   guardedHidingSpanWideBlind_refines_parse wZeroAbsorb witTfW_chip_sound witTraceW_satisfies

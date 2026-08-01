@@ -53,7 +53,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
   (Table TraceFamily TableId Lookup chipLookupTuple ChipTableSound chip_lookup_sound CHIP_RATE
-   chipLookupTupleN ChipTableSoundN chip_lookup_sound_N)
+   chipLookupTupleN ChipTableSoundN chip_lookup_sound_N ChipArityAdmitted chipArity_le_rate)
 open Dregg2.Circuit.DeployedCapTree
   (CapLeaf FACT_MARK leafFields packNode CapHashScheme Digest8 Cap8Scheme)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme
@@ -620,15 +620,16 @@ theorem leafDigest_sound8 (S8 : Cap8Scheme) (sponge : List ℤ → ℤ)
     (hChip : ChipTableSoundN (capPermOut S8) (tf .poseidon2))
     (hcore : MembershipCore sponge tf c env) :
     groupVal env c.leafDigest = capLeafDigest8 S8 (leafOf c env) := by
-  have hlen : (leafInputs c).length ≤ CHIP_RATE := by
-    simp [leafInputs, List.length_map, List.length_finRange, CHIP_RATE]
+  -- The cap LEAF absorb is 7 lanes — an admitted arity (the rate-8 `big` leaf-seeding row).
+  -- Literal spine, so it reduces for any `c`.
+  have hadm : ChipArityAdmitted (leafInputs c).length := of_decide_eq_true (Eq.refl true)
   have hmem : (chipLookupTupleN (leafInputs c) (digestCols c.leafDigest)).map (·.eval env.loc)
       ∈ tf .poseidon2 := by
     have := hcore.leafHashed
     unfold Lookup.holdsAt leafLookup at this
     exact this
   have h := chip_lookup_sound_N (capPermOut S8) (tf .poseidon2) hChip env.loc (leafInputs c)
-    (digestCols c.leafDigest) hlen hmem
+    (digestCols c.leafDigest) hadm hmem
   rw [digestCols_map, leafInputs_eval] at h
   -- `capPermOut S8 (leafFields ·) = List.ofFn (capLeafDigest8 S8 ·)` by `rfl`.
   have hreal : capPermOut S8 (leafFields (leafOf c env))
@@ -693,15 +694,15 @@ theorem node_sound8 (S8 : Cap8Scheme)
       = (if dirBoolVal c env lvl
           then nodeOf8 S8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
           else nodeOf8 S8 (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))) := by
-  have hlen : (nodeInputs c lvl).length ≤ CHIP_RATE := by
-    simp [nodeInputs, List.length_append, List.length_map, List.length_finRange, CHIP_RATE]
+  -- The spine NODE absorb is `pack8` = 16 lanes: the admitted `node8` compression arity.
+  have hadm : ChipArityAdmitted (nodeInputs c lvl).length := of_decide_eq_true (Eq.refl true)
   have hmem : (chipLookupTupleN (nodeInputs c lvl) (digestCols (c.node lvl))).map (·.eval env.loc)
       ∈ tf .poseidon2 := by
     have := hcore.nodeHashed lvl hlvl
     unfold Lookup.holdsAt nodeLookup at this
     exact this
   have h := chip_lookup_sound_N (capPermOut S8) (tf .poseidon2) hChip env.loc (nodeInputs c lvl)
-    (digestCols (c.node lvl)) hlen hmem
+    (digestCols (c.node lvl)) hadm hmem
   rw [digestCols_map, nodeInputs_eval c env lvl (dir_zero_or_one c env lvl (hcore.dirBool lvl hlvl))] at h
   -- `capPermOut S8 (pack8 l r) = List.ofFn (nodeOf8 S8 l r)` by `rfl`; peel the `if` either way.
   cases hb : dirBoolVal c env lvl

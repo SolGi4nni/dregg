@@ -361,10 +361,18 @@ private def rangeConstraintsFor (target col : Nat) : List VmConstraint2 :=
     (fun acc j => subE acc (.mul (.const (2 ^ j)) (.var (rangeBitCol target j))))
     (.var col))]
 
-private def factLookup (output : Nat) (inputs : List EmittedExpr) (laneBase : Nat) : VmConstraint2 :=
+/-- A fact site: `inputs` padded to five lanes, then the domain constant and the fact marker —
+seven felts, an ADMITTED chip arity. The side condition rides through so a caller handing more than
+five inputs (which would push the arity to `inputs.length + 2`) fails to elaborate rather than
+emitting a lookup the chip AIR refuses. -/
+private def factLookup (output : Nat) (inputs : List EmittedExpr) (laneBase : Nat)
+    (hAdm : ChipArityAdmitted
+      (inputs ++ List.replicate (5 - inputs.length) (EmittedExpr.const 0)
+        ++ [EmittedExpr.const 64207, EmittedExpr.const 1]).length
+        := by chip_arity_admitted) : VmConstraint2 :=
   .lookup (siteLookupN
     (inputs ++ List.replicate (5 - inputs.length) (.const 0) ++ [.const 64207, .const 1])
-    (output :: (List.range 7).map (fun j => laneBase + j)))
+    (output :: (List.range 7).map (fun j => laneBase + j)) hAdm)
 
 private def commonPayloadSource : Nat → Option Nat
   | 0 => some (Col.action 0 Col.creator)

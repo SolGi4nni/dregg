@@ -45,7 +45,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 TableId TraceFamily VmTrace Satisfied2
    ChipTableSoundN chipLookupTupleN chip_lookup_sound_N envAt rangeRows
-   range_row_mem_iff Lookup)
+   range_row_mem_iff Lookup ChipArityAdmitted)
 
 set_option autoImplicit false
 set_option maxRecDepth 20000
@@ -285,18 +285,26 @@ theorem bits_row0 {hash : List Int → Int} {t : VmTrace} (hne : t.rows ≠ [])
     {col : Nat} (hcol : col ∈ bitCols) : row0 t col = 0 ∨ row0 t col = 1 :=
   binary_of_modular_gate hcanon (gates_row0 hne hsat (binary_body_mem_of_bit_col hcol))
 
+/-- Every absorb block this descriptor emits is exactly 16 felts wide — the `node8` full-width
+compression arity, which the chip AIR admits. Stated once so the eight lever call-sites discharge
+the admitted-arity condition off their own length lemmas rather than off `≤ CHIP_RATE`, which is
+the predicate that let arity 8, 9 and 14 through elsewhere in the tree. -/
+theorem admitted_of_len16 {l : List EmittedExpr} (h : l.length = 16) :
+    ChipArityAdmitted l.length := by
+  rw [h]; exact of_decide_eq_true (Eq.refl true)
+
 theorem wide_hash_row0 {hash : List Int → Int} {t : VmTrace} (hne : t.rows ≠ [])
     (permOut : List Int → List Int)
     (hChip : ChipTableSoundN permOut (t.tf TableId.poseidon2))
     (hsat : Satisfied2 hash privateGraphRewriteDescriptor ppM0 ppF0 [] t)
     {inputs : List EmittedExpr} {outCols : List Nat}
-    (hlen : inputs.length ≤ 16)
+    (hlen : ChipArityAdmitted inputs.length)
     (hlookup : VmConstraint2.lookup
-      ⟨TableId.poseidon2, chipLookupTupleN inputs outCols⟩ ∈ hashLookups) :
+      ⟨TableId.poseidon2, chipLookupTupleN inputs outCols hlen⟩ ∈ hashLookups) :
     outCols.map (row0 t) = permOut (inputs.map (·.eval (row0 t))) := by
   have hpos : 0 < t.rows.length := List.length_pos_iff.mpr hne
   have hrow := hsat.rowConstraints 0 hpos _ (hash_lookup_mem hlookup)
-  have hmem : (chipLookupTupleN inputs outCols).map (·.eval (row0 t)) ∈
+  have hmem : (chipLookupTupleN inputs outCols hlen).map (·.eval (row0 t)) ∈
       t.tf TableId.poseidon2 := by
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, row0] using hrow
   exact chip_lookup_sound_N permOut (t.tf TableId.poseidon2) hChip (row0 t)
@@ -1438,57 +1446,57 @@ theorem privateGraphRewrite_sat_imp_accepts
       = [a (OLD_CORE_BASE + 0), a (OLD_CORE_BASE + 1), a (OLD_CORE_BASE + 2),
          a (OLD_CORE_BASE + 3), a (OLD_CORE_BASE + 4), a (OLD_CORE_BASE + 5),
          a (OLD_CORE_BASE + 6), a (OLD_CORE_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_stageFieldExprs _ _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_stageFieldExprs _ _))
       (by simp [hashLookups, graphCoreLookup])).symm.trans (outCols_map a OLD_CORE_BASE)
   have hNewCore : permOut ((stageFieldExprs NEW_STAGE_BASE 0).map (fun e => e.eval a))
       = [a (NEW_CORE_BASE + 0), a (NEW_CORE_BASE + 1), a (NEW_CORE_BASE + 2),
          a (NEW_CORE_BASE + 3), a (NEW_CORE_BASE + 4), a (NEW_CORE_BASE + 5),
          a (NEW_CORE_BASE + 6), a (NEW_CORE_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_stageFieldExprs _ _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_stageFieldExprs _ _))
       (by simp [hashLookups, graphCoreLookup])).symm.trans (outCols_map a NEW_CORE_BASE)
   have hOldRoot : permOut ((graphRootInputExprs OLD_CORE_BASE OLD_BLIND_BASE
         GRAPH_STATE_TAG).map (fun e => e.eval a))
       = [a (OLD_ROOT_BASE + 0), a (OLD_ROOT_BASE + 1), a (OLD_ROOT_BASE + 2),
          a (OLD_ROOT_BASE + 3), a (OLD_ROOT_BASE + 4), a (OLD_ROOT_BASE + 5),
          a (OLD_ROOT_BASE + 6), a (OLD_ROOT_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_graphRootInputExprs _ _ _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_graphRootInputExprs _ _ _))
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a OLD_ROOT_BASE)
   have hNewRoot : permOut ((graphRootInputExprs NEW_CORE_BASE NEW_BLIND_BASE
         GRAPH_STATE_TAG).map (fun e => e.eval a))
       = [a (NEW_ROOT_BASE + 0), a (NEW_ROOT_BASE + 1), a (NEW_ROOT_BASE + 2),
          a (NEW_ROOT_BASE + 3), a (NEW_ROOT_BASE + 4), a (NEW_ROOT_BASE + 5),
          a (NEW_ROOT_BASE + 6), a (NEW_ROOT_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_graphRootInputExprs _ _ _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_graphRootInputExprs _ _ _))
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a NEW_ROOT_BASE)
   have hR0Core : permOut ((ruleFieldExprs 0).map (fun e => e.eval a))
       = [a (RULE0_CORE_BASE + 0), a (RULE0_CORE_BASE + 1), a (RULE0_CORE_BASE + 2),
          a (RULE0_CORE_BASE + 3), a (RULE0_CORE_BASE + 4), a (RULE0_CORE_BASE + 5),
          a (RULE0_CORE_BASE + 6), a (RULE0_CORE_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_ruleFieldExprs _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_ruleFieldExprs _))
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a RULE0_CORE_BASE)
   have hR1Core : permOut ((ruleFieldExprs 1).map (fun e => e.eval a))
       = [a (RULE1_CORE_BASE + 0), a (RULE1_CORE_BASE + 1), a (RULE1_CORE_BASE + 2),
          a (RULE1_CORE_BASE + 3), a (RULE1_CORE_BASE + 4), a (RULE1_CORE_BASE + 5),
          a (RULE1_CORE_BASE + 6), a (RULE1_CORE_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_ruleFieldExprs _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_ruleFieldExprs _))
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a RULE1_CORE_BASE)
   have hR0Leaf : permOut ((ruleLeafInputExprs RULE0_CORE_BASE 0).map (fun e => e.eval a))
       = [a (RULE0_LEAF_BASE + 0), a (RULE0_LEAF_BASE + 1), a (RULE0_LEAF_BASE + 2),
          a (RULE0_LEAF_BASE + 3), a (RULE0_LEAF_BASE + 4), a (RULE0_LEAF_BASE + 5),
          a (RULE0_LEAF_BASE + 6), a (RULE0_LEAF_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_ruleLeafInputExprs _ _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_ruleLeafInputExprs _ _))
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a RULE0_LEAF_BASE)
   have hR1Leaf : permOut ((ruleLeafInputExprs RULE1_CORE_BASE 1).map (fun e => e.eval a))
       = [a (RULE1_LEAF_BASE + 0), a (RULE1_LEAF_BASE + 1), a (RULE1_LEAF_BASE + 2),
          a (RULE1_LEAF_BASE + 3), a (RULE1_LEAF_BASE + 4), a (RULE1_LEAF_BASE + 5),
          a (RULE1_LEAF_BASE + 6), a (RULE1_LEAF_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq (len_ruleLeafInputExprs _ _))
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 (len_ruleLeafInputExprs _ _))
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a RULE1_LEAF_BASE)
   have hRsRoot : permOut (rulesetInputExprs.map (fun e => e.eval a))
       = [a (RULESET_ROOT_BASE + 0), a (RULESET_ROOT_BASE + 1), a (RULESET_ROOT_BASE + 2),
          a (RULESET_ROOT_BASE + 3), a (RULESET_ROOT_BASE + 4), a (RULESET_ROOT_BASE + 5),
          a (RULESET_ROOT_BASE + 6), a (RULESET_ROOT_BASE + 7)] :=
-    (wide_hash_row0 hne permOut hChip hsat (le_of_eq len_rulesetInputExprs)
+    (wide_hash_row0 hne permOut hChip hsat (admitted_of_len16 len_rulesetInputExprs)
       (by simp [hashLookups, hashLookup])).symm.trans (outCols_map a RULESET_ROOT_BASE)
   set W : PrivateWitness := mkWitness a hpadOld hpadNew hpadCtx hpadLhs hpadRhs with hW
   refine ⟨W, ?_⟩

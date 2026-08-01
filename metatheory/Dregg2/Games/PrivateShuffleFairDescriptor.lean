@@ -713,7 +713,7 @@ theorem chip_lookup_sound_of_mem {hash : List Int → Int}
     (hsat : Satisfied2 hash privateShuffleFairN8Descriptor fairM0 fairF0 []
       (constTrace a pis tf))
     {inputs : List EmittedExpr} {outputs : List Nat}
-    (hinlen : inputs.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
+    (hinlen : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted inputs.length)
     (hmem : VmConstraint2.lookup
       ⟨TableId.poseidon2, chipLookupTupleN inputs outputs⟩ ∈ hashLookups) :
     outputs.map a = permOut (inputs.map (·.eval a)) := by
@@ -730,9 +730,12 @@ structure EmittedAirFacts (permOut : List Int → List Int)
   canonicalCells : CanonicalAssignment a
   semanticGates : ∀ body ∈ semanticBodies,
     body.eval a ≡ 0 [ZMOD BABYBEAR_MODULUS]
-  hashTrees : ∀ (inputs : List EmittedExpr) (outputs : List Nat),
-    inputs.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE →
-    VmConstraint2.lookup ⟨TableId.poseidon2, chipLookupTupleN inputs outputs⟩ ∈ hashLookups →
+  -- ⚑ The arity condition is NAMED (`hadm`), not an anonymous arrow: `chipLookupTupleN`'s
+  -- side condition discharges by `assumption` off exactly this binder, so the tuple named in the
+  -- next hypothesis is the one whose arity has been shown admitted.
+  hashTrees : ∀ (inputs : List EmittedExpr) (outputs : List Nat)
+    (hadm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted inputs.length),
+    VmConstraint2.lookup ⟨TableId.poseidon2, chipLookupTupleN inputs outputs hadm⟩ ∈ hashLookups →
     outputs.map a = permOut (inputs.map (·.eval a))
   publicPins : ∀ col pi,
     VmConstraint2.base (.piBinding .first col pi) ∈ publicPins →

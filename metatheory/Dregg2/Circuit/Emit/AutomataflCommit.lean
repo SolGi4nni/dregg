@@ -37,7 +37,8 @@ namespace Dregg2.Circuit.Emit.AutomataflCommit
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
-  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTupleN)
+  (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTupleN CHIP_RATE padToE
+   ChipArityAdmitted)
 open Dregg2.Games.Automatafl
 
 set_option autoImplicit false
@@ -432,14 +433,45 @@ degree-1) board commitment, and root-injectivity is the `pack_injective` theorem
 def commitBoardConstraints (n : Nat) : List VmConstraint2 :=
   commitBoardConstraintsAt n (PACK_FELT n) COMMIT_PI_BASE
 
+/-- The Option-B absorb block, **actually padded to `CHIP_RATE`** — which is what this adapter's
+own docstring always said it was, and what it did not do.
+
+⚠ **The bug this repair closes, stated plainly.** The old form handed `chipLookupTupleN` the bare
+`feltCount n` packed felts. `chipLookupTupleN` takes the arity to BE `ins.length`, so the emitted
+arity was `⌈n²/15⌉` — not 16 — and the chip AIR admits only `{0, 2, 3, 4, 7, 11, 16}`. Sweeping the
+board sizes: admitted at n ∈ {4, 5, 6, 7, 10} and REFUSED everywhere else, including **n = 11, the
+deployed automatafl board, where `feltCount 11 = 9`** — the same arity 9 that made the wide blinded
+membership descriptor unprovable in `57105f387`. Nothing was emitted through this adapter (it has no
+callers, and the corpus scan finds no arity-9 chip lookup on disk), so this is a trap that had not
+been sprung, not a shipped defect. Explicit padding makes the arity 16 for every shape that fits. -/
+def commitBoardHashIns (n : Nat) : List EmittedExpr :=
+  padToE CHIP_RATE ((List.range (feltCount n)).map (fun j => EmittedExpr.var (PACK_FELT n j)))
+
+theorem commitBoardHashIns_length {n : Nat} (hn : feltCount n ≤ CHIP_RATE) :
+    (commitBoardHashIns n).length = CHIP_RATE := by
+  simp only [commitBoardHashIns, padToE, List.length_append, List.length_replicate,
+    List.length_map, List.length_range]
+  omega
+
 /-- **Option B — single hash-to-8-lanes (adapter, NOT primary).** One arity-16 Poseidon2 over the
-`⌈n²/15⌉ ≤ 16` packed felts (padded to `CHIP_RATE`), output 8 lanes — the fixed-width digest the door
+`⌈n²/15⌉ ≤ 16` packed felts padded to `CHIP_RATE`, output 8 lanes — the fixed-width digest the door
 layer speaks, at the cost of one collision-resistance assumption (still NO Merkle tree). Use only
-where a downstream layer demands a fixed 8-felt board digest; Option A is the standalone default. -/
-def commitBoardHashLookup (n : Nat) (outCols : List Nat) : VmConstraint2 :=
+where a downstream layer demands a fixed 8-felt board digest; Option A is the standalone default.
+
+`hn` is the shape's own precondition and it is now CHECKED: a board too large to fit one absorb
+(`n ≥ 16`, where `feltCount n > CHIP_RATE`) cannot be handed to this adapter at all, rather than
+being handed to it and emitting a lookup no witness satisfies. -/
+def commitBoardHashLookup (n : Nat) (outCols : List Nat)
+    (hn : feltCount n ≤ CHIP_RATE := by first | assumption | exact of_decide_eq_true (Eq.refl true)) :
+    VmConstraint2 :=
   .lookup { table := TableId.poseidon2
-          , tuple := chipLookupTupleN
-              ((List.range (feltCount n)).map (fun j => EmittedExpr.var (PACK_FELT n j))) outCols }
+          , tuple := chipLookupTupleN (commitBoardHashIns n) outCols
+              (by rw [commitBoardHashIns_length hn]; exact of_decide_eq_true (Eq.refl true)) }
+
+-- The arity is 16 at the DEPLOYED automatafl board (n = 11), where the old form emitted 9.
+#guard (commitBoardHashIns 11).length == CHIP_RATE
+#guard ((List.range (feltCount 11)).map (fun j => EmittedExpr.var (PACK_FELT 11 j))).length == 9
+#guard !(ChipArityAdmitted 9 : Bool)
 
 /-- **`automataflCommitDesc n` — the standalone Option-A commitment descriptor**: `n²` cell columns
 + `⌈n²/15⌉` packed felts; constraints = alphabet range checks · pack gates · packed-felt PI bindings.

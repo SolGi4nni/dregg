@@ -77,7 +77,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId chipLookupTupleN CHIP_RATE CHIP_OUT_LANES
-   emitVmJson2)
+   emitVmJson2 ChipArityAdmitted)
 open Dregg2.Circuit.Emit.AirBuilder
 
 set_option autoImplicit false
@@ -522,12 +522,32 @@ def chainInputs (S : ComposeShape) (c : Nat) (domain : ℤ) (data : List Emitted
    else (S.chainCols c (b - 1)).map EmittedExpr.var)
   ++ streamBlock data b
 
+/-- **"one arity-16 `node8` site per block" is now a THEOREM, for every shape and every block.**
+It used to be only this file's prose. `chainInputs` branches on `b = 0`, so the accumulator half is
+the domain IV on the first block and the previous block's carrier columns after — two different
+expressions, and nothing forced them to the same width. `chipLookupTupleN` takes the arity to BE
+`ins.length`, so a shape whose `chainCols` returned other than `DIGEST_FELTS` columns would emit a
+chip lookup at an arity the AIR refuses, silently, for every block after the first. Both branches
+are 8 wide and the data block is `ABSORB_RATE` = 8 by construction; this discharges the
+admitted-arity side condition off that fact rather than off the comment. -/
+theorem chainInputs_length (S : ComposeShape) (c : Nat) (domain : ℤ) (data : List EmittedExpr)
+    (b : Nat) : (chainInputs S c domain data b).length = CHIP_RATE := by
+  cases b <;>
+    simp [chainInputs, streamBlock, iv8, ComposeShape.chainCols, bitsFrom,
+      DIGEST_FELTS, ABSORB_RATE, CHIP_RATE]
+
+theorem chainInputs_arity_admitted (S : ComposeShape) (c : Nat) (domain : ℤ)
+    (data : List EmittedExpr) (b : Nat) :
+    ChipArityAdmitted (chainInputs S c domain data b).length := by
+  rw [chainInputs_length]; exact of_decide_eq_true (Eq.refl true)
+
 /-- Chain `c`'s WIDE chip lookups — one arity-16 `node8` site per 8-felt block, binding all 8 output
 lanes (`chipLookupTupleN`; the soundness lever is `chip_lookup_sound_N`). -/
 def chainLookups (S : ComposeShape) (c : Nat) (domain : ℤ) (data : List EmittedExpr) (blocks : Nat) :
     List VmConstraint2 :=
   (List.range blocks).map fun b =>
-    .lookup ⟨TableId.poseidon2, chipLookupTupleN (chainInputs S c domain data b) (S.chainCols c b)⟩
+    .lookup ⟨TableId.poseidon2, chipLookupTupleN (chainInputs S c domain data b) (S.chainCols c b)
+      (chainInputs_arity_admitted S c domain data b)⟩
 
 /-! ## §12 — The public-input layout (`param-compose/src/pi.rs`).
 

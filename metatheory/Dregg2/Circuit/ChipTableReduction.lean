@@ -115,15 +115,22 @@ input length, `padTo` injectivity pins the inputs, and the append splits off the
 list algebra, no crypto. -/
 
 /-- The STRUCTURAL chip-row shape the deployed layout fixes: `arity :: (padTo CHIP_RATE ins ++
-outBlock)` with `arity = ins.length ≤ CHIP_RATE` and a fixed `CHIP_OUT_LANES`-wide output block. -/
+outBlock)` with `arity = ins.length` ADMITTED by the chip and a fixed `CHIP_OUT_LANES`-wide output
+block.
+
+⚑ The arity condition is `ChipArityAdmitted`, not `≤ CHIP_RATE`, and it belongs in the STRUCTURAL
+half exactly as much as the padded-block width does: the deployed admission is a degree-7 POLYNOMIAL
+IDENTITY on the arity column (`descriptor_ir2.rs:3073`), not a crypto fact. A row at arity 8 is as
+unrepresentable on the deployed chip as a row of the wrong length, and the shape predicate has to
+say so or it describes a chip nobody built. -/
 def ChipRowShaped (r : List ℤ) : Prop :=
-  ∃ ins outBlock : List ℤ, ins.length ≤ CHIP_RATE ∧ outBlock.length = CHIP_OUT_LANES ∧
+  ∃ ins outBlock : List ℤ, ChipArityAdmitted ins.length ∧ outBlock.length = CHIP_OUT_LANES ∧
     r = (ins.length : ℤ) :: (padTo CHIP_RATE ins ++ outBlock)
 
 /-- Every genuine wide chip row (of a `CHIP_OUT_LANES`-wide permutation) is `ChipRowShaped` — the
 structural projection of chip soundness (no crypto: the output block is just *some* 8-felt list). -/
 theorem chipRowN_shaped (permOut : List ℤ → List ℤ) (ins : List ℤ)
-    (hlen : ins.length ≤ CHIP_RATE) (hw : (permOut ins).length = CHIP_OUT_LANES) :
+    (hlen : ChipArityAdmitted ins.length) (hw : (permOut ins).length = CHIP_OUT_LANES) :
     ChipRowShaped (chipRowN permOut ins) :=
   ⟨ins, permOut ins, hlen, hw, rfl⟩
 
@@ -149,10 +156,10 @@ theorem chipRowShaped_decode_unique (r : List ℤ)
 `ChipRowShaped` AND its recovered output block equals `permOut` of its recovered inputs. This ISOLATES
 the residual: everything but `outBlock = permOut ins` is structural. -/
 theorem chipRowGenuine_of_shaped_output (permOut : List ℤ → List ℤ) (r : List ℤ)
-    (ins outBlock : List ℤ) (hlen : ins.length ≤ CHIP_RATE)
+    (ins outBlock : List ℤ) (hlen : ChipArityAdmitted ins.length)
     (hshape : r = (ins.length : ℤ) :: (padTo CHIP_RATE ins ++ outBlock))
     (hout : outBlock = permOut ins) :
-    ∃ ins' : List ℤ, ins'.length ≤ CHIP_RATE ∧ r = chipRowN permOut ins' :=
+    ∃ ins' : List ℤ, ChipArityAdmitted ins'.length ∧ r = chipRowN permOut ins' :=
   ⟨ins, hlen, by rw [hshape, hout]; rfl⟩
 
 /-! ### §2b — the STRUCTURE already rejects malformed rows (real content, no crypto). -/
@@ -166,7 +173,8 @@ theorem permZ_width (ins : List ℤ) : (permZ ins).length = CHIP_OUT_LANES := by
 /-- A genuine chip row for `permZ` (arity-0 absorb). -/
 def genRow : List ℤ := chipRowN permZ []
 
-theorem genRow_shaped : ChipRowShaped genRow := chipRowN_shaped permZ [] (by simp [CHIP_RATE]) (permZ_width [])
+theorem genRow_shaped : ChipRowShaped genRow :=
+  chipRowN_shaped permZ [] (of_decide_eq_true (Eq.refl true)) (permZ_width [])
 
 /-- A malformed row `[0]` (length 1) is NOT `ChipRowShaped`: a genuine row has length
 `1 + CHIP_RATE + CHIP_OUT_LANES = 25 ≠ 1`. So the STRUCTURAL skeleton alone rejects the forgery. -/
@@ -174,7 +182,7 @@ theorem forged_not_shaped : ¬ ChipRowShaped ([0] : List ℤ) := by
   rintro ⟨ins, out, hlen, hw, heq⟩
   have hl : ([0] : List ℤ).length = ((ins.length : ℤ) :: (padTo CHIP_RATE ins ++ out)).length := by
     rw [heq]
-  simp only [List.length_cons, List.length_append, padTo_length hlen, hw] at hl
+  simp only [List.length_cons, List.length_append, padTo_length (chipArity_le_rate hlen), hw] at hl
   simp [CHIP_RATE, CHIP_OUT_LANES] at hl
 
 /-! ## §3 — POSEIDON2 half, the RESIDUAL: named as `Poseidon2ChipArithSound`, and the DISCHARGE.
@@ -192,7 +200,8 @@ correctness of the round-by-round S-box + linear-layer gates the Rust KAT confor
 (`poseidon2_plonky3_cross_check_kat`). It is a SEPARATE primitive from `Poseidon2SpongeCR`
 (collision-resistance): here we need `output = permutation(input)`, NOT injectivity. -/
 def Poseidon2ChipArithSound (permOut : List ℤ → List ℤ) (roundGates : List ℤ → Prop) : Prop :=
-  ∀ r : List ℤ, roundGates r → ∃ ins : List ℤ, ins.length ≤ CHIP_RATE ∧ r = chipRowN permOut ins
+  ∀ r : List ℤ, roundGates r →
+    ∃ ins : List ℤ, ChipArityAdmitted ins.length ∧ r = chipRowN permOut ins
 
 /-- **The ACCEPTANCE-side fact** the deployed proof delivers: every committed chip row satisfies the
 round gates (the `Ir2Air::Chip` AIR holds on the extracted trace). Same epistemic class as the bus /
@@ -231,7 +240,7 @@ def roundGatesZ (r : List ℤ) : Prop :=
 theorem arithSound_permZ : Poseidon2ChipArithSound permZ roundGatesZ := by
   rintro r ⟨⟨ins, outBlock, hlen, _hw, hshape⟩, hout⟩
   exact chipRowGenuine_of_shaped_output permZ r ins outBlock hlen hshape
-    (hout ins outBlock hlen hshape)
+    (hout ins outBlock (chipArity_le_rate hlen) hshape)
 
 /-- The genuine row satisfies the round gates (its output block IS `permZ` of its inputs — forced by
 the unique decode). -/

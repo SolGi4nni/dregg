@@ -377,8 +377,9 @@ theorem busModel_feeds_chip_leverN (fp : List ℤ → F) (embed : ℤ → F)
     (d : EffectVmDescriptor2) (t : VmTrace) (mult : List ℕ)
     (permOut : List ℤ → List ℤ) (hSound : ChipTableSoundN permOut (t.tf .poseidon2))
     (hok : BusModelOk fp embed d t .poseidon2 mult)
-    (ins : List EmittedExpr) (digestCols : List Nat) (hlen : ins.length ≤ CHIP_RATE)
-    (hl : (⟨.poseidon2, chipLookupTupleN ins digestCols⟩ : Lookup) ∈ lookupsInto d .poseidon2)
+    (ins : List EmittedExpr) (digestCols : List Nat) (hlen : ChipArityAdmitted ins.length)
+    (hl : (⟨.poseidon2, chipLookupTupleN ins digestCols hlen⟩ : Lookup)
+            ∈ lookupsInto d .poseidon2)
     (i : Nat) (hi : i < t.rows.length) :
     digestCols.map (envAt t i).loc = permOut (ins.map (·.eval (envAt t i).loc)) := by
   have h := busModel_forces_lookup_holds fp embed d t .poseidon2 mult hok i hi _ hl

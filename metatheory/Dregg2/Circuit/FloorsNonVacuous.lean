@@ -123,7 +123,9 @@ theorem genuineChipTbl_sound : ChipTableSoundN permOutZ genuineChipTbl := by
   intro r hr
   -- the only row IS `chipRowN permOutZ []`.
   simp only [genuineChipTbl, List.mem_singleton] at hr
-  exact ⟨[], by simp [CHIP_RATE], hr⟩
+  -- arity 0 IS an admitted chip arity (the pad/fact row) — the witness survives the strengthening
+  -- of `ChipTableSoundN` from `≤ CHIP_RATE` to `ChipArityAdmitted`.
+  exact ⟨[], of_decide_eq_true (Eq.refl true), hr⟩
 
 /-- A FORGED chip table: a single row `[0]` that is NOT any `chipRowN permOutZ ins` (a real chip row
 begins with the arity tag and carries the full padded-input + 8-lane output block, so it has length
@@ -132,8 +134,9 @@ def forgedChipTbl : Table := [[0]]
 
 /-- The length of a genuine wide chip row whose absorbed inputs fit the rate is
 `1 + CHIP_RATE + CHIP_OUT_LANES` (here `1 + 11 + 8 = 20`). -/
-theorem chipRowN_length (ins : List ℤ) (hlen : ins.length ≤ CHIP_RATE) :
+theorem chipRowN_length (ins : List ℤ) (hlen : ChipArityAdmitted ins.length) :
     (chipRowN permOutZ ins).length = 1 + CHIP_RATE + CHIP_OUT_LANES := by
+  have hle := chipArity_le_rate hlen
   simp only [chipRowN, List.length_cons, List.length_append, permOutZ, List.length_replicate]
   rw [padTo, List.length_append, List.length_replicate]
   omega

@@ -32,10 +32,24 @@ same padding convention; under `state.length = 16 = CHIP_RATE` the padding suffi
 def chipRowState16 (permOut : List ℤ → List ℤ) (state : List ℤ) : List ℤ :=
   chipRowN permOut state
 
-/-- The corresponding lookup tuple over main-trace expressions and sixteen next-state columns. -/
-def chipLookupTupleState16 (state : List EmittedExpr) (nextStateCols : List Nat) :
+/-- The state16 width side condition, discharged the way `chip_arity_admitted` is: `assumption`
+for the generic levers, kernel reduction for a concrete state block. -/
+theorem chipArityAdmitted_of_state16 {state : List EmittedExpr}
+    (hstate : state.length = CHIP_STATE_LANES) : ChipArityAdmitted state.length := by
+  rw [hstate]; exact of_decide_eq_true (Eq.refl true)
+
+/-- The corresponding lookup tuple over main-trace expressions and sixteen next-state columns.
+
+The width condition is now a CHECKED side condition rather than a comment: `CHIP_STATE_LANES = 16`
+is an admitted absorb arity, and a state block of any other length is BOTH the wrong shape for this
+bus and (at 1, 5, 6, 8, 9, 10, 12, 13, 14, 15) an arity the chip AIR refuses outright. Carrying the
+width here is what lets `chipLookupTupleN`'s admitted-arity condition discharge — the state16 bus
+cannot be used to smuggle a non-admitted arity onto the shared chip. -/
+def chipLookupTupleState16 (state : List EmittedExpr) (nextStateCols : List Nat)
+    (hstate : state.length = CHIP_STATE_LANES :=
+      by first | assumption | exact of_decide_eq_true (Eq.refl true)) :
     List EmittedExpr :=
-  chipLookupTupleN state nextStateCols
+  chipLookupTupleN state nextStateCols (chipArityAdmitted_of_state16 hstate)
 
 /-- Semantic soundness of the fixed state16 table.  Both sides have exactly sixteen lanes; every
 row is the genuine permutation transition for its complete input state. -/
@@ -50,7 +64,7 @@ theorem ChipTableSoundState16.toSoundN {permOut : List ℤ → List ℤ} {tbl : 
     (h : ChipTableSoundState16 permOut tbl) : ChipTableSoundN permOut tbl := by
   intro r hr
   obtain ⟨state, hstate, _hout, hrow⟩ := h r hr
-  exact ⟨state, by simpa [CHIP_STATE_LANES] using hstate.le, hrow⟩
+  exact ⟨state, by rw [hstate]; exact of_decide_eq_true (Eq.refl true), hrow⟩
 
 /-- **THE FULL-STATE LEVER.** Membership of a fixed 33-felt lookup forces all sixteen output
 columns to equal the genuine permutation of all sixteen evaluated input-state expressions.  In
@@ -60,11 +74,10 @@ theorem chip_lookup_sound_state16 (permOut : List ℤ → List ℤ) (tbl : Table
     (hSound : ChipTableSoundState16 permOut tbl)
     (a : Assignment) (state : List EmittedExpr) (nextStateCols : List Nat)
     (hstate : state.length = CHIP_STATE_LANES)
-    (hmem : (chipLookupTupleState16 state nextStateCols).map (·.eval a) ∈ tbl) :
-    nextStateCols.map a = permOut (state.map (·.eval a)) := by
-  apply chip_lookup_sound_N permOut tbl hSound.toSoundN a state nextStateCols
-  · simpa [CHIP_STATE_LANES] using hstate.le
-  · exact hmem
+    (hmem : (chipLookupTupleState16 state nextStateCols hstate).map (·.eval a) ∈ tbl) :
+    nextStateCols.map a = permOut (state.map (·.eval a)) :=
+  chip_lookup_sound_N permOut tbl hSound.toSoundN a state nextStateCols
+    (chipArityAdmitted_of_state16 hstate) hmem
 
 /-- The declared table carried by a state16-using descriptor.  Rust validates this exact name,
 wire id, arity, and Poseidon2 parameter semantics before assembly. -/

@@ -445,7 +445,7 @@ def spongePlans : List State16Step :=
   spongePlan CONSEQUENCE_REAL_STATE consequenceRealPreimage ++ nodePlans
 
 def state16Lookups : List VmConstraint2 := spongePlans.map fun step =>
-  .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols⟩
+  .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols step.width⟩
 
 def semanticConstraints : List VmConstraint2 :=
   marketSwapConstraints ++ nullifierBindingConstraints ++ wideBindingConstraints ++

@@ -473,7 +473,7 @@ theorem wide_lanes_forced_at (hsat : Satisfied2 hash wideValueBindingDesc minit 
   have hh := wvbLookup hsat i hi hm
   simp only [Lookup.holdsAt] at hh
   have := chip_lookup_sound_N permOut (t.tf TableId.poseidon2) hSound (rowOf t i)
-    (wideLeft domain ++ wideRight) (wideOut base) (wideSiteIns_length domain) hh
+    (wideLeft domain ++ wideRight) (wideOut base) (of_decide_eq_true (Eq.refl true)) hh
   rwa [wideIns_eval] at this
 
 /-- **The `DOMAIN_A` carrier: all eight lanes are the genuine squeeze of THIS row's own limbs.** -/

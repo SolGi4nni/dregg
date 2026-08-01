@@ -335,9 +335,39 @@ def ehCarrierIn (w s : Nat) : List Nat :=
   if s = 0 then (List.range EH_CARRIER).map (ehAccInCol w)
   else (List.range EH_CARRIER).map (ehCarrierCol w (s - 1))
 
-/-- Step `s`'s absorbed inputs: `carrier(8) ‖ fresh(≤3)` — arity 11 (10 on the last step). -/
+/-- Step `s`'s absorbed inputs: `carrier(8) ‖ fresh(3)`, PADDED — **arity 11 at every step**.
+ 
+⚠ **This used to read "arity 11 (10 on the last step)", and that parenthesis was a defect.** There
+are 17 fresh felts and `EH_STEPS = 6` steps of `EH_FRESH_PER_STEP = 3`, so the last chunk carries
+only `17 − 15 = 2` and the last absorb went out at arity `8 + 2 = 10`. The deployed `Ir2Air::Chip`
+admits only `{0, 2, 3, 4, 7, 11, 16}` (its degree-7 admission product, `descriptor_ir2.rs:3073`);
+**10 is not a root**, so the sixth absorb of every row was a constraint with no satisfying
+assignment — this pin could never have proved. Padding the block to the full `carrier ‖ 3` makes
+every step arity 11, which is the arity the surrounding prose already claimed and the shape the
+deployed group discipline uses. `padToE` fills with literal zeros, which is what the short chunk's
+missing lanes evaluated to anyway. -/
 def ehStepInputs (w s : Nat) : List EmittedExpr :=
-  ((ehCarrierIn w s) ++ (ehFreshChunk w s)).map ev
+  padToE (EH_CARRIER + EH_FRESH_PER_STEP) (((ehCarrierIn w s) ++ (ehFreshChunk w s)).map ev)
+
+/-- **Every step absorbs EXACTLY `carrier ‖ 3` = 11 felts** — an ADMITTED chip arity, at every
+step including the last, which is the whole point of the pad. -/
+theorem ehStepInputs_length (w s : Nat) :
+    (ehStepInputs w s).length = EH_CARRIER + EH_FRESH_PER_STEP := by
+  have hc : (ehCarrierIn w s).length = EH_CARRIER := by
+    unfold ehCarrierIn; split <;> simp
+  have hf : (ehFreshChunk w s).length ≤ EH_FRESH_PER_STEP := by
+    unfold ehFreshChunk; exact List.length_take_le _ _
+  simp only [ehStepInputs, padToE, List.length_append, List.length_replicate, List.length_map,
+    List.length_append, hc]
+  omega
+
+/-- The absorb arity the chip AIR is asked for, at every step, is admitted. -/
+theorem ehStepInputs_admitted (w s : Nat) : ChipArityAdmitted (ehStepInputs w s).length := by
+  rw [ehStepInputs_length]; exact of_decide_eq_true (Eq.refl true)
+
+/-- Every step fits the chip bus (the weaker consequence, kept for the padding lemmas). -/
+theorem ehStepInputs_len_le (w s : Nat) : (ehStepInputs w s).length ≤ CHIP_RATE :=
+  chipArity_le_rate (ehStepInputs_admitted w s)
 
 /-- Step `s`'s forced output block. -/
 def ehStepOut (w s : Nat) : List Nat := (List.range EH_CARRIER).map (ehCarrierCol w s)
@@ -346,12 +376,15 @@ def ehStepOut (w s : Nat) : List Nat := (List.range EH_CARRIER).map (ehCarrierCo
 columns)`; against a `ChipTableSoundN` table, `chip_lookup_sound_N` forces **every** one of the `W`
 digest columns to the genuine permutation output — not merely its head. This is the half a bare
 `piBinding` does not have. -/
-def ehLookup (ins : List EmittedExpr) (outCols : List Nat) : VmConstraint2 :=
-  .lookup { table := .poseidon2, tuple := chipLookupTupleN ins outCols }
+def ehLookup (ins : List EmittedExpr) (outCols : List Nat)
+    (hAdm : ChipArityAdmitted ins.length := by chip_arity_admitted) : VmConstraint2 :=
+  .lookup { table := .poseidon2, tuple := chipLookupTupleN ins outCols hAdm }
 
-/-- The six absorbs of one row's 17-felt contribution. -/
+/-- The six absorbs of one row's 17-felt contribution. Each carries its own admitted-arity proof —
+the padding is what makes step 5 constructible at all. -/
 def ehAbsorbs (w : Nat) : List VmConstraint2 :=
-  (List.range EH_STEPS).map (fun s => ehLookup (ehStepInputs w s) (ehStepOut w s))
+  (List.range EH_STEPS).map
+    (fun s => ehLookup (ehStepInputs w s) (ehStepOut w s) (ehStepInputs_admitted w s))
 
 /-- **The tag gate.** `ehTagCol = Σ_{e < NUM_EFFECTS} e · sel_e`. The selector columns are `0..53`
 (`STATE_BEFORE_BASE = NUM_EFFECTS`), already booleanity- and one-hot-constrained by the host
@@ -504,23 +537,17 @@ the hash appears anywhere. -/
 def ehStepPair (w s : Nat) (a b : Assignment) : List ℤ × List ℤ :=
   ((ehStepInputs w s).map (·.eval a), (ehStepInputs w s).map (·.eval b))
 
-/-- Every step fits the chip bus. -/
-theorem ehStepInputs_len_le (w s : Nat) : (ehStepInputs w s).length ≤ CHIP_RATE := by
-  have hc : (ehCarrierIn w s).length = EH_CARRIER := by
-    unfold ehCarrierIn; split <;> simp
-  have hf : (ehFreshChunk w s).length ≤ EH_FRESH_PER_STEP := by
-    unfold ehFreshChunk; exact List.length_take_le _ _
-  simp only [ehStepInputs, List.length_map, List.length_append, hc]
-  simp only [EH_CARRIER, EH_FRESH_PER_STEP, CHIP_RATE] at *
-  omega
+
 
 /-- **RUNG 1 — one absorb hop, floor-free and pair-specific.** Two rows whose chip lookups force the
 same output block either absorbed the SAME inputs, or the two lists they absorbed ARE a genuine
 collision of the deployed permutation. Total: no hash hypothesis. -/
 theorem ehHop {permOut : List ℤ → List ℤ} {tbl : Table}
     (hSound : ChipTableSoundN permOut tbl) (a b : Assignment) (w s : Nat)
-    (hA : (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)).map (·.eval a) ∈ tbl)
-    (hB : (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)).map (·.eval b) ∈ tbl)
+    (hA : (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)
+            (ehStepInputs_admitted w s)).map (·.eval a) ∈ tbl)
+    (hB : (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)
+            (ehStepInputs_admitted w s)).map (·.eval b) ∈ tbl)
     (hout : (ehStepOut w s).map a = (ehStepOut w s).map b) :
     (ehStepInputs w s).map (·.eval a) = (ehStepInputs w s).map (·.eval b)
       ∨ IsCollW permOut (ehStepPair w s a b) := by
@@ -529,9 +556,9 @@ theorem ehHop {permOut : List ℤ → List ℤ} {tbl : Table}
   · refine Or.inr ⟨h, ?_⟩
     simp only [ehStepPair]
     rw [← chip_lookup_sound_N permOut tbl hSound a (ehStepInputs w s) (ehStepOut w s)
-          (ehStepInputs_len_le w s) hA,
+          (ehStepInputs_admitted w s) hA,
         ← chip_lookup_sound_N permOut tbl hSound b (ehStepInputs w s) (ehStepOut w s)
-          (ehStepInputs_len_le w s) hB]
+          (ehStepInputs_admitted w s) hB]
     exact hout
 
 /-- The carrier read into step `s+1` IS step `s`'s output block. -/
@@ -545,8 +572,8 @@ theorem ehCarrier_of_inputs {w s : Nat} {a b : Assignment}
   have hc : (ehCarrierIn w s).length = EH_CARRIER := by
     unfold ehCarrierIn; split <;> simp
   have := congrArg (List.take EH_CARRIER) h
-  simpa [ehStepInputs, List.map_append, List.map_map, Function.comp_def, ev, EmittedExpr.eval,
-    List.take_append_of_le_length, hc] using this
+  simpa [ehStepInputs, padToE, List.map_append, List.map_map, Function.comp_def, ev,
+    EmittedExpr.eval, List.take_append_of_le_length, hc] using this
 /-- **RUNG 2 — THE ROW KEYSTONE.** Walking the chain backwards from step `s`: either **every** step
 up to `s` absorbed the same 11 felts in both traces — hence the same domain tag, the same eight
 params and the same eight extension lanes — or one specific step's two absorbed lists ARE a genuine
@@ -558,8 +585,10 @@ through, and the prover picks both sides. Here every column named by `PI[16..20)
 block of a chip row, and the chain reaches back through all six absorbs to the declaration. -/
 theorem ehChain_back {permOut : List ℤ → List ℤ} {tbl : Table}
     (hSound : ChipTableSoundN permOut tbl) (a b : Assignment) (w : Nat)
-    (hA : ∀ s, (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)).map (·.eval a) ∈ tbl)
-    (hB : ∀ s, (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)).map (·.eval b) ∈ tbl) :
+    (hA : ∀ s, (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)
+            (ehStepInputs_admitted w s)).map (·.eval a) ∈ tbl)
+    (hB : ∀ s, (chipLookupTupleN (ehStepInputs w s) (ehStepOut w s)
+            (ehStepInputs_admitted w s)).map (·.eval b) ∈ tbl) :
     ∀ s, (ehStepOut w s).map a = (ehStepOut w s).map b →
       (∀ k ≤ s, (ehStepInputs w k).map (·.eval a) = (ehStepInputs w k).map (·.eval b))
       ∨ (∃ k ≤ s, IsCollW permOut (ehStepPair w k a b)) := by
@@ -781,10 +810,16 @@ example : ehTagGate 1000 = .base (.gate (ehTagGateBody 1000)) := rfl
 #guard 57 == 1 + EH_EXT_LANES + EH_CARRIER + (EH_STEPS - 1) * EH_CARRIER
 #guard ehAccOutCol 1000 (EH_CARRIER - 1) == 1000 + EH_SPAN - 1
 
--- ⚑ EVERY step is arity ≤ 11 — the `single_perm_compress` / deployed-chip contract.
--- Five arity-11 groups (carrier ‖ 3) and a final arity-10 (carrier ‖ 2).
-#guard ((List.range EH_STEPS).map (fun s => (ehStepInputs 1000 s).length)) == [11, 11, 11, 11, 11, 10]
-#guard ((List.range EH_STEPS).map (fun s => (ehStepInputs 1000 s).length)).all (· <= 11)
+-- ⚑ EVERY step is arity 11 — the deployed chip's ADMITTED group shape (carrier ‖ 3).
+--
+-- ⚠ This guard used to read `== [11, 11, 11, 11, 11, 10]`, and its comment called the final
+-- arity-10 group part of the contract. It was machine-checking the defect: `≤ CHIP_RATE` is not the
+-- chip's condition, `ChipArityAdmitted` is, and 10 is not among `{0,2,3,4,7,11,16}` — so the sixth
+-- absorb of every row was unsatisfiable and this pin could never have proved. A guard that pins the
+-- wrong invariant is worse than no guard, because the next reader trusts it.
+#guard ((List.range EH_STEPS).map (fun s => (ehStepInputs 1000 s).length)) == [11, 11, 11, 11, 11, 11]
+#guard ((List.range EH_STEPS).map (fun s => (ehStepInputs 1000 s).length)).all
+  (fun n => ChipArityAdmitted n)
 
 -- The seventeen declared felts are covered exactly once, in order, across the six steps.
 #guard (ehFreshCols 1000).length == 1 + NUM_PARAMS + EH_EXT_LANES
@@ -794,6 +829,11 @@ example : ehTagGate 1000 = .base (.gate (ehTagGateBody 1000)) := rfl
 #guard (ehAbsorbs 1000).length == EH_STEPS
 #guard (chipLookupTupleN (ehStepInputs 1000 0) (ehStepOut 1000 0)).length
   == 1 + CHIP_RATE + EH_CARRIER
+-- ⚑ EVERY step, including the LAST, absorbs at the ADMITTED arity 11. Before the pad the last
+-- step went out at 10, which the chip AIR refuses outright.
+#guard (List.range EH_STEPS).all (fun s => (ehStepInputs 1000 s).length == 11)
+#guard (List.range EH_STEPS).all (fun s => ChipArityAdmitted (ehStepInputs 1000 s).length)
+#guard !(ChipArityAdmitted 10 : Bool)
 
 -- The constraint budget: 1 tag + 6 absorbs + 8 continuity + 8 seed + 4 publish = 27.
 #guard (ehContinuity 1000).length == 8

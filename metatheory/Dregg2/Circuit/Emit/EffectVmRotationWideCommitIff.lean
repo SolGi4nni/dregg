@@ -146,14 +146,15 @@ theorem wideChipTableOf_sound (permW : List ℤ → List ℤ) (env : VmRowEnv) (
   simp only [wideChipTableOf, List.mem_map] at hr
   obtain ⟨p, hp, hrfl⟩ := hr
   refine ⟨p.1.map (·.eval env.loc), ?_, hrfl.symm⟩
-  simpa using rotV3WideSpecs_fit base cbase p hp
+  simpa using rotV3WideSpecs_admitted base cbase p hp
 
 /-- The evaluated wide-lookup tuple of a site whose carriers are genuine IS the genuine chip row.
 The bridge between "the lookup tuple as emitted" and "the chip row as tabulated". -/
 theorem siteLookupN_tuple_eval (permW : List ℤ → List ℤ) (env : VmRowEnv)
     (ins : List EmittedExpr) (digestCols : List Nat)
+    (hAdm : ChipArityAdmitted ins.length)
     (hgen : digestCols.map env.loc = permW (ins.map (·.eval env.loc))) :
-    (siteLookupN ins digestCols).tuple.map (·.eval env.loc)
+    (siteLookupN ins digestCols hAdm).tuple.map (·.eval env.loc)
       = chipRowN permW (ins.map (·.eval env.loc)) := by
   simp only [siteLookupN, chipLookupTupleN, chipRowN, padToE, padTo, List.map_cons,
     List.map_append, List.map_replicate, List.map_map, Function.comp_def, EmittedExpr.eval,
@@ -164,11 +165,11 @@ wide lookups against the prover-built table. Uniform in the site — no sixty-tw
 the table is indexed by the very spec list the lookups walk. -/
 theorem wide_lookups_of_chain (permW : List ℤ → List ℤ) (env : VmRowEnv) (base cbase : Nat)
     (hchain : WideChain8 permW env base cbase) :
-    ∀ p ∈ rotV3WideSpecs base cbase,
+    ∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
       (siteLookupN p.1 p.2).tuple.map (·.eval env.loc)
         ∈ wideChipTableOf permW env base cbase := by
   intro p hp
-  rw [siteLookupN_tuple_eval permW env p.1 p.2 (hchain p hp)]
+  rw [siteLookupN_tuple_eval permW env p.1 p.2 (rotV3WideSpecs_admitted _ _ p hp) (hchain p hp)]
   exact List.mem_map_of_mem hp
 
 /-! ## §3 — ⚑ THE BICONDITIONAL AT EIGHT FELTS. -/
@@ -182,9 +183,9 @@ genuine chain AND the state-commit carrier (carrier 61 — the published 8-felt 
 family, not assumed. `←` is `wide_lookups_of_chain`. -/
 theorem rotV3Wide_commit_iff8_of_table (permW : List ℤ → List ℤ) (tbl : Table)
     (hSound : ChipTableSoundN permW tbl) (env : VmRowEnv) (base cbase : Nat)
-    (hCompl : ∀ p ∈ rotV3WideSpecs base cbase,
+    (hCompl : ∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
       chipRowN permW (p.1.map (·.eval env.loc)) ∈ tbl) :
-    (∀ p ∈ rotV3WideSpecs base cbase,
+    (∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
         (siteLookupN p.1 p.2).tuple.map (·.eval env.loc) ∈ tbl)
     ↔ (WideChain8 permW env base cbase
         ∧ carrierVals cbase 61 env.loc
@@ -192,11 +193,11 @@ theorem rotV3Wide_commit_iff8_of_table (permW : List ℤ → List ℤ) (tbl : Ta
   constructor
   · intro hlk
     refine ⟨siteLookupsN_sound permW tbl hSound env (rotV3WideSpecs base cbase)
-              (rotV3WideSpecs_fit base cbase) hlk, ?_⟩
+              (rotV3WideSpecs_admitted base cbase) hlk, ?_⟩
     exact rotV3WidePin permW tbl hSound env base cbase hlk
   · rintro ⟨hchain, -⟩
     intro p hp
-    rw [siteLookupN_tuple_eval permW env p.1 p.2 (hchain p hp)]
+    rw [siteLookupN_tuple_eval permW env p.1 p.2 (rotV3WideSpecs_admitted _ _ p hp) (hchain p hp)]
     exact hCompl p hp
 
 /-- **`rotV3Wide_commit_iff8` — THE FLAGSHIP, over the prover-built table.** The sixty-two wide lookups
@@ -207,7 +208,7 @@ the federation QC body carry.
 
 Unconditional: no collision-resistance floor, no injectivity hypothesis, no assumed table oracle. -/
 theorem rotV3Wide_commit_iff8 (permW : List ℤ → List ℤ) (env : VmRowEnv) (base cbase : Nat) :
-    (∀ p ∈ rotV3WideSpecs base cbase,
+    (∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
         (siteLookupN p.1 p.2).tuple.map (·.eval env.loc)
           ∈ wideChipTableOf permW env base cbase)
     ↔ (WideChain8 permW env base cbase
@@ -229,9 +230,9 @@ permutation collides. Every statement here carries that disjunction. -/
 genuine collision of the deployed wide permutation at the named pair. -/
 theorem rotV3Wide_commit8_binds_or_collides (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW) (env env' : VmRowEnv) (base cbase base' cbase' : Nat)
-    (hlk : ∀ p ∈ rotV3WideSpecs base cbase,
+    (hlk : ∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
       (siteLookupN p.1 p.2).tuple.map (·.eval env.loc) ∈ wideChipTableOf permW env base cbase)
-    (hlk' : ∀ p ∈ rotV3WideSpecs base' cbase',
+    (hlk' : ∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base' cbase'),
       (siteLookupN p.1 p.2).tuple.map (·.eval env'.loc) ∈ wideChipTableOf permW env' base' cbase')
     (hagree : carrierVals cbase 61 env.loc = carrierVals cbase' 61 env'.loc) :
     (preLimbsWide base env.loc = preLimbsWide base' env'.loc
@@ -257,9 +258,9 @@ VACUOUS. `¬ WireColl permW l ir l' ir'` is a decidable claim about ONE named pa
 instance by instance, and asserting it here commits to nothing universal. -/
 theorem rotV3Wide_commit8_binds_of_noColl (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW) (env env' : VmRowEnv) (base cbase base' cbase' : Nat)
-    (hlk : ∀ p ∈ rotV3WideSpecs base cbase,
+    (hlk : ∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
       (siteLookupN p.1 p.2).tuple.map (·.eval env.loc) ∈ wideChipTableOf permW env base cbase)
-    (hlk' : ∀ p ∈ rotV3WideSpecs base' cbase',
+    (hlk' : ∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base' cbase'),
       (siteLookupN p.1 p.2).tuple.map (·.eval env'.loc) ∈ wideChipTableOf permW env' base' cbase')
     (hagree : carrierVals cbase 61 env.loc = carrierVals cbase' 61 env'.loc)
     (hno : ¬ WireColl permW (preLimbsWide base env.loc) (env.loc (base + B_IROOT))
@@ -299,7 +300,7 @@ construction is not vacuous. -/
 theorem canary_bogus_commit8_unsat (permW : List ℤ → List ℤ) (env : VmRowEnv) (base cbase : Nat)
     (hbogus : carrierVals cbase 61 env.loc
       ≠ wireCommitR8 permW (preLimbsWide base env.loc) (env.loc (base + B_IROOT))) :
-    ¬ (∀ p ∈ rotV3WideSpecs base cbase,
+    ¬ (∀ (p : List EmittedExpr × List Nat) (hp : p ∈ rotV3WideSpecs base cbase),
         (siteLookupN p.1 p.2).tuple.map (·.eval env.loc)
           ∈ wideChipTableOf permW env base cbase) :=
   fun hlk => hbogus ((rotV3Wide_commit_iff8 permW env base cbase).mp hlk).2

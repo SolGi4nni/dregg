@@ -88,7 +88,7 @@ def insOf (r : List ℤ) : List ℤ := (r.drop 1).take (r.headD 0).toNat
 `chipRowN permOutZ (its input)` (so its output block is the all-zero squeeze). Decidable for a concrete
 row. -/
 def genuineChipRowZ (r : List ℤ) : Prop :=
-  (insOf r).length ≤ CHIP_RATE ∧ r = chipRowN permOutZ (insOf r)
+  ChipArityAdmitted (insOf r).length ∧ r = chipRowN permOutZ (insOf r)
 
 instance : DecidablePred genuineChipRowZ := fun r => by unfold genuineChipRowZ; infer_instance
 

@@ -131,7 +131,7 @@ hits the genuine table built above.  This is the lookup half of an honest descri
 theorem state16_lookup_holds_of_execution (perm16 : List ℤ → List ℤ) (a : Assignment)
     (step : State16Step) (hstep : step ∈ v3PermutationSteps)
     (hexec : State16StepHolds perm16 a step) :
-    (chipLookupTupleState16 step.input step.outputCols).map (·.eval a) ∈
+    (chipLookupTupleState16 step.input step.outputCols step.width).map (·.eval a) ∈
       state16TableOf perm16 a := by
   unfold state16TableOf
   rw [List.mem_map]
@@ -259,7 +259,7 @@ theorem satisfied2_preFns3_concrete (scalarHash : List ℤ → ℤ)
     subst i
     simp only [preFns3OnlyDescriptor, List.mem_map] at hc
     obtain ⟨step, hstep, rfl⟩ := hc
-    change (chipLookupTupleState16 step.input step.outputCols).map
+    change (chipLookupTupleState16 step.input step.outputCols step.width).map
       (·.eval concretePreFns3Row) ∈
         (if poseidon2state16 = poseidon2state16 then
           state16TableOf deployedPerm16 concretePreFns3Row else [])

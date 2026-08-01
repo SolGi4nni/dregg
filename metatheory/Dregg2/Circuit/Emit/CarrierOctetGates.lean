@@ -92,7 +92,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv EFFECT_VM_WIDTH VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
   (Table TraceFamily Lookup VmConstraint2 EffectVmDescriptor2 ChipTableSoundN Satisfied2
-   chipLookupTupleN chip_lookup_sound_N CHIP_RATE VmTrace envAt)
+   chipLookupTupleN chip_lookup_sound_N CHIP_RATE VmTrace envAt ChipArityAdmitted)
 open Dregg2.Circuit.DeployedCapOpen (DEPTH digestCols digestCols_map groupVal pathOf8)
 open Dregg2.Circuit.DeployedCapTree (Digest8)
 open Dregg2.Circuit.DeployedFieldsTree (Fields8Scheme)
@@ -455,8 +455,7 @@ theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ �
   have hmem : (chipLookupTupleN (quadCols blockBase octetBase q)
       (digestCols (keyCommitDigestCol dgBase q))).map (·.eval e.loc) ∈ t.tf .poseidon2 := by
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, keyCommitLookup] using hlk
-  have hlen : (quadCols blockBase octetBase q).length ≤ CHIP_RATE := by
-    simp [quadCols, CHIP_RATE]
+  have hlen : ChipArityAdmitted (quadCols blockBase octetBase q).length := of_decide_eq_true (Eq.refl true)
   have hforce := chip_lookup_sound_N (permOutOf A) (t.tf .poseidon2) hChip e.loc
     (quadCols blockBase octetBase q) (digestCols (keyCommitDigestCol dgBase q)) hlen hmem
   rw [digestCols_map, quadCols_eval] at hforce
@@ -651,9 +650,7 @@ theorem pubkeyCompressConstraints_force (A : List ℤ → Digest8) (hash : List 
   have hmem : (chipLookupTupleN (pubkeyNode8Inputs blockBase octetBase)
       (digestCols (pubkeyCompressDigestCol dgBase))).map (·.eval e.loc) ∈ t.tf .poseidon2 := by
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, pubkeyCompressLookup] using hlk
-  have hlen : (pubkeyNode8Inputs blockBase octetBase).length ≤ CHIP_RATE := by
-    simp [pubkeyNode8Inputs, List.length_append, List.length_map, List.length_finRange,
-      CHIP_RATE]
+  have hlen : ChipArityAdmitted (pubkeyNode8Inputs blockBase octetBase).length := of_decide_eq_true (Eq.refl true)
   have hforce := chip_lookup_sound_N (permOutOf A) (t.tf .poseidon2) hChip e.loc
     (pubkeyNode8Inputs blockBase octetBase) (digestCols (pubkeyCompressDigestCol dgBase))
     hlen hmem

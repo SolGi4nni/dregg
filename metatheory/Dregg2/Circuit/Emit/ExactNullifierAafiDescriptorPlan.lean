@@ -406,7 +406,7 @@ def lowNewLeafTail : List EmittedExpr := lowNewLeafPreimage.drop 20
 def sharedLeafPlan : List State16Step :=
   (chunks4 sharedLeafPrefix).mapIdx fun stage chunk =>
     ⟨absorbInputExpr LEAF_SHARED_STATE_BASE oldLeafPreimage.length stage chunk,
-      stateCols LEAF_SHARED_STATE_BASE stage⟩
+      stateCols LEAF_SHARED_STATE_BASE stage, by exact of_decide_eq_true (Eq.refl true)⟩
 
 def absorbAfterShared (tailBase stage : Nat) (chunk : List EmittedExpr) : List EmittedExpr :=
   let prior := if stage = 0 then (stateCols LEAF_SHARED_STATE_BASE 4).map .var
@@ -419,9 +419,9 @@ def absorbAfterShared (tailBase stage : Nat) (chunk : List EmittedExpr) : List E
 def leafTailPlan (tailBase : Nat) (tail : List EmittedExpr) : List State16Step :=
   let chunks := chunks4 tail
   let absorb := chunks.mapIdx fun stage chunk =>
-    ⟨absorbAfterShared tailBase stage chunk, stateCols tailBase stage⟩
+    ⟨absorbAfterShared tailBase stage chunk, stateCols tailBase stage, by exact of_decide_eq_true (Eq.refl true)⟩
   absorb ++ [⟨(stateCols tailBase (chunks.length - 1)).map .var,
-    stateCols tailBase chunks.length⟩]
+    stateCols tailBase chunks.length, by exact of_decide_eq_true (Eq.refl true)⟩]
 
 def oldLeafPlan : List State16Step := leafTailPlan OLD_LEAF_STATE_BASE oldLeafTail
 def lowNewLeafPlan : List State16Step :=
@@ -506,7 +506,7 @@ def v3PermutationSteps : List State16Step :=
 #guard v3PermutationSteps.all fun step => step.outputCols.length == 16
 
 def v3State16Lookup (step : State16Step) : VmConstraint2 :=
-  .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols⟩
+  .lookup ⟨poseidon2state16, chipLookupTupleState16 step.input step.outputCols step.width⟩
 
 def v3State16Lookups : List VmConstraint2 := v3PermutationSteps.map v3State16Lookup
 

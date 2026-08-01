@@ -32,7 +32,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv EFFECT_VM_WIDTH VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
   (Table TraceFamily Lookup VmConstraint2 EffectVmDescriptor2 ChipTableSoundN Satisfied2
-   chipLookupTupleN chip_lookup_sound_N CHIP_RATE)
+   chipLookupTupleN chip_lookup_sound_N CHIP_RATE ChipArityAdmitted)
 open Dregg2.Circuit.DeployedCapOpen
   (CapOpenCols DEPTH digestCols digestCols_map curCol nodeInputs nodeLookup nodeInputs_eval
    dirBoolGate dirBoolVal dir_zero_or_one rootPinGate pathOf8 groupVal)
@@ -120,8 +120,8 @@ theorem heapLeafDigest_sound8 (S8 : Heap8Scheme)
     (hChip : ChipTableSoundN (heapPermOut S8) (tf .poseidon2))
     (hcore : HeapMembershipCore tf c env) :
     groupVal env c.leafDigest = heapLeafDigest8 S8 (heapLeafTripleOf c env) := by
-  have hlen : (heapLeafInputs c).length ≤ CHIP_RATE := by
-    simp [heapLeafInputs, CHIP_RATE]
+  -- the IMT leaf absorb is 3 lanes: an admitted arity, and the spine is literal for any `c`.
+  have hlen : ChipArityAdmitted (heapLeafInputs c).length := of_decide_eq_true (Eq.refl true)
   have hmem : (chipLookupTupleN (heapLeafInputs c) (digestCols c.leafDigest)).map (·.eval env.loc)
       ∈ tf .poseidon2 := by
     have := hcore.leafHashed
@@ -148,8 +148,7 @@ theorem heapNode_sound8 (S8 : Heap8Scheme)
       = (if dirBoolVal c env lvl
           then heapNodeOf8 S8 (groupVal env (c.sib lvl)) (groupVal env (curCol c lvl))
           else heapNodeOf8 S8 (groupVal env (curCol c lvl)) (groupVal env (c.sib lvl))) := by
-  have hlen : (nodeInputs c lvl).length ≤ CHIP_RATE := by
-    simp [nodeInputs, List.length_append, List.length_map, List.length_finRange, CHIP_RATE]
+  have hlen : ChipArityAdmitted (nodeInputs c lvl).length := of_decide_eq_true (Eq.refl true)
   have hmem : (chipLookupTupleN (nodeInputs c lvl) (digestCols (c.node lvl))).map (·.eval env.loc)
       ∈ tf .poseidon2 := by
     have := hcore.nodeHashed lvl hlvl
