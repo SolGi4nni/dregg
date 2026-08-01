@@ -1,23 +1,28 @@
-//! Runtime-ingestion gate for the additive, unregistered FNSP-v3 exact-nullifier descriptor.
+//! Runtime-ingestion + BYTE-PIN gate for the exact-nullifier FNSP-v3 descriptor.
 //!
-//! The artifact remains deliberately outside `circuit/descriptors/`: this test does not register
-//! a selector, mint a verifier key, update provenance, or make the staged circuit deployable.  It
-//! closes the narrower seam that mattered immediately after Lean emission: the exact checked-in
-//! bytes decode through the production IR-v2 parser and retain their reviewed geometry and
-//! content-addressed identity.
+//! The artifact now lives at `circuit/descriptors/by-name/faithful-note-spend-exact-v3.json` —
+//! the ONE copy, emitted by `metatheory/EmitByName.lean` (which is in
+//! `scripts/emit_descriptors.py`'s `EMITTERS`) and covered by `PROVENANCE.json` +
+//! `check-descriptor-drift.sh`.  It is still not REGISTERED: no selector, no verifier key, no
+//! rotated-registry row.  What this test closes is the seam that mattered after emission — the
+//! exact checked-in bytes decode through the production IR-v2 parser and retain their reviewed
+//! geometry and content-addressed identity.
+//!
+//! ⚑ THIS FILE IS NOW THE SECOND SOURCE. Until 2026-07-31 a duplicate of the artifact sat under
+//! `circuit/staged-descriptors/fnsp-v3/`, produced by a dedicated emitter and staging script that
+//! were in NEITHER the driver's `EMITTERS` nor the routing gate's allowlist. The nine-lane flag
+//! day therefore moved the registry copy to `trace_width` 3804 and left the staged copy at 3760.
+//! The duplicate, its emitter and its script are deleted; the SHA pin below is what keeps this
+//! artifact honest against its emitter, and it is an INDEPENDENT source because it is reviewed
+//! and written down here rather than recomputed from the same file.
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, parse_vm_descriptor2};
 
-const STAGED_JSON: &[u8] = include_bytes!(
-    "../staged-descriptors/fnsp-v3/faithful-note-spend-exact-aafi-fns3-rotated-wide-state.json"
-);
+const STAGED_JSON: &[u8] =
+    include_bytes!("../descriptors/by-name/faithful-note-spend-exact-v3.json");
 const EXPECTED_NAME: &str = "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state";
-/// ⚑ ROTATED 2026-07-31 with the staged artifact itself. The nine-lane flag day re-emitted the
-/// registry copy of this member but not `circuit/staged-descriptors/fnsp-v3/`, so the two diverged
-/// at `trace_width` 3804 vs 3760 and this fingerprint went stale by omission. The repair was to
-/// re-run the emitter (`lake env lean --run metatheory/EmitExactNullifierAafiRotatedState.lean`)
-/// and install its stdout verbatim — the freshly emitted bytes are byte-identical to the registry
-/// copy, which is the property `descriptor_by_name`'s promotion tooth asserts.
+/// The reviewed SHA-256 of the Lean emission at the nine-lane geometry (`NUM_PRE_LIMBS = 184`,
+/// `WIDE_CARRIERS = 62`).  A descriptor byte change must update this deliberately.
 const EXPECTED_SHA256: &str = "df654baea5a922badb8cd287fda6955d30a931b940f221b80fed284b3b7fbfc5";
 const EXPECTED_TABLE_IDS: [usize; 5] = [0, 9, 1, 84, 85];
 const EXPECTED_TRACE_WIDTH: usize = 3804;

@@ -124,8 +124,8 @@ fn convert_turn_effects_to_vm_unchecked(
         // NOT on this wire (`circuit/tests/setfield_value8_epoch_flip.rs`): it exists only on the
         // bare 1-felt stratum (w=1692/pi=57) with NO wide and NO welded twin, while the live
         // accept set is wide+welded only (`sdk/src/full_turn_proof.rs` `collect_bound` over
-        // WIDE_REGISTRY_STAGED_TSV + WIDE_UMEM_WELD_REGISTRY_TSV, w=1601/1608, pi=66). Adopting
-        // it is an epoch, not a collect-set flip.
+        // WIDE_REGISTRY_STAGED_TSV plus the welded twins DERIVED from it, w=1601/1608, pi=66).
+        // Adopting it is an epoch, not a collect-set flip.
         fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
             dregg_circuit::effect_vm::field_limbs9(value)[0]
         }

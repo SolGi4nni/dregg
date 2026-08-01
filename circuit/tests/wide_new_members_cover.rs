@@ -769,27 +769,35 @@ fn fresh_fold_leaf_mints_and_proves_both_bodies() {
     }
 }
 
-/// **THE GEOMETRY VERSION BOUNDARY, POSITIVE ARM** — every committed wide member (the bare
-/// wide registry AND the welded registry) rides the LIVE v2 wide-carrier geometry: the
+/// **THE GEOMETRY VERSION BOUNDARY, POSITIVE ARM** — every deployed wide member (the bare wide
+/// registry AND the DERIVED welded set) rides the LIVE v2 wide-carrier geometry: the
 /// structural detector measures its BEFORE→AFTER commit-carrier block span as 480 (60
 /// carriers) and admits it at `WIDE_CARRIER_GEOMETRY_VERSION`.
 #[test]
 fn wide_registries_are_geometry_version_v2() {
     use dregg_circuit::effect_vm_descriptors::{
-        WIDE_CARRIER_GEOMETRY_VERSION, WIDE_UMEM_WELD_REGISTRY_TSV, wide_carrier_geometry_version,
+        WIDE_CARRIER_GEOMETRY_VERSION, welded_wide_members, wide_carrier_geometry_version,
     };
-    for (tsv, which) in [
-        (WIDE_REGISTRY_STAGED_TSV, "bare wide"),
-        (WIDE_UMEM_WELD_REGISTRY_TSV, "wide+umem welded"),
-    ] {
-        for line in tsv.lines().filter(|l| !l.is_empty()) {
+    let bare: Vec<(String, _)> = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
             let mut it = line.splitn(3, '\t');
             let key = it.next().expect("key");
             let _name = it.next();
             let json = it.next().expect("json");
             let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} parses: {e}"));
+            (key.to_string(), d)
+        })
+        .collect();
+    let welded: Vec<(String, _)> = welded_wide_members()
+        .into_iter()
+        .map(|(key, d)| (key.to_string(), d))
+        .collect();
+    for (set, which) in [(bare, "bare wide"), (welded, "wide+umem welded")] {
+        for (key, d) in &set {
             assert_eq!(
-                wide_carrier_geometry_version(&d),
+                wide_carrier_geometry_version(d),
                 Ok(WIDE_CARRIER_GEOMETRY_VERSION),
                 "{which} member {key} must ride the live v2 wide-carrier geometry"
             );

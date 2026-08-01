@@ -52,14 +52,22 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, parse_vm_descriptor2, producer_owned_width, read_cols, weld_owned_cols,
 };
 use dregg_circuit::effect_vm_descriptors::{
-    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, welded_wide_members,
 };
 
-fn registries() -> [(&'static str, &'static str); 3] {
-    [
-        ("v3", V3_STAGED_REGISTRY_TSV),
-        ("wide", WIDE_REGISTRY_STAGED_TSV),
-        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+/// The three deployed registries. The welded set is DERIVED (`welded_wide_members`: each bare wide
+/// member under the Lean-emitted weld contract row), not read from a committed TSV.
+fn registries() -> Vec<(&'static str, Vec<(String, EffectVmDescriptor2)>)> {
+    vec![
+        ("v3", members(V3_STAGED_REGISTRY_TSV).collect()),
+        ("wide", members(WIDE_REGISTRY_STAGED_TSV).collect()),
+        (
+            "welded",
+            welded_wide_members()
+                .into_iter()
+                .map(|(key, d)| (key.to_string(), d))
+                .collect(),
+        ),
     ]
 }
 
@@ -91,8 +99,8 @@ fn members(tsv: &str) -> impl Iterator<Item = (String, EffectVmDescriptor2)> + '
 #[test]
 fn the_surviving_pad_is_weld_owned_or_dead() {
     let (mut weld_cols, mut dead_cols, mut checked) = (0usize, 0usize, 0usize);
-    for (label, tsv) in registries() {
-        for (key, d) in members(tsv) {
+    for (label, set) in registries() {
+        for (key, d) in set {
             let need = producer_owned_width(&d);
             assert!(
                 need <= d.trace_width,
@@ -142,8 +150,8 @@ fn the_pad_is_neither_empty_nor_the_whole_row() {
     let mut with_pad = 0usize;
     let mut total = 0usize;
     let mut widest: (String, usize, usize) = (String::new(), 0, 0);
-    for (label, tsv) in registries() {
-        for (key, d) in members(tsv) {
+    for (label, set) in registries() {
+        for (key, d) in set {
             let need = producer_owned_width(&d);
             let pad = d.trace_width - need;
             assert!(
@@ -191,8 +199,8 @@ fn the_pad_is_neither_empty_nor_the_whole_row() {
 #[test]
 fn the_gentian_refuse_block_is_weld_owned() {
     let (mut welded, mut in_tail, mut above) = (0usize, 0usize, Vec::new());
-    for (label, tsv) in registries() {
-        for (key, d) in members(tsv) {
+    for (label, set) in registries() {
+        for (key, d) in set {
             if !d.name.contains("-gentian-deployed-bare-refuse") {
                 continue;
             }

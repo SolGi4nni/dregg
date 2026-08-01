@@ -48,7 +48,7 @@
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, VmConstraint2, WindowExpr, parse_vm_descriptor2,
 };
-use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
+use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, derive_welded_wide_member};
 use dregg_circuit::lean_descriptor_air::{HashInput, LeanExpr, VmConstraint};
 use dregg_circuit_prove::factory_leaf_adapter::FACTORY_CHILD_VK_CLAIM_LEN;
 use dregg_circuit_prove::ivc_turn_chain::{
@@ -62,20 +62,30 @@ use dregg_circuit_prove::membership_leaf_adapter::MEMBERSHIP_CLAIM_LEN;
 // Committed-bytes helpers (the same surface the LIGHT CLIENT resolves)
 // ============================================================================
 
-fn member(tsv: &str, wire: &str) -> EffectVmDescriptor2 {
-    let json = tsv
-        .lines()
-        .find_map(|line| {
-            let mut it = line.splitn(3, '\t');
-            if it.next() == Some(wire) {
-                let _display = it.next();
-                it.next()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| panic!("{wire} not in the staged wide registry"));
-    parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{wire} must parse: {e:?}"))
+/// The deployed member for `wire` in one of the two wide sets: `"wide"` is resolved out of the
+/// committed bare registry, `"welded"` is DERIVED (bare member + the Lean-emitted weld contract row),
+/// which is how every wire verifier now obtains it.
+fn member(registry: &str, wire: &str) -> EffectVmDescriptor2 {
+    match registry {
+        "welded" => derive_welded_wide_member(wire)
+            .unwrap_or_else(|| panic!("{wire} has no derived welded member")),
+        "wide" => {
+            let json = WIDE_REGISTRY_STAGED_TSV
+                .lines()
+                .find_map(|line| {
+                    let mut it = line.splitn(3, '\t');
+                    if it.next() == Some(wire) {
+                        let _display = it.next();
+                        it.next()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| panic!("{wire} not in the staged wide registry"));
+            parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{wire} must parse: {e:?}"))
+        }
+        other => panic!("unknown wide member set {other}"),
+    }
 }
 
 fn expr_cols(e: &LeanExpr, out: &mut Vec<usize>) {
@@ -233,19 +243,18 @@ const KNOWN_DEAD_SITES: &[Site] = &[
     ),
 ];
 
-const REGISTRIES: &[(&str, &str)] = &[
-    ("wide", WIDE_REGISTRY_STAGED_TSV),
-    ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
-];
+/// The two deployed wide member sets, by the label [`member`] resolves them under: the committed
+/// bare registry, and the DERIVED welded set.
+const REGISTRIES: &[&str] = &["wide", "welded"];
 
 /// **THE LIVENESS GATE.** Every claim slot a carrier fold arm reads by index must be PINNED on the
 /// committed bytes, and its column must be FORCED (read by a non-pin constraint) — otherwise the pin
 /// is one `dropUnforcedPins` will delete on the next emit, and the arm is one emit from dead.
 #[test]
 fn every_live_fold_claim_slot_is_pinned_and_forced() {
-    for (label, tsv) in REGISTRIES {
+    for label in REGISTRIES {
         for (name, key, lo, len) in LIVE_SITES {
-            let d = member(tsv, key);
+            let d = member(label, key);
             let forced = forced_cols(&d);
             assert!(
                 lo + len <= d.public_input_count,
@@ -283,9 +292,9 @@ fn every_live_fold_claim_slot_is_pinned_and_forced() {
 #[test]
 fn the_dead_fold_claim_slots_are_still_dead_and_named() {
     let mut report = Vec::new();
-    for (label, tsv) in REGISTRIES {
+    for label in REGISTRIES {
         for (name, key, lo, len) in KNOWN_DEAD_SITES {
-            let d = member(tsv, key);
+            let d = member(label, key);
             for k in *lo..lo + len {
                 assert!(
                     k < d.public_input_count,

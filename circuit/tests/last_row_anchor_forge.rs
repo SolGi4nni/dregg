@@ -120,7 +120,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
     transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
-use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
+use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, welded_wide_members};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
@@ -475,9 +475,10 @@ fn forge_after_balance_at_row(
 // 0. The structural read, MEASURED over the whole deployed registry
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// **INVERTED.** Across both deployed wide registries: how many members emit constraints that are
-/// live on the last row other than a `Last` boundary pin — a `Boundary`, or a whole-domain
-/// `WindowGate { on_transition: false }`.
+/// **INVERTED.** Across both deployed wide member sets — the bare wide registry and the DERIVED
+/// welded set (`welded_wide_members`, the bare members under the additive umem weld): how many
+/// members emit constraints that are live on the last row other than a `Last` boundary pin — a
+/// `Boundary`, or a whole-domain `WindowGate { on_transition: false }`.
 ///
 /// Before the repair this measured **1 of 57** (`refusalVmDescriptor2R24` alone). It now measures
 /// **57 of 57**, and additionally that ZERO transition-domain `Gate`s survive anywhere — the Lean
@@ -485,20 +486,30 @@ fn forge_after_balance_at_row(
 /// vacuous on the last row.
 #[test]
 fn deployed_members_all_carry_last_row_algebra() {
-    for (label, tsv) in [
-        ("WIDE_REGISTRY_STAGED_TSV", WIDE_REGISTRY_STAGED_TSV),
-        ("WIDE_UMEM_WELD_REGISTRY_TSV", WIDE_UMEM_WELD_REGISTRY_TSV),
+    let bare: Vec<(String, EffectVmDescriptor2)> = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.splitn(3, '\t');
+            let (Some(key), Some(_), Some(json)) = (it.next(), it.next(), it.next()) else {
+                return None;
+            };
+            let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} parses: {e}"));
+            Some((key.to_string(), d))
+        })
+        .collect();
+    let welded: Vec<(String, EffectVmDescriptor2)> = welded_wide_members()
+        .into_iter()
+        .map(|(key, d)| (key.to_string(), d))
+        .collect();
+    for (label, set) in [
+        ("WIDE_REGISTRY_STAGED_TSV", bare),
+        ("the DERIVED welded set", welded),
     ] {
         let mut total = 0usize;
         let mut uncovered: Vec<String> = Vec::new();
         let mut unhardened: Vec<(String, usize)> = Vec::new();
         let mut total_whole_domain = 0usize;
-        for line in tsv.lines() {
-            let mut it = line.splitn(3, '\t');
-            let (Some(key), Some(_), Some(json)) = (it.next(), it.next(), it.next()) else {
-                continue;
-            };
-            let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key} parses: {e}"));
+        for (key, d) in &set {
             total += 1;
             let has_last_row_algebra = d.constraints.iter().any(|k| {
                 matches!(k, VmConstraint2::Base(VmConstraint::Boundary { .. }))

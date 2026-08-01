@@ -73,9 +73,31 @@ use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, VmConstraint2, WindowExpr, parse_vm_descriptor2,
 };
 use dregg_circuit::effect_vm_descriptors::{
-    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, welded_wide_members,
 };
 use dregg_circuit::lean_descriptor_air::{HashInput, LeanExpr, VmConstraint, VmRow};
+
+/// The parsed members of a committed `key\tname\tjson` registry TSV.
+fn members(tsv: &str) -> Vec<(String, EffectVmDescriptor2)> {
+    tsv.lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let key = line.split('\t').next().expect("registry key").to_string();
+            let json = line.split('\t').nth(2).expect("member json");
+            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+            (key, d)
+        })
+        .collect()
+}
+
+/// The welded set, DERIVED from the bare wide registry plus the Lean-emitted weld contract
+/// (`welded_wide_members`) — there is no committed welded TSV.
+fn welded_members() -> Vec<(String, EffectVmDescriptor2)> {
+    welded_wide_members()
+        .into_iter()
+        .map(|(key, d)| (key.to_string(), d))
+        .collect()
+}
 
 /// The EffectVM state-block bases the offset-encoded `Transition { hi, lo }` reads through
 /// (`lean_descriptor_air::EFFECTVM_STATE_{BEFORE,AFTER}_BASE`, re-derived here so a layout move
@@ -238,7 +260,7 @@ struct Census {
     aware_only_detail: Vec<(String, VmRow, usize, usize)>,
 }
 
-fn census(tsv: &str) -> Census {
+fn census(set: &[(String, EffectVmDescriptor2)]) -> Census {
     let mut out = Census {
         members: 0,
         pins: 0,
@@ -247,14 +269,9 @@ fn census(tsv: &str) -> Census {
         blind_detail: Vec::new(),
         aware_only_detail: Vec::new(),
     };
-    for line in tsv.lines().filter(|l| !l.is_empty()) {
-        let mut it = line.split('\t');
-        let key = it.next().expect("registry key").to_string();
-        let _name = it.next().expect("member name");
-        let json = it.next().expect("member json");
-        let d = parse_vm_descriptor2(json).expect("deployed member parses");
+    for (key, d) in set {
         out.members += 1;
-        let reads = collect(&d);
+        let reads = collect(d);
         for c in &d.constraints {
             if let VmConstraint2::Base(VmConstraint::PiBinding { row, col, pi_index }) = c {
                 out.pins += 1;
@@ -290,9 +307,9 @@ fn census(tsv: &str) -> Census {
 /// whose residue is the legacy 1-felt state-commitment pins the row-blind subtraction cannot reach.
 #[test]
 fn unforced_pi_pin_census_is_pinned() {
-    let v3 = census(V3_STAGED_REGISTRY_TSV);
-    let wide = census(WIDE_REGISTRY_STAGED_TSV);
-    let welded = census(WIDE_UMEM_WELD_REGISTRY_TSV);
+    let v3 = census(&members(V3_STAGED_REGISTRY_TSV));
+    let wide = census(&members(WIDE_REGISTRY_STAGED_TSV));
+    let welded = census(&welded_members());
 
     // ONE comparison, so a drift shows every number at once instead of stopping at the first.
     // `blind` is the set the Lean-side `dropUnforcedPins` removes, and it is now ZERO in all three
@@ -447,16 +464,13 @@ fn unforced_pi_pin_census_is_pinned() {
 ///     left and `effect_vm_descriptors::custom_commit_version` must stop keying on pins entirely.
 #[test]
 fn proof_bind_is_the_only_reader_of_the_custom_exposure_columns() {
-    for (label, tsv) in [
-        ("v3", V3_STAGED_REGISTRY_TSV),
-        ("wide", WIDE_REGISTRY_STAGED_TSV),
-        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+    for (label, set) in [
+        ("v3", members(V3_STAGED_REGISTRY_TSV)),
+        ("wide", members(WIDE_REGISTRY_STAGED_TSV)),
+        ("welded", welded_members()),
     ] {
         let mut declaration_only: Vec<(String, usize, usize)> = Vec::new();
-        for line in tsv.lines().filter(|l| !l.is_empty()) {
-            let key = line.split('\t').next().expect("key").to_string();
-            let json = line.split('\t').nth(2).expect("member json");
-            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+        for (key, d) in &set {
             // `collect` folds a `ProofBind`'s commit/vk references into `loc_all` — exactly as
             // Lean's `forcedCols` does, which is the over-count under measurement. So take the
             // reference surface of the descriptor WITHOUT its proof-bind declarations: what is
@@ -538,15 +552,12 @@ fn published_slot_accounting_is_pinned() {
 /// ever double-pins a slot this goes red before the subtraction is trusted on it.
 #[test]
 fn pin_relation_is_injective_so_the_no_op_theorem_applies() {
-    for (label, tsv) in [
-        ("v3", V3_STAGED_REGISTRY_TSV),
-        ("wide", WIDE_REGISTRY_STAGED_TSV),
-        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+    for (label, set) in [
+        ("v3", members(V3_STAGED_REGISTRY_TSV)),
+        ("wide", members(WIDE_REGISTRY_STAGED_TSV)),
+        ("welded", welded_members()),
     ] {
-        for line in tsv.lines().filter(|l| !l.is_empty()) {
-            let key = line.split('\t').next().expect("key");
-            let json = line.split('\t').nth(2).expect("member json");
-            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+        for (key, d) in &set {
             let mut pairs: Vec<(usize, usize)> = Vec::new();
             for c in &d.constraints {
                 if let VmConstraint2::Base(VmConstraint::PiBinding { col, pi_index, .. }) = c {
@@ -585,15 +596,12 @@ fn pin_relation_is_injective_so_the_no_op_theorem_applies() {
 #[test]
 fn approved_handoffs_sentinel_is_pinned_by_no_member() {
     use dregg_circuit::effect_vm::pi::{APPROVED_HANDOFFS_BASE, APPROVED_HANDOFFS_LEN};
-    for (label, tsv) in [
-        ("v3", V3_STAGED_REGISTRY_TSV),
-        ("wide", WIDE_REGISTRY_STAGED_TSV),
-        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+    for (label, set) in [
+        ("v3", members(V3_STAGED_REGISTRY_TSV)),
+        ("wide", members(WIDE_REGISTRY_STAGED_TSV)),
+        ("welded", welded_members()),
     ] {
-        for line in tsv.lines().filter(|l| !l.is_empty()) {
-            let key = line.split('\t').next().expect("key");
-            let json = line.split('\t').nth(2).expect("member json");
-            let d = parse_vm_descriptor2(json).expect("deployed member parses");
+        for (key, d) in &set {
             for c in &d.constraints {
                 if let VmConstraint2::Base(VmConstraint::PiBinding { pi_index, .. }) = c {
                     assert!(

@@ -115,3 +115,6 @@ rhlp-web
 # BANDWIDTH budget and made the entire site undeployable. They are not shipped; the
 # site build generates a labeled placeholder wherever one is referenced.
 dregg-atlas/site/screenshots/
+
+# i think this comes from o1js
+.fullchain 

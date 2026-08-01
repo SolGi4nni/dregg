@@ -2058,9 +2058,9 @@ impl std::fmt::Display for UmemV2Error {
 impl std::error::Error for UmemV2Error {}
 
 /// The FIXED per-effect COHORT proving inputs: the single-domain width-7 rows + the real
-/// [`UMemBoundaryWitness`] the deployed-form FIXED cohort descriptor
-/// (`circuit/descriptors/umem-cohort-v1-staged-registry.tsv`, the Lean
-/// `EffectVmEmitUMemCohort.umemCohortRegistry`) consumes. A variable-shape AIR cannot back ONE
+/// [`UMemBoundaryWitness`] the deployed single-domain WELD consumes
+/// ([`dregg_circuit::effect_vm_descriptors::weld_umem_into_wide_descriptor`] — the `umemOp` the
+/// Lean `EffectVmEmitUMemCohort.umemCohortDesc` models). A variable-shape AIR cannot back ONE
 /// committed VK, so the deployed umem form is the FIXED cohort (per-effect, single-domain,
 /// width-7, ONE `umemOp` guarded at column 6); a real multi-effect / multi-cell turn proves as
 /// per-effect fixed-cohort legs (one per effect-touch), exactly as the deployed rotated prover

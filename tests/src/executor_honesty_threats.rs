@@ -1121,7 +1121,7 @@ fn cross_cutting_all_pi_fields_trace_bound() {
     // ⚑ THE REGISTRY THIS TEST WALKS IS NOT THE ONE THAT SHIPS. `V3_STAGED_REGISTRY_TSV`
     // is SUPERSEDED on the live wire (its own docstring says so): the WIDE flag-day
     // repointed the SDK, the executor's `verify_one_cohort_run` and node retention at
-    // `WIDE_REGISTRY_STAGED_TSV` / `WIDE_UMEM_WELD_REGISTRY_TSV`. The exemption sets
+    // `WIDE_REGISTRY_STAGED_TSV` and the welded twins derived from it. The exemption sets
     // above are therefore a freeze over the DEMONSTRATION floor. They happen to be
     // exactly right for the deployed registries too — measured, not assumed — and
     // `deployed_wide_registries_carry_the_same_pin_exemptions_and_the_wide_anchors`
@@ -1141,7 +1141,7 @@ fn cross_cutting_all_pi_fields_trace_bound() {
 ///
 /// `cross_cutting_all_pi_fields_trace_bound` walks `V3_STAGED_REGISTRY_TSV`, which is
 /// the superseded bare/narrow demonstration floor. The deployed wire iterates
-/// `WIDE_REGISTRY_STAGED_TSV` and `WIDE_UMEM_WELD_REGISTRY_TSV`. Measured 2026-07-27,
+/// `WIDE_REGISTRY_STAGED_TSV` and the DERIVED welded set. Measured 2026-07-27,
 /// the exemption sets are IDENTICAL across all three (9 setField members with no
 /// first-row v1 pin; 22 setField + cap-write members with no last-row v1 pin), so the
 /// gap is on the wire and not merely on the floor.
@@ -1173,9 +1173,7 @@ fn deployed_wide_registries_carry_the_same_pin_exemptions_and_the_wide_anchors()
     use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
     use dregg_circuit::effect_vm::pi;
     use dregg_circuit::effect_vm::trace_rotated::V1_PI_COUNT;
-    use dregg_circuit::effect_vm_descriptors::{
-        WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
-    };
+    use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, welded_wide_members};
     use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 
     // The same seven semantic pins as the bare-registry audit.
@@ -1194,24 +1192,35 @@ fn deployed_wide_registries_carry_the_same_pin_exemptions_and_the_wide_anchors()
     const NO_FIRST_ROW_V1_PIN: usize = 9;
     const NO_LAST_ROW_V1_PIN: usize = 22;
 
-    for (label, tsv) in [
-        ("WIDE_REGISTRY_STAGED_TSV", WIDE_REGISTRY_STAGED_TSV),
-        ("WIDE_UMEM_WELD_REGISTRY_TSV", WIDE_UMEM_WELD_REGISTRY_TSV),
-    ] {
-        let mut members = 0usize;
-        let mut no_first: Vec<String> = Vec::new();
-        let mut no_last: Vec<String> = Vec::new();
-        for line in tsv.lines() {
-            if line.is_empty() {
-                continue;
-            }
-            members += 1;
+    // The welded members are DERIVED (bare wide member + the Lean-emitted weld contract row); only
+    // the bare wide registry is a committed TSV.
+    let bare: Vec<(String, _)> = WIDE_REGISTRY_STAGED_TSV
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
             let mut it = line.splitn(3, '\t');
             let key = it.next().expect("tsv key");
             let _name = it.next().expect("tsv name");
             let json = it.next().expect("tsv json");
             let desc = parse_vm_descriptor2(json)
-                .unwrap_or_else(|e| panic!("{label} member {key} failed to parse: {e}"));
+                .unwrap_or_else(|e| panic!("wide member {key} failed to parse: {e}"));
+            (key.to_string(), desc)
+        })
+        .collect();
+    let welded: Vec<(String, _)> = welded_wide_members()
+        .into_iter()
+        .map(|(key, desc)| (key.to_string(), desc))
+        .collect();
+
+    for (label, set) in [
+        ("WIDE_REGISTRY_STAGED_TSV", bare),
+        ("the DERIVED welded set", welded),
+    ] {
+        let mut members = 0usize;
+        let mut no_first: Vec<String> = Vec::new();
+        let mut no_last: Vec<String> = Vec::new();
+        for (key, desc) in &set {
+            members += 1;
             let pc = desc.public_input_count;
 
             let mut v1: Vec<(VmRow, usize, usize)> = Vec::new();

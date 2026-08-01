@@ -16,7 +16,7 @@
 //! the depth-16 membership crown and FORBIDS the plain cap descriptor. So a welded cap-open proof could
 //! not executor-commit (the executor expected plain). The executor now ADDITIVELY resolves the bare
 //! cap-open + welded cap-open descriptors (`attenuateCapOpenEffVmDescriptor2R24` in
-//! `WIDE_REGISTRY_STAGED_TSV` / `WIDE_UMEM_WELD_REGISTRY_TSV`) BESIDE the plain member and verifies the
+//! `WIDE_REGISTRY_STAGED_TSV` and its DERIVED welded twin) BESIDE the plain member and verifies the
 //! proof against them with the SAME anchored dpis — the cap-open WIDE PI vector is PI-COUNT-IDENTICAL
 //! (62) to the plain wide cap vector (the crown adds trace columns, not PIs), so the reconstructed 8-felt
 //! anchors bind BYTE-IDENTICALLY. The executor's cap-effect verify surface now AGREES with the wire's.

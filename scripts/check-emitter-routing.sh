@@ -10,11 +10,18 @@
 # from a different red:
 #   * `circuit/tests/fixtures/{discharge,vault}-sat-v3-staged.json` went stale TWICE in two flag days
 #     (`EmitDischargeVaultSat.lean` — unrouted), and a lane regenerated them by hand both times.
-#   * `EmitExactNullifierAafiRotatedState.lean`'s 1274-constraint descriptor sits at
-#     `staged-unregistered-no-vk` while a census concluded the arity-17 exit "is registration, not
-#     authoring" — an artifact nothing re-emits.
+#   * `EmitExactNullifierAafiRotatedState.lean`'s 1274-constraint descriptor sat at
+#     `staged-unregistered-no-vk` — an artifact nothing re-emitted. ✅ RESOLVED 2026-07-31 by
+#     DELETION, not by routing: it was a SECOND producer of bytes `EmitByName.lean` (which IS in
+#     `EMITTERS`) already emits from the same Lean definition into
+#     `circuit/descriptors/by-name/faithful-note-spend-exact-v3.json`. The two copies had already
+#     diverged — the registry copy moved to `trace_width` 3804 while the staged copy and its
+#     bespoke `--check` pins stayed at 3760/1258 — and the divergence had rotted THREE runtime
+#     constants in `circuit-prove`, leaving `staged_descriptor()` returning `Err` and
+#     `relation_program_bytes()` PANICKING. Routing the duplicate would have kept two copies in
+#     step; deleting it left one.
 #   * A fields-nonet lane found `circuit/staged-descriptors/fnsp-v3/*` "had simply been omitted from
-#     the flag day".
+#     the flag day". Same artifact, same cause; that directory no longer exists.
 #
 # This gate does NOT force every emitter into the driver — several are genuinely one-shot goldens or
 # probes, and sweeping them in would run 28 emitters on every flag day. It forces each one to be
@@ -133,7 +140,6 @@ declare -A DIAGNOSED=(
   [EmitKimchiCellCommit.lean]="artifact bridge/mina-zkapp/src/generated/kimchi-cellcommit-b.json (2.2 MB) is committed and read by bridge/mina-zkapp/src/DreggCellCommitNative.ts. CheckKimchiCellCommit.lean gates the EMISSION, not the committed BYTES: scripts/check-kimchi-cellcommit.sh does not diff the artifact and is not in scripts/local-gates.sh. Re-emitted 2026-07-31: byte-identical today."
   [EmitKimchiIncNonce.lean]="artifact bridge/mina-zkapp/src/generated/kimchi-incnonce-b.json is committed and read by bridge/mina-zkapp/src/DreggIncNonceNative.ts. No regen script, no byte pin, no drift gate. Re-emitted 2026-07-31: byte-identical today."
   [EmitKimchiPoseidon2.lean]="artifact bridge/mina-zkapp/src/generated/kimchi-poseidon2-w16.json is committed and read by src/Poseidon2Native.ts:107; the emitter RUNS again as of the joinS repair (was: deep recursion at the interpreter, a non-tail-recursive hand-rolled join). Routing it needs emit_descriptors.py to learn a bridge/mina-zkapp destination — driver work, not an excuse."
-  [EmitExactNullifierAafiRotatedState.lean]="⚠ OWNED BY THE LIVE A2/A3 LANE — left deliberately unrouted and unexcused; that lane's call, not this gate's. Rotated geometry: traceWidth 3804, piCount 76, 1274 constraints. Its staging tool is scripts/emit-exact-nullifier-aafi-rotated-state.py."
 )
 
 routed=$(python3 - <<'PY'

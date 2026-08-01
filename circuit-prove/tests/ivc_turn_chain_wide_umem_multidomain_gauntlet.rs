@@ -238,6 +238,61 @@ fn multidomain_forged_post_commit_refused_per_verb() {
     }
 }
 
+/// **RE-MINTED 2026-07-31** from `sdk/tests/umem_cohort_multidomain_staged_gauntlet.rs::
+/// multidomain_note_spend_proves_and_bites` (deleted with the staged umem-cohort registries).
+/// That file was the ONLY place a forged umem `prev_val` was attacked on a MULTI-DOMAIN leg — this
+/// gauntlet's own tooth (`multidomain_forged_post_commit_refused_per_verb`) forges the 8-felt
+/// post-commit, not the memory-reconciliation witness. Here on the DEPLOYED-adjacent weld: a leg
+/// whose heap-domain op claims a `prev_val` the PRE projection does not carry cannot mint, because
+/// the multi-domain welded leg self-verifies against the REAL boundary before it is returned.
+#[test]
+fn multidomain_forged_umem_prev_val_refuses_to_mint() {
+    let gg = grow_gate_before();
+    let state = CellState::new(1000, 0);
+    let effects = vec![note_spend(7)];
+    let before_cell = producer_cell(1000, 0);
+    let after_cell = producer_cell(1007, 0);
+    let (pre, mut ops) = note_umem_touch(before_cell.clone(), 1000, 1007, 77);
+    // The honest touch mints (the control — so an `is_err` below is the FORGE biting, not the rig).
+    assert!(
+        mint_welded_wide_umem_multidomain_rotated_participant_leg(
+            &state,
+            &effects,
+            &before_cell,
+            &after_cell,
+            &dregg_circuit::heap_root::empty_heap_root_8(),
+            &dregg_circuit::heap_root::empty_heap_root_8(),
+            &[[1u8; 32], [2u8; 32]],
+            None,
+            &pre,
+            &ops,
+            Some(&gg),
+        )
+        .is_ok(),
+        "control: the HONEST two-domain touch mints + self-verifies"
+    );
+    // FORGE the heap-domain op's claimed prior image (the PRE projection carries 1000).
+    ops[0].prev_val = Some(UVal::Int(999_999));
+    let res = mint_welded_wide_umem_multidomain_rotated_participant_leg(
+        &state,
+        &effects,
+        &before_cell,
+        &after_cell,
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &[[1u8; 32], [2u8; 32]],
+        None,
+        &pre,
+        &ops,
+        Some(&gg),
+    );
+    assert!(
+        res.is_err(),
+        "a MULTI-DOMAIN welded leg whose heap op forges its prior image must NOT mint — the umem \
+         reconciliation binds the read image, not just the write"
+    );
+}
+
 /// A SINGLE-domain leg (only the heap balance credit, no nullifier) FAILS CLOSED on the multi-domain
 /// entry — it belongs on the single-domain wide+umem weld, not the two-domain one.
 #[test]

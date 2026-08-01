@@ -1,8 +1,9 @@
 //! # THE WIDE+UMEM WELD MATRIX GAUNTLET — per-MEMBER present/domain parity through the DEPLOYED path.
 //!
-//! The structural parity test (`effect_vm_descriptors::wide_umem_weld_registry_parity_and_no_narrowing`)
-//! checks `registry == weld(bare_wide)` byte-for-byte and `WIDE_UMEM_WELD_REGISTRY_FP`. It NEVER checks
-//! that the DEPLOYED welded PRODUCER's trace agrees with the registry member's declared umem shape — the
+//! The structural derivation test (`effect_vm_descriptors::wide_umem_weld_derivation_matches_the_lean_contract`)
+//! checks that each derived welded member equals `weld(bare_wide)` at the shape the Lean contract row pins
+//! (`UMEM_WELD_TABLE` / `UMEM_WELD_TABLE_FP`; there is no committed welded TSV any more). It NEVER checks
+//! that the DEPLOYED welded PRODUCER's trace agrees with the member's declared umem shape — the
 //! welded leg's DOMAIN. That gap let the 9th flip-refusal (`a5df2470`) through: `setPermsVmDescriptor2R24`
 //! / `setVKVmDescriptor2R24` declared umem domain 1 (heap), but the deployed welded producer emits a
 //! domain-2 (caps) leg — `SetPermissions` / `SetVerificationKey` move `UKey::Permissions` /
@@ -15,7 +16,7 @@
 //! GENUINELY applies the effect, derives the GENUINE projection-diff umem ops (NOT a decoupled
 //! placeholder — a decoupled op would mask exactly this bug), MINTS through the DEPLOYED welded producer
 //! (`prove_wide_umem_welded_staged`), and BINDS+VERIFIES the proof through the DEPLOYED wire verifier
-//! (`verify_effect_vm_rotated_with_cutover`) under that member's Lean-emitted welded twin — present/domain
+//! (`verify_effect_vm_rotated_with_cutover`) under that member's derived welded twin — present/domain
 //! parity on the wire, the thing the structural test omits.
 //!
 //! ## Coverage map (all 54 welded members accounted for — `matrix_enumerates_all_54`)
@@ -35,20 +36,21 @@
 //!   route is the WRITE wrapper (covered above).
 //! * **Grow-gate / value-balance members:** transfer (`wide_umem_weld_staged_gauntlet`), and the
 //!   grow-gate births (noteSpend/noteCreate/createCell/factory/spawn) — classified, the wide-twin set
-//!   pinned by the structural parity test; their welded twin's domain rides the same `weldUMemIntoWide`.
+//!   pinned by the structural derivation test; their welded twin's domain rides the same `weldUMemIntoWide`.
 //!
 //! ## STAGED / VK-RISK-FREE
 //! Purely additive: the welded WIDE descriptors + the opt-in welded prover; no deployed descriptor / VK /
 //! default prover touched, `umem_witness_enabled` untouched. Requires `prover`; self-skips otherwise.
 
 use dregg_cell::{Cell, CellMode, Ledger};
+use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
 use dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest;
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
-use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
+use dregg_circuit::effect_vm_descriptors::{UMEM_WELD_TABLE, derive_welded_wide_member};
 use dregg_circuit::field::BabyBear;
 use dregg_sdk::AgentCipherclerk;
 use dregg_sdk::full_turn_proof::{
-    prove_wide_umem_welded_staged, verify_effect_vm_rotated_with_cutover,
+    prove_wide_umem_welded_staged, verify_effect_vm_rotated_with_cutover, welded_descriptor_vk_hash,
 };
 use dregg_turn::rotation_witness as rw;
 use dregg_turn::umem::{UDomain, UKey, UmemKind, UmemOp, project_record_kernel_state};
@@ -79,37 +81,33 @@ fn ops_from_diff(
     ops
 }
 
-fn welded_member_json(key: &str) -> &'static str {
-    WIDE_UMEM_WELD_REGISTRY_TSV
-        .lines()
-        .find_map(|l| {
-            let mut it = l.splitn(3, '\t');
-            if it.next() == Some(key) {
-                let _name = it.next();
-                it.next()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| {
-            panic!("{key}: welded member present in the Lean-emitted welded registry")
-        })
+/// The deployed welded member for `key`, DERIVED (bare wide member + the Lean-emitted weld contract
+/// row) — the object every wire verifier now resolves.
+fn welded_member(key: &str) -> EffectVmDescriptor2 {
+    derive_welded_wide_member(key).unwrap_or_else(|| panic!("{key}: has a derived welded member"))
 }
 
+/// The vk_hash a welded leg binds: blake3 of the derived member's CANONICAL bytes (there is no
+/// committed welded JSON string to hash any more).
+fn welded_member_vk_hash(key: &str) -> [u8; 32] {
+    welded_descriptor_vk_hash(&welded_member(key)).expect("canonical welded descriptor bytes")
+}
+
+/// The umem domain the welded member DECLARES, read off its single `umem_op`.
 fn welded_member_declared_domain(key: &str) -> u32 {
-    let j = welded_member_json(key);
-    let idx = j
-        .find("umem_op")
+    let d = welded_member(key);
+    let mut domains = d.constraints.iter().filter_map(|c| match c {
+        VmConstraint2::UMemOp(spec) => Some(spec.domain),
+        _ => None,
+    });
+    let first = domains
+        .next()
         .unwrap_or_else(|| panic!("{key}: welded member declares a umem_op"));
-    let rest = &j[idx..];
-    let di = rest.find("\"domain\"").expect("umem_op has a domain");
-    rest[di + 8..]
-        .chars()
-        .skip_while(|c| !c.is_ascii_digit())
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .expect("domain is a number")
+    assert!(
+        domains.next().is_none(),
+        "{key}: the single-domain weld must declare exactly one umem_op"
+    );
+    first
 }
 
 /// A sovereign before-cell with open permissions, fixed pubkey, token keyed by `seed`.
@@ -235,7 +233,7 @@ fn mint_and_wire_verify(family: &str, registry_key: &str, fx: &RecordPinFixture)
     assert_eq!(
         leg_domains[0], declared,
         "[{family}] PRESENT/DOMAIN PARITY: the GENUINE producer leg touches domain {} but the committed \
-         welded registry member {registry_key} declares domain {declared} — a welded proof would bind NO \
+         welded member {registry_key} declares domain {declared} — a welded proof would bind NO \
          descriptor on the wire (the 9th flip-refusal class). Reconcile `wideKeyUMemDomain`.",
         leg_domains[0]
     );
@@ -259,7 +257,7 @@ fn mint_and_wire_verify(family: &str, registry_key: &str, fx: &RecordPinFixture)
     .unwrap_or_else(|e| panic!("[{family}] the welded WIDE+umem mint MUST prove: {e:?}"));
 
     let proof_bytes = postcard::to_allocvec(&welded_proof).expect("serialize welded proof");
-    let vk_hash: [u8; 32] = *blake3::hash(welded_member_json(registry_key).as_bytes()).as_bytes();
+    let vk_hash: [u8; 32] = welded_member_vk_hash(registry_key);
 
     // (b) GREEN through the deployed wire verifier under the welded twin.
     verify_effect_vm_rotated_with_cutover(&proof_bytes, &welded_dpis, &vk_hash).unwrap_or_else(
@@ -512,8 +510,7 @@ fn matrix_forbidden_plain_cap_is_wire_rejected() {
     )
     .expect("the PLAIN welded grant SELF-verifies (it carries no membership crown)");
     let proof_bytes = postcard::to_allocvec(&welded_proof).unwrap();
-    let vk_hash: [u8; 32] =
-        *blake3::hash(welded_member_json("grantCapVmDescriptor2R24").as_bytes()).as_bytes();
+    let vk_hash: [u8; 32] = welded_member_vk_hash("grantCapVmDescriptor2R24");
     let r = verify_effect_vm_rotated_with_cutover(&proof_bytes, &welded_dpis, &vk_hash);
     assert!(
         r.is_err(),
@@ -622,15 +619,12 @@ fn coverage_table() -> Vec<(&'static str, Lane)> {
 
 #[test]
 fn matrix_enumerates_all_57() {
-    let registry_keys: std::collections::BTreeSet<&str> = WIDE_UMEM_WELD_REGISTRY_TSV
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.split('\t').next().expect("key"))
-        .collect();
+    let registry_keys: std::collections::BTreeSet<&str> =
+        UMEM_WELD_TABLE.iter().map(|r| r.key).collect();
     assert_eq!(
         registry_keys.len(),
         57,
-        "the welded registry has exactly 57 members (the member-for-member cover of the bare wide registry)"
+        "the welded set has exactly 57 members (the member-for-member cover of the bare wide registry)"
     );
     let table = coverage_table();
     let table_keys: std::collections::BTreeSet<&str> = table.iter().map(|(k, _)| *k).collect();
@@ -650,7 +644,7 @@ fn matrix_enumerates_all_57() {
     for k in &table_keys {
         assert!(
             registry_keys.contains(k),
-            "coverage-table key {k} is not a welded registry member (stale entry)"
+            "coverage-table key {k} is not a welded member (stale entry)"
         );
     }
     assert_eq!(

@@ -25,8 +25,9 @@
 //! The destinations are the members the wire ACCEPTS (`DescriptorAuthorityClass::CrownedWriteRoute`):
 //! `attenuateCapOpenEffVmDescriptor2R24` (the embedded UPDATE-AT-KEY, wide 2021 / welded 2028) and
 //! `revokeCapabilityWriteCapOpenVmDescriptor2R24` (the TOMBSTONE remove, wide 2014 / welded 2021).
-//! Both were ALREADY committed, byte-for-byte, in `V3_STAGED_REGISTRY_TSV`,
-//! `WIDE_REGISTRY_STAGED_TSV` and `WIDE_UMEM_WELD_REGISTRY_TSV`. **Nothing re-emits; no VK rotates.**
+//! Both were ALREADY committed, byte-for-byte, in `V3_STAGED_REGISTRY_TSV` and
+//! `WIDE_REGISTRY_STAGED_TSV`, and their welded twins are DERIVED from the latter.
+//! **Nothing re-emits; no VK rotates.**
 //! The fix is Rust PRODUCER wiring: `dregg_circuit::effect_vm::trace_rotated::`
 //! `{cap_write_capopen_route, generate_rotated_cap_write_capopen_wide}` — the write-spine producer,
 //! promoted out of `circuit/tests/cap_open_write_prove_through.rs`'s test-local scaffolding into
@@ -44,7 +45,7 @@
 //!
 //!   * [`cap_write_family_mints_wide_welded_legs`] — each member's honest leg PROVES, its 8-felt
 //!     (~124-bit) commit MOVED (a genuine cap-tree write), and the proof light-client VERIFIES against
-//!     the descriptor **parsed back out of the committed welded registry** (the same grounding the
+//!     the descriptor **derived for the deployed welded member** (the same grounding the
 //!     chain fold's `admit_welded_leg` performs) — not merely "it minted".
 //!   * [`cap_write_revoke_history_folds`] — a multi-turn attenuate history folds through
 //!     `fold_wide_welded_umem_turn_chain_staged` on the 8-felt continuity + ordered digest.
@@ -59,14 +60,12 @@
 //! STAGED: nothing deployed — welded staged descriptors, no VK epoch, no deployed-default flip.
 
 use dregg_circuit::cap_root::CapLeaf;
-use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, parse_vm_descriptor2, verify_vm_descriptor2_with_config,
-};
+use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, verify_vm_descriptor2_with_config};
 use dregg_circuit::effect_vm::trace_rotated::{
     CapWriteWideWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG, cap_write_capopen_route,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
-use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
+use dregg_circuit::effect_vm_descriptors::derive_welded_wide_member;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, TurnChainError, fold_wide_welded_umem_turn_chain_staged, ir2_leaf_wrap_config,
@@ -214,30 +213,18 @@ fn finalized(leg: RotatedParticipantLeg) -> FinalizedTurn {
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
-/// The committed welded member for `key`, parsed back out of `WIDE_UMEM_WELD_REGISTRY_TSV` — the
-/// Lean-emitted `EffectVmEmitUMemWeldWide.weldedWideRegistry`. This is the SAME grounding the chain
-/// fold's `admit_welded_leg` performs (it requires byte-equality with a registry member and verifies
-/// against THAT), so verifying a leg's proof against this value is a genuine light-client accept of
-/// the COMMITTED member — not of whatever descriptor the producer happened to carry.
+/// The deployed welded member for `key`, DERIVED the way every verifier now obtains it
+/// (`derive_welded_wide_member`: the committed bare wide member under the Lean-emitted weld contract
+/// row). This is the SAME grounding the chain fold's `admit_welded_leg` performs (it requires
+/// byte-equality with the derived member and verifies against THAT), so verifying a leg's proof
+/// against this value is a genuine light-client accept of the DEPLOYED member — not of whatever
+/// descriptor the producer happened to carry.
 fn committed_welded_member(key: &str) -> EffectVmDescriptor2 {
-    let json = WIDE_UMEM_WELD_REGISTRY_TSV
-        .lines()
-        .find_map(|l| {
-            let mut it = l.splitn(3, '\t');
-            if it.next() == Some(key) {
-                let _display = it.next();
-                it.next()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| panic!("{key} not in WIDE_UMEM_WELD_REGISTRY_TSV"));
-    parse_vm_descriptor2(json)
-        .unwrap_or_else(|e| panic!("the committed welded member {key} must parse: {e}"))
+    derive_welded_wide_member(key).unwrap_or_else(|| panic!("{key} has no derived welded member"))
 }
 
 /// The full light-client leg: the minted proof must verify, under the recursion leaf-wrap config,
-/// against the descriptor PARSED OUT OF the committed welded registry for `key` — and the leg's own
+/// against the descriptor DERIVED for the deployed welded member `key` — and the leg's own
 /// carried descriptor must be byte-equal to it (the fold's grounding requirement).
 fn assert_light_client_verifies_committed(leg: &RotatedParticipantLeg, key: &str) {
     let committed = committed_welded_member(key);
@@ -328,7 +315,7 @@ fn cap_write_leads_route_to_the_committed_write_capopen_members() {
     let r = cap_write_capopen_route(&revoke_cap(ANCHOR_KEY))
         .expect("revokeCapability has a cap-open WRITE route");
     assert_eq!(r.key, REVOKE_CAP_KEY);
-    // And each key really is in the committed welded registry (the fold grounds against it).
+    // And each key really has a derived welded member (the fold grounds against it).
     let _ = committed_welded_member(ATTENUATE_KEY);
     let _ = committed_welded_member(REVOKE_CAP_KEY);
 }

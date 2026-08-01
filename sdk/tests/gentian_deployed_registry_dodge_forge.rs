@@ -4,15 +4,15 @@
 //! (`gentianDeployedBareRefuse`, `EffectVmEmitRotationV3Refused.v3RegistryRefused`) was welded onto the
 //! **V3 1-felt** cohort ONLY. But the DEPLOYED light-client verify path — the SDK wire verifier
 //! [`dregg_sdk::full_turn_proof::verify_effect_vm_rotated_with_cutover`] and the executor
-//! `verify_one_cohort_run` — resolves the **WIDE / WELDED** registries
-//! (`WIDE_REGISTRY_STAGED_TSV` + `WIDE_UMEM_WELD_REGISTRY_TSV`), so a declared-capacity cell settling via
-//! a plain BARE wide leg bound the (refuse-free) WIDE bare member and was ACCEPTED — the open dodge.
+//! `verify_one_cohort_run` — resolves the **WIDE / WELDED** members (`WIDE_REGISTRY_STAGED_TSV` plus
+//! the welded twins DERIVED from it), so a declared-capacity cell settling via a plain BARE wide leg
+//! bound the (refuse-free) WIDE bare member and was ACCEPTED — the open dodge.
 //!
 //! THE FIX (option a — the wide VK epoch): the capacity-floor refuse is now lifted to ride the WIDE /
 //! WELDED bare cohort too (`Dregg2.Deos.BareCohortFloorRefuseWide.gentianWideBareRefuse`, aux blocks PAST
 //! the wide member width; `declared_capacity_unsat_wide`), emitted onto exactly the 36 bare cohort
-//! members and regenerated into `WIDE_REGISTRY_STAGED_TSV` / `WIDE_UMEM_WELD_REGISTRY_TSV`. The Rust
-//! `fill_refuse_aux` fills the wide aux base (`trace_width − 3·REFUSE_STRIDE`).
+//! members and regenerated into `WIDE_REGISTRY_STAGED_TSV`, which the welded twins are derived from.
+//! The Rust `fill_refuse_aux` fills the wide aux base (`trace_width − 3·REFUSE_STRIDE`).
 //!
 //! THIS FORGE now DECIDES the flip: a cell whose caveat manifest DECLARES the escrow capacity (tag 17,
 //! folded into caveatCommit PI 45) and settles via a plain bare-cohort `Burn` is REJECTED by the deployed
@@ -36,7 +36,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
     generate_rotated_effect_vm_descriptor_and_trace_wide,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
-use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
+use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, derive_welded_wide_member};
 use dregg_circuit::field::BabyBear;
 use dregg_turn::rotation_witness as rw;
 
@@ -182,14 +182,15 @@ fn declared_capacity_dodge_verifies_through_deployed_lightclient() {
     // ---- 0. GROUND: the flip landed — the DEPLOYED WIDE + WELDED bare burn members now carry the
     // capacity-floor refuse (the registries the deployed LC actually resolves), not only V3. ----
     let wide_json = registry_json(WIDE_REGISTRY_STAGED_TSV, WIDE_BARE_MEMBER).unwrap();
-    let welded_json = registry_json(WIDE_UMEM_WELD_REGISTRY_TSV, WIDE_BARE_MEMBER).unwrap();
+    let welded_bare = derive_welded_wide_member(WIDE_BARE_MEMBER)
+        .expect("the bare burn member has a derived welded twin");
     assert!(
         wide_json.contains("gentian-deployed-bare-refuse"),
         "the deployed WIDE bare burn now carries the capacity-floor refuse (the flip is on the \
          deployed default registry)"
     );
     assert!(
-        welded_json.contains("gentian-deployed-bare-refuse"),
+        welded_bare.name.contains("gentian-deployed-bare-refuse") && refuse_width(&welded_bare) > 0,
         "the deployed WELDED bare burn carries the refuse too (the require_welded route is closed)"
     );
     let wide_bare = wide_desc(WIDE_BARE_MEMBER); // the refuse-welded deployed member

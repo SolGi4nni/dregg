@@ -20,7 +20,7 @@
 //! `OodEvaluationMismatch` was a SEPARATE witness inconsistency (a spurious Heap-domain nonce op made
 //! the projection diff multi-domain — the single-domain cohort fails closed). The genuine wall is the
 //! forbidden-plain-cap wire tooth. This prover routes through the cap-open WIDE descriptor and welds
-//! the caps leg onto THAT — the descriptor the welded registry carries a wire-accepted twin of
+//! the caps leg onto THAT — the descriptor the welded set carries a wire-accepted twin of
 //! (`attenuateCapOpenEffVmDescriptor2R24`, domain 2 / caps).
 //!
 //! ## What this proves
@@ -28,8 +28,8 @@
 //! 1. **CONTROL** — the welded WIDE cap-open descriptor proves a real attenuate turn (the membership
 //!    crown + the universal-memory CAPS reconciliation, one proof) and SELF-verifies.
 //! 2. **THE WIRE LEG (the 7th wall closed)** — the welded proof verifies through the DEPLOYED wire
-//!    verifier under the Lean-emitted welded-twin `attenuateCapOpenEffVmDescriptor2R24` member of
-//!    [`WIDE_UMEM_WELD_REGISTRY_TSV`] — a domain-2 member accepted as a STAGED form beside the bare.
+//!    verifier under the DERIVED welded twin of `attenuateCapOpenEffVmDescriptor2R24`
+//!    ([`derive_welded_wide_member`]) — a domain-2 member accepted as a STAGED form beside the bare.
 //! 3. **THE ~124-BIT BINDING TOOTH** — tampering one of the welded leg's last-16 PIs (a forged 8-felt
 //!    commit felt) makes the wire verifier REJECT (the wide carrier PiBindings ride the weld).
 //! 4. **THE vk_hash TOOTH** — a tampered welded-member vk_hash is rejected.
@@ -53,12 +53,12 @@ use dregg_circuit::effect_vm::trace_rotated::{
     CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
 };
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
-use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
+use dregg_circuit::effect_vm_descriptors::derive_welded_wide_member;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_sdk::full_turn_proof::{
     CapMembershipWitness, prove_cap_open_umem_welded_staged, prove_wide_umem_welded_staged,
-    verify_effect_vm_rotated_with_cutover,
+    verify_effect_vm_rotated_with_cutover, welded_descriptor_vk_hash,
 };
 use dregg_turn::rotation_witness as rw;
 use dregg_turn::umem::{UKey, UVal, UmemKind, UmemOp, project_record_kernel_state};
@@ -222,19 +222,10 @@ fn attenuate_fixture() -> (
     (initial, effects, before_w, after_w, cap, proj_pre, ops)
 }
 
-fn welded_member_json(key: &str) -> &'static str {
-    WIDE_UMEM_WELD_REGISTRY_TSV
-        .lines()
-        .find_map(|l| {
-            let mut it = l.splitn(3, '\t');
-            if it.next() == Some(key) {
-                let _name = it.next();
-                it.next()
-            } else {
-                None
-            }
-        })
-        .expect("welded member present in the Lean-emitted welded registry")
+/// The vk_hash a WELDED leg carries: blake3 of the DERIVED welded member's canonical bytes.
+fn welded_vk_hash(key: &str) -> [u8; 32] {
+    let desc = derive_welded_wide_member(key).expect("the welded member derives");
+    welded_descriptor_vk_hash(&desc).expect("canonical welded descriptor bytes")
 }
 
 #[test]
@@ -257,14 +248,13 @@ fn domain2_attenuate_cap_open_weld_proves_and_verifies_through_wire() {
     );
 
     // THE WIRE LEG (the 7th wall closed): the welded proof verifies through the DEPLOYED wire verifier
-    // under the Lean-emitted welded-twin `attenuateCapOpenEffVmDescriptor2R24` member — a wire-ACCEPTED
+    // under the DERIVED welded twin of `attenuateCapOpenEffVmDescriptor2R24` — a wire-ACCEPTED
     // (NOT forbidden-plain) cap-open descriptor that carries the in-circuit membership crown.
     let proof_bytes = postcard::to_allocvec(&welded_proof).expect("serialize welded cap-open leg");
-    let vk_hash: [u8; 32] =
-        *blake3::hash(welded_member_json(ATTENUATE_WELDED_KEY).as_bytes()).as_bytes();
+    let vk_hash: [u8; 32] = welded_vk_hash(ATTENUATE_WELDED_KEY);
     verify_effect_vm_rotated_with_cutover(&proof_bytes, &welded_dpis, &vk_hash).expect(
         "the welded WIDE cap-open attenuate proof MUST verify through the deployed wire verifier under \
-         the Lean-emitted welded-wide cap-open registry member (the staged DOMAIN-2 verifier leg)",
+         the derived welded-wide cap-open member (the staged DOMAIN-2 verifier leg)",
     );
 
     // THE ~124-BIT BINDING TOOTH on the WIRE: tampering a published 8-felt commit felt makes the wire
@@ -403,10 +393,9 @@ fn domain2_plain_cap_weld_is_wire_forbidden() {
     )
     .expect("the PLAIN welded grant SELF-verifies (it carries no membership crown)");
 
-    // The PLAIN grant welded twin exists in the registry — but the wire FORBIDS plain cap descriptors.
+    // The PLAIN grant's welded twin derives fine — but the wire FORBIDS plain cap descriptors.
     let proof_bytes = postcard::to_allocvec(&welded_proof).expect("serialize plain welded grant");
-    let vk_hash: [u8; 32] =
-        *blake3::hash(welded_member_json("grantCapVmDescriptor2R24").as_bytes()).as_bytes();
+    let vk_hash: [u8; 32] = welded_vk_hash("grantCapVmDescriptor2R24");
     let r = verify_effect_vm_rotated_with_cutover(&proof_bytes, &welded_dpis, &vk_hash);
     assert!(
         r.is_err(),

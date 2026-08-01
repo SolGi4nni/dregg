@@ -220,13 +220,13 @@ mod tests {
     fn equivalent_descriptor_json_encoding_keeps_the_same_vk_identity() {
         const HEADER: &str = concat!(
             "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",",
-            "\"ir\":2,\"trace_width\":3760,\"public_input_count\":76,"
+            "\"ir\":2,\"trace_width\":3804,\"public_input_count\":76,"
         );
         let body = identity::EXECUTABLE_DESCRIPTOR_JSON
             .strip_prefix(HEADER)
             .expect("recognized executable descriptor header");
         let alternate_json = format!(
-            "{{\n \"trace_width\": 3760, \"public_input_count\": 76, \
+            "{{\n \"trace_width\": 3804, \"public_input_count\": 76, \
              \"ir\": 2, \"name\": \"{}\", {body}\n",
             identity::PREDICATE_NAME
         );

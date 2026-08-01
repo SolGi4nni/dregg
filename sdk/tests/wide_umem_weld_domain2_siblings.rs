@@ -4,8 +4,8 @@
 //! [`executor_cap_open_welded_commit`] proved the FIRST domain-2 family (`AttenuateCapability`) through
 //! all three surfaces (producer mint · deployed wire verifier · `TurnExecutor::execute` commit). The
 //! remaining domain-2 cap families route — with the cell's full c-list threaded — to their WRITE-bearing
-//! cap-open wrapper, whose welded twin now lives in
-//! [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV):
+//! cap-open wrapper, whose welded twin is DERIVED by
+//! [`derive_welded_wide_member`](dregg_circuit::effect_vm_descriptors::derive_welded_wide_member):
 //!
 //!   * `GrantCapability` (delegate / grantCap)  → `delegateWriteCapOpenVmDescriptor2R24`
 //!   * `Introduce`                              → `introduceWriteCapOpenVmDescriptor2R24`
@@ -14,10 +14,10 @@
 //!   * `RevokeDelegation`                       → `revokeDelegationWriteCapOpenVmDescriptor2R24`
 //!
 //! were only ASSERTED mechanically-covered by the shared cap-open route. This gauntlet MINTS each one,
-//! WIRE-VERIFIES it through `verify_effect_vm_rotated_with_cutover` under its Lean-emitted welded twin,
+//! WIRE-VERIFIES it through `verify_effect_vm_rotated_with_cutover` under its derived welded twin,
 //! and COMMITS it through the DEPLOYED `TurnExecutor::execute`, with the ~124-bit anchor + vk_hash teeth
-//! biting on each surface. (`SpawnWithDelegation` has no welded twin in the registry — its cap-open is a
-//! live-only member — so it is naturally skipped.)
+//! biting on each surface. (`SpawnWithDelegation` has no welded twin — its cap-open is a live-only
+//! member — so it is naturally skipped.)
 //!
 //! ## The route these siblings take (vs attenuate)
 //!
@@ -28,7 +28,7 @@
 //! `revokeDelegationWriteCapOpen…`, …) are the §10 WRITE-bearing tail (`v3RegistryCapOpenWriteWide`):
 //! they DO carry proven WIDE twins (`cap_open_key_has_wide_twin` is true), but their WELDED twins were
 //! the missing verifier leg — so a welded WIDE write-route mint verified under NO cohort descriptor.
-//! This lane WELDS the §10 write tail into the Lean-emitted welded registry (the byte source
+//! This lane WELDS the §10 write tail into the welded set (the Lean contract source
 //! `EmitWideUMemWeldRegistryProbe.lean`, FP-pinned), so each sibling's genuine WRITE route — the
 //! `…WriteCapOpen…` wrapper whose `map_op` binds the post-cap-root on-the-wire (the depth-16 membership
 //! crown AND the cap-tree write both in-circuit, NOT host-trusted) — now resolves a welded twin and
@@ -46,12 +46,13 @@ use dregg_cell::{Cell, CellId, CellMode, Ledger};
 use dregg_circuit::cap_root::CapLeaf;
 use dregg_circuit::effect_vm::Effect as VmEffect;
 use dregg_circuit::effect_vm::trace_rotated::{CapOpenWitness, SIGNATURE_AUTH_TAG};
-use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
+use dregg_circuit::effect_vm_descriptors::derive_welded_wide_member;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
 use dregg_sdk::AgentCipherclerk;
 use dregg_sdk::full_turn_proof::{
     CapMembershipWitness, prove_cap_open_umem_welded_staged, verify_effect_vm_rotated_with_cutover,
+    welded_descriptor_vk_hash,
 };
 use dregg_turn::rotation_witness as rw;
 use dregg_turn::umem::{UKey, UmemKind, UmemOp, project_record_kernel_state};
@@ -129,19 +130,10 @@ fn proof_carrying_turn(
     }
 }
 
-fn welded_member_json(key: &str) -> &'static str {
-    WIDE_UMEM_WELD_REGISTRY_TSV
-        .lines()
-        .find_map(|l| {
-            let mut it = l.splitn(3, '\t');
-            if it.next() == Some(key) {
-                let _name = it.next();
-                it.next()
-            } else {
-                None
-            }
-        })
-        .expect("welded member present in the Lean-emitted welded registry")
+/// The vk_hash a WELDED leg carries: blake3 of the DERIVED welded member's canonical bytes.
+fn welded_vk_hash(key: &str) -> [u8; 32] {
+    let desc = derive_welded_wide_member(key).expect("the welded member derives");
+    welded_descriptor_vk_hash(&desc).expect("canonical welded descriptor bytes")
 }
 
 /// A BROAD honest cap leaf (`EFFECT_ALL` mask: `mask_lo = mask_hi = 0xFFFF`) the authority-crown
@@ -292,8 +284,8 @@ fn mint_wire_commit(
     let proof_bytes =
         postcard::to_allocvec(&welded_proof).expect("serialize welded cap-open proof");
 
-    // 2. WIRE-VERIFY through the deployed verifier under the Lean-emitted welded twin.
-    let vk_hash: [u8; 32] = *blake3::hash(welded_member_json(welded_key).as_bytes()).as_bytes();
+    // 2. WIRE-VERIFY through the deployed verifier under the derived welded twin.
+    let vk_hash: [u8; 32] = welded_vk_hash(welded_key);
     verify_effect_vm_rotated_with_cutover(&proof_bytes, &welded_dpis, &vk_hash).unwrap_or_else(|e| {
         panic!(
             "[{family}] the welded WIDE cap-open proof MUST verify through the deployed wire verifier \

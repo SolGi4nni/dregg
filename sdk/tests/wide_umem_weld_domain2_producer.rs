@@ -14,8 +14,8 @@
 //! 1. **THE WELDED ROUTE (the seam closed)** — a single-effect `AttenuateCapability` turn with a
 //!    consumed-cap membership witness AND a threaded CAPS umem witness mints, through
 //!    `prove_full_turn`, an `"effect-vm-rotated"` leg that verifies UNIQUELY through the deployed wire
-//!    verifier under the Lean-emitted welded-twin `attenuateCapOpenEffVmDescriptor2R24` member of
-//!    [`WIDE_UMEM_WELD_REGISTRY_TSV`]. The leg's vk_hash PINS the WELDED member (PANIC if it does not
+//!    verifier under the DERIVED welded twin of `attenuateCapOpenEffVmDescriptor2R24`
+//!    ([`derive_welded_wide_member`]). The leg's vk_hash PINS the WELDED member (PANIC if it does not
 //!    — a silent bare-fallback cannot hide).
 //! 2. **THE ~124-BIT BINDING TOOTH** — tampering one of the welded leg's last-16 PIs (a forged 8-felt
 //!    commit felt) makes the wire verifier REJECT.
@@ -30,10 +30,12 @@ use dregg_circuit::effect_vm::trace_rotated::{
     CapOpenWitness, FACET_MASK_HI, SIGNATURE_AUTH_TAG, WRITE_MASK_LO,
 };
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
-use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
+use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, derive_welded_wide_member};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
-use dregg_sdk::full_turn_proof::{CapMembershipWitness, verify_effect_vm_rotated_with_cutover};
+use dregg_sdk::full_turn_proof::{
+    CapMembershipWitness, verify_effect_vm_rotated_with_cutover, welded_descriptor_vk_hash,
+};
 use dregg_sdk::{FullTurnWitness, RotationTurnWitness, UmemWeldWitness, prove_full_turn};
 use dregg_turn::rotation_witness as rw;
 use dregg_turn::umem::{UProjection, UVal, UmemOp, project_diff_ops, project_record_kernel_state};
@@ -199,6 +201,13 @@ fn member_json(registry: &'static str, key: &str) -> &'static str {
         .expect("registry member present")
 }
 
+/// The vk_hash a WELDED leg carries: blake3 of the DERIVED welded member's canonical bytes (the
+/// welded set is derived from the bare wide registry, so there is no committed JSON to hash).
+fn welded_vk_hash(key: &str) -> [u8; 32] {
+    let desc = derive_welded_wide_member(key).expect("the welded member derives");
+    welded_descriptor_vk_hash(&desc).expect("canonical welded descriptor bytes")
+}
+
 /// The `"effect-vm-rotated"` leg of a composed full-turn proof: `(proof_bytes, pis, vk_hash)`.
 fn rotated_leg(proof: &dregg_sdk::FullTurnProof) -> (Vec<u8>, Vec<BabyBear>, [u8; 32]) {
     let leg = proof
@@ -240,9 +249,7 @@ fn domain2_producer_routes_welded_through_prove_full_turn() {
     // — this assertion makes that a LOUD failure).
     verify_effect_vm_rotated_with_cutover(&leg_bytes, &leg_pis, &leg_vk)
         .expect("the welded cap-open leg MUST verify through the deployed wire verifier");
-    let welded_vk: [u8; 32] =
-        *blake3::hash(member_json(WIDE_UMEM_WELD_REGISTRY_TSV, ATTENUATE_WELDED_KEY).as_bytes())
-            .as_bytes();
+    let welded_vk: [u8; 32] = welded_vk_hash(ATTENUATE_WELDED_KEY);
     assert_eq!(
         leg_vk, welded_vk,
         "PRODUCER SEAM: the routed leg MUST be the WELDED cap-open member (its vk_hash pins the \
@@ -277,9 +284,7 @@ fn domain2_producer_bare_control_is_unaffected() {
         leg_vk, bare_vk,
         "the no-witness control MUST pin the BARE wide member (deployed default unaffected)"
     );
-    let welded_vk: [u8; 32] =
-        *blake3::hash(member_json(WIDE_UMEM_WELD_REGISTRY_TSV, ATTENUATE_WELDED_KEY).as_bytes())
-            .as_bytes();
+    let welded_vk: [u8; 32] = welded_vk_hash(ATTENUATE_WELDED_KEY);
     assert_ne!(
         leg_vk, welded_vk,
         "the no-witness control must NOT have welded (the welded form is opt-in via the witness)"

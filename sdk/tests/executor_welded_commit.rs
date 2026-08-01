@@ -8,8 +8,8 @@
 //! under NO resolved descriptor and REJECT — the wire-breaking blocker that gated the umem flip.
 //!
 //! This test drives a GENUINE welded proof through the DEPLOYED `TurnExecutor::execute` path and
-//! asserts it COMMITS: the executor now ALSO resolves the welded twin from
-//! `WIDE_UMEM_WELD_REGISTRY_TSV` and accepts a welded proof against it (a UNIQUE-accept beside the
+//! asserts it COMMITS: the executor now ALSO resolves the DERIVED welded twin
+//! (`derive_welded_wide_member`) and accepts a welded proof against it (a UNIQUE-accept beside the
 //! bare member). It also asserts the BARE path still commits (the welded twin is PRESENT for a
 //! transfer key, yet a bare proof falls back to the bare member and the 8-felt anchors stay bound),
 //! and that the welded twin's 8-felt anchors bite (a tampered NEW commitment rejects).

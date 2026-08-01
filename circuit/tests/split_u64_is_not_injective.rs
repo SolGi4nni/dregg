@@ -6,11 +6,17 @@
 //! then reduces mod `p`. Both aliases are constructed below, so a future reader
 //! cannot re-acquire the false contract from the name.
 //!
-//! This is the encoder underneath HORIZONLOG A8: the committed note-accumulator leaf
-//! (`cell::commitment_set::CommitmentSet::accumulator_leaf`,
-//! `cell::nullifier_set::NullifierSet::accumulator_leaf`) carries `split_u64(value).0`
-//! ALONE, so its faithful domain is `[0, 2^30)` — and `param::NOTE_VALUE_HI`, the
-//! companion limb the trace generator writes on both note rows, is read by nothing.
+//! This is the encoder that was underneath HORIZONLOG A8. The committed note-accumulator leaf
+//! (`cell::{commitment_set::CommitmentSet, nullifier_set::NullifierSet}::accumulator_leaf`)
+//! carried `split_u64(value).0` ALONE, so its faithful domain was `[0, 2^30)`.
+//!
+//! ⚑ **THAT CONSUMER IS GONE, 2026-07-31.** Both accumulators' `root8` now commits the note
+//! value as four `u16` limbs (`2^64` on the nose) in the exact tagged linked leaf, and
+//! `accumulator_leaf` is deleted — see `turn/tests/note_value_alias_at_2_30_closed.rs`. The
+//! aliases below are still REAL and still pinned, because `split_u64` itself is unchanged and
+//! the in-circuit map-op still reads its low limb as `param::NOTE_VALUE_LO`. What moved is which
+//! objects fold through it: the signed consensus anchor no longer does. `param::NOTE_VALUE_HI`
+//! is still written by the trace generator on both note rows and still read by nothing.
 
 use dregg_circuit::effect_vm::split_u64;
 use dregg_circuit::field::BABYBEAR_P;

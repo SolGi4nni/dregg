@@ -85,7 +85,7 @@ Stage A step 4: stand up a sel4-root-task-with-std PD that hosts the already-bui
 
 THE DESKTOP IS THE LEDGER. The compositor is a thin renderer of verified cell+capability state; it adds NO new trust. Concretely, four layers, each built by SPECIALIZING primitives that already exist (the WELD method — census says the capability usually already exists, disconnected).
 
-(1) APP = CELL (exists today). Every app is a dregg cell in the embedded World (starbridge-v2/src/world.rs). Its authority is its c-list of CapabilityRefs; its observable state is its cell-forest; its history is its receipt chain. No new abstraction — an app is what a cell already is.
+(1) APP = CELL (exists today). Every app is a dregg cell in the embedded World (starbridge-v2/src/world/). Its authority is its c-list of CapabilityRefs; its observable state is its cell-forest; its history is its receipt chain. No new abstraction — an app is what a cell already is.
 
 (2) WINDOW = A CHILD CELL whose state holds a SURFACE, addressed by a SURFACE-CAPABILITY. Mirror Fuchsia's View/Viewport/ViewRef onto dregg with ZERO new kernel verbs:
   - View (the surface itself) := a 'surface-cell' — a child cell created by the app via a FactoryDescriptor ('the surface factory'). Its state slots carry the surface descriptor: a content-commitment (BLAKE3 root of the pixel buffer OR of a retained scene-graph / DOM), an intrinsic-size hint, and a damage/epoch counter. NOTE the executor enforces created cells are born ZERO-balance and factory-validated — so a surface-cell is a legitimate, provenance-carrying object, not an ambient handle.

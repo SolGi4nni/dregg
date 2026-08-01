@@ -28,7 +28,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::{
-    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, welded_wide_members,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::HeapLeaf;
@@ -431,17 +431,35 @@ fn row_local_body_is_a_structural_mirror_and_authors_nothing() {
     let mut whole_domain = 0usize;
     let mut two_row = 0usize;
     let mut gates = 0usize;
-    for (label, tsv) in [
-        ("V3_STAGED_REGISTRY_TSV", V3_STAGED_REGISTRY_TSV),
-        ("WIDE_REGISTRY_STAGED_TSV", WIDE_REGISTRY_STAGED_TSV),
-        ("WIDE_UMEM_WELD_REGISTRY_TSV", WIDE_UMEM_WELD_REGISTRY_TSV),
+    // The welded members are DERIVED from the bare wide registry + the Lean-emitted contract table,
+    // not read from a committed TSV; the other two registries are still committed files.
+    let from_tsv = |tsv: &'static str| -> Vec<(String, EffectVmDescriptor2)> {
+        tsv.lines()
+            .filter_map(|line| {
+                let mut it = line.splitn(3, '\t');
+                let (Some(key), Some(_), Some(json)) = (it.next(), it.next(), it.next()) else {
+                    return None;
+                };
+                let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key}: {e}"));
+                Some((key.to_string(), d))
+            })
+            .collect()
+    };
+    for (label, set) in [
+        ("V3_STAGED_REGISTRY_TSV", from_tsv(V3_STAGED_REGISTRY_TSV)),
+        (
+            "WIDE_REGISTRY_STAGED_TSV",
+            from_tsv(WIDE_REGISTRY_STAGED_TSV),
+        ),
+        (
+            "the DERIVED welded set",
+            welded_wide_members()
+                .into_iter()
+                .map(|(key, d)| (key.to_string(), d))
+                .collect(),
+        ),
     ] {
-        for line in tsv.lines() {
-            let mut it = line.splitn(3, '\t');
-            let (Some(key), Some(_), Some(json)) = (it.next(), it.next(), it.next()) else {
-                continue;
-            };
-            let d = parse_vm_descriptor2(json).unwrap_or_else(|e| panic!("{key}: {e}"));
+        for (key, d) in &set {
             for (i, k) in d.constraints.iter().enumerate() {
                 let got = dregg_circuit::descriptor_ir2::row_local_body(k);
                 match k {

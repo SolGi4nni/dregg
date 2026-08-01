@@ -57,9 +57,18 @@
 //!   * **56 of 57 take the pin**; `heapWrite` is skipped with `Δwidth = 0`, `Δconstraints = 0` —
 //!     this file's exemption list is exactly the emit's;
 //!   * `public_input_count` moves on **zero** members;
-//!   * `Δconstraints = +27` on 54 members (the designed budget), and `Δwidth` is +65/+53/+56/0 —
-//!     the block is 65 columns, and the members below it lose 9–12 more to the E1 kill-set because
-//!     the new LIVE columns raise `e1Ceiling`. That side effect is recorded, not smoothed.
+//!   * `Δconstraints = +27` on 54 members (the designed budget), +28 on `mint` and +33 on `custom`
+//!     — the budget plus the pins the free-pin closure brings back.
+//!   * ⚑ `Δwidth` was reported as +65/+53/+56/0, with the non-uniformity "recorded, not smoothed".
+//!     **Re-measured 2026-07-31 on an independent decoder: the non-uniformity is a DEFECT.** The
+//!     9–12 columns are the gentian refuse block's dead stride-tail, deleted because the pin lands
+//!     ABOVE that block and slides `EmitWideRegistryProbe.e1Ceiling` (`traceWidth − 3·REFUSE_STRIDE`)
+//!     65 columns up into it — on all 36 bare-cohort members and no others. The deployed producer
+//!     runs `compact_e1_columns` on the PRE-gentian row, so it then refuses fail-closed (`mint`:
+//!     "row width 1819 < E1 band end 1867"). Re-emitted with the ceiling also subtracting `EH_SPAN`:
+//!     **Δwidth is +65 uniformly on all 56 bindable members, 0 on `heapWrite`, and the emitted
+//!     `e1compact` kill-sets are byte-identical to the committed ones.** The real price is 65
+//!     columns / 27 constraints, flat. See `EffectVmEffectsHashPin.lean` §Cost ⚑⚑.
 //!   * ⚑⚑ **and the free-pin residue closes as a side effect.** `ehFreshCols` absorbs `prmCol 0..7`,
 //!     so every effect-parameter column becomes read by a chip lookup: wide-registry pins go
 //!     1628 → **1859**, row-local-free pins 6 → **0**, and the two `proof_bind`-only
@@ -67,6 +76,14 @@
 //!     `unforced_pi_pin_census.rs::proof_bind_is_the_only_reader_of_the_custom_exposure_columns`
 //!     names. `mintVmDescriptor2R24`'s mint-identity pin and six of `custom`'s octet limbs come
 //!     BACK, kept by the same unchanged `dropUnforcedPins` because their columns are now forced.
+//!     ⚑ CONFIRMED by re-measurement on a second decoder, 2026-07-31, and the restored pins are
+//!     named: `mint` PI 46 → col 68; `custom` PI 47,48,49 → cols 73,74,75 and PI 55,56,57 → cols
+//!     69,70,71. And the ANTI-VACUITY leg the closure needs: all **228** window pins across the 57
+//!     wide members (224 new + `heapWrite`'s 4 pre-existing) are in `forcedCols`, in
+//!     `forcedColsDenoting`, AND read by a chip lookup — FORCED, not declared. Every count here was
+//!     taken against a baseline emit that reproduced the committed
+//!     `rotation-wide-registry-staged.tsv` BYTE-IDENTICALLY, so the deltas are the pin's and not
+//!     drift's.
 //!     ⚠ Those two sibling tests must then flip too, and they must flip to "forced", never to an
 //!     exemption.
 //! ⚠ Whoever flips it must also flip `vk_epoch_misc_light_client_binding.rs`'s three
@@ -78,16 +95,24 @@
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2, parse_vm_descriptor2};
 use dregg_circuit::effect_vm::pi::{EFFECTS_HASH_BASE, EFFECTS_HASH_LEN};
 use dregg_circuit::effect_vm_descriptors::{
-    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+    V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, welded_wide_members,
 };
 use dregg_circuit::lean_descriptor_air::VmConstraint;
 
-/// The three deployed registries, by the label their emit driver uses.
-fn registries() -> [(&'static str, &'static str); 3] {
-    [
-        ("v3", V3_STAGED_REGISTRY_TSV),
-        ("wide", WIDE_REGISTRY_STAGED_TSV),
-        ("welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+/// The three deployed registries, by the label their emit driver uses. The welded set is DERIVED
+/// from the bare wide registry plus the Lean-emitted contract table (`welded_wide_members`), not
+/// read out of a committed TSV.
+fn registries() -> Vec<(&'static str, Vec<(String, EffectVmDescriptor2)>)> {
+    vec![
+        ("v3", members(V3_STAGED_REGISTRY_TSV).collect()),
+        ("wide", members(WIDE_REGISTRY_STAGED_TSV).collect()),
+        (
+            "welded",
+            welded_wide_members()
+                .into_iter()
+                .map(|(key, d)| (key.to_string(), d))
+                .collect(),
+        ),
     ]
 }
 
@@ -176,8 +201,8 @@ fn effects_hash_pi_window_bindability_is_pinned() {
     let mut total = 0usize;
     let mut bindable = 0usize;
     let mut refused: Vec<(String, String, NotBindable)> = Vec::new();
-    for (label, tsv) in registries() {
-        for (key, d) in members(tsv) {
+    for (label, ms) in registries() {
+        for (key, d) in ms {
             total += 1;
             match bindability(&d) {
                 None => bindable += 1,
@@ -250,8 +275,8 @@ fn effects_hash_pi_window_is_bound_by_nothing() {
     let mut bindable = 0usize;
     let mut bound = 0usize;
     let mut bound_detail: Vec<(String, String, usize, usize)> = Vec::new();
-    for (label, tsv) in registries() {
-        for (key, d) in members(tsv) {
+    for (label, ms) in registries() {
+        for (key, d) in ms {
             if bindability(&d).is_some() {
                 continue; // the three named exceptions; their window is a different claim
             }
@@ -286,8 +311,8 @@ fn effects_hash_pi_window_is_bound_by_nothing() {
 fn the_effects_hash_slots_are_published_by_every_bindable_member() {
     let w = window();
     let mut checked = 0usize;
-    for (label, tsv) in registries() {
-        for (key, d) in members(tsv) {
+    for (label, ms) in registries() {
+        for (key, d) in ms {
             if bindability(&d).is_some() {
                 continue;
             }
