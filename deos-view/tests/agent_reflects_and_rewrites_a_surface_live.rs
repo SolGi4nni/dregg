@@ -167,7 +167,7 @@ fn body() {
 
     let editor = editor_for(
         0xC0,
-        Requirement::Root,
+        AuthRequired::None,
         Requirement::AtLeast(Credential::Signature),
     );
     let agent_js = r#"
@@ -318,7 +318,7 @@ fn body() {
     // This panel's authoring requires Proof; the agent holds only Signature.
     let overreach_editor = editor_for(
         0xCD,
-        Requirement::AtLeast(Credential::Signature),
+        AuthRequired::Signature,
         Requirement::AtLeast(Credential::Proof),
     );
     let overreach_js = r#"

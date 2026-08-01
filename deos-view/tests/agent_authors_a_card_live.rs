@@ -142,7 +142,7 @@ fn body() {
 
     let editor = editor_for(
         0xC0,
-        Requirement::Root,
+        AuthRequired::None,
         Requirement::AtLeast(Credential::Signature),
     );
     // The agent's actual snippet — its hands rewriting its own card's UI:
@@ -293,7 +293,7 @@ fn body() {
     // `editView` returns null, no patch lands, no turn commits, the view is untouched.
     let overreach_editor = editor_for(
         0xCD,
-        Requirement::AtLeast(Credential::Signature),
+        AuthRequired::Signature,
         Requirement::AtLeast(Credential::Proof),
     );
     let overreach_js = r#"

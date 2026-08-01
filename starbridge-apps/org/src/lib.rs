@@ -733,7 +733,7 @@ mod tests {
 
         let receipt = fire_transfer(
             &app,
-            &OWNER_RIGHTS,
+            &AuthRequired::None,
             ctx.cipherclerk(),
             ctx.executor(),
             "dregg:bob",

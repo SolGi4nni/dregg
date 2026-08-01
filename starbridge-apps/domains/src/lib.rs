@@ -1058,7 +1058,7 @@ mod tests {
             .fields[VERIFICATION_STATE_SLOT as usize];
         assert_eq!(field_to_u64(&before), VerificationState::Pending.code());
 
-        let receipt = fire_verify(&app, &OWNER_RIGHTS, ctx.cipherclerk(), ctx.executor())
+        let receipt = fire_verify(&app, &AuthRequired::None, ctx.cipherclerk(), ctx.executor())
             .expect("the owner verifies through the gated fire");
         assert_ne!(receipt.turn_hash, [0u8; 32]);
 
