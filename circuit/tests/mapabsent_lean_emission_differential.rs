@@ -29,7 +29,8 @@
 
 use dregg_circuit::descriptor_ir2::{
     CHIP_OUT_LANES, EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness, VmConstraint2,
-    map_absent_rows_for, prove_vm_descriptor2, table_air_row_local_accepts, verify_vm_descriptor2,
+    WindowExpr, map_absent_rows_for, prove_vm_descriptor2, table_air_gates_accept,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 use dregg_circuit::field::BabyBear;
@@ -193,7 +194,7 @@ fn the_emitted_columns_round_trip_the_key_and_the_pointer() {
 
     // The deployed evaluator accepts the honest table.
     assert!(
-        table_air_row_local_accepts(&t, &rows),
+        table_air_gates_accept(&t, &rows),
         "the REAL `Ir2Air::LeanTable` evaluator must accept the prover's own honest rows"
     );
 }
@@ -222,7 +223,7 @@ fn every_gated_column_is_still_gated_after_the_cutover() {
     let rows = map_absent_rows_for(&absent_desc(), &absent_trace(&heap, key), &[heap.clone()])
         .expect("the deployed prover assembles a map-absent table");
     let t = map_absent_table_air();
-    assert!(table_air_row_local_accepts(&t, &rows), "honest baseline");
+    assert!(table_air_gates_accept(&t, &rows), "honest baseline");
 
     let real_ix = rows
         .iter()
@@ -239,7 +240,7 @@ fn every_gated_column_is_still_gated_after_the_cutover() {
         let caught = [1u32, 2u32].iter().any(|&d| {
             let mut mutated = rows.clone();
             mutated[real_ix][col] = mutated[real_ix][col] + BabyBear::new(d);
-            !table_air_row_local_accepts(&t, &mutated)
+            !table_air_gates_accept(&t, &mutated)
         });
         if caught {
             detected.push(col);
@@ -357,7 +358,7 @@ fn a_forged_bracket_is_refused_by_the_emitted_gates() {
     let t = map_absent_table_air();
     let rows = map_absent_rows_for(&absent_desc(), &absent_trace(&heap, key), &[heap.clone()])
         .expect("the deployed prover assembles a map-absent table");
-    assert!(table_air_row_local_accepts(&t, &rows), "honest baseline");
+    assert!(table_air_gates_accept(&t, &rows), "honest baseline");
 
     let real_ix = rows
         .iter()
@@ -370,7 +371,7 @@ fn a_forged_bracket_is_refused_by_the_emitted_gates() {
     let mut forged = rows.clone();
     forged[real_ix][MA_LO_NEXT] = forged[real_ix][MA_KEY];
     assert!(
-        !table_air_row_local_accepts(&t, &forged),
+        !table_air_gates_accept(&t, &forged),
         "the emitted `key < low_next` comparator must refuse a pointer that does not exceed the key"
     );
 
@@ -378,7 +379,7 @@ fn a_forged_bracket_is_refused_by_the_emitted_gates() {
     let mut forged_lo = rows.clone();
     forged_lo[real_ix][MA_LO_ADDR] = forged_lo[real_ix][MA_KEY];
     assert!(
-        !table_air_row_local_accepts(&t, &forged_lo),
+        !table_air_gates_accept(&t, &forged_lo),
         "the emitted `low_addr < key` comparator must refuse a low address equal to the key"
     );
 
@@ -386,7 +387,7 @@ fn a_forged_bracket_is_refused_by_the_emitted_gates() {
     let mut forged_root = rows.clone();
     forged_root[real_ix][9] = forged_root[real_ix][9] + BabyBear::ONE;
     assert!(
-        !table_air_row_local_accepts(&t, &forged_root),
+        !table_air_gates_accept(&t, &forged_root),
         "the emitted root-preservation gate must refuse a moved post-root"
     );
 }
@@ -461,7 +462,7 @@ fn the_cutover_did_not_half_widen_the_key() {
     let leaf = chip[0];
     assert_eq!(
         leaf.tuple[0],
-        LeanExpr::Const(HEAP_LEAF_ARITY as i64),
+        WindowExpr::Const(HEAP_LEAF_ARITY as i64),
         "the emitted leaf absorb is arity {HEAP_LEAF_ARITY} — the deployed narrow schema"
     );
     assert_eq!(HEAP_LEAF_ARITY, 3);
@@ -470,9 +471,9 @@ fn the_cutover_did_not_half_widen_the_key() {
     //     are adjacent single columns inside the SAME arity-3 preimage. If the address had been
     //     widened while the pointer had not, the tuple would read eight address lanes and one
     //     pointer lane; it reads one and one.
-    assert_eq!(leaf.tuple[1], LeanExpr::Var(MA_LO_ADDR));
-    assert_eq!(leaf.tuple[2], LeanExpr::Var(MA_LO_VALUE));
-    assert_eq!(leaf.tuple[3], LeanExpr::Var(MA_LO_NEXT));
+    assert_eq!(leaf.tuple[1], WindowExpr::Loc(MA_LO_ADDR));
+    assert_eq!(leaf.tuple[2], WindowExpr::Loc(MA_LO_VALUE));
+    assert_eq!(leaf.tuple[3], WindowExpr::Loc(MA_LO_NEXT));
     assert_eq!(
         MA_LO_NEXT - MA_LO_ADDR,
         2,
@@ -484,7 +485,7 @@ fn the_cutover_did_not_half_widen_the_key() {
     assert!(
         leaf.tuple[1..4]
             .iter()
-            .any(|e| *e == LeanExpr::Var(MA_LO_NEXT)),
+            .any(|e| *e == WindowExpr::Loc(MA_LO_NEXT)),
         "the IMT pointer must ride inside the leaf digest's preimage"
     );
 

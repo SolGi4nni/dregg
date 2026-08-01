@@ -53,23 +53,21 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MapAbsentTableEmit
 
-open Dregg2.Exec.CircuitEmit (EmittedExpr)
-open Dregg2.Circuit.TableAirIR (BusOp BusInteraction TableAir emitTableAirJson)
+open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
+open Dregg2.Circuit.TableAirIR
+  (BusOp BusInteraction TableAir TableGate emitTableAirJson
+   v k eSub eOneMinus gBool gAll decompGates decompQueries limbGeom decompCols)
 
 set_option autoImplicit false
 
-/-! ## §0 — Expression sugar (the shapes the deployed builder produces). -/
+/-! ## §0 — Expression sugar.
 
-/-- Column read. -/
-def v (c : Nat) : EmittedExpr := .var c
-/-- Field constant. -/
-def k (n : ℤ) : EmittedExpr := .const n
-/-- `a − b`, the standard encoding (there is no `sub` node). -/
-def eSub (a b : EmittedExpr) : EmittedExpr := .add a (.mul (.const (-1)) b)
-/-- `1 − e`. -/
-def eOneMinus (e : EmittedExpr) : EmittedExpr := eSub (k 1) e
-/-- The boolean gate body `c·(c − 1)` — the Rust `x * (x - ONE)`. -/
-def gBool (c : Nat) : EmittedExpr := .mul (v c) (.add (v c) (k (-1)))
+⚠ MOVED. `v`/`k`/`eSub`/`eOneMinus`/`gBool` and the byte-limb decomposition gadget
+(`decompGates`/`decompQueries`) were defined privately in this file in the first pass. They are
+now `TableAirIR`'s, because the second table to need them would otherwise have re-derived them —
+which is the drift the first pass named. `v c` is `WindowExpr.loc c` (this table is purely
+row-local, so `nxt` appears nowhere below) and the decomposition gadget is parameterised by bit
+width, instantiated here at `KEY_LO_BITS = 27`. -/
 
 /-! ## §1 — The deployed column layout.
 
@@ -94,11 +92,11 @@ def HI_BASE : ℤ := 134217728
 /-- `KEY_HI_MAX` = 15: `p − 1 = 15 · 2^27`. -/
 def HI_MAX : ℤ := 15
 /-- Full 4-bit limbs of a 27-bit value (`limb_geom(27).0`). -/
-def LIMBS : Nat := 7
+def LIMBS : Nat := (limbGeom LO_BITS).1
 /-- Bits in the partial top limb (`limb_geom(27).1`). -/
-def TOP_BITS : Nat := 3
+def TOP_BITS : Nat := (limbGeom LO_BITS).2
 /-- Columns one 27-bit decomposition costs (`decomp_cols(27)` = limbs + top bits). -/
-def DECOMP : Nat := LIMBS + TOP_BITS
+def DECOMP : Nat := decompCols LO_BITS
 /-- `MA_DECOMP_COLS` = `[hi4, lo27 limbs, is15, inv15]`. -/
 def CANON_COLS : Nat := 1 + DECOMP + 2
 /-- `MA_CMP_COLS` = `[s, dhi, dlo, dlo limbs]`. -/
@@ -152,42 +150,25 @@ def BUS_P2 : String := "ir2_p2"
 def BUS_BYTE : String := "ir2_byte"
 def BUS_MAP_LOG : String := "ir2_map_log"
 
-/-! ## §2 — The range/comparator gadgets, emitted.
+/-! ## §2 — The canonical-split / comparator gadgets, emitted.
 
-These are the Lean authors of `eval_decomp`, `eval_canon_decomp` and `eval_lex_lt`. They are
-parameterized by the column block so the same emitters serve the `MapOps` table when it follows
-`MapAbsent` off the hand-written path. -/
+These are the Lean authors of `eval_canon_decomp` and `eval_lex_lt`. The byte-limb
+decomposition they both sit on (`eval_decomp`) is `TableAirIR`'s shared `decompGates` /
+`decompQueries`, instantiated here at `LO_BITS = 27`; the memory tables instantiate the SAME
+emitter at 30. They are parameterized by the column block so the same emitters serve the
+`MapOps` table when it follows `MapAbsent` off the hand-written path. -/
 
-/-- `Σ_{i < 7} limb_i · 16^i`, left-associated exactly as the Rust `recomposed +=` loop
-accumulates it (starting from `0`). -/
-def recompose27 (limb0 : Nat) : EmittedExpr :=
-  (List.range LIMBS).foldl
-    (fun acc i => .add acc (.mul (v (limb0 + i)) (k (16 ^ i))))
-    (k 0)
+/-- The 27-bit decomposition GATES at `limb0` (the shared emitter, at this table's width). -/
+def dGates (ve : WindowExpr) (limb0 : Nat) : List WindowExpr := decompGates LO_BITS ve limb0
 
-/-- `Σ_{b < 3} bit_b · 2^b` over the partial top limb's bit columns, same accumulation. -/
-def topRecomp (limb0 : Nat) : EmittedExpr :=
-  (List.range TOP_BITS).foldl
-    (fun acc b => .add acc (.mul (v (limb0 + LIMBS + b)) (k (2 ^ b))))
-    (k 0)
-
-/-- The GATES of one 27-bit decomposition of `ve` over the 10-column block at `limb0`:
-three booleans on the top-limb bits, the top-limb recomposition, then the whole-value
-recomposition. Emission order is the Rust loop's. -/
-def decompGates (ve : EmittedExpr) (limb0 : Nat) : List EmittedExpr :=
-  (List.range TOP_BITS).map (fun b => gBool (limb0 + LIMBS + b)) ++
-  [ eSub (topRecomp limb0) (v (limb0 + LIMBS - 1))
-  , eSub (recompose27 limb0) ve ]
-
-/-- The byte-table QUERIES of one 27-bit decomposition: the six FULL limbs (the seventh is
-bit-decomposed instead, which is what makes the top bound tight). -/
-def decompQueries (limb0 : Nat) (mult : EmittedExpr) : List BusInteraction :=
-  (List.range (LIMBS - 1)).map (fun i => ⟨BUS_BYTE, .query, mult, [v (limb0 + i)]⟩)
+/-- The 27-bit decomposition byte QUERIES at `limb0`. -/
+def dQueries (limb0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+  decompQueries LO_BITS BUS_BYTE limb0 mult
 
 /-- `hi4` of a canonical-decomposition block. -/
-def canonHi (b0 : Nat) : EmittedExpr := v b0
+def canonHi (b0 : Nat) : WindowExpr := v b0
 /-- `lo27 = value − hi4 · 2^27`. -/
-def canonLo (ve : EmittedExpr) (b0 : Nat) : EmittedExpr :=
+def canonLo (ve : WindowExpr) (b0 : Nat) : WindowExpr :=
   eSub ve (.mul (v b0) (k HI_BASE))
 
 /-- The gates of one CANONICAL decomposition `value = hi4·2^27 + lo27` over the 13-column block
@@ -198,8 +179,8 @@ query and `lo27 ∈ [0, 2^27)` by the decomposition, `hi4 = 15` admits only `lo2
 representable value at the top nibble is `p − 1` — the non-canonical alias `x + p` of any small
 `x` is UNSAT. That is what makes the comparators in §2c integer-faithful rather than
 representative-dependent. -/
-def canonDecompGates (ve : EmittedExpr) (b0 : Nat) (gate : EmittedExpr) : List EmittedExpr :=
-  decompGates (canonLo ve b0) (b0 + 1) ++
+def canonDecompGates (ve : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List WindowExpr :=
+  dGates (canonLo ve b0) (b0 + 1) ++
   [ gBool (b0 + 1 + DECOMP)
   , .mul (eSub (v b0) (k HI_MAX)) (v (b0 + 1 + DECOMP))
   , eSub (.mul (eSub (v b0) (k HI_MAX)) (v (b0 + 2 + DECOMP)))
@@ -207,17 +188,17 @@ def canonDecompGates (ve : EmittedExpr) (b0 : Nat) (gate : EmittedExpr) : List E
   , .mul (v (b0 + 1 + DECOMP)) (canonLo ve b0) ]
 
 /-- The queries of one canonical decomposition: the `hi4` nibble, then the low limbs. -/
-def canonDecompQueries (b0 : Nat) (mult : EmittedExpr) : List BusInteraction :=
-  ⟨BUS_BYTE, .query, mult, [v b0]⟩ :: decompQueries (b0 + 1) mult
+def canonDecompQueries (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+  ⟨BUS_BYTE, .query, mult, [v b0]⟩ :: dQueries (b0 + 1) mult
 
 /-- The gates of one lexicographic STRICT-LT `a < b` over canonical `(hi, lo)` pairs, on the
 13-column block at `b0` = `[s, dhi, dlo, dlo limbs (10)]`, gated by `gate`.
 
 `s = 1` ⇒ `bHi ≥ aHi + 1` (witness `dhi`, a nibble); `s = 0` ⇒ `bHi = aHi` and
 `bLo ≥ aLo + 1` (witness `dlo`, 27-bit). -/
-def lexLtGates (aHi aLo bHi bLo : EmittedExpr) (b0 : Nat) (gate : EmittedExpr) :
-    List EmittedExpr :=
-  gBool b0 :: decompGates (v (b0 + 2)) (b0 + 3) ++
+def lexLtGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExpr) :
+    List WindowExpr :=
+  gBool b0 :: dGates (v (b0 + 2)) (b0 + 3) ++
   [ eSub (v (b0 + 1))
          (.mul (.mul gate (v b0)) (eSub (eSub bHi aHi) (k 1)))
   , .mul (.mul gate (eOneMinus (v b0))) (eSub bHi aHi)
@@ -225,23 +206,23 @@ def lexLtGates (aHi aLo bHi bLo : EmittedExpr) (b0 : Nat) (gate : EmittedExpr) :
          (.mul (.mul gate (eOneMinus (v b0))) (eSub (eSub bLo aLo) (k 1))) ]
 
 /-- The queries of one lex comparator: the `dhi` nibble, then the `dlo` limbs. -/
-def lexLtQueries (b0 : Nat) (mult : EmittedExpr) : List BusInteraction :=
-  ⟨BUS_BYTE, .query, mult, [v (b0 + 1)]⟩ :: decompQueries (b0 + 3) mult
+def lexLtQueries (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+  ⟨BUS_BYTE, .query, mult, [v (b0 + 1)]⟩ :: dQueries (b0 + 3) mult
 
 /-! ## §3 — The chip tuples. -/
 
 /-- The 8-felt group at `base`. -/
-def group8 (base : Nat) : List EmittedExpr := (List.range LANES).map (fun i => v (base + i))
+def group8 (base : Nat) : List WindowExpr := (List.range LANES).map (fun i => v (base + i))
 
 /-- The arity-3 IMT leaf absorb `[3, addr, value, next, 0×13, out0..7]` (25 wide). -/
-def leafTuple (addrC valC nextC leafC : Nat) : List EmittedExpr :=
+def leafTuple (addrC valC nextC leafC : Nat) : List WindowExpr :=
   k LEAF_ARITY :: v addrC :: v valC :: v nextC ::
   ((List.range (RATE - 3)).map (fun _ => k 0) ++ group8 leafC)
 
 /-- The arity-16 `node8` compression tuple `[16, L8, R8, out8]` (25 wide), with
 `L8 = (1−dir)·cur + dir·sib` and `R8 = (1−dir)·sib + dir·cur`. -/
-def node8Tuple (curBase sibBase outBase dirC : Nat) : List EmittedExpr :=
-  let d : EmittedExpr := v dirC
+def node8Tuple (curBase sibBase outBase dirC : Nat) : List WindowExpr :=
+  let d : WindowExpr := v dirC
   k NODE8_ARITY ::
   ((List.range LANES).map (fun i =>
       .add (.mul (eOneMinus d) (v (curBase + i))) (.mul d (v (sibBase + i)))) ++
@@ -260,16 +241,20 @@ def foldOut (lvl : Nat) : Nat :=
 
 /-- The 19-felt map-log tuple `[root8, key, value, op, new_root8]`. `.absent` carries the
 canonical value `0` and op code `2`. -/
-def mapLogTuple : List EmittedExpr :=
+def mapLogTuple : List WindowExpr :=
   group8 MA_ROOT ++ [v MA_KEY, k 0, k 2] ++ group8 MA_NEW_ROOT
 
 /-! ## §4 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : EmittedExpr := v MA_IS_REAL
+def gReal : WindowExpr := v MA_IS_REAL
 
-/-- The gate list, in the deleted Rust arm's emission order. -/
-def mapAbsentGates : List EmittedExpr :=
+/-- The gate BODIES, in the deleted Rust arm's emission order. ⚑ Every one is UNFILTERED
+(`RowSel.all`) — the deployed arm called `builder.assert_zero` directly, never a row filter,
+and this table reads no `nxt` column. That is what made it the one table portable against the
+first-pass IR, and `mapAbsent_is_row_local` below states it as a checkable claim rather than
+leaving it to this comment. -/
+def mapAbsentGateBodies : List WindowExpr :=
   -- (1) the row guard is boolean.
   gBool MA_IS_REAL ::
   -- (2) every direction bit is boolean.
@@ -288,6 +273,9 @@ def mapAbsentGates : List EmittedExpr :=
   lexLtGates (canonHi MA_K_DEC0) (canonLo (v MA_KEY) MA_K_DEC0)
              (canonHi MA_B_DEC0) (canonLo (v MA_LO_NEXT) MA_B_DEC0)
              MA_CMP_HI0 gReal
+
+/-- The gate list: every body unfiltered. -/
+def mapAbsentGates : List TableGate := mapAbsentGateBodies.map gAll
 
 /-- The bus interactions, in the deleted Rust arm's emission order. -/
 def mapAbsentInteractions : List BusInteraction :=
@@ -328,9 +316,21 @@ Counts derived from the layout, not transcribed: `1 + DEPTH + LANES + 3·9 + 2·
 #guard mapAbsentTable.busCountOn "ir2_p2" == 17
 #guard mapAbsentTable.busCountOn "ir2_map_log" == 1
 
+-- ⚑ SELECTOR + BUS-SIDE pins. Every gate is unfiltered and every chip/byte leg is a QUERY (this
+-- table serves nothing), so a re-emission that re-scopes a gate or flips a lookup side moves one
+-- of these rather than passing silently on the totals above.
+#guard mapAbsentTable.gateCountSel .all == 70
+#guard mapAbsentTable.gateCountSel .transition == 0
+#guard mapAbsentTable.gateCountSel .first == 0
+#guard mapAbsentTable.gateCountSel .last == 0
+#guard mapAbsentTable.busCountOp "ir2_byte" .query == 35
+#guard mapAbsentTable.busCountOp "ir2_byte" .provide == 0
+#guard mapAbsentTable.busCountOp "ir2_p2" .query == 17
+#guard mapAbsentTable.busCountOp "ir2_map_log" .receive == 1
+
 -- Each gadget's own contribution, so a regression names the gadget rather than the total.
-#guard (decompGates (v 0) 100).length == 5
-#guard (decompQueries 100 (k 1)).length == 6
+#guard (dGates (v 0) 100).length == 5
+#guard (dQueries 100 (k 1)).length == 6
 #guard (canonDecompGates (v 0) 100 (v 1)).length == 9
 #guard (canonDecompQueries 100 (k 1)).length == 7
 #guard (lexLtGates (v 0) (v 1) (v 2) (v 3) 100 (v 4)).length == 9
@@ -338,6 +338,16 @@ Counts derived from the layout, not transcribed: `1 + DEPTH + LANES + 3·9 + 2·
 #guard (leafTuple 1 2 3 4).length == 25
 #guard (node8Tuple 10 20 30 40).length == 25
 #guard mapLogTuple.length == 19
+
+/-- ⚑ **THE TABLE IS ROW-LOCAL**, stated rather than commented: every gate is unfiltered. With
+`TableGate.transition_weakens` (a `.transition` re-scope accepts strictly MORE) this is the
+claim a selector drift would have to break, and it is now checkable by `decide` instead of by
+reading 70 constructors. -/
+theorem mapAbsent_is_row_local : ∀ g ∈ mapAbsentTable.gates, g.sel = .all := by
+  intro g hg
+  simp only [mapAbsentTable, mapAbsentGates, List.mem_map] at hg
+  obtain ⟨_, _, rfl⟩ := hg
+  rfl
 
 /-- The fold really walks ONE path: level 0 reads the leaf, level `lvl+1` reads what level `lvl`
 wrote, and the last level writes the COMMITTED root. Stated as a chain equation so a
@@ -486,18 +496,15 @@ None of that is a reason to keep a Rust-authored AIR, which is why it is not why
 
 /-! ## §8 — The wire pin.
 
-⚠ **A NAMED SEAM, not a closed one.** `circuit/descriptors/table-airs/` is a NEW subdirectory of
-the descriptor set, and `scripts/emit_descriptors.py`'s `verify_provenance` walks `DESC.iterdir()`
-(top-level files) plus an explicit `by-name/` — so a third subdirectory is **invisible to the
-provenance stamp**. That is the same shape as the hole which let `by-name/predicate-arith.json`
-drift into a deployed forgery, and it is named here rather than left to be discovered.
+ⓘ **THE SEAM THE FIRST PASS NAMED IS CLOSED.** `scripts/emit_descriptors.py::verify_provenance`
+now DISCOVERS subdirectories (`5dab39664`) rather than walking `DESC.iterdir()` plus a hardcoded
+`by-name/`, so `circuit/descriptors/table-airs/` is stamped like everything else and
+`check-descriptor-drift.sh` covers it. The first pass filed this as the first item of the
+follow-up; it is done, and this paragraph is the record rather than a live warning.
 
-What DOES bind the artifact today, and it is not nothing: the emitted bytes are `include_bytes!`d
-into `faithful_note_spend_exact_v3_identity`'s AIR-shape source closure, so an edit to the artifact
-moves a COMPILED fingerprint. Plus the pins below, which fix the emission on the Lean side.
-
-Routing `EmitTableAirs.lean` into `emit_descriptors.py` (so `check-descriptor-drift.sh` covers the
-directory) is the remaining work, and it is the FIRST item of the follow-up, not a nice-to-have. -/
+What ALSO binds the artifact: the emitted bytes are `include_bytes!`d into
+`faithful_note_spend_exact_v3_identity`'s AIR-shape source closure, so an edit to the artifact
+moves a COMPILED fingerprint. Plus the pins below, which fix the emission on the Lean side. -/
 
 /-- The wire string the Rust interpreter ingests. -/
 def MAP_ABSENT_JSON : String := emitTableAirJson mapAbsentTable
@@ -505,15 +512,18 @@ def MAP_ABSENT_JSON : String := emitTableAirJson mapAbsentTable
 -- THE WIRE PIN. Byte LENGTH plus the structural `#guard`s in §5 (70 gates, 53 interactions in a
 -- fixed per-bus split, width 358): any edit to a gate body, a tuple, a multiplicity or an offset
 -- moves the length, and any edit to the SHAPE moves §5. A full byte golden is deliberately not
--- inlined — 79 KB of literal would dominate this file — so this is a pin, not an identity, and the
+-- inlined — 90 KB of literal would dominate this file — so this is a pin, not an identity, and the
 -- identity is the compiled `include_bytes!` closure named above.
--- (The checked-in artifact is these bytes plus ONE trailing newline — 79,348 on disk — which is
--- `by-name/`'s convention and which `JsonCursor` skips as whitespace.)
-#guard MAP_ABSENT_JSON.length == 79347
+-- ⚠ THIS NUMBER MOVED in the second pass: the gate grammar gained a `RowSel` wrapper
+-- (`{"sel":"all","body":…}`) and every leaf went `{"t":"var","v":c}` → `{"t":"loc","c":c}`, so the
+-- artifact re-emits. The ALGEBRA is byte-for-byte the same object; the ENCODING is not.
+-- (The checked-in artifact is these bytes plus ONE trailing newline, which is `by-name/`'s
+-- convention and which `JsonCursor` skips as whitespace.)
+#guard MAP_ABSENT_JSON.length == 80817
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin above
 while asserting nothing. -/
 theorem mapAbsentTable_is_not_empty : mapAbsentTable.gates ≠ [] := by
-  simp [mapAbsentTable, mapAbsentGates]
+  simp [mapAbsentTable, mapAbsentGates, mapAbsentGateBodies]
 
 end Dregg2.Circuit.Emit.MapAbsentTableEmit

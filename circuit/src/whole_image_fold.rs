@@ -532,7 +532,8 @@ pub fn verify_whole_image_fold_bound(
 // THE FLAT-MEMORY TWIN — the fold chip bound to the FLAT memory boundary table.
 //
 // The exact mirror of the universal-boundary binding above, for the FLAT memory boundary
-// (`Ir2Air::MemBoundary`, `descriptor_ir2::MemBoundaryWitness`, Lean's `(minit, mfin, maddrs)`).
+// (the Lean-emitted `dregg-ir2-mem-boundary-v1` table AIR, `descriptor_ir2::MemBoundaryWitness`,
+// Lean's `(minit, mfin, maddrs)`).
 // This closes the latent flat-`minit` hole: `setFieldDynVmDescriptor2` stores a cell's eight user
 // fields in FLAT memory at addresses `0..7`, so the seven UNtouched fields' committed values live
 // ONLY in the prover-chosen `minit` — an image the flat `MemBoundary` AIR never opens against a
@@ -548,7 +549,7 @@ pub fn verify_whole_image_fold_bound(
 // table at `(WIF_KEY) → WIF_VALUE`, claiming the init tuple `(WIF_VALUE, serial 0)`. Two deployed
 // teeth bite together:
 //
-//   * the address-closure lookup (`Ir2Air::MemBoundary` → `BUS_MEM_ADDRS` table_entry) forces
+//   * the address-closure lookup (the boundary table's `BUS_MEM_ADDRS` `.provide` leg) forces
 //     every folded `WIF_KEY` to be a DECLARED boundary address — a fold row over an address the
 //     boundary never declared has no `table_entry` to balance and REFUSES (`memClosed`);
 //   * the Blum balance (`BUS_MEM_CHECK`: the boundary SENDS each declared init cell

@@ -967,7 +967,13 @@ const BASELINE: &[(&str, usize)] = &[
     // dregg-ir2-map-absent-v1.json`) instead of authoring the algebra. This is the direction of
     // the law; the row moves DOWN with it so the retired algebra cannot quietly come back.
     // `circuit/src/table_air.rs`, the new decoder, scores ZERO and therefore has no row at all.
-    ("circuit/src/descriptor_ir2.rs", 285),
+    // LOWERED 285 -> 281 on 2026-08-01 (same day, second pass): the `Ir2Air::ByteTable` arm — the
+    // shared `[0,16)` limb table every range check in IR-v2 bottoms out in — was DELETED and
+    // replaced by a second `Ir2Air::LeanTable` instance (`Dregg2/Circuit/Emit/ByteTableEmit.lean`
+    // -> `circuit/descriptors/table-airs/dregg-ir2-byte-v1.json`). The arm's two filtered
+    // `assert_zero`s and its `table_entry` leg are gone; the interpreter gained a `RowSel` factor
+    // and a `BusOp::Provide` case, which are lowering, not authoring.
+    ("circuit/src/descriptor_ir2.rs", 281),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

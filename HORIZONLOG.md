@@ -1,5 +1,117 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 1 (second pass) — the table-AIR tool could only say ROW-LOCAL, and that is why exactly ONE of the shared tables had moved
+
+`5ea421361` built `TableAir` and ported `Ir2Air::MapAbsent`, then named "seven remain". **The
+reason none of the seven followed was not effort: the IR could not express them.** Every remaining
+shared table is a SORTED or COUNTED table whose content is a relation between ADJACENT rows under a
+p3 row filter, and the first-pass `TableAir` had no selector, no next-row leaf, and no
+`table_entry`. Map-absent moved first because it is the ONLY purely row-local one of the set —
+which reads as a lucky ordering and was actually the whole constraint.
+
+⚠ **AND THE COUNT WAS WRONG. It is ELEVEN hand-written shared-table arms, not eight.** The
+first-pass doc enumerated `{Chip, ByteTable, Memory, MemBoundary, MapOps, MapAbsent, UMemory,
+UMemBoundary}` and omitted three that are equally hand-written: **`ChipState16`** (shares the Chip
+arm body), **`UMemBoundaryCohort`** (a width-9 single-row specialization with its own ~60 lines),
+and **`ExactPublicTable`**. Counted at source rather than relayed: 12 `Ir2Air` arms, one of which
+(`Main`) is the descriptor interpreter. So the burn-down is 3 done / 8 left, not 1 / 7.
+
+**THE TOOL, EXTENDED** (`Dregg2/Circuit/TableAirIR.lean`). Three additions, all three of which
+appear in the four lines of the byte-table arm:
+
+* **`RowSel`** — `.all | .first | .last | .transition`, the four p3 filters and no fifth. A gate is
+  now `⟨sel, body⟩`. `TableGate.transition_weakens` proves the direction that matters: re-scoping
+  `.all → .transition` accepts STRICTLY more and leaves the algebra byte-identical, so a selector
+  drift is invisible to any check that reads the body alone. `transition_strictly_weaker` exhibits
+  the row where they differ.
+* **`WindowExpr` in place of `EmittedExpr`** — the `nxt c` leaf the main IR already had for
+  `windowGate`, reused rather than reinvented. ⚠ **The decoder REFUSES an `.all`- or `.last`-scoped
+  `nxt`**: on the last row p3's `next` is the WRAP row, and that shape is a constraint between the
+  final row and the first, which no sorted table means.
+* **`BusOp.provide`** (`LookupBus::table_entry`) — the SERVING side of a lookup bus, which differs
+  from `.query` by the sign of the count AND by `count_weight`. A table that queries what it should
+  serve makes the bus unsatisfiable in one direction and vacuous in the other, with no gate
+  involved and therefore nothing a mutation sweep could see. Both new tables pin their side.
+* **`Coherent`** — and the honest one. `TableAir.Holds` quantifies over a `List VmRowEnv` whose
+  `nxt` fields are UNCONSTRAINED, so before this every cross-row theorem would have been about a
+  machine that does not exist. `Coherent rows` says `rows[i].nxt = rows[i+1].loc`, stated
+  separately so a proof that forgets it fails to apply rather than silently quantifying over
+  incoherent traces.
+
+**LANDED — two more arms DELETED.**
+
+* **`Ir2Air::ByteTable`** → `Emit/ByteTableEmit.lean` → `table-airs/dregg-ir2-byte-v1.json`. Two
+  columns, and every range check in IR-v2 bottoms out in it: `eval_decomp` splits a value into
+  4-bit limbs and queries each full limb here, so "this felt is 30 bits wide" MEANS "its limbs are
+  rows of this table".
+* **`Ir2Air::MemBoundary`** → `Emit/MemBoundaryTableEmit.lean` → `dregg-ir2-mem-boundary-v1.json`.
+  12 gates, 17 interactions, width 28, every count derived from the layout and `#guard`-pinned.
+
+⚑ **TWO COMMENT-ONLY CLAIMS BECAME THEOREMS, and both of them have a FALSE pole that is the
+interesting half.**
+
+1. `BYTE_TABLE_HEIGHT` says "the table AIR forces `value = row index`, so its committed HEIGHT is
+   its value range". `value_is_the_row_index` proves the first clause (under `Coherent`), and
+   `served_key_is_canonical` gives it in `[0, p)` so the served key set is exactly `[0, n)`. Then
+   **`gates_admit_every_height` proves the AIR does NOT bound `n`** — the increment trace of ANY
+   length satisfies every gate. So a 32-row byte table serving `[0, 32)`, which widens every limb
+   in the system from 4 bits to 5, passes this AIR exactly as the deployed 16-row one does, and
+   `verify_vm_descriptor2`'s separate height pin is the ONLY thing that refuses it. A soundness
+   story that stopped at half one would read as "the table cannot lie", and it can — about its
+   size.
+2. `MemBoundary` says "strictly increasing declared addresses (⇒ Nodup)" and, in a parenthesis,
+   "address magnitude bound (so the increasing chain cannot wrap the field)".
+   `addrs_distinct_as_felts` proves the form `Nodup` has to take — distinct MOD `p`, because the
+   lookup and the multiset compare FELTS — and then
+   **`wrap_witness_without_the_magnitude_bound` exhibits the attack the parenthesis names**: a
+   three-row witness with addresses `0 → 2^30 → p`, gap gate satisfied at EVERY step, both gaps
+   inside `[0, 2^30)`, whose first and last declared addresses are THE SAME FELT. So
+   `addr_strictMono` is true and does NOT imply `Nodup`; the magnitude gate is what buys it.
+
+**MEASURED, per table, at the deployed prover.** `byte_lean_emission_differential.rs` (6/6) and
+`memboundary_lean_emission_differential.rs` (6/6): the columns ROUND-TRIP out of the prover's own
+`build_traces` output; a per-CELL mutation sweep through the REAL deployed evaluator pins the
+undetected set **exactly** rather than bounding it; each forged shape is refused with the gate
+named; an honest witness proves and verifies. `ir2_degree_budget` is UNCHANGED for `byte` and
+`boundary`. ⚠ Same resolution as the first pass: *algebraically equal in the same order*, not
+byte-identical symbolic trees.
+
+⚠ **AND THE SWEEP FOUND A RESIDUAL, which is reported rather than glossed.** The memory boundary's
+undetected set is not only the bus-bound columns: it contains `(pad row, MB_ADDR)` for **every one
+of the five pad rows**. A pad row's address is bound by NOTHING in this table — `achk = 0·addr = 0`
+says nothing, and the gap gate that would compare it to its predecessor is itself gated by
+`next.is_real = 0`. `MB_ADDR_MULT`, the count the served `ir2_mem_addrs` leg rides at, is bound by
+no gate on ANY row. What contains it is the `ir2_mem_check` Blum multiset in a DIFFERENT AIR (an op
+at an address with no real boundary row has no serial-0 init send to consume), which is a
+containment argument about another object and is written down in `MemBoundaryTableEmit.lean` §4c
+because a reader of this table alone would not find it.
+
+**A FAIL-OPEN CLOSED IN THE SAME COMMIT.** `faithful_note_spend_exact_v3_identity`'s AIR and
+verifier source closures named the map-absent artifact and nothing else, so the byte and
+memory-boundary constraints — now live on the batch — sat in JSON the fingerprint did not cover.
+Both are added, and `the_air_closure_covers_every_emitted_table_air_artifact` reads the
+DIRECTORY so the fourth table cannot be forgotten the way the second and third nearly were.
+
+**THE FLAG DAY.** The table-air WIRE FORMAT changed: gates are now `{"sel":…,"body":…}` and every
+leaf went `{"t":"var","v":c}` → `{"t":"loc","c":c}`. **`dregg-ir2-map-absent-v1.json` re-emits**
+(79,347 → 80,817 bytes) with its ALGEBRA unchanged and its ENCODING different. A table-air JSON in
+the old grammar now REFUSES to load (`unknown window expr tag "var"`), as does one whose `sel` tag
+is unknown or whose `nxt` sits outside `.transition`/`.first`. `air_fingerprint()` moves — treat
+pre-cutover proof identities as non-interoperable. No `circuit/descriptors/*.json` changed; schema
+epoch UNCHANGED at 20. `law1`'s `descriptor_ir2.rs` row moves 285 → 281.
+`table_air_row_local_accepts` is RENAMED to `table_air_gates_accept`: the split it draws is
+gates-vs-buses, and "row-local" stopped being true of table AIRs the moment one could read `nxt`.
+
+**WHAT REMAINS — 8, in the order the tool makes them reachable.** `Memory` (~75 lines; same
+vocabulary as the boundary, no new tool), `UMemBoundaryCohort` (~60), `UMemBoundary` (~105),
+`UMemory` (~120), `MapOps` (~320; the gadget emitters it needs are already shared in `TableAirIR`
+§6 and `MapAbsentTableEmit` §2), `Chip`/`ChipState16` (~280, one arm body, the inline x⁷ S-box).
+⚠ **`ExactPublicTable` needs the tool extended AGAIN and is the only one that does**: it reads
+`builder.preprocessed()`, and `TableAir` has no preprocessed-column leaf. That is a `WindowExpr`
+constructor (`prep c`) plus a way for a table to declare its preprocessed matrix, and it should be
+priced before it is scheduled rather than discovered mid-port.
+
+
 ## ⚑⚑⚑ AUGUST 1 — the LIVE DOUBLE-SPEND GATE was a hand-written Rust AIR; it is now emitted from Lean
 
 `Ir2Air::MapAbsent` (`circuit/src/descriptor_ir2.rs`) was ~120 lines of `builder.assert_zero(..)` +

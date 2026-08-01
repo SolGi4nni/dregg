@@ -79,10 +79,20 @@ the scalar equation.
 
 `circuit/src/descriptor_ir2.rs`:
 
-1. **Content pinned.** `Ir2Air::ByteTable` (line 3060): `value = row index` — `when_first_row` asserts
-   `local[0] = 0`, `when_transition` asserts `next[0] = local[0] + 1`. The table cannot lie about its
-   values; range checks ride limb decomposition + LogUp byte queries against this bus, never a
-   prover-supplied table.
+1. **Content pinned.** ⚑ **UPDATED 2026-08-01: the `Ir2Air::ByteTable` arm is DELETED.** The table's
+   algebra is now authored in `metatheory/Dregg2/Circuit/Emit/ByteTableEmit.lean`, emitted to
+   `circuit/descriptors/table-airs/dregg-ir2-byte-v1.json`, and interpreted by `Ir2Air::LeanTable` —
+   architectural law #1. The constraints are the same two: a `.first`-scoped gate asserting
+   `local[0] = 0` and a `.transition`-scoped gate asserting `next[0] = local[0] + 1`. The table
+   cannot lie about its values; range checks ride limb decomposition + LogUp byte queries against
+   this bus, never a prover-supplied table.
+
+   ⓘ **And the two halves of the claim below are now THEOREMS, not prose.**
+   `ByteTableEmit.value_is_the_row_index` proves the content pin from the gate equations (under
+   `TableAirIR.Coherent`, which says the trace's `nxt` really is the following row —
+   without it the increment gate says nothing), and `served_key_is_canonical` gives the served key
+   set as `[0, n)` in `[0, p)`. ⚠ `gates_admit_every_height` proves the AIR does **not** bound `n`,
+   which is why point 2 below is load-bearing rather than belt-and-braces.
 2. **Height pinned, verify-side.** `verify_vm_descriptor2` (line 6256-6273) refuses any range instance
    whose committed degree ≠ the deployed `BYTE_TABLE_HEIGHT` (`= 1 << LIMB_BITS`), because "a taller
    table widens the limb range." Test `ir2_oversized_byte_table_refuses` (line 7639) commits a

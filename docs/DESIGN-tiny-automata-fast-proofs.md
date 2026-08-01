@@ -201,7 +201,7 @@ a table AIR of height 128 that all `k` lanes share for free.
    `Ir2Air::PublicTable { table_id, rows }` (not one per row); the table trace is
    `rows ++ padding` with a witnessed multiplicity column and `table_entry(key, multiplicity)` on
    `exact_public_bus_name(table_id)`; main-side `lookup_key(tuple, ONE)` is unchanged. The
-   descriptor-carried row values are pinned exactly as `Ir2Air::ByteTable` pins its value column —
+   descriptor-carried row values are pinned exactly as the byte table pins its value column —
    the natural home is a **preprocessed (VK-time-committed) matrix** carrying the manifest, which
    the manifest already deserves: it is part of relation identity today
    (`effect_vm_descriptor2_semantic_fingerprint`).

@@ -16,7 +16,10 @@
 //!     the table is sound in exactly the sense of Lean's `ChipTableSound`; hash-site lookups
 //!     ride the `ir2_p2` bus (the measured 85% lever — one aux block per UNIQUE permutation,
 //!     not per row × site);
-//!   * **range** — the shared `[0,256)` byte table; a declared `lookup` into the range table
+//!   * **range** — the shared `[0, 2^LIMB_BITS)` byte table (⚠ `LIMB_BITS` is **4**, so it is a
+//!     `[0,16)` NIBBLE table; the `[0,256)` this line used to say outlived the limb change by a
+//!     factor of 16, and a reader auditing a range bound from the prose would have been off by
+//!     it); a declared `lookup` into the range table
 //!     (`rangeLimb bits`) is realized by byte-limb decomposition + LogUp byte queries + a
 //!     tight top-limb bit bound (the proven `lean_lookup_air` shape; the realized relation is
 //!     exactly `v ∈ [0, 2^bits)` = Lean's `range_row_mem_iff`);
@@ -192,7 +195,8 @@
 //!     effect descriptors, the anchor realized as the `whole_image_fold` companion), the flat fold
 //!     is realized as a companion, NOT yet welded into `setFieldDynVmDescriptor2` itself. Welding it
 //!     — `setFieldDynVmDescriptor2` publishes `minit_root`/`mfin_root` PIs pinned to the turn's
-//!     committed pre/post-state root, with the fold (running-root columns in `Ir2Air::MemBoundary` +
+//!     committed pre/post-state root, with the fold (running-root columns in the memory-boundary
+//!     table +
 //!     the boundary producer, or an in-batch fold AIR) proving the pin, then `emit-descriptors.sh`
 //!     re-emit so its VK MOVES (`check-descriptor-drift.sh`) — is what makes a forged-`minit` proof
 //!     of setFieldDyn ITSELF refuse in `verify_batch` (today the companion is a separate proof).
@@ -258,7 +262,7 @@ use crate::plonky3_prover::{
     POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri_full, from_p3,
     poseidon2_permute_expr_lanes, to_p3,
 };
-use crate::table_air::{BusOp as TableBusOp, LeanTableAir};
+use crate::table_air::{BusOp as TableBusOp, LeanTableAir, RowSel as TableRowSel};
 // The concrete permutation aux-witness fill is prover-only (`perm_aux`).
 use crate::plonky3_prover::poseidon2_permute_aux_witness;
 
@@ -431,7 +435,7 @@ const BUS_UMEM_ADDRS: &str = "ir2_umem_addrs";
 /// manifest rows — 8,193x that — and the eight-way 524,416.
 ///
 /// [`Ir2Air::ExactPublicTable`] realizes the whole manifest as ONE multiplicity-bearing instance
-/// (the shape [`Ir2Air::ByteTable`] has always had), so the cost of a row is now one row of one
+/// (the shape the byte table has always had), so the cost of a row is now one row of one
 /// preprocessed matrix, not one instance. The caps below are therefore an ALLOCATION bound on the
 /// verifier — which materializes and commits the preprocessed manifest itself — and nothing else:
 /// `2^21` rows covers the four-way cut with headroom, and `2^25` cells bounds the preprocessed
@@ -727,10 +731,22 @@ impl WindowExpr {
         }
     }
 
+    /// The total degree of this expression as a polynomial over the columns. `Const` = 0,
+    /// `Loc`/`Nxt` = 1, `Add` = max, `Mul` = sum. The `LeanExpr` sibling of this is what sizes a
+    /// table AIR's quotient; the descriptor's own `windowGate` leaves degree to the batch
+    /// prover's symbolic analysis (its cumulative-sum bodies are linear).
+    pub(crate) fn degree(&self) -> usize {
+        match self {
+            WindowExpr::Const(_) => 0,
+            WindowExpr::Loc(_) | WindowExpr::Nxt(_) => 1,
+            WindowExpr::Add(a, b) => a.degree().max(b.degree()),
+            WindowExpr::Mul(a, b) => a.degree() + b.degree(),
+        }
+    }
+
     /// The maximum column index referenced (over both row tags), if any. The descriptor's
-    /// `windowGate` bounds check uses this; degree is left to the batch prover's symbolic
-    /// analysis (the cumulative-sum bodies are linear).
-    fn max_var(&self) -> Option<usize> {
+    /// `windowGate` bounds check uses this, and so does a table AIR's width check.
+    pub(crate) fn max_var(&self) -> Option<usize> {
         match self {
             WindowExpr::Loc(i) | WindowExpr::Nxt(i) => Some(*i),
             WindowExpr::Const(_) => None,
@@ -840,7 +856,7 @@ fn parse_array<T>(
     Ok(v)
 }
 
-fn parse_usize(c: &mut JsonCursor, what: &str) -> Result<usize, String> {
+pub(crate) fn parse_usize(c: &mut JsonCursor, what: &str) -> Result<usize, String> {
     let n = c.parse_int()?;
     if n < 0 {
         return Err(format!("negative {what} {n}"));
@@ -982,7 +998,7 @@ fn parse_table_def(c: &mut JsonCursor) -> Result<TableDef2, String> {
 /// Parse one `<window_expr>` object: `{"t":"loc"|"nxt"|"const"|"add"|"mul", …}` (Lean
 /// `WindowExpr.toJson`). `loc`/`nxt` carry a column index `c`; the arithmetic nodes reuse the
 /// `l`/`r` shape of `LeanExpr`.
-fn parse_window_expr(c: &mut JsonCursor) -> Result<WindowExpr, String> {
+pub(crate) fn parse_window_expr(c: &mut JsonCursor) -> Result<WindowExpr, String> {
     c.expect(b'{')?;
     c.expect_key("t")?;
     let tag = c.parse_string()?;
@@ -1306,6 +1322,10 @@ const fn limb_geom(bits: usize) -> (usize, usize) {
 }
 
 /// Aux columns one `bits`-wide decomposition adds (limbs + top bits when partial).
+pub const fn decomp_cols_pub(bits: usize) -> usize {
+    decomp_cols(bits)
+}
+
 const fn decomp_cols(bits: usize) -> usize {
     let (n, top) = limb_geom(bits);
     n + if top < LIMB_BITS { top } else { 0 }
@@ -1915,18 +1935,24 @@ pub fn ir2_eval_accepts(
     true
 }
 
-/// **THE ROW-LOCAL ACCEPT ORACLE FOR A LEAN-AUTHORED TABLE AIR.** Runs the ACTUAL
-/// `Ir2Air::LeanTable` evaluator — the deployed verifier's, not a transcription — over the given
-/// rows and returns `true` iff every GATE vanishes on every row.
+/// **THE GATE ACCEPT ORACLE FOR A LEAN-AUTHORED TABLE AIR.** Runs the ACTUAL `Ir2Air::LeanTable`
+/// evaluator — the deployed verifier's, not a transcription — over the given rows and returns
+/// `true` iff every GATE vanishes on every row its selector admits.
+///
+/// ⚑ Renamed from `table_air_row_local_accepts`: the first-pass IR had only row-local gates, so
+/// "row-local" and "gate" named the same set. They no longer do — a table AIR's gates may read the
+/// NEXT row under a `.transition` filter — and the split this oracle actually draws is
+/// **gates vs. buses**, not local vs. windowed. The windowing is faithful: `next` is
+/// `rows[(i+1) % height]` and the boundary tags are the row index, exactly as p3 evaluates them.
 ///
 /// Same faithfulness split as [`ir2_eval_accepts`]: the bus interactions are SWALLOWED (their
-/// meaning is the batch's LogUp balance, which no single-AIR row-local check can decide), so this
-/// oracle is faithful on `gates` and silent on `interactions`. A caller reasoning about a bus leg
-/// must use the prover, not this.
+/// meaning is the batch's LogUp balance, which no single-AIR check can decide), so this oracle is
+/// faithful on `gates` and silent on `interactions`. A caller reasoning about a bus leg must use
+/// the prover, not this.
 ///
 /// This is the instrument a re-emission needs: it makes "no gate was LOST" checkable by mutation,
 /// which a shape count alone cannot do (a re-emission could keep 70 gates and change one).
-pub fn table_air_row_local_accepts(t: &LeanTableAir, rows: &[Vec<BabyBear>]) -> bool {
+pub fn table_air_gates_accept(t: &LeanTableAir, rows: &[Vec<BabyBear>]) -> bool {
     if rows.is_empty() || rows.iter().any(|r| r.len() != t.width) {
         return false;
     }
@@ -1979,6 +2005,57 @@ pub fn map_absent_rows_for(
     traces
         .map_absent
         .ok_or_else(|| "descriptor assembles no map-absent table".to_string())
+}
+
+/// The HONEST byte (nibble) table rows the deployed prover would assemble for this descriptor and
+/// trace — `build_traces`' own output, multiplicity histogram included, not a re-derivation.
+/// Exposed for the same reason as [`map_absent_rows_for`]: a differential must mutate a genuine
+/// row, because a hand-built one would be a second author of the layout.
+pub fn byte_rows_for(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    map_heaps: &[Vec<HeapLeaf>],
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let traces = build_traces(
+        desc,
+        &layout,
+        presence,
+        base_trace,
+        &MemBoundaryWitness::default(),
+        map_heaps,
+        &UMemBoundaryWitness::default(),
+        true,
+    )?;
+    traces
+        .byte
+        .ok_or_else(|| "descriptor assembles no byte table".to_string())
+}
+
+/// The HONEST memory-boundary rows the deployed prover would assemble for this descriptor, trace
+/// and declared address list — `build_traces`' own output, not a re-derivation. Sibling of
+/// [`map_absent_rows_for`] and [`byte_rows_for`], for the same reason.
+pub fn mem_boundary_rows_for(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    mem_boundary: &MemBoundaryWitness,
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let traces = build_traces(
+        desc,
+        &layout,
+        presence,
+        base_trace,
+        mem_boundary,
+        &[],
+        &UMemBoundaryWitness::default(),
+        true,
+    )?;
+    traces
+        .boundary
+        .ok_or_else(|| "descriptor assembles no memory boundary table".to_string())
 }
 
 /// `i64`-valued convenience wrapper over [`ir2_eval_accepts`] so callers (the faithfulness
@@ -2550,29 +2627,34 @@ pub enum Ir2Air {
     /// same permutation constraints and width as [`Ir2Air::Chip`], but serve only the fixed
     /// `[16, input_state16, output_state16]` bus; it is absent from every legacy descriptor.
     ChipState16,
-    /// The `[0,256)` byte table (value column pinned to the row index).
-    ByteTable,
     /// The memory access table (Blum discipline + the read/write multiset legs).
     Memory,
-    /// The memory boundary (init/final image over the declared, strictly increasing
-    /// address list).
-    MemBoundary,
     /// The map-ops table (in-row sorted-Poseidon2 openings).
     MapOps,
     /// ⚑ **A WHOLE Lean-authored TABLE AIR, interpreted** — the shared auxiliary instances whose
     /// algebra used to be hand-written Rust arms of this very `match`.
     ///
     /// The wire object ([`crate::table_air::LeanTableAir`]) carries this table's own width, its
-    /// row-local gates as `LeanExpr` trees, and its bus interactions with a per-row MULTIPLICITY
-    /// EXPRESSION — the field a descriptor `Lookup` could not carry, and the reason a padded
-    /// shared table needed a new IR rather than a reuse of the main one. `Var(c)` reads column
-    /// `c` of THIS table's row.
+    /// gates as `WindowExpr` trees each under a ROW SELECTOR, and its bus interactions with a
+    /// per-row MULTIPLICITY EXPRESSION. Those are the two fields a descriptor `Gate`/`Lookup`
+    /// could not carry — the reason a padded, sorted shared table needed a new IR rather than a
+    /// reuse of the main one. `Loc(c)`/`Nxt(c)` read column `c` of THIS table's current/next row.
     ///
-    /// The map-ABSENT table (bracketed sorted-gap non-membership openings — the live in-circuit
-    /// double-spend gate) is the first instance: its author is
-    /// `metatheory/Dregg2/Circuit/Emit/MapAbsentTableEmit.lean` and its emission is
-    /// `circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json`. The ~150 lines of
-    /// `builder.assert_zero(..)` that used to live in the `Ir2Air::MapAbsent` arm are DELETED.
+    /// The instances, in the order they came off the hand-written path:
+    ///
+    /// * **map-absent** (`MapAbsentTableEmit.lean` →
+    ///   `circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json`) — bracketed sorted-gap
+    ///   non-membership openings, the live in-circuit double-spend gate. ~150 lines of
+    ///   `builder.assert_zero(..)` DELETED. The only purely row-local table of the eight, which
+    ///   is why it was portable against the first-pass IR.
+    /// * **byte** (`ByteTableEmit.lean` → `dregg-ir2-byte-v1.json`) — the shared `[0, 16)` limb
+    ///   table every range check bottoms out in. Needed `RowSel::{First, Transition}`,
+    ///   `WindowExpr::Nxt` and `BusOp::Provide`, none of which the first pass had.
+    /// * **memory boundary** (`MemBoundaryTableEmit.lean` → `dregg-ir2-mem-boundary-v1.json`) —
+    ///   the declared address list: init/final Blum images plus the `ir2_mem_addrs` table it
+    ///   SERVES. The Lean file proves what the deleted arm asserted in a parenthesis — the
+    ///   declared addresses are distinct AS FELTS, and the magnitude gate (not the gap gate) is
+    ///   what buys it.
     LeanTable(Arc<LeanTableAir>),
     /// The UNIVERSAL memory table (the one Blum multiset over `Domain × κ`).
     UMemory,
@@ -2585,7 +2667,7 @@ pub enum Ir2Air {
     /// multi-row witness in-circuit via `(next.is_real = 0)` on every transition.
     UMemBoundaryCohort,
     /// ⚑ **A WHOLE Lean-emitted exact-public manifest, as ONE multiplicity-bearing instance** —
-    /// the shape [`Ir2Air::ByteTable`] has always had, generalized from "value = row index" to
+    /// the shape the byte table has always had, generalized from "value = row index" to
     /// "row = the manifest's row, held in a preprocessed column".
     ///
     /// The manifest values and their multiplicities are PREPROCESSED, so they are verifier-known
@@ -2615,9 +2697,7 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
             Ir2Air::Chip | Ir2Air::ChipState16 => CHIP_WIDTH,
-            Ir2Air::ByteTable => 2,
             Ir2Air::Memory => MEM_WIDTH,
-            Ir2Air::MemBoundary => MB_WIDTH,
             Ir2Air::MapOps => MAP_WIDTH,
             Ir2Air::LeanTable(t) => t.width,
             Ir2Air::UMemory => UM_WIDTH,
@@ -3424,17 +3504,6 @@ where
             }
 
             // ----------------------------------------------------------------
-            Ir2Air::ByteTable => {
-                // value = row index (first row 0, increment 1): the table cannot lie.
-                builder.when_first_row().assert_zero(local[0].into());
-                builder
-                    .when_transition()
-                    .assert_zero(next[0].into() - local[0].into() - AB::Expr::ONE);
-                let bus = LookupBus::new(BUS_BYTE);
-                bus.table_entry(builder, [local[0].into()], local[1].into());
-            }
-
-            // ----------------------------------------------------------------
             Ir2Air::Memory => {
                 let is_real: AB::Expr = local[MEM_IS_REAL].into();
                 let kind: AB::Expr = local[MEM_KIND].into();
@@ -3507,56 +3576,6 @@ where
                 // Address closure: every op address is a declared boundary address.
                 let addrs = LookupBus::new(BUS_MEM_ADDRS);
                 addrs.lookup_key(builder, [local[MEM_ADDR].into()], is_real);
-            }
-
-            // ----------------------------------------------------------------
-            Ir2Air::MemBoundary => {
-                let is_real: AB::Expr = local[MB_IS_REAL].into();
-                builder.assert_zero(is_real.clone() * (is_real.clone() - AB::Expr::ONE));
-                builder.when_transition().assert_zero(
-                    (AB::Expr::ONE - local[MB_IS_REAL].into()) * next[MB_IS_REAL].into(),
-                );
-                // Strictly increasing declared addresses (⇒ Nodup): on a real→real step the
-                // gap (next.addr − addr − 1) is bound and range-checked.
-                builder.when_transition().assert_zero(
-                    local[MB_AGAP].into()
-                        - next[MB_IS_REAL].into()
-                            * (next[MB_ADDR].into() - local[MB_ADDR].into() - AB::Expr::ONE),
-                );
-                let agap_limbs: Vec<AB::Var> =
-                    local[MB_AGAP_LIMB0..MB_AGAP_LIMB0 + decomp_cols(MEM_GAP_BITS)].to_vec();
-                eval_decomp(builder, local[MB_AGAP].into(), &agap_limbs, MEM_GAP_BITS);
-                // Address magnitude bound (so the increasing chain cannot wrap the field):
-                // addr_chk = is_real·addr ∈ [0, 2^30).
-                builder
-                    .assert_zero(local[MB_ACHK].into() - is_real.clone() * local[MB_ADDR].into());
-                let achk_limbs: Vec<AB::Var> =
-                    local[MB_ACHK_LIMB0..MB_ACHK_LIMB0 + decomp_cols(MEM_GAP_BITS)].to_vec();
-                eval_decomp(builder, local[MB_ACHK].into(), &achk_limbs, MEM_GAP_BITS);
-
-                // Init entries produced at serial 0; final entries consumed.
-                let mem_check = PermutationCheckBus::new(BUS_MEM_CHECK);
-                mem_check.send(
-                    builder,
-                    [
-                        local[MB_ADDR].into(),
-                        local[MB_INIT_VAL].into(),
-                        AB::Expr::ZERO,
-                    ],
-                    is_real.clone(),
-                );
-                mem_check.receive(
-                    builder,
-                    [
-                        local[MB_ADDR].into(),
-                        local[MB_FIN_VAL].into(),
-                        local[MB_FIN_SERIAL].into(),
-                    ],
-                    is_real,
-                );
-                // The declared-address table for closure lookups.
-                let addrs = LookupBus::new(BUS_MEM_ADDRS);
-                addrs.table_entry(builder, [local[MB_ADDR].into()], local[MB_ADDR_MULT].into());
             }
 
             // ----------------------------------------------------------------
@@ -3890,15 +3909,38 @@ where
             // `circuit/tests/mapabsent_lean_emission_differential.rs`).
             Ir2Air::LeanTable(t) => {
                 for g in &t.gates {
-                    builder.assert_zero(g.eval_expr::<AB>(&local));
+                    // The ROW FILTER, as a selector FACTOR rather than a filtered sub-builder:
+                    // p3's `FilteredAirBuilder::assert_zero(x)` is literally
+                    // `inner.assert_zero(x * condition)`, and this is the same polynomial. Doing
+                    // it this way keeps `builder` unborrowed across the loop and matches what
+                    // `eval_row_local_constraints` already does for the main instance's boundary
+                    // forms. ⚠ It also costs the gate one degree — `LeanTableAir::max_degree`
+                    // accounts for that, and `ir2_degree_budget` is the tooth.
+                    let sel: Option<AB::Expr> = match g.sel {
+                        TableRowSel::All => None,
+                        TableRowSel::First => Some(builder.is_first_row()),
+                        TableRowSel::Last => Some(builder.is_last_row()),
+                        TableRowSel::Transition => Some(builder.is_transition()),
+                    };
+                    let body = g.body.eval_expr::<AB>(&local, &next);
+                    builder.assert_zero(match sel {
+                        Some(s) => s * body,
+                        None => body,
+                    });
                 }
                 for it in &t.interactions {
-                    let tuple: Vec<AB::Expr> =
-                        it.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
-                    let mult = it.mult.eval_expr::<AB>(&local);
+                    let tuple: Vec<AB::Expr> = it
+                        .tuple
+                        .iter()
+                        .map(|e| e.eval_expr::<AB>(&local, &next))
+                        .collect();
+                    let mult = it.mult.eval_expr::<AB>(&local, &next);
                     match it.op {
                         TableBusOp::Query => {
                             LookupBus::new(&it.bus).lookup_key(builder, tuple, mult);
+                        }
+                        TableBusOp::Provide => {
+                            LookupBus::new(&it.bus).table_entry(builder, tuple, mult);
                         }
                         TableBusOp::Receive => {
                             PermutationCheckBus::new(&it.bus).receive(builder, tuple, mult);
@@ -6644,11 +6686,15 @@ fn instance_airs(
         airs.push(Ir2Air::ChipState16);
     }
     if presence.byte {
-        airs.push(Ir2Air::ByteTable);
+        // The Lean-authored byte (nibble) table AIR — `Dregg2/Circuit/Emit/ByteTableEmit.lean`.
+        airs.push(Ir2Air::LeanTable(crate::table_air::byte_table_air_shared()));
     }
     if presence.memory {
         airs.push(Ir2Air::Memory);
-        airs.push(Ir2Air::MemBoundary);
+        // The Lean-authored memory-boundary table AIR — `Emit/MemBoundaryTableEmit.lean`.
+        airs.push(Ir2Air::LeanTable(
+            crate::table_air::mem_boundary_table_air_shared(),
+        ));
     }
     if presence.map_ops {
         airs.push(Ir2Air::MapOps);
@@ -7968,14 +8014,14 @@ mod tests {
                     Ir2Air::Main { .. } => "main",
                     Ir2Air::Chip => "chip",
                     Ir2Air::ChipState16 => "chip_state16",
-                    Ir2Air::ByteTable => "byte",
                     Ir2Air::Memory => "memory",
-                    Ir2Air::MemBoundary => "boundary",
                     Ir2Air::MapOps => "map_ops",
                     // The label is the Lean author's own emitted name, so a second table AIR
                     // gets its own row here without touching this match.
                     Ir2Air::LeanTable(t) => match t.name.as_str() {
                         "dregg-ir2-map-absent-v1" => "map_absent",
+                        "dregg-ir2-byte-v1" => "byte",
+                        "dregg-ir2-mem-boundary-v1" => "boundary",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }

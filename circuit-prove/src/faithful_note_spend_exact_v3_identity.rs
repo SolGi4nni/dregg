@@ -413,15 +413,41 @@ const AIR_SHAPE: DescriptorIr2AirShape = DescriptorIr2AirShape {
 const DESCRIPTOR_IR2_AIR_SOURCE: &[u8] = include_bytes!("../../circuit/src/descriptor_ir2.rs");
 const LEAN_DESCRIPTOR_AIR_SOURCE: &[u8] =
     include_bytes!("../../circuit/src/lean_descriptor_air.rs");
-// ⚑ THE TABLE-AIR LEG (added 2026-08-01 with the `Ir2Air::MapAbsent` cutover). The map-absent
-// instance's algebra no longer lives in `descriptor_ir2.rs`; it lives in a Lean-emitted artifact
-// that `table_air.rs` decodes. Without BOTH of these in the closure the constraints of the live
-// double-spend gate could change while this fingerprint stood still — a fail-open, and exactly
-// the class this closure exists to prevent. The artifact is hashed as well as the interpreter
-// because the interpreter is generic: it is the JSON that says what the AIR asserts.
+// ⚑ THE TABLE-AIR LEG (added 2026-08-01 with the `Ir2Air::MapAbsent` cutover). Those instances'
+// algebra no longer lives in `descriptor_ir2.rs`; it lives in Lean-emitted artifacts that
+// `table_air.rs` decodes. Without BOTH the interpreter and EVERY artifact in the closure, the
+// constraints of a live gate could change while this fingerprint stood still — a fail-open, and
+// exactly the class this closure exists to prevent. The artifacts are hashed as well as the
+// interpreter because the interpreter is generic: it is the JSON that says what the AIR asserts.
+//
+// ⚠ EVERY artifact, not the first one. Added 2026-08-01 (second pass): the byte and
+// memory-boundary cutovers put two MORE table AIRs on the batch and the closure covered neither
+// for the length of one commit. `table_airs_closure_covers_every_emitted_artifact` below is the
+// tooth that makes a third omission red instead of silent — it reads the DIRECTORY, so an
+// artifact added without a closure row fails rather than being trusted.
 const TABLE_AIR_INTERPRETER_SOURCE: &[u8] = include_bytes!("../../circuit/src/table_air.rs");
 const MAP_ABSENT_TABLE_AIR_ARTIFACT: &[u8] =
     include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json");
+const BYTE_TABLE_AIR_ARTIFACT: &[u8] =
+    include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-byte-v1.json");
+const MEM_BOUNDARY_TABLE_AIR_ARTIFACT: &[u8] =
+    include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-mem-boundary-v1.json");
+/// Every Lean-emitted table AIR on the batch, by artifact path. The closures below splice this in
+/// whole rather than listing rows, so a new table lands in both at once.
+const TABLE_AIR_ARTIFACTS: &[(&str, &[u8])] = &[
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json",
+        MAP_ABSENT_TABLE_AIR_ARTIFACT,
+    ),
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-byte-v1.json",
+        BYTE_TABLE_AIR_ARTIFACT,
+    ),
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-mem-boundary-v1.json",
+        MEM_BOUNDARY_TABLE_AIR_ARTIFACT,
+    ),
+];
 const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
     ("circuit/src/descriptor_ir2.rs", DESCRIPTOR_IR2_AIR_SOURCE),
     (
@@ -429,10 +455,9 @@ const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
         LEAN_DESCRIPTOR_AIR_SOURCE,
     ),
     ("circuit/src/table_air.rs", TABLE_AIR_INTERPRETER_SOURCE),
-    (
-        "circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json",
-        MAP_ABSENT_TABLE_AIR_ARTIFACT,
-    ),
+    TABLE_AIR_ARTIFACTS[0],
+    TABLE_AIR_ARTIFACTS[1],
+    TABLE_AIR_ARTIFACTS[2],
 ];
 
 fn air_fingerprint_for_parts(
@@ -519,13 +544,13 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
         "turn-prover/src/faithful_note_spend_exact_v3_verifier.rs",
         TURN_VERIFIER_WRAPPER_SOURCE,
     ),
-    // The verifier rebuilds the batch AIR set from the descriptor, and that set now includes a
-    // Lean-emitted table AIR. Both the decoder and the emission are part of what the verifier IS.
+    // The verifier rebuilds the batch AIR set from the descriptor, and that set now includes
+    // THREE Lean-emitted table AIRs. Both the decoder and every emission are part of what the
+    // verifier IS.
     ("circuit/src/table_air.rs", TABLE_AIR_INTERPRETER_SOURCE),
-    (
-        "circuit/descriptors/table-airs/dregg-ir2-map-absent-v1.json",
-        MAP_ABSENT_TABLE_AIR_ARTIFACT,
-    ),
+    TABLE_AIR_ARTIFACTS[0],
+    TABLE_AIR_ARTIFACTS[1],
+    TABLE_AIR_ARTIFACTS[2],
 ];
 
 fn update_len_prefixed_hash(hasher: &mut blake3::Hasher, bytes: &[u8]) {
@@ -587,6 +612,79 @@ mod tests {
                 encoding: slot.encoding.to_owned(),
             })
             .collect()
+    }
+
+    /// ⚑ **THE CLOSURE COVERS EVERY EMITTED TABLE AIR — read off the DIRECTORY, not off a list.**
+    ///
+    /// The fingerprint closures name table-air artifacts by path. A new table AIR added to the
+    /// batch with no closure row is a FAIL-OPEN: its constraints could change while this
+    /// fingerprint stood still, which is the exact class the table-air leg was added to prevent.
+    /// It already happened once in miniature — the byte and memory-boundary cutovers landed and
+    /// the closure covered neither for the length of a commit.
+    ///
+    /// A hardcoded list cannot catch its own omission. This walks
+    /// `circuit/descriptors/table-airs/` and fails if the directory holds an artifact the closure
+    /// does not, so the FOURTH table cannot be forgotten the way the second and third nearly
+    /// were.
+    #[test]
+    fn the_air_closure_covers_every_emitted_table_air_artifact() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .to_path_buf();
+        let dir = root.join("circuit/descriptors/table-airs");
+        let mut on_disk: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("table-airs directory must exist at {dir:?}: {e}"))
+            .map(|e| {
+                e.expect("dir entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|n| n.ends_with(".json"))
+            .collect();
+        on_disk.sort();
+        assert!(
+            !on_disk.is_empty(),
+            "no table-air artifacts found in {dir:?}"
+        );
+
+        let mut covered: Vec<String> = TABLE_AIR_ARTIFACTS
+            .iter()
+            .map(|(p, _)| p.rsplit('/').next().expect("a path component").to_string())
+            .collect();
+        covered.sort();
+
+        assert_eq!(
+            on_disk, covered,
+            "a Lean-emitted table AIR is on disk but NOT in the fingerprint closure (or vice \
+             versa). Add it to TABLE_AIR_ARTIFACTS — an uncovered artifact means the constraints \
+             of a live gate can change while this identity stands still."
+        );
+
+        // …and the bytes in the closure are the bytes on disk, so a row that names the right file
+        // and `include_bytes!`s another cannot pass the name check above.
+        for (path, bytes) in TABLE_AIR_ARTIFACTS {
+            let want = std::fs::read(root.join(path))
+                .unwrap_or_else(|e| panic!("closure names a missing artifact {path}: {e}"));
+            assert_eq!(
+                *bytes,
+                &want[..],
+                "closure bytes differ from disk for {path}"
+            );
+        }
+
+        // Both closures carry all of them.
+        for (path, _) in TABLE_AIR_ARTIFACTS {
+            assert!(
+                AIR_IMPLEMENTATION_SOURCES.iter().any(|(p, _)| p == path),
+                "{path} missing from AIR_IMPLEMENTATION_SOURCES"
+            );
+            assert!(
+                VERIFIER_SOURCE_CLOSURE.iter().any(|(p, _)| p == path),
+                "{path} missing from VERIFIER_SOURCE_CLOSURE"
+            );
+        }
     }
 
     #[test]
