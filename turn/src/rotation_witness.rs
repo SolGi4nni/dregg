@@ -511,8 +511,14 @@ pub fn empty_iroot_8() -> dregg_circuit::Faithful8 {
 pub const IROOT_LANES_1_TO_7_UNABSORBED: &str = "\
 iroot lanes 1..7 are computed and DISCARDED at the wire: `B_IROOT` is one column and the rotated \
 block has no free limb (NUM_PRE_LIMBS = 184 emitted / 187 in Lean, ROTATED_PADS empty). The value \
-reaching the signed anchor is therefore ONE felt — image 2^30.91, COLLISION 2^15.45, measured at \
-71,133 evaluations / 0.86 s — against the 2^123.63 the fold itself now carries. CUTOVER: extend the \
+reaching the signed anchor is therefore ONE felt — image 2^30.91, COLLISION 2^15.45 — against the \
+2^123.63 the fold itself now carries. ⚑ THIS IS A LIVE, EXHIBITED BREAK AT HEAD, NOT BOOKKEEPING: \
+the retired ENTRY collision (two distinct receipts, one log entry) cost 71,133 evaluations and IS \
+closed by hash_bytes_8, but the OUTPUT-PROJECTION collision — generic birthday on lane 0, which has \
+a 2^30.91 image however wide the fold is internally — is UNTOUCHED by that widening and was found \
+at HEAD in 64,147 evaluations, giving two well-formed receipt logs one byte-identical 32-byte \
+signed anchor (`the_residual_is_a_live_exhibited_break_at_head`). Widening the entry does not reach \
+the projection; only the columns do. CUTOVER: extend the \
 block to carry ir1..ir7 (Legal.bodyAligned forces extent 196, not 195), change the WIDE final chain \
 site from arity 11 (`d8 ‖ iroot ‖ 0 ‖ 0`, EffectVmEmitRotationWide.lean:217) to arity 16 \
 (`d8 ‖ iroot8` — already an admitted chip arity), split the NARROW V3 final site \

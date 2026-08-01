@@ -250,6 +250,89 @@ fn the_narrow_wire_slot_is_still_lane_zero_and_the_producer_agrees() {
     assert_eq!(rw::iroot8(&log).limbs(), receipt_chain_root_8(&log).limbs());
 }
 
+/// ⚑ **THE RESIDUAL IS A LIVE, EXHIBITED BREAK — NOT A COSMETIC ONE — AND THIS IS THE PROOF.**
+///
+/// It was put to me that widening the ENTRY (`hash_bytes` → `hash_bytes_8`) is the closure, since it
+/// is independent of the pre-limb geometry: two distinct receipts can no longer be one log entry, so
+/// the cheap attack is dead and the unabsorbed lanes are bookkeeping. **The first half is true and
+/// the second is false**, and the distinction is worth being exact about because it is the shape
+/// CLAUDE.md's "cost estimate → constraint" warning is about, arrived at from the other direction.
+///
+/// There are TWO attacks, and the entry widening kills only one:
+///
+///   (a) **collide the ENTRY** — `rh_a ≠ rh_b` with `hash_bytes rh_a = hash_bytes rh_b`. The two logs
+///       become the SAME list of felts, so every downstream fold agrees at any width. DEAD:
+///       `hash_bytes_8` has a `2^123.63` image (`the_leaf_entry_encoding_is_wide_now`).
+///   (b) **collide the OUTPUT PROJECTION** — `L₁ ≠ L₂` with `iroot8(L₁)[0] = iroot8(L₂)[0]`. Generic
+///       birthday over lane 0's image, which is `p ≈ 2^30.91` NO MATTER HOW WIDE THE FOLD IS
+///       INTERNALLY. **UNTOUCHED**, because the binding waist is the projection, and the projection
+///       is exactly what the geometry gates.
+///
+/// This test runs (b) against the fold AS SHIPPED and finds a real collision. The strength is
+/// genuinely there in the eight lanes — the assertion below shows the full octet separating the very
+/// pair that lane 0 merges — and it is thrown away at `B_IROOT`. So the residual is not a label on a
+/// closed hole; it is the hole, measured, at HEAD.
+#[test]
+fn the_residual_is_a_live_exhibited_break_at_head() {
+    let prefix: Vec<[u8; 32]> = (100u64..105).map(rh).collect();
+    let t0 = std::time::Instant::now();
+    let mut seen: HashMap<u32, u64> = HashMap::new();
+    let mut evals: u64 = 0;
+    let mut found = None;
+    for i in 0u64..(1 << 22) {
+        let mut log = prefix.clone();
+        log.push(rh(i));
+        // THE VALUE THAT ACTUALLY REACHES `B_IROOT` AT HEAD: lane 0 of the WIDE fold.
+        let wire = rw::iroot(&log).0;
+        evals += 1;
+        if let Some(&j) = seen.get(&wire) {
+            found = Some((j, i));
+            break;
+        }
+        seen.insert(wire, i);
+    }
+    let dt = t0.elapsed();
+    let (a, b) = found.expect("birthday over a 2^30.91 image must land well inside 2^22");
+
+    let mut l1 = prefix.clone();
+    let mut l2 = prefix.clone();
+    l1.push(rh(a));
+    l2.push(rh(b));
+    assert_ne!(l1, l2, "two genuinely different receipt histories");
+
+    // The wire slot merges them — TODAY, after the entry widening.
+    assert_eq!(
+        rw::iroot(&l1),
+        rw::iroot(&l2),
+        "the value absorbed at B_IROOT is identical for two different histories"
+    );
+    println!(
+        "RESIDUAL IS LIVE: wire-lane collision after {evals} evaluations / {dt:?} \
+         (birthday over lane 0's 2^30.91 image = 2^15.45). The ENTRY widening does NOT reach this."
+    );
+
+    // …and it reaches the signed anchor, which is the whole point.
+    let mut pre = vec![BabyBear::ZERO; rw::NUM_PRE_LIMBS];
+    for (i, slot) in pre.iter_mut().enumerate() {
+        *slot = BabyBear::new((i as u32) * 7 + 3);
+    }
+    let anchor = |log: &[[u8; 32]]| {
+        dregg_circuit::Faithful8::from_wire_commit_chip(&pre, rw::iroot(log)).to_bytes32()
+    };
+    assert_eq!(
+        anchor(&l1),
+        anchor(&l2),
+        "AT HEAD: two histories, ONE byte-identical 32-byte signed state anchor"
+    );
+
+    // The strength EXISTS and is discarded: the full octet separates the pair lane 0 merged.
+    assert_ne!(
+        rw::iroot8(&l1).limbs(),
+        rw::iroot8(&l2).limbs(),
+        "the eight lanes separate them — the fold is strong, the WIRE is what is narrow"
+    );
+}
+
 #[test]
 fn the_residual_is_a_gate_not_a_note() {
     // ⚑ "Documented != detected". `IROOT_LANES_1_TO_7_UNABSORBED` names a live shortfall. This
@@ -271,7 +354,15 @@ fn the_residual_is_a_gate_not_a_note() {
         "the residual must state the COLLISION bound it actually has"
     );
     assert!(r.contains("2^123.63"), "…and the bound the fold carries");
-    assert!(r.contains("71,133"), "…and the measured cost");
+    assert!(
+        r.contains("71,133"),
+        "…and the measured cost of the ENTRY collision"
+    );
+    assert!(
+        r.contains("64,147"),
+        "…and the measured cost of the OUTPUT-PROJECTION collision AT HEAD — the one the entry \
+         widening does NOT close, and what makes this residual a live break rather than a label"
+    );
     assert!(
         !r.contains("2^247"),
         "never quote the second-preimage figure for a collision residual"

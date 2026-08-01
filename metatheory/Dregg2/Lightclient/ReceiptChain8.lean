@@ -95,6 +95,34 @@ particular:
   NODE over a log; it needs collision resistance, priced by the birthday bound over its image. The
   nine-lane key encodings are the wrong tool here and the two numbers do not transfer.
 
+## §2½ — ⚑ THE CLASS THIS FILE IS AN INSTANCE OF: **the name says the deployed object, the statement
+says something else.**
+
+The defect repaired here is not "a stale citation". It is that a Rust header named a Lean theorem
+whose STATEMENT was about a different mathematical object — `mroot` over a bagged peak forest — while
+the code computed a flat chain, and nothing in either language could notice, because a name is not
+type-checked against the thing it claims. The theorem's later deletion made the citation *also*
+stale, which is the symptom people see first and the less interesting half.
+
+This tree has the sibling shape on record and it is worth reading them together, because the cure is
+the same and it is not "check the citation":
+
+* `HeapLeafWideEmit`'s exported "binding" is discharged over a carrier whose embedding is literally
+  `fun _ _ v => v`. It is `#assert_axioms`-clean, it is TRUE, and it proves nothing whatsoever about
+  the digest it is named for.
+* `mroot_injective` survived three days past its own refutation as a "strength bridge" because
+  reviewers checked its HYPOTHESIS and not its CONCLUSION (`MMR.lean` §3¼).
+* And this file's own first draft of §7 wrote a non-vacuity probe that could not observe the entry it
+  claimed to distinguish — the vacuity it existed to rule out, inside the witness. It went red and is
+  documented at `refChip` rather than quietly fixed.
+
+**THE RULE, and it is what made this file's shape a decision rather than a default: widen the object
+the PRODUCER EMITS, not the object with the closest name.** Widening `MMR.lean` here would have been
+strictly easier, would have built green, would have carried an honest `2^123.63`, and would have
+proved a theorem about a fold no line of deployed code computes — reproducing, at greater length and
+with a better bound, exactly the defect being repaired. **Read the carrier before the conclusion, and
+read the FOLD before the carrier.**
+
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem below.
 -/
 import Dregg2.Lightclient.MMR
