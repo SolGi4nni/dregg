@@ -47,10 +47,13 @@ host width: at the 178 → 184 ninth-lane flag day this moved 1647 → 1691 (`AP
 and four more appendix sites, `+16 + 28 = +44`), and at the rc-FOLD flag day 1691 → 1707
 (`APPENDIX_SPAN` 537 → 539 and two more appendix sites, `+2 + 14 = +16`), and at the FIELDS-CANONICITY
 flag day 1707 → 1819 (`APPENDIX_SPAN` 539 → 651 — the 112 aux columns of
-`Emit.FieldsCanonicity9Emit`; no new appendix site, so the graduation multiplier is unchanged). The
-guard went RED rather than silent all three times — which is the whole reason the literal is allowed
-to exist. -/
-def BEFORE_BASE : Nat := 1819
+`Emit.FieldsCanonicity9Emit`; no new appendix site, so the graduation multiplier is unchanged), and
+at the KEY-NONET flag day (2026-08-01, `rotatedNumPreLimbs` 184 → 187) 1819 → 1841 (`APPENDIX_SPAN`
+651 → 659 and two more appendix sites, `+8 + 14 = +22` — the identical delta `CUSTOM_COMMIT_TEETH_COL`
+took, 1791 → 1813, as at all three previous flag days). The guard went RED rather than silent all
+four times — which is the whole reason the literal is allowed to exist, and the fourth time it went
+red it stayed red for a day, because this file was not re-pinned with the rest of the flag day. -/
+def BEFORE_BASE : Nat := 1841
 def OCC_COL : Nat := BEFORE_BASE
 def OLD_VALUE_BASE : Nat := OCC_COL + 1
 def OLD_LEAF_STATE_BASE : Nat := OLD_VALUE_BASE + VALUE_LIMBS
@@ -74,11 +77,11 @@ def TRACE_WIDTH : Nat := COUNT_COL + 1
 def AUDIT_PI_BASE : Nat := 54
 def AUDIT_PI_COUNT : Nat := 16
 
-#guard BEFORE_BASE == 1819    -- ⚑ +112 at the FIELDS-CANONICITY flag day (APPENDIX_SPAN 539 → 651)
+#guard BEFORE_BASE == 1841    -- ⚑ +22 at the KEY-NONET flag day (APPENDIX_SPAN 651 → 659, +2 sites)
 #guard BEFORE_BASE == refusalV3.traceWidth   -- ⚑ the reality gate: no independent literal
-#guard AFTER_BASE == 2077
-#guard ACTIVE_COL == 2325
-#guard TRACE_WIDTH == 2327
+#guard AFTER_BASE == 2099
+#guard ACTIVE_COL == 2347
+#guard TRACE_WIDTH == 2349
 #guard AUDIT_PI_BASE == 46 + 8
 
 def ev (c : Nat) : EmittedExpr := .var c
@@ -263,7 +266,11 @@ def refusalExactFieldsWide : EffectVmDescriptor2 :=
 #guard refusalExactFieldsV4.traceWidth == TRACE_WIDTH
 #guard refusalExactFieldsV4.piCount == 70
 #guard (withRecordPin8Headroom2 refusalV3).piCount == AUDIT_PI_BASE
-#guard refusalExactFieldsWide.traceWidth == TRACE_WIDTH + 992
+-- ⚑ KEY-NONET: 992 → 1008. Two wide blocks of `wideNumCarriers` 8-felt carriers, 62 → 63.
+#guard refusalExactFieldsWide.traceWidth == TRACE_WIDTH + 1008
+-- and the same fact WELDED to the producer's derived span, so the next carrier move reds the literal.
+#guard refusalExactFieldsWide.traceWidth
+  == TRACE_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppendixSpan
 #guard refusalExactFieldsWide.piCount == 90
 #guard ((refusalExactFieldsV4.constraints.filter fun c =>
   match c with | .lookup l => l.table == poseidon2state16 | _ => false).length) == 26
