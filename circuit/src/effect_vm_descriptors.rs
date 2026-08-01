@@ -4200,11 +4200,22 @@ mod tests {
             match &welded.constraints[row.splice] {
                 VmConstraint2::UMemOp(spec) => {
                     assert_eq!(spec.domain, row.domain, "{}: welded domain", row.key);
-                    assert_eq!(
-                        spec.guard,
-                        crate::lean_descriptor_air::LeanExpr::Var(bare_desc.trace_width + 6),
-                        "{}: the umem guard sits at host_width + 6",
-                        row.key
+                    // ⚑ DESTRUCTURE, do not CONSTRUCT. Building a `LeanExpr::Var(..)` here to
+                    // compare against would be Rust-AUTHORED constraint IR, which
+                    // `law1_no_new_rust_authored_constraints` counts `#[cfg(test)]` or not — and
+                    // did: this assertion is the site that took the file's row 24 -> 25 in
+                    // `681cd3ec8`. `matches!` reads the guard's shape instead of minting one, so
+                    // the check is identical and nothing is authored. (Same discipline as
+                    // `circuit/src/table_air.rs`'s tests, which say so in a comment.)
+                    assert!(
+                        matches!(
+                            &spec.guard,
+                            crate::lean_descriptor_air::LeanExpr::Var(v)
+                                if *v == bare_desc.trace_width + 6
+                        ),
+                        "{}: the umem guard sits at host_width + 6, got {:?}",
+                        row.key,
+                        spec.guard
                     );
                 }
                 other => panic!("{}: contract splice is not a umemOp: {other:?}", row.key),
