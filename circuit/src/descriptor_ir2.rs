@@ -4638,6 +4638,9 @@ pub fn read_cols(desc: &EffectVmDescriptor2) -> Vec<usize> {
     }
     let mut out: Vec<usize> = Vec::new();
     for c in &desc.constraints {
+        // Every arm below DESTRUCTURES; this function authors nothing. (`law1_enforcement_gate`
+        // agrees — it classifies construction against destructuring syntactically, and
+        // `descriptor_ir2.rs`'s authored score is unchanged by this file's addition.)
         match c {
             VmConstraint2::Base(VmConstraint::Gate(body)) => e(body, &mut out),
             VmConstraint2::Base(VmConstraint::Boundary { body, .. }) => e(body, &mut out),

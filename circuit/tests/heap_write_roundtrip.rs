@@ -621,14 +621,20 @@ fn after_root_completion_lane_forge_is_unsat() {
 /// `refusal.rs`. So: take the HONEST fixture (which `after_root_completion_lane_forge_is_unsat`
 /// proves + verifies), mis-shape it, and hand it to the SAME `classify` every tooth uses.
 ///
-/// **The mis-shape is a WIDENING, and the direction is load-bearing.** Measured here: a row one
-/// column SHORT of `trace_width` PROVES, because `trace_with_chip_lanes`
-/// (`descriptor_ir2.rs:6075`) zero-`resize`s any short row up to the descriptor width *before* the
-/// arity pre-flight sees it — by design, so a producer may build at the pre-lane width. Only a row
-/// WIDER than the committed width reaches `descriptor_ir2.rs:5957` and returns the width `Err`. That
-/// is exactly the historical fault (`append_wide_carriers` re-inflating 1963 → 3065), so widening is
-/// what this gate reproduces. It is also why `assert_committed_shape` — which catches BOTH directions
-/// structurally — is the primary guard and the marker list only the second net.
+/// **The mis-shape is a WIDENING, and the direction is load-bearing.** A row WIDER than the
+/// committed width reaches `descriptor_ir2.rs:5957` and returns the width `Err`. That is exactly the
+/// historical fault (`append_wide_carriers` re-inflating 1963 → 3065), so widening is what this gate
+/// reproduces.
+///
+/// ⚑ The SHORT direction used to be the interesting one and no longer is. This comment used to
+/// record, as measured fact, that *"a row one column SHORT of `trace_width` PROVES, because
+/// `trace_with_chip_lanes` zero-`resize`s any short row up to the descriptor width before the arity
+/// pre-flight sees it"*. True until 2026-07-31, and not by design — the pad simply ran before the
+/// check meant to catch it, so that check could never fail. The pad is now bounded by
+/// `descriptor_ir2::producer_owned_width` and checked first;
+/// [`a_short_trace_is_refused_instead_of_padded`] is the executed inversion. A row inside the
+/// weld-owned tail is still legitimately padded, which is why `assert_committed_shape` — catching
+/// BOTH directions structurally — remains the primary guard and the marker list the second net.
 ///
 /// Both poles are asserted:
 ///
@@ -690,4 +696,90 @@ fn a_misshaped_trace_reds_instead_of_counting_as_a_refusal() {
         payload.contains("SHAPE/ARITY fault"),
         "the panic must NAME the shape fault, not merely happen: {payload}"
     );
+}
+
+/// **THE OTHER DIRECTION, NOW THAT IT REFUSES** — the inversion of the paragraph above.
+///
+/// The sibling test's doc-comment records, as a measured fact, that *"a row one column SHORT of
+/// `trace_width` PROVES, because `trace_with_chip_lanes` zero-`resize`s any short row up to the
+/// descriptor width before the arity pre-flight sees it"*. That asymmetry was not a design choice
+/// so much as an ORDERING: `prove_vm_descriptor2_inner` does compare the base row width against
+/// `desc.trace_width`, but every public entry point pads first, so the comparison was against a
+/// width its own caller had just manufactured and could never fail.
+///
+/// The pad is a real affordance and is kept — a producer may stop below the appended chip-LANE
+/// columns and the gentian refuse aux block, because those are filled at prove time. What it may
+/// not do is stop below `descriptor_ir2::producer_owned_width`, the derived width past which no
+/// weld fills anything. `producer_owned_pad_bound.rs` pins that bound on all 174 deployed members;
+/// this is the executed pole on the real prover, at the member whose honest fixture lives here.
+///
+/// ⚑ Both poles, because a refusal that also refuses the honest witness proves nothing:
+///
+///  * the honest full-width trace still PROVES and VERIFIES (completeness — the pad's legitimate
+///    users are untouched);
+///  * the same trace truncated one column below `producer_owned_width` is REFUSED, and the refusal
+///    NAMES the producer-owned width rather than failing somewhere downstream on unsatisfied
+///    algebra (which would be a different, accidental, and far less reliable rejection).
+///
+/// This is what makes the in-flight `EffectVmEffectsHashPin` flag day safe to install: its 65
+/// appended columns are producer-owned, so an un-updated `trace_rotated.rs` meets this refusal
+/// instead of folding the effects-hash IV over zeros and proving green.
+#[test]
+fn a_short_trace_is_refused_instead_of_padded() {
+    let wide_desc = parse_vm_descriptor2(registry_json(WIDE_REGISTRY_STAGED_TSV, KEY)).unwrap();
+    let (raw_trace, raw_dpis, map_heaps) = heap_write_fixture(true);
+    let mb = MemBoundaryWitness::default();
+
+    let mut htrace = raw_trace;
+    compact_like_the_producer(&mut htrace);
+    assert_committed_shape("honest heap-write", &wide_desc, &htrace, &raw_dpis);
+
+    // POLE 1 — COMPLETENESS. The honest, full-width trace is untouched by the bound.
+    let honest = prove_vm_descriptor2(&wide_desc, &htrace, &raw_dpis, &mb, &map_heaps)
+        .expect("the honest heap-write must still prove with the pad bounded");
+    verify_vm_descriptor2(&wide_desc, &honest, &raw_dpis)
+        .expect("the honest heap-write must still verify with the pad bounded");
+
+    // POLE 2 — the truncation. Cut one column BELOW the producer-owned width, so the pad would
+    // have to cover a column no weld fills. Derived from the descriptor, never transcribed.
+    let need = dregg_circuit::descriptor_ir2::producer_owned_width(&wide_desc);
+    assert!(
+        need > 0 && need <= wide_desc.trace_width,
+        "producer_owned_width {need} is not inside [1, {}]",
+        wide_desc.trace_width
+    );
+    let short_len = need - 1;
+    let mut short = htrace.clone();
+    for row in short.iter_mut() {
+        row.truncate(short_len);
+    }
+    assert_eq!(short[0].len(), short_len);
+
+    let err = match prove_vm_descriptor2(&wide_desc, &short, &raw_dpis, &mb, &map_heaps) {
+        Err(e) => e,
+        Ok(_) => panic!(
+            "a trace {short_len} wide — one column SHORT of the producer-owned width {need} for a \
+             committed width of {} — PROVED. The pad is unbounded again, and every block appended \
+             past `trace_width` can be folded over zeros by an un-updated producer while the \
+             prover reports success.",
+            wide_desc.trace_width
+        ),
+    };
+    assert!(
+        err.contains("PRODUCER-OWNED width"),
+        "the refusal must NAME the producer-owned width — a downstream algebra failure is an \
+         accident, not a gate. Prover said: {err}"
+    );
+    eprintln!("SHORT-ROW REFUSAL: {err}");
+
+    // POLE 3 — and it is netted by the same marker set the shape guard uses, so a tooth cannot
+    // read this width complaint as an unsat verdict (the vacuity this file's header repaired).
+    let marker = shape_fault(&err).unwrap_or_else(|| {
+        panic!(
+            "the short-row refusal is NOT matched by `refusal::SHAPE_FAULT_MARKERS`, so a tooth \
+             that truncates a trace would count this shape fault as a soundness refusal. \
+             Prover said: {err}"
+        )
+    });
+    eprintln!("SHORT-ROW REFUSAL netted by marker {marker:?}");
 }
