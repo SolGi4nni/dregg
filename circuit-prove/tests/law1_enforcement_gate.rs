@@ -982,7 +982,23 @@ const BASELINE: &[(&str, usize)] = &[
     // `BUS_MEM_ADDRS`) went with it: their only readers were the `Memory` and `MemBoundary` arms
     // and both are Lean-authored now. The `MEM_*` COLUMN offsets did NOT go — the witness producer
     // is the last thing in Rust that knows what column 3 means, so it writes its row BY NAME.
-    ("circuit/src/descriptor_ir2.rs", 265),
+    // LOWERED 265 -> 260 on 2026-08-01 (fourth pass): the `Ir2Air::UMemBoundaryCohort` arm — the
+    // width-9 single-row universal boundary — was DELETED and replaced by a fifth
+    // `Ir2Air::LeanTable` instance (`Emit/UMemBoundaryCohortTableEmit.lean` ->
+    // `dregg-ir2-umem-boundary-cohort-v1.json`). The VARIANT is gone from the enum. The `UBC_*`
+    // column offsets did NOT go dead and are not deleted: they now back a compile-time assertion
+    // (`THE_COHORT_IS_THE_GENERAL_PREFIX`) that the cohort layout IS the general boundary's
+    // 9-column prefix, which is what licenses `build_traces` writing one by-name prefix for both.
+    // LOWERED 260 -> 251 on 2026-08-01 (fifth pass): the `Ir2Air::UMemBoundary` arm — the width-38
+    // GENERAL universal boundary, i.e. the domain-major lexicographic strict-increase comparator
+    // over full-felt keys that establishes `Nodup` — was DELETED and replaced by a sixth
+    // `Ir2Air::LeanTable` instance (`Emit/UMemBoundaryTableEmit.lean` ->
+    // `dregg-ir2-umem-boundary-v1.json`). Its VARIANT is gone from the enum too, so both universal
+    // boundary forms are now Lean-authored. ⓘ The `UB_*` column offsets did NOT go dead: the
+    // witness producer writes the shared nine-column prefix BY NAME, and `UBC_*` back the
+    // compile-time `THE_COHORT_IS_THE_GENERAL_PREFIX` assertion that the cohort layout IS that
+    // prefix (`UBC_WIDTH == UB_KEY_HI4`).
+    ("circuit/src/descriptor_ir2.rs", 251),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

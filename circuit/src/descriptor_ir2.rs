@@ -2088,6 +2088,32 @@ pub fn mem_rows_for(
         .ok_or_else(|| "descriptor assembles no memory table".to_string())
 }
 
+/// The HONEST universal-boundary rows the deployed prover would assemble for this descriptor, trace
+/// and declared `(domain, key)` list — `build_traces`' own output, not a re-derivation. Serves BOTH
+/// boundary shapes: the width-9 cohort and the width-38 general one, selected by the descriptor's
+/// own table sem exactly as the prover selects them. Sibling of [`mem_boundary_rows_for`].
+pub fn umem_boundary_rows_for(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    umem_boundary: &UMemBoundaryWitness,
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let traces = build_traces(
+        desc,
+        &layout,
+        presence,
+        base_trace,
+        &MemBoundaryWitness::default(),
+        &[],
+        umem_boundary,
+        true,
+    )?;
+    traces
+        .umem_boundary
+        .ok_or_else(|| "descriptor assembles no universal boundary table".to_string())
+}
+
 /// `i64`-valued convenience wrapper over [`ir2_eval_accepts`] so callers (the faithfulness
 /// differential) need not depend on `p3-baby-bear` directly: the `(row, pi)` integers are lifted
 /// to canonical BabyBear felts (the same `i64_to_babybear` lowering the descriptor evaluator
@@ -2211,6 +2237,32 @@ const UBC_FIN_SERIAL: usize = 6;
 const UBC_IS_REAL: usize = 7;
 const UBC_ADDR_MULT: usize = 8;
 const UBC_WIDTH: usize = UBC_ADDR_MULT + 1; // 9
+
+/// ⚑ **THE COHORT LAYOUT IS THE GENERAL LAYOUT'S 9-COLUMN PREFIX** — pinned, not implied.
+///
+/// The two boundaries are now authored in DIFFERENT places: the general one is the
+/// `Ir2Air::UMemBoundary` arm below, the cohort one is
+/// `Dregg2/Circuit/Emit/UMemBoundaryCohortTableEmit.lean` (which reads its columns by its own
+/// `#guard`-pinned `UBC_*` defs). `build_traces` writes ONE prefix that both tables read, and it
+/// writes it by name using the `UB_*` constants — which is only correct because the cohort's
+/// offsets agree. Before the cutover the agreement was checked by the two arms sitting a page
+/// apart; now nothing would notice a drift, so it is a compile-time assertion.
+const THE_COHORT_IS_THE_GENERAL_PREFIX: () = {
+    assert!(UBC_DOMAIN == UB_DOMAIN);
+    assert!(UBC_KEY == UB_KEY);
+    assert!(UBC_INIT_PRESENT == UB_INIT_PRESENT);
+    assert!(UBC_INIT_VALUE == UB_INIT_VALUE);
+    assert!(UBC_FIN_PRESENT == UB_FIN_PRESENT);
+    assert!(UBC_FIN_VALUE == UB_FIN_VALUE);
+    assert!(UBC_FIN_SERIAL == UB_FIN_SERIAL);
+    assert!(UBC_IS_REAL == UB_IS_REAL);
+    assert!(UBC_ADDR_MULT == UB_ADDR_MULT);
+    // ⚑ …and the cohort's WIDTH is exactly where the general boundary's extra machinery starts:
+    // the canonical key split. That is the specialization stated as an equation rather than as
+    // "a quarter of the columns" — the cohort IS the prefix, and `UB_KEY_HI4` is the seam.
+    assert!(UBC_WIDTH == UB_KEY_HI4);
+    assert!(UBC_WIDTH < UB_WIDTH);
+};
 
 // -- Map-ABSENT table layout (one row per non-membership reconciliation): the realization of
 //    `map_op` kind `absent` (Lean `opensTo … none`, constructible by `opensTo_none_of_gap`) —
@@ -2689,17 +2741,25 @@ pub enum Ir2Air {
     ///   arm asserted: the gap gate DEFINES `prev_serial = serial − 1 − gap` in the field and does
     ///   NOT bound it, so a felt `p − 5` claimed at serial 1 satisfies every gate. What refuses it
     ///   is the `ir2_mem_check` multiset, which is a different object.
+    /// * **universal boundary, COHORT** (`UMemBoundaryCohortTableEmit.lean` →
+    ///   `dregg-ir2-umem-boundary-cohort-v1.json`) — the width-9 single-row specialization: at most
+    ///   one real declared address, so the general boundary's inter-row lexicographic comparator +
+    ///   key decomposition (29 of 38 columns) are dropped, sound because `Nodup` of one address is
+    ///   `nodup_singleton` (Lean `universal_memory_sound_single`). ⚑ The Lean file proves the
+    ///   single-row tooth AND draws the line the deleted comment did not: it bounds the MULTISET's
+    ///   declared list, not the served `ir2_umem_addrs` closure table, whose multiplicity column no
+    ///   gate reads on any row.
+    /// * **universal boundary, GENERAL** (`UMemBoundaryTableEmit.lean` →
+    ///   `dregg-ir2-umem-boundary-v1.json`) — the width-38 multi-address form, carrying the
+    ///   DOMAIN-MAJOR lexicographic comparator over full-felt keys that establishes `Nodup`. ⚑ The
+    ///   Lean file proves the `same_dom` forcing in both directions and then exhibits
+    ///   `the_gates_alone_admit_a_duplicate_declared_address`: the domain-major half of the order
+    ///   is carried by the `ir2_byte` nibble LOOKUP on `UB_DGAP`, so a three-row trace with
+    ///   domains 1 → 0 → 1 satisfies every GATE while declaring the same address twice. The bound
+    ///   is a bus leg, one object out.
     LeanTable(Arc<LeanTableAir>),
     /// The UNIVERSAL memory table (the one Blum multiset over `Domain × κ`).
     UMemory,
-    /// The universal boundary (init/final `Option` images over the declared,
-    /// domain-major lexicographically increasing `(domain, key)` list).
-    UMemBoundary,
-    /// The COHORT single-row specialization of [`Ir2Air::UMemBoundary`] (width 9): at most one
-    /// real declared address, so the inter-row lexicographic comparator + key decomposition are
-    /// dropped (`Nodup` is `nodup_singleton`, Lean `universal_memory_sound_single`). Refuses a
-    /// multi-row witness in-circuit via `(next.is_real = 0)` on every transition.
-    UMemBoundaryCohort,
     /// ⚑ **A WHOLE Lean-emitted exact-public manifest, as ONE multiplicity-bearing instance** —
     /// the shape the byte table has always had, generalized from "value = row index" to
     /// "row = the manifest's row, held in a preprocessed column".
@@ -2734,8 +2794,6 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
             Ir2Air::MapOps => MAP_WIDTH,
             Ir2Air::LeanTable(t) => t.width,
             Ir2Air::UMemory => UM_WIDTH,
-            Ir2Air::UMemBoundary => UB_WIDTH,
-            Ir2Air::UMemBoundaryCohort => UBC_WIDTH,
             // The committed column is the multiplicity; the manifest itself is preprocessed.
             Ir2Air::ExactPublicTable { .. } => 1,
         }
@@ -4027,173 +4085,6 @@ where
                 );
             }
 
-            // ----------------------------------------------------------------
-            Ir2Air::UMemBoundary => {
-                let is_real: AB::Expr = local[UB_IS_REAL].into();
-                let init_present: AB::Expr = local[UB_INIT_PRESENT].into();
-                let fin_present: AB::Expr = local[UB_FIN_PRESENT].into();
-                let same_dom: AB::Expr = local[UB_SAME_DOM].into();
-                for b in [&is_real, &init_present, &fin_present, &same_dom] {
-                    builder.assert_zero(b.clone() * (b.clone() - AB::Expr::ONE));
-                }
-                builder.when_transition().assert_zero(
-                    (AB::Expr::ONE - local[UB_IS_REAL].into()) * next[UB_IS_REAL].into(),
-                );
-                // Canonical `none` images.
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - init_present.clone())
-                        * local[UB_INIT_VALUE].into(),
-                );
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - fin_present.clone())
-                        * local[UB_FIN_VALUE].into(),
-                );
-                // Domain nibble + the unique canonical key decomposition (full-felt keys).
-                let bus = LookupBus::new(BUS_BYTE);
-                bus.lookup_key(builder, [local[UB_DOMAIN].into()], AB::Expr::ONE);
-                let (hi4, lo27) = eval_canon_decomp(
-                    builder,
-                    local[UB_KEY].into(),
-                    &local[UB_KEY_HI4..UB_KEY_HI4 + MA_DECOMP_COLS],
-                    is_real.clone(),
-                );
-                // DOMAIN-MAJOR LEXICOGRAPHIC strict increase ⇒ the declared addresses are
-                // Nodup — the hypothesis `memcheck_sound` stands on, enforced for full-felt
-                // keys. dgap = next.domain − domain is a nibble; same_dom is FORCED to the
-                // dgap-zero indicator (against next-real); equal domains compare keys.
-                bus.lookup_key(builder, [local[UB_DGAP].into()], AB::Expr::ONE);
-                {
-                    let mut tb = builder.when_transition();
-                    tb.assert_zero(
-                        local[UB_DGAP].into()
-                            - next[UB_IS_REAL].into()
-                                * (next[UB_DOMAIN].into() - local[UB_DOMAIN].into()),
-                    );
-                    tb.assert_zero(
-                        local[UB_DGAP].into() * local[UB_SAMEDOM_INV].into()
-                            - (next[UB_IS_REAL].into() - local[UB_SAME_DOM].into()),
-                    );
-                }
-                builder.assert_zero(local[UB_DGAP].into() * local[UB_SAME_DOM].into());
-                let next_hi4: AB::Expr = next[UB_KEY_HI4].into();
-                let next_lo27 =
-                    next[UB_KEY].into() - next[UB_KEY_HI4].into() * AB::Expr::from_u64(KEY_HI_BASE);
-                eval_lex_lt(
-                    builder,
-                    hi4,
-                    lo27,
-                    next_hi4,
-                    next_lo27,
-                    &local[UB_KCMP_S..UB_KCMP_S + MA_CMP_COLS],
-                    same_dom,
-                    true,
-                );
-
-                // Init cells produced at serial 0; final cells consumed (the ONE balance).
-                let umem_check = PermutationCheckBus::new(BUS_UMEM_CHECK);
-                umem_check.send(
-                    builder,
-                    [
-                        local[UB_DOMAIN].into(),
-                        local[UB_KEY].into(),
-                        local[UB_INIT_PRESENT].into(),
-                        local[UB_INIT_VALUE].into(),
-                        AB::Expr::ZERO,
-                    ],
-                    is_real.clone(),
-                );
-                umem_check.receive(
-                    builder,
-                    [
-                        local[UB_DOMAIN].into(),
-                        local[UB_KEY].into(),
-                        local[UB_FIN_PRESENT].into(),
-                        local[UB_FIN_VALUE].into(),
-                        local[UB_FIN_SERIAL].into(),
-                    ],
-                    is_real,
-                );
-                // The declared-address table for closure lookups.
-                let addrs = LookupBus::new(BUS_UMEM_ADDRS);
-                addrs.table_entry(
-                    builder,
-                    [local[UB_DOMAIN].into(), local[UB_KEY].into()],
-                    local[UB_ADDR_MULT].into(),
-                );
-            }
-            // ----------------------------------------------------------------
-            // The COHORT single-row boundary: the same Blum legs + address table as
-            // `UMemBoundary`, but the inter-row lexicographic comparator + key decomposition (the
-            // general boundary's `Nodup`-establishing machinery) are GONE. `Nodup` instead follows
-            // from there being at most ONE real row, which is forced here: every transition pins
-            // `next.is_real = 0`, so row 0 may be real and rows 1.. are pads — a multi-row witness
-            // is UNSAT. The soundness of dropping the comparator under this discipline is Lean
-            // `UniversalMemory.universal_memory_sound_single` (`[a].Nodup` via `nodup_singleton`,
-            // `#assert_axioms`-clean): with ≤1 declared address the dropped columns prove nothing.
-            Ir2Air::UMemBoundaryCohort => {
-                let is_real: AB::Expr = local[UBC_IS_REAL].into();
-                let init_present: AB::Expr = local[UBC_INIT_PRESENT].into();
-                let fin_present: AB::Expr = local[UBC_FIN_PRESENT].into();
-                for b in [&is_real, &init_present, &fin_present] {
-                    builder.assert_zero(b.clone() * (b.clone() - AB::Expr::ONE));
-                }
-                // THE SINGLE-ROW TOOTH: at most one real row (row 0). Every transition forces the
-                // NEXT row to be a pad, so the declared address list has length ≤ 1 ⇒ `Nodup` is
-                // free. This is what licenses dropping the lexicographic comparator: there is never
-                // a second row to compare against.
-                builder
-                    .when_transition()
-                    .assert_zero(next[UBC_IS_REAL].into());
-                // Canonical `none` images (the present bit gates the value to 0 for an absent cell).
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - init_present.clone())
-                        * local[UBC_INIT_VALUE].into(),
-                );
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - fin_present.clone())
-                        * local[UBC_FIN_VALUE].into(),
-                );
-                // The domain coordinate is a nibble (the shared byte table is exactly [0, 16)).
-                let bus = LookupBus::new(BUS_BYTE);
-                bus.lookup_key(builder, [local[UBC_DOMAIN].into()], AB::Expr::ONE);
-                // Init cells produced at serial 0; final cells consumed — the ONE Blum balance,
-                // identical to the general boundary's send/receive (the cohort drops only the
-                // ordering machinery, never the multiset legs).
-                let umem_check = PermutationCheckBus::new(BUS_UMEM_CHECK);
-                umem_check.send(
-                    builder,
-                    [
-                        local[UBC_DOMAIN].into(),
-                        local[UBC_KEY].into(),
-                        local[UBC_INIT_PRESENT].into(),
-                        local[UBC_INIT_VALUE].into(),
-                        AB::Expr::ZERO,
-                    ],
-                    is_real.clone(),
-                );
-                umem_check.receive(
-                    builder,
-                    [
-                        local[UBC_DOMAIN].into(),
-                        local[UBC_KEY].into(),
-                        local[UBC_FIN_PRESENT].into(),
-                        local[UBC_FIN_VALUE].into(),
-                        local[UBC_FIN_SERIAL].into(),
-                    ],
-                    is_real,
-                );
-                // The declared-address table for closure lookups (the `umemClosed` tooth).
-                let addrs = LookupBus::new(BUS_UMEM_ADDRS);
-                addrs.table_entry(
-                    builder,
-                    [local[UBC_DOMAIN].into(), local[UBC_KEY].into()],
-                    local[UBC_ADDR_MULT].into(),
-                );
-            }
             // ----------------------------------------------------------------
             Ir2Air::ExactPublicTable { table_id, manifest } => {
                 // The manifest row this table row offers, straight out of the preprocessed
@@ -5771,6 +5662,8 @@ fn build_traces(
                 umem_boundary.addrs.len()
             ));
         }
+        // Touch the layout-agreement assertion so it is evaluated.
+        let () = THE_COHORT_IS_THE_GENERAL_PREFIX;
         let ub_width = if presence.umem_cohort {
             UBC_WIDTH
         } else {
@@ -5799,24 +5692,32 @@ fn build_traces(
             } else {
                 (BabyBear::ZERO, BabyBear::ZERO, 0)
             };
-            row.push(BabyBear::new(domain));
+            // ⚑ WRITTEN BY NAME, not by push order — the same reason `4805cb6bb` gave for the
+            // memory boundary. Since the `Ir2Air::UMemBoundaryCohort` arm was deleted this loop is
+            // the LAST thing in Rust that knows what column 3 of a cohort row means; the cohort
+            // AIR's author is `Emit/UMemBoundaryCohortTableEmit.lean`, which reads columns by its
+            // OWN `UBC_*` defs. The shared prefix is named with the GENERAL layout's constants and
+            // `THE_COHORT_IS_THE_GENERAL_PREFIX` pins the cohort's to agree, so one set of writes
+            // serves both tables without either layout being implied by an ordering.
+            row.resize(UB_ADDR_MULT + 1, BabyBear::ZERO);
+            row[UB_DOMAIN] = BabyBear::new(domain);
             byte_hist[domain as usize] += 1; // the domain nibble lookup, every row
-            row.push(key);
-            row.push(init_p);
-            row.push(init_v);
-            row.push(fin_p);
-            row.push(fin_v);
-            row.push(BabyBear::new(fin_s));
-            row.push(if is_real {
+            row[UB_KEY] = key;
+            row[UB_INIT_PRESENT] = init_p;
+            row[UB_INIT_VALUE] = init_v;
+            row[UB_FIN_PRESENT] = fin_p;
+            row[UB_FIN_VALUE] = fin_v;
+            row[UB_FIN_SERIAL] = BabyBear::new(fin_s);
+            row[UB_IS_REAL] = if is_real {
                 BabyBear::ONE
             } else {
                 BabyBear::ZERO
-            });
-            row.push(BabyBear::new(
+            };
+            row[UB_ADDR_MULT] = BabyBear::new(
                 (*addr_mult.get(&(domain, key.as_u32())).unwrap_or(&0) % (BABYBEAR_P as u64))
                     as u32
                     * (is_real as u32),
-            ));
+            );
             // The cohort row STOPS at the 9 base columns — the key decomposition + lexicographic
             // comparator (the general boundary's `Nodup`-establishing machinery) are absent.
             if !presence.umem_cohort {
@@ -6691,9 +6592,11 @@ fn instance_airs(
     if presence.umem {
         airs.push(Ir2Air::UMemory);
         airs.push(if presence.umem_cohort {
-            Ir2Air::UMemBoundaryCohort
+            // The Lean-authored cohort boundary — `Emit/UMemBoundaryCohortTableEmit.lean`.
+            Ir2Air::LeanTable(crate::table_air::umem_boundary_cohort_table_air_shared())
         } else {
-            Ir2Air::UMemBoundary
+            // …and the Lean-authored general boundary — `Emit/UMemBoundaryTableEmit.lean`.
+            Ir2Air::LeanTable(crate::table_air::umem_boundary_table_air_shared())
         });
     }
     for (table_id, manifest) in exact_public_manifests(desc) {
@@ -8004,13 +7907,13 @@ mod tests {
                         "dregg-ir2-byte-v1" => "byte",
                         "dregg-ir2-mem-boundary-v1" => "boundary",
                         "dregg-ir2-memory-v1" => "memory",
+                        "dregg-ir2-umem-boundary-cohort-v1" => "umem_boundary_cohort",
+                        "dregg-ir2-umem-boundary-v1" => "umem_boundary",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }
                     },
                     Ir2Air::UMemory => "umemory",
-                    Ir2Air::UMemBoundary => "umem_boundary",
-                    Ir2Air::UMemBoundaryCohort => "umem_boundary_cohort",
                     // One instance PER MANIFEST ROW, so this label is shared by all of a
                     // descriptor's exact-public row instances (they are the same AIR shape,
                     // hence the same degree). Deliberately no `_ =>` arm: a new `Ir2Air`
@@ -10050,11 +9953,17 @@ mod tests {
         );
         let airs = instance_airs(&desc, layout, presence);
         assert!(
-            airs.iter().any(|a| matches!(a, Ir2Air::UMemBoundaryCohort)),
-            "the cohort boundary AIR must be in the instance set"
+            airs.iter().any(|a| matches!(
+                a,
+                Ir2Air::LeanTable(t) if t.name == "dregg-ir2-umem-boundary-cohort-v1"
+            )),
+            "the Lean-emitted cohort boundary AIR must be in the instance set"
         );
         assert!(
-            !airs.iter().any(|a| matches!(a, Ir2Air::UMemBoundary)),
+            !airs.iter().any(|a| matches!(
+                a,
+                Ir2Air::LeanTable(t) if t.name == "dregg-ir2-umem-boundary-v1"
+            )),
             "the general boundary AIR must NOT be committed for a cohort descriptor"
         );
 

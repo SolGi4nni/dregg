@@ -435,6 +435,38 @@ pub const MEM_BOUNDARY_TABLE_AIR_JSON: &str =
 pub const MEMORY_TABLE_AIR_JSON: &str =
     include_str!("../descriptors/table-airs/dregg-ir2-memory-v1.json");
 
+/// The COHORT universal-boundary table AIR, emitted by
+/// `Dregg2.Circuit.Emit.UMemBoundaryCohortTableEmit.cohortTable`.
+///
+/// The width-9 SINGLE-ROW specialization of the universal-memory boundary: the same
+/// `ir2_umem_check` Blum legs and the same served `ir2_umem_addrs` closure table as the general
+/// boundary, with the inter-row lexicographic comparator and the canonical key decomposition — 29
+/// of the general boundary's 38 columns — dropped. Its algebra used to be the
+/// `Ir2Air::UMemBoundaryCohort` arm; those lines are deleted.
+///
+/// ⚑ The Lean file proves the single-row tooth (`every_row_after_the_first_is_a_pad`, under
+/// `Coherent`) — the ENTIRE soundness licence for dropping a `Nodup`-establishing comparator — and
+/// then draws the line the deleted comment did not: the tooth bounds the MULTISET's declared list,
+/// not the served closure table, whose multiplicity column no gate reads on any row.
+pub const UMEM_BOUNDARY_COHORT_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-umem-boundary-cohort-v1.json");
+
+/// The GENERAL universal-boundary table AIR, emitted by
+/// `Dregg2.Circuit.Emit.UMemBoundaryTableEmit.umemBoundaryTable`.
+///
+/// The width-38 multi-address form of the universal-memory boundary: the same Blum legs and served
+/// closure table as the cohort, plus the DOMAIN-MAJOR lexicographic strict-increase comparator over
+/// full-felt keys that establishes `Nodup` for more than one declared address. Its algebra used to
+/// be the `Ir2Air::UMemBoundary` arm; those lines are deleted.
+///
+/// ⚑ The Lean file proves the `same_dom` forcing in BOTH directions and then exhibits
+/// `the_gates_alone_admit_a_duplicate_declared_address` — a three-row trace with domains 1 → 0 → 1
+/// that satisfies every GATE while rows 0 and 2 declare the same `(domain, key)`. The domain-major
+/// half of the order is carried by the `ir2_byte` nibble lookup on the gap column, which is a BUS
+/// leg; the gates alone do not give `Nodup`.
+pub const UMEM_BOUNDARY_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-umem-boundary-v1.json");
+
 /// The decoded map-absent table AIR. Panics on a malformed artifact — the artifact is
 /// `include_str!`d, so a failure here is a build-time defect, not a runtime input.
 pub fn map_absent_table_air() -> LeanTableAir {
@@ -501,6 +533,38 @@ pub fn memory_table_air_shared() -> Arc<LeanTableAir> {
         Arc::new(
             parse_table_air(MEMORY_TABLE_AIR_JSON)
                 .expect("the checked-in memory table AIR must decode"),
+        )
+    }))
+}
+
+/// The decoded cohort universal-boundary table AIR.
+pub fn umem_boundary_cohort_table_air() -> LeanTableAir {
+    (*umem_boundary_cohort_table_air_shared()).clone()
+}
+
+/// The decoded cohort universal-boundary table AIR, parsed ONCE per process.
+pub fn umem_boundary_cohort_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(UMEM_BOUNDARY_COHORT_TABLE_AIR_JSON)
+                .expect("the checked-in cohort universal-boundary table AIR must decode"),
+        )
+    }))
+}
+
+/// The decoded general universal-boundary table AIR.
+pub fn umem_boundary_table_air() -> LeanTableAir {
+    (*umem_boundary_table_air_shared()).clone()
+}
+
+/// The decoded general universal-boundary table AIR, parsed ONCE per process.
+pub fn umem_boundary_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(UMEM_BOUNDARY_TABLE_AIR_JSON)
+                .expect("the checked-in general universal-boundary table AIR must decode"),
         )
     }))
 }
@@ -806,6 +870,151 @@ mod tests {
             matches!(recv.tuple[2], WindowExpr::Loc(3)),
             "the CLAIMED prior serial"
         );
+    }
+
+    /// The cohort universal-boundary emission decodes at the deployed shape. ⚑ The counts are
+    /// derived here from the DEPLOYED width constant rather than transcribed from the Lean
+    /// `#guard`, and the width relation to the general boundary — the whole point of the
+    /// specialization — is asserted rather than described.
+    #[test]
+    fn the_cohort_umem_boundary_emission_decodes_at_the_deployed_shape() {
+        let t = umem_boundary_cohort_table_air();
+        assert_eq!(t.name, "dregg-ir2-umem-boundary-cohort-v1");
+        // 7 named columns + the guard + the served multiplicity.
+        assert_eq!(t.width, 9);
+
+        // Gates: 3 booleans + the single-row tooth + two canonical-`none` legs.
+        assert_eq!(t.gates.len(), 3 + 1 + 2);
+        assert_eq!(t.gate_count_sel(RowSel::All), 5);
+        assert_eq!(t.gate_count_sel(RowSel::Transition), 1);
+        assert_eq!(t.gate_count_sel(RowSel::First), 0);
+        assert_eq!(t.gate_count_sel(RowSel::Last), 0);
+
+        // Interactions: the domain nibble, the two Blum legs, the served closure entry.
+        assert_eq!(t.bus_count_on("ir2_byte"), 1);
+        assert_eq!(t.bus_count_on("ir2_umem_check"), 2);
+        assert_eq!(t.bus_count_on("ir2_umem_addrs"), 1);
+        assert_eq!(t.interactions.len(), 4);
+    }
+
+    /// ⚑ THE SINGLE-ROW TOOTH IS THE ONE TRANSITION GATE, and it reads ONLY the next row's guard.
+    /// A `.all` re-scope would bind the WRAP row (on the last row p3's `next` is row 0) and make an
+    /// honest cohort with a real row 0 UNSAT; the decoder refuses that shape outright, and this
+    /// pins that the deployed gate sits where it must.
+    #[test]
+    fn the_cohort_single_row_tooth_is_transition_scoped_and_reads_only_next() {
+        let t = umem_boundary_cohort_table_air();
+        let trans: Vec<_> = t
+            .gates
+            .iter()
+            .filter(|g| g.sel == RowSel::Transition)
+            .collect();
+        assert_eq!(trans.len(), 1);
+        assert!(matches!(trans[0].body, WindowExpr::Nxt(7)), "next.is_real");
+        // …and it SERVES the closure table at a column multiplicity, never a constant.
+        assert_eq!(t.bus_count_op("ir2_umem_addrs", BusOp::Provide), 1);
+        assert_eq!(t.bus_count_op("ir2_umem_addrs", BusOp::Query), 0);
+        let serve = t
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_umem_addrs")
+            .expect("one served entry");
+        assert_eq!(serve.tuple.len(), 2, "(domain, key)");
+        assert!(matches!(serve.mult, WindowExpr::Loc(8)));
+        // The Blum legs ride at `is_real`, which is what makes a pad declare NOTHING to the
+        // multiset — the reason the single-row tooth bounds the declared list at all.
+        for i in t.interactions.iter().filter(|i| i.bus == "ir2_umem_check") {
+            assert!(matches!(i.mult, WindowExpr::Loc(7)));
+        }
+    }
+
+    /// The general universal-boundary emission decodes at the deployed shape, and — ⚑ the check
+    /// that says what the specialization BUYS — the cohort really is a quarter of it.
+    #[test]
+    fn the_general_umem_boundary_emission_decodes_at_the_deployed_shape() {
+        let t = umem_boundary_table_air();
+        assert_eq!(t.name, "dregg-ir2-umem-boundary-v1");
+
+        // Width: 9 shared columns + a 13-column canonical key split + dgap/same_dom/inv
+        // + a 13-column comparator block.
+        let canon = 1 + crate::descriptor_ir2::decomp_cols_pub(27) + 2;
+        let cmp = 3 + crate::descriptor_ir2::decomp_cols_pub(27);
+        assert_eq!((canon, cmp), (13, 13));
+        assert_eq!(t.width, 9 + canon + 3 + cmp);
+        assert_eq!(t.width, 38);
+
+        // Gates: 4 booleans + the real prefix + 2 canonical-`none` + 9 canonical split
+        // + dgap def + inverse witness + `dgap·same_dom` + 6 comparator row-local + 3 branches.
+        assert_eq!(t.gates.len(), 4 + 1 + 2 + 9 + 3 + 6 + 3);
+        assert_eq!(t.gates.len(), 28);
+        assert_eq!(t.gate_count_sel(RowSel::All), 22);
+        assert_eq!(t.gate_count_sel(RowSel::Transition), 6);
+        assert_eq!(t.gate_count_sel(RowSel::First), 0);
+        assert_eq!(t.gate_count_sel(RowSel::Last), 0);
+
+        // Interactions: domain nibble + 7 canonical + dgap nibble + 7 comparator + 2 Blum + serve.
+        assert_eq!(t.bus_count_on("ir2_byte"), 1 + 7 + 1 + 7);
+        assert_eq!(t.bus_count_on("ir2_umem_check"), 2);
+        assert_eq!(t.bus_count_on("ir2_umem_addrs"), 1);
+        assert_eq!(t.interactions.len(), 19);
+
+        // ⚑ WHAT THE COHORT BUYS, measured against the two emissions rather than described: the
+        // specialization is a quarter of the width and carries a fifth of the gates.
+        let c = umem_boundary_cohort_table_air();
+        assert!(
+            c.width * 4 <= t.width,
+            "cohort {} vs general {}",
+            c.width,
+            t.width
+        );
+        assert!(c.gates.len() * 4 <= t.gates.len());
+        // …and the cohort's 9-column prefix is the general one's: the two Blum tuples agree
+        // column-for-column, which is what lets `build_traces` write ONE prefix for both.
+        for op in [BusOp::Send, BusOp::Receive] {
+            let g = t
+                .interactions
+                .iter()
+                .find(|i| i.bus == "ir2_umem_check" && i.op == op)
+                .expect("a general Blum leg");
+            let cc = c
+                .interactions
+                .iter()
+                .find(|i| i.bus == "ir2_umem_check" && i.op == op)
+                .expect("a cohort Blum leg");
+            assert_eq!(
+                g.tuple, cc.tuple,
+                "the two boundaries' {op:?} tuples must agree"
+            );
+            assert_eq!(g.mult, cc.mult);
+        }
+    }
+
+    /// ⚑ THE COMPARATOR'S THREE BRANCH EQUATIONS ARE `.transition`-SCOPED AND READ THE NEXT ROW —
+    /// the property that distinguishes this table from `map-absent`, which asserts the SAME three
+    /// under `.all` against two columns of one row. A drift either way leaves the algebra
+    /// byte-identical (`TableGate.transition_weakens`), so it is pinned on the emitted object.
+    #[test]
+    fn the_general_boundary_comparator_compares_against_the_successor() {
+        let t = umem_boundary_table_air();
+        let trans: Vec<_> = t
+            .gates
+            .iter()
+            .filter(|g| g.sel == RowSel::Transition)
+            .collect();
+        assert_eq!(
+            trans.len(),
+            6,
+            "prefix, dgap def, inverse witness, 3 branches"
+        );
+        // The last three transition gates are the comparator branches, and two of the three read
+        // the next row (the middle one is `gate·(1−s)·(bHi − aHi)`, which reads it too).
+        assert!(
+            trans[3..].iter().all(|g| reads_next(&g.body)),
+            "every comparator branch must compare against the SUCCESSOR"
+        );
+        // …and the map-absent comparator does NOT, because it compares within one row.
+        let ma = map_absent_table_air();
+        assert!(ma.gates.iter().all(|g| !reads_next(&g.body)));
     }
 
     /// A row-filtered gate costs one more degree than its body, because p3's filtered builder
