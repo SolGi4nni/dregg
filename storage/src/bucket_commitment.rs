@@ -237,9 +237,9 @@ pub(crate) mod poseidon2 {
     ///
     /// Packs **3 little-endian bytes per element** (a u24 value `< 2^24 ≤ p`, so
     /// `BabyBear::new` performs no modular reduction). This is deliberately NOT
-    /// the shared `dregg_circuit::field::from_bytes_packed`, which packs **4**
-    /// bytes into a u32 and reduces `% p`: since `p ≈ 2^30.9 < 2^32`, ~53% of
-    /// 4-byte chunks alias their `+p` partner (`v ≡ v + p`), so two distinct
+    /// the retired `dregg_circuit::field::from_bytes_packed` (DELETED 2026-08-01),
+    /// which packed **4** bytes into a u32 and reduced `% p`: since `p ≈ 2^30.9 < 2^32`,
+    /// ~53% of 4-byte chunks alias their `+p` partner (`v ≡ v + p`), so two distinct
     /// equal-length byte strings could produce the identical digest and pass the
     /// trustless read.
     ///
@@ -514,12 +514,27 @@ mod tests {
             "the substitution is same-length"
         );
         assert_ne!(honest, forged, "the bytes genuinely differ");
-        // Witness that the SHARED 4-byte primitive aliases them (the hole the
-        // injective packing exists to close).
+        // Witness that the RETIRED 4-byte primitive aliased them — the hole the injective
+        // packing exists to close. `BabyBear::from_bytes_packed` was DELETED on 2026-08-01
+        // (it was non-injective and still compiling), so the retired body is spelled out
+        // here rather than called: a negative witness must keep exhibiting the defect it
+        // names even after the defect's implementation is gone.
+        fn retired_four_byte_mod_p_packing(bytes: &[u8]) -> Vec<BabyBear> {
+            bytes
+                .chunks(4)
+                .map(|c| {
+                    let mut val: u32 = 0;
+                    for (j, &b) in c.iter().enumerate() {
+                        val |= (b as u32) << (j * 8);
+                    }
+                    BabyBear::new(val)
+                })
+                .collect()
+        }
         assert_eq!(
-            BabyBear::from_bytes_packed(&honest),
-            BabyBear::from_bytes_packed(&forged),
-            "the 4-byte %p packing aliases this pair"
+            retired_four_byte_mod_p_packing(&honest),
+            retired_four_byte_mod_p_packing(&forged),
+            "the retired 4-byte %p packing aliases this pair"
         );
 
         let mut c = bucket_with(&[("b.json", "{}")]);

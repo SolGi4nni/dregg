@@ -59,9 +59,11 @@
 pub mod digest;
 pub mod domain;
 pub mod limbs;
+pub mod varlen;
 
 pub use digest::{Digest8, Squeeze8};
 pub use domain::Domain;
 pub use limbs::{
     BABYBEAR_P, BYTES32_U16_LIMBS, Bytes32, LIMB_BITS, Limbs16, U64_U16_LIMBS, U64Limbs4,
 };
+pub use varlen::{LANE_RADIX, LEN_HEADER_LANES, bytes_to_lanes, lanes_to_bytes, len_lanes};

@@ -183,23 +183,48 @@ impl BabyBear {
         self * self
     }
 
-    /// Convert 4 bytes into a single field element (little-endian, fits in BabyBear).
-    /// Only uses 31 bits, so at most 3.875 bytes of entropy per element.
-    pub fn from_bytes_packed(bytes: &[u8]) -> Vec<Self> {
-        let mut result = Vec::new();
-        let mut i = 0;
-        while i < bytes.len() {
-            let mut val: u32 = 0;
-            for j in 0..4 {
-                if i + j < bytes.len() {
-                    val |= (bytes[i + j] as u32) << (j * 8);
-                }
-            }
-            // Reduce to fit in BabyBear
-            result.push(Self::new(val));
-            i += 4;
-        }
-        result
+    // ⚑ `from_bytes_packed` is DELETED (2026-08-01). It was the 4-byte-LE, zero-padding,
+    // `mod p`-reducing byte→felt map, and it was non-injective in TWO independent `O(1)` ways:
+    //
+    //   1. the final partial chunk was ZERO-FILLED and its consumer `poseidon2::hash_bytes`
+    //      tagged the sponge with the FELT count, so appending NULs up to the next multiple of
+    //      four changed nothing — `hash_bytes(b"foo") == hash_bytes(b"foo\0")`;
+    //   2. each chunk was a `u32` reduced mod `p = 2013265921 < 2^32`, so `2^32 − p = 2281701375`
+    //      chunk values — **53.1%** — had a `+p` sibling with the identical felt, AT EQUAL LENGTH.
+    //
+    // Both are exhibited over a Lean twin of this exact body in
+    // `metatheory/Dregg2/Circuit/BytesLanes.lean` (`legacy_admits_the_nul_append`,
+    // `legacy_admits_the_modP_alias`). The replacement is [`BabyBear::bytes_to_lanes`] below.
+    // It is DELETED rather than deprecated because a non-injective byte→felt map that still
+    // compiles is one the next author reaches for.
+
+    /// **THE injective variable-length byte→felt preimage.** `dregg_codec::bytes_to_lanes` widened
+    /// into felts: a four-lane base-`2^16` BYTE-COUNT header, then the bytes in little-endian
+    /// `u16` pairs.
+    ///
+    /// Every lane is `< 2^16 = 65536 < p`, so [`BabyBear::new`] never reduces one — the mod-`p`
+    /// alias of the deleted `from_bytes_packed` is structurally absent rather than merely
+    /// narrowed, and the length header is what makes the final lane's zero padding unambiguous.
+    ///
+    /// Lean authority `Dregg2.Circuit.BytesLanes`: `lanesToBytes_bytesToLanes` (a TOTAL decoder
+    /// that is a machine-checked left inverse) and its corollary `bytesToLanes_injective`. Not a
+    /// hash bound. The Rust body is pinned to that spec by Lean-COMPUTED KAT vectors plus a
+    /// round-trip sweep (`circuit/tests/bytes_lanes_injective.rs`), not extracted from it.
+    #[must_use]
+    pub fn bytes_to_lanes(bytes: &[u8]) -> Vec<Self> {
+        dregg_codec::bytes_to_lanes(bytes)
+            .into_iter()
+            .map(Self::new)
+            .collect()
+    }
+
+    /// The exact inverse of [`BabyBear::bytes_to_lanes`] — total, and the reason the encoder is
+    /// injective. Present so the round-trip is assertable at every call site, which is what a
+    /// difference-only test cannot check.
+    #[must_use]
+    pub fn lanes_to_bytes(lanes: &[Self]) -> Vec<u8> {
+        let raw: Vec<u32> = lanes.iter().map(|l| l.as_u32()).collect();
+        dregg_codec::lanes_to_bytes(&raw)
     }
 }
 

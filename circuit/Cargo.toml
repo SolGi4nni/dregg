@@ -39,6 +39,12 @@ p3-poseidon2-circuit-air = { workspace = true }
 # within its own crate, so we expand it manually).
 dregg-dsl = { path = "../dregg-dsl" }
 
+# THE CANONICAL BYTE->FELT CODEC, promoted from a dev-dep to a real one on 2026-08-01. The
+# dev-dep comment said "promoting it to a real dependency is Stage 2/3, when the projectors move";
+# `poseidon2::hash_bytes` is a projector and it moved. `dregg-codec` is still a dependency LEAF
+# (no workspace path deps of its own), so this edge cannot cycle.
+dregg-codec = { path = "../dregg-codec" }
+
 postcard = { version = "1", features = ["alloc"] }
 
 blake3 = "1"
@@ -64,12 +70,6 @@ plonky3 = []
 
 [dev-dependencies]
 criterion = { workspace = true }
-# TEST-LAYER ONLY, deliberately. `dregg-codec` is the canonical byte->felt codec and it is a
-# dependency LEAF: nothing in the workspace depends on it yet (Stage 0 is additive). This dev-dep
-# exists so `circuit/tests/byte_to_felt_codec_pins.rs` can PROVE the designation agrees with the
-# deployed map, without wiring any production path through it. Promoting it to a real dependency is
-# Stage 2/3, when the projectors move.
-dregg-codec = { path = "../dregg-codec" }
 dregg-bridge = { path = "../bridge", features = ["test-utils"] }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }

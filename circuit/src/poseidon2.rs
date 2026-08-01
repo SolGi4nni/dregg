@@ -559,13 +559,46 @@ pub fn wire_commit_8_chip(pre_limbs: &[BabyBear], iroot: BabyBear) -> [BabyBear;
 
 /// Hash arbitrary bytes into a single BabyBear field element via Poseidon2.
 ///
-/// Packs the input bytes into field elements (4 bytes per element with modular
-/// reduction), then hashes through the sponge construction. This is useful for
-/// bridging byte-oriented data (like BLAKE3 commitments) into the field-element
-/// domain used by the Poseidon2 Merkle tree.
+/// The preimage is [`BabyBear::bytes_to_lanes`] — a four-lane base-`2^16` BYTE-COUNT header then
+/// the bytes in little-endian `u16` pairs — so **distinct inputs have distinct preimages**
+/// (Lean `Dregg2.Circuit.BytesLanes.bytesToLanes_injective`, from a total decoder and a
+/// machine-checked left inverse).
+///
+/// # ⚑ What changed on 2026-08-01, and what did NOT
+///
+/// This used to be `hash_many(BabyBear::from_bytes_packed(data))`, and that composition was
+/// collidable in two independent ways at **cost 0** — the NUL-append (`hash_bytes(b"foo") ==
+/// hash_bytes(b"foo\0")`, because the packer zero-filled the final partial 4-byte chunk while the
+/// sponge tag counted FELTS) and the mod-`p` chunk alias at equal length (53.1% of `u32` chunks
+/// had a `+p` sibling). Both are gone: no preimage collision exists at all.
+///
+/// ⚠ **AND THE OUTPUT IS STILL ONE FELT, WHICH IS A DIFFERENT DEFECT AND IS NOT CLOSED.**
+/// `log2(p) = 30.906891`, so an unstructured collision search on this digest costs the birthday
+/// bound
+///
+/// ```text
+///     2^(30.906891 / 2)  =  2^15.4534   ≈  44,900 evaluations
+/// ```
+///
+/// — milliseconds. `docs/DESIGN-canonical-byte-felt-codec.md` §2.3 bans that shape by name
+/// (`Digest1`: *"There is no security boundary where that is acceptable"*). Neither fix reaches
+/// the other: no widening of the squeeze removes an append-collision in the preimage, and no
+/// repair of the preimage removes a birthday collision in a 31-bit codomain. Use [`hash_bytes_8`]
+/// wherever the sink can hold eight felts (`2^123.63`); the sinks that cannot — `HeapLeaf`'s
+/// one-felt `addr`/`value` fields and the `MapOp` value width in the emitted AIR — are owned by
+/// the value-widening campaign, which is a constraint change and not a later phase of this one.
 pub fn hash_bytes(data: &[u8]) -> BabyBear {
-    let elements = BabyBear::from_bytes_packed(data);
-    hash_many(&elements)
+    hash_many(&BabyBear::bytes_to_lanes(data))
+}
+
+/// **The eight-felt companion of [`hash_bytes`]** — same injective preimage, same rate-4 absorb,
+/// the squeeze-permute-squeeze of [`hash_many_8`].
+///
+/// This is the one to reach for at a security boundary: `~2^123.63` birthday over `p^8` against
+/// [`hash_bytes`]'s `2^15.45`. It exists so that a sink which CAN hold eight felts has no excuse
+/// to take one.
+pub fn hash_bytes_8(data: &[u8]) -> [BabyBear; 8] {
+    hash_many_8(&BabyBear::bytes_to_lanes(data))
 }
 
 /// **THE canonical felt-domain LIFECYCLE-PAYLOAD hash** — the single composition both the producer

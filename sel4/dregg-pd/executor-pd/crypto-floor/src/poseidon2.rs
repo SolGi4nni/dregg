@@ -252,10 +252,13 @@ pub fn hash_many(inputs: &[BabyBear]) -> BabyBear {
     state.state[0]
 }
 
-/// Hash arbitrary bytes into a single BabyBear via Poseidon2 (pack 4 bytes/elem,
-/// then the sponge). Verbatim `hash_bytes` — the bridge from byte data (e.g. a
-/// BLAKE3 commitment) into the field domain.
+/// Hash arbitrary bytes into a single BabyBear via Poseidon2 (the injective
+/// `bytes_to_lanes` preimage, then the sponge). Verbatim `hash_bytes` — the bridge
+/// from byte data (e.g. a BLAKE3 commitment) into the field domain.
+///
+/// ⚠ The SQUEEZE is still one felt (`2^15.45` birthday); only the preimage's two `O(1)`
+/// collisions were closed on 2026-08-01. See the workspace twin's doc for the split.
 pub fn hash_bytes(data: &[u8]) -> BabyBear {
-    let elements = BabyBear::from_bytes_packed(data);
+    let elements = BabyBear::bytes_to_lanes(data);
     hash_many(&elements)
 }

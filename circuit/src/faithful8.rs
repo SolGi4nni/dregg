@@ -272,10 +272,17 @@ impl Faithful8 {
     /// reduces to the sponge that absorbs the lanes. ⚠ Rung: proved in Lean, **not emitted and not
     /// consumed by a verifier**.
     ///
-    /// The geometry is `rotatedNumPreLimbs` 184 → 187, `B_SPAN` 247 → 251, a descriptor re-emit, a
-    /// VK rotation and `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16. Not this lane's edit — this lane's
-    /// edit is that the wall stops calling it faithful while that is pending. The packing itself is
-    /// owned by
+    /// The geometry is `rotatedNumPreLimbs` 184 → 187, `B_SPAN` 247 → 251, a descriptor re-emit and
+    /// a VK rotation. ⚑ **Re-checked 2026-08-01 and the two numbers hold; the epoch did not.**
+    /// `184 → 187` is right and `185` is not: `B_SPAN := n + 3 + (n − 4) / 3` is `Nat` floor
+    /// division while the carrier chain steps every three limbs, so the unwritten invariant is
+    /// `rotatedNumPreLimbs ≡ 1 (mod 3)` — `184 % 3 = 187 % 3 = 1`, `185 % 3 = 2` — and `187` buys
+    /// exactly the three ninth lanes the counting demands (`public_key`, `child_vk`,
+    /// `contract_hash`, all three 8-lane). `187 + 3 + 61 = 251` confirms `B_SPAN`. The epoch figure
+    /// read "15 → 16" and was stale by four: `CANONICAL_STATE_SCHEMA_EPOCH` is at **19**, so the
+    /// geometry move is 19 → 20. Not this lane's edit — this lane's edit is that the wall stops
+    /// calling it faithful while that is pending, and that the price is stated against the constant
+    /// rather than against a remembered one. The packing itself is owned by
     /// `dregg_commit::typed::canonical_32_to_felts_8` (byte-identical twin:
     /// `dregg_cell::commitment::canonical_to_babybear_pi`) and is UNCHANGED here.
     #[inline]

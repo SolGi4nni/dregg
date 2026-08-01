@@ -25,7 +25,7 @@
 //! `poseidon2::wire_commit_8_chip` chains on):
 //!
 //! ```text
-//! limbs  = BabyBear::from_bytes_packed(body)          // hash_bytes' OWN 4-byte-LE packing
+//! limbs  = BabyBear::bytes_to_lanes(body)             // hash_bytes' OWN injective packing
 //! d8     = chip_absorb(4,  [0x5A4F52, n_limbs, 0, 0]) // domain-marked, LENGTH-absorbing head
 //! d8     = chip_absorb(11, d8 ‖ limbs[3j..3j+3])      // per 3-limb group (final group 0-padded;
 //!                                                     //   safe: n is absorbed in the head)
@@ -59,12 +59,19 @@
 //!
 //! What is NOT bound here: the body's authenticity/well-formedness/injection-freedom
 //! (the attestation's three legs stay executor-verified, exactly the DECO posture),
-//! the byte↔limb packing injectivity (`from_bytes_packed` reduces each 4-byte word mod
-//! p — a property `hash_bytes` itself has), and the `content_commitment` weld above.
+//! and the `content_commitment` weld above.
+//!
+//! ⚑ **The byte↔limb packing injectivity USED to be on that not-bound list** (the retired
+//! `from_bytes_packed` reduced each 4-byte word mod `p`, aliasing 53.1% of chunks, and
+//! zero-filled the tail so a NUL-append was free). It came off on 2026-08-01: the packing is
+//! now `BabyBear::bytes_to_lanes`, injective by a machine-checked left inverse
+//! (Lean `Dregg2.Circuit.BytesLanes.bytesToLanes_injective`). The property is now HELD rather
+//! than shared with `hash_bytes` as a joint defect.
 //!
 //! ## Trace budget
 //!
-//! The body is bounded at [`ZKORACLE_MAX_BODY_LIMBS`] = 1024 limbs = 4 KiB. At the
+//! The body is bounded at [`ZKORACLE_MAX_BODY_LIMBS`] = 1024 limbs = 2040 bytes
+//! ([`ZKORACLE_MAX_BODY_BYTES`]; it was 4 KiB under the retired 4-byte packing). At the
 //! bound: trace width `1 + 1024 + (342 + 1)·8 = 3769` columns over 4 rows, with 343
 //! chip permutation sites per row.
 
@@ -84,8 +91,18 @@ use crate::ivc_turn_chain::{
 };
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
-/// The leaf's trace budget: max body limbs (4 bytes each) = 4 KiB of response body.
+/// The leaf's trace budget, in limbs.
+///
+/// ⚑ **THE BYTE BUDGET HALVED ON 2026-08-01 and the limb budget did not move.** The old
+/// packing was 4 bytes per limb, so 1024 limbs was 4 KiB. `bytes_to_lanes` is 2 bytes per
+/// limb plus a 4-lane length header — the price of injectivity — so the same 1024 limbs is
+/// now `2 * (1024 - 4) = 2040` bytes of response body. The LIMB bound is what the trace
+/// budget is actually about (width `1 + 1024 + (342 + 1)*8 = 3769` over 4 rows), so it is
+/// held fixed and the byte capacity is stated rather than silently doubled.
 pub const ZKORACLE_MAX_BODY_LIMBS: usize = 1024;
+
+/// The response-body byte capacity the limb budget buys, under `bytes_to_lanes`.
+pub const ZKORACLE_MAX_BODY_BYTES: usize = 2 * (ZKORACLE_MAX_BODY_LIMBS - 4);
 
 /// The head's domain-separation mark (`"ZOR"` ASCII), absorbed at lane 0 of the head
 /// permutation so a `zkoracle_leaf_commit` chain value never collides with a bare
@@ -159,8 +176,8 @@ fn chain_site(
 }
 
 /// The witness this leaf proves over: the attestation response body as BabyBear limbs
-/// (`from_bytes_packed`'s 4-byte-LE packing — the SAME packing `hash_bytes` uses),
-/// bounded at [`ZKORACLE_MAX_BODY_LIMBS`]. No blinding: the exposed lane IS the public
+/// (`BabyBear::bytes_to_lanes` — the SAME injective packing `hash_bytes` uses, cut over
+/// with it on 2026-08-01), bounded at [`ZKORACLE_MAX_BODY_LIMBS`]. No blinding: the exposed lane IS the public
 /// commitment (the attestation already publishes `content_commit`), so the chain is
 /// unkeyed — there is no opening to hide, unlike the DECO leaf's transcript salt.
 #[derive(Clone, Debug)]
@@ -170,10 +187,11 @@ pub struct ZkOracleLeafWitness {
 }
 
 impl ZkOracleLeafWitness {
-    /// Pack a raw response body into the witness (4-byte-LE limbs, `hash_bytes`' own
-    /// packing). Refuses an empty body or one past the 4 KiB trace budget.
+    /// Pack a raw response body into the witness (`hash_bytes`' own injective packing:
+    /// a four-lane byte-count header then little-endian `u16` pairs). Refuses an empty body
+    /// or one past the trace budget.
     pub fn from_body_bytes(body: &[u8]) -> Result<Self, String> {
-        let body_limbs = BabyBear::from_bytes_packed(body);
+        let body_limbs = BabyBear::bytes_to_lanes(body);
         check_limb_count(body_limbs.len())?;
         Ok(Self { body_limbs })
     }
@@ -246,10 +264,10 @@ pub fn zkoracle_leaf_commit(limbs: &[BabyBear]) -> Result<BabyBear, String> {
         .expect("chain has a head")[0])
 }
 
-/// [`zkoracle_leaf_commit`] over a raw byte body (via `hash_bytes`' own
-/// `from_bytes_packed` limb packing).
+/// [`zkoracle_leaf_commit`] over a raw byte body (via `hash_bytes`' own injective
+/// `bytes_to_lanes` limb packing).
 pub fn zkoracle_leaf_commit_bytes(body: &[u8]) -> Result<BabyBear, String> {
-    zkoracle_leaf_commit(&BabyBear::from_bytes_packed(body))
+    zkoracle_leaf_commit(&BabyBear::bytes_to_lanes(body))
 }
 
 /// The HONEST `ZKORACLE_CLAIM_LEN`-slot claim tuple for a witness: `[n_limbs, commit]`.

@@ -69,22 +69,45 @@ impl BabyBear {
         result
     }
 
-    /// Pack a byte slice into field elements, 4 little-endian bytes per element
-    /// (reduced mod p). This is `BabyBear::from_bytes_packed` from the circuit
-    /// crate — the exact bridge `poseidon2::hash_bytes` uses for byte-oriented
-    /// data (e.g. BLAKE3 commitments) entering the field domain.
-    pub fn from_bytes_packed(bytes: &[u8]) -> alloc::vec::Vec<Self> {
+    /// **THE injective variable-length byte→felt preimage** — `BabyBear::bytes_to_lanes` from
+    /// the circuit crate, the exact bridge `poseidon2::hash_bytes` uses for byte-oriented data
+    /// (e.g. BLAKE3 commitments) entering the field domain.
+    ///
+    /// A four-lane base-`2^16` BYTE-COUNT header, then the bytes in little-endian `u16` pairs.
+    /// Every lane is `< 2^16 = 65536 < p`, so `Self::new` never reduces one.
+    ///
+    /// ⚑ **This replaces `from_bytes_packed`, DELETED 2026-08-01 in both copies.** That map was
+    /// 4-byte LE strides with the final partial chunk ZERO-FILLED and each chunk reduced `mod p`,
+    /// and it was non-injective in two independent `O(1)` ways: `hash_bytes(b"foo") ==
+    /// hash_bytes(b"foo\0")` (the padding is invisible and `hash_many`'s tag counts FELTS), and
+    /// `[00,00,00,00]` vs `[01,00,00,78]` at equal length (`0x78000001 == p`). Lean authority and
+    /// both exhibits: `metatheory/Dregg2/Circuit/BytesLanes.lean`.
+    ///
+    /// ⚠ This crate is `no_std`, is OUTSIDE the cargo workspace, and **does not build on the
+    /// host at all** (`cargo check` here is `error: unwinding panics are not supported without
+    /// std`; it cross-builds for `aarch64-unknown-linux-musl` only). So a `#[cfg(test)]` module
+    /// in this crate can never go red and is not a gate — the existing one at `lib.rs:657` has
+    /// the same property. The drift detector for this twin therefore lives where it can RUN:
+    /// `the_out_of_workspace_crypto_floor_twin_has_not_drifted` in
+    /// `circuit/tests/bytes_lanes_injective.rs` reads THIS FILE and fails if the retired packer
+    /// reappears or the Lean-computed radix/header shape changes.
+    pub fn bytes_to_lanes(bytes: &[u8]) -> alloc::vec::Vec<Self> {
         let mut result = alloc::vec::Vec::new();
+        let mut rest = bytes.len() as u64;
+        for _ in 0..4 {
+            result.push(Self::new((rest % 65536) as u32));
+            rest /= 65536;
+        }
         let mut i = 0;
         while i < bytes.len() {
-            let mut val: u32 = 0;
-            for j in 0..4 {
-                if i + j < bytes.len() {
-                    val |= (bytes[i + j] as u32) << (j * 8);
-                }
-            }
-            result.push(Self::new(val));
-            i += 4;
+            let lo = bytes[i] as u32;
+            let hi = if i + 1 < bytes.len() {
+                bytes[i + 1] as u32
+            } else {
+                0
+            };
+            result.push(Self::new(lo + 256 * hi));
+            i += 2;
         }
         result
     }
