@@ -777,9 +777,21 @@ jobs:
 
           # Measured 2026-07-31 at 6 (six targets, one test each). RAISED to 10 on
           # 2026-08-01 when three more targets were armed: composer-entry-point (1) +
-          # stitcher-conflict-surface (1) + composes-a-doc-from-cells (2). A floor is a
-          # RATCHET: raise it when the set grows, NEVER lower one to make a red lane green.
-          FLOOR_DESKTOP_TESTS=10
+          # stitcher-conflict-surface (1) + composes-a-doc-from-cells (2). RAISED to 13 the
+          # same day for every-composer-gesture-is-reachable + typed-resolution-and-blame
+          # (3 between them; counted by the auditor running all eleven targets: 13 tests, all
+          # ok). A floor is a RATCHET: raise it when the set grows, NEVER lower one to make a
+          # red lane green.
+          #
+          # ⚑ WHY THOSE LAST TWO NEEDED A SEPARATE COMMIT, because the shape recurs. They were
+          # authored by one lane in the same wave in which ANOTHER lane armed the previous
+          # three. Both behaved correctly in isolation — the arming lane declined to arm two
+          # files it had not run, the authoring lane wrote "NOT ARMED" in its report — and the
+          # wave still left `check-never-run-targets.py` exiting 1 on every push, because that
+          # sweep is the `execution sweep` step of ci.yml's `clippy-correctness` HARD GATE.
+          # Nobody owned the SEAM between the two lanes. A new gpui-gated test target is not
+          # done when it passes; it is done when it is armed here or listed in dark-targets.txt.
+          FLOOR_DESKTOP_TESTS=13
 
           log=/tmp/gpui-teeth.log
           cargo test -p starbridge-v2 --features native-full \
@@ -792,6 +804,8 @@ jobs:
             --test deos_desktop_composer_has_a_real_entry_point \
             --test deos_desktop_stitcher_is_the_conflict_surface \
             --test deos_desktop_composes_a_doc_from_cells \
+            --test deos_desktop_every_composer_gesture_is_reachable \
+            --test deos_desktop_typed_resolution_and_blame \
             --no-fail-fast 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
 
@@ -836,18 +850,27 @@ jobs:
 
   page-on-red:
     name: Page a human when a tooth is red
-    needs: [binding-teeth, feature-gated-prove-teeth, lean-hard-mode]
+    needs: [binding-teeth, feature-gated-prove-teeth, lean-hard-mode, gpui-gated-desktop-teeth]
     # `always()` so this still runs after the teeth job fails; fire only on a real
     # failure (never on cancelled/skipped — lean-hard-mode is dispatch-gated and is
     # `skipped` on every scheduled run).
     #
     # `feature-gated-prove-teeth` is listed here for the reason it exists at all: a job
     # nobody is paged for is the same shape of nothing as a test nobody runs.
+    #
+    # ⚑ `gpui-gated-desktop-teeth` was added 2026-08-01 for EXACTLY that reason, and it had
+    # been missing since the job was written the previous day. Eleven armed desktop targets —
+    # including the anti-forge tooth that is the only thing stopping the transclude gesture
+    # rendering ANY 32 bytes as a provenanced quote — could go red nightly and page nobody.
+    # The job existed, floored what it executed, and reported into silence: a gate whose red
+    # nobody receives is a gate nobody has. Found by the lane that armed three more teeth into
+    # it, which is the reason to make an arming lane check its own delivery path.
     if: >-
       ${{ always() && github.event_name != 'pull_request'
           && (needs.binding-teeth.result == 'failure'
               || needs.feature-gated-prove-teeth.result == 'failure'
-              || needs.lean-hard-mode.result == 'failure') }}
+              || needs.lean-hard-mode.result == 'failure'
+              || needs.gpui-gated-desktop-teeth.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -863,12 +886,14 @@ jobs:
           TEETH: ${{ needs.binding-teeth.result }}
           PROVE: ${{ needs.feature-gated-prove-teeth.result }}
           LEAN: ${{ needs.lean-hard-mode.result }}
+          DESKTOP: ${{ needs.gpui-gated-desktop-teeth.result }}
         run: |
           set -euo pipefail
           TITLE='armed-teeth: a deployed binding tooth is RED'
           {
             printf '%s\n\n' "The nightly **Armed teeth** lane failed: ${RUN_URL}"
             printf '%s\n' "- \`binding-teeth\`: **${TEETH}**"
+            printf '%s\n' "- \`gpui-gated-desktop-teeth\`: **${DESKTOP}**"
             printf '%s\n' "- \`feature-gated-prove-teeth\`: **${PROVE}** (the \`--features prove\` weld canaries)"
             printf '%s\n\n' "- \`lean-hard-mode\`: **${LEAN}** (dispatch-gated; \`skipped\` on scheduled runs)"
             printf '%s\n' 'These are the DEPLOYED light-client binding teeth. This lane is `schedule` +'
