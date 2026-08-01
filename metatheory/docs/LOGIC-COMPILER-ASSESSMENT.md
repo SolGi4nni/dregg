@@ -789,8 +789,13 @@ The eight, with `(gate, boundary, window_gate, lookup, pi_binding, total)`:
     bridge-action                         (0, 0,  26,    0,   26,   52)
     shielded-whole-note-swap-substrate-v1 (0, 399, 0, 1105,  100, 1604)
 
-**So the other seven ARE the byte-reachable set, and their goldens survive.** Ordered by source
-size, the next three are `mina-fixture` (2 window gates + 2 pins — a two-leg `EffectAir`),
+⚑ **The two counts coincide at 8 and the mechanism explains why — but read the label.** P2.5's
+8/76 is a byte-reach measurement; the gate-free 8/76 above is a fresh count of `t` fields in the
+committed JSON. That they are the SAME EIGHT is an INFERENCE from the lowering code (only `.gate`
+goes through `exprToHead`; every other leg is structural), not a re-measurement, and only
+`dfa-routing-table-exact-public-v1` has been byte-confirmed — by fusing it. For the other seven,
+"the golden survives" is a PREDICTION with a stated mechanism, and the way to settle it is to fuse
+the next one, not to assert it here. Ordered by source size, the next three are `mina-fixture` (2 window gates + 2 pins — a two-leg `EffectAir`),
 `poseidon2-hash-arity2` (1 lookup + 3 pins), and `turn-chain-binding` (14 constraints across four
 kinds, the first to exercise `.first`/`.last` boundary legs at scale). `bridge-action` (52) and
 `bound-presentation` (21) are mechanical repeats. `shielded-whole-note-swap-substrate-v1` is 1604
