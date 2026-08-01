@@ -29,9 +29,24 @@ relabelled hypothesis: the conclusion is a genuine `Negl` advantage bound, the h
 SATISFIABLE keyed floor (`idFamily_CR` discharges it, `brokenFamily_not_CR` refutes it), so the
 implications are non-vacuous.
 
-Each sibling's `Negl` obligation is discharged MECHANICALLY by `thread_advantage_bound`
-(`Dregg2/Tactics/ThreadAdvantageBound.lean`), which recurses the negligibility-closure algebra and
-bottoms every collision leaf out at the `CollisionResistant` floor in context. Three SHAPES occur:
+⚑ THE PARAGRAPH THAT STOOD HERE WAS STALE, AND IT MISLED READERS INTO BELIEVING THIS WAS A SOLVED,
+MECHANICAL PROBLEM. It said each sibling's `Negl` obligation is "discharged MECHANICALLY by
+`thread_advantage_bound`, which recurses the negligibility-closure algebra and bottoms every
+collision leaf out at the `CollisionResistant` floor in context." Both halves are dead:
+
+  * `CollisionResistant` WAS DELETED 2026-07-28 (`HashFloorHonesty.lean:204` records the deletion).
+  * `thread_advantage_bound` fires on NO hash floor anywhere in the tree. Eleven invocation sites
+    exist: seven inside its own module, four in `KemSoundnessQuant` (MLWE / discrete-log), one in
+    `FoQromRegrounded`. Not one is a hash-collision leaf.
+
+⚠ AND §0 BELOW ALREADY SAYS SO — this header was contradicting its own file. §0 records that the
+bounds this module used to export were `theorem … (hCR : CollisionResistant F) … := by
+thread_advantage_bound`, which unfolds to `hCR opener`: the hypothesis handed back as the
+conclusion, on a floor that is itself false. That is why §1–§7 were rewritten on 2026-07-22.
+
+What is actually mechanical here is NOT a tactic: it is that the replacements already EXIST and are
+already PROVED (the ROM forms, carrying no floor hypothesis and no cost model), so the work is
+deleting what shadows them and repointing consumers. Three SHAPES occur:
 
   * **SINGLE-USE equivocation** — one Merkle opening bound (`OodCommitmentBinding`,
     `FriSoundness.oracle_binding`, `AirSoundness.committed_trace_pinned`, faithful state root):

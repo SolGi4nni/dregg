@@ -34,7 +34,13 @@ unpredictability no longer ride an empty hypothesis. Mirror of `IdentityCommitme
   output" becomes "⟹ distinct output EXCEPT with negligible probability".
 * **`hashrand_commit_binding_advantage_bound` / `hashrand_output_binding_advantage_bound`** — the same, on the
   DEPLOYED `crypto-hashrand` commit/combine hashes: an equivocating committer / a bias adversary has
-  negligible advantage under the proper floor. Both discharged by `thread_advantage_bound`.
+  negligible advantage under the proper floor. ⚑ CORRECTED: this said "both discharged by
+  `thread_advantage_bound`". That tactic fires on NO hash floor anywhere in the tree — its eleven
+  invocation sites are seven in its own module, four in `KemSoundnessQuant` (MLWE / discrete-log) and
+  one in `FoQromRegrounded`, none of them a collision leaf. `FloorRegroundedConsumers` §0 records
+  why: the bounds that tactic used to discharge were `hCR opener` — the hypothesis handed back as the
+  conclusion, on a floor that is itself false — and they were rewritten on 2026-07-22. These bounds
+  are discharged by their own reductions, not by a tactic.
 
 ## Non-fake
 

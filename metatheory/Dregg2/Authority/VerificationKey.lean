@@ -99,8 +99,14 @@ def VkInjective : Prop := Function.Injective canonicalVk
 def vkOf (c : VkComponents) : VkHash := canonicalVk c
 
 /-- **`vk_determines_components`** — content-addressing makes the circuit identity inspectable:
-equal VK hashes ⇒ equal components, GIVEN the §8 injectivity hypothesis. (Mirrors Factory's
-`vk_determines_invariants`; the four components, not just `(schema, program)`.) -/
+equal VK hashes ⇒ equal components, GIVEN the §8 injectivity hypothesis.
+
+⚠ THAT HYPOTHESIS IS THE SAME SHAPE THE CR-FLOOR SWEEP IS DELETING, and this theorem is the mirror of
+one already gone: `Factory.vk_determines_invariants` was DELETED as vacuous — `VkInjective`/
+`HashInjective` is injectivity of a hash into a bounded range, false by counting. This one survives
+only because it has not been swept yet; read it as carrying the same defect, and prefer
+`Crypto/FactoryBindingFloorRegrounded.vk_determines_invariants_binds_rom` (keyed ROM, no floor, no
+cost model) when a real guarantee is needed. -/
 theorem vk_determines_components (hinj : VkInjective) {c₁ c₂ : VkComponents}
     (h : vkOf c₁ = vkOf c₂) : c₁ = c₂ :=
   hinj h

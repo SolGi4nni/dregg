@@ -143,7 +143,11 @@ structure CommitSurface where
   over a `CommitSurface` was vacuous and could not even be given a refutability pole. The
   finite-support successor `RestFrameFin.RestHashIffFrameFin` restricts the biconditional to the
   `denote`-image of `FinKernelState` and IS satisfiable — see
-  `Circuit.CommitSurfaceInhabited.refCommitSurface`, a closed inhabitant of this whole structure. -/
+  a closed inhabitant of this whole structure. ⚑ CORRECTED: this cited
+  `Circuit.CommitSurfaceInhabited.refCommitSurface`, WHICH DOES NOT EXIST — no such module, no such
+  declaration. The real inhabitant is the deliberately ANONYMOUS `noncomputable example :
+  CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348`, left unnamed on purpose
+  because naming it mints a `bundle-user` carrier in the floor ratchet (that file's §6). -/
   restFrame   : RestHashIffFrameFin RH
 
 /-- The full-state commitment of a kernel under a surface, at a turn `t`. -/
@@ -231,7 +235,8 @@ binding.
 FINITELY-REPRESENTABLE kernels (the `denote`-image of `Circuit.FinKernelState`). Until 2026-07-31
 this theorem carried no such hypothesis and was stated over ALL kernels — and was VACUOUS, because
 its `S : CommitSurface` had no inhabitant at any parameter. It is now a claim with instances
-(`CommitSurfaceInhabited.refCommitSurface` inhabits `S`) about a strictly smaller class of states.
+(the anonymous `example : CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348`
+inhabits `S`; it is unnamed on purpose — see the field docs above) about a strictly smaller class.
 `ApexFloorFree` supplies the EXISTENCE half floor-free; this is the UNIQUENESS half, and it now says
 which states it is about. -/
 theorem stateDecode_pre_faithful (S : CommitSurface) (pc : PublishedCommit)

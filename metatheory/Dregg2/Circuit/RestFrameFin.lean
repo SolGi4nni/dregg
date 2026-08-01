@@ -113,8 +113,11 @@ changing shape), gated on both states being `FiniteRepresentable`.
 ⚑ Unlike `RestHashIffFrame`, this one HAS INSTANCES — see
 `Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, a CLOSED proof (no carried
 hypothesis) at `FinFrameHash.RH_fin Reference.refSponge`, and
-`Circuit.CommitSurfaceInhabited` for the constructed `CommitSurface` built on it. That single fact
-is the whole point of the file. -/
+and the ANONYMOUS `example : CommitSurface` at
+`Verify/RestFrameFiniteSupportSuccessor.lean:348` for the constructed surface built on it. That
+single fact is the whole point of the file. ⚑ CORRECTED: this named `Circuit.CommitSurfaceInhabited`,
+which DOES NOT EXIST — the inhabitant is deliberately anonymous, because naming it would mint a
+`bundle-user` carrier in the floor ratchet. -/
 def RestHashIffFrameFin (RH : RecordKernelState → ℤ) : Prop :=
   ∀ k k' : RecordKernelState, FiniteRepresentable k → FiniteRepresentable k' →
     (RH k = RH k' ↔
