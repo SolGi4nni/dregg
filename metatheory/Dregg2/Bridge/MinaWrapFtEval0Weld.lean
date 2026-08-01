@@ -1,42 +1,46 @@
 /-
 # Dregg2.Bridge.MinaWrapFtEval0Weld — **the reality gate: on devnet block 539508, the C5 FOLD is
-EXACT (`ftEval0 + linConstTerm = FT0 + LCT`, byte-for-byte, from the derived shifts and the wire),
-but `KimchiVerify.gateLinConst` does NOT reproduce the linearization constant term — a defect this
-file exposes and PINS on BOTH sides of the Pasta cycle.**
+EXACT (`ftEval0 + linConstTerm = FT0 + LCT`) AND `KimchiVerify.gateLinConst` now reproduces the
+linearization constant term byte-for-byte — so `ftEval0 == FT0` on BOTH sides of the Pasta cycle.**
 
-## ⚠⚠ THIS FILE NEVER COMPILED before 2026-08-01, so nothing below was ever machine-checked
+## ⚑⚑ CLOSED 2026-08-01 — the two-part `gateLinConst` defect this file exposed
+
+The defect this file first EXPOSED (once it compiled — see below): `gateLinConst` reproduced neither
+`LCT` (Wrap) nor `Scalars.Tick.constant_term` (Step), off by a fixed delta. ROOT CAUSE, both parts in
+the endomul gate: (1) `KimchiVerify.endoMulConstraints` carried a **12th** constraint (the
+distinct-point witness `(xp−xr)(xr−xs)·inv − 1`) transcribed from a NEWER `proof-systems`, but the
+DEPLOYED Mina circuit is `proof-systems` **0.3.0** with `EndosclMul::CONSTRAINTS = 11` — so
+`gateLinConst` now takes only the deployed `.take 11`; (2) the WRAP `endo` was `ENDO_R` (= `er`, the
+scalar-challenge endo), but the endomul gate reads `vi.endo` = the BASE endo `5^((q−1)/3)` — the OTHER
+cube root. With both fixed, `gateLinConst == LCT` (Wrap, §2b-head) and `== lct_true` (Step, §6a), both
+byte-exact on the real block. This is fidelity to the real block on the inherited IPA/FRI floor —
+SYNTHESIS-fidelity, NOT soundness.
+
+## ⚠⚠ THIS FILE NEVER COMPILED before 2026-08-01, so nothing below was machine-checked until then
 
 At its birth commit `bb7c0d7e3`, line 127 read `gammaChal := GAMMA_CHAL` — an identifier defined only
 in `MinaWrapDeferredWeld`, never opened here — so `W539508` "used sorry" and EVERY `#guard` cascaded.
-The celebratory claim in that commit ("six gate bodies reproduce the carried `LCT`") was **never
-run.** The one-token fix (`GAMMA_CHAL → GAMMA_N`, §1c-pinned as the raw wrap γ) makes it compile, and
-the claim is **FALSE on the real block.**
+The one-token fix (`GAMMA_CHAL → GAMMA_N`, §1c-pinned as the raw wrap γ) made it compile, which
+EXPOSED the `gateLinConst` defect above (the compiled-but-wrong headline), now CLOSED.
 
-## ⚑⚑ WHAT IS MEASURED AND WHAT IS NOT — read before quoting this file
+## ⚑⚑ WHAT IS MEASURED — read before quoting this file
 
   * **WRAP side, the FOLD: MEASURED EXACT (§2a).** `ftEval0 + linConstTerm` equals `FT0 + LCT`
-    (kimchi's own `afterZk = ft_eval0 + constant_term`) byte-for-byte. This validates `ftEval0R`, the
-    SEVEN DERIVED SHIFTS, `p(ζ)`, the challenge lifts and every column — all at once, and independently
-    of the endo (the sum cancels the constant term's endo-dependence).
-  * ⚑ **WRAP side, `gateLinConst`: REFUTED (§2b-head, §3).** `linConstTerm ≠ LCT` and `ftEval0 ≠ FT0`,
-    off by a fixed delta, for BOTH cube-root endos. Given §2a, the entire residual is
-    `KimchiVerify.gateLinConst` — kimchi's generic 6-gate linearization transcription does not
-    reproduce Rust's `PolishToken::evaluate(constant_term)`. `MinaRealBlockGate.LCT` is NOT retired.
+    (kimchi's own `afterZk = ft_eval0 + constant_term`) byte-for-byte. Validates `ftEval0R`, the SEVEN
+    DERIVED SHIFTS, `p(ζ)`, the challenge lifts and every column, independently of the endo.
+  * ✅ **WRAP side, `gateLinConst`: MEASURED EXACT (§2b-head, §3).** `linConstTerm == LCT` and
+    `ftEval0 == FT0` — kimchi's 6-gate linearization constant term reproduced (`.take 11` endomul,
+    base endo `5^((q−1)/3)`). `ft_eval0` is a pure function of the wire on the Wrap side.
   * **The public polynomial `p(ζ)`, `p(ζω)`: MEASURED (§4).** Recomputed from the forty public-input
     words with WITNESSED inverses.
   * **`cipShifted`: MEASURED (§5).** `shift_scalar` of `MinaRealBlockGate.CIP` IS
     `MinaWrapOpeningGate.CIP_SHIFTED`.
-  * ⚑ **STEP side: the SHIFTS GAP is CLOSED; slot 0 is NOT yet a discrimination — SAME `gateLinConst`
-    defect.** §6. The **seven Tick coset `shifts` at `domain_log2 = 16`** are DERIVED by
-    `Dregg2.Bridge.TickShifts.tickShiftsFp 16` (`Shifts::new` Blake2b→field, byte-exact `#guard` vs
-    o1-labs), so the Step side no longer REFUSES — it COMPUTES `ft_eval0` (`OUT_STEP.isSome`). With
-    the derived shifts, the corrected `endo_coefficient` (`5^((p-1)/3)`, un-conflated from `er`), and
-    every other input byte-exact, the derived `ft_eval0` = `19015…408756` ≠
-    `MinaWrapDeferredWeld.FT_EVAL0` (`12860…098804`). The lane's premise — shifts were the ONLY
-    residual — is FALSIFIED: the fold matches mina-rust `plonk_checks::ft_eval0` term-for-term, so the
-    residual is the CONSTANT TERM, the SAME `gateLinConst` defect the WRAP side refutes independently
-    (`OUT_STEP.linConstTerm = 14190…863095` vs the fold-implied `lct_true 20345…173047`). §6a PINS it.
-    §6b shows the shifts are load-bearing regardless. SYNTHESIS-fidelity — NOT soundness.
+  * ✅ **STEP side: shifts CLOSED, and slot 0 IS a discrimination (§6, §6a).** The seven Tick coset
+    `shifts` at `domain_log2 = 16` are DERIVED by `TickShifts.tickShiftsFp 16` (byte-exact vs o1-labs).
+    With the derived shifts, `endo_coefficient = 5^((p-1)/3)` (`stepEndoCoefficient`), the `.take 11`
+    endomul linearization, and every other input byte-exact, the derived `ft_eval0` == `FT_EVAL0`
+    (`12860…098804`) and `linConstTerm == lct_true` (`20345…173047`). §6b shows the shifts are
+    load-bearing: a bent shift moves `ft_eval0` off `FT_EVAL0`.
 
 Compiled, not kernel: every pin below is `#guard`, and that is the point of the file. NOT rooted in
 `Dregg2/FFI.lean` — it imports one-block fixtures whose kernel cost belongs off the archive's hot
@@ -95,16 +99,25 @@ transcription rested on a source reading. On a real Mina Wrap proof they do not.
 #guard EZ.getD (IDX_SEL + 1) 0 != 0    -- poseidon
 #guard EZ.getD (IDX_SEL + 2) 0 != 0    -- ⚑ complete_add, never exercised before this file
 #guard EZ.getD (IDX_SEL + 3) 0 != 0    -- ⚑ varbasemul, 21 constraints
-#guard EZ.getD (IDX_SEL + 4) 0 != 0    -- ⚑ endomul, 12 constraints — the only reader of `endo`
+#guard EZ.getD (IDX_SEL + 4) 0 != 0    -- ⚑ endomul, 11 deployed constraints — the only reader of `endo`
 #guard EZ.getD (IDX_SEL + 5) 0 != 0    -- ⚑ endomul_scalar, 11 constraints
 
-/-- ⚑ **CONFIG, named.** `env.endo_coefficient()` = the Wrap verifier index's `endo`.
+/-- ⚑ **CONFIG, named.** `env.endo_coefficient()` = the Wrap verifier index's `vi.endo`.
 
-This is the one constant in the file that is a READING rather than a measurement, and it is read by
-exactly one gate. `KimchiPoseidonGate.GEV` sets `endo := ENDO_R` on its Vesta fixture, but that
-fixture's `emulSel` is ZERO, so the value was never consumed there and the agreement is vacuous.
-§2 is the first place it is load-bearing; §2b is the discrimination that says so. -/
-def ENDO_COEFF : ZMod qN := ENDO_R
+⚑ CORRECTED: this is the BASE endomorphism eigenvalue `5^((q−1)/3) mod q` (`mina_poseidon::sponge::
+endo_coefficient::<Fq>()` = `vi.endo`, the value `pickles-extractors/src/main.rs:1126` feeds the
+constant-term `PolishToken::evaluate`), a cube root of unity in `Fq` — **NOT** `ENDO_R`. `ENDO_R` is
+`er`, the SCALAR-challenge endo of `ScalarChallenge::to_field` (the α′↦α, ζ′↦ζ lift), which is the
+OTHER cube root; the two were conflated here exactly as `MinaWrapFtEval0` §54 and the Step side's
+`endo := ENDO` warned. It is the Fq mirror of `TickShifts.stepEndoCoefficient = 5^((p−1)/3)`. Read by
+exactly one gate (`endoMulConstraints`, constraints 4–9 via `xq1`/`xq2`); with the deployed 11-body
+linearization (`KimchiVerify.gateLinConst`) this reproduces `MinaRealBlockGate.LCT` byte-for-byte. -/
+def ENDO_COEFF : ZMod qN := powFast ((5 : Nat) : ZMod qN) ((qN - 1) / 3)
+
+/- It is a cube root of unity and NOT `ENDO_R` (= `er`), so the two are no longer conflated. -/
+#guard ENDO_COEFF ^ 3 == (1 : ZMod qN)
+#guard ENDO_COEFF != ENDO_R
+#guard ENDO_COEFF.val == 2942865608506852014473558576493638302197734138389222805617480874486368177743
 
 /-- The `fq_kimchi` MDS, flat. `Constants::mds` is the sponge parameters of the field the circuit is
 over, and the Wrap circuit is over `Fq` (`KimchiPoseidonGate`'s note names the Vesta half). -/
@@ -169,24 +182,17 @@ public-input slots 5-8. -/
        | some (a, b, c) => Dregg2.Circuit.Emit.KimchiVerify.endomulScalarConstsOk a b c
        | none => false
 
-/-! ## §2 — ⚑⚑ MEASURED (for the FIRST time): the fold is EXACT; `gateLinConst` is NOT.
-
-⚠⚠ **THIS FILE NEVER COMPILED before this pass.** At its birth commit `bb7c0d7e3`, line 127 read
-`gammaChal := GAMMA_CHAL`, an identifier defined only in `MinaWrapDeferredWeld` and never opened here,
-so `W539508` "used sorry", EVERY `#guard` below cascaded, and NONE of §2–§7's claims was ever
-machine-checked. The one-token fix (`GAMMA_CHAL → GAMMA_N`, the raw wrap γ, §1c-pinned) makes it
-compile — and the headline it advertised is **FALSE on the real block**:
+/-! ## §2 — ✅ MEASURED: the fold is EXACT and `gateLinConst` reproduces the constant term.
 
 `MinaRealBlockGate.LCT` is Rust's `PolishToken::evaluate(constant_term)` and `FT0` is kimchi's own
 `oracles().ft_eval0`; kimchi's identity is `ft_eval0 = afterZk − constant_term`, so `afterZk = FT0 +
 LCT` is a value this tree can check against. **The fold reproduces it EXACTLY** — `deriveSide`'s
-`ftEval0 + linConstTerm` equals `FT0 + LCT` byte-for-byte (§2a), which validates `ftEval0R`, the seven
-shifts, `p(ζ)`, the challenge lifts and every column, all at once and independently of the endo (the
-sum cancels the constant term's endo-dependence). **But `gateLinConst` does NOT reproduce the constant
-term**: `OUT.linConstTerm ≠ LCT` (§2b-head), off by a fixed delta, for BOTH cube-root endos. The gap
-is `KimchiVerify.gateLinConst` (kimchi's generic 6-gate linearization transcription), not any input or
-the fold. Until it is fixed, `MinaRealBlockGate.LCT` is NOT retired and `ft_eval0` is NOT yet a pure
-function of the wire. -/
+`ftEval0 + linConstTerm` equals `FT0 + LCT` byte-for-byte (§2a), validating `ftEval0R`, the seven
+shifts, `p(ζ)`, the challenge lifts and every column, independently of the endo. **And `gateLinConst`
+now reproduces the constant term**: `OUT.linConstTerm == LCT` (§2b-head, CLOSED 2026-08-01 — the
+`.take 11` endomul linearization and the base endo `5^((q−1)/3)`, §1/§2b), so `ft_eval0 == FT0` (§3)
+and `ft_eval0` IS a pure function of the wire. `MinaRealBlockGate.LCT` is now DERIVABLE from
+`gateLinConst`, no longer merely carried. -/
 
 /-- The derived side, once, so §2-§3 read the same object. -/
 def OUT : Option (SideOut qN) := deriveSide W539508
@@ -204,24 +210,25 @@ from the constant term cleanly. -/
            Dregg2.Circuit.Emit.MinaRealBlockGate.FT0 + Dregg2.Circuit.Emit.MinaRealBlockGate.LCT
        | none => false
 
-/-! ### §2b-head — ⚑ THE `gateLinConst` DEFECT, PINNED. `linConstTerm ≠ LCT`.
+/-! ### §2b-head — ✅ THE `gateLinConst` DEFECT, CLOSED. `linConstTerm == LCT`.
 
-Given §2a (the fold is exact), this inequality localizes the entire residual to `gateLinConst`: it
-does not reproduce kimchi's real `PolishToken::evaluate(constant_term)`. This guard PINS the defect —
-when `KimchiVerify.gateLinConst` is corrected to match kimchi, `linConstTerm == LCT` and this flips
-RED, which is the signal the constant term closed. -/
+⚑ CLOSED 2026-08-01. This guard used to PIN `linConstTerm ≠ LCT` (the defect); it has FLIPPED. With
+the deployed 11-body endomul linearization (`KimchiVerify.gateLinConst` `.take 11`, `endosclmul.rs`
+`CONSTRAINTS = 11` at `proof-systems` 0.3.0) and the corrected base endo `ENDO_COEFF = 5^((q−1)/3)`
+(not `er`), `gateLinConst` reproduces the block's `PolishToken::evaluate(constant_term)` BYTE-FOR-BYTE.
+Given §2a (the fold is exact), this pins the constant term exactly, not merely the residual. -/
 #guard match OUT with
-       | some o => o.linConstTerm != Dregg2.Circuit.Emit.MinaRealBlockGate.LCT
+       | some o => o.linConstTerm == Dregg2.Circuit.Emit.MinaRealBlockGate.LCT
        | none => false
 
-/-! ### §2b — NON-VACUITY: each of the four bodies is LOAD-BEARING in `gateLinConst`'s OWN output.
+/-! ### §2b — NON-VACUITY: each of the four bodies is LOAD-BEARING in `gateLinConst`'s output.
 
-⚑ These controls are measured against `LCT_DERIVED` (`gateLinConst`'s full output on this block), NOT
-against `LCT` — because `gateLinConst ≠ LCT` already (§2b-head), so `≠ LCT` would be vacuous. Zeroing
-a selector must move `gateLinConst`'s own value; that the four largest bodies contribute is true even
-though their SUM is the wrong constant term. -/
+⚑ These controls are measured against `LCT_DERIVED` (`gateLinConst`'s full output on this block) —
+which now EQUALS `LCT` (§2b-head). Zeroing a selector must move `gateLinConst`'s value; that the four
+largest custom-gate bodies each contribute is a genuine discrimination on the (now-correct) constant
+term, not merely on an internally-consistent wrong value. -/
 
-/-- `gateLinConst`'s full output on block 539508 (the value §2b-head shows `≠ LCT`). -/
+/-- `gateLinConst`'s full output on block 539508 (which §2b-head shows `== LCT`). -/
 def LCT_DERIVED : ZMod qN :=
   match quotientConsts qN with
   | some (cA, cB, cC) => gateLinConst (gateEvalsOf W539508 cA cB cC)
@@ -258,13 +265,14 @@ coefficient produces a different `gateLinConst` value. -/
          gateLinConst (gateEvalsOf { W539508 with ew := EW.set IDX_W 0 } cA cB cC) != LCT_DERIVED
        | none => false
 
-/-! ## §3 — ⚑ `ft_eval0`: the fold is right, so `ftEval0 ≠ FT0` is EXACTLY the `gateLinConst` delta.
+/-! ## §3 — ✅ `ft_eval0`: the fold is right AND `gateLinConst` is right, so `ftEval0 == FT0`.
 
-`ftEval0 = afterZk − linConstTerm`. §2a pins `afterZk` exact and §2b-head pins `linConstTerm ≠ LCT`,
-so `ftEval0 ≠ FT0` follows, off by the same constant-term delta. When `gateLinConst` is corrected,
-`ftEval0 == FT0` and this flips RED. -/
+`ftEval0 = afterZk − linConstTerm`. §2a pins `afterZk` exact and §2b-head now pins `linConstTerm == LCT`,
+so `ftEval0 == FT0` follows exactly. ⚑ CLOSED 2026-08-01 (was `ftEval0 ≠ FT0`, the defect); this flipped
+with the 11-body endomul linearization + the corrected base endo. `ft_eval0` is now a pure function of
+the wire on the Wrap side. -/
 #guard match OUT with
-       | some o => o.ftEval0 != Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
+       | some o => o.ftEval0 == Dregg2.Circuit.Emit.MinaRealBlockGate.FT0
        | none => false
 
 /- The witnessed inverse really is `DINV` — so the ladder is not accidentally agreeing through a
@@ -369,7 +377,7 @@ and the ONE object that was not in the tree, the seven Tick coset `shifts`, is n
 | `domain_log2` | `branch_data` | ✅ WIRE |
 | `er` = `Endo.Wrap_inner_curve.scalar` | `MinaWrapDeferred.ENDO` | ✅ CONFIG, named |
 | `mds` = `fp_kimchi` | `PastaPoseidon.mdsN` | ✅ CONFIG, in tree |
-| `endo_coefficient` | the Tick verifier index | ⚠ CONFIG, read as `er` (see §2b for why that reading is only load-bearing where a selector fires) |
+| `endo_coefficient` | the Tick verifier index | ✅ CONFIG = `TickShifts.stepEndoCoefficient` = `5^((p−1)/3)` (the BASE endo, NOT `er`; the Wrap side's `ENDO_COEFF` is its Fq mirror) |
 | **the seven Tick coset `shifts` at `2^16`** | `TickShifts.tickShiftsFp 16` | ✅ **DERIVED** (Blake2b→field; `#guard`-pinned to `Shifts::new` byte-exact) |
 
 `Shifts::new` derives them by Blake2b over the domain; `TickShifts` transcribes exactly that
@@ -426,52 +434,40 @@ that `TICK_SHIFTS_PARTIAL` forced is GONE: the shifts gap is closed and the Step
 `ft_eval0` from the wire rather than returning `none`. -/
 #guard OUT_STEP.isSome
 
-/-! ### §6a — ⚑ SLOT 0 IS NOT YET A DISCRIMINATION: a SECOND residual, MEASURED and NAMED.
+/-! ### §6a — ✅ SLOT 0 IS NOW A DISCRIMINATION: the constant-term residual is CLOSED.
 
-The brief for this lane assumed the seven shifts were the ONLY thing between the Step side and
-`FT_EVAL0`, so that deriving them would make `ftEval0 == FT_EVAL0` and turn slot 0 from
-"solved-from-its-slot" into a differential. **That premise is FALSIFIED here.** With the derived
-shifts (byte-exact, `TickShifts`), the corrected `endo_coefficient` (`5^((p-1)/3)`, not `ENDO`), and
-EVERY other Step-side input confirmed byte-exact against o1-labs (columns in `to_absorption_sequence`
-order — the same slice `MinaWrapDeferred` real-block-verifies; `mds` = `fp_kimchi`, oracle-matched;
-`alpha`/`zeta` the `deferred.py`-verified lifts; `beta`/`gamma` raw), the derived `ft_eval0` is
+⚑ CLOSED 2026-08-01. With the derived shifts (byte-exact, `TickShifts`), the corrected
+`endo_coefficient` (`5^((p-1)/3)`, not `ENDO`), EVERY other Step-side input byte-exact against o1-labs
+(`mds` = `fp_kimchi`, oracle-matched; `alpha`/`zeta` the `deferred.py`-verified lifts; `beta`/`gamma`
+raw), AND the deployed 11-body endomul linearization (`KimchiVerify.gateLinConst` `.take 11` —
+`endosclmul.rs` `CONSTRAINTS = 11` at `proof-systems` 0.3.0, the SAME `gateLinConst` fix the WRAP side
+§2b-head verifies against `LCT`), the Step-side `ft_eval0` reproduces `FT_EVAL0` BYTE-FOR-BYTE:
 
-    `OUT_STEP.ftEval0 = 19015133850720799981561969103347224543420887819567943801623456181067047408756`
+    `OUT_STEP.ftEval0 = FT_EVAL0 = 12860…098804`
+    `OUT_STEP.linConstTerm = lct_true = 20345071543763246608538509185165536352110693439382108600930896203194519173047`
 
-which is **NOT** `FT_EVAL0 = 12860…098804`. The fold (`ftEval0R`) matches mina-rust
-`plonk_checks::ft_eval0` term-for-term (PERM_ALPHA0 = 21, `ω^(n-3)`, shifts in the denominator), so
-the residual is the linearization CONSTANT TERM: `deriveSide` computes it with
-`KimchiVerify.gateLinConst`, and §2 above REFUTES that function INDEPENDENTLY on the WRAP side — where
-the fold is provably exact (§2a: `ftEval0 + linConstTerm = FT0 + LCT`) yet `linConstTerm ≠ LCT`. So
-`gateLinConst` is the SAME broken input on both sides; it does not reproduce Rust's
-`PolishToken`/Pickles' `Scalars.Tick.constant_term`, which is what `FT_EVAL0` rests on. Solving the
-fold for the constant term the anchor needs gives
-
-    `lct_true   = 20345071543763246608538509185165536352110693439382108600930896203194519173047`
-    `lct_gateLC = 14190819821033234537891308285146002190684630817697890984532326410246828863095`
-
-(the derived one, `OUT_STEP.linConstTerm`). So the shifts gap is CLOSED and a distinct
-`gateLinConst` ≠ `Scalars.Tick.constant_term` gap is EXPOSED — it lives in `KimchiVerify` (not in any
-input this file controls) and is the real remaining work for slot 0. This guard PINS the current gap
-so that closing the constant-term residual (making the two equal) flips it RED, which is the signal
-that slot 0 has actually become a discrimination. -/
+The earlier residual (`lct_gateLC = 14190…863095`, from the spurious 12th endomul constraint) is GONE.
+The fold (`ftEval0R`) already matched mina-rust `plonk_checks::ft_eval0` term-for-term; the constant
+term `gateLinConst` now matches `Scalars.Tick.constant_term`. So slot 0 (`combined_inner_product`) is a
+real DISCRIMINATION: the whole Step-side gate linearization + C5 fold, fed the wire, reproduces the
+anchor `FT_EVAL0`. §6b's bent-shift red path bites on slot 0 itself, not merely on the fold sum. -/
 #guard match OUT_STEP with
-       | some o => o.ftEval0.val != Dregg2.Bridge.MinaWrapDeferredWeld.FT_EVAL0
+       | some o => o.ftEval0.val == Dregg2.Bridge.MinaWrapDeferredWeld.FT_EVAL0
        | none => false
 #guard match OUT_STEP with
        | some o => o.linConstTerm.val ==
-           14190819821033234537891308285146002190684630817697890984532326410246828863095
+           20345071543763246608538509185165536352110693439382108600930896203194519173047
        | none => false
 
 /-! ### §6b — ⚑ THE SHIFTS ARE LOAD-BEARING: bending one moves `ft_eval0`.
 
-Independently of the constant-term residual, the derived shifts are not decorative: perturbing them
-moves the Step-side `ft_eval0`. Two witnesses: the identity placeholder `replicate 7 1` (six shifts
-where cosets belong) and a single bent coset (`shift[1] + 1`) on the derived vector. Both are `some`
-(the shape gate accepts a seven-vector) with a `ft_eval0` DIFFERENT from the derived one — so when
-the constant-term residual is closed and `ftEval0 == FT_EVAL0` holds, THESE guarantee the equality is
-a real gate on the shift values, not one that would pass on any seven-vector. -/
-def FT_DERIVED : Nat := 19015133850720799981561969103347224543420887819567943801623456181067047408756
+The derived shifts are not decorative: perturbing them moves the Step-side `ft_eval0`. Two witnesses:
+the identity placeholder `replicate 7 1` (six shifts where cosets belong) and a single bent coset
+(`shift[1] + 1`) on the derived vector. Both are `some` (the shape gate accepts a seven-vector) with a
+`ft_eval0` DIFFERENT from the derived one (= `FT_EVAL0`, §6a) — so now that `ftEval0 == FT_EVAL0`
+holds, THESE guarantee that equality is a real gate on the shift values, not one that would pass on
+any seven-vector. -/
+def FT_DERIVED : Nat := Dregg2.Bridge.MinaWrapDeferredWeld.FT_EVAL0
 #guard match deriveSide { S539508 with sh := List.replicate 7 (1 : ZMod pN) } with
        | some o => o.ftEval0.val != FT_DERIVED
        | none => false
@@ -512,8 +508,9 @@ def WIRE_539508_WRAP : String :=
   ++ ";sh=" ++ nats Dregg2.Circuit.Emit.MinaRealBlockGate.SHIFT
   ++ ";md=" ++ nats MDS9
 
-/-- The kimchi-TRUE answer, from `MinaRealBlockGate`'s constants. The gate does NOT reach it, because
-its `lct`/`ft0` inherit the `gateLinConst` defect (§2b-head). -/
+/-- ✅ The kimchi-TRUE answer, from `MinaRealBlockGate`'s constants. The exported gate now REACHES it
+end-to-end (was refused by the `gateLinConst` defect, §2b-head; CLOSED 2026-08-01 by the 11-body endomul
+linearization + the corrected base endo `en = ENDO_COEFF = 5^((q−1)/3)`, not `er`). -/
 def EXPECTED_TRUE_539508_WRAP : String :=
   "lct=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.LCT.val
     ++ ";ft0=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.FT0.val
@@ -521,26 +518,12 @@ def EXPECTED_TRUE_539508_WRAP : String :=
     ++ ";ze=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.ZETA.val
     ++ ";al=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.ALPHA.val
 
-/-- The MEASURED answer the gate actually returns end-to-end: the `om`/`ze`/`al` are correct (the
-derivation runs — root of unity, both challenge lifts), and the `lct`/`ft0` are the `gateLinConst`
-values (`endo = ENDO_COEFF = ENDO_R`), off from `LCT`/`FT0` by the constant-term delta. -/
-def EXPECTED_MEASURED_539508_WRAP : String :=
-  "lct=8681360867184798963981514810663644655673070993510971872798076584395968078520"
-    ++ ";ft0=8573205762937390675306159305751401381856834676248414623596577458395032123847"
-    ++ ";om=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.OMEGA.val
-    ++ ";ze=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.ZETA.val
-    ++ ";al=" ++ toString Dregg2.Circuit.Emit.MinaRealBlockGate.ALPHA.val
-
-/- ⚑ **THE EXPORTED GATE, ON A REAL MINA BLOCK, END TO END** — it runs (parse + wire + `Nat` + the
-whole derivation), reproducing the correct `om`/`ze`/`al`; its `lct`/`ft0` are the `gateLinConst`
-values. -/
-#guard minaWrapFtEval0Gate WIRE_539508_WRAP == EXPECTED_MEASURED_539508_WRAP
-/- …and it does NOT match the kimchi-true answer — the `gateLinConst` defect, exhibited at the
-C-ABI. When `gateLinConst` is fixed, `EXPECTED_MEASURED` becomes `EXPECTED_TRUE` and this flips. -/
-#guard minaWrapFtEval0Gate WIRE_539508_WRAP != EXPECTED_TRUE_539508_WRAP
+/- ✅ **THE EXPORTED GATE, ON A REAL MINA BLOCK, END TO END** — it runs (parse + wire + `Nat` + the
+whole derivation) and reproduces the kimchi-TRUE `lct`/`ft0`/`om`/`ze`/`al` byte-for-byte. -/
+#guard minaWrapFtEval0Gate WIRE_539508_WRAP == EXPECTED_TRUE_539508_WRAP
 
 /- …and the same wire with the field selector flipped to the STEP side is a DIFFERENT answer, not
 the same one — so `m` is read and the two moduli are not silently one. -/
-#guard minaWrapFtEval0Gate ("m=p" ++ (WIRE_539508_WRAP.drop 3)) != EXPECTED_MEASURED_539508_WRAP
+#guard minaWrapFtEval0Gate ("m=p" ++ (WIRE_539508_WRAP.drop 3)) != EXPECTED_TRUE_539508_WRAP
 
 end Dregg2.Bridge.MinaWrapFtEval0Weld

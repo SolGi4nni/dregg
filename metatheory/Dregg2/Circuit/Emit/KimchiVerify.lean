@@ -900,12 +900,15 @@ def varBaseMulConstraints {R : Type} [CommRing R] (w wNext : List R) : List R :=
     , u * u - (t * t) * (ox - xT + ssq)
     , (oy + iy) * t - (ix - ox) * u ])
 
-/-- **`endoMulConstraints`** — the 12 `EndosclMul` (`GateType::EndoMul`) constraints
-(`endosclmul.rs:479-551`). **12, not 11** — the twelfth is the distinct-point witness
-`(xp−xr)(xr−xs)·inv − 1`. Columns CURR: `xt=w₀ yt=w₁ inv=w₂ xp=w₄ yp=w₅ n=w₆ xr=w₇ yr=w₈ s1=w₉
-s3=w₁₀ b1..b4=w₁₁..w₁₄`; NEXT: `xs=w'₄ ys=w'₅ n'=w'₆`. `endo` = `env.endo_coefficient()` — the
-verifier-index constant `cs.endo` (NOT a column). Note the decomposition sign here is
-`(…) − n'`, the OPPOSITE of `varbasemul`'s `n' − (…)`. -/
+/-- **`endoMulConstraints`** — the `EndosclMul` (`GateType::EndoMul`) constraints. This def carries
+**12**: the first 11 are the DEPLOYED gate (`proof-systems` 0.3.0, `EndosclMul::CONSTRAINTS = 11` —
+what Mina devnet/mainnet runs and what `gateLinConst` `.take 11`s for the linearization constant term),
+and the 12th is the distinct-point witness `(xp−xr)(xr−xs)·inv − 1`, added in a NEWER `proof-systems`
+and used ONLY by the `KimchiRenderEndoMul` synthesis checker (its witness sets `w₂ = inv`). ⚑ The 12th
+is NOT in the deployed block's constant term — see `gateLinConst`. Columns CURR: `xt=w₀ yt=w₁ inv=w₂
+xp=w₄ yp=w₅ n=w₆ xr=w₇ yr=w₈ s1=w₉ s3=w₁₀ b1..b4=w₁₁..w₁₄`; NEXT: `xs=w'₄ ys=w'₅ n'=w'₆`. `endo` =
+`env.endo_coefficient()` — the verifier-index constant `cs.endo` (NOT a column). Note the decomposition
+sign here is `(…) − n'`, the OPPOSITE of `varbasemul`'s `n' − (…)`. -/
 def endoMulConstraints {R : Type} [CommRing R] (endo : R) (w wNext : List R) : List R :=
   let ww := fun i => w.getD i (0 : R)
   let wn := fun i => wNext.getD i (0 : R)
@@ -995,13 +998,24 @@ structure GateEvals (R : Type) where
 (Σᵢ alpha^i·constraintᵢ)` (`argument.rs:201-213`, `linearization.rs:64-68,166-168`), with
 `index_terms = []` (`linearization.rs:364`) so this IS `linConstTerm`. Every one of the six v1 gate
 bodies is now TRANSCRIBED — generic (2), Poseidon (15), complete_add (7), varbasemul (21),
-endomul/`EndosclMul` (12), endomul_scalar (11) — none is a carrier. -/
+endomul/`EndosclMul` (**11**), endomul_scalar (11) — none is a carrier.
+
+⚑ ENDOMUL IS 11, NOT 12, IN THE DEPLOYED LINEARIZATION. Mina devnet/mainnet is built on
+`proof-systems` **0.3.0** (`endosclmul.rs`: `EndosclMul::CONSTRAINTS = 11`; the block-539508 verifier
+index whose `PolishToken::evaluate(linearization.constant_term)` this must reproduce is that version —
+confirmed byte-exact against `MinaRealBlockGate.LCT`/`MinaWrapDeferredWeld.FT_EVAL0`, both sides). The
+`endoMulConstraints` def carries a **12th** constraint — the distinct-point witness
+`(xp−xr)(xr−xs)·inv − 1` — transcribed from a NEWER `proof-systems` for the `KimchiRenderEndoMul`
+synthesis checker; that constraint is NOT in the deployed gate's linearization constant term, so the
+constant term takes only the deployed `.take 11`. (Every fixture with `emulSel = 0` — `gEvQ`,
+`KimchiPoseidonGate`, `KimchiRealProofGate` — is unchanged by the `.take`; only the real Mina block,
+whose `emulSel ≠ 0`, is affected, and it now reproduces the block's constant term exactly.) -/
 def gateLinConst {R : Type} [CommRing R] (g : GateEvals R) : R :=
   genericGateConstraint g.genSel g.alpha g.coeff g.w
   + g.posSel * poseidonBody g.alpha g.mds g.coeff g.w g.wNext
   + g.caddSel * alphaCombine g.alpha (completeAddConstraints g.w)
   + g.mulSel * alphaCombine g.alpha (varBaseMulConstraints g.w g.wNext)
-  + g.emulSel * alphaCombine g.alpha (endoMulConstraints g.endo g.w g.wNext)
+  + g.emulSel * alphaCombine g.alpha ((endoMulConstraints g.endo g.w g.wNext).take 11)
   + g.emulScalarSel * alphaCombine g.alpha (endomulScalarConstraints g.cA g.cB g.cC g.w)
 
 /-- **`kimchiVerifyDecisionGates`** — `kimchiVerifyDecisionField` (§9b) with the C5 linearization
@@ -1410,8 +1424,9 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
      (2026-07-27).** `linConstTerm = Σ_gate index(gate)·Σᵢ alpha^i·constraintᵢ` with
      `index_terms = []` (`linearization.rs:364`), and every body is now emitted from the source:
      generic 2 (`genericGateConstraint`), Poseidon 15 (`poseidonConstraints`), complete_add 7
-     (`completeAddConstraints`), varbasemul 21 (`varBaseMulConstraints`), endomul/`EndosclMul` **12**
-     (`endoMulConstraints` — the twelfth is the distinct-point witness `(xp−xr)(xr−xs)·inv − 1`),
+     (`completeAddConstraints`), varbasemul 21 (`varBaseMulConstraints`), endomul/`EndosclMul` **11**
+     deployed (`(endoMulConstraints …).take 11`; the def's 12th distinct-point witness
+     `(xp−xr)(xr−xs)·inv − 1` is a NEWER-`proof-systems` constraint NOT in the deployed 0.3.0 gate),
      endomul_scalar 11 (`endomulScalarConstraints`, with `11/6, −5/2, 2/3` supplied as WITNESSED
      ring quotients, `endomulScalarConstsOk`). `gateLinConst` sums them behind their selectors and
      `kimchiVerifyDecisionGates` threads the result into `ftEval0`. `KimchiPoseidonGate` runs this
