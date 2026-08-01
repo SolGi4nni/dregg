@@ -2,8 +2,15 @@
 # Dregg2.Circuit.Emit.DfaRoutingTableEmit — the TABLE-AS-INPUT DFA-routing descriptor family,
 with a refinement GENERAL over an arbitrary transition table (the M1 general DFA-refine).
 
-**This is Lean-authored AIR.** The descriptor family is authored here; the wire bytes of the
-concrete instance are byte-pinned by an `emitVmJson2` `#guard`; the refinement is a
+⚑ **This is Lean-COMPILED AIR — the first descriptor in the tree that is (2026-08-01).** House law
+#1 says the AIR is Lean-authored; this file is its endpoint. What is authored here is the SOURCE
+(`dfaAir`, §2: an `EffectAir` block of one `.lookup`, one `.transition` `.window` and two `.pin`
+legs over a declared `exactPublicRows` table). The DESCRIPTOR is
+`EffectLower.lowerAir … (dfaAir tbl)` — there is no hand-written `VmConstraint2` in this file, and
+the `def`s that used to hold them (`transitionLookup`, `continuityWindow`, `b1InitialPin`,
+`b2FinalPin`) are deleted. The wire bytes of the concrete instance are byte-pinned by an
+`emitVmJson2` `#guard` against `circuit/descriptors/by-name/dfa-routing-table-exact-public-v1.json`
+(unchanged across the fusion — sha256 `31bea51b…`, zero bytes moved); the refinement is a
 `Satisfied2Public <emitted-descriptor> ⟹ classify` theorem over the EMITTED object, general over
 the table. Rust parses the emitted IR2 bytes (`descriptor_ir2.rs::parse`, the
 `exact_public_rows` arm) and supplies witnesses; it authors nothing.
