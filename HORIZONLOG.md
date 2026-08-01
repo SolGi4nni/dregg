@@ -72,10 +72,33 @@ that gate holds unchanged — asserted, not assumed.
    attacker-CHOSEN 32-byte value **the honest figure is O(1)**. Fix = the injective 16×`u16`
    preimage (`raw_to_u16_le`, exactly the arity-16 row); NOT applied here only because it
    desynchronises the live lane-0 weld above and the repair belongs in Lean.
-2. **Neighbor-adjacency / nullifier non-membership** (`dregg-membership-adjacency::poseidon2-v1`) is
-   a chained binary `hash_2_to_1` tree, still ONE felt, **no wide Lean twin on disk** — the same
-   wound class, in the deployed double-spend gate. `narrow_felt_from_slot_low4` /
-   `adjacency_compress` in `membership_verifier.rs` mark exactly where it lands.
+2. ~~**Neighbor-adjacency / nullifier non-membership**~~ — **CLOSED (schema epoch 17).** The tree is
+   now `adjacency_node8(l,r) = A16(l ‖ r)`, all 8 lanes bound, 8-felt leaves and root, 26 PIs
+   (`dregg-membership-adjacency-wide::node8-v1`, w88/132 constraints, Lean-authored in
+   `Emit/AdjacencyMembershipWideEmit.lean`). Collision **2^15.45 → 2^123.63**. The one-felt path is
+   DELETED (descriptor, `membership_adjacency_air.rs`, the lane-0 `adjacency_compress`, the low-4-byte
+   root slot). `circuit/tests/adjacency_forge_tooth.rs` (5/5) exhibits the forge first: a real
+   collision in **20,879 evaluations (~2^14.3)** turned into a sorted 16-leaf tree where a key at leaf
+   index 2 — a genuine MEMBER — is certified ABSENT by the retired acceptance predicate, then `node8`
+   separating the same pair and the deployed prover/verifier refusing.
+   ⚠ **AND THE PREMISE ABOVE WAS WRONG — corrected at source.** This tree is *not* "the deployed
+   double-spend gate". `turn/src/executor/membership_verifier.rs::verify_nullifier_nonmembership`
+   has **zero production callers** — every call site is inside its own `#[cfg(test)] mod tests`. The
+   live in-circuit double-spend gate for `noteSpend` is `Ir2Air::MapAbsent` (`descriptor_ir2.rs:3786`,
+   reached via `noteSpendVmDescriptor2R24`), an Indexed-Merkle-Tree pointer bracket. The adjacency
+   family's real live consumer is `WitnessedPredicateKind::NonMembership` (cell `Renounced` /
+   `SortedNeighborNonMembershipVerifier`), which is what this cutover fixes.
+2b. ⚑ **NEW / OPEN — the same wound, in the gate that actually IS deployed.** `Ir2Air::MapAbsent`'s
+   roots, leaf digests and node folds are ALREADY `node8`, but `MA_KEY` (col 8), `MA_LO_ADDR` (18)
+   and `MA_LO_NEXT` (20) are **one felt each** (`descriptor_ir2.rs:2043-2064`, `:3806-3868`) — the
+   sort key and the IMT pointer are 31-bit inside a 247-bit tree. Its wide Lean emitters are already
+   **proved and unlanded**, the exact shape `MerkleMembership4aryWideEmit` was in before `57105f387`:
+   `Emit/LexCompare8Emit.lean` (`lexLt8Descriptor`, w40, `LEX_LT8_GOLDEN` byte-pinned, 12
+   `#assert_axioms`, **no JSON, no `EmitByName` row, no Rust decoder**), `Emit/HeapLeafWideEmit.lean`
+   (arity-17 wide leaf schema), with `Circuit/MapAbsentImtGateWide.lean` and the finished weld
+   `absentBracket_of_lexBlocks`. ⚠ Do NOT relay `halfWideLeaf_forges_absence_of_present` as a
+   statement about HEAD: it is a warning about the HALF-widened intermediate (widen addr/key but not
+   the pointer), not a claim that the current all-narrow gate forges for free.
 3. Bridge issuer ring-membership and preflight `dregg-derivation-v1` are **FAIL-CLOSED** at the
    widening (they refuse rather than compare at lane 0), with self-arming tests that go red the
    moment someone restores a positive pole without the federation-root flag day.

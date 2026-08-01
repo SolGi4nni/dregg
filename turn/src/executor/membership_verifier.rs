@@ -45,7 +45,8 @@ use dregg_cell::predicate::{
 use dregg_cell_crypto::value_commitment::verify_range_bytes;
 use dregg_circuit::BabyBear;
 use dregg_circuit::adjacency_witness::{
-    PI_IDX_LOWER as ADJ_PI_IDX_LOWER, PI_IDX_UPPER as ADJ_PI_IDX_UPPER, adjacency_witness,
+    ADJ_PI_COUNT, PI_IDX_LOWER as ADJ_PI_IDX_LOWER, PI_IDX_UPPER as ADJ_PI_IDX_UPPER,
+    adjacency_witness,
 };
 use dregg_circuit::custom_leaf_lowering::{
     cellprogram_to_descriptor2, fill_chain_columns, lower_cellprogram,
@@ -73,9 +74,13 @@ const TEMPORAL_PREDICATE_DESCRIPTOR_NAME: &str = "dregg-temporal-predicate-gte::
 
 const KIND_NAME: &str = "MerkleMembership";
 
-/// The emitted neighbor-adjacency descriptor name (`descriptor_by_name` key) —
-/// the sorted-set non-membership consecutiveness STARK.
-const ADJACENCY_DESCRIPTOR_NAME: &str = "dregg-membership-adjacency::poseidon2-v1";
+/// The emitted **WIDE** neighbor-adjacency descriptor name (`descriptor_by_name` key) — the
+/// sorted-set non-membership consecutiveness STARK, at full `node8` digest width.
+///
+/// ⚑ FLAG DAY: was `dregg-membership-adjacency::poseidon2-v1` (w18/5PI, every Merkle value ONE
+/// felt). That identity no longer routes, so a stored one-felt adjacency proof is REFUSED rather
+/// than reinterpreted.
+const ADJACENCY_DESCRIPTOR_NAME: &str = dregg_circuit::adjacency_witness::ADJACENCY_WIDE_NAME;
 
 /// Compress a 32-byte value to its **8-felt** membership leaf digest — THE
 /// canonical chip-native compress (`dregg_commit::typed::compress_member`): all
@@ -119,33 +124,42 @@ fn root_digest_from_slot(bytes: &[u8; 32]) -> Digest8 {
     })
 }
 
-/// ⚠ **THE SURVIVING ONE-FELT SLOT CONVENTION — NOT the membership root.**
+/// ⚠ **THE SURVIVING ONE-FELT SLOT CONVENTION — NOT a tree root.**
 ///
-/// Reads a single BabyBear felt from a 32-byte commitment's low four little-endian bytes. This is
-/// the encoding the MEMBERSHIP root used before the `node8` cutover, and it is deliberately kept
-/// ONLY for the two domains in this file that are still one felt wide:
+/// Reads a single BabyBear felt from a 32-byte commitment's low four little-endian bytes. After the
+/// adjacency `node8` cutover exactly ONE domain in this file still uses it:
 ///
-/// * the **neighbor-adjacency / nullifier-non-membership** sorted-set root
-///   (`dregg-membership-adjacency::poseidon2-v1`, whose interior is a chained `hash_2_to_1` tree —
-///   a genuinely narrow tree with NO wide Lean twin on disk, and therefore an OPEN finding of the
-///   same class as the one this cutover closed, not something it fixed); and
 /// * the **BridgePredicate `fact_commitment`**, which is a committed scalar and not a tree at all,
-///   so width is not the question there.
+///   so output width is not the question there.
 ///
-/// It is named apart from [`root_digest_from_slot`] on purpose: the membership root and these two
-/// share a byte convention no longer, and a future reader must not "unify" them back.
+/// It is named apart from [`root_digest_from_slot`] on purpose: no tree root shares this byte
+/// convention any more, and a future reader must not "unify" them back.
 fn narrow_felt_from_slot_low4(bytes: &[u8; 32]) -> BabyBear {
     BabyBear::new(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-/// The adjacency tree's leaf felt: lane 0 of the canonical [`compress`] digest.
+/// The adjacency tree's leaf digest: the FULL 8-felt canonical [`compress`].
 ///
-/// ⚠ A lane-0 projection, deliberately and visibly. The adjacency descriptor's leaf public inputs
-/// are one felt each, so widening the projection here without widening
-/// `dregg-membership-adjacency` would only move the truncation. That widening is the OPEN
-/// adjacency finding; this projection marks exactly where it lands.
-fn adjacency_compress(bytes: &[u8; 32]) -> BabyBear {
-    compress(bytes)[0]
+/// ⚑ FLAG DAY: was `compress(bytes)[0]` — a deliberate, visibly-marked lane-0 projection, because
+/// the retired adjacency descriptor's leaf public inputs were one felt each. Both leaf PIs are now
+/// 8-felt, so the projection is gone: the sorted-set bracket key is no longer a 31-bit commitment.
+fn adjacency_compress(bytes: &[u8; 32]) -> Digest8 {
+    compress(bytes)
+}
+
+/// Lexicographic order on the 8-felt leaf domain, lane 0 most significant.
+///
+/// ⚑ FLAG DAY: the sorted-set bracket `lower < candidate < upper` used to compare ONE `u32`. The
+/// tree is sorted by THIS order now, and a prover's tree must be built the same way — comparing a
+/// widened leaf by lane 0 alone would re-narrow the bracket the widening exists to fix.
+fn adjacency_leaf_cmp(a: &Digest8, b: &Digest8) -> core::cmp::Ordering {
+    for k in 0..DIGEST_W {
+        match a[k].as_u32().cmp(&b[k].as_u32()) {
+            core::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    core::cmp::Ordering::Equal
 }
 
 /// Wire encoding for a `MerkleMembership` proof blob.
@@ -374,15 +388,14 @@ impl NeighborAdjacencyVerifier for CircuitNeighborAdjacencyVerifier {
     ) -> Result<(), String> {
         // Derive the BabyBear public inputs from the cell's 32-byte values.
         //
-        // ROOT: the committed sorted-set root is ALREADY a felt — the set's
-        // binary-Poseidon2 Merkle root — published in the cell's 32-byte
-        // commitment as the felt's canonical 4-byte LE form (mirroring the
-        // pre-cutover MerkleMembership slot convention). We read it
-        // directly rather than re-compressing.
+        // ROOT: the committed sorted-set root is the set's binary-Poseidon2 `node8` Merkle root —
+        // since the cutover an 8-felt digest, not one felt — published in the cell's 32-byte
+        // commitment as eight canonical 4-byte LE limbs filling the slot exactly (8 x 4 = 32).
+        // Every BabyBear canonical value is `< 2^31 < 2^32`, so the encoding is INJECTIVE.
         //
-        // LEAVES: the neighbor *values* are raw 32-byte items, mapped into the
-        // tree's leaf-felt domain by the canonical Poseidon2 compression.
-        let root_felt = narrow_felt_from_slot_low4(root);
+        // LEAVES: the neighbor *values* are raw 32-byte items, mapped into the tree's 8-felt leaf
+        // domain by the canonical Poseidon2 compression — all eight lanes, no projection.
+        let root8 = root_digest_from_slot(root);
         let leaf_lower = adjacency_compress(lower);
         let leaf_upper = adjacency_compress(upper);
 
@@ -395,13 +408,14 @@ impl NeighborAdjacencyVerifier for CircuitNeighborAdjacencyVerifier {
         // against the committed root.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let wire = AdjacencyProofWire::from_bytes(adjacency_proof)?;
-            let pis = vec![
-                root_felt,
-                leaf_lower,
-                leaf_upper,
-                BabyBear::from_u64(wire.idx_lower as u64),
-                BabyBear::from_u64(wire.idx_upper as u64),
-            ];
+            // `[root0..7, leaf_lower0..7, leaf_upper0..7, idx_lower, idx_upper]` — the emitted
+            // descriptor's 26 PIs (was 5).
+            let mut pis = Vec::with_capacity(ADJ_PI_COUNT);
+            pis.extend_from_slice(&root8);
+            pis.extend_from_slice(&leaf_lower);
+            pis.extend_from_slice(&leaf_upper);
+            pis.push(BabyBear::from_u64(wire.idx_lower as u64));
+            pis.push(BabyBear::from_u64(wire.idx_upper as u64));
             let desc = descriptor_by_name(ADJACENCY_DESCRIPTOR_NAME).ok_or_else(|| {
                 format!(
                     "no adjacency descriptor dispatches for {ADJACENCY_DESCRIPTOR_NAME:?} (fail-closed)"
@@ -439,6 +453,7 @@ pub fn prove_neighbor_adjacency(
     let (trace, pis) = adjacency_witness(leaf_lower, lower_path, leaf_upper, upper_path)?;
     let idx_lower = pis[ADJ_PI_IDX_LOWER].as_u32();
     let idx_upper = pis[ADJ_PI_IDX_UPPER].as_u32();
+    debug_assert_eq!(pis.len(), ADJ_PI_COUNT);
 
     // Honest-prover contract: refuse a non-consecutive bracket up front. The
     // descriptor's internalized `idx_upper == idx_lower + 1` Last-row tooth also
@@ -466,22 +481,33 @@ pub fn prove_neighbor_adjacency(
 /// Re-export of the adjacency step (`AdjWitnessStep`) for prover-side callers.
 pub use dregg_circuit::adjacency_witness::AdjWitnessStep as NeighborAdjStep;
 
-/// The 32-byte set-commitment form a cell must publish for an adjacency tree
-/// whose binary-Poseidon2 root is `root_felt`: the felt's canonical 4-byte LE
-/// encoding (matching [`narrow_felt_from_slot_low4`], the convention the adjacency
-/// verifier reads). Provers build their tree over [`adjacency_leaf_felt`] leaves,
-/// take the resulting root felt, and publish `adjacency_commitment_bytes(root)`
-/// as the predicate commitment.
-pub fn adjacency_commitment_bytes(root_felt: BabyBear) -> [u8; 32] {
+/// The 32-byte set-commitment form a cell must publish for an adjacency tree whose binary
+/// Poseidon2 `node8` root is `root8`: eight canonical u32 LE limbs filling the slot (matching
+/// [`root_digest_from_slot`], the convention the adjacency verifier reads). Provers build their
+/// tree over [`adjacency_leaf_digest`] leaves, take the resulting 8-felt root, and publish
+/// `adjacency_commitment_bytes(root8)` as the predicate commitment.
+///
+/// ⚑ FLAG DAY: was one felt in the low four bytes with 28 zero bytes. **Every committed
+/// adjacency / non-membership set-commitment slot value CHANGES.**
+pub fn adjacency_commitment_bytes(root8: Digest8) -> [u8; 32] {
     let mut out = [0u8; 32];
-    out[..4].copy_from_slice(&root_felt.as_u32().to_le_bytes());
+    for (k, limb) in root8.iter().enumerate() {
+        out[k * 4..k * 4 + 4].copy_from_slice(&limb.as_u32().to_le_bytes());
+    }
     out
 }
 
-/// The tree leaf-felt for a 32-byte neighbor value (canonical Poseidon2
-/// compression). Provers build their binary tree over these leaves.
-pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
+/// The tree leaf DIGEST for a 32-byte neighbor value (canonical Poseidon2 compression, all eight
+/// lanes). Provers build their binary tree over these leaves, sorted by [`adjacency_leaf_order`].
+pub fn adjacency_leaf_digest(neighbor: &[u8; 32]) -> Digest8 {
     adjacency_compress(neighbor)
+}
+
+/// The sort order the adjacency tree's leaves must be in: lexicographic over the 8-felt leaf
+/// digest, lane 0 most significant. A prover sorting by lane 0 alone builds a tree whose gaps do
+/// not mean what the bracket check reads them to mean.
+pub fn adjacency_leaf_order(a: &Digest8, b: &Digest8) -> core::cmp::Ordering {
+    adjacency_leaf_cmp(a, b)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -489,7 +515,21 @@ pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
 // FORCES the sorted-tree adjacency (closing census-R1 / Lean §8¾ `NmRowEncodes`).
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Why this gate is the no-double-spend gate, in band, with real teeth.
+/// The sorted-set non-membership gate for a nullifier set.
+///
+/// ⚠ **NOT THE DEPLOYED noteSpend DOUBLE-SPEND GATE — measured 2026-08-01.** This function has
+/// **zero production callers**: every call site is inside this file's own `#[cfg(test)] mod tests`.
+/// The live in-circuit double-spend gate for `noteSpend` is `Ir2Air::MapAbsent`
+/// (`circuit/src/descriptor_ir2.rs`, reached through `noteSpendVmDescriptor2R24`) — an Indexed
+/// Merkle Tree POINTER bracket, not a physical-position adjacency: one low-leaf opening whose
+/// arity-3 digest binds `low.next_addr`, with `low_addr < key < low_next`. Runtime double-spend is
+/// additionally caught by `apply.rs::apply_note_spend`'s in-memory `note_nullifiers` set.
+///
+/// The prose below described this function as "the deployed double-spend gate" and that claim
+/// propagated into `HORIZONLOG.md` and a commit message before anyone read the call graph. It is
+/// kept as the sorted-tree non-membership *primitive* (the shape a nullifier-set light client would
+/// use, and the shape `WitnessedPredicateKind::NonMembership` DOES use via
+/// `CircuitNeighborAdjacencyVerifier`), described at its real resolution.
 ///
 /// A noteSpend's spending STARK proves the note commitment is *present* in the
 /// note tree and the nullifier is correctly derived — but it proves NOTHING
@@ -515,9 +555,9 @@ pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
 /// longer assumed; the adjacency constraint FORCES the `GapInterval` gap decode.
 ///
 /// # Arguments
-/// * `nullifier_set_root` — the committed sorted nullifier-set root, as the
-///   felt's canonical 4-byte LE form (the [`narrow_felt_from_slot_low4`] convention,
-///   matching [`adjacency_commitment_bytes`]).
+/// * `nullifier_set_root` — the committed sorted nullifier-set root, as eight canonical `u32` LE
+///   limbs filling the 32-byte slot (the [`root_digest_from_slot`] convention, matching
+///   [`adjacency_commitment_bytes`]).
 /// * `nullifier` — the 32-byte spent nullifier whose freshness is asserted.
 /// * `lower` / `upper` — the claimed neighbor leaves bracketing the nullifier.
 /// * `adjacency_proof` — the [`AdjacencyProofWire`] blob from
@@ -525,8 +565,8 @@ pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
 ///   leaves of `nullifier_set_root`.
 ///
 /// # Returns
-/// `Ok(())` iff (a) `lower < nullifier < upper` in the leaf-felt domain (the
-/// strict bracket) AND (b) the adjacency STARK accepts (`lower`,`upper` are
+/// `Ok(())` iff (a) `lower < nullifier < upper` in the **8-felt lexicographic** leaf-digest order
+/// (the strict bracket) AND (b) the adjacency STARK accepts (`lower`,`upper` are
 /// consecutive committed leaves). Either failing ⇒ `Err` (fail-closed). A
 /// wide-bracket forgery fails (b); a nullifier not strictly between the
 /// neighbors fails (a).
@@ -541,15 +581,21 @@ pub fn verify_nullifier_nonmembership(
     //     is sorted by (the same `compress` the adjacency AIR commits leaves
     //     under). A nullifier equal to a neighbor, or outside the bracket, is
     //     NOT a non-member witness — reject.
-    // Lane-0 projections: the adjacency/non-membership domain is still one felt wide (the
-    // OPEN adjacency finding). See `adjacency_compress`.
-    let nf_felt = adjacency_compress(nullifier).as_u32();
-    let lo_felt = adjacency_compress(lower).as_u32();
-    let hi_felt = adjacency_compress(upper).as_u32();
-    if !(lo_felt < nf_felt && nf_felt < hi_felt) {
+    // ⚑ FLAG DAY: these were lane-0 `u32` projections. The bracket is now the LEXICOGRAPHIC order
+    // on the full 8-felt leaf digest — the same order the committed tree is sorted by. Comparing a
+    // widened leaf at lane 0 would leave the bracket 31 bits wide however wide the tree got.
+    let nf8 = adjacency_compress(nullifier);
+    let lo8 = adjacency_compress(lower);
+    let hi8 = adjacency_compress(upper);
+    if !(adjacency_leaf_cmp(&lo8, &nf8) == core::cmp::Ordering::Less
+        && adjacency_leaf_cmp(&nf8, &hi8) == core::cmp::Ordering::Less)
+    {
         return Err(format!(
-            "nullifier leaf-felt {nf_felt} is not strictly between neighbors \
-             ({lo_felt}, {hi_felt}); not a non-membership witness"
+            "nullifier leaf digest {:?} is not strictly between neighbors ({:?}, {:?}) in the \
+             8-felt lexicographic leaf order; not a non-membership witness",
+            nf8.map(|f| f.as_u32()),
+            lo8.map(|f| f.as_u32()),
+            hi8.map(|f| f.as_u32())
         ));
     }
 
@@ -1809,26 +1855,29 @@ mod tests {
     use dregg_cell::predicate::{
         NonMembershipNeighborProof, NonMembershipProofV2, PredicateInput, WitnessedPredicate,
     };
-    use dregg_circuit::poseidon2::hash_2_to_1;
+    use dregg_circuit::adjacency_witness::adjacency_node8;
 
-    /// Build a binary Poseidon2 tree over `compress(neighbor)` leaves; return the
-    /// per-level felts (level 0 = leaves, last = [root]).
-    fn tree_levels(neighbors: &[[u8; 32]]) -> Vec<Vec<BabyBear>> {
+    /// Build a binary Poseidon2 `node8` tree over the 8-felt `compress(neighbor)` leaves; return
+    /// the per-level digests (level 0 = leaves, last = [root]).
+    ///
+    /// ⚑ node8 cutover: every level value is a full `Digest8` folded by `A16(l ‖ r)`; this was a
+    /// chain of one-felt `hash_2_to_1` values.
+    fn tree_levels(neighbors: &[[u8; 32]]) -> Vec<Vec<Digest8>> {
         assert!(neighbors.len().is_power_of_two());
-        let leaves: Vec<BabyBear> = neighbors.iter().map(adjacency_leaf_felt).collect();
+        let leaves: Vec<Digest8> = neighbors.iter().map(adjacency_leaf_digest).collect();
         let mut levels = vec![leaves];
         while levels.last().unwrap().len() > 1 {
             let cur = levels.last().unwrap();
             let mut next = Vec::with_capacity(cur.len() / 2);
             for pair in cur.chunks(2) {
-                next.push(hash_2_to_1(pair[0], pair[1]));
+                next.push(adjacency_node8(&pair[0], &pair[1]));
             }
             levels.push(next);
         }
         levels
     }
 
-    fn auth_path(levels: &[Vec<BabyBear>], mut index: usize) -> Vec<NeighborAdjStep> {
+    fn auth_path(levels: &[Vec<Digest8>], mut index: usize) -> Vec<NeighborAdjStep> {
         let depth = levels.len() - 1;
         let mut path = Vec::with_capacity(depth);
         for level in &levels[..depth] {
@@ -1996,10 +2045,10 @@ mod tests {
     fn e2e_consecutive_non_membership_accepts() {
         let neighbors = neighbors4();
         let levels = tree_levels(&neighbors);
-        let root_felt = *levels.last().unwrap().first().unwrap();
+        let root8 = *levels.last().unwrap().first().unwrap();
         // The cell's predicate commitment is the set root felt's LE bytes
         // (the adjacency verifier reads it via `narrow_felt_from_slot_low4`).
-        let commitment = adjacency_commitment_bytes(root_felt);
+        let commitment = adjacency_commitment_bytes(root8);
 
         // Consecutive neighbors at indices 1,2; a candidate strictly between
         // them in lexicographic order (0x20… < cand < 0x30…) is provably absent.
@@ -2033,8 +2082,8 @@ mod tests {
     fn e2e_wide_bracket_forge_rejected() {
         let neighbors = neighbors4();
         let levels = tree_levels(&neighbors);
-        let root_felt = *levels.last().unwrap().first().unwrap();
-        let commitment = adjacency_commitment_bytes(root_felt);
+        let root8 = *levels.last().unwrap().first().unwrap();
+        let commitment = adjacency_commitment_bytes(root8);
 
         // Wide bracket: leaf[0] and leaf[3] (indices 0 and 3, not adjacent).
         let lower = neighbors[0];
@@ -2078,7 +2127,8 @@ mod tests {
         let adjacency_proof = prove_neighbor_adjacency(&lower, &lp, &upper, &up).unwrap();
 
         // Use a commitment that does NOT match the proof's root.
-        let wrong_commitment = adjacency_commitment_bytes(BabyBear::new(123_456));
+        let wrong_commitment =
+            adjacency_commitment_bytes(core::array::from_fn(|k| BabyBear::new(123_456 + k as u32)));
         let candidate = {
             let mut c = [0x20u8; 32];
             c[31] = 0x80;
@@ -2103,7 +2153,7 @@ mod tests {
     /// Sorted (by leaf-felt) neighbor values, so a candidate strictly between
     /// two felt-consecutive leaves can be constructed. Returns the byte values
     /// in ascending leaf-felt order plus the matching tree levels.
-    fn felt_sorted_neighbors8() -> (Vec<[u8; 32]>, Vec<Vec<BabyBear>>) {
+    fn felt_sorted_neighbors8() -> (Vec<[u8; 32]>, Vec<Vec<Digest8>>) {
         // Eight distinct neighbor values (depth-3 → padded; we need a
         // power-of-two depth, so use 8 leaves = depth 3 is NOT power of two —
         // use 4 leaves (depth 2) which the adjacency AIR accepts).
@@ -2115,10 +2165,14 @@ mod tests {
                 b
             })
             .collect();
-        // Sort the VALUES by their leaf-felt so tree index order == felt order
-        // (the tree is sorted-by-leaf-felt, the adjacency-set discipline).
+        // Sort the VALUES by their 8-felt leaf digest so tree index order == leaf order (the
+        // adjacency-set discipline). ⚑ node8 cutover: this was `sort_by_key(leaf_felt.as_u32())`,
+        // a lane-0 sort; the bracket the gate checks is now the full lexicographic order, so the
+        // tree must be built in THAT order or its gaps do not mean what the bracket reads.
         let mut by_felt = raw.clone();
-        by_felt.sort_by_key(|v| adjacency_leaf_felt(v).as_u32());
+        by_felt.sort_by(|a, b| {
+            adjacency_leaf_order(&adjacency_leaf_digest(a), &adjacency_leaf_digest(b))
+        });
         let levels = tree_levels(&by_felt);
         (by_felt, levels)
     }
@@ -2129,15 +2183,18 @@ mod tests {
     #[test]
     fn notespend_nonmembership_consecutive_accepts() {
         let (vals, levels) = felt_sorted_neighbors8();
-        let root_felt = *levels.last().unwrap().first().unwrap();
-        let root = adjacency_commitment_bytes(root_felt);
+        let root8 = *levels.last().unwrap().first().unwrap();
+        let root = adjacency_commitment_bytes(root8);
 
         // Consecutive leaves at felt-sorted indices 1,2.
         let lower = vals[1];
         let upper = vals[2];
-        let lo_f = adjacency_leaf_felt(&lower).as_u32();
-        let hi_f = adjacency_leaf_felt(&upper).as_u32();
-        assert!(lo_f < hi_f, "neighbors must be felt-ordered");
+        let lo_f = adjacency_leaf_digest(&lower);
+        let hi_f = adjacency_leaf_digest(&upper);
+        assert!(
+            adjacency_leaf_order(&lo_f, &hi_f) == core::cmp::Ordering::Less,
+            "neighbors must be leaf-ordered (8-felt lexicographic)"
+        );
 
         // Find a nullifier whose compressed leaf-felt is strictly in (lo_f, hi_f).
         // Search a small family until one lands in the open gap (felt is a hash,
@@ -2147,8 +2204,10 @@ mod tests {
             let mut cand = [0u8; 32];
             cand[0] = 0x55;
             cand[1..5].copy_from_slice(&k.to_le_bytes());
-            let f = adjacency_compress(&cand).as_u32();
-            if lo_f < f && f < hi_f {
+            let f = adjacency_compress(&cand);
+            if adjacency_leaf_order(&lo_f, &f) == core::cmp::Ordering::Less
+                && adjacency_leaf_order(&f, &hi_f) == core::cmp::Ordering::Less
+            {
                 nullifier = Some(cand);
                 break;
             }
@@ -2173,14 +2232,14 @@ mod tests {
     #[test]
     fn notespend_wide_bracket_double_spend_rejected() {
         let (vals, levels) = felt_sorted_neighbors8();
-        let root_felt = *levels.last().unwrap().first().unwrap();
-        let root = adjacency_commitment_bytes(root_felt);
+        let root8 = *levels.last().unwrap().first().unwrap();
+        let root = adjacency_commitment_bytes(root8);
 
         // Wide bracket: the min and max committed leaves (felt-indices 0 and 3).
         let lower = vals[0];
         let upper = vals[3];
-        let lo_f = adjacency_leaf_felt(&lower).as_u32();
-        let hi_f = adjacency_leaf_felt(&upper).as_u32();
+        let lo_f = adjacency_leaf_digest(&lower);
+        let hi_f = adjacency_leaf_digest(&upper);
 
         // A nullifier strictly inside the WIDE gap — could equal an interior
         // committed leaf (a real double-spend target).
@@ -2189,8 +2248,10 @@ mod tests {
             let mut cand = [0u8; 32];
             cand[0] = 0x77;
             cand[1..5].copy_from_slice(&k.to_le_bytes());
-            let f = adjacency_compress(&cand).as_u32();
-            if lo_f < f && f < hi_f {
+            let f = adjacency_compress(&cand);
+            if adjacency_leaf_order(&lo_f, &f) == core::cmp::Ordering::Less
+                && adjacency_leaf_order(&f, &hi_f) == core::cmp::Ordering::Less
+            {
                 nullifier = Some(cand);
                 break;
             }
@@ -2236,8 +2297,8 @@ mod tests {
     #[test]
     fn notespend_nullifier_outside_bracket_rejected() {
         let (vals, levels) = felt_sorted_neighbors8();
-        let root_felt = *levels.last().unwrap().first().unwrap();
-        let root = adjacency_commitment_bytes(root_felt);
+        let root8 = *levels.last().unwrap().first().unwrap();
+        let root = adjacency_commitment_bytes(root8);
         let lower = vals[1];
         let upper = vals[2];
         let lp = auth_path(&levels, 1);

@@ -529,8 +529,8 @@ use std::sync::Arc;
 ///
 /// # Why this is a separate, injected trait
 ///
-/// The real adjacency check is a STARK
-/// (`dregg_circuit::membership_adjacency_air`). The `dregg-cell` crate must not
+/// The real adjacency check is a STARK (`dregg_circuit::adjacency_witness`, the WIDE `node8`
+/// family `dregg-membership-adjacency-wide::node8-v1`). The `dregg-cell` crate must not
 /// depend on `dregg-circuit` in its default build (dependency-cycle layering;
 /// cf. [`NotYetWiredVerifier`]), so the cell-side neighbor verifiers
 /// ([`SortedNeighborNonMembershipVerifier`], [`CredentialSetMembershipVerifier`])

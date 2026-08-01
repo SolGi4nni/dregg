@@ -466,11 +466,12 @@ pub mod block_conservation;
 
 // `effect_vm_p3_air` moved to `dregg-circuit-prove`.
 
-/// Sorted-set neighbor-adjacency STARK: proves two leaves are *consecutive*
-/// under a committed binary Merkle root, closing the Silver non-membership
-/// wide-bracket forge. See module docs and `dregg_cell::predicate`'s
-/// `SortedNeighborNonMembershipVerifier` / `CredentialSetMembershipVerifier`.
-pub mod membership_adjacency_air;
+// `membership_adjacency_air` is DELETED (node8 cutover). It was 188 lines of TYPES ONLY — the
+// RETIRED one-felt column layout (`ADJ_WIDTH = 18`, `adj_col`, `adj_pi`) and a dead
+// `ADJACENCY_AIR_NAME` with zero consumers repo-wide. Keeping a second, narrower spelling of a
+// layout that had already moved into the Lean emitter is exactly the "two shapes that agree today
+// disagree later" hazard. The live layout is `adjacency_witness` (w88/26PI), authored in
+// `metatheory/Dregg2/Circuit/Emit/AdjacencyMembershipWideEmit.lean`.
 
 /// Foundation 2 of the StarkProof→descriptor-prover migration: the depth-GENERAL binary
 /// Poseidon2 Merkle-membership IR-v2 descriptor builder. One Merkle level per trace row, tied by
@@ -486,10 +487,11 @@ pub mod membership_descriptor_general;
 /// coefficients while reproducing production's Lagrange-on-position arrangement. See module docs.
 pub mod membership_descriptor_4ary;
 
-/// Rust witness builder for the emitted neighbor-adjacency descriptor
-/// (`dregg-membership-adjacency::poseidon2-v1`) — the analog of `membership_witness`, so consumers of
-/// `descriptor_by_name` can prove/verify a sorted-set non-membership (consecutive-leaf) witness. See
-/// module docs.
+/// Rust witness builder for the emitted **WIDE** neighbor-adjacency descriptor
+/// (`dregg-membership-adjacency-wide::node8-v1`) — the analog of `membership_witness_4ary`, so
+/// consumers of `descriptor_by_name` can prove/verify a sorted-set non-membership
+/// (consecutive-leaf) witness. Every Merkle value is an 8-felt `node8` digest; the one-felt family
+/// (collision 2^15.45) is DELETED. See module docs.
 pub mod adjacency_witness;
 
 /// Rust witness builder for the emitted **Datalog derivation** descriptor

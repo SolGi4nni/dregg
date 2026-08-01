@@ -19,12 +19,12 @@ use dregg_cell::predicate::{
     NeighborAdjacencyVerifier, PredicateInput, WitnessedPredicateVerifier,
 };
 use dregg_circuit::BabyBear;
+use dregg_circuit::adjacency_witness::adjacency_node8;
 use dregg_circuit::dsl::membership::create_test_witness;
 use dregg_circuit::membership_descriptor_4ary::Digest8;
-use dregg_circuit::poseidon2::hash_2_to_1;
 use dregg_turn::executor::membership_verifier::{
     CircuitNeighborAdjacencyVerifier, MerkleMembershipStarkVerifier, NeighborAdjStep,
-    adjacency_commitment_bytes, adjacency_leaf_felt, authorized_set_root_bytes,
+    adjacency_commitment_bytes, adjacency_leaf_digest, authorized_set_root_bytes,
     prove_neighbor_adjacency, prove_sender_membership,
 };
 
@@ -128,19 +128,25 @@ fn membership_wire_roundtrip_depth3_padded_root_is_production_faithful() {
 // CircuitNeighborAdjacencyVerifier (postcard(Ir2BatchProof) + adjacency descriptor).
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Build the binary Poseidon2 tree levels over `compress(neighbor)` leaves.
-fn tree_levels(neighbors: &[[u8; 32]]) -> Vec<Vec<BabyBear>> {
-    let leaves: Vec<BabyBear> = neighbors.iter().map(adjacency_leaf_felt).collect();
+/// Build the binary Poseidon2 tree levels over the **8-felt** `compress(neighbor)` leaves.
+///
+/// ⚑ node8 cutover: every node is `adjacency_node8(l, r) = A16(l ‖ r)`, and every level value is a
+/// full `Digest8`. This was a chain of one-felt `hash_2_to_1` values.
+fn tree_levels(neighbors: &[[u8; 32]]) -> Vec<Vec<Digest8>> {
+    let leaves: Vec<Digest8> = neighbors.iter().map(adjacency_leaf_digest).collect();
     let mut levels = vec![leaves];
     while levels.last().unwrap().len() > 1 {
         let cur = levels.last().unwrap();
-        let next: Vec<BabyBear> = cur.chunks(2).map(|p| hash_2_to_1(p[0], p[1])).collect();
+        let next: Vec<Digest8> = cur
+            .chunks(2)
+            .map(|p| adjacency_node8(&p[0], &p[1]))
+            .collect();
         levels.push(next);
     }
     levels
 }
 
-fn auth_path(levels: &[Vec<BabyBear>], mut index: usize) -> Vec<NeighborAdjStep> {
+fn auth_path(levels: &[Vec<Digest8>], mut index: usize) -> Vec<NeighborAdjStep> {
     let depth = levels.len() - 1;
     let mut path = Vec::with_capacity(depth);
     for level in &levels[..depth] {
@@ -164,8 +170,8 @@ fn adjacency_wire_roundtrip_honest_accept_and_rejects() {
     // Four sorted leaves; the two MIDDLE ones (indices 1,2) are consecutive.
     let neighbors: [[u8; 32]; 4] = [[0x10u8; 32], [0x20u8; 32], [0x30u8; 32], [0x40u8; 32]];
     let levels = tree_levels(&neighbors);
-    let root_felt = levels.last().unwrap()[0];
-    let commitment = adjacency_commitment_bytes(root_felt);
+    let root8 = levels.last().unwrap()[0];
+    let commitment = adjacency_commitment_bytes(root8);
 
     let lower = neighbors[1];
     let upper = neighbors[2];
@@ -183,7 +189,11 @@ fn adjacency_wire_roundtrip_honest_accept_and_rejects() {
         .expect("honest consecutive adjacency must ACCEPT through the descriptor consumer");
 
     // NEGATIVE 1 — a wrong committed root: the last-row root pin fails.
-    let wrong_commitment = adjacency_commitment_bytes(root_felt + BabyBear::ONE);
+    // ⚑ The tamper lands on LANE 7 — a lane the retired one-felt commitment did not have. The
+    // root pin binds all eight.
+    let mut wrong_root8 = root8;
+    wrong_root8[7] = wrong_root8[7] + BabyBear::ONE;
+    let wrong_commitment = adjacency_commitment_bytes(wrong_root8);
     assert!(
         v.verify_adjacency(&wrong_commitment, &lower, &upper, &adjacency_proof)
             .is_err(),

@@ -32,6 +32,7 @@ the artifact IS the Lean author's output.
 -/
 import Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit
 import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
+import Dregg2.Circuit.Emit.AdjacencyMembershipWideEmit
 import Dregg2.Circuit.Emit.AttestedFactMembershipEmit
 import Dregg2.Circuit.Emit.AutomataflResolveEmit
 import Dregg2.Circuit.Emit.AutomataflStepEmit
@@ -132,8 +133,17 @@ Three notes the mechanical reader needs:
 def byNameDescriptors : List (String × EffectVmDescriptor2) :=
   [ ("accumulator-nonrev.json",
       Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit.accumulatorNonRevDesc)
-  , ("adjacency-membership.json",
-      Dregg2.Circuit.Emit.AdjacencyMembershipEmit.adjacencyDesc)
+  -- ⚑ node8 CUTOVER: `adjacency-membership.json` (`adjacencyDesc`) is RETIRED — its per-level
+  -- node was `chipLookupTupleNarrow [left, right] par`, the arity-2 NARROW bus binding `out0`
+  -- alone, so every interior node, both leaf PIs and the root PI committed at ~31 bits and were
+  -- collidable at 2^15.45 (`circuit/tests/adjacency_forge_tooth.rs` exhibits the forge: a MEMBER
+  -- of the committed set passes the sorted-set NON-membership gate). The narrow `def` survives in
+  -- `AdjacencyMembershipEmit` ONLY as the object the wide module's anti-masquerade tooth
+  -- quantifies over (`narrowNode2Lane0`, `interior_forge_narrow_admits_wide_refuses`) and as the
+  -- subject of the `AdjacencyMembershipRefine`/`Rung2` refinement rungs — you cannot state "the
+  -- old fold admits this" without the old fold. It is emitted nowhere.
+  , ("adjacency-membership-wide.json",
+      Dregg2.Circuit.Emit.AdjacencyMembershipWideEmit.adjacencyWideDesc)
   , ("attested-fact-membership.json",
       Dregg2.Circuit.Emit.AttestedFactMembershipEmit.attestedFactMembershipDesc)
   , ("automatafl-resolve.json",

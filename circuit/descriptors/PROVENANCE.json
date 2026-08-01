@@ -1,9 +1,9 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "24fd6197ad323e3ece875e930ab6ff1ddcf04bd3",
-  "repo_head": "1d05b1819985b0a293c237420fddb18d8e7ec3ac",
-  "source_dirty": false,
+  "dregg2_tree_hash": "84022de846edb7d95e58890d57614034c560b272",
+  "repo_head": "2e14776e711276cdaef7b6bada6c8d2bbee174c0",
+  "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",
@@ -18,7 +18,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-07-31T16:15:49Z",
+  "generated_utc": "2026-08-01T10:43:56Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -95,7 +95,7 @@
   },
   "by_name_sha256": {
     "accumulator-nonrev.json": "ad8f91b437b6d35aa07f609434eb97c9d43ecdb1ab778496fe5128baa32a6ff4",
-    "adjacency-membership.json": "4c5e5a229d3b1aed4a015e2930ea37fb2f10c5f323c259152d3fcc066c7ff8d1",
+    "adjacency-membership-wide.json": "b5df6275e5973a8d1995f929a8d87bb4beea5bfc63b39812baa60243a4180045",
     "attested-fact-membership.json": "a66055fca6672174460d774b1dda778702520b82650ce0566e89fff37f5c665b",
     "automatafl-legc-n11.json": "2adbe764381fc317f23e914f8ff52afd4b76d7ea70db96c1e9d85dc91d675188",
     "automatafl-legc-n5.json": "ac41145a9cdb60d6e0b583f4845b30206618f166ce46b43bca575a491101c10d",
@@ -175,7 +175,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "a30d058fc3c32590d19fd45f825f0a2d5ca987efd6d93cf635f4d9a3ec9ca925",
     "circuit/src/cap_reshape_descriptor.rs": "dde91b8af93dada783dbb4851108e779e4b285e46d6aa60171aaf44ad857a128",
-    "circuit/src/effect_vm_descriptors.rs": "dfd336d2bd14ac3972c3b160e306a632b368269f6fe95f7d6c252e746016903a",
+    "circuit/src/effect_vm_descriptors.rs": "89a38455dccd704034edb2bdbed56664dd82c8dee08b3d078d5e099822172b65",
     "circuit/src/lean_descriptor_air.rs": "de4caf0447da34707187d69ba851c71aa37044ff177f30a1a42f58bdf61a1316"
   }
 }

@@ -4,7 +4,7 @@ fn bench_descriptor_by_name_parse() {
     let names = [
         "dfa-routing-toggle-2state::poseidon2-v1",
         "note-spend-leaf::dregg-note-spending-dsl-v3",
-        "dregg-membership-adjacency::poseidon2-v1",
+        "dregg-membership-adjacency-wide::node8-v1",
         "dregg-delegate::v2",
         "dregg-accumulator-nonrev-emit-v2",
     ];

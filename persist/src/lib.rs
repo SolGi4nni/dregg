@@ -431,11 +431,156 @@ impl PersistentStore {
     /// at `A(pubkey8 ‖ 0⁸)[0]`, and lane 0 of the widened `compress_member` is bit-identical to
     /// the old return, so that gate holds unchanged — it is now a lane-0 projection of a leaf the
     /// membership STARK binds in full width. The teeth PIs 50/51 remain unpinned; that is a
-    /// SEPARATE wound. The neighbor-adjacency / nullifier-non-membership tree
-    /// (`dregg-membership-adjacency::poseidon2-v1`) is a DIFFERENT, still one-felt chained tree
-    /// with no wide Lean twin on disk — an open finding of the same class, not something this
-    /// epoch closed.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 16;
+    /// SEPARATE wound.
+    ///
+    /// ---
+    ///
+    /// **EPOCH 17 — the sorted-set NON-MEMBERSHIP (neighbor-adjacency) tree, same wound, same
+    /// cure.** Epoch 16 named the adjacency tree as "a DIFFERENT, still one-felt chained tree with
+    /// no wide Lean twin on disk". It is now widened and the one-felt path is DELETED.
+    ///
+    /// Every node of `dregg-membership-adjacency::poseidon2-v1` was one BabyBear felt:
+    /// `poseidon2::hash_2_to_1` returned `state.state[0]`; `adjacency_walk` chained that single
+    /// felt; the descriptor's per-level lookup was `chipLookupTupleNarrow [left, right] par` (the
+    /// arity-2 NARROW bus, `out0` alone); `adjacency_compress` truncated each leaf to lane 0; and
+    /// this crate's own note above pointed at `narrow_felt_from_slot_low4` for the root. Codomain
+    /// 30.907 bits ⇒ **collision 2^15.45**, second-preimage 2^30.91.
+    ///
+    /// ⚑ The collision is a DOUBLE SPEND, not merely a forged membership: this gate certifies
+    /// ABSENCE. An attacker mints a leaf pair whose one-felt parent collides with a genuine
+    /// adjacent leaf pair of the committed tree, presents it at those same indices — so the
+    /// consecutiveness tooth is satisfied HONESTLY — and chooses it to straddle a key that IS in
+    /// the set. `circuit/tests/adjacency_forge_tooth.rs` exhibits exactly that at the deployed
+    /// parameter (a real collision in 20,879 evaluations, ~2^14.3) and shows `node8` refusing it.
+    ///
+    /// The node is now `adjacency_node8(l, r) = A16(l ‖ r)` — one arity-16 `node8` absorb, since
+    /// two 8-felt children are exactly `CHIP_RATE = 16` felts — with all eight output lanes bound
+    /// at every level, an 8-lane chain (was ONE window), and 8-felt leaves as well as root.
+    /// **Collision 2^123.63**, second-preimage 2^247.26.
+    ///
+    /// **WHAT MUST BE RE-GENESISED AT 17:** every persisted sorted-set / non-membership predicate
+    /// commitment (`WitnessedPredicateKind::NonMembership`, the `SortedNeighborNonMembership` and
+    /// `CredentialSetMembership` revocation legs), and every stored `adjacency_proof` blob. The
+    /// 32-byte set-commitment encoding CHANGED with the tree: it was ONE felt in the low four
+    /// little-endian bytes with 28 zero bytes, and is now EIGHT canonical `u32` LE limbs filling
+    /// the slot exactly (`membership_verifier::adjacency_commitment_bytes`). Widening the tree
+    /// while the boundary re-narrowed the root would have bought nothing.
+    ///
+    /// **WHAT MOVES BESIDES THE STORE:** `by-name/adjacency-membership.json` (trace width 18,
+    /// 5 PIs) is DELETED and replaced by `by-name/adjacency-membership-wide.json` (width 88,
+    /// 26 PIs). The descriptor NAME changed (`dregg-membership-adjacency::poseidon2-v1` →
+    /// `dregg-membership-adjacency-wide::node8-v1`), so a pre-cutover proof identity resolves to
+    /// `None` and is REFUSED rather than reinterpreted. `circuit/src/membership_adjacency_air.rs`
+    /// — 188 lines publishing the retired 18-column layout with zero consumers — is DELETED.
+    ///
+    /// ⚠ **AND THE BRACKET MOVED WITH IT.** The strict `lower < candidate < upper` check compared
+    /// one `u32`; it is now LEXICOGRAPHIC over the full 8-felt leaf digest
+    /// (`membership_verifier::adjacency_leaf_order`), and a prover's tree must be sorted by that
+    /// same order. A tree sorted by lane 0 alone has gaps that do not mean what the bracket reads.
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE — say it out loud.** The live in-circuit
+    /// double-spend gate for `noteSpend` is NOT this tree: it is `Ir2Air::MapAbsent`, the Indexed
+    /// Merkle Tree pointer bracket in `circuit/src/descriptor_ir2.rs`, reached through
+    /// `noteSpendVmDescriptor2R24`. Its roots, leaf digests and node folds are ALREADY `node8` —
+    /// but `MA_KEY`, `MA_LO_ADDR` and `MA_LO_NEXT` are **one felt each**, so the sort key and the
+    /// IMT pointer are 31-bit while everything around them is 247-bit. That is a live finding of
+    /// this same class with its own proved-and-unlanded Lean emitters already on disk
+    /// (`Emit/LexCompare8Emit.lean`, `Emit/HeapLeafWideEmit.lean`,
+    /// `Circuit/MapAbsentImtGateWide.lean`). It is NOT fixed here.
+    ///
+    /// # Epoch 18 — the present-cell-set KEY (2026-08-01)
+    ///
+    /// `turn::rotation_witness::cells_root` stopped keying present-cell existence leaves by
+    /// `heap_addr(CELLS_COLLECTION, hash_bytes(id))` — ONE ~30.9-bit BabyBear felt per 32-byte
+    /// `CellId` — and became the exact tagged-linked-leaf accumulator its four siblings already
+    /// were (`FLI2`/`FLN2`/`FLE2`, depth 16, arity 4, eight lanes), keyed by the id's sixteen
+    /// little-endian `u16` limbs: `2^256` **on the nose**, injective, nothing reduced.
+    ///
+    /// **WHY, and it was not a width nit.** `assert_addr_unique` (release-active since
+    /// 2026-07-28) *panics* on a repeated address rather than silently deduping. Correct — a
+    /// dedup makes a cell's removal invisible to the anchor — but shipping it over a key an
+    /// attacker can collide converted a silent double-spend into a **$0 permanent consensus
+    /// halt**: `CellId::derive_raw` is BLAKE3 over an attacker-chosen `(public_key, token_id)`,
+    /// `Effect::CreateCell` checks only `balance == 0` (no possession check, no token registry,
+    /// no rate limit — `token_id` alone is a free grinding domain), and `cells_root` is on the
+    /// unconditional per-turn anchor path. ~2^15.5 offline folds plus two ordinary cell creations
+    /// panicked every node's finality executor into `FatalIntegrity`, block unacknowledged,
+    /// deterministically, across restarts. An injective key makes the refusal UNREACHABLE
+    /// instead of merely fail-closed.
+    ///
+    /// **WHAT MUST BE RE-GENESISED AT 18:** every persisted `pre_state_hash` / `post_state_hash`
+    /// and every stored `TurnReceipt` carrying them — the cells-root group is limb 0 ‖ 169..=175
+    /// of the rotated block, so the anchor value moves on EVERY turn, including turns that create
+    /// no cell. Executor signatures and federation receipt QCs over those anchors do not
+    /// re-verify and are not migrated.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no VK rotates and no descriptor is re-emitted. Nothing in any
+    /// circuit recomputes this key — the rotated trace generator overwrites the whole cells group
+    /// with its own in-circuit accounts tree (which production always feeds `before_accounts =
+    /// &[]`), and no verifier opens `cells_root`. The wide object was already Lean-proved and
+    /// already on disk; this epoch REGISTERS a consumer of it, exactly as
+    /// `Circuit/MapOpWideKeyPigeonhole.lean` says the kind-D residual requires.
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE.** The per-cell heap tree (`CellState::heap_map`,
+    /// rotated limb 28) still addresses by the one-felt `heap_addr`, and so does the wasm
+    /// light-client `verify_slot_opening` that recomputes it. That tree IS opened in-circuit
+    /// (`heapWriteVmDescriptor2R24` recomputes `heap_addr` in-row), so widening it is a VK
+    /// rotation and a descriptor re-emit — a different lane from this one.
+    ///
+    /// # Epoch 19 — `hash_bytes`' PREIMAGE became injective (2026-08-01)
+    ///
+    /// `dregg_circuit::poseidon2::hash_bytes` was `hash_many(BabyBear::from_bytes_packed(data))`,
+    /// and that composition was collidable at **cost 0** in two independent ways:
+    ///
+    /// 1. **the NUL-append.** The packer walked the input in 4-byte strides and ZERO-FILLED the
+    ///    final partial chunk, while `hash_many` tagged `state[4]` with the FELT count — so
+    ///    `hash_bytes(b"foo") == hash_bytes(b"foo\0")` and `hash_bytes(b"f") ==
+    ///    hash_bytes(b"f\0\0\0")`. Append a NUL; the digest does not move.
+    /// 2. **the mod-`p` chunk alias, AT EQUAL LENGTH.** Each chunk was a `u32` reduced mod
+    ///    `p = 0x78000001 < 2^32`, so `01 00 00 78` packed to exactly `p` and collided with
+    ///    `00 00 00 00`. `2^32 − p = 2281701375`, i.e. **53.1%** of chunks had a `+p` sibling. No
+    ///    length tag of any kind separates these, which is why the repair changed the RADIX.
+    ///
+    /// The preimage is now `BabyBear::bytes_to_lanes`: a four-lane base-`2^16` BYTE-COUNT header
+    /// then the bytes in little-endian `u16` pairs, every lane `< 2^16 < p` so nothing reduces.
+    /// Lean authority `Dregg2.Circuit.BytesLanes` — `lanesToBytes_bytesToLanes` is a TOTAL decoder
+    /// and a machine-checked LEFT INVERSE, `bytesToLanes_injective` its corollary. Not a hash
+    /// bound. Old-admits/new-rejects for both collisions:
+    /// `circuit/tests/bytes_lanes_injective.rs`, and at the named consumer
+    /// `sandstorm-bridge/tests/var_nul_append_inclusion_forgery.rs` (serving a grain's
+    /// `/var` card as `value ‖ "\0"` used to VERIFY under the honest root; it is now REFUSED).
+    ///
+    /// **WHAT MUST BE RE-GENESISED AT 19:** every persisted state commitment that `hash_bytes`
+    /// reaches — `turn::rotation_witness:349` (receipt hash → MMR leaf → `iroot`),
+    /// `exec_lean::nullifier::addr_of` (→ the nullifier root), and
+    /// `cell::program::eval::hash_preimage32` (→ a committed `PreimageGate` / `KeyRotationGate`
+    /// slot). Outside the ledger: every grain `/var` `data_root`
+    /// (`sandstorm_bridge::cell::{var_addr, var_value_felt}`), every `bucket_root` /
+    /// `content_root` hex (`storage::bucket_commitment`, `starbridge-apps/site-host`), every
+    /// zkOracle `content_commit` / `template_commit`, and every `wasm` `fact_hash` reaching
+    /// `PI_FACT_COMMITMENT`. A store at epoch 18 REFUSES to load rather than reinterpreting a
+    /// root computed under the aliasing preimage.
+    ///
+    /// **WHAT DOES *NOT* MOVE: no VK rotates and no descriptor is re-emitted.** Measured across
+    /// `metatheory/` on 2026-08-01: **no emitted AIR recomputes a byte packing.** Every Lean hash
+    /// carrier is felt- or `Nat`-domain (`hash : List ℤ → ℤ`); the "in-AIR `hash_bytes` recompute"
+    /// named at `circuit/src/effect_vm/authority_digest_weld.rs:54` is a felt-domain chip lookup
+    /// over two floor felts; and `Dregg2.Deos.InAirAuthorityDigestSelector` calls the byte-sponge
+    /// version *"the named, genuinely-VK-affecting remaining work"* — not built. So this is a
+    /// producer-side flag day, and it is strictly cheaper now than after that recompute lands.
+    /// (`ZKORACLE_MAX_BODY_LIMBS` is unmoved at 1024; the BYTE capacity it buys halves to 2040,
+    /// stated at the constant rather than silently doubled — the price of 2 bytes/felt.)
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE.** `hash_bytes` still squeezes ONE felt.
+    /// `log2(p) = 30.906891`, so a *searched* collision costs the birthday bound **`2^15.4534`**
+    /// ≈ 44,900 evaluations — milliseconds. That is the `Digest1` shape
+    /// `docs/DESIGN-canonical-byte-felt-codec.md` §2.3 bans by name; it is a DIFFERENT defect from
+    /// the two above, and **neither fix reaches the other** — no widening of the squeeze removes
+    /// an append-collision in the preimage, and no repair of the preimage removes a birthday
+    /// collision in a 31-bit codomain. Its fix is the `HeapLeaf` `addr`/`value` widening and the
+    /// `MapOp` value width in the emitted AIR (a constraint change), owned by that campaign.
+    /// `poseidon2::hash_bytes_8` is the 8-felt companion (`2^123.63`) for sinks that can take it.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 19;
 
     /// Open a persistent store backed by a file on disk.
     ///

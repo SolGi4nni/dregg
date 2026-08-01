@@ -23,7 +23,7 @@
 //! | `Dfa`             | `dfa-routing-toggle-2state::poseidon2-v1` (DfaRouting)                  |
 //! | `Temporal`        | `dregg-temporal-predicate-gte::dsl-v1` (TemporalPredicate)             |
 //! | `MerkleMembership`| `merkle-membership-depth2-4ary::poseidon2-v1` + the depth-GENERAL builder |
-//! | `NonMembership`   | `dregg-membership-adjacency::poseidon2-v1` + `quantified-absence-…`     |
+//! | `NonMembership`   | `dregg-membership-adjacency-wide::node8-v1` + `quantified-absence-…`    |
 //! | `BlindedSet`      | `dregg-accumulator-nonrev-emit-v2`                                      |
 //! | `BridgePredicate` | `bridge-action-leaf::bridge_action_air_v1` + `dregg-predicate-arith-ge::threshold-v1` |
 //! | `Custom`          | `dregg-effectvm-custom-v1` (customVmDescriptor2)                        |
@@ -113,8 +113,8 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         MERKLE_MEMBERSHIP_DEPTH2_JSON,
     ),
     (
-        "dregg-membership-adjacency::poseidon2-v1",
-        ADJACENCY_MEMBERSHIP_JSON,
+        "dregg-membership-adjacency-wide::node8-v1",
+        ADJACENCY_MEMBERSHIP_WIDE_JSON,
     ),
     (
         "dregg-attested-fact-membership::v1",
@@ -282,8 +282,11 @@ const MERKLE_MEMBERSHIP_DEPTH2_JSON: &str =
     include_str!("../descriptors/by-name/merkle-membership-depth2.json");
 const ATTESTED_FACT_MEMBERSHIP_JSON: &str =
     include_str!("../descriptors/by-name/attested-fact-membership.json");
-const ADJACENCY_MEMBERSHIP_JSON: &str =
-    include_str!("../descriptors/by-name/adjacency-membership.json");
+/// ⚑ node8 CUTOVER: the one-felt `adjacency-membership.json` (w18/5PI) is DELETED. This is the
+/// WIDE twin (w88/26PI); the retired NAME is not routed, so a pre-cutover proof identity is
+/// answered `None` and REFUSED rather than reinterpreted under different semantics.
+const ADJACENCY_MEMBERSHIP_WIDE_JSON: &str =
+    include_str!("../descriptors/by-name/adjacency-membership-wide.json");
 const QUANTIFIED_ABSENCE_JSON: &str =
     include_str!("../descriptors/by-name/quantified-absence.json");
 /// The **turn-chain binding** family (`dregg-turn-chain-binding-v2`), authored in
@@ -486,7 +489,7 @@ pub fn descriptor_names_for_kind(kind: PredicateKind) -> &'static [&'static str]
             "dregg-attested-fact-membership::v1",
         ],
         PredicateKind::NonMembership => &[
-            "dregg-membership-adjacency::poseidon2-v1",
+            "dregg-membership-adjacency-wide::node8-v1",
             "quantified-absence-quotient-accumulator::babybear4-v1",
         ],
         // (The 1-felt sorted-tree non-revocation descriptors are RETIRED — felt-width #11

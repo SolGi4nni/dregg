@@ -38,24 +38,25 @@ fn test_stark_proof_bytes_round_trip() {
         MembershipP3Proof, membership_public_inputs, prove_membership_p3, verify_membership_p3,
     };
 
-    // Build a Poseidon2-compatible Merkle path (depth 4).
-    let leaf_hash = BabyBear::new(12345);
+    // Build a Poseidon2-compatible Merkle path (depth 4). ⚑ node8 cutover (`57105f387`): the leaf
+    // and every sibling is a FULL 8-felt `Digest8`, not one felt, and the PIs are
+    // `[leaf0..7, root0..7]` (16) rather than `[leaf, root]` (2).
+    use dregg_circuit::membership_descriptor_4ary::{DIGEST_W, Digest8, PI_LEAF, PI_ROOT};
+    let leaf_hash: Digest8 = core::array::from_fn(|k| BabyBear::new(12345 + k as u32));
     let depth = 4;
-    let mut siblings = Vec::with_capacity(depth);
+    let mut siblings: Vec<[Digest8; 3]> = Vec::with_capacity(depth);
     let mut positions = Vec::with_capacity(depth);
     for i in 0..depth {
         positions.push((i % 4) as u8);
-        siblings.push([
-            BabyBear::new((i * 7 + 100) as u32),
-            BabyBear::new((i * 7 + 200) as u32),
-            BabyBear::new((i * 7 + 300) as u32),
-        ]);
+        siblings.push(core::array::from_fn(|s| {
+            core::array::from_fn(|k| BabyBear::new((i * 7 + 100 * (s + 1) + k) as u32))
+        }));
     }
 
-    // The public inputs the descriptor pins: [leaf, root].
+    // The public inputs the descriptor pins: [leaf0..7, root0..7].
     let pis = membership_public_inputs(leaf_hash, &siblings, &positions)
         .expect("witness must yield public inputs");
-    assert_eq!(pis[0], leaf_hash);
+    assert_eq!(&pis[PI_LEAF..PI_LEAF + DIGEST_W], &leaf_hash[..]);
 
     // Prove membership through the Lean-emitted descriptor.
     let proof = prove_membership_p3(leaf_hash, &siblings, &positions)
@@ -71,15 +72,19 @@ fn test_stark_proof_bytes_round_trip() {
     verify_membership_p3(&recovered, &pis).expect("deserialized STARK proof should verify");
 
     // ... and must still REJECT forged public inputs (the wrong-PI tooth this test exists for).
-    let wrong_leaf = vec![BabyBear::new(0xBAD), pis[1]];
+    // Post-cutover both tampers land on a HIGH lane, which the retired 1-felt PI pair did not even
+    // have — the widening is what makes these two cases distinct from lane 0.
+    let mut wrong_leaf = pis.clone();
+    wrong_leaf[PI_LEAF + DIGEST_W - 1] = BabyBear::new(0xBAD);
     assert!(
         verify_membership_p3(&recovered, &wrong_leaf).is_err(),
-        "a proof must NOT verify against a forged leaf"
+        "a proof must NOT verify against a forged leaf (lane 7)"
     );
-    let wrong_root = vec![pis[0], BabyBear::new(0xBAD)];
+    let mut wrong_root = pis.clone();
+    wrong_root[PI_ROOT + DIGEST_W - 1] = BabyBear::new(0xBAD);
     assert!(
         verify_membership_p3(&recovered, &wrong_root).is_err(),
-        "a proof must NOT verify against a forged root"
+        "a proof must NOT verify against a forged root (lane 7)"
     );
 }
 
