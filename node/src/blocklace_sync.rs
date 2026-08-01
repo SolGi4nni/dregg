@@ -6316,7 +6316,7 @@ fn planned_ordered_nullifier_successors(
         successor
             .insert(dregg_cell::note::Nullifier(spend.nullifier), spend.value)
             .map_err(|_| spend.nullifier)?;
-        roots.push(successor.faithful_root8_exact().to_bytes32());
+        roots.push(successor.root8().to_bytes32());
     }
     Ok((successor, roots))
 }
@@ -7726,7 +7726,7 @@ async fn execute_finalized_turn(
             };
         }
     };
-    let durable_nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
+    let durable_nullifier_root = durable_nullifier_set.root8().to_bytes32();
     let durable_commit_cursor = match s.store.commit_cursor() {
         Ok(cursor) => cursor,
         Err(e) => {
@@ -7832,7 +7832,7 @@ async fn execute_finalized_turn(
                 },
             )
             .collect();
-    let planned_nullifier_root = successor_nullifier_set.faithful_root8_exact().to_bytes32();
+    let planned_nullifier_root = successor_nullifier_set.root8().to_bytes32();
     *executor.note_nullifiers.lock().unwrap() = durable_nullifier_set;
 
     let agent = signed_turn.turn.agent;
@@ -8272,7 +8272,7 @@ async fn execute_finalized_turn(
             dregg_cell::nullifier_set::NullifierSet::from_records(records)
                 .map_err(|error| error.to_string())
         }) {
-        Ok(set) => set.faithful_root8_exact().to_bytes32(),
+        Ok(set) => set.root8().to_bytes32(),
         Err(e) => {
             error!(
                 block_id = %block_id,
@@ -10019,8 +10019,8 @@ mod tests {
         first_only
             .insert(dregg_cell::Nullifier(spends[0].nullifier), spends[0].value)
             .unwrap();
-        assert_eq!(roots[0], first_only.faithful_root8_exact().to_bytes32());
-        assert_eq!(roots[1], successor.faithful_root8_exact().to_bytes32());
+        assert_eq!(roots[0], first_only.root8().to_bytes32());
+        assert_eq!(roots[1], successor.root8().to_bytes32());
 
         let duplicate = [spends[0], spends[0]];
         assert_eq!(

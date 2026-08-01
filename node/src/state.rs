@@ -2994,7 +2994,7 @@ impl NodeStateInner {
                         "exact nullifier accumulator reconstruction failed: {error}"
                     ))
                 })?;
-        let nullifier_root = durable_nullifier_set.faithful_root8_exact().to_bytes32();
+        let nullifier_root = durable_nullifier_set.root8().to_bytes32();
         if key.latest_attested_root.nullifier_set_root != Some(nullifier_root) {
             return Err(FaithfulMirrorError::InconsistentHead(
                 "durable nullifier records do not reconstruct the latest attested root".to_string(),
@@ -3291,7 +3291,7 @@ mod faithful_mirror_snapshot_tests {
             .initialize_faithful_note_root_history(&anchor)
             .expect("initialize history");
         let empty_nullifier_root = dregg_cell::nullifier_set::NullifierSet::new()
-            .faithful_root8_exact()
+            .root8()
             .to_bytes32();
         state
             .store
@@ -3394,7 +3394,7 @@ mod faithful_mirror_snapshot_tests {
             .initialize_faithful_note_root_history(&anchor)
             .expect("initialize history");
         let empty_nullifier_root = dregg_cell::nullifier_set::NullifierSet::new()
-            .faithful_root8_exact()
+            .root8()
             .to_bytes32();
         state
             .store

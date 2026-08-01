@@ -915,6 +915,25 @@ mod tests {
         assert_eq!(plain, intent.to_bytes());
     }
 
+    /// The asset column the runtime's own cell is denominated in
+    /// (`AgentRuntime::new` funds it with `blake3(domain)` as its token id).
+    fn agent_asset_token(runtime: &AgentRuntime) -> [u8; 32] {
+        let ledger = runtime.ledger().lock().unwrap();
+        *ledger
+            .get(&runtime.cell_id())
+            .expect("the runtime always inserts its own cell")
+            .token_id()
+    }
+
+    /// A funded-at-zero recipient in the SAME asset column as the runtime's
+    /// cell — the only shape a `Transfer` can legally target.
+    fn same_asset_dest(runtime: &AgentRuntime, pk: [u8; 32]) -> CellId {
+        let cell = Cell::with_balance(pk, agent_asset_token(runtime), 0);
+        let id = cell.id();
+        runtime.ledger().lock().unwrap().insert_cell(cell).unwrap();
+        id
+    }
+
     #[test]
     fn authorized_sealed_intent_executes_as_turn() {
         let runtime = test_runtime("authorized");
@@ -922,13 +941,17 @@ mod tests {
         let (a_secret, _) = generate_x25519_keypair();
         let a_pk = [0xA1; 32];
 
-        // Recipient cell for the intent's transfer.
-        let dest = {
-            let cell = Cell::with_balance([0xC1; 32], [0u8; 32], 0);
-            let id = cell.id();
-            runtime.ledger().lock().unwrap().insert_cell(cell).unwrap();
-            id
-        };
+        // Recipient cell for the intent's transfer. ⚑ SAME ASSET COLUMN as the
+        // runtime's cell, and that is the whole point of the fixture: this read
+        // `[0u8; 32]` while the agent cell holds `blake3("mailbox-test")`, so the
+        // intent's Transfer was a CROSS-ASSET teleport. `b1a370194` (2026-07-25)
+        // added the executor's same-asset guard (`turn/src/executor/apply.rs`),
+        // shaped after the verified kernel's single-AssetId-column rewrite
+        // (`recTransferBal`) — the Rust guard is hand-written and matches that
+        // shape; it is not a machine-checked refinement of it. The fixture has
+        // been red since that guard landed — it was never modelling the flow it
+        // is named for. The refusal itself is the pole below.
+        let dest = same_asset_dest(&runtime, [0xC1; 32]);
 
         let mut set = BTreeSet::new();
         set.insert(a_pk);
@@ -959,6 +982,120 @@ mod tests {
 
         let ledger = runtime.ledger().lock().unwrap();
         assert_eq!(ledger.get(&dest).unwrap().state.balance(), 7);
+    }
+
+    /// Drive one authorized, custody-intact, well-sealed intent whose single
+    /// effect is a Transfer of `amount` into a FOREIGN asset column, on a fresh
+    /// runtime. Returns `(disposition, custody receipt, source debit, foreign
+    /// balance)`.
+    fn cross_asset_crank(label: &str, amount: u64) -> (CrankDisposition, CustodyReceipt, i64, i64) {
+        let runtime = test_runtime(label);
+        let (b_secret, b_public) = generate_x25519_keypair();
+        let (a_secret, _) = generate_x25519_keypair();
+        let a_pk = [0xA1; 32];
+
+        // A foreign asset column: token id `[0u8; 32]` is not `blake3(label)`.
+        let foreign = {
+            let cell = Cell::with_balance([0xC2; 32], [0u8; 32], 0);
+            let id = cell.id();
+            runtime.ledger().lock().unwrap().insert_cell(cell).unwrap();
+            id
+        };
+        assert_ne!(
+            agent_asset_token(&runtime),
+            [0u8; 32],
+            "the fixture is only meaningful while the columns actually differ"
+        );
+
+        let mut set = BTreeSet::new();
+        set.insert(a_pk);
+        let inbox = install_inbox(&runtime, sender_set_commitment(&set));
+
+        let intent = MailboxTurnIntent {
+            target: runtime.cell_id(),
+            method: "execute".into(),
+            effects: vec![Effect::Transfer {
+                from: runtime.cell_id(),
+                to: foreign,
+                amount,
+            }],
+        };
+        let sealed = seal_intent(&intent, FederationId(a_pk), &b_public, &a_secret, 0);
+
+        let transport = MemTransport {
+            pending: vec![delivered(a_pk, sealed)],
+        };
+        let mut crank = MailboxCrank::new(&runtime, inbox, b_secret, transport);
+        crank.senders.insert(a_pk);
+
+        let source_before = {
+            let ledger = runtime.ledger().lock().unwrap();
+            ledger.get(&runtime.cell_id()).unwrap().state.balance()
+        };
+        let mut report = crank.crank_once(10).unwrap();
+        assert_eq!(report.outcomes.len(), 1);
+        assert_eq!(report.executed(), 0, "report: {report:?}");
+        let (source_after, foreign_after) = {
+            let ledger = runtime.ledger().lock().unwrap();
+            (
+                ledger.get(&runtime.cell_id()).unwrap().state.balance(),
+                ledger.get(&foreign).unwrap().state.balance(),
+            )
+        };
+        let outcome = report.outcomes.remove(0);
+        (
+            outcome.disposition,
+            outcome.receipt,
+            source_before - source_after,
+            foreign_after,
+        )
+    }
+
+    /// The other pole of the test above: an AUTHORIZED sender, intact custody,
+    /// a well-formed seal — and a Transfer whose destination sits in a
+    /// DIFFERENT asset column. Every crank gate passes; the EXECUTOR refuses,
+    /// and no value crosses the asset boundary.
+    ///
+    /// The cost assertion is deliberately AMOUNT-RELATIVE rather than pinned to
+    /// a fee constant. A refused turn is NOT free: the executor commits fee +
+    /// nonce in Phase 1 and never rolls them back
+    /// (`turn/src/executor/execute.rs:597` — "prevents DoS via
+    /// expensive-but-failing turns that never pay"). What a refusal must cost
+    /// is the fee and NOTHING ELSE, so the debit cannot depend on the transfer
+    /// amount — which is exactly what goes red if the same-asset guard is
+    /// removed and these Transfers start landing.
+    #[test]
+    fn authorized_cross_asset_intent_is_refused_by_the_executor() {
+        let (small, small_receipt, small_debit, small_foreign) = cross_asset_crank("xasset-7", 7);
+        let (large, large_receipt, large_debit, large_foreign) =
+            cross_asset_crank("xasset-7k", 7_000);
+
+        for disposition in [&small, &large] {
+            match disposition {
+                CrankDisposition::Refused(RefusalReason::SubmitRejected(reason)) => assert!(
+                    reason.contains("cross-asset Transfer rejected"),
+                    "expected the executor's same-asset guard, got: {reason}"
+                ),
+                other => panic!("expected Refused(SubmitRejected(..)), got {other:?}"),
+            }
+        }
+
+        // Every gate BEFORE the executor passed — that is what makes this the
+        // executor's refusal and not a re-run of the custody/auth poles.
+        for receipt in [&small_receipt, &large_receipt] {
+            assert!(receipt.proof_ok);
+            assert!(receipt.payload_binding_ok);
+            assert!(receipt.executed_turn_receipt.is_none());
+        }
+
+        assert_eq!(small_foreign, 0, "no value may cross the asset boundary");
+        assert_eq!(large_foreign, 0, "no value may cross the asset boundary");
+        assert!(small_debit > 0, "a refused turn still pays its Phase-1 fee");
+        assert_eq!(
+            small_debit, large_debit,
+            "a refused Transfer must cost the fee and nothing else; a debit that \
+             scales with the amount (7 vs 7000) means the Transfer partially applied"
+        );
     }
 
     #[test]

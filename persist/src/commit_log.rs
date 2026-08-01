@@ -516,7 +516,7 @@ fn require_attested_nullifier_root(
     faithful: &FinalizedFaithfulRootWeld<'_>,
     set: &dregg_cell::nullifier_set::NullifierSet,
 ) -> Result<()> {
-    let expected = set.faithful_root8_exact().to_bytes32();
+    let expected = set.root8().to_bytes32();
     if faithful.attested_root.nullifier_set_root != Some(expected) {
         return Err(StoreError::Integrity(
             "attested nullifier root does not equal the exact durable successor accumulator"
@@ -556,8 +556,7 @@ fn verify_fresh_nullifiers_in(
                     "nullifier already spent or duplicated within finalized turn".to_string(),
                 )
             })?;
-        if set.faithful_root8_exact().to_bytes32() != statement.successor_nullifier_root.to_bytes()
-        {
+        if set.root8().to_bytes32() != statement.successor_nullifier_root.to_bytes() {
             return Err(StoreError::Integrity(
                 "finalized faithful spend does not bind its exact ordered nullifier successor"
                     .to_string(),
@@ -589,7 +588,7 @@ fn verify_replayed_nullifiers_in(
             StoreError::Integrity("replayed faithful attestation omits nullifier root".to_string())
         })?;
         let mut prefix = dregg_cell::nullifier_set::NullifierSet::new();
-        if prefix.faithful_root8_exact().to_bytes32() == claimed {
+        if prefix.root8().to_bytes32() == claimed {
             return Ok(());
         }
         for (nullifier, value, _) in records {
@@ -598,7 +597,7 @@ fn verify_replayed_nullifiers_in(
                     "durable nullifier history cannot reconstruct a replay prefix".to_string(),
                 )
             })?;
-            if prefix.faithful_root8_exact().to_bytes32() == claimed {
+            if prefix.root8().to_bytes32() == claimed {
                 return Ok(());
             }
         }
@@ -656,9 +655,7 @@ fn verify_replayed_nullifiers_in(
         prefix.insert(nullifier, spend.value).map_err(|_| {
             StoreError::Integrity("replayed durable nullifier is duplicated".to_string())
         })?;
-        if prefix.faithful_root8_exact().to_bytes32()
-            != statement.successor_nullifier_root.to_bytes()
-        {
+        if prefix.root8().to_bytes32() != statement.successor_nullifier_root.to_bytes() {
             return Err(StoreError::Integrity(
                 "replayed finalized spend does not bind its historical successor root".to_string(),
             ));
@@ -3308,7 +3305,7 @@ pub(crate) mod tests {
                     value: spend.value,
                     asset_type: 0x7000 + u64::try_from(index).unwrap(),
                     successor_nullifier_root: crate::CanonicalFaithfulRoot::from_faithful(
-                        set.faithful_root8_exact(),
+                        set.root8(),
                     ),
                 }
             })
@@ -3325,7 +3322,7 @@ pub(crate) mod tests {
             note_tree_root: Some(edge.successor.to_bytes()),
             nullifier_set_root: Some(
                 dregg_cell::nullifier_set::NullifierSet::new()
-                    .faithful_root8_exact()
+                    .root8()
                     .to_bytes32(),
             ),
             height: record.height,

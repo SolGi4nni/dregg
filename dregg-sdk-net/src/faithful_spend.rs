@@ -387,10 +387,7 @@ impl FaithfulNoteMirror {
                         "faithful nullifier mirror cannot be reconstructed: {error}"
                     ))
                 })?;
-            if nullifier_set
-                .faithful_root8_exact()
-                .limbs()
-                .map(BabyBear::as_u32)
+            if nullifier_set.root8().limbs().map(BabyBear::as_u32)
                 != page.head.attested_nullifier_root8
             {
                 return Err(refusal(
@@ -567,12 +564,7 @@ impl FaithfulNoteMirror {
                     "faithful nullifier mirror cannot be reconstructed: {error}"
                 ))
             })?;
-        if nullifier_set
-            .faithful_root8_exact()
-            .limbs()
-            .map(BabyBear::as_u32)
-            != head.attested_nullifier_root8
-        {
+        if nullifier_set.root8().limbs().map(BabyBear::as_u32) != head.attested_nullifier_root8 {
             return Err(refusal(
                 "local nullifier mirror is not bound to the mirrored attested head",
             ));
@@ -592,10 +584,7 @@ impl FaithfulNoteMirror {
             prior_context.push(FaithfulPriorSpendContext {
                 nullifier: prior.nullifier,
                 value: prior.value,
-                successor_nullifier_root8: nullifier_set
-                    .faithful_root8_exact()
-                    .limbs()
-                    .map(BabyBear::as_u32),
+                successor_nullifier_root8: nullifier_set.root8().limbs().map(BabyBear::as_u32),
             });
         }
         if !seen.insert(nullifier) {
@@ -603,10 +592,7 @@ impl FaithfulNoteMirror {
                 "current nullifier duplicates an ordered prior spend",
             ));
         }
-        let prefix_nullifier_root = nullifier_set
-            .faithful_root8_exact()
-            .limbs()
-            .map(BabyBear::as_u32);
+        let prefix_nullifier_root = nullifier_set.root8().limbs().map(BabyBear::as_u32);
         nullifier_set
             .insert(dregg_cell::note::Nullifier(nullifier), opening.value)
             .map_err(|_| refusal("current nullifier is already spent"))?;
@@ -622,10 +608,7 @@ impl FaithfulNoteMirror {
             prefix_nullifier_root,
             membership: local.membership,
             historical_note_root: (local.root_height, local.historical_note_root),
-            planned_successor_nullifier_root: nullifier_set
-                .faithful_root8_exact()
-                .limbs()
-                .map(BabyBear::as_u32),
+            planned_successor_nullifier_root: nullifier_set.root8().limbs().map(BabyBear::as_u32),
         })
     }
 }
@@ -997,6 +980,17 @@ mod tests {
         use std::io::{Read, Write};
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        // Nonblocking is for the ACCEPT poll only — it is what gives the loop a
+        // deadline instead of wedging when no client ever connects.
+        //
+        // ⚑ On Darwin the accepted socket INHERITS O_NONBLOCK from the listener
+        // (BSD semantics; Linux does not — measured both ways 2026-07-31). On a
+        // nonblocking fd `set_read_timeout` is a no-op, so the request read
+        // returned EAGAIN (errno 35 = `ErrorKind::WouldBlock`) in ~3µs whenever
+        // the client's bytes had not landed by the time `accept` returned — a
+        // window that widens under load. That, not resource exhaustion, is what
+        // made this fixture flake. Every accepted stream is put back into
+        // BLOCKING mode explicitly so the read timeout is real.
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
         let handle = std::thread::spawn(move || {
@@ -1011,14 +1005,45 @@ mod tests {
                         {
                             std::thread::sleep(std::time::Duration::from_millis(10));
                         }
-                        Err(_) => return,
+                        // FAIL LOUDLY. This arm used to `return`, which ended the
+                        // server thread quietly: a client that never issued its
+                        // next request left `server.join()` green and the caller's
+                        // `is_err()` satisfied by a TRANSPORT failure instead of
+                        // the refusal under test.
+                        Err(error) => {
+                            panic!("fixture mirror server: no client connected within 5s ({error})")
+                        }
                     }
                 };
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
-                let mut request = [0u8; 4096];
-                let _ = stream.read(&mut request).unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 4096];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) => panic!(
+                            "fixture mirror server: client closed after {} request bytes, \
+                             before the headers terminated",
+                            request.len()
+                        ),
+                        Ok(read) => request.extend_from_slice(&chunk[..read]),
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                || error.kind() == std::io::ErrorKind::TimedOut =>
+                        {
+                            panic!(
+                                "fixture mirror server: no complete request within 5s \
+                                 ({} bytes read)",
+                                request.len()
+                            )
+                        }
+                        Err(error) => {
+                            panic!("fixture mirror server: request read failed: {error}")
+                        }
+                    }
+                }
                 let body = serde_json::to_vec(&page).unwrap();
                 write!(
                     stream,
@@ -1064,7 +1089,7 @@ mod tests {
         let mut note_tree = Poseidon2NoteTree16::new();
         let note_root = note_tree.root().limbs().map(BabyBear::as_u32);
         let nullifier_root = dregg_cell::nullifier_set::NullifierSet::new()
-            .faithful_root8_exact()
+            .root8()
             .limbs()
             .map(BabyBear::as_u32);
         let anchor = FaithfulNoteMirrorAnchor {
@@ -1166,7 +1191,7 @@ mod tests {
         let mut tree = Poseidon2NoteTree16::from_commitments(&commitments, FAITHFUL_NOTE_DEPTH);
         let root = tree.root().limbs().map(BabyBear::as_u32);
         let empty_nullifier_root = dregg_cell::nullifier_set::NullifierSet::new()
-            .faithful_root8_exact()
+            .root8()
             .limbs()
             .map(BabyBear::as_u32);
         let anchor = FaithfulNoteMirrorAnchor {
@@ -1303,8 +1328,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn later_terminal_failure_leaves_caller_mirror_unchanged() {
+    /// A two-page mirror over ONE authenticated head: a nonterminal first page
+    /// carrying a full `COMMITMENT_PAGE_SIZE` commitment page, and a terminal
+    /// page carrying the genuine last commitment. Returns
+    /// `(first, terminal, trust, total_note_count)`.
+    fn paged_mirror_fixture() -> (
+        FaithfulNoteMirrorResponse,
+        FaithfulNoteMirrorResponse,
+        FaithfulNoteMirrorTrust,
+        u64,
+    ) {
         let (mut page, mut trust, seed) = empty_signed_page();
         let commitments = vec![[0x33; 32]; COMMITMENT_PAGE_SIZE + 1];
         let mut tree = Poseidon2NoteTree16::from_commitments(&commitments, FAITHFUL_NOTE_DEPTH);
@@ -1322,18 +1355,57 @@ mod tests {
         let mut terminal = page.clone();
         terminal.commitment_cursor = COMMITMENT_PAGE_SIZE as u64;
         terminal.next_commitment_cursor = commitments.len() as u64;
-        terminal.commitments = vec![[0x44; 32]];
+        terminal.commitments = vec![commitments[COMMITMENT_PAGE_SIZE]];
         terminal.complete = true;
+
+        (page, terminal, trust, commitments.len() as u64)
+    }
+
+    /// SUCCESS pole for the paged HTTP sync. This is also what keeps the
+    /// `serve_json_pages` fixture honest: a harness that fails to serve either
+    /// page cannot produce this green.
+    #[tokio::test]
+    async fn paged_sync_over_http_adopts_the_authenticated_terminal_page() {
+        let (page, terminal, trust, total) = paged_mirror_fixture();
+        let (base_url, server) = serve_json_pages(vec![page, terminal]);
+        let client = NodeHttpClient::new(base_url);
+        let mut mirror = FaithfulNoteMirror::default();
+        client
+            .sync_faithful_note_mirror(&mut mirror, &trust)
+            .await
+            .expect("a genuine terminal page must complete the sync");
+        server.join().unwrap();
+        assert_eq!(mirror.commitment_cursor(), total);
+        assert_eq!(mirror.anchor.as_ref(), Some(&trust.anchor));
+        assert!(mirror.head.is_some());
+    }
+
+    /// REFUSAL pole: same transport, same first page, a terminal page whose
+    /// final commitment does not reconstruct the sealed root.
+    #[tokio::test]
+    async fn later_terminal_failure_leaves_caller_mirror_unchanged() {
+        let (page, mut terminal, trust, _) = paged_mirror_fixture();
+        terminal.commitments = vec![[0x44; 32]];
 
         let (base_url, server) = serve_json_pages(vec![page, terminal]);
         let client = NodeHttpClient::new(base_url);
         let mut mirror = FaithfulNoteMirror::default();
-        assert!(
-            client
-                .sync_faithful_note_mirror(&mut mirror, &trust)
-                .await
-                .is_err()
-        );
+        let error = client
+            .sync_faithful_note_mirror(&mut mirror, &trust)
+            .await
+            .expect_err("a terminal page that does not reconstruct the root must refuse");
+        // Assert the REFUSAL, not merely an error. Plain `is_err()` is also
+        // satisfied by `"mirror request failed: …"` — the TRANSPORT arm — so a
+        // dead or wedged fixture server passed this test for the wrong reason.
+        match &error {
+            SdkError::Wire(reason) => assert!(
+                reason.contains(
+                    "complete faithful mirror commitments do not reconstruct the authenticated root"
+                ),
+                "expected the terminal root refusal, got: {reason}"
+            ),
+            other => panic!("expected an SdkError::Wire refusal, got {other:?}"),
+        }
         server.join().unwrap();
         assert_eq!(mirror.commitment_cursor(), 0);
         assert_eq!(mirror.history_cursor(), 0);

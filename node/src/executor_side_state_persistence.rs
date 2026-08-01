@@ -249,14 +249,15 @@ pub(crate) fn capture_executor_accumulators(
             seq,
         })
         .collect();
-    // ⚑ VALUE-FAITHFULNESS OF THE EXPORT (A8). The committed `root8()` leaf value is
-    // `split_u64(value).0` — the note value's LOW 30 BITS — so `root8()` CANNOT
-    // witness this check: a record whose value lost bit 30 (or bit 62, where
-    // `split_u64`'s `as u32` truncates) folds to the byte-identical legacy root.
-    // Compare on `faithful_root8_exact()` instead, which binds all 64 value bits and
-    // all 32 commitment bytes, so a record codec that narrows the note value fails
-    // CLOSED here rather than round-tripping to a silently different accumulator.
-    let live_exact = commitments.faithful_root8_exact();
+    // ⚑ VALUE-FAITHFULNESS OF THE EXPORT (A8). This comparison used to run on a SEPARATE
+    // `faithful_root8_exact()`, because the committed `root8()` could not witness it: its leaf
+    // value was `split_u64(value).0` — the note value's LOW 30 BITS — so a record whose value
+    // lost bit 30 (or bit 62, where `split_u64`'s `as u32` truncates) folded to a byte-identical
+    // committed root. Since 2026-07-31 `root8()` IS the exact tagged linked-leaf root (all 64
+    // value bits, all 32 commitment bytes, and a full-width successor pointer), so the check runs
+    // on the committed object itself and the two roots cannot drift apart — there is only one.
+    // A record codec that narrows the note value still fails CLOSED here.
+    let live_exact = commitments.root8();
     drop(commitments);
     let exported_exact = dregg_cell::commitment_set::CommitmentSet::from_records(
         note_commitments
@@ -264,7 +265,7 @@ pub(crate) fn capture_executor_accumulators(
             .map(|record| (record.commitment, record.value, record.seq)),
     )
     .map_err(|error| format!("executor note-commitment export is not replayable: {error}"))?
-    .faithful_root8_exact();
+    .root8();
     if exported_exact != live_exact {
         return Err(
             "executor note-commitment export is not value-faithful: the exported records \

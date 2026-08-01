@@ -827,14 +827,14 @@ impl PersistentStore {
                     "faithful-spend authority repeats a durable nullifier".to_string(),
                 )
             })?;
-            if set.faithful_root8_exact().to_bytes32() != authority.successor_nullifier_root {
+            if set.root8().to_bytes32() != authority.successor_nullifier_root {
                 return Err(StoreError::Integrity(
                     "faithful-spend authority successor is not the exact durable prefix root"
                         .to_string(),
                 ));
             }
         }
-        if attested.nullifier_set_root != Some(set.faithful_root8_exact().to_bytes32()) {
+        if attested.nullifier_set_root != Some(set.root8().to_bytes32()) {
             return Err(StoreError::Integrity(
                 "faithful-spend turn interval does not end at its attested nullifier root"
                     .to_string(),
@@ -922,12 +922,12 @@ mod tests {
                 value,
                 asset_type,
                 successor_nullifier_root: CanonicalFaithfulRoot::from_bytes(
-                    nullifiers.faithful_root8_exact().to_bytes32(),
+                    nullifiers.root8().to_bytes32(),
                 )
                 .unwrap(),
             });
         }
-        let final_nullifier_root = nullifiers.faithful_root8_exact().to_bytes32();
+        let final_nullifier_root = nullifiers.root8().to_bytes32();
 
         let write = store.db.begin_write().unwrap();
         {
