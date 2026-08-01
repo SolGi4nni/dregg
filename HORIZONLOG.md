@@ -206,7 +206,7 @@ copies. Old-admits/new-rejects for both collisions in Lean and Rust, and **at th
 serving a grain `/var` card as `value ‖ "\0"` used to VERIFY under the honest root and is now
 REFUSED (`sandstorm-bridge/tests/var_nul_append_inclusion_forgery.rs`).
 
-**FLAG DAY:** `CANONICAL_STATE_SCHEMA_EPOCH` 18 → 19, a **re-genesis and NOT a VK rotation** (see
+**FLAG DAY:** `CANONICAL_STATE_SCHEMA_EPOCH` **16 → 19** (⚠ this line said *18 → 19* and that commit's own VK-REGEN row said *16 → 17*; **`git log -S` finds ZERO commits ever holding 17 or 18** — the bump was 16 → 19 in one commit, and two independent records described a history that never happened), a **re-genesis and NOT a VK rotation** (see
 the measurement above). `ZKORACLE_MAX_BODY_LIMBS` holds at 1024; its BYTE capacity halves to 2040.
 
 ⚠ **THE RESIDUAL, SAID AT ITS OWN BOUND.** The squeeze is still **one felt** — `log2 p = 30.907`,
