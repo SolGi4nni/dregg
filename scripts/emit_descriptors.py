@@ -615,6 +615,28 @@ def require_regen_ack(changed: list[str], what: str) -> dict:
     return {"tree": tree, "dirty": dirty, "head": git_out("rev-parse", "HEAD")}
 
 
+def subdir_hash_legs(desc_hashes: dict[str, str]) -> dict[str, dict[str, str]]:
+    """Every `<subdir>/<file>` key of the emission, split into its own `<subdir>_sha256` leg.
+
+    ⚑ THE WRITE SIDE'S COUNTERPART TO `verify_provenance`'S DISCOVERY WALK (2026-08-01). The verify
+    leg was taught to walk EVERY subdirectory of `circuit/descriptors/` by discovery — but
+    `build_provenance` still special-cased `by-name/` alone, so the six tracked
+    `circuit/descriptors/table-airs/*.json` landed in `descriptor_sha256` under a `table-airs/…`
+    key while `table-airs_sha256` came out `null`. `--verify-provenance` then reported them BOTH
+    ways at once: "recorded in the stamp but MISSING on disk" (the flat walk cannot find a
+    slash-keyed name) and "on disk but NOT covered by the stamp". A stamp that cannot be verified
+    attests nothing, so the two sides are made symmetric here: discovery on both.
+
+    `by-name` is returned like any other subdirectory; `build_provenance` lifts it into its
+    historical `by_name_sha256` key."""
+    legs: dict[str, dict[str, str]] = {}
+    for name, h in sorted(desc_hashes.items()):
+        if "/" in name:
+            sub, base = name.split("/", 1)
+            legs.setdefault(sub, {})[base] = h
+    return legs
+
+
 def by_name_hashes_of(desc_hashes: dict[str, str]) -> dict[str, str]:
     """The by-name leg of the provenance stamp, sourced from the EMITTED content (via
     `desc_hashes`, which `install_and_stamp` computes over `written`) — NOT from disk.
@@ -653,10 +675,16 @@ def build_provenance(mode: str, auth: dict,
         # The stamp keeps the two legs separate (flat basenames each), as it always has; the
         # SOURCE of the by-name leg is what changed — emitted Lean bytes, not a disk re-hash.
         "descriptor_sha256": {
-            name: h for name, h in sorted(desc_hashes.items())
-            if not name.startswith("by-name/")
+            name: h for name, h in sorted(desc_hashes.items()) if "/" not in name
         },
         "by_name_sha256": by_name_hashes_of(desc_hashes),
+        # every OTHER descriptor subdirectory, by DISCOVERY — the mirror of `verify_provenance`'s
+        # own discovery walk, so a new subdirectory is stamped the day it appears.
+        **{
+            f"{sub}_sha256": leg
+            for sub, leg in subdir_hash_legs(desc_hashes).items()
+            if sub != "by-name"
+        },
         "fp_file_sha256": dict(sorted(fp_hashes.items())),
     }
 
@@ -698,9 +726,14 @@ def provenance_stamp_gap(written: dict[str, str]) -> list[str]:
     emitted = {name: sha256_hex(content.encode()) for name, content in written.items()}
     expected = {
         "descriptor_sha256": {
-            name: h for name, h in emitted.items() if not name.startswith("by-name/")
+            name: h for name, h in emitted.items() if "/" not in name
         },
         "by_name_sha256": by_name_hashes_of(emitted),
+        **{
+            f"{sub}_sha256": leg
+            for sub, leg in subdir_hash_legs(emitted).items()
+            if sub != "by-name"
+        },
     }
     findings: list[str] = []
     for leg, expect in expected.items():
@@ -724,6 +757,27 @@ def provenance_stamp_gap(written: dict[str, str]) -> list[str]:
     return findings
 
 
+def current_schema_epoch() -> str:
+    """`CANONICAL_STATE_SCHEMA_EPOCH` as the audit row's machine-readable trailer.
+
+    ⚑ THIS SCRIPT IS NOT THE GATE, and must never become it. The epoch is a Rust constant ANY
+    COMMIT CAN BUMP while only this function appends to the log, so a check placed here is blind
+    to exactly the case that motivated it (`6441705e8` bumped 20 → 21 and ran no emit). The gate
+    is `scripts/check-schema-epoch-log.py` + `dregg_persist::schema_epoch_log_row`, both keyed on
+    the CONSTANT. All this does is stop an emit row from being the malformed one that trips them.
+    """
+    src = ROOT / "persist" / "src" / "lib.rs"
+    hits = re.findall(r"^\s*pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = (\d+);",
+                      src.read_text(errors="replace"), re.M) if src.exists() else []
+    if len(hits) != 1:
+        sys.exit(
+            f"emit_descriptors: persist/src/lib.rs carries {len(hits)} definitions of "
+            f"CANONICAL_STATE_SCHEMA_EPOCH; the audit row's `epoch:` trailer has no single value "
+            f"to record. Refusing to append a row this repo's own gate cannot parse."
+        )
+    return f"epoch:{hits[0]}"
+
+
 def append_audit(mode: str, auth: dict, changed: list[str]) -> None:
     """The AUDIT TRAIL: one git-tracked row per applied regen/stamp."""
     log = ROOT / AUDIT_LOG_REL
@@ -736,16 +790,29 @@ def append_audit(mode: str, auth: dict, changed: list[str]) -> None:
             "(written by `scripts/emit_descriptors.py`; see docs/VK-REGEN-CONTROLS.md).\n"
             "Rows are never edited or removed; git history is the tamper-evidence.\n"
             "\n"
-            "| when (UTC) | operator | mode | HEAD:metatheory/Dregg2 | repo HEAD | source dirty | changed |\n"
-            "|---|---|---|---|---|---|---|\n"
+            "## SCHEMA EPOCH LEDGER\n"
+            "\n"
+            "| epoch | set by | when (UTC) | what it re-genesised |\n"
+            "|---|---|---|---|\n"
+            "\n"
+            "## EVENT ROWS\n"
+            "\n"
+            "| when (UTC) | operator | mode | HEAD:metatheory/Dregg2 | repo HEAD | source dirty "
+            "| changed | epoch |\n"
+            "|---|---|---|---|---|---|---|---|\n"
         )
     when = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     operator = f"{getpass.getuser()}@{socket.gethostname()}"
     shown = ", ".join(changed[:6]) + (f", … +{len(changed) - 6}" if len(changed) > 6 else "")
+    # A BARE `|` inside a cell is not a column — it silently ends one. Four rows written before
+    # 2026-08-01 carried unescaped pipes out of code spans (`d8 || iroot`, `lo | mid1<<8`) and
+    # had therefore never rendered as table rows at all, in any reader.
+    shown = shown.replace("|", r"\|")
     with log.open("a") as fh:
         fh.write(
             f"| {when} | {operator} | {mode} | {auth['tree']} | {auth['head']} "
-            f"| {'YES' if auth['dirty'] else 'no'} | {shown or '(stamp only)'} |\n"
+            f"| {'YES' if auth['dirty'] else 'no'} | {shown or '(stamp only)'} "
+            f"| {current_schema_epoch()} |\n"
         )
 
 
@@ -1759,24 +1826,76 @@ def _wf_parse(path: Path, rel: str) -> list[tuple[int, str, str, list[tuple[int,
     are read (`run`, `uses`, `working-directory`) and only two node shapes (a `|`/`>` block scalar,
     and a plain inline scalar), which is the whole grammar GitHub's step syntax uses for them.
 
-    `working-directory:` is tracked per step (reset at each `- ` list item at or above the step's
-    indent) because it RELOCATES every relative path in the step: `extension.yml`'s
-    `./build.sh` under `working-directory: extension` is `extension/build.sh`, which is tracked —
-    honouring the key turns two would-be false hits into two real passes."""
+    `working-directory:` RELOCATES every relative path in a step, so it has to be honoured:
+    `extension.yml`'s `./build.sh` under `working-directory: extension` is `extension/build.sh`,
+    which is tracked — reading the key turns two would-be false hits into two real passes.
+
+    ⚑ AND ITS SCOPE IS THE WHOLE CORRECTNESS OF THIS LEG. Measured 2026-08-01: it LEAKED. The
+    old rule reset the key at any `- ` item "at or above the step's indent", with the baseline
+    indent taken from the FIRST `- ` anywhere in the file — which in `ci.yml` is `- cron: '0 6 *
+    * *'` at indent 4, under `on: schedule:`. Every real step is at indent 6, so `6 <= 4` never
+    held and **the key was never reset again in that file**. One `working-directory: metatheory`
+    at line 1471 therefore relocated EVERY subsequent step, which is where the eight
+    `WORKFLOW-GHOST` findings against `metatheory/scripts/*` came from: not eight broken steps,
+    one broken parser. The leak cut BOTH ways and the quiet half was worse — a
+    `working-directory: ${{ matrix.dir }}` at line 442 leaked forward too, so FIFTEEN static,
+    checkable invocations (`scripts/ci-mathlib-cache.sh`, `scripts/check-dark-modules.py`,
+    `scripts/axiom-hygiene-guard.sh`, …) were deferred as "not static" and never checked at all.
+    A permanently-noisy check trains readers to skip it, and a deferral is how it goes blind
+    without ever printing a red.
+
+    The scope is now modelled properly, in the two shapes GitHub actually has:
+
+      * STEP level — `working-directory:` inside a step's mapping, scoped to THAT list item.
+      * JOB level — `defaults: → run: → working-directory:`, which applies to every `run` step
+        of the job (`extension.yml`, `forge.yml`) and dies at the next job.
+
+    ⚠ AND IT IS RESOLVED PER ITEM, NOT IN READING ORDER. A YAML mapping is unordered and this
+    repo writes it both ways — `ci.yml:192` is `- run: cargo test` with `working-directory:
+    solana-lock` on the line BELOW, while `ci.yml:298` puts the key first. A parser that
+    attributes the key only forwards silently drops the first shape, so the item's whole extent
+    is scanned before its `run:` steps are resolved.
+
+    `uses:` steps get NEITHER: `working-directory` is a `run` key, and `uses: ./x` resolves
+    against the workspace root however the cwd was set."""
     lines = path.read_text(errors="replace").splitlines()
-    steps: list[tuple[int, str, str, list[tuple[int, str]]]] = []
-    i, n = 0, len(lines)
-    cur_wd, cur_step_ind = "", None
+    n = len(lines)
+    # (lineno, kind, item_key, job_key, body) — wd is resolved after the walk, per item.
+    raw_steps: list[tuple[int, str, object, object, list[tuple[int, str]]]] = []
+    item_wd: dict[object, str] = {}
+    job_wd: dict[object, str] = {}
+    stack: list[tuple[int, int]] = []     # open `- ` items: (indent, start line)
+    defaults_ind: int | None = None       # the innermost open `defaults:` key
+    job_key: object = None                # the current job's key line, or None outside `jobs:`
+    jobs_ind: int | None = None           # indent of the `jobs:` key
+    steps_in_job = 0
+    i = 0
     while i < n:
         raw = lines[i]
         stripped = raw.strip()
-        if not stripped:
+        if not stripped or stripped.startswith("#"):
             i += 1
             continue
         ind = len(raw) - len(raw.lstrip())
-        if stripped.startswith("- ") or stripped == "-":
-            if cur_step_ind is None or ind <= cur_step_ind:
-                cur_wd, cur_step_ind = "", ind
+        is_item = stripped.startswith("- ") or stripped == "-"
+
+        # Close every list item we have dedented out of. A sibling `- ` at indent d ends the
+        # previous item at d; a mapping key at indent k ends every item at indent >= k.
+        while stack and (stack[-1][0] >= ind if is_item else stack[-1][0] >= ind):
+            stack.pop()
+        if is_item:
+            stack.append((ind, i + 1))
+        if defaults_ind is not None and ind <= defaults_ind:
+            defaults_ind = None
+        key0 = stripped.split(":", 1)[0].strip() if not is_item else ""
+        if key0 == "jobs" and stripped.rstrip().endswith(":"):
+            jobs_ind = ind
+        elif jobs_ind is not None and not is_item and ind == jobs_ind + 2 and stripped.endswith(":"):
+            job_key, steps_in_job = i + 1, 0          # a new job: its defaults start over
+            defaults_ind = None
+        if key0 == "defaults":
+            defaults_ind = ind
+
         mb = _WF_BLOCK_OPEN.match(raw)
         if mb:
             keyind = len(mb.group("pre"))
@@ -1790,7 +1909,8 @@ def _wf_parse(path: Path, rel: str) -> list[tuple[int, str, str, list[tuple[int,
                     break
                 body.append((j + 1, b)); j += 1
             if mb.group("key") == "run":
-                steps.append((i + 1, "run", cur_wd, body))
+                raw_steps.append((i + 1, "run", stack[-1][1] if stack else None, job_key, body))
+                steps_in_job += 1
             i = j
             continue
         mi = _WF_INLINE.match(raw)
@@ -1798,12 +1918,31 @@ def _wf_parse(path: Path, rel: str) -> list[tuple[int, str, str, list[tuple[int,
             val = re.sub(r"\s+#.*$", "", mi.group("val")).strip()
             key = mi.group("key")
             if key == "working-directory":
-                cur_wd = _wf_unquote(val)
+                if defaults_ind is not None and ind > defaults_ind:
+                    if steps_in_job:
+                        sys.exit(
+                            f"emit_descriptors: {rel}:{i + 1} declares a job-level "
+                            f"`defaults.run.working-directory` AFTER that job's steps. This "
+                            f"parser resolves job defaults in reading order, so it would apply "
+                            f"the key to none of them and report on a cwd it read wrong. Move "
+                            f"the `defaults:` block above `steps:`, or teach this parser to "
+                            f"resolve job defaults per job — do not leave it silently wrong."
+                        )
+                    job_wd[job_key] = _wf_unquote(val)
+                elif stack:
+                    item_wd[stack[-1][1]] = _wf_unquote(val)
             elif key == "run":
-                steps.append((i + 1, "run", cur_wd, [(i + 1, val)]))
+                raw_steps.append((i + 1, "run", stack[-1][1] if stack else None, job_key,
+                                  [(i + 1, val)]))
+                steps_in_job += 1
             elif key == "uses":
-                steps.append((i + 1, "uses", cur_wd, [(i + 1, val)]))
+                raw_steps.append((i + 1, "uses", None, None, [(i + 1, val)]))
         i += 1
+
+    steps: list[tuple[int, str, str, list[tuple[int, str]]]] = []
+    for lineno, kind, item, job, body in raw_steps:
+        wd = "" if kind == "uses" else (item_wd.get(item) or job_wd.get(job, ""))
+        steps.append((lineno, kind, wd, body))
     return steps
 
 
@@ -2585,8 +2724,130 @@ ACCEPTED_FLAGS = (
     "--list-guarded-paths",
     "--verify-by-name-routing",
     "--verify-provenance",
+    "--self-test-workflow-scope",
     "--strict",
 )
+
+
+# ── the workflow-scope red-proof ──────────────────────────────────────────────────────────────
+# `_wf_parse`'s `working-directory` scope decides where EVERY path in `verify_workflow_refs`
+# resolves, and when it leaked (see that function's docstring) it produced both failure modes at
+# once: eight false `WORKFLOW-GHOST` findings that no fix could clear, and fifteen real
+# invocations silently deferred as "not checkable". Neither could be seen from the output —
+# the reds looked like eight broken steps and the deferrals looked like coverage.
+#
+# So the scope gets its own can-it-go-red run, on SYNTHETIC workflows in a temp dir. Nothing in
+# the repo is read or written. ~0s, no git, no Lean, no cargo.
+_WF_SCOPE_CASES: tuple[tuple[str, str, dict[int, str]], ...] = (
+    (
+        "the leak itself: a shallower `- ` (`- cron:`) must not disable the reset",
+        """
+on:
+  schedule:
+    - cron: '0 6 * * *'
+jobs:
+  a:
+    steps:
+      - name: in metatheory
+        working-directory: metatheory
+        run: bash scripts/x.sh
+      - name: at the root
+        run: bash scripts/y.sh
+""",
+        {9: "metatheory", 11: ""},
+    ),
+    (
+        "the key AFTER `run:` in the same item (ci.yml:192's shape)",
+        """
+jobs:
+  a:
+    steps:
+      - run: cargo test
+        working-directory: solana-lock
+      - run: cargo build
+""",
+        {4: "solana-lock", 6: ""},
+    ),
+    (
+        "a job-level `defaults.run.working-directory` reaches every run step, and stops at the "
+        "next job",
+        """
+jobs:
+  a:
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - run: ./build.sh
+      - run: npm ci
+  b:
+    steps:
+      - run: ./other.sh
+""",
+        {7: "extension", 8: "extension", 11: ""},
+    ),
+    (
+        "`uses:` never inherits a cwd (it resolves against the workspace root)",
+        """
+jobs:
+  a:
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: ./.github/actions/thing
+      - run: ./build.sh
+""",
+        {7: "", 8: "extension"},
+    ),
+    (
+        # ⓘ This one is a FORWARD guard, not a refutation: the pre-2026-08-01 parser passed it
+        # (it never reset anything, so it could not clear a key early). It exists because the
+        # replacement pops a stack of open list items, which is a new way to get this wrong.
+        # The four cases above each FAIL against the old parser — verified, not assumed.
+        "a nested sequence inside a step does not clear that step's key",
+        """
+jobs:
+  a:
+    steps:
+      - name: nested
+        working-directory: wasm
+        with:
+          args:
+            - --headless
+            - --chrome
+        run: wasm-pack test
+      - run: cargo test
+""",
+        {10: "wasm", 11: ""},
+    ),
+)
+
+
+def self_test_workflow_scope() -> int:
+    import tempfile
+
+    bad = 0
+    print("emit_descriptors --self-test-workflow-scope (synthetic workflows in a temp dir)")
+    with tempfile.TemporaryDirectory() as td:
+        for name, text, want in _WF_SCOPE_CASES:
+            p = Path(td) / "wf.yml"
+            p.write_text(text.lstrip("\n"))
+            got = {ln: wd for ln, _k, wd, _b in _wf_parse(p, "wf.yml")}
+            # FLOOR: a parser that harvests nothing must not read as clean.
+            if len(got) < len(want):
+                print(f"  [BAD] {name}: parsed {len(got)} step(s), expected at least {len(want)}")
+                bad += 1
+                continue
+            wrong = {ln: (got.get(ln), w) for ln, w in want.items() if got.get(ln) != w}
+            if wrong:
+                print(f"  [BAD] {name}: {wrong} (got/want)")
+                bad += 1
+            else:
+                print(f"  [ok ] {name}")
+    print(f"emit_descriptors --self-test-workflow-scope: "
+          f"{'OK' if bad == 0 else str(bad) + ' CASE(S) WRONG'}")
+    return 1 if bad else 0
 
 
 def main():
@@ -2600,6 +2861,8 @@ def main():
             f"emit_descriptors: unknown arguments {unknown!r} (expected none, or one of: "
             + ", ".join(ACCEPTED_FLAGS) + ")"
         )
+    if "--self-test-workflow-scope" in argv:
+        sys.exit(self_test_workflow_scope())
     if "--verify-provenance" in argv:
         verify_provenance(strict="--strict" in argv)
         return
