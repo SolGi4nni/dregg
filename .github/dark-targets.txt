@@ -329,13 +329,32 @@ never-run deos-hermes test narrator_model_provenance_live   # `zk-live` is an op
 # carries once, so the marginal cost is the run, not the build) or whether these belong
 # on a nightly. Dropping `--no-run` from that one step is the whole arming change; it is
 # not made here because it is a CI-budget call, not a wiring omission.
+#
+# ── PARTIALLY RESOLVED 2026-07-31: the NIGHTLY branch of that fork, for four of them ──
+# `armed-teeth.yml`'s `gpui-gated-desktop-teeth` job now RUNS four of these on the
+# self-hosted host (hbox), floored on what actually executed. Their rows are gone from
+# this list because the two-sided ratchet requires it: a row that became executable
+# fails just as loudly as one that never ran. The four:
+#     deos_desktop_transclude_is_verified   (new; the flagship anti-forge tooth)
+#     deos_desktop_conflict_is_a_state
+#     deos_desktop_editor_types_to_heap
+#     deos_desktop_world_explorer_and_spotter
+#
+# The SEVEN below are still the open CI-budget call, unchanged. Per-push execution was
+# NOT chosen for them; adding one to the nightly job is a one-line `--test` and a floor
+# bump.
+#
+# ⚠ AND THE SWEEP ITSELF WAS LYING ABOUT THIS BLOCK, in a way that cancelled out. Until
+# 2026-07-31 `check-never-run-targets.py` compared `--features` LITERALLY (so an alias
+# like `native-full` never satisfied a `gpui-ui` gate) AND did not model `--no-run` (so a
+# compile-only invocation was credited with arming). Two errors in opposite directions.
+# Fixing only the first made ALL ELEVEN of these read "NO LONGER NEVER-RUN" on the
+# strength of `starbridge-v2-installers.yml`'s `--no-run` step — a false green inside the
+# sweep whose entire job is catching false greens. Both fixes landed together.
 never-run starbridge-v2 test branch_stitch_settlement_sound_multiplayer   # file-gated on `dev-surfaces`; ran per-push until ba3d84301. Compiled (not run) by starbridge-v2-installers.yml `--features desktop --no-run`.
 never-run starbridge-v2 test card_surface_grafts_live   # `card-pane` + `dev-surfaces`, ditto.
-never-run starbridge-v2 test deos_desktop_conflict_is_a_state   # `gpui-ui`, ditto.
-never-run starbridge-v2 test deos_desktop_editor_types_to_heap   # `gpui-ui`, ditto.
 never-run starbridge-v2 test deos_desktop_explorer_reflects_patches   # `gpui-ui`, ditto.
 never-run starbridge-v2 test deos_desktop_systemui_cap_chrome   # `android-systemui` + `gpui-ui`, ditto.
-never-run starbridge-v2 test deos_desktop_world_explorer_and_spotter   # `gpui-ui`, ditto.
 never-run starbridge-v2 test inspector_card_is_the_inspect_surface   # `card-pane` + `dev-surfaces`, ditto.
 never-run starbridge-v2 test membrane_surface_grafts_live   # `dev-surfaces` + `render-capture`, ditto.
 never-run starbridge-v2 test mode_cards_are_the_surfaces   # `card-pane` + `dev-surfaces`, ditto.

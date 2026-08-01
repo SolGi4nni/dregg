@@ -138,6 +138,11 @@ on:
         required: false
         default: ""
         type: string
+      desktop_runner:
+        description: "Override the gpui-gated-desktop-teeth runner. EMPTY uses the self-hosted host (hbox: self-hosted,lean-seed,linux-x86_64) — a hosted runner CANNOT finish this lane (gpui + libservo + the Lean archive exceed its disk)."
+        required: false
+        default: ""
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -671,6 +676,120 @@ jobs:
   # It does NOT gate anything (arming stays diagnostic, per the header above) — it just
   # makes a red tooth reach a human. A standing issue is refreshed rather than spammed:
   # one issue per outage, a comment per subsequent red run.
+  gpui-gated-desktop-teeth:
+    name: gpui-gated desktop teeth (--features native-full)
+    if: github.event_name != 'pull_request'
+    # THE THIRD AXIS: EXPENSIVE-SO-GPUI-GATED (added 2026-07-31).
+    #
+    # `binding-teeth` closed "expensive, therefore #[ignore]d". `feature-gated-prove-teeth`
+    # closed "expensive, therefore behind an off-by-default feature". This closes the same
+    # disease one crate over, and it was MEASURED by `scripts/check-never-run-targets.py`,
+    # which reds on exactly this:
+    #
+    #   NEW NEVER-RUN: starbridge-v2 test deos_desktop_transclude_is_verified
+    #     (gate=['embedded-executor','gpui-ui'] never-activated-by-an-invocation-that-runs-it=['gpui-ui'])
+    #
+    # `starbridge-v2`'s `default = ["embedded-executor"]`, so every integration test carrying
+    # `#![cfg(feature = "gpui-ui")]` compiles to an EMPTY crate and reports `0 passed; 0 failed`
+    # — the silent zero this workflow exists to floor. `starbridge-v2-installers.yml:422` runs
+    # `cargo test --release --features desktop --no-run`, which COMPILES these and never fires
+    # them: a target can be green in CI and have asserted nothing, forever.
+    #
+    # WHAT IS BEING ARMED, and why it is worth a self-hosted slot:
+    #   * `deos_desktop_transclude_is_verified` — THE ANTI-FORGE TOOTH. Until 2026-07-31 the
+    #     desktop transclude gesture was a `format!` string that would interpolate ANY 32 bytes
+    #     into a plausible-looking provenanced quote. This test transcludes a cell id the
+    #     ledger does not hold and asserts the document is left BYTE-IDENTICAL. It is the only
+    #     thing standing between "a live, provenanced quote" as a comment and as a fact.
+    #   * the desktop doc/heap and world-explorer integration targets beside it, which are
+    #     gated the same way and were equally never executed.
+    #
+    # ⚠ WHY SELF-HOSTED. `native-full` links gpui (metal/harfbuzz/cosmic-text/objc), libservo
+    # via `web-shell`, and the multi-MB verified Lean archive through `dregg-turn`. A hosted
+    # runner has ~14 GB of disk after reclaim and cannot finish this. hbox is registered with
+    # `self-hosted, lean-seed, linux-x86_64` (see lean-seed.yml) and has the RAM and the disk.
+    # The label reuse is honest but imperfect: `lean-seed` names a purpose this lane does not
+    # share. If a second self-hosted box is ever registered, give it a `desktop` label and
+    # narrow this.
+    #
+    # ⚠ RUST_MIN_STACK IS LOAD-BEARING, NOT A TUNING KNOB. Without it a thread in
+    # `panels_workspace::agent_memory_cockpit_affordance` overflows and the whole test process
+    # SIGSEGVs mid-run — which reports as a crashed lane, not a failed assertion, and MASKS
+    # every result after it. Measured 2026-07-31: the abort was hiding a real fifth failure.
+    runs-on: ${{ inputs.desktop_runner || fromJSON('["self-hosted","lean-seed","linux-x86_64"]') }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Arm the gpui-gated desktop teeth
+        env:
+          RUST_MIN_STACK: "33554432"
+        run: |
+          # `set +e` for the same reason as every other job here: GitHub runs `run:` under
+          # `bash -eo pipefail`, so the first red cargo would abort the step and make the
+          # floor check below UNREACHABLE CODE — a guard on the guard that cannot fire.
+          set +e
+          set -uo pipefail
+
+          # Measured 2026-07-31. A floor is a RATCHET: raise it when the set grows, NEVER
+          # lower one to make a red lane green.
+          FLOOR_DESKTOP_TESTS=4
+
+          log=/tmp/gpui-teeth.log
+          cargo test -p starbridge-v2 --features native-full \
+            --test deos_desktop_transclude_is_verified \
+            --test deos_desktop_editor_types_to_heap \
+            --test deos_desktop_conflict_is_a_state \
+            --test deos_desktop_world_explorer_and_spotter \
+            --no-fail-fast 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+
+          # ── FLOOR: WHAT ACTUALLY EXECUTED ────────────────────────────────────────────
+          # The exit code is NOT the verdict. A `#![cfg]`-emptied crate exits 0 having run
+          # nothing, which is precisely the failure this lane exists to catch, so the count
+          # of ASSERTIONS THAT RAN is the only trustworthy signal.
+          ran=$(grep -hoE '^test result: (ok|FAILED)\. [0-9]+ passed' "$log" \
+                | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' \
+                | paste -sd+ - | bc)
+          ran=${ran:-0}
+          echo "armed-teeth(desktop): $ran gpui-gated assertion(s) actually executed (floor $FLOOR_DESKTOP_TESTS)."
+          if [ "$ran" -lt "$FLOOR_DESKTOP_TESTS" ]; then
+            echo "::error::only $ran gpui-gated tooth(s) executed, below the measured floor of $FLOOR_DESKTOP_TESTS."
+            # ⚠ THE BACKTICKS ARE ESCAPED ON PURPOSE. An unescaped backtick inside a
+            # double-quoted bash string is COMMAND SUBSTITUTION, and this exact line shipped
+            # broken for one edit: it printed "::error::A  target with the feature off
+            # reports" — the `#![cfg(...)]` silently deleted, because bash ran it as a command
+            # (a leading # made it an empty comment). An error message about silent failure,
+            # failing silently. Every backtick below is \` for that reason.
+            echo "::error::A \`#![cfg(feature = \"gpui-ui\")]\` target with the feature off reports"
+            echo "::error::\`ok. 0 passed\` and EXITS 0 — a dropped --features flag, a renamed"
+            echo "::error::feature or a deleted target is indistinguishable from success by exit"
+            echo "::error::code. Fix the arming; do NOT lower the floor to clear this."
+            status=1
+          fi
+
+          # ── THE ANTI-FORGE TOOTH BY NAME ─────────────────────────────────────────────
+          # The floor above counts; this asserts the ONE test whose absence would be quietest.
+          # It is the flagship's only guarantee that a transclusion cannot be forged, and a
+          # rename would slip past a pure count.
+          if ! grep -q 'transcluding_an_unpublished_cell_leaves_the_document_unchanged_and_refuses' "$log"; then
+            echo "::error::the anti-forge tooth did not run. Until 2026-07-31 the desktop"
+            echo "::error::transclude gesture would render ANY 32 bytes as a provenanced quote;"
+            echo "::error::this test is what makes that false. If it was renamed, update this"
+            echo "::error::grep in the same commit."
+            status=1
+          fi
+
+          exit $status
+
+
   page-on-red:
     name: Page a human when a tooth is red
     needs: [binding-teeth, feature-gated-prove-teeth, lean-hard-mode]

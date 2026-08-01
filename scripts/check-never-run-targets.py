@@ -114,6 +114,9 @@ CARGO_TEST = re.compile(
 FEATS = re.compile(r"--features[= ]+([A-Za-z0-9_,./\-]+)")
 PKGS = re.compile(r"(?:-p|--package)[= ]+([A-Za-z0-9_.\-]+)")
 ALLFEATS = re.compile(r"--all-features")
+# `cargo test --no-run` BUILDS the test binaries and runs none of them. An invocation
+# carrying it arms nothing; see the drop in `workflow_test_invocations`.
+NORUN = re.compile(r"--no-run\b")
 # `cargo test --test a --test b` runs ONLY a and b. Ignoring this is not a detail:
 # `scripts/check-lean-marshal.sh` arms `--features lean-lib` and then names exactly
 # two of `dregg-lean-ffi`'s SIX whole-file `#![cfg(feature = "lean-lib")]` probes, so
@@ -198,6 +201,22 @@ def workflow_test_invocations() -> list[dict]:
                         cross.setdefault(p2, set()).add(f2)
                     else:
                         feats.add(f)
+            # ⚑ `--no-run` COMPILES AND EXECUTES NOTHING, so such an invocation arms
+            # NOTHING and must not enter the model at all.
+            #
+            # This was un-modelled until 2026-07-31 and it was HIDDEN by a second bug:
+            # `--features` was compared literally, so `starbridge-v2-installers.yml`'s
+            # `cargo test --release --features desktop --no-run` never satisfied a
+            # `gpui-ui` gate anyway and the omission cost nothing. The two errors
+            # cancelled, in opposite directions.
+            #
+            # Fixing only the alias expansion flipped the pair to a FALSE GREEN: eleven
+            # starbridge-v2 integration targets went "NO LONGER NEVER-RUN" on the
+            # strength of an invocation that has never executed one of them. That is the
+            # precise disease this sweep exists to detect, arriving inside the sweep.
+            # Both halves land together or neither does.
+            if NORUN.search(cargo_part):
+                continue
             invocations.append(
                 {
                     "pkgs": pkgs,            # empty set == workspace-wide
@@ -218,6 +237,38 @@ def gate_of(target: dict, pkg_dir: Path) -> list[str]:
         for blob in INNER_CFG.findall(head):
             gate |= set(FEATNAME.findall(blob))
     return sorted(gate)
+
+
+def expand_features(names: set[str], feature_map: dict) -> set[str]:
+    """Transitive closure of `names` through a package's own `[features]` table.
+
+    ⚠ WITHOUT THIS THE SWEEP READS `--features` LITERALLY, AND ALIASES GO DARK.
+    Measured 2026-07-31: `armed-teeth.yml` arms starbridge-v2's gpui teeth with
+    `--features native-full`; the manifest has `native-full = ["desktop"]` and
+    `desktop = [… "gpui-ui" …]`. Cargo activates `gpui-ui`, but a literal string
+    compare does not, so the sweep reported a genuinely-armed target as NEVER-RUN.
+
+    That error is in the DANGEROUS direction. Every other approximation in this file
+    is deliberately biased toward calling a target RUNNABLE, because (the header's
+    own words) "a ratchet that invents dark targets gets disabled". This one invented
+    one. Alias expansion moves the sweep toward cargo's real behaviour, so it is a
+    correctness fix rather than a loosening — it can only remove FALSE darkness, and
+    the two-sided ratchet still fails on any allowlist row that becomes executable.
+
+    Only LOCAL feature names are followed. `dep:foo` activates an optional dependency,
+    not a feature of this package; `pkg/feat` and `pkg?/feat` cross a package boundary
+    and are already modelled by the caller's `inv["cross"]`.
+    """
+    out, stack = set(names), list(names)
+    while stack:
+        f = stack.pop()
+        for edge in feature_map.get(f, []):
+            if edge.startswith("dep:") or "/" in edge:
+                continue
+            if edge not in out:
+                out.add(edge)
+                stack.append(edge)
+    return out
 
 
 def never_run() -> list[tuple[str, str, str, list[str], list[str], str]]:
@@ -242,13 +293,19 @@ def never_run() -> list[tuple[str, str, str, list[str], list[str], str]]:
                 # A `-p other` run cannot execute this package's targets. Its
                 # `pkg/feat` flags still cannot arm a target it does not select.
                 continue
-            active = set(base)
+            # Every set folded in here is expanded through this package's own
+            # `[features]` table first — an invocation that passes an ALIAS activates
+            # everything the alias implies, exactly as cargo does. See
+            # `expand_features` for why reading `--features` literally was a bug in
+            # the one direction this ratchet cannot afford.
+            feature_map = p.get("features", {}) or {}
+            active = expand_features(set(base), feature_map)
             if name in inv["cross"]:
-                active |= inv["cross"][name]
+                active |= expand_features(set(inv["cross"][name]), feature_map)
             if not inv["pkgs"] or name in inv["pkgs"]:
-                active |= inv["feats"]
+                active |= expand_features(set(inv["feats"]), feature_map)
                 if inv["all_features"]:
-                    active |= declared
+                    active |= expand_features(set(declared), feature_map)
             views.append((inv["scope"], active))
 
         for t in p["targets"]:
