@@ -2035,8 +2035,11 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
 /// `wireCommitR(rotatedLimbs, iroot)` over the 31 pre-iroot limbs in the order
 ///   `[cells_root, r0..r23, cap_root, nullifier_root, heap_root, lifecycle, epoch, committed_height]`
 /// with the authority residue (`compute_authority_digest_felt`) NAMED at index 24 (register r23),
-/// and proves `rotatedCommit_binds_authority_digest`: tampering the authority residue MOVES the
-/// published commitment.
+/// and proves `RotatedCommitBindsOrCollides.rotatedCommit_binds_authority_digest_or_collides`:
+/// tampering the authority residue MOVES the published commitment, or the prover hands back a
+/// genuine sponge collision at the two limb lists the total extractor returns. (The floored
+/// `rotatedCommit_binds_authority_digest` this comment used to name was deleted 2026-08-01: it
+/// rode `Poseidon2SpongeCR`, refuted at deployed BabyBear width, so it said nothing here.)
 ///
 /// This test is the Rust empirical twin in the SAME two forms the per-cell differential
 /// (`effect_vm_commit_lean_differential.rs`) carries:
@@ -2194,7 +2197,9 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     //    ONLY at index 27 (the new committed shielded-set root). This is the P0-2 non-vacuity on the
     //    note-commitments set: a turn that grew the commitments set publishes a DIFFERENT OLD/NEW
     //    commit than one that did not. The differential's Lean twin is
-    //    `RotatedCommitDifferential.rotatedCommit_binds_commitments_root`. --
+    //    `RotatedCommitBindsOrCollides.rotatedCommit_binds_commitments_root_or_collides` (the
+    //    floored `RotatedCommitDifferential.rotatedCommit_binds_commitments_root` was deleted
+    //    2026-08-01 — it rode the BabyBear-refuted `Poseidon2SpongeCR`). --
     // A note-commitment the kernel inserted: the FAITHFUL 8-felt commitments-accumulator root over
     // one created note (the native `CanonicalHeapTree8` — the SAME encoding the noteCreate grow-gate
     // opens against). It rides the 8-felt `commitments_root` group (limb 27 lane-0 ‖ completion lanes

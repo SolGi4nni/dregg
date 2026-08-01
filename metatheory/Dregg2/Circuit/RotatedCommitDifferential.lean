@@ -39,32 +39,26 @@ one does — at its OWN authority-residue position" a CHECKED Lean fact, the rot
     `v9_wire_commit` / `rotation_witness::wire_commit` realize (and that
     `EffectVmEmitRotationR.wireCommitR` is the spec of).
 
-  * `rotatedCommit_binds_authority_digest` (+ the per-limb binding family) — INJECTIVITY OVER THE
-    FULL ROTATED LIMB LIST off the ONE realizable `Poseidon2SpongeCR hash` carrier (via the
-    already-proven `EffectVmEmitRotationR.wireCommitR_binds`): the PUBLISHED rotated commitment
-    binds the `authorityDigest` limb (and every other limb, and the iroot). So tampering the
-    authority residue — a permission flip, a VK swap, a dropped side-table root — provably MOVES
-    the PUBLISHED `OLD_COMMIT`/`NEW_COMMIT`. This is the rotated twin of
-    `CommitDifferential.effectVmCommit_binds_record_digest`: the genuine "the published proof binds
-    the deployed bytes" statement, on the commitment the light client actually pins.
-
-  * `rotatedCommit_binds_cap_root` (corollary) — the published rotated commitment binds the
-    openable c-list root at index 25 (the rotated twin of `effectVmCommit_binds_cap_root`).
-
-  * the SHAPE CORRESPONDENCE (`rotated_and_perCell_both_bind_authority_residue`): the rotated
-    authority-residue limb plays the SAME role at its OWN fixed index (24) that the per-cell
-    `record_digest` plays at its fixed index (12) — both are the SINGLE authority-residue limb the
-    commitment binds, both bound off one collision-resistance carrier, and in the deployed code both
-    are LITERALLY `compute_authority_digest_felt(cell)`. Stated as one conjunction so the two
-    differentials are visibly the SAME closure on two commitment shapes.
+  * ⚑ THE BINDING FAMILY IS NO LONGER HERE (2026-08-01). `rotatedCommit_binds_authority_digest` (the
+    audit-P0-2 anti-ghost tooth), `rotatedCommit_binds_limbs`, `rotatedCommit_binds_cap_root`,
+    `rotatedCommit_binds_commitments_root` and the unified closure
+    `rotated_and_perCell_both_bind_authority_residue` all bought their conclusions with
+    `Poseidon2SpongeCR hash` — REFUTED at deployed BabyBear width by
+    `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — so at deployment they said nothing.
+    All five are DELETED in favour of floor-free successors that state the same anti-ghost content
+    with NO hypothesis on `hash` (a forgery moves the published commitment, OR the prover exhibits a
+    genuine sponge collision at named arguments): the four `*_or_collides` teeth in
+    `Circuit.RotatedCommitBindsOrCollides`, and
+    `Circuit.RotatedPerCellBindsOrCollides.rotated_and_perCell_both_bind_authority_residue_or_collides`
+    for the shape correspondence. See §3 below. Both successors import THIS module for the model.
 
   * the VACUITY GUARD: concrete computable `#guard`s over the injective Horner toy sponge
     (`Dregg2.Substrate.Heap.refSponge`) — the authority-digest limb (24) is load-bearing (a cell
     whose ONLY change is its authority residue PUBLISHES a different rotated commitment), the
     cap-root limb (25) is load-bearing, the iroot is bound, and the honest recompute is stable.
 
-Pure, computable, `#guard`-able (no `native_decide`). The carried `Poseidon2SpongeCR hash` is the
-SAME ONE named CR floor `EffectVmEmitRotationR` already runs on, never an `axiom`, never a `+`-fold.
+Pure, computable, `#guard`-able (no `native_decide`). This module now carries NO refuted floor in any
+type — it is the faithful MODEL (limb layout, index pins, non-vacuity guards) and nothing else.
 The Rust-side empirical twin is `circuit/tests/effect_vm_rotation_flip.rs`
 (`rotated_published_commit_moves_on_permission_flip`): the REAL
 `compute_canonical_state_commitment_v9_felt` over the SAME limb order, and a permission flip MOVES
@@ -75,8 +69,10 @@ import Dregg2.Circuit.CommitDifferential
 
 namespace Dregg2.Circuit.RotatedCommitDifferential
 
-open Dregg2.Circuit.Emit.EffectVmEmitRotationR (wireCommitR wireCommitR_binds)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+-- `wireCommitR_binds` and `Poseidon2Binding.Poseidon2SpongeCR` are DELIBERATELY NOT opened: the
+-- five declarations that consumed that refuted floor are gone (§3), and this module now carries no
+-- floor in any type. The floor-free successors open `wireCommitR_binds_or_collides` instead.
+open Dregg2.Circuit.Emit.EffectVmEmitRotationR (wireCommitR)
 open Dregg2.Substrate.Heap (refSponge)
 
 set_option autoImplicit false
@@ -170,186 +166,37 @@ model of `compute_canonical_state_commitment_v9_felt` / the producer `wire_commi
 def rotatedCommit (hash : List ℤ → ℤ) (limbs : List ℤ) (iroot : ℤ) : ℤ :=
   wireCommitR hash limbs iroot
 
-/-! ## §3 — INJECTIVITY: the PUBLISHED rotated commitment binds the authority residue (and every limb).
+/-! ## §3 — INJECTIVITY: MOVED, FLOOR-FREE, to `RotatedCommitBindsOrCollides`.
 
-Off the ONE realizable `Poseidon2SpongeCR hash` carrier (via the already-proven
-`wireCommitR_binds`), equal published rotated commitments force equal pre-iroot limb lists — so
-EVERY limb is bound, crucially `authorityDigest`. Tampering the authority residue MOVES the
-published `OLD_COMMIT`/`NEW_COMMIT` (audit P0-2 closed on the ACTUALLY-PUBLISHED commitment). -/
+This section used to hold four binding theorems — `rotatedCommit_binds_limbs`,
+`rotatedCommit_binds_authority_digest` (the audit-P0-2 anti-ghost tooth), `rotatedCommit_binds_cap_root`,
+`rotatedCommit_binds_commitments_root` — plus the unified closure
+`rotated_and_perCell_both_bind_authority_residue`. Every one of them bought its conclusion with
+`hCR : Poseidon2SpongeCR hash`, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+PROVES FALSE at deployed BabyBear width. They were therefore true-but-EMPTY at deployment: they
+certified the AIR's arithmetic, not that a permission-flip / VK-swap / dropped-root MOVES the
+published `OLD_COMMIT`/`NEW_COMMIT`.
 
-/-- **`rotatedCommit_binds_limbs` — the full pre-iroot-limb binding.** Equal published rotated
-commitments (over equal-length limb lists) force EQUAL limb lists AND equal iroots, off
-`Poseidon2SpongeCR hash` alone. This IS `wireCommitR_binds`, re-exposed at the `rotatedCommit`
-surface. -/
-theorem rotatedCommit_binds_limbs (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {l l' : List ℤ} {iroot iroot' : ℤ} (hlen : l.length = l'.length)
-    (h : rotatedCommit hash l iroot = rotatedCommit hash l' iroot') :
-    l = l' ∧ iroot = iroot' :=
-  wireCommitR_binds hash hCR hlen h
+⚑ ALL FIVE ARE DELETED (2026-08-01), not kept beside their successors. The floor-free replacements
+prove the SAME anti-ghost content with NO hypothesis on `hash` — a forgery either moves the published
+commitment, or the prover hands back a genuine sponge collision at the two limb lists the total
+extractor returns:
 
-/-- **`rotatedCommit_binds_authority_digest` — THE audit-P0-2 anti-ghost tooth on the PUBLISHED
-commitment.** Two rotated commitments over limb lists agreeing on every NAMED limb EXCEPT the
-authority residue (and the SAME iroot) force EQUAL `authorityDigest`. So two cells differing ONLY in
-their authority residue (permissions / VK / lifecycle / delegate / delegation / program / mode /
-visibility / side-table roots / fields[8..16] — all of which live ONLY in `authorityDigest` =
-register r23) PUBLISH a DIFFERENT `OLD_COMMIT`/`NEW_COMMIT`. The rotated twin of
-`CommitDifferential.effectVmCommit_binds_record_digest`, on the commitment the light client pins. -/
-theorem rotatedCommit_binds_authority_digest (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
-    (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
-    (authorityDigest authorityDigest' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot iroot : ℤ)
-    (h : rotatedCommit hash
-          (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-            authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot
-       = rotatedCommit hash
-          (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-            authorityDigest' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot) :
-    authorityDigest = authorityDigest' := by
-  have hlen :
-      (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-        authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot).length
-      = (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-        authorityDigest' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot).length := by
-    rw [rotatedLimbs_length, rotatedLimbs_length]
-  obtain ⟨hlist, _⟩ := rotatedCommit_binds_limbs hash hCR hlen h
-  -- the two limb lists are equal; read off the index-24 entry (the authority digest).
-  have hidx := congrArg (fun L => L[24]?) hlist
-  simp only [authority_digest_at_index_24, Option.some.injEq] at hidx
-  exact hidx
+  * `Circuit.RotatedCommitBindsOrCollides.rotatedCommit_binds_limbs_or_collides`
+  * `Circuit.RotatedCommitBindsOrCollides.rotatedCommit_binds_authority_digest_or_collides`
+  * `Circuit.RotatedCommitBindsOrCollides.rotatedCommit_binds_cap_root_or_collides`
+  * `Circuit.RotatedCommitBindsOrCollides.rotatedCommit_binds_commitments_root_or_collides`
+  * `Circuit.RotatedPerCellBindsOrCollides.rotated_and_perCell_both_bind_authority_residue_or_collides`
 
-/-- **`rotatedCommit_binds_cap_root` (corollary).** Equal published rotated commitments over limb
-lists agreeing everywhere except the cap-root limb force EQUAL `capRoot` — the published-commitment
-twin of cap-Phase-A's "the openable c-list root is bound" (`effectVmCommit_binds_cap_root`). -/
-theorem rotatedCommit_binds_cap_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
-    (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
-    (authorityDigest capRoot capRoot' nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-      committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot iroot : ℤ)
-    (h : rotatedCommit hash
-          (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-            authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot
-       = rotatedCommit hash
-          (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-            authorityDigest capRoot' nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot) :
-    capRoot = capRoot' := by
-  have hlen :
-      (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-        authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot).length
-      = (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-        authorityDigest capRoot' nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot).length := by
-    rw [rotatedLimbs_length, rotatedLimbs_length]
-  obtain ⟨hlist, _⟩ := rotatedCommit_binds_limbs hash hCR hlen h
-  have hidx := congrArg (fun L => L[25]?) hlist
-  simp only [cap_root_at_index_25, Option.some.injEq] at hidx
-  exact hidx
-
-/-! ## §4 — THE SHAPE CORRESPONDENCE: the rotated and per-cell commitments bind the SAME authority residue.
-
-The per-cell `CommitDifferential.effectVmCommit` binds its authority residue (`record_digest`) at
-its FIXED index 12; the rotated `rotatedCommit` binds its authority residue (`authorityDigest` =
-register r23) at its FIXED index 24. Both are the SINGLE authority-residue limb the commitment
-folds, both bound off one collision-resistance carrier. In the deployed code the two residue felts
-are LITERALLY the same value — both are `dregg_cell::commitment::compute_authority_digest_felt(cell)`
-(the per-cell `record_digest` and the rotated `pre_limbs[24]`), so the per-cell and the published
-rotated commitment bind the SAME bytes. The theorem below states the correspondence as one
-conjunction. -/
-
-/-- **`rotated_and_perCell_both_bind_authority_residue`** — the unified P0-2 closure: a change to the
-SHARED authority residue felt `d ≠ d'` (the value the deployed code computes ONCE as
-`compute_authority_digest_felt` and feeds to BOTH the per-cell `record_digest` and the rotated
-`pre_limbs[24]`) MOVES the per-cell commitment AND the published rotated commitment. Both are
-contrapositives of the respective binding theorems off their respective CR carriers; stated together
-so "the published proof binds the full kernel exactly as the per-cell commitment does" is one
-checked fact. -/
-theorem rotated_and_perCell_both_bind_authority_residue
-    -- per-cell side
-    (h4 : ℤ → ℤ → ℤ → ℤ → ℤ)
-    (balLo balHi nonce : ℤ) (pcFields : Fin 8 → ℤ) (pcCapRoot : ℤ)
-    -- rotated side
-    (hash : List ℤ → ℤ) (hCRN : Poseidon2SpongeCR hash)
-    (cellsRoot r0 r1 r2 : ℤ) (rFields : Fin 8 → ℤ)
-    (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
-    (capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot iroot : ℤ)
-    -- the SHARED authority residue felt and a tampered one
-    (d d' : ℤ) (hd : d ≠ d') :
-    -- per-cell commitment moves — or the deployed `hash_4_to_1` collides at two NAMED quads
-    (Dregg2.Circuit.CommitDifferential.effectVmCommit h4 balLo balHi nonce pcFields pcCapRoot d
-       ≠ Dregg2.Circuit.CommitDifferential.effectVmCommit h4 balLo balHi nonce pcFields pcCapRoot d'
-     ∨ Dregg2.Circuit.CommitDifferential.Coll4 h4
-         (Dregg2.Circuit.CommitDifferential.rootQuad h4 balLo balHi nonce pcFields pcCapRoot d)
-         (Dregg2.Circuit.CommitDifferential.rootQuad h4 balLo balHi nonce pcFields pcCapRoot d'))
-    -- AND the published rotated commitment moves
-    ∧ rotatedCommit hash
-        (rotatedLimbs cellsRoot r0 r1 r2 rFields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-          d capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot
-      ≠ rotatedCommit hash
-        (rotatedLimbs cellsRoot r0 r1 r2 rFields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-          d' capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot := by
-  refine ⟨?_, fun hrot => hd ?_⟩
-  · -- either the per-cell commitment already moved, or the unconditional tooth hands back the
-    -- collision the deployed `hash_4_to_1` would have to have.
-    by_cases hpc : Dregg2.Circuit.CommitDifferential.effectVmCommit h4 balLo balHi nonce pcFields
-        pcCapRoot d
-      = Dregg2.Circuit.CommitDifferential.effectVmCommit h4 balLo balHi nonce pcFields pcCapRoot d'
-    · rcases Dregg2.Circuit.CommitDifferential.effectVmCommit_binds_record_digest_or_collides
-        h4 balLo balHi nonce pcFields pcCapRoot d d' hpc with hdd | hcoll
-      · exact absurd hdd hd
-      · exact Or.inr hcoll
-    · exact Or.inl hpc
-  · exact rotatedCommit_binds_authority_digest hash hCRN cellsRoot r0 r1 r2 rFields
-      r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 d d' capRoot nullifierRoot commitmentsRoot
-      heapRoot lifecycle epoch committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot iroot hrot
-
-/-- **`rotatedCommit_binds_commitments_root` (corollary).** Equal published rotated commitments over
-limb lists agreeing everywhere except the `commitments_root` limb (index 27) force EQUAL
-`commitmentsRoot` — the published-commitment twin of the noteCreate grow-gate's "the committed
-shielded-set root is bound" (`RotatedKernelRefinementNotes.noteListRoot_binds`). So a forged note
-commitments-set (a dropped/reordered/wrong commitment insert) MOVES the published commitment. -/
-theorem rotatedCommit_binds_commitments_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (cellsRoot r0 r1 r2 : ℤ) (fields : Fin 8 → ℤ)
-    (r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22 : ℤ)
-    (authorityDigest capRoot nullifierRoot commitmentsRoot commitmentsRoot' heapRoot lifecycle epoch
-      committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot iroot : ℤ)
-    (h : rotatedCommit hash
-          (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-            authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-            committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot
-       = rotatedCommit hash
-          (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-            authorityDigest capRoot nullifierRoot commitmentsRoot' heapRoot lifecycle epoch
-            committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot) iroot) :
-    commitmentsRoot = commitmentsRoot' := by
-  have hlen :
-      (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-        authorityDigest capRoot nullifierRoot commitmentsRoot heapRoot lifecycle epoch
-        committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot).length
-      = (rotatedLimbs cellsRoot r0 r1 r2 fields r11 r12 r13 r14 r15 r16 r17 r18 r19 r20 r21 r22
-        authorityDigest capRoot nullifierRoot commitmentsRoot' heapRoot lifecycle epoch
-        committedHeight lifecycleDisc permsDigest vkDigest mode fieldsRoot).length := by
-    rw [rotatedLimbs_length, rotatedLimbs_length]
-  obtain ⟨hlist, _⟩ := rotatedCommit_binds_limbs hash hCR hlen h
-  have hidx := congrArg (fun L => L[27]?) hlist
-  simp only [commitments_root_at_index_27, Option.some.injEq] at hidx
-  exact hidx
+Those modules import THIS one (they reuse `rotatedCommit`, `rotatedLimbs` and the `[i]?`-index pins
+below), which is why the successors live above rather than here. What remains in this file is the
+faithful MODEL — the limb layout, the index pins, and the §5 non-vacuity guards — and it now carries
+NO refuted floor in any type. -/
 
 #assert_axioms rotatedLimbs_length
 #assert_axioms authority_digest_at_index_24
 #assert_axioms cap_root_at_index_25
 #assert_axioms commitments_root_at_index_27
-#assert_axioms rotatedCommit_binds_limbs
-#assert_axioms rotatedCommit_binds_authority_digest
-#assert_axioms rotatedCommit_binds_cap_root
-#assert_axioms rotatedCommit_binds_commitments_root
-#assert_axioms rotated_and_perCell_both_bind_authority_residue
 
 /-! ## §5 — VACUITY GUARD: the authority-digest limb (index 24) is LOAD-BEARING on the published commit.
 
