@@ -20,18 +20,31 @@ and proves:
     a pure reading of the AIR's continuity + boundary constraints — it needs NO crypto assumption at
     all, so the ordering guarantee a light client gets is PROVED, strictly stronger than assumed.
 
-  * **`digest_binds_ordered_history` (THE CR FLOOR).** Under `Poseidon2SpongeCR` (the single named hash
-    floor, never an axiom), two satisfying traces that publish the SAME `chain_digest` and the same
-    `num_turns` have the SAME ordered `(old_root, new_root, idx)` sequence — the digest binds the whole
-    ordered history, so a same-endpoint reorder is rejected by the digest. This is the only result that
-    rests on the hash floor, and it rests on it ALONE.
+  * **`digest_binds_ordered_history` (THE ANTI-REORDER TOOTH).** Two satisfying traces that publish the
+    SAME `chain_digest` and the same `num_turns` have the SAME ordered `(old_root, new_root, idx)`
+    sequence — the digest binds the whole ordered history, so a same-endpoint reorder is rejected by the
+    digest.
+
+    ⛑ **CUT OVER OFF `Poseidon2SpongeCR` (2026-08-01).** This used to rest on that floor — literal hash
+    injectivity, PROVED FALSE at deployed BabyBear parameters by
+    `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — so it was VACUOUSLY TRUE where the prover runs.
+    §5 now carries a TOTAL EXTRACTOR (`histCollFind`) plus an UNCONDITIONAL correctness theorem
+    (`histDigest_binds_or_collides`, no hypothesis on `hash` at all), and the keystone takes the
+    per-instance, REFUTABLE side condition `¬ SpongeColl hash (histCollFind …)` — refutable
+    (`histColl_refutable`), load-bearing (`histDigest_inj_unconditional_false`) and satisfiable at an
+    honest history for EVERY hash (`histColl_fires`), the three-way separation a global `∃ collision`
+    disjunct provably cannot make (`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`).
+    The old hypothesis IMPLIES the new one through the tree's UNIVERSAL bridge
+    `Poseidon2Binding.spongeColl_refutable_of_injective` (quantified over the PAIR, so no per-site twin is
+    minted and the port is a NET carrier DECREASE). `#assert_not_depends_on` pins the floor out of
+    proof-closure reach, with an `#assert_depends_on` positive control on that bridge.
 
 Non-vacuity is witnessed BOTH ways: a concrete honest trace satisfies (`satisfies_two`) and the
 keystone fires on a real chain step (`keystone_fires`); a reordered trace whose continuity is broken
 does NOT satisfy (`reordered_not_satisfies`), so the constraints are genuinely falsifiable.
 
-`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); `Poseidon2SpongeCR` is a Prop
-HYPOTHESIS where used, never an `axiom`. Imported into `Dregg2.lean` (in the trusted, axiom-audited closure).
+`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); the refuted floor now appears in
+ZERO declarations of this module — the discharge routes through the tree's existing universal bridge. Imported into `Dregg2.lean` (in the trusted, axiom-audited closure).
 -/
 import Dregg2.Distributed.HistoryAggregation
 import Dregg2.Circuit.Poseidon2Binding
@@ -39,7 +52,7 @@ import Dregg2.Circuit.Poseidon2Binding
 namespace Dregg2.Circuit.BindingAirSound
 
 open Dregg2.Distributed.HistoryAggregation
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 open Dregg2.Exec (RecChainedState)
 
 /-! ## 1. The denotational model of one `TurnChainBindingAir` row + the public inputs.
@@ -304,23 +317,50 @@ theorem binding_air_discharges_binding_sound
 
 end Portal
 
-/-! ## 5. THE CR FLOOR — the digest binds the whole ordered history (rests on `Poseidon2SpongeCR`). -/
+/-! ## 5. THE ANTI-REORDER TOOTH — the digest binds the whole ordered history.
 
-/-- **`histDigest_inj`** — injectivity of the running ordered digest under hash collision-resistance:
-two equal-length row lists folded (from any starting accumulators) to the SAME digest have equal
-starting accumulator AND equal ordered `(old, new, idx)` projections. The single use of
-`Poseidon2SpongeCR`: each fold step peels one `hash [acc, old, new, idx]` collision. -/
-theorem histDigest_inj (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+⚑ **CUT OVER off `Poseidon2SpongeCR` (2026-08-01)**, the same manoeuvre as `AggregationAirSound` §5 /
+`StateTransitionAirSound` §6 and for the same reason: literal hash injectivity is PROVED FALSE at
+deployed BabyBear parameters (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so both theorems
+below were VACUOUSLY TRUE where the prover runs. A TOTAL EXTRACTOR (`histCollFind`) locates the pair of
+absorbed 4-lists at which the deployed hash actually collided; `histDigest_binds_or_collides` is its
+UNCONDITIONAL correctness (no hypothesis on `hash` at all); the keystones take the per-instance,
+refutable `¬ SpongeColl hash (histCollFind …)`.
+
+⚠ NOT a global `∃ collision` disjunct — `SpongeCollisionShirk.orBreak_spongeCollision_iff_True` proves
+that shape is literally `True` at any field-bounded hash. The disjunct must name a PAIR. -/
+
+/-- **`histAbsorb acc r`** — the exact 4-list the AIR's digest gate absorbs (`hash [acc, old, new, idx]`,
+Rust constraints 4 + 5), named so the collision event is stated at precisely the pair the digest is
+taken of. -/
+def histAbsorb (acc : ℤ) (r : BindingRow) : List ℤ := [acc, r.oldRoot, r.newRoot, r.idx]
+
+/-- **⚑ THE EXTRACTOR.** Total and decidable. Recurses to the DEEPEST level first (the order the old
+proof's induction peeled in): a deeper named pair is DISTINCT by construction and is returned unchanged;
+otherwise the deeper accumulators provably agree and THIS level's two absorbed 4-lists are returned. -/
+def histCollFind (hash : List ℤ → ℤ) :
+    ℤ → ℤ → List BindingRow → List BindingRow → List ℤ × List ℤ
+  | a, b, r :: rest, r' :: rest' =>
+      let deep := histCollFind hash (hash (histAbsorb a r)) (hash (histAbsorb b r')) rest rest'
+      if deep.1 = deep.2 then (histAbsorb a r, histAbsorb b r') else deep
+  | _, _, _, _ => ([], [])
+
+/-- **⚑ THE EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two equal-length row lists folded to the
+SAME digest EITHER agree on the starting accumulator and on the whole ordered `(old, new, idx)`
+projection, OR the pair `histCollFind` returns is a GENUINE collision of the deployed hash. -/
+theorem histDigest_binds_or_collides (hash : List ℤ → ℤ) :
     ∀ (rows rows' : List BindingRow) (a b : ℤ),
       rows.length = rows'.length →
       histDigest hash a rows = histDigest hash b rows' →
-      a = b ∧ rows.map proj = rows'.map proj := by
+      (a = b ∧ rows.map proj = rows'.map proj
+        ∧ (histCollFind hash a b rows rows').1 = (histCollFind hash a b rows rows').2)
+      ∨ SpongeColl hash (histCollFind hash a b rows rows') := by
   intro rows
   induction rows with
   | nil =>
     intro rows' a b hlen heq
     cases rows' with
-    | nil => exact ⟨heq, rfl⟩
+    | nil => exact Or.inl ⟨heq, rfl, rfl⟩
     | cons r' rest' => simp at hlen
   | cons r rest ih =>
     intro rows' a b hlen heq
@@ -329,34 +369,119 @@ theorem histDigest_inj (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) 
     | cons r' rest' =>
       have hlen' : rest.length = rest'.length := by simpa using hlen
       simp only [histDigest] at heq
-      obtain ⟨hinner, htail⟩ :=
-        ih rest' (hash [a, r.oldRoot, r.newRoot, r.idx]) (hash [b, r'.oldRoot, r'.newRoot, r'.idx]) hlen' heq
-      have hlist := hCR _ _ hinner
-      injection hlist with hab h1
-      injection h1 with ho h2
-      injection h2 with hn h3
-      injection h3 with hi _
-      refine ⟨hab, ?_⟩
-      have hprojr : proj r = proj r' := by unfold proj; rw [ho, hn, hi]
-      simp only [List.map_cons, hprojr, htail]
+      rcases ih rest' (hash (histAbsorb a r)) (hash (histAbsorb b r')) hlen' heq with
+        ⟨hinner, htail, hdeep⟩ | hcoll
+      · have hfind : histCollFind hash a b (r :: rest) (r' :: rest')
+            = (histAbsorb a r, histAbsorb b r') := by
+          simp only [histCollFind]
+          rw [if_pos hdeep]
+        rw [hfind]
+        by_cases hpre : histAbsorb a r = histAbsorb b r'
+        · refine Or.inl ⟨?_, ?_, hpre⟩
+          · have hd := hpre
+            simp only [histAbsorb, List.cons.injEq, and_true] at hd
+            exact hd.1
+          · have hd := hpre
+            simp only [histAbsorb, List.cons.injEq, and_true] at hd
+            obtain ⟨-, ho, hn, hi⟩ := hd
+            have hprojr : proj r = proj r' := by unfold proj; rw [ho, hn, hi]
+            simp only [List.map_cons, hprojr, htail]
+        · exact Or.inr ⟨hpre, hinner⟩
+      · have hne := hcoll.1
+        have hfind : histCollFind hash a b (r :: rest) (r' :: rest')
+            = histCollFind hash (hash (histAbsorb a r)) (hash (histAbsorb b r')) rest rest' := by
+          simp only [histCollFind]
+          rw [if_neg hne]
+        rw [hfind]
+        exact Or.inr hcoll
 
-/-- **`digest_binds_ordered_history` (THE CR ANTI-REORDER TOOTH).** Two satisfying binding-AIR traces
+/-- **`histDigest_inj`** — injectivity of the running ordered digest: two equal-length row lists folded
+(from any starting accumulators) to the SAME digest have equal starting accumulator AND equal ordered
+`(old, new, idx)` projections. ⚑ The refuted `Poseidon2SpongeCR hash` premise is GONE, replaced by the
+per-instance, refutable side condition at the ONE pair `histCollFind` names. The old hypothesis IMPLIES
+it (`Poseidon2Binding.spongeColl_refutable_of_injective`), so this is strictly STRONGER with an unchanged
+conclusion. -/
+theorem histDigest_inj (hash : List ℤ → ℤ)
+    (rows rows' : List BindingRow) (a b : ℤ)
+    (hlen : rows.length = rows'.length)
+    (heq : histDigest hash a rows = histDigest hash b rows')
+    (hno : ¬ SpongeColl hash (histCollFind hash a b rows rows')) :
+    a = b ∧ rows.map proj = rows'.map proj :=
+  let r := (histDigest_binds_or_collides hash rows rows' a b hlen heq).resolve_right hno
+  ⟨r.1, r.2.1⟩
+
+/-! ### THE CUTOVER BRIDGE is the tree's UNIVERSAL one
+
+`Poseidon2Binding.spongeColl_refutable_of_injective`
+`: (hash) → Poseidon2SpongeCR hash → ∀ p, ¬ SpongeColl hash p`. It is quantified over the PAIR, so it
+discharges this side condition at every extractor output with no per-site bridge. A not-yet-ported
+consumer rewires as `digest_binds_ordered_history … (spongeColl_refutable_of_injective _ hCR _)`.
+
+⚑ Deliberately NO local `_of_CR` twin and no `_of_CR` re-derivation of the pre-cutover statement: each
+would be a BRAND-NEW declaration taking a refuted floor as a hypothesis, i.e. a fresh carrier and a
+`#floor_ratchet` accrual violation. Reusing the universal bridge lands the port at a NET carrier
+DECREASE, which is the point of the exercise. -/
+
+/-- The identity carrier for the bridge's side condition (the ConePort `AppRule` shape). -/
+theorem noHistColl_self {hash : List ℤ → ℤ} {a b : ℤ} {rows rows' : List BindingRow}
+    (hno : ¬ SpongeColl hash (histCollFind hash a b rows rows')) :
+    ¬ SpongeColl hash (histCollFind hash a b rows rows') := hno
+
+/-- **`digest_binds_ordered_history` (THE ANTI-REORDER TOOTH).** Two satisfying binding-AIR traces
 that publish the same `chain_digest` and the same `num_turns` have the SAME ordered
 `(old_root, new_root, idx)` sequence. So a same-endpoint, same-count reorder of the finalized history
-yields a DIFFERENT `chain_digest` and is rejected — the only crypto reliance is the named
-`Poseidon2SpongeCR` floor. -/
+yields a DIFFERENT `chain_digest` and is rejected. ⚑ The crypto reliance is now the per-instance side
+condition at the pair the extractor names, NOT the refuted `Poseidon2SpongeCR` floor. -/
 theorem digest_binds_ordered_history
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (rows rows' : List BindingRow) (pub pub' : BindingPublic)
     (h : Satisfies hash rows pub) (h' : Satisfies hash rows' pub')
     (hnum : pub.numTurns = pub'.numTurns)
-    (hdig : pub.chainDigest = pub'.chainDigest) :
+    (hdig : pub.chainDigest = pub'.chainDigest)
+    (hno : ¬ SpongeColl hash (histCollFind hash 0 0 rows rows')) :
     rows.map proj = rows'.map proj := by
   have hlen : rows.length = rows'.length := by
     rw [← h.count, ← h'.count, hnum]
   have e : histDigest hash 0 rows = histDigest hash 0 rows' := by
     rw [← h.digestEq, ← h'.digestEq, hdig]
-  exact (histDigest_inj hash hCR rows rows' 0 0 hlen e).2
+  exact (histDigest_inj hash rows rows' 0 0 hlen e hno).2
+
+/-! ### 5b. TEETH — the side condition is LOAD-BEARING, REFUTABLE, and SATISFIABLE. -/
+
+/-- **LOAD-BEARING**: dropping the side condition makes the binding FALSE. At the constant hash two
+single-row chains with different `old_root` fold to the same digest. -/
+theorem histDigest_inj_unconditional_false :
+    ¬ (∀ (hash : List ℤ → ℤ) (rows rows' : List BindingRow) (a b : ℤ),
+        rows.length = rows'.length →
+        histDigest hash a rows = histDigest hash b rows' →
+        rows.map proj = rows'.map proj) := by
+  intro hall
+  have h := hall (fun _ => 0)
+    [{ oldRoot := 1, newRoot := 0, idx := 0 }]
+    [{ oldRoot := 2, newRoot := 0, idx := 0 }] 0 0 rfl rfl
+  simp only [List.map_cons, List.map_nil, List.cons.injEq, proj, Prod.mk.injEq] at h
+  omega
+
+/-- **REFUTABLE**: on that same broken hash the extractor RETURNS a genuine collision. -/
+theorem histColl_refutable :
+    SpongeColl (fun _ => (0 : ℤ))
+      (histCollFind (fun _ => (0 : ℤ)) 0 0
+        [{ oldRoot := 1, newRoot := 0, idx := 0 }]
+        [{ oldRoot := 2, newRoot := 0, idx := 0 }]) := by
+  refine ⟨by decide, rfl⟩
+
+/-- **NON-VACUOUS / FIRES**: at an honest equal history the walk bottoms out at an EQUAL pair, so the
+side condition holds for EVERY hash — no CR, no floor. -/
+theorem histColl_fires (hash : List ℤ → ℤ) (rows : List BindingRow) (a : ℤ) :
+    ¬ SpongeColl hash (histCollFind hash a a rows rows) := by
+  intro hc
+  refine hc.1 ?_
+  clear hc
+  induction rows generalizing a with
+  | nil => rfl
+  | cons r rest ih =>
+    simp only [histCollFind]
+    rw [if_pos (ih (hash (histAbsorb a r)))]
 
 /-! ## 6. NON-VACUITY — the constraints are satisfiable (witnessed) AND falsifiable (anti-ghost). -/
 
@@ -458,11 +583,22 @@ theorem reordered_not_satisfies (hash : List ℤ → ℤ) (pub : BindingPublic) 
 #assert_axioms rowbound_represents_chainbound
 #assert_axioms foldedFinalRoot_eq_lastNew
 #assert_axioms represents_getLast
+#assert_axioms histDigest_binds_or_collides
 #assert_axioms histDigest_inj
 #assert_axioms digest_binds_ordered_history
+#assert_axioms histDigest_inj_unconditional_false
+#assert_axioms histColl_refutable
+#assert_axioms histColl_fires
+#assert_not_depends_on Dregg2.Circuit.BindingAirSound.histDigest_binds_or_collides [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.BindingAirSound.histDigest_inj [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.BindingAirSound.digest_binds_ordered_history [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+-- POSITIVE CONTROL: the rejector is not vacuous — the bridge DOES reach the floor.
 #assert_axioms keystone_fires
 #assert_axioms satisfies_one
 #assert_axioms satisfies_two
 #assert_axioms reordered_not_satisfies
 
 end Dregg2.Circuit.BindingAirSound
+-- POSITIVE CONTROL: the rejectors above are not blind — the tree's UNIVERSAL bridge, the one this
+-- module's side condition is discharged through, DOES reach the floor on the same walk.
+#assert_depends_on Dregg2.Circuit.Poseidon2Binding.spongeColl_refutable_of_injective [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]

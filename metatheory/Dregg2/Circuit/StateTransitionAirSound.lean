@@ -4,7 +4,18 @@
 **What this closes.** The AIR census flagged `circuit/src/ivc.rs::StateTransitionAir` (the real STARK AIR
 for the attenuation/IVC delegation fold chain, `ivc.rs:585`) as a STATUS-C gap: load-bearing-adjacent,
 yet with NO Lean denotational twin. This file gives it one, in the `Satisfied ⟹ intended relation`
-style of `BindingAirSound` / `AggAirSound`, resting only on `Poseidon2SpongeCR`.
+style of `BindingAirSound` / `AggAirSound`.
+
+⛑ **CUT OVER OFF `Poseidon2SpongeCR` (2026-08-01).** §6 used to rest on that floor — literal sponge
+injectivity, PROVED FALSE at deployed BabyBear parameters by
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — so its conclusions were VACUOUSLY TRUE where the
+prover runs. §6 now carries a TOTAL EXTRACTOR (`stCollFind`) plus an UNCONDITIONAL correctness theorem
+(`stFold_binds_or_collides`, no hypothesis on `sponge` at all), and the keystones take the per-instance,
+REFUTABLE side condition `¬ SpongeColl sponge (stCollFind …)`. The old hypothesis IMPLIES the new one
+through the tree's UNIVERSAL bridge `Poseidon2Binding.spongeColl_refutable_of_injective` (quantified over
+the PAIR, so no per-site twin is minted and the port is a NET carrier DECREASE).
+`#assert_not_depends_on` pins the floor out of proof-closure reach, with an `#assert_depends_on` positive
+control on that bridge so the rejector is not vacuous.
 
 **What `StateTransitionAir` is.** A width-4 trace `[step, old_hash, new_root, new_hash]`, one row per
 attenuation fold step. Its load-bearing accumulator is the `ACCUMULATED_HASH_WIDTH = 8`-felt wide hash
@@ -32,23 +43,26 @@ Proved:
   * **`stepCount_is_length` (THE DEPTH TOOTH, no crypto).** The published `step_count` equals the chain
     length — the delegation-depth accumulator binds the claimed depth to the actual number of folds (so
     `MAX_FOLD_DEPTH` rejection at `step_count` is rejection at chain length).
-  * **`state_digest_binds_chain` (THE CR TOOTH).** Under `Poseidon2SpongeCR`, two satisfying traces
-    publishing the same `accumulated_hash` and the same `step_count` have the SAME ordered
-    `(new_root, step)` sequence — a same-count reorder/forge of the fold history yields a different
-    digest and is rejected. The ONLY result resting on the hash floor.
+  * **`state_digest_binds_chain` (THE ANTI-REORDER TOOTH).** Two satisfying traces publishing the same
+    `accumulated_hash` and the same `step_count` have the SAME ordered `(new_root, step)` sequence — a
+    same-count reorder/forge of the fold history yields a different digest and is rejected. Its crypto
+    premise is the per-instance `¬ SpongeColl sponge (stCollFind …)`, refutable (`stColl_refutable`),
+    load-bearing (`stFold_inj_unconditional_false`) and satisfiable at an honest history for EVERY sponge
+    (`stColl_fires`) — the three-way separation a global `∃ collision` disjunct provably cannot make
+    (`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`).
 
 Non-vacuity BOTH ways: an honest 2-step chain satisfies (`honest_satisfies`) and the keystone fires
 (`keystone_fires`); a broken-continuity chain, a wrong first step, and a forged digest each fail to
 satisfy (`broken_continuity_unsat`, `wrong_step_init_unsat`, `forged_digest_unsat`).
 
-`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); `Poseidon2SpongeCR` is a Prop
-HYPOTHESIS where used, never an `axiom`. Imported into `Dregg2.lean` (in the trusted, axiom-audited closure).
+`#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); the refuted floor now appears in
+ZERO declarations of this module — the discharge routes through the tree's existing universal bridge. Imported into `Dregg2.lean` (in the trusted, axiom-audited closure).
 -/
 import Dregg2.Circuit.Poseidon2Binding
 
 namespace Dregg2.Circuit.StateTransitionAirSound
 
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 
 /-! ## 1. The denotational model of one `StateTransitionAir` row + the public inputs. -/
 
@@ -229,23 +243,52 @@ theorem stepCount_is_length
   have h2 := stepchain_last_step rows 1 hsat.stepChain hsat.stepInit hsat.nonempty lr hlr
   rw [← h1, h2]; ring
 
-/-! ## 6. THE CR TOOTH — the digest binds the whole ordered fold history (`Poseidon2SpongeCR`). -/
+/-! ## 6. THE ANTI-REORDER TOOTH — the digest binds the whole ordered fold history.
 
-/-- **`stFold_inj`** — injectivity of the sequential fold under sponge collision-resistance: two
-equal-length row lists folded (from any starting accumulators) to the SAME digest have equal starting
-accumulator AND equal ordered `(new_root, step)` projections. Each peel uses one
-`sponge [tag, acc, new_root, step]` collision. -/
-theorem stFold_inj (tag : ℤ) (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge) :
+⚑ **CUT OVER off `Poseidon2SpongeCR` (2026-08-01)**, the same manoeuvre as
+`AggregationAirSound` §5 and for the same reason: literal sponge injectivity is PROVED FALSE at
+deployed BabyBear parameters (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so both theorems
+below were VACUOUSLY TRUE where the prover runs. A TOTAL EXTRACTOR (`stCollFind`) locates the pair of
+absorbed 4-lists at which the deployed sponge actually collided; `stFold_binds_or_collides` is its
+UNCONDITIONAL correctness (no hypothesis on `sponge` at all, hence true at deployed parameters); the
+keystones take the per-instance, refutable `¬ SpongeColl sponge (stCollFind …)`.
+
+⚠ NOT a global `∃ collision` disjunct — `SpongeCollisionShirk.orBreak_spongeCollision_iff_True` proves
+that shape is literally `True` at any field-bounded sponge. The disjunct must name a PAIR. -/
+
+/-- **`stAbsorb tag acc r`** — the exact 4-list the deployed per-row gate absorbs
+(`sponge [tag, acc, new_root, step]`), named so the collision event is stated at precisely the pair the
+digest is taken of. `stExtend tag sponge acc r.newRoot r.step = sponge (stAbsorb tag acc r)` by `rfl`. -/
+def stAbsorb (tag acc : ℤ) (r : StateRow) : List ℤ := [tag, acc, r.newRoot, r.step]
+
+/-- **⚑ THE EXTRACTOR.** Total and decidable. Recurses to the DEEPEST level first (the order the old
+proof's induction peeled in): a deeper named pair is DISTINCT by construction and is returned unchanged;
+otherwise the deeper accumulators provably agree and THIS level's two absorbed 4-lists are returned.
+Runs off the end at `([], [])`, a trivially non-colliding pair. -/
+def stCollFind (tag : ℤ) (sponge : List ℤ → ℤ) :
+    ℤ → ℤ → List StateRow → List StateRow → List ℤ × List ℤ
+  | a, b, r :: rest, r' :: rest' =>
+      let deep := stCollFind tag sponge (stExtend tag sponge a r.newRoot r.step)
+        (stExtend tag sponge b r'.newRoot r'.step) rest rest'
+      if deep.1 = deep.2 then (stAbsorb tag a r, stAbsorb tag b r') else deep
+  | _, _, _, _ => ([], [])
+
+/-- **⚑ THE EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two equal-length row lists folded to the
+SAME digest EITHER agree on the starting accumulator and on the whole ordered `(new_root, step)`
+projection, OR the pair `stCollFind` returns is a GENUINE collision of the deployed sponge. -/
+theorem stFold_binds_or_collides (tag : ℤ) (sponge : List ℤ → ℤ) :
     ∀ (rows rows' : List StateRow) (a b : ℤ),
       rows.length = rows'.length →
       stFold tag sponge a rows = stFold tag sponge b rows' →
-      a = b ∧ rows.map projST = rows'.map projST := by
+      (a = b ∧ rows.map projST = rows'.map projST
+        ∧ (stCollFind tag sponge a b rows rows').1 = (stCollFind tag sponge a b rows rows').2)
+      ∨ SpongeColl sponge (stCollFind tag sponge a b rows rows') := by
   intro rows
   induction rows with
   | nil =>
     intro rows' a b hlen heq
     cases rows' with
-    | nil => exact ⟨heq, rfl⟩
+    | nil => exact Or.inl ⟨heq, rfl, rfl⟩
     | cons r' rest' => simp at hlen
   | cons r rest ih =>
     intro rows' a b hlen heq
@@ -254,31 +297,81 @@ theorem stFold_inj (tag : ℤ) (sponge : List ℤ → ℤ) (hCR : Poseidon2Spong
     | cons r' rest' =>
       have hlen' : rest.length = rest'.length := by simpa using hlen
       simp only [stFold] at heq
-      obtain ⟨hinner, htail⟩ :=
-        ih rest' (stExtend tag sponge a r.newRoot r.step) (stExtend tag sponge b r'.newRoot r'.step)
-          hlen' heq
-      simp only [stExtend] at hinner
-      have hlist := hCR _ _ hinner
-      injection hlist with _ h1
-      injection h1 with hab h2
-      injection h2 with hnr h3
-      injection h3 with hst _
-      refine ⟨hab, ?_⟩
-      have hprojr : projST r = projST r' := by unfold projST; rw [hnr, hst]
-      simp only [List.map_cons, hprojr, htail]
+      rcases ih rest' (stExtend tag sponge a r.newRoot r.step)
+          (stExtend tag sponge b r'.newRoot r'.step) hlen' heq with
+        ⟨hinner, htail, hdeep⟩ | hcoll
+      · have hfind : stCollFind tag sponge a b (r :: rest) (r' :: rest')
+            = (stAbsorb tag a r, stAbsorb tag b r') := by
+          simp only [stCollFind]
+          rw [if_pos hdeep]
+        rw [hfind]
+        by_cases hpre : stAbsorb tag a r = stAbsorb tag b r'
+        · refine Or.inl ⟨?_, ?_, hpre⟩
+          · have hd := hpre
+            simp only [stAbsorb, List.cons.injEq, and_true, true_and] at hd
+            exact hd.1
+          · have hd := hpre
+            simp only [stAbsorb, List.cons.injEq, and_true, true_and] at hd
+            obtain ⟨-, hnr, hst⟩ := hd
+            have hprojr : projST r = projST r' := by unfold projST; rw [hnr, hst]
+            simp only [List.map_cons, hprojr, htail]
+        · exact Or.inr ⟨hpre, hinner⟩
+      · have hne := hcoll.1
+        have hfind : stCollFind tag sponge a b (r :: rest) (r' :: rest')
+            = stCollFind tag sponge (stExtend tag sponge a r.newRoot r.step)
+                (stExtend tag sponge b r'.newRoot r'.step) rest rest' := by
+          simp only [stCollFind]
+          rw [if_neg hne]
+        rw [hfind]
+        exact Or.inr hcoll
 
-/-- **`state_digest_binds_chain` (THE CR ANTI-REORDER TOOTH).** Two satisfying `StateTransitionAir`
+/-- **`stFold_inj`** — injectivity of the sequential fold: two equal-length row lists folded (from any
+starting accumulators) to the SAME digest have equal starting accumulator AND equal ordered
+`(new_root, step)` projections. ⚑ The refuted `Poseidon2SpongeCR sponge` premise is GONE, replaced by
+the per-instance, refutable side condition at the ONE pair `stCollFind` names. The old hypothesis
+IMPLIES it (`Poseidon2Binding.spongeColl_refutable_of_injective`), so this is strictly STRONGER with an
+unchanged conclusion. -/
+theorem stFold_inj (tag : ℤ) (sponge : List ℤ → ℤ)
+    (rows rows' : List StateRow) (a b : ℤ)
+    (hlen : rows.length = rows'.length)
+    (heq : stFold tag sponge a rows = stFold tag sponge b rows')
+    (hno : ¬ SpongeColl sponge (stCollFind tag sponge a b rows rows')) :
+    a = b ∧ rows.map projST = rows'.map projST :=
+  let r := (stFold_binds_or_collides tag sponge rows rows' a b hlen heq).resolve_right hno
+  ⟨r.1, r.2.1⟩
+
+/-! ### THE CUTOVER BRIDGE is the tree's UNIVERSAL one
+
+`Poseidon2Binding.spongeColl_refutable_of_injective`
+`: (hash) → Poseidon2SpongeCR hash → ∀ p, ¬ SpongeColl hash p`. It is quantified over the PAIR, so it
+discharges this side condition at every extractor output with no per-site bridge. A not-yet-ported
+consumer rewires as `state_digest_binds_chain … (spongeColl_refutable_of_injective _ hCR _)`.
+
+⚑ Deliberately NO local `_of_CR` twin and no `_of_CR` re-derivation of the pre-cutover statement: each
+would be a BRAND-NEW declaration taking a refuted floor as a hypothesis, i.e. a fresh carrier and a
+`#floor_ratchet` accrual violation. Reusing the universal bridge lands the port at a NET carrier
+DECREASE, which is the point of the exercise. -/
+
+/-- The identity carrier for the bridge's side condition (the ConePort `AppRule` shape). -/
+theorem noStColl_self {sponge : List ℤ → ℤ} {tag a b : ℤ} {rows rows' : List StateRow}
+    (hno : ¬ SpongeColl sponge (stCollFind tag sponge a b rows rows')) :
+    ¬ SpongeColl sponge (stCollFind tag sponge a b rows rows') := hno
+
+/-- **`state_digest_binds_chain` (THE ANTI-REORDER TOOTH).** Two satisfying `StateTransitionAir`
 traces that publish the same `accumulated_hash` and the same `step_count` have the SAME ordered
 `(new_root, step)` sequence. So a same-count reorder/forge of the finalized fold history yields a
-DIFFERENT `accumulated_hash` and is rejected — the ONLY crypto reliance is the named
-`Poseidon2SpongeCR` floor. (Length equality is supplied by the no-crypto `stepCount_is_length` depth
-tooth; the `step` lane in each absorb makes the fold position-sensitive.) -/
+DIFFERENT `accumulated_hash` and is rejected. (Length equality is supplied by the no-crypto
+`stepCount_is_length` depth tooth; the `step` lane in each absorb makes the fold position-sensitive.)
+⚑ The crypto reliance is now the per-instance side condition at the pair the extractor names, NOT the
+refuted `Poseidon2SpongeCR` floor. -/
 theorem state_digest_binds_chain
-    {tag : ℤ} {sponge : List ℤ → ℤ} (hCR : Poseidon2SpongeCR sponge)
+    {tag : ℤ} {sponge : List ℤ → ℤ}
     {rows rows' : List StateRow} {pub pub' : StatePublic}
     (h : Satisfies tag sponge rows pub) (h' : Satisfies tag sponge rows' pub')
     (hnum : pub.stepCount = pub'.stepCount)
-    (hdig : pub.accumulatedHash = pub'.accumulatedHash) :
+    (hdig : pub.accumulatedHash = pub'.accumulatedHash)
+    (hno : ¬ SpongeColl sponge (stCollFind tag sponge
+      (initHash tag sponge pub.initialRoot) (initHash tag sponge pub'.initialRoot) rows rows')) :
     rows.map projST = rows'.map projST := by
   have hlen : rows.length = rows'.length := by
     have e1 := stepCount_is_length h
@@ -288,7 +381,47 @@ theorem state_digest_binds_chain
   have e : stFold tag sponge (initHash tag sponge pub.initialRoot) rows
          = stFold tag sponge (initHash tag sponge pub'.initialRoot) rows' := by
     rw [← (state_transition_forces_fold h).1, ← (state_transition_forces_fold h').1, hdig]
-  exact (stFold_inj tag sponge hCR rows rows' _ _ hlen e).2
+  exact (stFold_inj tag sponge rows rows' _ _ hlen e hno).2
+
+/-! ### 6b. TEETH — the side condition is LOAD-BEARING, REFUTABLE, and SATISFIABLE. -/
+
+/-- **LOAD-BEARING**: dropping the side condition makes the binding FALSE. At the constant sponge two
+single-row chains with different `new_root` fold to the same digest, so the ordered projections are NOT
+forced — the hypothesis does real work. -/
+theorem stFold_inj_unconditional_false :
+    ¬ (∀ (tag : ℤ) (sponge : List ℤ → ℤ) (rows rows' : List StateRow) (a b : ℤ),
+        rows.length = rows'.length →
+        stFold tag sponge a rows = stFold tag sponge b rows' →
+        rows.map projST = rows'.map projST) := by
+  intro hall
+  have h := hall 0 (fun _ => 0)
+    [{ step := 1, oldHash := 0, newRoot := 1, newHash := 0 }]
+    [{ step := 1, oldHash := 0, newRoot := 2, newHash := 0 }] 0 0 rfl rfl
+  simp only [List.map_cons, List.map_nil, List.cons.injEq, projST, Prod.mk.injEq] at h
+  omega
+
+/-- **REFUTABLE**: on that same broken sponge the extractor RETURNS a genuine collision, so the side
+condition really fails — it is not a `True` in disguise. -/
+theorem stColl_refutable :
+    SpongeColl (fun _ => (0 : ℤ))
+      (stCollFind 0 (fun _ => (0 : ℤ)) 0 0
+        [{ step := 1, oldHash := 0, newRoot := 1, newHash := 0 }]
+        [{ step := 1, oldHash := 0, newRoot := 2, newHash := 0 }]) := by
+  refine ⟨by decide, rfl⟩
+
+/-- **NON-VACUOUS / FIRES**: at an honest equal history the walk bottoms out at an EQUAL pair, so the
+side condition holds for EVERY sponge — no CR, no floor — and the ported binding genuinely fires at
+deployed parameters. -/
+theorem stColl_fires (tag : ℤ) (sponge : List ℤ → ℤ) (rows : List StateRow) (a : ℤ) :
+    ¬ SpongeColl sponge (stCollFind tag sponge a a rows rows) := by
+  intro hc
+  refine hc.1 ?_
+  clear hc
+  induction rows generalizing a with
+  | nil => rfl
+  | cons r rest ih =>
+    simp only [stCollFind]
+    rw [if_pos (ih (stExtend tag sponge a r.newRoot r.step))]
 
 /-! ## 7. NON-VACUITY — satisfiable (witnessed) AND falsifiable (anti-ghost). -/
 
@@ -390,8 +523,16 @@ end Vacuity
 #assert_axioms state_transition_forces_fold
 #assert_axioms stepchain_last_step
 #assert_axioms stepCount_is_length
+#assert_axioms stFold_binds_or_collides
 #assert_axioms stFold_inj
 #assert_axioms state_digest_binds_chain
+#assert_axioms stFold_inj_unconditional_false
+#assert_axioms stColl_refutable
+#assert_axioms stColl_fires
+#assert_not_depends_on Dregg2.Circuit.StateTransitionAirSound.stFold_binds_or_collides [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.StateTransitionAirSound.stFold_inj [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.StateTransitionAirSound.state_digest_binds_chain [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+-- POSITIVE CONTROL: the rejector is not vacuous — the bridge DOES reach the floor.
 #assert_axioms honest_satisfies
 #assert_axioms keystone_fires
 #assert_axioms depth_tooth_fires
@@ -400,3 +541,6 @@ end Vacuity
 #assert_axioms forged_digest_unsat
 
 end Dregg2.Circuit.StateTransitionAirSound
+-- POSITIVE CONTROL: the rejectors above are not blind — the tree's UNIVERSAL bridge, the one this
+-- module's side condition is discharged through, DOES reach the floor on the same walk.
+#assert_depends_on Dregg2.Circuit.Poseidon2Binding.spongeColl_refutable_of_injective [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
