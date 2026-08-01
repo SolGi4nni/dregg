@@ -137,13 +137,20 @@ lane 8 is at `lane8Off`, which is a column only when the pre-limb region has roo
 is BEFORE-block lane ↔ AFTER-block lane, at the same lane index. -/
 
 /-- ⚑ **THE ONE KNOB.** The in-block offset of the owner nonet's ninth lane.
-`rotatedNumPreLimbs` is one PAST the last absorbed pre-limb, so this value is deliberately NOT an
-absorbed column: today the nonet's ninth lane has nowhere to go
-(`KeyCanonicity9Emit.lane8_is_absorbed_iff`, and its `rotated*.pads = []` guard), and welding a
-non-column would be decoration. The moment the layout allocates the ninth owner lane, set this to
-that offset — the ninth weld then appears on its own, and
-`ownerFreeze_welds_lane8_iff_absorbed` is the machine-checked statement of exactly that. -/
-def OWNER_LANE8_OFF : Nat := rotatedNumPreLimbs
+⚑ THIS READ `rotatedNumPreLimbs` FOR ONE COMMIT, AND THAT WAS ALREADY WRONG WHEN IT LANDED.
+The prose said "the moment the layout allocates the ninth owner lane, set this to that offset".
+The layout allocated it SIX MINUTES EARLIER, in the sibling commit of the same wave: limb 186,
+absorbed by `wireCommitR` in both blocks. So the weld emitted EIGHT pairs and left the ninth lane
+— the one carrying the owner key's source bits 232..255, INCLUDING THE Ed25519 SIGN BIT, the one
+bit this entire flag day exists to bind — a free felt on the AFTER side. Composed and emitted,
+that is the E10 forgery restored on precisely the lane the nonet was built for: flip the sign
+bit in the AFTER block, mint a self-consistent NEW_COMMIT, and `-A` seals as `A`.
+
+Read the LAYOUT's own allocation instead. `B_PUBKEY_NINTH_LANE` is
+`(rotated187.octetLaneCol 2 8).getD 0`, i.e. where the octet table actually puts lane 8 — a
+different source from the pre-limb COUNT, which is what makes the guard below a gate rather than
+a tautology. -/
+def OWNER_LANE8_OFF : Nat := B_PUBKEY_NINTH_LANE
 
 /-- Is lane `l` of the owner nonet a real absorbed column at `lane8Off`? Lanes 0..7 always are (the
 deployed octet); lane 8 is exactly when `lane8Off < rotatedNumPreLimbs`. -/
@@ -210,19 +217,34 @@ theorem ownerFreeze_welds_lane8_iff_absorbed (w lane8Off : Nat) :
     refine ⟨8, List.mem_finRange 8, ?_⟩
     rw [if_pos (by simp only [laneIsColumn, Bool.or_eq_true, decide_eq_true_eq]; exact Or.inr habs)]
 
--- The deployed instance: 8 pairs today, and the pair count AGREES with the absorption predicate.
--- These are two independent readings — the emitted list vs. `rotatedNumPreLimbs` — so the guard
--- goes RED if the ninth lane is allocated and the weld is not updated, or vice versa.
+-- The deployed instance: the pair count AGREES with the absorption predicate.
+--
+-- ⚑ THIS COMMENT WAS TRUE OF WHAT IT INTENDED AND FALSE OF WHAT IT WROTE. With
+-- `OWNER_LANE8_OFF := rotatedNumPreLimbs` the condition below was `n < n` — FALSE FOR EVERY n,
+-- forever — so the guard asserted `8 == 8` at any extent and could not go red for the thing it
+-- names. It did not merely have the potential to rot: it ROTTED INSIDE ITS OWN WAVE, six minutes
+-- after being written, and the build stayed green. "A pin against its own definition is
+-- decoration", in the guard whose stated job was catching exactly this drift.
+--
+-- It is a gate now because the two sides come from genuinely different places: the left from the
+-- EMITTED pair list, the right from the layout's octet table (`B_PUBKEY_NINTH_LANE`) compared
+-- against the pre-limb COUNT. Move the lane without moving the weld, or vice versa, and this
+-- goes red.
 #guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).length
   == (if OWNER_LANE8_OFF < rotatedNumPreLimbs then 9 else 8)
 #guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).Nodup
--- …and the BEFORE columns really are the deployed octet, at both the bare and the avail faces.
+-- …and the welded columns really are the deployed NONET: the contiguous octet 105..112 PLUS the
+-- ninth lane, which is NOT contiguous with it (it lives at limb 186, past the octet band). That
+-- discontinuity is the whole reason these read the layout rather than a range: a `List.range 9`
+-- here would silently demand column 113, which belongs to something else entirely.
 #guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.fst
   == (List.range 8).map (fun k => EFFECT_VM_WIDTH + B_PUBKEY_OCTET + k)
+     ++ [EFFECT_VM_WIDTH + B_PUBKEY_NINTH_LANE]
 #guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.snd
   == (List.range 8).map (fun k => EFFECT_VM_WIDTH + B_SPAN + B_PUBKEY_OCTET + k)
+     ++ [EFFECT_VM_WIDTH + B_SPAN + B_PUBKEY_NINTH_LANE]
 #guard (ownerFreezeColPairs 198 OWNER_LANE8_OFF).map Prod.fst
-  == (List.range 8).map (fun k => 198 + B_PUBKEY_OCTET + k)
+  == (List.range 8).map (fun k => 198 + B_PUBKEY_OCTET + k) ++ [198 + B_PUBKEY_NINTH_LANE]
 -- Every welded BEFORE column is an ABSORBED pre-limb — the weld rides the `wireCommitR` chain,
 -- it does not freeze a free felt beside it.
 #guard ((ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.fst).all
@@ -478,7 +500,9 @@ def ownerWeldProbe : EffectVmDescriptor2 :=
 /-- ⚑ **THE MUTATION** — the probe with the owner welds DROPPED, and nothing else changed. -/
 def ownerWeldProbeMutated : EffectVmDescriptor2 := { ownerWeldProbe with constraints := [] }
 
-#guard ownerWeldProbe.constraints.length == 8
+-- NINE, not eight: the ninth is the owner key's lane-8 column at limb 186, which the weld only
+-- gained once OWNER_LANE8_OFF stopped reading the pre-limb COUNT and started reading the layout.
+#guard ownerWeldProbe.constraints.length == 9
 #guard ownerWeldProbeMutated.constraints.length == 0
 #guard ownerWeldProbe.traceWidth == ownerWeldProbeMutated.traceWidth
 
@@ -543,7 +567,7 @@ def cellSealOwnerFrozen : EffectVmDescriptor2 := ownerFreezeWire cellSealV3
 -- BYTE-SHAPE guards: the freeze adds exactly the welds and NO PI, NO column.
 #guard cellSealOwnerFrozen.piCount == cellSealV3.piCount
 #guard cellSealOwnerFrozen.traceWidth == cellSealV3.traceWidth
-#guard cellSealOwnerFrozen.constraints.length == cellSealV3.constraints.length + 8
+#guard cellSealOwnerFrozen.constraints.length == cellSealV3.constraints.length + 9
 #guard cellSealOwnerFrozen.name == cellSealV3.name
 -- …and the name-derived face IS the bare cohort face, so the exhibit above is about the emitted
 -- object and not a lookalike at some other base.
