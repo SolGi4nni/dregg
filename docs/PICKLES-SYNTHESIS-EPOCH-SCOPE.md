@@ -589,3 +589,43 @@ It turns the differentially-verified synthesis into the first machine-checked Pi
 verifier-side P0–P6/P4 ladder that is already on disk, resting on the inherited IPA floor as every
 implementation does. Its absence downgrades the artifact to "independent, differentially-verified Lean
 Pickles synthesis" — which is itself the first-of-its-kind milestone.
+
+---
+
+## §10 — R4a LANDED (2026-08-01): a Lean-synthesized circuit PROVES + VERIFIES on pure-Rust kimchi
+
+**Verb discipline:** every claim here is `[MEASURED]` on hbox (Rust 1.92, proof-systems tag 0.3.0
+rev `a73ca6e`), the same pure-Rust prover mina-rust links. No OCaml, no Node, no o1js in the path.
+
+**Artifacts (this rung's deliverables):**
+- `metatheory/Dregg2/Circuit/Emit/KimchiRender.lean` — the RENDER: `KimchiPlacement.place`'s
+  `List PlacedGate` (typ ordinal + seven `{row,col}` copy-permutation wires + generic coeffs) plus a
+  Lean-emitted application witness → the concrete gate-list/witness JSON proof-systems consumes at its
+  `make_prover_index` / `ConstraintSystem::create` front door. Runs via `lake env lean --run`.
+- `pickles-r4-harness` (standalone crate, scratchpad; NOT in the workspace) — reads that JSON, builds
+  `Vec<CircuitGate>` + `[Vec<Fp>; 15]` witness, and PROVES + VERIFIES.
+
+**The Lean-synthesized binding circuit** (authored in `KimchiRender.bindingGates`, placed by the SAME
+byte-verified `place`): `a=ext0, b=ext1, p=int0`; row 0 `Mul` (coeffs `[0,0,-1,1,0,…]`) ⇒ `p=a·b`;
+row 1 `Const 35` (coeffs `[1,0,0,0,-35,…]`) ⇒ `p=35`; `p` copy-wired across `(0,2)→(1,0)→(1,3)→(0,2)`.
+
+**Measured (`RUN_EXIT=0`):**
+- **Render fidelity** — the emitted `place caseA`/`place caseB` wires equal the o1js byte-goldens
+  (`caseA_o1js`/`caseB_o1js`) cell-for-cell, checked in Rust (Lean → JSON → Rust round-trip is faithful).
+- **[MILESTONE] `verify() == true` on the Lean-synthesized circuit, 760 ms.** A pure-Rust kimchi proof
+  of Lean's OWN synthesized gates+wires+coeffs+witness — not a hand-authored gate list.
+- **It BINDS, both polarities:** a gate-constraint tamper (`a: 5→6`) and a copy-permutation tamper
+  (the free cell `p@(1,3): 35→99`) are BOTH rejected at prove time (the vanishing-poly check bites).
+- **Control (proves the WIRE binds, not something else):** the identical `(1,3)` flip on a no-copy
+  variant (where `(1,3)` holds a fresh unwired var) is ACCEPTED — so the R1 placement wire is genuinely
+  load-bearing in a real proof, not merely byte-diffed.
+
+**Substrate (House Law #1):** the CIRCUIT is Lean-authored (`KimchiPlacement.place` + `KimchiRender`
+coeffs/witness); proof-systems is the Rust prover that RUNS it. The generic-gate constraint polynomial
+`c₀w₀+c₁w₁+c₂w₂+c₃w₀w₁+c₄` is proof-systems' fixed semantics; choosing the coefficients IS the synthesis.
+
+**R4a boundary / what this is NOT.** R4a is a **kimchi INNER proof** of a Lean-synthesized circuit. It
+is NOT a Mina-valid Pickles proof and NOT a soundness proof. The remaining gap to a Mina-settleable
+proof (**R4b**): wrap this inner proof in Pickles step/wrap recursion, whose mina-rust `step`/`wrap` are
+HARDWIRED to Mina's proof types (measured, §Verifier-scope) — a separate epoch rung gated on the
+retarget-fork. R4a proves the SYNTHESIS→PLACEMENT→PROVER pipeline end to end; R4b is the recursion wrap.
