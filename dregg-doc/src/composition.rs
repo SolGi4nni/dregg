@@ -58,10 +58,68 @@ use std::collections::{BTreeMap, BTreeSet};
 // ── §1: the child cell identity (the `dregg://` pointer) ─────────────────────
 
 /// A child cell's identity — content-addressed and unforgeable (the address IS
-/// the access grant and the identity). The standalone analogue of the substrate
-/// `dregg_types::CellId` / `web_of_cells::DreggUri`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct CellId(pub u128);
+/// the access grant and the identity). **The SAME 32 bytes the substrate
+/// `dregg_types::CellId` is**, not an analogue of it: a composed document's layout
+/// graph names its children at full substrate width, so the pointer a reader holds
+/// *is* the cell, recoverable byte-for-byte with no side table.
+///
+/// It used to be a `u128`, which forced every substrate consumer to narrow 256 bits
+/// onto 128 and left the layout graph — and, through
+/// [`crate::substrate::layout_substrate_commit`], the parent document's committed
+/// heap root — unable to tell two cells apart below that width. Narrowing was never
+/// safe at any width under the house floor, and one of the two narrowings in the
+/// tree was an algebraic fold a ~2^32 search collided outright.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CellId(pub [u8; 32]);
+
+impl CellId {
+    /// The id these exact 32 bytes name.
+    pub const fn from_bytes(b: [u8; 32]) -> Self {
+        CellId(b)
+    }
+
+    /// The id's bytes.
+    pub const fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// A SMALL, HUMAN-WRITTEN id for tests and demos — the integer big-endian in the
+    /// low 16 bytes, high 16 zero. Not a derivation: real cells come from the
+    /// substrate (`dregg_types::CellId::derive_raw`), and this exists so a fixture can
+    /// say "cell 0xF1" without inventing a fake genesis key.
+    pub const fn from_u128(v: u128) -> Self {
+        let src = v.to_be_bytes();
+        let mut b = [0u8; 32];
+        let mut i = 0;
+        while i < 16 {
+            b[16 + i] = src[i];
+            i += 1;
+        }
+        CellId(b)
+    }
+
+    /// The full 64-hex rendering — the `dregg://` citation anchor.
+    pub fn hex(&self) -> String {
+        use std::fmt::Write;
+        let mut s = String::with_capacity(64);
+        for b in &self.0 {
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    }
+}
+
+impl std::fmt::Display for CellId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.hex())
+    }
+}
+
+impl std::fmt::Debug for CellId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CellId({})", self.hex())
+    }
+}
 
 /// Version selection for an embed (§2.1): render the child *live* (its tip), or
 /// pin an immutable child receipt (a composition that never rots — the embed
@@ -1112,7 +1170,7 @@ const DESKTOP_EMBED_SEED: u64 = 0xDE5C_0DE5;
 /// The content-addressed embed-atom id a surface projects to (so a later
 /// reorder/remove targets the SAME embed-atom [`scene_to_composed`] created).
 pub fn surface_embed_id(s: &DesktopSurface) -> AtomId {
-    AtomId::derive(DESKTOP_EMBED_SEED, &format!("window:{}", s.owner.0))
+    AtomId::derive(DESKTOP_EMBED_SEED, &format!("window:{}", s.owner))
 }
 
 /// Project a workspace (paint-order `surfaces`) into a COMPOSED document
@@ -1156,10 +1214,10 @@ pub fn workspace_resolver(surfaces: &[DesktopSurface]) -> MapResolver {
         // carries a single marker text atom so the fold renders it; a real window
         // resolves its full cell layout (and may itself compose grandchildren).
         let mut g = LayoutGraph::new();
-        let marker = AtomId::derive(0x5_DE5C, &format!("content:{}", s.owner.0));
+        let marker = AtomId::derive(0x5_DE5C, &format!("content:{}", s.owner));
         g.insert_atom(LayoutAtom {
             id: marker,
-            content: AtomContent::Text(format!("window {:x}", s.owner.0)),
+            content: AtomContent::Text(format!("window {}", s.owner)),
             status: Status::Alive,
             provenance: Provenance::GENESIS,
         });
@@ -1189,7 +1247,7 @@ mod tests {
 
     /// Mint a layout-atom id for an embed (content-addressed over the cell + a seed).
     fn embed_id(seed: u64, cell: CellId) -> AtomId {
-        AtomId::derive(seed, &format!("embed:{}", cell.0))
+        AtomId::derive(seed, &format!("embed:{}", cell))
     }
 
     fn leaf_cell(text: &str) -> LayoutGraph {
@@ -1218,7 +1276,7 @@ mod tests {
 
     #[test]
     fn embed_places_a_cell_pointer() {
-        let fig = CellId(0xF1);
+        let fig = CellId::from_u128(0xF1);
         let eid = embed_id(1, fig);
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
@@ -1241,7 +1299,7 @@ mod tests {
 
     #[test]
     fn out_of_cap_child_darkens_not_amplifies() {
-        let secret = CellId(0x5EC);
+        let secret = CellId::from_u128(0x5EC);
         let eid = embed_id(1, secret);
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
@@ -1278,7 +1336,7 @@ mod tests {
 
     #[test]
     fn unknown_child_is_unresolved_not_panic() {
-        let gone = CellId(0xDEAD);
+        let gone = CellId::from_u128(0xDEAD);
         let eid = embed_id(1, gone);
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
@@ -1308,8 +1366,8 @@ mod tests {
 
     #[test]
     fn composition_cycle_is_a_state_not_a_stack_overflow() {
-        let a = CellId(0xAA);
-        let b = CellId(0xBB);
+        let a = CellId::from_u128(0xAA);
+        let b = CellId::from_u128(0xBB);
         // A embeds B; B embeds A — a cycle.
         let mut la = LayoutGraph::new();
         la.apply_patch(
@@ -1349,7 +1407,7 @@ mod tests {
 
     #[test]
     fn layout_edit_and_child_edit_do_not_conflict() {
-        let fig = CellId(0xF1);
+        let fig = CellId::from_u128(0xF1);
         let eid = embed_id(1, fig);
 
         // Base: one embed of the figure.
@@ -1370,7 +1428,7 @@ mod tests {
         };
 
         // Author A reorders/adds a second embed in the LAYOUT.
-        let other = CellId(0xF2);
+        let other = CellId::from_u128(0xF2);
         let mut a = base.clone();
         a.layout.apply_patch(
             Author(1),
@@ -1432,8 +1490,8 @@ mod tests {
 
     #[test]
     fn layout_merge_is_commutative_and_idempotent() {
-        let f1 = CellId(0xF1);
-        let f2 = CellId(0xF2);
+        let f1 = CellId::from_u128(0xF1);
+        let f2 = CellId::from_u128(0xF2);
         let mut base = LayoutGraph::new();
         base.apply_patch(
             Author(1),
@@ -1476,7 +1534,7 @@ mod tests {
 
     #[test]
     fn concurrent_pins_clash_as_a_field_conflict() {
-        let fig = CellId(0xF1);
+        let fig = CellId::from_u128(0xF1);
         let eid = embed_id(1, fig);
         let mut base = LayoutGraph::new();
         base.apply_patch(
@@ -1562,8 +1620,8 @@ mod tests {
 
     #[test]
     fn concurrent_embeds_at_one_position_are_a_layout_conflict() {
-        let f1 = CellId(0xF1);
-        let f2 = CellId(0xF2);
+        let f1 = CellId::from_u128(0xF1);
+        let f2 = CellId::from_u128(0xF2);
         let base = LayoutGraph::new();
 
         // Two authors each place a DIFFERENT figure right after ROOT, concurrently
@@ -1634,7 +1692,7 @@ mod tests {
 
     #[test]
     fn pinned_embed_is_stable_choice() {
-        let fig = CellId(0xF1);
+        let fig = CellId::from_u128(0xF1);
         let eid = embed_id(1, fig);
         let mut layout = LayoutGraph::new();
         layout.apply_patch(
@@ -1673,8 +1731,8 @@ mod tests {
 
     #[test]
     fn composition_recurses_into_grandchildren() {
-        let section = CellId(0x5EC);
-        let fig = CellId(0xF1);
+        let section = CellId::from_u128(0x5EC);
+        let fig = CellId::from_u128(0xF1);
 
         // The section cell embeds the figure cell.
         let mut section_layout = LayoutGraph::new();
@@ -1731,7 +1789,7 @@ mod tests {
     // workspace IS a graph of cells: each window an `Op::Embed` of its owner.
 
     fn win(tag: u128, z: i64) -> DesktopSurface {
-        DesktopSurface::new(CellId(tag), z)
+        DesktopSurface::new(CellId::from_u128(tag), z)
     }
 
     // (POSITIVE) The live workspace projects to a composed document that ROUND-TRIPS:
@@ -1748,7 +1806,11 @@ mod tests {
         // ROUND-TRIP: the embedded cells are exactly the window owners, IN z-ORDER.
         assert_eq!(
             r.embedded_cells(),
-            vec![CellId(0xA1), CellId(0xB2), CellId(0xC3)],
+            vec![
+                CellId::from_u128(0xA1),
+                CellId::from_u128(0xB2),
+                CellId::from_u128(0xC3)
+            ],
             "the composed desktop embeds each window's owner cell in paint order"
         );
         assert!(
@@ -1790,7 +1852,7 @@ mod tests {
         let after = content_composed(&layout, &viewer, &resolver);
         assert_eq!(
             after.embedded_cells(),
-            vec![CellId(0xA1), CellId(0xC3)],
+            vec![CellId::from_u128(0xA1), CellId::from_u128(0xC3)],
             "the closed window drops off the desktop; the order conducts through it"
         );
 
@@ -1817,7 +1879,7 @@ mod tests {
         let layout = scene_to_composed(&surfaces, Author(1));
         let resolver = workspace_resolver(&surfaces);
         // The viewer holds A1 and C3, but NOT the secret window 0x5EC.
-        let viewer = Viewer::able([CellId(0xA1), CellId(0xC3)]);
+        let viewer = Viewer::able([CellId::from_u128(0xA1), CellId::from_u128(0xC3)]);
 
         let r = content_composed(&layout, &viewer, &resolver);
         assert!(r.has_darkened(), "the out-of-cap window darkens");
@@ -1825,7 +1887,11 @@ mod tests {
         // are withheld.
         assert_eq!(
             r.embedded_cells(),
-            vec![CellId(0xA1), CellId(0x5EC), CellId(0xC3)],
+            vec![
+                CellId::from_u128(0xA1),
+                CellId::from_u128(0x5EC),
+                CellId::from_u128(0xC3)
+            ],
             "every window's citation survives (the secret is darkened, not erased)"
         );
         // Exactly the secret window darkened; the readable two rendered.
@@ -1836,7 +1902,7 @@ mod tests {
                 ..
             } = seg
             {
-                if *cell == CellId(0x5EC) {
+                if *cell == CellId::from_u128(0x5EC) {
                     assert!(
                         matches!(resolution, ChildResolution::Darkened { .. }),
                         "the out-of-cap window is darkened"
@@ -1866,7 +1932,7 @@ mod tests {
         // A composed layout whose parent carries its OWN text run BEFORE an embed.
         // The prototype used to skip text (composition.rs:941-947, "the named
         // interleave point"); the fold now emits it in document order.
-        let fig = CellId(0xF1);
+        let fig = CellId::from_u128(0xF1);
         let mut layout = LayoutGraph::new();
         // A parent text atom right after ROOT.
         let tid = AtomId::derive(1234, "intro");
@@ -1936,7 +2002,7 @@ mod tests {
             Author(1),
             &[Op::Embed {
                 id: surface_embed_id(&win(0xB2, 1)),
-                child: ChildRef::live(CellId(0xB2)),
+                child: ChildRef::live(CellId::from_u128(0xB2)),
                 after: a1,
                 role: EmbedRole::Section,
             }],
@@ -1947,7 +2013,7 @@ mod tests {
             Author(2),
             &[Op::Embed {
                 id: surface_embed_id(&win(0xC3, 1)),
-                child: ChildRef::live(CellId(0xC3)),
+                child: ChildRef::live(CellId::from_u128(0xC3)),
                 after: a1,
                 role: EmbedRole::Section,
             }],
@@ -1956,7 +2022,11 @@ mod tests {
         let merged = merge_layout(&d1, &d2);
         let all = vec![win(0xA1, 0), win(0xB2, 1), win(0xC3, 2)];
         let resolver = workspace_resolver(&all);
-        let viewer = Viewer::able([CellId(0xA1), CellId(0xB2), CellId(0xC3)]);
+        let viewer = Viewer::able([
+            CellId::from_u128(0xA1),
+            CellId::from_u128(0xB2),
+            CellId::from_u128(0xC3),
+        ]);
         let r = content_composed(&merged, &viewer, &resolver);
         // Both devices' windows opened at the same position (a fork) — surfaced as a
         // first-class layout conflict, never silently lost.

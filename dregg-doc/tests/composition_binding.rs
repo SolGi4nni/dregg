@@ -71,7 +71,7 @@ fn id_cell(marker: &str, key_commit: u64) -> LayoutGraph {
 /// `embedded_cells` reveals which key-generation it is (text atoms are skipped by
 /// the embed-focused fold, so we make the marker an embed, not text).
 fn id_cell_with_marker(key_commit: u64) -> (LayoutGraph, CellId) {
-    let marker_cell = CellId(0xD0_0000 + key_commit as u128); // distinct per generation
+    let marker_cell = CellId::from_u128(0xD0_0000 + key_commit as u128); // distinct per generation
     let mut g = LayoutGraph::new();
     let eid = AtomId::derive(key_commit, "alice-key-marker");
     g.insert_atom(LayoutAtom {
@@ -101,9 +101,9 @@ fn leaf(text: &str) -> LayoutGraph {
 
 #[test]
 fn name_embed_follows_a_rebind_but_a_cell_embed_does_not() {
-    let ns = CellId(0xACE); // the namespace cell
-    let x = CellId(0x11); // the cell "hero" first binds to
-    let y = CellId(0x22); // the cell it is later rebound to
+    let ns = CellId::from_u128(0xACE); // the namespace cell
+    let x = CellId::from_u128(0x11); // the cell "hero" first binds to
+    let y = CellId::from_u128(0x22); // the cell it is later rebound to
 
     // ONE document with TWO embeds at fixed positions:
     //  - a NAME embed of dregg://<ns>/hero  (the re-bindable arm)
@@ -189,8 +189,8 @@ fn name_embed_follows_a_rebind_but_a_cell_embed_does_not() {
 /// HEALS it — the re-bindable arm's distinguishing behavior.
 #[test]
 fn an_unbound_name_is_a_first_class_state_and_a_later_bind_heals_it() {
-    let ns = CellId(0xACE);
-    let z = CellId(0x33);
+    let ns = CellId::from_u128(0xACE);
+    let z = CellId::from_u128(0x33);
     let eid = embed_id(1, "embed:name:slot");
     let slot = DreggUri::new(ns, "slot");
 
@@ -249,7 +249,7 @@ fn a_cell_embed_survives_the_identity_cells_key_rotation() {
     // The identity cell: a STABLE id (the inception anchor), whose content/key
     // state advances on rotation. We model the rotation by advancing the key
     // commitment the cell's content reflects, while the CellId is unchanged.
-    let alice = CellId(0xA11CE); // inception-anchored, NEVER changes across rotation
+    let alice = CellId::from_u128(0xA11CE); // inception-anchored, NEVER changes across rotation
 
     let eid = embed_id(1, "embed:cell:alice");
     let mut layout = LayoutGraph::new();
@@ -322,7 +322,7 @@ fn a_cell_embed_survives_the_identity_cells_key_rotation() {
     // a hypothetical "rotated-to-a-new-id" cell is a DIFFERENT CellId, and a
     // Cell(id) embed of THAT old id would be Unresolved. The substrate's actual id
     // is inception-anchored, so this broken branch never occurs for a real rotation.
-    let alice_if_id_were_keybound = CellId(0xA11CE_BAD); // a DIFFERENT id
+    let alice_if_id_were_keybound = CellId::from_u128(0xA11CE_BAD); // a DIFFERENT id
     let broken_world = MapResolver::default().with(alice_if_id_were_keybound, id_cell("alice", 2));
     let r_broken = content_composed(&layout, &viewer, &broken_world);
     match &r_broken.segments[0] {
@@ -348,7 +348,7 @@ fn a_cell_embed_survives_the_identity_cells_key_rotation() {
 
 #[test]
 fn a_pinned_embed_resolves_the_frozen_past_even_after_the_source_is_retired() {
-    let src = CellId(0xF0);
+    let src = CellId::from_u128(0xF0);
     let frozen_receipt: u128 = 0xDEAD_BEEF;
     let eid = embed_id(1, "embed:pinned:src");
 

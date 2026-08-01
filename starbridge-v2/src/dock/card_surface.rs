@@ -533,9 +533,10 @@ impl ModeCard {
                 // The composer authors a document cell; over the cockpit's image we open
                 // it on a host derived from the focused cell and read its (initially empty)
                 // composition's view-tree — the surface a real authoring gesture grows.
-                let host = deos_js::composer_card::ChildCellId(u128::from_le_bytes(
-                    focus.as_bytes()[..16].try_into().unwrap_or([0u8; 16]),
-                ));
+                // The host IS the focused cell — `ChildCellId` carries the substrate's
+                // 32 bytes. (It used to truncate to the id's first 16, so two cells
+                // agreeing on their first half opened the SAME composer card.)
+                let host = deos_js::composer_card::ChildCellId(*focus.as_bytes());
                 let card = deos_js::composer_card::ComposerCard::open(
                     host,
                     Author(0xC0),

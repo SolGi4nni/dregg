@@ -20,7 +20,7 @@ use dregg_doc::composition::{
 };
 
 fn win(tag: u128, z: i64) -> DesktopSurface {
-    DesktopSurface::new(CellId(tag), z)
+    DesktopSurface::new(CellId::from_u128(tag), z)
 }
 
 /// (POSITIVE) The live workspace projects to a composed document whose embedded
@@ -36,7 +36,11 @@ fn the_live_workspace_projects_and_round_trips_through_the_real_fold() {
     let r = content_composed(&layout, &viewer, &resolver);
     assert_eq!(
         r.embedded_cells(),
-        vec![CellId(0xA1), CellId(0xB2), CellId(0xC3)],
+        vec![
+            CellId::from_u128(0xA1),
+            CellId::from_u128(0xB2),
+            CellId::from_u128(0xC3)
+        ],
         "the composed desktop embeds each window's owner cell in paint order"
     );
     assert!(
@@ -84,7 +88,7 @@ fn closing_a_window_is_a_real_edit_that_changes_the_rendered_desktop() {
     let after = content_composed(&layout, &viewer, &resolver);
     assert_eq!(
         after.embedded_cells(),
-        vec![CellId(0xA1), CellId(0xC3)],
+        vec![CellId::from_u128(0xA1), CellId::from_u128(0xC3)],
         "the closed window drops off the desktop; order conducts through the tombstone"
     );
 }
@@ -98,13 +102,17 @@ fn an_out_of_cap_window_darkens_while_the_rest_of_the_desktop_renders() {
     let layout = scene_to_composed(&surfaces, Author(1));
     let resolver = workspace_resolver(&surfaces);
     // The viewer lacks the secret window's owner cap.
-    let viewer = Viewer::able([CellId(0xA1), CellId(0xC3)]);
+    let viewer = Viewer::able([CellId::from_u128(0xA1), CellId::from_u128(0xC3)]);
 
     let r = content_composed(&layout, &viewer, &resolver);
     assert!(r.has_darkened(), "the out-of-cap window darkens");
     assert_eq!(
         r.embedded_cells(),
-        vec![CellId(0xA1), CellId(0x5EC), CellId(0xC3)],
+        vec![
+            CellId::from_u128(0xA1),
+            CellId::from_u128(0x5EC),
+            CellId::from_u128(0xC3)
+        ],
         "every window's citation survives — the secret is darkened, not erased"
     );
     let darkened = r
@@ -121,7 +129,7 @@ fn an_out_of_cap_window_darkens_while_the_rest_of_the_desktop_renders() {
         .expect("the secret window is darkened");
     assert_eq!(
         darkened,
-        CellId(0x5EC),
+        CellId::from_u128(0x5EC),
         "exactly the out-of-cap window darkened"
     );
 
@@ -145,7 +153,7 @@ fn two_devices_opening_windows_merge_as_a_layout_pushout_with_a_first_class_fork
         Author(1),
         &[Op::Embed {
             id: surface_embed_id(&win(0xB2, 1)),
-            child: ChildRef::live(CellId(0xB2)),
+            child: ChildRef::live(CellId::from_u128(0xB2)),
             after: a1,
             role: EmbedRole::Section,
         }],
@@ -155,7 +163,7 @@ fn two_devices_opening_windows_merge_as_a_layout_pushout_with_a_first_class_fork
         Author(2),
         &[Op::Embed {
             id: surface_embed_id(&win(0xC3, 1)),
-            child: ChildRef::live(CellId(0xC3)),
+            child: ChildRef::live(CellId::from_u128(0xC3)),
             after: a1,
             role: EmbedRole::Section,
         }],
@@ -164,7 +172,11 @@ fn two_devices_opening_windows_merge_as_a_layout_pushout_with_a_first_class_fork
     let merged = merge_layout(&d1, &d2);
     let all = vec![win(0xA1, 0), win(0xB2, 1), win(0xC3, 2)];
     let resolver = workspace_resolver(&all);
-    let viewer = Viewer::able([CellId(0xA1), CellId(0xB2), CellId(0xC3)]);
+    let viewer = Viewer::able([
+        CellId::from_u128(0xA1),
+        CellId::from_u128(0xB2),
+        CellId::from_u128(0xC3),
+    ]);
     let r = content_composed(&merged, &viewer, &resolver);
     assert!(
         r.segments

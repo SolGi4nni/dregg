@@ -252,7 +252,7 @@ impl ComposerCard {
     /// cell). A later reorder / remove can target this directly — UNTIL a [`Self::set_role`]
     /// re-roles the cell. For a target robust across a re-role, use [`Self::live_atom`].
     pub fn embed_id(&self, cell: ChildCellId) -> AtomId {
-        AtomId::derive(COMPOSER_EMBED_SEED, &format!("embed:{}", cell.0))
+        AtomId::derive(COMPOSER_EMBED_SEED, &format!("embed:{cell}"))
     }
 
     /// The CURRENT live embed-atom id for `cell` (robust across a re-role). `None` if
@@ -342,7 +342,7 @@ impl ComposerCard {
         let after = predecessor_of(&self.layout, id);
         let new_id = AtomId::derive(
             COMPOSER_EMBED_SEED,
-            &format!("embed:{}:role:{:?}", cell.0, role.to_embed()),
+            &format!("embed:{}:role:{:?}", cell, role.to_embed()),
         );
         self.apply(&[
             Op::Remove { id },
@@ -466,12 +466,12 @@ impl ComposerCard {
         let n = embed_atoms(&self.layout).len() as u128;
         let id = AtomId::derive(
             COMPOSER_EMBED_SEED,
-            &format!("view-authorship:{}:{}", self.host.0, n),
+            &format!("view-authorship:{}:{}", self.host, n),
         );
         self.apply(&[
             Op::Embed {
                 id,
-                child: ChildRef::live(ChildCellId(self.host.0 ^ 0x0A07_4015_4109)),
+                child: ChildRef::live(marker_sibling(self.host)),
                 after: AtomId::ROOT,
                 role: EmbedRole::Inline,
             },
@@ -494,10 +494,10 @@ impl ComposerCard {
         let mut r = MapResolver::default();
         for (_, _, cell, _) in embed_atoms(&self.layout) {
             let mut g = LayoutGraph::new();
-            let marker = AtomId::derive(0xC0_4EAF, &format!("content:{}", cell.0));
+            let marker = AtomId::derive(0xC0_4EAF, &format!("content:{cell}"));
             g.insert_atom(composition::LayoutAtom {
                 id: marker,
-                content: AtomContent::Text(format!("cell {:x}", cell.0)),
+                content: AtomContent::Text(format!("cell {cell}")),
                 status: Status::Alive,
                 provenance: Provenance::GENESIS,
             });
@@ -526,10 +526,10 @@ fn composer_view_for(host: ChildCellId, layout: &LayoutGraph) -> ViewTree {
     let mut resolver = MapResolver::default();
     for (_, _, cell, _) in embed_atoms(layout) {
         let mut g = LayoutGraph::new();
-        let marker = AtomId::derive(0xC0_4EAF, &format!("content:{}", cell.0));
+        let marker = AtomId::derive(0xC0_4EAF, &format!("content:{cell}"));
         g.insert_atom(composition::LayoutAtom {
             id: marker,
-            content: AtomContent::Text(format!("cell {:x}", cell.0)),
+            content: AtomContent::Text(format!("cell {cell}")),
             status: Status::Alive,
             provenance: Provenance::GENESIS,
         });
@@ -549,7 +549,7 @@ fn composer_view_for_children(host: ChildCellId, children: &[ComposedChild]) -> 
     let mut top: Vec<ViewTree> = Vec::new();
 
     // Title.
-    top.push(text(&format!("Composer · doc {:x}", host.0)));
+    top.push(text(&format!("Composer · doc {}", short_cell(host))));
 
     // ── Composed children section ───────────────────────────────────────────────────
     let mut kids: Vec<ViewTree> = vec![text("Composed cells")];
@@ -609,8 +609,19 @@ fn button(label: &str, turn: &str, arg: i64) -> ViewTree {
 
 /// A short legible cell id for a composed row.
 fn short_cell(c: ChildCellId) -> String {
-    let h = format!("{:032x}", c.0);
+    let h = c.hex();
     format!("{}…{}", &h[..6], &h[h.len() - 4..])
+}
+
+/// A transient marker cell for the provenance gesture — a cell DERIVED from the host
+/// (never the host itself, so the marker embed cannot be mistaken for a real child).
+/// The embed it rides is tombstoned in the same patch.
+fn marker_sibling(host: ChildCellId) -> ChildCellId {
+    let mut b = *host.bytes();
+    b[0] ^= 0x0A;
+    b[1] ^= 0x07;
+    b[2] ^= 0x40;
+    ChildCellId::from_bytes(b)
 }
 
 // ── the view-patch reshape (mirrors the inspector card's, since `ViewPatch::apply` is
@@ -760,7 +771,7 @@ mod tests {
     use super::*;
 
     fn cell(tag: u128) -> ChildCellId {
-        ChildCellId(tag)
+        ChildCellId::from_u128(tag)
     }
 
     fn doc() -> ComposerCard {

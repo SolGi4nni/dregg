@@ -99,6 +99,13 @@ impl Leaf {
         self.bytes.extend_from_slice(&v.to_le_bytes());
     }
 
+    /// A fixed-width 32-byte value (a composition child pointer / namespace cell —
+    /// the FULL substrate cell id, so the committed leaf binds every bit of the
+    /// identity the author placed, not a narrowing of it).
+    fn bytes32(&mut self, b: &[u8; 32]) {
+        self.bytes.extend_from_slice(b);
+    }
+
     /// A fixed-width u64 (authors).
     fn u64(&mut self, v: u64) {
         self.bytes.extend_from_slice(&v.to_le_bytes());
@@ -286,14 +293,14 @@ pub(crate) fn leaf_for_embed(
         // Identity arm: THIS exact child cell (its content-addressed id) + pin.
         ChildRef::Cell(cell, pin) => {
             leaf.run(b"cell");
-            leaf.u128(cell.0);
+            leaf.bytes32(&cell.0);
             leaf.run(pin.key().as_bytes());
         }
         // Binding arm: the (namespace, name) INDIRECTION + pin. Bind what the
         // author wrote — the name — never the namespace's current resolution.
         ChildRef::Name(uri, pin) => {
             leaf.run(b"name");
-            leaf.u128(uri.namespace.0);
+            leaf.bytes32(&uri.namespace.0);
             leaf.run(uri.name.as_bytes());
             leaf.run(pin.key().as_bytes());
         }
@@ -619,8 +626,14 @@ mod tests {
     fn layout_commit_is_construction_order_independent_and_non_vacuous() {
         // Sanity + non-vacuity: equal layouts commit equal against the REAL root;
         // a populated layout is neither the empty-heap root nor an empty layout.
-        let a = one_embed(ChildRef::live(EmbedCellId(0xF1)), EmbedRole::Figure);
-        let b = one_embed(ChildRef::live(EmbedCellId(0xF1)), EmbedRole::Figure);
+        let a = one_embed(
+            ChildRef::live(EmbedCellId::from_u128(0xF1)),
+            EmbedRole::Figure,
+        );
+        let b = one_embed(
+            ChildRef::live(EmbedCellId::from_u128(0xF1)),
+            EmbedRole::Figure,
+        );
         assert_eq!(
             layout_substrate_commit(&a),
             layout_substrate_commit(&b),
@@ -646,7 +659,10 @@ mod tests {
         // field (a pure layout has NO field leaves). This is the collection-tag
         // half of the arity separation; the per-section preimage tag (b"embed" vs
         // b"atom" vs b"edge") is the other half.
-        let l = one_embed(ChildRef::live(EmbedCellId(0xF1)), EmbedRole::Figure);
+        let l = one_embed(
+            ChildRef::live(EmbedCellId::from_u128(0xF1)),
+            EmbedRole::Figure,
+        );
         let map = layout_to_heap_map(&l);
         assert!(
             map.keys().any(|&(c, _)| c == COLL_EMBEDS),
@@ -672,9 +688,15 @@ mod tests {
         // the child CellId differs. A light client following the reference would be
         // shown a DIFFERENT child than the author embedded; the REAL root MUST
         // change so the forge cannot hide under the parent commitment.
-        let honest = one_embed(ChildRef::live(EmbedCellId(0xF1)), EmbedRole::Figure);
+        let honest = one_embed(
+            ChildRef::live(EmbedCellId::from_u128(0xF1)),
+            EmbedRole::Figure,
+        );
         let c0 = layout_substrate_commit(&honest);
-        let forged = one_embed(ChildRef::live(EmbedCellId(0xBAD)), EmbedRole::Figure);
+        let forged = one_embed(
+            ChildRef::live(EmbedCellId::from_u128(0xBAD)),
+            EmbedRole::Figure,
+        );
         assert_ne!(
             layout_substrate_commit(&forged),
             c0,
@@ -687,15 +709,15 @@ mod tests {
         // FORGE THE PIN: Live↔At and a different receipt each change the pointer
         // the author committed, so each changes the REAL root.
         let live = layout_substrate_commit(&one_embed(
-            ChildRef::live(EmbedCellId(0xF1)),
+            ChildRef::live(EmbedCellId::from_u128(0xF1)),
             EmbedRole::Figure,
         ));
         let at7 = layout_substrate_commit(&one_embed(
-            ChildRef::pinned(EmbedCellId(0xF1), 7),
+            ChildRef::pinned(EmbedCellId::from_u128(0xF1), 7),
             EmbedRole::Figure,
         ));
         let at9 = layout_substrate_commit(&one_embed(
-            ChildRef::pinned(EmbedCellId(0xF1), 9),
+            ChildRef::pinned(EmbedCellId::from_u128(0xF1), 9),
             EmbedRole::Figure,
         ));
         assert_ne!(at7, live, "Live -> At(7) changes the parent commitment");
@@ -710,7 +732,7 @@ mod tests {
         // THE LOAD-BEARING DISTINCTION (§1.4 re-bindable-yet-verifiable):
         // a `Name` embed's commitment binds the INDIRECTION (namespace ‖ name ‖
         // pin ‖ role), NOT the cell the namespace currently resolves it to.
-        let ns = EmbedCellId(0x115);
+        let ns = EmbedCellId::from_u128(0x115);
         let name_embed = |name: &str, pin: Pin, role: EmbedRole| -> LayoutGraph {
             one_embed(ChildRef::Name(DreggUri::new(ns, name), pin), role)
         };
@@ -722,8 +744,8 @@ mod tests {
         //     the parent commitment is UNCHANGED (the light client follows the SAME
         //     name; a swapped binding target does not forge the parent).
         let child = ChildRef::Name(DreggUri::new(ns, "hero"), Pin::Live);
-        let to_a = MapResolver::default().with_name(ns, "hero", EmbedCellId(0xA));
-        let to_b = MapResolver::default().with_name(ns, "hero", EmbedCellId(0xB));
+        let to_a = MapResolver::default().with_name(ns, "hero", EmbedCellId::from_u128(0xA));
+        let to_b = MapResolver::default().with_name(ns, "hero", EmbedCellId::from_u128(0xB));
         assert_ne!(
             to_a.resolved_cell(&child),
             to_b.resolved_cell(&child),
@@ -745,7 +767,10 @@ mod tests {
         );
         assert_ne!(
             layout_substrate_commit(&one_embed(
-                ChildRef::Name(DreggUri::new(EmbedCellId(0x999), "hero"), Pin::Live),
+                ChildRef::Name(
+                    DreggUri::new(EmbedCellId::from_u128(0x999), "hero"),
+                    Pin::Live
+                ),
                 EmbedRole::Figure,
             )),
             c0,
@@ -766,18 +791,18 @@ mod tests {
     #[test]
     fn cell_and_name_arms_do_not_alias() {
         // Arm-tag separation: a `Cell(id)` and a `Name` embed cannot collide even
-        // when the CellId and the namespace share the same u128 — the b"cell" /
+        // when the child cell and the namespace cell are the SAME id — the b"cell" /
         // b"name" arm tags keep their leaf preimages disjoint.
-        let shared = 0x42u128;
-        let as_cell = one_embed(ChildRef::live(EmbedCellId(shared)), EmbedRole::Figure);
+        let shared = EmbedCellId::from_u128(0x42);
+        let as_cell = one_embed(ChildRef::live(shared), EmbedRole::Figure);
         let as_name = one_embed(
-            ChildRef::Name(DreggUri::new(EmbedCellId(shared), ""), Pin::Live),
+            ChildRef::Name(DreggUri::new(shared, ""), Pin::Live),
             EmbedRole::Figure,
         );
         assert_ne!(
             layout_substrate_commit(&as_cell),
             layout_substrate_commit(&as_name),
-            "a Cell arm and a Name arm over the same u128 do not alias"
+            "a Cell arm and a Name arm over the same cell id do not alias"
         );
     }
 
@@ -792,7 +817,7 @@ mod tests {
             Author(1),
             &[EmbedOp::Embed {
                 id: AtomId::derive(1, "embed-a"),
-                child: ChildRef::live(EmbedCellId(0xF1)),
+                child: ChildRef::live(EmbedCellId::from_u128(0xF1)),
                 after: AtomId::ROOT,
                 role: EmbedRole::Figure,
             }],
@@ -802,7 +827,7 @@ mod tests {
             Author(2),
             &[EmbedOp::Embed {
                 id: AtomId::derive(1, "embed-b"),
-                child: ChildRef::live(EmbedCellId(0xF2)),
+                child: ChildRef::live(EmbedCellId::from_u128(0xF2)),
                 after: AtomId::ROOT,
                 role: EmbedRole::Figure,
             }],

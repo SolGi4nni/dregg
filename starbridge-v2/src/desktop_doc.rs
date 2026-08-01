@@ -107,13 +107,24 @@ pub fn render_desktop(
 //     ([`composition::close_surface`]), the embed grammar editing the document that IS
 //     the desktop.
 //
-// The bridge is the `CellId` reduction: the cockpit's 32-byte `dregg_cell::CellId`
-// folds to the composition crate's `composition::CellId(u128)` deterministically (a
-// full-width fold — every byte participates, so the anti-forge tooth survives: two
-// distinct windows do not collide). The window's CONTENT (its cell's sub-document) is
-// resolved by a `ChildResolver`; here we use the standalone `workspace_resolver` shape
-// (the substrate resolver plugs the real `dregg://` read + `Membrane::project` in its
-// place, exactly as `cell_transclusion.rs` does for a single whole-cell embed).
+// There is NO bridge to cross: `composition::CellId` IS the substrate's 32 bytes, so a
+// window's owner rides into the layout graph unchanged ([`composed_cell_id`] is the
+// identity injection). The window's CONTENT (its cell's sub-document) is resolved by a
+// `ChildResolver`; here we use the standalone `workspace_resolver` shape (the substrate
+// resolver plugs the real `dregg://` read + `Membrane::project` in its place, exactly as
+// `cell_transclusion.rs` does for a single whole-cell embed).
+//
+// ⚠ FLAG DAY (2026-08-01). This used to REDUCE the 32-byte id onto a `u128` with an
+// FNV-shaped polynomial fold `f(X) ^ rot64(f(Y))` over the id's two halves, documented
+// as "a FULL-WIDTH fold — every byte participates, so the anti-forge tooth survives:
+// two distinct windows do not collide." Every byte participating is not injectivity,
+// and the claim was false at a price far under even the 2^64 the `u128` suggested:
+// `rotate_left(64)` swaps a `u128`'s halves, so `composed(X‖Y)` and `composed(Y‖X)` are
+// each other's half-swap and collide on a single 64-BIT condition. A ~2^32 search found
+// the pair pinned in `tests/layout_child_pointer_is_full_width.rs`; before this change
+// those two distinct cells shared one embed-atom (the second window silently absorbed
+// by the first) and their one-window layouts shared a byte-identical
+// `layout_substrate_commit` root.
 
 use dregg_doc::composition::{
     self, content_composed, scene_to_composed, surface_embed_id, workspace_resolver,
@@ -121,25 +132,15 @@ use dregg_doc::composition::{
     Viewer,
 };
 
-/// Reduce the cockpit's 32-byte `dregg_cell::CellId` to the composition crate's
-/// `composition::CellId` (a `u128`) — a FULL-WIDTH fold so every byte of the cell's
-/// identity participates (two distinct windows do not collide into one embed; the
-/// anti-forge tooth the composition algebra proves over `CellId` is preserved across
-/// the reduction). Deterministic + stable: the same window always projects to the same
-/// embed-atom, so a later reorder/close targets the SAME atom.
+/// The cockpit's `dregg_cell::CellId` AS the composition crate's
+/// `composition::CellId` — the identity injection, both being the same 32 bytes.
+///
+/// Injective by construction, so two distinct windows can never share an embed-atom,
+/// and the layout graph can NAME the cell it embeds rather than merely digest it: a
+/// reader holding only the `LayoutGraph` recovers the full `dregg://` citation with no
+/// side table. Deterministic + stable, so a later reorder/close targets the SAME atom.
 pub fn composed_cell_id(owner: &dregg_cell::CellId) -> composition::CellId {
-    let bytes = owner.as_bytes();
-    // Fold the 32 bytes into two u128 halves, then mix — every byte contributes.
-    let mut hi: u128 = 0;
-    let mut lo: u128 = 0;
-    for (i, b) in bytes.iter().enumerate() {
-        if i < 16 {
-            hi = hi.wrapping_mul(0x0100_0000_01b3).wrapping_add(*b as u128);
-        } else {
-            lo = lo.wrapping_mul(0x0100_0000_01b3).wrapping_add(*b as u128);
-        }
-    }
-    composition::CellId(hi ^ lo.rotate_left(64))
+    composition::CellId(*owner.as_bytes())
 }
 
 /// Map one live cockpit surface onto the COMPOSED projection shape (vs.

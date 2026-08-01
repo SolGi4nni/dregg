@@ -115,18 +115,18 @@ fn render_to_png(hr: &mut HeadlessRender, source: &str, png: PathBuf) -> (Vec<u8
 // ── 1. THE COMPOSER CARD ───────────────────────────────────────────────────────────────
 fn bake_composer(hr: &mut HeadlessRender, out: &PathBuf) -> (PathBuf, PathBuf) {
     let mut card = ComposerCard::open(
-        deos_js::composer_card::ChildCellId(0xD0C),
+        deos_js::composer_card::ChildCellId::from_u128(0xD0C),
         Author(42),
         AuthRequired::None,
         Requirement::AtLeast(Credential::Signature),
     );
     // Compose a document from cells (the gestures = real composition patches).
     card.add_embed(
-        deos_js::composer_card::ChildCellId(0xA1),
+        deos_js::composer_card::ChildCellId::from_u128(0xA1),
         ComposerRole::Section,
     );
     card.add_embed(
-        deos_js::composer_card::ChildCellId(0xB2),
+        deos_js::composer_card::ChildCellId::from_u128(0xB2),
         ComposerRole::Figure,
     );
     let source0 = card.view_source();

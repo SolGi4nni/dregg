@@ -211,7 +211,7 @@ impl DocumentComposer {
     /// role-keyed atom (the old one is tombstoned). For a target that survives a re-role,
     /// use [`Self::live_atom`].
     pub fn embed_id(&self, cell: ChildCellId) -> AtomId {
-        AtomId::derive(COMPOSER_EMBED_SEED, &format!("embed:{}", cell.0))
+        AtomId::derive(COMPOSER_EMBED_SEED, &format!("embed:{cell}"))
     }
 
     /// The CURRENT live embed-atom id for `cell` (the one a reorder / remove should
@@ -325,7 +325,7 @@ impl DocumentComposer {
         // its order is re-threaded from the same predecessor.
         let new_id = AtomId::derive(
             COMPOSER_EMBED_SEED,
-            &format!("embed:{}:role:{:?}", cell.0, role.to_embed()),
+            &format!("embed:{}:role:{:?}", cell, role.to_embed()),
         );
         self.apply(&[
             Op::Remove { id },
@@ -428,10 +428,10 @@ impl DocumentComposer {
         let mut r = MapResolver::default();
         for (_, _, cell, _) in embed_atoms(&self.layout) {
             let mut g = LayoutGraph::new();
-            let marker = AtomId::derive(0xC0_4EAF, &format!("content:{}", cell.0));
+            let marker = AtomId::derive(0xC0_4EAF, &format!("content:{cell}"));
             g.insert_atom(composition::LayoutAtom {
                 id: marker,
-                content: AtomContent::Text(format!("cell {:x}", cell.0)),
+                content: AtomContent::Text(format!("cell {cell}")),
                 status: Status::Alive,
                 provenance: Provenance::GENESIS,
             });
@@ -458,23 +458,33 @@ impl DocumentComposer {
 //     ([`LiveComposition::block`] mirrors `docuverse::transclusion_line`), which is
 //     what the desktop commits into the document cell's umem heap.
 //
-// ⚠ NAMED SEAM — THE CHILD POINTER IS 128 BITS. `dregg_doc::composition::CellId` is a
-// `u128`, while a substrate `dregg_types::CellId` is 32 bytes. [`child_id`] therefore
-// NARROWS: the layout's own child pointer is a 128-bit domain-separated digest of the
-// full id, so the LayoutGraph alone distinguishes cells only to a ~2^64 birthday bound
-// — far below this repo's ~124-bit bar. Two things follow, and neither is a fix:
+// THE CHILD POINTER IS THE CELL ID. `dregg_doc::composition::CellId` carries the same
+// 32 bytes a substrate `dregg_types::CellId` does, so [`child_id`] is the identity
+// injection and a `LiveComposition` holds no second copy of anything: the LayoutGraph
+// alone names every child it embeds, at full width, and a reader with only the layout
+// (a light client) recovers the same `dregg://` citation the desktop commits.
 //
-//   1. [`LiveComposition`] keeps the FULL 32-byte id per child ([`LiveComposition::ids`])
-//      and is the authority for every citation it renders, so the bytes the desktop
-//      commits to the heap are full-width;
-//   2. [`LiveComposition::embed`] REFUSES a second cell that narrows onto a pointer
-//      already bound to a different full id ([`EmbedRefusal::ChildIdCollision`]), so a
-//      collision is a refusal rather than a silent aliasing of two cells.
+// ⚠ FLAG DAY (2026-08-01). `composition::CellId` was a `u128` and [`child_id`] NARROWED
+// 256 bits onto 128 (BLAKE3 truncated to 16 bytes). Two containments existed solely to
+// survive that and are now DELETED, not kept: a `LiveComposition::ids` side table that
+// re-widened each pointer for rendering, and an `EmbedRefusal::ChildIdCollision` arm
+// that refused a second cell landing on a bound pointer. Both are gone; the refusal
+// variant is removed from the enum rather than retained as a no-op.
 //
-// Neither closes the seam: a light client reading the LayoutGraph by itself still sees
-// 128 bits. The real fix is widening `dregg_doc::composition::CellId` to the substrate's
-// 32 bytes — a `dregg-doc` change touching every composition consumer, which is not this
-// module's to make. It is stated here rather than papered over.
+// What re-emits: nothing persisted — but every composition-layout commitment changes.
+// `dregg_doc::substrate::leaf_for_embed` now binds 32 bytes where it bound 16, so every
+// `layout_substrate_commit` root, and every document cell heap that carries a composed
+// block, is a different value than it was. The devnet re-genesises; no reader holds an
+// old layout root. Embed-atom ids move too (`AtomId::derive` now keys on the 64-hex id
+// rather than the decimal `u128`), so a composition authored before this commit and a
+// composition authored after do not share atom addresses.
+//
+// ⚠ STILL NARROW, and NOT this module's to widen: `dregg_doc::AtomId` is itself a
+// `u128`, and an embed-atom's id is derived from the child id through it. The CHILD
+// POINTER is now full width — it is what `Op::Embed` carries, what the commitment leaf
+// binds, and what a citation renders — but the layout VERTEX addressing a child sits in
+// a 128-bit space. That is a dregg-doc `AtomId` question (it addresses text atoms and
+// order-edges too), measured and named here, not silently inherited.
 
 use crate::world::World;
 
@@ -494,15 +504,6 @@ pub enum EmbedRefusal {
         /// The cell that was addressed.
         cell: dregg_types::CellId,
     },
-    /// Two DIFFERENT live cells narrow onto the same 128-bit layout child pointer (see
-    /// the module note). The second embed is refused rather than silently aliasing the
-    /// first — a composition never cites an ambiguous cell.
-    ChildIdCollision {
-        /// The cell being embedded.
-        cell: dregg_types::CellId,
-        /// The cell already bound to that pointer.
-        held: dregg_types::CellId,
-    },
 }
 
 impl EmbedRefusal {
@@ -520,12 +521,6 @@ impl EmbedRefusal {
                 "COMPOSE REFUSED: {} is not a live child of this document — nothing to \
                  reorder, re-role or remove.",
                 crate::reflect::short_hex(&cell.0)
-            ),
-            EmbedRefusal::ChildIdCollision { cell, held } => format!(
-                "COMPOSE REFUSED: {} narrows onto the same layout child pointer as {} — \
-                 the composition will not cite an ambiguous cell. Nothing composed.",
-                crate::reflect::short_hex(&cell.0),
-                crate::reflect::short_hex(&held.0)
             ),
         }
     }
@@ -546,17 +541,19 @@ pub struct LiveChild {
     pub live: bool,
 }
 
-/// The domain-separated 128-bit narrowing of a substrate cell id onto the layout's
-/// child pointer. See the module's NAMED SEAM note: this is lossy by construction
-/// (256 → 128 bits) and [`LiveComposition`] carries the full id alongside.
+/// A substrate cell id AS the layout's child pointer — the identity injection, both
+/// being the same 32 bytes. Lossless, so it needs no companion table and admits no
+/// collision.
 pub fn child_id(cell: &dregg_types::CellId) -> ChildCellId {
-    let mut h = blake3::Hasher::new();
-    h.update(b"dregg-desktop-composition-child-v1\0");
-    h.update(&cell.0);
-    let d = h.finalize();
-    let mut b = [0u8; 16];
-    b.copy_from_slice(&d.as_bytes()[..16]);
-    ChildCellId(u128::from_le_bytes(b))
+    ChildCellId(cell.0)
+}
+
+/// The layout child pointer's canonical bytes — **everything a reader holding only the
+/// [`LayoutGraph`] knows about a child's identity**. The observation point for the
+/// full-width gate: this must equal the substrate id's own 32 bytes, or the layout is
+/// citing a cell it cannot name.
+pub fn child_pointer_bytes(child: ChildCellId) -> Vec<u8> {
+    child.0.to_vec()
 }
 
 /// **A composition of LIVE cells** — a [`DocumentComposer`] whose every embed passed
@@ -564,9 +561,6 @@ pub fn child_id(cell: &dregg_types::CellId) -> ChildCellId {
 #[derive(Clone, Debug)]
 pub struct LiveComposition {
     composer: DocumentComposer,
-    /// The full 32-byte identity behind each narrowed layout pointer — the authority
-    /// for every citation this composition renders (module NAMED SEAM note).
-    ids: std::collections::BTreeMap<ChildCellId, dregg_types::CellId>,
 }
 
 impl LiveComposition {
@@ -574,7 +568,6 @@ impl LiveComposition {
     pub fn new(host: dregg_types::CellId, author: Author) -> Self {
         LiveComposition {
             composer: DocumentComposer::new(child_id(&host), author),
-            ids: std::collections::BTreeMap::new(),
         }
     }
 
@@ -583,19 +576,17 @@ impl LiveComposition {
         &self.composer
     }
 
-    /// **THE LEDGER GATE** — `cell` must be a cell of the live World, and must not
-    /// collide with a child already bound. Returns the pointer to place at.
+    /// **THE LEDGER GATE** — `cell` must be a cell of the live World. Returns the
+    /// pointer to place at.
+    ///
+    /// It used to also refuse a second cell narrowing onto a bound pointer; that arm
+    /// existed only because the pointer was narrower than the id, and is deleted rather
+    /// than kept as a check that can no longer fire.
     fn admit(&self, world: &World, cell: dregg_types::CellId) -> Result<ChildCellId, EmbedRefusal> {
         if world.ledger().get(&cell).is_none() {
             return Err(EmbedRefusal::NotALiveCell { cell });
         }
-        let id = child_id(&cell);
-        match self.ids.get(&id) {
-            Some(held) if *held != cell => {
-                Err(EmbedRefusal::ChildIdCollision { cell, held: *held })
-            }
-            _ => Ok(id),
-        }
+        Ok(child_id(&cell))
     }
 
     /// **ADD AN EMBED** of a LIVE cell, appended after the current tail. Refuses an id
@@ -607,7 +598,6 @@ impl LiveComposition {
         role: Role,
     ) -> Result<Receipt, EmbedRefusal> {
         let id = self.admit(world, cell)?;
-        self.ids.insert(id, cell);
         Ok(self.composer.add_embed(id, role))
     }
 
@@ -626,16 +616,15 @@ impl LiveComposition {
             Some(a) => Some(self.child_of(a)?),
             None => None,
         };
-        self.ids.insert(id, cell);
         Ok(self.composer.add_embed_at(id, anchor, role))
     }
 
     /// The layout pointer of a cell that must currently be a LIVE child.
     fn child_of(&self, cell: dregg_types::CellId) -> Result<ChildCellId, EmbedRefusal> {
         let id = child_id(&cell);
-        match self.ids.get(&id) {
-            Some(held) if *held == cell && self.composer.live_atom(id).is_some() => Ok(id),
-            _ => Err(EmbedRefusal::NotAChild { cell }),
+        match self.composer.live_atom(id) {
+            Some(_) => Ok(id),
+            None => Err(EmbedRefusal::NotAChild { cell }),
         }
     }
 
@@ -691,30 +680,14 @@ impl LiveComposition {
         self.composer
             .children()
             .into_iter()
-            .filter_map(|k| self.widen(k))
+            .map(live_child)
             .collect()
     }
 
     /// The full ROSTER — live children plus the tombstoned ones (retained, provenanced,
     /// time-travellable), at full substrate width.
     pub fn roster(&self) -> Vec<LiveChild> {
-        self.composer
-            .roster()
-            .into_iter()
-            .filter_map(|k| self.widen(k))
-            .collect()
-    }
-
-    /// Restore a composed child's FULL id from the layout's narrowed pointer. `None`
-    /// for a pointer this composition never admitted (unreachable through the gate —
-    /// every placement inserts into `ids` first — and dropped rather than guessed).
-    fn widen(&self, k: ComposedChild) -> Option<LiveChild> {
-        Some(LiveChild {
-            cell: *self.ids.get(&k.cell)?,
-            role: k.role,
-            placed_by: k.placed_by,
-            live: k.live,
-        })
+        self.composer.roster().into_iter().map(live_child).collect()
     }
 
     /// **THE COMPOSED BLOCK** — the composition rendered as document prose, carrying a
@@ -749,6 +722,19 @@ impl LiveComposition {
         out.push_str(BLOCK_CLOSE);
         out.push('\n');
         out
+    }
+}
+
+/// A composed child read at FULL substrate width — a total map, not a lookup. The
+/// layout pointer IS the cell id, so there is nothing to restore and no case in which a
+/// composed child cannot be named (the old `widen` consulted a side table and DROPPED a
+/// child it had no entry for).
+fn live_child(k: ComposedChild) -> LiveChild {
+    LiveChild {
+        cell: dregg_types::CellId(k.cell.0),
+        role: k.role,
+        placed_by: k.placed_by,
+        live: k.live,
     }
 }
 
@@ -912,7 +898,7 @@ mod tests {
     use super::*;
 
     fn cell(tag: u128) -> ChildCellId {
-        ChildCellId(tag)
+        ChildCellId::from_u128(tag)
     }
 
     fn doc() -> DocumentComposer {
