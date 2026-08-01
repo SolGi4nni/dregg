@@ -1093,8 +1093,9 @@ impl TugSession {
     fn hand_fog(&self, who: Player, label: &str) -> ViewNode {
         let count = self.hands[who.idx()].card_ids().len();
         let root = self.hands[who.idx()].root_bytes();
-        // A short hex of the committed root (the public fog datum).
-        let root_hex: String = root[0..4].iter().map(|b| format!("{b:02x}")).collect();
+        // A short hex of the committed root (the public fog datum). It spans two of the
+        // root's eight felt lanes — the retired one-felt slot had only lane 0 to show.
+        let root_hex: String = root[0..8].iter().map(|b| format!("{b:02x}")).collect();
         ViewNode::Section {
             title: label.to_string(),
             tag: String::new(),

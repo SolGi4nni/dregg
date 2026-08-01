@@ -21,9 +21,9 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::membership_descriptor_4ary::{
-    membership_descriptor_of_depth_4ary, membership_witness_4ary,
+    DIGEST_W, Digest8, PI_LEAF, PI_ROOT, create_test_witness, membership_descriptor_of_depth_4ary,
+    membership_witness_4ary,
 };
-use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
 use dregg_circuit::stark_zk::DreggZkStarkConfig;
 use dregg_circuit_prove::gpu_backend::{
     GpuDft, create_cpu_zk_config_seeded, create_gpu_zk_config_seeded, hiding_gpu_dispatch_counters,
@@ -61,18 +61,8 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
         .adapter_name()
         .expect("strict HidingFRI gate requires a named portable GPU adapter");
 
-    let leaf = BabyBear::new(0x00c0_ffee);
-    let witness = create_poseidon2_test_witness(leaf, DEPTH);
-    let siblings = witness
-        .levels
-        .iter()
-        .map(|level| level.siblings)
-        .collect::<Vec<_>>();
-    let positions = witness
-        .levels
-        .iter()
-        .map(|level| level.position)
-        .collect::<Vec<_>>();
+    let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(0x00c0_ffee + k as u32));
+    let (siblings, positions, _root) = create_test_witness(leaf, DEPTH);
     let descriptor = membership_descriptor_of_depth_4ary(DEPTH);
     let (trace, public) = membership_witness_4ary(leaf, &siblings, &positions)
         .expect("depth-2048 4-ary witness builds");
@@ -157,13 +147,21 @@ fn lean_ir2_hidingfri_proof_uses_gpu_merkle_and_is_cpu_exact() {
     verify_vm_descriptor2_with_config(&descriptor, &as_cpu, &public, &cpu_config)
         .expect("untouched CPU HidingFRI verifier accepts GPU-minted bytes");
 
-    let mut wrong_public = public.clone();
-    wrong_public[0] += BabyBear::ONE;
-    assert!(
-        verify_vm_descriptor2_with_config(&descriptor, &as_cpu, &wrong_public, &cpu_config)
-            .is_err(),
-        "CPU verifier accepted the GPU proof for a changed membership leaf"
-    );
+    // The membership statement publishes SIXTEEN PIs — the 8-felt leaf and the 8-felt root.
+    // Perturb every lane of BOTH digests: the pre-`node8` family pinned lane 0 alone, so a
+    // high-lane forgery was invisible to it. Each lane must be refused.
+    for slot in [PI_LEAF, PI_ROOT] {
+        for lane in 0..DIGEST_W {
+            let mut wrong_public = public.clone();
+            wrong_public[slot + lane] += BabyBear::ONE;
+            assert!(
+                verify_vm_descriptor2_with_config(&descriptor, &as_cpu, &wrong_public, &cpu_config)
+                    .is_err(),
+                "CPU verifier accepted the GPU proof for a membership digest changed at \
+                 PI slot {slot} lane {lane}"
+            );
+        }
+    }
 
     let mut changed_proof_bytes = gpu_bytes.clone();
     let changed_index = changed_proof_bytes.len() / 2;

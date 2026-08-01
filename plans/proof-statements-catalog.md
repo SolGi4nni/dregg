@@ -616,53 +616,99 @@ There EXISTS an input state S[0..7] and output state O[0..7] such that:
 
 ---
 
-## 14. Merkle Poseidon2 AIR (MerklePoseidon2Air / MerklePoseidon2StarkAir)
+## 14. Merkle Poseidon2 `node8` membership AIR (`dregg-merkle-membership-4ary-wide-general::v1`)
 
 ### Statement
 
 ```
-There EXISTS a leaf_hash and a Merkle path (siblings, positions) such that:
-  - Iterating hash_4_to_1 from leaf to root using the path yields root
-  - Each level's parent is computed as Poseidon2 hash of 4 children (including current)
-  - PI[0] == leaf_hash
-  - PI[1] == root
+There EXISTS an 8-felt leaf digest and a Merkle path (8-felt siblings, positions) s.t.:
+  - Iterating node8_4ary from leaf to root using the path yields root
+  - Each level's parent is A16( A16(c0 || c1) || A16(c2 || c3) ), all 8 output
+    lanes bound, over the four 8-felt children arranged by position
+  - PI[0..8]  == leaf   (all eight lanes)
+  - PI[8..16] == root   (all eight lanes)
 ```
 
-### Public Inputs (2 elements)
+`A16` is the arity-16 `node8` Poseidon2 absorb (`chip_absorb_all_lanes(16, ..)`), the same
+compression the deployed heap / cap / fields / nullifier trees ride. Authored in Lean:
+`metatheory/Dregg2/Circuit/Emit/MerkleMembership4aryWideEmit.lean` (`wideNodeFold_sound`,
+`wGroups_arranged`, `wCont_all_zero_iff`). Trace width 90, 95 constraints, 16 PIs.
 
-- PI[0]: `leaf_hash` -- the leaf value being proven as member
-- PI[1]: `root` -- the Merkle tree root
+### Public Inputs (16 elements)
+
+- PI[0..8]:  `leaf` -- the 8-felt leaf digest being proven a member
+- PI[8..16]: `root` -- the 8-felt Merkle tree root
 
 ### Witness
 
-- Per level: position (0-3) within the 4-ary node, 3 sibling hashes
-- The full Merkle path from leaf to root
+- Per level: position (0-3) within the 4-ary node as two bits, 3 sibling **8-felt digests**, the four ordered 8-felt children, and both stage-1 digests
+- The full Merkle path from leaf to root (one trace row per level; depth = trace height)
 
 ### Security Properties
 
-- **Soundness:** Each level's hash is computed in-circuit via Poseidon2 `hash_4_to_1`. Position validity is constrained via degree-4 polynomial `pos*(pos-1)*(pos-2)*(pos-3)==0`. Hash binding uses Lagrange interpolation to select correct child ordering.
-- **Collision resistance:** ⚠ **THIS LINE IS UNDER REVIEW AND SHOULD NOT BE CITED — 2026-08-01.**
-  It claimed *"forging membership requires finding a Poseidon2 collision (~2^124 work)"*. A design
-  review measured the deployed construction and the claim does not follow from it: `hash_4_to_1`
-  (`circuit/src/poseidon2.rs`) runs a genuine 16-wide permutation but **returns `state.state[0]` —
-  one felt** — and `generate_merkle_poseidon2_trace` (`circuit/src/dsl/membership.rs:40-76`) chains
-  that felt level to level, while the leaf `compress_member` (`commit/src/typed.rs:613-619`) is
-  `chip_absorb_all_lanes(16, ins)[0]`, discarding 7 of 8 output lanes. **Every node value in the
-  deployed tree is a single BabyBear felt (~31 bits).**
-  ⚑ "It is a hash image" does not rescue this: the bottleneck is the hash's **output width**, not its
-  input entropy — a perfect random oracle with a 31-bit codomain is still brute-forceable in 2^31
-  queries.
-  ⚠ **A replacement figure is deliberately NOT written here.** Getting this bound right deserves the
-  rigor the fields8→9 repair got, not a second guess in the same slot; the review that found it
-  declined to substitute one for that reason. The precedent for the fix already exists in-tree —
-  `cap_membership.rs`, `cap_root`, `nullifier_root`, `heap_root` and `commitments_root` all carry the
-  wide `Faithful8` / arity-16 `node8` pattern in this same rotated commitment.
-- **Two variants:** Round-by-round AIR (depth*TOTAL_ROUNDS rows, verifies every round) and simplified AIR (1 row per level, computes full hash in constraint)
+- **Soundness:** Each level's node is computed in-circuit by THREE arity-16 `node8` chip lookups (`A16(c0||c1)`, `A16(c2||c3)`, then `A16` of those), every one of the 8 output lanes bound — a forged lane has no serving chip row, so it is UNSAT. Position rides two binary bits (`position = b0 + 2*b1`), so the child-selection gates have integer coefficients and degree <= 3; the arrangement they force is proved in Lean (`wGroups_arranged`) to hold at every lane, i.e. of the WHOLE 8-felt values. The level chain is 8 window gates (`wCont_all_zero_iff`), where the retired family had one. Per-row gates are re-lowered as Last-row boundaries so the top level's children are not left unconstrained.
+- **Collision resistance — the real number, derived, at the width actually deployed (2026-08-01).**
+
+  The binding figure is the **COLLISION** bound, not the second-preimage bound: an attacker who
+  contributes a member to the set (or mints their own subtree) chooses *both* sides of the pair, so
+  a birthday search is the relevant work. Quoting the second-preimage figure here would be the
+  substitution this repo has made before.
+
+  **Derivation.** Every node of the tree is the full 8-lane output of `A16`, i.e. an element of
+  `BabyBear^8`. With `p = 2^31 - 2^27 + 1 = 15 * 2^27 + 1`:
+
+  ```
+  log2(p)            = log2(15) + 27            = 30.9068905963
+  node codomain      = p^8   ->  8 * log2(p)    = 247.2551 bits
+  COLLISION  (birthday, the binding figure)     = 247.2551 / 2 = 2^123.63
+  second-preimage (NOT the binding figure)      = 2^247.26
+  ```
+
+  **So: forging a membership path costs ~2^123.63 work.** That is the information-theoretic ceiling
+  the *width* permits; it is not a proof that Poseidon2 attains it, and it is a per-node figure that
+  composes over the path. It sits at the repo's ~124-bit bar and matches the 8-felt `Faithful8`
+  width every other rotated-commitment tree already carries — this family is no longer the binding
+  floor of the light-client statement (see the FRI soundness ledger for what is).
+
+  **What the retired construction actually was.** Until this cutover the per-level node was
+  `chip_absorb_all_lanes(4, children)[0]` — ONE felt, a 30.91-bit codomain:
+
+  ```
+  retired COLLISION      = 30.9069 / 2  = 2^15.45     <- milliseconds
+  retired second-preimage               = 2^30.91
+  ```
+
+  The line that stood here claimed **~2^124**. The measured collision bound was **2^15.45** — an
+  over-claim of **~108.5 bits**. `circuit/tests/membership_forge_tooth.rs` finds a real collision in
+  the retired node by deterministic search at the deployed parameter, turns it into a depth-2 tree
+  in which a leaf that was never in the set reaches the honest authorized root, and then shows the
+  `node8` fold separating the same pair and the deployed prover/verifier refusing the forged path.
+
+  ⚠ **The residual, stated plainly — the LEAF PREIMAGE is not injective, and it is not 2^123.63.**
+  `compress_member` (`commit/src/typed.rs`) now returns all eight lanes, but its preimage is
+  `canonical_32_to_felts_8(pk)`, which packs 30 bits per limb (`(hi & 0x3F) << 24`) and therefore
+  **drops 2 bits of every fourth byte — 16 of the 256 bits never enter the hash**. Two 32-byte
+  values differing only in those bits have a byte-identical leaf, constructed at cost O(1) with no
+  search. Consequences, split by who chooses the candidate:
+  - `SenderAuthorized { PublicRoot }` feeds `PredicateInput::Sender(pk)`, a real signing key. An
+    attacker would need a keypair agreeing with a member's on the other 240 bits — not practically
+    reachable. The tree bound governs.
+  - a `Witnessed { MerkleMembership }` predicate over an attacker-CHOSEN 32-byte value has no such
+    protection: the sibling is constructed, so the honest end-to-end figure there is **O(1)**, not
+    2^123.63.
+
+  The fix is the injective 16 x `u16` limb preimage (`raw_to_u16_le`, exactly 16 inputs = the
+  arity-16 chip row already used) — the same codec `exact_nullifier_aafi` / `Limbs16` /
+  `exact_commitment_leaf8` carry. It is deliberately NOT applied in this pass because lane 0 of
+  `compress_member` is welded in-AIR to `pubkeyCompress1Spec = A(pubkey8 || 0^8)[0]` over the
+  committed pubkey OCTET (`CarrierOctetGates.lean`), so changing the preimage desynchronises a live
+  gate and the repair belongs in Lean, not Rust. **It is the next item, not a closed one.**
+- **One descriptor, depth-uniform:** one row per 4-ary level, the depth riding the trace height. The Rust-authored `MerklePoseidon2Air` / `MerklePoseidon2StarkAir` variants this section used to name no longer exist in the tree.
 
 ### Composition Interface
 
 - **CONSUMED BY:** PresentationProof (issuer membership), BodyMembershipProof (fact existence), NoteSpendingProof (UTXO set)
-- **BINDING:** leaf_hash at row 0, root at last row
+- **BINDING:** leaf at row 0 cols 0..8 (PIs 0..8), root at last row cols 82..90 (PIs 8..16)
 
 ---
 
@@ -677,10 +723,10 @@ There EXISTS a leaf_hash, blinding_factor, and Merkle path such that:
   - The leaf_hash is NOT revealed (zero-knowledge ring membership)
 ```
 
-### Public Inputs (2 elements)
+### Public Inputs (16 elements)
 
-- PI[0]: `blinded_leaf` -- hash_2_to_1(leaf_hash, blinding_factor)
-- PI[1]: `root` -- Merkle tree root (e.g., federation root)
+- PI[0..8]:  `blinded_leaf` -- the 8-felt arity-9 absorb of `leaf_digest || blinding_factor`
+- PI[8..16]: `root` -- the 8-felt Merkle tree root (e.g., federation root)
 
 ### Witness
 
@@ -690,14 +736,14 @@ There EXISTS a leaf_hash, blinding_factor, and Merkle path such that:
 
 ### Security Properties
 
-- **Soundness:** Same as MerklePoseidon2StarkAir (Poseidon2 hash binding + position validity), plus blinding constraint: `col[7] == hash_2_to_1(col[0], col[6])` verified on every row.
+- **Soundness:** Same as section 14's `node8` fold (8-lane hash binding + position validity), plus the widened blinding tooth: an **arity-9** absorb over `cur8 || blinding` publishing an 8-felt blinded leaf, every output lane bound. It was `hash_2_to_1(col[0], col[6])` — one felt — so the published blinded leaf carried the same ~2^15.45 collision bound as the retired tree; it is now 2^123.63 by the derivation in section 14. Authored in `metatheory/Dregg2/Circuit/Emit/BlindedMembershipWideEmit.lean`; trace width 99, 96 constraints, 16 PIs.
 - **Zero-knowledge:** Row 0 col 0 (leaf_hash) is NOT bound to any public input. Only the blinded version appears publicly.
 - **Unlinkability:** Same issuer with different blinding_factor produces different PI[0] values. Verifier cannot correlate presentations of the same credential.
 
 ### Composition Interface
 
 - **CONSUMED BY:** PresentationProof (unlinkable issuer membership in federation)
-- **BINDING:** blinded_leaf at row 0 col 7, root at last row col 5
+- **BINDING:** blinded_leaf at row 0 cols 91..99, root at last row cols 82..90
 
 ---
 

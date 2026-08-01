@@ -51,12 +51,10 @@
 //! be `0`. Position-general trees need a position-generalized emitted descriptor (a descriptor-lane
 //! follow-up), not a change here.
 
-use crate::descriptor_ir2::{
-    CHIP_OUT_LANES, EffectVmDescriptor2, chip_absorb_all_lanes, parse_vm_descriptor2,
-};
+use crate::descriptor_ir2::{EffectVmDescriptor2, chip_absorb_all_lanes, parse_vm_descriptor2};
 use crate::field::BabyBear;
 use crate::membership_descriptor_4ary::{
-    C0, C1, C2, C3, CUR, LANE_BASE, MEMBERSHIP_4ARY_WIDTH, membership_witness_4ary,
+    CUR, DIGEST_W, Digest8, MEMBERSHIP_4ARY_WIDTH, PI_ROOT, membership_witness_4ary,
 };
 
 // ---- Column layout (mirror `BlindedMembershipEmit.lean` §1). ----
@@ -117,7 +115,7 @@ pub fn blinded_leaf(leaf_hash: BabyBear, blinding_factor: BabyBear) -> BabyBear 
 /// emitted `dregg-blinded-membership::v1` descriptor.
 ///
 /// `siblings` is the per-level sibling triple (depth [`BLINDED_MEMBERSHIP_DEPTH`] = 2); `positions`
-/// mirrors [`crate::poseidon2_air::generate_blinded_merkle_poseidon2_trace`]'s signature but — since
+/// mirrors the signature of the now-DELETED `generate_blinded_merkle_poseidon2_trace` but — since
 /// the emitted descriptor pins the member to the leftmost child slot — each entry must be `0`.
 ///
 /// The two Merkle parents (`PARENT0`, `PARENT1` = root) are the genuine `hash_4_to_1` chip out0 of
@@ -198,146 +196,203 @@ pub fn blinded_membership_witness(
 }
 
 // ============================================================================================
-// Depth-GENERAL, 4-ARY, GENERAL-POSITION blinded ring-membership (Golden Lift, stage 3d-DIM).
+// Depth-GENERAL, 4-ARY, GENERAL-POSITION, **8-FELT (`node8`)** blinded ring-membership.
 //
-// The depth-2/leftmost `blinded_membership_witness` above cannot carry PRODUCTION presentations,
-// which authenticate DEPTH-8, general-position (`position = i % 4`) paths (`bridge/present.rs`). This
-// family generalizes it exactly as [`crate::membership_descriptor_4ary`] generalizes the plain 4-ary
-// membership: ONE 4-ary Merkle level per trace row (depth in the trace HEIGHT + descriptor NAME),
-// carrying the two position bits + the ordered-children selection gates + the arity-4 `hash_4_to_1`
-// parent chip PER ROW (reused byte-for-byte from `membership_descriptor_4ary`), PLUS the arity-2
-// blinding tooth binding `blinded_leaf = hash_2_to_1(cur, blinding)` — the row-0 `cur` IS the hidden
-// member `leaf_hash`. PIs stay `[blinded_leaf, root]` (2, unlinkable); the member and the blinding
-// factor are hidden witnesses.
+// ## What this closes (felt-width finding #2 — federation)
 //
-// ## Column layout (width 27) — the 4-ary path columns (0..17) are IDENTICAL to
-// [`crate::membership_descriptor_4ary`]; the blinding tooth appends three blocks.
+// Until the WIDE cutover this family's node was **one BabyBear felt**: each level absorbed the four
+// children as four SINGLE felts (arity 4, out0 only), the continuity window chained ONE column, and
+// the blinding tooth absorbed the member digest as ONE felt (arity 2). So every interior node, the
+// committed root, AND the published blinded leaf were ~31-bit commitments — collidable at 2^15.5.
+// An attacker who contributes to a subtree birthday-collides an interior node and presents a
+// second, distinct authentication path reaching the SAME authorized federation root; and two member
+// digests agreeing on lane 0 publish the SAME blinded leaf under the same blinding factor, for free.
 //
-// | col     | name                     | meaning                                                       |
-// |---------|--------------------------|--------------------------------------------------------------|
-// | 0       | `CUR`                    | running hash (row 0 = the hidden `leaf_hash`; blind in0)      |
-// | 1..3    | `SIB0..SIB2`             | the three co-path siblings at this level (HIDDEN)            |
-// | 4,5     | `B0,B1`                  | position bits (`position = b0 + 2·b1 ∈ {0,1,2,3}`)            |
-// | 6..9    | `C0..C3`                 | the ordered children (`children[position] = cur`)            |
-// | 10      | `PAR`                    | `hash_4_to_1(c0..c3)` (chip out0); last row PI-pinned = root  |
-// | 11..17  | path lanes               | the 7 witnessed permutation lanes of `PAR`                    |
-// | 18      | `BLINDING_4ARY`          | the fresh blinding factor (HIDDEN — this gives unlinkability) |
-// | 19      | `BLINDED_LEAF_COL_4ARY`  | `hash_2_to_1(cur, blinding)` (chip out0); row-0 PI-pinned     |
-// | 20..26  | blind lanes              | the 7 witnessed permutation lanes of the blinding tooth       |
+// **Every node of this tree is now a full 8-felt Poseidon2 digest, and the published blinded leaf is
+// 8 felts of a 9-felt preimage.** The one-felt path is DELETED, not deprecated.
+//
+// ## The widened scheme (authored in Lean — LAW #1)
+//
+// The algebra is `Dregg2.Circuit.Emit.BlindedMembershipWideEmit` (`blindedMembershipWideDesc`);
+// Rust parses the emitted IR2 bytes and supplies witnesses, and constructs no constraints. The path
+// block (columns 0..90) is laid out IDENTICALLY to `MerkleMembership4aryWideEmit` — the same
+// balanced two-stage arity-16 `node8` fold
+//
+//     node8_4ary(c0,c1,c2,c3) = A16( A16(c0 ‖ c1) ‖ A16(c2 ‖ c3) )
+//
+// — so [`membership_witness_4ary`] builds it verbatim and this builder only appends the blinding
+// tooth. The Lean keystones are `wideNodeFold_sound` (a row's three fold lookups force the genuine
+// `wideFold4`), `wideBlind_sound` (the blind lookup forces the 8 published columns to
+// `A11(cur8 ‖ blinding ‖ 0 ‖ 0)` — the commitment binds the WHOLE member digest, not its lane 0),
+// `wCont_all_zero_iff` (the chain rides all 8 lanes), and the two anti-masquerade teeth
+// `interior_forge_narrow_admits_wide_refuses` / `blinded_leaf_forge_narrow_admits_wide_refuses`.
+//
+// **THE BLINDING IS PRESERVED.** The fresh blinding factor still rides the leaf, and leaf +
+// blinding stay HIDDEN — that hiddenness IS the unlinkability. What widened is the PREIMAGE and the
+// published image, not the PI *surface* of a secret.
+//
+// ## Column layout (width 99) — cols 0..90 are byte-for-byte
+// [`crate::membership_descriptor_4ary`]'s wide path row; the blinding tooth appends two blocks.
+//
+// | cols    | name                     | meaning                                                    |
+// |---------|--------------------------|------------------------------------------------------------|
+// | 0..8    | `CUR`                    | running 8-felt node (row 0 = the HIDDEN member leaf digest) |
+// | 8..32   | `SIB0..SIB2`             | the three co-path 8-felt siblings at this level (HIDDEN)    |
+// | 32,33   | `B0,B1`                  | position bits (`position = b0 + 2·b1 ∈ {0,1,2,3}`)          |
+// | 34..66  | `C0..C3`                 | the ordered 8-felt children (`children[position] = cur8`)   |
+// | 66..74  | `H01`                    | stage-1 left  `A16(c0 ‖ c1)` — all 8 lanes bound            |
+// | 74..82  | `H23`                    | stage-1 right `A16(c2 ‖ c3)` — all 8 lanes bound            |
+// | 82..90  | `PAR`                    | `A16(h01 ‖ h23)`; last row pinned to PIs 8..16 = the root   |
+// | 90      | `BLINDING_4ARY`          | the fresh blinding factor (HIDDEN — the unlinkability)      |
+// | 91..99  | `BLINDED_LEAF_COL_4ARY`  | `A11(cur8 ‖ blinding ‖ 0 ‖ 0)`; row 0 pinned to PIs 0..8             |
+//
+// UNLIKE the plain wide membership, the row-0 running node is NOT PI-pinned: it stays hidden, and
+// only its 8-felt blinded image is published.
 
-/// The 4-ary PATH block this family's descriptor carries: the 11 semantic columns PLUS the 7
-/// witnessed `PAR` permutation lanes at `[LANE_BASE, 18)`.
+/// The blinding tooth's chip arity: all 8 lanes of the member digest, the blinding felt, and TWO
+/// ZERO PADS, in ONE absorb (Lean `wBlindIns`, `#guard wBlindIns.length == 11`). The eleven inputs
+/// carry the whole preimage — the retired family's arity-2 `[cur0, blinding]` is exactly the lane-0
+/// waist this deletes.
 ///
-/// DELIBERATELY NOT `MEMBERSHIP_4ARY_WIDTH`. E7 narrowed the GENERAL 4-ary descriptor onto the
-/// narrow chip bus (18 → 11), but `blinded-membership-4ary-depth*` was NOT in that batch — it is
-/// still emitted WIDE, so its blinding tooth still starts at 18 and the path lanes still ride the
-/// trace. Deriving these indices from the general width would silently RENUMBER this family's
-/// columns the moment the general one shrank. They re-couple when the blinded-4ary pair is
-/// narrowed (the E7 renumbering set).
-pub const PATH_BLOCK_4ARY: usize = LANE_BASE + (CHIP_OUT_LANES - 1); // 18
-/// The fresh blinding factor column (HIDDEN).
-pub const BLINDING_4ARY: usize = PATH_BLOCK_4ARY; // 18
-/// The published blinded-leaf column (`hash_2_to_1(cur, blinding)`; row-0 pinned to `PI_BLINDED_LEAF_4ARY`).
-pub const BLINDED_LEAF_COL_4ARY: usize = PATH_BLOCK_4ARY + 1; // 19
-/// First of the 7 witnessed blinding (arity-2) Poseidon2 chip output lanes 1..7.
-pub const BLIND_LANE_BASE_4ARY: usize = PATH_BLOCK_4ARY + 2; // 20
-/// Total main-trace width: the 18 path columns + the blinding tooth's 2 semantic + 7 lane columns.
-pub const BLINDED_4ARY_WIDTH: usize = PATH_BLOCK_4ARY + 2 + (CHIP_OUT_LANES - 1); // 27
+/// ⚠ **ELEVEN, NOT NINE, AND THE DEPLOYED CHIP FORCES IT.** The Lean asked for arity 9 until
+/// 2026-08-01 and the descriptor was UNPROVABLE: the chip AIR admits `arity ∈ {0,2,3,4,7,11,16}`
+/// (`descriptor_ir2.rs` asserts `arity·(a−2)(a−3)(a−4)(a−7)(a−11)(a−16) = 0`, degree 7 = the whole
+/// S-box budget, so no eighth factor can be added) and at `a = 9` that product is `52920 ≠ 0`.
+/// Independently, [`chip_absorb_all_lanes`] seeds lanes 4/5/6 from the inputs only when
+/// `arity ∈ {7, 11, 16}`; at 9 it writes the arity TAG into lane 4 and zeros 5 and 6, so three of
+/// the eight member lanes never entered the preimage and the tooth bound five, not eight. Arity 11
+/// is the deployed wide arity (`CHIP_WIDE_ARITY`), the pads are binding-preserving
+/// (`packBlind_inj`), and every leaf lane now enters the permutation.
+pub const BLIND_ARITY_4ARY: usize = crate::descriptor_ir2::CHIP_WIDE_ARITY; // 11
 
-/// PI slot 0: the published `blinded_leaf` (the unlinkable commitment).
+// DRIFT GUARD — the padded preimage must still carry the whole member digest plus the blinding.
+const _: () = assert!(BLIND_ARITY_4ARY >= DIGEST_W + 1);
+
+/// The fresh blinding factor column (HIDDEN). Lean `wBLINDING`.
+pub const BLINDING_4ARY: usize = 90;
+/// First column of the published 8-felt blinded leaf group `[91, 99)` (row 0 pinned to PIs 0..8).
+/// Lean `wBLINDED`.
+pub const BLINDED_LEAF_COL_4ARY: usize = 91;
+/// Total main-trace width: the 90-column wide path row + the blinding felt + the 8-felt image.
+pub const BLINDED_4ARY_WIDTH: usize = 99;
+
+// DRIFT GUARD — two INDEPENDENT sources must agree, not a constant against its own definition.
+// The literals above are read off the Lean `w*` column defs; `MEMBERSHIP_4ARY_WIDTH` is the plain
+// wide membership family's own width. The Lean lays this family's path block out identically to
+// `MerkleMembership4aryWideEmit`, so the blinding tooth MUST start exactly where that row ends. If
+// either side moves, this fails at compile time instead of silently renumbering the trace.
+const _: () = assert!(BLINDING_4ARY == MEMBERSHIP_4ARY_WIDTH);
+const _: () = assert!(BLINDED_LEAF_COL_4ARY == BLINDING_4ARY + 1);
+const _: () = assert!(BLINDED_4ARY_WIDTH == BLINDED_LEAF_COL_4ARY + DIGEST_W);
+
+/// PI slots `0..8`: the published 8-felt `blinded_leaf` (the unlinkable commitment). Lean
+/// `wPI_BLINDED`.
 pub const PI_BLINDED_LEAF_4ARY: usize = 0;
-/// PI slot 1: the public federation Merkle `root`.
-pub const PI_ROOT_4ARY: usize = 1;
-/// Public-input count: `[blinded_leaf, root]`.
-pub const BLINDED_4ARY_PI_COUNT: usize = 2;
+/// PI slots `8..16`: the public 8-felt federation Merkle `root`. Lean `wPI_ROOT`.
+pub const PI_ROOT_4ARY: usize = 8;
+/// Public-input count: `[blinded0..blinded7, root0..root7]`.
+pub const BLINDED_4ARY_PI_COUNT: usize = 16;
 
-/// The prefix of the depth-GENERAL 4-ary blinded ring-membership descriptor name
-/// ([`blinded_membership_descriptor_of_depth_4ary`] pins `depth{N}` after it), mirroring
-/// [`crate::membership_descriptor_4ary::MEMBERSHIP_4ARY_NAME_PREFIX`].
-pub const BLINDED_4ARY_NAME_PREFIX: &str = "dregg-blinded-membership-4ary-general-depth";
-
-/// **`blinded_membership_descriptor_of_depth_4ary`** — the depth-GENERAL, 4-ary, general-position
-/// blinded ring-membership descriptor. The constraint block is depth-uniform (the depth lives in the
-/// trace height + the `name`); a depth-`d` witness (see [`blinded_membership_witness_4ary`]) hashes
-/// `d` `hash_4_to_1` levels whose root is byte-equal to the deployed set root, and publishes the
-/// arity-2 blinding of the hidden leaf. The path constraints (6 per-row gates + the parent chip +
-/// continuity + last-row re-lowering) are REUSED verbatim from
-/// [`crate::membership_descriptor_4ary::membership_descriptor_of_depth_4ary`]; the leaf PI pin is
-/// DROPPED (the member is hidden) and replaced by the blinding tooth + the row-0 `blinded_leaf` pin.
+/// THE WIRE DISPATCH PREFIX for the depth-GENERAL 4-ary blinded ring-membership family
+/// ([`blinded_membership_descriptor_of_depth_4ary`] writes `depth{N}` after it, and — unlike the
+/// plain membership family — stamps that label into the served descriptor's own `name`, so a
+/// producer that puts `desc.name` on the wire still routes).
 ///
-/// Mirrors the byte order of the Lean `blindedMembership4aryDesc` in
-/// `metatheory/Dregg2/Circuit/Emit/BlindedMembershipEmit.lean` (cross-checked in the tests against the
-/// byte-pinned goldens).
+/// ⚑ FLAG DAY: this string CHANGED at the `node8` cutover (it was
+/// `dregg-blinded-membership-4ary-general-depth`). The old identity no longer resolves, so a
+/// producer or a stored proof from the one-felt epoch is answered `UnknownAir` and REFUSED rather
+/// than reinterpreted under a descriptor with different semantics and a different PI count.
+pub const BLINDED_4ARY_NAME_PREFIX: &str = "dregg-blinded-membership-4ary-wide-general-depth";
+
+/// The emitted descriptor's OWN name, as the Lean `blindedMembershipWideDesc` fixes it. The served
+/// descriptor's `name` is overwritten with the depth label (above); this constant exists so the
+/// byte-pin test can check the golden it started from.
+pub const BLINDED_4ARY_WIDE_EMITTED_NAME: &str = "dregg-blinded-membership-4ary-wide-general::v1";
+
+/// Exact bytes emitted and byte-pinned by
+/// `Dregg2.Circuit.Emit.BlindedMembershipWideEmit.BLINDED_MEMBERSHIP_WIDE_GOLDEN`.
+pub const BLINDED_MEMBERSHIP_4ARY_WIDE_JSON: &str =
+    include_str!("../descriptors/by-name/blinded-membership-4ary-wide.json");
+
+/// **The WIDE published blinded leaf** — the 8-felt image `A11(leaf8 ‖ blinding ‖ 0 ‖ 0)` the descriptor
+/// binds the `BLINDED_LEAF_COL_4ARY` group to, and the in-circuit hash a light client / the fold
+/// re-verifies. All 8 lanes of the member digest and the blinding felt enter ONE absorb, and all 8
+/// output lanes are the commitment: there is no lane-0 projection on either side.
+pub fn blinded_leaf_8(leaf: &Digest8, blinding_factor: BabyBear) -> Digest8 {
+    let mut ins = [BabyBear::ZERO; BLIND_ARITY_4ARY];
+    ins[..DIGEST_W].copy_from_slice(leaf);
+    ins[DIGEST_W] = blinding_factor;
+    chip_absorb_all_lanes(BLIND_ARITY_4ARY, &ins)
+}
+
+/// **`blinded_membership_descriptor_of_depth_4ary`** — the depth-GENERAL, 4-ary, general-position,
+/// 8-felt blinded ring-membership descriptor. The constraint block is depth-uniform (the depth
+/// lives in the trace HEIGHT), so Rust parses ONE Lean-emitted artifact for every supported depth
+/// and never rewrites a constraint.
+///
+/// It DOES stamp the depth label into `name`. That is deliberate and load-bearing: this family's
+/// producers (`bridge/present.rs`'s `build_descriptor_wire`) put the served descriptor's `name` on
+/// the wire as the `predicate`, and `descriptor_by_name` routes only the
+/// [`BLINDED_4ARY_NAME_PREFIX`]`{depth}` form — so name and wire identity must coincide here.
+/// (Contrast [`crate::membership_descriptor_4ary::membership_4ary_dispatch_name`], where they are
+/// deliberately distinct and the conflation cost a production `UnknownAir`.)
 pub fn blinded_membership_descriptor_of_depth_4ary(depth: usize) -> EffectVmDescriptor2 {
     assert!(
         depth >= 2 && depth.is_power_of_two(),
         "blinded-membership depth must be a power of two ≥ 2"
     );
-    // `BlindedMembershipEmit.lean` proves the constraint block is depth-uniform:
-    // only this dispatch label differs. Rust may select a label, but never authors
-    // or mutates a constraint.
-    let mut desc = parse_vm_descriptor2(include_str!(
-        "../descriptors/by-name/blinded-membership-4ary-depth2.json"
-    ))
-    .expect("Lean-emitted blinded-membership descriptor must parse");
+    let mut desc = parse_vm_descriptor2(BLINDED_MEMBERSHIP_4ARY_WIDE_JSON)
+        .expect("Lean-emitted WIDE blinded-membership descriptor must parse");
     desc.name = format!("{BLINDED_4ARY_NAME_PREFIX}{depth}");
     desc
 }
 
-/// Build the depth-GENERAL, 4-ary, general-position **blinded** ring-membership base trace + public
-/// inputs `[blinded_leaf, root]`.
+/// Build the depth-GENERAL, 4-ary, general-position **8-felt blinded** ring-membership base trace +
+/// public inputs `[blinded0..blinded7, root0..root7]`.
 ///
-/// The 4-ary authentication path is built by [`membership_witness_4ary`] (so its committed root is
-/// BYTE-EQUAL to the deployed `hash_4_to_1`-chained root), then each row is extended with the arity-2
-/// blinding tooth: `blinded_leaf_col = hash_2_to_1(cur, blinding_factor)`, with the 7 permutation
-/// lanes witnessed. The row-0 `cur` is the hidden `leaf_hash`, so `pis[0] = hash_2_to_1(leaf_hash,
-/// blinding_factor)` — the same `blinding_factor` is reused on interior rows only to serve the
-/// (unpinned) blinding lookup there; only the row-0 blinded leaf is a public input.
+/// The authentication path is built by [`membership_witness_4ary`] — the SAME 90-column wide row,
+/// so the committed root is byte-equal to the plain wide membership family's `node8_4ary` fold —
+/// and each row is then extended with the wide blinding tooth: the 8 columns at
+/// [`BLINDED_LEAF_COL_4ARY`] carry `A9(cur8 ‖ blinding_factor)` for THAT row's running node. The
+/// row-0 running node is the hidden member leaf digest, so `pis[0..8] = blinded_leaf_8(leaf_hash,
+/// blinding_factor)`. The blinding factor is reused on interior rows only to serve the (unpinned)
+/// per-row blinding lookup; only the row-0 image is public.
 ///
 /// `siblings.len()` must equal `positions.len()`, each position `< 4`, and the depth a power of two
-/// ≥ 2 (the trace-height requirement, enforced by [`membership_witness_4ary`]). The member `leaf_hash`
-/// and the `blinding_factor` are DELIBERATELY absent from the PIs (unlinkability).
+/// ≥ 2 (the trace-height requirement, enforced by [`membership_witness_4ary`]). The member digest
+/// and the blinding factor are DELIBERATELY absent from the PIs (unlinkability).
 pub fn blinded_membership_witness_4ary(
-    leaf_hash: BabyBear,
+    leaf_hash: Digest8,
     blinding_factor: BabyBear,
-    siblings: &[[BabyBear; 3]],
+    siblings: &[[Digest8; 3]],
     positions: &[u8],
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let (path_trace, path_pis) = membership_witness_4ary(leaf_hash, siblings, positions)?;
-    // path_pis = [leaf_hash, root]; the root is byte-equal to the deployed set root.
-    let root = path_pis[1];
+    // path_pis = [leaf0..leaf7, root0..root7]; the root is the wide `node8_4ary` fold.
+    let root: Digest8 = core::array::from_fn(|k| path_pis[PI_ROOT + k]);
 
     let mut trace: Vec<Vec<BabyBear>> = Vec::with_capacity(path_trace.len());
-    let mut published_blinded_leaf = BabyBear::ZERO;
+    let mut published_blinded_leaf = [BabyBear::ZERO; DIGEST_W];
     for (j, prow) in path_trace.iter().enumerate() {
         debug_assert_eq!(prow.len(), MEMBERSHIP_4ARY_WIDTH);
-        let cur = prow[CUR];
-        // The genuine arity-2 chip absorb: out0 = hash_2_to_1(cur, blinding), lanes 1..7 witnessed.
-        let blind = chip_absorb_all_lanes(2, &[cur, blinding_factor]);
+        let cur: Digest8 = core::array::from_fn(|k| prow[CUR + k]);
+        // The genuine arity-11 chip absorb: all 8 output lanes ARE the blinded image, and all 8
+        // lanes of `cur` plus the blinding felt are in the preimage. A forged image lane, a forged
+        // member lane, or a forged blinding factor has no serving chip row → UNSAT.
+        let blind = blinded_leaf_8(&cur, blinding_factor);
         let mut row = vec![BabyBear::ZERO; BLINDED_4ARY_WIDTH];
         row[..MEMBERSHIP_4ARY_WIDTH].copy_from_slice(prow);
-        // `membership_witness_4ary` no longer carries the `PAR` permutation lanes (E7 narrowed the
-        // GENERAL descriptor). THIS family's descriptor is still WIDE, so re-derive them here from
-        // the same ordered children the path row carries — the arity-4 chip absorb whose out0 is
-        // `prow[PAR]`. A forged child or digest therefore still has no serving chip row → UNSAT.
-        let path_lanes = chip_absorb_all_lanes(4, &[prow[C0], prow[C1], prow[C2], prow[C3]]);
-        for k in 0..(CHIP_OUT_LANES - 1) {
-            row[LANE_BASE + k] = path_lanes[k + 1];
-        }
         row[BLINDING_4ARY] = blinding_factor;
-        row[BLINDED_LEAF_COL_4ARY] = blind[0];
-        for k in 0..(CHIP_OUT_LANES - 1) {
-            row[BLIND_LANE_BASE_4ARY + k] = blind[k + 1];
-        }
+        row[BLINDED_LEAF_COL_4ARY..BLINDED_LEAF_COL_4ARY + DIGEST_W].copy_from_slice(&blind);
         if j == 0 {
-            published_blinded_leaf = blind[0]; // = hash_2_to_1(leaf_hash, blinding_factor)
+            published_blinded_leaf = blind; // = blinded_leaf_8(leaf_hash, blinding_factor)
         }
         trace.push(row);
     }
 
-    let mut pis = vec![BabyBear::ZERO; BLINDED_4ARY_PI_COUNT];
-    pis[PI_BLINDED_LEAF_4ARY] = published_blinded_leaf;
-    pis[PI_ROOT_4ARY] = root;
+    let mut pis = Vec::with_capacity(BLINDED_4ARY_PI_COUNT);
+    pis.extend_from_slice(&published_blinded_leaf);
+    pis.extend_from_slice(&root);
     Ok((trace, pis))
 }
 
@@ -566,133 +621,290 @@ mod tests_4ary {
     use super::*;
     use crate::descriptor_by_name::descriptor_by_name;
     use crate::descriptor_ir2::{
-        EffectVmDescriptor2, LookupSpec, MemBoundaryWitness, TID_P2, VmConstraint2,
-        prove_vm_descriptor2, verify_vm_descriptor2,
+        CHIP_NODE8_ARITY, CHIP_OUT_LANES, CHIP_RATE, EffectVmDescriptor2, LookupSpec,
+        MemBoundaryWitness, TID_P2, TID_P2_NARROW, VmConstraint2, prove_vm_descriptor2,
+        verify_vm_descriptor2,
     };
     use crate::dsl::membership::create_test_witness;
     use crate::lean_descriptor_air::LeanExpr;
-    use std::panic::AssertUnwindSafe;
+    use crate::membership_descriptor_4ary::membership_root_4ary;
+    use crate::refusal::{Outcome, classify};
 
-    /// `true` iff `(trace, pis)` is REJECTED end-to-end (prove refuses OR the proof fails verify).
+    fn d8(base: u32) -> Digest8 {
+        core::array::from_fn(|k| BabyBear::new(base + k as u32))
+    }
+
+    /// `true` iff `(trace, pis)` is REJECTED end-to-end (prove refuses OR the produced proof fails
+    /// to verify). Prove-THEN-verify is the faithful consumer posture; `classify` REDS on any panic
+    /// that is not the p3 debug prover's documented unsat verdict, so a crash cannot masquerade as
+    /// a refusal.
     fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]) -> bool {
-        let r = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        match classify("rejects", || {
             let proof =
                 prove_vm_descriptor2(desc, trace, pis, &MemBoundaryWitness::default(), &[])?;
             verify_vm_descriptor2(desc, &proof, pis)
-        }));
-        matches!(r, Err(_) | Ok(Err(_)))
+        }) {
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
+        }
     }
 
-    /// The production-shaped witness: a depth-`d`, general-position (`position = i % 4`) path (exactly
-    /// `create_test_witness` / `bridge/present.rs`), blinded with `blinding`.
+    /// The production-shaped witness: a depth-`d`, general-position (`position = i % 4`) path
+    /// (exactly `create_test_witness` / `bridge/present.rs`), blinded with `blinding`.
     fn general_position_witness(
-        leaf: BabyBear,
+        leaf: Digest8,
         blinding: BabyBear,
         depth: usize,
-    ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, BabyBear) {
+    ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Digest8) {
         let (siblings, positions, prod_root) = create_test_witness(leaf, depth);
         let (trace, pis) = blinded_membership_witness_4ary(leaf, blinding, &siblings, &positions)
-            .expect("4-ary blinded witness builds");
+            .expect("4-ary wide blinded witness builds");
         (trace, pis, prod_root)
     }
 
-    /// BYTE-PIN — the Rust builder is byte-identical to the Lean `blindedMembership4aryDesc` golden
-    /// (`emitVmJson2`-emitted in `BlindedMembershipEmit.lean`, `#guard`-pinned there). Parsing the
-    /// Lean golden and comparing to the builder closes the Lean↔Rust loop at both production depths.
+    /// SHAPE PIN — the WIDE shape, pinned against the Lean `#guard`s in
+    /// `BlindedMembershipWideEmit.lean` (99 columns, 16 PIs, 96 constraints, FOUR wide-bus chip
+    /// lookups — three arity-16 fold stages plus the arity-11 blinding tooth — EIGHT continuity
+    /// windows, and ZERO narrow-bus lookups).
     #[test]
-    fn builder_matches_lean_golden() {
-        use crate::descriptor_ir2::parse_vm_descriptor2;
-        const G2: &str = include_str!("../descriptors/by-name/blinded-membership-4ary-depth2.json");
-        const G8: &str = include_str!("../descriptors/by-name/blinded-membership-4ary-depth8.json");
+    fn descriptor_shape_is_the_wide_lean_guarded_one() {
+        let d = blinded_membership_descriptor_of_depth_4ary(8);
+        assert_eq!(d.trace_width, BLINDED_4ARY_WIDTH);
+        assert_eq!(d.trace_width, 99);
+        assert_eq!(d.public_input_count, BLINDED_4ARY_PI_COUNT);
+        assert_eq!(d.public_input_count, 16);
+        assert_eq!(d.constraints.len(), 96);
+        assert!(d.tables.is_empty());
+
+        // FOUR wide chip lookups: the two stage-1 folds, the parent fold, and the blinding tooth.
+        let chips: Vec<&LookupSpec> = d
+            .constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint2::Lookup(l) if l.table == TID_P2 => Some(l),
+                _ => None,
+            })
+            .collect();
         assert_eq!(
-            parse_vm_descriptor2(G2).expect("depth-2 golden decodes"),
-            blinded_membership_descriptor_of_depth_4ary(2),
-            "Rust builder must equal the byte-pinned Lean depth-2 golden"
+            chips.len(),
+            4,
+            "two stage-1 folds + the parent fold + the wide blinding tooth"
         );
+        let arities: Vec<LeanExpr> = chips.iter().map(|l| l.tuple[0].clone()).collect();
         assert_eq!(
-            parse_vm_descriptor2(G8).expect("depth-8 golden decodes"),
-            blinded_membership_descriptor_of_depth_4ary(8),
-            "Rust builder must equal the byte-pinned Lean depth-8 golden"
+            arities,
+            vec![
+                LeanExpr::Const(CHIP_NODE8_ARITY as i64),
+                LeanExpr::Const(CHIP_NODE8_ARITY as i64),
+                LeanExpr::Const(CHIP_NODE8_ARITY as i64),
+                LeanExpr::Const(BLIND_ARITY_4ARY as i64),
+            ],
+            "three arity-16 node8 fold stages, then the arity-11 blinding absorb \
+             (the deployed family's arity-2 `[cur0, blinding]` tooth is DELETED)"
+        );
+        for l in &chips {
+            assert_eq!(
+                l.tuple.len(),
+                1 + CHIP_RATE + CHIP_OUT_LANES,
+                "the WIDE tuple shape (arity ‖ 16 ins ‖ 8 out lanes)"
+            );
+        }
+        // BUS IDENTITY — the widening is a CUTOVER, not an addition. A single-output (narrow)
+        // lookup is exactly the one-felt waist this deleted; none may survive.
+        assert_eq!(
+            d.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2_NARROW))
+                .count(),
+            0,
+            "no NARROW-bus chip lookup may survive the node8 widening"
+        );
+        // EIGHT continuity windows (the deployed family had ONE).
+        assert_eq!(
+            d.constraints
+                .iter()
+                .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
+                .count(),
+            DIGEST_W,
+            "the level chain must ride every lane"
         );
     }
 
-    /// STEP 0 — dispatch serves the built descriptor with the right shape: width 27, 2 PIs, and
-    /// three chip lookups (two? no — the per-row parent arity-4 + the arity-2 blinding tooth).
+    /// BYTE-PIN — the served descriptor IS the byte-pinned Lean golden
+    /// (`BLINDED_MEMBERSHIP_WIDE_GOLDEN`), modulo the ONE deliberate mutation: the depth label
+    /// stamped into `name` so the wire identity and the descriptor name coincide for this family.
     #[test]
-    fn dispatch_serves_the_built_descriptor() {
+    fn builder_is_the_lean_golden_modulo_the_depth_label() {
+        use crate::descriptor_ir2::parse_vm_descriptor2;
+        let golden = parse_vm_descriptor2(BLINDED_MEMBERSHIP_4ARY_WIDE_JSON)
+            .expect("the WIDE Lean golden decodes");
+        assert_eq!(
+            golden.name, BLINDED_4ARY_WIDE_EMITTED_NAME,
+            "the golden's own name is the Lean `blindedMembershipWideDesc.name`"
+        );
+        for depth in [2usize, 4, 8, 16] {
+            let mut expect = golden.clone();
+            expect.name = format!("{BLINDED_4ARY_NAME_PREFIX}{depth}");
+            assert_eq!(
+                expect,
+                blinded_membership_descriptor_of_depth_4ary(depth),
+                "the builder must be the Lean golden verbatim except for the depth label"
+            );
+        }
+    }
+
+    /// ⚑ FLAG DAY — the retired ONE-FELT wire identity must be UNROUTABLE, so a stored pre-cutover
+    /// proof is REFUSED (`UnknownAir`) rather than reinterpreted under a descriptor with a
+    /// different PI count and different semantics. The new identity must route, and route to
+    /// exactly what a producer proves under.
+    #[test]
+    fn dispatch_routes_the_new_identity_and_refuses_the_retired_one() {
         for depth in [2usize, 4, 8] {
             let name = format!("{BLINDED_4ARY_NAME_PREFIX}{depth}");
-            let via = descriptor_by_name(&name).expect("4-ary blinded dispatches");
-            assert_eq!(via.name, name);
+            let via = descriptor_by_name(&name).expect("the wide blinded identity must route");
+            assert_eq!(via.name, name, "the served name IS the wire identity here");
             assert_eq!(via.trace_width, BLINDED_4ARY_WIDTH);
             assert_eq!(via.public_input_count, BLINDED_4ARY_PI_COUNT);
             assert_eq!(via, blinded_membership_descriptor_of_depth_4ary(depth));
 
-            let chip: Vec<&LookupSpec> = via
-                .constraints
-                .iter()
-                .filter_map(|c| match c {
-                    VmConstraint2::Lookup(l) if l.table == TID_P2 => Some(l),
-                    _ => None,
-                })
-                .collect();
-            assert_eq!(
-                chip.len(),
-                2,
-                "one arity-4 parent hash + one arity-2 blinding tooth"
+            let retired = format!("dregg-blinded-membership-4ary-general-depth{depth}");
+            assert!(
+                descriptor_by_name(&retired).is_none(),
+                "the retired one-felt identity {retired:?} still routes — a pre-cutover proof \
+                 would be REINTERPRETED under the wide descriptor instead of refused"
             );
-            assert_eq!(chip[0].tuple[0], LeanExpr::Const(4), "parent arity-4");
-            assert_eq!(chip[1].tuple[0], LeanExpr::Const(2), "blinding arity-2");
         }
     }
 
-    /// STEP 1 — THE PRODUCTION POLE: an honest DEPTH-8, general-position (`position = i % 4`) blinded
-    /// membership proves through the dispatched descriptor and re-verifies. PIs = `[blinded_leaf,
-    /// root]`; the member `leaf_hash` and the `blinding` factor are HIDDEN. This is exactly the shape
-    /// `bridge/present.rs:1871` feeds.
+    /// ⚑ THE BLINDING TOOTH, AT WIDTH — the published commitment binds EVERY lane of the member
+    /// digest and the blinding felt. Perturbing any one of the nine preimage felts moves the image
+    /// in EVERY output lane; and the deployed narrow tooth's blind spot is stated as the contrast:
+    /// two members agreeing at lane 0 published the SAME one-felt blinded leaf for free.
     #[test]
-    fn honest_depth8_general_position_proves_and_verifies() {
+    fn the_wide_blinding_tooth_binds_all_nine_preimage_felts() {
+        let leaf = d8(0xA11CE);
+        let blinding = BabyBear::new(0xB11D);
+        let img = blinded_leaf_8(&leaf, blinding);
+
+        // Eight genuinely distinct output lanes — catches a replicated / `[x]*8` widening.
+        for i in 0..DIGEST_W {
+            for j in (i + 1)..DIGEST_W {
+                assert_ne!(img[i], img[j], "image lanes {i},{j} collide — not 8 felts");
+            }
+        }
+        // Every member lane is load-bearing, in every output lane.
+        for k in 0..DIGEST_W {
+            let mut alt = leaf;
+            alt[k] += BabyBear::ONE;
+            let alt_img = blinded_leaf_8(&alt, blinding);
+            for i in 0..DIGEST_W {
+                assert_ne!(
+                    img[i], alt_img[i],
+                    "image lane {i} unchanged after perturbing member lane {k} \
+                     — that member felt is NOT in the preimage"
+                );
+            }
+        }
+        // The blinding felt is load-bearing too (this is the unlinkability input).
+        let other = blinded_leaf_8(&leaf, blinding + BabyBear::ONE);
+        for i in 0..DIGEST_W {
+            assert_ne!(
+                img[i], other[i],
+                "image lane {i} ignores the blinding factor"
+            );
+        }
+        // THE DELETED WOUND, stated: a lane-0-equal but distinct member published the SAME
+        // one-felt blinded leaf under the deployed arity-2 tooth. The wide tooth separates them.
+        let mut sibling_member = leaf;
+        sibling_member[4] += BabyBear::ONE;
+        assert_eq!(sibling_member[0], leaf[0], "shares the lane-0 projection");
+        assert_eq!(
+            blinded_leaf(leaf[0], blinding),
+            blinded_leaf(sibling_member[0], blinding),
+            "the deployed one-felt tooth CANNOT tell these two members apart — the wound"
+        );
+        assert_ne!(
+            blinded_leaf_8(&leaf, blinding),
+            blinded_leaf_8(&sibling_member, blinding),
+            "the WIDE tooth must separate two members that agree only on lane 0"
+        );
+    }
+
+    /// STEP 1 — THE PRODUCTION POLE + ROUND-TRIP: an honest DEPTH-8, general-position blinded
+    /// membership proves through the dispatched descriptor and re-verifies, and its 16 PIs
+    /// ROUND-TRIP: the published blinded-leaf group IS `blinded_leaf_8(leaf, blinding)` and the
+    /// published root group IS the independently recomputed `membership_root_4ary` fold, lane for
+    /// lane. The member digest and the blinding factor are HIDDEN.
+    #[test]
+    fn honest_depth8_general_position_proves_verifies_and_round_trips() {
         let depth = 8usize;
         let name = format!("{BLINDED_4ARY_NAME_PREFIX}{depth}");
         let desc = descriptor_by_name(&name).expect("dispatch");
-        let leaf = BabyBear::new(0xA11CE);
+        let leaf = d8(0xA11CE);
         let blinding = BabyBear::new(0xB11D);
-        let (trace, pis, prod_root) = general_position_witness(leaf, blinding, depth);
+        let (siblings, positions, prod_root) = create_test_witness(leaf, depth);
+        let (trace, pis) = blinded_membership_witness_4ary(leaf, blinding, &siblings, &positions)
+            .expect("witness builds");
 
         assert_eq!(trace.len(), depth, "one trace row per 4-ary Merkle level");
+        assert_eq!(trace[0].len(), BLINDED_4ARY_WIDTH);
         assert_eq!(pis.len(), BLINDED_4ARY_PI_COUNT);
+
+        // ROUND-TRIP, not "two digests differ".
         assert_eq!(
-            pis[PI_BLINDED_LEAF_4ARY],
-            blinded_leaf(leaf, blinding),
-            "PI[0] is the genuine hash_2_to_1(leaf, blinding) image"
+            &pis[PI_BLINDED_LEAF_4ARY..PI_BLINDED_LEAF_4ARY + DIGEST_W],
+            &blinded_leaf_8(&leaf, blinding)[..],
+            "PIs 0..8 must BE the genuine A9(leaf8 ‖ blinding) image"
         );
         assert_eq!(
-            pis[PI_ROOT_4ARY], prod_root,
-            "PI[1] is the deployed hash_4_to_1-chained root"
+            &pis[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W],
+            &membership_root_4ary(leaf, &siblings, &positions)[..],
+            "PIs 8..16 must BE the independently folded node8 root"
         );
-        assert!(
-            !pis.contains(&leaf),
-            "leaf_hash is a hidden witness, not a PI"
+        assert_eq!(&pis[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W], &prod_root[..]);
+        // and the trace agrees with the PIs at both ends.
+        assert_eq!(
+            &trace[0][BLINDED_LEAF_COL_4ARY..BLINDED_LEAF_COL_4ARY + DIGEST_W],
+            &pis[PI_BLINDED_LEAF_4ARY..PI_BLINDED_LEAF_4ARY + DIGEST_W]
         );
+        assert_eq!(
+            &trace[depth - 1][crate::membership_descriptor_4ary::PAR
+                ..crate::membership_descriptor_4ary::PAR + DIGEST_W],
+            &prod_root[..]
+        );
+
+        // The member digest and the blinding factor are HIDDEN — no lane of either is published.
+        for k in 0..DIGEST_W {
+            assert!(
+                !pis.contains(&leaf[k]),
+                "member lane {k} leaked into the PIs — it is a hidden witness"
+            );
+        }
         assert!(
             !pis.contains(&blinding),
-            "blinding_factor is hidden, not a PI"
+            "the blinding factor is hidden, not a PI"
         );
 
         let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
-            .expect("honest depth-8 general-position blinded membership must prove");
+            .expect("honest depth-8 general-position wide blinded membership must prove");
         verify_vm_descriptor2(&desc, &proof, &pis).expect("the honest proof must re-verify");
     }
 
-    /// Round-trips at every production depth (2, 4, 8), all general-position.
+    /// Round-trips + proves at every production depth (2, 4, 8), all general-position.
     #[test]
     fn round_trips_depths_2_4_8() {
         for depth in [2usize, 4, 8] {
             let name = format!("{BLINDED_4ARY_NAME_PREFIX}{depth}");
             let desc = descriptor_by_name(&name).expect("dispatch");
-            let leaf = BabyBear::new(0xF00D + depth as u32);
+            let leaf = d8(0xF00D + depth as u32);
             let blinding = BabyBear::new(0xBEEF + depth as u32);
-            let (trace, pis, _) = general_position_witness(leaf, blinding, depth);
+            let (trace, pis, root) = general_position_witness(leaf, blinding, depth);
+            assert_eq!(&pis[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W], &root[..]);
+            assert_eq!(
+                &pis[PI_BLINDED_LEAF_4ARY..PI_BLINDED_LEAF_4ARY + DIGEST_W],
+                &blinded_leaf_8(&leaf, blinding)[..]
+            );
             let proof =
                 prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
                     .unwrap_or_else(|e| panic!("depth-{depth} must prove: {e}"));
@@ -701,93 +913,119 @@ mod tests_4ary {
         }
     }
 
-    /// STEP 2 — NON-MEMBER: a forged claimed `root` PI (not the genuine last parent) makes the root
-    /// pin UNSAT. Non-vacuous: the honest witness is accepted first.
+    /// STEP 2 — NON-MEMBER: a forged claimed `root` PI makes the root pin UNSAT — in EVERY lane,
+    /// not just lane 0 (which is all the one-felt family pinned). Non-vacuous: honest first.
     #[test]
-    fn non_member_root_refuses() {
-        let depth = 8usize;
+    fn forged_root_refuses_in_every_lane() {
+        let depth = 4usize;
         let desc =
             descriptor_by_name(&format!("{BLINDED_4ARY_NAME_PREFIX}{depth}")).expect("dispatch");
-        let (trace, pis, _) =
-            general_position_witness(BabyBear::new(1001), BabyBear::new(7), depth);
+        let (trace, pis, _) = general_position_witness(d8(1001), BabyBear::new(7), depth);
         assert!(
             !rejects(&desc, &trace, &pis),
-            "non-vacuity: honest accepted"
+            "non-vacuity: the honest witness is accepted"
         );
-
-        let mut bad_pis = pis.clone();
-        bad_pis[PI_ROOT_4ARY] += BabyBear::ONE;
-        assert!(
-            rejects(&desc, &trace, &bad_pis),
-            "a non-member (forged root PI) must be REJECTED (root pin)"
-        );
+        for lane in 0..DIGEST_W {
+            let mut bad = pis.clone();
+            bad[PI_ROOT_4ARY + lane] += BabyBear::ONE;
+            assert!(
+                rejects(&desc, &trace, &bad),
+                "a claimed root differing in lane {lane} must be REJECTED"
+            );
+        }
     }
 
-    /// STEP 2b — a forged CO-PATH at an interior level (claiming the real root) is rejected: the
-    /// depth-8 proof genuinely consumes all 8 `hash_4_to_1` levels.
+    /// STEP 2b — a forged CO-PATH at an interior level (claiming the real root) is rejected, and a
+    /// HIGH-LANE-only sibling change — a change the one-felt fold was structurally blind to — is
+    /// seen and refused. The depth-8 proof genuinely consumes all 8 `node8` levels, at full width.
     #[test]
-    fn forged_interior_copath_refuses() {
+    fn forged_interior_copath_refuses_including_high_lane_only() {
         let depth = 8usize;
         let desc =
             descriptor_by_name(&format!("{BLINDED_4ARY_NAME_PREFIX}{depth}")).expect("dispatch");
-        let leaf = BabyBear::new(0xBEEF);
+        let leaf = d8(0xBEEF);
         let blinding = BabyBear::new(0x51D);
-        let (siblings, positions, _root) = create_test_witness(leaf, depth);
+        let (siblings, positions, root) = create_test_witness(leaf, depth);
         let (honest_trace, honest_pis) =
             blinded_membership_witness_4ary(leaf, blinding, &siblings, &positions)
                 .expect("witness");
         assert!(
             !rejects(&desc, &honest_trace, &honest_pis),
-            "non-vacuity: honest accepted"
+            "non-vacuity: the honest witness is accepted"
         );
 
-        for lvl in [0usize, 3, 7] {
+        // lane 0 at three levels, plus a HIGH lane (7) — the one-felt blind spot.
+        for (lvl, lane) in [(0usize, 0usize), (3, 0), (7, 0), (3, 7), (7, 5)] {
             let mut bad = siblings.clone();
-            bad[lvl][0] += BabyBear::ONE;
+            bad[lvl][0][lane] += BabyBear::ONE;
+            assert_ne!(
+                membership_root_4ary(leaf, &bad, &positions),
+                root,
+                "a level-{lvl} lane-{lane} sibling change must move the root"
+            );
             let (bad_trace, _) =
                 blinded_membership_witness_4ary(leaf, blinding, &bad, &positions).expect("witness");
-            // recompute under the bad sibling but CLAIM the honest root+blinded_leaf.
             assert!(
                 rejects(&desc, &bad_trace, &honest_pis),
-                "a forged co-path at level {lvl} (claiming the real root) must be REJECTED"
+                "a forged co-path at level {lvl} lane {lane} (claiming the real root) must be \
+                 REJECTED"
             );
         }
     }
 
-    /// STEP 3 — WRONG BLINDED_LEAF: publishing a `blinded_leaf` PI that is NOT the arity-2 Poseidon2
-    /// image of `[leaf, blinding]` (overwriting the row-0 column AND its PI copy) has no serving chip
-    /// row → UNSAT. Non-vacuous.
+    /// STEP 3 — ⚑ THE LANE-0-EQUAL FORGERY: an attacker publishes a `blinded_leaf` that agrees
+    /// with the honest one on LANE 0 — the entire binding the deployed one-felt family had — but
+    /// differs at a higher lane. Overwriting the row-0 column group AND its PI copy (so the pin
+    /// stays satisfiable) leaves the arity-11 blinding lookup with no serving chip row → UNSAT.
+    /// Non-vacuous: the honest witness is accepted first.
     #[test]
-    fn wrong_blinded_leaf_refuses() {
-        let depth = 8usize;
+    fn a_lane0_equal_but_distinct_blinded_leaf_is_refused() {
+        let depth = 4usize;
         let desc =
             descriptor_by_name(&format!("{BLINDED_4ARY_NAME_PREFIX}{depth}")).expect("dispatch");
-        let (trace, pis, _) =
-            general_position_witness(BabyBear::new(1001), BabyBear::new(7), depth);
+        let (trace, pis, _) = general_position_witness(d8(0xDEC0DE), BabyBear::new(0x51D), depth);
         assert!(
             !rejects(&desc, &trace, &pis),
-            "non-vacuity: honest accepted"
+            "non-vacuity: the honest witness is accepted"
         );
 
+        for lane in 1..DIGEST_W {
+            let mut bad_trace = trace.clone();
+            let mut bad_pis = pis.clone();
+            let bogus = trace[0][BLINDED_LEAF_COL_4ARY + lane] + BabyBear::ONE;
+            bad_trace[0][BLINDED_LEAF_COL_4ARY + lane] = bogus;
+            bad_pis[PI_BLINDED_LEAF_4ARY + lane] = bogus; // keep the PI pin satisfiable
+            assert_eq!(
+                bad_pis[PI_BLINDED_LEAF_4ARY], pis[PI_BLINDED_LEAF_4ARY],
+                "the forgery agrees on lane 0 — the deployed family's whole binding"
+            );
+            assert!(
+                rejects(&desc, &bad_trace, &bad_pis),
+                "a published blinded leaf differing only at lane {lane} must be REJECTED \
+                 (the arity-11 blinding lookup has no serving chip row)"
+            );
+        }
+        // And the lane-0 forgery too, so the gate is not lane-selective.
         let mut bad_trace = trace.clone();
         let mut bad_pis = pis.clone();
         let bogus = trace[0][BLINDED_LEAF_COL_4ARY] + BabyBear::ONE;
         bad_trace[0][BLINDED_LEAF_COL_4ARY] = bogus;
-        bad_pis[PI_BLINDED_LEAF_4ARY] = bogus; // keep the PI pin satisfiable
+        bad_pis[PI_BLINDED_LEAF_4ARY] = bogus;
         assert!(
             rejects(&desc, &bad_trace, &bad_pis),
-            "a blinded_leaf that is not hash_2_to_1(leaf, blinding) must be REJECTED (chip lookup)"
+            "lane-0 forgery refused"
         );
     }
 
-    /// STEP 4 — UNLINKABILITY: the SAME member blinded with two DIFFERENT factors yields two DIFFERENT
-    /// `blinded_leaf` PIs, both of which verify under the SAME `root`.
+    /// STEP 4 — UNLINKABILITY, AT WIDTH: the SAME member blinded with two DIFFERENT factors yields
+    /// blinded-leaf PIs that differ in ALL EIGHT lanes (not merely "the digests differ"), while
+    /// committing to the SAME 8-felt root. Both shows prove and verify.
     #[test]
-    fn unlinkability_two_factors_two_blinded_leaves_both_verify() {
-        let depth = 8usize;
+    fn unlinkability_two_factors_differ_in_every_lane_and_both_verify() {
+        let depth = 4usize;
         let desc =
             descriptor_by_name(&format!("{BLINDED_4ARY_NAME_PREFIX}{depth}")).expect("dispatch");
-        let leaf = BabyBear::new(1001);
+        let leaf = d8(1001);
         let (siblings, positions, _root) = create_test_witness(leaf, depth);
         let (t1, p1) =
             blinded_membership_witness_4ary(leaf, BabyBear::new(0xB11D), &siblings, &positions)
@@ -796,13 +1034,18 @@ mod tests_4ary {
             blinded_membership_witness_4ary(leaf, BabyBear::new(0xDEAD), &siblings, &positions)
                 .expect("show 2");
 
-        assert_ne!(
-            p1[PI_BLINDED_LEAF_4ARY], p2[PI_BLINDED_LEAF_4ARY],
-            "distinct blinding factors must give distinct blinded_leaf (unlinkability)"
-        );
+        for lane in 0..DIGEST_W {
+            assert_ne!(
+                p1[PI_BLINDED_LEAF_4ARY + lane],
+                p2[PI_BLINDED_LEAF_4ARY + lane],
+                "two shows of ONE credential must differ in blinded-leaf lane {lane} — a lane \
+                 that agreed across shows would be a linkability handle"
+            );
+        }
         assert_eq!(
-            p1[PI_ROOT_4ARY], p2[PI_ROOT_4ARY],
-            "both shows commit to the same member under the same root"
+            &p1[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W],
+            &p2[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W],
+            "both shows commit to the same member under the same 8-felt root"
         );
 
         let pf1 = prove_vm_descriptor2(&desc, &t1, &p1, &MemBoundaryWitness::default(), &[])
@@ -811,5 +1054,26 @@ mod tests_4ary {
         let pf2 = prove_vm_descriptor2(&desc, &t2, &p2, &MemBoundaryWitness::default(), &[])
             .expect("show 2 proves");
         verify_vm_descriptor2(&desc, &pf2, &p2).expect("show 2 verifies");
+    }
+
+    /// STEP 5 — malformed inputs (non-power-of-two depth, length mismatch, out-of-range position)
+    /// are refused at witness-build time by the shared path builder.
+    #[test]
+    fn malformed_witness_refuses() {
+        let leaf = d8(7);
+        let blinding = BabyBear::new(3);
+        let zero3 = [[BabyBear::ZERO; DIGEST_W]; 3];
+        assert!(
+            blinded_membership_witness_4ary(leaf, blinding, &vec![zero3; 3], &[0, 0, 0]).is_err(),
+            "depth 3 is not a power of two"
+        );
+        assert!(
+            blinded_membership_witness_4ary(leaf, blinding, &vec![zero3; 2], &[0]).is_err(),
+            "siblings/positions length mismatch"
+        );
+        assert!(
+            blinded_membership_witness_4ary(leaf, blinding, &vec![zero3; 2], &[0, 4]).is_err(),
+            "position 4 is out of range"
+        );
     }
 }

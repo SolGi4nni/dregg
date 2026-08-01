@@ -63,7 +63,7 @@ pub mod recursive {
     };
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::membership_descriptor_4ary::{
-        membership_descriptor_of_depth_4ary, membership_witness_4ary,
+        Digest8, membership_descriptor_of_depth_4ary, membership_witness_4ary,
     };
     use dregg_circuit::plonky3_prover::to_p3;
 
@@ -887,9 +887,12 @@ pub mod recursive {
     /// `dregg_circuit::merkle_air::prove_membership_p3` path. The only
     /// difference here is that the inner batch is minted under the recursion
     /// config type so `RecursionInput::NativeBatchStark` can consume it.
+    ///
+    /// Leaf and siblings are full 8-felt [`Digest8`] nodes (the `node8` cutover): the folded
+    /// statement is the 16-PI `[leaf0..8, root0..8]` one, not the retired 1-felt `[leaf, root]`.
     pub fn prove_recursive_membership(
-        leaf_hash: BabyBear,
-        siblings: &[[BabyBear; 3]],
+        leaf_hash: Digest8,
+        siblings: &[[Digest8; 3]],
         positions: &[u8],
     ) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
         let desc = membership_descriptor_of_depth_4ary(siblings.len());
@@ -931,17 +934,14 @@ pub mod recursive {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
+        use dregg_circuit::membership_descriptor_4ary::create_test_witness;
 
         /// Recursion-shape smoke: one layer verifies the assured emitted
         /// membership descriptor's real multi-table IR2 proof in-circuit.
         #[test]
         fn recursive_merkle_poc() {
-            let leaf = BabyBear::new(42424242);
-            let witness = create_poseidon2_test_witness(leaf, 4);
-
-            let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
-            let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+            let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(42424242 + k as u32));
+            let (siblings, positions, _root) = create_test_witness(leaf, 4);
 
             let result = prove_recursive_membership(leaf, &siblings, &positions);
             assert!(

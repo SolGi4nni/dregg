@@ -15,6 +15,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 // Import the AuthToken trait to bring its methods into scope.
+use dregg_cell::Credential;
 use dregg_token::AuthToken;
 
 // Full runtime simulation modules.
@@ -299,7 +300,9 @@ pub(crate) struct Ir2ProofEnvelope {
     /// The descriptor dispatch key (encodes the membership depth). The consumer
     /// resolves it through `descriptor_by_name` -- a miss is fail-closed, never accept.
     pub descriptor_name: String,
-    /// Public inputs as canonical `BabyBear` u32 values (membership: `[leaf, root]`).
+    /// Public inputs as canonical `BabyBear` u32 values (membership: the sixteen
+    /// `[leaf0..leaf7, root0..root7]` lanes — it was `[leaf, root]` before the `node8`
+    /// widening, and a stored two-PI envelope no longer verifies).
     pub public_inputs: Vec<u32>,
     /// The opaque `Ir2BatchProof`, postcard-encoded (its canonical wire form).
     pub proof_postcard: Vec<u8>,
@@ -310,35 +313,44 @@ pub(crate) struct Ir2ProveOutcome {
     pub json: String,
     pub proof_size_bytes: usize,
     pub depth: usize,
-    pub leaf_value: u32,
-    pub root_value: u32,
+    /// The membership leaf, all eight canonical lanes (PIs 0..8).
+    pub leaf_lanes: Vec<u32>,
+    /// The committed root, all eight canonical lanes (PIs 8..16).
+    pub root_lanes: Vec<u32>,
     pub descriptor_name: String,
 }
 
-/// PRODUCER core: prove a real depth-`d` arity-4 Poseidon2 Merkle-membership
+/// PRODUCER core: prove a real depth-`d` arity-4 `node8` Poseidon2 Merkle-membership
 /// claim and package it as an `Ir2ProofEnvelope` JSON string. `depth` is snapped
 /// to a power of two in `{2, 4, 8}` (the descriptor's trace-height requirement).
 /// The proof self-verifies inside `prove_vm_descriptor2` before return.
-pub(crate) fn ir2_membership_prove(leaf_value: u32, depth: u32) -> Result<Ir2ProveOutcome, String> {
+///
+/// `leaf_seed` widens into the 8-felt leaf domain the way a real producer does — every node
+/// of this tree, leaf and sibling alike, is a full [`DIGEST_W`]-felt digest.
+pub(crate) fn ir2_membership_prove(leaf_seed: u32, depth: u32) -> Result<Ir2ProveOutcome, String> {
     use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::membership_descriptor_4ary::{
-        membership_4ary_dispatch_name, membership_descriptor_of_depth_4ary, membership_witness_4ary,
+        DIGEST_W, Digest8, PI_LEAF, PI_ROOT, compress_member_felts, membership_4ary_dispatch_name,
+        membership_descriptor_of_depth_4ary, membership_witness_4ary,
     };
 
     let depth = (depth.clamp(2, 8)).next_power_of_two() as usize; // {2, 4, 8}
-    let leaf = BabyBear::new(leaf_value);
+    // The leaf is a genuine 8-felt digest, not a felt in lane 0 with seven zeros beside it.
+    let leaf: Digest8 = compress_member_felts(&core::array::from_fn(|k| {
+        BabyBear::new(leaf_seed.wrapping_add(k as u32))
+    }));
 
-    // A deterministic depth-`d` authentication path (distinct siblings per level,
+    // A deterministic depth-`d` authentication path (distinct 8-felt siblings per level,
     // positions cycling through the 4-ary children slots).
-    let mut siblings: Vec<[BabyBear; 3]> = Vec::with_capacity(depth);
+    let mut siblings: Vec<[Digest8; 3]> = Vec::with_capacity(depth);
     let mut positions: Vec<u8> = Vec::with_capacity(depth);
     for level in 0..depth {
-        siblings.push([
-            BabyBear::new(100 + level as u32 * 7),
-            BabyBear::new(200 + level as u32 * 13),
-            BabyBear::new(300 + level as u32 * 17),
-        ]);
+        siblings.push(core::array::from_fn(|s| {
+            core::array::from_fn(|k| {
+                BabyBear::new(100 + level as u32 * 24 + s as u32 * 8 + k as u32)
+            })
+        }));
         positions.push((level % 4) as u8);
     }
 
@@ -348,7 +360,14 @@ pub(crate) fn ir2_membership_prove(leaf_value: u32, depth: u32) -> Result<Ir2Pro
 
     let proof_postcard = postcard::to_allocvec(&proof).map_err(|e| e.to_string())?;
     let proof_size_bytes = proof_postcard.len();
-    let root_value = pis[1].as_u32();
+    let leaf_lanes: Vec<u32> = pis[PI_LEAF..PI_LEAF + DIGEST_W]
+        .iter()
+        .map(|f| f.as_u32())
+        .collect();
+    let root_lanes: Vec<u32> = pis[PI_ROOT..PI_ROOT + DIGEST_W]
+        .iter()
+        .map(|f| f.as_u32())
+        .collect();
     // ⚠ THE WIRE DISPATCH IDENTITY, *not* `desc.name`. The Lean-emitted descriptor's
     // own name (`dregg-merkle-membership-4ary-general::v1`) does NOT resolve through
     // `descriptor_by_name`, so an envelope carrying it fails the consumer's
@@ -366,8 +385,8 @@ pub(crate) fn ir2_membership_prove(leaf_value: u32, depth: u32) -> Result<Ir2Pro
         json,
         proof_size_bytes,
         depth,
-        leaf_value: leaf.as_u32(),
-        root_value,
+        leaf_lanes,
+        root_lanes,
         descriptor_name: dispatch_name,
     })
 }
@@ -405,13 +424,24 @@ pub(crate) fn ir2_verify_membership_envelope(proof_json: &str) -> Result<(), Str
 /// TAMPER core: flip the claimed root in an envelope's public inputs, producing
 /// a proof that still decodes but no longer matches its claim -- so the deployed
 /// `verify_vm_descriptor2` REJECTS it. Demonstrates the proof<->claim binding.
+///
+/// It flips the HIGH lane (`PI_ROOT + 7`) of the 8-felt root, not lane 0: the retired
+/// one-felt family pinned lane 0 and nothing else, so tampering there would be the one
+/// perturbation a narrow verifier could also have caught. Moving the top lane is exactly the
+/// change the widening bought.
 pub(crate) fn ir2_tamper_root(proof_json: &str) -> Result<String, String> {
+    use dregg_circuit::membership_descriptor_4ary::{DIGEST_W, MEMBERSHIP_4ARY_PI_COUNT, PI_ROOT};
     let mut env: Ir2ProofEnvelope =
         serde_json::from_str(proof_json).map_err(|e| format!("envelope: {e}"))?;
-    if env.public_inputs.len() < 2 {
-        return Err("envelope has no root public input to tamper".to_string());
+    if env.public_inputs.len() < MEMBERSHIP_4ARY_PI_COUNT {
+        return Err(format!(
+            "envelope carries {} public inputs; a membership envelope carries \
+             {MEMBERSHIP_4ARY_PI_COUNT} ([leaf8 ‖ root8])",
+            env.public_inputs.len()
+        ));
     }
-    env.public_inputs[1] = env.public_inputs[1].wrapping_add(1);
+    let hi = PI_ROOT + DIGEST_W - 1;
+    env.public_inputs[hi] = env.public_inputs[hi].wrapping_add(1);
     serde_json::to_string(&env).map_err(|e| e.to_string())
 }
 
@@ -435,8 +465,10 @@ pub fn generate_demo_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue,
         proof_size_bytes: usize,
         generation_time_ms: f64,
         trace_rows: usize,
-        leaf_value: u32,
-        root_value: u32,
+        /// The membership leaf, all eight canonical lanes.
+        leaf_value: Vec<u32>,
+        /// The committed root, all eight canonical lanes.
+        root_value: Vec<u32>,
         descriptor_name: String,
     }
 
@@ -445,8 +477,8 @@ pub fn generate_demo_stark_proof(leaf_value: u32, depth: u32) -> Result<JsValue,
         proof_size_bytes: outcome.proof_size_bytes,
         generation_time_ms: elapsed_ms,
         trace_rows: outcome.depth,
-        leaf_value: outcome.leaf_value,
-        root_value: outcome.root_value,
+        leaf_value: outcome.leaf_lanes,
+        root_value: outcome.root_lanes,
         descriptor_name: outcome.descriptor_name,
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)

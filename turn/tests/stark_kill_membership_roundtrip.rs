@@ -20,6 +20,7 @@ use dregg_cell::predicate::{
 };
 use dregg_circuit::BabyBear;
 use dregg_circuit::dsl::membership::create_test_witness;
+use dregg_circuit::membership_descriptor_4ary::Digest8;
 use dregg_circuit::poseidon2::hash_2_to_1;
 use dregg_turn::executor::membership_verifier::{
     CircuitNeighborAdjacencyVerifier, MerkleMembershipStarkVerifier, NeighborAdjStep,
@@ -27,8 +28,9 @@ use dregg_turn::executor::membership_verifier::{
     prove_neighbor_adjacency, prove_sender_membership,
 };
 
-/// THE canonical chip-native membership compress (the executor's leaf domain).
-fn compress(bytes: &[u8; 32]) -> BabyBear {
+/// THE canonical chip-native membership compress (the executor's leaf domain) — an 8-felt
+/// `node8` digest since the widening, not lane 0 of one.
+fn compress(bytes: &[u8; 32]) -> Digest8 {
     dregg_commit::typed::compress_member(bytes)
 }
 
@@ -97,9 +99,9 @@ fn membership_wire_roundtrip_honest_accept_and_rejects() {
 #[test]
 fn membership_wire_roundtrip_depth3_padded_root_is_production_faithful() {
     // depth 3 is NOT a power of two. The producer pads the path to depth 4 with
-    // zero-sibling position-0 levels — EXACTLY how generate_merkle_poseidon2_trace
-    // pads — so the descriptor's committed root is BYTE-EQUAL to the production
-    // authorized_set_root_bytes. An honest ACCEPT is the faithful-padding witness;
+    // zero-sibling position-0 levels — EXACTLY how `pad_membership_path` pads — so
+    // the descriptor's committed root is BYTE-EQUAL to the production
+    // authorized_set_root_bytes (all eight lanes, filling the slot exactly). An honest ACCEPT is the faithful-padding witness;
     // a change to either padding rule would flip this to a root-pin rejection.
     let member = [0x22u8; 32];
     let leaf = compress(&member);

@@ -170,7 +170,6 @@ BY_NAME_NEWLINE_TERMINATED = frozenset({
     "dark-bazaar-private-n4k4.json",
     "faithful-note-spend-v2.json",
     "field-delta-result-range.json",
-    "merkle-membership-4ary-general.json",
     "poseidon2-hash-arity2.json",
     "private-preference-n4k4.json",
     "private-preference-cell-n4k4.json",

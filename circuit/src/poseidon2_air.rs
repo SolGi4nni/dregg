@@ -79,8 +79,11 @@ pub fn create_poseidon2_test_witness(leaf_hash: BabyBear, depth: usize) -> Merkl
     }
 }
 
-// Witness-generation compatibility. These functions author data, not AIR
-// constraints; their proofs route through Lean-emitted descriptors.
-pub use crate::dsl::membership::{
-    generate_blinded_merkle_poseidon2_trace, generate_merkle_poseidon2_trace,
-};
+// ⚑ The one-felt trace generators `generate_merkle_poseidon2_trace` /
+// `generate_blinded_merkle_poseidon2_trace` were re-exported here. They are DELETED: each chained
+// a Poseidon2 permutation truncated to `state.state[0]`, so every interior node and the committed
+// root were ~31-bit commitments (collided at 2^15.5 — see
+// `circuit/tests/membership_forge_tooth.rs`). The membership witness builders now live in
+// `crate::membership_descriptor_4ary` (`membership_witness_4ary`, 8-felt `node8` nodes) and
+// `crate::blinded_membership_witness`. Nothing is re-exported in their place on purpose: a
+// compatibility shim here is exactly how the narrow shape would survive the cutover.

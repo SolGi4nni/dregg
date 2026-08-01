@@ -920,7 +920,16 @@ const BASELINE: &[(&str, usize)] = &[
     ("circuit-prove/src/sovereign_leaf_adapter.rs", 3),
     ("circuit-prove/src/zkoracle_leaf_adapter.rs", 16),
     ("circuit/src/bilateral_aggregation_air.rs", 16),
-    ("circuit/src/blinded_membership_witness.rs", 5),
+    // 5 -> 7, 2026-08-01, membership `node8` cutover. The reason, as this gate demands: NONE of
+    // the 7 is authored constraint algebra. All 7 are `LeanExpr::Const` inside `#[cfg(test)]`,
+    // asserting the ARITY TAG of a chip lookup read off the LEAN-EMITTED descriptor
+    // (`assert_eq!(chips[i].tuple[0], LeanExpr::Const(16))`) — i.e. they READ emitted bytes to pin
+    // the shape, they do not construct it. The count rose because the wide descriptor carries FOUR
+    // chip lookups (three arity-16 node8 fold stages + the arity-11 blinding absorb) where the
+    // retired one-felt descriptor carried two. The constraints themselves moved the other way:
+    // they are authored in `metatheory/Dregg2/Circuit/Emit/BlindedMembershipWideEmit.lean` and
+    // Rust only parses `blinded-membership-4ary-wide.json`.
+    ("circuit/src/blinded_membership_witness.rs", 7),
     ("circuit/src/bound_presentation_witness.rs", 1),
     ("circuit/src/committed_threshold.rs", 7),
     ("circuit/src/constraint_prover.rs", 1),

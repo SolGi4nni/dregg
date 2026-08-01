@@ -435,12 +435,11 @@ fn forged_membership_rolls_back_rules_and_hidden_cells_atomically() {
         proofs.push(full.prove_play(card).expect("actual card is in inventory"));
         remaining = remaining.without(card);
     }
+    // Move the TOP lane of a co-path `node8` digest — the perturbation the retired one-felt
+    // tree could not even represent, let alone refuse.
     let sibling = &mut proofs[0].path[0].siblings[0];
-    *sibling = if *sibling == dregg_circuit::field::BabyBear::ZERO {
-        dregg_circuit::field::BabyBear::ONE
-    } else {
-        dregg_circuit::field::BabyBear::ZERO
-    };
+    let top = sibling.len() - 1;
+    sibling[top] += dregg_circuit::field::BabyBear::ONE;
 
     assert!(
         session

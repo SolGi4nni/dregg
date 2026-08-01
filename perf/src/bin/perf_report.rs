@@ -20,7 +20,7 @@
 
 use std::time::Instant;
 
-use dregg_circuit::dsl::membership::create_test_witness;
+use dregg_circuit::dsl::membership::{Digest8, create_test_witness};
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace};
 use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::field::BabyBear;
@@ -157,7 +157,10 @@ fn main() {
         "depth", "prove", "verify", "proof"
     );
     for depth in [4usize, 8, 16, 32] {
-        let leaf = BabyBear::new(42424242);
+        // The membership family is 8-felt (`node8`) end to end: the leaf, every co-path
+        // sibling and the committed root are full `Digest8` nodes, and the statement
+        // publishes 16 PIs.
+        let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(42424242 + k as u32));
         let (siblings, positions, _root) = create_test_witness(leaf, depth);
         let pis = membership_public_inputs(leaf, &siblings, &positions).expect("mpis");
         let proof = prove_membership_p3(leaf, &siblings, &positions).expect("mprove");

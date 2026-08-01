@@ -47,6 +47,7 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::membership_descriptor_4ary::{
+    DIGEST_W, Digest8, MEMBERSHIP_4ARY_PI_COUNT, PI_LEAF, PI_ROOT,
     membership_descriptor_of_depth_4ary, membership_witness_4ary,
 };
 use dregg_multiway_tug::hidden_hand::{HandTree, card_leaf};
@@ -71,10 +72,10 @@ pub(crate) struct TugPlayOutcome {
     /// postcard `Ir2BatchProof`) — feeds straight into [`ir2_verify_membership_envelope`].
     pub proof_json: String,
     pub proof_size_bytes: usize,
-    /// The played card's blinded Poseidon2 leaf (public input 0).
-    pub leaf_u32: u32,
-    /// The committed hand root the play climbs to (public input 1).
-    pub root_u32: u32,
+    /// The played card's blinded 8-felt Poseidon2 leaf digest (public inputs 0..8).
+    pub leaf_lanes: [u32; DIGEST_W],
+    /// The committed 8-felt hand root the play climbs to (public inputs 8..16).
+    pub root_lanes: [u32; DIGEST_W],
     /// The membership trace row count (== the 4-ary tree depth).
     pub num_rows: usize,
     /// The FAITHFULNESS gate: the proof's bound `root` PI equals [`HandTree::root`] — the
@@ -97,9 +98,10 @@ pub(crate) fn prove_tug_play_core(hand_json: &str, card_id: u64) -> Result<TugPl
         format!("card {card_id} is not in the committed hand (no membership proof)")
     })?;
 
-    // The real per-play membership witness: the blinded leaf + the 4-ary authentication path.
+    // The real per-play membership witness: the blinded 8-felt leaf + the 4-ary
+    // authentication path (every co-path node a full `node8` digest).
     let leaf = card_leaf(play.card_id, play.nonce);
-    let siblings: Vec<[BabyBear; 3]> = play.path.iter().map(|lvl| lvl.siblings).collect();
+    let siblings: Vec<[Digest8; 3]> = play.path.iter().map(|lvl| lvl.siblings).collect();
     let positions: Vec<u8> = play.path.iter().map(|lvl| lvl.position).collect();
     let depth = siblings.len();
 
@@ -114,11 +116,14 @@ pub(crate) fn prove_tug_play_core(hand_json: &str, card_id: u64) -> Result<TugPl
     verify_vm_descriptor2(&desc, &proof, &pis)
         .map_err(|e| format!("on-device self-verify failed: {e}"))?;
 
-    // FAITHFULNESS: the descriptor recomputes the parent via the SAME arity-4 Poseidon2
-    // absorb (`hash_4_to_1`) HandTree builds with, so the bound root PI equals the game's
-    // committed hand root. We assert it (never accept a proof bound to a foreign root).
+    // FAITHFULNESS: the descriptor recomputes the parent via the SAME `node8_4ary` fold
+    // (three arity-16 chip absorbs) HandTree builds with, so the bound root PIs equal the
+    // game's committed hand root — ALL EIGHT LANES. We assert it (never accept a proof bound
+    // to a foreign root, and never on a lane-0 projection: the one-felt family's entire root
+    // binding was a single lane, collided at 2^15.5).
     let committed_root = tree.root();
-    let root_matches_committed = pis.len() == 2 && pis[1] == committed_root;
+    let root_matches_committed = pis.len() == MEMBERSHIP_4ARY_PI_COUNT
+        && pis[PI_ROOT..PI_ROOT + DIGEST_W] == committed_root[..];
 
     let proof_postcard = postcard::to_allocvec(&proof).map_err(|e| e.to_string())?;
     let proof_size_bytes = proof_postcard.len();
@@ -132,8 +137,8 @@ pub(crate) fn prove_tug_play_core(hand_json: &str, card_id: u64) -> Result<TugPl
     Ok(TugPlayOutcome {
         proof_json,
         proof_size_bytes,
-        leaf_u32: leaf.as_u32(),
-        root_u32: pis[1].as_u32(),
+        leaf_lanes: core::array::from_fn(|k| pis[PI_LEAF + k].as_u32()),
+        root_lanes: core::array::from_fn(|k| pis[PI_ROOT + k].as_u32()),
         num_rows: trace.len(),
         root_matches_committed,
     })
@@ -156,8 +161,10 @@ pub fn prove_tug_play_on_device(hand_json: &str, card_id: u64) -> Result<JsValue
         proof_json: String,
         proof_size_bytes: usize,
         generation_time_ms: f64,
-        leaf: u32,
-        root: u32,
+        /// The blinded leaf digest, all eight canonical lanes (PIs 0..8).
+        leaf: Vec<u32>,
+        /// The committed hand root, all eight canonical lanes (PIs 8..16).
+        root: Vec<u32>,
         trace_rows: usize,
         root_matches_committed: bool,
     }
@@ -166,8 +173,8 @@ pub fn prove_tug_play_on_device(hand_json: &str, card_id: u64) -> Result<JsValue
         proof_json: out.proof_json,
         proof_size_bytes: out.proof_size_bytes,
         generation_time_ms: elapsed_ms,
-        leaf: out.leaf_u32,
-        root: out.root_u32,
+        leaf: out.leaf_lanes.to_vec(),
+        root: out.root_lanes.to_vec(),
         trace_rows: out.num_rows,
         root_matches_committed: out.root_matches_committed,
     };
@@ -331,18 +338,19 @@ mod tests {
     }
 
     /// FAITHFULNESS to the committed hand: two DIFFERENT played cards bind DIFFERENT leaves
-    /// under the SAME committed root — the proof commits to which card was played.
+    /// under the SAME committed root — the proof commits to which card was played. The
+    /// comparison is over ALL EIGHT lanes of each digest, not a lane-0 projection.
     #[test]
     fn different_plays_bind_different_leaves_same_root() {
         let a = prove_tug_play_core(HAND, 0).unwrap();
         let b = prove_tug_play_core(HAND, 7).unwrap();
         assert_ne!(
-            a.leaf_u32, b.leaf_u32,
-            "different cards ⇒ different blinded leaves"
+            a.leaf_lanes, b.leaf_lanes,
+            "different cards ⇒ different blinded 8-felt leaves"
         );
         assert_eq!(
-            a.root_u32, b.root_u32,
-            "both plays climb to the SAME committed hand root"
+            a.root_lanes, b.root_lanes,
+            "both plays climb to the SAME committed 8-felt hand root"
         );
     }
 

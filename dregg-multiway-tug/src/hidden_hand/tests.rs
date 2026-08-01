@@ -43,6 +43,50 @@ fn deal_commits_hand_as_a_merkle_root() {
     );
 }
 
+/// ⚑ **THE SLOT ROUND-TRIP.** The 32-byte commitment carries the WHOLE 8-felt root — eight
+/// canonical `u32` LE limbs filling all 32 bytes — and `root_from_bytes` recovers it exactly.
+///
+/// The byte shape is checked against a SECOND, INDEPENDENT decoder in another crate
+/// (`game_turn_slice::compiler::root_digest_from_commitment`, which is what the foldable leaf
+/// and the executor's `root_digest_from_slot` agree with), not against `root_to_bytes`'s own
+/// definition — a pin against its own definition is decoration.
+#[test]
+fn root_round_trips_through_all_thirty_two_bytes() {
+    let tree = HandTree::commit(sample_hand());
+    let root = tree.root();
+    let bytes = root_to_bytes(root);
+
+    assert_eq!(root_from_bytes(&bytes), Some(root), "the slot round-trips");
+    assert_eq!(
+        game_turn_slice::compiler::root_digest_from_commitment(&bytes),
+        Some(root),
+        "the independent fold-side decoder must read the SAME eight felts"
+    );
+
+    // NON-VACUITY: the slot is used in full. The retired one-felt encoding left bytes 4..32
+    // zero, so this is exactly the assertion that would have failed before the widening.
+    assert!(
+        bytes[4..].iter().any(|&b| b != 0),
+        "root lanes 1..8 must occupy bytes 4..32 — an all-zero tail is the one-felt slot"
+    );
+    // Every lane is separately load-bearing: moving ANY lane moves the bytes and decodes back
+    // to a DIFFERENT root (no lane is a don't-care the commitment ignores).
+    for lane in 0..DIGEST_W {
+        let mut moved = root;
+        moved[lane] += BabyBear::ONE;
+        let moved_bytes = root_to_bytes(moved);
+        assert_ne!(
+            moved_bytes, bytes,
+            "lane {lane} must reach the committed bytes"
+        );
+        assert_eq!(root_from_bytes(&moved_bytes), Some(moved));
+    }
+    // A non-canonical limb is REFUSED, never reduced into an alias of a canonical root.
+    let mut noncanonical = bytes;
+    noncanonical[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(root_from_bytes(&noncanonical), None);
+}
+
 // ---------------------------------------------------------------------------
 // The membership-proven legal play (executor-checked) — revealing nothing else.
 // ---------------------------------------------------------------------------
@@ -132,11 +176,23 @@ fn fabricated_card_is_refused_but_legal_play_commits() {
 
     // (c) A tampered authentication path — a flipped sibling breaks the walk.
     let mut tampered = legal.clone();
-    tampered.path[0].siblings[0] = dregg_circuit::field::BabyBear::ZERO;
+    tampered.path[0].siblings[0] = [dregg_circuit::field::BabyBear::ZERO; DIGEST_W];
     assert!(
         check_play(&tampered).is_err(),
         "a tampered membership path must be refused"
     );
+
+    // (c2) ⚑ THE HIGH-LANE TOOTH — the deleted wound, stated as a live gate. Perturb ONLY
+    // lane 7 of a co-path sibling: a change the retired one-felt path could not see at all
+    // (it carried lane 0 and nothing else, so this forgery reached the SAME committed root).
+    for lane in 1..DIGEST_W {
+        let mut high = legal.clone();
+        high.path[0].siblings[0][lane] += dregg_circuit::field::BabyBear::ONE;
+        assert!(
+            check_play(&high).is_err(),
+            "a lane-{lane}-only sibling change must be REFUSED — the one-felt fold was blind to it"
+        );
+    }
 
     // (d) The SAME proof against a DIFFERENT committed root — a swapped commitment.
     let mut wrong_root = legal.clone();
@@ -165,12 +221,22 @@ fn fabricated_card_is_refused_but_legal_play_commits() {
         "a nonce that aliases in one BabyBear lane must still be refused"
     );
 
-    // (f) The root's 32-byte wire form is canonical, not merely its low field lane.
+    // (f) EVERY one of the root's eight 4-byte lanes is load-bearing: flipping any lane —
+    // including the highest, which the retired one-felt slot left as 28 dead bytes — must be
+    // refused, and a non-canonical limb must be refused rather than reduced.
+    for lane in 0..DIGEST_W {
+        let mut moved = legal.clone();
+        moved.root[lane * 4] ^= 0x01;
+        assert!(
+            check_play(&moved).is_err(),
+            "a commitment differing in root lane {lane} must be refused"
+        );
+    }
     let mut noncanonical_root = legal.clone();
-    noncanonical_root.root[31] = 1;
+    noncanonical_root.root[28..32].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(
         check_play(&noncanonical_root).is_err(),
-        "non-zero high root bytes must not alias the canonical commitment"
+        "a non-canonical root limb must be REFUSED, never reduced into an alias"
     );
 }
 
@@ -303,26 +369,32 @@ fn ledger_commits_the_deal_and_freezes_the_hand_root() {
 
     let mut ledger = HiddenHandLedger::deploy(7).expect("deploy");
     ledger.deal(a.root(), b.root()).expect("the deal commits");
-    assert_eq!(ledger.read("a_hand_root"), a.root().as_u32() as u64);
+    // The WHOLE 8-felt root is committed, lane for lane — not a 31-bit projection of it.
+    assert_eq!(ledger.read_root("a_hand_root"), root_to_lanes(a.root()));
+    assert_eq!(ledger.read_root("b_hand_root"), root_to_lanes(b.root()));
     assert_eq!(ledger.read("phase"), PHASE_DEAL);
 
     let proof = a.prove_play(3).expect("dealt card");
     let remaining = a.without(3);
     let mut legal_next = ledger.state();
-    legal_next.a_rem_root = root_to_u64(remaining.root());
+    legal_next.a_rem_root = root_to_lanes(remaining.root());
     legal_next.a_played += 1;
     legal_next.generation += 1;
     legal_next.phase = PHASE_PLAY;
 
-    // A turn that tries to SWAP the committed hand root is refused (WriteOnce).
-    let mut swap = legal_next;
-    swap.a_hand_root ^= 0x1234; // change the frozen root
-    assert!(
-        ledger
-            .commit_raw_play(Player::A, &[proof.clone()], &swap)
-            .is_err(),
-        "swapping the committed hand root must be refused"
-    );
+    // A turn that tries to SWAP the committed hand root is refused (WriteOnce) — in EVERY
+    // lane. A per-lane sweep is the tooth: with a one-lane register the seven high lanes of
+    // the root were unfrozen, so a swap that agreed on lane 0 committed silently.
+    for lane in 0..ROOT_LANES {
+        let mut swap = legal_next;
+        swap.a_hand_root[lane] ^= 0x1234; // change the frozen root
+        assert!(
+            ledger
+                .commit_raw_play(Player::A, &[proof.clone()], &swap)
+                .is_err(),
+            "swapping lane {lane} of the committed hand root must be refused"
+        );
+    }
 
     // A phase REWIND is refused (Monotonic).
     let mut rewind = legal_next;
@@ -354,10 +426,13 @@ fn ledger_play_advances_generation_and_writes_remaining_root() {
         "the play advances the generation"
     );
     assert_eq!(ledger.read("a_played"), 1);
-    assert_eq!(ledger.read("a_rem_root"), remaining.root().as_u32() as u64);
     assert_eq!(
-        ledger.read("a_hand_root"),
-        a.root().as_u32() as u64,
+        ledger.read_root("a_rem_root"),
+        root_to_lanes(remaining.root())
+    );
+    assert_eq!(
+        ledger.read_root("a_hand_root"),
+        root_to_lanes(a.root()),
         "the committed root is unchanged"
     );
 
@@ -366,7 +441,7 @@ fn ledger_play_advances_generation_and_writes_remaining_root() {
     // do NOT advance gen
     let proof2 = a.prove_play(7).expect("another pinned-inventory member");
     stale.a_played += 1;
-    stale.a_rem_root = root_to_u64(a.without(3).without(7).root());
+    stale.a_rem_root = root_to_lanes(a.without(3).without(7).root());
     assert!(
         ledger
             .commit_raw_play(Player::A, &[proof2], &stale)
@@ -386,7 +461,7 @@ fn ledger_requires_witnesses_on_the_actual_executor_path() {
     let remaining = a.without(3);
     let before = ledger.state();
     let mut claimed = before;
-    claimed.a_rem_root = root_to_u64(remaining.root());
+    claimed.a_rem_root = root_to_lanes(remaining.root());
     claimed.a_played += 1;
     claimed.generation += 1;
     claimed.phase = PHASE_PLAY;
@@ -449,12 +524,9 @@ fn ledger_refuses_forged_tampered_and_wrong_root_proofs_without_a_ghost_step() {
     );
 
     let mut tampered = legal.clone();
-    let sibling = &mut tampered.path[0].siblings[0];
-    *sibling = if *sibling == BabyBear::ZERO {
-        BabyBear::ONE
-    } else {
-        BabyBear::ZERO
-    };
+    // Move ONLY the top lane of a co-path node: the perturbation the one-felt tree could not
+    // represent, let alone refuse.
+    tampered.path[0].siblings[0][DIGEST_W - 1] += BabyBear::ONE;
     assert!(
         ledger
             .play(Player::A, &[tampered], remaining.root())

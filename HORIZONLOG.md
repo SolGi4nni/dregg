@@ -1,5 +1,92 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 1 — THE MEMBERSHIP TREE WAS 31 BITS WIDE AND FORGEABLE IN 0.44 SECONDS
+**Every node of the deployed `MerkleMembership` tree was ONE BabyBear felt. The tree is now 8-felt `node8`, and the one-felt path is DELETED.**
+
+`hash_4_to_1` ran a genuine 16-wide Poseidon2 permutation and returned **`state.state[0]`**;
+`generate_merkle_poseidon2_trace` chained that single felt level to level (the PRODUCTION root);
+the descriptor's parent lookup carried the arity-4 chip `out0` alone; `compress_member` truncated
+the leaf identically. Codomain `p = 2^31 - 2^27 + 1`, so `log2(p) = 30.907`.
+
+⚑ **"It is a hash image" does not rescue that** — the bottleneck is the OUTPUT WIDTH. And the
+binding figure is the COLLISION bound, not the second-preimage bound, because an attacker who
+contributes a member (or mints a subtree) chooses **both** sides of the pair:
+
+| | retired (1 felt) | deployed (`node8`, 8 felts) |
+|---|---|---|
+| codomain | 30.907 bits | 247.255 bits |
+| **collision — the binding figure** | **2^15.45** | **2^123.63** |
+| second-preimage | 2^30.91 | 2^247.26 |
+
+`plans/proof-statements-catalog.md` had claimed **~2^124** for the retired construction. The measured
+collision bound was **2^15.45** — an over-claim of **~108.5 bits**. The real number, with its
+derivation, is now written there.
+
+**THE TOOTH IS EXHIBITED, NOT DESCRIBED.** `circuit/tests/membership_forge_tooth.rs` (5/5 green):
+a deterministic birthday search finds a REAL collision in the retired node **at the deployed
+parameter** — `108,248` evaluations (~2^16.7), **0.44 s** — builds a depth-2 tree in which a leaf
+that was never in the committed set reaches the honest authorized root, then shows `node8`
+separating the same pair and the deployed prover/verifier refusing the forged path. The retired node
+is reconstructed from the primitive it was and PINNED against both `hash_4_to_1` and the arity-4
+chip absorb, so it is the deployed construction and not a straw man.
+
+**WHAT THE NODE IS NOW** — `node8_4ary(c0,c1,c2,c3) = A16(A16(c0‖c1) ‖ A16(c2‖c3))`, the arity-16
+`node8` absorb the heap/cap/fields/nullifier trees already ride, all 8 output lanes bound at every
+level, an 8-lane chain (was one window), an 8-felt leaf, 16 PIs. **Lean-authored** —
+`MerkleMembership4aryWideEmit.lean` / `BlindedMembershipWideEmit.lean` (`wideNodeFold_sound`,
+`wGroups_arranged`, `wCont_all_zero_iff`, `interior_forge_narrow_admits_wide_refuses`). Law #1 stays
+green; Rust parses the emitted bytes and constructs no constraints.
+
+**⚑ THE LEAN WIDE BLINDED DESCRIPTOR WAS UNPROVABLE, AND HAD BEEN SINCE IT WAS WRITTEN.** Its
+blinding tooth asked the Poseidon2 chip for **arity 9**. The chip AIR admits
+`arity ∈ {0,2,3,4,7,11,16}` — it asserts `arity·(a−2)(a−3)(a−4)(a−7)(a−11)(a−16) = 0`, degree 7 = the
+whole S-box budget, so no eighth factor can be added — and at `a = 9` that product is `52920 ≠ 0`.
+Independently, `chip_absorb_all_lanes` seeds lanes 4/5/6 from the inputs only at
+`arity ∈ {7,11,16}`, so at 9 it wrote the arity TAG into lane 4 and zeroed 5 and 6: **three of the
+eight member lanes never entered the preimage.** Fixed in Lean at arity 11 (`cur8 ‖ r ‖ 0 ‖ 0`,
+pads binding-preserving by `packBlind_inj`), golden regenerated, 17/17 blinded tests green.
+⚑ **NOTHING GATES A LEAN EMITTER'S CHOSEN ABSORB ARITY AGAINST THE CHIP'S ADMITTED SET.** A second
+instance is already on disk: `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json` carries
+TID_P2 lookups at arity **8 and 14**. That missing gate is the next thing to build.
+
+**THE FLAG DAY** — schema epoch **15 → 16**; a store at 15 REFUSES to load.
+`merkle-membership-4ary-general.json` (w11/2PI) and `blinded-membership-4ary-depth{2,8}.json`
+(w27/2PI) are DELETED; `merkle-membership-4ary-wide-general.json` (w90/16PI) and
+`blinded-membership-4ary-wide.json` (w99/16PI) replace them. Both wire dispatch prefixes changed, so
+a pre-cutover proof identity answers `UnknownAir` and is REFUSED rather than reinterpreted. The
+32-byte authorized-set root slot moved from ONE felt in the low 4 bytes to EIGHT canonical `u32` LE
+limbs filling the slot (injective) — widening the tree while the boundary re-narrowed it would have
+bought nothing. VK rotates for both families; `docs/VK-REGEN-LOG.md` carries the row.
+
+**WHAT DOES NOT MOVE:** the in-AIR sender-leaf weld `pubkeyCompress1Spec = A(pubkey8 ‖ 0⁸)[0]` is
+stated at lane 0, and lane 0 of the widened `compress_member` is bit-identical to the old return, so
+that gate holds unchanged — asserted, not assumed.
+
+**NAMED RESIDUALS — undone work, not theorems**
+
+1. ⚑ **The LEAF PREIMAGE is still not injective, and it is not 2^123.63.**
+   `canonical_32_to_felts_8` packs 30 bits/limb (`(hi & 0x3F) << 24`), dropping 2 bits of every
+   fourth byte — **16 of 256 bits never enter the hash**, so a colliding 32-byte sibling is
+   CONSTRUCTED at O(1). For `SenderAuthorized` the candidate is a real signing key (a 240-bit
+   target, not reachable) and the tree bound governs; for a `Witnessed { MerkleMembership }` over an
+   attacker-CHOSEN 32-byte value **the honest figure is O(1)**. Fix = the injective 16×`u16`
+   preimage (`raw_to_u16_le`, exactly the arity-16 row); NOT applied here only because it
+   desynchronises the live lane-0 weld above and the repair belongs in Lean.
+2. **Neighbor-adjacency / nullifier non-membership** (`dregg-membership-adjacency::poseidon2-v1`) is
+   a chained binary `hash_2_to_1` tree, still ONE felt, **no wide Lean twin on disk** — the same
+   wound class, in the deployed double-spend gate. `narrow_felt_from_slot_low4` /
+   `adjacency_compress` in `membership_verifier.rs` mark exactly where it lands.
+3. Bridge issuer ring-membership and preflight `dregg-derivation-v1` are **FAIL-CLOSED** at the
+   widening (they refuse rather than compare at lane 0), with self-arming tests that go red the
+   moment someone restores a positive pole without the federation-root flag day.
+4. Membership teeth PIs 50/51 remain unpinned (pre-existing; the fold arm is fail-closed on every
+   deployed leg). `circuit/src/membership_descriptor_general.rs` — 39 Law-#1 sites, one felt, NO
+   Lean emitter, and **test-only** — should be deleted, not widened.
+5. `dregg-multiway-tug` surface tests exceed the game's computron budget
+   (`limit=10000, used=10028`) on the wider trace — a budget constant, named and not yet raised.
+
+---
+
 ## ⚑⚑⚑⚑ JULY 31 — THE KERNEL'S AUTHORITY CALCULUS HAD NO BASE CASE, and the fix was one disjunct in the gate plus one constructor in the SPEC
 **`recKDelegateOwned` was correct, proved, and routed NOWHERE for 13 days. It is now the gate.**
 

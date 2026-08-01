@@ -38,7 +38,8 @@ mod membership_p3 {
     };
     use crate::field::BabyBear;
     use crate::membership_descriptor_4ary::{
-        membership_descriptor_of_depth_4ary, membership_witness_4ary,
+        Digest8, MEMBERSHIP_4ARY_PI_COUNT, membership_descriptor_of_depth_4ary,
+        membership_witness_4ary,
     };
 
     /// A Merkle-Poseidon2 membership proof interpreted from Lean-emitted IR2.
@@ -68,13 +69,12 @@ mod membership_p3 {
 
     impl std::error::Error for MembershipP3Error {}
 
-    /// Build the public inputs `[leaf, root]` for a membership statement, exactly as
-    /// the DSL path's `generate_merkle_poseidon2_trace` does (so a caller can bind
-    /// them into a composed proof). The `root` is the Poseidon2 hash-chain root the
-    /// `(leaf, siblings, positions)` witness recomputes.
+    /// Build the sixteen public inputs `[leaf0..leaf7, root0..root7]` for a membership
+    /// statement (so a caller can bind them into a composed proof). The `root` is the 8-felt
+    /// `node8` fold the `(leaf, siblings, positions)` witness recomputes.
     pub fn membership_public_inputs(
-        leaf: BabyBear,
-        siblings: &[[BabyBear; 3]],
+        leaf: Digest8,
+        siblings: &[[Digest8; 3]],
         positions: &[u8],
     ) -> Result<Vec<BabyBear>, MembershipP3Error> {
         if siblings.len() < 2 {
@@ -98,10 +98,10 @@ mod membership_p3 {
     /// Proves that `leaf` is a member of the Poseidon2 Merkle tree whose root is
     /// recomputed from `(siblings, positions)`. The returned proof self-verifies
     /// before return (matching the other migrated AIRs), so a returned proof is one
-    /// the audited verifier accepts. The public inputs are `[leaf, root]`.
+    /// the audited verifier accepts. The public inputs are `[leaf0..leaf7, root0..root7]`.
     pub fn prove_membership_p3(
-        leaf: BabyBear,
-        siblings: &[[BabyBear; 3]],
+        leaf: Digest8,
+        siblings: &[[Digest8; 3]],
         positions: &[u8],
     ) -> Result<MembershipP3Proof, MembershipP3Error> {
         if siblings.len() < 2 {
@@ -124,7 +124,7 @@ mod membership_p3 {
     }
 
     /// Verify a Merkle-Poseidon2 membership proof on the AUDITED Plonky3 verifier
-    /// (`p3-batch-stark`). `public_inputs` must be `[leaf, root]`.
+    /// (`p3-batch-stark`). `public_inputs` must be `[leaf0..leaf7, root0..root7]` (16 felts).
     ///
     /// The verifier reconstructs `CommonData` from the AIR + the proof's degree
     /// bits — it needs no witness (the genuine standalone-verifier path).
@@ -132,10 +132,12 @@ mod membership_p3 {
         proof: &MembershipP3Proof,
         public_inputs: &[BabyBear],
     ) -> Result<(), MembershipP3Error> {
-        if public_inputs.len() != 2 {
-            return Err(MembershipP3Error::VerificationFailed(
-                "membership public inputs must be [leaf, root]".into(),
-            ));
+        if public_inputs.len() != MEMBERSHIP_4ARY_PI_COUNT {
+            return Err(MembershipP3Error::VerificationFailed(format!(
+                "membership public inputs must be [leaf0..leaf7, root0..root7] \
+                 ({MEMBERSHIP_4ARY_PI_COUNT} felts), got {}",
+                public_inputs.len()
+            )));
         }
         let desc = membership_descriptor_of_depth_4ary(
             proof
@@ -156,23 +158,35 @@ mod membership_p3 {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::dsl::membership::create_test_witness as dsl_create_test_witness;
+        use crate::membership_descriptor_4ary::{
+            DIGEST_W, PI_LEAF, PI_ROOT, create_test_witness, membership_root_4ary,
+        };
 
-        /// Honest membership proves + verifies through the AUDITED p3 verifier, and
-        /// its public inputs `[leaf, root]` match the DSL path's exactly.
+        fn d8(base: u32) -> Digest8 {
+            core::array::from_fn(|k| BabyBear::new(base + k as u32))
+        }
+
+        /// Honest membership proves + verifies through the AUDITED p3 verifier, and its sixteen
+        /// public inputs ROUND-TRIP: they ARE the leaf and the independently recomputed `node8`
+        /// fold, lane for lane — not merely "some digest".
         #[test]
         fn membership_p3_proves_and_verifies_honest() {
-            let leaf = BabyBear::new(42424242);
-            let (siblings, positions, root) = dsl_create_test_witness(leaf, 4);
+            let leaf = d8(42424242);
+            let (siblings, positions, root) = create_test_witness(leaf, 4);
 
-            // PI parity with the DSL membership path.
-            let (_dsl_trace, dsl_pis) = crate::dsl::membership::generate_merkle_poseidon2_trace(
-                leaf, &siblings, &positions,
-            );
             let pis = membership_public_inputs(leaf, &siblings, &positions).unwrap();
-            assert_eq!(pis, dsl_pis, "p3 membership PIs must match the DSL path");
-            assert_eq!(pis[0], leaf);
-            assert_eq!(pis[1], root);
+            assert_eq!(
+                pis.len(),
+                MEMBERSHIP_4ARY_PI_COUNT,
+                "16 PIs: leaf(8) then root(8)"
+            );
+            assert_eq!(&pis[PI_LEAF..PI_LEAF + DIGEST_W], &leaf[..]);
+            assert_eq!(
+                &pis[PI_ROOT..PI_ROOT + DIGEST_W],
+                &membership_root_4ary(leaf, &siblings, &positions)[..],
+                "the published root must BE the recomputed node8 fold"
+            );
+            assert_eq!(&pis[PI_ROOT..PI_ROOT + DIGEST_W], &root[..]);
 
             let proof = prove_membership_p3(leaf, &siblings, &positions)
                 .expect("honest membership must prove+verify through audited p3");
@@ -182,66 +196,71 @@ mod membership_p3 {
         /// Depth-8 honest membership also round-trips.
         #[test]
         fn membership_p3_depth_8() {
-            let leaf = BabyBear::new(7777);
-            let (siblings, positions, _root) = dsl_create_test_witness(leaf, 8);
+            let leaf = d8(7777);
+            let (siblings, positions, _root) = create_test_witness(leaf, 8);
             let pis = membership_public_inputs(leaf, &siblings, &positions).unwrap();
             let proof = prove_membership_p3(leaf, &siblings, &positions).expect("depth-8 proof");
             verify_membership_p3(&proof, &pis).expect("depth-8 verify");
         }
 
-        /// ANTI-GHOST: a forged `root` public input is REJECTED by the audited
-        /// verifier (the proof's bound hash-chain root is the genuine one, not the
-        /// forged PI).
+        /// ANTI-GHOST: a forged `root` public input is REJECTED by the audited verifier — in
+        /// EVERY lane. The one-felt family pinned lane 0 alone; all eight are pinned now.
         #[test]
-        fn membership_p3_rejects_forged_root() {
-            let leaf = BabyBear::new(42424242);
-            let (siblings, positions, _root) = dsl_create_test_witness(leaf, 4);
+        fn membership_p3_rejects_forged_root_in_every_lane() {
+            let leaf = d8(42424242);
+            let (siblings, positions, _root) = create_test_witness(leaf, 4);
             let pis = membership_public_inputs(leaf, &siblings, &positions).unwrap();
             let proof = prove_membership_p3(leaf, &siblings, &positions).expect("honest proof");
 
-            let mut forged = pis.clone();
-            forged[1] = forged[1] + BabyBear::new(1); // forge the root
-            let res = verify_membership_p3(&proof, &forged);
-            assert!(
-                res.is_err(),
-                "SOUNDNESS: a forged Merkle root MUST be rejected by the audited p3 verifier"
-            );
+            for lane in 0..DIGEST_W {
+                let mut forged = pis.clone();
+                forged[PI_ROOT + lane] = forged[PI_ROOT + lane] + BabyBear::new(1);
+                assert!(
+                    verify_membership_p3(&proof, &forged).is_err(),
+                    "SOUNDNESS: a root forged in lane {lane} MUST be rejected"
+                );
+            }
         }
 
-        /// ANTI-GHOST: a forged `leaf` public input is REJECTED (the first-row
-        /// boundary pins `current == leaf`).
+        /// ANTI-GHOST: a forged `leaf` public input is REJECTED in every lane (the row-0
+        /// boundaries pin all eight). Includes the lane-0-EQUAL forgery the retired one-felt
+        /// family could not distinguish at all.
         #[test]
-        fn membership_p3_rejects_forged_leaf() {
-            let leaf = BabyBear::new(42424242);
-            let (siblings, positions, _root) = dsl_create_test_witness(leaf, 4);
+        fn membership_p3_rejects_forged_leaf_in_every_lane() {
+            let leaf = d8(42424242);
+            let (siblings, positions, _root) = create_test_witness(leaf, 4);
             let pis = membership_public_inputs(leaf, &siblings, &positions).unwrap();
             let proof = prove_membership_p3(leaf, &siblings, &positions).expect("honest proof");
 
-            let mut forged = pis.clone();
-            forged[0] = BabyBear::new(99999); // forge the leaf
-            let res = verify_membership_p3(&proof, &forged);
-            assert!(
-                res.is_err(),
-                "SOUNDNESS: a forged leaf MUST be rejected by the audited p3 verifier"
-            );
+            for lane in 0..DIGEST_W {
+                let mut forged = pis.clone();
+                forged[PI_LEAF + lane] = forged[PI_LEAF + lane] + BabyBear::new(1);
+                if lane != 0 {
+                    assert_eq!(
+                        forged[PI_LEAF], pis[PI_LEAF],
+                        "lane {lane} forgery shares the lane-0 projection the retired family pinned"
+                    );
+                }
+                assert!(
+                    verify_membership_p3(&proof, &forged).is_err(),
+                    "SOUNDNESS: a leaf forged in lane {lane} MUST be rejected"
+                );
+            }
         }
 
-        /// ANTI-GHOST (forged WITNESS): a prover with a leaf that is NOT in the tree
-        /// cannot produce a proof verifying against the genuine root — the recomputed
-        /// hash-chain root differs, so proving (which self-verifies) fails.
+        /// ANTI-GHOST (forged WITNESS): a prover with a leaf that is NOT in the tree cannot
+        /// produce a proof verifying against the genuine root.
         #[test]
         fn membership_p3_rejects_non_member_leaf() {
-            let leaf = BabyBear::new(42424242);
-            let (siblings, positions, root) = dsl_create_test_witness(leaf, 4);
+            let leaf = d8(42424242);
+            let (siblings, positions, root) = create_test_witness(leaf, 4);
 
-            // A different leaf with the SAME siblings/positions recomputes a DIFFERENT
-            // root; proving for the genuine `root` is impossible.
-            let non_member = BabyBear::new(13371337);
-            let res = prove_membership_p3(non_member, &siblings, &positions);
-            // Proving succeeds (it proves membership for the non-member's OWN root),
-            // but verifying against the genuine tree root must reject.
-            if let Ok(proof) = res {
-                let genuine_pis = vec![non_member, root];
+            let non_member = d8(13371337);
+            assert_ne!(non_member, leaf);
+            if let Ok(proof) = prove_membership_p3(non_member, &siblings, &positions) {
+                let mut genuine_pis = Vec::with_capacity(MEMBERSHIP_4ARY_PI_COUNT);
+                genuine_pis.extend_from_slice(&non_member);
+                genuine_pis.extend_from_slice(&root);
                 assert!(
                     verify_membership_p3(&proof, &genuine_pis).is_err(),
                     "SOUNDNESS: a non-member leaf must not verify against the genuine root"

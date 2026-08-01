@@ -6,12 +6,22 @@
 //! hidden hand **cryptographic**:
 //!
 //! * **At DEAL, each player's private round inventory is COMMITTED as a Poseidon2 4-ary
-//!   Merkle root** ([`HandTree`]) — opening hand plus deterministic later draws, ten distinct
-//!   cards total. Each leaf is a blinded
-//!   commitment `Poseidon2(DOMAIN, card, nonce, 0)`, so the root HIDES which cards are
+//!   `node8` Merkle root** ([`HandTree`]) — opening hand plus deterministic later draws, ten
+//!   distinct cards total. Each leaf is a blinded **8-felt** commitment
+//!   `A16([DOMAIN ‖ card ‖ nonce] ‖ 0⁸)`, so the root HIDES which cards are
 //!   in the inventory (the per-card nonce blinds even the small card space) and BINDS the
 //!   player to exactly that round multiset. The current six-or-fewer-card UI hand is a separate
 //!   private commitment rebuilt from the reference engine; it never leaks the future draws.
+//!
+//!   ⚑ **FLAG DAY (felt-width finding #9).** Every node of this tree — leaf, sibling, interior,
+//!   and the committed root — was ONE BabyBear felt: `hash_4_to_1` truncated to `state[0]`,
+//!   a ~31-bit commitment. A 31-bit codomain is birthday-collided in 2^15.5 (milliseconds), so
+//!   a second authentication path to the SAME committed hand root existed for a card that was
+//!   never dealt, and both the clear-side tooth and the fold would have accepted it. The tree
+//!   is now the full 8-felt [`node8_4ary`] fold, its 32-byte commitment carries eight canonical
+//!   `u32` limbs filling the slot exactly ([`root_to_bytes`]), and the path wire carries all
+//!   eight lanes per sibling. Every stored hand commitment, `PlayProof` path blob, and ledger
+//!   root lane CHANGES; the old shapes refuse to decode rather than reinterpret.
 //!
 //! * **Each PLAY carries a [`StateConstraint::Witnessed`] `{ MerkleMembership }` proof**
 //!   ([`PlayProof`]) — a Poseidon2 Merkle authentication path from the played card's
@@ -50,27 +60,32 @@
 //! committed hand root, the play generation, and the phase.
 //!
 //! NAMED NEXT (honest scope, `docs/VERIFIED-GAME-PORTFOLIO.md`): **Phase 3** — the
-//! STARK fold, lowering this `Witnessed { MerkleMembership }` tooth into the
-//! now-Lane-D-unblocked fold (the `MerkleAir` — `circuit/src/merkle_types.rs` — proves
-//! the SAME 4-ary Poseidon2 path this module checks in the clear; a whole private
-//! match → one succinct proof; the Witnessed lowering is the game-turn-slice residual
-//! to wire). **Phase 4** the Lean refinement. The Offering surface and fresh-seed replay are
-//! live; transport-specific private delivery remains a frontend responsibility.
+//! STARK fold, lowering this `Witnessed { MerkleMembership }` tooth through
+//! `game_turn_slice::compiler::lower_witnessed_merkle_membership` onto the LEAN-EMITTED wide
+//! membership descriptor (which proves the SAME `node8_4ary` fold this module checks in the
+//! clear); a whole private match → one succinct proof. ⚑ The state-BOUND half of that fold is
+//! BLOCKED: the emitted descriptor reserves no `[old8 ‖ new8]` door (see
+//! [`crate::fold::membership_leaf_bound`]). **Phase 4** the Lean refinement. The Offering
+//! surface and fresh-seed replay are live; transport-specific private delivery remains a
+//! frontend responsibility.
 
 use std::sync::Arc;
 
 use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, Effect, EmbeddedExecutor, TurnReceipt,
 };
-use dregg_cell::program::{TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag};
+use dregg_cell::program::{
+    HeapAtom, TransitionMeta, WitnessBlobView, WitnessBundle, WitnessKindTag,
+};
 use dregg_cell::{
     Cell, CellProgram, CellState, InputRef, PredicateInput, StateConstraint, WitnessedPredicate,
     WitnessedPredicateError, WitnessedPredicateKind, WitnessedPredicateRegistry,
     WitnessedPredicateVerifier, field_from_u64,
 };
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-use dregg_circuit::merkle_types::compute_parent_poseidon2;
-use dregg_circuit::poseidon2::hash_4_to_1;
+use dregg_circuit::membership_descriptor_4ary::{
+    DIGEST_W, Digest8, absorb16, membership_root_4ary, node8_4ary,
+};
 use dregg_schema::layout::{CheckedLayout, Slot, allocate_checked};
 use dregg_schema::schema::Schema;
 use dregg_schema::{genesis_oneshot_teeth, genesis_sentinel_freeze};
@@ -100,74 +115,91 @@ pub const DECK_SIZE: usize = 21;
 /// hash-site). A fabricated "card" cannot masquerade as a pad leaf.
 const DOMAIN_LEAF: u32 = 0x6d746c66; // "mtlf"
 const DOMAIN_PAD: u32 = 0x70616421; // "pad!"
-const DOMAIN_CARD: u32 = 0x63617264; // "card"
-const DOMAIN_NONCE: u32 = 0x6e6f6e63; // "nonc"
 
-/// Commit a full `u64` into one field element without first squeezing it into a single
-/// BabyBear lane. Three 30/30/4-bit limbs are individually canonical, so changing any bit of
-/// the opening changes the Poseidon2 preimage (up to the hash's collision-resistance).
-fn u64_digest(domain: u32, value: u64) -> BabyBear {
-    let limb0 = (value & ((1u64 << 30) - 1)) as u32;
-    let limb1 = ((value >> 30) & ((1u64 << 30) - 1)) as u32;
-    let limb2 = (value >> 60) as u32;
-    hash_4_to_1(&[
-        BabyBear::new_canonical(domain),
-        BabyBear::new_canonical(limb0),
-        BabyBear::new_canonical(limb1),
-        BabyBear::new_canonical(limb2),
-    ])
+/// The three 30/30/4-bit limbs of a `u64`, each individually canonical. Every bit of the
+/// opening rides its own field lane, so no two distinct `u64`s share a limb triple.
+fn u64_limbs(value: u64) -> [BabyBear; 3] {
+    [
+        BabyBear::new_canonical((value & ((1u64 << 30) - 1)) as u32),
+        BabyBear::new_canonical(((value >> 30) & ((1u64 << 30) - 1)) as u32),
+        BabyBear::new_canonical((value >> 60) as u32),
+    ]
 }
 
-/// The blinded Merkle **leaf** committing to one dealt card:
-/// `Poseidon2(DOMAIN_LEAF, digest64(card), digest64(nonce), 0)`. The two staged digests
-/// faithfully carry all 64 bits rather than aliasing openings modulo the ~31-bit native field.
-/// The per-card `nonce` blinds the small card space (identical guild-copies get distinct leaves;
-/// the leaf hides `card`).
-pub fn card_leaf(card_id: u64, nonce: u64) -> BabyBear {
-    hash_4_to_1(&[
-        BabyBear::new_canonical(DOMAIN_LEAF),
-        u64_digest(DOMAIN_CARD, card_id),
-        u64_digest(DOMAIN_NONCE, nonce),
-        BabyBear::ZERO,
-    ])
+/// The blinded Merkle **leaf** committing to one dealt card — a FULL 8-felt `node8` digest:
+/// `A16([DOMAIN_LEAF ‖ card_limbs ‖ nonce_limbs ‖ 0] ‖ 0⁸)`, the same arity-16 chip absorb
+/// (`dregg_circuit::membership_descriptor_4ary::absorb16`) the deployed membership family
+/// folds with, returning ALL EIGHT output lanes.
+///
+/// ⚑ It used to be ONE BabyBear felt (`hash_4_to_1` truncated to `state[0]`), which put the
+/// whole hand commitment on a ~31-bit codomain — birthday-collided in 2^15.5, i.e. a second
+/// opening for a card never dealt. The two staged `u64_digest` hashes existed only because a
+/// 4-lane preimage could not hold `1 + 3 + 3` limbs; the 16-lane absorb can, so the card and
+/// nonce limbs now enter the preimage DIRECTLY (positionally separated) with no intermediate
+/// squeeze.
+pub fn card_leaf(card_id: u64, nonce: u64) -> Digest8 {
+    let mut pre = [BabyBear::ZERO; DIGEST_W];
+    pre[0] = BabyBear::new_canonical(DOMAIN_LEAF);
+    pre[1..4].copy_from_slice(&u64_limbs(card_id));
+    pre[4..7].copy_from_slice(&u64_limbs(nonce));
+    absorb16(&pre, &[BabyBear::ZERO; DIGEST_W])
 }
 
-/// The padding leaf for the unused slots of a fixed-arity tree.
-fn pad_leaf() -> BabyBear {
-    hash_4_to_1(&[
-        BabyBear::new_canonical(DOMAIN_PAD),
-        BabyBear::ZERO,
-        BabyBear::ZERO,
-        BabyBear::ZERO,
-    ])
+/// The padding leaf for the unused slots of a fixed-arity tree (an 8-felt `node8` digest).
+fn pad_leaf() -> Digest8 {
+    let mut pre = [BabyBear::ZERO; DIGEST_W];
+    pre[0] = BabyBear::new_canonical(DOMAIN_PAD);
+    absorb16(&pre, &[BabyBear::ZERO; DIGEST_W])
 }
 
-/// Encode a root felt as the 32-byte commitment the `Witnessed { MerkleMembership }`
-/// predicate carries (canonical `u32` in the low four bytes, the rest zero — the same
-/// felt-in-a-slot shape `turn::executor::membership_verifier::root_felt_from_slot`
-/// reads).
-pub fn root_to_bytes(root: BabyBear) -> [u8; 32] {
+/// Encode the 8-felt hand root as the 32-byte commitment the
+/// `Witnessed { MerkleMembership }` predicate carries: EIGHT canonical `u32` little-endian
+/// limbs filling the slot exactly (8 x 4 = 32). Every BabyBear canonical value is
+/// `< 2^31 < 2^32`, so the encoding is INJECTIVE — the 32 bytes determine the eight felts and
+/// vice versa. Byte-identical to
+/// `turn::executor::membership_verifier::authorized_set_root_bytes`, which
+/// `root_digest_from_slot` reads back.
+///
+/// ⚑ FLAG DAY: this wrote ONE canonical `u32` into the low four bytes and left 28 zero. A
+/// widened tree whose root re-narrowed at the slot boundary would have bought nothing, so the
+/// slot encoding moved with the tree. Every committed hand-root commitment CHANGES.
+pub fn root_to_bytes(root: Digest8) -> [u8; 32] {
     let mut out = [0u8; 32];
-    out[0..4].copy_from_slice(&root.as_u32().to_le_bytes());
+    for (i, felt) in root.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
     out
 }
 
-/// Decode a root felt from its 32-byte commitment form (the inverse of
-/// [`root_to_bytes`]).
-fn root_from_bytes(bytes: &[u8; 32]) -> Option<BabyBear> {
-    if bytes[4..].iter().any(|&byte| byte != 0) {
-        return None;
+/// Decode the 8-felt hand root from its 32-byte commitment form (the exact inverse of
+/// [`root_to_bytes`]). `None` iff any limb is non-canonical (`>= BABYBEAR_P`) — a
+/// non-canonical commitment is REFUSED rather than silently reduced, so two byte strings can
+/// never name the same root.
+pub fn root_from_bytes(bytes: &[u8; 32]) -> Option<Digest8> {
+    let mut root = [BabyBear::ZERO; DIGEST_W];
+    for (i, lane) in root.iter_mut().enumerate() {
+        let b = i * 4;
+        let raw = u32::from_le_bytes([bytes[b], bytes[b + 1], bytes[b + 2], bytes[b + 3]]);
+        if raw >= BABYBEAR_P {
+            return None;
+        }
+        *lane = BabyBear::from_canonical(raw);
     }
-    let mut b = [0u8; 4];
-    b.copy_from_slice(&bytes[0..4]);
-    let raw = u32::from_le_bytes(b);
-    (raw < BABYBEAR_P).then(|| BabyBear::from_canonical(raw))
+    Some(root)
 }
 
-/// The `u64` register lane a root occupies inside the committed cell (its canonical
-/// felt). The `WriteOnce` / free-write register teeth compare this scalar.
-fn root_to_u64(root: BabyBear) -> u64 {
-    root.as_u32() as u64
+/// The number of state lanes a committed root occupies inside the cell: ONE PER FELT. Each
+/// lane holds a canonical BabyBear (`< 2^32`), so it lands inside the deployed setField
+/// writable window (`circuit/tests/setfield_encoder_window_gate.rs` — only bytes 28..32 of a
+/// field value are writable); the `WriteOnce` teeth freeze all eight, not a projection.
+pub const ROOT_LANES: usize = DIGEST_W;
+
+/// The eight canonical `u32` lanes an 8-felt root occupies inside the committed cell (on the
+/// HEAP plane — 4 roots x 8 lanes does not fit the cell's 16 register slots). The
+/// `WriteOnce` / `Immutable` teeth compare these lane-for-lane, so the frozen quantity is the
+/// WHOLE root — not a 31-bit projection of it.
+pub fn root_to_lanes(root: Digest8) -> [u32; ROOT_LANES] {
+    core::array::from_fn(|i| root[i].as_u32())
 }
 
 // ===========================================================================
@@ -184,24 +216,25 @@ pub const HAND_TREE_DEPTH: usize = 2;
 pub const HAND_TREE_LEAVES: usize = 16; // 4^2
 
 /// One level of a Poseidon2 membership authentication path: the played node's position
-/// among its four siblings, plus the three sibling node values.
+/// among its four siblings, plus the three sibling **8-felt** node digests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PathLevel {
     /// The node's position in its 4-group (`0..=3`).
     pub position: u8,
-    /// The three sibling node values at this level.
-    pub siblings: [BabyBear; 3],
+    /// The three sibling node digests at this level (full `node8` width — the one-felt
+    /// sibling was blind to seven of every neighbour's eight lanes).
+    pub siblings: [Digest8; 3],
 }
 
-/// A hand, COMMITTED as a Poseidon2 4-ary Merkle root. Holds the (card, nonce) openings
-/// PRIVATELY; only [`HandTree::root`] is ever published. Recommitting after a play
-/// ([`HandTree::without`]) is the remaining-hand update.
+/// A hand, COMMITTED as a Poseidon2 4-ary Merkle root of **8-felt `node8` nodes**. Holds the
+/// (card, nonce) openings PRIVATELY; only [`HandTree::root`] is ever published. Recommitting
+/// after a play ([`HandTree::without`]) is the remaining-hand update.
 #[derive(Clone, Debug)]
 pub struct HandTree {
     /// The dealt (card_id, nonce) pairs — SECRET, never leave the owner.
     cards: Vec<(u64, u64)>,
     /// The 4-ary tree layers, `layers[0]` = the padded leaves, `layers[depth][0]` = root.
-    layers: Vec<Vec<BabyBear>>,
+    layers: Vec<Vec<Digest8>>,
 }
 
 impl HandTree {
@@ -211,7 +244,7 @@ impl HandTree {
             cards.len() <= HAND_TREE_LEAVES,
             "hand exceeds the {HAND_TREE_LEAVES}-leaf tree capacity"
         );
-        let mut leaves: Vec<BabyBear> = cards.iter().map(|&(c, n)| card_leaf(c, n)).collect();
+        let mut leaves: Vec<Digest8> = cards.iter().map(|&(c, n)| card_leaf(c, n)).collect();
         let pad = pad_leaf();
         leaves.resize(HAND_TREE_LEAVES, pad);
 
@@ -221,15 +254,17 @@ impl HandTree {
             let mut next = Vec::with_capacity(prev.len() / 4);
             for group in prev.chunks(4) {
                 let four = [group[0], group[1], group[2], group[3]];
-                next.push(hash_4_to_1(&four));
+                // THE node8 FOLD — `A16(A16(c0‖c1) ‖ A16(c2‖c3))`, the exact recurrence the
+                // Lean-authored membership descriptor's three arity-16 chip lookups enforce.
+                next.push(node8_4ary(&four));
             }
             layers.push(next);
         }
         HandTree { cards, layers }
     }
 
-    /// The committed hand root.
-    pub fn root(&self) -> BabyBear {
+    /// The committed hand root (the full 8-felt `node8` digest).
+    pub fn root(&self) -> Digest8 {
         self.layers[HAND_TREE_DEPTH][0]
     }
 
@@ -260,7 +295,7 @@ impl HandTree {
         for level in 0..HAND_TREE_DEPTH {
             let position = (idx % 4) as u8;
             let group = idx / 4;
-            let mut siblings = [BabyBear::ZERO; 3];
+            let mut siblings = [[BabyBear::ZERO; DIGEST_W]; 3];
             let mut s = 0;
             for j in 0..4usize {
                 if j != position as usize {
@@ -332,19 +367,28 @@ impl PlayProof {
     }
 
     /// Serialize the membership PATH — the `Witnessed` predicate's proof blob
-    /// (`depth ‖ [position ‖ sib0 ‖ sib1 ‖ sib2]*`, each felt a canonical `u32`).
+    /// (`depth ‖ [position ‖ sib0[0..8] ‖ sib1[0..8] ‖ sib2[0..8]]*`, each felt a canonical
+    /// `u32` LE). ⚑ FLAG DAY: a level was 13 bytes (one felt per sibling); it is now
+    /// [`LEVEL_BYTES`], carrying all EIGHT lanes of each co-path digest. A pre-cutover blob
+    /// no longer decodes (`decode_path` rejects it on length).
     pub fn path_bytes(&self) -> Vec<u8> {
-        let mut b = Vec::with_capacity(1 + self.path.len() * 13);
+        let mut b = Vec::with_capacity(1 + self.path.len() * LEVEL_BYTES);
         b.push(self.path.len() as u8);
         for lvl in &self.path {
             b.push(lvl.position);
             for sib in &lvl.siblings {
-                b.extend_from_slice(&sib.as_u32().to_le_bytes());
+                for felt in sib {
+                    b.extend_from_slice(&felt.as_u32().to_le_bytes());
+                }
             }
         }
         b
     }
 }
+
+/// One serialized authentication level: `position` + three 8-felt siblings, each felt a
+/// canonical `u32` LE.
+const LEVEL_BYTES: usize = 1 + 3 * DIGEST_W * 4;
 
 /// Decode the opening blob (`card_id ‖ nonce`).
 fn decode_opening(bytes: &[u8]) -> Option<(u64, u64)> {
@@ -356,20 +400,28 @@ fn decode_opening(bytes: &[u8]) -> Option<(u64, u64)> {
     Some((card, nonce))
 }
 
-/// Decode the path blob into `(position, siblings)` levels.
+/// Decode the path blob into `(position, 8-felt siblings)` levels. A non-canonical limb
+/// (`>= BABYBEAR_P`) is REFUSED rather than reduced, so two blobs can never name the same
+/// co-path.
 fn decode_path(bytes: &[u8]) -> Option<Vec<PathLevel>> {
     let mut it = bytes.iter().copied();
     let depth = it.next()? as usize;
     let mut path = Vec::with_capacity(depth);
     for _ in 0..depth {
         let position = it.next()?;
-        let mut siblings = [BabyBear::ZERO; 3];
+        let mut siblings = [[BabyBear::ZERO; DIGEST_W]; 3];
         for sib in siblings.iter_mut() {
-            let mut w = [0u8; 4];
-            for byte in w.iter_mut() {
-                *byte = it.next()?;
+            for felt in sib.iter_mut() {
+                let mut w = [0u8; 4];
+                for byte in w.iter_mut() {
+                    *byte = it.next()?;
+                }
+                let raw = u32::from_le_bytes(w);
+                if raw >= BABYBEAR_P {
+                    return None; // non-canonical limb — malformed
+                }
+                *felt = BabyBear::from_canonical(raw);
             }
-            *sib = BabyBear::new_canonical(u32::from_le_bytes(w));
         }
         path.push(PathLevel { position, siblings });
     }
@@ -383,15 +435,21 @@ fn decode_path(bytes: &[u8]) -> Option<Vec<PathLevel>> {
 // The MerkleMembership verifier — registered into the cell's real registry.
 // ===========================================================================
 
-/// A real `MerkleMembership` [`WitnessedPredicateVerifier`]: recomputes the played
-/// card's Poseidon2 leaf from its opening and walks the 4-ary authentication path to the
-/// committed root. Accepts iff the walk lands on the predicate's `commitment` root. This
-/// is the cell-side, executor-checked form of the Phase-3 `MerkleAir` STARK
-/// (`circuit/src/merkle_types.rs` proves the SAME `compute_parent_poseidon2` recurrence).
+/// A real `MerkleMembership` [`WitnessedPredicateVerifier`]: recomputes the played card's
+/// 8-felt Poseidon2 leaf from its opening and folds the 4-ary authentication path to the
+/// committed root with [`membership_root_4ary`] — the SAME `node8_4ary` recurrence the
+/// Lean-emitted membership descriptor's three arity-16 chip lookups enforce in-circuit
+/// (`Dregg2.Circuit.Emit.MerkleMembership4aryWideEmit`). Accepts iff the fold lands on the
+/// predicate's `commitment` root, in all eight lanes.
+///
+/// ⚑ It used to walk `compute_parent_poseidon2` — the Rust `MerkleAir`'s ONE-FELT parent
+/// (`hash_4_to_1` truncated to `state[0]`). A ~31-bit node is birthday-collided in 2^15.5, so
+/// a second authentication path to the SAME committed hand root existed for a card that was
+/// never dealt, and this gate would have accepted it.
 ///
 /// A fabricated card (a leaf not under the root) or a tampered path cannot land on the
-/// committed root — Poseidon2 collision-resistance is the security. Registered on a
-/// [`WitnessedPredicateRegistry`] as the `MerkleMembership` built-in, it IS the gate the
+/// committed root — full-width Poseidon2 collision-resistance is now the security. Registered
+/// on a [`WitnessedPredicateRegistry`] as the `MerkleMembership` built-in, it IS the gate the
 /// cell evaluator calls.
 pub struct HandMembershipVerifier;
 
@@ -431,8 +489,9 @@ impl WitnessedPredicateVerifier for HandMembershipVerifier {
             reason: "malformed membership path".into(),
         })?;
 
-        // Recompute the leaf and walk the Poseidon2 path to the root.
-        let mut current = card_leaf(card, nonce);
+        // Recompute the leaf and walk the `node8` path to the root — `membership_root_4ary`
+        // IS the fold the Lean-authored descriptor's three arity-16 chip lookups enforce, so
+        // the clear-side gate and the in-circuit gate check the identical relation.
         for lvl in &path {
             if lvl.position > 3 {
                 return Err(WitnessedPredicateError::Rejected {
@@ -440,8 +499,10 @@ impl WitnessedPredicateVerifier for HandMembershipVerifier {
                     reason: format!("path position {} out of range 0..=3", lvl.position),
                 });
             }
-            current = compute_parent_poseidon2(current, lvl.position, &lvl.siblings);
         }
+        let siblings: Vec<[Digest8; 3]> = path.iter().map(|lvl| lvl.siblings).collect();
+        let positions: Vec<u8> = path.iter().map(|lvl| lvl.position).collect();
+        let current = membership_root_4ary(card_leaf(card, nonce), &siblings, &positions);
         let expected =
             root_from_bytes(commitment).ok_or_else(|| WitnessedPredicateError::Rejected {
                 kind_name: "MerkleMembership",
@@ -708,6 +769,13 @@ pub const PHASE_SCORE: u64 = 4;
 
 const LEDGER_FEDERATION: [u8; 32] = [0xD6; 32];
 
+/// The per-turn computron CEILING this app declares (`EmbeddedExecutor::with_metered_turn_fee`).
+/// It must cover the WIDEST turn — the atomic `start_round` genesis, which writes the Lean rules
+/// cell's whole projection AND both players' 8-lane inventory roots (metered at 10 028 against
+/// the 10 000 default the moment the roots widened to `node8`). Metered mode means a narrow turn
+/// still pays only a narrow turn's price, so this number is a DoS bound, not a per-turn tax.
+const GENESIS_FEE_CEILING: u64 = 40_000;
+
 fn witnessed_play_method(player: Player, count: usize) -> String {
     format!(
         "{PLAY}:{}:{count}",
@@ -715,12 +783,11 @@ fn witnessed_play_method(player: Player, count: usize) -> String {
     )
 }
 
-/// The twelve register components, in allocation order.
-const LEDGER_REGISTERS: [&str; 12] = [
-    "a_hand_root",
-    "b_hand_root",
-    "a_rem_root",
-    "b_rem_root",
+/// The eight scalar register components, in allocation order. ⚑ The four committed ROOTS
+/// left this array at the `node8` cutover: an 8-felt root needs eight lanes, and 4 x 8 = 32
+/// does not fit the cell's 16 register slots (`dregg_schema::layout::STATE_SLOTS`), so the
+/// roots ride the HEAP plane ([`LEDGER_ROOTS`]) — a lane apiece, none of them a projection.
+const LEDGER_REGISTERS: [&str; 8] = [
     "phase",
     "gen",
     "a_pick_seal",
@@ -731,13 +798,27 @@ const LEDGER_REGISTERS: [&str; 12] = [
     "b_played",
 ];
 
-/// The full committed register state (rewritten in whole each turn, one field mutated).
+/// The four committed 8-felt roots, each occupying [`ROOT_LANES`] heap lanes named
+/// `"{base}{k}"`. Declared in this order, so the heap keys are deterministic.
+const LEDGER_ROOTS: [&str; 4] = ["a_hand_root", "b_hand_root", "a_rem_root", "b_rem_root"];
+
+/// The heap component name of lane `k` of the root `base`.
+fn root_lane_name(base: &str, k: usize) -> String {
+    format!("{base}{k}")
+}
+
+/// The full committed state (rewritten in whole each turn, one quantity mutated).
+///
+/// ⚑ FLAG DAY: the four roots were `u64` scalars — the low 31 bits of the committed hand
+/// digest and nothing else, so the `WriteOnce` teeth froze a projection while the tree above
+/// them was widened. Each is now the full eight canonical `u32` lanes ([`root_to_lanes`]),
+/// frozen lane-for-lane.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LedgerState {
-    pub a_hand_root: u64,
-    pub b_hand_root: u64,
-    pub a_rem_root: u64,
-    pub b_rem_root: u64,
+    pub a_hand_root: [u32; ROOT_LANES],
+    pub b_hand_root: [u32; ROOT_LANES],
+    pub a_rem_root: [u32; ROOT_LANES],
+    pub b_rem_root: [u32; ROOT_LANES],
     pub phase: u64,
     pub generation: u64,
     pub a_pick_seal: u64,
@@ -762,12 +843,9 @@ pub struct LedgerDeployment {
 impl LedgerDeployment {
     /// Allocate + Legal-check the hidden-hand schema.
     pub fn new() -> Self {
-        // Built in the same order as LEDGER_REGISTERS so the slots resolve cleanly.
-        let s = Schema::new(LEDGER_SCENE_ID)
-            .identity("a_hand_root")
-            .identity("b_hand_root")
-            .identity("a_rem_root")
-            .identity("b_rem_root")
+        // Built in the same order as LEDGER_REGISTERS so the slots resolve cleanly; the
+        // four 8-lane roots follow as heap components (keys `STATE_SLOTS..`).
+        let mut s = Schema::new(LEDGER_SCENE_ID)
             .stat("phase", 0, 8)
             .stat("gen", 0, 255)
             .identity("a_pick_seal")
@@ -776,6 +854,11 @@ impl LedgerDeployment {
             .identity("b_secret_seal")
             .stat("a_played", 0, 8)
             .stat("b_played", 0, 8);
+        for base in LEDGER_ROOTS {
+            for k in 0..ROOT_LANES {
+                s = s.collection(root_lane_name(base, k));
+            }
+        }
         let layout = allocate_checked(&s).expect("hidden-hand layout is Legal");
         LedgerDeployment { layout }
     }
@@ -788,14 +871,33 @@ impl LedgerDeployment {
         }
     }
 
-    /// The teeth shared by every non-genesis method: the committed hand roots + each
-    /// committed pick seal are `WriteOnce` (a swap is refused) and the phase is
-    /// `Monotonic` (no rewind).
+    /// Resolve lane `k` of the committed root `base` to its heap key.
+    pub fn root_key(&self, base: &str, k: usize) -> u64 {
+        match self.layout.resolve(&root_lane_name(base, k)) {
+            Some(Slot::Heap(key)) => key,
+            other => panic!("`{base}{k}` is not a heap key: {other:?}"),
+        }
+    }
+
+    /// Every heap key of the committed root `base`, lane order.
+    fn root_keys(&self, base: &str) -> [u64; ROOT_LANES] {
+        core::array::from_fn(|k| self.root_key(base, k))
+    }
+
+    /// The teeth shared by every non-genesis method: ALL EIGHT lanes of each committed hand
+    /// root and each committed pick seal are `WriteOnce` (a swap is refused) and the phase
+    /// is `Monotonic` (no rewind).
     fn common_teeth(&self) -> Vec<StateConstraint> {
         let mut teeth = Vec::new();
+        for base in ["a_hand_root", "b_hand_root"] {
+            for key in self.root_keys(base) {
+                teeth.push(StateConstraint::HeapField {
+                    key,
+                    atom: HeapAtom::WriteOnce,
+                });
+            }
+        }
         for name in [
-            "a_hand_root",
-            "b_hand_root",
             "a_pick_seal",
             "b_pick_seal",
             "a_secret_seal",
@@ -823,7 +925,15 @@ impl LedgerDeployment {
             constraints.push(StateConstraint::StrictMonotonic { index: gen_slot });
             // Non-play methods cannot smuggle a private-inventory consumption alongside a pick
             // or score transition. Witnessed play cases below replace this base PLAY case.
-            for name in ["a_rem_root", "b_rem_root", "a_played", "b_played"] {
+            for base in ["a_rem_root", "b_rem_root"] {
+                for key in dep.root_keys(base) {
+                    constraints.push(StateConstraint::HeapField {
+                        key,
+                        atom: HeapAtom::Immutable,
+                    });
+                }
+            }
+            for name in ["a_played", "b_played"] {
                 constraints.push(StateConstraint::Immutable {
                     index: dep.reg(name),
                 });
@@ -893,13 +1003,19 @@ impl LedgerDeployment {
                         "a_played"
                     }),
                 });
-                constraints.push(StateConstraint::Immutable {
-                    index: self.reg(if player == Player::A {
-                        "b_rem_root"
-                    } else {
-                        "a_rem_root"
-                    }),
-                });
+                // The OTHER seat's remaining-inventory root is frozen in every one of its
+                // eight lanes — a play may not touch the opponent's committed remainder.
+                let other_rem = if player == Player::A {
+                    "b_rem_root"
+                } else {
+                    "a_rem_root"
+                };
+                for key in self.root_keys(other_rem) {
+                    constraints.push(StateConstraint::HeapField {
+                        key,
+                        atom: HeapAtom::Immutable,
+                    });
+                }
                 for proof_index in 0..count {
                     constraints.push(StateConstraint::Witnessed {
                         wp: WitnessedPredicate::merkle_membership(
@@ -981,7 +1097,18 @@ impl HiddenHandLedger {
             AgentCipherclerk::from_seed(seed_material),
             LEDGER_FEDERATION,
         );
-        let exec = EmbeddedExecutor::new(&cclerk, "default");
+        // ⚑ THE GENESIS TURN OUTGREW THE DEFAULT BUDGET AT THE `node8` CUTOVER. `start_round`
+        // seeds the Lean rules cell AND pins both private inventory roots in ONE atomic turn;
+        // each root went from a single `u64` register to [`ROOT_LANES`] state lanes (4 roots x 8
+        // = 32 writes where there were 4), and the turn metered 10 028 against the 10 000
+        // `DEFAULT_TURN_FEE` — refused before it could write its opening state.
+        //
+        // METERED, not flat: `turn.fee` is both the per-turn LIMIT and the full debit, so a flat
+        // fee sized to the genesis makes every one-field play turn pay the genesis price and caps
+        // the match at endowment/fee turns. Metered mode stamps `min(estimate, ceiling)` — a play
+        // pays a play's price, and the ceiling still bites as this app's DoS bound.
+        let exec =
+            EmbeddedExecutor::new(&cclerk, "default").with_metered_turn_fee(GENESIS_FEE_CEILING);
         exec.set_witnessed_registry(membership_registry());
 
         let owner = cclerk.public_key().0;
@@ -1036,26 +1163,39 @@ impl HiddenHandLedger {
 
     fn effects(&self, s: &LedgerState) -> Vec<Effect> {
         let cell = self.cell();
-        let mut effects = Vec::with_capacity(LEDGER_REGISTERS.len());
-        let mut set = |name: &str, v: u64| {
-            effects.push(Effect::SetField {
-                cell,
-                index: self.dep.reg(name) as u64,
-                value: field_from_u64(v),
-            });
-        };
-        set("a_hand_root", s.a_hand_root);
-        set("b_hand_root", s.b_hand_root);
-        set("a_rem_root", s.a_rem_root);
-        set("b_rem_root", s.b_rem_root);
-        set("phase", s.phase);
-        set("gen", s.generation);
-        set("a_pick_seal", s.a_pick_seal);
-        set("b_pick_seal", s.b_pick_seal);
-        set("a_secret_seal", s.a_secret_seal);
-        set("b_secret_seal", s.b_secret_seal);
-        set("a_played", s.a_played);
-        set("b_played", s.b_played);
+        let mut effects = Vec::with_capacity(LEDGER_REGISTERS.len() + 4 * ROOT_LANES);
+        {
+            let mut set = |name: &str, v: u64| {
+                effects.push(Effect::SetField {
+                    cell,
+                    index: self.dep.reg(name) as u64,
+                    value: field_from_u64(v),
+                });
+            };
+            set("phase", s.phase);
+            set("gen", s.generation);
+            set("a_pick_seal", s.a_pick_seal);
+            set("b_pick_seal", s.b_pick_seal);
+            set("a_secret_seal", s.a_secret_seal);
+            set("b_secret_seal", s.b_secret_seal);
+            set("a_played", s.a_played);
+            set("b_played", s.b_played);
+        }
+        // The four committed roots, ALL EIGHT LANES EACH, on the heap plane.
+        for (base, lanes) in [
+            ("a_hand_root", s.a_hand_root),
+            ("b_hand_root", s.b_hand_root),
+            ("a_rem_root", s.a_rem_root),
+            ("b_rem_root", s.b_rem_root),
+        ] {
+            for (k, lane) in lanes.iter().enumerate() {
+                effects.push(Effect::SetField {
+                    cell,
+                    index: self.dep.root_key(base, k),
+                    value: field_from_u64(*lane as u64),
+                });
+            }
+        }
         effects
     }
 
@@ -1130,9 +1270,9 @@ impl HiddenHandLedger {
         effects
     }
 
-    fn deal_state(a_root: BabyBear, b_root: BabyBear) -> LedgerState {
-        let ar = root_to_u64(a_root);
-        let br = root_to_u64(b_root);
+    fn deal_state(a_root: Digest8, b_root: Digest8) -> LedgerState {
+        let ar = root_to_lanes(a_root);
+        let br = root_to_lanes(b_root);
         LedgerState {
             a_hand_root: ar,
             b_hand_root: br,
@@ -1152,7 +1292,7 @@ impl HiddenHandLedger {
 
     /// **The deal** — commit both players' hand roots under genesis (also seeding the
     /// remaining roots = the hand roots, `phase = DEAL`, `gen = 0`).
-    pub fn deal(&mut self, a_root: BabyBear, b_root: BabyBear) -> Result<TurnReceipt, WorldError> {
+    pub fn deal(&mut self, a_root: Digest8, b_root: Digest8) -> Result<TurnReceipt, WorldError> {
         let s = Self::deal_state(a_root, b_root);
         let effects = self.genesis_effects(self.cell, self.effects(&s));
         let receipt = self.commit(GENESIS, effects, Vec::new())?;
@@ -1166,8 +1306,8 @@ impl HiddenHandLedger {
     pub fn start_round(
         &mut self,
         projection: &Projection,
-        a_root: BabyBear,
-        b_root: BabyBear,
+        a_root: Digest8,
+        b_root: Digest8,
     ) -> Result<TurnReceipt, WorldError> {
         let state = Self::deal_state(a_root, b_root);
         let game = self.action(
@@ -1199,7 +1339,7 @@ impl HiddenHandLedger {
         &mut self,
         player: Player,
         proofs: &[PlayProof],
-        new_remaining_root: BabyBear,
+        new_remaining_root: Digest8,
     ) -> Result<TurnReceipt, WorldError> {
         let prepared = self.prepare_play(player, proofs, new_remaining_root)?;
         let receipt = self.commit(
@@ -1220,7 +1360,7 @@ impl HiddenHandLedger {
         player: Player,
         expected_cards: &[u64],
         proofs: &[PlayProof],
-        new_remaining_root: BabyBear,
+        new_remaining_root: Digest8,
         action: ActionKind,
         projection: &Projection,
     ) -> Result<TurnReceipt, WorldError> {
@@ -1280,7 +1420,7 @@ impl HiddenHandLedger {
         &self,
         player: Player,
         proofs: &[PlayProof],
-        new_remaining_root: BabyBear,
+        new_remaining_root: Digest8,
     ) -> Result<PreparedPlay, WorldError> {
         if proofs.is_empty() || proofs.len() > 4 {
             return Err(WorldError::Refused(format!(
@@ -1310,7 +1450,7 @@ impl HiddenHandLedger {
         }
 
         let mut s = self.state;
-        let r = root_to_u64(new_remaining_root);
+        let r = root_to_lanes(new_remaining_root);
         match player {
             Player::A => {
                 s.a_rem_root = r;
@@ -1502,6 +1642,18 @@ impl HiddenHandLedger {
                 u64::from_be_bytes(bytes[24..32].try_into().expect("8-byte field lane"))
             })
             .unwrap_or(0)
+    }
+
+    /// Read a committed 8-felt root off the cell's heap plane, as its canonical `u32` lanes.
+    /// This is the WHOLE committed root — there is no lane projection to read.
+    pub fn read_root(&self, base: &str) -> [u32; ROOT_LANES] {
+        core::array::from_fn(|k| {
+            self.exec
+                .cell_state(self.cell)
+                .and_then(|state| state.get_field_ext(self.dep.root_key(base, k)))
+                .map(|field| field_lane(&field) as u32)
+                .unwrap_or(0)
+        })
     }
 
     fn read_game_reg(&self, name: &str) -> u64 {

@@ -34,7 +34,7 @@
 //! laid out by `compose_aggregate`. A verifier checks:
 //! 1. Effect VM PIs: old_commitment, new_commitment, net_delta, effects_hash
 //! 2. Authorization PIs: state_root, derived_hash (must bind to capability used)
-//! 3. Membership PIs: leaf_hash, merkle_root (must match authorization's state_root)
+//! 3. Membership PIs: the 8-felt leaf digest then the 8-felt merkle root (16 slots)
 //! 4. Conservation PIs: (if present) commitment sums balance
 //!
 //! Cross-proof PI bindings:
@@ -59,6 +59,7 @@ use dregg_circuit::effect_vm::{self, CellState, Effect as VmEffectKind, generate
 // `lean_descriptor_air` parse/prove/verify) are RETIRED. The effect-VM transition is
 // proven/verified through the rotated IR-v2 descriptor `dregg_circuit::descriptor_ir2`.)
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::membership_descriptor_4ary::Digest8;
 use dregg_circuit::merkle_air::{
     MembershipP3Proof, membership_public_inputs, prove_membership_p3, verify_membership_p3,
 };
@@ -540,11 +541,16 @@ impl RotationTurnWitness {
 }
 
 /// Membership witness for the Merkle sub-proof.
+///
+/// Every node of the 4-ary membership tree — leaf, co-path siblings, interior nodes and the
+/// committed root — is a full 8-felt Poseidon2 digest ([`Digest8`], the `node8` fold). The
+/// retired 1-felt family committed ~31 bits per node, birthday-collidable at 2^15.5; the
+/// sub-proof now publishes 16 PIs (`[leaf0..8, root0..8]`), not 2.
 pub struct MembershipWitness {
-    /// The leaf hash (hash of the capability being proven).
-    pub leaf_hash: BabyBear,
-    /// Merkle siblings at each tree level.
-    pub siblings: Vec<[BabyBear; 3]>,
+    /// The 8-felt leaf digest (the capability being proven).
+    pub leaf_hash: Digest8,
+    /// The three co-path 8-felt siblings at each tree level.
+    pub siblings: Vec<[Digest8; 3]>,
     /// Position indices at each tree level (0..3 for 4-ary tree).
     pub positions: Vec<u8>,
 }
@@ -4552,7 +4558,7 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
             SdkError::InvalidWitness(format!("membership p3 proof serialize failed: {e}"))
         })?;
 
-        // Membership public inputs: [leaf_hash, root]
+        // Membership public inputs: the 8-felt leaf digest then the 8-felt root (16 slots).
         let mem_pi = membership_public_inputs(
             mem_witness.leaf_hash,
             &mem_witness.siblings,
@@ -10225,8 +10231,8 @@ mod tests {
             direction: 1,
         }];
 
-        // Membership witness: a leaf genuinely in a depth-4 Merkle tree.
-        let leaf = BabyBear::new(424242);
+        // Membership witness: an 8-felt leaf genuinely in a depth-4 `node8` Merkle tree.
+        let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(424242 + k as u32));
         let (siblings, positions, _root) = merkle_test_witness(leaf, 4);
 
         let rot = rotation_for_initial(&initial, &effects);
@@ -10419,16 +10425,21 @@ mod tests {
     /// ANTI-GHOST end-to-end: forging the published MEMBERSHIP root in a finished
     /// full-turn proof MUST be rejected by the audited membership verifier (the
     /// proof binds the genuine hash-chain root, not the forged PI).
+    ///
+    /// The root is EIGHT felts (the `node8` cutover), and every one is pinned: the loop
+    /// forges each lane in turn. The retired family pinned lane 0 alone, so a root forged in
+    /// lanes 1..8 was invisible to it — that is precisely the case this asserts.
     #[test]
     fn full_turn_rejects_forged_membership_root() {
         use dregg_circuit::dsl::membership::create_test_witness as merkle_test_witness;
+        use dregg_circuit::membership_descriptor_4ary::{DIGEST_W, PI_ROOT};
 
         let initial = CellState::new(1000, 0);
         let effects = vec![VmEffect::Transfer {
             amount: 100,
             direction: 1,
         }];
-        let leaf = BabyBear::new(555111);
+        let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(555111 + k as u32));
         let (siblings, positions, _root) = merkle_test_witness(leaf, 4);
 
         let rot = rotation_for_initial(&initial, &effects);
@@ -10452,20 +10463,35 @@ mod tests {
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");
 
-        // Forge the published membership root (PI[1] of the membership sub-proof).
-        let mem = proof
-            .composed
-            .sub_proofs
-            .iter_mut()
-            .find(|sp| sp.label == "membership")
-            .expect("membership sub-proof present");
-        mem.sub_public_inputs[1] = mem.sub_public_inputs[1] + BabyBear::new(1);
+        // Non-vacuity: the honest proof is ACCEPTED before any lane is forged.
+        verify_full_turn(&proof, old_commit, new_commit)
+            .expect("the honest full turn must verify (else the forge canary is vacuous)");
 
-        let res = verify_full_turn(&proof, old_commit, new_commit);
-        assert!(
-            res.is_err(),
-            "SOUNDNESS: a forged membership root MUST be rejected by the audited p3 verifier"
-        );
+        for lane in 0..DIGEST_W {
+            let mem = proof
+                .composed
+                .sub_proofs
+                .iter_mut()
+                .find(|sp| sp.label == "membership")
+                .expect("membership sub-proof present");
+            let honest = mem.sub_public_inputs[PI_ROOT + lane];
+            mem.sub_public_inputs[PI_ROOT + lane] = honest + BabyBear::new(1);
+
+            let res = verify_full_turn(&proof, old_commit, new_commit);
+            assert!(
+                res.is_err(),
+                "SOUNDNESS: a membership root forged in lane {lane} MUST be rejected by the \
+                 audited p3 verifier"
+            );
+
+            let mem = proof
+                .composed
+                .sub_proofs
+                .iter_mut()
+                .find(|sp| sp.label == "membership")
+                .expect("membership sub-proof present");
+            mem.sub_public_inputs[PI_ROOT + lane] = honest;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════

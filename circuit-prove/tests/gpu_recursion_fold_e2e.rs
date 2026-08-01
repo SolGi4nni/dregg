@@ -42,9 +42,8 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::membership_descriptor_4ary::{
-    membership_descriptor_of_depth_4ary, membership_witness_4ary,
+    Digest8, create_test_witness, membership_descriptor_of_depth_4ary, membership_witness_4ary,
 };
-use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
 use dregg_circuit_prove::gpu_backend::{
     GpuDft, create_gpu_recursion_config, gpu_recursion_proof_to_cpu, prove_recursion_layer_cpu,
     prove_recursion_layer_gpu, verify_gpu_recursion_layer,
@@ -75,10 +74,8 @@ fn real_fold_layer_byte_identical_on_gpu_and_measured() {
     let cpu_config = create_recursion_config();
 
     // ---- 1. a REAL emitted-descriptor IR2 proof over a sound Merkle trace
-    let leaf = BabyBear::new(42424242);
-    let witness = create_poseidon2_test_witness(leaf, 4);
-    let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
-    let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+    let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(42424242 + k as u32));
+    let (siblings, positions, _root) = create_test_witness(leaf, 4);
     let desc = membership_descriptor_of_depth_4ary(siblings.len());
     let (trace, public_inputs) =
         membership_witness_4ary(leaf, &siblings, &positions).expect("membership witness builds");
@@ -289,10 +286,8 @@ fn recursion_tower_large_regime_byte_identical_on_gpu() {
     let params = ProveNextLayerParams::default();
 
     // ---- Lean-emitted membership IR2 leaf -----------------------------------
-    let leaf = BabyBear::new(42424242);
-    let witness = create_poseidon2_test_witness(leaf, 4);
-    let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
-    let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+    let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(42424242 + k as u32));
+    let (siblings, positions, _root) = create_test_witness(leaf, 4);
     let desc = membership_descriptor_of_depth_4ary(siblings.len());
     let (trace, public_inputs) =
         membership_witness_4ary(leaf, &siblings, &positions).expect("membership witness builds");

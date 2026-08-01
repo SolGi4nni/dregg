@@ -8,7 +8,7 @@
 //! turn's set-membership is checked ENTIRELY OFF-AIR by a re-executing validator: the
 //! [`turn::executor::membership_verifier::MerkleMembershipStarkVerifier`] runs a
 //! STANDALONE `dregg_circuit::dsl::membership` Poseidon2 Merkle STARK whose
-//! `[leaf, root]` public inputs the executor pins (`membership_verifier.rs:143..158`,
+//! `[leaf0..8, root0..8]` public inputs the executor pins (`membership_verifier.rs:143..158`,
 //! `leaf = compress(sender_pk)`, `verify_membership_dsl(&proof, leaf, root)`).
 //!
 //! A PURE LIGHT CLIENT (one that only folds the per-turn recursion tree) never
@@ -105,28 +105,45 @@ type RecursionChallenge = <DreggRecursionConfig as StarkGenericConfig>::Challeng
 const D: usize = 4;
 
 // ---- Membership-tuple layout (the leaf's descriptor PI slots) ----
-/// The `sender_leaf` slot — `compress(sender_pk)`, the membership STARK `pi[0]` and the
-/// deployed leg's published sender-leaf tooth. (`membership_verifier.rs:143`.)
+/// The `sender_leaf` slot — one felt of `compress(sender_pk)`, and the deployed leg's published
+/// sender-leaf tooth. (`membership_verifier.rs:143`.)
 pub const SENDER_LEAF_SLOT: usize = 0;
-/// The `authorized_root` slot — the cell's `AuthorizedSet::PublicRoot` felt, the
-/// membership STARK `pi[1]` and the deployed leg's published authorized-root tooth.
+/// The `authorized_root` slot — one felt of the cell's `AuthorizedSet::PublicRoot`, and the
+/// deployed leg's published authorized-root tooth.
 pub const AUTHORIZED_ROOT_SLOT: usize = SENDER_LEAF_SLOT + 1;
-/// Total membership-tuple width / PI count (1 + 1 = 2), matching the
-/// `dregg_circuit::dsl::membership` STARK's `[leaf, root]` public-input layout.
+/// Total membership-tuple width / PI count (1 + 1 = 2).
+///
+/// ⚑ **THIS IS TWO FELTS AND THE MEMBERSHIP STARK IS NOW SIXTEEN.** Until the `node8` cutover
+/// this width was justified as "matching the `dregg_circuit::dsl::membership` STARK's
+/// `[leaf, root]` public-input layout"; that layout is now `[leaf0..8, root0..8]`
+/// (`MEMBERSHIP_4ARY_PI_COUNT = 16`), so the tuple this leaf binds carries ~31 bits of a leaf
+/// and ~31 bits of a root that the STARK itself commits at full 8-felt width.
+///
+/// It is NOT widened here, and the reason is not taste: this width is fixed by the DEPLOYED
+/// effect-vm leg's PI exposure, not by the membership family. The fold arm reads the leg's
+/// claimed tuple at [`crate::ivc_turn_chain::MEMBERSHIP_CLAIM_PI_LO`] = 50 for
+/// `MEMBERSHIP_CLAIM_LEN` slots; widening to 16 would run 50..66 straight through the wide
+/// anchors at 52..67 on `transferV3MembershipWide`. Widening it is a Lean descriptor regen
+/// (`CarrierComposed`/`EffectVmEmitRotationV3`) plus the `carrier_claim_pins_admitted` geometry
+/// — and note the standing measurement recorded at that constant: the teeth pins at 50/51 do
+/// not exist on the emitted bytes today, so this arm is fail-closed on every deployed leg.
 pub const MEMBERSHIP_TUPLE_WIDTH: usize = AUTHORIZED_ROOT_SLOT + 1;
 
 /// The 2-felt `(sender_leaf, authorized_root)` claim the leaf re-exposes for the
 /// binding node to `connect`.
 pub const MEMBERSHIP_CLAIM_LEN: usize = MEMBERSHIP_TUPLE_WIDTH;
 
-/// A `SenderAuthorized` turn's membership tuple — the SAME `(leaf, root)` the off-AIR
-/// `membership_verifier.rs` `MerkleMembershipStarkVerifier` pins
-/// (`leaf = compress(sender_pk)`, `root = root_felt_from_slot(authorized_set_root)`).
+/// A `SenderAuthorized` turn's membership tuple.
+///
+/// ⚑ ONE FELT EACH — see [`MEMBERSHIP_TUPLE_WIDTH`]. The off-AIR
+/// `membership_verifier.rs` `MerkleMembershipStarkVerifier` now pins an 8-felt leaf and an
+/// 8-felt root; this fold-side tuple is the deployed leg's 2-slot teeth exposure and is widened
+/// by the descriptor regen, not here.
 #[derive(Clone, Copy, Debug)]
 pub struct SenderMembershipWitness {
-    /// `compress(sender_pk)` — the sender leaf a verifying Merkle path proves.
+    /// One felt of `compress(sender_pk)` — the sender leaf a verifying Merkle path proves.
     pub sender_leaf: BabyBear,
-    /// The cell's `AuthorizedSet::PublicRoot` felt — the root the path reaches.
+    /// One felt of the cell's `AuthorizedSet::PublicRoot` — the root the path reaches.
     pub authorized_root: BabyBear,
 }
 

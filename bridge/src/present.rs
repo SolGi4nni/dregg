@@ -16,6 +16,7 @@
 use dregg_circuit::binding::WideHash;
 use dregg_circuit::derivation_air::{CircuitRule, DerivationWitness};
 use dregg_circuit::fold_types::{FoldWitness, RemovedFact};
+use dregg_circuit::membership_descriptor_4ary::{DIGEST_W, Digest8};
 use dregg_circuit::merkle_air::{MerkleLevelWitness, MerkleWitness};
 use dregg_circuit::merkle_types::compute_parent_poseidon2;
 use dregg_circuit::poseidon2;
@@ -185,6 +186,48 @@ impl RealPresentationProof {
     }
 }
 
+/// The 8-felt (`node8`) issuer authentication path the WIDE ring-membership descriptor consumes:
+/// an 8-felt leaf, three 8-felt co-path siblings per level, and the 8-felt federation root the
+/// `node8_4ary` fold reaches.
+struct WideIssuerPath {
+    leaf_hash: Digest8,
+    siblings: Vec<[Digest8; 3]>,
+    positions: Vec<u8>,
+    expected_root: Digest8,
+}
+
+/// ⚑⚑ **RETURNS `None` UNCONDITIONALLY — the issuer ring-membership leg is FAIL-CLOSED, blocked
+/// on the federation-root flag day.** This is a refusal with its reason attached, not a stub kept
+/// for compatibility: every caller short-circuits, so no presentation is minted whose ring leg
+/// binds less than it claims.
+///
+/// **Why it cannot be written today.** `blinded_membership_witness_4ary` now takes an 8-felt
+/// `Digest8` leaf and 8-felt co-path siblings and publishes 16 PIs. What this function is handed
+/// is `dregg_circuit::merkle_types::MerkleWitness` — ONE FELT PER NODE, folded by
+/// `compute_parent_poseidon2`, whose `expected_root` is one felt, matching the 32-byte wire
+/// federation root every producer in this repo builds (`bb_to_bytes`: one felt in bytes `0..4`,
+/// `4..32` zeroed). The two ways to bridge that gap are both wrong:
+///
+///   * **Widen each one-felt node into the 8-felt domain and refold with `node8_4ary`.** It
+///     compiles, proves and verifies — and binds nothing more than before, because each node
+///     still carries ~31 bits, so an interior-node birthday collision (2^15.5) still yields a
+///     second authentication path to the same root. Decoration.
+///   * **Compare the 8-felt committed root against `expected_root` at lane 0.** That is exactly
+///     the projection this cutover exists to delete.
+///
+/// **The fix — a flag day, not a repoint.** Fold the federation tree with `node8_4ary` over
+/// 8-felt nodes (the byte-level siblings this builder already holds — `MerkleProof.siblings[i][j]`,
+/// 32 bytes each — carry the entropy, so `compress_member_felts(&bytes32_to_8_limbs(b))` is the
+/// leaf/sibling map); make the 32-byte wire federation root the eight canonical LE-`u32` limbs of
+/// that 8-felt root (32 bytes fits exactly, and the same flag day is already landed on the SDK
+/// side in `dregg_sdk::verify::expected_federation_root_d8`); and give `PresentationWitness` the
+/// 8-felt path. That crosses `circuit/src/merkle_types.rs` (`MerkleWitness`,
+/// `compute_parent_poseidon2`), `circuit/src/presentation.rs` (`PresentationWitness`), and every
+/// federation-root producer (~21 files, ~96 sites, including `turn/**`).
+fn wide_issuer_path(_issuer_membership: &MerkleWitness) -> Option<WideIssuerPath> {
+    None
+}
+
 /// Build the bridge-side [`RealPresentationProof`] from a presentation witness.
 ///
 /// This is the descriptor-wire PRODUCER that replaced the retired
@@ -208,34 +251,27 @@ fn build_real_presentation_proof(w: &PresentationWitness) -> Option<RealPresenta
     };
 
     // (a) RING/UNLINKABILITY — the depth-general 4-ary BLINDED ring-membership descriptor.
-    //     PIs [blinded_leaf, root]; the member leaf_hash + blinding factor stay hidden.
-    let siblings: Vec<[BabyBear; 3]> = w
-        .issuer_membership
-        .levels
-        .iter()
-        .map(|l| l.siblings)
-        .collect();
-    let positions: Vec<u8> = w
-        .issuer_membership
-        .levels
-        .iter()
-        .map(|l| l.position)
-        .collect();
-    let depth = siblings.len();
+    //     PIs [blinded_leaf0..8, root0..8]; the member leaf_hash + blinding factor stay hidden.
+    //
+    // ⚑ FAIL-CLOSED TODAY — `wide_issuer_path` returns `None` unconditionally; read its doc for
+    //   the blocker and the fix. Everything below it is the finished wide shape, so closing the
+    //   blocker is implementing that one function.
+    let issuer8 = wide_issuer_path(&w.issuer_membership)?;
+    let depth = issuer8.siblings.len();
     let (blinded_trace, blinded_pis) =
         dregg_circuit::blinded_membership_witness::blinded_membership_witness_4ary(
-            w.issuer_membership.leaf_hash,
+            issuer8.leaf_hash,
             w.blinding_factor,
-            &siblings,
-            &positions,
+            &issuer8.siblings,
+            &issuer8.positions,
         )
         .ok()?;
-    // Fail-closed: the committed root MUST be the federation root, else the proof would not bind
-    // the issuer to this federation.
-    if blinded_pis
-        .get(dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY)
-        .copied()
-        != Some(w.issuer_membership.expected_root)
+    // Fail-closed: the committed root MUST be the federation root — in ALL EIGHT LANES — else the
+    // proof would not bind the issuer to this federation. The retired one-felt family compared a
+    // single ~31-bit slot, which a birthday collision (2^15.5) reaches.
+    if blinded_pis[dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY
+        ..dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY + DIGEST_W]
+        != issuer8.expected_root[..]
     {
         return None;
     }
@@ -462,8 +498,8 @@ pub struct WirePresentationProof {
 /// * `blob` — `postcard(Ir2BatchProof)`: the deployed 4-ary depth-general
 ///   Merkle-membership descriptor's proof, produced by the real
 ///   [`dregg_circuit::descriptor_ir2::prove_vm_descriptor2`].
-/// * `vk` — the expected public inputs `[leaf, root]`, one canonical little-endian
-///   `u32` per 4 bytes — exactly the encoding
+/// * `vk` — the expected public inputs `[leaf0..leaf7, root0..root7]`, one canonical
+///   little-endian `u32` per 4 bytes — exactly the encoding
 ///   [`crate::verifier::DescriptorDispatchVerifier`] (and the routed
 ///   `ProofVerifier::verify_with_predicate`) decodes.
 #[derive(Clone, Debug)]
@@ -472,25 +508,27 @@ pub struct Ir2IssuerWire {
     pub predicate: String,
     /// `postcard(Ir2BatchProof)` — the NEW wire format for the membership proof.
     pub blob: Vec<u8>,
-    /// Expected public inputs `[leaf, root]` as one canonical LE `u32` per 4 bytes.
+    /// Expected public inputs `[leaf0..leaf7, root0..root7]` (16 felts) as one canonical
+    /// LE `u32` per 4 bytes.
     pub vk: Vec<u8>,
 }
 
 /// Prove issuer federation membership in the NEW IR-v2 descriptor wire format.
 ///
-/// `(leaf, siblings, positions)` is a 4-ary Poseidon2 authentication path — each
-/// `position ∈ {0,1,2,3}`, three co-path siblings per level — EXACTLY the shape
-/// [`compute_parent_poseidon2`] / [`BridgePresentationBuilder::build_issuer_membership_poseidon2`]
-/// already build. The implied root is BYTE-EQUAL to the deployed `hash_4_to_1`-chained
-/// federation root and is committed as the second public input (`vk`'s second limb).
+/// `(leaf, siblings, positions)` is a 4-ary **`node8`** Poseidon2 authentication path — each
+/// `position ∈ {0,1,2,3}`, three co-path 8-felt siblings per level. Every node is a full
+/// [`Digest8`]; the one-felt family this replaced committed ~31 bits per node (collidable at
+/// 2^15.5), so an attacker who contributed a subtree could present a second authentication path
+/// to the SAME federation root. The implied root is the `node8_4ary` fold and is committed as
+/// public inputs 8..16.
 ///
 /// This is the opaque-byte-encoder flip: it replaces
 /// `stark::proof_to_bytes(StarkProof)` with `postcard(Ir2BatchProof)` and drops the
 /// air-name entirely. `depth` (`siblings.len()`) must be a power of two ≥ 2 (the
 /// trace-height requirement of [`dregg_circuit::membership_descriptor_4ary::membership_witness_4ary`]).
 pub fn prove_issuer_membership_ir2(
-    leaf: BabyBear,
-    siblings: &[[BabyBear; 3]],
+    leaf: Digest8,
+    siblings: &[[Digest8; 3]],
     positions: &[u8],
 ) -> Result<Ir2IssuerWire, AuthError> {
     use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
@@ -499,7 +537,7 @@ pub fn prove_issuer_membership_ir2(
     };
 
     let depth = siblings.len();
-    // Honest 4-ary witness → base trace + public inputs `[leaf, root]`.
+    // Honest 4-ary node8 witness → base trace + 16 public inputs `[leaf0..8, root0..8]`.
     let (trace, pis) = membership_witness_4ary(leaf, siblings, positions)
         .map_err(|e| AuthError::InvalidRequest(format!("issuer membership 4-ary witness: {e}")))?;
     // The Lean-emitted, depth-uniform 4-ary descriptor (the depth rides the trace
@@ -1583,12 +1621,25 @@ impl BridgePresentationBuilder {
     /// The federation path depth must be a power of two ≥ 2 (the 4-ary witness
     /// trace-height requirement); the synthetic test path (depth 8) and any
     /// power-of-two federation tree satisfy it.
+    ///
+    /// ⚑⚑ FAIL-CLOSED TODAY — same blocker as [`build_real_presentation_proof`]:
+    ///    [`prove_issuer_membership_ir2`] now takes an 8-felt `Digest8` path, and
+    ///    [`Self::build_issuer_membership_poseidon2`] returns the ONE-FELT
+    ///    `dregg_circuit::merkle_types::MerkleWitness` folded by `compute_parent_poseidon2`
+    ///    against the one-felt `federation_root_bb`. Read [`wide_issuer_path`] for why widening it
+    ///    in place would be decoration, why projecting would be the wound, and what the fix is.
     pub fn prove_issuer_membership_ir2_wire(&self) -> Result<Ir2IssuerWire, AuthError> {
         let issuer_key_hash = bytes_to_babybear(&self.issuer_key);
         let witness = self.build_issuer_membership_poseidon2(issuer_key_hash)?;
-        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
-        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
-        prove_issuer_membership_ir2(witness.leaf_hash, &siblings, &positions)
+        let issuer8 = wide_issuer_path(&witness).ok_or_else(|| {
+            AuthError::InvalidRequest(
+                "issuer ring-membership is FAIL-CLOSED: the federation tree is still one felt per \
+                 node while the membership descriptor is 8-felt (`node8`). See \
+                 `dregg_bridge::present::wide_issuer_path` for the flag day that closes it."
+                    .into(),
+            )
+        })?;
+        prove_issuer_membership_ir2(issuer8.leaf_hash, &issuer8.siblings, &issuer8.positions)
     }
 
     /// Build Poseidon2 issuer membership from a real federation Merkle tree.
@@ -3898,15 +3949,19 @@ mod ir2_issuer_wire_roundtrip {
     use dregg_turn::ProofVerifier;
     use std::sync::Arc;
 
-    /// A deterministic depth-`d` 4-ary authentication path: fixed leaf, distinct
-    /// siblings, cycling positions ∈ {0,1,2,3}. Returns `(leaf, siblings, positions, root)`
-    /// where `root` is the deployed `hash_4_to_1`-chained root.
-    fn fixture(depth: usize) -> (BabyBear, Vec<[BabyBear; 3]>, Vec<u8>, BabyBear) {
-        let leaf = BabyBear::new(0xABCD);
-        let siblings: Vec<[BabyBear; 3]> = (0..depth)
+    /// A deterministic depth-`d` 4-ary **`node8`** authentication path: fixed 8-felt leaf,
+    /// distinct 8-felt siblings, cycling positions ∈ {0,1,2,3}. Returns
+    /// `(leaf, siblings, positions, root)` where `root` is the deployed `node8_4ary`-folded
+    /// 8-felt root.
+    fn fixture(depth: usize) -> (Digest8, Vec<[Digest8; 3]>, Vec<u8>, Digest8) {
+        let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(0xABCD + k as u32));
+        let siblings: Vec<[Digest8; 3]> = (0..depth)
             .map(|i| {
-                let b = 1000 + (i as u32) * 3;
-                [BabyBear::new(b), BabyBear::new(b + 1), BabyBear::new(b + 2)]
+                core::array::from_fn(|s| {
+                    core::array::from_fn(|k| {
+                        BabyBear::new(1000 + ((i * 3 + s) as u32) * 101 + k as u32)
+                    })
+                })
             })
             .collect();
         let positions: Vec<u8> = (0..depth).map(|i| (i % 4) as u8).collect();
@@ -3926,14 +3981,20 @@ mod ir2_issuer_wire_roundtrip {
         let wire = prove_issuer_membership_ir2(leaf, &siblings, &positions)
             .expect("honest issuer membership must prove");
         assert_eq!(
-            wire.predicate, "merkle-membership::poseidon2-4ary-general-depth4",
-            "descriptor identity names the 4-ary depth-general family + depth"
+            wire.predicate, "merkle-membership::poseidon2-4ary-wide-general-depth4",
+            "descriptor identity names the WIDE 4-ary depth-general family + depth"
         );
-        // VK is exactly `[leaf, root]` as canonical LE-u32 limbs.
+        // VK is exactly `[leaf0..leaf7, root0..root7]` as canonical LE-u32 limbs — SIXTEEN felts.
         let mut expected_vk = Vec::new();
-        expected_vk.extend_from_slice(&leaf.0.to_le_bytes());
-        expected_vk.extend_from_slice(&root.0.to_le_bytes());
-        assert_eq!(wire.vk, expected_vk, "VK commits [leaf, root]");
+        for felt in leaf.iter().chain(root.iter()) {
+            expected_vk.extend_from_slice(&felt.0.to_le_bytes());
+        }
+        assert_eq!(
+            wire.vk.len(),
+            dregg_circuit::membership_descriptor_4ary::MEMBERSHIP_4ARY_PI_COUNT * 4,
+            "the wide wire commits 16 felts, not 2"
+        );
+        assert_eq!(wire.vk, expected_vk, "VK commits [leaf0..8, root0..8]");
 
         let stark_v = StarkProofVerifier::new();
         let dsl_v = DslAwareProofVerifier::new(Arc::new(dregg_dsl_runtime::ProgramRegistry::new()));
@@ -3988,14 +4049,27 @@ mod ir2_issuer_wire_roundtrip {
             "the IR-v2 proof under the wrong-KIND descriptor must be REJECTED"
         );
 
-        // REJECT — forged expected root (leaf is not a member under this root).
-        let mut forged_vk = Vec::new();
-        forged_vk.extend_from_slice(&leaf.0.to_le_bytes());
-        forged_vk.extend_from_slice(&BabyBear::new_canonical(root.0 ^ 1).0.to_le_bytes());
-        assert!(
-            !stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &forged_vk),
-            "a forged expected root must be REJECTED"
-        );
+        // REJECT — forged expected root, in EVERY lane. The retired one-felt family committed the
+        // root in a single ~31-bit slot; a root forged in lanes 1..8 did not exist as a distinct
+        // wire value at all. Each lane must now be refused on its own.
+        for lane in 0..DIGEST_W {
+            let mut forged_root = root;
+            forged_root[lane] = BabyBear::new_canonical(forged_root[lane].0 ^ 1);
+            let mut forged_vk = Vec::new();
+            for felt in leaf.iter().chain(forged_root.iter()) {
+                forged_vk.extend_from_slice(&felt.0.to_le_bytes());
+            }
+            assert!(
+                !stark_v.verify_with_predicate(
+                    &wire.predicate,
+                    &wire.blob,
+                    "read",
+                    "res",
+                    &forged_vk
+                ),
+                "an expected root forged in lane {lane} must be REJECTED"
+            );
+        }
 
         // REJECT — tampered blob (bit-flip in the postcard bytes).
         let mut tampered = wire.blob.clone();
@@ -4021,15 +4095,21 @@ mod ir2_issuer_wire_roundtrip {
         );
     }
 
-    /// THE ACTUAL PRESENT PATH — the real [`BridgePresentationBuilder`] issuer
-    /// `MerkleWitness` (its synthetic depth-8 4-ary federation path) is re-expressed
-    /// as the IR-v2 wire and verified through the flipped consumer. Proves the
-    /// producer is fed by the genuine present-side membership construction, and that
-    /// the IR-v2 root is byte-equal to the federation root the builder committed.
+    /// ⚑ THE ACTUAL PRESENT PATH — **FAIL-CLOSED, AND THIS IS THE TRIPWIRE THAT SAYS SO.**
+    ///
+    /// This test used to prove the builder's real synthetic depth-8 federation path through the
+    /// IR-v2 wire and assert the committed root round-tripped. That path is one felt per node
+    /// (`compute_parent_poseidon2`), and the membership descriptor is now 8-felt (`node8`), so
+    /// [`BridgePresentationBuilder::prove_issuer_membership_ir2_wire`] REFUSES rather than mint a
+    /// proof whose 8-felt wire root is folded from ~31-bit nodes — see [`wide_issuer_path`].
+    ///
+    /// ⚠ **WHEN THE FEDERATION-ROOT FLAG DAY LANDS, THIS TEST GOES RED, AND THAT IS ITS JOB.**
+    /// Whoever implements `wide_issuer_path` must restore the positive pole here: prove the wire,
+    /// assert `predicate == "merkle-membership::poseidon2-4ary-wide-general-depth8"`, assert the
+    /// VK's root limbs 8..16 equal the committed 8-felt federation root, and re-add the
+    /// consumer-ACCEPT plus the per-lane forged-root REJECT.
     #[test]
-    fn builder_issuer_membership_ir2_wire_roundtrips() {
-        // Reproduce the builder's synthetic depth-8 federation root (same
-        // `compute_parent_poseidon2` chain the synthetic membership path validates).
+    fn builder_issuer_membership_ir2_wire_is_fail_closed_until_the_flag_day() {
         let key = [7u8; 32];
         let issuer_hash = bytes_to_babybear(&key);
         let mut current = issuer_hash;
@@ -4044,41 +4124,26 @@ mod ir2_issuer_wire_roundtrip {
         }
         let fed_root_bb = current;
         let fed_root_bytes = bb_to_bytes(fed_root_bb);
-
         let builder = BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
 
-        // PRODUCER: the real builder issuer witness → IR-v2 wire.
-        let wire = builder
-            .prove_issuer_membership_ir2_wire()
-            .expect("builder issuer membership must prove");
-        assert_eq!(
-            wire.predicate, "merkle-membership::poseidon2-4ary-general-depth8",
-            "synthetic federation path is depth 8"
-        );
+        // The one-felt federation path is still WELL FORMED — the refusal is about WIDTH, not a
+        // broken builder. This keeps the test from passing for the wrong reason.
+        builder
+            .build_issuer_membership_poseidon2(issuer_hash)
+            .expect("the one-felt synthetic federation path still builds and binds its root");
 
-        // The IR-v2 root (VK's second limb) is BYTE-EQUAL to the federation root
-        // the builder committed — the binding the migration must preserve.
-        let root_limb = u32::from_le_bytes([wire.vk[4], wire.vk[5], wire.vk[6], wire.vk[7]]);
-        assert_eq!(
-            BabyBear::new_canonical(root_limb),
-            fed_root_bb,
-            "IR-v2 membership root must equal the committed federation root"
-        );
-
-        // CONSUMER: honest ACCEPT through the flipped StarkProofVerifier route.
-        let stark_v = StarkProofVerifier::new();
-        assert!(
-            stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &wire.vk),
-            "the real builder's IR-v2 issuer proof must ACCEPT"
-        );
-
-        // Non-vacuous: a forged federation root is REJECTED.
-        let mut forged_vk = wire.vk.clone();
-        forged_vk[4] ^= 0x01;
-        assert!(
-            !stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &forged_vk),
-            "a forged federation root must be REJECTED"
-        );
+        match builder.prove_issuer_membership_ir2_wire() {
+            Err(AuthError::InvalidRequest(reason)) => {
+                assert!(
+                    reason.contains("FAIL-CLOSED") && reason.contains("node8"),
+                    "the refusal must name the blocker, got: {reason}"
+                );
+            }
+            Err(other) => panic!("expected the typed width refusal, got {other:?}"),
+            Ok(_) => panic!(
+                "the issuer ring-membership wire MINTED a proof from a one-felt federation path.                  If `wide_issuer_path` is now implemented, restore this test's positive pole (see                  its doc) instead of deleting the assertion."
+            ),
+        }
     }
 
     /// End-to-end prove+verify for EVERY comparison operator now that each has an emitted descriptor.

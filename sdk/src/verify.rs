@@ -5,6 +5,7 @@
 //! the verifier side of a presentation exchange.
 
 use crate::error::SdkError;
+use dregg_circuit::membership_descriptor_4ary::{DIGEST_W, Digest8};
 use dregg_circuit::presentation::{DescriptorProofWire, verify_descriptor_wire};
 
 /// The descriptor-wire bundle the SDK verifier consumes after the `StarkProof` → IR-v2
@@ -18,8 +19,9 @@ use dregg_circuit::presentation::{DescriptorProofWire, verify_descriptor_wire};
 /// [`dregg_circuit::presentation::RealPresentationProof::verify`]:
 ///
 /// * `blinded_membership` — the depth-general 4-ary blinded ring-membership proof
-///   (`dregg-blinded-membership-4ary-general-depth{N}`); PIs `[blinded_leaf, root]`. Proves the
-///   issuer is a member of the federation rooted at `root` (unlinkably).
+///   (`dregg-blinded-membership-4ary-wide-general-depth{N}`); PIs
+///   `[blinded_leaf0..8, root0..8]`. Proves the issuer is a member of the federation rooted at
+///   `root` (unlinkably).
 /// * `bound_presentation` — the bound-presentation proof (`dregg-bound-presentation::v1`); PIs
 ///   `[federation_root, action_binding(8), timestamp, presentation_tag, revealed_facts(8),
 ///   verifier_nonce]`. Binds the action/resource and (for selective disclosure) the revealed-facts
@@ -131,21 +133,31 @@ pub fn verify_authorization_proof(
     verify_authorization_bundle(&bundle, federation_root, expected_action, expected_resource)
 }
 
-/// The expected federation root as a canonical `BabyBear`, using the same 32-byte decode the
-/// legacy hand-STARK path used: a value that fits in the low 4 bytes is read as an LE `u32`;
-/// otherwise the full-width Poseidon2 compression (`bytes_to_babybear`) is applied.
+/// ⚑ FLAG DAY — **the 32-byte federation root now CARRIES the 8-felt ring-membership root**, as
+/// eight canonical little-endian `u32` limbs. It used to carry ONE `BabyBear` in bytes `0..4` with
+/// `4..32` zeroed, because the blinded ring-membership descriptor's committed root was one felt.
+/// After the `node8` cutover that root is a full [`Digest8`], and 8 felts × 4 bytes is exactly the
+/// 32 the wire already had. A pre-cutover root (one felt, tail zeros) decodes to a digest whose
+/// lanes `1..8` are zero, which no honest `node8_4ary` fold produces — so it is REFUSED, never
+/// reinterpreted.
+///
+/// This is the identity decode: nothing is projected or discarded.
+fn expected_federation_root_d8(federation_root: &[u8; 32]) -> Digest8 {
+    dregg_circuit::effect_vm::bytes32_to_8_limbs(federation_root)
+}
+
+/// The expected federation root as ONE canonical `BabyBear` — the slot the Lean-emitted
+/// `dregg-bound-presentation::v1` descriptor pins at [`FEDERATION_ROOT`].
+///
+/// ⚠ **This is a ~31-bit binding, and it is the AUTH leg's, not the ring leg's.** It is the
+/// Poseidon2 hash of ALL EIGHT limbs of the 32-byte root (`bytes_to_babybear`), NOT lane 0 of
+/// [`expected_federation_root_d8`] — the two are independent derivations from the same wire bytes,
+/// so widening the ring leg introduced no projection here. The residual is the bound-presentation
+/// descriptor's one-felt `federation_root` public input, which is authored in
+/// `metatheory/Dregg2/Circuit/Emit/BoundPresentationEmit.lean` and is the named follow-up; the RING
+/// leg below binds the root at the full 8-felt width today.
 fn expected_federation_root(federation_root: &[u8; 32]) -> dregg_circuit::BabyBear {
-    use dregg_circuit::BabyBear;
-    if federation_root[4..].iter().all(|&b| b == 0) {
-        BabyBear::new(u32::from_le_bytes([
-            federation_root[0],
-            federation_root[1],
-            federation_root[2],
-            federation_root[3],
-        ]))
-    } else {
-        dregg_bridge::present::bytes_to_babybear(federation_root)
-    }
+    dregg_bridge::present::bytes_to_babybear(federation_root)
 }
 
 /// Fail-closed descriptor-identity gate: the two wires MUST name the exact expected descriptors
@@ -177,7 +189,8 @@ fn check_bundle_predicates(bundle: &AuthorizationDescriptorProof) -> Result<(), 
 /// success (so a caller like [`verify_selective_disclosure`] can additionally bind the
 /// revealed-facts commitment). Mirrors
 /// [`dregg_circuit::presentation::RealPresentationProof::verify`] steps 4(a)/4(b):
-///   (a) MEMBERSHIP: the blinded ring-membership proof's committed root must be `federation_root`.
+///   (a) MEMBERSHIP: the blinded ring-membership proof's committed 8-felt root must be
+///       `federation_root`.
 ///   (b) AUTH: the bound-presentation proof's federation-root PI must match, and its action-binding
 ///       PIs must equal the binding recomputed from `(expected_action, expected_resource)`.
 /// Fail-closed: any decode/verify/PI-length/root/action mismatch is `Ok(None)`; an unknown
@@ -188,18 +201,22 @@ fn verify_authorization_wires(
     expected_action: &str,
     expected_resource: &str,
 ) -> Result<Option<Vec<dregg_circuit::BabyBear>>, SdkError> {
-    use dregg_circuit::blinded_membership_witness::PI_ROOT_4ARY;
+    use dregg_circuit::blinded_membership_witness::{BLINDED_4ARY_PI_COUNT, PI_ROOT_4ARY};
     use dregg_circuit::bound_presentation_witness::{FEDERATION_ROOT, REQUEST_PREDICATE_BASE};
 
     check_bundle_predicates(bundle)?;
     let expected_root = expected_federation_root(federation_root);
+    let expected_root8 = expected_federation_root_d8(federation_root);
 
-    // (a) MEMBERSHIP: verify the blinded ring-membership proof; PIs [blinded_leaf, root].
+    // (a) MEMBERSHIP: verify the blinded ring-membership proof. Its PIs are the 8-felt
+    //     `blinded_leaf` then the 8-felt federation `root` — SIXTEEN slots, not two.
     let blinded_pis = match verify_descriptor_wire(&bundle.blinded_membership) {
-        Some(pis) if pis.len() > PI_ROOT_4ARY => pis,
+        Some(pis) if pis.len() >= BLINDED_4ARY_PI_COUNT => pis,
         _ => return Ok(None),
     };
-    if blinded_pis[PI_ROOT_4ARY] != expected_root {
+    // EVERY LANE. The retired one-felt family bound ~31 bits of the federation root, so a second
+    // authentication path to a birthday-collided root was accepted; all eight lanes must agree.
+    if blinded_pis[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W] != expected_root8[..] {
         // Issuer is not a member of the federation rooted at `federation_root`.
         return Ok(None);
     }
@@ -884,31 +901,35 @@ mod tests {
         resource: &str,
         revealed: [BabyBear; 8],
     ) -> (AuthorizationDescriptorProof, [u8; 32]) {
-        // (a) blinded ring-membership (depth-2, 4-ary) — its committed root is the federation root.
-        let leaf = BabyBear::new(0xABCD);
+        // (a) blinded ring-membership (depth-2, 4-ary `node8`) — its committed 8-felt root IS the
+        //     federation root. Leaf and every co-path sibling are full `Digest8` nodes.
+        let leaf: Digest8 = core::array::from_fn(|k| BabyBear::new(0xABCD + k as u32));
         let blinding = BabyBear::new(0xB11D);
-        let sibs = [
-            [
-                BabyBear::new(2002),
-                BabyBear::new(3003),
-                BabyBear::new(4004),
-            ],
-            [
-                BabyBear::new(5005),
-                BabyBear::new(6006),
-                BabyBear::new(7007),
-            ],
-        ];
+        let sibs: [[Digest8; 3]; 2] = core::array::from_fn(|lvl| {
+            core::array::from_fn(|s| {
+                core::array::from_fn(|k| {
+                    BabyBear::new(2002 + (lvl * 3 + s) as u32 * 1001 + k as u32)
+                })
+            })
+        });
         let pos = [0u8, 0u8];
         let (bl_trace, bl_pis) =
             blinded_membership_witness_4ary(leaf, blinding, &sibs, &pos).expect("blinded witness");
-        let root = bl_pis[PI_ROOT_4ARY];
+        let root8: Digest8 = bl_pis[PI_ROOT_4ARY..PI_ROOT_4ARY + DIGEST_W]
+            .try_into()
+            .expect("the blinded wire publishes an 8-felt root");
         let desc_bl = blinded_membership_descriptor_of_depth_4ary(2);
         let blinded_membership = wire_from(&desc_bl, bl_trace, bl_pis);
 
-        // The federation root the caller passes: root's canonical u32 in the low 4 bytes.
+        // The federation root the caller passes: the 8-felt root as eight canonical LE-u32 limbs
+        // (the FLAG-DAY encoding — see `expected_federation_root_d8`).
         let mut fed = [0u8; 32];
-        fed[0..4].copy_from_slice(&root.as_u32().to_le_bytes());
+        for (k, felt) in root8.iter().enumerate() {
+            fed[k * 4..k * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+        }
+        // The AUTH leg's ONE-felt pin: a Poseidon2 hash of all eight limbs, recomputed by the
+        // verifier from the same bytes (never a lane of the digest).
+        let root = expected_federation_root(&fed);
 
         // (b) bound-presentation — action binding + federation_root + revealed_facts commitment.
         let action_binding = compute_action_binding(action, resource);
@@ -949,18 +970,29 @@ mod tests {
         );
     }
 
-    /// A wrong federation root is REJECTED (membership root no longer matches).
+    /// A wrong federation root is REJECTED (membership root no longer matches) — in EVERY one of
+    /// the eight limbs. The retired one-felt encoding put the whole root in bytes `0..4` and left
+    /// `4..32` zero, so a root differing only in the high limbs was literally the SAME wire value;
+    /// perturbing limb 7 is the case that could not previously exist.
     #[test]
     fn verify_authorization_proof_rejects_wrong_root() {
         let zero = [BabyBear::ZERO; 8];
-        let (bundle, mut fed) = honest_bundle("read", "api/v1/users", zero);
+        let (bundle, fed) = honest_bundle("read", "api/v1/users", zero);
         let bytes = postcard::to_allocvec(&bundle).expect("encode bundle");
-        fed[0] ^= 0xFF; // perturb the federation root
-        assert_eq!(
+        assert!(
             verify_authorization_proof(&bytes, &fed, "read", "api/v1/users").unwrap(),
-            false,
-            "a bundle whose committed root != the caller's federation root must be rejected"
+            "the honest bundle must verify (else the wrong-root canary is vacuous)"
         );
+        for limb in 0..DIGEST_W {
+            let mut wrong = fed;
+            wrong[limb * 4] ^= 0xFF;
+            assert_eq!(
+                verify_authorization_proof(&bytes, &wrong, "read", "api/v1/users").unwrap(),
+                false,
+                "a bundle whose committed root differs from the caller's in limb {limb} must be \
+                 rejected"
+            );
+        }
     }
 
     /// A wrong (action, resource) is REJECTED (the bound-presentation action binding no longer matches).

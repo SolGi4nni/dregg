@@ -56,9 +56,10 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::dsl::circuit::ProgramRegistry;
-use dregg_circuit::dsl::membership::generate_merkle_poseidon2_trace;
 use dregg_circuit::dsl::predicates::PredicateType;
-use dregg_circuit::membership_descriptor_4ary::membership_witness_4ary;
+use dregg_circuit::membership_descriptor_4ary::{
+    DIGEST_W, Digest8, membership_root_4ary, membership_witness_4ary,
+};
 use dregg_circuit::predicate_arith_witness::PREDICATE_ARITH_NAME;
 use dregg_circuit::predicate_comparison_witness::{
     PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
@@ -76,37 +77,75 @@ const KIND_NAME: &str = "MerkleMembership";
 /// the sorted-set non-membership consecutiveness STARK.
 const ADJACENCY_DESCRIPTOR_NAME: &str = "dregg-membership-adjacency::poseidon2-v1";
 
-/// Compress a 32-byte value to its membership leaf felt — THE canonical
-/// chip-native compress (`dregg_commit::typed::compress_member`): lane 0 of the
-/// deployed chip's arity-16 `node8` absorb over
+/// Compress a 32-byte value to its **8-felt** membership leaf digest — THE
+/// canonical chip-native compress (`dregg_commit::typed::compress_member`): all
+/// eight output lanes of the deployed chip's arity-16 `node8` absorb over
 /// `canonical_32_to_felts_8(bytes) ‖ 0⁸`.
 ///
-/// This is the SAME function the in-AIR membership keystone forces
+/// Lane 0 of this digest is the value the in-AIR membership keystone welds
 /// (`CarrierOctetGates.lean::withMembershipPubkeyCompress` /
-/// `pubkeyCompress1Spec`), so executor, membership-STARK leaf domain, and the
-/// Lean gate agree on the leaf the membership circuit commits to (the fail-open
-/// law's third edge). NOTE: this REPLACED the pre-big-bang
-/// `hash_many(encode_hash(bytes))` two-permutation sponge, which no deployed
-/// chip arity computes — every membership root value changed; the big-bang
-/// re-genesis re-derives deployed roots. The bridge note-spend domain
+/// `pubkeyCompress1Spec`), unchanged by the widening; the membership STARK now
+/// binds all eight lanes, so executor, leaf domain, and Lean gate agree and the
+/// leaf is no longer a 31-bit commitment. The bridge note-spend domain
 /// (`apply.rs::verify_stark`'s local `compress`, `bridge::present`'s
-/// `bytes_to_babybear`) is a SEPARATE domain, re-aligned in the bridge lane
-/// (the re-proved note-spend STARK), not here.
-fn compress(bytes: &[u8; 32]) -> BabyBear {
+/// `bytes_to_babybear`) is a SEPARATE domain.
+fn compress(bytes: &[u8; 32]) -> Digest8 {
     dregg_commit::typed::compress_member(bytes)
 }
 
-/// Read an authorized-set root felt from a 32-byte slot value.
+/// Read the authorized-set **8-felt** root from a 32-byte slot value.
 ///
-/// The cell program publishes the Poseidon2 Merkle root (a BabyBear felt) in
-/// its slot as the felt's canonical 4-byte little-endian form in the low 4
-/// bytes (the rest zero). The root is ALREADY a field element (the membership
-/// circuit's `root` public input), so — unlike the leaf, which is a raw 32-byte
-/// pk that must be compressed — the verifier reads it directly rather than
-/// compressing it again. [`authorized_set_root_bytes`] emits the matching form.
-fn root_felt_from_slot(bytes: &[u8; 32]) -> BabyBear {
-    let v = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    BabyBear::new(v)
+/// The cell program publishes the Poseidon2 Merkle root — since the `node8`
+/// cutover an 8-felt digest, not one felt — in its slot as eight canonical
+/// 4-byte little-endian limbs, filling the slot exactly (8 x 4 = 32). Every
+/// BabyBear canonical value is `< 2^31 < 2^32`, so the encoding is INJECTIVE:
+/// the 32 bytes determine the eight felts and vice versa, with no truncation at
+/// the boundary. [`authorized_set_root_bytes`] emits the matching form.
+///
+/// ⚑ FLAG DAY: this used to read `u32::from_le_bytes(bytes[0..4])` — ONE felt in
+/// the low four bytes, the other 28 zero. Widening the tree while the boundary
+/// re-narrowed the root would have bought nothing, so the slot encoding moved
+/// with it. Every committed authorized-set root slot value CHANGES; see the
+/// module header's flag-day note.
+fn root_digest_from_slot(bytes: &[u8; 32]) -> Digest8 {
+    core::array::from_fn(|i| {
+        let b = i * 4;
+        BabyBear::new(u32::from_le_bytes([
+            bytes[b],
+            bytes[b + 1],
+            bytes[b + 2],
+            bytes[b + 3],
+        ]))
+    })
+}
+
+/// ⚠ **THE SURVIVING ONE-FELT SLOT CONVENTION — NOT the membership root.**
+///
+/// Reads a single BabyBear felt from a 32-byte commitment's low four little-endian bytes. This is
+/// the encoding the MEMBERSHIP root used before the `node8` cutover, and it is deliberately kept
+/// ONLY for the two domains in this file that are still one felt wide:
+///
+/// * the **neighbor-adjacency / nullifier-non-membership** sorted-set root
+///   (`dregg-membership-adjacency::poseidon2-v1`, whose interior is a chained `hash_2_to_1` tree —
+///   a genuinely narrow tree with NO wide Lean twin on disk, and therefore an OPEN finding of the
+///   same class as the one this cutover closed, not something it fixed); and
+/// * the **BridgePredicate `fact_commitment`**, which is a committed scalar and not a tree at all,
+///   so width is not the question there.
+///
+/// It is named apart from [`root_digest_from_slot`] on purpose: the membership root and these two
+/// share a byte convention no longer, and a future reader must not "unify" them back.
+fn narrow_felt_from_slot_low4(bytes: &[u8; 32]) -> BabyBear {
+    BabyBear::new(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+/// The adjacency tree's leaf felt: lane 0 of the canonical [`compress`] digest.
+///
+/// ⚠ A lane-0 projection, deliberately and visibly. The adjacency descriptor's leaf public inputs
+/// are one felt each, so widening the projection here without widening
+/// `dregg-membership-adjacency` would only move the truncation. That widening is the OPEN
+/// adjacency finding; this projection marks exactly where it lands.
+fn adjacency_compress(bytes: &[u8; 32]) -> BabyBear {
+    compress(bytes)[0]
 }
 
 /// Wire encoding for a `MerkleMembership` proof blob.
@@ -206,23 +245,29 @@ impl WitnessedPredicateVerifier for MerkleMembershipStarkVerifier {
         };
 
         let leaf = compress(&candidate);
-        let root = root_felt_from_slot(commitment);
+        let root = root_digest_from_slot(commitment);
+        // The descriptor's 16 public inputs: [leaf0..leaf7, root0..root7].
+        let mut pis = Vec::with_capacity(2 * DIGEST_W);
+        pis.extend_from_slice(&leaf);
+        pis.extend_from_slice(&root);
 
         // The wire is [depth: u32 LE || postcard(Ir2BatchProof)]. The depth picks
-        // the VK-distinct 4-ary membership descriptor via the fail-closed
-        // `descriptor_by_name` dispatch; that descriptor pins public inputs
-        // [leaf, root]. Verification accepts iff the prover knew a depth-N 4-ary
-        // Poseidon2 Merkle path from `leaf` to the committed `root` — a non-member
-        // has no such path (collision resistance), so verify fails and
-        // SenderAuthorized rejects. Decode + verify run under `catch_unwind` so a
-        // malformed / tampered blob is a fail-closed rejection, never a panic.
+        // the VK-distinct 4-ary `node8` membership descriptor via the fail-closed
+        // `descriptor_by_name` dispatch; that descriptor pins all sixteen public
+        // inputs. Verification accepts iff the prover knew a depth-N 4-ary
+        // Poseidon2 Merkle path of 8-FELT nodes from `leaf` to the committed
+        // `root`. A non-member has no such path, and — unlike the retired
+        // one-felt tree, whose 31-bit nodes are collided at 2^15.5 — forging one
+        // now costs a full-width Poseidon2 collision. Decode + verify run under
+        // `catch_unwind` so a malformed / tampered blob is a fail-closed
+        // rejection, never a panic.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let wire = MembershipProofWire::from_bytes(proof_bytes)?;
             let name = format!("{MEMBERSHIP_4ARY_NAME_PREFIX}{}", wire.depth);
             let desc = descriptor_by_name(&name).ok_or_else(|| {
                 format!("no membership descriptor dispatches for {name:?} (fail-closed)")
             })?;
-            verify_vm_descriptor2(&desc, &wire.proof, &[leaf, root])
+            verify_vm_descriptor2(&desc, &wire.proof, &pis)
         }));
         match result {
             Ok(Ok(())) => Ok(()),
@@ -332,14 +377,14 @@ impl NeighborAdjacencyVerifier for CircuitNeighborAdjacencyVerifier {
         // ROOT: the committed sorted-set root is ALREADY a felt — the set's
         // binary-Poseidon2 Merkle root — published in the cell's 32-byte
         // commitment as the felt's canonical 4-byte LE form (mirroring the
-        // MerkleMembership `root_felt_from_slot` convention). We read it
+        // pre-cutover MerkleMembership slot convention). We read it
         // directly rather than re-compressing.
         //
         // LEAVES: the neighbor *values* are raw 32-byte items, mapped into the
         // tree's leaf-felt domain by the canonical Poseidon2 compression.
-        let root_felt = root_felt_from_slot(root);
-        let leaf_lower = compress(lower);
-        let leaf_upper = compress(upper);
+        let root_felt = narrow_felt_from_slot_low4(root);
+        let leaf_lower = adjacency_compress(lower);
+        let leaf_upper = adjacency_compress(upper);
 
         // Decode + verify under `catch_unwind`: a tampered / malformed blob is a
         // fail-closed rejection, never a panic. The emitted adjacency descriptor
@@ -389,8 +434,8 @@ pub fn prove_neighbor_adjacency(
     upper: &[u8; 32],
     upper_path: &[NeighborAdjStep],
 ) -> Result<Vec<u8>, String> {
-    let leaf_lower = compress(lower);
-    let leaf_upper = compress(upper);
+    let leaf_lower = adjacency_compress(lower);
+    let leaf_upper = adjacency_compress(upper);
     let (trace, pis) = adjacency_witness(leaf_lower, lower_path, leaf_upper, upper_path)?;
     let idx_lower = pis[ADJ_PI_IDX_LOWER].as_u32();
     let idx_upper = pis[ADJ_PI_IDX_UPPER].as_u32();
@@ -423,7 +468,7 @@ pub use dregg_circuit::adjacency_witness::AdjWitnessStep as NeighborAdjStep;
 
 /// The 32-byte set-commitment form a cell must publish for an adjacency tree
 /// whose binary-Poseidon2 root is `root_felt`: the felt's canonical 4-byte LE
-/// encoding (matching [`root_felt_from_slot`], the convention the adjacency
+/// encoding (matching [`narrow_felt_from_slot_low4`], the convention the adjacency
 /// verifier reads). Provers build their tree over [`adjacency_leaf_felt`] leaves,
 /// take the resulting root felt, and publish `adjacency_commitment_bytes(root)`
 /// as the predicate commitment.
@@ -436,7 +481,7 @@ pub fn adjacency_commitment_bytes(root_felt: BabyBear) -> [u8; 32] {
 /// The tree leaf-felt for a 32-byte neighbor value (canonical Poseidon2
 /// compression). Provers build their binary tree over these leaves.
 pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
-    compress(neighbor)
+    adjacency_compress(neighbor)
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -471,7 +516,7 @@ pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
 ///
 /// # Arguments
 /// * `nullifier_set_root` — the committed sorted nullifier-set root, as the
-///   felt's canonical 4-byte LE form (the [`root_felt_from_slot`] convention,
+///   felt's canonical 4-byte LE form (the [`narrow_felt_from_slot_low4`] convention,
 ///   matching [`adjacency_commitment_bytes`]).
 /// * `nullifier` — the 32-byte spent nullifier whose freshness is asserted.
 /// * `lower` / `upper` — the claimed neighbor leaves bracketing the nullifier.
@@ -496,9 +541,11 @@ pub fn verify_nullifier_nonmembership(
     //     is sorted by (the same `compress` the adjacency AIR commits leaves
     //     under). A nullifier equal to a neighbor, or outside the bracket, is
     //     NOT a non-member witness — reject.
-    let nf_felt = compress(nullifier).as_u32();
-    let lo_felt = compress(lower).as_u32();
-    let hi_felt = compress(upper).as_u32();
+    // Lane-0 projections: the adjacency/non-membership domain is still one felt wide (the
+    // OPEN adjacency finding). See `adjacency_compress`.
+    let nf_felt = adjacency_compress(nullifier).as_u32();
+    let lo_felt = adjacency_compress(lower).as_u32();
+    let hi_felt = adjacency_compress(upper).as_u32();
     if !(lo_felt < nf_felt && nf_felt < hi_felt) {
         return Err(format!(
             "nullifier leaf-felt {nf_felt} is not strictly between neighbors \
@@ -1030,13 +1077,12 @@ pub fn registry_with_real_verifiers_full(
 /// `sender_pk` is the 32-byte sender public key (the candidate); the returned
 /// serialized proof blob ([`MembershipProofWire`]: depth + `postcard(Ir2BatchProof)`)
 /// verifies under [`MerkleMembershipStarkVerifier`] against the set root computed
-/// from the same path. The `siblings`/`positions` are BabyBear-domain Merkle
-/// witness data (leaf-to-root); the path is padded to a power-of-two depth (as
-/// [`generate_merkle_poseidon2_trace`] pads) and proven through the 4-ary
-/// `membership_descriptor_of_depth_4ary` descriptor.
+/// from the same path. The `siblings`/`positions` are **8-felt** Merkle witness
+/// data (leaf-to-root); the path is padded to a power-of-two depth and proven
+/// through the 4-ary `node8` `membership_descriptor_of_depth_4ary` descriptor.
 pub fn prove_sender_membership(
     sender_pk: &[u8; 32],
-    siblings: &[[BabyBear; 3]],
+    siblings: &[[Digest8; 3]],
     positions: &[u8],
 ) -> Result<Vec<u8>, String> {
     if siblings.len() != positions.len() {
@@ -1048,10 +1094,9 @@ pub fn prove_sender_membership(
     }
     let leaf = compress(sender_pk);
     // Pad the authentication path to the next power-of-two depth (min 2) with
-    // zero-sibling, position-0 levels — EXACTLY how `generate_merkle_poseidon2_trace`
-    // pads internally — so the descriptor's committed root stays BYTE-EQUAL to the
-    // production root (`authorized_set_root_felt`). `membership_witness_4ary`
-    // requires a power-of-two depth >= 2; the pad reproduces production's root.
+    // zero-sibling, position-0 levels, so the descriptor's committed root stays
+    // BYTE-EQUAL to the production root (`authorized_set_root_digest`).
+    // `membership_witness_4ary` requires a power-of-two depth >= 2.
     let (padded_siblings, padded_positions) = pad_membership_path(siblings, positions);
     let depth = padded_siblings.len();
     let (trace, pis) = membership_witness_4ary(leaf, &padded_siblings, &padded_positions)?;
@@ -1067,51 +1112,52 @@ pub fn prove_sender_membership(
 }
 
 /// Pad a Merkle authentication path to the next power-of-two depth (min 2) with
-/// zero-sibling, position-0 levels — the SAME padding
-/// [`generate_merkle_poseidon2_trace`] applies internally, so the padded 4-ary
-/// descriptor root is byte-equal to the production `authorized_set_root_felt`.
+/// zero-sibling, position-0 levels, so the padded 4-ary descriptor root is
+/// byte-equal to the production `authorized_set_root_digest`.
 fn pad_membership_path(
-    siblings: &[[BabyBear; 3]],
+    siblings: &[[Digest8; 3]],
     positions: &[u8],
-) -> (Vec<[BabyBear; 3]>, Vec<u8>) {
+) -> (Vec<[Digest8; 3]>, Vec<u8>) {
     let mut s = siblings.to_vec();
     let mut p = positions.to_vec();
     let target = s.len().next_power_of_two().max(2);
     while s.len() < target {
-        s.push([BabyBear::ZERO; 3]);
+        s.push([[BabyBear::ZERO; DIGEST_W]; 3]);
         p.push(0);
     }
     (s, p)
 }
 
-/// The authorized-set Merkle root as a BabyBear felt (the value the membership
-/// circuit commits to as `root`), for a sender leaf at `(siblings, positions)`.
+/// The authorized-set Merkle root as an **8-felt digest** (the value the
+/// membership circuit commits to as `root0..root7`), for a sender leaf at
+/// `(siblings, positions)`.
 ///
-/// Delegates to the circuit's own trace generator so the root matches exactly
-/// what the membership STARK commits to (Poseidon2 `hash_4_to_1` of children
-/// arranged by position), rather than re-deriving it here.
-pub fn authorized_set_root_felt(
+/// Delegates to the circuit's own fold so the root matches exactly what the
+/// membership STARK commits to (the arity-16 `node8` two-stage fold of the
+/// children arranged by position), rather than re-deriving it here.
+pub fn authorized_set_root_digest(
     sender_pk: &[u8; 32],
-    siblings: &[[BabyBear; 3]],
+    siblings: &[[Digest8; 3]],
     positions: &[u8],
-) -> BabyBear {
+) -> Digest8 {
     let leaf = compress(sender_pk);
-    let (_trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, siblings, positions);
-    // PI layout is [leaf, root].
-    public_inputs[1]
+    let (padded_siblings, padded_positions) = pad_membership_path(siblings, positions);
+    membership_root_4ary(leaf, &padded_siblings, &padded_positions)
 }
 
 /// The 32-byte slot value the cell program publishes for the authorized-set
-/// root: the root felt's canonical 4-byte little-endian form in the low bytes
-/// (matching [`root_felt_from_slot`]).
+/// root: the 8-felt root's eight canonical 4-byte little-endian limbs, filling
+/// the slot exactly (matching [`root_digest_from_slot`]).
 pub fn authorized_set_root_bytes(
     sender_pk: &[u8; 32],
-    siblings: &[[BabyBear; 3]],
+    siblings: &[[Digest8; 3]],
     positions: &[u8],
 ) -> [u8; 32] {
-    let root = authorized_set_root_felt(sender_pk, siblings, positions);
+    let root = authorized_set_root_digest(sender_pk, siblings, positions);
     let mut out = [0u8; 32];
-    out[..4].copy_from_slice(&root.0.to_le_bytes());
+    for (i, felt) in root.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&felt.as_u32().to_le_bytes());
+    }
     out
 }
 
@@ -1124,17 +1170,15 @@ pub fn authorized_set_root_bytes(
 // the 4-ary membership descriptor needs a power-of-two depth ≥ 2, so the
 // member sits at position 0 of a depth-2 tree padded with zero siblings. Both
 // the slot value and the proof are derived from the SAME `compress` /
-// `generate_merkle_poseidon2_trace` convention the [`MerkleMembershipStarkVerifier`]
+// `membership_root_4ary` convention the [`MerkleMembershipStarkVerifier`]
 // reads, so they are mutually consistent by construction (the root the prover
 // commits to is exactly the root the verifier reconstructs from the slot).
 
 /// The canonical depth-2 single-member witness: position 0 at each level,
-/// zero siblings. The 4-ary membership descriptor requires a power-of-two
-/// depth ≥ 2; this is the minimal honest path for a one-element authorized set.
-const SINGLE_MEMBER_SIBLINGS: [[BabyBear; 3]; 2] = [
-    [BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
-    [BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
-];
+/// zero 8-felt siblings. The 4-ary membership descriptor requires a
+/// power-of-two depth ≥ 2; this is the minimal honest path for a one-element
+/// authorized set.
+const SINGLE_MEMBER_SIBLINGS: [[Digest8; 3]; 2] = [[[BabyBear::ZERO; DIGEST_W]; 3]; 2];
 const SINGLE_MEMBER_POSITIONS: [u8; 2] = [0, 0];
 
 /// The 32-byte authorized-set root slot value for a set whose ONLY member is
@@ -1364,10 +1408,10 @@ impl WitnessedPredicateVerifier for BridgePredicateStarkVerifier {
         })?;
 
         // The committed fact is a BabyBear felt published in the 32-byte
-        // commitment as its canonical 4-byte LE form (the `root_felt_from_slot`
+        // commitment as its canonical 4-byte LE form (the `narrow_felt_from_slot_low4`
         // convention shared with MerkleMembership). Reconstruct it; the circuit
         // verifier binds it as a public input.
-        let fact_commitment = root_felt_from_slot(commitment);
+        let fact_commitment = narrow_felt_from_slot_low4(commitment);
 
         match (requirement, wire) {
             (
@@ -1433,7 +1477,7 @@ impl WitnessedPredicateVerifier for BridgePredicateStarkVerifier {
 }
 
 /// The 32-byte BridgePredicate `commitment` form for a `fact_commitment` felt:
-/// its canonical 4-byte LE encoding (matching [`root_felt_from_slot`], the
+/// its canonical 4-byte LE encoding (matching [`narrow_felt_from_slot_low4`], the
 /// convention the verifier reads). Hosts that hold a `fact_commitment` BabyBear
 /// publish `bridge_predicate_commitment_bytes(fact_commitment)` as the predicate
 /// commitment.
@@ -1889,11 +1933,20 @@ mod tests {
             let mut ins = [BabyBear::ZERO; 16];
             ins[..8].copy_from_slice(&limbs);
             let chip_lane0 = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins)[0];
+            // ⚑ THE WELD IS STATED AT LANE 0, and the widening did NOT move it: the membership
+            // STARK now binds all eight lanes, and lane 0 is bit-identical to what the retired
+            // one-felt compress returned. That is exactly what keeps
+            // `withMembershipPubkeyCompress` / `pubkeyCompress1Spec` true unchanged.
+            assert_eq!(
+                compress(pk)[0],
+                chip_lane0,
+                "executor membership compress lane 0 must equal chip-native node8 lane 0 \
+                 (the Lean gate's pubkeyCompress1Spec) for pk {pk:02x?}"
+            );
             assert_eq!(
                 compress(pk),
-                chip_lane0,
-                "executor membership compress must equal chip-native node8 lane 0 \
-                 (the Lean gate's pubkeyCompress1Spec) for pk {pk:02x?}"
+                chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins),
+                "and the full leaf must be ALL EIGHT lanes of that same absorb"
             );
         }
     }
@@ -1909,7 +1962,7 @@ mod tests {
                 &dregg_circuit::effect_vm::bytes32_to_8_limbs(&pk),
             );
             assert_ne!(
-                compress(&pk),
+                compress(&pk)[0],
                 old,
                 "chip-native compress must differ from the retired sponge for pk {pk:02x?}"
             );
@@ -1945,7 +1998,7 @@ mod tests {
         let levels = tree_levels(&neighbors);
         let root_felt = *levels.last().unwrap().first().unwrap();
         // The cell's predicate commitment is the set root felt's LE bytes
-        // (the adjacency verifier reads it via `root_felt_from_slot`).
+        // (the adjacency verifier reads it via `narrow_felt_from_slot_low4`).
         let commitment = adjacency_commitment_bytes(root_felt);
 
         // Consecutive neighbors at indices 1,2; a candidate strictly between
@@ -2094,7 +2147,7 @@ mod tests {
             let mut cand = [0u8; 32];
             cand[0] = 0x55;
             cand[1..5].copy_from_slice(&k.to_le_bytes());
-            let f = compress(&cand).as_u32();
+            let f = adjacency_compress(&cand).as_u32();
             if lo_f < f && f < hi_f {
                 nullifier = Some(cand);
                 break;
@@ -2136,7 +2189,7 @@ mod tests {
             let mut cand = [0u8; 32];
             cand[0] = 0x77;
             cand[1..5].copy_from_slice(&k.to_le_bytes());
-            let f = compress(&cand).as_u32();
+            let f = adjacency_compress(&cand).as_u32();
             if lo_f < f && f < hi_f {
                 nullifier = Some(cand);
                 break;

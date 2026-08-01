@@ -40,6 +40,7 @@ import Dregg2.Circuit.Emit.AutomataflLegCEmit
 import Dregg2.Circuit.Emit.AutomataflResolveMarksCapstone
 import Dregg2.Circuit.Emit.AutomataflStepMarksGolden
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
+import Dregg2.Circuit.Emit.BlindedMembershipWideEmit
 import Dregg2.Circuit.Emit.BoundPresentationEmit
 import Dregg2.Circuit.Emit.BridgeActionEmit
 import Dregg2.Circuit.Emit.DerivationEmit
@@ -52,6 +53,7 @@ import Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld
 import Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan
 import Dregg2.Circuit.Emit.FieldDeltaRangeEmit
 import Dregg2.Circuit.Emit.MerkleMembership4aryEmit
+import Dregg2.Circuit.Emit.MerkleMembership4aryWideEmit
 import Dregg2.Circuit.Emit.MerkleMembershipEmit
 import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
@@ -154,10 +156,13 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.AutomataflStepMarksCapstone.automataflStepMarksDescN 2)
   , ("automatafl-step-marks-n11.json",
       Dregg2.Circuit.Emit.AutomataflStepMarksCapstone.automataflStepMarksDescN 11)
-  , ("blinded-membership-4ary-depth2.json",
-      Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembership4aryDesc 2)
-  , ("blinded-membership-4ary-depth8.json",
-      Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembership4aryDesc 8)
+  -- ⚑ node8 CUTOVER: the depth-keyed ONE-FELT blinded 4-ary pair
+  -- (`blinded-membership-4ary-depth{2,8}.json`, `blindedMembership4aryDesc`) is RETIRED. Its
+  -- node fold chained lane 0 only, so every interior node, the root PI and the published
+  -- blinded leaf were ~31-bit. The wide twin is depth-uniform (the depth rides the trace
+  -- height), so one row replaces two.
+  , ("blinded-membership-4ary-wide.json",
+      Dregg2.Circuit.Emit.BlindedMembershipWideEmit.blindedMembershipWideDesc)
   , ("blinded-membership.json",
       Dregg2.Circuit.Emit.BlindedMembershipEmit.blindedMembershipDesc)
   , ("bound-presentation.json",
@@ -186,8 +191,15 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.FaithfulNoteSpendDescriptorPlan.faithfulNoteSpendDescriptor)
   , ("faithful-note-spend-exact-v3.json",
       Dregg2.Circuit.Emit.ExactNullifierAafiRotatedStateWeld.exactNullifierAafiRotatedStateDescriptor)
-  , ("merkle-membership-4ary-general.json",
-      Dregg2.Circuit.Emit.MerkleMembership4aryEmit.membership4aryDesc)
+  -- ⚑ node8 CUTOVER: `merkle-membership-4ary-general.json` (`membership4aryDesc`) is RETIRED —
+  -- its per-level node was `chip_absorb_all_lanes(4, children)[0]`, ONE BabyBear felt, so the
+  -- whole tree committed at ~31 bits and was collidable at 2^15.5
+  -- (`circuit/tests/membership_forge_tooth.rs` exhibits the forge). The narrow `def` survives in
+  -- `MerkleMembership4aryEmit` ONLY as the object the wide module's anti-masquerade tooth
+  -- quantifies over (`narrowFold4Lane0`, `interior_forge_narrow_admits_wide_refuses`) — you
+  -- cannot state "the old fold admits this" without the old fold. It is emitted nowhere.
+  , ("merkle-membership-4ary-wide-general.json",
+      Dregg2.Circuit.Emit.MerkleMembership4aryWideEmit.merkleMembership4aryWideDesc)
   , ("merkle-membership-depth2.json",
       Dregg2.Circuit.Emit.MerkleMembershipEmit.merkleMembershipDesc)
   , ("mina-fixture.json",
@@ -328,7 +340,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 77
+#guard byNameDescriptors.length == 76
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

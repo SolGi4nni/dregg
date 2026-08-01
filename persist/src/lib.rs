@@ -392,7 +392,50 @@ impl PersistentStore {
     /// `Store::faithful_nullifier_root`, `plan_faithful_nullifier_successor` and
     /// `node::executor_side_state_persistence` already do. A rebuild that re-inserts in storage
     /// order produces a different, wrong root; that is asserted as a pole rather than assumed.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 15;
+    /// ─────────────────────────────────────────────────────────────────────────────────────────
+    /// ⚑ **15 → 16, 2026-08-01: THE MEMBERSHIP TREE IS 8 FELTS WIDE (felt-width finding #9).**
+    ///
+    /// Every node of the 4-ary Poseidon2 `MerkleMembership` tree was **one BabyBear felt**:
+    /// `hash_4_to_1` ran a genuine 16-wide permutation and returned `state.state[0]`;
+    /// `generate_merkle_poseidon2_trace` chained that single felt level to level (the production
+    /// root); the descriptor's parent lookup carried the arity-4 chip `out0` alone; and
+    /// `compress_member` truncated the leaf the same way. A codomain of ~2^30.9 is
+    /// second-preimaged in ~2^31 and **collided in ~2^15.5** — an attacker who contributes to or
+    /// mints a subtree finds a second child quadruple with the same parent and presents a
+    /// distinct authentication path reaching the SAME authorized root for a key that was never in
+    /// the set. `circuit/tests/membership_forge_tooth.rs` exhibits that collision and the forged
+    /// path it buys, then shows the widened fold refusing both.
+    ///
+    /// The node is now `node8_4ary(c0,c1,c2,c3) = A16(A16(c0‖c1) ‖ A16(c2‖c3))` — the arity-16
+    /// `node8` absorb the deployed heap/cap/fields trees already ride — with all eight output
+    /// lanes bound at every level, an 8-lane chain, and an 8-felt leaf.
+    ///
+    /// **WHAT MUST BE RE-GENESISED:** every persisted `SenderAuthorized { PublicRoot }`
+    /// authorized-set root slot value, and every stored `MerkleMembership` / blinded-membership
+    /// proof blob. The 32-byte root slot encoding CHANGED with the tree: it was ONE felt in the
+    /// low four little-endian bytes with 28 zero bytes, and is now EIGHT canonical `u32` LE limbs
+    /// filling the slot exactly (injective — every BabyBear canonical value is `< 2^31 < 2^32`).
+    /// A store at epoch 15 REFUSES to load rather than reinterpreting a one-felt root as the low
+    /// limb of an 8-felt one.
+    ///
+    /// **WHAT MOVES BESIDES THE STORE:** the descriptor, its fingerprint and its verifier key.
+    /// `merkle-membership-4ary-general.json` (trace width 11, 2 PIs) and
+    /// `blinded-membership-4ary-depth{2,8}.json` (width 27, 2 PIs) are DELETED and replaced by
+    /// `merkle-membership-4ary-wide-general.json` (width 90, 16 PIs) and
+    /// `blinded-membership-4ary-wide.json` (width 99, 16 PIs). The wire dispatch prefixes changed
+    /// too, so a pre-cutover proof identity answers `UnknownAir` and is REFUSED rather than
+    /// reinterpreted under a descriptor with different semantics.
+    ///
+    /// **WHAT DOES NOT MOVE:** the in-AIR sender-leaf weld
+    /// (`CarrierOctetGates.lean::withMembershipPubkeyCompress` / `pubkeyCompress1Spec`) is stated
+    /// at `A(pubkey8 ‖ 0⁸)[0]`, and lane 0 of the widened `compress_member` is bit-identical to
+    /// the old return, so that gate holds unchanged — it is now a lane-0 projection of a leaf the
+    /// membership STARK binds in full width. The teeth PIs 50/51 remain unpinned; that is a
+    /// SEPARATE wound. The neighbor-adjacency / nullifier-non-membership tree
+    /// (`dregg-membership-adjacency::poseidon2-v1`) is a DIFFERENT, still one-felt chained tree
+    /// with no wide Lean twin on disk — an open finding of the same class, not something this
+    /// epoch closed.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 16;
 
     /// Open a persistent store backed by a file on disk.
     ///

@@ -45,14 +45,23 @@ fn sample_hand() -> Vec<(u64, u64)> {
 fn every_play_lowers_to_a_membership_leaf() {
     let hand = sample_hand();
     let tree = HandTree::commit(hand.clone());
-    let root = root_felt_from_commitment(&tree.root_bytes());
+    let root = root_digest_from_commitment(&tree.root_bytes()).expect("canonical hand root");
     for &(card, nonce) in &hand {
         let proof = tree.prove_play(card).expect("a dealt card can be proven");
         let leaf = membership_leaf_for_play(&proof).expect("an honest play lowers to a leaf");
+        // SIXTEEN PIs — the emitted descriptor's `[leaf0..7, root0..7]`, all eight lanes of
+        // each digest pinned (the retired leaf published two, one lane apiece).
+        let mut expect: Vec<BabyBear> = card_leaf(card, nonce).to_vec();
+        expect.extend_from_slice(&root);
         assert_eq!(
-            leaf.public_inputs,
-            vec![card_leaf(card, nonce), root],
-            "PIs are [leaf, root] — the card id is NOT in the proof"
+            leaf.public_inputs, expect,
+            "PIs are [leaf8 ‖ root8] — the card id is NOT in the proof"
+        );
+        assert_eq!(leaf.public_inputs.len(), 16);
+        assert_eq!(
+            leaf.descriptor.public_input_count,
+            leaf.public_inputs.len(),
+            "the leaf publishes exactly the emitted descriptor's PIs"
         );
         assert!(
             !leaf.public_inputs.contains(&BabyBear::from_u64(card)),
@@ -62,6 +71,8 @@ fn every_play_lowers_to_a_membership_leaf() {
             leaf.num_rows, 2,
             "depth-2 hand tree ⇒ a 2-row membership trace"
         );
+        assert_eq!(leaf.base_trace.len(), 2);
+        assert_eq!(leaf.base_trace[0].len(), leaf.descriptor.trace_width);
     }
 }
 
@@ -81,10 +92,19 @@ fn fabricated_card_has_no_membership_leaf() {
 
     // A dealt card's proof with a corrupted sibling no longer climbs to the committed root.
     let mut proof = tree.prove_play(hand[0].0).expect("dealt card proves");
-    proof.path[0].siblings[0] = proof.path[0].siblings[0] + BabyBear::ONE;
+    proof.path[0].siblings[0][0] += BabyBear::ONE;
     assert!(
         membership_leaf_for_play(&proof).is_err(),
         "a tampered path that does not climb to the committed root is refused at lowering"
+    );
+
+    // ⚑ THE HIGH-LANE TOOTH: a change to lane 7 ALONE — invisible to the retired one-felt
+    // fold, which absorbed lane 0 and discarded the other seven — must also refuse.
+    let mut high = tree.prove_play(hand[1].0).expect("dealt card proves");
+    high.path[0].siblings[2][7] += BabyBear::ONE;
+    assert!(
+        membership_leaf_for_play(&high).is_err(),
+        "a lane-7-only co-path change must be refused (the one-felt fold could not see it)"
     );
 
     // A replay of a played card against the UPDATED remaining root fails membership.
@@ -129,62 +149,68 @@ fn win_output_is_welded_to_the_cell_prefix() {
     );
 }
 
-/// **THE PER-PLAY MEMBERSHIP RECEIPT IS WELDED TO THE CELL PREFIX.** The membership leaf now
-/// publishes `[old8 ‖ new8 ‖ leaf ‖ root]` (18 PIs), the deployed state-binding shape — not the
-/// old fixture-bound `[leaf, root]`. Its public-input commitment (the value the fold binds and the
-/// state node connects to the leg's real rotated roots) MOVES when the `[old8 ‖ new8]` prefix is
-/// one cell's vs another's, so a per-play move cannot be claimed over a different cell transition.
-/// The membership fact is unchanged (the card id is still NOT in the PIs).
+/// ⚑ **THE STATE-BOUND MEMBERSHIP LEAF IS BLOCKED, AND THIS PINS THE BLOCKER.**
+///
+/// This test used to assert that `membership_leaf_bound` produced an 18-PI
+/// `[old8 ‖ new8 ‖ leaf ‖ root]` leaf whose commitment moved with the cell prefix. It could
+/// only do so because the leaf rode a **Rust-authored** circuit-DSL descriptor whose
+/// `public_input_count` and `PiBinding` indices Rust was free to rewrite — and that same Rust
+/// AIR is the one-felt (`hash_4_to_1 -> state[0]`, ~31-bit, collided at 2^15.5) membership
+/// recurrence this cutover deleted. The wide leaf rides the LEAN-EMITTED descriptor, which
+/// spends all sixteen of its PIs on `[leaf8 ‖ root8]` and reserves no state door; re-indexing
+/// an emitted artifact's PIs from Rust is not an option (LAW #1 — and it would silently
+/// diverge the proven object from the byte-pinned Lean golden and its VK).
+///
+/// So the state-bound leaf REFUSES, and the two things that must stay true are pinned here:
+/// the refusal NAMES the Lean-side fix, and an honest play still lowers to a real (unbound)
+/// membership leaf while a tampered one still does not.
+///
+/// ⚠ When `MerkleMembership4aryWideEmit` reserves the door (`public_input_count = 32`,
+/// `PI_LEAF = 16`, `PI_ROOT = 24`), this test must be REPLACED by the welding assertions
+/// above — deliberately, not by deleting it.
 #[test]
-fn membership_leaf_is_welded_to_the_cell_prefix() {
+fn state_bound_membership_leaf_is_blocked_on_the_lean_state_door() {
     use super::{fixture_wire_commit8, membership_leaf_bound};
     let hand = sample_hand();
     let tree = HandTree::commit(hand.clone());
-    let root = root_felt_from_commitment(&tree.root_bytes());
-    let (card, nonce) = hand[5]; // card 18 — a hidden play
+    let (card, _nonce) = hand[5]; // card 18 — a hidden play
     let proof = tree.prove_play(card).expect("a dealt card proves");
 
     let new8: [BabyBear; 8] = core::array::from_fn(|i| BabyBear::new(700 + i as u32));
-    // A distinct non-fixture prefix standing in for a cell's rotated roots.
     let cell_a: [BabyBear; 8] = core::array::from_fn(|i| BabyBear::new(9_000 + i as u32));
 
-    let a = membership_leaf_bound(cell_a, new8, &proof).expect("an honest play lowers to a leaf");
-    // The state-binding ABI shape: [old8 ‖ new8 ‖ leaf ‖ root].
-    assert_eq!(a.public_inputs.len(), 18, "[old8 ‖ new8 ‖ leaf ‖ root]");
-    assert_eq!(&a.public_inputs[0..8], &cell_a, "PI[0..8] = old8");
-    assert_eq!(&a.public_inputs[8..16], &new8, "PI[8..16] = new8");
-    assert_eq!(
-        a.public_inputs[16],
-        card_leaf(card, nonce),
-        "PI[16] = the blinded card leaf"
-    );
-    assert_eq!(
-        a.public_inputs[17], root,
-        "PI[17] = the committed hand root"
-    );
-    // The membership portion [leaf, root] hides the card: the raw card id is not among it (leaf
-    // is the blinded Poseidon2 commitment card_leaf(card, nonce), root is the hand digest).
+    let err = membership_leaf_bound(cell_a, new8, &proof)
+        .err()
+        .expect("the state-bound membership leaf is blocked on the Lean PI layout");
     assert!(
-        !a.public_inputs[16..].contains(&BabyBear::from_u64(card)),
-        "the raw card id never appears in the membership PIs — the hand stays private-in-fold"
+        err.contains("state door") && err.contains("MerkleMembership4aryWideEmit"),
+        "the refusal must NAME the Lean-side fix, not merely fail; got: {err}"
+    );
+    assert!(
+        membership_leaf_bound(fixture_wire_commit8(), new8, &proof).is_err(),
+        "the blocker is not prefix-dependent"
     );
 
-    // The SAME play over a DIFFERENT cell prefix binds a different commitment — the receipt is
-    // welded to the cell, not free.
-    let b = membership_leaf_bound(fixture_wire_commit8(), new8, &proof).expect("lowers");
-    assert_ne!(
-        custom_proof_pi_commitment(&a.public_inputs),
-        custom_proof_pi_commitment(&b.public_inputs),
-        "a membership play over a DIFFERENT cell prefix must bind a different commitment — the \
-         per-play receipt is welded to the cell, not the fixture"
+    // The UNBOUND membership leaf is real and honest: sixteen PIs, the emitted descriptor,
+    // and the card id still absent (the hand stays private-in-fold).
+    let leaf = membership_leaf_for_play(&proof).expect("an honest play still lowers");
+    assert_eq!(leaf.public_inputs.len(), 16, "[leaf8 ‖ root8]");
+    assert!(
+        !leaf.public_inputs.contains(&BabyBear::from_u64(card)),
+        "the raw card id never appears in the membership PIs"
     );
 
-    // A fabricated/tampered play still has no leaf (the refusal survives the prefixing).
+    // A fabricated/tampered play is refused BEFORE the blocker is reported, so the blocker is
+    // never a way for a forged play to look merely "unsupported".
     let mut bad = tree.prove_play(hand[0].0).expect("dealt card proves");
-    bad.path[0].siblings[0] = bad.path[0].siblings[0] + BabyBear::ONE;
+    bad.path[0].siblings[0][0] += BabyBear::ONE;
+    let bad_err = membership_leaf_bound(cell_a, new8, &bad)
+        .err()
+        .expect("a tampered path is refused even on the blocked path");
     assert!(
-        membership_leaf_bound(cell_a, new8, &bad).is_err(),
-        "a tampered path is refused at lowering even with the state prefix"
+        !bad_err.contains("state door"),
+        "a tampered path must be refused as a FORGERY, not reported as the layout blocker; \
+         got: {bad_err}"
     );
 }
 
@@ -460,7 +486,10 @@ fn the_field_octet_sits_where_the_deployed_derivation_says_fast() {
 /// next — the only two-play private match in the tree, and now the only one that
 /// is welded to real state rather than the `pk[0]=7` fixture.
 #[test]
-#[ignore = "HEAVY: TWO real recursion folds in debug (~minutes, multi-GB); run with --ignored on persvati/a RAM-box"]
+#[ignore = "BLOCKED (node8 cutover): the state-bound membership leaf needs a 16-felt \
+                    [old8 | new8] door on the Lean-emitted wide membership descriptor \
+                    (MerkleMembership4aryWideEmit); until it lands `membership_leaf_bound` \
+                    REFUSES and this body cannot run. HEAVY when unblocked (~minutes, multi-GB)"]
 fn private_match_folds_and_lightclient_accepts() {
     use super::{cell_wire_commit8, fixture_wire_commit8, fold_match_over_cell};
 
@@ -541,7 +570,10 @@ fn private_match_folds_and_lightclient_accepts() {
 /// welding both properties at once is a real follow-up and it is stated as one,
 /// not quietly folded into an accept.
 #[test]
-#[ignore = "HEAVY: TWO real recursion folds in debug (~minutes, multi-GB); run with --ignored on persvati/a RAM-box"]
+#[ignore = "BLOCKED (node8 cutover): the state-bound membership leaf needs a 16-felt \
+                    [old8 | new8] door on the Lean-emitted wide membership descriptor \
+                    (MerkleMembership4aryWideEmit); until it lands `membership_leaf_bound` \
+                    REFUSES and this body cannot run. HEAVY when unblocked (~minutes, multi-GB)"]
 fn match_win_output_is_attested() {
     use super::{
         cell_rotated_roots, cell_wire_commit8, fixture_wire_commit8, membership_leaf_bound,
@@ -643,7 +675,10 @@ fn a_real_world_cell() -> dregg_cell::Cell {
 /// fold, refused. This closes the fixture residual for the per-play moves the way
 /// `fold_real_cell.rs` closed it for the WIN move.
 #[test]
-#[ignore = "SLOW: deployed state-binding recursion fold over the real WorldCell per-play membership transition (~minutes)"]
+#[ignore = "BLOCKED (node8 cutover): the state-bound membership leaf needs a 16-felt \
+                    [old8 | new8] door on the Lean-emitted wide membership descriptor \
+                    (MerkleMembership4aryWideEmit); until it lands `membership_leaf_bound` \
+                    REFUSES and this body cannot run. HEAVY when unblocked (~minutes, multi-GB)"]
 fn membership_play_folds_over_the_real_cell_and_lightclient_accepts() {
     use super::{
         cell_rotated_roots, fixture_wire_commit8, fold_membership_play_over_cell,

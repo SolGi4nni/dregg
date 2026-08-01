@@ -21,24 +21,24 @@ use dregg_cell::program::{
     WitnessKindTag,
 };
 use dregg_cell::state::CellState;
-use dregg_circuit::BabyBear;
 use dregg_circuit::dsl::membership::create_test_witness;
+use dregg_circuit::membership_descriptor_4ary::{DIGEST_W, Digest8};
 use dregg_turn::executor::membership_verifier::{
-    MerkleMembershipStarkVerifier, authorized_set_root_bytes, authorized_set_root_felt,
+    MerkleMembershipStarkVerifier, authorized_set_root_bytes, authorized_set_root_digest,
     prove_sender_membership, registry_with_real_sender_membership,
 };
 
 /// THE canonical chip-native membership compress — the executor's leaf domain
 /// (`dregg_commit::typed::compress_member`, the same function the in-AIR gate
-/// `withMembershipPubkeyCompress` forces). Replaced the pre-big-bang
-/// `hash_many(encode_hash(pk))` two-permutation sponge.
-fn compress(bytes: &[u8; 32]) -> BabyBear {
+/// `withMembershipPubkeyCompress` forces). Since the `node8` widening it returns ALL EIGHT
+/// output lanes of the deployed arity-16 absorb, not lane 0.
+fn compress(bytes: &[u8; 32]) -> Digest8 {
     dregg_commit::typed::compress_member(bytes)
 }
 
 /// Build a (siblings, positions) Merkle witness for a given sender pk leaf at
-/// the test tree of `depth`.
-fn witness_for(sender: &[u8; 32], depth: usize) -> (Vec<[BabyBear; 3]>, Vec<u8>) {
+/// the test tree of `depth`. Every co-path node is a full 8-felt digest.
+fn witness_for(sender: &[u8; 32], depth: usize) -> (Vec<[Digest8; 3]>, Vec<u8>) {
     let leaf = compress(sender);
     let (sibs, pos, _root) = create_test_witness(leaf, depth);
     (sibs, pos)
@@ -208,13 +208,43 @@ fn sender_authorized_constraint_rejects_non_member() {
     );
 }
 
-/// Sanity: the felt and byte root helpers are consistent.
+/// THE SLOT ROUND-TRIP: the committed 32-byte root slot carries the WHOLE 8-felt digest —
+/// eight canonical `u32` LE limbs filling all 32 bytes — and reads back lane-for-lane.
+///
+/// ⚑ This used to assert only that `bytes[0..4]` decoded to the root FELT, with 28 bytes
+/// unread. That is the boundary re-narrowing the widening exists to close: a tree of 8-felt
+/// nodes whose committed root is projected to 31 bits at the slot buys nothing. The negative
+/// half is the non-vacuity: NO high lane may be zero-padded away, and two roots differing in
+/// ANY lane must differ in the bytes.
 #[test]
-fn root_bytes_round_trip_to_felt() {
+fn root_bytes_round_trip_carries_all_eight_lanes() {
     let sender = [0x11u8; 32];
     let (sibs, pos) = witness_for(&sender, 3);
-    let felt = authorized_set_root_felt(&sender, &sibs, &pos);
+    let digest = authorized_set_root_digest(&sender, &sibs, &pos);
     let bytes = authorized_set_root_bytes(&sender, &sibs, &pos);
-    let recovered = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    assert_eq!(recovered, felt.0);
+
+    // Every lane round-trips through its own four bytes; the slot is used exactly.
+    for (k, felt) in digest.iter().enumerate() {
+        let recovered = u32::from_le_bytes([
+            bytes[k * 4],
+            bytes[k * 4 + 1],
+            bytes[k * 4 + 2],
+            bytes[k * 4 + 3],
+        ]);
+        assert_eq!(recovered, felt.as_u32(), "root lane {k} must round-trip");
+    }
+    // NON-VACUITY: the digest is genuinely eight lanes wide — the retired encoding would have
+    // left bytes 4..32 zero, and a lane-0-only root has no eight distinct lanes to carry.
+    assert_eq!(digest.len(), DIGEST_W);
+    assert!(
+        bytes[4..].iter().any(|&b| b != 0),
+        "the high 28 bytes must carry root lanes 1..8 — all-zero is the retired one-felt slot"
+    );
+    // A DIFFERENT authorized set moves the bytes (the slot is not a constant).
+    let (other_sibs, other_pos) = witness_for(&[0x99u8; 32], 3);
+    assert_ne!(
+        bytes,
+        authorized_set_root_bytes(&[0x99u8; 32], &other_sibs, &other_pos),
+        "a different authorized set must commit different root bytes"
+    );
 }

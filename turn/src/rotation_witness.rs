@@ -622,9 +622,19 @@ pub fn sender_membership_teeth(before_cell: &Cell) -> (BabyBear, BabyBear) {
     };
     match slot_index.and_then(|i| before_cell.state.fields.get(i as usize)) {
         Some(slot) => (
-            dregg_commit::typed::compress_member(before_cell.public_key()),
-            // The verifier's `root_felt_from_slot`: the root is ALREADY a felt, published in the
-            // slot as its canonical 4-byte little-endian form — read, don't compress.
+            // ⚠ LANE 0 OF THE 8-FELT LEAF, DELIBERATELY. `compress_member` returns the full
+            // eight-lane `node8` digest since the membership `node8` cutover, and the membership
+            // STARK binds all eight. These two TEETH columns are a different, narrower surface:
+            // the in-AIR weld that anchors them (`CarrierOctetGates.lean`'s
+            // `withMembershipPubkeyCompress` / `pubkeyCompress1Spec`) is stated at
+            // `A(pubkey8 ‖ 0⁸)[0]`, so lane 0 is exactly the value that gate forces and this
+            // projection keeps the two sides bit-identical. It is NOT a re-narrowing of the tree:
+            // the teeth are claim carriers whose PIs (50/51) are still unpinned, and the fold's
+            // membership arm is fail-closed on every deployed leg. Widening the teeth to eight
+            // lanes is the SEPARATE `MembershipAuthRootEdge` work, not this cutover.
+            dregg_commit::typed::compress_member(before_cell.public_key())[0],
+            // The verifier's `root_digest_from_slot` reads eight canonical 4-byte little-endian
+            // limbs from the slot; limb 0 is lane 0 of the 8-felt root — the matching projection.
             BabyBear::new(u32::from_le_bytes([slot[0], slot[1], slot[2], slot[3]])),
         ),
         None => (BabyBear::ZERO, BabyBear::ZERO),

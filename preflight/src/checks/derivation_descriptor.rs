@@ -21,9 +21,36 @@
 //!      public inputs are `[state_root, derived_hash, not_after, org_id, budget,
 //!      body_hash0..7]` — so the state root, the conclusion, AND every consumed body-fact
 //!      hash are pinned in-circuit (C6/C6b/C6c).
-//!   2. `merkle-membership::poseidon2-4ary-general-depth{N}`
-//!      ([`dregg_circuit::membership_descriptor_4ary`]), whose public inputs are
-//!      `[leaf, root]`.
+//!   2. `merkle-membership::poseidon2-4ary-wide-general-depth{N}`
+//!      ([`dregg_circuit::membership_descriptor_4ary`]), whose public inputs are the 8-felt
+//!      leaf then the 8-felt root — SIXTEEN slots, every node a full `node8` digest.
+//!
+//! ## ⚑⚑ THE COMPOSITE IS BLOCKED AND THEREFORE FAIL-CLOSED
+//!
+//! [`prove_verify_membership`] REFUSES today — [`wide_body_fact_path`] returns `None`
+//! unconditionally — so these preflight checks report FAILED with the reason attached rather
+//! than reporting a green over a binding that is ~31 bits wide. That red is the detection.
+//!
+//! `prove_verify_membership` binds the membership leg's `leaf`/`root` to the derivation leg's
+//! exported `body_hash{i}` / `state_root` pins. After the `node8` cutover the membership side is
+//! 8 felts and the derivation side is still ONE — `dregg-derivation-v1` pins `pi[0]` at column
+//! `BODY_ROOT_START` and `pi[5..13]` at `BODY_HASH_START..+8`, one felt each
+//! (`metatheory/Dregg2/Circuit/Emit/DerivationEmit.lean`) — and the body-fact tree the callers
+//! build (`dregg_commit::poseidon2_tree::Poseidon2MerkleTree`, `hash_4_to_1`) is one felt per
+//! node.
+//!
+//! The two ways to make it compile today are both wrong:
+//!
+//!   * take lane 0 of the 8-felt root / leaf to meet the one-felt pin — the projection this
+//!     cutover exists to delete;
+//!   * widen the one-felt tree nodes into the 8-felt domain and refold — the nodes still carry
+//!     ~31 bits, so an interior-node birthday collision still produces a second authentication
+//!     path to the same root. It would prove and verify and bind nothing more.
+//!
+//! THE FIX: `dregg-derivation-v1` must publish an 8-felt `state_root` and 8-felt body-fact
+//! hashes (`BODY_ROOT_START` is ALREADY eight columns wide — `derivation_air.rs:45` — so the
+//! trace has room), and the callers' body-fact tree must fold with `node8_4ary`. That is
+//! Lean-authored AIR plus `commit/src/poseidon2_tree.rs`; neither is this lane's.
 //!
 //! [`prove_verify_step_with_membership`] rebuilds the composite from those two: it proves
 //! and verifies the step's derivation descriptor, then for each body fact proves and
@@ -55,7 +82,8 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::membership_descriptor_4ary::{
-    PI_LEAF, PI_ROOT, membership_descriptor_of_depth_4ary, membership_witness_4ary,
+    DIGEST_W, Digest8, PI_LEAF, PI_ROOT, membership_descriptor_of_depth_4ary,
+    membership_witness_4ary,
 };
 
 /// pi index of the derivation descriptor's `state_root` pin.
@@ -136,28 +164,57 @@ pub fn prove_verify_step_with_membership(
     Ok(total_bytes)
 }
 
-/// Prove + verify one 4-ary Merkle-membership descriptor proof, asserting its `[leaf, root]`
-/// public inputs are exactly `(expected_leaf, expected_root)`.
+/// The 8-felt (`node8`) body-fact authentication path the WIDE membership descriptor consumes,
+/// together with the 8-felt state root the derivation leg must pin.
+struct WideBodyFactPath {
+    leaf: Digest8,
+    siblings: Vec<[Digest8; 3]>,
+    positions: Vec<u8>,
+    expected_leaf: Digest8,
+    expected_root: Digest8,
+}
+
+/// ⚑⚑ **RETURNS `None` UNCONDITIONALLY — the derivation↔membership composite is FAIL-CLOSED.**
+/// See the module header for the full statement. In one line: `expected_leaf` / `expected_root`
+/// are the `dregg-derivation-v1` pins and are ONE felt each, `pis[PI_LEAF..]` / `pis[PI_ROOT..]`
+/// are eight, and `mp.fact_hash` / `mp.siblings` are the one-felt `BodyFactMerkleProof` over a
+/// one-felt `Poseidon2MerkleTree`. Closing this by indexing lane 0 is the projection the `node8`
+/// cutover deletes; widening the one-felt tree in place binds nothing more. The fix is 8-felt
+/// pins in `DerivationEmit.lean` plus a `node8_4ary` body-fact tree — neither is this lane's.
+fn wide_body_fact_path(
+    _mp: &BodyFactMerkleProof,
+    _expected_root: BabyBear,
+    _expected_leaf: BabyBear,
+) -> Option<WideBodyFactPath> {
+    None
+}
+
+/// Prove + verify one 4-ary Merkle-membership descriptor proof, asserting its
+/// `[leaf0..8, root0..8]` public inputs are exactly `(expected_leaf, expected_root)`.
+///
+/// ⚑ FAIL-CLOSED TODAY — [`wide_body_fact_path`] refuses; everything below it is the finished
+/// wide shape, so closing the blocker is implementing that one function.
 fn prove_verify_membership(
     mp: &BodyFactMerkleProof,
     expected_root: BabyBear,
     expected_leaf: BabyBear,
 ) -> Result<usize, String> {
-    let depth = mp.siblings.len();
-    let (trace, pis) = membership_witness_4ary(mp.fact_hash, &mp.siblings, &mp.positions)
+    let path = wide_body_fact_path(mp, expected_root, expected_leaf).ok_or_else(|| {
+        "derivation+membership composite is FAIL-CLOSED: `dregg-derivation-v1` pins a ONE-FELT          state_root and one-felt body-fact hashes while the membership descriptor is 8-felt          (`node8`). See `wide_body_fact_path` for the flag day that closes it."
+            .to_string()
+    })?;
+    let depth = path.siblings.len();
+    let (trace, pis) = membership_witness_4ary(path.leaf, &path.siblings, &path.positions)
         .map_err(|e| format!("membership witness for fact {}: {e}", mp.fact_hash.0))?;
-    if pis[PI_LEAF] != expected_leaf {
-        return Err(format!(
-            "membership leaf {} != the derivation's exported body-fact pin {}",
-            pis[PI_LEAF].0, expected_leaf.0
-        ));
+    // EVERY LANE, both digests: the one-felt family bound ~31 bits of each.
+    if pis[PI_LEAF..PI_LEAF + DIGEST_W] != path.expected_leaf[..] {
+        return Err(
+            "membership leaf != the derivation's exported body-fact pin (8-felt compare)".into(),
+        );
     }
-    if pis[PI_ROOT] != expected_root {
-        return Err(format!(
-            "membership root {} != the derivation's state_root pin {} — the fact is not in the \
-             proven state",
-            pis[PI_ROOT].0, expected_root.0
-        ));
+    if pis[PI_ROOT..PI_ROOT + DIGEST_W] != path.expected_root[..] {
+        return Err("membership root != the derivation's state_root pin (8-felt compare) — the                     fact is not in the proven state"
+            .into());
     }
 
     let desc = membership_descriptor_of_depth_4ary(depth);

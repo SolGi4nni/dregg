@@ -11,12 +11,14 @@
 //!
 //! The lowering lives in the IMT terminal ([`game_turn_slice::compiler`]): a
 //! [`PlayProof`](crate::hidden_hand::PlayProof)'s leaf opening + authentication path + root
-//! become a [`LoweredMembership`] leaf — the deployed circuit-DSL
-//! `merkle_poseidon2_descriptor` (the SAME 4-ary Poseidon2 recurrence the clear-side
-//! verifier walks, that `dregg_circuit::merkle_types::MerkleAir` proves) with a trace that
-//! climbs the path to the committed root, and public inputs `[leaf, root]`. Each play's leaf
-//! proves through `prove_custom_leaf_with_commitment` and binds into a `Custom`-effect turn;
-//! the turns fold via [`prove_turn_chain_recursive`] into one `WholeChainProof`.
+//! become a [`LoweredMembership`] leaf — the LEAN-EMITTED wide 4-ary membership descriptor
+//! (the SAME 8-felt `node8_4ary` recurrence the clear-side verifier walks) with a base trace
+//! that climbs the path to the committed root, and the descriptor's sixteen public inputs
+//! `[leaf0..7, root0..7]`. The turns fold via [`prove_turn_chain_recursive`] into one
+//! `WholeChainProof`.
+//!
+//! ⚑ **The state-bound half is BLOCKED on a Lean-side PI-layout change** — the emitted
+//! membership descriptor reserves no `[old8 ‖ new8]` door. See [`membership_leaf_bound`].
 //!
 //! ## What is private (honest scope)
 //!
@@ -58,13 +60,11 @@ use dregg_circuit_prove::joint_turn_aggregation::{
 use dregg_turn::rotation_witness as rw;
 use game_turn_slice::compiler::{
     LoweredMembership, MembershipLevel, MerkleMembershipWitness, lower_witnessed_merkle_membership,
-    root_felt_from_commitment,
+    root_digest_from_commitment,
 };
 
 use dregg_cell::{InputRef, WitnessedPredicate};
 
-use dregg_circuit::dsl::circuit::{BoundaryDef, CellProgram};
-use dregg_circuit::dsl::descriptors::merkle_poseidon2_descriptor;
 use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
 
 use crate::hidden_hand::{PlayProof, card_leaf, check_play};
@@ -92,14 +92,30 @@ pub struct LeafBundle {
 }
 
 impl From<LoweredMembership> for LeafBundle {
+    /// The membership leaf is DESCRIPTOR-BACKED: its AIR is the Lean-emitted wide 4-ary
+    /// membership artifact, so the fold proves that descriptor directly rather than lowering
+    /// a Rust `CellProgram`. (The retired conversion carried the hand-authored circuit-DSL
+    /// `merkle_poseidon2_descriptor` and its named-column witness map.)
+    ///
+    /// ⚠ **THE EMITTED DESCRIPTOR RESERVES NO STATE DOOR.** It publishes SIXTEEN PIs
+    /// `[leaf8 ‖ root8]`, which is exactly `CUSTOM_PI_STATE_PREFIX_LEN`, so the deployed
+    /// state-binding leaf's length check PASSES and PI[0..8] / PI[8..16] are then read as the
+    /// claimed `[old8 ‖ new8]` — i.e. the card's leaf digest and the hand root, standing in for
+    /// rotated cell roots they are not. That claim can never agree with the leg's REAL anchors,
+    /// so a fold over this bundle is UNSAT and refused; it is fail-closed, but it fails as a
+    /// confusing state-node conflict rather than a named refusal. Use it for the BASE membership
+    /// STARK (prove/verify the descriptor directly, as `wasm::prove_tug_play_core` does); for a
+    /// state-bound receipt see [`membership_leaf_bound`], which names the Lean-side blocker.
     fn from(l: LoweredMembership) -> Self {
-        LeafBundle {
-            program: l.program,
-            witness_values: l.witness_values,
-            num_rows: l.num_rows,
-            public_inputs: l.public_inputs,
-            descriptor_state_leaf: None,
-        }
+        LeafBundle::descriptor_backed(
+            l.public_inputs,
+            l.num_rows,
+            DescriptorStateLeafSource {
+                descriptor: l.descriptor,
+                base_trace: l.base_trace,
+                board_window: None,
+            },
+        )
     }
 }
 
@@ -145,9 +161,9 @@ impl LeafBundle {
 /// tooth the executor checks in the clear (`hidden_hand::membership_program`). `Err` = a
 /// fabricated card / tampered path (the proof does not climb to the committed root).
 pub fn membership_leaf_for_play(proof: &PlayProof) -> Result<LoweredMembership, String> {
-    // Reject non-canonical 32-byte commitments before the fold's one-felt root projection.
-    // Without this clear-side gate, distinct byte commitments sharing the same low field lane
-    // would lower to the same public input even though Tug's wire commitment is canonical.
+    // Run the clear-side executor tooth first: it re-derives the leaf and folds the path with
+    // `node8_4ary`, and it refuses a non-canonical 32-byte commitment outright (so two byte
+    // strings can never name one root).
     check_play(proof)?;
     let leaf = card_leaf(proof.card_id, proof.nonce);
     let levels: Vec<MembershipLevel> = proof
@@ -158,7 +174,8 @@ pub fn membership_leaf_for_play(proof: &PlayProof) -> Result<LoweredMembership, 
             siblings: lvl.siblings,
         })
         .collect();
-    let root = root_felt_from_commitment(&proof.root);
+    let root = root_digest_from_commitment(&proof.root)
+        .ok_or_else(|| "hand-root commitment is not eight canonical BabyBear limbs".to_string())?;
     let witness = MerkleMembershipWitness { leaf, levels, root };
     // The identical predicate the clear-side check runs: the opening rides witness blob 0,
     // the path rides blob 1, committed under the played card's root.
@@ -166,59 +183,49 @@ pub fn membership_leaf_for_play(proof: &PlayProof) -> Result<LoweredMembership, 
     lower_witnessed_merkle_membership(&wp, &witness).map_err(|b| b.to_string())
 }
 
-/// The `merkle_poseidon2_descriptor` recurrence, with the deployed 16-felt state-binding prefix
-/// (`[old8 ‖ new8]`) RESERVED at PI[0..16] and the membership leaf/root relocated to PI 16/17.
+/// ⚑ **BLOCKED — THE STATE-DOOR PREFIX DOES NOT EXIST ON THE WIDE MEMBERSHIP DESCRIPTOR.**
 ///
-/// This is the membership-leaf twin of `win_leaf_bound`'s `GameProgramCompiler::with_public_inputs(16)`
-/// door: the deployed `Effect::Custom` state-binding node
-/// ([`custom_state_binding`](dregg_circuit::effect_vm::custom_state_binding)) requires every custom
-/// sub-proof to publish `[old8 ‖ new8]` at PI[0..16] so it can `connect` those lanes to the leg's
-/// REAL rotated roots — a 2-PI `[leaf, root]` leaf is refused by the deployed prover
-/// (`PublicInputsTooShort`). The 16 prefix lanes are FREE descriptor PIs (no AIR boundary binds
-/// them — the fold does), exactly as the win door's reserved prefix is; the merkle recurrence's
-/// own boundaries (leaf = `CURRENT`@first, root = `PARENT`@last) shift up by the prefix width, so
-/// what the AIR proves is unchanged — only the PI indices move. The trace columns are identical to
-/// [`lower_witnessed_merkle_membership`]'s, so its witness reuses verbatim.
-fn merkle_descriptor_with_state_prefix() -> dregg_circuit::dsl::circuit::CircuitDescriptor {
-    let mut desc = merkle_poseidon2_descriptor();
-    desc.public_input_count = CUSTOM_PI_STATE_PREFIX_LEN + 2; // [old8 ‖ new8 ‖ leaf ‖ root]
-    for b in desc.boundaries.iter_mut() {
-        if let BoundaryDef::PiBinding { pi_index, .. } = b {
-            *pi_index += CUSTOM_PI_STATE_PREFIX_LEN;
-        }
-    }
-    desc
-}
-
-/// **THE MEMBERSHIP RECEIPT WELDED TO THE REAL CELL.** Lower a hidden-hand [`PlayProof`] to a
-/// foldable membership leaf carrying the deployed state-binding prefix: PIs
-/// `[old8 ‖ new8 ‖ leaf ‖ root]`, where `old8`/`new8` are the WorldCell's OWN rotated roots
-/// ([`cell_rotated_roots`]) and `leaf`/`root` are the blinded card commitment + the committed hand
-/// root the merkle recurrence proves (the card id is still NOT in the proof — the hand stays
-/// private-in-fold).
+/// The deployed `Effect::Custom` state-binding node
+/// ([`custom_state_binding`](dregg_circuit::effect_vm::custom_state_binding)) requires every
+/// custom sub-proof to publish `[old8 ‖ new8]` at PI[0..16] so it can `connect` those lanes to
+/// the leg's REAL rotated roots. The Lean-emitted wide 4-ary membership descriptor
+/// (`Dregg2.Circuit.Emit.MerkleMembership4aryWideEmit`, byte-pinned at
+/// `circuit/descriptors/by-name/merkle-membership-4ary-wide-general.json`) declares
+/// `public_input_count = 16` and spends all sixteen on `[leaf0..7, root0..7]`. It reserves NO
+/// door.
 ///
-/// This is the membership twin of [`win_leaf_bound`]. Because the prefix is the real cell's roots,
-/// the deployed `Effect::Custom` state-binding node ties this sub-proof to THAT cell's transition —
-/// a per-play move is now a receipt bound to real state, not the `pk[0]=7` fixture. `Err` = a
-/// fabricated card / tampered path (refused at lowering, as [`membership_leaf_for_play`]).
+/// This used to work by taking the **Rust-authored** circuit-DSL `merkle_poseidon2_descriptor`,
+/// bumping its `public_input_count` and shifting every `PiBinding`'s index by 16
+/// (`merkle_descriptor_with_state_prefix`, DELETED here). That is only possible because the
+/// descriptor was hand-built in Rust — and that same Rust AIR is the one-felt
+/// (`hash_4_to_1 -> state[0]`, ~31-bit, birthday-collided at 2^15.5) recurrence this cutover
+/// exists to delete. Rewriting the PI layout of a Lean-EMITTED, byte-pinned artifact from Rust
+/// is the same violation with a worse blast radius: it silently diverges the proven object from
+/// the Lean golden and its VK.
+///
+/// **The fix is in Lean, and it is small:** `MerkleMembership4aryWideEmit` must reserve
+/// `CUSTOM_PI_STATE_PREFIX_LEN` FREE door PIs ahead of the membership PIs
+/// (`public_input_count = 32`, `PI_LEAF = 16`, `PI_ROOT = 24`) exactly as the automatafl
+/// resolve/step descriptors already do — the door lanes carry no AIR boundary, the fold binds
+/// them. Until then this REFUSES rather than fold an unbound (or one-felt) membership receipt
+/// into a light-client-attested chain.
 pub fn membership_leaf_bound(
-    old8: [BabyBear; 8],
-    new8: [BabyBear; 8],
+    _old8: [BabyBear; 8],
+    _new8: [BabyBear; 8],
     proof: &PlayProof,
 ) -> Result<LeafBundle, String> {
-    let base = membership_leaf_for_play(proof)?; // base.public_inputs == [leaf, root]
-    let mut public_inputs =
-        Vec::with_capacity(CUSTOM_PI_STATE_PREFIX_LEN + base.public_inputs.len());
-    public_inputs.extend_from_slice(&old8);
-    public_inputs.extend_from_slice(&new8);
-    public_inputs.extend_from_slice(&base.public_inputs);
-    Ok(LeafBundle {
-        program: CellProgram::new(merkle_descriptor_with_state_prefix(), 1),
-        descriptor_state_leaf: None,
-        witness_values: base.witness_values,
-        num_rows: base.num_rows,
-        public_inputs,
-    })
+    // Still run the honest-play gate, so a fabricated card / tampered path is refused HERE and
+    // the blocker below is only ever reported for an otherwise-valid play.
+    membership_leaf_for_play(proof)?;
+    Err(format!(
+        "state-bound membership leaf BLOCKED: the Lean-emitted wide membership descriptor \
+         publishes {} PIs ([leaf8 ‖ root8]) and reserves no {CUSTOM_PI_STATE_PREFIX_LEN}-felt \
+         [old8 ‖ new8] state door. Reserving it is a change to \
+         `metatheory/Dregg2/Circuit/Emit/MerkleMembership4aryWideEmit.lean` (public_input_count \
+         32, PI_LEAF 16, PI_ROOT 24) + a descriptor re-emit + a VK rotation. Rust must not \
+         re-index the emitted artifact's PIs.",
+        dregg_circuit::membership_descriptor_4ary::MEMBERSHIP_4ARY_PI_COUNT
+    ))
 }
 
 // ===========================================================================
