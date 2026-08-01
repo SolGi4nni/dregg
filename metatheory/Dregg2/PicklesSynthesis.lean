@@ -32,6 +32,14 @@ never `EffectVmEmitV2`):
   * `Dregg2.Circuit.Emit.KimchiRender`        — R4a: PlacedGate → proof-systems gate-list/witness render
   * `Dregg2.Circuit.Emit.KimchiRenderPoseidon` — R4a-scaled: a REAL Poseidon-permutation circuit
       (11 byte-exact `Poseidon` rows + a `Zero` gate, Lean-placed, Lean-witnessed via `PastaPoseidon`)
+  * `Dregg2.Circuit.Emit.KimchiRenderCompleteAdd`   — CURVE gate: a REAL `complete_add` circuit
+      (G + [2]G = [3]G; Lean witness generator, output cross-checked vs the `PastaCurve.Gp3` KAT)
+  * `Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar` — CURVE gate: a REAL `endo_mul_scalar` circuit
+      (16-bit scalar crumb-decode; the three folds satisfy `endomulScalarConstraints` over `ZMod pN`)
+  * `Dregg2.Circuit.Emit.KimchiRenderVarBaseMul`    — CURVE gate: a REAL `var_base_mul` circuit
+      (5-bit chained scalar-mul step; both rows satisfy `varBaseMulConstraints` over `ZMod pN`)
+  * `Dregg2.Circuit.Emit.KimchiRenderEndoMul`       — CURVE gate: a REAL `endo_mul` circuit
+      (4-bit endo-optimized step; both rows satisfy `endoMulConstraints` over `ZMod pN`)
   * `Dregg2.Bridge.PicklesR3BranchDataDiff`   — R3: the branch_data prefix-mask pack (vs devnet block)
   * `Dregg2.Bridge.PicklesStatementDiff`      — R3: the WHOLE Wrap statement packing byte-exact
   * `Dregg2.Bridge.PicklesStepStatementDiff`  — R3: the Step per-proof layout + `fq=Type2/Fq` field-key
@@ -49,6 +57,10 @@ import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.KimchiPlacement
 import Dregg2.Circuit.Emit.KimchiRender
 import Dregg2.Circuit.Emit.KimchiRenderPoseidon
+import Dregg2.Circuit.Emit.KimchiRenderCompleteAdd
+import Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar
+import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul
+import Dregg2.Circuit.Emit.KimchiRenderEndoMul
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff

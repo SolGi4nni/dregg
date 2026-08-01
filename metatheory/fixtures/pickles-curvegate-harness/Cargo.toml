@@ -1,0 +1,56 @@
+# pickles-curvegate-harness — PROVE+VERIFY+BIND the LEAN-SYNTHESIZED kimchi CURVE gates.
+#
+# Sibling of `pickles-poseidon-harness` (do NOT fold them together): this crate is the pure-Rust
+# prove/verify gate for the CURVE custom gates whose rows + witness grids are emitted by Lean —
+# `complete_add` (EC point addition), and — as they land — `var_base_mul`, `endo_mul`,
+# `endo_mul_scalar`. Each circuit's gate list + witness JSON is produced by
+# `Dregg2.Circuit.Emit.KimchiRenderCompleteAdd` (and siblings) and committed under `fixtures/`.
+#
+# WHAT IT DOES. Reads a Lean-emitted circuit JSON (gate typ/wires/coeffs + the COLUMNS-wide witness
+# grid), builds the pure-Rust kimchi `Vec<CircuitGate>` + `[Vec<Fp>;15]` witness, and PROVES + VERIFIES
+# it through the SAME `proof-systems` (tag 0.3.0) front door mina-rust uses. The `#[test]` functions are
+# the committed CI gate: `verify()==true` on the good witness, plus binding — a tamper on a CONSTRAINED
+# cell is REJECTED and a flip of an UNCONSTRAINED cell is ACCEPTED (so the rejection is the gate
+# constraint biting, not a blanket reject). The gate-satisfaction preflight is disabled
+# (`disable_gates_checks=true`) so rejection is by the PROOF, not a debug assert.
+#
+# House Law #1: the CIRCUIT (gates/coeffs/witness + placement) is Lean-authored; `proof-systems` is the
+# Rust PROVER that RUNS it. No OCaml, no Node, no o1js in this path.
+#
+# REGENERATE the fixtures (only when the Lean render changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiRenderCompleteAdd \
+#     && lake env lean --run Dregg2/Circuit/Emit/EmitCurveGateJson.lean \
+#     && cp /tmp/pickles-curvegate/*.json fixtures/pickles-curvegate-harness/fixtures/
+#
+# RUN the tests:
+#   cargo test --manifest-path metatheory/fixtures/pickles-curvegate-harness/Cargo.toml -- --nocapture
+
+[package]
+name = "pickles-curvegate-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
