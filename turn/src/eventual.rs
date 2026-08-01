@@ -114,7 +114,15 @@ impl From<EventualRef> for Target {
     }
 }
 
-/// An output produced by a turn, recorded in the receipt for pipeline resolution.
+/// An output produced by a turn, used for in-batch pipeline resolution.
+///
+/// ⚠ NOT receipt-carried. These are re-derived from the turn's DECLARED effects by
+/// `executor::pipeline::extract_turn_outputs` into a process-local `ResolutionTable`
+/// that lives for the duration of one `execute_pipeline` call. No `TurnOutput` enters
+/// `TurnReceipt`, `effects_hash`, or any wire format — so a `TurnOutput` variant is not
+/// a receipt-binding surface, and anything that must be light-client-visible needs a
+/// receipt field, not an arm here. (Corrected 2026-07-31: this comment previously said
+/// "recorded in the receipt", which `TurnReceipt` at `turn/src/turn.rs:1008` refutes.)
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnOutput {
     /// A capability was granted.
