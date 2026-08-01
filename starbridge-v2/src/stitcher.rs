@@ -50,7 +50,7 @@
 
 use dregg_doc::{
     blame, content, merge, resolutions_for, Author, BlameLine, ConflictRegion, Doc, DocGraph,
-    Granularity, History, PatchId, Provenance, Rendered, Resolution, ResolutionChoice,
+    Granularity, History, PatchId, Provenance, Regime, Rendered, Resolution, ResolutionChoice,
 };
 
 /// Which author a one-click PICK keeps — the two sides of a two-way fork made
@@ -84,9 +84,11 @@ pub struct AltView {
 pub struct ConflictView {
     /// This region's position among the document's conflicts (stable per render).
     pub index: usize,
-    /// True iff this is a single-valued FIELD clash (the conservation/authority
-    /// regime that may need consensus) rather than a prose antichain.
-    pub is_field: bool,
+    /// Which REGIME this conflict belongs to — a prose antichain (always resolvable
+    /// by a region author) or a single-valued FIELD clash (the conservation /
+    /// authority boundary that may need consensus). Carried verbatim from the patch
+    /// core so a surface paints the regime it actually is, not a boolean guess.
+    pub regime: Regime,
     /// For a field clash, the field name; for prose, `None`.
     pub field: Option<String>,
     /// The live alternatives (>= 2), each with text + provenance. The surface
@@ -95,6 +97,12 @@ pub struct ConflictView {
 }
 
 impl ConflictView {
+    /// True iff this is a single-valued FIELD clash rather than a prose antichain
+    /// — derived from [`ConflictView::regime`], never stored beside it (one shape).
+    pub fn is_field(&self) -> bool {
+        matches!(self.regime, Regime::Field)
+    }
+
     /// The two-way alternative for `side`, if this is a two-way fork.
     pub fn alt(&self, side: Side) -> Option<&AltView> {
         let i = match side {
@@ -135,6 +143,21 @@ pub struct StitchReceipt {
     pub patch: PatchId,
     /// Who settled the conflict (the resolving authority).
     pub resolver: Author,
+}
+
+/// **EVERYTHING A RENDERER NEEDS TO PAINT THE CONFLICT, FROM ONE REPLAY.** A
+/// surface that asked the stitcher for the graph, then the views, then each
+/// region's choices would fold the whole patch-history once per question — every
+/// frame. [`Stitcher::surface`] folds it ONCE and hands back all three.
+#[derive(Clone, Debug)]
+pub struct ConflictSurface {
+    /// The live document graph (the fold of the stitched + resolved history) — what
+    /// a boundary/commitment readout is taken over.
+    pub graph: DocGraph,
+    /// Each unresolved region, paired with its ready resolution choices in the same
+    /// order [`Stitcher::choices`] yields them (so a click index means the same
+    /// thing on both paths).
+    pub regions: Vec<(ConflictView, Vec<StitchChoice>)>,
 }
 
 /// THE STITCHER — a conflicted document made touchable. Holds the stitched
@@ -178,6 +201,20 @@ impl Stitcher {
     /// Convenience: build from two [`Doc`]s (their underlying histories).
     pub fn from_docs(ours: &Doc, theirs: &Doc) -> Self {
         Self::from_branches(ours.history(), theirs.history())
+    }
+
+    /// Set the grain a [`Stitcher::custom_resolution`] diffs at — the caller's own
+    /// editing granularity (a surface whose document is word-grained must not have
+    /// its typed resolution silently re-diffed by line). Defaults to
+    /// [`Granularity::Line`], the program-source default.
+    pub fn with_granularity(mut self, granularity: Granularity) -> Self {
+        self.granularity = granularity;
+        self
+    }
+
+    /// The grain this stitcher's custom resolutions diff at.
+    pub fn granularity(&self) -> Granularity {
+        self.granularity
     }
 
     /// The current document graph (the fold of the stitched + resolved history).
@@ -228,6 +265,28 @@ impl Stitcher {
             .into_iter()
             .map(StitchChoice::from_doc_choice)
             .collect()
+    }
+
+    /// **THE WHOLE PAINTABLE SURFACE, ONE REPLAY** — the live graph plus every
+    /// unresolved region with its ready, attributed choices. This is what a renderer
+    /// asks for: it is exactly [`Stitcher::graph`] + [`Stitcher::conflicts`] +
+    /// [`Stitcher::choices`] per region, computed off a single fold instead of one
+    /// fold per question.
+    pub fn surface(&self, resolver: Author) -> ConflictSurface {
+        let graph = self.graph();
+        let rendered = content(&graph);
+        let regions = rendered
+            .conflicts()
+            .enumerate()
+            .map(|(index, region)| {
+                let choices = resolutions_for(&graph, region, resolver)
+                    .into_iter()
+                    .map(StitchChoice::from_doc_choice)
+                    .collect();
+                (view_of(index, region), choices)
+            })
+            .collect();
+        ConflictSurface { graph, regions }
     }
 
     /// PICK a side of a TWO-WAY conflict — keep that author's alternative, drop the
@@ -307,7 +366,7 @@ impl Stitcher {
 fn view_of(index: usize, region: &ConflictRegion) -> ConflictView {
     ConflictView {
         index,
-        is_field: region.field.is_some(),
+        regime: region.regime,
         field: region.field.clone(),
         alternatives: region
             .alternatives
@@ -383,7 +442,15 @@ mod tests {
         );
 
         let c = &conflicts[0];
-        assert!(!c.is_field, "this is a prose antichain, not a field clash");
+        assert!(
+            !c.is_field(),
+            "this is a prose antichain, not a field clash"
+        );
+        assert_eq!(
+            c.regime,
+            dregg_doc::Regime::Prose,
+            "the regime is carried verbatim from the patch core"
+        );
         assert_eq!(c.alternatives.len(), 2, "BOTH alternatives surfaced");
 
         // Both authors' text is present, each attributed to who wrote it (a fact,
@@ -468,6 +535,59 @@ mod tests {
             Author(2),
             "the dropped branch still carries who wrote it — provenanced, not lost"
         );
+    }
+
+    /// ⚑ [`Stitcher::surface`] exists so a renderer folds the history ONCE instead of
+    /// once per question — which means it is a SECOND path to the same answers, and a
+    /// second path is exactly the thing this module was cut over to stop having. It
+    /// must therefore agree with the piecewise reads, region for region, choice for
+    /// choice, down to the resolving patch's content-addressed id.
+    #[test]
+    fn the_one_fold_surface_agrees_with_the_piecewise_reads() {
+        let (ours, theirs) = divergent_branches();
+        let st = Stitcher::from_branches(&ours, &theirs);
+        let s = st.surface(Author(1));
+
+        assert!(
+            !s.regions.is_empty(),
+            "the premise: this divergence DOES conflict, so there is something to agree about"
+        );
+        assert_eq!(
+            s.regions.len(),
+            st.conflicts().len(),
+            "the surface must carry every region `conflicts` reports"
+        );
+        assert_eq!(
+            s.graph.atoms().count(),
+            st.graph().atoms().count(),
+            "the surface's fold is the stitcher's fold"
+        );
+        for (i, (view, choices)) in s.regions.iter().enumerate() {
+            assert_eq!(
+                view,
+                &st.conflicts()[i],
+                "region {i}'s view drifted from `conflicts`"
+            );
+            let piecewise = st.choices(i, Author(1));
+            assert!(
+                !piecewise.is_empty(),
+                "region {i} must offer at least one resolution (else this agrees vacuously)"
+            );
+            assert_eq!(
+                choices.len(),
+                piecewise.len(),
+                "region {i} offers a different number of choices on the two paths"
+            );
+            for (a, b) in choices.iter().zip(&piecewise) {
+                assert_eq!(a.label, b.label, "region {i}: a choice's label drifted");
+                assert_eq!(
+                    a.patch.id(),
+                    b.patch.id(),
+                    "region {i}: the two paths built DIFFERENT resolving patches — a \
+                     click would commit something other than what it previewed"
+                );
+            }
+        }
     }
 
     #[test]
@@ -588,7 +708,7 @@ mod tests {
         let conflicts = st.conflicts();
         assert_eq!(conflicts.len(), 1, "exactly one region: {conflicts:?}");
         let c = &conflicts[0];
-        assert!(!c.is_field, "a prose antichain, not a field clash");
+        assert!(!c.is_field(), "a prose antichain, not a field clash");
         assert_eq!(c.alternatives.len(), 2, "BOTH readings surfaced");
 
         let texts: Vec<&str> = c.alternatives.iter().map(|a| a.text.as_str()).collect();
@@ -617,6 +737,36 @@ mod tests {
         let text = st.rendered().to_marked_string();
         assert!(text.contains("ALPHA"), "kept our reading: {text:?}");
         assert!(!text.contains("AlPhA"), "dropped theirs: {text:?}");
+    }
+
+    /// ⚑ [`Stitcher::with_granularity`] must actually STEER something, or it is a knob
+    /// a caller sets and the object ignores. It steers exactly one thing — the grain a
+    /// typed CUSTOM resolution is diffed at — so drive both poles through the identical
+    /// gesture and show the resulting patch graph differs.
+    #[test]
+    fn the_granularity_knob_steers_the_custom_resolutions_diff() {
+        let typed = "the agreed wording here\n";
+        let live_atoms = |g: Granularity| {
+            let mut st = replacement_branches(true).with_granularity(g);
+            assert_eq!(st.granularity(), g, "the knob round-trips");
+            st.custom_resolution(0, Side::A, Author(9), typed)
+                .expect("a two-way fork accepts a custom resolution");
+            assert!(
+                st.rendered()
+                    .to_marked_string()
+                    .contains("the agreed wording"),
+                "both grains must reach the typed reading"
+            );
+            st.graph().atoms().filter(|a| a.is_alive()).count()
+        };
+        let by_line = live_atoms(Granularity::Line);
+        let by_word = live_atoms(Granularity::Word);
+        assert!(
+            by_word > by_line,
+            "a WORD-grained stitcher must cut the typed resolution into more atoms than \
+             a LINE-grained one ({by_word} vs {by_line}); equal counts mean the grain \
+             was ignored"
+        );
     }
 
     #[test]

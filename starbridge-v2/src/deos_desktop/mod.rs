@@ -246,10 +246,16 @@ use dregg_cell::lifecycle::CellLifecycle;
 use dregg_types::CellId;
 
 use dregg_doc::{
-    blame, blame_summary, content, resolutions_for, text_from_heap, Author, Doc, DocGraph,
-    DocHeapCell, Granularity, PatchId, Regime, ResolutionChoice,
+    blame, blame_summary, content, text_from_heap, Author, Doc, DocGraph, DocHeapCell, Granularity,
+    PatchId, Regime,
 };
 
+/// THE STITCHER — hyperdreggmedia authoring surface #3. The desktop's conflict
+/// surface *is* this object: the pushout, the antichain's live alternatives with
+/// their provenance, the ready one-click resolutions, and the committed resolution
+/// turn all come from here. The desktop used to carry a second, inline copy of every
+/// one of those derivations.
+use crate::stitcher::{StitchChoice, Stitcher};
 use crate::world::{grant_capability, transfer, CommitOutcome, World};
 
 // The chrome kit + persistence types are re-exported so existing call sites
@@ -421,11 +427,13 @@ enum WinKind {
         /// clone of `doc`'s patch-history that a second author edits independently,
         /// confined until stitched. `None` until the user forks one.
         branch: Option<Doc>,
-        /// **The STITCHED document** after a merge (`History::stitch` = the pushout) —
-        /// it may carry first-class `dregg_doc` conflict states (an antichain of live
-        /// alternatives) where both authors edited the same region. `None` until a
-        /// stitch runs; rendered as the live ConflictView when it holds a conflict.
-        merged: Option<Doc>,
+        /// **THE HELD STITCH** — a live [`Stitcher`] over the pushout of `doc` and
+        /// `branch` (`History::stitch`). It may carry first-class `dregg_doc` conflict
+        /// states (an antichain of live alternatives) where both authors edited the
+        /// same region. `None` until a stitch runs; painted from
+        /// [`Stitcher::surface`] while it holds a conflict, and dropped when the
+        /// resolved merge publishes.
+        merged: Option<Stitcher>,
     },
     /// A links / backlinks view — which cells this one reaches (its caps) and which
     /// reach it, plus the transclusions composed into it.
@@ -649,6 +657,13 @@ enum ActionKind {
     /// provenanced reference to this cell's content into `into`'s document (a
     /// receipted patch + a verified turn). The genuine cross-cell compose gesture.
     TranscludeInto { into: CellId },
+    /// **COMPOSE: embed this cell as a LIVE CHILD of the named target document** —
+    /// the compose-a-document-*from cells* gesture
+    /// ([`crate::document_composer::LiveComposition`]), as distinct from a
+    /// transclusion's value-quote: the child stays a live cell in the host's layout
+    /// graph, re-rendered into the committed block on every later gesture. One real
+    /// layout patch + one verified revision turn; a refusal writes nothing.
+    ComposeInto { into: CellId },
     /// Seal / unseal the cell (a lifecycle turn) — a window-control-ish actuation
     /// surfaced in the deep menu.
     ToggleSeal,
@@ -2001,11 +2016,31 @@ impl DeosDesktop {
                 A::OpenDoc,
             ));
         } else {
-            for into in doc_targets {
+            for into in &doc_targets {
                 v.push(MenuAction::new(
-                    format!("Transclude into doc {}", id_short(&into)),
+                    format!("Transclude into doc {}", id_short(into)),
                     true,
-                    A::TranscludeInto { into },
+                    A::TranscludeInto { into: *into },
+                ));
+            }
+        }
+        // ── Compose: embed this cell as a LIVE CHILD of every OPEN document ──
+        //    The composer's ENTRY POINT. It sat beside the transclude gesture as
+        //    private methods no keyboard, mouse or menu path reached — only its own
+        //    `bake_compose_*` hooks did, which is a feature the test suite can perform
+        //    and the shipped desktop cannot.
+        if doc_targets.is_empty() {
+            v.push(MenuAction::new(
+                "Compose into… (open a Document first)",
+                false,
+                A::OpenDoc,
+            ));
+        } else {
+            for into in &doc_targets {
+                v.push(MenuAction::new(
+                    format!("Compose into doc {} (as a live section)", id_short(into)),
+                    true,
+                    A::ComposeInto { into: *into },
                 ));
             }
         }
@@ -2355,6 +2390,11 @@ impl DeosDesktop {
             }
             ActionKind::TranscludeInto { into } => {
                 self.transclude_into(cell, *into);
+            }
+            ActionKind::ComposeInto { into } => {
+                // The acted-on cell becomes a live CHILD of the target document's
+                // composition (the host is the document, the child is this cell).
+                self.compose_embed(*into, cell, crate::document_composer::Role::Section);
             }
             ActionKind::CascadeWindows => self.cascade_windows(),
             ActionKind::TileWindows => self.tile_windows(),
@@ -2999,11 +3039,12 @@ impl DeosDesktop {
     }
 
     /// **Stitch the draft branch into the document** (BRANCH-AND-STITCH-PROTOCOL §3 —
-    /// the pushout). `History::stitch` folds both branches' patches; the result is a
-    /// merged `dregg_doc::Doc` that may carry FIRST-CLASS CONFLICT STATES (an antichain
-    /// of live alternatives) where both authors edited one region. A clean stitch folds
-    /// straight into the document + heap; a conflicted stitch is held in `merged` and
-    /// surfaced as the live ConflictView (resolved by a later patch — never rejected).
+    /// the pushout), through [`Stitcher::from_branches`]: the desktop does not fold the
+    /// two histories itself. The stitch may carry FIRST-CLASS CONFLICT STATES (an
+    /// antichain of live alternatives) where both authors edited one region. A clean
+    /// stitch folds straight into the document + heap; a conflicted one is HELD as the
+    /// live `Stitcher` and painted as the conflict surface (resolved by a later patch —
+    /// never rejected).
     fn stitch_branch(&mut self, cell: CellId) {
         let g = if self.layout.prefs.word_granularity {
             Granularity::Word
@@ -3019,16 +3060,13 @@ impl DeosDesktop {
                 ..
             } = &mut ws.kind
             {
-                let mut stitched = doc.history().branch();
-                stitched.stitch(b.history());
-                let graph = stitched.replay();
-                let rendered = content(&graph);
-                let stitched_doc = Doc::from_history(stitched, g);
-                if rendered.has_conflict() {
-                    *merged = Some(stitched_doc);
+                let st = Stitcher::from_branches(doc.history(), b.history()).with_granularity(g);
+                if st.has_conflict() {
+                    *merged = Some(st);
                     outcome = Some((true, String::new()));
                 } else {
-                    // Clean stitch — adopt the merged history as the document's own.
+                    // Clean stitch — adopt the stitched history as the document's own.
+                    let stitched_doc = Doc::from_history(st.history().clone(), g);
                     let text = stitched_doc.text();
                     *doc = stitched_doc;
                     *merged = None;
@@ -3071,8 +3109,8 @@ impl DeosDesktop {
         }
     }
 
-    /// How many unresolved conflict regions the stitched (merged) document carries, if
-    /// any. `None` when there is no merged document open on the cell.
+    /// How many unresolved conflict regions the held stitch carries, if any. `None`
+    /// when no stitch is held on the cell.
     fn doc_merged_conflict_count(&self, cell: CellId) -> Option<usize> {
         match self
             .windows
@@ -3080,111 +3118,176 @@ impl DeosDesktop {
             .map(|w| &w.kind)
         {
             Some(WinKind::DocEditor {
-                merged: Some(m), ..
-            }) => Some(content(&m.history().replay()).conflicts().count()),
+                merged: Some(st), ..
+            }) => Some(st.conflicts().len()),
             _ => None,
         }
     }
 
-    /// **Resolve one conflict region with one choice** — apply the ready
-    /// `ResolutionChoice` patch (keep-this / order-both / choose-value) to the merged
-    /// document's history. A resolution is *just another additive authored patch*
-    /// (`dregg_doc` resolve.rs); after it the antichain collapses. When the merged
-    /// document is fully conflict-free, it FOLDS into the document + a real verified
-    /// heap-commit turn, and the draft branch retires — the merge is published.
+    /// **THE PAINTED CONFLICT SURFACE, AS DATA.** Every row the conflict view shows —
+    /// the section heading, the umem boundary that binds both alternatives, each
+    /// region's heading, its live alternatives with their author provenance, and the
+    /// one-click resolutions — in paint order. [`Self::render_doc_collab`] paints
+    /// exactly this and computes nothing of its own, so a bake/test reads the same
+    /// strings a user sees. Empty when no stitch is held on `cell`.
+    fn conflict_rows(&self, cell: CellId) -> Vec<ConflictRow> {
+        let Some(WinKind::DocEditor {
+            merged: Some(st), ..
+        }) = self
+            .windows
+            .get(&(cell, WinKindTag::DocEditor))
+            .map(|w| &w.kind)
+        else {
+            return Vec::new();
+        };
+        // ONE fold of the stitched history gives the graph, every region's view, and
+        // every region's ready choices — the stitcher's own surface, not a re-derivation.
+        let surface = st.surface(self.author);
+        let n = surface.regions.len();
+        // The conflict's umem boundary BINDS BOTH live alternatives (forging or
+        // hiding one moves the root — the anti-forge tooth, in the committed heap).
+        let root = self.doc_umem_boundary(cell, &surface.graph);
+        let mut rows = vec![
+            ConflictRow::Section(format!(
+                "CONFLICT ({n} region{}, first-class state · held, NOT committed)",
+                if n == 1 { "" } else { "s" }
+            )),
+            ConflictRow::Boundary(Self::boundary_short(&root)),
+        ];
+        for (view, choices) in &surface.regions {
+            let ri = view.index;
+            let regime_lbl = match view.regime {
+                Regime::Prose => "prose · always-resolvable",
+                Regime::Field => "field · needs consensus",
+            };
+            rows.push(ConflictRow::Region(match &view.field {
+                Some(f) => format!("region {ri}  ·  field '{f}'  ·  {regime_lbl}"),
+                None => format!("region {ri}  ·  {regime_lbl}"),
+            }));
+            // Each live alternative, attributed to WHO wrote it — you vs co-author
+            // (a FACT carried by the commitment; the loser is provenanced, not lost).
+            for alt in &view.alternatives {
+                rows.push(ConflictRow::Alt(
+                    self.conflict_alt_line(alt.provenance.author, &alt.text),
+                ));
+            }
+            for (ci, choice) in choices.iter().enumerate() {
+                rows.push(ConflictRow::Choice {
+                    region: ri,
+                    choice: ci,
+                    label: choice.label.clone(),
+                });
+            }
+        }
+        rows
+    }
+
+    /// One live alternative's line: who wrote it, then its (clipped) reading.
+    fn conflict_alt_line(&self, author: Author, text: &str) -> String {
+        let txt: String = text.chars().take(80).collect();
+        format!(
+            "{}: {}",
+            self.author_label(author),
+            if txt.trim().is_empty() {
+                "(empty)"
+            } else {
+                txt.trim()
+            }
+        )
+    }
+
+    /// **Resolve one conflict region with one choice** — commit the held stitch's ready
+    /// [`StitchChoice`] (keep-this / order-both / choose-value) through
+    /// [`Stitcher::resolve`]. A resolution is *just another additive authored patch*
+    /// (`dregg_doc` resolve.rs); after it the antichain collapses and the committed
+    /// patch id IS the turn's receipt. When the stitch is fully conflict-free it FOLDS
+    /// into the document + a real verified heap-commit turn, and the draft branch
+    /// retires — the merge is published.
     fn resolve_conflict(&mut self, cell: CellId, region_idx: usize, choice_idx: usize) {
         let author = self.author;
-        // Build the resolving patch off the live merged graph + chosen region/choice.
-        let choice: Option<ResolutionChoice> = match self
+        let g = if self.layout.prefs.word_granularity {
+            Granularity::Word
+        } else {
+            Granularity::Line
+        };
+        // The chosen gesture, off the stitcher's own menu for that region.
+        let choice: Option<StitchChoice> = match self
             .windows
             .get(&(cell, WinKindTag::DocEditor))
             .map(|w| &w.kind)
         {
             Some(WinKind::DocEditor {
-                merged: Some(m), ..
-            }) => {
-                let graph = m.history().replay();
-                // Clone the chosen region out so the `rendered` borrow ends here,
-                // then build its resolution menu against the (still-live) graph.
-                let region = content(&graph).conflicts().nth(region_idx).cloned();
-                region.and_then(|region| {
-                    resolutions_for(&graph, &region, author)
-                        .into_iter()
-                        .nth(choice_idx)
-                })
-            }
+                merged: Some(st), ..
+            }) => st.choices(region_idx, author).into_iter().nth(choice_idx),
             _ => None,
         };
         let Some(choice) = choice else {
             self.say("RESOLVE: that conflict/choice is gone (already resolved?).");
             return;
         };
-        // Apply the resolution patch onto the merged history; re-render.
-        let mut published: Option<(Doc, bool)> = None; // (doc, fully_clean)
+        // Commit it as a real turn ON the held stitch, then re-read the antichain. The
+        // resolved document is folded out only when the stitch comes back CLEAN —
+        // otherwise the stitcher keeps holding it with the resolution already in.
         let mut receipt_out: Option<PatchId> = None;
+        let mut settled: Option<Doc> = None; // `Some` iff every region is resolved
+        let mut held_a_stitch = false;
         if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
             if let WinKind::DocEditor {
-                merged: Some(m), ..
+                merged: Some(st), ..
             } = &mut ws.kind
             {
-                let mut h = m.history().branch();
-                receipt_out = Some(h.commit(choice.patch.clone()));
-                let still_conflicted = content(&h.replay()).has_conflict();
-                let g = if self.layout.prefs.word_granularity {
-                    Granularity::Word
-                } else {
-                    Granularity::Line
-                };
-                let resolved = Doc::from_history(h, g);
-                published = Some((resolved, !still_conflicted));
+                held_a_stitch = true;
+                receipt_out = Some(st.resolve(&choice).patch);
+                if !st.has_conflict() {
+                    settled = Some(Doc::from_history(st.history().clone(), g));
+                }
             }
         }
         // The resolution patch's id IS the turn's receipt — surface it.
         if let Some(receipt) = receipt_out {
             self.last_resolution = Some((cell, choice.label.clone(), receipt));
         }
-        let Some((resolved, clean)) = published else {
+        if !held_a_stitch {
             return;
-        };
-        if clean {
-            // The conflict is fully resolved — publish: adopt the merged history as the
-            // document's own, retire the branch, and commit the resolved prose to heap.
-            let text = resolved.text();
-            if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
-                if let WinKind::DocEditor {
-                    doc,
-                    branch,
-                    merged,
-                    ..
-                } = &mut ws.kind
-                {
-                    *doc = resolved;
-                    *branch = None;
-                    *merged = None;
+        }
+        match settled {
+            Some(resolved) => {
+                // Fully resolved — publish: adopt the stitched history as the document's
+                // own, retire the branch, and commit the resolved prose to heap.
+                let text = resolved.text();
+                if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
+                    if let WinKind::DocEditor {
+                        doc,
+                        branch,
+                        merged,
+                        ..
+                    } = &mut ws.kind
+                    {
+                        *doc = resolved;
+                        *branch = None;
+                        *merged = None;
+                    }
                 }
+                self.retire_branch_input(cell);
+                self.edit_doc(cell, text);
+                self.say(format!(
+                    "RESOLVE doc {} → '{}' — conflict collapsed, merge PUBLISHED to heap \
+                     (the resolution is itself a receipted patch).",
+                    id_short(&cell),
+                    choice.label
+                ));
             }
-            self.retire_branch_input(cell);
-            self.edit_doc(cell, text);
-            self.say(format!(
-                "RESOLVE doc {} → '{}' — conflict collapsed, merge PUBLISHED to heap \
-                 (the resolution is itself a receipted patch).",
-                id_short(&cell),
-                choice.label
-            ));
-        } else {
-            // Still conflicted (more regions / concurrent resolutions) — hold the merged
-            // doc with the resolution folded in; the remaining conflicts stay live.
-            if let Some(ws) = self.windows.get_mut(&(cell, WinKindTag::DocEditor)) {
-                if let WinKind::DocEditor { merged, .. } = &mut ws.kind {
-                    *merged = Some(resolved);
-                }
+            None => {
+                // Still conflicted (more regions / concurrent resolutions) — the held
+                // stitcher already carries the resolution patch, so the remaining
+                // conflicts stay live with nothing to re-seat.
+                self.say(format!(
+                    "RESOLVE doc {} → '{}' applied; further conflict(s) remain (resolution \
+                     is closed under its own conflicts).",
+                    id_short(&cell),
+                    choice.label
+                ));
             }
-            self.say(format!(
-                "RESOLVE doc {} → '{}' applied; further conflict(s) remain (resolution is \
-                 closed under its own conflicts).",
-                id_short(&cell),
-                choice.label
-            ));
         }
     }
 
@@ -4088,6 +4191,54 @@ impl DeosDesktop {
         });
     }
 
+    /// **THE OPEN MENU'S ENTRIES, AS THE USER READS THEM** — `(label, enabled)` in
+    /// menu order; a separator is `("", false)`. This is `actions_for`'s real output
+    /// via [`Self::bake_open_menu`], so a gesture that is not *offered* is visible
+    /// here as an absence.
+    pub fn bake_menu_entries(&self) -> Vec<(String, bool)> {
+        self.open_menu
+            .as_ref()
+            .map(|m| {
+                m.actions
+                    .iter()
+                    .map(|a| {
+                        if a.separator {
+                            (String::new(), false)
+                        } else {
+                            (a.label.clone(), a.held)
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// **CLICK the open menu's entry `idx`** — the identical body
+    /// `render_context_menu`'s row listener runs: actuate the entry's `ActionKind`
+    /// against the menu's subject (a cell, or the desktop for the background menu)
+    /// and dismiss the menu. A disabled or separator row does nothing and the menu
+    /// stays open, exactly as a click on a dimmed row does. Returns whether the row
+    /// actuated. The only thing this stands in for is the mouse hit-test — the
+    /// action, its enablement, and the dispatch are the shipped ones.
+    pub fn bake_menu_click(&mut self, idx: usize) -> bool {
+        let Some(menu) = self.open_menu.as_ref() else {
+            return false;
+        };
+        let Some(action) = menu.actions.get(idx) else {
+            return false;
+        };
+        if action.separator || !action.held {
+            return false;
+        }
+        let (cell, kind) = (menu.cell, action.kind.clone());
+        match cell {
+            Some(c) => self.actuate(c, &kind),
+            None => self.actuate_desktop(&kind),
+        }
+        self.open_menu = None;
+        true
+    }
+
     /// Open a DOCUMENT EDITOR window on `cell` (what "Open as Document" does).
     pub fn bake_open_doc(&mut self, cell: CellId) {
         self.open_kind(cell, WinKindTag::DocEditor);
@@ -4302,8 +4453,18 @@ impl DeosDesktop {
         self.doc_merged_conflict_count(cell)
     }
 
+    /// **THE CONFLICT SURFACE AS THE USER READS IT** — every row the conflict view
+    /// paints, in paint order, verbatim: the section heading, the umem boundary that
+    /// binds both alternatives, each region's heading, its live alternatives with
+    /// their author provenance, and the one-click resolution labels. The renderer
+    /// paints exactly this list (`ConflictRow`) and decides no string of its own, so
+    /// this is the surface, not a summary of it. Empty when no stitch is held.
+    pub fn bake_conflict_surface(&self, cell: CellId) -> Vec<String> {
+        self.conflict_rows(cell).iter().map(|r| r.text()).collect()
+    }
+
     /// Resolve conflict region `region_idx` of `cell`'s stitched document with choice
-    /// `choice_idx` (a one-click `ResolutionChoice` patch). A bake/test hook.
+    /// `choice_idx` (a one-click [`crate::stitcher::StitchChoice`]). A bake/test hook.
     pub fn bake_resolve_conflict(&mut self, cell: CellId, region_idx: usize, choice_idx: usize) {
         self.resolve_conflict(cell, region_idx, choice_idx);
         self.doc_resync.insert(cell);
@@ -5728,7 +5889,8 @@ impl DeosDesktop {
     /// core). It shows: Fork-a-draft / diverge / Stitch controls; and when a stitch
     /// produced a conflict, the ConflictView — each antichain region's live
     /// alternatives side-by-side WITH author provenance, and one-click resolution
-    /// buttons (`resolutions_for`) that each commit a real resolution patch.
+    /// buttons — every one of them read off the held [`Stitcher`]'s surface, each
+    /// committing a real resolution patch.
     fn render_doc_collab(
         &mut self,
         cell: CellId,
@@ -5738,7 +5900,9 @@ impl DeosDesktop {
         // A live co-author draft editor exists exactly while a branch is forked.
         self.ensure_branch_input(cell, window, cx);
 
-        let (has_branch, branch_graph, doc_graph, merged) = match self
+        // (The held stitch is read as DATA by `conflict_rows` below; this only needs
+        //  to know WHETHER one is held, so no per-frame clone of it happens here.)
+        let (has_branch, branch_graph, doc_graph, has_stitch) = match self
             .windows
             .get(&(cell, WinKindTag::DocEditor))
             .map(|w| &w.kind)
@@ -5752,9 +5916,9 @@ impl DeosDesktop {
                 branch.is_some(),
                 branch.as_ref().map(|b| b.history().replay()),
                 Some(doc.history().replay()),
-                merged.clone(),
+                merged.is_some(),
             ),
-            _ => (false, None, None, None),
+            _ => (false, None, None, false),
         };
         let branch_input = self.branch_inputs.get(&cell).cloned();
 
@@ -5776,7 +5940,7 @@ impl DeosDesktop {
         }
 
         // The branch/stitch controls.
-        if !has_branch && merged.is_none() {
+        if !has_branch && !has_stitch {
             col = col.child(self.doc_collab_button(
                 cell,
                 "Fork a co-author draft branch",
@@ -5831,73 +5995,40 @@ impl DeosDesktop {
         }
 
         // ── THE CONFLICT VIEW — first-class conflict states, side-by-side. ──
-        if let Some(m) = &merged {
-            let graph = m.history().replay();
-            let rendered = content(&graph);
-            let conflicts: Vec<_> = rendered.conflicts().cloned().collect();
-            // The conflict's umem boundary BINDS BOTH live alternatives (forging or
-            // hiding one moves the root — the anti-forge tooth, in the committed heap).
-            let conflict_root = self.doc_umem_boundary(cell, &graph);
-            col = col
-                .child(face_section(&format!(
-                    "CONFLICT ({} region{}, first-class state · held, NOT committed)",
-                    conflicts.len(),
-                    if conflicts.len() == 1 { "" } else { "s" }
-                )))
-                .child(face_row(
-                    "binds both alts",
-                    &Self::boundary_short(&conflict_root),
-                ));
-            for (ri, region) in conflicts.iter().enumerate() {
-                let regime_lbl = match region.regime {
-                    Regime::Prose => "prose · always-resolvable",
-                    Regime::Field => "field · needs consensus",
-                };
-                let head = if let Some(f) = &region.field {
-                    format!("region {ri}  ·  field '{f}'  ·  {regime_lbl}")
-                } else {
-                    format!("region {ri}  ·  {regime_lbl}")
-                };
-                col = col.child(
+        //    PAINT ONLY: every string here is decided by `conflict_rows` (which reads
+        //    the held `Stitcher`'s surface), so the bake reads what the user sees.
+        for row in self.conflict_rows(cell) {
+            col = match &row {
+                ConflictRow::Section(s) => col.child(face_section(s)),
+                ConflictRow::Boundary(h) => col.child(face_row("binds both alts", h)),
+                ConflictRow::Region(head) => col.child(
                     div()
                         .my_1()
                         .px_1()
                         .text_size(px(10.0))
                         .font_weight(FontWeight::BOLD)
                         .text_color(gpui::rgb(0xa02020))
-                        .child(head),
-                );
-                // Each live alternative, attributed to WHO wrote it — you vs co-author
-                // (a FACT carried by the commitment; the loser is provenanced, not lost).
-                for alt in &region.alternatives {
-                    let txt: String = alt.text.chars().take(80).collect();
-                    col = col.child(
-                        div()
-                            .ml_2()
-                            .px_1()
-                            .py_1()
-                            .bg(gpui::rgb(0xfff4f4))
-                            .border_1()
-                            .border_color(gpui::rgb(0xd0a0a0))
-                            .text_size(px(10.0))
-                            .child(format!(
-                                "{}: {}",
-                                self.author_label(alt.provenance.author),
-                                if txt.trim().is_empty() {
-                                    "(empty)"
-                                } else {
-                                    txt.trim()
-                                }
-                            )),
-                    );
-                }
-                // One-click resolution choices — each a ready, authored patch (its commit
-                // is the resolution turn's receipt).
-                let choices = resolutions_for(&graph, region, self.author);
-                for (ci, choice) in choices.iter().enumerate() {
-                    col = col.child(self.doc_resolve_button(cell, ri, ci, &choice.label, cx));
-                }
-            }
+                        .child(head.clone()),
+                ),
+                ConflictRow::Alt(line) => col.child(
+                    div()
+                        .ml_2()
+                        .px_1()
+                        .py_1()
+                        .bg(gpui::rgb(0xfff4f4))
+                        .border_1()
+                        .border_color(gpui::rgb(0xd0a0a0))
+                        .text_size(px(10.0))
+                        .child(line.clone()),
+                ),
+                // One-click resolution choices — each a ready, authored patch (its
+                // commit is the resolution turn's receipt).
+                ConflictRow::Choice {
+                    region,
+                    choice,
+                    label,
+                } => col.child(self.doc_resolve_button(cell, *region, *choice, label, cx)),
+            };
         }
 
         // ── THE RECEIPT — the most recent resolution, as a content-addressed turn id.
@@ -5960,7 +6091,7 @@ impl DeosDesktop {
     }
 
     /// A one-click conflict-resolution button — commits exactly the chosen
-    /// `ResolutionChoice`'s ready patch onto the merged document.
+    /// [`crate::stitcher::StitchChoice`]'s ready patch onto the held stitch.
     fn doc_resolve_button(
         &self,
         cell: CellId,
@@ -8693,6 +8824,42 @@ enum TitleBtn {
     Minimize,
     Maximize,
     Close,
+}
+
+/// **ONE ROW OF THE PAINTED CONFLICT SURFACE.** The conflict view used to be
+/// computed inline *inside* the renderer, which meant nothing but a screenshot could
+/// observe it. The rows are now derived once by
+/// [`DeosDesktop::conflict_rows`] (off [`crate::stitcher::Stitcher::surface`]) and the
+/// renderer merely paints them — so a bake/test reads EXACTLY the strings a user
+/// sees, and a change to either is a change to both.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ConflictRow {
+    /// The section heading ("CONFLICT (n regions, …)").
+    Section(String),
+    /// The umem boundary that binds every live alternative (its short hex).
+    Boundary(String),
+    /// A region heading (index · field · regime).
+    Region(String),
+    /// One live alternative: "who wrote it: the text".
+    Alt(String),
+    /// A one-click resolution, addressed by the region/choice indices the click
+    /// actuates with.
+    Choice {
+        region: usize,
+        choice: usize,
+        label: String,
+    },
+}
+
+impl ConflictRow {
+    /// The row's displayed text — what the painted surface reads, verbatim.
+    fn text(&self) -> String {
+        match self {
+            ConflictRow::Section(s) | ConflictRow::Region(s) | ConflictRow::Alt(s) => s.clone(),
+            ConflictRow::Boundary(h) => format!("binds both alts  {h}"),
+            ConflictRow::Choice { label, .. } => format!("resolve: {label}"),
+        }
+    }
 }
 
 /// A document COLLABORATION gesture (the branch/stitch surface of the doc editor).
