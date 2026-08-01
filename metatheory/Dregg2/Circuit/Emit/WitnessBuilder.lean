@@ -201,17 +201,76 @@ wires). -/
 /-- A variable→value assignment (`External i` / `Internal i` ↦ its witness value). -/
 abbrev VarEnv := List (PVar × Int)
 
+/-- **SPEC** of the variable→value direction: a `find?` over the whole env, FIRST match wins. -/
 def envLookup (env : VarEnv) (v : PVar) : Int :=
   match env.find? (fun p => p.1 == v) with
   | some p => p.2
   | none => 0
 
-/-- **THE COMPOSING FRONT-END.** One gate's `GateWitness` at absolute row `absRow`: place each of its
-    permutation-column variables' value (from the shared `env`) at that variable's cell. A variable
-    shared with another gate is filled from the SAME env entry in BOTH — so the copy class is
-    single-valued. `rowPositions` (read-only from `KimchiPlacement`) is the exact `{row,col}` map. -/
+/-- **THE COMPOSING FRONT-END, SPEC form.** One gate's `GateWitness` at absolute row `absRow`: place
+    each of its permutation-column variables' value (from the shared `env`) at that variable's cell.
+    A variable shared with another gate is filled from the SAME env entry in BOTH — so the copy class
+    is single-valued. `rowPositions` (read-only from `KimchiPlacement`) is the exact `{row,col}` map.
+    Composing a whole circuit through THIS form is O(rows · |env|): see `gateVarWitnessAt`. -/
 def gateVarWitness (absRow : Nat) (g : PGate) (env : VarEnv) : GateWitness :=
   (rowPositions absRow g.permVars).map (fun vc => (vc.2, envLookup env vc.1))
+
+/-! ### The variable → value index — the SECOND quadratic, and the one that was left.
+
+MEASURED on hbox (2026-08-01, CPU-clocked, a clean worktree at the indexed `place`/`toGrid`), the
+whole `gateVarWitness` pass over the step_main fragment: **21 / 210 / 2602 / 15515 ms at 132 / 454 /
+1674 / 4058 rows — a fitted exponent of 2.02**, against `place`'s 1.11–1.22 and `toGrid`'s 1.18 once
+those were indexed. At 4058 rows it was **97% of the whole Lean-side assembly**. The cause is
+`envLookup`: a `find?` over the ENTIRE env for each of up to `K_PERMUTS` cells per row, and the env
+grows with the circuit (one entry per variable, one variable per wire), so it is O(rows · |env|).
+
+Same treatment, same reason for `Array` over `Std.HashMap`: it reduces in the kernel, so §3's
+`by decide` σ theorems keep holding on the definitions the interpreter runs. -/
+
+/-- One past the largest `varIx` present in an env. -/
+def envIxBound (env : VarEnv) : Nat :=
+  env.foldl (fun m p => Nat.max m (varIx p.1 + 1)) 0
+
+/-- **THE VARIABLE → VALUE INDEX**, built ONCE per circuit: bucket `varIx v` holds `v`'s value.
+    Folding the REVERSED env means a variable's FIRST entry is written LAST and wins — exactly
+    `envLookup`'s `find?` semantics on a duplicated variable. -/
+def envIndex (env : VarEnv) : Array (Option Int) :=
+  env.reverse.foldl (fun a p => a.set! (varIx p.1) (some p.2))
+    (Array.replicate (envIxBound env) none)
+
+/-- `envLookup` against the index; an absent variable is `0`, as before. -/
+def envLookupAt (ix : Array (Option Int)) (v : PVar) : Int := (ix.getD (varIx v) none).getD 0
+
+/-- **THE COMPOSING FRONT-END.** `gateVarWitness` against the index — identical result, O(1) per
+    cell. This is the form a whole-circuit assembly calls: build `envIndex` once, then one of these
+    per row. -/
+def gateVarWitnessAt (ix : Array (Option Int)) (absRow : Nat) (g : PGate) : GateWitness :=
+  (rowPositions absRow g.permVars).map (fun vc => (vc.2, envLookupAt ix vc.1))
+
+/-- An env probe: 100 variables of BOTH `PVar` constructors, then the whole list REPEATED with
+    different values — so every variable carries two entries and `envLookup`'s FIRST-WINS rule is
+    observable (reversing the list flips which one wins: the RED control below). -/
+def envProbe : VarEnv :=
+  let base := (List.range 100).flatMap (fun i =>
+    [((.external i : PVar), (i * 7 + 1 : Int)), ((.internal i : PVar), (i * 11 + 2 : Int))])
+  base ++ base.map (fun p => (p.1, p.2 + 1000))
+
+/-- A gate touching both `PVar` constructors, a repeated variable, and an ABSENT one (`internal 142`,
+    past the probe's 100) — so the index's default path is exercised too. -/
+def envProbeGate : PGate :=
+  { kind := .generic
+  , permVars := [some (.external 3), some (.internal 7), none, some (.external 99),
+                 some (.internal 0), some (.external 3), some (.internal 142)]
+  , coeffs := [] }
+
+-- ⚑ THE ENV INDEX IS FAITHFUL — same cells, same values, including the absent-variable default.
+#guard gateVarWitnessAt (envIndex envProbe) 5 envProbeGate == gateVarWitness 5 envProbeGate envProbe
+#guard envLookupAt (envIndex envProbe) (.internal 142) == envLookup envProbe (.internal 142)
+#guard envLookupAt (envIndex envProbe) (.external 3) == 22    -- the FIRST entry, not the +1000 one
+-- ⚑ IT CAN GO RED. Reversing the env flips which duplicate entry wins; if the index did not
+-- preserve first-wins the two would still agree. They must not.
+#guard (gateVarWitnessAt (envIndex envProbe.reverse) 5 envProbeGate
+          == gateVarWitness 5 envProbeGate envProbe) == false
 
 /-- Two generic gates sharing wire `x = external 0` ("gate A's output feeds gate B"), each with a
     private var. `x` occupies (0,0),(0,3) in gate A and (1,0) in gate B — a 3-cell copy class spanning

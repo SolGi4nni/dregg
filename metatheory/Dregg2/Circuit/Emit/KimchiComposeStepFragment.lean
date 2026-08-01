@@ -71,7 +71,8 @@ namespace Dregg2.Circuit.Emit.KimchiComposeStepFragment
 
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
 open Dregg2.Circuit.Emit.KimchiPlacement
-open Dregg2.Circuit.Emit.WitnessBuilder (VarEnv GateWitness gridAt gateVarWitness compose toGrid)
+open Dregg2.Circuit.Emit.WitnessBuilder
+  (VarEnv GateWitness gridAt gateVarWitness envIndex gateVarWitnessAt compose toGrid)
 open Dregg2.Circuit.Emit.KimchiRenderVarBaseMul (fAdd fSub fMul fInv stepVbm renderCircuit)
 open Dregg2.Circuit.Emit.KimchiRenderCompleteAdd (completeAddWitness)
 open Dregg2.Circuit.Emit.KimchiVerify
@@ -445,14 +446,21 @@ def fragGates (rows : List RowSpec) : List PGate :=
   rows.map (fun r => { kind := r.kind, permVars := r.perm, coeffs := [] })
 
 /-- The composed 15 × `nRows` witness grid, via `WitnessBuilder.compose`: per-row, the env-driven
-permutation cells ++ the advice cells, all laid into the grid ONCE. -/
+permutation cells ++ the advice cells, all laid into the grid ONCE.
+
+⚑ `gateVarWitnessAt (envIndex env)`, not `gateVarWitness … env`. The two produce the SAME cells
+(pinned in `WitnessBuilder`, both polarities); the difference is that `envLookup`'s `find?` walks the
+WHOLE env per cell, so composing R rows costs O(R·|env|) — and `|env|` grows with the circuit, one
+entry per variable. MEASURED on hbox at the four scale rungs, that pass was 21 / 210 / 2602 / 15515 ms
+at 132 / 454 / 1674 / 4058 rows (fitted exponent **2.02**) and, once `place`/`toGrid` were indexed,
+**97% of the whole Lean-side assembly**. `envIndex` is built ONCE per circuit. -/
 def fragWitness (f : Frag) : List (List Int) :=
   let rows := fragRows f true
-  let env := fragEnv f
+  let ix := envIndex (fragEnv f)
   let n := rows.length
   compose 15 n
     ((rows.zip (List.range n)).map (fun ri =>
-      gateVarWitness ri.2 { kind := ri.1.kind, permVars := ri.1.perm, coeffs := [] } env
+      gateVarWitnessAt ix ri.2 { kind := ri.1.kind, permVars := ri.1.perm, coeffs := [] }
       ++ ri.1.advice.map (fun cv => ((⟨ri.2, cv.1⟩ : Cell), cv.2))))
 
 /-- Read circuit row `r` out of the ASSEMBLED column-major grid (all 15 columns). The gate `#guard`s
