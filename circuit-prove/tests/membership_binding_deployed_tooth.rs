@@ -28,6 +28,17 @@
 //! Both poles are `#[ignore]` (real recursion, minutes). Run with:
 //!   cargo test -p dregg-circuit-prove --test membership_binding_deployed_tooth -- --ignored --nocapture
 
+// ⚠ STALE AS OF 2026-08-01, IN THE DIRECTION THAT MAKES THE WOUND LOOK CLOSED.
+//
+// Re-measured on the emitted bytes: `transferVmDescriptor2R24` has 68 PIs and 29 pins, and there is
+// **no `pi_binding` at 50 or 51**. Columns 1735/1736 are referenced by NOTHING, while 1730-1734 and
+// 1737+ all are — `dropUnforcedPins` deleted the pins and E1 compaction then removed the dead columns.
+// Top pinned column is 1734.
+//
+// ⚑ CONSEQUENCE: `carrier_claim_pins_admitted` hard-requires the pin, so the **Membership fold arm is
+// FAIL-CLOSED on every deployed leg today** — `MembershipBindingFromFold`'s flip is inert on the
+// deployed object, and this tooth's *honest* pole cannot pass either. The same cause reds bridge PI 46.
+// The teeth are not "native at 1771..1772"; they do not exist.
 mod binding_tooth;
 use binding_tooth::assert_refused_by_binding_node;
 

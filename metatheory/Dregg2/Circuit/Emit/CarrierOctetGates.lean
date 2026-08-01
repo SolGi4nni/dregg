@@ -563,13 +563,23 @@ theorem satisfied2_of_withSovereignKeyCommit (hash : List ℤ → ℤ)
 
 /-! ### §2b — membership: the 1-felt sender-leaf compress (chip-native `node8` form).
 
-⚑ NAMED MISMATCH (module doc): the executor's `membership_verifier.rs::compress` is TODAY
-`hash_many(encode_hash(pk))` — a rate-4 two-permutation sponge over 32-bit limbs that NO deployed
-chip arity computes. This gate realizes the CHIP-NATIVE injective compress — the arity-16 `node8`
-row over `pubkey8 ‖ 0⁸` (every committed limb genuinely seeded; the same lane every keystone
-rides) — and the wiring step OWES the executor re-alignment (compress + its `apply.rs`/SDK twins +
-the membership-STARK leaf domain) before the gate goes live. Do NOT wire against the misaligned
-executor (fail-open law). -/
+⚑ NAMED MISMATCH — **CLOSED 2026-08-01, and this block was STALE FOR WEEKS.**
+
+`turn/src/executor/membership_verifier.rs:95-97` is `dregg_commit::typed::compress_member` — chip-native
+lane 0 of the arity-16 `node8` absorb, i.e. exactly `pubkeyCompress1Spec`. Its own doc at `:88-94`
+records that it REPLACED the `hash_many(encode_hash(bytes))` two-permutation sponge. So the gate below
+already realizes the deployed function, and the executor re-alignment this block scoped as future work
+is **done**.
+
+⚠ This stale paragraph cost real work: it was quoted as the blocker in a brief that would have taken a
+VK epoch to fix a mismatch that no longer existed. **The refutation was two lines, in the very file this
+paragraph accuses.** A doc-comment naming a mismatch is a claim with a date on it.
+
+⚠ What actually blocks the LEAF leg is different and still open: `B_PUBKEY_OCTET` carries the operated
+cell's OWNER key (`turn/src/rotation_witness.rs:560-561`) while `SenderAuthorized` exists to authorize a
+sender who is NOT the owner, and the executor compresses `PredicateInput::Sender`
+(`membership_verifier.rs:208`). The leg needs a committed SENDER-pubkey octet — the twin of the owner
+fill — and nothing else. -/
 
 /-- The arity-16 `node8`-form input block: the 8 committed octet columns ‖ 8 literal zeros. -/
 def pubkeyNode8Inputs (blockBase octetBase : Nat) : List EmittedExpr :=

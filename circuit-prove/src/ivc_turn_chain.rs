@@ -3592,6 +3592,17 @@ pub const SOVEREIGN_KEY_COMMIT_PI_LO: usize = 58;
 /// `transferV3MembershipWide_publishes_teeth`). PI-EXPOSURE leg only (the FOLD edge binds;
 /// the in-AIR welds stay the named `MembershipAuthRootEdge` seams). Same fail-closed
 /// admission discipline.
+// ⚠ STALE AS OF 2026-08-01, IN THE DIRECTION THAT MAKES THE WOUND LOOK CLOSED.
+//
+// Re-measured on the emitted bytes: `transferVmDescriptor2R24` has 68 PIs and 29 pins, and there is
+// **no `pi_binding` at 50 or 51**. Columns 1735/1736 are referenced by NOTHING, while 1730-1734 and
+// 1737+ all are — `dropUnforcedPins` deleted the pins and E1 compaction then removed the dead columns.
+// Top pinned column is 1734.
+//
+// ⚑ CONSEQUENCE: `carrier_claim_pins_admitted` hard-requires the pin, so the **Membership fold arm is
+// FAIL-CLOSED on every deployed leg today** — `MembershipBindingFromFold`'s flip is inert on the
+// deployed object, and this tooth's *honest* pole cannot pass either. The same cause reds bridge PI 46.
+// The teeth are not "native at 1771..1772"; they do not exist.
 pub const MEMBERSHIP_CLAIM_PI_LO: usize = 50;
 /// The bridge leg's felt mint-hash claim PI — **NATIVE**: the committed mint row
 /// (`mintV3BridgeHash`, the STEP-3/4 regen) pins the mint row's `param0` (`prmCol 0` — since
