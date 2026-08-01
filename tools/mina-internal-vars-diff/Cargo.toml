@@ -1,0 +1,18 @@
+# Standalone (detached) crate — R1 internal_vars/rows_rev byte-diff.
+# Depends ONLY on the OCaml-compatible binprot codec mina-rust uses to read real circuit-blobs
+# (openmina/binprot-rs @400b52c, the exact rev pinned by ~/dev/mina-rust/Cargo.toml). We re-declare
+# `VRaw` byte-identically to mina-rust `crates/ledger/src/proofs/provers.rs:285-289` so our
+# serialisation IS what mina-rust would read/write. mina-rust is NOT modified and NOT linked.
+[package]
+name = "mina-internal-vars-diff"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+binprot = { git = "https://github.com/openmina/binprot-rs", rev = "400b52c" }
+binprot_derive = { git = "https://github.com/openmina/binprot-rs", rev = "400b52c" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

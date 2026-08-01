@@ -682,3 +682,48 @@ the de-vacuum modules `CaveatCommitBindsOrCollides` / `RotatedCommitBindsOrColli
 goes through the churned `EffectVmEmitV2`. They are NOT in `PicklesSynthesis`. (The six rooted modules
 go through `EffectVmEmit` v1 + `DescriptorIR2`, both already in `Dregg2.lean`, never `EffectVmEmitV2` —
 verified by import-cone walk before rooting.)
+
+---
+
+## R1's last sub-residual CLOSED — internal_vars/rows_rev byte-diff → **DIVERGENT** (2026-08-01)
+
+R1 (`KimchiPlacement.lean`, `425ec7d87`) made the placed `{row,col}` WIRES byte-exact vs o1js and
+MODELLED the `internal_vars`/`rows_rev` blob shapes, explicitly leaving their byte-diff as a residual
+("o1js's `constraintSystem` JSON does not expose internal_vars; needs the circuit-blobs binprot dump").
+That residual is now MEASURED and closed.
+
+**Oracle (authoritative, zero OCaml build):** `tools/mina-internal-vars-diff/oracle/extract-reference.mjs`
+reaches o1js 2.15.0's LIVE OCaml constraint system `cs` — the SAME object o1js's own
+`dump_extra_circuit_data` (`plonk_constraint_system.ml:2451`, compiled into `o1js_node.bc.cjs` and
+gated by `MINA_DUMP_CIRCUIT_DATA∈{1,true,yes}`) serialises into `_rows_rev.bin` (`cs[3]`) /
+`_internal_vars.bin` (`cs[2]`). We capture `cs` by wrapping `Snarky.constraintSystem.toJson` and decode
+the js_of_ocaml value directly. The `.bin` bytes are produced/round-tripped with the EXACT
+OCaml-compatible codec mina-rust reads real circuit-blobs with (`openmina/binprot-rs@400b52c`);
+`VRaw` is re-declared byte-identically to `mina-rust provers.rs:285-289` (mina-rust NOT modified/linked).
+Diff tool: `tools/mina-internal-vars-diff/` (`cargo run --offline`, green-or-bust self-tests + exit 1).
+
+**MEASURED — the wires match (R1's proven result holds), the blobs DO NOT:**
+
+- **internal_vars.bin: o1js is EMPTY for BOTH toy circuits** (0 entries → the single byte `0x00`).
+  R1's model is non-empty (`caseB_internalVars` = 1 entry; caseA's `permVars` reference `Internal 0`).
+  **First diverging byte: offset 0 — ref `0x00` (Nat0 entry-count 0) vs lean `0x01`.** o1js's TS
+  frontend allocates fresh EXTERNAL witnesses for intermediate sums/products and constrains them with
+  generic gates; it does NOT use the OCaml `reduce_lincom`/`create_internal` internal-var machinery R1
+  transcribed. So these circuits have NO internal vars at all.
+- **rows_rev.bin: variable IDENTITIES and singleton COLUMNS diverge.**
+  caseA — o1js `[E2,_,_,E0,E1,E2]` (the sum var is External 2; x,y at cols 3,4) vs R1
+  `[I0,E0,E1,_,_,I0,_]` (Internal 0; x,y at cols 1,2). caseB row1 — o1js `[E2,_,_,E0,E3,E2]` (a witness
+  `E3` at col 4) vs R1 `[I1,_,_,E0,_,I1,_]` (col 4 empty). The x-copy 3-cell class `{(0,3),(0,4),(1,3)}`
+  DOES match. **The equivalence-class STRUCTURE is identical → the placed wires are identical**; the
+  wires simply UNDER-DETERMINE the grid (a singleton var and an empty cell both self-wire), so R1's
+  wire-faithful reconstruction is not o1js's actual rows_rev. Also: real `_rows_rev.bin` rows are the
+  written var array (length 6 here), not R1's 7-slot `K_PERMUTS` truncation, and are stored REVERSED.
+
+**Shape confirmed:** o1js's real rows_rev round-trips through `Vec<Vec<Option<VRaw>>>` identically, and
+the empty internal_vars through `HashMap<u32,(Vec<(BigInt,VRaw)>,Option<BigInt>)>` — R1's TYPE model
+matches the binprot; only the VALUES diverge.
+
+**Consequence:** placement WIRES are byte-trustworthy (R1 + this). internal_vars/rows_rev are NOT yet
+byte-faithful to o1js — R4b/render must regenerate R1's toy grids FROM o1js's actual rows_rev (which
+this oracle now emits) before trusting a full circuit-blobs emit. Not a bug in R1's `place` pass; its
+INPUT grids are a wire-equivalent reconstruction, not o1js's constraint system.

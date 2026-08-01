@@ -1,0 +1,62 @@
+{
+  "circuit": "caseA",
+  "o1js_version": "2.15.0",
+  "source": "live o1js OCaml cs[3]/cs[2] (== dump_extra_circuit_data serialises these)",
+  "rows": 1,
+  "publicInputSize": 0,
+  "wires": [
+    [
+      [
+        0,
+        5
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        0,
+        3
+      ],
+      [
+        0,
+        4
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        0,
+        6
+      ]
+    ]
+  ],
+  "rows_rev_on_disk": [
+    [
+      {
+        "kind": "External",
+        "i": 2
+      },
+      null,
+      null,
+      {
+        "kind": "External",
+        "i": 0
+      },
+      {
+        "kind": "External",
+        "i": 1
+      },
+      {
+        "kind": "External",
+        "i": 2
+      }
+    ]
+  ],
+  "internal_vars_count": 0
+}
