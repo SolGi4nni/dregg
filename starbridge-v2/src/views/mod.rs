@@ -268,10 +268,6 @@ mod one_palette_gate {
         );
     }
 
-    /// The gate above is only worth its runtime if the canonical file actually
-    /// holds the values — otherwise "exactly one file" could be satisfied by
-    /// ZERO. Pins the ten canonical hexes present at the canonical path.
-    #[test]
     /// THE ANTI-VACUITY POLE — "the literals live in exactly ONE file" is satisfiable by
     /// ZERO files, so something must prove the canonical home is actually populated.
     ///
