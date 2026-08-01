@@ -602,7 +602,24 @@ mod tests {
         let w = ZkOracleLeafWitness::from_body_bytes(&body).unwrap();
         let pis = zkoracle_leaf_public_inputs(&w);
         assert_eq!(pis.len(), ZKORACLE_CLAIM_LEN);
-        assert_eq!(pis[ZKORACLE_LEAF_LEN_PI], BabyBear::new(75)); // 300 / 4
+        // The exposed length PI is the LIMB count, and the packing that produces it moved on
+        // 2026-08-01 (4-byte mod-p chunks -> `bytes_to_lanes`: a 4-lane byte-count header then
+        // little-endian u16 pairs). This used to read `BabyBear::new(75) // 300 / 4`; it is now
+        // stated as the encoder's own arithmetic so a further packing change fails the ENCODER's
+        // tests rather than silently re-pinning here.
+        // TWO INDEPENDENT SOURCES, not a constant against its own definition: the count is derived
+        // by hand from the encoding (4 header lanes + ⌈300/2⌉ pair lanes = 154) and the deployed
+        // encoder is asserted to agree.
+        let expected_limbs = 4 + body.len().div_ceil(2);
+        assert_eq!(
+            expected_limbs, 154,
+            "300 bytes -> 4 header + 150 pair lanes"
+        );
+        assert_eq!(w.body_limbs.len(), expected_limbs);
+        assert_eq!(
+            pis[ZKORACLE_LEAF_LEN_PI],
+            BabyBear::new(expected_limbs as u32)
+        );
         assert_eq!(
             pis[ZKORACLE_LEAF_COMMIT_PI],
             zkoracle_leaf_commit_bytes(&body).unwrap()
@@ -642,18 +659,48 @@ mod tests {
     #[test]
     #[ignore = "SLOW: real recursion leaf wrap (~seconds+); run with --ignored"]
     fn honest_zkoracle_1kib_proves_and_exposes_claim() {
-        let body = anthropic_json_body(1024); // 256 limbs, 87 chip sites
+        let body = anthropic_json_body(1024); // 4 + 512 = 516 limbs under bytes_to_lanes
         let (dt, bytes) = prove_and_check(&body);
         eprintln!("zkoracle leaf 1 KiB body: prove {dt:?}, proof {bytes} bytes");
     }
 
-    /// THE POSITIVE POLE at the trace budget (~4 KiB = 1024 limbs, 343 chip sites).
+    /// THE POSITIVE POLE at the trace budget (1024 limbs, 343 chip sites).
+    ///
+    /// ⚑ The BYTE size moved on 2026-08-01 and the limb bound did not: the retired 4-byte packing
+    /// put 1024 limbs at 4 KiB, and `bytes_to_lanes` (2 bytes/limb + a 4-lane length header) puts
+    /// it at [`ZKORACLE_MAX_BODY_BYTES`] = 2040. This pole is stated in LIMBS, which is what the
+    /// trace budget is about, so it cannot drift again with the packing.
     #[test]
     #[ignore = "SLOW: real recursion leaf wrap (~seconds+); run with --ignored"]
-    fn honest_zkoracle_4kib_proves_and_exposes_claim() {
-        let body = anthropic_json_body(4096); // 1024 limbs — the bound
+    fn honest_zkoracle_max_body_proves_and_exposes_claim() {
+        let body = anthropic_json_body(ZKORACLE_MAX_BODY_BYTES);
+        let w = ZkOracleLeafWitness::from_body_bytes(&body).expect("the max body must pack");
+        assert_eq!(
+            w.body_limbs.len(),
+            ZKORACLE_MAX_BODY_LIMBS,
+            "ZKORACLE_MAX_BODY_BYTES must land exactly on the limb bound"
+        );
         let (dt, bytes) = prove_and_check(&body);
-        eprintln!("zkoracle leaf 4 KiB body: prove {dt:?}, proof {bytes} bytes");
+        eprintln!(
+            "zkoracle leaf {ZKORACLE_MAX_BODY_BYTES}-byte body ({} limbs): prove {dt:?}, proof {bytes} bytes",
+            w.body_limbs.len()
+        );
+    }
+
+    /// COMPLETENESS + REFUSAL at the seam the packing change moved: the largest admissible body
+    /// packs, and one byte more is refused rather than silently truncated.
+    #[test]
+    fn the_body_byte_budget_matches_the_limb_budget() {
+        let ok = anthropic_json_body(ZKORACLE_MAX_BODY_BYTES);
+        let w = ZkOracleLeafWitness::from_body_bytes(&ok).expect("the max body must pack");
+        assert_eq!(w.body_limbs.len(), ZKORACLE_MAX_BODY_LIMBS);
+        let too_big = anthropic_json_body(ZKORACLE_MAX_BODY_BYTES + 2);
+        assert!(
+            ZkOracleLeafWitness::from_body_bytes(&too_big).is_err(),
+            "a body past the limb budget must be REFUSED, not truncated"
+        );
+        // ...and the retired 4 KiB figure is genuinely over the bound now — the flag day is real.
+        assert!(ZkOracleLeafWitness::from_body_bytes(&anthropic_json_body(4096)).is_err());
     }
 
     /// THE LEAF-BINDING TOOTH: a forged commitment lane (body honest) is REFUSED at

@@ -297,10 +297,17 @@ fn gentian_weld_31bit_authority_collision_separated_at_8_felt() {
         c
     }
 
-    // Re-mined 2026-07-26 by `zz_mine_gentian_collision_salts` below (the old 57684/1393 pair stopped
-    // colliding when the authority-digest geometry moved; the premise assert went red, not the claim).
-    let locked = make(false, 281909);
-    let open = make(true, 3882);
+    // ⚑ RE-MINED 2026-08-01 by `zz_mine_gentian_collision_salts` below — the THIRD pair, and the
+    // reason is the same each time: this tooth's premise is a COLLISION under a moving digest, so
+    // the salts rot whenever the digest moves and the PREMISE assert goes red, not the claim.
+    //   * 57684 / 1393  died 2026-07-26 when the authority-digest geometry moved;
+    //   * 281909 / 3882 died today when `hash_bytes`' PREIMAGE became injective
+    //     (`from_bytes_packed` -> `BabyBear::bytes_to_lanes`). That change closed the two O(1)
+    //     preimage collisions and closed NOTHING about the 1-felt squeeze, which is exactly what
+    //     this tooth is about — so the tooth is as meaningful as it ever was, at the same
+    //     `2^15.45` birthday bound, and only the witness needed re-finding.
+    let locked = make(false, 230711);
+    let open = make(true, 2404);
 
     // The cells are GENUINELY different authority states (locked-down vs wide-open send permission).
     assert_eq!(locked.permissions.send, AuthRequired::Impossible);

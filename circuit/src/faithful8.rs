@@ -278,9 +278,14 @@ impl Faithful8 {
     /// division while the carrier chain steps every three limbs, so the unwritten invariant is
     /// `rotatedNumPreLimbs ≡ 1 (mod 3)` — `184 % 3 = 187 % 3 = 1`, `185 % 3 = 2` — and `187` buys
     /// exactly the three ninth lanes the counting demands (`public_key`, `child_vk`,
-    /// `contract_hash`, all three 8-lane). `187 + 3 + 61 = 251` confirms `B_SPAN`. The epoch figure
-    /// read "15 → 16" and was stale by four: `CANONICAL_STATE_SCHEMA_EPOCH` is at **19**, so the
-    /// geometry move is 19 → 20. Not this lane's edit — this lane's edit is that the wall stops
+    /// `contract_hash`, all three 8-lane). `187 + 3 + 61 = 251` confirms `B_SPAN`.
+    ///
+    /// ⚑ **THE EPOCH NUMBER IS DELIBERATELY NOT WRITTEN HERE, and that is the correction.** This
+    /// note read "15 → 16" and was stale by four; it was then corrected to "19 → 20" and was stale
+    /// by one **within the hour** (`persist::PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH` moved
+    /// 16 → 17 → 18 → 19 → 20 on 2026-08-01 alone). A remembered epoch in a doc comment is a pin
+    /// against nothing. The move is **one bump of that constant, whatever it reads when you land
+    /// it** — go read it. Not this lane's edit — this lane's edit is that the wall stops
     /// calling it faithful while that is pending, and that the price is stated against the constant
     /// rather than against a remembered one. The packing itself is owned by
     /// `dregg_commit::typed::canonical_32_to_felts_8` (byte-identical twin:
