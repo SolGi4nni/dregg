@@ -59,8 +59,7 @@ set_option autoImplicit false
 
 namespace Dregg2.Verify.FloorRatchetSpecimens
 
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.CircuitSoundness (CommitSurface)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR Poseidon2RealizedSponge)
 
 /-- EXEMPT. The canonical refutation spelling: refutes a floor, assumes none. This is the shape of
 `poseidon2SpongeCR_false_babyBear`, and the campaign wants more of it — writing one must never be a
@@ -110,10 +109,19 @@ def specB2FalseLaundry : Prop :=
   ∀ f : List ℤ → ℤ, Poseidon2SpongeCR f → (0 : ℤ) = 1 → False
 
 /-- GATED, and a CARRIER. **B3** — the floor arrives through a grandfathered STRUCTURE instead of a
-binder. `CommitSurface` carries four refuted floors as FIELDS, so no inhabitant exists at deployed
-parameters and this says exactly as little as a floor binder does. -/
+binder. `Poseidon2RealizedSponge` carries `spongeCR : Poseidon2SpongeCR sponge` as a FIELD, refuted at
+deployed BabyBear width, so no inhabitant exists there and this says exactly as little as a floor
+binder does.
+
+⚑ **RE-SEATED 2026-08-01.** The specimen was `∀ _S : CommitSurface, ∀ xs ys : List ℤ, xs = ys` and it
+would now read EXEMPT — not because the gate regressed but because `CommitSurface`'s four injectivity
+fields were DELETED as refuted, so the bundle is no longer floor-carrying. A specimen that silently
+stops being a carrier is a self-test that stops testing, so it is re-seated on
+`Poseidon2RealizedSponge` — the bundle the ORIGINAL B3 probe rode in on
+(`b3_via_grandfathered_bundle (R : Poseidon2RealizedSponge s) … : xs = ys := R.spongeCR xs ys h`) and
+one that is still a `sentinelBundles` entry. Same shape, same required verdict, live floor. -/
 def specB3BundleLaundry : Prop :=
-  ∀ _S : CommitSurface, ∀ xs ys : List ℤ, xs = ys
+  ∀ {s : List ℤ → ℤ}, ∀ _R : Poseidon2RealizedSponge s, ∀ xs ys : List ℤ, xs = ys
 
 /-! ## The POSITION rule (2026-07-27): mentioning a floor is not assuming one
 

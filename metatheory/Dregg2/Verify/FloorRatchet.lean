@@ -238,9 +238,17 @@ delete the line in the same commit as the port. `DeployedCapTree.CapHashScheme` 
 for exactly one afternoon before a co-tenant lane shed its `chipCR : Compress1CR` field
 (`Circuit/CapHashBundleCutoverCheck.lean`) and re-inhabited it with `deployedCapHashScheme`, whose
 own chip REFUTES the deleted field — so keep the list to bundles too big to fall by accident. -/
+-- ⚰ `Dregg2.Circuit.CircuitSoundness.CommitSurface` was the first entry and is REMOVED 2026-08-01,
+-- for the good reason this docstring names: its four injectivity fields (`cmbInj`/`compInj`/
+-- `compNInj`/`leafInj`) are DELETED, so the bundle is no longer floor-carrying and the sentinel
+-- would fail closed. Its one remaining field is `restFrame : RestFrameFin.RestHashIffFrameFin RH`,
+-- whose body is `Iff`-headed and satisfiable (`RestFrameFiniteSupportSuccessor` constructs a closed
+-- inhabitant), so nothing in the fixpoint fires on it. ⚠ The four floors did NOT stop existing —
+-- `ClosureSurface.S_live` and ~250 downstream sites still bind `compressInjective`/
+-- `compressNInjective`/`cellLeafInjective` DIRECTLY, as ordinary hypotheses, and the `binder` class
+-- still gates every one of them. What fell is the BUNDLE surface, not the binder surface.
 def sentinelBundles : List Name :=
-  [ `Dregg2.Circuit.CircuitSoundness.CommitSurface
-  , `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
+  [ `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
   , `Dregg2.Circuit.ClosureLog.StateDecodeLog
   , `Dregg2.Circuit.ClosureFanoutGenuine.ClosureReadouts
   , `Dregg2.Circuit.ClosureReadoutsRealizable.ClosureReadoutsLive ]

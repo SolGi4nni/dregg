@@ -58,9 +58,13 @@ The "genuine kernel transition" is the proved declarative kernel `ActionDispatch
     `Poseidon2Binding`). The faithfulness of the decode rides on it (via `wireCommitR_binds` /
     `recStateCommit_binds_kernel`). REALIZABLE.
 
-  * the `CommitSurface` CR fields (`compressInjective cmb/compress`, `compressNInjective compressN`,
-    `cellLeafInjective CH`, `RestHashIffFrame RH`) — the standard Poseidon CR set the full-state root
-    `recStateCommit` binds under. REALIZABLE; bundled, not free.
+  * ⚰ the `CommitSurface` CR fields (`compressInjective cmb/compress`, `compressNInjective
+    compressN`, `cellLeafInjective CH`) — GONE 2026-08-01. They were listed here as "REALIZABLE;
+    bundled, not free"; they are not realizable, they are REFUTED at deployed BabyBear width by
+    pigeonhole, and the bundle that carried them had no deployed inhabitant. The binding they
+    justified is now `CommitSurface.commit_binds_orBreak`, which hands back a CONCRETE collision
+    instead of assuming there is none. The surviving field is `restFrame : RestHashIffFrameFin RH`,
+    which IS satisfiable.
 
   * `hrefines : ∀ e, descriptorRefines (liveRegistry e) (fullActionStep-arm e)` — the per-effect
     refinement, CARRIED as an apex hypothesis. This is the rung the rest of the campaign discharges
@@ -75,12 +79,15 @@ The "genuine kernel transition" is the proved declarative kernel `ActionDispatch
     rather than hypothesizing a free `pre`/`post`/`hdecode`. REALIZABLE (every accepted trace's
     published roots ARE `recStateCommit` of the kernels the prover committed); named, not faked.
 
-DERIVED (NOT carried — proved here from the above): the decode's faithfulness
-(`stateDecode_*_faithful`), the frame continuity over a chain
-(`stateDecodeChain_frame_continuous`), and the apex composition shape.
+DERIVED (NOT carried — proved here from the above): the frame continuity over a chain
+(`stateDecodeChain_frame_continuous`, in REDUCTION FORM since 2026-08-01) and the apex composition
+shape. The decode's faithfulness moved out: `stateDecode_*_faithful` are DELETED (they rode the
+vacuous `commit_binds`); their floor-free twins are
+`StateCommitReduce.stateDecode_pre/post_faithful_orBreak`.
 -/
 import Dregg2.Circuit.StateCommit
 import Dregg2.Circuit.RestFrameFin
+import Dregg2.Circuit.StateCommitReduceRaw
 import Dregg2.Circuit.LogCommitRegrounded
 import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.DescriptorIR2
@@ -98,6 +105,7 @@ open Dregg2.Circuit.StateCommit
   (recStateCommit recStateCommit_binds_kernel AccountsWF
    compressInjective compressNInjective cellLeafInjective RestHashIffFrame logHashInjective)
 open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
+open Dregg2.Circuit.CollisionReduce (OrBreak)
 open Dregg2.Circuit.ActionDispatch
   (fullActionStep turnSpec execFullTurnA_iff_turnSpec actionTag)
 open Dregg2.Exec
@@ -114,8 +122,29 @@ full-state-root binding needs. These are SECTION PARAMETERS in `StateCommit`, ne
 them lets the apex carry "the surface is collision-resistant" as ONE named hypothesis. Each field is
 REALIZABLE by a real Poseidon. -/
 
-/-- A binding commitment surface for the full kernel state: the five primitives `recStateCommit`
-runs over, plus the standard Poseidon CR set under which equal roots force equal kernels. -/
+/-- A commitment surface for the full kernel state: the five primitives `recStateCommit` runs over,
+plus the finite-support rest-frame obligation.
+
+⚰ **FOUR INJECTIVITY FIELDS DELETED 2026-08-01** — `cmbInj : compressInjective cmb`,
+`compInj : compressInjective compress`, `compNInj : compressNInjective compressN`,
+`leafInj : cellLeafInjective CH`. Each asserts that a COMPRESSING map into ONE BabyBear felt is
+injective, which pigeonhole REFUTES at deployed parameters
+(`Verify/ApexPremiseVacuity.lean:177`) — so no deployed surface ever inhabited the bundle and
+EVERYTHING quantified over `S : CommitSurface` and conditioned on them was VACUOUSLY TRUE.
+
+The only consumers that read them AS INJECTIVITY were `CommitSurface.commit_binds` (deleted; use
+`commit_binds_orBreak`), `StateCommitReduce.surface_no_stateBreak` (deleted with its two dependents),
+and `FinInjectivityCollapse.injectivity_collapses_to_poseidon2CR` (retired — its target
+`Poseidon2SpongeCR` is refuted at the same width). Every other mention was a CONSTRUCTOR filling
+them.
+
+⚠ WHAT THIS DOES NOT FIX: `ClosureSurface.S_live` and its ~250 downstream sites still bind
+`compressInjective`/`compressNInjective`/`cellLeafInjective` DIRECTLY, as ordinary hypotheses — the
+same refuted predicates, one layer out. Those theorems are still vacuous; shedding the BUNDLE does
+not shed the BINDERS. That drain is the carrier-census cluster-2 sweep and is NOT done here.
+
+The surviving `restFrame` field is the finite-support successor `RestHashIffFrameFin`, which IS
+satisfiable — see its own doc below. -/
 structure CommitSurface where
   /-- the per-cell leaf hash. -/
   CH        : CellId → Value → ℤ
@@ -127,14 +156,6 @@ structure CommitSurface where
   compress  : ℤ → ℤ → ℤ
   /-- the sponge over a leaf list. -/
   compressN : List ℤ → ℤ
-  /-- CR: the combiner is injective. -/
-  cmbInj      : compressInjective cmb
-  /-- CR: the node hash is injective. -/
-  compInj     : compressInjective compress
-  /-- CR: the sponge is injective. -/
-  compNInj    : compressNInjective compressN
-  /-- CR: the leaf hash binds the whole `Value`. -/
-  leafInj     : cellLeafInjective CH
   /-- the rest hash is injective on the framed non-`cell` components OF FINITELY-SUPPORTED STATES.
 
   ⚑ **This field was `RestHashIffFrame RH` until 2026-07-31, and that made the whole bundle
@@ -154,32 +175,61 @@ structure CommitSurface where
 def CommitSurface.commit (S : CommitSurface) (k : RecordKernelState) (t : Turn) : ℤ :=
   recStateCommit S.CH S.RH S.cmb S.compress S.compressN k t
 
-/-- **The faithfulness engine (no admissibility).** Two kernels whose surface commitments AGREE (at
-the same turn), both `AccountsWF` and both FINITELY REPRESENTABLE, are EQUAL. This is
-`StateCommit.recStateCommit_binds_kernel` repackaged: the published commitment BINDS the
-kernel under the CR set — it uses NO authority gate, NO frame assumption, only collision-resistance
-+ the two structural side conditions. This is exactly the faithfulness the decode below rests on.
+/-! ### The faithfulness engine, in REDUCTION FORM.
 
-⚑ **NARROWED 2026-07-31, and this is the honest content of the repair.** `hfin`/`hfin'` are NEW.
-They sit exactly where `hwf`/`hwf'` already sat — a per-call structural obligation, never a field of
-the bundle (a bundle of FUNCTIONS has no business quantifying over STATES). The predecessor took no
-such hypothesis and was applicable to any pair of kernels; it was also VACUOUS, because no
-`CommitSurface` existed to apply it at. A true theorem about finitely-supported states beats a
-vacuous one about all of them — but it must say WHICH states, which is what `hfin` does.
+⚰ **`CommitSurface.commit_binds` is DELETED (2026-08-01).** It said: two `AccountsWF`,
+finitely-representable kernels whose surface commitments agree at the same turn are EQUAL. It proved
+that by feeding `recStateCommit_binds_kernel` the four injectivity FIELDS
+`S.cmbInj`/`S.compInj`/`S.compNInj`/`S.leafInj` — every one of which is FALSE at deployed
+parameters, because injectivity of a compressing map into ONE BabyBear felt is refuted by pigeonhole
+(`Verify/ApexPremiseVacuity.lean:177`). So the theorem, and everything conditioned on it, was
+VACUOUSLY TRUE; the four fields are deleted from the structure in the same commit.
 
-⚠ `RestFrameFin.not_finiteRepresentable_of_lifecycle_ne_zero` exhibits an `AccountsWF` kernel
-OUTSIDE the domain, so the restriction is real. Whether every EXECUTOR-REACHED kernel is inside it
-is `FinKernelState.denote_surjective_on_reachable`, still gated on the per-effect commuting square
-`hpres`, undischarged for every effect today. -/
-theorem CommitSurface.commit_binds (S : CommitSurface) (k k' : RecordKernelState)
+`commit_binds_orBreak` below is the replacement and it is the SAME conclusion with the honest
+disjunct: the kernels are equal, OR the adversary exhibited a CONCRETE collision of one of `S`'s four
+hash carriers. It consumes only `S.CH/cmb/compress/compressN/RH/restFrame` — no injectivity — so it
+holds AT THE DEPLOYED HASH, and its consumers carry the break rather than assuming it away.
+
+⚠ Do NOT reintroduce a `¬ S.StateBreak`-hypothesised twin. `¬ StateBreak S` is false at deployed
+width for exactly the pigeonhole reason the four fields are, so hypothesising it is the same vacuity
+under another name — which is why `StateCommitReduce.commit_binds_of_no_stateBreak` was deleted
+alongside. -/
+
+/-- **The state-commit apex break at a surface's carriers**: a concrete collision of `S`'s sponge,
+root combiner, node hash, or cell-leaf hash — the four commitment primitives `recStateCommit` runs
+over. Definitionally the raw `StateCommitReduce.StateBreakP` at `S`'s carriers.
+
+⚑ Defined HERE, not in `StateCommitReduce` where it lived until 2026-08-01. This module's OWN
+bindings (`stateDecodeChain_frame_continuous`, the turn-chain seam teeth) have to state their break
+disjunct, and `StateCommitReduce` sits ABOVE this module in the import order. The raw layers moved
+DOWN to `StateCommitReduceRaw` for the same reason. -/
+def CommitSurface.StateBreak (S : CommitSurface) : Prop :=
+  StateCommitReduce.StateBreakP S.CH S.cmb S.compress S.compressN
+
+/-- `StateBreak` is the raw break at the surface's carriers (definitional). -/
+theorem CommitSurface.stateBreak_eq_raw (S : CommitSurface) :
+    S.StateBreak = StateCommitReduce.StateBreakP S.CH S.cmb S.compress S.compressN := rfl
+
+/-- **★ THE FAITHFULNESS ENGINE (floor-free).** Two kernels whose surface commitments AGREE (at the
+same turn), both `AccountsWF` and both FINITELY REPRESENTABLE, are EQUAL — OR one of `S`'s four hash
+carriers has a concrete collision. This is `StateCommitReduceRaw.recStateCommit_binds_kernel_orBreak`
+repackaged at the surface: the published commitment BINDS the kernel unless the hash broke. NO
+authority gate, NO frame assumption, NO injectivity carrier.
+
+⚑ `hfin`/`hfin'` (2026-07-31) sit exactly where `hwf`/`hwf'` already sat — a per-call structural
+obligation, never a field of the bundle (a bundle of FUNCTIONS has no business quantifying over
+STATES). ⚠ `RestFrameFin.not_finiteRepresentable_of_lifecycle_ne_zero` exhibits an `AccountsWF`
+kernel OUTSIDE the domain, so the restriction is real. Whether every EXECUTOR-REACHED kernel is
+inside it is `FinKernelState.denote_surjective_on_reachable`, still gated on the per-effect commuting
+square `hpres`, undischarged for every effect today. -/
+theorem CommitSurface.commit_binds_orBreak (S : CommitSurface) (k k' : RecordKernelState)
     (t : Dregg2.Exec.Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
-    (h : S.commit k t = S.commit k' t) : k = k' := by
-  apply recStateCommit_binds_kernel (CH := S.CH) (RH := S.RH) (cmb := S.cmb)
-    (compress := S.compress) (compressN := S.compressN)
-    S.cmbInj S.compInj S.compNInj S.leafInj S.restFrame k k' t hwf hwf' hfin hfin'
-  exact h
+    (h : S.commit k t = S.commit k' t) :
+    OrBreak S.StateBreak (k = k') :=
+  StateCommitReduce.recStateCommit_binds_kernel_orBreak S.CH S.cmb S.compress S.compressN S.RH
+    S.restFrame k k' t hwf hwf' hfin hfin' h
 
 /-! ## §2 — `StateDecode`: the FAITHFUL witness→kernel-state decode.
 
@@ -227,35 +277,20 @@ structure StateDecode (S : CommitSurface) (pc : PublishedCommit)
   /-- `post`'s kernel is structurally well-formed. -/
   postWF    : AccountsWF post.kernel
 
-/-- **★ FAITHFULNESS (pre) — UNIQUENESS OF THE STATE BEHIND A PUBLISHED ROOT.** Two pre-states
-decoding the SAME published commitment have EQUAL kernels. No admissibility used — pure commitment
-binding.
+/-! ### ⚰ TOMBSTONE — `stateDecode_pre_faithful` / `stateDecode_post_faithful` (DELETED 2026-08-01).
 
-⚑ **THE DOMAIN, STATED IN THE STATEMENT AND NOT IN A COMMENT.** `hfin`/`hfin'` restrict the claim to
-FINITELY-REPRESENTABLE kernels (the `denote`-image of `Circuit.FinKernelState`). Until 2026-07-31
-this theorem carried no such hypothesis and was stated over ALL kernels — and was VACUOUS, because
-its `S : CommitSurface` had no inhabitant at any parameter. It is now a claim with instances
-(the anonymous `example : CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348`
-inhabits `S`; it is unnamed on purpose — see the field docs above) about a strictly smaller class.
-`ApexFloorFree` supplies the EXISTENCE half floor-free; this is the UNIQUENESS half, and it now says
-which states it is about. -/
-theorem stateDecode_pre_faithful (S : CommitSurface) (pc : PublishedCommit)
-    {pre post pre' post' : RecChainedState}
-    (hfin : FiniteRepresentable pre.kernel) (hfin' : FiniteRepresentable pre'.kernel)
-    (h : StateDecode S pc pre post) (h' : StateDecode S pc pre' post') :
-    pre.kernel = pre'.kernel :=
-  S.commit_binds pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hfin hfin'
-    (h.preBinds ▸ h'.preBinds ▸ rfl)
+They said: two pre-states (resp. post-states) decoding the SAME published commitment have EQUAL
+kernels — the UNIQUENESS half of the decode. Both were one application of
+`CommitSurface.commit_binds`, hence conditioned on the four refuted injectivity fields, hence
+VACUOUSLY TRUE at deployed parameters (see the tombstone above `CommitSurface.StateBreak`).
 
-/-- **★ FAITHFULNESS (post).** Two post-states decoding the SAME published commitment have EQUAL
-kernels. No admissibility used. Same domain restriction as the `pre` twin — see its docstring. -/
-theorem stateDecode_post_faithful (S : CommitSurface) (pc : PublishedCommit)
-    {pre post pre' post' : RecChainedState}
-    (hfin : FiniteRepresentable post.kernel) (hfin' : FiniteRepresentable post'.kernel)
-    (h : StateDecode S pc pre post) (h' : StateDecode S pc pre' post') :
-    post.kernel = post'.kernel :=
-  S.commit_binds post.kernel post'.kernel pc.turn h.postWF h'.postWF hfin hfin'
-    (h.postBinds ▸ h'.postBinds ▸ rfl)
+CONSUME INSTEAD: `StateCommitReduce.stateDecode_pre_faithful_orBreak` /
+`stateDecode_post_faithful_orBreak` — the same conclusion, or a concrete `S.StateBreak`. They existed
+already and were proved floor-free; what changes here is that the vacuous originals no longer sit
+beside them.
+
+(EXISTENCE of a real transition behind an accepted proof is a separate and floor-free result —
+`ApexFloorFree.lightclient_unfoolable_free`. Uniqueness is what these two were about.) -/
 
 /-! ## §3 — `descriptorRefines`: the per-effect rung.
 
@@ -320,20 +355,25 @@ commitment binding, not a free hypothesis.
 the `foldStepRoots` glue from `TurnCircuitCompose`. The `turn`-equality is the boundary-turn agreement
 the layout pins.)
 
-⚑ **NARROWED 2026-07-31 with `commit_binds`**: the seam kernels must be FINITELY REPRESENTABLE
-(`hfin`/`hfin'`). The frame is still DERIVED and not assumed; it is derived on a smaller class of
-states. See `CommitSurface.commit_binds`. -/
+⚑ **NARROWED 2026-07-31**: the seam kernels must be FINITELY REPRESENTABLE (`hfin`/`hfin'`). The
+frame is still DERIVED and not assumed; it is derived on a smaller class of states.
+
+⚑ **REDUCTION FORM 2026-08-01.** The conclusion gained the `OrBreak S.StateBreak` disjunct when
+`CommitSurface.commit_binds` was deleted as vacuous. That is not a weakening of what was KNOWN — the
+old unconditional form held only under four premises no deployed surface satisfies — it is the first
+statement of this tooth that is TRUE at the deployed hash. A prover who publishes a seam commitment
+disagreeing with the threaded kernel is still rejected, unless they exhibit a Poseidon collision. -/
 theorem stateDecodeChain_frame_continuous (S : CommitSurface) (a b : DecodedStep S)
     (hfin : FiniteRepresentable a.post.kernel) (hfin' : FiniteRepresentable b.pre.kernel)
     (hturn : a.pc.turn = b.pc.turn)
     (hseam : a.pc.pubPost = b.pc.pubPre) :
-    a.post.kernel = b.pre.kernel := by
+    OrBreak S.StateBreak (a.post.kernel = b.pre.kernel) := by
   have ha : a.pc.pubPost = S.commit a.post.kernel a.pc.turn := a.decode.postBinds
   have hb : b.pc.pubPre = S.commit b.pre.kernel b.pc.turn := b.decode.preBinds
   have : S.commit a.post.kernel a.pc.turn = S.commit b.pre.kernel b.pc.turn := by
     rw [← ha, ← hb, hseam]
   rw [hturn] at this
-  exact S.commit_binds a.post.kernel b.pre.kernel b.pc.turn a.decode.postWF b.decode.preWF
+  exact S.commit_binds_orBreak a.post.kernel b.pre.kernel b.pc.turn a.decode.postWF b.decode.preWF
     hfin hfin' this
 
 /-! ## §5 — the minimal honest STARK-batch interface.
@@ -591,7 +631,8 @@ once` — is `Freshness.no_replay` / `replay_rejected_after_apply`, lifted onto 
 by `Freshness.deployed_no_replay` (the accepted-`runTurn` sequence IS a monotone `CommitChain`; the
 advance is DERIVED, not assumed). Its crypto residual is EXACTLY `Poseidon2SpongeCR` (the four
 sponge-shaped CR fields — root/node/frame/leaf — all reduce to that one hash floor via
-the historical (retired) `Freshness.poseidon2CommitSurface`) plus the PROVED nonce-monotone invariant;
+the historical `Freshness.poseidon2CommitSurface`, now the floor-free `spongeCommitSurface`) plus the
+PROVED nonce-monotone invariant;
 the deployed replacement is `CommitFaithfulRegrounded.no_replay_faithful`; the sole non-crypto
 carrier is the structural `RestHashIffFrame` (not sponge-reducible — the state carries function-valued
 components). Do NOT read "a light client that runs nothing cannot be fooled" as covering replay: it
@@ -756,14 +797,19 @@ of `seam` is certified by the commitment binding, not taken on faith.
 
 ⚑ **NARROWED 2026-07-31**: `hfin` says every threaded kernel is FINITELY REPRESENTABLE. Stated as a
 per-step hypothesis rather than a field of `DecodedStep` so the restriction is VISIBLE in the
-signature of every theorem that uses it, instead of hiding inside a carried structure. -/
+signature of every theorem that uses it, instead of hiding inside a carried structure.
+
+⚑ **REDUCTION FORM 2026-08-01** (with `stateDecodeChain_frame_continuous`). ONE `S.StateBreak`
+disjunct for the WHOLE chain, not one per adjacency — `CollisionReduce.OrBreak.isChain` folds the
+per-seam dichotomies, because a single collision anywhere is a single break. -/
 theorem turnDecodeChain_seam_kernel_derived (hash : List ℤ → ℤ) (S : CommitSurface)
     {start fin : RecChainedState} (c : TurnDecodeChain hash S start fin)
     (hfin : ∀ d ∈ c.steps, FiniteRepresentable d.pre.kernel ∧ FiniteRepresentable d.post.kernel) :
-    List.IsChain (fun a b => a.post.kernel = b.pre.kernel) c.steps := by
-  refine List.IsChain.imp_of_mem_imp ?_ c.pubSeam
-  intro a b ha hb hpub
-  exact stateDecodeChain_frame_continuous S a b (hfin a ha).2 (hfin b hb).1 hpub.1 hpub.2
+    OrBreak S.StateBreak (List.IsChain (fun a b => a.post.kernel = b.pre.kernel) c.steps) := by
+  refine OrBreak.isChain (fun i hi => ?_)
+  have hpub := List.isChain_iff_getElem.mp c.pubSeam i hi
+  exact stateDecodeChain_frame_continuous S _ _
+    (hfin _ (List.getElem_mem _)).2 (hfin _ (List.getElem_mem _)).1 hpub.1 hpub.2
 
 /-- **The per-step refinement obligation over a decoded turn.** Each decoded step's descriptor is the
 registry entry for SOME effect index `e`, and its circuit witness + faithful decode force `dispatchArm
@@ -1065,7 +1111,8 @@ structure LogDecode (LH : List Turn → ℤ) (pubLogPre pubLogPost : ℤ) (pre p
 
 /-- **FAITHFULNESS (log).** Two log-decodes of the SAME published log commitment force EQUAL receipt
 chains — pure `logHashInjective` binding, no admissibility. The log analog of
-`stateDecode_pre_faithful`/`stateDecode_post_faithful`. -/
+`StateCommitReduce.stateDecode_pre/post_faithful_orBreak` (the kernel twins; their injective
+originals were deleted 2026-08-01 as vacuous). -/
 theorem logDecode_faithful (LH : List Turn → ℤ)
     {p q : ℤ} {pre post pre' post' : RecChainedState}
     (hno : ¬ Dregg2.Circuit.LogCommitRegrounded.LogColl LH pre.log pre'.log)
@@ -1201,19 +1248,26 @@ hash collision; a forged intermediate kernel cannot satisfy the published kernel
 turn-chain BINDS the full state — receipts included.
 
 ⚑ **NARROWED 2026-07-31**: the KERNEL half now requires `hfin` (every threaded kernel finitely
-representable); the LOG half is unchanged. -/
+representable); the LOG half is unchanged.
+
+⚑ **REDUCTION FORM 2026-08-01**: the KERNEL half carries the `S.StateBreak` disjunct (its binding
+was the vacuous `CommitSurface.commit_binds`); the LOG half is already floor-free through the
+per-instance `NoLogSeamColl` (2026-07-25 bundle cutover) and contributes no disjunct. So the full
+seam is: the whole state chains, OR one of `S`'s four hash carriers has a concrete collision. -/
 theorem turnDecodeChainLog_seam_full_derived (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
     {start fin : RecChainedState} {c : TurnDecodeChain hash S start fin}
     (cl : TurnDecodeChainLog hash S LH c)
     (hfin : ∀ d ∈ c.steps, FiniteRepresentable d.pre.kernel ∧ FiniteRepresentable d.post.kernel)
     (hno : NoLogSeamColl LH (fun d : DecodedStep S => d.post.log)
       (fun d : DecodedStep S => d.pre.log) c.steps) :
-    List.IsChain (fun a b => a.post = b.pre) c.steps := by
+    OrBreak S.StateBreak (List.IsChain (fun a b => a.post = b.pre) c.steps) := by
   have hker := turnDecodeChain_seam_kernel_derived hash S c hfin
   have hlog := turnDecodeChainLog_seam_log_derived hash S LH cl hno
   -- zip the kernel-continuity and log-continuity chains, then `a.post.kernel = b.pre.kernel ∧
-  -- a.post.log = b.pre.log ⟹ a.post = b.pre` (structure eta).
-  refine List.IsChain.imp ?_ (isChain_and hker hlog)
+  -- a.post.log = b.pre.log ⟹ a.post = b.pre` (structure eta). The kernel half arrives as an
+  -- `OrBreak`, so the zip happens inside the good branch and the break passes through untouched.
+  refine OrBreak.imp (fun hkerChain => ?_) hker
+  refine List.IsChain.imp ?_ (isChain_and hkerChain hlog)
   intro a b hab
   obtain ⟨hk, hl⟩ := hab
   -- `a.post = b.pre` from equal kernels AND equal logs (the two `RecChainedState` fields, eta).
@@ -1276,9 +1330,7 @@ example (LH : List Turn → ℤ) (hLog : logHashInjective LH)
 #assert_axioms turnDecodeChainLog_seam_full_derived
 #assert_axioms turnDecodeChainLog_rejects_forged_log
 
-#assert_axioms CommitSurface.commit_binds
-#assert_axioms stateDecode_pre_faithful
-#assert_axioms stateDecode_post_faithful
+#assert_axioms CommitSurface.commit_binds_orBreak
 #assert_axioms stateDecodeChain_frame_continuous
 #assert_axioms lightclient_unfoolable
 #assert_axioms lightclient_turn_unfoolable

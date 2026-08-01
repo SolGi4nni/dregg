@@ -150,10 +150,18 @@ ratchet = os.path.join(mt_dir, "Dregg2/Verify/FloorRatchet.lean")
 rsrc = open(ratchet, encoding='utf-8', errors='replace').read() if os.path.isfile(ratchet) else ""
 bm = re.search(r'def\s+sentinelBundles\s*:.*?:=\s*\[(.*?)\]', rsrc, re.S)
 bundle_shorts = sorted({s.rsplit('.', 1)[-1] for s in re.findall(r'`([A-Za-z0-9_.]+)', bm.group(1))}) if bm else []
-if 'sentinelBundles' in rsrc and (len(bundle_shorts) < 3 or "CommitSurface" not in bundle_shorts):
+# The named witness is a PARSE CANARY, not a policy: it proves the regex above actually matched
+# something real, because a silent empty parse would leave FLOOR_RE (below) blind and this whole
+# scan would pass by seeing nothing. It must therefore name a bundle that genuinely EXISTS.
+# ⚑ It named `CommitSurface` until 2026-08-01, when that structure's four injectivity fields were
+# deleted (they asserted a compressing map into one BabyBear felt is injective — false by
+# pigeonhole) and it stopped being a floor-carrying bundle at all. Re-pointed at
+# `Poseidon2RealizedSponge`, which still carries a floor-typed field. The strength is unchanged:
+# same >= 3 floor, same "a known bundle must be present" requirement, live witness.
+if 'sentinelBundles' in rsrc and (len(bundle_shorts) < 3 or "Poseidon2RealizedSponge" not in bundle_shorts):
     sys.stderr.write(
         "check-floor-baseline-preflight: FAIL — `FloorRatchet.lean` names `sentinelBundles`, but\n"
-        "  only %d bundle name(s) parsed (need >= 3, CommitSurface among them). Fix the parse.\n"
+        "  only %d bundle name(s) parsed (need >= 3, Poseidon2RealizedSponge among them). Fix the parse.\n"
         "  parsed: %s\n" % (len(bundle_shorts), ", ".join(bundle_shorts) or "(none)"))
     sys.exit(1)
 if 'sentinelBundles' not in rsrc:

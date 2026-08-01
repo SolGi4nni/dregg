@@ -18,8 +18,12 @@ a hypothesis added **zero carriers**:
 Measured on a HEAD-pinned green tree before the fix: `lake env lean` on this exact file returned
 **EXIT=0**, `1600 grandfathered carriers` — identical to the run without it. The declaration is as
 vacuous as a floor binder and the gate had nothing to say. Thirty-two such bundles were
-grandfathered; `Dregg2.Circuit.CircuitSoundness.CommitSurface` carries FOUR refuted floors as
-fields and is reached by 409 declarations.
+grandfathered; the worst was `Dregg2.Circuit.CircuitSoundness.CommitSurface` — FOUR refuted floors
+as fields, reached by 409 declarations. ⚑ 2026-08-01: those four fields are DELETED, so that bundle
+is no longer floor-carrying and it is off `sentinelBundles`. This canary is unaffected — it always
+rode `Poseidon2RealizedSponge`, whose `spongeCR` field is still a live refuted floor. (⚠ what fell
+is the BUNDLE surface, not the binder surface: `ClosureSurface.S_live` and ~130 downstream sites
+still bind `compressInjective`/`compressNInjective`/`cellLeafInjective` directly.)
 
 ## What this file asserts
 

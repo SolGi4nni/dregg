@@ -11,15 +11,17 @@ deployed NARROW rotated-block wire commitment.
 This module instantiates the apex's `CommitSurface` at the FULL Lean commitment `recStateCommit`
 (`StateCommit.recStateCommit = cmb (cellDigest …) (RH …)`, the root that BINDS THE WHOLE KERNEL via
 `recStateCommit_binds_kernel`). Over THAT surface there is NO `wireCommit ↔ recStateCommit` seam: the
-surface root IS `recStateCommit`, so `S_live.commit_binds` (= `recStateCommit_binds_kernel`) is the
-binding directly, no reconciliation. `S_live` is exactly the surface `CircuitSoundness.CommitSurface`
+surface root IS `recStateCommit`, so `CommitSurface.commit_binds_orBreak`
+(= `StateCommitReduceRaw.recStateCommit_binds_kernel_orBreak`) is the binding directly, no
+reconciliation. `S_live` is exactly the surface `CircuitSoundness.CommitSurface`
 the VK epoch deploys.
 
 ## What instantiating at `recStateCommit` DOES discharge — and what it CANNOT (the honest finding)
 
-`S_live.commit_binds` (`recStateCommit_binds_kernel`, kernel injectivity from the CR carriers) gives
-FAITHFULNESS: the published root DETERMINES the full kernel (all 16 fields). So `StateDecode S_live pc
-pre post` pins `pre.kernel`/`post.kernel` to the published commitments uniquely — the apex's decode is
+`CommitSurface.commit_binds_orBreak` (`recStateCommit_binds_kernel_orBreak`, NO injectivity carrier)
+gives FAITHFULNESS: the published root DETERMINES the full kernel (all 16 fields), unless the
+adversary exhibits a CONCRETE collision of one of the four carriers. So `StateDecode S_live pc pre
+post` pins `pre.kernel`/`post.kernel` to the published commitments uniquely-or-a-break — the apex's decode is
 genuinely about the published endpoints, NOT arbitrary ones. THAT is the win `recStateCommit` buys, and
 the generic bridge `closedBridge_of_step` below uses it: from a per-effect `fullActionStep` between the
 DECODED endpoints, it produces `kstepAll`, with `StateDecode` certifying the endpoints are the published
@@ -64,9 +66,11 @@ post`, decode FORCED (the conclusion is about the StateDecode-pinned endpoints),
 ## The carrier set (no new floor beyond the hash CR)
 
 The bridge adds NO floor beyond the named Poseidon/Merkle CR set + `StarkSound`:
-  * `S_live` is built from the abstract CR carriers `compressInjective`/`compressNInjective`/
-    `cellLeafInjective`/`RestHashIffFrame` (the SAME set `StateCommit`/`CommitSurface` already carry).
-  * `S_live.commit_binds` is `recStateCommit_binds_kernel` over those carriers — no new axiom.
+  * `S_live` is built from the five primitives + `RestHashIffFrameFin`. ⚑ Its four
+    `compressInjective`/`compressNInjective`/`cellLeafInjective` parameters are INERT since
+    2026-08-01 (the `CommitSurface` fields they filled are deleted as refuted); see `S_live`'s
+    docstring for the measured cost of removing them and why this pass did not.
+  * The binding is `CommitSurface.commit_binds_orBreak` — no injectivity carrier, no new axiom.
   * The per-effect `<effect>Encodes` is the residual the rung ALREADY carried (it is NOT a new floor;
     it is the `WitnessDecodes`-class decode the apex already enumerates).
   * The `.log` residual is inside `<effect>Encodes` (`logAdv`) — NOT a new carried Prop; it is the
@@ -74,8 +78,9 @@ The bridge adds NO floor beyond the named Poseidon/Merkle CR set + `StarkSound`:
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The CR carriers enter only through the
-`CommitSurface` fields (hypotheses bundled into `S_live`'s constructor), never as axioms.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The CR carriers no longer enter the
+`CommitSurface` at all (its four injectivity fields are deleted); they survive only as `S_live`'s
+inert parameters and as this file's own theorem binders, never as axioms.
 NEW file; imports are read-only.
 -/
 import Dregg2.Circuit.TransferDecodeBridge
@@ -97,28 +102,52 @@ set_option autoImplicit false
 
 /-! ## §1 — `S_live`: the apex `CommitSurface` whose `.commit = recStateCommit`.
 
-The apex's `CommitSurface` IS the five `recStateCommit` primitives + the standard Poseidon CR set;
+The apex's `CommitSurface` IS the five `recStateCommit` primitives + `RestHashIffFrameFin`;
 `CommitSurface.commit S k t = recStateCommit S.CH S.RH S.cmb S.compress S.compressN k t` definitionally.
 So ANY `CommitSurface` value already has `.commit = recStateCommit` — there is no narrower deployed
-commitment to bridge to, hence NO surface seam. We expose `S_live` as the surface built from abstract CR
-carriers (mirroring exactly how the apex carries its `S`): the closure is parametric in the realizable
-Poseidon, with `S_live.commit_binds = recStateCommit_binds_kernel` proven from the carriers. -/
+commitment to bridge to, hence NO surface seam. We expose `S_live` as the surface built from those
+primitives (mirroring exactly how the apex carries its `S`), with the binding
+`CommitSurface.commit_binds_orBreak` proved floor-free over them. -/
 
-/-- **`S_live` — the live full-kernel commitment surface (`.commit = recStateCommit`).** Built from the
-abstract CR carriers (the realizable Poseidon/Merkle hash floor: `compressInjective cmb/compress`,
-`compressNInjective compressN`, `cellLeafInjective CH`, `RestHashIffFrameFin RH`). `S_live.commit k t`
-unfolds to `recStateCommit … k t = cmb (cellDigest …) (RH …)`, the root binding the WHOLE kernel; the
-binding `S_live.commit_binds` is `recStateCommit_binds_kernel` over these carriers (proven in
-`StateCommit`, repackaged by `CommitSurface.commit_binds`). No narrower wire commitment, so NO
-`wireCommit ↔ recStateCommit` seam. -/
+/-- **`S_live` — the live full-kernel commitment surface (`.commit = recStateCommit`).** Built from
+the five primitives plus `RestHashIffFrameFin RH`. `S_live.commit k t` unfolds to
+`recStateCommit … k t = cmb (cellDigest …) (RH …)`, the root binding the WHOLE kernel; the binding is
+`CommitSurface.commit_binds_orBreak` (equal roots ⟹ equal kernels, or a CONCRETE collision of one of
+the four carriers). No narrower wire commitment, so NO `wireCommit ↔ recStateCommit` seam.
+
+⚑ **THE FOUR CR PARAMETERS ARE NOW INERT (2026-08-01), AND THAT IS A NAMED, MEASURED HALT — NOT A
+DESIGN CHOICE.** `hCmb`/`hCompress`/`hCompressN`/`hLeaf` had exactly one job: filling the four
+`CommitSurface` injectivity FIELDS. Those fields are DELETED (each is refuted at deployed BabyBear
+width by pigeonhole — see the tombstone on `CircuitSoundness.CommitSurface`), so these four
+parameters now do nothing. The old docstring called them "the realizable Poseidon/Merkle hash floor";
+they are not realizable.
+
+⚠ **They are still here, and here is exactly what deleting them costs and why it did not happen in
+this pass.** MEASURED, not estimated: 132 application sites across 20 files pass them positionally
+(a uniform textual pattern, mechanically removable), but 26 DECLARATIONS would then be left binding
+`{hCmb : compressInjective cmb}` &c. with the binder appearing nowhere in their type — which is a
+hard error at every one of THEIR call sites, so their signatures must change too. Two of those 26 are
+`ClosureFanoutGenuine.ClosureReadouts` and `ClosureReadoutsRealizable.ClosureReadoutsLive`, which take
+the four as STRUCTURE PARAMETERS, are themselves `#floor_ratchet` sentinel bundles, and are applied
+positionally via `@ClosureReadouts CH RH cmb compress compressN hCmb …`. And the whole cone from this
+module upward CANNOT BE ELABORATED in the tree as it stands: a co-tenant's in-flight rotation-width
+work reds `Deos/BareCohortFloorRefuseDeployed` and `Circuit/Emit/ExactFieldsRefusalEmit` on trace-width
+`#guard`s, so `BareCohortFloorRefuseDeployed.olean` does not exist and nothing above it compiles. A
+26-signature surgery through two sentinel bundles, performed blind, is not a drain — it is a wager.
+
+⚠ **AND SHEDDING THEM WOULD NOT BY ITSELF DE-VACUATE ANYTHING.** Every one of those callers binds
+`compressInjective`/`compressNInjective`/`cellLeafInjective` in its OWN signature; those are the same
+refuted predicates one layer out, and the `#floor_ratchet` `binder` class already gates all of them.
+Shedding the BUNDLE (done) is not shedding the BINDERS (not done). That is the carrier-census
+cluster-2 sweep, and it is the next wave — do it when the rotation-width cone is green. -/
 def S_live
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
-    (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
+    (_hCmb : compressInjective cmb) (_hCompress : compressInjective compress)
+    (_hCompressN : compressNInjective compressN) (_hLeaf : cellLeafInjective CH)
     (hRest : RestHashIffFrameFin RH) : CommitSurface where
   CH := CH; RH := RH; cmb := cmb; compress := compress; compressN := compressN
-  cmbInj := hCmb; compInj := hCompress; compNInj := hCompressN; leafInj := hLeaf; restFrame := hRest
+  restFrame := hRest
 
 /-- **`S_live_commit` — `S_live.commit` IS `recStateCommit`.** The surface root over the live carriers
 is literally `recStateCommit` of the kernel (the apex's `CommitSurface.commit` definitional unfold). NO

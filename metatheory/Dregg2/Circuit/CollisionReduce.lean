@@ -60,6 +60,19 @@ theorem OrBreak.weaken (g : Break → Break') (x : OrBreak Break P) : OrBreak Br
 theorem OrBreak.resolve (hNo : ¬ Break) (x : OrBreak Break P) : P :=
   Or.elim x id (fun b => absurd b hNo)
 
+/-- **Chain lift.** If EVERY adjacency of a list binds-or-breaks, the WHOLE chain binds-or-breaks.
+The `OrBreak` analogue of `List.isChain_iff_getElem`, and the shape every per-seam binding folded
+along a decoded turn needs: a `Break` anywhere is one break for the whole chain, so the disjunct does
+not multiply with the list's length. Classical in the break only (`by_cases` on `Break` itself, which
+is a `Prop`), never in the good branch. -/
+theorem OrBreak.isChain {α : Type _} {R : α → α → Prop} {l : List α}
+    (h : ∀ (i : Nat) (hi : i + 1 < l.length),
+      OrBreak Break (R (l[i]'(Nat.lt_of_succ_lt hi)) (l[i + 1]'hi))) :
+    OrBreak Break (List.IsChain R l) := by
+  by_cases hb : Break
+  · exact Or.inr hb
+  · exact Or.inl (List.isChain_iff_getElem.mpr fun i hi => (h i hi).resolve hb)
+
 /-! ## Leaf producers — the binding bricks, repackaged as `OrBreak` -/
 
 /-- **Merkle opening** as an `OrBreak` leaf: the opened value binds, unless a sponge collision. -/
@@ -110,6 +123,7 @@ theorem OrBreak.no_resolve_of_break (hb : Break) : ¬ ∃ _ : ¬ Break, True :=
 #assert_axioms OrBreak.map₂
 #assert_axioms OrBreak.weaken
 #assert_axioms OrBreak.resolve
+#assert_axioms OrBreak.isChain
 #assert_axioms opening_orBreak
 #assert_axioms compress_orBreak
 #assert_axioms cellLeaf_orBreak

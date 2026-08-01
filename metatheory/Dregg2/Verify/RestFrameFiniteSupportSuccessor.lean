@@ -67,6 +67,7 @@ unconditional theorem (the only "floor" is `refSponge_CR`, already discharged).
 import Dregg2.Circuit.FinBindsKernel
 import Dregg2.Circuit.StateCommit
 import Dregg2.Circuit.RestFrameCardinalityFloor
+import Dregg2.Circuit.StateCommitReduce
 
 namespace Dregg2.Verify.RestFrameFiniteSupportSuccessor
 
@@ -325,8 +326,8 @@ elaborating them IS the check. -/
 
 section Inhabitant
 
-open Dregg2.Circuit.CircuitSoundness (CommitSurface StateDecode PublishedCommit
-  stateDecode_pre_faithful)
+open Dregg2.Circuit.CircuitSoundness (CommitSurface StateDecode PublishedCommit)
+open Dregg2.Circuit.StateCommitReduce (stateDecode_pre_faithful_orBreak)
 open Dregg2.Circuit.FinBindsKernel (CH_fin CH_fin_injective finInit_accountsWF)
 open Dregg2.Circuit.Freshness (spongeCompress spongeCompress_inj)
 open Dregg2.Circuit.StateCommit (AccountsWF recStateCommit)
@@ -351,33 +352,38 @@ noncomputable example : CommitSurface where
   cmb       := spongeCompress Reference.refSponge
   compress  := spongeCompress Reference.refSponge
   compressN := Reference.refSponge
-  cmbInj    := spongeCompress_inj Reference.refSponge Reference.refSponge_CR
-  compInj   := spongeCompress_inj Reference.refSponge Reference.refSponge_CR
-  compNInj  := compressNInjective_of_poseidon2CR Reference.refSponge_CR
-  leafInj   := CH_fin_injective Reference.refSponge Reference.refSponge_CR
   restFrame := restHashIffFrameFin_satisfiable
 
 /-- **★ UNIQUENESS FIRES, AND IT BITES.** Over the constructed surface, a forged pre-state that
-claims the SAME published root as `denote finInit` is REFUSED. This is `stateDecode_pre_faithful`
-applied at a real instance — the theorem that was unrefutable-and-vacuous yesterday, doing work.
+claims the SAME published root as `denote finInit` is REFUSED — UNLESS the forger exhibits a concrete
+`S.StateBreak` (a collision of `S`'s root combiner, node hash, frame sponge or cell leaf). This is
+`StateCommitReduce.stateDecode_pre_faithful_orBreak` applied at a real instance.
 
 The two `FiniteRepresentable` hypotheses are supplied honestly: `denote finInit` by construction,
 the forgery by assumption (a forger who cannot produce a finitely-supported state is outside the
 claim, which is exactly what §5b names as the remaining residual). Stated over an ARBITRARY
-`S : CommitSurface` on purpose — the surface above is what makes that quantifier non-empty, and the
-refusal itself needs no property of `S` beyond the bundle it already carries. -/
+`S : CommitSurface` on purpose — the surface above is what makes that quantifier non-empty.
+
+⚑ **THE CONCLUSION IS `S.StateBreak`, NOT `False` (2026-08-01).** It was `False`, via
+`stateDecode_pre_faithful`, which rode `CommitSurface.commit_binds` and hence the four injectivity
+fields that are refuted at deployed width — so the refusal was VACUOUS there. The break disjunct is
+the honest content: at the reference sponge (`refSponge_CR` is CLOSED and the four collision events
+are all refutable from it) the break branch is impossible and the refusal is absolute; at deployed
+width it is exactly the collision the forger must exhibit. -/
 example (S : CommitSurface) (t : Turn) (forged : RecChainedState)
     (hwf : AccountsWF forged.kernel) (hfin : FiniteRepresentable forged.kernel)
     (hne : forged.kernel ≠ denote finInit)
-    (hclaim : S.commit forged.kernel t = S.commit (denote finInit) t) : False := by
+    (hclaim : S.commit forged.kernel t = S.commit (denote finInit) t) : S.StateBreak := by
   have hdec₁ : StateDecode S ⟨S.commit (denote finInit) t, S.commit (denote finInit) t, t⟩
       ⟨denote finInit, []⟩ ⟨denote finInit, []⟩ :=
     ⟨rfl, rfl, finInit_accountsWF, finInit_accountsWF⟩
   have hdec₂ : StateDecode S ⟨S.commit (denote finInit) t, S.commit (denote finInit) t, t⟩
       forged forged :=
     ⟨hclaim.symm, hclaim.symm, hwf, hwf⟩
-  exact hne (stateDecode_pre_faithful S _ (finiteRepresentable_of_denote finInit) hfin
-    hdec₁ hdec₂).symm
+  rcases stateDecode_pre_faithful_orBreak S _ (finiteRepresentable_of_denote finInit) hfin
+    hdec₁ hdec₂ with heq | hbrk
+  · exact absurd heq.symm hne
+  · exact hbrk
 
 /-! ### ⚑ THE `FiniteRepresentable` HYPOTHESES ARE LOAD-BEARING — the binding is FALSE without them.
 
