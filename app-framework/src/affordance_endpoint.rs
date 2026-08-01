@@ -112,15 +112,17 @@ pub fn parse_auth_required(raw: &str) -> Option<AuthRequired> {
 /// Note what is missing: `"none"`. On the requirement side that label meant
 /// "ungated" to two crates and "root only" to three, so it is REFUSED rather than
 /// reinterpreted — a descriptor carrying it must say `"public"` or `"root"`.
+///
+/// The arms here are the HTTP-facing ALIASES (`"sig"`, `"impossible"`); every
+/// canonical [`Requirement::label`] spelling — including `"custom:<64 hex>"`, the
+/// one this endpoint used to emit and refuse to read back — is handled by
+/// delegating the fallback to [`Requirement::parse_label`], so the two parsers
+/// cannot drift apart on a rung again.
 pub fn parse_requirement(raw: &str) -> Option<Requirement> {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "public" => Some(Requirement::Public),
-        "root" => Some(Requirement::Root),
-        "either" => Some(Requirement::AtLeast(Credential::Either)),
-        "signature" | "sig" => Some(Requirement::AtLeast(Credential::Signature)),
-        "proof" => Some(Requirement::AtLeast(Credential::Proof)),
-        "never" | "impossible" => Some(Requirement::Never),
-        _ => None,
+        "sig" => Some(Requirement::AtLeast(Credential::Signature)),
+        "impossible" => Some(Requirement::Never),
+        other => Requirement::parse_label(other),
     }
 }
 
@@ -650,5 +652,76 @@ mod tests {
         assert_eq!(els.len(), 3);
         let admin = els.iter().find(|e| e["name"] == "admin").unwrap();
         assert_eq!(admin["fire_endpoint"], "/doc-affordances/fire/admin");
+    }
+
+    /// ⚑ THE GAP: a `Custom`-gated affordance's descriptor was WRITE-ONLY. The
+    /// surface emitted `Requirement::label()`, which was the bare word `"custom"`,
+    /// and `parse_requirement` had no arm for it — so re-reading the descriptor the
+    /// endpoint itself published failed closed at `ScaffoldError::UnknownRights`.
+    ///
+    /// This is the whole trip over the REAL emitter and the REAL parser: every rung
+    /// a surface can declare must survive `descriptor()` → `parse_requirement()`
+    /// UNCHANGED, and the two `Custom` gates must not collapse into each other.
+    #[test]
+    fn every_declared_rung_round_trips_through_the_descriptor_including_custom() {
+        let doc = cid(0xD0);
+        let vk_a = [0xA1u8; 32];
+        let vk_b = [0xB2u8; 32];
+        let declared = [
+            ("pub_", Requirement::Public),
+            ("sig_", Requirement::AtLeast(Credential::Signature)),
+            ("prf_", Requirement::AtLeast(Credential::Proof)),
+            ("eth_", Requirement::AtLeast(Credential::Either)),
+            (
+                "cusa",
+                Requirement::AtLeast(Credential::Custom { vk_hash: vk_a }),
+            ),
+            (
+                "cusb",
+                Requirement::AtLeast(Credential::Custom { vk_hash: vk_b }),
+            ),
+            ("root", Requirement::Root),
+            ("nvr_", Requirement::Never),
+        ];
+        let mut surface = AffordanceSurface::named(doc, "rungs");
+        for (name, req) in declared.iter() {
+            surface = surface.declare(CellAffordance::new(*name, req.clone(), emit_event(doc)));
+        }
+
+        let desc = surface.descriptor("/rungs");
+        assert_eq!(desc.elements.len(), declared.len());
+        for (name, req) in declared.iter() {
+            let el = desc
+                .elements
+                .iter()
+                .find(|e| &e.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from the descriptor"));
+            assert_eq!(
+                parse_requirement(&el.required_rights).as_ref(),
+                Some(req),
+                "descriptor rung {name} published `{}` and did not read back",
+                el.required_rights
+            );
+        }
+
+        // The two Custom gates name DIFFERENT verifiers and are incomparable on the
+        // lattice; a shared `"custom"` label would have made the descriptor claim
+        // they were the same gate.
+        let a = &desc
+            .elements
+            .iter()
+            .find(|e| e.name == "cusa")
+            .unwrap()
+            .required_rights;
+        let b = &desc
+            .elements
+            .iter()
+            .find(|e| e.name == "cusb")
+            .unwrap()
+            .required_rights;
+        assert_ne!(
+            a, b,
+            "two distinct Custom gates must publish distinct labels"
+        );
     }
 }

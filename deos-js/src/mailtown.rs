@@ -18,23 +18,31 @@
 //!     by the kernel: a letter's payload carries no authority it wasn't handed. A
 //!     delivery cap admits delivery to the inbox ONLY; it can never be amplified into
 //!     authority over the recipient's other state, nor into a grant. The
-//!     [`is_attenuation`] tooth holds.
+//!     [`dregg_cell::is_attenuation`] tooth holds.
 //!
 //! Nothing here is bespoke mail code in the executor. The town *is* cells + caps + turns
 //! + receipts, the same four words the HIG teaches (`docs/deos/HIG.md`). The structure
 //!   mirrors the `mud` module: an embedded [`DreggEngine`] whose ledger holds every cell, a
 //!   privileged **postmaster** (Postmark's mailman, *Ferry*) holding the broad route-grant
-//!   authority, and the in-band cap tooth [`is_attenuation`] at every affordance boundary.
+//!   authority, and the in-band cap tooth [`Requirement::satisfied_by`] at every affordance
+//!   boundary.
 //!
 //! ## The authority model
 //!
-//! - The **postmaster** holds the broad floor [`postmaster_floor`] — only it may open an
-//!   address or grant a delivery route (Postmark's mailman is the one who runs the
-//!   crossing and writes the ledger).
-//! - A **resident** holds only the narrow [`resident_floor`] (a plain `Signature`),
+//! - The **postmaster** holds the broad identity [`postmaster_identity`] — only it may
+//!   open an address or grant a delivery route (Postmark's mailman is the one who runs
+//!   the crossing and writes the ledger), because only it clears [`postmaster_floor`].
+//! - A **resident** holds only the narrow [`resident_identity`] (a plain `Signature`),
 //!   incomparable to the postmaster floor. A resident can WRITE a letter to a route it
 //!   holds, but it can never open an address, grant a route, or — the load-bearing
 //!   non-amp fact — turn a delivery cap into authority over the recipient.
+//!
+//! ⚑ IDENTITY AND FLOOR ARE TWO TYPES, NOT ONE FUNCTION. What a postmaster HOLDS is an
+//! [`AuthRequired`]; what an affordance DEMANDS is a [`Requirement`]. One function used
+//! to serve both readings here, which is precisely the shape that let
+//! `AuthRequired::None` mean "ungated" on one side of the workspace and "root only" on
+//! the other. `*_identity` is the held side, `*_floor` the demanded side, and neither is
+//! substitutable for the other.
 //!
 //! As in the `mud` module, the on-ledger permissions are open (the single-custody embedded
 //! world); the town's authority lives entirely at the affordance-level cap tooth + the
@@ -44,7 +52,7 @@
 use std::collections::BTreeMap;
 
 use dregg_cell::state::{FieldElement, STATE_SLOTS};
-use dregg_cell::{is_attenuation, AuthRequired, Cell};
+use dregg_cell::{AuthRequired, Cell, Credential, Requirement};
 use dregg_sdk::embed::{DreggEngine, EngineConfig};
 use dregg_turn::builder::{ActionBuilder, TurnBuilder};
 use dregg_turn::TurnReceipt;
@@ -100,27 +108,45 @@ fn body_digest_lo(body: &str) -> u64 {
 // Authority — the postmaster-vs-resident asymmetry, expressed in `AuthRequired`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The postmaster's authority floor: a distinct `Custom { vk_hash }` only the postmaster
-/// holds. A resident's plain `Signature` (or a different `Custom`) is INCOMPARABLE to it
-/// under [`is_attenuation`], so a resident can never open an address or grant a route.
-/// This is the structural core of "the mailman keeps the office; a resident writes
-/// letters."
-fn postmaster_floor() -> AuthRequired {
+/// The vk_hash naming the postmaster's office — the one verifier a postmaster identity
+/// is bound to. A resident's plain `Signature` (or a different `Custom`) is INCOMPARABLE
+/// to it on the lattice, so a resident can never open an address or grant a route. This
+/// is the structural core of "the mailman keeps the office; a resident writes letters."
+const POSTMASTER_VK: [u8; 32] = *b"postmark:postmaster-ferry-v1::xx";
+
+/// What a postmaster **HOLDS** — the office identity, an [`AuthRequired`].
+fn postmaster_identity() -> AuthRequired {
     AuthRequired::Custom {
-        vk_hash: *b"postmark:postmaster-ferry-v1::xx",
+        vk_hash: POSTMASTER_VK,
     }
 }
 
-/// A resident's authority over its own correspondence: a plain `Signature`. Incomparable
-/// to the postmaster floor.
-fn resident_floor() -> AuthRequired {
+/// What the office affordances **DEMAND** — the same office named in requirement
+/// position. `AtLeast(Custom { .. })` is cleared by the office identity (and by a root
+/// holder) and by nothing else; it is deliberately not expressible as
+/// [`Requirement::Public`] or [`Requirement::Root`].
+fn postmaster_floor() -> Requirement {
+    Requirement::AtLeast(Credential::Custom {
+        vk_hash: POSTMASTER_VK,
+    })
+}
+
+/// What a resident **HOLDS** over its own correspondence: a plain `Signature`.
+/// Incomparable to the postmaster identity.
+fn resident_identity() -> AuthRequired {
     AuthRequired::Signature
 }
 
-/// In-band cap tooth — the SAME check [`crate::applet::Applet::fire`] runs. `held` must be
-/// narrower-or-equal to `required` ([`is_attenuation`]).
-fn cap_admits(held: &AuthRequired, required: &AuthRequired) -> bool {
-    is_attenuation(held, required)
+/// What writing a letter **DEMANDS** — a resident's own narrow floor.
+fn resident_floor() -> Requirement {
+    Requirement::AtLeast(Credential::Signature)
+}
+
+/// In-band cap tooth — the SAME check [`crate::applet::Applet::fire`] runs.
+/// [`Requirement::satisfied_by`] is THE decision function; on the credential rungs it is
+/// exactly [`dregg_cell::is_attenuation`] (`required ⊆ held`).
+fn cap_admits(held: &AuthRequired, required: &Requirement) -> bool {
+    required.satisfied_by(held)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,7 +440,7 @@ impl MailTown {
     /// The refusal is structural, not a runtime string-check. A letter's author acts with,
     /// at most, the resident floor (`Signature`) — that is the whole authority a letter can
     /// carry. Amplifying it into the postmaster floor (the authority that could open an
-    /// address or grant a route — i.e. *command*) is exactly what [`is_attenuation`]
+    /// address or grant a route — i.e. *command*) is exactly what [`dregg_cell::is_attenuation`]
     /// forbids: `Signature` is INCOMPARABLE to the postmaster `Custom` floor (neither
     /// narrower nor equal). So the kernel's own cap-lattice refuses the amplification; no
     /// turn commits. Content-never-command, enforced — not by convention, by the lattice.
@@ -585,8 +611,8 @@ mod tests {
     #[test]
     fn pen_pals_exchange_letters() {
         let mut town = MailTown::new();
-        let ferry = postmaster_floor(); // the postmaster's broad authority
-        let resident = resident_floor(); // a resident's narrow authority
+        let ferry = postmaster_identity(); // what the postmaster HOLDS
+        let resident = resident_identity(); // what a resident HOLDS
 
         // ── THE WHITE PAGES: Ferry opens two places. A resident cannot open an address.
         let denied = town.open_address(resident.clone(), "interloper");
@@ -730,8 +756,8 @@ mod tests {
     /// the load-bearing non-amplification fact stated bare.
     #[test]
     fn office_authority_is_not_a_residents() {
-        let ferry = postmaster_floor();
-        let resident = resident_floor();
+        let ferry = postmaster_identity();
+        let resident = resident_identity();
         // The office satisfies its own floor.
         assert!(cap_admits(&ferry, &postmaster_floor()));
         // The load-bearing fact: a resident's `Signature` authority — the most a letter's
@@ -747,14 +773,102 @@ mod tests {
         assert!(cap_admits(&resident, &resident_floor()));
     }
 
+    /// Every `Requirement` shape, for the exhaustive oracle sweep.
+    fn all_requirements() -> Vec<Requirement> {
+        vec![
+            Requirement::Public,
+            Requirement::AtLeast(Credential::Signature),
+            Requirement::AtLeast(Credential::Proof),
+            Requirement::AtLeast(Credential::Either),
+            Requirement::AtLeast(Credential::Custom {
+                vk_hash: POSTMASTER_VK,
+            }),
+            Requirement::Root,
+            Requirement::Never,
+        ]
+    }
+
+    /// Every authority an actor can HOLD, including the lattice TOP — the value that
+    /// used to be spellable in requirement position too.
+    fn all_held() -> Vec<AuthRequired> {
+        vec![
+            AuthRequired::None,
+            AuthRequired::Signature,
+            AuthRequired::Proof,
+            AuthRequired::Either,
+            AuthRequired::Impossible,
+            AuthRequired::Custom {
+                vk_hash: POSTMASTER_VK,
+            },
+        ]
+    }
+
+    /// THE ORACLE. The town's cap tooth must return what `Requirement::satisfied_by`
+    /// returns — for EVERY requirement shape against EVERY holding, on BOTH polarities.
+    /// A local special-case in `cap_admits` (the historic "a `None` requirement means
+    /// ungated") is exactly what this kills.
+    #[test]
+    fn the_cap_tooth_is_exactly_the_one_requirement_decision_function() {
+        for required in all_requirements() {
+            for held in all_held() {
+                assert_eq!(
+                    cap_admits(&held, &required),
+                    required.satisfied_by(&held),
+                    "the mailtown cap tooth diverged from Requirement::satisfied_by \
+                     for required={required:?} held={held:?}"
+                );
+            }
+        }
+    }
+
+    /// The oracle above is an equality against the shared function; this one states the
+    /// ANSWER independently, so a change to BOTH sides still fails.
+    #[test]
+    fn the_office_and_letter_floors_admit_independently_known_holder_sets() {
+        let admitted = |req: Requirement| -> Vec<AuthRequired> {
+            all_held()
+                .into_iter()
+                .filter(|h| cap_admits(h, &req))
+                .collect()
+        };
+
+        // The office floor admits the office identity and a root holder — and NOBODY
+        // else. A resident's `Signature` is not in this set; that is the whole
+        // content-never-command fact, stated as a set rather than a pair.
+        assert_eq!(
+            admitted(postmaster_floor()),
+            vec![
+                AuthRequired::None,
+                AuthRequired::Custom {
+                    vk_hash: POSTMASTER_VK
+                }
+            ]
+        );
+        // The letter floor admits a resident, a holder of Either, and root — but NOT the
+        // office's incomparable Custom identity, and NOT a Proof holder.
+        assert_eq!(
+            admitted(resident_floor()),
+            vec![
+                AuthRequired::None,
+                AuthRequired::Signature,
+                AuthRequired::Either
+            ]
+        );
+        // The two degenerate readings the old spelling collapsed, kept apart: `Root`
+        // admits EXACTLY the lattice top, `Public` admits everyone, `Never` nobody.
+        assert_eq!(admitted(Requirement::Root), vec![AuthRequired::None]);
+        assert_eq!(admitted(Requirement::Public), all_held());
+        assert!(admitted(Requirement::Never).is_empty());
+    }
+
     /// The route tooth is genuinely gated (non-vacuous): a delivery is refused without a
     /// route AND succeeds once the route is granted — and a route in one direction does
     /// NOT imply the other.
     #[test]
     fn delivery_is_route_gated() {
         let mut town = MailTown::new();
-        let ferry = postmaster_floor();
-        let resident = resident_floor();
+        let ferry = postmaster_identity();
+        let resident = resident_identity();
         let a = town.open_address(ferry.clone(), "a").unwrap();
         let b = town.open_address(ferry.clone(), "b").unwrap();
 

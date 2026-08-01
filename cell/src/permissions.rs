@@ -227,24 +227,40 @@ impl Requirement {
     }
 
     /// A short stable label (`"public"`, `"signature"`, `"proof"`, `"either"`,
-    /// `"custom"`, `"root"`, `"never"`) — the wire/UI spelling, and the inverse of
-    /// [`Requirement::parse_label`].
-    pub fn label(&self) -> &'static str {
+    /// `"custom:<64 hex>"`, `"root"`, `"never"`) — the wire/UI spelling, and the
+    /// inverse of [`Requirement::parse_label`] on EVERY variant.
+    ///
+    /// ⚑ The `Custom` rung carries its `vk_hash` in the label. It used to emit a bare
+    /// `"custom"`, which no parser accepted — so a `Custom`-gated affordance's
+    /// descriptor could be EMITTED and never read back (it failed closed at
+    /// `ScaffoldError::UnknownRights`). A bare `"custom"` cannot round-trip even in
+    /// principle: `AtLeast(Custom { vk_hash })` NAMES a registered verifier
+    /// (`WitnessedPredicateRegistry`), and two `Custom` requirements with different
+    /// `vk_hash`es are INCOMPARABLE on the lattice — dropping the hash does not lose
+    /// detail, it loses the identity of the gate.
+    pub fn label(&self) -> String {
         match self {
-            Requirement::Public => "public",
-            Requirement::AtLeast(Credential::Signature) => "signature",
-            Requirement::AtLeast(Credential::Proof) => "proof",
-            Requirement::AtLeast(Credential::Either) => "either",
-            Requirement::AtLeast(Credential::Custom { .. }) => "custom",
-            Requirement::Root => "root",
-            Requirement::Never => "never",
+            Requirement::Public => "public".to_string(),
+            Requirement::AtLeast(Credential::Signature) => "signature".to_string(),
+            Requirement::AtLeast(Credential::Proof) => "proof".to_string(),
+            Requirement::AtLeast(Credential::Either) => "either".to_string(),
+            Requirement::AtLeast(Credential::Custom { vk_hash }) => {
+                format!("{CUSTOM_LABEL_PREFIX}{}", hex32(vk_hash))
+            }
+            Requirement::Root => "root".to_string(),
+            Requirement::Never => "never".to_string(),
         }
     }
 
-    /// Parse a [`Requirement::label`]. `None` for an unknown label — and note there
-    /// is deliberately no `"none"` spelling: the old string meant either `public` or
-    /// `root` depending on who read it, so a descriptor carrying it must be rewritten
-    /// rather than reinterpreted.
+    /// Parse a [`Requirement::label`]. `None` for an unknown label.
+    ///
+    /// Two spellings are deliberately REFUSED rather than reinterpreted:
+    ///
+    /// * `"none"` — the old string meant either `public` or `root` depending on who
+    ///   read it, so a descriptor carrying it must be rewritten.
+    /// * a bare `"custom"` — it names no verifier, and inventing a `vk_hash` to
+    ///   accept it would manufacture a gate nobody declared. Only
+    ///   `"custom:<64 hex>"` parses.
     pub fn parse_label(label: &str) -> Option<Requirement> {
         match label {
             "public" => Some(Requirement::Public),
@@ -253,14 +269,47 @@ impl Requirement {
             "either" => Some(Requirement::AtLeast(Credential::Either)),
             "root" => Some(Requirement::Root),
             "never" => Some(Requirement::Never),
-            _ => None,
+            other => other
+                .strip_prefix(CUSTOM_LABEL_PREFIX)
+                .and_then(unhex32)
+                .map(|vk_hash| Requirement::AtLeast(Credential::Custom { vk_hash })),
         }
     }
 }
 
+/// The `Custom` rung's label prefix. The 64 hex chars after it are the `vk_hash`;
+/// see [`Requirement::label`] for why a bare `"custom"` is not a spelling.
+const CUSTOM_LABEL_PREFIX: &str = "custom:";
+
+/// Lower-case hex of a 32-byte hash — the `custom:` label payload.
+fn hex32(bytes: &[u8; 32]) -> String {
+    let mut out = String::with_capacity(64);
+    for b in bytes {
+        out.push(char::from_digit((b >> 4) as u32, 16).expect("nibble < 16"));
+        out.push(char::from_digit((b & 0x0f) as u32, 16).expect("nibble < 16"));
+    }
+    out
+}
+
+/// Inverse of [`hex32`]. `None` unless `s` is EXACTLY 64 hex digits — a short, long
+/// or non-hex payload names no verifier and must refuse, not truncate.
+fn unhex32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    let mut chars = s.chars();
+    for slot in out.iter_mut() {
+        let hi = chars.next()?.to_digit(16)?;
+        let lo = chars.next()?.to_digit(16)?;
+        *slot = ((hi << 4) | lo) as u8;
+    }
+    Some(out)
+}
+
 impl std::fmt::Display for Requirement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label())
+        f.write_str(&self.label())
     }
 }
 
@@ -531,12 +580,60 @@ mod requirement_tests {
             Requirement::AtLeast(Credential::Signature),
             Requirement::AtLeast(Credential::Proof),
             Requirement::AtLeast(Credential::Either),
+            Requirement::AtLeast(Credential::Custom {
+                vk_hash: [0xC5; 32],
+            }),
             Requirement::Root,
             Requirement::Never,
         ] {
-            assert_eq!(Requirement::parse_label(req.label()), Some(req.clone()));
+            assert_eq!(Requirement::parse_label(&req.label()), Some(req.clone()));
         }
         // The ambiguous old spelling is refused, not reinterpreted.
         assert_eq!(Requirement::parse_label("none"), None);
+    }
+
+    #[test]
+    fn the_custom_label_carries_the_vk_hash_and_a_bare_custom_is_refused() {
+        // ⚑ THE GAP THIS CLOSES: `label()` emitted a bare `"custom"` that NO parser
+        // accepted, so a `Custom`-gated affordance's descriptor was write-only.
+        let a = Requirement::AtLeast(Credential::Custom {
+            vk_hash: [0x0A; 32],
+        });
+        let b = Requirement::AtLeast(Credential::Custom {
+            vk_hash: [0x0B; 32],
+        });
+
+        // The label NAMES the verifier — it is not the constant string `"custom"`.
+        assert_eq!(a.label(), format!("custom:{}", "0a".repeat(32)));
+        assert_ne!(
+            a.label(),
+            b.label(),
+            "two Custom requirements are INCOMPARABLE on the lattice; one shared \
+             label would collapse two different gates into one descriptor"
+        );
+        assert!(!a.satisfied_by(&AuthRequired::Custom {
+            vk_hash: [0x0B; 32]
+        }));
+
+        // And the parse is by vk_hash, not by the word.
+        assert_eq!(Requirement::parse_label(&a.label()), Some(a));
+        assert_eq!(Requirement::parse_label(&b.label()), Some(b));
+
+        // A payload that names no verifier REFUSES rather than inventing one — the
+        // same doctrine as `"none"`.
+        assert_eq!(Requirement::parse_label("custom"), None);
+        assert_eq!(Requirement::parse_label("custom:"), None);
+        assert_eq!(
+            Requirement::parse_label(&format!("custom:{}", "0a".repeat(31))),
+            None
+        );
+        assert_eq!(
+            Requirement::parse_label(&format!("custom:{}", "0a".repeat(33))),
+            None
+        );
+        assert_eq!(
+            Requirement::parse_label(&format!("custom:{}zz", "0a".repeat(31))),
+            None
+        );
     }
 }

@@ -7,10 +7,11 @@
 //!
 //! THE DISCIPLINE: this module imports the GENUINE dregg gate, never a parallel one.
 //! It depends ONLY on `dregg-cell` — the home of:
-//!   * [`is_attenuation`] (`required ⊆ held`, the proven attenuation lattice — the
-//!     SAME `cell/src/capability.rs:603` predicate the firmament runs for every
-//!     capability),
-//!   * [`AuthRequired`] (the real cap lattice),
+//!   * [`Requirement::satisfied_by`] (THE decision function — `required ⊆ held` over
+//!     the proven attenuation lattice, i.e. the SAME
+//!     [`dregg_cell::is_attenuation`] predicate the firmament runs for every
+//!     capability, with the two degenerate lattice ends given their own names),
+//!   * [`AuthRequired`] (the real cap lattice, on the HELD side),
 //!   * [`CellState`] + [`CellProgram`] + [`StateConstraint`] (the real live-state gate
 //!     — the SAME `CellProgram::evaluate` the executor runs every turn).
 //!
@@ -27,7 +28,7 @@
 //! the signal changes — the runtime dual of those Lean predicates.
 
 use dregg_cell::state::{CellState, FieldElement, STATE_SLOTS};
-use dregg_cell::{is_attenuation, AuthRequired, CellProgram, StateConstraint};
+use dregg_cell::{AuthRequired, CellProgram, Credential, Requirement, StateConstraint};
 
 /// Slot 0 of the proposal cell carries its `status` (the council exemplar's state machine).
 pub const STATUS_SLOT: usize = 0;
@@ -182,11 +183,22 @@ impl Viewer {
     }
 }
 
-/// The **cap-gate** — `required ⊆ held` via the GENUINE [`dregg_cell::is_attenuation`].
-/// This is THE gate, not a parallel role check: the same predicate `delegate.rs` runs to
-/// admit a child surface and the membrane runs to compose a reshare.
-pub fn cap_ok(held: &AuthRequired, required: &AuthRequired) -> bool {
-    is_attenuation(held, required)
+/// The **cap-gate** — is a holder of `held` admitted by `required`? THE decision
+/// function [`Requirement::satisfied_by`], not a parallel role check: for the four
+/// credential rungs it IS the GENUINE [`dregg_cell::is_attenuation`] (`required ⊆
+/// held`), the same predicate `delegate.rs` runs to admit a child surface and the
+/// membrane runs to compose a reshare.
+///
+/// ⚑ `required` is a [`Requirement`], NOT an [`AuthRequired`]. This entry point used
+/// to take the raw lattice element, which made `AuthRequired::None` spellable here —
+/// the value that read as "ungated" to some gates in the workspace and "root only" to
+/// others. It is not spellable now: a caller demanding the lattice TOP must say
+/// [`Requirement::Root`] and one demanding nothing must say [`Requirement::Public`],
+/// and the two are visibly different predicates (see the oracle in this module's
+/// tests). The HELD side stays [`AuthRequired`] — there the TOP genuinely means "the
+/// widest authority", which is exactly what the holder of it has.
+pub fn cap_ok(held: &AuthRequired, required: &Requirement) -> bool {
+    required.satisfied_by(held)
 }
 
 /// The **state-gate** — does the REAL [`CellProgram::evaluate`] admit firing in the
@@ -246,7 +258,7 @@ impl GateVerdict {
 /// Evaluate the cap∧state verdict (no window) for a gated affordance like `vote`/`approve`.
 pub fn gated_verdict(
     held: &AuthRequired,
-    required: &AuthRequired,
+    required: &Requirement,
     program: &CellProgram,
     slots: &CellSlots,
 ) -> GateVerdict {
@@ -261,7 +273,7 @@ pub fn gated_verdict(
 /// `resolve` (the deadline tooth — twin of `Reactive.fireReactive_after_deadline_refuses`).
 pub fn reactive_verdict(
     held: &AuthRequired,
-    required: &AuthRequired,
+    required: &Requirement,
     program: &CellProgram,
     slots: &CellSlots,
     open: u64,
@@ -281,20 +293,123 @@ const _: () = assert!(STATE_SLOTS > TALLY_SLOT);
 mod tests {
     use super::*;
 
+    /// The councillor/member ballot requirement, in `Requirement` spelling.
+    fn either_req() -> Requirement {
+        Requirement::AtLeast(Credential::Either)
+    }
+
     #[test]
     fn cap_tooth_is_the_real_is_attenuation() {
         // councillor (Either) clears a Signature-or-Either requirement; member (Signature)
         // does NOT clear an Either requirement; outsider (Custom) is incomparable.
-        assert!(cap_ok(&AuthRequired::Either, &AuthRequired::Either));
-        assert!(!cap_ok(&AuthRequired::Signature, &AuthRequired::Either));
+        assert!(cap_ok(&AuthRequired::Either, &either_req()));
+        assert!(!cap_ok(&AuthRequired::Signature, &either_req()));
         assert!(!cap_ok(
             &AuthRequired::Custom {
                 vk_hash: [0x9E; 32]
             },
-            &AuthRequired::Either
+            &either_req()
         ));
         // and a Signature holder clears a Signature requirement (the `comment` baseline).
-        assert!(cap_ok(&AuthRequired::Signature, &AuthRequired::Signature));
+        assert!(cap_ok(
+            &AuthRequired::Signature,
+            &Requirement::AtLeast(Credential::Signature)
+        ));
+    }
+
+    /// Every `Requirement` shape, for the exhaustive oracle sweep.
+    fn all_requirements() -> Vec<Requirement> {
+        vec![
+            Requirement::Public,
+            Requirement::AtLeast(Credential::Signature),
+            Requirement::AtLeast(Credential::Proof),
+            Requirement::AtLeast(Credential::Either),
+            Requirement::AtLeast(Credential::Custom {
+                vk_hash: [0x9E; 32],
+            }),
+            Requirement::Root,
+            Requirement::Never,
+        ]
+    }
+
+    /// Every authority a viewer can HOLD — including the lattice TOP, the value that
+    /// used to be spellable on the required side too.
+    fn all_held() -> Vec<AuthRequired> {
+        vec![
+            AuthRequired::None,
+            AuthRequired::Signature,
+            AuthRequired::Proof,
+            AuthRequired::Either,
+            AuthRequired::Impossible,
+            AuthRequired::Custom {
+                vk_hash: [0x9E; 32],
+            },
+        ]
+    }
+
+    #[test]
+    fn the_cap_tooth_is_exactly_the_one_requirement_decision_function() {
+        // THE ORACLE. This prototype's reactive gate must return what
+        // `Requirement::satisfied_by` returns — for EVERY requirement shape against
+        // EVERY holding, on BOTH polarities, not just the pair the council demo
+        // exercises. A local special-case here (the historic `None => true`) is
+        // exactly what this kills.
+        for required in all_requirements() {
+            for held in all_held() {
+                assert_eq!(
+                    cap_ok(&held, &required),
+                    required.satisfied_by(&held),
+                    "the leptos cap tooth diverged from Requirement::satisfied_by \
+                     for required={required:?} held={held:?}"
+                );
+                // …and the cap conjunct of the FULL verdict is the same function, so
+                // a special case cannot hide one layer up.
+                let v = gated_verdict(
+                    &held,
+                    &required,
+                    &pending_precondition(),
+                    &CellSlots::pending(),
+                );
+                assert_eq!(v.cap, required.satisfied_by(&held));
+            }
+        }
+    }
+
+    #[test]
+    fn root_public_and_never_admit_independently_known_viewer_sets() {
+        // The oracle above is an equality against the shared function; this one states
+        // the ANSWER independently, so a change to BOTH sides still fails.
+        let admitted = |req: Requirement| -> Vec<AuthRequired> {
+            all_held().into_iter().filter(|h| cap_ok(h, &req)).collect()
+        };
+
+        // `Root` admits EXACTLY the lattice top — a councillor's `Either` does NOT
+        // clear it. This is the half of the old `AuthRequired::None` reading that
+        // three crates meant.
+        assert_eq!(admitted(Requirement::Root), vec![AuthRequired::None]);
+        // `Public` admits everyone, including a viewer holding nothing usable. This is
+        // the OTHER half two crates meant by the same value.
+        assert_eq!(admitted(Requirement::Public), all_held());
+        // `Never` admits nobody, not even root.
+        assert!(admitted(Requirement::Never).is_empty());
+        // The councillor tier: the top and Either — NOT Signature (a member), NOT
+        // Proof, NOT the outsider's incomparable Custom.
+        assert_eq!(
+            admitted(Requirement::AtLeast(Credential::Either)),
+            vec![AuthRequired::None, AuthRequired::Either]
+        );
+        // The outsider's own identity clears its own Custom gate and nothing else's.
+        assert_eq!(
+            admitted(Requirement::AtLeast(Credential::Custom {
+                vk_hash: [0x9E; 32]
+            })),
+            vec![
+                AuthRequired::None,
+                AuthRequired::Custom {
+                    vk_hash: [0x9E; 32]
+                }
+            ]
+        );
     }
 
     #[test]
@@ -317,20 +432,10 @@ mod tests {
         let prog = pending_precondition();
         let pending = CellSlots::pending();
         // councillor + PENDING ⇒ LIT.
-        let v = gated_verdict(
-            &AuthRequired::Either,
-            &AuthRequired::Either,
-            &prog,
-            &pending,
-        );
+        let v = gated_verdict(&AuthRequired::Either, &either_req(), &prog, &pending);
         assert!(v.lit());
         // member + PENDING ⇒ DARK on the cap tooth (right state, wrong caps).
-        let v = gated_verdict(
-            &AuthRequired::Signature,
-            &AuthRequired::Either,
-            &prog,
-            &pending,
-        );
+        let v = gated_verdict(&AuthRequired::Signature, &either_req(), &prog, &pending);
         assert!(!v.lit() && v.dark_reason().unwrap().starts_with("cap tooth"));
         // councillor + RESOLVED ⇒ DARK on the state tooth (right caps, wrong state).
         let resolved = CellSlots {
@@ -338,12 +443,7 @@ mod tests {
             tally: 1,
             height: 0,
         };
-        let v = gated_verdict(
-            &AuthRequired::Either,
-            &AuthRequired::Either,
-            &prog,
-            &resolved,
-        );
+        let v = gated_verdict(&AuthRequired::Either, &either_req(), &prog, &resolved);
         assert!(!v.lit() && v.dark_reason().unwrap().starts_with("state tooth"));
     }
 
@@ -353,24 +453,10 @@ mod tests {
         let mut pending = CellSlots::pending();
         pending.height = 5;
         // inside [0,10] ⇒ window passes; at height 11 ⇒ window tooth darkens.
-        let v = reactive_verdict(
-            &AuthRequired::Either,
-            &AuthRequired::Either,
-            &prog,
-            &pending,
-            0,
-            10,
-        );
+        let v = reactive_verdict(&AuthRequired::Either, &either_req(), &prog, &pending, 0, 10);
         assert!(v.lit());
         pending.height = 11;
-        let v = reactive_verdict(
-            &AuthRequired::Either,
-            &AuthRequired::Either,
-            &prog,
-            &pending,
-            0,
-            10,
-        );
+        let v = reactive_verdict(&AuthRequired::Either, &either_req(), &prog, &pending, 0, 10);
         assert!(!v.lit() && v.dark_reason().unwrap().starts_with("window tooth"));
     }
 

@@ -687,13 +687,25 @@ impl Board {
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let coord = Coord::new(row, col);
-                // THE GATE — both axes, both REAL:
-                //  (a) the player's identity must authorize the tile's vision
-                //      requirement (window rights, the REAL is_attenuation). The
-                //      tile's requirement is the side's own identity (a friendly
-                //      tile) — a viewer of the WRONG side is incomparable, refused.
+                // THE GATE — two axes, and ONLY ONE OF THEM DECIDES ANYTHING HERE:
+                //  (a) the identity axis is TRIVIALLY SATISFIED AT THIS CALL SITE and
+                //      is not a fog gate. `project_for` renders the board AS `side`:
+                //      `vision.window.rights` is `side_rights(side)` (see
+                //      `vision_cap_for`) and the tile requirement is the same value,
+                //      so `is_attenuation` compares an identity with itself and is
+                //      constant `true`. Measured, not assumed: forcing this conjunct
+                //      to `true` leaves all 145 crate tests green. It is kept only so
+                //      the axis survives if the vision cap ever becomes
+                //      viewer-supplied — it is NOT what refuses the enemy.
+                //      ⚑ THE REAL CROSS-SIDE REFUSAL IS ELSEWHERE, and is genuinely
+                //      gated: `can_rehydrate_tile` (through the real `Membrane`, where
+                //      viewer and tile-owner are INDEPENDENT arguments) and the
+                //      affordance cap-gate on `side_requirement(side)` (below), whose
+                //      incomparable `Custom` identities are what
+                //      `the_fog_is_the_real_is_attenuation_not_a_flag` pins.
                 //  (b) the tile-origin must be in the player's vision frustum (the
-                //      REAL may_fetch over the fetch-allowlist).
+                //      REAL may_fetch over the fetch-allowlist) — this is the conjunct
+                //      that actually varies per tile here.
                 let tile_requirement = side_rights(side); // the tile is gated to THIS side's view
                 let identity_ok = is_attenuation(&vision.window.rights, &tile_requirement);
                 let frustum_ok = vision.may_fetch(&coord.origin());
