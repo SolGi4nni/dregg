@@ -462,7 +462,7 @@ theorem chipSoundN_implies_chipSound (permOut : List ℤ → List ℤ)
   | nil =>
       rw [hpo] at hl; simp [CHIP_OUT_LANES] at hl
   | cons d lanes =>
-      refine ⟨ins, lanes, hins, ?_, ?_⟩
+      refine ⟨ins, lanes, chipArity_le_rate hins, ?_, ?_⟩
       · have : (d :: lanes).length = CHIP_OUT_LANES := by rw [← hpo]; exact hl
         simp only [List.length_cons] at this
         omega
