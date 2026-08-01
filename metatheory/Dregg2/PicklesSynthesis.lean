@@ -40,6 +40,10 @@ never `EffectVmEmitV2`):
       (5-bit chained scalar-mul step; both rows satisfy `varBaseMulConstraints` over `ZMod pN`)
   * `Dregg2.Circuit.Emit.KimchiRenderEndoMul`       — CURVE gate: a REAL `endo_mul` circuit
       (4-bit endo-optimized step; both rows satisfy `endoMulConstraints` over `ZMod pN`)
+  * `Dregg2.Circuit.Emit.WitnessBuilder`      — the reusable witness-assembly core (compute → place →
+      compose): reproduces `poseidonWitness` byte-identically through the combinator (`#guard`) and
+      COMPOSES two gates sharing a copied wire with a consistent shared cell (`place`'s copy-permutation
+      σ holds — `by decide` on the concrete circuit, falsifiable)
   * `Dregg2.Bridge.PicklesR3BranchDataDiff`   — R3: the branch_data prefix-mask pack (vs devnet block)
   * `Dregg2.Bridge.PicklesStatementDiff`      — R3: the WHOLE Wrap statement packing byte-exact
   * `Dregg2.Bridge.PicklesStepStatementDiff`  — R3: the Step per-proof layout + `fq=Type2/Fq` field-key
@@ -61,6 +65,7 @@ import Dregg2.Circuit.Emit.KimchiRenderCompleteAdd
 import Dregg2.Circuit.Emit.KimchiRenderEndoMulScalar
 import Dregg2.Circuit.Emit.KimchiRenderVarBaseMul
 import Dregg2.Circuit.Emit.KimchiRenderEndoMul
+import Dregg2.Circuit.Emit.WitnessBuilder
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff
