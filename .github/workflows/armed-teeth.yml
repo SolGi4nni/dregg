@@ -740,7 +740,7 @@ jobs:
 
           # Measured 2026-07-31. A floor is a RATCHET: raise it when the set grows, NEVER
           # lower one to make a red lane green.
-          FLOOR_DESKTOP_TESTS=4
+          FLOOR_DESKTOP_TESTS=6
 
           log=/tmp/gpui-teeth.log
           cargo test -p starbridge-v2 --features native-full \
@@ -748,6 +748,8 @@ jobs:
             --test deos_desktop_editor_types_to_heap \
             --test deos_desktop_conflict_is_a_state \
             --test deos_desktop_world_explorer_and_spotter \
+            --test two_instance_multiplayer_session \
+            --test branch_stitch_settlement_sound_multiplayer \
             --no-fail-fast 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
 
