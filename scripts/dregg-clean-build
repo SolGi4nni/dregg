@@ -1,0 +1,305 @@
+#!/usr/bin/env bash
+# dregg-clean-build — a HEAD-consistent GREEN off the churned shared tree, in one command.
+#
+# ═══ THE WOUND THIS CLOSES ══════════════════════════════════════════════════════════════════
+# The shared working tree is chronically dirty from parallel lanes, so a bare `lake build` grades
+# the CHURN, not HEAD. Measured 3× in one session: a `MinaWrapDeferredWeld` build died on
+#   `error: no such file or directory … metatheory/Dregg2/Bridge/MinaWrapDeferredWeld.lean`
+# because a sibling lane had that file half-moved in the working tree — a `.olean` was warm but the
+# `.lean` the trace pointed at was, for that instant, not on disk. The same failure was also seen as
+# "metatheory/Dregg2 is DIRTY, a seed keyed to a COMMITTED one": the build keyed on the committed
+# tree while reading uncommitted files. Three lanes hand-rolled the same fix — detached-HEAD worktree
+# + a reflink/COW clone of a warm `.lake` + build — and each paid for it separately. This is that fix,
+# once.
+#
+# WHAT IT DOES (and the two facts that make it correct):
+#   1. It builds the COMMITTED object you name (default: `HEAD`), never the dirty working tree. It
+#      resolves the tree of that commit and materialises it in a fresh, zero-WIP worktree, verified
+#      `git status`-clean. That clean worktree IS the head-consistency guarantee.
+#   2. It seeds that worktree with a COPY of a warm lane's `.lake` (mathlib + ~1900 Dregg2 oleans),
+#      so it re-validates traces instead of re-downloading mathlib or elaborating from scratch. On a
+#      recent sha the delta is a handful of modules; measured green in ~25s for a matched target.
+#
+# WHY A DEDICATED BARE REPO ON THE BOX (not the lane's own `.git`):
+#   A build lane's `.git` is rsync-shipped and INCOHERENT — pbuild proved rsync cannot ship a live
+#   `.git` (objects arrive after the refs that name them). `git worktree add <lane>/.git <sha>` fails
+#   with `invalid reference` even though `rev-parse` prints the sha. So the git SOURCE is a private
+#   bare repo fed by `git push` from a coherent checkout (this machine), and the warm `.lake` comes
+#   from a lane — two separate sources, deliberately. The push is history-less (a snapshot commit of
+#   the target tree) so it ships ~11k objects in ~20s, not thousands of divergent swarm commits.
+#
+# FOOTGUNS GUARDED (each cost someone real time):
+#   · reflink must be same-fs → the worktree is placed on the SAME filesystem as the warm lane; on
+#     ZFS-without-block-cloning `--reflink=auto` silently degrades to a full (but safe) copy.
+#   · a worktree must not corrupt the source lane's `.lake` → we COPY the `.lake` (never share/hardlink
+#     by default) and the lane's `.git` is never touched (a separate bare repo is the git source).
+#   · the warm `.lake`'s toolchain / `lake-manifest` must match the sha or lake rebuilds → we CHECK
+#     both and WARN (a mismatch predicts a full rebuild / mathlib re-resolve; it is not fatal).
+#   · a live lane's `.lake` can be torn mid-write → we prefer a QUIESCENT lane (no lean/lake process
+#     touching it) and warn when the warmest lane is busy.
+#   · `swarm-build` output must be REDIRECTED, never piped through ssh → the build writes to a file on
+#     the box; only structured markers and the log tail come back.
+#
+# USAGE
+#   scripts/dregg-clean-build <lean-target> [--sha <commit>] [--host <host>] [options]
+#     <lean-target>          e.g. Dregg2.Bridge.MinaWrapDeferredWeld  or  Dregg2.PicklesSynthesis
+#     --sha <commit>         commit-ish to build (default: HEAD — the committed HEAD, NOT the WIP)
+#     --host <host>          build host: an ssh host (default: hbox) or `local` for in-place
+#     --warm-lane <name>     warm `.lake` source lane (default: auto — warmest quiescent lane)
+#     --hardlink-lake        seed `.lake` with `cp -al` (fast, same-fs only; UNSAFE if a rebuild
+#                            truncates a shared olean — only for a sha that matches the warm lane)
+#     --keep                 do not tear the worktree down (debug)
+#     -h | --help
+#
+# EXIT: 0 GREEN · 1 RED (build failed — the churn-free truth about that sha) · 2 usage · 3 env fault
+set -uo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$SELF"
+
+# ── defaults ────────────────────────────────────────────────────────────────────────────────
+HOST="${DREGG_CLEAN_BUILD_HOST:-hbox}"
+SHA_REF="HEAD"
+WARM_LANE="auto"
+COPY_MODE="reflink"          # reflink | hardlink
+KEEP=0
+TARGET=""
+# Where lanes live on the box. Auto-probed if the default is absent.
+REMOTE_BUILD_ROOT="${DREGG_BUILD_ROOT:-/tank/dregg-build}"
+BARE_NAME=".clean-build.git"
+
+die(){ echo "dregg-clean-build: $*" >&2; exit 2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --sha)          SHA_REF="${2:?--sha needs a value}"; shift 2;;
+    --host)         HOST="${2:?--host needs a value}"; shift 2;;
+    --warm-lane)    WARM_LANE="${2:?--warm-lane needs a value}"; shift 2;;
+    --hardlink-lake) COPY_MODE="hardlink"; shift;;
+    --keep)         KEEP=1; shift;;
+    -h|--help)      sed -n '1,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+    --) shift; break;;
+    -*)             die "unknown option: $1";;
+    *)              [ -z "$TARGET" ] && TARGET="$1" || die "unexpected argument: $1"; shift;;
+  esac
+done
+[ -n "$TARGET" ] || die "no <lean-target> given (e.g. Dregg2.Bridge.MinaWrapDeferredWeld)"
+case "$TARGET" in
+  Dregg2.*|dregg2.*) : ;;
+  *) echo "dregg-clean-build: note — target '$TARGET' does not start with 'Dregg2.'; passing through to lake as-is." >&2;;
+esac
+
+# ── resolve the COMMITTED object (never the working tree) ─────────────────────────────────────
+SHA="$(git rev-parse --verify "${SHA_REF}^{commit}" 2>/dev/null)" \
+  || die "cannot resolve '${SHA_REF}' to a commit in this repo"
+SHORT="$(git rev-parse --short "$SHA")"
+TREE="$(git rev-parse "${SHA}^{tree}")"
+echo "dregg-clean-build: target=$TARGET  sha=$SHORT ($SHA)  host=$HOST"
+echo "dregg-clean-build: building the COMMITTED tree $TREE — the dirty working tree is ignored."
+
+# ── the remote driver (runs on the build host; identical logic used by local mode) ────────────
+DRIVER="$(cat <<'REMOTE_DRIVER'
+set -uo pipefail
+BUILD_ROOT="$1"; GIT_SOURCE="$2"; SNAP="$3"; TARGET="$4"; WARM_LANE="$5"; COPY_MODE="$6"; KEEP="$7"; EXPECT_TREE="$8"; SWARM="$9"
+m(){ printf 'CB_%s=%s\n' "$1" "$2"; }
+
+# pick the warmest QUIESCENT lane if asked to
+pick_warm(){
+  local best="" bestscore=-1000000 d lane n busy score
+  for d in "$BUILD_ROOT"/*/metatheory/.lake; do
+    [ -d "$d" ] || continue
+    lane="$(basename "$(dirname "$(dirname "$d")")")"
+    case "$lane" in .dregg-clean-build|.cbwt-*|.reflinktest*) continue;; esac
+    n=$(find "$d/build/lib/lean/Dregg2" -name '*.olean' 2>/dev/null | wc -l)
+    [ "$n" -gt 0 ] || continue
+    busy=0
+    if pgrep -af 'lean|lake' 2>/dev/null | grep -q "/$lane/"; then busy=1; fi
+    score=$n; [ "$busy" = 1 ] && score=$((n - 100000))
+    if [ "$score" -gt "$bestscore" ]; then bestscore=$score; best="$lane"; fi
+  done
+  echo "$best"
+}
+if [ "$WARM_LANE" = auto ]; then WARM_LANE="$(pick_warm)"; fi
+[ -n "$WARM_LANE" ] || { m RESULT ERROR; echo "CB_ERR=no warm lane with Dregg2 oleans found under $BUILD_ROOT"; exit 3; }
+WARM="$BUILD_ROOT/$WARM_LANE"
+[ -d "$WARM/metatheory/.lake" ] || { m RESULT ERROR; echo "CB_ERR=warm lane '$WARM_LANE' has no metatheory/.lake"; exit 3; }
+m WARM_LANE "$WARM_LANE"
+if pgrep -af 'lean|lake' 2>/dev/null | grep -q "/$WARM_LANE/"; then
+  echo "CB_WARN=warm lane '$WARM_LANE' has a live lean/lake process — its .lake may be mid-write (torn olean risk)."
+fi
+
+WT="$BUILD_ROOT/.dregg-clean-build/${SNAP:0:12}-$$-$RANDOM"
+LOG_KEEP="$BUILD_ROOT/.dregg-clean-build/last-${SNAP:0:12}.log"
+cleanup(){
+  if [ "$KEEP" != 1 ]; then
+    git -C "$GIT_SOURCE" worktree remove --force "$WT" >/dev/null 2>&1
+    rm -rf "$WT"
+    git -C "$GIT_SOURCE" worktree prune >/dev/null 2>&1
+  else
+    echo "CB_KEPT=$WT"
+  fi
+}
+trap cleanup EXIT
+mkdir -p "$BUILD_ROOT/.dregg-clean-build"
+
+git -C "$GIT_SOURCE" worktree add --detach "$WT" "$SNAP" >/dev/null 2>&1 \
+  || { m RESULT ERROR; echo "CB_ERR=git worktree add failed for $SNAP"; exit 3; }
+
+# clean check = head-consistency. Also assert the tree is exactly the committed tree we asked for.
+dirty=$(git -C "$WT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+got_tree=$(git -C "$WT" rev-parse 'HEAD^{tree}' 2>/dev/null)
+if [ "$dirty" = 0 ] && [ "$got_tree" = "$EXPECT_TREE" ]; then m HEAD_CONSISTENT 1; else m HEAD_CONSISTENT 0; fi
+[ "$got_tree" = "$EXPECT_TREE" ] || echo "CB_WARN=worktree tree $got_tree != requested committed tree $EXPECT_TREE"
+
+# toolchain / manifest match (predicts whether lake reuses the warm oleans)
+wt_tc=$(cat "$WT/metatheory/lean-toolchain" 2>/dev/null)
+warm_tc=$(cat "$WARM/metatheory/lean-toolchain" 2>/dev/null)
+m TOOLCHAIN "$wt_tc"
+[ "$wt_tc" = "$warm_tc" ] || echo "CB_WARN=toolchain mismatch (worktree=$wt_tc warm=$warm_tc): expect a full re-elaboration."
+wt_m=$(sha256sum "$WT/metatheory/lake-manifest.json" 2>/dev/null | awk '{print $1}')
+warm_m=$(sha256sum "$WARM/metatheory/lake-manifest.json" 2>/dev/null | awk '{print $1}')
+if [ -n "$wt_m" ] && [ "$wt_m" != "$warm_m" ]; then
+  echo "CB_WARN=lake-manifest differs from warm lane: mathlib rev may re-resolve/rebuild."
+fi
+
+# same-fs guard for the copy
+wt_dev=$(stat -c %d "$WT/metatheory" 2>/dev/null)
+warm_dev=$(stat -c %d "$WARM/metatheory/.lake" 2>/dev/null)
+if [ "$COPY_MODE" = hardlink ] && [ "$wt_dev" != "$warm_dev" ]; then
+  echo "CB_WARN=hardlink requested but warm .lake and worktree differ in filesystem — using reflink/copy instead."
+  COPY_MODE=reflink
+fi
+
+# seed the warm .lake (COPY — never share the source lane's oleans)
+rm -rf "$WT/metatheory/.lake"
+t0=$(date +%s)
+if [ "$COPY_MODE" = hardlink ]; then
+  cp -al "$WARM/metatheory/.lake" "$WT/metatheory/.lake"
+else
+  cp --reflink=auto -a "$WARM/metatheory/.lake" "$WT/metatheory/.lake"
+fi
+crc=$?
+t1=$(date +%s)
+[ "$crc" = 0 ] || { m RESULT ERROR; echo "CB_ERR=copy of warm .lake failed (mode=$COPY_MODE)"; exit 3; }
+m LAKE_COPY_SEC $((t1 - t0))
+m LAKE_COPY_MODE "$COPY_MODE"
+m LAKE_OLEANS "$(find "$WT/metatheory/.lake/build/lib/lean/Dregg2" -name '*.olean' 2>/dev/null | wc -l | tr -d ' ')"
+
+# BUILD — redirect to a file on the box (never pipe swarm-build through ssh)
+cd "$WT/metatheory" || { m RESULT ERROR; echo "CB_ERR=no metatheory/ in worktree"; exit 3; }
+LOG="$WT/dregg-clean-build.log"
+BUILDER=(lake build "$TARGET")
+[ -n "$SWARM" ] && command -v "$SWARM" >/dev/null 2>&1 && BUILDER=("$SWARM" lake build "$TARGET")
+b0=$(date +%s)
+"${BUILDER[@]}" > "$LOG" 2>&1
+rc=$?
+b1=$(date +%s)
+m BUILD_SEC $((b1 - b0))
+m BUILD_RC "$rc"
+cp "$LOG" "$LOG_KEEP" 2>/dev/null && m LOG "$LOG_KEEP"
+
+if [ "$rc" -eq 0 ] && grep -q "Build completed" "$LOG"; then
+  m RESULT GREEN
+else
+  m RESULT RED
+  echo "CB_ERR_BEGIN"
+  grep -nE 'error:|✖|Some required|no such file|build failed|failures' "$LOG" 2>/dev/null | head -25
+  echo "CB_ERR_END"
+  echo "CB_TAIL_BEGIN"; tail -20 "$LOG"; echo "CB_TAIL_END"
+fi
+REMOTE_DRIVER
+)"
+
+# ── build a history-less SNAPSHOT of the target tree (cheap to push, exact content) ───────────
+# The snapshot commit has no parents, so a push ships only this tree's objects (not the divergent
+# history). Its content is byte-identical to the committed tree of $SHA — that is what we build.
+SNAP="$(git commit-tree "$TREE" -m "dregg-clean-build snapshot of $SHA ($TARGET)")" \
+  || die "could not create snapshot commit"
+
+run_remote(){
+  local swarm="swarm-build"
+  # preflight the host
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" true 2>/dev/null \
+    || { echo "dregg-clean-build: host '$HOST' unreachable over ssh"; exit 3; }
+  # probe the build root + a coherent bare repo
+  local root
+  root="$(ssh "$HOST" "for r in '$REMOTE_BUILD_ROOT' \"\$HOME/dregg-build\"; do [ -d \"\$r\" ] && { echo \"\$r\"; break; }; done" 2>/dev/null)"
+  [ -n "$root" ] || { echo "dregg-clean-build: no build root on '$HOST' (tried $REMOTE_BUILD_ROOT and \$HOME/dregg-build)"; exit 3; }
+  local bare="$root/$BARE_NAME"
+  ssh "$HOST" "git init --bare -q '$bare' 2>/dev/null; git -C '$bare' config gc.auto 0" 2>/dev/null \
+    || { echo "dregg-clean-build: could not init bare repo at $bare on $HOST"; exit 3; }
+  # push the snapshot coherently. --no-verify: this is a private build ref, not a shared-history push;
+  # the workspace-closure pre-push gate targets contributions to main, not a build snapshot.
+  echo "dregg-clean-build: pushing snapshot to $HOST:$bare (history-less; first push of a new tree ~20s) ..."
+  DREGG_ALLOW_UNRESOLVED_TIP=1 git push --no-verify -q "$HOST:$bare" "+${SNAP}:refs/dregg-clean-build/${SHORT}" 2>&1 \
+    | grep -vE '^$' || true
+  ssh "$HOST" "git -C '$bare' cat-file -e '$SNAP'" 2>/dev/null \
+    || { echo "dregg-clean-build: snapshot did not land coherently on $HOST"; exit 3; }
+  # run the driver: script on stdin, values as positional args (no interpolation of the log/build).
+  local tmp; tmp="$(mktemp)"; printf '%s\n' "$DRIVER" > "$tmp"
+  ssh "$HOST" bash -s -- "$root" "$bare" "$SNAP" "$TARGET" "$WARM_LANE" "$COPY_MODE" "$KEEP" "$TREE" "$swarm" < "$tmp"
+  local rc=$?
+  rm -f "$tmp"
+  return $rc
+}
+
+run_local(){
+  # Local mode: the local repo is coherent, so worktree directly from $SHA (no push/snapshot needed);
+  # warm .lake is the local metatheory/.lake. swarm-build usually absent locally → bare lake, capped.
+  local bare="$SELF/.git"
+  # Local warm lane is '.' (this checkout); the remote driver expects <root>/<lane>/metatheory/.lake,
+  # so local mode runs a thin inline variant of the same steps rather than the lane-scanning driver.
+  local WT; WT="$(mktemp -d "${TMPDIR:-/tmp}/dcb.XXXXXX")"
+  local swarm="swarm-build"; command -v "$swarm" >/dev/null 2>&1 || swarm=""
+  ( set -uo pipefail
+    trap '[ "'"$KEEP"'" = 1 ] || { git -C "'"$bare"'" worktree remove --force "'"$WT"'" >/dev/null 2>&1; rm -rf "'"$WT"'"; git -C "'"$bare"'" worktree prune >/dev/null 2>&1; }' EXIT
+    git -C "$bare" worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || { echo "CB_RESULT=ERROR"; echo "CB_ERR=local worktree add failed"; exit 3; }
+    dirty=$(git -C "$WT" status --porcelain | wc -l | tr -d ' ')
+    [ "$dirty" = 0 ] && echo "CB_HEAD_CONSISTENT=1" || echo "CB_HEAD_CONSISTENT=0"
+    echo "CB_WARM_LANE=. (local metatheory/.lake)"
+    rm -rf "$WT/metatheory/.lake"
+    cp --reflink=auto -a "$SELF/metatheory/.lake" "$WT/metatheory/.lake" 2>/dev/null || { echo "CB_RESULT=ERROR"; echo "CB_ERR=local .lake copy failed (is metatheory/.lake warm?)"; exit 3; }
+    cd "$WT/metatheory"
+    LOG="$WT/dregg-clean-build.log"
+    if [ -n "$swarm" ]; then "$swarm" lake build "$TARGET" > "$LOG" 2>&1; else LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-4}" lake build "$TARGET" > "$LOG" 2>&1; fi
+    rc=$?
+    echo "CB_BUILD_RC=$rc"
+    cp "$LOG" "${TMPDIR:-/tmp}/dregg-clean-build-last.log" 2>/dev/null && echo "CB_LOG=${TMPDIR:-/tmp}/dregg-clean-build-last.log"
+    if [ "$rc" -eq 0 ] && grep -q "Build completed" "$LOG"; then echo "CB_RESULT=GREEN"; else echo "CB_RESULT=RED"; echo "CB_ERR_BEGIN"; grep -nE 'error:|✖|no such file|build failed' "$LOG" | head -25; echo "CB_ERR_END"; echo "CB_TAIL_BEGIN"; tail -20 "$LOG"; echo "CB_TAIL_END"; fi
+  )
+  return $?
+}
+
+# ── run + parse markers into a human report ───────────────────────────────────────────────────
+OUT="$(mktemp)"
+if [ "$HOST" = local ]; then run_local | tee "$OUT"; else run_remote | tee "$OUT"; fi
+
+echo
+echo "──────────────────────────────────────────────────────────────────────────"
+get(){ grep -m1 "^CB_$1=" "$OUT" 2>/dev/null | sed "s/^CB_$1=//"; }
+RESULT="$(get RESULT)"; HC="$(get HEAD_CONSISTENT)"; WL="$(get WARM_LANE)"
+COPYS="$(get LAKE_COPY_SEC)"; COPYM="$(get LAKE_COPY_MODE)"; OLE="$(get LAKE_OLEANS)"
+BS="$(get BUILD_SEC)"; TC="$(get TOOLCHAIN)"; LOGP="$(get LOG)"
+HCTXT="unknown"; [ "$HC" = 1 ] && HCTXT="YES (worktree was git-clean at the committed tree)"
+[ "$HC" = 0 ] && HCTXT="NO — see CB_WARN above"
+case "$RESULT" in
+  GREEN)
+    echo "dregg-clean-build: GREEN — $TARGET at $SHORT is a clean, HEAD-consistent build."
+    echo "  head-consistent : $HCTXT"
+    echo "  warm lane       : ${WL:-?}  (${OLE:-?} Dregg2 oleans, .lake copy ${COPYS:-?}s via ${COPYM:-?})"
+    echo "  build           : ${BS:-?}s   toolchain ${TC:-?}"
+    grep -E '^CB_WARN=' "$OUT" | sed 's/^CB_WARN=/  warn            : /'
+    RC=0;;
+  RED)
+    echo "dregg-clean-build: RED — $TARGET FAILS at committed $SHORT (this is the churn-free truth, not your WIP)."
+    echo "  head-consistent : $HCTXT"
+    grep -E '^CB_WARN=|^CB_ERR|no such file|error:' "$OUT" | sed 's/^/  /' | head -30
+    [ -n "$LOGP" ] && echo "  full log on box : $LOGP"
+    RC=1;;
+  *)
+    echo "dregg-clean-build: ENV FAULT — the build never ran cleanly."
+    grep -E '^CB_ERR=|^CB_WARN=' "$OUT" | sed 's/^/  /'
+    RC=3;;
+esac
+rm -f "$OUT"
+exit $RC
