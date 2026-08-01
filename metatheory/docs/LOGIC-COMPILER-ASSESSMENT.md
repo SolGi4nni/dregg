@@ -1061,3 +1061,30 @@ gap was rendering, and rendering is exactly what a canonical normal form settles
 against the pre-invariant deployed artifact. `normalFormOk` REFUSES it, correctly. Bringing it into
 the invariant is a one-line change (`wLin [(1, .nxt CURRENT), (-1, .loc NEXT)] 0`) plus its golden,
 and it was left to its owning lane rather than taken mid-flight.
+
+## P3.6 — ⚑ RE-MEASURED against the sibling normal-form landing (`8827eba0f`, same day)
+
+A parallel lane landed `Emit/AirNormalForm.lean` and **re-emitted ten by-name descriptors** into a
+consistent unit-coefficient rendering (`mul(const 1, x)` everywhere), touching
+`EffectLowerCore.lean` in the process. That is the direction P2.5 and P3.4 both name as correct —
+RE-EMIT the corpus, do not bend `AirBuilder.headToExpr` toward one of its two shapes — so the two
+lanes agree; but it moves numbers this section quotes, so they are re-measured at HEAD:
+
+* **The fused descriptor is untouched.** `dfa-routing-table-exact-public-v1.json` is still
+  sha256 `31bea51b…`; its only coefficient is `-1`, so the unit-coefficient normalization does not
+  reach it. The zero-byte-move claim holds at current HEAD, not just at the fusion commit.
+* **The gate-free 8/76 is unchanged**, and it is the same eight names: `bound-presentation`,
+  `bridge-action`, `dfa-routing-table-exact-public-v1`, `guarded-hiding-span-m0-wide-…-blind5-v1`,
+  `mina-fixture`, `poseidon2-hash-arity2`, `shielded-whole-note-swap-substrate-v1`,
+  `turn-chain-binding`. Kind census also unchanged (gate 68 · pi_binding 69 · lookup 51 ·
+  boundary 37 · window_gate 29) — a rendering change moves no `t` field.
+* **The corpus's internal inconsistency is being paid down, not argued away.** 33 of 76 now carry a
+  `mul(const 1, ·)` inside a gate/boundary/window BODY (measured at HEAD with that scope). P2.5's
+  37/58/25 was measured before the re-emit and with a different scope; do not compare the two
+  numbers directly, and do not cite either as "the" figure without saying which.
+
+⚑ The compiler-authored count is **still 1 of 76**. Ten descriptors being re-emitted through a
+normal form is a corpus repair, not a fusion: those files are still produced by hand-written
+`VmConstraint2` literals in their `*Emit.lean` authors, now merely rendering consistently. The
+authorship number only moves when an emitter's literals are DELETED and its descriptor becomes
+`lowerAir`/`lowerEffect` output — which has happened exactly once.
