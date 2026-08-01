@@ -157,9 +157,20 @@ root build instead.
 
 ## The RATCHET
 The ~1650 existing carriers cannot be ported today, so the gate compares against a checked-in
-baseline of grandfathered declaration NAMES (`FloorRatchetBaseline.grandfathered`).
-  * a carrier NOT in the baseline → **build error**. This is the accrual stop.
-  * a baseline name that is no longer a carrier → reported as SLACK, never an error.
+baseline of grandfathered `(declaration NAME, floor SET)` PAIRS
+(`FloorRatchetBaseline.grandfathered`, one row per pair).
+  * a carrier whose PAIR is not in the baseline → **build error**. This is the accrual stop.
+  * a baselined pair that is no longer a carrier → reported as SLACK, never an error.
+
+⚑ **THE KEY IS THE PAIR, NOT THE NAME (2026-08-01).** It used to be the name, and `Carrier.floor`
+recorded only the FIRST floor found in a declaration — so a grandfathered NAME was a blanket
+exemption over the ENTIRE refuted-floor set, for the life of the name. A baselined declaration could
+be drained of `compressInjective` and ACQUIRE `Poseidon2SpongeCR` in the same commit and stay green;
+a name could be deleted and a different theorem reintroduced under it, green. Measured while a drain
+was in flight: 477 declarations bind `compressInjective`/`compressNInjective`/`cellLeafInjective`
+directly and **161 of them bind a second refuted floor as well** — 161 standing holes, in exactly
+the declarations being edited. See the KEY section at `keySep` for the row format, for how a
+`prop-body` def or BUNDLE is attributed back to the ROOT floors it carries, and for LEGACY rows.
 LOWERING is easy and mechanical, and runs against a GREEN tree:
 `#floor_ratchet_emit "…/FloorRatchetBaseline.lean"` rewrites the baseline as
 `baseline ∩ current`, so it can only ever REMOVE names. Run it after a port to bank the win.
@@ -472,12 +483,183 @@ what B1/B2/B3/B4 cost — keep testing the LIVE predicate rather than a retired 
 def antiFloor (floorC hidden : Name → Bool) (ty : Expr) : Bool :=
   !assumesFloorContent floorC hidden ty
 
-/-- A declaration that violates (or is grandfathered under) the ratchet. -/
+/-- A declaration that violates (or is grandfathered under) the ratchet.
+
+⚑ `floor` and `cls` are REPORTING ONLY and always have been. The BASELINE KEY is `name ⊕ floors`
+— see `carrierKey`. -/
 structure Carrier where
   name  : Name
-  floor : Name          -- the refuted floor, `prop-body` def, or floor BUNDLE it carries
+  floor : Name          -- PRIMARY hit: the refuted floor, `prop-body` def, or BUNDLE. Reporting.
   cls   : String        -- binder | prop-body | propdef-user | bundle | bundle-user | inj-spelled
+  /-- ⚑ **THE KEY, with `name`.** EVERY ROOT refuted floor this declaration assumes — not the
+  first one found — sorted and deduplicated. A `prop-body` def or a BUNDLE is not itself a root
+  floor, so it is ATTRIBUTED to the refuted floors it carries (`rootOf`): the key names what is
+  actually false, and it does not churn when a proof is rerouted through a different
+  floor-carrying `Prop` def that carries the same floors.
+
+  ⚑ IT IS AN OVER-APPROXIMATION, IN THE SAFE DIRECTION, AND SO WAS `floor` BEFORE IT. Membership
+  in the carrier surface is decided by POSITION (`assumesFloorContent` — a floor in a claim assumes
+  nothing); the set collected here is every floor-carrying constant in the type, position not
+  consulted, exactly as `floorHit` never consulted it. So a declaration that ASSUMES `A` and
+  CLAIMS `B` keys on `{A,B}`. The cost is that dropping the claim of `B` reads as a change and must
+  be re-emitted; the alternative — a position-aware collector — is the only thing that would
+  tighten it, and it would be tightening a set whose looseness can only ever REFUSE, never admit. -/
+  floors : Array Name
   deriving Inhabited
+
+/-! ### The baseline KEY — `name ⊕ floor-set`, and why the name alone was a hole
+
+⚑ CLOSED 2026-08-01. `check` and `emit` keyed the baseline on `c.name.toString` ALONE, and the
+per-declaration scan recorded only the FIRST floor it found. Together those made a grandfathered
+NAME a blanket exemption over the ENTIRE refuted-floor set, for the life of the name:
+
+  * a baselined declaration could be DRAINED of `compressInjective` and ACQUIRE `Poseidon2SpongeCR`
+    in the same commit and stay green — the name was in the baseline, and nothing else was read;
+  * a name could be deleted and a DIFFERENT declaration reintroduced under it, green;
+  * a declaration binding two refuted floors that drops one and adds another reports the same
+    first hit before and after.
+
+That was not hypothetical. An audit measured **477** declarations binding `compressInjective` /
+`compressNInjective` / `cellLeafInjective` directly, **161** of which also bind a SECOND refuted
+floor — 161 permanent name-shaped holes, while a drain of the first floor is in flight and every
+one of those declarations is being edited.
+
+A baseline row is now `name ⊣ floor₁+floor₂+…`, and an EXISTING name presenting a NEW floor set is
+a FRESH carrier — a hard error, exactly as a brand-new declaration is. SLACK is unchanged in kind:
+a baselined pair that is no longer a carrier is REPORTED and never errors.
+
+⚑ **LEGACY ROWS.** A row with no `⊣` is the pre-key format and grandfathers its name against ANY
+floor set — i.e. it is still the hole, for that one declaration, until the baseline is re-emitted.
+They are tolerated for exactly one reason: this change had to red NOTHING on the day it landed, and
+a ~1900-row baseline cannot be hand-keyed. `#floor_ratchet_emit` upgrades every legacy row it can
+still see to a keyed row in one pass; `check` prints the surviving count on EVERY run (pass or
+fail), and `scripts/floor_ratchet_check.sh` refuses an INCREASE. The healthy value is 0. -/
+
+/-- Separates a baseline row's declaration name from its floor set. Chosen because no Lean
+identifier contains it, so a row parses unambiguously and a legacy (name-only) row is exactly a row
+in which it does not occur. -/
+def keySep : String := " ⊣ "
+
+/-- Separates floors within a row's floor set. -/
+def floorSep : String := "+"
+
+/-- Sort + dedup, by `Name.toString`, so a key is a FUNCTION of the floor set and not of the order
+`foldConsts` happened to visit constants in. Determinism here is load-bearing: an order-dependent
+key would rewrite the whole baseline on an unrelated edit and drown the signal it exists to give. -/
+def sortDedup (a : Array Name) : Array Name := Id.run do
+  let s := a.qsort (fun x y => x.toString < y.toString)
+  let mut out : Array Name := #[]
+  for n in s do
+    match out.back? with
+    | some m => if m != n then out := out.push n
+    | none   => out := out.push n
+  return out
+
+/-- Render a baseline row. An EMPTY floor set renders as `∅` rather than as a bare name, so an
+instrument bug can never silently manufacture a LEGACY row (which would grandfather that name
+against everything). `surface` also hard-errors on an empty-floor-set carrier. -/
+def renderKey (n : Name) (fs : Array Name) : String :=
+  let s := sortDedup fs
+  if s.isEmpty then n.toString ++ keySep ++ "∅"
+  else n.toString ++ keySep ++ String.intercalate floorSep (s.toList.map (·.toString))
+
+/-- `some (name, floors)` for a KEYED row; `none` for a LEGACY (pre-key, name-only) row. -/
+def splitKey (row : String) : Option (String × String) :=
+  match row.splitOn keySep with
+  | _ :: [] => none
+  | n :: rest => some (n, String.intercalate keySep rest)
+  | [] => none
+
+/-- The declaration name a row is about, keyed or legacy. -/
+def rowName (row : String) : String :=
+  match splitKey row with
+  | some (n, _) => n
+  | none => row
+
+/-- A keyed row's floor set, as strings. `∅` is the empty set (see `renderKey`). -/
+def rowFloors (fs : String) : Array String :=
+  if fs == "∅" then #[] else (fs.splitOn floorSep).toArray
+
+def carrierKey (c : Carrier) : String := renderKey c.name c.floors
+
+/-- Does baseline ROW grandfather the declaration `nm` assuming `floors`?
+
+⚑ **SUBSET, NOT EQUALITY, AND THAT IS THE WHOLE DESIGN.** A row is an UPPER BOUND on what a
+declaration may assume, so it grandfathers any floor set CONTAINED in its own:
+
+  * ACQUIRING a floor (`{A}` baselined, `{A,B}` presented) is accrual — the thing this gate exists
+    to stop — and is refused.
+  * DROPPING one (`{A,B}` baselined, `{B}` presented) is a PORT. It must not cost a red, or the
+    gate is charging the campaign for its own wins, and the audit predicts ~321 declarations doing
+    exactly this in the in-flight `compressInjective` drain. It is admitted, and the next
+    `#floor_ratchet_emit` rewrites the row to the tightened set — the ratchet lowering itself.
+
+Equality would satisfy the letter of "a new floor is a fresh carrier" and turn every port into a
+build error, which lands where a blind gate lands, more slowly.
+
+A LEGACY row (no `⊣`) grandfathers its name against ANY floor set. -/
+def rowAdmits (row : String) (nm : String) (floors : Array String) : Bool :=
+  match splitKey row with
+  | some (n, fs) => n == nm && (let bound := rowFloors fs; floors.all (fun f => bound.contains f))
+  | none         => row == nm
+
+/-! ⚑ THE KEY ALGEBRA, ASSERTED WHERE IT IS DEFINED. These run when this module elaborates — which
+is every root build that touches the gate — and they are the one part of the new tooth that needs
+no environment to test, so they are tested with no environment. The end-to-end proof that the gate
+BITES on this class is `scripts/floor_ratchet_canary_key.lean`; these are the algebra under it. -/
+
+private def keyFloors (c : String) : Array String :=
+  match splitKey c with | some (_, fs) => rowFloors fs | none => #[]
+private def keyDecl (c : String) : String := rowName c
+private def admitsKey (row key : String) : Bool := rowAdmits row (keyDecl key) (keyFloors key)
+
+-- a keyed row grandfathers its own pair …
+#guard admitsKey (renderKey `N #[`A]) (renderKey `N #[`A]) == true
+-- … and NOT the same name with an ACQUIRED second floor (the 161-declaration case) …
+#guard admitsKey (renderKey `N #[`A]) (renderKey `N #[`A, `B]) == false
+-- … nor the same name with a SWAPPED floor (drained of one, acquired another) …
+#guard admitsKey (renderKey `N #[`A]) (renderKey `N #[`B]) == false
+-- … nor a different declaration under a floor set that happens to match …
+#guard admitsKey (renderKey `N #[`A]) (renderKey `M #[`A]) == false
+-- … but it DOES grandfather a DRAIN, which is a port and must never cost a red.
+#guard admitsKey (renderKey `N #[`A, `B]) (renderKey `N #[`B]) == true
+#guard admitsKey (renderKey `N #[`A, `B]) (renderKey `N #[]) == true
+-- ⚑ and a floor-name PREFIX is not a floor: `compressInjective` must not be admitted by a row
+-- carrying `compressInjectiveWide`, which a substring test would do.
+#guard admitsKey (renderKey `N #[`compressInjectiveWide]) (renderKey `N #[`compressInjective])
+         == false
+-- A LEGACY row is the pre-key format: a blanket exemption over the whole floor set, for its name.
+#guard admitsKey "N" (renderKey `N #[`B, `C]) == true
+#guard admitsKey "N" (renderKey `M #[`B]) == false
+-- The key is a FUNCTION of the SET: insertion order and duplicates cannot change it.
+#guard renderKey `N #[`B, `A] == renderKey `N #[`A, `B]
+#guard renderKey `N #[`A, `B, `A] == renderKey `N #[`A, `B]
+-- A keyed row round-trips, and an empty floor set can never be mistaken for a legacy row.
+#guard (splitKey (renderKey `N #[`A, `B])).isSome == true
+#guard (splitKey "N").isNone == true
+#guard (splitKey (renderKey `N #[])).isSome == true
+#guard rowFloors "∅" == (#[] : Array String)
+#guard rowName (renderKey `Foo.bar #[`A]) == "Foo.bar"
+#guard rowName "Foo.bar" == "Foo.bar"
+
+/-- ⚑ CANARY PINS — baseline rows for declarations that exist ONLY inside
+`scripts/floor_ratchet_canary_key.lean`, kept HERE rather than in the generated baseline for one
+reason: `#floor_ratchet_emit` writes `baseline ∩ current`, and these names are never current on a
+root build, so an ordinary shrink-emit would DELETE them and disarm the canary with no signal.
+
+They make the key canary possible at all. Its violating theorems must be "already in the baseline
+under one floor" before they can present a different one, and its `control_` theorem must be
+grandfathered by a MATCHING pair — without which the canary would pass for the wrong reason (a pin
+that matches nothing rejects everything, including the control).
+
+On a root build all three are SLACK by construction, so they are excluded from the slack report. -/
+def canaryPins : Array String :=
+  let p2 := "Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR"
+  let cn := "Dregg2.Circuit.StateCommit.compressNInjective"
+  #[ "control_floor_ratchet_key_canary_unchanged" ++ keySep ++ p2
+   , "control_floor_ratchet_key_canary_drained" ++ keySep ++ p2 ++ floorSep ++ cn
+   , "floor_ratchet_key_canary_acquires" ++ keySep ++ p2
+   , "floor_ratchet_key_canary_swapped" ++ keySep ++ p2 ]
 
 structure Surface where
   floors    : Array Name           -- refuted floors, DERIVED from the environment
@@ -934,6 +1116,63 @@ def surface : MetaM Surface := do
         floor-carrying. That is a WIN; delete this name from `sentinelBundles` in the same \
         commit as the port, and re-emit the baseline to bank the carriers that fell with it.\n\
         Check which by reading the structure's fields. Refusing to run until then."
+  -- ===== ROOT-FLOOR ATTRIBUTION: which REFUTED FLOORS does each `prop-body` def / BUNDLE carry? ==
+  -- The fixpoint above answers a BOOLEAN ("does this node carry floor content"), which is all the
+  -- carrier/exempt verdict needs. The baseline KEY needs NAMES: a row that said only "this
+  -- declaration is a carrier via `descriptorRefines`" would churn the moment a proof is rerouted
+  -- through a different floor-carrying def, and would say nothing about which refuted floor makes
+  -- it vacuous. So a SECOND fixpoint propagates the ROOT floor set along the same edges — over the
+  -- DISCOVERED nodes only (hundreds), not the whole tree.
+  --
+  -- Every pb/bn node is grounded in `floors` by construction (the Bool fixpoint's only base case
+  -- is a `floors` member), so an EMPTY root set is an attribution bug and fails closed below.
+  --
+  -- ⚑ The EDGES are pre-filtered ONCE. `used` is a whole `getUsedConstants` array — hundreds of
+  -- entries, nearly all of them `Eq`/`List`/`Nat` — and the fixpoint only ever looks at the few
+  -- that are floors or nodes. Filtering first makes the per-pass cost |nodes|·|edges| instead of
+  -- |nodes|·|used|, which is what keeps this off the root build's critical path.
+  let pbNodes := propDefs.filter (fun (n, _) => pb.contains n)
+  let bnNodes := structDefs.filter (fun (n, _) => bn.contains n)
+  let mut edges : Array (Name × Array Name × Array Name) := #[]
+  for (n, used) in pbNodes ++ bnNodes do
+    let mut fs : Array Name := #[]
+    let mut es : Array Name := #[]
+    for c in used do
+      if floors.contains c then
+        unless fs.contains c do fs := fs.push c
+      else if c != n && (pb.contains c || bn.contains c) then
+        unless es.contains c do es := es.push c
+    edges := edges.push (n, fs, es)
+  let mut rootOf : Std.HashMap Name (Std.HashSet Name) := {}
+  for (n, fs, _) in edges do
+    rootOf := rootOf.insert n (fs.foldl (fun a f => a.insert f) ({} : Std.HashSet Name))
+  let mut rIters := 0
+  let mut rChanged := true
+  while rChanged && rIters < 200 do
+    rChanged := false
+    rIters := rIters + 1
+    for (n, _, es) in edges do
+      let mut s := rootOf.getD n {}
+      let before := s.size
+      for c in es do
+        if let some t := rootOf.get? c then
+          for f in t.toList do s := s.insert f
+      if s.size != before then
+        rootOf := rootOf.insert n s
+        rChanged := true
+  if rIters >= 200 then
+    throwError "FLOOR-RATCHET FAIL-CLOSED: the root-floor attribution fixpoint did not converge."
+  for (n, _, _) in edges do
+    if (rootOf.getD n {}).isEmpty then
+      throwError "FLOOR-RATCHET FAIL-CLOSED: {n} was discovered as floor-carrying, but NO root \
+        refuted floor could be attributed to it. Every `prop-body` def and every floor BUNDLE is \
+        grounded in `floors` by construction — the Bool fixpoint's only base case is a member of \
+        `floors` — so this is the attribution walking a different edge set than the discovery did. \
+        Every carrier reached through {n} would key on an EMPTY floor set. Refusing to run."
+  -- The ROOT refuted floors a mentioned constant contributes: itself if it IS one, otherwise the
+  -- floors attributed to it as a `prop-body` def or BUNDLE.
+  let rootsOf : Name → Array Name := fun c =>
+    if floors.contains c then #[c] else (rootOf.getD c {}).toList.toArray
   -- The SPLIT the position rule needs: a floor NAME assumes nothing in a claim position, a
   -- floor-carrying `Prop` def or BUNDLE assumes something wherever it appears (it UNFOLDS to an
   -- implication / has no inhabitant). See `assumesFloorContent`.
@@ -1004,10 +1243,10 @@ def surface : MetaM Surface := do
     -- IDENTITY classes first: a floor-carrying `Prop` def / STRUCTURE is a carrier by what it IS,
     -- and its own type (`∀ …, Prop`, `Sort _`) mentions nothing.
     if pb.contains nm then
-      carriers := carriers.push ⟨nm, nm, "prop-body"⟩
+      carriers := carriers.push ⟨nm, nm, "prop-body", (rootOf.getD nm {}).toList.toArray⟩
       continue
     if bn.contains nm then
-      carriers := carriers.push ⟨nm, nm, "bundle"⟩
+      carriers := carriers.push ⟨nm, nm, "bundle", (rootOf.getD nm {}).toList.toArray⟩
       continue
     -- ONE `foldConsts` pass, not three scans of a `getUsedConstants` array. This loop runs
     -- over every one of our declarations on EVERY root build, and `getUsedConstants` allocates
@@ -1022,12 +1261,20 @@ def surface : MetaM Surface := do
     -- gate's total added cost, of order 10s on a root elaboration that already costs ~30s, and
     -- the fact that both forms return an identical surface (1586 carriers / 27 floors / 563
     -- shape-leaks) — which is a useful cross-check on this rewrite, and all it is.
-    let (floorHit, pbHit, bnHit, injSeen) :=
-      ci.type.foldConsts (none, none, none, false) fun c (fh, ph, bh, inj) =>
+    --
+    -- ⚑ `hits` is the fifth component and it is why this fold is no longer three `isNone` ternaries
+    -- with a Bool: the first three record the FIRST occurrence of each class, which is all the
+    -- REPORTED class/floor needs, and keying the baseline on that first hit alone is the hole this
+    -- fifth component closes. Every floor-carrying constant in the type is collected, so the key
+    -- below is the whole floor SET.
+    let (floorHit, pbHit, bnHit, injSeen, hits) :=
+      ci.type.foldConsts (none, none, none, false, (#[] : Array Name))
+        fun c (fh, ph, bh, inj, hs) =>
         ( if fh.isNone && floors.contains c then some c else fh
         , if ph.isNone && pb.contains c then some c else ph
         , if bh.isNone && bn.contains c then some c else bh
-        , inj || c == ``Function.Injective )
+        , inj || c == ``Function.Injective
+        , if floors.contains c || pb.contains c || bn.contains c then hs.push c else hs )
     -- Cheap exit for the ~99% of declarations that mention no content at all, so the structural
     -- position walk below runs on the few thousand that do rather than on every declaration.
     if floorHit.isNone && pbHit.isNone && bnHit.isNone && !injSeen then continue
@@ -1042,7 +1289,16 @@ def surface : MetaM Surface := do
       else if let some f := bnHit then some (f, "bundle-user")
       else none
     match named? with
-    | some (f, cls) => carriers := carriers.push ⟨nm, f, cls⟩
+    | some (f, cls) =>
+      -- ⚑ THE INLINE FLOORS COUNT TOWARD THE KEY EVEN HERE, where the named classes already
+      -- decided the verdict. A declaration that binds `compressInjective` AND an inline-spelled
+      -- refuted `Function.Injective` is assuming BOTH; a key that stopped at the named one would
+      -- let the inline half be added or swapped under a grandfathered name for free — the same
+      -- hole one spelling over. This does NOT touch `shapeLeak`/`injResid`, which stay exactly
+      -- what they were: the accounting of declarations the named classes did NOT already gate.
+      let injFs ← if injSeen then InjSpelling.classifyAll injSigs injMemo ci.type else pure #[]
+      let roots := hits.foldl (fun acc c => acc ++ rootsOf c) (#[] : Array Name)
+      carriers := carriers.push ⟨nm, f, cls, sortDedup (roots ++ injFs)⟩
     | none =>
       if injSeen then
         -- ⚑ THE INLINE SPELLING. A `Function.Injective f` HYPOTHESIS at a signature this tree
@@ -1052,12 +1308,28 @@ def surface : MetaM Surface := do
         -- It runs even for declarations the named classes exempt: `antiFloor` reads content BY
         -- NAME and `Function.Injective` is not one, so an inline-spelled refuted floor bound by a
         -- declaration that concludes `False` is the B1/B2 laundry one spelling over.
-        match ← InjSpelling.classify injSigs injMemo ci.type with
-        | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled"⟩
+        --
+        -- ⚑ `classifyAll`, not `classify`: it is EMPTY exactly when `classify` is `none` and its
+        -- first element is exactly what `classify` returned, so the verdict and the reported floor
+        -- are unchanged — what is added is the REST of the refuted signatures this declaration
+        -- binds, which the key needs and a first-hit answer discards.
+        let injFs ← InjSpelling.classifyAll injSigs injMemo ci.type
+        match injFs[0]? with
+        | some fl => carriers := carriers.push ⟨nm, fl, "inj-spelled", sortDedup injFs⟩
         | none =>
           shapeLeak := shapeLeak + 1
           for k in ← InjSpelling.residualKeys injSigs ci.type do
             injResid := injResid.insert k ((injResid.getD k 0) + 1)
+  -- ⚑ FAIL CLOSED ON AN EMPTY KEY. A carrier with no attributed floor would render as `… ⊣ ∅`,
+  -- which is at least not a legacy row — but it is still an instrument that has lost track of WHY
+  -- a declaration is vacuous, and every such carrier would key identically. Unreachable by
+  -- construction (each class contributes at least one root floor); it is here because "unreachable"
+  -- is the state this file has been wrong about before.
+  for c in carriers do
+    if c.floors.isEmpty then
+      throwError "FLOOR-RATCHET FAIL-CLOSED: carrier {c.name} (class {c.cls}, primary {c.floor}) \
+        has an EMPTY floor set, so its baseline key names no refuted floor at all. The root-floor \
+        attribution has lost an edge the carrier scan still walks. Refusing to run."
   let sorted := carriers.qsort (fun a b => a.name.toString < b.name.toString)
   let residArr := injResid.toList.toArray.qsort (fun a b => a.2 > b.2 || (a.2 == b.2 && a.1 < b.1))
   let sigKeys ← injSigs.mapM (fun s => do pure s!"{← InjSpelling.sigKey s.dom s.cod}  [{s.floor}]")
@@ -1068,13 +1340,63 @@ def surface : MetaM Surface := do
 
 /-! ## The gate -/
 
-/-- Compare the live surface against the checked-in baseline. New carriers are a hard error. -/
+/-- Compare the live surface against the checked-in baseline. New carriers are a hard error.
+
+⚑ The comparison is on `name ⊕ floor-set`, not on the name. A baselined row is an UPPER BOUND: an
+EXISTING baselined name that has ACQUIRED a refuted floor is a FRESH carrier and errors — that is
+the tooth — while one that DROPPED a floor is a port and stays grandfathered (`rowAdmits`). A
+LEGACY (name-only) row still grandfathers its name against any floor set, is counted, and is
+reported on every run; see the KEY section above for why they are tolerated and how they go away. -/
 def check (baseline : Array String) : MetaM Unit := do
   let s ← surface
-  let base : Std.HashSet String := baseline.foldl (fun a b => a.insert b) {}
-  let cur : Std.HashSet String := s.carriers.foldl (fun a c => a.insert c.name.toString) {}
-  let fresh := s.carriers.filter (fun c => !base.contains c.name.toString)
-  let slack := baseline.filter (fun b => !cur.contains b)
+  let mut baseKeys : Std.HashSet String := {}
+  let mut baseLegacy : Std.HashSet String := {}
+  -- name ↦ the floor sets it is baselined under. This is the lookup the SUBSET rule needs, and it
+  -- also lets the error say "you already have this name, under THESE floors" instead of reporting
+  -- an edit to a grandfathered declaration as a brand-new theorem.
+  let mut baseByName : Std.HashMap String (Array String) := {}
+  for b in baseline do
+    match splitKey b with
+    | some (n, fs) =>
+      baseKeys := baseKeys.insert b
+      baseByName := baseByName.insert n ((baseByName.getD n #[]).push fs)
+    | none => baseLegacy := baseLegacy.insert b
+  let keyedRows := baseKeys.size
+  let legacyRows := baseLegacy.size
+  -- The canary pins are matched but never counted or reported as slack: they name declarations
+  -- that exist only inside `scripts/floor_ratchet_canary_key.lean`. See `canaryPins`.
+  for p in canaryPins do
+    if let some (n, fs) := splitKey p then
+      baseByName := baseByName.insert n ((baseByName.getD n #[]).push fs)
+  -- ⚑ A carrier is grandfathered when SOME baselined row for its name CONTAINS its floor set (a
+  -- port that drops a floor keeps its grandfathering; acquiring one does not), or when a LEGACY
+  -- name-only row still covers it.
+  let admits : Carrier → Bool := fun c =>
+    let nm := c.name.toString
+    let fs := c.floors.map (·.toString)
+    baseLegacy.contains nm
+      || (baseByName.getD nm #[]).any (fun b => rowAdmits (nm ++ keySep ++ b) nm fs)
+  let curKeys : Std.HashSet String := s.carriers.foldl (fun a c => a.insert (carrierKey c)) {}
+  let curNames : Std.HashSet String := s.carriers.foldl (fun a c => a.insert c.name.toString) {}
+  let fresh := s.carriers.filter (fun c => !admits c)
+  -- SLACK is EXACT-match, deliberately: a row that is no longer the carrier's pair — because the
+  -- declaration was ported away entirely OR because its floor set TIGHTENED — is a row the next
+  -- shrink-emit can lower for free. Reported, never an error.
+  let slack := baseline.filter (fun b =>
+    match splitKey b with
+    | some _ => !curKeys.contains b
+    | none   => !curNames.contains b)
+  -- ⚑ PRINTED BEFORE THE VIOLATION `throwError`, for the reason the honest-floor block below
+  -- records: `throwError` discards the command's message log, and the run you most need this
+  -- number on is the red one. A legacy row is the PRE-KEY format and is exactly the hole this key
+  -- closes, still open for that one declaration.
+  unless baseLegacy.isEmpty do
+    logInfo s!"⚑ floor-ratchet: {legacyRows} of {baseline.size} baseline rows are LEGACY \
+      (name-only, no `⊣`). Each grandfathers its declaration against the ENTIRE refuted \
+      floor set — it may be drained of one floor and acquire another, or be deleted and \
+      reintroduced as a different theorem, and this gate will not notice. {keyedRows} row(s) are \
+      keyed on `name ⊕ floor-set` and are gated properly. ONE `#floor_ratchet_emit` on a green \
+      tree upgrades every legacy row that is still a carrier; the healthy value here is 0."
   -- ⚑ EVERY honest-floor demotion is printed on EVERY root build, with both of the poles it rode
   -- in on, and it is printed HERE — BEFORE the violation `throwError`, not after. A gate that
   -- reports which floors it stopped defending only on the runs where it passes is reporting at
@@ -1089,18 +1411,41 @@ def check (baseline : Array String) : MetaM Unit := do
       parametrically refuted), so their consumers are NOT gated:\n{hlines}"
   unless fresh.isEmpty do
     let env ← getEnv
+    let reshaped := fresh.filter (fun c => (baseByName.getD c.name.toString #[]).size > 0)
     let shown := fresh.toList.take 40
     let body := String.intercalate "\n" (shown.map fun c =>
-      s!"    {c.name}\n      floor: {c.floor}   class: {c.cls}   module: {moduleOf env c.name}")
+      let was := baseByName.getD c.name.toString #[]
+      let covered := was.foldl (fun a b => a ++ rowFloors b) (#[] : Array String)
+      let gained := (c.floors.map (·.toString)).filter (fun f => !covered.contains f)
+      let wasLine :=
+        if was.isEmpty then ""
+        else s!"\n      ⚑ SAME NAME, ACQUIRED A FLOOR — it is ALREADY baselined under \
+          {String.intercalate " / " was.toList}, and it now also assumes \
+          {String.intercalate "+" gained.toList}. Grandfathering is an UPPER BOUND on what a \
+          declaration may assume: dropping a floor keeps it, adding one does not."
+      s!"    {c.name}\n      floors: {String.intercalate "+" (c.floors.toList.map (·.toString))}\
+        \n      primary: {c.floor}   class: {c.cls}   module: {moduleOf env c.name}{wasLine}")
     let more := if fresh.size > shown.length then
         s!"\n    … and {fresh.size - shown.length} more." else ""
-    let paste := String.intercalate ",\n" (fresh.toList.map fun c => s!"  \"{c.name}\"")
+    let reshapedNote :=
+      if reshaped.isEmpty then ""
+      else s!"\n⚑ {reshaped.size} of these are NOT new declarations: the NAME is already \
+        grandfathered, and the declaration has ACQUIRED a refuted floor it was not grandfathered \
+        for. That is the hole this key closed on 2026-08-01 — a baselined name used to be a \
+        blanket exemption over every refuted floor forever, so a declaration could be drained of \
+        one floor and acquire another in the same commit and stay green, and 161 declarations were \
+        sitting on exactly that. (DROPPING a floor is a port and is still grandfathered; it is \
+        never reported here.) If the new floor is genuinely unavoidable, grandfather the NEW ROW \
+        (case 3); the old row will be dropped by the next shrink-emit as slack.\n"
+    let paste := String.intercalate ",\n" (fresh.toList.map fun c => s!"  \"{carrierKey c}\"")
     throwError "\n\
-      ⚑ FLOOR-RATCHET: {fresh.size} NEW declaration(s) take a REFUTED floor as a hypothesis.\n\
+      ⚑ FLOOR-RATCHET: {fresh.size} declaration(s) take a REFUTED floor as a hypothesis under a \
+      (name, floor-set) pair that is not grandfathered.\n\
       \n\
       A floor listed below is PROVED FALSE in this tree at deployed BabyBear parameters, so \
       every theorem assuming it is VACUOUS — it says nothing about the deployed system. The \
       campaign measured accrual outrunning removal ~1.2:1; this gate is the stop.\n\
+      {reshapedNote}\
       \n{body}{more}\n\
       \n\
       Three ways forward, in order of preference:\n\
@@ -1149,7 +1494,9 @@ def check (baseline : Array String) : MetaM Unit := do
       3. GRANDFATHER IT, VISIBLY. If it genuinely cannot be ported now, paste the lines below \
          into `manual` in `Dregg2/Verify/FloorRatchetBaseline.lean` and say in the commit \
          message WHY the port is not possible yet. Each one is a claim, on the record, that a \
-         new theorem is knowingly VACUOUS at deployed parameters.\n\
+         new theorem is knowingly VACUOUS at deployed parameters. ⚑ Paste them WHOLE — the row \
+         is `name{keySep}floor+floor`, and a row stripped back to a bare name is a LEGACY row: \
+         a blanket exemption over every refuted floor, for the life of that name.\n\
       \n\
       ⚑ Paste, do NOT reach for `#floor_ratchet_emit!` here: this build just FAILED, `lean` \
          writes no olean for a module that errors, so `import Dregg2` either cannot resolve or \
@@ -1162,7 +1509,8 @@ def check (baseline : Array String) : MetaM Unit := do
     {s.floors.size} refuted floors ({s.propBody.size} prop-body defs, {s.bundles.size} floor \
     bundles); binder {byCls "binder"} + prop-body {byCls "prop-body"} + propdef-user \
     {byCls "propdef-user"} + bundle {byCls "bundle"} + bundle-user {byCls "bundle-user"} \
-    + inj-spelled {byCls "inj-spelled"}; baseline {baseline.size}, slack {slack.size}; \
+    + inj-spelled {byCls "inj-spelled"}; baseline {baseline.size} \
+    ({keyedRows} keyed on `name ⊕ floor-set`, {legacyRows} LEGACY name-only), slack {slack.size}; \
     inline injectivity: {s.injSigs.size} REFUTED signatures gated, {s.shapeLeak} sites left at \
     {s.injResid.size} UNREFUTED signatures (exempt — `#floor_ratchet_floors` lists them); \
     {s.total} constants."
@@ -1191,7 +1539,11 @@ def report : MetaM Unit := do
   let s ← surface
   let mut lines : Array String := #[]
   for f in s.floors do
-    let n := (s.carriers.filter (fun c => c.floor == f)).size
+    -- ⚑ Counted over the whole KEY (`c.floors`), not the primary hit, so a declaration assuming
+    -- three refuted floors is counted under all three. The column therefore SUMS TO MORE than the
+    -- carrier total, on purpose: "how many declarations would a port of this floor touch" is the
+    -- question a reader has here, and the first-hit count answered a different one.
+    let n := (s.carriers.filter (fun c => c.floors.contains f)).size
     lines := lines.push s!"  {n}\t{f}"
   let mut blines : Array String := #[]
   for b in s.bundles do
@@ -1201,7 +1553,8 @@ def report : MetaM Unit := do
   let hlines := String.intercalate "\n" (s.honest.toList.map fun (f, d, n, m, i) =>
     s!"  {f}\tby {d}\tpole {n}\tmodel {m}\tclass inhabited by {i}")
   logInfo s!"floor-ratchet DERIVED SURFACE\n\
-    refuted floors ({s.floors.size}), with carrier counts:\n\
+    refuted floors ({s.floors.size}), with the number of carriers ASSUMING each (a carrier \
+    assuming several is counted under each, so this column sums to more than the carrier total):\n\
     {String.intercalate "\n" lines.toList}\n\
     floors DECLARED HONEST ({s.honest.size}) — refutable at a degenerate instance AND satisfiable, \
     so their consumers are not vacuous and are not gated (`Verify/FloorPole`):\n{hlines}\n\
@@ -1234,15 +1587,31 @@ def renderBaseline (names : Array String) : String := Id.run do
      # Dregg2.Verify.FloorRatchetBaseline — the grandfathered refuted-floor carriers.\n\
      \n\
      GENERATED by `#floor_ratchet_emit` (see `Dregg2/Verify/FloorRatchet.lean`). Do not edit\n\
-     by hand except to DELETE lines. Every name here is a declaration whose type takes a\n\
+     by hand except to DELETE lines. Every row here is a declaration whose type takes a\n\
      hypothesis this tree PROVES FALSE at deployed BabyBear parameters, so the declaration\n\
      is VACUOUS. They are grandfathered because they cannot all be ported at once — this\n\
      file is the RATCHET, and its only healthy direction is SHORTER.\n\
      \n\
-     * REMOVING lines: mechanical. After a port, re-run the plain\n\
+     ## A ROW IS A PAIR: `declaration.name ⊣ floor+floor+…`\n\
+     \n\
+     The floor set is EVERY refuted floor the declaration assumes, sorted. It is part of the\n\
+     KEY, not a comment: a name already listed here that presents a DIFFERENT floor set is a\n\
+     FRESH carrier and a hard build error. Before 2026-08-01 the key was the NAME ALONE, which\n\
+     made every row a blanket exemption over the whole refuted-floor set forever — a listed\n\
+     declaration could be drained of `compressInjective` and acquire `Poseidon2SpongeCR` in one\n\
+     commit, or be deleted and reintroduced as a different theorem, and stay green. An audit\n\
+     measured 477 declarations binding the three StateCommit floors directly, 161 of which bind\n\
+     a SECOND refuted floor as well.\n\
+     \n\
+     ⚑ A row with NO `⊣` is a LEGACY row, left from that name-only format. It still\n\
+     grandfathers its name against any floor set — i.e. the hole is still open for that one\n\
+     declaration. `#floor_ratchet_emit` upgrades every legacy row that is still a carrier; the\n\
+     gate prints how many survive on every run and the healthy count is 0.\n\
+     \n\
+     * REMOVING rows: mechanical. After a port, re-run the plain\n\
        `#floor_ratchet_emit \"…\"` — it emits `baseline ∩ current`, so it can only shrink.\n\
-     * ADDING lines: requires `#floor_ratchet_emit!` and shows up as added lines in review.\n\
-       An added line is a claim that a new theorem HAD to be built on a refuted floor.\n\
+     * ADDING rows: requires `#floor_ratchet_emit!` and shows up as added lines in review.\n\
+       An added row is a claim that a new theorem HAD to be built on a refuted floor.\n\
      -/\n\
      set_option autoImplicit false\n\
      \n\
@@ -1278,19 +1647,49 @@ def renderBaseline (names : Array String) : String := Id.run do
   out := out ++ "\nend Dregg2.Verify.FloorRatchetBaseline\n"
   return out
 
-/-- `grow = false`: emit `baseline ∩ current` (shrink only). `grow = true`: emit `current`. -/
+/-- `grow = false`: emit `baseline ∩ current` (shrink only). `grow = true`: emit `current`.
+
+Rows are written KEYED (`name ⊣ floor+floor+…`) and always at the carrier's CURRENT floor set, so a
+shrink emit lowers a row whose declaration shed a floor as well as dropping a row whose declaration
+was ported away — both are the ratchet turning the only direction it turns.
+
+Admission is the same SUBSET rule `check` uses, plus LEGACY (name-only) rows, and in the legacy case
+it writes the KEYED row: that is the one-pass migration off the name-only format. It is not a
+laundering route — `check` is exactly as permissive about a legacy row, so the emit can only bank a
+pair the gate was already passing. Once no legacy row survives, a declaration that ACQUIRED a floor
+is dropped here and reds on the next `check`, which is the intended behaviour: the emitters are for
+a green tree, and a green tree is one where nothing was acquired unnoticed. -/
 def emit (baseline : Array String) (path : String) (grow : Bool) : MetaM Unit := do
   let s ← surface
-  let base : Std.HashSet String := baseline.foldl (fun a b => a.insert b) {}
-  let curNames := s.carriers.map (·.name.toString)
-  let out :=
-    if grow then curNames
-    else curNames.filter (fun n => base.contains n)
-  let added := if grow then (curNames.filter (fun n => !base.contains n)).size else 0
+  let mut baseLegacy : Std.HashSet String := {}
+  let mut baseByName : Std.HashMap String (Array String) := {}
+  for b in baseline do
+    match splitKey b with
+    | some (n, fs) => baseByName := baseByName.insert n ((baseByName.getD n #[]).push fs)
+    | none         => baseLegacy := baseLegacy.insert b
+  let keyAdmits : Carrier → Bool := fun c =>
+    let nm := c.name.toString
+    let fs := c.floors.map (·.toString)
+    (baseByName.getD nm #[]).any (fun b => rowAdmits (nm ++ keySep ++ b) nm fs)
+  let curRows := s.carriers.map (fun c => (carrierKey c, c.name.toString, keyAdmits c))
+  let admitted := curRows.filter (fun (_, n, k) => k || baseLegacy.contains n)
+  let out := (if grow then curRows else admitted).map (·.1)
+  let added := if grow then (curRows.filter (fun (_, _, k) => !k)).size else 0
+  let upgraded := if grow then 0 else (admitted.filter (fun (_, _, k) => !k)).size
+  let outSet : Std.HashSet String := out.foldl (fun a r => a.insert r) {}
+  let outNames : Std.HashSet String := out.foldl (fun a r => a.insert (rowName r)) {}
+  let dropped := (baseline.filter (fun b =>
+    match splitKey b with
+    | some _ => !outSet.contains b
+    | none   => !outNames.contains b)).size
   IO.FS.writeFile path (renderBaseline out)
-  logInfo s!"floor-ratchet baseline → {path}: {out.size} names \
-    (was {baseline.size}; {baseline.size - (baseline.filter (fun b => out.contains b)).size} \
-    removed, {added} ADDED{if grow then " — deliberate raise, justify it in the commit" else ""})."
+  logInfo s!"floor-ratchet baseline → {path}: {out.size} rows \
+    (was {baseline.size}; {dropped} dropped, {upgraded} LEGACY name-only rows UPGRADED to \
+    `name ⊕ floor-set` keys, {added} ADDED\
+    {if grow then " — deliberate raise, justify it in the commit" else ""}). \
+    ⚑ Every row this wrote is keyed; any legacy row still in the tree is one this run could not \
+    see — check the OTHER baseline file (`FloorRatchetBaselineInline`), whose surviving names are \
+    now duplicated here as keyed rows and can be deleted."
 
 /-! ## Commands -/
 

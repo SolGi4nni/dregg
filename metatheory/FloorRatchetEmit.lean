@@ -14,8 +14,33 @@ the gate's own modules must not do (they are imported BY the root).
 The uncommented invocation below is the plain, SHRINK-ONLY emitter: it writes
 `baseline ∩ current`, so a carrier that is not already grandfathered is dropped rather than
 laundered in. Then rebuild (`lake build Dregg2`) and commit the shortened baseline with the
-port. The gate's own summary line reports `slack` — how many baseline names are no longer
+port. The gate's own summary line reports `slack` — how many baseline rows are no longer
 carriers, i.e. how much the ratchet can be lowered for free right now.
+
+⚑ A row is a PAIR — `declaration.name ⊣ floor+floor+…` — and the emit always writes the
+carrier's CURRENT floor set. So a shrink emit now banks TWO kinds of win: a declaration that
+stopped being a carrier at all (its row is dropped) and one that merely SHED a floor (its row
+is lowered). Both are things a name-keyed baseline could not see.
+
+## ⚑ THE ONE-TIME MIGRATION OFF NAME-ONLY ROWS — RUN THIS, THEN DELETE THE INLINE ARRAY
+
+The key landed on 2026-08-01 against a baseline of ~2195 name-only rows, which could not be
+hand-keyed and had to red nothing on the day. So a row with no `⊣` is a LEGACY row and still
+grandfathers its declaration against the ENTIRE refuted-floor set — the hole, still open, for
+that one declaration. `#floor_ratchet` prints the surviving count on every run and
+`scripts/floor_ratchet_check.sh` refuses an increase. The healthy value is 0, and getting
+there is two steps on a green tree:
+
+  1. `lake env lean FloorRatchetEmit.lean` — every legacy row that is still a carrier is
+     rewritten as a keyed row, in `Dregg2/Verify/FloorRatchetBaseline.lean`. This includes the
+     275 names currently living in `Dregg2/Verify/FloorRatchetBaselineInline.lean`: the emitter
+     reads both arrays and writes ONE file.
+  2. Empty `FloorRatchetBaselineInline.inlineSpelled` (delete `i0`/`i1`, leave the array `#[]`).
+     Its names are now keyed rows in the main baseline; left in place they are 275 legacy rows
+     that no emit will ever reach, because nothing rewrites that file.
+
+Rebuild after both. `legacy` in the gate's summary line should read 0; if it does not, the
+rows it is still counting are in a file the emitter did not write.
 
 ## Raising the ratchet (rare, and deliberate)
 

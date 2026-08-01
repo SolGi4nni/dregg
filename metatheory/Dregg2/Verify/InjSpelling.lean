@@ -223,6 +223,40 @@ def classify (sigs : Array Sig) (memo : IO.Ref (Std.HashMap String (Option Name)
       if v.isSome then return v
   return none
 
+/-- **EVERY** refuted inline signature a type binds, in `injBinders` order, deduplicated.
+
+`classify` short-circuits at the first hit, which is all a yes/no verdict needs. The RATCHET's
+baseline key needs the whole set: a declaration binding two refuted inline signatures that DROPS the
+first one and keeps the second is a different vacuity claim than it was, and a first-hit answer
+reports the same floor before and after. Same per-binder logic as `classify` (structural compare
+first, memoized δ-fallback second), so `classifyAll` is empty exactly when `classify` is `none` and
+its FIRST element is exactly what `classify` returns. -/
+def classifyAll (sigs : Array Sig) (memo : IO.Ref (Std.HashMap String (Option Name)))
+    (ty : Expr) : MetaM (Array Name) := do
+  let mut out : Array Name := #[]
+  for (a, b) in injBinders ty do
+    if a.hasLooseBVars || b.hasLooseBVars then continue
+    let mut found : Option Name := none
+    for s in sigs do
+      if found.isNone && s.dom == a && s.cod == b then found := some s.floor
+    if found.isNone then
+      let key ← sigKey a b
+      match (← memo.get).get? key with
+      | some v => found := v
+      | none =>
+        let mut v : Option Name := none
+        for s in sigs do
+          if v.isNone then
+            let eq ← (try isDefEq s.dom a catch _ => pure false)
+            if eq then
+              let eq2 ← (try isDefEq s.cod b catch _ => pure false)
+              if eq2 then v := some s.floor
+        memo.modify (·.insert key v)
+        found := v
+    if let some fl := found then
+      unless out.contains fl do out := out.push fl
+  return out
+
 /-- The residual: the inline-injectivity signatures a type binds that are NOT gated, as printable
 keys. This is what makes the exempt half ACCOUNTED FOR rather than waved away — the report
 histograms them, so "579 ungated" becomes a list of signatures with counts and a reason. -/

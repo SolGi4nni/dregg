@@ -81,6 +81,59 @@ if git -C "$META" rev-parse --verify --quiet "$DEFAULT_BRANCH" >/dev/null 2>&1 \
   fi
 fi
 
+# 3b. LEGACY (name-only) baseline rows may only ever go DOWN.
+#
+# A baseline row is a PAIR: `name ⊣ floor+floor+…`. A row with no separator is the pre-2026-08-01
+# name-only format, and it still grandfathers its declaration against the ENTIRE refuted-floor set
+# — so a listed theorem can be drained of one floor and acquire another, or be deleted and
+# reintroduced as a different theorem, and the gate will not notice. They were tolerated for one
+# reason: keying the ~1900 existing rows required an emit against a GREEN root, and this change had
+# to red nothing on the day it landed.
+#
+# One `#floor_ratchet_emit` on a green tree upgrades every legacy row that is still a carrier. The
+# healthy count is 0 and the count may not INCREASE — the gate's error output prints pastable KEYED
+# rows, so the only way to add a legacy row is to hand-strip one back to a bare name.
+INLINE_FILE="Dregg2/Verify/FloorRatchetBaselineInline.lean"
+count_keyed() { grep -c '^  ".* ⊣ ' 2>/dev/null || true; }
+legacy_file() {  # $1 = path
+  local all keyed
+  all="$(count_names < "$1")"
+  keyed="$(count_keyed < "$1")"
+  echo $(( ${all:-0} - ${keyed:-0} ))
+}
+legacy_ref() {  # $1 = ref, $2 = repo-relative path; prints "" when unavailable
+  git -C "$META" cat-file -e "$1:$2" 2>/dev/null || { echo ""; return; }
+  local all keyed
+  all="$(git -C "$META" show "$1:$2" | count_names)"
+  keyed="$(git -C "$META" show "$1:$2" | count_keyed)"
+  echo $(( ${all:-0} - ${keyed:-0} ))
+}
+LEGACY_NOW=0
+for f in "$BASE_FILE" "$INLINE_FILE"; do
+  [ -f "$META/$f" ] && LEGACY_NOW=$(( LEGACY_NOW + $(legacy_file "$META/$f") ))
+done
+if [ "$LEGACY_NOW" -gt 0 ]; then
+  printf '\033[33mfloor-ratchet: %s LEGACY (name-only) baseline rows\033[0m — each is a blanket\n' \
+    "$LEGACY_NOW"
+  printf 'exemption over the WHOLE refuted-floor set for that declaration. Run\n' >&2
+  printf "  cd metatheory && lake env lean FloorRatchetEmit.lean\n" >&2
+  printf 'on a green tree to key them, then empty %s (its\n' "$INLINE_FILE" >&2
+  printf 'surviving names are folded into the main baseline as keyed rows). Target: 0.\n' >&2
+fi
+if git -C "$META" rev-parse --verify --quiet "$DEFAULT_BRANCH" >/dev/null 2>&1; then
+  LW1="$(legacy_ref "$DEFAULT_BRANCH" "metatheory/$BASE_FILE")"
+  LW2="$(legacy_ref "$DEFAULT_BRANCH" "metatheory/$INLINE_FILE")"
+  if [ -n "$LW1" ] || [ -n "$LW2" ]; then
+    LEGACY_WAS=$(( ${LW1:-0} + ${LW2:-0} ))
+    if [ "$LEGACY_NOW" -gt "$LEGACY_WAS" ]; then
+      fail "LEGACY baseline rows went UP: $LEGACY_WAS -> $LEGACY_NOW vs $DEFAULT_BRANCH.
+  A name-only row grandfathers a declaration against every refuted floor there is, forever. The
+  gate prints pastable KEYED rows on failure, so a new one means a row was hand-stripped back to a
+  bare name. Paste the row WHOLE."
+    fi
+  fi
+fi
+
 printf 'floor-ratchet wiring OK: imported, invoked, baseline not silently raised.\n'
 
 [ "${1:-}" = "--presence" ] && exit 0
@@ -101,6 +154,12 @@ cd "$META"
 #      floor_ratchet_canary_antifloor.lean B1/B2 — the anti-floor exemption used as a laundry
 #      floor_ratchet_canary_order.lean     B4 — binder ORDER, plus the `control_` over-tightening
 #                                          check (a genuine refutation that must stay EXEMPT)
+#      floor_ratchet_canary_key.lean       THE BASELINE KEY — a declaration ALREADY grandfathered
+#                                          that acquires or swaps a refuted floor. Its `control_`
+#                                          is load-bearing in the other direction: it is the only
+#                                          evidence the canary's baseline pins match anything at
+#                                          all, without which its two violations would be reported
+#                                          for a reason unrelated to the key.
 CANARIES="$(cd "$META" && ls scripts/floor_ratchet_canary*.lean 2>/dev/null || true)"
 [ -n "$CANARIES" ] || fail "no scripts/floor_ratchet_canary*.lean exists. The gate can no longer
   be shown to fail, so a green '#floor_ratchet' means only that the check ran, not that it works.
