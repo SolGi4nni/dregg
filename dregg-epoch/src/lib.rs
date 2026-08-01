@@ -2,8 +2,9 @@
 //!
 //! The dregg upgrade story is GIT-LOCKSTEP + FAIL-CLOSED: the light-client
 //! descriptors, the registry fingerprints ([`WIDE_REGISTRY_STAGED_FP`] +
-//! [`WIDE_UMEM_WELD_REGISTRY_FP`] — the two registries the deployed
-//! prover/verifiers actually run), the effect-VM geometry, and the
+//! [`UMEM_WELD_TABLE_FP`] — the committed wide registry the deployed
+//! prover/verifiers run, and the Lean contract the welded set is DERIVED
+//! from), the effect-VM geometry, and the
 //! slot-caveat tag vocabulary are all compile-time constants. A client's "epoch" is *implicitly* whatever git HEAD it compiled
 //! against. When a client and a node were built from different HEADs, the only
 //! symptom today is a silent verification mismatch: the client cannot tell
@@ -57,7 +58,7 @@ use dregg_circuit::effect_vm::pi::{
     SLOT_CAVEAT_TAG_STRICT_MONOTONIC, SLOT_CAVEAT_TAG_TEMPORAL_GATE, SLOT_CAVEAT_TAG_UNTIL_EVENT,
     SLOT_CAVEAT_TAG_VAULT_DEPOSIT, SLOT_CAVEAT_TAG_WRITE_ONCE,
 };
-use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_FP, WIDE_UMEM_WELD_REGISTRY_FP};
+use dregg_circuit::effect_vm_descriptors::{UMEM_WELD_TABLE_FP, WIDE_REGISTRY_STAGED_FP};
 
 /// The wire-protocol version of the epoch handshake ITSELF (the shape of the
 /// [`EpochManifest`] on the wire), independent of any circuit rotation. Bump
@@ -115,7 +116,7 @@ pub fn known_caveat_tags() -> BTreeSet<u32> {
 pub struct EpochManifest {
     /// The registry fingerprint — the sha256 fingerprints of the DEPLOYED
     /// effect-VM descriptor registries, `<wide>+<wide-umem-welded>`
-    /// ([`WIDE_REGISTRY_STAGED_FP`] + [`WIDE_UMEM_WELD_REGISTRY_FP`] — the two
+    /// ([`WIDE_REGISTRY_STAGED_FP`] + [`UMEM_WELD_TABLE_FP`] — the two
     /// registries the live producer mints from and the wire/executor verifiers
     /// iterate). This is the LOAD-BEARING identity: two binaries can verify
     /// each other's proofs iff their `registry_fp` match (same VK-epoch). A
@@ -151,7 +152,7 @@ pub struct EpochManifest {
 
 /// Build the local binary's manifest from the real baked constants.
 pub fn local_manifest() -> EpochManifest {
-    let registry_fp = format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}");
+    let registry_fp = format!("{WIDE_REGISTRY_STAGED_FP}+{UMEM_WELD_TABLE_FP}");
     EpochManifest {
         descriptor_set_tag: format!(
             "w{EFFECT_VM_WIDTH}/r{ROTATION_R}/fp{}",
@@ -252,7 +253,7 @@ mod tests {
         // fingerprints; this asserts the manifest tracks them rather than a copy.
         assert_eq!(
             local_manifest().registry_fp,
-            format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}")
+            format!("{WIDE_REGISTRY_STAGED_FP}+{UMEM_WELD_TABLE_FP}")
         );
         // And the deployed values are the sha256 hexes we expect at this HEAD, so a silent
         // fingerprint drift is caught here. (The manifest previously pinned the bare 1-felt V3 FP —
@@ -285,10 +286,29 @@ mod tests {
         // a later one. It is right about the discipline and was wrong about which epoch is current.
         // Hence the third pin below, which the essay claimed and the code never checked.
         // ⚠ TWO, NOT THREE — and the comment above is why that needed checking. `registry_fp` is
-        // composed of exactly these two (`format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}")`,
+        // composed of exactly these two (`format!("{WIDE_REGISTRY_STAGED_FP}+{UMEM_WELD_TABLE_FP}")`,
         // :144), so `V3_STAGED_REGISTRY_FP` is NOT part of this epoch's identity. The essay's "ALL
         // THREE registry fingerprints moved" is true of the FLAG DAY and false of this pin's subject;
         // I nearly added a third entry on the strength of it.
+        //
+        // ⚑ HANDSHAKE FLAG DAY 2026-07-31 — `registry_fp` CHANGES SHAPE, and nothing else does.
+        // `WIDE_UMEM_WELD_REGISTRY_FP` (sha256 of the 10 MB welded registry TSV) is gone with the
+        // file; its half of the identity is now `UMEM_WELD_TABLE_FP`, the sha256 of the Lean
+        // `umemweld` contract rows the welded set is DERIVED from. Every un-rebuilt peer gets
+        // `RegistryFpMismatch` on connect — the intended fail-closed reading.
+        //
+        // ⚠ IT IS A HANDSHAKE FLAG DAY, NOT A CHAIN ONE, and that was VERIFIED rather than asserted:
+        // all 57 derived welded members were compared against the committed welded members before the
+        // file was deleted — byte-identical through
+        // `descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes`, 57/57, and again 57/57
+        // through an independent JSON re-derivation outside the crate. Identical descriptors ⇒
+        // identical AIRs ⇒ NO VK rotation, NO re-genesis, NO PI-count change.
+        //
+        // ⚠ ONE THING DID MOVE ON THE WIRE, and it is not this constant: a welded leg's attached
+        // `vk_hash` was `blake3` of the welded member's committed JSON STRING, which no longer
+        // exists. It is now `blake3` of that descriptor's canonical bytes
+        // (`sdk::full_turn_proof::welded_descriptor_vk_hash`). Welded legs minted before this commit
+        // are refused with `rotated effect-vm vk_hash mismatch`.
         let pins: [(&str, &str, &str); 2] = [
             (
                 "WIDE_REGISTRY_STAGED_FP",
@@ -296,9 +316,9 @@ mod tests {
                 "8efec5f786f763592a29fd8e360f9905c697f904e620ada1513f52915d4cc510",
             ),
             (
-                "WIDE_UMEM_WELD_REGISTRY_FP",
-                WIDE_UMEM_WELD_REGISTRY_FP,
-                "1ac8bcb6de1675740c3a165666cbeda643862533a2b12a7c6268750cdf2b3884",
+                "UMEM_WELD_TABLE_FP",
+                UMEM_WELD_TABLE_FP,
+                "3250e7dad9efcd734bad745af5b4f144a2d19e2263e323c533fb22d0749c3cd7",
             ),
         ];
         let stale: Vec<String> = pins
@@ -390,10 +410,7 @@ mod tests {
                 local: l,
                 remote: r,
             } => {
-                assert_eq!(
-                    l,
-                    format!("{WIDE_REGISTRY_STAGED_FP}+{WIDE_UMEM_WELD_REGISTRY_FP}")
-                );
+                assert_eq!(l, format!("{WIDE_REGISTRY_STAGED_FP}+{UMEM_WELD_TABLE_FP}"));
                 assert_eq!(r, "deadbeef".repeat(8));
             }
             other => panic!("expected RegistryFpMismatch, got {other:?}"),

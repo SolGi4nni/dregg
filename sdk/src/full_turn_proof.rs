@@ -189,7 +189,7 @@ pub struct FullTurnWitness {
     /// its Blum op trace) so the effect-vm leg mints the WIDE+UMEM **welded** form INSTEAD of the bare
     /// wide leg. When `Some` AND the turn is a SINGLE cohort-run whose descriptor key has a welded twin
     /// in
-    /// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV),
+    /// the DERIVED welded set ([`derive_welded_wide_member`](dregg_circuit::effect_vm_descriptors::derive_welded_wide_member)),
     /// [`prove_cohort_run_chain`] routes the run through the welded producer
     /// ([`prove_wide_umem_welded_cap_open_staged`] for a CAPS-domain cap-open member, or
     /// [`prove_wide_umem_welded_staged`] for a value/domain-1 plain member) so the leg carries the
@@ -1217,196 +1217,6 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
     // Prove through the IR-v2 batch prover (self-verifies before return).
     prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
         .map_err(|e| SdkError::InvalidWitness(format!("rotated IR-v2 proof: {e}")))
-}
-
-/// **THE STAGED UMEM-COHORT PROVER (VK-RISK-FREE — NOT the deployed default).** The
-/// rotation-flip's deployed-routing precursor: given one effect-leg's universal-memory touch
-/// (its pre-state projection + the Blum op trace), it routes to the FIXED per-effect cohort
-/// descriptor (`umem_cohort_lean_key_for_effect` → `umem_cohort_descriptor_json`, the byte-pinned
-/// `UMEM_COHORT_V1_STAGED_REGISTRY_TSV` emitted from the verified Lean
-/// `EffectVmEmitUMemCohort.umemCohortRegistry`), builds the single-domain width-7 rows + the REAL
-/// `UMemBoundaryWitness` ([`dregg_turn::umem::umem_cohort_proving_inputs_from`]), and proves
-/// through the DEPLOYED-form umem prover [`prove_vm_descriptor2_umem`] with that real boundary —
-/// NOT `UMemBoundaryWitness::default()`. Self-verifies before return.
-///
-/// This is the architectural-unknown resolution made executable: a real turn proves as PER-EFFECT
-/// fixed-cohort legs (mirroring the deployed rotated routing — one descriptor per leg), each
-/// single-domain. A multi-domain leg fails closed (the trace generator's single-domain gate); the
-/// fixed cohort descriptor's baked-in domain is checked against the leg's actual domain.
-///
-/// STAGED: the deployed default ([`prove_effect_vm_rotated_ir2_with_caveat`] / the IVC
-/// `mint_from_block_witnesses`) stays per-map / per-rotated-descriptor with a DEFAULT umem
-/// boundary; this entry is opt-in and never on the live wire. The VK flag-day welds the umem leg
-/// INTO the rotated descriptor — until then this proves the umem-form reconciliation STANDALONE,
-/// exactly as the cohort emitter's width-7 descriptors model it.
-pub fn prove_umem_cohort_staged(
-    effect: &VmEffectKind,
-    pre: &dregg_turn::umem::UProjection,
-    ops: &[dregg_turn::umem::UmemOp],
-) -> Result<
-    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
-    SdkError,
-> {
-    use dregg_circuit::descriptor_ir2::{
-        MemBoundaryWitness, UMemOpSpec, VmConstraint2, parse_vm_descriptor2,
-        prove_vm_descriptor2_umem, verify_vm_descriptor2,
-    };
-    use dregg_circuit::effect_vm_descriptors::{
-        umem_cohort_descriptor_json, umem_cohort_lean_key_for_effect,
-    };
-
-    // Resolve the FIXED cohort descriptor for this effect-leg (fail closed for non-members).
-    let key = umem_cohort_lean_key_for_effect(effect).ok_or_else(|| {
-        SdkError::InvalidWitness(format!(
-            "umem cohort staged: effect {effect:?} is not a umem-cohort member (stays per-map)"
-        ))
-    })?;
-    let json = umem_cohort_descriptor_json(key).ok_or_else(|| {
-        SdkError::InvalidWitness(format!(
-            "umem cohort staged: '{key}' not in the staged umem cohort registry"
-        ))
-    })?;
-    let desc = parse_vm_descriptor2(json)
-        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort descriptor parse: {e}")))?;
-
-    // Bridge the leg's per-turn umem witness into the FIXED single-domain cohort form (the
-    // trace generator fails closed on a multi-domain leg).
-    let inputs = dregg_turn::umem::umem_cohort_proving_inputs_from(pre, ops)
-        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort trace generation: {e}")))?;
-
-    // The fixed descriptor's baked-in domain MUST match the leg's actual domain (the cohort
-    // descriptor carries the domain as a constant; a mismatch would prove a different plane's
-    // reconciliation than the leg touched).
-    let desc_domain = match desc.constraints.first() {
-        Some(VmConstraint2::UMemOp(UMemOpSpec { domain, .. })) => *domain,
-        _ => {
-            return Err(SdkError::InvalidWitness(format!(
-                "umem cohort staged: descriptor '{key}' carries no umem-op constraint"
-            )));
-        }
-    };
-    if desc_domain != inputs.domain {
-        return Err(SdkError::InvalidWitness(format!(
-            "umem cohort staged: descriptor '{key}' is domain {desc_domain} but the leg touches \
-             domain {}",
-            inputs.domain
-        )));
-    }
-
-    // Prove through the DEPLOYED-form umem prover with the REAL boundary; self-verify.
-    let proof = prove_vm_descriptor2_umem(
-        &desc,
-        &inputs.rows,
-        &[],
-        &MemBoundaryWitness::default(),
-        &[],
-        &inputs.boundary,
-    )
-    .map_err(|e| SdkError::InvalidWitness(format!("umem cohort IR-v2 proof: {e}")))?;
-    verify_vm_descriptor2(&desc, &proof, &[])
-        .map_err(|e| SdkError::InvalidWitness(format!("umem cohort self-verify: {e}")))?;
-    Ok(proof)
-}
-
-/// **THE STAGED MULTI-DOMAIN UMEM-COHORT PROVER (VK-RISK-FREE — NOT the deployed default).** The
-/// completion of [`prove_umem_cohort_staged`] to the effects whose state touch spans MORE THAN ONE
-/// domain in a single effect (the NOTE/BRIDGE economic verbs — a `nullifiers`-domain freshness
-/// insert + a `heap`-domain balance write), on which the single-domain cohort path fails closed.
-///
-/// Given one effect-leg's multi-domain universal-memory touch (its pre-state projection + the Blum
-/// op trace), it routes to the FIXED per-effect MULTI-DOMAIN cohort descriptor
-/// (`umem_cohort_multidomain_lean_key_for_effect` → `umem_cohort_multidomain_descriptor_json`, the
-/// byte-pinned [`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`] emitted from the verified Lean
-/// `EffectVmEmitUMemCohortMulti.umemCohortMultiRegistry`), builds the multi-domain rows + the REAL
-/// `UMemBoundaryWitness` ([`dregg_turn::umem::umem_cohort_multidomain_proving_inputs_from`]), and
-/// proves through the DEPLOYED-form umem prover [`prove_vm_descriptor2_umem`] with that real
-/// boundary. Self-verifies before return.
-///
-/// The fixed descriptor's baked-in per-op domain set (in column order) is checked against the leg's
-/// actual domain set — a mismatch fails closed (the descriptor carries the FIXED domain set its
-/// committed VK backs; it must not prove a different plane-set than the leg touched).
-///
-/// SOUNDNESS SCOPE (honest): the multi-domain cohort leg reconciles each touched domain's boundary
-/// FAITHFULLY and INDEPENDENTLY (the per-domain survival keystones, `noteSpend_post_root` /
-/// `_pre_root`, parametric over the domain). It does NOT by itself bind the CROSS-domain economic
-/// invariant (e.g. balance-credit == spent-note-value) — that is not a memory-reconciliation
-/// property; it rides the effect's own rotated AIR gates (the weld preserves the whole rotated
-/// constraint set). This is the same division as the single-domain cohort.
-///
-/// STAGED: opt-in, never on the live wire; `umem_witness_enabled` untouched. The deployed default
-/// stays per-map until the gated VK epoch.
-pub fn prove_umem_cohort_multidomain_staged(
-    effect: &VmEffectKind,
-    pre: &dregg_turn::umem::UProjection,
-    ops: &[dregg_turn::umem::UmemOp],
-) -> Result<
-    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
-    SdkError,
-> {
-    use dregg_circuit::descriptor_ir2::{
-        MemBoundaryWitness, UMemOpSpec, VmConstraint2, parse_vm_descriptor2,
-        prove_vm_descriptor2_umem, verify_vm_descriptor2,
-    };
-    use dregg_circuit::effect_vm_descriptors::{
-        umem_cohort_multidomain_descriptor_json, umem_cohort_multidomain_lean_key_for_effect,
-    };
-
-    // Resolve the FIXED multi-domain cohort descriptor for this effect-leg (fail closed for
-    // non-members / single-domain effects).
-    let key = umem_cohort_multidomain_lean_key_for_effect(effect).ok_or_else(|| {
-        SdkError::InvalidWitness(format!(
-            "umem multi-domain cohort staged: effect {effect:?} is not a multi-domain umem-cohort \
-             member (single-domain effects use prove_umem_cohort_staged)"
-        ))
-    })?;
-    let json = umem_cohort_multidomain_descriptor_json(key).ok_or_else(|| {
-        SdkError::InvalidWitness(format!(
-            "umem multi-domain cohort staged: '{key}' not in the staged multi-domain registry"
-        ))
-    })?;
-    let desc = parse_vm_descriptor2(json).map_err(|e| {
-        SdkError::InvalidWitness(format!("umem multi-domain cohort descriptor parse: {e}"))
-    })?;
-
-    // Bridge the leg's per-turn umem witness into the FIXED multi-domain cohort form (fails closed
-    // on a single-domain or empty leg).
-    let inputs =
-        dregg_turn::umem::umem_cohort_multidomain_proving_inputs_from(pre, ops).map_err(|e| {
-            SdkError::InvalidWitness(format!("umem multi-domain cohort trace generation: {e}"))
-        })?;
-
-    // The fixed descriptor's per-op domains (in column order) MUST match the leg's actual domain
-    // set — the descriptor carries the FIXED plane-set its committed VK backs.
-    let desc_domains: Vec<u32> = desc
-        .constraints
-        .iter()
-        .filter_map(|c| match c {
-            VmConstraint2::UMemOp(UMemOpSpec { domain, .. }) => Some(*domain),
-            _ => None,
-        })
-        .collect();
-    if desc_domains != inputs.domains {
-        return Err(SdkError::InvalidWitness(format!(
-            "umem multi-domain cohort staged: descriptor '{key}' bakes domains {desc_domains:?} but \
-             the leg touches domains {:?}",
-            inputs.domains
-        )));
-    }
-
-    // Prove through the DEPLOYED-form umem prover with the REAL boundary; self-verify.
-    let proof = prove_vm_descriptor2_umem(
-        &desc,
-        &inputs.rows,
-        &[],
-        &MemBoundaryWitness::default(),
-        &[],
-        &inputs.boundary,
-    )
-    .map_err(|e| SdkError::InvalidWitness(format!("umem multi-domain cohort IR-v2 proof: {e}")))?;
-    verify_vm_descriptor2(&desc, &proof, &[]).map_err(|e| {
-        SdkError::InvalidWitness(format!("umem multi-domain cohort self-verify: {e}"))
-    })?;
-    Ok(proof)
 }
 
 /// **THE ROTATED+UMEM WELD PROVER (STAGED, VK-RISK-FREE) — the last precursor before the gated VK
@@ -2724,46 +2534,57 @@ fn cap_open_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
     Ok(*blake3::hash(json.as_bytes()).as_bytes())
 }
 
-/// Look up a WIDE+UMEM WELDED descriptor JSON by its LIVE registry key from
-/// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
-/// — the Lean-emitted, member-for-member welded twin of the wide registry. The KEY is the live
-/// registry key (`transferVmDescriptor2R24` / `attenuateCapOpenEffVmDescriptor2R24`); the JSON is the
-/// welded descriptor (the wide carriers + the appended `umemOp` leg). `Ok(None)` when the key has NO
-/// welded twin (the 1-felt-only / wide-twin-pending residual — e.g. `transferCapOpenTB`); `Err` only
-/// on a malformed line (unreachable for the committed TSV).
-fn wide_umem_weld_registry_json_by_key(key: &str) -> Option<&'static str> {
-    use dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV;
-    WIDE_UMEM_WELD_REGISTRY_TSV.lines().find_map(|line| {
-        let mut it = line.splitn(3, '\t');
-        if it.next() == Some(key) {
-            let _display = it.next();
-            it.next()
-        } else {
-            None
-        }
-    })
-}
-
-/// True iff the live registry `key` has a welded twin in the Lean-emitted
-/// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
-/// — the gate the welded routing in [`prove_cohort_run_chain`] keys on (a welded member welds; a
+/// True iff the live registry `key` has a welded twin in the Lean-grounded welded set — the gate the
+/// welded routing in [`prove_cohort_run_chain`] keys on (a welded member welds; a
 /// wide-twin-pending residual stays bare).
 pub fn wide_umem_weld_registry_has(key: &str) -> bool {
-    wide_umem_weld_registry_json_by_key(key).is_some()
+    dregg_circuit::effect_vm_descriptors::umem_weld_row(key).is_some()
 }
 
-/// The WIDE+UMEM WELDED leg's `vk_hash` for a registry `key`: the blake3 fingerprint of the welded
-/// member's committed JSON — the SAME fingerprint the wire verifier
-/// (`verify_effect_vm_rotated_with_cutover`) and the executor's `verify_and_commit_proof_rotated`
-/// re-derive from the uniquely-accepting welded descriptor. So a welded leg's attached vk_hash MUST
-/// pin the welded member (NOT the bare wide member) for the descriptor-identity tooth to pass.
+/// **THE DESCRIPTOR-IDENTITY FINGERPRINT OF A DERIVED WELDED MEMBER.**
+///
+/// ⚑ THIS IS NOT `blake3(committed JSON)` (2026-07-31), and it is the one wire-visible consequence
+/// of deleting `rotation-wide-umem-welded-registry-staged.tsv`. Every other rotated leg fingerprints
+/// the exact JSON STRING its registry line carries; a welded member no longer HAS a committed JSON
+/// string, so hashing one is not an option that exists. It fingerprints the descriptor's CANONICAL
+/// bytes instead (`descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes`, schema-v1,
+/// serde-free, spelling-independent, and deliberately fallible rather than truncating) — which every
+/// holder of the object can recompute, forever, from the object.
+///
+/// Measured before the switch: all 174 members of the three registries encode, strict-decode and
+/// re-encode BYTE-EXACTLY through that codec, so it is total on this domain.
+///
+/// ⚠ FLAG DAY: welded legs' attached `vk_hash` values CHANGE. No VK rotates, no AIR changes, no PI
+/// moves — this is the descriptor-identity metadata the wire carries beside the proof, and the
+/// verifier below re-derives it the same new way. A leg minted before this commit is refused with
+/// `rotated effect-vm vk_hash mismatch`, which is the intended fail-closed reading.
+///
+/// ⚠ RESIDUAL, NAMED: the BARE wide / cap-open legs still hash their committed JSON spelling, so
+/// this path now has two fingerprint rules distinguished by whether the member is shipped or
+/// derived. Moving the bare ones onto canonical bytes too is the right end state and is a strictly
+/// larger flag day (every rotated leg's `vk_hash`), so it is not smuggled in here.
+pub fn welded_descriptor_vk_hash(
+    desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
+) -> Result<[u8; 32], SdkError> {
+    let bytes =
+        dregg_circuit::descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes(desc)
+            .map_err(|e| {
+                SdkError::InvalidWitness(format!(
+                    "welded descriptor '{}' is not canonically representable: {e:?}",
+                    desc.name
+                ))
+            })?;
+    Ok(*blake3::hash(&bytes).as_bytes())
+}
+
+/// The WIDE+UMEM WELDED leg's `vk_hash` for a registry `key` — the SAME fingerprint the wire
+/// verifier (`verify_effect_vm_rotated_with_cutover`) re-derives from the uniquely-accepting welded
+/// descriptor. So a welded leg's attached vk_hash MUST pin the welded member (NOT the bare wide
+/// member) for the descriptor-identity tooth to pass. See [`welded_descriptor_vk_hash`].
 fn wide_umem_weld_vk_hash_by_key(key: &str) -> Result<[u8; 32], SdkError> {
-    let json = wide_umem_weld_registry_json_by_key(key).ok_or_else(|| {
-        SdkError::InvalidWitness(format!(
-            "{key} has no welded twin in WIDE_UMEM_WELD_REGISTRY_TSV"
-        ))
-    })?;
-    Ok(*blake3::hash(json.as_bytes()).as_bytes())
+    let desc = dregg_circuit::effect_vm_descriptors::derive_welded_wide_member(key)
+        .ok_or_else(|| SdkError::InvalidWitness(format!("{key} has no welded twin")))?;
+    welded_descriptor_vk_hash(&desc)
 }
 
 /// THE WIDE CAP-OPEN FLAG-DAY: does this cap-open effective key have a PROVEN wide twin in
@@ -3602,7 +3423,7 @@ fn build_effect_vm_cap_open_leg(
 /// witness inconsistency — a spurious nonce op made the projection diff multi-domain; the genuine wall
 /// is the forbidden-plain-cap wire tooth). This prover instead routes through the cap-open WIDE
 /// descriptor (the membership crown the wire DEMANDS) and welds the caps leg onto THAT — the descriptor
-/// the welded registry (`WIDE_UMEM_WELD_REGISTRY_TSV`) carries a wire-accepted twin of (e.g.
+/// the derived welded set carries a wire-accepted twin of (e.g.
 /// `attenuateCapOpenEffVmDescriptor2R24`, domain 2).
 ///
 /// `route` MUST be a wide-eligible cap-open route (`cap_open_key_has_wide_twin`, non-TB); `cap` the
@@ -3712,7 +3533,7 @@ fn prove_wide_umem_welded_cap_open_staged(
 /// cap-open+umem CAPS-domain weld ([`prove_wide_umem_welded_cap_open_staged`]) — a self-verifying
 /// welded mint of a domain-2 cohort member (attenuate / grant / delegate / revoke / introduce …). The
 /// produced leg verifies through the deployed wire verifier under the cap-open member's welded twin in
-/// [`WIDE_UMEM_WELD_REGISTRY_TSV`](dregg_circuit::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV)
+/// the DERIVED welded set ([`derive_welded_wide_member`](dregg_circuit::effect_vm_descriptors::derive_welded_wide_member))
 /// (for the wire-accepted cap-open keys — e.g. `attenuateCapOpenEffVmDescriptor2R24`).
 ///
 /// `effects` is a single-effect cap-authorized run; `cap` the actor's consumed-capability membership
@@ -4090,7 +3911,7 @@ fn prove_cohort_run_chain(
             // welded twin, prove the WIDE cap-open+umem WELDED descriptor (the membership crown + the
             // 8-felt anchors + the appended `umemOp` caps-reconciliation leg) instead of the bare wide
             // cap-open leg. The welded leg verifies UNIQUELY through the deployed wire/executor verifiers
-            // under its `WIDE_UMEM_WELD_REGISTRY_TSV` member (admitted ADDITIVELY beside the bare wide
+            // under its DERIVED welded member (admitted ADDITIVELY beside the bare wide
             // form), so its vk_hash MUST pin the WELDED member. This FAILS CLOSED (no silent bare
             // fallback) when the welded prove cannot mint — a threaded witness that does not reconcile
             // the genuine caps diff is a LOUD error, never a hidden downgrade.
@@ -4491,16 +4312,21 @@ fn verify_effect_vm_rotated_inner(
     // (kept while TB lacked a wide twin) is RETIRED: a 1-felt leg — normal OR cap-open — verifies
     // under NO accepted registry here and is REJECTED, matching the executor's wide-only
     // `verify_one_cohort_run`. A forged plain-cap descriptor still hits the AUTHORITY FLOOR below.
-    use dregg_circuit::effect_vm_descriptors::{
-        WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
-    };
+    use dregg_circuit::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, welded_wide_members};
 
     let proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
         .map_err(|e| format!("rotated effect-vm proof deserialize: {e}"))?;
 
-    // Collect the (name, json) of every descriptor in a registry the proof verifies under.
-    let collect_bound = |registry: &'static str| -> Vec<(&'static str, &'static str)> {
-        let mut bound: Vec<(&'static str, &'static str)> = Vec::new();
+    // The accepting member's `(registry key, descriptor-identity fingerprint)`. The fingerprint is
+    // computed HERE, at collection time, because the two accepted sets fingerprint differently: a
+    // SHIPPED member hashes the committed JSON string its registry line carries, a DERIVED welded
+    // member hashes its canonical bytes (there is no committed string — see
+    // `welded_descriptor_vk_hash`).
+    let mut bound: Vec<(&'static str, [u8; 32])> = Vec::new();
+
+    // Collect every SHIPPED (committed-JSON) descriptor in a registry the proof verifies under.
+    let collect_bound = |registry: &'static str| -> Vec<(&'static str, [u8; 32])> {
+        let mut found: Vec<(&'static str, [u8; 32])> = Vec::new();
         for line in registry.lines() {
             let mut it = line.splitn(3, '\t');
             let name = match it.next() {
@@ -4517,18 +4343,18 @@ fn verify_effect_vm_rotated_inner(
             {
                 let dpis = &public_inputs[..desc.public_input_count];
                 if verify_vm_descriptor2(&desc, &proof, dpis).is_ok() {
-                    bound.push((name, json));
+                    found.push((name, *blake3::hash(json.as_bytes()).as_bytes()));
                 }
             }
         }
-        bound
+        found
     };
 
     // WIDE + WELDED are the ONLY accepted registries. This is the load-bearing reject tooth: a
     // malicious producer cannot present a 1-felt V3 leg for ANY effect (normal or cap-open) to
     // dodge the wide ~124-bit commitment — the proof verifies under NO accepted descriptor ⇒
     // REJECTED, forcing every leg onto the 8-felt wide route.
-    let mut bound = collect_bound(WIDE_REGISTRY_STAGED_TSV);
+    bound.extend(collect_bound(WIDE_REGISTRY_STAGED_TSV));
     // THE umem VK EPOCH (G4): the Lean-emitted WIDE+UMEM WELDED registry is the deployed DEFAULT
     // producer's accepted descriptor set. A welded proof (`prove_wide_umem_welded_staged`) binds the
     // welded member here UNIQUELY — its welded width / extra umemOp constraint cannot verify against any
@@ -4539,9 +4365,22 @@ fn verify_effect_vm_rotated_inner(
     // multi-cohort chain legs, and the rollback path). The deployed EXECUTOR verifier is the one that
     // REQUIRES the welded twin for a single-cohort sovereign turn (`verify_one_cohort_run`'s
     // `require_welded`), so a committed turn carries the umem boundary on the wire.
-    bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV));
+    // The welded set is DERIVED (`welded_wide_members`), not a shipped registry — the deployed
+    // producer already composed it this way and the 10 MB TSV only handed the verifier a
+    // pre-materialized copy of it.
+    for (key, desc) in welded_wide_members() {
+        if public_inputs.len() >= desc.public_input_count {
+            let dpis = &public_inputs[..desc.public_input_count];
+            if verify_vm_descriptor2(&desc, &proof, dpis).is_ok() {
+                bound.push((
+                    key,
+                    welded_descriptor_vk_hash(&desc).map_err(|e| e.to_string())?,
+                ));
+            }
+        }
+    }
     match bound.as_slice() {
-        [(name, json)] => {
+        [(name, member_fp)] => {
             // AUTHORITY FLOOR (light-client unfoolability): a CAP effect MUST be proven under its
             // cap-open descriptor (the depth-16 cap-membership authority crown is IN that descriptor,
             // and ONLY that descriptor). The PLAIN cohort descriptor for a cap effect
@@ -4579,11 +4418,13 @@ fn verify_effect_vm_rotated_inner(
                      the refuse weld)."
                 ));
             }
-            // Re-derive the rotated vk_hash from the uniquely-accepting cohort descriptor's
-            // committed JSON and pin it to the attached vk_hash. A tampered vk_hash is rejected
-            // even though the proof itself is selector-bound (defends the descriptor-identity
-            // metadata the wire carries).
-            let derived = *blake3::hash(json.as_bytes()).as_bytes();
+            // Re-derive the rotated vk_hash from the uniquely-accepting cohort descriptor and pin it
+            // to the attached vk_hash. A tampered vk_hash is rejected even though the proof itself
+            // is selector-bound (defends the descriptor-identity metadata the wire carries). The
+            // fingerprint was computed at collection time, by the rule that member's provenance
+            // dictates: committed JSON for a shipped member, canonical bytes for a derived welded
+            // one (`welded_descriptor_vk_hash`).
+            let derived = *member_fp;
             if &derived != expected_vk_hash {
                 return Err(format!(
                     "rotated effect-vm vk_hash mismatch: attached {expected_vk_hash:?} != \
@@ -6046,7 +5887,7 @@ mod tests {
     /// test makes the deny-list's COMPLETENESS mechanical instead of a hand census:
     ///
     /// 1. It enumerates EVERY descriptor key in EVERY deployed registry the wire verifier iterates
-    ///    (`V3_STAGED`, `WIDE`, and the umem-`WIDE_UMEM_WELD` registry — so WELDED authority descriptors
+    ///    (`V3_STAGED`, `WIDE`, and the DERIVED umem-welded set — so WELDED authority descriptors
     ///    are covered too, exactly the umem-flip concern).
     /// 2. It requires each key to be CLASSIFIED (`descriptor_authority_class` ≠ `None`). A NEW
     ///    authority-shaped descriptor entering a registry un-classified FAILS here — it cannot ride the
@@ -6058,23 +5899,20 @@ mod tests {
     #[test]
     fn authority_deny_list_is_complete_over_deployed_registry() {
         use dregg_circuit::effect_vm_descriptors::{
-            V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+            UMEM_WELD_TABLE, V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV,
         };
         use std::collections::BTreeSet;
 
         // The wire verifier (`verify_effect_vm_rotated_with_cutover`) passes the registry KEY (TSV
-        // col-0 — bare for every registry, including the welded one) to the deny-list, so we classify
-        // and check the SAME value.
-        let keys: BTreeSet<&str> = [
-            V3_STAGED_REGISTRY_TSV,
-            WIDE_REGISTRY_STAGED_TSV,
-            WIDE_UMEM_WELD_REGISTRY_TSV,
-        ]
-        .iter()
-        .flat_map(|tsv| tsv.lines())
-        .filter(|l| !l.is_empty())
-        .map(|l| l.split('\t').next().expect("registry line has a key"))
-        .collect();
+        // col-0 for a shipped registry, `UMemWeldRow::key` for the DERIVED welded set — the same
+        // value either way) to the deny-list, so we classify and check the SAME value.
+        let keys: BTreeSet<&str> = [V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY_STAGED_TSV]
+            .iter()
+            .flat_map(|tsv| tsv.lines())
+            .filter(|l| !l.is_empty())
+            .map(|l| l.split('\t').next().expect("registry line has a key"))
+            .chain(UMEM_WELD_TABLE.iter().map(|r| r.key))
+            .collect();
 
         assert!(
             keys.len() > 40,

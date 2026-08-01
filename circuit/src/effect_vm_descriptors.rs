@@ -817,7 +817,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 /// ⚠ SUPERSEDED ON THE LIVE WIRE (2026-07-18 bare-V3 stratum audit) — the earlier "HARDSWAP made
 /// this the sole live per-turn effect-VM source" note is STALE TWICE OVER: the WIDE flag-day
 /// repointed the deployed producer/verifiers to `WIDE_REGISTRY_STAGED_TSV` /
-/// `WIDE_UMEM_WELD_REGISTRY_TSV` (SDK `prove_cohort_run_chain` / `verify_effect_vm_rotated_inner`,
+/// the DERIVED welded set (SDK `prove_cohort_run_chain` / `verify_effect_vm_rotated_inner`,
 /// executor `verify_one_cohort_run`, node retention — all wide-only). What still consumes THIS
 /// bare registry at HEAD: the `dregg-verifier rotated-replay-chain` CLI demonstration floor, the
 /// 3 gentian Sat members (`settleEscrowSat`/`dischargeSat`/`vaultSat`, which have NO wide twins),
@@ -833,114 +833,6 @@ pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
     "67cb088af4aac76d8cebe25d20fe105ecd3bb6f5152101f4a3d00f32ab11dbfd";
-
-/// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
-/// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
-/// `transferBalanceUMem` · `mintBalanceUMem` · `burnBalanceUMem` · `revokeUMem` ·
-/// `nullifierFreshUMem` — emitted from the verified Lean
-/// `Dregg2.Circuit.Emit.EffectVmEmitUMemCohort.umemCohortRegistry` (`#assert_axioms`-clean,
-/// byte-pinned). Each is single-domain, width-7, ONE `umem_op` guarded at column 6 — the FIXED
-/// shape a committed VK can back (the producer's per-turn `umem-turn-boundary` form is
-/// variable-width `6 + #domains` and cannot). `key\tname\tjson` per line (key = the lean def
-/// name, e.g. `setFieldUMem`; name = the wire descriptor name; json = the parseable descriptor).
-///
-/// ADDITIVE / STAGED: a NEW set BESIDE the deployed per-map / rotated registries, NO VK bump,
-/// nothing on the live wire. The deployed prover keeps using the per-map V3 registry until the
-/// gated VK epoch; this is the per-effect → umem-descriptor routing the flip rides through.
-pub const UMEM_COHORT_V1_STAGED_REGISTRY_TSV: &str =
-    include_str!("../descriptors/umem-cohort-v1-staged-registry.tsv");
-
-/// Resolve the umem-form COHORT lean-key (the [`UMEM_COHORT_V1_STAGED_REGISTRY_TSV`] first
-/// column) for an [`Effect`](crate::effect_vm::Effect) — the per-effect FIXED-cohort
-/// descriptor this effect's universal-memory touch proves against. `None` = the effect is not
-/// (yet) a umem-cohort member (it stays on the per-map path; e.g. multi-domain or
-/// state-passthrough effects). STAGED: this is the effect→umem-descriptor resolver the gated
-/// flip routes through; the deployed default never calls it.
-///
-/// The domain each member touches mirrors `turn/src/umem.rs` (`UKey::domain`): Field / Balance →
-/// `heap`(1), Cap planes → `caps`(2), nullifiers → `nullifiers`(3).
-pub fn umem_cohort_lean_key_for_effect(effect: &crate::effect_vm::Effect) -> Option<&'static str> {
-    use crate::effect_vm::Effect;
-    Some(match effect {
-        Effect::SetField { .. } => "setFieldUMem",
-        Effect::Transfer { .. } => "transferBalanceUMem",
-        Effect::GrantCapability { .. } => "grantUMem",
-        Effect::AttenuateCapability { .. } => "attenuateUMem",
-        Effect::RevokeCapability { .. } => "revokeUMem",
-        Effect::Mint { .. } | Effect::BridgeMint { .. } => "mintBalanceUMem",
-        Effect::Burn { .. } => "burnBalanceUMem",
-        Effect::NoteSpend { .. } => "nullifierFreshUMem",
-        _ => return None,
-    })
-}
-
-/// The parseable descriptor JSON (third column) for a umem-cohort lean-key in
-/// [`UMEM_COHORT_V1_STAGED_REGISTRY_TSV`]. `None` if the key is absent.
-pub fn umem_cohort_descriptor_json(lean_key: &str) -> Option<&'static str> {
-    UMEM_COHORT_V1_STAGED_REGISTRY_TSV.lines().find_map(|line| {
-        let mut it = line.splitn(3, '\t');
-        if it.next() == Some(lean_key) {
-            let _wire_name = it.next();
-            it.next()
-        } else {
-            None
-        }
-    })
-}
-
-/// The byte-pinned staged registry of the MULTI-DOMAIN umem-form COHORT descriptors (the verified
-/// Lean `EffectVmEmitUMemCohortMulti.umemCohortMultiRegistry`, `EmitUMemCohortMulti.lean`-emitted +
-/// `#guard` byte-pinned). Each is width-8, TWO `umem_op`s — one per touched domain, guarded at
-/// column 6 (`heap`, the balance credit) and column 7 (`nullifiers`, the freshness insert) — the
-/// FIXED twin of the producer's sorted-domain two-domain form (`turn/src/umem.rs`), the shape a
-/// committed VK can back. This COMPLETES the umem cohort to the effects whose state touch spans more
-/// than one domain in one effect (the NOTE/BRIDGE economic verbs), on which the single-domain cohort
-/// fails closed. `key\tname\tjson` per line.
-///
-/// ADDITIVE / STAGED: a NEW set BESIDE the single-domain [`UMEM_COHORT_V1_STAGED_REGISTRY_TSV`] and
-/// the deployed per-map / rotated registries, NO VK bump, nothing on the live wire.
-pub const UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV: &str =
-    include_str!("../descriptors/umem-cohort-multidomain-v1-staged-registry.tsv");
-
-/// Resolve the MULTI-DOMAIN umem-form COHORT lean-key for an [`Effect`](crate::effect_vm::Effect)
-/// whose state touch spans MORE THAN ONE domain in a single effect — the per-effect FIXED-cohort
-/// descriptor (`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`) this effect's universal-memory
-/// touch proves against. `None` = the effect is single-domain (resolve it through
-/// [`umem_cohort_lean_key_for_effect`]) or a non-member (stays per-map). STAGED: the deployed default
-/// never calls it.
-///
-/// The deployed multi-domain effects are the NOTE/BRIDGE economic verbs: each reveals/inserts a
-/// `nullifiers`-domain freshness cell AND writes the `heap`-domain balance — domains `{heap (1),
-/// nullifiers (3)}`, the producer's sorted-code order placing `heap` at guard column 6 and
-/// `nullifiers` at guard column 7.
-pub fn umem_cohort_multidomain_lean_key_for_effect(
-    effect: &crate::effect_vm::Effect,
-) -> Option<&'static str> {
-    use crate::effect_vm::Effect;
-    Some(match effect {
-        // reveal a nullifier (nullifiers) + credit the balance (heap)
-        Effect::NoteSpend { .. } => "noteSpendUMem",
-        // insert an inbound bridged nullifier (nullifiers) + credit the balance (heap)
-        Effect::BridgeMint { .. } => "bridgeMintUMem",
-        _ => return None,
-    })
-}
-
-/// The parseable descriptor JSON (third column) for a multi-domain umem-cohort lean-key in
-/// [`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`]. `None` if the key is absent.
-pub fn umem_cohort_multidomain_descriptor_json(lean_key: &str) -> Option<&'static str> {
-    UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV
-        .lines()
-        .find_map(|line| {
-            let mut it = line.splitn(3, '\t');
-            if it.next() == Some(lean_key) {
-                let _wire_name = it.next();
-                it.next()
-            } else {
-                None
-            }
-        })
-}
 
 /// The wire-name suffix marking a descriptor as the rotated+umem WELD
 /// ([`weld_umem_into_rotated_descriptor`]). A descriptor whose `name` ends with this is a STAGED
@@ -987,7 +879,8 @@ pub fn weld_umem_into_rotated_descriptor(
     rotated: &crate::descriptor_ir2::EffectVmDescriptor2,
     domain: u32,
 ) -> crate::descriptor_ir2::EffectVmDescriptor2 {
-    weld_umem_into_descriptor_with_suffix(rotated, domain, ROTATED_UMEM_WELD_SUFFIX, false)
+    let split = canonicity_splice_of(rotated);
+    weld_umem_into_descriptor_with_suffix(rotated, domain, ROTATED_UMEM_WELD_SUFFIX, false, split)
 }
 
 /// **THE COHORT-SPECIALIZED ROTATED+UMEM WELD (STAGED, VK-RISK-FREE) — the IVC-fold perf lever.**
@@ -1008,7 +901,8 @@ pub fn weld_umem_into_rotated_descriptor_cohort(
     rotated: &crate::descriptor_ir2::EffectVmDescriptor2,
     domain: u32,
 ) -> crate::descriptor_ir2::EffectVmDescriptor2 {
-    weld_umem_into_descriptor_with_suffix(rotated, domain, ROTATED_UMEM_WELD_SUFFIX, true)
+    let split = canonicity_splice_of(rotated);
+    weld_umem_into_descriptor_with_suffix(rotated, domain, ROTATED_UMEM_WELD_SUFFIX, true, split)
 }
 
 /// **THE WIDE ROTATED+UMEM WELD (STAGED, VK-RISK-FREE) — the real flip precursor the VK epoch
@@ -1031,19 +925,78 @@ pub fn weld_umem_into_rotated_descriptor_cohort(
 /// `verify_full_turn_bound` binds) stay intact. STAGED: a NEW descriptor BESIDE the deployed wide
 /// registry — no VK bump, nothing on the live wire. `domain` is the cohort domain the welded effect
 /// touches (heap 1 / caps 2 / nullifiers 3), checked against the leg's actual domain by the prover.
+///
+/// ⚑ THE SPLICE POSITION COMES FROM THE LEAN EMIT ([`UMEM_WELD_TABLE`]), keyed by the HOST's own
+/// wire name — never from Rust arithmetic. See [`weld_umem_into_descriptor_with_suffix`]. A host
+/// that is not a deployed wide member has no Lean-emitted contract row, so there is no defensible
+/// place to put the op: this PANICS rather than guessing one, in every profile.
 pub fn weld_umem_into_wide_descriptor(
     wide: &crate::descriptor_ir2::EffectVmDescriptor2,
     domain: u32,
 ) -> crate::descriptor_ir2::EffectVmDescriptor2 {
-    weld_umem_into_descriptor_with_suffix(wide, domain, WIDE_UMEM_WELD_SUFFIX, false)
+    let row = umem_weld_row_for_host(wide).unwrap_or_else(|| {
+        panic!(
+            "wide+umem weld: host '{}' ({} cols / {} PIs / {} constraints) matches NO row in the \
+             Lean-emitted UMEM_WELD_TABLE, so the canonicity splice index is unknown. Every \
+             deployed wide member has one; a host that does not is off-registry and must not be \
+             welded (guessing the index would mint a DIFFERENT AIR under the same name).",
+            wide.name,
+            wide.trace_width,
+            wide.public_input_count,
+            wide.constraints.len()
+        )
+    });
+    let welded = weld_umem_into_descriptor_with_suffix(
+        wide,
+        domain,
+        WIDE_UMEM_WELD_SUFFIX,
+        false,
+        row.splice,
+    );
+    row.check(&welded);
+    welded
+}
+
+/// **THE DERIVED WIDE+UMEM WELDED MEMBER** for a live registry `key` — what
+/// `circuit/descriptors/rotation-wide-umem-welded-registry-staged.tsv` used to hand a verifier
+/// pre-materialized, computed instead the way the PROVER has always computed it
+/// ([`weld_umem_into_wide_descriptor`] over the bare wide member). `None` for a key with no wide
+/// twin. Verified byte-for-byte against all 57 committed welded members before the TSV was deleted.
+pub fn derive_welded_wide_member(key: &str) -> Option<crate::descriptor_ir2::EffectVmDescriptor2> {
+    let row = umem_weld_row(key)?;
+    let bare_json = WIDE_REGISTRY_STAGED_TSV.lines().find_map(|line| {
+        let mut it = line.splitn(3, '\t');
+        if it.next() == Some(key) {
+            let _display = it.next();
+            it.next()
+        } else {
+            None
+        }
+    })?;
+    let bare = crate::descriptor_ir2::parse_vm_descriptor2(bare_json).ok()?;
+    let welded = weld_umem_into_wide_descriptor(&bare, row.domain);
+    // The weld resolved its row by the host's SHAPE (it is handed a descriptor, not a key). We hold
+    // the KEY's row, so check against that one too: for a shape group with several members the two
+    // rows agree by construction, and this is what makes "agree" a checked fact rather than a
+    // reading of the table.
+    row.check(&welded);
+    Some(welded)
+}
+
+/// Every derived welded member, in registry order — the iteration the wire verifiers used to run
+/// over the deleted TSV's lines.
+pub fn welded_wide_members() -> Vec<(&'static str, crate::descriptor_ir2::EffectVmDescriptor2)> {
+    UMEM_WELD_TABLE
+        .iter()
+        .filter_map(|row| derive_welded_wide_member(row.key).map(|d| (row.key, d)))
+        .collect()
 }
 
 /// **THE WIDE ROTATED+UMEM MULTI-DOMAIN WELD (STAGED, VK-RISK-FREE) — the last family tail.** The
 /// two-domain twin of [`weld_umem_into_wide_descriptor`]: weld the MULTI-DOMAIN umem cohort leg INTO
 /// a WIDE descriptor (a member of [`WIDE_REGISTRY_STAGED_TSV`]). Where the single-domain weld appends
 /// ONE `umemOp` over 7 fresh columns, this appends the FIXED multi-domain cohort shape (the verified
-/// Lean `EffectVmEmitUMemCohortMulti.umemCohortDesc2`, the byte-pinned
-/// [`UMEM_COHORT_MULTIDOMAIN_V1_STAGED_REGISTRY_TSV`]): `6 + domains.len()` fresh main columns
+/// Lean `EffectVmEmitUMemCohortMulti.umemCohortDesc2`): `6 + domains.len()` fresh main columns
 /// `[base .. base + 6 + domains.len())` — `base+0..base+5` shared (`key · present · value ·
 /// prev_present · prev_value · prev_serial`), one PER-DOMAIN guard at `base + 6 + i` — and ONE
 /// `umemOp` per touched domain (in the supplied COLUMN order, the producer's sorted-domain-code order
@@ -1120,11 +1073,18 @@ pub fn weld_umem_multidomain_into_wide_descriptor(
 /// existing constraint, so the base descriptor's whole PI vector + every PI binding survive
 /// unchanged — the property that lets the WIDE weld keep the 16 wide-commit PIs (the 8-felt
 /// ~124-bit anchors) intact.
+///
+/// `split` is the index the `umemOp` is INSERTED at. It is a caller obligation because the two
+/// callers know it from different sources: the WIDE weld reads it out of the Lean emit
+/// ([`UMEM_WELD_TABLE`]), the narrow rotated weld locates it with [`canonicity_splice_of`]. This
+/// function only enforces that wherever it lands is genuinely the canonicity-block boundary — and
+/// it enforces that in EVERY profile (see the note at the check).
 fn weld_umem_into_descriptor_with_suffix(
     desc: &crate::descriptor_ir2::EffectVmDescriptor2,
     domain: u32,
     suffix: &str,
     cohort: bool,
+    split: usize,
 ) -> crate::descriptor_ir2::EffectVmDescriptor2 {
     use crate::descriptor_ir2::{
         MemKind, TID_UMEM_BOUNDARY, TID_UMEMORY, TableDef2, TableSem, UMemOpSpec, VmConstraint2,
@@ -1170,8 +1130,8 @@ fn weld_umem_into_descriptor_with_suffix(
             TableSem::UMemBoundary
         },
     });
-    // The single welded universal-memory WRITE op over the appended 7 columns — byte-for-byte the
-    // cohort `umemOp` (`circuit/descriptors/umem-cohort-v1-staged-registry.tsv`), offset to `base`.
+    // The single welded universal-memory WRITE op over the appended 7 columns — the shape the Lean
+    // `EffectVmEmitUMemCohort.umemCohortDesc` models, offset to `base`.
     let op = VmConstraint2::UMemOp(UMemOpSpec {
         guard: LeanExpr::Var(base + 6),
         domain,
@@ -1190,33 +1150,59 @@ fn weld_umem_into_descriptor_with_suffix(
     // boundary between the host constraints and it. A bare `push` puts the op AFTER the canonicity
     // block and the two descriptors then differ by a permutation — which is not cosmetic:
     // `MainLayout::build` walks the constraint list in order to assign every range/submask aux
-    // column, so a reordered list is a DIFFERENT AIR and a different VK. The parity tooth
-    // (`wide_umem_weld_registry_parity_and_no_narrowing`) is what caught it; it compares the two
-    // byte-for-byte precisely so a runtime weld can never quietly prove against a shape the emit
-    // did not commit.
+    // column, so a reordered list is a DIFFERENT AIR and a different VK.
     //
-    // The split point is DERIVED from the emit's own shape rather than transcribed:
-    // `canon9ConstraintsAt` is `2 blocks × 8 slots × (7 gates + 12 lookups)`, appended last and
-    // never reordered by `hardenLastRow` / `dropUnforcedPins` (both are order-preserving, and the
-    // latter removes only `piBinding`s, of which the block has none).
-    const CANON9_PER_SLOT_CONSTRAINTS: usize = 7 + 12;
-    const CANON9_CONSTRAINTS: usize = 2 * 8 * CANON9_PER_SLOT_CONSTRAINTS;
-    let split = welded
-        .constraints
-        .len()
-        .checked_sub(CANON9_CONSTRAINTS)
-        .expect("a canonicity-welded member carries at least its 304 canon9 constraints");
-    debug_assert!(
-        matches!(welded.constraints[split], VmConstraint2::WindowGate(_))
+    // ⚑ THE BOUNDARY CHECK RUNS IN EVERY PROFILE (2026-07-31). It was a `debug_assert!` — a
+    // fail-closed check compiled out of exactly the builds that ship — sitting under a `split`
+    // Rust recomputed as `constraints.len() - 2 * 8 * (7 + 12)`. Both halves are gone: the WIDE
+    // caller now takes `split` from the Lean emit's own `umemweld` contract row, and what remains
+    // here is a real assertion that the index lands on the canonicity boundary (a row-local gate
+    // first, a range lookup last). It is O(1) beside a whole-descriptor clone, so there was never
+    // a cost reason for it to be debug-only.
+    assert!(
+        split < welded.constraints.len()
+            && matches!(welded.constraints[split], VmConstraint2::WindowGate(_))
             && matches!(
                 welded.constraints[welded.constraints.len() - 1],
                 VmConstraint2::Lookup(_)
             ),
-        "the trailing {CANON9_CONSTRAINTS} constraints must be the canonicity block (a row-local \
-         gate first, a range lookup last); if the emit changed shape, move this split with it"
+        "umem weld splice {split} of '{}' ({} constraints) is not the fields-canonicity boundary \
+         (want a row-local gate at the splice and a range lookup last). The emit's shape and this \
+         splice have diverged; move the splice with it rather than welding a different AIR under \
+         the same name.",
+        desc.name,
+        welded.constraints.len()
     );
     welded.constraints.insert(split, op);
     welded
+}
+
+/// The number of constraints the Lean `fieldsCanonical9Wire` appends: two blocks of eight slots,
+/// each slot contributing seven row-local gates and twelve range lookups.
+///
+/// ⚠ NAMED RESIDUAL. For the deployed WIDE members this number is NOT used — their splice comes
+/// straight out of the Lean emit ([`UMEM_WELD_TABLE`]). It survives only for the STAGED NARROW
+/// rotated weld, which has no committed registry and therefore no emitted contract row, so its
+/// splice is still a Rust-side reconstruction of a Lean fact. The always-on boundary check in
+/// [`weld_umem_into_descriptor_with_suffix`] is what keeps that reconstruction from failing
+/// silently; the way to retire it is a `umemweld`-style companion line from the narrow emit, not a
+/// second copy of this arithmetic.
+const CANON9_BLOCK_LEN: usize = 2 * 8 * (7 + 12);
+
+/// The splice index for a host with NO Lean-emitted contract row — the STAGED narrow rotated weld.
+/// See [`CANON9_BLOCK_LEN`] for why this is a residual rather than the general mechanism.
+fn canonicity_splice_of(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
+    desc.constraints
+        .len()
+        .checked_sub(CANON9_BLOCK_LEN)
+        .unwrap_or_else(|| {
+            panic!(
+                "umem weld: '{}' has {} constraints, fewer than the {CANON9_BLOCK_LEN}-constraint \
+                 fields-canonicity block it must splice before",
+                desc.name,
+                desc.constraints.len()
+            )
+        })
 }
 
 // ⚑ DELETED 2026-07-31 — `WIDE_TRANSFER_STAGED_TSV` /
@@ -1245,7 +1231,7 @@ fn weld_umem_into_descriptor_with_suffix(
 /// is the registry the deployed light client and executor actually resolve members from
 /// (`turn/src/executor/proof_verify.rs::verify_one_cohort_run`,
 /// `sdk/src/full_turn_proof.rs::verify_effect_vm_rotated_inner`), and — with
-/// [`WIDE_UMEM_WELD_REGISTRY_TSV`] — it IS the VK-epoch identity
+/// [`UMEM_WELD_TABLE_FP`] — it IS the VK-epoch identity
 /// (`dregg_epoch::local_manifest`'s `registry_fp` is exactly these two fingerprints).
 ///
 /// The `staged` in the filename and the "ADDITIVE / parallel path beside the live 1-felt registry"
@@ -1305,10 +1291,153 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 /// tests). This is the descriptor set the wire verifiers (`verify_effect_vm_rotated_with_cutover`,
 /// the IVC `admit_welded_leg`) iterate as a NEW accepted form BESIDE the bare wide registry. ADDITIVE:
 /// the live 1-felt / bare wide registries / FP / VK are UNTOUCHED; `umem_witness_enabled` stays false.
-pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
-    include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
-pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "1ac8bcb6de1675740c3a165666cbeda643862533a2b12a7c6268750cdf2b3884";
+///
+/// ⚑ **THE SET IS NOW DERIVED, NOT SHIPPED (2026-07-31).** `WIDE_UMEM_WELD_REGISTRY_TSV` /
+/// `circuit/descriptors/rotation-wide-umem-welded-registry-staged.tsv` (10,049,999 bytes) and
+/// `WIDE_UMEM_WELD_REGISTRY_FP` are DELETED. The file was a member-for-member 57/57 cover of
+/// [`WIDE_REGISTRY_STAGED_TSV`] under one purely-additive transform, so — over and above the bare
+/// wide registry, which is still committed and FP-pinned — it carried only the per-member
+/// `(domain, splice index, shape)` rows now in [`UMEM_WELD_TABLE`], ~8 KB against 10 MB.
+///
+/// It was also, already, a pre-materialized copy of something the deployed PROVER computed at
+/// runtime and never opened the file for (`sdk::full_turn_proof`'s
+/// `weld_umem_into_wide_descriptor(&wide_desc, domain)`), so the two halves of the wire were
+/// deriving and shipping the SAME object. Now both derive it. Use
+/// [`derive_welded_wide_member`] / [`welded_wide_members`].
+///
+/// Verified before deletion, twice and independently: every one of the 57 committed welded members
+/// equals `weld_umem_into_wide_descriptor(bare_wide[key], table[key].domain)` — once through
+/// `descriptor_ir2_canonical::canonical_effect_vm_descriptor2_bytes` in Rust, once through a
+/// standalone JSON re-derivation outside this crate. 57/57 both times.
+pub const UMEM_WELD_TABLE: &[UMemWeldRow] = crate::effect_vm::umem_weld_generated::UMEM_WELD_TABLE;
+
+/// The byte identity of the welded descriptor set — sha256 of the Lean `umemweld` companion lines
+/// [`UMEM_WELD_TABLE`] is rendered from. Replaces the deleted `WIDE_UMEM_WELD_REGISTRY_FP` (sha256
+/// of the deleted TSV) in `dregg_epoch::local_manifest`'s `registry_fp`, so a re-emit that moves any
+/// member's domain or splice still moves the handshake identity.
+pub const UMEM_WELD_TABLE_FP: &str = crate::effect_vm::umem_weld_generated::UMEM_WELD_TABLE_FP;
+
+/// One Lean-emitted derivation-contract row: everything `weld_umem_into_wide_descriptor` needs on
+/// top of a bare wide member, plus the welded shape the result is checked against.
+///
+/// The fields are the `umemweld\t…` companion line `EmitWideUMemWeldRegistryProbe.lean` prints, in
+/// order. See `circuit/src/effect_vm/umem_weld_generated.rs` for what each one pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UMemWeldRow {
+    /// The LIVE registry key (`transferVmDescriptor2R24`), shared with [`WIDE_REGISTRY_STAGED_TSV`].
+    pub key: &'static str,
+    /// The universal-memory plane this member's effect reconciles (heap 1 / caps 2).
+    pub domain: u32,
+    /// Where the `umemOp` sits in the welded constraint list — LOCATED by the Lean emit.
+    pub splice: usize,
+    /// The welded member's trace width (host + 7).
+    pub trace_width: usize,
+    /// The welded member's PI count — equal to the host's (the weld never narrows).
+    pub pi_count: usize,
+    /// The welded member's constraint count (host + 1).
+    pub constraints: usize,
+    /// The welded member's wire name (the host's name + [`WIDE_UMEM_WELD_SUFFIX`]).
+    pub name: &'static str,
+}
+
+impl UMemWeldRow {
+    /// Check a freshly-derived welded member against every quantity this row pins. Runs on EVERY
+    /// construction and in EVERY profile — a table that has drifted from the emit goes red here
+    /// rather than quietly minting a different AIR under a committed name.
+    fn check(&self, welded: &crate::descriptor_ir2::EffectVmDescriptor2) {
+        assert!(
+            welded.name == self.name
+                && welded.trace_width == self.trace_width
+                && welded.public_input_count == self.pi_count
+                && welded.constraints.len() == self.constraints
+                && matches!(
+                    welded.constraints.get(self.splice),
+                    Some(crate::descriptor_ir2::VmConstraint2::UMemOp(_))
+                ),
+            "derived welded member for {} does not match its Lean contract row: got name={} \
+             width={} pi={} constraints={}, want name={} width={} pi={} constraints={} with the \
+             umemOp at index {}",
+            self.key,
+            welded.name,
+            welded.trace_width,
+            welded.public_input_count,
+            welded.constraints.len(),
+            self.name,
+            self.trace_width,
+            self.pi_count,
+            self.constraints,
+            self.splice
+        );
+    }
+}
+
+/// The Lean contract row for a live registry `key`, or `None` if the key has no welded twin.
+pub fn umem_weld_row(key: &str) -> Option<&'static UMemWeldRow> {
+    UMEM_WELD_TABLE.iter().find(|r| r.key == key)
+}
+
+/// The Lean contract row for a HOST DESCRIPTOR — the lookup [`weld_umem_into_wide_descriptor`] uses,
+/// which holds the wide member but not its registry key.
+///
+/// ⚑ THE NAME IS NOT A KEY, and resolving on it alone is a bug this repo has already paid for once
+/// (`trace_rotated::wide_registry_key_for_descriptor_name` refuses for the same reason).
+/// `attenuateVmDescriptor2R24` and `revokeCapabilityVmDescriptor2R24` are BOTH
+/// `dregg-effectvm-attenuateA-v1-genuine-norecompute-tick-…` and their descriptors are NOT the same
+/// object — 559 constraints against 558 — so a name-only lookup silently welds one member at the
+/// other's splice. (Measured: the first draft of this function did exactly that, and the always-on
+/// contract check below is what caught it.)
+///
+/// So the lookup is on the host's whole observable SHAPE, and candidates that disagree on the
+/// splice REFUSE instead of picking one. Measured over the deployed set: 50 shape groups, the only
+/// multi-member one being the 8 `setFieldVmDescriptor2-{slot}R24` twins, which agree on splice and
+/// domain (they differ in which columns their pins name, not in any count).
+fn umem_weld_row_for_host(
+    host: &crate::descriptor_ir2::EffectVmDescriptor2,
+) -> Option<&'static UMemWeldRow> {
+    let candidates: Vec<&'static UMemWeldRow> = UMEM_WELD_TABLE
+        .iter()
+        .filter(|r| {
+            r.name.len() == host.name.len() + WIDE_UMEM_WELD_SUFFIX.len()
+                && r.name.starts_with(host.name.as_str())
+                && r.name.ends_with(WIDE_UMEM_WELD_SUFFIX)
+                && r.trace_width == host.trace_width + 7
+                && r.pi_count == host.public_input_count
+                && r.constraints == host.constraints.len() + 1
+        })
+        .collect();
+    let first = *candidates.first()?;
+    assert!(
+        candidates.iter().all(|r| r.splice == first.splice),
+        "wide+umem weld: host '{}' ({} constraints) matches {} contract rows that DISAGREE on the \
+         canonicity splice ({:?}). The shape no longer determines the splice; the weld must be \
+         resolved by registry KEY at the call site rather than guessing one.",
+        host.name,
+        host.constraints.len(),
+        candidates.len(),
+        candidates
+            .iter()
+            .map(|r| (r.key, r.splice))
+            .collect::<Vec<_>>()
+    );
+    Some(first)
+}
+
+/// Every registry key whose derived welded member carries `welded_name` — the reverse of
+/// [`umem_weld_row`], for a verifier holding a carried welded descriptor and no key.
+///
+/// ⚠ Returns a LIST, not an `Option`. Several registry keys share one display name
+/// (`attenuateVmDescriptor2R24` and `revokeCapabilityVmDescriptor2R24` are both
+/// `dregg-effectvm-attenuateA-v1-genuine-…`, and so are their welded twins), and they do NOT
+/// necessarily carry the same geometry — see `trace_rotated::wide_registry_key_for_descriptor_name`,
+/// which refuses for the same reason. A caller that picked `find(..)` would silently test one
+/// candidate and reject a leg carrying the other.
+pub fn umem_weld_keys_for_welded_name(welded_name: &str) -> Vec<&'static str> {
+    UMEM_WELD_TABLE
+        .iter()
+        .filter(|r| r.name == welded_name)
+        .map(|r| r.key)
+        .collect()
+}
 
 /// The number of written-slot completion lanes the deployed setField members publish (the VALUE8
 /// weld — the high bits of the written 32-byte field value).
@@ -1854,7 +1983,7 @@ impl std::error::Error for UnbackedProofBindError {}
 ///
 /// **Why `ProofBind` IS the custom-member identity here** (measured, not assumed): across all
 /// three deployed staged registries — `V3_STAGED_REGISTRY_TSV` (60 members),
-/// [`WIDE_REGISTRY_STAGED_TSV`] (57) and [`WIDE_UMEM_WELD_REGISTRY_TSV`] (57) — EXACTLY
+/// [`WIDE_REGISTRY_STAGED_TSV`] (57) and the DERIVED welded set ([`welded_wide_members`], 57) — EXACTLY
 /// one member carries a `proof_bind` op, and in every one of them it is
 /// `customVmDescriptor2R24`. Keying on the op rather than on the name means a member-name
 /// suffix flag-day (`…-gentian-deployed-bare-refuse`, `…-umem-wide-welded-staged`) cannot slip a
@@ -2218,7 +2347,7 @@ mod tests {
     /// editable artifacts, and `all_descriptors_parse` above only checks parseability,
     /// which a byte-changing-but-still-parseable hand-edit / bad merge / partial
     /// checkout survives silently. This is the identical `sha256_hex(x) == X_FP` check
-    /// already wired 1300 lines below for `WIDE_UMEM_WELD_REGISTRY_TSV` and
+    /// already wired 1300 lines below for the derived welded set and
     /// `V3_SETFIELD_VALUE8_STAGED_REGISTRY_TSV`, applied to the descriptors themselves.
     /// It does NOT prove Lean-agreement — only that nothing edited a descriptor JSON
     /// (or its FP) without re-running the emit script that repins both together.
@@ -4004,23 +4133,24 @@ mod tests {
         assert_eq!(n, 57, "the wide registry covers all 57 live V3 members");
     }
 
-    /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY: drift pin + per-member weld parity (the
-    /// MISSING VERIFIER LEG, grounded).** The welded registry TSV is fingerprint-stable (the Lean
-    /// `EmitWideUMemWeldRegistryProbe.lean` is the byte source), parses member-for-member, is
-    /// name-stable on the KEYS with the bare wide registry, and — the load-bearing tooth — each Lean
-    /// welded member is BYTE-IDENTICAL to applying the Rust additive [`weld_umem_into_wide_descriptor`]
-    /// to the corresponding bare wide member at the welded member's own domain. That parity is what
-    /// makes a welded proof (built Rust-side via `weld_umem_into_wide_descriptor`) verify UNIQUELY
-    /// against the Lean-grounded registry member on the wire. The NO-NARROWING invariant
-    /// (`piCount` unchanged, `traceWidth = host + 7`) is checked per member.
+    /// **THE DERIVED WIDE+UMEM WELDED SET: the Lean contract holds, member for member.** The
+    /// deleted `rotation-wide-umem-welded-registry-staged.tsv` used to be compared byte-for-byte
+    /// against the Rust weld here. There is no file to compare against any more, so what is checked
+    /// is the thing that replaced it: for all 57 keys the derivation SUCCEEDS, agrees with its
+    /// Lean-emitted contract row on every quantity (name / width / PI count / constraint count /
+    /// splice — enforced inside [`UMemWeldRow::check`], which runs on every construction), covers
+    /// the bare wide registry exactly, and NARROWS NOTHING.
+    ///
+    /// ⚠ What this can no longer catch, stated plainly: a Lean emit whose welded HOST constraints
+    /// differ from the bare wide member in some way the contract row does not describe. That is
+    /// unreachable by construction — the emit welds onto the very member
+    /// `WIDE_REGISTRY_STAGED_TSV` commits — and `scripts/emit_descriptors.py` re-derives every
+    /// member from the emit's own stdout and REFUSES the emit on a mismatch, which is where an
+    /// end-to-end byte comparison still happens.
     #[test]
-    fn wide_umem_weld_registry_parity_and_no_narrowing() {
+    fn wide_umem_weld_derivation_matches_the_lean_contract() {
         use crate::descriptor_ir2::{VmConstraint2, parse_vm_descriptor2};
 
-        // The bare wide members, keyed. The welded registry is now a member-for-member 57/57 cover of
-        // the bare wide registry: v3RegistryCapOpenWide (the first 45 bare members) + the 9 §10
-        // WRITE-bearing cap-open tail wrappers + the 3 live-only wide members (transferCapOpenTB /
-        // heapWrite / supplyMint) — every welded key is a bare WIDE_REGISTRY_STAGED_TSV key.
         let bare: std::collections::HashMap<&str, &str> = WIDE_REGISTRY_STAGED_TSV
             .lines()
             .filter(|l| !l.is_empty())
@@ -4034,73 +4164,128 @@ mod tests {
             .collect();
 
         let mut n = 0usize;
-        for line in WIDE_UMEM_WELD_REGISTRY_TSV.lines() {
-            if line.is_empty() {
-                continue;
-            }
+        for row in UMEM_WELD_TABLE {
             n += 1;
-            let mut it = line.splitn(3, '\t');
-            let key = it.next().expect("welded key");
-            let name = it.next().expect("welded name");
-            let json = it.next().expect("welded json");
             assert!(
-                name.ends_with(WIDE_UMEM_WELD_SUFFIX),
-                "{key}: welded member name carries the WIDE_UMEM_WELD_SUFFIX"
+                row.name.ends_with(WIDE_UMEM_WELD_SUFFIX),
+                "{}: welded member name carries the WIDE_UMEM_WELD_SUFFIX",
+                row.key
             );
-            let welded = parse_vm_descriptor2(json)
-                .unwrap_or_else(|e| panic!("{key} welded member parses: {e}"));
-            // Extract the welded leg's domain (the single appended umemOp).
-            let domain = welded
-                .constraints
-                .iter()
-                .find_map(|c| match c {
-                    VmConstraint2::UMemOp(spec) => Some(spec.domain),
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("{key}: welded member declares a umemOp"));
-
             let bare_json = bare
-                .get(key)
-                .unwrap_or_else(|| panic!("{key}: welded key is a bare wide registry key"));
+                .get(row.key)
+                .unwrap_or_else(|| panic!("{}: welded key is a bare wide registry key", row.key));
             let bare_desc = parse_vm_descriptor2(bare_json)
-                .unwrap_or_else(|e| panic!("{key} bare member parses: {e}"));
+                .unwrap_or_else(|e| panic!("{} bare member parses: {e}", row.key));
 
-            // THE PARITY TOOTH: the Lean-emitted welded member == the Rust additive weld of the bare
-            // member at the same domain. The welded VK is Lean-grounded AND the Rust producer's weld
-            // agrees with it (the ONE-circuit/VK invariant).
-            let rust_welded = weld_umem_into_wide_descriptor(&bare_desc, domain);
+            // The derivation itself (its contract check runs inside).
+            let welded = derive_welded_wide_member(row.key)
+                .unwrap_or_else(|| panic!("{}: derivation must succeed", row.key));
+
+            // The welded name is exactly the host's name plus the suffix — the property
+            // `umem_weld_row_for_host` resolves on.
             assert_eq!(
-                welded, rust_welded,
-                "{key}: Lean-emitted welded member must byte-match the Rust weld_umem_into_wide_descriptor"
+                welded.name,
+                format!("{}{WIDE_UMEM_WELD_SUFFIX}", bare_desc.name),
+                "{}: the welded name is the bare name + the suffix",
+                row.key
             );
+            // The op is at the contract's index, at the contract's domain, over the 7 columns past
+            // the host width.
+            match &welded.constraints[row.splice] {
+                VmConstraint2::UMemOp(spec) => {
+                    assert_eq!(spec.domain, row.domain, "{}: welded domain", row.key);
+                    assert_eq!(
+                        spec.guard,
+                        crate::lean_descriptor_air::LeanExpr::Var(bare_desc.trace_width + 6),
+                        "{}: the umem guard sits at host_width + 6",
+                        row.key
+                    );
+                }
+                other => panic!("{}: contract splice is not a umemOp: {other:?}", row.key),
+            }
 
-            // NO-NARROWING: `piCount` unchanged, `traceWidth = host + 7`.
+            // NO-NARROWING: `piCount` unchanged, `traceWidth = host + 7`, every host constraint
+            // survives in order (the weld only INSERTS).
             assert_eq!(
                 welded.public_input_count, bare_desc.public_input_count,
-                "{key}: the weld must NOT change public_input_count (the 8-felt anchors stay put)"
+                "{}: the weld must NOT change public_input_count (the 8-felt anchors stay put)",
+                row.key
             );
             assert_eq!(
                 welded.trace_width,
                 bare_desc.trace_width + 7,
-                "{key}: the weld appends exactly the 7 umem columns"
+                "{}: the weld appends exactly the 7 umem columns",
+                row.key
+            );
+            let survivors: Vec<_> = welded
+                .constraints
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != row.splice)
+                .map(|(_, c)| c.clone())
+                .collect();
+            assert_eq!(
+                survivors, bare_desc.constraints,
+                "{}: the weld must leave every host constraint untouched and in order",
+                row.key
             );
         }
         assert_eq!(
             n, 57,
-            "the welded registry is a member-for-member 57/57 cover of the bare wide registry: all 45 \
+            "the welded set is a member-for-member 57/57 cover of the bare wide registry: all 45 \
              v3RegistryCapOpenWide emit-source members + the 9 §10 WRITE-bearing cap-open tail wrappers \
              (the write twins the wire routes cap WRITE turns to, minus grantCapWriteCapOpen which has \
              no bare wide twin) + the 3 live-only wide members (transferCapOpenTB / heapWrite / \
              supplyMint)"
         );
-
-        // The byte fingerprint pin (the committed-descriptor discipline; Lean is the byte source).
-        // Mirrors how `WIDE_REGISTRY_STAGED_FP` pins the bare wide registry.
+        let keys: std::collections::BTreeSet<&str> =
+            UMEM_WELD_TABLE.iter().map(|r| r.key).collect();
         assert_eq!(
-            sha256_hex(WIDE_UMEM_WELD_REGISTRY_TSV.as_bytes()),
-            WIDE_UMEM_WELD_REGISTRY_FP,
-            "the welded-wide registry TSV drifted from its committed fingerprint — regenerate via \
-             `lake env lean --run EmitWideUMemWeldRegistryProbe.lean` and update WIDE_UMEM_WELD_REGISTRY_FP"
+            keys.len(),
+            57,
+            "the contract table has no duplicate keys (a duplicate would make the derivation \
+             order-dependent)"
+        );
+
+        // ⚑ THE NAME IS NOT A KEY — pinned, because `umem_weld_row_for_host` would be a silent
+        // mis-weld if it ever became one. `attenuateVmDescriptor2R24` and
+        // `revokeCapabilityVmDescriptor2R24` share a display name AND differ in shape; the 8
+        // setField twins share a name and AGREE in shape. Both facts are load-bearing: the first
+        // says a name-only lookup is wrong, the second says a shape lookup is total.
+        let attenuate = umem_weld_row("attenuateVmDescriptor2R24").expect("row");
+        let revoke_cap = umem_weld_row("revokeCapabilityVmDescriptor2R24").expect("row");
+        assert_eq!(
+            attenuate.name, revoke_cap.name,
+            "these two keys are expected to SHARE a welded display name"
+        );
+        assert_ne!(
+            (attenuate.splice, attenuate.constraints),
+            (revoke_cap.splice, revoke_cap.constraints),
+            "…and to differ in shape, which is why the weld resolves on shape and not on name"
+        );
+        let mut by_shape: std::collections::BTreeMap<
+            (&str, usize, usize, usize),
+            std::collections::BTreeSet<usize>,
+        > = std::collections::BTreeMap::new();
+        for r in UMEM_WELD_TABLE {
+            by_shape
+                .entry((r.name, r.trace_width, r.pi_count, r.constraints))
+                .or_default()
+                .insert(r.splice);
+        }
+        let ambiguous: Vec<_> = by_shape.iter().filter(|(_, s)| s.len() > 1).collect();
+        assert!(
+            ambiguous.is_empty(),
+            "a host SHAPE must determine the canonicity splice — these groups disagree: \
+             {ambiguous:?}. `weld_umem_into_wide_descriptor` refuses on them at runtime; this says \
+             so at build time."
+        );
+        assert_eq!(
+            keys,
+            bare.keys()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "the contract table covers exactly the bare wide registry's keys"
         );
     }
 
@@ -4116,24 +4301,43 @@ mod tests {
         use crate::lean_descriptor_air::{VmConstraint, VmRow};
         use std::collections::BTreeSet;
 
-        for (label, tsv, want_pi) in [
+        // The welded set is DERIVED, not shipped, so it enters as parsed members rather than as a
+        // TSV string — the same 8 setField twins, resolved through `derive_welded_wide_member`.
+        let from_tsv =
+            |tsv: &'static str| -> Vec<(String, crate::descriptor_ir2::EffectVmDescriptor2)> {
+                tsv.lines()
+                    .filter_map(|line| {
+                        let mut it = line.splitn(3, '\t');
+                        let key = it.next()?;
+                        if !key.starts_with("setFieldVmDescriptor2-") {
+                            return None;
+                        }
+                        let _name = it.next();
+                        let json = it.next()?;
+                        Some((
+                            key.to_string(),
+                            crate::descriptor_ir2::parse_vm_descriptor2(json)
+                                .unwrap_or_else(|e| panic!("{key} parses: {e}")),
+                        ))
+                    })
+                    .collect()
+            };
+        let welded_setfields: Vec<(String, crate::descriptor_ir2::EffectVmDescriptor2)> =
+            welded_wide_members()
+                .into_iter()
+                .filter(|(k, _)| k.starts_with("setFieldVmDescriptor2-"))
+                .map(|(k, d)| (k.to_string(), d))
+                .collect();
+
+        for (label, members, want_pi) in [
             // 57/73/73 → 58/74/74: the nine-lane epoch's EIGHTH value lane is an eighth PI.
-            ("v3-1felt", V3_STAGED_REGISTRY_TSV, 58usize),
-            ("wide", WIDE_REGISTRY_STAGED_TSV, 74),
-            ("wide-umem-welded", WIDE_UMEM_WELD_REGISTRY_TSV, 74),
+            ("v3-1felt", from_tsv(V3_STAGED_REGISTRY_TSV), 58usize),
+            ("wide", from_tsv(WIDE_REGISTRY_STAGED_TSV), 74),
+            ("wide-umem-welded", welded_setfields.clone(), 74),
         ] {
             let mut seen = 0usize;
             let mut per_slot_cols: Vec<BTreeSet<usize>> = Vec::new();
-            for line in tsv.lines() {
-                let mut it = line.splitn(3, '\t');
-                let key = it.next().unwrap_or_default();
-                if !key.starts_with("setFieldVmDescriptor2-") {
-                    continue;
-                }
-                let _name = it.next();
-                let json = it.next().expect("registry line carries json");
-                let d = crate::descriptor_ir2::parse_vm_descriptor2(json)
-                    .unwrap_or_else(|e| panic!("{label}/{key} parses: {e}"));
+            for (key, d) in &members {
                 assert_eq!(
                     d.public_input_count, want_pi,
                     "{label}/{key}: the VALUE8 epoch publishes 8 completion PIs \
@@ -4461,20 +4665,42 @@ mod tests {
     fn registry_proof_bind_declarations_are_exactly_the_custom_member() {
         use crate::descriptor_ir2::parse_vm_descriptor2;
 
-        for (label, tsv) in [
-            ("v3-staged", V3_STAGED_REGISTRY_TSV),
-            ("wide-staged", WIDE_REGISTRY_STAGED_TSV),
-            ("wide-umem-welded", WIDE_UMEM_WELD_REGISTRY_TSV),
+        let parse_tsv = |label: &str,
+                         tsv: &'static str|
+         -> Vec<(String, crate::descriptor_ir2::EffectVmDescriptor2)> {
+            tsv.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|line| {
+                    let mut it = line.splitn(3, '\t');
+                    let key = it.next().expect("registry line has a key").to_string();
+                    let _name = it.next();
+                    let json = it.next().expect("registry line has a descriptor json");
+                    let d = parse_vm_descriptor2(json)
+                        .unwrap_or_else(|e| panic!("{label}/{key} must parse: {e}"));
+                    (key, d)
+                })
+                .collect()
+        };
+        // The welded set is DERIVED (`derive_welded_wide_member`), not a committed TSV.
+        let welded: Vec<(String, crate::descriptor_ir2::EffectVmDescriptor2)> =
+            welded_wide_members()
+                .into_iter()
+                .map(|(k, d)| (k.to_string(), d))
+                .collect();
+
+        for (label, members_vec) in [
+            ("v3-staged", parse_tsv("v3-staged", V3_STAGED_REGISTRY_TSV)),
+            (
+                "wide-staged",
+                parse_tsv("wide-staged", WIDE_REGISTRY_STAGED_TSV),
+            ),
+            ("wide-umem-welded", welded.clone()),
         ] {
             let mut declaring: Vec<(String, String, usize)> = Vec::new();
             let mut members = 0usize;
-            for line in tsv.lines().filter(|l| !l.trim().is_empty()) {
-                let mut it = line.splitn(3, '\t');
-                let key = it.next().expect("registry line has a key").to_string();
-                let _name = it.next();
-                let json = it.next().expect("registry line has a descriptor json");
-                let d = parse_vm_descriptor2(json)
-                    .unwrap_or_else(|e| panic!("{label}/{key} must parse: {e}"));
+            for (key, d) in &members_vec {
+                let key = key.clone();
+                let d = d.clone();
                 members += 1;
                 let n = proof_bind_declarations(&d);
                 if n > 0 {
@@ -4504,17 +4730,11 @@ mod tests {
             assert_eq!(*n, 1, "{label}: the custom member declares exactly one");
 
             // The typed refusal names the arm and the remedy — it is actionable, not a bare bool.
-            let json = tsv
-                .lines()
-                .find_map(|line| {
-                    let mut it = line.splitn(3, '\t');
-                    (it.next() == Some("customVmDescriptor2R24")).then(|| {
-                        let _name = it.next();
-                        it.next()
-                    })?
-                })
-                .expect("the custom member is in every staged registry");
-            let custom = parse_vm_descriptor2(json).expect("custom parses");
+            let custom = members_vec
+                .iter()
+                .find(|(k, _)| k == "customVmDescriptor2R24")
+                .map(|(_, d)| d.clone())
+                .expect("the custom member is in every deployed set");
             let msg = require_no_unbacked_proof_bind(&custom)
                 .unwrap_err()
                 .to_string();

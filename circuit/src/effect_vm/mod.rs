@@ -184,6 +184,11 @@ pub mod pi;
 /// producer's `trace_rotated::compact_s2_columns` drops exactly the columns the Lean emit deleted
 /// from the committed wide descriptors. Same law as `layout_generated`: never hand-edit.
 pub mod s2_compact_generated;
+/// THE WIDE+UMEM WELD DERIVATION CONTRACT — Lean-emitted `(key, domain, splice, shape)` per wide
+/// member. It REPLACES the 10 MB `rotation-wide-umem-welded-registry-staged.tsv`, which was that
+/// table applied to the (still committed) bare wide registry; the verifier now derives its welded
+/// member exactly the way the prover always has. Same law as `layout_generated`: never hand-edit.
+pub mod umem_weld_generated;
 
 mod air;
 pub mod authority_digest_weld;

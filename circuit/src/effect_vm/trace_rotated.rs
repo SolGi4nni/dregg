@@ -4835,20 +4835,26 @@ pub fn compacted_column(registry_key: &str, raw_col: usize) -> Result<Option<usi
 pub fn wide_registry_key_for_descriptor_name(display_name: &str) -> Result<&'static str, String> {
     use super::e1_compact_generated::E1_COMPACT_TABLE;
     use super::s2_compact_generated::S2_COMPACT_TABLE;
-    use crate::effect_vm_descriptors::{WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV};
+    use crate::effect_vm_descriptors::{UMEM_WELD_TABLE, WIDE_REGISTRY_STAGED_TSV};
 
-    // Both registries, because a WELDED leg carries the `…-umem-wide-welded-staged` display name
-    // while keying the SAME registry key (and the same S2/E1 geometry — the weld appends columns
-    // ABOVE the compaction, so every committed column below it is unmoved).
+    // Both forms, because a WELDED leg carries the `…-umem-wide-welded-staged` display name while
+    // keying the SAME registry key (and the same S2/E1 geometry — the weld appends columns ABOVE
+    // the compaction, so every committed column below it is unmoved). The welded names come from
+    // the Lean derivation contract now that the welded registry TSV is derived, not shipped.
     let keys: Vec<&'static str> = WIDE_REGISTRY_STAGED_TSV
         .lines()
-        .chain(WIDE_UMEM_WELD_REGISTRY_TSV.lines())
         .filter_map(|line| {
             let mut it = line.splitn(3, '\t');
             let key = it.next()?;
             let display = it.next()?;
             (display == display_name).then_some(key)
         })
+        .chain(
+            UMEM_WELD_TABLE
+                .iter()
+                .filter(|r| r.name == display_name)
+                .map(|r| r.key),
+        )
         .collect();
     let first = *keys.first().ok_or_else(|| {
         format!(
@@ -6425,8 +6431,9 @@ pub struct CapWriteWideWitness {
 /// in-circuit membership crown launders host-trusted authority, so such a leg self-verifies and the
 /// WIRE refuses it. The write-bearing cap-open wrappers are the wire-ACCEPTED members
 /// (`DescriptorAuthorityClass::CrownedWriteRoute`), and they are already committed — byte-for-byte — in
-/// `V3_STAGED_REGISTRY_TSV`, [`WIDE_REGISTRY_STAGED_TSV`](crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV)
-/// and [`WIDE_UMEM_WELD_REGISTRY_TSV`](crate::effect_vm_descriptors::WIDE_UMEM_WELD_REGISTRY_TSV).
+/// `V3_STAGED_REGISTRY_TSV` and [`WIDE_REGISTRY_STAGED_TSV`](crate::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV)
+/// (and, derived from the latter, in the welded set —
+/// [`derive_welded_wide_member`](crate::effect_vm_descriptors::derive_welded_wide_member)).
 /// Nothing re-emits and no VK rotates to take this route.
 ///
 /// SCOPE: exactly the three leads the wide dispatcher's cap-WRITE arm lays a base trace for. The other

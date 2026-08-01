@@ -1103,7 +1103,7 @@ impl TurnExecutor {
             rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
         };
         use dregg_circuit::effect_vm_descriptors::{
-            WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
+            WIDE_REGISTRY_STAGED_TSV, derive_welded_wide_member,
         };
         use dregg_circuit::field::BabyBear;
 
@@ -1203,9 +1203,12 @@ impl TurnExecutor {
         })?;
 
         // WELDED-AWARE RESOLUTION (the umem VK EPOCH — G4, the welded form is the DEPLOYED DEFAULT).
-        // The welded registry (WIDE_UMEM_WELD_REGISTRY_TSV) is a member-for-member 57/57 cover of the
-        // bare wide registry (the parity tooth in `effect_vm_descriptors.rs`), so EVERY cohort key now
-        // resolves a welded twin here. The weld is PI-COUNT-PRESERVING (`welded.public_input_count ==
+        // The welded set is a member-for-member 57/57 cover of the bare wide registry (the contract
+        // tooth in `effect_vm_descriptors.rs`), so EVERY cohort key now resolves a welded twin here.
+        // ⚑ It is DERIVED, not read from a shipped 10 MB TSV: `derive_welded_wide_member` applies the
+        // SAME `weld_umem_into_wide_descriptor` the deployed PRODUCER applies, at the Lean-emitted
+        // domain + canonicity splice for this key. Verified byte-for-byte against all 57 committed
+        // welded members before the file was deleted. The weld is PI-COUNT-PRESERVING (`welded.public_input_count ==
         // bare.public_input_count`), so the SAME reconstructed `dpis` (the 8-felt before/after anchors +
         // fee/record pins below) bind BOTH forms BYTE-IDENTICALLY; only the descriptor target differs.
         //
@@ -1226,7 +1229,7 @@ impl TurnExecutor {
         //     producer emits them, so the verifier still admits their bare form. (transferCapOpenTB is
         //     cap-open-routed: it never surfaces as `name`, and its bare/welded cap-open members ride the
         //     additive `cap_open_descs` set below — listed here for intent.)
-        // This mirrors the SDK wire verifier's `bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV))`.
+        // This mirrors the SDK wire verifier's iteration over `welded_wide_members()`.
         //   * CUSTOM (the Custom-VK door): a custom transition is STATE-PASSTHROUGH at the
         //     kernel layer — the Effect VM enforces balance/nonce/fields/cap_root continuity
         //     and the app's meaning lives entirely in the sub-proof. So the record-kernel diff
@@ -1245,23 +1248,7 @@ impl TurnExecutor {
             "transferCapOpenTBVmDescriptor2R24",
             "customVmDescriptor2R24",
         ];
-        let welded_desc = WIDE_UMEM_WELD_REGISTRY_TSV
-            .lines()
-            .find_map(|line| {
-                let mut it = line.splitn(3, '\t');
-                if it.next() == Some(name) {
-                    let _name = it.next();
-                    it.next()
-                } else {
-                    None
-                }
-            })
-            .map(|wj| {
-                parse_vm_descriptor2(wj).map_err(|e| {
-                    TurnError::InvalidExecutionProof(format!("welded descriptor parse: {e}"))
-                })
-            })
-            .transpose()?;
+        let welded_desc = derive_welded_wide_member(name);
 
         // 5. The caveat manifest the producer used (transfer exercises both domains;
         //    everything else uses the empty manifest).
@@ -1783,8 +1770,10 @@ impl TurnExecutor {
         let mut cap_open_descs: Vec<dregg_circuit::descriptor_ir2::EffectVmDescriptor2> =
             Vec::new();
         for key in cap_open_candidate_keys(lead) {
-            for registry in [WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV] {
-                let json = registry.lines().find_map(|line| {
+            // The BARE wide cap-open member, read from the committed registry …
+            let bare_cap = WIDE_REGISTRY_STAGED_TSV
+                .lines()
+                .find_map(|line| {
                     let mut it = line.splitn(3, '\t');
                     if it.next() == Some(*key) {
                         let _display = it.next();
@@ -1792,13 +1781,12 @@ impl TurnExecutor {
                     } else {
                         None
                     }
-                });
-                if let Some(json) = json {
-                    if let Ok(d) = parse_vm_descriptor2(json) {
-                        if d.public_input_count == cap_open_dpis.len() {
-                            cap_open_descs.push(d);
-                        }
-                    }
+                })
+                .and_then(|json| parse_vm_descriptor2(json).ok());
+            // … and its WELDED twin, DERIVED from it (the welded registry TSV is gone).
+            for d in bare_cap.into_iter().chain(derive_welded_wide_member(key)) {
+                if d.public_input_count == cap_open_dpis.len() {
+                    cap_open_descs.push(d);
                 }
             }
         }

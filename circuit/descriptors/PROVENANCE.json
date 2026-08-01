@@ -12,8 +12,6 @@
     "EmitWideRegistryProbe.lean",
     "EmitBilateralLegs.lean",
     "EmitCrossCellConservation.lean",
-    "EmitUMemCohort.lean",
-    "EmitUMemCohortMulti.lean",
     "EmitWideUMemWeldRegistryProbe.lean",
     "EmitLayoutManifest.lean",
     "EmitByName.lean",
@@ -93,10 +91,7 @@
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
     "rotation-v3-staged-registry.tsv": "67cb088af4aac76d8cebe25d20fe105ecd3bb6f5152101f4a3d00f32ab11dbfd",
-    "rotation-wide-registry-staged.tsv": "8efec5f786f763592a29fd8e360f9905c697f904e620ada1513f52915d4cc510",
-    "rotation-wide-umem-welded-registry-staged.tsv": "1ac8bcb6de1675740c3a165666cbeda643862533a2b12a7c6268750cdf2b3884",
-    "umem-cohort-multidomain-v1-staged-registry.tsv": "89574dbb90269e908911a7f920be691af7e24a6dc4802e5da035feec44867775",
-    "umem-cohort-v1-staged-registry.tsv": "97a4d13edb173a831b81c4cb3cab84c2ee03baf2a45593d000dfa239d6bf4cfb"
+    "rotation-wide-registry-staged.tsv": "8efec5f786f763592a29fd8e360f9905c697f904e620ada1513f52915d4cc510"
   },
   "by_name_sha256": {
     "accumulator-nonrev.json": "ad8f91b437b6d35aa07f609434eb97c9d43ecdb1ab778496fe5128baa32a6ff4",
