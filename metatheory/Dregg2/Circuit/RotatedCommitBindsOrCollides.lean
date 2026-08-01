@@ -26,6 +26,22 @@ is de-vacuumed. The per-cell leg of
 (`CommitDifferential.effectVmCommit_binds_record_digest_or_collides`); these make the rotated leg
 match, so the unified P0-2 closure can be restated floor-free on BOTH commitment shapes.
 
+⚑ UPDATE 2026-08-01 — THE TWO PARAGRAPHS ABOVE ARE HISTORY, NOT CURRENT STATE. Both have happened:
+
+  * This module is NO LONGER INERT and no longer unrooted. It is a `defaultTargets` member via
+    `Dregg2.CommitBindsGuards` (with `Emit.CaveatCommitBindsOrCollides`), so a plain `lake build`
+    now elaborates it and its four `#assert_axioms` can actually go red. Until then they ran in NO
+    build target — `scripts/check-guard-modules.py` classed it `UNTRACKED-ORPHAN`.
+  * The consumer flip LANDED, so the four floored twins named at the top of this header no longer
+    exist. `RotatedCommitDifferential.rotatedCommit_binds_{limbs,authority_digest,cap_root,
+    commitments_root}` and `rotated_and_perCell_both_bind_authority_residue` are DELETED — this
+    module's teeth were their only remaining reason to exist, and a vacuous-at-deployment theorem
+    kept "as the grandfathered migration target" is worse than an absent one. The unified P0-2
+    closure now lives, floor-free on BOTH legs, at
+    `Circuit.RotatedPerCellBindsOrCollides.rotated_and_perCell_both_bind_authority_residue_or_collides`,
+    which consumes `rotatedCommit_binds_authority_digest_or_collides` below. Five
+    `FloorRatchetBaseline` rows retired (1869→1864).
+
 Discipline: sorry-free; the whole proof is the floored twin's body with `wireCommitR_binds hash hCR`
 replaced by `wireCommitR_binds_or_collides hash`, the equality branch reading off the same
 `[i]?`-index pin, the collision branch handing back the residual. No BabyBear arithmetic computed.
