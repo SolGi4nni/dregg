@@ -601,6 +601,84 @@ pub fn hash_bytes_8(data: &[u8]) -> [BabyBear; 8] {
     hash_many_8(&BabyBear::bytes_to_lanes(data))
 }
 
+/// The EMPTY-receipt-log domain tag — ASCII `RCE2`, the same 4-byte-tag convention the sibling
+/// accumulators use (`FLI2`/`FLN2`/`FLE2` on the cells tree). Lean twin:
+/// `ReceiptChain8.rchainEmptyTag`.
+pub const RCHAIN_EMPTY_DOMAIN: BabyBear = BabyBear::from_canonical(0x5243_4532 % 2013265921);
+
+/// **THE RECEIPT-LOG ROOT, AT EIGHT LANES** — the single definition of the fold
+/// `turn::rotation_witness::iroot` names, and the byte-twin of the Lean keystone
+/// [`Dregg2.Lightclient.ReceiptChain8.RChain8Scheme.rchain8`]
+/// (`metatheory/Dregg2/Lightclient/ReceiptChain8.lean`), whose
+/// `rchain8_binds_or_collides` proves — UNCONDITIONALLY, with no refuted floor — that two logs with
+/// equal roots are equal OR a total extractor hands back a genuine collision of this chip.
+///
+/// ```text
+///   root8 := hash_many_8 []                                       -- arity 0, the EMPTY-log root
+///   for (i, rh) in log, oldest first:
+///       entry8 := hash_bytes_8 rh                                 -- 8 lanes, injective preimage
+///       leaf8  := hash_many_8 (i ‖ entry8)                        -- arity 9
+///       root8  := hash_many_8 (root8 ‖ leaf8)                     -- arity 16 — the node8 block
+/// ```
+///
+/// Three preimage LENGTHS ride one carrier — 0, 9, 16 — and they are mutually disjoint, so the
+/// empty / leaf / node domains separate by length alone with no tag felt. (The Lean MMR this fold
+/// was once claimed to realize separates its cons and node cases only by position, both at arity 2.)
+///
+/// # ⚑ THE NUMBER, DERIVED — and it is COLLISION, not second-preimage
+///
+/// A receipt-log root is a fold over a log; what an equivocating prover needs is two logs with one
+/// root, which is a birthday event over the image.
+///
+/// ```text
+///   log₂ p  = 30.906891                     p = 2013265921
+///   image   = p^8       ⇒  8 · 30.906891 = 247.255128 bits
+///   collision ≈ 2^(247.255128 / 2) = 2^123.63
+/// ```
+///
+/// **2^123.63.** The second-preimage figure for the same object is ~2^247.3 and is NOT the governing
+/// number here; quoting it would be the flattering half of the pair.
+///
+/// # What this replaced, and what it cost while it stood
+///
+/// The retired producer was a ZERO-seeded left-leaning chain in which BOTH the leaf and the running
+/// root were ONE felt (`hash_many [root, hash_many [i, hash_bytes rh]]`). Two independent ~31-bit
+/// waists, and the inner one is the cheaper: `hash_bytes` squeezes a 32-byte receipt hash onto one
+/// felt, so two DISTINCT receipts produced a literally identical log entry. Measured at **71,133
+/// Poseidon2 evaluations / 0.86 s** on one debug-build core — see
+/// `turn/tests/iroot_wide_old_admits_new_rejects.rs`, which builds the colliding pair into two
+/// well-formed receipt logs and shows the retired fold ACCEPTING them as one history.
+///
+/// # The empty-log root is TAGGED, and the obvious spelling was wrong
+///
+/// It seeds the empty log at `hash_many_8 [RCHAIN_EMPTY_DOMAIN, 0]` rather than at ZERO, so the empty
+/// receipt root is a domain-separated image like every sibling accumulator's
+/// (`empty_nullifier_root_8`, `empty_commitments_root_8`, `empty_revoked_root_8`) instead of a bare
+/// sentinel that aliases them all. That is also what makes the Lean extractor TOTAL — `0 =
+/// chipAbsorb8 (…)` names no colliding preimage pair.
+///
+/// ⚠ **It was first written `hash_many_8(&[])`, matching the Lean `chipAbsorb8 []` and `MMR.lean`'s
+/// `bag hash [] = hash []`, and that is DEGENERATE HERE.** [`hash_many_8`] absorbs in rate-4 chunks;
+/// an EMPTY input has no chunks, so the permutation never runs and lanes 0..3 come back literally
+/// ZERO — a zero sentinel in exactly the lane the wire carries. Caught by
+/// `rotation_witness::tests::iroot_binds_the_whole_log`. Arity 2 is an admitted chip arity
+/// (`CHIP_ADMITTED_ARITIES = [0,2,3,4,7,11,16]`), so the tag survives the in-circuit cutover.
+pub fn receipt_chain_root_8(receipt_hashes: &[[u8; 32]]) -> crate::Faithful8 {
+    let mut root: [BabyBear; 8] = hash_many_8(&[RCHAIN_EMPTY_DOMAIN, BabyBear::ZERO]);
+    for (position, rh) in receipt_hashes.iter().enumerate() {
+        let mut leaf_in = [BabyBear::ZERO; 9];
+        leaf_in[0] = BabyBear::new(position as u32);
+        leaf_in[1..].copy_from_slice(&hash_bytes_8(rh));
+        let leaf = hash_many_8(&leaf_in);
+
+        let mut node_in = [BabyBear::ZERO; 16];
+        node_in[..8].copy_from_slice(&root);
+        node_in[8..].copy_from_slice(&leaf);
+        root = hash_many_8(&node_in);
+    }
+    crate::Faithful8::from_root8(root)
+}
+
 /// **THE canonical felt-domain LIFECYCLE-PAYLOAD hash** — the single composition both the producer
 /// (`dregg_turn::rotation_witness::lifecycle_felt`) and the per-cell commitment
 /// (`dregg_cell::commitment::v9_lifecycle_felt`) fold into the committed lifecycle limb

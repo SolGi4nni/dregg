@@ -69,11 +69,23 @@
 //!    slot 0 of a wide carrier. This anchor does not touch those sites. The one
 //!    that was IN this anchor — `cells_root` — is closed; `V9RotationContext.iroot`
 //!    is the remaining bare `BabyBear` in the same struct (see below).
-//! 3b. **`iroot` is STILL a 1-felt left-leaning fold** (`rotation_witness::iroot`,
-//!    every intermediate `root: BabyBear` ~31 bits). It is ZERO on this path — the
-//!    ctx builder below pins it, deliberately — so it contributes nothing to the
-//!    deployed anchor today; it is a standing falsifier the moment a live receipt
-//!    MMR root is threaded here, and widening `cells_root` did NOT close it.
+//! 3b. **`iroot`'s FOLD is now 8-felt** (`rotation_witness::iroot8` →
+//!    `poseidon2::receipt_chain_root_8`, every intermediate `Faithful8`, Lean
+//!    `ReceiptChain8.rchain8_binds_or_collides` at 2^123.63) — **but the WIRE SLOT
+//!    `B_IROOT` is still ONE COLUMN, so only lane 0 is absorbed.** The rotated block
+//!    has no free limb (`ROTATED_PADS` is empty), so lanes 1..7 have nowhere to go
+//!    until the extent grows and the descriptors re-emit; the named residual is
+//!    `rotation_witness::IROOT_LANES_1_TO_7_UNABSORBED` and the gate that refuses to
+//!    let it become furniture is
+//!    `turn/tests/iroot_wide_old_admits_new_rejects.rs::the_residual_is_a_gate_not_a_note`.
+//!    ⚑ **On THIS path it is a pinned constant** (the empty-log root — the ctx builder
+//!    below pins it, deliberately), so the classical anchor does not depend on the
+//!    receipt log at all and the width costs nothing here. It costs on the
+//!    **sovereign proof-carrying path**, where `sdk::cipherclerk` folds the agent's
+//!    REAL receipt chain in and `executor::atomic.rs:992-993` writes the resulting
+//!    commitments straight into `TurnReceipt::{pre,post}_state_hash`. Measured: two
+//!    well-formed receipt logs, one byte-identical signed anchor, 71,133 evaluations,
+//!    0.86 s.
 //! 4. **Cost.** `Ledger::root()` was an incrementally-maintained O(log n) leaf
 //!    patch. This anchor is O(n_cells) Poseidon2 for `cells_root` plus a
 //!    `CanonicalHeapTree8` rebuild per accumulator, twice per turn (pre + post).
@@ -116,13 +128,19 @@ use dregg_circuit::field::BabyBear;
 /// commitment moves when the shielded-note / revocation accumulators move —
 /// exactly as the circuit's carrier does.
 ///
-/// `iroot` is **zero** (the empty receipt-log MMR). The receipt-index MMR is a
-/// node-level accumulator (`node::api`'s `receipt_index`), not state the
+/// `iroot` is the EMPTY-receipt-log root ([`crate::rotation_witness::empty_iroot`]). The receipt
+/// index is a node-level accumulator (`node::api`'s `receipt_index`), not state the
 /// executor holds; and the anchor cannot bind the *current* turn's receipt
 /// anyway, since that receipt's hash is computed FROM this commitment. The
 /// receipt log is bound into `receipt_hash` by `previous_receipt_hash` instead,
 /// which chains the whole history. Using the same constant for pre and post is
 /// what makes chain continuity exact.
+///
+/// ⚑ FLAG DAY 2026-08-01: that constant was the literal `BabyBear::ZERO`, and it is now DERIVED by
+/// calling the fold on the empty log. Two reasons, and neither is cosmetic: a bare zero aliases
+/// every other empty accumulator's sentinel, and a hand-restated constant is exactly the shape that
+/// drifts from its producer (this file's own history has three such notes that ended up wrong). It
+/// is a pin against an INDEPENDENT source now — the producer — not against a literal.
 pub fn consensus_ctx(
     ledger: &Ledger,
     nullifier_root: Faithful8,
@@ -134,7 +152,7 @@ pub fn consensus_ctx(
         nullifier_root,
         commitments_root,
         revoked_root,
-        iroot: BabyBear::ZERO,
+        iroot: crate::rotation_witness::empty_iroot(),
         material: RotationCarrierMaterial::default(),
     }
 }

@@ -621,7 +621,38 @@ impl PersistentStore {
     /// lanes of the owner key. `circuit/tests/key_nonet_ninth_lane_reaches_the_anchor.rs` is the
     /// gate that flips when the geometry is emitted; it is keyed on `NUM_PRE_LIMBS`, so it cannot
     /// rot quietly the way the hand-carried `B_CHAIN_BASE` did across `178 → 184`.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 21;
+    /// ## Epoch 22 — the receipt-log root (`iroot`) becomes an 8-lane fold, and its EMPTY root
+    /// stops being zero
+    ///
+    /// **WHAT MOVES:** every persisted `pre_state_hash` / `post_state_hash` and every stored
+    /// `TurnReceipt` carrying them, on BOTH paths. `turn::rotation_witness::iroot` is no longer a
+    /// zero-seeded 1-felt chain over 1-felt leaves; it is lane 0 of
+    /// `poseidon2::receipt_chain_root_8` (Lean twin
+    /// `Dregg2.Lightclient.ReceiptChain8.rchain8`, `rchain8_binds_or_collides` at 2^123.63), whose
+    /// empty-log root is the domain-tagged `A2[RCE2, 0]` rather than `BabyBear::ZERO`. Since
+    /// `state_commit::consensus_ctx` pins the EMPTY root on the classical path, that constant moving
+    /// is itself enough to move every classical anchor. Executor signatures and federation receipt
+    /// QCs over epoch-21 anchors do not re-verify and are **not migrated** —
+    /// `enforce_canonical_state_schema_epoch` refuses a store stamped 21 rather than reinterpreting
+    /// it.
+    ///
+    /// **WHAT DOES *NOT* MOVE:** no chip arity, no table, no descriptor width, no PI count, no VK.
+    /// `iroot` is witness-carried: no AIR gate constrains its value (`weldsAt` covers `base+1..11`
+    /// and `B_CAP_ROOT`; `rotPins` never names `B_IROOT`; the Rust descriptor audit treats it as a
+    /// fresh absorbed limb and never as a digest). So this is a producer/value change only.
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE — the same shape as the note above, and the same
+    /// blocker.** `B_IROOT` is ONE column and `ROTATED_PADS` is empty, so lanes 1..7 of the fold are
+    /// computed and DISCARDED at the wire: the value reaching the signed anchor is still one felt
+    /// (collision 2^15.45, measured at 71,133 evaluations / 0.86 s in
+    /// `turn/tests/iroot_wide_old_admits_new_rejects.rs`, which builds two well-formed receipt logs
+    /// with a byte-identical signed anchor). The cutover is named in
+    /// `rotation_witness::IROOT_LANES_1_TO_7_UNABSORBED` and gated by
+    /// `the_residual_is_a_gate_not_a_note`, which is keyed on `NUM_PRE_LIMBS` so it flips the day
+    /// the geometry is emitted. Verified 2026-08-01, not relayed: `lake env lean --run
+    /// EmitLayoutManifest.lean` fails to LOAD — `EffectVmEmitRotationWide.olean` does not exist —
+    /// so `emit_descriptors.py` cannot run at all while that lane's edit is in flight.
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 22;
 
     /// Open a persistent store backed by a file on disk.
     ///

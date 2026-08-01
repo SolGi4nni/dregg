@@ -2,9 +2,14 @@
 //!
 //! `.docs-history-noclaude/ROTATION-CUTOVER.md` §5 items 3-5 name three witness columns of the rotated
 //! state block that no v1 column carries, and that no producer existed for: `cells_root`
-//! (the turn-level boundary view over present cells), `iroot` (the MMR root over the
-//! receipt log — whole-history non-omission, Lean `mroot_injective` /
-//! `metatheory/Dregg2/Lightclient/MMR.lean`), and the `lifecycle` / `epoch` scalar limbs.
+//! (the turn-level boundary view over present cells), `iroot` (the root over the
+//! receipt log — whole-history non-omission, Lean
+//! `Dregg2.Lightclient.ReceiptChain8.rchain8_binds_or_collides` /
+//! `metatheory/Dregg2/Lightclient/ReceiptChain8.lean`), and the `lifecycle` / `epoch` scalar limbs.
+//!
+//! ⚠ That citation read `mroot_injective` / `Dregg2/Lightclient/MMR.lean` until 2026-08-01, and both
+//! halves were false: the theorem had been DELETED on 2026-07-28 as pigeonhole-false, and `iroot` is
+//! a left-leaning chain, not the MMR's bagged peak forest. See [`iroot8`].
 //!
 //! The cutover doc is explicit that these were DELIBERATELY UNBUILT: a producer is only
 //! validatable against the rotated trace builder that consumes it, and that builder is the
@@ -36,10 +41,14 @@
 //!
 //! ## Honest boundary notes
 //!
-//! * The `iroot` MMR is a left-leaning Poseidon2 fold over the per-position receipt
-//!   leaves — the Rust twin of the Lean MMR whose root `mroot_injective` makes
-//!   tamper/truncate/extend/reorder all move (`MMR.lean:313`). No Rust MMR primitive
-//!   existed before this module (`ROTATION-CUTOVER.md` §5 item 4).
+//! * The `iroot` is a left-leaning Poseidon2 fold over the per-position receipt leaves — the Rust
+//!   twin of Lean `ReceiptChain8.rchain8`, whose `rchain8_binds_or_collides` makes
+//!   tamper/truncate/extend/reorder all move at **2^123.63**, unconditionally (no `Compress8CR`,
+//!   no `Poseidon2SpongeCR` — both refuted at deployed parameters). ⚠ This note used to cite
+//!   `mroot_injective` (`MMR.lean:313`) and to call the fold an MMR; the theorem was deleted
+//!   2026-07-28 and the fold is not an MMR. ⚠ The value that reaches the wire is still lane 0 —
+//!   see [`IROOT_LANES_1_TO_7_UNABSORBED`], which is the one number to read before citing this
+//!   root's strength at the anchor.
 //! * `cells_root` is the sorted-Poseidon2 boundary root over the present cells' existence
 //!   leaves (`dregg_circuit::heap_root` — the SAME tree the heap domain commits to), the
 //!   `boundary_root_derived` analogue at the turn level (`UNIVERSAL-MEMORY.md`).
@@ -62,7 +71,7 @@ use dregg_circuit::exact_nullifier_aafi::{
     ExactLinkedDomains, ExactTaggedKey, exact_linked_append_root8, exact_root_faithful8,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::{hash_bytes, hash_many};
+use dregg_circuit::poseidon2::hash_many;
 
 /// The CONFIRMED rotated register count (ember 2026-06-12, `ROTATION-CUTOVER.md` §2b).
 pub const NUM_REGISTERS: usize = 24;
@@ -422,22 +431,96 @@ pub fn cells_root(ledger: &Ledger) -> dregg_circuit::Faithful8 {
     exact_root_faithful8(lanes)
 }
 
-/// **THE `iroot` PRODUCER** — the MMR root over the receipt log.
+/// **THE `iroot` PRODUCER** — the receipt-log root, as a FAITHFUL 8-felt digest.
 ///
-/// A left-leaning Poseidon2 fold over the per-position receipt leaves: each leaf is the
-/// felt digest of `(position, receipt_hash)`, and the running root accumulates
-/// `root := hash[root, leaf]` in chronological order. This is the Rust realization of the
-/// Lean MMR whose `mroot_injective` (`MMR.lean:313`) makes the root bind the WHOLE log:
-/// tampering any leaf, truncating, extending, or reordering all move the fold. The empty
-/// log yields the zero root (a uniform no-op for a turn that appends nothing).
-pub fn iroot(receipt_hashes: &[[u8; 32]]) -> BabyBear {
-    let mut root = BabyBear::ZERO;
-    for (position, rh) in receipt_hashes.iter().enumerate() {
-        let leaf = hash_many(&[BabyBear::new(position as u32), hash_bytes(rh)]);
-        root = hash_many(&[root, leaf]);
-    }
-    root
+/// Delegates to the SINGLE definition, [`dregg_circuit::poseidon2::receipt_chain_root_8`], whose
+/// byte-twin is the Lean keystone `Dregg2.Lightclient.ReceiptChain8.RChain8Scheme.rchain8`
+/// (`metatheory/Dregg2/Lightclient/ReceiptChain8.lean`). There is one fold body, in the crate that
+/// owns the chip primitives, and no second copy here to drift.
+///
+/// `rchain8_binds_or_collides` proves — with NO hypothesis, in particular no `Compress8CR` and no
+/// `Poseidon2SpongeCR`, both of which are refuted at deployed parameters — that two receipt logs
+/// with equal roots are EQUAL, or a TOTAL extractor names a genuine collision of the deployed chip.
+/// So tamper / truncate / extend / reorder each move this root, at **2^123.63** (birthday over
+/// `p^8`, `8 · log₂ p = 247.26` bits; the second-preimage figure ~2^247.3 is not the governing one).
+///
+/// ## ⚑ WHAT THIS REPLACED, AND WHAT THE HEADER SAID WHILE IT STOOD
+///
+/// This module's header cited `mroot_injective` TWICE (at the module doc and at the "honest boundary
+/// notes") as the reason this root "makes tamper/truncate/extend/reorder all move". Both citations
+/// were false, in two independent ways, and they are corrected above:
+///
+/// * **`mroot_injective` did not exist.** It was DELETED on 2026-07-28 (`ed616d24c`) as
+///   pigeonhole-false — `MMR.lean` §3¼ shows ONE sponge collision at two singleton preimages refutes
+///   its exact CONCLUSION, not merely its premise. Its honest successor `mroot_binds_or_collides`
+///   carries a residual `MMR.lean`'s own header prices at **~2^15.5 queries: a break, not a bound**.
+/// * **This was never an MMR.** `Lightclient.MMR` is a peak forest bagged youngest-outward
+///   (`mroot = bag (peaksOf L)`, a binary carry). This is a flat left-leaning chain. No theorem
+///   about one was ever a theorem about the other, whatever the name said. The genuine MMR
+///   realization is `dregg-query/src/mmr.rs` (BLAKE3, 32-byte digests) — a different consumer,
+///   which is NOT narrow, and whose own two `mroot_injective` citations are the same stale class.
+///
+/// The retired fold was zero-seeded with a ONE-felt running root over ONE-felt leaves, so it had two
+/// independent ~31-bit waists. A real colliding pair was found by deterministic search in **71,133
+/// evaluations / 0.86 s** and built into two well-formed 7-entry receipt logs that the retired fold
+/// accepts as one history (`turn/tests/iroot_wide_old_admits_new_rejects.rs`).
+pub fn iroot8(receipt_hashes: &[[u8; 32]]) -> dregg_circuit::Faithful8 {
+    dregg_circuit::poseidon2::receipt_chain_root_8(receipt_hashes)
 }
+
+/// ⚠ **THE WIRE SLOT — LANE 0 ONLY, AND THAT IS THE WHOLE OF THE RESIDUAL.**
+///
+/// `B_IROOT` is ONE trace column. The rotated block's every other column is occupied
+/// (`layout_generated::ROTATED_PADS` is EMPTY at the nine-lane geometry), so lanes 1..7 of
+/// [`iroot8`] have nowhere to be absorbed until the block extent grows and the descriptors re-emit.
+/// This projection is that gap, named: see [`IROOT_LANES_1_TO_7_UNABSORBED`] for the cost, the
+/// geometry, and the exact cutover.
+///
+/// ⚑ It is a PROJECTION OF THE WIDE FOLD, not a second fold. The retired narrow body is deleted:
+/// the day the columns exist, `produce` writes `iroot8(..).write_lanes(..)` and this function is
+/// deleted outright — there is no narrow definition left to re-derive or to drift.
+pub fn iroot(receipt_hashes: &[[u8; 32]]) -> BabyBear {
+    iroot8(receipt_hashes).limbs()[0]
+}
+
+/// The receipt root of the EMPTY log — the value `state_commit::consensus_ctx` pins on the classical
+/// executor path, where the anchor deliberately does not bind the receipt log (the current turn's
+/// receipt hash is computed FROM this commitment, so it cannot be inside it; `previous_receipt_hash`
+/// chains the history instead).
+///
+/// ⚑ It was `BabyBear::ZERO`. It is now the domain-separated arity-0 chip image, DERIVED by calling
+/// the fold on the empty log rather than restated as a constant — so the pin and the producer cannot
+/// drift, and the empty receipt root no longer aliases every other zero sentinel in the tree.
+#[inline]
+pub fn empty_iroot() -> BabyBear {
+    iroot(&[])
+}
+
+/// The 8-lane empty receipt root — the wide form of [`empty_iroot`], for the day the wire carries
+/// all eight.
+#[inline]
+pub fn empty_iroot_8() -> dregg_circuit::Faithful8 {
+    iroot8(&[])
+}
+
+/// The NAMED residual [`iroot`] carries, in the burn-down grammar
+/// (`docs/FAITHFUL-COMMITMENT-LAW.md`). Swept by
+/// `turn/tests/iroot_wide_old_admits_new_rejects.rs::the_residual_is_a_gate_not_a_note`, which goes
+/// RED — deliberately — the day `NUM_PRE_LIMBS` moves off 184, so this cannot quietly persist past
+/// its own cutover.
+pub const IROOT_LANES_1_TO_7_UNABSORBED: &str = "\
+iroot lanes 1..7 are computed and DISCARDED at the wire: `B_IROOT` is one column and the rotated \
+block has no free limb (NUM_PRE_LIMBS = 184 emitted / 187 in Lean, ROTATED_PADS empty). The value \
+reaching the signed anchor is therefore ONE felt — image 2^30.91, COLLISION 2^15.45, measured at \
+71,133 evaluations / 0.86 s — against the 2^123.63 the fold itself now carries. CUTOVER: extend the \
+block to carry ir1..ir7 (Legal.bodyAligned forces extent 196, not 195), change the WIDE final chain \
+site from arity 11 (`d8 ‖ iroot ‖ 0 ‖ 0`, EffectVmEmitRotationWide.lean:217) to arity 16 \
+(`d8 ‖ iroot8` — already an admitted chip arity), split the NARROW V3 final site \
+(EffectVmEmitRotationV3.lean:500) off arity 9 which is NOT admitted, re-emit, rotate the VK, and \
+bump CANONICAL_STATE_SCHEMA_EPOCH. BLOCKED 2026-08-01, verified not relayed: \
+EmitLayoutManifest.lean cannot load — EffectVmEmitRotationWide.olean does not exist because that \
+module is RED in the working tree under another lane's 187 key-nonet flag day, so \
+emit_descriptors.py cannot run at all.";
 
 /// The chained rotated state commitment — the Rust twin of Lean `wireCommitR`
 /// (`EffectVmEmitRotationR.lean`): the 4-wide head over the first four limbs, 3-wide chip
@@ -1177,8 +1260,15 @@ mod tests {
         assert_eq!(NUM_PRE_LIMBS, 184);
     }
 
-    /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /
-    /// reorder of the receipt log each MOVE the root.
+    /// THE iroot NON-OMISSION TOOTH (Lean `ReceiptChain8.rchain8_binds_or_collides`): tamper /
+    /// truncate / extend / reorder of the receipt log each MOVE the root.
+    ///
+    /// ⚠ This doc cited `mroot_injective` until 2026-08-01 — a theorem deleted 2026-07-28 as
+    /// pigeonhole-false, about a different (MMR) fold. Note also what this test does NOT establish:
+    /// it exercises four hand-picked mutations, which is a smoke check, not a bound. The bound is
+    /// the Lean theorem; the REFUTATION of the retired 1-felt shape (a real collision, found by
+    /// deterministic search, admitted as one history all the way to the signed anchor) is
+    /// `tests/iroot_wide_old_admits_new_rejects.rs`.
     #[test]
     fn iroot_binds_the_whole_log() {
         let log = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
@@ -1196,8 +1286,21 @@ mod tests {
         // reorder
         let reordered = vec![log[1], log[0], log[2]];
         assert_ne!(base, iroot(&reordered), "reorder must move the root");
-        // the empty log is the zero root
-        assert_eq!(iroot(&[]), BabyBear::ZERO);
+        // ⚑ FLAG DAY: the empty log is NO LONGER the zero root. It is the domain-separated arity-0
+        // chip image, like every sibling accumulator's empty root — a bare zero sentinel aliases
+        // them all, and it is also what made the Lean collision extractor non-total
+        // (`0 = chipAbsorb8 (…)` names no colliding preimage pair). `state_commit::consensus_ctx`
+        // moved with it.
+        assert_ne!(
+            iroot(&[]),
+            BabyBear::ZERO,
+            "the empty receipt root is not a zero sentinel"
+        );
+        assert_eq!(
+            iroot(&[]),
+            empty_iroot(),
+            "…and the constant is derived, not restated"
+        );
     }
 
     /// `cells_root` is a function of the SET of present cells, not the insertion order.
