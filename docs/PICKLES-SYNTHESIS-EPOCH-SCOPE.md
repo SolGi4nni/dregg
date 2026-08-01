@@ -254,6 +254,49 @@ bridge script `.rows`→`.gates`/`.digest`.
 - **Reuses:** `KRow`/`KimchiLower` generic-gate model `[exists]`; `KimchiPartition` placement remainder.
 - **New:** the builder monad, placement, permutation, `internal_vars`, the JSON render.
 
+#### R1 — EARLIEST FALSIFIABLE SIGNAL, MEASURED 2026-08-01 (the placement pass EMITS byte-exact `{row,col}` wires)
+`[exists]` `metatheory/Dregg2/Circuit/Emit/KimchiPlacement.lean` (built in-graph through lake, 3033
+jobs; `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; no `sorry`/`native_decide`) +
+`bridge/mina-zkapp/scripts/pickles-placement-oracle.mjs` (green-or-bust, exit 0). The NEW FOUNDATION
+`KimchiCustomGates` named as the ONE structural divergence — the Snarky-style **cell placement +
+copy-permutation** — is BUILT and byte-diffed against o1js 2.15.0 `Provable.constraintSystem(f).gates[i].wires`:
+- **`place` is authored in Lean, transcribed from `plonk_constraint_system.ml`** (o1js's Snarky backend,
+  READ-ONLY oracle) `[read]` `:917-943` (`equivalence_classes_to_hashtbl`: SORT each class by `(row,col)`,
+  ROTATE-LEFT, cell → next-in-cycle), `:1131-1150` (`add_row` wires cols 0..6), `:1156-1253`
+  (`finalize_and_get_gates`: public rows first, `wired_to = init 7 (fun col => permutation {row;col})`,
+  unwired cells self-wire).
+- **`wires` MATCHES, byte-exact — the divergence is CLOSED.** `caseB_wires_match_o1js` (`by decide`):
+  Lean `place` of the smallest cross-row COPY — `x` witnessed once, used in two separate gate rows, a
+  3-cell equivalence class `{(0,3),(0,4),(1,3)}` spanning two rows — reproduces o1js's exact sigma
+  wiring `(0,4)↦(1,3)↦(0,3)↦(0,4)` cell-for-cell, all 14 cells over 2 gates. `caseA_wires_match_o1js`
+  (x+y===8, o1js example) pins the base case. The oracle re-confirms live o1js == the Lean goldens.
+- **Falsifiable and it BITES:** `caseB_misplaced_diverges` / `caseB_noCopy_diverges` (`by decide`) — a
+  mis-placed input cell, or dropping the copy, makes the wires ≠ o1js's; the adversarial oracle run
+  confirms a corrupted golden exits non-zero. `caseB_sigma_is_permutation` (`by decide`): σ is a
+  BIJECTION on the circuit's cells (sorted emitted wires = sorted full cell set) — the PLONK copy-arg
+  soundness shape, concretely.
+- ⚑ **R3's `internal_vars` residual — MODEL half CLOSED.** `InternalVarDef`
+  (`{terms : List (Int × PVar), const : Option Int}`) and `PGate.permVars` ARE the mina-rust
+  circuit-blobs shapes `*_internal_vars.bin` (`HashMap<u32,(Vec<(BigInt,VRaw)>,Option<BigInt>)>`) and
+  `*_rows_rev.bin` (`Vec<Vec<Option<VRaw>>>`) `[read]` `mina-rust crates/ledger/src/proofs/provers.rs:284-293`,
+  consumed by `compute_witness` `[read]` `transaction.rs:3822-3866`. So the "no dregg model" half R3
+  named is closed. **Sub-residual, NAMED:** o1js's `constraintSystem` JSON does NOT expose internal_vars,
+  so its BYTE-diff oracle is the circuit-blobs binprot dump, not zero-build. The PLACEMENT (`wires`) IS
+  zero-build-diffable and is the gate above.
+- **Cost, REVISED (R4 proximity).** The placement algorithm is now a proven, byte-exact Lean object;
+  extending case B's 2 generic rows to the completeAdd/poseidon rows the sibling emitted (`KimchiCustomGates`)
+  is the SAME pass fed those gates' `permVars` — placement adds no rows and is gate-agnostic, so the
+  custom-gate rows' `wires` become diffable the moment their var-in-cell grids are supplied (an R2/witness
+  question, not new placement work). R4 (VK + a verifying proof) needs: the JSON render (`KRow`/`PlacedGate`
+  → `*_gates.json` with hex coeffs, mechanical), the internal_vars/rows_rev binprot emit (shapes now
+  modelled), and the body assembly. **R1's two live unknowns from §8 — placement fidelity (risk #2) — is
+  RETIRED for the generic family and the mechanism is validated;** the remaining R4 variance is body
+  emission surface, not the copy-permutation. Phase-A estimate unchanged (R1 3–5; the placement mechanism
+  de-risks toward the low end, like R2/R3's packing halves).
+- **Honest label:** *Lean's placement pass emits `{row,col}` wires byte-identical to o1js's for a fixed
+  copy circuit (MEASURED)* — FIDELITY, NOT "machine-checked Pickles"; asserts nothing about recursion
+  soundness.
+
 ### R2 — The custom-gate emitter library (the gadgets)
 Emit `poseidon` (11 rows/perm), `completeAdd`, `varBaseMul`, `endoMul`, `endoMulScalar`, `group_map`,
 and the `lowest_128_bits`/`assert_n_bits` range gadgets — each a Lean emitter over the K1–K4c math.
