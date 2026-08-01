@@ -419,6 +419,50 @@ byte-exact against the SAME kimchi-verified devnet block 539508. The map, by slo
   `Lookup_parameters.opt_spec` block (slots 38–39, both 0 with no lookup), which the Lean layout
   under-counts. Recorded so a Step/Wrap assembler does not size the public input at 38.
 
+#### R3 — STEP-statement layout, ENUMERATED + MODELED + diffed vs o1js/openmina, 2026-08-01
+`[exists]` `metatheory/Dregg2/Bridge/PicklesStepStatementDiff.lean` (kernel-clean, `[propext,
+Quot.sound]`, elaborates via `lake env lean` against HEAD-clean `PicklesRecursion` oleans; every
+keystone `#assert_axioms`-gated) + `bridge/mina-zkapp/scripts/pickles-step-statement-oracle.ts` (exit 0,
+green-or-bust). Closes the Step hand-off the Wrap lane named above. ⚑ **The Step statement has NO wire
+in this fixture** (it is a Wrap-proof decode — the oracle MEASURES this: `combined_inner_product_shifted
+== Type1/Fp(cip)`, not Type2/Fq), so this is a LAYOUT/ORDER + FIELD-KEY result, not a byte-diff of
+packed values against the chain.
+- **The 27-slot per-proof layout, from TWO independent implementations that AGREE:** OCaml
+  `composition_types.ml:1298-1318` `to_data` == openmina Rust `unfinalized.rs:397-434`
+  `Unfinalized::to_field_elements`, block-for-block: `fq(5) · digest(1) · challenge(2) ·
+  scalar_challenge(3) · bulletproof(15) · bool(1)`. `stepToDataFlat_positions` (decide, axiom-free) lays
+  distinct sentinels `0..26` at exactly those offsets. bp = `Backend.Tock.Rounds.n = 15` (tied to
+  `deferredRounds .step`, not a bare literal): a Step proof defers a WRAP proof's 15 IPA rounds — mirror
+  of the Wrap statement's 16 (= Step rounds).
+- **Step ≠ Wrap layout** (`step_and_wrap_layouts_differ`, decide): digest EARLY (block #2, right after
+  the field block) vs LATE (Wrap #4); a trailing `should_finalize` bool (Wrap has none); NO `branch_data`
+  (Wrap carries it); field block `fq` vs `fp`; bp 15 vs 16. A step assembler cannot reuse the Wrap order.
+- **FIELD-KEY `fq = Type2/Fq` — SOURCE-DEFINITIVE** (the mirror of Wrap's Type1/Fp): OCaml `impls.ml:135`
+  binds the Step statement `typ`'s `Field` spec leaf to `Shifted_value.Type2.typ Other_field`
+  (Other_field = Tock = **Fq**); openmina `unfinalized.rs:105` types `combined_inner_product` as `<Fq as
+  FieldWitness>::Shifting = ShiftedValue<Fq>` = Type2 (`plonk_checks.rs:113`, subtract-only `s − 2^255`,
+  no halving). ⚠ This is NOT `PicklesRecursion.shiftKindFor` (which keys the IN-CIRCUIT verify on the
+  NATIVE field: `.step ↦ Type1`); the STATEMENT deferred block keys on the deferred VALUE's field
+  (Fq → Type2), exactly `F::Shifting`.
+- **The diverging control** (`step_fq_key_is_observable`, decide): on a concrete Fq scalar, identity /
+  Type1-over-Fq (wrong KIND) / Type2-over-Fq are pairwise distinct — so a wrong key WOULD diverge if a
+  wire existed, the mirror of Wrap's `fp_shift_is_load_bearing`. The wrong-FIELD control (Type2/Fp vs
+  Type2/Fq) is the oracle's cross-modulus bigint check. A **two-sided TS↔Lean pin**
+  (`step_fq_sample_shift_pins_oracle`) fixes `type2OfField shift2Fq SAMPLE_FQ` to the exact digits the
+  oracle computes with `(s − 2^255) mod q` — kernel `ZMod qN` == bigint, a byte-diff not an eyeball.
+- **o1js carries the path** (oracle, green-or-bust): `o1js_node.bc.cjs` hits `should_finalize` 6,
+  `shifted_value` 68, `unfinalized_proofs` 36, `per_proof` 7, `composition_types` 194 — same emitter.
+- **Residual, named + MEASURED (not chased):** (1) no step wire here → packed VALUES not byte-diffed;
+  closed by a decoded STEP statement (a step proof's `unfinalized_proofs.(i)` per-proof public input,
+  openmina `Unfinalized`, giving real Fq `cip/b/perm` with their Type2/Fq `.shifted` forms — the analog
+  of the Wrap `_shifted` pairing this fixture has for the Fp block). (2) ⚑ **New Step-specific subtlety:
+  the Fq→Fp slot embedding.** Unlike Wrap (p<q, so a Type1/Fp value drops into an Fq slot directly), the
+  Step statement is Fp-native but its fq scalars are Fq with **q>p** — Type2 EXISTS for exactly this
+  larger-scalar-field case (`shifted_value.ml:140-150`); the exact embedding into Fp slots is a
+  value-level detail modeled here only as the subtract-only shift over Fq. **Honest label:** *the Step
+  per-proof layout ORDER + the `fq=Type2/Fq` field-key are confirmed from Lean against two agreeing
+  implementations (MEASURED); packed values await a step wire* — FIDELITY, NOT "machine-checked Pickles".
+
 ### R4 — The circuit bodies + VK + a proof that VERIFIES
 Assemble R1–R3 into the step and wrap circuit bodies: emit `incrementally_verify_proof` +
 `finalize_other_proof` + me-only hashing + `step_main`/`wrap_main` orchestration `[read]`
