@@ -613,7 +613,7 @@ here: this surface's conclusions are UNWEAKENED (it never claimed them), but the
 reading 176..183 as cell-owned field lanes, which is what makes the field octet injective — is NOT
 taken yet. -/
 structure RotatedContext where
-  residual : Fin 184 → Int
+  residual : Fin Dregg2.Circuit.Emit.rotatedNumPreLimbs → Int
   iroot : Int
 
 abbrev RotatedContextProvider := CellId → Value → RotatedContext
@@ -672,9 +672,9 @@ noncomputable def rotatedCommit8 (fold8 : AuthorityFold8) (permW : List Int → 
   wireCommitR8 permW (rotatedPreLimbs fold8 ctx v) ctx.iroot
 
 /-- Computable direct twin on a canonical `RotatedCell`, used by the golden guards and by a Rust
-differential: it avoids the abstract malformed-value branch while retaining the exact 184 indices. -/
+differential: it avoids the abstract malformed-value branch while retaining the exact named indices. -/
 def deployedRotatedLimb (fold8 : AuthorityFold8) (ctx : RotatedContext)
-    (d : RotatedCell) (i : Fin 184) : Int :=
+    (d : RotatedCell) (i : Fin Dregg2.Circuit.Emit.rotatedNumPreLimbs) : Int :=
   match i.1 with
   | 1 => d.balance % splitMod
   | 2 => d.nonce
@@ -787,7 +787,7 @@ theorem rotatedPreLimbs_eq_implies (fold8 : AuthorityFold8)
       fold8 (rotatedAuthorityInput v) = fold8 (rotatedAuthorityInput w) := by
   have hfn : rotatedLimb fold8 ctx v = rotatedLimb fold8 ctx' w :=
     List.ofFn_injective h
-  have hp (n : Nat) (hn : n < 184) :
+  have hp (n : Nat) (hn : n < Dregg2.Circuit.Emit.rotatedNumPreLimbs) :
       rotatedLimb fold8 ctx v ⟨n, hn⟩ = rotatedLimb fold8 ctx' w ⟨n, hn⟩ :=
     congrFun hfn ⟨n, hn⟩
   have hlo : (decodedRotatedCell v).balance % splitMod =

@@ -492,9 +492,10 @@ Pinned by the `#guard` below to the DERIVED `transferV3.traceWidth + wideAppendi
 numeral form keeps the downstream `omega` disequalities decidable). ⚑ 2683 → 2699 at the rc-FOLD
 flag day (`C_SPAN` 43 → 45 plus the two new appendix sites' 14 graduated lane columns); ⚑ 2699 →
 2811 at the FIELDS-CANONICITY flag day (`APPENDIX_SPAN` 539 → 651, no new site). -/
-def MEMBERSHIP_TEETH_COL_WIDE : Nat := 2811
-
-#guard MEMBERSHIP_TEETH_COL_WIDE == transferV3.traceWidth + wideAppendixSpan
+-- ⚑ Was the literal `2811` (= the graduated width plus the wide appendix at the 184-limb
+-- geometry). Derived now, for the same reason its AVAIL twin is: a teeth column that follows
+-- the carriers cannot fall behind them, and a flag day moves it without anyone editing a number.
+def MEMBERSHIP_TEETH_COL_WIDE : Nat := transferV3.traceWidth + wideAppendixSpan
 
 /-- **`transferV3MembershipWide`** — the WIDE deployed membership-teeth transfer member (the
 `WIDE_REGISTRY_STAGED_TSV` row under the live key `transferVmDescriptor2R24`): teeth PIs 50..51
