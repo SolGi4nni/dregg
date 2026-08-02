@@ -227,10 +227,12 @@ and every cut span in `dropIdx` is the band `s2DeadCols` actually deletes. -/
   (fun k => decide (dropIdx 0 1200 (k * 10) == k * 10 - deadBelow 0 1200 (k * 10)))
 
 -- ...and the bands themselves are the EMITTER's, not this file's opinion of them.
-#guard (s2CarrierCols 0).head? == some B_STATE_COMMIT
-#guard (s2CarrierCols 0).length == B_SPAN - B_STATE_COMMIT
-#guard (s2DeadCols 0 1200).take (2 * (B_SPAN - B_STATE_COMMIT))
-  == s2CarrierCols 0 ++ s2CarrierCols B_SPAN
+#guard (s2CarrierCols 0).head? == some Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT
+#guard (s2CarrierCols 0).length
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN - Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT
+#guard (s2DeadCols 0 1200).take
+    (2 * (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN - Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT))
+  == s2CarrierCols 0 ++ s2CarrierCols Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN
 
 /-- O(1) membership in the dead-column set (the list `s2DeadCols` is the SPEC; this is the
 computable form the emit-time gates and the index map run on). -/
