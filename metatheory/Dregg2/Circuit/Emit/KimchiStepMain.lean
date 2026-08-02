@@ -142,7 +142,9 @@ that same statement word into the fold's own multiplier, so the prover chose
 was 49: `2·chals + 5`, upstream's own `squeeze_challenge` + `squeeze_scalar` + `util.ml:98-99`
 arithmetic. (The commit before that took 8713 → 9317 on #3, #1 and #9's second consumer.)
 
-The RUN LENGTHS are the fidelity signal, and all six families are unchanged by R6/R7/R8: a `Poseidon`
+The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are unchanged
+by R6/R7/R8 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for
+`Poseidon`, `EndoMul`, `EndoMulScalar`, `VarBaseMul`, `CompleteAdd` and no others): a `Poseidon`
 permutation is 11 rows (206 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
 `EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows — **51 such chains now** (23 transcript
