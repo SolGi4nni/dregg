@@ -476,6 +476,127 @@ theorem caseB_internalVars_shape :
     caseB_internalVars.head?.map (fun d => (d.terms.length, d.const))
       = some (1, some 1) := by decide
 
+/-! ## §4b — THE TWO PUBLIC-INPUT HAZARDS, made to REFUSE instead of to pass green.
+
+`place`'s two arguments are INDEPENDENT and nothing reconciles them. Two ways that goes wrong, both
+found by the public-input lane (`6203df56d`) on a real circuit, both of which produce a **confident
+green**:
+
+  **H1 — silent public/aux absorption.** Public word `i` lives at `external i` — faithfully to
+  Snarky, whose `finalize_and_get_gates` wires public row `i` col 0 to `External row` (`:1189-1191`),
+  so this is the ORACLE's numbering and not a dregg choice. But every existing Lean circuit here
+  numbers its OWN variables from `external 0` too. Hand such a circuit a `pubSize > 0` and its first
+  `pubSize` aux variables are ABSORBED into the public input: the classes merge, the placement is
+  self-consistent, the circuit proves — and it proves something else. The lane had to hand-route its
+  gates to `external 3` to escape this.
+
+  **H2 — inert public words.** A declared public word that NO gate reads gets a singleton class,
+  self-wires, is pinned by the σ-is-a-permutation check, and is INERT — an unconstrained input
+  nothing reports. A `PRIMARY_LEN` mismatch is then N inert words and a green — and the two numbers
+  in play are easy to swap: mina-rust `crates/ledger/src/proofs/constants.rs` gives
+  `StepTransactionProof { PRIMARY_LEN = 67, ROWS = 17806 }` (the step_main target) against
+  `WrapTransactionProof { PRIMARY_LEN = 40, ROWS = 15122 }` — read there, not relayed.
+
+**The missing information is WHERE THE CIRCUIT'S OWN VARIABLES START**, and `place` cannot infer it —
+a gate reading `external 0` under `pubSize = 3` is exactly what a *correct* public-input consumer
+looks like. So it is DEMANDED: `Contract` carries `auxBase`, and `placeChecked` refuses rather than
+reinterprets. `place` itself is UNCHANGED (every emitted byte depends on it), and at `pubSize = 0`
+`placeChecked` is `place` with an always-vacuous check — pinned below. -/
+
+/-- The variable-numbering CONTRACT `place`'s two arguments cannot express: `pubSize` public words at
+`external 0 .. pubSize-1` (Snarky's own numbering), and `auxBase` = the lowest `external` id the
+circuit allocates for its OWN variables. -/
+structure Contract where
+  pubSize : Nat
+  auxBase : Nat
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Why a placement was REFUSED. -/
+inductive PlaceRefusal where
+  /-- **H1.** The circuit's own ids start BELOW the public words, so `auxBase .. pubSize-1` would be
+  silently absorbed into the public input. -/
+  | auxOverlapsPublic (auxBase pubSize : Nat)
+  /-- A gate references `external i` in the DEAD GAP `pubSize ≤ i < auxBase` — an id that is neither
+  a public word nor one the circuit declared it allocates. -/
+  | referenceInGap (i : Nat)
+  /-- **H2.** Public word `i` is read by no gate: a self-wired singleton, unconstrained, inert. -/
+  | inertPublicWord (i : Nat)
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Every `external` id any gate references (permutation columns only — the ones `place` wires). -/
+def externalRefs (gates : List PGate) : List Nat :=
+  (gates.flatMap (fun g => (g.permVars.take K_PERMUTS).filterMap id)).filterMap
+    (fun v => match v with | .external i => some i | .internal _ => none)
+
+/-- Which public words a circuit's gates actually READ, as a `pubSize`-wide bitmap (one pass). -/
+def publicWordsRead (pubSize : Nat) (gates : List PGate) : Array Bool :=
+  (externalRefs gates).foldl (fun a i => if i < pubSize then a.set! i true else a)
+    (Array.replicate pubSize false)
+
+/-- **H2, REPORTABLE.** The declared public words no gate reads. Empty is the healthy case; a
+`PRIMARY_LEN` mismatch shows up here as exactly the surplus words. -/
+def inertPublicWords (pubSize : Nat) (gates : List PGate) : List Nat :=
+  let read := publicWordsRead pubSize gates
+  (List.range pubSize).filter (fun i => !(read.getD i false))
+
+/-- **THE FAIL-CLOSED PLACEMENT ENTRY.** Same placement, or a REFUSAL naming the incoherence. A
+circuit that means to have public inputs calls THIS; `place` stays available for the raw pass (and is
+what every `pubSize = 0` fixture uses), but a `pubSize > 0` caller that reaches for it is opting out
+of both checks in the open. -/
+def placeChecked (c : Contract) (gates : List PGate) :
+    Except PlaceRefusal (List PlacedGate) :=
+  if c.auxBase < c.pubSize then .error (.auxOverlapsPublic c.auxBase c.pubSize)
+  else match (externalRefs gates).find? (fun i => c.pubSize ≤ i && i < c.auxBase) with
+    | some i => .error (.referenceInGap i)
+    | none =>
+      match (inertPublicWords c.pubSize gates).head? with
+      | some i => .error (.inertPublicWord i)
+      | none => .ok (place c.pubSize gates)
+
+/-! ### §4b.1 — the refusals BITE, and the `pubSize = 0` path is untouched. -/
+
+/-- A two-row circuit reading public words 0,1,2 and allocating its own vars from `external 10`. -/
+def piProbeGates : List PGate :=
+  [ { kind := .generic
+    , permVars := [some (.external 0), some (.external 1), some (.external 10),
+                   none, none, some (.external 10), none]
+    , coeffs := [] }
+  , { kind := .generic
+    , permVars := [some (.external 2), some (.external 11), none,
+                   some (.external 10), none, none, none]
+    , coeffs := [] } ]
+
+-- ⚑ pubSize = 0 IS UNTOUCHED: the checked entry returns exactly `place`'s object for every existing
+-- fixture shape, so nothing emitted can move through this door either.
+#guard (placeChecked ⟨0, 0⟩ caseA).toOption == some (place 0 caseA)
+#guard (placeChecked ⟨0, 0⟩ caseB).toOption == some (place 0 caseB)
+#guard (placeChecked ⟨0, 0⟩ (idxProbeGates 60)).toOption == some (place 0 (idxProbeGates 60))
+
+-- The coherent public-input circuit is ACCEPTED, and gives the same placement `place` would.
+#guard (placeChecked ⟨3, 10⟩ piProbeGates).toOption == some (place 3 piProbeGates)
+#guard inertPublicWords 3 piProbeGates == []
+
+-- ⚑ H1 REFUSES. The same gates declared with aux starting at 0 — the shape every existing circuit
+-- has — is the silent-absorption case, and it now cannot pass.
+#guard match placeChecked ⟨3, 0⟩ piProbeGates with
+       | .error (.auxOverlapsPublic 0 3) => true | _ => false
+
+-- ⚑ H2 REFUSES, and REPORTS which words are inert. `pubSize = 6` over a circuit that reads only
+-- 0,1,2 leaves 3,4,5 unconstrained — the `PRIMARY_LEN` 67-vs-40 shape in miniature.
+#guard inertPublicWords 6 piProbeGates == [3, 4, 5]
+#guard match placeChecked ⟨6, 10⟩ piProbeGates with
+       | .error (.inertPublicWord 3) => true | _ => false
+-- …and the surplus is exactly the mismatch, counted: declare step_main's `PRIMARY_LEN = 67` over a
+-- circuit that reads only 7 of them and 60 words are reported inert, not silently pinned.
+#guard (inertPublicWords 67
+          [{ kind := .generic
+           , permVars := (List.range K_PERMUTS).map (fun c => some (.external c))
+           , coeffs := [] }]) == (List.range 67).drop 7
+
+-- A reference in the DEAD GAP (neither public nor declared-aux) refuses too.
+#guard match placeChecked ⟨2, 5⟩ piProbeGates with
+       | .error (.referenceInGap 2) => true | _ => false
+
 #assert_axioms caseA_wires_match_o1js
 #assert_axioms caseB_wires_match_o1js
 #assert_axioms caseB_misplaced_diverges
