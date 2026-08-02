@@ -12,7 +12,7 @@ Lean; Rust only INTERPRETS."*
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -59,11 +59,10 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.UMemBoundaryCohortTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
-   v n k eSub eOneMinus gBool gAll gTrans readsCol)
+  (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
+   v n k eSub eOneMinus gBool gAll gTrans)
 
 set_option autoImplicit false
 
@@ -94,7 +93,7 @@ def BUS_UMEM_ADDRS : String := "ir2_umem_addrs"
 /-! ## §2 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v UBC_IS_REAL
+def gReal : TExpr := v UBC_IS_REAL
 
 /-- The gate list, in the deleted Rust arm's emission order.
 
@@ -130,6 +129,7 @@ def cohortInteractions : List BusInteraction :=
 def cohortTable : TableAir :=
   { name         := "dregg-ir2-umem-boundary-cohort-v1"
   , width        := UBC_WIDTH
+  , defs         := []
   , gates        := cohortGates
   , interactions := cohortInteractions }
 
@@ -173,7 +173,7 @@ theorem next_is_a_pad {rows : List VmRowEnv}
   have hg := hh i hlt ⟨.transition, n UBC_IS_REAL⟩ (by simp [cohortTable, cohortGates, gTrans])
   simp only [TableGate.holdsAt] at hg
   have hz := hg (by simp; omega)
-  simpa [n, WindowExpr.eval] using hz
+  simpa [n, TExpr.evalWith] using hz
 
 /-- ⚑ **THE SINGLE-ROW TOOTH.** On a COHERENT accepting trace every row after the first carries
 `is_real = 0`. So AT MOST ONE declared address reaches the `ir2_umem_check` multiset, `Nodup` is
@@ -203,7 +203,7 @@ theorem canonical_none_is_forced {rows : List VmRowEnv} (hh : cohortTable.Holds 
     ⟨.all, .mul (.mul gReal (eOneMinus (v UBC_INIT_PRESENT))) (v UBC_INIT_VALUE)⟩
     (by simp [cohortTable, cohortGates, gAll])
   simp only [TableGate.holdsAt] at hg
-  simp only [gReal, eOneMinus, eSub, v, k, WindowExpr.eval, hr, hp] at hg
+  simp only [gReal, eOneMinus, eSub, v, k, TExpr.evalWith, hr, hp] at hg
   simpa using hg
 
 /-! ### §4b — ⚠ THE FALSE POLE: the single-row tooth does NOT bound the served table. -/
@@ -251,18 +251,18 @@ theorem a_pad_row_can_still_serve_the_closure_table :
 
 /-- ⚠ **NO GATE READS `UBC_ADDR_MULT`**, stated as an emission fact rather than as prose. -/
 theorem addr_mult_is_read_by_no_gate :
-    cohortTable.gates.all (fun g => !readsCol g.body UBC_ADDR_MULT) = true := by decide
+    cohortTable.gates.all (fun g => !TExpr.readsColIn cohortTable.defs g.body UBC_ADDR_MULT) = true := by decide
 
 /-- …nor `UBC_KEY`, which is why a pad may serve any key at all: the key column enters ONLY the two
 Blum tuples and the served entry, never a gate. -/
 theorem key_is_read_by_no_gate :
-    cohortTable.gates.all (fun g => !readsCol g.body UBC_KEY) = true := by decide
+    cohortTable.gates.all (fun g => !TExpr.readsColIn cohortTable.defs g.body UBC_KEY) = true := by decide
 
 /-- …and the CONTRAST, so the two predicates above are not vacuously true of every column: the row
 guard is read by FOUR of the six gates — its own boolean, the single-row tooth (through `nxt`), and
 both canonical-`none` legs. -/
 theorem is_real_is_read_by_gates :
-    (cohortTable.gates.filter (fun g => readsCol g.body UBC_IS_REAL)).length = 4 := by decide
+    (cohortTable.gates.filter (fun g => TExpr.readsColIn cohortTable.defs g.body UBC_IS_REAL)).length = 4 := by decide
 
 /-! ### §4c — Non-vacuity, both poles of the GATES themselves. -/
 
@@ -293,7 +293,7 @@ def UMEM_BOUNDARY_COHORT_JSON : String := emitTableAirJson cohortTable
 -- THE WIRE PIN. Byte length plus the structural `#guard`s in §3 (6 gates, 4 interactions in a fixed
 -- per-bus/per-side split, width 9). (The checked-in artifact is these bytes plus ONE trailing
 -- newline, which `JsonCursor` skips as whitespace.)
-#guard UMEM_BOUNDARY_COHORT_JSON.length == 1426
+#guard UMEM_BOUNDARY_COHORT_JSON.length == 1436
 
 /-- The emission is not empty and not a stub. -/
 theorem cohortTable_is_not_empty : cohortTable.gates ≠ [] := by

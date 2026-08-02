@@ -259,8 +259,7 @@ use crate::lean_descriptor_air::{
 use crate::lean_descriptor_air::i64_to_babybear;
 use crate::lean_descriptor_air::{EffectVmDescriptor, RangeSpec};
 use crate::plonky3_prover::{
-    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri_full, from_p3,
-    poseidon2_permute_expr_lanes, to_p3,
+    POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config_with_fri_full, from_p3, to_p3,
 };
 use crate::table_air::{BusOp as TableBusOp, LeanTableAir, RowSel as TableRowSel};
 // The concrete permutation aux-witness fill is prover-only (`perm_aux`).
@@ -424,7 +423,11 @@ const BUS_BYTE: &str = "ir2_byte";
 // needs and which are therefore written by name below).
 const BUS_MEM_LOG: &str = "ir2_mem_log";
 const BUS_MAP_LOG: &str = "ir2_map_log";
-const BUS_FACT: &str = "ir2_fact";
+// ⓘ …and `BUS_FACT` is gone for the same reason, in the `Ir2Air::Chip` cutover (2026-08-02): its
+// ONLY Rust reader was the hand-written chip arm's `fact_bus.table_entry`, and that arm is deleted.
+// The name now lives once, in `Emit/ChipTableEmit.lean`, and reaches the prover through the emitted
+// artifact. (The `ir2_p2` / `ir2_p2_narrow` names stay: `Ir2Air::Main`'s hash-site lookups are their
+// QUERY side, so those are genuine couplings between this file and the Lean author.)
 // ⓘ …and the SAME shape for the universal memory (2026-08-01, the `Ir2Air::UMemory` cutover):
 // `BUS_UMEM_LOG` keeps a Rust reader — `Ir2Air::Main`'s `umem_op` send — while `BUS_UMEM_CHECK` and
 // `BUS_UMEM_ADDRS` had exactly three, the `UMemory` arm and the two boundary arms, and all three are
@@ -740,18 +743,12 @@ impl WindowExpr {
         }
     }
 
-    /// The total degree of this expression as a polynomial over the columns. `Const` = 0,
-    /// `Loc`/`Nxt` = 1, `Add` = max, `Mul` = sum. The `LeanExpr` sibling of this is what sizes a
-    /// table AIR's quotient; the descriptor's own `windowGate` leaves degree to the batch
-    /// prover's symbolic analysis (its cumulative-sum bodies are linear).
-    pub(crate) fn degree(&self) -> usize {
-        match self {
-            WindowExpr::Const(_) => 0,
-            WindowExpr::Loc(_) | WindowExpr::Nxt(_) => 1,
-            WindowExpr::Add(a, b) => a.degree().max(b.degree()),
-            WindowExpr::Mul(a, b) => a.degree() + b.degree(),
-        }
-    }
+    // ⓘ `WindowExpr::degree` is GONE (2026-08-02). Its only caller was `LeanTableAir::max_degree`,
+    // and a table AIR's expression is `TableExpr` now — whose degree must resolve `Shr` through the
+    // definition list (`TableExpr::degree_with`), which a `WindowExpr` method structurally cannot.
+    // The main descriptor's own `windowGate` never used it: its cumulative-sum bodies are linear and
+    // the batch prover's symbolic analysis sizes the quotient. Deleted rather than kept as a method
+    // nothing calls.
 
     /// The maximum column index referenced (over both row tags), if any. The descriptor's
     /// `windowGate` bounds check uses this, and so does a table AIR's width check.
@@ -764,6 +761,47 @@ impl WindowExpr {
                 (Some(x), None) | (None, Some(x)) => Some(x),
                 (None, None) => None,
             },
+        }
+    }
+}
+
+/// **Evaluate a Lean-authored table AIR's expression** as an `AB::Expr` polynomial over the current
+/// (`local`) and next (`next`) rows, against a definition vector `dv` that has ALREADY been resolved
+/// for this row.
+///
+/// ⚑ `TableExpr::Shr(i)` is a CLONE of `dv[i]`, never a re-walk of `defs[i]`. That is what makes
+/// the emitted DAG cost the prover what the deployed hand-written arm costs it: on the prover's
+/// folder `AB::Expr` is a packed field value, so the clone is a copy of a number, and the chip's
+/// 16 per-round S-box values are computed once each and read 35 times — exactly the sharing
+/// `poseidon2_permute_expr_lanes` had as Rust locals. Measured on the chip: 70,524 field operations
+/// as a tree, 2,943 shared.
+///
+/// ⚠ An out-of-range `Shr` reads ZERO. That case is unreachable — `LeanTableAir::check` refuses a
+/// forward reference and an out-of-range index at DECODE time, and the artifacts are `include_str!`d
+/// so a failure there is a build-time defect — but the evaluator must be total, and a `0` is the
+/// value a dropped definition would have. It is the refusal upstream that is load-bearing, not this
+/// fallback.
+pub(crate) fn eval_table_expr<AB>(
+    e: &crate::table_air::TableExpr,
+    local: &[AB::Var],
+    next: &[AB::Var],
+    dv: &[AB::Expr],
+) -> AB::Expr
+where
+    AB: AirBuilder,
+    AB::F: PrimeField32,
+{
+    use crate::table_air::TableExpr as TE;
+    match e {
+        TE::Loc(i) => local[*i].into(),
+        TE::Nxt(i) => next[*i].into(),
+        TE::Const(c) => const_to_expr::<AB>(*c),
+        TE::Shr(i) => dv.get(*i).cloned().unwrap_or_else(|| AB::Expr::ZERO),
+        TE::Add(a, b) => {
+            eval_table_expr::<AB>(a, local, next, dv) + eval_table_expr::<AB>(b, local, next, dv)
+        }
+        TE::Mul(a, b) => {
+            eval_table_expr::<AB>(a, local, next, dv) * eval_table_expr::<AB>(b, local, next, dv)
         }
     }
 }
@@ -2659,7 +2697,7 @@ const CHIP_AUX0: usize = CHIP_NODE8 + 1;
 /// (the permutation constraints read `CHIP_AUX0..CHIP_AUX0+PERM_AUX` — untouched). Zero until sites are
 /// routed to the narrow bus; the narrow entry then balances at 0 for the deployed (wide-only) path.
 const CHIP_MULT_NARROW: usize = CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS;
-/// On [`Ir2Air::ChipState16`] the final column is instead the multiplicity of the full-state
+/// On the `chip-state16` table AIR the final column is instead the multiplicity of the full-state
 /// 33-tuple bus.  Reusing the same column index in a distinct AIR variant keeps the ordinary
 /// chip width and every existing descriptor/VK shape unchanged.
 const CHIP_MULT_STATE16: usize = CHIP_MULT_NARROW;
@@ -2771,12 +2809,6 @@ pub enum Ir2Air {
         /// Resolved aux layout.
         layout: MainLayoutPub,
     },
-    /// The Poseidon2 chip table (every row a REAL permutation; `ChipTableSound`).
-    Chip,
-    /// A conditionally-present raw full-state Poseidon2 permutation table.  Its rows use the
-    /// same permutation constraints and width as [`Ir2Air::Chip`], but serve only the fixed
-    /// `[16, input_state16, output_state16]` bus; it is absent from every legacy descriptor.
-    ChipState16,
     /// ⚑ **A WHOLE Lean-authored TABLE AIR, interpreted** — the shared auxiliary instances whose
     /// algebra used to be hand-written Rust arms of this very `match`.
     ///
@@ -2865,7 +2897,6 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
     fn width(&self) -> usize {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
-            Ir2Air::Chip | Ir2Air::ChipState16 => CHIP_WIDTH,
             Ir2Air::LeanTable(t) => t.width,
             // The committed column is the multiplicity; the manifest itself is preprocessed.
             Ir2Air::ExactPublicTable { .. } => 1,
@@ -2900,18 +2931,19 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
     }
 
     fn max_constraint_degree(&self) -> Option<usize> {
-        match self {
-            // The inline Poseidon2 S-box (x⁷ between committed round-state blocks).
-            // A 1-register (committed-cube, degree-3) variant was built and MEASURED
-            // worse at every security-parity FRI point: +141 aux columns ⇒ +25.8 KiB
-            // on transfer at (lb=3, q=38), and the low blowup it would enable loses
-            // to high-blowup/few-queries anyway (.docs-history-noclaude/PROOF-ECONOMICS.md §2c).
-            // Guarded by `ir2_degree_budget`.
-            Ir2Air::Chip | Ir2Air::ChipState16 => Some(7),
-            // Let the symbolic analysis infer the rest (map-ops is lookup-spine only now;
-            // descriptor gates vary on main).
-            _ => None,
-        }
+        // ⚑ NOTHING IS HARDCODED HERE ANY MORE. The chip's degree used to be an announced
+        // `Some(7)` beside a hand-written arm; the arm is deleted and the degree now comes out of
+        // the emitted object, through `LeanTableAir::max_degree`'s `def_degrees` pass — the S-box
+        // is four definitions whose degrees run 2, 3, 4, 7, and a gate reading the last of them is
+        // degree 7 exactly as the tree spelling was.
+        //
+        // (The inline x⁷ S-box was chosen over a 1-register committed-cube degree-3 variant, which
+        // was built and MEASURED worse at every security-parity FRI point: +141 aux columns ⇒
+        // +25.8 KiB on transfer at (lb=3, q=38), and the low blowup it would enable loses to
+        // high-blowup/few-queries anyway — `.docs-history-noclaude/PROOF-ECONOMICS.md` §2c.
+        // `ir2_degree_budget` is the tooth, and it is UNCHANGED by the sharing node: sharing is a
+        // change of representation, not of degree.)
+        None
     }
 }
 
@@ -3202,286 +3234,6 @@ where
             }
 
             // ----------------------------------------------------------------
-            Ir2Air::Chip | Ir2Air::ChipState16 => {
-                // These two AIR instances share the exact permutation constraint system and
-                // trace width.  Only their lookup interface differs: the legacy instance serves
-                // the 8-output/narrow/fact buses, while the additive state16 instance serves the
-                // complete 16-input/16-output transition bus.
-                let serves_state16 = matches!(self, Ir2Air::ChipState16);
-                let arity: AB::Expr = local[CHIP_ARITY].into();
-                let is_fact: AB::Expr = local[CHIP_IS_FACT].into();
-                let big: AB::Expr = local[CHIP_BIG].into();
-                let wide: AB::Expr = local[CHIP_WIDE].into();
-                let node8: AB::Expr = local[CHIP_NODE8].into();
-                let two = AB::Expr::from_u64(2);
-                let three = AB::Expr::from_u64(3);
-                let four = AB::Expr::from_u64(4);
-                let seven = AB::Expr::from_u64(7);
-                let eleven = AB::Expr::from_u64(CHIP_WIDE_ARITY as u64);
-                let sixteen = AB::Expr::from_u64(CHIP_NODE8_ARITY as u64);
-                builder.assert_zero(is_fact.clone() * (is_fact.clone() - AB::Expr::ONE));
-                // arity ∈ {0 (pad/fact), 2, 3 (cap node [FACT_MARK,l,r]), 4, 7 (cap leaf), 11
-                // (Phase B-GATE-INPUT wide MD step: 8-felt carrier + 3 limbs), 16 (Phase H3 node8:
-                // L8 ‖ R8 full-width Merkle compression)}. Degree 7 (= the S-box budget).
-                builder.assert_zero(
-                    arity.clone()
-                        * (arity.clone() - two.clone())
-                        * (arity.clone() - three.clone())
-                        * (arity.clone() - four.clone())
-                        * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone())
-                        * (arity.clone() - sixteen.clone()),
-                );
-                if serves_state16 {
-                    // Only the arity-16 branch is the raw `perm(input_state16)` relation: smaller
-                    // absorb arities inject their length tag into lane 4.  Pin every row with a
-                    // nonzero state-bus multiplicity to arity 16, so the fixed tag cannot be
-                    // laundered through a seed-from-zero absorb row.  Zero-multiplicity pads stay
-                    // free to use the genuine arity-0 chip row.
-                    builder.assert_zero(
-                        local[CHIP_MULT_STATE16].into() * (arity.clone() - sixteen.clone()),
-                    );
-                }
-                // A fact row carries arity 0 (so the genuine fact state's zero tag is
-                // expressible — no hybrid absorb/fact state is).
-                builder.assert_zero(is_fact.clone() * arity.clone());
-                // `big = [arity == 7]`: boolean, high EXACTLY on arity 7. Selects the rate-8 leaf
-                // seeding (lanes 4..6 = genuine in4..in6) from the rate-4 seeding (lane 4 = arity
-                // tag, 5/6 = fact marker/flag). `big` stays LOW on the wide arity 11 — there the
-                // `wide` selector drives lanes 4..6 (and 7..10) from inputs instead.
-                builder.assert_zero(big.clone() * (big.clone() - AB::Expr::ONE));
-                builder.assert_zero(big.clone() * (arity.clone() - seven.clone()));
-                // p7 ≠ 0 ⇔ arity ∈ {0,2,3,4,11,16} (= 0 exactly at arity 7); p7·(1−big) forces big
-                // HIGH on the arity-7 branch. (`(a−11)`/`(a−16)` adjoined so p7 also vanishes the
-                // wide + node8 rows — big is LOW there. Degree 7 — a SIDE constraint, not S-boxed.)
-                let p7 = arity.clone()
-                    * (arity.clone() - two.clone())
-                    * (arity.clone() - three.clone())
-                    * (arity.clone() - four.clone())
-                    * (arity.clone() - eleven.clone())
-                    * (arity.clone() - sixteen.clone());
-                builder.assert_zero(p7 * (AB::Expr::ONE - big.clone()));
-                // `wide = [arity == 11]`: boolean, high EXACTLY on the wide arity. Lifts the narrow
-                // input-zeroing pins (in7..in10) and selects the input-seeded lanes 4..6.
-                builder.assert_zero(wide.clone() * (wide.clone() - AB::Expr::ONE));
-                builder.assert_zero(wide.clone() * (arity.clone() - eleven.clone()));
-                // p11 ≠ 0 ⇔ arity ∈ {0,2,3,4,7,16} (= 0 exactly at arity 11); p11·(1−wide) forces
-                // wide HIGH on the arity-11 branch. (Degree 7 — a SIDE constraint, not S-boxed.)
-                let p11 = arity.clone()
-                    * (arity.clone() - two.clone())
-                    * (arity.clone() - three.clone())
-                    * (arity.clone() - four.clone())
-                    * (arity.clone() - seven.clone())
-                    * (arity.clone() - sixteen.clone());
-                builder.assert_zero(p11 * (AB::Expr::ONE - wide.clone()));
-                // `node8 = [arity == 16]` (Phase H3): boolean, high EXACTLY on the full-width L8‖R8
-                // compression row. Lifts the narrow input-zeroing pins (in7..in15) and selects the
-                // input-seeded lanes 4..6.
-                builder.assert_zero(node8.clone() * (node8.clone() - AB::Expr::ONE));
-                builder.assert_zero(node8.clone() * (arity.clone() - sixteen.clone()));
-                // p16 ≠ 0 ⇔ arity ∈ {0,2,3,4,7,11} (= 0 exactly at arity 16); p16·(1−node8) forces
-                // node8 HIGH on the arity-16 branch. (Degree 7 — a SIDE constraint, not S-boxed.)
-                let p16 = arity.clone()
-                    * (arity.clone() - two.clone())
-                    * (arity.clone() - three.clone())
-                    * (arity.clone() - four.clone())
-                    * (arity.clone() - seven.clone())
-                    * (arity.clone() - eleven.clone());
-                builder.assert_zero(p16 * (AB::Expr::ONE - node8.clone()));
-                // `seed456 = big + wide + node8` (∈ {0,1}: at most one flag is high — the membership
-                // gate forces distinct arity values 7/11/16). When high, lanes 4/5/6 carry genuine
-                // in4/in5/in6 (rate-8 leaf, wide step, OR node8); when low, lane 4 = arity tag.
-                let seed456 = big.clone() + wide.clone() + node8.clone();
-                // Inputs beyond the arity are ZERO (the padTo discipline — a junk-padded row is
-                // not a genuine chipRow). The input lanes a row genuinely uses are exactly
-                // `i < arity`; the gates below vanish each lane on the arity classes that do
-                // NOT reach it. (None routed through the S-box.)
-                //
-                // in0/in1: used by every absorb arity {2,3,4,7,11,16} AND fact rows; pinned only on
-                // the bare pad row (arity 0, non-fact). q01 = (a−2)(a−3)(a−4)(a−7)(a−11)(a−16) is 0
-                // on arity∈{2,3,4,7,11,16} and +29568 on the pad/fact row (arity 0, SIX negative
-                // factors ⇒ positive). Subtracting 29568·is_fact cancels it on fact rows.
-                let q01 = (arity.clone() - two.clone())
-                    * (arity.clone() - three.clone())
-                    * (arity.clone() - four.clone())
-                    * (arity.clone() - seven.clone())
-                    * (arity.clone() - eleven.clone())
-                    * (arity.clone() - sixteen.clone());
-                // q01 on the pad row (arity 0): (−2)(−3)(−4)(−7)(−11)(−16) = +29568.
-                let q01_pad = AB::Expr::from_u64(1848 * CHIP_NODE8_ARITY as u64);
-                for i in 0..2 {
-                    let inp: AB::Expr = local[CHIP_IN0 + i].into();
-                    builder.assert_zero(inp * (q01.clone() - q01_pad.clone() * is_fact.clone()));
-                }
-                // in2: genuine for arity ∈ {3,4,7,11,16}; pinned on {0,2} and fact.
-                builder.assert_zero(
-                    local[CHIP_IN0 + 2].into()
-                        * (arity.clone() - three.clone())
-                        * (arity.clone() - four.clone())
-                        * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone())
-                        * (arity.clone() - sixteen.clone()),
-                );
-                // in3: genuine only for arity ∈ {4,7,11,16}; pinned on {0,2,3} and fact.
-                builder.assert_zero(
-                    local[CHIP_IN0 + 3].into()
-                        * (arity.clone() - four.clone())
-                        * (arity.clone() - seven.clone())
-                        * (arity.clone() - eleven.clone())
-                        * (arity.clone() - sixteen.clone()),
-                );
-                // in4/in5/in6: genuine for arity ∈ {7 (rate-8 leaf), 11 (wide), 16 (node8)}; pinned
-                // else.
-                for i in 4..7 {
-                    builder.assert_zero(
-                        local[CHIP_IN0 + i].into()
-                            * (arity.clone() - seven.clone())
-                            * (arity.clone() - eleven.clone())
-                            * (arity.clone() - sixteen.clone()),
-                    );
-                }
-                // in7..in10: genuine for the wide arity 11 AND node8 arity 16 (the second 8-felt
-                // child's first 4 lanes ride here); pinned on every narrow arity ≤ 7.
-                for i in 7..CHIP_WIDE_ARITY {
-                    builder.assert_zero(
-                        local[CHIP_IN0 + i].into()
-                            * (arity.clone() - eleven.clone())
-                            * (arity.clone() - sixteen.clone()),
-                    );
-                }
-                // in11..in15: genuine ONLY for node8 arity 16 (the tail of the second 8-felt child);
-                // pinned on EVERY other arity (incl. the wide arity 11, which uses lanes 0..10).
-                for i in CHIP_WIDE_ARITY..CHIP_NODE8_ARITY {
-                    builder.assert_zero(
-                        local[CHIP_IN0 + i].into() * (arity.clone() - sixteen.clone()),
-                    );
-                }
-                // The three AMBIGUOUS seed-source columns S4/S5/S6, pinned by SIDE constraints
-                // (off the S-box path). When `seed456 = 0` (rate-4 / fact): S4 = arity tag,
-                // S5 = is_fact·FACT_MARK, S6 = is_fact — byte-identical to the deployed seeding.
-                // When `seed456 = 1` (arity 7 leaf OR arity 11 wide): S4/S5/S6 = genuine in4/in5/in6.
-                builder.assert_zero(
-                    local[CHIP_S4].into()
-                        - (seed456.clone() * local[CHIP_IN0 + 4].into()
-                            + (AB::Expr::ONE - seed456.clone()) * arity.clone()),
-                );
-                builder.assert_zero(
-                    local[CHIP_S5].into()
-                        - (seed456.clone() * local[CHIP_IN0 + 5].into()
-                            + (AB::Expr::ONE - seed456.clone())
-                                * is_fact.clone()
-                                * AB::Expr::from_u64(FACT_MARK as u64)),
-                );
-                builder.assert_zero(
-                    local[CHIP_S6].into()
-                        - (seed456.clone() * local[CHIP_IN0 + 6].into()
-                            + (AB::Expr::ONE - seed456.clone()) * is_fact.clone()),
-                );
-                // The REAL permutation, output pinned. Every seeded lane reads ONE column
-                // (degree 1) so the first x⁷ S-box stays at the degree-7 budget. Rate-4 rows
-                // (is_fact = 0): state = (in0..in3, arity tag) — `hash_many`'s shape. Rate-8 leaf
-                // (arity 7): state = (in0..in6, 0…). Fact rows (is_fact = 1, arity 0): state =
-                // (l, r, 0, 0, 0, FACT_MARK, 1, 0…) — `hash_fact`'s marker shape via S5/S6. Wide
-                // (arity 11): state = (in0..in10, 0…) — the 8-felt carrier ‖ 3 limbs, lanes 7..10
-                // read directly (pinned 0 on every narrow arity, so reading them is safe there).
-                let mut st: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
-                for i in 0..4 {
-                    st[i] = local[CHIP_IN0 + i].into();
-                }
-                st[4] = local[CHIP_S4].into();
-                st[5] = local[CHIP_S5].into();
-                st[6] = local[CHIP_S6].into();
-                // Lanes 7..15: the wide carrier/limb tail (7..10) AND the node8 second-child tail
-                // (11..15). On every arity that does not reach a lane it is pinned 0 above, so
-                // seeding them directly preserves the narrow/wide state shapes. arity 16 seeds all
-                // 16 lanes = WIDTH (full-width compression, no capacity).
-                for i in 7..CHIP_NODE8_ARITY {
-                    st[i] = local[CHIP_IN0 + i].into();
-                }
-                let aux: Vec<AB::Var> =
-                    local[CHIP_AUX0..CHIP_AUX0 + POSEIDON2_PERM_AUX_COLS].to_vec();
-                // Expose the first 8 lanes `state[0..8]` of the SAME already-fully-constrained
-                // final permutation. Lane 0 is the squeezed digest the single-output sites bind;
-                // lanes 1..8 are the genuine distinct lanes the 8-felt commitment sponge will use
-                // (Phase B-GATE makes them AVAILABLE; the deployed commitment is still 1-felt).
-                let lanes = poseidon2_permute_expr_lanes::<AB>(builder, st, &aux);
-                // out0 == lane0 (the existing digest binding — UNCHANGED meaning).
-                builder.assert_zero(local[CHIP_OUT].into() - lanes[0].clone());
-                // out1..out7 == lanes 1..8: the 7 NEW constraints. These EQUALITY-bind the
-                // genuine distinct permutation lanes (out[i] is NOT a free column and NOT a copy
-                // of out[0]) — a witness with a forged out[i] is UNSAT (the anti-laundering crux).
-                for i in 1..CHIP_OUT_LANES {
-                    builder.assert_zero(local[CHIP_OUT + i].into() - lanes[i].clone());
-                }
-
-                if serves_state16 {
-                    // Raw permutation transition: `[16, complete input state, complete output
-                    // state]`.  The last 16 aux columns are the already-constrained final
-                    // permutation state.  (The shared helper returns only its first 8 lanes.)
-                    // Exposing the whole final aux block here therefore adds no witness columns
-                    // and cannot leave lanes 8..15 free.
-                    let state_bus = LookupBus::new(BUS_P2_STATE16);
-                    let mut state_tuple: Vec<AB::Expr> = Vec::with_capacity(CHIP_STATE16_TUPLE_LEN);
-                    state_tuple.push(AB::Expr::from_u64(POSEIDON2_WIDTH as u64));
-                    for i in 0..POSEIDON2_WIDTH {
-                        state_tuple.push(local[CHIP_IN0 + i].into());
-                    }
-                    let final_state = POSEIDON2_PERM_AUX_COLS - POSEIDON2_WIDTH;
-                    for lane in aux.iter().skip(final_state).take(POSEIDON2_WIDTH) {
-                        state_tuple.push((*lane).into());
-                    }
-                    state_bus.table_entry(
-                        builder,
-                        state_tuple,
-                        local[CHIP_MULT_STATE16].into() * (AB::Expr::ONE - is_fact.clone()),
-                    );
-                } else {
-                    // Provide the (arity, ins, out0..out7) tuple on the absorb bus, consumed `mult`
-                    // times — fact rows provide ZERO here (no fact digest can serve a
-                    // hash-site lookup) and vice versa.
-                    let bus = LookupBus::new(BUS_P2);
-                    let mut tuple: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-                    tuple.push(local[CHIP_ARITY].into());
-                    for i in 0..CHIP_RATE {
-                        tuple.push(local[CHIP_IN0 + i].into());
-                    }
-                    for i in 0..CHIP_OUT_LANES {
-                        tuple.push(local[CHIP_OUT + i].into());
-                    }
-                    bus.table_entry(
-                        builder,
-                        tuple,
-                        local[CHIP_MULT].into() * (AB::Expr::ONE - is_fact.clone()),
-                    );
-                    // NARROW receive (tuple-narrowing pass): the SAME row also serves single-output
-                    // sites via an 18-wide tuple `[arity, ins, out0]` — no output lanes.
-                    let bus1 = LookupBus::new(BUS_P2_1);
-                    let mut ntuple: Vec<AB::Expr> = Vec::with_capacity(1 + CHIP_RATE + 1);
-                    ntuple.push(local[CHIP_ARITY].into());
-                    for i in 0..CHIP_RATE {
-                        ntuple.push(local[CHIP_IN0 + i].into());
-                    }
-                    ntuple.push(local[CHIP_OUT].into());
-                    bus1.table_entry(
-                        builder,
-                        ntuple,
-                        local[CHIP_MULT_NARROW].into() * (AB::Expr::ONE - is_fact.clone()),
-                    );
-                    // Provide (l, r, out) on the fact bus for fact rows only.
-                    let fact_bus = LookupBus::new(BUS_FACT);
-                    fact_bus.table_entry(
-                        builder,
-                        [
-                            local[CHIP_IN0].into(),
-                            local[CHIP_IN0 + 1].into(),
-                            local[CHIP_OUT].into(),
-                        ],
-                        local[CHIP_MULT].into() * is_fact,
-                    );
-                }
-            }
-
-            // ----------------------------------------------------------------
             // ⚑ THE LEAN-AUTHORED TABLE AIRs. This arm is the whole interpreter: it authors NO
             // algebra, it walks the wire object. What used to sit here was the hand-written
             // `Ir2Air::MapAbsent` arm — ~120 lines of `assert_zero` / `lookup_key` for the live
@@ -3492,6 +3244,24 @@ where
             // constraint-identical to the deleted arm (checked by
             // `circuit/tests/mapabsent_lean_emission_differential.rs`).
             Ir2Air::LeanTable(t) => {
+                // ⚑ **THE DEFINITION PRELUDE — this is the memoisation, and it is the whole point
+                // of the `defs` list.** Each shared sub-expression is evaluated ONCE per row into
+                // an `AB::Expr` and every `TableExpr::Shr` then CLONES that value. On the prover's
+                // folder `AB::Expr` is a packed field value, so a clone is a copy of a number and
+                // the polynomial is never re-walked; on the symbolic builder it is an `Rc`, so the
+                // constraint graph is a DAG rather than a re-expanded tree.
+                //
+                // ⚠ An emission that shrank the artifact while the interpreter re-expanded it at
+                // evaluation would be pure theatre — the wire would look fixed and the prover
+                // would pay the same. `defs` is walked ONCE, here, before any gate.
+                //
+                // The left-to-right pass is sound because `LeanTableAir::check` has already
+                // REFUSED any definition that references a later one.
+                let mut dv: Vec<AB::Expr> = Vec::with_capacity(t.defs.len());
+                for d in &t.defs {
+                    let value = eval_table_expr::<AB>(d, &local, &next, &dv);
+                    dv.push(value);
+                }
                 for g in &t.gates {
                     // The ROW FILTER, as a selector FACTOR rather than a filtered sub-builder:
                     // p3's `FilteredAirBuilder::assert_zero(x)` is literally
@@ -3506,7 +3276,7 @@ where
                         TableRowSel::Last => Some(builder.is_last_row()),
                         TableRowSel::Transition => Some(builder.is_transition()),
                     };
-                    let body = g.body.eval_expr::<AB>(&local, &next);
+                    let body = eval_table_expr::<AB>(&g.body, &local, &next, &dv);
                     builder.assert_zero(match sel {
                         Some(s) => s * body,
                         None => body,
@@ -3516,9 +3286,9 @@ where
                     let tuple: Vec<AB::Expr> = it
                         .tuple
                         .iter()
-                        .map(|e| e.eval_expr::<AB>(&local, &next))
+                        .map(|e| eval_table_expr::<AB>(e, &local, &next, &dv))
                         .collect();
-                    let mult = it.mult.eval_expr::<AB>(&local, &next);
+                    let mult = eval_table_expr::<AB>(&it.mult, &local, &next, &dv);
                     match it.op {
                         TableBusOp::Query => {
                             LookupBus::new(&it.bus).lookup_key(builder, tuple, mult);
@@ -3897,7 +3667,7 @@ pub fn chip_absorb_all_lanes(arity: usize, inputs: &[BabyBear]) -> [BabyBear; CH
 ///
 /// `build_traces` commits exactly this row for each distinct `(arity, in0..in15)` absorb key in a
 /// descriptor's chip histogram, and [`chip_air_row_accepts`] hands the SAME row to the deployed
-/// `Ir2Air::Chip` evaluator. It is factored out precisely so that a gate asking "does the chip
+/// chip table AIR's evaluator. It is factored out precisely so that a gate asking "does the chip
 /// admit this arity?" cannot answer out of a re-typed copy of the witness generator's rules: it
 /// answers by RUNNING the generator and then running the AIR.
 ///
@@ -3969,7 +3739,7 @@ pub(crate) fn chip_absorb_row(tuple: &[u32], mult: u64, narrow_mult: u64) -> Vec
 ///
 /// Builds the honest chip row the DEPLOYED witness generator emits for the absorb
 /// `(arity, inputs)` — literally [`chip_absorb_row`], the function `build_traces` calls — and
-/// runs the DEPLOYED `Ir2Air::Chip` constraint evaluator over it. Returns `true` iff every Chip
+/// runs the DEPLOYED chip table AIR's constraint evaluator over it. Returns `true` iff every chip
 /// constraint vanishes on that row.
 ///
 /// This is what makes the admitted arity set DERIVABLE rather than restatable. The chip AIR
@@ -3990,13 +3760,23 @@ pub(crate) fn chip_absorb_row(tuple: &[u32], mult: u64, narrow_mult: u64) -> Vec
 /// multiset leg and are swallowed. That is the whole of the Chip arm's own algebra — the
 /// admission product, the `big`/`wide`/`node8` selector gates, the input-lane pins, the S4/S5/S6
 /// seed blend and the full Poseidon2 permutation with its output-lane equalities.
-pub fn chip_air_row_accepts(arity: u32, inputs: &[BabyBear]) -> bool {
+/// **The HONEST chip row the deployed witness generator emits** for an absorb at `arity` over
+/// `inputs` — `chip_absorb_row`, the very function `build_traces` calls, at multiplicity 1.
+///
+/// Exposed so a differential can measure the emitted table AIR against the prover's OWN row rather
+/// than against a row the test built: a hand-constructed witness would make both poles of a sweep
+/// statements about the test's arithmetic, not the deployed generator's.
+pub fn chip_honest_row(arity: u32, inputs: &[BabyBear]) -> Vec<BabyBear> {
     let mut tuple = vec![0u32; CHIP_TUPLE_LEN];
     tuple[CHIP_ARITY] = arity;
     for i in 0..CHIP_RATE {
         tuple[CHIP_IN0 + i] = inputs.get(i).copied().unwrap_or(BabyBear::ZERO).as_u32();
     }
-    let row: Vec<P3BabyBear> = chip_absorb_row(&tuple, 1, 0)
+    chip_absorb_row(&tuple, 1, 0)
+}
+
+pub fn chip_air_row_accepts(arity: u32, inputs: &[BabyBear]) -> bool {
+    let row: Vec<P3BabyBear> = chip_honest_row(arity, inputs)
         .iter()
         .map(|&x| to_p3(x))
         .collect();
@@ -4009,7 +3789,7 @@ pub fn chip_air_row_accepts(arity: u32, inputs: &[BabyBear]) -> bool {
         height: 1,
         failed: false,
     };
-    Ir2Air::Chip.eval(&mut builder);
+    Ir2Air::LeanTable(crate::table_air::chip_table_air_shared()).eval(&mut builder);
     !builder.failed
 }
 
@@ -6031,10 +5811,12 @@ fn instance_airs(
         layout: MainLayoutPub(layout),
     }];
     if presence.chip {
-        airs.push(Ir2Air::Chip);
+        airs.push(Ir2Air::LeanTable(crate::table_air::chip_table_air_shared()));
     }
     if presence.chip_state16 {
-        airs.push(Ir2Air::ChipState16);
+        airs.push(Ir2Air::LeanTable(
+            crate::table_air::chip_state16_table_air_shared(),
+        ));
     }
     if presence.byte {
         // The Lean-authored byte (nibble) table AIR — `Dregg2/Circuit/Emit/ByteTableEmit.lean`.
@@ -7374,8 +7156,6 @@ mod tests {
                 );
                 let name = match air {
                     Ir2Air::Main { .. } => "main",
-                    Ir2Air::Chip => "chip",
-                    Ir2Air::ChipState16 => "chip_state16",
                     // The label is the Lean author's own emitted name, so a second table AIR
                     // gets its own row here without touching this match.
                     Ir2Air::LeanTable(t) => match t.name.as_str() {
@@ -7387,6 +7167,8 @@ mod tests {
                         "dregg-ir2-umem-boundary-cohort-v1" => "umem_boundary_cohort",
                         "dregg-ir2-umem-boundary-v1" => "umem_boundary",
                         "dregg-ir2-map-ops-v1" => "map_ops",
+                        "dregg-ir2-chip-v1" => "chip",
+                        "dregg-ir2-chip-state16-v1" => "chip_state16",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }
@@ -7841,7 +7623,8 @@ mod tests {
         let airs = instance_airs(&desc, layout, presence);
         assert!(matches!(
             airs.as_slice(),
-            [Ir2Air::Main { .. }, Ir2Air::ChipState16]
+            [Ir2Air::Main { .. }, Ir2Air::LeanTable(t)]
+                if t.name == "dregg-ir2-chip-state16-v1"
         ));
 
         let proof = prove_vm_descriptor2(
@@ -7862,7 +7645,8 @@ mod tests {
         assert!(
             instance_airs(&legacy, legacy_layout, legacy_presence)
                 .iter()
-                .all(|air| !matches!(air, Ir2Air::ChipState16))
+                .all(|air| !matches!(air, Ir2Air::LeanTable(t)
+                    if t.name == "dregg-ir2-chip-state16-v1"))
         );
     }
 

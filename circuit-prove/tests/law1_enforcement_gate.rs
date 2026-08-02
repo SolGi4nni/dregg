@@ -1027,7 +1027,18 @@ const BASELINE: &[(&str, usize)] = &[
     // rather than left as harmless.
     // The `MAP_*` COLUMN offsets did NOT go: the witness producer writes its row BY NAME through
     // them, because it is the last thing in Rust that knows what a column means.
-    ("circuit/src/descriptor_ir2.rs", 204),
+    // ⚑ RE-PINNED 2026-08-02, 204 -> 180: the `Ir2Air::Chip | Ir2Air::ChipState16` arm — the
+    // LARGEST hand-written arm in the file, ~280 lines of arity/selector/seeding/output algebra
+    // plus the inline call to `poseidon2_permute_expr_lanes`'s 352 constraints — was DELETED and
+    // replaced by two more `Ir2Air::LeanTable` instances (`Emit/ChipTableEmit.lean` +
+    // `Emit/Poseidon2RoundGates.lean` -> `dregg-ir2-chip{,-state16}-v1.json`, 159 KB each). BOTH
+    // VARIANTS are gone from the enum, so `Ir2Air` is now Main / LeanTable / ExactPublicTable —
+    // three arms, one of which is the interpreter and one of which is the last hand-written one.
+    // ⓘ `BUS_FACT` and `WindowExpr::degree` went with it (their only readers were in that arm), and
+    // `max_constraint_degree` lost its hardcoded `Some(7)`: the chip's degree now comes out of the
+    // emitted definition list through `LeanTableAir::def_degrees`, and `ir2_degree_budget` is
+    // UNCHANGED because sharing is a change of representation, not of degree.
+    ("circuit/src/descriptor_ir2.rs", 180),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

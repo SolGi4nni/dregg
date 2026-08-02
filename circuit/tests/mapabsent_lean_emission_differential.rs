@@ -29,8 +29,7 @@
 
 use dregg_circuit::descriptor_ir2::{
     CHIP_OUT_LANES, EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness, VmConstraint2,
-    WindowExpr, map_absent_rows_for, prove_vm_descriptor2, table_air_gates_accept,
-    verify_vm_descriptor2,
+    map_absent_rows_for, prove_vm_descriptor2, table_air_gates_accept, verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 use dregg_circuit::field::BabyBear;
@@ -39,6 +38,7 @@ use dregg_circuit::heap_root::{
 };
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{BusOp, map_absent_table_air};
 
 // The deployed layout, transcribed ONCE here so the assertions below can name a column. These are
@@ -462,7 +462,7 @@ fn the_cutover_did_not_half_widen_the_key() {
     let leaf = chip[0];
     assert_eq!(
         leaf.tuple[0],
-        WindowExpr::Const(HEAP_LEAF_ARITY as i64),
+        TableExpr::Const(HEAP_LEAF_ARITY as i64),
         "the emitted leaf absorb is arity {HEAP_LEAF_ARITY} — the deployed narrow schema"
     );
     assert_eq!(HEAP_LEAF_ARITY, 3);
@@ -471,9 +471,9 @@ fn the_cutover_did_not_half_widen_the_key() {
     //     are adjacent single columns inside the SAME arity-3 preimage. If the address had been
     //     widened while the pointer had not, the tuple would read eight address lanes and one
     //     pointer lane; it reads one and one.
-    assert_eq!(leaf.tuple[1], WindowExpr::Loc(MA_LO_ADDR));
-    assert_eq!(leaf.tuple[2], WindowExpr::Loc(MA_LO_VALUE));
-    assert_eq!(leaf.tuple[3], WindowExpr::Loc(MA_LO_NEXT));
+    assert_eq!(leaf.tuple[1], TableExpr::Loc(MA_LO_ADDR));
+    assert_eq!(leaf.tuple[2], TableExpr::Loc(MA_LO_VALUE));
+    assert_eq!(leaf.tuple[3], TableExpr::Loc(MA_LO_NEXT));
     assert_eq!(
         MA_LO_NEXT - MA_LO_ADDR,
         2,
@@ -485,7 +485,7 @@ fn the_cutover_did_not_half_widen_the_key() {
     assert!(
         leaf.tuple[1..4]
             .iter()
-            .any(|e| *e == WindowExpr::Loc(MA_LO_NEXT)),
+            .any(|e| *e == TableExpr::Loc(MA_LO_NEXT)),
         "the IMT pointer must ride inside the leaf digest's preimage"
     );
 

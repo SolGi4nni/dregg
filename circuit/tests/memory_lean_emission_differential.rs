@@ -32,12 +32,13 @@
 //! verdict is how an accepting gate hides.
 
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, MemKind, MemOpSpec, VmConstraint2, WindowExpr,
-    mem_rows_for, prove_vm_descriptor2, table_air_gates_accept, verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, MemKind, MemOpSpec, VmConstraint2, mem_rows_for,
+    prove_vm_descriptor2, table_air_gates_accept, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{BusOp, RowSel, memory_table_air};
 
 // The deployed layout, transcribed ONCE here so the assertions below can name a column. These are
@@ -430,8 +431,8 @@ fn the_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
         .iter()
         .find(|i| i.bus == "ir2_mem_addrs")
         .expect("one closure query");
-    assert_eq!(closure.tuple, vec![WindowExpr::Loc(MEM_ADDR)]);
-    assert_eq!(closure.mult, WindowExpr::Loc(MEM_IS_REAL));
+    assert_eq!(closure.tuple, vec![TableExpr::Loc(MEM_ADDR)]);
+    assert_eq!(closure.mult, TableExpr::Loc(MEM_IS_REAL));
 
     // The Blum pair: PUBLISH my own image at MY serial, CONSUME the prior image at the CLAIMED
     // one. A swap of the two serial columns here reverses the whole read-consistency argument.
@@ -443,9 +444,9 @@ fn the_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
     assert_eq!(
         send.tuple,
         vec![
-            WindowExpr::Loc(MEM_ADDR),
-            WindowExpr::Loc(MEM_VALUE),
-            WindowExpr::Loc(MEM_SERIAL)
+            TableExpr::Loc(MEM_ADDR),
+            TableExpr::Loc(MEM_VALUE),
+            TableExpr::Loc(MEM_SERIAL)
         ]
     );
     let recv = t
@@ -456,16 +457,16 @@ fn the_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
     assert_eq!(
         recv.tuple,
         vec![
-            WindowExpr::Loc(MEM_ADDR),
-            WindowExpr::Loc(MEM_PREV_VALUE),
-            WindowExpr::Loc(MEM_PREV_SERIAL)
+            TableExpr::Loc(MEM_ADDR),
+            TableExpr::Loc(MEM_PREV_VALUE),
+            TableExpr::Loc(MEM_PREV_SERIAL)
         ],
         "the consumed tuple carries the CLAIMED prior serial — which is exactly why the multiset, \
          not the gap gate, is what refuses a wrapped claim"
     );
     // Both ride at `is_real`, so a pad row contributes NOTHING to the multiset.
-    assert_eq!(send.mult, WindowExpr::Loc(MEM_IS_REAL));
-    assert_eq!(recv.mult, WindowExpr::Loc(MEM_IS_REAL));
+    assert_eq!(send.mult, TableExpr::Loc(MEM_IS_REAL));
+    assert_eq!(recv.mult, TableExpr::Loc(MEM_IS_REAL));
 
     // The gathered op log is a RECEIVE (the main AIR sends).
     assert_eq!(t.bus_count_op("ir2_mem_log", BusOp::Receive), 1);

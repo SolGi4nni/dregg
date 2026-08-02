@@ -14,7 +14,7 @@ Rust only INTERPRETS."*
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -88,12 +88,10 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.UMemoryTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
-   v n k eSub eOneMinus gBool gAll gFirst gTrans decompGates decompQueries limbGeom decompCols
-   readsCol)
+  (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
+   v n k eSub eOneMinus gBool gAll gFirst gTrans decompGates decompQueries limbGeom decompCols)
 
 set_option autoImplicit false
 
@@ -153,9 +151,9 @@ def BUS_UMEM_ADDRS : String := "ir2_umem_addrs"
 /-! ## §2 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v UM_IS_REAL
+def gReal : TExpr := v UM_IS_REAL
 /-- `domain − 3`, the nullifier-domain indicator's argument (the Rust `dom_m3`). -/
-def domM3 : WindowExpr := eSub (v UM_DOMAIN) (k NULLIFIER_DOMAIN)
+def domM3 : TExpr := eSub (v UM_DOMAIN) (k NULLIFIER_DOMAIN)
 
 /-- The gate list, in the deleted Rust arm's emission order.
 
@@ -227,6 +225,7 @@ def umemInteractions : List BusInteraction :=
 def umemoryTable : TableAir :=
   { name         := "dregg-ir2-umemory-v1"
   , width        := UM_WIDTH
+  , defs         := []
   , gates        := umemGates
   , interactions := umemInteractions }
 
@@ -288,7 +287,7 @@ theorem first_row_serial_is_one {rows : List VmRowEnv}
     (by simp [umemoryTable, umemGates, gFirst])
   simp only [TableGate.holdsAt] at hg
   have hz := hg (by simp)
-  simp only [eSub, v, k, WindowExpr.eval] at hz
+  simp only [eSub, v, k, TExpr.evalWith] at hz
   unfold Int.ModEq at hz ⊢
   omega
 
@@ -300,7 +299,7 @@ theorem serial_step {rows : List VmRowEnv}
     (by simp [umemoryTable, umemGates, gTrans])
   simp only [TableGate.holdsAt] at hg
   have hz := hg (by simp; omega)
-  simp only [eSub, v, n, k, WindowExpr.eval] at hz
+  simp only [eSub, v, n, k, TExpr.evalWith] at hz
   unfold Int.ModEq at hz ⊢
   omega
 
@@ -639,7 +638,7 @@ touches is bound entirely by the `ir2_umem_addrs` closure lookup and the `ir2_um
 both BUS legs, which `TableAir.Holds` is silent about. A gate-level mutation sweep is therefore
 structurally blind to the key, and that is a fact about the mechanism, not a gap in the sweep. -/
 theorem key_is_read_by_no_gate :
-    (umemoryTable.gates.filter (fun g => readsCol g.body UM_KEY)).length = 0 := by decide
+    (umemoryTable.gates.filter (fun g => TExpr.readsColIn umemoryTable.defs g.body UM_KEY)).length = 0 := by decide
 
 /-- …the non-vacuity contrast: the DOMAIN, its sibling column in every bus tuple, IS read — by the
 TWO nullifier-forcing gates. So "no gate reads the key" is a statement about the key, not about the
@@ -649,17 +648,17 @@ table being gate-free on its address columns.
 tooth only through the forcing gates, which is the same two-gates-away structure §4c's second
 refutation turns on. -/
 theorem domain_is_read_by_two_gates :
-    (umemoryTable.gates.filter (fun g => readsCol g.body UM_DOMAIN)).length = 2 := by decide
+    (umemoryTable.gates.filter (fun g => TExpr.readsColIn umemoryTable.defs g.body UM_DOMAIN)).length = 2 := by decide
 
 /-- ⚠ **NO GATE RANGE-CHECKS `UM_PREV_SERIAL`.** The column is read by exactly ONE gate body — the
 gap definition, which does not bound it — and by NO byte-bus query. This is the emission fact behind
 §4c's first refutation. -/
 theorem prev_serial_is_read_by_one_gate :
-    (umemoryTable.gates.filter (fun g => readsCol g.body UM_PREV_SERIAL)).length = 1 := by decide
+    (umemoryTable.gates.filter (fun g => TExpr.readsColIn umemoryTable.defs g.body UM_PREV_SERIAL)).length = 1 := by decide
 
 theorem no_byte_query_reads_prev_serial :
     (umemoryTable.interactions.filter
-      (fun i => i.bus == BUS_BYTE && i.tuple.any (fun e => readsCol e UM_PREV_SERIAL))).length
+      (fun i => i.bus == BUS_BYTE && i.tuple.any (fun e => TExpr.readsColIn umemoryTable.defs e UM_PREV_SERIAL))).length
       = 0 := by decide
 
 /-- …and the contrast: eight byte queries — the gap's seven full limbs plus the DOMAIN nibble, which
@@ -667,7 +666,7 @@ is the whole of "domain is a nibble". -/
 theorem the_byte_queries_are_the_gap_limbs_and_the_domain :
     (umemoryTable.interactions.filter (fun i => i.bus == BUS_BYTE)).length = 8 ∧
     (umemoryTable.interactions.filter
-      (fun i => i.bus == BUS_BYTE && i.tuple.any (fun e => readsCol e UM_DOMAIN))).length = 1 := by
+      (fun i => i.bus == BUS_BYTE && i.tuple.any (fun e => TExpr.readsColIn umemoryTable.defs e UM_DOMAIN))).length = 1 := by
   refine ⟨by decide, by decide⟩
 
 /-! ## §5 — The wire pin. -/
@@ -680,7 +679,7 @@ def UMEMORY_JSON : String := emitTableAirJson umemoryTable
 -- offset moves the length, and any edit to the SHAPE moves §3. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which is the `by-name/` convention and which `JsonCursor` skips
 -- as whitespace.)
-#guard UMEMORY_JSON.length == 5772
+#guard UMEMORY_JSON.length == 5782
 
 /-- The emission is not empty and not a stub. -/
 theorem umemoryTable_is_not_empty : umemoryTable.gates ≠ [] := by

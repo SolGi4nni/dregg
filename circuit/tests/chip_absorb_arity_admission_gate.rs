@@ -76,7 +76,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use dregg_circuit::descriptor_ir2::WindowExpr;
 use dregg_circuit::descriptor_ir2::{
     CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, TID_P2, TID_P2_NARROW,
     TID_P2_STATE16, VmConstraint2, chip_absorb_all_lanes, chip_air_row_accepts,
@@ -85,7 +84,8 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::plonky3_prover::POSEIDON2_WIDTH;
-use dregg_circuit::table_air::{LeanTableAir, parse_table_air};
+use dregg_circuit::table_air::TableExpr;
+use dregg_circuit::table_air::{BusOp, LeanTableAir, parse_table_air};
 
 // ============================================================================
 // §1 — the three maps, each DERIVED
@@ -350,7 +350,7 @@ fn chip_input_lanes_for_bus(bus: &str) -> Option<usize> {
 /// constant), the bus's input-lane count, and per lane whether the emitter routed a value in.
 ///
 /// ⚑ Both corpora reduce to this — a descriptor `Lookup` over `LeanExpr`, and a Lean TABLE AIR
-/// interaction over `WindowExpr` — so the admission and lane checks have exactly ONE
+/// interaction over `TableExpr` — so the admission and lane checks have exactly ONE
 /// implementation. A second copy for the table AIRs is how one of them ends up laxer.
 struct ChipTuple {
     at: String,
@@ -468,26 +468,45 @@ fn audit(found: &[Found], tables: &[FoundTable], admitted: &BTreeSet<u32>) -> Ve
         }
     }
     // ⚑ The SAME checks over the Lean-authored TABLE AIRs, whose chip absorbs were dark until
-    // 2026-08-01 (see the module doc). Their tuples are `WindowExpr` rather than `LeanExpr`; only
+    // 2026-08-01 (see the module doc). Their tuples are `TableExpr` rather than `LeanExpr`; only
     // the two leaf predicates differ, and both reduce into the shared `ChipTuple` above.
     for f in tables {
         for (ii, i) in f.table.interactions.iter().enumerate() {
             let Some(lanes) = chip_input_lanes_for_bus(&i.bus) else {
                 continue;
             };
+            // ⚑ **THE SERVING SIDE IS NOT AN ASK, and conflating them was a real hazard the moment
+            // the SERVER became a Lean artifact (2026-08-02, the `Ir2Air::Chip` cutover).**
+            //
+            // This gate's whole contract is that every *client* names a CONSTANT arity from the
+            // admitted set — the chip's domain separation IS the tag, so a witness-controlled arity
+            // on a query lets one row answer for two domains. The chip TABLE's own legs are
+            // `BusOp::Provide`: it is the one object that serves ALL seven arities from one table,
+            // so its tuple's first element is necessarily the `CHIP_ARITY` COLUMN. Auditing it as a
+            // client reported two findings that say only "the server is a server".
+            //
+            // ⚠ It is skipped here and NOT left unchecked: what binds the served arity is the
+            // degree-7 membership gate, and `admitted_arity_set_is_derived_from_the_chip` DERIVES
+            // the admitted set by probing that gate through the real deployed evaluator — so the
+            // set this gate audits every client against comes from the server's own algebra, and
+            // `Emit/ChipTableEmit.lean`'s `arity_in_declared_set` proves it admits no eighth root.
+            // `the_chip_table_serves_and_does_not_query` below pins the sides.
+            if i.op == BusOp::Provide {
+                continue;
+            }
             v.table_lookups += 1;
             let t = ChipTuple {
                 at: format!("{} [{}] interaction {ii}", f.origin, f.table.name),
                 lanes,
                 arity: match i.tuple.first() {
-                    Some(WindowExpr::Const(c)) => Some(*c),
+                    Some(TableExpr::Const(c)) => Some(*c),
                     _ => None,
                 },
                 lane: i
                     .tuple
                     .iter()
                     .skip(1)
-                    .map(|e| (!matches!(e, WindowExpr::Const(0)), format!("{e:?}")))
+                    .map(|e| (!matches!(e, TableExpr::Const(0)), format!("{e:?}")))
                     .collect(),
             };
             check_chip_tuple(&mut v, &genuine, &dropped, admitted, &t);
@@ -592,6 +611,42 @@ const UNPARSABLE_EXEMPT: &[(&str, &str)] = &[
         "mirror-gate canary stub: DELIBERATELY drifted — that is the canary",
     ),
 ];
+
+/// ⚑ **THE CHIP TABLE IS THE SERVER, and its sides are pinned rather than assumed.** The audit
+/// above skips `Provide` legs because a server's arity is necessarily a column; that skip is only
+/// sound if the chip's legs really ARE all `Provide` and it queries the absorb buses NOWHERE. A
+/// table that queried what it should serve makes the bus unsatisfiable in one direction and vacuous
+/// in the other, with no gate involved — invisible to every other check in this file.
+#[test]
+fn the_chip_table_serves_and_does_not_query() {
+    for t in [
+        dregg_circuit::table_air::chip_table_air(),
+        dregg_circuit::table_air::chip_state16_table_air(),
+    ] {
+        assert!(!t.interactions.is_empty(), "{}: no bus legs at all", t.name);
+        for i in &t.interactions {
+            assert_eq!(
+                i.op,
+                BusOp::Provide,
+                "{}: leg on {} is a {:?}; the chip SERVES every one of its buses",
+                t.name,
+                i.bus,
+                i.op
+            );
+        }
+    }
+    // …and the legacy chip serves exactly the three buses, on the two absorb ones plus the fact
+    // bus, so a dropped leg is visible here and not only in the Lean `#guard`s.
+    let chip = dregg_circuit::table_air::chip_table_air();
+    assert_eq!(chip.bus_count_op("ir2_p2", BusOp::Provide), 1);
+    assert_eq!(chip.bus_count_op("ir2_p2_narrow", BusOp::Provide), 1);
+    assert_eq!(chip.bus_count_op("ir2_fact", BusOp::Provide), 1);
+    assert_eq!(chip.bus_count_on("ir2_p2_state16"), 0);
+    let s16 = dregg_circuit::table_air::chip_state16_table_air();
+    assert_eq!(s16.bus_count_op("ir2_p2_state16", BusOp::Provide), 1);
+    assert_eq!(s16.bus_count_on("ir2_p2"), 0);
+    assert_eq!(s16.bus_count_on("ir2_fact"), 0);
+}
 
 #[test]
 fn every_emitted_descriptor_asks_the_chip_for_an_admitted_arity() {

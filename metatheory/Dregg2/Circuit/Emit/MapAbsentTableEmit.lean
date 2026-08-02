@@ -53,9 +53,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MapAbsentTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate emitTableAirJson
+  (TExpr BusOp BusInteraction TableAir TableGate emitTableAirJson
    v k eSub eOneMinus gBool gAll decompGates decompQueries limbGeom decompCols
    canonHi canonLo canonDecompGates canonDecompQueries lexLtGates lexLtQueries
    group8 chipAbsorbTuple node8Tuple foldCurAt foldOutAt foldQueries)
@@ -67,7 +66,7 @@ set_option autoImplicit false
 ⚠ MOVED. `v`/`k`/`eSub`/`eOneMinus`/`gBool` and the byte-limb decomposition gadget
 (`decompGates`/`decompQueries`) were defined privately in this file in the first pass. They are
 now `TableAirIR`'s, because the second table to need them would otherwise have re-derived them —
-which is the drift the first pass named. `v c` is `WindowExpr.loc c` (this table is purely
+which is the drift the first pass named. `v c` is `TExpr.loc c` (this table is purely
 row-local, so `nxt` appears nowhere below) and the decomposition gadget is parameterised by bit
 width, instantiated here at `KEY_LO_BITS = 27`. -/
 
@@ -179,20 +178,20 @@ abbrev foldOut (lvl : Nat) : Nat := foldOutAt MA_LO_CHAIN0 MA_ROOT DEPTH lvl
 
 /-- The 19-felt map-log tuple `[root8, key, value, op, new_root8]`. `.absent` carries the
 canonical value `0` and op code `2`. -/
-def mapLogTuple : List WindowExpr :=
+def mapLogTuple : List TExpr :=
   group8 MA_ROOT ++ [v MA_KEY, k 0, k 2] ++ group8 MA_NEW_ROOT
 
 /-! ## §4 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v MA_IS_REAL
+def gReal : TExpr := v MA_IS_REAL
 
 /-- The gate BODIES, in the deleted Rust arm's emission order. ⚑ Every one is UNFILTERED
 (`RowSel.all`) — the deployed arm called `builder.assert_zero` directly, never a row filter,
 and this table reads no `nxt` column. That is what made it the one table portable against the
 first-pass IR, and `mapAbsent_is_row_local` below states it as a checkable claim rather than
 leaving it to this comment. -/
-def mapAbsentGateBodies : List WindowExpr :=
+def mapAbsentGateBodies : List TExpr :=
   -- (1) the row guard is boolean.
   gBool MA_IS_REAL ::
   -- (2) every direction bit is boolean.
@@ -236,6 +235,7 @@ def mapAbsentInteractions : List BusInteraction :=
 def mapAbsentTable : TableAir :=
   { name         := "dregg-ir2-map-absent-v1"
   , width        := MA_WIDTH
+  , defs         := []
   , gates        := mapAbsentGates
   , interactions := mapAbsentInteractions }
 
@@ -449,7 +449,7 @@ def MAP_ABSENT_JSON : String := emitTableAirJson mapAbsentTable
 -- artifact re-emits. The ALGEBRA is byte-for-byte the same object; the ENCODING is not.
 -- (The checked-in artifact is these bytes plus ONE trailing newline, which is `by-name/`'s
 -- convention and which `JsonCursor` skips as whitespace.)
-#guard MAP_ABSENT_JSON.length == 80817
+#guard MAP_ABSENT_JSON.length == 80827
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin above
 while asserting nothing. -/

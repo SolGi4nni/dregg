@@ -39,12 +39,13 @@
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, MemKind, UMemBoundaryWitness, UMemOpSpec,
-    VmConstraint2, WindowExpr, prove_vm_descriptor2_umem, table_air_gates_accept, umem_rows_for,
+    VmConstraint2, prove_vm_descriptor2_umem, table_air_gates_accept, umem_rows_for,
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::{assert_violated_constraint_not_bus, must_refuse_or_unsat_panic};
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{BusOp, RowSel, umemory_table_air};
 
 // The deployed layout, transcribed ONCE here so the assertions below can name a column. These are
@@ -689,9 +690,9 @@ fn the_universal_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
         .expect("one closure query");
     assert_eq!(
         closure.tuple,
-        vec![WindowExpr::Loc(UM_DOMAIN), WindowExpr::Loc(UM_KEY)]
+        vec![TableExpr::Loc(UM_DOMAIN), TableExpr::Loc(UM_KEY)]
     );
-    assert_eq!(closure.mult, WindowExpr::Loc(UM_IS_REAL));
+    assert_eq!(closure.mult, TableExpr::Loc(UM_IS_REAL));
 
     // The Blum pair: PUBLISH my own `Option` image at MY serial, CONSUME the prior image at the
     // CLAIMED one. A swap of the two serial columns here reverses the whole read-consistency
@@ -704,11 +705,11 @@ fn the_universal_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
     assert_eq!(
         send.tuple,
         vec![
-            WindowExpr::Loc(UM_DOMAIN),
-            WindowExpr::Loc(UM_KEY),
-            WindowExpr::Loc(UM_PRESENT),
-            WindowExpr::Loc(UM_VALUE),
-            WindowExpr::Loc(UM_SERIAL),
+            TableExpr::Loc(UM_DOMAIN),
+            TableExpr::Loc(UM_KEY),
+            TableExpr::Loc(UM_PRESENT),
+            TableExpr::Loc(UM_VALUE),
+            TableExpr::Loc(UM_SERIAL),
         ]
     );
     let recv = t
@@ -719,17 +720,17 @@ fn the_universal_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
     assert_eq!(
         recv.tuple,
         vec![
-            WindowExpr::Loc(UM_DOMAIN),
-            WindowExpr::Loc(UM_KEY),
-            WindowExpr::Loc(UM_PREV_PRESENT),
-            WindowExpr::Loc(UM_PREV_VALUE),
-            WindowExpr::Loc(UM_PREV_SERIAL),
+            TableExpr::Loc(UM_DOMAIN),
+            TableExpr::Loc(UM_KEY),
+            TableExpr::Loc(UM_PREV_PRESENT),
+            TableExpr::Loc(UM_PREV_VALUE),
+            TableExpr::Loc(UM_PREV_SERIAL),
         ],
         "the consumed tuple carries the CLAIMED prior serial — which is exactly why the multiset, \
          not the gap gate, is what refuses a wrapped claim"
     );
-    assert_eq!(send.mult, WindowExpr::Loc(UM_IS_REAL));
-    assert_eq!(recv.mult, WindowExpr::Loc(UM_IS_REAL));
+    assert_eq!(send.mult, TableExpr::Loc(UM_IS_REAL));
+    assert_eq!(recv.mult, TableExpr::Loc(UM_IS_REAL));
 
     // The gathered op log is a RECEIVE (the main AIR sends), and it is the table's first EIGHT
     // columns verbatim — the reason the witness producer can write the tuple by name.
@@ -742,7 +743,7 @@ fn the_universal_op_log_queries_the_closure_table_and_rides_the_blum_chain() {
         .expect("one log receive");
     assert_eq!(
         log.tuple,
-        (0..8).map(WindowExpr::Loc).collect::<Vec<_>>(),
+        (0..8).map(TableExpr::Loc).collect::<Vec<_>>(),
         "the eight-felt log tuple IS columns 0..8"
     );
 

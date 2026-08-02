@@ -13,7 +13,7 @@
 //! This module is the interpreter for the vocabulary. The Lean author is
 //! `Dregg2/Circuit/TableAirIR.lean`; the per-table emitters are `Dregg2/Circuit/Emit/*TableEmit.lean`
 //! and their emissions are `circuit/descriptors/table-airs/*.json`. **Nothing in this file authors a
-//! constraint**: it decodes a wire object whose `gates` are [`WindowExpr`] trees under a [`RowSel`],
+//! constraint**: it decodes a wire object whose `gates` are [`TableExpr`] trees under a [`RowSel`],
 //! and whose `interactions` name a bus, a call shape, a multiplicity expression and a tuple.
 //! `Ir2Air::LeanTable` walks that and calls `assert_zero` / `lookup_key` / `table_entry` /
 //! `receive` / `send` on exactly what it says.
@@ -29,7 +29,7 @@
 //! **The row selector.** ⚑ This is what blocked every table but map-absent, and it is new in the
 //! second pass. The map-absent table is the ONLY purely row-local one; every other shared table is
 //! a SORTED or COUNTED table whose content is a relation between ADJACENT rows, asserted under a
-//! p3 row filter. [`TableGate`] carries that filter and [`WindowExpr::Nxt`] reads the next row.
+//! p3 row filter. [`TableGate`] carries that filter and [`TableExpr::Nxt`] reads the next row.
 //!
 //! ⚠ Bus interactions carry NO selector, deliberately: every deployed table pushes its
 //! interactions on the unfiltered builder (a filtered p3 builder is not an `InteractionBuilder`),
@@ -37,13 +37,27 @@
 //!
 //! ## Column space
 //!
-//! `WindowExpr::Loc(c)` / `Nxt(c)` here read column `c` of **this table's** current / next row, not
+//! `TableExpr::Loc(c)` / `Nxt(c)` here read column `c` of **this table's** current / next row, not
 //! the main trace's. That is the whole "sub-descriptor at a column offset" content, and it is why
 //! this is a separate `Ir2Air` arm rather than a splice into the main constraint walk.
 
+//! ## ⚑ Column space, and why this module has its OWN expression type
+//!
+//! A table AIR's expression is [`TableExpr`], not the main descriptor's `TableExpr`. The decision
+//! and its evidence live in the Lean author (`Dregg2/Circuit/TableAirIR.lean` §1b); the Rust side
+//! mirrors it for the same reason, stated in the terms that bite here: `Ir2Air::Main` has NO
+//! definition list, so a `Shr` leaf reaching it has nothing to resolve against, and it has no
+//! preprocessed trace, so a future `Prep` leaf would index out of an empty slice. Widening
+//! `TableExpr` would put permanently-unserviceable variants into the type `Ir2Air::Main`
+//! interprets and buy a fail-closed refusal on the main decode path for each. Here they are simply
+//! a different type that the main path never sees.
+//!
+//! The five shared constructors carry IDENTICAL wire tags to `TableExpr`'s, which is why the eight
+//! artifacts emitted before the sharing node existed re-emit with every gate and interaction byte
+//! unchanged.
+
 use std::sync::{Arc, OnceLock};
 
-use crate::descriptor_ir2::WindowExpr;
 use crate::lean_descriptor_air::JsonCursor;
 
 /// The bus call shape (Lean `TableAirIR.BusOp`).
@@ -117,6 +131,84 @@ impl RowSel {
     }
 }
 
+/// A table AIR's expression (Lean `TableAirIR.TExpr`): the main IR's five leaves plus the SHARING
+/// leaf. `Loc(c)` / `Nxt(c)` read column `c` of **this table's** current / next row, not the main
+/// trace's — that is the whole "sub-descriptor at a column offset" content, and it is why this is a
+/// separate `Ir2Air` arm rather than a splice into the main constraint walk.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TableExpr {
+    /// Current-row column `c`.
+    Loc(usize),
+    /// Next-row column `c`.
+    Nxt(usize),
+    /// A signed integer constant.
+    Const(i64),
+    /// ⚑ **The SHARING leaf**: the already-computed value of [`LeanTableAir::defs`]`[i]`.
+    ///
+    /// The interpreter evaluates the definition list ONCE per row into a vector and every `Shr`
+    /// reads it — which is what makes the emitted DAG cost the prover what the deployed
+    /// hand-written arm costs it, rather than what a re-expanded tree would. A definition may
+    /// reference only STRICTLY EARLIER definitions ([`LeanTableAir::check`] refuses otherwise), so
+    /// one left-to-right pass resolves the whole list.
+    Shr(usize),
+    /// Field addition.
+    Add(Box<TableExpr>, Box<TableExpr>),
+    /// Field multiplication.
+    Mul(Box<TableExpr>, Box<TableExpr>),
+}
+
+impl TableExpr {
+    /// The maximum column index referenced (over both row tags), if any. ⚠ `Shr` reads NO column of
+    /// its own — its columns are its definition's, and [`LeanTableAir::check`] resolves that through
+    /// the definition list rather than here.
+    pub(crate) fn max_var(&self) -> Option<usize> {
+        match self {
+            TableExpr::Loc(i) | TableExpr::Nxt(i) => Some(*i),
+            TableExpr::Const(_) | TableExpr::Shr(_) => None,
+            TableExpr::Add(a, b) | TableExpr::Mul(a, b) => match (a.max_var(), b.max_var()) {
+                (Some(x), Some(y)) => Some(x.max(y)),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+
+    /// The maximum `Shr` index referenced, if any. What the acyclicity and range checks read —
+    /// and what a differential reads to say "this gate block shares nothing", which is the
+    /// hypothesis a sub-table analysis of it needs.
+    pub fn max_share(&self) -> Option<usize> {
+        match self {
+            TableExpr::Shr(i) => Some(*i),
+            TableExpr::Loc(_) | TableExpr::Nxt(_) | TableExpr::Const(_) => None,
+            TableExpr::Add(a, b) | TableExpr::Mul(a, b) => match (a.max_share(), b.max_share()) {
+                (Some(x), Some(y)) => Some(x.max(y)),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+
+    /// The total degree as a polynomial over the columns, given the degrees of the definitions
+    /// already resolved. `Const` = 0, `Loc`/`Nxt` = 1, `Shr(i)` = `def_degrees[i]`, `Add` = max,
+    /// `Mul` = sum.
+    ///
+    /// ⚠ A `Shr` is NOT degree 1. Sharing changes REPRESENTATION, not degree, and a version that
+    /// treated a share as a leaf would report the chip's degree-7 S-box as degree 1 and silently
+    /// under-size the quotient. `def_degrees` is built in the same left-to-right pass the values
+    /// are.
+    pub(crate) fn degree_with(&self, def_degrees: &[usize]) -> usize {
+        match self {
+            TableExpr::Const(_) => 0,
+            TableExpr::Loc(_) | TableExpr::Nxt(_) => 1,
+            TableExpr::Shr(i) => def_degrees.get(*i).copied().unwrap_or(usize::MAX),
+            TableExpr::Add(a, b) => a.degree_with(def_degrees).max(b.degree_with(def_degrees)),
+            TableExpr::Mul(a, b) => a
+                .degree_with(def_degrees)
+                .saturating_add(b.degree_with(def_degrees)),
+        }
+    }
+}
+
 /// One gate of a table AIR (Lean `TableAirIR.TableGate`): a two-row polynomial and the row filter
 /// it is asserted under.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,7 +216,7 @@ pub struct TableGate {
     /// The row filter.
     pub sel: RowSel,
     /// The two-row polynomial body, which must VANISH on every row the filter admits.
-    pub body: WindowExpr,
+    pub body: TableExpr,
 }
 
 /// One bus interaction of a table AIR (Lean `TableAirIR.BusInteraction`).
@@ -135,9 +227,9 @@ pub struct TableInteraction {
     /// The call shape.
     pub op: BusOp,
     /// Per-row multiplicity. `Const(1)` is the unconditional case.
-    pub mult: WindowExpr,
+    pub mult: TableExpr,
     /// The tuple placed on the bus.
-    pub tuple: Vec<WindowExpr>,
+    pub tuple: Vec<TableExpr>,
 }
 
 /// A table AIR, authored in Lean and decoded here (Lean `TableAirIR.TableAir`).
@@ -147,6 +239,18 @@ pub struct LeanTableAir {
     pub name: String,
     /// This table's own column count.
     pub width: usize,
+    /// ⚑ **THE SHARED DEFINITION LIST** — the sub-expressions the interpreter computes ONCE per
+    /// row, which every [`TableExpr::Shr`] then reads.
+    ///
+    /// The deployed hand-written arms hold their shared sub-values as `AB::Expr` VALUES:
+    /// `poseidon2_permute_expr_lanes` computes each round's 16 S-box outputs once and the linear
+    /// layer references them 35× each. A tree emission of the same polynomial duplicates them —
+    /// 141,439 nodes against 7,355 on the chip, 70,524 field operations against 2,943. `defs` is
+    /// the vocabulary for the sharing the deployed gadget already had.
+    ///
+    /// Entry `i` may reference only entries `< i`; [`LeanTableAir::check`] refuses otherwise, which
+    /// is what makes the interpreter's single left-to-right pass a resolution rather than a guess.
+    pub defs: Vec<TableExpr>,
     /// Row-filtered gates: each must VANISH on every row its selector admits.
     pub gates: Vec<TableGate>,
     /// The declared bus interactions.
@@ -161,22 +265,47 @@ impl LeanTableAir {
     /// multiplies by the selector, and so does this module's interpreter. Counting the body alone
     /// would under-report the deployed degree of every `.first`/`.last`/`.transition` gate.
     pub fn max_degree(&self) -> usize {
+        let dd = self.def_degrees();
         let gate_deg = self
             .gates
             .iter()
-            .map(|g| g.body.degree() + usize::from(!matches!(g.sel, RowSel::All)))
+            .map(|g| g.body.degree_with(&dd) + usize::from(!matches!(g.sel, RowSel::All)))
             .max()
             .unwrap_or(0);
         let bus_deg = self
             .interactions
             .iter()
             .map(|i| {
-                let m = i.mult.degree();
-                m + i.tuple.iter().map(WindowExpr::degree).max().unwrap_or(0)
+                let m = i.mult.degree_with(&dd);
+                m + i
+                    .tuple
+                    .iter()
+                    .map(|e| e.degree_with(&dd))
+                    .max()
+                    .unwrap_or(0)
             })
             .max()
             .unwrap_or(0);
         gate_deg.max(bus_deg)
+    }
+
+    /// The degree of each shared definition, resolved in the one left-to-right pass the values are.
+    ///
+    /// ⚠ This is what keeps `ir2_degree_budget` honest under sharing: the chip's S-box is four
+    /// definitions whose degrees run 2, 3, 4, 7, and a gate that reads the last of them is degree
+    /// 7 exactly as the tree spelling was. Sharing changes representation, not degree.
+    pub fn def_degrees(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::with_capacity(self.defs.len());
+        for d in &self.defs {
+            let deg = d.degree_with(&out);
+            out.push(deg);
+        }
+        out
+    }
+
+    /// The number of shared definitions — a count a re-emission cannot silently drop.
+    pub fn def_count(&self) -> usize {
+        self.defs.len()
     }
 
     /// How many interactions this table declares on a given bus. A re-emission that drops a bus
@@ -207,20 +336,67 @@ impl LeanTableAir {
     /// LAST row p3's `next` is the WRAP row (back to row 0), so an `.all`- or `.last`-scoped `Nxt`
     /// is a constraint between the final row and the first — never what a sorted table means, and
     /// invisible in the algebra.
+    /// ⚑ …and the definition list must be ACYCLIC BY ORDER and every `Shr` in range.
+    ///
+    /// `defs[i]` may reference only `defs[j]` with `j < i`. That is not a style rule: the
+    /// interpreter resolves the list in ONE left-to-right pass, so a forward or self reference
+    /// would read a slot that does not exist yet. This function refuses it; nothing downstream
+    /// substitutes a zero. An out-of-range `Shr` in a gate, a multiplicity or a tuple is refused
+    /// for the same reason.
     fn check(&self) -> Result<(), String> {
-        let mut worst: Option<usize> = None;
-        let mut note = |e: &WindowExpr| {
-            if let Some(v) = e.max_var() {
-                worst = Some(worst.map_or(v, |w: usize| w.max(v)));
+        // Shares FIRST: `reads_next` and the column bound both resolve through the definition
+        // list, and neither is meaningful until the list is known to be well-formed.
+        for (di, d) in self.defs.iter().enumerate() {
+            if let Some(m) = d.max_share()
+                && m >= di
+            {
+                return Err(format!(
+                    "table air \"{}\": definition {} references definition {}, which is not \
+                     strictly earlier; the definition list must be topologically ordered",
+                    self.name, di, m
+                ));
+            }
+        }
+        let nd = self.defs.len();
+        let mut share_out_of_range = |e: &TableExpr, what: &str| -> Result<(), String> {
+            match e.max_share() {
+                Some(m) if m >= nd => Err(format!(
+                    "table air \"{}\": {} references definition {} but only {} are declared",
+                    self.name, what, m, nd
+                )),
+                _ => Ok(()),
             }
         };
-        for g in &self.gates {
-            note(&g.body);
+        for (gi, g) in self.gates.iter().enumerate() {
+            share_out_of_range(&g.body, &format!("gate {gi}"))?;
         }
-        for i in &self.interactions {
-            note(&i.mult);
-            for t in &i.tuple {
-                note(t);
+        for (ii, i) in self.interactions.iter().enumerate() {
+            share_out_of_range(&i.mult, &format!("interaction {ii} multiplicity"))?;
+            for (ti, t) in i.tuple.iter().enumerate() {
+                share_out_of_range(t, &format!("interaction {ii} tuple element {ti}"))?;
+            }
+        }
+
+        let mut worst: Option<usize> = None;
+        {
+            // A `Shr` reads its DEFINITION's columns, so the column bound is resolved through the
+            // list — which is also why the definitions are scanned here at all.
+            let mut note = |e: &TableExpr| {
+                if let Some(v) = e.max_var() {
+                    worst = Some(worst.map_or(v, |w: usize| w.max(v)));
+                }
+            };
+            for d in &self.defs {
+                note(d);
+            }
+            for g in &self.gates {
+                note(&g.body);
+            }
+            for i in &self.interactions {
+                note(&i.mult);
+                for t in &i.tuple {
+                    note(t);
+                }
             }
         }
         if let Some(v) = worst
@@ -231,8 +407,14 @@ impl LeanTableAir {
                 self.name, v, self.width
             ));
         }
+
+        // ⚑ The next-row scope refusal, resolved THROUGH the definitions. A gate that reads `nxt`
+        // only via a `Shr` is still a gate that reads the next row, and a version of this check
+        // that stopped at the `Shr` leaf would wave exactly that shape through under `.all` — a
+        // silent constraint between the final row and the first.
+        let dn = self.defs_read_next();
         for (gi, g) in self.gates.iter().enumerate() {
-            if matches!(g.sel, RowSel::All | RowSel::Last) && reads_next(&g.body) {
+            if matches!(g.sel, RowSel::All | RowSel::Last) && reads_next_with(&g.body, &dn) {
                 return Err(format!(
                     "table air \"{}\": gate {} is \"{}\"-scoped but reads the next row; \
                      on the last row that is the WRAP row",
@@ -244,15 +426,96 @@ impl LeanTableAir {
         }
         Ok(())
     }
+
+    /// Per-definition next-row verdicts, one left-to-right pass.
+    fn defs_read_next(&self) -> Vec<bool> {
+        let mut out: Vec<bool> = Vec::with_capacity(self.defs.len());
+        for d in &self.defs {
+            let r = reads_next_with(d, &out);
+            out.push(r);
+        }
+        out
+    }
+
+    /// Does this gate read the next row, resolving `Shr` through this table's definitions?
+    pub fn gate_reads_next(&self, g: &TableGate) -> bool {
+        reads_next_with(&g.body, &self.defs_read_next())
+    }
 }
 
-/// Does this expression read the NEXT row anywhere?
-fn reads_next(e: &WindowExpr) -> bool {
+/// Does this expression read the NEXT row, given per-definition verdicts already computed?
+///
+/// ⚠ An out-of-range `Shr` reads `true` — FAIL-CLOSED, so an unresolvable share is refused by the
+/// `.all`-scoped-`nxt` check rather than waved through. (`check` refuses it first; this is the
+/// belt.)
+fn reads_next_with(e: &TableExpr, def_verdicts: &[bool]) -> bool {
     match e {
-        WindowExpr::Nxt(_) => true,
-        WindowExpr::Loc(_) | WindowExpr::Const(_) => false,
-        WindowExpr::Add(a, b) | WindowExpr::Mul(a, b) => reads_next(a) || reads_next(b),
+        TableExpr::Nxt(_) => true,
+        TableExpr::Loc(_) | TableExpr::Const(_) => false,
+        TableExpr::Shr(i) => def_verdicts.get(*i).copied().unwrap_or(true),
+        TableExpr::Add(a, b) | TableExpr::Mul(a, b) => {
+            reads_next_with(a, def_verdicts) || reads_next_with(b, def_verdicts)
+        }
     }
+}
+
+/// **Parse one `TableExpr`.** Mirrors Lean `TableAirIR.TExpr.toJson` tag for tag. The five shared
+/// tags are `parse_window_expr`'s verbatim; `shr` is the sixth and it carries an INDEX (`i`), not a
+/// column (`c`) — a decoder that read `c` here would resolve every share against column 0.
+fn parse_table_expr(c: &mut JsonCursor) -> Result<TableExpr, String> {
+    c.expect(b'{')?;
+    c.expect_key("t")?;
+    let tag = c.parse_string()?;
+    let out = match tag.as_str() {
+        "loc" => {
+            c.expect(b',')?;
+            c.expect_key("c")?;
+            let i = c.parse_int()?;
+            if i < 0 {
+                return Err(format!("table expr `loc` index {i} is negative"));
+            }
+            TableExpr::Loc(i as usize)
+        }
+        "nxt" => {
+            c.expect(b',')?;
+            c.expect_key("c")?;
+            let i = c.parse_int()?;
+            if i < 0 {
+                return Err(format!("table expr `nxt` index {i} is negative"));
+            }
+            TableExpr::Nxt(i as usize)
+        }
+        "const" => {
+            c.expect(b',')?;
+            c.expect_key("v")?;
+            TableExpr::Const(c.parse_int()?)
+        }
+        "shr" => {
+            c.expect(b',')?;
+            c.expect_key("i")?;
+            let i = c.parse_int()?;
+            if i < 0 {
+                return Err(format!("table expr `shr` index {i} is negative"));
+            }
+            TableExpr::Shr(i as usize)
+        }
+        "add" | "mul" => {
+            c.expect(b',')?;
+            c.expect_key("l")?;
+            let l = parse_table_expr(c)?;
+            c.expect(b',')?;
+            c.expect_key("r")?;
+            let r = parse_table_expr(c)?;
+            if tag == "add" {
+                TableExpr::Add(Box::new(l), Box::new(r))
+            } else {
+                TableExpr::Mul(Box::new(l), Box::new(r))
+            }
+        }
+        other => return Err(format!("unknown table expr tag \"{other}\"")),
+    };
+    c.expect(b'}')?;
+    Ok(out)
 }
 
 /// Parse one gate object `{"sel":…,"body":…}`.
@@ -262,7 +525,7 @@ fn parse_gate(c: &mut JsonCursor) -> Result<TableGate, String> {
     let sel = RowSel::from_tag(&c.parse_string()?)?;
     c.expect(b',')?;
     c.expect_key("body")?;
-    let body = crate::descriptor_ir2::parse_window_expr(c)?;
+    let body = parse_table_expr(c)?;
     c.expect(b'}')?;
     Ok(TableGate { sel, body })
 }
@@ -277,7 +540,7 @@ fn parse_interaction(c: &mut JsonCursor) -> Result<TableInteraction, String> {
     let op = BusOp::from_tag(&c.parse_string()?)?;
     c.expect(b',')?;
     c.expect_key("mult")?;
-    let mult = crate::descriptor_ir2::parse_window_expr(c)?;
+    let mult = parse_table_expr(c)?;
     c.expect(b',')?;
     c.expect_key("tuple")?;
     let tuple = parse_expr_array(c)?;
@@ -291,7 +554,7 @@ fn parse_interaction(c: &mut JsonCursor) -> Result<TableInteraction, String> {
 }
 
 /// Parse a JSON array of `<window_expr>` objects.
-fn parse_expr_array(c: &mut JsonCursor) -> Result<Vec<WindowExpr>, String> {
+fn parse_expr_array(c: &mut JsonCursor) -> Result<Vec<TableExpr>, String> {
     c.expect(b'[')?;
     let mut out = Vec::new();
     if c.peek() == Some(b']') {
@@ -299,7 +562,7 @@ fn parse_expr_array(c: &mut JsonCursor) -> Result<Vec<WindowExpr>, String> {
         return Ok(out);
     }
     loop {
-        out.push(crate::descriptor_ir2::parse_window_expr(c)?);
+        out.push(parse_table_expr(c)?);
         match c.peek() {
             Some(b',') => {
                 c.expect(b',')?;
@@ -358,6 +621,9 @@ pub fn parse_table_air(src: &str) -> Result<LeanTableAir, String> {
         return Err(format!("table air \"{name}\" declares width {width}"));
     }
     c.expect(b',')?;
+    c.expect_key("defs")?;
+    let defs = parse_expr_array(&mut c)?;
+    c.expect(b',')?;
     c.expect_key("gates")?;
     let gates = parse_gate_array(&mut c)?;
     c.expect(b',')?;
@@ -383,6 +649,7 @@ pub fn parse_table_air(src: &str) -> Result<LeanTableAir, String> {
     let t = LeanTableAir {
         name,
         width: width as usize,
+        defs,
         gates,
         interactions,
     };
@@ -516,6 +783,40 @@ pub const UMEM_BOUNDARY_TABLE_AIR_JSON: &str =
 pub const MAP_OPS_TABLE_AIR_JSON: &str =
     include_str!("../descriptors/table-airs/dregg-ir2-map-ops-v1.json");
 
+/// The Poseidon2 CHIP table AIR, emitted by `Dregg2.Circuit.Emit.ChipTableEmit.chipTable`.
+///
+/// ⚑ The shared hash table EVERY IR-v2 proof rides: one instance per batch serves every hash fact —
+/// the main trace's hash-site lookups, the map-ops leaf absorbs, the Merkle-chain facts. Its
+/// arity/selector algebra, its seeding, its output binding and the 352 constraints of
+/// `poseidon2_permute_expr_lanes` used to be ~280 lines of hand-written Rust in
+/// `descriptor_ir2.rs::Ir2Air::Chip`; those lines are DELETED and this string is what replaced them.
+///
+/// ⚑ **This is the artifact the sharing node exists for.** 1,078 shared definitions — the round
+/// constant adds, the four multiplications of each `exp_const_u64::<7>`, and the `t*`/`state`/`sums`
+/// values of each `external_linear_layer_expr` — carrying the SAME sharing the deleted Rust arm had
+/// as locals. Tree spelling: 141,439 nodes, 70,524 field operations per row, 3.1 MB. Shared:
+/// 7,355 nodes, **2,943 operations**, 159 KB.
+///
+/// ⚑ The Lean file REFUTES FOUR of the deleted arm's comment-only claims — see
+/// `Dregg2/Circuit/Emit/ChipTableEmit.lean` §7, and the `⚠ THE COMMENT WAS WRONG` notes on the
+/// deleted arm's own text below.
+pub const CHIP_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-chip-v1.json");
+
+/// The `ChipState16` variant, emitted by `Dregg2.Circuit.Emit.ChipTableEmit.chipState16Table`.
+///
+/// The same width, the same 1,078 definitions and the same permutation as the legacy chip, plus ONE
+/// gate (`mult_state16 · (arity − 16)`, which pins any row with a nonzero state-bus multiplicity to
+/// arity 16) and a different bus interface: it serves the raw `[16, input_state16, output_state16]`
+/// transition instead of the absorb/narrow/fact triple.
+///
+/// ⚑ The Lean file proves the extra gate is NOT decoration (`state16_refuses_arity4_at_nonzero_mult`)
+/// and that it forces NOTHING at zero multiplicity, and it REFUTES the `(1 − is_fact)` factor on the
+/// state16 bus multiplicity: `state16_bus_guard_is_dead` shows `mult_state16 ≢ 0 ∧ is_fact ≡ 1` is
+/// unsatisfiable, so the factor never differs from 1 anywhere it could matter.
+pub const CHIP_STATE16_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-chip-state16-v1.json");
+
 /// The decoded map-absent table AIR. Panics on a malformed artifact — the artifact is
 /// `include_str!`d, so a failure here is a build-time defect, not a runtime input.
 pub fn map_absent_table_air() -> LeanTableAir {
@@ -634,6 +935,39 @@ pub fn umem_boundary_table_air_shared() -> Arc<LeanTableAir> {
     }))
 }
 
+/// The decoded Poseidon2 chip table AIR.
+pub fn chip_table_air() -> LeanTableAir {
+    (*chip_table_air_shared()).clone()
+}
+
+/// The decoded Poseidon2 chip table AIR, parsed ONCE per process. ⚑ Every batch carries a chip
+/// instance, so this `OnceLock` is on the hottest path of the whole system.
+pub fn chip_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(CHIP_TABLE_AIR_JSON)
+                .expect("the checked-in chip table AIR must decode"),
+        )
+    }))
+}
+
+/// The decoded `ChipState16` table AIR.
+pub fn chip_state16_table_air() -> LeanTableAir {
+    (*chip_state16_table_air_shared()).clone()
+}
+
+/// The decoded `ChipState16` table AIR, parsed ONCE per process.
+pub fn chip_state16_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(CHIP_STATE16_TABLE_AIR_JSON)
+                .expect("the checked-in chip-state16 table AIR must decode"),
+        )
+    }))
+}
+
 /// The decoded map reconciliation table AIR.
 pub fn map_ops_table_air() -> LeanTableAir {
     (*map_ops_table_air_shared()).clone()
@@ -706,7 +1040,7 @@ mod tests {
         assert_eq!(t.gate_count_sel(RowSel::First), 0);
         assert_eq!(t.gate_count_sel(RowSel::Last), 0);
         assert_eq!(t.gate_count_sel(RowSel::Transition), 0);
-        assert!(t.gates.iter().all(|g| !reads_next(&g.body)));
+        assert!(t.gates.iter().all(|g| !t.gate_reads_next(g)));
     }
 
     /// The chip absorbs and the log receive ride at multiplicity `is_real` (column 17), not at a
@@ -716,11 +1050,11 @@ mod tests {
     fn the_padded_legs_carry_a_column_multiplicity_not_a_constant() {
         let t = map_absent_table_air();
         for i in t.interactions.iter().filter(|i| i.bus != "ir2_byte") {
-            // `matches!` DESTRUCTURES — constructing a `WindowExpr` here to compare against would
+            // `matches!` DESTRUCTURES — constructing a `TableExpr` here to compare against would
             // be Rust-authored IR, which is the very thing this module exists to delete (and
             // `law1_no_new_rust_authored_constraints` counts it, `#[cfg(test)]` or not).
             assert!(
-                matches!(i.mult, WindowExpr::Loc(17)),
+                matches!(i.mult, TableExpr::Loc(17)),
                 "the {} leg must ride at `is_real`, got {:?}",
                 i.bus,
                 i.mult
@@ -728,7 +1062,7 @@ mod tests {
         }
         // …and the byte queries are the UNCOUNTED variant the deployed arm used.
         for i in t.interactions.iter().filter(|i| i.bus == "ir2_byte") {
-            assert!(matches!(i.mult, WindowExpr::Const(1)), "got {:?}", i.mult);
+            assert!(matches!(i.mult, TableExpr::Const(1)), "got {:?}", i.mult);
         }
     }
 
@@ -746,8 +1080,8 @@ mod tests {
         assert_eq!(logs[0].op, BusOp::Receive);
         assert_eq!(logs[0].tuple.len(), 19, "the 19-felt map-log tuple");
         // op code 2 = `.absent`, canonical value 0, at the tuple's centre.
-        assert!(matches!(logs[0].tuple[9], WindowExpr::Const(0)));
-        assert!(matches!(logs[0].tuple[10], WindowExpr::Const(2)));
+        assert!(matches!(logs[0].tuple[9], TableExpr::Const(0)));
+        assert!(matches!(logs[0].tuple[10], TableExpr::Const(2)));
     }
 
     /// The byte emission decodes at the deployed shape: width 2, one `.first` gate, one
@@ -775,9 +1109,9 @@ mod tests {
         assert_eq!(t.bus_count_op("ir2_byte", BusOp::Query), 0);
         let leg = &t.interactions[0];
         assert_eq!(leg.tuple.len(), 1, "the served key is the value column");
-        assert!(matches!(leg.tuple[0], WindowExpr::Loc(0)));
+        assert!(matches!(leg.tuple[0], TableExpr::Loc(0)));
         // The multiplicity is the second column — how many times this entry is consumed.
-        assert!(matches!(leg.mult, WindowExpr::Loc(1)));
+        assert!(matches!(leg.mult, TableExpr::Loc(1)));
     }
 
     /// The increment gate reads the NEXT row, under `.transition` and nothing else. On the last
@@ -791,16 +1125,16 @@ mod tests {
             .filter(|g| g.sel == RowSel::Transition)
             .collect();
         assert_eq!(trans.len(), 1);
-        assert!(reads_next(&trans[0].body));
+        assert!(t.gate_reads_next(trans[0]));
         let first: Vec<_> = t.gates.iter().filter(|g| g.sel == RowSel::First).collect();
         assert_eq!(first.len(), 1);
-        assert!(!reads_next(&first[0].body), "the anchor is row-local");
+        assert!(!t.gate_reads_next(first[0]), "the anchor is row-local");
     }
 
     /// A wire object that reads past its declared width is REFUSED at decode time.
     #[test]
     fn a_column_past_the_width_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"gates":[{"sel":"all","body":{"t":"loc","c":7}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"all","body":{"t":"loc","c":7}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("reads column 7"), "got: {err}");
     }
@@ -810,11 +1144,11 @@ mod tests {
     /// first — a relation no sorted table means and one the algebra alone cannot show.
     #[test]
     fn an_unscoped_next_row_read_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"gates":[{"sel":"all","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"all","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("reads the next row"), "got: {err}");
         // …and the same body under `.transition` is fine.
-        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"gates":[{"sel":"transition","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
+        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"transition","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
         assert!(parse_table_air(ok).is_ok());
     }
 
@@ -822,9 +1156,79 @@ mod tests {
     /// `.all` would turn a padded table's transition gate into a wrap-row constraint.
     #[test]
     fn an_unknown_selector_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"gates":[{"sel":"sometimes","body":{"t":"loc","c":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"sometimes","body":{"t":"loc","c":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("unknown row selector"), "got: {err}");
+    }
+
+    /// ⚑ A `shr` that references a LATER definition is REFUSED. The interpreter resolves the
+    /// definition list in ONE left-to-right pass, so a forward or self reference would read a slot
+    /// that does not exist yet — and `Vec::get` would hand it a `None`, i.e. a silent zero. This is
+    /// the refusal that makes the one-pass resolution sound rather than lucky.
+    #[test]
+    fn a_forward_definition_reference_is_refused() {
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"shr","i":1},{"t":"loc","c":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let err = parse_table_air(bad).expect_err("must refuse a forward reference");
+        assert!(err.contains("not strictly earlier"), "got: {err}");
+        // …and a SELF reference, which is the cycle of length one.
+        let selfref = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"shr","i":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        assert!(
+            parse_table_air(selfref)
+                .expect_err("must refuse a self reference")
+                .contains("not strictly earlier")
+        );
+        // …and the same list in TOPOLOGICAL order decodes.
+        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":0},{"t":"mul","l":{"t":"shr","i":0},"r":{"t":"shr","i":0}}],"gates":[{"sel":"all","body":{"t":"shr","i":1}}],"interactions":[]}"#;
+        let t = parse_table_air(ok).expect("a topologically ordered list decodes");
+        assert_eq!(t.def_count(), 2);
+        // …and the shared square really is degree 2, not degree 1: a `Shr` is NOT a leaf.
+        assert_eq!(t.def_degrees(), vec![1, 2]);
+        assert_eq!(t.max_degree(), 2);
+    }
+
+    /// ⚑ A `shr` naming a definition that does not exist is REFUSED — in a gate, in a multiplicity
+    /// and in a tuple. Substituting a zero would make the gate a DIFFERENT polynomial silently.
+    #[test]
+    fn an_out_of_range_share_is_refused() {
+        for bad in [
+            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#,
+            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":0}],"gates":[],"interactions":[{"bus":"b","op":"query","mult":{"t":"shr","i":3},"tuple":[{"t":"loc","c":0}]}]}"#,
+            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":0}],"gates":[],"interactions":[{"bus":"b","op":"query","mult":{"t":"const","v":1},"tuple":[{"t":"shr","i":9}]}]}"#,
+        ] {
+            let err = parse_table_air(bad).expect_err("must refuse an out-of-range share");
+            assert!(err.contains("only"), "got: {err}");
+        }
+    }
+
+    /// ⚑ A next-row read hidden BEHIND a definition is still a next-row read. A `reads_next` that
+    /// stopped at the `Shr` leaf would wave exactly this through under `.all` — the silent
+    /// final-row-against-first constraint the scope refusal exists to prevent, now reachable by an
+    /// emitter that hoists the read into a shared value.
+    #[test]
+    fn a_next_row_read_through_a_definition_is_refused() {
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"nxt","c":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let err = parse_table_air(bad).expect_err("must refuse a shared next-row read under .all");
+        assert!(err.contains("reads the next row"), "got: {err}");
+        // …and TWO definitions deep, so the chase is not one level.
+        let deep = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"nxt","c":0},{"t":"add","l":{"t":"shr","i":0},"r":{"t":"const","v":1}}],"gates":[{"sel":"all","body":{"t":"shr","i":1}}],"interactions":[]}"#;
+        assert!(
+            parse_table_air(deep)
+                .expect_err("must chase through two definitions")
+                .contains("reads the next row")
+        );
+        // …and the same shape under `.transition` decodes, so the refusal is about SCOPE.
+        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"nxt","c":0}],"gates":[{"sel":"transition","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        assert!(parse_table_air(ok).is_ok());
+    }
+
+    /// ⚑ A column read only THROUGH a definition is still bounded by the declared width. An
+    /// emitter that hoisted an out-of-range read into a shared value would otherwise reach the
+    /// evaluator and panic on the slice index.
+    #[test]
+    fn a_column_past_the_width_inside_a_definition_is_refused() {
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":7}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let err = parse_table_air(bad).expect_err("must refuse");
+        assert!(err.contains("reads column 7"), "got: {err}");
     }
 
     /// A v2 DESCRIPTOR json cannot be mistaken for a table AIR.
@@ -884,7 +1288,7 @@ mod tests {
             .expect("one send");
         assert_eq!(send.tuple.len(), 3);
         assert!(
-            matches!(send.tuple[2], WindowExpr::Const(0)),
+            matches!(send.tuple[2], TableExpr::Const(0)),
             "the init image is published at serial ZERO — the anchor the whole Blum chain \
              bottoms out in"
         );
@@ -944,14 +1348,14 @@ mod tests {
             .expect("one publish");
         // (addr, value, serial) — the SERIAL column, not the claimed prior one.
         assert_eq!(send.tuple.len(), 3);
-        assert!(matches!(send.tuple[2], WindowExpr::Loc(5)));
+        assert!(matches!(send.tuple[2], TableExpr::Loc(5)));
         let recv = mem
             .interactions
             .iter()
             .find(|i| i.bus == "ir2_mem_check" && i.op == BusOp::Receive)
             .expect("one consume");
         assert!(
-            matches!(recv.tuple[2], WindowExpr::Loc(3)),
+            matches!(recv.tuple[2], TableExpr::Loc(3)),
             "the CLAIMED prior serial"
         );
     }
@@ -994,7 +1398,7 @@ mod tests {
             .filter(|g| g.sel == RowSel::Transition)
             .collect();
         assert_eq!(trans.len(), 1);
-        assert!(matches!(trans[0].body, WindowExpr::Nxt(7)), "next.is_real");
+        assert!(matches!(trans[0].body, TableExpr::Nxt(7)), "next.is_real");
         // …and it SERVES the closure table at a column multiplicity, never a constant.
         assert_eq!(t.bus_count_op("ir2_umem_addrs", BusOp::Provide), 1);
         assert_eq!(t.bus_count_op("ir2_umem_addrs", BusOp::Query), 0);
@@ -1004,11 +1408,11 @@ mod tests {
             .find(|i| i.bus == "ir2_umem_addrs")
             .expect("one served entry");
         assert_eq!(serve.tuple.len(), 2, "(domain, key)");
-        assert!(matches!(serve.mult, WindowExpr::Loc(8)));
+        assert!(matches!(serve.mult, TableExpr::Loc(8)));
         // The Blum legs ride at `is_real`, which is what makes a pad declare NOTHING to the
         // multiset — the reason the single-row tooth bounds the declared list at all.
         for i in t.interactions.iter().filter(|i| i.bus == "ir2_umem_check") {
-            assert!(matches!(i.mult, WindowExpr::Loc(7)));
+            assert!(matches!(i.mult, TableExpr::Loc(7)));
         }
     }
 
@@ -1093,12 +1497,12 @@ mod tests {
         // The last three transition gates are the comparator branches, and two of the three read
         // the next row (the middle one is `gate·(1−s)·(bHi − aHi)`, which reads it too).
         assert!(
-            trans[3..].iter().all(|g| reads_next(&g.body)),
+            trans[3..].iter().all(|g| t.gate_reads_next(g)),
             "every comparator branch must compare against the SUCCESSOR"
         );
         // …and the map-absent comparator does NOT, because it compares within one row.
         let ma = map_absent_table_air();
-        assert!(ma.gates.iter().all(|g| !reads_next(&g.body)));
+        assert!(ma.gates.iter().all(|g| !ma.gate_reads_next(g)));
     }
 
     /// The universal memory op-log emission decodes at the deployed shape. The counts are derived
@@ -1158,25 +1562,25 @@ mod tests {
             .find(|i| i.bus == "ir2_umem_check" && i.op == BusOp::Send)
             .expect("one publish");
         assert_eq!(send.tuple.len(), 5, "(domain, key, present, value, serial)");
-        assert!(matches!(send.tuple[4], WindowExpr::Loc(8)), "UM_SERIAL");
+        assert!(matches!(send.tuple[4], TableExpr::Loc(8)), "UM_SERIAL");
         let recv = um
             .interactions
             .iter()
             .find(|i| i.bus == "ir2_umem_check" && i.op == BusOp::Receive)
             .expect("one consume");
         assert!(
-            matches!(recv.tuple[4], WindowExpr::Loc(6)),
+            matches!(recv.tuple[4], TableExpr::Loc(6)),
             "the CLAIMED prior serial"
         );
         // Every multiset/log/closure leg rides at `is_real` (column 9), which is what makes a pad
         // row declare NOTHING — and is exactly the containment the pad-row refutation rests on.
         for i in um.interactions.iter().filter(|i| i.bus != "ir2_byte") {
-            assert!(matches!(i.mult, WindowExpr::Loc(9)), "{} leg", i.bus);
+            assert!(matches!(i.mult, TableExpr::Loc(9)), "{} leg", i.bus);
         }
         // …while both byte queries (gap limbs and the domain nibble) are the UNCOUNTED variant, so
         // a pad row's DOMAIN is range-bound even though nothing else about a pad is.
         for i in um.interactions.iter().filter(|i| i.bus == "ir2_byte") {
-            assert!(matches!(i.mult, WindowExpr::Const(1)));
+            assert!(matches!(i.mult, TableExpr::Const(1)));
         }
     }
 
@@ -1272,13 +1676,13 @@ mod tests {
             .iter()
             .find(|i| i.bus == "ir2_map_log")
             .unwrap();
-        assert!(matches!(a_recv.tuple[10], WindowExpr::Const(2)));
+        assert!(matches!(a_recv.tuple[10], TableExpr::Const(2)));
         let o_recv = ops
             .interactions
             .iter()
             .find(|i| i.bus == "ir2_map_log")
             .unwrap();
-        assert!(matches!(o_recv.tuple[10], WindowExpr::Loc(10)));
+        assert!(matches!(o_recv.tuple[10], TableExpr::Loc(10)));
     }
 
     /// A row-filtered gate costs one more degree than its body, because p3's filtered builder

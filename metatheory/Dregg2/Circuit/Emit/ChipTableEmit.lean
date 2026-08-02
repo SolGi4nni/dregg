@@ -16,7 +16,7 @@ seeding, the output binding and the bus interface, and splices the two together.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr`. Nothing in this cutover hand-writes a Rust constraint.
+Every gate below is a Lean `TExpr`. Nothing in this cutover hand-writes a Rust constraint.
 
 ## ⚑ WHAT THE PORT FOUND — read §7 before trusting the Rust comments
 
@@ -45,22 +45,25 @@ And the column-layout comments are stale on SEVEN constants — `CHIP_OUT // 9` 
 (28/29/30) — with two more next door: `plonky3_prover.rs:292` `PARENT_COL // 245` (357) and
 `descriptor_ir2.rs:889` *"`CHIP_RATE` = 11"* (16). §1 derives every offset from the arithmetic.
 
-## ⚑ WHAT THE PORT COSTS — read `Poseidon2RoundGates` §7 before deploying
+## ⚑ WHAT THE PORT COST — and what the sharing node bought. §10, `Poseidon2RoundGates` §7
 
-`WindowExpr` is a TREE with no sharing node and the Rust interpreter's `WindowExpr::eval_expr` is a
-naive recursive walk. The deployed hand-written arm shares its 16 per-round S-box values as
-`AB::Expr`; a tree cannot. MEASURED on this emission:
+The first pass of this file measured a blocker and stopped rather than cutting: `TExpr` was a TREE
+with no sharing node, the Rust interpreter's `eval_expr` a naive recursive walk, and the deployed
+hand-written arm shares its 16 per-round S-box values as `AB::Expr` VALUES. `TableAirIR` now has a
+`shr` leaf and a per-table `defs` list, and the chip emits with the sharing the Rust arm has —
+measured on both spellings, in §10, in this file:
 
-| | tree | hash-consed DAG | ratio |
-|---|---|---|---|
-| permutation alone | 140,850 nodes | 3,194 | **44.1×** |
-| whole `chipTable` | 141,439 nodes | 3,318 | **42.6×** |
-| emitted JSON | 3,098,882 bytes | — | — |
+|                    | TREE      | SHARED (emitted) | ratio |
+|--------------------|-----------|------------------|-------|
+| expression nodes   | 141,439   | **7,355**        | 19.2× |
+| **arithmetic ops** | **70,524**| **2,943**        | **24.0×** |
+| emitted JSON       | 3,098,882 B | **159,180 B**  | 19.5× |
+| definitions        | —         | 1,078            |       |
 
-70,249 of those nodes are arithmetic, evaluated per row of the quotient domain (blow-up 64). The
-algebra is the deployed one and this file does NOT trade it for a cheaper arithmetization — that
-would be inventing a different circuit. The cost is a property of the IR (no share/`let` node), it
-is stated here rather than smoothed over, and §11 prices the fix.
+⚑ **`opCount` is what the prover pays**, once per row of the quotient domain at blow-up 64, and
+2,943 is the deployed arm's own 2,316 field operations plus exactly one multiplication per gate
+(`TExpr` encodes `a − b` as `a + (−1)·b`; 391 gates). The algebra is the deployed one and this file
+does NOT trade it for a cheaper arithmetization — that would be inventing a different circuit.
 
 ## Axiom hygiene
 No `sorry`, no `native_decide`, no new axiom. `Nat.Prime 2013265921` is DISCHARGED by `norm_num`,
@@ -71,14 +74,12 @@ import Dregg2.Circuit.Emit.Poseidon2RoundGates
 
 namespace Dregg2.Circuit.Emit.ChipTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate emitTableAirJson v k eSub eOneMinus gBool gAll
-   readsCol readsNext)
+  (TExpr BusOp BusInteraction TableAir TableGate emitTableAirJson v k s eSub eOneMinus gBool gAll)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.Poseidon2RoundGates
-  (WIDTH POSEIDON2_AUX_COLS TOTAL_ROUNDS permGateBodies permOutLane permFinalState permBlocks
-   permAuxWitness nodeCount totalNodes)
+  (WIDTH POSEIDON2_AUX_COLS TOTAL_ROUNDS permGateBodies permEmission permOutLane permFinalState
+   permBlocks permAuxWitness nodeCount opCount totalNodes)
 
 set_option autoImplicit false
 
@@ -164,20 +165,20 @@ subset of the declared arities, where a `c = 0` factor is the bare column (the R
 in §7 a statement about all ten rather than ten re-readings. -/
 
 /-- `arity` and the four selector flags, as expressions. -/
-def eArity : WindowExpr := v CHIP_ARITY
-def eIsFact : WindowExpr := v CHIP_IS_FACT
-def eBig : WindowExpr := v CHIP_BIG
-def eWide : WindowExpr := v CHIP_WIDE
-def eNode8 : WindowExpr := v CHIP_NODE8
+def eArity : TExpr := v CHIP_ARITY
+def eIsFact : TExpr := v CHIP_IS_FACT
+def eBig : TExpr := v CHIP_BIG
+def eWide : TExpr := v CHIP_WIDE
+def eNode8 : TExpr := v CHIP_NODE8
 /-- `seed456 = big + wide + node8`, left-associated as the Rust builds it. -/
-def eSeed456 : WindowExpr := .add (.add eBig eWide) eNode8
+def eSeed456 : TExpr := .add (.add eBig eWide) eNode8
 
 /-- `ae − c`, with `c = 0` the bare expression — the Rust `arity.clone()` factor. -/
-def eMinus (ae : WindowExpr) (c : ℤ) : WindowExpr := if c = 0 then ae else eSub ae (k c)
+def eMinus (ae : TExpr) (c : ℤ) : TExpr := if c = 0 then ae else eSub ae (k c)
 
 /-- `(ae − c₀)·(ae − c₁)·…`, left-associated exactly as the Rust `arity.clone() * (arity − two) * …`
 accumulates it. -/
-def eProdMinus (ae : WindowExpr) : List ℤ → WindowExpr
+def eProdMinus (ae : TExpr) : List ℤ → TExpr
   | []        => k 1
   | c :: rest => rest.foldl (fun acc c' => .mul acc (eMinus ae c')) (eMinus ae c)
 
@@ -212,50 +213,50 @@ def inputRoots (i : Nat) : List ℤ :=
 Each is named so §7 can talk about a gate rather than an index, and so a drift names the gate. -/
 
 /-- `is_fact` is boolean. -/
-def gIsFactBool : WindowExpr := gBool CHIP_IS_FACT
+def gIsFactBool : TExpr := gBool CHIP_IS_FACT
 /-- The arity MEMBERSHIP product — degree 7, the S-box budget. -/
-def gArityMember : WindowExpr := eProdMinus eArity ARITIES
+def gArityMember : TExpr := eProdMinus eArity ARITIES
 /-- ⚑ The state16-ONLY pin: a row with nonzero state-bus multiplicity is arity 16. -/
-def gState16Pin : WindowExpr := .mul (v CHIP_MULT_STATE16) (eSub eArity (k 16))
+def gState16Pin : TExpr := .mul (v CHIP_MULT_STATE16) (eSub eArity (k 16))
 /-- A fact row carries arity 0. -/
-def gFactArity : WindowExpr := .mul eIsFact eArity
-def gBigBool : WindowExpr := gBool CHIP_BIG
+def gFactArity : TExpr := .mul eIsFact eArity
+def gBigBool : TExpr := gBool CHIP_BIG
 /-- `big` high ⇒ arity 7. -/
-def gBigPin : WindowExpr := .mul eBig (eSub eArity (k 7))
+def gBigPin : TExpr := .mul eBig (eSub eArity (k 7))
 /-- arity 7 ⇒ `big` high. -/
-def gBigForce : WindowExpr := .mul (eProdMinus eArity P7_ROOTS) (eOneMinus eBig)
-def gWideBool : WindowExpr := gBool CHIP_WIDE
-def gWidePin : WindowExpr := .mul eWide (eSub eArity (k 11))
-def gWideForce : WindowExpr := .mul (eProdMinus eArity P11_ROOTS) (eOneMinus eWide)
-def gNode8Bool : WindowExpr := gBool CHIP_NODE8
-def gNode8Pin : WindowExpr := .mul eNode8 (eSub eArity (k 16))
-def gNode8Force : WindowExpr := .mul (eProdMinus eArity P16_ROOTS) (eOneMinus eNode8)
+def gBigForce : TExpr := .mul (eProdMinus eArity P7_ROOTS) (eOneMinus eBig)
+def gWideBool : TExpr := gBool CHIP_WIDE
+def gWidePin : TExpr := .mul eWide (eSub eArity (k 11))
+def gWideForce : TExpr := .mul (eProdMinus eArity P11_ROOTS) (eOneMinus eWide)
+def gNode8Bool : TExpr := gBool CHIP_NODE8
+def gNode8Pin : TExpr := .mul eNode8 (eSub eArity (k 16))
+def gNode8Force : TExpr := .mul (eProdMinus eArity P16_ROOTS) (eOneMinus eNode8)
 
 /-- The `q01` multiplier: zero on every absorb arity, `+29568` on the pad row, and CANCELLED on a
 fact row by the `−29568·is_fact` term. -/
-def eQ01Guard : WindowExpr := eSub (eProdMinus eArity Q01_ROOTS) (.mul (k Q01_PAD) eIsFact)
+def eQ01Guard : TExpr := eSub (eProdMinus eArity Q01_ROOTS) (.mul (k Q01_PAD) eIsFact)
 
 /-- The zeroing gate of input lane `i`. Lanes 0/1 ride `eQ01Guard`; the rest ride `inputRoots`. -/
-def gInputZero (i : Nat) : WindowExpr :=
+def gInputZero (i : Nat) : TExpr :=
   if i < 2 then .mul (v (CHIP_IN0 + i)) eQ01Guard
   else .mul (v (CHIP_IN0 + i)) (eProdMinus eArity (inputRoots i))
 
 /-- `S4 = seed456·in4 + (1 − seed456)·arity`. -/
-def gS4 : WindowExpr :=
+def gS4 : TExpr :=
   eSub (v CHIP_S4) (.add (.mul eSeed456 (v (CHIP_IN0 + 4))) (.mul (eOneMinus eSeed456) eArity))
 /-- `S5 = seed456·in5 + (1 − seed456)·is_fact·FACT_MARK`. -/
-def gS5 : WindowExpr :=
+def gS5 : TExpr :=
   eSub (v CHIP_S5)
     (.add (.mul eSeed456 (v (CHIP_IN0 + 5)))
           (.mul (.mul (eOneMinus eSeed456) eIsFact) (k FACT_MARK)))
 /-- `S6 = seed456·in6 + (1 − seed456)·is_fact`. -/
-def gS6 : WindowExpr :=
+def gS6 : TExpr :=
   eSub (v CHIP_S6) (.add (.mul eSeed456 (v (CHIP_IN0 + 6))) (.mul (eOneMinus eSeed456) eIsFact))
 
 /-- **The ARITY/SELECTOR/SEEDING gates**, in the Rust emission order. `servesState16` inserts the
 one extra gate the state16 variant adds, at the position the Rust emits it (right after the
 membership gate) — the two variants SHARE this list rather than copying it. -/
-def chipSelectorBodies (servesState16 : Bool) : List WindowExpr :=
+def chipSelectorBodies (servesState16 : Bool) : List TExpr :=
   [gIsFactBool, gArityMember] ++
   (if servesState16 then [gState16Pin] else []) ++
   [ gFactArity
@@ -269,22 +270,41 @@ def chipSelectorBodies (servesState16 : Bool) : List WindowExpr :=
 `S4`/`S5`/`S6` columns (each a single column read, degree 1, so the first `x⁷` S-box stays inside
 the degree-7 budget — that is the whole reason those columns exist); lanes 7..15 read the wide
 carrier / `node8` second-child tail, which every narrow arity pins to zero. -/
-def chipSeedState : List WindowExpr :=
+def chipSeedState : List TExpr :=
   (List.range 4).map (fun i => v (CHIP_IN0 + i)) ++
   [v CHIP_S4, v CHIP_S5, v CHIP_S6] ++
   (List.range (CHIP_NODE8_ARITY - 7)).map (fun i => v (CHIP_IN0 + 7 + i))
 
+/-- ⚑ **THE EMITTED PERMUTATION** — the 1,078 SHARED DEFINITIONS and the 352 gate bodies that read
+them, at the chip's aux base and seeding. The chip declares no definitions of its own, so the
+permutation's start at index 0 and `chipDefs` IS the table's whole `defs` list.
+
+⚠ The chip's own selector/seeding/output gates share NOTHING, and that is correct rather than an
+oversight: `arity`, `is_fact` and the flags are single column reads (a `shr` of a `loc` costs a slot
+and saves nothing), and each arity product is read once. The sharing is entirely in the permutation,
+which is where the duplication was. `chipSelectorBodies` and `chipOutBodies` are therefore
+share-free, which is also what lets §6's sub-tables carry their verdicts back to the emitted table
+(`TableAir.rowHoldsWith_of_shareFree`). -/
+def chipEmission : List TExpr × List TExpr := permEmission CHIP_AUX0 0 chipSeedState
+
+/-- The shared definitions the emitted chip table carries. -/
+def chipDefs : List TExpr := chipEmission.1
+
 /-- The 352 permutation gates, at the chip's aux base and seeding. -/
-def chipPermBodies : List WindowExpr := permGateBodies CHIP_AUX0 chipSeedState
+def chipPermBodies : List TExpr := chipEmission.2
+
+/-- ⚠ The TREE spelling of the same 352 gates — NOT emitted. Kept as §10's measurement baseline and
+as the agreement oracle `Poseidon2RoundGates` §6b runs. -/
+def chipPermBodiesTree : List TExpr := permGateBodies CHIP_AUX0 chipSeedState
 
 /-- The 8 OUTPUT BINDINGS `out[i] − lanes[i]`. ⚑ After the permutation's final rebind these
 `lanes[i]` ARE aux columns, so each is an equality binding to an already-constrained column — which
 is exactly what makes a forged `out[i]` unsatisfiable (§7). -/
-def chipOutBodies : List WindowExpr :=
+def chipOutBodies : List TExpr :=
   (List.range CHIP_OUT_LANES).map (fun i => eSub (v (CHIP_OUT + i)) (permOutLane CHIP_AUX0 i))
 
 /-- The whole gate-body list of either variant. -/
-def chipGateBodies (servesState16 : Bool) : List WindowExpr :=
+def chipGateBodies (servesState16 : Bool) : List TExpr :=
   chipSelectorBodies servesState16 ++ chipPermBodies ++ chipOutBodies
 
 /-! ## §4 — The bus interface.
@@ -294,18 +314,18 @@ p3 `count_weight = 0`). A `.query` here would make each bus unsatisfiable in one
 vacuous in the other. §5 pins `busCountOp` on both sides. -/
 
 /-- The 25-wide absorb tuple `[arity, ins(16), out0..out7]`. -/
-def chipTuple : List WindowExpr :=
+def chipTuple : List TExpr :=
   eArity :: ((List.range CHIP_RATE).map (fun i => v (CHIP_IN0 + i)) ++
              (List.range CHIP_OUT_LANES).map (fun i => v (CHIP_OUT + i)))
 
 /-- The 18-wide narrow tuple `[arity, ins(16), out0]` — the SAME row serving single-output sites. -/
-def chipNarrowTuple : List WindowExpr :=
+def chipNarrowTuple : List TExpr :=
   eArity :: ((List.range CHIP_RATE).map (fun i => v (CHIP_IN0 + i)) ++ [v CHIP_OUT])
 
 /-- The 33-wide raw-transition tuple `[16, complete input state, complete output state]`. ⚑ The
 output block is the FINAL aux block (`aux[POSEIDON2_AUX_COLS − 16 ..]`), which the permutation
 gates already constrain — exposing it adds no witness columns and leaves lanes 8..15 not free. -/
-def chipState16Tuple : List WindowExpr :=
+def chipState16Tuple : List TExpr :=
   k (CHIP_NODE8_ARITY : ℤ) ::
     ((List.range WIDTH).map (fun i => v (CHIP_IN0 + i)) ++ permFinalState CHIP_AUX0)
 
@@ -326,6 +346,7 @@ def chipState16Interactions : List BusInteraction :=
 def chipTable : TableAir :=
   { name         := "dregg-ir2-chip-v1"
   , width        := CHIP_WIDTH
+  , defs         := chipDefs
   , gates        := (chipGateBodies false).map gAll
   , interactions := chipInteractions }
 
@@ -334,6 +355,7 @@ and a different bus interface. -/
 def chipState16Table : TableAir :=
   { name         := "dregg-ir2-chip-state16-v1"
   , width        := CHIP_WIDTH
+  , defs         := chipDefs
   , gates        := (chipGateBodies true).map gAll
   , interactions := chipState16Interactions }
 
@@ -401,21 +423,31 @@ theorem legacy_is_state16_minus_pin :
 the state16 variant declares and then uses nowhere. A free column is not a soundness hole, but it is
 a column the witness generator must fill and the commitment must carry. -/
 
-/-- The distinct columns an emitted table reads, over gates AND interactions. One pass, hash-consed
-— `readsCol` per column would be a 386× tree walk. -/
+/-- The distinct columns an emitted table reads, over DEFINITIONS, gates AND interactions. One pass,
+hash-consed — `readsColIn` per column would be a 386× walk over a thousand definitions.
+
+⚑ The definition pass is not bookkeeping: with the sharing node, every column the permutation reads
+is read THROUGH a `shr`, so a coverage scan that stopped at gate bodies would report the chip
+reading 34 of its 386 columns. Each `shr i` contributes the columns of `defs[i]`, and because the
+list is topologically ordered a single left-to-right pass is enough (the `defs` loop runs FIRST and
+accumulates into the same set). -/
 def readCols (t : TableAir) : List Nat := Id.run do
   let mut seen : Std.HashSet Nat := {}
-  let rec go (e : WindowExpr) (s : Std.HashSet Nat) : Std.HashSet Nat :=
+  let mut dcols : Array (Std.HashSet Nat) := Array.emptyWithCapacity t.defs.length
+  let rec go (e : TExpr) (dv : Array (Std.HashSet Nat)) (s : Std.HashSet Nat) : Std.HashSet Nat :=
     match e with
     | .loc c => s.insert c
     | .nxt c => s.insert c
     | .const _ => s
-    | .add a b => go b (go a s)
-    | .mul a b => go b (go a s)
-  for g in t.gates do seen := go g.body seen
+    | .shr i => (dv.getD i {}).fold (fun acc c => acc.insert c) s
+    | .add a b => go b dv (go a dv s)
+    | .mul a b => go b dv (go a dv s)
+  for d in t.defs do
+    dcols := dcols.push (go d dcols {})
+  for g in t.gates do seen := go g.body dcols seen
   for i in t.interactions do
-    seen := go i.mult seen
-    for e in i.tuple do seen := go e seen
+    seen := go i.mult dcols seen
+    for e in i.tuple do seen := go e dcols seen
   return (List.range t.width).filter (fun c => seen.contains c)
 
 #guard (readCols chipTable).length == CHIP_WIDTH
@@ -424,26 +456,48 @@ def readCols (t : TableAir) : List Nat := Id.run do
 
 /-! ## §6 — THE ANALYSIS SUB-TABLES.
 
-⚠ **NOT EMITTED, and not artifacts.** `chipTable` carries 140,850 expression nodes, so a KERNEL
-`decide` against it is not viable. These three tables are built from the SAME body lists the
+⚠ **NOT EMITTED, and not artifacts.** The emitted chip carries 1,078 definitions and 391 gates, so a
+KERNEL `decide` against it is not viable. These three tables are built from the SAME body lists the
 emission splices, so a `decide` against them is a decision about the emitted gates — and
 `selector_of_chip` / `out_of_chip` carry the verdict back to `chipTable` itself rather than leaving
-the sub-table an unconnected model. -/
+the sub-table an unconnected model.
+
+⚑ **AND WITH A DEFINITION LIST IN PLAY THAT TRANSPORT IS A REAL OBLIGATION.** The sub-tables declare
+`defs := []` while the emitted table resolves 1,078, so a verdict about the sub-table is a verdict
+about a different machine UNLESS the block it covers reads no definition. It does not — the
+selector, seeding and output gates are share-free, all the sharing is in the permutation — and that
+is DISCHARGED by `decide` on the emitted gate list (`selector_block_is_share_free` below), not
+assumed. Without it these three theorems would be vacuously about `#[]`. -/
 
 /-- The 31 arity/selector/seeding gates of the LEGACY variant. -/
 def chipSelectorTable : TableAir :=
   { name := "chip-selectors (ANALYSIS ONLY, not emitted)"
-  , width := CHIP_WIDTH, gates := (chipSelectorBodies false).map gAll, interactions := [] }
+  , width := CHIP_WIDTH, defs := [], gates := (chipSelectorBodies false).map gAll, interactions := [] }
 
 /-- The 32 arity/selector/seeding gates of the STATE16 variant. -/
 def chipState16SelectorTable : TableAir :=
   { name := "chip-state16-selectors (ANALYSIS ONLY, not emitted)"
-  , width := CHIP_WIDTH, gates := (chipSelectorBodies true).map gAll, interactions := [] }
+  , width := CHIP_WIDTH, defs := [], gates := (chipSelectorBodies true).map gAll, interactions := [] }
 
 /-- The 8 output bindings. -/
 def chipOutTable : TableAir :=
   { name := "chip-out-bindings (ANALYSIS ONLY, not emitted)"
-  , width := CHIP_WIDTH, gates := chipOutBodies.map gAll, interactions := [] }
+  , width := CHIP_WIDTH, defs := [], gates := chipOutBodies.map gAll, interactions := [] }
+
+/-- ⚑ **THE HYPOTHESIS THE TRANSPORT NEEDS, DECIDED.** Not one gate of the three sub-tables reads a
+shared definition, so their verdicts are independent of the definition vector. A future edit that
+shared a selector sub-expression would turn this red rather than silently making the three theorems
+below statements about an empty vector. -/
+theorem selector_block_is_share_free :
+    chipSelectorTable.gates.all (fun g => g.body.maxShare == none) = true ∧
+    chipState16SelectorTable.gates.all (fun g => g.body.maxShare == none) = true ∧
+    chipOutTable.gates.all (fun g => g.body.maxShare == none) = true := by
+  refine ⟨by decide, by decide, by decide⟩
+
+-- ⚠ THE CONTROL: the permutation half is NOT share-free, so the predicate above is discriminating
+-- rather than trivially true of every gate list. (A `#guard`, i.e. a compiled evaluation — the
+-- permutation block is far too large for the kernel and `native_decide` is not used in this tree.)
+#guard (chipPermBodies.map gAll).all (fun g => g.body.maxShare == none) == false
 
 /-- The emitted gate list really is the selector block followed by the rest. -/
 theorem chipTable_gates_split :
@@ -453,6 +507,8 @@ theorem chipTable_gates_split :
 /-- …so anything the selector sub-table refuses, the EMITTED table refuses. -/
 theorem selector_of_chip {env : VmRowEnv} {f l : Bool} (h : chipTable.RowHolds env f l) :
     chipSelectorTable.RowHolds env f l := by
+  refine TableAir.rowHoldsWith_of_shareFree selector_block_is_share_free.1
+    (sv := chipTable.shareVals env) ?_
   intro g hg
   exact h g (by rw [chipTable_gates_split]; exact List.mem_append_left _ hg)
 
@@ -465,12 +521,16 @@ theorem chipState16Table_gates_split :
 
 theorem state16_selector_of_chip {env : VmRowEnv} {f l : Bool}
     (h : chipState16Table.RowHolds env f l) : chipState16SelectorTable.RowHolds env f l := by
+  refine TableAir.rowHoldsWith_of_shareFree selector_block_is_share_free.2.1
+    (sv := chipState16Table.shareVals env) ?_
   intro g hg
   exact h g (by rw [chipState16Table_gates_split]; exact List.mem_append_left _ hg)
 
 /-- …and the OUTPUT bindings are the emitted table's tail. -/
 theorem out_of_chip {env : VmRowEnv} {f l : Bool} (h : chipTable.RowHolds env f l) :
     chipOutTable.RowHolds env f l := by
+  refine TableAir.rowHoldsWith_of_shareFree selector_block_is_share_free.2.2
+    (sv := chipTable.shareVals env) ?_
   intro g hg
   refine h g ?_
   rw [chipTable_gates_split]
@@ -511,36 +571,36 @@ private theorem not_dvd_small {q : ℤ} (hq : q ≠ 0) (hlt : q.natAbs < 2013265
 /-! ### §7.0 — Reading a gate off the emitted list. -/
 
 private theorem sel_gate {env : VmRowEnv} {f l : Bool}
-    (h : chipSelectorTable.RowHolds env f l) {b : WindowExpr}
-    (hb : b ∈ chipSelectorBodies false) : b.eval env ≡ 0 [ZMOD 2013265921] :=
+    (h : chipSelectorTable.RowHolds env f l) {b : TExpr}
+    (hb : b ∈ chipSelectorBodies false) : b.evalWith #[] env ≡ 0 [ZMOD 2013265921] :=
   h (gAll b) (List.mem_map_of_mem hb)
 
-private theorem mem_sel (b : WindowExpr) (hb : b ∈ chipSelectorBodies false) :
+private theorem mem_sel (b : TExpr) (hb : b ∈ chipSelectorBodies false) :
     b ∈ chipSelectorBodies false := hb
 
 /-- Evaluation of the emitted product expression IS the integer product. -/
-private theorem eMinus_eval (ae : WindowExpr) (c : ℤ) (env : VmRowEnv) :
-    (eMinus ae c).eval env = ae.eval env - c := by
+private theorem eMinus_eval (ae : TExpr) (c : ℤ) (env : VmRowEnv) :
+    (eMinus ae c).evalWith #[] env = ae.evalWith #[] env - c := by
   unfold eMinus
   split
   · next h => simp [h]
-  · simp [eSub, k, WindowExpr.eval]; ring
+  · simp [eSub, k, TExpr.evalWith]; ring
 
-private theorem fold_eval (ae : WindowExpr) (env : VmRowEnv) :
-    ∀ (cs : List ℤ) (acc : WindowExpr),
-      (cs.foldl (fun a c => WindowExpr.mul a (eMinus ae c)) acc).eval env
-        = cs.foldl (fun a c => a * (ae.eval env - c)) (acc.eval env) := by
+private theorem fold_eval (ae : TExpr) (env : VmRowEnv) :
+    ∀ (cs : List ℤ) (acc : TExpr),
+      (cs.foldl (fun a c => TExpr.mul a (eMinus ae c)) acc).evalWith #[] env
+        = cs.foldl (fun a c => a * (ae.evalWith #[] env - c)) (acc.evalWith #[] env) := by
   intro cs
   induction cs with
   | nil => intro acc; simp
   | cons c rest ih =>
     intro acc
-    simpa [WindowExpr.eval, eMinus_eval] using ih (WindowExpr.mul acc (eMinus ae c))
+    simpa [TExpr.evalWith, eMinus_eval] using ih (TExpr.mul acc (eMinus ae c))
 
-theorem eProdMinus_eval (ae : WindowExpr) (env : VmRowEnv) (cs : List ℤ) :
-    (eProdMinus ae cs).eval env = prodMinus (ae.eval env) cs := by
+theorem eProdMinus_eval (ae : TExpr) (env : VmRowEnv) (cs : List ℤ) :
+    (eProdMinus ae cs).evalWith #[] env = prodMinus (ae.evalWith #[] env) cs := by
   cases cs with
-  | nil => simp [eProdMinus, prodMinus, k, WindowExpr.eval]
+  | nil => simp [eProdMinus, prodMinus, k, TExpr.evalWith]
   | cons c rest => simpa [eProdMinus, prodMinus, eMinus_eval] using fold_eval ae env rest (eMinus ae c)
 
 /-! ### §7.1 — ⚑ REFUTED: `p7` / `p11` / `p16` are described BACKWARDS.
@@ -636,37 +696,37 @@ private theorem prodMinus_congr6 {A c : ℤ} (h : A ≡ c [ZMOD 2013265921]) (r0
 /-! ### §7.0b — Gate bodies, evaluated. -/
 
 private theorem gBool_eval (c : Nat) (env : VmRowEnv) :
-    (gBool c).eval env = env.loc c * (env.loc c - 1) := by
-  simp only [gBool, v, k, WindowExpr.eval]; ring
+    (gBool c).evalWith #[] env = env.loc c * (env.loc c - 1) := by
+  simp only [gBool, v, k, TExpr.evalWith]; ring
 
 private theorem gArityMember_eval (env : VmRowEnv) :
-    gArityMember.eval env = prodMinus (env.loc CHIP_ARITY) ARITIES := by
-  simp [gArityMember, eProdMinus_eval, eArity, v, WindowExpr.eval]
+    gArityMember.evalWith #[] env = prodMinus (env.loc CHIP_ARITY) ARITIES := by
+  simp [gArityMember, eProdMinus_eval, eArity, v, TExpr.evalWith]
 
 private theorem gFactArity_eval (env : VmRowEnv) :
-    gFactArity.eval env = env.loc CHIP_IS_FACT * env.loc CHIP_ARITY := by
-  simp [gFactArity, eIsFact, eArity, v, WindowExpr.eval]
+    gFactArity.evalWith #[] env = env.loc CHIP_IS_FACT * env.loc CHIP_ARITY := by
+  simp [gFactArity, eIsFact, eArity, v, TExpr.evalWith]
 
 private theorem gPin_eval (fc : Nat) (c : ℤ) (env : VmRowEnv) :
-    (WindowExpr.mul (v fc) (eSub eArity (k c))).eval env
+    (TExpr.mul (v fc) (eSub eArity (k c))).evalWith #[] env
       = env.loc fc * (env.loc CHIP_ARITY - c) := by
-  simp only [eArity, eSub, k, v, WindowExpr.eval]; ring
+  simp only [eArity, eSub, k, v, TExpr.evalWith]; ring
 
 private theorem gForce_eval (roots : List ℤ) (fc : Nat) (env : VmRowEnv) :
-    (WindowExpr.mul (eProdMinus eArity roots) (eOneMinus (v fc))).eval env
+    (TExpr.mul (eProdMinus eArity roots) (eOneMinus (v fc))).evalWith #[] env
       = prodMinus (env.loc CHIP_ARITY) roots * (1 - env.loc fc) := by
-  simp only [eOneMinus, eSub, k, v, WindowExpr.eval, eProdMinus_eval, eArity]; ring
+  simp only [eOneMinus, eSub, k, v, TExpr.evalWith, eProdMinus_eval, eArity]; ring
 
 private theorem eQ01Guard_eval (env : VmRowEnv) :
-    eQ01Guard.eval env
+    eQ01Guard.evalWith #[] env
       = prodMinus (env.loc CHIP_ARITY) Q01_ROOTS - Q01_PAD * env.loc CHIP_IS_FACT := by
-  simp [eQ01Guard, eSub, k, v, WindowExpr.eval, eProdMinus_eval, eArity, eIsFact]; ring
+  simp [eQ01Guard, eSub, k, v, TExpr.evalWith, eProdMinus_eval, eArity, eIsFact]; ring
 
 /-- The input-zeroing gate of lane `i` is one of the emitted selector gates. Split out because it
 is the one gate reached through a `List.map`, not a literal. -/
 private theorem sel_inputZero {env : VmRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) (i : Nat) (hi : i < CHIP_NODE8_ARITY) :
-    (gInputZero i).eval env ≡ 0 [ZMOD 2013265921] := by
+    (gInputZero i).evalWith #[] env ≡ 0 [ZMOD 2013265921] := by
   refine sel_gate h ?_
   simp only [chipSelectorBodies, Bool.false_eq_true, if_false]
   exact List.mem_append_left _ (List.mem_append_right _
@@ -680,8 +740,8 @@ theorem big_high_iff_arity_seven {env : VmRowEnv} {f l : Bool}
     (env.loc CHIP_BIG ≡ 1 [ZMOD 2013265921]) ↔ (env.loc CHIP_ARITY ≡ 7 [ZMOD 2013265921]) := by
   have hpin := sel_gate h (b := gBigPin) (by simp [chipSelectorBodies])
   have hforce := sel_gate h (b := gBigForce) (by simp [chipSelectorBodies])
-  rw [show gBigPin = WindowExpr.mul (v CHIP_BIG) (eSub eArity (k 7)) from rfl, gPin_eval] at hpin
-  rw [show gBigForce = WindowExpr.mul (eProdMinus eArity P7_ROOTS) (eOneMinus (v CHIP_BIG))
+  rw [show gBigPin = TExpr.mul (v CHIP_BIG) (eSub eArity (k 7)) from rfl, gPin_eval] at hpin
+  rw [show gBigForce = TExpr.mul (eProdMinus eArity P7_ROOTS) (eOneMinus (v CHIP_BIG))
         from rfl, gForce_eval] at hforce
   refine flag_exact (q := 15120) hpin hforce (fun hA => ?_) (not_dvd_small (by norm_num) (by norm_num))
   simpa [P7_ROOTS, show prodMinus (7 : ℤ) P7_ROOTS = 15120 from by decide] using
@@ -693,8 +753,8 @@ theorem wide_high_iff_arity_eleven {env : VmRowEnv} {f l : Bool}
     (env.loc CHIP_WIDE ≡ 1 [ZMOD 2013265921]) ↔ (env.loc CHIP_ARITY ≡ 11 [ZMOD 2013265921]) := by
   have hpin := sel_gate h (b := gWidePin) (by simp [chipSelectorBodies])
   have hforce := sel_gate h (b := gWideForce) (by simp [chipSelectorBodies])
-  rw [show gWidePin = WindowExpr.mul (v CHIP_WIDE) (eSub eArity (k 11)) from rfl, gPin_eval] at hpin
-  rw [show gWideForce = WindowExpr.mul (eProdMinus eArity P11_ROOTS) (eOneMinus (v CHIP_WIDE))
+  rw [show gWidePin = TExpr.mul (v CHIP_WIDE) (eSub eArity (k 11)) from rfl, gPin_eval] at hpin
+  rw [show gWideForce = TExpr.mul (eProdMinus eArity P11_ROOTS) (eOneMinus (v CHIP_WIDE))
         from rfl, gForce_eval] at hforce
   refine flag_exact (q := -110880) hpin hforce (fun hA => ?_)
     (not_dvd_small (by norm_num) (by norm_num))
@@ -707,9 +767,9 @@ theorem node8_high_iff_arity_sixteen {env : VmRowEnv} {f l : Bool}
     (env.loc CHIP_NODE8 ≡ 1 [ZMOD 2013265921]) ↔ (env.loc CHIP_ARITY ≡ 16 [ZMOD 2013265921]) := by
   have hpin := sel_gate h (b := gNode8Pin) (by simp [chipSelectorBodies])
   have hforce := sel_gate h (b := gNode8Force) (by simp [chipSelectorBodies])
-  rw [show gNode8Pin = WindowExpr.mul (v CHIP_NODE8) (eSub eArity (k 16)) from rfl,
+  rw [show gNode8Pin = TExpr.mul (v CHIP_NODE8) (eSub eArity (k 16)) from rfl,
     gPin_eval] at hpin
-  rw [show gNode8Force = WindowExpr.mul (eProdMinus eArity P16_ROOTS) (eOneMinus (v CHIP_NODE8))
+  rw [show gNode8Force = TExpr.mul (eProdMinus eArity P16_ROOTS) (eOneMinus (v CHIP_NODE8))
         from rfl, gForce_eval] at hforce
   refine flag_exact (q := 1572480) hpin hforce (fun hA => ?_)
     (not_dvd_small (by norm_num) (by norm_num))
@@ -755,8 +815,8 @@ gate a future narrowing of the arity set would touch. -/
 /-- At most one selector flag is high, so `seed456` is boolean. -/
 theorem seed456_is_boolean {env : VmRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) :
-    (eSeed456.eval env ≡ 0 [ZMOD 2013265921]) ∨
-    (eSeed456.eval env ≡ 1 [ZMOD 2013265921]) := by
+    (eSeed456.evalWith #[] env ≡ 0 [ZMOD 2013265921]) ∨
+    (eSeed456.evalWith #[] env ≡ 1 [ZMOD 2013265921]) := by
   have hbb := bool_of_gate (by
     simpa [gBool_eval] using
       (sel_gate h (b := gBigBool) (by simp [chipSelectorBodies])))
@@ -769,10 +829,10 @@ theorem seed456_is_boolean {env : VmRowEnv} {f l : Bool}
   have hbp := sel_gate h (b := gBigPin) (by simp [chipSelectorBodies])
   have hwp := sel_gate h (b := gWidePin) (by simp [chipSelectorBodies])
   have hnp := sel_gate h (b := gNode8Pin) (by simp [chipSelectorBodies])
-  rw [show gBigPin = WindowExpr.mul (v CHIP_BIG) (eSub eArity (k 7)) from rfl, gPin_eval] at hbp
-  rw [show gWidePin = WindowExpr.mul (v CHIP_WIDE) (eSub eArity (k 11)) from rfl,
+  rw [show gBigPin = TExpr.mul (v CHIP_BIG) (eSub eArity (k 7)) from rfl, gPin_eval] at hbp
+  rw [show gWidePin = TExpr.mul (v CHIP_WIDE) (eSub eArity (k 11)) from rfl,
     gPin_eval] at hwp
-  rw [show gNode8Pin = WindowExpr.mul (v CHIP_NODE8) (eSub eArity (k 16)) from rfl,
+  rw [show gNode8Pin = TExpr.mul (v CHIP_NODE8) (eSub eArity (k 16)) from rfl,
     gPin_eval] at hnp
   -- ⚑ ONLY the three `flag·(arity − c)` PINS are used below. The membership gate, which the Rust
   -- comment credits, is never touched: two high flags already force two distinct arity residues.
@@ -781,9 +841,9 @@ theorem seed456_is_boolean {env : VmRowEnv} {f l : Bool}
     intro c d hc hd hlt
     by_contra hne
     exact not_dvd_small (sub_ne_zero.mpr hne) hlt (dvd_sub_of_modEq (hc.symm.trans hd))
-  have heval : eSeed456.eval env
+  have heval : eSeed456.evalWith #[] env
       = env.loc CHIP_BIG + env.loc CHIP_WIDE + env.loc CHIP_NODE8 := by
-    simp only [eSeed456, eBig, eWide, eNode8, v, WindowExpr.eval]
+    simp only [eSeed456, eBig, eWide, eNode8, v, TExpr.evalWith]
   rw [heval]
   rcases hbb with hb | hb <;> rcases hwb with hw | hw <;> rcases hnb with hn | hn
   · exact Or.inl (by simpa using (hb.add hw).add hn)
@@ -822,7 +882,7 @@ theorem fact_row_has_arity_zero {env : VmRowEnv} {f l : Bool}
 FREE there — which is what lets a fact row carry `l` and `r`. -/
 theorem q01_guard_vanishes_on_fact_rows {env : VmRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) (hf : env.loc CHIP_IS_FACT ≡ 1 [ZMOD 2013265921]) :
-    eQ01Guard.eval env ≡ 0 [ZMOD 2013265921] := by
+    eQ01Guard.evalWith #[] env ≡ 0 [ZMOD 2013265921] := by
   have hA := fact_row_has_arity_zero h hf
   rw [eQ01Guard_eval]
   have h1 : prodMinus (env.loc CHIP_ARITY) Q01_ROOTS ≡ Q01_PAD [ZMOD 2013265921] := by
@@ -839,7 +899,7 @@ theorem pad_row_zeroes_in0_and_in1 {env : VmRowEnv} {f l : Bool}
     (hA : env.loc CHIP_ARITY ≡ 0 [ZMOD 2013265921]) :
     env.loc CHIP_IN0 ≡ 0 [ZMOD 2013265921] ∧
     env.loc (CHIP_IN0 + 1) ≡ 0 [ZMOD 2013265921] := by
-  have hguard : eQ01Guard.eval env ≡ Q01_PAD [ZMOD 2013265921] := by
+  have hguard : eQ01Guard.evalWith #[] env ≡ Q01_PAD [ZMOD 2013265921] := by
     rw [eQ01Guard_eval]
     have h1 : prodMinus (env.loc CHIP_ARITY) Q01_ROOTS ≡ Q01_PAD [ZMOD 2013265921] := by
       simpa [Q01_ROOTS, show prodMinus (0 : ℤ) Q01_ROOTS = Q01_PAD from by decide] using
@@ -850,11 +910,11 @@ theorem pad_row_zeroes_in0_and_in1 {env : VmRowEnv} {f l : Bool}
   have step : ∀ (i : Nat), i < 2 → env.loc (CHIP_IN0 + i) ≡ 0 [ZMOD 2013265921] := by
     intro i hi
     have hg := sel_inputZero h i (by simp only [CHIP_NODE8_ARITY]; omega)
-    rw [show gInputZero i = WindowExpr.mul (v (CHIP_IN0 + i)) eQ01Guard from by
-      simp [gInputZero, hi], WindowExpr.eval] at hg
+    rw [show gInputZero i = TExpr.mul (v (CHIP_IN0 + i)) eQ01Guard from by
+      simp [gInputZero, hi], TExpr.evalWith] at hg
     rw [Int.modEq_zero_iff_dvd] at hg
     rcases pPrimeInt.dvd_mul.mp hg with hd | hd
-    · simpa [v, WindowExpr.eval] using (Int.modEq_zero_iff_dvd).mpr hd
+    · simpa [v, TExpr.evalWith] using (Int.modEq_zero_iff_dvd).mpr hd
     · exact absurd ((Int.modEq_zero_iff_dvd).mp (hguard.symm.trans
         ((Int.modEq_zero_iff_dvd).mpr hd)))
         (not_dvd_small (by decide) (by decide))
@@ -887,11 +947,11 @@ theorem forged_out_lane_is_unsat {env : VmRowEnv} {f l : Bool} (i : Nat) (hi : i
       (Dregg2.Circuit.Emit.Poseidon2RoundGates.permOutLane CHIP_AUX0 i)))
     (List.mem_map_of_mem (List.mem_map_of_mem (List.mem_range.mpr hi)))
   have : (eSub (v (CHIP_OUT + i))
-      (Dregg2.Circuit.Emit.Poseidon2RoundGates.permOutLane CHIP_AUX0 i)).eval env
+      (Dregg2.Circuit.Emit.Poseidon2RoundGates.permOutLane CHIP_AUX0 i)).evalWith #[] env
       ≡ 0 [ZMOD 2013265921] := hg
   rw [show (Dregg2.Circuit.Emit.Poseidon2RoundGates.permOutLane CHIP_AUX0 i)
       = v (CHIP_AUX0 + 336 + i) from rfl] at this
-  simp only [eSub, v, WindowExpr.eval] at this
+  simp only [eSub, v, TExpr.evalWith] at this
   have := (Int.modEq_zero_iff_dvd).mp this
   exact modEq_of_dvd_sub (by simpa using this)
 
@@ -901,8 +961,8 @@ theorem forged_out_lane_is_unsat {env : VmRowEnv} {f l : Bool} (i : Nat) (hi : i
 literally `0`. That is intended (a zero-multiplicity pad stays free to be the arity-0 chip row), and
 it is the answer to "what does it force there": nothing at all. -/
 theorem state16_pin_vacuous_at_zero_multiplicity (env : VmRowEnv)
-    (h : env.loc CHIP_MULT_STATE16 = 0) : gState16Pin.eval env = 0 := by
-  simp [gState16Pin, eArity, eSub, k, v, WindowExpr.eval, h]
+    (h : env.loc CHIP_MULT_STATE16 = 0) : gState16Pin.evalWith #[] env = 0 := by
+  simp [gState16Pin, eArity, eSub, k, v, TExpr.evalWith, h]
 
 /-- On a NONZERO-multiplicity row it pins arity to 16 — so the fixed length tag cannot be laundered
 through a seed-from-zero absorb row. -/
@@ -911,8 +971,8 @@ theorem state16_nonzero_mult_forces_arity_sixteen {env : VmRowEnv} {f l : Bool}
     (hm : ¬ (env.loc CHIP_MULT_STATE16 ≡ 0 [ZMOD 2013265921])) :
     env.loc CHIP_ARITY ≡ 16 [ZMOD 2013265921] := by
   have hg := h (gAll gState16Pin) (List.mem_map_of_mem (by simp [chipSelectorBodies]))
-  have hg : gState16Pin.eval env ≡ 0 [ZMOD 2013265921] := hg
-  rw [show gState16Pin = WindowExpr.mul (v CHIP_MULT_STATE16) (eSub eArity (k 16)) from rfl,
+  have hg : gState16Pin.evalWith #[] env ≡ 0 [ZMOD 2013265921] := hg
+  rw [show gState16Pin = TExpr.mul (v CHIP_MULT_STATE16) (eSub eArity (k 16)) from rfl,
     gPin_eval, Int.modEq_zero_iff_dvd] at hg
   rcases pPrimeInt.dvd_mul.mp hg with hd | hd
   · exact absurd ((Int.modEq_zero_iff_dvd).mpr hd) hm
@@ -927,19 +987,19 @@ theorem state16_bus_guard_is_dead {env : VmRowEnv} {f l : Bool}
     (h : chipState16SelectorTable.RowHolds env f l)
     (hm : ¬ (env.loc CHIP_MULT_STATE16 ≡ 0 [ZMOD 2013265921])) :
     env.loc CHIP_IS_FACT ≡ 0 [ZMOD 2013265921] ∧
-    (WindowExpr.mul (v CHIP_MULT_STATE16) (eOneMinus eIsFact)).eval env
+    (TExpr.mul (v CHIP_MULT_STATE16) (eOneMinus eIsFact)).evalWith #[] env
       ≡ env.loc CHIP_MULT_STATE16 [ZMOD 2013265921] := by
   have h16 := state16_nonzero_mult_forces_arity_sixteen h hm
   have hfb := bool_of_gate (by
     simpa [gBool_eval] using
       (h (gAll gIsFactBool) (List.mem_map_of_mem (by simp [chipSelectorBodies]))
-        : gIsFactBool.eval env ≡ 0 [ZMOD 2013265921]))
+        : gIsFactBool.evalWith #[] env ≡ 0 [ZMOD 2013265921]))
   have hf0 : env.loc CHIP_IS_FACT ≡ 0 [ZMOD 2013265921] := by
     rcases hfb with h0 | h1
     · exact h0
     · exfalso
       have hga := h (gAll gFactArity) (List.mem_map_of_mem (by simp [chipSelectorBodies]))
-      have hga : gFactArity.eval env ≡ 0 [ZMOD 2013265921] := hga
+      have hga : gFactArity.evalWith #[] env ≡ 0 [ZMOD 2013265921] := hga
       rw [gFactArity_eval, Int.modEq_zero_iff_dvd] at hga
       have hA0 : env.loc CHIP_ARITY ≡ 0 [ZMOD 2013265921] := by
         rcases pPrimeInt.dvd_mul.mp hga with hd | hd
@@ -950,7 +1010,7 @@ theorem state16_bus_guard_is_dead {env : VmRowEnv} {f l : Bool}
       exact not_dvd_small (q := (16 : ℤ)) (by norm_num) (by norm_num)
         ((Int.modEq_zero_iff_dvd).mp h16_0)
   refine ⟨hf0, ?_⟩
-  simp only [eOneMinus, eSub, eIsFact, k, v, WindowExpr.eval]
+  simp only [eOneMinus, eSub, eIsFact, k, v, TExpr.evalWith]
   have : env.loc CHIP_MULT_STATE16 * (1 + -1 * env.loc CHIP_IS_FACT)
       ≡ env.loc CHIP_MULT_STATE16 * (1 + -1 * 0) [ZMOD 2013265921] :=
     Int.ModEq.mul_left _ (Int.ModEq.add_left _ (Int.ModEq.mul_left _ hf0))
@@ -1191,35 +1251,66 @@ def bump (row : List ℤ) (c : Nat) : List ℤ :=
 
 /-! ## §10 — The wire pins, and the emission's cost.
 
-The byte length plus the structural pins of §5 fix the emission: any edit to a gate body, a tuple, a
-multiplicity or an offset moves the length, and any edit to the SHAPE moves §5. A full byte golden
-is deliberately not inlined — 3 MB of literal would be absurd — so this is a pin, not an identity. -/
+The byte length plus the structural pins of §5 fix the emission: any edit to a definition, a gate
+body, a tuple, a multiplicity or an offset moves the length, and any edit to the SHAPE moves §5. A
+full byte golden is deliberately not inlined — 159 KB of literal would be absurd — so this is a pin,
+not an identity. -/
 
-/-- The wire string the Rust interpreter ingests for `Ir2Air::Chip`. -/
+/-- The wire string the Rust interpreter ingests for the chip. -/
 def CHIP_JSON : String := emitTableAirJson chipTable
-/-- …and for `Ir2Air::ChipState16`. -/
+/-- …and for the state16 variant. -/
 def CHIP_STATE16_JSON : String := emitTableAirJson chipState16Table
 
-/-- ⚑ The emitted node total — the prover's per-row constraint-evaluation cost, and the number
-`Poseidon2RoundGates` §7 is about. -/
-def chipNodeTotal : Nat := totalNodes (chipGateBodies false)
+/-- ⚑ The emitted node total: the shared DEFINITIONS plus the gate bodies that read them. -/
+def chipNodeTotal : Nat := totalNodes chipDefs + totalNodes (chipGateBodies false)
 
-/-- The shared-DAG size of the WHOLE chip emission — `Poseidon2RoundGates.dagSize` applied here. -/
-def chipDagSize : Nat := Dregg2.Circuit.Emit.Poseidon2RoundGates.dagSize (chipGateBodies false)
+/-- ⚑ **THE PROVER'S PER-ROW WORK** — field operations, each definition counted ONCE however many
+times it is read. This is the number the sharing node exists for; `chipNodeTotal` is a proxy. -/
+def chipOpTotal : Nat :=
+  (chipDefs.foldl (fun acc b => acc + opCount b) 0) +
+  ((chipGateBodies false).foldl (fun acc b => acc + opCount b) 0)
 
--- ⚑ THE COST, PINNED. `Poseidon2RoundGates` §7 owns the ratio; these are the totals it lands at.
-#guard chipNodeTotal == 141439
-#guard totalNodes (chipGateBodies true) == 141446
+/-- The TREE spelling's node total — the `before`, kept so the win is a ratio of two measured
+objects in one file rather than a number quoted from a previous commit. -/
+def chipTreeNodeTotal : Nat :=
+  totalNodes (chipSelectorBodies false ++ chipPermBodiesTree ++ chipOutBodies)
+
+/-- …and the tree spelling's operation total. -/
+def chipTreeOpTotal : Nat :=
+  (chipSelectorBodies false ++ chipPermBodiesTree ++ chipOutBodies).foldl
+    (fun acc b => acc + opCount b) 0
+
+/-- The hash-consed floor of the tree spelling. -/
+def chipDagSize : Nat :=
+  Dregg2.Circuit.Emit.Poseidon2RoundGates.dagSize
+    (chipSelectorBodies false ++ chipPermBodiesTree ++ chipOutBodies)
+
+-- ⚑ THE COST, BEFORE AND AFTER, both measured here.
+#guard chipTreeNodeTotal == 141439
+#guard chipTreeOpTotal == 70524
 #guard chipDagSize == 3318
-#guard chipNodeTotal / chipDagSize == 42
+#guard chipDefs.length == 1078
+#guard chipNodeTotal == 7355
+#guard chipOpTotal == 2943
+#guard totalNodes chipDefs + totalNodes (chipGateBodies true) == 7362
+-- The wins, as ratios rather than as four numbers a reader has to divide.
+#guard chipTreeNodeTotal / chipNodeTotal == 19
+#guard chipTreeOpTotal / chipOpTotal == 23      -- 70524 / 2943 = 23.96
+
+-- ⚑ WELL-FORMEDNESS OF THE EMITTED DEFINITION LIST. A forward reference or an out-of-range share
+-- would make the one-pass resolution wrong; both are refused, here and by the Rust decoder.
+#guard chipTable.wellFormed == true
+#guard chipState16Table.wellFormed == true
+#guard chipTable.defCount == 1078
+#guard chipState16Table.defCount == 1078
 
 -- ⚑ THE WIRE PIN. Byte LENGTH plus the structural `#guard`s of §5 (391/392 gates, 3/1 interactions
--- in a fixed per-bus split, width 386): any edit to a gate body, a tuple, a multiplicity or an
--- offset moves the length, and any edit to the SHAPE moves §5.
--- ⚠ 3.1 MB EACH. That is the tree IR's duplication on the wire, not a rich circuit: the SAME
--- polynomial hash-consed is 3,225 nodes. Read the module header before treating this as normal.
-#guard CHIP_JSON.length == 3098882
-#guard CHIP_STATE16_JSON.length == 3098539
+-- in a fixed per-bus split, width 386, 1078 definitions): any edit to a definition, a gate body, a
+-- tuple, a multiplicity or an offset moves the length, and any edit to the SHAPE moves §5.
+-- ⚠ 159 KB each, against 3,098,882 / 3,098,539 for the tree spelling — **19.5×**. The wire shrink
+-- is the SIDE EFFECT; the point is `chipOpTotal`.
+#guard CHIP_JSON.length == 159180
+#guard CHIP_STATE16_JSON.length == 158837
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin above
 while asserting nothing. -/
@@ -1229,31 +1320,40 @@ theorem chipTable_is_not_empty : chipTable.gates ≠ [] := by
 theorem chipState16Table_is_not_empty : chipState16Table.gates ≠ [] := by
   simp [chipState16Table, chipGateBodies, chipSelectorBodies]
 
-/-! ## §11 — ⚠ WHAT REMAINS, PRICED — and it is a DESIGN FORK, not a follow-up.
+-- ⚑ …and neither is the DEFINITION list DEAD, which a count pin alone would not distinguish from a
+-- table that declares a thousand definitions and reads none of them. (`#guard`s: the emitted table
+-- is far past what the kernel will reduce, and this file does not use `native_decide` — same
+-- instrument as §9's whole-table poles.)
+#guard chipTable.defs.isEmpty == false
+#guard (chipGateBodies false).any (fun b => b.maxShare != none)
+#guard (chipGateBodies true).any (fun b => b.maxShare != none)
+-- …and the sharing is REACHED, not merely present: the last definition is read by a gate.
+#guard (chipGateBodies false).any (fun b => b.maxShare == some (chipDefs.length - 1))
 
-**This file closes law #1 for the chip.** Two things are named rather than done, and the first is
-the one to decide before the artifacts are cut.
+/-! ## §11 — ⚠ WHAT REMAINS.
 
-**1. `WindowExpr` NEEDS A SHARING NODE.** Measured above: 42.6×, and `WindowExpr::eval_expr`
-(`descriptor_ir2.rs`) is a naive recursive walk with no memoisation, so the ratio lands on the
-prover as-is. The deployed hand-written arm shares its 16 per-round S-box values as `AB::Expr`
-VALUES; a tree IR cannot express that, so the port is byte-honest and ~43× more expensive at the
-same time. The fix is a `WindowExpr` constructor — a `let`/`share` leaf, or a flat
-`Vec<Node>` + index encoding — which is EXACTLY the shape of `TableAirIR` §7 item 1's fork (a new
-`WindowExpr` constructor re-reds every match on both sides, Lean `eval`/`toJson`/`readsCol`/
-`readsNext` and Rust `parse_window_expr`/`eval_expr`/`degree`/`max_var`/`reads_next`), and it
-re-emits all nine artifacts and moves two fingerprints. ⓘ It is a genuine design fork, and it is a
-fork the OTHER open item on that list already forces, so it should be decided once.
+**This file closes law #1 for the chip, and the design fork that blocked it is closed too.**
 
-**2. The integration this file does not do**, because a sibling lane owns those files: routing
-`chipTable` / `chipState16Table` into `EmitTableAirs.lean`, cutting
-`circuit/descriptors/table-airs/dregg-ir2-chip{,-state16}-v1.json`, replacing the
-`Ir2Air::Chip | Ir2Air::ChipState16` arm with `Ir2Air::LeanTable`, and the VK epoch that follows.
-⚠ The two artifacts are ~3.1 MB EACH and both are `include_str!`'d into the AIR-shape source
-closure, so the flag day is: nine table-air artifacts, `air_fingerprint()` and
-`verifier_source_closure_fingerprint()` both move, every chip-bearing VK rotates, re-genesis.
-Say it out loud rather than discovering it at emit time — and note that fixing item 1 FIRST makes
-those artifacts ~70 KB instead, which is the argument for deciding the fork before cutting them.
--/
+**1. ✅ THE SHARING NODE — DONE (2026-08-02).** `TableAirIR.TExpr` has a `shr` leaf and `TableAir` a
+`defs` list; the fork (widen the MAIN descriptor's `WindowExpr` versus give `TableAir` its own
+grammar) is decided in `TableAirIR` §1b, on the evidence there. The chip emits **1,078 definitions**
+and its per-row work falls from **70,524 field operations to 2,943 — 24.0×** — landing on the
+deployed hand-written arm's own op count plus exactly one multiplication per gate (`Poseidon2RoundGates`
+§7b). The artifacts are **159 KB** each, not 3.1 MB.
+
+⚠ **The earlier estimate here said "~70 KB"; the measurement says 159 KB.** The estimate assumed a
+share reference costs what a column read costs, and `{"t":"shr","i":1077}` is longer than
+`{"t":"loc","c":40}`. Said as a correction rather than left to look like a hit.
+
+**2. The integration.** Routing `chipTable` / `chipState16Table` into `EmitTableAirs.lean`, cutting
+`circuit/descriptors/table-airs/dregg-ir2-chip{,-state16}-v1.json`, and replacing the
+`Ir2Air::Chip | Ir2Air::ChipState16` arm with `Ir2Air::LeanTable`.
+
+**THE FLAG DAY, said out loud.** The table-air WIRE FORMAT gained a `defs` key, so all eight
+pre-existing artifacts re-emit (each gaining exactly `,"defs":[]` after its width and changing in no
+other byte); two new artifacts land; `air_fingerprint()` and
+`verifier_source_closure_fingerprint()` both move because both splice the table-air artifacts whole;
+every chip-bearing VK rotates; re-genesis. A table-air JSON in the pre-`defs` grammar now REFUSES to
+load. -/
 
 end Dregg2.Circuit.Emit.ChipTableEmit

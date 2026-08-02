@@ -139,6 +139,47 @@ so this is pinned rather than assumed. -/
 theorem RowSel.tag_injective : Function.Injective RowSel.tag := by
   intro a b h; cases a <;> cases b <;> simp_all [RowSel.tag]
 
+/-! ### §1b — ⚑ `TExpr`: the table grammar, and why it is NOT `WindowExpr`.
+
+The first two passes typed a table's gates at `DescriptorIR2.WindowExpr`, the MAIN descriptor's
+`windowGate` type. §7 priced widening it (for a `prep` leaf) against giving `TableAir` its own
+grammar and called it a genuine design fork. **It is decided here, and the deciding evidence is a
+count plus a fact about `Ir2Air::Main`:**
+
+* `WindowExpr` is named in **120 Lean files / 720 occurrences**, and `windowGate` — the MAIN
+  descriptor's constructor — in **110 of them**. The whole table side (this file, the nine
+  `*TableEmit.lean`, `Poseidon2RoundGates`) is 213 occurrences across 11 files.
+* `Ir2Air::Main` can serve NEITHER of the two leaves a table needs. It has no definition list, so a
+  `shr` leaf has nothing to resolve against; it has no preprocessed trace, so a `prep` leaf panics
+  inside the evaluator. Widening the shared type therefore puts two permanently-unserviceable
+  constructors into a type 110 main-descriptor files construct, and buys a new fail-closed refusal
+  on the main decode path for each — a refusal that must then never regress.
+* ⚠ And §7's own counter-argument (*"duplicating the grammar this file's §5 exists to avoid
+  duplicating"*) does not survive contact: §5/§6 exist to stop TABLES from re-deriving GADGETS from
+  each other, and no main-descriptor file imports one. They move with the type in a single edit.
+
+So `TExpr` is `WindowExpr`'s five leaves plus `shr`. The wire tags of the shared five are
+IDENTICAL, which is what makes the eight existing artifacts re-emit with their gate and interaction
+bytes untouched. `WindowExpr` is not modified, and `Ir2Air::Main` never sees this type. -/
+
+/-- **A table AIR's expression.** `loc`/`nxt`/`const`/`add`/`mul` are `WindowExpr`'s, byte for byte
+on the wire; `shr i` is the SHARING leaf — the value of the table's `defs[i]`, computed ONCE per row
+and reused. -/
+inductive TExpr where
+  /-- Current-row column `c` of THIS table. -/
+  | loc   (c : Nat)
+  /-- Next-row column `c` of THIS table. -/
+  | nxt   (c : Nat)
+  /-- A field constant. -/
+  | const (z : ℤ)
+  /-- ⚑ **The SHARING leaf**: the already-computed value of `defs[i]`. A `defs` entry may reference
+  only STRICTLY EARLIER entries (`TableAir.defsAcyclic`), so the definition list is a topologically
+  ordered DAG and one left-to-right pass resolves it. -/
+  | shr   (i : Nat)
+  | add   (a b : TExpr)
+  | mul   (a b : TExpr)
+  deriving Repr
+
 /-- One bus interaction of a table AIR: the named bus, the call shape, the MULTIPLICITY
 expression (evaluated per row — this is what `Lookup` lacks and what a padded shared table
 needs), and the tuple. Deliberately carries NO `RowSel`: see the module doc. -/
@@ -149,22 +190,32 @@ structure BusInteraction where
   bus   : String
   op    : BusOp
   /-- Per-row multiplicity. `.const 1` is the unconditional case `Lookup` hardcodes. -/
-  mult  : WindowExpr
-  tuple : List WindowExpr
+  mult  : TExpr
+  tuple : List TExpr
   deriving Repr
 
 /-- One gate of a table AIR: a two-row polynomial and the row filter it is asserted under. -/
 structure TableGate where
   sel  : RowSel
-  body : WindowExpr
+  body : TExpr
   deriving Repr
 
 /-- **A table AIR, authored in Lean.** `width` is this table's OWN column count; every
-`WindowExpr.loc c` / `.nxt c` in `gates`/`interactions` reads column `c` of THIS table's
+`TExpr.loc c` / `.nxt c` in `defs`/`gates`/`interactions` reads column `c` of THIS table's
 current / next row. -/
 structure TableAir where
   name         : String
   width        : Nat
+  /-- ⚑ **THE SHARED DEFINITION LIST** — the sub-expressions computed ONCE per row, which every
+  `TExpr.shr i` then reads. Entry `i` may reference only entries `< i`, so the list is a
+  topologically ordered DAG rather than a graph needing a fixpoint.
+
+  This is what a tree IR could not say, and it is not a wire optimisation: the deployed
+  hand-written arms hold their shared sub-values as `AB::Expr` VALUES (`poseidon2_permute_expr_lanes`
+  computes each round's 16 S-box outputs once and the linear layer references them ~35× each), and
+  a tree emission of the same polynomial DUPLICATES them — 140,850 nodes against 3,194, measured on
+  the chip. `defs` is the vocabulary for the sharing the deployed gadget already has. -/
+  defs         : List TExpr
   /-- Row-filtered gates: each expression must VANISH on every row its selector admits (the
   Rust `builder.<filter>().assert_zero(..)`). -/
   gates        : List TableGate
@@ -174,21 +225,56 @@ structure TableAir where
 
 A row of a table trace is a WINDOW: the current row, its successor, and the two boundary tags
 p3's filters read. `VmRowEnv` (`Emit.EffectVmEmit`) is that window — `loc`/`nxt`/`pub`, with
-`pub` unused here because a shared table has no public inputs. -/
+`pub` unused here because a shared table has no public inputs.
 
-/-- The gate holds on one row window, under its selector. The four cases are exactly p3's four
-filters: `.all` fires everywhere, `.first`/`.last` only on their boundary row, `.transition`
-everywhere but the last (which is the only scope where `nxt` is the genuine successor). -/
-def TableGate.holdsAt (g : TableGate) (env : VmRowEnv) (isFirst isLast : Bool) : Prop :=
+⚑ A table's denotation now has TWO stages, and that split IS the sharing: `shareVals` resolves the
+definition list ONCE per row window, left to right, and everything else reads the resulting vector.
+A gate never re-enters a definition. -/
+
+/-- Evaluate a `TExpr` against a row window and an ALREADY-RESOLVED definition vector.
+`shr i` past the end of `sv` reads `0`; `TableAir.wellFormed` is what rules that out, and the
+Rust decoder refuses it rather than substituting. -/
+def TExpr.evalWith (sv : Array ℤ) (env : VmRowEnv) : TExpr → ℤ
+  | .loc c   => env.loc c
+  | .nxt c   => env.nxt c
+  | .const z => z
+  | .shr i   => sv.getD i 0
+  | .add a b => a.evalWith sv env + b.evalWith sv env
+  | .mul a b => a.evalWith sv env * b.evalWith sv env
+
+/-- ⚑ **THE ONE-PASS RESOLUTION.** Definition `i` is evaluated against the vector of definitions
+`0 … i−1` and appended, so each is computed EXACTLY ONCE per row however many times it is read.
+This is the Lean twin of the Rust interpreter's per-row `Vec<AB::Expr>` prelude, and it is why
+`eval_expr` on the Rust side genuinely memoises rather than re-walking a re-expanded DAG. -/
+def shareVals (defs : List TExpr) (env : VmRowEnv) : Array ℤ :=
+  defs.foldl (fun acc d => acc.push (d.evalWith acc env)) (Array.emptyWithCapacity defs.length)
+
+/-- The definition vector of a table at a row window. -/
+def TableAir.shareVals (t : TableAir) (env : VmRowEnv) : Array ℤ :=
+  _root_.Dregg2.Circuit.TableAirIR.shareVals t.defs env
+
+/-- The gate holds on one row window, under its selector, against a resolved definition vector.
+The four cases are exactly p3's four filters: `.all` fires everywhere, `.first`/`.last` only on
+their boundary row, `.transition` everywhere but the last (which is the only scope where `nxt` is
+the genuine successor). -/
+def TableGate.holdsAt (g : TableGate) (sv : Array ℤ) (env : VmRowEnv) (isFirst isLast : Bool) :
+    Prop :=
   match g.sel with
-  | .all        => g.body.eval env ≡ 0 [ZMOD 2013265921]
-  | .first      => isFirst = true  → g.body.eval env ≡ 0 [ZMOD 2013265921]
-  | .last       => isLast  = true  → g.body.eval env ≡ 0 [ZMOD 2013265921]
-  | .transition => isLast  = false → g.body.eval env ≡ 0 [ZMOD 2013265921]
+  | .all        => g.body.evalWith sv env ≡ 0 [ZMOD 2013265921]
+  | .first      => isFirst = true  → g.body.evalWith sv env ≡ 0 [ZMOD 2013265921]
+  | .last       => isLast  = true  → g.body.evalWith sv env ≡ 0 [ZMOD 2013265921]
+  | .transition => isLast  = false → g.body.evalWith sv env ≡ 0 [ZMOD 2013265921]
+
+/-- The gates hold against a GIVEN definition vector. Split out from `RowHolds` so the vector is a
+single argument that the decidability instance evaluates ONCE — folding `shareVals` into the
+quantifier body would recompute it per gate, which is the very cost this node exists to remove. -/
+def TableAir.RowHoldsWith (t : TableAir) (sv : Array ℤ) (env : VmRowEnv) (isFirst isLast : Bool) :
+    Prop :=
+  ∀ g ∈ t.gates, g.holdsAt sv env isFirst isLast
 
 /-- The gates hold on ONE row window. -/
 def TableAir.RowHolds (t : TableAir) (env : VmRowEnv) (isFirst isLast : Bool) : Prop :=
-  ∀ g ∈ t.gates, g.holdsAt env isFirst isLast
+  t.RowHoldsWith (t.shareVals env) env isFirst isLast
 
 /-- ⚑ **A GATE'S VERDICT ON A CONCRETE WINDOW IS DECIDABLE**, and that is what lets an emitter
 exhibit BOTH poles against the EMITTED gate list rather than against a hand-transcribed copy of it.
@@ -197,22 +283,28 @@ Without this, a false-pole witness has to be stated over a `structure` of ℤ fa
 the gate equations by hand — and a re-transcription is exactly the step a cutover is supposed to
 delete. Written as a `match` on the literal constructors (not via `unfold` + `split`) so the
 instance REDUCES in the kernel, which is what `decide` needs. -/
-instance TableGate.instDecidableHoldsAt (g : TableGate) (env : VmRowEnv) (f l : Bool) :
-    Decidable (g.holdsAt env f l) :=
+instance TableGate.instDecidableHoldsAt (g : TableGate) (sv : Array ℤ) (env : VmRowEnv)
+    (f l : Bool) : Decidable (g.holdsAt sv env f l) :=
   match g with
   | ⟨.all, body⟩ =>
-      inferInstanceAs (Decidable (body.eval env ≡ 0 [ZMOD 2013265921]))
+      inferInstanceAs (Decidable (body.evalWith sv env ≡ 0 [ZMOD 2013265921]))
   | ⟨.first, body⟩ =>
-      inferInstanceAs (Decidable (f = true → body.eval env ≡ 0 [ZMOD 2013265921]))
+      inferInstanceAs (Decidable (f = true → body.evalWith sv env ≡ 0 [ZMOD 2013265921]))
   | ⟨.last, body⟩ =>
-      inferInstanceAs (Decidable (l = true → body.eval env ≡ 0 [ZMOD 2013265921]))
+      inferInstanceAs (Decidable (l = true → body.evalWith sv env ≡ 0 [ZMOD 2013265921]))
   | ⟨.transition, body⟩ =>
-      inferInstanceAs (Decidable (l = false → body.eval env ≡ 0 [ZMOD 2013265921]))
+      inferInstanceAs (Decidable (l = false → body.evalWith sv env ≡ 0 [ZMOD 2013265921]))
 
 /-- …and therefore so is the whole row verdict, over the emitted gate list. -/
+instance TableAir.instDecidableRowHoldsWith (t : TableAir) (sv : Array ℤ) (env : VmRowEnv)
+    (f l : Bool) : Decidable (t.RowHoldsWith sv env f l) :=
+  inferInstanceAs (Decidable (∀ g ∈ t.gates, g.holdsAt sv env f l))
+
+/-- ⚑ …and for the whole table, with the definition vector resolved ONCE. `t.shareVals env` is a
+single argument here, so a `decide` evaluates the prelude once and every gate reads the vector. -/
 instance TableAir.instDecidableRowHolds (t : TableAir) (env : VmRowEnv) (f l : Bool) :
     Decidable (t.RowHolds env f l) :=
-  inferInstanceAs (Decidable (∀ g ∈ t.gates, g.holdsAt env f l))
+  inferInstanceAs (Decidable (t.RowHoldsWith (t.shareVals env) env f l))
 
 /-- The gates hold on EVERY row of a trace of `n` row windows: window `i` is FIRST iff `i = 0`
 and LAST iff `i + 1 = n`. -/
@@ -251,30 +343,42 @@ theorem TableAir.rowHolds_of_no_gates (t : TableAir) (h : t.gates = [])
 
 /-- `RowHolds` is monotone in the gate list: dropping gates cannot turn acceptance into
 refusal. The direction a cutover must watch — a re-emission that LOSES a gate accepts strictly
-more. -/
-theorem TableAir.rowHolds_of_sublist {t u : TableAir} (h : t.gates.Sublist u.gates)
-    (env : VmRowEnv) (f l : Bool) (hu : u.RowHolds env f l) : t.RowHolds env f l :=
+more. ⚠ Stated at a SHARED definition vector, so it applies only between tables with the same
+`defs` — which is the honest scope: a re-emission that changes the definitions changes what every
+`shr` denotes, and that is not a sublist relation. -/
+theorem TableAir.rowHoldsWith_of_sublist {t u : TableAir} (h : t.gates.Sublist u.gates)
+    (sv : Array ℤ) (env : VmRowEnv) (f l : Bool) (hu : u.RowHoldsWith sv env f l) :
+    t.RowHoldsWith sv env f l :=
   fun g hg => hu g (h.mem hg)
+
+/-- …and at the same `defs`, that is a statement about `RowHolds` itself. -/
+theorem TableAir.rowHolds_of_sublist {t u : TableAir} (h : t.gates.Sublist u.gates)
+    (hd : t.defs = u.defs) (env : VmRowEnv) (f l : Bool) (hu : u.RowHolds env f l) :
+    t.RowHolds env f l := by
+  have : t.shareVals env = u.shareVals env := by
+    simp [TableAir.shareVals, hd]
+  rw [TableAir.RowHolds, this]
+  exact TableAir.rowHoldsWith_of_sublist h _ env f l hu
 
 /-- ⚑ **A ROW SELECTOR IS A REAL WEAKENING, not bookkeeping.** Re-scoping a gate from `.all` to
 `.transition` — the single most likely transcription slip in this cutover, and the one that
 leaves the algebra byte-identical — strictly ENLARGES the accepted set: everything the `.all`
 gate admits, the `.transition` gate admits too, and (by the refutation below) not conversely.
 So a selector drift accepts MORE and cannot be caught by any check that reads the body alone. -/
-theorem TableGate.transition_weakens (body : WindowExpr) (env : VmRowEnv) (f l : Bool)
-    (h : TableGate.holdsAt ⟨.all, body⟩ env f l) :
-    TableGate.holdsAt ⟨.transition, body⟩ env f l := by
+theorem TableGate.transition_weakens (body : TExpr) (sv : Array ℤ) (env : VmRowEnv) (f l : Bool)
+    (h : TableGate.holdsAt ⟨.all, body⟩ sv env f l) :
+    TableGate.holdsAt ⟨.transition, body⟩ sv env f l := by
   intro _; exact h
 
 /-- …and the weakening is STRICT: on the LAST row a `.transition` gate is vacuous while the
 `.all` gate still bites. The witness is the constant-1 body on a last row. -/
 theorem TableGate.transition_strictly_weaker :
-    ∃ (body : WindowExpr) (env : VmRowEnv) (f l : Bool),
-      TableGate.holdsAt ⟨.transition, body⟩ env f l ∧
-      ¬ TableGate.holdsAt ⟨.all, body⟩ env f l := by
-  refine ⟨.const 1, ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩, false, true, ?_, ?_⟩
+    ∃ (body : TExpr) (sv : Array ℤ) (env : VmRowEnv) (f l : Bool),
+      TableGate.holdsAt ⟨.transition, body⟩ sv env f l ∧
+      ¬ TableGate.holdsAt ⟨.all, body⟩ sv env f l := by
+  refine ⟨.const 1, #[], ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩, false, true, ?_, ?_⟩
   · intro h; exact absurd h (by decide)
-  · intro h; revert h; unfold TableGate.holdsAt; simp only [WindowExpr.eval]; decide
+  · intro h; revert h; unfold TableGate.holdsAt; simp only [TExpr.evalWith]; decide
 
 /-! ## §3 — ⚠ WHAT `Holds` DOES NOT SAY.
 
@@ -313,7 +417,10 @@ def TableAir.gateCountSel (t : TableAir) (s : RowSel) : Nat :=
 
 /-- Does this expression read column `c`, on either row tag? Decidable, so "no gate reads the
 multiplicity column" is a `decide`-able claim about the emitted object rather than a sentence a
-reader has to check by eye against 70 constructors. -/
+reader has to check by eye against 70 constructors.
+
+⚠ This is the `WindowExpr` form, kept for the MAIN rail (`Circuit.EffectAirIR` reuses it). The
+table form is `TExpr.readsColIn`, which must chase `shr` through the definitions. -/
 def readsCol : WindowExpr → Nat → Bool
   | .loc c', c => c' == c
   | .nxt c', c => c' == c
@@ -323,28 +430,219 @@ def readsCol : WindowExpr → Nat → Bool
 
 /-- Does this expression read the NEXT row anywhere? The Lean twin of the Rust decoder's
 `reads_next`, which is what refuses an `.all`- or `.last`-scoped `nxt` (on the last row p3's
-`next` is the WRAP row). -/
+`next` is the WRAP row). ⚠ `WindowExpr` form — the MAIN rail's. -/
 def readsNext : WindowExpr → Bool
   | .nxt _ => true
   | .loc _ | .const _ => false
   | .add a b | .mul a b => readsNext a || readsNext b
 
-/-- A table is ROW-LOCAL when no gate reads the next row and every gate is unfiltered — the shape
-that needed no selector vocabulary at all, and the property a re-emission of such a table must not
-quietly lose (`TableGate.transition_weakens`: a re-scope accepts strictly more). -/
+/-! ### §3b — ⚑ The same two predicates on `TExpr`, CHASING `shr`.
+
+A `shr` leaf is opaque to a syntactic scan, and both predicates are load-bearing: `readsNext` is
+what refuses an `.all`-scoped next-row read (on the last row p3's `next` is the WRAP row) and
+`readsCol` is what a coverage pin reads. A version that stopped at `shr` would report a gate
+reading the next row THROUGH a definition as row-local — a silent widening of exactly the shape
+`TableGate.transition_weakens` says is invisible in the algebra. So both take the definition list
+and resolve through it. The Rust decoder does the same, and refuses rather than guessing. -/
+
+/-- Does this expression read column `c`, given per-definition verdicts already computed?
+⚠ An out-of-range `shr` reads `false` — the direction that under-reports coverage rather than
+inventing it; `wellFormed` is what rules the case out. -/
+def TExpr.readsColWith (dv : Array Bool) : TExpr → Nat → Bool
+  | .loc c', c => c' == c
+  | .nxt c', c => c' == c
+  | .const _, _ => false
+  | .shr i,   _ => dv.getD i false
+  | .add a b, c => TExpr.readsColWith dv a c || TExpr.readsColWith dv b c
+  | .mul a b, c => TExpr.readsColWith dv a c || TExpr.readsColWith dv b c
+
+/-- Does this expression read the NEXT row, given per-definition verdicts already computed?
+⚠ An out-of-range `shr` reads `true` — FAIL-CLOSED, so an unresolvable share is refused by the
+`.all`-scoped-`nxt` check rather than waved through. -/
+def TExpr.readsNextWith (dv : Array Bool) : TExpr → Bool
+  | .nxt _ => true
+  | .loc _ | .const _ => false
+  | .shr i => dv.getD i true
+  | .add a b | .mul a b => TExpr.readsNextWith dv a || TExpr.readsNextWith dv b
+
+/-- The per-definition next-row verdicts, resolved in one left-to-right pass — the same shape
+`shareVals` uses, and correct for the same reason (definition `i` sees only `0 … i−1`). -/
+def defsReadNext (defs : List TExpr) : Array Bool :=
+  defs.foldl (fun acc d => acc.push (d.readsNextWith acc)) (Array.emptyWithCapacity defs.length)
+
+/-- The per-definition column-`c` verdicts, one pass. -/
+def defsReadCol (defs : List TExpr) (c : Nat) : Array Bool :=
+  defs.foldl (fun acc d => acc.push (d.readsColWith acc c)) (Array.emptyWithCapacity defs.length)
+
+/-- Does this expression — resolving `shr` through `defs` — read column `c`? -/
+def TExpr.readsColIn (defs : List TExpr) (e : TExpr) (c : Nat) : Bool :=
+  e.readsColWith (defsReadCol defs c) c
+
+/-- Does this expression — resolving `shr` through `defs` — read the NEXT row anywhere? -/
+def TExpr.readsNextIn (defs : List TExpr) (e : TExpr) : Bool :=
+  e.readsNextWith (defsReadNext defs)
+
+/-- A table is ROW-LOCAL when no gate reads the next row (THROUGH the definitions) and every gate
+is unfiltered — the shape that needed no selector vocabulary at all, and the property a re-emission
+of such a table must not quietly lose (`TableGate.transition_weakens`: a re-scope accepts strictly
+more). -/
 def TableAir.isRowLocal (t : TableAir) : Bool :=
-  t.gates.all (fun g => g.sel == .all && !readsNext g.body)
+  let dv := defsReadNext t.defs
+  t.gates.all (fun g => g.sel == .all && !g.body.readsNextWith dv)
+
+/-! ### §3c — ⚑ WELL-FORMEDNESS OF THE DEFINITION LIST.
+
+Two things must hold or the denotation is quietly wrong rather than loudly refused, and neither is
+implied by the types:
+
+1. **Acyclicity by ORDER.** `defs[i]` may reference only `defs[j]` with `j < i`. That is what makes
+   the one-pass `shareVals` a resolution rather than a guess — a forward or self reference reads a
+   not-yet-pushed slot, and `Array.getD` would hand it a `0`. A DAG whose topological order is the
+   list order needs no fixpoint and no cycle detection at evaluation time.
+2. **Range.** Every `shr` in a gate, a multiplicity or a tuple must name a declared definition.
+
+`TableAir.wellFormed` is both, decidably, on the emitted object; the Rust decoder REFUSES a table
+that fails it rather than substituting zeros. -/
+
+/-- The largest `shr` index in an expression, if any. -/
+def TExpr.maxShare : TExpr → Option Nat
+  | .shr i => some i
+  | .loc _ | .nxt _ | .const _ => none
+  | .add a b | .mul a b =>
+      match a.maxShare, b.maxShare with
+      | some x, some y => some (max x y)
+      | some x, none   => some x
+      | none,   some y => some y
+      | none,   none   => none
+
+/-- Every `shr` in `e` names a definition strictly below `bound`. -/
+def TExpr.sharesBelow (e : TExpr) (bound : Nat) : Bool :=
+  match e.maxShare with
+  | none   => true
+  | some m => decide (m < bound)
+
+/-- ⚑ Definition `i` references only definitions `< i` — the topological order that makes the
+one-pass resolution correct. -/
+def TableAir.defsAcyclic (t : TableAir) : Bool :=
+  t.defs.zipIdx.all (fun p => p.1.sharesBelow p.2)
+
+/-- Every `shr` outside the definition list names a declared definition. -/
+def TableAir.sharesInRange (t : TableAir) : Bool :=
+  t.gates.all (fun g => g.body.sharesBelow t.defs.length) &&
+  t.interactions.all (fun i =>
+    i.mult.sharesBelow t.defs.length && i.tuple.all (fun e => e.sharesBelow t.defs.length))
+
+/-- The decidable well-formedness verdict the Rust decoder mirrors. -/
+def TableAir.wellFormed (t : TableAir) : Bool := t.defsAcyclic && t.sharesInRange
+
+/-- The number of shared definitions — a count a re-emission cannot silently drop. -/
+def TableAir.defCount (t : TableAir) : Nat := t.defs.length
+
+/-! ### §3d — ⚑ A SHARE-FREE BLOCK IS THE SAME MACHINE IN BOTH TABLES.
+
+A big emitted table is too large for the kernel, so its soundness theorems are decided against
+SUB-TABLES built from the same body lists. With a definition list in play that becomes a real
+obligation rather than bookkeeping: the sub-table resolves NO definitions while the emitted table
+resolves a thousand, and a theorem about the sub-table would be about a different machine unless the
+block it covers reads none of them.
+
+`evalWith_of_shareFree` is that hypothesis, discharged rather than assumed — and it is decidable per
+gate (`maxShare == none`), so the transport below is a `decide` on the emitted list, not a promise. -/
+
+/-- A share-free expression does not read the definition vector at all. -/
+theorem TExpr.evalWith_of_shareFree :
+    ∀ (e : TExpr), e.maxShare = none → ∀ (sv sv' : Array ℤ) (env : VmRowEnv),
+      e.evalWith sv env = e.evalWith sv' env := by
+  intro e
+  induction e with
+  | loc c => intro _ _ _ _; rfl
+  | nxt c => intro _ _ _ _; rfl
+  | const z => intro _ _ _ _; rfl
+  | shr i => intro h; simp [TExpr.maxShare] at h
+  | add a b iha ihb =>
+      intro h sv sv' env
+      simp only [TExpr.maxShare] at h
+      split at h
+      · exact absurd h (by simp)
+      · exact absurd h (by simp)
+      · exact absurd h (by simp)
+      · next ha hb =>
+        simp only [TExpr.evalWith, iha ha sv sv' env, ihb hb sv sv' env]
+  | mul a b iha ihb =>
+      intro h sv sv' env
+      simp only [TExpr.maxShare] at h
+      split at h
+      · exact absurd h (by simp)
+      · exact absurd h (by simp)
+      · exact absurd h (by simp)
+      · next ha hb =>
+        simp only [TExpr.evalWith, iha ha sv sv' env, ihb hb sv sv' env]
+
+/-- …so a gate whose body is share-free holds against ANY definition vector if it holds against one. -/
+theorem TableGate.holdsAt_of_shareFree {g : TableGate} (h : g.body.maxShare = none)
+    {sv sv' : Array ℤ} {env : VmRowEnv} {f l : Bool} (hh : g.holdsAt sv env f l) :
+    g.holdsAt sv' env f l := by
+  unfold TableGate.holdsAt at hh ⊢
+  rw [TExpr.evalWith_of_shareFree g.body h sv' sv env]
+  exact hh
+
+/-- ⚑ **THE TRANSPORT.** A table whose every gate is share-free has a `RowHoldsWith` independent of
+the definition vector — which is what lets a sub-table verdict be carried back to the emitted table
+that DOES have definitions. The hypothesis is `decide`-able on the emitted gate list. -/
+theorem TableAir.rowHoldsWith_of_shareFree {t : TableAir}
+    (h : t.gates.all (fun g => g.body.maxShare == none) = true)
+    {sv sv' : Array ℤ} {env : VmRowEnv} {f l : Bool} (hh : t.RowHoldsWith sv env f l) :
+    t.RowHoldsWith sv' env f l := by
+  intro g hg
+  refine TableGate.holdsAt_of_shareFree ?_ (hh g hg)
+  have := List.all_eq_true.mp h g hg
+  simpa using this
+
+/-- …and in particular a share-free table's `RowHolds` is its `RowHoldsWith` at any vector. -/
+theorem TableAir.rowHolds_of_shareFree_rowHoldsWith {t : TableAir}
+    (h : t.gates.all (fun g => g.body.maxShare == none) = true)
+    {sv : Array ℤ} {env : VmRowEnv} {f l : Bool} (hh : t.RowHoldsWith sv env f l) :
+    t.RowHolds env f l :=
+  TableAir.rowHoldsWith_of_shareFree h hh
 
 /-! ## §4 — The wire format.
 
-The grammar is `WindowExpr.toJson`'s (`loc`/`nxt`/`const`/`add`/`mul`), which the Rust
-`parse_window_expr` already decodes for the main descriptor's `windowGate`. The table AIR adds
-the gate wrapper (`sel` + `body`) and the interaction object. The Rust decoder mirrors THIS
-renderer, exactly as the v2 decoder mirrors `emitVmJson2`. -/
+The five shared leaves render EXACTLY as `WindowExpr.toJson` renders them
+(`loc`/`nxt`/`const`/`add`/`mul`), which is why the eight artifacts emitted before the sharing node
+existed keep every gate and interaction byte. `shr` is the sixth tag, and `defs` the one new
+top-level key.
+
+⚠ **`defs` is emitted unconditionally, and that IS a flag day** — the eight pre-existing artifacts
+each gain the literal `,"defs":[]` after their width and change in no other byte. An OPTIONAL key
+would have kept them byte-identical and bought a decoder that has to peek, i.e. a wire format with
+two readings; this repo's rule is to break loudly rather than reinterpret. The Rust decoder mirrors
+THIS renderer key for key, exactly as the v2 decoder mirrors `emitVmJson2`. -/
 
 private def jsonArray {α : Type} (f : α → String) : List α → String
   | []      => "[]"
   | x :: xs => "[" ++ f x ++ (xs.foldl (fun acc y => acc ++ "," ++ f y) "") ++ "]"
+
+/-- Wire-render a `TExpr`. The five shared constructors are `WindowExpr.toJson`'s, byte for byte. -/
+def TExpr.toJson : TExpr → String
+  | .loc c   => "{\"t\":\"loc\",\"c\":" ++ toString c ++ "}"
+  | .nxt c   => "{\"t\":\"nxt\",\"c\":" ++ toString c ++ "}"
+  | .const z => "{\"t\":\"const\",\"v\":" ++ (if z < 0 then "-" ++ toString (-z) else toString z) ++ "}"
+  | .shr i   => "{\"t\":\"shr\",\"i\":" ++ toString i ++ "}"
+  | .add l r => "{\"t\":\"add\",\"l\":" ++ l.toJson ++ ",\"r\":" ++ r.toJson ++ "}"
+  | .mul l r => "{\"t\":\"mul\",\"l\":" ++ l.toJson ++ ",\"r\":" ++ r.toJson ++ "}"
+
+/-- ⚑ The five shared leaves render IDENTICALLY to `WindowExpr`'s. This is the property that makes
+the eight pre-sharing artifacts re-emit with their gate bytes untouched, and it is pinned rather
+than eyeballed. -/
+theorem TExpr.toJson_agrees_with_windowExpr :
+    (TExpr.loc 7).toJson = (WindowExpr.loc 7).toJson ∧
+    (TExpr.nxt 7).toJson = (WindowExpr.nxt 7).toJson ∧
+    (TExpr.const (-3)).toJson = (WindowExpr.const (-3)).toJson ∧
+    (TExpr.add (.loc 1) (.const 2)).toJson
+      = (WindowExpr.add (.loc 1) (.const 2)).toJson ∧
+    (TExpr.mul (.nxt 1) (.const 2)).toJson
+      = (WindowExpr.mul (.nxt 1) (.const 2)).toJson := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Render one gate. -/
 def TableGate.toJson (g : TableGate) : String :=
@@ -353,13 +651,14 @@ def TableGate.toJson (g : TableGate) : String :=
 /-- Render one bus interaction. -/
 def BusInteraction.toJson (i : BusInteraction) : String :=
   "{\"bus\":\"" ++ i.bus ++ "\",\"op\":\"" ++ i.op.tag ++ "\",\"mult\":" ++ i.mult.toJson ++
-  ",\"tuple\":" ++ jsonArray WindowExpr.toJson i.tuple ++ "}"
+  ",\"tuple\":" ++ jsonArray TExpr.toJson i.tuple ++ "}"
 
 /-- **`emitTableAirJson`** — the canonical wire string. What the `#guard` golden pins and the
 Rust decoder ingests. -/
 def emitTableAirJson (t : TableAir) : String :=
   "{\"name\":\"" ++ t.name ++ "\",\"kind\":\"table_air\",\"ir\":2,\"width\":" ++
-  toString t.width ++ ",\"gates\":" ++ jsonArray TableGate.toJson t.gates ++
+  toString t.width ++ ",\"defs\":" ++ jsonArray TExpr.toJson t.defs ++
+  ",\"gates\":" ++ jsonArray TableGate.toJson t.gates ++
   ",\"interactions\":" ++ jsonArray BusInteraction.toJson t.interactions ++ "}"
 
 /-! ## §5 — Shared authoring sugar.
@@ -370,25 +669,27 @@ pass; they are hoisted because `ByteTableEmit`, `MemBoundaryTableEmit` and `Memo
 all need them). -/
 
 /-- Current-row column read. -/
-def v (c : Nat) : WindowExpr := .loc c
+def v (c : Nat) : TExpr := .loc c
 /-- NEXT-row column read. ⚠ Only meaningful under `.transition` (or `.first`); on the last row
 p3's `next` is the WRAP row. -/
-def n (c : Nat) : WindowExpr := .nxt c
+def n (c : Nat) : TExpr := .nxt c
 /-- Field constant. -/
-def k (z : ℤ) : WindowExpr := .const z
+def k (z : ℤ) : TExpr := .const z
+/-- ⚑ Read shared definition `i` — the value the table computed ONCE for this row. -/
+def s (i : Nat) : TExpr := .shr i
 /-- `a − b`, the standard encoding (there is no `sub` node). -/
-def eSub (a b : WindowExpr) : WindowExpr := .add a (.mul (.const (-1)) b)
+def eSub (a b : TExpr) : TExpr := .add a (.mul (.const (-1)) b)
 /-- `1 − e`. -/
-def eOneMinus (e : WindowExpr) : WindowExpr := eSub (k 1) e
+def eOneMinus (e : TExpr) : TExpr := eSub (k 1) e
 /-- The boolean gate body `c·(c − 1)` — the Rust `x * (x - ONE)`. -/
-def gBool (c : Nat) : WindowExpr := .mul (v c) (.add (v c) (k (-1)))
+def gBool (c : Nat) : TExpr := .mul (v c) (.add (v c) (k (-1)))
 
 /-- An unfiltered gate. -/
-def gAll (e : WindowExpr) : TableGate := ⟨.all, e⟩
+def gAll (e : TExpr) : TableGate := ⟨.all, e⟩
 /-- A first-row gate. -/
-def gFirst (e : WindowExpr) : TableGate := ⟨.first, e⟩
+def gFirst (e : TExpr) : TableGate := ⟨.first, e⟩
 /-- A transition gate. -/
-def gTrans (e : WindowExpr) : TableGate := ⟨.transition, e⟩
+def gTrans (e : TExpr) : TableGate := ⟨.transition, e⟩
 
 /-! ## §6 — The byte-limb decomposition gadget, emitted.
 
@@ -421,13 +722,13 @@ def decompCols (bits : Nat) : Nat :=
 
 /-- `Σ_{i < m} limb_i · 16^i` over the limb block at `limb0`, left-associated exactly as the
 Rust `recomposed +=` loop accumulates it (starting from `0`). -/
-def recompose (bits : Nat) (limb0 : Nat) : WindowExpr :=
+def recompose (bits : Nat) (limb0 : Nat) : TExpr :=
   (List.range (limbGeom bits).1).foldl
     (fun acc i => .add acc (.mul (v (limb0 + i)) (k (LIMB_BASE ^ i))))
     (k 0)
 
 /-- `Σ_{b < top} bit_b · 2^b` over the partial top limb's bit columns, same accumulation. -/
-def topRecompose (bits : Nat) (limb0 : Nat) : WindowExpr :=
+def topRecompose (bits : Nat) (limb0 : Nat) : TExpr :=
   (List.range (limbGeom bits).2).foldl
     (fun acc b => .add acc (.mul (v (limb0 + (limbGeom bits).1 + b)) (k (2 ^ b))))
     (k 0)
@@ -435,14 +736,14 @@ def topRecompose (bits : Nat) (limb0 : Nat) : WindowExpr :=
 /-- The GATES of one `bits`-wide decomposition of `ve` over the block at `limb0`: booleans on
 the top-limb bits, the top-limb recomposition, then the whole-value recomposition. Emission
 order is the Rust loop's. -/
-def decompGates (bits : Nat) (ve : WindowExpr) (limb0 : Nat) : List WindowExpr :=
+def decompGates (bits : Nat) (ve : TExpr) (limb0 : Nat) : List TExpr :=
   (List.range (limbGeom bits).2).map (fun b => gBool (limb0 + (limbGeom bits).1 + b)) ++
   [ eSub (topRecompose bits limb0) (v (limb0 + (limbGeom bits).1 - 1))
   , eSub (recompose bits limb0) ve ]
 
 /-- The byte-table QUERIES of one decomposition: the FULL limbs only (the top one is
 bit-decomposed instead, which is what makes the bound tight). -/
-def decompQueries (bits : Nat) (byteBus : String) (limb0 : Nat) (mult : WindowExpr) :
+def decompQueries (bits : Nat) (byteBus : String) (limb0 : Nat) (mult : TExpr) :
     List BusInteraction :=
   (List.range ((limbGeom bits).1 - 1)).map
     (fun i => ⟨byteBus, .query, mult, [v (limb0 + i)]⟩)
@@ -474,14 +775,14 @@ def CMP_COLS : Nat := 3 + decompCols KEY_LO_BITS
 #guard KEY_HI_MAX * KEY_HI_BASE == 2013265921 - 1
 
 /-- `hi4` of a canonical-decomposition block. -/
-def canonHi (b0 : Nat) : WindowExpr := v b0
+def canonHi (b0 : Nat) : TExpr := v b0
 /-- `lo27 = value − hi4 · 2^27`. -/
-def canonLo (ve : WindowExpr) (b0 : Nat) : WindowExpr :=
+def canonLo (ve : TExpr) (b0 : Nat) : TExpr :=
   eSub ve (.mul (v b0) (k KEY_HI_BASE))
 
 /-- The gates of one CANONICAL decomposition `value = hi4·2^27 + lo27` over the 13-column block at
 `b0`, gated by `gate`. The last is the UNIQUENESS TOOTH `is15 · lo27 = 0`. -/
-def canonDecompGates (ve : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List WindowExpr :=
+def canonDecompGates (ve : TExpr) (b0 : Nat) (gate : TExpr) : List TExpr :=
   decompGates KEY_LO_BITS (canonLo ve b0) (b0 + 1) ++
   [ gBool (b0 + 1 + decompCols KEY_LO_BITS)
   , .mul (eSub (v b0) (k KEY_HI_MAX)) (v (b0 + 1 + decompCols KEY_LO_BITS))
@@ -490,12 +791,12 @@ def canonDecompGates (ve : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List Win
   , .mul (v (b0 + 1 + decompCols KEY_LO_BITS)) (canonLo ve b0) ]
 
 /-- The queries of one canonical decomposition: the `hi4` nibble, then the low limbs. -/
-def canonDecompQueries (byteBus : String) (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+def canonDecompQueries (byteBus : String) (b0 : Nat) (mult : TExpr) : List BusInteraction :=
   ⟨byteBus, .query, mult, [v b0]⟩ :: decompQueries KEY_LO_BITS byteBus (b0 + 1) mult
 
 /-- The ROW-LOCAL half of a lex comparator block: the branch selector's boolean and the `dlo`
 range decomposition. Always `.all`-scoped in both consumers. -/
-def lexLtRowLocalGates (b0 : Nat) : List WindowExpr :=
+def lexLtRowLocalGates (b0 : Nat) : List TExpr :=
   gBool b0 :: decompGates KEY_LO_BITS (v (b0 + 2)) (b0 + 3)
 
 /-- ⚑ The three BRANCH equations of a lex comparator, split out from the row-local half because
@@ -503,8 +804,8 @@ the two deployed consumers assert them under DIFFERENT selectors: `MapAbsent` co
 of ONE row (`.all`), the universal boundary compares a row against its SUCCESSOR (`.transition`,
 the Rust `transition_only` flag). Keeping them in one list would have forced the second consumer to
 re-derive the algebra beside a different filter. -/
-def lexLtBranchGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExpr) :
-    List WindowExpr :=
+def lexLtBranchGates (aHi aLo bHi bLo : TExpr) (b0 : Nat) (gate : TExpr) :
+    List TExpr :=
   [ eSub (v (b0 + 1)) (.mul (.mul gate (v b0)) (eSub (eSub bHi aHi) (k 1)))
   , .mul (.mul gate (eOneMinus (v b0))) (eSub bHi aHi)
   , eSub (v (b0 + 2)) (.mul (.mul gate (eOneMinus (v b0))) (eSub (eSub bLo aLo) (k 1))) ]
@@ -512,11 +813,11 @@ def lexLtBranchGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExp
 /-- The gates of one lexicographic STRICT-LT `a < b`, all at one selector — the `MapAbsent` shape.
 `s = 1` ⇒ `bHi ≥ aHi + 1` (witness `dhi`, a nibble); `s = 0` ⇒ `bHi = aHi` and `bLo ≥ aLo + 1`
 (witness `dlo`, 27-bit). -/
-def lexLtGates (aHi aLo bHi bLo : WindowExpr) (b0 : Nat) (gate : WindowExpr) : List WindowExpr :=
+def lexLtGates (aHi aLo bHi bLo : TExpr) (b0 : Nat) (gate : TExpr) : List TExpr :=
   lexLtRowLocalGates b0 ++ lexLtBranchGates aHi aLo bHi bLo b0 gate
 
 /-- The queries of one lex comparator: the `dhi` nibble, then the `dlo` limbs. -/
-def lexLtQueries (byteBus : String) (b0 : Nat) (mult : WindowExpr) : List BusInteraction :=
+def lexLtQueries (byteBus : String) (b0 : Nat) (mult : TExpr) : List BusInteraction :=
   ⟨byteBus, .query, mult, [v (b0 + 1)]⟩ :: decompQueries KEY_LO_BITS byteBus (b0 + 3) mult
 
 -- Per-gadget contributions, so a regression names the gadget rather than a total.
@@ -559,7 +860,7 @@ def NODE8_ARITY : ℤ := 16
 #guard RATE == 16
 
 /-- The 8-felt digest group at `base`. -/
-def group8 (base : Nat) : List WindowExpr := (List.range LANES).map (fun i => v (base + i))
+def group8 (base : Nat) : List TExpr := (List.range LANES).map (fun i => v (base + i))
 
 /-- The chip ABSORB tuple `[arity, padTo RATE ins, out0..out7]` (25 wide) — the Lean twin of the
 Rust `chip_absorb_tuple`. ⚑ The arity tag is DATA (`ins.length`), not a hardcoded constant: a wider
@@ -568,7 +869,7 @@ closure's own doc claims and which a per-table copy would quietly lose.
 
 ⚠ `ins.length` must be one of `CHIP_ADMITTED_ARITIES` — the deployed chip's degree-7 admission
 product has exactly seven roots and `≤ RATE` is strictly weaker (`DescriptorIR2`, the arity note). -/
-def chipAbsorbTuple (ins : List Nat) (digest : Nat) : List WindowExpr :=
+def chipAbsorbTuple (ins : List Nat) (digest : Nat) : List TExpr :=
   k (ins.length : ℤ) ::
     (ins.map v ++ (List.range (RATE - ins.length)).map (fun _ => k 0) ++ group8 digest)
 
@@ -578,8 +879,8 @@ def chipAbsorbTuple (ins : List Nat) (digest : Nat) : List WindowExpr :=
 
 ⚠ The direction MIX is what costs the tuple its SECOND degree, and it is why `ir2_degree_budget`
 reads 4 rather than 3 on every table that folds a path. -/
-def node8Tuple (curBase sibBase outBase dirC : Nat) : List WindowExpr :=
-  let d : WindowExpr := v dirC
+def node8Tuple (curBase sibBase outBase dirC : Nat) : List TExpr :=
+  let d : TExpr := v dirC
   k NODE8_ARITY ::
   ((List.range LANES).map (fun i =>
       .add (.mul (eOneMinus d) (v (curBase + i))) (.mul d (v (sibBase + i)))) ++
@@ -600,7 +901,7 @@ def foldOutAt (chain0 root depth : Nat) (lvl : Nat) : Nat :=
 
 /-- The `depth`-many `node8` queries that fold ONE path from `leaf` to `root`, at multiplicity
 `mult`, reading sibling block `sib0` and direction bits `dir0`. -/
-def foldQueries (bus : String) (leaf chain0 root sib0 dir0 depth : Nat) (mult : WindowExpr) :
+def foldQueries (bus : String) (leaf chain0 root sib0 dir0 depth : Nat) (mult : TExpr) :
     List BusInteraction :=
   (List.range depth).map (fun lvl =>
     (⟨bus, .query, mult,
@@ -655,22 +956,29 @@ inside a burn-down of transcriptions would have been the wrong shape.
 
 **Four things are missing, in the order they bite.**
 
-1. **A PREPROCESSED-COLUMN LEAF.** `WindowExpr` has `loc`/`nxt` and no `prep c`. ⚠ And
-   `WindowExpr` is NOT this file's type — it is `DescriptorIR2`'s, shared with the MAIN
-   descriptor's `windowGate`. Adding a constructor there re-reds every match on it on both sides
-   (Lean: `eval`, `toJson`, `readsCol`, `readsNext`; Rust: `parse_window_expr`, `eval_expr`,
-   `degree`, `max_var`, `window_body_as_local`, `reads_next`), and — because `Ir2Air::Main` has NO
-   preprocessed trace — a `prep` leaf reaching a main descriptor must be REFUSED by a new
-   fail-closed check, or it panics inside the evaluator. ⓘ **A genuine design fork**, and it should
-   be decided before any of the rest: give `TableAir` its OWN expression type (duplicating the
-   grammar this file's §5 exists to avoid duplicating) or widen the shared one (poisoning the main
-   IR with a leaf it can never serve).
+1. ✅ **THE DESIGN FORK — DECIDED 2026-08-02, and it is decided in §1b, not here.** `TableAir` has
+   its OWN expression type. The deciding evidence is in §1b: `WindowExpr` is a MAIN-descriptor type
+   (120 files, 110 of them constructing `windowGate`), `Ir2Air::Main` can serve neither of the two
+   leaves a table needs, and §7's own counter-argument — that a separate type duplicates the grammar
+   §5 exists to avoid duplicating — does not hold, because §5/§6 are TABLE-only and no
+   main-descriptor file imports them.
+
+   The fork was priced here for `prep` and by `ChipTableEmit` §11 for a SHARING node, and it was
+   the same fork both times. `TExpr` landed with **`shr`**, because that leaf has a consumer today
+   (`Poseidon2RoundGates`). ⚠ **`prep` is NOT here, deliberately**: a constructor with a decoder, a
+   denotation and no emitter is a reference without a referent, and this repo's rule is not to keep
+   one. What the decision buys the `prep` leaf is stated exactly: it is now ONE constructor on
+   `TExpr` plus one case in `TExpr.{evalWith,toJson,readsColWith,readsNextWith,maxShare}` and their
+   five Rust mirrors — re-redding the ELEVEN table files, and **not the 110 main-descriptor ones**,
+   and needing **no new fail-closed refusal on the main path at all**, because `Ir2Air::Main` never
+   decodes this grammar. That is the whole content of item 1, and it is discharged.
 
 2. **A WAY TO DECLARE THE PREPROCESSED MATRIX.** `check` bounds every column index against `width`;
    a `prep` index lives in a DIFFERENT column space and needs its own declared bound. `TableAir`
-   therefore gains a field, the wire format gains a key, and **all six checked-in artifacts
+   therefore gains a field, the wire format gains a key, and **all eight checked-in artifacts
    re-emit** — with `air_fingerprint()` and `verifier_source_closure_fingerprint()` moving, since
-   both splice `TABLE_AIR_ARTIFACTS` whole.
+   both splice `TABLE_AIR_ARTIFACTS` whole. ⓘ The `defs` key already took that flag day once
+   (2026-08-02); a `prepWidth` key is the same shape of change and the same cost.
 
 3. **PARAMETERIZATION, which the other ten do not need.** This is not one table: it is a FAMILY.
    The arity, the multiplicity column and the bus name (`ir2_exact_public_{table_id}`) all come
@@ -701,19 +1009,21 @@ inside a burn-down of transcriptions would have been the wrong shape.
    hypothetical one — including the fact that every `LeanTableAir` currently declares ZERO
    preprocessed columns, which is what makes the six existing sweeps sound.
 
-**Estimate, said as an estimate and not as a constraint:** one design decision (item 1), a wire
-flag day covering seven artifacts and two fingerprints (item 2), and an `Ir2Air` variant reshape
-plus a schema-instantiation path (item 3) — item 4 is done. None of it is a reason to leave a
-Rust-authored AIR standing — it is the shape of the work, and the work is the next item, not a
-deferral. -/
+**Estimate, said as an estimate and not as a constraint:** item 1 is DONE (the fork is decided and
+`TExpr` exists; adding `prep` is one constructor on a type only the eleven table files see), item 4
+is done, and what remains is a wire flag day covering eight artifacts and two fingerprints (item 2)
+plus an `Ir2Air` variant reshape and a schema-instantiation path (item 3). None of it is a reason to
+leave a Rust-authored AIR standing — it is the shape of the work, and the work is the next item, not
+a deferral. -/
 
-/-! ## §8 — Tripwires: the grammar golden, and both polarities of `RowHolds`. -/
+/-! ## §8 — Tripwires: the grammar golden, the SHARING node, and both polarities of `RowHolds`. -/
 
 /-- A tiny table exercising every node of the grammar: gates at three selectors, a next-row
 read, all four bus ops, a non-constant multiplicity. -/
 def demoTable : TableAir :=
   { name := "demo-table-air"
   , width := 2
+  , defs := []
   , gates :=
       [ gAll (.mul (v 0) (.add (v 0) (k (-1))))
       , gFirst (v 0)
@@ -725,23 +1035,111 @@ def demoTable : TableAir :=
       , ⟨"ir2_mem_check", .send, .mul (v 0) (v 1), [v 1]⟩ ] }
 
 -- THE WIRE GOLDEN, byte-pinned. The Rust decoder's grammar is THIS string's grammar.
+-- ⚠ The ONLY difference from the pre-sharing golden is the `,"defs":[]` after the width; every
+-- gate and interaction byte is unchanged, which is the property the eight artifacts inherit.
 #guard emitTableAirJson demoTable ==
-  "{\"name\":\"demo-table-air\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"sel\":\"first\",\"body\":{\"t\":\"loc\",\"c\":0}},{\"sel\":\"transition\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}}}}}],\"interactions\":[{\"bus\":\"ir2_byte\",\"op\":\"query\",\"mult\":{\"t\":\"const\",\"v\":1},\"tuple\":[{\"t\":\"loc\",\"c\":1}]},{\"bus\":\"ir2_byte\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":1},\"tuple\":[{\"t\":\"loc\",\"c\":0}]},{\"bus\":\"ir2_map_log\",\"op\":\"receive\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"loc\",\"c\":0},{\"t\":\"loc\",\"c\":1}]},{\"bus\":\"ir2_mem_check\",\"op\":\"send\",\"mult\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"loc\",\"c\":1}},\"tuple\":[{\"t\":\"loc\",\"c\":1}]}]}"
+  "{\"name\":\"demo-table-air\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"sel\":\"first\",\"body\":{\"t\":\"loc\",\"c\":0}},{\"sel\":\"transition\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}}}}}],\"interactions\":[{\"bus\":\"ir2_byte\",\"op\":\"query\",\"mult\":{\"t\":\"const\",\"v\":1},\"tuple\":[{\"t\":\"loc\",\"c\":1}]},{\"bus\":\"ir2_byte\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":1},\"tuple\":[{\"t\":\"loc\",\"c\":0}]},{\"bus\":\"ir2_map_log\",\"op\":\"receive\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"loc\",\"c\":0},{\"t\":\"loc\",\"c\":1}]},{\"bus\":\"ir2_mem_check\",\"op\":\"send\",\"mult\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"loc\",\"c\":1}},\"tuple\":[{\"t\":\"loc\",\"c\":1}]}]}"
 
 -- Shape pins: a dropped gate or bus leg moves one of these.
 #guard demoTable.gates.length == 3
+#guard demoTable.defCount == 0
 #guard demoTable.busCount == 4
 #guard demoTable.busCountOn "ir2_byte" == 2
 #guard demoTable.busCountOp "ir2_byte" .query == 1
 #guard demoTable.busCountOp "ir2_byte" .provide == 1
 #guard demoTable.gateCountSel .all == 1
 #guard demoTable.gateCountSel .transition == 1
+#guard demoTable.wellFormed == true
 -- The two column predicates, both polarities, on a table that exercises `nxt`.
 #guard demoTable.isRowLocal == false
-#guard readsNext (eSub (n 0) (v 0)) == true
-#guard readsNext (gBool 0) == false
-#guard readsCol (gBool 0) 0 == true
-#guard readsCol (gBool 0) 1 == false
+#guard readsNext (DescriptorIR2.WindowExpr.add (.nxt 0) (.loc 0)) == true
+#guard readsNext (DescriptorIR2.WindowExpr.loc 0) == false
+#guard readsCol (DescriptorIR2.WindowExpr.loc 0) 0 == true
+#guard readsCol (DescriptorIR2.WindowExpr.loc 0) 1 == false
+#guard TExpr.readsNextIn [] (eSub (n 0) (v 0)) == true
+#guard TExpr.readsNextIn [] (gBool 0) == false
+#guard TExpr.readsColIn [] (gBool 0) 0 == true
+#guard TExpr.readsColIn [] (gBool 0) 1 == false
+
+/-! ### §8b — ⚑ THE SHARING NODE, both polarities.
+
+`shareDemo` computes `d0 = c0 + 1` once and squares it via `d1 = d0·d0`, then asserts `c1 = d1`.
+The point of the pins below is that a `shr` is a REAL leaf with a REAL denotation and REAL
+analyses — not a wire abbreviation the evaluator re-expands. -/
+
+/-- A table whose gate reads a shared definition twice, through a second definition. -/
+def shareDemo : TableAir :=
+  { name := "share-demo"
+  , width := 2
+  , defs := [ .add (v 0) (k 1)          -- d0 = c0 + 1
+            , .mul (s 0) (s 0) ]        -- d1 = d0²
+  , gates := [ gAll (eSub (v 1) (s 1)) ]
+  , interactions := [] }
+
+/-- …and the same table with a `nxt` hidden BEHIND a definition, which is the shape a
+`shr`-blind `readsNext` would wave through under an `.all` selector. -/
+def shareNxtDemo : TableAir :=
+  { name := "share-nxt-demo"
+  , width := 2
+  , defs := [ .add (n 0) (k 1) ]
+  , gates := [ gAll (eSub (v 1) (s 0)) ]
+  , interactions := [] }
+
+#guard shareDemo.defCount == 2
+#guard shareDemo.wellFormed == true
+#guard shareDemo.isRowLocal == true
+-- The wire tag, byte-pinned: `shr` carries an INDEX, not a column.
+#guard TExpr.toJson (s 3) == "{\"t\":\"shr\",\"i\":3}"
+#guard emitTableAirJson shareDemo ==
+  "{\"name\":\"share-demo\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"defs\":[{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}},{\"t\":\"mul\",\"l\":{\"t\":\"shr\",\"i\":0},\"r\":{\"t\":\"shr\",\"i\":0}}],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"shr\",\"i\":1}}}}],\"interactions\":[]}"
+
+-- ⚑ THE ANALYSES CHASE `shr`. A column read only THROUGH a definition is still a read…
+#guard TExpr.readsColIn shareDemo.defs (s 1) 0 == true
+#guard TExpr.readsColIn shareDemo.defs (s 1) 1 == false
+-- …and a `nxt` read only THROUGH a definition is still a next-row read. ⚠ This is the pin that
+-- keeps the `.all`-scoped-`nxt` refusal honest: `isRowLocal` is FALSE here, and a `readsNext` that
+-- stopped at the `shr` leaf would have said `true`.
+#guard TExpr.readsNextIn shareNxtDemo.defs (s 0) == true
+#guard shareNxtDemo.isRowLocal == false
+
+-- ⚑ WELL-FORMEDNESS, both poles. A forward reference and an out-of-range share are REFUSED.
+#guard ({ shareDemo with defs := [.mul (s 1) (k 1), .const 0] } : TableAir).defsAcyclic == false
+#guard ({ shareDemo with defs := [.mul (s 0) (k 1)] } : TableAir).defsAcyclic == false
+#guard ({ shareDemo with gates := [gAll (s 9)] } : TableAir).sharesInRange == false
+#guard ({ shareDemo with
+          interactions := [⟨"b", .query, s 9, [v 0]⟩] } : TableAir).sharesInRange == false
+
+/-- ⚑ **THE SHARING IS SEMANTICS-PRESERVING, exhibited.** `shareDemo` accepts exactly the rows on
+which `c1 = (c0+1)²`, which is what the same polynomial written as a TREE would accept. Both poles,
+decided against the emitted object. -/
+theorem shareDemo_accepts_the_square :
+    shareDemo.RowHolds ⟨fun c => if c = 0 then 4 else 25, fun _ => 0, fun _ => 0⟩ false false := by
+  decide
+
+/-- …and REFUSES a row where the shared value is not squared. A share that evaluated to `0` — the
+shape an unresolvable index would produce — would accept `c1 = 0` here; it does not. -/
+theorem shareDemo_refuses_a_wrong_square :
+    ¬ shareDemo.RowHolds ⟨fun c => if c = 0 then 4 else 24, fun _ => 0, fun _ => 0⟩ false false := by
+  decide
+
+/-- …and in particular refuses the all-zero row, which is what a silently-zero `shr` would accept. -/
+theorem shareDemo_refuses_zero :
+    ¬ shareDemo.RowHolds ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩ false false := by decide
+
+/-- ⚑ **THE TREE AND THE DAG DENOTE THE SAME THING**, on the emitted objects rather than in prose:
+the un-shared spelling of `shareDemo`'s gate accepts and refuses exactly where the shared one does.
+This is the claim the whole node rests on, and it is stated so that a `shareVals` that resolved in
+the wrong order would break it. -/
+def shareDemoTree : TableAir :=
+  { name := "share-demo-tree"
+  , width := 2
+  , defs := []
+  , gates := [ gAll (eSub (v 1) (.mul (.add (v 0) (k 1)) (.add (v 0) (k 1)))) ]
+  , interactions := [] }
+
+#guard ((List.range 12).all (fun a => (List.range 12).all (fun b =>
+    let e : VmRowEnv := ⟨fun c => if c = 0 then (a : ℤ) else (b : ℤ), fun _ => 0, fun _ => 0⟩
+    decide (shareDemo.RowHolds e false false) == decide (shareDemoTree.RowHolds e false false))))
 
 /-- The all-zero window, an interior row (neither first nor last). -/
 private def zeroEnv : VmRowEnv := ⟨fun _ => 0, fun _ => 0, fun _ => 0⟩

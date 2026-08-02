@@ -12,7 +12,7 @@ Rust only INTERPRETS."*
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -73,13 +73,12 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MapOpsTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate emitTableAirJson
+  (TExpr BusOp BusInteraction TableAir TableGate emitTableAirJson
    v k eSub eOneMinus gBool gAll decompCols
    canonHi canonLo canonDecompGates canonDecompQueries lexLtGates lexLtQueries
-   group8 chipAbsorbTuple node8Tuple foldCurAt foldOutAt foldQueries readsCol)
+   group8 chipAbsorbTuple node8Tuple foldCurAt foldOutAt foldQueries)
 
 set_option autoImplicit false
 
@@ -195,37 +194,37 @@ def INV6 : ℤ := 1677721601
 theorem inv6_is_the_inverse_of_six : 6 * INV6 = 5 * 2013265921 + 1 := by decide
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v MAP_IS_REAL
+def gReal : TExpr := v MAP_IS_REAL
 /-- The op code column. -/
-def gOp : WindowExpr := v MAP_OP
+def gOp : TExpr := v MAP_OP
 /-- The committed AAFI selector. -/
-def gS : WindowExpr := v MAP_S
+def gS : TExpr := v MAP_S
 
 /-- `not_insert = 1 − 6⁻¹·op·(op − 1)` — the unique degree-2 polynomial that is 1 at `op ∈ {0, 1}`
 and 0 at `op = 3`. ⚠ Its value at `op = 4` is `−1`, which is why every consumer below repairs it
 with a multiple of `s`. -/
-def notInsert : WindowExpr := eSub (k 1) (.mul (.mul (k INV6) gOp) (eSub gOp (k 1)))
+def notInsert : TExpr := eSub (k 1) (.mul (.mul (k INV6) gOp) (eSub gOp (k 1)))
 /-- `rw_sel = not_insert + s` — fires the read/write OLD-leaf absorb at `op ∈ {0, 1}` only. -/
-def rwSel : WindowExpr := .add notInsert gS
+def rwSel : TExpr := .add notInsert gS
 /-- `not_insert3 = not_insert + 2·s` — fires the shared PATH1 old chain at `op ∈ {0, 1, 4}`. -/
-def notInsert3 : WindowExpr := .add notInsert (.mul (k 2) gS)
+def notInsert3 : TExpr := .add notInsert (.mul (k 2) gS)
 /-- `not_aafi = 1 − s`. -/
-def notAafi : WindowExpr := eOneMinus gS
+def notAafi : TExpr := eOneMinus gS
 /-- `aafi_gate = is_real · s` — every AAFI chip leg's multiplicity. ⚠ NOT the multiplicity of the
 AAFI range block's byte queries, which ride `s` alone; §4e is that asymmetry. -/
-def aafiGate : WindowExpr := .mul gReal gS
+def aafiGate : TExpr := .mul gReal gS
 
 /-! ## §3 — THE TABLE. -/
 
 /-- The 19-felt map-log tuple `[root8, key, value, op, new_root8]`. -/
-def mapLogTuple : List WindowExpr :=
+def mapLogTuple : List TExpr :=
   group8 MAP_ROOT ++ [v MAP_KEY, v MAP_VALUE, v MAP_OP] ++ group8 MAP_NEW_ROOT
 
 /-- The gate BODIES, in the deleted Rust arm's emission order. ⚑ Every one is UNFILTERED
 (`RowSel.all`) — the deployed arm called `builder.assert_zero` directly, never a row filter, and no
 gate reads a `nxt` column: a reconciliation row is a complete statement about ONE map op, and the
 LOG ORDER lives in the `ir2_map_log` multiset rather than in an adjacency constraint. -/
-def mapOpsGateBodies : List WindowExpr :=
+def mapOpsGateBodies : List TExpr :=
   -- (1) the row guard is boolean.
   gBool MAP_IS_REAL ::
   -- (2) op ∈ {0 (read), 1 (write), 3 (insert), 4 (aafi-insert)}. `absent` (2) rides the map-ABSENT
@@ -313,6 +312,7 @@ def mapOpsInteractions : List BusInteraction :=
 def mapOpsTable : TableAir :=
   { name         := "dregg-ir2-map-ops-v1"
   , width        := MAP_WIDTH
+  , defs         := []
   , gates        := mapOpsGates
   , interactions := mapOpsInteractions }
 
@@ -618,28 +618,28 @@ tuple and by the `ir2_map_log` receive, both bus legs. So a gate-level mutation 
 is structurally blind to the root, and any check that reads only the gates cannot distinguish a
 genuine reconciliation from `openingFreeRow`. -/
 theorem root_is_read_by_no_gate :
-    ∀ i < 8, (mapOpsTable.gates.filter (fun g => readsCol g.body (MAP_ROOT + i))).length = 0 := by
+    ∀ i < 8, (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body (MAP_ROOT + i))).length = 0 := by
   intro i h; interval_cases i <;> decide
 
 /-- …and neither is the POST-root. -/
 theorem new_root_is_read_by_no_gate :
     ∀ i < 8,
-      (mapOpsTable.gates.filter (fun g => readsCol g.body (MAP_NEW_ROOT + i))).length = 0 := by
+      (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body (MAP_NEW_ROOT + i))).length = 0 := by
   intro i h; interval_cases i <;> decide
 
 /-- …the NON-VACUITY contrast, so the two above are not read as "the sweep sees nothing": the row
 guard is read by four gates and the op code by five, both on every row. -/
 theorem is_real_and_op_are_read_by_gates :
-    (mapOpsTable.gates.filter (fun g => readsCol g.body MAP_IS_REAL)).length = 2 ∧
-    (mapOpsTable.gates.filter (fun g => readsCol g.body MAP_OP)).length = 4 ∧
-    (mapOpsTable.gates.filter (fun g => readsCol g.body MAP_S)).length = 42 := by
+    (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body MAP_IS_REAL)).length = 2 ∧
+    (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body MAP_OP)).length = 4 ∧
+    (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body MAP_S)).length = 42 := by
   refine ⟨by decide, by decide, by decide⟩
 
 /-- ⚠ …and the SIBLING columns — 256 of the 898, the largest block in the row — are read by no gate
 either. Every sibling enters the AIR only through a `node8` lookup tuple. -/
 theorem the_first_sibling_lane_is_read_by_no_gate :
-    (mapOpsTable.gates.filter (fun g => readsCol g.body MAP_SIB0)).length = 0 ∧
-    (mapOpsTable.gates.filter (fun g => readsCol g.body MAP_SIB2_0)).length = 0 := by
+    (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body MAP_SIB0)).length = 0 ∧
+    (mapOpsTable.gates.filter (fun g => TExpr.readsColIn mapOpsTable.defs g.body MAP_SIB2_0)).length = 0 := by
   refine ⟨by decide, by decide⟩
 
 /-! ## §6 — The wire pin. -/
@@ -654,7 +654,7 @@ def MAP_OPS_JSON : String := emitTableAirJson mapOpsTable
 -- the identity is the compiled `include_bytes!` closure in
 -- `circuit-prove/src/faithful_note_spend_exact_v3_identity.rs`. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which `JsonCursor` skips as whitespace.)
-#guard MAP_OPS_JSON.length == 338975
+#guard MAP_OPS_JSON.length == 338985
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin in §4
 while asserting nothing. -/

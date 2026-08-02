@@ -37,12 +37,13 @@
 //! is a containment argument about a different object, stated in the Lean file's §4c.
 
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, MemKind, MemOpSpec, VmConstraint2, WindowExpr,
+    EffectVmDescriptor2, MemBoundaryWitness, MemKind, MemOpSpec, VmConstraint2,
     mem_boundary_rows_for, prove_vm_descriptor2, table_air_gates_accept, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{BusOp, RowSel, mem_boundary_table_air};
 
 // The deployed layout, transcribed ONCE here so the assertions below can name a column. These are
@@ -412,10 +413,10 @@ fn the_boundary_serves_the_address_table_and_anchors_the_blum_chain() {
         .iter()
         .find(|i| i.bus == "ir2_mem_addrs")
         .expect("one served address entry");
-    assert_eq!(serve.tuple, vec![WindowExpr::Loc(MB_ADDR)]);
+    assert_eq!(serve.tuple, vec![TableExpr::Loc(MB_ADDR)]);
     assert_eq!(
         serve.mult,
-        WindowExpr::Loc(MB_ADDR_MULT),
+        TableExpr::Loc(MB_ADDR_MULT),
         "the served count is the multiplicity COLUMN — a constant would refuse every witness \
          whose per-address op counts are not flat"
     );
@@ -429,9 +430,9 @@ fn the_boundary_serves_the_address_table_and_anchors_the_blum_chain() {
     assert_eq!(
         send.tuple,
         vec![
-            WindowExpr::Loc(MB_ADDR),
-            WindowExpr::Loc(MB_INIT_VAL),
-            WindowExpr::Const(0)
+            TableExpr::Loc(MB_ADDR),
+            TableExpr::Loc(MB_INIT_VAL),
+            TableExpr::Const(0)
         ],
         "the INIT image is published at serial ZERO — the anchor every read chain bottoms out in"
     );
@@ -443,15 +444,15 @@ fn the_boundary_serves_the_address_table_and_anchors_the_blum_chain() {
     assert_eq!(
         recv.tuple,
         vec![
-            WindowExpr::Loc(MB_ADDR),
-            WindowExpr::Loc(MB_FIN_VAL),
-            WindowExpr::Loc(MB_FIN_SERIAL)
+            TableExpr::Loc(MB_ADDR),
+            TableExpr::Loc(MB_FIN_VAL),
+            TableExpr::Loc(MB_FIN_SERIAL)
         ]
     );
     // Both ride at `is_real`, so a pad row contributes NOTHING to the multiset — the reason the
     // per-row multiplicity expression exists at all.
-    assert_eq!(send.mult, WindowExpr::Loc(MB_IS_REAL));
-    assert_eq!(recv.mult, WindowExpr::Loc(MB_IS_REAL));
+    assert_eq!(send.mult, TableExpr::Loc(MB_IS_REAL));
+    assert_eq!(recv.mult, TableExpr::Loc(MB_IS_REAL));
 
     // Two transition-scoped gates (prefix, gap) and ten unfiltered ones.
     assert_eq!(t.gate_count_sel(RowSel::Transition), 2);

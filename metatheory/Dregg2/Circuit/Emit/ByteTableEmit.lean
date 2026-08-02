@@ -11,7 +11,7 @@ the deployed prover. Its algebra was hand-authored Rust, which architectural law
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -19,7 +19,7 @@ hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` b
 
 `MapAbsent` is purely row-local. This table is not: its whole content is a CROSS-ROW increment
 chain plus a lookup-SERVE leg, and the first-pass `TableAir` could express neither. `RowSel`
-(`.first` / `.transition`), `WindowExpr.nxt`, and `BusOp.provide` are the three additions, and
+(`.first` / `.transition`), `TExpr.nxt`, and `BusOp.provide` are the three additions, and
 all three appear in these four lines of deployed Rust:
 
 ```rust
@@ -59,9 +59,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.ByteTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson v n k eSub gFirst gTrans)
+  (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson v n k eSub gFirst gTrans)
 
 set_option autoImplicit false
 
@@ -110,6 +109,7 @@ def byteInteractions : List BusInteraction :=
 def byteTable : TableAir :=
   { name         := "dregg-ir2-byte-v1"
   , width        := BT_WIDTH
+  , defs         := []
   , gates        := byteGates
   , interactions := byteInteractions }
 
@@ -144,7 +144,7 @@ theorem first_row_is_zero {rows : List VmRowEnv}
     rows[0].loc BT_VALUE ≡ 0 [ZMOD 2013265921] := by
   have hg := hh 0 h ⟨.first, v BT_VALUE⟩ (by simp [byteTable, byteGates, gFirst])
   simp only [TableGate.holdsAt] at hg
-  simpa [v, WindowExpr.eval] using hg (by simp)
+  simpa [v, TExpr.evalWith] using hg (by simp)
 
 /-- The transition gate, unpacked: on any non-final row the NEXT window value is one more. -/
 theorem step {rows : List VmRowEnv}
@@ -154,7 +154,7 @@ theorem step {rows : List VmRowEnv}
     (by simp [byteTable, byteGates, gTrans])
   simp only [TableGate.holdsAt] at hg
   have hz := hg (by simp; omega)
-  simp only [eSub, v, n, k, WindowExpr.eval] at hz
+  simp only [eSub, v, n, k, TExpr.evalWith] at hz
   unfold Int.ModEq at hz ⊢
   omega
 
@@ -243,10 +243,10 @@ theorem gates_admit_every_height (m : Nat) :
       intro hf
       have hi : i = 0 := by simpa using hf
       subst hi
-      simp [mkRow, v, WindowExpr.eval, Int.ModEq]
+      simp [mkRow, v, TExpr.evalWith, Int.ModEq]
     · simp only [TableGate.holdsAt]
       intro _
-      simp [mkRow, eSub, v, n, k, WindowExpr.eval, Int.ModEq]
+      simp [mkRow, eSub, v, n, k, TExpr.evalWith, Int.ModEq]
 
 /-- NON-VACUITY, the FALSE pole of the GATES themselves: a trace whose first row is not zero is
 REFUSED. A table AIR that no assignment refutes is decoration; this exhibits the refutation. -/
@@ -257,7 +257,7 @@ theorem a_nonzero_first_row_is_refused :
   simp only [TableGate.holdsAt] at hg
   have := hg (by simp)
   revert this
-  simp only [v, WindowExpr.eval]
+  simp only [v, TExpr.evalWith]
   decide
 
 /-! ## §5 — The wire pin. -/
@@ -268,7 +268,7 @@ def BYTE_JSON : String := emitTableAirJson byteTable
 -- THE WIRE GOLDEN, byte-pinned in full: this table is small enough that the whole emission is
 -- the golden, so there is no gap between "the shape pins pass" and "these are the bytes".
 #guard BYTE_JSON ==
-  "{\"name\":\"dregg-ir2-byte-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"gates\":[{\"sel\":\"first\",\"body\":{\"t\":\"loc\",\"c\":0}},{\"sel\":\"transition\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}}}}}],\"interactions\":[{\"bus\":\"ir2_byte\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":1},\"tuple\":[{\"t\":\"loc\",\"c\":0}]}]}"
+  "{\"name\":\"dregg-ir2-byte-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"defs\":[],\"gates\":[{\"sel\":\"first\",\"body\":{\"t\":\"loc\",\"c\":0}},{\"sel\":\"transition\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}}}}}],\"interactions\":[{\"bus\":\"ir2_byte\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":1},\"tuple\":[{\"t\":\"loc\",\"c\":0}]}]}"
 
 /-- The emission is not empty and not a stub. -/
 theorem byteTable_is_not_empty : byteTable.gates ≠ [] := by

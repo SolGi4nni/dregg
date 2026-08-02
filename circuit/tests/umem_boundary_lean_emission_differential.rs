@@ -30,12 +30,13 @@
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, MemKind, UMemBoundaryWitness, UMemOpSpec,
-    VmConstraint2, WindowExpr, prove_vm_descriptor2_umem, table_air_gates_accept,
-    umem_boundary_rows_for, verify_vm_descriptor2,
+    VmConstraint2, prove_vm_descriptor2_umem, table_air_gates_accept, umem_boundary_rows_for,
+    verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{
     BusOp, RowSel, umem_boundary_cohort_table_air, umem_boundary_table_air,
 };
@@ -549,9 +550,9 @@ fn the_boundary_serves_the_closure_table_and_agrees_with_the_cohort() {
         .expect("one served entry");
     assert_eq!(
         serve.tuple,
-        vec![WindowExpr::Loc(UB_DOMAIN), WindowExpr::Loc(UB_KEY)]
+        vec![TableExpr::Loc(UB_DOMAIN), TableExpr::Loc(UB_KEY)]
     );
-    assert_eq!(serve.mult, WindowExpr::Loc(UB_ADDR_MULT));
+    assert_eq!(serve.mult, TableExpr::Loc(UB_ADDR_MULT));
 
     let send = t
         .interactions
@@ -561,15 +562,15 @@ fn the_boundary_serves_the_closure_table_and_agrees_with_the_cohort() {
     assert_eq!(
         send.tuple,
         vec![
-            WindowExpr::Loc(UB_DOMAIN),
-            WindowExpr::Loc(UB_KEY),
-            WindowExpr::Loc(UB_INIT_PRESENT),
-            WindowExpr::Loc(UB_INIT_VALUE),
-            WindowExpr::Const(0)
+            TableExpr::Loc(UB_DOMAIN),
+            TableExpr::Loc(UB_KEY),
+            TableExpr::Loc(UB_INIT_PRESENT),
+            TableExpr::Loc(UB_INIT_VALUE),
+            TableExpr::Const(0)
         ],
         "the INIT cell is published at serial ZERO"
     );
-    assert_eq!(send.mult, WindowExpr::Loc(UB_IS_REAL));
+    assert_eq!(send.mult, TableExpr::Loc(UB_IS_REAL));
 
     // ⚑ THE TWO FORMS AGREE ON THE SHARED PREFIX. `build_traces` writes ONE nine-column prefix for
     // both tables (`THE_COHORT_IS_THE_GENERAL_PREFIX` pins the offsets); this checks the two

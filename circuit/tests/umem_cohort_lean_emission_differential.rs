@@ -25,13 +25,13 @@
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, MemBoundaryWitness, MemKind, TID_UMEM_BOUNDARY, TID_UMEMORY, TableDef2,
-    TableSem, UMemBoundaryWitness, UMemOpSpec, VmConstraint2, WindowExpr,
-    prove_vm_descriptor2_umem, table_air_gates_accept, umem_boundary_rows_for,
-    verify_vm_descriptor2,
+    TableSem, UMemBoundaryWitness, UMemOpSpec, VmConstraint2, prove_vm_descriptor2_umem,
+    table_air_gates_accept, umem_boundary_rows_for, verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
 use dregg_circuit::refusal::must_refuse_or_unsat_panic;
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{BusOp, RowSel, umem_boundary_cohort_table_air};
 
 // The deployed layout, transcribed ONCE here so the assertions below can name a column. These are
@@ -406,9 +406,9 @@ fn the_cohort_serves_the_closure_table_and_anchors_the_blum_chain() {
         .expect("one served address entry");
     assert_eq!(
         serve.tuple,
-        vec![WindowExpr::Loc(UBC_DOMAIN), WindowExpr::Loc(UBC_KEY)]
+        vec![TableExpr::Loc(UBC_DOMAIN), TableExpr::Loc(UBC_KEY)]
     );
-    assert_eq!(serve.mult, WindowExpr::Loc(UBC_ADDR_MULT));
+    assert_eq!(serve.mult, TableExpr::Loc(UBC_ADDR_MULT));
 
     // The Blum pair, in the right directions and at the right anchor.
     let send = t
@@ -419,11 +419,11 @@ fn the_cohort_serves_the_closure_table_and_anchors_the_blum_chain() {
     assert_eq!(
         send.tuple,
         vec![
-            WindowExpr::Loc(UBC_DOMAIN),
-            WindowExpr::Loc(UBC_KEY),
-            WindowExpr::Loc(UBC_INIT_PRESENT),
-            WindowExpr::Loc(UBC_INIT_VALUE),
-            WindowExpr::Const(0)
+            TableExpr::Loc(UBC_DOMAIN),
+            TableExpr::Loc(UBC_KEY),
+            TableExpr::Loc(UBC_INIT_PRESENT),
+            TableExpr::Loc(UBC_INIT_VALUE),
+            TableExpr::Const(0)
         ],
         "the INIT cell is published at serial ZERO — the anchor every read chain bottoms out in"
     );
@@ -433,11 +433,11 @@ fn the_cohort_serves_the_closure_table_and_anchors_the_blum_chain() {
         .find(|i| i.bus == "ir2_umem_check" && i.op == BusOp::Receive)
         .expect("one final consume");
     assert_eq!(recv.tuple.len(), 5);
-    assert_eq!(recv.tuple[4], WindowExpr::Loc(UBC_FIN_SERIAL));
+    assert_eq!(recv.tuple[4], TableExpr::Loc(UBC_FIN_SERIAL));
     // ⚑ BOTH ride at `is_real`, which is what makes a pad declare NOTHING — the fact the
     // single-row tooth's `Nodup` argument actually rests on.
-    assert_eq!(send.mult, WindowExpr::Loc(UBC_IS_REAL));
-    assert_eq!(recv.mult, WindowExpr::Loc(UBC_IS_REAL));
+    assert_eq!(send.mult, TableExpr::Loc(UBC_IS_REAL));
+    assert_eq!(recv.mult, TableExpr::Loc(UBC_IS_REAL));
 
     // The domain nibble query rides at a CONSTANT: a pad's domain is range-bound too.
     let nibble = t
@@ -446,7 +446,7 @@ fn the_cohort_serves_the_closure_table_and_anchors_the_blum_chain() {
         .find(|i| i.bus == "ir2_byte")
         .expect("one domain nibble query");
     assert_eq!(nibble.op, BusOp::Query);
-    assert_eq!(nibble.mult, WindowExpr::Const(1));
+    assert_eq!(nibble.mult, TableExpr::Const(1));
 
     // Exactly one transition-scoped gate — the single-row tooth — and five unfiltered ones.
     assert_eq!(t.gate_count_sel(RowSel::Transition), 1);

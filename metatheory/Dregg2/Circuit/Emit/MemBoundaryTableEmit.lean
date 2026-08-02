@@ -11,7 +11,7 @@ emitted from Lean; Rust only INTERPRETS."*
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -57,10 +57,9 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MemBoundaryTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate emitTableAirJson
-   v n k eSub eOneMinus gBool gAll gTrans decompGates decompQueries limbGeom decompCols readsCol)
+  (TExpr BusOp BusInteraction TableAir TableGate emitTableAirJson
+   v n k eSub eOneMinus gBool gAll gTrans decompGates decompQueries limbGeom decompCols)
 
 set_option autoImplicit false
 
@@ -107,7 +106,7 @@ def BUS_MEM_ADDRS : String := "ir2_mem_addrs"
 /-! ## §2 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v MB_IS_REAL
+def gReal : TExpr := v MB_IS_REAL
 
 /-- The gate list, in the deleted Rust arm's emission order.
 
@@ -150,6 +149,7 @@ def memBoundaryInteractions : List BusInteraction :=
 def memBoundaryTable : TableAir :=
   { name         := "dregg-ir2-mem-boundary-v1"
   , width        := MB_WIDTH
+  , defs         := []
   , gates        := memBoundaryGates
   , interactions := memBoundaryInteractions }
 
@@ -334,12 +334,12 @@ What contains it is the `ir2_mem_check` Blum multiset in a DIFFERENT AIR: an op 
 no real boundary row has no serial-0 init send to consume, so the multiset cannot balance however
 the lookup is served. This theorem is the pointer to that argument, not a substitute for it. -/
 theorem addr_mult_is_read_by_no_gate :
-    memBoundaryTable.gates.all (fun g => !readsCol g.body MB_ADDR_MULT) = true := by decide
+    memBoundaryTable.gates.all (fun g => !TExpr.readsColIn memBoundaryTable.defs g.body MB_ADDR_MULT) = true := by decide
 
 /-- …and the CONTRAST, so the predicate above is not vacuously true of every column: the address
 column IS read, by five of the twelve gates. -/
 theorem addr_is_read_by_gates :
-    (memBoundaryTable.gates.filter (fun g => readsCol g.body MB_ADDR)).length = 2 := by decide
+    (memBoundaryTable.gates.filter (fun g => TExpr.readsColIn memBoundaryTable.defs g.body MB_ADDR)).length = 2 := by decide
 
 /-! ## §5 — The wire pin. -/
 

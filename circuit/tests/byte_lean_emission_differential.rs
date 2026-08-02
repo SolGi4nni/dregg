@@ -32,13 +32,14 @@
 
 use dregg_circuit::descriptor_ir2::{
     BYTE_TABLE_HEIGHT, CHIP_OUT_LANES, EffectVmDescriptor2, MapKind, MapOpSpec, MemBoundaryWitness,
-    VmConstraint2, WindowExpr, byte_rows_for, prove_vm_descriptor2, table_air_gates_accept,
+    VmConstraint2, byte_rows_for, prove_vm_descriptor2, table_air_gates_accept,
     verify_vm_descriptor2,
 };
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf, SENTINEL_MAX};
 use dregg_circuit::lean_descriptor_air::LeanExpr;
+use dregg_circuit::table_air::TableExpr;
 use dregg_circuit::table_air::{BusOp, RowSel, byte_table_air};
 
 /// The deployed layout, transcribed ONCE here so the assertions below can name a column.
@@ -382,10 +383,10 @@ fn the_byte_table_serves_the_bus_it_does_not_query_it() {
     assert_eq!(leg.bus, "ir2_byte");
     assert_eq!(leg.op, BusOp::Provide);
     assert_eq!(leg.tuple.len(), 1, "the served key is one felt: the value");
-    assert_eq!(leg.tuple[0], WindowExpr::Loc(BT_VALUE));
+    assert_eq!(leg.tuple[0], TableExpr::Loc(BT_VALUE));
     assert_eq!(
         leg.mult,
-        WindowExpr::Loc(BT_MULT),
+        TableExpr::Loc(BT_MULT),
         "the leg rides at the multiplicity COLUMN — a constant here would refuse every honest \
          witness whose limb histogram is not flat"
     );

@@ -12,7 +12,7 @@ architectural law #1 forbids: *"circuits are emitted from Lean; Rust only INTERP
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -61,12 +61,10 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MemoryTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
-   v n k eSub eOneMinus gBool gAll gFirst gTrans decompGates decompQueries limbGeom decompCols
-   readsCol)
+  (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
+   v n k eSub eOneMinus gBool gAll gFirst gTrans decompGates decompQueries limbGeom decompCols)
 
 set_option autoImplicit false
 
@@ -111,7 +109,7 @@ def BUS_MEM_ADDRS : String := "ir2_mem_addrs"
 /-! ## §2 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v MEM_IS_REAL
+def gReal : TExpr := v MEM_IS_REAL
 
 /-- The gate list, in the deleted Rust arm's emission order.
 
@@ -156,6 +154,7 @@ def memoryInteractions : List BusInteraction :=
 def memoryTable : TableAir :=
   { name         := "dregg-ir2-memory-v1"
   , width        := MEM_WIDTH
+  , defs         := []
   , gates        := memoryGates
   , interactions := memoryInteractions }
 
@@ -218,7 +217,7 @@ theorem first_row_serial_is_one {rows : List VmRowEnv}
     (by simp [memoryTable, memoryGates, gFirst])
   simp only [TableGate.holdsAt] at hg
   have hz := hg (by simp)
-  simp only [eSub, v, k, WindowExpr.eval] at hz
+  simp only [eSub, v, k, TExpr.evalWith] at hz
   unfold Int.ModEq at hz ⊢
   omega
 
@@ -230,7 +229,7 @@ theorem serial_step {rows : List VmRowEnv}
     (by simp [memoryTable, memoryGates, gTrans])
   simp only [TableGate.holdsAt] at hg
   have hz := hg (by simp; omega)
-  simp only [eSub, v, n, k, WindowExpr.eval] at hz
+  simp only [eSub, v, n, k, TExpr.evalWith] at hz
   unfold Int.ModEq at hz ⊢
   omega
 
@@ -402,12 +401,12 @@ theorem an_unwitnessed_gap_is_refused :
 the column is read by exactly TWO gate bodies — the gap definition, and nothing that bounds it —
 and by NO byte-bus query. Contrast `MEM_GAP_LIMB0`, which every range check bottoms out in. -/
 theorem prev_serial_is_read_by_one_gate :
-    (memoryTable.gates.filter (fun g => readsCol g.body MEM_PREV_SERIAL)).length = 1 := by decide
+    (memoryTable.gates.filter (fun g => TExpr.readsColIn memoryTable.defs g.body MEM_PREV_SERIAL)).length = 1 := by decide
 
 /-- …and by no byte query, which is where a magnitude bound would have to live. -/
 theorem no_byte_query_reads_prev_serial :
     (memoryTable.interactions.filter
-      (fun i => i.bus == BUS_BYTE && i.tuple.any (fun e => readsCol e MEM_PREV_SERIAL))).length
+      (fun i => i.bus == BUS_BYTE && i.tuple.any (fun e => TExpr.readsColIn memoryTable.defs e MEM_PREV_SERIAL))).length
       = 0 := by decide
 
 /-- …the non-vacuity contrast: the gap's limb columns ARE byte-queried, one each. -/
@@ -424,7 +423,7 @@ def MEMORY_JSON : String := emitTableAirJson memoryTable
 -- offset moves the length, and any edit to the SHAPE moves §3. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which is the `by-name/` convention and which `JsonCursor` skips
 -- as whitespace.)
-#guard MEMORY_JSON.length == 3833
+#guard MEMORY_JSON.length == 3843
 
 /-- The emission is not empty and not a stub. -/
 theorem memoryTable_is_not_empty : memoryTable.gates ≠ [] := by

@@ -12,7 +12,7 @@ which architectural law #1 forbids: *"circuits are emitted from Lean; Rust only 
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD: this is Lean-authored AIR.
 
-Every gate below is a Lean `WindowExpr` under an explicit `RowSel`. Nothing in this cutover
+Every gate below is a Lean `TExpr` under an explicit `RowSel`. Nothing in this cutover
 hand-writes a Rust constraint, and the `law1_no_new_rust_authored_constraints` baseline for
 `descriptor_ir2.rs` goes DOWN.
 
@@ -58,11 +58,10 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.UMemBoundaryTableEmit
 
-open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.TableAirIR
-  (BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
-   v n k eSub eOneMinus gBool gAll gTrans decompCols readsCol
+  (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
+   v n k eSub eOneMinus gBool gAll gTrans decompCols
    KEY_LO_BITS KEY_HI_BASE KEY_HI_MAX CANON_COLS CMP_COLS
    canonHi canonLo canonDecompGates canonDecompQueries
    lexLtRowLocalGates lexLtBranchGates lexLtQueries)
@@ -128,16 +127,16 @@ def BUS_UMEM_ADDRS : String := "ir2_umem_addrs"
 /-! ## §2 — THE TABLE. -/
 
 /-- `is_real`, the row guard. -/
-def gReal : WindowExpr := v UB_IS_REAL
+def gReal : TExpr := v UB_IS_REAL
 /-- `same_dom`, the comparator's gate. -/
-def gSameDom : WindowExpr := v UB_SAME_DOM
+def gSameDom : TExpr := v UB_SAME_DOM
 /-- This row's canonical `(hi4, lo27)` split of its key. -/
-def aHi : WindowExpr := canonHi UB_KEY_HI4
-def aLo : WindowExpr := canonLo (v UB_KEY) UB_KEY_HI4
+def aHi : TExpr := canonHi UB_KEY_HI4
+def aLo : TExpr := canonLo (v UB_KEY) UB_KEY_HI4
 /-- The NEXT row's split, read from the next row's own columns. ⚠ Only meaningful under
 `.transition`; the three branch gates that use it are the only place it appears. -/
-def bHi : WindowExpr := n UB_KEY_HI4
-def bLo : WindowExpr := eSub (n UB_KEY) (.mul (n UB_KEY_HI4) (k KEY_HI_BASE))
+def bHi : TExpr := n UB_KEY_HI4
+def bLo : TExpr := eSub (n UB_KEY) (.mul (n UB_KEY_HI4) (k KEY_HI_BASE))
 
 /-- The gate list, in the deleted Rust arm's emission order.
 
@@ -196,6 +195,7 @@ def umemBoundaryInteractions : List BusInteraction :=
 def umemBoundaryTable : TableAir :=
   { name         := "dregg-ir2-umem-boundary-v1"
   , width        := UB_WIDTH
+  , defs         := []
   , gates        := umemBoundaryGates
   , interactions := umemBoundaryInteractions }
 
@@ -358,7 +358,7 @@ theorem flipping_same_dom_against_a_nonzero_gap_is_refused :
 `UMemBoundaryCohortTableEmit` §4b: the column appears only in the `.provide` leg's multiplicity.
 Contained by the `ir2_umem_check` multiset, which is a different object. -/
 theorem addr_mult_is_read_by_no_gate :
-    umemBoundaryTable.gates.all (fun g => !readsCol g.body UB_ADDR_MULT) = true := by decide
+    umemBoundaryTable.gates.all (fun g => !TExpr.readsColIn umemBoundaryTable.defs g.body UB_ADDR_MULT) = true := by decide
 
 /-- …and the CONTRAST, so the predicate is not vacuously true of every column. ⓘ MEASURED, and the
 number is smaller than a reader would guess: the KEY column is read by exactly THREE gates — the
@@ -366,13 +366,13 @@ whole-value recomposition of its canonical split, the `is15 · lo27 = 0` uniquen
 comparator's low-word branch. Everything else about the key is mediated by its `(hi4, lo27)`
 BLOCK, which is the point of splitting it: the ordering argument never touches the raw felt. -/
 theorem key_is_read_by_three_gates :
-    (umemBoundaryTable.gates.filter (fun g => readsCol g.body UB_KEY)).length = 3 := by decide
+    (umemBoundaryTable.gates.filter (fun g => TExpr.readsColIn umemBoundaryTable.defs g.body UB_KEY)).length = 3 := by decide
 
 /-- ⚑ …and the DGAP column is read by exactly three gates — its own definition, the inverse
 witness, and the `dgap · same_dom` leg — and by NONE of them is it bounded. The bound is the
 sixteenth `ir2_byte` query. Stated as an emission fact because §4b turns on it. -/
 theorem dgap_is_read_by_three_gates_and_bounded_by_none :
-    (umemBoundaryTable.gates.filter (fun g => readsCol g.body UB_DGAP)).length = 3 := by decide
+    (umemBoundaryTable.gates.filter (fun g => TExpr.readsColIn umemBoundaryTable.defs g.body UB_DGAP)).length = 3 := by decide
 
 /-! ## §5 — The wire pin. -/
 
