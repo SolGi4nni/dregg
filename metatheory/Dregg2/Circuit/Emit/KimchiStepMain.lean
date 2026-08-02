@@ -88,7 +88,10 @@ line items, not against a round number.
     OPT-SPONGE over the carried bulletproof challenges muxed by §8h's DERIVED
     `branch_data.proofs_verified_mask` bits (the `Field.if_` state mux, `:998-1003`), the
     **43 evaluation columns absorbed at ζ and ζω** in
-    `to_absorption_sequence` order, the ξ′/r′ squeezes, `hash_messages_for_next_step_proof`, and
+    `to_absorption_sequence` order, the ξ′/r′ squeezes, `hash_messages_for_next_step_proof` — whose
+    `Not_opt` prefix IS ⚑ §3c's `sponge_after_index`, the wrap verifier key's 28 commitments as 56
+    absorbed words, 27 of them THE FOLD'S OWN base variables, with `index_digest` squeezed off that
+    state and absorbed as R1's first word — and
     ⚑ §8g's chain 1 — `to_field_checked` of the SECOND squeeze, which IS the `r` the C8 fold and
     `b_correct` multiply by (`let r = scalar (Scalar_challenge.create r_actual)`, `:1013`).
   * **R8 `finalize`** — ⚑ `finalize_other_proof`'s TAIL, the rung at which the deferred values stop
@@ -114,38 +117,33 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              7192      7661        9324        9417
-    non-Generic         13778              6558      6560        7931        7954
-    Poseidon             6292 (31.4%)      1034      1034        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       634      1101        1393        1463   —
+    total gates         20023              7192      7661        9338        9431
+    non-Generic         13778              6558      6560        7944        7967
+    Poseidon             6292 (31.4%)      1034      1034        2277        2277   11×572 / 11×207 ✓
+    Generic              6245 (31.2%)       634      1101        1394        1464   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1562      1564        1687        1694   —
+    Zero                 2246 (11.2%)      1562      1564        1689        1696   —
     VarBaseMul           1596  (8.0%)      1040      1040        1040        1040   1×1596 / 1×1040   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       114       114         114         114   1×159 2×65 3×23
                     15×1 30×1 / 1×114
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9317 → 9417 rows), and every row of it is a retirement rather
-than scale. **+72 `Generic`** are `Inner_curve.typ`'s own `check` — `assert_on_curve`
-(`snarky_curve.ml:212-229`), three halves per SUPPLIED commitment, 48 of them (§7b). Every kimchi
-curve gate constrains the addition arithmetic and NOTHING ELSE, so until this landed an off-curve
-"commitment" satisfied the whole fold; §12b′ exhibits one and shows `endoMulConstraints` and
-`completeAddConstraints` are zero on its grid. The other **+8 `Generic`, +16 `EndoMulScalar`,
-+4 `Zero`** are the two `assert_128_bits` chains of
-the assembly's THIRD `lowest_128_bits`, R8's own (`xi_actual`, `step_verifier.ml:820-822,1102`).
-That one was the residue #1 left behind, and it was the worst of the three: its high part was an
-`AOp.wit` with no defining row, so `xi_correct` accepted ANY 128-bit ξ — and §8g's chain 0 lifts
-that same statement word into the fold's own multiplier, so the prover chose
-`combined_inner_product`'s ξ outright. §12c′ exhibits the witness, shows R8's program ACCEPTS it
-(`out = 1`) and shows the new high chain REFUSES it. `EndoMulScalar` is 51 eight-row chains where it
-was 49: `2·chals + 5`, upstream's own `squeeze_challenge` + `squeeze_scalar` + `util.ml:98-99`
-arithmetic. (The commit before that took 8713 → 9317 on #3, #1 and #9's second consumer.)
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9417 → 9431 rows) — **fourteen rows, and they close the OTHER
+half of Fiat–Shamir.** `sponge_after_index` (`step_verifier.ml:1149-1157`) is derived rather than
+witnessed: **+11 `Poseidon` and +1 `Zero`** are the ONE permutation `index_digest` is
+(`Sponge.squeeze_field (Sponge.copy sponge_after_index)`, `:529-534`), **+1 `Zero`** its σ-only
+probe, and **+1 `Generic`** the `Inner_curve.constant` pin for `sigma_comm[6]` — the single plonk-
+index commitment `combine_split_commitments` does not already carry (`common.ml:243-246` hands it to
+`ft_comm` as `sigma_comm_last`). The other 27 index commitments needed NO new rows because they ARE
+the fold's own `.const` bases, and segment C now absorbs those very variables. §3c is the assembly;
+§12d is the exhibit. (The commit before that took 9317 → 9417 on #1's third `lowest_128_bits` and
+§7b's `assert_on_curve`; the one before that 8713 → 9317 on #3, #1 and #9's second consumer.)
 
 The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are unchanged
 by R6/R7/R8 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for
 `Poseidon`, `EndoMul`, `EndoMulScalar`, `VarBaseMul`, `CompleteAdd` and no others): a `Poseidon`
-permutation is 11 rows (206 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
+permutation is 11 rows (207 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
 `EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows — **51 such chains now** (23 transcript
 challenges + their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own
@@ -190,17 +188,32 @@ domain selection. #2–#11 below name them. ⚑ R8 spends 70 `Generic` rows on `
 tail. That is the trade this file is supposed to be making: every commit here should be buying a
 named simplification, not scale.
 
-⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations. `verify_one`'s own
-sponge work is now assembled; the remaining 366 permutations are the app logic and the pieces #5
-names (the real `sponge_after_index` over the plonk index, `group_map`).
+⚑ Likewise `Poseidon` (2277 vs 6292): R7 brings the count to 207 permutations, the last of which is
+`sponge_after_index`'s squeeze. `verify_one`'s own sponge work is now assembled; the remaining 365
+permutations are the app logic and `group_map` (#5).
 
-⚑ **WHERE FIAT-SHAMIR STANDS, stated at the resolution it is actually at.** All three
-`lowest_128_bits` in the assembly now range-check BOTH parts (#1), so given the sponge state no
-challenge is prover-chosen; and `should_verify` is a public statement word (§16g), so the rung that
-binds the deferred values cannot be switched off invisibly. What is NOT yet true is that the sponge
-INPUT is derived: 46 of the committed shape's 142 absorbed words are `msgVal` free variables
-standing for `sponge_after_index`, `t_comm` and the scalar absorptions (§3b, #5). A prover grinds
-those and steers every squeeze. Both halves matter and only one of them is done.
+⚑ **WHERE FIAT-SHAMIR STANDS, stated at the resolution it is actually at, and BOTH HALVES.**
+
+  * **GIVEN THE STATE, no challenge is prover-chosen.** All three `lowest_128_bits` range-check both
+    parts (#1), and `should_verify` is a public statement word (§16g) so the rung that binds the
+    deferred values cannot be switched off invisibly.
+  * **THE INPUT IS NOW DERIVED WHERE `sponge_after_index` REACHES IT, AND NOT ELSEWHERE.** Segment
+    C's `Not_opt` prefix went from **58 `hmVal` fixtures to 2**: 56 of those words are the wrap
+    verifier key's 28 commitments in `index_to_field_elements` order, 27 of them the fold's own
+    `.const` bases and the 28th pinned by an `Inner_curve.constant` row; the two that remain are the
+    inductive rule's `app_state`, which no `verify_one` sub-circuit derives. And `index_digest` —
+    the squeeze of that sponge — is now R1's FIRST absorbed word, so the transcript is a function of
+    the verifier key. §12d exhibits the grind that was open until this landed: one plonk-index word,
+    chosen by addition in under 48 tries, drives `index_digest` to a value the prover picked and
+    MOVES EVERY transcript challenge — and the pin row's own generic-gate body refuses it now.
+  * ⚠ **THE RESIDUE, counted.** Of the committed shape's 142 R1-absorbed words, **45 are still free
+    `msgVal` witnesses** (46 this morning). They are `t_comm`'s 7 commitments (14 words) and the
+    `Shifted_value` scalar absorptions. `t_comm` cannot honestly leave that list by being absorbed —
+    absorbing a commitment nothing CONSUMES converts a free word into a free word with an
+    `assert_on_curve` — so it leaves when `ft_comm`'s MSM is assembled and not before (#5).
+
+So: the sponge input is derived for the verifier key and NOT for `t_comm`. Both halves matter, one
+is closed and the other is 45/142 of the way from where it was.
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -337,17 +350,35 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      mask half of that is no longer missing (§8h, #9 below); what remains is the b-polynomial of the
      carried challenges at ζ and ζω, which is R5's `deferredRows` ladder run on a SECOND challenge
      vector.
-  5. **Named and NOT assembled**, each a real sub-circuit: `ft_comm`'s own 8-term 255-bit MSM
-     (`common.ml:238-256` — the `t_comm` Horner and the `sigma_comm_last` scale; R3 is sized as
-     `multiscale_known` alone); `group_map` (`step_verifier.ml:214-237`);
-     `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`; the real `sponge_after_index`
-     (the plonk index is hashed here from `N_HM_FIX = 58` FIXTURE words, not from the actual
-     commitments — and R1's own transcript absorbs 46 more, §3b's `msgVal`);
+  5. **Named and NOT assembled**, each a real sub-circuit: `group_map` (`step_verifier.ml:214-237`);
+     `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`;
      `x_hat blinding`; `lagrange_commitment` / `public_input_commitment_dynamic`'s domain selection;
      `actual_evaluation`'s per-column chunk Horner (`combined_evals`; our columns are single-chunk,
      though `ζ^n = pow2_pow ζ 16` IS assembled in R6); `Evals.validate_feature_flags`; and the
      app-logic `rule.main`. (`xi_correct`, the `Boolean.all` finalisation and its assert, and the
-     `should_verify` mux left this list on 2026-08-02 — they are R8.)
+     `should_verify` mux left this list on 2026-08-02 — they are R8. ⚑ **`sponge_after_index` LEFT
+     IT on 2026-08-02 too** — it is §3c, and the entry it used to carry read "the plonk index is
+     hashed here from `N_HM_FIX = 58` FIXTURE words, not from the actual commitments".)
+
+     ⚑ **`ft_comm`'s own 8-term MSM IS THE HEAD OF THIS LIST, and here is its exact shape and its
+     exact blocker.** `Common.ft_comm` (`common.ml:238-256`) is
+     `perm·sigma_comm_last + chunked_t_comm − zeta_to_domain_size·chunked_t_comm`, where
+     `chunked_t_comm` is a 7-chunk Horner in `zeta_to_srs_length` — **eight `scale_fast2`s and eight
+     adds**, and `step_verifier.ml:243-245` scales every one of them at
+     `~num_bits:Field.size_in_bits = 255`, i.e. `chunks_needed ~num_bits:254 = 51` 5-bit chunks =
+     `51·2 + 2 = 104` rows each. **8 × 104 + 8 = 840 rows.** ⚠ Its uniform 255 is why #2's warning
+     is worth repeating: `multiscale_known`'s 40 scalars are NOT uniform (5×255 + 3×255 + 22×128 +
+     1×10), so widening R3 the same way would emit 25 chunks of leading zeros per challenge word.
+     The DATA is not the blocker and says so: `MinaStepPrevCommitments.T_COMM_XY` is the block's own
+     7 `t_comm` chunks and `MinaWrapGroupGate.SIGMA6` is `sigma_comm_last`, both already on disk and
+     both already `#guard`ed on-curve. What is undone is the sub-circuit: a second `VarBaseMul`
+     region at `msmChunks = 51`, its scalars wired to R6's `zeta_to_srs_length` /
+     `zeta_to_domain_size` and R6's `perm` rather than to fresh witnesses, and R4 round 2's base
+     (`COMBINE_XY[3]`) becoming that MSM's OUTPUT instead of an `Inner_curve.constant`.
+     ⚠ AND THE THING NOT TO DO: absorbing the 7 `t_comm` commitments into R1 WITHOUT the MSM would
+     move 14 words off the free list while changing nothing a prover can do — an absorbed commitment
+     that no sub-circuit consumes is still ground freely. It comes off the list when the MSM
+     consumes it.
   6. Every challenge is derived at ONE width (128 bits, 8 `EndoMulScalar` rows). Upstream also uses
      16/32/64/192/256-bit `to_field_checked` (the 1/2/4/12/16-row runs in the table). ⚑ Since #1 the
      assembly emits `2·chals + 5` chains where it emitted `chals + 2`, so the 8-row family is now
@@ -419,10 +450,10 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      ⚑ **NOT RETIRABLE WITHOUT A SUB-CIRCUIT THAT
      DOES NOT EXIST.** `verified` is `Step_verifier.verify` (`step_main.ml:88-107`) — the whole wrap
      kimchi verifier: `check_bulletproof` (`equal_g`, the `scale_fast` of `sg`, the IPA fold), the
-     `x_hat`/`ft_comm` commitment MSMs against REAL commitments, `group_map`, and
-     `sponge_after_index` over the actual plonk index. Those are #3 and #5's named-and-not-assembled
-     list. Deriving the bit from anything less would be a value that LOOKS derived; the honest state
-     is the witness plus this sentence.
+     `x_hat`/`ft_comm` commitment MSMs against REAL commitments, and `group_map`. Those are #3 and
+     #5's named-and-not-assembled list — one item SHORTER since 2026-08-02, because
+     `sponge_after_index` over the actual plonk index is now §3c. Deriving the bit from anything
+     less would be a value that LOOKS derived; the honest state is the witness plus this sentence.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
@@ -626,10 +657,13 @@ commitment `0` — and every round past them is a `bullet_reduce` `(L,R)`, all o
 def ipaAbsorbs (r : Nat) : Bool := if r + 1 < N_WDB then wdbAbsorbed (r + 1) else true
 
 /-- The rounds whose bases the transcript absorbs, in schedule order: round `absRoundList[k]`'s
-commitment is what transcript block `k` absorbs. Capped at `absorbs` blocks (§12 pins that the cap
-does not bind at either shape, so no absorbed commitment silently becomes a constant). -/
+commitment is what transcript block `k + 1` absorbs. ⚑ Block **0** is not in this list — it is
+`index_digest`, which upstream absorbs BEFORE any commitment (`absorb sponge Field index_digest`,
+`step_verifier.ml:535`, ahead of `Vector.iter ~f:(absorb sponge PC) sg_old` at `:537`). Capped at
+`absorbs − 1` blocks (§12 pins that the cap does not bind at either shape, so no absorbed
+commitment silently becomes a constant). -/
 def absRoundList (s : StepShape) : List Nat :=
-  ((List.range s.ipaRounds).filter ipaAbsorbs).take s.absorbs
+  ((List.range s.ipaRounds).filter ipaAbsorbs).take (s.absorbs - 1)
 
 /-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
 
@@ -677,13 +711,37 @@ count is EVEN because the `Opt` region must begin on a rate-2 block boundary: up
 `Opt_sponge` masks per FIELD ELEMENT, this segment's `Field.if_` mux is per BLOCK, and an odd
 prefix would put a `Not_opt` word and an `Opt` word under one `keep` bit. -/
 def vHm (s : StepShape) (i : Nat) : PVar := xv (baseHm s + i)
-def N_HM_FIX : Nat := 58
+/-- `Plonk_verification_key_evals`' commitment count: `sigma_comm` 7 + `coefficients_comm` 15 + six
+selectors (`plonk_verification_key_evals.ml:8-19`). -/
+def N_IDX_COMMS : Nat := 28
+/-- …as field elements, `Inner_curve.to_field_elements` flattened — `sponge_after_index`'s WHOLE
+input (`step_verifier.ml:1149-1157`). -/
+def N_IDX_WORDS : Nat := 2 * N_IDX_COMMS
+/-- ⚑ The APP-STATE words, and since 2026-08-02 the only fixtures left in the `Not_opt` prefix.
+`to_field_elements_without_index` puts `state_to_field_elements app_state` first; the app state is
+the INDUCTIVE RULE's own statement and no `verify_one` sub-circuit derives it, so it is a witness
+here and is named as one rather than counted as derived. -/
+def N_HM_APP : Nat := 2
+def N_HM_FIX : Nat := N_IDX_WORDS + N_HM_APP
+
+/-! ### The PLONK-INDEX region (§3c) — `sponge_after_index`'s own variables.
+
+Only the index commitments the FOLD does not already carry need variables of their own; the other
+27 ARE `combine_split_commitments`' `.const` bases and segment C absorbs THOSE variables. The
+region is allocated in full at every shape so no id moves when a round becomes available. -/
+def baseIdx (s : StepShape) : Nat := baseHm s + N_HM_APP
+def vIdxX (s : StepShape) (k : Nat) : PVar := xv (baseIdx s + 2 * k)
+def vIdxY (s : StepShape) (k : Nat) : PVar := xv (baseIdx s + 2 * k + 1)
+/-- ⚑ **`index_digest`** — lane `j` of `Sponge.squeeze_field (Sponge.copy sponge_after_index)`
+(`step_verifier.ml:529-534`). Lane 0 is the word R1's transcript absorbs FIRST. -/
+def vIdxD (s : StepShape) (j : Nat) : PVar := xv (baseIdx s + N_IDX_WORDS + j)
+def N_IDX_VARS : Nat := N_IDX_WORDS + 3
 
 /-- Variables one sponge segment consumes: `3(nb+sq+1)` state lanes, `2·nb` post lanes, and for a
 MASKED segment the `after`/`d`/`p`/`keep` mux cells. -/
 def segVarCount (nb sq : Nat) : Nat := 3 * (nb + sq + 1) + 2 * nb + 9 * nb + nb
 
-def baseSegA (s : StepShape) : Nat := baseHm s + N_HM_FIX
+def baseSegA (s : StepShape) : Nat := baseIdx s + N_IDX_VARS
 /-- Segment A (the opt-sponge): `2·bRounds` masked words, one squeeze. -/
 def nbA (s : StepShape) : Nat := (2 * s.bRounds + 1) / 2
 def baseSegB (s : StepShape) : Nat := baseSegA s + segVarCount (nbA s) 1
@@ -887,11 +945,11 @@ transcript block `b` absorbs — one σ class spanning the `Poseidon` sponge and
 
 ⚠ THE RESIDUE, named rather than absorbed. The VALUES are a real proof's — `MinaStepPrevCommitments`
 reads them out of the `MinaWrap*` gates for devnet block 539508 — and since §7b every absorbed one
-also carries `Inner_curve.typ`'s `assert_on_curve`. Two things are still undone and neither is a
-theorem: `multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words (the packed Wrap statement;
-#2 has the word-for-word census) and here are still the circuit's own derived challenges; and
-segment C's `sponge_after_index` prefix is still 58 fixture words rather than the real plonk
-index. -/
+also carries `Inner_curve.typ`'s `assert_on_curve`. What is still undone and is not a theorem:
+`multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words (the packed Wrap statement; #2 has
+the word-for-word census) and here are still the circuit's own derived challenges. ⚑ The second
+residue this note used to carry — "segment C's `sponge_after_index` prefix is still 58 fixture words
+rather than the real plonk index" — is §3c, retired 2026-08-02. -/
 
 /-- Where a curve base comes from. -/
 inductive BaseSrc where
@@ -907,11 +965,13 @@ inductive BaseSrc where
 /-- IPA round `r`'s base source. -/
 def ipaSrc (s : StepShape) (r : Nat) : BaseSrc :=
   match (absRoundList s).findIdx? (fun x => x == r) with
-  | some k => .absorbed k
+  | some k => .absorbed (k + 1)
   | none => .const
 
-/-- Transcript block `b`'s commitment, as an IPA round — the inverse of `ipaSrc`. -/
-def blockRound (s : StepShape) (b : Nat) : Option Nat := (absRoundList s)[b]?
+/-- Transcript block `b`'s commitment, as an IPA round — the inverse of `ipaSrc`. ⚑ Block 0 carries
+NO commitment: it is `index_digest`'s block. -/
+def blockRound (s : StepShape) (b : Nat) : Option Nat :=
+  if b == 0 then none else (absRoundList s)[b - 1]?
 
 /-- ⚑ R3 is `multiscale_known` — the x_hat MSM — and every one of ITS bases is an SRS Lagrange
 commitment inside `Inner_curve.constant`. There is no absorbed base in R3, upstream or here. -/
@@ -936,37 +996,135 @@ def msmBaseOf (bs : List (Nat × Nat)) (i : Nat) : Nat × Nat := bs.getD i (0, 0
 def ipaBaseOf (s : StepShape) (bs : List (Nat × Nat)) (r : Nat) : Nat × Nat :=
   bs.getD (s.msmTerms + r) (0, 0)
 
-/-- A transcript word that carries NO commitment — the blocks standing for `t_comm`, the index
-digest and the scalar absorptions, which the assembled sub-circuits do not consume.
+/-- `Inner_curve.constant`: ONE `Generic` row pinning BOTH coordinates of a base the verifier fixes.
+Half 1 is `w₀ − x = 0` over col 0, half 2 is `w₃ − y = 0` over col 3. -/
+def baseConstRow (vx vy : PVar) (p : Nat × Nat) : SRow :=
+  genericRow (some vx) none none (some vy) none none (cConst (p.1 : Int) ++ cConst (p.2 : Int))
+
+/-! ## §3c — `sponge_after_index`, DERIVED (the other half of Fiat–Shamir).
+
+`step_verifier.ml:1149-1157`, verbatim:
+
+    let sponge_after_index index =
+      let sponge = Sponge.create sponge_params in
+      Array.iter (Types.index_to_field_elements ~g:Inner_curve.to_field_elements index)
+        ~f:(fun x -> Sponge.absorb sponge (`Field x)) ; sponge
+
+with `index = d.wrap_key` (`step_main.ml:61`) — the SAME `Plonk_verification_key_evals.t` the fold
+consumes as `~verification_key:m`. Two things read it, and both are here:
+
+  * **`index_digest`** (`:529-535`) — `Sponge.squeeze_field (Sponge.copy sponge_after_index)`, and
+    `absorb sponge Field index_digest` is the FIRST thing the transcript swallows, ahead of
+    `sg_old`. That is the wire that makes every transcript challenge a function of the verifier key.
+  * **`hash_messages_for_next_step_proof`** (`:1158-1168`) — `Sponge.copy after_index`, then the
+    app state / commitments / challenges. Segment C's `Not_opt` prefix IS that copy: absorbing the
+    56 index words into a fresh sponge and continuing gives the same state a copy does, and 56 is
+    even so the continuation starts on a rate-2 block boundary.
+
+⚑ **27 OF THE 28 COMMITMENTS ARE ALREADY VARIABLES IN THIS ASSEMBLY.** `combine_split_commitments`
+carries `sigma_comm[0..5]`, `coefficients_comm[0..14]` and the six selector commitments
+(`step_verifier.ml:583-617`) as `.const` fold bases, each already pinned by an `Inner_curve.constant`
+row. Segment C absorbs THOSE VERY VARIABLES, so the plonk index the sponge hashes and the plonk
+index the fold multiplies by are ONE object rather than two agreeing copies. The 28th,
+`sigma_comm[6]`, is `Common.ft_comm`'s `sigma_comm_last` (`common.ml:243-246`) and the fold does not
+carry it, so it gets a pinned variable of its own here.
+
+⚠ WHAT THIS DOES NOT DO: the 56 words are the verifier key, which a PROVER cannot choose either way
+— the substance is that they are no longer FREE, i.e. the sponge state is a function of the key
+rather than of a witness. -/
+
+/-- VK commitment `k`, in `index_to_field_elements` order, as an IPA fold round — `none` for
+`sigma_comm[6]`, which `combine_split_commitments` does not carry. Round `r`'s base is
+`COMBINE_XY[r+1]`, so the census indices 41..46 / 26..40 / 5..10 become rounds 40..45 / 25..39 /
+4..9. -/
+def idxRoundOf (k : Nat) : Option Nat :=
+  if k < 6 then some (40 + k)
+  else if k == 6 then none
+  else if k < 22 then some (25 + (k - 7))
+  else some (4 + (k - 22))
+
+/-- …and whether THIS shape has that round as a constant fold base. A shape too small to reach the
+round falls back to a pinned variable of its own, so the derivation holds at every shape. -/
+def idxSrc (s : StepShape) (k : Nat) : Option Nat :=
+  match idxRoundOf k with
+  | some r => if r < s.ipaRounds && ipaSrc s r == BaseSrc.const then some r else none
+  | none => none
+
+/-- The VARIABLE `sponge_after_index` absorbs at coordinate `j` of index commitment `k`. -/
+def idxVar (s : StepShape) (k j : Nat) : PVar :=
+  match idxSrc s k with
+  | some r => if j == 0 then ipx s (qT s r) else ipy s (qT s r)
+  | none => if j == 0 then vIdxX s k else vIdxY s k
+
+/-- …and its VALUE, out of `MinaStepPrevCommitments.INDEX_XY`. -/
+def idxVal (k j : Nat) : Nat :=
+  let p := Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD k (0, 0)
+  if j == 0 then p.1 else p.2
+
+/-- The index commitments this shape must pin itself — everything the fold does not already hold. -/
+def idxOwn (s : StepShape) : List Nat :=
+  (List.range N_IDX_COMMS).filter (fun k => idxSrc s k == none)
+
+/-- `Inner_curve.constant` rows for those. -/
+def idxConstRows (s : StepShape) : List SRow :=
+  (idxOwn s).map (fun k =>
+    baseConstRow (vIdxX s k) (vIdxY s k)
+      (Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD k (0, 0)))
+
+/-- `sponge_after_index`'s trajectory over a WORD FUNCTION — `idxStatesWith ws ! b` is the state
+entering absorb block `b`. Parametrised so §12d can re-run it on a prover's chosen input. -/
+def idxStatesWith (ws : Nat → Nat) : List (List Nat) :=
+  (List.range N_IDX_COMMS).foldl
+    (fun acc b =>
+      let st := acc.getLastD [0, 0, 0]
+      acc ++ [ Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
+                 [ (st.getD 0 0 + ws (2 * b)) % pN, (st.getD 1 0 + ws (2 * b + 1)) % pN
+                 , st.getD 2 0 ] ])
+    [[0, 0, 0]]
+
+/-- The honest word at flat position `i` of the index absorption. -/
+def idxWordAt (i : Nat) : Nat := idxVal (i / 2) (i % 2)
+
+/-- ⚑ `sponge_after_index`'s STATE after all 28 absorptions — a closed function of the verifier key,
+shape-independent by construction (the prefix is the same 56 words at every shape). -/
+def idxAfterState : List Nat := (idxStatesWith idxWordAt).getLastD [0, 0, 0]
+
+/-- …one more permutation, and lane 0 of it IS `index_digest`. -/
+def idxDigestState : List Nat :=
+  Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm idxAfterState
+def indexDigest : Nat := idxDigestState.getD 0 0
+
+/-- A transcript word that carries NEITHER a commitment NOR the index digest — the blocks standing
+for `t_comm` and the scalar absorptions, which the assembled sub-circuits do not consume.
 
 ⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** A `vMsg`
 word is a free variable: no row pins it, no sub-circuit derives it, and the absorb row eats it. At
-`shapeStep` that is `absorbs − 48 = 23` blocks, i.e. **46 of the 142 absorbed words**, and a prover
-who grinds them steers every squeeze — not by breaking a decomposition (all three `lowest_128_bits`
-range-check both parts since 2026-08-02) but by choosing the sponge's INPUT. What each of those
-words should be is exactly #5's not-assembled list: the real `sponge_after_index` over the plonk
-index, `ft_comm`'s `t_comm` Horner, and the `Shifted_value` scalar absorptions. Until those are
-assembled, "no challenge is prover-chosen GIVEN the transcript" is the true statement and "the
-transcript is derived" is not. §12 pins the 23. -/
+`shapeStep` that is 23 blocks less block 0's derived lane — **45 of the 142 absorbed words** — and a
+prover who grinds them steers every squeeze, not by breaking a decomposition (all three
+`lowest_128_bits` range-check both parts since 2026-08-02) but by choosing the sponge's INPUT. What
+they should be is now a SHORTER list than it was this morning: `ft_comm`'s `t_comm` Horner (7
+commitments, 14 words) and the `Shifted_value` scalar absorptions. `sponge_after_index` left it
+(§3c). §12 pins the count as an equality. -/
 def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
 
 /-- ⚑ The VARIABLE absorbed at lane `j` of transcript block `b`. For a block that carries one of the
-previous proof's commitments this IS the fold's base-point variable. -/
+previous proof's commitments this IS the fold's base-point variable; for block 0 lane 0 it is
+`index_digest`, the squeeze of `sponge_after_index`.
+
+⚠ Lane 1 of block 0 is still a `vMsg`: upstream `index_digest` is a single `Field` absorption and
+`sg_old[0]`'s x-coordinate shares its rate-2 block, whereas this file models one commitment per
+block. That is the SAME per-block-vs-per-element simplification the opt-sponge prefix carries, named
+once and not twice. -/
 def msgVar (s : StepShape) (b j : Nat) : PVar :=
   match blockRound s b with
   | some r => if j == 0 then ipx s (qT s r) else ipy s (qT s r)
-  | none => vMsg s b j
+  | none => if b == 0 && j == 0 then vIdxD s 0 else vMsg s b j
 
 /-- …and its VALUE. -/
 def msgValOf (s : StepShape) (bs : List (Nat × Nat)) (b j : Nat) : Nat :=
   match blockRound s b with
   | some r => let p := ipaBaseOf s bs r; if j == 0 then p.1 else p.2
-  | none => msgVal b j
-
-/-- `Inner_curve.constant`: ONE `Generic` row pinning BOTH coordinates of a base the verifier fixes.
-Half 1 is `w₀ − x = 0` over col 0, half 2 is `w₃ − y = 0` over col 3. -/
-def baseConstRow (vx vy : PVar) (p : Nat × Nat) : SRow :=
-  genericRow (some vx) none none (some vy) none none (cConst (p.1 : Int) ++ cConst (p.2 : Int))
+  | none => if b == 0 && j == 0 then indexDigest else msgVal b j
 
 /-! ## §4 — R1, the TRANSCRIPT SPONGE.
 
@@ -1019,11 +1177,15 @@ structure SpongeData where
   msgs : List (List Nat)
   deriving Repr, Inhabited
 
-def runSponge (s : StepShape) (bs : List (Nat × Nat)) : SpongeData :=
+/-- R1's trajectory, PARAMETRISED on the value of `index_digest` — the transcript's first absorbed
+word (§3c). One implementation, so §12d's grinding control re-runs the assembly's own sponge rather
+than a second copy of it. -/
+def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) : SpongeData :=
   (List.range s.blocks).foldl
     (fun d b =>
       let pre := d.states.getLastD [0, 0, 0]
-      let ms := if b < s.absorbs then [msgValOf s bs b 0, msgValOf s bs b 1] else []
+      let ms := if b < s.absorbs then
+          [ (if b == 0 then dig else msgValOf s bs b 0), msgValOf s bs b 1 ] else []
       let post :=
         if b < s.absorbs then
           [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
@@ -1032,6 +1194,10 @@ def runSponge (s : StepShape) (bs : List (Nat × Nat)) : SpongeData :=
       { states := d.states ++ [ss.getLastD post], perms := d.perms ++ [ss]
       , msgs := d.msgs ++ [ms] })
     { states := [[0, 0, 0]], perms := [], msgs := [] }
+
+/-- …at the DERIVED digest, which is the only instance the assembly emits. -/
+def runSponge (s : StepShape) (bs : List (Nat × Nat)) : SpongeData :=
+  runSpongeWith s bs indexDigest
 
 /-- **R1's rows.** -/
 def transcriptRows (s : StepShape) (d : SpongeData) (wired : Bool) : List SRow :=
@@ -2401,7 +2567,8 @@ def frSpec (s : StepShape) (dg : PVar × Nat) (ftVal : Nat) : SegSpec :=
           , (vColW s k, evVal (EV_PREFIX + k) 1) ])
   , squeezes := 2, masked := false }
 
-/-- A deterministic fixture standing for one of the plonk-index / app-state words. -/
+/-- A deterministic fixture standing for one of the two APP-STATE words. Since §3c the plonk-index
+half of this prefix is derived and this covers only `state_to_field_elements app_state`. -/
 def hmVal (i : Nat) : Nat := (13 + 3000017 * i + 5 * i * i) % pN
 
 /-- ⚑ Segment C's per-block `keep`, and the SECOND consumer of `branch_data`'s mask.
@@ -2417,8 +2584,23 @@ def hmKeepAt (s : StepShape) (ms : List Nat) (b : Nat) : PVar × Nat :=
            else if w - (N_HM_FIX + 4) < s.bRounds then 0 else 1
   (vMask s i, ms.getD i 0)
 
+/-- **`index_digest`'s rows** (§3c) — ONE permutation over segment C's own state after the 28 index
+absorptions, which is `Sponge.squeeze_field (Sponge.copy sponge_after_index)`
+(`step_verifier.ml:529-534`). The input lanes are segment C's state variables, so the copy is a σ
+class and not a recomputation. -/
+def idxDigestRows (s : StepShape) (wired : Bool) : List SRow :=
+  permBlockRows (sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) 0)
+                (sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) 1)
+                (sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) 2)
+                (vIdxD s 0) (vIdxD s 1) (vIdxD s 2) (permStates idxAfterState)
+  ++ [probeRow wired (vIdxD s 0) (vIdxD s 1)]
+
 def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) (d : SpongeData) : SegSpec :=
-  { ws := (List.range N_HM_FIX).map (fun i => (vHm s i, hmVal i))
+  -- ⚑ §3c: the `Not_opt` prefix is `sponge_after_index`'s own absorption — the 28 plonk-index
+  -- commitments as 56 coordinates, 27 of them THE FOLD'S OWN `.const` base variables — then the two
+  -- app-state words, which are the only fixtures left in it.
+  { ws := (List.range N_IDX_WORDS).map (fun i => (idxVar s (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
+      ++ (List.range N_HM_APP).map (fun i => (vHm s i, hmVal i))
       ++ [ (mpx s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).1)
          , (mpy s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).2)
          , (ipx s (qSum s (s.ipaRounds - 2)), (v.sums.getLastD (0, 0)).1)
@@ -2864,7 +3046,9 @@ def absRows (t : StepData) (wired : Bool) : List SRow :=
   let s := t.sh
   segRows (baseSegA s) t.specA t.segA wired
   ++ segRows (baseSegB s) t.specB t.segB wired
+  ++ idxConstRows s
   ++ segRows (baseSegC s) t.specC t.segC wired
+  ++ idxDigestRows s wired
   ++ rDefRows s t.defc wired
 
 /-- **THE ROW SCHEDULE**, in the order `verify_one` runs it. -/
@@ -2961,8 +3145,12 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (List.range (s.cipEvals + 1)).map (fun i => (vCa s i, (t.df.ca.getD i 0 : Int)))
   -- R6: the compiled ft program's slots.
   ++ aEnvOf (baseFtS s) t.ft.fp.prog t.ft.vals
-  -- R7: the three sponge segments and the fixture words of `hash_messages_for_next_step_proof`.
-  ++ (List.range N_HM_FIX).map (fun i => (vHm s i, (hmVal i : Int)))
+  -- R7: the three sponge segments, `sponge_after_index`'s own pinned commitments and its squeeze,
+  -- and the two APP-STATE words that are all that is left of the old fixture prefix (§3c).
+  ++ (List.range N_HM_APP).map (fun i => (vHm s i, (hmVal i : Int)))
+  ++ (idxOwn s).flatMap (fun k =>
+      [ (vIdxX s k, (idxVal k 0 : Int)), (vIdxY s k, (idxVal k 1 : Int)) ])
+  ++ (List.range 3).map (fun j => (vIdxD s j, (idxDigestState.getD j 0 : Int)))
   ++ segEnv (baseSegA s) t.specA t.segA
   ++ segEnv (baseSegB s) t.specB t.segB
   ++ segEnv (baseSegC s) t.specC t.segC
@@ -3138,8 +3326,9 @@ than reverse-engineered from a row count:
   * `ipaRounds = 76` = 46 `combine_split_commitments` folds (`COMBINE_XY`'s 47 commitments, less the
     one the accumulator starts at) + `bullet_reduce`'s 30 `(L,R)` endos. Both lists are on disk at
     exactly those lengths.
-  * `absorbs = 71` covers the 48 blocks that carry a commitment (18 fold + 30 gammas) plus the
-    `t_comm`, index-digest and scalar absorptions the assembled sub-circuits do not consume.
+  * `absorbs = 71` is block 0 (⚑ `index_digest`, §3c — upstream's own first absorption) plus the 48
+    blocks that carry a commitment (18 fold + 30 gammas) plus the 22 `t_comm` / scalar-absorption
+    blocks the assembled sub-circuits do not consume.
 
 `chals = 23` is β, γ, α, ζ, ξ, r, u, c + the 15 `bullet_reduce` squeezes; `msmChunks = 26` is the
 128-bit `scale_fast2` — ⚑ #2 has the MEASURED per-word width census, and 8 of the 40 words are
@@ -3157,7 +3346,10 @@ def shapeStep : StepShape :=
 evaluation columns out of it (`EV_PREFIX = 4` + 43), and R7 absorbs those same 43 at two points. A
 shape with fewer columns is not a smaller `verify_one`, it is a different one. -/
 def shapeSmoke : StepShape :=
-  { absorbs := 2, chals := 5, emsRows := 8
+  -- ⚑ `absorbs` is 3 and not 2 since §3c: block 0 is `index_digest`'s, so the two absorbed
+  -- commitments need blocks 1 and 2. It also gives the smoke shape ONE `vMsg` word, which is what
+  -- lets the smoke pins see the free-word residue at all.
+  { absorbs := 3, chals := 5, emsRows := 8
   , msmTerms := 3, msmChunks := 26
   -- ⚑ `bRounds` is EVEN so the opt-sponge's rate-2 blocks do not straddle the two previous proofs:
   -- each proof contributes `bRounds` challenge words and a block absorbs two, so a block belongs to
@@ -3208,9 +3400,11 @@ def totalRowsS : Nat := pubS + nRowsS
 -- ⚑ SEVEN GATE TYPES in one circuit — the census. Eleven `Poseidon` rows per sponge block, which
 -- is upstream's own run length (`sponge_inputs.ml:47-64` / `plonk_constraint_system.ml:1450-1530`,
 -- and MEASURED in Mina's `step-zkapp-proved` blob: every `Poseidon` run there is exactly 11).
--- FOUR sponges now: R1's transcript sponge and R7's three absorption segments.
+-- FOUR sponges now: R1's transcript sponge and R7's three absorption segments — **plus the ONE
+-- extra permutation §3c's `index_digest` is**, `Sponge.squeeze_field (Sponge.copy
+-- sponge_after_index)`, which is why the `+ 1` is here and not hidden in a segment's block count.
 #guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length
-        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
+        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks + 1)
 -- ⚑ `2·chals + 5` `to_field_checked` chains, 8 `EndoMulScalar` rows each — and the composition of
 -- that number IS the ledger of two retirements. Per transcript challenge TWO chains: the challenge
 -- itself and `lowest_128_bits`' `assert_128_bits hi` (#1). Plus §8g's ξ (one, no split) and its r
@@ -3558,16 +3752,40 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 #guard (absRoundList shapeSmoke).length == 2
 -- …and R3 carries NO absorbed base, which is `multiscale_known`'s own shape.
 #guard (List.range shapeStep.msmTerms).all (fun i => msmSrc i == BaseSrc.const)
--- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently. A block
--- with no commitment absorbs two `msgVal` fixtures that no row pins — 23 blocks, 46 words, out of
--- `2·absorbs = 142`. That is the last place a prover still steers Fiat-Shamir, and it is #5's
--- not-assembled list (`sponge_after_index`, `ft_comm`'s `t_comm`, the scalar absorptions), not a
--- theorem. Equality, so assembling one of them moves this number.
+-- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently, and
+-- **stated at `shapeStep` because the smoke shape has almost none of them.** A block with no
+-- commitment absorbs `msgVal` fixtures that no row pins; block 0 lane 0 is no longer one of them
+-- (§3c wires `index_digest` there), so of `2·absorbs = 142` absorbed words **45 are free where 46
+-- were this morning**. Equality, so assembling one of the rest moves this number. What remains is
+-- `ft_comm`'s `t_comm` Horner (7 commitments, 14 words) and the `Shifted_value` scalar absorptions.
 #guard shapeStep.absorbs - (absRoundList shapeStep).length == 23
 #guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 23
--- …and at the SMOKE shape every absorb block carries a commitment, which is why the smoke pins
--- cannot see this one: it is stated at the committed shape on purpose.
-#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none) == 0
+#guard (List.range shapeStep.absorbs).foldl
+        (fun n b => n + (List.range 2).countP (fun j =>
+           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 45
+-- …and exactly ONE absorbed word of R1's transcript is `index_digest`, at BLOCK 0 — upstream's own
+-- position (`absorb sponge Field index_digest` precedes `Vector.iter ~f:(absorb sponge PC) sg_old`,
+-- `step_verifier.ml:535,537`).
+#guard (List.range shapeStep.absorbs).foldl
+        (fun n b => n + (List.range 2).countP (fun j =>
+           msgVar shapeStep b j == vIdxD shapeStep 0)) 0 == 1
+#guard msgVar shapeStep 0 0 == vIdxD shapeStep 0
+#guard msgValOf shapeStep (stepBases shapeStep) 0 0 == indexDigest
+-- …and the SEGMENT-C count, which is the other half and the bigger one: the `Not_opt` prefix was
+-- 58 `hmVal` fixtures and is now `sponge_after_index`'s 56 derived words plus the two app-state
+-- words. **58 free → 2.**
+#guard (List.range N_HM_FIX).countP (fun i =>
+  (List.range N_HM_APP).any (fun a =>
+    (tS.specC.ws.getD i (xv 0, 0)).1 == vHm shapeSmoke a)) == N_HM_APP
+#guard (List.range N_HM_APP).all (fun a =>
+  (tS.specC.ws.getD (N_IDX_WORDS + a) (xv 0, 0)).1 == vHm shapeSmoke a)
+-- …and the other 56 are the plonk index, word for word, in `index_to_field_elements` order.
+#guard (List.range N_IDX_WORDS).all (fun i =>
+  (tS.specC.ws.getD i (xv 0, 0)) == (idxVar shapeSmoke (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
+#guard N_HM_APP == 2 && N_IDX_WORDS == 56 && N_HM_FIX == 58
+-- …and at the SMOKE shape only block 0's second lane is free, which is why the transcript count
+-- above is stated at the committed shape on purpose.
+#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none) == 1
 -- …so the pin rows are exactly the constants, one `Generic` row per point.
 #guard (msmBaseRows shapeSmoke tS.msm).length == shapeSmoke.msmTerms
 #guard (ipaBaseRows shapeSmoke tS.ipa).length
@@ -3878,6 +4096,157 @@ def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
 -- …and they really are the finalize program's slots, not a parallel pair: the values agree.
 #guard tS.fin.vals.getD tS.fin.fp.slots.xiHi 0 == tS.fin.xiHi
 #guard tS.fin.vals.getD tS.fin.fp.slots.xiActual 0 == tS.fin.xiStmt
+
+-- ── §12d — ⚑ THE SPONGE **INPUT** IS DERIVED: `sponge_after_index` ─────────────────────────────
+-- §12c and §12c′ close one half of Fiat–Shamir: GIVEN the sponge state, no challenge here is
+-- prover-chosen. This is the other half. Until 2026-08-02 the plonk index the transcript starts
+-- from was 58 `hmVal` fixtures no row pinned, so a prover chose the sponge's INPUT and steered every
+-- squeeze without breaking a single decomposition. `step_verifier.ml:1149-1157` derives it —
+-- `Sponge.absorb` of `index_to_field_elements index`, the wrap verifier key's 28 commitments — and
+-- `:529-535` squeezes a copy of that sponge and absorbs the result as the transcript's FIRST word.
+
+-- ⚑ THE 56 ABSORBED WORDS ARE THE PLONK INDEX, in `index_to_field_elements` order
+-- (`side_loaded_verification_key.ml:159-183`: `sigma_comm @ coefficients_comm @` six selectors).
+#guard Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.length == N_IDX_COMMS
+#guard (List.range N_IDX_WORDS).all (fun i =>
+  idxWordAt i == Dregg2.Bridge.MinaStepPrevCommitments.INDEX_WORDS.getD i 0)
+
+-- ⚑ …AND 27 OF THE 28 **ARE THE FOLD'S OWN `.const` BASES** — the plonk index the sponge hashes and
+-- the plonk index `combine_split_commitments` multiplies by are ONE object, not two copies that
+-- agree today. Stated at `shapeStep`: the smoke shape's 3 IPA rounds cannot reach round 40, so it
+-- pins all 28 itself, which is why the σ pins below are smoke and the census pins are step.
+#guard (List.range N_IDX_COMMS).countP (fun k => idxSrc shapeStep k != none) == 27
+#guard idxOwn shapeStep == [6]
+#guard idxOwn shapeSmoke == List.range N_IDX_COMMS
+#guard (List.range N_IDX_COMMS).all (fun k =>
+  match idxSrc shapeStep k with
+  | some r => ipaSrc shapeStep r == BaseSrc.const
+              && REAL_IPA_XY.getD r (0, 0)
+                 == Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD k (0, 0)
+  | none => k == 6)
+-- …27 DISTINCT rounds, so two index words cannot be quietly sharing one base.
+#guard ((List.range N_IDX_COMMS).filterMap (idxSrc shapeStep)).dedup.length == 27
+-- ⚑ …and the ONE constant fold round the index census does NOT claim is round 2 — `COMBINE_XY[3]`,
+-- which is `ft_comm` (#5, not assembled). So the fold's 28 constants are exactly
+-- {`ft_comm`} ∪ {the plonk index}, and the census is COMPLETE rather than a subset that fits.
+#guard ((List.range shapeStep.ipaRounds).filter (fun r =>
+          ipaSrc shapeStep r == BaseSrc.const
+          && !(((List.range N_IDX_COMMS).filterMap (idxSrc shapeStep)).contains r))) == [2]
+-- …and the 28th index commitment, `sigma_comm[6]`, is the one `Vector.split m.sigma_comm` hands to
+-- `Common.ft_comm` as `sigma_comm_last` (`common.ml:243-246`) — hence pinned here and not routed.
+#guard idxSrc shapeStep 6 == none && idxRoundOf 6 == none
+
+-- ⚑ SEGMENT C's `Not_opt` PREFIX **IS** `sponge_after_index`. Its state after the 28 index blocks
+-- is exactly the sponge upstream copies (`Sponge.copy after_index`, `:1163`), and `index_digest` is
+-- one more permutation of that state.
+#guard tS.segC.states.getD (N_IDX_WORDS / 2) [] == idxAfterState
+#guard idxDigestState == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm idxAfterState
+#guard indexDigest == idxDigestState.getD 0 0
+-- …and it is not degenerate: the state moved off zero, the digest is nonzero, and it is a DIFFERENT
+-- value from segment C's own final squeeze (which absorbs 30 more words after it).
+#guard idxAfterState != [0, 0, 0]
+#guard indexDigest != 0
+#guard indexDigest != (tS.segC.states.getLastD []).getD 0 0
+
+-- ⚑ THE WIRES. Each pinned index coordinate is read by its `Inner_curve.constant` row and by
+-- segment C's own absorb row — two cells, an equality, so deleting either leg reds.
+#guard (List.range N_IDX_COMMS).all (fun k =>
+  (classCells posS (vIdxX shapeSmoke k)).length == 2
+  && (classCells posS (vIdxY shapeSmoke k)).length == 2)
+-- …and `index_digest`'s three output lanes: lane 0 is read by the digest permutation's closing
+-- `Zero` row, by its σ-only probe, AND by R1's block-0 absorb row — that last cell is the whole
+-- point, and it is what a `.length ≥ 2` floor would not have caught.
+#guard (classCells posS (vIdxD shapeSmoke 0)).length == 3
+#guard (classCells posS (vIdxD shapeSmoke 1)).length == 2
+#guard (classCells posS (vIdxD shapeSmoke 2)).length == 1
+#guard ((classCells posS (vIdxD shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
+
+/-- The state entering the LAST index absorb block: everything before it is untouched by the word
+the prover grinds, so a candidate costs TWO permutations rather than fifty-eight. -/
+def idxPreLast : List Nat := (idxStatesWith idxWordAt).getD (N_IDX_COMMS - 1) []
+/-- `index_digest` when the LAST index word is `w` and every earlier one is honest. -/
+def idxDigestAtLast (w : Nat) : Nat :=
+  (Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
+    (Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
+      [ (idxPreLast.getD 0 0 + idxWordAt (N_IDX_WORDS - 2)) % pN
+      , (idxPreLast.getD 1 0 + w) % pN, idxPreLast.getD 2 0 ])).getD 0 0
+
+-- the helper reproduces the assembly's own digest on the honest word, so what follows measures the
+-- grind and not a second sponge.
+#guard idxDigestAtLast (idxWordAt (N_IDX_WORDS - 1)) == indexDigest
+
+/-- ⚑ THE TARGET THE PROVER CHOOSES. Any predicate on the squeeze will do; this one asks for a
+digest divisible by 16, which the honest key does not give. -/
+def GRIND_MOD : Nat := 16
+def grindCand (t : Nat) : Nat := (idxWordAt (N_IDX_WORDS - 1) + t) % pN
+/-- …and the SEARCH: the first offset whose digest hits it. This is the attack, run. -/
+def grindT : Nat :=
+  (((List.range 48).map (· + 1)).find?
+     (fun t => idxDigestAtLast (grindCand t) % GRIND_MOD == 0)).getD 0
+def groundWord : Nat := grindCand grindT
+def groundDigest : Nat := idxDigestAtLast groundWord
+
+-- ⚑⚑ **THE EXHIBIT: THE GRIND SUCCEEDS.** The honest key MISSES the chosen target; the prover finds
+-- an input that HITS it, by addition, in under 48 tries — and the resulting `index_digest` is a
+-- different value from the honest one.
+#guard indexDigest % GRIND_MOD != 0
+#guard grindT != 0
+#guard groundDigest % GRIND_MOD == 0
+#guard groundDigest != indexDigest
+#guard groundWord != idxWordAt (N_IDX_WORDS - 1)
+
+/-- R1's transcript at the GROUND digest — the assembly's own `runSpongeWith`, one word changed. -/
+def spGround : SpongeData := runSpongeWith shapeSmoke (stepBases shapeSmoke) groundDigest
+
+-- ⚑⚑ **AND IT STEERS EVERY SQUEEZE.** One plonk-index word, chosen by the prover, and EVERY
+-- transcript challenge moves — β, γ, α, ζ, ξ, and with them the x_hat MSM's scalars, the fold's
+-- weights and `combined_inner_product`. That is Fiat–Shamir's input becoming prover-chosen, which
+-- is the attack the range checks of §12c/§12c′ do not touch.
+#guard (List.range shapeSmoke.chals).all (fun c =>
+  chalOf shapeSmoke spGround c != chalOf shapeSmoke tS.sp c)
+#guard (spGround.states.getLastD []).getD 0 0 != (tS.sp.states.getLastD []).getD 0 0
+
+/-- Segment C re-run with the ground word in the last index slot. -/
+def segCGround : SegData :=
+  runSeg { tS.specC with
+           ws := tS.specC.ws.set (N_IDX_WORDS - 1) (idxVar shapeSmoke 27 1, groundWord) }
+
+-- ⚑ **THE HOLE, ON THE EMITTED OBJECT.** The sponge itself never objects: with the ground word in
+-- place, every one of segment C's blocks is still exactly `Ref.perm` of its absorbed state (or the
+-- state unchanged, where the mask drops it). A `Poseidon` gate constrains the permutation and NOT
+-- what was fed to it, so before §3c there was nothing in the assembly that could refuse this.
+#guard (List.range tS.specC.blocks).all (fun b =>
+  let ws := tS.specC.ws.set (N_IDX_WORDS - 1) (idxVar shapeSmoke 27 1, groundWord)
+  let pre := segCGround.states.getD b []
+  let post := if b < tS.specC.nb then
+      [ fAdd (pre.getD 0 0) ((ws.getD (2 * b) (xv 0, 0)).2)
+      , fAdd (pre.getD 1 0) ((ws.getD (2 * b + 1) (xv 0, 0)).2), pre.getD 2 0 ]
+    else pre
+  if b < tS.specC.nb && tS.specC.maskedAt b && tS.specC.keepBit b == 0 then
+    segCGround.states.getD (b + 1) [] == pre
+  else segCGround.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
+-- …and it really is a different sponge, so the pin above is not comparing the honest run to itself.
+#guard (segCGround.states.getLastD []).getD 0 0 != (tS.segC.states.getLastD []).getD 0 0
+
+/-- The `Inner_curve.constant` row §3c emits for index commitment `k`. -/
+def idxPinRow (k : Nat) : SRow :=
+  baseConstRow (vIdxX shapeSmoke k) (vIdxY shapeSmoke k)
+    (Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD k (0, 0))
+
+-- ⚑⚑ **AND THE DERIVED VERSION REFUSES IT.** The pin row's OWN generic-gate body —
+-- `KimchiVerify.genericGateConstraint`, proof-systems' polynomial, read-only — is 0 on the verifier
+-- key's coordinates and NONZERO on the ground one. Accepted this morning, refused now.
+#guard pinBody (idxPinRow 27) (idxVal 27 0, idxVal 27 1) == 0
+#guard (pinBody (idxPinRow 27) (idxVal 27 0, groundWord) == 0) == false
+-- …and the check is SATISFIABLE at every one of the 28, not just the one the grind used.
+#guard (List.range N_IDX_COMMS).all (fun k => pinBody (idxPinRow k) (idxVal k 0, idxVal k 1) == 0)
+-- ⚑ …and at the COMMITTED shape the same word is refused TWICE, because it is not a private
+-- variable there: index commitment 27 is `endomul_scalar_comm`, which is fold round 9's base, so
+-- bending it moves `combine_split_commitments` as well as failing round 9's own pin row.
+#guard idxSrc shapeStep 27 == some 9
+#guard idxVar shapeStep 27 1 == ipy shapeStep (qT shapeStep 9)
+#guard REAL_IPA_XY.getD 9 (0, 0)
+        == Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD 27 (0, 0)
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
@@ -4376,12 +4745,19 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 #guard (finRows shapeSmoke tS.ft tS.fin true).length > 0 && (endoConstRow shapeSmoke).length > 0
 #guard (xiDefRows shapeSmoke tS.defc true).length > 0
         && (rDefRows shapeSmoke tS.defc true).length > 0
--- ⚑ …and R7's own sub-list really is the three segments PLUS §8g's `r` chain.
+-- ⚑ …and R7's own sub-list really is the three segments, §3c's index pins and digest permutation,
+-- and §8g's `r` chain. Stated as an equality over every summand, so a dropped sub-list reds here.
 #guard (absRows tS true).length
         == (segRows (baseSegA shapeSmoke) tS.specA tS.segA true).length
            + (segRows (baseSegB shapeSmoke) tS.specB tS.segB true).length
+           + (idxConstRows shapeSmoke).length
            + (segRows (baseSegC shapeSmoke) tS.specC tS.segC true).length
+           + (idxDigestRows shapeSmoke true).length
            + (rDefRows shapeSmoke tS.defc true).length
+-- …and neither §3c sub-list is empty: 12 rows of permutation + a probe, and one `Generic` pin per
+-- index commitment this shape must hold itself.
+#guard (idxDigestRows shapeSmoke true).length == 13
+#guard (idxConstRows shapeSmoke).length == (idxOwn shapeSmoke).length
 
 -- ⚑ **WHICH RUNG BINDS WHICH MULTIPLIER** (#10's honest residue, machine-checked). ξ's chain rides
 -- with R5 because its source is a STATEMENT word, so `vDLift 0` has a computing row from `r5_full`
@@ -4443,7 +4819,7 @@ def posAt (k : Rung) : List (PVar × Cell) :=
 -- R7 adds `Poseidon` (11 rows per permutation, upstream's own run length) and — since §8g — exactly
 -- ONE further `to_field_checked` chain, `r_actual`'s. No curve gate, no second chain.
 #guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.poseidon)).length
-        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
+        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks + 1)
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.poseidon)).length
         == 11 * shapeSmoke.blocks
 #guard (List.range 4).all (fun i =>

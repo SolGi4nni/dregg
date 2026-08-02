@@ -76,6 +76,56 @@ the 46 fold bases (`COMBINE_XY` from index 1 — index 0 is where the accumulato
 `bullet_reduce` gammas. -/
 def ALL_XY : List Pt := LAGRANGE_XY ++ COMBINE_XY.tail ++ GAMMA_XY
 
+/-! ## ⚑ THE PLONK INDEX — the 28 commitments `sponge_after_index` swallows
+
+`step_verifier.ml:1149-1157`:
+
+    let sponge_after_index index =
+      let sponge = Sponge.create sponge_params in
+      Array.iter (Types.index_to_field_elements ~g:Inner_curve.to_field_elements index)
+        ~f:(fun x -> Sponge.absorb sponge (`Field x)) ;
+      sponge
+
+and `index` is `d.wrap_key` (`step_main.ml:61`) — **the same `Plonk_verification_key_evals.t` the
+fold consumes as `~verification_key:m`**. `index_to_field_elements`
+(`pickles_base/side_loaded_verification_key.ml:159-183`) is, verbatim,
+`sigma_comm @ coefficients_comm @ [generic; psm; complete_add; mul; emul; endomul_scalar]` mapped
+through `g` — 28 commitments, 56 field elements, IN THAT ORDER.
+
+⚑ **27 of the 28 are ALREADY on disk here**, because `combine_split_commitments` consumes them:
+`COMBINE_XY[41..46]` is `sigma_comm_init = sigma_comm[0..5]`, `COMBINE_XY[26..40]` is
+`coefficients_comm[0..14]`, `COMBINE_XY[5..10]` is the six selector commitments
+(`step_verifier.ml:583-617`). The 28th, `sigma_comm[6]`, is the one commitment the fold does NOT
+carry — `Vector.split m.sigma_comm` hands it to `Common.ft_comm` as `sigma_comm_last`
+(`common.ml:243-246`) — and `MinaWrapGroupGate.SIGMA6` is exactly that point, already read off the
+devnet blockchain Wrap verifier index for the `ft_comm` rung. So this list, like every other one
+here, owns NO literals.
+
+⚠ MEASURED against a SECOND source, 2026-08-02: all 27 agree coordinate-for-coordinate with
+`bridge/mina-zkapp/fixtures/mina-devnet-wrap-blockchain-vk.json` (kimchi's own
+`devnet_blockchain_verifier_index.json`, 33-byte compressed Pallas points, `x` little-endian in
+bytes 0-31 and the "y ≥ p/2" flag in byte 32). That is the independence gate: the aggregation gate's
+47 points and o1-labs' published verifier index are two sources that could disagree and do not, so
+`SIGMA6` — which only ONE of them carries — is the same key's seventh permutation commitment and
+not a stray. -/
+
+/-- The 28 plonk-index commitments in `index_to_field_elements` order: `sigma_comm[0..6]`,
+`coefficients_comm[0..14]`, then generic / psm / complete_add / mul / emul / endomul_scalar. -/
+def INDEX_XY : List Pt :=
+  ((List.range 6).map (fun k => COMBINE_XY.getD (41 + k) (0, 0)))
+  ++ [ ((Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).1,
+        (Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).2.1) ]
+  ++ ((List.range 15).map (fun k => COMBINE_XY.getD (26 + k) (0, 0)))
+  ++ ((List.range 6).map (fun k => COMBINE_XY.getD (5 + k) (0, 0)))
+
+/-- `sponge_after_index`'s 56 field elements, `Inner_curve.to_field_elements` flattened. -/
+def INDEX_WORDS : List Nat := INDEX_XY.flatMap (fun p => [p.1, p.2])
+
+/-- The block's 7 `t_comm` chunks — `receive without t_comm` (`step_verifier.ml:568`) absorbs them
+and `Common.ft_comm`'s Horner consumes them. Named here because `KimchiStepMain` #5 is blocked on
+that MSM and the DATA is not what blocks it. -/
+def T_COMM_XY : List Pt := flat Dregg2.Circuit.Emit.MinaWrapGroupGate.TCHUNKS
+
 /-- `y^2 = x^3 + 5` over Pallas' base field. -/
 def onCurve (p : Pt) : Bool :=
   (p.2 * p.2) % pN == (p.1 * p.1 % pN * p.1 + 5) % pN
@@ -109,5 +159,37 @@ def EVERY : List Pt := LAGRANGE_XY ++ COMBINE_XY ++ GAMMA_XY
 -- …and none is a small multiple of the generator: `basePts` was `[3]G, [4]G, …`, whose coordinates
 -- are tiny-index outputs of a public ladder. These are full-width and unrelated.
 #guard EVERY.all (fun p => p.1 > 2 ^ 200)
+
+-- ── ⚑ THE PLONK INDEX ─────────────────────────────────────────────────────────────────────────
+-- 28 commitments, 56 field elements — `Plonk_verification_key_evals`' own field count
+-- (`sigma_comm : Permuts_vec = 7`, `coefficients_comm : Columns_vec = 15`, six selectors).
+#guard INDEX_XY.length == 28
+#guard INDEX_WORDS.length == 56
+#guard T_COMM_XY.length == 7
+-- …every one on the Pallas curve in this field, distinct, finite, full-width.
+#guard INDEX_XY.all onCurve
+#guard T_COMM_XY.all onCurve
+#guard (INDEX_XY.map (·.1)).dedup.length == 28
+#guard INDEX_XY.all (fun p => p.1 != 0 && p.2 != 0 && p.1 > 2 ^ 200)
+-- ⚑ …and the 27 the FOLD also carries are THE SAME POINTS, at the census indices
+-- `step_verifier.ml:583-617` gives them. Stated index-by-index rather than as a set, because the
+-- ORDER is what `index_to_field_elements` fixes and a permuted list would hash differently.
+#guard (List.range 6).all (fun k => INDEX_XY.getD k (0, 0) == COMBINE_XY.getD (41 + k) (0, 0))
+#guard (List.range 15).all (fun k =>
+  INDEX_XY.getD (7 + k) (0, 0) == COMBINE_XY.getD (26 + k) (0, 0))
+#guard (List.range 6).all (fun k =>
+  INDEX_XY.getD (22 + k) (0, 0) == COMBINE_XY.getD (5 + k) (0, 0))
+-- ⚑ …and the 28th is the one the fold does NOT carry: `sigma_comm[6]` is in no `COMBINE_XY` slot,
+-- which is `Vector.split m.sigma_comm`'s own shape (`common.ml:243-246`). A pin that merely said
+-- "28 points" would be satisfied by a duplicate; this one says the seventh is genuinely elsewhere.
+#guard COMBINE_XY.all (fun p => p != INDEX_XY.getD 6 (0, 0))
+#guard INDEX_XY.getD 6 (0, 0)
+        == ((Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).1,
+            (Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).2.1)
+-- …and the index commitments are DISJOINT from `bullet_reduce`'s gammas and from the SRS Lagrange
+-- constants — three different provenances, no accidental sharing.
+#guard INDEX_XY.all (fun p => !(GAMMA_XY.contains p) && !(LAGRANGE_XY.contains p))
+-- …and `t_comm` is a fourth: the prover's quotient commitment, in none of the other lists.
+#guard T_COMM_XY.all (fun p => !(EVERY.contains p) && !(INDEX_XY.contains p))
 
 end Dregg2.Bridge.MinaStepPrevCommitments
