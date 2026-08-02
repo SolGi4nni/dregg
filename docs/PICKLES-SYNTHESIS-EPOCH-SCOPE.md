@@ -854,3 +854,216 @@ ones; `endo_mul_scalar` is not wired to the `endo_mul` chain's `n'`. (The public
 longer on that list — `6203df56d` proved it, and `pi_wide` at 67 words re-emits byte-identical
 here.) And this rung is a **performance and fail-closedness fix to the authoring tool**: it is not a
 soundness result, not machine-checked Pickles, and the emitted object is byte-for-byte what it was.
+
+---
+
+## §13 — MINA'S CANONICAL WRAP + STEP GATE LISTS, OBTAINED (2026-08-01) — and the Model-(1) framing REFUTED at source
+
+This section closes §1's "emission target" from the other side: we now hold Mina's own compiled
+circuits as bytes, with a one-number byte-identity oracle over them. It also **refutes the framing
+that motivated the extraction**, which matters more than the extraction.
+
+### §13.1 — Route (a) SUCCEEDED. The wrap gate list is a download, not a derivation
+
+`*_gates.json` in o1-labs' `circuit-blobs` releases is *exactly* kimchi's `Circuit { public_input_size,
+gates }` serde form — the same bytes `caml_pasta_f{p,q}_plonk_circuit_serialize` emits
+(`mina/src/lib/crypto/kimchi_bindings/stubs/src/gate_vector.rs:96-104`), which is why mina-rust reads
+them with a five-line `serde_json::from_reader` (`mina-rust/crates/ledger/src/proofs/provers.rs:38-49`).
+So Mina's canonical circuits are already serialized and publicly released. Route (b) — coaxing o1js to
+dump wrap — was not needed for *Mina's* wrap.
+
+Fetched from `https://github.com/o1-labs/circuit-blobs/releases/download/berkeley-devnet/`, cached in
+`~/.mina/circuit-blobs/berkeley-devnet/` (mina-rust's own resolution order, `circuit_blobs.rs:126-152`):
+
+| circuit | field | public input | gates | non-Generic | kimchi digest (md5) |
+|---|---|---|---|---|---|
+| `wrap-transaction` (**canonical `wrap_main`**) | Fq/Tock | **40** | **15122** | **11601** | `b9a01295c8cc9bda6d12142a581cd305` |
+| `wrap-blockchain` (a 2nd `wrap_main`) | Fq/Tock | 40 | 14657 | **11601** | `bbecaf158ca543ec8ac9e7144400e669` |
+| `step-transaction` (branch 0) | Fp/Tick | 67 | 17806 | 6023 | `c33ec5211c07928c87e850a63c6a2079` |
+| `step-zkapp-proved` (branch 4, runs `verify_one`) | Fp/Tick | 67 | 20023 | 13778 | `0cafcbc6dffccddbc82f8c2519c16341` |
+
+Every number agrees with openmina's independently transcribed `ProofConstants`
+(`mina-rust/crates/ledger/src/proofs/constants.rs:81-107`: `WrapTransactionProof {PRIMARY_LEN 40,
+ROWS 15122}`, `StepTransactionProof {67, 17806}`, `StepZkappProvedProof {67, 20023}`,
+`WrapBlockProof {40, 14657}`).
+
+Gate-type histograms (`wrap-transaction` / `wrap-blockchain`):
+`Generic 3521/3056 · Poseidon 2871/2871 · Zero 2757/2757 · EndoMul 2528/2528 · VarBaseMul 2417/2417 ·
+EndoMulScalar 536/536 · CompleteAdd 492/492`.
+
+### §13.2 — THE ONE NUMBER: a candidate wrap is byte-exact iff its md5 is `b9a01295c8cc9bda6d12142a581cd305`
+
+kimchi's `CryptoDigest` (`proof-systems/utils/src/hasher.rs`) is
+`sha256( b"kimchi-circuit0" || bcs::to_bytes(Circuit{public_input_size, gates}) )`, and the OCaml
+constraint-system digest is `Md5.digest_bytes` of those 32 bytes
+(`kimchi_backend/common/plonk_constraint_system.ml:1071-1075`).
+
+⚑ **That md5 is the hash o1-labs put in the release-asset FILENAME.** Re-deriving it from the JSON is
+therefore a diff against a source we did not author — not a pin against its own definition. Measured:
+**all four blobs reproduce their own filename hash**, from a from-scratch BCS re-serialization
+(`usize→u64 LE`, `seq→ULEB128 len`, `[Wire;7]→no length prefix`, unit-variant enum→ULEB128 index,
+`Vec<F>` under `SerdeAs`→`serialize_bytes` of the 32 LE arkworks bytes). BCS variant indices come from
+the `GateType` declaration order in `kimchi/src/circuits/gate.rs`.
+
+Structural facts the digest run also fixed, for the emission lane:
+- **The first `public_input_size` gates ARE the public-input rows** — in both wraps, gates `0..39` are
+  `Generic` with exactly 5 coefficients `[1,0,0,0,0]`; gate 40 onward are 10-coefficient
+  (double-)Generic rows. In `wrap-transaction`: 40 five-coeff Generics + 3481 ten-coeff Generics.
+- Coefficient arity by gate type is rigid: `Poseidon`=15, `Generic`=5 or 10, everything else = 0.
+- Gadget census of canonical `wrap_main` (maximal same-type runs, identical in both wraps):
+  **261 Poseidon permutations** (runs of 11, each followed by a `Zero`), **79 endo-scalar-muls**
+  (`EndoMul` runs of exactly 32), 29 `EndoMulScalar` runs `{8×19, 16×6, 24×2, 120×2}`,
+  2417 singleton `VarBaseMul` rows, 2757 singleton `Zero` rows.
+
+### §13.3 — SIZE OF THE REPRODUCTION PROBLEM: 95.4% of `wrap_main` is invariant
+
+Measured by diffing the two independently compiled wrap circuits:
+
+- **The non-Generic gate stream is IDENTICAL — 11,601 gates, same types in the same order, same
+  coefficients** (all empty except `Poseidon`'s 15). Byte-identical sequences, verified elementwise.
+- The Generic layer also mostly agrees: 2,832 of the 3,056 blockchain-wrap `Generic` coefficient
+  vectors also occur in the transaction wrap (multiset intersection).
+- ⇒ the genuinely per-circuit residue in `wrap-transaction` is **≤ 689 of 15,122 gates (4.6%)**, and
+  it is confined to `Generic` coefficients plus the copy-permutation wiring. That residue is exactly
+  what `wrap_main` bakes in as constants (§13.5).
+
+**So reproducing `wrap_main` is ~11.6k rows of six known gate types plus a ~3.5k Generic constant
+layer — large but structurally flat, not structurally novel.** No gate type outside the seven above
+appears; no lookup, no foreign-field, no range-check, no Xor/Rot. `zk_rows = 3`, domain `2^14`.
+
+### §13.4 — The wrap VK is obtainable, and it ships as JSON
+
+openmina embeds Mina's real wrap verifier indices at
+`mina-rust/crates/ledger/src/proofs/data/devnet_{transaction,blockchain}_verifier_index.json`
+(`verifiers.rs:195-211`, `include_str!`). Byte copies now live at
+`bridge/mina-zkapp/fixtures/mina-devnet-wrap-{transaction,blockchain}-vk.json` (5.4 KB each) so the
+oracle does not depend on the co-tenant checkout; the oracle pins their sha256 **and** re-diffs against
+`~/dev/mina-rust` when that tree is present, so an upstream swap is RED rather than invisible.
+
+`wrap-transaction` VK: `public = 40`, `prev_challenges = 2`, `zk_rows = 3`, `max_poly_size = 32768`,
+domain `2^14 = 16384`, and 28 curve-point commitments (`sigma_comm×7`, `coefficients_comm×15`,
+`generic/psm/complete_add/mul/emul/endomul_scalar`). `public = 40` from openmina's VK against
+`public_input_size = 40` from o1-labs' gate blob is a genuine two-source agreement, and
+`15122 + 3 ≤ 16384` is checked as the capacity rule.
+
+The *Poseidon* VK hash (`Zkapp_account.digest_vk`) is not computed here and is not the relevant
+number — see §13.5; it applies to side-loaded zkApp VKs, which the transaction wrap is not.
+
+### §13.5 — ⚑ THE FRAMING IS REFUTED. There is no canonical wrap VK a zkApp must match
+
+The brief that motivated this extraction asserted: *(i) a zkApp account stores the STEP (side-loaded)
+VK; (ii) Mina's wrap circuit is fixed, one canonical wrap VK per proofs-verified arity; (iii) a stock
+node therefore REJECTS a proof wrapped under a non-canonical wrap circuit.* **All three are false.**
+Verified at source:
+
+**(i) REFUTED — the account stores the WRAP VK.** `Mina_base__Verification_key_wire.Stable.V1` is
+`{max_proofs_verified, actual_wrap_domain_size, wrap_index}`
+(`mina-rust/crates/p2p-messages/src/v2/generated.rs:989-993`), and `wrap_index` is 28 curve points
+(`:566-575`). `mina/src/lib/pickles/side_loaded_verification_key.mli:50-55` says it outright: *"The
+plonk verification key for the 'wrapping' proof that this key is used to verify."*
+`Pickles.Side_loaded.Verification_key.of_compiled` takes `wrap_key = Verification_key.commitments
+wrap_vk` (`mina/src/lib/pickles/compile.ml:864, 885-896`); the step VKs (`compile.ml:650-654`) never
+enter the account VK. The verifier index is assembled field-for-field from the account's own
+`wrap_index` over **Fq** (`mina-rust/crates/ledger/src/proofs/verifiers.rs:396-470`,
+`verification.rs:829-841`).
+
+**(ii) REFUTED — `wrap_main` bakes the STEP VKs in as circuit CONSTANTS**, so the wrap circuit differs
+per compiled zkApp. `mina/src/lib/pickles/wrap_main.ml:215-219`:
+`Wrap_verifier.choose_key which_branch (Vector.map (Lazy.force step_keys) ~f:(Plonk_verification_key_evals.map ~f:Inner_curve.constant))`
+— `Inner_curve.**constant**`. Likewise `step_widths` (`:177-179`) and `step_domains` (`:184-186,:402`).
+Pickles even ships `wrap_main_dummy_override` (`compile.ml:1155-1204`) — a wrap circuit that asserts
+*nothing* about its statement, padded to the right domain — plus `?override_wrap_domain`
+(`compile.ml:389, 488-499`).
+
+**(iii) REFUTED — no such check exists.** The node's entire out-of-circuit check list is
+`mina-rust/crates/ledger/src/proofs/verification.rs:557-674`: single-chunk, feature-flag consistency,
+"domain size is small enough", and wrap domain ∈ `[13,14,15]` (`:653-667`). Nothing compares a wrap
+index to anything; `grep -rn canonical` over `mina/src/lib/pickles/` and mina-rust's `proofs/` returns
+zero hits. In-circuit the binding is a hash equality only — the VK is `exists`-witnessed and checked
+against the account's registered hash (`transaction_snark.ml:1427-1442`). The contrast in one pair of
+lines: a zkApp's VK enters as `vk.wrap_index.to_cvar(CircuitVar::**Var**)`
+(`mina-rust/.../proofs/zkapp.rs:1352`), the node's own wrap index as
+`to_cvar(CircuitVar::**Constant**)` (`.../proofs/block.rs:1889`). Pickles' own adversarial test
+(`pickles.ml:2008-2041`) compiles *with the do-nothing wrap circuit* and still has to corrupt a
+statement field to get a rejection — the vacuous wrap circuit alone was not sufficient.
+
+⚑ **`CONSTRAINT_SYSTEM_DIGESTS` does not gate user zkApps.** The three md5s in
+`mina-rust/crates/core/src/network.rs:120,198` feed the **ChainId** only (`chain_id.rs:243-263`,
+consumed at `transition_frontier_genesis_reducer.rs:112-115`), and they cover `transaction-merge`,
+`transaction-base`, `blockchain-step` — the node's own *Tick* constraint systems built directly from
+`Merge.main`/`Base.main` (`transaction_snark.ml:3529-3544`), not the pickles step circuits above and
+not any wrap. (Their values differ from all four §13.1 digests, as expected.)
+
+### §13.6 — What the corrected target actually is
+
+A third party wanting a **stock node to accept** a zkApp proof must reproduce, byte-exactly:
+
+1. the **wrap statement layout** — 40 packed Fq public-input words, `Impls.Wrap.input ()` which takes
+   **unit**, i.e. carries no zkApp-dependent parameter (`mina/src/lib/pickles/impls.ml:219`; hardcoded
+   as `let public = 40` at `verifiers.rs:400`). **This is the one genuinely canonical object**, and
+   §3.1/§3.3 of this document already enumerate it;
+2. the **out-of-circuit deferred-values derivation**, because the verifier *recomputes* the public
+   input rather than trusting it (`verification.rs:866-889`) — Fiat-Shamir sponge, absorb order,
+   `ft_eval`, bulletproof challenges, `Wrap_hack` padding;
+3. the two hashed me-only digests (`verification.rs:430-455`);
+4. backend constants: Pasta/Tock IPA, `prev_challenges = 2`, `zk_rows = 3`, `Common.tock_shifts`,
+   `max_poly_size = 2^15`, wrap `log2 ∈ {13,14,15}` agreeing with the registered
+   `actual_wrap_domain_size` (`common.ml:27-31`, `verifiers.rs:381-393`);
+5. `AuthorizationKind::Proof(vk_hash)` equal to `digest_vk` of the account's stored VK
+   (`verifiable.rs:20-33`; in-circuit `transaction_snark.ml:1441`).
+
+What is **merely registered** on chain is the 28 wrap commitments plus two 3-valued tags. **The author
+picks them; nothing on the network has an opinion about which circuit produced them.** The blast
+radius of a weak wrap circuit is exactly the account that published it — which is the design, since
+"proof authorization" means "a proof under *my* VK".
+
+⇒ **The §13.1 blobs are not a VK we must match. They are the reference implementation of `wrap_main`,
+in bytes** — the thing a Lean-synthesized wrap should agree with because we want a *meaningful*
+recursion, not because a node checks. That is a weaker obligation and a much better-instrumented one:
+we can diff against it gate-by-gate at any time.
+
+### §13.7 — The fixed STEP scaffolding (for the `KimchiStepMain.lean` lane)
+
+Not free, and now pinned:
+
+- **Step public input = 67 field elements** at `max_proofs_verified = 2` — every Mina step circuit
+  (`constants.rs:37-119`: all five branches `PRIMARY_LEN = 67`). Unlike wrap,
+  `Impls.Step.input ~proofs_verified ~wrap_rounds ~feature_flags` (`impls.ml:128`) **does** vary with
+  `proofs_verified`, so 67 is the N2 value, not a universal constant. Side-loaded proofs are padded to
+  N2 out-of-circuit anyway (`pickles.ml:236-240,254-257` `Wrap_hack.pad_proof`, with the standing TODO
+  "This should be the actual max width on a per proof basis").
+- **`Basic` for the transaction rule set** (`constants.rs:246-275`): `proof_verifieds = [0,2,0,0,1]`,
+  `wrap_domain = 2^14`, `step_domains = [2^15, 2^15, 2^15, 2^14, 2^15]`, all eight feature flags `No`,
+  `self_branches = 5`.
+- **`ForWrapData`** (`constants.rs:139-235`): `pi_branches = 5`, `step_widths = [0,2,0,0,1]`,
+  `wrap_domain_indices = [1,1]` (except `WrapZkappProvedProof`: `[1,0]`), `which_index` 0/1/2/3/4 for
+  transaction/merge/zkapp-optsigned-optsigned/zkapp-optsigned/zkapp-proved.
+- ⚑ **`WrapZkappProof`, `WrapZkappProvedProof`, `WrapZkappOptSignedProof` and `WrapMergeProof` all
+  reuse `WrapTransactionProof`'s constants verbatim** (`constants.rs:59-79,95-101`) — the five step
+  branches share ONE wrap circuit; `which_index` is a witness, not a structural difference.
+- `verify_one` (`mina/src/lib/pickles/step_main.ml:26-...`) is where the recursion cost lands; its
+  price is visible as branch 4 (`step-zkapp-proved`, 1 proof verified, 20023 rows, 13778 non-Generic)
+  against branch 0 (`step-transaction`, 0 proofs verified, 17806 rows, 6023 non-Generic).
+
+### §13.8 — Wired as a green-or-bust oracle, with five red-path bites
+
+`bridge/mina-zkapp/scripts/mina-canonical-circuit-oracle.mjs`, registered in
+`scripts/pickles-synthesis-oracles.sh` (MJS list + `MIGRATED`, so it also runs the shared harness
+`--self-test`). It resolves/fetches the blobs exactly as mina-rust does, re-serializes each to BCS,
+recomputes sha256+md5, and diffs 24 entries: `{public_input_size, gates, digest_md5}` per circuit
+against the o1-labs filename md5 + openmina's `constants.rs`, plus the six wrap-VK shape entries.
+
+Its red path is *measured*, not asserted — each of these must move the digest or the run fails:
+flip one bit of one coefficient; move one wire row by 1; retype the last gate; `public_input_size + 1`;
+drop the last gate. All five fire.
+
+```
+scripts/pickles-synthesis-oracles.sh                 # runs it alongside R1/R2
+node scripts/mina-canonical-circuit-oracle.mjs --self-test
+node scripts/mina-canonical-circuit-oracle.mjs --circuit wrap-transaction --dump wrap.json
+node scripts/mina-canonical-circuit-oracle.mjs --circuit wrap-transaction --candidate lean-emitted.json
+```
+
+The last form is the one the Lean wrap lane will use: a gate-by-gate diff against the canonical blob
+that cites the first divergence by `g<i>.{typ,w<j>,c<k>}`. The md5 is the total statement; the
+gate walk localizes it.

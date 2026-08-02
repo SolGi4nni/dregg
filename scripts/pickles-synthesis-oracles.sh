@@ -30,8 +30,9 @@ RUN_TS=1
 
 # The green-or-bust diffs. `custom-gate-oracle.mjs` is a DUMP (always exit 0), not a gate — omitted.
 MJS_ORACLES=(
-  "custom-gate-diff.mjs"          # R2: emitted custom-gate typ+coeffs (poseidon 165 coeffs) vs o1js
-  "pickles-placement-oracle.mjs"  # R1: {row,col} copy-permutation wires vs live o1js
+  "custom-gate-diff.mjs"               # R2: emitted custom-gate typ+coeffs (poseidon 165 coeffs) vs o1js
+  "pickles-placement-oracle.mjs"       # R1: {row,col} copy-permutation wires vs live o1js
+  "mina-canonical-circuit-oracle.mjs"  # R4: MINA'S OWN wrap+step gate lists as the byte TARGET
 )
 TS_ORACLES=(
   "pickles-r3-branchdata-oracle.ts"    # R3: branch_data prefix-mask pack vs devnet block 539508
@@ -41,7 +42,7 @@ TS_ORACLES=(
 
 # Oracles migrated to the shared diff-oracle.mjs harness — invoked with `--self-test` so each MEASURES
 # its own red path (corrupted candidate → exit 1) alongside the live green diff.
-MIGRATED="custom-gate-diff.mjs pickles-placement-oracle.mjs pickles-r3-branchdata-oracle.ts"
+MIGRATED="custom-gate-diff.mjs pickles-placement-oracle.mjs mina-canonical-circuit-oracle.mjs pickles-r3-branchdata-oracle.ts"
 is_migrated() { case " $MIGRATED " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 fails=0
