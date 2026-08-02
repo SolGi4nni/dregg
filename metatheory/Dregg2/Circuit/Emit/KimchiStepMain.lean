@@ -98,6 +98,13 @@ line items, not against a round number.
     ladder over the fold output plus one `Ops.add_fast`. That is what makes `delta` and `c` words
     something READS. ⚠ `equal_g lhs rhs` (`:340`) is NOT here: `rhs` is the IPA opening, i.e.
     `verified` (#11), still a witnessed boolean.
+    ⚠ ⚑ …and since 2026-08-02 **§17 MEASURES what assembling it would and would not buy**, because
+    the answer inverts the reason it was next: `G = challenge_polynomial_commitment`, `z_1` and `z_2`
+    are FREE WITNESSES, so `equal_g` is satisfiable for every `lhs` and **refuses no on-curve
+    substitution of a consumed commitment.** The exhibit is honest-CLOSES / substituted-with-same-`G`
+    REFUSED / substituted-with-re-solved-`G` ACCEPTED, on this assembly's own values, with
+    `Generators.h` and the Bw19 `group_map` parameters measured off the Rust side. `G`'s binder is
+    `step_main.ml:526-545`, one rung above `verify_one`.
   * **R5 `deferred` + `xi` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
     `b(ζ) = ∏(1 + uᵢ·ζ^{2^{k−1−i}})` (`Wrap.challenge_polynomial`, `wrap.ml:15-17`; the product
     `KimchiVerify.bEvalSq` folds) and `combined_inner_product = Σ_k ξ^k·(evₖ(ζ) + r·evₖ(ζω))`
@@ -575,6 +582,23 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      2026-08-02, because `sponge_after_index` over the actual plonk index is now §3c and the
      `x_hat` / `ft_comm` commitment MSMs over REAL commitments are R3 and §6b. Deriving the bit from anything
      less would be a value that LOOKS derived; the honest state is the witness plus this sentence.
+     ⚑ **AND SINCE §17 THE PRICE OF DERIVING IT IS MEASURED, not estimated — and it is NOT a refusal.**
+     `equal_g lhs rhs` (`:340`) compares `lhs = c·q + δ` with `rhs = z₁·(G + b·u) + z₂·H`. Of those,
+     `q`/`c`/`δ` are bound (R1/R4/§7b), `b` is R8's statement word, `u = group_map (squeeze)` is
+     DERIVABLE (§17 derives it, against `groupmap`'s own Rust output) and `H = Generators.h` is
+     PINNABLE (§17 measures it off `SRS::<Pallas>::create`) — but `G`, `z₁` and `z₂` are FREE
+     WITNESSES with no other occurrence in `step_verifier.ml`. §17 exhibits the consequence on this
+     assembly's numbers: the honest opening closes, the on-curve-substituted assembly with the same
+     `G` is REFUSED, and the same substitution with `G` re-solved (one `Fq` inverse, three scalar
+     multiplications — no discrete log) is ACCEPTED. So assembling `equal_g` would make `verified` a
+     function of the transcript instead of a free bit, and would refuse NO commitment substitution.
+     **What refuses one is `G`'s binder, and it is `step_main.ml:526-545`** — the OUTER
+     `hash_messages_for_next_step_proof` over `acc.wrap_proof.opening.challenge_polynomial_commitment`,
+     whose digest is the step statement's public `messages_for_next_step_proof` (`:571-575`). ⚠ That
+     is NOT §8e's segment C, which is the inner `…_opt` call over `sg_old` (`step_main.ml:66-80`); see
+     §17 for the false wire in `hmSpec` that this reading also turned up. With `G` bound, `z₁`/`z₂`
+     alone leave a two-dimensional discrete log in `⟨G + b·u, H⟩` — the IPA opening's own hardness,
+     which is an assumption and not a gate, and must be described as one.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
@@ -2272,7 +2296,16 @@ squeeze, seeded at `scalar_challenge.ml:230-235` like every other round, then on
 (`:340`) is the IPA opening's own equality and `rhs` needs `scale_fast2 u advice.b`,
 `challenge_polynomial_commitment`, `z_1`, `z_2` and `Generators.h` — that is `verified` (#11), still a
 witnessed boolean here. What IS closed is that `delta` and `c` are no longer words the sponge eats
-and nothing reads: bend either and this ladder's own gate polynomials move. -/
+and nothing reads: bend either and this ladder's own gate polynomials move.
+
+⚠ ⚑ **AND `equal_g` WOULD REFUSE NO ON-CURVE SUBSTITUTION — MEASURED (§17), which inverts the reason
+this rung was queued.** `G = challenge_polynomial_commitment`, `z_1` and `z_2` occur at exactly two
+places each in `step_verifier.ml` (`:253` destructure, `:332-336` use): no absorption, no pin, no
+statement word, no other consumer. So for ANY `lhs` a prover sets `G := z_1⁻¹·(lhs − z_2·H) − b·u` —
+one scalar-field inverse and three scalar multiplications — and the equality holds. §17 exhibits it
+on this assembly's own values: honest CLOSES, the on-curve-substituted assembly with the same `G`
+REFUSED, the same substitution with `G` re-solved ACCEPTED. `G`'s binder is `step_main.ml:526-545`,
+one rung ABOVE `verify_one`. -/
 def lhsRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   let sl := lhsSlots s
   endoSeedRows s sl (v.sums.getLastD (0, 0)) wired
@@ -7086,5 +7119,293 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
           match o with | .inp _ => true | _ => false)).length ≥ 10
 -- …and R8's program is a real program, not a stub.
 #guard finS.fp.prog.size ≥ 80
+
+/-! ## §17 — `check_bulletproof`'s `rhs` and `equal_g`: WHAT IT WOULD REFUSE, AND WHAT IT WOULD NOT.
+
+`step_verifier.ml:328-340`, verbatim:
+
+    let rhs =
+      with_label __LOC__ (fun () ->
+          let b_u = scale_fast2 u advice.b in
+          let z_1_g_plus_b_u = scale_fast2 (challenge_polynomial_commitment + b_u) z_1 in
+          let z2_h = scale_fast2 (Inner_curve.constant (Lazy.force Generators.h)) z_2 in
+          z_1_g_plus_b_u + z2_h )
+    in
+    (`Success (equal_g lhs rhs), challenges)
+
+R4 already emits `lhs = Scalar_challenge.endo q c + delta` (`:325-327`, `lhsRows`). This section is
+the OTHER side, evaluated on the assembly's own values — and the reason it is an EXHIBIT and not a
+row-set is a MEASURED fact that inverts the reason the rung was queued.
+
+## ⚑ THE FINDING: `equal_g` ALONE REFUSES NOTHING
+
+`equal_g lhs rhs` is `Boolean.all (List.map2 Field.equal …)` (`:69-73`) — a two-coordinate equality
+between `lhs = c·q + δ` and `rhs = z₁·(G + b·u) + z₂·H`, where
+
+  * `q` is the fold of every consumed commitment, `c` the last transcript squeeze, `δ` an absorbed
+    word — **all three bound** (R1/R4, and `assert_on_curve` on the supplied ones);
+  * `b` is `advice.b`, a statement word (R8's `vBShift`) — **bound**;
+  * `u = group_map (Sponge.squeeze_field sponge)` (`:263-266`) — **derivable**, and this section
+    derives it (`gmapFp`), so it is a function of the transcript;
+  * `H = Generators.h` — an `Inner_curve.constant`, **pinnable** (`GENERATORS_H`);
+  * and `G = challenge_polynomial_commitment`, `z₁`, `z₂` — **FREE WITNESSES.** Read at source, `G`
+    occurs at exactly two places in `step_verifier.ml` (`:253` destructure, `:333` use) and `z₁`/`z₂`
+    at exactly two (`:253`, `:332-336`). No absorption, no pin, no statement word, no other consumer.
+
+So for ANY `lhs` a prover sets `G := z₁⁻¹·(lhs − z₂·H) − b·u` — one scalar-field inverse and three
+scalar multiplications, **no discrete log** — and `equal_g` holds. `bpExhibit` below measures exactly
+that on the assembly's own numbers: the honest witness closes, the on-curve-substituted assembly with
+the SAME `G` is REFUSED, and the same substitution with `G` RE-SOLVED is ACCEPTED again.
+
+⚠ **So the previous rung's note — "`equal_g` is the first rung that can refuse an on-curve
+substitution" — is FALSE as stated, and this is where it is measured.** What `equal_g` buys is that
+`verified` (#11) stops being a free boolean and becomes a function of `(q, c, δ, b, u, G, z₁, z₂)`.
+What it does NOT buy is any refusal, because the last three of those are the prover's.
+
+## ⚑ WHAT WOULD REFUSE IT, NAMED AT SOURCE
+
+`G`'s binder exists and it is **one rung ABOVE `verify_one`**: `step_main.ml:526-545` hashes
+`acc.wrap_proof.opening.challenge_polynomial_commitment` — this very `G`, one per previous proof —
+into `hash_messages_for_next_step_proof`, whose digest is the step statement's
+`messages_for_next_step_proof` (`step_main.ml:571-575`), a PUBLIC output. With that assembled, a
+re-solved `G` moves a public word and the public-vector tie refuses it; `z₁`/`z₂` alone then leave a
+two-dimensional discrete log in `⟨G + b·u, H⟩`, which is the IPA opening's own hardness and not a
+gate. Without it, `equal_g` is satisfiable for every `lhs`.
+
+⚠ **AND THAT HASH IS NOT SEGMENT C.** §8e's segment C is the OTHER call —
+`hash_messages_for_next_step_proof_opt` inside `verify_one` (`step_main.ml:66-80`), over
+`prev_challenge_polynomial_commitments` (= `sg_old`) and `prev_challenges`, masked by
+`branch_data.proofs_verified_mask`. Its two commitment slots are currently wired to R3's x_hat sum
+and R4's fold output `q` (`hmSpec`), which are neither `sg_old` nor `G`: **a false wire, named here
+rather than left for the rung that trips over it.** `sg_old[0]` is already a variable in this
+assembly (`ipx/ipy (qInit s)`, the fold's `~init`), so half of that correction is a two-word swap;
+the other half needs `sg_old[1]`, the `Wrap_hack.Checked.pad_commitments` second slot.
+
+## THE UNDONE ROW-SET, PRICED
+
+Three `scale_fast2`s at `~num_bits:255` (`:240-242`) = 3 × 51 chunks, reusing §6b's `ftcScaleTerm`
+and its `Shifted_value.Type2` split rows; two `Ops.add_fast`s; `assert_on_curve` on `G`; one
+`Inner_curve.constant` pin for `H`; `group_map` as ~13 double-`Generic` rows (`potential_xs` is 6
+multiplications and one inverse, then three `sqrt_flagged` at 3 constraints each, `Boolean.Assert.any`,
+and the first-of-three selection); and `equal_g` as two `Field.equal` plus one `Boolean.all`.
+≈ **375 rows.** Every constant it needs is measured below. -/
+
+/-! ### Field roots — Tonelli–Shanks over `Fp`, which `group_map` needs and no other rung did. -/
+
+private def fPowAux : Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, acc => acc
+  | f + 1, base, e, acc =>
+      if e == 0 then acc
+      else fPowAux f (fMul base base) (e / 2) (if e % 2 == 1 then fMul acc base else acc)
+
+/-- `a^e` in `Fp`. -/
+def fPow (a e : Nat) : Nat := fPowAux 300 (a % pN) e 1
+
+/-- Euler's criterion. -/
+def fIsSquare (a : Nat) : Bool := a % pN == 0 || fPow a ((pN - 1) / 2) == 1
+
+/-- `Aux.non_residue` (`snarky_group_map/checked_map.ml:5-9`): the first non-square from 2 up. It is
+the multiplier `sqrt_flagged`'s `Field.if_` selects when `is_square` is false, so it is a CIRCUIT
+constant and not only a witness-generation one. -/
+def FP_NONRES : Nat := 5
+/-- `Fp`'s two-adicity: `p − 1 = 2^32 · m`. -/
+def FP_S : Nat := 32
+def FP_M : Nat := (pN - 1) / 2 ^ FP_S
+
+private def fOrd2 : Nat → Nat → Nat
+  | 0, _ => 0
+  | f + 1, t => if t == 1 then 0 else 1 + fOrd2 f (fMul t t)
+
+private def fTsGo : Nat → Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, _, R => R
+  | f + 1, M, c, t, R =>
+      if t == 1 then R
+      else
+        let i := fOrd2 (FP_S + 2) t
+        let b := fPow c (2 ^ (M - i - 1))
+        fTsGo f i (fMul b b) (fMul t (fMul b b)) (fMul R b)
+
+/-- A square root in `Fp` (Tonelli–Shanks at `FP_NONRES`). ⚠ WHICH root: the same one arkworks'
+`Field::sqrt` returns — pinned against `groupmap`'s own output below, so the choice is measured and
+not assumed. Either root satisfies `assert_square`, so it is a witness convention. -/
+def fSqrt (a : Nat) : Nat :=
+  if a % pN == 0 then 0
+  else fTsGo (FP_S + 2) FP_S (fPow FP_NONRES FP_M) (fPow a FP_M) (fPow a ((FP_M + 1) / 2))
+
+#guard fIsSquare 4 && fIsSquare 3 && fIsSquare 2 && !fIsSquare FP_NONRES
+#guard pN - 1 == 2 ^ FP_S * FP_M && FP_M % 2 == 1
+#guard fMul (fSqrt 3) (fSqrt 3) == 3
+
+/-! ### `Group_map.Bw19`'s parameters for Pallas (`b = 5`).
+
+`Group_map.Bw19.Params.create (module Field.Constant) { b = Inner_curve.Params.b }`
+(`step_verifier.ml:214-224`, `bw19.ml:40-65`). MEASURED off `groupmap`'s own
+`BWParameters<PallasParameters>` (`metatheory/fixtures/pickles-stepmain-harness/src/bin/gmprobe.rs`),
+and each one re-derived here from its DEFINING identity, so the pin is not a copy of itself. -/
+
+def BW_U : Nat := 1
+def BW_FU : Nat := 6
+def BW_SQ3 : Nat :=
+  17006931536212783554987228065028097629383328157457783420645920607630467569011
+def BW_SQ3_MU2 : Nat :=
+  8503465768106391777493614032514048814691664078728891710322960303815233784505
+def BW_INV3U2 : Nat :=
+  19298681539552699237261830834781317975575370987961040477303117842899978420225
+
+-- `u` is the first nonzero `u` with `f(u) = u³ + 5 ≠ 0`, and `fu = f(u)`.
+#guard BW_U == 1 && BW_FU == fAdd (fMul BW_U (fMul BW_U BW_U)) 5
+-- `sqrt_neg_three_u_squared² = −3u²`, and it is the root TS returns.
+#guard fMul BW_SQ3 BW_SQ3 == fSub 0 (fMul 3 (fMul BW_U BW_U))
+#guard BW_SQ3 == fSqrt (fSub 0 (fMul 3 (fMul BW_U BW_U)))
+-- `sqrt_neg_three_u_squared_minus_u_over_2 = (sqrt(−3u²) − u)/2`.
+#guard fAdd (fMul 2 BW_SQ3_MU2) BW_U == BW_SQ3
+-- `inv_three_u_squared = 1/(3u²)`.
+#guard fMul BW_INV3U2 (fMul 3 (fMul BW_U BW_U)) == 1
+
+/-- `potential_xs` (`bw19.ml:78-100`), the three candidate abscissae. -/
+def bwPotentialXs (t : Nat) : Nat × Nat × Nat :=
+  let t2 := fMul t t
+  let alpha := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv (fMul (fAdd t2 BW_FU) t2)
+  let x1 := fSub BW_SQ3_MU2 (fMul (fMul (fMul t2 t2) alpha) BW_SQ3)
+  let x2 := fSub (fSub 0 BW_U) x1
+  let tp := fAdd t2 BW_FU
+  let x3 := fSub BW_U (fMul (fMul (fMul tp tp) (fMul alpha tp)) BW_INV3U2)
+  (x1, x2, x3)
+
+/-- `group_map` (`step_verifier.ml:214-237`): the first candidate whose `y² = x³ + 5` is a square,
+with its root. In-circuit this is `Snarky_group_map.Checked.wrap` — all three roots are witnessed and
+`sqrt_flagged`'s `is_square` bits select the first (`checked_map.ml:37-53`); the VALUE is this. -/
+def gmapFp (t : Nat) : Nat × Nat :=
+  let xs := bwPotentialXs t
+  let y2 : Nat → Nat := fun x => fAdd (fMul x (fMul x x)) 5
+  if fIsSquare (y2 xs.1) then (xs.1, fSqrt (y2 xs.1))
+  else if fIsSquare (y2 xs.2.1) then (xs.2.1, fSqrt (y2 xs.2.1))
+  else (xs.2.2, fSqrt (y2 xs.2.2))
+
+-- ⚑ TWO INDEPENDENT SOURCES: this Lean evaluator against `groupmap`'s Rust `to_group`, x AND y,
+-- at three points. A shared bug would have to be mirrored in an arkworks Tonelli–Shanks.
+#guard gmapFp 1 ==
+  (9649340769776349618630915417390658987787685493980520238651558921449989210097,
+   3950737189590882296854259000931426390023175717834009675387235630316976417171)
+#guard gmapFp 2 ==
+  (7490297615487088126677272056937205155610944112134090485255527413633040282968,
+   24422916109215858790805163472192903212291163064750739225981256297054129088675)
+#guard gmapFp 12345 ==
+  (24906630028487510826194306484278106810353957277345535608514541304332784387649,
+   18687091782981476925585512723474604782144949211138020305971037232472882709057)
+-- …and its output is on the curve, which is what makes it a legal `scale_fast2` base.
+#guard onCurveA (gmapFp 1) && onCurveA (gmapFp 12345)
+
+/-- **`Generators.h`** — `Kimchi_bindings.Protocol.SRS.Fq.urs_h (Backend.Tock.Keypair.load_urs ())`
+(`step_main_inputs.ml:306-311`), i.e. the Pallas SRS blinder, `Blake2b512(b"srs_misc" ++ 0u32)`
+through `point_of_random_bytes` (`poly-commitment/src/ipa.rs:751-775`) and independent of the SRS
+depth. MEASURED off `SRS::<Pallas>::create` (`gmprobe.rs`). ⚑ `step_verifier.ml` uses it TWICE — here
+at `:336` and as `x_hat blinding` at `:558` — so pinning it retires a constant two rungs need. -/
+def GENERATORS_H : Nat × Nat :=
+  (15427374333697483577096356340297985232933727912694971579453397496858943128065,
+   2509910240642018366461735648111399592717548684137438645981418079872989533888)
+
+#guard onCurveA GENERATORS_H
+
+/-! ### `scale_fast2`'s EFFECTIVE MULTIPLIER, and the group arithmetic `rhs` is.
+
+`ftcScaleTerm g sv` runs `acc ← 2·acc + (2bₖ−1)·g` from `acc₀ = 2g`, `n₀ = 0` over the 255 bits of
+`sv/2`, then takes the `s_odd` branch — which is `[2^255 + sv]·g`, i.e. §6b's stated
+`Shifted_value.Type2` residue, here as an arithmetic definition rather than a sentence. -/
+def bpK (sv : Nat) : Nat := (2 ^ 255 + sv) % Dregg2.Circuit.Emit.PastaField.qN
+
+-- …stated as an identity against the emitter that actually produces the ladder rows, on a real base.
+#guard (scMulM pN (bpK 12345) (jOf GENERATORS_H)).isSome
+#guard jacEqM pN ((scMulM pN (bpK 12345) (jOf GENERATORS_H)).getD (0, 0, 0))
+                 (jOf (ftcScaleTerm GENERATORS_H 12345).res)
+
+private def qPowAux : Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, acc => acc
+  | f + 1, base, e, acc =>
+      if e == 0 then acc
+      else qPowAux f (base * base % Dregg2.Circuit.Emit.PastaField.qN) (e / 2) (if e % 2 == 1 then acc * base % Dregg2.Circuit.Emit.PastaField.qN else acc)
+/-- Inverse in the Pallas SCALAR field — the field `z₁` lives in. -/
+def qInv (a : Nat) : Nat := qPowAux 300 (a % Dregg2.Circuit.Emit.PastaField.qN) (Dregg2.Circuit.Emit.PastaField.qN - 2) 1
+#guard qInv 12345 * 12345 % Dregg2.Circuit.Emit.PastaField.qN == 1
+
+private def bpMul (k : Nat) (P : Nat × Nat × Nat) : Nat × Nat × Nat :=
+  (scMulM pN (k % Dregg2.Circuit.Emit.PastaField.qN) P).getD (0, 0, 0)
+
+/-- `rhs = z₁·(G + b·u) + z₂·H`, in Jacobian coordinates so no inversion is needed to compare. -/
+def bpRhs (u H : Nat × Nat) (G : Nat × Nat × Nat) (bv z1 z2 : Nat) : Nat × Nat × Nat :=
+  let bu := bpMul (bpK bv) (jOf u)
+  jAdd (bpMul (bpK z1) (jAdd G bu)) (bpMul (bpK z2) (jOf H))
+
+/-- ⚑ **THE PROVER'S SOLVE.** `G := z₁⁻¹·(lhs − z₂·H) − b·u`. One scalar-field inverse and three
+scalar multiplications — the whole cost of re-closing `equal_g` after ANY change to `lhs`. -/
+def bpSolveG (u H lhs : Nat × Nat) (bv z1 z2 : Nat) : Nat × Nat × Nat :=
+  let bu := bpMul (bpK bv) (jOf u)
+  jAdd (bpMul (qInv (bpK z1)) (jAdd (jOf lhs) (jNeg (bpMul (bpK z2) (jOf H))))) (jNeg bu)
+
+/-- `equal_g lhs rhs`, as a Boolean over the VALUES. -/
+def bpCloses (u H lhs : Nat × Nat) (G : Nat × Nat × Nat) (bv z1 z2 : Nat) : Bool :=
+  jacEqM pN (bpRhs u H G bv z1 z2) (jOf lhs)
+
+/-! ### The exhibit, on the assembly's own numbers.
+
+`tS` is the honest smoke assembly; `tSwapAbs` is the SAME assembly with one ABSORBED fold commitment
+replaced by another of block 539508's own valid on-curve points (§12b). Both are already proved
+objects here — the substitution is accepted by every gate in `r8_finalize`, which is the "(a) today's
+assembly accepts it" half stated as a fact about a circuit rather than about a value. -/
+
+/-- The `u` squeeze's challenge index: `let u = group_map (Sponge.squeeze_field sponge)` (`:263-266`)
+is the squeeze the schedule emits after absorb block `oCip` (§2b, `sqAfter`), and β/γ/α/ζ are the
+four before it. -/
+def uChalIx (s : StepShape) : Nat := ((List.range (oCip s)).map (sqAfter s)).foldl (· + ·) 0
+#guard uChalIx shapeSmoke == 4
+#guard uChalIx shapeStep == 4
+
+/-- `z₁` and `z₂`, the opening's response scalars. Deterministic fixtures BECAUSE they are witnesses
+with no upstream binder — that is the point of the exhibit, not a shortcut. -/
+def BP_Z1 : Nat := 987654321098765432109876543210
+def BP_Z2 : Nat := 555555555555555555555555555555
+
+/-- `lhs = Scalar_challenge.endo q c + delta` — R4's `qLhsOut`, read off the assembly. -/
+def bpLhsOf (t : StepData) : Nat × Nat := (t.ipa.lhsAdd.getD 4 0, t.ipa.lhsAdd.getD 5 0)
+/-- `u = group_map (squeeze)` on the assembly's own transcript. -/
+def bpUOf (t : StepData) : Nat × Nat := gmapFp (chalOf t.sh t.sp (uChalIx t.sh))
+/-- `advice.b` — R8's statement word. -/
+def bpBOf (t : StepData) : Nat := t.fin.bShift
+
+/-- The `G` an honest prover hands `verify_one`: the one that makes the opening close. -/
+def bpGHonest : Nat × Nat × Nat :=
+  bpSolveG (bpUOf tS) GENERATORS_H (bpLhsOf tS) (bpBOf tS) BP_Z1 BP_Z2
+
+-- The honest witness CLOSES, and its `G` is a legal `Inner_curve.typ` value.
+#guard bpCloses (bpUOf tS) GENERATORS_H (bpLhsOf tS) bpGHonest (bpBOf tS) BP_Z1 BP_Z2
+#guard Dregg2.Circuit.Emit.PastaCurve.oncurveM pN bpGHonest
+
+-- ⚑ The substitution really is a DIFFERENT circuit: it moves the `u` squeeze (hence `u` itself, a
+-- curve point), and it moves `lhs`. Neither is a restatement of the other.
+#guard bpUOf tSwapAbs != bpUOf tS
+#guard bpLhsOf tSwapAbs != bpLhsOf tS
+#guard onCurveA (bpUOf tS) && onCurveA (bpUOf tSwapAbs)
+
+-- ⚑⚑ **(b) THE SUBSTITUTED ASSEMBLY WITH THE HONEST `G` IS REFUSED.** This is what `equal_g` buys.
+#guard !bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGHonest
+                 (bpBOf tSwapAbs) BP_Z1 BP_Z2
+
+-- ⚑⚑ **(c) …AND THE SAME SUBSTITUTION WITH `G` RE-SOLVED IS ACCEPTED.** Same `z₁`, same `z₂`, same
+-- everything a rung here binds; one scalar-field inverse and three scalar multiplications on the
+-- prover's side. **This is the measurement that `equal_g` alone refuses no on-curve substitution**,
+-- and it is why `G`'s binder (`step_main.ml:526-545`) is the item and not the row count.
+def bpGResolved : Nat × Nat × Nat :=
+  bpSolveG (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) (bpBOf tSwapAbs) BP_Z1 BP_Z2
+#guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGResolved
+                (bpBOf tSwapAbs) BP_Z1 BP_Z2
+#guard Dregg2.Circuit.Emit.PastaCurve.oncurveM pN bpGResolved
+-- …and it IS a different commitment, so (b) and (c) are not the same witness twice.
+#guard !jacEqM pN bpGResolved bpGHonest
+
+-- ⚑ …and the free scalars alone suffice too: `z₁ = z₂ = 1` re-closes it with a different `G`, so
+-- neither of the two response scalars is doing any work either.
+#guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs)
+                (bpSolveG (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) (bpBOf tSwapAbs) 1 1)
+                (bpBOf tSwapAbs) 1 1
 
 end Dregg2.Circuit.Emit.KimchiStepMain
