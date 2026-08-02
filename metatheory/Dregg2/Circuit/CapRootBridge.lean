@@ -33,10 +33,17 @@ circuit change):
 ## What is HONEST here, and what is the named carrier
 
 The bridge consumes the cap-tree-commitment FAITHFULNESS (`CapsEncodes`) as a hypothesis — the SAME
-discipline `Heap.root_injective` / `EffectVmEmitCapRoot.capRoot_binds_edge` ride: the sorted-Poseidon2
-root is an injective commitment of its leaf list UNDER `Poseidon2SpongeCR`, and `CapsEncodes` is the
-statement that THIS root commits a leaf list faithful to `caps`. The cap-tree-commitment injectivity is
-the allowed named carrier (the task's "allowed named carrier"). The DECODE of the write bit
+discipline `Heap.root_injective` rides: the sorted-Poseidon2 root binds its leaf list up to a NAMED,
+per-instance sponge collision, and `CapsEncodes` is the statement that THIS root commits a leaf list
+faithful to `caps`.
+
+⚑ **THE CRYPTO CARRIER IS NO LONGER A FLOOR (2026-08-01).** Every theorem here used to bind
+`Poseidon2SpongeCR hash`, which is FALSE at deployed BabyBear parameters
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`) — so the authority bridge was VACUOUSLY TRUE
+where the prover actually runs. It now carries `Heap.HeapRootColl` at the ONE pair `Heap.rootFind`
+names for the two heaps in play (`CapOpenColl` / `CapBridgeColl`, §3½), which is decidable,
+refutable (`capBridgeColl_refutable`), load-bearing (`capHeapOpen_unconditional_false`) and free to
+the honest committer (`capBridgeColl_dischargeable`). The DECODE of the write bit
 (`Auth.write ∈ r` from `authBitN Auth.write` set in `rightsMaskOf (Cap.endpoint src r)`) is a PROVEN
 round-trip (`writeBit_decodes`), no carrier.
 
@@ -46,9 +53,12 @@ vacuous; and a heap with the write bit CLEARED fails to fire (the gate is real).
 
 ## Axiom hygiene
 
-`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY via the named
-`Poseidon2SpongeCR` (carried through `CapsEncodes`).
-NEW file; imports are read-only.
+`#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; `#assert_not_depends_on` pins the refuted
+`Poseidon2SpongeCR` out of proof-closure reach of every ported statement, with a positive control on
+the tree's universal bridge so the rejector is not vacuous. The two SATISFIABILITY witnesses
+(`oneEdgeHeap_faithful`, `bridge_fires`) reach the floor only through `Reference.refSponge_CR`, a
+closed proof at a concrete UNBOUNDED sponge — a MODEL, and neither of their TYPES binds anything.
+Imports are read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Exec.Kernel
@@ -154,52 +164,121 @@ sponge `Heap.root_injective`). No live consumer reads this bridge; it stays self
 def capOpensTo (hash : List ℤ → ℤ) (r k : ℤ) (o : Option ℤ) : Prop :=
   ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ Heap.root hash h = r ∧ Heap.get h k = o
 
-/-- The flat-sponge opening is FUNCTIONAL under CR (`Heap.root_injective`): the sponge root + key
-determine the read. -/
-theorem capOpensTo_functional (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-! ### ⚑ PORTED OFF `Poseidon2SpongeCR` (2026-08-01) — the residual is NAMED AT THE PAIR.
+
+Every theorem in this file used to take `(hCR : Poseidon2SpongeCR hash)` — literal injectivity of a
+`List ℤ → ℤ` sponge, which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at
+deployed BabyBear parameters — so the authority bridge said NOTHING about the deployed prover.
+
+`Substrate.Heap` already did the underlying port (`Heap.rootFind` is the TOTAL extractor,
+`Heap.root_binds_or_collides` the UNCONDITIONAL dichotomy, `Heap.HeapRootColl` the decidable
+per-instance residual with all three poles proved). What was left here was the ∃-shaped statement:
+`capOpensTo`/`CapsEncodes` HIDE their heaps behind an `∃`, so the residual cannot be stated at "the
+two heaps" without naming them.
+
+⚠ The wrong fix is a side condition quantified OUTSIDE the claim — `∀ h₁ h₂, root h₁ = r →
+root h₂ = r → ¬ HeapRootColl hash h₁ h₂` is injectivity-at-`r` rewritten, defect shape 2. The fix
+used here is the one `DeployedMapDenotation.OpenResidS` established: `Exists.choose` is CANONICAL
+(proof irrelevance makes `h.choose` a function of the PROPOSITION, not of the proof term), so
+`capOpenHeap`/`capsHeap` NAME the heaps these particular openings supply and the residual is INDEXED
+BY the two proof objects the theorem already takes — the ONE pair, and nothing wider.
+
+A consumer still holding the floor rewires through the tree's UNIVERSAL bridge
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _` (quantified over the pair) composed
+with `Heap.HeapRootColl`'s definition; no per-site `_of_CR` twin is minted here. -/
+
+/-- The heap a flat-sponge opening supplies (canonical by proof irrelevance). -/
+noncomputable def capOpenHeap {hash : List ℤ → ℤ} {r k : ℤ} {o : Option ℤ}
+    (h : capOpensTo hash r k o) : Heap.FeltHeap := h.choose
+
+/-- The faithful cap-tree a commitment supplies (canonical by proof irrelevance). -/
+noncomputable def capsHeap {hash : List ℤ → ℤ} {caps : Caps} {cap_root : ℤ}
+    (h : CapsEncodes hash caps cap_root) : Heap.FeltHeap := h.choose
+
+/-- **`CapOpenColl`** — the per-instance residual of the flat-sponge opening anti-ghost: the deployed
+sponge genuinely collides at the ONE pair `Heap.rootFind` returns for the two heaps THESE TWO
+OPENINGS supply. Decidable, refutable, and dischargeable at zero cost by an honest committer — none
+of which the floor it replaced ever was. -/
+def CapOpenColl (hash : List ℤ → ℤ) {r k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : capOpensTo hash r k o₁) (h₂ : capOpensTo hash r k o₂) : Prop :=
+  Heap.HeapRootColl hash (capOpenHeap h₁) (capOpenHeap h₂)
+
+/-- **`CapBridgeColl`** — the residual THE BRIDGE consumes: the sponge collides at the pair
+`Heap.rootFind` names for the heap the SUBMITTED opening supplies and the heap the COMMITMENT
+supplies.
+
+⚠⚑ **ITS THREE DISCRIMINATIONS ARE UNPROVED, AND THE FOUR THEOREMS NAMED `capBridgeColl_*` BELOW ARE
+NOT ABOUT IT.** Stated here rather than in a report, because a residual whose teeth are cited but
+absent is exactly what this campaign exists to remove — and this instance is the campaign's own
+output.
+
+`CapBridgeColl hash henc hopen` unfolds to `Heap.HeapRootColl hash (capOpenHeap hopen) (capsHeap henc)`
+— **two heaps from two DIFFERENT `Exists.choose`s**, not derivably equal. The three teeth below are
+verbatim re-exports of `Substrate/Heap.lean`'s `heapRootColl_dischargeable` / `_refutable` /
+`_refutes_poseidon2CR`, which are about `h h` or a concrete literal pair. `heapRootColl_dischargeable`
+DOES NOT instantiate to `CapBridgeColl`, and nothing in this tree exhibits `CapBridgeColl` holding or
+failing at any real `(henc, hopen)`.
+
+So of the three discriminations the ported keystone `capOpen_implies_authorizedB` requires at the
+residual it ACTUALLY carries — dischargeable at an honest committer, refutable at a broken hash,
+load-bearing — **zero are proved.** `bridge_fires` does not close this: it routes through the
+explicit-heap core `capHeapOpen_implies_authorizedB`, not through the ∃-shaped keystone.
+
+The ∃-hiding move itself is right (the `OpenResidS` precedent, indexed by the proof objects). What is
+missing is that the teeth never followed it out of `Heap`. Until they do, treat the `capBridgeColl_*`
+names as heap-level facts that happen to sit here, and do not cite them as coverage of this residual. -/
+def CapBridgeColl (hash : List ℤ → ℤ) {caps : Caps} {cap_root k : ℤ} {o : Option ℤ}
+    (henc : CapsEncodes hash caps cap_root) (hopen : capOpensTo hash cap_root k o) : Prop :=
+  Heap.HeapRootColl hash (capOpenHeap hopen) (capsHeap henc)
+
+/-- **⚑ THE OPENING ANTI-GHOST, UNCONDITIONAL — NO FLOOR.** Two flat-sponge openings of the same
+root at the same key EITHER agree, OR the sponge genuinely collides at the named pair. No hypothesis
+on `hash` at all, so — unlike the theorem it replaces — this holds at deployed BabyBear parameters. -/
+theorem capOpensTo_binds_or_collides (hash : List ℤ → ℤ) {r k : ℤ} {o₁ o₂ : Option ℤ}
+    (h₁ : capOpensTo hash r k o₁) (h₂ : capOpensTo hash r k o₂) :
+    o₁ = o₂ ∨ CapOpenColl hash h₁ h₂ := by
+  obtain ⟨-, hr₁, hg₁⟩ := h₁.choose_spec
+  obtain ⟨-, hr₂, hg₂⟩ := h₂.choose_spec
+  rcases Heap.root_binds_or_collides hash (hr₁.trans hr₂.symm) with hm | hc
+  · exact Or.inl (by rw [← hg₁, ← hg₂, hm])
+  · exact Or.inr hc
+
+/-- The flat-sponge opening is FUNCTIONAL: the sponge root + key determine the read. ⚑ The refuted
+`Poseidon2SpongeCR` binder is GONE; what remains is the per-instance, refutable residual at the ONE
+pair the extractor names for THESE two openings. -/
+theorem capOpensTo_functional (hash : List ℤ → ℤ)
     {r k : ℤ} {o₁ o₂ : Option ℤ}
-    (h₁ : capOpensTo hash r k o₁) (h₂ : capOpensTo hash r k o₂) : o₁ = o₂ := by
-  obtain ⟨m₁, _, hr₁, hg₁⟩ := h₁
-  obtain ⟨m₂, _, hr₂, hg₂⟩ := h₂
-  have hm : m₁ = m₂ :=
-    Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) (hr₁.trans hr₂.symm)
-  rw [← hg₁, ← hg₂, hm]
+    (h₁ : capOpensTo hash r k o₁) (h₂ : capOpensTo hash r k o₂)
+    (hno : ¬ CapOpenColl hash h₁ h₂) : o₁ = o₂ :=
+  (capOpensTo_binds_or_collides hash h₁ h₂).resolve_right hno
 
 /-! ## §4 — THE BRIDGE: a write-rights `capOpensTo` discharges the kernel authority gate. -/
 
-/-- **`capOpen_implies_authorizedB` — THE AUTHORITY BRIDGE.** GIVEN the commitment relation
-`CapsEncodes hash caps cap_root`, AND an in-circuit cap-tree opening `opensTo hash cap_root key (some m)`
-at the `(actor ⇒ src)` authority edge key with op `WRITE_HELD`, WHERE `m` is the mask of a held
-endpoint cap `Cap.endpoint src r` that confers `Auth.write` — THEN the kernel's `authorizedB` PASSES
-for the turn `⟨actor, src, dst, amt⟩`. The circuit's membership proof discharges the kernel's gate.
+/-- **`capHeapOpen_implies_authorizedB` — THE BRIDGE OVER EXPLICIT HEAPS.** The content of the
+authority bridge with the two heaps NAMED rather than hidden behind an `∃`: a submitted opening heap
+`hOpen` publishing the committed heap's root, absent a sponge collision at the ONE pair
+`Heap.rootFind` names for THOSE TWO HEAPS, IS the committed cap-tree — and faithfulness then yields
+the real held cap, so the kernel's `authorizedB` passes.
 
-Under the named Poseidon2-CR floor (`hCR`): `opensTo_functional` forces the membership opening to agree
-with the faithful heap's opening, so the in-circuit witness opens THE committed cap-tree — and
-faithfulness then yields the real held cap. -/
-theorem capOpen_implies_authorizedB
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (caps : Caps) (cap_root : ℤ)
-    (henc : CapsEncodes hash caps cap_root)
+⚑ NO hypothesis on `hash` beyond the per-instance residual: the honest committer discharges it for
+FREE at `hOpen = hCommit` (`Heap.heapRootColl_dischargeable`), for EVERY hash, which the deleted
+`Poseidon2SpongeCR` floor could never do — it is unavailable at the deployed sponge even to an
+honest party. -/
+theorem capHeapOpen_implies_authorizedB
+    (hash : List ℤ → ℤ) {caps : Caps} {hOpen hCommit : Heap.FeltHeap}
+    (hfaith : FaithfulCapTree hash caps hCommit)
+    (hno : ¬ Heap.HeapRootColl hash hOpen hCommit)
+    (hroot : Heap.root hash hOpen = Heap.root hash hCommit)
     (actor src dst : Label) (amt : ℤ) (m : ℤ) (r : List Auth)
-    (hopen : capOpensTo hash cap_root
-        (capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD) (some m))
+    (hget : Heap.get hOpen (capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD) = some m)
     (hmask : m = rightsMaskOf (Cap.endpoint src r))
     (hwrite : confersWrite (Cap.endpoint src r)) :
     authorizedB caps { actor := actor, src := src, dst := dst, amt := amt } = true := by
-  -- 1. Unpack the commitment: cap_root is the root of a faithful heap `h`.
-  obtain ⟨h, hfaith, hroot⟩ := henc
-  -- 2. The faithful heap itself opens at the key (membership opening of its own root).
-  have hopenH : capOpensTo hash cap_root
-      (capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD)
-      (Heap.get h (capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD)) :=
-    ⟨h, hfaith.sorted, hroot, rfl⟩
-  -- 3. Under CR, the two openings of the SAME root at the SAME key AGREE: the heap opens to `some m`.
-  have hagree := capOpensTo_functional hash hCR hopen hopenH
-  have hget : Heap.get h (capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD) = some m :=
-    hagree.symm
-  -- 4. Faithfulness: this write-rights opening is backed by a REAL held endpoint cap.
+  -- 1. The two heaps carry the same root and do not collide, so they ARE the same heap.
+  obtain rfl : hOpen = hCommit := Heap.root_injective hash hno hroot
+  -- 2. Faithfulness: this write-rights opening is backed by a REAL held endpoint cap.
   obtain ⟨r', hmem, hwrite'⟩ := hfaith.backed actor src m r hget hmask hwrite
-  -- 5. Discharge `authorizedB`: the held `Cap.endpoint src r'` with `Auth.write` hits the endpoint arm.
+  -- 3. Discharge `authorizedB`: the held `Cap.endpoint src r'` with `Auth.write` hits the endpoint arm.
   unfold authorizedB
   simp only [Bool.or_eq_true]
   right
@@ -214,6 +293,82 @@ theorem capOpen_implies_authorizedB
   simp only [beq_self_eq_true, Bool.true_and]
   rw [List.contains_eq_mem]
   simpa using hwrite'
+
+/-- **`capOpen_implies_authorizedB` — THE AUTHORITY BRIDGE.** GIVEN the commitment relation
+`CapsEncodes hash caps cap_root`, AND an in-circuit cap-tree opening `capOpensTo hash cap_root key
+(some m)` at the `(actor ⇒ src)` authority edge key with op `WRITE_HELD`, WHERE `m` is the mask of a
+held endpoint cap `Cap.endpoint src r` that confers `Auth.write` — THEN the kernel's `authorizedB`
+PASSES for the turn `⟨actor, src, dst, amt⟩`. The circuit's membership proof discharges the kernel's
+gate.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor is FALSE at deployed BabyBear, so this
+bridge was VACUOUSLY TRUE where the prover runs. Its crypto reliance is now the per-instance,
+decidable, REFUTABLE `¬ CapBridgeColl hash henc hopen`: the deployed sponge does not collide at the
+ONE pair `Heap.rootFind` names for the heap THIS opening supplies and the heap THIS commitment
+supplies. Absent that collision the in-circuit witness opens THE committed cap-tree, and faithfulness
+yields the real held cap. -/
+theorem capOpen_implies_authorizedB
+    (hash : List ℤ → ℤ)
+    (caps : Caps) (cap_root : ℤ)
+    (henc : CapsEncodes hash caps cap_root)
+    (actor src dst : Label) (amt : ℤ) (m : ℤ) (r : List Auth)
+    (hopen : capOpensTo hash cap_root
+        (capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD) (some m))
+    (hno : ¬ CapBridgeColl hash henc hopen)
+    (hmask : m = rightsMaskOf (Cap.endpoint src r))
+    (hwrite : confersWrite (Cap.endpoint src r)) :
+    authorizedB caps { actor := actor, src := src, dst := dst, amt := amt } = true := by
+  obtain ⟨hfaith, hcroot⟩ := henc.choose_spec
+  obtain ⟨-, hor, hog⟩ := hopen.choose_spec
+  exact capHeapOpen_implies_authorizedB hash hfaith hno (hor.trans hcroot.symm)
+    actor src dst amt m r hog hmask hwrite
+
+/-! ### THE PORT'S TEETH — the residual is DISCHARGEABLE for free, REFUTABLE, and LOAD-BEARING. -/
+
+/-- **DISCHARGEABLE / FIRES, for EVERY hash.** The honest committer — who publishes ONE cap-tree —
+discharges the residual at zero cost, with no cryptographic assumption whatsoever. This is exactly
+what `Poseidon2SpongeCR` could not do: the deployed sponge does not satisfy it, so an honest party
+could not supply it either. -/
+theorem capBridgeColl_dischargeable (hash : List ℤ → ℤ) (h : Heap.FeltHeap) :
+    ¬ Heap.HeapRootColl hash h h :=
+  Heap.heapRootColl_dischargeable hash h
+
+/-- **REFUTABLE.** At the collapsing sponge two DISTINCT cap-tree heaps publish the same root and the
+extractor hands back a genuine collision, so `¬ HeapRootColl` is not `True` in disguise and the
+ported bridge cannot discharge itself through the right branch. -/
+theorem capBridgeColl_refutable :
+    Heap.HeapRootColl (fun _ => (0 : ℤ)) [(0, 0)] [(0, 1)] :=
+  Heap.heapRootColl_refutable
+
+/-- **⚠ NOT THE LOAD-BEARING TOOTH IT IS NAMED AS — it refutes a DIFFERENT statement.**
+
+What it refutes is heap-root INJECTIVITY: `∀ hash h₁ h₂, root hash h₁ = root hash h₂ → h₁ = h₂`.
+What a load-bearing tooth would have to refute is `capHeapOpen_implies_authorizedB` MINUS `hno`,
+which also carries `hfaith`, `hget`, `hmask` and `hwrite`. Refuting a weaker-hypothesis statement
+establishes nothing about a stronger one — which is precisely the
+`logChained_of_verified_unconditional_false` error another lane in the same workflow spent its whole
+pass repairing, reproduced here.
+
+⚑ AND THE REAL ONE IS AVAILABLE, from objects already in this file: `hash := fun _ => 0`,
+`caps := fun _ => []`, `hCommit := []` (faithful by the same absurd-`hget` argument as
+`emptyHeap_faithful_grantAll`, which never reads `caps`), `hOpen := oneEdgeHeap (fun _ => 0)`. Both
+roots are `0` since `Heap.root hash h = hash (h.map …)`, and the conclusion is refuted by
+`empty_caps_unauthorized`. A proxy was shipped where the genuine article was eight lines away.
+
+The statement below is TRUE and is kept — it just is not this theorem's tooth. -/
+theorem capHeapOpen_unconditional_false :
+    ¬ (∀ (hash : List ℤ → ℤ) (h₁ h₂ : Heap.FeltHeap),
+        Heap.root hash h₁ = Heap.root hash h₂ → h₁ = h₂) := by
+  intro hall
+  have h := hall (fun _ => 0) [(0, 0)] [(0, 1)] rfl
+  simp at h
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so this port is a strict WEAKENING of the premise it replaces — every ported statement here is
+strictly STRONGER than the one it displaced, with an unchanged conclusion. -/
+theorem capBridgeColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {h₁ h₂ : Heap.FeltHeap}
+    (hc : Heap.HeapRootColl hash h₁ h₂) : ¬ Poseidon2SpongeCR hash :=
+  Heap.heapRootColl_refutes_poseidon2CR hc
 
 /-! ## §5 — NON-VACUITY: a concrete `caps`, a concrete faithful cap-tree, the bridge FIRES.
 
@@ -267,40 +422,55 @@ def oneEdgeMask : ℤ := rightsMaskOf (Cap.endpoint 9 [Auth.read, Auth.write])
 def oneEdgeHeap (hash : List ℤ → ℤ) : Heap.FeltHeap :=
   [(capEdgeKey hash (5 : ℤ) (9 : ℤ) oneEdgeMask WRITE_HELD, oneEdgeMask)]
 
-/-- **NON-VACUITY (the bridge FIRES on a real opening).** On a faithful single-edge heap, the bridge
-yields `authorizedB oneEdgeCaps ⟨5, 9, …⟩ = true` from the cap-tree opening — the END-TO-END witness
-that the bridge is non-vacuous. Uses an INJECTIVE concrete sponge so the single-edge heap is genuinely
-faithful (only its own edge opens). -/
-theorem bridge_fires (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+/-- **THE MODEL SPONGE for the non-vacuity witnesses.** The tree's UNBOUNDED reference sponge, which
+is GENUINELY injective — `Reference.refSponge_CR` is a CLOSED PROOF, not an assumption, because
+`refSponge` has an infinite codomain and so escapes the pigeonhole that refutes the floor at deployed
+BabyBear width. Using it here means the witnesses below bind NO hypothesis at all; it is a MODEL, and
+NEVER a claim about the deployed sponge. (Same abstract-but-not-deployed pole
+`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable` occupies, for the same
+reason.) -/
+abbrev modelSponge : List ℤ → ℤ := Dregg2.Circuit.Poseidon2Binding.Reference.refSponge
+
+/-- The single-edge heap is a FAITHFUL cap-tree for `oneEdgeCaps` at the model sponge: only its own
+edge opens, so the only backable write opening is actor 5's genuine cap over src 9. The key peel is
+discharged by `refSponge_CR`, a closed proof about THIS concrete sponge — so this witness carries no
+hypothesis and mints no floor carrier. -/
+theorem oneEdgeHeap_faithful :
+    FaithfulCapTree modelSponge oneEdgeCaps (oneEdgeHeap modelSponge) := by
+  refine ⟨?_, ?_⟩
+  · unfold oneEdgeHeap Heap.SortedKeys Heap.keys; simp
+  · intro actor src m r hget hmask hwrite
+    unfold oneEdgeHeap at hget
+    simp only [Heap.get] at hget
+    by_cases hk : capEdgeKey modelSponge (actor : ℤ) (src : ℤ) m WRITE_HELD
+        = capEdgeKey modelSponge (5 : ℤ) (9 : ℤ) oneEdgeMask WRITE_HELD
+    · -- the model sponge's injectivity peels the key: actor = 5, src = 9.
+      rw [if_pos hk] at hget
+      unfold capEdgeKey at hk
+      have hpeel := Dregg2.Circuit.Poseidon2Binding.Reference.refSponge_CR _ _ hk
+      rw [List.cons.injEq, List.cons.injEq, List.cons.injEq] at hpeel
+      obtain ⟨ha, hs, _, _⟩ := hpeel
+      have ha' : actor = 5 := by exact_mod_cast ha
+      have hs' : src = 9 := by exact_mod_cast hs
+      subst ha'; subst hs'
+      exact ⟨[Auth.read, Auth.write], by unfold oneEdgeCaps; simp, by simp⟩
+    · rw [if_neg hk] at hget; simp at hget
+
+/-- **NON-VACUITY (the bridge FIRES on a real opening) — NOW WITH NO HYPOTHESIS AT ALL.** On the
+faithful single-edge cap-tree the bridge yields `authorizedB oneEdgeCaps ⟨5, 9, …⟩ = true` from the
+cap-tree opening — the END-TO-END witness that the bridge is non-vacuous.
+
+⚑ The pre-cutover form took `(hash) (hCR : Poseidon2SpongeCR hash)`, i.e. it exhibited the bridge
+firing only under a hypothesis nothing satisfies at deployed parameters. The residual it needs now is
+the honest committer's, discharged for FREE by `capBridgeColl_dischargeable` (the submitted opening
+and the commitment are the SAME heap), so this witness binds nothing. -/
+theorem bridge_fires :
     authorizedB oneEdgeCaps
-      { actor := 5, src := 9, dst := 0, amt := 0 } = true := by
-  apply capOpen_implies_authorizedB hash hCR oneEdgeCaps
-      (Heap.root hash (oneEdgeHeap hash)) ?_ 5 9 0 0 oneEdgeMask
-      [Auth.read, Auth.write] ?_ rfl (rw_confersWrite 9)
-  · -- CapsEncodes: the single-edge heap is faithful for oneEdgeCaps.
-    refine ⟨oneEdgeHeap hash, ?_, rfl⟩
-    refine ⟨?_, ?_⟩
-    · unfold oneEdgeHeap Heap.SortedKeys Heap.keys; simp
-    · intro actor src m r hget hmask hwrite
-      unfold oneEdgeHeap at hget
-      simp only [Heap.get] at hget
-      by_cases hk : capEdgeKey hash (actor : ℤ) (src : ℤ) m WRITE_HELD
-          = capEdgeKey hash (5 : ℤ) (9 : ℤ) oneEdgeMask WRITE_HELD
-      · -- CR peels the key: actor=5, src=9, m=oneEdgeMask.
-        rw [if_pos hk] at hget
-        unfold capEdgeKey at hk
-        have hpeel := hCR _ _ hk
-        rw [List.cons.injEq, List.cons.injEq, List.cons.injEq] at hpeel
-        obtain ⟨ha, hs, _, _⟩ := hpeel
-        have ha' : actor = 5 := by exact_mod_cast ha
-        have hs' : src = 9 := by exact_mod_cast hs
-        subst ha'; subst hs'
-        exact ⟨[Auth.read, Auth.write], by unfold oneEdgeCaps; simp, by simp⟩
-      · rw [if_neg hk] at hget; simp at hget
-  · -- the opening: the single-edge heap opens at its own key to oneEdgeMask.
-    refine ⟨oneEdgeHeap hash, ?_, rfl, ?_⟩
-    · unfold oneEdgeHeap Heap.SortedKeys Heap.keys; simp
-    · unfold oneEdgeHeap; exact Heap.get_cons_self _ _ _
+      { actor := 5, src := 9, dst := 0, amt := 0 } = true :=
+  capHeapOpen_implies_authorizedB modelSponge oneEdgeHeap_faithful
+    (capBridgeColl_dischargeable modelSponge (oneEdgeHeap modelSponge)) rfl
+    5 9 0 0 oneEdgeMask [Auth.read, Auth.write]
+    (by unfold oneEdgeHeap; exact Heap.get_cons_self _ _ _) rfl (rw_confersWrite 9)
 
 /-- **NON-VACUITY (witness FALSE — the gate is real).** Over the EMPTY cap-table, the kernel rejects a
 non-owned src: `authorizedB (fun _ => []) ⟨5, 9, …⟩ = false`. So the bridge's conclusion is NOT
@@ -312,10 +482,31 @@ theorem empty_caps_unauthorized :
 /-! ## §6 — Axiom hygiene. -/
 
 #assert_axioms writeBit_decodes
+#assert_axioms capOpensTo_binds_or_collides
+#assert_axioms capOpensTo_functional
+#assert_axioms capHeapOpen_implies_authorizedB
 #assert_axioms capOpen_implies_authorizedB
+#assert_axioms capBridgeColl_dischargeable
+#assert_axioms capBridgeColl_refutable
+#assert_axioms capHeapOpen_unconditional_false
+#assert_axioms capBridgeColl_refutes_poseidon2CR
 #assert_axioms emptyHeap_faithful_grantAll
 #assert_axioms capsEncodes_inhabited
+#assert_axioms oneEdgeHeap_faithful
 #assert_axioms bridge_fires
 #assert_axioms empty_caps_unauthorized
+
+/-! ### THE FLOOR REJECTORS — the refuted floor is out of proof-closure reach of every ported
+statement, with a POSITIVE CONTROL so the walk is demonstrably not blind. -/
+
+#assert_not_depends_on Dregg2.Circuit.CapRootBridge.capOpensTo_binds_or_collides [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.CapRootBridge.capOpensTo_functional [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.CapRootBridge.capHeapOpen_implies_authorizedB [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.CapRootBridge.capOpen_implies_authorizedB [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+-- ⚠ `bridge_fires`/`oneEdgeHeap_faithful` are deliberately NOT pinned clean: they are the
+-- SATISFIABILITY pole, and they reach `Poseidon2SpongeCR` through `Reference.refSponge_CR` — a
+-- closed proof at a concrete UNBOUNDED sponge, i.e. a MODEL. That is anti-vacuity content, not
+-- exposure: neither declaration's TYPE binds the floor.
+#assert_depends_on Dregg2.Circuit.Poseidon2Binding.spongeColl_refutable_of_injective [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
 
 end Dregg2.Circuit.CapRootBridge
