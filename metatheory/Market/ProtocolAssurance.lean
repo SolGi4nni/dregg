@@ -374,123 +374,63 @@ def ShieldedRingApexStep (pre post : RecChainedState) : Prop :=
     f.clearing.post = post.kernel ∧
     post.log = ringReceiptLog (settlementsOf f.clearing.nodes) pre.log
 
-/-- **The exact remaining descriptor refinement.**  A satisfying shielded-ring descriptor whose
-*own trace publication* is the commitment decoded as `pre/post` must yield the whole fused clearing
-above.  The explicit `tracePublishedCommit t = pc` premise is load-bearing: without it a descriptor
-theorem could decode an unrelated public commitment.  This is stronger than recognizing six
-`[nullifier, root, value_binding]` lanes: it binds creators, allocation rows, kernel endpoints, and
-the receipt chain.
+/-! ### ⚰ TOMBSTONE — `ShieldedRingDescriptorRefines` / `ShieldedRingApexRefinementResidual`
+(DELETED 2026-08-02).
 
-⚑⚑ **THE RESIDUAL IS ALREADY DISCHARGED — BY THE PARAMETERS. MEASURED 2026-08-01, NOT PORTED.**
+**What it claimed.** For a `CommitSurface` `S`, a hash and a descriptor `d`:
 
-The body opens `Poseidon2SpongeCR hash → …`, a floor `HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
-PROVES FALSE at deployed BabyBear (infinite `List Int` into ~2³¹ values, pigeonhole). The floor is in the
-VALUE, not the signature, so no floor binder appears in the type of anything that mentions this def and no
-binder-keyed census can see it.
+    Poseidon2SpongeCR hash →
+    ∀ minit mfin maddrs t pc pre post,
+      Satisfied2 hash d minit mfin maddrs t → tracePublishedCommit t = pc →
+      StateDecode S pc pre post → ShieldedRingApexStep pre post
 
-That matters MORE here than at the other two prop-body carriers, because of how this def is used.
-`DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear` transfers verbatim: at any
-field-bounded sponge THIS def holds for every descriptor `d`, including with `ShieldedRingApexStep`
-replaced by anything at all. And this def is never DISCHARGED anywhere in the tree — its only live uses
-are the alias `ShieldedRingApexRefinementResidual` and the `hmarket` hypothesis of
-`shieldedRingApexStep_of_accept` / `starkMarketClaimExtraction_of_shielded_descriptor` /
-`starkMarketClaimExtraction_of_effect_step`. A named residual that is TRUE at deployed parameters is not a
-residual: the "exact remaining descriptor refinement" that the shielded-ring apex advertises as its last
-piece of honest work is, at the parameters we deploy at, no work.
+— "any satisfying witness of the shielded-ring descriptor whose own publication decodes to `pre`/`post`
+yields the whole fused, fair, kernel-real two-leg clearing AND its receipt-chain link". The alias
+`ShieldedRingApexRefinementResidual` was the same proposition under the name the shielded apex advertised
+as its last piece of honest work.
 
-MEASURED surface: 5 exact-word mentions of the def (+5 of the alias). 2 comments, this def, the alias,
-three `hmarket` binders, two `FloorRatchetBaseline` rows. Small — which is why this is the cheapest of the
-three to port and the one whose port changes a claim rather than a plumbing detail.
+**Why it was vacuous.** The `Poseidon2SpongeCR hash →` antecedent sat in the VALUE, and
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES IT FALSE at deployed BabyBear (infinite
+`List Int` into ~2³¹ values, pigeonhole). `DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear`
+transfers verbatim: at any field-bounded sponge the def held for EVERY descriptor, including with
+`ShieldedRingApexStep` replaced by anything at all. Because the floor was in the value and not the
+signature, no floor binder appeared in the type of anything that mentioned it and `#floor_ratchet` — which
+keys on binders — saw nothing at the consumers. Nothing in the tree ever discharged it.
 
-⚠ The three consumers are NOT rescued by their explicit `hCR : Poseidon2SpongeCR hash` binder. That binder
-makes them visibly floor-carrying, but it is a SECOND vacuity, not a repair of this one: with `hCR` refuted
-they are unusable, and with `hmarket` free they assert nothing about the ring circuit either way. Both have
-to go.
+**Why the antecedent was not simply deleted.** `shieldedRingDescriptorRefinesFree_forces_no_decode`
+(below, §"THE FLOOR-FREE SHIELDED RUNG") proves the antecedent-free port holds only where its own premise
+is EMPTY: `StateDecode`/`StateDecodeC` are LOG-BLIND while `ShieldedRingApexStep` is LOG-FORCING, so the
+forged pair `(pre, ⟨post.kernel, pre.log⟩)` decodes the same commitment and yields
+`pre.log.length = pre.log.length + 2`. Deleting the antecedent would have traded a free hypothesis for an
+unsatisfiable one.
 
-MEASURED AGAIN (second pass, comments and string literals stripped mechanically): **2 code sites for
-the def (itself + the alias) and 4 for `ShieldedRingApexRefinementResidual` (its own line + the three
-`hmarket` binders), 3 comment mentions, 2 `FloorRatchetBaseline` rows.** Nothing produces it. This is
-the SMALLEST of the three prop-body carriers and the only one whose port changes a claim rather than a
-plumbing detail — and it is in NO sentinel list (`FloorCensus.sentinelPropBody` is
-`[descriptorRefines]` alone), so its port needs no `FloorCensus.lean` edit, and a `FloorRatchetBaseline`
-row left stale by a port is green (that file is emitted as `baseline ∩ current`).
+**What replaced it.** `ShieldedRingDescriptorRefinesKernel` — no floor, bundle replaced by a bare
+`ApexFloorFree.CommitMap`, publication link kept, conclusion weakened to `ShieldedRingApexKernelStep` (the
+fused fair kernel-real clearing at the two states' KERNELS). Both poles live:
+`shieldedRingApexKernelStep_realizable` and `shieldedRingDescriptorRefinesKernel_refutable` (refuted on
+KERNEL content at `ApexFloorFree.collapseMap emptyTrace`, via `settleRing_preserves_nullifiers`).
 
-⚠ **THE `apexCommitFloor_unsatisfiable` CITATION BELOW WAS STALE WHEN IT WAS WRITTEN — corrected
-2026-08-01.** `ApexPremiseVacuity.ApexCommitFloor` is the five-conjunct list `compressInjective cmb ∧
-compressInjective compress ∧ compressNInjective compressN ∧ cellLeafInjective CH ∧ RestHashIffFrame RH`,
-and `apexCommitFloor_unsatisfiable` kills it through the FIFTH conjunct by Cantor. `CommitSurface` at
-HEAD carries NONE of those five: `1f53df6d2` deleted the four injectivity fields and the fifth is
-`RestHashIffFrameFin RH`. The bundle has a CLOSED inhabitant — the anonymous `noncomputable example :
-CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348` — so `(S : CommitSurface) → ¬ P S`
-is no longer free and a refutability pole at the bundle is stateable for the first time.
+**What the caller now discharges.** The receipt-chain half is no longer asserted; it is
+`ShieldedRingLogResidual f pre post` — one equation, zero quantifiers, naming the decoded pair AND the
+extracted clearing — carried as an implication ON THAT INSTANCE at every consumer.
+`shieldedRingLogResidual_unconditional_false` proves dropping it makes the decomposition FALSE, so it is
+work and not decoration. Consumers, all in this file:
+`shieldedRingKernelEndpoints_of_accept` (was `shieldedRingApexStep_of_accept`),
+`starkMarketClaimExtraction_of_shielded_descriptor` (statement UNCHANGED — its conclusion
+`MarketBoundaryBinding` reads kernels only and never needed the log half; the old proof already discarded
+it), and `lightclient_market_seam_of_shielded_descriptor` (its `ShieldedRingApexStep` and `turnSpec`
+conjuncts moved behind the residual implication).
 
-The reason to reach for `CommitMap` survives, but it is a DIFFERENT reason and the port must be
-written on the real one: `ApexFloorFree.descriptorRefinesFree_false_at_False_kstep` needs a commit map
-that HITS the opaque published value `tracePublishedCommit emptyTrace` (that is `collapseMap`'s whole
-job), and `S.commit = recStateCommit S.CH S.RH S.cmb S.compress S.compressN` cannot be chosen to hit an
-opaque target. The map must be ARBITRARY; the bundle is not empty.
+⚠ Their `hCR : Poseidon2SpongeCR hash` binders went with it: `hCR` was consumed ONLY to discharge this
+def's dead antecedent, so the three consumers now bind no floor at all. Their
+`Dregg2/Verify/FloorRatchetBaseline.lean` rows, and the two rows naming this def and its alias, are
+SLACK — that file is emitted as `baseline ∩ current` and never errors on a name that is no longer a
+carrier. They are deliberately left in place.
 
-⚑ The refutation here has a shape ready-made for it, which is why this def is the one to do first:
-`ApexFloorFree.satisfied2_emptyTrace` satisfies EVERY descriptor at `emptyTrace`, and
-`ShieldedRingApexStep.log_length` forces `post.log.length = pre.log.length + 2` — so a decode to two
-empty-log states refutes the ported obligation outright (`0 = 0 + 2`). ⚠ It must go in as an ANONYMOUS
-`example` if its type still mentions `CommitSurface`: that makes it a `#floor_ratchet` `bundle-user`
-carrier and the gate hard-errors on a new named one (the discipline of
-`Verify/RestFrameFiniteSupportSuccessor.lean` §6).
-
-⚑⚑ **AND THAT SAME `log_length` ARGUMENT IS THE BLOCKER, NOT JUST THE TOOTH — MEASURED 2026-08-01,
-LANDED AS A THEOREM.** The paragraph above read the log-length refutation as a convenience (the ported
-def would be REFUTABLE, which is the acceptance test). Run the same argument at an ARBITRARY decode
-rather than at `state0`/`state1` and it says something much stronger:
-`shieldedRingDescriptorRefinesFree_forces_no_decode` — the ported rung holds ONLY where its own premise
-is EMPTY. `StateDecode`/`StateDecodeC` read only kernels and `AccountsWF`, never `.log`, so from any
-decode of `(pre, post)` the pair `(pre, ⟨post.kernel, pre.log⟩)` decodes the SAME commitment, and the
-rung there yields `pre.log.length = pre.log.length + 2`. So deleting the antecedent does not convert a
-free hypothesis into an honest open one; it converts it into an UNSATISFIABLE one, and the three
-`hmarket` consumers would become "unsatisfiable ⟹ anything".
-
-HONEST REPLACEMENT — the deletion is step one of it and NOT the whole of it. What landed
-(§ "THE FLOOR-FREE SHIELDED RUNG", below `ShieldedRingApexStep.log_length`) is the deletion target,
-`ShieldedRingDescriptorRefinesFree`, stated over `ApexFloorFree.CommitMap` — an `abbrev` for
-`ApexFloorFree.descriptorRefinesFree C hash d ShieldedRingApexStep`, so the port routes through the
-existing floor-free rung instead of minting a second obligation shape — together with its refutation
-`shieldedRingDescriptorRefinesFree_false_at_collapseMap` and the measurement above. What is NOT landed,
-and is the real remaining decision, is where the LOG LINK comes from: `ClosureAll.hrefinesAllClosed`
-supplies it for the general rung as `mkLog`, a producer of `ClosureLog.StateDecodeLog`, which is a
-`FloorRatchet.sentinelBundles` member carrying `logHashInjective` — a refuted floor. Doing the same here
-would trade one floor for another. The floor-free alternatives are to weaken the conclusion to its
-kernel-endpoint half and name the log clause as a separate per-instance residual, or to carry the log
-link as an explicit non-crypto premise. Neither is taken here.
-
-⚑ **THE FIRST OF THE TWO IS NOW TAKEN — § "THE SOUND HALF OF THE SHIELDED RUNG", below.**
-`ShieldedRingDescriptorRefinesKernel` is the kernel-endpoint rung (floor-free, bundle-free, publication
-link carried) and `ShieldedRingLogResidual` is the log clause as a quantifier-free per-instance
-proposition naming the pair AND the extracted clearing. `shielded_lightclient_kernel_endpoints_free` is
-the apex over it. THIS def is unchanged and is still what all three consumers take; the retirement is
-the open decision and the section names the sites it touches.
-
-Do NOT re-ground on `SpongeCollisionShirk.SpongeColl` at a named pair — no proof here feeds the sponge a
-pair, so a per-instance side condition would be decoration and a fresh carrier. Do NOT re-ground on
-`OrBreak (SpongeCollision hash) _`: refuted wholesale by
-`SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`.
-
-⚠ THE `bundle-user` WARNING ABOVE IS ALSO STALE. `FloorRatchet.sentinelBundles` is
-`[Poseidon2RealizedSponge, StateDecodeLog, ClosureReadouts, ClosureReadoutsLive]` — `CommitSurface` was
-removed when its four injectivity fields were deleted, and `scripts/check-floor-baseline-preflight.sh`
-re-pointed its parse canary for the same reason. A named declaration mentioning `CommitSurface` is no
-longer a bundle-user carrier on that account. The declarations landed below avoid it regardless, since
-they are stated over `CommitMap`. -/
-def ShieldedRingDescriptorRefines (S : CommitSurface) (hash : List Int → Int)
-    (d : EffectVmDescriptor2) : Prop :=
-  Poseidon2SpongeCR hash →
-  ∀ minit mfin maddrs t pc pre post,
-    Satisfied2 hash d minit mfin maddrs t →
-    tracePublishedCommit t = pc →
-    StateDecode S pc pre post →
-    ShieldedRingApexStep pre post
-
-abbrev ShieldedRingApexRefinementResidual := ShieldedRingDescriptorRefines
-
+Do NOT resurrect this shape. Do NOT re-ground on `SpongeCollisionShirk.SpongeColl` at a named pair (no
+proof here feeds the sponge a pair, so a per-instance side condition would be decoration and a fresh
+carrier), and do NOT re-ground on `OrBreak (SpongeCollision hash) _` — refuted wholesale by
+`SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`. -/
 /-- The apex semantic object is inhabited by a genuine fused, funded bilateral swap. -/
 def fusedSettlePre : RecordKernelState where
   accounts := {1, 2}
@@ -547,11 +487,15 @@ theorem ShieldedRingApexStep.log_length {pre post : RecChainedState}
 
 /-! ## ⚑ THE FLOOR-FREE SHIELDED RUNG, AND WHY DELETING THE ANTECEDENT IS NOT THE PORT.
 
-`ShieldedRingDescriptorRefines` carries `Poseidon2SpongeCR hash →` in its VALUE, so no floor binder
-appears in the type of anything that mentions it. The annotation above prescribed the repair that
+⚰ The def this section measures — `ShieldedRingDescriptorRefines` — was DELETED on 2026-08-02; see the
+tombstone above. Everything below is retained because it is what MEASURED that def, and the measurement
+is the reason the retirement took the shape it did. Read it in the past tense.
+
+`ShieldedRingDescriptorRefines` carried `Poseidon2SpongeCR hash →` in its VALUE, so no floor binder
+appeared in the type of anything that mentioned it. The annotation above prescribed the repair that
 landed for `ClosureAll.ClosedLogExtract` and `CircuitCompleteness.descriptorComplete`: DELETE the
 antecedent and restate over a bare commit map. This section lands the target of that port and then
-MEASURES it — and the measurement says the deletion, taken alone, does not repair this def.
+MEASURES it — and the measurement says the deletion, taken alone, does not repair that def.
 
 **The ported rung needs no new obligation shape.** With `StateDecode S` replaced by its field-for-field
 commit-map twin `ApexFloorFree.StateDecodeC C`, the body of `ShieldedRingDescriptorRefines` IS
@@ -594,16 +538,21 @@ deliberately not taken here.
 to its kernel-endpoint half" and "name a per-instance log residual" read above as alternatives; they are
 the two halves of one decomposition, and the section below lands both together
 (`ShieldedRingDescriptorRefinesKernel` + `ShieldedRingLogResidual`, reassembled by
-`shieldedRingApexStep_of_kernelEndpoints_and_residual`). Nothing here is deleted or rewired.
+`shieldedRingApexStep_of_kernelEndpoints_and_residual`). ⚑ AND THE REWIRING IS NOW DONE TOO (2026-08-02):
+all three consumers take the kernel rung, the old def and its alias are deleted, and the log clause
+travels as an explicit `ShieldedRingLogResidual` implication wherever it was load-bearing. See the
+tombstone above.
 
-⚠ `descriptorRefinesTB` is the same shape and is WORSE: it carries no `tracePublishedCommit t = pc`
-link at all, so its `pc` is unconstrained. The correction above applies verbatim to its annotation —
-⚑ AND THE "WORSE" IS NOW MEASURED, not just asserted:
+⚠ `descriptorRefinesTB` was the same shape and WORSE: it carried no `tracePublishedCommit t = pc`
+link at all, so its `pc` was unconstrained. The correction above applied verbatim to its annotation —
+⚑ AND THE "WORSE" WAS MEASURED, not just asserted:
 `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTBKernelUnlinked_forces_no_decode` proves that
 without the link even the kernel-endpoint half holds only where its own premise is empty, for a reason
 that has nothing to do with the log (a decode is two equations in `pc.turn`, so it survives moving `pc`
 to any turn, including a self-transfer the admit guard refuses). The kernel-endpoint repair therefore
-transfers to that def ONLY with the publication link restored — `descriptorRefinesTBKernelFree`, §8 there.
+transferred to that def ONLY with the publication link restored — `descriptorRefinesTBKernelFree`, §8
+there, which is what its apex now takes; that def, like this one, was RETIRED on 2026-08-02 (⚰ tombstone
+at §6 of that file).
 -/
 
 section FloorFreeShieldedRung
@@ -612,7 +561,8 @@ open Dregg2.Circuit.ApexFloorFree
   (CommitMap StateDecodeC descriptorRefinesFree emptyTrace satisfied2_emptyTrace
    state0 state1 kernel0 kernel1 kernel0_wf kernel1_wf kernel1_ne_kernel0 collapseMap)
 
-/-- **`ShieldedRingDescriptorRefinesFree C hash d`** — `ShieldedRingDescriptorRefines` with the refuted
+/-- **`ShieldedRingDescriptorRefinesFree C hash d`** — the RETIRED `ShieldedRingDescriptorRefines` (⚰
+tombstone above) with the refuted
 `Poseidon2SpongeCR` antecedent GONE and the `CommitSurface` bundle replaced by a bare commit map. It is
 literally `ApexFloorFree.descriptorRefinesFree` at the shielded step relation: same quantifier prefix,
 same `Satisfied2` premise, same `tracePublishedCommit t = pc` publication link, same decode.
@@ -670,14 +620,14 @@ theorem stateDecodeC_collapseMap_state0_state1 :
     unfold collapseMap
     rw [if_neg kernel1_ne_kernel0]
 
-/-- ⚑ **REFUTABLE — the acceptance test `ShieldedRingDescriptorRefines` FAILS.** At the exhibited commit
-map `ApexFloorFree.collapseMap emptyTrace`, for EVERY hash and EVERY descriptor (the deployed
-`Rfix e` included), the floor-free shielded rung is FALSE.
+/-- ⚑ **REFUTABLE — the acceptance test the RETIRED `ShieldedRingDescriptorRefines` FAILED.** At the
+exhibited commit map `ApexFloorFree.collapseMap emptyTrace`, for EVERY hash and EVERY descriptor (the
+deployed `Rfix e` included), the floor-free shielded rung is FALSE.
 
-Contrast, at the same descriptor and a deployed-shaped sponge: `ShieldedRingDescriptorRefines S hash d`
-HOLDS, because `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes its antecedent — the
-transfer of `DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear` to this def. One
-obligation is discharged by the PARAMETERS; this one cannot be discharged by them at all. -/
+Contrast, at the same descriptor and a deployed-shaped sponge: the retired def (⚰ tombstone above)
+HELD, because `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes its antecedent — the
+transfer of `DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear` to it. That
+obligation was discharged by the PARAMETERS; this one cannot be discharged by them at all. -/
 theorem shieldedRingDescriptorRefinesFree_false_at_collapseMap
     (hash : List Int → Int) (d : EffectVmDescriptor2) :
     ¬ ShieldedRingDescriptorRefinesFree (collapseMap emptyTrace) hash d := fun h =>
@@ -698,7 +648,8 @@ The section above measured that `ShieldedRingDescriptorRefinesFree` — the ante
 (`shieldedRingDescriptorRefinesFree_forces_no_decode`), and left the repair open with two named
 alternatives: weaken the conclusion to its kernel-endpoint half and name the log clause as a separate
 per-instance residual, or carry the log link as an explicit non-crypto premise. This section lands the
-FIRST, additively. Nothing above changes; no consumer is rewired.
+FIRST. ⚑ It landed additively on 2026-08-02 and was WIRED IN the same day — the three consumers below
+now take this rung and the old def is deleted (⚰ tombstone, §"The exact remaining descriptor refinement").
 
 **Why the kernel-endpoint half survives the argument that killed the whole one.** The refutation
 manufactures a SECOND decode of the same commitment — `(pre, ⟨post.kernel, pre.log⟩)` — which agrees
@@ -718,18 +669,28 @@ position: the residual appears as an implication ON THE PAIR AND CLEARING BOUND 
 consumer that discharges it for its own decoded instance recovers the full `ShieldedRingApexStep` and one
 that cannot still keeps the kernel endpoints.
 
-⚠ **WHAT IS STILL TRUE OF `ShieldedRingDescriptorRefines`, AND WHAT IS NOT DECIDED HERE.** The old def is
-UNCHANGED and is still what all three consumers take: the `hmarket` binders of
-`shieldedRingApexStep_of_accept`, `starkMarketClaimExtraction_of_shielded_descriptor` and
-`lightclient_market_seam_of_shielded_descriptor` (all in this file), through the alias
-`ShieldedRingApexRefinementResidual`. Retiring it in favour of the rung below would change what the
-shielded apex ADVERTISES — those three would export kernel endpoints plus a named log residual instead of
-the whole fused step — so it is an operator decision, not proof work. The proof work is done here; the
-open item is the retirement, and it touches exactly those three theorems, the alias at its definition
-site, the prose reference in `Market/ShieldedClearing.lean`, and the two
-`Dregg2/Verify/FloorRatchetBaseline.lean` rows (`ShieldedRingApexRefinementResidual ⊣ Poseidon2SpongeCR`,
-`ShieldedRingDescriptorRefines ⊣ Poseidon2SpongeCR`), which are emitted as `baseline ∩ current` and go
-green when the def they name stops carrying the floor.
+⚑ **THE RETIREMENT, LANDED 2026-08-02 — what the shielded apex ADVERTISES CHANGED, and here is how.**
+The old def and its alias are DELETED (⚰ tombstone at their former definition site). What each consumer
+now says, and where the log clause went:
+
+  * `shieldedRingKernelEndpoints_of_accept` — RENAMED from `shieldedRingApexStep_of_accept`, because the
+    old name promised `ShieldedRingApexStep` from an accept and that is no longer what it delivers
+    unconditionally. It now exports the decode, the fused clearing, its two kernel-endpoint equations,
+    AND `ShieldedRingLogResidual f pre post → ShieldedRingApexStep pre post` on the named instance. Its
+    `hCR` binder is GONE: `hCR` was consumed only to discharge the deleted antecedent.
+  * `starkMarketClaimExtraction_of_shielded_descriptor` — STATEMENT UNCHANGED but for the binders. Its
+    conclusion `MarketBoundaryBinding` is three kernel/commitment facts and reads no `.log` at all; the
+    old proof already discarded the log conjunct as `_hlog`. This consumer never needed the log half, so
+    no residual travels here — the kernel rung alone reproves it verbatim.
+  * `lightclient_market_seam_of_shielded_descriptor` — `MarketBoundaryBinding`, the decode, the endpoint
+    equations and the asset-conservation clause survive UNCONDITIONALLY; the two conjuncts that read the
+    receipt chain (`ShieldedRingApexStep` and the `turnSpec` allocation lowering, which is derived from
+    it through `drexClearing_refines_turnSpec`) moved BEHIND the residual implication on the same bound
+    instance.
+
+The `Dregg2/Verify/FloorRatchetBaseline.lean` rows naming the deleted def, its alias and the three
+consumers' `hCR` binders are now SLACK — that file is emitted as `baseline ∩ current`, so a baseline name
+that is no longer a carrier is simply absent from `current` and never errors. They are left in place.
 -/
 
 section ShieldedKernelEndpointRung
@@ -767,8 +728,8 @@ settlement endpoints ARE the two states' kernels. Everything the shielded apex c
 transition happened — the `CycleValid` + `LegFused` ring, the positive wants, the real `settleRing`
 execution — is retained; only the receipt-chain link is dropped.
 
-This is the part of `ShieldedRingDescriptorRefines` that needs no hash floor: the decode pins kernels,
-this conclusion reads kernels, and nothing in either mentions a sponge. -/
+This is the part of the retired `ShieldedRingDescriptorRefines` that needs no hash floor: the decode pins
+kernels, this conclusion reads kernels, and nothing in either mentions a sponge. -/
 def ShieldedRingApexKernelStep (pre post : RecChainedState) : Prop :=
   ∃ f : FusedDrexClearing, f.clearing.pre = pre.kernel ∧ f.clearing.post = post.kernel
 
@@ -823,7 +784,8 @@ theorem shieldedRingApexStep_of_kernelEndpoints_and_residual {f : FusedDrexClear
     ShieldedRingApexStep pre post :=
   ⟨f, hpre, hpost, hres⟩
 
-/-- **`ShieldedRingDescriptorRefinesKernel C hash d` — THE SOUND RUNG.** `ShieldedRingDescriptorRefines`
+/-- **`ShieldedRingDescriptorRefinesKernel C hash d` — THE SOUND RUNG, and since 2026-08-02 the ONLY
+descriptor rung the shielded consumers take.** The retired `ShieldedRingDescriptorRefines` (⚰ tombstone)
 with the refuted `Poseidon2SpongeCR` antecedent gone, the `CommitSurface` bundle replaced by a bare
 commit map, and the conclusion weakened to its kernel-endpoint half. Like
 `ShieldedRingDescriptorRefinesFree` it is an `abbrev` for `ApexFloorFree.descriptorRefinesFree` — same
@@ -905,7 +867,7 @@ theorem not_shieldedRingApexKernelStep_state0_state1 :
 `ApexFloorFree.collapseMap emptyTrace`, for EVERY hash and EVERY descriptor (the deployed `Rfix e`
 included), the kernel-endpoint rung is FALSE. It is therefore a claim about the circuit and not a
 statement the parameters discharge — the failure that `DescriptorRefinesShirkRefuted` set the test for,
-and that `ShieldedRingDescriptorRefines` fails at deployed BabyBear.
+and that the retired `ShieldedRingDescriptorRefines` failed at deployed BabyBear.
 
 ⚠ And it is refuted DIFFERENTLY from `shieldedRingDescriptorRefinesFree_false_at_collapseMap`. That one
 runs through `shieldedRingDescriptorRefinesFree_forces_no_decode`, i.e. through a fact that holds at EVERY
@@ -927,10 +889,10 @@ published roots and a fused, fair, kernel-real two-leg clearing whose settlement
 kernels; and the log clause is carried as an implication ON THAT NAMED PAIR AND THAT NAMED CLEARING, so
 discharging it for the instance in hand recovers the whole `ShieldedRingApexStep`.
 
-This is the floor-free counterpart of `shieldedRingApexStep_of_accept`, which is NOT rewired onto it: that
-theorem and its two downstream consumers still take `ShieldedRingApexRefinementResidual`, and swapping
-them changes what the shielded apex advertises. See the section header for the retirement decision and
-the exact list of sites it touches. -/
+⚑ It is also the ENGINE of the `CommitSurface`-flavoured apex the outward interfaces still use:
+`shieldedRingKernelEndpoints_of_accept` is PROVED by instantiating this theorem at `C := S.commit` and
+converting `StateDecodeC S.commit` to `StateDecode S` field for field, so nothing downstream reads a
+second apex chain. -/
 theorem shielded_lightclient_kernel_endpoints_free
     (C : CommitMap) (hash : List Int → Int) (R : Registry) [StarkSound hash R]
     (marketEffect : EffectIdx)
@@ -1016,7 +978,8 @@ abbrev DrexClearingEffectRefinementResidual := MarketEffectAllocationIdentity
 through the ordinary single-action registry arm.  The negative theorem below shows that route is
 actually impossible for the deployed balance tag `0`: a balance arm appends one receipt, whereas a
 fused clearing appends two.  The viable route is therefore the direct endpoint-carrying ring
-descriptor `ShieldedRingDescriptorRefines`, not a coercion of the ring to one `FullActionA`. -/
+descriptor — since 2026-08-02 `ShieldedRingDescriptorRefinesKernel` plus `ShieldedRingLogResidual`, the
+retired `ShieldedRingDescriptorRefines` before that — not a coercion of the ring to one `FullActionA`. -/
 def MarketEffectExtractsShieldedRing (marketEffect : EffectIdx) : Prop :=
   ∀ (pre post : RecChainedState), dispatchArm marketEffect pre post →
     ShieldedRingApexStep pre post
@@ -1136,41 +1099,85 @@ theorem starkMarketClaimExtraction_of_effect_step
 /-! ### The direct shielded-descriptor route.
 
 The generic single-action `dispatchArm` is not needed once the market registry entry itself refines to
-`ShieldedRingApexStep`.  This is the faithful apex shape for a ring descriptor: STARK extraction gives
+the shielded ring.  This is the faithful apex shape for a ring descriptor: STARK extraction gives
 its satisfying trace, state decode gives the committed endpoints, and the descriptor theorem gives the
-whole fused clearing. -/
+fused clearing and its kernel endpoints.
 
-/-- A verifying proof of the designated shielded-ring descriptor extracts decoded endpoints and the
-whole fused clearing directly. -/
-theorem shieldedRingApexStep_of_accept
+⚑ **REWIRED 2026-08-02.** Both theorems below took `ShieldedRingApexRefinementResidual` — the alias of
+`ShieldedRingDescriptorRefines`, whose `Poseidon2SpongeCR` antecedent
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes at deployed BabyBear, making both VACUOUSLY
+TRUE at the parameters we deploy at. They now take `ShieldedRingDescriptorRefinesKernel` at `S.commit`,
+and their `hCR` binders are gone (`hCR` existed only to feed that dead antecedent). The receipt-chain
+half of the conclusion travels as `ShieldedRingLogResidual` on the instance the existential binds. See
+the ⚰ tombstone at the retired def's former site. -/
+
+section ShieldedDescriptorRoute
+
+open Dregg2.Circuit.ApexFloorFree (StateDecodeC WitnessDecodesC)
+
+/-- **`WitnessDecodes` IS `WitnessDecodesC` at `S.commit`** — field for field, since `StateDecode S` and
+`StateDecodeC S.commit` are the same four equations. The one plumbing step the `CommitSurface`-flavoured
+apex needs to run on the floor-free engine. -/
+theorem witnessDecodesC_of_witnessDecodes {hash : List Int → Int} {R : Registry} {S : CommitSurface}
+    {pi : BatchPublicInputs} (h : WitnessDecodes hash R S pi) :
+    WitnessDecodesC hash R S.commit pi := by
+  intro minit mfin maddrs t hsat hpub
+  obtain ⟨pre, post, hd⟩ := h minit mfin maddrs t hsat hpub
+  exact ⟨pre, post, ⟨hd.preBinds, hd.postBinds, hd.preWF, hd.postWF⟩⟩
+
+/-- ★ **`shieldedRingKernelEndpoints_of_accept`** — a verifying proof of the designated shielded-ring
+descriptor extracts decoded endpoints and the fused clearing whose settlement endpoints ARE their
+kernels, with the receipt-chain link carried as a NAMED per-instance residual.
+
+⚰ RENAMED from `shieldedRingApexStep_of_accept` (2026-08-02). The old name promised
+`ShieldedRingApexStep` from an accept; what an accept plus the sound rung actually delivers is the
+kernel-endpoint half, and `ShieldedRingApexStep` only under `ShieldedRingLogResidual f pre post`.
+
+⚠ **NOTHING REAL IS LOST, and say the reason at the right resolution.** The old theorem was not merely
+"weaker in a way we now admit": at deployed BabyBear it was UNAPPLICABLE, because its `hCR :
+Poseidon2SpongeCR hash` binder is refuted there
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`) — and its one Market-specific premise, `hmarket`,
+was FREE there for the same reason, so it constrained the ring circuit in no way either. Unusable
+premise plus empty premise; a non-guarantee is replaced by a real guarantee plus a residual the caller
+can see and discharge.
+
+Proved by instantiating `shielded_lightclient_kernel_endpoints_free` at `C := S.commit` — the
+`CommitSurface` here is only ever read through its `commit` projection, exactly as `ApexFloorFree` §1
+observed. -/
+theorem shieldedRingKernelEndpoints_of_accept
     (hash : List Int → Int) (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
-    (hmarket : ShieldedRingApexRefinementResidual S hash (R marketEffect))
+    [StarkSound hash R]
+    (hmarket : ShieldedRingDescriptorRefinesKernel S.commit hash (R marketEffect))
     (pi : BatchPublicInputs) (π : BatchProof) (heffect : pi.effect = marketEffect)
     (hwitdec : WitnessDecodes hash R S pi)
     (hacc : verifyBatch (vkOfRegistry R) pi π = Verdict.accept) :
-    ∃ pre post : RecChainedState,
-      StateDecode S pi.toPublished pre post ∧ ShieldedRingApexStep pre post := by
-  obtain ⟨minit, mfin, maddrs, t, hsat, hpub⟩ :=
-    (inferInstance : StarkSound hash R).extract pi π hacc
-  obtain ⟨pre, post, hdecode⟩ := hwitdec minit mfin maddrs t hsat hpub
-  have hsatMarket : Satisfied2 hash (R marketEffect) minit mfin maddrs t := by
-    simpa only [heffect] using hsat
-  have hapex : ShieldedRingApexStep pre post :=
-    hmarket hCR minit mfin maddrs t pi.toPublished pre post hsatMarket hpub hdecode
-  exact ⟨pre, post, hdecode, hapex⟩
+    ∃ (pre post : RecChainedState) (f : FusedDrexClearing),
+      StateDecode S pi.toPublished pre post ∧
+      f.clearing.pre = pre.kernel ∧
+      f.clearing.post = post.kernel ∧
+      (ShieldedRingLogResidual f pre post → ShieldedRingApexStep pre post) := by
+  obtain ⟨pre, post, f, hdec, hfpre, hfpost, hres, _hpre, _hpost⟩ :=
+    shielded_lightclient_kernel_endpoints_free S.commit hash R marketEffect hmarket pi π heffect
+      (witnessDecodesC_of_witnessDecodes hwitdec) hacc
+  exact ⟨pre, post, f, ⟨hdec.preBinds, hdec.postBinds, hdec.preWF, hdec.postWF⟩, hfpre, hfpost, hres⟩
 
 /-- The historical accept-level Market extraction follows from the exact shielded descriptor
-refinement, without an opaque endpoint extractor or the ordinary single-action dispatcher. -/
+refinement, without an opaque endpoint extractor or the ordinary single-action dispatcher.
+
+⚑ **ITS STATEMENT IS UNCHANGED BY THE RETIREMENT, AND THAT IS A FINDING.** `MarketBoundaryBinding` is
+`AccountsWF c.post` plus the two commitment equations — it reads no `.log` anywhere, and the pre-retirement
+proof already discarded the receipt-chain conjunct as `_hlog`. So the log clause does NOT travel here:
+this consumer never used it, and the kernel-endpoint rung reproves `StarkMarketClaimExtraction` verbatim.
+Only the binders moved (`hCR` deleted, `hmarket` retyped). -/
 theorem starkMarketClaimExtraction_of_shielded_descriptor
     (hash : List Int → Int) (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
-    (hmarket : ShieldedRingApexRefinementResidual S hash (R marketEffect))
+    [StarkSound hash R]
+    (hmarket : ShieldedRingDescriptorRefinesKernel S.commit hash (R marketEffect))
     (hwitdec : ∀ pi : BatchPublicInputs, WitnessDecodes hash R S pi) :
     StarkMarketClaimExtraction S R marketEffect := by
   intro pi π heffect hacc
-  obtain ⟨pre, post, hdecode, f, hcpre, hcpost, _hlog⟩ :=
-    shieldedRingApexStep_of_accept hash S R marketEffect hCR hmarket pi π heffect
+  obtain ⟨pre, post, f, hdecode, hcpre, hcpost, _hres⟩ :=
+    shieldedRingKernelEndpoints_of_accept hash S R marketEffect hmarket pi π heffect
       (hwitdec pi) hacc
   refine ⟨f.clearing, ?_⟩
   refine ⟨hcpre ▸ hdecode.preWF, ?_, ?_⟩
@@ -1181,8 +1188,11 @@ theorem starkMarketClaimExtraction_of_shielded_descriptor
       pi.post = S.commit post.kernel pi.turn := hdecode.postBinds
       _ = S.commit f.clearing.post pi.turn := by rw [hcpost]
 
-#assert_axioms shieldedRingApexStep_of_accept
+#assert_axioms witnessDecodesC_of_witnessDecodes
+#assert_axioms shieldedRingKernelEndpoints_of_accept
 #assert_axioms starkMarketClaimExtraction_of_shielded_descriptor
+
+end ShieldedDescriptorRoute
 
 /-! ## 4. What the two verified towers prove from the narrowed effect-refinement residual. -/
 
@@ -1231,12 +1241,27 @@ theorem lightclient_market_seam
   exact no_minting_drex_clearing c b
 
 /-- **The direct STARK↔Market seam at the correct ring apex.**  Compared with the historical
-`lightclient_market_seam`, this consumes only the exact descriptor refinement, extracts the fused ring
-itself, and exports the proved exact `turnSpec` allocation lowering as part of the conclusion. -/
+`lightclient_market_seam`, this consumes only the exact descriptor refinement and extracts the fused ring
+itself.
+
+⚑ **REWIRED 2026-08-02, AND THIS IS THE ONE CONSUMER WHERE THE LOG CLAUSE IS LOAD-BEARING.** It took
+`ShieldedRingApexRefinementResidual`, vacuous at deployed BabyBear; it now takes
+`ShieldedRingDescriptorRefinesKernel` at `S.commit` and binds no floor. What that costs, exactly:
+
+  * UNCONDITIONAL, as before — `MarketBoundaryBinding S pi f.clearing`, the decode, the two
+    kernel-endpoint equations, and asset conservation `recTotalAsset post.kernel = recTotalAsset
+    pre.kernel` (which reads only the endpoints, through `no_minting_drex_clearing`).
+  * BEHIND `ShieldedRingLogResidual f pre post` — `ShieldedRingApexStep pre post` and the exact `turnSpec`
+    allocation lowering. The `turnSpec` conjunct is derived from the receipt-chain equation itself
+    (`drexClearing_refines_turnSpec` rewritten by `← hlog`), so it cannot be carried forward without it;
+    it is the second half of the same clause, not a separate casualty.
+
+The residual sits INSIDE the existential, indexed by the very `f`, `pre`, `post` it speaks about — a
+caller that discharges it for its own decoded instance recovers both conjuncts unchanged. -/
 theorem lightclient_market_seam_of_shielded_descriptor
     (hash : List Int → Int) (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
-    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
-    (hmarket : ShieldedRingApexRefinementResidual S hash (R marketEffect))
+    [StarkSound hash R]
+    (hmarket : ShieldedRingDescriptorRefinesKernel S.commit hash (R marketEffect))
     (pi : BatchPublicInputs) (π : BatchProof)
     (heffect : pi.effect = marketEffect)
     (hwitdec : WitnessDecodes hash R S pi)
@@ -1244,11 +1269,13 @@ theorem lightclient_market_seam_of_shielded_descriptor
     ∃ (f : FusedDrexClearing) (pre post : RecChainedState),
       MarketBoundaryBinding S pi f.clearing ∧
       StateDecode S pi.toPublished pre post ∧
-      ShieldedRingApexStep pre post ∧
-      turnSpec pre (clearingActions f.clearing) post ∧
+      f.clearing.pre = pre.kernel ∧
+      f.clearing.post = post.kernel ∧
+      (ShieldedRingLogResidual f pre post →
+        ShieldedRingApexStep pre post ∧ turnSpec pre (clearingActions f.clearing) post) ∧
       ∀ b : AssetId, recTotalAsset post.kernel b = recTotalAsset pre.kernel b := by
-  obtain ⟨pre, post, hdecode, f, hcpre, hcpost, hlog⟩ :=
-    shieldedRingApexStep_of_accept hash S R marketEffect hCR hmarket pi π heffect hwitdec hacc
+  obtain ⟨pre, post, f, hdecode, hcpre, hcpost, hstepOfRes⟩ :=
+    shieldedRingKernelEndpoints_of_accept hash S R marketEffect hmarket pi π heffect hwitdec hacc
   have hbound : MarketBoundaryBinding S pi f.clearing := by
     refine ⟨hcpre ▸ hdecode.preWF, ?_, ?_⟩
     · calc
@@ -1257,13 +1284,16 @@ theorem lightclient_market_seam_of_shielded_descriptor
     · calc
         pi.post = S.commit post.kernel pi.turn := hdecode.postBinds
         _ = S.commit f.clearing.post pi.turn := by rw [hcpost]
-  have hlower := drexClearing_refines_turnSpec f.clearing pre.log
-  have hturn : turnSpec pre (clearingActions f.clearing) post := by
-    simpa [hcpre, hcpost, ← hlog] using hlower
-  refine ⟨f, pre, post, hbound, hdecode, ⟨f, hcpre, hcpost, hlog⟩, hturn, ?_⟩
-  intro b
-  rw [← hcpre, ← hcpost]
-  exact no_minting_drex_clearing f.clearing b
+  refine ⟨f, pre, post, hbound, hdecode, hcpre, hcpost, ?_, ?_⟩
+  · intro hlog
+    have hlogEq : post.log = ringReceiptLog (settlementsOf f.clearing.nodes) pre.log := hlog
+    have hlower := drexClearing_refines_turnSpec f.clearing pre.log
+    have hturn : turnSpec pre (clearingActions f.clearing) post := by
+      simpa [hcpre, hcpost, ← hlogEq] using hlower
+    exact ⟨hstepOfRes hlog, hturn⟩
+  · intro b
+    rw [← hcpre, ← hcpost]
+    exact no_minting_drex_clearing f.clearing b
 
 /-- **The full outward composition on one commitment surface.**  If a target-chain register is anchored
 at the accepted batch's public pre-root, the extracted Market clearing advances it to exactly the

@@ -76,10 +76,16 @@ they converge on ONE remaining residual — the serialized-trace descriptor refi
     `ringCommit8_post_binds_kernel`), the endpoint action pins, and the receipt-log transition
     (`receiptRoot_endpointPostLog`, `RingEndpointAccepted.receipt_transition`); its acceptance object
     forces the ring clearing and the kernel endpoints (`RingEndpointAccepted.clearing_nodes` /
-    `.kernel_endpoints`).  What is still residual is the full
-    `Market.ProtocolAssurance.ShieldedRingDescriptorRefines` — the refinement binding a `Satisfied2`
-    proof over the SERIALIZED AIR trace to that semantic apex step (the same serialized-trace residual
-    the matching-layer edge above names).
+    `.kernel_endpoints`).  What is still residual is
+    `Market.ProtocolAssurance.ShieldedRingDescriptorRefinesKernel` — the refinement binding a `Satisfied2`
+    proof over the SERIALIZED AIR trace to the kernel-endpoint apex step (the same serialized-trace
+    residual the matching-layer edge above names) — PLUS, per decoded instance,
+    `ProtocolAssurance.ShieldedRingLogResidual`, the receipt-chain equation.
+    ⚰ This named `ShieldedRingDescriptorRefines` until 2026-08-02. That def carried a
+    `Poseidon2SpongeCR` antecedent in its VALUE which `HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+    refutes at deployed BabyBear, so the "remaining residual" it named was, at the parameters we deploy
+    at, already true and therefore no work at all. It is deleted; see the ⚰ tombstone in
+    `Market/ProtocolAssurance.lean`.
 
 ## THE PAYOFF — this deletes the `intent/src/trustless.rs` DECRYPT committee.
 

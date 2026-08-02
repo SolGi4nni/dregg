@@ -52,9 +52,14 @@ the turn the light client SEES, not a free existential. This module:
      its decode + the cap-open source + the turn-identity binding force `BalanceMovementSpecFacet fcaps
      provided pre pc.turn a post` — the authority leg over the PUBLISHED turn.
 
-  5. **`descriptorRefinesTB`** + **`lightclient_transfer_faithful_turnbound`** — the apex re-stated so
-     the conclusion's turn IS `pi.turn`: the authority a light client gets is over the turn it
-     published, NOT a free one.
+  5. **`descriptorRefinesTBKernelFree`** (§8) + **`lightclient_transfer_kernelArm_turnbound`** (§9) —
+     the apex re-stated so the conclusion's turn IS `pi.turn`: the authority a light client gets is over
+     the turn it published, NOT a free one.
+     ⚰ These REPLACED `descriptorRefinesTB` + `lightclient_transfer_faithful_turnbound` on 2026-08-02.
+     The old rung carried a refuted `Poseidon2SpongeCR` in its VALUE, so the apex over it asserted
+     nothing at deployed BabyBear; see the ⚰ TOMBSTONE at §6. The receipt-chain conjunct of the
+     conclusion is now the named per-instance residual `FacetLogResidual`; every authority conjunct this
+     module exists to force is still delivered unconditionally, over `pi.turn`.
 
 ## Honest residual (named, not faked)
 
@@ -243,155 +248,74 @@ theorem dispatchArmFacetTB_owner_fires (fcaps : FacetCaps) (provided : AuthProvi
     dispatchArmFacetTB fcaps provided pc.turn pre post :=
   dispatchArmFacetTB_owner fcaps provided pc pre post a howner hval
 
-/-! ## §6 — the TURN-BOUND apex: the authority a light client gets is over the turn it PUBLISHED.
+/-! ## §6 — ⚰ TOMBSTONE: `descriptorRefinesTB`, `descriptorRefinesTB_to_descriptorRefines` and
+`lightclient_transfer_faithful_turnbound` (DELETED / REWIRED 2026-08-02).
 
-`descriptorRefinesTB` is the per-effect rung whose `kstep` is the TURN-BOUND arm over `pc.turn`; the
-apex over it concludes the step on the PUBLISHED turn — the smuggle (authority over a free turn) closed.
-The turn-identity binding `TurnIdentityBound` is consumed inside the rung (it is the named PI obligation
-the rung needs to tie the witness turn to the published one). -/
+This section held the TURN-BOUND apex. The apex survives — it moved to §9, below §8's sound rung, and
+concludes at the kernel-endpoint arm plus a NAMED per-instance log residual. What was deleted is the rung
+it stood on and the lowering that forwarded that rung's floor.
 
-/-- **`descriptorRefinesTB S hash d fcaps provided`** — the per-effect refinement whose kernel step is
-the TURN-BOUND faithful arm: any satisfying witness of `d` whose published commitment `pc` decodes to
-`pre`/`post` forces `dispatchArmFacetTB fcaps provided pc.turn pre post` — the faithful step ON THE
-PUBLISHED TURN. The turn-identity binding lives inside the discharge (the value-rung's witness turn IS
-`pc.turn`); the conclusion's turn is the light client's `pc.turn`, not a free existential.
+**What `descriptorRefinesTB S hash d fcaps provided` claimed.**
 
-⚑ **PROP-BODY FLOOR CARRIER. MEASURED 2026-08-01, NOT PORTED.** The body opens
-`Poseidon2SpongeCR hash → …`, a floor `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at
-deployed BabyBear. Because it sits in the VALUE, no floor binder appears in the type of anything that
-mentions this def, so a binder-keyed census sees nothing. `DescriptorRefinesShirkRefuted`'s argument
-transfers verbatim: at any field-bounded sponge `descriptorRefinesTB` holds for EVERY `fcaps`/`provided`,
-including at an unsatisfiable turn-bound arm — the "authority over the PUBLISHED turn" that §6 claims to
-close is, at deployed parameters, discharged by the parameters rather than by the circuit.
+    Poseidon2SpongeCR hash →
+    ∀ minit mfin maddrs t pc pre post,
+      Satisfied2 hash d minit mfin maddrs t → StateDecode S pc pre post →
+      dispatchArmFacetTB fcaps provided pc.turn pre post
 
-MEASURED surface: 10 exact-word mentions, of which 6 are comments. The 3 live sites are this def, the
-lowering `descriptorRefinesTB_to_descriptorRefines`, and the `hrefines` binder of
-`lightclient_transfer_faithful_turnbound`; the tenth is the `FloorRatchetBaseline` row.
+— "any satisfying witness of `d` whose decoded published commitment is `pc` forces the whole faithful
+transfer step, authority leg included, ON THE PUBLISHED TURN `pc.turn`".
 
-⚑ THE ANTECEDENT IS DEAD HERE TOO, and this def is where that is easiest to read: NOTHING IN THE TREE
-DISCHARGES `descriptorRefinesTB`. It is carried as a hypothesis at
-`lightclient_transfer_faithful_turnbound` and consumed nowhere else, so no proof anywhere reads the
-`hCR` its body introduces. `descriptorRefinesTB_to_descriptorRefines` merely forwards that `hCR` into
-`CircuitSoundness.descriptorRefines`, whose antecedent is dead by the same measurement — floor-to-floor
-plumbing with no reader at either end.
+**Why it was vacuous.** The `Poseidon2SpongeCR hash →` antecedent sat in the VALUE, and
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES IT FALSE at deployed BabyBear.
+`DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear` transfers verbatim: at any
+field-bounded sponge the def held for EVERY `fcaps` and `provided`, including at an unsatisfiable
+turn-bound arm — so the "authority over the PUBLISHED turn" this module exists to force was, at deployed
+parameters, discharged by the parameters and not by the circuit. The floor being in the value meant no
+floor binder appeared in the type of anything mentioning it, so `#floor_ratchet`, which keys on binders,
+saw nothing at the consumers. Nothing in the tree ever discharged it.
 
-MEASURED AGAIN (second pass, comments and string literals stripped mechanically): **3 code sites, 9
-comment mentions, plus 2 `FloorRatchetBaseline` rows.** The 3 are this def, `descriptorRefinesTB_to_
-descriptorRefines`, and the `hrefines` binder of `lightclient_transfer_faithful_turnbound` — nothing
-produces it, confirming the paragraph above.
+**Why deleting the antecedent was not the repair, twice over.** First,
+`Market.ProtocolAssurance.shieldedRingDescriptorRefinesFree_forces_no_decode` transfers: `StateDecode` is
+LOG-BLIND, `dispatchArmFacetTB` is LOG-FORCING (`not_dispatchArmFacetTB_log_collapse`), so the forged pair
+`(pre, ⟨post.kernel, pre.log⟩)` decodes the same `pc` and demands `pre.log = pc.turn :: pre.log`. Second —
+and this is where this def was WORSE placed than the shielded twin — it carried NO
+`tracePublishedCommit t = pc` link, so its `pc` was free; `descriptorRefinesTBKernelUnlinked_forces_no_decode`
+(§8) proves that even the LOG-FREE kernel-endpoint half then entails that nothing decodes, at EVERY commit
+map, because a decode is two equations in `pc.turn` and survives moving `pc` to a degenerate self-transfer
+the `admitGuardAFacet` refuses.
 
-⚠ **THE "SECOND, INDEPENDENT REASON" BELOW WAS STALE WHEN IT WAS WRITTEN — corrected 2026-08-01.**
-`ApexPremiseVacuity.ApexCommitFloor` is the five-conjunct list `compressInjective cmb ∧
-compressInjective compress ∧ compressNInjective compressN ∧ cellLeafInjective CH ∧ RestHashIffFrame
-RH`, and `apexCommitFloor_unsatisfiable` kills it through the FIFTH conjunct by Cantor. `CommitSurface`
-at HEAD carries NONE of those five: `1f53df6d2` deleted the four injectivity fields and the fifth is
-`RestHashIffFrameFin RH`. The bundle has a CLOSED inhabitant — the anonymous `noncomputable example :
-CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348`. So `lightclient_transfer_faithful_
-turnbound` is NOT inapplicable for a second reason, and `(S : CommitSurface) → ¬ P S` is no longer free:
-a refutability pole at the bundle is stateable for the first time. The remaining reason to reach for
-`CommitMap` is that `ApexFloorFree`'s refutation needs a map that HITS the opaque `tracePublishedCommit
-emptyTrace` (that is what `collapseMap` is for) and `S.commit = recStateCommit …` cannot be chosen to
-hit an opaque target — the map must be ARBITRARY, not the bundle empty.
+**What replaced it.** `descriptorRefinesTBKernelFree` (§8) — no floor, `CommitSurface` replaced by a bare
+`ApexFloorFree.CommitMap`, conclusion weakened to `dispatchArmFacetTBKernel`, and the publication link
+RESTORED (which the apex already holds from `StarkSound.extract` and used to discard). Both poles live:
+`dispatchArmFacetTBKernel_owner_fires` and `descriptorRefinesTBKernelFree_refutable`.
 
-⚑ The tooth may not be a NAMED theorem: a type mentioning `CommitSurface` is a `#floor_ratchet`
-`bundle-user` carrier and the gate hard-errors on a new one, so it goes in as an anonymous `example`
-(the discipline of `Verify/RestFrameFiniteSupportSuccessor.lean` §6). Whether `CommitSurface` is still
-computed into `Surface.bundles` after the drain needs a root `#floor_ratchet` run, which the root cannot
-elaborate today; that run is step 0 of the port.
+**What the caller now discharges.** `FacetLogResidual pc.turn pre post` — `post.log = pc.turn :: pre.log`,
+one equation, zero quantifiers, naming the decoded pair AND the published turn — carried as an implication
+on the instance the apex's existential binds. `facetLogResidual_unconditional_false` proves dropping it
+makes the rung false, so it is work and not decoration.
 
-⚑ This def is in NO sentinel list (`FloorCensus.sentinelPropBody` is `[descriptorRefines]` alone), so
-unlike `CircuitSoundness.descriptorRefines` its port needs no `FloorCensus.lean` edit — and a
-`FloorRatchetBaseline` row left stale by a port is green, since that file is emitted as
-`baseline ∩ current`. With `ShieldedRingDescriptorRefines` (5 sites), this is one of the two prop-body
-carriers a single lane can land alone.
+**`descriptorRefinesTB_to_descriptorRefines` is DELETED, not rewired onto its old target.** It said the
+turn-bound rung entails `CircuitSoundness.descriptorRefines S hash d (dispatchArmFacet fcaps provided 0)`
+— i.e. "the turn-bound rung pins what the old existential rung leaves free". Its TARGET is itself a live
+prop-body floor carrier (`CircuitSoundness.descriptorRefines`, `FloorCensus.sentinelPropBody`), so keeping
+the lowering would mean forwarding into a dead antecedent from a rung that no longer has one — the exact
+floor-to-floor plumbing with no reader at either end that this def's own §6 annotation named. The CONTENT
+survives floor-free as `descriptorRefinesTBKernelFree_to_free_turn` (§9): the turn-bound kernel rung
+entails `ApexFloorFree.descriptorRefinesFree` at the same arm with the turn released back to an
+existential. ⚠ That is a STRICTLY WEAKER conclusion than the deleted lowering's, because the target arm is
+the kernel half; the receipt-chain clause of the old target is the residual, and this is stated at the
+weaker place deliberately rather than reconstructed with a floor.
 
-HONEST REPLACEMENT: delete the antecedent, exactly as `ClosureAll.ClosedLogExtract` and
-`CircuitCompleteness.descriptorComplete` were deleted on 2026-07-25 (`FloorCensus.portedPropBody`), and
-state it over a bare `ApexFloorFree.CommitMap` rather than the `CommitSurface` bundle (for the
-arbitrary-map reason just corrected, NOT for the uninhabitedness one). Do NOT
-re-ground on `¬ SpongeColl` at a named pair: there is no pair in play, so a per-instance side condition
-here would be decoration. Do NOT re-ground on `OrBreak (SpongeCollision hash) _` — refuted wholesale by
-`SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`.
+⚠ The `hCR : Poseidon2SpongeCR hash` binder of the apex went with the rung: it was consumed ONLY to feed
+the deleted antecedent. The `Dregg2/Verify/FloorRatchetBaseline.lean` rows naming `descriptorRefinesTB`,
+`descriptorRefinesTB_to_descriptorRefines` and `lightclient_transfer_faithful_turnbound` are now SLACK —
+that file is emitted as `baseline ∩ current`, so a baseline name that is no longer a carrier is absent
+from `current` and never errors. They are left in place.
 
-⚑⚑ **AND THE DELETION ALONE IS NOT THE REPAIR — MEASURED 2026-08-01, PROVED FOR THE SHIELDED TWIN.**
-`Market.ProtocolAssurance.shieldedRingDescriptorRefinesFree_forces_no_decode` shows that deleting the
-antecedent from a rung whose CONCLUSION is a fixed log-forcing relation leaves an obligation that holds
-only where its own premise is EMPTY. The argument is structural and transfers here verbatim:
-`StateDecode` reads `pre.kernel`, `post.kernel` and `AccountsWF` and NEVER `.log`, while
-`dispatchArmFacetTB` unfolds through `BalanceMovementSpecFacet`, whose third conjunct is
-`st'.log = tr :: st.log`. So from any decode of `(pre, post)` the pair `(pre, ⟨post.kernel, pre.log⟩)`
-decodes the SAME `pc` and the rung there demands `pre.log = pc.turn :: pre.log`.
-
-This def is WORSE placed than the shielded one, not better: it carries no `tracePublishedCommit t = pc`
-premise, so its `pc` is unconstrained and `pc.turn` — the very turn `dispatchArmFacetTB` binds — is
-whatever the decode supplies. The port must therefore decide where the log link comes from before it
-deletes anything. `ClosureAll.hrefinesAllClosed` supplies it for the general rung as `mkLog`, a producer
-of `ClosureLog.StateDecodeLog`, a `FloorRatchet.sentinelBundles` member carrying `logHashInjective` —
-so copying that route trades one refuted floor for another.
-
-WHY IT WAITS: this def is smaller than `CircuitSoundness.descriptorRefines` but sits DOWNSTREAM of it
-through `descriptorRefinesTB_to_descriptorRefines`, whose conclusion is that def. Porting this one first
-leaves the lowering forwarding a live `hCR` into a dead antecedent, which reads as a genuine consumer and
-is the exact shape that made this class invisible. The two go in one commit, in that order.
-
-⚑ **THE SOUND HALF NOW EXISTS ALONGSIDE THIS DEF — §8, below.** `descriptorRefinesTBKernelFree` is the
-kernel-endpoint rung (no floor, no bundle, publication link RESTORED) and `FacetLogResidual` is the log
-clause as a quantifier-free per-instance proposition naming the pair and the published turn;
-`dispatchArmFacetTB_of_kernelArm_and_residual` reassembles them. ⚠ And §8 MEASURES the "worse" this
-annotation asserts: `descriptorRefinesTBKernelUnlinked_forces_no_decode` proves that with THIS def's own
-quantifier prefix — no `tracePublishedCommit t = pc` — even the log-free kernel-endpoint half holds only
-where its own premise is empty, at every commit map, for a reason that has nothing to do with the log. So
-the port here needs the link restored, not merely the antecedent deleted and the conclusion weakened.
-THIS def is unchanged and is still what both its consumers take; the retirement is the open decision. -/
-def descriptorRefinesTB (S : CommitSurface) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
-    (fcaps : FacetCaps) (provided : AuthProvided) : Prop :=
-  Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash →
-  ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (pc : PublishedCommit) (pre post : RecChainedState),
-    Satisfied2 hash d minit mfin maddrs t →
-    StateDecode S pc pre post →
-    dispatchArmFacetTB fcaps provided pc.turn pre post
-
-/-- **`descriptorRefinesTB_to_descriptorRefines`** — the turn-bound rung entails the existential rung at
-`dispatchArmFacet`, so an apex carrying `descriptorRefinesTB` is STRONGER than one carrying the old
-`descriptorRefines … (dispatchArmFacet …)` (it pins the turn the old one left free). -/
-theorem descriptorRefinesTB_to_descriptorRefines (S : CommitSurface) (hash : List ℤ → ℤ)
-    (d : EffectVmDescriptor2) (fcaps : FacetCaps) (provided : AuthProvided)
-    (h : descriptorRefinesTB S hash d fcaps provided) :
-    descriptorRefines S hash d (Dregg2.Circuit.RotatedKernelRefinementFacet.dispatchArmFacet fcaps provided 0) := by
-  intro hCR minit mfin maddrs t pc pre post hsat hdec
-  exact dispatchArmFacetTB_to_dispatchArmFacet fcaps provided pc.turn pre post
-    (h hCR minit mfin maddrs t pc pre post hsat hdec)
-
-/-- **`lightclient_transfer_faithful_turnbound` — THE TURN-BOUND APEX.** From a verifying batch + the
-named floors + the carried TURN-BOUND per-effect rung `descriptorRefinesTB`, there EXIST decoded
-endpoints and a genuine faithful transfer transition ON THE PUBLISHED TURN `pi.turn`: the authority leg
-(owner OR cap) reads the turn the LIGHT CLIENT PUBLISHED, not a free existential. The light client RAN
-NOTHING; the authority it is certified is over the identity it sees. This closes the owner-authority /
-turn-identity smuggle at the apex. -/
-theorem lightclient_transfer_faithful_turnbound
-    (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry)
-    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash) [StarkSound hash R]
-    (fcaps : FacetCaps) (provided : AuthProvided)
-    (hrefines : ∀ e, descriptorRefinesTB S hash (R e) fcaps provided)
-    (pi : BatchPublicInputs) (π : BatchProof)
-    (hwitdec : WitnessDecodes hash R S pi)
-    (hacc : verifyBatch (vkOfRegistry R) pi π = Verdict.accept) :
-    ∃ pre post : RecChainedState,
-      StateDecode S pi.toPublished pre post ∧
-      dispatchArmFacetTB fcaps provided pi.turn pre post ∧
-      pi.pre = S.commit pre.kernel pi.turn ∧
-      pi.post = S.commit post.kernel pi.turn := by
-  -- lower the turn-bound rung to the existential rung and run the apex; then re-derive the STRONGER
-  -- turn-bound conclusion from the same witness via the turn-bound rung directly.
-  obtain ⟨minit, mfin, maddrs, t, hsat, hpub⟩ :=
-    (inferInstance : StarkSound hash R).extract pi π hacc
-  obtain ⟨pre, post, hdecode⟩ := hwitdec minit mfin maddrs t hsat hpub
-  -- the turn-bound rung forces the step ON THE PUBLISHED TURN `pi.toPublished.turn = pi.turn`.
-  have hstep : dispatchArmFacetTB fcaps provided pi.toPublished.turn pre post :=
-    hrefines pi.effect hCR minit mfin maddrs t pi.toPublished pre post hsat hdecode
-  rw [BatchPublicInputs.toPublished_turn] at hstep
-  exact ⟨pre, post, hdecode, hstep, by simpa using hdecode.preBinds, by simpa using hdecode.postBinds⟩
+Do NOT resurrect this shape. Do NOT re-ground on `¬ SpongeColl` at a named pair (no proof here feeds the
+sponge a pair, so a per-instance side condition would be decoration and a fresh carrier), and do NOT
+re-ground on `OrBreak (SpongeCollision hash) _` — refuted wholesale by
+`SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`. -/
 
 /-! ## §6.R — THE REALIZATION: `hsrc` (and the src leg of `TurnIdentityBound`) DERIVED from the live
 turn-identity PI weld, no longer carried.
@@ -547,16 +471,17 @@ theorem transfer_descriptorRefines_facetTB_realized (hash : List ℤ → ℤ)
 
 /-! ## §8 — ⚑ THE SOUND HALF, AND THE PRECISE REASON THIS DEF IS WORSE PLACED THAN THE SHIELDED TWIN.
 
-`descriptorRefinesTB`'s annotation (§6) records two findings and takes neither: the
-`Poseidon2SpongeCR` antecedent in its VALUE is dead and refuted, and DELETING it is not the repair,
+`descriptorRefinesTB`'s annotation (now the ⚰ TOMBSTONE at §6) recorded two findings and took neither:
+the `Poseidon2SpongeCR` antecedent in its VALUE is dead and refuted, and DELETING it is not the repair,
 because the conclusion `dispatchArmFacetTB` is LOG-FORCING while `StateDecode` is LOG-BLIND
 (`Market.ProtocolAssurance.shieldedRingDescriptorRefinesFree_forces_no_decode`, proved for the shielded
 twin, transfers verbatim). This section lands the same repair the shielded twin got — the
-kernel-endpoint half plus a named per-instance log residual — ADDITIVELY, and then measures the ONE
-place where this def is genuinely worse.
+kernel-endpoint half plus a named per-instance log residual — and then measures the ONE
+place where that def was genuinely worse. It landed ADDITIVELY on 2026-08-02 and was WIRED IN the same
+day (§9); the def it replaces is deleted.
 
 ⚑⚑ **THE KERNEL-ENDPOINT HALF IS STATABLE HERE, BUT ONLY WITH THE PUBLICATION LINK RESTORED.** The §6
-annotation is right that `descriptorRefinesTB` carries no `tracePublishedCommit t = pc`, and that is not
+annotation was right that `descriptorRefinesTB` carried no `tracePublishedCommit t = pc`, and that is not
 a cosmetic gap: `descriptorRefinesTBKernelUnlinked_forces_no_decode` proves that WITHOUT the link even
 the log-free kernel-endpoint rung holds only where its own premise is empty — for a reason that has
 nothing to do with the log. `StateDecodeC C pc pre post` is two equations in `pc.turn`, so from ANY
@@ -573,17 +498,15 @@ strictly weaker obligation — the apex already holds `tracePublishedCommit t = 
 rung has both poles: `descriptorRefinesTBKernelFree_refutable` and
 `dispatchArmFacetTBKernel_owner_fires`.
 
-⚠ **NOTHING BELOW IS WIRED IN.** `descriptorRefinesTB` is unchanged and is still what its two consumers
-take: `descriptorRefinesTB_to_descriptorRefines` and the `hrefines` binder of
-`lightclient_transfer_faithful_turnbound` (both in §6 above). Retiring it in favour of
-`descriptorRefinesTBKernelFree` would change what the turn-bound apex advertises — it would export the
-kernel-endpoint arm plus a named log residual rather than the whole faithful arm — and it would also
-have to decide whether `descriptorRefinesTB_to_descriptorRefines`'s target,
-`CircuitSoundness.descriptorRefines`, is ported in the same commit (§6: "the two go in one commit, in
-that order"). That is an operator decision. The proof work is done here; the open item is the
-retirement, and it touches exactly those two theorems plus the two
-`Dregg2/Verify/FloorRatchetBaseline.lean` rows naming `descriptorRefinesTB` and
-`descriptorRefinesTB_to_descriptorRefines`, which are emitted as `baseline ∩ current`. -/
+⚑ **THIS IS NOW WIRED IN (2026-08-02).** `descriptorRefinesTB` and `descriptorRefinesTB_to_
+descriptorRefines` are DELETED (⚰ §6) and the apex — `lightclient_transfer_kernelArm_turnbound`, §9 —
+takes `descriptorRefinesTBKernelFree` and binds no floor. What the turn-bound apex advertises DID change:
+it exports the kernel-endpoint arm on the PUBLISHED turn plus `FacetLogResidual` as an implication on the
+decoded pair, rather than the whole faithful arm. Nothing real was lost — the old conclusion was VACUOUS
+at deployed BabyBear because the rung it rested on was — and the smuggle §1 closes is untouched: the
+authority leg `authorizedFacetB fcaps provided pi.turn` still reads the PUBLISHED turn, since
+`dispatchArmFacetTBKernel` retains every conjunct of `BalanceMovementSpecFacet` except the receipt-chain
+one. -/
 
 section KernelEndpointRungTB
 
@@ -689,7 +612,8 @@ theorem facetLogResidual_unconditional_false (fcaps : FacetCaps) (provided : Aut
   exact not_dispatchArmFacetTB_log_collapse fcaps provided pubTurn pre post
     (hall pre ⟨post.kernel, pre.log⟩ hk)
 
-/-- **`descriptorRefinesTBKernelFree C hash d fcaps provided` — THE SOUND RUNG.** `descriptorRefinesTB`
+/-- **`descriptorRefinesTBKernelFree C hash d fcaps provided` — THE SOUND RUNG, and since 2026-08-02 the
+ONLY per-effect rung the turn-bound apex takes.** The retired `descriptorRefinesTB` (⚰ §6)
 with the refuted `Poseidon2SpongeCR` antecedent gone, the `CommitSurface` bundle replaced by a bare
 commit map, the conclusion weakened to its kernel-endpoint half, AND the publication link
 `tracePublishedCommit t = pc` RESTORED. The link is not decoration here: without it the rung is refuted
@@ -753,9 +677,9 @@ included), every `fcaps` and every `provided`, the kernel-endpoint rung is FALSE
 NO live accounts, and `admitGuardAFacet` demands the published source be one — a KERNEL refutation, which
 is what a kernel-endpoint rung ought to be refutable on, and it says nothing about the log.
 
-Contrast, at the same descriptor and a deployed-shaped sponge: `descriptorRefinesTB S hash d fcaps
-provided` HOLDS, because `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes its antecedent. One
-obligation is discharged by the PARAMETERS; this one is a claim about the circuit. -/
+Contrast, at the same descriptor and a deployed-shaped sponge: the retired `descriptorRefinesTB` (⚰ §6)
+HELD, because `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes its antecedent. That
+obligation was discharged by the PARAMETERS; this one is a claim about the circuit. -/
 theorem descriptorRefinesTBKernelFree_refutable (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (fcaps : FacetCaps) (provided : AuthProvided) :
     ¬ descriptorRefinesTBKernelFree (collapseMap emptyTrace) hash d fcaps provided := by
@@ -793,6 +717,103 @@ theorem descriptorRefinesTBKernelFree_refutable (hash : List ℤ → ℤ) (d : E
 
 end KernelEndpointRungTB
 
+/-! ## §9 — ⚑ THE TURN-BOUND APEX, REWIRED ONTO THE SOUND RUNG (2026-08-02).
+
+`lightclient_transfer_faithful_turnbound` stood in §6 on `descriptorRefinesTB`, whose
+`Poseidon2SpongeCR` antecedent `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes at deployed
+BabyBear — so the apex asserted nothing at the parameters we deploy at. It now stands on
+`descriptorRefinesTBKernelFree` (§8) and binds no floor at all: `hCR` is gone, because its only use was to
+feed the deleted antecedent.
+
+**WHAT IT ADVERTISES NOW, EXACTLY.** UNCONDITIONALLY: the decode, the two commitment equations, and
+`dispatchArmFacetTBKernel fcaps provided pi.turn pre post` — the faithful arm on the PUBLISHED turn with
+its receipt-chain conjunct discharged by construction, i.e. the deployed two-axis authority gate over
+`pi.turn`, non-negativity, availability, `src ≠ dst`, liveness, accepts, the `recTransferBal` movement and
+the 16-field frame. BEHIND `FacetLogResidual pi.turn pre post`: the full `dispatchArmFacetTB`. So the
+smuggle §1 closes is untouched — the authority a light client is certified is still over the turn it
+PUBLISHED — and what moved behind the residual is only the receipt-chain advance.
+
+**THE PUBLICATION LINK IS NOW CONSUMED.** The old apex held `tracePublishedCommit t = pi.toPublished` from
+`StarkSound.extract` and threw it away. §8's rung takes it, and `descriptorRefinesTBKernelUnlinked_false`
+shows that is not bookkeeping: without it the rung is refuted at every commit map. The apex therefore asks
+STRICTLY LESS of the circuit than the deleted one did while carrying no floor. -/
+
+section TurnBoundApexRewired
+
+open Dregg2.Circuit.ApexFloorFree (CommitMap StateDecodeC descriptorRefinesFree)
+
+/-- ★ **`lightclient_transfer_kernelArm_turnbound` — THE TURN-BOUND APEX, FLOOR-FREE.** From a verifying
+batch, `[StarkSound hash R]`, the carried witness→state existence rung, and the turn-bound KERNEL rung
+`descriptorRefinesTBKernelFree` at `S.commit`, there EXIST decoded endpoints between which the faithful
+transfer arm holds ON THE PUBLISHED TURN `pi.turn` at its kernel endpoints, with the receipt-chain advance
+carried as a NAMED per-instance residual on that pair.
+
+⚰ Renamed from `lightclient_transfer_faithful_turnbound` (⚰ §6): the old name promised the whole faithful
+arm from an accept, and what an accept plus a sound rung delivers is the kernel arm, plus the faithful arm
+under `FacetLogResidual`.
+
+⚠ **NOTHING REAL IS LOST, at the right resolution.** The old theorem was UNAPPLICABLE at deployed
+BabyBear — its `hCR : Poseidon2SpongeCR hash` binder is refuted there
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`) — and its one circuit-specific premise, `hrefines`
+at `descriptorRefinesTB`, was FREE there for the same reason, so it constrained the transfer circuit in
+no way either. Unusable premise plus empty premise; what replaces it is a real guarantee over `pi.turn`
+plus a residual the caller can see and discharge.
+
+The `CommitSurface` here is read only through its `commit` projection (`ApexFloorFree` §1), which is why
+the rung is asked at `S.commit` and the decode converts field for field. -/
+theorem lightclient_transfer_kernelArm_turnbound
+    (hash : List ℤ → ℤ) (S : CommitSurface) (R : Registry) [StarkSound hash R]
+    (fcaps : FacetCaps) (provided : AuthProvided)
+    (hrefines : ∀ e, descriptorRefinesTBKernelFree S.commit hash (R e) fcaps provided)
+    (pi : BatchPublicInputs) (π : BatchProof)
+    (hwitdec : WitnessDecodes hash R S pi)
+    (hacc : verifyBatch (vkOfRegistry R) pi π = Verdict.accept) :
+    ∃ pre post : RecChainedState,
+      StateDecode S pi.toPublished pre post ∧
+      dispatchArmFacetTBKernel fcaps provided pi.turn pre post ∧
+      (FacetLogResidual pi.turn pre post → dispatchArmFacetTB fcaps provided pi.turn pre post) ∧
+      pi.pre = S.commit pre.kernel pi.turn ∧
+      pi.post = S.commit post.kernel pi.turn := by
+  obtain ⟨minit, mfin, maddrs, t, hsat, hpub⟩ :=
+    (inferInstance : StarkSound hash R).extract pi π hacc
+  obtain ⟨pre, post, hdecode⟩ := hwitdec minit mfin maddrs t hsat hpub
+  -- `StateDecode S` IS `StateDecodeC S.commit`, field for field.
+  have hdecC : StateDecodeC S.commit pi.toPublished pre post :=
+    ⟨hdecode.preBinds, hdecode.postBinds, hdecode.preWF, hdecode.postWF⟩
+  -- the sound rung, fed the SAME publication link the extraction supplied.
+  have hstep : dispatchArmFacetTBKernel fcaps provided pi.toPublished.turn pre post :=
+    hrefines pi.effect minit mfin maddrs t pi.toPublished pre post hsat hpub hdecC
+  rw [BatchPublicInputs.toPublished_turn] at hstep
+  exact ⟨pre, post, hdecode, hstep,
+    fun hres =>
+      dispatchArmFacetTB_of_kernelArm_and_residual fcaps provided pi.turn pre post hstep hres,
+    by simpa using hdecode.preBinds, by simpa using hdecode.postBinds⟩
+
+/-- **`descriptorRefinesTBKernelFree_to_free_turn` — what survives of the deleted lowering.**
+`descriptorRefinesTB_to_descriptorRefines` (⚰ §6) said the turn-bound rung entails the existential-turn
+rung, i.e. it PINS what the old one leaves free. That comparison is restated here at the sound rungs: the
+turn-bound kernel rung entails `ApexFloorFree.descriptorRefinesFree` at the same arm with the turn
+released back to an existential, and the witness is the PUBLISHED `pc.turn`.
+
+⚠ Say what this is NOT. The deleted lowering's target was `CircuitSoundness.descriptorRefines`, which
+carries its own refuted `Poseidon2SpongeCR` antecedent in its VALUE; forwarding into it from a rung that
+no longer has one is floor-to-floor plumbing with no reader at either end. This is stated at
+`descriptorRefinesFree` instead, and at the KERNEL arm — a strictly weaker conclusion than the deleted
+one's, the difference being exactly `FacetLogResidual`. The converse fails, which is the whole point of
+this module: a free turn is the smuggle §1 names. -/
+theorem descriptorRefinesTBKernelFree_to_free_turn (C : CommitMap) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor2) (fcaps : FacetCaps) (provided : AuthProvided)
+    (h : descriptorRefinesTBKernelFree C hash d fcaps provided) :
+    descriptorRefinesFree C hash d
+      (fun pre post => ∃ tr : Turn, dispatchArmFacetTBKernel fcaps provided tr pre post) :=
+  fun minit mfin maddrs t pc pre post hsat hlink hdec =>
+    ⟨pc.turn, h minit mfin maddrs t pc pre post hsat hlink hdec⟩
+
+#assert_axioms lightclient_transfer_kernelArm_turnbound
+#assert_axioms descriptorRefinesTBKernelFree_to_free_turn
+
+end TurnBoundApexRewired
+
 /-! ## §7 — Axiom hygiene. -/
 
 #assert_axioms transferAuthoritySourceCanon_ofTB
@@ -805,7 +826,5 @@ end KernelEndpointRungTB
 #assert_axioms transfer_descriptorRefinesTB_dispatchArm
 #assert_axioms dispatchArmFacetTB_rejects_unauthorized
 #assert_axioms dispatchArmFacetTB_owner_fires
-#assert_axioms descriptorRefinesTB_to_descriptorRefines
-#assert_axioms lightclient_transfer_faithful_turnbound
 
 end Dregg2.Circuit.RotatedKernelRefinementFacetTurnBound

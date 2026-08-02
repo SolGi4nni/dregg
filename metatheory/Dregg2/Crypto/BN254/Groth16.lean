@@ -221,8 +221,10 @@ with `verifyProof : List Nat → List Nat → Bool` an ABSTRACT oracle and `pub.
 
 3. **Circuit meaning → clearing.**  A satisfying `R25` witness whose public inputs decode the
    eight-lane `genesisRoot/finalRoot` and `numTurns` yields, via the already-landed shielded-ring
-   apex extraction (`ProtocolAssurance.shieldedRingApexStep_of_accept` +
-   `starkMarketClaimExtraction_of_shielded_descriptor`), a `DrexClearing` with
+   apex extraction (`ProtocolAssurance.shieldedRingKernelEndpoints_of_accept` +
+   `starkMarketClaimExtraction_of_shielded_descriptor` — the first RENAMED from
+   `shieldedRingApexStep_of_accept` on 2026-08-02, when both were rewired off the retired
+   `ShieldedRingDescriptorRefines` onto `ShieldedRingDescriptorRefinesKernel`), a `DrexClearing` with
    `stateLanes c.pre = genesisRoot`, `stateLanes c.post = finalRoot`, `c.nodes.length = numTurns`.
    The `stateLanes` codec is the deployed eight-lane state commitment (`Lane8`), matched to the
    circuit's public-input encoding — a faithful-codec obligation already NAMED in ProtocolAssurance.

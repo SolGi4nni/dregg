@@ -426,8 +426,11 @@ APPLIED NOWHERE — its only non-comment occurrences are its own `theorem` line,
     through (`hrefinesAllClosed` → `ClosureForest.hrefines_forest_closed` → `descriptorRefines_complete`
     and its 31-tag census) — opens `intro _hCR …` and never mentions it again;
   * `WitnessRealizing.descriptorRefines_trivial` drops it;
-  * `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTB_to_descriptorRefines` only FORWARDS it into
-    `descriptorRefinesTB`, whose body opens with the same dead antecedent;
+  * `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTB_to_descriptorRefines` only FORWARDED it
+    into `descriptorRefinesTB`, whose body opened with the same dead antecedent — ⚰ BOTH DELETED
+    2026-08-02 (tombstone at §6 of that file), which REMOVES this def's last in-tree consumer of the
+    antecedent rather than weakening the measurement: the lowering is gone precisely because forwarding a
+    live `hCR` into a dead antecedent is plumbing with no reader at either end;
   * the only genuine reads are inside the refuted twin (`DescriptorRefinesReduce.descriptorRefines_of_R`)
     and the refutations themselves.
 
@@ -539,11 +542,22 @@ port, not an assumption of it.
 **SMALLEST FIRST STEP, and it is not this def.** `FloorCensus.sentinelPropBody` is
 `[descriptorRefines]` and nothing else, so porting THIS def requires editing `FloorCensus.lean` in
 the same commit — which the vacuity-campaign lanes are forbidden to touch, so it needs the operator,
-and it is the first work item rather than a reason to stop. The other two prop-body carriers are in
-no sentinel list and can land alone: `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTB`
+and it is the first work item rather than a reason to stop. The other two prop-body carriers were in
+no sentinel list and could land alone: `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTB`
 (3 live code sites) and `Market.ProtocolAssurance.ShieldedRingDescriptorRefines` (5). Baseline rows
-block neither — `FloorRatchetBaseline` is emitted as `baseline ∩ current` and its only healthy
-direction is shorter, so a row left stale by a port is green. -/
+blocked neither — `FloorRatchetBaseline` is emitted as `baseline ∩ current` and its only healthy
+direction is shorter, so a row left stale by a port is green.
+
+⚑ **BOTH OF THOSE TWO ARE NOW DELETED (2026-08-02).** They were retired onto
+`RotatedKernelRefinementFacetTurnBound.descriptorRefinesTBKernelFree` and
+`Market.ProtocolAssurance.ShieldedRingDescriptorRefinesKernel` — floor-free, `CommitMap`-stated,
+publication-link-carrying, conclusions weakened to their kernel-endpoint halves with the receipt-chain
+clause named as a per-instance residual (`FacetLogResidual`, `ShieldedRingLogResidual`). Tombstones sit
+at their former definition sites. Of the three prop-body carriers this docblock named, THIS def is the
+one still standing, and it is the one whose port needs the `FloorCensus.lean` edit above. ⚠ The route was
+DELETION and not `FloorCensus.portedPropBody`: that ratchet requires the ported name to STILL RESOLVE, so
+a retired-and-deleted def must not be added to it. Whether any prop-body carrier this docblock did not
+name survives is a question only a root `#floor_ratchet`/census run answers. -/
 def descriptorRefines (S : CommitSurface) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor2) (kstep : RecChainedState → RecChainedState → Prop) : Prop :=
   Poseidon2SpongeCR hash →
