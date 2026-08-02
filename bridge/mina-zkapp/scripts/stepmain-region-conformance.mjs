@@ -3,8 +3,9 @@
 //
 // ## WHAT THIS IS, AND WHAT `stepmain-shape-diff.mjs` COULD NOT SEE
 //
-// `stepmain-shape-diff.mjs` compares five run-length FAMILIES (Poseidon 11×207, EndoMul 32×76,
-// EndoMulScalar 8×51, VarBaseMul 1×1448, CompleteAdd 1×138). A run length cannot see a wrong
+// `stepmain-shape-diff.mjs` compares five run-length FAMILIES (Poseidon 11, EndoMul 32,
+// EndoMulScalar 8, VarBaseMul 1, CompleteAdd 1 — the LENGTHS, whose instance COUNTS move with every
+// sub-circuit the assembly gains and are therefore not written down here). A run length cannot see a wrong
 // coefficient, a wrong wire, a right-shaped gadget in the wrong place, or a region emitted in the
 // wrong order. This script sees all four, at the granularity of ONE GATE: `typ`, `coeffs`, and the
 // intra-gadget copy-permutation.
@@ -45,6 +46,50 @@
 // class-mate was a probe into a SELF, so every SELF this script reports as a divergence is
 // RE-CONFIRMED against the UNSPLICED emission before it is counted.
 //
+// ## ⚑ THE GENERIC SELECTOR HALVES, AND THE TWO NORMALIZATIONS THE CENSUS NEEDS
+//
+// A kimchi `Generic` row is DOUBLE: `coeffs[0..4]` and `[5..9]` are two independent
+// `(l, r, o, m, c)` operations over cols 0,1,2 and 3,4,5. Which half pairs with which is OUR packing
+// choice, so the comparable unit is the HALF. Comparing halves by EXACT COEFFICIENT VECTOR — which
+// is what this script did until 2026-08-02 — over-counts the divergence two ways, and both are
+// artifacts of the instrument rather than facts about the circuit:
+//
+//   * **A DIFFERENT CONSTANT IS NOT A DIFFERENT SHAPE.** `[1,0,0,0,-k]` is Snarky's own
+//     `Equal (var, constant)` row (`plonk_constraint_system.ml:1668-1678`) and it emits ~250 of
+//     them; ours pin OUR constants. Exact-value matching scored 185 such halves as "a shape Snarky
+//     never emits". Collapsing every constant outside ±100 to `K` is the FAMILY key.
+//   * **A HALF IS HOMOGENEOUS.** `Σ cᵢ·termᵢ = 0` and its negation are the SAME constraint. Mina
+//     emits `[-1,-1,0,0,0]` ×60 where we emit `[1,1,0,0,0]` ×9 — one equation, opposite global
+//     sign, because `reduce_lincom` happened to fold the other way. The FAMILY key is therefore also
+//     sign-normalized (negate when the leading nonzero coefficient is > p/2).
+//
+// Both censuses are reported. The EXACT one is the byte-level tripwire — one bent coefficient moves
+// its digest. The FAMILY one is the fidelity statement: which SHAPES we emit that Snarky does not.
+//
+// ## ⚑ THE ALL-ZERO HALF, AND WHY IT IS GATED AND NOT MERELY COUNTED
+//
+// A half whose five coefficients are all zero constrains NOTHING. Mina emits zero of them in 12,423
+// halves, because `add_generic_constraint` queues ONE `pending_generic_gate` for the WHOLE system
+// (`:1449-1458`) and finalization flushes at most one (`:1296-1299`) — an odd half from one gadget
+// pairs with the next generic constraint wherever in the circuit it comes from. Ours pack per
+// EMISSION SITE (`packHalves`, `aRows`), so every site with an odd half leaves a tail.
+//
+// That is waste, not a defect — but the SAME symptom would also be produced by a defect: an operand
+// dropped into a half that carries no equation, which is a constraint the assembly meant to enforce
+// and does not. The two are told apart by CONSTRUCTION, and the three facts that tell them apart are
+// CONFORM ENTRIES (`generic/zero-half/…`), not commentary:
+//
+//   (1) every all-zero half is a SECOND half — a first half means the packer mis-ordered;
+//   (2) its three permutation columns are SELF in the UNSPLICED emission — a σ-classed cell in a
+//       half with no equation is a variable the circuit believes is wired and that this row does not
+//       constrain;
+//   (3) its row's OTHER half carries a real equation — an all-zero ROW is a row emitted for nothing.
+//
+// (2) is the dropped-constraint detector and it is the reason this is a gate. A fourth check — that
+// the witness columns under an all-zero half are zero, which catches a DEAD variable occurring
+// exactly once and therefore SELF — needs the witness and so runs only against a live emission,
+// where it THROWS rather than scoring.
+//
 // ## GREEN OR BUST
 //
 // The reference vector is (i) facts read off MINA'S blob and (ii) the DIVERGENCE LEDGER below — one
@@ -59,7 +104,7 @@
 //   node scripts/stepmain-region-conformance.mjs --self-test      # + the harness red path
 //   node scripts/stepmain-region-conformance.mjs --report         # the per-region verdict, readable
 //   node scripts/stepmain-region-conformance.mjs --lean <path>    # a specific rung emission
-//   node scripts/stepmain-region-conformance.mjs --falsify        # prove the diff bites (6 bites)
+//   node scripts/stepmain-region-conformance.mjs --falsify        # prove the diff bites (10 bites)
 //   node scripts/stepmain-region-conformance.mjs --refresh-fixture
 //
 // The Lean side is `/tmp/pickles-stepmain/stepmain_step_r8_finalize.json` when a `lake env lean --run
@@ -85,6 +130,30 @@ const LEAN_FIXTURE = new URL('../fixtures/stepmain-step-r8-finalize-gates.json.g
 
 const fp = (c) => { let v = BigInt(c) % FP; if (v < 0n) v += FP; return v.toString(); };
 const leHex = (h) => BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex')).toString();
+
+// ── Generic selector-half KEYS (see the header). `exactKey` is the byte tripwire; `famKey` is the
+// SHAPE: constants outside ±100 collapse to `K`, and the half is negated when its leading nonzero
+// coefficient is > p/2, because `Σ cᵢ·termᵢ = 0` and its negation are one constraint.
+const exactKey = (h) => h.join('|');
+const small = (v) => (v === 0n ? '0' : v < 100n ? v.toString() : v > FP - 100n ? `-${FP - v}` : 'K');
+const famKey = (h) => {
+  const v = h.map(BigInt);
+  const lead = v.find((x) => x !== 0n);
+  const n = lead !== undefined && lead > FP / 2n ? v.map((x) => (x === 0n ? 0n : FP - x)) : v;
+  return n.map(small).join(' ');
+};
+const EQ_KEY = [1n, FP - 1n, 0n, 0n, 0n].join('|');
+/** ⚑ The SET of shape families we emit and Snarky does not — count-free, so assembly growth does not
+ *  move it and a genuinely NEW shape is the only thing that does. Each is classified in the LEDGER. */
+const FAM_SET_EXPECTED = [
+  '[0 0 0 0 0]',       // the empty second half        → generic/empty-second-half
+  '[1 -1 0 0 0]',      // a row where Snarky unions    → generic/row-equality-not-sigma-tie
+  '[K 0 1 0 0]',       // the endo seed scale          → generic/unfused-scale
+  '[0 0 1 -1 5]',      // assert_on_curve, fused       → generic/fused-halves
+  '[0 0 1 -1 -1]',     // b_poly Horner, fused         → generic/fused-halves
+  '[1 -2 -1 0 0]', '[1 2 -1 0 0]',                  // small arithmetic, fused
+  '[1 0 0 0 1]', '[1 0 0 0 -3]', '[1 0 0 0 -6]', '[1 0 0 0 -11]', // constant pins at values Mina lacks
+].sort().join(' ');
 
 // ── loading ───────────────────────────────────────────────────────────────────────────────────────
 function normalizeMina(pi, gates) {
@@ -112,7 +181,7 @@ function normalizeLean(j) {
       return { row: remap[t.row], col: t.col };
     }),
   }));
-  return { pi: j.public_input_size, gates, raw, probe, remap };
+  return { pi: j.public_input_size, gates, raw, probe, remap, keep };
 }
 
 function loadLeanSide(explicit) {
@@ -123,8 +192,10 @@ function loadLeanSide(explicit) {
     throw new Error(`no Lean emission: neither ${live} nor the committed fixture. Produce it with\n` +
       '   (cd metatheory && lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)');
   const slim = (j) => JSON.stringify({ name: j.name, public_input_size: j.public_input_size, num_rows: j.num_rows, probe_rows: j.probe_rows, gates: j.gates });
-  let src, text;
-  if (haveLive) { src = live; text = slim(JSON.parse(readFileSync(live, 'utf8'))); }
+  let src, text, witness = null;
+  // ⚠ `slim` drops the `witness` field (the fixture carries gates only). It is kept ASIDE here for
+  // the dead-variable check, which is live-only BY CONSTRUCTION and says so rather than falling back.
+  if (haveLive) { const f = JSON.parse(readFileSync(live, 'utf8')); witness = f.witness ?? null; src = live; text = slim(f); }
   else { src = 'fixture'; text = gunzipSync(readFileSync(LEAN_FIXTURE)).toString('utf8'); }
   // ⚠ NOT a fallback. When both exist the LIVE emission is the truth and is what gets measured — but
   // the two must AGREE, and if they do not the fixture is stale, which is a RED the caller must see
@@ -137,7 +208,7 @@ function loadLeanSide(explicit) {
       `STALE: live ${a.slice(0, 12)}… != fixture ${b.slice(0, 12)}… — the Lean assembly moved; refresh with --refresh-fixture`;
     src = a === b ? `${live} (== fixture)` : `${live} (⚠ FIXTURE STALE)`;
   }
-  return { src, fixture, j: JSON.parse(text) };
+  return { src, fixture, witness, j: JSON.parse(text) };
 }
 
 // ── gadget instances ──────────────────────────────────────────────────────────────────────────────
@@ -221,28 +292,29 @@ function localize(MG, mb, LG, lb, len, withCoeffs) {
 const LEDGER = {
   'xhat/scalar-widths': {
     why: '#2 per-word MSM scalar widths',
-    expect: 'mina 2×1 26×22 51×8 (982 chunks) vs lean 26×38 52×1 (1040)',
+    expect: 'mina 2×1 26×22 51×8 (982 chunks) vs lean 26×40 (1040)',
     note: 'Mina scales Wrap statement word i by ITS OWN width (`Spec.pack`); ours is uniform `msmChunks`. '
       + "⚑ Mina's measured width vector 8×51 + 22×26 + 1×2 = 982 chunks is #2's transcribed table WORD FOR WORD.",
   },
   'xhat/ladder-seed-unwired': {
     why: 'UNRECORDED',
-    expect: '228/228 cells SELF in the UNSPLICED emission (mina: 0)',
+    expect: '120/240 cells SELF in the UNSPLICED emission (mina: 0)',
     note: "each x_hat ladder's accumulator seed (row+0 cols 2,3 = x0,y0), scalar seed (col 4 = n) and "
       + 'the two leading pad bits (row+1 cols 2,3,4) are in NO permutation class; Mina puts all six in one.',
   },
-  'ftcomm/scalar-seed-unwired': {
-    why: 'UNRECORDED',
-    expect: '8/8 cells SELF in the UNSPLICED emission (mina: 0)',
-    note: "each ft_comm ladder's scalar-accumulator seed (row+0 col 4 = n) is in no class; Mina wires it "
-      + '(the POINT seed at cols 2,3 IS wired here — §6b does what R3 does not).',
-  },
-  'ipa/endo-seed-unwired': {
-    why: 'UNRECORDED',
-    expect: '228/228 cells SELF in the UNSPLICED emission (mina: 0)',
-    note: "each `Scalar_challenge.endo` block's accumulator seed (row+0 cols 4,5 = xP,yP) and scalar seed "
-      + '(col 6 = n) are in no class; Mina wires 4,5 to the preceding `add_fast` and closes 6 on the block.',
-  },
+  // ⚑ RETIRED 2026-08-02 — `ftcomm/scalar-seed-unwired` stopped being observed (0/8, was 8/8). The
+  // Lean side has pinned that cell as WIRED all along (`KimchiStepMain` §12f,
+  // `#guard (classCells posS (ftcN k 0)).length == 2` — the `n_acc = Field.zero` pin row plus the
+  // ladder's first `VarBaseMul`), so the two sources now agree; the probe used to land on a
+  // different row because the 51-chunk ladder boundaries shifted with the R1 interleaving.
+  // ⚑ RETIRED 2026-08-02 — `ipa/endo-seed-unwired` stopped being observed (0/231, was 228/228). Each
+  // `Scalar_challenge.endo` block's accumulator seed (row+0 cols 4,5) is now the output of the two
+  // `Ops.add_fast`s `scalar_challenge.ml:230-234` emits and its scalar seed (col 6) is pinned to
+  // `Field.zero` (`:235`) — `KimchiStepMain` §12g, landed in `4de44340f`. ⚠ It read 228/228 until
+  // today because the COMMITTED gz fixture predated that commit and no live emission was present;
+  // refreshing the fixture is what surfaced the retirement. Same for `ftcomm/scalar-seed-unwired`,
+  // and it is why `xhat/ladder-seed-unwired` fell 228/228 → 120/240 (§12f pinned three of its six
+  // cells; the two leading pad bits remain).
   'tfc/chain-endpoints': {
     why: '#7 endo lift / #1 the `lowest_128_bits` split',
     expect: "51/51 chains outside Mina's 3 classes; core rows 1..6 match 51/51",
@@ -255,28 +327,67 @@ const LEDGER = {
     expect: 'mina 1×2 2×42 4×25 8×28 9×1 12×2 16×3 19×1 22×1 24×1 28×1 32×2 128×1 vs lean 8×51',
     note: 'Mina emits `to_field_checked` at 1/2/4/8/9/12/16/19/22/24/28/32/128 rows; we emit only 8.',
   },
-  'generic/selector-shapes-absent-upstream': {
-    why: 'UNRECORDED',
-    expect: '550/2951 halves in 172 shapes Snarky never emits [3959ab25d543ca45]; top: ×164 [0 0 0 0 0] '
-      + '×114 [1 -1 0 0 0] ×55 [0 0 -1 1 -5] ×24 [1 -34028236… -1 0 0] ×16 [0 0 -1 1 1] ×9 [1 1 0 0 0]',
-    note: 'Generic selector halves we emit that Snarky NEVER emits — headed by the all-zero half (a row half '
-      + 'that constrains nothing) and `1 -1 0 0 0` (equality, which Snarky does by copy-permutation, not a row). '
-      + 'The digest covers the WHOLE miss list, so one bent selector coefficient moves it.',
+  // ── the Generic selector halves, CLASSIFIED. One entry per mechanism, each naming the upstream
+  // code that makes the difference, so a NEW shape family cannot hide inside a count that was going
+  // to move anyway. `generic/exact-value-census` is the byte tripwire; the rest are the fidelity
+  // statement. ⚑ 2026-08-02: this replaced ONE opaque entry ("550 halves in 172 shapes").
+  'generic/exact-value-census': {
+    why: 'INSTRUMENT — the byte tripwire, not a divergence claim',
+    expect: '630/3137 halves differ by EXACT coefficient vector [be4d3f052f1eb591]; 436 of those differ '
+      + 'by SHAPE FAMILY (constants→K, sign-normalized), so 194 are the same family carrying our constants',
+    note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
+      + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
+      + "`[1,0,0,0,-k]` is Snarky's own `Equal (var, constant)` row (`plonk_constraint_system.ml:1668-1678`).",
+  },
+  'generic/empty-second-half': {
+    why: 'UNRECORDED — COMPILER WASTE, classified 2026-08-02',
+    expect: '165 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
+    note: 'A half constraining nothing. NOT a dropped constraint and NOT padding of an operand — measured by '
+      + 'construction: no permutation-classed cell, no live witness value, and every host row carries a real '
+      + "equation in its first half. It is our per-site packing (`packHalves`, `aRows`) against Snarky's ONE "
+      + '`pending_generic_gate` for the whole system (`:1449-1458`, flushed once at `:1296-1299`), which is why '
+      + 'Mina has none. Cost: 82 rows a global pairing pass would recover.',
+  },
+  'generic/row-equality-not-sigma-tie': {
+    why: 'UNRECORDED — a ROW where upstream unions, classified 2026-08-02',
+    expect: '114 halves [1 -1 0 0 0] (mina: 0); a global pending_generic_gate would save 82 rows, and '
+      + 'converting these to σ-ties a further 57',
+    note: '`Field.Assert.equal x y` on two plain variables is `Union_find.union` and emits NO ROW at all '
+      + '(`plonk_constraint_system.ml:1650-1653`); only unequal SCALES fall through to a generic row (`:1655`). '
+      + 'Ours spends a half. Sites: `closingRows` (67 — every public word tied to its computed variable), '
+      + "`tfcRows` split=false (30), the `AOp` compiler's `.aeq` and two one-offs. Converting saves 57 rows.",
+  },
+  'generic/fused-halves': {
+    why: 'UNRECORDED — a TIGHTER encoding of the same equation, classified 2026-08-02',
+    expect: '57 [0 0 -1 1 -5] (assert_on_curve) + 16 [0 0 -1 1 1] (b_poly Horner) + 3 small-arith = 76',
+    note: 'One half carrying a multiply AND its additive constant, where Snarky spends two because '
+      + '`reduce_lincom` (`:1498`) folds the linear part into the CONSUMER instead. `y·y − x³ − b = 0` with '
+      + 'b = PALLAS_B = 5 is one half here and `[0 0 -1 1 0]` + `[1 0 -1 0 5]` upstream (Mina emits 129 of the '
+      + 'latter). These are GATES — the on-curve half is what refuses an off-curve absorbed commitment.',
+  },
+  'generic/unfused-scale': {
+    why: 'UNRECORDED — the MIRROR of the above, classified 2026-08-02',
+    expect: '77 halves [endo 0 -1 0 0] (mina: 0; its nearest by support: [1 0 -1 0 0] ×3)',
+    note: "`Scalar_challenge.endo`'s seed pin `endo·xt − xq = 0` (`scalar_challenge.ml:232`), materialised as "
+      + 'its own half. Snarky never materialises a bare scale: `Cvar` is a LAZY linear combination, so '
+      + '`Field.scale` folds into whichever row consumes it. ⚑ This is a GATE and must not be "converted away" '
+      + '— both its cells were FREE WITNESSES until 2026-08-02, and `endo` is cross-checked by the `EndoMul` '
+      + "gate body, which is byte-identical to Mina's 76/76.",
   },
   'probe-rows': {
     why: 'header "THE σ-ONLY PROBES" (not on the #1–#11 list)',
-    expect: '399 standalone Zero rows (mina: 0)',
+    expect: '480 standalone Zero rows (mina: 0)',
     note: 'standalone `Zero` rows placed into σ classes so a flip isolates the wire. Mina has none. Spliced out here.',
   },
   'scope/unassembled-subcircuits': {
     why: '#5 group_map · equal_g · check_bulletproof `scale_fast` of sg · rule.main',
-    expect: 'Poseidon 207/572 VBM51 8/20 ENDO32 76/77',
+    expect: 'Poseidon 195/572 VBM51 8/20',
     note: 'Mina gadget instances with no counterpart here. SUBSET-NESS, not failure — counted so a shrinkage is visible.',
   },
 };
 
 // ── the measurement ───────────────────────────────────────────────────────────────────────────────
-function measure(M, L, fixture = 'absent') {
+function measure(M, L, fixture = 'absent', witness = null) {
   const MG = M.gates, LG = L.gates;
   const R = { conform: [], diverge: [], regions: [] };
   const conform = (name, ref, cand) => R.conform.push({ name, ref, cand });
@@ -367,7 +478,11 @@ function measure(M, L, fixture = 'absent') {
   const mEc = cluster(runsOf(MG, 'EndoMul').filter((r) => r.n === 32).map((r) => ({ s: r.s, len: 33 })), 100);
   const lEc = cluster(runsOf(LG, 'EndoMul').filter((r) => r.n === 32).map((r) => ({ s: r.s, len: 33 })), 100);
   R.ipa = { mina: mEc.map((c) => c.length), lean: lEc.map((c) => c.length) };
-  const mIpa = mEc.filter((c) => c.length >= 10).flat();
+  // ⚑ ALL of Mina's EndoMul-32 blocks, singleton cluster included. It used to be `c.length >= 10`,
+  // which dropped Mina's lone `check_bulletproof` block (`Scalar_challenge.endo q c`,
+  // `step_verifier.ml:326`) because we had no counterpart for it. We do since 2026-08-02, so the
+  // reference is 77 and the filter would now be hiding the very block that closed `delta`.
+  const mIpa = mEc.flat();
   conform('region/ipa/endo-blocks', mIpa.length, lEc.flat().length);
 
   // (C) the DIVERGENCE set from the gadget signatures, RE-CONFIRMED against the unspliced emission.
@@ -389,19 +504,74 @@ function measure(M, L, fixture = 'absent') {
   R.emsWidths = { mina: emsW(MG), lean: emsW(LG) };
   if (R.emsWidths.mina !== R.emsWidths.lean) diverge('tfc/widths', `mina ${R.emsWidths.mina} vs lean ${R.emsWidths.lean}`);
 
-  // Generic SELECTOR HALVES. A kimchi Generic row is DOUBLE: coeffs[0..4] and [5..9] are two
-  // independent (l,r,o,m,c) operations. Which half pairs with which is OUR packing choice, so the
-  // comparable unit is the HALF, not the row.
-  const halves = (G) => { const m = new Map(); for (const g of G) if (g.typ === 'Generic') { m.set(g.coeffs.slice(0, 5).join('|'), (m.get(g.coeffs.slice(0, 5).join('|')) ?? 0) + 1); if (g.coeffs.length >= 10) m.set(g.coeffs.slice(5, 10).join('|'), (m.get(g.coeffs.slice(5, 10).join('|')) ?? 0) + 1); } return m; };
-  const MH = halves(MG), LH = halves(LG);
-  let hIn = 0, hOut = 0; const hMiss = [];
-  for (const [k, c] of LH) { if (MH.has(k)) hIn += c; else { hOut += c; hMiss.push([k, c]); } }
-  hMiss.sort((a, b) => b[1] - a[1]);
-  // ⚑ the digest covers the WHOLE miss list (every shape and every count), so ONE bent selector
-  // coefficient anywhere in the 1509 Generic rows moves it. A top-6 summary alone could not see that.
-  const missDigest = createHash('sha256').update([...hMiss].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, c]) => `${k}=${c}`).join(';')).digest('hex').slice(0, 16);
-  R.generic = { minaDistinct: MH.size, leanDistinct: LH.size, in: hIn, out: hOut, digest: missDigest, top: hMiss.slice(0, 6).map(([k, c]) => `×${c} [${k.split('|').map((s) => { const v = BigInt(s); return v > FP / 2n ? `-${FP - v}` : s; }).map((s) => (s.length > 12 ? `${s.slice(0, 9)}…` : s)).join(' ')}]`) };
-  if (hOut) diverge('generic/selector-shapes-absent-upstream', `${hOut}/${hIn + hOut} halves in ${hMiss.length} shapes Snarky never emits [${missDigest}]; top: ${R.generic.top.join(' ')}`);
+  // ── ⚑ GENERIC SELECTOR HALVES, classified. See the header for the two normalizations.
+  const halvesOf = (G, key) => { const m = new Map(); for (const g of G) if (g.typ === 'Generic') for (const h of [g.coeffs.slice(0, 5), g.coeffs.length >= 10 ? g.coeffs.slice(5, 10) : null]) if (h) { const k = key(h); m.set(k, (m.get(k) ?? 0) + 1); } return m; };
+  const census = (key) => {
+    const mh = halvesOf(MG, key), lh = halvesOf(LG, key);
+    let inn = 0, out = 0; const miss = [];
+    for (const [k, c] of lh) { if (mh.has(k)) inn += c; else { out += c; miss.push([k, c]); } }
+    miss.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    return { mh, lh, in: inn, out, miss };
+  };
+  const EX = census(exactKey), FA = census(famKey);
+  // The digest covers the WHOLE exact-value miss list, so ONE bent coefficient moves it.
+  const missDigest = createHash('sha256').update([...EX.miss].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, c]) => `${k}=${c}`).join(';')).digest('hex').slice(0, 16);
+  R.generic = { minaDistinct: EX.mh.size, leanDistinct: EX.lh.size, in: EX.in, out: EX.out, digest: missDigest,
+    famIn: FA.in, famOut: FA.out, famMiss: FA.miss, minaFams: FA.mh.size, leanFams: FA.lh.size };
+  // ⚑ THE STABLE KEY: the SET of shape families we emit and Snarky does not. Growing more of the same
+  // gadgets moves every count in this block and does NOT move this set — so a genuinely new shape is
+  // the one thing that shows here, instead of hiding inside a count that was going to move anyway.
+  conform('generic/family-set-absent-upstream', FAM_SET_EXPECTED, FA.miss.map(([k]) => `[${k}]`).sort().join(' '));
+  diverge('generic/exact-value-census', `${EX.out}/${EX.in + EX.out} halves differ by EXACT coefficient vector `
+    + `[${missDigest}]; ${FA.out} of those differ by SHAPE FAMILY (constants→K, sign-normalized), so `
+    + `${EX.out - FA.out} are the same family carrying our constants`);
+
+  // ── ⚑ THE ALL-ZERO HALF: classified by CONSTRUCTION, and the classification is the gate.
+  // Checked against the UNSPLICED emission — the probe splice can only turn a σ-classed cell SELF, so
+  // the spliced view would UNDER-report exactly the thing (2) is looking for.
+  const rawOf = new Array(LG.length); { let n = 0; for (let i = 0; i < L.raw.length; i++) if (L.remap[i] >= 0) rawOf[n++] = i; }
+  const zeroHalves = [];
+  for (let r = 0; r < LG.length; r++) {
+    const g = LG[r];
+    if (g.typ !== 'Generic' || g.coeffs.length < 10) continue;
+    for (const w of [0, 1]) if (g.coeffs.slice(5 * w, 5 * w + 5).every((c) => c === '0')) zeroHalves.push({ r, w });
+  }
+  const zFirstHalf = zeroHalves.filter((z) => z.w === 0).length;
+  const zClassed = zeroHalves.filter((z) => { const rr = rawOf[z.r]; return [0, 1, 2].some((k) => { const j = 3 * z.w + k, wr = L.raw[rr].wires[j]; return !(wr.row === rr && wr.col === j); }); });
+  const zDeadRow = zeroHalves.filter((z) => LG[z.r].coeffs.slice(5 * (1 - z.w), 5 * (1 - z.w) + 5).every((c) => c === '0'));
+  conform('generic/zero-half/all-are-second-halves', 0, zFirstHalf);
+  conform('generic/zero-half/no-sigma-classed-cell', 0, zClassed.length ? `${zClassed.length} ⚑ DROPPED CONSTRAINT: ${zClassed.slice(0, 4).map((z) => `row ${z.r} half ${z.w}`).join(', ')}` : 0);
+  conform('generic/zero-half/host-row-carries-an-equation', 0, zDeadRow.length);
+  // (4) the DEAD-VARIABLE check. A variable occurring exactly once is SELF, so (2) cannot see it; the
+  // witness can. Live-only BY CONSTRUCTION — the fixture carries gates alone — and it THROWS rather
+  // than scoring, so it is never a quiet pass when the witness is absent.
+  if (witness) for (const z of zeroHalves) for (const k of [0, 1, 2]) {
+    const v = witness[3 * z.w + k]?.[rawOf[z.r]];
+    if (v !== undefined && String(v) !== '0')
+      throw new Error(`⚑ DEAD VARIABLE: row ${rawOf[z.r]} col ${3 * z.w + k} carries ${String(v).slice(0, 24)} under an all-zero Generic half`);
+  }
+  if (zeroHalves.length) diverge('generic/empty-second-half', `${zeroHalves.length} halves, all SECOND halves, ${zClassed.length} σ-classed cells, ${zDeadRow.length} all-zero rows (mina: 0 of ${[...halvesOf(MG, exactKey).values()].reduce((a, b) => a + b, 0)})`);
+
+  // ── ROW ECONOMY: what the two conversions are worth, measured off the emitted object rather than
+  // estimated. `pending_generic_gate` pairing recovers the empty halves; the σ-tie conversion removes
+  // the equality halves outright. Both numbers move as the assembly grows — that is the point.
+  let gRows = 0, fiveCo = 0, eqHalves = 0;
+  for (let r = L.pi; r < LG.length; r++) { const g = LG[r]; if (g.typ !== 'Generic') continue; gRows++; if (g.coeffs.length < 10) { fiveCo++; continue; } for (const w of [0, 1]) if (g.coeffs.slice(5 * w, 5 * w + 5).join('|') === EQ_KEY) eqHalves++; }
+  const live = 2 * gRows - fiveCo - zeroHalves.length;
+  R.economy = { gRows, live, empty: zeroHalves.length, eq: eqHalves,
+    packed: Math.ceil(live / 2), bothWays: Math.ceil((live - eqHalves) / 2) };
+  if (eqHalves) diverge('generic/row-equality-not-sigma-tie', `${eqHalves} halves [1 -1 0 0 0] (mina: 0); a global pending_generic_gate would save ${gRows - R.economy.packed} rows, and converting these to σ-ties a further ${R.economy.packed - R.economy.bothWays}`);
+
+  // the remaining families, split by whether they FUSE what Snarky spreads or SPREAD what it fuses
+  const famCount = (k) => FA.miss.find(([f]) => f === k)?.[1] ?? 0;
+  const fused = famCount('0 0 1 -1 5') + famCount('0 0 1 -1 -1') + famCount('1 -2 -1 0 0') + famCount('1 2 -1 0 0');
+  const scaled = famCount('K 0 1 0 0');
+  if (fused) diverge('generic/fused-halves', `${famCount('0 0 1 -1 5')} [0 0 -1 1 -5] (assert_on_curve) + ${famCount('0 0 1 -1 -1')} [0 0 -1 1 1] (b_poly Horner) + ${famCount('1 -2 -1 0 0') + famCount('1 2 -1 0 0')} small-arith = ${fused}`);
+  // Mina's nearest neighbours are looked up by SUPPORT (which coefficient positions are nonzero),
+  // never hardcoded — a family name written into prose here would be a pin against this file.
+  const support = (k) => k.split(' ').map((c) => (c === '0' ? '.' : '#')).join('');
+  const near = [...FA.mh].filter(([k]) => support(k) === support('K 0 1 0 0')).sort((a, b) => b[1] - a[1]).slice(0, 2);
+  if (scaled) diverge('generic/unfused-scale', `${scaled} halves [endo 0 -1 0 0] (mina: 0; its nearest by support: ${near.map(([k, c]) => `[${k}] ×${c}`).join(' ') || 'none'})`);
 
   if (L.probe.size) diverge('probe-rows', `${L.probe.size} standalone Zero rows (mina: 0)`);
 
@@ -451,7 +621,15 @@ function report(R, src, M, L) {
   console.log(`   to_field_checked widths (EndoMulScalar run lengths)`);
   console.log(`              mina ${R.emsWidths.mina}`);
   console.log(`              lean ${R.emsWidths.lean}`);
-  console.log(`   Generic selector halves  ${R.generic.in}/${R.generic.in + R.generic.out} of ours use a shape Snarky also emits (${R.generic.leanDistinct} distinct here, ${R.generic.minaDistinct} upstream)`);
+  console.log(`   Generic selector halves`);
+  console.log(`              by EXACT coefficient vector   ${R.generic.in}/${R.generic.in + R.generic.out} match a Snarky half (${R.generic.leanDistinct} distinct here, ${R.generic.minaDistinct} upstream)`);
+  console.log(`              by SHAPE FAMILY (K, ±)        ${R.generic.famIn}/${R.generic.famIn + R.generic.famOut} match  — ${R.generic.out - R.generic.famOut} of the exact misses are the same family with our constants`);
+  for (const [k, c] of R.generic.famMiss) console.log(`                 ×${String(c).padStart(4)}  [${k}]`);
+  const e = R.economy;
+  console.log(`   Generic ROW ECONOMY (circuit rows, PI block excluded)`);
+  console.log(`              ${e.gRows} rows carry ${e.live} halves that constrain something + ${e.empty} that do not`);
+  console.log(`              one global pending_generic_gate  → ${e.packed} rows   (${e.gRows - e.packed} saved)`);
+  console.log(`              + the ${e.eq} equalities as σ-ties → ${e.bothWays} rows   (${e.gRows - e.bothWays} saved in total)`);
   console.log('\n── (C) DIVERGENCES, classified against KimchiStepMain.lean\'s NAMED SIMPLIFICATIONS');
   const un = [];
   for (const d of R.diverge) {
@@ -471,13 +649,13 @@ function report(R, src, M, L) {
 }
 
 // ── falsifiers: the diff must MOVE when the candidate is bent ─────────────────────────────────────
-function falsify(M, leanJson) {
+function falsify(M, leanJson, witness) {
   const good = JSON.stringify(candidateVector(measure(M, normalizeLean(leanJson))));
   const bite = (label, mutate) => {
     const copy = JSON.parse(JSON.stringify(leanJson));
     mutate(copy);
     let got;
-    try { got = JSON.stringify(candidateVector(measure(M, normalizeLean(copy)))); }
+    try { got = JSON.stringify(candidateVector(measure(M, normalizeLean(copy), 'absent', witness))); }
     catch (e) { process.stdout.write(`   red-path OK: ${label} -> REFUSED (${String(e.message).slice(0, 60)}…)\n`); return; }
     if (got === good) throw new Error(`RED-PATH FAILED: ${label} did not move the conformance vector`);
     process.stdout.write(`   red-path OK: ${label} -> conformance vector MOVED\n`);
@@ -496,6 +674,25 @@ function falsify(M, leanJson) {
   // 6. the OTHER leg of the ledger: a divergence that STOPS being observed must also be RED, or a
   //    retired simplification would leave a dead allowance sitting in the ledger forever.
   bite('drop every σ-probe row → the `probe-rows` ledger entry goes unobserved', (j) => { j.probe_rows = []; });
+  // ⚑ 7-9. THE DROPPED-CONSTRAINT GATE. An operand wired into a half that carries no equation is the
+  //    defect the all-zero census exists to tell apart from waste, and the three checks that tell
+  //    them apart must each be able to go red on their own.
+  const zeroRow = (j) => j.gates.findIndex((g) => NAMES[g.typ] === 'Generic' && g.coeffs.length === 10
+    && g.coeffs.slice(5, 10).every((c) => fp(c) === '0'));
+  bite('wire an operand into an all-zero half → a σ-classed cell with no equation', (j) => {
+    const i = zeroRow(j); j.gates[i].wires[3] = [j.gates[i].wires[0][0], j.gates[i].wires[0][1]];
+  });
+  bite('move an all-zero half to the FIRST position', (j) => {
+    const i = zeroRow(j); j.gates[i].coeffs = [...j.gates[i].coeffs.slice(5), ...j.gates[i].coeffs.slice(0, 5)];
+  });
+  bite('blank a whole Generic row → an all-zero ROW, emitted for nothing', (j) => {
+    const i = zeroRow(j); j.gates[i].coeffs = j.gates[i].coeffs.map(() => '0');
+  });
+  // 10. a NEW shape family must move the count-free family SET, not merely a count.
+  bite('bend one selector into a family Snarky never emits', (j) => {
+    const i = j.gates.findIndex((g) => NAMES[g.typ] === 'Generic' && g.coeffs.length === 10);
+    j.gates[i].coeffs[0] = '3'; j.gates[i].coeffs[1] = '7';
+  });
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
@@ -503,9 +700,9 @@ const argv = process.argv.slice(2);
 const arg = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
 const { spec, publicInputSize, gates } = await loadCircuit('step-zkapp-proved');
 const M = normalizeMina(publicInputSize, gates);
-const { src, fixture, j: leanJson } = loadLeanSide(arg("--lean"));
+const { src, fixture, witness, j: leanJson } = loadLeanSide(arg("--lean"));
 const L = normalizeLean(leanJson);
-const R = measure(M, L, fixture);
+const R = measure(M, L, fixture, witness);
 
 if (argv.includes('--refresh-fixture')) {
   const { gzipSync } = await import('node:zlib');
@@ -524,6 +721,6 @@ await runOracle({
   candidate: () => candidateVector(R),
   extra: () => {
     report(R, src, M, L);
-    if (argv.includes('--falsify')) falsify(M, leanJson);
+    if (argv.includes('--falsify')) falsify(M, leanJson, witness);
   },
 });
