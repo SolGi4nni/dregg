@@ -109,10 +109,19 @@ line items, not against a round number.
     occurrences to an `assert_on_curve` and an absorption whose squeeze is public word 7, so a
     re-solved `G` now MOVES a public word (§17(d)) — but `bpCloses` on the re-solved witness is
     still `true` (§17(e)), because `rhs`/`equal_g` are still not emitted and **no row here relates
-    `G` to the opening.** Segment D binds `G` to the STATEMENT. The refusal is a consumer's, one
-    recursion step later, through segment C's reconstruction and the wrap-proof tie
-    (`step_main.ml:83-86,108`) — and with `G` fixed the `z₁`/`z₂` residue is a two-dimensional
-    discrete log, an ASSUMPTION and not a gate.
+    `G` to the opening.** Segment D binds `G` to the STATEMENT.
+    ⚠ ⚑ …and since 2026-08-02 **THE INTER-STEP TIE ITSELF IS ASSEMBLED AS A CHAIN AND MEASURED
+    (§18), AND IT DOES NOT REFUSE THE SUBSTITUTION EITHER — IT PROPAGATES IT.** The previous
+    sentence here read "the refusal is a consumer's, one recursion step later, through segment C's
+    reconstruction and the wrap-proof tie (`step_main.ml:83-86,108`)"; §18 builds exactly that
+    consumer and the substituted chain CLOSES. What the tie buys is that `sg_old` at step `N+1` is
+    FORCED to be the `G` used at step `N` — the fake commitment cannot be laundered away between
+    steps — and that direction IS a refusal (§18(d)). The refusal of the substitution itself is one
+    link further still: the accumulator check `per_proof_witness.ml:12-32` states, whose two legs
+    are `E_c = f_c(ζ)` over `prev_challenges` (simplification #4's residue, measurably ABSENT here,
+    §18(f)) and `sg_old` OPENING to `E_c` — which is `verified` (#11), an ASSUMPTION at every step
+    of the chain. And with `G` fixed the `z₁`/`z₂` residue is a two-dimensional discrete log, an
+    ASSUMPTION and not a gate.
   * **R5 `deferred` + `xi` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
     `b(ζ) = ∏(1 + uᵢ·ζ^{2^{k−1−i}})` (`Wrap.challenge_polynomial`, `wrap.ml:15-17`; the product
     `KimchiVerify.bEvalSq` folds) and `combined_inner_product = Σ_k ξ^k·(evₖ(ζ) + r·evₖ(ζω))`
@@ -189,10 +198,35 @@ PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep
     CompleteAdd           403  (2.0%)       334       334         334         334   1×159 2×65 3×23
                     15×1 30×1 / 1×334
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10601 → 10746 rows, +145) — **and the headline is a
+⚑⚑ MOVEMENT SINCE THE PREVIOUS COMMIT: **ZERO ROWS. 10,746 unchanged, and that is the result.**
+This rung was queued to flip §17(e)'s verdict by assembling the inter-step tie — segment C's
+reconstruction of the previous statement compared against the wrap proof it verifies. §18 assembles
+that chain and MEASURES it, and **the substituted-with-re-solved-`G` witness is ACCEPTED before and
+ACCEPTED after.** The tie is not a refusal of the substitution; it is a FORCING of `sg_old`. Rows
+that do not buy the refusal are not the deliverable, so none were emitted — what changed is the
+measurement, three source corrections and one named simplification made falsifiable:
+
+  * ⚑ **THE TIE HAS NO `Field.Assert.equal` IN IT.** Read at source, the reconstructed digest is
+    SUBSTITUTED into the wrap statement (`step_main.ml:83-84`) and that statement is handed to
+    `verify` (`:108`), which packs it (`step_verifier.ml:1237-1245`) and feeds it to
+    `multiscale_known` (`:543-545`). Its only in-circuit wire is **x_hat MSM term 12's SCALAR**
+    (`composition_types.ml:854-882`: `fp ×5 · challenge ×2 · scalar_challenge ×3 · digest ×3`, and
+    `messages_for_next_step_proof` is the third digest). That wire is simplification #2's residue,
+    and taking it would not move the verdict — §18 measures the verdict without it.
+  * ⚑ **THE TWO HASHES ARE PINNED AS ONE CHAIN.** §18(a): segment C at step `N+1`, fed step `N`'s
+    app state, `G` and returned bulletproof challenges, reproduces step `N`'s public word 7 EXACTLY.
+    That equality is not a definition — the two segments have different word lists, lengths, masks
+    and app-state fixtures and coincide only if the mask, the interleave, the `Sponge.copy` point
+    and the block alignment are all right.
+  * ⚑ **AND `E_c` IS NOT `f_c(ζ)` HERE — the leg that WOULD refuse it, measured absent.**
+    `per_proof_witness.ml:12-32` names the accumulator check; its first leg is simplification #4's
+    `sg_evals` residue, and §18(f) shows the `evVal` fixture is not the b-polynomial of
+    `prev_challenges`, so the leg is FALSE on this assembly's numbers rather than merely silent.
+
+⚑ MOVEMENT IN THE PREVIOUS COMMIT (10601 → 10746 rows, +145) — **and the headline was a
 CORRECTION, not the rows: segment C hashed two quantities upstream does not put in that hash, and
-did not hash the two it does.** The new rows are the OTHER hash, and they do NOT buy the refusal the
-rung was queued for; see R4 and §17.
+did not hash the two it does.** Those rows are the OTHER hash, and they do NOT buy the refusal the
+rung was queued for; see R4, §17 and §18.
 
   * ⚑⚑ **SEGMENT C's COMMITMENT SLOTS CORRECTED: zero rows.** `hash_messages_for_next_step_proof_opt`
     absorbs `challenge_polynomial_commitments = prev_challenge_polynomial_commitments`
@@ -378,16 +412,29 @@ costs only eleven because it is a `Sponge.copy` of `sponge_after_index` and re-a
     `G = challenge_polynomial_commitment` had ZERO occurrences in the assembly; it now has
     `assert_on_curve` and segment D's absorb, so a substituted `G` moves a public word. It is still
     **not refused**: `rhs`/`equal_g` are not emitted, so no row relates `G` to the IPA opening, and
-    §17(e) re-runs the substitution exhibit and it is ACCEPTED exactly as before. The refusal belongs
-    to whoever COMPARES `messages_for_next_step_proof` — the next step's `verify_one`, one recursion
-    step later. With `G` fixed, `z₁`/`z₂` leave a two-dimensional discrete log: an ASSUMPTION.
+    §17(e) re-runs the substitution exhibit and it is ACCEPTED exactly as before.
+  * ⚠ ⚑⚑ **AND THE NEXT STEP'S CONSUMER IS NOW BUILT AND MEASURED, AND IT ACCEPTS IT TOO**
+    (2026-08-02, §18). The bullet above used to end "the refusal belongs to whoever COMPARES
+    `messages_for_next_step_proof` — the next step's `verify_one`, one recursion step later." §18
+    builds that chain: segment C at step `N+1`, fed step `N`'s app state, `G` and returned
+    bulletproof challenges, reconstructs step `N`'s public word 7 EXACTLY (§18(a)) — and the
+    SUBSTITUTED chain reconstructs the MOVED word just as exactly (§18(b)). **The tie propagates the
+    substitution; it does not refuse it.** What it does refuse is the mismatch: a prover cannot move
+    word 7 at `N` and then carry the honest `G` at `N+1` (§18(d)). Read at source the tie is not even
+    an equality — the digest is SUBSTITUTED into the wrap statement (`step_main.ml:83-84`) and
+    consumed as x_hat MSM term 12's scalar (`step_verifier.ml:1237-1245,543-545`,
+    `composition_types.ml:854-882`). The refusal is one link further: the accumulator check
+    (`per_proof_witness.ml:12-32`), whose `E_c = f_c(ζ)` leg is simplification #4's residue and is
+    measurably ABSENT (§18(f)) and whose OPENING leg is `verified` (#11). With `G` fixed, `z₁`/`z₂`
+    leave a two-dimensional discrete log: an ASSUMPTION.
 
 So: the sponge input is derived for the verifier key and for the quotient commitment, both MSM
 ladders and every endo ladder start where upstream starts them, the blocks are fed in upstream's
-order, every item `verify_one` absorbs is a word some row here READS, and both of `step_main`'s
-`messages_for_next_step_proof` hashes are over the objects upstream hashes. What is left of the
-transcript residue is one structural pad lane — and `verified` (#11), which is still a witnessed
-boolean and is still what would have to hold `G` to its opening.
+order, every item `verify_one` absorbs is a word some row here READS, both of `step_main`'s
+`messages_for_next_step_proof` hashes are over the objects upstream hashes, and the two of them are
+pinned as the two ends of ONE inter-step chain. What is left of the transcript residue is one
+structural pad lane — and `verified` (#11), which is still a witnessed boolean and is still what
+would have to hold `G` to its opening, **at every step of that chain and not only at this one.**
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -526,6 +573,16 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      mask half of that is no longer missing (§8h, #9 below); what remains is the b-polynomial of the
      carried challenges at ζ and ζω, which is R5's `deferredRows` ladder run on a SECOND challenge
      vector.
+     ⚑ **AND SINCE §18 THIS RESIDUE HAS A NAME AND A CONSEQUENCE, not just a description.** Read at
+     source (`per_proof_witness.ml:12-32`) these four entries ARE `E_c`, and the accumulator is
+     finalised by "`challenge_polynomial_commitment` **opens** to `E_c` at zeta" together with
+     "`E_c = f_c(zeta)`". So this residue is **one of the two legs that would refuse a substituted
+     `G`** — the other being the opening itself (#11). §18(f) measures that the `evVal` fixture is
+     NOT `bEvalSq ζ prev_challenges`, so the leg is FALSE on this assembly's own numbers rather than
+     merely unassembled, and that `f_c` over `prev_challenges` is a different value from `f_c` over
+     the challenges segment D absorbs — conflating the two would close the leg vacuously.
+     ⚠ Taking it alone would still not refuse the substitution: `E_c` is a function of
+     `prev_challenges` and not of `sg_old`, so the relation between them remains the opening.
   5. **Named and NOT assembled**, each a real sub-circuit: `group_map` (`step_verifier.ml:214-237`);
      `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`;
      `x_hat blinding`; `lagrange_commitment` / `public_input_commitment_dynamic`'s domain selection;
@@ -659,6 +716,19 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      OPENING, and `verified` is still a witness. ⚠ And even with `G` fixed, `z₁`/`z₂` leave a
      two-dimensional discrete log in `⟨G + b·u, H⟩` — the IPA opening's own hardness, an ASSUMPTION
      and not a gate, and it must be described as one.
+     ⚠ ⚑⚑ **AND THAT CONSUMER IS NOW BUILT, AND IT ACCEPTS IT TOO (2026-08-02, §18).** The sentence
+     above — "that comparison is the NEXT step's `verify_one` … outside this circuit by
+     construction" — was a description of where the refusal LIVES, and it was wrong about what lives
+     there. §18 assembles the chain: step `N+1`'s segment C reconstruction reproduces step `N`'s
+     public word 7 on the honest chain (§18(a)) AND on the substituted one (§18(b)). The tie FORCES
+     `sg_old` at `N+1` to be the `G` used at `N` — the fake commitment must be carried, which §18(d)
+     measures as a refusal in that direction — and then the substituted chain proceeds. **The actual
+     refusal is the accumulator check** (`per_proof_witness.ml:12-32`): `sg_old` must OPEN at ζ to
+     `f_c(ζ)` over `prev_challenges`. Its `E_c = f_c(ζ)` leg is #4's residue and is measurably absent
+     (§18(f)); its OPENING leg is THIS entry. So the honest one-line state of `verified` is: it is
+     the last thing standing between a substituted commitment and acceptance, **at every step of the
+     recursion and not only at this one**, and it is an ASSUMPTION until a sub-circuit that does not
+     exist is built.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
@@ -7662,6 +7732,10 @@ refuse. What changed is measurable and it is smaller than a refusal:
     what it expects — which is the next step's `verify_one`, through the very inner hash segment C
     reconstructs and the wrap-proof tie at `step_main.ml:83-86,108`. **One recursion step later.**
     This circuit alone still accepts; it just no longer proves the honest statement.
+    ⚠ ⚑ **AND THAT CONSUMER IS NOW BUILT — §18 — AND IT IS NOT A REFUSAL EITHER.** The sentence
+    above says "that is a refusal only for a consumer that compares"; §18 builds the comparison and
+    the substituted chain CLOSES, because the prover carries the fake `G` forward as `sg_old` and the
+    reconstruction reproduces the moved word. Read §18 before quoting this bullet as a deferral.
   * The prover who is willing to move that public word is not refused here at all. `equal_g` is not
     emitted, so **no row in this assembly relates `G` to the opening** — segment D binds `G` to the
     STATEMENT, not to the IPA.
@@ -7955,7 +8029,11 @@ def bpGResolvedA : Nat × Nat := jAff bpGResolved
 --   (i) a row relating `G` to `lhs` — that is `rhs` + `equal_g`, the ≈373 rows above, still unemitted;
 --   (ii) a consumer that compares public word 7 against an INDEPENDENTLY known digest — that is the
 --        next step's `verify_one`, i.e. segment C's reconstruction plus the wrap-proof tie, which is
---        outside this circuit by construction.
+--        outside this circuit by construction. ⚠ ⚑ **AND (ii) IS NOW BUILT AND IT IS NOT SUFFICIENT
+--        EITHER** — §18 measures it; the digest the next step "independently knows" is the one the
+--        prover carried, so the comparison is satisfied by the substituted chain. The pin that would
+--        make (e) a refusal is neither of these two: it is the accumulator check's OPENING leg
+--        (`per_proof_witness.ml:12-32`), i.e. #11.
 -- What IS pinned is that the two hashes are the two ENDS of that chain and are wired to the two
 -- different objects upstream wires them to: segment C to `sg_old`, segment D to `G`.
 #guard sgOldVar shapeSmoke 0 0 == ipx shapeSmoke (qInit shapeSmoke)
@@ -7975,5 +8053,292 @@ def bpGResolvedA : Nat × Nat := jAff bpGResolved
                   (jOf (bpLhsOf tSwapAbs))) == false
 #guard jacEqM pN (bpRhs (bpUOf tS) GENERATORS_H bpGHonest (bpBOf tS) BP_Z1 BP_Z2)
                  (jOf (bpLhsOf tS))
+
+/-! ## §18 — THE INTER-STEP TIE: segment D at step `N` against segment C at step `N+1`.
+
+§17 ends on "the refusal belongs to the next step's `verify_one`, through segment C's reconstruction
+and the wrap-proof tie". **This section builds that chain and measures whether it refuses.** It is an
+EXHIBIT and not a row-set, for the same reason §17 is: the answer decides whether rows are the right
+deliverable, and it decides against.
+
+## ⚑ THE TIE, READ AT SOURCE — AND THERE IS NO `Field.Assert.equal` IN IT
+
+`step_main.ml:65-87`, verbatim in shape:
+
+    let statement =
+      let prev_messages_for_next_step_proof =                                       (* :66 *)
+        hash_messages_for_next_step_proof ~widths ~max_width
+          ~proofs_verified_mask:(Vector.trim_front branch_data.proofs_verified_mask …)   (* :70-74 *)
+          { app_state ; dlog_plonk_index = d.wrap_key
+          ; challenge_polynomial_commitments = prev_challenge_polynomial_commitments   (* :78-79 *)
+          ; old_bulletproof_challenges = prev_challenges }                             (* :80 *)
+      in
+      { Types.Wrap.Statement.messages_for_next_step_proof =
+          prev_messages_for_next_step_proof                                          (* :83-84 *)
+      ; proof_state = { proof_state with messages_for_next_wrap_proof } }             (* :85-86 *)
+    in
+    let verified = … verify … ~proof:wrap_proof … statement unfinalized               (* :88, :108 *)
+
+⚑ **The "comparison" is a SUBSTITUTION, not an equality.** The reconstructed digest is placed INTO
+the wrap statement (`:83-84`) and that statement is handed to `verify` (`:108`), which packs it
+(`step_verifier.ml:1237-1245`, `Spec.pack … to_data statement`) into `public_input` and feeds it to
+`multiscale_known` (`:543-545`) — the x_hat MSM — whose output is absorbed at `:560`. Read at source
+(`composition_types.ml:854-882`) the packed order is `fp ×5 · challenge ×2 · scalar_challenge ×3 ·
+digest ×3 · …`, and `messages_for_next_step_proof` is the THIRD digest, i.e. **word 12**. So the
+reconstruction reaches the circuit through exactly one wire: term 12's MSM scalar.
+
+⚠ **That wire is named simplification #2's open residue**, which is why this section can measure the
+tie but not emit it: #2 is "term `i`'s scalar must BE Wrap statement word `i`", and a `Digest` packs
+at 255 bits (`spec.ml:376-392`) where R3 runs a uniform 26 chunks. Emitting term 12 alone at 51
+chunks is the per-word width vector #2 already prices. **It would not change the verdict below** —
+see (c) — so it is not taken here.
+
+## ⚑ THE CHAIN, AND WHY THE TWO HASHES ARE ONE OBJECT
+
+Segment D at step `N` (`step_main.ml:525-566`) absorbs `(app_state_N, G_N, bulletproof_challenges_N)`
+onto a `Sponge.copy` of `sponge_after_index`; its squeeze is step `N`'s public
+`messages_for_next_step_proof` (`:572-573`). Segment C at step `N+1` (`:59-81`) absorbs
+`(app_state_N, sg_old, prev_challenges)` onto the SAME copy point, masked. `per_proof_witness.ml:
+90-97` says what those two witness fields are: `prev_challenges` are "the challenges c_0 … c_{k-1}
+corresponding to each W_i" and `prev_challenge_polynomial_commitments` "the commitments to the
+challenge polynomials … corresponding to each of the prev_challenges" — i.e. step `N`'s own
+`G` and `bulletproof_challenges`. **So on the honest chain the two digests are EQUAL**, and that
+equality is the tie. It is pinned below and it is not a definition: the two segments have different
+word lists, different lengths, different masks and different app-state fixtures, and they coincide
+only if the mask, the interleave (`composition_types.ml:595-607`), the copy point and the block
+alignment are all right.
+
+## ⚑⚑ THE VERDICT — READ IT BEFORE QUOTING THE SECTION
+
+**The inter-step tie does NOT refuse the substituted commitment. It PROPAGATES it.** A prover who
+substitutes at step `N` and re-solves `G` moves step `N`'s public word 7; at step `N+1` he carries
+`sg_old := G_resolved`, and the reconstruction reproduces the MOVED word exactly. (b) below measures
+that on the emitted segments. What the tie buys is real and smaller than a refusal: it FORCES
+`sg_old` at `N+1` to be the `G` the prover used at `N` — he cannot launder the fake commitment away
+between steps — and (d) measures that direction as a refusal.
+
+⚠ **So the brief's premise, and §17(f)(ii)'s wording, are corrected in place**: the reconstruction is
+not what refuses a substituted `G`. What refuses it is one link FURTHER — the accumulator check that
+`per_proof_witness.ml:12-32` states in prose:
+
+> "This part of the accumulator state is finalized by checking that `challenge_polynomial_commitment`
+> is a commitment to the polynomial `f_c := prod (1 + c_i x^{2^{k-1-i}})` … instead of checking this,
+> we get an evaluation `E_c` at a random point zeta and check that `challenge_polynomial_commitment`
+> **opens** to `E_c` at zeta. Then we will need to check that `E_c = f_c(zeta)`."
+
+Two legs, and this assembly has NEITHER:
+
+  * **`E_c = f_c(ζ)`** — the `sg_evals` prefix entries `vEz 0/1` and `vEw 0/1`, which are `evVal`
+    FIXTURES here. That is named simplification #4's residue verbatim, and (f) below measures that
+    the fixture is not the b-polynomial of `prev_challenges`, so the leg is not merely unassembled,
+    it is FALSE on this assembly's own numbers. It is assemblable: R5's `deferredRows` ladder run on
+    `vPrevChal` at ζ and ζω.
+  * **`sg_old` OPENS to `E_c`** — the IPA opening at step `N+1`. That is `verified` (#11), and it is
+    the same object §17 stops at. **It is an ASSUMPTION, not a gate**, at every step of the chain.
+
+So the honest shape of the whole result is: `G` is bound to step `N`'s statement (§8e′), FORCED
+forward into `sg_old` at step `N+1` (this section), and finally MEANS something only through a
+commitment-opening that no rung of this assembly emits. The substituted witness is accepted at every
+one of those rungs. -/
+
+/-- ⚑ Segment C's spec with each slot's contents supplied, so the CHAIN can be evaluated at step
+`N`'s outputs rather than at this instance's own fixtures. Structurally identical to `hmSpec` — the
+variables, the length, the mask and the interleave are the same objects, only the VALUES differ, and
+the first `#guard` below pins that by comparing the two word lists. -/
+def hmChainSpec (s : StepShape) (app : Nat → Nat)
+    (G0 : Nat × Nat) (ch0 : Nat → Nat) (G1 : Nat × Nat) (ch1 : Nat → Nat) : SegSpec :=
+  { ws := (List.range N_IDX_WORDS).map (fun i => (idxVar s (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
+      ++ (List.range N_HM_APP).map (fun i => (vHm s i, app i))
+      ++ [ (sgOldVar s 0 0, G0.1), (sgOldVar s 0 1, G0.2) ]
+      ++ (List.range s.bRounds).map (fun k => (vPrevChal s k, ch0 k))
+      ++ [ (sgOldVar s 1 0, G1.1), (sgOldVar s 1 1, G1.2) ]
+      ++ (List.range s.bRounds).map (fun k => (vPrevChal s (s.bRounds + k), ch1 k))
+  , squeezes := 1, masked := true, maskFrom := N_HM_FIX / 2, keep := hmKeepAt s MASK_BITS }
+
+/-- Segment C's squeeze on chained inputs — step `N+1`'s reconstruction of step `N`'s statement. -/
+def hmChainDigest (s : StepShape) (app : Nat → Nat)
+    (G0 : Nat × Nat) (ch0 : Nat → Nat) (G1 : Nat × Nat) (ch1 : Nat → Nat) : Nat :=
+  ((runSeg (hmChainSpec s app G0 ch0 G1 ch1)).states.getLastD []).getD 0 0
+
+/-- Step `N`'s `old_bulletproof_challenges` — `finalize_other_proof`'s RETURNED vector
+(`step_main.ml:563-565`), which in this assembly is `vLift (uChal k)`. These are the words segment D
+absorbs, and therefore the words step `N+1` must carry as `prev_challenges`. -/
+def chainChals (s : StepShape) (d : SpongeData) (k : Nat) : Nat := liftOf s d (s.uChal k)
+
+/-- Segment C's own slot-0 contents, unchanged — the `Wrap_hack` dummy slot. -/
+def chainSlot0 (_s : StepShape) (v : IpaData) : (Nat × Nat) × (Nat → Nat) :=
+  ((sgOldVal v 0 0, sgOldVal v 0 1), fun k => prevChalVal k)
+
+/-- ⚑ The chained reconstruction under a SUPPLIED mask, so the `Wrap_hack`-dummy control in (e) can
+be run at `[1,1]` — the `N2` instance's own legal prefix mask — without restating the schedule. -/
+def hmChainDigestMask (s : StepShape) (ms : List Nat) (app : Nat → Nat)
+    (G0 : Nat × Nat) (ch0 : Nat → Nat) (G1 : Nat × Nat) (ch1 : Nat → Nat) : Nat :=
+  ((runSeg { hmChainSpec s app G0 ch0 G1 ch1 with keep := hmKeepAt s ms }).states.getLastD []).getD 0 0
+
+-- ⚑ **THE PARAMETERISATION IS FAITHFUL**: at this instance's own values `hmChainSpec` IS `hmSpec`,
+-- word for word — same variables, same order, same length. So every measurement below is about the
+-- emitted segment C and not about a second model of it.
+#guard (hmChainSpec shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1 (chainSlot0 shapeSmoke tS.ipa).2
+          (sgOldVal tS.ipa 1 0, sgOldVal tS.ipa 1 1)
+          (fun k => prevChalVal (shapeSmoke.bRounds + k))).ws == (hmSpec shapeSmoke tS.ipa).ws
+#guard hmChainDigest shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1 (chainSlot0 shapeSmoke tS.ipa).2
+          (sgOldVal tS.ipa 1 0, sgOldVal tS.ipa 1 1)
+          (fun k => prevChalVal (shapeSmoke.bRounds + k))
+        == (tS.segC.states.getLastD []).getD 0 0
+
+/-- Step `N`'s public word 7 as a function of the commitment in segment D's slot — §17(d)'s object,
+named here so the two sides of the tie are two named quantities. -/
+def wordSeven (t : StepData) (G : Nat × Nat) : Nat := hmOutDigestOf shapeSmoke t.sp G
+
+#guard wordSeven tS G_XY == (stepPublic tS).getD 7 0
+
+-- ⚑⚑ **(a) THE HONEST CHAIN CLOSES.** Step `N+1`'s segment C, fed step `N`'s app state, `G` and
+-- returned bulletproof challenges, reconstructs step `N`'s public word 7 EXACTLY. This is the
+-- reconstruction-and-comparison, and it is the first time the two hashes are shown to be the two
+-- ends of one chain rather than two sponges that happen to share a copy point.
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tS.ipa).1
+          (chainSlot0 shapeSmoke tS.ipa).2 G_XY (chainChals shapeSmoke tS.sp)
+        == wordSeven tS G_XY
+-- …and it is not trivially true: segment C's own app-state fixture gives a DIFFERENT digest, so the
+-- identity is carrying the chained app state and not ignoring it.
+#guard hmChainDigest shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1
+          (chainSlot0 shapeSmoke tS.ipa).2 G_XY (chainChals shapeSmoke tS.sp)
+        != wordSeven tS G_XY
+
+-- ⚑⚑ **(b) THE DELIVERABLE. THE SUBSTITUTED CHAIN CLOSES TOO — THE TIE DOES NOT REFUSE IT.**
+-- Step `N` is `tSwapAbs` with `G` re-solved (§17(c)/(e)); its public word 7 has MOVED (§17(d)).
+-- Step `N+1` carries `sg_old := G_resolved` and step `N`'s challenges, and the reconstruction
+-- reproduces the moved word. Nothing anywhere in the chain objects.
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
+        == wordSeven tSwapAbs bpGResolvedA
+-- …and this really is the §17(e) witness and not a re-run of the honest one: the two chains'
+-- digests differ, and `equal_g` still closes on the substituted one.
+#guard wordSeven tSwapAbs bpGResolvedA != wordSeven tS G_XY
+#guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGResolved
+                (bpBOf tSwapAbs) BP_Z1 BP_Z2
+
+-- ⚑ **(c) AND A WHOLE FAMILY OF CHAINS CLOSES, because `z₁`/`z₂` occur in NEITHER segment.**
+-- Re-solving at `z₁ = z₂ = 1` reaches a third commitment; its chain closes just as well. So the tie
+-- constrains WHICH `G` is carried forward, not WHETHER a satisfying `G` exists.
+def bpG11 : Nat × Nat :=
+  jAff (bpSolveG (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) (bpBOf tSwapAbs) 1 1)
+#guard onCurveA bpG11 && bpG11 != bpGResolvedA && bpG11 != bpGHonestA
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpG11 (chainChals shapeSmoke tSwapAbs.sp)
+        == wordSeven tSwapAbs bpG11
+-- …and the reason is structural: `G` is a word of segment D and of NEITHER other place, while `z₁`
+-- and `z₂` are not variables of this assembly at all. So the chain can move with `G` and cannot move
+-- with the response scalars.
+#guard (tS.specD.ws.map (·.1)).countP (fun v => v == vGx shapeSmoke) == 1
+#guard (tS.specC.ws.map (·.1)).countP (fun v => v == vGx shapeSmoke) == 0
+
+-- ⚑⚑ **(d) THE DIRECTION THE TIE DOES REFUSE — and it is the reason the tie is not nothing.**
+-- A prover who moves step `N`'s word 7 and then carries the HONEST `G` forward at step `N+1` is
+-- REFUSED: the reconstruction no longer equals the word the wrap proof was made for. So the fake
+-- commitment cannot be laundered away between steps; it must be carried.
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 G_XY (chainChals shapeSmoke tSwapAbs.sp)
+        != wordSeven tSwapAbs bpGResolvedA
+-- …and each of the other three chained quantities is covered in the same direction:
+--   the carried challenges,
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA
+          (fun k => if k == 0 then fAdd (chainChals shapeSmoke tSwapAbs.sp 0) 1
+                    else chainChals shapeSmoke tSwapAbs.sp k)
+        != wordSeven tSwapAbs bpGResolvedA
+--   the app state,
+#guard hmChainDigest shapeSmoke (fun i => fAdd (hmOVal i) 1)
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).1 (chainSlot0 shapeSmoke tSwapAbs.ipa).2
+          bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
+        != wordSeven tSwapAbs bpGResolvedA
+--   and either coordinate of the carried commitment alone.
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 (fAdd bpGResolvedA.1 1, bpGResolvedA.2)
+          (chainChals shapeSmoke tSwapAbs.sp)
+        != wordSeven tSwapAbs bpGResolvedA
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 (bpGResolvedA.1, fAdd bpGResolvedA.2 1)
+          (chainChals shapeSmoke tSwapAbs.sp)
+        != wordSeven tSwapAbs bpGResolvedA
+
+-- ⚑ **(e) THE OTHER DIRECTION: what the comparison does NOT cover, and the MASKED SLOT.**
+-- With `Prefix_mask.there N1 = [0,1]` (`pickles_base/proofs_verified.ml:75-81`, §8h) slot 0 is the
+-- `Wrap_hack` dummy: bending its commitment or ANY of its challenges leaves the reconstruction
+-- exactly where it was. It bites only if both mask bits are on — which is the `N2` instance, not
+-- this one.
+#guard MASK_BITS == [0, 1]
+#guard hmChainDigest shapeSmoke hmOVal (fAdd (chainSlot0 shapeSmoke tSwapAbs.ipa).1.1 1,
+            (chainSlot0 shapeSmoke tSwapAbs.ipa).1.2)
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
+        == wordSeven tSwapAbs bpGResolvedA
+#guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (fun k => fAdd (prevChalVal k) 1) bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
+        == wordSeven tSwapAbs bpGResolvedA
+-- …and with BOTH bits on it does bite, so the control is about the mask and not about the slot.
+#guard hmChainDigestMask shapeSmoke [1, 1] hmOVal
+          (fAdd (chainSlot0 shapeSmoke tSwapAbs.ipa).1.1 1,
+           (chainSlot0 shapeSmoke tSwapAbs.ipa).1.2)
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
+        != hmChainDigestMask shapeSmoke [1, 1] hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 bpGResolvedA (chainChals shapeSmoke tSwapAbs.sp)
+-- …and the two quantities the MIS-WIRED segment C used to hash are in neither word list, so no
+-- bend of `x_hat` or of the fold output `q` can reach this comparison at all (§12k's other half).
+#guard (tS.specC.ws.map (·.1)).all (fun v =>
+  v != mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
+  && v != ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1)))
+
+/-! ### ⚑ (f) THE LEG THAT WOULD REFUSE IT, AND THE MEASUREMENT THAT IT IS ABSENT.
+
+`per_proof_witness.ml:12-21`: the accumulator is finalised by checking that `sg_old` OPENS at ζ to
+`E_c`, and that `E_c = f_c(ζ) = ∏_i (1 + c_i·ζ^{2^{k−1−i}})` over the CARRIED challenges. The
+CONSTRUCTION is `step_verifier.ml:935-948` — `sg_olds = Vector.map prev_challenges ~f:
+challenge_polynomial` and `sg_evals pt = Vector.map2 mask sg_olds ~f:(fun keep f -> (keep, f pt))`
+at `plonk.zeta` and `zetaw` — and those two vectors are `combine`'s own prefix (`:1076-1102`,
+`List.append sg_evals ([| Some x_hat |] :: [| Some ft |] :: a)`), i.e. exactly `EV_PREFIX`'s first
+two entries. `challenge_polynomial` is `∏_i (1 + chals[i]·pt^{2^{k−1−i}})`
+(`wrap_verifier.ml:16-36`), which is `bEvalSq`'s own convention.
+
+In this assembly `E_c` is that prefix — `vEz 0/1` at ζ and `vEw 0/1` at ζω — and those are `evVal`
+fixtures (#4's residue). The pins below measure that the fixture is not `f_c(ζ)`, i.e. the leg is
+not merely unassembled: it is FALSE here, so a `#guard` can see its absence rather than only its
+silence. ⚠ `prev_challenges` are fixtures too (`prevChalVal`), so this measures the WIRE, not a
+value claim about a real accumulator. -/
+
+/-- `f_c` over the KEPT slot's carried challenges, in `bEvalSq`'s own list order. -/
+def prevUs : List (ZMod pN) :=
+  (List.range shapeSmoke.bRounds).map (fun k =>
+    ((prevChalVal (shapeSmoke.bRounds + k) : Nat) : ZMod pN))
+
+-- ⚑ `E_c` at ζ is a FIXTURE and it is not `f_c(ζ)`; likewise at ζω. Both legs of the `sg_evals`
+-- prefix for the kept slot.
+#guard (((evVal 1 0 : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs) == false
+#guard (((evVal 1 1 : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
+              (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN)) prevUs) == false
+-- …and `f_c` is not degenerate at these numbers, so the two pins above are about the wire and not
+-- about a constant: the b-polynomial MOVES when one carried challenge moves.
+#guard (Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN)
+              (prevUs.set 0 (prevUs.getD 0 0 + 1))) == false
+-- ⚑ …and it is the CARRIED vector, not this proof's own: `f_c` over `prev_challenges` differs from
+-- `f_c` over the challenges segment D absorbs. Conflating the two would have closed the leg
+-- vacuously.
+#guard (Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS) == false
+
+-- ⚑ **(g) AND THE OTHER LEG IS THE OPENING, WHICH IS `verified` (#11) AND AN ASSUMPTION.**
+-- With `G` bound to the statement (§8e′) and FORCED forward by (a)/(d), what is left between the
+-- substituted commitment and a refusal is: `G_resolved` must open at ζ to `f_c(ζ)`. No rung of this
+-- assembly emits that opening — `rhs`/`equal_g` are not emitted (§17), and `verified` is a witnessed
+-- boolean. ⚠ There is no `#guard` that says "that is hard"; what IS measurable is that the prover's
+-- solve stays available in the direction he needs and closes on the substituted chain, which is (b),
+-- and that with `G` held fixed it does not (§17(g)). The residue is the two-dimensional discrete log
+-- in `⟨G + b·u, H⟩` and it is stated as an ASSUMPTION, not as a gate.
+#guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs)
+                (jOf bpGResolvedA) (bpBOf tSwapAbs) BP_Z1 BP_Z2
+#guard (jacEqM pN (bpRhs (bpUOf tSwapAbs) GENERATORS_H (jOf bpGHonestA) (bpBOf tSwapAbs)
+                     BP_Z1 BP_Z2) (jOf (bpLhsOf tSwapAbs))) == false
 
 end Dregg2.Circuit.Emit.KimchiStepMain
