@@ -44,6 +44,49 @@
 # the `emulSel = 0` selector patterns — which is the regime EVERY pre-existing fixture in this tree
 # lived in, and exactly why the defect survived until 2026-08-01.
 #
+# ── AND A THIRD REFERENCE FOR THE SAME FUNCTION: `linconst_om` / `ft0_om` ───────
+# `gateLinConst` is the most defect-prone definition here, so it gets a third independent
+# implementation: OPENMINA's linearization constant term (its own `Expr` evaluator over its own
+# `constraints_expr` linearization — no `PolishToken` anywhere), and openmina's `ft_eval0` composed
+# over it against `KimchiVerify.ftEval0R`.
+#
+# ⚑ HOW IT IS REACHED. `plonk_checks.rs:481` declares `mod scalars` PRIVATE, so `scalars::compute`
+# — the constant-term producer — is not nameable outside `mina-tree`; its only callers are
+# `ft_eval0` (`:442`) and `ft_eval0_checked` (`:1025`). `linconst_om` therefore drives `pub fn
+# ft_eval0` with `zk_polynomial = 0`, `zeta_to_n_minus_1 = 0` and `p_eval0 = [0]`, which annihilates
+# every prefix term and leaves `ft_eval0 = −constant_term`. Nothing is transcribed. The annihilation
+# is MEASURED by perturbation (`prefix_annihilation_is_measured`), shown able to fail
+# (`prefix_annihilation_can_fail`), and the extracted value is validated against kimchi's own
+# constant term (`openmina_constant_term_agrees_with_kimchi_constant_term`).
+#
+# ⚑ BOTH HISTORICAL DEFECTS MOVE IT, MEASURED 2026-08-02 (counts from re-emitting the Lean side):
+#     `.take 11` → take-12       linconst 214/276 · linconst_om 238/420 · ft0_om 110/120
+#     base endo → `er` (= endo²) linconst   0/276 · linconst_om 238/420 · ft0_om 110/120
+# The `linconst` zero is NOT a miss: that pair FEEDS the endo as a swept input, so a Lean side that
+# DERIVED the wrong endo is outside what it can measure at all. `linconst_om` pins the endo at
+# openmina's `endos::<Fp>().0` and emits it as a derived input column, so it catches the half of the
+# 2026-08-01 defect the kimchi pair structurally cannot.
+#
+# ⚑ SELECTOR COVERAGE, the regime the old fixtures missed (`emulSel = 0` everywhere):
+#     linconst    216/276 records have each of the six gate selectors nonzero
+#     linconst_om 240/420   ft0_om 115/120
+# `every_gate_selector_is_hot_in_hundreds_of_records` pins the `linconst_om` floor at 200 per gate,
+# so a sweep that narrows back toward the blind regime is RED rather than quietly green.
+#
+# ⚠ WHAT IS **NOT** A THIRD REFERENCE, and it looked like one. openmina also carries
+# `public_input/scalars.rs` — `complete_add` / `var_base_mul` / `endo_mul` / `endo_mul_scalar`,
+# `pub` and GENERATED from Mina's own OCaml. They compute WRONG VALUES: `field_from_hex`
+# (`scalars.rs:40-51`) is `o1_utils`' LITTLE-endian `from_hex` while the generated literals are
+# written big-endian, so their literal `1` decodes as 2^248 and `endo_mul_scalar` PANICS on its
+# `11/6`-family constants. Nothing in openmina calls any of them (the call sites are commented out
+# at `plonk_checks.rs:330-333`), so it is invisible upstream. Measured in
+# `generated_scalars_are_dead_and_misdecode_their_literals` rather than described.
+#   ⚑ What DOES survive is the term COUNT, because the α coefficients are read from the array the
+#   caller passes rather than baked: `endo_mul` moves for α^1…α^10 and for NOTHING above, so Mina's
+#   own codegen says the deployed EndoMul body is ELEVEN constraints — the `.take 11` question
+#   answered by a source that is neither kimchi nor dregg
+#   (`generated_gate_bodies_use_exactly_their_deployed_term_counts`).
+#
 # ── THE `[Field F]` LAYER — the 2026-08-01 "unreachable" claim was STALE, and is now SWEPT ─────
 # This block used to read: "`KimchiVerify.publicEval`, `ftEval0`, `permScalar`,
 # `combinedInnerProduct`, `zkPoly`, `ipaB0` and `ftComm` are declared under `variable {F : Type}
@@ -113,12 +156,19 @@
 # SEVEN entries.
 #
 # ── WHAT IS STILL NOT COVERED ──────────────────────────────────────────────────
-# `KimchiVerify.ftEval0R` against openmina's `plonk_checks::ft_eval0` (`pub`, and openmina is the
-# only Rust with a standalone one — drivable with plain field elements plus `PlonkMinimal` and
-# `make_scalars_env`, no wire structs), and `MinaWrapDeferred.expandDeferred` against
-# `mina_tree::proofs::step::expand_deferred` (pub; its inputs are nested wire structs from
-# `mina-p2p-messages` — `AllEvals`, `StatementProofState`, `branch_data` — so driving it over many
-# inputs is a decoder exercise on top of this one).
+# `MinaWrapDeferred.expandDeferred` against `mina_tree::proofs::step::expand_deferred` (pub; its
+# inputs are nested wire structs from `mina-p2p-messages` — `AllEvals`, `StatementProofState`,
+# `branch_data` — so driving it over many inputs is a decoder exercise on top of this one).
+# (`ftEval0R` ↔ `plonk_checks::ft_eval0` was the other item on this list; it is `ft0_om` now.)
+#
+# ⚠ AND WHAT `linconst_om` NARROWS relative to `linconst`: the endo coefficient and the MDS are
+# PINNED, not swept, because `scalars::compute` reads both from `endos::<F>()` / `sponge_params()`
+# instead of taking them as parameters. `linconst` keeps the swept version; neither pair alone
+# covers both regimes.
+#
+# ⚠ `ft0_om` cannot compare ζ = 1 or ζ = ω^{n−3}: those are the two poles of `ftEval0R`'s witnessed
+# inverse `denomInv`, where the Lean object is not defined. Both sides walk ζ off them with the same
+# deterministic `+1` loop, and the Rust side asserts the walk never outruns the Lean side's fuel.
 #
 # ⚠ `publiceval` sweeps OFF-DOMAIN ONLY, and the boundary is a MEASURED SPLIT, not an omission. At
 # `x = ω^i` ark-poly returns the indicator vector (the correct `p(ω^i) = −pubᵢ`) while kimchi's
@@ -161,11 +211,13 @@ PAIRS=(endo endo_fq endolift bpoly bpolymod cip linconst zkpoly rootunity permof
        sponge_fp sponge_fq challenge emulconsts
        publiceval ipab0 frdigest frpair frphase2
        rootunity_fq zkpoly_fq permscalar_fq publiceval_fq ipab0_fq
-       om_endo om_bpoly shift1 unshift1 shift1b unshift1b shift2 unshift2)
+       om_endo om_bpoly shift1 unshift1 shift1b unshift1b shift2 unshift2
+       linconst_om ft0_om)
 # The record floor. A RATCHET: raise it when the sweep grows.
 # 2026-08-01 3800 (23 pairs) → 2026-08-02 4700 (29 pairs: the `[Field F]` layer and the Fr-sponge)
-# → 2026-08-02 5600 (34 pairs: the SAME `[Field F]` layer at Fq, off `Fact (Nat.Prime qN)`).
-FLOOR=5600
+# → 2026-08-02 5600 (34 pairs: the SAME `[Field F]` layer at Fq, off `Fact (Nat.Prime qN)`)
+# → 2026-08-02 6200 (36 pairs: `linconst_om` + `ft0_om`, openmina's linearization constant term).
+FLOOR=6200
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

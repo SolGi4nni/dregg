@@ -18,6 +18,16 @@
 #              + PicklesRecursion.type1ToField shift1Fp
 #   shift2     PicklesRecursion.type2OfField shift2Fq        ↔ ShiftedValue<Fq>::of_field       (Type2)
 #   unshift2   PicklesRecursion.type2ToField shift2Fq        ↔ ShiftedValue<Fq>::shifted_to_field
+#   linconst_om KimchiVerify.gateLinConst                    ↔ openmina's linearization CONSTANT TERM
+#   ft0_om     KimchiVerify.ftEval0R over gateLinConst       ↔ plonk_checks::ft_eval0
+#
+# ⚑ THE LAST TWO ARE WHY THIS CRATE MATTERS MOST. `gateLinConst` is the most defect-prone
+# definition in the tree — a `.take 11` over-count AND the wrong cube-root endo, both invisible to
+# every fixture because every fixture sat at `emulSel = 0`. It had TWO references (kimchi's
+# `PolishToken::evaluate(constant_term)`, the real-block welds); these make openmina the THIRD, and
+# openmina builds its own linearization and runs its own `Expr` evaluator with no `PolishToken`
+# anywhere. See `src/main.rs` §1b for how the private `mod scalars` is reached and §1c for the
+# openmina defect that stopped its GENERATED gate bodies from being a fourth.
 #
 # ⚑ THE SHIFT BOUNDARY IS THE POINT. Type1 is `(x − (2^255+1))/2` over Fp and Type2 is `x − 2^255`
 # over Fq. The edge bank feeds `2^255`, `2^255+1`, `2^254`, `p−1` and `(p−1)/2` — values that

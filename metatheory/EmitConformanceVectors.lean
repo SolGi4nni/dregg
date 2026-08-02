@@ -62,6 +62,19 @@ route and in 2.81 s of elaboration. §18 sweeps `rootunity_fq`, `zkpoly_fq`, `pe
 `publiceval_fq` and `ipab0_fq` — and Fq is the field the WRAP verifier computes in, so this is the
 deployed instantiation and not a symmetry exercise.
 
+⚑ AND `gateLinConst` HAS A THIRD REFERENCE, in §19. It is the most defect-prone definition in this
+tree — it carried a `.take 11` over-count AND the wrong cube-root endo, and every fixture stayed
+green because every fixture sat at `emulSel = 0`. §7 (`linconst`) gave it a second reference,
+kimchi's `PolishToken::evaluate(constant_term)`. §19 gives it openmina's, which builds its own
+linearization and runs its own `Expr` evaluator with no `PolishToken` anywhere, plus `ft0_om`:
+`ftEval0R` fed `gateLinConst` against openmina's `ft_eval0` computing ITS constant term internally.
+
+Measured 2026-08-02 by re-emitting this file with each historical defect put back:
+  `.take 11` → take-12       linconst 214/276 · linconst_om 238/420 · ft0_om 110/120
+  base endo → `er` (= endo²) linconst   0/276 · linconst_om 238/420 · ft0_om 110/120
+The `linconst` zero is not a miss — §7 FEEDS the endo as a swept input, so a Lean side that DERIVED
+the wrong endo is outside what it measures. §19 pins it and catches that half.
+
 ⚑ THE SECOND SPONGE, also new in §15. The `sponge_fp`/`sponge_fq`/`challenge` pairs drive
 `PastaPoseidonFq.SpongeSt`. `KimchiVerify.frSpongeDigest`/`frSqueezePair` — what C3's `challengesOk`
 actually runs on — are built on `PastaPoseidon.Ref.absorbAll`, a different Lean spelling that nothing
@@ -89,7 +102,7 @@ namespace Dregg2.ConformanceVectors
 
 open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.KimchiVerify
-  (endoMap bEvalSq cipR zkPolyR gateLinConst GateEvals
+  (endoMap bEvalSq cipR zkPolyR gateLinConst GateEvals ftEval0R
    publicEval permScalar ipaB0 frSqueezePair frSpongeDigest frEvalPointOrder)
 open Dregg2.Bridge.MinaWrapDeferred (endoLift bPolyMod rootOfUnity permOf shiftType1 unshiftType1)
 open Dregg2.Circuit.Emit.PicklesRecursion
@@ -1121,6 +1134,186 @@ def emitIpaB0Fq : List String := Id.run do
     case := case + 1
   return out
 
+/-! ## §19 — ⚑ THE THIRD REFERENCE FOR THE LINEARIZATION CONSTANT TERM, and `ft_eval0` composed.
+
+`gateLinConst` is the most defect-prone definition in this tree: it carried a `.take 11` over-count
+AND the wrong cube-root endo, and every fixture stayed green because every one of them sat at
+`emulSel = 0`. §7 gave it a second reference (kimchi's `PolishToken::evaluate(constant_term)`).
+These two pairs give it a THIRD — openmina's, which builds its own linearization and runs its own
+`Expr` evaluator with no `PolishToken` anywhere.
+
+⚑ `linconst_om` — `gateLinConst` against openmina's constant term.
+⚑ `ft0_om`      — `ftEval0R` (fed `gateLinConst`) against openmina's `plonk_checks::ft_eval0`
+                   (which computes ITS constant term internally). The composed object, both sides.
+
+⚠ TWO INPUTS ARE PINNED, NOT SWEPT, and it is the reference that pins them: `scalars::compute`
+reads the endo coefficient from `endos::<F>()` and the MDS from `sponge_params()` rather than
+taking them as parameters. So both are held at openmina's values here and emitted as INPUT
+columns — DERIVED independently on this side (`endoFp` below, `realMds`), so a drift is red at the
+input column rather than silently compared. §7's `linconst` keeps the swept version. -/
+
+/-- The base endo coefficient at `Fp`: `GENERATOR^((p−1)/3)` with `GENERATOR = 5`
+(`mina_poseidon/src/sponge.rs:110-114`). This is the constant `scalars::compute` installs as
+`Constants::endo_coefficient` — the BASE endo, a cube root of unity, and **not** `er`
+(`ScalarChallenge::to_field`'s scalar endo). Conflating the two was half the historical
+`gateLinConst` defect; here they cannot be conflated, because this value is compared byte-for-byte
+against `endos::<Fp>().0` at every record. -/
+def endoFp : ZMod pN := powFast ((5 : Nat) : ZMod pN) ((pN - 1) / 3)
+
+-- It really is a cube root of unity — the property `er` does not have.
+#guard endoFp ^ 3 == (1 : ZMod pN)
+
+/-- `linconst_om`'s input columns: α β γ endo, the 9 MDS entries, then coeff/w/wNext/sel. -/
+def ctIns (a b g : Nat) (coeff w wn sel : List Nat) : List Nat :=
+  [a, b, g, endoFp.val] ++ realMds.flatten ++ coeff ++ w ++ wn ++ sel
+
+/-- ⚑ `linconst_om`. Block A is §7's structured half verbatim, so the two references are compared
+on identical data; block B turns each gate on IN TURN with a nonzero random selector over random
+witness data — the regime every pre-existing fixture missed; block C makes all six live at once. -/
+def emitLinconstOm : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  -- A: one selector hot at a time, plus all-hot, over the edge bank
+  for hot in List.range 7 do
+    for bi in List.range edgeFp.length do
+      let sel := (List.range 6).map (fun i => if hot = 6 || hot = i then 1 else 0)
+      let coeff := (List.range 15).map (fun i => bk edgeFp (bi + i))
+      let w := (List.range 15).map (fun i => bk edgeFp (bi + 2 * i + 1))
+      let wn := (List.range 15).map (fun i => bk edgeFp (bi + 3 * i + 5))
+      let a := bk edgeFp (bi + 1)
+      let b := bk edgeFp (bi + 2)
+      let g := bk edgeFp (bi + 4)
+      let v := ofFp (gateLinConst (linGate a endoFp.val realMds coeff w wn sel))
+      out := out ++ [mkRec "linconst_om" case (ctIns a b g coeff w wn sel) [v]]
+      case := case + 1
+  let mut s := 0x21
+  -- B: ⚑ each gate NONZERO IN TURN over RANDOM data. ⚠ DRAW ORDER: coeff, w, wn, sel-value,
+  -- alpha, beta, gamma — exactly `pair_linconst_om`'s block B.
+  for gate in List.range 6 do
+    for _ in List.range 24 do
+      let mut st := s
+      let mut coeff : List Nat := []
+      for _ in List.range 15 do
+        let (s1, v) := smFe pN st; st := s1; coeff := coeff ++ [v]
+      let mut w : List Nat := []
+      for _ in List.range 15 do
+        let (s1, v) := smFe pN st; st := s1; w := w ++ [v]
+      let mut wn : List Nat := []
+      for _ in List.range 15 do
+        let (s1, v) := smFe pN st; st := s1; wn := wn ++ [v]
+      let (s1, sv0) := smFe pN st
+      let sv := if sv0 = 0 then 1 else sv0
+      let (s2, a) := smFe pN s1
+      let (s3, b) := smFe pN s2
+      let (s4, g) := smFe pN s3
+      s := s4
+      let sel := (List.range 6).map (fun i => if i = gate then sv else 0)
+      let v := ofFp (gateLinConst (linGate a endoFp.val realMds coeff w wn sel))
+      out := out ++ [mkRec "linconst_om" case (ctIns a b g coeff w wn sel) [v]]
+      case := case + 1
+  -- C: everything random, every selector live at once
+  for _ in List.range 192 do
+    let mut st := s
+    let mut coeff : List Nat := []
+    for _ in List.range 15 do
+      let (s1, v) := smFe pN st; st := s1; coeff := coeff ++ [v]
+    let mut w : List Nat := []
+    for _ in List.range 15 do
+      let (s1, v) := smFe pN st; st := s1; w := w ++ [v]
+    let mut wn : List Nat := []
+    for _ in List.range 15 do
+      let (s1, v) := smFe pN st; st := s1; wn := wn ++ [v]
+    let mut sel : List Nat := []
+    for _ in List.range 6 do
+      let (s1, v) := smFe pN st; st := s1; sel := sel ++ [v]
+    let (s1, a) := smFe pN st
+    let (s2, b) := smFe pN s1
+    let (s3, g) := smFe pN s2
+    s := s3
+    let v := ofFp (gateLinConst (linGate a endoFp.val realMds coeff w wn sel))
+    out := out ++ [mkRec "linconst_om" case (ctIns a b g coeff w wn sel) [v]]
+    case := case + 1
+  return out
+
+/-! ### `ft0_om` — the composed `ft_eval0`.
+
+⚠ ζ IS NUDGED off `ftEval0R`'s two witnessed-inverse poles (`ζ = 1` and `ζ = ω^{n−3}`), by the same
+deterministic `+1` walk on both sides. Those are the points where `denomInv` does not exist; they
+are not a regime a value pair can compare, and saying so is cheaper than a silent skip. -/
+
+def ft0Logs : List Nat := [2, 3, 4, 6, 8]
+
+/-- The deterministic ζ walk. Fuel 8; the Rust side asserts the loop never runs that long. -/
+def nudgeZeta (omnm3 : ZMod pN) : Nat → ZMod pN → ZMod pN
+  | 0, z => z
+  | k + 1, z => if z = 1 ∨ z = omnm3 then nudgeZeta omnm3 k (z + 1) else z
+
+/-- ⚑ `ft0_om`: `KimchiVerify.ftEval0R` over `gateLinConst` against openmina's `ft_eval0` over its
+own internally-computed constant term. ω and the seven coset shifts are DERIVED here
+(`rootOfUnity` / `tickShiftsFp`) and emitted as input columns, not read back from the Rust. -/
+def emitFt0Om : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  let mut s := 0x22
+  for l in ft0Logs do
+    let n := 2 ^ l
+    let om := rootOfUnity l
+    let omnm3 := powFast (toFp om) (n - 3)
+    let sh := tickShiftsFp l
+    -- ⚠ `c` is an ARGUMENT, not a capture: a `do`-block closure freezes `let mut case` at its
+    -- definition site, which silently numbered every record of a domain identically.
+    let mk : Nat → Nat → Nat → Nat → Nat → List Nat → List Nat → List Nat → List Nat →
+        Nat → Nat → Nat → List Nat → String :=
+      fun c zeta0 a b g coeff w wn sg zz zzw pz sel =>
+        let zeta := nudgeZeta omnm3 8 (toFp zeta0)
+        let lct := gateLinConst (linGate a endoFp.val realMds coeff w wn sel)
+        let dinv := ((zeta - omnm3) * (zeta - 1))⁻¹
+        let ft := ftEval0R n (toFp om) zeta (toFp b) (toFp g)
+          (powFast (toFp a) 21) (powFast (toFp a) 22) (powFast (toFp a) 23)
+          (w.map toFp) (sg.map toFp) sh (toFp zz) (toFp zzw) (toFp pz) lct dinv
+        mkRec "ft0_om" c
+          ([l, om, zeta.val, a, b, g, endoFp.val] ++ realMds.flatten ++ sh.map ZMod.val
+            ++ coeff ++ w ++ wn ++ sg ++ [zz, zzw, pz] ++ sel) [ofFp ft]
+    for bi in List.range edgeFp.length do
+      let coeff := (List.range 15).map (fun i => bk edgeFp (bi + i))
+      let w := (List.range 15).map (fun i => bk edgeFp (bi + 2 * i + 1))
+      let wn := (List.range 15).map (fun i => bk edgeFp (bi + 3 * i + 5))
+      let sg := (List.range 6).map (fun i => bk edgeFp (bi + i + 2))
+      let sel := (List.range 6).map (fun i => bk edgeFp (bi + i + 1))
+      out := out ++ [mk case (bk edgeFp (bi + 9)) (bk edgeFp (bi + 1)) (bk edgeFp (bi + 2))
+        (bk edgeFp (bi + 4)) coeff w wn sg (bk edgeFp (bi + 6)) (bk edgeFp (bi + 7))
+        (bk edgeFp (bi + 8)) sel]
+      case := case + 1
+    for _ in List.range 12 do
+      -- ⚠ DRAW ORDER: coeff, w, wn, s, sel, ζ, α, β, γ, z(ζ), z(ζω), p(ζ).
+      let mut st := s
+      let mut coeff : List Nat := []
+      for _ in List.range 15 do
+        let (s1, v) := smFe pN st; st := s1; coeff := coeff ++ [v]
+      let mut w : List Nat := []
+      for _ in List.range 15 do
+        let (s1, v) := smFe pN st; st := s1; w := w ++ [v]
+      let mut wn : List Nat := []
+      for _ in List.range 15 do
+        let (s1, v) := smFe pN st; st := s1; wn := wn ++ [v]
+      let mut sg : List Nat := []
+      for _ in List.range 6 do
+        let (s1, v) := smFe pN st; st := s1; sg := sg ++ [v]
+      let mut sel : List Nat := []
+      for _ in List.range 6 do
+        let (s1, v) := smFe pN st; st := s1; sel := sel ++ [v]
+      let (s1, zeta0) := smFe pN st
+      let (s2, a) := smFe pN s1
+      let (s3, b) := smFe pN s2
+      let (s4, g) := smFe pN s3
+      let (s5, zz) := smFe pN s4
+      let (s6, zzw) := smFe pN s5
+      let (s7, pz) := smFe pN s6
+      s := s7
+      out := out ++ [mk case zeta0 a b g coeff w wn sg zz zzw pz sel]
+      case := case + 1
+  return out
+
 /-! ## §14 — the whole emission, in the harnesses' order. -/
 
 def allRecords : List String :=
@@ -1141,6 +1334,8 @@ def allRecords : List String :=
     ++ emitRootUnityFq ++ emitZkpolyFq ++ emitPermScalarFq ++ emitPublicEvalFq ++ emitIpaB0Fq
     -- the openmina half
     ++ emitOmEndo ++ emitOmBpoly ++ emitShifts1 ++ emitShifts2
+    -- ⚑ the THIRD reference for the linearization constant term, and `ft_eval0` composed
+    ++ emitLinconstOm ++ emitFt0Om
 
 def emitAll : IO Unit := do
   let h ← IO.getStdout
