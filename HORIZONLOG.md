@@ -1,5 +1,67 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 1 (third pass) — `step_verifier.verify_one` ASSEMBLES: 6,459 rows, five rungs, every boundary binds — and the 17,806-row target was the WRONG CIRCUIT
+
+`KimchiComposeStepFragment` had proved the MSM *shape* at scale and the brief pointed at
+`StepTransactionProof {PRIMARY_LEN 67, ROWS 17806}` as the target. **That circuit contains ZERO
+`verify_one` calls.** It is instantiated with `N_PREVIOUS = 0` (mina-rust
+`crates/ledger/src/proofs/transaction.rs:4286`, `step::step::<StepTransactionProof, 0>`); its 17,739
+gate rows (`ROWS = gate_rows + PRIMARY_LEN`, `transaction.rs:3830`) are the transaction-application
+`rule.main`. The recursive verifier lives in the branches that HAVE previous proofs —
+`StepMergeProof` (2 prevs, 29,010), `StepBlockProof` (2, 34,797), `StepZkappProvedProof` (1, 20,023).
+Costed from Snarky's own emitters (`plonk_constraint_system.ml`), **one `verify_one` is ≈ 6.7k rows**,
+and that is what `Dregg2/Circuit/Emit/KimchiStepMain.lean` is sized against.
+
+**LANDED (`652118998`, `7bd328547`, `21fc7e63a`) — the recursive verifier in five named sub-circuits,
+each proved pure-Rust and each binding BEFORE the next was added.**
+
+    rung             rows   domain   honest prove+verify   sigma probes REJECTED
+    r1_transcript    1225     2048          812 ms                8/24
+    r2_challenges    1501     2048          790 ms                8/47
+    r3_msm           3589     4096          887 ms                8/122
+    r4_ipa           6323     8192         1039 ms                8/273
+    r5_full          6459     8192         1004 ms                8/274
+
+At every rung: honest `verify()==true`; a σ-ONLY probe desync REJECTED; the SAME flip on the UNWIRED
+control (identical rows, byte-identical witness, probes in no σ class) ACCEPTED; an unread advice
+cell ACCEPTED. At r5 additionally a tampered public vector REJECTED and the σ leg — flip public cell
+`(i,0)` AND tell the verifier the new value — REJECTED at `i=0` and `i=66`. The committed CI fixture
+runs EVERY probe on BOTH columns, not a sample (7 `#[test]`, 27 s).
+
+**THREE CAPABILITIES NO PRIOR RUNG HAD.** A COPY-WIRED POSEIDON (`KimchiRenderPoseidon` proved one
+permutation with an IDENTITY permutation — `sevenNones`, self-wired; here 94 permutations chain
+through σ across block boundaries). A CHAINED `EndoMulScalar` (`to_field_checked`'s `(n,a,b)`
+accumulators hop row→row through σ, and the reconstructed `n₈` is tied to the SPONGE OUTPUT by a
+`Generic` decomposition row). And ONE VARIABLE ACROSS THREE GATE TYPES: term `i`'s `var_base_mul`
+scalar counter, the `EndoMulScalar` chain's final `n₈`, and the `endo_mul` tail's counter are the
+SAME VARIABLE — the value the challenge decode produced IS the value the MSM multiplies by.
+
+**SHAPE-DIFFED against Mina's own compiled circuit** (`bridge/mina-zkapp/scripts/stepmain-shape-diff.mjs`,
+over the `step-zkapp-proved` blob — branch 4, the one that runs `verify_one`). **Four of six
+RUN-LENGTH families match EXACTLY**: Poseidon 11, EndoMul 32, VarBaseMul 1, EndoMulScalar 8. The
+`EndoMul` COUNT is 2,432 against upstream's 2,465 — the fold/`bullet_reduce` machinery is here at
+full size. All SEVEN gate types Mina uses are emitted; no lookup, foreign-field or range-check gate
+exists in any Mina step or wrap circuit.
+
+⚠ **THE FRONTIER, NAMED — and the two shortfalls are NOT the same kind.** `EndoMulScalar` (184 vs
+776), `CompleteAdd` (112 vs 403) and `VarBaseMul` (988 vs 1,596) are short because some widths and
+fold shapes are not instantiated: mechanical. **`Generic` (277 vs 6,245) and `Poseidon` (1,034 vs
+6,292) are short because two sub-circuits are NOT BUILT** — `ft_eval0` + `Plonk_checks.checked` with
+the `scalars_env`/`combined_evals` blocks (`step_verifier.ml:1019-1071,1131-1136`), and the
+43-column evaluation absorption + opt-sponge masking + `hash_messages_for_next_step_proof`
+(`:950-1006`, `step_main.ml:525-567`). Also absent: the 16-row range check inside `lowest_128_bits`,
+the 255-bit `scale_fast2` width, the non-128-bit `to_field_checked` widths, `group_map`, `equal_g`.
+Those are UNDONE WORK, not theorems of the model, and the module header lists them all.
+
+The deferred rung does compute TWO of `finalize_other_proof`'s four outputs: `b(ζ)` and
+`combined_inner_product`, the latter pinned against `KimchiVerify.cipR` — which IS the shipped
+`combinedInnerProduct` by that module's own `rfl` theorem — with a red control.
+
+⚑ **SCOPE.** INNER-KIMCHI FIDELITY of the assembled recursive verifier. NOT a soundness proof, NOT
+machine-checked Pickles, NOT a Mina-valid proof: the kimchi proof is an INNER proof of a
+`verify_one`-shaped circuit and **wrap is a later rung**.
+
+
 ## ⚑⚑⚑ AUGUST 1 (second pass) — the table-AIR tool could only say ROW-LOCAL, and that is why exactly ONE of the shared tables had moved
 
 `5ea421361` built `TableAir` and ported `Ir2Air::MapAbsent`, then named "seven remain". **The
