@@ -444,12 +444,143 @@ mod stepmain_tests {
     /// Regenerate/prove the other three with the driver + `harness <dir> <tag>` (Cargo.toml header).
     const COMMITTED: [&str; 2] = ["r1_transcript", "r5_full"];
 
-    // Both committed rungs, both polarities, EVERY probe (not a sample).
-    #[test]
-    fn committed_rungs_prove_and_bind() {
+    struct Fixture {
+        wired: CircuitJson,
+        unwired: CircuitJson,
+        iw: Idx,
+        iu: Idx,
+        gm: <Vesta as CommitmentCurve>::Map,
+        public: Vec<Fp>,
+    }
+
+    fn fixture(rung: &str) -> Fixture {
         let dir = fixtures_dir();
+        let wired = load_path(&dir.join(format!("stepmain_smoke_{rung}.json")));
+        let unwired = load_path(&dir.join(format!("stepmain_smoke_{rung}_unwired.json")));
+        let iw = index_for(&wired);
+        let iu = index_for(&unwired);
+        let public = public_of(&wired);
+        Fixture {
+            wired,
+            unwired,
+            iw,
+            iu,
+            gm: <Vesta as CommitmentCurve>::Map::setup(),
+            public,
+        }
+    }
+
+    // ── (1) HONEST ──────────────────────────────────────────────────────────────────────────
+    #[test]
+    fn honest_rungs_verify() {
         for rung in COMMITTED {
-            run_rung(&dir, "smoke", rung, usize::MAX);
+            let f = fixture(rung);
+            prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &f.public)
+                .unwrap_or_else(|e| panic!("{rung}: honest witness REJECTED: {e}"));
+        }
+    }
+
+    // ── (2) WIRING: a sigma-ONLY probe cell is constrained by the copy-permutation and by NOTHING
+    // else (a `Zero` gate reads nothing and no gate reads a probe row), so its rejection IS sigma.
+    // EVERY probe, not a sample.
+    #[test]
+    fn every_sigma_probe_binds() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            for &r in &f.wired.probe_rows {
+                for col in [0usize, 1usize] {
+                    assert!(
+                        prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, col, r), &f.public)
+                            .is_err(),
+                        "{rung}: probe-row {r} col-{col} desync ACCEPTED on the WIRED circuit"
+                    );
+                }
+            }
+        }
+    }
+
+    // ── (3) NOT-ADJACENCY: the honest UNWIRED witness verifies, and the SAME flips are ACCEPTED
+    // there. Same rows, byte-identical witness; the only difference is the sigma class.
+    #[test]
+    fn unwired_control_accepts_the_same_flips() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            prove_and_verify(&f.iu, &f.gm, build_witness(&f.unwired), &f.public)
+                .unwrap_or_else(|e| panic!("{rung}: honest UNWIRED witness REJECTED: {e}"));
+            for &r in &f.unwired.probe_rows {
+                assert!(
+                    prove_and_verify(&f.iu, &f.gm, tamper(&f.unwired, 0, r), &f.public).is_ok(),
+                    "{rung}: probe-row {r} flip REJECTED on the UNWIRED circuit - the wired reject was not the wire"
+                );
+            }
+        }
+    }
+
+    // The control IS a control: identical rows, identical gate types, byte-identical witness, and
+    // DIFFERENT wires. If the witnesses ever diverged, the acceptance above would prove nothing.
+    #[test]
+    fn control_differs_only_in_the_placement() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            assert_eq!(f.unwired.num_rows, f.wired.num_rows);
+            assert_eq!(
+                f.unwired.gates.iter().map(|g| g.typ).collect::<Vec<_>>(),
+                f.wired.gates.iter().map(|g| g.typ).collect::<Vec<_>>()
+            );
+            assert_eq!(f.unwired.witness, f.wired.witness);
+            assert_ne!(
+                f.unwired
+                    .gates
+                    .iter()
+                    .map(|g| g.wires.clone())
+                    .collect::<Vec<_>>(),
+                f.wired
+                    .gates
+                    .iter()
+                    .map(|g| g.wires.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    // ── (4) NON-VACUITY: advice cells no gate reads and no cycle contains -> ACCEPTED. Without
+    // this the rejections above could all be an artefact of a circuit that rejects everything.
+    #[test]
+    fn unread_advice_cells_are_accepted() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            let p0 = f.wired.probe_rows[0];
+            for col in [12usize, 13usize] {
+                assert!(
+                    prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, col, p0), &f.public).is_ok(),
+                    "{rung}: unread advice cell (col {col}, row {p0}) flip REJECTED - the rejections may be vacuous"
+                );
+            }
+        }
+    }
+
+    // ── (5) PUBLIC INPUT (r5 only): the proof BINDS the claim, and each public word is WIRED into
+    // the circuit rather than merely declared.
+    #[test]
+    fn public_input_binds_and_is_wired_in() {
+        let f = fixture("r5_full");
+        assert!(f.wired.public_input_size > 0);
+        // (a) the honest proof against a TAMPERED public vector.
+        let mut bad = f.public.clone();
+        bad[0] += Fp::from(1u64);
+        assert!(
+            prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &bad).is_err(),
+            "honest proof ACCEPTED against a tampered public vector"
+        );
+        // (b) the sigma leg: flip public cell (i,0) AND tell the verifier the new value, so the
+        // public row's own constraint w0[i] = p_i still holds. Only the copy-permutation can refuse.
+        for i in [0usize, f.wired.public_input_size - 1] {
+            let mut b = f.public.clone();
+            b[i] += Fp::from(1u64);
+            assert!(
+                prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, i), &b).is_err(),
+                "public cell ({i},0) flip WITH a matching public vector ACCEPTED - public word {i} is not wired in"
+            );
         }
     }
 

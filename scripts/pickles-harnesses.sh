@@ -56,6 +56,7 @@ HARNESSES=(
   "compose|pickles-compose-harness|7|the first CROSS-GATE copy wire: var_base_mul output consumed by complete_add through sigma"
   "publicinput|pickles-publicinput-harness|10|the PUBLIC-INPUT path of place: pubSize>0 proved, PI tamper rejected, sigma-wire + non-vacuity controls, at 3 words and at step_main's 67"
   "stepfragment|pickles-stepfragment-harness|9|the 132-row step_main fragment: 6 chained var_base_mul + endo_mul + a 6-long complete_add chain"
+  "stepmain|pickles-stepmain-harness|7|step_verifier.verify_one ASSEMBLED: a copy-wired Poseidon sponge, chained EndoMulScalar tied to the squeeze, an MSM whose scalar IS the derived challenge, endo_mul fold rounds, deferred b(zeta)+combined_inner_product, PRIMARY_LEN 67 - all seven gate types in one circuit"
 )
 DECLARED_COUNT=${#HARNESSES[@]}
 
