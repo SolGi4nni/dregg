@@ -92,9 +92,15 @@ def challenge_v(r):
     return (limbs[0] & 0xFFFFFFFFFFFFFFFF) | ((limbs[1] & 0xFFFFFFFFFFFFFFFF) << 64)
 
 
-def main():
-    d = json.load(open(BLOCK))
-    b64 = d["protocol_state_proof_base64_urlsafe"]
+def walk_b64(b64):
+    """The walk, over ANY block's base64url `protocolStateProof`.
+
+    ⚑ Factored out of `main()` so the SAME decoder runs over every fixture in
+    `metatheory/fixtures/mina-blocks/`, not only block 539508. The asserts are
+    deliberately kept: a block that trips one is a block exercising a shape this
+    tree does not implement (a joint combiner, a feature flag, a lookup
+    evaluation), and that must be a loud refusal, not a silent skip.
+    """
     raw = base64.urlsafe_b64decode(b64 + "=" * (-len(b64) % 4))
     r = R(raw)
     out = {}
@@ -179,8 +185,13 @@ def main():
     return out
 
 
+def main(block_path=None):
+    d = json.load(open(block_path or BLOCK))
+    return walk_b64(d["protocol_state_proof_base64_urlsafe"])
+
+
 if __name__ == "__main__":
-    o = main()
+    o = main(sys.argv[1] if len(sys.argv) > 1 else None)
     print("TAIL BYTES LEFT:", o["_tail"])
     print("alpha ", o["alpha"])
     print("beta  ", o["beta"])

@@ -157,11 +157,49 @@ fn main() {
     let mode = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "devnet".to_string());
+    let path = std::env::args().nth(2);
     match mode.as_str() {
-        "devnet" => devnet(),
+        "devnet" => devnet(path.as_deref()),
         "mainnet" => mainnet(),
-        other => panic!("unknown mode {other}; expected devnet|mainnet"),
+        // ⚑ VK-FREE mode. `compute_deferred_values` calls openmina's own `expand_deferred`,
+        // which takes ONLY the proof — no verifier index. So this mode runs on a network whose
+        // embedded VK openmina cannot load (mainnet, see §"mainnet VK"), and yields the
+        // ground truth for the six `expand_deferred` words plus every wire value the Lean
+        // Step-side derivation consumes. It asserts NOTHING about the proof's validity and
+        // says so in its own `_ground_truth` field.
+        "deferred" => deferred(
+            path.as_deref()
+                .expect("deferred mode needs a block json path"),
+            std::env::args().nth(3).as_deref().unwrap_or("devnet"),
+        ),
+        other => panic!("unknown mode {other}; expected devnet|mainnet|deferred"),
     }
+}
+
+/// The committed shape of a block fixture: exactly what a public Mina GraphQL node serves for
+/// `bestChain { stateHash … protocolStateProof { base64 } }`, written to a file. Every fixture
+/// under `metatheory/fixtures/mina-blocks/` has this shape, block 539508's included.
+#[derive(serde::Deserialize)]
+struct Fixture {
+    chain_id: String,
+    genesis_state_hash: String,
+    state_hash: String,
+    previous_state_hash: String,
+    blockchain_length: String,
+    protocol_state_proof_base64_urlsafe: String,
+}
+
+/// ⚑ THE BLOCK IS AN ARGUMENT, NOT A BAKED-IN FILE. `include_str!` pinned every conformance
+/// claim in this tree to ONE block; a fixture path makes the same code run on any block a node
+/// serves, which is what makes "the welds conform to the protocol" a checkable sentence rather
+/// than a hope.
+const DEFAULT_BLOCK: &str = "mina_devnet_block.json";
+
+fn load_fixture(path: Option<&str>) -> Fixture {
+    let p = path.unwrap_or(DEFAULT_BLOCK);
+    let raw =
+        std::fs::read_to_string(p).unwrap_or_else(|e| panic!("cannot read block fixture {p}: {e}"));
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("block fixture {p} does not parse: {e}"))
 }
 
 /// The reproduction of the stale-mainnet-VK finding (see the module header).
@@ -189,20 +227,10 @@ fn mainnet() {
     assert!(ok);
 }
 
-fn devnet() {
+fn devnet(path: Option<&str>) {
     mina_core::NetworkConfig::init("devnet").expect("network init");
 
-    #[derive(serde::Deserialize)]
-    struct Fixture {
-        chain_id: String,
-        genesis_state_hash: String,
-        state_hash: String,
-        previous_state_hash: String,
-        blockchain_length: String,
-        protocol_state_proof_base64_urlsafe: String,
-    }
-    let fx: Fixture = serde_json::from_str(include_str!("../mina_devnet_block.json"))
-        .expect("devnet fixture parses");
+    let fx: Fixture = load_fixture(path);
 
     eprintln!(
         "[devnet] chain_id={} height={} state_hash={}",
@@ -344,6 +372,111 @@ fn devnet() {
         &public_comm,
         &o,
     );
+}
+
+/// ⚑ THE VK-FREE CONFORMANCE SURFACE — openmina's own `expand_deferred` on any network's block.
+///
+/// `devnet()` above is the FULL gate: it needs `BlockVerifier::make()`, and openmina at
+/// `82480cd468` cannot load the mainnet one (§"mainnet VK" — reproduced, still red 2026-08-02).
+/// But the six words the Lean Step-side weld computes — `combined_inner_product`, `b`,
+/// `zeta_to_srs_length`, `zeta_to_domain_size`, `perm`, `xi` — are produced by
+/// `ledger::proofs::step::expand_deferred`, whose `ExpandDeferredParams` carries ONLY the proof's
+/// own `prev_evals`, its `old_bulletproof_challenges` and its `proof_state`. No verifier index.
+///
+/// So this mode emits, for ANY block a node serves:
+///   * the six `expand_deferred` words (the TARGET), from openmina's own code;
+///   * every wire input the Lean `expandDeferred`/`deriveSide` consume (the INPUT), from the
+///     binprot decode.
+/// The two are different code paths in the same sense the devnet gate's are.
+///
+/// ⚠ WHAT THIS MODE DOES **NOT** ASSERT: nothing verifies the proof here. No accumulator check,
+/// no `kimchi::verifier::verify`, no VK. A block that fails this mode's expectations is a
+/// conformance divergence of OUR derivation against openmina's; a block that passes is NOT
+/// thereby a verified block. `devnet` mode is the one that carries the verification.
+fn deferred(path: &str, network: &str) {
+    mina_core::NetworkConfig::init(network).expect("network init");
+    let fx: Fixture = load_fixture(Some(path));
+    eprintln!(
+        "[deferred/{network}] chain_id={} height={} state_hash={}",
+        fx.chain_id, fx.blockchain_length, fx.state_hash
+    );
+
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(fx.protocol_state_proof_base64_urlsafe.trim_end_matches('='))
+        .expect("base64url");
+    let proof = PicklesProofProofsVerified2ReprStableV2::binprot_read(&mut bytes.as_slice())
+        .expect("proof binprot decodes");
+
+    let d = compute_deferred_values(&proof);
+    let dv = &proof.statement.proof_state.deferred_values;
+    let c: Fp = (0..255).fold(Fp::one(), |a, _| a + a) + Fp::one();
+    let unshift = |s: &Fp| *s + *s + c;
+
+    println!("{{");
+    println!("\"_network\": \"mina {network}\",");
+    println!("\"_state_hash\": \"{}\",", fx.state_hash);
+    println!("\"_blockchain_length\": {},", fx.blockchain_length);
+    println!("\"_mode\": \"deferred (VK-FREE)\",");
+    println!("\"_ground_truth\": \"openmina ledger::proofs::step::expand_deferred ONLY — the proof is NOT verified in this mode\",");
+    println!("\"wrap_shape\": {{");
+    println!("  \"ipa_rounds_k\": {},", proof.proof.bulletproof.lr.len());
+    println!(
+        "  \"prev_challenges\": {},",
+        proof
+            .statement
+            .messages_for_next_step_proof
+            .challenge_polynomial_commitments
+            .len()
+    );
+    println!(
+        "  \"branch_data_proofs_verified\": \"{:?}\",",
+        dv.branch_data.proofs_verified
+    );
+    println!(
+        "  \"branch_data_domain_log2\": {}",
+        dv.branch_data.domain_log2.0 .0
+    );
+    println!("}},");
+    println!("\"step_deferred_values\": {{");
+    println!("  \"alpha\": {},", u128_of(&d.plonk.alpha));
+    println!("  \"beta\": {},", u128_of(&d.plonk.beta));
+    println!("  \"gamma\": {},", u128_of(&d.plonk.gamma));
+    println!("  \"zeta\": {},", u128_of(&d.plonk.zeta));
+    println!("  \"xi\": {},", u128_of(&d.xi));
+    // ⚑ BOTH FORMS. `to_public_input` puts the TYPE-1 SHIFTED value in slots 0-4, so the
+    // `*_shifted` fields are the targets the Lean `expandDeferred` must hit; the unshifted ones
+    // are emitted beside them so a reader can see which is which rather than guess.
+    println!(
+        "  \"zeta_to_srs_length_shifted\": \"{}\",",
+        dfp(&d.plonk.zeta_to_srs_length.shifted)
+    );
+    println!(
+        "  \"zeta_to_srs_length\": \"{}\",",
+        dfp(&unshift(&d.plonk.zeta_to_srs_length.shifted))
+    );
+    println!(
+        "  \"zeta_to_domain_size_shifted\": \"{}\",",
+        dfp(&d.plonk.zeta_to_domain_size.shifted)
+    );
+    println!(
+        "  \"zeta_to_domain_size\": \"{}\",",
+        dfp(&unshift(&d.plonk.zeta_to_domain_size.shifted))
+    );
+    println!("  \"perm_shifted\": \"{}\",", dfp(&d.plonk.perm.shifted));
+    println!("  \"perm\": \"{}\",", dfp(&unshift(&d.plonk.perm.shifted)));
+    println!(
+        "  \"combined_inner_product_shifted\": \"{}\",",
+        dfp(&d.combined_inner_product.shifted)
+    );
+    println!(
+        "  \"combined_inner_product\": \"{}\",",
+        dfp(&unshift(&d.combined_inner_product.shifted))
+    );
+    println!("  \"b_shifted\": \"{}\",", dfp(&d.b.shifted));
+    println!("  \"b\": \"{}\"", dfp(&unshift(&d.b.shifted)));
+    println!("}}");
+    println!("}}");
 }
 
 /// `verification.rs::compute_deferred_values`, reproduced (it is private there).

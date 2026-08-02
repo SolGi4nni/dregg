@@ -91,6 +91,20 @@ echo
 # every shape (gates|statement|field). If this is GREEN the migrated oracles' `--self-test`s are trustworthy.
 run_one "diff-oracle.mjs --self-test (harness engine red-path)" node "scripts/diff-oracle.mjs" --self-test
 
+# ⚑ Step 0b: THE MULTI-BLOCK CONFORMANCE GATE — the one that stops every real-data claim in this
+# tree from being about a single devnet block. Every oracle below and every `MinaWrap*Weld.lean`
+# was, until 2026-08-02, pinned to block 539508 alone; `Dregg2/Bridge/MinaMultiBlockConformance.lean`
+# re-runs the same weld functions on seven fixtures (five devnet incl. the hardfork genesis, one
+# mainnet, plus 539508 as the control) and this gate keeps that generated module answerable to the
+# fixtures' own bytes: declared + tracked + decoding + byte-identical inputs, and the deferred
+# targets agreeing across two openmina functions. It runs its OWN `--self-test` first, so a run in
+# which the gate could not go red is itself RED. The Lean `#guard`s are run by `lake build`
+# (`Dregg2.MinaBridgeGuards`, a `defaultTargets` library) — this half needs neither lean nor cargo.
+run_one "check-mina-multiblock-conformance.py --self-test (gate red-path)" \
+  python3 "$ROOT/scripts/check-mina-multiblock-conformance.py" --self-test
+run_one "check-mina-multiblock-conformance.py (7 fixtures, 2 networks)" \
+  python3 "$ROOT/scripts/check-mina-multiblock-conformance.py"
+
 for o in "${MJS_ORACLES[@]}"; do
   extra=""
   [ "$o" = "stepmain-region-conformance.mjs" ] && extra="--falsify"

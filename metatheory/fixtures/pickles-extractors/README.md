@@ -251,3 +251,54 @@ no network: they read `mina_devnet_block.json` and run in about a second.
 ⚠ `phaseb.py` SOLVES for the step-side `ft_eval0` from public-input slot 0 rather than deriving it;
 the weld says so at the pin. Deriving it needs the seven Tick coset shifts and
 `Plonk_checks.Scalars.Tick.constant_term`.
+
+---
+
+## ⚑⚑ `../mina-blocks/` — the MULTI-BLOCK fixture set, and why it exists
+
+Until 2026-08-02 every real-data conformance claim in this tree was pinned to **one** devnet block,
+539508. That means anything accidentally fitted to that block's particulars could never show: a
+constant that happens to equal something there, a branch never taken because that block's shape
+does not take it, a width that collapses because two of its exponents coincide.
+
+`metatheory/fixtures/mina-blocks/` holds additional blocks in the SAME schema, so the same code
+runs on all of them:
+
+```
+bridge/tools/mina-block-fetch.py --network devnet --best 40 --out <dir>     # pick from these
+bridge/tools/mina-block-fetch.py --network devnet --genesis  --out metatheory/fixtures/mina-blocks
+bridge/tools/mina-block-fetch.py --network mainnet --best 1   --out metatheory/fixtures/mina-blocks
+
+./target/release/pickles-reality-gate-export devnet   <fixture>            # the FULL gate
+./target/release/pickles-reality-gate-export deferred <fixture> <network>  # VK-FREE, mainnet works
+./target/release/wrap_group_export <fixture>                               # the GROUP side
+python3 gen_multiblock_conformance.py --fixtures ../mina-blocks \
+    --fixture mina_devnet_block.json --out-dir <extractor json dir> \
+    --lean ../../Dregg2/Bridge/MinaMultiBlockConformance.lean
+scripts/check-mina-multiblock-conformance.py [--self-test]                 # the standing gate
+```
+
+### ⚑ What a fixture set of BLOCK PROOFS can and cannot vary — measured, 40 consecutive blocks
+
+**Every devnet blockchain-SNARK Wrap proof has the same shape.** `branch_data = (proofs_verified =
+N2, domain_log2 = 16)`, two accumulator commitments, 15 IPA rounds, one chunk per evaluation column,
+identical binprot length. That is a property of the RULE, not of the instance — so **no additional
+block proof can exercise a different `proofs_verified` or a different domain**, and a fixture set of
+block proofs cannot refute a constant fitted to those. Say that out loud rather than implying the
+sweep covers it. The axes that DO vary, and on which the fixtures were chosen:
+
+  * **transaction content** — from an empty block (0 user commands, 0 zkApp commands, 0 snark jobs)
+    to the busiest in the window (4 / 3 / 35). Different Step proof wrapped, hence every field
+    value, the accumulator challenges and the accumulator commitments.
+  * **the hardfork genesis block** (devnet 296372) — its proof is 32 binprot bytes shorter, a
+    degenerate object whose small challenge limbs take short varints. ⚠ `kimchi::verifier::verify`
+    REJECTS it (`Err(OpenProof)`) while `accumulator_check` accepts: Mina's genesis carries a dummy
+    blockchain proof. Step-side fixture only, and the extractor refuses it loudly rather than
+    emitting.
+  * **mainnet** — a different network, verification key and genesis. ⚠ Step side only: openmina at
+    `82480cd468` still cannot load its own embedded mainnet verifier index (the stale-serde defect
+    reproduced above), so `BlockVerifier::make()` panics. `expand_deferred` needs no verifier index,
+    which is why the `deferred` mode exists and why the Step side runs anyway.
+
+Historical heights are **not** re-fetchable: a public node serves only its transition frontier
+(~290 blocks), and `block(height: N)` answers "Could not find block in transition frontier".

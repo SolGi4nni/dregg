@@ -31,6 +31,7 @@ kernel cost belongs off the archive's hot path — the same split the weld docum
 -/
 import Dregg2.Bridge.MinaWrapFtEval0Weld
 import Dregg2.Circuit.Emit.KimchiStepMain
+import Dregg2.Bridge.MinaMultiBlockConformance
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -49,6 +50,50 @@ open Dregg2.Bridge.MinaWrapFtEval0Weld (S539508 OUT_STEP)
 Every field is a `.lit`: the compiled program is the same one `r6_ft_eval0`'s rows execute, but here
 its inputs are the block's own values rather than the assembly's variables. The slicing (`ez k` is
 column `k` of the 43, `IDX_*` index after the four-entry prefix) is `MinaWrapFtEval0`'s, shared. -/
+
+/-! ### §1a — ⚑ THE PROGRAM, AS A FUNCTION OF A BLOCK.
+
+Everything below §1a used to bake block 539508 into the wire, the config AND the two passes, so the
+straight-line program the circuit rows execute could only ever be run on one block — the exact
+shape that makes a fitted constant invisible. `compiledFtLctOf` takes the SAME `SideWire` the value
+layer takes, so `Dregg2.Bridge.MinaMultiBlockConformance` runs the emitted program on every fixture
+and the 539508 definitions below are one instance of it rather than the only one. -/
+
+/-- The emitted straight-line program at an arbitrary Step wire: both passes (the placeholder pass
+that reads `ω^{n−3}` and the actual `perm` scalar off, then the real one with those witnessed), and
+the `(ft_eval0, linConstTerm)` it lands on. ⚑ The domain, the coset shifts, the endo and the MDS all
+come from `W`, so nothing here is a constant of one block. -/
+def compiledFtLctOf (W : Dregg2.Bridge.MinaWrapFtEval0.SideWire pN) : Nat × Nat :=
+  let om := (rootOfUnity pN W.log2n).val
+  let zt := (endoMap W.er W.zetaChal).val
+  let wire : FtWire :=
+    { ez := fun k => .lit (W.ez.getD k 0).val
+    , ew := fun k => .lit (W.ew.getD k 0).val
+    , zeta := .lit zt
+    , alpha := .lit (endoMap W.er W.alphaChal).val
+    , beta := .lit (W.betaChal % pN)
+    , gamma := .lit (W.gammaChal % pN)
+    , pZeta := .lit W.pZeta.val }
+  let cfg : Nat → Nat → FtCfg := fun dInv pC =>
+    { log2n := W.log2n
+    , omega := om
+    , omegaInv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv om
+    , shifts := W.sh.map (·.val)
+    , mds9 := W.mds9.map (·.val)
+    , endo := W.endo.val
+    , cA := match quotientConsts pN with | some (a, _, _) => a.val | none => 0
+    , cB := match quotientConsts pN with | some (_, b, _) => b.val | none => 0
+    , cC := match quotientConsts pN with | some (_, _, c) => c.val | none => 0
+    , denomInv := dInv, permClaimed := pC }
+  let p0 := ftProgOf wire (cfg 1 0)
+  let v0 := aEval (fun _ => 0) p0.prog
+  let dinv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv
+    (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fMul
+      (Dregg2.Circuit.Emit.KimchiStepMain.fSub zt (v0.getD p0.slots.omInv3 0))
+      (Dregg2.Circuit.Emit.KimchiStepMain.fSub zt 1))
+  let p1 := ftProgOf wire (cfg dinv (v0.getD p0.slots.perm 0))
+  let v1 := aEval (fun _ => 0) p1.prog
+  (v1.getD p1.slots.ftEval0 0, v1.getD p1.slots.linConst 0)
 
 /-- ζ, LIFTED — `ScalarChallenge::to_field` with the block's `er`, exactly as `deriveSide` lifts it. -/
 def ZETA_STEP : Nat := (endoMap S539508.er S539508.zetaChal).val
@@ -144,6 +189,11 @@ def LCT_ANCHOR : Nat :=
 #guard FT_COMPILED == FT_ANCHOR
 #guard LCT_COMPILED == LCT_ANCHOR
 
+-- ⚑ …and the BLOCK-PARAMETRIC entry point (§1a) lands on the same pair at this block's wire, so
+-- the seven-fixture sweep in `Dregg2.Bridge.MinaMultiBlockConformance` runs THIS program and not a
+-- re-transcription of it. Without this the two could drift and only the 539508 one would be pinned.
+#guard compiledFtLctOf S539508 == (FT_ANCHOR, LCT_ANCHOR)
+
 -- …and it agrees with the VALUE LAYER's own answer on the same block, so the compiler and
 -- `deriveSide` are two routes to one number rather than one route quoted twice.
 #guard match OUT_STEP with
@@ -156,18 +206,11 @@ def LCT_ANCHOR : Nat :=
 moves the COMPILED one — i.e. the shifts, the endo and the constant term are load-bearing INSIDE the
 program the circuit rows execute. -/
 
-/-- Re-run the program with one input bent. -/
+/-- Re-run the program with one input bent. ⚑ A THIN WRAPPER over [`compiledFtLctOf`], so the
+"unbent re-run IS the anchor" pin below is about the same code path any block runs. -/
 def compiledAt (shifts : List Nat) (endoV : Nat) : Nat :=
-  let c0 : FtCfg := { C539508 shifts 1 0 with endo := endoV }
-  let p0 := ftProgOf W539508 c0
-  let v0 := aEval (fun _ => 0) p0.prog
-  let dinv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv
-    (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fMul
-      (Dregg2.Circuit.Emit.KimchiStepMain.fSub ZETA_STEP (v0.getD p0.slots.omInv3 0))
-      (Dregg2.Circuit.Emit.KimchiStepMain.fSub ZETA_STEP 1))
-  let c1 : FtCfg := { C539508 shifts dinv (v0.getD p0.slots.perm 0) with endo := endoV }
-  let p1 := ftProgOf W539508 c1
-  (aEval (fun _ => 0) p1.prog).getD p1.slots.ftEval0 0
+  (compiledFtLctOf { S539508 with sh := shifts.map (fun x => (x : ZMod pN))
+                                  endo := ((endoV : Nat) : ZMod pN) }).1
 
 /- The unbent re-run IS the anchor (so `compiledAt` is the same program, and the reds below are
 about the bend and not about the helper). -/
@@ -232,5 +275,57 @@ open Dregg2.Circuit.Emit.KimchiStepMain (SHIFT_C shiftT1 unshiftT1 shiftT2)
 #guard unshiftT1 (shiftT1 FT_ANCHOR) == FT_ANCHOR
 #guard shiftT1 FT_ANCHOR != shiftT2 FT_ANCHOR
 #guard shiftT1 FT_ANCHOR != FT_ANCHOR
+
+/-! ## §5 — ⚑⚑ THE EMITTED PROGRAM ON EVERY FIXTURE, NOT ONLY ON 539508.
+
+Everything above this section is about ONE block. `Dregg2.Bridge.MinaMultiBlockConformance` carries
+seven — five devnet (including the hardfork genesis), one mainnet, and 539508 as the control — each
+with its OWN inputs from an independent binprot re-walk and its OWN targets from openmina. This
+section runs the SAME compiled program (`compiledFtLctOf`, §1a) on each of them.
+
+⚑ What this adds over that module's own §1: that module checks the VALUE LAYER (`deriveSide`). This
+checks the STRAIGHT-LINE PROGRAM whose slots become `r6_ft_eval0`'s `Generic` rows — and then feeds
+ITS output through `expandDeferred` to the block's six `expand_deferred` words. So the arithmetic
+the circuit rows execute is what reaches openmina's answer, on seven blocks. -/
+
+open Dregg2.Bridge.MinaMultiBlockConformance (StepBlock STEP_BLOCKS stepWire evalsOf stepFtEval0)
+
+/-- The COMPILED `ft_eval0` at a fixture's Step wire. -/
+def compiledFtOf (b : StepBlock) : Nat := (compiledFtLctOf (stepWire b)).1
+
+/-- ⚑ The compiler and the value layer land on ONE number, AND that number carries the block's six
+deferred words to openmina's own `expand_deferred` answers. -/
+def compiledAgrees (b : StepBlock) : Bool :=
+  stepFtEval0 b == some (compiledFtOf b) &&
+  (let d := Dregg2.Bridge.MinaWrapDeferred.expandDeferred (evalsOf b) (compiledFtOf b)
+   d.cip == b.tCip && d.b == b.tB && d.zetaToSrsLength == b.tZsrs
+   && d.zetaToDomainSize == b.tZdom && d.perm == b.tPerm && d.xi == b.tXi)
+
+/- ⚑⚑ **THE RESULT.** The emitted circuit program reproduces every fixture's `ft_eval0`, and that
+`ft_eval0` reproduces every fixture's six deferred words. Until this line the program had been run
+on exactly one block. -/
+#guard STEP_BLOCKS.all compiledAgrees
+#guard STEP_BLOCKS.length == 7
+
+/- …and the sweep is a GATE, not an identity: bending an input of the first fixture refuses. -/
+#guard match STEP_BLOCKS with
+       | b :: _ => !(compiledAgrees { b with evals := b.evals.set 37 (0, 0) })
+       | [] => false
+#guard match STEP_BLOCKS with
+       | b :: _ => !(compiledAgrees { b with domainLog2 := 15 })
+       | [] => false
+/- ⚑ …and one fixture's compiled answer is not another's, so the seven are seven measurements. -/
+#guard (STEP_BLOCKS.map compiledFtOf).dedup.length == STEP_BLOCKS.length
+
+/-! ### §5b — ⚠ THE ONE THING SEVEN BLOCKS CANNOT SETTLE, said plainly.
+
+§3b's `skeleton P1.prog == skeleton PA.prog` pins that the program run here IS the one the assembly
+emits. It holds because `S539508.log2n` and `KimchiStepMain.FT_LOG2N` are BOTH 16 — and the file's
+own §3b discriminator shows the skeletons differ across domains. **Measured over 40 consecutive
+devnet blocks: every blockchain-SNARK Wrap proof carries `branch_data.domain_log2 = 16`**, because
+that is a property of the Pickles RULE and not of the instance. So no additional block proof can
+separate those two 16s, and the sweep above must not be read as evidence that it does. What the
+sweep does establish is that every OTHER input of the program — the columns, the challenges, the
+coset shifts, the endo, `p(ζ)` — is genuinely read per block. -/
 
 end Dregg2.Bridge.StepMainFtEval0RealBlock

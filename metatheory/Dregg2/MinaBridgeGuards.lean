@@ -42,6 +42,13 @@ already-authored six into the build graph so their negative assertions can go re
       it reproduces `FT_EVAL0` and the constant term byte-for-byte, with four red paths (a bent coset
       shift, the identity shifts, `er` in place of the base endo, a wrong domain). Rooted HERE and not
       in `FFI.lean` for the same reason the weld it sits beside is: one-block fixtures.
+  * `Dregg2.Bridge.MinaMultiBlockConformance` — ⚑⚑ **the same weld functions on blocks that are NOT
+      539508.** Seven fixtures (five devnet including the hardfork genesis, one mainnet, plus 539508
+      as the control), each with its OWN targets from openmina and its OWN inputs from the
+      independent binprot re-walk. Every claim above this line was, until it landed, stated over one
+      block; this is what makes "the welds conform to the protocol" a sentence with a red path.
+      GENERATED — regenerate with `metatheory/fixtures/pickles-extractors/
+      gen_multiblock_conformance.py`, do not hand-edit.
 
 (The DAG is redundant on purpose: `MinaWrapFtEval0Weld` transitively pulls Deferred/DeferredWeld/
 PublicInput/TickShifts, and `MinaWrapChallengesWeld` is a second top. All six are imported explicitly
@@ -59,6 +66,7 @@ import Dregg2.Bridge.MinaWrapFtEval0Weld
 import Dregg2.Bridge.MinaWrapPublicInput
 import Dregg2.Bridge.TickShifts
 import Dregg2.Bridge.StepMainFtEval0RealBlock
+import Dregg2.Bridge.MinaMultiBlockConformance
 
 namespace Dregg2.MinaBridgeGuards
 

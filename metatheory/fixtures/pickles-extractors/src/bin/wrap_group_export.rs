@@ -308,8 +308,18 @@ fn main() {
         blockchain_length: String,
         protocol_state_proof_base64_urlsafe: String,
     }
-    let fx: Fixture = serde_json::from_str(include_str!("../../mina_devnet_block.json"))
-        .expect("devnet fixture parses");
+    // ⚑ THE BLOCK IS AN ARGUMENT. `include_str!` pinned the group-side gold (`FT_COMM_GOLD`,
+    // `SIGMA6`, the 15 IPA prechallenges, `cip_shifted`) to ONE block, so nothing fitted to that
+    // block's particulars could ever show. Any fixture under
+    // `metatheory/fixtures/mina-blocks/` with the same schema now runs the identical code.
+    let block_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "mina_devnet_block.json".to_string());
+    let fx: Fixture = serde_json::from_str(
+        &std::fs::read_to_string(&block_path)
+            .unwrap_or_else(|e| panic!("cannot read block fixture {block_path}: {e}")),
+    )
+    .expect("devnet fixture parses");
     assert_eq!(
         fx.genesis_state_hash, "3NL93SipJfAMNDBRfQ8Uo8LPovC74mnJZfZYB5SK7mTtkL72dsPx",
         "not the devnet genesis"
