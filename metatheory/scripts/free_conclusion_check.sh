@@ -120,9 +120,10 @@ set -e
 if [ "$CANARY_EXIT" -eq 0 ]; then
   printf '%s\n' "$CANARY_OUT" >&2
   fail "the canary returned EXIT=0. The free-conclusion gate HAS STOPPED BEING ABLE TO FAIL:
-  scripts/free_conclusion_canary.lean registers a keystone whose conclusion is
-  'OrBreak (SpongeCollision hash) (xs = ys)', which this tree PROVES equivalent to True, and the
-  gate did not name it. Every clean run of this gate is now worthless."
+  scripts/free_conclusion_canary.lean registers two keystones this tree PROVES are satisfied
+  unconditionally — one concluding 'OrBreak (SpongeCollision hash) (xs = ys)' and one concluding
+  'SpongeCollision hash' outright — and the gate named neither. Every clean run of this gate is now
+  worthless."
 fi
 
 grep -q 'FREE-CONCLUSION RATCHET' <<<"$CANARY_OUT" \
@@ -141,6 +142,17 @@ grep -q 'free_conclusion_canary_violation_KS' <<<"$RATCHET_OUT" \
   keystone. The report is what an author acts on; an error that does not say which declaration is
   free is not usable."; }
 
+# ⚑ THE BARE HALF. A keystone whose CONCLUSION IS the free break event, with no disjunction at all,
+# read CLEAN until 2026-08-02 — the gate derived only `?P ∨ Break` patterns, so nothing matched a
+# bare one. Both violations are named by the SAME error, so a run that names only the disjunctive
+# one means the bare rule specifically has gone dark while everything else still looks healthy.
+grep -q 'free_conclusion_canary_bare_violation_KS' <<<"$RATCHET_OUT" \
+  || { printf '%s\n' "$CANARY_OUT" >&2; fail "the gate named the disjunctive violation but NOT the
+  BARE one. free_conclusion_canary_bare_violation_KS concludes 'SpongeCollision hash' outright,
+  which spongeCollision_of_fieldBounded supplies at every field-bounded sponge. The bare rule
+  (FreeConclusionRatchet.barePatternOf / bareTestHere) is disarmed, and every '_toGlobal' bridge
+  registered as a keystone is invisible again."; }
+
 # The CONTROL must NOT be named. A classifier that flags every disjunction reds here too — and it
 # would red the campaign's own repair, which is the degeneration that gets a gate deleted.
 if grep -q 'control_free_conclusion_canary_ported_KS' <<<"$RATCHET_OUT"; then
@@ -151,12 +163,34 @@ if grep -q 'control_free_conclusion_canary_ported_KS' <<<"$RATCHET_OUT"; then
   every disjunction, and in that state it makes porting a build error."
 fi
 
+# ⚑ THE REFUTATION CONTROL must NOT be named either, and this is the one that makes the bare rule
+# possible at all. control_free_conclusion_canary_refutation_KS has the SAME conclusion and the
+# SAME shape as the bare violation — `∀ …, Hyp → SpongeCollision hash` — and differs only in that
+# its hypothesis is the one the freeness proof itself carries. If the gate names it, the bare rule
+# has stopped separating the two and is now eating the pigeonhole REFUTATION that arms the whole
+# instrument: writing the refutation would become a build error.
+if grep -q 'control_free_conclusion_canary_refutation_KS' <<<"$RATCHET_OUT"; then
+  printf '%s\n' "$CANARY_OUT" >&2
+  fail "the gate named the REFUTATION CONTROL. control_free_conclusion_canary_refutation_KS is
+  'FieldBounded hash -> SpongeCollision hash', the pigeonhole fact that ARMS this gate. Flagging it
+  makes the refutation a build error and the gate disarms itself. The bare rule must key on the
+  HYPOTHESIS (is it one the freeness proof needs?), never on the shape of the conclusion."
+fi
+
+# The bare rule's OWN inversion (canary §2c): `selfTest` must refuse a witness set with the bare
+# patterns stripped. Without this line the bare rule could be deleted and every gate stays green.
+grep -q 'bare-rule disarm control: BITES' <<<"$CANARY_OUT" \
+  || { printf '%s\n' "$CANARY_OUT" >&2; fail "the canary's BARE-RULE DISARM CONTROL did not report
+  a bite. Either it was removed from scripts/free_conclusion_canary.lean (§2c) or
+  FreeConclusionRatchet.bareSentinelWitnesses no longer refuses a witness set with no bare patterns
+  — in which case the bare rule can be switched off without a single check going red."; }
+
 grep -q 'OVERALL: PASS' <<<"$CANARY_OUT" \
   || { printf '%s\n' "$CANARY_OUT" >&2; fail "the canary's '#keystone_audit' did not PASS. The
   canary's whole point is that the OLD lint accepts a free-disjunct keystone with GENUINE
   companions; if the companions have stopped being genuine, the demonstration is worthless."; }
 
-ok "canary EXIT=1, gate named the violation, did NOT name the control, and #keystone_audit passed it"
+ok "canary EXIT=1, gate named BOTH violations (disjunctive + bare), named NEITHER control (ported + refutation), and #keystone_audit passed all four"
 
 [ "${1:-}" = "--canary" ] && exit 0
 

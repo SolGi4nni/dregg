@@ -35,10 +35,22 @@ arbitrary good branch (a `_trivial` witness). Position matters in both direction
 
   * a break event in HYPOTHESIS position is a floor question, not a freeness question — that is
     `#floor_ratchet`'s surface, and this gate must not double-bill it;
-  * a break event CLAIMED (`FieldBounded hash → SpongeCollision hash`) is the pigeonhole fact
-    itself, which is TRUE and load-bearing — flagging it would gate the refutation that arms this
-    very gate;
   * a break event under `¬` is a tombstone, and the campaign wants more of them.
+
+## THE SECOND RULE, and the pair that forced it (2026-08-02)
+
+A conclusion that IS the break event, with no disjunction at all, is free for exactly the same
+reason — and until 2026-08-02 it read CLEAN, because every derived pattern had the shape `?P ∨ B`.
+The obstacle was real: the tree's own PROOF that the event is free has that shape too, so
+
+    FieldBounded hash      → SpongeCollision hash      -- `specBreakClaimed`, the REFUTATION: CLEAN
+    SpongeColl hash xs ys  → SpongeCollision hash      -- `specFreeBareBreak`, a BRIDGE: FLAGGED
+
+cannot be told apart by anything that looks at the conclusion. They are told apart by the
+HYPOTHESIS: a declaration concluding a bare free break event is flagged iff it carries a `Prop`
+hypothesis that the freeness proof itself does not need. Those two specimens are that pair, and they
+are the reason both must be re-classified on every run — the rule is one predicate away from either
+going blind or eating the refutation that arms the gate.
 -/
 import Dregg2.Circuit.SpongeCollisionShirk
 import Dregg2.Circuit.StateCommitReduceRaw
@@ -93,6 +105,29 @@ def specFreeStateBreak : Prop :=
     (compressN : List ℤ → ℤ) (n : Nat),
     OrBreak (Dregg2.Circuit.StateCommitReduce.StateBreakP CH cmb compress compressN) (n = n)
 
+/-- FLAGGED. ⚑⚑ **THE BARE CONCLUSION — the class that read CLEAN until 2026-08-02.** No
+disjunction at all: the conclusion IS the free break event. This is the `_toGlobal` / `_toSponge`
+shape, and the tree really contains it — `Distributed.HistoryAggregation.ChainLogColl.toSponge`
+takes the NAMED residual and returns the global existential, and
+`Circuit.CommitFaithfulRegrounded.stateBreak_faithful_reduces` does the same for
+`FaithfulBreakGlobal`. As a GUARANTEE it says nothing: `spongeCollision_of_fieldBounded` supplies
+the conclusion at every deployed sponge without looking at `hc`.
+
+⚑ Compare `specBreakClaimed` below, which has the SAME `Hyp → Break` shape and must stay CLEAN. The
+separator is the hypothesis: `hc` is not one the freeness proof needs, `FieldBounded` is. -/
+def specFreeBareBreak : Prop :=
+  ∀ (hash : List ℤ → ℤ) (xs ys : List ℤ), SpongeColl hash xs ys → SpongeCollision hash
+
+/-- FLAGGED. The bare rule across the SECOND break family, and through the `OrBreak` spelling: the
+bare pattern for `StateBreakP` is read off `orBreak_stateBreakP_iff_True`, whose conclusion is
+written `OrBreak (StateBreakP …) P` and only becomes `P ∨ StateBreakP …` under reducible unfolding.
+A bare rule that did not unfold would arm one family and not the other, and the two spellings are
+distributed across the tree by accident of authorship. -/
+def specFreeBareStateBreak : Prop :=
+  ∀ (CH : CellId → Value → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+    (compressN : List ℤ → ℤ) (n : Nat), n = n →
+    Dregg2.Circuit.StateCommitReduce.StateBreakP CH cmb compress compressN
+
 /-! ### CLEAN — and each one is a REPAIR, a REFUTATION, or ordinary content. -/
 
 /-- CLEAN. ⚑⚑ **THE CONTROL THAT MATTERS MOST — the SOUND SHAPE must never be a build error.**
@@ -112,13 +147,28 @@ and must not double-bill the other instrument's surface. -/
 def specBreakInHypothesis : Prop :=
   ∀ (hash : List ℤ → ℤ) (xs ys : List ℤ), ¬ SpongeColl hash xs ys → hash xs = hash ys → xs = ys
 
-/-- CLEAN. A POSITIVE claim that the collision exists — this is
+/-- CLEAN. ⚑⚑ **THE OTHER POLE OF THE BARE RULE, and the reason that rule needs a predicate rather
+than a shape.** A POSITIVE claim that the collision exists — this is
 `spongeCollision_of_fieldBounded` itself, the pigeonhole fact that ARMS this gate. Flagging it
 would make writing the freeness witness a build error, which is the exact failure
 `FloorRatchet`'s POSITION rule was introduced to stop (`34854bf62` deleted a satisfiability
-witness because naming a floor in a conclusion tripped an instrument). -/
+witness because naming a floor in a conclusion tripped an instrument).
+
+⚠ Syntactically this is INDISTINGUISHABLE from `specFreeBareBreak`: both are `∀ …, Hyp → Break`,
+both conclude the same free event, and no rule keyed on the SHAPE of the conclusion can separate
+them. What separates them is that `FieldBounded hash` is the hypothesis the freeness proof itself
+carries and `SpongeColl hash xs ys` is not — so this declaration is a proof that the break is free,
+and that one is a declaration whose guarantee the break event supplies for nothing. -/
 def specBreakClaimed : Prop :=
   ∀ (hash : List ℤ → ℤ), FieldBounded hash → SpongeCollision hash
+
+/-- CLEAN. The refutation pole again, carrying a DATA binder the freeness witness does not have.
+Pins that the bare rule's exemption is about `Prop` hypotheses — the things that could be doing
+argumentative work — and not about the telescope being identical. A rule that demanded an exact
+telescope match would flag every restatement of the pigeonhole fact, and the refutation would have
+to be written in one blessed spelling forever. -/
+def specBareFreenessWithData : Prop :=
+  ∀ (hash : List ℤ → ℤ) (_n : Nat), FieldBounded hash → SpongeCollision hash
 
 /-- CLEAN. An ordinary disjunction with no break event in it. Pins that the gate is keyed on
 DERIVED freeness witnesses and not on the `∨` connective — a rule that flagged every disjunction in

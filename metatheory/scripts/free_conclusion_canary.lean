@@ -7,10 +7,12 @@ exists, so that the one new red is attributable.
 
     cd metatheory && lake env lean scripts/free_conclusion_canary.lean
 
-**EXPECTED: EXIT=1**, with `⚑ FREE-CONCLUSION RATCHET: 1 registered keystone(s) …` naming
-`free_conclusion_canary_violation_KS` and NOT naming `control_free_conclusion_canary_ported_KS`.
-A ZERO exit means the gate has gone blind and every guarantee in
-`Dregg2/Verify/FreeConclusionRatchet.lean` is void.
+**EXPECTED: EXIT=1**, with `⚑ FREE-CONCLUSION RATCHET: 2 registered keystone(s) …` naming
+`free_conclusion_canary_violation_KS` and `free_conclusion_canary_bare_violation_KS`, and naming
+NEITHER `control_free_conclusion_canary_ported_KS` NOR
+`control_free_conclusion_canary_refutation_KS`. A ZERO exit means the gate has gone blind and every
+guarantee in `Dregg2/Verify/FreeConclusionRatchet.lean` is void; naming only ONE violation means
+one of the two rules has, which reads identically to a healthy run if you only check the exit code.
 
 ## What each half of this file is for
 
@@ -31,6 +33,17 @@ That is the gap this gate closes, demonstrated in-band rather than asserted in a
 NAMED pair, also registered as a keystone. The gate must NOT name it. Without this half the canary
 would pass for the wrong reason — a classifier that flags every disjunction reds here too, and reds
 the whole campaign's repair with it.
+
+**§2b — THE BARE PAIR (2026-08-02).** The same demonstration for the rule that closed the
+bare-conclusion blind spot, and it is a PAIR because the two declarations are indistinguishable by
+their conclusions: `free_conclusion_canary_bare_violation_KS` (`SpongeColl … → SpongeCollision hash`,
+a bridge that loses the pair) must be named, and `control_free_conclusion_canary_refutation_KS`
+(`FieldBounded hash → SpongeCollision hash`, the pigeonhole refutation that ARMS the gate) must not
+— though both are registered keystones and both conclude the same free event.
+
+**§2c — THE BARE RULE'S OWN INVERSION.** §2b shows the rule bites; §2c shows it cannot be disarmed
+quietly, by handing `selfTest` a witness set with every bare pattern stripped and requiring it to
+REFUSE. A derived rule that derives nothing flags nothing and looks exactly like a clean tree.
 
 ## Why a standalone file, and not a temporary edit to the tree
 
@@ -115,6 +128,123 @@ theorem free_conclusion_canary_violation_teeth :
     teeth := free_conclusion_canary_violation_teeth]
 def free_conclusion_canary_violation_KS := @free_conclusion_canary_violation
 
+/-! ## §2b — THE BARE VIOLATION, AND ITS TWIN THAT MUST STAY CLEAN.
+
+⚑ **THE PAIR THIS HALF EXISTS FOR.** `free_conclusion_canary_bare_violation` and
+`control_free_conclusion_canary_refutation` have the SAME SHAPE — `∀ …, Hyp → SpongeCollision hash`,
+no disjunction anywhere — and the SAME conclusion, at the same free break event. One must be named
+by the gate and the other must not, and no rule keyed on the shape of the conclusion can tell them
+apart. That is why the bare rule is keyed on the HYPOTHESIS instead: `hb : FieldBounded hash` is
+what the freeness proof itself carries, `hc : SpongeColl hash xs ys` is not.
+
+Until 2026-08-02 the gate read BOTH of these clean — `#free_conclusion_probe
+Dregg2.Circuit.CommitFaithfulRegrounded.stateBreak_faithful_reduces` came back "no free disjunct
+found" though its conclusion is proved free ten lines above it in its own file — and the limit was
+written up as possibly terminal. It was not. -/
+
+/-- **THE BARE VIOLATION.** Its conclusion IS the free break event, undisjoined: this is the
+`_toGlobal` / `_toSponge` shape the tree really contains
+(`Distributed.HistoryAggregation.ChainLogColl.toSponge`,
+`Circuit.CommitFaithfulRegrounded.stateBreak_faithful_reduces`). The proof term is the confession
+again — `hc` is never looked at, because at a field-bounded sponge it does not have to be. -/
+theorem free_conclusion_canary_bare_violation
+    (hash : List ℤ → ℤ) (hb : FieldBounded hash) (xs ys : List ℤ)
+    (_hc : SpongeColl hash xs ys) :
+    SpongeCollision hash :=
+  spongeCollision_of_fieldBounded hb
+
+/-- `fun _ => 0` is field-bounded, and it is the sponge both bare companions are stated at. -/
+theorem canary_zeroHash_fieldBounded : FieldBounded (fun _ => (0 : ℤ)) :=
+  fun _ => ⟨le_refl 0, by norm_num⟩
+
+/-- A GENUINE satisfiability witness for the bare violation: both hypotheses hold at a concrete
+sponge (`SpongeColl (fun _ => 0) [0] [1]` is `SpongeCollisionShirk.spongeColl_refutable`) and the
+conclusion fires there. -/
+theorem free_conclusion_canary_bare_violation_satisfiable :
+    SpongeCollision (fun _ => (0 : ℤ)) :=
+  free_conclusion_canary_bare_violation (fun _ => (0 : ℤ)) canary_zeroHash_fieldBounded [0] [1]
+    ⟨list01_ne, rfl⟩
+
+/-- GENUINE teeth, and pointing somewhere else — exactly as §2's do, for the same reason: at a
+field-bounded sponge the bare conclusion is `True` and has no refutation to point at. -/
+theorem free_conclusion_canary_bare_violation_teeth :
+    ¬ SpongeColl headHash [0] [1] :=
+  Dregg2.Circuit.SpongeCollisionShirk.noSpongeColl_satisfiable
+
+@[load_bearing_keystone
+    satisfiable := free_conclusion_canary_bare_violation_satisfiable
+    teeth := free_conclusion_canary_bare_violation_teeth]
+def free_conclusion_canary_bare_violation_KS := @free_conclusion_canary_bare_violation
+
+/-- **THE REFUTATION CONTROL — the pigeonhole fact, REGISTERED AS A KEYSTONE.** Same conclusion as
+the bare violation, same absence of a disjunction; its only `Prop` hypothesis is the one the
+freeness proof needs. The gate must NOT name it. A bare rule that did would make writing the
+refutation a build error — and the refutation is what ARMS this gate, so the gate would be
+disarming itself. Registered as a keystone deliberately: "it is not tagged" is not the reason it is
+clean, and pinning it here means the exemption is exercised in the corpus the gate actually
+scans. -/
+theorem control_free_conclusion_canary_refutation
+    (hash : List ℤ → ℤ) (hb : FieldBounded hash) :
+    SpongeCollision hash :=
+  spongeCollision_of_fieldBounded hb
+
+/-- The refutation control's satisfiability witness. -/
+theorem control_free_conclusion_canary_refutation_satisfiable :
+    SpongeCollision (fun _ => (0 : ℤ)) :=
+  control_free_conclusion_canary_refutation (fun _ => (0 : ℤ)) canary_zeroHash_fieldBounded
+
+/-- The refutation control's teeth, and note WHAT they are about: the HYPOTHESIS. `FieldBounded` is
+two-valued — a function whose outputs leave the BabyBear range is refused — so this keystone's
+premise is a real condition on the sponge rather than something every function satisfies. That is
+also the whole content of the exemption the gate grants this declaration: the hypothesis is the one
+doing the work, which is exactly what the bare violation's `hc` provably is not. -/
+theorem control_free_conclusion_canary_refutation_teeth :
+    ¬ FieldBounded (fun _ => (-1 : ℤ)) := by
+  intro h
+  have h0 := (h []).1
+  norm_num at h0
+
+@[load_bearing_keystone
+    satisfiable := control_free_conclusion_canary_refutation_satisfiable
+    teeth := control_free_conclusion_canary_refutation_teeth]
+def control_free_conclusion_canary_refutation_KS := @control_free_conclusion_canary_refutation
+
+/-! ## §2c — THE BARE RULE'S OWN INVERSION, IN BAND.
+
+§2b proves the bare rule BITES. This proves it CANNOT BE DISARMED QUIETLY, which is the other half
+and the one that is invisible from a green build: the bare pattern is DERIVED (`barePatternOf` reads
+`?P ∨ B` off a freeness witness and hands back `B`), so any edit to that derivation — a spelling
+change in a break event, a reducibility change under `whnfR`, a stricter guard — can stop producing
+it, and a rule that produces no patterns flags nothing and looks exactly like a clean tree.
+
+So the derivation is checked against a DELIBERATELY DISARMED witness set here: `selfTest` must
+REFUSE it, and refuse it with the bare-pattern message rather than incidentally. This is the same
+discipline as the canary itself, one level down — the fail-closed check gets its own canary. -/
+
+open Lean Elab Command Meta Dregg2.Verify.FreeConclusionRatchet in
+run_cmd liftTermElabM do
+  let ws ← deriveWitnesses
+  let disarmed := ws.map (fun w => { w with bareHeads := #[] })
+  let bite ←
+    try
+      selfTest disarmed
+      pure none
+    catch e => pure (some (← e.toMessageData.toString))
+  match bite with
+  | none =>
+    throwError "BARE-RULE DISARM CONTROL FAILED: `selfTest` ACCEPTED a witness set with every bare \
+      pattern stripped. `bareSentinelWitnesses` is supposed to make that a hard error — with it \
+      broken, deleting the bare rule's derivation would leave every gate in this repo green and \
+      every `_toGlobal` keystone unscanned."
+  | some msg =>
+    if (msg.splitOn "no longer arms a BARE pattern").length ≤ 1 then
+      throwError "BARE-RULE DISARM CONTROL FAILED: `selfTest` refused the disarmed witness set, but \
+        for some OTHER reason:\n{msg}\nThe bare-pattern sentinel check did not fire, so it is not \
+        what is holding the rule in place and it would not notice the rule going dark."
+    else
+      logInfo "bare-rule disarm control: BITES (a witness set with no bare patterns is REFUSED by \
+        `bareSentinelWitnesses`, with the bare-pattern message)."
+
 /-! ## §4 — THE CONTROL: the same claim, PORTED. The gate must NOT name this one. -/
 
 /-- **THE CONTROL.** The landed repair shape: the residual is `SpongeColl hash xs ys`, a collision
@@ -145,14 +275,17 @@ theorem control_free_conclusion_canary_ported_teeth : SpongeColl (fun _ => (0 : 
     teeth := control_free_conclusion_canary_ported_teeth]
 def control_free_conclusion_canary_ported_KS := @control_free_conclusion_canary_ported
 
-/-! ## §3 — THE OLD LINT, RUN ON BOTH. Both must PASS: that is the gap, in the act.
+/-! ## §3 — THE OLD LINT, RUN ON ALL FOUR. Every one must PASS: that is the gap, in the act.
 
 `#keystone_audit` THROWS on failure, so a red here would mean the canary's companions are not
-genuine and the demonstration is worthless. Both are expected to log PASS. -/
+genuine and the demonstration is worthless. All four are expected to log PASS — including the BARE
+violation, which carries a real satisfiability witness and real teeth and is still worth nothing. -/
 
 #keystone_audit free_conclusion_canary_violation_KS
 #keystone_audit control_free_conclusion_canary_ported_KS
+#keystone_audit free_conclusion_canary_bare_violation_KS
+#keystone_audit control_free_conclusion_canary_refutation_KS
 
-/-! ## §5 — THE NEW GATE. EXPECTED: THROW, naming the violation and NOT the control. -/
+/-! ## §5 — THE NEW GATE. EXPECTED: THROW, naming BOTH violations and NEITHER control. -/
 
 #free_conclusion_ratchet

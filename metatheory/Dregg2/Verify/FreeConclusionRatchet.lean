@@ -54,6 +54,11 @@ means — the freeness witnesses are DERIVED from the environment on every run, 
       `_trivial` spelling and it is the same fact.
   AND the resulting pattern **DISCRIMINATES** (see `isGeneric`).
 
+Each witness's pattern `?P ∨ B` ALSO yields the BARE pattern `B` (§2b): instantiate the arbitrary
+good branch at `False` and the same witness proves the break event outright, so a conclusion that IS
+the break event — with no disjunction anywhere — is reached by the same derivation. That rule
+carries an exemption and the exemption is the whole of it; see "THE BARE CONCLUSION" below.
+
 Prove a new break event free and the gate starts defending against it the same build, with no edit
 here — exactly `FloorRatchet`'s derivation discipline, for the same reason (a hand list is how the
 Python ruler went blind to 7 of 10 refuted floors).
@@ -102,6 +107,78 @@ not double-bill it. Within the conclusion, `¬` and `↔` are NOT descended:
     and the campaign wants more of them;
   * `A ↔ B` with `B` free ASSERTS `A`, which is content.
 
+⚠ THE BARE RULE READS THE HYPOTHESES, and the sentence above needs that qualification rather than
+being left to read as a blanket. It does not judge whether a hypothesis is LEGITIMATE — that is
+`#floor_ratchet`'s question and it is still not double-billed here. It asks only whether a
+hypothesis is IDLE at a conclusion the tree already proves free, which is a property of the
+conclusion, priced against the freeness proof. A hypothesis in a declaration whose conclusion is not
+free is never looked at at all.
+
+## ⚑ THE BARE CONCLUSION — SETTLED 2026-08-02. It was written up as possibly terminal. It is not.
+
+This gate shipped (`0f802d73d`) with a hole it had MEASURED on itself, and a hedge attached to it.
+The hole:
+
+    #free_conclusion_probe Dregg2.Circuit.CommitFaithfulRegrounded.stateBreak_faithful_reduces
+      → "no free disjunct found"
+
+though that theorem's conclusion is `FaithfulBreakGlobal …`, which
+`faithfulBreakGlobal_free_of_fieldBounded` proves OUTRIGHT ten lines above it in its own file. Same
+for `Distributed.HistoryAggregation.ChainLogColl.toSponge`, whose conclusion is a bare
+`SpongeCollision compressN`. CAUSE: every derived pattern had the shape `?P ∨ Break`, so a
+conclusion that IS the free event, undisjoined, matched nothing.
+
+The hedge, in that commit's message: *"a bare-`Break` rule would also flag
+`spongeCollision_of_fieldBounded`, which the spec deliberately pins CLEAN"* — and then, attached to
+it, the guess that the limit might be a permanent one. **That argument is right about the pair and
+wrong about the verdict, and the guess is REFUTED below rather than inherited.** The phrase itself
+is deliberately not reproduced here: a docstring asserting a limit nobody proved is the exact move
+this campaign exists to stop, and the record of it belongs in `0f802d73d`, not in the instrument. The two declarations really
+are indistinguishable by any predicate on the SHAPE OF THE CONCLUSION — the conclusion is the same
+proposition:
+
+    FieldBounded hash      → SpongeCollision hash      -- the REFUTATION.  must stay CLEAN
+    SpongeColl hash xs ys  → SpongeCollision hash      -- the `_toGlobal` BRIDGE.  must FLAG
+
+They are separated, exactly and mechanically, by a predicate on the HYPOTHESIS:
+
+> **A declaration concluding a bare free break event is FLAGGED iff it carries a `Prop` hypothesis
+> that the freeness proof itself does not need.**
+
+The refutation assumes precisely what the freeness witness assumes, so nothing it carries is idle
+and it is clean. A consumer that returns the break event as its GUARANTEE assumes things about the
+object it claims to secure (`hW : Poseidon2Width8 permW`, `StateBreakP …`, `ChainLogColl …`) and
+every one of them is DEAD WEIGHT — the witness reaches that same conclusion without them. That is
+what makes such a statement vacuous, and the report now NAMES the idle hypothesis (`Hit.detail`).
+`bareTestHere` is the implementation and carries the argument again at the point of use.
+
+Three things about the predicate, because a rule is a claim:
+
+  * it needs no notion of authorial intent, no naming convention and no registration — it compares
+    two telescopes at the parameters the CONCLUSION MATCH already determined;
+  * it does not exempt "the refutation" BY NAME. Every restatement of it is clean
+    (`specBareFreenessWithData`), and a "refutation" that acquires an idle `Prop` hypothesis is
+    flagged — which is the fail-closed direction, since that is no longer a refutation but a weaker
+    theorem wearing one;
+  * it is an EXEMPTION, not a matter of scope. The other candidate refinement was to lean on the
+    fact that only KEYSTONES are scanned, so `spongeCollision_of_fieldBounded` is simply out of
+    scope. That is strictly weaker — it holds exactly until someone tags the pigeonhole fact — so
+    `scripts/free_conclusion_canary.lean` REGISTERS the refutation as a keystone (§2b,
+    `control_free_conclusion_canary_refutation_KS`) and requires the gate to leave it alone anyway.
+
+MEASURED 2026-08-02, and each of these is a number that would have hidden a mistake:
+
+  * the two blind declarations above now FLAG, each naming its idle hypothesis;
+  * `spongeCollision_of_fieldBounded`, `faithfulBreakGlobal_free_of_fieldBounded` and the
+    `specBreakClaimed` specimen read CLEAN;
+  * the tagged corpus is UNCHANGED — 0 free conclusions over 84 keystones — so the baseline stays
+    EMPTY and this rule reds nothing that was not already red;
+  * the three historical statements still flag through the DISJUNCTIVE rule and their three
+    `_of_noColl` ports still read clean: the new rule moved no old verdict;
+  * the canary bites both ways — §2b names a bare-violation keystone and not the refutation control,
+    §2c proves the rule cannot be switched off quietly (a witness set with the bare patterns
+    stripped is REFUSED by `bareSentinelWitnesses`).
+
 ## ⚠ WHAT THIS GATE DOES NOT DO — read before quoting it
 
 It is a **necessary-condition** check on one known-and-proved class, not a decision procedure for
@@ -119,8 +196,13 @@ vacuity. Precisely:
      false negative is what §1 of this docstring describes. The report NAMES the witness so its
      residual hypothesis is one click away.
   3. **It says nothing about the good branch.** A keystone that is not flagged may still be vacuous
-     for a reason nobody has proved yet. A clean run means "no registered keystone concludes a
-     disjunction this tree proves free", not "the keystones are sound".
+     for a reason nobody has proved yet. A clean run means "no registered keystone concludes
+     something this tree proves free", not "the keystones are sound".
+  4. **The BARE rule reads the hypotheses, so it is silent on a declaration with none.** A keystone
+     concluding a bare break event and assuming nothing (`theorem k : SpongeCollision headHash`) is
+     CLEAN here, and rightly: at a CONCRETE sponge that IS the pigeonhole fact and carries content,
+     and at an abstract one it is not provable at all. The tree contains no third case today; if one
+     appears, this rule does not see it.
 -/
 import Lean
 import Dregg2.Verify.FloorCensus
@@ -278,16 +360,83 @@ def matchesWitness (ty : Expr) (iffForm : Bool) (target : Expr) : MetaM Bool :=
 
 /-! ## §3 — the derived witness set -/
 
+/-! ### §2b — THE BARE PATTERN, DERIVED FROM THE DISJUNCTIVE ONE
+
+A witness's pattern is `?P ∨ B` with `?P` the witness's OWN arbitrary good branch. Instantiate that
+metavariable at `False` and the witness proves `False ∨ B`, i.e. **`B` itself**, under exactly the
+hypotheses it already carries. So the tree's proof that `?P ∨ B` is free IS a proof that the BARE
+break event `B` is free, and the bare pattern is DERIVED — never a second hand list, and it arms and
+disarms with the disjunctive one.
+
+That instance is not hypothetical: `SpongeCollisionShirk.orBreak_spongeCollision_False` is literally
+`OrBreak (SpongeCollision hash) False` in the tree, and `spongeCollision_of_fieldBounded` is the
+same fact with the `False` peeled off.
+
+⚑ THE BARE PATTERN GETS ITS OWN DISCRIMINATION GATE, for a sharper failure than the disjunctive
+one: if `B` came back an unassigned metavariable the pattern would be `?B`, which matches EVERY
+proposition in the tree rather than merely every disjunction. `isGenericBare` runs the same opaque
+probes.
+
+⚠ AND IT IS REDUNDANT TODAY — said plainly rather than left to read as a defence. On the shape
+`?P ∨ B` a bare-metavariable `B` already makes `isGeneric` match the `a ∨ b` probe, so the witness
+never survives to reach here. It is kept because the two patterns are computed by DIFFERENT code
+paths (`patternOf` takes the `↔ True` side unreduced; `barePatternOf` reduces), and the day those
+diverge — a loosened left-disjunct guard, a deeper `whnf` — this is the check that stops a pattern
+matching the whole tree. It is defence in depth for a specific future edit, not a check that can
+fire today. -/
+
+/-- The BARE free pattern of a witness, plus the witness's own telescope metavariables (the caller
+needs them AFTER matching, to read off which hypotheses the freeness proof actually requires).
+
+`none` unless the pattern reduces to `?P ∨ B` with `?P` an unassigned metavariable OF THIS
+WITNESS'S telescope. A concrete left disjunct is not an arbitrary good branch, so nothing is derived
+from it. -/
+def barePatternOf (ty : Expr) (iffForm : Bool) : MetaM (Option (Expr × Array Expr)) := do
+  let (mvars, _, body) ← forallMetaTelescope ty
+  let some concl := (if iffForm then iffTrueSide? body else some body) | return none
+  let c ← try whnfR concl catch _ => pure concl
+  unless c.isAppOfArity ``Or 2 do return none
+  let args := c.getAppArgs
+  let lhs ← instantiateMVars args[0]!
+  unless lhs.isMVar do return none
+  unless mvars.any (fun m => m == lhs) do return none
+  return some (args[1]!, mvars)
+
+/-- The DISCRIMINATION gate for the bare pattern. Same probes, same reason, one extra bite: a bare
+pattern that is itself a metavariable matches every `Prop` in the tree. -/
+def isGenericBare (ty : Expr) (iffForm : Bool) : MetaM Bool :=
+  withLocalDeclD `a (.sort .zero) fun a =>
+  withLocalDeclD `b (.sort .zero) fun b => do
+    let probes : Array Expr :=
+      #[ a
+       , mkApp2 (.const ``Or []) a b
+       , mkApp2 (.const ``And []) a b
+       , mkApp (.const ``Not []) a
+       , mkApp2 (.const ``Iff []) a b ]
+    for p in probes do
+      let hit ← withoutModifyingState do
+        match ← barePatternOf ty iffForm with
+        | none => pure false
+        | some (pat, _) => try isDefEq pat p catch _ => pure false
+      if hit then return true
+    return false
+
 /-- A FREENESS WITNESS, derived from the environment. `heads` is the PREFILTER key: the pattern's
 head constant BOTH as written and after reducible unfolding, because `OrBreak B P` is an `abbrev`
 for `P ∨ B` and a keystone may spell the same statement either way (that spelling split is the
 residual `FloorRatchet` had to close for `Function.Injective` vs `Poseidon2SpongeCR`;
-`FreeConclusionSpecimens.specFreeSpelledViaOr` pins it here before it can open). -/
+`FreeConclusionSpecimens.specFreeSpelledViaOr` pins it here before it can open).
+
+`bareHeads` is the same prefilter for the BARE pattern (§2b), EMPTY when the witness arms no bare
+pattern — which is how a witness whose conclusion is not a disjunction over its own good branch
+(`CatalogInstances.AuthorizationGuard.admits_unchecked`, an `Eq`) contributes nothing to the bare
+rule. -/
 structure FreeWitness where
-  thm     : Name
-  iffForm : Bool
-  shape   : String
-  heads   : Array Name
+  thm       : Name
+  iffForm   : Bool
+  shape     : String
+  heads     : Array Name
+  bareHeads : Array Name
   deriving Inhabited
 
 /-- Every freeness witness in our modules, sorted by name so the gate's verdicts and its baseline
@@ -325,18 +474,30 @@ def deriveWitnesses : MetaM (Array FreeWitness) := do
         pure (some ((#[] ++ asWritten.toArray) ++ reduced.toArray))
     let some heads := heads? | continue
     if heads.isEmpty then continue
+    let bareHeads ← withoutModifyingState do
+      match ← barePatternOf ci.type iffForm with
+      | none => pure (#[] : Array Name)
+      | some (pat, _) =>
+        if ← isGenericBare ci.type iffForm then pure #[] else do
+          let asWritten := headConst? pat
+          let reduced ← try pure (headConst? (← whnfR pat)) catch _ => pure none
+          pure ((#[] ++ asWritten.toArray) ++ reduced.toArray)
     out := out.push
-      { thm := nm, iffForm, shape := if iffForm then "iff_True" else "arbitrary-branch", heads }
+      { thm := nm, iffForm, shape := if iffForm then "iff_True" else "arbitrary-branch", heads,
+        bareHeads }
   return out.qsort (fun x y => x.thm.toString < y.thm.toString)
 
 /-! ## §4 — scanning a conclusion -/
 
-/-- A flagged declaration: WHICH witness proves WHICH subterm of its conclusion free. -/
+/-- A flagged declaration: WHICH witness proves WHICH subterm of its conclusion free. `detail` is
+the bare rule's evidence — the hypothesis that the freeness proof does NOT need, i.e. the one the
+declaration is carrying for nothing — and is empty for a disjunctive hit. -/
 structure Hit where
   subject : Name
   witness : Name
   shape   : String
   subterm : String
+  detail  : String := ""
   deriving Inhabited
 
 /-- Baseline row separator. Chosen because no Lean identifier contains it. The key is the PAIR
@@ -347,10 +508,75 @@ def keySep : String := " ⊣ "
 
 def hitKey (h : Hit) : String := h.subject.toString ++ keySep ++ h.witness.toString
 
+/-- **THE BARE RULE, and the ONE predicate that separates its two poles.**
+
+A conclusion that IS the free break event, undisjoined, is `True` for exactly the same reason a
+disjunction over it is — so it must be flagged. But the tree's own PROOF that the event is free has
+that shape too (`SpongeCollisionShirk.spongeCollision_of_fieldBounded :  FieldBounded hash →
+SpongeCollision hash`), and flagging it would gate the refutation that ARMS this gate. Those two are
+the counterexample pair, and this is the predicate that separates them:
+
+> **A declaration concluding a bare free break event is flagged iff it carries a `Prop` hypothesis
+> that the freeness proof itself does not need.**
+
+The refutation assumes exactly `FieldBounded hash` — the freeness witness's own hypothesis, and
+nothing else — so it is CLEAN, and so is every restatement of it. A consumer that returns the break
+event as its GUARANTEE carries hypotheses ABOUT THE THING IT CLAIMS TO SECURE (`hW :
+Poseidon2Width8 permW`, `StateBreakP …`, `ChainLogColl …`), and every one of them is dead weight:
+the conclusion follows from the witness alone. That is exactly what makes it vacuous, and it is
+what the flag says.
+
+The comparison is against the witness's own telescope INSTANTIATED BY THE MATCH, so it is the
+hypotheses the freeness proof needs AT THESE PARAMETERS, not a name test. A witness hypothesis still
+carrying a metavariable after the match is UNDETERMINED and covers nothing — otherwise it would
+unify with any subject hypothesis at all and the rule would fail open.
+
+⚠ FAIL-CLOSED, on the same terms as the disjunctive rule (docstring §2): a subject that does not
+supply `FieldBounded` is flagged anyway. Its conclusion is free at every sponge this tree deploys,
+the cost of a false positive is one baseline row with a stated reason, and the shipped gate already
+takes exactly this direction — `HistoryAggregation.logChained_of_verified_orBreak` has no
+`FieldBounded` hypothesis and is flagged (measured 2026-08-02). -/
+def bareTestHere (ws : Array FreeWitness) (subject : Name) (hyps : Array Expr) (e : Expr) :
+    MetaM (Option Hit) := do
+  let env ← getEnv
+  let some hs := headConst? e | return none
+  for w in ws do
+    unless w.bareHeads.contains hs do continue
+    let some wci := env.find? w.thm | continue
+    let res ← withoutModifyingState do
+      let some (pat, mvars) ← barePatternOf wci.type w.iffForm | pure none
+      let matched ← try isDefEq pat e catch _ => pure false
+      if !matched then pure none else do
+        let mut needed : Array Expr := #[]
+        for m in mvars do
+          let mty ← instantiateMVars (← inferType m)
+          if mty.hasExprMVar then continue
+          if ← isProp mty then needed := needed.push mty
+        for h in hyps do
+          let hty ← instantiateMVars h
+          let mut covered := false
+          for wh in needed do
+            let same ← withoutModifyingState <|
+              (do try isDefEq hty wh catch _ => pure false)
+            if same then
+              covered := true
+              break
+          unless covered do
+            return some
+              { subject, witness := w.thm, shape := s!"bare({w.shape})",
+                subterm := toString (← ppExpr e),
+                detail := toString (← ppExpr hty) }
+        pure none
+    if let some h := res then return some h
+  return none
+
 /-- Test ONE subterm, IN ITS OWN SCOPE, against every derived witness. The head prefilter is
 syntactic and consults BOTH spellings the witness recorded, so `OrBreak B P` and its `abbrev`
-expansion `P ∨ B` land on the same witness. -/
-def testHere (ws : Array FreeWitness) (subject : Name) (e : Expr) : MetaM (Option Hit) := do
+expansion `P ∨ B` land on the same witness. The DISJUNCTIVE rule is tried first, so a keystone whose
+conclusion is `P ∨ Break` is reported against the disjunction it actually wrote rather than against
+the break event nested inside it. -/
+def testHere (ws : Array FreeWitness) (subject : Name) (hyps : Array Expr) (e : Expr) :
+    MetaM (Option Hit) := do
   let env ← getEnv
   let some hs := headConst? e | return none
   for w in ws do
@@ -359,7 +585,7 @@ def testHere (ws : Array FreeWitness) (subject : Name) (e : Expr) : MetaM (Optio
     if ← matchesWitness wci.type w.iffForm e then
       return some { subject, witness := w.thm, shape := w.shape,
                     subterm := toString (← ppExpr e) }
-  return none
+  bareTestHere ws subject hyps e
 
 /-- Walk the POSITIVE positions of a conclusion, testing each in place.
 
@@ -374,26 +600,45 @@ the local context, `isDefEq` cannot assign against them, and the term silently r
 symptom is a gate that passes on anything nested under an `∃` or a `λ` — which is where a free
 disjunct hides in a real "there is an extraction such that …" statement.
 `FreeConclusionSpecimens.specFreeUnderExists` is exactly that shape, and it is why the classifier
-self-test exists: the bug was found by the specimen, on the first run, not by review. -/
-partial def scanPositive (ws : Array FreeWitness) (subject : Name) (e : Expr) :
+self-test exists: the bug was found by the specimen, on the first run, not by review.
+
+`hyps` carries the subject's `Prop` hypotheses down for the BARE rule, and it GROWS at every `∀` the
+scan enters: an implication nested inside the conclusion (`… → SpongeCollision hash`) is dead weight
+in exactly the same way as one in the outer telescope, and reading only the outer telescope would
+let one hop of nesting hide it. -/
+partial def scanPositive (ws : Array FreeWitness) (subject : Name) (hyps : Array Expr) (e : Expr) :
     MetaM (Option Hit) := do
   match e with
   | .app (.const ``Not _) _ => return none
-  | .mdata _ b => scanPositive ws subject b
-  | .forallE .. => forallTelescope e fun _ b => scanPositive ws subject b
-  | .lam .. => lambdaTelescope e fun _ b => scanPositive ws subject b
-  | .letE _ _ _ b _ => scanPositive ws subject b
+  | .mdata _ b => scanPositive ws subject hyps b
+  | .forallE .. => forallTelescope e fun xs b => do
+      scanPositive ws subject (← propHyps hyps xs) b
+  | .lam .. => lambdaTelescope e fun _ b => scanPositive ws subject hyps b
+  | .letE _ _ _ b _ => scanPositive ws subject hyps b
   | .app f a =>
     if e.isAppOfArity ``Iff 2 then return none
-    if let some h ← testHere ws subject e then return some h
-    if let some h ← scanPositive ws subject f then return some h
-    scanPositive ws subject a
-  | _ => testHere ws subject e
+    if let some h ← testHere ws subject hyps e then return some h
+    if let some h ← scanPositive ws subject hyps f then return some h
+    scanPositive ws subject hyps a
+  | _ => testHere ws subject hyps e
+where
+  /-- Extend `acc` with the types of the `Prop`-typed locals among `xs`. -/
+  propHyps (acc : Array Expr) (xs : Array Expr) : MetaM (Array Expr) := do
+    let mut out := acc
+    for x in xs do
+      let t ← inferType x
+      if ← isProp t then out := out.push t
+    return out
 
 /-- Classify ONE type: the first (witness, positive subterm) pair that matches, or `none`.
 Deterministic — witnesses are sorted, positions are visited outside-in. -/
 def scanType (ws : Array FreeWitness) (subject : Name) (ty : Expr) : MetaM (Option Hit) :=
-  forallTelescope ty fun _ concl => scanPositive ws subject concl
+  forallTelescope ty fun xs concl => do
+    let mut hyps : Array Expr := #[]
+    for x in xs do
+      let t ← inferType x
+      if ← isProp t then hyps := hyps.push t
+    scanPositive ws subject hyps concl
 
 /-! ## §5 — FAIL-CLOSED self-checks
 
@@ -420,6 +665,20 @@ def sentinelWitnesses : List Name :=
   , `Dregg2.Circuit.StateCommitReduce.orBreak_stateBreakP_iff_True
   , `Dregg2.Circuit.CircuitSoundness.CommitSurface.orBreak_stateBreak_iff_True ]
 
+/-- SENTINEL BARE PATTERNS: witnesses that MUST arm the bare rule (§2b) as well as the disjunctive
+one. The bare pattern is DERIVED from the disjunctive pattern's shape, so a change to `patternOf`,
+to `whnfR`'s reducibility, or to how a break event is spelled can silently stop deriving it — and a
+disarmed bare rule looks exactly like a tree with no bare free conclusions in it.
+
+Only witnesses reachable from EVERY invocation site are listed (both of these come in through
+`Circuit.CircuitSoundness`). The bare `∨` spelling — `CommitFaithfulRegrounded.orFaithful-
+BreakGlobal_iff_True`, which no module imports — is not pinnable here for that reason; it was
+MEASURED to arm `FaithfulBreakGlobal` on 2026-08-02 and `specFreeBareStateBreak` pins the
+`whnfR`-through-`OrBreak` path that the spelling difference exercises. -/
+def bareSentinelWitnesses : List Name :=
+  [ `Dregg2.Circuit.SpongeCollisionShirk.orBreak_spongeCollision_iff_True
+  , `Dregg2.Circuit.StateCommitReduce.orBreak_stateBreakP_iff_True ]
+
 /-- The DISCRIMINATION self-test (`true` = must be ACCEPTED as a freeness witness). Both
 degenerations are invisible from a green build:
 
@@ -437,7 +696,14 @@ def witnessSpecimenVerdicts : List (Name × Bool) :=
 /-- The CLASSIFIER self-test (`true` = the type must be FLAGGED). Each name is a `Prop`-valued def
 in `Dregg2.Verify.FreeConclusionSpecimens` whose VALUE is a declaration TYPE.
 `specPerInstanceResidual` is the one that matters most: it is the landed REPAIR, and a gate that
-flags it turns porting into a build error. -/
+flags it turns porting into a build error.
+
+⚑ THE LAST FOUR ARE THE BARE RULE'S POLES, and they are the whole reason that rule can exist. The
+declaration that MUST flag (`specFreeBareBreak`, a named residual cashed out as the global event)
+and the one that MUST NOT (`specBreakClaimed`, the pigeonhole refutation) have the SAME shape
+`Hyp → Break`. What separates them is whether the hypothesis is one the freeness proof itself
+carries. If either verdict moves, that separation has failed and the bare rule is either blind or
+eating the refutation. -/
 def classifierSpecimenVerdicts : List (Name × Bool) :=
   [ (`Dregg2.Verify.FreeConclusionSpecimens.specFreeOrBreak, true)
   , (`Dregg2.Verify.FreeConclusionSpecimens.specFreeSpelledViaOr, true)
@@ -446,9 +712,12 @@ def classifierSpecimenVerdicts : List (Name × Bool) :=
   , (`Dregg2.Verify.FreeConclusionSpecimens.specFreeStateBreak, true)
   , (`Dregg2.Verify.FreeConclusionSpecimens.specPerInstanceResidual, false)
   , (`Dregg2.Verify.FreeConclusionSpecimens.specBreakInHypothesis, false)
-  , (`Dregg2.Verify.FreeConclusionSpecimens.specBreakClaimed, false)
   , (`Dregg2.Verify.FreeConclusionSpecimens.specOrdinaryDisjunction, false)
-  , (`Dregg2.Verify.FreeConclusionSpecimens.specFreeUnderNot, false) ]
+  , (`Dregg2.Verify.FreeConclusionSpecimens.specFreeUnderNot, false)
+  , (`Dregg2.Verify.FreeConclusionSpecimens.specFreeBareBreak, true)
+  , (`Dregg2.Verify.FreeConclusionSpecimens.specFreeBareStateBreak, true)
+  , (`Dregg2.Verify.FreeConclusionSpecimens.specBreakClaimed, false)
+  , (`Dregg2.Verify.FreeConclusionSpecimens.specBareFreenessWithData, false) ]
 
 /-! ## §6 — THE BASELINE
 
@@ -475,6 +744,14 @@ the exact free subterm (`#free_conclusion_probe`, run 2026-08-01):
     RecursiveAggregation.conserves_from_verification_orBreak   ⟵ orBreak_stateBreakP_iff_True
 
 and their three `_of_noColl` ports come back CLEAN. Load-bearing and refutable, on the real objects.
+
+⚑ **RE-MEASURED 2026-08-02, WITH THE BARE RULE ARMED: still ZERO, over 84 reachable keystones.** The
+rule that closed the bare blind spot added NOTHING to this baseline, and the three statements above
+still flag through the disjunctive rule with the same witness. So the baseline is empty for two
+independent reasons now, and neither of them is "nobody looked": the two declarations the bare rule
+was built for (`CommitFaithfulRegrounded.stateBreak_faithful_reduces`,
+`HistoryAggregation.ChainLogColl.toSponge`) are real and really flag — they are simply not tagged as
+keystones, which is exactly the difference between a bridge that loses the pair and a claim.
 
 Rows are `subject{keySep}witness` — the PAIR, so a grandfathered keystone that acquires a SECOND
 free disjunct is a fresh violation rather than covered forever by one row. A row is a claim, on the
@@ -506,6 +783,18 @@ def selfTest (ws : Array FreeWitness) : MetaM Unit := do
         derivation did not rediscover it. The derivation has gone blind — every break event of \
         that family is now ungated and this gate would pass on the exact statements it was built \
         to catch. Fix the derivation, do not delete the sentinel."
+  -- (a') the BARE pattern must still be derived from those witnesses (§2b).
+  for s in bareSentinelWitnesses do
+    let some w := ws.find? (fun w => w.thm == s)
+      | throwError "FREE-CONCLUSION FAIL-CLOSED: bare-pattern sentinel {s} is not among the derived \
+        witnesses at all — see the `sentinelWitnesses` error above for the two ways that happens."
+    if w.bareHeads.isEmpty then
+      throwError "FREE-CONCLUSION FAIL-CLOSED: {s} is still a freeness witness but no longer arms a \
+        BARE pattern. `barePatternOf` reads `?P ∨ B` off the witness's own conclusion and hands back \
+        `B`; if that stopped working, a declaration whose conclusion IS the free break event — \
+        undisjoined — reads CLEAN again, which is the blind spot this rule was written to close \
+        (`CommitFaithfulRegrounded.stateBreak_faithful_reduces`, measured blind on 2026-08-01). \
+        Fix the derivation, do not delete the sentinel."
   -- (b) the discrimination test must not have degenerated in either direction.
   for (spec, want) in witnessSpecimenVerdicts do
     let some ci := env.find? spec
@@ -535,7 +824,10 @@ def selfTest (ws : Array FreeWitness) : MetaM Unit := do
         {if got then "FLAGGED" else "CLEAN"}, expected {if want then "FLAGGED" else "CLEAN"}. \
         ⚑ If `specPerInstanceResidual` is the one that moved, the gate is now flagging the \
         campaign's own REPAIR — the per-instance residual at a NAMED pair — and porting has just \
-        become a build error. Fix the classifier; do not weaken the specimen."
+        become a build error. ⚑ If `specBreakClaimed` is the one that moved, the BARE rule has \
+        eaten the pigeonhole REFUTATION that arms this whole gate, which is the failure that made \
+        the bare class look terminal in the first place. Fix the classifier; do not weaken the \
+        specimen."
 
 /-- Derive the witness set, run every self-check, and classify the tagged corpus. Hard-errors on any
 fail-closed condition BEFORE reporting, so a blind instrument can never report a clean surface. -/
@@ -574,18 +866,27 @@ def check : MetaM Unit := do
     let env ← getEnv
     let body := String.intercalate "\n" (fresh.toList.map fun h =>
       s!"    {h.subject}\n      module: {moduleOf env h.subject}\n      \
-        free subterm: {h.subterm}\n      proved free by: {h.witness}  [{h.shape}]")
+        free subterm: {h.subterm}\n      proved free by: {h.witness}  [{h.shape}]" ++
+      (if h.detail.isEmpty then ""
+       else s!"\n      ⚑ BARE: the conclusion IS the free event. This hypothesis does no work — the \
+witness proves the conclusion without it:\n        {h.detail}"))
     let paste := String.intercalate ",\n" (fresh.toList.map fun h => s!"  \"{hitKey h}\"")
     throwError "\n\
-      ⚑ FREE-CONCLUSION RATCHET: {fresh.size} registered keystone(s) CONCLUDE a disjunction this \
+      ⚑ FREE-CONCLUSION RATCHET: {fresh.size} registered keystone(s) CONCLUDE something this \
       tree PROVES is satisfied unconditionally.\n\
       \n\
-      The named subterm is not a weakened claim — it is `True`. The break disjunct is a GLOBAL \
+      The named subterm is not a weakened claim — it is `True`. The break event is a GLOBAL \
       EXISTENTIAL, and the same pigeonhole that refutes the injectivity floor these statements \
       were ported OFF of ESTABLISHES it, at every field-bounded (= every deployed) sponge. The \
       keystone therefore constrains nothing, and it will have passed `#keystone_audit` HONESTLY: \
       the satisfiability witness fires, the teeth refute a hostile instance, and neither check \
       looks at the conclusion's information content.\n\
+      \n\
+      A hit marked ⚑ BARE has no disjunction at all: its CONCLUSION is the free event, and the \
+      named hypothesis is dead weight. The fix is the same port — return the residual AT THE NAMED \
+      PAIR (`SpongeColl hash a b`, `RecStateCommitColl …`) instead of the global existential — \
+      except that here there is no good branch to keep, so the statement is a `_toGlobal` bridge \
+      and the question is whether anything should be reading it as a guarantee at all.\n\
       \n{body}\n\
       \n\
       Two ways forward.\n\
@@ -646,7 +947,8 @@ elab "#free_conclusion_report" : command =>
     let hlines :=
       if s.hits.isEmpty then "  (none)"
       else String.intercalate "\n" (s.hits.toList.map fun (h : Hit) =>
-        s!"  \"{hitKey h}\"\n     free subterm: {h.subterm}")
+        s!"  \"{hitKey h}\"\n     free subterm: {h.subterm}" ++
+        (if h.detail.isEmpty then "" else s!"\n     ⚑ BARE; idle hypothesis: {h.detail}"))
     logInfo s!"free-conclusion REPORT\n\
       {s.witnesses.size} derived freeness witness(es):\n{wlines}\n\
       {s.keystones.size} tagged keystone(s); {s.hits.size} with a FREE conclusion:\n{hlines}").run'
@@ -666,13 +968,17 @@ elab "#free_conclusion_probe" k:ident : command => do
       | throwError "#free_conclusion_probe: {subject} is not in the environment."
     match ← scanType ws subject ci.type with
     | some h =>
+      let extra :=
+        if h.detail.isEmpty then ""
+        else s!"\n  ⚑ BARE — the conclusion IS the free event, and this hypothesis does no work \
+(the witness proves the conclusion without it): {h.detail}"
       logInfo s!"⚑ FREE CONCLUSION — {subject}\n  free subterm : {h.subterm}\n  \
-        proved free by: {h.witness}  [{h.shape}]\n  \
+        proved free by: {h.witness}  [{h.shape}]{extra}\n  \
         This statement is satisfied unconditionally at the parameters that witness assumes."
     | none =>
-      logInfo s!"free-conclusion: no free disjunct found in {subject}. ⚠ That is a NEGATIVE result \
-        against {ws.size} derived witnesses, not a soundness result — a break event nobody has \
-        proved free yet is invisible here.").run'
+      logInfo s!"free-conclusion: no free conclusion found in {subject} — no free disjunct, and no \
+        bare break event either. ⚠ That is a NEGATIVE result against {ws.size} derived witnesses, \
+        not a soundness result — a break event nobody has proved free yet is invisible here.").run'
 
 /-- `#free_conclusion_selftest` — run the instrument's OWN checks (sentinels rediscovered,
 discrimination verdicts, classifier verdicts) with no keystone corpus in scope. Throws on any
@@ -682,7 +988,8 @@ elab "#free_conclusion_selftest" : command =>
     let ws : Array FreeWitness ← deriveWitnesses
     selfTest ws
     logInfo s!"free-conclusion SELF-TEST PASS — {sentinelWitnesses.length} sentinel witness(es) \
-      rediscovered, {witnessSpecimenVerdicts.length} discrimination verdict(s) held, \
+      rediscovered, {bareSentinelWitnesses.length} of them still arming a BARE pattern, \
+      {witnessSpecimenVerdicts.length} discrimination verdict(s) held, \
       {classifierSpecimenVerdicts.length} classifier verdict(s) held, over {ws.size} derived \
       witnesses.").run'
 
@@ -692,7 +999,8 @@ elab "#free_conclusion_witnesses" : command =>
   liftTermElabM <| (do
     let ws : Array FreeWitness ← deriveWitnesses
     let wlines := String.intercalate "\n" (ws.toList.map fun (w : FreeWitness) =>
-      s!"  {w.thm}  [{w.shape}]  heads: {w.heads.toList}")
+      s!"  {w.thm}  [{w.shape}]  heads: {w.heads.toList}\n     bare: \
+{if w.bareHeads.isEmpty then "(none — arms no bare pattern)" else toString w.bareHeads.toList}")
     logInfo s!"free-conclusion DERIVED WITNESSES ({ws.size})\n{wlines}").run'
 
 end Dregg2.Verify.FreeConclusionRatchet
