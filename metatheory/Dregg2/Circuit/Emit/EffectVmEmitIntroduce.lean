@@ -316,8 +316,17 @@ theorem introduceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-theorem introduceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+/-- The descriptor-level anti-ghost, UNCONDITIONAL: two satisfying `introduce` rows publishing the SAME
+`NEW_COMMIT` public input EITHER have identical absorbed after-blocks OR exhibit a genuine
+deployed-sponge collision at the pair `transferCollFind` names.
+
+⚑ CUT OVER 2026-08-01 off `Poseidon2SpongeCR`, PROVED FALSE at deployed BabyBear parameters by
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — the old form was vacuous where the prover runs.
+The replacement (`absorbed_determined_by_commit_or_collides`) was ALREADY PROVED and already used by the
+sibling effects; this declaration was left behind by that cutover. A consumer wanting the bare equality
+applies `Poseidon2Binding.spongeColl_refutable_of_injective`; no local `_of_CR` twin is minted, so this
+is a NET carrier decrease and not a `#floor_ratchet` accrual. -/
+theorem introduceDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash introduceVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash introduceVmDescriptor e₂ true true)
@@ -329,7 +338,7 @@ theorem introduceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
       ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ introduceHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ introduceHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash introduceVmDescriptor e true true →
@@ -359,7 +368,7 @@ theorem introduceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     obtain ⟨l₁, u₁⟩ := hcanon₁
     obtain ⟨l₂, u₂⟩ := hcanon₂
     omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — the cap-table grant (OFF-ROW), via `introduceA_full_sound`. -/
 
@@ -604,7 +613,7 @@ theorem introduceNonAmp_rejects_amplify (env : Dregg2.Circuit.Emit.EffectVmEmit.
 #assert_axioms introduceVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms introduceDescriptor_full_sound
-#assert_axioms introduceDescriptor_commit_binds_state
+#assert_axioms introduceDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_introduce
 #assert_axioms unify_introduce_via_full_sound
 #assert_axioms goodIntroduceRow_realizes_intent

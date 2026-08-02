@@ -318,8 +318,17 @@ theorem revokeDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
-theorem revokeDescriptor_commit_binds_state (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash)
+/-- The descriptor-level anti-ghost, UNCONDITIONAL: two satisfying `revokeDelegation` rows publishing the SAME
+`NEW_COMMIT` public input EITHER have identical absorbed after-blocks OR exhibit a genuine
+deployed-sponge collision at the pair `transferCollFind` names.
+
+⚑ CUT OVER 2026-08-01 off `Poseidon2SpongeCR`, PROVED FALSE at deployed BabyBear parameters by
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — the old form was vacuous where the prover runs.
+The replacement (`absorbed_determined_by_commit_or_collides`) was ALREADY PROVED and already used by the
+sibling effects; this declaration was left behind by that cutover. A consumer wanting the bare equality
+applies `Poseidon2Binding.spongeColl_refutable_of_injective`; no local `_of_CR` twin is minted, so this
+is a NET carrier decrease and not a `#floor_ratchet` accrual. -/
+theorem revokeDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
       ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
@@ -328,7 +337,7 @@ theorem revokeDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hsat₁ : satisfiedVm hash revokeVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash revokeVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
-    absorbedCols e₁ = absorbedCols e₂ := by
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ := by
   have hs₁ : siteHoldsAll hash e₁ revokeHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ revokeHashSites := hsat₂.2.1
   -- The last-row PI pin fires mod-p (the deployed field constraint).
@@ -360,7 +369,7 @@ theorem revokeDescriptor_commit_binds_state (hash : List ℤ → ℤ)
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
     obtain ⟨k, hk⟩ := Int.modEq_iff_dvd.mp hmod
     omega
-  exact absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — the cap-table edge removal (OFF-ROW), via `revokeDelegationA_full_sound`.
 
@@ -586,7 +595,7 @@ theorem revokeNonAmp_rejects_amplify (env : Dregg2.Circuit.Emit.EffectVmEmit.VmR
 #assert_axioms revokeVm_rejects_nonce_freeze
 #assert_axioms intent_to_cellSpec
 #assert_axioms revokeDescriptor_full_sound
-#assert_axioms revokeDescriptor_commit_binds_state
+#assert_axioms revokeDescriptor_commit_binds_state_or_collides
 #assert_axioms unify_revoke
 #assert_axioms unify_revoke_via_full_sound
 #assert_axioms goodRevokeRow_realizes_intent

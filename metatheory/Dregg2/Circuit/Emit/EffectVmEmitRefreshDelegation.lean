@@ -66,7 +66,7 @@ system. It is DELETED and replaced by `delegRoot_binds_under_commit_or_collides`
 branches NAME the colliding pair a total extractor returns (`CellCommitSColl` at the commitment
 absorption, `RootsColl` at the ordered root list). `delegRoot_binds_under_commit_of_injective` recovers
 the old statement as exactly the injective special case. The remaining `Poseidon2SpongeCR` uses in this
-file are on the STATE-BLOCK teeth (`refreshDescriptor_commit_binds_state`), a separate leg.
+file are on the STATE-BLOCK teeth (`refreshDescriptor_commit_binds_state_or_collides`), a separate leg.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
@@ -83,7 +83,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gNonce gCapPass site0 site1 site2 site3 transitionAll boundaryFirstPins
    boundaryLastPins transferHashSites gate_modEq_iff not_modEq_zero_of_canon eqToModEq)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit_of_injective)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+  (CellState absorbedCols absorbed_determined_by_commit_or_collides TransferColl)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
@@ -309,16 +310,23 @@ theorem refreshDescriptor_full_sound (env : VmRowEnv) (pre post : CellState)
 /-- The refresh hash sites ARE the transfer keystone's (same 4-site chain). -/
 theorem refreshHashSites_eq : refreshVmDescriptor.hashSites = transferHashSites := rfl
 
-/-- **`refreshDescriptor_commit_binds_state`** — two refresh rows that satisfy the hash sites and publish
-equal `state_commit`s have identical absorbed columns (the post-state, `cap_root` included). So a prover
-cannot tamper any absorbed cell while keeping the published commitment. -/
-theorem refreshDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- The descriptor-level anti-ghost, UNCONDITIONAL: two satisfying `refreshDelegation` rows publishing the SAME
+`NEW_COMMIT` public input EITHER have identical absorbed after-blocks OR exhibit a genuine
+deployed-sponge collision at the pair `transferCollFind` names.
+
+⚑ CUT OVER 2026-08-01 off `Poseidon2SpongeCR`, PROVED FALSE at deployed BabyBear parameters by
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` — the old form was vacuous where the prover runs.
+The replacement (`absorbed_determined_by_commit_or_collides`) was ALREADY PROVED and already used by the
+sibling effects; this declaration was left behind by that cutover. A consumer wanting the bare equality
+applies `Poseidon2Binding.spongeColl_refutable_of_injective`; no local `_of_CR` twin is minted, so this
+is a NET carrier decrease and not a `#floor_ratchet` accrual. -/
+theorem refreshDescriptor_commit_binds_state_or_collides (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ transferHashSites)
     (hs₂ : siteHoldsAll hash e₂ transferHashSites)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
-    absorbedCols e₁ = absorbedCols e₂ :=
-  absorbed_determined_by_commit_of_injective hash hCR e₁ e₂ hs₁ hs₂ hcommit
+    absorbedCols e₁ = absorbedCols e₂ ∨ TransferColl hash e₁ e₂ :=
+  absorbed_determined_by_commit_or_collides hash e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §7 — THE DELEG SYSTEM-ROOT (STAGE 3): binding the touched `delegations` field.
 
@@ -765,7 +773,7 @@ theorem refreshNonAmp_rejects_amplify (env : Dregg2.Circuit.Emit.EffectVmEmit.Vm
 #assert_axioms refreshVm_rejects_wrong_output
 #assert_axioms intent_to_refreshCellSpec
 #assert_axioms refreshDescriptor_full_sound
-#assert_axioms refreshDescriptor_commit_binds_state
+#assert_axioms refreshDescriptor_commit_binds_state_or_collides
 #assert_axioms delegRoot_moves_under_spec
 #assert_axioms delegRoot_binds_under_commit_or_collides
 #assert_axioms delegRoot_binds_under_commit_of_injective

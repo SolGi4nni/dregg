@@ -58,7 +58,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins transferHashSites boundaryLast_pins)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbed_determined_by_commit_of_injective)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
 open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
   (baseAbsorbedCols RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds_or_collides
    wide_rejects_root_tamper_or_collides WideColl RootsColl wideHashSites)
