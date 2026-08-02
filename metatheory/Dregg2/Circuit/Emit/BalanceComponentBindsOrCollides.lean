@@ -31,7 +31,7 @@ commitment side: **do not assume the collision away — hand it back.**
     equality and, in the failing branch, RETURNS the collision it was handed; `encodes` reads the
     digest equality straight out of either disjunct.
   * `balanceEFree` (§3) — transfer's spec at that component, through `Inst.Transfer.balanceEOf`, so
-    the view / log / 17-clause rest frame / guard sub-system are literally the SAME OBJECT as
+    the view / log / 18-clause rest frame / guard sub-system are literally the SAME OBJECT as
     `balanceE`'s and cannot drift from it.
   * `apexFree_or_collides` and `apexFree_iff_balanceMovementSpec` (§4) — the collapse. The first is
     HYPOTHESIS-FREE and disjunctive; the second takes `¬ BalColl D` at the ONE pair this witness
@@ -148,7 +148,7 @@ def balComponentFree (D : (CellId → AssetId → ℤ) → ℤ) :
 /-! ## §3 — transfer's spec at that component. -/
 
 /-- **`balanceEFree`** — transfer's `EffectSpec2` with the floor-free `bal` component. Reached
-through `Inst.Transfer.balanceEOf`, so the view, the growing log, the 17-clause rest frame and the
+through `Inst.Transfer.balanceEOf`, so the view, the growing log, the 18-clause rest frame and the
 whole `propBit` guard sub-system are THE SAME OBJECT `balanceE` uses; there is no second frame to
 drift. It takes no injectivity hypothesis, at all. -/
 def balanceEFree (D : (CellId → AssetId → ℤ) → ℤ) : EffectSpec2 RecChainedState BalanceArgs :=

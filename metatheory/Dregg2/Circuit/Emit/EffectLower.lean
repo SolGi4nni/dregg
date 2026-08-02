@@ -44,9 +44,9 @@ one, not a fourth private copy). Three stages:
 
 `transferLoweredDesc` IS `lowerEffect` applied to transfer's `EffectSpec2` (`transferLoweredDesc_is_lowering`,
 by `rfl`). It is **NOT** byte-equal to the deployed transfer AIR, and it cannot be, because
-transfer's `EffectSpec2` carries no arithmetic to lower: `Inst/transfer.lean:99` commits the whole
-6-conjunct `admitGuardA` as ONE `propBit` column asserted `= 1`, and `Inst/transfer.lean:118`
-carries the ledger through an ABSTRACT injective digest `D`. §5 measures the gap with executed
+transfer's `EffectSpec2` carries no arithmetic to lower: `Inst.Transfer.balanceGuardGates` commits
+the whole 6-conjunct `admitGuardA` as ONE `propBit` column asserted `= 1`, and the ledger goes
+through an ABSTRACT digest `D`. §5 measures the gap with executed
 `#guard`s (11 constraints vs 36; width 72 vs 188; 0 hash sites vs 4; 0 ranges vs 2) against the
 bare v1 `def`, records the committed bytes of the LIVE registry member (**1874 wide, 663
 constraints**), and `lowered_json_ne_deployed_json` REFUTES byte-equality as a theorem.
@@ -54,11 +54,19 @@ constraints**), and `lowered_json_ne_deployed_json` REFUTES byte-equality as a t
 What IS proved is the refinement (`transferLowered_refines_balanceMovement`): the descriptor this
 pass EMITS forces the same `BalanceMovementSpec` the deployed one does. Same spec, different
 mechanism, and the deployed descriptor carries strictly more (§5's `deployedExtra` doc).
-⚑ It does NOT route through `Inst.Transfer.transfer_full_sound`, because that carries
-`logHashInjective`, which `StateCommit.lean:251` PROVES FALSE at deployed BabyBear — a theorem
-under it says nothing about the shipping system. §6 calls `effect2_circuit_full_sound` directly at
-the ported `¬ LogColl` side condition instead: refutable, at the one pair of logs the witness
-supplies, and strictly stronger by `LogCommitRegrounded.noLogColl_of_inj`.
+⚑ IT ROUTES AROUND BOTH REFUTED DIGEST FLOORS. It does NOT go through
+`Inst.Transfer.transfer_full_sound`, which carries `logHashInjective` (`StateCommit.lean:251` PROVES
+it FALSE at deployed BabyBear); §6 calls `effect2_circuit_full_sound` directly at the ported
+`¬ LogColl` side condition — refutable, at the one pair of logs the witness supplies, and strictly
+stronger by `LogCommitRegrounded.noLogColl_of_inj`. ⚠ AND IT NO LONGER BINDS `balanceE`'s
+`Function.Injective D` (2026-08-02). It did when it landed, and this header called that portal
+unrefuted: `Verify.InjSpelledFloors.balDigest_not_injective` refutes it by CARDINALITY — an
+uncountable function space into a countable `ℤ`, false at every parameter — so all three transfer
+keystones here were VACUOUS and `#floor_ratchet` said so. §4/§6 are now stated at
+`Emit.BalanceComponentBindsOrCollides.balanceEFree`, whose `bal` component proves `binds`/`encodes`
+with NO hypothesis on `D`, and the residual is the per-pair `¬ BalColl` (or, in
+`transferLowered_refines_balanceMovement_or_collides`, no residual at all — the collision is handed
+back in the conclusion).
 
 ## ⚑ PHASE 2 (2026-08-01) — the SOURCE was widened, and one deployed descriptor is now BYTE-EXACT
 
@@ -250,7 +258,7 @@ theorem satisfied_of_lowered {St Args : Type} (name : String) (E : EffectSpec2 S
 
 Transfer's `EffectSpec2` is `Emit.BalanceComponentBindsOrCollides.balanceEFree` — transfer's spec at
 the FLOOR-FREE `bal` component, reached through the component-parametric
-`Inst.Transfer.balanceEOf`, so its view / growing log / 17-clause rest frame / `propBit` guard
+`Inst.Transfer.balanceEOf`, so its view / growing log / 18-clause rest frame / `propBit` guard
 sub-system are literally the SAME OBJECT `Inst.Transfer.balanceE` uses. Its derived circuit is
 `balanceGuardGates ++ [cE2RestF, cE2Bind, cE2Log]` — the single `propBit` guard gate at wire `0`
 plus the three digest EQ gates. `transferLoweredDesc` is the pass's output on exactly that, and

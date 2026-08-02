@@ -4,13 +4,14 @@
 `balanceA` is the single-component per-asset VALUE-MOVEMENT constructor of `FullActionA`: the unified
 action executor dispatches `.balanceA t a` to `recCexecAsset s t a`, which (on its admissibility guard)
 rewrites ONLY the per-asset ledger `bal : CellId → AssetId → ℤ` — debiting `(src,a)` and crediting
-`(dst,a)` via `recTransferBal` — prepends the turn `t` to the receipt log, and freezes the 16 non-`bal`
+`(dst,a)` via `recTransferBal` — prepends the turn `t` to the receipt log, and freezes the 18 non-`bal`
 kernel fields. It is the canonical "transfer" effect (`Dregg2/Circuit/StateCommit.lean` proved this
 SAME movement bespoke; this is its THIN v2 instance through the generic framework).
 
 Structurally it is NEAR-IDENTICAL to the `burnA` worked template (`Dregg2/Circuit/Inst/burnA.lean`) —
-the SAME touched component (`bal`, a `funcComponent` over the whole-ledger function = the realizable
-whole-function injective digest), the SAME growing log, the SAME `RestIffNoBal` frame portal (reused
+the SAME touched component (`bal`, a `funcComponent` over the whole-ledger function — whose
+injective-digest carrier is REFUTED BY CARDINALITY, `Verify.InjSpelledFloors.balDigest_not_injective`;
+see `balComponent` and the floor-free `Emit.BalanceComponentBindsOrCollides`), the SAME growing log, the SAME `RestIffNoBal` frame portal (reused
 from `EffectCommit2` — no new `RestIffNo*` needed) — differing ONLY in (1) the spec-predicted ledger
 value is the debit/credit movement `recTransferBal bal src dst a amt` (not the burn's `recBalCredit …
 (-amt)`), (2) the guard is the 6-conjunct `admitGuardA` (authority ∧ non-negativity ∧ per-asset
@@ -23,7 +24,7 @@ full-state witness for `balanceE` proves the complete declarative `BalanceMoveme
 in `Dregg2/Circuit/Spec/balancemovement.lean`, whose executor corner is `recCexecAsset_iff_spec`).
 
 The bridge `apex_iff_balanceMovementSpec` is a DIRECT identity match (no And-reassoc): the framework's
-derived `apex` for `balanceE` lays its 19 conjuncts (guard ∧ post-`bal` ∧ log ∧ 16-field frame) in the
+derived `apex` for `balanceE` lays its 21 conjuncts (guard ∧ post-`bal` ∧ log ∧ 18-field frame) in the
 VERBATIM order of `BalanceMovementSpec`. The apex's component clause is the FULL whole-function equality
 `bal = recTransferBal …`, which is EXACTLY `BalanceMovementSpec`'s `bal` clause (not a weaker subset),
 so no "subset ⇐ full-equality" weakening is needed.
@@ -69,9 +70,10 @@ theorem propBit_eq_one {p : Prop} [Decidable p] : Circuit.propBit p = 1 ↔ p :=
 /-! ## §1 — the `balanceA` instance (touched component = `bal`).
 
 `balanceA` over `RecChainedState`: the touched component is the per-asset ledger `bal` (a `funcComponent`
-whose digest is an injective whole-function hash — the realizable bar of `cellLeafInjective`); the log
-GROWS by the turn `t`; the frame is the 16 non-`bal` kernel fields (`RestIffNoBal`, reused from the
-framework — `balanceA` shares the burn/mint touched field). -/
+whose digest carries whole-function injectivity — ⚠ NOT the `cellLeafInjective` bar, and not realizable:
+it is refuted by CARDINALITY at every parameter); the log GROWS by the turn `t`; the frame is the 18
+non-`bal` kernel fields (`RestIffNoBal`, reused from the framework — `balanceA` shares the burn/mint
+touched field). -/
 
 /-- The balance-movement effect arguments: the moving turn `t` and the asset column `a`. (`Turn` carries
 `actor`/`src`/`dst`/`amt`; `a : AssetId` selects the ledger column.) -/
@@ -110,9 +112,16 @@ theorem balanceGuardLocal (a b : Assignment) (hab : ∀ w, w < 1 → a w = b w) 
       simp only [Constraint.holds, cBitGuard, vBitGuard, Expr.eval, h0] at hcc ⊢
       exact hcc
 
-/-- The `bal` component digest: an injective whole-function hash (carried `Function.Injective D`). The
-spec-predicted value is the debit/credit movement `recTransferBal bal src dst a amt` — the SOLE
-difference from `burnA`, which predicts the supply debit `recBalCredit … (-amt)`. -/
+/-- The `bal` component digest, carrying `Function.Injective D`. The spec-predicted value is the
+debit/credit movement `recTransferBal bal src dst a amt` — the SOLE difference from `burnA`, which
+predicts the supply debit `recBalCredit … (-amt)`.
+
+⚠ **THAT CARRIER IS REFUTED, AND THIS COMMENT USED TO CALL IT "REALIZABLE".** `D`'s domain is a
+FUNCTION SPACE — uncountably many ledgers into a countable `ℤ` — so
+`Verify.InjSpelledFloors.balDigest_not_injective` refutes it by CARDINALITY: no such injection
+exists at any parameters, for any hash, in any field. This is not the `cellLeafInjective` /
+Poseidon-CR bar; it is worse, and everything below that binds it is VACUOUS. The floor-free
+component is `Emit.BalanceComponentBindsOrCollides.balComponentFree`. -/
 def balComponent (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
     ActiveComponent RecChainedState BalanceArgs :=
   funcComponent (β := CellId → AssetId → ℤ) (·.bal) D hD
@@ -121,7 +130,7 @@ def balComponent (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injec
 /-- **`balanceEOf`** — transfer's `EffectSpec2` PARAMETRIC IN ITS `bal` COMPONENT.
 
 Everything the balance-movement effect's spec holds EXCEPT which `ActiveComponent` commits the
-ledger: the chained view, the growing log, the 17-clause rest frame and the whole `propBit` guard
+ledger: the chained view, the growing log, the 18-clause rest frame and the whole `propBit` guard
 sub-system. Factored out so a SECOND component — the floor-free
 `Emit.BalanceComponentBindsOrCollides.balComponentFree`, whose `binds` needs no injectivity — reaches
 the SAME spec without a second copy of the frame. Two frames that agree today are two frames that
@@ -244,11 +253,18 @@ theorem apex_iff_balanceMovementSpec (D : (CellId → AssetId → ℤ) → ℤ) 
 /-! ### §1c — THE VALIDATION: `transfer_full_sound ⇒ BalanceMovementSpec` through the framework. -/
 
 /-- **`transfer_full_sound` — the VALIDATION (balance-movement through the v2 framework).** A satisfying
-v2 full-state witness for `balanceE` proves the complete declarative `BalanceMovementSpec`. Portals:
-`RestIffNoBal RH` (the `bal`-omitting rest frame, shared with burn/mint), `logHashInjective LH` (the
-growing log), `Function.Injective D` (the `bal` component's whole-function digest — the realizable
-Poseidon-CR bar). CONCLUDES the bespoke `Spec.BalanceMovement.BalanceMovementSpec` THROUGH the generic
-`effect2_circuit_full_sound`, the circuit⟺spec corner of the balance-movement triangle. -/
+v2 full-state witness for `balanceE` proves the complete declarative `BalanceMovementSpec`. CONCLUDES
+the bespoke `Spec.BalanceMovement.BalanceMovementSpec` THROUGH the generic
+`effect2_circuit_full_sound`, the circuit⟺spec corner of the balance-movement triangle.
+
+⚠ **IT IS VACUOUS AT DEPLOYMENT AND BOTH REASONS ARE IN-TREE THEOREMS.** Portals: `RestIffNoBal RH`
+(the `bal`-omitting rest frame, shared with burn/mint — unrefuted); `logHashInjective LH`, PROVED
+FALSE at deployed BabyBear width (`StateCommit.lean:251`); and `Function.Injective D`, PROVED FALSE
+by CARDINALITY at every parameter (`Verify.InjSpelledFloors.balDigest_not_injective`). This
+doc-comment used to call the second one "the realizable Poseidon-CR bar" — it is not that bar and it
+is not realizable. The floor-free route to the SAME conclusion is
+`Emit.EffectLower.transferLowered_refines_balanceMovement` (per-pair `¬ LogColl` / `¬ BalColl`) and
+`transferLowered_refines_balanceMovement_or_collides` (no side condition at all). -/
 theorem transfer_full_sound
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
     (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
