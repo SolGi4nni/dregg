@@ -704,11 +704,12 @@ mod stepmain_tests {
     }
 
     // r8 is `finalize_other_proof`'s TAIL, and it is the rung that makes the deferred values BIND.
-    // It must be (a) strictly larger than r7, (b) Generic/Zero-ONLY on top of it (it is scalar
-    // arithmetic plus the `Field.equal` boolean gadgets - not one new curve gate, not one new
-    // Poseidon permutation), and (c) still carrying the PRIMARY_LEN public-input path whose FIRST
-    // FOUR words are now the statement's deferred values. A regression that relabelled r7 as r8
-    // would pass every prove and say nothing; this is what catches it.
+    // It must be (a) strictly larger than r7, (b) NO CURVE GATE and no new Poseidon permutation on
+    // top of it - it is scalar arithmetic, the `Field.equal` boolean gadgets, and the two
+    // `assert_128_bits` chains its own `lowest_128_bits` owes - and (c) still carrying the
+    // PRIMARY_LEN public-input path whose FIRST FOUR words are now the statement's deferred values.
+    // A regression that relabelled r7 as r8 would pass every prove and say nothing; this is what
+    // catches it.
     #[test]
     fn finalize_rung_binds_the_deferred_values() {
         let dir = fixtures_dir();
@@ -722,19 +723,34 @@ mod stepmain_tests {
             r8.num_rows,
             r7.num_rows
         );
-        // (b) Generic/Zero only: every OTHER family is unchanged.
+        // (b) NO CURVE GATE, NO NEW SPONGE: every one of those families is unchanged.
         for (ord, name) in [
             (2usize, "Poseidon"),
             (3, "CompleteAdd"),
             (4, "VarBaseMul"),
             (5, "EndoMul"),
-            (6, "EndoMulScalar"),
         ] {
             assert_eq!(
                 c7[ord], c8[ord],
                 "r8 changed the {name} family - the finalize rung is not scalar arithmetic"
             );
         }
+        // …and EXACTLY TWO further `to_field_checked` chains - 16 EndoMulScalar rows - which are
+        // the THIRD `lowest_128_bits` in the assembly: `xi_actual = lowest_128_bits (squeeze
+        // fr_sponge)` (`step_verifier.ml:820-822,1102`), whose high part `util.ml:98` asserts
+        // unconditionally and whose low part `util.ml:99` asserts because
+        // `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true`. It was +0 until
+        // 2026-08-02: R8 split a field element with NOTHING constraining either half, so any
+        // 128-bit xi the prover named satisfied `xi_correct` - and since the fold's own multiplier
+        // is `to_field_checked` of that same statement word, Fiat-Shamir was his. `==` and not
+        // `>=` so a THIRD chain appearing here is also a red.
+        assert_eq!(
+            c8[6],
+            c7[6] + 16,
+            "r8's EndoMulScalar delta is {} - expected exactly two 8-row `to_field_checked` chains \
+             (the `assert_128_bits` of BOTH parts of `xi_actual`'s `lowest_128_bits`)",
+            c8[6] - c7[6]
+        );
         // …and it really adds Generic rows (the unshifts, the two b-polynomial legs, the four
         // `Field.equal` gadgets and the `Boolean.all` mux are all double-Generic halves).
         assert!(

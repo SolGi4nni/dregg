@@ -108,32 +108,35 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              7120      7589        9252        9317
-    non-Generic         13778              6558      6560        7931        7934
+    total gates         20023              7120      7589        9252        9345
+    non-Generic         13778              6558      6560        7931        7954
     Poseidon             6292 (31.4%)      1034      1034        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       562      1029        1321        1383   —
+    Generic              6245 (31.2%)       562      1029        1321        1391   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1562      1564        1687        1690   —
+    Zero                 2246 (11.2%)      1562      1564        1687        1694   —
     VarBaseMul           1596  (8.0%)      1040      1040        1040        1040   1×1596 / 1×1040   ✓
-    EndoMulScalar         776  (3.9%)       376       376         392         392   8×28 / 8×49 ✓
+    EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       114       114         114         114   1×159 2×65 3×23
                     15×1 30×1 / 1×114
 
-⚑ MOVEMENT SINCE THE r8 COMMIT (8713 → 9317 rows), and every row of it is a retirement rather than
-scale: **+68 `Generic`** base pins (`Inner_curve.constant`, 40 in R3 + 28 verifier-key ones in R4,
-#3); **+90 `Generic`** segment-C opt-sponge mux rows (#9's second consumer); **+96 `Generic` and
-+192 `EndoMulScalar` and +48 `Zero`** for the 24 `assert_128_bits hi` chains (#1); **+52
-`VarBaseMul`, +52 `Zero`, +2 `CompleteAdd`** from `msmTerms` 38 → 40, which is the devnet Wrap
-verifier key's own `public = 40` measured off the real artifact rather than back-solved from a row
-count. `EndoMulScalar` is 49 eight-row chains where it was 25: `2·chals + 3`, upstream's own
-`squeeze_challenge` + `squeeze_scalar` arithmetic.
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9317 → 9345 rows), and every row of it is a retirement rather
+than scale: **+8 `Generic`, +16 `EndoMulScalar`, +4 `Zero`** — the two `assert_128_bits` chains of
+the assembly's THIRD `lowest_128_bits`, R8's own (`xi_actual`, `step_verifier.ml:820-822,1102`).
+That one was the residue #1 left behind, and it was the worst of the three: its high part was an
+`AOp.wit` with no defining row, so `xi_correct` accepted ANY 128-bit ξ — and §8g's chain 0 lifts
+that same statement word into the fold's own multiplier, so the prover chose
+`combined_inner_product`'s ξ outright. §12c′ exhibits the witness, shows R8's program ACCEPTS it
+(`out = 1`) and shows the new high chain REFUSES it. `EndoMulScalar` is 51 eight-row chains where it
+was 49: `2·chals + 5`, upstream's own `squeeze_challenge` + `squeeze_scalar` + `util.ml:98-99`
+arithmetic. (The commit before that took 8713 → 9317 on #3, #1 and #9's second consumer.)
 
 The RUN LENGTHS are the fidelity signal, and all six families are unchanged by R6/R7/R8: a `Poseidon`
 permutation is 11 rows (206 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
 `EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
-128-bit `to_field_checked` is 8 `EndoMulScalar` rows — **25 such chains now** (23 transcript
-challenges + §8g's deferred ξ and r), against upstream's 28 8-row runs. The `EndoMul` COUNT is 2432
+128-bit `to_field_checked` is 8 `EndoMulScalar` rows — **51 such chains now** (23 transcript
+challenges + their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own
+`lowest_128_bits` on BOTH parts), against upstream's 28 8-row runs. The `EndoMul` COUNT is 2432
 against upstream's 2465, i.e. the fold/`bullet_reduce` machinery is here at full size. Only SEVEN
 gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no range-check —
 and all seven are emitted here.
@@ -145,14 +148,14 @@ every rung
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1225     2048             960 ms              24
-    r2_challenges    1870     2048             998 ms             116
-    r3_msm           4108     8192            1280 ms             195
-    r4_ipa           6870     8192            1294 ms             346
-    r5_full          7120     8192            1313 ms             352
-    r6_ft_eval0      7589     8192            1330 ms             354
-    r7_absorption    9252    16384            1626 ms             365
-    r8_finalize      9317    16384            1638 ms             368
+    r1_transcript    1225     2048            1006 ms              24
+    r2_challenges    1870     2048            1042 ms             116
+    r3_msm           4108     8192            1297 ms             195
+    r4_ipa           6870     8192            1340 ms             346
+    r5_full          7120     8192            1352 ms             352
+    r6_ft_eval0      7589     8192            1350 ms             354
+    r7_absorption    9252    16384            1670 ms             365
+    r8_finalize      9345    16384            1667 ms             372
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -167,10 +170,10 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1383 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1391 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
 of the two `combine`s (#4), `equal_g`, `group_map`, `ft_comm`'s own MSM, `x_hat blinding` and the
-domain selection. #2–#11 below name them. ⚑ R8 spends 62 `Generic` rows on `finalize_other_proof`'s
+domain selection. #2–#11 below name them. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
 tail. That is the trade this file is supposed to be making: every commit here should be buying a
 named simplification, not scale.
 
@@ -207,8 +210,19 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      `hi' = (squeeze − lo')·2^{−128}` and the Fiat-Shamir challenge is his. §12c exhibits that exact
      witness, shows it satisfies the decomposition row, shows the LOW chain accepts it, and shows the
      new HIGH chain refuses it (`hi' ≥ 2¹²⁸`, so its own `EndoMulScalar` fold cannot reconstruct it).
-     ⚠ Residue: the THIRD `lowest_128_bits` in the assembly — the split of the fr-sponge's FIRST
-     squeeze inside R8's compiled finalize program, for `xi_correct` — still has no high chain.
+     ⚑ **AND THE THIRD SITE IS NOW CLOSED TOO (2026-08-02).** The residue this entry carried read:
+     "the THIRD `lowest_128_bits` — the split of the fr-sponge's FIRST squeeze inside R8's compiled
+     finalize program, for `xi_correct` — still has no high chain." It was the WORST of the three,
+     because §8g's chain 0 lifts the very statement word `xi_correct` compares against INTO THE FOLD:
+     a prover who chose ξ chose `combined_inner_product`'s own multiplier. R8's `hi` was an `AOp.wit`
+     — a cell no row defines — so `xi_actual = squeeze − 2¹²⁸·hi` could be made ANY 128-bit value.
+     Both chains are now emitted (`util.ml:98` asserts `hi` unconditionally, `:99` asserts `lo`
+     because `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true`,
+     `step_verifier.ml:821-822`), wired to the compiled program's OWN cells. §12c′ exhibits the
+     forged ξ, shows R8's program ACCEPTS it (`out = 1`, `xi_correct = 1`, `xi_actual` = the chosen
+     ξ) and that the fold's multiplier and `combined_inner_product` both MOVE under it, and shows the
+     new high chain REFUSES it. All three `lowest_128_bits` in the assembly are now range-checked on
+     both parts, so **no Fiat–Shamir value in this circuit is prover-chosen.**
   2. All MSM scalars are assembled at the 128-bit width (54-row `scale_fast2`). Upstream's
      `multiscale_known` runs `~num_bits:Field.size_in_bits` = 255 for a `Field` scalar
      (`step_verifier.ml:165-172`) and `ft_comm`'s 8 `scale_fast2`s are 255-bit too
@@ -265,7 +279,7 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      `should_verify` mux left this list on 2026-08-02 — they are R8.)
   6. Every challenge is derived at ONE width (128 bits, 8 `EndoMulScalar` rows). Upstream also uses
      16/32/64/192/256-bit `to_field_checked` (the 1/2/4/12/16-row runs in the table). ⚑ Since #1 the
-     assembly emits `2·chals + 3` chains where it emitted `chals + 2`, so the 8-row family is now
+     assembly emits `2·chals + 5` chains where it emitted `chals + 2`, so the 8-row family is now
      over-represented rather than under-; the missing WIDTHS are still missing.
   7. ⚑ **RETIRED 2026-08-02.** `to_field_checked` is the `EndoMulScalar` chain, then
      `Field.Assert.equal n scalar`, then **`Field.(scale a endo + b)`** (`scalar_challenge.ml:125-129`)
@@ -675,9 +689,17 @@ def vRLiftT (s : StepShape) (c : Nat) : PVar :=
   xv (baseRng s + c * rngStride s + 3 * (s.emsRows + 1) + 1)
 def vRLift (s : StepShape) (c : Nat) : PVar :=
   xv (baseRng s + c * rngStride s + 3 * (s.emsRows + 1) + 2)
+/-- **R8's `lowest_128_bits`, high part.** `xi_actual = lowest_128_bits (squeeze fr_sponge)`
+(`step_verifier.ml:820-822,1102`) is decomposed INSIDE the compiled finalize program (§8f), where
+its high part is an `AOp.wit` — a cell with no defining row. `Util.lowest_128_bits` asserts
+`assert_128_bits hi` UNCONDITIONALLY (`util.ml:98`), and this is that chain. -/
+def RNG_FIN_HI (s : StepShape) : Nat := s.chals + N_DEFC
+/-- **…and its LOW part.** `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true`
+(`step_verifier.ml:821-822`), so `util.ml:99` asserts the low part too. -/
+def RNG_FIN_LO (s : StepShape) : Nat := s.chals + N_DEFC + 1
 /-- One block per split source; the ξ chain's block is allocated and unused, so no id moves when a
-future rung splits it. -/
-def nRng (s : StepShape) : Nat := s.chals + N_DEFC
+future rung splits it. The last two are R8's, over the fr-sponge's FIRST squeeze. -/
+def nRng (s : StepShape) : Nat := s.chals + N_DEFC + 2
 
 def baseFtS (s : StepShape) : Nat := baseRng s + nRng s * rngStride s
 
@@ -2334,6 +2356,10 @@ structure FinSlots where
   bUsed : Nat
   permUsed : Nat
   xiActual : Nat
+  /-- ⚑ `lowest_128_bits`' HIGH part, as a program slot, so §5b's `assert_128_bits` chain can be
+  wired to the very cell the decomposition row reads. Without that chain this witness is free and
+  `xiActual` is whatever the prover wants (§12c). -/
+  xiHi : Nat
   xc : Nat
   bc : Nat
   cc : Nat
@@ -2409,7 +2435,7 @@ def finBuild (W : FinWire) (C : FinCfg) : AM FinSlots := do
   let out ← eAdd svf nsv
   let _ ← eEq out one
   pure { zetaw := zetaw, bwZeta := bw, bActual := bAct, cipUsed := cipUsed, bUsed := bUsed
-       , permUsed := permUsed, xiActual := xiAct, xc := xc, bc := bc, cc := cc, pc := pc
+       , permUsed := permUsed, xiActual := xiAct, xiHi := hi, xc := xc, bc := bc, cc := cc, pc := pc
        , finalized := fin, out := out }
 
 structure FinProg where
@@ -2547,11 +2573,23 @@ def runFin (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
   , cipShift := shiftT1 (df.ca.getLastD 0), bShift := shiftT1 (bActualOf s d df rv)
   , permShift := shiftT1 permA, xiStmt := sqv % 2 ^ 128, xiHi := sqv / 2 ^ 128 }
 
-/-- **R8's rows**: the compiled finalize program plus its σ-only probes. -/
+/-- **R8's rows**: the compiled finalize program, the TWO `assert_128_bits` chains its
+`lowest_128_bits` owes (`util.ml:98-99` — the high part unconditionally, the low part because
+`Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true`), and its σ-only probes.
+
+⚑ THE HIGH CHAIN IS THE SOUNDNESS-BEARING ONE. `hi` is an `AOp.wit`: no row defines it, so before
+this chain the decomposition `xiActual = squeeze − 2¹²⁸·hi` was ONE equation in TWO unknowns and the
+prover could hand `xi_correct` any 128-bit ξ he liked — the fold's own multiplier, since §8g's chain
+0 lifts that same statement word. §12c exhibits that witness: R8's program ACCEPTS it (`out = 1`)
+and the high chain REFUSES it. The chains' sources are the program's OWN cells, not fresh copies. -/
 def finRows (s : StepShape) (f : FtData) (fn : FinData) (wired : Bool) : List SRow :=
   let base := baseFin s f
   let V := aVarAt base fn.fp.prog
   aRows base fn.fp.prog
+  ++ rangeRows s (RNG_FIN_HI s) (V fn.fp.slots.xiHi)
+       (fn.vals.getD fn.fp.slots.xiHi 0) wired
+  ++ rangeRows s (RNG_FIN_LO s) (V fn.fp.slots.xiActual)
+       (fn.vals.getD fn.fp.slots.xiActual 0) wired
   ++ [ probeRow wired (V fn.fp.slots.finalized) (V fn.fp.slots.bActual)
      , probeRow wired (V fn.fp.slots.cipUsed) (V fn.fp.slots.xiActual)
      , probeRow wired (V fn.fp.slots.permUsed) (V fn.fp.slots.bUsed) ]
@@ -2711,9 +2749,13 @@ def circuitEnv (t : StepData) : VarEnv :=
       ++ [ (vHi s c, (hiOf s t.sp c : Int))
          , (vLiftT s c, (liftTOf s t.sp c : Int)), (vLift s c, (liftOf s t.sp c : Int)) ])
   ++ [ (vEndoR s, (ENDO_R : Int)) ]
-  -- §5b: the `assert_128_bits hi` chains — one per SPLIT source, R2's `chals` and §8g's `r`.
+  -- §5b: the `assert_128_bits hi` chains — one per SPLIT source, R2's `chals` and §8g's `r`…
   ++ (List.range s.chals).flatMap (fun c => rngEnv s c (hiOf s t.sp c))
   ++ rngEnv s (s.chals + 1) (t.defc.hi.getD 1 0)
+  -- …and R8's own `lowest_128_bits`, BOTH parts (`~constrain_low_bits:true`), over the compiled
+  -- finalize program's OWN cells rather than over a parallel computation of them.
+  ++ rngEnv s (RNG_FIN_HI s) (t.fin.vals.getD t.fin.fp.slots.xiHi 0)
+  ++ rngEnv s (RNG_FIN_LO s) (t.fin.vals.getD t.fin.fp.slots.xiActual 0)
   -- §8g: the two DEFERRED challenge chains (ξ from the statement word, r from the fr-sponge's
   -- second squeeze), each a full `to_field_checked` accumulator trace.
   ++ (List.range N_DEFC).flatMap (fun c =>
@@ -3003,20 +3045,30 @@ def totalRowsS : Nat := pubS + nRowsS
 -- FOUR sponges now: R1's transcript sponge and R7's three absorption segments.
 #guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length
         == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
--- ⚑ `2·chals + 3` `to_field_checked` chains, 8 `EndoMulScalar` rows each — and the composition of
+-- ⚑ `2·chals + 5` `to_field_checked` chains, 8 `EndoMulScalar` rows each — and the composition of
 -- that number IS the ledger of two retirements. Per transcript challenge TWO chains: the challenge
 -- itself and `lowest_128_bits`' `assert_128_bits hi` (#1). Plus §8g's ξ (one, no split) and its r
--- (two: the challenge and its high part). Upstream's own arithmetic, `squeeze_challenge` +
+-- (two: the challenge and its high part). Plus R8's own `lowest_128_bits` of the fr-sponge's FIRST
+-- squeeze — TWO, because `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true` and
+-- `util.ml:98-99` then asserts BOTH parts. Upstream's own arithmetic, `squeeze_challenge` +
 -- `squeeze_scalar`.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMulScalar)).length
-        == (2 * shapeSmoke.chals + 3) * shapeSmoke.emsRows
+        == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows
 -- …stated the other way, so a chain that vanished cannot hide inside the arithmetic: the range
--- chains are `chals + 1` of the total.
+-- chains are `chals + 3` of the total.
 #guard ((List.range shapeSmoke.chals).flatMap
           (fun c => rangeRows shapeSmoke c (vHi shapeSmoke c) (hiOf shapeSmoke tS.sp c) true)).length
         == shapeSmoke.chals * (shapeSmoke.emsRows + 6)
 #guard (rangeRows shapeSmoke (shapeSmoke.chals + 1) (vDHi shapeSmoke 1)
           (tS.defc.hi.getD 1 0) true).length == shapeSmoke.emsRows + 6
+-- ⚑ …and R8's TWO, which is the third `lowest_128_bits` in the assembly. Stated as an EQUALITY on
+-- the emitted sub-list: `finRows` is `aRows` + these two chains + three probes, so a deleted chain
+-- moves this number rather than hiding behind another consumer of the same variable.
+#guard (finRows shapeSmoke tS.ft tS.fin true).length
+        == (aRows (baseFin shapeSmoke tS.ft) tS.fin.fp.prog).length
+           + 2 * (shapeSmoke.emsRows + 6) + 3
+#guard nRng shapeSmoke == shapeSmoke.chals + 4
+#guard RNG_FIN_LO shapeSmoke == RNG_FIN_HI shapeSmoke + 1
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
         == shapeSmoke.msmTerms * shapeSmoke.msmChunks
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMul)).length
@@ -3471,6 +3523,87 @@ def forgedHi : Nat := fMul (fSub (sqOf 0) forgedLo) INV_TWO128
 -- …and §8g's ξ chain has NO high part at all, because its source is already a `Challenge.t` —
 -- upstream splits nothing there either (`let xi = scalar xi`).
 #guard (classCells posS (vDHi shapeSmoke 0)).length == 0
+
+-- ── §12c′ — ⚑ THE THIRD `lowest_128_bits`: R8's, AND IT WAS THE WORST OF THE THREE ─────────────
+-- The two above are R2's transcript squeezes and §8g's `r`. The THIRD lives INSIDE the compiled
+-- finalize program (§8f): `xi_actual = lowest_128_bits (squeeze fr_sponge)`
+-- (`step_verifier.ml:820-822,1102`), where the high part is an `AOp.wit` — a cell NO row defines.
+-- It is the worst of the three because §8g's chain 0 lifts the very word `xi_correct` compares
+-- against INTO THE FOLD, so a prover who chooses ξ chooses `combined_inner_product`'s multiplier.
+
+/-- R8's own `lowest_128_bits` cells, as circuit variables. -/
+def finHiVar : PVar := aVarAt (baseFin shapeSmoke tS.ft) tS.fin.fp.prog tS.fin.fp.slots.xiHi
+def finLoVar : PVar := aVarAt (baseFin shapeSmoke tS.ft) tS.fin.fp.prog tS.fin.fp.slots.xiActual
+
+/-- Re-run R8's finalize program with a CHOSEN ξ: the statement word set to `xi'` and
+`lowest_128_bits`' high part set to `hi'`. Every other input, and every `Field.equal` witness, is
+the honest one — so what this measures is whether R8's own gadget accepts, not whether some other
+leg was sabotaged. Returns `(out, xi_correct, xi_actual)`; `out` is the value the rung's last row
+ASSERTS equals 1. -/
+def finAtChosenXi (xi' hi' : Nat) : Nat × Nat × Nat :=
+  let s := shapeSmoke
+  let env := (finInputEnv s tS.sp tS.ft tS.df tS.segB tS.specB rFoldS).map
+    (fun p => if p.1 == vXiStmt s then (p.1, (xi' : Int)) else p)
+  let p := finProgOf (finWireOf s tS.ft) (finCfgOf s hi')
+  let vs := aEval (envLookupAt (envIndex env)) p.prog
+  (vs.getD p.slots.out 0, vs.getD p.slots.xc 0, vs.getD p.slots.xiActual 0)
+
+/-- ⚑ THE FORGERY R8's MISSING HIGH CHAIN ALLOWED: the prover names the ξ he wants and the
+decomposition row hands back the high part that makes `xi_correct` hold. -/
+def forgedXi : Nat := (tS.fin.xiStmt + 1) % 2 ^ 128
+def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
+
+-- The forged pair satisfies R8's decomposition EXACTLY as the honest pair does…
+#guard fAdd forgedXi (fMul TWO128 forgedXiHi) == sq1S % pN
+#guard fAdd tS.fin.xiStmt (fMul TWO128 tS.fin.xiHi) == sq1S % pN
+-- …the forged ξ is a legal `Challenge.t`, so §8g's chain 0 (`Field.Assert.equal n scalar`, no
+-- split) reconstructs it and the FOLD accepts it as its multiplier…
+#guard forgedXi < 2 ^ 128
+#guard ((emsAccs shapeSmoke forgedXi).getLastD (0, 2, 2)).1 == forgedXi
+-- …and it is a DIFFERENT ξ from the honest one.
+#guard forgedXi != tS.fin.xiStmt
+
+-- ⚑⚑ **THE EXHIBIT: R8's PROGRAM ACCEPTS IT.** `out = 1` — the value the rung's last row asserts —
+-- with `xi_correct = 1` and `xi_actual` equal to the ξ the prover named. Every other leg honest.
+#guard finAtChosenXi forgedXi forgedXiHi == (1, 1, forgedXi)
+-- …and the honest pair does the same, so the helper is measuring the gadget and not a broken input.
+#guard finAtChosenXi tS.fin.xiStmt tS.fin.xiHi == (1, 1, tS.fin.xiStmt)
+-- ⚑ …and the forgery is NOT a no-op: the fold's own multiplier moves, and so does
+-- `combined_inner_product` — this is Fiat-Shamir becoming prover-chosen, not a relabelling.
+#guard (Dregg2.Circuit.Emit.KimchiVerify.endoMap ((ENDO_R : Nat) : ZMod pN) forgedXi
+         == foldMulOf sq1S) == false
+#guard (Dregg2.Circuit.Emit.KimchiVerify.cipR
+          (Dregg2.Circuit.Emit.KimchiVerify.endoMap ((ENDO_R : Nat) : ZMod pN) forgedXi)
+          (foldMulOf sq2S)
+          (tS.df.ez.map (fun n => (n : ZMod pN))) (tS.df.ew.map (fun n => (n : ZMod pN)))
+        == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
+             (tS.df.ez.map (fun n => (n : ZMod pN)))
+             (tS.df.ew.map (fun n => (n : ZMod pN)))) == false
+
+-- ⚑⚑ **AND THE NEW HIGH CHAIN REFUSES IT.** The forced high part does not fit in 128 bits, so its
+-- `EndoMulScalar` fold cannot reconstruct it and the chain's `Field.Assert.equal n scalar` fails.
+-- Accepted before, REFUSED after — the same shape §12c has for R2.
+#guard 2 ^ 128 ≤ forgedXiHi
+#guard ((emsAccs shapeSmoke forgedXiHi).getLastD (0, 2, 2)).1 != forgedXiHi
+-- …and the chain is SATISFIABLE: the honest high part fits and its own chain reconstructs it, as
+-- does the honest low part (`~constrain_low_bits:true` asserts that one too, `util.ml:99`).
+#guard tS.fin.xiHi < 2 ^ 128 && tS.fin.xiStmt < 2 ^ 128
+#guard ((emsAccs shapeSmoke tS.fin.xiHi).getLastD (0, 2, 2)).1 == tS.fin.xiHi
+#guard ((emsAccs shapeSmoke tS.fin.xiStmt).getLastD (0, 2, 2)).1 == tS.fin.xiStmt
+-- …and the split is doing work: the squeeze is NOT already 128 bits, so `hi ≠ 0`.
+#guard tS.fin.xiHi != 0
+
+-- ⚑ …and the chains are wired to the PROGRAM's OWN cells, not to fresh copies. `hi` is an
+-- `AOp.wit`: with the chain gone its class is ONE cell (the `hi·2¹²⁸` multiply that reads it) and
+-- nothing else in the assembly touches it — so this equality, unlike a floor, cannot survive the
+-- chain's deletion.
+#guard (classCells posS finHiVar).length == 2
+-- `xi_actual`'s four: the `sub` row that defines it, `xi_correct`'s own difference row, its σ-only
+-- probe, and the new low chain's tie.
+#guard (classCells posS finLoVar).length == 4
+-- …and they really are the finalize program's slots, not a parallel pair: the values agree.
+#guard tS.fin.vals.getD tS.fin.fp.slots.xiHi 0 == tS.fin.xiHi
+#guard tS.fin.vals.getD tS.fin.fp.slots.xiActual 0 == tS.fin.xiStmt
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
@@ -4011,13 +4144,25 @@ def posAt (k : Rung) : List (PVar × Cell) :=
 -- …and R7 adds TWO: `r_actual`'s own chain and the `assert_128_bits` of its high part.
 #guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
         == (2 * shapeSmoke.chals + 3) * shapeSmoke.emsRows
+-- ⚑ …and R8 adds TWO MORE — the THIRD `lowest_128_bits`, `xi_actual`'s, both parts (§12c′). This is
+-- the pin that would have caught the hole: before it landed, R8's EndoMulScalar delta was ZERO and
+-- the finalize rung split a field element with nothing constraining either half.
+#guard ((rungRows tS .finalize true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
+        == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows
 
 #guard (rungRows tS .full true).length < (rungRows tS .ftEval0 true).length
 #guard (rungRows tS .ftEval0 true).length < (rungRows tS .absorb true).length
 #guard (rungRows tS .absorb true).length < (rungRows tS .finalize true).length
--- R8 is `Generic`-only over R7 (it is scalar arithmetic + the boolean gadgets).
+-- R8 over R7 is scalar arithmetic + the boolean gadgets + the two `assert_128_bits` chains of its
+-- own `lowest_128_bits` (§12c′) — so `Generic`/`Zero`/`EndoMulScalar` and NOT ONE CURVE GATE. It
+-- was `Generic`/`Zero` only until the third high chain landed; that is a stated change, not drift.
 #guard ((rungRows tS .finalize true).drop (rungRows tS .absorb true).length).all
-        (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero)
+        (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero
+                  || r.kind == KGateType.endoMulScalar)
+#guard (List.range 4).all (fun i =>
+  let k : KGateType := [KGateType.completeAdd, .varBaseMul, .endoMul, .poseidon].getD i .zero
+  ((rungRows tS .finalize true).filter (fun r => r.kind == k)).length
+    == ((rungRows tS .absorb true).filter (fun r => r.kind == k)).length)
 -- R6 is `Generic`-only (it is scalar arithmetic; every other gate family is unchanged by it).
 #guard ((rungRows tS .ftEval0 true).drop (rungRows tS .full true).length).all
         (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero)
