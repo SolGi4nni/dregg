@@ -83,7 +83,8 @@ PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep
     EndoMul                 2465 (12.3%)          2432        32×77+1×1 / 32×76    ✓ EXACT
     Zero                    2246 (11.2%)          1432        —
     VarBaseMul              1596  (8.0%)           988        1×1596    / 1×988    ✓ EXACT
-    EndoMulScalar            776  (3.9%)           184        2×42 4×25 8×28 16×3 12×2 1×2 / 8×23
+    EndoMulScalar            776  (3.9%)           184        / 8×23  — upstream also runs
+                    2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd              403  (2.0%)           112        1×159 2×65 3×23 15×1 30×1 / 1×112
 
 The RUN LENGTHS are the fidelity signal, and four of six match EXACTLY: a `Poseidon` permutation is
