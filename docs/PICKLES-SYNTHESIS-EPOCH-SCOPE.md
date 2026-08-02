@@ -727,3 +727,124 @@ matches the binprot; only the VALUES diverge.
 byte-faithful to o1js — R4b/render must regenerate R1's toy grids FROM o1js's actual rows_rev (which
 this oracle now emits) before trusting a full circuit-blobs emit. Not a bug in R1's `place` pass; its
 INPUT grids are a wire-equivalent reconstruction, not o1js's constraint system.
+
+---
+
+## §12 — The Lean-side assembly wall REMOVED (2026-08-01): five scans → five built-once indexes
+
+`3c3f61b24` landed the 132-row `step_main` MSM fragment and named the obstruction: the pure-Rust
+prover was flat across the ladder while **Lean-side assembly was quadratic**. This rung removes it.
+
+**The claim here is a COMPLEXITY claim, read off the code — not a benchmark.** Each of the five
+scans below answers a per-query question by walking a whole list, and each index answers the same
+question in O(1) after one pass. Nothing about that needs a stopwatch, and a fitted exponent taken
+on a co-tenant build box would be contention dressed as evidence.
+
+### The five scans, and what replaced them
+
+| site | was | now | built |
+|---|---|---|---|
+| `KimchiPlacement.permLookup` (via `placedWires`) | `pairs.find?` per cell, `7·nRows` cells → **O(nRows · \|pairs\|)** | `pairsByRow` + `placedWiresAt`: σ pairs bucketed by SOURCE ROW, a row reads ≤ 7 → **O(nRows)** | once per circuit |
+| `KimchiPlacement.classCells` (via `permPairs`) | one `filter` of ALL positions per variable → **O(\|vars\| · \|positions\|)** | `varBuckets`: variable → its cells, keyed by `varIx` → **O(\|positions\|)** | once per circuit |
+| `KimchiPlacement.distinctVars` | `List.dedup` = `pwFilter (· ≠ ·)` → **O(P²)** | right-to-left pass with a `varIx`-indexed seen-array → **O(P)** | once per circuit |
+| `WitnessBuilder.toGrid` | `ps.find?` per grid cell, `numCols·numRows` cells → **O(cells · \|placements\|)** | `cellIndex`: placements bucketed by row, a cell reads ~`numCols` → **O(cells + \|placements\|)** | once per circuit |
+| `WitnessBuilder.envLookup` (via `gateVarWitness`) | `env.find?` per cell, ≤ 7 per row → **O(nRows · \|env\|)** | `envIndex` + `gateVarWitnessAt`: variable → value, keyed by `varIx` → **O(nRows + \|env\|)** | once per circuit |
+
+`varIx` is `external n ↦ 2n`, `internal n ↦ 2n+1` — injective, so one bucket array separates every
+variable with no collision to resolve (its own `#guard`).
+
+⚑ **`Array`, deliberately NOT `Std.HashMap`.** `Array.replicate` / `modify` / `getD` / `set!` all
+reduce in the **kernel**, so `caseA_wires_match_o1js`, `caseB_wires_match_o1js`,
+`caseB_sigma_is_permutation` and `sharedGrid_copy_perm_holds` still hold **`by decide`, on the same
+definitions the interpreter runs**. `Std.HashMap` would have forced those theorems onto an
+`implemented_by`/`csimp` split — a trusted compiler directive standing where a kernel check stands.
+
+⚑ **The fifth scan (`envLookup`) was not in the original list.** Indexing `place` and `toGrid` did
+not make assembly linear; it left `O(nRows · |env|)` as the whole cost, since `|env|` grows with the
+circuit (one entry per variable, one variable per wire). Shipping the first four and filing the fifth
+as a later phase would have been a containment. It is fixed in the same rung, and doing so required
+editing one consumer (`KimchiComposeStepFragment.fragWitness`, two lines) that the lane brief marked
+read-only — said out loud rather than absorbed.
+
+### ⚑ NOTHING EMITTED MOVES — the gate, and it is load-independent
+
+1. **The pre-optimization definitions are RETAINED as differential references** — `placeSpec`,
+   `permPairsSpec`, `distinctVarsSpec`, `toGridSpec`, `gateVarWitness`/`envLookup` — not as
+   compatibility no-ops but as what new `#guard`s pin the indexed forms against: a 60-row synthetic
+   circuit (cross-row classes, both `varIx` parities, repeated variables inside a row, unwired holes)
+   at `public_input_size` **0 and 3**; a 40-row grid probe where every cell is placed twice with
+   different values; a 200-entry env holding both `PVar` constructors, every variable duplicated,
+   plus an absent one.
+2. **Those differentials go RED, shown in-file.** A one-variable mis-placement makes indexed and
+   scanning placement disagree; reversing the placement list or the env — which flips which duplicate
+   wins — makes indexed and scanning results disagree. So FIRST-WINS order really is preserved and
+   the `==` is not two spellings of one traversal.
+3. **THIRTEEN emitted fixtures re-emit BYTE-IDENTICAL**, emitted on hbox from a
+   `scripts/dregg-clean-build` worktree — a different box from the one that produced the references:
+
+   | fixture | sha1 (unchanged) |
+   |---|---|
+   | `stepfragment.json` (105 KB, 132 rows, 4 gate types) | `927bb0f6d9f93077dfe67935c600e74cd07439d5` |
+   | `stepfragment_unwired.json` | `42414555e92177ede9dd43102aeb09081c7c222c` |
+   | `compose_msm.json` / `_unwired` | `a89288950c80cb170c17bd4790d989429cc65358` / `a2a61eb428e13b72afe0def65a80e13dcdaa301f` |
+   | `complete_add` / `endo_mul` / `endo_mul_scalar` / `var_base_mul` | `4b9239e0…` / `949c61ad…` / `73950a80…` / `311cb880…` |
+   | `poseidon.json` | `6999ccd65af460ff89a04be9cd29944a76dc1510` |
+   | PI lane: `pi_mul_a` / `pi_mul_b` / `pi_nowire` | `f56642d7…` / `7a043f5d…` / `24e978fc…` |
+   | PI lane: **`pi_wide.json` — `pubSize = 67`, step_main's real `PRIMARY_LEN`** | `48bcddf954706332187baf2db47598be33c9ed84` |
+
+4. **`scripts/pickles-synthesis-oracles.sh` exits 0** — the live o1js 2.15.0 placement diff is
+   byte-exact and its RED path bites (flip a value → RED, drop the tail → RED).
+5. **`dregg-clean-build Dregg2.PicklesSynthesis --host hbox` GREEN** at the committed sha, in a
+   detached `git status`-clean worktree: every `#guard` in `KimchiPlacement` / `WitnessBuilder` /
+   `KimchiComposeMSM` / `KimchiComposeStepFragment` / `KimchiRender*` passes unchanged.
+
+**Anecdote, explicitly not evidence:** on a contended hbox the 4058-row shape (K=40 C=48 E=96 — a
+rung above anything `3c3f61b24` measured) assembles in a fraction of a second of CPU per phase, and
+`pi_wide` at `pubSize = 67` emits without a pause. No exponent is fitted and none is claimed; the
+boxes available were at load 96–209 throughout.
+
+⚠ **A correction to the record while here.** The ladder in `3c3f61b24` is **five rungs, 13 → 27 →
+132 → 454 → 1674 rows**, and its two series are five long: `place 3/8/170/1941/25707 ms`,
+`compose 4/23/514/6075/83808 ms`. So `170/514` belong to **132** rows and the top MEASURED rung was
+**1674** (domain 2048). A 4058-row / domain-4096 rung was never measured there. Any restatement
+putting `170/514` at 454 rows is shifted by one and names a rung that does not exist.
+
+### §12a — `place`'s two public-input hazards now REFUSE
+
+Found by the public-input lane (`6203df56d`), which routed around them by hand rather than edit a
+file it did not own. Both produced a confident green. `place` is unchanged; the checks are additive.
+
+- **H1 — silent public/aux absorption.** `pubSize` and `gates` are independent and nothing
+  reconciles them. Public word `i` lives at `external i` — the ORACLE's numbering (Snarky wires
+  public row `i` col 0 to `External row`), not a dregg choice — but every existing Lean circuit here
+  numbers its OWN variables from `external 0` too. A `pubSize > 0` call on such a circuit absorbs its
+  first `pubSize` aux variables into the public input, self-consistently, and it proves *something
+  else*.
+- **H2 — inert public words.** A declared public word no gate reads gets a singleton class,
+  self-wires, is *pinned* by the σ-is-a-permutation check, and is unconstrained. A `PRIMARY_LEN`
+  mismatch is then N inert words and a green — and the two numbers are easy to swap: mina-rust
+  `crates/ledger/src/proofs/constants.rs` gives `StepTransactionProof { PRIMARY_LEN = 67, ROWS =
+  17806 }` against `WrapTransactionProof { PRIMARY_LEN = 40, ROWS = 15122 }`.
+
+`place` cannot tell H1 from correct usage — a gate reading `external 0` under `pubSize = 3` is
+exactly what a public-input consumer looks like — so the missing fact is **demanded** rather than
+guessed: `Contract { pubSize, auxBase }` plus `placeChecked : Contract → List PGate → Except
+PlaceRefusal (List PlacedGate)`, refusing with `auxOverlapsPublic` (H1), `inertPublicWord i` (H2) or
+`referenceInGap i`, and otherwise returning exactly `place pubSize gates`. `inertPublicWords` makes
+H2 **reportable**, not merely refusable. All four refusal/acceptance paths are `#guard`ed, and
+`pubSize = 0` is pinned to be byte-identical to `place`.
+
+**A rejected alternative, named:** give public words their own `PVar.public` constructor. That makes
+H1 structurally impossible — but it diverges from the transcribed Snarky `External row` the o1js byte
+pins are diffed against, and breaks the PI lane's landed circuit. The contract keeps the oracle's
+numbering and turns silent reinterpretation into refusal.
+
+### What this rung does NOT cover
+
+The unexercised patterns `3c3f61b24` listed are **unchanged** — they concern circuit CONTENT, not row
+count: no Generic gate with real coefficients is in any proved composition; Poseidon has never been
+σ-wired into another gate; the fragment allocates only `External` variables, never Snarky `Internal`
+ones; `endo_mul_scalar` is not wired to the `endo_mul` chain's `n'`. (The public-input path is no
+longer on that list — `6203df56d` proved it, and `pi_wide` at 67 words re-emits byte-identical
+here.) And this rung is a **performance and fail-closedness fix to the authoring tool**: it is not a
+soundness result, not machine-checked Pickles, and the emitted object is byte-for-byte what it was.
