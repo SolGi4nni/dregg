@@ -2971,9 +2971,14 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 -- ⚑ …and it is a WIRE, not just an arithmetic identity: the variable `cipRows` Horners over is in a
 -- σ class that also holds §8g chain 0's lift row, and the statement ξ word's class reaches THREE
 -- rows (the chain's `Field.Assert.equal`, the closing public tie, and R8's `xi_correct` gadget).
-#guard (classCells posS (vDLift shapeSmoke 0)).length ≥ 3
-#guard (classCells posS (vDLift shapeSmoke 1)).length ≥ 3
-#guard (classCells posS (vXiStmt shapeSmoke)).length ≥ 3
+-- Exact counts, not floors: ξ's class is the `cipEvals` Horner reads + its own lift row + its probe;
+-- r's is the `cipEvals` `r·evₖ(ζω)` reads + lift + probe + R8's `b_correct` read. A chain that
+-- vanished, or a fold that stopped reading it, moves these.
+#guard (classCells posS (vDLift shapeSmoke 0)).length == shapeSmoke.cipEvals + 2
+#guard (classCells posS (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 3
+-- …and the statement ξ word is read by EXACTLY three rows: §8g chain 0's `Field.Assert.equal`, the
+-- closing public tie, and R8's `xi_correct` gadget. Drop any one and this is 2.
+#guard (classCells posS (vXiStmt shapeSmoke)).length == 3
 -- …the r chain's source really is segment B's SECOND squeeze cell (a state lane the sponge rows own).
 #guard (classCells posS (frSqueeze2Var shapeSmoke)).length ≥ 2
 #guard frSqueeze2Var shapeSmoke != frSqueezeVar shapeSmoke
@@ -3328,9 +3333,14 @@ The three segments' arithmetic, against `PastaPoseidon.Ref.perm` — the same re
 #guard BRANCH_DOMAIN_LOG2 == FT_LOG2N
 -- ⚑ …and the mask VARIABLES really are wired: each reaches its §8h rows AND the opt-sponge mux rows
 -- it gates, and `branch_data` reaches §8h's pack row and the closing public tie.
-#guard (classCells posS (vMask shapeSmoke 0)).length ≥ 5
-#guard (classCells posS (vMask shapeSmoke 1)).length ≥ 5
-#guard (classCells posS (vBranch shapeSmoke)).length ≥ 2
+-- Exact: each mask bit is read by its booleanity row (3 cells), `Checked.pack` (1), its probe (1),
+-- and the THREE `Field.if_` lane-mux rows of every opt-sponge block that reads it.
+#guard (List.range 2).all (fun i =>
+  (classCells posS (vMask shapeSmoke i)).length
+    == 5 + 3 * ((List.range (nbA shapeSmoke)).filter (fun b => optProofOf shapeSmoke b == i)).length)
+#guard (classCells posS (vMask shapeSmoke 0)).length == 11
+-- …and `branch_data` is read by EXACTLY three rows: the pack row, the closing public tie, its probe.
+#guard (classCells posS (vBranch shapeSmoke)).length == 3
 #guard (exposedVars shapeSmoke).getD 4 (xv 0) == vBranch shapeSmoke
 
 -- ⚑⚑ **THE BITING RED CONTROL FOR #9.** Re-run segment A at the OTHER two legal prefix masks. `N2`
@@ -3426,11 +3436,18 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 -- a fact rather than a sentence in a header.
 def posAt (k : Rung) : List (PVar × Cell) :=
   circuitPositions (rungPub shapeSmoke k) (stepGates (rungRows tS k true))
-#guard (classCells (posAt .full) (vDLift shapeSmoke 0)).length ≥ 2
-#guard (classCells (posAt .ftEval0) (vDLift shapeSmoke 0)).length ≥ 2
-#guard (classCells (posAt .full) (vDLift shapeSmoke 1)).length ≥ 1
-#guard (classCells (posAt .absorb) (vDLift shapeSmoke 1)).length ≥ 2
-#guard (classCells (posAt .finalize) (vDLift shapeSmoke 1)).length ≥ 3
+-- ξ's class is COMPLETE at `r5_full`: nothing above r5 adds a cell to it, because its chain is
+-- already there. (A floor `≥ 2` would pass here even with the chain deleted — the fold's own reads
+-- alone give 47 — so this is stated as an EQUALITY against the top rung.)
+#guard (classCells (posAt .full) (vDLift shapeSmoke 0)).length
+        == (classCells (posAt .finalize) (vDLift shapeSmoke 0)).length
+#guard (classCells (posAt .full) (vDLift shapeSmoke 0)).length == shapeSmoke.cipEvals + 2
+-- r's is NOT: below the fr-sponge it is exactly the fold's `cipEvals` reads and NO defining row;
+-- `r7_absorption` is the rung that adds the chain's lift row and its probe.
+#guard (classCells (posAt .full) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals
+#guard (classCells (posAt .ftEval0) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals
+#guard (classCells (posAt .absorb) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 2
+#guard (classCells (posAt .finalize) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 3
 -- …and the ξ chain's `EndoMulScalar` rows are in r5 while the r chain's are not.
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
         == (shapeSmoke.chals + 1) * shapeSmoke.emsRows
