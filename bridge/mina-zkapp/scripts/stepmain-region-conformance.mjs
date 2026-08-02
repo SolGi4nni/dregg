@@ -333,7 +333,7 @@ const LEDGER = {
   // statement. ⚑ 2026-08-02: this replaced ONE opaque entry ("550 halves in 172 shapes").
   'generic/exact-value-census': {
     why: 'INSTRUMENT — the byte tripwire, not a divergence claim',
-    expect: '630/3137 halves differ by EXACT coefficient vector [be4d3f052f1eb591]; 436 of those differ '
+    expect: '630/3159 halves differ by EXACT coefficient vector [490599976224fa60]; 436 of those differ '
       + 'by SHAPE FAMILY (constants→K, sign-normalized), so 194 are the same family carrying our constants',
     note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
       + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
@@ -341,7 +341,7 @@ const LEDGER = {
   },
   'generic/empty-second-half': {
     why: 'UNRECORDED — COMPILER WASTE, classified 2026-08-02',
-    expect: '165 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
+    expect: '164 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
     note: 'A half constraining nothing. NOT a dropped constraint and NOT padding of an operand — measured by '
       + 'construction: no permutation-classed cell, no live witness value, and every host row carries a real '
       + "equation in its first half. It is our per-site packing (`packHalves`, `aRows`) against Snarky's ONE "
@@ -359,7 +359,7 @@ const LEDGER = {
   },
   'generic/fused-halves': {
     why: 'UNRECORDED — a TIGHTER encoding of the same equation, classified 2026-08-02',
-    expect: '57 [0 0 -1 1 -5] (assert_on_curve) + 16 [0 0 -1 1 1] (b_poly Horner) + 3 small-arith = 76',
+    expect: '58 [0 0 -1 1 -5] (assert_on_curve) + 16 [0 0 -1 1 1] (b_poly Horner) + 3 small-arith = 77',
     note: 'One half carrying a multiply AND its additive constant, where Snarky spends two because '
       + '`reduce_lincom` (`:1498`) folds the linear part into the CONSUMER instead. `y·y − x³ − b = 0` with '
       + 'b = PALLAS_B = 5 is one half here and `[0 0 -1 1 0]` + `[1 0 -1 0 5]` upstream (Mina emits 129 of the '
@@ -376,12 +376,12 @@ const LEDGER = {
   },
   'probe-rows': {
     why: 'header "THE σ-ONLY PROBES" (not on the #1–#11 list)',
-    expect: '480 standalone Zero rows (mina: 0)',
+    expect: '482 standalone Zero rows (mina: 0)',
     note: 'standalone `Zero` rows placed into σ classes so a flip isolates the wire. Mina has none. Spliced out here.',
   },
   'scope/unassembled-subcircuits': {
     why: '#5 group_map · equal_g · check_bulletproof `scale_fast` of sg · rule.main',
-    expect: 'Poseidon 195/572 VBM51 8/20',
+    expect: 'Poseidon 206/572 VBM51 8/20',
     note: 'Mina gadget instances with no counterpart here. SUBSET-NESS, not failure — counted so a shrinkage is visible.',
   },
 };

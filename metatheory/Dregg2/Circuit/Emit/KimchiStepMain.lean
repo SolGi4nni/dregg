@@ -103,8 +103,16 @@ line items, not against a round number.
     are FREE WITNESSES, so `equal_g` is satisfiable for every `lhs` and **refuses no on-curve
     substitution of a consumed commitment.** The exhibit is honest-CLOSES / substituted-with-same-`G`
     REFUSED / substituted-with-re-solved-`G` ACCEPTED, on this assembly's own values, with
-    `Generators.h` and the Bw19 `group_map` parameters measured off the Rust side. `G`'s binder is
-    `step_main.ml:526-545`, one rung above `verify_one`.
+    `Generators.h` and the Bw19 `group_map` parameters measured off the Rust side.
+    ⚠ ⚑ …and `G`'s binder — `step_main.ml:525-566`, one rung above `verify_one` — **IS NOW
+    ASSEMBLED (segment D, §8e′), AND THE SUBSTITUTION IS STILL ACCEPTED.** `G` went from ZERO
+    occurrences to an `assert_on_curve` and an absorption whose squeeze is public word 7, so a
+    re-solved `G` now MOVES a public word (§17(d)) — but `bpCloses` on the re-solved witness is
+    still `true` (§17(e)), because `rhs`/`equal_g` are still not emitted and **no row here relates
+    `G` to the opening.** Segment D binds `G` to the STATEMENT. The refusal is a consumer's, one
+    recursion step later, through segment C's reconstruction and the wrap-proof tie
+    (`step_main.ml:83-86,108`) — and with `G` fixed the `z₁`/`z₂` residue is a two-dimensional
+    discrete log, an ASSUMPTION and not a gate.
   * **R5 `deferred` + `xi` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
     `b(ζ) = ∏(1 + uᵢ·ζ^{2^{k−1−i}})` (`Wrap.challenge_polynomial`, `wrap.ml:15-17`; the product
     `KimchiVerify.bEvalSq` folds) and `combined_inner_product = Σ_k ξ^k·(evₖ(ζ) + r·evₖ(ζω))`
@@ -132,6 +140,18 @@ line items, not against a round number.
     `Not_opt` prefix IS ⚑ §3c's `sponge_after_index`, the wrap verifier key's 28 commitments as 56
     absorbed words, 27 of them THE FOLD'S OWN base variables, with `index_digest` squeezed off that
     state and absorbed as R1's first word — and
+    ⚑ …and since 2026-08-02 R7 carries **BOTH** hashes, because there are two and they hash
+    different things (`step_main.ml:59-81` and `:525-566`). **Segment C, the INNER `…_opt` call**,
+    had its two commitment slots wired to R3's x_hat sum and R4's fold output `q`; upstream's are
+    `prev_challenge_polynomial_commitments` — `sg_old`, which this assembly already held as the
+    fold's `~init` and its round-0 base — and the two vectors are INTERLEAVED PER PROOF
+    (`composition_types.ml:595-607`), not concatenated. Both were wrong; §12k exhibits the
+    correction in both directions on the emitted digest. **Segment D, the OUTER call**, is new: a
+    `Sponge.copy` of `sponge_after_index` over the app state, `G`
+    (`acc.wrap_proof.opening.challenge_polynomial_commitment`, `:534`) and
+    `finalize_other_proof`'s RETURNED `bulletproof_challenges` (`:563-565` — a different vector from
+    segment C's `prev_challenges`), unmasked, its squeeze the step statement's public
+    `messages_for_next_step_proof` (`:572-575`). ⚠ See R4 for what that does and does not buy — and
     ⚑ §8g's chain 1 — `to_field_checked` of the SECOND squeeze, which IS the `r` the C8 fold and
     `b_correct` multiply by (`let r = scalar (Scalar_challenge.create r_actual)`, `:1013`).
   * **R8 `finalize`** — ⚑ `finalize_other_proof`'s TAIL, the rung at which the deferred values stop
@@ -157,28 +177,40 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8362      8831       10508       10601
-    non-Generic         13778              7595      7597        8981        8999
-    Poseidon             6292 (31.4%)       902       902        2145        2145   11×572 / 11×195 ✓
-    Generic              6245 (31.2%)       767      1234        1527        1602   —
+    total gates         20023              8363      8832       10653       10746
+    non-Generic         13778              7590      7592        9110        9133
+    Poseidon             6292 (31.4%)       902       902        2266        2266   11×572 / 11×206 ✓
+    Generic              6245 (31.2%)       773      1240        1543        1613   —
     EndoMul              2465 (12.3%)      2464      2464        2464        2464   32×77+1×1 / 32×77 ✓
-    Zero                 2246 (11.2%)      2062      2064        2189        2200   —
+    Zero                 2246 (11.2%)      2066      2068        2206        2213   —
     VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       334       334         334         334   1×159 2×65 3×23
                     15×1 30×1 / 1×334
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10554 → 10601 rows, +47) — **and the headline is that R1 now
-FEEDS THE SPONGE IN `verify_one`'S OWN ORDER, which is what closed the last three absorptions.**
-The +47 is small and it is the whole point: what landed is not scale, it is the schedule.
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10601 → 10746 rows, +145) — **and the headline is a
+CORRECTION, not the rows: segment C hashed two quantities upstream does not put in that hash, and
+did not hash the two it does.** The new rows are the OTHER hash, and they do NOT buy the refusal the
+rung was queued for; see R4 and §17.
 
-  * ⚑ **R1 INTERLEAVED (§2b).** Absorb blocks and squeezes now sit where
-    `incrementally_verify_proof` puts them, and the absorb ORDER is upstream's rather than the
-    `ipaAbsorbs` filter's (which had `z_comm` ahead of `w_comm` and the gammas ahead of `t_comm`).
-    **Zero rows** — `absorbs` is still 59 and `chals` still 23; only the order moved. Every
-    challenge VALUE moved with it, and with them every ladder the challenges drive.
-  * ⚑ **`sg_old[0]` CLOSED: +1 `CompleteAdd`, +2 `Zero`, +2 on-curve halves.**
+  * ⚑⚑ **SEGMENT C's COMMITMENT SLOTS CORRECTED: zero rows.** `hash_messages_for_next_step_proof_opt`
+    absorbs `challenge_polynomial_commitments = prev_challenge_polynomial_commitments`
+    (`step_main.ml:78-79`) — `sg_old`. The slots held R3's x_hat MSM output and R4's fold output `q`,
+    both computed INSIDE this `verify_one` and both already public words of their own. Both `sg_old`
+    slots were already variables here (`qInit` and fold round 0's base), so the swap cost nothing;
+    the word ORDER changed too, because `to_field_elements_without_index`
+    (`composition_types.ml:595-607`) INTERLEAVES each commitment with its own challenge run. §12k
+    exhibits both directions on the emitted digest — and names the third fact, that with
+    `Prefix_mask.there N1` slot 0 is the `Wrap_hack` dummy and is masked out, so only slot 1 bites.
+  * ⚑⚑ **SEGMENT D, the OUTER `hash_messages_for_next_step_proof`: +121 `Poseidon`, +11 `Generic`,
+    +13 `Zero` (144 rows), and `assert_on_curve` on `G` (+1 `Generic` row).** `step_main.ml:525-566`
+    — a `Sponge.copy` of `sponge_after_index` over the app state, `G` and `finalize_other_proof`'s
+    returned `bulletproof_challenges`, its squeeze the step statement's public
+    `messages_for_next_step_proof`. ⚠ **It does NOT refuse the substitution §17 exhibits.** `G` went
+    from zero occurrences to a public digest, so a re-solved `G` now moves a public word — but
+    `equal_g` still closes and `rhs` is still not emitted. §17(d)–(g) measure exactly that.
+  * ⚑ **`sg_old[0]` CLOSED: +1 `CompleteAdd`, +2 `Zero`, +2 on-curve halves** (previous commit).
     `combine_split_commitments`' `~init` (`step_verifier.ml:606`) — the fold chain starts at
     commitment 0, so `ipaRounds` adds instead of `ipaRounds − 1`.
   * ⚑ **`combined_inner_product` CLOSED: +1 `Generic`, +1 `Zero`.** One `Boolean.typ` check for the
@@ -188,13 +220,13 @@ The +47 is small and it is the whole point: what landed is not scale, it is the 
     `check_bulletproof`'s `lhs = Scalar_challenge.endo q c + delta` (`:325-327`) — one 32-block endo
     ladder over the fold output at the LAST squeeze, seeded like every other, plus the closing add.
 
-⚑ **AND THE 77th ENDO BLOCK IS UPSTREAM'S OWN.** `EndoMul` 2432 → **2464 against Mina's 2465**, and
-the run-length family goes `32×76` → **`32×77`**, which is exactly Mina's `32×77 1×1`. The region
-conformance script's `ipa` anchor had already measured the split as `combine_split_commitments 46 |
-bullet_reduce 30 | check_bulletproof 1` and was comparing only the first two against our 76; the
-block we were missing was the one `delta` needed. `VarBaseMul` 1448, `EndoMulScalar` 408 and
-`Poseidon` 2145 are unchanged to the row — no other sub-circuit moved.
-(The two commits before these took 10342 → 10554 on the three ladder seeds and the absorb-shape
+⚑ **AND THE 77th ENDO BLOCK IS UPSTREAM'S OWN, AND THIS COMMIT DID NOT TOUCH IT.** `EndoMul` is
+**2464 against Mina's 2465** and the run-length family is `32×77`, exactly Mina's `32×77 1×1` — the
+same as before this rung, re-measured by `stepmain-shape-diff.mjs` after it. `VarBaseMul` `1×1448`,
+`EndoMulScalar` `8×51` and `CompleteAdd` `1×334` are unchanged to the row; the ONLY family that
+moved is `Poseidon`, `11×195` → **`11×206`**, the eleven permutations segment D is.
+(The commit before this took 10554 → 10601 on the R1 interleaving and the three closures; the two
+before that 10342 → 10554 on the three ladder seeds and the absorb-shape
 correction; before that 9431 → 10342 on §6b's `ft_comm` MSM; before that 9417 → 9431 on §3c's
 `sponge_after_index`; before that 9317 → 9417 on #1's third `lowest_128_bits` and §7b's
 `assert_on_curve`.)
@@ -202,7 +234,7 @@ correction; before that 9431 → 10342 on §6b's `ft_comm` MSM; before that 9417
 The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are INTACT
 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for `Poseidon`,
 `EndoMul`, `EndoMulScalar`, `VarBaseMul`, `CompleteAdd` and no others): a `Poseidon` permutation is
-11 rows (195 of them, upstream 572), a 128-bit `Scalar_challenge.endo` is 32 `EndoMul` rows, a
+11 rows (206 of them, upstream 572), a 128-bit `Scalar_challenge.endo` is 32 `EndoMul` rows, a
 `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero` — **`1×1448` after §6b, still
 `1×`**, because a 255-bit `scale_fast2` chunk has the same two-row shape as a 128-bit one — and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows, **51 such chains** (23 transcript challenges +
@@ -221,14 +253,14 @@ range-check — and all seven are emitted here.
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1069     2048             752 ms              24
-    r2_challenges    1714     2048             734 ms             116
-    r3_msm           4917     8192            1027 ms             221
-    r4_ipa           8110     8192             979 ms             452
-    r5_full          8362    16384            1180 ms             459
-    r6_ft_eval0      8831    16384            1224 ms             461
-    r7_absorption   10508    16384            1247 ms             473
-    r8_finalize     10601    16384            1242 ms             480
+    r1_transcript    1069     2048             745 ms              24
+    r2_challenges    1714     2048             765 ms             116
+    r3_msm           4917     8192             958 ms             221
+    r4_ipa           8111     8192            1053 ms             452
+    r5_full          8363    16384            1217 ms             459
+    r6_ft_eval0      8832    16384            1236 ms             461
+    r7_absorption   10653    16384            1218 ms             475
+    r8_finalize     10746    16384            1263 ms             482
 
 (⚠ **`r8`'s 17.1 s in the previous rung's table was a loaded box and NOT the assembly.** Measured
 again here at 10,601 rows — 47 MORE than the 10,554 that produced the 17 s — it is **1.24 s**, in
@@ -248,17 +280,19 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1602 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1613 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
 of the two `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection —
 `ft_comm`'s own MSM LEFT this list on 2026-08-02 (§6b). #2–#11 below name the rest. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
 tail. That is the trade this file is supposed to be making: every commit here should be buying a
 named simplification, not scale.
 
-⚑ Likewise `Poseidon` (2145 vs 6292): R7 brings the count to 195 permutations, the last of which is
-`sponge_after_index`'s squeeze — TWELVE fewer than the previous rung, and the twelve are the absorb
-blocks the shape correction deleted. `verify_one`'s own sponge work is now assembled; the remaining
-377 permutations are the app logic and `group_map` (#5).
+⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations — ELEVEN more than
+the previous rung, and the eleven are segment D, the OUTER `hash_messages_for_next_step_proof`. It
+costs only eleven because it is a `Sponge.copy` of `sponge_after_index` and re-absorbs none of the
+28 index commitments (`step_verifier.ml:1164`). `verify_one`'s own sponge work plus BOTH of
+`step_main`'s hashes are now assembled; the remaining 366 permutations are the app logic and
+`group_map` (#5).
 
 ⚑ **WHERE FIAT-SHAMIR STANDS, stated at the resolution it is actually at, and BOTH HALVES.**
 
@@ -330,10 +364,30 @@ blocks the shape correction deleted. `verify_one`'s own sponge work is now assem
     bent). What that COSTS: `2·bRounds` words that were derived cells are now prover-supplied,
     bound by `verified` (#11) exactly as upstream binds them, and by nothing in `verify_one`.
 
+  * ⚑⚑ **AND `step_main`'s TWO HASHES ARE NOW BOTH ASSEMBLED, AND ONE OF THEM WAS HASHING THE
+    WRONG THING** (2026-08-02, §8e′ + §12k). The INNER `…_opt` call (`step_main.ml:59-81`) — segment
+    C, whose digest is the WRAP statement's `messages_for_next_step_proof` — had its two commitment
+    slots wired to R3's x_hat output and R4's fold output `q`. Upstream's are
+    `prev_challenge_polynomial_commitments`, i.e. `sg_old`, which this assembly already held as the
+    fold's `~init` and its round-0 base; and the commitments are INTERLEAVED with their own challenge
+    runs (`composition_types.ml:595-607`), which the segment also did not do. A public word was a
+    function of two quantities upstream does not put in it. §12k bends both directions on the emitted
+    digest. The OUTER call (`:525-566`) — segment D, the STEP statement's own
+    `messages_for_next_step_proof` — is now assembled too, and it is what absorbs `G`.
+  * ⚠ ⚑ **AND `G` IS BOUND TO THE STATEMENT AND NOT TO THE OPENING. SAY BOTH.** Before this rung
+    `G = challenge_polynomial_commitment` had ZERO occurrences in the assembly; it now has
+    `assert_on_curve` and segment D's absorb, so a substituted `G` moves a public word. It is still
+    **not refused**: `rhs`/`equal_g` are not emitted, so no row relates `G` to the IPA opening, and
+    §17(e) re-runs the substitution exhibit and it is ACCEPTED exactly as before. The refusal belongs
+    to whoever COMPARES `messages_for_next_step_proof` — the next step's `verify_one`, one recursion
+    step later. With `G` fixed, `z₁`/`z₂` leave a two-dimensional discrete log: an ASSUMPTION.
+
 So: the sponge input is derived for the verifier key and for the quotient commitment, both MSM
 ladders and every endo ladder start where upstream starts them, the blocks are fed in upstream's
-order, and every item `verify_one` absorbs is a word some row here READS. What is left of the
-transcript residue is one structural pad lane.
+order, every item `verify_one` absorbs is a word some row here READS, and both of `step_main`'s
+`messages_for_next_step_proof` hashes are over the objects upstream hashes. What is left of the
+transcript residue is one structural pad lane — and `verified` (#11), which is still a witnessed
+boolean and is still what would have to hold `G` to its opening.
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -592,13 +646,19 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      `G` is REFUSED, and the same substitution with `G` re-solved (one `Fq` inverse, three scalar
      multiplications — no discrete log) is ACCEPTED. So assembling `equal_g` would make `verified` a
      function of the transcript instead of a free bit, and would refuse NO commitment substitution.
-     **What refuses one is `G`'s binder, and it is `step_main.ml:526-545`** — the OUTER
-     `hash_messages_for_next_step_proof` over `acc.wrap_proof.opening.challenge_polynomial_commitment`,
-     whose digest is the step statement's public `messages_for_next_step_proof` (`:571-575`). ⚠ That
-     is NOT §8e's segment C, which is the inner `…_opt` call over `sg_old` (`step_main.ml:66-80`); see
-     §17 for the false wire in `hmSpec` that this reading also turned up. With `G` bound, `z₁`/`z₂`
-     alone leave a two-dimensional discrete log in `⟨G + b·u, H⟩` — the IPA opening's own hardness,
-     which is an assumption and not a gate, and must be described as one.
+     ⚠ ⚑ **AND `G`'s BINDER IS NOW ASSEMBLED — AND IT DID NOT REFUSE IT EITHER (2026-08-02, §8e′,
+     §17(d)–(g)).** The OUTER `hash_messages_for_next_step_proof` (`step_main.ml:525-566`) over
+     `acc.wrap_proof.opening.challenge_polynomial_commitment` is segment D, and its squeeze IS the
+     step statement's public `messages_for_next_step_proof` (`:572-575`). Measured on the emitted
+     object: a re-solved `G` MOVES that public word (§17(d)) — and the substituted witness is still
+     ACCEPTED (§17(e)), because nothing here relates `G` to `lhs`. The prior wording, "with that
+     assembled … the public-vector tie refuses it", was WRONG: the tie exposes the digest, it does
+     not compare it against an independently known one. That comparison is the NEXT step's
+     `verify_one` — segment C's reconstruction plus the wrap-proof tie (`step_main.ml:83-86,108`) —
+     which is outside this circuit by construction. So `G` is bound to the STATEMENT and not to the
+     OPENING, and `verified` is still a witness. ⚠ And even with `G` fixed, `z₁`/`z₂` leave a
+     two-dimensional discrete log in `⟨G + b·u, H⟩` — the IPA opening's own hardness, an ASSUMPTION
+     and not a gate, and it must be described as one.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
@@ -1075,8 +1135,10 @@ because the double-generic's own `w₀w₁` term is it.
 bases, since §6b `t_comm`'s `tCommN` chunks, and since the R1 interleaving `sg_old[0]` and `delta`.
 A CONSTANT base is pinned coordinate-for-coordinate and needs no membership check; the one COMPUTED
 base (`ft_comm`, fold round `FTC_ROUND`) is on the curve because the `complete_add` chain that
-produced it is. -/
-def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 2
+produced it is. ⚑ …and since 2026-08-02 the THIRD non-round point is `G`, the previous proof's
+`opening.challenge_polynomial_commitment` (`vGx`/`vGy`): it too arrives through `Inner_curve.typ`
+(`wrap_proof.ml:39,60`) and it is what segment D absorbs. -/
+def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 3
 def baseOnC (s : StepShape) : Nat :=
   baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks + 1
 def vOcX2 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k)
@@ -1154,8 +1216,45 @@ def baseSegB (s : StepShape) : Nat := baseSegA s + segVarCount (nbA s) 1
 points, two squeezes (ξ′ and r′). -/
 def nbB (s : StepShape) : Nat := (4 + 2 * (s.cipEvals - 4) + 1) / 2
 def baseSegC (s : StepShape) : Nat := baseSegB s + segVarCount (nbB s) 2
-/-- Segment C (`hash_messages_for_next_step_proof`), one squeeze. -/
-def nbC (s : StepShape) : Nat := (N_HM_FIX + 4 + 2 * s.bRounds + 1) / 2
+/-- Segment C (the INNER `hash_messages_for_next_step_proof_opt`, `step_main.ml:66-81`), one
+squeeze. `N_HM_FIX` prefix words + two slots of `(commitment ×2, bRounds challenges)`. -/
+def nbC (s : StepShape) : Nat := (N_HM_FIX + 2 * (2 + s.bRounds) + 1) / 2
+
+/-- ⚑ Segment D — the **OUTER** `hash_messages_for_next_step_proof` (`step_main.ml:525-566`). It is
+a `Sponge.copy` of `sponge_after_index` (`step_verifier.ml:1162-1164`), so it re-absorbs NONE of the
+28 index commitments: its words are the app state and, per previous proof of THIS rule, the wrap
+proof's `opening.challenge_polynomial_commitment` (`:534`) followed by that proof's computed
+`bulletproof_challenges` (`:563-565`, unpadded). This file assembles ONE `verify_one`, so
+`V.f proofs_verified` (`:538`) is one slot. -/
+def baseSegD (s : StepShape) : Nat := baseSegC s + segVarCount (nbC s) 1
+def nbD (s : StepShape) : Nat := (N_HM_APP + 2 + s.bRounds + 1) / 2
+
+/-- The OUTER hash's own witnesses: its two app-state words (`step_main.ml:550-557` — the rule's
+OUTPUT state, a different object from the previous proof's `app_state` segment C absorbs) and the
+previous proof's `challenge_polynomial_commitment`. -/
+def baseOut (s : StepShape) : Nat := baseSegD s + segVarCount (nbD s) 1
+def vHmO (s : StepShape) (i : Nat) : PVar := xv (baseOut s + i)
+/-- ⚑ **`G`** — `acc.wrap_proof.opening.challenge_polynomial_commitment` (`step_main.ml:534`), the
+very field `check_bulletproof` destructures at `step_verifier.ml:253` and uses at `:333`. Until this
+rung it occurred in this assembly NOWHERE (§17); it is now `Inner_curve.typ`-checked (§7b) and
+absorbed by segment D, whose squeeze is the step statement's public `messages_for_next_step_proof`.
+⚠ `check_bulletproof`'s `rhs` is still NOT emitted, so no row here relates `G` to the opening. -/
+def vGx (s : StepShape) : PVar := xv (baseOut s + N_HM_APP)
+def vGy (s : StepShape) : PVar := xv (baseOut s + N_HM_APP + 1)
+def N_OUT_VARS : Nat := N_HM_APP + 2
+
+/-- ⚑ `G`'s honest VALUE, and it is a FIXTURE — named as one. The wrap proof's `sg` is not in
+`MinaStepPrevCommitments` (that file carries the STEP proof's commitments), so this is another of
+block 539508's own on-curve points standing in for it. ⚠ What that costs is stated in §17: no row
+here relates `G` to the opening, so "the honest `G`" means "an on-curve point in the slot", not "the
+point that closes `equal_g`". §17 measures the digest at BOTH, which is what makes the exhibit
+independent of this choice. -/
+def G_XY : Nat × Nat := Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 27 (0, 0)
+
+/-- The OUTER hash's two app-state words — `rule.main`'s OUTPUT state (`step_main.ml:550-557`),
+which no `verify_one` sub-circuit derives. A distinct fixture from segment C's `hmVal`, because it
+is a distinct object: segment C's is the PREVIOUS proof's app state. -/
+def hmOVal (i : Nat) : Nat := (23 + 5000011 * i + 11 * i * i) % pN
 
 /-! ### The STATEMENT words R8 binds (§8f).
 
@@ -1165,7 +1264,7 @@ circuit's statement and CHECKED against what the circuit recomputes. They are ex
 four public words, so a prover who supplies a different deferred value is refused by R8's
 `Boolean.all` assert rather than believed. ⚠ In rungs r5–r7 (below the rung that checks them) they
 are statement inputs and nothing else; r8 is the rung that binds them. -/
-def baseStmt (s : StepShape) : Nat := baseSegC s + segVarCount (nbC s) 1
+def baseStmt (s : StepShape) : Nat := baseOut s + N_OUT_VARS
 /-- `combined_inner_product`, `Shifted_value.Type1`. -/
 def vCipShift (s : StepShape) : PVar := xv (baseStmt s)
 /-- `b`, `Shifted_value.Type1`. -/
@@ -2241,7 +2340,8 @@ def onCVar (s : StepShape) (k : Nat) : PVar × PVar :=
   if k < l then let r := (absRoundList s).getD k 0; (ipx s (qT s r), ipy s (qT s r))
   else if k < t then (vTcX s (k - l), vTcY s (k - l))
   else if k == t then (ipx s (qInit s), ipy s (qInit s))
-  else (ipx s (qDel s), ipy s (qDel s))
+  else if k == t + 1 then (ipx s (qDel s), ipy s (qDel s))
+  else (vGx s, vGy s)
 
 /-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED commitment, over the very coordinate
 variables the transcript absorbed and the `EndoMul` (or, for `t_comm`, the `VarBaseMul`) chain
@@ -2304,8 +2404,10 @@ places each in `step_verifier.ml` (`:253` destructure, `:332-336` use): no absor
 statement word, no other consumer. So for ANY `lhs` a prover sets `G := z_1⁻¹·(lhs − z_2·H) − b·u` —
 one scalar-field inverse and three scalar multiplications — and the equality holds. §17 exhibits it
 on this assembly's own values: honest CLOSES, the on-curve-substituted assembly with the same `G`
-REFUSED, the same substitution with `G` re-solved ACCEPTED. `G`'s binder is `step_main.ml:526-545`,
-one rung ABOVE `verify_one`. -/
+REFUSED, the same substitution with `G` re-solved ACCEPTED. ⚑ `G`'s binder — `step_main.ml:525-566`,
+one rung ABOVE `verify_one` — is ASSEMBLED since 2026-08-02 (segment D, §8e′), and **the re-solved
+witness is STILL ACCEPTED**: what changed is that it now moves the step statement's public
+`messages_for_next_step_proof` (§17(d)–(e)). -/
 def lhsRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   let sl := lhsSlots s
   endoSeedRows s sl (v.sums.getLastD (0, 0)) wired
@@ -3429,6 +3531,14 @@ structure SegSpec where
   /-- ⚑ For a MASKED segment, the `keep` VARIABLE and BIT of each absorb block. Both come from
   §8h's unpacking of the `branch_data` statement word — this is not a schedule constant. -/
   keep : Nat → PVar × Nat := fun _ => (xv 0, 0)
+  /-- ⚑ **`Sponge.copy`** — the segment does not start at `[0,0,0]` but at ANOTHER sponge's state,
+  whose three lanes are that sponge's own variables. `none` is a fresh `Sponge.create` (segments A,
+  B, C); `some f` is `Sponge.copy` (segment D, `step_main.ml:547` / `step_verifier.ml:1164`, which
+  copies `sponge_after_index` rather than re-absorbing the 28 index commitments). A copy is a σ
+  class, not a recomputation: block 0's state lanes ARE the source's variables. -/
+  copyFrom : Option (Nat → PVar) := none
+  /-- …and the copied STATE's values. `[0,0,0]` for a fresh sponge. -/
+  init : List Nat := [0, 0, 0]
   deriving Inhabited
 
 /-- Is absorb block `b` muxed by a `keep` bit? -/
@@ -3467,7 +3577,7 @@ def runSeg (g : SegSpec) : SegData :=
         if b < g.nb && g.maskedAt b && g.keepBit b == 0 then pre else after
       { states := d.states ++ [next], perms := d.perms ++ [ss]
       , afters := d.afters ++ [after] })
-    { states := [[0, 0, 0]], perms := [], afters := [] }
+    { states := [g.init], perms := [], afters := [] }
 
 /-- Segment variable regions, all relative to one base. -/
 def sgSt (base _nb _sq b j : Nat) : PVar := xv (base + 3 * b + j)
@@ -3487,51 +3597,64 @@ def hmDigestVar (s : StepShape) : PVar := sgSt (baseSegC s) (nbC s) 1 (nbC s + 1
 -- `g.keepVar b`, which is one of the two `branch_data` mask bits. The id slots the old region
 -- occupied stay reserved in `segVarCount` so no other region moves.
 
+/-- ⚑ Segment state lane `j` entering block `b`, THROUGH the copy: block 0's lanes are the copy
+source's variables when the segment is a `Sponge.copy`, and its own otherwise. Every read of a
+segment's state goes through this, so a copied segment cannot silently allocate a second state. -/
+def SegSpec.stV (g : SegSpec) (base nb sq b j : Nat) : PVar :=
+  match g.copyFrom with
+  | some f => if b == 0 then f j else sgSt base nb sq b j
+  | none => sgSt base nb sq b j
+
 /-- **One segment's rows.** -/
 def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow :=
   let nb := g.nb
   let sq := g.squeezes
-  [ genericRow (some (sgSt base nb sq 0 0)) none none (some (sgSt base nb sq 0 1)) none none
-      (cConst 0 ++ cConst 0)
-  , genericRow (some (sgSt base nb sq 0 2)) none none none none none (cConst 0 ++ cNil) ]
+  let stv := g.stV base nb sq
+  -- ⚑ A FRESH sponge pins its own `[0,0,0]`; a COPY has no init rows at all, because its block-0
+  -- lanes are the source sponge's variables and the source's own rows already computed them.
+  (if g.copyFrom.isSome then []
+   else [ genericRow (some (sgSt base nb sq 0 0)) none none (some (sgSt base nb sq 0 1)) none none
+            (cConst 0 ++ cConst 0)
+        , genericRow (some (sgSt base nb sq 0 2)) none none none none none (cConst 0 ++ cNil) ])
   ++ (List.range g.blocks).flatMap (fun b =>
       if b < nb then
         let out : Nat → PVar :=
           if g.maskedAt b then (fun j => sgAfter base nb sq b j)
-          else (fun j => sgSt base nb sq (b + 1) j)
-        [ genericRow (some (sgSt base nb sq b 0)) (some (g.ws.getD (2 * b) (xv 0, 0)).1)
+          else (fun j => stv (b + 1) j)
+        [ genericRow (some (stv b 0)) (some (g.ws.getD (2 * b) (xv 0, 0)).1)
                      (some (sgPost base nb sq b 0))
-                     (some (sgSt base nb sq b 1)) (some (g.ws.getD (2 * b + 1) (xv 0, 0)).1)
+                     (some (stv b 1)) (some (g.ws.getD (2 * b + 1) (xv 0, 0)).1)
                      (some (sgPost base nb sq b 1)) (cAdd ++ cAdd) ]
-        ++ permBlockRows (sgPost base nb sq b 0) (sgPost base nb sq b 1) (sgSt base nb sq b 2)
+        ++ permBlockRows (sgPost base nb sq b 0) (sgPost base nb sq b 1) (stv b 2)
              (out 0) (out 1) (out 2) (d.perms.getD b [])
         ++ (if g.maskedAt b then
               -- the `Field.if_` mux: outⱼ = beforeⱼ + keep·(afterⱼ − beforeⱼ)
               (List.range 3).map (fun j =>
-                genericRow (some (sgAfter base nb sq b j)) (some (sgSt base nb sq b j))
+                genericRow (some (sgAfter base nb sq b j)) (some (stv b j))
                            (some (sgD base nb sq b j))
                            (some (g.keepVar b)) (some (sgD base nb sq b j))
                            (some (sgP base nb sq b j)) (cSub ++ cMul))
-              ++ [ genericRow (some (sgSt base nb sq b 0)) (some (sgP base nb sq b 0))
-                              (some (sgSt base nb sq (b + 1) 0))
-                              (some (sgSt base nb sq b 1)) (some (sgP base nb sq b 1))
-                              (some (sgSt base nb sq (b + 1) 1)) (cAdd ++ cAdd)
-                 , genericRow (some (sgSt base nb sq b 2)) (some (sgP base nb sq b 2))
-                              (some (sgSt base nb sq (b + 1) 2)) none none none (cAdd ++ cNil) ]
+              ++ [ genericRow (some (stv b 0)) (some (sgP base nb sq b 0))
+                              (some (stv (b + 1) 0))
+                              (some (stv b 1)) (some (sgP base nb sq b 1))
+                              (some (stv (b + 1) 1)) (cAdd ++ cAdd)
+                 , genericRow (some (stv b 2)) (some (sgP base nb sq b 2))
+                              (some (stv (b + 1) 2)) none none none (cAdd ++ cNil) ]
             else [])
-        ++ (if b + 1 == nb then [probeRow wired (sgSt base nb sq (b + 1) 0)
-                                              (sgSt base nb sq (b + 1) 1)] else [])
+        ++ (if b + 1 == nb then [probeRow wired (stv (b + 1) 0) (stv (b + 1) 1)] else [])
       else
-        permBlockRows (sgSt base nb sq b 0) (sgSt base nb sq b 1) (sgSt base nb sq b 2)
-          (sgSt base nb sq (b + 1) 0) (sgSt base nb sq (b + 1) 1) (sgSt base nb sq (b + 1) 2)
+        permBlockRows (stv b 0) (stv b 1) (stv b 2)
+          (stv (b + 1) 0) (stv (b + 1) 1) (stv (b + 1) 2)
           (d.perms.getD b [])
-        ++ [probeRow wired (sgSt base nb sq (b + 1) 0) (sgSt base nb sq (b + 1) 1)])
+        ++ [probeRow wired (stv (b + 1) 0) (stv (b + 1) 1)])
 
-/-- A segment's environment. -/
+/-- A segment's environment. ⚑ A COPY owns no block-0 state cells — those are the source sponge's
+variables and `circuitEnv` already binds them there; assigning them again would be a second binding
+of one id, which `envIndex` would silently resolve to whichever came first. -/
 def segEnv (base : Nat) (g : SegSpec) (d : SegData) : VarEnv :=
   let nb := g.nb
   let sq := g.squeezes
-  (List.range (g.blocks + 1)).flatMap (fun b =>
+  ((List.range (g.blocks + 1)).filter (fun b => b != 0 || g.copyFrom.isNone)).flatMap (fun b =>
     (List.range 3).map (fun j => (sgSt base nb sq b j, ((d.states.getD b []).getD j 0 : Int))))
   ++ (List.range nb).flatMap (fun b =>
       let pre := d.states.getD b []
@@ -3555,10 +3678,14 @@ def segEnv (base : Nat) (g : SegSpec) (d : SegData) : VarEnv :=
 def StepShape.frCols (s : StepShape) : Nat := s.cipEvals - EV_PREFIX
 /-- Carried bulletproof challenges: two previous proofs × `bRounds` each. -/
 def StepShape.optWords (s : StepShape) : Nat := 2 * s.bRounds
-/-- `hash_messages_for_next_step_proof`'s field elements: the `Not_opt` prefix (`sponge_after_index`
-+ app state), the two challenge-polynomial commitments (4 coordinates) and the unpadded bulletproof
-challenges — the last two groups `Opt`-masked. -/
-def StepShape.hmWords (s : StepShape) : Nat := N_HM_FIX + 4 + 2 * s.bRounds
+/-- The INNER `hash_messages_for_next_step_proof_opt`'s field elements: the `Not_opt` prefix
+(`sponge_after_index` + app state), then TWO `Opt`-masked runs of `(sg_old[i] ×2, that proof's
+`bRounds` carried challenges)` — interleaved per proof, `composition_types.ml:603-606`. -/
+def StepShape.hmWords (s : StepShape) : Nat := N_HM_FIX + 2 * (2 + s.bRounds)
+/-- The OUTER `hash_messages_for_next_step_proof`'s: app state, then ONE unmasked run of
+(`G` ×2, this step's `bRounds` computed bulletproof challenges). No index prefix — it is a
+`Sponge.copy` of `sponge_after_index` (`step_verifier.ml:1164`). -/
+def StepShape.hmOutWords (s : StepShape) : Nat := N_HM_APP + 2 + s.bRounds
 
 /-! ### §8h — `branch_data`'s `proofs_verified_mask`, UNPACKED.
 
@@ -3622,13 +3749,18 @@ def hmVal (i : Nat) : Nat := (13 + 3000017 * i + 5 * i * i) % pN
 `hash_messages_for_next_step_proof_opt` masks BOTH the `challenge_polynomial_commitments` and the
 `old_bulletproof_challenges` with the SAME `proofs_verified_mask` — two `Vector.map2`s over the
 vector §8h already unpacked (`step_verifier.ml:1180-1186`) — while the app state stays `Not_opt`.
-Until 2026-08-02 this segment absorbed all of them UNMASKED, which was the residue #9's retirement
-made visible. Word `2b` decides: the four commitment coordinates first, one previous proof each,
-then `bRounds` challenge words per proof. -/
+
+⚑ **CORRECTED AT SOURCE 2026-08-02: the two vectors are INTERLEAVED PER PROOF, not concatenated.**
+`to_field_elements_without_index` (`composition_types.ml:595-607`) is
+`Array.concat [app_state; Vector.map2 comms chals ~f:(fun c ch -> g c ++ ch) |> concat]`, so the
+word order is `comm₀ ×2 · chals₀ ×bRounds · comm₁ ×2 · chals₁ ×bRounds` — one proof's commitment
+IMMEDIATELY followed by that proof's challenges. This function ran the concatenated layout (all four
+commitment coordinates, then all `2·bRounds` challenges) until it was read at source. The per-proof
+stride is `2 + bRounds`, which is EVEN because `bRounds` is, so no rate-2 block straddles the two
+mask bits. -/
 def hmKeepAt (s : StepShape) (ms : List Nat) (b : Nat) : PVar × Nat :=
   let w := 2 * b
-  let i := if w < N_HM_FIX + 4 then (w - N_HM_FIX) / 2
-           else if w - (N_HM_FIX + 4) < s.bRounds then 0 else 1
+  let i := min 1 (if w < N_HM_FIX then 0 else (w - N_HM_FIX) / (2 + s.bRounds))
   (vMask s i, ms.getD i 0)
 
 /-- **`index_digest`'s rows** (§3c) — ONE permutation over segment C's own state after the 28 index
@@ -3642,20 +3774,123 @@ def idxDigestRows (s : StepShape) (wired : Bool) : List SRow :=
                 (vIdxD s 0) (vIdxD s 1) (vIdxD s 2) (permStates idxAfterState)
   ++ [probeRow wired (vIdxD s 0) (vIdxD s 1)]
 
-def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) : SegSpec :=
-  -- ⚑ §3c: the `Not_opt` prefix is `sponge_after_index`'s own absorption — the 28 plonk-index
-  -- commitments as 56 coordinates, 27 of them THE FOLD'S OWN `.const` base variables — then the two
-  -- app-state words, which are the only fixtures left in it.
+/-- ⚑ **`sg_old[i]`, the variable and its value** — `prev_challenge_polynomial_commitments`, the
+`Per_proof_witness` field `verify_one` passes as `~sg_old` (`step_main.ml:107`) and absorbs at
+`step_verifier.ml:538`. BOTH slots are already variables of this assembly and neither needed a new
+one: slot 0 is `combine_split_commitments`' `~init` accumulator (`:606`, `qInit`) and slot 1 is fold
+ROUND 0's base, because round `r` folds census commitment `r+1` and commitment 1 IS `sg_old[1]`
+(§2, `wdbAbsorbed`). ⚠ §17 priced the second half as needing a new `Wrap_hack.Checked.pad_commitments`
+slot; read at source it does not — the correction is a FOUR-word swap, not two. -/
+def sgOldVar (s : StepShape) (i j : Nat) : PVar :=
+  let p := if i == 0 then qInit s else qT s 0
+  if j == 0 then ipx s p else ipy s p
+def sgOldVal (v : IpaData) (i j : Nat) : Nat :=
+  let p := if i == 0 then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+           else v.bases.getD 0 (0, 0)
+  if j == 0 then p.1 else p.2
+
+/-- ⚑ **THE INNER `hash_messages_for_next_step_proof_opt`** (`step_main.ml:59-81`), read at source.
+
+    { app_state
+    ; dlog_plonk_index = d.wrap_key
+    ; challenge_polynomial_commitments = prev_challenge_polynomial_commitments
+    ; old_bulletproof_challenges = prev_challenges }
+
+⚠ ⚑ **CORRECTED 2026-08-02, AND IT WAS A MEASURED WRONG WIRE.** The two commitment slots were
+`mpx/mpy (pSum (msmTerms−2))` — R3's x_hat MSM output — and `ipx/ipy (qSum (ipaRounds−1))` — R4's
+fold output `q`. Neither is `prev_challenge_polynomial_commitments`: `x_hat` is `multiscale_known`'s
+result over the SRS Lagrange bases and `q` is `p_prime + lr_prod`, both computed INSIDE this
+`verify_one` and both already public words of their own (`exposedVars` 13–16). What the hash absorbs
+is the previous proof's own `sg_old`, which the fold consumes as its `~init` and its round-0 base.
+So this segment's digest — a PUBLIC word — was a function of two quantities upstream does not put in
+it, and not a function of the two it does.
+
+⚑ §3c: the `Not_opt` prefix is `sponge_after_index`'s own absorption — the 28 plonk-index
+commitments as 56 coordinates, 27 of them THE FOLD'S OWN `.const` base variables — then the two
+app-state words, which are the only fixtures left in it. -/
+def hmSpec (s : StepShape) (v : IpaData) : SegSpec :=
+  { ws := (List.range N_IDX_WORDS).map (fun i => (idxVar s (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
+      ++ (List.range N_HM_APP).map (fun i => (vHm s i, hmVal i))
+      -- ⚑ INTERLEAVED per previous proof (`composition_types.ml:603-606`): `sg_old[i]`'s two
+      -- coordinates, then THAT proof's `bRounds` carried challenges, then the next slot.
+      -- `old_bulletproof_challenges = prev_challenges` (`step_main.ml:80`) — the SAME vector
+      -- segment A absorbs, so segment C's public digest moves when one of them is bent.
+      ++ (List.range 2).flatMap (fun i =>
+          [ (sgOldVar s i 0, sgOldVal v i 0), (sgOldVar s i 1, sgOldVal v i 1) ]
+          ++ (List.range s.bRounds).map (fun k =>
+              (vPrevChal s (i * s.bRounds + k), prevChalVal (i * s.bRounds + k))))
+  , squeezes := 1, masked := true, maskFrom := N_HM_FIX / 2, keep := hmKeepAt s MASK_BITS }
+
+/-- ⚑ **THE MIS-WIRED SEGMENT C, kept as the RED CONTROL'S "before" object and nothing else.**
+`§12k` bends the two things this absorbed and shows they no longer move the digest, and bends the two
+`sg_old` slots and shows they now do. Not reachable from `rungRows`; it emits no row. -/
+def hmSpecMiswired (s : StepShape) (t : MsmData) (v : IpaData) : SegSpec :=
   { ws := (List.range N_IDX_WORDS).map (fun i => (idxVar s (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
       ++ (List.range N_HM_APP).map (fun i => (vHm s i, hmVal i))
       ++ [ (mpx s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).1)
          , (mpy s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).2)
          , (ipx s (qSum s (s.ipaRounds - 1)), (v.sums.getLastD (0, 0)).1)
          , (ipy s (qSum s (s.ipaRounds - 1)), (v.sums.getLastD (0, 0)).2) ]
-      -- ⚑ `old_bulletproof_challenges = prev_challenges` (`step_main.ml:80`) — the SAME vector
-      -- segment A absorbs, so segment C's public digest moves when one of them is bent.
       ++ (List.range (2 * s.bRounds)).map (fun i => (vPrevChal s i, prevChalVal i))
-  , squeezes := 1, masked := true, maskFrom := N_HM_FIX / 2, keep := hmKeepAt s MASK_BITS }
+  , squeezes := 1, masked := true, maskFrom := N_HM_FIX / 2
+  -- …with the CONCATENATED layout's own `keep` map, the one `hmKeepAt` ran: the four commitment
+  -- coordinates take one mask bit per PAIR, then the challenges split at `bRounds`. Running the
+  -- corrected map over the old word order would be a straw man.
+  , keep := fun b =>
+      let w := 2 * b
+      let i := if w < N_HM_FIX + 4 then (w - N_HM_FIX) / 2
+               else if w - (N_HM_FIX + 4) < s.bRounds then 0 else 1
+      (vMask s i, MASK_BITS.getD i 0) }
+
+/-! ### ⚑⚑ Segment D — the **OUTER** `hash_messages_for_next_step_proof` (`step_main.ml:525-566`).
+
+    let messages_for_next_step_proof =
+      let challenge_polynomial_commitments =
+        … fun acc -> acc.wrap_proof.opening.challenge_polynomial_commitment …    (:530-535)
+      hash_messages_for_next_step_proof
+        { app_state ; dlog_plonk_index ; challenge_polynomial_commitments
+        ; old_bulletproof_challenges = (* unpadded! *) bulletproof_challenges }  (:559-566)
+    in … { proof_state = { unfinalized_proofs; messages_for_next_step_proof } …  (:572-575)
+
+**This is `G`'s binder**, and it is one rung ABOVE `verify_one`: the commitment it absorbs is the
+very `challenge_polynomial_commitment` `check_bulletproof` destructures (`step_verifier.ml:253`) and
+uses in `rhs` (`:333`), and its squeeze is the step statement's `messages_for_next_step_proof`, a
+PUBLIC word.
+
+Three things it is NOT, each read at source rather than assumed:
+
+  * **NOT masked.** It is `hash_messages_for_next_step_proof`, not `…_opt` (`:547`), so there is no
+    `proofs_verified_mask` and no `Opt_sponge` — every word is `Not_opt`.
+  * **NOT a re-absorption of the index.** Both hashes are `Sponge.copy after_index`
+    (`step_verifier.ml:1164`, `:1178`), so segment D starts at segment C's OWN state after its 56
+    index words — the same copy §3c already models for `index_digest`. Its block-0 state lanes ARE
+    segment C's variables.
+  * **NOT `prev_challenges`.** `old_bulletproof_challenges` here is `bulletproof_challenges`, the
+    vector `finalize_other_proof` RETURNS (`step_verifier.ml:1114-1116,1147`,
+    `compute_challenges ~scalar`), i.e. the deferred challenges the `b(ζ)` product folds over,
+    LIFTED. In this assembly those are `vLift (uChal k)` — segment C's are `vPrevChal`, a different
+    vector. Two hashes, two challenge vectors; conflating them would have been the same class of
+    defect this rung is correcting.
+
+⚑ Slot count: `V.f proofs_verified (M.f prevs)` (`:538`) is one entry per previous proof of THIS
+rule, unmasked and unpadded. This file assembles ONE `verify_one`, so segment D has ONE slot.
+(`StepMergeProof` and `StepBlockProof` have two; `StepZkappProvedProof` one.) -/
+def hmOutSpec (s : StepShape) (d : SpongeData) (G : Nat × Nat) : SegSpec :=
+  { ws := (List.range N_HM_APP).map (fun i => (vHmO s i, hmOVal i))
+      ++ [ (vGx s, G.1), (vGy s, G.2) ]
+      ++ (List.range s.bRounds).map (fun k =>
+          (vLift s (s.uChal k), liftOf s d (s.uChal k)))
+  , squeezes := 1, masked := false
+  , copyFrom := some (fun j => sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) j)
+  , init := idxAfterState }
+
+/-- ⚑ **The step statement's `messages_for_next_step_proof`** (`step_main.ml:572-575`) — segment D's
+squeeze, and the word `G` moves. -/
+def hmOutDigestVar (s : StepShape) : PVar := sgSt (baseSegD s) (nbD s) 1 (nbD s + 1) 0
+/-- …and its VALUE, as a function of `G` alone with the rest of the assembly held fixed. This is what
+§17's exhibit evaluates at the honest and at the re-solved commitment. -/
+def hmOutDigestOf (s : StepShape) (d : SpongeData) (G : Nat × Nat) : Nat :=
+  ((runSeg (hmOutSpec s d G)).states.getLastD []).getD 0 0
 
 /-! ## §8f — R8, `finalize_other_proof`'s TAIL: the deferred values BIND.
 
@@ -3839,6 +4074,10 @@ sub-circuit so a public tie reaches all five. ⚑ The FIRST FOUR are the stateme
 R8's `Boolean.all` assert is what makes them a claim the circuit refuses to lie about. -/
 def exposedVars (s : StepShape) : List PVar :=
   ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s, vShouldVerify s, vBranch s, hmDigestVar s
+   -- ⚑ the STEP statement's own `messages_for_next_step_proof` (`step_main.ml:572-575`), segment
+   -- D's squeeze. `hmDigestVar` above is the WRAP statement's (`:83-86`), segment C's — two
+   -- different digests of two different hashes, and both are public.
+   , hmOutDigestVar s
    , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
    , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
@@ -4055,9 +4294,12 @@ structure StepData where
   segA : SegData
   segB : SegData
   segC : SegData
+  /-- ⚑ Segment D — the OUTER `hash_messages_for_next_step_proof` (`step_main.ml:525-566`). -/
+  segD : SegData
   specA : SegSpec
   specB : SegSpec
   specC : SegSpec
+  specD : SegSpec
   deriving Inhabited
 
 /-- ⚑ THE DEPENDENCY ORDER, and why the fr-sponge now runs BEFORE the fold. Since §8g the C8 fold's
@@ -4102,12 +4344,16 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
   let defc := runDefc segB specB
   let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1)
-  let specC := hmSpec s msm ipa
+  let specC := hmSpec s ipa
+  -- ⚑ segment D copies `sponge_after_index` (`step_verifier.ml:1164`), so it does not depend on
+  -- segment C's own trajectory past the index prefix — the two hashes are SIBLINGS off one copy,
+  -- not a chain.
+  let specD := hmOutSpec s sp G_XY
   { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
   , defc := defc, df := df
   , fin := runFin s sp ft df segB specB (defc.lift s 1)
-  , segA := segA, segB := segB, segC := runSeg specC
-  , specA := specA, specB := specB, specC := specC }
+  , segA := segA, segB := segB, segC := runSeg specC, segD := runSeg specD
+  , specA := specA, specB := specB, specC := specC, specD := specD }
 
 /-- The assembly on the HONEST supplied commitments — block 539508's own. -/
 def mkStep (s : StepShape) : StepData := mkStepWith s (stepBases s)
@@ -4120,6 +4366,9 @@ def absRows (t : StepData) (wired : Bool) : List SRow :=
   ++ segRows (baseSegB s) t.specB t.segB wired
   ++ idxConstRows s
   ++ segRows (baseSegC s) t.specC t.segC wired
+  -- ⚑ segment D — the OUTER hash, a `Sponge.copy` off segment C's index prefix, so it emits NO
+  -- init pin row and its block-0 state lanes are segment C's own variables.
+  ++ segRows (baseSegD s) t.specD t.segD wired
   ++ idxDigestRows s wired
   ++ rDefRows s t.defc wired
 
@@ -4230,7 +4479,8 @@ def circuitEnv (t : StepData) : VarEnv :=
       let x := if k < l then (t.ipa.bases.getD ((absRoundList s).getD k 0) (0, 0)).1
                else if k < l + tCommN s then (ftcTc (k - l)).1
                else if k == l + tCommN s then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY.1
-               else Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
+               else if k == l + tCommN s + 1 then Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
+               else G_XY.1
       [ (vOcX2 s k, (fMul x x : Int)), (vOcX3 s k, (fMul (fMul x x) x : Int)) ])
   -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
   -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.
@@ -4274,6 +4524,10 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- R7: the three sponge segments, `sponge_after_index`'s own pinned commitments and its squeeze,
   -- and the two APP-STATE words that are all that is left of the old fixture prefix (§3c).
   ++ (List.range N_HM_APP).map (fun i => (vHm s i, (hmVal i : Int)))
+  -- ⚑ the OUTER hash's own witnesses: its app-state words and `G`, the previous proof's
+  -- `opening.challenge_polynomial_commitment` (`step_main.ml:534`).
+  ++ (List.range N_HM_APP).map (fun i => (vHmO s i, (hmOVal i : Int)))
+  ++ [ (vGx s, (G_XY.1 : Int)), (vGy s, (G_XY.2 : Int)) ]
   -- ⚑ `prev_challenges` — segments A and C absorb these SAME variables (`step_verifier.ml:956`,
   -- `step_main.ml:80`).
   ++ (List.range (2 * s.bRounds)).map (fun i => (vPrevChal s i, (prevChalVal i : Int)))
@@ -4283,6 +4537,7 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ segEnv (baseSegA s) t.specA t.segA
   ++ segEnv (baseSegB s) t.specB t.segB
   ++ segEnv (baseSegC s) t.specC t.segC
+  ++ segEnv (baseSegD s) t.specD t.segD
   -- R8: the four STATEMENT words and the compiled finalize program's slots.
   ++ [ (vCipShift s, (t.fin.cipShift : Int)), (vBShift s, (t.fin.bShift : Int))
      , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int))
@@ -4540,11 +4795,12 @@ def totalRowsS : Nat := pubS + nRowsS
 -- ⚑ SEVEN GATE TYPES in one circuit — the census. Eleven `Poseidon` rows per sponge block, which
 -- is upstream's own run length (`sponge_inputs.ml:47-64` / `plonk_constraint_system.ml:1450-1530`,
 -- and MEASURED in Mina's `step-zkapp-proved` blob: every `Poseidon` run there is exactly 11).
--- FOUR sponges now: R1's transcript sponge and R7's three absorption segments — **plus the ONE
+-- FIVE sponges now: R1's transcript sponge and R7's FOUR absorption segments — **plus the ONE
 -- extra permutation §3c's `index_digest` is**, `Sponge.squeeze_field (Sponge.copy
 -- sponge_after_index)`, which is why the `+ 1` is here and not hidden in a segment's block count.
 #guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length
-        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks + 1)
+        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks
+                 + tS.specD.blocks + 1)
 -- ⚑ `2·chals + 5` `to_field_checked` chains, 8 `EndoMulScalar` rows each — and the composition of
 -- that number IS the ledger of two retirements. Per transcript challenge TWO chains: the challenge
 -- itself and `lowest_128_bits`' `assert_128_bits hi` (#1). Plus §8g's ξ (one, no split) and its r
@@ -5169,8 +5425,10 @@ def nTrans : Nat := pubS + (transcriptRows shapeSmoke tS.sp true).length
 -- class, and on how many of its cells lie in R1's row range, so a deleted wire cannot satisfy it.
 -- (`ipaBlocks` `EndoMul` reads + the absorb row + since §7b the three `assert_on_curve` halves,
 -- which read `x` three times and `y` twice.)
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
-#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 5
+-- ⚑ `+ 7` and not `+ 6` since the segment-C correction: fold round 0's base IS `sg_old[1]`,
+-- so its class now also spans the INNER `hash_messages_for_next_step_proof_opt`'s absorb row.
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 7
+#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).filter
           (fun c => c.row < nTrans)).length == 1
 #guard ((classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).filter
@@ -5320,23 +5578,28 @@ def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :
 -- ⚑ THE ROWS ARE THE CENSUS, stated as equalities. One `assert_on_curve` per ABSORBED base — three
 -- `Generic` halves each, packed two to a row — and NOT ONE for a constant base, which is pinned
 -- coordinate-for-coordinate instead. A deleted check moves both numbers.
-#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length + tCommN shapeSmoke + 2
-#guard nOnC shapeStep == 48 + 7 + 2
+#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length + tCommN shapeSmoke + 3
+#guard nOnC shapeStep == 48 + 7 + 3
 #guard nOnCRows == (3 * nOnC shapeSmoke + 1) / 2
-#guard (onCurveRows shapeStep).length == (3 * 57 + 1) / 2
--- ⚑ …and the two that arrived with the R1 interleaving are `sg_old[0]` and `delta`, at the tail of
--- the checked list and over the very variables the fold's `~init` and the `cq + delta` add read.
+#guard (onCurveRows shapeStep).length == (3 * 58 + 1) / 2
+-- ⚑ …and the three non-round points are `sg_old[0]`, `delta` and — since segment D — `G`, at the
+-- tail of the checked list and over the very variables the fold's `~init`, the `cq + delta` add and
+-- the outer hash read.
 #guard onCVar shapeStep (48 + 7) == (ipx shapeStep (qInit shapeStep), ipy shapeStep (qInit shapeStep))
 #guard onCVar shapeStep (48 + 8) == (ipx shapeStep (qDel shapeStep), ipy shapeStep (qDel shapeStep))
+#guard onCVar shapeStep (48 + 9) == (vGx shapeStep, vGy shapeStep)
 #guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve
          Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
 #guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve
          Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
+#guard onCurveA G_XY
 -- …and the checked variables ARE the fold's own base coordinates, not a fresh copy: `x`'s class
 -- gains the two `assert_on_curve` halves that read it (`x·x` and `x2·x`) on top of the
 -- `ipaBlocks` `EndoMul` reads and the transcript's absorb row.
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
-#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 5
+-- ⚑ `+ 7` and not `+ 6` since the segment-C correction: fold round 0's base IS `sg_old[1]`,
+-- so its class now also spans the INNER `hash_messages_for_next_step_proof_opt`'s absorb row.
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 7
+#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
 -- …and a CONSTANT base's class gains NOTHING from §7b — pinned, not checked, which is upstream's
 -- own split (`Inner_curve.constant` is a literal and carries no `check`). Its `ipaBlocks + 2` is the
 -- `EndoMul` reads, the pin row and segment C's index absorb, and no `assert_on_curve` half.
@@ -6680,15 +6943,24 @@ def segCDigest (bits : List Nat) : Nat := ((segCWith bits).states.getLastD []).g
 -- above says exactly "the old segment C computed a different hash". Named separately because that
 -- is the retirement, not a by-product of it.
 #guard segCDigest [1, 1] != (tS.segC.states.getLastD []).getD 0 0
--- ⚑ …and the mask is applied to the RIGHT WORDS: the `Not_opt` prefix is unconditional, the four
--- commitment coordinates take one bit per previous proof, the challenge words `bRounds` at a time.
+-- ⚑ …and the mask is applied to the RIGHT WORDS: the `Not_opt` prefix is unconditional, then ONE
+-- bit per previous proof over that proof's `(commitment ×2, bRounds challenges)` RUN — the
+-- interleaved layout `to_field_elements_without_index` builds (`composition_types.ml:603-606`).
+-- ⚠ These four pins read `vMask 0, 1, 0, 1` at blocks `+0, +1, +2, last` until 2026-08-02, which is
+-- the CONCATENATED layout's pattern and is exactly what the wrong wire looked like from here.
 #guard (List.range tS.specC.nb).all (fun b =>
   tS.specC.maskedAt b == decide (N_HM_FIX ≤ 2 * b))
 #guard tS.specC.maskFrom == N_HM_FIX / 2
-#guard (hmKeepAt shapeSmoke MASK_BITS (N_HM_FIX / 2)).1 == vMask shapeSmoke 0
-#guard (hmKeepAt shapeSmoke MASK_BITS (N_HM_FIX / 2 + 1)).1 == vMask shapeSmoke 1
-#guard (hmKeepAt shapeSmoke MASK_BITS (N_HM_FIX / 2 + 2)).1 == vMask shapeSmoke 0
+-- the per-proof stride is `2 + bRounds` words = `(2 + bRounds)/2` blocks (3 at the smoke shape).
+#guard (List.range ((2 + shapeSmoke.bRounds) / 2)).all (fun k =>
+  (hmKeepAt shapeSmoke MASK_BITS (N_HM_FIX / 2 + k)).1 == vMask shapeSmoke 0)
+#guard (List.range ((2 + shapeSmoke.bRounds) / 2)).all (fun k =>
+  (hmKeepAt shapeSmoke MASK_BITS (N_HM_FIX / 2 + (2 + shapeSmoke.bRounds) / 2 + k)).1
+    == vMask shapeSmoke 1)
 #guard (hmKeepAt shapeSmoke MASK_BITS (tS.specC.nb - 1)).1 == vMask shapeSmoke 1
+-- …and the same at the COMMITTED shape, where the stride is 9 blocks and not 3.
+#guard (hmKeepAt shapeStep MASK_BITS (N_HM_FIX / 2 + 8)).1 == vMask shapeStep 0
+#guard (hmKeepAt shapeStep MASK_BITS (N_HM_FIX / 2 + 9)).1 == vMask shapeStep 1
 -- …the `Opt` region starts on a BLOCK boundary, which is the whole reason the prefix is even.
 #guard N_HM_FIX % 2 == 0
 -- ⚑ …and the digest is a PUBLIC WORD, so the mask reaches the verifier's own vector rather than
@@ -6696,6 +6968,36 @@ def segCDigest (bits : List Nat) : Nat := ((segCWith bits).states.getLastD []).g
 -- stronger statement that it is READ OUT.)
 #guard (exposedVars shapeSmoke).getD 6 (xv 0) == hmDigestVar shapeSmoke
 #guard (stepPublic tS).getD 6 0 == ((tS.segC.states.getLastD []).getD 0 0 : Int)
+
+-- ── ⚑⚑ SEGMENT D — the OUTER `hash_messages_for_next_step_proof` (`step_main.ml:525-566`) ───────
+-- Its squeeze is the STEP statement's `messages_for_next_step_proof` (`:572-575`), public word 7 —
+-- a DIFFERENT digest from segment C's, which is the WRAP statement's (`:83-86`).
+#guard (exposedVars shapeSmoke).getD 7 (xv 0) == hmOutDigestVar shapeSmoke
+#guard (stepPublic tS).getD 7 0 == ((tS.segD.states.getLastD []).getD 0 0 : Int)
+#guard (stepPublic tS).getD 6 0 != (stepPublic tS).getD 7 0
+-- ⚑ …and it is a `Sponge.copy` of `sponge_after_index` and NOT a re-absorption: its block-0 state
+-- lanes ARE segment C's own variables at the index boundary, the same copy `index_digest` takes,
+-- and its state at block 0 is `idxAfterState`.
+#guard (List.range 3).all (fun j =>
+  tS.specD.stV (baseSegD shapeSmoke) (nbD shapeSmoke) 1 0 j
+    == sgSt (baseSegC shapeSmoke) (nbC shapeSmoke) 1 (N_IDX_WORDS / 2) j)
+#guard tS.segD.states.headD [] == idxAfterState
+#guard tS.segC.states.getD (N_IDX_WORDS / 2) [] == idxAfterState
+-- …so it absorbs NONE of the 56 index words: its whole word list is app state, `G`, challenges.
+#guard tS.specD.ws.length == shapeSmoke.hmOutWords
+#guard tS.specD.ws.length == N_HM_APP + 2 + shapeSmoke.bRounds
+#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).1 == vGx shapeSmoke
+#guard (tS.specD.ws.getD (N_HM_APP + 1) (xv 0, 0)).1 == vGy shapeSmoke
+#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).2 == G_XY.1
+-- ⚑ …and its challenge run is `bulletproof_challenges` — the vector `finalize_other_proof` RETURNS
+-- (`step_verifier.ml:1114-1116,1147`), i.e. the LIFTED deferred challenges the `b(ζ)` product folds
+-- over — and NOT segment C's `prev_challenges`. Two hashes, two vectors, and they are disjoint here.
+#guard (List.range shapeSmoke.bRounds).all (fun k =>
+  (tS.specD.ws.getD (N_HM_APP + 2 + k) (xv 0, 0)).1 == vLift shapeSmoke (shapeSmoke.uChal k))
+#guard (tS.specD.ws.map (·.1)).all (fun v =>
+  ((List.range (2 * shapeSmoke.bRounds)).any (fun i => v == vPrevChal shapeSmoke i)) == false)
+-- …and it is UNMASKED: `hash_messages_for_next_step_proof`, not `…_opt` (`step_main.ml:547`).
+#guard tS.specD.masked == false && tS.specC.masked == true
 
 -- ⚑ SEGMENT B ABSORBS R5's AND R6's OWN VARIABLES: the digest of segment A, `ft_eval1`, the two
 -- public-polynomial evaluations, then the 43 columns at ζ and ζω INTERLEAVED
@@ -6711,26 +7013,151 @@ def segCDigest (bits : List Nat) : Nat := ((segCWith bits).states.getLastD []).g
 -- ⚑ …and segments A and C absorb `prev_challenges` — THE SAME VARIABLES, which is upstream's own
 -- shape (`step_verifier.ml:956` and `step_main.ml:80` read one vector) and NOT R2's challenges. That
 -- false wire is what made `combined_inner_product` a cycle; see `vPrevChal` for what it cost and what
--- it bought. Segment C also absorbs R3's and R4's fold outputs.
+-- it bought.
 #guard (List.range tS.specA.ws.length).all (fun i =>
   (tS.specA.ws.getD i (xv 0, 0)).1 == vPrevChal shapeSmoke i)
-#guard (List.range (2 * shapeSmoke.bRounds)).all (fun i =>
-  (tS.specC.ws.getD (N_HM_FIX + 4 + i) (xv 0, 0)) == (tS.specA.ws.getD i (xv 0, 0)))
+-- ⚑ …and segment C carries them INTERLEAVED with the commitment they belong to
+-- (`composition_types.ml:603-606`): proof `i`'s two coordinates at `N_HM_FIX + i·(2+bRounds)`, then
+-- proof `i`'s OWN `bRounds` challenges — which are segment A's entries `i·bRounds …` in order.
+#guard (List.range 2).all (fun i =>
+  (List.range shapeSmoke.bRounds).all (fun k =>
+    tS.specC.ws.getD (N_HM_FIX + i * (2 + shapeSmoke.bRounds) + 2 + k) (xv 0, 0)
+      == tS.specA.ws.getD (i * shapeSmoke.bRounds + k) (xv 0, 0)))
 -- …and NO segment absorbs a transcript challenge variable any more.
 #guard (tS.specA.ws.map (·.1)).all (fun v =>
   ((List.range shapeSmoke.chals).any (fun c => v == vN shapeSmoke c shapeSmoke.emsRows)) == false)
-#guard (tS.specC.ws.getD N_HM_FIX (xv 0, 0)).1
-        == mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
-#guard (tS.specC.ws.getD (N_HM_FIX + 2) (xv 0, 0)).1
-        == ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1))
 
--- ⚑ THE SPONGE IS NOT DEGENERATE: the three digests differ from each other and from zero, so a
+-- ⚑⚑ **SEGMENT C's TWO COMMITMENT SLOTS ARE `sg_old`, AND THEY WERE NOT** (corrected 2026-08-02).
+-- Read at source (`step_main.ml:78-79`) the field is
+-- `challenge_polynomial_commitments = prev_challenge_polynomial_commitments`, the vector `verify_one`
+-- also hands `verify` as `~sg_old` (`:107`). Both slots were already variables of this assembly:
+-- slot 0 is the fold's `~init` (`qInit`, `step_verifier.ml:606`) and slot 1 is fold ROUND 0's base,
+-- because round `r` folds census commitment `r+1` and commitment 1 IS `sg_old[1]`.
+#guard (tS.specC.ws.getD N_HM_FIX (xv 0, 0)).1 == ipx shapeSmoke (qInit shapeSmoke)
+#guard (tS.specC.ws.getD (N_HM_FIX + 1) (xv 0, 0)).1 == ipy shapeSmoke (qInit shapeSmoke)
+#guard (tS.specC.ws.getD (N_HM_FIX + 2 + shapeSmoke.bRounds) (xv 0, 0)).1
+        == ipx shapeSmoke (qT shapeSmoke 0)
+#guard (tS.specC.ws.getD (N_HM_FIX + 3 + shapeSmoke.bRounds) (xv 0, 0)).1
+        == ipy shapeSmoke (qT shapeSmoke 0)
+-- …and `sg_old[1]` really is fold round 0's base, at BOTH shapes: `absRoundList`'s first entry, the
+-- point transcript block `oPre` absorbs.
+#guard (absRoundList shapeSmoke).headD 99 == 0 && (absRoundList shapeStep).headD 99 == 0
+#guard msgVar shapeStep oPre 0 == ipx shapeStep (qT shapeStep 0)
+#guard sgOldVar shapeStep 0 0 == ipx shapeStep (qInit shapeStep)
+#guard sgOldVar shapeStep 1 0 == ipx shapeStep (qT shapeStep 0)
+-- ⚠ …and NEITHER of the two the segment used to carry is in it any more. `x_hat`'s MSM output and
+-- the fold output `q` are computed INSIDE this `verify_one` and are public words 14–17 in their own
+-- right; upstream puts neither in this hash.
+#guard (tS.specC.ws.map (·.1)).all (fun v =>
+  v != mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
+  && v != mpy shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
+  && v != ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1))
+  && v != ipy shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1)))
+
+-- ⚑ THE SPONGE IS NOT DEGENERATE: the four digests differ from each other and from zero, so a
 -- sponge that silently absorbed nothing would show.
 #guard (tS.segA.states.getLastD []).getD 0 0 != 0
 #guard (tS.segB.states.getLastD []).getD 0 0 != 0
 #guard (tS.segC.states.getLastD []).getD 0 0 != 0
+#guard (tS.segD.states.getLastD []).getD 0 0 != 0
 #guard (tS.segA.states.getLastD []).getD 0 0 != (tS.segB.states.getLastD []).getD 0 0
 #guard (tS.segB.states.getLastD []).getD 0 0 != (tS.segC.states.getLastD []).getD 0 0
+#guard (tS.segC.states.getLastD []).getD 0 0 != (tS.segD.states.getLastD []).getD 0 0
+
+-- ── ⚑⚑ §12k — **THE SEGMENT-C MIS-WIRE, IN BOTH DIRECTIONS, ON THE EMITTED DIGEST** ─────────────
+-- A correction without an exhibited alternative is a claim. `hmSpecMiswired` is the segment exactly
+-- as it stood; `hmSpec` is the corrected one. The control has to BITE BOTH WAYS: what upstream
+-- absorbs must now move the digest, and what it does not must now leave it alone.
+
+/-- Segment C's digest under a word-list transform — the object both directions compare. -/
+def segCDigestOf (ws : List (PVar × Nat)) : Nat :=
+  ((runSeg { tS.specC with ws := ws }).states.getLastD []).getD 0 0
+/-- …and the MIS-WIRED segment's, likewise. -/
+def segCMisSpec : SegSpec := hmSpecMiswired shapeSmoke tS.msm tS.ipa
+def segCMisDigestOf (ws : List (PVar × Nat)) : Nat :=
+  ((runSeg { segCMisSpec with ws := ws }).states.getLastD []).getD 0 0
+/-- Bend word `i`'s VALUE by one, leaving its variable and every other word alone. -/
+def bendW (ws : List (PVar × Nat)) (i : Nat) : List (PVar × Nat) :=
+  ws.set i ((ws.getD i (xv 0, 0)).1, fAdd (ws.getD i (xv 0, 0)).2 1)
+
+/-- The four word POSITIONS at issue, in each layout. -/
+def wSgOld0 : Nat := N_HM_FIX
+def wSgOld1 : Nat := N_HM_FIX + 2 + shapeSmoke.bRounds
+/-- In the MIS-WIRED layout the four commitment coordinates were contiguous at `N_HM_FIX`: x_hat's
+sum first, then the fold output. -/
+def wXhat : Nat := N_HM_FIX
+def wFold : Nat := N_HM_FIX + 2
+
+-- the two layouts really are different objects and both are the same LENGTH, so nothing below is
+-- comparing a longer list with a shorter one.
+#guard tS.specC.ws.length == segCMisSpec.ws.length
+#guard tS.specC.ws != segCMisSpec.ws
+#guard segCDigestOf tS.specC.ws == (tS.segC.states.getLastD []).getD 0 0
+#guard segCMisDigestOf segCMisSpec.ws != segCDigestOf tS.specC.ws
+
+-- ⚑⚑ **(→) THE CORRECTED SLOT BITES.** Bending either coordinate of `sg_old[1]` moves segment C's
+-- digest, which is public word 6. The mis-wired segment never held that variable at all.
+#guard segCDigestOf (bendW tS.specC.ws wSgOld1) != segCDigestOf tS.specC.ws
+#guard segCDigestOf (bendW tS.specC.ws (wSgOld1 + 1)) != segCDigestOf tS.specC.ws
+#guard (segCMisSpec.ws.map (·.1)).all (fun v =>
+  v != ipx shapeSmoke (qInit shapeSmoke) && v != ipy shapeSmoke (qInit shapeSmoke)
+  && v != ipx shapeSmoke (qT shapeSmoke 0) && v != ipy shapeSmoke (qT shapeSmoke 0))
+
+-- ⚠ ⚑ **AND SLOT 0 DOES NOT BITE — SAY IT, BECAUSE IT IS THE MASK DOING ITS JOB AND NOT A HOLE.**
+-- `MASK_BITS = Prefix_mask.there N1 = [0,1]`: with ONE previous proof the kept slot is the SUFFIX
+-- one, so slot 0 is the dummy `Wrap_hack` pad and its whole run — commitment AND challenges — is
+-- muxed out of the state (`step_verifier.ml:1180-1186`, `:998-1003`). Bending it therefore moves
+-- nothing, at either layout. A control that claimed both slots bite would be measuring the wrong
+-- instance.
+#guard MASK_BITS == [0, 1]
+#guard segCDigestOf (bendW tS.specC.ws wSgOld0) == segCDigestOf tS.specC.ws
+#guard segCDigestOf (bendW tS.specC.ws (wSgOld0 + 1)) == segCDigestOf tS.specC.ws
+-- …and it is the MASK and not the wiring: flip both bits on and slot 0 bites too.
+#guard (hmKeepAt shapeSmoke [1, 1] (N_HM_FIX / 2)).2 == 1
+#guard ((runSeg { tS.specC with ws := bendW tS.specC.ws wSgOld0
+                              , keep := fun b => (xv 0, (hmKeepAt shapeSmoke [1, 1] b).2) }
+        ).states.getLastD []).getD 0 0
+        != ((runSeg { tS.specC with keep := fun b => (xv 0, (hmKeepAt shapeSmoke [1, 1] b).2) }
+            ).states.getLastD []).getD 0 0
+
+-- ⚑⚑ **(←) THE WRONGLY-WIRED WORD NO LONGER BITES.** In the mis-wired layout the fold output `q`
+-- sat in the KEPT slot, so bending it moved this public digest — which is exactly what made the
+-- wrong wire invisible: a bent word DID move a public output, just not the one upstream moves. In
+-- the corrected segment that variable is absent, so no bend of it can reach this digest.
+#guard segCMisDigestOf (bendW segCMisSpec.ws wFold) != segCMisDigestOf segCMisSpec.ws
+#guard (segCMisSpec.ws.getD wFold (xv 0, 0)).1
+        == ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1))
+-- (the x_hat pair sat in the DROPPED slot under the old `keep` map, so it never bit either — the
+-- old wire put one computed quantity where upstream puts a dummy and the other where upstream puts
+-- the live commitment.)
+#guard segCMisDigestOf (bendW segCMisSpec.ws wXhat) == segCMisDigestOf segCMisSpec.ws
+#guard (segCMisSpec.ws.getD wXhat (xv 0, 0)).1
+        == mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
+-- …and both of them are public words of their OWN at the committed shape, so nothing was lost by
+-- taking them out of this hash — they were never unobserved.
+#guard (exposedVars shapeStep).getD 14 (xv 0)
+        == mpx shapeStep (pSum shapeStep (shapeStep.msmTerms - 2))
+#guard (exposedVars shapeStep).getD 16 (xv 0)
+        == ipx shapeStep (qSum shapeStep (shapeStep.ipaRounds - 1))
+
+-- ⚑ …and the CORRECTION IS NOT VACUOUS at the level of the public vector: the digest word moved.
+-- (Both layouts absorb the same 58-word prefix and the same 2·bRounds challenges; only the four
+-- commitment coordinates and their ORDER differ, and that is enough.)
+#guard (stepPublic tS).getD 6 0 == ((tS.segC.states.getLastD []).getD 0 0 : Int)
+#guard (stepPublic tS).getD 6 0 != (segCMisDigestOf segCMisSpec.ws : Int)
+
+-- ⚑ …and the ORDER is load-bearing on its own, stated separately from the SLOTS. The concatenated
+-- layout over the SAME four correct words gives a different digest from the interleaved one, so
+-- "the right words" would not have been enough.
+def wsConcat : List (PVar × Nat) :=
+  tS.specC.ws.take N_HM_FIX
+  ++ [ tS.specC.ws.getD wSgOld0 (xv 0, 0), tS.specC.ws.getD (wSgOld0 + 1) (xv 0, 0)
+     , tS.specC.ws.getD wSgOld1 (xv 0, 0), tS.specC.ws.getD (wSgOld1 + 1) (xv 0, 0) ]
+  ++ (List.range (2 * shapeSmoke.bRounds)).map (fun i =>
+      (vPrevChal shapeSmoke i, prevChalVal i))
+#guard wsConcat.length == tS.specC.ws.length
+#guard wsConcat != tS.specC.ws
+#guard segCDigestOf wsConcat != segCDigestOf tS.specC.ws
 
 /-! ## §15 — the LADDER is monotone, REACHED BY THE EMITTER, and each rung really adds its
 sub-circuit.
@@ -6770,15 +7197,22 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 #guard (finRows shapeSmoke tS.ft tS.fin true).length > 0 && (endoConstRow shapeSmoke).length > 0
 #guard (xiDefRows shapeSmoke tS.defc true).length > 0
         && (rDefRows shapeSmoke tS.defc true).length > 0
--- ⚑ …and R7's own sub-list really is the three segments, §3c's index pins and digest permutation,
+-- ⚑ …and R7's own sub-list really is the FOUR segments, §3c's index pins and digest permutation,
 -- and §8g's `r` chain. Stated as an equality over every summand, so a dropped sub-list reds here.
 #guard (absRows tS true).length
         == (segRows (baseSegA shapeSmoke) tS.specA tS.segA true).length
            + (segRows (baseSegB shapeSmoke) tS.specB tS.segB true).length
            + (idxConstRows shapeSmoke).length
            + (segRows (baseSegC shapeSmoke) tS.specC tS.segC true).length
+           + (segRows (baseSegD shapeSmoke) tS.specD tS.segD true).length
            + (idxDigestRows shapeSmoke true).length
            + (rDefRows shapeSmoke tS.defc true).length
+-- ⚑ …and segment D is NON-EMPTY and is exactly `blocks` permutations' worth of rows with NO init
+-- pin row, which is what `Sponge.copy` means here: `nbD` absorb blocks (13 rows each, the last one
+-- +1 for its probe) and one squeeze block (12 + probe).
+#guard (segRows (baseSegD shapeSmoke) tS.specD tS.segD true).length
+        == 13 * nbD shapeSmoke + 1 + 13
+#guard tS.specD.copyFrom.isSome && tS.specA.copyFrom.isNone && tS.specC.copyFrom.isNone
 -- …and neither §3c sub-list is empty: 12 rows of permutation + a probe, and one `Generic` pin per
 -- index commitment this shape must hold itself.
 #guard (idxDigestRows shapeSmoke true).length == 13
@@ -6798,6 +7232,22 @@ def posAt (k : Rung) : List (PVar × Cell) :=
 #guard (classCells (posAt .ftEval0) (hmDigestVar shapeSmoke)).length == 1
 #guard (classCells (posAt .absorb) (hmDigestVar shapeSmoke)).length == 3
 #guard (classCells (posAt .finalize) (hmDigestVar shapeSmoke)).length == 3
+-- ⚑ …and the OUTER digest reads exactly the same way, so segment D inherits the same caveat and
+-- gets it said rather than assumed.
+#guard (classCells (posAt .full) (hmOutDigestVar shapeSmoke)).length == 1
+#guard (classCells (posAt .ftEval0) (hmOutDigestVar shapeSmoke)).length == 1
+#guard (classCells (posAt .absorb) (hmOutDigestVar shapeSmoke)).length == 3
+#guard (classCells (posAt .finalize) (hmOutDigestVar shapeSmoke)).length == 3
+-- ⚑ **`G`'s LADDER POSITION, and it is the honest statement of what segment D bought.** From
+-- `r4_ipa` (where `assert_on_curve` lands) to `r6_ft_eval0`, `G`'s whole class is those three
+-- halves — a witness the circuit checks is on the curve and reads NOWHERE ELSE. `r7_absorption` is
+-- the rung that adds the absorption, and it adds exactly ONE cell per coordinate. Below `r4` it has
+-- no cell at all, which is what "zero occurrences" meant before this rung.
+#guard (classCells (posAt .msm) (vGx shapeSmoke)).length == 0
+#guard (classCells (posAt .ipa) (vGx shapeSmoke)).length == 3
+#guard (classCells (posAt .ftEval0) (vGx shapeSmoke)).length == 3
+#guard (classCells (posAt .absorb) (vGx shapeSmoke)).length == 4
+#guard (classCells (posAt .finalize) (vGx shapeSmoke)).length == 4
 -- ⚠ ⚑ **AND `index_digest` HAS THE SAME LADDER POSITION, so say it rather than let the retirement
 -- read as unconditional.** §3c's derivation lives in R7 — the permutation is squeezed off segment
 -- C's own state, and segment C is an R7 sub-circuit — while R1 ABSORBS the result at block 0. So
@@ -6881,7 +7331,8 @@ def posAt (k : Rung) : List (PVar × Cell) :=
 -- R7 adds `Poseidon` (11 rows per permutation, upstream's own run length) and — since §8g — exactly
 -- ONE further `to_field_checked` chain, `r_actual`'s. No curve gate, no second chain.
 #guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.poseidon)).length
-        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks + 1)
+        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks
+                 + tS.specD.blocks + 1)
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.poseidon)).length
         == 11 * shapeSmoke.blocks
 #guard (List.range 4).all (fun i =>
@@ -7173,22 +7624,62 @@ two-dimensional discrete log in `⟨G + b·u, H⟩`, which is the IPA opening's 
 gate. Without it, `equal_g` is satisfiable for every `lhs`.
 
 ⚠ **AND THAT HASH IS NOT SEGMENT C.** §8e's segment C is the OTHER call —
-`hash_messages_for_next_step_proof_opt` inside `verify_one` (`step_main.ml:66-80`), over
+`hash_messages_for_next_step_proof_opt` inside `verify_one` (`step_main.ml:59-81`), over
 `prev_challenge_polynomial_commitments` (= `sg_old`) and `prev_challenges`, masked by
-`branch_data.proofs_verified_mask`. Its two commitment slots are currently wired to R3's x_hat sum
-and R4's fold output `q` (`hmSpec`), which are neither `sg_old` nor `G`: **a false wire, named here
-rather than left for the rung that trips over it.** `sg_old[0]` is already a variable in this
-assembly (`ipx/ipy (qInit s)`, the fold's `~init`), so half of that correction is a two-word swap;
-the other half needs `sg_old[1]`, the `Wrap_hack.Checked.pad_commitments` second slot.
+`branch_data.proofs_verified_mask`.
+
+## ⚑ WHAT LANDED 2026-08-02, AND THE TWO PLACES THIS SECTION WAS WRONG AT SOURCE
+
+**(1) Segment C's commitment slots are corrected**, and §12k exhibits it in both directions. The
+slots were R3's x_hat sum and R4's fold output `q` — neither is `sg_old`. ⚠ This section said the
+second half "needs `sg_old[1]`, the `Wrap_hack.Checked.pad_commitments` second slot", i.e. a variable
+this assembly did not have. **It did have it.** `sg_old[1]` is census commitment 1, which is fold
+ROUND 0's base (`ipx/ipy (qT s 0)`) because round `r` folds commitment `r+1` — the correction was a
+FOUR-word swap with no new variable at all.
+
+**(2) The two vectors are INTERLEAVED PER PROOF**, which neither this section nor `hmSpec` had:
+`to_field_elements_without_index` (`composition_types.ml:595-607`) is
+`Array.concat [app_state; Vector.map2 comms chals ~f:(fun c ch -> g c ++ ch)]`, so the order is
+`comm₀ · chals₀ · comm₁ · chals₁`, not four coordinates followed by every challenge. §12k pins that
+the concatenated order over the SAME four correct words gives a DIFFERENT digest, so the layout was
+load-bearing on its own.
+
+**(3) The outer hash IS assembled** — segment D, `hmOutSpec`, a `Sponge.copy` of `sponge_after_index`
+(`step_verifier.ml:1164`) absorbing the app state, `G`, and `finalize_other_proof`'s returned
+`bulletproof_challenges`, with its squeeze exposed as public word 7. `G` now has an
+`assert_on_curve` and an absorption where it had **no occurrence at all**.
+
+## ⚑⚑ AND THE VERDICT ON THE SUBSTITUTION, RE-RUN BELOW WITH `G` BOUND — READ IT BEFORE QUOTING
+
+**The substituted-with-re-solved-`G` witness is STILL ACCEPTED.** `bpCloses` is unchanged and it is
+still `true`; nothing in this file refuses it, and binding `G` to a public digest did not make it
+refuse. What changed is measurable and it is smaller than a refusal:
+
+  * `G` was a witness with **zero occurrences** — any on-curve point sat in it, and no constraint and
+    no public word moved. It is now absorbed, so **a re-solved `G` MOVES public word 7**, exhibited
+    below at the honest and at the re-solved commitment.
+  * That is a refusal only for a consumer that **compares** `messages_for_next_step_proof` against
+    what it expects — which is the next step's `verify_one`, through the very inner hash segment C
+    reconstructs and the wrap-proof tie at `step_main.ml:83-86,108`. **One recursion step later.**
+    This circuit alone still accepts; it just no longer proves the honest statement.
+  * The prover who is willing to move that public word is not refused here at all. `equal_g` is not
+    emitted, so **no row in this assembly relates `G` to the opening** — segment D binds `G` to the
+    STATEMENT, not to the IPA.
+
+⚠ So the answer to "is the previous proof's commitment bound now" is: **bound to the statement, not
+to the opening, and the opening is not checked here.** And with `G` fixed, `z₁`/`z₂` still leave a
+two-dimensional discrete log in `⟨G + b·u, H⟩` — the IPA opening's own hardness, an ASSUMPTION and
+not a gate.
 
 ## THE UNDONE ROW-SET, PRICED
 
 Three `scale_fast2`s at `~num_bits:255` (`:240-242`) = 3 × 51 chunks, reusing §6b's `ftcScaleTerm`
-and its `Shifted_value.Type2` split rows; two `Ops.add_fast`s; `assert_on_curve` on `G`; one
-`Inner_curve.constant` pin for `H`; `group_map` as ~13 double-`Generic` rows (`potential_xs` is 6
-multiplications and one inverse, then three `sqrt_flagged` at 3 constraints each, `Boolean.Assert.any`,
-and the first-of-three selection); and `equal_g` as two `Field.equal` plus one `Boolean.all`.
-≈ **375 rows.** Every constant it needs is measured below. -/
+and its `Shifted_value.Type2` split rows; two `Ops.add_fast`s; one `Inner_curve.constant` pin for
+`H`; `group_map` as ~13 double-`Generic` rows (`potential_xs` is 6 multiplications and one inverse,
+then three `sqrt_flagged` at 3 constraints each, `Boolean.Assert.any`, and the first-of-three
+selection); and `equal_g` as two `Field.equal` plus one `Boolean.all`.
+≈ **373 rows** (`assert_on_curve` on `G` left this list — segment D needed it and it is emitted).
+Every constant it needs is measured below. -/
 
 /-! ### Field roots — Tonelli–Shanks over `Fp`, which `group_map` needs and no other rung did. -/
 
@@ -7407,5 +7898,82 @@ def bpGResolved : Nat × Nat × Nat :=
 #guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs)
                 (bpSolveG (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) (bpBOf tSwapAbs) 1 1)
                 (bpBOf tSwapAbs) 1 1
+
+/-! ### ⚑⚑ THE EXHIBIT RE-RUN WITH SEGMENT D IN PLACE — and its LITERAL verdict.
+
+The question this rung was queued on: does binding `G` into `hash_messages_for_next_step_proof`
+refuse the substitution? **It does not.** What it does is make the substitution move a public word.
+Both halves are measured here, on the emitted object, and neither is inferred from the other. -/
+
+/-- Jacobian → affine, so a solved `G` can be handed to the segment as a commitment. -/
+def jAff (P : Nat × Nat × Nat) : Nat × Nat :=
+  let zi := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv P.2.2
+  let z2 := fMul zi zi
+  (fMul P.1 z2, fMul P.2.1 (fMul z2 zi))
+
+/-- The honest `G` and the re-solved one, as curve points segment D can absorb. -/
+def bpGHonestA : Nat × Nat := jAff bpGHonest
+def bpGResolvedA : Nat × Nat := jAff bpGResolved
+
+-- the affine forms are on the curve and really are two different points.
+#guard onCurveA bpGHonestA && onCurveA bpGResolvedA
+#guard bpGHonestA != bpGResolvedA
+-- …and `jAff` is faithful: re-lifting each one lands back on its Jacobian class.
+#guard jacEqM pN (jOf bpGHonestA) bpGHonest && jacEqM pN (jOf bpGResolvedA) bpGResolved
+
+-- ⚑⚑ **(d) THE RE-SOLVED `G` MOVES THE STEP STATEMENT'S PUBLIC WORD.** Same assembly, same
+-- transcript, same everything else — only the commitment in segment D's one slot differs, and
+-- `messages_for_next_step_proof` (`step_main.ml:572-575`) is a different field element. Before this
+-- rung `G` had no occurrence at all and this difference was ZERO by construction.
+#guard hmOutDigestOf shapeSmoke tS.sp bpGResolvedA != hmOutDigestOf shapeSmoke tS.sp bpGHonestA
+-- …and the digest really is the public word, so this is a statement about the emitted vector.
+#guard hmOutDigestOf shapeSmoke tS.sp G_XY == (tS.segD.states.getLastD []).getD 0 0
+#guard (stepPublic tS).getD 7 0 == (hmOutDigestOf shapeSmoke tS.sp G_XY : Int)
+-- …and it is `G` and not something else in that segment doing it: bending EITHER coordinate alone
+-- moves the digest, and bending nothing leaves it.
+#guard hmOutDigestOf shapeSmoke tS.sp (fAdd G_XY.1 1, G_XY.2)
+        != hmOutDigestOf shapeSmoke tS.sp G_XY
+#guard hmOutDigestOf shapeSmoke tS.sp (G_XY.1, fAdd G_XY.2 1)
+        != hmOutDigestOf shapeSmoke tS.sp G_XY
+
+-- ⚠ ⚑⚑ **(e) AND `equal_g` STILL ACCEPTS IT — the deliverable, stated as the failure it is.**
+-- This is exactly `#guard` (c) above, re-asserted after segment D landed so that the record cannot
+-- read as if the rung closed it. The witness that was ACCEPTED before is ACCEPTED after.
+#guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGResolved
+                (bpBOf tSwapAbs) BP_Z1 BP_Z2
+-- …and no row in this assembly relates `G` to the opening: `G`'s ENTIRE class is its
+-- `assert_on_curve` halves and segment D's absorb row. `rhs` is not emitted, so there is nothing
+-- else for it to be in. (`assert_on_curve` reads `x` three times and `y` twice; segment D's absorb
+-- row reads each once. Equalities, so an added consumer would red here rather than pass a floor.)
+#guard (classCells posS (vGx shapeSmoke)).length == 4
+#guard (classCells posS (vGy shapeSmoke)).length == 3
+-- …whereas the fold's `~init` — a commitment this file DOES consume — spans four row families.
+#guard (classCells posS (ipx shapeSmoke (qInit shapeSmoke))).length ≥ 5
+
+-- ⚑ **(f) WHAT WOULD HAVE TO BE TRUE FOR (e) TO BECOME A REFUSAL**, stated as the two pins that
+-- are NOT here rather than as prose. Neither is satisfiable in this assembly today:
+--   (i) a row relating `G` to `lhs` — that is `rhs` + `equal_g`, the ≈373 rows above, still unemitted;
+--   (ii) a consumer that compares public word 7 against an INDEPENDENTLY known digest — that is the
+--        next step's `verify_one`, i.e. segment C's reconstruction plus the wrap-proof tie, which is
+--        outside this circuit by construction.
+-- What IS pinned is that the two hashes are the two ENDS of that chain and are wired to the two
+-- different objects upstream wires them to: segment C to `sg_old`, segment D to `G`.
+#guard sgOldVar shapeSmoke 0 0 == ipx shapeSmoke (qInit shapeSmoke)
+#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).1 == vGx shapeSmoke
+#guard (tS.specC.ws.map (·.1)).all (fun v => v != vGx shapeSmoke && v != vGy shapeSmoke)
+#guard (tS.specD.ws.map (·.1)).all (fun v =>
+  v != ipx shapeSmoke (qInit shapeSmoke) && v != ipx shapeSmoke (qT shapeSmoke 0))
+
+-- ⚑ **(g) THE RESIDUE IS A DISCRETE LOG, AND IT IS AN ASSUMPTION.** With `G` fixed, re-closing
+-- `equal_g` for a moved `lhs` means solving `z₁·(G + b·u) + z₂·H = lhs` in the two unknowns
+-- `z₁, z₂` — two scalars against a two-generator subgroup, i.e. the IPA opening's own hardness.
+-- ⚠ There is NO pin below asserting that is hard; a `#guard` cannot say so. What the two pins here
+-- do say is that the solve `bpSolveG` uses is NOT available in that direction: it inverts `z₁` to
+-- get `G`, and with `G` fixed the same identity gives no `z₁` without a log of `lhs − z₂·H` to base
+-- `G + b·u`. So the exhibit stops at `G` on purpose.
+#guard (jacEqM pN (bpRhs (bpUOf tSwapAbs) GENERATORS_H bpGHonest (bpBOf tSwapAbs) BP_Z1 BP_Z2)
+                  (jOf (bpLhsOf tSwapAbs))) == false
+#guard jacEqM pN (bpRhs (bpUOf tS) GENERATORS_H bpGHonest (bpBOf tS) BP_Z1 BP_Z2)
+                 (jOf (bpLhsOf tS))
 
 end Dregg2.Circuit.Emit.KimchiStepMain
