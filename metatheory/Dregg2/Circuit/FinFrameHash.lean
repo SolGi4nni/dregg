@@ -42,7 +42,7 @@ namespace Dregg2.Circuit.FinFrameHash
 
 open Dregg2.Exec Dregg2.Authority
 open Dregg2.Circuit.FinKernelState
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 open Dregg2.Circuit.Poseidon2Binding.Reference (encV encV_injective)
 
 set_option autoImplicit false
@@ -211,20 +211,85 @@ theorem serializeFin_injective {f f' : FinKernelState} (h : serializeFin f = ser
       | exact hSlot | exact hFac | exact hLife | exact hDeath | exact hDel | exact hDels
       | exact hEp | exact hEpat | exact hHeaps | exact hNRoot | exact hRRoot | exact hCRoot
 
-/-! ## §5 — `frameHashFin` + the HEADLINE `restHashIffFrame_fin` (residual `Poseidon2SpongeCR`). -/
+/-! ## §5 — `frameHashFin`, THE FRAME EXTRACTOR, and the HEADLINE `restHashIffFrame_fin`.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** Both headline theorems of this file used to take
+`(hCR : Poseidon2SpongeCR sponge)` — literal injectivity of a `List ℤ → ℤ` sponge, which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear parameters
+(an infinite domain into `~2³¹` values, pigeonhole). At the parameters the prover actually runs at
+they were therefore VACUOUSLY TRUE and said nothing about the frame hash.
+
+What replaces the floor is the shape `Poseidon2Binding.group4Find_spec` /
+`AggregationAirSound.aggFold_binds_or_collides` already use: a TOTAL EXTRACTOR (`frameCollFind`,
+`restCollFind`) that HANDS BACK the specific pair of canonical serializations at which the deployed
+sponge would have to collide, an UNCONDITIONAL correctness theorem with NO hypothesis on `sponge`
+at all (`frameHashFin_binds_or_collides`, `restHash_binds_or_collides` — hence TRUE at deployed
+parameters, unlike the bindings they replace), and a per-instance, REFUTABLE side condition
+`¬ SpongeColl sponge (…Find f f')` at the named pair.
+
+⚠ Deliberately NOT a global `∃ xs ys, xs ≠ ys ∧ sponge xs = sponge ys` disjunct:
+`SpongeCollisionShirk.orBreak_spongeCollision_iff_True` proves that shape is literally `True` at any
+field-bounded sponge, because the very pigeonhole that refutes the floor ESTABLISHES the global
+existential. The disjunct has to name a PAIR.
+
+⚑ Deliberately NO local `_of_CR` twin: it would be a BRAND-NEW declaration taking a refuted floor as
+a hypothesis, i.e. a fresh carrier and a `#floor_ratchet` accrual violation. A consumer still
+holding the floor rewires through the tree's UNIVERSAL bridge
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _` — quantified over the PAIR, so the port
+lands at a NET carrier DECREASE. -/
 
 /-- **`frameHashFin sponge f`** — the Poseidon2 frame hash of the finite kernel state: the sponge of
 its canonical serialization. -/
 def frameHashFin (sponge : List ℤ → ℤ) (f : FinKernelState) : ℤ := sponge (serializeFin f)
 
+/-- **⚑ THE WHOLE-STATE FRAME EXTRACTOR.** Total, and a computation (`DecidableEq (List ℤ)` is real,
+so nothing here is `Classical.choose` of an existential): the two canonical serializations are
+EXACTLY what the frame hash absorbs, so when two DISTINCT finite states publish the same frame hash
+this pair IS the collision. Returned unconditionally; on the good branch it is a pair of equal lists
+and is never read. -/
+def frameCollFind (f f' : FinKernelState) : List ℤ × List ℤ :=
+  (serializeFin f, serializeFin f')
+
+/-- **⚑ THE EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two finite kernel states with the SAME
+frame hash EITHER are equal, OR the pair `frameCollFind` returns is a GENUINE collision of the
+deployed sponge. Nothing is assumed about `sponge`, so — unlike the theorem it replaces — this holds
+at deployed BabyBear parameters. -/
+theorem frameHashFin_binds_or_collides (sponge : List ℤ → ℤ) (f f' : FinKernelState)
+    (h : frameHashFin sponge f = frameHashFin sponge f') :
+    f = f' ∨ SpongeColl sponge (frameCollFind f f') := by
+  by_cases hs : serializeFin f = serializeFin f'
+  · exact Or.inl (serializeFin_injective hs)
+  · exact Or.inr ⟨hs, h⟩
+
 /-- **`restHashIffFrame_fin` — THE HEADLINE.** The frame hash binds the WHOLE finite kernel state:
-`frameHashFin sponge f = frameHashFin sponge f' → f = f'`. RESIDUAL `Poseidon2SpongeCR sponge` ALONE —
-equal hashes ⇒[CR] equal serializations ⇒[`serializeFin_injective`] equal state. NO new carrier. -/
-theorem restHashIffFrame_fin (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    {f f' : FinKernelState} (h : frameHashFin sponge f = frameHashFin sponge f') : f = f' :=
-  serializeFin_injective (hCR _ _ h)
+`frameHashFin sponge f = frameHashFin sponge f' → f = f'`. ⚑ The refuted `Poseidon2SpongeCR sponge`
+premise is GONE; what remains is the per-instance, refutable side condition about the ONE pair
+`frameCollFind` names for THESE two states. The old hypothesis IMPLIES it
+(`Poseidon2Binding.spongeColl_refutable_of_injective`), so this is strictly STRONGER and the
+conclusion is unchanged. NO new carrier. -/
+theorem restHashIffFrame_fin (sponge : List ℤ → ℤ)
+    {f f' : FinKernelState} (h : frameHashFin sponge f = frameHashFin sponge f')
+    (hno : ¬ SpongeColl sponge (frameCollFind f f')) : f = f' :=
+  (frameHashFin_binds_or_collides sponge f f' h).resolve_right hno
 
 /-! ## §6 — THE DISCHARGE-LIFT to `StateCommit.RestHashIffFrame` (on the denote image). -/
+
+/-- **⚑ THE REST-SIDE EXTRACTOR.** `RH_fin` absorbs the 15 non-`cell` codes, so the pair the rest
+binding can only fail at is exactly the two `serializeRestFin` images. Total, decidable, no
+`Classical.choose`. -/
+def restCollFind (f f' : FinKernelState) : List ℤ × List ℤ :=
+  (serializeRestFin f, serializeRestFin f')
+
+/-- **⚑ THE REST EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two finite states whose rest
+serializations sponge to the same felt EITHER have equal rest serializations, OR the pair
+`restCollFind` returns is a GENUINE collision of the deployed sponge. No hypothesis on `sponge`,
+hence true at deployed BabyBear parameters. -/
+theorem restHash_binds_or_collides (sponge : List ℤ → ℤ) (f f' : FinKernelState)
+    (h : sponge (serializeRestFin f) = sponge (serializeRestFin f')) :
+    serializeRestFin f = serializeRestFin f' ∨ SpongeColl sponge (restCollFind f f') := by
+  by_cases hs : serializeRestFin f = serializeRestFin f'
+  · exact Or.inl hs
+  · exact Or.inr ⟨hs, h⟩
 
 /-- **`RH_fin sponge k`** — the rest-hash on `RecordKernelState`, defined via the finite representative:
 for a `denote` image, the sponge of its (unique, by `denote_injective`) preimage's non-`cell`
@@ -335,12 +400,16 @@ private theorem restAgree_symm {f f' : FinKernelState}
 /-- **`restHashIffFrame_of_fin` — THE DISCHARGE-LIFT (honest scope: the DENOTE IMAGE).** For any two
 reachable (`denote`-image) `RecordKernelState`s, `RH_fin sponge` satisfies the exact
 `StateCommit.RestHashIffFrame` biconditional: equal rest hashes ⟺ every non-`cell` component agrees.
-RESIDUAL `Poseidon2SpongeCR sponge` ALONE. This is the discharge every real state needs (every real
+⚑ The refuted `Poseidon2SpongeCR sponge` premise is GONE (2026-08-01); the residual is the
+per-instance, refutable `¬ SpongeColl sponge (restCollFind f f')` at the ONE pair the extractor names
+for THESE two states, and it is consumed only by the `.mp` leg (the `.mpr` leg is `congrArg`, pure).
+This is the discharge every real state needs (every real
 `RecordKernelState` is a `denote` image); it is NOT claimed for non-reachable, infinite-support states
 (where no finite serialization exists — the honestly-named residual scope). Cf. the drift tripwire
 `rest_body_matches` welding this body to `StateCommit.RestHashIffFrame`. -/
-theorem restHashIffFrame_of_fin (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR sponge)
-    (f f' : FinKernelState) :
+theorem restHashIffFrame_of_fin (sponge : List ℤ → ℤ)
+    (f f' : FinKernelState)
+    (hno : ¬ SpongeColl sponge (restCollFind f f')) :
     RH_fin sponge (denote f) = RH_fin sponge (denote f') ↔
       ((denote f').accounts = (denote f).accounts ∧ (denote f').caps = (denote f).caps
         ∧ (denote f').bal = (denote f).bal
@@ -358,7 +427,8 @@ theorem restHashIffFrame_of_fin (sponge : List ℤ → ℤ) (hCR : Poseidon2Spon
   rw [RH_fin_denote, RH_fin_denote, restBody_iff_restAgree]
   constructor
   · intro h
-    exact restAgree_symm (restAgree_of_serializeRestFin (hCR _ _ h))
+    exact restAgree_symm
+      (restAgree_of_serializeRestFin ((restHash_binds_or_collides sponge f f' h).resolve_right hno))
   · intro h
     exact congrArg sponge (serializeRestFin_of_restAgree h)
 
@@ -455,4 +525,100 @@ theorem serializeFin_separates_nullifierRoot :
   have h0 := congrFun (congrArg FinKernelState.nullifierRoot hEq) 0
   simp [rootedInit, finInit] at h0
 
+/-! ## §8 — THE PORT'S TEETH: the per-instance residual is LOAD-BEARING, REFUTABLE, and
+SATISFIABLE-FOR-FREE.
+
+Three separate questions, and a side condition that cannot answer all three separately is a `True`
+in disguise. The global `∃ collision` disjunct provably cannot make this separation
+(`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`); the named pair can. -/
+
+/-- The two states the teeth fire on are genuinely DISTINCT — `rootedInit` carries `nullifierRoot
+0 ↦ 7` where `finInit` carries `0`. (A reachable pair, not a contrived one: it is the same pair
+`serializeFin_separates_nullifierRoot` and `FinBindsKernel.RH_fin_separates_root` use.) -/
+theorem rootedInit_ne_finInit : rootedInit ≠ finInit := by
+  intro h
+  have h0 := congrFun (congrArg FinKernelState.nullifierRoot h) 0
+  simp [rootedInit, finInit] at h0
+
+/-- **LOAD-BEARING (frame side)**: dropping the per-instance side condition makes the whole-state
+frame binding FALSE. At the collapsing sponge the two distinct states above hash to the same felt,
+so `f = f'` is NOT forced — the hypothesis does real work, it is not decoration. -/
+theorem restHashIffFrame_fin_unconditional_false :
+    ¬ (∀ (sponge : List ℤ → ℤ) (f f' : FinKernelState),
+        frameHashFin sponge f = frameHashFin sponge f' → f = f') :=
+  fun hall => rootedInit_ne_finInit (hall (fun _ => 0) rootedInit finInit rfl)
+
+/-- **REFUTABLE (frame side)**: on that same collapsing sponge the extractor RETURNS a genuine
+collision, so the new side condition really FAILS — it is not `True` in disguise, and the ported
+theorem cannot discharge itself by taking the right branch. -/
+theorem frameColl_refutable :
+    SpongeColl (fun _ : List ℤ => (0 : ℤ)) (frameCollFind rootedInit finInit) :=
+  ⟨serializeFin_separates_nullifierRoot, rfl⟩
+
+/-- **SATISFIABLE FOR FREE / FIRES (frame side)**: at one and the same state the extractor bottoms
+out at an EQUAL pair, so the side condition holds for EVERY sponge — no CR, no floor — and the ported
+binding genuinely fires at deployed parameters. -/
+theorem frameColl_fires (sponge : List ℤ → ℤ) (f : FinKernelState) :
+    ¬ SpongeColl sponge (frameCollFind f f) := fun hc => hc.1 rfl
+
+/-- The rest serialization SEPARATES the same pair (the `nullifierRoot` lane is one of the 15 rest
+codes) — the rest-side counterpart of `serializeFin_separates_nullifierRoot`. -/
+theorem serializeRestFin_separates_nullifierRoot :
+    serializeRestFin rootedInit ≠ serializeRestFin finInit := by
+  intro h
+  obtain ⟨-, -, -, -, -, -, -, -, -, -, -, -, -, -, -, hNRoot, -, -⟩ :=
+    restAgree_of_serializeRestFin h
+  have h0 := congrFun hNRoot 0
+  simp [rootedInit, finInit] at h0
+
+/-- **LOAD-BEARING (rest side)**: dropping the side condition makes the rest binding — the `.mp` leg
+`restHashIffFrame_of_fin` actually consumes — FALSE at the collapsing sponge. -/
+theorem restHash_unconditional_false :
+    ¬ (∀ (sponge : List ℤ → ℤ) (f f' : FinKernelState),
+        sponge (serializeRestFin f) = sponge (serializeRestFin f') →
+        serializeRestFin f = serializeRestFin f') :=
+  fun hall => serializeRestFin_separates_nullifierRoot (hall (fun _ => 0) rootedInit finInit rfl)
+
+/-- **REFUTABLE (rest side)**. -/
+theorem restColl_refutable :
+    SpongeColl (fun _ : List ℤ => (0 : ℤ)) (restCollFind rootedInit finInit) :=
+  ⟨serializeRestFin_separates_nullifierRoot, rfl⟩
+
+/-- **SATISFIABLE FOR FREE / FIRES (rest side)**, for EVERY sponge. -/
+theorem restColl_fires (sponge : List ℤ → ℤ) (f : FinKernelState) :
+    ¬ SpongeColl sponge (restCollFind f f) := fun hc => hc.1 rfl
+
+/-- **THE PORTED BINDING FIRES.** At an honest self-comparison the residual is free
+(`restColl_fires`), so the biconditional `restHashIffFrame_of_fin` really holds — for EVERY sponge,
+with no cryptographic hypothesis anywhere. This is the pole the pre-cutover statement could not
+reach: `Poseidon2SpongeCR` is unavailable at the deployed sponge even to an honest party. -/
+theorem restHashIffFrame_of_fin_fires (sponge : List ℤ → ℤ) (f : FinKernelState) :
+    RH_fin sponge (denote f) = RH_fin sponge (denote f) :=
+  (restHashIffFrame_of_fin sponge f f (restColl_fires sponge f)).mpr
+    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-! ## §9 — axiom hygiene + the floor rejectors. -/
+
+#assert_axioms frameHashFin_binds_or_collides
+#assert_axioms restHash_binds_or_collides
+#assert_axioms restHashIffFrame_fin
+#assert_axioms restHashIffFrame_of_fin
+#assert_axioms rootedInit_ne_finInit
+#assert_axioms restHashIffFrame_fin_unconditional_false
+#assert_axioms frameColl_refutable
+#assert_axioms frameColl_fires
+#assert_axioms serializeRestFin_separates_nullifierRoot
+#assert_axioms restHash_unconditional_false
+#assert_axioms restColl_refutable
+#assert_axioms restColl_fires
+#assert_axioms restHashIffFrame_of_fin_fires
+#assert_not_depends_on Dregg2.Circuit.FinFrameHash.frameHashFin_binds_or_collides [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.FinFrameHash.restHash_binds_or_collides [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.FinFrameHash.restHashIffFrame_fin [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Circuit.FinFrameHash.restHashIffFrame_of_fin [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+
 end Dregg2.Circuit.FinFrameHash
+-- POSITIVE CONTROL: the rejectors above are not blind — the tree's UNIVERSAL bridge, the one a
+-- not-yet-ported consumer of this module discharges its side condition through, DOES reach the floor
+-- on the same walk.
+#assert_depends_on Dregg2.Circuit.Poseidon2Binding.spongeColl_refutable_of_injective [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]

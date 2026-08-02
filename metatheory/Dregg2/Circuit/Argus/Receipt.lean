@@ -64,11 +64,13 @@ the Argus cornerstones; this module derives no collision-resistance.
     public-input binding — the running prover's PI equation). That used to be the named carried gap;
     it is now DISCHARGED onto the landed light-client floor: `argus_published_index_pins_receipt`
     derives BOTH `hRootPI` and `hSFRootPI` from MMR OPENINGS of the published receipt index
-    (`Lightclient/MMR.lean` — `mroot_binds_position` under the ONE named `Poseidon2SpongeCR` floor).
+    (`Lightclient/MMR.lean` — `mroot_binds_position`, floor-free since 2026-07-28: it asks only for
+    the per-instance `MMR.MRootColl` residual at the two logs in play).
     The residual premise is the EPOCH layout fact itself — the node writes each turn's circuit root and
     executor receipt-chain root at their dense index positions, the `CommitBindsMMR` obligation MMR §6
     records as discharged-by-construction at the flag-day. So the §2 form survives as the INNER lemma;
-    the protocol-facing keystone consumes published-index openings, terminal at Poseidon2SpongeCR.
+    the protocol-facing keystone consumes published-index openings, terminal at the per-instance
+    `MMR.MRootColl` residual (⚑ NOT `Poseidon2SpongeCR` — that carrier was drained 2026-08-01).
     The H4-descriptor field-subset widening (MID-4 R1, tasks #36/#37/#91) is OUT OF SCOPE: we bind to
     `cellCommit`, the canonical receipt the H4 chain encodes, exactly as the crown does.
 
@@ -305,30 +307,40 @@ The §2 keystone carries the cross-AIR PI binding as a bare hypothesis ("the two
 SAME published value"). The receipt index the EPOCH publishes is an MMR (`Lightclient/MMR.lean`): history
 keys are dense positions, the per-turn commitment absorbs the index root (`CommitBindsMMR`, discharged by
 construction at the flag-day layout), and `mroot_binds_position` proves — as of 2026-07-28 with NO
-floor of its own, only a per-instance `MMR.MRootColl` residual this file discharges from its own
-`hCR` — that ANY log recomposing the published root opens identically at every
+floor of its own, only a per-instance `MMR.MRootColl` residual this file now CARRIES rather than
+manufacturing from a refuted floor (⚑ 2026-08-01) — that ANY log recomposing the published root opens identically at every
 position. So "both proofs bind their root to the SAME published value" is not a free-floating PI equation
 any more: it is "both roots OPEN at the same dense position of the published index", and the equality the
 §2 keystone needs is DERIVED, adversarial-server included (the prover's openings may be against its own
-log `L'`; CR forces `L' = L`). The carried hypothesis burns down to the named crypto floor. -/
+log `L'`; absent a collision at the pair `mrootFind` names, `L' = L`). The carried hypothesis burns
+down to a DECIDABLE residual at a NAMED pair, not to a floor the deployed sponge cannot satisfy. -/
 
 section PublishedIndex
 
 open Dregg2.Lightclient.MMR (mroot Opens mroot_binds_position)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-
 /-- **`published_position_pins_value`** — openings of ONE published index position pin ONE value,
 adversarial server included: if the prover's log `L'` recomposes the published root of the genuine log
 `L` (`mroot hash L' = mroot hash L`) and a value opens at position `i` of each, the values are EQUAL.
 This is the `hRootPI`-shape supplier: `mroot_binds_position` (the MMR root binding pins the whole
-log) + positional determinism. Terminal at the named `Poseidon2SpongeCR` floor, which is THIS file's
-carrier, not the MMR module's: the ported `mroot_binds_position` asks only for `¬ MRootColl` at the
-two logs in play, and `hCR` discharges it inline. Porting the rest of this cone means giving the
-Argus keystones their own per-instance residuals — a separate wave. -/
-theorem published_position_pins_value (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+log) + positional determinism.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor was THIS file's carrier, not the MMR
+module's — `mroot_binds_position` was already ported and asks only for `¬ MRootColl` at the two logs
+in play, and `hCR` was discharging it INLINE. Since that residual is stated at exactly `L'` and `L`,
+both of which the statement already names, the hoist is total: the keystone now carries the
+DECIDABLE per-instance residual instead of a hypothesis
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` proves FALSE at deployed BabyBear.
+Dischargeable by the honest single-log party (`MMR.mrootColl_dischargeable`), refutable
+(`MMR.mrootColl_refutable`), so this is strictly STRONGER with an unchanged conclusion; a caller
+still holding the floor supplies `Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`.
+
+⚑ HONEST PRICE, inherited from `mroot_binds_position` and unchanged by the port: the deployed MMR
+root is ONE felt, so the residual is worth ≈2^15.5 queries. -/
+theorem published_position_pins_value (hash : List ℤ → ℤ)
     {L L' : List ℤ} (hpub : mroot hash L' = mroot hash L)
+    (hno : ¬ Dregg2.Lightclient.MMR.MRootColl hash L' L)
     {i : ℕ} {r' r : ℤ} (h' : Opens L' i r') (h : Opens L i r) : r' = r := by
-  have hpos := mroot_binds_position hash hpub (fun hc => hc.1 (hCR _ _ hc.2)) i
+  have hpos := mroot_binds_position hash hpub hno i
   exact Option.some.inj ((h'.symm.trans hpos).trans h)
 
 /-- **`argus_published_index_pins_receipt` — THE DISCHARGED KEYSTONE.** The §2 connection keystone
@@ -337,7 +349,8 @@ with the PI-binding hypotheses REPLACED by their protocol mechanism: instead of 
 holds the published receipt-index root (`mroot hash L`), the prover's openings are against ANY log `L'`
 recomposing it, and the Argus-produced state's circuit root / executor receipt-chain root OPEN at the
 SAME dense positions (`i`/`j`) as the second witnessed state `k₂`'s. Under the ONE named
-`Poseidon2SpongeCR` floor the openings FORCE the root equalities (`published_position_pins_value`), and
+per-instance `MMR.MRootColl` residual the openings FORCE the root equalities
+(`published_position_pins_value`), and
 the §2 keystone concludes: the Argus-produced cell's receipt IS `k₂`'s canonical receipt on every live
 cell of the common carrier. The cross-AIR PI binding is no longer carried — it is derived from the
 published index, terminal at the named CR floor; the remaining protocol obligation is exactly MMR §6's
@@ -346,7 +359,7 @@ theorem argus_published_index_pins_receipt
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (LH : List Turn → ℤ)
     (compress2 : Int → Int → Int) (restLimbs : CellId → List ℤ)
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
@@ -358,7 +371,8 @@ theorem argus_published_index_pins_receipt
     (hexec : interp st k = some k')
     -- the published receipt index: the client-held genuine log `L`, the prover's log `L'` recomposing
     -- the SAME published root (the adversarial-server form):
-    (L L' : List ℤ) (hpub : mroot hash L' = mroot hash L) (i j : ℕ)
+    (L L' : List ℤ) (hpub : mroot hash L' = mroot hash L)
+    (hnoIdx : ¬ Dregg2.Lightclient.MMR.MRootColl hash L' L) (i j : ℕ)
     -- both circuit roots open at the SAME dense position `i`, both executor receipt-chain roots at `j`:
     (hOpenCirc' : Opens L' i (recStateCommit CH RH cmb compress compressN k' t))
     (hOpenCirc  : Opens L  i (recStateCommit CH RH cmb compress compressN k₂ t))
@@ -370,10 +384,10 @@ theorem argus_published_index_pins_receipt
   -- the openings of the published index DERIVE the two PI-binding equalities the §2 keystone carried.
   have hRootPI : recStateCommit CH RH cmb compress compressN k' t
       = recStateCommit CH RH cmb compress compressN k₂ t :=
-    published_position_pins_value hash hCR hpub hOpenCirc' hOpenCirc
+    published_position_pins_value hash hpub hnoIdx hOpenCirc' hOpenCirc
   have hSFRootPI : recSetFieldCommit CH RH cmb compressN LH k' cell log
       = recSetFieldCommit CH RH cmb compressN LH k₂ cell log' :=
-    published_position_pins_value hash hCR hpub hOpenSF' hOpenSF
+    published_position_pins_value hash hpub hnoIdx hOpenSF' hOpenSF
   intro c hcCirc hcExec
   obtain ⟨hPub, hCircEq, _⟩ :=
     argus_commits_to_one_receipt CH RH cmb compress compressN LH compress2 restLimbs
@@ -391,7 +405,7 @@ theorem transfer_published_index_pins_receipt
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (LH : List Turn → ℤ)
     (compress2 : Int → Int → Int) (restLimbs : CellId → List ℤ)
-    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
     (hRest : RestHashIffFrame RH) (hLog : Dregg2.Circuit.StateCommit.logHashInjective LH)
@@ -401,7 +415,8 @@ theorem transfer_published_index_pins_receipt
     (hnoFrameLeafE : ¬ FrameLeafColl CH k' k₂ (k'.accounts \ {cell}))
     (hnoTouchedLeaf : ¬ CellLeafColl CH cell (k'.cell cell) (k₂.cell cell))
     (hexec : recKExec k turn = some k')
-    (L L' : List ℤ) (hpub : mroot hash L' = mroot hash L) (i j : ℕ)
+    (L L' : List ℤ) (hpub : mroot hash L' = mroot hash L)
+    (hnoIdx : ¬ Dregg2.Lightclient.MMR.MRootColl hash L' L) (i j : ℕ)
     (hOpenCirc' : Opens L' i (recStateCommit CH RH cmb compress compressN k' t))
     (hOpenCirc  : Opens L  i (recStateCommit CH RH cmb compress compressN k₂ t))
     (hOpenSF'   : Opens L' j (recSetFieldCommit CH RH cmb compressN LH k' cell log))
@@ -412,9 +427,9 @@ theorem transfer_published_index_pins_receipt
   have hi : interp (transferStmt turn) k = some k' := by
     rw [interp_transferStmt_eq_recKExec]; exact hexec
   exact argus_published_index_pins_receipt CH RH cmb compress compressN LH compress2 restLimbs
-    hash hCR hCmb hCompress hCompressN hRest hLog (transferStmt turn) k k' k₂ t cell log log'
+    hash hCmb hCompress hCompressN hRest hLog (transferStmt turn) k k' k₂ t cell log log'
     hnoFrameLeafC hnoMovedLeaf hnoFrameLeafE hnoTouchedLeaf
-    hi L L' hpub i j hOpenCirc' hOpenCirc hOpenSF' hOpenSF
+    hi L L' hpub hnoIdx i j hOpenCirc' hOpenCirc hOpenSF' hOpenSF
 
 -- NON-VACUITY of the openings premise (both polarities, on the decidable `Opens`): a root WRITTEN at a
 -- dense index position OPENS there...

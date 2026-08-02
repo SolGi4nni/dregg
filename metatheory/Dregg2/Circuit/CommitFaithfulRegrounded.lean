@@ -88,14 +88,45 @@ ARITY: a per-instance leg must name the opening, so the definition takes `(k, k'
   The new one needed a `FinKernelState` with a NON-EMPTY `CanonMap` (`finNonce`), which the tree did
   not have; it is now here and reusable.
 
-⚠ STILL OPEN, and named rather than hidden: `transfer_circuit_full_sound_faithful_of_noColl` has NO
-`*_unconditional_false` canary. `finNonce` supplies the `FiniteRepresentable` half now, but the
-witness also needs a satisfying `satisfiedS` assignment whose `cSRestFrame` gate holds — i.e. an
-INHABITANT of `RestHashIffFrameFin`, which the tree still does not have (`Verify/
-RestFrameFiniteSupportSuccessor` proves the predicate satisfiable-and-refutable, not inhabited by a
-named `RH`). Dropping `hRest` from the refuted statement would NOT be a fix: refuting a
-weaker-hypothesis statement does not refute the stronger one. That is undone work, not a theorem of
-the model.
+⚑⚑ **2026-08-01 (third pass) — THE BLOCKER PRINTED HERE WAS FALSE; THE CANARY IS LANDED.** The
+paragraph this replaces said `transfer_circuit_full_sound_faithful_of_noColl` could not get an
+`*_unconditional_false` canary because the witness needs "an INHABITANT of `RestHashIffFrameFin`,
+which the tree still does not have (`Verify/RestFrameFiniteSupportSuccessor` proves the predicate
+satisfiable-and-refutable, not inhabited by a named `RH`)". The tree has had one since 2026-07-31:
+`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable` is a CLOSED theorem of type
+`RestHashIffFrameFin (RH_fin Reference.refSponge)`. It NAMES the rest-hash and proves the predicate
+OF it, carrying no hypothesis at all (`Poseidon2Binding.Reference.refSponge_CR` is itself a closed
+proof, not a binder) — "SATISFIABLE" there IS the inhabitant. The blocker was written from that
+file's section HEADINGS rather than its statements, and it cost this canary a pass.
+* The ONE true half of it is kept: dropping `hRest` would NOT be a fix, because refuting a
+  weaker-hypothesis statement does not refute the stronger one. So
+  `transfer_circuit_full_sound_faithful_unconditional_false` keeps `RestHashIffFrameFin RH` INSIDE
+  the quantifier and refutes the statement WITH it; the only thing deleted is `hno`.
+* **The witness is `StateCommit`'s OWN reference forgery at a lossy deployment.** `finKS0` /
+  `finForgedThirdCell` exhibit `kS0` and `forgedThirdCell` as `denote` images
+  (`denote_finKS0` / `denote_finForgedThirdCell`) — that is what supplies the two
+  `FiniteRepresentable` hypotheses, and it is the piece `finNonce` could not supply, since the nonce
+  canary's states differ in a CELL but are not the transfer triple.
+  `accountsWF_kS0` / `accountsWF_forgedThirdCell` supply the structural pair, and
+  `satisfiedS_forgedThirdCell_at_lossy` builds the full satisfying assignment: the nine transfer
+  gates by `decide` (`StateCommit`'s own `#guard` already records that `transferCircuit` ACCEPTS this
+  forgery), `cSRestFrame` from `restHashIffFrameFin_satisfiable`'s REVERSE direction at the eighteen
+  frozen non-cell components, `cSFrameReuse` / `cSMovedBind` from the collapsed constant primitives.
+* ⚑ **THE PAIRING IS AT ONE AND THE SAME INSTANCE.** `transferFaithfulColl_refutable` already FIRES
+  the residual at exactly this triple — `constantAuthorityFold8` / `constantWide` /
+  `rotatedContextDemoIroot`, `kS0` / `forgedThirdCell` / `goodTurnS`. Read together the two teeth say:
+  WITHOUT `hno` the conclusion is FALSE here, and `hno` is PRECISELY what this witness violates. That
+  co-location is itself a theorem — `transfer_canary_and_residual_at_one_instance` — not a sentence,
+  so an edit that moves either side stops elaborating instead of quietly decoupling them.
+* ⚠ The `RH` the canary picks is the REFERENCE pole (`Encodable.encode`), the strongest rest hash the
+  tree has, so the rest-frame gate genuinely bites and the forgery has to respect all eighteen frozen
+  components. All the lossiness is on the CELL side (`constantWide` collapses `wireCommitR8`). A
+  canary that had picked a weak `RH` would be refuting the statement by disabling the hypothesis it
+  is supposed to keep.
+* This file now IMPORTS `Dregg2.Verify.RestFrameFiniteSupportSuccessor` (a `Circuit` module reaching
+  UP into `Verify`) to route through the one existing witness rather than re-proving it locally: a
+  per-site copy of a satisfiability proof is exactly the second shape the campaign's rules forbid.
+  No cycle — nothing in that module's cone imports this one.
 
 No `sorry`, `admit`, `native_decide`, or new axiom.  Every theorem is audited below.
 -/
@@ -110,6 +141,10 @@ import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Circuit.Emit.RotatedLayout
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.EffectTransfer
+-- ⚑ 2026-08-01: for `restHashIffFrameFin_satisfiable`, the CLOSED, NAMED inhabitant of
+-- `RestHashIffFrameFin` the transfer canary's `cSRestFrame` gate needs.  Routed through the ONE
+-- existing witness rather than re-proving it here (a per-site copy would be a second shape).
+import Dregg2.Verify.RestFrameFiniteSupportSuccessor
 import Mathlib.Data.List.OfFn
 import Mathlib.Logic.Encodable.Pi
 
@@ -2192,6 +2227,228 @@ theorem noTransferFaithfulColl_not_provable :
       ¬ TransferFaithfulColl fold8 permW ctx compress compressN k k' t :=
   fun h => h _ _ _ _ _ _ _ goodTurnS transferFaithfulColl_refutable
 
+/-! ### ⚑⚑ TOOTH (LOAD-BEARING) FOR THE TRANSFER TWIN — the canary the header said was impossible.
+
+`transfer_circuit_full_sound_faithful_of_noColl` was the one ported statement with no
+`*_unconditional_false` sibling, and the reason recorded in this file's header was FALSE: the witness
+needs an inhabitant of `RestHashIffFrameFin`, and
+`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable` is exactly that — a CLOSED
+theorem naming `RH_fin Reference.refSponge`, carrying nothing.
+
+What the witness genuinely needed beyond it was a satisfying `satisfiedS` assignment at a state pair
+BOTH halves of which are `FiniteRepresentable`.  That is supplied by exhibiting `StateCommit`'s own
+reference forgery — `kS0` (cells 0/1/2 at 100/5/50) and `forgedThirdCell` (0/1 honestly debited and
+credited to 70/35, bystander cell 2 MINTED 50 → 999) — as `denote` images of two `FinKernelState`s.
+The forgery is then run at the LOSSY deployment: `transferCircuit` accepts it (`StateCommit`'s own
+`#guard` records that), the frame/moved gates collapse under the constant primitives, and the
+rest-frame gate holds because the eighteen non-cell components are literally frozen.  So `satisfiedS`
+holds and `TransferSpec` does not.
+
+⚑ `transferFaithfulColl_refutable` above FIRES the residual at THIS SAME TRIPLE.  The two teeth are
+the same instance read twice: without `hno` the conclusion is FALSE, and `hno` is precisely what this
+witness violates — `transfer_canary_and_residual_at_one_instance` says that as a theorem, not as
+prose, so a later edit that moves either side stops elaborating.
+
+⚑ **THE REST HASH IS NOT WHERE THE CHEAT IS, and that is the point.**  `RH_fin Reference.refSponge`
+is `Encodable.encode`, genuinely injective and genuinely NOT BabyBear-bounded — the strongest rest
+hash the tree has.  The rest-frame gate therefore genuinely BITES here: it forces all eighteen
+non-cell components frozen, and the forgery has to (and does) respect every one of them.  All the
+lossiness is on the CELL side — `constantWide` collapses `wireCommitR8`, so `CH_faithful8` separates
+no two openings.  A canary that had instead picked a weak `RH` would be refuting the statement by
+disabling the hypothesis it is supposed to keep. -/
+
+section TransferCanary
+
+open Dregg2.Circuit.FinKernelState (FinKernelState finInit denote CanonMap SortedMap lookupList)
+open Dregg2.Circuit.FinFrameHash (RH_fin)
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge)
+open Dregg2.Verify.RestFrameFiniteSupportSuccessor (restHashIffFrameFin_satisfiable)
+
+/-- A one-field balance record — the exact `Value` shape `kS0`/`forgedThirdCell` store. -/
+private def balV (b : Int) : Value := Value.record [("balance", Value.int b)]
+
+/-- **`kS0` AS A `FinKernelState`.**  Three stored cells, sorted keys, no stored default — so it is a
+`CanonMap`, and `denote` of it is `kS0` on the nose. -/
+private def finKS0 : FinKernelState :=
+  { finInit with
+    accounts := {0, 1, 2}
+    cell := ⟨⟨[(0, balV 100), (1, balV 5), (2, balV 50)], by decide⟩, by
+      intro p hp
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+      rcases hp with rfl | rfl | rfl <;> exact fun h => Value.noConfusion h⟩ }
+
+/-- **`forgedThirdCell` AS A `FinKernelState`** — the same three keys, cell 2 minted to 999. -/
+private def finForgedThirdCell : FinKernelState :=
+  { finKS0 with
+    cell := ⟨⟨[(0, balV 70), (1, balV 35), (2, balV 999)], by decide⟩, by
+      intro p hp
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hp
+      rcases hp with rfl | rfl | rfl <;> exact fun h => Value.noConfusion h⟩ }
+
+theorem denote_finKS0 : denote finKS0 = kS0 := by
+  have hcell : ∀ c, (denote finKS0).cell c = kS0.cell c := by
+    intro c
+    by_cases h0 : c = 0
+    · subst h0; rfl
+    · by_cases h1 : c = 1
+      · subst h1; rfl
+      · by_cases h2 : c = 2
+        · subst h2; rfl
+        · simp [denote, finKS0, kS0, CanonMap.get, SortedMap.get, SortedMap.lookup,
+            lookupList, h0, h1, h2, Ne.symm h0, Ne.symm h1, Ne.symm h2]
+          rfl
+  ext1 <;> first | rfl | (funext c; exact hcell c)
+
+theorem denote_finForgedThirdCell : denote finForgedThirdCell = forgedThirdCell := by
+  have hcell : ∀ c, (denote finForgedThirdCell).cell c = forgedThirdCell.cell c := by
+    intro c
+    by_cases h0 : c = 0
+    · subst h0; rfl
+    · by_cases h1 : c = 1
+      · subst h1; rfl
+      · by_cases h2 : c = 2
+        · subst h2; rfl
+        · simp [denote, finForgedThirdCell, finKS0, forgedThirdCell, kS0, CanonMap.get,
+            SortedMap.get, SortedMap.lookup, lookupList, h0, h1, h2,
+            Ne.symm h0, Ne.symm h1, Ne.symm h2]
+          rfl
+  ext1 <;> first | rfl | (funext c; exact hcell c)
+
+/-- The forgery is inside the narrowed domain: both halves are `denote` images, so the
+`FiniteRepresentable` envelope of the transfer twin is met, not dodged. -/
+theorem finiteRepresentable_kS0 : FiniteRepresentable kS0 := ⟨finKS0, denote_finKS0⟩
+
+theorem finiteRepresentable_forgedThirdCell : FiniteRepresentable forgedThirdCell :=
+  ⟨finForgedThirdCell, denote_finForgedThirdCell⟩
+
+theorem accountsWF_kS0 : AccountsWF kS0 := by
+  intro c hc
+  have h0 : c ≠ 0 := by rintro rfl; exact hc (by simp [kS0])
+  have h1 : c ≠ 1 := by rintro rfl; exact hc (by simp [kS0])
+  have h2 : c ≠ 2 := by rintro rfl; exact hc (by simp [kS0])
+  simp [kS0, h0, h1, h2]
+
+theorem accountsWF_forgedThirdCell : AccountsWF forgedThirdCell := by
+  intro c hc
+  have h0 : c ≠ 0 := by rintro rfl; exact hc (by simp [forgedThirdCell, kS0])
+  have h1 : c ≠ 1 := by rintro rfl; exact hc (by simp [forgedThirdCell, kS0])
+  have h2 : c ≠ 2 := by rintro rfl; exact hc (by simp [forgedThirdCell, kS0])
+  simp [forgedThirdCell, kS0, h0, h1, h2]
+
+/-- The rest-frame gate at the named inhabitant: the forgery freezes all eighteen non-cell
+components, so `restHashIffFrameFin_satisfiable`'s REVERSE direction hands back the equal rest
+hashes.  (The FORWARD direction is what makes the predicate content-bearing; this canary needs the
+other one, which is why an inhabitant — not merely satisfiability-in-the-abstract — was required.) -/
+private theorem restEq_forged :
+    RH_fin refSponge kS0 = RH_fin refSponge forgedThirdCell :=
+  (restHashIffFrameFin_satisfiable kS0 forgedThirdCell
+      finiteRepresentable_kS0 finiteRepresentable_forgedThirdCell).mpr
+    ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The nine projection gates ACCEPT the minted-bystander forgery — `StateCommit`'s own `#guard`
+(`satisfied transferCircuit (encodeT kS0 goodTurnS forgedThirdCell)`) as a `Prop`, since the transfer
+twin's `satisfiedS` needs it as a term and not as a `#guard`. -/
+private theorem htsat_forged :
+    satisfied transferCircuit (encodeT kS0 goodTurnS forgedThirdCell) := by decide
+
+/-- The conclusion the canary refutes: `forgedThirdCell` is NOT the spec post-state — its cell 2 holds
+999 where the spec's debit/credit of `kS0` leaves 50. -/
+theorem transferSpec_forgedThirdCell_false : ¬ TransferSpec kS0 goodTurnS forgedThirdCell := by
+  rintro ⟨-, hcell, -⟩
+  have h2 : balOf (forgedThirdCell.cell 2)
+      = balOf (recTransfer kS0.cell goodTurnS.src goodTurnS.dst goodTurnS.amt 2) :=
+    congrArg balOf (congrFun hcell 2)
+  revert h2
+  decide
+
+/-- **THE SATISFYING ASSIGNMENT.**  At the lossy deployment the forgery satisfies the WHOLE
+`stateCircuit` plus the root decomposition: nine transfer gates transported from `htsat_forged`,
+`cSRestFrame` from `restEq_forged`, and `cSFrameReuse`/`cSMovedBind` because the constant
+`compressN`/`compress` collapse both sides.  This is the assignment the header claimed the tree could
+not build. -/
+theorem satisfiedS_forgedThirdCell_at_lossy :
+    satisfiedS (fun _ _ => (0 : Int)) (fun _ _ => (0 : Int))
+      (encodeS (CH_faithful8 constantAuthorityFold8 constantWide rotatedContextDemoIroot)
+        (RH_fin refSponge) (fun _ _ => (0 : Int)) (fun _ _ => (0 : Int))
+        (fun _ => (0 : Int)) kS0 goodTurnS forgedThirdCell) := by
+  have e0 := encodeS_agrees_encodeT
+    (CH_faithful8 constantAuthorityFold8 constantWide rotatedContextDemoIroot)
+    (RH_fin refSponge) (fun _ _ => (0 : Int)) (fun _ _ => (0 : Int)) (fun _ => (0 : Int))
+    kS0 goodTurnS forgedThirdCell
+  refine ⟨?_, ?_, ?_⟩
+  · intro c hc
+    unfold stateCircuit at hc
+    rw [List.mem_append] at hc
+    rcases hc with hc | hc
+    · have hcT := htsat_forged c hc
+      unfold transferCircuit at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+        · unfold Constraint.holds at hcT ⊢
+          simp only [cTAuth, cTNonneg, cTAvail, cTDistinct, cTSrcLive, cTDstLive, cTDebit,
+            cTCredit, cTConserve, Expr.eval,
+            e0 vSrcPre (by decide), e0 vDstPre (by decide), e0 vSrcPost (by decide),
+            e0 vDstPost (by decide), e0 vAmt (by decide), e0 vTAuth (by decide),
+            e0 vTNonneg (by decide), e0 vTAvail (by decide), e0 vTDistinct (by decide),
+            e0 vTSrcLive (by decide), e0 vTDstLive (by decide)] at hcT ⊢
+          exact hcT
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl
+      · exact (srestframe_iff _ _ _ _ _ _ _ _).mpr restEq_forged
+      · exact (sframereuse_iff _ _ _ _ _ _ _ _).mpr rfl
+      · exact (smovedbind_iff _ _ _ _ _ _ _ _).mpr rfl
+  · simp only [encS_vPreRoot]
+    rfl
+  · simp only [encS_vPostRoot]
+    rfl
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING).** Delete the per-instance side condition from
+`transfer_circuit_full_sound_faithful_of_noColl` and the statement is FALSE — not weaker, FALSE — with
+EVERYTHING ELSE still in place: the `RestHashIffFrameFin RH` carrier stays INSIDE the quantifier
+(dropping it would refute a stronger statement and say nothing about the real one), and so do
+`AccountsWF` and `FiniteRepresentable` on both states.  At the lossy eight-lane deployment
+`StateCommit`'s minted-bystander forgery satisfies the whole full-state circuit while failing
+`TransferSpec`.  So `hno` is carrying the argument at the transfer layer, and
+`transferFaithfulColl_refutable` names — at this very triple — the collision it demands. -/
+theorem transfer_circuit_full_sound_faithful_unconditional_false :
+    ¬ (∀ (fold8 : AuthorityFold8) (permW : List Int → List Int) (ctx : RotatedContextProvider)
+        (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+        (RH : RecordKernelState → Int),
+        RestHashIffFrameFin RH →
+        ∀ (k : RecordKernelState) (t : Turn) (k' : RecordKernelState),
+        AccountsWF k → AccountsWF k' → FiniteRepresentable k → FiniteRepresentable k' →
+        satisfiedS cmb compress
+          (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k') →
+        TransferSpec k t k') := by
+  intro hall
+  exact transferSpec_forgedThirdCell_false
+    (hall constantAuthorityFold8 constantWide rotatedContextDemoIroot
+      (fun _ _ => 0) (fun _ _ => 0) (fun _ => 0) (RH_fin refSponge)
+      restHashIffFrameFin_satisfiable kS0 goodTurnS forgedThirdCell
+      accountsWF_kS0 accountsWF_forgedThirdCell
+      finiteRepresentable_kS0 finiteRepresentable_forgedThirdCell
+      satisfiedS_forgedThirdCell_at_lossy)
+
+/-- **⚑⚑ THE ACCEPTANCE TEST FOR THE CANARY.**  Prose that two teeth are "at the same instance" rots;
+this does not.  At ONE deployment (`constantAuthorityFold8` / `constantWide` /
+`rotatedContextDemoIroot`, all-zero outer primitives) and ONE triple (`kS0` / `goodTurnS` /
+`forgedThirdCell`): the witness SATISFIES the full-state circuit, FAILS `TransferSpec`, and TRIPS
+`TransferFaithfulColl`.  So the statement refuted above differs from
+`transfer_circuit_full_sound_faithful_of_noColl` by `hno` ALONE, and `hno` is false exactly where the
+conclusion is.  If a later edit moves either tooth to a different instance, this stops elaborating. -/
+theorem transfer_canary_and_residual_at_one_instance :
+    satisfiedS (fun _ _ => (0 : Int)) (fun _ _ => (0 : Int))
+        (encodeS (CH_faithful8 constantAuthorityFold8 constantWide rotatedContextDemoIroot)
+          (RH_fin refSponge) (fun _ _ => (0 : Int)) (fun _ _ => (0 : Int)) (fun _ => (0 : Int))
+          kS0 goodTurnS forgedThirdCell)
+      ∧ ¬ TransferSpec kS0 goodTurnS forgedThirdCell
+      ∧ TransferFaithfulColl constantAuthorityFold8 constantWide rotatedContextDemoIroot
+          (fun _ _ => (0 : Int)) (fun _ => (0 : Int)) kS0 forgedThirdCell goodTurnS :=
+  ⟨satisfiedS_forgedThirdCell_at_lossy, transferSpec_forgedThirdCell_false,
+    transferFaithfulColl_refutable⟩
+
+end TransferCanary
+
 #assert_axioms plus4_collision
 #assert_axioms constantAuthorityFold_collision
 #assert_axioms constantAuthorityFold8_collision
@@ -2216,6 +2473,18 @@ theorem noTransferFaithfulColl_not_provable :
 #assert_axioms transferFaithfulColl_refutable
 #assert_axioms noTransferFaithfulColl_not_provable
 #assert_axioms commit_binds_nonce_faithful_unconditional_false
+-- ⚑⚑ the LOAD-BEARING canary for the transfer twin (2026-08-01, third pass): the header's
+-- "no inhabitant of `RestHashIffFrameFin`" blocker was false, and this is the discharge.
+#assert_axioms denote_finKS0
+#assert_axioms denote_finForgedThirdCell
+#assert_axioms finiteRepresentable_kS0
+#assert_axioms finiteRepresentable_forgedThirdCell
+#assert_axioms accountsWF_kS0
+#assert_axioms accountsWF_forgedThirdCell
+#assert_axioms transferSpec_forgedThirdCell_false
+#assert_axioms satisfiedS_forgedThirdCell_at_lossy
+#assert_axioms transfer_circuit_full_sound_faithful_unconditional_false
+#assert_axioms transfer_canary_and_residual_at_one_instance
 
 /-! ## 5. The honest floor.
 

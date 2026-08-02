@@ -921,36 +921,50 @@ theorem satisfied2_fin_root (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
       = Heap.root hash (UniversalMemory.boundaryCells (fun a => some (mfin a).1) as) :=
   UniversalMemory.boundary_init_root_derived hash hs has hsem
 
-/-- **The flat boundary binding is SOUND (the anti-forgery tooth) — `Heap.root_injective` under
-`Poseidon2SpongeCR`.** A committed pre-state map `mcommitted` and the prover's declared init heap
-`mdeclared` carry the SAME root iff they ARE the same map. So pinning the `minit_root` PI to the
-committed pre-state root forces the declared flat init image to be the committed pre-state — a
-forged `minit` (a tampered value at a declared address, the exploit the diagnosis confirmed)
-CANNOT keep the published root. The flat analog of `boundary_init_root_bound`. -/
-theorem satisfied2_init_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **The flat boundary binding is SOUND (the anti-forgery tooth) — `Heap.root_injective`.** A
+committed pre-state map `mcommitted` and the prover's declared init heap `mdeclared` carrying the
+SAME root ARE the same map. So pinning the `minit_root` PI to the committed pre-state root forces
+the declared flat init image to be the committed pre-state — a forged `minit` (a tampered value at
+a declared address, the exploit the diagnosis confirmed) CANNOT keep the published root. The flat
+analog of `boundary_init_root_bound`.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor is refuted at deployed BabyBear, so
+the anti-forgery tooth was vacuous at the parameters the prover runs at — precisely where the
+forged-`minit` exploit lives. It now carries `Heap.root_injective`'s own DECIDABLE per-instance
+residual at the ONE pair `Heap.rootFind` names for these two heaps: dischargeable by the honest
+committer for free (`Heap.heapRootColl_dischargeable`), refutable at a degenerate sponge
+(`Heap.heapRootColl_refutable`), and it REFUTES the old premise
+(`Heap.heapRootColl_refutes_poseidon2CR`), so the statement is strictly STRONGER with the
+conclusion unchanged. A caller holding the floor rewires through the tree's universal bridge
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`. -/
+theorem satisfied2_init_root_bound (hash : List ℤ → ℤ)
     {mcommitted mdeclared : Heap.FeltHeap}
+    (hno : ¬ Heap.HeapRootColl hash mdeclared mcommitted)
     (hroot : Heap.root hash mdeclared = Heap.root hash mcommitted) :
     mdeclared = mcommitted :=
-  Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hroot
+  Heap.root_injective hash hno hroot
 
 /-- **THE WHOLE-IMAGE flat init binding — `boundary_whole_image_sem` applied.** The no-extra-cells
 direction: if the committed pre-state root EQUALS the sorted-Poseidon2 fold of the ENTIRE declared
 flat boundary image `boundaryCells (some ∘ minit) as` — the obligation the in-circuit whole-image
 root-fold discharges (the `whole_image_fold` sorted-insert chip cross-bound to the `MemBoundary`
-table) — then under the named CR floor the committed heap agrees with the declared init image at
+table) — then, absent a sponge collision at the ONE pair the root extractor names for this pin, the
+committed heap agrees with the declared init image at
 EVERY address: declared cells open to `minit a`, and every address OFF the declared list is ABSENT.
 So a committed pre-state holding any value the boundary did not declare CANNOT keep the published
 root; the flat boundary image is the WHOLE committed pre-state. This is what rejects a forged
 `minit[a]=999` at an UNTOUCHED declared field: that forged image folds to a DIFFERENT root, so the
 `minit_root` PI pin against the committed pre-state root REFUSES. The flat companion of
 `satisfied2U_init_whole_image`. -/
-theorem satisfied2_init_whole_image (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem satisfied2_init_whole_image (hash : List ℤ → ℤ)
     {mcommitted : Heap.FeltHeap} {minit : ℤ → ℤ} {as : List ℤ}
     (has : as.Pairwise (· < ·))
+    (hno : ¬ Heap.HeapRootColl hash mcommitted
+      (UniversalMemory.boundaryCells (fun a => some (minit a)) as))
     (hpin : Heap.root hash mcommitted
       = Heap.root hash (UniversalMemory.boundaryCells (fun a => some (minit a)) as)) :
     ∀ a, Heap.get mcommitted a = if a ∈ as then some (minit a) else none :=
-  UniversalMemory.boundary_whole_image_sem hash hCR has hpin
+  UniversalMemory.boundary_whole_image_sem hash has hno hpin
 
 /-! ## §6b — `Satisfied2U`: the UNIVERSAL-memory denotation (the one-Blum-multiset leg).
 
@@ -1103,7 +1117,7 @@ over the touched keys `as` (declared, sorted), then today's committed pre-state 
 sorted-Poseidon2 root of the boundary view derived from `uinit`. This is what makes the universal
 boundary's init column TRUSTWORTHY: pinning that derived root to the committed pre-state root (the
 PI-v3 ride-along) forces the declared init image to be the committed pre-state — a tampered init
-CANNOT keep the published root (`boundary_init_root_bound`, under `Poseidon2SpongeCR`). The init
+CANNOT keep the published root (`boundary_init_root_bound`, on its per-instance residual). The init
 side needs NO memcheck pinning: `uinit` is the given, not a prover-chosen final column. -/
 theorem satisfied2U_init_root (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (dm : UniversalMemory.Domain)
@@ -1123,15 +1137,16 @@ theorem satisfied2U_init_root (hash : List ℤ → ℤ) (d : EffectVmDescriptor2
 cells).** The no-extra-cells direction `satisfied2U_init_root` could not reach by per-cell
 membership: if the committed pre-state root EQUALS the sorted-Poseidon2 fold of the ENTIRE
 declared boundary image (`boundaryCells (uinit dm·) as`) — the obligation the in-circuit
-whole-boundary root-fold discharges, riding the universal-map rotation — then under the named CR
-floor the committed heap agrees with the declared init image at EVERY address: declared cells
+whole-boundary root-fold discharges, riding the universal-map rotation — then, absent a sponge
+collision at the ONE pair the root extractor names for this pin,
+the committed heap agrees with the declared init image at EVERY address: declared cells
 open to their declared value AND every address OFF the declared list is ABSENT in the committed
 pre-state. So a committed heap holding any cell the boundary never declared CANNOT keep the
 published root; the boundary image is the WHOLE committed pre-state, not merely a subset. This is
 the init-side whole-image companion of `satisfied2U_init_root`; it ASSUMES the fold-root pin
 (`hpin`) rather than a per-cell `hsem`, which is exactly the in-circuit obligation that remains. -/
 theorem satisfied2U_init_whole_image (hash : List ℤ → ℤ)
-    (hCR : Poseidon2SpongeCR hash) (d : EffectVmDescriptor2)
+    (d : EffectVmDescriptor2)
     (dm : UniversalMemory.Domain)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     {uinit : UniversalMemory.UAddr ℤ → Option ℤ}
@@ -1140,10 +1155,12 @@ theorem satisfied2U_init_whole_image (hash : List ℤ → ℤ)
     {hpre : Heap.FeltHeap} {as : List ℤ}
     (_h : Satisfied2U hash d minit mfin maddrs uinit ufin uaddrs t)
     (has : as.Pairwise (· < ·))
+    (hno : ¬ Heap.HeapRootColl hash hpre
+      (UniversalMemory.boundaryCells (fun a => uinit (dm, a)) as))
     (hpin : Heap.root hash hpre
       = Heap.root hash (UniversalMemory.boundaryCells (fun a => uinit (dm, a)) as)) :
     ∀ a : ℤ, Heap.get hpre a = if a ∈ as then uinit (dm, a) else none :=
-  UniversalMemory.boundary_whole_image_sem hash hCR has hpin
+  UniversalMemory.boundary_whole_image_sem hash has hno hpin
 
 /-- **THE NULLIFIER WIN at the IR — `nullifier_fresh_sound` applied.** In a `Satisfied2U`
 witness whose universal log splits around a guarded read returning `none` at
