@@ -62,11 +62,11 @@ use dregg_cell::commitment::compute_authority_digest_8;
 use dregg_cell::{Cell, Ledger, lifecycle::CellLifecycle};
 pub use dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS;
 use dregg_circuit::effect_vm::layout_generated::{
-    AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
-    CAP_ROOT_GROUP, CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
+    AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, CAP_ROOT_GROUP,
+    CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
     NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, ROTATED_FIELD_LANE_COL, VK_GROUP,
 };
-use dregg_circuit::effect_vm::split_u64;
+use dregg_circuit::effect_vm::{PUBKEY_NONET_LANE_COL, split_u64};
 use dregg_circuit::exact_nullifier_aafi::{
     ExactLinkedDomains, ExactTaggedKey, exact_linked_append_root8, exact_root_faithful8,
 };
@@ -730,18 +730,26 @@ pub fn produce(
         dregg_circuit::Faithful8::from_bytes32(&contract_hash)
             .write_octet(&mut pre_limbs, B_CONTRACT_HASH_OCTET);
     }
-    // 105..=112: the operated cell's owner key, LOW EIGHT LANES of the base-2^29 nonet — the form
-    // that matches the executor's KEY_COMMIT teeth (byte-identical to the cell twin's
-    // `canonical_to_babybear_nonet`).
+    // 105..=112 ‖ 186: the operated cell's owner key, ALL NINE LANES of the base-2^29 nonet
+    // (byte-identical to the cell twin's `canonical_to_babybear_nonet` and to
+    // `dregg_commit::typed::canonical_32_to_lanes_9`).
     //
-    // ⚑ LANE 8 IS DROPPED HERE. See the twin at `cell::commitment::compute_rotated_pre_limbs` for
-    // the full note: the encoder is injective, this write is not, and it cannot be until
-    // `layout_generated.rs` is regenerated at `NUM_PRE_LIMBS = 187` so lane 8 has in-block limb
-    // 186 to be absorbed at. Routed through the `_DANGER` hatch under
-    // `KEY_NONET_NINTH_LANE_UNBOUND` so the burn-down gate keeps naming it.
-    let nonet = dregg_commit::typed::canonical_32_to_lanes_9(cell.public_key());
-    dregg_circuit::Faithful8::from_key_nonet_low8(nonet)
-        .write_octet(&mut pre_limbs, B_PUBKEY_OCTET);
+    // ⚑ 2026-08-02 — THE NINTH LANE REACHES THE ANCHOR. See the twin at
+    // `cell::commitment::compute_rotated_pre_limbs` for the full note, INCLUDING the scope
+    // correction. In one line: this write was the LOW EIGHT lanes, so the OWNER-KEY CARRIER bound
+    // 232 of the key's 256 bits, and the 24 it missed contain the Ed25519 x-sign — `A` and `−A`
+    // landed on a byte-identical carrier at cost zero. Lane 8 now lands on `B_PUBKEY_NINTH_LANE`
+    // (in-block limb 186), an ABSORBED pre-limb, so `wireCommitR` folds it.
+    //
+    // ⚠ NOT "the anchor bound 232 bits": the authority digest absorbs `public_key` byte-exactly on
+    // limbs 24 ‖ 12..=18, so `state_commit` already separated the pair at hash strength. The gain
+    // is HASH BINDING -> INJECTION on the key's own columns.
+    //
+    // ⚠ NON-CONTIGUOUS: read `PUBKEY_NONET_LANE_COL`, never a stride from `B_PUBKEY_OCTET`.
+    // THE TWIN MOVES WITH IT BY CONSTRUCTION: both producers call `Faithful9::from_key_lanes9`
+    // over the SAME column array, so there is one encoder, one index table, and no second body.
+    dregg_circuit::Faithful9::from_key_lanes9(cell.public_key())
+        .write_lanes(&mut pre_limbs, PUBKEY_NONET_LANE_COL);
 
     let iroot_val = iroot(receipt_hashes);
     let state_commit = wire_commit(&pre_limbs, iroot_val);

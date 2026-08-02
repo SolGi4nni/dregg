@@ -337,7 +337,9 @@ a birthday bound is being claimed.
 
 The geometry: the pre-limb region is 184/184 full, so this is `rotatedNumPreLimbs` 184 → 187 (the
 `≡ 1 (mod 3)` `chunk31` invariant forbids +1 or +2), `B_SPAN` 247 → 251, a descriptor re-emit, a VK
-rotation and `CANONICAL_STATE_SCHEMA_EPOCH` 15 → 16 — a re-genesis. The key octet, unlike the
+rotation and a `CANONICAL_STATE_SCHEMA_EPOCH` bump — a re-genesis. ⚠ **The epoch NUMBER is
+deliberately not written here.** This sentence said "15 → 16" and was stale by seven within the
+day; go read `persist::PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH`. The key octet, unlike the
 fields octet, is welded to nothing and read lane-wise by nobody, so the encoding can be replaced
 **wholesale**: the nonet needs no `NoWrap` leg, no cube gate and no aux columns, and its canonicity
 envelope is two legs and zero gates (eight lookups at 29 bits, one at 24 — `canonicalKey9_iff_in_image`
@@ -347,13 +349,20 @@ into any member and not consumed by a verifier**; the column map is still a para
 (`circuit/tests/zzz_e10_freeze_owner_falsifier.rs`), which is a **missing constraint** and needs no
 collision at all.
 
-### The `_DANGER` sites = the burn-down list — **NOT EMPTY**
+### The `_DANGER` sites = the burn-down list — **EMPTY as of 2026-08-02**
 
-`grep -rn -e from_lossy_31bit_DANGER -e 'from_canonical_key(' --include='*.rs'` IS the burn-down
-list — both names, because the two deployed producers reach the hatch *through*
-`from_canonical_key`. It was recorded here as **"EMPTY (v13 DONE)"** until 2026-08-01; it was empty
-only because the key octet had been let in the front door, so the emptiness was a property of the
-list's definition rather than of the tree.
+`grep -rn from_lossy_31bit_DANGER --include='*.rs'` IS the burn-down list, plus the call sites of
+any ROUTER — a constructor in `circuit/src/faithful8.rs` whose body calls the hatch. The gate
+derives the router names from the source rather than from this sentence, which is why the recipe
+here could name a deleted one (`from_canonical_key(`, then `from_key_nonet_low8(`) and the gate
+still be right.
+
+⚠ **It has read "empty" before and been wrong.** It said **"EMPTY (v13 DONE)"** until 2026-08-01,
+and it was empty only because the key octet had been let in the FRONT DOOR as a named constructor
+— the emptiness was a property of the list's definition, not of the tree. So read today's emptiness
+narrowly: **nothing routes through the hatch**, and that is the whole claim. `from_bytes32` still
+admits an `O(1)`-aliasable octet through the front door, and the section above ("WHAT THIS WALL
+DOES NOT GUARD" in `circuit/src/faithful8.rs`) is where the wall's real limits live.
 
 ⚑ **This list is now a GATE.** `circuit/tests/faithful8_key_octet_below_floor.rs
 ::the_burn_down_list_names_every_hatch_admission` walks every `*.rs` in the workspace, collects the
@@ -389,27 +398,34 @@ file is still scanned. On its first run the gate went red on a sibling lane's
 which is both the reason the scope is written down here and the evidence that the walk works.
 
 <!-- BURN-DOWN-LIST-BEGIN -->
-- `cell/src/commitment.rs` — `KEY_NONET_NINTH_LANE_UNBOUND` — `compute_rotated_pre_limbs` writes
-  the owner key at `B_PUBKEY_OCTET`, reaching the hatch through `from_key_nonet_low8`. Closes when
-  `layout_generated.rs` is regenerated at `NUM_PRE_LIMBS = 187`.
-- `circuit/src/faithful8.rs` — `KEY_NONET_NINTH_LANE_UNBOUND` — `Faithful8::from_key_nonet_low8`'s
-  body, the routing itself. This is the entry that makes the other two visible; it goes when the
-  constructor goes.
-- `turn/src/rotation_witness.rs` — `KEY_NONET_NINTH_LANE_UNBOUND` — `produce`, the producer twin of
-  `compute_rotated_pre_limbs`.
+(no entries)
 
-⚑ **What changed on 2026-08-01, and read it before quoting the old number.** These three entries
-used to be `KEY_COMMIT_30BIT_RESIDUAL` — "the encoding drops 16 source bits". **The encoding is
-fixed.** All four twins now run the base-`2^29` nonet (`canonical_32_to_lanes_9`), whose image is
-exactly `2^256` and whose injectivity is a Lean theorem with a machine-checked left inverse
-(`Dregg2.Circuit.KeyLanes9.keyToLanes9_injective`). What survives is a **geometry** residual, and
-it is strictly smaller and strictly different: the anchor absorbs only the low eight lanes because
-`B_PUBKEY_OCTET` is eight columns wide. The membership leaves and the four-felt id folds take all
-nine lanes today and are closed.
+⚑ **CLOSED 2026-08-02 — the owner key's ninth lane reaches the anchor.** The three entries that
+stood here (`cell/src/commitment.rs`, `circuit/src/faithful8.rs`, `turn/src/rotation_witness.rs`,
+all carrying `KEY_NONET_NINTH_LANE_UNBOUND`) admitted that `state_commit` absorbed **lanes 0..=7
+only — 232 of the owner key's 256 bits, and the Ed25519 x-sign was not among them**, so a point
+`A` and its negation `-A` reached the signed consensus anchor with a byte-identical limb vector at
+cost zero.
 
-Reason constants, quoted verbatim from `circuit/src/faithful8.rs`:
+They are gone because the residual is, not because the list was redefined:
 
-> KEY_COMMIT nonet lane 8 UNBOUND at the anchor: the encoder is injective (base-2^29 nonet, image 2^256) but B_PUBKEY_OCTET is 8 columns wide in the deployed 184-limb geometry, so state_commit absorbs lanes 0..=7 only — 232 of 256 key bits, Ed25519 sign bit NOT among them. Closes when layout_generated.rs is regenerated at NUM_PRE_LIMBS = 187 and lane 8 lands on in-block limb 186
+1. the emitted geometry is `NUM_PRE_LIMBS = 187` with `B_PUBKEY_NINTH_LANE = 186`, an ABSORBED
+   pre-limb, so `wireCommitR` folds it into `state_commit`;
+2. both producers write all nine lanes through `Faithful9::from_key_lanes9` over
+   `dregg_circuit::effect_vm::PUBKEY_NONET_LANE_COL`;
+3. the constructor `Faithful8::from_key_nonet_low8` and the reason constant
+   `KEY_NONET_NINTH_LANE_UNBOUND` are **deleted** — there is no `Faithful8` path to an owner-key
+   octet any more, so a caller that wants one gets a compile error rather than a doc row.
+
+(Numbered, not bulleted, deliberately: the gate parses every line in this section that opens with
+a dash and a code span as an ENTRY, so prose here must not wear an entry's shape.)
+
+⚠ **What is NOT closed by this, and must not be read into an empty list.** The nonet's CANONICITY
+ENVELOPE (`Emit.KeyCanonicity9Emit.keyCanonical9At` — eight range lookups at 29 bits plus one at
+24) is authored and proved in Lean and **applied by nothing**. So the anchor now BINDS all 256 key
+bits, and no emitted constraint yet REFUSES a lane vector outside the encoder's image. The
+`OwnerFreezeWire` colEq on limb 186 is emitted and does hold the lane frozen BEFORE-to-AFTER.
+
 <!-- BURN-DOWN-LIST-END -->
 
 The `fields[0..7]` pair that used to be the list is genuinely gone — closed by the nine-lane

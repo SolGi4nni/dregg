@@ -61,7 +61,14 @@
 //! | 1 | `cell/src/commitment.rs::canonical_to_babybear_nonet` | `[u32; 9]` |
 //! | 2 | `commit/src/typed.rs::canonical_32_to_lanes_9` | `[BabyBear; 9]` |
 //! | 3 | `storage/src/commitment.rs::canonical_32_to_lanes_9` | `[BabyBear; 9]` |
-//! | 4 | `circuit/src/effect_vm/trace.rs::canonical_id_to_felts_4` | inlines the packing, folds to 4 |
+//! | 4 | `circuit/src/effect_vm/helpers.rs::key_limbs9` | `[BabyBear; 9]` |
+//!
+//! ⚑ **Twin #4 was INVISIBLE to this file until 2026-08-02.** It was an inline loop inside
+//! `circuit/src/effect_vm/trace.rs::canonical_id_to_felts_4`, so the corpus below cross-checked
+//! THREE transcriptions and the fourth was pinned only through a four-felt FOLD of itself. It is
+//! now the named `key_limbs9` (hoisted, zero felts moved) and it is a full leg of the cross-check
+//! — which matters more than the tidiness, because `key_limbs9` is the body BOTH deployed rotated
+//! producers write into the committed owner-key carrier.
 //!
 //! ## Why this file lives in `dregg-commit`
 //!
@@ -76,9 +83,9 @@
 //! injectivity of the map says nothing about whether the anchor absorbs all nine of its lanes; see
 //! the ⚠ above.
 
-use dregg_circuit::Faithful8;
+use dregg_circuit::Faithful9;
 use dregg_circuit::effect_vm::canonical_id_to_felts_4;
-use dregg_circuit::field::BABYBEAR_P;
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_commit::typed::{
     KEY_LANE_BITS, KEY_TOP_LANE_BITS, canonical_32_to_felts_4, canonical_32_to_lanes_9,
     compress_member, lanes_9_to_canonical_32,
@@ -227,6 +234,16 @@ fn twin3_storage(x: &[u8; 32]) -> [u32; 9] {
     dregg_storage::commitment::canonical_32_to_lanes_9(x).map(|f| f.as_u32())
 }
 
+/// ⚑ **TWIN #4, VISIBLE FOR THE FIRST TIME (2026-08-02).** This body used to be INLINED inside
+/// `circuit/src/effect_vm/trace.rs::canonical_id_to_felts_4`, which is exactly why the corpus below
+/// pinned three transcriptions and not four: an unnamed inline copy is the copy a twin test cannot
+/// reach. It is now `dregg_circuit::effect_vm::key_limbs9`, hoisted rather than re-typed (zero felts
+/// moved), and it is also the body BOTH deployed rotated producers write through — so drift here is
+/// drift at the signed anchor.
+fn twin4_circuit(x: &[u8; 32]) -> [u32; 9] {
+    dregg_circuit::effect_vm::key_limbs9(x).map(|f| f.as_u32())
+}
+
 // ---------------------------------------------------------------------------
 // GATE 1 — the twin cross-check.
 // ---------------------------------------------------------------------------
@@ -244,6 +261,7 @@ fn f2_packer_twins_agree_across_cell_commit_and_storage() {
         let a = twin1_cell(x);
         let b = twin2_commit(x);
         let c = twin3_storage(x);
+        let d = twin4_circuit(x);
 
         assert_eq!(
             a,
@@ -259,6 +277,25 @@ fn f2_packer_twins_agree_across_cell_commit_and_storage() {
             "TWIN DRIFT at corpus[{idx}] ({}): \
              commit::typed::canonical_32_to_lanes_9 != storage::commitment::canonical_32_to_lanes_9\n\
              commit  = {b:?}\nstorage = {c:?}",
+            hex(x)
+        );
+        assert_eq!(
+            c,
+            d,
+            "TWIN DRIFT at corpus[{idx}] ({}): \
+             storage::commitment::canonical_32_to_lanes_9 != circuit::effect_vm::key_limbs9\n\
+             storage = {c:?}\ncircuit = {d:?}\n\
+             ⚑ circuit::key_limbs9 is what BOTH rotated producers write into the committed key \
+             carrier, so this leg is the one that reaches the signed anchor.",
+            hex(x)
+        );
+
+        // ⚑ AND THE ROUND TRIP, on the same corpus. Four encoders agreeing could all be wrong
+        // together; a total decoder recovering the 32 bytes cannot be satisfied by a consensus.
+        assert_eq!(
+            dregg_circuit::effect_vm::key_from_lanes9(&dregg_circuit::effect_vm::key_limbs9(x)),
+            *x,
+            "ROUND-TRIP FAILED at corpus[{idx}] ({}) — the nonet is not injective on this input",
             hex(x)
         );
     }
@@ -284,35 +321,38 @@ fn f2_packer_twins_agree_on_the_four_felt_fold_in_circuit_trace() {
     }
 }
 
+/// ⚑ **REPOINTED 2026-08-02.** This was `f2_faithful8_wall_is_the_low_eight_lanes_and_nothing_else`
+/// and it pinned `Faithful8::from_key_nonet_low8` — the projection — against its own input, which
+/// its own comment called "the WEAKEST test in the file, close to a pin against its own
+/// definition". It also carried the sentence that made the residual visible here: *"the wall takes
+/// nine lanes and keeps eight."*
+///
+/// The wall now takes nine lanes and keeps NINE, so the interesting property is no longer "it did
+/// not transform them" — it is that the wall is **invertible**, which no `Faithful8` constructor
+/// could ever claim. That is a real assertion rather than a near-tautology: a wall that scrambled,
+/// truncated or reordered would fail it, and so would one that lost lane 8 again.
 #[test]
-fn f2_faithful8_wall_is_the_low_eight_lanes_and_nothing_else() {
-    // `Faithful8::from_key_nonet_low8` NAMES the lanes; it must not transform them. If a future
-    // change makes the wall re-encode, the deployed `B_PUBKEY_OCTET` fill
-    // (`turn/src/rotation_witness.rs`) would silently stop matching every off-AIR reconstruction
-    // that calls the packer directly.
-    //
-    // ⚠ HONESTY, so nobody overweights this one: it is the WEAKEST test in the file and it is
-    // close to a pin against its own definition — the constructor's body is a projection today,
-    // so the assertion is nearly true by construction. Its one real job is the day someone puts
-    // arithmetic inside the wall.
-    //
-    // ⚑ It is ALSO the place the un-closed half is visible in this file: the wall takes nine
-    // lanes and keeps eight. That is asserted, not commented.
+fn f2_faithful9_wall_keeps_all_nine_lanes_and_inverts() {
     for x in corpus() {
         let lanes = canonical_32_to_lanes_9(&x);
-        let walled = Faithful8::from_key_nonet_low8(lanes).limbs();
+        let walled = Faithful9::from_key_lanes9(&x).lanes();
         assert_eq!(
             walled.map(|f| f.as_u32()),
-            [
-                lanes[0], lanes[1], lanes[2], lanes[3], lanes[4], lanes[5], lanes[6], lanes[7],
-            ]
-            .map(|f| f.as_u32()),
-            "Faithful8::from_key_nonet_low8 transformed its input"
+            lanes.map(|f| f.as_u32()),
+            "Faithful9::from_key_lanes9 disagrees with the authoring twin \
+             commit::typed::canonical_32_to_lanes_9"
         );
         assert_eq!(
             walled.len(),
-            8,
-            "the wall is eight lanes wide — this is the residual, not a bug in the test"
+            9,
+            "the wall is NINE lanes wide — that is the flag day"
+        );
+        // ⚑ ANTI-VACUITY: the 32 bytes come back. "The lanes match" is a differential between two
+        // encoders and says nothing about whether either binds its source; this does.
+        assert_eq!(
+            Faithful9::from_key_lanes9(&x).to_key_bytes(),
+            x,
+            "the committed nonet must decode back to the key it encodes"
         );
     }
 }
@@ -437,22 +477,38 @@ fn nonet_injectivity_reaches_the_membership_leaf_and_both_four_felt_folds() {
         "the circuit-side four-felt id fold still merges the pair"
     );
 
-    // ⚠ AND THE ONE THAT STILL MERGES, asserted so the file cannot be read as "all closed".
-    // The anchor write keeps lanes 0..=7; this pair differs only in bytes 3, 7, …, 31, of which
-    // byte 31 is in lane 8 — so whether it separates depends on which byte moved. Use a pair that
-    // differs ONLY above bit 232 to make the residual unambiguous.
+    // ⚑ **AND THE ONE THAT USED TO MERGE — now the sharpest leg of the file.** Until 2026-08-02
+    // this block asserted `assert_eq!` on the low-eight anchor write and its message read "if this
+    // started separating, the ninth lane landed — retire KEY_NONET_NINTH_LANE_UNBOUND and delete
+    // this assertion". It landed; the assertion is inverted rather than deleted, because a pair
+    // differing ONLY in bit 255 is the tightest possible probe of the ninth lane and it would be a
+    // waste to lose it.
+    //
+    // Bit 7 of byte 31 is source bit 255, which is bit 23 of lane 8 (`255 - 8*29 = 23`) — the ONLY
+    // lane that can see it. So this pair separates iff lane 8 is committed, and nothing else about
+    // the write can make it pass.
     let mut c = a;
     c[31] ^= 1 << 7;
     assert_ne!(a, c);
+    let lanes_a = canonical_32_to_lanes_9(&a);
+    let lanes_c = canonical_32_to_lanes_9(&c);
+    let low8 = |l: [BabyBear; 9]| -> [u32; 8] { std::array::from_fn(|i| l[i].as_u32()) };
     assert_eq!(
-        Faithful8::from_key_nonet_low8(canonical_32_to_lanes_9(&a))
-            .limbs()
-            .map(|f| f.as_u32()),
-        Faithful8::from_key_nonet_low8(canonical_32_to_lanes_9(&c))
-            .limbs()
-            .map(|f| f.as_u32()),
-        "if the low-eight anchor write started separating a pair differing only in bit 255, the \
-         ninth lane landed — retire KEY_NONET_NINTH_LANE_UNBOUND and delete this assertion"
+        low8(lanes_a),
+        low8(lanes_c),
+        "OLD ADMITS: the retired low-eight write must still merge this pair — it is the claim \
+         being refuted, and if it stops holding the refutation is vacuous"
+    );
+    assert_ne!(
+        Faithful9::from_key_lanes9(&a).lanes().map(|f| f.as_u32()),
+        Faithful9::from_key_lanes9(&c).lanes().map(|f| f.as_u32()),
+        "NEW REJECTS: the nine-lane wall must separate a pair differing only in source bit 255 — \
+         if it does not, lane 8 is being dropped somewhere"
+    );
+    assert_eq!(
+        (lanes_a[8].as_u32()) ^ (lanes_c[8].as_u32()),
+        1 << 23,
+        "…and the separation must be exactly bit 23 of lane 8"
     );
 }
 

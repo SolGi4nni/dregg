@@ -248,6 +248,147 @@ pub fn field_from_lanes9(lanes: &[BabyBear; 9]) -> [u8; 32] {
     out
 }
 
+/// The KEY nonet's radix exponent: lanes 0..=7 are base-`2^29` digits. `2^29 = 536870912 < p`, so
+/// **no lane ever reduces** and the encoding is not a `mod p` map. Lean twin:
+/// `Dregg2.Circuit.KeyLanes9.K`, and the emitted layout carries the same number as
+/// [`super::layout_generated::KEY_LANE_BITS`] — the pin below compares the two.
+const KEY9_LANE_BITS: usize = 29;
+
+/// The top lane's width, `2^256 / (2^29)^8 = 2^24`. NARROWER by construction, and that is
+/// load-bearing rather than incidental: a *uniform* nine-lane check at 29 bits admits
+/// `[0, …, 0, 2^24]`, whose value is exactly `2^256` and which decodes byte-for-byte to the
+/// all-zero key. Lean twin: `Dregg2.Circuit.KeyLanes9.KTOP`.
+const KEY9_TOP_BITS: usize = 24;
+
+/// The pin, against the EMITTED layout rather than against these two constants' own sum — two
+/// independent sources, so this is a gate and not a decoration. A lane widening that forgets the
+/// top lane cannot survive it, and neither can a Lean-side move that does not reach this file.
+const KEY_NONET_MATCHES_THE_EMITTED_LAYOUT: () = assert!(
+    KEY9_LANE_BITS == super::layout_generated::KEY_LANE_BITS
+        && KEY9_TOP_BITS == super::layout_generated::KEY_TOP_BITS
+        && 8 * KEY9_LANE_BITS + KEY9_TOP_BITS == 256
+);
+
+/// **THE OWNER-KEY NONET'S NINE IN-BLOCK COLUMNS**, lane order — the Rust counterpart of Lean
+/// `Emit.KeyCanonicity9Emit.deployedKeyCols`, which is likewise a FUNCTION of the layout rather
+/// than a ninth constant beside it.
+///
+/// ⚠ **NOT contiguous, and never reconstructible with a stride.** Lanes 0..=7 are the deployed
+/// octet at `B_PUBKEY_OCTET = 105`; lane 8 is at `B_PUBKEY_NINTH_LANE = 186`, past the whole
+/// completion band. A `[base + i for i in 0..9]` here would silently claim column 113, which
+/// belongs to `fields[0]`'s completion window — the shape that made ~143 rotated members UNSAT
+/// across the `178 → 184` flag day.
+///
+/// The two indices come from genuinely different places in the emitted layout — the octet BASE
+/// table and the NINTH-LANE table — and the assertion below compares this construction against
+/// both of them positionally. That is what makes it a gate rather than a pin against its own
+/// definition: move the lane in Lean without moving its octet, or vice versa, and this stops
+/// compiling.
+pub const PUBKEY_NONET_LANE_COL: [usize; 9] = {
+    use super::layout_generated::{
+        B_PUBKEY_NINTH_LANE, B_PUBKEY_OCTET, ROTATED_OCTET_BASES, ROTATED_OCTET_NINTH_LANES,
+    };
+    // The owner key is app-PI octet index 2 of the three carrier octets.
+    assert!(ROTATED_OCTET_BASES[2] == B_PUBKEY_OCTET);
+    assert!(ROTATED_OCTET_NINTH_LANES[2] == B_PUBKEY_NINTH_LANE);
+    // The ninth lane must be an ABSORBED pre-limb or `wireCommitR` never folds it and the column
+    // carries nothing — the exact condition Lean states as `lane8_is_absorbed_iff`.
+    assert!(B_PUBKEY_NINTH_LANE < super::layout_generated::NUM_PRE_LIMBS);
+    // …and it must not alias the octet band it completes.
+    assert!(B_PUBKEY_NINTH_LANE >= B_PUBKEY_OCTET + 8);
+    [
+        B_PUBKEY_OCTET,
+        B_PUBKEY_OCTET + 1,
+        B_PUBKEY_OCTET + 2,
+        B_PUBKEY_OCTET + 3,
+        B_PUBKEY_OCTET + 4,
+        B_PUBKEY_OCTET + 5,
+        B_PUBKEY_OCTET + 6,
+        B_PUBKEY_OCTET + 7,
+        B_PUBKEY_NINTH_LANE,
+    ]
+};
+
+/// **THE KEY NONET — a 32-byte canonical value → nine BabyBear lanes, base `2^29`, little-endian.**
+/// The Rust twin of the Lean authority `metatheory/Dregg2/Circuit/KeyLanes9.lean` (`keyToLanes9`):
+/// read the 32 bytes as one little-endian 256-bit number and take its nine base-`2^29` digits.
+/// Lanes 0..=7 are below `2^29`; lane 8 is below `2^24` because `2^256 / (2^29)^8 = 2^24`. The
+/// image is therefore **exactly `2^256`** — the encoding step loses nothing and there is no
+/// encoding collision to bound at all.
+///
+/// ## What this body is, and what it is not
+///
+/// It is not a new transcription. `trace.rs::canonical_id_to_felts_4` inlined this exact loop and
+/// now calls it, so the count of bodies in the tree did not change — what changed is that the
+/// fourth twin has a NAME, and therefore an entry in the cross-check
+/// (`commit/tests/key_octet_f2_twins_and_the_hole.rs`) that the other three already had. An
+/// unnamed inline copy is precisely the copy a twin test cannot see.
+///
+/// The other three are `dregg_commit::typed::canonical_32_to_lanes_9` (the authoring site),
+/// `dregg_cell::commitment::canonical_to_babybear_nonet`, and
+/// `dregg_storage::commitment::canonical_32_to_lanes_9`. They are deliberately independent
+/// re-typings: re-typing IS the review, and the `178 → 184` flag day rotted on a derived constant
+/// that had been "improved" into a relation.
+///
+/// ## Substrate, stated plainly
+///
+/// `keyToLanes9_injective` and `keyLanes9ToBytes_keyToLanes9` are machine-checked **Lean** theorems
+/// — a total decoder plus a left inverse, not a hash bound and not a birthday bound. There is no
+/// formal semantics of Rust and this body is not extracted from that Lean. What pins the two is the
+/// round-trip sweep against [`key_from_lanes9`] and the twin corpus. Read that as "case-tested
+/// against a verified spec", never as "verified".
+///
+/// ## ⚠ A key needs INJECTIVITY, not collision resistance
+///
+/// The figure to quote here is **`2^256` image, injective** — never the `2^123.63` birthday
+/// collision bound, which is the answer for a *hash node* and has been misquoted in this key's
+/// place more than once. Eight BabyBear lanes carry `8 · log₂ p = 247.26` bits against 256 and lose
+/// by pigeonhole whatever they contain; nine carry 278.16, which is why `2^256` fits inside them
+/// with room and why the top lane must be checked at 24 bits rather than 29.
+#[inline]
+pub fn key_limbs9(canonical: &[u8; 32]) -> [BabyBear; 9] {
+    let () = KEY_NONET_MATCHES_THE_EMITTED_LAYOUT;
+    std::array::from_fn(|i| {
+        let bit = i * KEY9_LANE_BITS;
+        // 29 bits starting at an offset of 0..=7 spans at most 36 bits, so a five-byte window is
+        // always enough and always fits a u64.
+        let mut acc: u64 = 0;
+        for k in 0..5usize {
+            if let Some(byte) = canonical.get(bit / 8 + k) {
+                acc |= u64::from(*byte) << (8 * k);
+            }
+        }
+        acc >>= bit % 8;
+        BabyBear::new((acc & ((1u64 << KEY9_LANE_BITS) - 1)) as u32)
+    })
+}
+
+/// **THE KEY DECODER** — total, and the left inverse of [`key_limbs9`] on every 32-byte value. The
+/// Rust twin of Lean `Dregg2.Circuit.KeyLanes9.keyLanes9ToBytes`.
+///
+/// Total on *every* lane vector, including vectors outside the encoder's image, which it reads
+/// modulo `2^256` exactly as the Lean does. That totality is what makes the canonicity envelope's
+/// exhibit expressible at all: `[0, …, 0, 2^24]` has every lane below `2^29`, so it passes a
+/// *uniform* nine-lane range check, and it decodes byte-for-byte to the all-zero key. The
+/// envelope's second leg — lane 8 below `2^24` — is what refuses it, and it is not a consequence
+/// of the first.
+#[inline]
+pub fn key_from_lanes9(lanes: &[BabyBear; 9]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, lane) in lanes.iter().enumerate() {
+        let v = u64::from(lane.as_u32());
+        for k in 0..KEY9_LANE_BITS {
+            if (v >> k) & 1 == 1 {
+                let bit = i * KEY9_LANE_BITS + k;
+                if bit < 256 {
+                    out[bit / 8] |= 1 << (bit % 8);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Fold of a full 32-byte value into a single BabyBear. **⚠ NOT collision-resistant — `O(1)`, and
 /// `O(1)` even for a CHOSEN TARGET.** This doc used to open with "Collision-resistant fold" and
 /// claim `~2^-31`; both are wrong, and the repo's own test says so

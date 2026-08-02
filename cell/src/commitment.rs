@@ -1196,12 +1196,11 @@ pub fn compute_rotated_pre_limbs(
     ctx: &V9RotationContext,
 ) -> Vec<dregg_circuit::field::BabyBear> {
     use dregg_circuit::effect_vm::layout_generated::{
-        AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
-        CAP_ROOT_GROUP, CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP,
-        HEAP_ROOT_GROUP, NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP,
-        ROTATED_FIELD_LANE_COL, VK_GROUP,
+        AUTHORITY_DIGEST_GROUP, B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, CAP_ROOT_GROUP,
+        CELLS_ROOT_GROUP, COMMITMENTS_ROOT_GROUP, FIELDS_ROOT_GROUP, HEAP_ROOT_GROUP,
+        NULLIFIER_ROOT_GROUP, PERMS_GROUP, REVOKED_ROOT_GROUP, ROTATED_FIELD_LANE_COL, VK_GROUP,
     };
-    use dregg_circuit::effect_vm::split_u64;
+    use dregg_circuit::effect_vm::{PUBKEY_NONET_LANE_COL, split_u64};
     use dregg_circuit::field::BabyBear;
 
     let mut pre = vec![BabyBear::ZERO; V9_NUM_PRE_LIMBS];
@@ -1365,23 +1364,47 @@ pub fn compute_rotated_pre_limbs(
         dregg_circuit::Faithful8::from_bytes32(&contract_hash)
             .write_octet(&mut pre, B_CONTRACT_HASH_OCTET);
     }
-    // 105..=112: the operated cell's owner key, LOW EIGHT LANES of the base-2^29 nonet
-    // (`canonical_to_babybear_nonet`, byte-identical to
-    // `dregg_commit::typed::canonical_32_to_lanes_9`), the EXACT match to the executor's
-    // KEY_COMMIT teeth and to the producer twin `dregg_turn::rotation_witness::produce`.
+    // 105..=112 ‖ 186: the operated cell's owner key, ALL NINE LANES of the base-2^29 nonet
+    // (`dregg_circuit::effect_vm::key_limbs9`, byte-identical to `canonical_to_babybear_nonet` and
+    // to `dregg_commit::typed::canonical_32_to_lanes_9`), the EXACT match to the producer twin
+    // `dregg_turn::rotation_witness::produce`.
     //
-    // ⚑ LANE 8 IS DROPPED HERE AND THAT IS THE OPEN HALF OF THE FLAG DAY. The encoder is
-    // injective; this WRITE is not, because `B_PUBKEY_OCTET` is eight columns wide in the
-    // deployed geometry and the ninth lane's home (in-block limb 186) exists only in the proved,
-    // un-emitted 187-limb layout. `Faithful8::from_key_nonet_low8` routes to the `_DANGER` hatch
-    // under `KEY_NONET_NINTH_LANE_UNBOUND` precisely so this site stays on the burn-down list.
+    // ⚑ 2026-08-02 — THE NINTH LANE REACHES THE ANCHOR. This write used to be the LOW EIGHT lanes
+    // and nothing else, because `B_PUBKEY_OCTET` is eight columns wide and lane 8 had no home. The
+    // encoder was injective and the WRITE was not, so THE OWNER-KEY CARRIER bound 232 of the key's
+    // 256 bits. RFC 8032 §5.1.2 puts an Ed25519 public key's x-sign in bit 7 of byte 31, i.e.
+    // inside lane 8, so a point `A` and its negation `−A` (a keypair whose private half is
+    // `-a mod L`) landed on a BYTE-IDENTICAL carrier, at cost zero and with no search — and every
+    // gate that reads the carrier (the KEY_COMMIT teeth, the owner freeze, the octet welds) saw
+    // one key where there were two. The `187`-limb geometry gives lane 8 in-block limb 186,
+    // `B_PUBKEY_NINTH_LANE`, which is an ABSORBED pre-limb — `wireCommitR` folds `[0, 187)` — so
+    // the carrier is now an INJECTION and `state_commit` binds it.
     //
-    // Do NOT "fix" this by reverting to the 30-bit octet because it carried 240 bits to this
-    // one's 232: both drop bit 7 of byte 31, so both merge an Ed25519 key with its negation, and
-    // the octet additionally put a second encoder in the tree. The gate that flips is
-    // `circuit/tests/key_nonet_ninth_lane_reaches_the_anchor.rs`, keyed on `NUM_PRE_LIMBS`.
-    let nonet = canonical_to_babybear_nonet(cell.public_key()).map(BabyBear::new);
-    dregg_circuit::Faithful8::from_key_nonet_low8(nonet).write_octet(&mut pre, B_PUBKEY_OCTET);
+    // ⚠ SAY THE SCOPE EXACTLY. It is NOT true that `state_commit` bound only 232 key bits before
+    // this: `authority_residue_bytes` (sixty lines up) absorbs `cell.public_key` BYTE-EXACTLY and
+    // its blake3 digest rides `AUTHORITY_DIGEST_GROUP` (limbs 24 ‖ 12..=18), so the anchor already
+    // separated `A` from `-A` at that path's hash strength (`Faithful8::from_bytes32` over a
+    // blake3 output — the law's 2^123.63 collision figure). What this repair buys is the
+    // difference between a HASH binding and an INJECTION on the key's own columns: the committed
+    // nonet DETERMINES the key (it decodes), which is what
+    // `keyCanon9_determines_the_owner_key_deployed` needs and what a digest can never give.
+    // Measured in `circuit/tests/key_nonet_anchor_old_admits_new_rejects.rs`, not relayed.
+    //
+    // ⚠ THE NONET IS NON-CONTIGUOUS: lane 8 is at 186, not at 113. Read
+    // `PUBKEY_NONET_LANE_COL` (derived in `dregg-circuit` from the emitted octet-base and
+    // ninth-lane tables, the Rust counterpart of Lean `deployedKeyCols`) and never a stride.
+    //
+    // ⚑ A KEY NEEDS INJECTIVITY, NOT COLLISION RESISTANCE. The figure here is "image exactly
+    // 2^256, injective" — NOT the 2^123.63 birthday bound, which is the hash-node answer and has
+    // been quoted in this key's place more than once. Eight BabyBear lanes carry 247.26 bits
+    // against 256 and lose by pigeonhole whatever they contain (`p^8 < 2^256 ≤ p^9`); the retired
+    // 30-bit octet carried 240 to the low-eight nonet's 232, and BOTH dropped bit 7 of byte 31, so
+    // neither was a repair. Nine lanes is the minimum and this is nine.
+    //
+    // Byte-identical to the `rotation_witness::produce` twin: both call
+    // `Faithful9::from_key_lanes9` over the SAME `PUBKEY_NONET_LANE_COL`.
+    dregg_circuit::Faithful9::from_key_lanes9(cell.public_key())
+        .write_lanes(&mut pre, PUBKEY_NONET_LANE_COL);
     pre
 }
 
