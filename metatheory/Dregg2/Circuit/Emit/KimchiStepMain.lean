@@ -4773,6 +4773,20 @@ def posAt (k : Rung) : List (PVar × Cell) :=
 #guard (classCells (posAt .ftEval0) (hmDigestVar shapeSmoke)).length == 1
 #guard (classCells (posAt .absorb) (hmDigestVar shapeSmoke)).length == 3
 #guard (classCells (posAt .finalize) (hmDigestVar shapeSmoke)).length == 3
+-- ⚠ ⚑ **AND `index_digest` HAS THE SAME LADDER POSITION, so say it rather than let the retirement
+-- read as unconditional.** §3c's derivation lives in R7 — the permutation is squeezed off segment
+-- C's own state, and segment C is an R7 sub-circuit — while R1 ABSORBS the result at block 0. So
+-- from `r1_transcript` to `r6_ft_eval0` `vIdxD 0` is a free witness the transcript eats (class = the
+-- absorb row alone), and it is DERIVED at `r7_absorption` and `r8_finalize` (the permutation's
+-- closing `Zero`, its σ probe, the absorb row). The reportable object is the full assembly; the
+-- lower rungs are sub-circuits and this is where that costs something.
+#guard (classCells (posAt .transcript) (vIdxD shapeSmoke 0)).length == 1
+#guard (classCells (posAt .ftEval0) (vIdxD shapeSmoke 0)).length == 1
+#guard (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 3
+#guard (classCells (posAt .finalize) (vIdxD shapeSmoke 0)).length == 3
+-- …and the plonk-index pin rows are R7's too, so the same reading applies to the 56 absorbed words.
+#guard (classCells (posAt .ftEval0) (vIdxX shapeSmoke 27)).length == 0
+#guard (classCells (posAt .absorb) (vIdxX shapeSmoke 27)).length == 2
 
 -- ξ's class is COMPLETE at `r5_full`: nothing above r5 adds a cell to it, because its chain is
 -- already there. (A floor `≥ 2` would pass here even with the chain deleted — the fold's own reads
