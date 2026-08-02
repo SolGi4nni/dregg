@@ -50,15 +50,20 @@ never `EffectVmEmitV2`):
       `WitnessBuilder`; every row satisfies its `KimchiVerify` constraint body ON THE ASSEMBLED GRID,
       σ holds on that grid (falsifiably), and the point/scalar semantics are cross-checked against
       `PastaCurve`'s independent Jacobian formulas. Proved pure-Rust by `pickles-stepfragment-harness`
-  * `Dregg2.Circuit.Emit.KimchiStepMain` — **`step_verifier.verify_one` itself**, in the five named
+  * `Dregg2.Circuit.Emit.KimchiStepMain` — **`step_verifier.verify_one` itself**, in the SEVEN named
       sub-circuits it runs: the Fp Poseidon transcript SPONGE (state copy-wired across every block
       boundary — no prior rung had copy-wired a `Poseidon` gate at all), `to_field_checked`'s chained
       `EndoMulScalar` rows tied back to the squeeze, the commitment MSM whose `var_base_mul` scalar
       counter CLOSES ON the challenge the `EndoMulScalar` chain decoded (one σ class across three
-      gate types), the `Scalar_challenge.endo` fold rounds, and the deferred `b(ζ)` +
+      gate types), the `Scalar_challenge.endo` fold rounds, the deferred `b(ζ)` +
       `combined_inner_product` (pinned against `KimchiVerify.cipR`) with Step's `PRIMARY_LEN = 67`
-      public input placed through `placeChecked`. All SEVEN gate types Mina's step circuits use, in
-      one circuit. Proved pure-Rust rung by rung by `pickles-stepmain-harness`
+      public input placed through `placeChecked`, **`scalars_env` + the six-gate linearization
+      CONSTANT TERM + `ft_eval0` + `Plonk_checks.checked`** (compiled from a straight-line program
+      onto double-`Generic` rows and pinned value-for-value against `KimchiVerify.gateLinConst` /
+      `ftEval0R` / the 67 constraint bodies list-by-list, each with a red control), and **the
+      43-column evaluation ABSORPTION with `Opt_sponge` masking + `hash_messages_for_next_step_proof`**.
+      All SEVEN gate types Mina's step circuits use, in one circuit. Proved pure-Rust rung by rung by
+      `pickles-stepmain-harness`
   * `Dregg2.Circuit.Emit.KimchiRenderPublicInput` — the PUBLIC-INPUT path of `place`, which every rung
       above ran at `pubSize = 0` (measured 2026-08-01: all nine committed fixtures carried
       `public_input_size: 0`, so the leading public rows, the `External i ↦ {i,0}` cells and the

@@ -94,9 +94,11 @@ msm={sh.msmTerms}x{sh.msmChunks} ipa={sh.ipaRounds}x{sh.ipaBlocks} b={sh.bRounds
 pub={sh.pubWords} =="
   let tc0 ← IO.monoMsNow
   let t := mkStep sh
-  let _ ← force (t.sp.states.length + t.msm.terms.length + t.ipa.accs.length) "chains"
+  let _ ← force (t.sp.states.length + t.msm.terms.length + t.ipa.accs.length
+                 + t.ft.fp.prog.size + t.segB.states.length) "chains"
   let tc1 ← IO.monoMsNow
   IO.println s!"    chain evaluation (sponge + vbm + endo + deferred): {tc1 - tc0} ms"
-  for k in [Rung.transcript, Rung.challenges, Rung.msm, Rung.ipa, Rung.full] do
+  for k in [Rung.transcript, Rung.challenges, Rung.msm, Rung.ipa, Rung.full,
+            Rung.ftEval0, Rung.absorb] do
     let _ ← emitRung dir tag t k
     pure ()

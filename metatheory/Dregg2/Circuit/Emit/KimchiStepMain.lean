@@ -165,6 +165,7 @@ import Dregg2.Circuit.Emit.KimchiComposeStepFragment
 import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Circuit.Emit.PastaCurve
 import Dregg2.Circuit.Emit.PastaPoseidon
+import Dregg2.Bridge.MinaWrapFtEval0
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -183,6 +184,7 @@ open Dregg2.Circuit.Emit.KimchiVerify
 open Dregg2.Circuit.Emit.PastaCurve (jacEqM scMulM)
 open Dregg2.Circuit.Emit.PastaField (pN)
 open Dregg2.Circuit.Emit.PastaPoseidon (rcsN)
+open Dregg2.Bridge.MinaWrapFtEval0 (IDX_Z IDX_SEL IDX_W IDX_COEFF IDX_S)
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -318,8 +320,33 @@ def vCk (s : StepShape) (k : Nat) : PVar := xv (baseCip s + 3 * s.cipEvals + k)
 def vTk (s : StepShape) (i : Nat) : PVar := xv (baseCip s + 4 * s.cipEvals + i)
 /-- The Horner accumulator after `i` steps; `vCa cipEvals` IS `combined_inner_product`. -/
 def vCa (s : StepShape) (i : Nat) : PVar := xv (baseCip s + 5 * s.cipEvals + i)
-/-- One past the last circuit variable id. -/
-def nVars (s : StepShape) : Nat := baseCip s + 6 * s.cipEvals + 1
+
+/-! ### R6/R7 regions (§8d, §8e).
+
+The absorption segments come FIRST and the ft program's slots LAST, because only the ft region's
+size depends on a compiled program: every other base is a closed function of the shape. -/
+
+def baseHm (s : StepShape) : Nat := baseCip s + 6 * s.cipEvals + 1
+/-- One of `hash_messages_for_next_step_proof`'s 57 fixture words (app state + the 28 plonk-index
+commitments as 56 coordinates). -/
+def vHm (s : StepShape) (i : Nat) : PVar := xv (baseHm s + i)
+def N_HM_FIX : Nat := 57
+
+/-- Variables one sponge segment consumes: `3(nb+sq+1)` state lanes, `2·nb` post lanes, and for a
+MASKED segment the `after`/`d`/`p`/`keep` mux cells. -/
+def segVarCount (nb sq : Nat) : Nat := 3 * (nb + sq + 1) + 2 * nb + 9 * nb + nb
+
+def baseSegA (s : StepShape) : Nat := baseHm s + N_HM_FIX
+/-- Segment A (the opt-sponge): `2·bRounds` masked words, one squeeze. -/
+def nbA (s : StepShape) : Nat := (2 * s.bRounds + 1) / 2
+def baseSegB (s : StepShape) : Nat := baseSegA s + segVarCount (nbA s) 1
+/-- Segment B (the fr-sponge): the digest, `ft_eval1`, `p(ζ)`, `p(ζω)` and the 43 columns at both
+points, two squeezes (ξ′ and r′). -/
+def nbB (s : StepShape) : Nat := (4 + 2 * (s.cipEvals - 4) + 1) / 2
+def baseSegC (s : StepShape) : Nat := baseSegB s + segVarCount (nbB s) 2
+/-- Segment C (`hash_messages_for_next_step_proof`), one squeeze. -/
+def nbC (s : StepShape) : Nat := (61 + 2 * s.bRounds + 1) / 2
+def baseFtS (s : StepShape) : Nat := baseSegC s + segVarCount (nbC s) 1
 
 /-- The challenge that plays ξ (the polynomial-combination challenge) in `combined_inner_product`. -/
 def StepShape.xiChal (s : StepShape) : Nat := s.chals - 1
@@ -665,7 +692,14 @@ structure DefData where
 column of the previous proof's `PointEvaluations`. -/
 def evVal (k pt : Nat) : Nat := (11 + 2000003 * (2 * k + pt) + 7 * k * k) % pN
 
-def runDef (s : StepShape) (d : SpongeData) : DefData :=
+/-- ⚑ The column vector at ζ, with entry 3 — the `ft` column — OVERRIDDEN by R6's computed
+`ft_eval0`. That is upstream's own wiring: `combine ~ft:ft_eval0 …` (`step_verifier.ml:1078-1083`)
+folds `ft_eval0` into `combined_inner_product` as the fourth prefix column. The four-entry prefix is
+`sg_old`×2, the public polynomial, `ft`; R6 reads only entries ≥ 4, so the override is not
+circular. -/
+def evZOf (ftVal : Nat) (k : Nat) : Nat := if k == 3 then ftVal else evVal k 0
+
+def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) : DefData :=
   let zs := (List.range s.bRounds).foldl
     (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [chalOf s d 0]
   let st := (List.range s.bRounds).foldl
@@ -675,7 +709,7 @@ def runDef (s : StepShape) (d : SpongeData) : DefData :=
     ([], [1])
   let xi := chalOf s d s.xiChal
   let rr := chalOf s d s.rChal
-  let ez := (List.range s.cipEvals).map (fun k => evVal k 0)
+  let ez := (List.range s.cipEvals).map (fun k => evZOf ftVal k)
   let ew := (List.range s.cipEvals).map (fun k => evVal k 1)
   let dk := (List.range s.cipEvals).map (fun k => fMul rr (ew.getD k 0))
   let ck := (List.range s.cipEvals).map (fun k => fAdd (ez.getD k 0) (dk.getD k 0))
@@ -721,6 +755,873 @@ def cipRows (s : StepShape) (wired : Bool) : List SRow :=
                    (cMul ++ cAdd) ])
   ++ [ probeRow wired (vCa s s.cipEvals) (vCk s 0) ]
 
+/-! ## §8b — the ARITHMETIC COMPILER: a straight-line program over `Generic` rows.
+
+`ft_eval0`, `Plonk_checks.checked` and the linearization constant term are pure scalar arithmetic
+over the previous proof's evaluations, and Snarky emits them as `Generic` rows
+(`plonk_constraint_system.ml`'s `Basic.R1CS`/`Square`/`Boolean` all land on the double generic gate).
+Rather than hand-writing several hundred rows, this compiles a STRAIGHT-LINE PROGRAM: slot `i` owns
+one circuit variable, each operation is one HALF of a double-`Generic` row, and two consecutive
+operations share a row.
+
+⚑ THE PROGRAM IS CHECKED AGAINST THE VALUE LAYER, NOT TRUSTED. `KimchiVerify`'s constraint bodies —
+read-only transcriptions of `proof-systems` — are evaluated at the SAME inputs in §12, **list by
+list**, and the compiled program's slot values must agree elementwise. A transcription slip in any
+one of the 67 constraint bodies goes red there, not silently into a proof. -/
+
+/-- One straight-line arithmetic operation. Slot `i` is the `i`-th entry of the program. -/
+inductive AOp where
+  /-- ALIAS an existing circuit variable — no row, no new variable. This is how the program reaches
+  the sponge's challenges and the previous proof's evaluation columns. -/
+  | inp (v : PVar)
+  /-- A FREE witness cell: no defining row. Only what the program asserts about it constrains it —
+  the witnessed-inverse device (`KimchiVerify` §9b's `denomInv`). -/
+  | wit (val : Nat)
+  /-- A field constant, pinned by the row `w₀ = k`. -/
+  | lit (val : Nat)
+  | add (i j : Nat)
+  | sub (i j : Nat)
+  | mul (i j : Nat)
+  /-- ASSERT slot `i` = slot `j`; the produced slot is inert. -/
+  | aeq (i j : Nat)
+  deriving Repr, Inhabited, DecidableEq
+
+/-- `w₂ = w₀ − w₁`. -/ def cSub : List Int := [1, -1, -1, 0, 0]
+
+/-- The program builder. -/
+abbrev AM := StateM (Array AOp)
+
+def em (o : AOp) : AM Nat := do
+  let st ← get
+  set (st.push o)
+  pure st.size
+
+def eLit (k : Nat) : AM Nat := em (.lit k)
+def eWit (k : Nat) : AM Nat := em (.wit k)
+def eInp (v : PVar) : AM Nat := em (.inp v)
+def eAdd (a b : Nat) : AM Nat := em (.add a b)
+def eSub (a b : Nat) : AM Nat := em (.sub a b)
+def eMul (a b : Nat) : AM Nat := em (.mul a b)
+def eEq (a b : Nat) : AM Nat := em (.aeq a b)
+
+/-- `x − y` over `Fp`. -/
+def fSub (x y : Nat) : Nat := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fSub x y
+
+/-- Evaluate the program. `lk` resolves `.inp` variables out of the surrounding circuit. -/
+def aEval (lk : PVar → Int) (prog : Array AOp) : Array Nat :=
+  prog.foldl (fun (vs : Array Nat) op =>
+    vs.push (match op with
+      | .inp v => (lk v).toNat % pN
+      | .wit x => x % pN
+      | .lit x => x % pN
+      | .add i j => fAdd (vs.getD i 0) (vs.getD j 0)
+      | .sub i j => fSub (vs.getD i 0) (vs.getD j 0)
+      | .mul i j => fMul (vs.getD i 0) (vs.getD j 0)
+      | .aeq i _ => vs.getD i 0)) #[]
+
+/-- Slot `i`'s circuit variable. `.inp` aliases; everything else owns `xv (base + i)`. -/
+def aVarAt (base : Nat) (prog : Array AOp) (i : Nat) : PVar :=
+  match prog.getD i default with
+  | .inp v => v
+  | _ => xv (base + i)
+
+/-- The slots that need a `Generic` half (`.inp` and `.wit` need none). -/
+def aHalfSlots (prog : Array AOp) : List Nat :=
+  (List.range prog.size).filter (fun i =>
+    match prog.getD i default with | .inp _ => false | .wit _ => false | _ => true)
+
+/-- Slot `i`'s half: its three permutation columns and its five coefficients. -/
+def aHalf (base : Nat) (prog : Array AOp) (i : Nat) : List (Option PVar) × List Int :=
+  let V := aVarAt base prog
+  match prog.getD i default with
+  | .lit k => ([some (V i), none, none], cConst (k : Int))
+  | .add a b => ([some (V a), some (V b), some (V i)], cAdd)
+  | .sub a b => ([some (V a), some (V b), some (V i)], cSub)
+  | .mul a b => ([some (V a), some (V b), some (V i)], cMul)
+  | .aeq a b => ([some (V a), some (V b), none], cEq)
+  | _ => ([none, none, none], cNil)
+
+/-- The program's rows: two halves per double-`Generic` row, a `cNil` tail half when odd. -/
+def aRows (base : Nat) (prog : Array AOp) : List SRow :=
+  let sl := aHalfSlots prog
+  (List.range ((sl.length + 1) / 2)).map (fun r =>
+    let h1 := aHalf base prog (sl.getD (2 * r) 0)
+    let h2 := if 2 * r + 1 < sl.length then aHalf base prog (sl.getD (2 * r + 1) 0)
+              else (([none, none, none] : List (Option PVar)), cNil)
+    ({ kind := .generic, perm := h1.1 ++ h2.1 ++ [none], coeffs := h1.2 ++ h2.2 } : SRow))
+
+/-- The program's contribution to the variable environment. -/
+def aEnvOf (base : Nat) (prog : Array AOp) (vals : Array Nat) : VarEnv :=
+  (List.range prog.size).filterMap (fun i =>
+    match prog.getD i default with
+    | .inp _ => none
+    | _ => some (xv (base + i), (vals.getD i 0 : Int)))
+
+/-! ## §8c — the SIX GATE CONSTRAINT BODIES, compiled.
+
+Each mirrors a `KimchiVerify` body one-for-one, and §12 pins the compiled values against that body's
+own output list. These are the factors the six selectors multiply in the linearization constant term
+(`gateLinConst`, `argument.rs:201-213`). -/
+
+/-- `x⁷` — kimchi's Poseidon S-box (`PlonkSpongeConstantsKimchi::PERM_SBOX = 7`). 4 muls. -/
+def pSbox (x : Nat) : AM Nat := do
+  let x2 ← eMul x x
+  let x4 ← eMul x2 x2
+  let x6 ← eMul x4 x2
+  eMul x6 x
+
+/-- `poseidonLaneConstraint`: `target − (rc + Σ_c mds[j][c]·sbox(source_c))`, sboxes precomputed. -/
+def pLane (mdsRow : List Nat) (rc : Nat) (sb : List Nat) (target : Nat) : AM Nat := do
+  let t0 ← eMul (mdsRow.getD 0 0) (sb.getD 0 0)
+  let t1 ← eMul (mdsRow.getD 1 0) (sb.getD 1 0)
+  let t2 ← eMul (mdsRow.getD 2 0) (sb.getD 2 0)
+  let s01 ← eAdd t0 t1
+  let s ← eAdd s01 t2
+  let r ← eAdd rc s
+  eSub target r
+
+/-- The 15 `Poseidon` constraints (`poseidonConstraints`), in emission order. -/
+def pPoseidon (mdsS : List (List Nat)) (c w wn : List Nat) : AM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let cc := fun i => c.getD i 0
+  let wnn := fun i => wn.getD i 0
+  let sb ← (List.range 15).foldlM (fun acc i => do let s ← pSbox (ww i); pure (acc ++ [s])) []
+  let g := fun (ix : List Nat) => ix.map (fun i => sb.getD i 0)
+  let s0 := g [0, 1, 2]; let s1 := g [6, 7, 8]; let s2 := g [9, 10, 11]
+  let s3 := g [12, 13, 14]; let s4 := g [3, 4, 5]
+  let m := fun j => mdsS.getD j []
+  let spec : List (Nat × Nat × List Nat × Nat) :=
+    [ (0, 0, s0, ww 6), (1, 1, s0, ww 7), (2, 2, s0, ww 8)
+    , (0, 3, s1, ww 9), (1, 4, s1, ww 10), (2, 5, s1, ww 11)
+    , (0, 6, s2, ww 12), (1, 7, s2, ww 13), (2, 8, s2, ww 14)
+    , (0, 9, s3, ww 3), (1, 10, s3, ww 4), (2, 11, s3, ww 5)
+    , (0, 12, s4, wnn 0), (1, 13, s4, wnn 1), (2, 14, s4, wnn 2) ]
+  spec.foldlM (fun acc q => do let k ← pLane (m q.1) (cc q.2.1) q.2.2.1 q.2.2.2; pure (acc ++ [k])) []
+
+/-- The 7 `CompleteAdd` constraints (`completeAddConstraints`). -/
+def pCompleteAdd (one : Nat) (w : List Nat) : AM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let x1 := ww 0; let y1 := ww 1; let x2 := ww 2; let y2 := ww 3
+  let x3 := ww 4; let y3 := ww 5; let inf := ww 6; let sameX := ww 7
+  let s := ww 8; let infZ := ww 9; let x21Inv := ww 10
+  let x21 ← eSub x2 x1
+  let y21 ← eSub y2 y1
+  let x1sq ← eMul x1 x1
+  let nsx ← eSub one sameX
+  let a ← eMul x21Inv x21
+  let k0 ← eSub a nsx
+  let k1 ← eMul sameX x21
+  let ss ← eAdd s s
+  let ssy ← eMul ss y1
+  let q2 ← eAdd x1sq x1sq
+  let t1a ← eSub ssy q2
+  let t1 ← eSub t1a x1sq
+  let p1 ← eMul sameX t1
+  let x21s ← eMul x21 s
+  let t2 ← eSub x21s y21
+  let p2 ← eMul nsx t2
+  let k2 ← eAdd p1 p2
+  let sx ← eAdd x1 x2
+  let sx3 ← eAdd sx x3
+  let s2v ← eMul s s
+  let k3 ← eSub sx3 s2v
+  let d ← eSub x1 x3
+  let sd ← eMul s d
+  let e1 ← eSub sd y1
+  let k4 ← eSub e1 y3
+  let f ← eSub sameX inf
+  let k5 ← eMul y21 f
+  let g ← eMul y21 infZ
+  let k6 ← eSub g inf
+  pure [k0, k1, k2, k3, k4, k5, k6]
+
+/-- The 21 `VarbaseMul` constraints (`varBaseMulConstraints`). -/
+def pVarBaseMul (one : Nat) (w wn : List Nat) : AM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let wnn := fun i => wn.getD i 0
+  let xT := ww 0; let yT := ww 1
+  let accX := fun i => ([ww 2, ww 7, ww 9, ww 11, ww 13, wnn 0] : List Nat).getD i 0
+  let accY := fun i => ([ww 3, ww 8, ww 10, ww 12, ww 14, wnn 1] : List Nat).getD i 0
+  let bit := fun i => ([wnn 2, wnn 3, wnn 4, wnn 5, wnn 6] : List Nat).getD i 0
+  let sl := fun i => ([wnn 7, wnn 8, wnn 9, wnn 10, wnn 11] : List Nat).getD i 0
+  let nPrev := ww 4; let nNext := ww 5
+  let acc ← (List.range 5).foldlM (fun a i => do let aa ← eAdd a a; eAdd (bit i) aa) nPrev
+  let dec ← eSub nNext acc
+  let rest ← (List.range 5).foldlM (fun out i => do
+      let b := bit i; let s := sl i
+      let ix := accX i; let iy := accY i
+      let ox := accX (i + 1); let oy := accY (i + 1)
+      let b2 ← eAdd b b
+      let bSign ← eSub b2 one
+      let ssq ← eMul s s
+      let rxa ← eSub ssq ix
+      let rx ← eSub rxa xT
+      let t ← eSub ix rx
+      let iy2 ← eAdd iy iy
+      let ts ← eMul t s
+      let u ← eSub iy2 ts
+      let bb ← eMul b b
+      let k0 ← eSub bb b
+      let ixT ← eSub ix xT
+      let l1 ← eMul ixT s
+      let by' ← eMul bSign yT
+      let r1 ← eSub iy by'
+      let k1 ← eSub l1 r1
+      let uu ← eMul u u
+      let tt ← eMul t t
+      let oxT ← eSub ox xT
+      let q ← eAdd oxT ssq
+      let ttq ← eMul tt q
+      let k2 ← eSub uu ttq
+      let oyiy ← eAdd oy iy
+      let l3 ← eMul oyiy t
+      let ixox ← eSub ix ox
+      let r3 ← eMul ixox u
+      let k3 ← eSub l3 r3
+      pure (out ++ [k0, k1, k2, k3])) []
+  pure (dec :: rest)
+
+/-- The 11 DEPLOYED `EndosclMul` constraints (`endoMulConstraints … |>.take 11`, `proof-systems`
+0.3.0's `CONSTRAINTS = 11` — the 12th distinct-point witness is NOT in the deployed constant term,
+`gateLinConst`'s own `.take 11`). -/
+def pEndoMul (one endo : Nat) (w wn : List Nat) : AM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let wnn := fun i => wn.getD i 0
+  let xt := ww 0; let yt := ww 1
+  let xp := ww 4; let yp := ww 5; let n := ww 6
+  let xr := ww 7; let yr := ww 8; let s1 := ww 9; let s3 := ww 10
+  let b1 := ww 11; let b2 := ww 12; let b3 := ww 13; let b4 := ww 14
+  let xs := wnn 4; let ys := wnn 5; let nNext := wnn 6
+  let em1 ← eSub endo one
+  let t1 ← eMul b1 em1
+  let u1 ← eAdd one t1
+  let xq1 ← eMul u1 xt
+  let t3 ← eMul b3 em1
+  let u3 ← eAdd one t3
+  let xq2 ← eMul u3 xt
+  let b22 ← eAdd b2 b2
+  let v2 ← eSub b22 one
+  let yq1 ← eMul v2 yt
+  let b42 ← eAdd b4 b4
+  let v4 ← eSub b42 one
+  let yq2 ← eMul v4 yt
+  let s1sq ← eMul s1 s1
+  let s3sq ← eMul s3 s3
+  let n2 ← eAdd n n
+  let d1 ← eAdd n2 b1
+  let d1a ← eAdd d1 d1
+  let d2 ← eAdd d1a b2
+  let d2a ← eAdd d2 d2
+  let d3 ← eAdd d2a b3
+  let d3a ← eAdd d3 d3
+  let d4 ← eAdd d3a b4
+  let nC ← eSub d4 nNext
+  let xpxr ← eSub xp xr
+  let xrxs ← eSub xr xs
+  let ysyr ← eAdd ys yr
+  let yryp ← eAdd yr yp
+  let k0 ← do let t ← eMul b1 b1; eSub t b1
+  let k1 ← do let t ← eMul b2 b2; eSub t b2
+  let k2 ← do let t ← eMul b3 b3; eSub t b3
+  let k3 ← do let t ← eMul b4 b4; eSub t b4
+  let k4 ← do let a ← eSub xq1 xp; let l ← eMul a s1; let r ← eSub yq1 yp; eSub l r
+  let k5 ← do
+    let xp2 ← eAdd xp xp
+    let a ← eSub xp2 s1sq
+    let a2 ← eAdd a xq1
+    let m1 ← eMul xpxr s1
+    let m2 ← eAdd m1 yryp
+    let l ← eMul a2 m2
+    let yp2 ← eAdd yp yp
+    let r ← eMul yp2 xpxr
+    eSub l r
+  let k6 ← do
+    let l ← eMul yryp yryp
+    let p ← eMul xpxr xpxr
+    let a ← eSub s1sq xq1
+    let a2 ← eAdd a xr
+    let r ← eMul p a2
+    eSub l r
+  let k7 ← do let a ← eSub xq2 xr; let l ← eMul a s3; let r ← eSub yq2 yr; eSub l r
+  let k8 ← do
+    let xr2 ← eAdd xr xr
+    let a ← eSub xr2 s3sq
+    let a2 ← eAdd a xq2
+    let m1 ← eMul xrxs s3
+    let m2 ← eAdd m1 ysyr
+    let l ← eMul a2 m2
+    let yr2 ← eAdd yr yr
+    let r ← eMul yr2 xrxs
+    eSub l r
+  let k9 ← do
+    let l ← eMul ysyr ysyr
+    let p ← eMul xrxs xrxs
+    let a ← eSub s3sq xq2
+    let a2 ← eAdd a xs
+    let r ← eMul p a2
+    eSub l r
+  pure [k0, k1, k2, k3, k4, k5, k6, k7, k8, k9, nC]
+
+/-- The 11 `EndomulScalar` constraints (`endomulScalarConstraints`). `cA/cB/cC` are the witnessed
+quotients `11/6, −5/2, 2/3`, and `negOne/three/six/eleven` are the small literals of `c`, `d` and
+`crumb`. -/
+def pEmScalar (cA cB cC negOne three six eleven : Nat) (w : List Nat) : AM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let n0 := ww 0; let n8 := ww 1; let a0 := ww 2; let b0 := ww 3
+  let a8 := ww 4; let b8 := ww 5
+  let x := fun i => ww (6 + i)
+  let cf : Nat → AM Nat := fun t => do
+    let m1 ← eMul cC t
+    let s1 ← eAdd m1 cB
+    let m2 ← eMul s1 t
+    let s2 ← eAdd m2 cA
+    eMul s2 t
+  let cfs ← (List.range 8).foldlM (fun acc i => do let v ← cf (x i); pure (acc ++ [v])) []
+  let dfs ← (List.range 8).foldlM (fun acc i => do
+      let t := x i
+      let m1 ← eMul negOne t
+      let s1 ← eAdd m1 three
+      let m2 ← eMul s1 t
+      let s2 ← eAdd m2 negOne
+      let v ← eAdd (cfs.getD i 0) s2
+      pure (acc ++ [v])) []
+  let n8e ← (List.range 8).foldlM (fun acc i => do
+      let a2 ← eAdd acc acc
+      let a4 ← eAdd a2 a2
+      eAdd a4 (x i)) n0
+  let a8e ← (List.range 8).foldlM (fun acc i => do
+      let a2 ← eAdd acc acc
+      eAdd a2 (cfs.getD i 0)) a0
+  let b8e ← (List.range 8).foldlM (fun acc i => do
+      let a2 ← eAdd acc acc
+      eAdd a2 (dfs.getD i 0)) b0
+  let c0 ← eSub n8e n8
+  let c1 ← eSub a8e a8
+  let c2 ← eSub b8e b8
+  let cr ← (List.range 8).foldlM (fun acc i => do
+      let t := x i
+      let a ← eSub t six
+      let b ← eMul a t
+      let c ← eAdd b eleven
+      let d ← eMul c t
+      let e ← eSub d six
+      let v ← eMul e t
+      pure (acc ++ [v])) []
+  pure ([c0, c1, c2] ++ cr)
+
+/-- `genericGateConstraint` — the double generic gate's own linearization factor. -/
+def pGenericGate (genSel alpha : Nat) (c w : List Nat) : AM Nat := do
+  let cc := fun i => c.getD i 0
+  let ww := fun i => w.getD i 0
+  let t0 ← eMul (cc 0) (ww 0)
+  let t1 ← eMul (cc 1) (ww 1)
+  let t2 ← eMul (cc 2) (ww 2)
+  let w01 ← eMul (ww 0) (ww 1)
+  let t3 ← eMul (cc 3) w01
+  let s0 ← eAdd t0 t1
+  let s1 ← eAdd s0 t2
+  let s2 ← eAdd s1 t3
+  let k1 ← eAdd s2 (cc 4)
+  let u0 ← eMul (cc 5) (ww 3)
+  let u1 ← eMul (cc 6) (ww 4)
+  let u2 ← eMul (cc 7) (ww 5)
+  let w34 ← eMul (ww 3) (ww 4)
+  let u3 ← eMul (cc 8) w34
+  let r0 ← eAdd u0 u1
+  let r1 ← eAdd r0 u2
+  let r2 ← eAdd r1 u3
+  let k2 ← eAdd r2 (cc 9)
+  let ak2 ← eMul alpha k2
+  let sum ← eAdd k1 ak2
+  eMul genSel sum
+
+/-- `alphaCombine α cs = Σᵢ αⁱ·csᵢ`, Horner-free (the powers are shared with `ft_eval0`'s `α^21..23`
+so the whole rung pays for one power chain). -/
+def pAlphaCombine (apow : List Nat) (cs : List Nat) : AM Nat := do
+  match cs with
+  | [] => eLit 0
+  | c0 :: rest =>
+      (List.range rest.length).foldlM (fun acc i => do
+        let t ← eMul (apow.getD (i + 1) 0) (rest.getD i 0)
+        eAdd acc t) c0
+
+/-! ## §8d — R6, `ft_eval0` + `Plonk_checks.checked`, with `scalars_env`.
+
+`step_verifier.ml:1019-1071,1131-1136`. The rung compiles, in order:
+
+  * **`scalars_env`** (`plonk_checks.ml:254-408`) — `ω^{n−1}` as a WITNESSED inverse (`ω·ω⁻¹ = 1`
+    checked in-circuit, so `ω^{n−1}` is derived rather than asserted), `ω^{n−2}`, `ω^{n−3}`,
+    `zk_polynomial`, `ζ^n − 1` by `log2n` squarings, and the α power chain `α⁰..α²³`.
+  * **the linearization constant term** — `gateLinConst`: all six gate bodies of §8c behind their
+    selectors, α-combined. This is `Sc.constant_term env` (`plonk_checks.ml:459`).
+  * **`ft_eval0`** (`plonk_checks.ml:420-460`) — the permutation numerator fold over the 6 σ evals,
+    minus `p(ζ)`, minus the denominator fold over the 7 coset shifts, plus `numerator·denomInv` with
+    `denom·denomInv = 1` CHECKED (the same witnessed-inverse device, no `Field` instance needed),
+    minus the constant term.
+  * **`Plonk_checks.checked`** (`plonk_checks.ml:516-548`) — `derive_plonk`'s `perm` scalar
+    `−(fold over e.s of (γ + β·s + w) from z(ζω)·β·α²¹·zkp)`, asserted equal to the deferred value.
+
+⚑ IT READS THE ASSEMBLY, not a private island: `ζ/α/β/γ` are R2's challenge variables and the 43
+evaluation columns are R5's `vEz`/`vEw` — so the whole rung hangs off σ classes that R1–R5 created.
+And its OUTPUT is tied to `vEz 3`, the `ft` entry of the `combined_inner_product` column vector,
+which is exactly `combine ~ft:ft_eval0` at `step_verifier.ml:1078-1083`. -/
+
+/-- The four-entry prefix of the C8 column vector (`sg_old`×2, the public polynomial, `ft`);
+`MinaWrapFtEval0`'s own slicing, and `IDX_Z`/`IDX_W`/`IDX_S`/`IDX_COEFF`/`IDX_SEL` index AFTER it. -/
+def EV_PREFIX : Nat := 4
+/-- Column `k` of the 43-column evaluation vector at ζ. -/
+def vColZ (s : StepShape) (k : Nat) : PVar := vEz s (EV_PREFIX + k)
+/-- …and at ζω. -/
+def vColW (s : StepShape) (k : Nat) : PVar := vEw s (EV_PREFIX + k)
+
+/-- Which challenge plays ζ / α / β / γ in the deferred scalar arithmetic. -/
+def StepShape.zetaChal (_s : StepShape) : Nat := 0
+def StepShape.alphaChal (_s : StepShape) : Nat := 1
+def StepShape.betaChal (_s : StepShape) : Nat := 2
+def StepShape.gammaChal (_s : StepShape) : Nat := 3
+
+/-- The wire the ft program reads: each field is a SOURCE OP, so the same program compiles against
+the assembled circuit's variables (`.inp`) and against a real block's field values (`.lit`). -/
+structure FtWire where
+  ez : Nat → AOp
+  ew : Nat → AOp
+  zeta : AOp
+  alpha : AOp
+  beta : AOp
+  gamma : AOp
+  pZeta : AOp
+
+/-- The config the ft program bakes in as constants: the domain, the seven coset shifts, the MDS,
+the endomorphism coefficient and the three `EndomulScalar` quotients — plus the two witnessed
+values the circuit CHECKS rather than trusts. -/
+structure FtCfg where
+  log2n : Nat
+  omega : Nat
+  omegaInv : Nat
+  shifts : List Nat
+  mds9 : List Nat
+  endo : Nat
+  cA : Nat
+  cB : Nat
+  cC : Nat
+  denomInv : Nat
+  permClaimed : Nat
+  deriving Repr, Inhabited
+
+/-- The slots the rung's rows and pins refer to. -/
+structure FtSlots where
+  ftEval0 : Nat
+  linConst : Nat
+  zkp : Nat
+  perm : Nat
+  zetaN : Nat
+  omInv3 : Nat
+  deriving Repr, Inhabited
+
+/-- **The ft program.** Returns the named output slots. -/
+def ftBuild (W : FtWire) (C : FtCfg) : AM FtSlots := do
+  -- ── small literals and the config constants ───────────────────────────────────────────────
+  let one ← eLit 1
+  let negOne ← eLit (pN - 1)
+  let three ← eLit 3
+  let six ← eLit 6
+  let eleven ← eLit 11
+  let omega ← eLit C.omega
+  let omInv ← eLit C.omegaInv
+  let endo ← eLit C.endo
+  let cA ← eLit C.cA
+  let cB ← eLit C.cB
+  let cC ← eLit C.cC
+  let shiftS ← (List.range 7).foldlM
+    (fun acc i => do let v ← eLit (C.shifts.getD i 0); pure (acc ++ [v])) []
+  let mdsS ← (List.range 3).foldlM (fun acc j => do
+      let row ← (List.range 3).foldlM
+        (fun r i => do let v ← eLit (C.mds9.getD (3 * j + i) 0); pure (r ++ [v])) []
+      pure (acc ++ [row])) []
+  -- ── scalars_env ───────────────────────────────────────────────────────────────────────────
+  -- ⚑ ω^{n−1} = ω⁻¹ is DERIVED: `ω·ω⁻¹ = 1` is a row, so a wrong inverse cannot be witnessed.
+  let chk ← eMul omega omInv
+  let _ ← eEq chk one
+  let omInv2 ← eMul omInv omInv
+  let omInv3 ← eMul omInv2 omInv
+  let zeta ← em W.zeta
+  let alpha ← em W.alpha
+  let beta ← em W.beta
+  let gamma ← em W.gamma
+  let zm3 ← eSub zeta omInv3
+  let zm2 ← eSub zeta omInv2
+  let zm1 ← eSub zeta omInv
+  let zkpA ← eMul zm3 zm2
+  let zkp ← eMul zkpA zm1
+  let zetaN ← (List.range C.log2n).foldlM (fun acc _ => eMul acc acc) zeta
+  let zeta1m1 ← eSub zetaN one
+  let apow ← (List.range 23).foldlM (fun acc _ => do
+      let p ← eMul (acc.getLastD one) alpha; pure (acc ++ [p])) [one]
+  let a0 := apow.getD 21 0
+  let a1 := apow.getD 22 0
+  let a2 := apow.getD 23 0
+  -- ── the wire columns ──────────────────────────────────────────────────────────────────────
+  let ez ← (List.range 43).foldlM (fun acc k => do let v ← em (W.ez k); pure (acc ++ [v])) []
+  let ew ← (List.range 43).foldlM (fun acc k => do let v ← em (W.ew k); pure (acc ++ [v])) []
+  let coeff := (List.range 15).map (fun i => ez.getD (IDX_COEFF + i) 0)
+  let wv := (List.range 15).map (fun i => ez.getD (IDX_W + i) 0)
+  let wn := (List.range 15).map (fun i => ew.getD (IDX_W + i) 0)
+  let sv := (List.range 6).map (fun i => ez.getD (IDX_S + i) 0)
+  let zZeta := ez.getD IDX_Z 0
+  let zZetaW := ew.getD IDX_Z 0
+  let genSel := ez.getD (IDX_SEL + 0) 0
+  let posSel := ez.getD (IDX_SEL + 1) 0
+  let caddSel := ez.getD (IDX_SEL + 2) 0
+  let mulSel := ez.getD (IDX_SEL + 3) 0
+  let emulSel := ez.getD (IDX_SEL + 4) 0
+  let emsSel := ez.getD (IDX_SEL + 5) 0
+  -- ── gateLinConst: the six bodies behind their selectors ───────────────────────────────────
+  let gG ← pGenericGate genSel alpha coeff wv
+  let cPos ← pPoseidon mdsS coeff wv wn
+  let aPos ← pAlphaCombine apow cPos
+  let gPos ← eMul posSel aPos
+  let cAdd' ← pCompleteAdd one wv
+  let aAdd ← pAlphaCombine apow cAdd'
+  let gAdd ← eMul caddSel aAdd
+  let cMulG ← pVarBaseMul one wv wn
+  let aMul ← pAlphaCombine apow cMulG
+  let gMul ← eMul mulSel aMul
+  let cEmul ← pEndoMul one endo wv wn
+  let aEmul ← pAlphaCombine apow cEmul
+  let gEmul ← eMul emulSel aEmul
+  let cEms ← pEmScalar cA cB cC negOne three six eleven wv
+  let aEms ← pAlphaCombine apow cEms
+  let gEms ← eMul emsSel aEms
+  let l1 ← eAdd gG gPos
+  let l2 ← eAdd l1 gAdd
+  let l3 ← eAdd l2 gMul
+  let l4 ← eAdd l3 gEmul
+  let lct ← eAdd l4 gEms
+  -- ── ft_eval0 (`ftEval0R`, term for term) ──────────────────────────────────────────────────
+  let w6g ← eAdd (wv.getD 6 0) gamma
+  let i1 ← eMul w6g zZetaW
+  let i2 ← eMul i1 a0
+  let init ← eMul i2 zkp
+  let numerFold ← (List.range 6).foldlM (fun x i => do
+      let bs ← eMul beta (sv.getD i 0)
+      let bw ← eAdd bs (wv.getD i 0)
+      let bwg ← eAdd bw gamma
+      eMul x bwg) init
+  let afterPub ← eSub numerFold (← em W.pZeta)
+  let dInit0 ← eMul a0 zkp
+  let dInit ← eMul dInit0 zZeta
+  let bz ← eMul beta zeta
+  let denomFold ← (List.range 7).foldlM (fun x i => do
+      let bzs ← eMul bz (shiftS.getD i 0)
+      let gb ← eAdd gamma bzs
+      let gbw ← eAdd gb (wv.getD i 0)
+      eMul x gbw) dInit
+  let afterDenom ← eSub afterPub denomFold
+  let n1a ← eMul zeta1m1 a1
+  let n1 ← eMul n1a zm3
+  let n2a ← eMul zeta1m1 a2
+  let zm1c ← eSub zeta one
+  let n2 ← eMul n2a zm1c
+  let nsum ← eAdd n1 n2
+  let oneMz ← eSub one zZeta
+  let numerator ← eMul nsum oneMz
+  let denom ← eMul zm3 zm1c
+  let dinv ← eWit C.denomInv
+  let dchk ← eMul denom dinv
+  let _ ← eEq dchk one
+  let nd ← eMul numerator dinv
+  let afterZk ← eAdd afterDenom nd
+  let ftEval0 ← eSub afterZk lct
+  -- ── Plonk_checks.checked: derive_plonk's `perm` scalar, asserted against the deferred word ──
+  let p0 ← eMul zZetaW beta
+  let p1 ← eMul p0 a0
+  let pInit ← eMul p1 zkp
+  let pFold ← (List.range 6).foldlM (fun x i => do
+      let bs ← eMul beta (sv.getD i 0)
+      let gb ← eAdd gamma bs
+      let gbw ← eAdd gb (wv.getD i 0)
+      eMul x gbw) pInit
+  let perm ← eMul negOne pFold
+  let permClaimed ← eWit C.permClaimed
+  let _ ← eEq perm permClaimed
+  pure { ftEval0 := ftEval0, linConst := lct, zkp := zkp, perm := perm
+       , zetaN := zetaN, omInv3 := omInv3 }
+
+/-- The compiled program plus its named slots. -/
+structure FtProg where
+  prog : Array AOp
+  slots : FtSlots
+  deriving Repr, Inhabited
+
+def ftProgOf (W : FtWire) (C : FtCfg) : FtProg :=
+  let r := (ftBuild W C).run #[]
+  { prog := r.2, slots := r.1 }
+
+/-! ### The committed ft config and wire, for the ASSEMBLED instance. -/
+
+/-- The step domain: `Common.Max_degree.step_log2 = 16` (`plonk_checks.ml` `srs_length_log2`). -/
+def FT_LOG2N : Nat := 16
+def FT_N : Nat := 2 ^ FT_LOG2N
+/-- The `2^16`-th root of unity of `Fp`, DERIVED (`MinaWrapFtEval0.rootOfUnity`, read-only). -/
+def FT_OMEGA : Nat := (Dregg2.Bridge.MinaWrapFtEval0.rootOfUnity pN FT_LOG2N).val
+def FT_OMEGA_INV : Nat := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv FT_OMEGA
+/-- `env.endo_coefficient()` on the STEP side: the BASE endomorphism eigenvalue `5^((p−1)/3)`, NOT
+the scalar-challenge endo (`MinaWrapFtEval0Weld` §6's `stepEndoCoefficient`; the conflation of the
+two cube roots is the defect that file closed). -/
+def FT_ENDO : Nat :=
+  (Dregg2.Bridge.MinaWrapFtEval0.powFast ((5 : Nat) : ZMod pN) ((pN - 1) / 3)).val
+/-- The three `EndomulScalar` quotients `11/6, −5/2, 2/3` (`quotientConsts`, read-only). -/
+def FT_QUOT : Nat × Nat × Nat :=
+  match Dregg2.Bridge.MinaWrapFtEval0.quotientConsts pN with
+  | some (a, b, c) => (a.val, b.val, c.val)
+  | none => (0, 0, 0)
+/-- Seven distinct nonzero coset shifts. The real Tick shifts are `TickShifts.tickShiftsFp 16`; the
+assembled instance's shifts are its own (the Blake2b derivation is off this module's hot path), and
+the real ones are exercised in the real-block pin. -/
+def FT_SHIFTS : List Nat := (List.range 7).map (fun i => (1 + 7919 * (i + 1) * (i + 3)) % pN)
+/-- The linearization's `Constants::mds` IS `Vesta::sponge_params().mds = fp_kimchi` (`curve.rs:63`),
+i.e. K3's own `PastaPoseidon.mdsN` — the same nine constants the sponge rung R1 permutes with. -/
+def FT_MDS9 : List Nat := Dregg2.Circuit.Emit.PastaPoseidon.mdsN.flatten
+
+/-- The ft program's `.inp` lookup: the challenges and the 43 columns, straight from the chains. It
+does NOT read column 3, so the `ft` override below is not circular. -/
+def ftInputEnv (s : StepShape) (d : SpongeData) : VarEnv :=
+  (List.range s.chals).map (fun c => (vN s c s.emsRows, (chalOf s d c : Int)))
+  ++ (List.range s.cipEvals).flatMap (fun k =>
+      [(vEz s k, (evVal k 0 : Int)), (vEw s k, (evVal k 1 : Int))])
+
+def ftWireOf (s : StepShape) : FtWire :=
+  { ez := fun k => .inp (vColZ s k)
+  , ew := fun k => .inp (vColW s k)
+  , zeta := .inp (vN s s.zetaChal s.emsRows)
+  , alpha := .inp (vN s s.alphaChal s.emsRows)
+  , beta := .inp (vN s s.betaChal s.emsRows)
+  , gamma := .inp (vN s s.gammaChal s.emsRows)
+  , pZeta := .inp (vEz s 2) }
+
+/-- The two witnessed values, computed from the wire: `denomInv` and the deferred `perm` scalar.
+Both are CHECKED by a row (`denom·denomInv = 1`, `perm_actual = perm_claimed`), so a wrong witness
+is a refusal rather than an accept. Computed by running the program once with placeholders. -/
+def ftCfgRaw (dInv pC : Nat) : FtCfg :=
+  { log2n := FT_LOG2N, omega := FT_OMEGA, omegaInv := FT_OMEGA_INV
+  , shifts := FT_SHIFTS, mds9 := FT_MDS9, endo := FT_ENDO
+  , cA := FT_QUOT.1, cB := FT_QUOT.2.1, cC := FT_QUOT.2.2
+  , denomInv := dInv, permClaimed := pC }
+
+/-- Everything R6 needs, evaluated ONCE. -/
+structure FtData where
+  fp : FtProg
+  vals : Array Nat
+  /-- The witnessed inverse of `(ζ − ω^{n−3})(ζ − 1)`, checked by a row. -/
+  denomInv : Nat
+  /-- The deferred `perm` scalar `Plonk_checks.checked` compares against, checked by a row. -/
+  permClaimed : Nat
+  deriving Repr, Inhabited
+
+/-- Run the program twice: once to read off `denom` and the actual `perm` scalar, then once with the
+witnesses those force. The second run is the emitted one. -/
+def runFt (s : StepShape) (d : SpongeData) : FtData :=
+  let W := ftWireOf s
+  let lk := envLookupAt (envIndex (ftInputEnv s d))
+  let p0 := ftProgOf W (ftCfgRaw 1 0)
+  let v0 := aEval lk p0.prog
+  -- `denom` is the slot the `dchk` multiplication reads; recompute it directly from ζ and ω^{n−3}.
+  let zeta := (lk (vN s s.zetaChal s.emsRows)).toNat % pN
+  let omInv3 := v0.getD p0.slots.omInv3 0
+  let denom := fMul (fSub zeta omInv3) (fSub zeta 1)
+  let dInv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv denom
+  let pC := v0.getD p0.slots.perm 0
+  let p1 := ftProgOf W (ftCfgRaw dInv pC)
+  { fp := p1, vals := aEval lk p1.prog, denomInv := dInv, permClaimed := pC }
+
+/-- **R6's rows**: the compiled program, the tie of its `ft_eval0` output to the `ft` column of the
+`combined_inner_product` vector, and the σ-only probes. -/
+def ftRows (s : StepShape) (f : FtData) (wired : Bool) : List SRow :=
+  let base := baseFtS s
+  let V := aVarAt base f.fp.prog
+  aRows base f.fp.prog
+  ++ [ genericRow (some (V f.fp.slots.ftEval0)) (some (vEz s 3)) none none none none (cEq ++ cNil)
+     , probeRow wired (V f.fp.slots.ftEval0) (V f.fp.slots.linConst)
+     , probeRow wired (V f.fp.slots.perm) (V f.fp.slots.zkp) ]
+
+/-! ## §8e — R7, the EVALUATION ABSORPTION + opt-sponge masking.
+
+`step_verifier.ml:950-1006`, `step_main.ml:525-567`. Three sponge SEGMENTS, each a fresh `[0,0,0]`
+state, `absorb` blocks of two words (`rate = 2`), then bare squeeze permutations:
+
+  * **A — the opt-sponge** over the carried bulletproof challenges, with a per-block `keep` MASK.
+    Upstream's own trick (`:985-1003`) absorbs unconditionally and then MUXES the state
+    (`Array.map2_exn sponge.state state_before ~f:(Field.if_ b)`); this compiles that mux as
+    `outⱼ = beforeⱼ + keep·(afterⱼ − beforeⱼ)`, three lanes, three `Generic` halves each. That is
+    the `branch_data.proofs_verified_mask` path, and it is the piece the sponge rung R1 had no
+    shape for.
+  * **B — the fr-sponge**: the challenge digest, `ft_eval1`, `p(ζ)`, `p(ζω)`, then **the 43 columns
+    at ζ and ζω interleaved** (`to_absorption_sequence`), then TWO squeezes for ξ′ and r′.
+  * **C — `hash_messages_for_next_step_proof`**: the app state, the 28 plonk-index commitments (56
+    coordinates), the two challenge-polynomial commitments and the unpadded bulletproof challenges,
+    then one squeeze.
+
+⚑ EVERY ABSORBED WORD IS AN ASSEMBLY VARIABLE where upstream's is: segment A absorbs R2's
+challenges, segment B absorbs R5's evaluation columns (the SAME variables R6 reads) and R6's
+`ft_eval1`/`p(ζ)` entries, and segment C absorbs R3's and R4's fold outputs. -/
+
+/-- One segment's schedule. -/
+structure SegSpec where
+  /-- absorbed words: the variable and its value, padded to an even length. -/
+  ws : List (PVar × Nat)
+  /-- squeeze permutations after the absorb blocks. -/
+  squeezes : Nat
+  /-- per absorb-block `keep` mask: `some (var, val)` masks, `none` does not. -/
+  masked : Bool
+  deriving Inhabited
+
+def SegSpec.nb (g : SegSpec) : Nat := (g.ws.length + 1) / 2
+def SegSpec.blocks (g : SegSpec) : Nat := g.nb + g.squeezes
+
+/-- A segment's evaluated trajectory. -/
+structure SegData where
+  /-- the state ENTERING each block, `blocks + 1` of them. -/
+  states : List (List Nat)
+  /-- the 56 round states of each block's permutation. -/
+  perms : List (List (List Nat))
+  /-- the un-muxed permutation output of each absorb block. -/
+  afters : List (List Nat)
+  deriving Repr, Inhabited
+
+/-- `keep` for absorb block `b` of a masked segment: the first half of the blocks are the ACTUAL
+previous proof's challenges (`Vector.trim_front actual_width_mask`), the rest are masked out. -/
+def segKeep (nb b : Nat) : Nat := if 2 * b < nb then 1 else 0
+
+def runSeg (g : SegSpec) : SegData :=
+  (List.range g.blocks).foldl
+    (fun d b =>
+      let pre := d.states.getLastD [0, 0, 0]
+      let post :=
+        if b < g.nb then
+          [ fAdd (pre.getD 0 0) ((g.ws.getD (2 * b) (xv 0, 0)).2)
+          , fAdd (pre.getD 1 0) ((g.ws.getD (2 * b + 1) (xv 0, 0)).2)
+          , pre.getD 2 0 ]
+        else pre
+      let ss := permStates post
+      let after := ss.getLastD post
+      let next :=
+        if b < g.nb && g.masked && segKeep g.nb b == 0 then pre else after
+      { states := d.states ++ [next], perms := d.perms ++ [ss]
+      , afters := d.afters ++ [after] })
+    { states := [[0, 0, 0]], perms := [], afters := [] }
+
+/-- Segment variable regions, all relative to one base. -/
+def sgSt (base _nb _sq b j : Nat) : PVar := xv (base + 3 * b + j)
+def sgPost (base nb sq b j : Nat) : PVar := xv (base + 3 * (nb + sq + 1) + 2 * b + j)
+def sgAfter (base nb sq b j : Nat) : PVar :=
+  xv (base + 3 * (nb + sq + 1) + 2 * nb + 3 * b + j)
+def sgD (base nb sq b j : Nat) : PVar :=
+  xv (base + 3 * (nb + sq + 1) + 5 * nb + 3 * b + j)
+def sgP (base nb sq b j : Nat) : PVar :=
+  xv (base + 3 * (nb + sq + 1) + 8 * nb + 3 * b + j)
+/-- The per-block `keep` mask variable. -/
+def sgKeep (base nb sq b : Nat) : PVar := xv (base + 3 * (nb + sq + 1) + 11 * nb + b)
+
+/-- **One segment's rows.** -/
+def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow :=
+  let nb := g.nb
+  let sq := g.squeezes
+  [ genericRow (some (sgSt base nb sq 0 0)) none none (some (sgSt base nb sq 0 1)) none none
+      (cConst 0 ++ cConst 0)
+  , genericRow (some (sgSt base nb sq 0 2)) none none none none none (cConst 0 ++ cNil) ]
+  ++ (List.range g.blocks).flatMap (fun b =>
+      if b < nb then
+        let out : Nat → PVar :=
+          if g.masked then (fun j => sgAfter base nb sq b j)
+          else (fun j => sgSt base nb sq (b + 1) j)
+        [ genericRow (some (sgSt base nb sq b 0)) (some (g.ws.getD (2 * b) (xv 0, 0)).1)
+                     (some (sgPost base nb sq b 0))
+                     (some (sgSt base nb sq b 1)) (some (g.ws.getD (2 * b + 1) (xv 0, 0)).1)
+                     (some (sgPost base nb sq b 1)) (cAdd ++ cAdd) ]
+        ++ permBlockRows (sgPost base nb sq b 0) (sgPost base nb sq b 1) (sgSt base nb sq b 2)
+             (out 0) (out 1) (out 2) (d.perms.getD b [])
+        ++ (if g.masked then
+              -- the `Field.if_` mux: outⱼ = beforeⱼ + keep·(afterⱼ − beforeⱼ)
+              (List.range 3).map (fun j =>
+                genericRow (some (sgAfter base nb sq b j)) (some (sgSt base nb sq b j))
+                           (some (sgD base nb sq b j))
+                           (some (sgKeep base nb sq b)) (some (sgD base nb sq b j))
+                           (some (sgP base nb sq b j)) (cSub ++ cMul))
+              ++ [ genericRow (some (sgSt base nb sq b 0)) (some (sgP base nb sq b 0))
+                              (some (sgSt base nb sq (b + 1) 0))
+                              (some (sgSt base nb sq b 1)) (some (sgP base nb sq b 1))
+                              (some (sgSt base nb sq (b + 1) 1)) (cAdd ++ cAdd)
+                 , genericRow (some (sgSt base nb sq b 2)) (some (sgP base nb sq b 2))
+                              (some (sgSt base nb sq (b + 1) 2)) none none none (cAdd ++ cNil) ]
+            else [])
+        ++ (if b + 1 == nb then [probeRow wired (sgSt base nb sq (b + 1) 0)
+                                              (sgSt base nb sq (b + 1) 1)] else [])
+      else
+        permBlockRows (sgSt base nb sq b 0) (sgSt base nb sq b 1) (sgSt base nb sq b 2)
+          (sgSt base nb sq (b + 1) 0) (sgSt base nb sq (b + 1) 1) (sgSt base nb sq (b + 1) 2)
+          (d.perms.getD b [])
+        ++ [probeRow wired (sgSt base nb sq (b + 1) 0) (sgSt base nb sq (b + 1) 1)])
+
+/-- A segment's environment. -/
+def segEnv (base : Nat) (g : SegSpec) (d : SegData) : VarEnv :=
+  let nb := g.nb
+  let sq := g.squeezes
+  (List.range (g.blocks + 1)).flatMap (fun b =>
+    (List.range 3).map (fun j => (sgSt base nb sq b j, ((d.states.getD b []).getD j 0 : Int))))
+  ++ (List.range nb).flatMap (fun b =>
+      let pre := d.states.getD b []
+      (List.range 2).map (fun j =>
+        (sgPost base nb sq b j,
+         (fAdd (pre.getD j 0) ((g.ws.getD (2 * b + j) (xv 0, 0)).2) : Int))))
+  ++ (if g.masked then
+        (List.range nb).flatMap (fun b =>
+          let pre := d.states.getD b []
+          let aft := d.afters.getD b []
+          let k := segKeep nb b
+          [(sgKeep base nb sq b, (k : Int))]
+          ++ (List.range 3).flatMap (fun j =>
+              let dv := fSub (aft.getD j 0) (pre.getD j 0)
+              [ (sgAfter base nb sq b j, (aft.getD j 0 : Int))
+              , (sgD base nb sq b j, (dv : Int))
+              , (sgP base nb sq b j, (fMul k dv : Int)) ]))
+      else [])
+
+/-- The three segments' shapes, from the committed `StepShape`. -/
+def StepShape.frCols (s : StepShape) : Nat := s.cipEvals - EV_PREFIX
+/-- Carried bulletproof challenges: two previous proofs × `bRounds` each. -/
+def StepShape.optWords (s : StepShape) : Nat := 2 * s.bRounds
+/-- `hash_messages_for_next_step_proof`'s field elements: the app state, the 28 plonk-index
+commitments as 56 coordinates, the two challenge-polynomial commitments (4 coordinates), and the
+unpadded bulletproof challenges. -/
+def StepShape.hmWords (s : StepShape) : Nat := 61 + 2 * s.bRounds
+
+def optSpec (s : StepShape) (d : SpongeData) : SegSpec :=
+  { ws := (List.range s.optWords).map (fun i =>
+      let c := i % s.chals
+      (vN s c s.emsRows, chalOf s d c))
+  , squeezes := 1, masked := true }
+
+def frSpec (s : StepShape) (dg : PVar × Nat) (ftVal : Nat) : SegSpec :=
+  { ws := [ dg, (vEw s 3, evVal 3 1), (vEz s 2, evZOf ftVal 2), (vEw s 2, evVal 2 1) ]
+      ++ (List.range s.frCols).flatMap (fun k =>
+          [ (vColZ s k, evZOf ftVal (EV_PREFIX + k))
+          , (vColW s k, evVal (EV_PREFIX + k) 1) ])
+  , squeezes := 2, masked := false }
+
+/-- A deterministic fixture standing for one of the plonk-index / app-state words. -/
+def hmVal (i : Nat) : Nat := (13 + 3000017 * i + 5 * i * i) % pN
+
+def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) (d : SpongeData) : SegSpec :=
+  { ws := (List.range 57).map (fun i => (vHm s i, hmVal i))
+      ++ [ (mpx s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).1)
+         , (mpy s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).2)
+         , (ipx s (qSum s (s.ipaRounds - 2)), (v.sums.getLastD (0, 0)).1)
+         , (ipy s (qSum s (s.ipaRounds - 2)), (v.sums.getLastD (0, 0)).2) ]
+      ++ (List.range (2 * s.bRounds)).map (fun i =>
+          let c := i % s.chals
+          (vN s c s.emsRows, chalOf s d c))
+  , squeezes := 1, masked := false }
+
 /-- The circuit variables EXPOSED as the public output — `pubWords` of them, drawn from every
 sub-circuit so a public tie reaches all five. -/
 def exposedVars (s : StepShape) : List PVar :=
@@ -754,12 +1655,43 @@ structure StepData where
   sp : SpongeData
   msm : MsmData
   ipa : IpaData
+  ft : FtData
   df : DefData
-  deriving Repr, Inhabited
+  segA : SegData
+  segB : SegData
+  segC : SegData
+  specA : SegSpec
+  specB : SegSpec
+  specC : SegSpec
+  deriving Inhabited
+
+/-- R6's `ft_eval0`, as a value. -/
+def FtData.out (f : FtData) : Nat := f.vals.getD f.fp.slots.ftEval0 0
 
 def mkStep (s : StepShape) : StepData :=
   let sp := runSponge s
-  { sh := s, sp := sp, msm := runMsm s sp, ipa := runIpa s sp, df := runDef s sp }
+  let msm := runMsm s sp
+  let ipa := runIpa s sp
+  -- ⚑ R6 first: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds.
+  let ft := runFt s sp
+  let ftv := ft.out
+  let specA := optSpec s sp
+  let segA := runSeg specA
+  let dg : PVar × Nat :=
+    (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
+     (segA.states.getLastD []).getD 0 0)
+  let specB := frSpec s dg ftv
+  let specC := hmSpec s msm ipa sp
+  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, df := runDef s sp ftv
+  , segA := segA, segB := runSeg specB, segC := runSeg specC
+  , specA := specA, specB := specB, specC := specC }
+
+/-- **R7's rows** — the three sponge segments of §8e. -/
+def absRows (t : StepData) (wired : Bool) : List SRow :=
+  let s := t.sh
+  segRows (baseSegA s) t.specA t.segA wired
+  ++ segRows (baseSegB s) t.specB t.segB wired
+  ++ segRows (baseSegC s) t.specC t.segC wired
 
 /-- **THE ROW SCHEDULE**, in the order `verify_one` runs it. -/
 def stepRows (t : StepData) (wired : Bool) : List SRow :=
@@ -771,6 +1703,8 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ deferredRows s wired
   ++ cipRows s wired
   ++ closingRows s
+  ++ ftRows s t.ft wired
+  ++ absRows t wired
 
 /-- The CIRCUIT's variable → value assignment (public words are added by `stepEnv`). -/
 def circuitEnv (t : StepData) : VarEnv :=
@@ -819,6 +1753,13 @@ def circuitEnv (t : StepData) : VarEnv :=
       , (vDk s k, (t.df.dk.getD k 0 : Int)), (vCk s k, (t.df.ck.getD k 0 : Int))
       , (vTk s k, (t.df.tk.getD k 0 : Int)) ])
   ++ (List.range (s.cipEvals + 1)).map (fun i => (vCa s i, (t.df.ca.getD i 0 : Int)))
+  -- R6: the compiled ft program's slots.
+  ++ aEnvOf (baseFtS s) t.ft.fp.prog t.ft.vals
+  -- R7: the three sponge segments and the fixture words of `hash_messages_for_next_step_proof`.
+  ++ (List.range N_HM_FIX).map (fun i => (vHm s i, (hmVal i : Int)))
+  ++ segEnv (baseSegA s) t.specA t.segA
+  ++ segEnv (baseSegB s) t.specB t.segB
+  ++ segEnv (baseSegC s) t.specC t.segC
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values
 are READ OUT of the circuit env at the exposed variables — so a public word and the variable the
@@ -879,12 +1820,13 @@ pubWords` through `placeChecked`. Each rung is a superset of the one below, so a
 hide behind a smaller circuit. -/
 
 inductive Rung where
-  | transcript | challenges | msm | ipa | full
+  | transcript | challenges | msm | ipa | full | ftEval0 | absorb
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "r1_transcript" | .challenges => "r2_challenges" | .msm => "r3_msm"
-  | .ipa => "r4_ipa" | .full => "r5_full"
+  | .ipa => "r4_ipa" | .full => "r5_full" | .ftEval0 => "r6_ft_eval0"
+  | .absorb => "r7_absorption"
 
 /-- Rung `k`'s rows. -/
 def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
@@ -893,17 +1835,21 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let b := (List.range s.chals).flatMap (challengeRows s t.sp wired)
   let c := msmRows s t.msm wired
   let d := ipaRows s t.ipa wired
+  let e := deferredRows s wired ++ cipRows s wired ++ closingRows s
+  let f := ftRows s t.ft wired
   match k with
   | .transcript => a
   | .challenges => a ++ b
   | .msm => a ++ b ++ c
   | .ipa => a ++ b ++ c ++ d
-  | .full => a ++ b ++ c ++ d ++ deferredRows s wired ++ closingRows s
+  | .full => a ++ b ++ c ++ d ++ e
+  | .ftEval0 => a ++ b ++ c ++ d ++ e ++ f
+  | .absorb => a ++ b ++ c ++ d ++ e ++ f ++ absRows t wired
 
-/-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it. -/
+/-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at and above it. -/
 def rungPub (s : StepShape) : Rung → Nat
-  | .full => s.pubWords
-  | _ => 0
+  | .transcript | .challenges | .msm | .ipa => 0
+  | _ => s.pubWords
 
 /-- Rung `k`'s absolute probe rows, in schedule order. -/
 def rungProbeRows (t : StepData) (k : Rung) : List Nat :=
@@ -967,12 +1913,16 @@ def shapeStep : StepShape :=
   , ipaRounds := 76, ipaBlocks := 32
   , bRounds := 16, cipEvals := 47, pubWords := 67 }
 
-/-- A small shape for the fast in-CI pins (the committed one is emitted by the driver). -/
+/-- A small shape for the fast in-CI pins (the committed one is emitted by the driver).
+
+⚑ `cipEvals` is **47 at both scales** and is no longer free: R6 slices the previous proof's 43
+evaluation columns out of it (`EV_PREFIX = 4` + 43), and R7 absorbs those same 43 at two points. A
+shape with fewer columns is not a smaller `verify_one`, it is a different one. -/
 def shapeSmoke : StepShape :=
   { absorbs := 2, chals := 5, emsRows := 8
   , msmTerms := 3, msmChunks := 26
   , ipaRounds := 3, ipaBlocks := 32
-  , bRounds := 3, cipEvals := 7, pubWords := 12 }
+  , bRounds := 3, cipEvals := 47, pubWords := 12 }
 
 /-! ## §12 — the in-CI pins, on the SMOKE instance (`#guard`, interpreter-reduced).
 
@@ -981,8 +1931,8 @@ build` and cover every structural property the harness cannot see. Nullary `def`
 evaluates the chains ONCE. -/
 
 def tS : StepData := mkStep shapeSmoke
-def rowsS : List SRow := rungRows tS .full true
-def rowsUS : List SRow := rungRows tS .full false
+def rowsS : List SRow := rungRows tS .absorb true
+def rowsUS : List SRow := rungRows tS .absorb false
 def nRowsS : Nat := rowsS.length
 def pubS : Nat := shapeSmoke.pubWords
 def gatesS : List PGate := stepGates rowsS
@@ -1017,7 +1967,9 @@ def totalRowsS : Nat := pubS + nRowsS
 -- ⚑ SEVEN GATE TYPES in one circuit — the census. Eleven `Poseidon` rows per sponge block, which
 -- is upstream's own run length (`sponge_inputs.ml:47-64` / `plonk_constraint_system.ml:1450-1530`,
 -- and MEASURED in Mina's `step-zkapp-proved` blob: every `Poseidon` run there is exactly 11).
-#guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length == 11 * shapeSmoke.blocks
+-- FOUR sponges now: R1's transcript sponge and R7's three absorption segments.
+#guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length
+        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMulScalar)).length
         == shapeSmoke.chals * shapeSmoke.emsRows
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
@@ -1071,16 +2023,16 @@ def totalRowsS : Nat := pubS + nRowsS
 
 -- ⚑ THE WIRED/UNWIRED DIFFERENCE IS EXACTLY THE PROBES: every probe cell is in a σ cycle in the
 -- WIRED circuit and self-wired (in NO cycle) in the UNWIRED one.
-#guard (rungProbeRows tS .full).all (fun r => permLookup pairsS ⟨r, 0⟩ != (⟨r, 0⟩ : Cell))
-#guard (rungProbeRows tS .full).all (fun r => permLookup pairsS ⟨r, 1⟩ != (⟨r, 1⟩ : Cell))
-#guard (rungProbeRows tS .full).all (fun r => permLookup pairsUS ⟨r, 0⟩ == (⟨r, 0⟩ : Cell))
-#guard (rungProbeRows tS .full).all (fun r => permLookup pairsUS ⟨r, 1⟩ == (⟨r, 1⟩ : Cell))
-#guard (rungProbeRows tS .full).length ≥ 10
+#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsS ⟨r, 0⟩ != (⟨r, 0⟩ : Cell))
+#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsS ⟨r, 1⟩ != (⟨r, 1⟩ : Cell))
+#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsUS ⟨r, 0⟩ == (⟨r, 0⟩ : Cell))
+#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsUS ⟨r, 1⟩ == (⟨r, 1⟩ : Cell))
+#guard (rungProbeRows tS .absorb).length ≥ 10
 
 -- ⚑ IT CAN GO RED. Desync ONE mid-chain probe cell and the σ check FAILS, so the `= true` above
 -- is a gate rather than a tautology. (`toGrid` is first-wins, so the prepended override lands.)
 #guard
-  (let probe := (rungProbeRows tS .full).getD ((rungProbeRows tS .full).length / 2) 0
+  (let probe := (rungProbeRows tS .absorb).getD ((rungProbeRows tS .absorb).length / 2) 0
    let ix := envIndex (stepEnv tS)
    let broken := Dregg2.Circuit.Emit.WitnessBuilder.toGrid 15 totalRowsS
      (((⟨probe, 0⟩ : Cell), (7 : Int))
@@ -1244,5 +2196,338 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
           (tS.df.ew.map (fun n => (n : ZMod pN)))) == false)
 -- The two combiner challenges are distinct (a collision would make the red control vacuous).
 #guard chalOf shapeSmoke tS.sp shapeSmoke.xiChal != chalOf shapeSmoke tS.sp shapeSmoke.rChal
+
+/-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
+
+The compiler of §8b is a compiler, not an oracle: every value it produces is pinned here against the
+READ-ONLY `KimchiVerify` body it claims to compute, on the SAME inputs, and each pin carries a red
+control that bites. The 67 gate constraints are compared **list by list**, so a slip in one body of
+one gate cannot be absorbed by the sum. -/
+
+/-- The ft program's slot values at the smoke instance. -/
+def ftS : FtData := tS.ft
+def ftVal (i : Nat) : Nat := ftS.vals.getD i 0
+/-- The ft program's inputs, resolved the way the program resolves them. -/
+def ftLkS : PVar → Int := envLookupAt (envIndex (ftInputEnv shapeSmoke tS.sp))
+def ftInp (v : PVar) : Nat := (ftLkS v).toNat % pN
+def zetaS : Nat := ftInp (vN shapeSmoke shapeSmoke.zetaChal shapeSmoke.emsRows)
+def alphaS : Nat := ftInp (vN shapeSmoke shapeSmoke.alphaChal shapeSmoke.emsRows)
+def betaS : Nat := ftInp (vN shapeSmoke shapeSmoke.betaChal shapeSmoke.emsRows)
+def gammaS : Nat := ftInp (vN shapeSmoke shapeSmoke.gammaChal shapeSmoke.emsRows)
+/-- The 43 columns, as the `GateEvals` slicing sees them. -/
+def colZ (k : Nat) : ZMod pN := ((evZOf ftS.out (EV_PREFIX + k) : Nat) : ZMod pN)
+def colW (k : Nat) : ZMod pN := ((evVal (EV_PREFIX + k) 1 : Nat) : ZMod pN)
+def wZ : List (ZMod pN) := (List.range 15).map (fun i => colZ (IDX_W + i))
+def wW : List (ZMod pN) := (List.range 15).map (fun i => colW (IDX_W + i))
+def coeffZ : List (ZMod pN) := (List.range 15).map (fun i => colZ (IDX_COEFF + i))
+def sZ : List (ZMod pN) := (List.range 6).map (fun i => colZ (IDX_S + i))
+def mdsS3 : List (List (ZMod pN)) :=
+  (List.range 3).map (fun j => (List.range 3).map (fun i => ((FT_MDS9.getD (3 * j + i) 0 : Nat) : ZMod pN)))
+
+/-- The `GateEvals` the linearization constant term is evaluated against — assembled from the SAME
+column variables the circuit reads. -/
+def gS : Dregg2.Circuit.Emit.KimchiVerify.GateEvals (ZMod pN) :=
+  { alpha := (alphaS : ZMod pN), endo := ((FT_ENDO : Nat) : ZMod pN), mds := mdsS3
+    coeff := coeffZ, w := wZ, wNext := wW
+    cA := ((FT_QUOT.1 : Nat) : ZMod pN), cB := ((FT_QUOT.2.1 : Nat) : ZMod pN)
+    cC := ((FT_QUOT.2.2 : Nat) : ZMod pN)
+    genSel := colZ (IDX_SEL + 0), posSel := colZ (IDX_SEL + 1)
+    caddSel := colZ (IDX_SEL + 2), mulSel := colZ (IDX_SEL + 3)
+    emulSel := colZ (IDX_SEL + 4), emulScalarSel := colZ (IDX_SEL + 5) }
+
+-- ⚑ THE CONFIG IS REAL, not decorative. ω is a primitive `2^16`-th root of unity (so `ω^{n−1}` IS
+-- the witnessed inverse the circuit derives), the three `EndomulScalar` quotients are the genuine
+-- ones, and the endo coefficient is a cube root of unity distinct from 1.
+#guard Dregg2.Bridge.MinaWrapFtEval0.powFast ((FT_OMEGA : Nat) : ZMod pN) FT_N == (1 : ZMod pN)
+#guard Dregg2.Bridge.MinaWrapFtEval0.powFast ((FT_OMEGA : Nat) : ZMod pN) (FT_N / 2) != (1 : ZMod pN)
+#guard fMul FT_OMEGA FT_OMEGA_INV == 1
+#guard Dregg2.Circuit.Emit.KimchiVerify.endomulScalarConstsOk
+        ((FT_QUOT.1 : Nat) : ZMod pN) ((FT_QUOT.2.1 : Nat) : ZMod pN)
+        ((FT_QUOT.2.2 : Nat) : ZMod pN)
+#guard ((FT_ENDO : Nat) : ZMod pN) ^ 3 == (1 : ZMod pN)
+#guard ((FT_ENDO : Nat) : ZMod pN) != (1 : ZMod pN)
+#guard FT_MDS9.length == 9
+-- ⚑ ALL SIX GATE SELECTORS FIRE. Without this every body but `generic` is multiplied by zero and
+-- the six transcriptions rest on a source reading — the exact hazard `MinaWrapFtEval0Weld` §1b
+-- named when it found the first fixture with a nonzero `emulSel`.
+#guard (List.range 6).all (fun i => colZ (IDX_SEL + i) != 0)
+
+-- ⚑ ω^{n−1}, ω^{n−2}, ω^{n−3} ARE the circuit's derived inverse powers — the reason the rung spends
+-- ONE witnessed inverse instead of a 48-row exponentiation, and the reason `zkPoly` is exact.
+#guard ((FT_OMEGA_INV : Nat) : ZMod pN)
+        == Dregg2.Bridge.MinaWrapFtEval0.powFast ((FT_OMEGA : Nat) : ZMod pN) (FT_N - 1)
+#guard ((ftVal ftS.fp.slots.omInv3 : Nat) : ZMod pN)
+        == Dregg2.Bridge.MinaWrapFtEval0.powFast ((FT_OMEGA : Nat) : ZMod pN) (FT_N - 3)
+-- …and `ζ^n` really is the `log2n`-fold squaring, and `zkPoly` the shipped one.
+#guard ((ftVal ftS.fp.slots.zetaN : Nat) : ZMod pN)
+        == Dregg2.Bridge.MinaWrapFtEval0.powFast ((zetaS : Nat) : ZMod pN) FT_N
+#guard ((ftVal ftS.fp.slots.zkp : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.zkPolyR FT_N
+             ((FT_OMEGA : Nat) : ZMod pN) ((zetaS : Nat) : ZMod pN)
+
+-- ⚑ **THE LINEARIZATION CONSTANT TERM.** The compiled six-body sum IS `KimchiVerify.gateLinConst`
+-- of the same `GateEvals` — the value `MinaWrapFtEval0Weld` reproduces byte-for-byte on devnet
+-- block 539508's Step side (`lct_true = 20345…173047`) and on its Wrap side (`LCT`).
+#guard ((ftVal ftS.fp.slots.linConst : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS
+-- …and IT BITES: bend ONE input — the `endomul` selector — and the constant term moves.
+#guard (((ftVal ftS.fp.slots.linConst : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.gateLinConst
+              { gS with emulSel := gS.emulSel + 1 }) == false
+-- …and the endo really is load-bearing (the `endoMulConstraints` reader; the cube-root conflation
+-- `MinaWrapFtEval0Weld` closed would show HERE).
+#guard (((ftVal ftS.fp.slots.linConst : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.gateLinConst
+              { gS with endo := gS.endo + 1 }) == false
+
+-- ⚑ **`ft_eval0`.** The compiled fold IS `KimchiVerify.ftEval0R` — the CommRing mirror that is the
+-- shipped `ftEval0` for every field (`ftEval0R_eq`, `rfl`) — at the SAME domain, challenges,
+-- columns, shifts and constant term, with the witnessed inverse the circuit checks.
+#guard
+  ((ftS.out : Nat) : ZMod pN)
+    == Dregg2.Circuit.Emit.KimchiVerify.ftEval0R FT_N
+         ((FT_OMEGA : Nat) : ZMod pN) ((zetaS : Nat) : ZMod pN)
+         ((betaS : Nat) : ZMod pN) ((gammaS : Nat) : ZMod pN)
+         (((alphaS : Nat) : ZMod pN) ^ 21) (((alphaS : Nat) : ZMod pN) ^ 22)
+         (((alphaS : Nat) : ZMod pN) ^ 23)
+         wZ sZ (FT_SHIFTS.map (fun x => ((x : Nat) : ZMod pN)))
+         (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
+         (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS)
+         (((ftS.denomInv : Nat) : ZMod pN))
+-- ⚑ …and the pin BITES at every leg that could silently drift. β for γ:
+#guard
+  (((ftS.out : Nat) : ZMod pN)
+    == Dregg2.Circuit.Emit.KimchiVerify.ftEval0R FT_N
+         ((FT_OMEGA : Nat) : ZMod pN) ((zetaS : Nat) : ZMod pN)
+         ((gammaS : Nat) : ZMod pN) ((gammaS : Nat) : ZMod pN)
+         (((alphaS : Nat) : ZMod pN) ^ 21) (((alphaS : Nat) : ZMod pN) ^ 22)
+         (((alphaS : Nat) : ZMod pN) ^ 23)
+         wZ sZ (FT_SHIFTS.map (fun x => ((x : Nat) : ZMod pN)))
+         (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
+         (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS)
+         (((ftS.denomInv : Nat) : ZMod pN))) == false
+-- …a bent coset shift (the leg `MinaWrapFtEval0Weld` §6b exhibits on the real block):
+#guard
+  (((ftS.out : Nat) : ZMod pN)
+    == Dregg2.Circuit.Emit.KimchiVerify.ftEval0R FT_N
+         ((FT_OMEGA : Nat) : ZMod pN) ((zetaS : Nat) : ZMod pN)
+         ((betaS : Nat) : ZMod pN) ((gammaS : Nat) : ZMod pN)
+         (((alphaS : Nat) : ZMod pN) ^ 21) (((alphaS : Nat) : ZMod pN) ^ 22)
+         (((alphaS : Nat) : ZMod pN) ^ 23)
+         wZ sZ ((FT_SHIFTS.map (fun x => ((x : Nat) : ZMod pN))).set 1
+                  (((FT_SHIFTS.getD 1 0 : Nat) : ZMod pN) + 1))
+         (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
+         (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS)
+         (((ftS.denomInv : Nat) : ZMod pN))) == false
+-- …and a constant term off by one (so the `gateLinConst` leg is not decoration inside the fold):
+#guard
+  (((ftS.out : Nat) : ZMod pN)
+    == Dregg2.Circuit.Emit.KimchiVerify.ftEval0R FT_N
+         ((FT_OMEGA : Nat) : ZMod pN) ((zetaS : Nat) : ZMod pN)
+         ((betaS : Nat) : ZMod pN) ((gammaS : Nat) : ZMod pN)
+         (((alphaS : Nat) : ZMod pN) ^ 21) (((alphaS : Nat) : ZMod pN) ^ 22)
+         (((alphaS : Nat) : ZMod pN) ^ 23)
+         wZ sZ (FT_SHIFTS.map (fun x => ((x : Nat) : ZMod pN)))
+         (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
+         (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS + 1)
+         (((ftS.denomInv : Nat) : ZMod pN))) == false
+
+-- ⚑ THE WITNESSED INVERSE IS THE GENUINE ONE — and the circuit checks it, so a prover who supplies
+-- another value is refused by the `denom·denomInv = 1` row rather than believed.
+#guard (((zetaS : Nat) : ZMod pN)
+          - Dregg2.Bridge.MinaWrapFtEval0.powFast ((FT_OMEGA : Nat) : ZMod pN) (FT_N - 3))
+        * (((zetaS : Nat) : ZMod pN) - 1) * ((ftS.denomInv : Nat) : ZMod pN) == (1 : ZMod pN)
+
+-- ⚑ `Plonk_checks.checked` — `derive_plonk`'s `perm` scalar, compiled, against a direct fold of the
+-- same six σ evaluations. `checked` asserts exactly this equality against the deferred word, and the
+-- rung emits that assertion as a row.
+#guard
+  ((ftVal ftS.fp.slots.perm : Nat) : ZMod pN)
+    == -((List.range 6).foldl
+           (fun acc i => acc * (((gammaS : Nat) : ZMod pN)
+             + ((betaS : Nat) : ZMod pN) * sZ.getD i 0 + wZ.getD i 0))
+           (colW IDX_Z * ((betaS : Nat) : ZMod pN) * (((alphaS : Nat) : ZMod pN) ^ 21)
+             * ((ftVal ftS.fp.slots.zkp : Nat) : ZMod pN)))
+#guard (((ftVal ftS.fp.slots.perm : Nat) : ZMod pN) == 0) == false
+
+-- ⚑ THE OUTPUT IS WIRED INTO R5's `combined_inner_product`: `ft_eval0` IS the `ft` column the C8
+-- fold consumes (`combine ~ft:ft_eval0`, `step_verifier.ml:1078-1083`), so the two rungs share a
+-- variable rather than agreeing by construction in Lean only.
+#guard tS.df.ez.getD 3 0 == ftS.out
+#guard evZOf ftS.out 3 == ftS.out
+#guard evZOf ftS.out 3 != evVal 3 0
+
+/-! ### §13a — the SIXTY-SEVEN CONSTRAINT BODIES, list by list.
+
+The pins above check the SUM. These check each compiled body against the `KimchiVerify` list it
+mirrors, elementwise, so a compensating pair of slips cannot pass. Each of the six is run through
+`aEval` a second time in isolation (the same `ftLkS`), which is why the slot indices below are the
+ones the isolated program returns. -/
+
+/-- Compile one body in isolation and read its constraint slots' values. -/
+def bodyVals (b : AM (List Nat)) : List (ZMod pN) :=
+  let r := b.run #[]
+  let vs := aEval ftLkS r.2
+  r.1.map (fun i => ((vs.getD i 0 : Nat) : ZMod pN))
+
+/-- The slots every body shares, emitted once at the head of an isolated program. -/
+structure WireSlots where
+  one : Nat
+  negOne : Nat
+  three : Nat
+  six : Nat
+  eleven : Nat
+  endo : Nat
+  cA : Nat
+  cB : Nat
+  cC : Nat
+  mdsS : List (List Nat)
+  coeff : List Nat
+  w : List Nat
+  wNext : List Nat
+  deriving Inhabited
+
+def wireSlots (endoV : Nat) : AM WireSlots := do
+  let one ← eLit 1
+  let negOne ← eLit (pN - 1)
+  let three ← eLit 3
+  let six ← eLit 6
+  let eleven ← eLit 11
+  let endo ← eLit endoV
+  let cA ← eLit FT_QUOT.1
+  let cB ← eLit FT_QUOT.2.1
+  let cC ← eLit FT_QUOT.2.2
+  let mdsS ← (List.range 3).foldlM (fun acc j => do
+      let row ← (List.range 3).foldlM
+        (fun r i => do let v ← eLit (FT_MDS9.getD (3 * j + i) 0); pure (r ++ [v])) []
+      pure (acc ++ [row])) []
+  let ez ← (List.range 43).foldlM
+    (fun acc i => do let v ← eInp (vColZ shapeSmoke i); pure (acc ++ [v])) []
+  let ew ← (List.range 43).foldlM
+    (fun acc i => do let v ← eInp (vColW shapeSmoke i); pure (acc ++ [v])) []
+  pure { one, negOne, three, six, eleven, endo, cA, cB, cC, mdsS
+       , coeff := (List.range 15).map (fun i => ez.getD (IDX_COEFF + i) 0)
+       , w := (List.range 15).map (fun i => ez.getD (IDX_W + i) 0)
+       , wNext := (List.range 15).map (fun i => ew.getD (IDX_W + i) 0) }
+
+def bodyCompleteAdd : AM (List Nat) := do
+  let q ← wireSlots FT_ENDO; pCompleteAdd q.one q.w
+def bodyVarBaseMul : AM (List Nat) := do
+  let q ← wireSlots FT_ENDO; pVarBaseMul q.one q.w q.wNext
+def bodyEndoMul (endoV : Nat) : AM (List Nat) := do
+  let q ← wireSlots endoV; pEndoMul q.one q.endo q.w q.wNext
+def bodyEmScalar : AM (List Nat) := do
+  let q ← wireSlots FT_ENDO
+  pEmScalar q.cA q.cB q.cC q.negOne q.three q.six q.eleven q.w
+def bodyPoseidon : AM (List Nat) := do
+  let q ← wireSlots FT_ENDO; pPoseidon q.mdsS q.coeff q.w q.wNext
+
+#guard bodyVals bodyCompleteAdd
+        == Dregg2.Circuit.Emit.KimchiVerify.completeAddConstraints wZ
+#guard bodyVals bodyVarBaseMul
+        == Dregg2.Circuit.Emit.KimchiVerify.varBaseMulConstraints wZ wW
+#guard bodyVals (bodyEndoMul FT_ENDO)
+        == (Dregg2.Circuit.Emit.KimchiVerify.endoMulConstraints
+              ((FT_ENDO : Nat) : ZMod pN) wZ wW).take 11
+#guard bodyVals bodyEmScalar
+        == Dregg2.Circuit.Emit.KimchiVerify.endomulScalarConstraints
+             ((FT_QUOT.1 : Nat) : ZMod pN) ((FT_QUOT.2.1 : Nat) : ZMod pN)
+             ((FT_QUOT.2.2 : Nat) : ZMod pN) wZ
+#guard bodyVals bodyPoseidon
+        == Dregg2.Circuit.Emit.KimchiVerify.poseidonConstraints mdsS3 coeffZ wZ wW
+-- …and the list-by-list pins BITE: a bent `endo` moves the `EndosclMul` list.
+#guard (bodyVals (bodyEndoMul (FT_ENDO + 1))
+         == (Dregg2.Circuit.Emit.KimchiVerify.endoMulConstraints
+               ((FT_ENDO : Nat) : ZMod pN) wZ wW).take 11) == false
+-- …and none of the five lists is all-zero (a body that vanished would match a wrong transcription).
+#guard (Dregg2.Circuit.Emit.KimchiVerify.varBaseMulConstraints wZ wW).any (fun z => z != 0)
+#guard (Dregg2.Circuit.Emit.KimchiVerify.poseidonConstraints mdsS3 coeffZ wZ wW).any (fun z => z != 0)
+
+/-! ## §14 — R7: the EVALUATION ABSORPTION.
+
+The three segments' arithmetic, against `PastaPoseidon.Ref.perm` — the same reference whose
+`Ref.hash` reproduces the o1js `Poseidon.hash` gold KATs, and the same one R1's sponge answers to. -/
+
+#guard tS.specB.ws.length == 4 + 2 * (shapeSmoke.cipEvals - EV_PREFIX)
+#guard tS.specB.ws.length == 90
+#guard tS.specA.ws.length == 2 * shapeSmoke.bRounds
+#guard tS.specC.ws.length == shapeSmoke.hmWords
+#guard tS.specA.nb == nbA shapeSmoke
+#guard tS.specB.nb == nbB shapeSmoke
+#guard tS.specC.nb == nbC shapeSmoke
+
+-- ⚑ EVERY SEGMENT IS THE REAL SPONGE: each block's output is `Ref.perm` of its absorbed input,
+-- EXCEPT where the opt-sponge MASK discards it — and that exception is exactly the masked blocks.
+#guard (List.range tS.specB.blocks).all (fun b =>
+  let pre := tS.segB.states.getD b []
+  let post := if b < tS.specB.nb then
+      [ fAdd (pre.getD 0 0) ((tS.specB.ws.getD (2 * b) (xv 0, 0)).2)
+      , fAdd (pre.getD 1 0) ((tS.specB.ws.getD (2 * b + 1) (xv 0, 0)).2), pre.getD 2 0 ]
+    else pre
+  tS.segB.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
+#guard (List.range tS.specC.blocks).all (fun b =>
+  let pre := tS.segC.states.getD b []
+  let post := if b < tS.specC.nb then
+      [ fAdd (pre.getD 0 0) ((tS.specC.ws.getD (2 * b) (xv 0, 0)).2)
+      , fAdd (pre.getD 1 0) ((tS.specC.ws.getD (2 * b + 1) (xv 0, 0)).2), pre.getD 2 0 ]
+    else pre
+  tS.segC.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
+
+-- ⚑ THE MASK IS A MASK, BOTH WAYS. A `keep = 1` block advances to the permutation output; a
+-- `keep = 0` block leaves the state EXACTLY where it was — `Field.if_` on all three lanes
+-- (`step_verifier.ml:998-1003`). Both branches occur, so neither is untested.
+#guard (List.range tS.specA.nb).all (fun b =>
+  if segKeep tS.specA.nb b == 1
+  then tS.segA.states.getD (b + 1) [] == tS.segA.afters.getD b []
+  else tS.segA.states.getD (b + 1) [] == tS.segA.states.getD b [])
+#guard (List.range tS.specA.nb).any (fun b => segKeep tS.specA.nb b == 1)
+#guard (List.range tS.specA.nb).any (fun b => segKeep tS.specA.nb b == 0)
+-- …and a masked-out block's DISCARDED permutation output is genuinely different from the state it
+-- keeps, so the mux is deciding something.
+#guard (List.range tS.specA.nb).all (fun b =>
+  segKeep tS.specA.nb b == 1 || tS.segA.afters.getD b [] != tS.segA.states.getD b [])
+
+-- ⚑ SEGMENT B ABSORBS R5's AND R6's OWN VARIABLES: the digest of segment A, `ft_eval1`, the two
+-- public-polynomial evaluations, then the 43 columns at ζ and ζω INTERLEAVED
+-- (`to_absorption_sequence`, `step_verifier.ml:967-1005`) — the same `vEz`/`vEw` the C8 fold and the
+-- `ft_eval0` rung read. Not a private stream.
+#guard (tS.specB.ws.getD 0 (xv 0, 0)).1
+        == sgSt (baseSegA shapeSmoke) (nbA shapeSmoke) 1 tS.specA.blocks 0
+#guard (tS.specB.ws.getD 0 (xv 0, 0)).2 == (tS.segA.states.getLastD []).getD 0 0
+#guard (tS.specB.ws.getD 1 (xv 0, 0)).1 == vEw shapeSmoke 3
+#guard (List.range shapeSmoke.frCols).all (fun k =>
+  (tS.specB.ws.getD (4 + 2 * k) (xv 0, 0)).1 == vColZ shapeSmoke k
+  && (tS.specB.ws.getD (5 + 2 * k) (xv 0, 0)).1 == vColW shapeSmoke k)
+-- …and segment A absorbs R2's challenges, segment C R3's and R4's fold outputs.
+#guard (List.range tS.specA.ws.length).all (fun i =>
+  (tS.specA.ws.getD i (xv 0, 0)).1 == vN shapeSmoke (i % shapeSmoke.chals) shapeSmoke.emsRows)
+#guard (tS.specC.ws.getD N_HM_FIX (xv 0, 0)).1
+        == mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
+#guard (tS.specC.ws.getD (N_HM_FIX + 2) (xv 0, 0)).1
+        == ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 2))
+
+-- ⚑ THE SPONGE IS NOT DEGENERATE: the three digests differ from each other and from zero, so a
+-- sponge that silently absorbed nothing would show.
+#guard (tS.segA.states.getLastD []).getD 0 0 != 0
+#guard (tS.segB.states.getLastD []).getD 0 0 != 0
+#guard (tS.segC.states.getLastD []).getD 0 0 != 0
+#guard (tS.segA.states.getLastD []).getD 0 0 != (tS.segB.states.getLastD []).getD 0 0
+#guard (tS.segB.states.getLastD []).getD 0 0 != (tS.segC.states.getLastD []).getD 0 0
+
+/-! ## §15 — the LADDER is monotone and the new rungs really add their sub-circuit. -/
+
+#guard (rungRows tS .full true).length < (rungRows tS .ftEval0 true).length
+#guard (rungRows tS .ftEval0 true).length < (rungRows tS .absorb true).length
+-- R6 is `Generic`-only (it is scalar arithmetic; every other gate family is unchanged by it).
+#guard ((rungRows tS .ftEval0 true).drop (rungRows tS .full true).length).all
+        (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero)
+-- R7 adds `Poseidon` and nothing else new: 11 rows per permutation, upstream's own run length.
+#guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.poseidon)).length
+        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
+#guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.poseidon)).length
+        == 11 * shapeSmoke.blocks
+-- …and the compiled ft program is a real program, not a stub.
+#guard ftS.fp.prog.size ≥ 900
+#guard (aHalfSlots ftS.fp.prog).length ≥ 700
 
 end Dregg2.Circuit.Emit.KimchiStepMain

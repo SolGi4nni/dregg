@@ -18,8 +18,16 @@
 //                  by ROW OVERLAP (not sigma), each closing on its own challenge, folded by a
 //                  second complete_add chain.
 //   r5_full        + the deferred b(zeta) = prod(1 + u_i * zeta^(2^(k-1-i))) Generic chain over the
-//                  challenge variables, and the PRIMARY_LEN public-input ties. Placed through
-//                  `placeChecked`, so an inert public word REFUSES rather than passing green.
+//                  challenge variables, the combined_inner_product Horner chain, and the
+//                  PRIMARY_LEN public-input ties. Placed through `placeChecked`, so an inert public
+//                  word REFUSES rather than passing green.
+//   r6_ft_eval0    + `scalars_env` + the linearization CONSTANT TERM (all six kimchi gate bodies
+//                  behind their selectors, alpha-combined) + `ft_eval0` + `Plonk_checks.checked`'s
+//                  `perm` scalar, compiled from a straight-line program onto double-Generic rows.
+//                  Its `ft_eval0` output IS the `ft` column r5's combined_inner_product folds.
+//   r7_absorption  + the fr-sponge: an OPT-SPONGE over the carried bulletproof challenges with a
+//                  per-block keep MASK (the `Field.if_` state mux), the 43-column evaluation
+//                  absorption at zeta and zeta*omega, and `hash_messages_for_next_step_proof`.
 //
 // WHAT IT DOES. Reads the Lean-emitted circuit JSON (gate typ/wires/coeffs, the 15-wide witness
 // grid, the public vector, and the sigma-only probe rows), builds the pure-Rust kimchi objects, and
@@ -76,12 +84,14 @@ type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>
 type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
 
 /// The five rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 5] = [
+const RUNGS: [&str; 7] = [
     "r1_transcript",
     "r2_challenges",
     "r3_msm",
     "r4_ipa",
     "r5_full",
+    "r6_ft_eval0",
+    "r7_absorption",
 ];
 
 // ---- the Lean-emitted JSON shape ----
@@ -390,7 +400,7 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec!["r1_transcript", "r5_full"],
+            vec!["r1_transcript", "r7_absorption"],
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -434,15 +444,15 @@ fn main() {
 mod stepmain_tests {
     use super::*;
 
-    /// The COMMITTED subset of the ladder. All five rungs are emitted by the driver and were proved
-    /// at both scales (see the header), but the rungs are CUMULATIVE — r5 contains r4 contains r3 —
-    /// so committing all ten fixtures would put ~3 MB of five-times-redundant JSON in the tree and
-    /// re-churn all of it on every assembly change. The two committed here are the ones that are
-    /// not redundant with each other: `r1_transcript` ISOLATES the genuinely new capability (a
-    /// copy-wired Poseidon sponge — nothing before this had wired a `Poseidon` gate to anything) at
-    /// minimum cost, and `r5_full` is the SUPERSET, the only rung carrying the public input.
-    /// Regenerate/prove the other three with the driver + `harness <dir> <tag>` (Cargo.toml header).
-    const COMMITTED: [&str; 2] = ["r1_transcript", "r5_full"];
+    /// The COMMITTED subset of the ladder. All SEVEN rungs are emitted by the driver and were
+    /// proved at both scales (see the header), but the rungs are CUMULATIVE — r7 contains r6
+    /// contains r5 … — so committing all fourteen fixtures would put tens of MB of
+    /// seven-times-redundant JSON in the tree and re-churn all of it on every assembly change.
+    /// `r1_transcript` ISOLATES the copy-wired Poseidon sponge at minimum cost and `r7_absorption`
+    /// is the SUPERSET; `r6_ft_eval0` is committed too but only READ (the census test below), not
+    /// proved in CI, because it is r7 minus the sponge segments. Regenerate/prove the other four
+    /// with the driver + `harness <dir> <tag>` (Cargo.toml header).
+    const COMMITTED: [&str; 2] = ["r1_transcript", "r7_absorption"];
 
     struct Fixture {
         wired: CircuitJson,
@@ -563,7 +573,7 @@ mod stepmain_tests {
     // the circuit rather than merely declared.
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        let f = fixture("r5_full");
+        let f = fixture("r7_absorption");
         assert!(f.wired.public_input_size > 0);
         // (a) the honest proof against a TAMPERED public vector.
         let mut bad = f.public.clone();
@@ -593,7 +603,7 @@ mod stepmain_tests {
     fn full_rung_is_the_whole_assembly_with_seven_gate_types() {
         let dir = fixtures_dir();
         let r1 = load_path(&dir.join("stepmain_smoke_r1_transcript.json"));
-        let full = load_path(&dir.join("stepmain_smoke_r5_full.json"));
+        let full = load_path(&dir.join("stepmain_smoke_r7_absorption.json"));
         assert!(
             full.num_rows > r1.num_rows,
             "the full rung ({} rows) does not extend the transcript rung ({} rows)",
@@ -617,7 +627,54 @@ mod stepmain_tests {
         assert!(full.public_input_size > 0);
         assert_eq!(full.public_input.len(), full.public_input_size);
         // The transcript rung does NOT (it is placed at pubSize 0) - so the public-input legs of
-        // the gate are attributable to r5 alone.
+        // the gate are attributable to the closing rungs alone.
+        assert_eq!(r1.public_input_size, 0);
+    }
+
+    // The two rungs added on top of `verify_one`'s first five sub-circuits really are there, and
+    // each is the sub-circuit it claims: r6 is scalar arithmetic (Generic-only on top of r5) and r7
+    // is the fr-sponge (Poseidon permutations on top of r6, 11 rows each - upstream's own run
+    // length). A regression that emitted an EMPTY rung would prove green and say nothing; this is
+    // what makes the ladder's top two rungs load-bearing rather than relabelled copies of r5.
+    #[test]
+    fn ft_eval0_and_absorption_rungs_extend_the_assembly() {
+        let dir = fixtures_dir();
+        let r1 = load_path(&dir.join("stepmain_smoke_r1_transcript.json"));
+        let r6 = load_path(&dir.join("stepmain_smoke_r6_ft_eval0.json"));
+        let r7 = load_path(&dir.join("stepmain_smoke_r7_absorption.json"));
+        let c6 = gate_census(&r6);
+        let c7 = gate_census(&r7);
+        // r6 is `ft_eval0` + `Plonk_checks.checked` + the linearization constant term: the compiled
+        // straight-line program is HUNDREDS of double-Generic rows, not a handful.
+        assert!(
+            c6[1] > 600,
+            "r6 has only {} Generic rows - the ft_eval0 / constant-term program is missing",
+            c6[1]
+        );
+        // r7 adds the fr-sponge: WHOLE Poseidon permutations (11 rows each, upstream's own run
+        // length) and NOT ONE new curve gate.
+        assert!(
+            c7[2] >= c6[2] + 11 * 40,
+            "r7 added only {} Poseidon rows over r6 - the evaluation absorption is missing",
+            c7[2] - c6[2]
+        );
+        assert_eq!(
+            (c7[2] - c6[2]) % 11,
+            0,
+            "r7's added Poseidon rows are not whole permutations"
+        );
+        for ord in [3usize, 4, 5, 6] {
+            assert_eq!(
+                c6[ord], c7[ord],
+                "r7 changed a CURVE gate family (ord {ord}) - the absorption rung is not a sponge"
+            );
+        }
+        // r7 also adds the absorb rows and the opt-sponge mux rows.
+        assert!(c7[1] > c6[1]);
+        // Each rung strictly extends the one below and keeps the public-input path.
+        assert!(r1.num_rows < r6.num_rows && r6.num_rows < r7.num_rows);
+        assert!(r6.public_input_size > 0 && r7.public_input_size > 0);
+        assert!(r7.probe_rows.len() > r6.probe_rows.len());
         assert_eq!(r1.public_input_size, 0);
     }
 }
