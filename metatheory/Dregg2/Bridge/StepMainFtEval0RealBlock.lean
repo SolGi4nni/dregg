@@ -211,4 +211,26 @@ a different one (`ζ^n` is `log2n` squarings), so the pin above is discriminatin
 #guard (skeleton (ftProgOf W539508 (C539508 SHIFTS_STEP 1 0)).prog
          == skeleton (ftProgOf W539508 { C539508 SHIFTS_STEP 1 0 with log2n := 15 }).prog) == false
 
+/-! ## §6 — R8's `Shifted_value.Type1` shift, from TWO independent sources.
+
+`KimchiStepMain` §8f defines its own `shiftT1`/`unshiftT1` because that module must not import the
+deferred-values bridge. A constant checked against its own definition is decoration; these check the
+circuit's shift against `MinaWrapDeferred`'s — which is the map whose output `MinaWrapDeferredWeld`
+compares to block 539508's ACTUAL public-input words. So the unshifts R8 emits are the encoding a
+real Wrap statement wears, not a locally-consistent one. -/
+
+open Dregg2.Circuit.Emit.KimchiStepMain (SHIFT_C shiftT1 unshiftT1 shiftT2)
+
+#guard SHIFT_C == Dregg2.Bridge.MinaWrapDeferred.SHIFT_C
+#guard (List.range 8).all (fun i =>
+  let x := (7 + 1000003 * i) % pN
+  shiftT1 x == Dregg2.Bridge.MinaWrapDeferred.shiftType1 x
+  && unshiftT1 (shiftT1 x) == x
+  && Dregg2.Bridge.MinaWrapDeferred.unshiftType1 (shiftT1 x) == x)
+-- …and the two anchors of this file wear it too: `FT_EVAL0` shifted and unshifted round-trips, and
+-- the Type2 (subtract-only) reading of the SAME word is a different field element.
+#guard unshiftT1 (shiftT1 FT_ANCHOR) == FT_ANCHOR
+#guard shiftT1 FT_ANCHOR != shiftT2 FT_ANCHOR
+#guard shiftT1 FT_ANCHOR != FT_ANCHOR
+
 end Dregg2.Bridge.StepMainFtEval0RealBlock

@@ -92,22 +92,22 @@ o1-labs publishes Mina's compiled circuits as `*_gates.json` release blobs (kimc
 `Circuit { public_input_size, gates }` serde form; `bridge/mina-zkapp/scripts/
 mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' own asset filename).
 **`step-zkapp-proved` is branch 4 — the step branch that RUNS `verify_one` on a side-loaded proof**:
-PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-01):
+PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
-    gate            Mina step-zkapp-proved   r5_full   r6_ft_eval0  r7_absorption  run-lengths
-    total gates            20023               6555       7024          8569
-    non-Generic            13778               6183       6185          7536
-    Poseidon                6292 (31.4%)       1034       1034          2266    11×572 / 11×206 ✓
-    Generic                 6245 (31.2%)        372        839          1033    —
-    EndoMul                 2465 (12.3%)       2432       2432          2432    32×77+1×1 / 32×76 ✓
-    Zero                    2246 (11.2%)       1433       1435          1554    —
-    VarBaseMul              1596  (8.0%)        988        988           988    1×1596 / 1×988    ✓
-    EndoMulScalar            776  (3.9%)        184        184           184    / 8×23 — upstream
+    gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
+    total gates         20023              6602      7071        8616        8681
+    non-Generic         13778              6206      6208        7559        7562
+    Poseidon             6292 (31.4%)      1034      1034        2266        2266   11×572 / 11×206 ✓
+    Generic              6245 (31.2%)       396       863        1057        1119   —
+    EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
+    Zero                 2246 (11.2%)      1456      1458        1577        1580   —
+    VarBaseMul           1596  (8.0%)       988       988         988         988   1×1596 / 1×988    ✓
+    EndoMulScalar         776  (3.9%)       184       184         184         184   / 8×23 — upstream
                     also runs 2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd              403  (2.0%)        112        112           112    1×159 2×65 3×23
+    CompleteAdd           403  (2.0%)       112       112         112         112   1×159 2×65 3×23
                     15×1 30×1 / 1×112
 
-The RUN LENGTHS are the fidelity signal, and all six families are unchanged by R6/R7: a `Poseidon`
+The RUN LENGTHS are the fidelity signal, and all six families are unchanged by R6/R7/R8: a `Poseidon`
 permutation is 11 rows (206 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
 `EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows. The `EndoMul` COUNT is 2432 against upstream's
@@ -125,11 +125,13 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1033 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1119 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the per-challenge
-`lowest_128_bits ~constrain_low_bits:true` range checks (#1 below), the SECOND `combine` and the
-`Shifted_value` unshifts of `combined_inner_product`/`b_correct` (#4), `equal_g`, `group_map`, and
-the `Boolean.all` finalisation. #4–#8 below name them.
+`lowest_128_bits ~constrain_low_bits:true` range checks (#1 below), the `sg_evals` prefix of the two
+`combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection. #1–#11 below name
+them. ⚑ R8 spends 62 `Generic` rows on `finalize_other_proof`'s tail and 24 of the +86 since
+2026-08-01 are R2's endo lift — cheap rows that RETIRE two named simplifications rather than add
+scale, which is the trade this file is supposed to be making.
 
 ⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations. `verify_one`'s own
 sponge work is now assembled; the remaining 366 permutations are the app logic and the pieces #5
