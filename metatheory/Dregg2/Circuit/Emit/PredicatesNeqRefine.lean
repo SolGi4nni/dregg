@@ -17,6 +17,12 @@ open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRowEnv holdsVm_gate_false holdsVm_piFirst_true)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.PredicatesNeqEmit
+-- ⚑ `predicateNeqDesc` is COMPILER-AUTHORED (`EffectLower.lowerAir`): its gate bodies are
+-- `AirNormalForm.gateBody <src>`, so each residual is read off the COMPILED body through
+-- `gateBody_eval`, and `lowerConstraint_gateBody` / `lowerPiPinLeg` expose the lowered constraint's
+-- constructor to `holdsVm_gate_false` and to `decide`.
+open Dregg2.Circuit.Emit.AirNormalForm (gateBody gateBody_eval lowerConstraint_gateBody)
+open Dregg2.Circuit.Emit.EffectLower (lowerPiPinLeg)
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -98,26 +104,29 @@ theorem predicateNeq_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
   have hc3 : (2013265921 : ℤ) ∣ ((envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT) := by
     have h := hsat.rowConstraints 0 h0 c3SlotGate mem_c3
     rw [hlast] at h
-    simp only [c3SlotGate, VmConstraint2.holdsAt, holdsVm_gate_false, c3Body, EmittedExpr.eval] at h
-    have hkey : (envAt t 0).loc SLOT_A + -1 * (envAt t 0).loc INPUT
-        = (envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT := by ring
-    rw [hkey, Int.modEq_zero_iff_dvd] at h; exact h
+    simp only [c3SlotGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false, gateBody_eval, c3Src, Dregg2.Circuit.Expr.eval] at h
+    -- `gateBody_eval` hands back the residual as `lhs − rhs` directly, so no `ring` re-shaping.
+    rw [Int.modEq_zero_iff_dvd] at h; exact h
   -- the diff gate as a divisibility fact.
   have hc5 : (2013265921 : ℤ) ∣ ((envAt t 0).loc DIFF - (envAt t 0).loc SLOT_A
       + (envAt t 0).loc THRESHOLD) := by
     have h := hsat.rowConstraints 0 h0 c5DiffGate mem_c5
     rw [hlast] at h
-    simp only [c5DiffGate, VmConstraint2.holdsAt, holdsVm_gate_false, c5Body, EmittedExpr.eval] at h
+    simp only [c5DiffGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false, gateBody_eval, c5Src, Dregg2.Circuit.Expr.eval] at h
     rw [Int.modEq_zero_iff_dvd] at h
-    -- `h : p ∣ c5Body-linear`; the body is `DIFF − SLOT_A + THRESHOLD` up to `ring`.
-    have hkey : (envAt t 0).loc DIFF + -1 * (envAt t 0).loc SLOT_A + (envAt t 0).loc THRESHOLD
+    -- `h : p ∣ (DIFF − (SLOT_A + (−1)·THRESHOLD))`, the compiler's residual for `c5Src`.
+    have hkey : (envAt t 0).loc DIFF
+          - ((envAt t 0).loc SLOT_A + -1 * (envAt t 0).loc THRESHOLD)
         = (envAt t 0).loc DIFF - (envAt t 0).loc SLOT_A + (envAt t 0).loc THRESHOLD := by ring
     rw [hkey] at h; exact h
   -- the nonzero-inverse tooth: `DIFF · DIFF_INV ≡ 1 [ZMOD p]`, so `p ∤ DIFF`.
   have hcnz : ¬ ((2013265921 : ℤ) ∣ (envAt t 0).loc DIFF) := by
     have h := hsat.rowConstraints 0 h0 cNzGate mem_cNz
     rw [hlast] at h
-    simp only [cNzGate, VmConstraint2.holdsAt, holdsVm_gate_false, cNzBody, EmittedExpr.eval] at h
+    simp only [cNzGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false, gateBody_eval, cNzSrc, Dregg2.Circuit.Expr.eval] at h
     rw [Int.modEq_zero_iff_dvd] at h
     -- h : p ∣ (DIFF * DIFF_INV + -1)
     intro hdvd
@@ -176,7 +185,7 @@ theorem neqWitness_satisfies :
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
         c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, cNzGate,
-        factHashLookup, factCommitLookup, g0, g1] <;>
+        factHashLookup, factCommitLookup, lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
       first
         | exact gph0
         | exact gph1
@@ -184,7 +193,10 @@ theorem neqWitness_satisfies :
         | exact gpc1
         | decide
   rowHashes := by intro i _; trivial
-  rowRanges := by intro i _ r hr; simp only [predicateNeqDesc, List.not_mem_nil] at hr
+  rowRanges := by
+    intro i _ r hr
+    rw [show predicateNeqDesc.ranges = [] from rfl] at hr
+    simp at hr
   memAddrsNodup := List.nodup_nil
   memClosed := by intro op hop; rw [memLog_pred] at hop; simp at hop
   memDisciplined := by rw [memLog_pred]; trivial
@@ -295,8 +307,9 @@ theorem neqBad_not_satisfies :
   have hlast : ((0 : Nat) + 1 == neqBadTrace.rows.length) = false := rfl
   have hrc := h.rowConstraints 0 h0 cNzGate mem_cNz
   rw [hlast] at hrc
-  simp only [cNzGate, VmConstraint2.holdsAt, holdsVm_gate_false] at hrc
-  have hx : cNzBody.eval (envAt neqBadTrace 0).loc = -1 := by decide
+  simp only [cNzGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+    holdsVm_gate_false] at hrc
+  have hx : (gateBody cNzSrc).eval (envAt neqBadTrace 0).loc = -1 := by decide
   rw [hx] at hrc
   exact absurd hrc (by decide)
 

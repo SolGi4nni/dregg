@@ -57,8 +57,13 @@ open Dregg2.Circuit.ChipNarrowLookup (narrowTable)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
   (blindedMembershipDesc level0Lookup level1Lookup blindLookup continuityGate continuityLastFix
    rootPin blindedLeafPin contBody continuity_body_zero_iff
+   blindedMembershipDesc_constraints level0Leg level1Leg blindLeg contSrc
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 BLINDING BLINDED_LEAF
    ROOT_PI BLINDED_LEAF_PI)
+-- ⚑ COMPILER-AUTHORED descriptor: membership goes through `blindedMembershipDesc_constraints`
+-- (the compiler's own output, by `rfl`) and every gate body through `gateBody_eval`.
+open Dregg2.Circuit.Emit.AirNormalForm
+  (gateBody gateBody_eval liftTuple_emit lowerConstraint_gateBody)
 open Dregg2.Circuit.Emit.MerkleMembershipRefine (merkleFold2 MerkleMembers2 Canon eq_of_modEq_canon)
 open Dregg2.Circuit.Emit.BlindedMembershipRefine
   (BlindedMembers BlindedCanon lookupChip4 lookupChip2 firstPi activeGateZero)
@@ -70,8 +75,10 @@ set_option autoImplicit false
 
 local macro "bm_mem" : tactic =>
   `(tactic| (show _ ∈ blindedMembershipDesc.constraints;
-             simp [blindedMembershipDesc, level0Lookup, level1Lookup, blindLookup, continuityGate,
-               continuityLastFix, rootPin, blindedLeafPin]))
+             rw [blindedMembershipDesc_constraints];
+             simp [level0Lookup, level1Lookup, blindLookup, continuityGate,
+               continuityLastFix, rootPin, blindedLeafPin, level0Leg, level1Leg, blindLeg,
+               contBody, liftTuple_emit, lowerConstraint_gateBody]))
 
 /-! ## §1 — the last-row extractor + the every-row level-tie (the fix's teeth). -/
 
@@ -99,12 +106,12 @@ theorem contAtRow0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 := by
   by_cases hlast : (0 + 1 == t.rows.length) = true
   · exact eq_of_modEq_canon hcCur1 hcPar0
-      ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+      ((gate_modEq_iff (gateBody_eval contSrc (envAt t 0).loc)).mp
         (lastBoundaryZero hsat 0 hpos hlast contBody (by bm_mem)))
   · have hf : (0 + 1 == t.rows.length) = false := by
       simp only [Bool.not_eq_true] at hlast; exact hlast
     exact eq_of_modEq_canon hcCur1 hcPar0
-      ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+      ((gate_modEq_iff (gateBody_eval contSrc (envAt t 0).loc)).mp
         (activeGateZero hsat 0 hpos hf contBody (by bm_mem)))
 
 /-! ## §2 — the strengthened whole-descriptor bridge (no-forgery, any non-empty height). -/
@@ -223,7 +230,9 @@ theorem forge_satisfied_legacy :
         level0Lookup, level1Lookup, blindLookup, continuityGate, rootPin, blindedLeafPin] <;>
       trivial
   · intro i _; trivial
-  · intro i _ r hr; simp [legacyBlindedDesc, blindedMembershipDesc] at hr
+  · intro i _ r hr
+    rw [show legacyBlindedDesc.ranges = [] from rfl] at hr
+    simp at hr
   · exact List.nodup_nil
   · intro op hop; rw [hmemlog] at hop; simp at hop
   · rw [hmemlog]; trivial
@@ -357,7 +366,9 @@ theorem honest_satisfied2 :
         blindedLeafPin] <;>
       trivial
   · intro i _; trivial
-  · intro i _ r hr; simp [blindedMembershipDesc] at hr
+  · intro i _ r hr
+    rw [show blindedMembershipDesc.ranges = [] from rfl] at hr
+    simp at hr
   · exact List.nodup_nil
   · intro op hop; rw [hmemlog] at hop; simp at hop
   · rw [hmemlog]; trivial
@@ -428,7 +439,9 @@ theorem honest_satisfied2_show2 :
         blindedLeafPin] <;>
       trivial
   · intro i _; trivial
-  · intro i _ r hr; simp [blindedMembershipDesc] at hr
+  · intro i _ r hr
+    rw [show blindedMembershipDesc.ranges = [] from rfl] at hr
+    simp at hr
   · exact List.nodup_nil
   · intro op hop; rw [hmemlog] at hop; simp at hop
   · rw [hmemlog]; trivial
