@@ -64,11 +64,14 @@ def attested_history_conserves_KS :=
   @Dregg2.Circuit.RecursiveAggregation.attested_history_conserves
 
 -- (3) CONSERVES FROM VERIFICATION (the CRITICAL-3 closure).
+-- ⚑ REPOINTED to the per-instance form. It was registered on `conserves_from_verification`, whose
+-- own docstring says "⚠ BRIDGE ONLY — the four hash premises are REFUTED at deployed BabyBear
+-- width". The instrument was certifying a VACUOUS statement as the CRITICAL-3 closure.
 @[load_bearing_keystone
     satisfiable := Dregg2.Distributed.HistoryAggregation.honest_kernelChained_conserves
     teeth := Dregg2.Circuit.RecursiveAggregation.tampered_aggregate_cannot_bind]
 def conserves_from_verification_KS :=
-  @Dregg2.Circuit.RecursiveAggregation.conserves_from_verification
+  @Dregg2.Circuit.RecursiveAggregation.conserves_from_verification_of_noColl
 
 -- (4) REAL-ENGINE-SOUND (the EngineSound carrier is inhabited).
 @[load_bearing_keystone
@@ -94,15 +97,19 @@ def wellformed_attests_whole_history_KS :=
   @Dregg2.Distributed.HistoryAggregation.wellformed_attests_whole_history
 
 -- (7) VERIFIED HISTORY CONSERVES (the headline CRITICAL-3 closure).
--- ⚑ REPOINTED 2026-08-01 to the FLOOR-FREE twin. The registered keystone used to be
--- `verified_history_conserves`, whose four `compressInjective`/`compressNInjective`/`cellLeafInjective`
--- premises are REFUTED at deployed BabyBear width — so the instrument was certifying a VACUOUS
--- statement. The `_orBreak` form concludes the same conservation OR a concrete `StateBreakP`.
+-- ⚑ REPOINTED TWICE, and the first repoint was WRONG — record both, because the second failure is
+-- the instructive one. It was registered on `verified_history_conserves`, whose four injectivity
+-- premises are REFUTED at deployed width, so the instrument certified a vacuous statement. It was
+-- then repointed to `_orBreak` — ONTO ANOTHER VACUOUS STATEMENT, because `StateBreakP` is a GLOBAL
+-- EXISTENTIAL that `SpongeCollisionShirk` proves free at any field-bounded sponge. Same instrument,
+-- same PASS, same nothing. ⚠ AND THE LINT CANNOT SEE THIS: `KeystoneLint` checks satisfiability and
+-- teeth companions only, so a free disjunct passes it structurally. Now on the per-instance form,
+-- whose residual names a pair.
 @[load_bearing_keystone
     satisfiable := Dregg2.Distributed.HistoryAggregation.honest_kernelChained_conserves
     teeth := Dregg2.Distributed.HistoryAggregation.tooth_rejects_broken_order]
 def verified_history_conserves_KS :=
-  @Dregg2.Distributed.HistoryAggregation.verified_history_conserves_orBreak
+  @Dregg2.Distributed.HistoryAggregation.verified_history_conserves_of_noColl
 
 -- (8) KERNEL-CHAINED CONSERVES.
 @[load_bearing_keystone
@@ -112,14 +119,15 @@ def kernelChained_conserves_KS :=
   @Dregg2.Distributed.HistoryAggregation.kernelChained_conserves
 
 -- (9) ROOT-TOOTH PINS KERNEL (CR root-recovery to kernel equality).
--- ⚑ REPOINTED 2026-08-01 to the FLOOR-FREE twin, same reason as (7): the injective form is vacuous at
--- deployed width, so the light client "genuinely learns the adjacent kernels coincide" only against a
--- hash nobody runs. `root_tooth_pins_kernel_orBreak` earns it at the real hash.
+-- ⚑ REPOINTED TWICE, same story as (7): the injective form is vacuous at deployed width, and the
+-- `_orBreak` form it was moved to is ALSO vacuous — its disjunct holds unconditionally. The light
+-- client "genuinely learns the adjacent kernels coincide" only under the per-instance residual,
+-- which names the pair the extraction visits.
 @[load_bearing_keystone
     satisfiable := Dregg2.Distributed.HistoryAggregation.honest_chain_kernelChained
     teeth := Dregg2.Distributed.HistoryAggregation.tooth_rejects_broken_order]
 def root_tooth_pins_kernel_KS :=
-  @Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_orBreak
+  @Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_of_noColl
 
 /-! ### the light-client UC reduction. -/
 
