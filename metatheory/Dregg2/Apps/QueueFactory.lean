@@ -592,13 +592,16 @@ abbrev qrelCap : List RelCaveat := [ RelCaveat.fieldLteOther headSeqField capaci
 -- ...and an OVER-BOUND write (head → 3 > cap 2) is REJECTED by the live relational gate (KEYSTONE a, in-executor):
 #guard ((relStateStepGuarded qrel qrelCap headSeqField 0 0 3).isSome) == false
 
-/-! ## §DELETION — the W2 deletion-readiness note (land-before-kill).
+/-! ## §DELETION — the W2 burn-down, LANDED (land-before-kill, then the kill).
 
-THIS module + the relational caveat are the LAND-BEFORE-KILL prerequisite for the queue verb
-family. Once the factory is the live queue path (this module shipped + every queue app re-pointed),
-W2 DELETES the 6-verb family:
+THIS module + the relational caveat were the LAND-BEFORE-KILL prerequisite for the queue verb family;
+the factory IS the live queue path and F2b then deleted the 6-verb family. Evidence:
+`Exec/RecordKernel.lean:266-268` — "F2b removed the kernel queue side-table (`RecordKernelState.queues`)
+and its kernel ops (`queueAllocateK`/`queueEnqueueK`/`queueDequeueK`/`queueResizeK` and the `qbuf*`
+FIFO buffer spec)". `structure RecordKernelState` (`RecordKernel.lean:309`) carries no `queues` field at
+any line. The list below is the RECORD of the burn-down:
 
-  WHAT W2 DELETES (the queue side-table surface — `Dregg2.Exec.RecordKernel` / `…TurnExecutorFull`,
+  WHAT W2 DELETED (the queue side-table surface — `Dregg2.Exec.RecordKernel` / `…TurnExecutorFull`,
   and the Argus `QueueAllocate`/`Enqueue`/`Dequeue`/`Resize`/`AtomicTx`/`PipelineStep` effect welds):
     (1) the SIX kernel arms / chain ops / `FullActionA` arms:
           • QueueAllocate ↦ `createCellFromFactoryA` over `queueFactory` (the mint).
@@ -611,27 +614,33 @@ W2 DELETES the 6-verb family:
           • AtomicTx      ↦ the forest/joint-turn layer (same as escrow's multi-cell settle).
           • PipelineStep  ↦ a sequence of enqueue/dequeue writes (no new mechanism).
     (2) the OFF-LEDGER `queues` side-table itself (the `queues : List QueueRecord` field on
-        `RecordKernelState`) — DISSOLVED into the minted cell's own slots; the deposit value (if any)
-        DISSOLVED into the cell's own `bal` column.
+        `RecordKernelState`) — GONE (`RecordKernel.lean:266-268`); DISSOLVED into the minted cell's own
+        slots, and the deposit value (if any) into the cell's own `bal` column. The `QueueRecord` TYPE
+        survives ONLY for the FFI `WState` wire codec (`RecordKernel.lean:265-277`).
     (3) the `qbuf*` ON-LEDGER buffer accounting (`qbufEnqueue`/`qbufDequeue`/`qbuf_fifo_order` as a
         STATE mechanism) — RETAINED only as the authenticated FIFO-order SHADOW (the message_root
-        commitment is the §8 crypto portal); the sequence counters become the cell-field truth.
+        commitment is the §8 crypto portal); the sequence counters are the cell-field truth. The shadow
+        MOVED HERE with the burn-down (`qbufEnqueue` is `QueueFactory.lean:367`, `qbuf_fifo_order` is
+        `:379`), per `RecordKernel.lean:273-274`.
     (4) any bespoke queue-occupancy / capacity measure and its accounting theory — COLLAPSED into the
         cross-slot relational caveat (the bound is now `RelCaveat.fieldLteOther`, enforced in-executor
         by `relStateStepGuarded`).
 
-  WHAT MUST BE RE-POINTED FIRST (the land-before-kill blockers — every queue-verb consumer):
+  WHAT HAD TO BE RE-POINTED FIRST (the land-before-kill blockers — every queue-verb consumer; the
+  ordering below is DISCHARGED: no `def queueAllocateK`/`queueEnqueueK`/`queueDequeueK`/`queueResizeK`
+  exists anywhere in the tree, so nothing can still be reading the verbs):
     • any `Dregg2.Apps.*` queue/mailbox/pipeline app on the queue verbs — re-point to `queueFactory`
       + the gated `setField` writes (same pattern as `BountyBoardGated` → `escrowFactoryEntry`).
     • the INBOX / PUBSUB twins (`Dregg2.Apps.InboxFactory` / `Dregg2.Apps.PubsubFactory`, this wave)
       SHARE the queue shape; they land as their own factories on the SAME relational caveat — no
       shared side-table to sequence, since each is its own minted cell.
 
-  NOT DELETED HERE (land-before-kill): nothing above is removed in this commit — we only prove the
-  factory is a faithful replacement and enumerate the burn-down. The verb deletion is the SUBSEQUENT
-  W2 commit, gated on the re-points above all landing green AND the relational caveat being wired
-  through `stateStepGuarded`/`caveatsAdmit` for every queue `SetField` (the RelationalCaveat
-  §SOUNDNESS surface — `relStateStepGuarded` — supplies exactly this).
+  DELETED (F2b): everything above is GONE — this module's commit only proved the factory a faithful
+  replacement and enumerated the burn-down; the verb deletion landed in the SUBSEQUENT W2 commit, as
+  planned, with the relational caveat wired through `stateStepGuarded`/`caveatsAdmit` for every queue
+  `SetField` (the RelationalCaveat §SOUNDNESS surface — `relStateStepGuarded` — supplies exactly this).
+  Evidence: `Exec/RecordKernel.lean:266-268`. Do NOT cite this section as a live blocker — it is the
+  record of a completed burn-down.
 -/
 
 #assert_axioms queueFactory_conforms

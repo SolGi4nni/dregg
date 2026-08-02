@@ -16,7 +16,7 @@ proved escrow-as-cell-program is sound; THIS module makes it the LIVE path:
   * the locked VALUE lives in the minted cell's own per-asset `bal` column (a `deposit` is an ordinary
     `move` IN; a `release`/`refund` is an ordinary `move` OUT — the probe's `escrowSettle`), so escrow
     inherits the kernel's per-asset move conservation law VERBATIM, with NO `escrows` side-table and NO
-    bespoke `recTotalAsset` quantity.
+    bespoke combined conserved quantity.
 
 The four release-safety keystones (conservation / no-double-resolve / release-only-on-condition /
 value-not-stranded) are RE-ESTABLISHED on the FACTORY-BORN cell here — i.e. on the cell whose caveats
@@ -35,10 +35,13 @@ keystones. That is the witness that the factory is a FAITHFUL replacement for th
 executor; `deposit` moves the locked value into the minted cell's `bal`; release/refund are the probe's
 `escrowRelease`/`escrowRefund` on that cell.
 
-## §DELETION-READINESS (land-before-kill — what W2 removes once this is the live path)
+## §DELETION — the burn-down LANDED (land-before-kill, then the kill)
 
-ENUMERATED at the foot (`§DELETION`). NOTHING is deleted here (land-before-kill): we prove the factory
-is a faithful replacement + list the verb-family surface to remove + the re-point prerequisite.
+ENUMERATED at the foot (`§DELETION`). The land-before-kill ORDER was honoured and the KILL has since
+LANDED: F1b removed the kernel escrow holding-store and its ops (`Exec/RecordKernel.lean:302` — "the
+kernel escrow holding-store (`escrows : List EscrowRecord`) is GONE"), and the escrow/obligation
+handler cluster went with it (`Exec/Handlers/Escrow.lean:5-7`). This module is the replacement that
+made that legal; the foot list is now the RECORD of what was removed, not a to-do.
 
 NEW file. Imports the probe + the factory executor; does NOT touch `cell/src/capability.rs`/`seal.rs`,
 `Argus/Compile.lean`, or the Substrate/Dynamics files. `#assert_axioms`-pinned to
@@ -327,31 +330,42 @@ def facFunded : Option RecordKernelState :=
 -- an UNKNOWN factory key never mints (fail-closed):
 #guard ((mintEscrowCell facWorld 0 3 99).isSome) == false
 
-/-! ## §DELETION — the W2 deletion-readiness note (land-before-kill).
+/-! ## §DELETION — the W2 burn-down, LANDED (land-before-kill, then the kill).
 
-THIS module + the BountyBoardGated re-point are the LAND-BEFORE-KILL prerequisite. Once the factory is
-the live escrow path (this module shipped + every escrow app re-pointed), W2 DELETES the verb family:
+THIS module + the BountyBoardGated re-point were the LAND-BEFORE-KILL prerequisite; the factory IS the
+live escrow path and F1b then deleted the verb family. Evidence: `Exec/RecordKernel.lean:302` (the
+holding-store `escrows : List EscrowRecord` "is GONE"), `Exec/RecordKernel.lean:996-997` (the per-asset
+escrow lifecycle + the off-ledger measure `escrowHeldAsset` "is GONE"), `Exec/Handlers/Escrow.lean:5-7`
+(the handler cluster went with the ops). The list below is the RECORD of the burn-down:
 
-  WHAT W2 DELETES (the escrow side-table surface — `Dregg2.Exec.RecordKernel` / `…TurnExecutorFull`):
+  WHAT W2 DELETED (the escrow side-table surface — `Dregg2.Exec.RecordKernel` / `…TurnExecutorFull`):
     (1) the THREE kernel arms / chain ops:
           • `createEscrowKAsset` / `createEscrowChainA` / the `.createEscrowA` `FullActionA` arm
           • `releaseEscrowKAsset` / `releaseEscrowChainA` / the `.releaseEscrowA` arm
           • `refundEscrowKAsset` / `refundEscrowChainA` / the `.refundEscrowA` arm
         (replaced by: `createCellFromFactoryA` + `setFieldA` + `balanceA` over `escrowFactoryEntry`).
-    (2) the OFF-LEDGER side-table itself: the `escrows : List EscrowRecord` field on `RecordKernelState`
-        (`RecordKernel.lean:~483/542`) — DISSOLVED into the minted cell's own `bal` column.
+    (2) the OFF-LEDGER side-table itself: the `escrows : List EscrowRecord` field on
+        `RecordKernelState` — GONE. `structure RecordKernelState` (`RecordKernel.lean:309`) carries no
+        such field at any line; the parked value DISSOLVED into the minted cell's own `bal` column. The
+        `EscrowRecord` TYPE survives ONLY for the FFI `WState` wire codec + the deployed escrow-root
+        column model (`RecordKernel.lean:231-238`).
     (3) `escrowHeldAsset` (the off-ledger held-value measure) and `EscrowRecord`'s escrow-specific
-        fields (`creator`/`recipient`/`amount`/`resolved`) where used ONLY by escrow.
+        fields (`creator`/`recipient`/`amount`/`resolved`) where used ONLY by escrow —
+        `escrowHeldAsset` is GONE (`RecordKernel.lean:996-997`).
     (4) the E3 TRANSITIONAL term from W1: `recTotalAsset`'s escrow summand
-        (`recTotalAsset + escrowHeldAsset`) COLLAPSES back to plain `recTotalAsset` — the bespoke
-        combined conserved quantity and its accounting theory (`escrow_settle_conserves_combined`,
-        `heldSum_markResolved_found`, the `…WithEscrow` neutrality lemmas) all DIE, because escrow
-        conservation is now the ORDINARY per-asset move law (`recKExecAsset_conserves_per_asset`).
+        (`recTotalAsset + escrowHeldAsset`) COLLAPSED back to plain `recTotalAsset`, which is now
+        literally the cell-sum alone — `recTotalAsset k a = ∑ c ∈ k.accounts, k.bal c a`
+        (`RecordKernel.lean:665`). The bespoke combined conserved quantity and its accounting theory
+        (`escrow_settle_conserves_combined`, `heldSum_markResolved_found`, the `…WithEscrow`
+        neutrality lemmas) all DIED, because escrow conservation is now the ORDINARY per-asset move
+        law (`recKExecAsset_conserves_per_asset`).
     (5) the escrow settle-liveness side teeth that read the side-table
-        (`releaseEscrowKAsset_nonlive_fails` / `refundEscrowKAsset_nonlive_fails`) are SUBSUMED by the
-        move's own fail-closed guard (a move into a non-live cell already fails) + the state machine.
+        (`releaseEscrowKAsset_nonlive_fails` / `refundEscrowKAsset_nonlive_fails`) — GONE, SUBSUMED by
+        the move's own fail-closed guard (a move into a non-live cell already fails) + the state machine.
 
-  WHAT MUST BE RE-POINTED FIRST (the land-before-kill blockers — every escrow-verb consumer):
+  WHAT HAD TO BE RE-POINTED FIRST (the land-before-kill blockers — every escrow-verb consumer; the
+  ordering below is DISCHARGED: no `def createEscrowKAsset`/`releaseEscrowKAsset`/`refundEscrowKAsset`
+  exists anywhere in the tree, so nothing can still be reading the verbs):
     • `Dregg2.Apps.BountyBoardGated`  — DONE in this wave (re-points to `escrowFactoryEntry`).
     • `Dregg2.Apps.BountyBoard`       — the ungated dual (same re-point pattern; W2 follow-up).
     • `Dregg2.Apps.ComputeExchange{,Gated}` — escrow-verb consumers (order/settle/refund); re-point.
@@ -363,9 +377,11 @@ the live escrow path (this module shipped + every escrow app re-pointed), W2 DEL
       `EscrowRecord`. This is the one genuine ordering constraint: the side-table field cannot be
       removed while a non-escrow consumer still reads it.
 
-  NOT DELETED HERE (land-before-kill): nothing above is removed in this commit — we only prove the
-  factory is a faithful replacement and enumerate the burn-down. The verb deletion is the SUBSEQUENT W2
-  commit, gated on the re-points above all landing green.
+  DELETED (F1b): everything above is GONE — this module's commit only proved the factory a faithful
+  replacement and enumerated the burn-down; the verb deletion landed in the SUBSEQUENT W2 commit, as
+  planned. Evidence: `Exec/RecordKernel.lean:302` (holding-store), `:996-997` (`escrowHeldAsset` + the
+  per-asset escrow lifecycle), `Exec/Handlers/Escrow.lean:5-7` (the handler cluster). Do NOT cite this
+  section as a live blocker — it is the record of a completed burn-down.
 -/
 
 #assert_axioms escrowFactoryEntry_conforms

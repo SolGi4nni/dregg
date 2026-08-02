@@ -2,21 +2,26 @@
 # Dregg2.Apps.BridgeCell — W2 LANE G: the cross-domain BRIDGE as a factory-born CELL.
 
 This module re-lands the BRIDGE verb family (`bridgeLock`/`bridgeFinalize`/`bridgeCancel` over the
-shared off-ledger `escrows` side-table with the `bridge := true` tag — `RecordKernel.lean:1797…1841`)
-as a factory-born CELL that custodies the locked cross-domain value in its OWN per-asset `bal` column,
-with the FOREIGN-FINALITY witness as the release condition. It is the bridge twin of W2's
-`Dregg2.Apps.EscrowFactory` (the escrow factory), and it settles the finalized value to the W1
-BRIDGE-POT (`Dregg2.Substrate.IssuerLedger.canonical_bridge_law` / the probe's
-`bridgeFinalizeToPotK`), so the whole bridge lifecycle is conservation-EXACT with NO disclosed
-off-ledger outflow.
+shared off-ledger `escrows` side-table with the `bridge := true` tag) as a factory-born CELL that
+custodies the locked cross-domain value in its OWN per-asset `bal` column, with the FOREIGN-FINALITY
+witness as the release condition. It is the bridge twin of W2's `Dregg2.Apps.EscrowFactory` (the escrow
+factory), and it settles the finalized value to the BRIDGE-POT, so the whole bridge lifecycle is
+conservation-EXACT with NO disclosed off-ledger outflow. The verbs it replaced are GONE and so are
+their line numbers: no `escrows` field exists on `RecordKernelState` (`Exec/RecordKernel.lean:309`)
+and the three ops died with the store (`Exec/RecordKernel.lean:302`, `Exec/Handlers/Bridge.lean:2-11`).
+The W1 pot-law names this header used to cite (`IssuerLedger.canonical_bridge_law`, the probe's
+`bridgeFinalizeToPotK`) went with them — `IssuerLedger.lean:48-50`: the bridge outflow "died with the
+kernel holding-store … nothing to retire".
 
 ## The move that makes the bridge a cell program (and the side-table redundant)
 
-dregg1/dregg2 bridge today parks a `bridge := true`-tagged `EscrowRecord` in the SHARED off-ledger
-store `k.escrows`: a LOCK single-cell DEBITs the originator and parks the record; a FINALIZE marks it
-resolved WITHOUT a credit — the value LEFT for the foreign chain, a disclosed OUTFLOW that BREAKS the
-plain per-asset conservation (`bridgeFinalize_breaks_exact`), bought back only by the bespoke
-`recTotalAsset` combined measure; a CANCEL credits the originator back (conserved).
+dregg1/dregg2 bridge USED TO park a `bridge := true`-tagged `EscrowRecord` in the SHARED off-ledger
+store `k.escrows`: a LOCK single-cell DEBITed the originator and parked the record; a FINALIZE marked
+it resolved WITHOUT a credit — the value LEFT for the foreign chain, a disclosed OUTFLOW that BROKE
+plain per-asset conservation (`bridgeFinalize_breaks_exact`), bought back only by the bespoke combined
+measure; a CANCEL credited the originator back (conserved). ALL GONE: F1b deleted the store and the
+three bridge kernel ops (`Exec/RecordKernel.lean:302`, `Exec/Handlers/Bridge.lean:2-11`), taking the
+outflow exemption and both bridge teeth with them (`Substrate/IssuerSupplyProbe.lean:572-577`).
 
 The cell-program rebuild does the OPPOSITE move — the SAME move escrow made: **the bridge cell HOLDS
 the locked value in its own per-asset `bal` column.** A LOCK is an ordinary `move` IN
@@ -67,10 +72,13 @@ These RE-USE the escrow factory probe's already-proved keystones VERBATIM — th
 + value in `bal`), so feeding the factory-install facts in lifts them with no re-proof. That is the
 witness that the factory is a FAITHFUL replacement for the bridge verbs (§DELETION).
 
-NEW file only. Imports the escrow factory + the W1 issuer-supply probe (for the bridge-POT exact-ledger
-law `bridgeFinalizeToPot_preserves_exact` + the `bridgeFinalize_breaks_exact` non-vacuity tooth — the
-bridge-pot framing). Does NOT touch any shared mod/import file. `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}`. Land-before-kill: nothing deleted.
+NEW file only. Imports the escrow factory + the W1 issuer-supply probe for the `ExactLedger` value law
+(the probe's bridge-outflow pair `bridgeFinalize_breaks_exact` / `bridgeFinalizeToPot_preserves_exact`
+died with the verb — `Substrate/IssuerSupplyProbe.lean:572-577`: both "rode the bridge-tagged `escrows`
+records; F1b deleted them", and the pot repair is the DEFAULT here because the bridge cell holds locked
+value in a CELL from the start). Does NOT touch any shared mod/import file. `#assert_axioms`-pinned to
+`{propext, Classical.choice, Quot.sound}`. Land-before-kill: the kill LANDED — F1b deleted the bridge
+verb family (`Exec/Handlers/Bridge.lean:2-11`); see §DELETION at the foot.
 -/
 import Dregg2.Apps.EscrowFactory
 import Dregg2.Substrate.IssuerSupplyProbe
@@ -404,13 +412,17 @@ no kernel verb can drop value off-ledger at all. -/
 #assert_axioms finalize_requires_live_pot
 #assert_axioms cancel_requires_live_originator
 
-/-! ## §DELETION — the bridge-verb deletion-readiness list (land-before-kill).
+/-! ## §DELETION — the bridge-verb burn-down, LANDED (land-before-kill, then the kill).
 
-THIS module is the LAND-BEFORE-KILL prerequisite for the bridge family. Once the bridge factory is the
-live cross-domain path (this module shipped + every bridge consumer re-pointed), W2 DELETES the bridge
-verb family, which shares the SAME off-ledger `escrows` store as escrow (the `bridge := true` tag):
+THIS module was the LAND-BEFORE-KILL prerequisite for the bridge family; the bridge factory IS the live
+cross-domain path and F1b then deleted the bridge verb family, which had shared the SAME off-ledger
+`escrows` store as escrow (the `bridge := true` tag). Evidence: `Exec/Handlers/Bridge.lean:2-11` — "F1b
+deleted the kernel escrow holding-store (`RecordKernelState.escrows`) and the bridge lock/finalize/
+cancel kernel ops (`bridgeLockKAsset`/`bridgeFinalizeKAsset`/`bridgeCancelKAsset`) that parked into it",
+so the `bridgeLockA`/`bridgeFinalizeA`/`bridgeCancelA` handler cluster is GONE WITH IT; the shared store
+itself is `Exec/RecordKernel.lean:302`. The list below is the RECORD of the burn-down:
 
-  WHAT W2 DELETES (the bridge surface — `Dregg2.Exec.RecordKernel`):
+  WHAT W2 DELETED (the bridge surface — `Dregg2.Exec.RecordKernel`):
     (1) the THREE bridge kernel arms + their raw bodies:
           • `bridgeLockKAsset` / `createBridgeRawAsset`        (replaced by: `mintBridgeCell` +
             `lockBridge` = `createCellFromFactoryA` + the ordinary move IN);
@@ -418,29 +430,37 @@ verb family, which shares the SAME off-ledger `escrows` store as escrow (the `br
             move OUT to the bridge-pot, gated on the finality witness — `escrowRelease`);
           • `bridgeCancelKAsset`                                (replaced by: `cancelBridge` = the move
             OUT to the originator — `escrowRefund`).
-    (2) the `bridge : Bool` TAG on `EscrowRecord` (`RecordKernel.lean:~269`) — DISSOLVED, because the
+    (2) the `bridge : Bool` TAG on `EscrowRecord` — DISSOLVED as a KERNEL mechanism, because the
         bridge does not park a record in the shared store; its value lives in the minted cell's `bal`
         column and its lifecycle in the cell's `state` slot. (The tag's only job was to separate the
         two RESOLUTION semantics in the shared store; with no shared store the distinction is the
-        finalize-target, the pot, not a record flag.)
+        finalize-target, the pot, not a record flag.) The FIELD still exists at
+        `RecordKernel.lean:259`, but only inside the TRANSITIONAL wire-codec `EscrowRecord`
+        (`RecordKernel.lean:231-238`) — no kernel op reads it.
     (3) the bridge-specific combined-measure theory:
           • `bridge_lock_conserves_combined_per_asset`
           • `bridge_cancel_conserves_combined_per_asset`
           • `bridgeFinalizeKAsset_moves_combined_per_asset` (the disclosed-outflow accounting)
-        all DIE, because bridge conservation is now the ORDINARY per-asset move law
-        (`recKExecAsset_conserves_per_asset`, lifted as `lockBridge/finalize/cancel_conserves`).
-    (4) the W1 bridge-OUTFLOW EXEMPTION machinery:
-          • `bridgeFinalize_breaks_exact` (the non-vacuity tooth — kept ONLY as the `§6` contrast,
-            then retired with the verb);
+        all DIED, because bridge conservation is the ORDINARY per-asset move law
+        (`recKExecAsset_conserves_per_asset`, lifted as `lockBridge/finalize/cancel_conserves`); none
+        of the three resolves anywhere in the tree.
+    (4) the W1 bridge-OUTFLOW EXEMPTION machinery — GONE, retired with the verb
+        (`Substrate/IssuerSupplyProbe.lean:572-577`):
+          • `bridgeFinalize_breaks_exact` (the non-vacuity tooth — it was kept only as the `§6`
+            contrast);
           • `bridgeFinalizeToPotK` / `bridgeFinalizeToPot_preserves_exact` — the verb-era pot REPAIR is
             SUBSUMED by the cell-program finalize-to-pot (`finalize_conserves`): the pot is now just the
-            finalize MOVE TARGET, not a bespoke settle verb. (`canonical_bridge_law` retires with it.)
+            finalize MOVE TARGET, not a bespoke settle verb. (`canonical_bridge_law` retired with it —
+            `IssuerLedger.lean:48-50`.)
     (5) the Argus IR welds for the deleted arms (`Circuit/Argus/Effects/BridgeLock.lean`,
-        `BridgeFinalize.lean`, `BridgeCancel.lean`) re-point to the factory + move + setField welds
-        (the SAME re-point the escrow Argus welds get) — NOT deleted blindly; re-welded onto the
-        cell-program path.
+        `BridgeFinalize.lean`, `BridgeCancel.lean`) — GONE from `Dregg2/Circuit/Argus/Effects/`,
+        re-welded onto the cell-program path (`CreateCellFromFactory.lean` + `BalanceA.lean` +
+        `SetField.lean`, the SAME re-point the escrow Argus welds took); the inbound
+        `BridgeMint.lean` (the §8 portal inflow) SURVIVES, matching `Exec/Handlers/Bridge.lean:2-11`.
 
-  WHAT MUST BE RE-POINTED FIRST (the land-before-kill blockers — every bridge-verb consumer):
+  WHAT HAD TO BE RE-POINTED FIRST (the land-before-kill blockers — every bridge-verb consumer; the
+  ordering below is DISCHARGED: no `def bridgeLockKAsset`/`bridgeFinalizeKAsset`/`bridgeCancelKAsset`
+  exists anywhere in the tree, so nothing can still be reading the verbs):
     • `Dregg2.Apps.CrossChainBridgeGated` — the headline bridge app; re-point to `bridgeFactoryEntry`
       + `mintBridgeCell`/`lockBridge`/`finalizeBridge`/`cancelBridge`. (This is the §VERDICT consumer.)
     • any `StakedSlaGated` / obligation twin that SHARES the `EscrowRecord.bridge` store — DECIDE
@@ -452,14 +472,15 @@ verb family, which shares the SAME off-ledger `escrows` store as escrow (the `br
       + chain ops — re-point to `createCellFromFactoryA` + `balanceA`/`setFieldA` over
       `bridgeFactoryEntry`, mirroring the escrow `§DELETION` (1).
 
-  ORDERING NOTE (the one genuine constraint): the bridge `§DELETION` is GATED on the escrow `§DELETION`
-  for the SHARED `escrows` field, but the bridge `bridge` TAG and the three bridge arms can be removed
-  INDEPENDENTLY (they are bridge-only) once `CrossChainBridgeGated` is re-pointed. The bridge-pot
-  framing (§6) is the bridge family's analog of the escrow factory's no-side-table payoff.
+  ORDERING NOTE (the one genuine constraint, now MOOT): the bridge `§DELETION` was GATED on the escrow
+  `§DELETION` for the SHARED `escrows` field. Both landed in the SAME step — F1b removed the store and
+  the escrow AND bridge ops together (`Exec/RecordKernel.lean:302`, `Exec/Handlers/Bridge.lean:2-11`,
+  `Exec/Handlers/Escrow.lean:5-7`). The bridge-pot framing (§6) is the bridge family's analog of the
+  escrow factory's no-side-table payoff.
 
-  NOT DELETED HERE (land-before-kill): nothing above is removed in this commit — we only prove the
-  factory is a faithful replacement + enumerate the burn-down. The verb deletion is the SUBSEQUENT W2
-  commit, gated on the re-points above all landing green.
+  DELETED (F1b): everything above is GONE — this module's commit only proved the factory a faithful
+  replacement + enumerated the burn-down; the verb deletion landed in the SUBSEQUENT W2 commit, as
+  planned. Do NOT cite this section as a live blocker — it is the record of a completed burn-down.
 -/
 
 end Dregg2.Apps.BridgeCell

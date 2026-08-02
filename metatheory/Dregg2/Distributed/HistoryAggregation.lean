@@ -32,6 +32,26 @@ verified executor), the chain is correctly ordered (each post-root = next pre-ro
 chain is a `Run recChainedSystem` from genesis whose final state is the genuine fold of the history,
 so `recChained_run_conserves` (no mint/burn over the entire history) applies.
 
+⚑⚑ **2026-08-01 — THE `_orBreak` TWINS OF `ee18461c1` WERE ALSO VACUOUS, AND ARE NOW BRIDGES.**
+Those twins removed the refuted `compressNInjective`/`compressInjective`/`cellLeafInjective`
+hypotheses and paid for it with a disjunct that is a GLOBAL collision existential — `SpongeCollision
+compressN`, and `StateBreakP`, which opens with it. Pigeonhole SUPPLIES that existential at every
+field-bounded (= deployed) sponge, so every `OrBreak (SpongeCollision …) P` and `OrBreak (StateBreakP
+…) P` in this file was literally `True` (`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`,
+`StateCommitReduce.orBreak_stateBreakP_iff_True`, both over an ARBITRARY good branch). Vacuous by
+free disjunct instead of by false hypothesis.
+
+Every keystone now has an UNCONDITIONAL `_or_collides` form whose residual is a collision AT THE
+NAMED PAIR the extraction visits (`ReceiptColl` / `LogFeltsColl` / `LogRootColl` at the log layer;
+`SeamSpongeColl` + `StateCommitLeafRegrounded.RecStateCommitColl` at the kernel layer;
+`ChainKernelColl` / `ChainLogColl` bounded to the attested chain's OWN seams), plus an `_of_noColl`
+form carrying ONE per-instance, refutable side condition at that pair. The `_orBreak` and
+`_injective` forms are RETAINED, labelled `⚠ BRIDGE ONLY`, and re-derived through the port, so the
+strength relation is machine-checked rather than asserted. §7b carries the teeth the free form
+provably cannot: SATISFIABLE at every hash on an honest seam, REFUTABLE at a lossy one, NOT PROVABLE,
+and LOAD-BEARING (dropping the residual leaves a REFUTED statement — including a two-step chain that
+MINTS 400 while satisfying the genesis pin and the verified root tooth).
+
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
 Verified with `lake build Dregg2.Distributed.HistoryAggregation`.
 -/
@@ -47,7 +67,12 @@ open Dregg2.Circuit.StateCommit (recStateCommit recStateCommit_binds recStateCom
   compressInjective compressNInjective cellLeafInjective RestHashIffFrame AccountsWF cellDigest)
 open Dregg2.Circuit.CollisionReduce (OrBreak SpongeCollision spongeN_orBreak)
 open Dregg2.Circuit.StateCommitReduce (StateBreakP recStateCommit_binds_orBreak
-  recStateCommit_binds_kernel_orBreak)
+  recStateCommit_binds_kernel_orBreak recStateCommit_binds_kernel_or_collidesFin)
+-- ⚑ the PER-INSTANCE residual vocabulary (2026-08-01, the free-disjunct port): a collision at a
+-- NAMED pair, never `∃ two colliding inputs`.
+open Dregg2.Circuit.SpongeCollisionShirk (SpongeColl)
+open Dregg2.Circuit.StateCommitLeafRegrounded (CompressColl RecStateCommitColl
+  recStateCommit_binds_or_collides noRecStateCommitColl_diag)
 
 /-- The all-zero turn — `Turn` has no `Inhabited` instance, so we name the canonical default
 turn-context used to commit the genesis/empty-chain root. -/
@@ -148,45 +173,145 @@ its premise is false at deployed width. -/
 theorem noSpongeColl_of_inj (hCompressN : compressNInjective compressN) :
     ¬ SpongeCollision compressN := fun ⟨_, _, hne, heq⟩ => hne (hCompressN _ _ heq)
 
-/-- **Twin of `turnReceipt_injective`, floor-free.** A receipt felt commits the whole turn — or the
-deployed sponge collides on the two named 4-felt absorbs. -/
-theorem turnReceipt_binds_orBreak {t t' : Dregg2.Exec.Turn}
-    (h : turnReceipt compressN t = turnReceipt compressN t') :
-    OrBreak (SpongeCollision compressN) (t = t') := by
+/-! #### ⚑⚑ THE PER-INSTANCE PORT (2026-08-01) — the `_orBreak` twins above were ALSO free.
+
+`SpongeCollision compressN` is a GLOBAL existential ("there EXIST two colliding lists"), which
+`SpongeCollisionShirk.spongeCollision_of_fieldBounded` SUPPLIES at every field-bounded sponge — i.e.
+at every sponge this chain deploys. So `OrBreak (SpongeCollision compressN) P` is literally `True`
+(`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`, over an arbitrary good branch `P`), and the
+twins landed in `ee18461c1` traded vacuous-by-false-hypothesis for vacuous-by-free-disjunct.
+
+The sound shape is the one `Circuit/StateCommitLeafRegrounded` and `Circuit/AggregationAirSound`
+use: an UNCONDITIONAL dichotomy whose residual is a collision AT THE NAMED PAIR the extraction
+visits (`SpongeCollisionShirk.SpongeColl hash xs ys := xs ≠ ys ∧ hash xs = hash ys`), and a
+per-instance side condition `¬ Coll … p` at THAT pair. ⚠ Universally quantifying the side condition
+would re-write injectivity and restore the vacuity; none of the `_of_noColl` forms below does. -/
+
+/-- The four felts the deployed receipt absorb feeds the sponge — `turnReceipt`'s SPONGE ARGUMENT,
+named so a residual can talk about the specific pair rather than about "some pair". -/
+def receiptFelts (t : Dregg2.Exec.Turn) : List ℤ :=
+  [(t.actor : ℤ), (t.src : ℤ), (t.dst : ℤ), t.amt]
+
+/-- `turnReceipt` IS the sponge of `receiptFelts` (definitional). -/
+theorem turnReceipt_eq (t : Dregg2.Exec.Turn) :
+    turnReceipt compressN t = compressN (receiptFelts t) := rfl
+
+/-- The receipt encoding is injective — a STRUCTURAL fact about the four-field layout, no hash
+anywhere. This is what makes `ReceiptColl` a claim about the SPONGE and not about the framing. -/
+theorem receiptFelts_injective {t t' : Dregg2.Exec.Turn}
+    (h : receiptFelts t = receiptFelts t') : t = t' := by
   obtain ⟨a, b, c, d⟩ := t
   obtain ⟨a', b', c', d'⟩ := t'
-  unfold turnReceipt at h
-  -- original: `hCompressN _ _ h` — the sponge-injectivity appeal, now an `OrBreak` leaf.
-  refine OrBreak.imp ?_ (spongeN_orBreak compressN h)
-  intro hl
-  simp only [List.cons.injEq, and_true, Nat.cast_inj] at hl
-  obtain ⟨h1, h2, h3, h4⟩ := hl
+  simp only [receiptFelts, List.cons.injEq, and_true, Nat.cast_inj] at h
+  obtain ⟨h1, h2, h3, h4⟩ := h
   subst h1; subst h2; subst h3; subst h4; rfl
 
-/-- **Twin of `logFelts_injective`, floor-free.** The receipt-felt list determines the audit log — or
-the sponge collides. Structural recursion mirrors the original, threading with `bind`/`map₂`. -/
-theorem logFelts_binds_orBreak :
+/-- **`ReceiptColl compressN t t'`** — the two turns' 4-felt absorbs are a GENUINE collision of the
+deployed sponge, AT THE NAMED PAIR. Distinctness is inside `SpongeColl`, so the side condition is
+never satisfied vacuously by an equal pair. -/
+def ReceiptColl (t t' : Dregg2.Exec.Turn) : Prop :=
+  SpongeColl compressN (receiptFelts t) (receiptFelts t')
+
+/-- **⚑ UNCONDITIONAL receipt binding.** A receipt felt commits the whole turn, OR the deployed
+sponge collides at the two NAMED 4-felt absorbs. No injectivity hypothesis, no global existential. -/
+theorem turnReceipt_binds_or_collides {t t' : Dregg2.Exec.Turn}
+    (h : turnReceipt compressN t = turnReceipt compressN t') :
+    t = t' ∨ ReceiptColl compressN t t' := by
+  by_cases hp : receiptFelts t = receiptFelts t'
+  · exact Or.inl (receiptFelts_injective hp)
+  · exact Or.inr ⟨hp, h⟩
+
+/-- **`LogFeltsColl compressN L L'`** — a receipt-level equivocation at a pair of turns DRAWN FROM
+the two logs in play. Bounded to the named lists (the `StateCommitLeafRegrounded.FrameLeafColl`
+shape); it is NOT the global "some two turns collide", which pigeonhole would supply for free. -/
+def LogFeltsColl (L L' : List Dregg2.Exec.Turn) : Prop :=
+  ∃ t ∈ L, ∃ t' ∈ L', ReceiptColl compressN t t'
+
+/-- **⚑ UNCONDITIONAL receipt-felt-list binding.** The receipt-felt list determines the audit log, OR
+a named pair of its turns collides. Structural recursion mirrors the injective original. -/
+theorem logFelts_binds_or_collides :
     ∀ {L L' : List Dregg2.Exec.Turn}, logFelts compressN L = logFelts compressN L' →
-      OrBreak (SpongeCollision compressN) (L = L')
-  | [], [], _ => OrBreak.ok rfl
+      L = L' ∨ LogFeltsColl compressN L L'
+  | [], [], _ => Or.inl rfl
   | [], _ :: _, h => by simp [logFelts] at h
   | _ :: _, [], h => by simp [logFelts] at h
   | x :: xs, y :: ys, h => by
     simp only [logFelts, List.map_cons, List.cons.injEq] at h
-    exact OrBreak.map₂ (fun (hx : x = y) (hxs : xs = ys) => by rw [hx, hxs])
-      (turnReceipt_binds_orBreak compressN h.1)
-      (logFelts_binds_orBreak (L := xs) (L' := ys) h.2)
+    rcases turnReceipt_binds_or_collides compressN h.1 with hx | hc
+    · rcases logFelts_binds_or_collides (L := xs) (L' := ys) h.2 with hxs | ⟨t, ht, t', ht', hc⟩
+      · exact Or.inl (by rw [hx, hxs])
+      · exact Or.inr ⟨t, List.mem_cons_of_mem _ ht, t', List.mem_cons_of_mem _ ht', hc⟩
+    · exact Or.inr ⟨x, by simp, y, by simp, hc⟩
 
-/-- **⚑ Twin of `logRoot_injective` — THE LOG ROOT BINDS THE WHOLE AUDIT LOG, FLOOR-FREE.** Two audit
-logs with equal receipt-index roots are EQUAL, OR the proof names a concrete collision of the deployed
-sponge. A node that keeps the published root while suppressing, forging, reordering or truncating a
-receipt therefore does not merely "violate an assumption" — it EXHIBITS a `SpongeCollision compressN`.
-This is the non-omission keystone at deployed parameters, which `logRoot_injective` never was. -/
+/-- **`LogRootColl compressN L L'`** — the receipt-index root equivocated on the two NAMED logs: the
+sponge collided at the two named felt lists, or a named receipt pair did. -/
+def LogRootColl (L L' : List Dregg2.Exec.Turn) : Prop :=
+  SpongeColl compressN (logFelts compressN L) (logFelts compressN L')
+    ∨ LogFeltsColl compressN L L'
+
+/-- **⚑ THE UNCONDITIONAL LOG-ROOT BINDING — the non-omission primitive at deployed parameters.**
+Two audit logs with equal receipt-index roots are EQUAL, OR the NAMED residual `LogRootColl` holds at
+the exact argument pairs the extraction visits. No `compressNInjective` (refuted), no
+`SpongeCollision` (free): a node that keeps the published root while suppressing, forging, reordering
+or truncating a receipt must break the deployed sponge AT A PAIR THIS THEOREM NAMES. -/
+theorem logRoot_binds_or_collides {L L' : List Dregg2.Exec.Turn}
+    (h : logRoot compressN L = logRoot compressN L') :
+    L = L' ∨ LogRootColl compressN L L' := by
+  by_cases hp : logFelts compressN L = logFelts compressN L'
+  · exact Or.imp_right Or.inr (logFelts_binds_or_collides compressN hp)
+  · exact Or.inr (Or.inl ⟨hp, h⟩)
+
+/-- **S3** — the injective original's conclusion, from the PER-INSTANCE residual at the named pair. -/
+theorem logRoot_binds_of_noColl {L L' : List Dregg2.Exec.Turn}
+    (hno : ¬ LogRootColl compressN L L')
+    (h : logRoot compressN L = logRoot compressN L') : L = L' :=
+  (logRoot_binds_or_collides compressN h).resolve_right hno
+
+/-! #### The FREE-DISJUNCT twins, retained as ⚠ BRIDGE ONLY and re-derived through the port.
+
+Each `_orBreak` below is now `_or_collides` with its NAMED pair forgotten into the global existential
+— which is exactly the step that makes it free. They are kept (consumers in `Lightclient/
+NonOmissionAttack` still open them) and re-derived, so the strength relation is machine-checked
+rather than asserted; nothing in this file's ported chain consumes them. -/
+
+/-- A named receipt collision cashes out as a sponge break (⚠ the direction that LOSES the pair). -/
+theorem ReceiptColl.toSponge {t t' : Dregg2.Exec.Turn} (h : ReceiptColl compressN t t') :
+    SpongeCollision compressN := ⟨_, _, h.1, h.2⟩
+
+/-- A named receipt-felt-list collision cashes out as a sponge break. -/
+theorem LogFeltsColl.toSponge {L L' : List Dregg2.Exec.Turn} (h : LogFeltsColl compressN L L') :
+    SpongeCollision compressN := by
+  obtain ⟨_, _, _, _, hc⟩ := h
+  exact hc.toSponge compressN
+
+/-- A named log-root collision cashes out as a sponge break. -/
+theorem LogRootColl.toSponge {L L' : List Dregg2.Exec.Turn} (h : LogRootColl compressN L L') :
+    SpongeCollision compressN := by
+  rcases h with ⟨hne, heq⟩ | hc
+  · exact ⟨_, _, hne, heq⟩
+  · exact hc.toSponge compressN
+
+/-- ⚠ **BRIDGE ONLY.** `SpongeCollision compressN` is a GLOBAL existential, hence FREE at every
+field-bounded sponge, so this dichotomy is `True` as deployed. `turnReceipt_binds_or_collides` is the
+form that discriminates. -/
+theorem turnReceipt_binds_orBreak {t t' : Dregg2.Exec.Turn}
+    (h : turnReceipt compressN t = turnReceipt compressN t') :
+    OrBreak (SpongeCollision compressN) (t = t') :=
+  Or.imp_right (ReceiptColl.toSponge compressN) (turnReceipt_binds_or_collides compressN h)
+
+/-- ⚠ **BRIDGE ONLY** (see `turnReceipt_binds_orBreak`). -/
+theorem logFelts_binds_orBreak {L L' : List Dregg2.Exec.Turn}
+    (h : logFelts compressN L = logFelts compressN L') :
+    OrBreak (SpongeCollision compressN) (L = L') :=
+  Or.imp_right (LogFeltsColl.toSponge compressN) (logFelts_binds_or_collides compressN h)
+
+/-- ⚠ **BRIDGE ONLY.** Announced as "the non-omission keystone at deployed parameters" in
+`ee18461c1`; it is not — its disjunct is supplied by pigeonhole at the deployed sponge.
+`logRoot_binds_or_collides` is the surviving statement. -/
 theorem logRoot_binds_orBreak {L L' : List Dregg2.Exec.Turn}
     (h : logRoot compressN L = logRoot compressN L') :
-    OrBreak (SpongeCollision compressN) (L = L') := by
-  unfold logRoot at h
-  exact OrBreak.bind (spongeN_orBreak compressN h) (logFelts_binds_orBreak compressN)
+    OrBreak (SpongeCollision compressN) (L = L') :=
+  Or.imp_right (LogRootColl.toSponge compressN) (logRoot_binds_or_collides compressN h)
 
 /-- `turnReceipt` is injective: a receipt felt commits the whole turn. ⚠ **BRIDGE ONLY** — the
 `compressNInjective` premise is FALSE at deployed width; re-derived through `turnReceipt_binds_orBreak`
@@ -313,6 +438,210 @@ theorem seam_roots_chain (s s' : ChainStep)
   unfold ChainStep.newRoot ChainStep.oldRoot
   rw [hstate, hturn]
 
+/-! ### ⚑⚑ THE SEAM RESIDUAL, PER-INSTANCE (2026-08-01) — the port of §5's three teeth.
+
+Every seam theorem does the same two things: peel ONE outer rotated sponge at ONE NAMED limb pair,
+then hand the kernel-digest limb to the whole-kernel binding or the receipt-log limb to the log root.
+Both callees already have per-instance ports (`StateCommitReduce.recStateCommit_binds_kernel_-
+or_collidesFin`, residual `StateCommitLeafRegrounded.RecStateCommitColl`; `logRoot_binds_or_collides`,
+residual `LogRootColl`), so the seam residual is exactly the union of the outer sponge event at the
+named limb pair and the callee's residual — never a global existential. -/
+
+/-- The two limbs the deployed rotated commit absorbs at a state/turn — `chainedCommit`'s SPONGE
+ARGUMENT, named so the outer peel's residual can name the specific pair. -/
+def seamLimbs (st : RecChainedState) (t : Dregg2.Exec.Turn) : List ℤ :=
+  [recStateCommit CH RH cmb compress compressN st.kernel t, logRoot compressN st.log]
+
+/-- `chainedCommit` IS the sponge of `seamLimbs` (definitional). -/
+theorem chainedCommit_eq (st : RecChainedState) (t : Dregg2.Exec.Turn) :
+    chainedCommit CH RH cmb compress compressN st t
+      = compressN (seamLimbs CH RH cmb compress compressN st t) := rfl
+
+/-- The seam tooth, restated at the sponge argument the peel actually inspects. -/
+theorem seam_limbs_of_tooth (s s' : ChainStep) (hturn : s.turn = s'.turn)
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    compressN (seamLimbs CH RH cmb compress compressN s.post s'.turn)
+      = compressN (seamLimbs CH RH cmb compress compressN s'.pre s'.turn) := by
+  unfold ChainStep.newRoot ChainStep.oldRoot at htooth
+  rw [hturn] at htooth
+  exact htooth
+
+/-- **`SeamSpongeColl s s'`** — the OUTER rotated sponge collided at the seam's NAMED limb pair. -/
+def SeamSpongeColl (s s' : ChainStep) : Prop :=
+  SpongeColl compressN (seamLimbs CH RH cmb compress compressN s.post s'.turn)
+    (seamLimbs CH RH cmb compress compressN s'.pre s'.turn)
+
+/-- **`SeamStateColl s s'`** — the outer sponge collided at the named limb pair, or the ROOT COMBINER
+did at the named `(cellDigest, RH)` pair. The residual of the commitment-level seam recovery. -/
+def SeamStateColl (s s' : ChainStep) : Prop :=
+  SeamSpongeColl CH RH cmb compress compressN s s'
+    ∨ CompressColl cmb
+        (cellDigest CH compress compressN s.post.kernel s'.turn) (RH s.post.kernel)
+        (cellDigest CH compress compressN s'.pre.kernel s'.turn) (RH s'.pre.kernel)
+
+/-- **`SeamKernelColl s s'`** — the outer sponge collided at the named limb pair, or one of the four
+commitment primitives did at the argument pairs `RecStateCommitColl` names. -/
+def SeamKernelColl (s s' : ChainStep) : Prop :=
+  SeamSpongeColl CH RH cmb compress compressN s s'
+    ∨ RecStateCommitColl CH RH cmb compress compressN s.post.kernel s'.pre.kernel s'.turn
+
+/-- **`SeamLogColl s s'`** — the outer sponge collided at the named limb pair, or the receipt-index
+root did at the named log pair. The NARROW seam residual: this leg costs only the sponge. -/
+def SeamLogColl (s s' : ChainStep) : Prop :=
+  SeamSpongeColl CH RH cmb compress compressN s s'
+    ∨ LogRootColl compressN s.post.log s'.pre.log
+
+/-- **⚑ `root_tooth_pins_state_or_collides` — THE COMMITMENT-LEVEL SEAM RECOVERY, UNCONDITIONAL.**
+An agreeing root tooth at a matched turn-context forces the adjacent cell-digests AND rest-hashes
+equal, OR the NAMED residual `SeamStateColl` holds at the exact pairs the extraction visits. No
+injectivity hypothesis, no global collision existential. -/
+theorem root_tooth_pins_state_or_collides (s s' : ChainStep)
+    (hturn : s.turn = s'.turn)
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    (cellDigest CH compress compressN s.post.kernel s'.turn
+        = cellDigest CH compress compressN s'.pre.kernel s'.turn
+      ∧ RH s.post.kernel = RH s'.pre.kernel)
+      ∨ SeamStateColl CH RH cmb compress compressN s s' := by
+  have hsp := seam_limbs_of_tooth CH RH cmb compress compressN s s' hturn htooth
+  by_cases hp : seamLimbs CH RH cmb compress compressN s.post s'.turn
+      = seamLimbs CH RH cmb compress compressN s'.pre s'.turn
+  · have hlimb : recStateCommit CH RH cmb compress compressN s.post.kernel s'.turn
+        = recStateCommit CH RH cmb compress compressN s'.pre.kernel s'.turn := by
+      simp only [seamLimbs, List.cons.injEq, and_true] at hp
+      exact hp.1
+    exact Or.imp_right Or.inr
+      (recStateCommit_binds_or_collides CH RH cmb compress compressN
+        s.post.kernel s'.pre.kernel s'.turn hlimb)
+  · exact Or.inr (Or.inl ⟨hp, hsp⟩)
+
+/-- **S3** — the injective original's conclusion, from the per-instance residual at the named pair. -/
+theorem root_tooth_pins_state_of_noColl (s s' : ChainStep)
+    (hturn : s.turn = s'.turn)
+    (hno : ¬ SeamStateColl CH RH cmb compress compressN s s')
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    cellDigest CH compress compressN s.post.kernel s'.turn
+        = cellDigest CH compress compressN s'.pre.kernel s'.turn
+      ∧ RH s.post.kernel = RH s'.pre.kernel :=
+  (root_tooth_pins_state_or_collides CH RH cmb compress compressN s s' hturn htooth).resolve_right
+    hno
+
+/-- **⚑⚑ `root_tooth_pins_kernel_or_collides` — THE STRENGTHENED SEAM RECOVERY, UNCONDITIONAL.**
+An agreeing root tooth at a matched turn-context forces the adjacent KERNELS equal, OR the NAMED
+four-way residual `SeamKernelColl` holds. `RestHashIffFrameFin` is the one carried premise (a
+structural rest-frame correspondence, not a hash floor — `Verify.RestFrameFiniteSupportSuccessor`);
+`AccountsWF`/`FiniteRepresentable` are structural. This is what a light client seeing only matching
+roots genuinely learns AT THE DEPLOYED HASH. -/
+theorem root_tooth_pins_kernel_or_collides
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH) (s s' : ChainStep)
+    (hwf : AccountsWF s.post.kernel) (hwf' : AccountsWF s'.pre.kernel)
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable s.post.kernel)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable s'.pre.kernel)
+    (hturn : s.turn = s'.turn)
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    s.post.kernel = s'.pre.kernel ∨ SeamKernelColl CH RH cmb compress compressN s s' := by
+  have hsp := seam_limbs_of_tooth CH RH cmb compress compressN s s' hturn htooth
+  by_cases hp : seamLimbs CH RH cmb compress compressN s.post s'.turn
+      = seamLimbs CH RH cmb compress compressN s'.pre s'.turn
+  · have hlimb : recStateCommit CH RH cmb compress compressN s.post.kernel s'.turn
+        = recStateCommit CH RH cmb compress compressN s'.pre.kernel s'.turn := by
+      simp only [seamLimbs, List.cons.injEq, and_true] at hp
+      exact hp.1
+    exact Or.imp_right Or.inr
+      (recStateCommit_binds_kernel_or_collidesFin CH cmb compress compressN RH hRest
+        s.post.kernel s'.pre.kernel s'.turn hwf hwf' hfin hfin' hlimb)
+  · exact Or.inr (Or.inl ⟨hp, hsp⟩)
+
+/-- **S3** — the injective original's conclusion, from the per-instance residual at the named seam. -/
+theorem root_tooth_pins_kernel_of_noColl
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH) (s s' : ChainStep)
+    (hwf : AccountsWF s.post.kernel) (hwf' : AccountsWF s'.pre.kernel)
+    (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable s.post.kernel)
+    (hfin' : Dregg2.Circuit.RestFrameFin.FiniteRepresentable s'.pre.kernel)
+    (hturn : s.turn = s'.turn)
+    (hno : ¬ SeamKernelColl CH RH cmb compress compressN s s')
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    s.post.kernel = s'.pre.kernel :=
+  (root_tooth_pins_kernel_or_collides CH RH cmb compress compressN hRest s s' hwf hwf' hfin hfin'
+    hturn htooth).resolve_right hno
+
+/-- **⚑ `root_tooth_pins_log_or_collides` — THE NON-OMISSION SEAM TOOTH, UNCONDITIONAL.** An agreeing
+root tooth at a matched turn-context forces the adjacent RECEIPT LOGS equal, OR the NAMED residual
+`SeamLogColl` holds. A node that drops, forges, reorders or truncates a receipt must break the
+deployed sponge at a pair THIS THEOREM NAMES. -/
+theorem root_tooth_pins_log_or_collides (s s' : ChainStep)
+    (hturn : s.turn = s'.turn)
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    s.post.log = s'.pre.log ∨ SeamLogColl CH RH cmb compress compressN s s' := by
+  have hsp := seam_limbs_of_tooth CH RH cmb compress compressN s s' hturn htooth
+  by_cases hp : seamLimbs CH RH cmb compress compressN s.post s'.turn
+      = seamLimbs CH RH cmb compress compressN s'.pre s'.turn
+  · have hlimb : logRoot compressN s.post.log = logRoot compressN s'.pre.log := by
+      simp only [seamLimbs, List.cons.injEq, and_true] at hp
+      exact hp.2
+    exact Or.imp_right Or.inr (logRoot_binds_or_collides compressN hlimb)
+  · exact Or.inr (Or.inl ⟨hp, hsp⟩)
+
+/-- **S3** — the injective original's conclusion, from the per-instance residual at the named seam. -/
+theorem root_tooth_pins_log_of_noColl (s s' : ChainStep)
+    (hturn : s.turn = s'.turn)
+    (hno : ¬ SeamLogColl CH RH cmb compress compressN s s')
+    (htooth : ChainStep.newRoot CH RH cmb compress compressN s
+                = ChainStep.oldRoot CH RH cmb compress compressN s') :
+    s.post.log = s'.pre.log :=
+  (root_tooth_pins_log_or_collides CH RH cmb compress compressN s s' hturn htooth).resolve_right hno
+
+/-! #### The cash-out maps (⚠ the direction that LOSES the named pair, kept only for the bridges). -/
+
+/-- A `RecStateCommitColl` at a named pair cashes out as a `StateBreakP` — the four-way apex break
+with the pair FORGOTTEN. ⚠ It is that forgetting that makes the target free at deployed parameters
+(`StateCommitReduce.orBreak_stateBreakP_iff_True`); nothing on a ported path may travel this way. -/
+theorem stateBreakP_of_recStateCommitColl {k k' : Dregg2.Exec.RecordKernelState}
+    {t : Dregg2.Exec.Turn} (h : RecStateCommitColl CH RH cmb compress compressN k k' t) :
+    StateBreakP CH cmb compress compressN := by
+  rcases h with hr | hn | hf | hm
+  · exact StateBreakP.ofCmb CH cmb compress compressN hr.extracts
+  · exact StateBreakP.ofCompress CH cmb compress compressN hn.extracts
+  · rcases hf.extracts with hs | hc
+    · exact StateBreakP.ofSponge CH cmb compress compressN hs
+    · exact StateBreakP.ofCell CH cmb compress compressN hc
+  · rcases hm.extracts with hn2 | hc
+    · exact StateBreakP.ofCompress CH cmb compress compressN hn2
+    · exact StateBreakP.ofCell CH cmb compress compressN hc
+
+/-- The seam sponge event cashes out as a bare sponge existential. -/
+theorem SeamSpongeColl.toSponge {s s' : ChainStep}
+    (h : SeamSpongeColl CH RH cmb compress compressN s s') : SpongeCollision compressN :=
+  ⟨_, _, h.1, h.2⟩
+
+/-- The kernel seam residual cashes out as the apex break. -/
+theorem SeamKernelColl.toStateBreak {s s' : ChainStep}
+    (h : SeamKernelColl CH RH cmb compress compressN s s') :
+    StateBreakP CH cmb compress compressN := by
+  rcases h with hs | hk
+  · exact StateBreakP.ofSponge CH cmb compress compressN (hs.toSponge CH RH cmb compress compressN)
+  · exact stateBreakP_of_recStateCommitColl CH RH cmb compress compressN hk
+
+/-- The commitment-level seam residual cashes out as the apex break. -/
+theorem SeamStateColl.toStateBreak {s s' : ChainStep}
+    (h : SeamStateColl CH RH cmb compress compressN s s') :
+    StateBreakP CH cmb compress compressN := by
+  rcases h with hs | hc
+  · exact StateBreakP.ofSponge CH cmb compress compressN (hs.toSponge CH RH cmb compress compressN)
+  · exact StateBreakP.ofCmb CH cmb compress compressN hc.extracts
+
+/-- The log seam residual cashes out as a bare sponge existential. -/
+theorem SeamLogColl.toSponge {s s' : ChainStep}
+    (h : SeamLogColl CH RH cmb compress compressN s s') : SpongeCollision compressN := by
+  rcases h with hs | hl
+  · exact hs.toSponge CH RH cmb compress compressN
+  · exact hl.toSponge compressN
+
 /-- **`root_tooth_pins_state` (THE CR RECOVERY).** Under collision-resistance of the
 commitment combiner, the ROOT-level tooth pins the underlying full-state COMMITMENT: if two steps
 share a turn-context and their seam roots agree, then their cell-digests AND rest-hashes agree
@@ -329,17 +658,11 @@ theorem root_tooth_pins_state_orBreak (s s' : ChainStep)
     OrBreak (StateBreakP CH cmb compress compressN)
       (cellDigest CH compress compressN s.post.kernel s'.turn
           = cellDigest CH compress compressN s'.pre.kernel s'.turn
-        ∧ RH s.post.kernel = RH s'.pre.kernel) := by
-  unfold ChainStep.newRoot ChainStep.oldRoot chainedCommit at htooth
-  rw [hturn] at htooth
-  -- original: `hCompressN _ _ htooth` — the OUTER rotated-sponge peel, now an `OrBreak` leaf.
-  refine OrBreak.bind (OrBreak.weaken (StateBreakP.ofSponge CH cmb compress compressN)
-    (spongeN_orBreak compressN htooth)) ?_
-  intro hlimbs
-  simp only [List.cons.injEq, and_true] at hlimbs
-  -- original: `recStateCommit_binds … hCmb …` — now `StateCommitReduceRaw`'s floor-free twin.
-  exact recStateCommit_binds_orBreak CH cmb compress compressN RH
-    s.post.kernel s'.pre.kernel s'.turn hlimbs.1
+        ∧ RH s.post.kernel = RH s'.pre.kernel) :=
+  -- ⚠ BRIDGE ONLY (2026-08-01): re-derived from the per-instance port by FORGETTING the named pair,
+  -- which is exactly the step that makes the disjunct free at deployed parameters.
+  Or.imp_right (SeamStateColl.toStateBreak CH RH cmb compress compressN)
+    (root_tooth_pins_state_or_collides CH RH cmb compress compressN s s' hturn htooth)
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `compressInjective cmb` / `compressNInjective compressN`
 are REFUTED at deployed BabyBear width, so this statement is VACUOUSLY true there and the light-client
@@ -381,18 +704,13 @@ theorem root_tooth_pins_kernel_orBreak
     (hturn : s.turn = s'.turn)
     (htooth : ChainStep.newRoot CH RH cmb compress compressN s
                 = ChainStep.oldRoot CH RH cmb compress compressN s') :
-    OrBreak (StateBreakP CH cmb compress compressN) (s.post.kernel = s'.pre.kernel) := by
-  unfold ChainStep.newRoot ChainStep.oldRoot chainedCommit at htooth
-  rw [hturn] at htooth
-  -- original: `hCompressN _ _ htooth` — the OUTER rotated-sponge peel, now an `OrBreak` leaf.
-  refine OrBreak.bind (OrBreak.weaken (StateBreakP.ofSponge CH cmb compress compressN)
-    (spongeN_orBreak compressN htooth)) ?_
-  intro hlimbs
-  simp only [List.cons.injEq, and_true] at hlimbs
-  -- original: `recStateCommit_binds_kernel … hCmb hCompress hCompressN hLeaf hRest …` — all four
-  -- refuted injectivities gone; only the non-hash `RestHashIffFrameFin` modelling premise remains.
-  exact recStateCommit_binds_kernel_orBreak CH cmb compress compressN RH hRest
-    s.post.kernel s'.pre.kernel s'.turn hwf hwf' hfin hfin' hlimbs.1
+    OrBreak (StateBreakP CH cmb compress compressN) (s.post.kernel = s'.pre.kernel) :=
+  -- ⚠ BRIDGE ONLY (2026-08-01): `StateBreakP` opens with a GLOBAL sponge existential, so this
+  -- dichotomy is `True` at deployed parameters. `root_tooth_pins_kernel_or_collides` is the form
+  -- that discriminates; this one is retained only to machine-check that nothing was given up.
+  Or.imp_right (SeamKernelColl.toStateBreak CH RH cmb compress compressN)
+    (root_tooth_pins_kernel_or_collides CH RH cmb compress compressN hRest s s' hwf hwf' hfin hfin'
+      hturn htooth)
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** All four hash premises are REFUTED at deployed BabyBear
 width (`HashFloorHonesty.*_false_of_finite_range`, `StateCommitFloorRegrounded.*_false_babyBear`), so
@@ -433,14 +751,10 @@ theorem root_tooth_pins_log_orBreak (s s' : ChainStep)
     (hturn : s.turn = s'.turn)
     (htooth : ChainStep.newRoot CH RH cmb compress compressN s
                 = ChainStep.oldRoot CH RH cmb compress compressN s') :
-    OrBreak (SpongeCollision compressN) (s.post.log = s'.pre.log) := by
-  unfold ChainStep.newRoot ChainStep.oldRoot chainedCommit at htooth
-  rw [hturn] at htooth
-  refine OrBreak.bind (spongeN_orBreak compressN htooth) ?_
-  intro hlimbs
-  simp only [List.cons.injEq, and_true] at hlimbs
-  -- the second limb is the receipt-log root; `logRoot_binds_orBreak` recovers the audit log.
-  exact logRoot_binds_orBreak compressN hlimbs.2
+    OrBreak (SpongeCollision compressN) (s.post.log = s'.pre.log) :=
+  -- ⚠ BRIDGE ONLY (2026-08-01). `root_tooth_pins_log_or_collides` is the form that discriminates.
+  Or.imp_right (SeamLogColl.toSponge CH RH cmb compress compressN)
+    (root_tooth_pins_log_or_collides CH RH cmb compress compressN s s' hturn htooth)
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `compressNInjective compressN` is REFUTED at deployed
 width, so "the light client CATCHES a dropped receipt" was, as stated here, a claim about a sponge the
@@ -574,7 +888,7 @@ def SeamStruct : List ChainStep → Prop
         ∧ Dregg2.Circuit.RestFrameFin.FiniteRepresentable s'.pre.kernel)
       ∧ SeamStruct (s' :: rest)
 
-/-- **`kernelChained_of_verified` (THE DERIVATION — state continuity FROM verification).** From the
+/-! ### **`kernelChained_of_verified` (THE DERIVATION — state continuity FROM verification).** From the
 genesis pin `s₀.pre.kernel = g.kernel` (genesis is public/agreed — NOT the malicious surface), the
 verified root tooth `ChainBound` (what a verified `bindingProof` delivers, = `AggregateAttests.ordered`),
 and the structural envelope `SeamStruct` (matched turns + `AccountsWF`), the whole chain is
@@ -582,26 +896,77 @@ and the structural envelope `SeamStruct` (matched turns + `AccountsWF`), the who
 `root_tooth_pins_kernel` from the `ChainBound` tooth — it is no longer the prover-supplied `StateChained`
 hypothesis the critique flagged. Kernel continuity (hence conservation) follows from the VERIFIED root
 under the CR floor, with only the genesis pin + structural envelope as honest inputs. -/
-theorem kernelChained_of_verified_orBreak
+/-- **`ChainKernelColl steps`** — SOME adjacent seam of THE NAMED LIST equivocated. Bounded to the
+steps in play (the `FrameLeafColl` shape): it names a seam of `steps`, never "some seam somewhere". -/
+def ChainKernelColl : List ChainStep → Prop
+  | []              => False
+  | [_]             => False
+  | s :: s' :: rest =>
+      SeamKernelColl CH RH cmb compress compressN s s'
+        ∨ ChainKernelColl (s' :: rest)
+
+/-- **⚑⚑ `kernelChained_of_verified_or_collides` — KERNEL CONTINUITY FROM VERIFICATION,
+UNCONDITIONAL.** From the genesis pin, the VERIFIED root tooth `ChainBound`, and the structural
+envelope `SeamStruct`, the whole chain is `KernelChained`, OR the NAMED residual `ChainKernelColl`
+holds at one of the chain's own seams. No injectivity hypothesis and no global existential: the
+adversary must name the seam and the argument pair it broke. -/
+theorem kernelChained_of_verified_or_collides
     (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (g : RecChainedState) :
     ∀ steps : List ChainStep,
       KernelGenesisPin g steps →
       ChainBound CH RH cmb compress compressN steps →
       SeamStruct steps →
-      OrBreak (StateBreakP CH cmb compress compressN) (KernelChained g steps)
-  | [], _, _, _ => OrBreak.ok trivial
-  | [_], hgen, _, _ => OrBreak.ok ⟨hgen, trivial⟩
+      KernelChained g steps ∨ ChainKernelColl CH RH cmb compress compressN steps
+  | [], _, _, _ => Or.inl trivial
+  | [_], hgen, _, _ => Or.inl ⟨hgen, trivial⟩
   | s :: s' :: rest, hgen, hbound, hstruct => by
     obtain ⟨htooth, hboundrest⟩ := hbound
     obtain ⟨⟨hturn, hwf, hwf', hfin, hfin'⟩, hstructrest⟩ := hstruct
-    -- the seam is DERIVED from the verified tooth — or the chain hands back a concrete collision.
-    refine OrBreak.bind (root_tooth_pins_kernel_orBreak CH RH cmb compress compressN hRest
-      s s' hwf hwf' hfin hfin' hturn htooth) ?_
-    intro hseam
-    exact OrBreak.imp (fun htail => ⟨hgen, htail⟩)
-      (kernelChained_of_verified_orBreak hRest s.post (s' :: rest)
-        hseam.symm hboundrest hstructrest)
+    rcases root_tooth_pins_kernel_or_collides CH RH cmb compress compressN hRest
+        s s' hwf hwf' hfin hfin' hturn htooth with hseam | hc
+    · rcases kernelChained_of_verified_or_collides hRest s.post (s' :: rest)
+          hseam.symm hboundrest hstructrest with htail | hc
+      · exact Or.inl ⟨hgen, htail⟩
+      · exact Or.inr (Or.inr hc)
+    · exact Or.inr (Or.inl hc)
+
+/-- **S3** — kernel continuity from the PER-INSTANCE chain residual. -/
+theorem kernelChained_of_verified_of_noColl
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    (g : RecChainedState) (steps : List ChainStep)
+    (hgen : KernelGenesisPin g steps)
+    (hbound : ChainBound CH RH cmb compress compressN steps)
+    (hstruct : SeamStruct steps)
+    (hno : ¬ ChainKernelColl CH RH cmb compress compressN steps) :
+    KernelChained g steps :=
+  (kernelChained_of_verified_or_collides CH RH cmb compress compressN hRest g steps hgen hbound
+    hstruct).resolve_right hno
+
+/-- The chain residual cashes out as the apex break (⚠ the direction that LOSES the seam). -/
+theorem ChainKernelColl.toStateBreak : ∀ {steps : List ChainStep},
+    ChainKernelColl CH RH cmb compress compressN steps → StateBreakP CH cmb compress compressN
+  | [], h => False.elim h
+  | [_], h => False.elim h
+  | _ :: s' :: rest, h => by
+    rcases h with hc | hrest
+    · exact SeamKernelColl.toStateBreak CH RH cmb compress compressN hc
+    · exact ChainKernelColl.toStateBreak (steps := s' :: rest) hrest
+
+/-- ⚠ **BRIDGE ONLY (2026-08-01).** Re-derived from `kernelChained_of_verified_or_collides` by
+forgetting which seam and which pair broke; `StateBreakP`'s leading global sponge existential then
+makes the dichotomy `True` at deployed parameters. Retained so the strength relation is
+machine-checked; nothing on the ported path consumes it. -/
+theorem kernelChained_of_verified_orBreak
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    (g : RecChainedState) (steps : List ChainStep)
+    (hgen : KernelGenesisPin g steps)
+    (hbound : ChainBound CH RH cmb compress compressN steps)
+    (hstruct : SeamStruct steps) :
+    OrBreak (StateBreakP CH cmb compress compressN) (KernelChained g steps) :=
+  Or.imp_right (ChainKernelColl.toStateBreak CH RH cmb compress compressN)
+    (kernelChained_of_verified_or_collides CH RH cmb compress compressN hRest g steps hgen hbound
+      hstruct)
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** Four REFUTED premises ⇒ vacuous at deployed width.
 `kernelChained_of_verified_orBreak` above is the surviving form. -/
@@ -637,6 +1002,33 @@ VERIFIED root tooth `ChainBound` (= `AggregateAttests.ordered`), and the structu
 `root_tooth_pins_kernel`) with `kernelChained_conserves` (kernel continuity ⇒ conservation). This is
 the precise statement the critique asked for: "trusting the aggregate trusts a no-mint/no-burn history"
 now follows from the VERIFIED root, not from the prover's honesty about state continuity. -/
+theorem verified_history_conserves_or_collides
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    (g : RecChainedState) (steps : List ChainStep)
+    (hgen : KernelGenesisPin g steps)
+    (hbound : ChainBound CH RH cmb compress compressN steps)
+    (hstruct : SeamStruct steps) :
+    recTotal (lastStateOf g steps).kernel = recTotal g.kernel
+      ∨ ChainKernelColl CH RH cmb compress compressN steps :=
+  Or.imp_left (kernelChained_conserves g steps)
+    (kernelChained_of_verified_or_collides CH RH cmb compress compressN hRest g steps hgen hbound
+      hstruct)
+
+/-- **S3 — THE HEADLINE, from the PER-INSTANCE residual.** Conservation across the whole history from
+`verify`-supplied inputs plus ONE refutable side condition naming the chain's own seams. -/
+theorem verified_history_conserves_of_noColl
+    (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
+    (g : RecChainedState) (steps : List ChainStep)
+    (hgen : KernelGenesisPin g steps)
+    (hbound : ChainBound CH RH cmb compress compressN steps)
+    (hstruct : SeamStruct steps)
+    (hno : ¬ ChainKernelColl CH RH cmb compress compressN steps) :
+    recTotal (lastStateOf g steps).kernel = recTotal g.kernel :=
+  (verified_history_conserves_or_collides CH RH cmb compress compressN hRest g steps hgen hbound
+    hstruct).resolve_right hno
+
+/-- ⚠ **BRIDGE ONLY (2026-08-01).** The free-disjunct twin, re-derived from the port.
+`verified_history_conserves_or_collides` is the form that discriminates. -/
 theorem verified_history_conserves_orBreak
     (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (g : RecChainedState) (steps : List ChainStep)
@@ -645,8 +1037,9 @@ theorem verified_history_conserves_orBreak
     (hstruct : SeamStruct steps) :
     OrBreak (StateBreakP CH cmb compress compressN)
       (recTotal (lastStateOf g steps).kernel = recTotal g.kernel) :=
-  OrBreak.imp (kernelChained_conserves g steps)
-    (kernelChained_of_verified_orBreak CH RH cmb compress compressN hRest g steps hgen hbound hstruct)
+  Or.imp_right (ChainKernelColl.toStateBreak CH RH cmb compress compressN)
+    (verified_history_conserves_or_collides CH RH cmb compress compressN hRest g steps hgen hbound
+      hstruct)
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** The headline "conservation from VERIFICATION ALONE" was, at
 deployed BabyBear width, conservation from four FALSE premises. `verified_history_conserves_orBreak`
@@ -690,30 +1083,74 @@ def LogGenesisPin (g : RecChainedState) : List ChainStep → Prop
   | []        => True
   | s :: _    => s.pre.log = g.log
 
-/-- **`logChained_of_verified` (THE NON-OMISSION DERIVATION — log continuity FROM verification).** From
+/-! ### **`logChained_of_verified` (THE NON-OMISSION DERIVATION — log continuity FROM verification).** From
 the genesis log pin, the VERIFIED root tooth `ChainBound` (= `AggregateAttests.ordered`), and the
 structural envelope `SeamStruct` (only its turn-match arm is used), the whole chain is `LogChained`:
 each inter-step seam `s.post.log = s'.pre.log` is DERIVED by `root_tooth_pins_log` from the verified
 tooth. So a light client verifying the aggregate root learns the receipt log chains genuinely across
 the WHOLE history — omission impossible at every folded step — with NO `hweld`, resting on the rotated
 commit's receipt-log limb under the one CR floor. -/
-theorem logChained_of_verified_orBreak (g : RecChainedState) :
+/-- **`ChainLogColl steps`** — SOME adjacent seam of THE NAMED LIST equivocated at the receipt-log
+limb. Bounded to the steps in play; the narrow (sponge-only) twin of `ChainKernelColl`. -/
+def ChainLogColl : List ChainStep → Prop
+  | []              => False
+  | [_]             => False
+  | s :: s' :: rest =>
+      SeamLogColl CH RH cmb compress compressN s s'
+        ∨ ChainLogColl (s' :: rest)
+
+/-- **⚑⚑ `logChained_of_verified_or_collides` — WHOLE-HISTORY NON-OMISSION, UNCONDITIONAL.** From the
+genesis log pin, the VERIFIED root tooth, and `SeamStruct`'s turn-match arm, the receipt log chains
+across the WHOLE history, OR the NAMED residual `ChainLogColl` holds at one of the chain's own seams.
+An omitting node must exhibit a sponge collision at a pair this theorem names. -/
+theorem logChained_of_verified_or_collides (g : RecChainedState) :
     ∀ steps : List ChainStep,
       LogGenesisPin g steps →
       ChainBound CH RH cmb compress compressN steps →
       SeamStruct steps →
-      OrBreak (SpongeCollision compressN) (LogChained g steps)
-  | [], _, _, _ => OrBreak.ok trivial
-  | [_], hgen, _, _ => OrBreak.ok ⟨hgen, trivial⟩
+      LogChained g steps ∨ ChainLogColl CH RH cmb compress compressN steps
+  | [], _, _, _ => Or.inl trivial
+  | [_], hgen, _, _ => Or.inl ⟨hgen, trivial⟩
   | s :: s' :: rest, hgen, hbound, hstruct => by
     obtain ⟨htooth, hboundrest⟩ := hbound
     obtain ⟨⟨hturn, _, _⟩, hstructrest⟩ := hstruct
-    refine OrBreak.bind
-      (root_tooth_pins_log_orBreak CH RH cmb compress compressN s s' hturn htooth) ?_
-    intro hseam
-    exact OrBreak.imp (fun htail => ⟨hgen, htail⟩)
-      (logChained_of_verified_orBreak s.post (s' :: rest)
-        hseam.symm hboundrest hstructrest)
+    rcases root_tooth_pins_log_or_collides CH RH cmb compress compressN s s' hturn htooth with
+      hseam | hc
+    · rcases logChained_of_verified_or_collides s.post (s' :: rest)
+          hseam.symm hboundrest hstructrest with htail | hc
+      · exact Or.inl ⟨hgen, htail⟩
+      · exact Or.inr (Or.inr hc)
+    · exact Or.inr (Or.inl hc)
+
+/-- **S3** — whole-history log continuity from the PER-INSTANCE chain residual. -/
+theorem logChained_of_verified_of_noColl (g : RecChainedState) (steps : List ChainStep)
+    (hgen : LogGenesisPin g steps)
+    (hbound : ChainBound CH RH cmb compress compressN steps)
+    (hstruct : SeamStruct steps)
+    (hno : ¬ ChainLogColl CH RH cmb compress compressN steps) :
+    LogChained g steps :=
+  (logChained_of_verified_or_collides CH RH cmb compress compressN g steps hgen hbound
+    hstruct).resolve_right hno
+
+/-- The log-chain residual cashes out as a bare sponge existential (⚠ loses the seam). -/
+theorem ChainLogColl.toSponge : ∀ {steps : List ChainStep},
+    ChainLogColl CH RH cmb compress compressN steps → SpongeCollision compressN
+  | [], h => False.elim h
+  | [_], h => False.elim h
+  | _ :: s' :: rest, h => by
+    rcases h with hc | hrest
+    · exact SeamLogColl.toSponge CH RH cmb compress compressN hc
+    · exact ChainLogColl.toSponge (steps := s' :: rest) hrest
+
+/-- ⚠ **BRIDGE ONLY (2026-08-01).** Re-derived from the port.
+`logChained_of_verified_or_collides` is the form that discriminates. -/
+theorem logChained_of_verified_orBreak (g : RecChainedState) (steps : List ChainStep)
+    (hgen : LogGenesisPin g steps)
+    (hbound : ChainBound CH RH cmb compress compressN steps)
+    (hstruct : SeamStruct steps) :
+    OrBreak (SpongeCollision compressN) (LogChained g steps) :=
+  Or.imp_right (ChainLogColl.toSponge CH RH cmb compress compressN)
+    (logChained_of_verified_or_collides CH RH cmb compress compressN g steps hgen hbound hstruct)
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `logChained_of_verified_orBreak` above is the deployed-true
 whole-history non-omission statement: the log chains at every folded step, or the omitting node
@@ -836,11 +1273,205 @@ theorem tooth_rejects_broken_order (s s' : ChainStep)
   intro h
   exact hbreak h.1
 
+/-! ## 7b. ⚑⚑ TEETH FOR THE PER-INSTANCE RESIDUALS — SATISFIABLE, REFUTABLE, LOAD-BEARING.
+
+These are the three discriminations the free-disjunct form provably CANNOT make: at deployed
+parameters `OrBreak (StateBreakP …) P` and `OrBreak (SpongeCollision …) P` are literally `True`
+(`StateCommitReduce.orBreak_stateBreakP_iff_True`, `SpongeCollisionShirk.orBreak_spongeCollision_-
+iff_True`), so nothing about them is satisfiable-but-not-provable and no hypothesis of theirs can be
+load-bearing. -/
+
+/-- **TOOTH (SATISFIABLE, AT EVERY HASH).** At an HONEST seam — the post-state genuinely IS the next
+pre-state — the kernel seam residual is REFUTED outright, for every choice of the five portal
+functions (no injective one need be picked). So `¬ SeamKernelColl` is inhabited. -/
+theorem noSeamKernelColl_of_honest (s s' : ChainStep) (hst : s.post = s'.pre) :
+    ¬ SeamKernelColl CH RH cmb compress compressN s s' := by
+  rintro (hsp | hk)
+  · exact hsp.1 (by rw [hst])
+  · rw [hst] at hk
+    exact noRecStateCommitColl_diag CH RH cmb compress compressN s'.pre.kernel s'.turn hk
+
+/-- **TOOTH (SATISFIABLE, AT EVERY HASH) — log leg.** At an honest seam over an empty receipt log the
+log residual is refuted at every hash. ⚑ Note the honest asymmetry: at a NON-empty log
+`LogRootColl`'s second disjunct also covers a receipt collision BETWEEN TWO TURNS OF THAT LOG, which
+is a genuine deployed break event and not something a diagonal argument may discharge — the residual
+carries more content there, not less. -/
+theorem noSeamLogColl_of_honest_nil (s s' : ChainStep) (hst : s.post = s'.pre)
+    (hnil : s'.pre.log = []) : ¬ SeamLogColl CH RH cmb compress compressN s s' := by
+  rintro (hsp | hl)
+  · exact hsp.1 (by rw [hst])
+  · rw [hst] at hl
+    rcases hl with ⟨hne, -⟩ | ⟨t, ht, -, -, -⟩
+    · exact hne rfl
+    · rw [hnil] at ht
+      exact absurd ht (by simp)
+
+/-- A SECOND genuine executor step, from a genesis holding `500`. Needed by the chain-level tooth:
+every chain built from `honestStep` alone starts AND ends at total `100`, so no such chain can
+witness a conservation break — the break lives at a seam that JUMPS between supplies. -/
+def richGenesis : RecChainedState where
+  kernel :=
+    { accounts := {0, 1}
+    , cell := fun c => if c = 0 then .record [("balance", .int 500)]
+                       else .record [("balance", .int 0)]
+    , caps := fun _ => [] }
+  log := []
+
+/-- The rich honest step: cell `0` transfers `10` to cell `1` out of a supply of `500`. -/
+def richStep : ChainStep where
+  pre := richGenesis
+  turn := honestTurn
+  post := (recCexec richGenesis honestTurn).get (by decide)
+  commits := (Option.some_get _).symm
+
+/-- **TOOTH (REFUTABLE — the residual FIRES).** At the all-constant portal, on a seam whose two
+kernels genuinely differ, `SeamKernelColl` HOLDS: the leaf hash maps two distinct cell `Value`s
+together, which the residual sees through its `MovedColl` disjunct. So `¬ SeamKernelColl` is not a
+tautology — a lossy hash is CAUGHT at this seam, not defined away. -/
+theorem seamKernelColl_refutable :
+    SeamKernelColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) honestStep richStep := by
+  refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, rfl⟩)))))
+  intro h
+  exact absurd (congrArg Dregg2.Exec.balOf h) (by decide)
+
+/-- **TOOTH (NOT PROVABLE).** Since some instantiation satisfies the seam residual, `¬ SeamKernelColl`
+is not a schema true of every portal/seam choice — a genuine per-instance obligation, discharged case
+by case, never a floor in disguise. -/
+theorem noSeamKernelColl_not_provable :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (s s' : ChainStep),
+      ¬ SeamKernelColl CH RH cmb compress compressN s s' :=
+  fun h => h _ _ _ _ _ honestStep richStep seamKernelColl_refutable
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING) — the log seam residual, at FULL strength.** `root_tooth_pins_log_-
+of_noColl` with `hno` DELETED is FALSE — and nothing else was dropped, because that theorem carries
+no structural side conditions beyond the turn-match. At the constant sponge two genuine executor
+steps share a root while their receipt logs differ by exactly the receipt one of them recorded, which
+is the omission the keystone claims to catch. (The dual reading: delete nothing from
+`root_tooth_pins_log_orBreak` and it is STILL `True`.) -/
+theorem root_tooth_pins_log_unconditional_false :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (s s' : ChainStep),
+        s.turn = s'.turn →
+        ChainStep.newRoot CH RH cmb compress compressN s
+          = ChainStep.oldRoot CH RH cmb compress compressN s' →
+        s.post.log = s'.pre.log := by
+  intro hall
+  have h := hall (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+    (fun _ => (0 : ℤ)) honestStep honestStep rfl rfl
+  exact absurd (congrArg List.length h) (by decide)
+
+/-- **⚑ TOOTH (LOAD-BEARING) — the kernel seam residual.** `root_tooth_pins_kernel_of_noColl` with
+`hno` deleted is FALSE: at the constant portal a step's post-kernel and its own pre-kernel share a
+root while their cell-`0` balances differ (`90` vs `100`).
+
+⚠ **Stated precisely:** this drops the structural envelope (`RestHashIffFrameFin`, `AccountsWF`,
+`FiniteRepresentable`) ALONG WITH `hno`, because a `ChainStep` carries a real `recCexec` witness and
+the only such witnesses in this file run over `teethGenesis`, which is not `AccountsWF` (its dead
+cells hold `.record [("balance", .int 0)]`, not the kernel default) and not a `denote` image. What
+identifies `hno` as the load-bearing one is the companion `seamKernelColl_refutable`: the residual
+FIRES at exactly this witness, so it is the side condition that excludes the counterexample. Building
+an `AccountsWF`-and-`FiniteRepresentable` `ChainStep` pair (a `FinKernelState`-backed genesis plus a
+representability proof for the post-transfer cell map) is the named, unported strengthening. -/
+theorem root_tooth_pins_kernel_unconditional_false :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (s s' : ChainStep),
+        s.turn = s'.turn →
+        ChainStep.newRoot CH RH cmb compress compressN s
+          = ChainStep.oldRoot CH RH cmb compress compressN s' →
+        s.post.kernel = s'.pre.kernel := by
+  intro hall
+  have h := hall (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+    (fun _ => (0 : ℤ)) honestStep honestStep rfl rfl
+  exact absurd (congrArg (fun k => Dregg2.Exec.balOf (k.cell 0)) h) (by decide)
+
+/-- **⚑ TOOTH (LOAD-BEARING) — the commitment-level seam residual.** `root_tooth_pins_state_of_noColl`
+with `hno` deleted is FALSE at a portal that is NOT constant in the leaf/node layer: with
+`CH := balOf`, `compress := snd` and a constant outer sponge the tooth still holds by `rfl` while the
+two cell-digests differ (`10` vs `0`). Same precise caveat as above about the structural envelope,
+which this theorem does not carry at all. -/
+theorem root_tooth_pins_state_unconditional_false :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (s s' : ChainStep),
+        s.turn = s'.turn →
+        ChainStep.newRoot CH RH cmb compress compressN s
+          = ChainStep.oldRoot CH RH cmb compress compressN s' →
+        cellDigest CH compress compressN s.post.kernel s'.turn
+          = cellDigest CH compress compressN s'.pre.kernel s'.turn := by
+  intro hall
+  have h := hall (fun _ v => Dregg2.Exec.balOf v) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+    (fun _ b => b) (fun _ => (0 : ℤ)) honestStep honestStep rfl rfl
+  exact absurd h (by decide)
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING) — the CHAIN-LEVEL residual, on the conservation headline.**
+`verified_history_conserves_of_noColl` with `hno` deleted is FALSE: at the constant portal the
+two-step chain `[honestStep, richStep]` satisfies the genesis pin AND the verified root tooth, yet
+its endpoint total is `500` against a genesis total of `100` — value MINTED across a seam the roots
+did not pin. This is exactly the attack the headline claims to exclude, and `ChainKernelColl` is what
+excludes it (`chainKernelColl_fires_at_the_minting_chain` below, at the SAME witness).
+
+⚠ Same precise caveat as `root_tooth_pins_kernel_unconditional_false`: `SeamStruct` is dropped along
+with `hno` for the same `ChainStep`-constructibility reason, and the companion firing theorem is what
+identifies `hno` as the side condition doing the work. -/
+theorem verified_history_conserves_unconditional_false :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (g : RecChainedState) (steps : List ChainStep),
+        KernelGenesisPin g steps →
+        ChainBound CH RH cmb compress compressN steps →
+        recTotal (lastStateOf g steps).kernel = recTotal g.kernel := by
+  intro hall
+  have h := hall (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+    (fun _ => (0 : ℤ)) teethGenesis [honestStep, richStep] rfl ⟨rfl, trivial⟩
+  exact absurd h (by decide)
+
+/-- **⚑ THE RESIDUAL COVERS THE MINTING CHAIN.** The chain-level residual FIRES at exactly the
+witness that refutes the `hno`-deleted conservation headline — so the ported theorem is not merely
+narrower, it is narrower *precisely where the unported one is false*. -/
+theorem chainKernelColl_fires_at_the_minting_chain :
+    ChainKernelColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) [honestStep, richStep] :=
+  Or.inl seamKernelColl_refutable
+
 end Portal
 
 /-! ## 8. Axiom hygiene. -/
 
--- ⚑ the FLOOR-FREE twins (2026-08-01) — these are the ones that hold at the deployed sponge.
+-- ⚑⚑ THE PER-INSTANCE PORT (2026-08-01) — the statements that DISCRIMINATE at deployed parameters.
+#assert_axioms Dregg2.Distributed.HistoryAggregation.receiptFelts_injective
+#assert_axioms Dregg2.Distributed.HistoryAggregation.turnReceipt_binds_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.logFelts_binds_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.logRoot_binds_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.logRoot_binds_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_state_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_state_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_log_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_log_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.kernelChained_of_verified_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.kernelChained_of_verified_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.verified_history_conserves_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.verified_history_conserves_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.logChained_of_verified_or_collides
+#assert_axioms Dregg2.Distributed.HistoryAggregation.logChained_of_verified_of_noColl
+-- teeth: SATISFIABLE / REFUTABLE / NOT PROVABLE / LOAD-BEARING.
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamKernelColl_of_honest
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamLogColl_of_honest_nil
+#assert_axioms Dregg2.Distributed.HistoryAggregation.seamKernelColl_refutable
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamKernelColl_not_provable
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_log_unconditional_false
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_unconditional_false
+#assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_state_unconditional_false
+#assert_axioms Dregg2.Distributed.HistoryAggregation.verified_history_conserves_unconditional_false
+#assert_axioms Dregg2.Distributed.HistoryAggregation.chainKernelColl_fires_at_the_minting_chain
+
+-- ⚠ BRIDGE ONLY (the free-disjunct twins of 2026-08-01, retained and re-derived through the port).
 #assert_axioms Dregg2.Distributed.HistoryAggregation.turnReceipt_binds_orBreak
 #assert_axioms Dregg2.Distributed.HistoryAggregation.logFelts_binds_orBreak
 #assert_axioms Dregg2.Distributed.HistoryAggregation.logRoot_binds_orBreak

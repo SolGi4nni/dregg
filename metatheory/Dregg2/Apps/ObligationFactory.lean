@@ -71,9 +71,12 @@ obligee and advances to SLASHED; a DOUBLE-RESOLVE (fulfil then fulfil/slash) is 
 UNCONDITIONED slash (one whose deadline witness is wrong, AND one attempted while the condition
 holds) is rejected. Both the §VERDICT teeth are exhibited as real rejections.
 
-## §DELETION-READINESS (land-before-kill)
+## §DELETION — the burn-down LANDED (land-before-kill, then the kill)
 
-Enumerated at the foot (`§DELETION`). NOTHING is deleted here.
+Enumerated at the foot (`§DELETION`). The land-before-kill ORDER was honoured and the KILL has since
+LANDED: F1b removed the shared kernel holding-store (`Exec/RecordKernel.lean:302` — the escrow/
+obligation/bridge-LFC value "parks in factory cells' OWN `bal` columns"), and the obligation handler
+cluster went with the escrow batch (`Exec/Handlers/Escrow.lean:5-7`).
 
 NEW file only. Imports the escrow factory executor + the escrow probe (for the proved per-asset
 move-conservation lift and the `SlotCaveat`/`setField`/`fieldOf` vocabulary). Does NOT edit
@@ -677,12 +680,16 @@ def facBonded : Option RecordKernelState :=
 -- an UNKNOWN factory key never mints (fail-closed):
 #guard ((mintObligationCell facWorld 0 3 99).isSome) == false
 
-/-! ## §DELETION — the W2 deletion-readiness note (land-before-kill).
+/-! ## §DELETION — the W2 burn-down, LANDED (land-before-kill, then the kill).
 
-THIS module is the LAND-BEFORE-KILL prerequisite for the obligation verb family. Once it is the
-live obligation path (this module shipped + every obligation app re-pointed), W2 DELETES:
+THIS module was the LAND-BEFORE-KILL prerequisite for the obligation verb family; it IS the live
+obligation path and F1b then deleted the verbs. Evidence: `Exec/RecordKernel.lean:302` — the kernel
+holding-store `escrows : List EscrowRecord` "is GONE" and escrow/obligation/bridge-LFC value "parks in
+factory cells' OWN `bal` columns (`Apps/{EscrowFactory,ObligationFactory,BridgeCell}.lean`)"; the
+obligation handler cluster died with the escrow batch (`Exec/Handlers/Escrow.lean:5-7`). The list below
+is the RECORD of the burn-down:
 
-  WHAT W2 DELETES (the obligation side-table surface — `Dregg2.Exec.RecordKernel` /
+  WHAT W2 DELETED (the obligation side-table surface — `Dregg2.Exec.RecordKernel` /
   `…TurnExecutorFull`, and the Argus `CreateObligation`/`FulfillObligation`/`SlashObligation`
   effect welds in `Dregg2/Circuit/Argus/*` + `circuit/src/effect_vm/*`):
     (1) the THREE kernel arms / chain ops / `FullActionA` arms:
@@ -694,26 +701,31 @@ live obligation path (this module shipped + every obligation app re-pointed), W2
             (replaced by `slashObligation` = the gated `setFieldA` + the per-asset move).
     (2) any OFF-LEDGER obligation side-table (the obligation tag on the SHARED `EscrowRecord`
         store, or a dedicated `obligations` field on `RecordKernelState`) — DISSOLVED into the
-        minted cell's own `bal` column. (NOTE — the ORDERING CONSTRAINT: the obligation family
-        SHARES `EscrowRecord`'s store with escrow/bridge per the EscrowFactory §DELETION; the
-        shared field cannot be removed until escrow AND obligation AND bridge are all re-pointed.)
+        minted cell's own `bal` column. The ORDERING CONSTRAINT (obligation SHARED `EscrowRecord`'s
+        store with escrow/bridge, so the field could not go until all three were re-pointed) is MOOT:
+        all three landed in the SAME F1b step and `structure RecordKernelState`
+        (`RecordKernel.lean:309`) carries neither an `escrows` nor an `obligations` field at any line.
     (3) the obligation-specific held-value measure (`obligationHeldAsset` or the obligation summand
         of any combined `recTotalAssetWith…` quantity) and its accounting theory — COLLAPSED back
-        to plain `recTotalAsset`, since obligation conservation is now the ordinary per-asset move
-        law `recKExecAsset_conserves_per_asset`.
+        to plain `recTotalAsset`, which is now literally the cell-sum alone
+        (`recTotalAsset k a = ∑ c ∈ k.accounts, k.bal c a`, `RecordKernel.lean:665`), since obligation
+        conservation is the ordinary per-asset move law `recKExecAsset_conserves_per_asset`.
     (4) the obligation settle-liveness side teeth that read the side-table — SUBSUMED by the move's
         own fail-closed guard (`settle_requires_live_target` here) + the state machine.
 
-  WHAT MUST BE RE-POINTED FIRST (the land-before-kill blockers — every obligation-verb consumer):
+  WHAT HAD TO BE RE-POINTED FIRST (the land-before-kill blockers — every obligation-verb consumer; the
+  ordering below is DISCHARGED: no `def createObligationKAsset`/`fulfillObligationKAsset`/
+  `slashObligationKAsset` exists anywhere in the tree, so nothing can still be reading the verbs):
     • any `Dregg2.Apps.*` SLA/bond/staking app on the obligation verbs (e.g. `StakedSlaGated`,
       the bond/penalty apps) — re-point to `obligationFactory` + `postBond` + `fulfilObligation`/
       `slashObligation`. (Same re-point pattern as `BountyBoardGated` → `escrowFactoryEntry`.)
     • the SHARED-`EscrowRecord` twins (escrow/bridge): obligation joins escrow/swiss as a family
       that re-lands as a factory; the shared side-table field is deleted only AFTER all of them.
 
-  NOT DELETED HERE (land-before-kill): nothing above is removed in this commit — we only prove the
-  factory is a faithful replacement and enumerate the burn-down. The verb deletion is the
-  SUBSEQUENT W2 commit, gated on the re-points above all landing green.
+  DELETED (F1b): everything above is GONE — this module's commit only proved the factory a faithful
+  replacement and enumerated the burn-down; the verb deletion landed in the SUBSEQUENT W2 commit, as
+  planned. Evidence: `Exec/RecordKernel.lean:302`, `Exec/Handlers/Escrow.lean:5-7`. Do NOT cite this
+  section as a live blocker — it is the record of a completed burn-down.
 -/
 
 #assert_axioms obligationFactory_conforms

@@ -91,10 +91,12 @@ def expectedAccounts (s : RecChainedState) (args : CreateCellArgs) : Finset Cell
 def expectedBal (s : RecChainedState) (args : CreateCellArgs) : CellId → AssetId → ℤ :=
   fun c a => if c = args.newCell then 0 else s.kernel.bal c a
 
-def accountsComp (LE : CellId → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE) :
+/-- ⚑ FLOOR-FREE (2026-08-01): `accountsComponent` no longer takes `compressNInjective` /
+`listLeafInjective` as structure data — its `postClause` carries the NAMED per-instance
+`AccountsResid` disjunct instead. See the FINDING block in `Circuit/AccountsCommit.lean`. -/
+def accountsComp (LE : CellId → ℤ) (cN : List ℤ → ℤ) :
     ActiveComponent RecChainedState CreateCellArgs :=
-  accountsComponent LE cN hN hLE expectedAccounts
+  accountsComponent LE cN expectedAccounts
 
 def balComp (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
     ActiveComponent RecChainedState CreateCellArgs :=
@@ -105,12 +107,12 @@ def bornEmptyComp (D : BornEmptySideTables → ℤ) (hD : Function.Injective D) 
   bornEmptySideComponent (toKernel := chainView.toKernel) (fresh := fun _ args => args.newCell) D hD
 
 def createCellE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (_hN : compressNInjective cN) (_hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DSide : BornEmptySideTables → ℤ) (hDSide : Function.Injective DSide) :
     EffectSpec2Triple RecChainedState CreateCellArgs where
   view         := chainView
-  active1      := accountsComp LE cN hN hLE
+  active1      := accountsComp LE cN
   active2      := balComp DBal hDBal
   active3      := bornEmptyComp DSide hDSide
   logUpdate    := some (fun s args => createReceipt args.actor args.newCell :: s.log)
@@ -176,24 +178,30 @@ theorem createCellRestFrameEncodes (S : Surface2) (LE : CellId → ℤ) (cN : Li
 
 /-! ### §2b — apex ↔ FULL `CreateCellSpec` (executor semantics). -/
 
+/-- ⚑ The S3 restoration, PER-INSTANCE (2026-08-01). `accountsComponent`'s `postClause` now reads
+`accounts = expected ∨ AccountsResid …`, so the apex implies `CreateCellSpec` exactly when the
+residual is refuted AT THE NAMED TRIPLE `(s, args, s'.kernel)` — never universally, which would be
+`compressNInjective` rewritten. The ← direction needs nothing (`Or.inl`); the hypothesis is on the
+`↔` so the call sites are positional-stable. -/
 theorem apex_iff_createCellSpec (LE : CellId → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DSide : BornEmptySideTables → ℤ) (hDSide : Function.Injective DSide)
-    (s : RecChainedState) (args : CreateCellArgs) (s' : RecChainedState) :
+    (s : RecChainedState) (args : CreateCellArgs) (s' : RecChainedState)
+    (hnoAcc : ¬ AccountsResid LE cN expectedAccounts s args s'.kernel) :
     (createCellE LE cN hN hLE DBal hDBal DSide hDSide).apex s args s' ↔
       CreateCellSpec s args.actor args.newCell s' := by
   dsimp only [EffectSpec2Triple.apex, createCellE, accountsComp, balComp, bornEmptyComp,
     accountsComponent, funcComponent, bornEmptySideComponent, chainView, CreateCellSpec,
-    createCellGuardProp, createCellAdmit, expectedAccounts, expectedBal, readBornEmptySide,
+    createCellGuardProp, createCellAdmit, expectedBal, readBornEmptySide,
     expectedBornEmptySide]
   constructor
   · rintro ⟨hg, hacc, hbal, hside, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
-    refine ⟨hg, hacc, ?_, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
+    refine ⟨hg, hacc.resolve_right hnoAcc, ?_, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
     exact (bornEmptyAt_iff_side_and_bal s.kernel args.newCell s'.kernel).mpr ⟨hside, hbal⟩
   · rintro ⟨hg, hacc, hborn, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
     obtain ⟨hside, hbal⟩ := (bornEmptyAt_iff_side_and_bal s.kernel args.newCell s'.kernel).mp hborn
-    exact ⟨hg, hacc, hbal, hside, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
+    exact ⟨hg, Or.inl hacc, hbal, hside, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
 
 /-! ### §2c — THE VALIDATION: `createCellA_full_sound ⇒ CreateCellSpec`. -/
 
@@ -213,7 +221,8 @@ theorem createCellA_full_sound
     effect2triple_circuit_full_sound S (createCellE LE cN hN hLE DBal hDBal DSide hDSide)
       (createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest) (hno := Dregg2.Circuit.LogCommitRegrounded.noLogColl_of_inj hLog)
       (createCellGuardDecodes LE cN hN hLE DBal hDBal DSide hDSide) s args s' h
-  exact (apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mp hapex
+  exact (apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mp hapex
 
 
 

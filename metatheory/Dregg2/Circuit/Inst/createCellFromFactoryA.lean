@@ -134,10 +134,12 @@ def expectedSlotCaveats (s : RecChainedState) (args : CreateFromFactoryArgs) :
   | some e => factoryPostCaveats (factoryBornCaveats s.kernel args.newCell) args.newCell e
   | none   => s.kernel.slotCaveats
 
-def accountsComp (LE : CellId → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE) :
+/-- ⚑ FLOOR-FREE (2026-08-01): `accountsComponent` no longer takes `compressNInjective` /
+`listLeafInjective` as structure data — its `postClause` carries the NAMED per-instance
+`AccountsResid` disjunct instead. See the FINDING block in `Circuit/AccountsCommit.lean`. -/
+def accountsComp (LE : CellId → ℤ) (cN : List ℤ → ℤ) :
     ActiveComponent RecChainedState CreateFromFactoryArgs :=
-  accountsComponent LE cN hN hLE expectedAccounts
+  accountsComponent LE cN expectedAccounts
 
 def balComp (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
     ActiveComponent RecChainedState CreateFromFactoryArgs :=
@@ -156,14 +158,14 @@ def bornEmptyAuthorityComp (D : BornEmptyAuthorityTables → ℤ) (hD : Function
   bornEmptyAuthorityComponent (toKernel := chainView.toKernel) (fresh := fun _ args => args.newCell) D hD
 
 def createFromFactoryE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (_hN : compressNInjective cN) (_hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
     (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth) :
     EffectSpec2Quint RecChainedState CreateFromFactoryArgs where
   view         := chainView
-  active1      := accountsComp LE cN hN hLE
+  active1      := accountsComp LE cN
   active2      := balComp DBal hDBal
   active3      := cellComp DCell hDCell
   active4      := slotCaveatsComp DSC hDSC
@@ -272,29 +274,35 @@ theorem CreateFromFactorySpec_implies_circuitSpec (st : RecChainedState) (actor 
   exact (bornEmptyAuthority_post_iff st.kernel newCell st'.kernel).mpr
     ⟨hcaps, hlif, hdc, hdel, hdgs⟩
 
+/-- ⚑ The S3 restoration, PER-INSTANCE (2026-08-01). `accountsComponent`'s `postClause` now reads
+`accounts = expected ∨ AccountsResid …`, so the apex implies the spec exactly when the residual is
+refuted AT THE NAMED TRIPLE `(s, args, s'.kernel)` — never universally, which would be
+`compressNInjective` rewritten. -/
 theorem apex_iff_createFromFactoryCircuitSpec (LE : CellId → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
     (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
-    (s : RecChainedState) (args : CreateFromFactoryArgs) (s' : RecChainedState) :
+    (s : RecChainedState) (args : CreateFromFactoryArgs) (s' : RecChainedState)
+    (hnoAcc : ¬ AccountsResid LE cN expectedAccounts s args s'.kernel) :
     (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth).apex s args s' ↔
       CreateFromFactoryCircuitSpec s args.actor args.newCell args.vk s' := by
   dsimp only [EffectSpec2Quint.apex, createFromFactoryE, accountsComp, balComp, cellComp,
     slotCaveatsComp, bornEmptyAuthorityComp, accountsComponent, funcComponent,
     bornEmptyAuthorityComponent, chainView, CreateFromFactoryCircuitSpec, createFromFactoryGuardProp,
-    factoryAdmit, expectedAccounts, expectedBal, expectedCell, expectedSlotCaveats,
+    factoryAdmit, expectedBal, expectedCell, expectedSlotCaveats,
     readBornEmptyAuthority, expectedBornEmptyAuthority]
   constructor
   · rintro ⟨hex, hacc, hbal, hcell, hsc, hauth, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
     obtain ⟨e, hadmit⟩ := hex
-    refine ⟨e, hadmit, hacc, hbal, ?_, ?_, hauth, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
+    refine ⟨e, hadmit, hacc.resolve_right hnoAcc, hbal, ?_, ?_, hauth, hlog, hNul, hRev, hCom, hQ,
+      hFac, hSB⟩
     · simpa [expectedCell, hadmit.2.1] using hcell
     · simpa [expectedSlotCaveats, hadmit.2.1] using hsc
   · rintro ⟨e, hadmit, hacc, hbal, hcell, hsc, hauth, hlog, hNul, hRev, hCom, hQ, hFac,
       hSB⟩
-    refine ⟨⟨e, hadmit⟩, hacc, hbal, ?_, ?_, hauth, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
+    refine ⟨⟨e, hadmit⟩, Or.inl hacc, hbal, ?_, ?_, hauth, hlog, hNul, hRev, hCom, hQ, hFac, hSB⟩
     · simpa [expectedCell, hadmit.2.1] using hcell
     · simpa [expectedSlotCaveats, hadmit.2.1] using hsc
 
@@ -323,7 +331,8 @@ theorem createCellFromFactoryA_full_sound
       (createFromFactoryGuardDecodes LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) s args
       s' h
   exact (apex_iff_createFromFactoryCircuitSpec LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth
-      hDAuth s args s').mp hapex
+      hDAuth s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mp hapex
 
 
 
