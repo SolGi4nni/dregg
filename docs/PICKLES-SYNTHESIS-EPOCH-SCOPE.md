@@ -803,6 +803,12 @@ rung above anything `3c3f61b24` measured) assembles in a fraction of a second of
 `pi_wide` at `pubSize = 67` emits without a pause. No exponent is fitted and none is claimed; the
 boxes available were at load 96–209 throughout.
 
+⚠ **Read commit `589de5b0a`'s message with that caveat.** It quotes fitted exponents (2.02 for the
+`envLookup` pass, 1.11–1.22 for `place`) from CPU-clocked readings taken on hbox at load 80–150.
+Those numbers located the fifth scan, which is what they were for; they are **not** evidence of a
+complexity class and should not be cited as such. The complexity claim is the table above, and it is
+a code reading.
+
 ⚠ **A correction to the record while here.** The ladder in `3c3f61b24` is **five rungs, 13 → 27 →
 132 → 454 → 1674 rows**, and its two series are five long: `place 3/8/170/1941/25707 ms`,
 `compose 4/23/514/6075/83808 ms`. So `170/514` belong to **132** rows and the top MEASURED rung was
