@@ -99,7 +99,11 @@ line items, not against a round number.
     §8f); `xi_correct` against the fr-sponge's own squeeze; and `Boolean.all [xi_correct; b_correct;
     combined_inner_product_correct; plonk_checks_passed]` behind the `should_verify` mux, ASSERTED.
     The four statement words are the **first four public words**, so a prover who claims a different
-    deferred value is refused rather than believed.
+    deferred value is refused rather than believed. ⚑ And `should_verify` is the FIFTH: it is a
+    STATEMENT bool upstream (`step_main.ml:36-37` asserts it equal to `unfinalized.should_finalize`,
+    which is in the Per_proof statement's `bool` list, `composition_types.ml:1219,1310`), and while
+    this file made it a witness a prover set it to 0 and the whole assert passed with all four legs
+    false (§16g).
 
 ## ⚑ THE SHAPE ORACLE — MEASURED against Mina's own compiled step circuit
 
@@ -155,14 +159,14 @@ every rung
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1225     2048            1000 ms              24
-    r2_challenges    1870     2048             981 ms             116
-    r3_msm           4108     8192            1297 ms             195
-    r4_ipa           6942     8192            1336 ms             346
-    r5_full          7192     8192            1337 ms             352
-    r6_ft_eval0      7661     8192            1387 ms             354
-    r7_absorption    9324    16384            1664 ms             365
-    r8_finalize      9417    16384            1657 ms             372
+    r1_transcript    1225     2048            1084 ms              24
+    r2_challenges    1870     2048            1072 ms             116
+    r3_msm           4108     8192            1422 ms             195
+    r4_ipa           6942     8192            1464 ms             346
+    r5_full          7192     8192            1486 ms             352
+    r6_ft_eval0      7661     8192            1471 ms             354
+    r7_absorption    9324    16384            1652 ms             365
+    r8_finalize      9417    16384            1643 ms             372
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -397,7 +401,11 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      below the fr-sponge — the fold's `r` is a free witness, and it binds at r7/r8. That is the
      ladder position `vEz 3` (R6's `ft_eval0`) and the four statement words already occupy.
  11. R8's `verified` bit (the kimchi `verify` result the mux ANDs with `finalized`) is a witnessed
-     boolean, booleanity-constrained and nothing else. ⚑ **NOT RETIRABLE WITHOUT A SUB-CIRCUIT THAT
+     boolean, booleanity-constrained and nothing else. ⚑ **`should_verify` LEFT THIS ENTRY on
+     2026-08-02** — it was never a missing sub-circuit, it was a STATEMENT WORD this file had made a
+     witness, and a witnessed `should_verify` let a prover switch the whole `Boolean.all` assert off
+     (§16g). `verified` is different, and the rest of this entry is why.
+     ⚑ **NOT RETIRABLE WITHOUT A SUB-CIRCUIT THAT
      DOES NOT EXIST.** `verified` is `Step_verifier.verify` (`step_main.ml:88-107`) — the whole wrap
      kimchi verifier: `check_bulletproof` (`equal_g`, the `scale_fast` of `sg`, the IPA fold), the
      `x_hat`/`ft_comm` commitment MSMs against REAL commitments, `group_map`, and
@@ -712,7 +720,18 @@ bits are a SUFFIX: with one previous proof it is slot 1 that is kept, not slot 0
 def vMask (s : StepShape) (i : Nat) : PVar := xv (baseStmt s + 6 + i)
 /-- The mask's own packing `m₀ + 2·m₁`, `Checked.pack`'s inner `pack`. -/
 def vMaskPack (s : StepShape) : PVar := xv (baseStmt s + 8)
-def N_STMT : Nat := 9
+/-- ⚑ **`should_verify`, and it is a STATEMENT BOOL and not a witness.**
+`step_main.ml:36-37` opens `verify_one` with `Boolean.Assert.( = )
+unfinalized.should_finalize should_verify`, and `should_finalize` is a field of
+`Types.Step.Proof_state.Per_proof.In_circuit` whose `spec` puts it in the `bool` list
+(`composition_types.ml:1219,1310`) — i.e. it is part of the STEP STATEMENT, hence public.
+Until 2026-08-02 this file made it an `AOp.wit`: the prover could set it to 0 and R8's
+`verified && finalized ||| not should_verify` assert passed with ALL FOUR deferred bindings
+false. §16g exhibits that. It is now a statement word, tied by a closing row like the other
+four, so the mux branch is a PUBLIC CLAIM a consumer reads rather than a prover's private
+choice — which is exactly upstream's semantics for a dummy previous proof. -/
+def vShouldVerify (s : StepShape) : PVar := xv (baseStmt s + 9)
+def N_STMT : Nat := 10
 
 /-! ### The DEFERRED challenges ξ and r (§8g) — the fold's own multipliers.
 
@@ -2447,6 +2466,8 @@ structure FinWire where
   bShift : AOp
   permShift : AOp
   xiStmt : AOp
+  /-- `should_verify` — a STATEMENT bool (`step_main.ml:36-37`), not a witness. -/
+  shouldVerify : AOp
 
 /-- What R8 bakes in, plus the witnesses its own rows CHECK. -/
 structure FinCfg where
@@ -2458,9 +2479,10 @@ structure FinCfg where
   /-- per `Field.equal` gadget: the witnessed inverse and the result bit. -/
   eqInv : List Nat
   eqBit : List Nat
-  /-- the kimchi `verified` bit and `should_verify` (`step_main.ml:36,121`). -/
+  /-- the kimchi `verified` bit (`step_main.ml:121`; #11 — it is a witness and stays one until
+  `Step_verifier.verify` exists). `should_verify` is NOT here: since 2026-08-02 it is a STATEMENT
+  word the wire reads, because upstream's is one. -/
   verified : Nat
-  shouldVerify : Nat
   deriving Repr, Inhabited
 
 structure FinSlots where
@@ -2541,7 +2563,7 @@ def finBuild (W : FinWire) (C : FinCfg) : AM FinSlots := do
   let ver ← eWit C.verified
   let ver2 ← eMul ver ver
   let _ ← eEq ver2 ver
-  let sv ← eWit C.shouldVerify
+  let sv ← em W.shouldVerify
   let sv2 ← eMul sv sv
   let _ ← eEq sv2 sv
   let vf ← eMul ver fin
@@ -2566,7 +2588,7 @@ def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
 sub-circuit so a public tie reaches all five. ⚑ The FIRST FOUR are the statement's deferred values;
 R8's `Boolean.all` assert is what makes them a claim the circuit refuses to lie about. -/
 def exposedVars (s : StepShape) : List PVar :=
-  ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s, vBranch s, hmDigestVar s
+  ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s, vShouldVerify s, vBranch s, hmDigestVar s
    , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
    , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
@@ -2637,7 +2659,8 @@ def finWireOf (s : StepShape) (f : FtData) : FinWire :=
   , cipShift := .inp (vCipShift s)
   , bShift := .inp (vBShift s)
   , permShift := .inp (vPermShift s)
-  , xiStmt := .inp (vXiStmt s) }
+  , xiStmt := .inp (vXiStmt s)
+  , shouldVerify := .inp (vShouldVerify s) }
 
 /-- Everything R8 needs, evaluated ONCE. -/
 structure FinData where
@@ -2667,7 +2690,8 @@ def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
   , (vCipShift s, (shiftT1 (df.ca.getLastD 0) : Int))
   , (vBShift s, (shiftT1 (bActualOf s d df rv) : Int))
   , (vPermShift s, (shiftT1 permA : Int))
-  , (vXiStmt s, ((sqv % 2 ^ 128 : Nat) : Int)) ]
+  , (vXiStmt s, ((sqv % 2 ^ 128 : Nat) : Int))
+  , (vShouldVerify s, 1) ]
   ++ (List.range s.bRounds).map (fun k => (vLift s (k + 1), (liftOf s d (k + 1) : Int)))
 
 /-- The HONEST config: `lowest_128_bits`' high part, and — because every `Field.equal` leg holds —
@@ -2676,7 +2700,7 @@ bent inputs, where the honest witness is `bit = 0` and the assert FAILS. -/
 def finCfgOf (s : StepShape) (hi : Nat) : FinCfg :=
   { rounds := s.bRounds, omega := FT_OMEGA, shiftC := SHIFT_C, hiXi := hi
   , eqInv := List.replicate 4 0, eqBit := List.replicate 4 1
-  , verified := 1, shouldVerify := 1 }
+  , verified := 1 }
 
 def runFin (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
     (segB : SegData) (specB : SegSpec) (rv : Nat) : FinData :=
@@ -2925,6 +2949,7 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ [ (vCipShift s, (t.fin.cipShift : Int)), (vBShift s, (t.fin.bShift : Int))
      , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int))
      -- §8h: `branch_data` and the two `proofs_verified_mask` bits it packs.
+     , (vShouldVerify s, 1)
      , (vBranch s, (branchPacked : Int)), (vDomLog2 s, (BRANCH_DOMAIN_LOG2 : Int))
      , (vMask s 0, (MASK_BITS.getD 0 0 : Int)), (vMask s 1, (MASK_BITS.getD 1 0 : Int))
      , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int)) ]
@@ -4207,7 +4232,7 @@ def maskReaders (i : Nat) : Nat :=
 #guard (classCells posS (vMask shapeSmoke 1)).length == 20
 -- …and `branch_data` is read by EXACTLY three rows: the pack row, the closing public tie, its probe.
 #guard (classCells posS (vBranch shapeSmoke)).length == 3
-#guard (exposedVars shapeSmoke).getD 4 (xv 0) == vBranch shapeSmoke
+#guard (exposedVars shapeSmoke).getD 5 (xv 0) == vBranch shapeSmoke
 
 -- ⚑⚑ **THE BITING RED CONTROL FOR #9.** Re-run segment A at the OTHER two legal prefix masks. `N2`
 -- ([tt;tt], both previous proofs real) and `N0` ([ff;ff], none) each give a DIFFERENT opt-sponge
@@ -4253,8 +4278,8 @@ def segCDigest (bits : List Nat) : Nat := ((segCWith bits).states.getLastD []).g
 -- ⚑ …and the digest is a PUBLIC WORD, so the mask reaches the verifier's own vector rather than
 -- dying inside R7. (`vSt`-style inertness is what `placeChecked` would have caught; this is the
 -- stronger statement that it is READ OUT.)
-#guard (exposedVars shapeSmoke).getD 5 (xv 0) == hmDigestVar shapeSmoke
-#guard (stepPublic tS).getD 5 0 == ((tS.segC.states.getLastD []).getD 0 0 : Int)
+#guard (exposedVars shapeSmoke).getD 6 (xv 0) == hmDigestVar shapeSmoke
+#guard (stepPublic tS).getD 6 0 == ((tS.segC.states.getLastD []).getD 0 0 : Int)
 
 -- ⚑ SEGMENT B ABSORBS R5's AND R6's OWN VARIABLES: the digest of segment A, `ft_eval1`, the two
 -- public-polynomial evaluations, then the 43 columns at ζ and ζω INTERLEAVED
@@ -4554,7 +4579,11 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
   let tgt : PVar :=
     match which with
     | 0 => vCipShift s | 1 => vBShift s | 2 => vPermShift s | _ => vXiStmt s
-  let env := base.map (fun p => if p.1 == tgt then (p.1, p.2 + 1) else p)
+  -- ⚑ `should_verify` is bent through the ENVIRONMENT, because since §8f it is a STATEMENT WORD
+  -- and not a `FinCfg` witness: selecting the dummy branch is a public claim, not a private one.
+  let env := base.map (fun p =>
+    if p.1 == tgt then (p.1, p.2 + 1)
+    else if p.1 == vShouldVerify s then (p.1, (sv : Int)) else p)
   -- the honest witnesses for the bent instance: the bent leg's difference is `±2` (an unshift
   -- doubles) or `−1` (the raw ξ word), so `bit = 0` and `inv = d⁻¹` there, `bit = 1` elsewhere.
   let dv : Nat := if which == 3 then pN - 1 else 2
@@ -4563,8 +4592,7 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
   let C : FinCfg :=
     { finCfgOf s (sqv / 2 ^ 128) with
       eqInv := (List.replicate 4 0).set idx inv
-      eqBit := (List.replicate 4 1).set idx 0
-      shouldVerify := sv }
+      eqBit := (List.replicate 4 1).set idx 0 }
   let p := finProgOf (finWireOf s tS.ft) C
   (aEval (envLookupAt (envIndex env)) p.prog).getD p.slots.out 0
 
@@ -4579,6 +4607,28 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
 -- accepts the very same bent statement — `verified && finalized ||| not should_verify`
 -- (`step_main.ml:121`). A mux with one reachable branch is decoration.
 #guard (List.range 4).all (fun i => finOutBent i 0 == 1)
+
+-- ── (g) ⚑ `should_verify` IS A STATEMENT WORD, NOT A WITNESS ───────────────────────────────────
+-- ⚑ THE HOLE THIS CLOSES, exhibited by the two lines above. `should_verify = 0` makes R8's assert
+-- pass with ALL FOUR deferred legs false — so while it was an `AOp.wit` with no defining row, a
+-- prover simply set it to 0 and `finalize_other_proof`'s tail bound NOTHING. That is not upstream:
+-- `step_main.ml:36-37` asserts `unfinalized.should_finalize = should_verify`, and `should_finalize`
+-- is in the Per_proof statement's `bool` list (`composition_types.ml:1219,1310`), i.e. PUBLIC.
+-- It is now the assembly's tenth statement word and its FIFTH public word, so choosing the dummy
+-- branch is a claim the consumer READS.
+#guard (exposedVars shapeSmoke).getD 4 (xv 0) == vShouldVerify shapeSmoke
+#guard (exposedVars shapeStep).getD 4 (xv 0) == vShouldVerify shapeStep
+-- …its class is R8's five reads — the booleanity square (two cells), the `= sv` assert, the mux
+-- multiply and the `1 − sv` — PLUS the closing public tie. Equality, so the tie's deletion (which
+-- is the whole content of the fix) moves it: as a witness it was these five and no public cell.
+#guard (classCells posS (vShouldVerify shapeSmoke)).length == 6
+-- …and it is in `finInputEnv`, i.e. R8 reaches it as an `.inp` and not as a private cell.
+#guard (finS.fp.prog.toList.filter (fun o => o == AOp.inp (vShouldVerify shapeSmoke))).length == 1
+-- …and NO `.wit` slot of R8's program holds it any more. The witnesses that remain are exactly the
+-- four `Field.equal` inverse/bit pairs, `lowest_128_bits`' high part (range-checked by §12c′'s
+-- chain) and #11's `verified` bit — which is the honest census of what R8 still takes on trust.
+#guard (finS.fp.prog.toList.filter (fun o =>
+          match o with | .wit _ => true | _ => false)).length == 4 * 2 + 1 + 1
 
 -- ── (f) NO FREE VARIABLE reaches the public vector ────────────────────────────────────────────
 -- ⚑ Every exposed variable's copy class has a cell OUTSIDE its closing row, i.e. some row COMPUTES
