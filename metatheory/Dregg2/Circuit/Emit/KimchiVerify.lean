@@ -43,7 +43,14 @@ directly, above the felt encoding.
     Fq-sponge (over `qN`, `fq_kimchi` params, absorbing curve points) is the NAMED residual: it
     yields β, γ, α', ζ' and the `digest` that seeds phase 2.
   * **C4** public eval at ζ, ζω (`publicEval`) — the exact batch-inverted Lagrange formula
-    (`verifier.rs:336-379`), field-generic, KAT'd (collapse + discrimination).
+    (`verifier.rs:336-379`), field-generic. ⚑ CORRECTED 2026-08-02: this line said "KAT'd (collapse
+    + discrimination)" and the KATs were at `ℚ`, which is not the deployed field and cannot express
+    the on-domain collapse (over `ℚ` the only roots of unity are ±1). It is now SWEPT at both
+    deployed fields — `publiceval` (`ZMod pN`) and `publiceval_fq` (`ZMod qN`), 348 records each —
+    against ark-poly's `evaluate_all_lagrange_coefficients`, and recomputed on block 539508's forty
+    public words by `MinaWrapFtEval0Weld`. ⚠ The `x ∈ H` boundary is a MEASURED behavioural split,
+    not a gap: `publicEval` reproduces KIMCHI's 0 there rather than the mathematically correct
+    `−pubᵢ`, faithfully.
   * **C5** the permutation term of ft(ζ) + `permScalar` (`verifier.rs:411-462`,
     `permutation.rs:392-430`) — the copy-constraint z-poly identity, folded into `ftEval0`, REAL.
   * **C6** the linearization at ζ: a real `PolishToken` mini-evaluator (`evalToks`) + the GENERIC
@@ -52,8 +59,18 @@ directly, above the felt encoding.
     (generic 2, Poseidon 15, complete_add 7, varbasemul 21, endomul 12, endomul_scalar 11) and
     `gateLinConst` sums them behind their selectors — `linConstTerm` is DERIVED, not carried.
   * **C7** `f_comm`/`ft_comm` + Maller (`ftComm`, `verifier.rs:958-965`) — the Maller relation
-    `ft_comm = f_comm − (ζⁿ−1)·t_comm`, field/module-generic, KAT'd. The MSM producing `f_comm`
-    is the K2 carrier.
+    `ft_comm = f_comm − (ζⁿ−1)·t_comm`, field/module-generic. ⚑ CORRECTED 2026-08-02: this line
+    said "KAT'd", and the whole of that was `ftComm_kat` below — ONE instance at `G = F = ℚ`, while
+    seven theorems named `ftComm_*` in `PicklesFinalize` and `MinaWrapGroupGate` were about two
+    DIFFERENT objects and were welded to this one by nothing.
+    `Dregg2/Circuit/Emit/FtCommWeld.lean` names the three and welds what can be welded:
+    `PicklesFinalize.picklesFtComm` at its honest `zeta_to_domain_size` **IS** this definition, for
+    every `[Field F]` (`picklesFtComm_is_kimchi_ftComm`); that assembly reproduces o1-labs'
+    `ft_comm` on Mina block 539508's real Pallas points; and this definition now has evidence at
+    both DEPLOYED fields including the on-domain degeneracy `ftComm_ignores_tComm_on_the_domain`,
+    which a `ℚ` KAT cannot state. ⚠ NOT welded, and named there rather than implied: this definition
+    at the Pallas point group, which needs `Module (ZMod qN) G`, i.e. the group-order fact.
+    The MSM producing `f_comm` is the K2 carrier.
   * **C8** `combined_inner_product` (`combinedInnerProduct`, `commitment.rs:600-657`) — the exact
     nested sum (v1 `chunk_size = 1`), field-generic, KAT'd (positive anchor + discrimination).
   * **C9** the IPA opening (`ipaB0`, `ipaDeferralOk`, `deferral_records`) — `b0` from K4c's
@@ -1373,6 +1390,9 @@ private def gEvQ (posSel : ℚ) : GateEvals ℚ :=
 #guard decide (Ref.hash [Ref.hash [], 1, 2, 3, 4] ≠ Ref.hash [Ref.hash [], 1, 99, 3, 4])
 
 -- C7: Maller's ft-commitment over `G = F = ℚ`: `ftComm = fComm − (ζⁿ−1)·tComm` (55 = 100 − 15·3).
+-- ⚠ THIS IS NOT `ftComm`'s EVIDENCE — it is one instance at `ℚ`, and it was ALL of it until
+-- 2026-08-02. See `Dregg2/Circuit/Emit/FtCommWeld.lean` for the weld to `PicklesFinalize`'s
+-- in-circuit assembly, the block-539508 group-side instance, and the deployed-field `#guard`s.
 theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
   rw [ftComm]; norm_num [smul_eq_mul]
 
@@ -1458,7 +1478,9 @@ theorem ftComm_kat : ftComm (G := ℚ) 4 (2:ℚ) 100 3 = 55 := by
      §9b, `refines`-tied to `kimchiVerifyDecision`), evaluated end-to-end on a REAL proof over
      `ZMod pN` in `KimchiRealProofGate`. What remains carried in that accept: the C3/C9 crypto
      carriers, C4 `p(ζ)` fed as an input (its Lagrange-denominator recomputation not extracted),
-     and C7 `ftComm`/`permScalar` (commitment/MSM-valued, the K2 carrier — not field-value checks).
+     and C7 `ftComm`/`permScalar` (commitment/MSM-valued, the K2 carrier — not field-value checks;
+     `permScalar` is now swept at BOTH deployed fields by the `permscalar`/`permscalar_fq` pairs,
+     and `ftComm` is welded and evaluated on real points by `FtCommWeld`).
      The batch assembly (`assembleBatch`: the ordered eval list feeding `cip`, the `Evaluation`
      pairing `verifier.rs:967-1181`) is the plumbing the carriers consume.
   6. **Out of v1 scope:** the `sg` split's terminal discharge (P10), multi-proof BATCHING

@@ -17,14 +17,26 @@ The real field values are emitted by `proof-systems/kimchi/examples/reality_gate
     `KimchiVerify` header label `Fq = ZMod qN` (the Vesta BASE field) was a mislabel; it is now
     CORRECTED to `Fp = ZMod pN` at the source. This gate uses the correct `ZMod pN`.
 
-  * The shipped C4–C8 formulas (`combinedInnerProduct`, `ftEval0`, `publicEval`, …) are
-    `[Field F]`-typed. **There is no `Field (ZMod pN)` instance in the tree** (no in-kernel
-    primality proof of the 255-bit `pN`; `native_decide` is forbidden), so the shipped defs
-    **cannot be instantiated at the real Pasta field**. To exercise the REAL values,
+  * The shipped C4–C8 formulas (`combinedInnerProduct`, `ftEval0`, …) are `[Field F]`-typed.
+    ⚑ **CORRECTED 2026-08-02.** This paragraph used to read "**There is no `Field (ZMod pN)`
+    instance in the tree** (no in-kernel primality proof of the 255-bit `pN`; `native_decide` is
+    forbidden), so the shipped defs **cannot be instantiated at the real Pasta field**." That has
+    been false since 2026-07-29: `Dregg2/Circuit/Emit/PastaBasePrime.lean:122` installs
+    `Fact (Nat.Prime pN)` by a kernel-checked recursive Lucas/Pratt certificate with no
+    `native_decide`, and `PastaScalarPrime.lean` now does the same for `qN`. Mathlib's
+    `ZMod.instField` fires at BOTH Pasta fields and inversion is computable there.
+    ⚠ `publicEval` was ALSO listed above, and it does not belong in that list at all: it has no
+    `CommRing` mirror and **this gate never evaluates it** — C4's `p(ζ)` enters as an INPUT here.
+    Its real-value evidence is elsewhere: `MinaWrapFtEval0Weld` recomputes `p(ζ)` at `ZMod qN` on
+    block 539508's forty public words, and the `publiceval`/`publiceval_fq` pairs of
+    `scripts/pickles-crossimpl-differential.sh` sweep it at both deployed fields against ark-poly.
+    The mirrors remain the right device for THIS gate and the reason is now the honest one — they
+    keep the real-value evaluation inside a `CommRing` with a witnessed inverse, so nothing here
+    depends on a primality certificate. To exercise the REAL values,
     `KimchiVerify` §9b supplies `CommRing`-typed MIRRORS (`cipR`, `ftEval0R`) whose bodies are
     byte-identical to the shipped defs and are TIED to them by `rfl` for every field (`cipR_eq`,
     `ftEval0R_eq`) — so evaluating a mirror at `ZMod pN` runs the shipped def's exact computation,
-    at a `CommRing` where the shipped `[Field F]` signature cannot be typed. The single field
+    at a `CommRing` and not at a `Field`. The single field
     inverse `ftEval0` needs is SUPPLIED as a witness `denomInv` and CHECKED (`denom·denomInv = 1`)
     in the ring, so NO `Field`/primality instance is required. This is a **differential** (the
     shipped def's arithmetic reproduces the real proof's value), not a proof the Field-typed def runs.
