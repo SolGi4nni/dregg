@@ -680,16 +680,18 @@ mod stepmain_tests {
                 "r7 changed a CURVE gate family (ord {ord}) - the absorption rung is not a sponge"
             );
         }
-        // r7 adds EXACTLY ONE further `to_field_checked` chain - 8 EndoMulScalar rows - and it is
-        // `r_actual`'s: the fr-sponge's SECOND squeeze, lifted into the `r` the combined_inner_
-        // product fold and `b_correct` multiply by (`step_verifier.ml:1008,1013`). Before that chain
-        // existed the fold multiplied by an R1 transcript challenge and the fr-sponge fed nothing
-        // but `xi_correct`. `== +8` and not `>=` so a second chain appearing here is also a red.
+        // r7 adds EXACTLY TWO further `to_field_checked` chains - 16 EndoMulScalar rows - and both
+        // hang off `r_actual`, the fr-sponge's SECOND squeeze: the chain that lifts it into the `r`
+        // the combined_inner_product fold and `b_correct` multiply by
+        // (`step_verifier.ml:1008,1013`), AND `lowest_128_bits`' `assert_128_bits` of its high part,
+        // which is itself a `to_field_checked` (`step_verifier.ml:88-97,190-192`) and is what stops
+        // a prover choosing the low part outright. It was +8 until 2026-08-02, when the range check
+        // landed. `==` and not `>=` so a THIRD chain appearing here is also a red.
         assert_eq!(
             c7[6],
-            c6[6] + 8,
-            "r7's EndoMulScalar delta is {} - expected exactly one 8-row `to_field_checked` chain \
-             (r_actual's lift)",
+            c6[6] + 16,
+            "r7's EndoMulScalar delta is {} - expected exactly two 8-row `to_field_checked` chains \
+             (r_actual's lift and the `assert_128_bits` of its high part)",
             c7[6] - c6[6]
         );
         // r7 also adds the absorb rows and the opt-sponge mux rows.
