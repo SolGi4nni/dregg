@@ -367,7 +367,7 @@ theorem guardedHidingSpan_refines_parse_grounded
     (hgtc : ∀ k : Fin 8, t.pub (piGUARD k) = guardTableCommit8 absorb tbl k) :
     (wVal (row0 t) gHOLE
         = holeCommitWideOf absorb (wVal (row0 t) gDIGEST) (wVal (row0 t) gCT) (bVal (row0 t))
-      ∧ wVal (row0 t) gDIGEST = absorb (List.ofFn (wVal (row0 t) gSPAN)))
+      ∧ wVal (row0 t) gDIGEST = absorb (packSpanW (wVal (row0 t) gSPAN)))
     ∧ (∀ k : Fin 8, wVal (row0 t) gGUARD k ≡ guardTableCommit8 absorb tbl k [ZMOD 2013265921])
     ∧ derives s g = true
     ∧ (∃ d : Nat → List Value, guardedSafe (m0Template lit0 lit1 g) d

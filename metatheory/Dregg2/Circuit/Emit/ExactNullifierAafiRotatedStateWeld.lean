@@ -349,15 +349,17 @@ theorem satisfying_row_computes_wide_state_commits
   · apply rotV3WidePin permW (t.tf .poseidon2) hchip (envAt t row)
       BEFORE_BLOCK_BASE BEFORE_CARRIER_BASE
     intro p hp
-    have hmem := beforeWideLookup_mem (.lookup (siteLookupN p.1 p.2))
-      (List.mem_map.mpr ⟨p, hp, rfl⟩)
+    have hmem := beforeWideLookup_mem
+      (.lookup (siteLookupN p.1 p.2 (rotV3WideSpecs_admitted _ _ p hp)))
+      (List.mem_map.mpr ⟨⟨p, hp⟩, List.mem_attach _ _, rfl⟩)
     have h := hconstraints _ hmem
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, siteLookupN] using h
   · apply rotV3WidePin permW (t.tf .poseidon2) hchip (envAt t row)
       AFTER_BLOCK_BASE AFTER_CARRIER_BASE
     intro p hp
-    have hmem := afterWideLookup_mem (.lookup (siteLookupN p.1 p.2))
-      (List.mem_map.mpr ⟨p, hp, rfl⟩)
+    have hmem := afterWideLookup_mem
+      (.lookup (siteLookupN p.1 p.2 (rotV3WideSpecs_admitted _ _ p hp)))
+      (List.mem_map.mpr ⟨⟨p, hp⟩, List.mem_attach _ _, rfl⟩)
     have h := hconstraints _ hmem
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, siteLookupN] using h
 
