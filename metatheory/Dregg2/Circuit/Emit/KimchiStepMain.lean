@@ -159,14 +159,14 @@ every rung
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1225     2048            1084 ms              24
-    r2_challenges    1870     2048            1072 ms             116
-    r3_msm           4108     8192            1422 ms             195
-    r4_ipa           6942     8192            1464 ms             346
-    r5_full          7192     8192            1486 ms             352
-    r6_ft_eval0      7661     8192            1471 ms             354
-    r7_absorption    9324    16384            1652 ms             365
-    r8_finalize      9417    16384            1643 ms             372
+    r1_transcript    1225     2048            1042 ms              24
+    r2_challenges    1870     2048            1204 ms             116
+    r3_msm           4108     8192            1560 ms             195
+    r4_ipa           6942     8192            2011 ms             346
+    r5_full          7192     8192            1806 ms             352
+    r6_ft_eval0      7661     8192            1811 ms             354
+    r7_absorption    9338    16384            2806 ms             366
+    r8_finalize      9431    16384            1851 ms             373
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
