@@ -60,6 +60,10 @@ line items, not against a round number.
     final `n'` cell (col 5) and its challenge's final `n₈` cell (col 1) are the SAME VARIABLE, so
     the value `EndoMulScalar` decoded is the value `VarBaseMul` multiplies by — one σ class spanning
     three gate types and three sub-circuits.
+    ⚑ …and since 2026-08-02 the ladder STARTS where upstream starts it: `add_fast base base` as a
+    `CompleteAdd` row per term and `n_acc = Field.zero` as a `Generic` pin
+    (`plonk_curve_ops.ml:157-158`). Both were free witnesses; §12f exhibits what that bought a
+    prover.
     ⚑ …and since 2026-08-02 **`Common.ft_comm`** (§6b, `common.ml:238-256`): eight `scale_fast2`s at
     `~num_bits:255` — 51 chunks each, `step_verifier.ml:240-242,587-591` — over `sigma_comm_last` and
     `t_comm`'s seven quotient chunks, folded by `common.ml`'s own `Ops.add_fast` chain, with
@@ -126,64 +130,72 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8103      8572       10249       10342
-    non-Generic         13778              7424      7426        8810        8833
-    Poseidon             6292 (31.4%)      1034      1034        2277        2277   11×572 / 11×207 ✓
-    Generic              6245 (31.2%)       679      1146        1439        1509   —
+    total gates         20023              8011      8480       10157       10250
+    non-Generic         13778              7320      7322        8706        8729
+    Poseidon             6292 (31.4%)       902       902        2145        2145   11×572 / 11×195 ✓
+    Generic              6245 (31.2%)       691      1158        1451        1521   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1996      1998        2123        2130   —
+    Zero                 2246 (11.2%)      1984      1986        2111        2118   —
     VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd           403  (2.0%)       138       138         138         138   1×159 2×65 3×23
-                    15×1 30×1 / 1×138
+    CompleteAdd           403  (2.0%)       178       178         178         178   1×159 2×65 3×23
+                    15×1 30×1 / 1×178
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9431 → 10342 rows) — **911 rows, and they are
-`Common.ft_comm`'s MSM.** §6b: **+408 `VarBaseMul` and +408 `Zero`** are eight 255-bit `scale_fast2`
-ladders at 51 five-bit chunks each (`plonk_curve_ops.ml:251-267` at `~num_bits:Field.size_in_bits`,
-`step_verifier.ml:240-242`); **+24 `CompleteAdd`** are each ladder's `add_fast base base` and
-`add_fast h (G.negate g)` plus `common.ml`'s own eight `Ops.add_fast`s; **+45 `Generic`** are the two
-`Shifted_value.Type2` splits, the per-term top-bit assert / negate / `G.if_` mux and the seven new
-`assert_on_curve`s, less the pin row round 2 no longer needs; the rest are σ-only probes.
-⚑ **AND R1 DID NOT GROW BY A SINGLE ROW.** `t_comm`'s seven commitments took transcript blocks that
-were already there and already absorbing — **14 `msgVal` fixtures BECAME the MSM's operands.** That
-is the whole point of the commit and the reason the row delta is all MSM: absorbing `t_comm` was
-never the work, consuming it was.
-`VarBaseMul` is now **1448 against upstream's 1596**, i.e. both of `verify_one`'s commitment MSMs are
-here at full width; the residue is `multiscale_known`'s per-word widths (#2). §6b is the assembly;
-§12e is the exhibit. (The commit before this took 9417 → 9431 on §3c's `sponge_after_index`; before
-that 9317 → 9417 on #1's third `lowest_128_bits` and §7b's `assert_on_curve`; before that 8713 →
-9317 on #3, #1 and #9's second consumer.)
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10342 → 10250 rows) — **the row count went DOWN, and that is
+the commit.** Two things happened and they pull opposite ways.
+
+  * ⚑ **THE ABSORB SHAPE SHRANK: `absorbs` 71 → 59, −156 rows** (−132 `Poseidon`, −12 `Zero`, −12
+    `Generic`). `2·71 = 142` transcript words against the **117** sponge items `verify_one` actually
+    absorbs — twelve whole rate-2 blocks that stood for nothing upstream feeds. `absorbs` is now
+    `⌈117/2⌉` and §12b pins the item census against the wiring census as an equality. `Poseidon`
+    goes 2277 → 2145, i.e. 195 permutations rather than 207: TWELVE FEWER PERMUTATIONS OF NOTHING.
+  * ⚑ **R3's LADDER SEED LANDED: +40 `CompleteAdd`, +24 `Generic`** (`plonk_curve_ops.ml:157-158`).
+    Forty `add_fast base base` rows and twenty `Generic` halves pinning `n_acc = Field.zero`, plus
+    four more halves for §6b's eight `ft_comm` ladders, which carried `:157` and not `:158`.
+    `CompleteAdd` goes 138 → 178 and the run-length family stays `1×`, because every seed row is
+    preceded by a `Zero` probe and followed by its ladder's first `VarBaseMul`.
+
+Net −92. ⚑ **AND NO SUB-CIRCUIT LEFT.** `EndoMul` 2432, `VarBaseMul` 1448 and `EndoMulScalar` 408
+are unchanged to the row, and so is every probe count — the fold, `bullet_reduce`, both commitment
+MSMs and all 51 `to_field_checked` chains are exactly where they were. What went is transcript
+blocks the source does not have. (The commit before this took 9431 → 10342 on §6b's `ft_comm` MSM;
+before that 9417 → 9431 on §3c's `sponge_after_index`; before that 9317 → 9417 on #1's third
+`lowest_128_bits` and §7b's `assert_on_curve`; before that 8713 → 9317 on #3, #1 and #9's second
+consumer.)
 
 The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are INTACT
 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for `Poseidon`,
 `EndoMul`, `EndoMulScalar`, `VarBaseMul`, `CompleteAdd` and no others): a `Poseidon` permutation is
-11 rows (207 of them, upstream 572), a 128-bit `Scalar_challenge.endo` is 32 `EndoMul` rows, a
+11 rows (195 of them, upstream 572), a 128-bit `Scalar_challenge.endo` is 32 `EndoMul` rows, a
 `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero` — **`1×1448` after §6b, still
 `1×`**, because a 255-bit `scale_fast2` chunk has the same two-row shape as a 128-bit one — and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows, **51 such chains** (23 transcript challenges +
 their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own `lowest_128_bits`
-on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` stays `1×138` because every add is
-followed by its σ-only probe. The `EndoMul` COUNT is 2432 against upstream's 2465 and `VarBaseMul`
+on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` is `1×178` — 138 plus R3's forty new seed rows — because every add is
+followed by a row of another kind (its σ-only probe, or its ladder's first `VarBaseMul`). The `EndoMul` COUNT is 2432 against upstream's 2465 and `VarBaseMul`
 1448 against 1596, i.e. the fold, `bullet_reduce` and BOTH commitment MSMs are here at full size.
 Only SEVEN gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no
 range-check — and all seven are emitted here.
 
-⚑ MEASURED PROVE (hbox, co-tenant, `swarm-build` + `taskset -c 0-15 nice -n 15`, 2026-08-02):
-every rung
+⚑ MEASURED PROVE (2026-08-02, `cargo run --release … -- /tmp/pickles-stepmain step`): every rung
 `verify()==true`, and every rung keeps all five polarities — honest ACCEPT · σ-only desync REJECTED
 · byte-identical UNWIRED control ACCEPTED · unread advice ACCEPTED · (r5–r8) public-vector tamper
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1225     2048            1041 ms              24
-    r2_challenges    1870     2048             987 ms             116
-    r3_msm           5009     8192            1316 ms             221
-    r4_ipa           7853     8192            1355 ms             372
-    r5_full          8103     8192            1354 ms             378
-    r6_ft_eval0      8572    16384            1645 ms             380
-    r7_absorption   10249    16384            1728 ms             392
-    r8_finalize     10342    16384            1674 ms             399
+    r1_transcript    1069     2048            6227 ms              24
+    r2_challenges    1714     2048            2007 ms             116
+    r3_msm           4917     8192            1569 ms             221
+    r4_ipa           7761     8192            1834 ms             372
+    r5_full          8011     8192            1713 ms             378
+    r6_ft_eval0      8480    16384            1490 ms             380
+    r7_absorption   10157    16384            1469 ms             392
+    r8_finalize     10250    16384            5194 ms             399
+
+(r1's 6.2 s and r8's 5.2 s are first-touch and last-touch of a co-tenant box; the middle six are the
+steady-state figure. ⚠ the numbers above are from this workstation, not hbox as the previous rung's
+table was — the shape is the measurement, the wall-clock is not.)
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -198,16 +210,17 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1509 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1521 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
 of the two `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection —
 `ft_comm`'s own MSM LEFT this list on 2026-08-02 (§6b). #2–#11 below name the rest. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
 tail. That is the trade this file is supposed to be making: every commit here should be buying a
 named simplification, not scale.
 
-⚑ Likewise `Poseidon` (2277 vs 6292): R7 brings the count to 207 permutations, the last of which is
-`sponge_after_index`'s squeeze. `verify_one`'s own sponge work is now assembled; the remaining 365
-permutations are the app logic and `group_map` (#5).
+⚑ Likewise `Poseidon` (2145 vs 6292): R7 brings the count to 195 permutations, the last of which is
+`sponge_after_index`'s squeeze — TWELVE fewer than the previous rung, and the twelve are the absorb
+blocks the shape correction deleted. `verify_one`'s own sponge work is now assembled; the remaining
+377 permutations are the app logic and `group_map` (#5).
 
 ⚑ **WHERE FIAT-SHAMIR STANDS, stated at the resolution it is actually at, and BOTH HALVES.**
 
@@ -234,20 +247,31 @@ permutations are the app logic and `group_map` (#5).
     would refuse it is the IPA opening — `verified`, #11, still a witnessed boolean. The same is
     true of the 48 fold commitments since #3; what changed for `t_comm` is that it stopped being a
     word nothing reads.
-  * ⚠ **THE RESIDUE, counted — and the inherited count was wrong about WHAT it is.** Of the
-    committed shape's 142 R1-absorbed words, **31 are still free `msgVal` witnesses** (45 before
-    §6b, 46 before §3c). The previous rung called them "the `Shifted_value` / opening scalar
-    absorptions"; read at source they are not. `verify_one` absorbs **117** sponge items, and only
-    **SIX** of the 31 stand for ones this file has not wired — `sg_old[0]`'s two coordinates (the
-    fold's accumulator seed, which gets no round), `check_bulletproof`'s `absorb sponge Scalar
-    advice.combined_inner_product` as field+bit (`step_verifier.ml:79-81,256`) and `absorb sponge PC
-    delta` (`:321`). The other **25 are `absorbs = 71` overshooting 117**: a SHAPE correction, not a
-    sub-circuit.
+  * ⚑ **AND THE LADDER'S SEED IS NO LONGER THE PROVER'S** (2026-08-02, §12f). `scale_fast_unpack`
+    opens with `let acc = ref (add_fast base base)` and `let n_acc = ref Field.zero`
+    (`plonk_curve_ops.ml:157-158`) and R3 emitted NEITHER, so `pAcc i 0` and `vSN i 0` were
+    witnesses no row read. Doubling is a bijection on the group, so a chosen `acc₀` reaches EVERY
+    output — `multiscale_known`'s result is `x_hat`, a public word and a segment-C absorption — and
+    a chosen `n₀` lets the prover pick the BITS while the counter chain still closes on the
+    challenge cell. §12f exhibits both witnesses, shows `varBaseMulConstraints` (proof-systems' own
+    21, read-only) ACCEPTING the forged ladder row for row, and shows the two new rows refusing
+    them. ⚑ The `n_acc` pin covers §6b's eight `ft_comm` ladders too: they carried `:157` and not
+    `:158`.
+  * ⚠ **THE ABSORB SHAPE WAS SWALLOWING WORDS UPSTREAM NEVER FEEDS IT, and that was being reported
+    as a backlog.** `absorbs` was **71** — `2·71 = 142` field elements — against the **117** sponge
+    items `verify_one` actually absorbs (`ABSORB_ITEMS`, §2, item by item). The previous rung
+    reported all 31 free words as unwired absorptions; twenty-five of them stood for nothing.
+    `absorbs = absorbBlocksNeeded = ⌈117/2⌉ = 59` now, so **7 of the 118 words are free**: the SIX
+    real unwired absorptions — `sg_old[0]`'s two coordinates (the fold's accumulator seed, which
+    gets no round), `check_bulletproof`'s `absorb sponge Scalar advice.combined_inner_product` as
+    field+bit (`step_verifier.ml:79-81,256`) and `absorb sponge PC delta` (`:321`) — plus ONE pad
+    lane, because 117 is odd and this file models one commitment per rate-2 block. §12b pins the
+    item census against the wiring census as an EQUALITY.
 
-So: the sponge input is derived for the verifier key AND for the quotient commitment. What is left
-is six unwired absorptions and a shape that swallows 25 words upstream never feeds it — and saying
-that, rather than "31 scalar absorptions", is the difference between a residue and a backlog item
-that would never have been checked.
+So: the sponge input is derived for the verifier key AND for the quotient commitment, and both MSM
+ladders start where upstream starts them. What is left is six unwired absorptions and one pad lane —
+and saying that, rather than "31 scalar absorptions", is the difference between a residue and a
+backlog item that would never have been checked.
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -707,6 +731,66 @@ commitment silently becomes a constant). -/
 def absRoundList (s : StepShape) : List Nat :=
   ((List.range s.ipaRounds).filter ipaAbsorbs).take (s.absorbs - 1)
 
+/-! ### ⚑ `verify_one`'s SPONGE-ITEM CENSUS — what `absorbs` is supposed to be a count OF.
+
+Read at source and counted item by item, because the number `absorbs` carried until 2026-08-02 was
+not a count of anything: it was 71, i.e. `2·71 = 142` field elements, against the **117** sponge
+items `verify_one` actually feeds its transcript. Twenty-five words the sponge swallowed corresponded
+to nothing upstream absorbs — a SHAPE overshoot that the previous rung's residue note had mistaken
+for twenty-five unwired absorptions.
+
+`Sponge.absorb` takes ONE field element per call; `absorb sponge PC p` is
+`g1_to_field_elements p` = **two**, and `absorb sponge Scalar (x, b)` is `Field x` then `Bits [b]` =
+**two** (`step_verifier.ml:75-84`). At rate 2 the block count is `⌈items/2⌉`. -/
+
+/-- The census, in `incrementally_verify_proof`'s own absorption order. -/
+def ABSORB_ITEMS : List (String × Nat) :=
+  [ -- `absorb sponge Field index_digest` (`step_verifier.ml:534`) — ONE field element.
+    ("index_digest", 1)
+    -- `Vector.iter ~f:(absorb sponge PC) sg_old` (`:538`) over `Wrap_hack.Checked.pad_commitments`,
+    -- `Padded_length = Nat.N2` (`wrap_hack.ml:24,28`): TWO points.
+  , ("sg_old, padded ×2", 4)
+    -- `absorb sponge PC x_hat` (`:560`).
+  , ("x_hat", 2)
+    -- `Vector.iter ~f:absorb_g w_comm` (`:562`), `Plonk_types.Columns = 15`.
+  , ("w_comm ×15", 30)
+    -- `receive without z_comm` (`:565`).
+  , ("z_comm", 2)
+    -- `receive without t_comm` (`:567`), `Commitment_lengths.create ~t:(of_int 7)`
+    -- (`commitment_lengths.ml:6-11`).
+  , ("t_comm ×7", 14)
+    -- `absorb sponge Scalar advice.combined_inner_product` (`:256-259`) — `Other_field.t` is
+    -- `(Field.t, Boolean.var)`, so `absorb_scalar` emits field THEN bit (`:79-81`).
+  , ("combined_inner_product, field+bit", 2)
+    -- `bullet_reduce`'s `absorb (PC :: PC) gammas_i` (`:199`) over 15 `(L,R)` pairs.
+  , ("bullet_reduce (L,R) ×15", 60)
+    -- `absorb sponge PC delta` (`:321`).
+  , ("delta", 2) ]
+/-- **117.** -/
+def N_ABSORB_ITEMS : Nat := (ABSORB_ITEMS.map (·.2)).foldl (· + ·) 0
+
+/-- ⚑ The absorptions `verify_one` performs that this file does NOT yet wire to a variable a
+sub-circuit reads. Named individually so the residue is a LIST and not an adjective. -/
+def UNWIRED_ITEMS : List (String × Nat) :=
+  [ -- `combine_split_commitments` starts its accumulator AT commitment 0 (`:606`, `~init`), so
+    -- `sg_old[0]` gets no fold ROUND and this file gives it no transcript block.
+    ("sg_old[0]", 2)
+    -- absorbed AFTER `sponge_digest_before_evaluations` is squeezed (`:574` precedes `:256`), so
+    -- upstream has no cycle; R1's model runs ALL absorb blocks before ALL squeezes, which does.
+  , ("combined_inner_product, field+bit", 2)
+    -- consumed by `lhs = Scalar_challenge.endo q c + delta` (`:326-327`), the `check_bulletproof`
+    -- tail this file has not assembled.
+  , ("delta", 2) ]
+/-- **6.** -/
+def N_UNWIRED_ITEMS : Nat := (UNWIRED_ITEMS.map (·.2)).foldl (· + ·) 0
+
+/-- The absorb-block count a shape needs to feed `N_ABSORB_ITEMS` items at rate 2 — `⌈117/2⌉ = 59`.
+⚑ 117 is ODD, so one lane of one block has nothing upstream to carry: `index_digest` is a single
+`Field` and every later item comes in pairs, so the spare lane is block 0's second, exactly where the
+one non-commitment free word already sat (`msgVar`). That single PAD LANE is the difference between
+`2·absorbs` and 117, and it is a consequence of modelling ONE commitment per rate-2 block. -/
+def absorbBlocksNeeded : Nat := (N_ABSORB_ITEMS + 1) / 2
+
 /-! ### `Common.ft_comm`'s own quantities (§6b).
 
 `common.ml:238-256` and `step_verifier.ml:240-242,587-591`. Everything the ft_comm MSM is sized by,
@@ -1064,6 +1148,15 @@ def genericRow (v0 v1 v2 v3 v4 v5 : Option PVar) (c : List Int) : SRow :=
 def cSplit (bits : Nat) : List Int := [1, -((2 ^ bits : Nat) : Int), -1, 0, 0]
 /-- An unused generic half. -/ def cNil : List Int := [0, 0, 0, 0, 0]
 
+/-- Pack a list of `Generic` HALVES two to a row (Snarky's own double-generic filling). -/
+def packHalves (hs : List (List (Option PVar) × List Int)) : List SRow :=
+  let nil : List (Option PVar) × List Int := ([none, none, none], cNil)
+  (List.range ((hs.length + 1) / 2)).map (fun r =>
+    let h1 := hs.getD (2 * r) nil
+    let h2 := if 2 * r + 1 < hs.length then hs.getD (2 * r + 1) nil else nil
+    ({ kind := .generic, perm := h1.1 ++ h2.1 ++ [none]
+     , coeffs := h1.2 ++ h2.2 } : SRow))
+
 /-! ## §3b — the SUPPLIED COMMITMENTS, and where each curve base COMES FROM.
 
 ⚑ This is simplification #3, and reading `step_verifier.ml` at source splits it in two, because
@@ -1254,23 +1347,26 @@ sub-circuit consumes.
 
 ⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** A `vMsg`
 word is a free variable: no row pins it, no sub-circuit derives it, and the absorb row eats it. At
-`shapeStep` that is 16 blocks less block 0's derived lane — **31 of the 142 absorbed words** (45
-before §6b) — and a prover who grinds them steers every squeeze, not by breaking a decomposition (all
-three `lowest_128_bits` range-check both parts since 2026-08-02) but by choosing the sponge's INPUT.
-What they should be is now a SHORTER list than it was: `sponge_after_index` left it (§3c) and
-`ft_comm`'s seven `t_comm` chunks left it (§6b, 14 words) — and the latter left it by being
-CONSUMED, not merely absorbed.
+`shapeStep` that is **7 of the 118 absorbed words** — and a prover who grinds them steers every
+squeeze, not by breaking a decomposition (all three `lowest_128_bits` range-check both parts since
+2026-08-02) but by choosing the sponge's INPUT. What they should be is now a SHORTER list than it
+was: `sponge_after_index` left it (§3c) and `ft_comm`'s seven `t_comm` chunks left it (§6b, 14
+words) — and the latter left it by being CONSUMED, not merely absorbed.
 
-⚠ ⚑ AND WHAT THE 31 ACTUALLY ARE, read at source rather than inherited. Only **six** of them stand
-for absorptions `verify_one` really performs and this file has not wired: `sg_old[0]`'s two
-coordinates (commitment 0 is where `combine_split_commitments`' fold STARTS, so it gets no round and
-no block), and `check_bulletproof`'s `absorb sponge Scalar advice.combined_inner_product` (2 sponge
-items — `absorb_scalar (x, b)` is `Field x` then `Bits [b]`, `step_verifier.ml:79-81,256`) and
-`absorb sponge PC delta` (`:321`). The other **25** are `absorbs = 71` OVERSHOOTING: `verify_one`
-absorbs `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items and this shape swallows 142. That
-is a SHAPE correction, not a sub-circuit — and the previous rung's note called all 31 "the
-`Shifted_value` / opening scalar absorptions", which over-counts them by four. §12b pins the count
-as an equality. -/
+⚠ ⚑ AND WHAT THEY ACTUALLY ARE, read at source rather than inherited. **SIX** of the seven stand for
+absorptions `verify_one` really performs and this file has not wired (`UNWIRED_ITEMS`, §2):
+`sg_old[0]`'s two coordinates (commitment 0 is where `combine_split_commitments`' fold STARTS, so it
+gets no round and no block), and `check_bulletproof`'s `absorb sponge Scalar
+advice.combined_inner_product` (2 sponge items — `absorb_scalar (x, b)` is `Field x` then `Bits [b]`,
+`step_verifier.ml:79-81,256`) and `absorb sponge PC delta` (`:321`). The **seventh** is block 0's
+second lane: `verify_one` feeds `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items, 117 is
+odd, and one lane of the `⌈117/2⌉` rate-2 blocks therefore carries nothing upstream absorbs.
+
+⚠ ⚑ **THE COUNT USED TO BE 31, AND 25 OF THOSE WERE NOT ABSORPTIONS AT ALL.** `absorbs` was **71**
+until 2026-08-02 — `2·71 = 142` words against 117 items — and the previous rung reported the whole
+31 as a backlog of unwired absorptions. Twenty-five of them stood for nothing: the shape swallowed
+words `verify_one` never feeds it. `absorbs` is now `absorbBlocksNeeded = ⌈117/2⌉` and §12b pins the
+item census against the wiring census as an EQUALITY, so neither can drift into the other. -/
 def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
 
 /-- ⚑ The VARIABLE absorbed at lane `j` of transcript block `b`. For a block that carries one of the
@@ -1598,14 +1694,51 @@ def msmBaseRows (s : StepShape) (m : MsmData) : List SRow :=
   (List.range s.msmTerms).map (fun i =>
     baseConstRow (mpx s (pT s i)) (mpy s (pT s i)) (m.terms.getD i default).T)
 
+/-- **`scale_fast_unpack`'s OWN SEED**, `Ops.add_fast base base` (`plonk_curve_ops.ml:157`) — one
+`CompleteAdd` row per MSM term, DEFINING `pAcc i 0` instead of leaving it a witness.
+
+⚑ THE HOLE THIS CLOSES. The ladder is `accₖ₊₁ = [2]accₖ + (2bₖ−1)·T`, so
+`acc_N = 2^{5·msmChunks}·acc₀ + Σₖ (2bₖ−1)·2^{5·msmChunks−1−k}·T`. Doubling is a BIJECTION on the
+group, so for ANY target point the prover solves for `acc₀` — and nothing else in R3 objects: the
+base is pinned (`msmBaseRows`), the bits are the chunk rows' own advice, and the counter chain closes
+on the challenge variable, none of which say a word about the seed. `multiscale_known`'s output —
+`x_hat`, a PUBLIC word here and a segment-C absorption — was the prover's outright. §12f exhibits the
+witness. §6b's `ft_comm` ladders carried this row from the start (`ftcTermRows`'s `caRow g g`); R3's
+did not. -/
+def msmDblRow (s : StepShape) (m : MsmData) (i : Nat) : SRow :=
+  let T := (m.terms.getD i default).T
+  let c := completeAddWitness T.1 T.2 T.1 T.2
+  { kind := .completeAdd
+  , perm := [ some (mpx s (pT s i)), some (mpy s (pT s i))
+            , some (mpx s (pT s i)), some (mpy s (pT s i))
+            , some (mpx s (pAcc s i 0)), some (mpy s (pAcc s i 0)), none ]
+  , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
+              , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
+
+/-- **`let n_acc = ref Field.zero`** (`plonk_curve_ops.ml:158`) — the SECOND free witness of the same
+two lines, one `Generic` half per MSM term.
+
+⚑ `Field.zero` is a CONSTANT upstream; here `vSN i 0` was a variable no row read. The chunk rows
+constrain `n' = 32·n + Σ_t 2^{4−t}·b_t`, so the chain closes on
+`n_final = 32^{msmChunks}·n₀ + (the bits as an integer)` — and `n_final` IS the challenge variable
+(`vSN i msmChunks = vN (msmChal i) emsRows`). With `n₀` free a prover picks ANY bit vector and solves
+`n₀ = (n_final − bits)·32^{−msmChunks}`; the bits he picks are the multiplier the ladder actually
+uses. That is the acc₀ hole through the other cell, and §12f exhibits it too. -/
+def msmNZeroRows (s : StepShape) : List SRow :=
+  packHalves ((List.range s.msmTerms).map (fun i =>
+    ([some (vSN s i 0), none, none], cConst 0)))
+
 /-- **R3's rows.** -/
 def msmRows (s : StepShape) (m : MsmData) (wired : Bool) : List SRow :=
   msmBaseRows s m
+  ++ msmNZeroRows s
+  ++ [msmDblRow s m 0]
   ++ ((List.range s.msmChunks).flatMap (msmChunkRows s m 0))
   ++ [probeRow wired (mpx s (pAcc s 0 s.msmChunks)) (mpy s (pAcc s 0 s.msmChunks))]
   ++ (List.range (s.msmTerms - 1)).flatMap (fun a =>
        let i := a + 1
-       ((List.range s.msmChunks).flatMap (msmChunkRows s m i))
+       [msmDblRow s m i]
+       ++ ((List.range s.msmChunks).flatMap (msmChunkRows s m i))
        ++ [probeRow wired (mpx s (pAcc s i s.msmChunks)) (mpy s (pAcc s i s.msmChunks))]
        ++ [msmAddRow s m a]
        ++ [probeRow wired (mpx s (pSum s a)) (mpy s (pSum s a))])
@@ -1702,15 +1835,6 @@ row — strictly stronger than membership. So the checked set is exactly the ABS
 /-- `Pallas.Params.b`. `Params.a = 0`, so the `a·x` term of `assert_on_curve` folds away; a curve
 with `a ≠ 0` would need one more half and one more variable, and this is where that would go. -/
 def PALLAS_B : Nat := 5
-
-/-- Pack a list of `Generic` HALVES two to a row (Snarky's own double-generic filling). -/
-def packHalves (hs : List (List (Option PVar) × List Int)) : List SRow :=
-  let nil : List (Option PVar) × List Int := ([none, none, none], cNil)
-  (List.range ((hs.length + 1) / 2)).map (fun r =>
-    let h1 := hs.getD (2 * r) nil
-    let h2 := if 2 * r + 1 < hs.length then hs.getD (2 * r + 1) nil else nil
-    ({ kind := .generic, perm := h1.1 ++ h2.1 ++ [none]
-     , coeffs := h1.2 ++ h2.2 } : SRow))
 
 /-- `assert_on_curve (x, y)` as three `Generic` halves: `x2 = x·x`, `x3 = x2·x`, and
 `y·y − x3 − b = 0` — the `assert_square` with the linear combination folded into the coefficients,
@@ -1955,6 +2079,16 @@ def ftcScalRows (s : StepShape) (W : FtcWire) (wired : Bool) : List SRow :=
     , ([some (ftcOdd s c), some (ftcOdd s c), some (ftcOdd s c)], cMul) ]))
   ++ (List.range N_FTC_SCAL).map (fun c => probeRow wired (ftcDiv2 s c) (ftcOdd s c))
 
+/-- **`let n_acc = ref Field.zero`** for `ft_comm`'s own ladders (`plonk_curve_ops.ml:158`), one
+`Generic` half per `scale_fast2`. ⚑ §6b emitted `:157`'s `add_fast base base` from the start and NOT
+`:158`'s counter seed, so `ftcN k 0` was a free witness and the closing
+`Field.Assert.equal !n_acc scalar` (`:208`) — the wire that makes the ladder multiply by R6's derived
+`perm` / `ζ^n` — was one equation in two unknowns: the prover picks the 255 bits and solves for
+`ftcN k 0`. The same defect R3 carried at `vSN i 0`, in the ladder that computes `ft_comm`. -/
+def ftcNZeroRows (s : StepShape) : List SRow :=
+  packHalves ((List.range (ftcTerms s)).map (fun k =>
+    ([some (ftcN s k 0), none, none], cConst 0)))
+
 /-- **Term `k`'s rows.** The `G.if_` mux is `d = h − (h−g) ; m = s_odd·d ; res = (h−g) + m` per
 coordinate — Snarky's `Field.if_` (`else_ + b·(then_ − else_)`) with the difference sealed, because a
 double-`Generic` half carries three variables and `res − else_ − b·(then_ − else_)` needs four. -/
@@ -2000,6 +2134,7 @@ def ftcAddRows (s : StepShape) (d : FtcData) (wired : Bool) : List SRow :=
 /-- **§6b's rows.** -/
 def ftcRows (s : StepShape) (W : FtcWire) (d : FtcData) (wired : Bool) : List SRow :=
   ftcScalRows s W wired
+  ++ ftcNZeroRows s
   ++ (List.range (ftcTerms s)).flatMap (ftcTermRows s d wired)
   ++ ftcAddRows s d wired
 
@@ -3827,17 +3962,23 @@ than reverse-engineered from a row count:
   * `ipaRounds = 76` = 46 `combine_split_commitments` folds (`COMBINE_XY`'s 47 commitments, less the
     one the accumulator starts at) + `bullet_reduce`'s 30 `(L,R)` endos. Both lists are on disk at
     exactly those lengths.
-  * `absorbs = 71` is block 0 (⚑ `index_digest`, §3c — upstream's own first absorption) plus the 48
-    blocks that carry a fold commitment (18 fold + 30 gammas) plus — since §6b — the 7 that carry
-    `t_comm`'s quotient chunks, plus the 15 `check_bulletproof` scalar-absorption blocks the
-    assembled sub-circuits do not consume.
+  * ⚑ **`absorbs = 59` is `⌈117/2⌉`, and 117 is `verify_one`'s own sponge-item count**
+    (`ABSORB_ITEMS`, §2, item by item at `step_verifier.ml:534-567,199,256,321`). It was **71** until
+    2026-08-02 — `2·71 = 142` field elements against 117 — and that 25-word overshoot was being
+    reported as twenty-five unwired ABSORPTIONS, which is a backlog item, rather than as a shape
+    that swallows words upstream never feeds it, which is an error. (24 of the 25 go; the 25th is
+    the pad lane an odd item count forces.) The 59 are: block 0
+    (⚑ `index_digest`, §3c — upstream's own first absorption, one `Field`, its second lane the one
+    PAD lane an odd item count forces), the 48 blocks that carry a fold commitment (18 fold + 30
+    gammas), the 7 that carry `t_comm`'s quotient chunks (§6b), and **three** for the absorptions
+    still unwired — `sg_old[0]`, `combined_inner_product` as field+bit, `delta` (`UNWIRED_ITEMS`).
 
 `chals = 23` is β, γ, α, ζ, ξ, r, u, c + the 15 `bullet_reduce` squeezes; `msmChunks = 26` is the
 128-bit `scale_fast2` — ⚑ #2 has the MEASURED per-word width census, and 8 of the 40 words are
 255-bit while 22 are 128 and one is 10, so a uniform widening is the wrong move; `bRounds = 16` is `Step_bp_vec = N16`;
 `cipEvals = 47` is `N45` + `Wrap_hack`'s two; `pubWords = 67` is Step's `PRIMARY_LEN`. -/
 def shapeStep : StepShape :=
-  { absorbs := 71, chals := 23, emsRows := 8
+  { absorbs := 59, chals := 23, emsRows := 8
   , msmTerms := 40, msmChunks := 26
   , ipaRounds := 76, ipaBlocks := 32
   , bRounds := 16, cipEvals := 47, pubWords := 67 }
@@ -3942,12 +4083,18 @@ def totalRowsS : Nat := pubS + nRowsS
            + ftcTerms shapeSmoke * FTC_CHUNKS
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMul)).length
         == shapeSmoke.ipaRounds * shapeSmoke.ipaBlocks
--- …and `CompleteAdd` is the two summation chains plus §6b's: per `scale_fast2` the initial
--- `add_fast base base` and the odd-branch `add_fast h (negate g)` (`plonk_curve_ops.ml:157,267`),
--- then `common.ml`'s own `tCommN + 1` adds.
+-- …and `CompleteAdd` is the two summation chains, R3's OWN `add_fast base base` per term (§12f,
+-- new 2026-08-02) and §6b's: per `scale_fast2` the initial `add_fast base base` and the odd-branch
+-- `add_fast h (negate g)` (`plonk_curve_ops.ml:157,267`), then `common.ml`'s own `tCommN + 1` adds.
 #guard (placedS.filter (fun g => g.kind == KGateType.completeAdd)).length
-        == (shapeSmoke.msmTerms - 1) + (shapeSmoke.ipaRounds - 1)
+        == (shapeSmoke.msmTerms - 1) + shapeSmoke.msmTerms + (shapeSmoke.ipaRounds - 1)
            + 2 * ftcTerms shapeSmoke + (tCommN shapeSmoke + 1)
+-- ⚑ …and every `CompleteAdd` is still followed by a row of another kind, which is why the shape
+-- diff's `CompleteAdd` family stays `1×n`: R3's seed row is preceded by a `Zero` probe (or the pin
+-- block) and followed by its ladder's first `VarBaseMul`.
+#guard ((List.range nRowsS).filter (fun i =>
+          (rowsS.getD i default).kind == KGateType.completeAdd
+          && (rowsS.getD (i + 1) default).kind == KGateType.completeAdd)) == []
 -- Generic = the pubWords public rows `place` emits + the circuit's own generic rows.
 #guard (placedS.filter (fun g => g.kind == KGateType.generic)).length ≥ pubS
 
@@ -4272,13 +4419,14 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 -- **stated at `shapeStep` because the smoke shape has almost none of them.** A block with no
 -- commitment absorbs `msgVal` fixtures that no row pins; block 0 lane 0 is no longer one of them
 -- (§3c wires `index_digest` there), and since §6b seven of them carry `t_comm`'s quotient chunks,
--- so of `2·absorbs = 142` absorbed words **31 are free where 45 were before §6b**. EQUALITY, so
--- assembling one of the rest moves this number — and so does un-assembling `ft_comm`.
-#guard shapeStep.absorbs - (absRoundList shapeStep).length == 23
-#guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 23
+-- so of `2·absorbs = 118` absorbed words **7 are free where 31 were at `absorbs = 71` and 45 before
+-- §6b**. EQUALITY, so assembling one of the rest moves this number — and so does un-assembling
+-- `ft_comm`, and so does widening the shape back out.
+#guard shapeStep.absorbs - (absRoundList shapeStep).length == 11
+#guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 11
 #guard (List.range shapeStep.absorbs).foldl
         (fun n b => n + (List.range 2).countP (fun j =>
-           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 31
+           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 7
 -- ⚑ …and the FOURTEEN that left are exactly `t_comm`'s, block for block and lane for lane. Stated
 -- against `T_COMM_XY` so a block that merely stopped being a `vMsg` without carrying a commitment
 -- would not satisfy it.
@@ -4298,14 +4446,34 @@ def foldMulOf (sq : Nat) : ZMod pN :=
            msgVar shapeStep b j == vIdxD shapeStep 0)) 0 == 1
 #guard msgVar shapeStep 0 0 == vIdxD shapeStep 0
 #guard msgValOf shapeStep (stepBases shapeStep) 0 0 == indexDigest
--- ⚠ ⚑ …and the 31 are NOT 31 unwired upstream absorptions, which is what the inherited note said.
--- `verify_one` absorbs `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items (index_digest,
--- padded `sg_old`, `x_hat`, 15 `w_comm`, `z_comm`, 7 `t_comm`, `combined_inner_product` as
--- field+bit, 15 `(L,R)` pairs, `delta` — `step_verifier.ml:534-567`, `:256,315,321`), and this shape
--- swallows 142. SIX of the 31 are real and unwired (`sg_old[0]`, `combined_inner_product`, `delta`);
--- the other 25 are `absorbs` overshooting, which is a shape correction and not a sub-circuit.
-#guard 2 * shapeStep.absorbs == 142
-#guard 2 * shapeStep.absorbs - 117 == 25
+-- ── ⚑ THE ABSORB SHAPE IS `verify_one`'s OWN ITEM COUNT (the 25-word overshoot, retired) ───────
+-- The previous rung read the 31 free words as 31 unwired absorptions; read at source, only SIX were.
+-- The other 25 were `absorbs = 71` swallowing words upstream never feeds it. `absorbs` is now
+-- `⌈117/2⌉`, so the shape and the source agree BY CONSTRUCTION rather than by a number someone
+-- chose. Every pin below is an EQUALITY: widening `absorbs` back out reds three of them at once.
+#guard N_ABSORB_ITEMS == 117
+#guard (ABSORB_ITEMS.map (·.2)) == [1, 4, 2, 30, 2, 14, 2, 60, 2]
+#guard absorbBlocksNeeded == 59
+#guard shapeStep.absorbs == absorbBlocksNeeded
+#guard 2 * shapeStep.absorbs == 118
+-- ⚑ …and the residue is now ONE pad lane, not twenty-five phantom words. 117 is odd, `index_digest`
+-- is the single unpaired `Field`, and every later item is a point or a `(field, bit)` pair.
+#guard 2 * shapeStep.absorbs - N_ABSORB_ITEMS == 1
+-- ⚑⚑ **THE ITEM CENSUS AND THE WIRING CENSUS AGREE, AS AN EQUALITY.** The items `verify_one`
+-- absorbs, less the six this file has not wired, are EXACTLY the words a row here reads:
+-- `index_digest` + the 48 fold commitments + `t_comm`'s 7 chunks = 111. A deleted wire moves the
+-- right-hand side; a phantom absorption moves the left; neither can be absorbed into the other.
+#guard N_UNWIRED_ITEMS == 6
+#guard N_ABSORB_ITEMS - N_UNWIRED_ITEMS
+        == 1 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep
+#guard 1 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep == 111
+-- …so the 7 free words ARE the six unwired items plus the pad lane, counted two ways.
+#guard 2 * shapeStep.absorbs - (1 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep)
+        == N_UNWIRED_ITEMS + 1
+-- …and the cap that sizes `t_comm` still does not bind: three blocks are left over, one per
+-- unwired item, so `tCommN` is 7 because `N_TCOMM` is 7 and not because the shape ran out.
+#guard shapeStep.absorbs - 1 - (absRoundList shapeStep).length == N_TCOMM + 3
+#guard tCommN shapeStep == N_TCOMM
 -- …and the SEGMENT-C count, which is the other half and the bigger one: the `Not_opt` prefix was
 -- 58 `hmVal` fixtures and is now `sponge_after_index`'s 56 derived words plus the two app-state
 -- words. **58 free → 2.**
@@ -4355,10 +4523,12 @@ def nTrans : Nat := pubS + (transcriptRows shapeSmoke tS.sp true).length
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).filter
           (fun c => c.row < nTrans)).length == 0
 #guard idxSrc shapeSmoke 22 == some constR0
--- …and R3's bases likewise: pinned, never absorbed.
+-- …and R3's bases likewise: pinned, never absorbed. ⚑ `+ 3` and not `+ 1` since §12f: the seed row
+-- `add_fast base base` reads the base TWICE (cols 0,1 and 2,3) on top of the pin row and the
+-- `msmChunks` `VarBaseMul` reads.
 #guard ((classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).filter
           (fun c => c.row < nTrans)).length == 0
-#guard (classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).length == shapeSmoke.msmChunks + 1
+#guard (classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).length == shapeSmoke.msmChunks + 3
 
 /-- The supplied commitments with base `k` replaced by ANOTHER of the real block's points — a prover
 who hands `verify_one` a different, perfectly valid, on-curve commitment. -/
@@ -4823,13 +4993,19 @@ def idxPinRow (k : Nat) : SRow :=
 -- `ftcTerms` ladders and `common.ml`'s add chain. A vanished sub-list moves this number.
 #guard (ftcRows shapeSmoke tS.ftw tS.ftc true).length
         == (ftcScalRows shapeSmoke tS.ftw true).length
+           + (ftcNZeroRows shapeSmoke).length
            + ftcTerms shapeSmoke * (ftcTermRows shapeSmoke tS.ftc true 0).length
            + (ftcAddRows shapeSmoke tS.ftc true).length
+-- ⚑ …and `plonk_curve_ops.ml:158`'s counter seed is pinned for every one of them (§12f): one
+-- `Generic` half per `scale_fast2`, packed two to a row.
+#guard (ftcNZeroRows shapeSmoke).length == (ftcTerms shapeSmoke + 1) / 2
+#guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
+  (classCells posS (ftcN shapeSmoke k 0)).length == 2)
 -- …one term is `2·FTC_CHUNKS` chunk rows, the doubling and odd-branch `add_fast`s, two probes and
 -- the four `Generic` rows of the top-bit assert, the negate and `G.if_`'s six halves.
 #guard (ftcTermRows shapeSmoke tS.ftc true 0).length == 2 * FTC_CHUNKS + 8
 #guard (ftcAddRows shapeSmoke tS.ftc true).length == 2 * (tCommN shapeSmoke - 1) + 5
-#guard (ftcRows shapeSmoke tS.ftw tS.ftc true).length == 453
+#guard (ftcRows shapeSmoke tS.ftw tS.ftc true).length == 455
 -- …and `common.ml`'s own operation count: `tCommN + 1` `Ops.add_fast`s, `ftcTerms` scales.
 #guard tS.ftc.addCells.length == tCommN shapeSmoke + 1
 #guard tS.ftc.terms.length == ftcTerms shapeSmoke
@@ -5110,6 +5286,156 @@ def tcSqBody (p : Nat × Nat) : ZMod pN :=
 -- the quotient chunks, and the last `tCommN` checked variables ARE `t_comm`'s.
 #guard (List.range (tCommN shapeSmoke)).all (fun i =>
   onCVar shapeSmoke ((absRoundList shapeSmoke).length + i) == (vTcX shapeSmoke i, vTcY shapeSmoke i))
+
+-- ── §12f — ⚑ R3's LADDER SEED WAS THE PROVER'S (`plonk_curve_ops.ml:157-158`, CLOSED) ──────────
+-- §12b pinned R3's BASES to the SRS Lagrange constants and §12c/§12c′ closed the challenge
+-- decompositions. Neither says a word about where the ladder STARTS. `scale_fast_unpack` opens with
+-- TWO initialisers — `let acc = ref (add_fast base base)` (`:157`) and `let n_acc = ref Field.zero`
+-- (`:158`) — and R3 emitted NEITHER, so `pAcc i 0` and `vSN i 0` were witnesses no row read. Both
+-- are exhibited below on the assembly's OWN generators: the ladder's gate polynomial ACCEPTS each
+-- forgery, and each of the two new rows refuses it.
+
+/-- MSM term 0's base — an SRS Lagrange constant PINNED by `msmBaseRows` (§12b), so the exhibit
+cannot be mistaken for "the prover swapped the base". -/
+def msmT0 : Nat × Nat := (tS.msm.terms.getD 0 default).T
+/-- …the HONEST seed, `add_fast base base` = `[2]T`. -/
+def msmSeedHon : Nat × Nat := dblA msmT0
+/-- ⚑ **THE PROVER'S SEED**: `[3]T`. On the curve, so `Inner_curve.typ`'s check would not object
+either — and ANY point works, which is the whole content of the hole. -/
+def msmSeedForged : Nat × Nat := addA msmSeedHon msmT0
+/-- Term 0's ladder from an arbitrary seed — `runVbm`, the assembly's OWN generator, at the
+assembly's own bits. -/
+def msmFrom (seed : Nat × Nat) : TermData := runVbm msmT0 seed (tS.msm.bits.getD 0 [])
+def msmForged : TermData := msmFrom msmSeedForged
+
+-- the honest run IS the assembly's term 0, so what follows measures the forgery and not a second
+-- copy of the ladder.
+#guard (msmFrom msmSeedHon).accs == (tS.msm.terms.getD 0 default).accs
+#guard (tS.msm.terms.getD 0 default).accs.getD 0 (0, 0) == msmSeedHon
+#guard msmSeedForged != msmSeedHon
+#guard onCurveA msmT0 && onCurveA msmSeedHon && onCurveA msmSeedForged
+-- ⚑ the COUNTER CHAIN IS UNTOUCHED by a forged seed: the forged ladder's `n` cells are the honest
+-- ones, so the σ class that closes `vSN 0 msmChunks` on the challenge variable — the only thing R3
+-- constrained about this term — is satisfied by the forgery exactly as by the honest witness.
+#guard msmForged.ns == (tS.msm.terms.getD 0 default).ns
+-- ⚑⚑ **AND THE OUTPUT IS A DIFFERENT POINT.** `multiscale_known`'s result is `x_hat`: a PUBLIC word
+-- (`exposedVars`) and a segment-C absorption. This is the prover choosing what the MSM returned.
+#guard msmForged.accs.getLastD (0, 0) != (tS.msm.terms.getD 0 default).accs.getLastD (0, 0)
+
+/-- The 15 CURR and 15 NEXT cells of one `VarBaseMul` chunk, laid out as `msmChunkRows` emits them
+(`varbasemul.rs:310-331`): base `(w₀,w₁)`, accumulators `(w₂,w₃) (w₇,w₈) (w₉,w₁₀) (w₁₁,w₁₂)
+(w₁₃,w₁₄)` on CURR and `(w'₀,w'₁)` on NEXT, `n = w₄`, `n' = w₅`, bits `w'₂..w'₆`, slopes
+`w'₇..w'₁₁`. -/
+def vbmChunkCells (td : TermData) (bits : List Nat) (j : Nat) : List Nat × List Nat :=
+  let ax : Nat → Nat := fun k => (td.accs.getD k (0, 0)).1
+  let ay : Nat → Nat := fun k => (td.accs.getD k (0, 0)).2
+  ( [ td.T.1, td.T.2, ax (5*j), ay (5*j), td.ns.getD (5*j) 0, td.ns.getD (5*(j+1)) 0, 0
+    , ax (5*j+1), ay (5*j+1), ax (5*j+2), ay (5*j+2)
+    , ax (5*j+3), ay (5*j+3), ax (5*j+4), ay (5*j+4) ]
+  , [ ax (5*(j+1)), ay (5*(j+1))
+    , bits.getD (5*j) 0, bits.getD (5*j+1) 0, bits.getD (5*j+2) 0, bits.getD (5*j+3) 0
+    , bits.getD (5*j+4) 0
+    , td.slopes.getD (5*j) 0, td.slopes.getD (5*j+1) 0, td.slopes.getD (5*j+2) 0
+    , td.slopes.getD (5*j+3) 0, td.slopes.getD (5*j+4) 0, 0, 0, 0 ] )
+/-- …answered to `varBaseMulConstraints`, proof-systems' own 21 constraints, read-only. -/
+def vbmOk (c : List Nat × List Nat) : Bool :=
+  (varBaseMulConstraints (R := ZMod pN) (c.1.map (fun n => (n : ZMod pN)))
+      (c.2.map (fun n => (n : ZMod pN)))).all (fun z => decide (z = 0))
+
+-- the cell helper reproduces the ASSEMBLY's own accepted rows on the honest term…
+#guard (List.range shapeSmoke.msmChunks).all (fun j =>
+  vbmOk (vbmChunkCells (tS.msm.terms.getD 0 default) (tS.msm.bits.getD 0 []) j))
+-- ⚑⚑ **THE HOLE, ON THE EMITTED GATE POLYNOMIAL.** Every `VarBaseMul` row of the FORGED ladder
+-- satisfies the same 21 constraints. A curve gate constrains the STEP and not the START, so before
+-- this commit there was nothing in R3 that could refuse a chosen `acc₀`.
+#guard (List.range shapeSmoke.msmChunks).all (fun j =>
+  vbmOk (vbmChunkCells msmForged (tS.msm.bits.getD 0 []) j))
+
+/-- The seed row's eleven `CompleteAdd` cells with the OUTPUT replaced by the point a prover
+claims — `msmDblRow`'s own witness, one substitution. -/
+def msmDblCellsAt (seed : Nat × Nat) : List Nat :=
+  ((completeAddWitness msmT0.1 msmT0.2 msmT0.1 msmT0.2).set 4 seed.1).set 5 seed.2
+def caOk (c : List Nat) : Bool :=
+  (completeAddConstraints (R := ZMod pN) (c.map (fun n => (n : ZMod pN)))).all (fun z => decide (z = 0))
+
+-- ⚑⚑ **AND THE ASSEMBLED VERSION REFUSES IT.** The seed row's own gate body is 0 on
+-- `add_fast base base` and NONZERO on the prover's point. ACCEPTED this morning — no row read
+-- `pAcc i 0` at all — REFUSED now.
+#guard caOk (msmDblCellsAt msmSeedHon)
+#guard caOk (msmDblCellsAt msmSeedForged) == false
+-- …and the check is SATISFIABLE at every term, not just the one the exhibit used.
+#guard (List.range shapeSmoke.msmTerms).all (fun i =>
+  let T := (tS.msm.terms.getD i default).T
+  caOk (completeAddWitness T.1 T.2 T.1 T.2))
+-- …and the row is REALLY IN THE SCHEDULE, wired to the ladder's first accumulator cell: `pAcc i 0`
+-- now has TWO cells (the seed row's output and chunk 0's `VarBaseMul` input) where it had one.
+#guard (classCells posS (mpx shapeSmoke (pAcc shapeSmoke 0 0))).length == 2
+#guard (classCells posS (mpy shapeSmoke (pAcc shapeSmoke 0 0))).length == 2
+#guard (List.range shapeSmoke.msmTerms).all (fun i =>
+  (classCells posS (mpx shapeSmoke (pAcc shapeSmoke i 0))).length == 2)
+
+-- ── …AND THE SECOND WITNESS OF THE SAME TWO LINES: the counter seed (`:158`) ───────────────────
+/-- The counter trace `nₖ₊₁ = 2nₖ + bₖ` (`plonk_curve_ops.ml:170`) from an ARBITRARY seed. -/
+def nTraceFrom (n0 : Nat) (bits : List Nat) : List Nat :=
+  bits.foldl (fun acc b => acc ++ [(2 * acc.getLastD 0 + b) % pN]) [n0]
+/-- ⚑ The honest bits with the MSB flipped — a DIFFERENT multiplier, hence a different ladder
+output. -/
+def msmBitsForged : List Nat :=
+  (tS.msm.bits.getD 0 []).set 0 (1 - (tS.msm.bits.getD 0 []).headD 0)
+/-- …and the counter seed that makes the chain still close on the SAME challenge cell:
+`n₀ = (n_final − N(bits′))·2^{−5·msmChunks}`, one field inversion. -/
+def msmN0Forged : Nat :=
+  fMul (fSub ((tS.msm.terms.getD 0 default).ns.getLastD 0)
+             ((nTraceFrom 0 msmBitsForged).getLastD 0))
+       (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv (2 ^ (5 * shapeSmoke.msmChunks) % pN))
+
+-- the trace helper reproduces the assembly's own counter chain from `n₀ = 0`…
+#guard (nTraceFrom 0 (tS.msm.bits.getD 0 [])) == (tS.msm.terms.getD 0 default).ns
+-- ⚑⚑ **THE FORGERY: DIFFERENT BITS, THE SAME CHALLENGE CELL.** The chain from the prover's seed
+-- closes on exactly the value `vSN 0 msmChunks` is wired to, so `Field.Assert.equal !n_acc scalar`
+-- (`:208`) — the wire R3 was relying on — is satisfied by a bit vector the prover chose.
+#guard msmBitsForged != tS.msm.bits.getD 0 []
+#guard msmN0Forged != 0
+#guard (nTraceFrom msmN0Forged msmBitsForged).getLastD 0
+        == (tS.msm.terms.getD 0 default).ns.getLastD 0
+-- …and the ladder over those bits lands on a DIFFERENT point, which is the same theft as above
+-- through the other cell.
+#guard (runVbm msmT0 msmSeedHon msmBitsForged).accs.getLastD (0, 0)
+        != (tS.msm.terms.getD 0 default).accs.getLastD (0, 0)
+
+/-- `msmNZeroRows`' first row, as its own `Generic` body — half 1 is `w₀ = 0` over `vSN i 0`. -/
+def msmNZeroRow0 : SRow := (msmNZeroRows shapeSmoke).headD default
+def nZeroBody (v : Nat) : ZMod pN :=
+  Dregg2.Circuit.Emit.KimchiVerify.genericGateConstraint (1 : ZMod pN) (3 : ZMod pN)
+    (msmNZeroRow0.coeffs.map (fun c => ((c : Int) : ZMod pN)))
+    [(v : ZMod pN), 0, 0, 0, 0, 0]
+
+-- ⚑⚑ **AND `n_acc := ref Field.zero` REFUSES IT.** The pin row's own generic-gate body —
+-- `KimchiVerify.genericGateConstraint`, read-only — is 0 at the constant upstream uses and NONZERO
+-- at the prover's seed.
+#guard msmNZeroRow0.coeffs == cConst 0 ++ cConst 0
+#guard nZeroBody 0 == 0
+#guard (nZeroBody msmN0Forged == 0) == false
+-- …and `vSN i 0` is READ by that row for every term (two cells: the pin and chunk 0's `VarBaseMul`).
+#guard (List.range shapeSmoke.msmTerms).all (fun i =>
+  (classCells posS (vSN shapeSmoke i 0)).length == 2)
+-- ⚑ …and the SAME pin now covers §6b's eight `ft_comm` ladders, which had `:157` and not `:158`:
+-- `ftcN k 0` was free, so the closing `Field.Assert.equal !n_acc scalar` against R6's derived `perm`
+-- / `ζ^n` cell was one equation in two unknowns and `ft_comm` was choosable the same way.
+#guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
+  (tS.ftc.terms.getD k default).td.ns.headD 1 == 0)
+#guard ((ftcNZeroRows shapeSmoke).headD default).coeffs == cConst 0 ++ cConst 0
+
+-- ⚠ ⚑ **AND SAY WHAT IS STILL OPEN, at the point of use.** R4's `Scalar_challenge.endo` has the
+-- SAME TWO free witnesses and this commit does NOT close them: `scalar_challenge.ml:230-234` seeds
+-- the endo accumulator at `acc = p + p` where `p = t + (Endo.base·xt, yt)` — a `Generic` scale and
+-- TWO `add_fast`s — and `n_acc := ref Field.zero` at `:235`, while `runIpa` starts at `dblA T` with
+-- `qAcc r 0` and `vQN r 0` read by nothing. MEASURED here rather than asserted: the round-0
+-- accumulator cell is in a ONE-cell class, which is what "free" looked like for `pAcc i 0` an hour
+-- ago. Closing it moves every fold value (upstream's seed is `2(t + φ(t))`, not `2t`), so it is its
+-- own rung and not a hunk of this one.
+#guard (classCells posS (ipx shapeSmoke (qAcc shapeSmoke 0 0))).length == 1
+#guard (classCells posS (vQN shapeSmoke 0 0)).length == 1
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
