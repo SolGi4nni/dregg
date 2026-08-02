@@ -674,12 +674,24 @@ mod stepmain_tests {
             0,
             "r7's added Poseidon rows are not whole permutations"
         );
-        for ord in [3usize, 4, 5, 6] {
+        for ord in [3usize, 4, 5] {
             assert_eq!(
                 c6[ord], c7[ord],
                 "r7 changed a CURVE gate family (ord {ord}) - the absorption rung is not a sponge"
             );
         }
+        // r7 adds EXACTLY ONE further `to_field_checked` chain - 8 EndoMulScalar rows - and it is
+        // `r_actual`'s: the fr-sponge's SECOND squeeze, lifted into the `r` the combined_inner_
+        // product fold and `b_correct` multiply by (`step_verifier.ml:1008,1013`). Before that chain
+        // existed the fold multiplied by an R1 transcript challenge and the fr-sponge fed nothing
+        // but `xi_correct`. `== +8` and not `>=` so a second chain appearing here is also a red.
+        assert_eq!(
+            c7[6],
+            c6[6] + 8,
+            "r7's EndoMulScalar delta is {} - expected exactly one 8-row `to_field_checked` chain \
+             (r_actual's lift)",
+            c7[6] - c6[6]
+        );
         // r7 also adds the absorb rows and the opt-sponge mux rows.
         assert!(c7[1] > c6[1]);
         // Each rung strictly extends the one below and keeps the public-input path.

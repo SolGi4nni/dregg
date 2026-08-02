@@ -56,12 +56,14 @@ line items, not against a round number.
   * **R4 `ipa`** — `combine_split_commitments` + `bullet_reduce`: `ipaRounds` `Scalar_challenge.endo`
     scalar multiplications of `ipaBlocks` 4-bit blocks each (the row-OVERLAP chaining pattern, no σ
     hop), each closing on its own challenge, folded by a second `complete_add` chain.
-  * **R5 `deferred` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
+  * **R5 `deferred` + `xi` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
     `b(ζ) = ∏(1 + uᵢ·ζ^{2^{k−1−i}})` (`Wrap.challenge_polynomial`, `wrap.ml:15-17`; the product
     `KimchiVerify.bEvalSq` folds) and `combined_inner_product = Σ_k ξ^k·(evₖ(ζ) + r·evₖ(ζω))`
     (`Common.combined_evaluation`, the `2 × cipEvals` `mul_and_add`s; pinned against
     `KimchiVerify.combinedInnerProduct`, transcribed READ-ONLY from `verifier.rs`) — both as
-    `Generic` chains over the CHALLENGE variables. Then the closing tie of every one of the
+    `Generic` chains over the CHALLENGE variables. ⚑ Its ξ is §8g's chain 0: a full
+    `to_field_checked` of the STATEMENT's ξ word (`let xi = scalar xi`, `step_verifier.ml:1012`),
+    the word R8's `xi_correct` ties to the fr-sponge. Then the closing tie of every one of the
     `pubWords` public words to a computed circuit variable. This rung turns the public input on:
     `placeChecked` (not `place`) with `Contract ⟨pubWords, AUX⟩`, so a public word no gate reads
     REFUSES rather than sitting inert, and the circuit's own ids cannot be silently absorbed into
@@ -72,10 +74,12 @@ line items, not against a round number.
     against `KimchiVerify.gateLinConst` / `ftEval0R` / the 67 constraint bodies list-by-list (§13),
     each with a red control. Its `ft_eval0` output IS the `ft` column R5's `combined_inner_product`
     folds — upstream's own `combine ~ft:ft_eval0`.
-  * **R7 `absorption`** — the fr-sponge (`step_verifier.ml:950-1006`, `step_main.ml:525-567`): an
+  * **R7 `absorption`** — the fr-sponge (`step_verifier.ml:950-1013`, `step_main.ml:525-567`): an
     OPT-SPONGE over the carried bulletproof challenges with a per-block `keep` MASK (the `Field.if_`
     state mux, `:998-1003`), the **43 evaluation columns absorbed at ζ and ζω** in
-    `to_absorption_sequence` order, the ξ′/r′ squeezes, and `hash_messages_for_next_step_proof`.
+    `to_absorption_sequence` order, the ξ′/r′ squeezes, `hash_messages_for_next_step_proof`, and
+    ⚑ §8g's chain 1 — `to_field_checked` of the SECOND squeeze, which IS the `r` the C8 fold and
+    `b_correct` multiply by (`let r = scalar (Scalar_challenge.create r_actual)`, `:1013`).
   * **R8 `finalize`** — ⚑ `finalize_other_proof`'s TAIL, the rung at which the deferred values stop
     being computed and start BINDING (`step_verifier.ml:1076-1147`, `step_main.ml:121,522`): the
     second challenge polynomial at `ζω = domain#generator·ζ` so `b_actual = challenge_poly ζ +
@@ -189,21 +193,44 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      control. `plonk.zeta`/`plonk.alpha` (R6), the deferred ξ/r (R5's `combined_inner_product`) and
      every bulletproof challenge (R5's and R8's `challenge_polynomial`) now read the LIFTED value;
      β/γ stay raw, which is upstream's own split (`map_challenges ~f:Fn.id ~scalar`).
-  8. R6's seven coset shifts are `FT_SHIFTS` (distinct nonzero fixtures), not `TickShifts.tickShiftsFp
-     16`. The Blake2b derivation is off this module's hot path; the REAL shifts are what the
-     real-block instance runs, and §13's bent-shift red control shows the value depends on them.
+  8. ⚑ **RETIRED 2026-08-02.** R6's seven coset shifts were `FT_SHIFTS`, distinct nonzero fixtures.
+     `FT_SHIFTS` is now **`TickShifts.tickShiftsFp 16`** — the `Shifts::new` Blake2b→field
+     construction (`permutation.rs:149-197`), `#guard`-pinned in `Dregg2/Bridge/TickShifts.lean`
+     byte-exact against o1-labs' own `Shifts::new(Radix2EvaluationDomain::<Fp>::new(2^16))` output.
+     §13 re-states the identity at the point of use, checks the structure the derivation guarantees
+     (`shifts[0] = 1`, six distinct QNRs outside the domain), and carries the RED CONTROL that makes
+     it a retirement rather than a rename: `FT_SHIFTS_WERE_FIXTURES` gives a DIFFERENT `ft_eval0` at
+     the same wire, as does a one-unit bend in any derived shift.
   9. R7's opt-sponge mask is a fixed `keep` pattern (the first half of the blocks kept), standing for
      `branch_data.proofs_verified_mask` / `Vector.trim_front actual_width_mask`. The mask VARIABLE is
      in the circuit and both branches occur; what is not here is deriving it from `branch_data`.
- 10. ⚑ **NEW, and it is the ORDER.** Upstream squeezes ξ′/r′ from the fr-sponge and THEN folds
-     `combined_inner_product` with `scalar xi` (`step_verifier.ml:1006-1013,1078-1085`). Here the
-     fr-sponge is R7 and the fold is R5, so the ξ/r the C8 fold multiplies by are R1's transcript
-     challenges, not `endoMap` of R7's squeeze. R8's `xi_correct` therefore binds the STATEMENT's ξ
-     to the fr-sponge squeeze (which is the check upstream writes) but does not yet make that word
-     the fold's own multiplier. Closing it is a row-schedule reordering, not new arithmetic.
+     ⚑ The missing piece is small and named: `branch_data` is ONE field element packing
+     `4·domain_log2 + pack(mask)` (`branch_data.ml:95-101`), so retiring this is a statement word,
+     an unpack row, booleanity + prefix-mask rows (`Proofs_verified.Prefix_mask`), and aliasing
+     `sgKeep` to the two mask bits. It is not blocked on a sub-circuit that does not exist.
+ 10. ⚑ **RETIRED 2026-08-02 — the fr-sponge now FEEDS the fold, not merely gets checked against it.**
+     This entry read: "the ξ/r the C8 fold multiplies by are R1's transcript challenges, not
+     `endoMap` of R7's squeeze… R8's `xi_correct` binds the STATEMENT's ξ to the fr-sponge squeeze
+     but does not yet make that word the fold's own multiplier." §8g is that multiplier. READ AT
+     SOURCE (`step_verifier.ml:1006-1013`), upstream is a TWO-STEP, and the two multipliers have
+     DIFFERENT provenance: `xi = scalar xi` lifts the STATEMENT's ξ word (the one `xi_correct` ties
+     to the first squeeze), while `r = scalar (Scalar_challenge.create r_actual)` lifts the SECOND
+     squeeze directly and has no statement word at all. Both are now real `to_field_checked` chains
+     — 8 `EndoMulScalar` rows, the tie to their source, the endo lift — and `cipRows`/`b_correct`
+     multiply by their outputs. The red control BITES: bending either squeeze by one moves
+     `combined_inner_product` and `b_actual`, which it could not do before (§12a, §16b).
+     ⚠ THE HONEST RESIDUE, pinned in §15: ξ's source is a statement word so its chain rides with R5
+     and binds from `r5_full` up; `r`'s source is an R7 variable, so at r5/r6 — sub-circuits strictly
+     below the fr-sponge — the fold's `r` is a free witness, and it binds at r7/r8. That is the
+     ladder position `vEz 3` (R6's `ft_eval0`) and the four statement words already occupy.
  11. R8's `verified` bit (the kimchi `verify` result the mux ANDs with `finalized`) is a witnessed
-     boolean, booleanity-constrained and nothing else — the accumulator/`check_bulletproof` verdict
-     it stands for is not assembled.
+     boolean, booleanity-constrained and nothing else. ⚑ **NOT RETIRABLE WITHOUT A SUB-CIRCUIT THAT
+     DOES NOT EXIST.** `verified` is `Step_verifier.verify` (`step_main.ml:88-107`) — the whole wrap
+     kimchi verifier: `check_bulletproof` (`equal_g`, the `scale_fast` of `sg`, the IPA fold), the
+     `x_hat`/`ft_comm` commitment MSMs against REAL commitments, `group_map`, and
+     `sponge_after_index` over the actual plonk index. Those are #3 and #5's named-and-not-assembled
+     list. Deriving the bit from anything less would be a value that LOOKS derived; the honest state
+     is the witness plus this sentence.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
@@ -233,6 +260,7 @@ import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Circuit.Emit.PastaCurve
 import Dregg2.Circuit.Emit.PastaPoseidon
 import Dregg2.Bridge.MinaWrapFtEval0
+import Dregg2.Bridge.TickShifts
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
 
@@ -446,16 +474,50 @@ def vCipShift (s : StepShape) : PVar := xv (baseStmt s)
 def vBShift (s : StepShape) : PVar := xv (baseStmt s + 1)
 /-- `plonk.perm`, `Shifted_value.Type1` (`Plonk_checks.checked` compares the SHIFTED words). -/
 def vPermShift (s : StepShape) : PVar := xv (baseStmt s + 2)
-/-- `xi`'s RAW prechallenge — `xi_correct` compares it against the fr-sponge's own squeeze. -/
+/-- `xi`'s RAW prechallenge — `xi_correct` compares it against the fr-sponge's own squeeze, and
+§8g's chain `0` LIFTS it into the multiplier the C8 fold uses. -/
 def vXiStmt (s : StepShape) : PVar := xv (baseStmt s + 3)
 def N_STMT : Nat := 4
 
-def baseFtS (s : StepShape) : Nat := baseStmt s + N_STMT
+/-! ### The DEFERRED challenges ξ and r (§8g) — the fold's own multipliers.
 
-/-- The challenge that plays ξ (the polynomial-combination challenge) in `combined_inner_product`. -/
-def StepShape.xiChal (s : StepShape) : Nat := s.chals - 1
-/-- The challenge that plays `r` (the evaluation-point combiner). -/
-def StepShape.rChal (s : StepShape) : Nat := s.chals - 2
+`step_verifier.ml:1006-1013`, verbatim:
+
+    let squeeze () = squeeze_challenge sponge in
+    let xi_actual = squeeze () in
+    let r_actual  = squeeze () in
+    let xi_correct = Field.equal xi_actual (match xi with { inner = xi } -> xi) in
+    let xi = scalar xi in
+    let r  = scalar (Import.Scalar_challenge.create r_actual) in
+
+so the ξ the C8 fold multiplies by is `to_field_checked` of **the statement's ξ word** — the word
+`xi_correct` ties to the fr-sponge's FIRST squeeze — and the `r` it (and `b_correct`) multiplies by
+is `to_field_checked` of the fr-sponge's **SECOND squeeze**, with no statement word at all. Each
+gets its own `to_field_checked` chain; chain `0` is ξ and chain `1` is r. ⚑ This is the retirement
+of the module header's simplification #10: before it, both were R1 transcript challenges and the
+fr-sponge squeeze fed NOTHING but `xi_correct`. -/
+def N_DEFC : Nat := 2
+/-- One deferred chain's variable block: `n/a/b` at every `EndoMulScalar` row boundary, the
+`lowest_128_bits` high part, and the lift's two cells. -/
+def defcStride (s : StepShape) : Nat := 3 * (s.emsRows + 1) + 3
+def baseDefC (s : StepShape) : Nat := baseStmt s + N_STMT
+def vDN (s : StepShape) (c k : Nat) : PVar := xv (baseDefC s + c * defcStride s + k)
+def vDA (s : StepShape) (c k : Nat) : PVar :=
+  xv (baseDefC s + c * defcStride s + (s.emsRows + 1) + k)
+def vDB (s : StepShape) (c k : Nat) : PVar :=
+  xv (baseDefC s + c * defcStride s + 2 * (s.emsRows + 1) + k)
+/-- The discarded high part. Chain `0` has none — its source is already a `Challenge.t`. -/
+def vDHi (s : StepShape) (c : Nat) : PVar :=
+  xv (baseDefC s + c * defcStride s + 3 * (s.emsRows + 1))
+def vDLiftT (s : StepShape) (c : Nat) : PVar :=
+  xv (baseDefC s + c * defcStride s + 3 * (s.emsRows + 1) + 1)
+/-- ⚑ **THE FOLD'S OWN MULTIPLIER.** `vDLift 0` is ξ and `vDLift 1` is r: the variables `cipRows`
+Horners over and scales its `evₖ(ζω)` leg by, and the one `b_correct` weights `challenge_poly ζω`
+with. Nothing else in the assembly plays those two roles. -/
+def vDLift (s : StepShape) (c : Nat) : PVar :=
+  xv (baseDefC s + c * defcStride s + 3 * (s.emsRows + 1) + 2)
+
+def baseFtS (s : StepShape) : Nat := baseDefC s + N_DEFC * defcStride s
 
 /-! ## §3 — the row-schedule primitives. -/
 
@@ -610,37 +672,73 @@ def emsAccs (s : StepShape) (v : Nat) : List (Nat × Nat × Nat) :=
     [(0, 2, 2)]
   (List.range (s.emsRows + 1)).map (fun k => all.getD (8 * k) (0, 2, 2))
 
-/-- The `(a₈, b₈)` accumulators and the LIFT `a₈·endo_r + b₈` of challenge `c`. -/
-def liftOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
-  let a := (emsAccs s (chalOf s d c)).getD s.emsRows (0, 2, 2)
+/-- The `(a₈, b₈)` accumulators and the LIFT `a₈·endo_r + b₈` of a 128-bit prechallenge. -/
+def liftVal (s : StepShape) (v : Nat) : Nat :=
+  let a := (emsAccs s v).getD s.emsRows (0, 2, 2)
   fAdd (fMul a.2.1 ENDO_R) a.2.2
-def liftTOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
-  fMul ((emsAccs s (chalOf s d c)).getD s.emsRows (0, 2, 2)).2.1 ENDO_R
+def liftTVal (s : StepShape) (v : Nat) : Nat :=
+  fMul ((emsAccs s v).getD s.emsRows (0, 2, 2)).2.1 ENDO_R
+/-- …of transcript challenge `c`. -/
+def liftOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat := liftVal s (chalOf s d c)
+def liftTOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat := liftTVal s (chalOf s d c)
 
-/-- The one row that pins `endo_r`, emitted once ahead of the challenge chains. -/
+/-- The one row that pins `endo_r`, emitted once ahead of the challenge chains. Every
+`to_field_checked` chain in the assembly — R2's `chals` and §8g's two deferred ones — shares it. -/
 def endoConstRow (s : StepShape) : List SRow :=
   [ genericRow (some (vEndoR s)) none none none none none (cConst (ENDO_R : Int) ++ cNil) ]
 
-/-- **R2's rows** for challenge `c`. -/
-def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : List SRow :=
-  let cr := crumbsOf s (chalOf s d c)
-  [ genericRow (some (vN s c 0)) none none (some (vA s c 0)) none none (cConst 0 ++ cConst 2)
-  , genericRow (some (vB s c 0)) none none none none none (cConst 2 ++ cNil) ]
+/-- One `to_field_checked` chain's variable block, so the SAME row emitter serves R2's transcript
+challenges and §8g's deferred ξ/r. -/
+structure ChalVars where
+  n : Nat → PVar
+  a : Nat → PVar
+  b : Nat → PVar
+  hi : PVar
+  liftT : PVar
+  lift : PVar
+
+def r2Vars (s : StepShape) (c : Nat) : ChalVars :=
+  { n := vN s c, a := vA s c, b := vB s c, hi := vHi s c
+  , liftT := vLiftT s c, lift := vLift s c }
+def defcVars (s : StepShape) (c : Nat) : ChalVars :=
+  { n := vDN s c, a := vDA s c, b := vDB s c, hi := vDHi s c
+  , liftT := vDLiftT s c, lift := vDLift s c }
+
+/-- **`to_field_checked`'s rows** over a 128-bit prechallenge `v` (`scalar_challenge.ml:12-129`):
+`n₀=0, a₀=2, b₀=2` pinned by `Generic` rows, `emsRows` chained `EndoMulScalar` rows, the tie of the
+chain's reconstructed `n₈` back to its SOURCE, and the closing lift `Field.(scale a endo + b)`.
+
+`split = true` — the source is a FULL field element (a sponge squeeze), so the tie is the
+`lowest_128_bits` decomposition `src = n₈ + 2^chalBits·hi`. `split = false` — the source is already
+a `Challenge.t` (§8g's statement ξ word), so the tie is `Field.Assert.equal n scalar` (`:124`) and
+the chain's `hi` cell is not allocated by any row. -/
+def tfcRows (s : StepShape) (cv : ChalVars) (src : PVar) (split : Bool) (v : Nat)
+    (wired : Bool) : List SRow :=
+  let cr := crumbsOf s v
+  [ genericRow (some (cv.n 0)) none none (some (cv.a 0)) none none (cConst 0 ++ cConst 2)
+  , genericRow (some (cv.b 0)) none none none none none (cConst 2 ++ cNil) ]
   ++ (List.range s.emsRows).map (fun k =>
       ({ kind := .endoMulScalar
-       , perm := [ some (vN s c k), some (vN s c (k+1)), some (vA s c k), some (vB s c k)
-                 , some (vA s c (k+1)), some (vB s c (k+1)), none ]
+       , perm := [ some (cv.n k), some (cv.n (k+1)), some (cv.a k), some (cv.b k)
+                 , some (cv.a (k+1)), some (cv.b (k+1)), none ]
        , advice := (List.range 8).map (fun j => (6 + j, (cr.getD (8 * k + j) 0 : Int)))
                    ++ [(14, 0)] } : SRow))
-  ++ [ genericRow (some (vSt s (s.absorbs + c + 1) 0)) (some (vHi s c))
-                  (some (vN s c s.emsRows)) none none none (cSplit s.chalBits ++ cNil)
+  ++ [ (if split then
+          genericRow (some src) (some cv.hi) (some (cv.n s.emsRows)) none none none
+                     (cSplit s.chalBits ++ cNil)
+        else
+          genericRow (some (cv.n s.emsRows)) (some src) none none none none (cEq ++ cNil))
      -- ⚑ `to_field_checked`'s CLOSING LINE: `Field.(scale a endo + b)`. Two halves of one row, and
      -- the `a₈`/`b₈` cells the `EndoMulScalar` chain produced now carry a value the rest of the
      -- assembly reads.
-     , genericRow (some (vA s c s.emsRows)) (some (vEndoR s)) (some (vLiftT s c))
-                  (some (vLiftT s c)) (some (vB s c s.emsRows)) (some (vLift s c)) (cMul ++ cAdd)
-     , probeRow wired (vN s c s.emsRows) (vA s c s.emsRows)
-     , probeRow wired (vLift s c) (vB s c s.emsRows) ]
+     , genericRow (some (cv.a s.emsRows)) (some (vEndoR s)) (some cv.liftT)
+                  (some cv.liftT) (some (cv.b s.emsRows)) (some cv.lift) (cMul ++ cAdd)
+     , probeRow wired (cv.n s.emsRows) (cv.a s.emsRows)
+     , probeRow wired cv.lift (cv.b s.emsRows) ]
+
+/-- **R2's rows** for challenge `c` — `tfcRows` at the transcript sponge's own squeeze. -/
+def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : List SRow :=
+  tfcRows s (r2Vars s c) (vSt s (s.absorbs + c + 1) 0) true (chalOf s d c) wired
 
 /-! ## §6 — R3, the COMMITMENT MSM (`multiscale_known` / `ft_comm`).
 
@@ -827,7 +925,10 @@ folds `ft_eval0` into `combined_inner_product` as the fourth prefix column. The 
 circular. -/
 def evZOf (ftVal : Nat) (k : Nat) : Nat := if k == 3 then ftVal else evVal k 0
 
-def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) : DefData :=
+/-- ⚑ `xi` and `rr` are the DEFERRED multipliers of §8g — `to_field_checked` of the statement's ξ
+word and of the fr-sponge's second squeeze — NOT transcript challenges. The fold is `fed` by the
+squeeze, not merely checked against it. -/
+def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr : Nat) : DefData :=
   let zs := (List.range s.bRounds).foldl
     (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [liftOf s d 0]
   let st := (List.range s.bRounds).foldl
@@ -835,8 +936,6 @@ def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) : DefData :=
       let f := fAdd 1 (fMul (liftOf s d (k + 1)) (zs.getD (s.bRounds - 1 - k) 0))
       (acc.1 ++ [f], acc.2 ++ [fMul (acc.2.getLastD 1) f]))
     ([], [1])
-  let xi := liftOf s d s.xiChal
-  let rr := liftOf s d s.rChal
   let ez := (List.range s.cipEvals).map (fun k => evZOf ftVal k)
   let ew := (List.range s.cipEvals).map (fun k => evVal k 1)
   let dk := (List.range s.cipEvals).map (fun k => fMul rr (ew.getD k 0))
@@ -871,14 +970,17 @@ from the top over `Generic` rows, two per evaluation column:
     B(i)  half1  w₀=accᵢ   w₁=ξ        w₂=tᵢ      tᵢ = accᵢ · ξ
           half2  w₃=tᵢ     w₄=c_{n−1−i} w₅=accᵢ₊₁ accᵢ₊₁ = tᵢ + c_{n−1−i}
 
-ξ and `r` are CHALLENGE variables, so this rung reads R2's outputs through σ as well. -/
+⚑ ξ and `r` are `vDLift 0` / `vDLift 1` — §8g's DEFERRED challenges, `to_field_checked` of the
+statement's ξ word and of the fr-sponge's second squeeze (`step_verifier.ml:1012-1013`). Every
+`Generic` half of this fold therefore hangs off the fr-sponge through σ, which is the retirement of
+simplification #10. -/
 def cipRows (s : StepShape) (wired : Bool) : List SRow :=
   [ genericRow (some (vCa s 0)) none none none none none (cConst 0 ++ cNil) ]
   ++ (List.range s.cipEvals).flatMap (fun k =>
-      [ genericRow (some (vLift s s.rChal)) (some (vEw s k)) (some (vDk s k))
+      [ genericRow (some (vDLift s 1)) (some (vEw s k)) (some (vDk s k))
                    (some (vEz s k)) (some (vDk s k)) (some (vCk s k)) (cMul ++ cAdd) ])
   ++ (List.range s.cipEvals).flatMap (fun i =>
-      [ genericRow (some (vCa s i)) (some (vLift s s.xiChal)) (some (vTk s i))
+      [ genericRow (some (vCa s i)) (some (vDLift s 0)) (some (vTk s i))
                    (some (vTk s i)) (some (vCk s (s.cipEvals - 1 - i))) (some (vCa s (i+1)))
                    (cMul ++ cAdd) ])
   ++ [ probeRow wired (vCa s s.cipEvals) (vCk s 0) ]
@@ -1503,10 +1605,18 @@ def FT_QUOT : Nat × Nat × Nat :=
   match Dregg2.Bridge.MinaWrapFtEval0.quotientConsts pN with
   | some (a, b, c) => (a.val, b.val, c.val)
   | none => (0, 0, 0)
-/-- Seven distinct nonzero coset shifts. The real Tick shifts are `TickShifts.tickShiftsFp 16`; the
-assembled instance's shifts are its own (the Blake2b derivation is off this module's hot path), and
-the real ones are exercised in the real-block pin. -/
-def FT_SHIFTS : List Nat := (List.range 7).map (fun i => (1 + 7919 * (i + 1) * (i + 3)) % pN)
+/-- ⚑ **The SEVEN TICK COSET SHIFTS, DERIVED** — `TickShifts.tickShiftsFp 16`, the `Shifts::new`
+Blake2b→field construction over the Step field, `#guard`-pinned THERE byte-exact against o1-labs'
+own `Shifts::new(Radix2EvaluationDomain::<Fp>::new(2^16))` output. This is what `Plonk_checks`
+`ft_eval0`'s denominator fold really runs on; §13 re-states the byte-exact identity here and shows
+the OLD fixtures move `ft_eval0`. (Retires the module header's simplification #8.) -/
+def FT_SHIFTS : List Nat := (Dregg2.Bridge.TickShifts.tickShiftsFp 16).map (fun x => x.val)
+
+/-- The seven distinct nonzero placeholders the rung used BEFORE the derivation was wired in. Kept
+for exactly one purpose: §13's red control, which shows they give a DIFFERENT `ft_eval0`. Nothing
+emits them. -/
+def FT_SHIFTS_WERE_FIXTURES : List Nat :=
+  (List.range 7).map (fun i => (1 + 7919 * (i + 1) * (i + 3)) % pN)
 /-- The linearization's `Constants::mds` IS `Vesta::sponge_params().mds = fp_kimchi` (`curve.rs:63`),
 i.e. K3's own `PastaPoseidon.mdsN` — the same nine constants the sponge rung R1 permutes with. -/
 def FT_MDS9 : List Nat := Dregg2.Circuit.Emit.PastaPoseidon.mdsN.flatten
@@ -1970,6 +2080,12 @@ def frSqueezeVar (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s + 
 def frSqueezeVal (segB : SegData) (specB : SegSpec) : Nat :=
   (segB.states.getD (specB.nb + 1) []).getD 0 0
 
+/-- The fr-sponge's **SECOND** squeeze — `r_actual` (`step_verifier.ml:1008`). §8g's chain `1`
+decomposes it and lifts it into the `r` the C8 fold and `b_correct` multiply by. -/
+def frSqueeze2Var (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s + 2) 0
+def frSqueeze2Val (segB : SegData) (specB : SegSpec) : Nat :=
+  (segB.states.getD (specB.nb + 2) []).getD 0 0
+
 /-- `b(ζω)` — the SECOND challenge polynomial, over the lifted bulletproof challenges. -/
 def bwOf (s : StepShape) (d : SpongeData) : Nat :=
   let zetaw := fMul FT_OMEGA (liftOf s d s.zetaChal)
@@ -1979,13 +2095,13 @@ def bwOf (s : StepShape) (d : SpongeData) : Nat :=
     (fun acc k => fMul acc (fAdd 1 (fMul (liftOf s d (k+1)) (zws.getD (s.bRounds - 1 - k) 0)))) 1
 
 /-- `b_actual = challenge_poly ζ + r · challenge_poly ζω` (`step_verifier.ml:1124-1128`), computed
-DIRECTLY here so §16 can pin the emitted program's own slot against it. -/
-def bActualOf (s : StepShape) (d : SpongeData) (df : DefData) : Nat :=
-  fAdd (df.accs.getLastD 0) (fMul (liftOf s d s.rChal) (bwOf s d))
+DIRECTLY here so §16 can pin the emitted program's own slot against it. `rv` is §8g's DEFERRED r. -/
+def bActualOf (s : StepShape) (d : SpongeData) (df : DefData) (rv : Nat) : Nat :=
+  fAdd (df.accs.getLastD 0) (fMul rv (bwOf s d))
 
 def finWireOf (s : StepShape) (f : FtData) : FinWire :=
   { zeta := .inp (vLift s s.zetaChal)
-  , r := .inp (vLift s s.rChal)
+  , r := .inp (vDLift s 1)
   , bZeta := .inp (vAcc s s.bRounds)
   , cipActual := .inp (vCa s s.cipEvals)
   , permActual := .inp (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm)
@@ -2008,20 +2124,21 @@ structure FinData where
   xiHi : Nat
   deriving Repr, Inhabited
 
-/-- R8's `.inp` lookup: the lifted challenges, R5's two outputs, R6's `perm` slot, R7's squeeze, and
-the four statement words — every one of them a variable another rung's rows compute. -/
+/-- R8's `.inp` lookup: the lifted challenges, §8g's deferred `r`, R5's two outputs, R6's `perm`
+slot, R7's squeeze, and the four statement words — every one of them a variable another rung's rows
+compute. -/
 def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
-    (segB : SegData) (specB : SegSpec) : VarEnv :=
+    (segB : SegData) (specB : SegSpec) (rv : Nat) : VarEnv :=
   let sqv := frSqueezeVal segB specB
   let permA := f.vals.getD f.fp.slots.perm 0
   [ (vLift s s.zetaChal, (liftOf s d s.zetaChal : Int))
-  , (vLift s s.rChal, (liftOf s d s.rChal : Int))
+  , (vDLift s 1, (rv : Int))
   , (vAcc s s.bRounds, (df.accs.getLastD 0 : Int))
   , (vCa s s.cipEvals, (df.ca.getLastD 0 : Int))
   , (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm, (permA : Int))
   , (frSqueezeVar s, (sqv : Int))
   , (vCipShift s, (shiftT1 (df.ca.getLastD 0) : Int))
-  , (vBShift s, (shiftT1 (bActualOf s d df) : Int))
+  , (vBShift s, (shiftT1 (bActualOf s d df rv) : Int))
   , (vPermShift s, (shiftT1 permA : Int))
   , (vXiStmt s, ((sqv % 2 ^ 128 : Nat) : Int)) ]
   ++ (List.range s.bRounds).map (fun k => (vLift s (k + 1), (liftOf s d (k + 1) : Int)))
@@ -2035,13 +2152,13 @@ def finCfgOf (s : StepShape) (hi : Nat) : FinCfg :=
   , verified := 1, shouldVerify := 1 }
 
 def runFin (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
-    (segB : SegData) (specB : SegSpec) : FinData :=
+    (segB : SegData) (specB : SegSpec) (rv : Nat) : FinData :=
   let sqv := frSqueezeVal segB specB
   let permA := f.vals.getD f.fp.slots.perm 0
   let p := finProgOf (finWireOf s f) (finCfgOf s (sqv / 2 ^ 128))
-  let lk := envLookupAt (envIndex (finInputEnv s d f df segB specB))
-  { fp := p, vals := aEval lk p.prog, bActual := bActualOf s d df
-  , cipShift := shiftT1 (df.ca.getLastD 0), bShift := shiftT1 (bActualOf s d df)
+  let lk := envLookupAt (envIndex (finInputEnv s d f df segB specB rv))
+  { fp := p, vals := aEval lk p.prog, bActual := bActualOf s d df rv
+  , cipShift := shiftT1 (df.ca.getLastD 0), bShift := shiftT1 (bActualOf s d df rv)
   , permShift := shiftT1 permA, xiStmt := sqv % 2 ^ 128, xiHi := sqv / 2 ^ 128 }
 
 /-- **R8's rows**: the compiled finalize program plus its σ-only probes. -/
@@ -2053,6 +2170,56 @@ def finRows (s : StepShape) (f : FtData) (fn : FinData) (wired : Bool) : List SR
      , probeRow wired (V fn.fp.slots.cipUsed) (V fn.fp.slots.xiActual)
      , probeRow wired (V fn.fp.slots.permUsed) (V fn.fp.slots.bUsed) ]
 
+/-! ## §8g — the DEFERRED CHALLENGES: the fr-sponge FEEDS the fold.
+
+`step_verifier.ml:1006-1013`. Before this section the C8 fold multiplied by two R1 transcript
+challenges and the fr-sponge's squeeze reached nothing but `xi_correct` — the fold was CHECKED
+against the squeeze and not FED by it (the module header's simplification #10). Here the two
+multipliers are `to_field_checked` chains whose sources are the fr-sponge's own two squeezes:
+
+  * **chain 0 — ξ.** Source is the STATEMENT's ξ word (`vXiStmt`), which is already a
+    `Challenge.t`, so the chain's tie is `Field.Assert.equal n scalar` and not a decomposition. R8's
+    `xi_correct` is what binds that word to the fr-sponge's FIRST squeeze — upstream's own two-step
+    (`let xi_correct = … xi_actual … in let xi = scalar xi`), so a prover cannot move the fold
+    without failing the assert.
+  * **chain 1 — r.** Source is the fr-sponge's SECOND squeeze, decomposed by `lowest_128_bits`.
+    Upstream carries no statement word for `r` at all: `scalar (Scalar_challenge.create r_actual)`.
+
+⚑ THE RUNG CONSEQUENCE, stated plainly. Chain 0's source is a statement word and its rows ride with
+R5, so ξ is derived at EVERY rung from r5 up. Chain 1's source is an R7 variable, so its rows ride
+with R7: at r5/r6 (sub-circuits strictly below the fr-sponge) the fold's `r` is a free witness, and
+at r7/r8 it is the squeeze's lift. That is the same ladder position `vEz 3` (R6's `ft_eval0`) and
+the four statement words already occupy, and §15 pins which rung binds which. -/
+
+/-- The two deferred prechallenges and their discarded high parts. -/
+structure DefcData where
+  /-- `lowest_128_bits` of the fr-sponge's first (ξ) and second (r) squeeze. -/
+  pre : List Nat
+  /-- the high parts. Chain `0`'s is unused — its source is already a `Challenge.t`. -/
+  hi : List Nat
+  deriving Repr, Inhabited
+
+def runDefc (segB : SegData) (specB : SegSpec) : DefcData :=
+  let sq1 := frSqueezeVal segB specB
+  let sq2 := frSqueeze2Val segB specB
+  { pre := [sq1 % 2 ^ 128, sq2 % 2 ^ 128], hi := [0, sq2 / 2 ^ 128] }
+
+/-- Chain `c`'s LIFTED value — the multiplier itself. -/
+def DefcData.lift (dc : DefcData) (s : StepShape) (c : Nat) : Nat :=
+  liftVal s (dc.pre.getD c 0)
+
+/-- **§8g's rows** for chain `c`, over the source `src`. -/
+def defcRows (s : StepShape) (dc : DefcData) (c : Nat) (src : PVar) (split : Bool)
+    (wired : Bool) : List SRow :=
+  tfcRows s (defcVars s c) src split (dc.pre.getD c 0) wired
+
+/-- Chain 0 (ξ), from the statement word — rides with R5. -/
+def xiDefRows (s : StepShape) (dc : DefcData) (wired : Bool) : List SRow :=
+  defcRows s dc 0 (vXiStmt s) false wired
+/-- Chain 1 (r), from the fr-sponge's second squeeze — rides with R7. -/
+def rDefRows (s : StepShape) (dc : DefcData) (wired : Bool) : List SRow :=
+  defcRows s dc 1 (frSqueeze2Var s) true wired
+
 /-! ## §9 — the whole assembly: rows, environment, placement, witness. -/
 
 /-- Everything the schedule and the environment read, evaluated ONCE. -/
@@ -2062,6 +2229,7 @@ structure StepData where
   msm : MsmData
   ipa : IpaData
   ft : FtData
+  defc : DefcData
   df : DefData
   fin : FinData
   segA : SegData
@@ -2072,6 +2240,11 @@ structure StepData where
   specC : SegSpec
   deriving Inhabited
 
+/-- ⚑ THE DEPENDENCY ORDER, and why the fr-sponge now runs BEFORE the fold. Since §8g the C8 fold's
+own multipliers are `to_field_checked` of the fr-sponge's two squeezes, so segment B is evaluated
+first and `runDef` is fed from it. Nothing the fr-sponge absorbs depends on `combined_inner_product`
+(segment B absorbs the digest of segment A, `ft_eval1`, the two public-poly evaluations and the 43
+columns — R6's and R5's fixtures), so the order is a chain and not a cycle. -/
 def mkStep (s : StepShape) : StepData :=
   let sp := runSponge s
   let msm := runMsm s sp
@@ -2079,7 +2252,6 @@ def mkStep (s : StepShape) : StepData :=
   -- ⚑ R6 first: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds.
   let ft := runFt s sp
   let ftv := ft.out
-  let df := runDef s sp ftv
   let specA := optSpec s sp
   let segA := runSeg specA
   let dg : PVar × Nat :=
@@ -2087,18 +2259,23 @@ def mkStep (s : StepShape) : StepData :=
      (segA.states.getLastD []).getD 0 0)
   let specB := frSpec s dg ftv
   let segB := runSeg specB
+  -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
+  let defc := runDefc segB specB
+  let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1)
   let specC := hmSpec s msm ipa sp
-  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, df := df
-  , fin := runFin s sp ft df segB specB
+  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, defc := defc, df := df
+  , fin := runFin s sp ft df segB specB (defc.lift s 1)
   , segA := segA, segB := segB, segC := runSeg specC
   , specA := specA, specB := specB, specC := specC }
 
-/-- **R7's rows** — the three sponge segments of §8e. -/
+/-- **R7's rows** — the three sponge segments of §8e, then §8g's `r` chain over the fr-sponge's
+second squeeze. -/
 def absRows (t : StepData) (wired : Bool) : List SRow :=
   let s := t.sh
   segRows (baseSegA s) t.specA t.segA wired
   ++ segRows (baseSegB s) t.specB t.segB wired
   ++ segRows (baseSegC s) t.specC t.segC wired
+  ++ rDefRows s t.defc wired
 
 /-- **THE ROW SCHEDULE**, in the order `verify_one` runs it. -/
 def stepRows (t : StepData) (wired : Bool) : List SRow :=
@@ -2109,6 +2286,7 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ msmRows s t.msm wired
   ++ ipaRows s t.ipa wired
   ++ deferredRows s wired
+  ++ xiDefRows s t.defc wired
   ++ cipRows s wired
   ++ closingRows s
   ++ ftRows s t.ft wired
@@ -2135,6 +2313,16 @@ def circuitEnv (t : StepData) : VarEnv :=
       ++ [ (vHi s c, (hiOf s t.sp c : Int))
          , (vLiftT s c, (liftTOf s t.sp c : Int)), (vLift s c, (liftOf s t.sp c : Int)) ])
   ++ [ (vEndoR s, (ENDO_R : Int)) ]
+  -- §8g: the two DEFERRED challenge chains (ξ from the statement word, r from the fr-sponge's
+  -- second squeeze), each a full `to_field_checked` accumulator trace.
+  ++ (List.range N_DEFC).flatMap (fun c =>
+      let v := t.defc.pre.getD c 0
+      let accs := emsAccs s v
+      (List.range (s.emsRows + 1)).flatMap (fun k =>
+        let a := accs.getD k (0, 2, 2)
+        [ (vDN s c k, (a.1 : Int)), (vDA s c k, (a.2.1 : Int)), (vDB s c k, (a.2.2 : Int)) ])
+      ++ [ (vDHi s c, (t.defc.hi.getD c 0 : Int))
+         , (vDLiftT s c, (liftTVal s v : Int)), (vDLift s c, (liftVal s v : Int)) ])
   ++ (List.range s.msmTerms).flatMap (fun i =>
       let td := t.msm.terms.getD i default
       [ (mpx s (pT s i), (td.T.1 : Int)), (mpy s (pT s i), (td.T.2 : Int)) ]
@@ -2258,7 +2446,7 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let b := endoConstRow s ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
   let c := msmRows s t.msm wired
   let d := ipaRows s t.ipa wired
-  let e := deferredRows s wired ++ cipRows s wired ++ closingRows s
+  let e := deferredRows s wired ++ xiDefRows s t.defc wired ++ cipRows s wired ++ closingRows s
   let f := ftRows s t.ft wired
   let g := absRows t wired
   let h := finRows s t.ft t.fin wired
@@ -2396,8 +2584,10 @@ def totalRowsS : Nat := pubS + nRowsS
 -- FOUR sponges now: R1's transcript sponge and R7's three absorption segments.
 #guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length
         == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
+-- ⚑ `chals + N_DEFC` `to_field_checked` chains: R2's transcript challenges AND §8g's deferred ξ/r,
+-- 8 `EndoMulScalar` rows each. The `+ N_DEFC` is #10's retirement, counted.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMulScalar)).length
-        == shapeSmoke.chals * shapeSmoke.emsRows
+        == (shapeSmoke.chals + N_DEFC) * shapeSmoke.emsRows
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
         == shapeSmoke.msmTerms * shapeSmoke.msmChunks
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMul)).length
@@ -2605,6 +2795,29 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
 -- …and it is NOT the trivial product (a degenerate `b` would make the rung vacuous).
 #guard tS.df.accs.getLastD 0 != 1
 
+-- ── §12a — ⚑ THE FOLD IS FED BY THE FR-SPONGE (simplification #10, retired) ────────────────────
+-- The multipliers the C8 fold uses are §8g's DEFERRED challenges. Named once, so every pin below
+-- reads the same two values the `Generic` halves of `cipRows` multiply by.
+def sq1S : Nat := frSqueezeVal tS.segB tS.specB
+def sq2S : Nat := frSqueeze2Val tS.segB tS.specB
+def xiFoldS : Nat := tS.defc.lift shapeSmoke 0
+def rFoldS : Nat := tS.defc.lift shapeSmoke 1
+/-- The multiplier a given fr-sponge squeeze would produce: `lowest_128_bits`, then
+`to_field_checked` — the whole §8g chain, as a value. -/
+def foldMulOf (sq : Nat) : ZMod pN :=
+  Dregg2.Circuit.Emit.KimchiVerify.endoMap ((ENDO_R : Nat) : ZMod pN)
+    (Dregg2.Circuit.Emit.KimchiVerify.low128 sq)
+
+-- ⚑ **ξ IS `endoMap` OF R7's FIRST SQUEEZE, r IS `endoMap` OF ITS SECOND.** `xi_correct` binds the
+-- statement's ξ word to the first squeeze (§16d) and §8g's chain 0 lifts THAT word, so the composite
+-- the fold multiplies by is exactly this. Upstream's own two-step, `step_verifier.ml:1010-1013`.
+#guard ((xiFoldS : Nat) : ZMod pN) == foldMulOf sq1S
+#guard ((rFoldS : Nat) : ZMod pN) == foldMulOf sq2S
+-- …the two squeezes are different field elements, so ξ ≠ r is a fact about the sponge and not luck.
+#guard sq1S != sq2S && xiFoldS != rFoldS
+-- …and the lift is not the identity (a degenerate endo would make the chain decoration).
+#guard xiFoldS != tS.defc.pre.getD 0 0 && rFoldS != tS.defc.pre.getD 1 0
+
 -- ⚑ THE ASSEMBLED `combined_inner_product` IS THE VERIFIER'S. The Horner chain the `Generic` rows
 -- compute equals `KimchiVerify.cipR` applied to the SAME ξ, r and evaluation columns — and `cipR`
 -- IS the shipped `combinedInnerProduct` (`KimchiVerify.cipR_eq`, `rfl`, for every field; the
@@ -2612,21 +2825,52 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
 -- answers to the READ-ONLY transcription of `verifier.rs`, not to its own definition.
 #guard
   ((tS.df.ca.getLastD 0 : ZMod pN)
-    == Dregg2.Circuit.Emit.KimchiVerify.cipR
-         ((liftOf shapeSmoke tS.sp shapeSmoke.xiChal : ZMod pN))
-         ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+    == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
          (tS.df.ez.map (fun n => (n : ZMod pN))) (tS.df.ew.map (fun n => (n : ZMod pN))))
 -- …and it CAN go red: swapping ξ for r gives a different value (so the equality is discriminating,
 -- not two names for zero).
 #guard
   (((tS.df.ca.getLastD 0 : ZMod pN)
-     == Dregg2.Circuit.Emit.KimchiVerify.cipR
-          ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
-          ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+     == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq2S) (foldMulOf sq2S)
           (tS.df.ez.map (fun n => (n : ZMod pN)))
           (tS.df.ew.map (fun n => (n : ZMod pN)))) == false)
--- The two combiner challenges are distinct (a collision would make the red control vacuous).
-#guard liftOf shapeSmoke tS.sp shapeSmoke.xiChal != liftOf shapeSmoke tS.sp shapeSmoke.rChal
+
+-- ⚑⚑ **THE BITING RED CONTROL FOR #10: BENDING R7's SQUEEZE MOVES THE FOLD.** Before §8g the fold's
+-- multipliers were R1 transcript challenges and this could not bite — the fr-sponge reached
+-- `xi_correct` and nothing else, so a bent squeeze left `combined_inner_product` exactly where it
+-- was. Now each squeeze is the SOURCE of a `to_field_checked` chain, and a one-unit bend in either
+-- one moves the folded value.
+#guard
+  (((tS.df.ca.getLastD 0 : ZMod pN)
+     == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf (sq1S + 1)) (foldMulOf sq2S)
+          (tS.df.ez.map (fun n => (n : ZMod pN)))
+          (tS.df.ew.map (fun n => (n : ZMod pN)))) == false)
+#guard
+  (((tS.df.ca.getLastD 0 : ZMod pN)
+     == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf (sq2S + 1))
+          (tS.df.ez.map (fun n => (n : ZMod pN)))
+          (tS.df.ew.map (fun n => (n : ZMod pN)))) == false)
+-- ⚑ …and the RETIRED reading — the last two R1 transcript challenges, which is what the fold
+-- multiplied by until 2026-08-02 — is a DIFFERENT value. Derived, not fixed.
+#guard
+  (((tS.df.ca.getLastD 0 : ZMod pN)
+     == Dregg2.Circuit.Emit.KimchiVerify.cipR
+          ((liftOf shapeSmoke tS.sp (shapeSmoke.chals - 1) : ZMod pN))
+          ((liftOf shapeSmoke tS.sp (shapeSmoke.chals - 2) : ZMod pN))
+          (tS.df.ez.map (fun n => (n : ZMod pN)))
+          (tS.df.ew.map (fun n => (n : ZMod pN)))) == false)
+#guard xiFoldS != liftOf shapeSmoke tS.sp (shapeSmoke.chals - 1)
+#guard rFoldS != liftOf shapeSmoke tS.sp (shapeSmoke.chals - 2)
+
+-- ⚑ …and it is a WIRE, not just an arithmetic identity: the variable `cipRows` Horners over is in a
+-- σ class that also holds §8g chain 0's lift row, and the statement ξ word's class reaches THREE
+-- rows (the chain's `Field.Assert.equal`, the closing public tie, and R8's `xi_correct` gadget).
+#guard (classCells posS (vDLift shapeSmoke 0)).length ≥ 3
+#guard (classCells posS (vDLift shapeSmoke 1)).length ≥ 3
+#guard (classCells posS (vXiStmt shapeSmoke)).length ≥ 3
+-- …the r chain's source really is segment B's SECOND squeeze cell (a state lane the sponge rows own).
+#guard (classCells posS (frSqueeze2Var shapeSmoke)).length ≥ 2
+#guard frSqueeze2Var shapeSmoke != frSqueezeVar shapeSmoke
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
@@ -2678,6 +2922,26 @@ def gS : Dregg2.Circuit.Emit.KimchiVerify.GateEvals (ZMod pN) :=
 #guard ((FT_ENDO : Nat) : ZMod pN) ^ 3 == (1 : ZMod pN)
 #guard ((FT_ENDO : Nat) : ZMod pN) != (1 : ZMod pN)
 #guard FT_MDS9.length == 9
+
+-- ⚑⚑ **THE SEVEN COSET SHIFTS ARE THE DERIVED TICK SHIFTS** (simplification #8, retired). The rung
+-- runs `TickShifts.tickShiftsFp 16` — the `Shifts::new` Blake2b→field construction — and that list
+-- is pinned BYTE-EXACT there against o1-labs' own `Shifts::new(Radix2EvaluationDomain::<Fp>::new
+-- (2^16))` output (`tick_shifts_export`, a path that runs kimchi and touches no Lean). Restated
+-- here so a swap back to a fixture is a red in THIS file, at the point of use.
+#guard FT_SHIFTS == Dregg2.Bridge.TickShifts.TICK_SHIFTS_16_ORACLE
+#guard FT_SHIFTS.length == 7
+-- …the first shift is the identity coset (`shifts[0] = 1`, `permutation.rs:158`), the rest are not,
+-- and all seven are distinct — the structure `Shifts::new` guarantees and a fixture cannot fake.
+#guard FT_SHIFTS.headD 0 == 1
+#guard (FT_SHIFTS.drop 1).all (fun x => x != 1 && x != 0)
+#guard FT_SHIFTS.dedup.length == 7
+-- …and the derivation really is a derivation: the six sampled shifts are quadratic NON-residues of
+-- `Fp` outside the `2^16` domain, which is `Shifts::sample`'s own acceptance predicate.
+#guard (FT_SHIFTS.drop 1).all (fun x =>
+  Dregg2.Bridge.TickShifts.accept FT_N [] ((x : Nat) : ZMod pN))
+-- ⚑ …and they are NOT the placeholders the rung used before (the red control lives in §13's
+-- `ft_eval0` pins below, where the fixtures give a different value).
+#guard (List.range 7).all (fun i => FT_SHIFTS.getD i 0 != FT_SHIFTS_WERE_FIXTURES.getD i 0)
 -- ⚑ ALL SIX GATE SELECTORS FIRE. Without this every body but `generic` is multiplied by zero and
 -- the six transcriptions rest on a source reading — the exact hazard `MinaWrapFtEval0Weld` §1b
 -- named when it found the first fixture with a nonzero `emulSel`.
@@ -2737,7 +3001,8 @@ def gS : Dregg2.Circuit.Emit.KimchiVerify.GateEvals (ZMod pN) :=
          (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
          (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS)
          (((ftS.denomInv : Nat) : ZMod pN))) == false
--- …a bent coset shift (the leg `MinaWrapFtEval0Weld` §6b exhibits on the real block):
+-- ⚑ …a bent DERIVED coset shift (the leg `MinaWrapFtEval0Weld` §6b exhibits on the real block):
+-- bend one of `tickShiftsFp 16`'s own outputs by one and `ft_eval0` moves.
 #guard
   (((ftS.out : Nat) : ZMod pN)
     == Dregg2.Circuit.Emit.KimchiVerify.ftEval0R FT_N
@@ -2747,6 +3012,21 @@ def gS : Dregg2.Circuit.Emit.KimchiVerify.GateEvals (ZMod pN) :=
          (((alphaS : Nat) : ZMod pN) ^ 23)
          wZ sZ ((FT_SHIFTS.map (fun x => ((x : Nat) : ZMod pN))).set 1
                   (((FT_SHIFTS.getD 1 0 : Nat) : ZMod pN) + 1))
+         (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
+         (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS)
+         (((ftS.denomInv : Nat) : ZMod pN))) == false
+-- ⚑⚑ **DERIVED, NOT FIXED — the red control for simplification #8.** The seven placeholders the
+-- rung ran until 2026-08-02 give a DIFFERENT `ft_eval0` at the same wire. So the value the circuit's
+-- `Generic` rows compute is the one Mina's own `Shifts::new` cosets produce, and swapping the
+-- derivation back out is a red rather than a silence.
+#guard
+  (((ftS.out : Nat) : ZMod pN)
+    == Dregg2.Circuit.Emit.KimchiVerify.ftEval0R FT_N
+         ((FT_OMEGA : Nat) : ZMod pN) ((zetaS : Nat) : ZMod pN)
+         ((betaS : Nat) : ZMod pN) ((gammaS : Nat) : ZMod pN)
+         (((alphaS : Nat) : ZMod pN) ^ 21) (((alphaS : Nat) : ZMod pN) ^ 22)
+         (((alphaS : Nat) : ZMod pN) ^ 23)
+         wZ sZ (FT_SHIFTS_WERE_FIXTURES.map (fun x => ((x : Nat) : ZMod pN)))
          (colZ IDX_Z) (colW IDX_Z) ((evVal 2 0 : Nat) : ZMod pN)
          (Dregg2.Circuit.Emit.KimchiVerify.gateLinConst gS)
          (((ftS.denomInv : Nat) : ZMod pN))) == false
@@ -2965,6 +3245,7 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
         == (rungRows tS .msm true).length + (ipaRows shapeSmoke tS.ipa true).length
 #guard (rungRows tS .full true).length
         == (rungRows tS .ipa true).length + (deferredRows shapeSmoke true).length
+           + (xiDefRows shapeSmoke tS.defc true).length
            + (cipRows shapeSmoke true).length + (closingRows shapeSmoke).length
 #guard (rungRows tS .ftEval0 true).length
         == (rungRows tS .full true).length + (ftRows shapeSmoke tS.ft true).length
@@ -2979,6 +3260,34 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 #guard (cipRows shapeSmoke true).length > 0 && (deferredRows shapeSmoke true).length > 0
 #guard (ftRows shapeSmoke tS.ft true).length > 0 && (absRows tS true).length > 0
 #guard (finRows shapeSmoke tS.ft tS.fin true).length > 0 && (endoConstRow shapeSmoke).length > 0
+#guard (xiDefRows shapeSmoke tS.defc true).length > 0
+        && (rDefRows shapeSmoke tS.defc true).length > 0
+-- ⚑ …and R7's own sub-list really is the three segments PLUS §8g's `r` chain.
+#guard (absRows tS true).length
+        == (segRows (baseSegA shapeSmoke) tS.specA tS.segA true).length
+           + (segRows (baseSegB shapeSmoke) tS.specB tS.segB true).length
+           + (segRows (baseSegC shapeSmoke) tS.specC tS.segC true).length
+           + (rDefRows shapeSmoke tS.defc true).length
+
+-- ⚑ **WHICH RUNG BINDS WHICH MULTIPLIER** (#10's honest residue, machine-checked). ξ's chain rides
+-- with R5 because its source is a STATEMENT word, so `vDLift 0` has a computing row from `r5_full`
+-- up. `r`'s source is the fr-sponge's second squeeze, an R7 variable, so `vDLift 1` has NO computing
+-- row below `r7_absorption` and has one at and above it. Stated as a pin so the ladder position is
+-- a fact rather than a sentence in a header.
+def posAt (k : Rung) : List (PVar × Cell) :=
+  circuitPositions (rungPub shapeSmoke k) (stepGates (rungRows tS k true))
+#guard (classCells (posAt .full) (vDLift shapeSmoke 0)).length ≥ 2
+#guard (classCells (posAt .ftEval0) (vDLift shapeSmoke 0)).length ≥ 2
+#guard (classCells (posAt .full) (vDLift shapeSmoke 1)).length ≥ 1
+#guard (classCells (posAt .absorb) (vDLift shapeSmoke 1)).length ≥ 2
+#guard (classCells (posAt .finalize) (vDLift shapeSmoke 1)).length ≥ 3
+-- …and the ξ chain's `EndoMulScalar` rows are in r5 while the r chain's are not.
+#guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
+        == (shapeSmoke.chals + 1) * shapeSmoke.emsRows
+#guard ((rungRows tS .ftEval0 true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
+        == (shapeSmoke.chals + 1) * shapeSmoke.emsRows
+#guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
+        == (shapeSmoke.chals + 2) * shapeSmoke.emsRows
 
 #guard (rungRows tS .full true).length < (rungRows tS .ftEval0 true).length
 #guard (rungRows tS .ftEval0 true).length < (rungRows tS .absorb true).length
@@ -2989,11 +3298,20 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 -- R6 is `Generic`-only (it is scalar arithmetic; every other gate family is unchanged by it).
 #guard ((rungRows tS .ftEval0 true).drop (rungRows tS .full true).length).all
         (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero)
--- R7 adds `Poseidon` and nothing else new: 11 rows per permutation, upstream's own run length.
+-- R7 adds `Poseidon` (11 rows per permutation, upstream's own run length) and — since §8g — exactly
+-- ONE further `to_field_checked` chain, `r_actual`'s. No curve gate, no second chain.
 #guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.poseidon)).length
         == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks)
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.poseidon)).length
         == 11 * shapeSmoke.blocks
+#guard (List.range 4).all (fun i =>
+  let k : KGateType := [KGateType.completeAdd, .varBaseMul, .endoMul, .zero].getD i .zero
+  ((rungRows tS .absorb true).filter (fun r => r.kind == k)).length
+    ≥ ((rungRows tS .ftEval0 true).filter (fun r => r.kind == k)).length)
+#guard (List.range 3).all (fun i =>
+  let k : KGateType := [KGateType.completeAdd, .varBaseMul, .endoMul].getD i .zero
+  ((rungRows tS .absorb true).filter (fun r => r.kind == k)).length
+    == ((rungRows tS .ftEval0 true).filter (fun r => r.kind == k)).length)
 -- …and the compiled ft program is a real program, not a stub.
 #guard ftS.fp.prog.size ≥ 900
 #guard (aHalfSlots ftS.fp.prog).length ≥ 700
@@ -3007,7 +3325,9 @@ is the failure mode this section exists to catch. -/
 def finS : FinData := tS.fin
 def finVal (i : Nat) : Nat := finS.vals.getD i 0
 def zetaLS : Nat := liftOf shapeSmoke tS.sp shapeSmoke.zetaChal
-def rLS : Nat := liftOf shapeSmoke tS.sp shapeSmoke.rChal
+/-- ⚑ `r` is §8g's DEFERRED challenge — `to_field_checked` of the fr-sponge's SECOND squeeze
+(`step_verifier.ml:1008,1013`), not a transcript challenge. -/
+def rLS : Nat := rFoldS
 /-- The lifted bulletproof challenges, in `bEval`'s own list order (factor `k` carries the exponent
 `2^{bRounds−1−k}`). -/
 def usS : List (ZMod pN) :=
@@ -3067,6 +3387,20 @@ def usS : List (ZMod pN) :=
                   (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN))
                   ((List.range shapeSmoke.bRounds).map
                      (fun k => ((chalOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN)))) == false
+-- ⚑ …and — since §8g — the `r` that weights the second leg is `endoMap` of the fr-sponge's SECOND
+-- squeeze, so BENDING THAT SQUEEZE MOVES `b_actual` too. This is #10's red control on the
+-- `b_correct` side: the value is derived from the sponge, not fixed by the transcript.
+#guard (((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS
+            + foldMulOf (sq2S + 1)
+              * Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
+                  (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN)) usS) == false
+-- …and the RETIRED reading (the second-to-last transcript challenge) also moves it.
+#guard (((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS
+            + ((liftOf shapeSmoke tS.sp (shapeSmoke.chals - 2) : Nat) : ZMod pN)
+              * Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
+                  (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN)) usS) == false
 -- …and neither b-polynomial is the trivial product.
 #guard finS.bActual != 0 && bwOf shapeSmoke tS.sp != 1
 
@@ -3090,9 +3424,7 @@ def usS : List (ZMod pN) :=
 -- …and `combined_inner_product` really is the value R5's Horner chain produced, which §12 already
 -- pinned against `KimchiVerify.cipR`. So the unshift lands on `cipR`, not on a local name for it.
 #guard ((finVal finS.fp.slots.cipUsed : Nat) : ZMod pN)
-        == Dregg2.Circuit.Emit.KimchiVerify.cipR
-             ((liftOf shapeSmoke tS.sp shapeSmoke.xiChal : ZMod pN))
-             ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+        == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
              (tS.df.ez.map (fun n => (n : ZMod pN))) (tS.df.ew.map (fun n => (n : ZMod pN)))
 
 -- ── (d) `xi_correct` — the fr-sponge's own squeeze ────────────────────────────────────────────
@@ -3103,10 +3435,18 @@ def usS : List (ZMod pN) :=
 #guard finS.xiStmt < 2 ^ 128
 -- …and the squeeze is NOT already 128 bits (so the decomposition is doing work).
 #guard finS.xiHi != 0
--- …and it is NOT R1's transcript ξ: the two sponges are different objects, which is why the check
--- is a check. (⚠ NAMED REMAINDER: the ξ the C8 fold multiplies by is still R1's, not `endoMap` of
--- this squeeze — see simplification #10.)
-#guard finS.xiStmt != chalOf shapeSmoke tS.sp shapeSmoke.xiChal
+-- …and it is NOT any R1 transcript squeeze: the two sponges are different objects, which is why the
+-- check is a check.
+#guard (List.range shapeSmoke.chals).all (fun c =>
+  finS.xiStmt != chalOf shapeSmoke tS.sp c)
+-- ⚑ **AND THIS WORD FEEDS THE FOLD** (simplification #10, retired). `xi_correct` ties the statement
+-- ξ word to this squeeze, and §8g's chain 0 lifts THAT WORD into the multiplier `cipRows` Horners
+-- over — upstream's `let xi_correct = … in let xi = scalar xi` (`step_verifier.ml:1010-1012`). So a
+-- prover cannot move the fold's ξ without failing `xi_correct`, and cannot satisfy `xi_correct`
+-- without the fold's ξ being `endoMap` of the fr-sponge's squeeze.
+#guard ((xiFoldS : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.endoMap ((ENDO_R : Nat) : ZMod pN) finS.xiStmt
+#guard tS.defc.pre.getD 0 0 == finS.xiStmt
 
 -- ── (e) `Boolean.all` and the `should_verify` mux ─────────────────────────────────────────────
 -- ⚑ ALL FOUR legs are 1 on the honest instance, the conjunction is 1, and the muxed output is 1 —
@@ -3123,7 +3463,7 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
   let s := shapeSmoke
   let d := tS.sp
   let sqv := frSqueezeVal tS.segB tS.specB
-  let base := finInputEnv s d tS.ft tS.df tS.segB tS.specB
+  let base := finInputEnv s d tS.ft tS.df tS.segB tS.specB rFoldS
   -- bend the `which`-th statement word (0 = cip, 1 = b, 2 = perm, 3 = xi)
   let tgt : PVar :=
     match which with
