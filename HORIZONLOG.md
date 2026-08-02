@@ -1,5 +1,83 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 2 (accumulator check, LEG ONE) — `E_c = f_c(ζ)` over `prev_challenges` is COMPUTED where it was four free witnesses, `prev_challenges` reach a public word for the first time, and the substituted commitment is STILL ACCEPTED
+
+`e7bebcc94` ended on an ORDERED next step: "(i) `E_c = f_c(ζ)` — R5's `deferredRows` ladder on
+`vPrevChal` at ζ/ζω wired into `vEz 0/1` / `vEw 0/1`, which makes `prev_challenges` reach a public
+word for the first time." **This is (i), and it is `KimchiStepMain.lean` §8i: +76 rows, 10,746 →
+10,822.**
+
+⚠ ⚑ **THE VERDICT FIRST, because a reader would otherwise assume otherwise: §18(b) IS RE-RUN AND IS
+UNCHANGED. The substituted-with-re-solved-`G` witness is ACCEPTED before and ACCEPTED after.** `E_c`
+is a function of `prev_challenges` and ζ; `sg_old` does not occur in it. A prover who substitutes an
+absorbed fold commitment and re-solves `G` carries the SAME `prev_challenges` forward, so all four
+computed entries land exactly where they would have. This leg closes a DIFFERENT hole — four values
+the prover used to choose freely — and does not close that one.
+
+**READ AT SOURCE BEFORE BUILDING** (verified in `~/dev/mina/src/lib/pickles`, quoted with line
+numbers, not relayed — fourteen recorded descriptions in a row have been wrong at source in this
+campaign):
+
+* `wrap_verifier.ml:16-35` — `challenge_polynomial ~one ~add ~mul chals = stage (fun pt →
+  ∏_i (1 + chals.(i)·pt^{2^{k−1−i}}))`, with `pow_two_pows` the squaring ladder. Reached from
+  `step_verifier.ml:655-657`.
+* `step_verifier.ml:934-948` — `zetaw = Field.mul domain#generator plonk.zeta`; `sg_olds =
+  Vector.map prev_challenges ~f:challenge_polynomial`; `sg_evals pt = Vector.map2 mask sg_olds
+  ~f:(fun keep f -> (keep, f pt))` at `plonk.zeta` and `zetaw`.
+* `step_verifier.ml:1076-1102` — `combine ~ft ~sg_evals x_hat e` prepends the `sg_evals` vector to
+  `[x_hat] :: [ft] :: a`, so those two entries ARE the first two of `combine`'s prefix.
+* `per_proof_witness.ml:12-32` — the accumulator check in prose, and it is **TWO legs**:
+  `challenge_polynomial_commitment` must **open** at ζ to `E_c`, AND `E_c = f_c(ζ)`.
+* ⚑ `step_verifier.ml:918`, one line and it is the whole trap: *"You use the NEW bulletproof
+  challenges to check b. Not the old ones."*
+
+**MEASURED on the emitted object** (§8i's rows, §18(f)'s pins, all interpreter-reduced `#guard`):
+
+* **(a) THE FOUR PREFIX ENTRIES ARE `f_c`.** `vEz 0/1` at ζ and `vEw 0/1` at ζω, each pinned against
+  `KimchiVerify.bEvalSq` — a different definition in a different module, the read-only transcription
+  of `b_poly`, tied to `bEval` by a theorem — at the emitted ζ, the emitted ζω and the carried
+  challenge run of its own slot. All four are distinct values, and none is the `evVal` fixture it
+  replaced.
+* **(b) `prev_challenges` REACH A PUBLIC WORD.** A carried challenge had **ZERO** cells at `r5_full`
+  (its only consumers were segments A and C, both R7); it now has exactly TWO, and through `combine`
+  it reaches `combined_inner_product` — public word 9, and the statement word R8's
+  `combined_inner_product_correct` binds. Bending one carried word moves `E_c` at BOTH points of its
+  slot and moves `cip` with it; the other slot does not move.
+* **(c) THE CONFLATION REDS, in two forms.** `f_c` over `prev_challenges` ≠ `f_c` over the challenges
+  segment D absorbs (the value pin), and the emitted `E_c` is the former and not the latter.
+  Structurally: §8i's rows read `vPrevChal` and **NOT ONE** `vLift (uChal k)`; `deferredRows`' rows
+  read every `vLift (uChal k)` and **NOT ONE** `vPrevChal`. Substituting one vector for the other in
+  `runDef` moves all four entries and `cip` — that is the vacuous closure, priced.
+* **(d) `b(ζ)` DOES NOT MOVE in either direction.** It is the ladder over the NEW challenges that
+  R8's `b_correct` binds; bending a carried challenge, or conflating the two vectors, leaves it
+  exactly where it was.
+* **(e) `zetaw` IS ONE CELL.** `:934` binds it once and both `:948` and `:1124` read that binding, so
+  R8's finalize program stopped recomputing `ω·ζ` and now ALIASES §8i's `vZW 0` (`#guard` on the
+  program op itself). That is where R8's −1 row went. ζ left that program with it — nothing else
+  there read it.
+
+⚠ **WHAT IS STILL BOUND ONLY BY ASSUMPTION, unchanged.** Leg two — `sg_old` opening at ζ to `E_c` —
+is `verified` (#11), a witnessed boolean, at every step of the recursion. It is not a rung; it is the
+IPA opening. Nothing here is "the accumulator check is now in circuit."
+⚠ **AND `combine`'s `Opt.Maybe` MUX IS STILL NOT EMITTED** (`common.ml:264-271`): with
+`Prefix_mask.there N1` upstream drops slot 0's entry and `cipRows` folds all 47 unconditionally. A
+residue of `combine`, named where §8h derived the mask this consumer still ignores.
+
+**+76 ROWS, and NOT ONE RUN-LENGTH FAMILY MOVED.** §8i is `Generic`/`Zero` only: `EndoMul` **32×77**
+(2464 against Mina's 2465), `Poseidon` 11×206, `EndoMulScalar` 8×51, `VarBaseMul` 1×1448,
+`CompleteAdd` 1×334 — every one unchanged to the row. `cargo test` **9/9** (ratchet floor 9), all
+eight rungs prove with `verify()==true` and all five polarities, region conformance **GREEN
+byte-exact** off a fixture regenerated from this emission with its ten falsifiers all still biting,
+and the count-free Generic shape-family SET is **unchanged** — the new rows use shapes Snarky
+already emits.
+
+⚑ **SCOPE, unchanged.** INNER-KIMCHI FIDELITY of the assembled recursive verifier. NOT a soundness
+proof, NOT machine-checked Pickles, NOT a Mina-valid proof; wrap is a later rung.
+
+⚑ **NEXT.** (ii) #2's per-word MSM widths, the inter-step tie's own emitted wire (x_hat term 12 at
+51 chunks); (iii) `combine`'s `Opt.Maybe` mux, now that both of its masked entries are computed;
+(iv) `verified` — and (iv) is not a rung, it is the IPA opening.
+
 ## ⚑⚑⚑ AUGUST 2 (inter-step) — the tie between `step_main`'s two `messages_for_next_step_proof` hashes is BUILT and holds byte-for-byte, and it does NOT refuse the substituted commitment: it PROPAGATES it
 
 `7b368a6c6` ended on "the refusal belongs to the next step's `verify_one`, through segment C's

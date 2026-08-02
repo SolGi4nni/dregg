@@ -186,44 +186,64 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8363      8832       10653       10746
-    non-Generic         13778              7590      7592        9110        9133
+    total gates         20023              8440      8909       10730       10822
+    non-Generic         13778              7594      7596        9114        9137
     Poseidon             6292 (31.4%)       902       902        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       773      1240        1543        1613   —
+    Generic              6245 (31.2%)       846      1313        1616        1685   —
     EndoMul              2465 (12.3%)      2464      2464        2464        2464   32×77+1×1 / 32×77 ✓
-    Zero                 2246 (11.2%)      2066      2068        2206        2213   —
+    Zero                 2246 (11.2%)      2070      2072        2210        2217   —
     VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       334       334         334         334   1×159 2×65 3×23
                     15×1 30×1 / 1×334
 
-⚑⚑ MOVEMENT SINCE THE PREVIOUS COMMIT: **ZERO ROWS. 10,746 unchanged, and that is the result.**
-This rung was queued to flip §17(e)'s verdict by assembling the inter-step tie — segment C's
-reconstruction of the previous statement compared against the wrap proof it verifies. §18 assembles
-that chain and MEASURES it, and **the substituted-with-re-solved-`G` witness is ACCEPTED before and
-ACCEPTED after.** The tie is not a refusal of the substitution; it is a FORCING of `sg_old`. Rows
-that do not buy the refusal are not the deliverable, so none were emitted — what changed is the
-measurement, three source corrections and one named simplification made falsifiable:
+⚑⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10746 → 10822 rows, +76): **the ACCUMULATOR CHECK's FIRST
+LEG. `E_c = f_c(ζ)` over `prev_challenges` is COMPUTED, where it was four free `evVal` witnesses —
+and the substitution §17(e)/§18(b) exhibits is still ACCEPTED, which is said here and not at the
+bottom.**
 
-  * ⚑ **THE TIE HAS NO `Field.Assert.equal` IN IT.** Read at source, the reconstructed digest is
-    SUBSTITUTED into the wrap statement (`step_main.ml:83-84`) and that statement is handed to
-    `verify` (`:108`), which packs it (`step_verifier.ml:1237-1245`) and feeds it to
-    `multiscale_known` (`:543-545`). Its only in-circuit wire is **x_hat MSM term 12's SCALAR**
-    (`composition_types.ml:854-882`: `fp ×5 · challenge ×2 · scalar_challenge ×3 · digest ×3`, and
-    `messages_for_next_step_proof` is the third digest). That wire is simplification #2's residue,
-    and taking it would not move the verdict — §18 measures the verdict without it.
-  * ⚑ **THE TWO HASHES ARE PINNED AS ONE CHAIN.** §18(a): segment C at step `N+1`, fed step `N`'s
-    app state, `G` and returned bulletproof challenges, reproduces step `N`'s public word 7 EXACTLY.
-    That equality is not a definition — the two segments have different word lists, lengths, masks
-    and app-state fixtures and coincide only if the mask, the interleave, the `Sponge.copy` point
-    and the block alignment are all right.
-  * ⚑ **AND `E_c` IS NOT `f_c(ζ)` HERE — the leg that WOULD refuse it, measured absent.**
-    `per_proof_witness.ml:12-32` names the accumulator check; its first leg is simplification #4's
-    `sg_evals` residue, and §18(f) shows the `evVal` fixture is not the b-polynomial of
-    `prev_challenges`, so the leg is FALSE on this assembly's numbers rather than merely silent.
+`per_proof_witness.ml:12-32` states the accumulator check in prose and it is TWO legs:
+`challenge_polynomial_commitment` must **open** at ζ to `E_c`, AND `E_c = f_c(ζ)` over
+`prev_challenges`. §8i is the second of those, read at source from `step_verifier.ml:934-948`
+(`zetaw`, `sg_olds = Vector.map prev_challenges ~f:challenge_polynomial`, `sg_evals pt` at ζ and
+ζω) feeding `combine`'s own prefix at `:1076-1102`, with `challenge_polynomial` itself at
+`wrap_verifier.ml:16-35`.
 
-⚑ MOVEMENT IN THE PREVIOUS COMMIT (10601 → 10746 rows, +145) — **and the headline was a
+  * ⚑ **+77 `Generic`/`Zero` rows in R5, −1 in R8.** One half pins `domain#generator`; one gives the
+    SINGLE `zetaw` cell (`:934`) that `sg_evals` and `b_correct` share — R8 stopped recomputing
+    `ω·ζ`, which is where its row went; then ζω's 15 squaring halves and FOUR 16-factor product
+    ladders whose outputs ARE `vEz 0/1` and `vEw 0/1`.
+  * ⚑ **`prev_challenges` REACH A PUBLIC WORD for the first time.** §18(f): a carried challenge had
+    ZERO cells at `r5_full` (its only consumers were segments A and C, both R7); it now has exactly
+    two, and through `combine` it reaches `combined_inner_product` — public word 9, and the
+    statement word R8's `combined_inner_product_correct` binds. Bending one moves `E_c` at both
+    points of its slot and moves `cip` with it; the OTHER slot does not move.
+  * ⚑ **THE VACUOUS CLOSURE IS PINNED SHUT.** `f_c` over `prev_challenges` is NOT `f_c` over this
+    proof's own returned bulletproof challenges — `step_verifier.ml:918` says so in one line ("You
+    use the NEW bulletproof challenges to check b. Not the old ones."). §18(f) pins the value
+    inequality, pins the emitted `E_c` against `KimchiVerify.bEvalSq` at the carried vector, and
+    pins the ROW-LEVEL read-set disjointness both ways: §8i's rows touch no `vLift (uChal k)`,
+    `deferredRows`' touch no `vPrevChal`.
+  * ⚠ ⚑ **AND IT DOES NOT REFUSE THE SUBSTITUTION. §18(b) IS RE-RUN AND IS UNCHANGED.** `E_c` is a
+    function of `prev_challenges` and ζ; `sg_old` does not occur in it. The prover who substitutes an
+    absorbed commitment and re-solves `G` carries the SAME `prev_challenges`, so all four computed
+    entries land where they would have. **ACCEPTED before, ACCEPTED after.** What this leg removes is
+    a DIFFERENT forgery surface — four values the prover used to choose freely — not this one. The
+    thing still standing between a substituted commitment and acceptance is leg TWO, the opening,
+    which is `verified` (#11), a witnessed boolean, and NOT a rung.
+
+⚑ MOVEMENT IN THE COMMIT BEFORE (ZERO ROWS, 10,746 unchanged) — the inter-step tie, assembled and
+MEASURED in §18. Segment C at step `N+1`, fed step `N`'s app state, `G` and returned bulletproof
+challenges, reproduces step `N`'s public word 7 EXACTLY (§18(a)) — and the SUBSTITUTED chain
+reproduces the MOVED word just as exactly (§18(b)). The tie is not a refusal of the substitution; it
+is a FORCING of `sg_old`. Its three source corrections stand: the tie has **no `Field.Assert.equal`
+in it** (the reconstructed digest is SUBSTITUTED into the wrap statement at `step_main.ml:83-84` and
+its only in-circuit wire is x_hat MSM term 12's SCALAR, simplification #2's residue); the two hashes
+are ONE chain; and the leg that would refuse it is the accumulator check — which is what §8i above
+half-closes.
+
+⚑ MOVEMENT TWO COMMITS BACK (10601 → 10746 rows, +145) — **and the headline was a
 CORRECTION, not the rows: segment C hashed two quantities upstream does not put in that hash, and
 did not hash the two it does.** Those rows are the OTHER hash, and they do NOT buy the refusal the
 rung was queued for; see R4, §17 and §18.
@@ -256,14 +276,14 @@ rung was queued for; see R4, §17 and §18.
 
 ⚑ **AND THE 77th ENDO BLOCK IS UPSTREAM'S OWN, AND THIS COMMIT DID NOT TOUCH IT.** `EndoMul` is
 **2464 against Mina's 2465** and the run-length family is `32×77`, exactly Mina's `32×77 1×1` — the
-same as before this rung, re-measured by `stepmain-shape-diff.mjs` after it. `VarBaseMul` `1×1448`,
-`EndoMulScalar` `8×51` and `CompleteAdd` `1×334` are unchanged to the row; the ONLY family that
-moved is `Poseidon`, `11×195` → **`11×206`**, the eleven permutations segment D is.
-(The commit before this took 10554 → 10601 on the R1 interleaving and the three closures; the two
-before that 10342 → 10554 on the three ladder seeds and the absorb-shape
-correction; before that 9431 → 10342 on §6b's `ft_comm` MSM; before that 9417 → 9431 on §3c's
-`sponge_after_index`; before that 9317 → 9417 on #1's third `lowest_128_bits` and §7b's
-`assert_on_curve`.)
+same as before this rung, re-measured by `stepmain-shape-diff.mjs` after it. `Poseidon` `11×206`,
+`VarBaseMul` `1×1448`, `EndoMulScalar` `8×51` and `CompleteAdd` `1×334` are unchanged to the row:
+**§8i is `Generic`/`Zero` only, so NOT ONE run-length family moved.** (The commit before this moved
+none either; the one before that took 10601 → 10746 on segments C/D; before that 10554 → 10601 on
+the R1 interleaving and the three closures; the two before that 10342 → 10554 on the three ladder
+seeds and the absorb-shape correction; before that 9431 → 10342 on §6b's `ft_comm` MSM; before that
+9417 → 9431 on §3c's `sponge_after_index`; before that 9317 → 9417 on #1's third `lowest_128_bits`
+and §7b's `assert_on_curve`.)
 
 The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are INTACT
 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for `Poseidon`,
@@ -287,14 +307,14 @@ range-check — and all seven are emitted here.
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1069     2048             745 ms              24
-    r2_challenges    1714     2048             765 ms             116
-    r3_msm           4917     8192             958 ms             221
-    r4_ipa           8111     8192            1053 ms             452
-    r5_full          8363    16384            1217 ms             459
-    r6_ft_eval0      8832    16384            1236 ms             461
-    r7_absorption   10653    16384            1218 ms             475
-    r8_finalize     10746    16384            1263 ms             482
+    r1_transcript    1069     2048             744 ms              24
+    r2_challenges    1714     2048             845 ms             116
+    r3_msm           4917     8192            1021 ms             221
+    r4_ipa           8111     8192            1003 ms             452
+    r5_full          8440    16384            1248 ms             463
+    r6_ft_eval0      8909    16384            1248 ms             465
+    r7_absorption   10730    16384            1277 ms             479
+    r8_finalize     10822    16384            1277 ms             486
 
 (⚠ **`r8`'s 17.1 s in the previous rung's table was a loaded box and NOT the assembly.** Measured
 again here at 10,601 rows — 47 MORE than the 10,554 that produced the 17 s — it is **1.24 s**, in
@@ -566,23 +586,35 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      `Σₖ ξᵏ(ez_k + r·ew_k)` — which IS `combine(ζ) + r·combine(ζω)` term-for-term, and IS
      `KimchiVerify.cipR`'s own body. The r-weighted second fold was never absent; it was folded per
      COLUMN instead of per POINT. What WAS absent is now R8: `b_correct`'s `+ r·challenge_poly ζω`
-     leg and the `Shifted_value.Type1.to_field` unshifts. **Still open:** the `sg_evals` prefix
-     entries (`vEz 0/1`, `vEw 0/1`) are `evVal` fixtures where upstream puts the b-polynomial of the
-     CARRIED old bulletproof challenges, masked by `Vector.trim_front actual_width_mask` — so the
-     two `combine`s' first two v-entries are not yet computed from the carried challenges. ⚑ The
-     mask half of that is no longer missing (§8h, #9 below); what remains is the b-polynomial of the
-     carried challenges at ζ and ζω, which is R5's `deferredRows` ladder run on a SECOND challenge
-     vector.
-     ⚑ **AND SINCE §18 THIS RESIDUE HAS A NAME AND A CONSEQUENCE, not just a description.** Read at
-     source (`per_proof_witness.ml:12-32`) these four entries ARE `E_c`, and the accumulator is
-     finalised by "`challenge_polynomial_commitment` **opens** to `E_c` at zeta" together with
-     "`E_c = f_c(zeta)`". So this residue is **one of the two legs that would refuse a substituted
-     `G`** — the other being the opening itself (#11). §18(f) measures that the `evVal` fixture is
-     NOT `bEvalSq ζ prev_challenges`, so the leg is FALSE on this assembly's own numbers rather than
-     merely unassembled, and that `f_c` over `prev_challenges` is a different value from `f_c` over
-     the challenges segment D absorbs — conflating the two would close the leg vacuously.
-     ⚠ Taking it alone would still not refuse the substitution: `E_c` is a function of
-     `prev_challenges` and not of `sg_old`, so the relation between them remains the opening.
+     leg and the `Shifted_value.Type1.to_field` unshifts.
+     ⚑⚑ **AND THE `sg_evals` RESIDUE IS CLOSED TOO (2026-08-02, §8i) — `E_c = f_c(ζ)` IS COMPUTED.**
+     This entry read "**Still open:** the `sg_evals` prefix entries (`vEz 0/1`, `vEw 0/1`) are
+     `evVal` fixtures where upstream puts the b-polynomial of the CARRIED old bulletproof
+     challenges". They are now four `f_c` ladders over `vPrevChal` — `challenge_polynomial`
+     (`wrap_verifier.ml:16-35`) at `plonk.zeta` and at `zetaw`, per slot, wired into `combine`'s own
+     prefix (`step_verifier.ml:935-948` feeding `:1076-1102`). §18(f) pins each of the four against
+     `KimchiVerify.bEvalSq`, the read-only transcription, and pins that a bent carried challenge
+     moves `E_c` and `combined_inner_product` (a PUBLIC WORD) with it. `prev_challenges` reach a
+     public word for the first time.
+     ⚑ **THE TRAP, PINNED SO A FUTURE CONFLATION REDS.** `f_c` over `prev_challenges` is NOT `f_c`
+     over this proof's own returned bulletproof challenges — upstream says it in one line at
+     `step_verifier.ml:918` ("You use the NEW bulletproof challenges to check b. Not the old ones.")
+     — and using the latter would close the leg VACUOUSLY. §18(f) pins the value inequality AND the
+     row-level read-set disjointness in both directions: §8i's rows touch no `vLift (uChal k)`,
+     `deferredRows`' touch no `vPrevChal`.
+     ⚠ **WHAT IT DOES NOT BUY, said where the claim is made.** Read at source
+     (`per_proof_witness.ml:12-32`) these four entries ARE `E_c` and the accumulator check is TWO
+     legs — "`challenge_polynomial_commitment` **opens** to `E_c` at zeta" AND "`E_c = f_c(zeta)`".
+     This is the SECOND of those and not the first. `E_c` is a function of `prev_challenges` and ζ;
+     `sg_old` does not occur in it, so nothing here relates the commitment to the value it must open
+     to. §18(b) is re-run with the leg computed and the substituted chain is **ACCEPTED exactly as
+     before**. What is removed is a different, independent forgery surface: four free witnesses the
+     prover chose are now derived cells.
+     ⚠ **AND `combine`'s `Opt.Maybe` MUX IS STILL NOT EMITTED.** Upstream folds prefix entry `i`
+     through `Field.if_ keep` (`common.ml:264-271`) and with `Prefix_mask.there N1` slot 0 is
+     dropped; `cipRows` folds all `cipEvals` entries unconditionally. That is a residue of `combine`,
+     not of this leg, and it is named here because §8h derived the mask and this is the consumer that
+     still ignores it.
   5. **Named and NOT assembled**, each a real sub-circuit: `group_map` (`step_verifier.ml:214-237`);
      `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`;
      `x_hat blinding`; `lagrange_commitment` / `public_input_commitment_dynamic`'s domain selection;
@@ -1562,7 +1594,82 @@ def ftcN (s : StepShape) (k j : Nat) : PVar :=
 def nFtcVars (s : StepShape) : Nat :=
   ftcTerms s * ftcStride + 4 * tCommN s + 1 + 2 * N_FTC_SCAL
 
-def baseFtS (s : StepShape) : Nat := baseFtc s + nFtcVars s
+/-! ### ⚑⚑ §8i — `sg_olds` / `sg_evals`: the ACCUMULATOR CHECK's FIRST LEG, and its variables.
+
+READ AT SOURCE, and this is the whole of it (`step_verifier.ml:934-948`, verbatim in shape):
+
+    let zetaw = Field.mul domain#generator plonk.zeta in                            (* :934 *)
+    let sg_olds =
+      Vector.map prev_challenges ~f:(fun chals ->
+          unstage (challenge_polynomial (Vector.to_array chals))) in                (* :935-939 *)
+    let sg_evals1, sg_evals2 =
+      let sg_evals pt =
+        Vector.map2 ~f:(fun keep f -> (keep, f pt))
+          (Vector.trim_front actual_width_mask …) sg_olds in
+      (sg_evals plonk.zeta, sg_evals zetaw)                                          (* :940-948 *)
+
+and `challenge_polynomial ~one ~add ~mul chals = stage (fun pt →
+∏_i (1 + chals.(i) · pt^{2^{k−1−i}}))` (`wrap_verifier.ml:16-35`, reached through
+`step_verifier.ml:655-657`). Those two vectors are `combine`'s OWN PREFIX
+(`:1076-1102`, `List.append sg_evals ([| Some x_hat |] :: [| Some ft |] :: a)`) — i.e. exactly
+`EV_PREFIX`'s first two entries at both points, which is why this region's four outputs ARE
+`vEz 0/1` and `vEw 0/1` rather than four cells that feed them.
+
+⚑ **WHAT `per_proof_witness.ml:12-32` SAYS THIS IS.** "…we get an evaluation `E_c` at a random point
+zeta and check that `challenge_polynomial_commitment` **opens** to `E_c` at zeta. Then we will need
+to check that `E_c = f_c(zeta)`." So `E_c` is these four values and the accumulator check is TWO
+legs. **This region is leg ONE and only leg one**; leg two (the opening) is `verified` (#11), a
+witnessed boolean, and §18(g) says so where it is measured.
+
+⚠ ⚑ **THE VECTOR IS `prev_challenges` AND NOT THIS PROOF'S OWN, and upstream says it in a comment**:
+`step_verifier.ml:918` — *"You use the NEW bulletproof challenges to check b. Not the old ones."* —
+which is the same sentence read from the other side. `b_correct` (§8f) folds `bulletproof_challenges`
+(`:1114-1121`, `finalize_other_proof`'s RETURNED vector, the one segment D absorbs); `sg_olds` folds
+`prev_challenges` (`:937`, `Per_proof_witness.t`'s carried field, the one segments A and C absorb).
+**Conflating them would close this leg vacuously**, and §18(f) pins the two values apart so that a
+future conflation goes red rather than green.
+
+⚑ THE POINT LADDER IS SHARED AND THE PRODUCT LADDERS ARE NOT, which is a deviation and is stated
+here rather than in a footnote. Upstream's `challenge_polynomial` is `stage`d and re-`unstage`d per
+(vector, point), so it recomputes `pow_two_pows` in each of the four calls; this region computes
+`ζ^{2^j}` ONCE (it reuses §8's own `vZ`, which the `b(ζ)` ladder already owns) and `(ζω)^{2^j}` once.
+Sharing MERGES σ classes rather than splitting them — strictly fewer free cells, never more — and
+the four PRODUCTS, which are what the challenge vectors reach, are four separate chains. -/
+def baseEc (s : StepShape) : Nat := baseFtc s + nFtcVars s
+/-- ⚑ `domain#generator`, pinned by one `Generic` half so `ζω` is a MULTIPLICATION by a wired
+constant rather than a coefficient baked into a bespoke selector shape. -/
+def vOmegaC (s : StepShape) : PVar := xv (baseEc s)
+/-- ⚑ **`zetaw` (`step_verifier.ml:934`) at `k = 0`, and `(ζω)^{2^k}` above it.** ONE `zetaw`
+variable, because upstream has one: `:934` binds it, `:948` evaluates `sg_evals` at it and `:1124`
+folds `b_correct`'s second leg over it. §8f's program now READS this cell instead of recomputing
+`ω·ζ` in its own slot. -/
+def vZW (s : StepShape) (k : Nat) : PVar := xv (baseEc s + 1 + k)
+/-- The four `sg_evals` ladders: `l = 2·slot + point`, point `0` = ζ and `1` = ζω. -/
+def N_EC : Nat := 4
+def ecSlot (l : Nat) : Nat := l / 2
+def ecPoint (l : Nat) : Nat := l % 2
+/-- One ladder's own cells: `bRounds` factors and the `bRounds − 1` interior products (the seed is
+the shared constant-1 cell, the output is `vEz`/`vEw`). -/
+def ecStride (s : StepShape) : Nat := 2 * s.bRounds - 1
+def baseEcL (s : StepShape) : Nat := baseEc s + 1 + s.bRounds
+/-- Ladder `l`'s factor `1 + c_k·pt^{2^{bRounds−1−k}}`. -/
+def vEcFac (s : StepShape) (l k : Nat) : PVar := xv (baseEcL s + l * ecStride s + k)
+/-- ⚑ Ladder `l`'s OUTPUT — `E_c` for slot `l/2` at point `l%2`, which IS `combine`'s prefix entry
+and not a cell that feeds one. -/
+def vEcOut (s : StepShape) (l : Nat) : PVar :=
+  if ecPoint l == 0 then vEz s (ecSlot l) else vEw s (ecSlot l)
+/-- Ladder `l`'s running product after `k` factors. `k = 0` is §8's own constant-1 cell (one
+constant, five consumers, one σ class); `k = bRounds` is the output. -/
+def vEcAcc (s : StepShape) (l k : Nat) : PVar :=
+  if k == 0 then vAcc s 0
+  else if k == s.bRounds then vEcOut s l
+  else xv (baseEcL s + l * ecStride s + s.bRounds + (k - 1))
+/-- The point's power ladder: ζ's is §8's `vZ`, ζω's is this region's own. -/
+def vEcPow (s : StepShape) (l k : Nat) : PVar :=
+  if ecPoint l == 0 then vZ s k else vZW s k
+def nEcVars (s : StepShape) : Nat := 1 + s.bRounds + N_EC * ecStride s
+
+def baseFtS (s : StepShape) : Nat := baseEc s + nEcVars s
 
 /-! ## §3 — the row-schedule primitives. -/
 
@@ -2769,7 +2876,16 @@ structure DefData where
   zs : List Nat
   facs : List Nat
   accs : List Nat
-  /-- the claimed evaluations at ζ and ζω (the `cipEvals` poly columns). -/
+  /-- ⚑ **`zetaw` and its own squaring ladder** (`step_verifier.ml:934`), `zws k = (ζω)^{2^k}`,
+  `bRounds` entries — `pow_two_pows`' own recurrence at the SECOND evaluation point. -/
+  zws : List Nat
+  /-- ⚑ **The four `sg_evals` ladders' factors**, ladder-major (`l = 2·slot + point`). -/
+  ecFacs : List (List Nat)
+  /-- ⚑ …and their running products, `bRounds + 1` per ladder. The last entry of ladder `l` IS
+  `E_c` for slot `l/2` at point `l%2` — `f_c(ζ)` / `f_c(ζω)` over `prev_challenges`. -/
+  ecAccs : List (List Nat)
+  /-- the evaluations at ζ and ζω (the `cipEvals` poly columns). ⚑ Entries 0 and 1 are no longer
+  claimed: since §8i they are `ecAccs`' outputs, i.e. `E_c` computed from the carried challenges. -/
   ez : List Nat
   ew : List Nat
   dk : List Nat
@@ -2789,10 +2905,30 @@ folds `ft_eval0` into `combined_inner_product` as the fourth prefix column. The 
 circular. -/
 def evZOf (ftVal : Nat) (k : Nat) : Nat := if k == 3 then ftVal else evVal k 0
 
+/-- ⚑ **`f_c` — `challenge_polynomial` (`wrap_verifier.ml:16-35`) as a value**, over an arbitrary
+challenge vector and an arbitrary point ladder. `pw j` is `pt^{2^j}`, so factor `k` is
+`1 + c_k·pt^{2^{bRounds−1−k}}` — `bEvalSq`'s own convention (§18(f) pins the emitted output against
+`KimchiVerify.bEvalSq`, which is the read-only transcription). Returns `(factors, products)`; the
+products' last entry is `f_c(pt)`. -/
+def fcLadder (rounds : Nat) (pw : Nat → Nat) (ch : Nat → Nat) : List Nat × List Nat :=
+  (List.range rounds).foldl
+    (fun (acc : List Nat × List Nat) k =>
+      let f := fAdd 1 (fMul (ch k) (pw (rounds - 1 - k)))
+      (acc.1 ++ [f], acc.2 ++ [fMul (acc.2.getLastD 1) f]))
+    ([], [1])
+
 /-- ⚑ `xi` and `rr` are the DEFERRED multipliers of §8g — `to_field_checked` of the statement's ξ
 word and of the fr-sponge's second squeeze — NOT transcript challenges. The fold is `fed` by the
-squeeze, not merely checked against it. -/
-def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr : Nat) : DefData :=
+squeeze, not merely checked against it.
+
+⚑ `omega` is `domain#generator` and `pc` is **`prev_challenges`** — the CARRIED vector
+(`per_proof_witness.ml:90-92`), NOT this proof's own returned bulletproof challenges, which are
+`liftOf s d (s.uChal k)` and which `st` below folds for `b(ζ)`. Upstream keeps the two apart in one
+sentence at `step_verifier.ml:918` ("You use the NEW bulletproof challenges to check b. Not the old
+ones."), and this signature keeps them apart by taking the old ones as a separate argument that no
+default connects to the transcript. -/
+def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr omega : Nat)
+    (pc : Nat → Nat) : DefData :=
   let zs := (List.range s.bRounds).foldl
     (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [liftOf s d s.zetaChal]
   let st := (List.range s.bRounds).foldl
@@ -2800,8 +2936,24 @@ def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr : Nat) : DefDat
       let f := fAdd 1 (fMul (liftOf s d (s.uChal k)) (zs.getD (s.bRounds - 1 - k) 0))
       (acc.1 ++ [f], acc.2 ++ [fMul (acc.2.getLastD 1) f]))
     ([], [1])
-  let ez := (List.range s.cipEvals).map (fun k => evZOf ftVal k)
-  let ew := (List.range s.cipEvals).map (fun k => evVal k 1)
+  -- ⚑ §8i — `zetaw` (`:934`) and `sg_olds`/`sg_evals` (`:935-948`). FOUR ladders: two slots, two
+  -- points. `l = 2·slot + point`.
+  let zws := (List.range (s.bRounds - 1)).foldl
+    (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x])
+    [fMul omega (liftOf s d s.zetaChal)]
+  let ecs := (List.range N_EC).map (fun l =>
+    fcLadder s.bRounds
+      (fun j => if ecPoint l == 0 then zs.getD j 0 else zws.getD j 0)
+      (fun k => pc (ecSlot l * s.bRounds + k)))
+  let ecOut : Nat → Nat := fun l => ((ecs.getD l ([], [])).2).getLastD 0
+  -- ⚑ prefix entries 0 and 1 are `sg_evals`' — `E_c` at ζ in `ez`, at ζω in `ew` — where they were
+  -- `evVal` FIXTURES until §8i. Entry 2 is `x_hat`, entry 3 is R6's `ft_eval0`; both keep their
+  -- fixtures and `evZOf` is unchanged, because `combine`'s prefix is
+  -- `sg_evals ++ [x_hat] ++ [ft] ++ …` and only its first two entries are this leg.
+  let ez := (List.range s.cipEvals).map (fun k =>
+    if k < 2 then ecOut (2 * k) else evZOf ftVal k)
+  let ew := (List.range s.cipEvals).map (fun k =>
+    if k < 2 then ecOut (2 * k + 1) else evVal k 1)
   let dk := (List.range s.cipEvals).map (fun k => fMul rr (ew.getD k 0))
   let ck := (List.range s.cipEvals).map (fun k => fAdd (ez.getD k 0) (dk.getD k 0))
   -- Horner from the TOP: `accᵢ₊₁ = accᵢ·ξ + c_{n−1−i}` closes to `Σ_k ξ^k · c_k`, which IS
@@ -2812,9 +2964,12 @@ def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr : Nat) : DefDat
       (acc.1 ++ [t], acc.2 ++ [fAdd t (ck.getD (s.cipEvals - 1 - i) 0)]))
     ([], [0])
   { zs := zs, facs := st.1, accs := st.2
+  , zws := zws, ecFacs := ecs.map (·.1), ecAccs := ecs.map (·.2)
   , ez := ez, ew := ew, dk := dk, ck := ck, tk := hz.1, ca := hz.2 }
 
-/-- **R5a's rows.** -/
+/-- **R5a's rows.** ⚑ Its challenge operand is `vLift (uChal k)` — this proof's OWN bulletproof
+challenges, the vector `step_verifier.ml:918` calls "the NEW" ones. §8i's ladders read `vPrevChal`
+and NOTHING from this list, and §18(f) pins that read-set disjointness in both directions. -/
 def deferredRows (s : StepShape) (wired : Bool) : List SRow :=
   [ genericRow (some (vAcc s 0)) none none none none none (cConst 1 ++ cNil)
   , genericRow (some (vZ s 0)) (some (vLift s s.zetaChal)) none none none none (cEq ++ cNil) ]
@@ -2824,6 +2979,32 @@ def deferredRows (s : StepShape) (wired : Bool) : List SRow :=
       genericRow (some (vLift s (s.uChal k))) (some (vZ s (s.bRounds - 1 - k))) (some (vFac s k))
                  (some (vAcc s k)) (some (vFac s k)) (some (vAcc s (k+1))) (cMulPlus1 ++ cMul))
   ++ [ probeRow wired (vAcc s s.bRounds) (vZ s s.bRounds) ]
+
+/-- **§8i's rows — `sg_olds` / `sg_evals`, `E_c = f_c(ζ)` over `prev_challenges`.**
+
+`step_verifier.ml:934-948`. One `Generic` half pins `domain#generator`; one multiplies it by
+`plonk.zeta` to give the SINGLE `zetaw` cell `:948` and `:1124` share; then ζω's squaring ladder
+(`bRounds − 1` halves, `pow_two_pows`' own count); then FOUR product ladders, one `Generic` row per
+factor in exactly `deferredRows`' fused shape (`w₂ = 1 + w₀w₁` beside `w₅ = w₃w₄`), whose outputs
+ARE `vEz 0/1` and `vEw 0/1`.
+
+⚑ THE CHALLENGE OPERAND IS `vPrevChal`. That is the whole point of the rung: before it, these four
+prefix entries were free `evVal` witnesses and `prev_challenges` reached nothing in R5 at all. ⚠ It
+is leg ONE. `E_c` is a function of `prev_challenges` and NOT of `sg_old`, so nothing here relates the
+commitment to the value it must open to; that relation is the opening, `verified` (#11). -/
+def sgEvalRows (s : StepShape) (omega : Nat) (wired : Bool) : List SRow :=
+  [ genericRow (some (vOmegaC s)) none none
+               (some (vLift s s.zetaChal)) (some (vOmegaC s)) (some (vZW s 0))
+               (cConst (omega : Int) ++ cMul) ]
+  ++ packHalves ((List.range (s.bRounds - 1)).map (fun k =>
+       ([some (vZW s k), some (vZW s k), some (vZW s (k+1))], cMul)))
+  ++ (List.range N_EC).flatMap (fun l =>
+      (List.range s.bRounds).map (fun k =>
+        genericRow (some (vPrevChal s (ecSlot l * s.bRounds + k)))
+                   (some (vEcPow s l (s.bRounds - 1 - k))) (some (vEcFac s l k))
+                   (some (vEcAcc s l k)) (some (vEcFac s l k)) (some (vEcAcc s l (k+1)))
+                   (cMulPlus1 ++ cMul)))
+  ++ (List.range N_EC).map (fun l => probeRow wired (vEcOut s l) (vEcFac s l 0))
 
 /-- **R5a', `combined_inner_product`** — `Common.combined_evaluation` (`common.ml:258-…`), the
 `2 × cipEvals` `mul_and_add`s. `cip = Σ_k ξ^k · (evₖ(ζ) + r · evₖ(ζω))`, assembled as a Horner fold
@@ -4003,10 +4184,12 @@ def shiftT2 (x : Nat) : Nat := fSub x (2 ^ 255 % pN)
 /-- The wire R8 reads: every field a SOURCE OP, so the rung's program can also be run on bent inputs
 (§16's red controls) without touching the assembly. -/
 structure FinWire where
-  /-- ζ, LIFTED (`plonk.zeta`). -/
-  zeta : AOp
   /-- `r`, LIFTED (`scalar (Scalar_challenge.create r_actual)`). -/
   r : AOp
+  /-- ⚑ `zetaw` — §8i's OWN cell (`vZW 0`), not a slot of this program. `step_verifier.ml:934` binds
+  `zetaw` ONCE and both `sg_evals` (`:948`) and `b_correct` (`:1124`) read that binding; recomputing
+  `ω·ζ` here would be a second variable with the same value and no tie between them. -/
+  zetaw : AOp
   /-- `challenge_poly ζ` — R5's `vAcc bRounds`. -/
   bZeta : AOp
   /-- R5's `combined_inner_product` output. -/
@@ -4027,7 +4210,6 @@ structure FinWire where
 /-- What R8 bakes in, plus the witnesses its own rows CHECK. -/
 structure FinCfg where
   rounds : Nat
-  omega : Nat
   shiftC : Nat
   /-- `lowest_128_bits`' discarded high part. -/
   hiXi : Nat
@@ -4066,11 +4248,14 @@ def finBuild (W : FinWire) (C : FinCfg) : AM FinSlots := do
   let one ← eLit 1
   let shiftC ← eLit C.shiftC
   let two128 ← eLit (2 ^ 128 % pN)
-  let omega ← eLit C.omega
-  let zeta ← em W.zeta
   let r ← em W.r
   -- ── b_correct's SECOND leg (`:1124-1128`) ─────────────────────────────────────────────────
-  let zetaw ← eMul omega zeta
+  -- ⚑ `zetaw` is READ, not recomputed: §8i owns `Field.mul domain#generator plonk.zeta` (`:934`)
+  -- because `sg_evals` needs it too, and upstream binds it once for both. ⚑ …and ζ ITSELF left this
+  -- program with it: `challenge_poly plonk.zeta` (`:1124`) is R5's `vAcc bRounds`, which `bZeta`
+  -- already aliases, so R8 had no other use for it and a slot that aliases a variable nothing reads
+  -- is not kept for shape.
+  let zetaw ← em W.zetaw
   let zws ← (List.range C.rounds).foldlM (fun acc _ => do
       let y ← eMul (acc.getLastD zetaw) (acc.getLastD zetaw); pure (acc ++ [y])) [zetaw]
   let bw ← (List.range C.rounds).foldlM (fun acc k => do
@@ -4208,8 +4393,8 @@ def bActualOf (s : StepShape) (d : SpongeData) (df : DefData) (rv : Nat) : Nat :
   fAdd (df.accs.getLastD 0) (fMul rv (bwOf s d))
 
 def finWireOf (s : StepShape) (f : FtData) : FinWire :=
-  { zeta := .inp (vLift s s.zetaChal)
-  , r := .inp (vDLift s 1)
+  { r := .inp (vDLift s 1)
+  , zetaw := .inp (vZW s 0)
   , bZeta := .inp (vAcc s s.bRounds)
   , cipActual := .inp (vCa s s.cipEvals)
   , permActual := .inp (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm)
@@ -4240,8 +4425,9 @@ def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
     (segB : SegData) (specB : SegSpec) (rv : Nat) : VarEnv :=
   let sqv := frSqueezeVal segB specB
   let permA := f.vals.getD f.fp.slots.perm 0
-  [ (vLift s s.zetaChal, (liftOf s d s.zetaChal : Int))
-  , (vDLift s 1, (rv : Int))
+  [ (vDLift s 1, (rv : Int))
+  -- ⚑ §8i's `zetaw` cell (`step_verifier.ml:934`), which `sg_evals` and `b_correct` share.
+  , (vZW s 0, (df.zws.getD 0 0 : Int))
   , (vAcc s s.bRounds, (df.accs.getLastD 0 : Int))
   , (vCa s s.cipEvals, (df.ca.getLastD 0 : Int))
   , (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm, (permA : Int))
@@ -4257,7 +4443,7 @@ def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
 `bit = 1`, `inv = 0` in all four gadgets, with `verified = should_verify = 1`. §16 re-runs this at
 bent inputs, where the honest witness is `bit = 0` and the assert FAILS. -/
 def finCfgOf (s : StepShape) (hi : Nat) : FinCfg :=
-  { rounds := s.bRounds, omega := FT_OMEGA, shiftC := SHIFT_C, hiXi := hi
+  { rounds := s.bRounds, shiftC := SHIFT_C, hiXi := hi
   , eqInv := List.replicate 4 0, eqBit := List.replicate 4 1
   , verified := 1 }
 
@@ -4396,7 +4582,11 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   -- ⚑ the SHIFTED value, because that is what `:257-259` unwraps and absorbs
   -- (`Shifted_value.Type2.Shifted_value x -> x`) and it is exactly `vCipShift`, the statement word
   -- R8's `combined_inner_product_correct` ties back to this same Horner output.
-  let cipV := shiftT1 ((runDef s sp0 ft0.out (defc0.lift s 0) (defc0.lift s 1)).ca.getLastD 0)
+  -- ⚑ §8i's four `E_c` ladders ride in `runDef` and read `prevChalVal` — a witness vector, NOT the
+  -- transcript — so PASS 1 computes the same `E_c` PASS 2 does and the fold stays a chain. (ζ is
+  -- identical across the two passes: `cip` is absorbed after ζ is squeezed, §12i.)
+  let cipV := shiftT1 ((runDef s sp0 ft0.out (defc0.lift s 0) (defc0.lift s 1)
+                          FT_OMEGA prevChalVal).ca.getLastD 0)
   -- **PASS 2 — the real transcript**, carrying `(combined_inner_product, its `Boolean.var`)`.
   let sp := runSponge s bs (cipV, CIP_BIT)
   let msm := runMsm s bs sp
@@ -4413,7 +4603,7 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let segB := runSeg specB
   -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
   let defc := runDefc segB specB
-  let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1)
+  let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1) FT_OMEGA prevChalVal
   let specC := hmSpec s ipa
   -- ⚑ segment D copies `sponge_after_index` (`step_verifier.ml:1164`), so it does not depend on
   -- segment C's own trajectory past the index prefix — the two hashes are SIBLINGS off one copy,
@@ -4452,6 +4642,7 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ ftcRows s t.ftw t.ftc wired
   ++ ipaRows s t.ipa wired
   ++ deferredRows s wired
+  ++ sgEvalRows s FT_OMEGA wired
   ++ branchRows s wired
   ++ xiDefRows s t.defc wired
   ++ cipRows s wired
@@ -4584,6 +4775,16 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (List.range (s.bRounds + 1)).map (fun k => (vZ s k, (t.df.zs.getD k 0 : Int)))
   ++ (List.range s.bRounds).map (fun k => (vFac s k, (t.df.facs.getD k 0 : Int)))
   ++ (List.range (s.bRounds + 1)).map (fun k => (vAcc s k, (t.df.accs.getD k 0 : Int)))
+  -- ⚑ §8i: `domain#generator`, `zetaw` and its squaring ladder, and the FOUR `f_c` ladders over
+  -- `prev_challenges`. The ladders' OUTPUTS are `vEz 0/1` / `vEw 0/1`, which the `cipEvals` block
+  -- below already places out of `t.df.ez` / `t.df.ew` — so they appear once, not twice.
+  ++ [ (vOmegaC s, (FT_OMEGA : Int)) ]
+  ++ (List.range s.bRounds).map (fun k => (vZW s k, (t.df.zws.getD k 0 : Int)))
+  ++ (List.range N_EC).flatMap (fun l =>
+      (List.range s.bRounds).map (fun k =>
+        (vEcFac s l k, ((t.df.ecFacs.getD l []).getD k 0 : Int)))
+      ++ (List.range (s.bRounds - 1)).map (fun k =>
+        (vEcAcc s l (k + 1), ((t.df.ecAccs.getD l []).getD (k + 1) 0 : Int))))
   ++ (List.range s.cipEvals).flatMap (fun k =>
       [ (vEz s k, (t.df.ez.getD k 0 : Int)), (vEw s k, (t.df.ew.getD k 0 : Int))
       , (vDk s k, (t.df.dk.getD k 0 : Int)), (vCk s k, (t.df.ck.getD k 0 : Int))
@@ -4700,8 +4901,8 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let b := endoConstRow s ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
   let c := msmRows s t.msm wired ++ ftcRows s t.ftw t.ftc wired
   let d := ipaRows s t.ipa wired
-  let e := deferredRows s wired ++ branchRows s wired ++ xiDefRows s t.defc wired
-           ++ cipRows s wired ++ closingRows s
+  let e := deferredRows s wired ++ sgEvalRows s FT_OMEGA wired ++ branchRows s wired
+           ++ xiDefRows s t.defc wired ++ cipRows s wired ++ closingRows s
   let f := ftRows s t.ft wired
   let g := absRows t wired
   let h := finRows s t.ft t.fin wired
@@ -7250,6 +7451,7 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
         == (rungRows tS .msm true).length + (ipaRows shapeSmoke tS.ipa true).length
 #guard (rungRows tS .full true).length
         == (rungRows tS .ipa true).length + (deferredRows shapeSmoke true).length
+           + (sgEvalRows shapeSmoke FT_OMEGA true).length
            + (branchRows shapeSmoke true).length + (xiDefRows shapeSmoke tS.defc true).length
            + (cipRows shapeSmoke true).length + (closingRows shapeSmoke).length
 #guard (rungRows tS .ftEval0 true).length
@@ -7263,6 +7465,12 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 #guard (stepRows tS true).length == (rungRows tS .finalize true).length
 -- …and each sub-list is NON-EMPTY, so "the sum matches" cannot be satisfied by a vanished rung.
 #guard (cipRows shapeSmoke true).length > 0 && (deferredRows shapeSmoke true).length > 0
+-- ⚑ …and §8i's own sub-list, which is the rung this file last added. Its length is stated as the
+-- CLOSED FORM of what it emits — the `zetaw` row, ζω's `bRounds − 1` squaring halves packed two to
+-- a row, `N_EC · bRounds` fused factor rows and `N_EC` probes — so a ladder that quietly loses a
+-- slot or a point reds here rather than shrinking silently.
+#guard (sgEvalRows shapeSmoke FT_OMEGA true).length
+        == 1 + (shapeSmoke.bRounds - 1 + 1) / 2 + N_EC * shapeSmoke.bRounds + N_EC
 #guard (ftRows shapeSmoke tS.ft true).length > 0 && (absRows tS true).length > 0
 #guard (finRows shapeSmoke tS.ft tS.fin true).length > 0 && (endoConstRow shapeSmoke).length > 0
 #guard (xiDefRows shapeSmoke tS.defc true).length > 0
@@ -8126,20 +8334,29 @@ not what refuses a substituted `G`. What refuses it is one link FURTHER — the 
 > we get an evaluation `E_c` at a random point zeta and check that `challenge_polynomial_commitment`
 > **opens** to `E_c` at zeta. Then we will need to check that `E_c = f_c(zeta)`."
 
-Two legs, and this assembly has NEITHER:
+Two legs. **Since 2026-08-02 this assembly has the FIRST and not the second**, and the verdict below
+is unchanged by that:
 
-  * **`E_c = f_c(ζ)`** — the `sg_evals` prefix entries `vEz 0/1` and `vEw 0/1`, which are `evVal`
-    FIXTURES here. That is named simplification #4's residue verbatim, and (f) below measures that
-    the fixture is not the b-polynomial of `prev_challenges`, so the leg is not merely unassembled,
-    it is FALSE on this assembly's own numbers. It is assemblable: R5's `deferredRows` ladder run on
-    `vPrevChal` at ζ and ζω.
+  * **`E_c = f_c(ζ)` — COMPUTED (§8i).** The `sg_evals` prefix entries `vEz 0/1` and `vEw 0/1` were
+    `evVal` FIXTURES (simplification #4's residue verbatim); they are now the outputs of four `f_c`
+    ladders over `vPrevChal` at ζ and ζω, and (f) below pins them against `KimchiVerify.bEvalSq`,
+    pins that they are NOT `f_c` of the challenges segment D absorbs (the vacuous closure), and
+    pins the read-set disjointness in both directions so a future conflation reds.
   * **`sg_old` OPENS to `E_c`** — the IPA opening at step `N+1`. That is `verified` (#11), and it is
     the same object §17 stops at. **It is an ASSUMPTION, not a gate**, at every step of the chain.
 
+⚠ ⚑ **AND LEG ONE ALONE DOES NOT REFUSE THE SUBSTITUTION — (b) IS RE-RUN AND IS UNCHANGED.** `E_c`
+is a function of `prev_challenges` and ζ; `sg_old` does not occur in it. A prover who substitutes an
+absorbed commitment and re-solves `G` carries the SAME `prev_challenges` forward, so every one of the
+four computed entries is the value it would have been, and the chain closes exactly as (b) measures.
+What the leg buys is that the accumulator state the next step carries is now CONSTRAINED to be the
+b-polynomial of the challenges it also hashes, instead of four free witnesses — i.e. it removes a
+second, independent forgery surface (`E_c` chosen freely) rather than closing this one.
+
 So the honest shape of the whole result is: `G` is bound to step `N`'s statement (§8e′), FORCED
-forward into `sg_old` at step `N+1` (this section), and finally MEANS something only through a
-commitment-opening that no rung of this assembly emits. The substituted witness is accepted at every
-one of those rungs. -/
+forward into `sg_old` at step `N+1` (this section), `E_c` is now the right POLYNOMIAL EVALUATION
+(§8i), and the two still MEET only through a commitment-opening that no rung of this assembly emits.
+The substituted witness is accepted at every one of those rungs. -/
 
 /-- ⚑ Segment C's spec with each slot's contents supplied, so the CHAIN can be evaluated at step
 `N`'s outputs rather than at this instance's own fixtures. Structurally identical to `hmSpec` — the
@@ -8288,7 +8505,7 @@ def bpG11 : Nat × Nat :=
   v != mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
   && v != ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1)))
 
-/-! ### ⚑ (f) THE LEG THAT WOULD REFUSE IT, AND THE MEASUREMENT THAT IT IS ABSENT.
+/-! ### ⚑ (f) LEG ONE OF THE ACCUMULATOR CHECK — `E_c = f_c(ζ)` OVER `prev_challenges`, COMPUTED.
 
 `per_proof_witness.ml:12-21`: the accumulator is finalised by checking that `sg_old` OPENS at ζ to
 `E_c`, and that `E_c = f_c(ζ) = ∏_i (1 + c_i·ζ^{2^{k−1−i}})` over the CARRIED challenges. The
@@ -8299,34 +8516,148 @@ at `plonk.zeta` and `zetaw` — and those two vectors are `combine`'s own prefix
 two entries. `challenge_polynomial` is `∏_i (1 + chals[i]·pt^{2^{k−1−i}})`
 (`wrap_verifier.ml:16-36`), which is `bEvalSq`'s own convention.
 
-In this assembly `E_c` is that prefix — `vEz 0/1` at ζ and `vEw 0/1` at ζω — and those are `evVal`
-fixtures (#4's residue). The pins below measure that the fixture is not `f_c(ζ)`, i.e. the leg is
-not merely unassembled: it is FALSE here, so a `#guard` can see its absence rather than only its
-silence. ⚠ `prev_challenges` are fixtures too (`prevChalVal`), so this measures the WIRE, not a
-value claim about a real accumulator. -/
+⚑⚑ **AND SINCE §8i THAT PREFIX IS COMPUTED — this subsection is the measurement of leg ONE, not of
+its absence.** `vEz 0/1` and `vEw 0/1` were `evVal` fixtures (#4's residue) until 2026-08-02; they
+are now the outputs of four `f_c` ladders whose challenge operand is `vPrevChal`. What that buys and
+what it does not:
+
+  * `prev_challenges` reach the r5 sub-circuit AT ALL for the first time — below this they had no
+    cell before `r7_absorption`, where segments A and C absorb them — and through `combine` they
+    reach `combined_inner_product`, which is a PUBLIC WORD and a statement word R8 binds. That is the
+    first time the carried accumulator state constrains anything this circuit outputs.
+  * ⚠ **IT IS STILL NOT A REFUSAL OF THE SUBSTITUTION.** `E_c` is a function of `prev_challenges`
+    and of ζ, and of NOTHING ELSE — `sg_old` does not occur in it. The relation between the
+    commitment and the value it must open to is leg TWO, the opening, which is `verified` (#11), a
+    witnessed boolean. (b) above is unchanged and re-runs unchanged: the substituted chain closes.
+  * ⚠ **`prev_challenges` are still fixtures** (`prevChalVal`) and so is the app state, so what is
+    measured here is the WIRE — that the emitted value IS `f_c` of THOSE cells — and not a value
+    claim about a real accumulator.
+  * ⚠ **`combine`'s `Opt.Maybe` mux is still not emitted.** Upstream folds `sg_evals` entry `i`
+    through `Field.if_ keep` (`common.ml:264-271`), and with `Prefix_mask.there N1 = [0,1]` slot 0
+    is skipped; `cipRows` folds all `cipEvals` entries unconditionally, so slot 0's `E_c` is folded
+    here where upstream drops it. That is a NAMED residue of `combine`, not of this leg. -/
 
 /-- `f_c` over the KEPT slot's carried challenges, in `bEvalSq`'s own list order. -/
 def prevUs : List (ZMod pN) :=
   (List.range shapeSmoke.bRounds).map (fun k =>
     ((prevChalVal (shapeSmoke.bRounds + k) : Nat) : ZMod pN))
+/-- …and over the OTHER slot's — the `Wrap_hack` dummy. -/
+def prevUs0 : List (ZMod pN) :=
+  (List.range shapeSmoke.bRounds).map (fun k => ((prevChalVal k : Nat) : ZMod pN))
+/-- ζω, as a value: `Field.mul domain#generator plonk.zeta` (`step_verifier.ml:934`). -/
+def zetawLS : Nat := fMul FT_OMEGA zetaLS
 
--- ⚑ `E_c` at ζ is a FIXTURE and it is not `f_c(ζ)`; likewise at ζω. Both legs of the `sg_evals`
--- prefix for the kept slot.
+-- ⚑⚑ **LEG ONE, COMPUTED.** The four emitted prefix entries ARE `f_c` over the carried challenges —
+-- against `KimchiVerify.bEvalSq`, the READ-ONLY transcription of `b_poly`, at the emitted ζ and the
+-- emitted ζω. Not `runDef`'s own recursion restated: `bEvalSq` is a different definition in a
+-- different module, tied to `bEval` by a theorem.
+#guard ((tS.df.ez.getD 1 0 : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs
+#guard ((tS.df.ew.getD 1 0 : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetawLS : Nat) : ZMod pN) prevUs
+#guard ((tS.df.ez.getD 0 0 : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs0
+#guard ((tS.df.ew.getD 0 0 : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetawLS : Nat) : ZMod pN) prevUs0
+-- …and each of the four is a DIFFERENT value, so "all four are `f_c`" is not four names for one
+-- number, and the two SLOTS really carry different challenge runs.
+#guard [tS.df.ez.getD 0 0, tS.df.ez.getD 1 0, tS.df.ew.getD 0 0, tS.df.ew.getD 1 0].dedup.length == 4
+-- …and NONE of them is the fixture it replaced, which is the retirement stated as a red control:
+-- the previous four values are still computable and are still not `f_c`.
+#guard (List.range 2).all (fun j =>
+  tS.df.ez.getD j 0 != evVal j 0 && tS.df.ew.getD j 0 != evVal j 1)
 #guard (((evVal 1 0 : Nat) : ZMod pN)
          == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs) == false
-#guard (((evVal 1 1 : Nat) : ZMod pN)
-         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
-              (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN)) prevUs) == false
--- …and `f_c` is not degenerate at these numbers, so the two pins above are about the wire and not
--- about a constant: the b-polynomial MOVES when one carried challenge moves.
-#guard (Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs
-         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN)
-              (prevUs.set 0 (prevUs.getD 0 0 + 1))) == false
--- ⚑ …and it is the CARRIED vector, not this proof's own: `f_c` over `prev_challenges` differs from
--- `f_c` over the challenges segment D absorbs. Conflating the two would have closed the leg
--- vacuously.
+
+-- ⚑⚑ **THE TRAP THIS RUNG IS BUILT AROUND, PINNED IN BOTH FORMS.** `f_c` over `prev_challenges` is
+-- NOT `f_c` over the challenges segment D absorbs — upstream's own `step_verifier.ml:918`, "You use
+-- the NEW bulletproof challenges to check b. Not the old ones." A conflation would close leg one
+-- vacuously, and it now REDS: first as a value inequality, then as a read-set disjointness on the
+-- emitted rows, which is the form a future edit is most likely to break.
 #guard (Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) prevUs
          == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS) == false
+#guard (((tS.df.ez.getD 1 0 : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS) == false
+-- …and `b(ζ)` — the ladder over the NEW challenges, which R8's `b_correct` binds — is a different
+-- number from every one of the four, so the two vectors are apart at the emitted values too.
+#guard (List.range 2).all (fun j =>
+  tS.df.accs.getLastD 0 != tS.df.ez.getD j 0 && tS.df.accs.getLastD 0 != tS.df.ew.getD j 0)
+-- ⚑ **THE READ-SET, both directions.** §8i's rows read `vPrevChal` and NOT ONE `vLift (uChal k)`;
+-- `deferredRows`' rows read every `vLift (uChal k)` and NOT ONE `vPrevChal`. Neither statement is a
+-- floor. A future edit that wires the ladders to the transcript's own challenges — the vacuous
+-- closure — breaks the first; one that drops the carried wire breaks it too.
+def ecRowVars : List PVar :=
+  (sgEvalRows shapeSmoke FT_OMEGA true).flatMap (fun r => r.perm.filterMap id)
+def defRowVars : List PVar :=
+  (deferredRows shapeSmoke true).flatMap (fun r => r.perm.filterMap id)
+#guard (List.range shapeSmoke.bRounds).all (fun k =>
+  (ecRowVars.contains (vLift shapeSmoke (shapeSmoke.uChal k))) == false)
+#guard (List.range shapeSmoke.bRounds).all (fun k =>
+  defRowVars.contains (vLift shapeSmoke (shapeSmoke.uChal k)))
+#guard (List.range (2 * shapeSmoke.bRounds)).all (fun i =>
+  ecRowVars.contains (vPrevChal shapeSmoke i))
+#guard (List.range (2 * shapeSmoke.bRounds)).all (fun i =>
+  (defRowVars.contains (vPrevChal shapeSmoke i)) == false)
+
+-- ⚑⚑ **THE RED CONTROL IN THE DIRECTION THAT MUST MOVE**: bend ONE carried challenge word and `E_c`
+-- moves, its slot's BOTH points move, and `combined_inner_product` — a public word — moves with it.
+-- Run on `runDef` at the assembly's own ζ, ξ and r, so only the carried vector differs.
+def dfBent : DefData :=
+  runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA
+    (fun i => if i == shapeSmoke.bRounds then fAdd (prevChalVal i) 1 else prevChalVal i)
+#guard dfBent.ez.getD 1 0 != tS.df.ez.getD 1 0
+#guard dfBent.ew.getD 1 0 != tS.df.ew.getD 1 0
+#guard dfBent.ca.getLastD 0 != tS.df.ca.getLastD 0
+-- …and it moves the KEPT slot ONLY — the dummy slot's two entries are untouched, so the bend is
+-- reaching one ladder and not smearing across the region.
+#guard dfBent.ez.getD 0 0 == tS.df.ez.getD 0 0 && dfBent.ew.getD 0 0 == tS.df.ew.getD 0 0
+-- ⚑ **AND THE DIRECTION THAT MUST NOT MOVE**: substitute the challenges segment D absorbs — this
+-- proof's OWN returned bulletproof challenges — for the carried vector and every one of the four
+-- entries lands somewhere else. That is the conflation, priced on the emitted values.
+def dfConflated : DefData :=
+  runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA
+    (fun i => chainChals shapeSmoke tS.sp (i % shapeSmoke.bRounds))
+#guard dfConflated.ez.getD 1 0 != tS.df.ez.getD 1 0
+#guard dfConflated.ew.getD 1 0 != tS.df.ew.getD 1 0
+#guard dfConflated.ca.getLastD 0 != tS.df.ca.getLastD 0
+-- …and `b(ζ)`, which reads the NEW challenges, is IDENTICAL across all three — it is the other
+-- vector's ladder and no bend of the carried one may touch it.
+#guard dfBent.accs.getLastD 0 == tS.df.accs.getLastD 0
+#guard dfConflated.accs.getLastD 0 == tS.df.accs.getLastD 0
+-- ⚑ **`zetaw` IS ONE CELL.** `:934` binds it once; `sg_evals` (`:948`) and `b_correct` (`:1124`)
+-- read that binding. R8's program no longer recomputes `ω·ζ` — its `zetaw` slot is an ALIAS of
+-- §8i's `vZW 0`, which is what makes the two readings one σ class rather than two equal numbers.
+#guard finS.fp.prog.getD finS.fp.slots.zetaw default == AOp.inp (vZW shapeSmoke 0)
+#guard finVal finS.fp.slots.zetaw == zetawLS && tS.df.zws.getD 0 0 == zetawLS
+-- …and ζω's ladder is `pow_two_pows`' own recurrence, at the length upstream computes.
+#guard tS.df.zws.length == shapeSmoke.bRounds
+#guard (List.range (shapeSmoke.bRounds - 1)).all (fun k =>
+  tS.df.zws.getD (k + 1) 0 == fMul (tS.df.zws.getD k 0) (tS.df.zws.getD k 0))
+-- …and ζω ≠ ζ, so the two points are two points (a degenerate ω would make half the region a copy).
+#guard zetawLS != zetaLS && FT_OMEGA != 1
+
+-- ⚑⚑ **THE LADDER POSITION — `prev_challenges` REACH THE CIRCUIT'S OUTPUT.** Below §8i a carried
+-- challenge had NO cell at `r5_full`: its only consumers were segments A and C, which are R7's. It
+-- now has exactly TWO there (its slot's ζ ladder and its slot's ζω ladder), and the class grows by
+-- the two absorptions at `r7_absorption`. Equalities, not floors.
+#guard (classCells (posAt .ipa) (vPrevChal shapeSmoke shapeSmoke.bRounds)).length == 0
+#guard (classCells (posAt .full) (vPrevChal shapeSmoke shapeSmoke.bRounds)).length == 2
+#guard (classCells (posAt .ftEval0) (vPrevChal shapeSmoke shapeSmoke.bRounds)).length == 2
+#guard (classCells (posAt .absorb) (vPrevChal shapeSmoke shapeSmoke.bRounds)).length == 4
+-- …and the prefix entries themselves went from FREE WITNESSES the fold read to DERIVED cells: at
+-- `r5_full` `vEz 1`'s class is the fold's own read, its ladder's closing row and its probe.
+#guard (classCells (posAt .full) (vEz shapeSmoke 1)).length == 3
+#guard (classCells (posAt .full) (vEw shapeSmoke 1)).length == 3
+-- …while the entries this leg does NOT cover — `x_hat` at 2, `ft_eval0` at 3 — keep exactly the one
+-- fold read they had, so the pin says "two of four", which is what `combine`'s prefix is.
+#guard (classCells (posAt .full) (vEz shapeSmoke 2)).length == 1
+#guard (classCells (posAt .full) (vEw shapeSmoke 2)).length == 1
+-- ⚑ …and the OUTPUT reach, stated as the wire it is: `combined_inner_product` is public word 9 and
+-- `vCipShift` is public word 0, and R8's `combined_inner_product_correct` ties them. So a carried
+-- challenge now reaches a public word through rows, not through a comment.
+#guard (exposedVars shapeSmoke).getD 9 (xv 0) == vCa shapeSmoke shapeSmoke.cipEvals
+#guard (exposedVars shapeSmoke).getD 0 (xv 0) == vCipShift shapeSmoke
+#guard (stepPublic tS).getD 9 0 == (tS.df.ca.getLastD 0 : Int)
 
 -- ⚑ **(g) AND THE OTHER LEG IS THE OPENING, WHICH IS `verified` (#11) AND AN ASSUMPTION.**
 -- With `G` bound to the statement (§8e′) and FORCED forward by (a)/(d), what is left between the
