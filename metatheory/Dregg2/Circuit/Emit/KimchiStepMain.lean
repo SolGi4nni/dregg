@@ -27,7 +27,10 @@ The recursive verifier is exercised by the branches that HAVE previous proofs:
   * x_hat MSM (`multiscale_known`)             ≈ 1972 `var_base_mul`-family rows + ~30 adds
   * the 47-commitment fold (`combine_split_commitments`) 46 × (endo 35 + add 1) = **1656**
   * `bullet_reduce`, 15 rounds                  15 × (2 endo + add) + 14 add = **1079**
-  * `ft_comm`                                   8 × 104 + 8 = **840**
+  * `ft_comm`                                   8 × 104 + 8 = **840** — ASSEMBLED (§6b), and it
+    MEASURES 901 rows here: `104` is `Ops.add_fast = 1 CompleteAdd` costing only, and the emitted
+    ladder also carries `Shifted_value.Type2`'s split, `scale_fast2`'s top-bit assert, the `G.if_`
+    mux and the σ-only probes
   * `check_bulletproof` tail                    ≈ **460**
   * `finalize_other_proof`                      ~20 × 8 endo-scalar = 160, + ≈ 560 poseidon
 
@@ -50,13 +53,19 @@ line items, not against a round number.
     at cols 0/2/3), `n₀=0, a₀=2, b₀=2` PINNED by `Generic` rows, and a `Generic` decomposition row
     tying the chain's reconstructed `n₈` back to the SPONGE OUTPUT variable. `EndoMulScalar` had
     never been chained and had never been wired to another gate type.
-  * **R3 `msm`** — `multiscale_known`, the x_hat MSM: `msmTerms` `var_base_mul` scalar
+  * **R3 `msm`** — TWO MSMs. `multiscale_known`, the x_hat MSM: `msmTerms` `var_base_mul` scalar
     multiplications
     of `msmChunks` 5-bit chunks (`bits_per_chunk = 5`, `plonk_curve_ops.ml:66`), summed by a
     `complete_add` chain. ⚑ Each term's scalar counter chain CLOSES ON ITS CHALLENGE: term `i`'s
     final `n'` cell (col 5) and its challenge's final `n₈` cell (col 1) are the SAME VARIABLE, so
     the value `EndoMulScalar` decoded is the value `VarBaseMul` multiplies by — one σ class spanning
     three gate types and three sub-circuits.
+    ⚑ …and since 2026-08-02 **`Common.ft_comm`** (§6b, `common.ml:238-256`): eight `scale_fast2`s at
+    `~num_bits:255` — 51 chunks each, `step_verifier.ml:240-242,587-591` — over `sigma_comm_last` and
+    `t_comm`'s seven quotient chunks, folded by `common.ml`'s own `Ops.add_fast` chain, with
+    `Shifted_value.Type2`'s split emitted as a row against R6's derived `perm` / `ζ^n` cells. Its
+    OUTPUT is R4 round 2's base. **This is what makes `t_comm`'s absorption mean something:** its 14
+    transcript words are the MSM's operands, not fixtures the sponge eats.
   * **R4 `ipa`** — `combine_split_commitments` + `bullet_reduce`: `ipaRounds` `Scalar_challenge.endo`
     scalar multiplications of `ipaBlocks` 4-bit blocks each (the row-OVERLAP chaining pattern, no σ
     hop), each closing on its own challenge, folded by a second `complete_add` chain. ⚑ Its bases
@@ -117,40 +126,48 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              7192      7661        9338        9431
-    non-Generic         13778              6558      6560        7944        7967
+    total gates         20023              8103      8572       10249       10342
+    non-Generic         13778              7424      7426        8810        8833
     Poseidon             6292 (31.4%)      1034      1034        2277        2277   11×572 / 11×207 ✓
-    Generic              6245 (31.2%)       634      1101        1394        1464   —
+    Generic              6245 (31.2%)       679      1146        1439        1509   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1562      1564        1689        1696   —
-    VarBaseMul           1596  (8.0%)      1040      1040        1040        1040   1×1596 / 1×1040   ✓
+    Zero                 2246 (11.2%)      1996      1998        2123        2130   —
+    VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd           403  (2.0%)       114       114         114         114   1×159 2×65 3×23
-                    15×1 30×1 / 1×114
+    CompleteAdd           403  (2.0%)       138       138         138         138   1×159 2×65 3×23
+                    15×1 30×1 / 1×138
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9417 → 9431 rows) — **fourteen rows, and they close the OTHER
-half of Fiat–Shamir.** `sponge_after_index` (`step_verifier.ml:1149-1157`) is derived rather than
-witnessed: **+11 `Poseidon` and +1 `Zero`** are the ONE permutation `index_digest` is
-(`Sponge.squeeze_field (Sponge.copy sponge_after_index)`, `:529-534`), **+1 `Zero`** its σ-only
-probe, and **+1 `Generic`** the `Inner_curve.constant` pin for `sigma_comm[6]` — the single plonk-
-index commitment `combine_split_commitments` does not already carry (`common.ml:243-246` hands it to
-`ft_comm` as `sigma_comm_last`). The other 27 index commitments needed NO new rows because they ARE
-the fold's own `.const` bases, and segment C now absorbs those very variables. §3c is the assembly;
-§12d is the exhibit. (The commit before that took 9317 → 9417 on #1's third `lowest_128_bits` and
-§7b's `assert_on_curve`; the one before that 8713 → 9317 on #3, #1 and #9's second consumer.)
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9431 → 10342 rows) — **911 rows, and they are
+`Common.ft_comm`'s MSM.** §6b: **+408 `VarBaseMul` and +408 `Zero`** are eight 255-bit `scale_fast2`
+ladders at 51 five-bit chunks each (`plonk_curve_ops.ml:251-267` at `~num_bits:Field.size_in_bits`,
+`step_verifier.ml:240-242`); **+24 `CompleteAdd`** are each ladder's `add_fast base base` and
+`add_fast h (G.negate g)` plus `common.ml`'s own eight `Ops.add_fast`s; **+45 `Generic`** are the two
+`Shifted_value.Type2` splits, the per-term top-bit assert / negate / `G.if_` mux and the seven new
+`assert_on_curve`s, less the pin row round 2 no longer needs; the rest are σ-only probes.
+⚑ **AND R1 DID NOT GROW BY A SINGLE ROW.** `t_comm`'s seven commitments took transcript blocks that
+were already there and already absorbing — **14 `msgVal` fixtures BECAME the MSM's operands.** That
+is the whole point of the commit and the reason the row delta is all MSM: absorbing `t_comm` was
+never the work, consuming it was.
+`VarBaseMul` is now **1448 against upstream's 1596**, i.e. both of `verify_one`'s commitment MSMs are
+here at full width; the residue is `multiscale_known`'s per-word widths (#2). §6b is the assembly;
+§12e is the exhibit. (The commit before this took 9417 → 9431 on §3c's `sponge_after_index`; before
+that 9317 → 9417 on #1's third `lowest_128_bits` and §7b's `assert_on_curve`; before that 8713 →
+9317 on #3, #1 and #9's second consumer.)
 
-The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are unchanged
-by R6/R7/R8 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for
-`Poseidon`, `EndoMul`, `EndoMulScalar`, `VarBaseMul`, `CompleteAdd` and no others): a `Poseidon`
-permutation is 11 rows (207 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
-`EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
-128-bit `to_field_checked` is 8 `EndoMulScalar` rows — **51 such chains now** (23 transcript
-challenges + their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own
-`lowest_128_bits` on BOTH parts), against upstream's 28 8-row runs. The `EndoMul` COUNT is 2432
-against upstream's 2465, i.e. the fold/`bullet_reduce` machinery is here at full size. Only SEVEN
-gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no range-check —
-and all seven are emitted here.
+The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are INTACT
+(⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for `Poseidon`,
+`EndoMul`, `EndoMulScalar`, `VarBaseMul`, `CompleteAdd` and no others): a `Poseidon` permutation is
+11 rows (207 of them, upstream 572), a 128-bit `Scalar_challenge.endo` is 32 `EndoMul` rows, a
+`var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero` — **`1×1448` after §6b, still
+`1×`**, because a 255-bit `scale_fast2` chunk has the same two-row shape as a 128-bit one — and a
+128-bit `to_field_checked` is 8 `EndoMulScalar` rows, **51 such chains** (23 transcript challenges +
+their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own `lowest_128_bits`
+on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` stays `1×138` because every add is
+followed by its σ-only probe. The `EndoMul` COUNT is 2432 against upstream's 2465 and `VarBaseMul`
+1448 against 1596, i.e. the fold, `bullet_reduce` and BOTH commitment MSMs are here at full size.
+Only SEVEN gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no
+range-check — and all seven are emitted here.
 
 ⚑ MEASURED PROVE (hbox, co-tenant, `swarm-build` + `taskset -c 0-15 nice -n 15`, 2026-08-02):
 every rung
@@ -159,14 +176,14 @@ every rung
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1225     2048            1042 ms              24
-    r2_challenges    1870     2048            1204 ms             116
-    r3_msm           4108     8192            1560 ms             195
-    r4_ipa           6942     8192            2011 ms             346
-    r5_full          7192     8192            1806 ms             352
-    r6_ft_eval0      7661     8192            1811 ms             354
-    r7_absorption    9338    16384            2806 ms             366
-    r8_finalize      9431    16384            1851 ms             373
+    r1_transcript    1225     2048            1041 ms              24
+    r2_challenges    1870     2048             987 ms             116
+    r3_msm           5009     8192            1316 ms             221
+    r4_ipa           7853     8192            1355 ms             372
+    r5_full          8103     8192            1354 ms             378
+    r6_ft_eval0      8572    16384            1645 ms             380
+    r7_absorption   10249    16384            1728 ms             392
+    r8_finalize     10342    16384            1674 ms             399
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -181,10 +198,10 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1463 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1509 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
-of the two `combine`s (#4), `equal_g`, `group_map`, `ft_comm`'s own MSM, `x_hat blinding` and the
-domain selection. #2–#11 below name them. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
+of the two `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection —
+`ft_comm`'s own MSM LEFT this list on 2026-08-02 (§6b). #2–#11 below name the rest. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
 tail. That is the trade this file is supposed to be making: every commit here should be buying a
 named simplification, not scale.
 
@@ -206,14 +223,21 @@ permutations are the app logic and `group_map` (#5).
     the verifier key. §12d exhibits the grind that was open until this landed: one plonk-index word,
     chosen by addition in under 48 tries, drives `index_digest` to a value the prover picked and
     MOVES EVERY transcript challenge — and the pin row's own generic-gate body refuses it now.
-  * ⚠ **THE RESIDUE, counted.** Of the committed shape's 142 R1-absorbed words, **45 are still free
-    `msgVal` witnesses** (46 this morning). They are `t_comm`'s 7 commitments (14 words) and the
-    `Shifted_value` scalar absorptions. `t_comm` cannot honestly leave that list by being absorbed —
-    absorbing a commitment nothing CONSUMES converts a free word into a free word with an
-    `assert_on_curve` — so it leaves when `ft_comm`'s MSM is assembled and not before (#5).
+  * **AND FOR `t_comm`, BECAUSE `ft_comm` NOW CONSUMES IT.** §6b assembles `Common.ft_comm`'s eight
+    `scale_fast2`s; the seven quotient commitments are the MSM's operands, carry `Inner_curve.typ`'s
+    `assert_on_curve`, and R4 round 2's base is the MSM's output rather than a supplied point.
+    §12e exhibits the grind — one `t_comm` coordinate, chosen by addition in under 64 tries, moves
+    EVERY transcript challenge — and shows the on-curve row refusing it, and shows that substituting
+    a VALID on-curve quotient chunk moves `ft_comm` and the fold, which is the difference between
+    consuming a commitment and merely absorbing one.
+  * ⚠ **THE RESIDUE, counted.** Of the committed shape's 142 R1-absorbed words, **31 are still free
+    `msgVal` witnesses** (45 before §6b, 46 before §3c). They are `check_bulletproof`'s
+    `Shifted_value` scalar absorptions — `combined_inner_product`, the opening's `z_1`/`z_2`,
+    `delta` and `sg` (`step_verifier.ml:245-330`) — and they leave the list when
+    `check_bulletproof`'s tail is assembled (#5), not before.
 
-So: the sponge input is derived for the verifier key and NOT for `t_comm`. Both halves matter, one
-is closed and the other is 45/142 of the way from where it was.
+So: the sponge input is derived for the verifier key AND for the quotient commitment, and it is not
+for `check_bulletproof`'s scalars. Both halves matter; the second is 31/142 from where it started.
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -298,9 +322,11 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      R3's uniform `msmChunks` becoming a per-word vector (cumulative point offsets in §2, per-term
      bit lists in §6) and `vSN i (chunks i)` being wired to the statement word instead of to
      `vN (msmChal i) emsRows`. That is the retirement; nothing less is one.
-     ⚠ `ft_comm`'s 8 `scale_fast2`s ARE uniformly 255 (`step_verifier.ml:243-245`), but `ft_comm`
-     is on #5's not-assembled list and R3 is sized as `multiscale_known` alone, so that half of this
-     entry is blocked on #5 and not on a chunk count.
+     ⚠ `ft_comm`'s 8 `scale_fast2`s ARE uniformly 255 (`step_verifier.ml:240-242`), and since
+     2026-08-02 they are ASSEMBLED at that width — §6b, `FTC_CHUNKS = 51`. That is a SECOND
+     `VarBaseMul` region with its own chunk count, which is why `msmChunks` stays 26: the two MSMs
+     have genuinely different scalar widths and collapsing them would be wrong in both directions.
+     R3's own per-word width vector remains this entry's residue.
   3. ⚑ **RETIRED 2026-08-02, and reading at source split it in two.** This read "the MSM base points
      are `basePts` (distinct on-curve Pallas points), not the previous proof's actual commitments".
      Upstream's bases have TWO provenances and NEITHER is a free witness (§3b): `multiscale_known`'s
@@ -360,25 +386,31 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      IT on 2026-08-02 too** — it is §3c, and the entry it used to carry read "the plonk index is
      hashed here from `N_HM_FIX = 58` FIXTURE words, not from the actual commitments".)
 
-     ⚑ **`ft_comm`'s own 8-term MSM IS THE HEAD OF THIS LIST, and here is its exact shape and its
-     exact blocker.** `Common.ft_comm` (`common.ml:238-256`) is
-     `perm·sigma_comm_last + chunked_t_comm − zeta_to_domain_size·chunked_t_comm`, where
-     `chunked_t_comm` is a 7-chunk Horner in `zeta_to_srs_length` — **eight `scale_fast2`s and eight
-     adds**, and `step_verifier.ml:243-245` scales every one of them at
-     `~num_bits:Field.size_in_bits = 255`, i.e. `chunks_needed ~num_bits:254 = 51` 5-bit chunks =
-     `51·2 + 2 = 104` rows each. **8 × 104 + 8 = 840 rows.** ⚠ Its uniform 255 is why #2's warning
-     is worth repeating: `multiscale_known`'s 40 scalars are NOT uniform (5×255 + 3×255 + 22×128 +
-     1×10), so widening R3 the same way would emit 25 chunks of leading zeros per challenge word.
-     The DATA is not the blocker and says so: `MinaStepPrevCommitments.T_COMM_XY` is the block's own
-     7 `t_comm` chunks and `MinaWrapGroupGate.SIGMA6` is `sigma_comm_last`, both already on disk and
-     both already `#guard`ed on-curve. What is undone is the sub-circuit: a second `VarBaseMul`
-     region at `msmChunks = 51`, its scalars wired to R6's `zeta_to_srs_length` /
-     `zeta_to_domain_size` and R6's `perm` rather than to fresh witnesses, and R4 round 2's base
-     (`COMBINE_XY[3]`) becoming that MSM's OUTPUT instead of an `Inner_curve.constant`.
-     ⚠ AND THE THING NOT TO DO: absorbing the 7 `t_comm` commitments into R1 WITHOUT the MSM would
-     move 14 words off the free list while changing nothing a prover can do — an absorbed commitment
-     that no sub-circuit consumes is still ground freely. It comes off the list when the MSM
-     consumes it.
+     ⚑ **`ft_comm`'s own 8-term MSM LEFT THIS LIST on 2026-08-02 — it is §6b.** The entry named
+     three undone things: "a second `VarBaseMul` region at `msmChunks = 51`, its scalars wired to
+     R6's `zeta_to_srs_length` / `zeta_to_domain_size` and R6's `perm` rather than to fresh
+     witnesses, and R4 round 2's base (`COMBINE_XY[3]`) becoming that MSM's OUTPUT instead of an
+     `Inner_curve.constant`." All three landed. `Common.ft_comm` (`common.ml:238-256`) is
+     `perm·sigma_comm_last + chunked_t_comm − zeta_to_domain_size·chunked_t_comm`, `chunked_t_comm`
+     a 7-chunk Horner in `zeta_to_srs_length` — eight `scale_fast2`s and eight `Ops.add_fast`s, every
+     scale at `~num_bits:Field.size_in_bits = 255` (`step_verifier.ml:240-242`), i.e.
+     `chunks_needed ~num_bits:254 = 51` five-bit chunks.
+     ⚑ **AND IT WAS ASSEMBLED THE WAY THE PREVIOUS ENTRY SAID IT HAD TO BE.** That entry warned:
+     "absorbing the 7 `t_comm` commitments into R1 WITHOUT the MSM would move 14 words off the free
+     list while changing nothing a prover can do — an absorbed commitment that no sub-circuit
+     consumes is still ground freely." §12e is the measurement that it IS consumed: substitute ONE
+     quotient chunk — chunk 0, which is only a Horner ADDEND and no scale's base — and `ft_comm`
+     moves, so R4 round 2's base moves and the fold moves with it; and the grind that steers every
+     transcript challenge off ONE `t_comm` coordinate is REFUSED by `assert_on_curve`, which covers
+     `t_comm` now because it arrives through `Inner_curve.typ` like every other supplied commitment.
+     ⚠ **THE RESIDUE, and it is a REPRESENTATION one.** Upstream's `ft_comm` scalars are
+     `unfinalized.deferred_values.plonk` through `Plonk.In_circuit.to_wrap`
+     (`step_verifier.ml:1264-1267`) — `Other_field.t Shifted_value.Type2.t` STATEMENT words over the
+     OTHER field (`impls.ml:50-57`), which the step circuit does not constrain at all; the `Fp` Type1
+     twins R6/R8 check are different objects and the tie between them is the next wrap proof's job.
+     Here the ladder reads R6's OWN cells, which is strictly MORE constrained inside this circuit —
+     and the price is that `Shifted_value.Type2`'s `2^255` shift cancels in `Fq`, a fact this circuit
+     cannot see. §6b states it at the point of use rather than in a footnote.
   6. Every challenge is derived at ONE width (128 bits, 8 `EndoMulScalar` rows). Upstream also uses
      16/32/64/192/256-bit `to_field_checked` (the 1/2/4/12/16-row runs in the table). ⚑ Since #1 the
      assembly emits `2·chals + 5` chains where it emitted `chals + 2`, so the 8-row family is now
@@ -449,10 +481,10 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      (§16g). `verified` is different, and the rest of this entry is why.
      ⚑ **NOT RETIRABLE WITHOUT A SUB-CIRCUIT THAT
      DOES NOT EXIST.** `verified` is `Step_verifier.verify` (`step_main.ml:88-107`) — the whole wrap
-     kimchi verifier: `check_bulletproof` (`equal_g`, the `scale_fast` of `sg`, the IPA fold), the
-     `x_hat`/`ft_comm` commitment MSMs against REAL commitments, and `group_map`. Those are #3 and
-     #5's named-and-not-assembled list — one item SHORTER since 2026-08-02, because
-     `sponge_after_index` over the actual plonk index is now §3c. Deriving the bit from anything
+     kimchi verifier: `check_bulletproof` (`equal_g`, the `scale_fast` of `sg`, the IPA fold) and
+     `group_map`. Those are #3 and #5's named-and-not-assembled list — TWO items shorter on
+     2026-08-02, because `sponge_after_index` over the actual plonk index is now §3c and the
+     `x_hat` / `ft_comm` commitment MSMs over REAL commitments are R3 and §6b. Deriving the bit from anything
      less would be a value that LOOKS derived; the honest state is the witness plus this sentence.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
@@ -665,14 +697,45 @@ commitment silently becomes a constant). -/
 def absRoundList (s : StepShape) : List Nat :=
   ((List.range s.ipaRounds).filter ipaAbsorbs).take (s.absorbs - 1)
 
+/-! ### `Common.ft_comm`'s own quantities (§6b).
+
+`common.ml:238-256` and `step_verifier.ml:240-242,587-591`. Everything the ft_comm MSM is sized by,
+stated where the transcript census can already see it: `t_comm`'s chunk count decides how many
+transcript blocks stop being free, and the on-curve region below is sized by it. -/
+
+/-- `Commitment_lengths.create ~t:(of_int 7)` (`commitment_lengths.ml:6-11`) — the quotient
+polynomial's chunk count, hence `Array.length t_comm` in `common.ml:248`. -/
+def N_TCOMM : Nat := 7
+/-- …as many as THIS shape has FREE transcript blocks for, capped at 7. The smoke shape carries
+three, the same way it carries three fold rounds instead of 76; §12b″ pins that the cap does not bind
+at the committed shape, so no `t_comm` chunk silently stays a free witness. -/
+def tCommN (s : StepShape) : Nat := min N_TCOMM (s.absorbs - 1 - (absRoundList s).length)
+/-- `ft_comm`'s `scale_fast2` count: `plonk.perm · sigma_comm_last`, the `n−1` Horner steps in
+`plonk.zeta_to_srs_length`, and the closing `plonk.zeta_to_domain_size` scale. **Eight** at
+`tCommN = 7`, which is `common.ml:246,251,256` counted. -/
+def ftcTerms (s : StepShape) : Nat := tCommN s + 1
+/-- `Ops.chunks_needed ~num_bits:(Field.size_in_bits − 1) = ⌈254/5⌉` — the chunk count EVERY
+`ft_comm` scale runs at (`plonk_curve_ops.ml:66-70,254-257`; `scale_fast2 ~num_bits:255` via
+`step_verifier.ml:240-242`). ⚠ NOT `msmChunks`: `multiscale_known`'s scalars carry a width PER BASIC
+(#2) and `ft_comm`'s are uniformly 255-bit. -/
+def FTC_CHUNKS : Nat := 51
+/-- ⚑ The fold round whose base `Common.ft_comm` COMPUTES. `combine_split_commitments`' commitment
+`3` is `ft_comm` (`step_verifier.ml:606`), and round `r` folds commitment `r+1`, so it is round 2. -/
+def FTC_ROUND : Nat := 2
+
 /-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
 
 `snarky_curve.ml:212-217`: `let x2 = square x in let x3 = x2 * x in let ax = Params.a * x in
 assert_square y (x3 + ax + Params.b)`. Pallas has `a = 0, b = 5` (`Inner_curve.C =
 Kimchi_pasta.Pasta.Pallas`, `step_main_inputs.ml:115`), so `ax` folds to the zero cvar and the
 assert is ONE `Generic` half. Two variables per checked point — `x²` and `x³`; `y²` needs no slot
-because the double-generic's own `w₀w₁` term is it. -/
-def nOnC (s : StepShape) : Nat := (absRoundList s).length
+because the double-generic's own `w₀w₁` term is it.
+
+⚑ The checked set is every SUPPLIED commitment the transcript absorbs: the `absRoundList` fold
+bases, and since §6b `t_comm`'s `tCommN` chunks. A CONSTANT base is pinned coordinate-for-coordinate
+and needs no membership check; the one COMPUTED base (`ft_comm`, fold round `FTC_ROUND`) is on the
+curve because the `complete_add` chain that produced it is. -/
+def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s
 def baseOnC (s : StepShape) : Nat := baseQN s + s.ipaRounds * s.ipaBlocks
 def vOcX2 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k)
 def vOcX3 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k + 1)
@@ -884,7 +947,75 @@ def RNG_FIN_LO (s : StepShape) : Nat := s.chals + N_DEFC + 1
 future rung splits it. The last two are R8's, over the fr-sponge's FIRST squeeze. -/
 def nRng (s : StepShape) : Nat := s.chals + N_DEFC + 2
 
-def baseFtS (s : StepShape) : Nat := baseRng s + nRng s * rngStride s
+/-! ### `Common.ft_comm`'s MSM region (§6b) — the `scale_fast2` variables.
+
+One block per `scale_fast2` term (`ftcStride`), then the shared globals. ⚑ The region owns NO base
+variables except `t_comm`'s: term 0's base is `sigma_comm_last`, which is §3c's own pinned
+`vIdxX/vIdxY 6`; term 1's is `t_comm[n−1]`, whose two variables ARE transcript block `l+1`'s absorbed
+words; and every later term's base is the PREVIOUS `Ops.add_fast`'s output. -/
+def baseFtc (s : StepShape) : Nat := baseRng s + nRng s * rngStride s
+
+/-- One `scale_fast2` term's variables: `FTC_CHUNKS+1` accumulator points, `FTC_CHUNKS` counter
+boundaries (the last is the scalar's own `s_div_2`, shared), the top bit `scale_fast2` asserts zero,
+the base's negated `y`, the `s_odd = 0` branch point, and `G.if_`'s three cells per coordinate. -/
+def ftcStride : Nat := 2 * (FTC_CHUNKS + 1) + FTC_CHUNKS + 1 + 1 + 2 + 2 + 2 + 2
+
+/-- ⚑ `Shifted_value.Type2`'s DISTINCT scalars: `0` is `plonk.perm`, `1` is
+`plonk.zeta_to_srs_length` — which at `log2n = srs_length_log2 = 16` IS `plonk.zeta_to_domain_size`
+(`plonk_checks.ml:496-497`), so the Horner steps and the closing scale share ONE pair. Upstream
+shares it too: `scale_fast2` takes the already-split pair, so `common.ml` splits nothing per scale. -/
+def N_FTC_SCAL : Nat := 2
+/-- Term `k`'s scalar block. -/
+def ftcScalOf (k : Nat) : Nat := if k == 0 then 0 else 1
+
+def ftcAccX (s : StepShape) (k j : Nat) : PVar := xv (baseFtc s + k * ftcStride + 2 * j)
+def ftcAccY (s : StepShape) (k j : Nat) : PVar := xv (baseFtc s + k * ftcStride + 2 * j + 1)
+/-- Term `k`'s block base offset for the non-accumulator cells. -/
+def ftcOff (s : StepShape) (k : Nat) : Nat := baseFtc s + k * ftcStride + 2 * (FTC_CHUNKS + 1)
+/-- `scale_fast2`'s TOP BIT — `bits_lsb.(254)`, which `plonk_curve_ops.ml:262-265` asserts zero. It
+is chunk 0's MSB, so it is a wired permutation cell of that chunk's `Zero` row and a `Generic` row
+pins it. Without it the counter equation has TWO solutions mod `p` and the prover picks. -/
+def ftcTop (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS)
+/-- `Inner_curve.negate g`'s `y` — the odd-branch `add_fast h (G.negate g)` (`:267`). -/
+def ftcNegY (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 1)
+def ftcHmX (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 2)
+def ftcHmY (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 3)
+/-- `G.if_`'s `then_ − else_` (`h − (h−g)`), per coordinate. -/
+def ftcDX (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 4)
+def ftcDY (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 5)
+/-- …and `s_odd · (then_ − else_)`. -/
+def ftcMX (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 6)
+def ftcMY (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 7)
+/-- Term `k`'s `scale_fast2` OUTPUT. -/
+def ftcResX (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 8)
+def ftcResY (s : StepShape) (k : Nat) : PVar := xv (ftcOff s k + FTC_CHUNKS + 9)
+
+def baseFtcG (s : StepShape) : Nat := baseFtc s + ftcTerms s * ftcStride
+/-- ⚑ **`t_comm` chunk `i`'s coordinates — and they are TRANSCRIPT WORDS.** `receive without t_comm`
+(`step_verifier.ml:567`) absorbs them; `Common.ft_comm`'s Horner consumes them. One σ class spanning
+the `Poseidon` sponge, `assert_on_curve` and this MSM's `VarBaseMul` chain. -/
+def vTcX (s : StepShape) (i : Nat) : PVar := xv (baseFtcG s + 2 * i)
+def vTcY (s : StepShape) (i : Nat) : PVar := xv (baseFtcG s + 2 * i + 1)
+/-- `Ops.add_fast` output `a` (`a = 0 .. tCommN−1`): the `n−1` Horner partials `resₙ₋₂₋ₐ`, then
+`f_comm + chunked_t_comm`. The LAST add's output is not here — it is the fold's own round-`FTC_ROUND`
+base variable. -/
+def ftcAddX (s : StepShape) (a : Nat) : PVar := xv (baseFtcG s + 2 * tCommN s + 2 * a)
+def ftcAddY (s : StepShape) (a : Nat) : PVar := xv (baseFtcG s + 2 * tCommN s + 2 * a + 1)
+/-- `negate (scale chunked_t_comm zeta_to_domain_size)`'s `y` (`common.ml:256`). -/
+def ftcNegQ (s : StepShape) : PVar := xv (baseFtcG s + 4 * tCommN s)
+/-- `Shifted_value.Type2`'s `s_div_2` — and the cell the ladder's FINAL counter IS. -/
+def ftcDiv2 (s : StepShape) (c : Nat) : PVar := xv (baseFtcG s + 4 * tCommN s + 1 + 2 * c)
+/-- …and its `s_odd`, a `Boolean.var`. -/
+def ftcOdd (s : StepShape) (c : Nat) : PVar := xv (baseFtcG s + 4 * tCommN s + 2 + 2 * c)
+/-- Term `k`'s counter at chunk boundary `j`. At `j = FTC_CHUNKS` it IS the scalar's `s_div_2`
+variable — `Field.Assert.equal !n_acc scalar` (`plonk_curve_ops.ml:208`), the wire that makes the
+ladder multiply by the value R6 derived and not by one the prover picked. -/
+def ftcN (s : StepShape) (k j : Nat) : PVar :=
+  if j == FTC_CHUNKS then ftcDiv2 s (ftcScalOf k) else xv (ftcOff s k + j)
+def nFtcVars (s : StepShape) : Nat :=
+  ftcTerms s * ftcStride + 4 * tCommN s + 1 + 2 * N_FTC_SCAL
+
+def baseFtS (s : StepShape) : Nat := baseFtc s + nFtcVars s
 
 /-! ## §3 — the row-schedule primitives. -/
 
@@ -957,14 +1088,19 @@ inductive BaseSrc where
   | const
   /-- the previous proof's commitment, absorbed at transcript block `b` — the SAME two variables. -/
   | absorbed (b : Nat)
+  /-- ⚑ COMPUTED IN-CIRCUIT: `Common.ft_comm`, whose two coordinate variables are the OUTPUT of
+  §6b's own `complete_add` chain. Neither pinned nor absorbed — derived. -/
+  | computed
   deriving Repr, DecidableEq, Inhabited
 
 -- (⚑ the provenance CENSUS — `wdbAbsorbed` / `ipaAbsorbs` / `absRoundList` — is stated in §2,
 -- because §2's `assert_on_curve` region is sized by it.)
 
-/-- IPA round `r`'s base source. -/
+/-- IPA round `r`'s base source. ⚑ Round `FTC_ROUND` is `ft_comm` and is COMPUTED since §6b — it was
+an `Inner_curve.constant` carrying the real block's `COMBINE_XY[3]` until 2026-08-02. -/
 def ipaSrc (s : StepShape) (r : Nat) : BaseSrc :=
-  match (absRoundList s).findIdx? (fun x => x == r) with
+  if r == FTC_ROUND then .computed
+  else match (absRoundList s).findIdx? (fun x => x == r) with
   | some k => .absorbed (k + 1)
   | none => .const
 
@@ -972,6 +1108,14 @@ def ipaSrc (s : StepShape) (r : Nat) : BaseSrc :=
 NO commitment: it is `index_digest`'s block. -/
 def blockRound (s : StepShape) (b : Nat) : Option Nat :=
   if b == 0 then none else (absRoundList s)[b - 1]?
+
+/-- ⚑ Transcript block `b`'s `t_comm` CHUNK, if it carries one. `receive without t_comm`
+(`step_verifier.ml:567`) absorbs the seven quotient commitments after `z_comm` and before ζ, so they
+take the blocks immediately after the fold's own — the first `tCommN` that carried a `msgVal`
+fixture. -/
+def tCommBlock (s : StepShape) (b : Nat) : Option Nat :=
+  let l := (absRoundList s).length
+  if l < b && b ≤ l + tCommN s then some (b - l - 1) else none
 
 /-- ⚑ R3 is `multiscale_known` — the x_hat MSM — and every one of ITS bases is an SRS Lagrange
 commitment inside `Inner_curve.constant`. There is no absorbed base in R3, upstream or here. -/
@@ -1094,17 +1238,20 @@ def idxDigestState : List Nat :=
   Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm idxAfterState
 def indexDigest : Nat := idxDigestState.getD 0 0
 
-/-- A transcript word that carries NEITHER a commitment NOR the index digest — the blocks standing
-for `t_comm` and the scalar absorptions, which the assembled sub-circuits do not consume.
+/-- A transcript word that carries NEITHER a commitment, NOR a `t_comm` chunk, NOR the index
+digest — the blocks standing for the `Shifted_value` / opening scalar absorptions, which no assembled
+sub-circuit consumes.
 
 ⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** A `vMsg`
 word is a free variable: no row pins it, no sub-circuit derives it, and the absorb row eats it. At
-`shapeStep` that is 23 blocks less block 0's derived lane — **45 of the 142 absorbed words** — and a
-prover who grinds them steers every squeeze, not by breaking a decomposition (all three
-`lowest_128_bits` range-check both parts since 2026-08-02) but by choosing the sponge's INPUT. What
-they should be is now a SHORTER list than it was this morning: `ft_comm`'s `t_comm` Horner (7
-commitments, 14 words) and the `Shifted_value` scalar absorptions. `sponge_after_index` left it
-(§3c). §12 pins the count as an equality. -/
+`shapeStep` that is 16 blocks less block 0's derived lane — **31 of the 142 absorbed words** (45
+before §6b) — and a prover who grinds them steers every squeeze, not by breaking a decomposition (all
+three `lowest_128_bits` range-check both parts since 2026-08-02) but by choosing the sponge's INPUT.
+What they should be is now a SHORTER list than it was: `sponge_after_index` left it (§3c) and
+`ft_comm`'s seven `t_comm` chunks left it (§6b, 14 words) — and the latter left it by being
+CONSUMED, not merely absorbed. What remains is `check_bulletproof`'s `Shifted_value` scalar
+absorptions (`combined_inner_product`, `z_1`, `z_2`, `delta`, `sg`). §12b pins the count as an
+equality. -/
 def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
 
 /-- ⚑ The VARIABLE absorbed at lane `j` of transcript block `b`. For a block that carries one of the
@@ -1118,13 +1265,21 @@ once and not twice. -/
 def msgVar (s : StepShape) (b j : Nat) : PVar :=
   match blockRound s b with
   | some r => if j == 0 then ipx s (qT s r) else ipy s (qT s r)
-  | none => if b == 0 && j == 0 then vIdxD s 0 else vMsg s b j
+  | none =>
+    match tCommBlock s b with
+    | some i => if j == 0 then vTcX s i else vTcY s i
+    | none => if b == 0 && j == 0 then vIdxD s 0 else vMsg s b j
 
 /-- …and its VALUE. -/
 def msgValOf (s : StepShape) (bs : List (Nat × Nat)) (b j : Nat) : Nat :=
   match blockRound s b with
   | some r => let p := ipaBaseOf s bs r; if j == 0 then p.1 else p.2
-  | none => if b == 0 && j == 0 then indexDigest else msgVal b j
+  | none =>
+    match tCommBlock s b with
+    | some i =>
+      let p := Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.getD i (0, 0)
+      if j == 0 then p.1 else p.2
+    | none => if b == 0 && j == 0 then indexDigest else msgVal b j
 
 /-! ## §4 — R1, the TRANSCRIPT SPONGE.
 
@@ -1177,15 +1332,17 @@ structure SpongeData where
   msgs : List (List Nat)
   deriving Repr, Inhabited
 
-/-- R1's trajectory, PARAMETRISED on the value of `index_digest` — the transcript's first absorbed
-word (§3c). One implementation, so §12d's grinding control re-runs the assembly's own sponge rather
-than a second copy of it. -/
-def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) : SpongeData :=
+/-- R1's trajectory, PARAMETRISED on the value of `index_digest` (§3c) AND on ONE absorbed word,
+block `bt` lane `jt` — the two grinds §12d and §12b″ run. One implementation, so both controls
+re-run the assembly's own sponge rather than a second copy of it; `bt ≥ absorbs` overrides nothing. -/
+def runSpongeAt (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) (bt jt w : Nat) : SpongeData :=
   (List.range s.blocks).foldl
     (fun d b =>
       let pre := d.states.getLastD [0, 0, 0]
       let ms := if b < s.absorbs then
-          [ (if b == 0 then dig else msgValOf s bs b 0), msgValOf s bs b 1 ] else []
+          [ (if b == bt && jt == 0 then w
+             else if b == 0 then dig else msgValOf s bs b 0)
+          , (if b == bt && jt == 1 then w else msgValOf s bs b 1) ] else []
       let post :=
         if b < s.absorbs then
           [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
@@ -1194,6 +1351,10 @@ def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) : SpongeD
       { states := d.states ++ [ss.getLastD post], perms := d.perms ++ [ss]
       , msgs := d.msgs ++ [ms] })
     { states := [[0, 0, 0]], perms := [], msgs := [] }
+
+/-- …with no word overridden. -/
+def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) : SpongeData :=
+  runSpongeAt s bs dig s.blocks 0 0
 
 /-- …at the DERIVED digest, which is the only instance the assembly emits. -/
 def runSponge (s : StepShape) (bs : List (Nat × Nat)) : SpongeData :=
@@ -1446,8 +1607,13 @@ structure IpaData where
   addCells : List (List Nat)
   deriving Repr, Inhabited
 
-def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) : IpaData :=
-  let bases := (List.range s.ipaRounds).map (fun r => ipaBaseOf s allB r)
+/-- ⚑ `ftcOut` is `Common.ft_comm`'s ASSEMBLED value — round `FTC_ROUND`'s base since §6b. The
+supplied list still carries `COMBINE_XY[3]` (the real block's own `ft_comm`) and the assembly
+IGNORES it: that round's base is computed, so a supplied one would be a second copy. -/
+def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) (ftcOut : Nat × Nat)
+    : IpaData :=
+  let bases := (List.range s.ipaRounds).map (fun r =>
+    if ipaSrc s r == BaseSrc.computed then ftcOut else ipaBaseOf s allB r)
   let rounds := (List.range s.ipaRounds).map (fun r =>
     let T := bases.getD r (0, 0)
     let bits := endoBitsOf s (chalOf s d (s.ipaChal r))
@@ -1493,9 +1659,10 @@ def ipaAddRow (s : StepShape) (v : IpaData) (a : Nat) : SRow :=
   , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
               , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
-/-- **R4's base pins** — ONLY the verifier-key / computed bases (`ipaSrc r = .const`). The absorbed
-ones are pinned by nothing here on purpose: they are the previous proof's, and what binds them is
-that their two variables ARE transcript block `b`'s absorbed words. -/
+/-- **R4's base pins** — ONLY the verifier-key CONSTANTS (`ipaSrc r = .const`). The absorbed ones are
+pinned by nothing here on purpose: they are the previous proof's, and what binds them is that their
+two variables ARE transcript block `b`'s absorbed words. ⚑ Round `FTC_ROUND` is in neither set since
+§6b: its base is `.computed`, so a pin row there would be pinning a derived value to a literal. -/
 def ipaBaseRows (s : StepShape) (v : IpaData) : List SRow :=
   ((List.range s.ipaRounds).filter (fun r => ipaSrc s r == BaseSrc.const)).map (fun r =>
     baseConstRow (ipx s (qT s r)) (ipy s (qT s r)) (v.bases.getD r (0, 0)))
@@ -1535,12 +1702,20 @@ def onCurveHalves (s : StepShape) (k : Nat) (vx vy : PVar) :
   , ([some (vOcX2 s k), some vx, some (vOcX3 s k)], cMul)
   , ([some vy, some vy, some (vOcX3 s k)], [0, 0, -1, 1, -(PALLAS_B : Int)]) ]
 
-/-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED base, over the very coordinate
-variables the transcript absorbed and the `EndoMul` chain multiplies. -/
+/-- The `k`-th CHECKED point's coordinate VARIABLES: the `absRoundList` fold bases, then `t_comm`'s
+`tCommN` chunks — every SUPPLIED commitment the transcript swallows. -/
+def onCVar (s : StepShape) (k : Nat) : PVar × PVar :=
+  let l := (absRoundList s).length
+  if k < l then let r := (absRoundList s).getD k 0; (ipx s (qT s r), ipy s (qT s r))
+  else (vTcX s (k - l), vTcY s (k - l))
+
+/-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED commitment, over the very coordinate
+variables the transcript absorbed and the `EndoMul` (or, for `t_comm`, the `VarBaseMul`) chain
+multiplies. -/
 def onCurveRows (s : StepShape) : List SRow :=
   packHalves ((List.range (nOnC s)).flatMap (fun k =>
-    let r := (absRoundList s).getD k 0
-    onCurveHalves s k (ipx s (qT s r)) (ipy s (qT s r))))
+    let v := onCVar s k
+    onCurveHalves s k v.1 v.2))
 
 /-- **R4's rows.** -/
 def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
@@ -1554,6 +1729,260 @@ def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
        ++ [probeRow wired (ipx s (qAcc s r s.ipaBlocks)) (ipy s (qAcc s r s.ipaBlocks))]
        ++ [ipaAddRow s v a]
        ++ [probeRow wired (ipx s (qSum s a)) (ipy s (qSum s a))])
+
+/-! ## §6b — `Common.ft_comm`'s MSM: the sub-circuit that makes `t_comm` MEAN something.
+
+`common.ml:238-256`, verbatim:
+
+    let ft_comm ~add:( + ) ~scale ~endoscale ~negate ~verification_key:m ~alpha ~plonk ~t_comm =
+      let ( * ) x g = scale g x in
+      let _, [ sigma_comm_last ] = Vector.split m.sigma_comm (…) in
+      let f_comm = List.reduce_exn ~f:( + ) [ plonk.perm * sigma_comm_last ] in
+      let chunked_t_comm =
+        let n = Array.length t_comm in
+        let res = ref t_comm.(n - 1) in
+        for i = n - 2 downto 0 do res := t_comm.(i) + scale !res plonk.zeta_to_srs_length done ;
+        !res
+      in
+      f_comm + chunked_t_comm + negate (scale chunked_t_comm plonk.zeta_to_domain_size)
+
+instantiated at `step_verifier.ml:587-591` with `~add:Ops.add_fast ~scale:scale_fast2
+~negate:Inner_curve.negate ~verification_key:m ~plonk ~t_comm`, and `scale_fast2 p s = Ops.scale_fast2
+p s ~num_bits:Field.size_in_bits` (`:240-242`) — **255 bits, uniformly, all eight of them.** So
+`chunks_needed ~num_bits:254 = 51` five-bit chunks per scale (`plonk_curve_ops.ml:66-70,254-257`).
+
+⚑ **WHY THIS IS THE RUNG AND NOT A ROW COUNT.** Until 2026-08-02 `t_comm`'s seven commitments were
+seven `msgVal` fixtures: free variables the transcript ate and nothing read. The previous lane
+refused to absorb them on their own and was right to — an absorbed commitment no sub-circuit CONSUMES
+is still ground freely, and the only thing absorbing it buys is a smaller number in a census. §12b″
+exhibits the grind that was open, and shows what refuses it now.
+
+## THE EIGHT SCALES AND WHERE EACH BASE COMES FROM
+
+    k       base                                  scalar                     provenance of the base
+    0       sigma_comm_last = sigma_comm[6]       plonk.perm                 §3c's own pinned var
+    1       t_comm[n−1]                           zeta_to_srs_length         TRANSCRIPT-ABSORBED
+    2..n−1  resₙ₋ₖ (add k−2's output)             zeta_to_srs_length         COMPUTED
+    n       chunked_t_comm = res₀                 zeta_to_domain_size        COMPUTED
+
+and `tCommN + 1` `Ops.add_fast`s: the `n−1` Horner adds `resₙ₋₂₋ₐ = t_comm[n−2−a] + scale(a+1)`,
+then `f_comm + chunked_t_comm`, then `+ negate (…)`. The last one's OUTPUT is R4 round `FTC_ROUND`'s
+base — `combine_split_commitments`' commitment 3 (`step_verifier.ml:606`), which was an
+`Inner_curve.constant` carrying the real block's `COMBINE_XY[3]` and is now derived.
+
+## ⚑ THE SCALARS, AND THE ONE DIVERGENCE FROM UPSTREAM — NAMED, AND IT IS A STRENGTHENING
+
+Upstream's `plonk` here is `unfinalized.deferred_values.plonk` mapped through
+`Plonk.In_circuit.to_wrap` (`step_verifier.ml:1264-1267`), whose `'fp` is
+`Other_field.t Shifted_value.Type2.t` — i.e. **`(Field.t * Boolean.var)` statement words over the
+OTHER field** (`impls.ml:50-57`). Nothing in the step circuit constrains them: `Plonk_checks.checked`
+(R6/R8) compares the **`Fp` Type1** twins of the same deferred values, and the `Fq` Type2 twins are
+checked by the NEXT wrap proof. So upstream's `ft_comm` multiplies by three values a step-circuit
+prover chooses.
+
+Here they are R6's OWN derived cells — `Plonk_checks.checked`'s `perm` and the `ζ^n` slot — split
+into `(s_div_2, s_odd)` by a row that reads that cell. That is strictly MORE constrained than
+upstream inside this circuit, and it is why `ft_comm`'s output is a function of the transcript rather
+than of a witness.
+⚠ **THE RESIDUE, stated rather than absorbed.** `Shifted_value.Type2`'s shift lives in the OTHER
+field (`shifted_value.ml:178-188`: `to_field t = t + 2^{size_in_bits}`), so what this ladder computes
+is `[s + 2^255]·g` for the wired `s` — upstream's own emitted arithmetic, with the shift's
+cancellation an `Fq`-side fact this circuit cannot see. And ⚑ at `log2n = srs_length_log2 = 16`
+(`FT_LOG2N`; `plonk_checks.ml:496-497`) `zeta_to_srs_length` and `zeta_to_domain_size` are the SAME
+field element, so the Horner steps and the closing scale share one scalar here; at a shape where the
+wrap domain and the step SRS length differ they would not, and that is a shape fact, not a wiring
+one. -/
+
+/-- The `5·FTC_CHUNKS = 255` bits of `v`, MSB-first — `scale_fast_unpack`'s `bits_msb`
+(`plonk_curve_ops.ml:151-156`), at `actual_bits_used = chunks_needed · 5`. -/
+def ftcBitsOf (v : Nat) : List Nat :=
+  (List.range (5 * FTC_CHUNKS)).map (fun k => v / 2 ^ (5 * FTC_CHUNKS - 1 - k) % 2)
+
+/-- The two scalar cells `ft_comm` reads, as VARIABLE + VALUE. Passed in rather than reached for, so
+§6b has no forward dependency on §8d's compiled program. -/
+structure FtcWire where
+  /-- `plonk.perm` — R6's `Plonk_checks.checked` slot. -/
+  permV : PVar
+  permVal : Nat
+  /-- `plonk.zeta_to_srs_length` = `plonk.zeta_to_domain_size` — R6's `ζ^n` slot. -/
+  zetaV : PVar
+  zetaVal : Nat
+  deriving Repr, Inhabited
+
+/-- Scalar block `c`'s variable and value. -/
+def ftcScalV (W : FtcWire) (c : Nat) : PVar := if c == 0 then W.permV else W.zetaV
+def ftcScalVal (W : FtcWire) (c : Nat) : Nat := if c == 0 then W.permVal else W.zetaVal
+
+/-- One evaluated `scale_fast2` (`plonk_curve_ops.ml:251-267`). -/
+structure FtcTerm where
+  /-- the `scale_fast_unpack` ladder: base, 256 accumulator points, 255 slopes, 256 counters. -/
+  td : TermData
+  bits : List Nat
+  /-- `Ops.add_fast g g` — `scale_fast_unpack`'s own `acc := ref (add_fast base base)` (`:157`).
+  Without this row `acc₀` is a free witness and the ladder's OUTPUT is the prover's. -/
+  dblCells : List Nat
+  /-- `add_fast h (G.negate g)` — the `s_odd = 0` branch (`:267`). -/
+  hMg : Nat × Nat
+  hMgCells : List Nat
+  /-- `G.if_ s_odd ~then_:h ~else_:(h − g)`. -/
+  res : Nat × Nat
+  deriving Repr, Inhabited
+
+/-- `Common.ft_comm`, evaluated. -/
+structure FtcData where
+  terms : List FtcTerm
+  /-- the `tCommN` `Ops.add_fast` outputs that get variables: the `n−1` Horner partials, then
+  `f_comm + chunked_t_comm`. -/
+  adds : List (Nat × Nat)
+  /-- …and all `tCommN + 1` of their cell vectors, the last being the closing subtraction. -/
+  addCells : List (List Nat)
+  /-- ⚑ **`Common.ft_comm`.** R4 round `FTC_ROUND`'s base. -/
+  out : Nat × Nat
+  deriving Repr, Inhabited
+
+/-- `sigma_comm_last` — `Vector.split m.sigma_comm` hands `common.ml:243-245` the SEVENTH permutation
+commitment, which is `INDEX_XY[6]` and the one plonk-index commitment the fold does not carry. -/
+def ftcSigma : Nat × Nat := Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD 6 (0, 0)
+def ftcTc (i : Nat) : Nat × Nat := Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.getD i (0, 0)
+
+/-- ONE `scale_fast2` over base `g` and scalar `sv`. -/
+def ftcScaleTerm (g : Nat × Nat) (sv : Nat) : FtcTerm :=
+  let bits := ftcBitsOf (sv / 2)
+  let td := runVbm g (dblA g) bits
+  let h := td.accs.getLastD (0, 0)
+  let ng : Nat × Nat := (g.1, Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fSub 0 g.2)
+  let hc := completeAddWitness h.1 h.2 ng.1 ng.2
+  let hmg : Nat × Nat := (hc.getD 4 0, hc.getD 5 0)
+  { td := td, bits := bits
+  , dblCells := completeAddWitness g.1 g.2 g.1 g.2
+  , hMg := hmg, hMgCells := hc
+  , res := if sv % 2 == 1 then h else hmg }
+
+/-- **`Common.ft_comm`, run** over a `t_comm` ACCESSOR. The Horner is evaluated in `common.ml`'s own
+`downto` order, so term `k ≥ 2`'s base is add `k−2`'s output and the two loops are ONE fold.
+Parametrised so §12b″ can re-run it on a prover's substituted quotient commitment. -/
+def runFtcWith (s : StepShape) (W : FtcWire) (ftcTc : Nat → Nat × Nat) : FtcData :=
+  let n := tCommN s
+  let t0 := ftcScaleTerm ftcSigma W.permVal
+  let st := (List.range n).foldl
+    (fun (acc : List FtcTerm × List (Nat × Nat) × List (List Nat)) j =>
+      let k := j + 1
+      let g := if k == 1 then ftcTc (n - 1) else acc.2.1.getD (k - 2) (0, 0)
+      let tk := ftcScaleTerm g W.zetaVal
+      if k + 1 ≤ n then
+        let l := ftcTc (n - 1 - k)
+        let c := completeAddWitness l.1 l.2 tk.res.1 tk.res.2
+        (acc.1 ++ [tk], acc.2.1 ++ [(c.getD 4 0, c.getD 5 0)], acc.2.2 ++ [c])
+      else (acc.1 ++ [tk], acc.2.1, acc.2.2))
+    ([], [], [])
+  let terms := t0 :: st.1
+  let chunked := st.2.1.getD (n - 2) (0, 0)
+  let cF := completeAddWitness t0.res.1 t0.res.2 chunked.1 chunked.2
+  let fc : Nat × Nat := (cF.getD 4 0, cF.getD 5 0)
+  let qn := (terms.getD n default).res
+  let cO := completeAddWitness fc.1 fc.2 qn.1
+              (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fSub 0 qn.2)
+  { terms := terms, adds := st.2.1 ++ [fc], addCells := st.2.2 ++ [cF, cO]
+  , out := (cO.getD 4 0, cO.getD 5 0) }
+
+/-- …at the block's OWN quotient commitments, which is the only instance the assembly emits. -/
+def runFtc (s : StepShape) (W : FtcWire) : FtcData := runFtcWith s W ftcTc
+
+/-- Term `k`'s base-point VARIABLES. -/
+def ftcBaseVar (s : StepShape) (k : Nat) : PVar × PVar :=
+  if k == 0 then (vIdxX s 6, vIdxY s 6)
+  else if k == 1 then (vTcX s (tCommN s - 1), vTcY s (tCommN s - 1))
+  else (ftcAddX s (k - 2), ftcAddY s (k - 2))
+
+/-- A `complete_add` row: `o = l + r`, with `Ops.add_fast`'s four stored cells as advice. -/
+def caRow (l r o : PVar × PVar) (c : List Nat) : SRow :=
+  { kind := .completeAdd
+  , perm := [ some l.1, some l.2, some r.1, some r.2, some o.1, some o.2, none ]
+  , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
+              , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
+
+/-- Term `k`'s chunk `j` — the same two-row `VarBaseMul` shape R3 uses. ⚑ Chunk 0's `Zero` row wires
+col 2 (bit `5j+0`, the MSB) to `ftcTop`, so `scale_fast2`'s `bits_lsb.(254) = 0`
+(`plonk_curve_ops.ml:262-265`) is a real row: without it the counter identity has two solutions mod
+`p` and the prover picks the point. -/
+def ftcChunkRows (s : StepShape) (d : FtcData) (k j : Nat) : List SRow :=
+  let tm := d.terms.getD k default
+  let td := tm.td
+  let ax : Nat → Int := fun i => ((td.accs.getD i (0, 0)).1 : Int)
+  let ay : Nat → Int := fun i => ((td.accs.getD i (0, 0)).2 : Int)
+  let bt : Nat → Int := fun i => (td.slopes.getD i 0 : Int)
+  let bi : Nat → Int := fun i => (tm.bits.getD i 0 : Int)
+  let g := ftcBaseVar s k
+  [ { kind := .varBaseMul
+    , perm := [ some g.1, some g.2
+              , some (ftcAccX s k j), some (ftcAccY s k j)
+              , some (ftcN s k j), some (ftcN s k (j+1)), none ]
+    , advice := [ (7, ax (5*j+1)), (8, ay (5*j+1)), (9, ax (5*j+2)), (10, ay (5*j+2))
+                , (11, ax (5*j+3)), (12, ay (5*j+3)), (13, ax (5*j+4)), (14, ay (5*j+4)) ] }
+  , { kind := .zero
+    , perm := [ some (ftcAccX s k (j+1)), some (ftcAccY s k (j+1))
+              , (if j == 0 then some (ftcTop s k) else none), none, none, none, none ]
+    , advice := (if j == 0 then [] else [(2, bi (5*j))])
+                ++ [ (3, bi (5*j+1)), (4, bi (5*j+2)), (5, bi (5*j+3)), (6, bi (5*j+4))
+                   , (7, bt (5*j)), (8, bt (5*j+1)), (9, bt (5*j+2)), (10, bt (5*j+3))
+                   , (11, bt (5*j+4)) ] } ]
+
+/-- **`Shifted_value.Type2`'s own rows**, once per DISTINCT scalar: `Field.Assert.equal (2·s_div_2 +
+s_odd) s` (`plonk_curve_ops.ml:290-291`) and `Boolean.typ`'s check on `s_odd`. ⚑ The `s` these read
+is R6's derived cell, not a statement word. -/
+def ftcScalRows (s : StepShape) (W : FtcWire) (wired : Bool) : List SRow :=
+  packHalves ((List.range N_FTC_SCAL).flatMap (fun c =>
+    [ ([some (ftcScalV W c), some (ftcDiv2 s c), some (ftcOdd s c)], cSplit 1)
+    , ([some (ftcOdd s c), some (ftcOdd s c), some (ftcOdd s c)], cMul) ]))
+  ++ (List.range N_FTC_SCAL).map (fun c => probeRow wired (ftcDiv2 s c) (ftcOdd s c))
+
+/-- **Term `k`'s rows.** The `G.if_` mux is `d = h − (h−g) ; m = s_odd·d ; res = (h−g) + m` per
+coordinate — Snarky's `Field.if_` (`else_ + b·(then_ − else_)`) with the difference sealed, because a
+double-`Generic` half carries three variables and `res − else_ − b·(then_ − else_)` needs four. -/
+def ftcTermRows (s : StepShape) (d : FtcData) (wired : Bool) (k : Nat) : List SRow :=
+  let tm := d.terms.getD k default
+  let g := ftcBaseVar s k
+  let hx := ftcAccX s k FTC_CHUNKS
+  let hy := ftcAccY s k FTC_CHUNKS
+  let od := ftcOdd s (ftcScalOf k)
+  packHalves
+    [ ([some g.2, some (ftcNegY s k), none], [1, 1, 0, 0, 0])
+    , ([some (ftcTop s k), none, none], cConst 0)
+    , ([some hx, some (ftcHmX s k), some (ftcDX s k)], [1, -1, -1, 0, 0])
+    , ([some od, some (ftcDX s k), some (ftcMX s k)], cMul)
+    , ([some (ftcHmX s k), some (ftcMX s k), some (ftcResX s k)], cAdd)
+    , ([some hy, some (ftcHmY s k), some (ftcDY s k)], [1, -1, -1, 0, 0])
+    , ([some od, some (ftcDY s k), some (ftcMY s k)], cMul)
+    , ([some (ftcHmY s k), some (ftcMY s k), some (ftcResY s k)], cAdd) ]
+  ++ [ caRow g g (ftcAccX s k 0, ftcAccY s k 0) tm.dblCells ]
+  ++ ((List.range FTC_CHUNKS).flatMap (ftcChunkRows s d k))
+  ++ [ probeRow wired hx hy
+     , caRow (hx, hy) (g.1, ftcNegY s k) (ftcHmX s k, ftcHmY s k) tm.hMgCells
+     , probeRow wired (ftcResX s k) (ftcResY s k) ]
+
+/-- **The `Ops.add_fast` chain**, in `common.ml`'s order — and its LAST output is the fold's own
+round-`FTC_ROUND` base variable, which is the whole point of the rung. -/
+def ftcAddRows (s : StepShape) (d : FtcData) (wired : Bool) : List SRow :=
+  let n := tCommN s
+  let cel : Nat → List Nat := fun a => d.addCells.getD a []
+  (List.range (n - 1)).flatMap (fun a =>
+    [ caRow (vTcX s (n - 2 - a), vTcY s (n - 2 - a))
+            (ftcResX s (a + 1), ftcResY s (a + 1))
+            (ftcAddX s a, ftcAddY s a) (cel a)
+    , probeRow wired (ftcAddX s a) (ftcAddY s a) ])
+  ++ [ caRow (ftcResX s 0, ftcResY s 0) (ftcAddX s (n - 2), ftcAddY s (n - 2))
+             (ftcAddX s (n - 1), ftcAddY s (n - 1)) (cel (n - 1))
+     , probeRow wired (ftcAddX s (n - 1)) (ftcAddY s (n - 1)) ]
+  ++ packHalves [ ([some (ftcResY s n), some (ftcNegQ s), none], [1, 1, 0, 0, 0]) ]
+  ++ [ caRow (ftcAddX s (n - 1), ftcAddY s (n - 1)) (ftcResX s n, ftcNegQ s)
+             (ipx s (qT s FTC_ROUND), ipy s (qT s FTC_ROUND)) (cel n)
+     , probeRow wired (ipx s (qT s FTC_ROUND)) (ipy s (qT s FTC_ROUND)) ]
+
+/-- **§6b's rows.** -/
+def ftcRows (s : StepShape) (W : FtcWire) (d : FtcData) (wired : Bool) : List SRow :=
+  ftcScalRows s W wired
+  ++ (List.range (ftcTerms s)).flatMap (ftcTermRows s d wired)
+  ++ ftcAddRows s d wired
 
 /-! ## §8 — R5, the DEFERRED `b(ζ)` and the CLOSING public ties.
 
@@ -2337,6 +2766,16 @@ def runFt (s : StepShape) (d : SpongeData) : FtData :=
   let p1 := ftProgOf W (ftCfgRaw dInv pC)
   { fp := p1, vals := aEval lk p1.prog, denomInv := dInv, permClaimed := pC }
 
+/-- ⚑ §6b's two scalars, READ OFF R6's compiled program: `Plonk_checks.checked`'s `perm`
+(`plonk_checks.ml:482-488`) and `ζ^n` (`:496`, `= zeta_to_srs_length` at `log2n = 16`, `:497`). This
+is the whole of the divergence §6b names — upstream's `ft_comm` reads the `Fq` Type2 statement twins
+of these, which the step circuit does not constrain at all. -/
+def ftcWireOf (s : StepShape) (f : FtData) : FtcWire :=
+  { permV := aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm
+  , permVal := f.vals.getD f.fp.slots.perm 0
+  , zetaV := aVarAt (baseFtS s) f.fp.prog f.fp.slots.zetaN
+  , zetaVal := f.vals.getD f.fp.slots.zetaN 0 }
+
 /-- **R6's rows**: the compiled program, the tie of its `ft_eval0` output to the `ft` column of the
 `combined_inner_product` vector, and the σ-only probes. -/
 def ftRows (s : StepShape) (f : FtData) (wired : Bool) : List SRow :=
@@ -2998,6 +3437,10 @@ structure StepData where
   msm : MsmData
   ipa : IpaData
   ft : FtData
+  /-- §6b's two scalar cells, read off R6's program. -/
+  ftw : FtcWire
+  /-- ⚑ `Common.ft_comm` — the MSM whose output is R4 round `FTC_ROUND`'s base. -/
+  ftc : FtcData
   defc : DefcData
   df : DefData
   fin : FinData
@@ -3017,9 +3460,14 @@ columns — R6's and R5's fixtures), so the order is a chain and not a cycle. -/
 def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let sp := runSponge s bs
   let msm := runMsm s bs sp
-  let ipa := runIpa s bs sp
-  -- ⚑ R6 first: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds.
+  -- ⚑ R6 first: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds — and since §6b
+  -- its `perm` / `ζ^n` slots are also `Common.ft_comm`'s scalars, so R6 runs BEFORE the fold. That
+  -- is a chain and not a cycle: `runFt` reads only the transcript sponge, and fold round
+  -- `FTC_ROUND`'s base is `ft_comm`'s output rather than a supplied commitment.
   let ft := runFt s sp
+  let ftw := ftcWireOf s ft
+  let ftc := runFtc s ftw
+  let ipa := runIpa s bs sp ftc.out
   let ftv := ft.out
   let specA := optSpec s sp
   let segA := runSeg specA
@@ -3032,7 +3480,8 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let defc := runDefc segB specB
   let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1)
   let specC := hmSpec s msm ipa sp
-  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, defc := defc, df := df
+  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
+  , defc := defc, df := df
   , fin := runFin s sp ft df segB specB (defc.lift s 1)
   , segA := segA, segB := segB, segC := runSeg specC
   , specA := specA, specB := specB, specC := specC }
@@ -3058,6 +3507,7 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ endoConstRow s
   ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
   ++ msmRows s t.msm wired
+  ++ ftcRows s t.ftw t.ftc wired
   ++ ipaRows s t.ipa wired
   ++ deferredRows s wired
   ++ branchRows s wired
@@ -3131,10 +3581,42 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
       let p := t.ipa.sums.getD a (0, 0)
       [ (ipx s (qSum s a), (p.1 : Int)), (ipy s (qSum s a), (p.2 : Int)) ])
-  -- §7b: `assert_on_curve`'s two intermediates per ABSORBED base.
+  -- §7b: `assert_on_curve`'s two intermediates per ABSORBED commitment — the fold's bases and,
+  -- since §6b, `t_comm`'s chunks.
   ++ (List.range (nOnC s)).flatMap (fun k =>
-      let x := (t.ipa.bases.getD ((absRoundList s).getD k 0) (0, 0)).1
+      let l := (absRoundList s).length
+      let x := if k < l then (t.ipa.bases.getD ((absRoundList s).getD k 0) (0, 0)).1
+               else (ftcTc (k - l)).1
       [ (vOcX2 s k, (fMul x x : Int)), (vOcX3 s k, (fMul (fMul x x) x : Int)) ])
+  -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
+  -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.
+  ++ (List.range (ftcTerms s)).flatMap (fun k =>
+      let tm := t.ftc.terms.getD k default
+      let hx := (tm.td.accs.getLastD (0, 0)).1
+      let hy := (tm.td.accs.getLastD (0, 0)).2
+      let od := ftcScalVal t.ftw (ftcScalOf k) % 2
+      let dx := fSub hx tm.hMg.1
+      let dy := fSub hy tm.hMg.2
+      (List.range (FTC_CHUNKS + 1)).flatMap (fun j =>
+        let a := tm.td.accs.getD (5 * j) (0, 0)
+        [ (ftcAccX s k j, (a.1 : Int)), (ftcAccY s k j, (a.2 : Int)) ])
+      ++ (List.range FTC_CHUNKS).map (fun j =>
+          (ftcN s k j, (tm.td.ns.getD (5 * j) 0 : Int)))
+      ++ [ (ftcTop s k, (tm.bits.headD 0 : Int))
+         , (ftcNegY s k, (fSub 0 tm.td.T.2 : Int))
+         , (ftcHmX s k, (tm.hMg.1 : Int)), (ftcHmY s k, (tm.hMg.2 : Int))
+         , (ftcDX s k, (dx : Int)), (ftcDY s k, (dy : Int))
+         , (ftcMX s k, (fMul od dx : Int)), (ftcMY s k, (fMul od dy : Int))
+         , (ftcResX s k, (tm.res.1 : Int)), (ftcResY s k, (tm.res.2 : Int)) ])
+  ++ (List.range (tCommN s)).flatMap (fun i =>
+      [ (vTcX s i, ((ftcTc i).1 : Int)), (vTcY s i, ((ftcTc i).2 : Int)) ])
+  ++ (List.range (tCommN s)).flatMap (fun a =>
+      let p := t.ftc.adds.getD a (0, 0)
+      [ (ftcAddX s a, (p.1 : Int)), (ftcAddY s a, (p.2 : Int)) ])
+  ++ [ (ftcNegQ s, (fSub 0 (t.ftc.terms.getD (tCommN s) default).res.2 : Int)) ]
+  ++ (List.range N_FTC_SCAL).flatMap (fun c =>
+      let v := ftcScalVal t.ftw c
+      [ (ftcDiv2 s c, ((v / 2 : Nat) : Int)), (ftcOdd s c, ((v % 2 : Nat) : Int)) ])
   ++ (List.range (s.bRounds + 1)).map (fun k => (vZ s k, (t.df.zs.getD k 0 : Int)))
   ++ (List.range s.bRounds).map (fun k => (vFac s k, (t.df.facs.getD k 0 : Int)))
   ++ (List.range (s.bRounds + 1)).map (fun k => (vAcc s k, (t.df.accs.getD k 0 : Int)))
@@ -3244,7 +3726,7 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let s := t.sh
   let a := transcriptRows s t.sp wired
   let b := endoConstRow s ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
-  let c := msmRows s t.msm wired
+  let c := msmRows s t.msm wired ++ ftcRows s t.ftw t.ftc wired
   let d := ipaRows s t.ipa wired
   let e := deferredRows s wired ++ branchRows s wired ++ xiDefRows s t.defc wired
            ++ cipRows s wired ++ closingRows s
@@ -3327,8 +3809,9 @@ than reverse-engineered from a row count:
     one the accumulator starts at) + `bullet_reduce`'s 30 `(L,R)` endos. Both lists are on disk at
     exactly those lengths.
   * `absorbs = 71` is block 0 (⚑ `index_digest`, §3c — upstream's own first absorption) plus the 48
-    blocks that carry a commitment (18 fold + 30 gammas) plus the 22 `t_comm` / scalar-absorption
-    blocks the assembled sub-circuits do not consume.
+    blocks that carry a fold commitment (18 fold + 30 gammas) plus — since §6b — the 7 that carry
+    `t_comm`'s quotient chunks, plus the 15 `check_bulletproof` scalar-absorption blocks the
+    assembled sub-circuits do not consume.
 
 `chals = 23` is β, γ, α, ζ, ξ, r, u, c + the 15 `bullet_reduce` squeezes; `msmChunks = 26` is the
 128-bit `scale_fast2` — ⚑ #2 has the MEASURED per-word width census, and 8 of the 40 words are
@@ -3346,15 +3829,19 @@ def shapeStep : StepShape :=
 evaluation columns out of it (`EV_PREFIX = 4` + 43), and R7 absorbs those same 43 at two points. A
 shape with fewer columns is not a smaller `verify_one`, it is a different one. -/
 def shapeSmoke : StepShape :=
-  -- ⚑ `absorbs` is 3 and not 2 since §3c: block 0 is `index_digest`'s, so the two absorbed
-  -- commitments need blocks 1 and 2. It also gives the smoke shape ONE `vMsg` word, which is what
-  -- lets the smoke pins see the free-word residue at all.
-  { absorbs := 3, chals := 5, emsRows := 8
+  -- ⚑ `absorbs` is 7 since §6b: block 0 is `index_digest`'s, blocks 1–3 carry the three absorbed
+  -- fold commitments, blocks 4–6 carry `tCommN = 3` `t_comm` chunks. It still leaves ONE free
+  -- `vMsg` block (block 0's second lane), which is what lets the smoke pins see the residue at all.
+  { absorbs := 7, chals := 5, emsRows := 8
   , msmTerms := 3, msmChunks := 26
   -- ⚑ `bRounds` is EVEN so the opt-sponge's rate-2 blocks do not straddle the two previous proofs:
   -- each proof contributes `bRounds` challenge words and a block absorbs two, so a block belongs to
   -- exactly one mask bit. (`shapeStep`'s 16 is even for the same reason — `Step_bp_vec = N16`.)
-  , ipaRounds := 3, ipaBlocks := 32
+  -- ⚑ `ipaRounds` is 5 and not 3 since §6b: round `FTC_ROUND = 2` is now COMPUTED, so a 3-round
+  -- shape would have NO `.const` fold base left and §12b's constant-provenance pins would be
+  -- vacuous. At 5, rounds 0/1/3 are absorbed, 2 is computed and 4 is a verifier-key constant —
+  -- all three provenances present.
+  , ipaRounds := 5, ipaBlocks := 32
   , bRounds := 4, cipEvals := 47, pubWords := 12 }
 
 /-! ## §12 — the in-CI pins, on the SMOKE instance (`#guard`, interpreter-reduced).
@@ -3429,12 +3916,19 @@ def totalRowsS : Nat := pubS + nRowsS
            + 2 * (shapeSmoke.emsRows + 6) + 3
 #guard nRng shapeSmoke == shapeSmoke.chals + 4
 #guard RNG_FIN_LO shapeSmoke == RNG_FIN_HI shapeSmoke + 1
+-- ⚑ `VarBaseMul` is R3's `multiscale_known` AND §6b's `ft_comm` — the second MSM runs at
+-- `FTC_CHUNKS = 51`, `step_verifier.ml:240-242`'s uniform 255 bits, not at `msmChunks`.
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
         == shapeSmoke.msmTerms * shapeSmoke.msmChunks
+           + ftcTerms shapeSmoke * FTC_CHUNKS
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMul)).length
         == shapeSmoke.ipaRounds * shapeSmoke.ipaBlocks
+-- …and `CompleteAdd` is the two summation chains plus §6b's: per `scale_fast2` the initial
+-- `add_fast base base` and the odd-branch `add_fast h (negate g)` (`plonk_curve_ops.ml:157,267`),
+-- then `common.ml`'s own `tCommN + 1` adds.
 #guard (placedS.filter (fun g => g.kind == KGateType.completeAdd)).length
         == (shapeSmoke.msmTerms - 1) + (shapeSmoke.ipaRounds - 1)
+           + 2 * ftcTerms shapeSmoke + (tCommN shapeSmoke + 1)
 -- Generic = the pubWords public rows `place` emits + the circuit's own generic rows.
 #guard (placedS.filter (fun g => g.kind == KGateType.generic)).length ≥ pubS
 
@@ -3748,21 +4242,36 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 -- `bullet_reduce` gammas absorbed, 28 verifier-key / computed constants.
 #guard (absRoundList shapeStep).length == 48
 #guard ((List.range shapeStep.ipaRounds).filter
-          (fun r => ipaSrc shapeStep r == BaseSrc.const)).length == 28
-#guard (absRoundList shapeSmoke).length == 2
+          (fun r => ipaSrc shapeStep r == BaseSrc.const)).length == 27
+-- ⚑ …and EXACTLY ONE round is COMPUTED — `ft_comm`, which was the 28th constant until §6b.
+#guard ((List.range shapeStep.ipaRounds).filter
+          (fun r => ipaSrc shapeStep r == BaseSrc.computed)) == [FTC_ROUND]
+#guard (absRoundList shapeSmoke).length == 3
 -- …and R3 carries NO absorbed base, which is `multiscale_known`'s own shape.
 #guard (List.range shapeStep.msmTerms).all (fun i => msmSrc i == BaseSrc.const)
 -- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently, and
 -- **stated at `shapeStep` because the smoke shape has almost none of them.** A block with no
 -- commitment absorbs `msgVal` fixtures that no row pins; block 0 lane 0 is no longer one of them
--- (§3c wires `index_digest` there), so of `2·absorbs = 142` absorbed words **45 are free where 46
--- were this morning**. Equality, so assembling one of the rest moves this number. What remains is
--- `ft_comm`'s `t_comm` Horner (7 commitments, 14 words) and the `Shifted_value` scalar absorptions.
+-- (§3c wires `index_digest` there), and since §6b seven of them carry `t_comm`'s quotient chunks,
+-- so of `2·absorbs = 142` absorbed words **31 are free where 45 were before §6b**. EQUALITY, so
+-- assembling one of the rest moves this number — and so does un-assembling `ft_comm`. What remains
+-- is `check_bulletproof`'s `Shifted_value` scalar absorptions.
 #guard shapeStep.absorbs - (absRoundList shapeStep).length == 23
 #guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 23
 #guard (List.range shapeStep.absorbs).foldl
         (fun n b => n + (List.range 2).countP (fun j =>
-           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 45
+           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 31
+-- ⚑ …and the FOURTEEN that left are exactly `t_comm`'s, block for block and lane for lane. Stated
+-- against `T_COMM_XY` so a block that merely stopped being a `vMsg` without carrying a commitment
+-- would not satisfy it.
+#guard (List.range shapeStep.absorbs).foldl
+        (fun n b => n + (List.range 2).countP (fun _ => tCommBlock shapeStep b != none)) 0 == 14
+#guard (List.range (tCommN shapeStep)).all (fun i =>
+  let b := (absRoundList shapeStep).length + 1 + i
+  tCommBlock shapeStep b == some i
+  && msgVar shapeStep b 0 == vTcX shapeStep i && msgVar shapeStep b 1 == vTcY shapeStep i
+  && msgValOf shapeStep (stepBases shapeStep) b 0 == (ftcTc i).1
+  && msgValOf shapeStep (stepBases shapeStep) b 1 == (ftcTc i).2)
 -- …and exactly ONE absorbed word of R1's transcript is `index_digest`, at BLOCK 0 — upstream's own
 -- position (`absorb sponge Field index_digest` precedes `Vector.iter ~f:(absorb sponge PC) sg_old`,
 -- `step_verifier.ml:535,537`).
@@ -3783,9 +4292,12 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 #guard (List.range N_IDX_WORDS).all (fun i =>
   (tS.specC.ws.getD i (xv 0, 0)) == (idxVar shapeSmoke (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
 #guard N_HM_APP == 2 && N_IDX_WORDS == 56 && N_HM_FIX == 58
--- …and at the SMOKE shape only block 0's second lane is free, which is why the transcript count
--- above is stated at the committed shape on purpose.
-#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none) == 1
+-- …and at the SMOKE shape only block 0's second lane is free (blocks 4–6 carry `t_comm`), which is
+-- why the transcript count above is stated at the committed shape on purpose.
+#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none) == 4
+#guard (List.range shapeSmoke.absorbs).foldl
+        (fun n b => n + (List.range 2).countP (fun j =>
+           msgVar shapeSmoke b j == vMsg shapeSmoke b j)) 0 == 1
 -- …so the pin rows are exactly the constants, one `Generic` row per point.
 #guard (msmBaseRows shapeSmoke tS.msm).length == shapeSmoke.msmTerms
 #guard (ipaBaseRows shapeSmoke tS.ipa).length
@@ -3810,11 +4322,13 @@ def nTrans : Nat := pubS + (transcriptRows shapeSmoke tS.sp true).length
           (fun c => c.row < nTrans)).length == 1
 #guard ((classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).filter
           (fun c => c.row < nTrans)).length == 1
--- …and a CONSTANT base's class has the same SIZE and NO cell in the transcript: it is pinned, not
--- absorbed. (Same size is why the count alone would be decoration — the row range is the pin.)
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 1
+-- …and a CONSTANT base has NO cell in the transcript: it is pinned, not absorbed. Its class is
+-- `ipaBlocks` `EndoMul` reads + the `Inner_curve.constant` pin + segment C's `sponge_after_index`
+-- absorb, because the smoke shape's one constant fold round IS plonk-index commitment 22 (§3c).
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 2
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).filter
           (fun c => c.row < nTrans)).length == 0
+#guard idxSrc shapeSmoke 22 == some constR0
 -- …and R3's bases likewise: pinned, never absorbed.
 #guard ((classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).filter
           (fun c => c.row < nTrans)).length == 0
@@ -3950,18 +4464,19 @@ def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :
 -- ⚑ THE ROWS ARE THE CENSUS, stated as equalities. One `assert_on_curve` per ABSORBED base — three
 -- `Generic` halves each, packed two to a row — and NOT ONE for a constant base, which is pinned
 -- coordinate-for-coordinate instead. A deleted check moves both numbers.
-#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length
-#guard nOnC shapeStep == 48
+#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length + tCommN shapeSmoke
+#guard nOnC shapeStep == 48 + 7
 #guard nOnCRows == (3 * nOnC shapeSmoke + 1) / 2
-#guard (onCurveRows shapeStep).length == (3 * 48 + 1) / 2
+#guard (onCurveRows shapeStep).length == (3 * 55 + 1) / 2
 -- …and the checked variables ARE the fold's own base coordinates, not a fresh copy: `x`'s class
 -- gains the two `assert_on_curve` halves that read it (`x·x` and `x2·x`) on top of the
 -- `ipaBlocks` `EndoMul` reads and the transcript's absorb row.
 #guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 4
 #guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 3
--- …and a CONSTANT base's class is UNCHANGED at `ipaBlocks + 1` — pinned, not checked, which is
--- upstream's own split (`Inner_curve.constant` is a literal and carries no `check`).
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 1
+-- …and a CONSTANT base's class gains NOTHING from §7b — pinned, not checked, which is upstream's
+-- own split (`Inner_curve.constant` is a literal and carries no `check`). Its `ipaBlocks + 2` is the
+-- `EndoMul` reads, the pin row and segment C's index absorb, and no `assert_on_curve` half.
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 2
 -- …and the two intermediates really are `x²` and `x³` of that point.
 #guard tS.ipa.bases.getD absR0 (0, 0) == honPt
 #guard fMul honPt.1 honPt.1 == fMul honPt.1 honPt.1
@@ -4117,7 +4632,9 @@ def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
 -- pins all 28 itself, which is why the σ pins below are smoke and the census pins are step.
 #guard (List.range N_IDX_COMMS).countP (fun k => idxSrc shapeStep k != none) == 27
 #guard idxOwn shapeStep == [6]
-#guard idxOwn shapeSmoke == List.range N_IDX_COMMS
+-- …and the smoke shape reaches exactly ONE of them (round 4 = `generic_comm`, index commitment 22),
+-- so both legs of `idxVar` are exercised at both scales.
+#guard idxOwn shapeSmoke == (List.range N_IDX_COMMS).filter (fun k => k != 22)
 #guard (List.range N_IDX_COMMS).all (fun k =>
   match idxSrc shapeStep k with
   | some r => ipaSrc shapeStep r == BaseSrc.const
@@ -4126,12 +4643,13 @@ def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
   | none => k == 6)
 -- …27 DISTINCT rounds, so two index words cannot be quietly sharing one base.
 #guard ((List.range N_IDX_COMMS).filterMap (idxSrc shapeStep)).dedup.length == 27
--- ⚑ …and the ONE constant fold round the index census does NOT claim is round 2 — `COMBINE_XY[3]`,
--- which is `ft_comm` (#5, not assembled). So the fold's 28 constants are exactly
--- {`ft_comm`} ∪ {the plonk index}, and the census is COMPLETE rather than a subset that fits.
+-- ⚑ …and there is now NO constant fold round the index census fails to claim: the fold's 27
+-- constants are EXACTLY the plonk index minus `sigma_comm[6]`, because the twenty-eighth —
+-- `COMBINE_XY[3]`, `ft_comm` — stopped being a constant when §6b computed it. (This pin read
+-- `== [2]` until 2026-08-02; that `2` was the residue, and it is the round §6b writes.)
 #guard ((List.range shapeStep.ipaRounds).filter (fun r =>
           ipaSrc shapeStep r == BaseSrc.const
-          && !(((List.range N_IDX_COMMS).filterMap (idxSrc shapeStep)).contains r))) == [2]
+          && !(((List.range N_IDX_COMMS).filterMap (idxSrc shapeStep)).contains r))) == []
 -- …and the 28th index commitment, `sigma_comm[6]`, is the one `Vector.split m.sigma_comm` hands to
 -- `Common.ft_comm` as `sigma_comm_last` (`common.ml:243-246`) — hence pinned here and not routed.
 #guard idxSrc shapeStep 6 == none && idxRoundOf 6 == none
@@ -4150,9 +4668,20 @@ def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
 
 -- ⚑ THE WIRES. Each pinned index coordinate is read by its `Inner_curve.constant` row and by
 -- segment C's own absorb row — two cells, an equality, so deleting either leg reds.
+-- ⚑ …with TWO exceptions the census names. Commitment 22 owns NO variable at this shape — `idxVar`
+-- routes it to the fold's round-4 base, which is the whole substance of §3c. And commitment 6,
+-- `sigma_comm_last`, is also §6b's term-0 BASE: `FTC_CHUNKS` `VarBaseMul` reads, the doubling's two
+-- and the odd-branch add's one, on top of the pin row and segment C's absorb.
 #guard (List.range N_IDX_COMMS).all (fun k =>
-  (classCells posS (vIdxX shapeSmoke k)).length == 2
-  && (classCells posS (vIdxY shapeSmoke k)).length == 2)
+  if k == 22 then (classCells posS (vIdxX shapeSmoke k)).length == 0
+                  && (classCells posS (vIdxY shapeSmoke k)).length == 0
+  else if k == 6 then (classCells posS (vIdxX shapeSmoke k)).length == FTC_CHUNKS + 5
+                      && (classCells posS (vIdxY shapeSmoke k)).length == FTC_CHUNKS + 5
+  else (classCells posS (vIdxX shapeSmoke k)).length == 2
+       && (classCells posS (vIdxY shapeSmoke k)).length == 2)
+#guard idxVar shapeSmoke 22 0 == ipx shapeSmoke (qT shapeSmoke constR0)
+#guard (classCells posS (idxVar shapeSmoke 22 0)).length == shapeSmoke.ipaBlocks + 2
+
 -- …and `index_digest`'s three output lanes: lane 0 is read by the digest permutation's closing
 -- `Zero` row, by its σ-only probe, AND by R1's block-0 absorb row — that last cell is the whole
 -- point, and it is what a `.length ≥ 2` floor would not have caught.
@@ -4247,6 +4776,307 @@ def idxPinRow (k : Nat) : SRow :=
 #guard idxVar shapeStep 27 1 == ipy shapeStep (qT shapeStep 9)
 #guard REAL_IPA_XY.getD 9 (0, 0)
         == Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.getD 27 (0, 0)
+
+-- ── §12e — ⚑ `Common.ft_comm`'s MSM, AND `t_comm` STOPS BEING FREE (#5's head, retired) ────────
+-- The previous rung derived `sponge_after_index` and left 45 of R1's 142 absorbed words free,
+-- naming `t_comm`'s 14 as the ones that could only leave the list by being CONSUMED. §6b consumes
+-- them, and everything below is stated on the EMITTED object rather than on the intention.
+
+-- ⚑ THE SHAPE IS `common.ml`'s, counted. Eight `scale_fast2`s at `chunks_needed ~num_bits:254 = 51`
+-- five-bit chunks (`plonk_curve_ops.ml:69-70,254-257`), and the `tCommN` cap does NOT bind at the
+-- committed shape — so no quotient chunk silently stays a free witness there.
+#guard tCommN shapeStep == N_TCOMM
+#guard tCommN shapeStep == Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.length
+#guard ftcTerms shapeStep == 8
+#guard tCommN shapeSmoke == 3 && ftcTerms shapeSmoke == 4
+#guard FTC_CHUNKS == (254 + 4) / 5 && 5 * FTC_CHUNKS == 255
+-- …and it is a DIFFERENT width from R3's, which is exactly what #2's warning is about.
+#guard FTC_CHUNKS != shapeSmoke.msmChunks
+
+-- ⚑ THE ROW CENSUS, as an equality over its own sub-lists: the two `Shifted_value.Type2` splits,
+-- `ftcTerms` ladders and `common.ml`'s add chain. A vanished sub-list moves this number.
+#guard (ftcRows shapeSmoke tS.ftw tS.ftc true).length
+        == (ftcScalRows shapeSmoke tS.ftw true).length
+           + ftcTerms shapeSmoke * (ftcTermRows shapeSmoke tS.ftc true 0).length
+           + (ftcAddRows shapeSmoke tS.ftc true).length
+-- …one term is `2·FTC_CHUNKS` chunk rows, the doubling and odd-branch `add_fast`s, two probes and
+-- the four `Generic` rows of the top-bit assert, the negate and `G.if_`'s six halves.
+#guard (ftcTermRows shapeSmoke tS.ftc true 0).length == 2 * FTC_CHUNKS + 8
+#guard (ftcAddRows shapeSmoke tS.ftc true).length == 2 * (tCommN shapeSmoke - 1) + 5
+#guard (ftcRows shapeSmoke tS.ftw tS.ftc true).length == 453
+-- …and `common.ml`'s own operation count: `tCommN + 1` `Ops.add_fast`s, `ftcTerms` scales.
+#guard tS.ftc.addCells.length == tCommN shapeSmoke + 1
+#guard tS.ftc.terms.length == ftcTerms shapeSmoke
+#guard tS.ftc.adds.length == tCommN shapeSmoke
+
+-- ⚑⚑ **`t_comm`'s COORDINATES ARE THE TRANSCRIPT'S WORDS AND THE MSM's OPERANDS.** One σ class
+-- spanning `Poseidon`, `assert_on_curve` and `VarBaseMul`. The Horner SEED `t_comm[n−1]` is term 1's
+-- base, so its class is the whole ladder; a chunk that is only an ADDEND still has five cells.
+-- Equalities, so a deleted leg reds rather than passing a floor.
+#guard (classCells posS (vTcX shapeSmoke (tCommN shapeSmoke - 1))).length == FTC_CHUNKS + 7
+#guard (classCells posS (vTcY shapeSmoke (tCommN shapeSmoke - 1))).length == FTC_CHUNKS + 6
+#guard (classCells posS (vTcX shapeSmoke 0)).length == 5
+#guard (classCells posS (vTcY shapeSmoke 0)).length == 4
+#guard ((classCells posS (vTcX shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
+#guard ((classCells posS (vTcY shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
+-- ⚑ …AND THE CONTRAST THAT SAYS WHAT "FREE" MEANT. A surviving `vMsg` word's class is ONE cell —
+-- the absorb row. That is the class every `t_comm` word was in before §6b: no row pins it, no
+-- gadget reads it, and a `Poseidon` gate constrains the permutation and not what was fed to it.
+#guard (classCells posS (vMsg shapeSmoke 0 1)).length == 1
+-- …and `t_comm` is the FOURTH provenance in the assembly, in none of the other three lists.
+#guard Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.all (fun p =>
+  !(Dregg2.Bridge.MinaStepPrevCommitments.ALL_XY.contains p)
+  && !(Dregg2.Bridge.MinaStepPrevCommitments.INDEX_XY.contains p))
+
+-- ⚑ THE SCALARS ARE R6's OWN CELLS and not statement words (§6b's named divergence, a
+-- strengthening): `Plonk_checks.checked`'s `perm` and the `ζ^n` slot.
+#guard tS.ftw.permV == aVarAt (baseFtS shapeSmoke) tS.ft.fp.prog tS.ft.fp.slots.perm
+#guard tS.ftw.zetaV == aVarAt (baseFtS shapeSmoke) tS.ft.fp.prog tS.ft.fp.slots.zetaN
+#guard tS.ftw.permVal == tS.ft.vals.getD tS.ft.fp.slots.perm 0
+#guard tS.ftw.zetaVal == tS.ft.vals.getD tS.ft.fp.slots.zetaN 0
+#guard tS.ftw.permVal != 0 && tS.ftw.zetaVal != 0 && tS.ftw.permVal != tS.ftw.zetaVal
+-- …`Shifted_value.Type2`'s split reconstructs each of them, and `s_div_2 < 2^254`, so
+-- `scale_fast2`'s top-bit assert is SATISFIABLE and not decoration.
+#guard (List.range N_FTC_SCAL).all (fun c =>
+  let v := ftcScalVal tS.ftw c
+  2 * (v / 2) + v % 2 == v && v / 2 < 2 ^ 254)
+#guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
+  (tS.ftc.terms.getD k default).bits.headD 1 == 0)
+-- …the ladder's FINAL counter cell IS `s_div_2`'s variable, per term — `Field.Assert.equal !n_acc
+-- scalar` (`plonk_curve_ops.ml:208`) — and every term's chain really reconstructs it.
+#guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
+  ftcN shapeSmoke k FTC_CHUNKS == ftcDiv2 shapeSmoke (ftcScalOf k))
+#guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
+  (tS.ftc.terms.getD k default).td.ns.getLastD 0 == ftcScalVal tS.ftw (ftcScalOf k) / 2)
+-- …and the SHARING is upstream's: `scale_fast2` takes an already-split pair, so the `n−1` Horner
+-- scales and the closing one read ONE `s_div_2` class and `perm` reads its own.
+#guard (classCells posS (ftcDiv2 shapeSmoke 0)).length == 3
+#guard (classCells posS (ftcDiv2 shapeSmoke 1)).length == 5
+#guard (classCells posS (ftcOdd shapeSmoke 1)).length == 11
+
+/-- `[2^n]·P` in Jacobian. -/
+def jPow2 (n : Nat) (P : Nat × Nat × Nat) : Nat × Nat × Nat :=
+  (List.range n).foldl (fun Q _ => jDbl Q) P
+/-- `[s + 2^255]·g` — `scale_fast2`'s own semantics (`plonk_curve_ops.ml:236-249`;
+`shifted_value.ml:140-150`: `to_field t = t + 2^{size_in_bits}`), computed by `PastaCurve`'s
+INVERSION-FREE Jacobian double-and-add, an entirely separate formula family from the affine ladder. -/
+def ftcJacScale (g : Nat × Nat) (sv : Nat) : Nat × Nat × Nat :=
+  match scMulM pN sv (jOf g) with
+  | some R => jAdd (jPow2 255 (jOf g)) R
+  | none => jPow2 255 (jOf g)
+
+-- ⚑⚑ **THE LADDER COMPUTES WHAT `scale_fast2` SAYS IT DOES**, checked against that oracle without
+-- inversion. Both scalar blocks, so `perm` and `ζ^n` are each exercised.
+#guard jacEqM pN (jOf (tS.ftc.terms.getD 0 default).res) (ftcJacScale ftcSigma tS.ftw.permVal)
+#guard jacEqM pN (jOf (tS.ftc.terms.getD 1 default).res)
+                 (ftcJacScale (ftcTc (tCommN shapeSmoke - 1)) tS.ftw.zetaVal)
+-- …and the oracle DISCRIMINATES: a one-off scalar gives a different point, so the pin is not
+-- comparing a value with itself.
+#guard (jacEqM pN (jOf (tS.ftc.terms.getD 0 default).res)
+                  (ftcJacScale ftcSigma (tS.ftw.permVal + 1))) == false
+
+-- ⚑⚑ **AND THE `Ops.add_fast` CHAIN IS `common.ml:246-256`, add for add**, recomputed in Jacobian
+-- from the ladders' own outputs: the `n−1` Horner adds, `f_comm + chunked_t_comm`, and the closing
+-- `+ negate (scale chunked_t_comm zeta_to_domain_size)`.
+#guard (List.range (tCommN shapeSmoke - 1)).all (fun a =>
+  jacEqM pN (jOf (tS.ftc.adds.getD a (0, 0)))
+            (jAdd (jOf (ftcTc (tCommN shapeSmoke - 2 - a)))
+                  (jOf (tS.ftc.terms.getD (a + 1) default).res)))
+#guard jacEqM pN (jOf (tS.ftc.adds.getD (tCommN shapeSmoke - 1) (0, 0)))
+                 (jAdd (jOf (tS.ftc.terms.getD 0 default).res)
+                       (jOf (tS.ftc.adds.getD (tCommN shapeSmoke - 2) (0, 0))))
+#guard jacEqM pN (jOf tS.ftc.out)
+                 (jAdd (jOf (tS.ftc.adds.getD (tCommN shapeSmoke - 1) (0, 0)))
+                       (jNeg (jOf (tS.ftc.terms.getD (tCommN shapeSmoke) default).res)))
+-- …and `ft_comm` is a genuine curve point, not a coordinate pair that happens to satisfy the gates.
+#guard onCurveA tS.ftc.out
+
+-- ⚑⚑ **R4 ROUND `FTC_ROUND`'s BASE IS THIS MSM's OUTPUT.** Not a supplied commitment and not an
+-- `Inner_curve.constant`: the `complete_add` closing `common.ml:255-256` writes the fold's own base
+-- variables. `combine_split_commitments`' commitment 3 IS `ft_comm` (`step_verifier.ml:606`), and
+-- round `r` folds commitment `r+1`.
+#guard ipaSrc shapeSmoke FTC_ROUND == BaseSrc.computed
+#guard ipaSrc shapeStep FTC_ROUND == BaseSrc.computed
+#guard tS.ipa.bases.getD FTC_ROUND (0, 0) == tS.ftc.out
+#guard ((ftcAddRows shapeSmoke tS.ftc true).getLastD default).perm
+        == [ some (ipx shapeSmoke (qT shapeSmoke FTC_ROUND))
+           , some (ipy shapeSmoke (qT shapeSmoke FTC_ROUND)), none, none, none, none, none ]
+#guard (let rs := ftcAddRows shapeSmoke tS.ftc true
+        let r := rs.getD (rs.length - 2) default
+        r.kind == KGateType.completeAdd
+        && r.perm.getD 4 none == some (ipx shapeSmoke (qT shapeSmoke FTC_ROUND))
+        && r.perm.getD 5 none == some (ipy shapeSmoke (qT shapeSmoke FTC_ROUND)))
+-- …the supplied list still carries the real block's own `COMBINE_XY[3]` and the assembly IGNORES
+-- it — which is the point: a derived value cannot agree with a fixture by construction, because the
+-- scalars here are R6's and not the block's `Fq` deferred values.
+#guard ipaBaseOf shapeSmoke (stepBases shapeSmoke) FTC_ROUND
+        == Dregg2.Bridge.MinaStepPrevCommitments.COMBINE_XY.getD 3 (0, 0)
+#guard tS.ftc.out != Dregg2.Bridge.MinaStepPrevCommitments.COMBINE_XY.getD 3 (0, 0)
+-- …no pin row for it, and its class is the 32 `EndoMul` reads plus the add's output and the probe.
+#guard (ipaBaseRows shapeSmoke tS.ipa).all (fun r =>
+  r.perm.headD none != some (ipx shapeSmoke (qT shapeSmoke FTC_ROUND)))
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke FTC_ROUND))).length
+        == shapeSmoke.ipaBlocks + 2
+#guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke FTC_ROUND))).filter
+          (fun c => c.row < nTrans)).length == 0
+
+/-- `Common.ft_comm` re-run with `t_comm[i]` replaced by another of the real block's points — a
+prover who hands `verify_one` a different, perfectly valid, ON-CURVE quotient commitment. -/
+def tcSwapped (i : Nat) : Nat → Nat × Nat := fun k =>
+  if k == i then Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 29 (0, 0) else ftcTc k
+def ftcSwap0 : FtcData := runFtcWith shapeSmoke tS.ftw (tcSwapped 0)
+
+-- ⚑⚑ **IT IS CONSUMED, AND THAT IS THE WHOLE DIFFERENCE FROM ABSORBING IT.** Substitute ONE
+-- quotient chunk — chunk 0, which is only a Horner ADDEND and no scale's base — and `ft_comm` moves,
+-- so R4 round `FTC_ROUND`'s base moves and the fold moves with it. Before §6b that substitution
+-- changed one sponge input and NOTHING else in the circuit.
+#guard ftcSwap0.out != tS.ftc.out
+#guard (runIpa shapeSmoke (stepBases shapeSmoke) tS.sp ftcSwap0.out).sums.getLastD (0, 0)
+        != tS.ipa.sums.getLastD (0, 0)
+-- …and the Horner SEED matters too, through the ladder rather than through an add.
+#guard (ftcScaleTerm (Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 29 (0, 0))
+                     tS.ftw.zetaVal).res != (tS.ftc.terms.getD 1 default).res
+-- …and so does each SCALAR: bend `perm` by one and `f_comm` moves, so `ft_comm` does.
+#guard (ftcScaleTerm ftcSigma (tS.ftw.permVal + 1)).res != (tS.ftc.terms.getD 0 default).res
+
+-- ⚑⚑ **THE FORMULA, AGAINST A GOLD o1-labs' OWN `SRS::verify` PINNED.** Everything above checks
+-- the assembly against itself and against `PastaCurve`. This checks `common.ml:246-256` — the shape
+-- §6b's row schedule implements — against the REAL block. `MinaWrapGroupGate` reproduces devnet
+-- block 539508's `ft_comm` over the group law (`ftComm_reproduces_kimchi`) and o1-labs' `SRS::verify`
+-- accepts the opening proof at that point. The transcription below is §6b's OWN order — seed at
+-- `t_comm.(n−1)`, fold `t_comm.(i) + scale res zeta_to_srs_length` downto 0, then
+-- `f_comm + chunked + negate (scale chunked zeta_to_domain_size)` — over `MinaWrapGroupGate`'s
+-- projective primitives, at the block's own `perm` / ζ powers / commitments. It lands on the gold.
+-- ⚠ AND IT SETTLES THE ζ QUESTION §6b names: at the real block the two ζ powers are DIFFERENT
+-- (`max_poly_size = 2^15` against `domain_size = 2^14`), where this assembly's `log2n =
+-- srs_length_log2 = 16` collapses them. That is a shape fact and it is why the two Horner scalars
+-- share one `Shifted_value.Type2` pair HERE and would not THERE.
+def ftcHornerReal : Dregg2.Circuit.Emit.MinaWrapGroupGate.Pt :=
+  (List.range (N_TCOMM - 1)).foldl
+    (fun acc j =>
+      Dregg2.Circuit.Emit.MinaWrapGroupGate.padd
+        (Dregg2.Circuit.Emit.MinaWrapGroupGate.TCHUNKS.getD (N_TCOMM - 2 - j) (0, 0, 0))
+        (Dregg2.Circuit.Emit.MinaWrapGroupGate.smul
+          Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_SRS acc))
+    (Dregg2.Circuit.Emit.MinaWrapGroupGate.TCHUNKS.getD (N_TCOMM - 1) (0, 0, 0))
+/-- `common.ml:246,255-256` at the real block, with `zeta_to_domain_size` as a PARAMETER so the
+Maller-factor conflation is a red control and not a coincidence. -/
+def ftcRealAt (zDom : Nat) : Dregg2.Circuit.Emit.MinaWrapGroupGate.Pt :=
+  Dregg2.Circuit.Emit.MinaWrapGroupGate.padd
+    (Dregg2.Circuit.Emit.MinaWrapGroupGate.padd
+      (Dregg2.Circuit.Emit.MinaWrapGroupGate.smul
+        Dregg2.Circuit.Emit.MinaWrapGroupGate.PERM_SCALAR
+        Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6)
+      ftcHornerReal)
+    (Dregg2.Circuit.Emit.MinaWrapGroupGate.pneg
+      (Dregg2.Circuit.Emit.MinaWrapGroupGate.smul zDom ftcHornerReal))
+/-- `zeta_to_domain_size = ζⁿ`, i.e. one MORE than the Maller factor the gate carries. -/
+def ZETA_DOM : Nat := Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_DOM_M1 + 1
+
+#guard Dregg2.Circuit.Emit.PastaCurveComplete.projEqM pN (ftcRealAt ZETA_DOM)
+         Dregg2.Circuit.Emit.MinaWrapGroupGate.FT_COMM_GOLD
+-- …and the Horner alone reproduces kimchi's own `chunk_commitment(zeta_to_srs_len)` gold, so the
+-- `downto` order is right and not merely consistent with the sum.
+#guard Dregg2.Circuit.Emit.PastaCurveComplete.projEqM pN ftcHornerReal
+         Dregg2.Circuit.Emit.MinaWrapGroupGate.CHUNKED_T_GOLD
+-- ⚑ …and the MALLER FACTOR is load-bearing. `common.ml:256` scales by `zeta_to_domain_size` and the
+-- `+ chunked` term is what leaves `(ζⁿ − 1)`; reading `zeta_to_domain_size` AS the Maller factor —
+-- the conflation this transcription could most easily have made — gives a DIFFERENT point.
+#guard (Dregg2.Circuit.Emit.PastaCurveComplete.projEqM pN
+          (ftcRealAt Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_DOM_M1)
+          Dregg2.Circuit.Emit.MinaWrapGroupGate.FT_COMM_GOLD) == false
+-- …and the two ζ powers really are DIFFERENT at the real block, so `ZETA_SRS` cannot be standing in
+-- for `ZETA_DOM` in the pin above.
+#guard Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_SRS != ZETA_DOM
+#guard (Dregg2.Circuit.Emit.PastaCurveComplete.projEqM pN
+          (ftcRealAt Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_SRS)
+          Dregg2.Circuit.Emit.MinaWrapGroupGate.FT_COMM_GOLD) == false
+-- ⚑ …and the POINTS the assembly consumes ARE that gold's own inputs: `ftcSigma` is
+-- `sigma_comm[6]` and `ftcTc` is the block's `t_comm`, coordinate for coordinate.
+#guard (List.range N_TCOMM).all (fun i =>
+  let p := Dregg2.Circuit.Emit.MinaWrapGroupGate.TCHUNKS.getD i (0, 0, 0)
+  ftcTc i == (p.1, p.2.1))
+#guard ftcSigma == ((Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).1,
+                    (Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).2.1)
+
+-- ⚑⚑ THE GRIND THAT WAS OPEN UNTIL THIS LANDED (§12d's shape, aimed at `t_comm`).
+/-- The transcript block `t_comm`'s LAST chunk occupies — the last absorb block, so a candidate
+costs TWO permutations rather than twelve. -/
+def tcBlk : Nat := (absRoundList shapeSmoke).length + tCommN shapeSmoke
+def tcHon : Nat := (ftcTc (tCommN shapeSmoke - 1)).2
+/-- Transcript challenge 0 when that word is `w` and every earlier one is honest. -/
+def tcChalAt (w : Nat) : Nat :=
+  let pre := tS.sp.states.getD tcBlk []
+  ((Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
+     (Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
+       [ (pre.getD 0 0 + (ftcTc (tCommN shapeSmoke - 1)).1) % pN
+       , (pre.getD 1 0 + w) % pN, pre.getD 2 0 ])).getD 0 0) % 2 ^ shapeSmoke.chalBits
+
+-- the block really is `t_comm`'s last, and the helper reproduces the assembly's OWN challenge on
+-- the honest word — so what follows measures the grind and not a second sponge.
+#guard tcBlk == shapeSmoke.absorbs - 1
+#guard tCommBlock shapeSmoke tcBlk == some (tCommN shapeSmoke - 1)
+#guard msgVar shapeSmoke tcBlk 1 == vTcY shapeSmoke (tCommN shapeSmoke - 1)
+#guard tcChalAt tcHon == chalOf shapeSmoke tS.sp 0
+
+/-- …and the SEARCH: the first additive offset whose challenge hits the prover's target. -/
+def tcGrindT : Nat :=
+  (((List.range 64).map (· + 1)).find? (fun t =>
+     tcChalAt ((tcHon + t) % pN) % GRIND_MOD == 0)).getD 0
+def tcGround : Nat := (tcHon + tcGrindT) % pN
+
+-- ⚑⚑ **THE GRIND SUCCEEDS.** The block's real quotient commitment MISSES the chosen target; the
+-- prover finds a word that HITS it, by addition, in under 64 tries.
+#guard chalOf shapeSmoke tS.sp 0 % GRIND_MOD != 0
+#guard tcGrindT != 0
+#guard tcChalAt tcGround % GRIND_MOD == 0
+#guard tcGround != tcHon
+
+/-- R1's transcript at the ground word — the assembly's OWN `runSpongeAt`, one word changed. -/
+def spTc : SpongeData :=
+  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest tcBlk 1 tcGround
+
+-- ⚑⚑ **AND IT STEERS EVERY SQUEEZE.** One `t_comm` coordinate, chosen by the prover, and EVERY
+-- transcript challenge moves — with them the x_hat MSM's scalars, the fold's weights and
+-- `combined_inner_product`. That is Fiat–Shamir's INPUT becoming prover-chosen, and it is exactly
+-- what absorbing `t_comm` WITHOUT consuming it would have left untouched.
+#guard (List.range shapeSmoke.chals).all (fun c =>
+  chalOf shapeSmoke spTc c != chalOf shapeSmoke tS.sp c)
+#guard (spTc.states.getLastD []).getD 0 0 != (tS.sp.states.getLastD []).getD 0 0
+
+-- ⚑ **THE HOLE, ON THE EMITTED OBJECT.** R1 itself never objects: with the ground word absorbed,
+-- every sponge block is still exactly `Ref.perm` of its own absorbed state. A `Poseidon` gate
+-- constrains the permutation and NOT what was fed to it, so before §6b nothing in the assembly
+-- could refuse this.
+#guard (List.range shapeSmoke.absorbs).all (fun b =>
+  let pre := spTc.states.getD b []
+  let ms := spTc.msgs.getD b []
+  spTc.states.getD (b + 1) []
+    == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
+         [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ])
+
+/-- `assert_on_curve`'s `assert_square` half as its OWN `Generic` body — `y·y − x³ − b`
+(`snarky_curve.ml:212-217`), the third half `onCurveHalves` emits. -/
+def tcSqBody (p : Nat × Nat) : ZMod pN :=
+  Dregg2.Circuit.Emit.KimchiVerify.genericGateConstraint (1 : ZMod pN) (3 : ZMod pN)
+    ((([0, 0, -1, 1, -(PALLAS_B : Int)] : List Int) ++ cNil).map (fun c => ((c : Int) : ZMod pN)))
+    [(p.2 : ZMod pN), (p.2 : ZMod pN)
+    , ((fMul (fMul p.1 p.1) p.1 : Nat) : ZMod pN), 0, 0, 0]
+
+-- ⚑⚑ **AND THE ASSEMBLED VERSION REFUSES IT.** `t_comm` arrives through `Inner_curve.typ` now, so
+-- §7b's `assert_on_curve` covers it: the row's own generic-gate body — `KimchiVerify.
+-- genericGateConstraint`, read-only — is 0 on the block's real quotient commitment and NONZERO on
+-- the ground one. ACCEPTED before §6b (no row read that word at all), REFUSED now.
+#guard tcSqBody (ftcTc (tCommN shapeSmoke - 1)) == 0
+#guard (tcSqBody ((ftcTc (tCommN shapeSmoke - 1)).1, tcGround) == 0) == false
+#guard onCurveA ((ftcTc (tCommN shapeSmoke - 1)).1, tcGround) == false
+-- …and the check is SATISFIABLE at every one of the seven chunks, not just the one the grind used.
+#guard Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.all onCurveA
+#guard (List.range N_TCOMM).all (fun i => tcSqBody (ftcTc i) == 0)
+-- ⚑ …and §7b's rows really cover `t_comm`: the on-curve census is the fold's absorbed bases PLUS
+-- the quotient chunks, and the last `tCommN` checked variables ARE `t_comm`'s.
+#guard (List.range (tCommN shapeSmoke)).all (fun i =>
+  onCVar shapeSmoke ((absRoundList shapeSmoke).length + i) == (vTcX shapeSmoke i, vTcY shapeSmoke i))
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
@@ -4724,6 +5554,7 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
            + ((List.range shapeSmoke.chals).flatMap (challengeRows shapeSmoke tS.sp true)).length
 #guard (rungRows tS .msm true).length
         == (rungRows tS .challenges true).length + (msmRows shapeSmoke tS.msm true).length
+           + (ftcRows shapeSmoke tS.ftw tS.ftc true).length
 #guard (rungRows tS .ipa true).length
         == (rungRows tS .msm true).length + (ipaRows shapeSmoke tS.ipa true).length
 #guard (rungRows tS .full true).length
@@ -4787,6 +5618,29 @@ def posAt (k : Rung) : List (PVar × Cell) :=
 -- …and the plonk-index pin rows are R7's too, so the same reading applies to the 56 absorbed words.
 #guard (classCells (posAt .ftEval0) (vIdxX shapeSmoke 27)).length == 0
 #guard (classCells (posAt .absorb) (vIdxX shapeSmoke 27)).length == 2
+
+-- ⚑ **§6b's LADDER POSITION, and it is the honest half of the retirement.** `ft_comm`'s scalars are
+-- R6's OWN cells, and R6's rows arrive at `r6_ft_eval0`. So from `r3_msm` to `r5_full` the `perm`
+-- and `ζ^n` cells are FREE WITNESSES — read by §6b's `Shifted_value.Type2` split row and by NOTHING
+-- else — and they are DERIVED at `r6_ft_eval0` and above. Stated the way `index_digest`'s and
+-- `vDLift 1`'s are, because the reportable object is the full assembly and the lower rungs are
+-- sub-circuits. Equalities, not floors.
+#guard (classCells (posAt .msm) tS.ftw.permV).length == 1
+#guard (classCells (posAt .ipa) tS.ftw.permV).length == 1
+#guard (classCells (posAt .ftEval0) tS.ftw.permV).length == 4
+#guard (classCells (posAt .msm) tS.ftw.zetaV).length == 1
+#guard (classCells (posAt .ipa) tS.ftw.zetaV).length == 1
+#guard (classCells (posAt .ftEval0) tS.ftw.zetaV).length == 3
+-- …and `sigma_comm_last`'s `Inner_curve.constant` pin is R7's (§3c), so term 0's BASE reads the same
+-- way: the ladder, the doubling and the odd-branch add at `r3_msm`, plus the pin and segment C's
+-- absorb from `r7_absorption`.
+#guard (classCells (posAt .msm) (vIdxX shapeSmoke 6)).length == FTC_CHUNKS + 3
+#guard (classCells (posAt .absorb) (vIdxX shapeSmoke 6)).length == FTC_CHUNKS + 5
+-- ⚑ …whereas `t_comm`'s own words are ABSORBED at `r1_transcript` and CONSUMED from `r3_msm` up —
+-- no ladder position at all, which is what makes the retirement unconditional for them.
+#guard (classCells (posAt .transcript) (vTcX shapeSmoke 0)).length == 1
+#guard (classCells (posAt .msm) (vTcX shapeSmoke 0)).length == 2
+#guard (classCells (posAt .ipa) (vTcX shapeSmoke 0)).length == 5
 
 -- ξ's class is COMPLETE at `r5_full`: nothing above r5 adds a cell to it, because its chain is
 -- already there. (A floor `≥ 2` would pass here even with the chain deleted — the fold's own reads

@@ -89,13 +89,24 @@ def main : IO Unit := do
     | some str => match parseShape str with
                   | some s => (str.replace "," "_", s)
                   | none => ("step", shapeStep)
+  -- ⚑ FAIL CLOSED on a shape too small for `Common.ft_comm`. `tCommN` is `min 7 (free blocks)`, and
+  -- the Horner needs at least two chunks (`common.ml:247-253` seeds at `t_comm.(n-1)` and folds
+  -- down); at `tCommN < 2` the add chain would index past its own list and emit a `(0,0)` "point".
+  -- The two committed shapes are 7 and 3; an arbitrary `DREGG_SM` spec must not silently degrade.
+  if tCommN sh < 2 then
+    throw (IO.userError s!"emit: tCommN = {tCommN sh} — the shape has fewer than two FREE \
+transcript blocks for `t_comm` (absorbs={sh.absorbs}, absorbed rounds={(absRoundList sh).length}); \
+`Common.ft_comm`'s Horner needs at least two quotient chunks")
   IO.println s!"== step_main assembly: absorbs={sh.absorbs} chals={sh.chals} ems={sh.emsRows} \
 msm={sh.msmTerms}x{sh.msmChunks} ipa={sh.ipaRounds}x{sh.ipaBlocks} b={sh.bRounds} \
 pub={sh.pubWords} =="
   let tc0 ← IO.monoMsNow
   let t := mkStep sh
+  -- ⚑ `t.ftc.terms` is in the force since `Common.ft_comm`'s MSM landed: it is eight 255-bit
+  -- `scale_fast2` ladders and by far the largest single item in the chain phase, so leaving it out
+  -- would report its cost under "rows".
   let _ ← force (t.sp.states.length + t.msm.terms.length + t.ipa.accs.length
-                 + t.ft.fp.prog.size + t.segB.states.length) "chains"
+                 + t.ft.fp.prog.size + t.segB.states.length + t.ftc.terms.length) "chains"
   let tc1 ← IO.monoMsNow
   IO.println s!"    chain evaluation (sponge + vbm + endo + deferred): {tc1 - tc0} ms"
   for k in [Rung.transcript, Rung.challenges, Rung.msm, Rung.ipa, Rung.full,
