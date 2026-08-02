@@ -196,11 +196,27 @@ fn honest_large_value_setfield_proves_under_value8() {
     // one adds none — it appends constraints into columns `rotateV3` had already allocated — so the
     // appendix growth passes through the graduation 1:1. Same +112 on all 57 wide members
     // (`effect_vm_descriptors::WIDE_MEMBER_GEOMETRY`), with a delta spread of zero.
+    //
+    // ⚑ 1864 → 1886 AT THE KEY-NONET FLAG DAY (`76c3f7b9b`, `NUM_PRE_LIMBS` 184 → 187), and this
+    // one lands on BOTH of the terms canon9 left alone — it is a LIMB move, so it moves the blocks:
+    //
+    //   B_SPAN        = B_CHAIN_BASE + B_NUM_CHAIN: 247 → 251           -- +3 limbs, +1 carrier
+    //   APPENDIX_SPAN = 2·B_SPAN + C_SPAN + CANON9_SPAN: 651 → 659      -- +8, the blocks only
+    //   ROT_WIDTH     = 188 + 659                            = 847      -- +8
+    //   N_ROT_SITES   = ROT_APPENDIX_SITES(138) + 4: 140 → 142          -- the new carrier absorbs
+    //   GRAD_ROT_WIDTH= 847 + 7·142                          = 1841     -- +8 + 14 = +22
+    //   trace_width   = 1841 + 45                            = 1886
+    //
+    // `C_SPAN` (45) and `CANON9_SPAN` (112) do not move — the widening is in the rotated blocks and
+    // nowhere else. Cross-checked against the emitted artifact, not the failure message: `mint`,
+    // `revoke` and every `setFieldVmDescriptor2-*R24` read 1886 in the committed registry, and
+    // transfer's avail pad 10 gives 1896 — a consistent emit, not a partial one.
     assert_eq!(
-        desc.trace_width, 1864,
+        desc.trace_width, 1886,
         "the NINE-LANE weld adds one column per slot (1692 → 1736); the rc FOLD adds the caveat \
          region's two absorbing carriers and their lanes (1736 → 1752); the FIELDS-CANONICITY emit \
-         adds the 112-column aux region past the caveat region (1752 → 1864)"
+         adds the 112-column aux region past the caveat region (1752 → 1864); the KEY NONET adds \
+         three limbs and the chain carrier that absorbs them, twice over (1864 → 1886)"
     );
     // 57 → 58: the ninth lane publishes one more PI. `46 prefix + 8 value8 + 4 rc`, and the emitted
     // descriptor carries pi_binding indices 46..=53 on columns [569..575, 614] — the seventh contiguous

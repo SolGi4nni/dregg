@@ -1,7 +1,26 @@
 //! E10-FREEZE-FALSIFIER — the frozen-authority falsifier on the no-freeze member `cellSeal`,
 //! made OWNER-LIMB-PRECISE (circuit-minimality campaign, item E10).
 //!
-//! ## The open witness-gen-perimeter unknown this probe resolves
+//! ## ⚑ STATUS: THE HOLE IS CLOSED, AND THIS FILE IS NOW THE REGRESSION GUARD
+//!
+//! Everything below describes the wound as it stood, and it is kept because the wound is what the
+//! guard guards. But the verdict has FLIPPED. `36541604a` ("E10: the AFTER owner limb was welded by
+//! nothing — ownerFreezeWire puts the freeze on the wire") landed `Emit/OwnerFreezeWire.lean` and
+//! wired it into `EmitRotationV3.lean`'s driver chain, so every rotated member — `cellSeal`
+//! included — now carries one `colEq` per owner-key nonet lane (the octet `B_PUBKEY_OCTET`
+//! 105..112 plus the ninth lane `B_PUBKEY_NINTH_LANE`, welded because it is an absorbed pre-limb).
+//!
+//! Measured over the re-emitted registry: the honest seal still PROVES and VERIFIES, the
+//! owner-changed seal is REJECTED, and the control lifecycle-freeze forgery is still REJECTED. So
+//! the assertion at the bottom is now `!owner_forge_accepted`, and this test's job changed from
+//! *observing* the gap to *refusing to let it come back*: delete the freeze from the emit and this
+//! file goes red.
+//!
+//! Both halves are asserted deliberately. A weld that rejected the forgery by rejecting
+//! EVERYTHING would be a vacuous green, so the honest seal's PROVE+VERIFY is checked first and the
+//! control is checked after — three verdicts, not one.
+//!
+//! ## The witness-gen-perimeter unknown this probe resolved (the wound, as it stood)
 //!
 //! 41 of the 57 rotated cohort members carry ZERO freeze-shaped `colEq` gates. `cellSeal` is one:
 //! `cellSealVmDescriptor2R24` is `v3Of (rotateV3WithRecordPin B_LIFECYCLE …)` — it appends ONLY the
@@ -260,23 +279,31 @@ fn e10_cellseal_after_owner_limb_is_unforced_at_air_level() {
          satisfied, self-consistent NEW_COMMIT) prove/verify verdict = {}; control lifecycle-freeze \
          = REJECTED.",
         if owner_forge_accepted {
-            "ACCEPTED (unforced — witness-gen gap present)"
+            "ACCEPTED (unforced — the E10 gap is OPEN again)"
         } else {
-            "REJECTED (compensated)"
+            "REJECTED (the `ownerFreezeWire` colEq bites — E10 closed)"
         }
     );
 
-    // THE RESOLVED FINDING. The AFTER owner limb is UNFORCED at the AIR level for cellSeal: the
-    // deployed descriptor accepts a seal that silently rewrites the operated cell's owner. Combined
-    // with `proof_verify.rs`'s NEW_COMMIT ← claimed-post anchor (no independent recompute), NOTHING
-    // in the descriptor/verifier path rejects the changed-owner seal. This is the member-precise
-    // witness-gen hole the 41 no-freeze members share; closing it = an owner-freeze `colEq`
-    // (`gPubkeyFreeze`, AFTER pubkey octet == BEFORE) authored in Lean and emitted into the cohort.
+    // ⚑ THE FINDING, CLOSED — and the polarity of this assertion is the closure.
+    //
+    // It read `assert!(owner_forge_accepted)` while the hole was open: the deployed descriptor
+    // accepted a seal that silently rewrote the operated cell's owner, because the pubkey octet
+    // carried no freeze `colEq` and `proof_verify.rs` anchors NEW_COMMIT to the CLAIMED post rather
+    // than recomputing it. The named fix was "an owner-freeze `colEq` authored in Lean and emitted
+    // into the cohort", and that is exactly what `36541604a` shipped
+    // (`Emit/OwnerFreezeWire.lean` → `EmitRotationV3.lean`'s `ownerFreezeWire` wrap).
+    //
+    // So the assertion inverts, and with it this file's job. The verifier-side hole it named
+    // (NEW_COMMIT ← claimed post, never recomputed) is UNCHANGED and still real — what changed is
+    // that the AIR no longer lets the claimed post disagree with the pre-state about who owns the
+    // cell, which is what made that hole reachable for the owner limb.
     assert!(
-        owner_forge_accepted,
-        "OBSERVED: the LIVE cellSealVmDescriptor2R24 ACCEPTS a self-consistent seal with a forged \
-         AFTER owner octet — the pubkey octet (105..112) carries NO freeze colEq and NEW_COMMIT is \
-         anchored to the CLAIMED post (not recomputed), so the owner limb is UNFORCED. If this ever \
-         flips to REJECTED, an owner-binding gate landed — update the E10 finding."
+        !owner_forge_accepted,
+        "REGRESSION: the LIVE cellSealVmDescriptor2R24 ACCEPTED a self-consistent seal with a \
+         forged AFTER owner octet. The owner freeze (`ownerFreezeWire`, one `colEq` per owner-key \
+         nonet lane: the octet at B_PUBKEY_OCTET 105..112 plus B_PUBKEY_NINTH_LANE) is missing from \
+         the emitted member or was dropped by a later wrap — E10 is open again, and NEW_COMMIT is \
+         still anchored to the prover's claimed post, so nothing downstream will catch it."
     );
 }

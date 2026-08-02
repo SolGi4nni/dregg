@@ -616,26 +616,31 @@ fn setfielddyn_dynamic_overflow_proves_against_deployed_descriptor() {
     // blocks widen it by `REFUSE_WELD_WIDEN = 45`.
     //
     // ⚑ ALL THREE NUMBERS MOVED AT THE NINE-LANE EPOCH (1647/1619/1664 → 1691/1663/1708), AGAIN AT
-    // THE rc FOLD (→ 1707/1679/1724), AND AGAIN AT THE FIELDS-CANONICITY EMIT (→ 1819/1791/1836),
-    // and every one is derived rather than transcribed:
-    //   GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES = 839 + 7·140 = 1819   (was 727 + 7·140 = 1707)
-    //   setFieldDyn base = 1819 − 4·7 = 1791                              (was 1679)
-    //   trace_width      = 1791 + 45  = 1836                              (was 1724)
-    // The whole +112 enters at ROT_WIDTH: `APPENDIX_SPAN` 539 → 651 for the 112-column canonicity
-    // aux region (2 blocks × 8 slots × 7), and `fieldsCanonical9At_hashSites` proves the wrap adds
-    // NO hash site, so `N_ROT_SITES` is unmoved at 140 and the growth passes through the graduation
-    // 1:1 instead of being multiplied by 7. Cross-check on a member with the standard host:
-    // 1819 + 45 = 1864, the committed `mint`/`revoke`/`setField-*` width; transfer's avail pad 10
-    // gives 1874.
+    // THE rc FOLD (→ 1707/1679/1724), AGAIN AT THE FIELDS-CANONICITY EMIT (→ 1819/1791/1836), AND
+    // AGAIN AT THE KEY NONET (`76c3f7b9b` → 1841/1813/1858), and every one is derived rather than
+    // transcribed:
+    //   GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES = 847 + 7·142 = 1841   (was 839 + 7·140 = 1819)
+    //   setFieldDyn base = 1841 − 4·7 = 1813                              (was 1791)
+    //   trace_width      = 1813 + 45  = 1858                              (was 1836)
+    // The canon9 +112 entered at ROT_WIDTH alone: `APPENDIX_SPAN` 539 → 651 for the 112-column
+    // canonicity aux region (2 blocks × 8 slots × 7), with `fieldsCanonical9At_hashSites` proving
+    // the wrap adds NO hash site, so `N_ROT_SITES` stayed at 140 and the growth passed through the
+    // graduation 1:1 instead of being multiplied by 7. The key nonet's +22 splits, because a LIMB
+    // move touches both terms: `APPENDIX_SPAN` 651 → 659 (= 2·ΔB_SPAN, the three ninth-lane limbs
+    // plus the chain carrier that absorbs them, per block) gives +8, and that carrier is a chip
+    // absorb SITE, so `N_ROT_SITES` 140 → 142 gives +14. The −4·7 stays −28: setFieldDyn's deficit
+    // is its four MISSING v1-face sites, and the two new sites are appendix sites it gains like
+    // every other member. Cross-check on a member with the standard host: 1841 + 45 = 1886, the
+    // committed `mint`/`revoke`/`setField-*` width; transfer's avail pad 10 gives 1896.
     assert_eq!(
-        desc.trace_width, 1836,
-        "setFieldDyn is a DISTINCT V1Face geometry (base 1791 = GRAD_ROT_WIDTH 1819 − four chip \
-         sites·7) refuse-welded over ITS OWN base: 1791 + 45 refuse span = 1836 (matches committed \
+        desc.trace_width, 1858,
+        "setFieldDyn is a DISTINCT V1Face geometry (base 1813 = GRAD_ROT_WIDTH 1841 − four chip \
+         sites·7) refuse-welded over ITS OWN base: 1813 + 45 refuse span = 1858 (matches committed \
          setFieldDynVmDescriptor2R24 trace_width — per-member, not fixed to the standard graduated host)"
     );
     assert_ne!(
         desc.trace_width, ROT_WIDTH,
-        "setFieldDyn's width (1836) != the ungraduated rotated width (ROT_WIDTH = 839)"
+        "setFieldDyn's width (1858) != the ungraduated rotated width (ROT_WIDTH = 847)"
     );
 
     // The dynamic SetField (field_idx > 7) routes to the dyn descriptor by name.

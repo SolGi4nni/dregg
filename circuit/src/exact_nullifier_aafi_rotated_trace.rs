@@ -451,8 +451,15 @@ mod tests {
         assert_eq!(NULLIFIER_OFFSETS, [26, 68, 69, 70, 71, 72, 73, 74]);
         // The nine-lane epoch (`NUM_PRE_LIMBS` 178 → 184): the payload gained six cells, all of
         // them stable (the nullifier group did not move), and the wide chain gained two carriers.
-        assert_eq!(STABLE_FRAME_CELLS, 177);
-        assert_eq!(WIDE_CARRIERS, 62);
+        //
+        // ⚑ The KEY-NONET epoch (`76c3f7b9b`, 184 → 187) is the same shape one more time:
+        //   STABLE_FRAME_CELLS = ROTATED_PAYLOAD_WIDTH − 8 = (NUM_PRE_LIMBS + 1) − 8: 177 → 180.
+        //     +3, and all three are STABLE — the three new columns are the carrier octets' ninth
+        //     lanes (184/185/186), and `NULLIFIER_OFFSETS` is unmoved, which the line above pins.
+        //   WIDE_CARRIERS = 2 + (NUM_PRE_LIMBS − 4)/3: 62 → 63. 183 is again 0 mod 3, so the
+        //     three new limbs form exactly ONE more clean 3-limb body group — no leftover carrier.
+        assert_eq!(STABLE_FRAME_CELLS, 180);
+        assert_eq!(WIDE_CARRIERS, 63);
         let trace = sample_trace();
         assert_eq!(trace.rows().len(), EXACT_AAFI_TRACE_ROWS);
         assert!(
@@ -539,7 +546,15 @@ mod tests {
         //   +6  `boundary`  outer last-row boundaries = STABLE_FRAME_CELLS + 2*CHIP_OUT_LANES
         //                  = (ROTATED_PAYLOAD_WIDTH - 8) + 16, 187 -> 193
         // 1258 + 4 + 6 + 6 = 1274. `gate` (108) and `pi_binding` (76) are not limb-dependent.
-        assert_eq!(descriptor.constraints.len(), 1274);
+        //
+        // ⚑ 1274 -> 1282 at the KEY-NONET epoch (`76c3f7b9b`, NUM_PRE_LIMBS 184 -> 187). The SAME
+        // three limb-dependent families, at +3 limbs instead of +6 — every term below is the same
+        // expression as its line above, re-evaluated, and nothing new appears:
+        //   +2  `lookup`      TID_P2 wide lookups = 2 * WIDE_CARRIERS, 2*62 -> 2*63
+        //   +3  `window_gate` = ROTATED_PAYLOAD_WIDTH = NUM_PRE_LIMBS + 1, 185 -> 188
+        //   +3  `boundary`    = STABLE_FRAME_CELLS + 2*CHIP_OUT_LANES, 193 -> 196
+        // 1274 + 2 + 3 + 3 = 1282. `gate` and `pi_binding` are still not limb-dependent.
+        assert_eq!(descriptor.constraints.len(), 1282);
         let trace = sample_trace();
 
         let wide: Vec<_> = descriptor

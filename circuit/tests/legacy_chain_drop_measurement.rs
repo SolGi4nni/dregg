@@ -54,10 +54,11 @@ const BASELINE_PROVER_MS: f64 = 637.9;
 ///
 /// ```text
 /// UNCOMPACTED = <narrow deployed cohort trace_width> + WIDE_CARRIER_APPENDIX + 2 membership teeth
-///   178-limb:  1702 + 960 + 2 = 2664   (the recorded [M] baseline, reproduced exactly)
-///   184-limb:  1746 + 992 + 2 = 2740
-///   rc FOLD:   1762 + 992 + 2 = 2756
-///   CANON9:    1874 + 992 + 2 = 2868
+///   178-limb:  1702 + 960  + 2 = 2664   (the recorded [M] baseline, reproduced exactly)
+///   184-limb:  1746 + 992  + 2 = 2740
+///   rc FOLD:   1762 + 992  + 2 = 2756
+///   CANON9:    1874 + 992  + 2 = 2868
+///   KEY NONET: 1896 + 1008 + 2 = 2906
 /// ```
 ///
 /// The +76 (178 → 184) is `44` on the narrow member (`2·ΔB_SPAN + 7·ΔN_ROT_SITES = 16 + 28`) plus
@@ -74,19 +75,33 @@ const BASELINE_PROVER_MS: f64 = 637.9;
 /// not move, so the carrier appendix stays at 992: the aux region rides PAST the limbs and the
 /// absorption chain never sees it.
 ///
+/// ⚑ The KEY-NONET move (`76c3f7b9b`, `NUM_PRE_LIMBS` 184 → 187) is the FIRST one since 178 → 184
+/// that lands on BOTH terms, because it is the first that moves the limb count itself:
+///   * `+22` on the narrow member (1874 → 1896): `ΔAPPENDIX_SPAN(8) + 7·ΔN_ROT_SITES(2) = 8 + 14`.
+///     The appendix's 8 is `2·ΔB_SPAN` — each rotated block gains the 3 ninth-lane limbs plus the
+///     one extra chain carrier that absorbs them (`B_NUM_CHAIN` 61 → 62); `C_SPAN` and
+///     `CANON9_SPAN` do not move. The 14 is that extra carrier's chip-absorb site, one per block,
+///     × the 7 graduated lane columns each.
+///   * `+16` on the carrier appendix (992 → 1008): `2 · 8 · ΔWIDE_NUM_CARRIERS`, and
+///     `ΔWIDE_NUM_CARRIERS` is 1 — 183 is 0 mod 3, so the three new limbs are exactly one more
+///     clean body group with no leftover carrier.
+/// So this is the rc fold's shape (both sides move) rather than canon9's (narrow only): the S2
+/// band grows with the limb count, so it grows here.
+///
 /// Cross-check that this is the right baseline and not a fitted number:
-/// `2868 − S2_DELETED_COLS(992) − e1_drop(94) = 1782`, which is the committed
+/// `2906 − S2_DELETED_COLS(1008) − e1_drop(94) = 1804`, which is the committed
 /// `transferVmDescriptor2R24` wide width, and the assertion below computes exactly that
 /// subtraction from live constants.
 ///
 /// **The deletion's CLAIM is unchanged, and the RATIO is WEAKENING — which is the honest way to
 /// report it.** It removed `960 + 94 = 1054` of 2664 columns (−39.6%); then `992 + 94 = 1086` of
-/// 2740 (−39.6%); then of 2756 (−39.4%); now `992 + 94 = 1086` of 2868 (−37.9%). The S2 band grows
-/// with the LIMB COUNT, not with the caveat region and not with the canonicity aux, so both the rc
-/// fold's +16 and canon9's +112 land entirely on the SURVIVING side. That is not a regression: a
-/// dead-stratum deletion must not touch bound columns, and every one of those 128 is read by a
-/// constraint.
-const BASELINE_WIDTH: usize = 2868;
+/// 2740 (−39.6%); then of 2756 (−39.4%); then `992 + 94 = 1086` of 2868 (−37.9%); now
+/// `1008 + 94 = 1102` of 2906 (−37.9%). The S2 band grows with the LIMB COUNT, not with the caveat
+/// region and not with the canonicity aux, so the rc fold's +16 and canon9's +112 landed entirely
+/// on the SURVIVING side — but the key nonet's +38 splits 22/16 across the two. That is not a
+/// regression: a dead-stratum deletion must not touch bound columns, and every one of those 128 is
+/// read by a constraint.
+const BASELINE_WIDTH: usize = 2906;
 
 fn open_permissions() -> Permissions {
     Permissions {
@@ -220,8 +235,9 @@ fn s2_deletion_yield_measurement() {
     const REPS: usize = 3;
 
     let (deployed, mut trace, pis, heaps, mem) = honest_wide_transfer();
-    // The deployed compact width: 2664 − 960 (two 60-col carrier bands + 840 chip lanes, S2) − the
-    // E1 dead v1-face bands (Epoch-1 SECOND flag-day, per-member from the Lean-emitted table).
+    // The deployed compact width: BASELINE_WIDTH − S2_DELETED_COLS (two `S2_CARRIER_SPAN`-col
+    // carrier bands + `S2_LANE_SPAN` chip lanes, at 187 limbs: 2·63 + 882 = 1008) − the E1 dead
+    // v1-face bands (Epoch-1 SECOND flag-day, per-member from the Lean-emitted table).
     let e1_drop: usize = dregg_circuit::effect_vm::e1_compact_generated::E1_COMPACT_TABLE
         .iter()
         .find(|(k, _)| *k == "transferVmDescriptor2R24")

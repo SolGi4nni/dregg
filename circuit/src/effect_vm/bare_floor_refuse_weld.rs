@@ -489,12 +489,19 @@ mod tests {
     fn tag_cols_are_the_deployed_bound_columns() {
         // The decode reads the EXACT deployed caveat-manifest type-tag columns the COVERAGE carrier
         // binds via the caveat-commit chain (imported `caveat_tag_col` = `CAVEAT_BASE + 1 + k·ENTRY_SIZE`).
-        // Concrete drift pin at the NINE-LANE/184-limb geometry: `CAVEAT_BASE = V1_WIDTH(188) +
-        // 2·B_SPAN(247) = 682`, `ENTRY_SIZE = 7`. (Was 666/667.. at 178 limbs.)
-        assert_eq!(caveat_tag_col(0), 683);
-        assert_eq!(caveat_tag_col(1), 690);
-        assert_eq!(caveat_tag_col(2), 697);
-        assert_eq!(caveat_tag_col(3), 704);
+        // Concrete drift pin at the KEY-NONET/187-limb geometry: `CAVEAT_BASE = V1_WIDTH(188) +
+        // 2·B_SPAN(251) = 690`, `ENTRY_SIZE = 7`. (Was 666/667.. at 178 limbs; 682/683.. at 184.)
+        //
+        // ⚑ 683 → 691 at `76c3f7b9b`, and the whole move is `B_SPAN` 247 → 251 counted TWICE (the
+        // BEFORE and AFTER rotated blocks both sit between the v1 face and the caveat region):
+        //   +3  `NUM_PRE_LIMBS` 184 → 187   (the three carrier-octet ninth lanes)
+        //   +1  `B_NUM_CHAIN`   61  → 62    (one more wide chain carrier absorbs them)
+        //   = +4 per block × 2 blocks       = +8 on CAVEAT_BASE, and +8 on every tag column.
+        // `ENTRY_SIZE` (7) and the manifest's 4-entry shape are untouched, so the stride is intact.
+        assert_eq!(caveat_tag_col(0), 691);
+        assert_eq!(caveat_tag_col(1), 698);
+        assert_eq!(caveat_tag_col(2), 705);
+        assert_eq!(caveat_tag_col(3), 712);
     }
 
     #[test]

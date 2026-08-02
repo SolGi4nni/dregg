@@ -408,12 +408,17 @@ fn d1_d2_chip_census_and_logup_aux_provenance() {
     // loudly here instead of leaving a floating count. ⚑ 138 → 140 / 262 → 264 at the rc FOLD: the
     // caveat region gained the TWO chip sites that absorb the DFA route-commitment carrier into the
     // published caveat commitment (the S2 stratum is per-BLOCK and does not move with them).
-    assert_eq!(sites.len(), 140, "chip lookups at HEAD (was 264 pre-S2)");
+    // ⚑ 140 → 142 / 264 → 268 at the KEY NONET (`76c3f7b9b`, `NUM_PRE_LIMBS` 184 → 187). Unlike the
+    // rc fold, this one IS per-block: each rotated block gained one wide chain carrier
+    // (`B_NUM_CHAIN` 61 → 62) to absorb the three ninth-lane limbs, and one carrier is one absorb
+    // SITE — so +2 deployed sites AND +2 deleted S2 sites (`S2_LANE_SPAN` 868 → 882 = 2 × 7 lanes),
+    // hence the pre-S2 total moves by 4 while the deployed census moves by 2.
+    assert_eq!(sites.len(), 142, "chip lookups at HEAD (was 268 pre-S2)");
     assert_eq!(
         sites.len() + dregg_circuit::effect_vm::s2_compact_generated::S2_LANE_SPAN / 7,
-        264,
+        268,
         "the S2 flag-day deleted exactly the graduated chip-lane sites (S2_LANE_SPAN spans 7 lanes \
-         per site), taking the deployed census 264 → 140"
+         per site), taking the deployed census 268 → 142"
     );
 
     // -- tag / var-arity histograms --
@@ -1089,19 +1094,32 @@ fn e3_mutable_last_limb_schedule_rate8_sim() {
         chains.push(stream);
     }
     assert_eq!(chains.len(), 2);
+    // `NUM_PRE_LIMBS + 1` — the pre-iroot limbs plus the iroot itself. 179 at 178 limbs, 185 at
+    // 184, 188 at 187 (the KEY NONET, `76c3f7b9b`: the three carrier-octet ninth lanes).
+    let chain_len = dregg_circuit::effect_vm::layout_generated::NUM_PRE_LIMBS + 1;
+    assert_eq!(chain_len, 188, "187 pre-limbs + iroot");
     for (i, c) in chains.iter().enumerate() {
-        assert_eq!(c.len(), 185, "chain {i}: 184 pre-limbs + iroot");
+        assert_eq!(
+            c.len(),
+            chain_len,
+            "chain {i}: NUM_PRE_LIMBS pre-limbs + iroot"
+        );
     }
 
     // -- the empirical divergence set: WHERE do the two streams actually differ? --
     // The E3 premise is that a transfer's divergence is confined to the three mutable
-    // scalars r0/r1/r2 (stream positions 1..=3); cells_root (0) and the iroot (178) are
-    // turn-level, everything else (fields, authority digest, roots) is untouched by a
-    // transfer. If this assert ever fires, the reorder win is smaller than projected.
-    let divergent: Vec<usize> = (0..179)
+    // scalars r0/r1/r2 (stream positions 1..=3); cells_root (0) and the iroot (the last
+    // position) are turn-level, everything else (fields, authority digest, roots) is untouched
+    // by a transfer. If this assert ever fires, the reorder win is smaller than projected.
+    //
+    // ⚑ This scan was the literal `0..179` — the 178-limb chain length — and it stayed 179 through
+    // TWO widenings while the length pin above was retyped both times. So the six positions the
+    // nine-lane epoch added and the three the key nonet added were never examined: the premise was
+    // being checked on a prefix. It is the chain's own length now.
+    let divergent: Vec<usize> = (0..chain_len)
         .filter(|&i| chains[0][i].as_u32() != chains[1][i].as_u32())
         .collect();
-    println!("E3: BEFORE/AFTER divergent stream positions = {divergent:?} (of 179)");
+    println!("E3: BEFORE/AFTER divergent stream positions = {divergent:?} (of {chain_len})");
     assert!(!divergent.is_empty(), "a transfer must move the balance");
     assert!(
         divergent.iter().all(|&i| (1..=3).contains(&i)),

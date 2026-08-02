@@ -837,14 +837,31 @@ fn remove_write_twins_bind_the_post_remove_cap_root() {
         // first canonicity gate, i.e. a row-local body) so a further outermost wrap fails loudly
         // instead of stripping 32 constraints from the middle of somebody else's block.
         const CANON9_CONSTRAINTS: usize = 2 * 8 * (7 + 12);
+        // ⚑ AND IT HAPPENED AGAIN, ONE WRAP LATER (`36541604a`, the E10 OWNER FREEZE). The driver
+        // (`EmitRotationV3.lean:153`) is now
+        //     dropUnforcedPins <| hardenLastRow <| fieldsCanonical9Wire <| ownerFreezeWire <| d
+        // and `ownerFreezeWire` sits INSIDE canon9, so its `colEq` welds land between the host tail
+        // and the canonicity block. Subtracting canon9 alone put `n` nine constraints past the end
+        // of the host, `[n-33, n-17)` picked up owner welds (`Base`, not `Lookup`), and the shape
+        // assertion fired — the same "a guard that cannot execute" failure a third time, in the
+        // same block. The count is DERIVED from the layout, not typed: the weld is one `colEq` per
+        // owner-key nonet lane, and lane 8 is welded exactly when it is an ABSORBED pre-limb
+        // (`ownerFreezeColPairs`' own `if OWNER_LANE8_OFF < rotatedNumPreLimbs then 9 else 8`).
+        use dregg_circuit::effect_vm::layout_generated::{B_PUBKEY_NINTH_LANE, NUM_PRE_LIMBS};
+        const OWNER_FREEZE_CONSTRAINTS: usize = if B_PUBKEY_NINTH_LANE < NUM_PRE_LIMBS {
+            9
+        } else {
+            8
+        };
         let n = stripped
             .constraints
             .len()
-            .checked_sub(CANON9_CONSTRAINTS)
+            .checked_sub(CANON9_CONSTRAINTS + OWNER_FREEZE_CONSTRAINTS)
             .unwrap_or_else(|| {
                 panic!(
                     "[{key}] the committed member must carry the {CANON9_CONSTRAINTS}-constraint \
-                     fields-canonicity block appended past its host"
+                     fields-canonicity block and the {OWNER_FREEZE_CONSTRAINTS}-constraint owner \
+                     freeze appended past its host"
                 )
             });
         assert!(
@@ -853,9 +870,19 @@ fn remove_write_twins_bind_the_post_remove_cap_root() {
         );
         assert!(
             dregg_circuit::descriptor_ir2::row_local_body(&stripped.constraints[n]).is_some(),
-            "[{key}] constraint {n} must be the FIRST canonicity gate (the carry-digit split); if \
-             it is not, something else was appended outermost and the strip below would cut the \
-             wrong 32 constraints"
+            "[{key}] constraint {n} must be the FIRST owner-freeze weld (a `colEq`, hardened onto \
+             the whole domain); if it is not, something else was appended past the host and the \
+             strip below would cut the wrong 32 constraints"
+        );
+        // ...and the whole owner-freeze block really is row-local welds, so `n` is the host end and
+        // not a point inside somebody else's block. A canon9 range LOOKUP here would mean the
+        // subtraction landed short.
+        assert!(
+            stripped.constraints[n..n + OWNER_FREEZE_CONSTRAINTS]
+                .iter()
+                .all(|c| dregg_circuit::descriptor_ir2::row_local_body(c).is_some()),
+            "[{key}] the {OWNER_FREEZE_CONSTRAINTS} owner-freeze welds must sit immediately past \
+             the host block, ahead of the canonicity block"
         );
         // The committed tail is: … 8 BEFORE welds, 16 node lookups, 8 root pins, 8 zero pins,
         // 1 selector gate (`withSelectorGate` appends exactly one row-local gate). Assert that

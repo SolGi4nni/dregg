@@ -344,14 +344,16 @@ mod tests {
         for k in 0..cav::MAX_CAVEATS {
             assert_eq!(caveat_tag_col(k), CAVEAT_BASE + 1 + k * cav::ENTRY_SIZE);
         }
-        // The concrete bound columns (drift pin at the NINE-LANE geometry: the nine-lane flag day
-        // moved `NUM_PRE_LIMBS` 178 → 184 and each rotated block `B_SPAN` 239 → 247, so
-        // CAVEAT_BASE = V1_WIDTH(188) + 2*B_SPAN(247) = 682; ENTRY_SIZE = 7; so
-        // caveat_tag_col(0) = 683).
-        assert_eq!(caveat_tag_col(0), 683);
-        assert_eq!(caveat_tag_col(1), 690);
-        assert_eq!(caveat_tag_col(2), 697);
-        assert_eq!(caveat_tag_col(3), 704);
+        // The concrete bound columns (drift pin at the KEY-NONET geometry: `76c3f7b9b` moved
+        // `NUM_PRE_LIMBS` 184 → 187 and `B_NUM_CHAIN` 61 → 62, so each rotated block's `B_SPAN`
+        // went 247 → 251 and CAVEAT_BASE = V1_WIDTH(188) + 2*B_SPAN(251) = 690; ENTRY_SIZE = 7;
+        // so caveat_tag_col(0) = 691. The delta is +4 per block × 2 blocks = +8, uniformly on all
+        // four tag columns — the manifest's own stride and entry count did not move.
+        // Earlier epochs, for the trail: 239/667.. at 178 limbs, 247/683.. at 184.)
+        assert_eq!(caveat_tag_col(0), 691);
+        assert_eq!(caveat_tag_col(1), 698);
+        assert_eq!(caveat_tag_col(2), 705);
+        assert_eq!(caveat_tag_col(3), 712);
     }
 
     #[test]

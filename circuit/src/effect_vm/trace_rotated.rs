@@ -7521,6 +7521,14 @@ mod tests {
     /// 178-geometry restated beside the generated group table. The nine-lane epoch consumed both
     /// pads into the fields NONET and this tooth went red for the one region it was not reading
     /// from Lean, which is the drift it was written to catch, pointed at itself.
+    ///
+    /// ⚑ And it happened AGAIN, one region over, at the KEY NONET epoch (`76c3f7b9b`,
+    /// `NUM_PRE_LIMBS` 184 → 187). The three new columns are the carrier octets' ninth lanes
+    /// (184/185/186 = `B_{CHILD_VK,CONTRACT_HASH,PUBKEY}_NINTH_LANE`), which Lean emits as their
+    /// OWN region — `ROTATED_OCTET_NINTH_LANES` — precisely because they are not adjacent to the
+    /// octets they complete. This tooth assembled every region except that one and reported a
+    /// 184-column cover of a 187-column layout. The repair is to extend the region, never to move
+    /// the `0..NUM_PRE_LIMBS` expectation: the expectation is the Lean export.
     #[test]
     fn rotated_layout_is_a_complete_disjoint_tiling() {
         let mut occ: Vec<usize> = Vec::new();
@@ -7535,6 +7543,10 @@ mod tests {
                 occ.push(base + k);
             }
         }
+        // ...and each octet's NINTH lane. NOT adjacent to its octet (184/185/186 sit past the
+        // fields nonet), so this is a separate emitted region and must be extended separately —
+        // reconstructing it as `base + 8` would put it back on top of the octet next door.
+        occ.extend(ROTATED_OCTET_NINTH_LANES);
         occ.extend(ROTATED_FIELDS_LANE_COLS);
         occ.extend(ROTATED_CELLS_COMPLETION);
         occ.extend(ROTATED_PADS);
@@ -7543,13 +7555,25 @@ mod tests {
         assert_eq!(
             occ, expected,
             "rotated pre-iroot layout must be a complete disjoint tiling of 0..{NUM_PRE_LIMBS} \
-             (matches Lean rotated184_legal + rotated184_complete)"
+             (matches Lean rotated187_legal + rotated187_complete)"
         );
         // The named octet bases the rest of this module reads ARE the emitted octet list — the one
         // place a consumer could still drift off the table it just checked.
         assert_eq!(
             ROTATED_OCTET_BASES,
             [B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET]
+        );
+        // ...and the same for the ninth lanes, POSITIONALLY parallel to the bases above (lane 8 of
+        // octet `i` is `ROTATED_OCTET_NINTH_LANES[i]`, not `ROTATED_OCTET_BASES[i] + 8`). This is
+        // what makes the extend above a tiling claim rather than three loose columns: the owner
+        // key's ninth lane (the Ed25519 sign bit) is `B_PUBKEY_NINTH_LANE`, and it is covered.
+        assert_eq!(
+            ROTATED_OCTET_NINTH_LANES,
+            [
+                B_CHILD_VK_NINTH_LANE,
+                B_CONTRACT_HASH_NINTH_LANE,
+                B_PUBKEY_NINTH_LANE
+            ]
         );
         // The nine-lane epoch left NO spare column: the tiling above is only complete because the
         // pads are gone. Stated so a future bump that re-introduces a pad has to say so here.

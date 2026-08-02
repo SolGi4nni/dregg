@@ -942,27 +942,35 @@ fn wide_carrier_blocks_fill_exactly_the_allocated_appendix() {
         AFTER_BASE, B_IROOT, BEFORE_BASE, GRAD_ROT_WIDTH, NUM_PRE_LIMBS, WIDE_CARRIER_APPENDIX,
         WIDE_CARRIER_BLOCK_SPAN, append_wide_carriers,
     };
-    // The derived flag-day geometry, RE-TYPED at the nine-lane epoch (178 -> 184 pre-limbs).
+    // The derived flag-day geometry, RE-TYPED at the KEY NONET epoch (184 -> 187 pre-limbs,
+    // `76c3f7b9b`; before that 178 -> 184 at the nine-lane epoch).
     //
     //   wide_carriers_for_limbs(n) = 1 + (n-4)/3 + (n-4)%3 + 1
     //     head + 3-limb body groups + 1-limb leftovers + the final iroot carrier
-    //   n = 184: body = 180, 1 + 60 + 0 + 1 = 62          (n = 178: 1 + 58 + 0 + 1 = 60)
-    //   WIDE_COMMIT_CARRIER      = WIDE_NUM_CARRIERS - 1  = 61
-    //   WIDE_CARRIER_BLOCK_SPAN  = 8 * 62                 = 496
-    //   WIDE_CARRIER_APPENDIX    = 2 * 496                = 992
+    //   n = 187: body = 183, 1 + 61 + 0 + 1 = 63   (n = 184: 1 + 60 + 0 + 1 = 62; n = 178: 60)
+    //   WIDE_COMMIT_CARRIER      = WIDE_NUM_CARRIERS - 1  = 62
+    //   WIDE_CARRIER_BLOCK_SPAN  = 8 * 63                 = 504
+    //   WIDE_CARRIER_APPENDIX    = 2 * 504                = 1008
     //
-    // The Lean side derives 62 INDEPENDENTLY — one carrier per emitted wide-lookup spec,
-    // `EffectVmEmitRotationWide.wideNumCarriers_eq : wideNumCarriers = 62` — and agrees.
+    // The whole delta is ONE carrier: 183 is 0 mod 3, so the three new pre-limbs (the carrier
+    // octets' ninth lanes, 184/185/186) form exactly one more clean 3-limb body group and leave no
+    // 1-limb leftover. +1 carrier -> +8 columns per block -> +16 across the two-block appendix.
+    //
+    // The Lean side derives 63 INDEPENDENTLY — one carrier per emitted wide-lookup spec — and
+    // agrees, at every step of the chain:
+    //   `EffectVmEmitRotationWide.wideNumCarriers_eq      : wideNumCarriers      = 63`
+    //   `EffectVmEmitRotationWide.wideCarrierBlockSpan_eq : wideCarrierBlockSpan = 504`
+    //   `EffectVmEmitRotationWide.wideAppendixSpan_eq     : wideAppendixSpan     = 1008`
     //
     // ⚠ `assert_eq!(WIDE_NUM_CARRIERS, wide_carriers_for_limbs(NUM_PRE_LIMBS))` USED TO STAND HERE
     // and has been DELETED: `trace_rotated.rs` defines `WIDE_NUM_CARRIERS` as exactly that call, so
     // the assertion was `x == x` — true at every geometry, including a wrong one. It is the same
     // tautology the cap-open geometry block was cleaned of on the same day. The literals below CAN
     // go red; that restated definition never could.
-    assert_eq!(WIDE_NUM_CARRIERS, 62, "184 pre-limbs -> 62 carriers");
-    assert_eq!(WIDE_COMMIT_CARRIER, 61, "the commitment carrier is 61");
-    assert_eq!(WIDE_CARRIER_BLOCK_SPAN, 496);
-    assert_eq!(WIDE_CARRIER_APPENDIX, 992);
+    assert_eq!(WIDE_NUM_CARRIERS, 63, "187 pre-limbs -> 63 carriers");
+    assert_eq!(WIDE_COMMIT_CARRIER, 62, "the commitment carrier is 62");
+    assert_eq!(WIDE_CARRIER_BLOCK_SPAN, 504);
+    assert_eq!(WIDE_CARRIER_APPENDIX, 1008);
 
     // A base row with recognizable limb material in both rotated blocks (limbs + iroot).
     let host_width = GRAD_ROT_WIDTH;

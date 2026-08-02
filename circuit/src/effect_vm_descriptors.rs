@@ -3245,7 +3245,17 @@ mod tests {
                     // no gadget); the whole +112 is `GRAD_ROT_WIDTH` 1707 -> 1819 carrying the
                     // canonicity aux region through `APPENDIX_SPAN` 539 -> 651, with `N_ROT_SITES`
                     // unmoved (`fieldsCanonical9At_hashSites`). 1819 + 73 = 1892.
-                    1892
+                    // ⚑ 1892 -> 1914 at the KEY NONET (`76c3f7b9b`). The satisfaction span is AGAIN
+                    // unchanged at 73; the whole +22 is `GRAD_ROT_WIDTH` 1819 -> 1841, and it splits:
+                    //    +8  `APPENDIX_SPAN` 651 -> 659 = 2·(B_SPAN 247 -> 251), the two rotated
+                    //        blocks each gaining 3 pre-limbs + 1 chain carrier. `C_SPAN` (45) and
+                    //        `CANON9_SPAN` (112) are untouched, so the appendix moves by the blocks
+                    //        alone.
+                    //   +14  `ROT_APPENDIX_SITES` 136 -> 138 × the 7 graduated lane columns each.
+                    //        Two sites, one per block: the extra chain carrier is one more absorb.
+                    // 1841 + 73 = 1914, and `settleEscrowSatVmDescriptor2R24` emits at 1841 flat —
+                    // a third reading of the same base, from the same TSV.
+                    1914
                 } else {
                     // GRAD_ROT_WIDTH + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns.
                     // Re-pinned 2121 → 2185 from the emitted TSV: the satisfaction-gadget span grew
@@ -3258,7 +3268,11 @@ mod tests {
                     // for the same reason: 1819 + 538 (the unchanged satisfaction span). That both
                     // members moved by exactly the base's delta is the check — a satisfaction gadget
                     // that had ALSO grown would show up as a member-specific residue here.
-                    2357
+                    // ⚑ 2357 -> 2379 at the KEY NONET, and the check fires clean a second time:
+                    // +22, EXACTLY discharge's delta and exactly `GRAD_ROT_WIDTH` 1819 -> 1841
+                    // (decomposed on the discharge arm above). 1841 + 538 — the no-dilution span is
+                    // unmoved, so neither gadget grew under the widening.
+                    2379
                 };
                 assert_eq!(
                     d.trace_width, expected,
