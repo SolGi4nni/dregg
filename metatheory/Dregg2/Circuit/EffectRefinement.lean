@@ -304,7 +304,8 @@ theorem createCell_spec_refines_circuit (S : Surface2) (LE : CellId → ℤ) (cN
   effect2triple_circuit_full_complete S (createCellE LE cN hN hLE DBal hDBal DSide hDSide)
     (createCellRestFrameEncodes S LE cN hN hLE DBal hDBal DSide hDSide hRest)
     (createCellGuardEncodes LE cN hN hLE DBal hDBal DSide hDSide) s args s'
-    ((apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mpr h)
+    ((apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mpr h)
 
 theorem createCell_circuit_refines_exec (S : Surface2) (LE : CellId → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
@@ -446,7 +447,8 @@ theorem spawn_spec_refines_circuit (S : Surface2) (LE : CellId → ℤ) (cN : Li
   effect2quint_circuit_full_complete S (spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs)
     (spawnRestFrameEncodes S LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs hRest)
     (spawnGuardEncodes LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs) s args s'
-    ((apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s').mpr h)
+    ((apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mpr h)
 
 -- The spawn descriptor is now a MOVING face: the product `active5` forces `delegationEpochAt` to the birth
 -- stamp, so BOTH directions run over the STRENGTHENED `SpawnFullSpec` (soundness AND completeness). The

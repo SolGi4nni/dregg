@@ -169,7 +169,9 @@ theorem recStateCommit_binds_kernel_fin
       (spongeCompress sponge) sponge (spongeCompress_inj sponge hCR) (denote f) (denote f') t hroot
   -- the 17 non-cell fields from `RH_fin` ON THE IMAGE (residual `Poseidon2SpongeCR`).
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA,
-    hHeaps, hNR, hRR, hCRoot⟩ := (restHashIffFrame_of_fin sponge hCR f f').mp hRHeq
+    hHeaps, hNR, hRR, hCRoot⟩ :=
+      (restHashIffFrame_of_fin sponge f f'
+        (spongeColl_refutable_of_injective sponge hCR _)).mp hRHeq
   -- the cell map from the cell-digest (reuse the committed `cellDigest_binds_cells` with `AccountsWF`).
   have hcell : (denote f).cell = (denote f').cell :=
     cellDigest_binds_cells (CH_fin sponge) (spongeCompress sponge) sponge
@@ -202,7 +204,9 @@ theorem recStateCommit_binds_kernel_fin_canon
     recStateCommit_binds (CH_fin sponge) (RH_fin sponge) (spongeCompress sponge)
       (spongeCompress sponge) sponge (spongeCompress_inj sponge hCR) (denote f) (denote f') t hroot
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA,
-    hHeaps, hNR, hRR, hCRoot⟩ := (restHashIffFrame_of_fin sponge hCR f f').mp hRHeq
+    hHeaps, hNR, hRR, hCRoot⟩ :=
+      (restHashIffFrame_of_fin sponge f f'
+        (spongeColl_refutable_of_injective sponge hCR _)).mp hRHeq
   have hcell : (denote f).cell = (denote f').cell :=
     cellDigest_binds_cells_fin sponge hCR f f' t hCanon hCanon' hAcc.symm hcd
   apply RecordKernelState.ext <;>
@@ -258,7 +262,9 @@ do not. So the rest hash genuinely binds the accumulator root — not vacuous. -
 theorem RH_fin_separates_root :
     RH_fin Reference.refSponge (denote rootedInit) ≠ RH_fin Reference.refSponge (denote finInit) := by
   intro h
-  have hbody := (restHashIffFrame_of_fin Reference.refSponge Reference.refSponge_CR rootedInit finInit).mp h
+  have hbody :=
+    (restHashIffFrame_of_fin Reference.refSponge rootedInit finInit
+      (spongeColl_refutable_of_injective Reference.refSponge Reference.refSponge_CR _)).mp h
   -- the 16th of the 17 clauses: `(denote finInit).nullifierRoot = (denote rootedInit).nullifierRoot`.
   have hroot := hbody.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.1
   have h0 := congrFun hroot 0                         -- (denote finInit).nR 0 = (denote rootedInit).nR 0

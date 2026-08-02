@@ -370,8 +370,23 @@ theorem conserves_from_verification_or_collides
 from `verify agg.root = true`, with the refuted injectivity set replaced by ONE per-instance side
 condition naming the attested chain's OWN seams. Satisfiable at an honest chain
 (`HistoryAggregation.noSeamKernelColl_of_honest`, at every hash), refutable at a lossy one
-(`seamKernelColl_refutable`), and load-bearing (`verified_history_conserves_unconditional_false`) —
-the three discriminations `conserves_from_verification_orBreak` provably cannot make. -/
+(`HistoryAggregation.seamKernelColl_refutable`), and load-bearing — the three discriminations
+`conserves_from_verification_orBreak` provably cannot make.
+
+⚑ **LOAD-BEARING, and what that citation may say.** The theorem for THIS statement is
+`conserves_from_verification_unconditional_false` (§5b): the minting chain satisfies this theorem's
+`es`, `hroot` and `hgen`, so a light client checking the succinct root alone accepts a history whose
+endpoint total is `500` against a genesis `100` — verification is not what excludes the mint.
+⚠ It DOES drop `hRest` and `hstruct` alongside `hno` (the `AccountsWF`/`FiniteRepresentable`
+obstruction of `HistoryAggregation.root_tooth_pins_kernel_unconditional_false`, spelled out at §5b);
+what identifies `hno` as the load-bearing one is
+`HistoryAggregation.chainKernelColl_fires_at_the_minting_chain`, which fires at exactly that chain
+and portal.
+
+⚠ `HistoryAggregation.verified_history_conserves_unconditional_false` — which this docstring used to
+cite for load-bearingness — refutes the `hno`-deleted `verified_history_conserves_of_noColl`, whose
+hypothesis is `ChainBound` DIRECTLY. `es : EngineSound …` + `hroot` stands in that place here and is
+STRICTLY STRONGER, so refuting that statement establishes nothing about this one. -/
 theorem conserves_from_verification_of_noColl
     (hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH)
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
@@ -460,40 +475,78 @@ via `root_tooth_pins_log` (the rotated commit's receipt-log limb). This is exact
 ROOT-FACE repair named ("`HistoryAggregation.stateRoot := rotatedCommit`") now CLOSED whole-history: a
 node cannot drop / forge / reorder / truncate a receipt at ANY step without breaking a published
 commit, and the light client sees it from the succinct aggregate alone. The receipt LOG — the one
-component the kernel-only §8 root did NOT bind — is now bound by the model the aggregate attests. -/
+component the kernel-only §8 root did NOT bind — is now bound by the model the aggregate attests.
+
+⚑ **BREAKING (2026-08-01):** `hstruct` narrowed from `SeamStruct` to `SeamTurnMatch` — the only arm
+the log recovery ever read. A caller holding `SeamStruct` inserts
+`HistoryAggregation.seamTurnMatch_of_seamStruct`; the `⚠ BRIDGE ONLY` forms below keep the wide
+signature, so nothing outside this file and `HistoryAggregation` changed. The narrowing is what makes
+the S3's load-bearing tooth statable at a SATISFIABLE envelope — see
+`logChained_of_verified_unconditional_false`. -/
 theorem non_omission_from_verification_or_collides
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
     (hroot : verify agg.root = true)
     (hgen : LogGenesisPin g steps)
-    (hstruct : SeamStruct steps) :
+    (hmatch : SeamTurnMatch steps) :
     LogChained g steps ∨ ChainLogColl CH RH cmb compress compressN steps := by
   have hatt := light_client_verifies_whole_history Proof verify CH RH cmb compress compressN
     agg g steps es hroot
   exact logChained_of_verified_or_collides CH RH cmb compress compressN g steps hgen hatt.ordered
-    hstruct
+    hmatch
 
 /-- **⚑⚑ S3 — THE WHOLE-HISTORY NON-OMISSION HEADLINE AT DEPLOYED PARAMETERS.** The receipt log
 chains across the whole attested history from `verify agg.root = true`, with the refuted
 `compressNInjective` replaced by ONE per-instance side condition naming the attested chain's OWN
 seams and the receipt pairs inside its OWN logs. An omitting node must exhibit a sponge collision at
-a pair this statement names. -/
+a pair this statement names.
+
+**The three discriminations** (they were MISSING for this residual until 2026-08-01, while the
+conservation leg's `ChainKernelColl` had all three): REFUTABLE at a lossy sponge
+(`HistoryAggregation.seamLogColl_fires_at_the_diagonal_seam`), NOT PROVABLE
+(`HistoryAggregation.noSeamLogColl_not_provable`), and LOAD-BEARING —
+`non_omission_from_verification_unconditional_false` (§5b) refutes THIS theorem with `hno` deleted,
+with NOTHING else dropped alongside it: the omitting chain satisfies this theorem's other four
+hypotheses verbatim — `omitting_engine_sound`, the verifying root, the genesis log pin and
+`SeamTurnMatch` — and still DROPS a receipt across a seam.
+`HistoryAggregation.chainLogColl_fires_at_the_omitting_chain` fires at that same witness.
+
+⚠ **Cite §5b, not the `HistoryAggregation` twin.**
+`HistoryAggregation.logChained_of_verified_unconditional_false` refutes the `hno`-deleted
+`logChained_of_verified_of_noColl`, which hypothesises `ChainBound` DIRECTLY. This theorem does not:
+`es : EngineSound …` + `hroot` stands in that place and is STRICTLY STRONGER, so that twin says
+nothing about this statement. This docstring claimed otherwise until 2026-08-01; the repair was to
+prove the missing theorem (verification genuinely does NOT exclude the omitting chain), not to
+soften the claim. ⚠ Note `ChainLogColl []` and `ChainLogColl [s]` are `False` by definition, so
+these teeth necessarily live at the two-step lift, which is where they are.
+
+⚑ **WHAT `hno` COSTS AN HONEST NODE.** It is not free. Unlike the conservation leg — where
+`noSeamKernelColl_of_honest` refutes the residual at an honest seam for FREE, at every hash — the log
+residual survives an honest seam once any step's receipt log is non-empty: `LogRootColl L L` keeps
+its `LogFeltsColl L L` disjunct even at EQUAL logs, i.e. "two distinct turns of that same log collide
+under `compressN`", and `seamLogColl_fires_at_honest_seam_with_colliding_log` exhibits exactly that
+between two genuine executor steps. The discharge is `noChainLogColl_of_honest`: every seam honest,
+plus at each step a FINITE self-collision check over the `|log|²` receipt pairs that step already
+holds. Per-instance and decidable — a price, not a floor — but a real one, and
+`noSeamLogColl_of_honest_nil` is the only corner where it is zero. -/
 theorem non_omission_from_verification_of_noColl
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
     (hroot : verify agg.root = true)
     (hgen : LogGenesisPin g steps)
-    (hstruct : SeamStruct steps)
+    (hmatch : SeamTurnMatch steps)
     (hno : ¬ ChainLogColl CH RH cmb compress compressN steps) :
     LogChained g steps :=
   (non_omission_from_verification_or_collides Proof verify CH RH cmb compress compressN
-    agg g steps es hroot hgen hstruct).resolve_right hno
+    agg g steps es hroot hgen hmatch).resolve_right hno
 
 /-- ⚠ **BRIDGE ONLY (2026-08-01).** The disjunct is a BARE `SpongeCollision compressN` — a global
 existential that `SpongeCollisionShirk.spongeCollision_of_fieldBounded` supplies at every deployed
 sponge, so this whole-history non-omission dichotomy is `True` as stated and the light client learns
 nothing from it. `non_omission_from_verification_or_collides` is the surviving form; this one is
-retained, re-derived through it, purely to machine-check that nothing proved was given up. -/
+retained, re-derived through it, purely to machine-check that nothing proved was given up. Keeps the
+wide `SeamStruct` hypothesis (adapted through `seamTurnMatch_of_seamStruct`) so its callers in
+`Lightclient/NonOmissionAttack` are unaffected by the narrowing above. -/
 theorem non_omission_from_verification_orBreak
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g steps)
@@ -504,7 +557,7 @@ theorem non_omission_from_verification_orBreak
       (Dregg2.Circuit.CollisionReduce.SpongeCollision compressN) (LogChained g steps) :=
   Or.imp_right (ChainLogColl.toSponge CH RH cmb compress compressN)
     (non_omission_from_verification_or_collides Proof verify CH RH cmb compress compressN
-      agg g steps es hroot hgen hstruct)
+      agg g steps es hroot hgen (seamTurnMatch_of_seamStruct steps hstruct))
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `compressNInjective` is REFUTED at deployed width, so this
 form of the non-omission headline concluded from a false premise. `non_omission_from_verification_orBreak`
@@ -637,6 +690,187 @@ theorem anchored_tooth_bites_on_real_chain
     False :=
   anchored_attests_rejects_fabricated_genesis RealProof zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps (realAggregate.genesisRoot + 1) (by omega) anch
+
+/-! ### 5b. ⚑⚑ THE TWO S3s' LOAD-BEARING TEETH, AT THE S3s' OWN HYPOTHESES.
+
+⚑ **What was wrong here, 2026-08-01.** Both S3s of §4 announced that `hno` is load-bearing and cited
+`HistoryAggregation.logChained_of_verified_unconditional_false` /
+`verified_history_conserves_unconditional_false` for it — the second of them with the words "with
+NOTHING else dropped alongside it". Those two theorems refute the `hno`-deleted forms of
+`logChained_of_verified_of_noColl` and `verified_history_conserves_of_noColl`, which hypothesise
+`ChainBound` DIRECTLY. The S3s here do not: they carry `es : EngineSound …` and
+`hroot : verify agg.root = true` IN PLACE of `ChainBound`, which is a STRICTLY STRONGER hypothesis
+set — `light_client_verifies_whole_history` extracts `ChainBound` from it and four public pins
+besides. Refuting a weaker-hypothesis statement establishes nothing about a stronger one, so the
+citation was an overreach in exactly the shape this campaign exists to catch: `hno` might have been
+excluding a counterexample that VERIFICATION already excluded.
+
+**Verification had not.** The engine side is INHABITABLE at both counterexample chains, which is what
+this section proves: `omitting_engine_sound` and `minting_engine_sound` are real `EngineSound`
+instances over a chain that DROPS a receipt and a chain that MINTS `400`. Nothing in them is faked —
+`acceptAll` accepts, so all three implications have TRUE antecedents and must be discharged;
+`leaf_sound`'s positional pairing is discharged by each `ChainStep`'s OWN `commits` field (both
+chains are built from genuine `recCexec` steps); and `binding_sound`'s four obligations hold with
+the aggregate's public roots DEFINED to be the genuine ones.
+
+⚑ **The mechanism, said plainly, because it is the whole content of the result.** `EngineSound`
+constrains the per-step executor transitions, the ROOTS, and the turn count. It says nothing about
+the receipt log or the ledger total except THROUGH the roots — so a LOSSY sponge blinds it: at
+`zcompressN`, `chainedCommit` is `compressN [d, iroot]` and every root is `0`, so `ChainBound` holds
+by `rfl` across a seam that dropped a receipt or jumped supply. That is exactly the collision `hno`
+refuses to grant, at exactly the seam it names
+(`HistoryAggregation.chainLogColl_fires_at_the_omitting_chain`,
+`…chainKernelColl_fires_at_the_minting_chain`). The residual is not decoration on top of
+verification; it is the entire distance between a verifying aggregate and a true conclusion. -/
+
+/-- The OMITTING two-step chain — `honestStep` against ITSELF. Its first step's post-log holds the
+receipt that step just recorded while its second step's pre-log is EMPTY: a receipt DROPPED across
+the seam. At the constant portal both roots are `0`, so the temporal tooth still holds. The chain
+`HistoryAggregation.chainLogColl_fires_at_the_omitting_chain` fires at. -/
+def omittingSteps : List ChainStep := [honestStep, honestStep]
+
+/-- The aggregate over `omittingSteps`: every proof is the accepting `Unit`, and the four public
+commitments are the genuine ones of that chain, so `binding_sound`'s pins hold definitionally. -/
+def omittingAggregate : Aggregate RealProof where
+  root := ()
+  leafProofs := [(), ()]
+  bindingProof := ()
+  genesisRoot := ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN honestStep
+  finalRoot := foldedFinalRoot zCH zRH zcmb zcompress zcompressN teethGenesis omittingSteps
+  chainDigest := 0
+  numTurns := 2
+
+/-- **`omitting_engine_sound` — VERIFICATION DOES NOT EXCLUDE THE OMITTING CHAIN.** The three named
+engine-soundness hypotheses all HOLD over a chain that drops a receipt. Nothing is faked: both leaf
+obligations are discharged by `honestStep.commits`, the genuine executor witness the step carries,
+and the binding leaf's `ChainBound` is the constant portal's `rfl`. This is the fact that makes the
+non-omission S3's load-bearing tooth statable at the S3's own hypotheses. -/
+theorem omitting_engine_sound :
+    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+      omittingAggregate teethGenesis omittingSteps := by
+  refine { recursive_sound := ?_, leaf_sound := ?_, binding_sound := ?_ }
+  · intro _
+    exact ⟨fun _ _ => rfl, rfl⟩
+  · show List.Forall₂ _ [(), ()] omittingSteps
+    exact List.Forall₂.cons (fun _ => honestStep.commits)
+      (List.Forall₂.cons (fun _ => honestStep.commits) List.Forall₂.nil)
+  · intro _
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · exact ⟨rfl, trivial⟩
+    · simp [omittingAggregate, omittingSteps]
+    · rfl
+    · rfl
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING) — the NON-OMISSION S3, AT ITS OWN HYPOTHESES.**
+`non_omission_from_verification_of_noColl` with `hno` DELETED is FALSE, and **nothing else is
+dropped alongside it**: the statement refuted below carries, verbatim, that theorem's other four
+hypotheses — the engine soundness, the verifying root, the genesis log pin and the per-seam turn
+match. The witness is the omitting chain, which satisfies all four (`omitting_engine_sound`, `rfl`,
+`rfl`, `⟨rfl, trivial⟩`) and still drops a receipt across the seam.
+
+⚑ This is the theorem the S3's load-bearing claim needs.
+`HistoryAggregation.logChained_of_verified_unconditional_false` refutes the `ChainBound`-hypothesised
+keystone, NOT this S3, whose `EngineSound` + `hroot` is strictly stronger. The companion that
+identifies `hno` as the side condition excluding THIS counterexample is
+`HistoryAggregation.chainLogColl_fires_at_the_omitting_chain`, at the same chain and the same
+portal. -/
+theorem non_omission_from_verification_unconditional_false :
+    ¬ ∀ (Proof : Type) (verify : Proof → Bool)
+        (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ)
+        (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+        (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep),
+        EngineSound Proof verify CH RH cmb compress compressN agg g steps →
+        verify agg.root = true →
+        LogGenesisPin g steps →
+        SeamTurnMatch steps →
+        LogChained g steps := by
+  intro hall
+  have h := hall RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    omittingAggregate teethGenesis omittingSteps omitting_engine_sound rfl rfl ⟨rfl, trivial⟩
+  exact absurd (congrArg List.length h.2.1) (by decide)
+
+/-- The MINTING two-step chain — `honestStep` followed by `richStep`, which starts from a genesis
+holding `500` against the first step's `100`. Value is created across the seam; at the constant
+portal both roots are `0`, so the temporal tooth still holds. The chain
+`HistoryAggregation.chainKernelColl_fires_at_the_minting_chain` fires at. -/
+def mintingSteps : List ChainStep := [honestStep, richStep]
+
+/-- The aggregate over `mintingSteps` — same shape as `omittingAggregate`, genuine public pins. -/
+def mintingAggregate : Aggregate RealProof where
+  root := ()
+  leafProofs := [(), ()]
+  bindingProof := ()
+  genesisRoot := ChainStep.oldRoot zCH zRH zcmb zcompress zcompressN honestStep
+  finalRoot := foldedFinalRoot zCH zRH zcmb zcompress zcompressN teethGenesis mintingSteps
+  chainDigest := 0
+  numTurns := 2
+
+/-- **`minting_engine_sound` — VERIFICATION DOES NOT EXCLUDE THE MINTING CHAIN.** As
+`omitting_engine_sound`, over the chain that creates value across a seam: both leaf obligations come
+from the steps' own `commits` witnesses (`honestStep`'s and `richStep`'s), and the binding leaf's
+tooth is the constant portal's `rfl`. -/
+theorem minting_engine_sound :
+    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+      mintingAggregate teethGenesis mintingSteps := by
+  refine { recursive_sound := ?_, leaf_sound := ?_, binding_sound := ?_ }
+  · intro _
+    exact ⟨fun _ _ => rfl, rfl⟩
+  · show List.Forall₂ _ [(), ()] mintingSteps
+    exact List.Forall₂.cons (fun _ => honestStep.commits)
+      (List.Forall₂.cons (fun _ => richStep.commits) List.Forall₂.nil)
+  · intro _
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · exact ⟨rfl, trivial⟩
+    · simp [mintingAggregate, mintingSteps]
+    · rfl
+    · rfl
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING) — the CONSERVATION S3, AT ITS OWN ENGINE HYPOTHESES.**
+`conserves_from_verification_of_noColl` with `hno` deleted is FALSE at hypotheses that INCLUDE the
+engine soundness and the verifying root: the minting chain satisfies `EngineSound`,
+`verify agg.root = true` and the genesis kernel pin, and its endpoint total is `500` against a
+genesis total of `100`. So verification is NOT what excludes the mint — a light client checking the
+succinct root alone would accept this history.
+
+⚠ **Stated precisely — what IS dropped alongside `hno`, and why each.** Two hypotheses, for two
+DIFFERENT reasons, and they are not equally hard to restore.
+
+  * `hstruct : SeamStruct steps` — a REAL obstruction, the one
+    `HistoryAggregation.root_tooth_pins_kernel_unconditional_false` names. A `ChainStep` carries a
+    real `recCexec` witness; every such witness in this tree runs over `teethGenesis` or
+    `richGenesis`, whose DEAD cells hold `.record [("balance", .int 0)]` while `default : Value` is
+    `.int 0` — so `AccountsWF` (`∀ c ∉ accounts, cell c = default`) FAILS on both, and no
+    `SeamStruct` chain is constructible here to be a counterexample at all. Restoring it means
+    building an `AccountsWF`-and-`FiniteRepresentable` genesis whose executor witness still decides
+    — the named, unported strengthening.
+  * `hRest : RestHashIffFrameFin RH` — NOT an obstruction, UNDONE WORK. It is satisfiable
+    (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, a closed proof at
+    `RH_fin Reference.refSponge`), and it would cost this counterexample nothing to carry: the tooth
+    here is forced by `zcompressN` alone — `chainedCommit` is `compressN [_, _]`, so a constant
+    `compressN` sends every root to `0` whatever `RH` is. The only thing in the way is that
+    carrying it would make this the first `Circuit/*` module to import a `Verify/*` one, a module-
+    graph change with ~8 downstream consumers that is not this theorem's to make. Since `hstruct`
+    must go regardless, the caveat survives either way — but `hRest` is one import from gone.
+
+What identifies `hno` as the load-bearing one despite the drop is the companion
+`HistoryAggregation.chainKernelColl_fires_at_the_minting_chain`: the residual FIRES at exactly THIS
+chain and THIS portal, so it is the side condition that excludes the counterexample. The log leg
+needed no such caveat at all, which is why its S3 was narrowed to `SeamTurnMatch`. -/
+theorem conserves_from_verification_unconditional_false :
+    ¬ ∀ (Proof : Type) (verify : Proof → Bool)
+        (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ)
+        (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+        (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep),
+        EngineSound Proof verify CH RH cmb compress compressN agg g steps →
+        verify agg.root = true →
+        KernelGenesisPin g steps →
+        recTotal (lastStateOf g steps).kernel = recTotal g.kernel := by
+  intro hall
+  have h := hall RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+    mintingAggregate teethGenesis mintingSteps minting_engine_sound rfl rfl
+  exact absurd h (by decide)
 
 end Realize
 
@@ -971,6 +1205,13 @@ end Accumulator
 -- whole-history NON-OMISSION derived from `verify agg.root` (the rotated commit binds every receipt log):
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.real_engine_sound
+-- ⚑⚑ the two S3s' LOAD-BEARING teeth, at the S3s' OWN hypotheses (2026-08-01). The
+-- `HistoryAggregation` `_unconditional_false` pair refutes the `ChainBound`-hypothesised keystones,
+-- NOT these S3s, whose `EngineSound` + `hroot` is strictly stronger; both S3s cited it anyway.
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.omitting_engine_sound
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification_unconditional_false
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.minting_engine_sound
+#assert_axioms Dregg2.Circuit.RecursiveAggregation.conserves_from_verification_unconditional_false
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.light_client_fires_on_real_chain
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.real_chain_first_turn_executed
 #assert_axioms Dregg2.Circuit.RecursiveAggregation.tampered_aggregate_cannot_bind

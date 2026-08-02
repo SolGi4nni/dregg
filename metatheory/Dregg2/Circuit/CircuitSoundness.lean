@@ -470,7 +470,80 @@ proofs; it is NOT a 241-site change. What couples it into a single indivisible c
   3. Each of the 29 consumers drops an argument at its `hrefines e hCR …` application sites, and sheds
      `hCR` where nothing else in the proof reads it.
 
-None of the three is a reason to keep the antecedent; they are the work order. -/
+None of the three is a reason to keep the antecedent; they are the work order.
+
+⚑ **RE-MEASURED 2026-08-01 (second pass). The blast-radius numbers hold; two claims around them do
+not.** Exact-word count over `metatheory/`, comments AND string literals stripped mechanically:
+**245 mentions, 84 in CODE, 161 in comments, 38 files.** The 84 code sites account exactly:
+
+  * **29** `hrefines`-family HYPOTHESIS binders — and checked one at a time, **29/29 also bind
+    `hCR : Poseidon2SpongeCR hash` explicitly**. (The one that reads as an exception to a
+    line-local grep, `Metatheory.Adversary.Schema.circuitDynamics`, is a `noncomputable def` and
+    binds it four lines above its `hrefines`.) The consumer half is visible; it is not the hole.
+  * **32** in `DescriptorRefinesComplete` — but that is TWO declarations: the alias `def`, and the
+    single `descriptorRefines_census`, whose statement is one 31-way conjunction.
+  * **4** `open` lines, **1** `FloorCensus.sentinelPropBody` row, **1** this def, **17** producers
+    and equations — of which 4 are `DescriptorRefinesShirkRefuted`'s deliberate refutations and 1 is
+    `DescriptorRefinesReduce.descriptorRefines_constHash_vacuous`.
+
+**THE ALIAS CHAIN IS THREE DEEP, NOT TWO, AND THE THIRD CARRIES THE CAPSTONES.** Where a grep for
+this def's name goes blind:
+
+  * `CircuitSoundnessAssembled.EffectDecodeBridge` — 7 code sites, 4 files.
+  * `DescriptorRefinesComplete.DescriptorRefinesComplete`
+    (`def … : Prop := ∀ e, descriptorRefines …`) — 12 code sites, 4 files. Not named above until now.
+  * `WitnessRealizing.LeafRefinement`, through its `refines` FIELD: reached as
+    `Nonempty (LeafRefinement …)` at **18 code sites in 4 files**, including
+    `AssuranceCaseGrounded.deployed_system_secure_grounded{,_v2}`,
+    `grounded_capstone_engine_fires{,_v2}`, and six `GroundedApex` theorems.
+
+At none of those 37 sites does the word `descriptorRefines` occur.
+
+⚠ **"NO INSTRUMENT CAN SEE IT" IS FALSE, and stating it that way is how a real finding gets
+over-read.** `#floor_ratchet`'s `Surface` carries `propBody` and `bundles` as a JOINT FIXPOINT
+(`Verify/FloorRatchet.lean:669-670`), and every one of the 24 declarations across this chain that
+was probed — this def, `EffectDecodeBridge`, `DescriptorRefinesComplete`, `LeafRefinement`,
+`rejectLeaf`, `leafStep_of_refinement`, `leafSound_of_refinements`, `engineSound_of_refinements`,
+three `GroundedApex` theorems, `AssuranceCaseGrounded.deployed_system_secure_grounded`, plus
+`descriptorRefinesTB` and `Market.ProtocolAssurance.ShieldedRingDescriptorRefines` — is ALREADY a
+grandfathered row in `FloorRatchetBaseline`. The ratchet SEES this class and PERMITS it. What the
+prop-body placement hides is the declaration's TYPE: `#print`, `#check`, a human reader, and an
+`#assert_axioms` audit all see a clean signature. Two different failures; only the second is this
+def's, and the fix for the first is a shorter baseline, not a new instrument.
+
+⚠ **"the (separately refuted) `CommitSurface` bundle" IS STALE — as of `1f53df6d2`, TODAY.**
+`ApexPremiseVacuity.ApexCommitFloor` is the five-conjunct list `compressInjective cmb ∧
+compressInjective compress ∧ compressNInjective compressN ∧ cellLeafInjective CH ∧
+RestHashIffFrame RH`, and `apexCommitFloor_unsatisfiable` kills it through the FIFTH conjunct, by
+Cantor. `CommitSurface` at HEAD has NONE of those five as fields — the four injectivity ones are
+deleted (§1's tombstone) and the fifth is `RestHashIffFrameFin RH` — and it has a CLOSED inhabitant,
+the anonymous `noncomputable example : CommitSurface` at
+`Verify/RestFrameFiniteSupportSuccessor.lean:348`. So `(S : CommitSurface) → ¬ P S` is no longer
+free and a refutability pole AT THE BUNDLE is stateable for the first time.
+
+That does not make `ApexFloorFree.CommitMap` unnecessary; it changes the REASON, and the old reason
+is about to be copied into two more files. `descriptorRefinesFree_false_at_False_kstep` needs a
+commit map that HITS the opaque published value `tracePublishedCommit emptyTrace` — that is what
+`ApexFloorFree.collapseMap` is for. `S.commit` is `recStateCommit` of `S`'s five primitives and
+cannot be chosen to hit an opaque target. **The move to `CommitMap` is because the map must be
+ARBITRARY, not because the bundle is empty.**
+
+⚑ **AND THE TOOTH MAY NOT BE A NAMED THEOREM.** A declaration whose TYPE mentions `CommitSurface`
+is a `#floor_ratchet` `bundle-user` carrier and the gate hard-errors on a new one; the established
+discipline for a reference-pole object is an ANONYMOUS `example`
+(`Verify/RestFrameFiniteSupportSuccessor.lean` §6, `TurnDecodeChainLogBundleCutoverCheck` §1/§5).
+Whether `CommitSurface` is still computed into `Surface.bundles` after the drain is a question only
+a root `#floor_ratchet` run answers, and the root cannot elaborate today — that run is step 0 of the
+port, not an assumption of it.
+
+**SMALLEST FIRST STEP, and it is not this def.** `FloorCensus.sentinelPropBody` is
+`[descriptorRefines]` and nothing else, so porting THIS def requires editing `FloorCensus.lean` in
+the same commit — which the vacuity-campaign lanes are forbidden to touch, so it needs the operator,
+and it is the first work item rather than a reason to stop. The other two prop-body carriers are in
+no sentinel list and can land alone: `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTB`
+(3 live code sites) and `Market.ProtocolAssurance.ShieldedRingDescriptorRefines` (5). Baseline rows
+block neither — `FloorRatchetBaseline` is emitted as `baseline ∩ current` and its only healthy
+direction is shorter, so a row left stale by a port is green. -/
 def descriptorRefines (S : CommitSurface) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor2) (kstep : RecChainedState → RecChainedState → Prop) : Prop :=
   Poseidon2SpongeCR hash →
