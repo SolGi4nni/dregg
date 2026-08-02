@@ -309,6 +309,22 @@ re-ground on `¬ SpongeColl` at a named pair: there is no pair in play, so a per
 here would be decoration. Do NOT re-ground on `OrBreak (SpongeCollision hash) _` — refuted wholesale by
 `SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`.
 
+⚑⚑ **AND THE DELETION ALONE IS NOT THE REPAIR — MEASURED 2026-08-01, PROVED FOR THE SHIELDED TWIN.**
+`Market.ProtocolAssurance.shieldedRingDescriptorRefinesFree_forces_no_decode` shows that deleting the
+antecedent from a rung whose CONCLUSION is a fixed log-forcing relation leaves an obligation that holds
+only where its own premise is EMPTY. The argument is structural and transfers here verbatim:
+`StateDecode` reads `pre.kernel`, `post.kernel` and `AccountsWF` and NEVER `.log`, while
+`dispatchArmFacetTB` unfolds through `BalanceMovementSpecFacet`, whose third conjunct is
+`st'.log = tr :: st.log`. So from any decode of `(pre, post)` the pair `(pre, ⟨post.kernel, pre.log⟩)`
+decodes the SAME `pc` and the rung there demands `pre.log = pc.turn :: pre.log`.
+
+This def is WORSE placed than the shielded one, not better: it carries no `tracePublishedCommit t = pc`
+premise, so its `pc` is unconstrained and `pc.turn` — the very turn `dispatchArmFacetTB` binds — is
+whatever the decode supplies. The port must therefore decide where the log link comes from before it
+deletes anything. `ClosureAll.hrefinesAllClosed` supplies it for the general rung as `mkLog`, a producer
+of `ClosureLog.StateDecodeLog`, a `FloorRatchet.sentinelBundles` member carrying `logHashInjective` —
+so copying that route trades one refuted floor for another.
+
 WHY IT WAITS: this def is smaller than `CircuitSoundness.descriptorRefines` but sits DOWNSTREAM of it
 through `descriptorRefinesTB_to_descriptorRefines`, whose conclusion is that def. Porting this one first
 leaves the lowering forwarding a live `hCR` into a dead antecedent, which reads as a genuine consumer and

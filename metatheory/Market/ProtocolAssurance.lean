@@ -42,6 +42,7 @@ Pure.  No axioms; the two missing links remain named propositions.
 -/
 import Market.CrossChainSettlement
 import Dregg2.Circuit.CircuitSoundness
+import Dregg2.Circuit.ApexFloorFree
 import Dregg2.Tactics
 
 namespace Market.ProtocolAssurance
@@ -437,24 +438,41 @@ empty-log states refutes the ported obligation outright (`0 = 0 + 2`). ⚠ It mu
 carrier and the gate hard-errors on a new named one (the discipline of
 `Verify/RestFrameFiniteSupportSuccessor.lean` §6).
 
-HONEST REPLACEMENT: delete the antecedent — the same DELETION that landed for
-`ClosureAll.ClosedLogExtract` and `CircuitCompleteness.descriptorComplete` on 2026-07-25
-(`FloorCensus.portedPropBody`) — and state the def over a bare `ApexFloorFree.CommitMap` instead of
-`S : CommitSurface`, for the arbitrary-map reason just corrected.
-`ApexFloorFree.descriptorRefinesFree` is the shape to copy; it already carries the
-`tracePublishedCommit t = pc` link this def carries, and
-`ApexFloorFree.descriptorRefinesFree_false_at_False_kstep` shows the resulting obligation is REFUTABLE,
-which is the acceptance test this def fails today.
+⚑⚑ **AND THAT SAME `log_length` ARGUMENT IS THE BLOCKER, NOT JUST THE TOOTH — MEASURED 2026-08-01,
+LANDED AS A THEOREM.** The paragraph above read the log-length refutation as a convenience (the ported
+def would be REFUTABLE, which is the acceptance test). Run the same argument at an ARBITRARY decode
+rather than at `state0`/`state1` and it says something much stronger:
+`shieldedRingDescriptorRefinesFree_forces_no_decode` — the ported rung holds ONLY where its own premise
+is EMPTY. `StateDecode`/`StateDecodeC` read only kernels and `AccountsWF`, never `.log`, so from any
+decode of `(pre, post)` the pair `(pre, ⟨post.kernel, pre.log⟩)` decodes the SAME commitment, and the
+rung there yields `pre.log.length = pre.log.length + 2`. So deleting the antecedent does not convert a
+free hypothesis into an honest open one; it converts it into an UNSATISFIABLE one, and the three
+`hmarket` consumers would become "unsatisfiable ⟹ anything".
+
+HONEST REPLACEMENT — the deletion is step one of it and NOT the whole of it. What landed
+(§ "THE FLOOR-FREE SHIELDED RUNG", below `ShieldedRingApexStep.log_length`) is the deletion target,
+`ShieldedRingDescriptorRefinesFree`, stated over `ApexFloorFree.CommitMap` — an `abbrev` for
+`ApexFloorFree.descriptorRefinesFree C hash d ShieldedRingApexStep`, so the port routes through the
+existing floor-free rung instead of minting a second obligation shape — together with its refutation
+`shieldedRingDescriptorRefinesFree_false_at_collapseMap` and the measurement above. What is NOT landed,
+and is the real remaining decision, is where the LOG LINK comes from: `ClosureAll.hrefinesAllClosed`
+supplies it for the general rung as `mkLog`, a producer of `ClosureLog.StateDecodeLog`, which is a
+`FloorRatchet.sentinelBundles` member carrying `logHashInjective` — a refuted floor. Doing the same here
+would trade one floor for another. The floor-free alternatives are to weaken the conclusion to its
+kernel-endpoint half and name the log clause as a separate per-instance residual, or to carry the log
+link as an explicit non-crypto premise. Neither is taken here.
 
 Do NOT re-ground on `SpongeCollisionShirk.SpongeColl` at a named pair — no proof here feeds the sponge a
 pair, so a per-instance side condition would be decoration and a fresh carrier. Do NOT re-ground on
 `OrBreak (SpongeCollision hash) _`: refuted wholesale by
 `SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`.
 
-⚠ AND THE PORT DOES NOT FINISH THE JOB HERE. Deleting the antecedent makes this def refutable; it does not
-make it PROVED. What is left afterwards is the genuine, still-open obligation the header describes —
-six-lane recognition ⟹ the whole `FusedDrexClearing` — which nothing in the tree discharges. The port
-converts a free hypothesis into an honest open one. That is the whole of its value, and it is worth it. -/
+⚠ THE `bundle-user` WARNING ABOVE IS ALSO STALE. `FloorRatchet.sentinelBundles` is
+`[Poseidon2RealizedSponge, StateDecodeLog, ClosureReadouts, ClosureReadoutsLive]` — `CommitSurface` was
+removed when its four injectivity fields were deleted, and `scripts/check-floor-baseline-preflight.sh`
+re-pointed its parse canary for the same reason. A named declaration mentioning `CommitSurface` is no
+longer a bundle-user carrier on that account. The declarations landed below avoid it regardless, since
+they are stated over `CommitMap`. -/
 def ShieldedRingDescriptorRefines (S : CommitSurface) (hash : List Int → Int)
     (d : EffectVmDescriptor2) : Prop :=
   Poseidon2SpongeCR hash →
@@ -519,6 +537,140 @@ theorem ShieldedRingApexStep.log_length {pre post : RecChainedState}
 #assert_axioms fusedSettle_settles
 #assert_axioms shieldedRingApexStep_realizable
 #assert_axioms ShieldedRingApexStep.log_length
+
+/-! ## ⚑ THE FLOOR-FREE SHIELDED RUNG, AND WHY DELETING THE ANTECEDENT IS NOT THE PORT.
+
+`ShieldedRingDescriptorRefines` carries `Poseidon2SpongeCR hash →` in its VALUE, so no floor binder
+appears in the type of anything that mentions it. The annotation above prescribed the repair that
+landed for `ClosureAll.ClosedLogExtract` and `CircuitCompleteness.descriptorComplete`: DELETE the
+antecedent and restate over a bare commit map. This section lands the target of that port and then
+MEASURES it — and the measurement says the deletion, taken alone, does not repair this def.
+
+**The ported rung needs no new obligation shape.** With `StateDecode S` replaced by its field-for-field
+commit-map twin `ApexFloorFree.StateDecodeC C`, the body of `ShieldedRingDescriptorRefines` IS
+`ApexFloorFree.descriptorRefinesFree C hash d ShieldedRingApexStep` — the same universally quantified
+rung the apex chain already runs on, at the shielded step relation. So the port routes through an
+existing floor-free bridge rather than minting a second one, and
+`ShieldedRingDescriptorRefinesFree` below is an `abbrev`, not a new `Prop`.
+
+⚑⚑ **AND THE PORTED RUNG HAS NO SATISFIABLE POLE WITH CIRCUIT CONTENT** —
+`shieldedRingDescriptorRefinesFree_forces_no_decode`, proved below. The reason is structural and has
+nothing to do with the sponge:
+
+  * `StateDecode` / `StateDecodeC` are LOG-BLIND. All four fields read `pre.kernel` and `post.kernel`
+    (`preBinds`, `postBinds`, `preWF`, `postWF`); `RecChainedState.log` appears in none of them.
+  * `ShieldedRingApexStep` is LOG-FORCING: its third conjunct is
+    `post.log = ringReceiptLog (settlementsOf f.clearing.nodes) pre.log`, and with `f.twoLeg` that
+    gives `ShieldedRingApexStep.log_length : post.log.length = pre.log.length + 2`.
+
+So from ANY decode `StateDecodeC C pc pre post` one builds a SECOND decode of the SAME `pc` — the pair
+`(pre, ⟨post.kernel, pre.log⟩)`, which agrees with the first on every field the decode reads — and the
+rung applied there yields `pre.log.length = pre.log.length + 2`. The rung therefore holds only where its
+own premise is EMPTY. Deleting the antecedent trades an obligation the PARAMETERS discharge for one no
+circuit can discharge; the three consumers would go from "free hypothesis" to "unsatisfiable hypothesis
+⟹ anything", which is the failure `ApexFloorFree`'s satisfiable poles exist to rule out.
+
+⚠ **THIS IS A PROPERTY OF THE CLASS, NOT OF THE SHIELDED RING.** Every per-effect spec ends
+`st'.log = t :: st.log` (`BalanceMovementSpec`, `MintASpec`, `BalanceMovementSpecFacet`, …), so
+`dispatchArm` and `dispatchArmFacetTB` are log-forcing in exactly the same way. What differs is where
+the log link is supplied. `CircuitSoundness.descriptorRefines` is PARAMETRIC in `kstep`, so it keeps a
+satisfiable pole (`ApexFloorFree.descriptorRefinesFree_trivial`), and its deployed discharge
+`ClosureAll.hrefinesAllClosed` carries the link EXPLICITLY as `mkLog`, a producer of
+`ClosureLog.StateDecodeLog` — a `FloorRatchet.sentinelBundles` member carrying `logHashInjective`.
+`ShieldedRingDescriptorRefines` bakes `ShieldedRingApexStep` in and carries no such link, so there is
+nowhere for it to arrive except a new hypothesis. Supplying it the way the tree already does
+reintroduces a refuted floor; supplying it honestly means either weakening the conclusion to its
+kernel-endpoint half or naming a per-instance log residual. That decision is the NEXT step and is
+deliberately not taken here.
+
+⚠ `descriptorRefinesTB` is the same shape and is WORSE: it carries no `tracePublishedCommit t = pc`
+link at all, so its `pc` is unconstrained. The correction above applies verbatim to its annotation.
+-/
+
+section FloorFreeShieldedRung
+
+open Dregg2.Circuit.ApexFloorFree
+  (CommitMap StateDecodeC descriptorRefinesFree emptyTrace satisfied2_emptyTrace
+   state0 state1 kernel0 kernel1 kernel0_wf kernel1_wf kernel1_ne_kernel0 collapseMap)
+
+/-- **`ShieldedRingDescriptorRefinesFree C hash d`** — `ShieldedRingDescriptorRefines` with the refuted
+`Poseidon2SpongeCR` antecedent GONE and the `CommitSurface` bundle replaced by a bare commit map. It is
+literally `ApexFloorFree.descriptorRefinesFree` at the shielded step relation: same quantifier prefix,
+same `Satisfied2` premise, same `tracePublishedCommit t = pc` publication link, same decode.
+
+Stated over `C : CommitMap` and not `S : CommitSurface` because the refutation below needs a map that
+HITS the opaque value `tracePublishedCommit emptyTrace` publishes — that is `ApexFloorFree.collapseMap`'s
+job — and `S.commit = recStateCommit S.CH S.RH S.cmb S.compress S.compressN` cannot be chosen to hit an
+opaque target. The map must be ARBITRARY; the bundle is not empty. -/
+abbrev ShieldedRingDescriptorRefinesFree (C : CommitMap) (hash : List Int → Int)
+    (d : EffectVmDescriptor2) : Prop :=
+  descriptorRefinesFree C hash d ShieldedRingApexStep
+
+/-- ⚑⚑ **THE MEASUREMENT: the ported rung ENTAILS THAT NOTHING DECODES.** At every commit map, hash and
+descriptor, if the floor-free shielded rung holds then NO pair of chained states decodes the commitment
+the empty trace publishes. The rung is not merely hard to discharge — it is FALSE wherever its own
+premise fires, so it has no satisfiable pole carrying circuit content.
+
+The proof is the log-blindness argument stated above and uses nothing about the hash: from the given
+decode of `pre`/`post`, the pair `(pre, ⟨post.kernel, pre.log⟩)` decodes the SAME commitment (the decode
+reads only kernels and their well-formedness), and `ShieldedRingApexStep.log_length` at that pair gives
+`pre.log.length = pre.log.length + 2`.
+
+⚠ This is why "delete the antecedent" is NOT by itself the port for this def, and it is the reason the
+three `hmarket` consumers are NOT rewired in this commit. -/
+theorem shieldedRingDescriptorRefinesFree_forces_no_decode
+    (C : CommitMap) (hash : List Int → Int) (d : EffectVmDescriptor2)
+    (h : ShieldedRingDescriptorRefinesFree C hash d)
+    (pre post : RecChainedState)
+    (hdec : StateDecodeC C (tracePublishedCommit emptyTrace) pre post) : False := by
+  have hstep : ShieldedRingApexStep pre ⟨post.kernel, pre.log⟩ :=
+    h (fun _ => 0) (fun _ => (0, 0)) [] emptyTrace (tracePublishedCommit emptyTrace)
+      pre ⟨post.kernel, pre.log⟩ (satisfied2_emptyTrace hash d _ _) rfl
+      ⟨hdec.preBinds, hdec.postBinds, hdec.preWF, hdec.postWF⟩
+  have hlen := ShieldedRingApexStep.log_length hstep
+  simp only at hlen
+  omega
+
+/-- **THE PREMISE OF THE MEASUREMENT IS INHABITED — a CLOSED decode.** At
+`ApexFloorFree.collapseMap emptyTrace`, the two well-formed kernels `kernel0`/`kernel1` DO decode the
+commitment the empty trace publishes.
+
+Named rather than left inline (it is inline in `ApexFloorFree.descriptorRefinesFree_false_at_False_kstep`)
+because it is what stops `shieldedRingDescriptorRefinesFree_forces_no_decode` from being a statement
+about an empty hypothesis: there is a commit map at which decodes exist, so "the rung entails nothing
+decodes" is a real constraint on the rung and not a fact about `StateDecodeC` being unsatisfiable. -/
+theorem stateDecodeC_collapseMap_state0_state1 :
+    StateDecodeC (collapseMap emptyTrace) (tracePublishedCommit emptyTrace) state0 state1 := by
+  refine ⟨?_, ?_, kernel0_wf, kernel1_wf⟩
+  · show (tracePublishedCommit emptyTrace).pubPre
+        = collapseMap emptyTrace kernel0 (tracePublishedCommit emptyTrace).turn
+    unfold collapseMap
+    rw [if_pos rfl]
+  · show (tracePublishedCommit emptyTrace).pubPost
+        = collapseMap emptyTrace kernel1 (tracePublishedCommit emptyTrace).turn
+    unfold collapseMap
+    rw [if_neg kernel1_ne_kernel0]
+
+/-- ⚑ **REFUTABLE — the acceptance test `ShieldedRingDescriptorRefines` FAILS.** At the exhibited commit
+map `ApexFloorFree.collapseMap emptyTrace`, for EVERY hash and EVERY descriptor (the deployed
+`Rfix e` included), the floor-free shielded rung is FALSE.
+
+Contrast, at the same descriptor and a deployed-shaped sponge: `ShieldedRingDescriptorRefines S hash d`
+HOLDS, because `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes its antecedent — the
+transfer of `DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear` to this def. One
+obligation is discharged by the PARAMETERS; this one cannot be discharged by them at all. -/
+theorem shieldedRingDescriptorRefinesFree_false_at_collapseMap
+    (hash : List Int → Int) (d : EffectVmDescriptor2) :
+    ¬ ShieldedRingDescriptorRefinesFree (collapseMap emptyTrace) hash d := fun h =>
+  shieldedRingDescriptorRefinesFree_forces_no_decode _ hash d h state0 state1
+    stateDecodeC_collapseMap_state0_state1
+
+#assert_axioms ShieldedRingDescriptorRefinesFree
+#assert_axioms stateDecodeC_collapseMap_state0_state1
+#assert_axioms shieldedRingDescriptorRefinesFree_forces_no_decode
+#assert_axioms shieldedRingDescriptorRefinesFree_false_at_collapseMap
+
+end FloorFreeShieldedRung
 
 /-- **`DrexClearingEffectRefinementResidual` (OPEN):** the missing per-effect/whole-turn descriptor
 theorem.  Besides matching kernel endpoints, the extracted step must denote the exact list of ordinary
