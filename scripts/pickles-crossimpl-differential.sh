@@ -13,11 +13,16 @@
 # Both implementations are on this machine. Nothing was diffing them. This does.
 #
 # ── WHAT IT RUNS ───────────────────────────────────────────────────────────────
-#   RUST half  metatheory/fixtures/pickles-crossimpl-harness  — calls o1-labs' own `pub fn`s
+#   RUST half  TWO reference implementations, concatenated in this order:
+#              metatheory/fixtures/pickles-crossimpl-harness — calls o1-labs' own `pub fn`s
 #              (`b_poly`, `combined_inner_product`, `ScalarChallenge::to_field`,
 #              `PolishToken::evaluate(linearization.constant_term)`, `Shifts::new`,
 #              `permutation_vanishing_polynomial`, `ConstraintSystem::perm_scalars`,
-#              `ArithmeticSponge`, `DefaultFqSponge::challenge`) over a deterministic sweep.
+#              `ArithmeticSponge`, `DefaultFqSponge::challenge`) over a deterministic sweep;
+#              metatheory/fixtures/pickles-openmina-harness — calls OPENMINA's (`mina-tree`)
+#              `ScalarChallenge::to_field`, `util::challenge_polynomial` and the `ShiftedValue`
+#              Type1/Type2 bridge that kimchi does not carry at all. Two independent Rust
+#              renderings, so an agreement is about the FUNCTION and not about one library's habits.
 #   LEAN half  metatheory/EmitConformanceVectors.lean — drives dregg's `KimchiVerify`,
 #              `MinaWrapDeferred`, `TickShifts` and `PastaPoseidonFq` over the SAME sweep.
 #
@@ -26,9 +31,34 @@
 # that drifted between the two languages is itself a RED diff rather than a silent
 # comparison-of-different-things.
 #
-# ⚠ THIS IS A FIDELITY DIFFERENTIAL, NOT A SOUNDNESS PROOF. Two implementations agreeing on 2500
+# ⚠ THIS IS A FIDELITY DIFFERENTIAL, NOT A SOUNDNESS PROOF. Two implementations agreeing on 3806
 # inputs is strong evidence they compute the same function and NO evidence that the function is the
-# right one. Where dregg's Lean and o1-labs' Rust are wrong in the same way, this is silent.
+# right one. Where dregg's Lean and the Rust are wrong in the SAME way, this is silent.
+#
+# ── THE FLAGSHIP PAIR BITES THE DEFECT IT WAS BUILT FOR, MEASURED ──────────────
+# `linconst` diffs `KimchiVerify.gateLinConst` against kimchi's
+# `PolishToken::evaluate(linearization.constant_term)`. FALSIFIED on 2026-08-02 by re-emitting the
+# Lean side with the EXACT `.take 12` delta added back
+# (`+ emulSel · alpha^11 · endoMulConstraints[11]`, the constraint a NEWER proof-systems has and the
+# deployed 0.3.0 gate does not): **214 of 276 `linconst` records changed**. The 62 that did not are
+# the `emulSel = 0` selector patterns — which is the regime EVERY pre-existing fixture in this tree
+# lived in, and exactly why the defect survived until 2026-08-01.
+#
+# ── WHAT IS NOT COVERED, and it is a FINDING ───────────────────────────────────
+# `KimchiVerify.publicEval`, `ftEval0`, `permScalar`, `combinedInnerProduct`, `zkPoly`, `ipaB0` and
+# `ftComm` are declared under `variable {F : Type} [Field F]`, and this tree has NO
+# `Field (ZMod pN)` instance (no in-kernel primality proof of the 255-bit Pasta prime;
+# `native_decide` forbidden). They cannot be instantiated at the DEPLOYED field at all, so no
+# differential can reach them. Three have CommRing mirrors and are diffed through those (`cipR`,
+# `zkPolyR`, `ftEval0R` — the last still uncovered, see below); `publicEval`, `permScalar` and
+# `ipaB0` have NO mirror and are unreachable. `permof` therefore diffs `MinaWrapDeferred.permOf`,
+# dregg's separate `Nat`-with-explicit-modulus copy of the same `derive_plonk` scalar.
+#
+# STILL UNCOVERED, both reachable and both real work: `KimchiVerify.ftEval0R` against openmina's
+# `plonk_checks::ft_eval0` (pub, and openmina is the only Rust with a standalone one), and
+# `MinaWrapDeferred.expandDeferred` against `mina_tree::proofs::step::expand_deferred` (pub; its
+# inputs are nested wire structs from `mina-p2p-messages` — `AllEvals`, `StatementProofState`,
+# `branch_data` — so driving it over many inputs is a decoder exercise on top of this one).
 #
 # ── NO FALLBACK ────────────────────────────────────────────────────────────────
 # A missing cargo, a missing lake, an empty vector file, a record count below the floor, a PAIR that
@@ -41,7 +71,8 @@
 #   scripts/pickles-crossimpl-differential.sh --rust-only  # regenerate the Rust vectors only
 #
 #   PICKLES_XI_RUST_VECTORS=/path/to/rust.tsv scripts/pickles-crossimpl-differential.sh
-#       Consume a vector file produced elsewhere instead of running cargo here. This is the hbox
+#       Consume a CONCATENATED vector file (kimchi half then openmina half) produced elsewhere
+#       instead of running cargo here. This is the hbox
 #       route: the Rust half is a cold kimchi+arkworks build and belongs on the build box, while the
 #       Lean half is an INTERPRETED run over already-elaborated `.olean`s and is single-process.
 #
@@ -52,14 +83,16 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HARNESS="$ROOT/metatheory/fixtures/pickles-crossimpl-harness"
+HARNESS_OM="$ROOT/metatheory/fixtures/pickles-openmina-harness"
 LEAN_EMITTER="EmitConformanceVectors.lean"
 
 # The pairs that MUST be present on both sides with a nonzero count. A pair that vanishes is a
 # coverage loss, and a coverage loss that exits 0 is the thing this file refuses to be.
 PAIRS=(endo endo_fq endolift bpoly bpolymod cip linconst zkpoly rootunity permof shifts
-       sponge_fp sponge_fq challenge emulconsts)
+       sponge_fp sponge_fq challenge emulconsts
+       om_endo om_bpoly shift1 unshift1 shift1b unshift1b shift2 unshift2)
 # The record floor. A RATCHET: raise it when the sweep grows.
-FLOOR=2500
+FLOOR=3800
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -77,8 +110,11 @@ gen_rust() {
     return 0
   fi
   command -v cargo >/dev/null 2>&1 || fail "cargo not found and PICKLES_XI_RUST_VECTORS unset"
-  cargo run --quiet --release --manifest-path "$HARNESS/Cargo.toml" --bin harness -- "$RUSTV" \
-    || fail "the Rust harness did not run"
+  cargo run --quiet --release --manifest-path "$HARNESS/Cargo.toml" --bin harness -- "$WORK/a.tsv" \
+    || fail "the kimchi harness did not run"
+  cargo run --quiet --release --manifest-path "$HARNESS_OM/Cargo.toml" --bin harness -- "$WORK/b.tsv" \
+    || fail "the openmina harness did not run"
+  cat "$WORK/a.tsv" "$WORK/b.tsv" > "$RUSTV"
 }
 
 # ── the Lean half ──────────────────────────────────────────────────────────────

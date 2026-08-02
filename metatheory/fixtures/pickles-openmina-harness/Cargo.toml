@@ -1,0 +1,70 @@
+# pickles-openmina-harness — the SECOND reference implementation in the cross-implementation
+# differential: **openmina** (`mina-tree`), not kimchi.
+#
+# ⚑ WHY A SECOND ONE. `pickles-crossimpl-harness` diffs dregg's Lean against o1-labs'
+# `proof-systems` 0.3.0. That is the library Mina runs, but it is not the whole ecosystem: openmina
+# is an INDEPENDENT Rust rendering of Pickles — its own `ft_eval0` (kimchi has none: kimchi's is
+# INLINE in `verifier.rs:412-489`), its own `ScalarChallenge::to_field` (written as a bit-reversal
+# rather than a reversed loop), its own `challenge_polynomial`, and the `ShiftedValue` Type1/Type2
+# bridge that kimchi does not have at all. Diffing against BOTH is what makes an agreement evidence
+# about the FUNCTION rather than about one library's habits.
+#
+# THE PAIRS (appended to the crossimpl vector stream, in this order):
+#   om_endo    MinaWrapDeferred.endoLift                     ↔ mina_tree ScalarChallenge::to_field
+#   om_bpoly   MinaWrapDeferred.bPolyMod                     ↔ mina_tree util::challenge_polynomial
+#   shift1     MinaWrapDeferred.shiftType1                   ↔ ShiftedValue<Fp>::of_field       (Type1)
+#              + PicklesRecursion.type1OfField shift1Fp      — dregg's SECOND Type1 copy
+#   unshift1   MinaWrapDeferred.unshiftType1                 ↔ ShiftedValue<Fp>::shifted_to_field
+#              + PicklesRecursion.type1ToField shift1Fp
+#   shift2     PicklesRecursion.type2OfField shift2Fq        ↔ ShiftedValue<Fq>::of_field       (Type2)
+#   unshift2   PicklesRecursion.type2ToField shift2Fq        ↔ ShiftedValue<Fq>::shifted_to_field
+#
+# ⚑ THE SHIFT BOUNDARY IS THE POINT. Type1 is `(x − (2^255+1))/2` over Fp and Type2 is `x − 2^255`
+# over Fq. The edge bank feeds `2^255`, `2^255+1`, `2^254`, `p−1` and `(p−1)/2` — values that
+# STRADDLE the boundary, where an off-by-one in the constant or a missing halving is a
+# perfectly-canonical field element and invisible to any single-value pin.
+#
+# ⚠ STANDALONE WORKSPACE, and it carries openmina's OWN `Cargo.lock`. Resolving fresh FAILS:
+# `core2 0.4.0` is yanked from crates.io and `multihash 0.18.1` (via `mina-core`) requires exactly
+# it, so a lock-less `cargo build` cannot select a version. The committed lock is a copy of
+# `~/dev/mina-rust/Cargo.lock` with this crate's root added — which is also what makes the gate's
+# dependency set a COMMITTED fact rather than a per-run resolution.
+#
+# ⚠ mina-rust is READ-ONLY (codex's co-tenant tree). This crate links it by GIT rev, not by path, so
+# it builds on a box that has no checkout — which is the case for hbox.
+#
+# RUN:  cargo run --release --manifest-path metatheory/fixtures/pickles-openmina-harness/Cargo.toml -- <out.tsv>
+#       scripts/pickles-crossimpl-differential.sh   # runs it, appends it, and diffs the whole stream
+
+[package]
+name = "pickles-openmina-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+# openmina, at the SAME rev `bridge/tools/mina-tip` pins. `ledger`'s package name is `mina-tree`.
+mina-tree = { git = "https://github.com/emberian/mina-rust", rev = "82480cd468f1" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+ark-poly = { version = "0.5.0" }
+serde_json = "1"
+# ⚑ RESOLUTION PIN, not a used dependency — same reason `bridge/tools/mina-tip` carries it:
+# `ark-ff-macros` floats num-bigint to crates.io 0.4.8 while the [patch] fork is 0.4.6, and two
+# versions make ark-ff's `From<BigInt<4>>` target the wrong `BigUint`.
+num-bigint = "=0.4.6"
+
+[workspace]
+
+# ⚑ MUST MIRROR mina-rust's workspace patches (`~/dev/mina-rust/Cargo.toml`).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

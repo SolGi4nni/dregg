@@ -46,6 +46,7 @@ import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Bridge.MinaWrapDeferred
 import Dregg2.Bridge.TickShifts
 import Dregg2.Circuit.Emit.PastaPoseidonFq
+import Dregg2.Circuit.Emit.PicklesRecursion
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -55,7 +56,9 @@ namespace Dregg2.ConformanceVectors
 open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.KimchiVerify
   (endoMap bEvalSq cipR zkPolyR gateLinConst GateEvals)
-open Dregg2.Bridge.MinaWrapDeferred (endoLift bPolyMod rootOfUnity permOf)
+open Dregg2.Bridge.MinaWrapDeferred (endoLift bPolyMod rootOfUnity permOf shiftType1 unshiftType1)
+open Dregg2.Circuit.Emit.PicklesRecursion
+  (type1OfField type1ToField type2OfField type2ToField shift1Fp shift2Fq)
 open Dregg2.Bridge.MinaWrapFtEval0 (powFast)
 open Dregg2.Bridge.TickShifts (tickShiftsFp)
 open Dregg2.Circuit.Emit.PastaPoseidonFq
@@ -575,7 +578,97 @@ show up only as an unlocalisable `linconst` red. -/
 def emitEmulConsts : List String :=
   [mkRec "emulconsts" 0 [0] [cAV.val, cBV.val, cCV.val]]
 
-/-! ## §13 — the whole emission, in the harness's order. -/
+/-! ## §13 — the OPENMINA half (`pickles-openmina-harness`), appended to the same stream.
+
+The reference for these is openmina (`mina-tree`), an INDEPENDENT Rust rendering of Pickles — not
+kimchi. `om_endo` is a THIRD spelling of the endomorphism lift (openmina writes it as
+`u128::reverse_bits()` + a forward pair iterator where kimchi writes a reversed `get_bit` loop and
+this tree writes a `List.range 64 |>.reverse` fold). `om_bpoly` is a second reading of the same
+product. The four shift pairs are the Type1/Type2 bridge kimchi does not carry at all.
+
+⚑ THE SHIFT BOUNDARY IS THE POINT. Type1 is `(x − (2^255+1))·2⁻¹` over Fp; Type2 is `x − 2^255` over
+Fq. The bank feeds `2^255`, `2^255+1` (the constant itself, whose image is 0), `2^254`, `p−1` and
+`(p−1)/2` — values that STRADDLE the boundary, where an off-by-one in `c` or a dropped halving lands
+on a perfectly canonical field element and is invisible to any single-value pin.
+
+⚑ AND BOTH LEAN COPIES OF TYPE1 RUN. `MinaWrapDeferred.shiftType1` and
+`PicklesRecursion.type1OfField shift1Fp` are two independent renderings in this tree; they are
+emitted as `shift1` and `shift1b` over IDENTICAL inputs, so a divergence between them shows up as
+exactly one of the two blocks going red. -/
+
+def omBpolyLens : List Nat := [1, 2, 3, 15, 16]
+
+def emitOmEndo : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for c in edgeChal do
+    out := out ++ [mkRec "om_endo" case [c] [endoLift c]]
+    case := case + 1
+  let mut s := 0x11
+  for _ in List.range 192 do
+    let (s1, c) := smChal s
+    s := s1
+    out := out ++ [mkRec "om_endo" case [c] [endoLift c]]
+    case := case + 1
+  return out
+
+def emitOmBpoly : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for k in omBpolyLens do
+    for x in edgeFp do
+      let chals := (List.range k).map (fun i => bk edgeFp i)
+      out := out ++ [mkRec "om_bpoly" case ([k, x] ++ chals) [bPolyMod x chals]]
+      case := case + 1
+  let mut s := 0x12
+  for _ in List.range 128 do
+    let (s1, ki) := smBelow s omBpolyLens.length
+    let k := omBpolyLens.getD ki 0
+    let (s2, x) := smFe pN s1
+    let mut st := s2
+    let mut chals : List Nat := []
+    for _ in List.range k do
+      let (s3, c) := smFe pN st; st := s3; chals := chals ++ [c]
+    s := st
+    out := out ++ [mkRec "om_bpoly" case ([k, x] ++ chals) [bPolyMod x chals]]
+    case := case + 1
+  return out
+
+/-- The shared input vector for all four Type1 blocks: the Fp edge bank then 128 random elements. -/
+def shift1Inputs : List Nat := Id.run do
+  let mut xs := edgeFp
+  let mut s := 0x13
+  for _ in List.range 128 do
+    let (s1, x) := smFe pN s; s := s1; xs := xs ++ [x]
+  return xs
+
+/-- …and for the two Type2 blocks, over Fq. -/
+def shift2Inputs : List Nat := Id.run do
+  let mut xs := edgeFq
+  let mut s := 0x14
+  for _ in List.range 128 do
+    let (s1, x) := smFe qN s; s := s1; xs := xs ++ [x]
+  return xs
+
+def emitBlock (name : String) (xs : List Nat) (f : Nat → Nat) : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for x in xs do
+    out := out ++ [mkRec name case [x] [f x]]
+    case := case + 1
+  return out
+
+def emitShifts1 : List String :=
+  emitBlock "shift1" shift1Inputs shiftType1
+  ++ emitBlock "unshift1" shift1Inputs unshiftType1
+  ++ emitBlock "shift1b" shift1Inputs (fun x => (type1OfField shift1Fp (toFp x)).val)
+  ++ emitBlock "unshift1b" shift1Inputs (fun t => (type1ToField shift1Fp (toFp t)).val)
+
+def emitShifts2 : List String :=
+  emitBlock "shift2" shift2Inputs (fun x => (type2OfField shift2Fq (toFq x)).val)
+  ++ emitBlock "unshift2" shift2Inputs (fun t => (type2ToField shift2Fq (toFq t)).val)
+
+/-! ## §14 — the whole emission, in the harnesses' order. -/
 
 def allRecords : List String :=
   emitEndo ++ emitEndoFq ++ emitEndoLift
@@ -585,6 +678,8 @@ def allRecords : List String :=
     ++ emitSponge "sponge_fp" fpParams edgeFp 48 8
     ++ emitSponge "sponge_fq" fqParams edgeFq 0 0
     ++ emitChallenge ++ emitEmulConsts
+    -- the openmina half
+    ++ emitOmEndo ++ emitOmBpoly ++ emitShifts1 ++ emitShifts2
 
 def emitAll : IO Unit := do
   let h ← IO.getStdout
