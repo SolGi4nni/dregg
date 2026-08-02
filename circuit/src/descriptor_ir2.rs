@@ -425,9 +425,13 @@ const BUS_BYTE: &str = "ir2_byte";
 const BUS_MEM_LOG: &str = "ir2_mem_log";
 const BUS_MAP_LOG: &str = "ir2_map_log";
 const BUS_FACT: &str = "ir2_fact";
+// ⓘ …and the SAME shape for the universal memory (2026-08-01, the `Ir2Air::UMemory` cutover):
+// `BUS_UMEM_LOG` keeps a Rust reader — `Ir2Air::Main`'s `umem_op` send — while `BUS_UMEM_CHECK` and
+// `BUS_UMEM_ADDRS` had exactly three, the `UMemory` arm and the two boundary arms, and all three are
+// Lean-authored now. The names are deleted rather than kept as constants nothing reads. The `UM_*`
+// COLUMN offsets stay, for the same reason the `MEM_*` ones do: the witness producer is the last
+// thing in Rust that knows what a column means, and it writes its row BY NAME.
 const BUS_UMEM_LOG: &str = "ir2_umem_log";
-const BUS_UMEM_CHECK: &str = "ir2_umem_check";
-const BUS_UMEM_ADDRS: &str = "ir2_umem_addrs";
 
 /// ⚑ **FLAG DAY (2026-07-29): a manifest is ONE instance, not one instance per row.**
 ///
@@ -1755,9 +1759,20 @@ struct Ir2RowLocalBuilder<'a> {
     local: &'a [P3BabyBear],
     next: &'a [P3BabyBear],
     public_values: &'a [P3BabyBear],
-    /// An empty preprocessed window (the IR-v2 Main AIR carries no preprocessed columns); held
-    /// here so `preprocessed()` can return a reference into it.
-    empty_prep: p3_air::RowWindow<'a, P3BabyBear>,
+    /// ⚑ **THE PREPROCESSED WINDOW — REAL, not empty.** It was
+    /// `RowWindow::from_two_rows(&[], &[])` until 2026-08-01, on the reasoning that the two AIRs
+    /// this builder then served (`Ir2Air::Main`, `Ir2Air::LeanTable`) carry no preprocessed
+    /// columns. That was true and it made the instrument BLIND BY CONSTRUCTION to the one arm
+    /// that does read them (`Ir2Air::ExactPublicTable`, whose manifest values and pinned
+    /// multiplicities live entirely here), and it would have gone on being true-looking the
+    /// moment a Lean-authored table declared a preprocessed matrix
+    /// (`TableAirIR` §7, item 4).
+    ///
+    /// The window is now whatever [`ir2_air_gates_accept`] was handed, and that entry point
+    /// REFUSES rather than substituting zeros when an AIR's `preprocessed_width()` and the
+    /// supplied rows disagree. The authority on "does this arm read preprocessed columns" is the
+    /// AIR itself, so a future arm is covered without touching this struct.
+    prep: p3_air::RowWindow<'a, P3BabyBear>,
     row: usize,
     height: usize,
     /// Set once any row-local `assert_zero` body is non-zero.
@@ -1778,8 +1793,7 @@ impl<'a> p3_air::AirBuilder for Ir2RowLocalBuilder<'a> {
     }
 
     fn preprocessed(&self) -> &Self::PreprocessedWindow {
-        // The IR-v2 Main AIR carries no preprocessed columns; an empty window suffices.
-        &self.empty_prep
+        &self.prep
     }
 
     fn is_first_row(&self) -> Self::Expr {
@@ -1926,7 +1940,91 @@ pub fn ir2_eval_accepts(
             local: &rows[row_index],
             next: &rows[next_index],
             public_values: public_inputs,
-            empty_prep: p3_air::RowWindow::from_two_rows(&[], &[]),
+            prep: p3_air::RowWindow::from_two_rows(&[], &[]),
+            row: row_index,
+            height,
+            failed: false,
+        };
+        air.eval(&mut builder);
+        if builder.failed {
+            return false;
+        }
+    }
+    true
+}
+
+/// **⚑ THE GATE ACCEPT ORACLE, FOR ANY `Ir2Air` INSTANCE — PREPROCESSED COLUMNS INCLUDED.**
+///
+/// Runs the ACTUAL deployed evaluator over `rows` (the committed MAIN trace) with `prep_rows` as
+/// the PREPROCESSED matrix, and returns `true` iff every GATE vanishes on every row its selector
+/// admits. Bus interactions are SWALLOWED, exactly as in [`ir2_eval_accepts`] — their meaning is
+/// the batch's LogUp balance, which no single-AIR check can decide.
+///
+/// ## Why this exists, and what it fixes
+///
+/// Every mutation sweep in the table-AIR cutover runs through the row-local builder, and that
+/// builder used to hand every AIR an EMPTY preprocessed window. For `Ir2Air::Main` and
+/// `Ir2Air::LeanTable` that is currently correct — neither declares preprocessed columns — but it
+/// made the instrument structurally blind to `Ir2Air::ExactPublicTable`, whose manifest VALUES and
+/// PINNED multiplicities live *entirely* in the preprocessed matrix and whose one gate reads
+/// nothing else. An arm that a sweep cannot reach is an arm no sweep can certify, and the moment a
+/// Lean-authored table declares a preprocessed matrix (`TableAirIR` §7, item 4) the same harness
+/// would have swept the new columns against nothing while reporting a clean undetected set.
+///
+/// ## ⚑ IT REFUSES; IT DOES NOT SUBSTITUTE
+///
+/// The shape contract is checked against the AIR's OWN `BaseAir::preprocessed_width` — the
+/// authority on whether an arm reads preprocessed columns, so a future arm is covered without
+/// editing this function — and a mismatch returns `false`:
+///
+/// * an AIR that declares `pw` preprocessed columns MUST be handed exactly `rows.len()` prep rows
+///   of width `pw`. Handing it `&[]` is REFUSED, not silently zero-filled: zeros are a *witness*,
+///   and a sweep that accepts against a witness it invented is the gate that cannot go red;
+/// * an AIR that declares NONE must be handed none. A caller supplying a preprocessed matrix to
+///   `Ir2Air::Main` has confused two instances, and that is a defect rather than a no-op.
+///
+/// `prep_next` is the wrap row, matching the main window — though every deployed prep-reading arm
+/// declares `preprocessed_next_row_columns() == []` and reads only `current_slice()`.
+pub fn ir2_air_gates_accept(
+    air: &Ir2Air,
+    rows: &[Vec<BabyBear>],
+    prep_rows: &[Vec<BabyBear>],
+) -> bool {
+    let width = <Ir2Air as BaseAir<P3BabyBear>>::width(air);
+    if rows.is_empty() || rows.iter().any(|r| r.len() != width) {
+        return false;
+    }
+    // ⚑ THE FAIL-CLOSED SHAPE CONTRACT. Asked of the AIR, never assumed of the arm.
+    let pw = <Ir2Air as BaseAir<P3BabyBear>>::preprocessed_width(air);
+    if pw == 0 {
+        if !prep_rows.is_empty() {
+            return false;
+        }
+    } else if prep_rows.len() != rows.len() || prep_rows.iter().any(|r| r.len() != pw) {
+        return false;
+    }
+
+    let p3rows: Vec<Vec<P3BabyBear>> = rows
+        .iter()
+        .map(|r| r.iter().map(|&x| to_p3(x)).collect())
+        .collect();
+    let p3prep: Vec<Vec<P3BabyBear>> = prep_rows
+        .iter()
+        .map(|r| r.iter().map(|&x| to_p3(x)).collect())
+        .collect();
+    let height = p3rows.len();
+    for row_index in 0..height {
+        let next_index = (row_index + 1) % height;
+        let prep = if pw == 0 {
+            p3_air::RowWindow::from_two_rows(&[], &[])
+        } else {
+            p3_air::RowWindow::from_two_rows(&p3prep[row_index], &p3prep[next_index])
+        };
+        let mut builder = Ir2RowLocalBuilder {
+            local: &p3rows[row_index],
+            next: &p3rows[next_index],
+            public_values: &[],
+            prep,
             row: row_index,
             height,
             failed: false,
@@ -1956,33 +2054,14 @@ pub fn ir2_eval_accepts(
 ///
 /// This is the instrument a re-emission needs: it makes "no gate was LOST" checkable by mutation,
 /// which a shape count alone cannot do (a re-emission could keep 70 gates and change one).
+///
+/// ⓘ A thin wrapper over [`ir2_air_gates_accept`] since 2026-08-01: the preprocessed window is no
+/// longer hard-coded empty HERE, it is asked of the AIR there. A `LeanTableAir` declares no
+/// preprocessed columns today, so the empty matrix this passes is the CHECKED shape rather than an
+/// assumed one — and the day the table IR grows a preprocessed matrix, this call REFUSES instead
+/// of sweeping against zeros.
 pub fn table_air_gates_accept(t: &LeanTableAir, rows: &[Vec<BabyBear>]) -> bool {
-    if rows.is_empty() || rows.iter().any(|r| r.len() != t.width) {
-        return false;
-    }
-    let p3rows: Vec<Vec<P3BabyBear>> = rows
-        .iter()
-        .map(|r| r.iter().map(|&x| to_p3(x)).collect())
-        .collect();
-    let air = Ir2Air::LeanTable(Arc::new(t.clone()));
-    let height = p3rows.len();
-    for row_index in 0..height {
-        let next_index = (row_index + 1) % height;
-        let mut builder = Ir2RowLocalBuilder {
-            local: &p3rows[row_index],
-            next: &p3rows[next_index],
-            public_values: &[],
-            empty_prep: p3_air::RowWindow::from_two_rows(&[], &[]),
-            row: row_index,
-            height,
-            failed: false,
-        };
-        air.eval(&mut builder);
-        if builder.failed {
-            return false;
-        }
-    }
-    true
+    ir2_air_gates_accept(&Ir2Air::LeanTable(Arc::new(t.clone())), rows, &[])
 }
 
 /// The HONEST map-absent table rows the deployed prover would assemble for this descriptor,
@@ -2112,6 +2191,65 @@ pub fn umem_boundary_rows_for(
     traces
         .umem_boundary
         .ok_or_else(|| "descriptor assembles no universal boundary table".to_string())
+}
+
+/// The HONEST universal memory OP-LOG rows the deployed prover would assemble for this descriptor
+/// and trace — `build_traces`' own output, not a re-derivation. Sibling of [`mem_rows_for`], for the
+/// same reason: a differential must mutate a genuine row, because a hand-built one would be a second
+/// author of the layout.
+pub fn umem_rows_for(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    umem_boundary: &UMemBoundaryWitness,
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let traces = build_traces(
+        desc,
+        &layout,
+        presence,
+        base_trace,
+        &MemBoundaryWitness::default(),
+        &[],
+        umem_boundary,
+        true,
+    )?;
+    traces
+        .umemory
+        .ok_or_else(|| "descriptor assembles no universal memory table".to_string())
+}
+
+/// **⚑ THE ONE PREPROCESSED-READING INSTANCE, AS A SWEEPABLE PAIR.** For the descriptor's exact-public
+/// table `table_id`, returns `(the AIR, the committed MAIN rows, the PREPROCESSED rows)` — all three
+/// exactly as the deployed prover assembles and the deployed verifier RECOMPUTES them
+/// (`ExactPublicManifest::main_trace` / `::preprocessed`, the same calls `instance_airs` and
+/// `ProverData::from_airs_and_degrees` make).
+///
+/// This is the instrument [`ir2_air_gates_accept`]'s preprocessed window exists for. The
+/// exact-public arm's ONLY gate is `committed multiplicity − preprocessed multiplicity`, so with an
+/// empty preprocessed window there is nothing for a sweep to compare against; handed the real
+/// matrix, a mutation of the committed column is refused and the pin becomes measurable.
+pub fn exact_public_instance_for(
+    desc: &EffectVmDescriptor2,
+    table_id: usize,
+) -> Result<(Ir2Air, Vec<Vec<BabyBear>>, Vec<Vec<BabyBear>>), String> {
+    let (_, manifest) = exact_public_manifests(desc)
+        .into_iter()
+        .find(|(id, _)| *id == table_id)
+        .ok_or_else(|| format!("descriptor declares no exact-public table with id {table_id}"))?;
+    let main_rows = manifest.main_trace();
+    let prep = manifest.preprocessed::<P3BabyBear>();
+    let pw = manifest.arity + 1;
+    let prep_rows: Vec<Vec<BabyBear>> = prep
+        .values
+        .chunks(pw)
+        .map(|c| c.iter().map(|&x| from_p3(x)).collect())
+        .collect();
+    Ok((
+        Ir2Air::ExactPublicTable { table_id, manifest },
+        main_rows,
+        prep_rows,
+    ))
 }
 
 /// `i64`-valued convenience wrapper over [`ir2_eval_accepts`] so callers (the faithfulness
@@ -2757,9 +2895,18 @@ pub enum Ir2Air {
     ///   is carried by the `ir2_byte` nibble LOOKUP on `UB_DGAP`, so a three-row trace with
     ///   domains 1 → 0 → 1 satisfies every GATE while declaring the same address twice. The bound
     ///   is a bus leg, one object out.
+    /// * **universal memory** (`UMemoryTableEmit.lean` → `dregg-ir2-umemory-v1.json`) — the OP LOG
+    ///   of the ONE Blum multiset over `Domain × κ`, whose cells are `Option`s: the flat memory's
+    ///   positional serial chain and gap range check, a read discipline over BOTH components of the
+    ///   pair, canonical-`none` on both images, and the NULLIFIER insert-only tooth. ⚑ The Lean file
+    ///   refutes TWO of the deleted arm's sentences. `prev_serial < serial` fails for the same
+    ///   reason it fails in the flat memory — the arm's own words, *"exactly the flat memory's gap
+    ///   shape"*, are true and that shape does not bound — and *"a nullifier-domain write installing
+    ///   `none` is UNSAT"* holds only of REAL rows: the tooth `is_null·kind·(1 − present)` carries
+    ///   no `is_real` factor of its own, the gating arrives two gates away through the
+    ///   inverse-witness gate that forces `is_null = is_real`, and a PAD row spelling exactly the
+    ///   forbidden op satisfies every gate.
     LeanTable(Arc<LeanTableAir>),
-    /// The UNIVERSAL memory table (the one Blum multiset over `Domain × κ`).
-    UMemory,
     /// ⚑ **A WHOLE Lean-emitted exact-public manifest, as ONE multiplicity-bearing instance** —
     /// the shape the byte table has always had, generalized from "value = row index" to
     /// "row = the manifest's row, held in a preprocessed column".
@@ -2793,7 +2940,6 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
             Ir2Air::Chip | Ir2Air::ChipState16 => CHIP_WIDTH,
             Ir2Air::MapOps => MAP_WIDTH,
             Ir2Air::LeanTable(t) => t.width,
-            Ir2Air::UMemory => UM_WIDTH,
             // The committed column is the multiplicity; the manifest itself is preprocessed.
             Ir2Air::ExactPublicTable { .. } => 1,
         }
@@ -3969,123 +4115,6 @@ where
             }
 
             // ----------------------------------------------------------------
-            Ir2Air::UMemory => {
-                let is_real: AB::Expr = local[UM_IS_REAL].into();
-                let kind: AB::Expr = local[UM_KIND].into();
-                let present: AB::Expr = local[UM_PRESENT].into();
-                let prev_present: AB::Expr = local[UM_PREV_PRESENT].into();
-                let is_null: AB::Expr = local[UM_IS_NULL].into();
-                for b in [&is_real, &kind, &present, &prev_present, &is_null] {
-                    builder.assert_zero(b.clone() * (b.clone() - AB::Expr::ONE));
-                }
-                // Real rows form a prefix.
-                builder.when_transition().assert_zero(
-                    (AB::Expr::ONE - local[UM_IS_REAL].into()) * next[UM_IS_REAL].into(),
-                );
-                // Positional serials.
-                builder
-                    .when_first_row()
-                    .assert_zero(local[UM_SERIAL].into() - AB::Expr::ONE);
-                builder
-                    .when_transition()
-                    .assert_zero(next[UM_SERIAL].into() - local[UM_SERIAL].into() - AB::Expr::ONE);
-                // Read discipline on the Option cell: a read returns its claimed prior cell.
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - kind.clone())
-                        * (local[UM_PRESENT].into() - local[UM_PREV_PRESENT].into()),
-                );
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - kind.clone())
-                        * (local[UM_VALUE].into() - local[UM_PREV_VALUE].into()),
-                );
-                // Canonical `none`: an absent cell carries payload 0 (the (present, value)
-                // pair is then a faithful encoding of `Option` — Lean `optOf`).
-                builder.assert_zero(
-                    is_real.clone() * (AB::Expr::ONE - present.clone()) * local[UM_VALUE].into(),
-                );
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - prev_present.clone())
-                        * local[UM_PREV_VALUE].into(),
-                );
-                // prev_serial < serial (Disciplined), exactly the flat memory's gap shape.
-                builder.assert_zero(
-                    local[UM_GAP].into()
-                        - is_real.clone()
-                            * (local[UM_SERIAL].into()
-                                - AB::Expr::ONE
-                                - local[UM_PREV_SERIAL].into()),
-                );
-                let limbs: Vec<AB::Var> =
-                    local[UM_GAP_LIMB0..UM_GAP_LIMB0 + decomp_cols(MEM_GAP_BITS)].to_vec();
-                eval_decomp(builder, local[UM_GAP].into(), &limbs, MEM_GAP_BITS);
-                // Domain is a nibble (new state components are new codes, never new tables).
-                let bus = LookupBus::new(BUS_BYTE);
-                bus.lookup_key(builder, [local[UM_DOMAIN].into()], AB::Expr::ONE);
-                // THE INSERT-ONLY TOOTH (nullifiers): is_null is FORCED to the domain
-                // indicator, and a nullifier-domain write installing `none` is UNSAT —
-                // `UniversalMemory.InsertOnlyAt`, in-circuit. This is what upgrades a
-                // `present = 0` read into the PROVED freshness fact.
-                let dom_m3 = local[UM_DOMAIN].into() - AB::Expr::from_u64(NULLIFIER_DOMAIN as u64);
-                builder.assert_zero(dom_m3.clone() * is_null.clone());
-                builder.assert_zero(
-                    dom_m3 * local[UM_NULL_INV].into() - (is_real.clone() - is_null.clone()),
-                );
-                builder.assert_zero(is_null * kind * (AB::Expr::ONE - present));
-
-                // The table carries EXACTLY the gathered log (umemTableFaithful).
-                let umem_log = PermutationCheckBus::new(BUS_UMEM_LOG);
-                umem_log.receive(
-                    builder,
-                    [
-                        local[UM_DOMAIN].into(),
-                        local[UM_KEY].into(),
-                        local[UM_PRESENT].into(),
-                        local[UM_VALUE].into(),
-                        local[UM_PREV_PRESENT].into(),
-                        local[UM_PREV_VALUE].into(),
-                        local[UM_PREV_SERIAL].into(),
-                        local[UM_KIND].into(),
-                    ],
-                    is_real.clone(),
-                );
-                // The ONE Blum multiset (Lean `MemCheck` over `Domain × κ` with `Option`
-                // cells): every op consumes its claimed prior cell and publishes its own.
-                let umem_check = PermutationCheckBus::new(BUS_UMEM_CHECK);
-                umem_check.send(
-                    builder,
-                    [
-                        local[UM_DOMAIN].into(),
-                        local[UM_KEY].into(),
-                        local[UM_PRESENT].into(),
-                        local[UM_VALUE].into(),
-                        local[UM_SERIAL].into(),
-                    ],
-                    is_real.clone(),
-                );
-                umem_check.receive(
-                    builder,
-                    [
-                        local[UM_DOMAIN].into(),
-                        local[UM_KEY].into(),
-                        local[UM_PREV_PRESENT].into(),
-                        local[UM_PREV_VALUE].into(),
-                        local[UM_PREV_SERIAL].into(),
-                    ],
-                    is_real.clone(),
-                );
-                // Address closure over the declared universal boundary.
-                let addrs = LookupBus::new(BUS_UMEM_ADDRS);
-                addrs.lookup_key(
-                    builder,
-                    [local[UM_DOMAIN].into(), local[UM_KEY].into()],
-                    is_real,
-                );
-            }
-
-            // ----------------------------------------------------------------
             Ir2Air::ExactPublicTable { table_id, manifest } => {
                 // The manifest row this table row offers, straight out of the preprocessed
                 // (verifier-recomputed) matrix — nothing here trusts a committed value.
@@ -4553,7 +4582,7 @@ pub fn chip_air_row_accepts(arity: u32, inputs: &[BabyBear]) -> bool {
         local: &row,
         next: &row,
         public_values: &[],
-        empty_prep: p3_air::RowWindow::from_two_rows(&[], &[]),
+        prep: p3_air::RowWindow::from_two_rows(&[], &[]),
         row: 0,
         height: 1,
         failed: false,
@@ -5537,16 +5566,31 @@ fn build_traces(
             } else {
                 ([BabyBear::ZERO; 8], false)
             };
-            let mut row: Vec<BabyBear> = Vec::with_capacity(UM_WIDTH);
-            row.extend_from_slice(&tuple);
-            row.push(BabyBear::new(serial));
-            row.push(if is_real {
+            // ⚑ WRITTEN BY NAME, not by push order — the same reason `4805cb6bb` gave for the
+            // boundary producer and the `Ir2Air::Memory` cutover gave for the flat op log. Since
+            // the `Ir2Air::UMemory` arm was deleted, this is the LAST thing in Rust that knows what
+            // column 6 of a universal op-log row means; the AIR's author is
+            // `Dregg2/Circuit/Emit/UMemoryTableEmit.lean`, which reads columns by its OWN `UM_*`
+            // defs (`#guard`-pinned to these numbers). Positional pushes would leave that knowledge
+            // in the ORDER of thirteen calls and the constants dead.
+            // `the_emitted_columns_round_trip_the_universal_op_log` checks the two sides agree.
+            let mut row = vec![BabyBear::ZERO; UM_GAP + 1];
+            row[UM_DOMAIN] = tuple[UM_DOMAIN];
+            row[UM_KEY] = tuple[UM_KEY];
+            row[UM_PRESENT] = tuple[UM_PRESENT];
+            row[UM_VALUE] = tuple[UM_VALUE];
+            row[UM_PREV_PRESENT] = tuple[UM_PREV_PRESENT];
+            row[UM_PREV_VALUE] = tuple[UM_PREV_VALUE];
+            row[UM_PREV_SERIAL] = tuple[UM_PREV_SERIAL];
+            row[UM_KIND] = tuple[UM_KIND];
+            row[UM_SERIAL] = BabyBear::new(serial);
+            row[UM_IS_REAL] = if is_real {
                 BabyBear::ONE
             } else {
                 BabyBear::ZERO
-            });
+            };
             let gap = if is_real {
-                let prev = tuple[6].as_u32();
+                let prev = tuple[UM_PREV_SERIAL].as_u32();
                 if prev >= serial {
                     return Err(format!(
                         "umem op {i}: claimed prev serial {prev} not before own serial {serial}"
@@ -5559,12 +5603,13 @@ fn build_traces(
             if (gap as u64) >= (1u64 << MEM_GAP_BITS) {
                 return Err(format!("umem op {i}: serial gap {gap} >= 2^{MEM_GAP_BITS}"));
             }
-            row.push(BabyBear::new(gap));
+            row[UM_GAP] = BabyBear::new(gap);
             fill_decomp(gap, MEM_GAP_BITS, &mut row, &mut byte_hist);
             // The forced nullifier-domain indicator + its inverse witness.
-            let domain = tuple[0];
+            let domain = tuple[UM_DOMAIN];
             byte_hist[domain.as_u32() as usize] += 1; // the domain nibble lookup, every row
             let is_null = is_real && domain.as_u32() == NULLIFIER_DOMAIN;
+            debug_assert_eq!(row.len(), UM_IS_NULL);
             row.push(if is_null {
                 BabyBear::ONE
             } else {
@@ -5577,9 +5622,13 @@ fn build_traces(
                     .inverse()
                     .expect("domain != nullifiers")
             };
+            debug_assert_eq!(row.len(), UM_NULL_INV);
             row.push(null_inv);
-            // THE INSERT-ONLY TOOTH, pre-flight face (the AIR refuses it in-circuit too).
-            if is_null && tuple[7] == BabyBear::ONE && tuple[2] == BabyBear::ZERO {
+            // THE INSERT-ONLY TOOTH, pre-flight face. ⚠ The emitted AIR refuses this in-circuit
+            // only on a REAL row — `UMemoryTableEmit.a_pad_row_spells_the_forbidden_nullifier_write`
+            // is the measurement — and `is_null` is already `is_real`-gated here, so the two faces
+            // agree on exactly which rows they bite.
+            if is_null && tuple[UM_KIND] == BabyBear::ONE && tuple[UM_PRESENT] == BabyBear::ZERO {
                 return Err(format!(
                     "umem op {i}: nullifier-domain write installs an ABSENT cell — \
                      insert-only discipline violated (nobody un-spends)"
@@ -6590,7 +6639,10 @@ fn instance_airs(
         ));
     }
     if presence.umem {
-        airs.push(Ir2Air::UMemory);
+        // The Lean-authored universal memory op-log table AIR — `Emit/UMemoryTableEmit.lean`.
+        airs.push(Ir2Air::LeanTable(
+            crate::table_air::umemory_table_air_shared(),
+        ));
         airs.push(if presence.umem_cohort {
             // The Lean-authored cohort boundary — `Emit/UMemBoundaryCohortTableEmit.lean`.
             Ir2Air::LeanTable(crate::table_air::umem_boundary_cohort_table_air_shared())
@@ -7907,13 +7959,13 @@ mod tests {
                         "dregg-ir2-byte-v1" => "byte",
                         "dregg-ir2-mem-boundary-v1" => "boundary",
                         "dregg-ir2-memory-v1" => "memory",
+                        "dregg-ir2-umemory-v1" => "umemory",
                         "dregg-ir2-umem-boundary-cohort-v1" => "umem_boundary_cohort",
                         "dregg-ir2-umem-boundary-v1" => "umem_boundary",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }
                     },
-                    Ir2Air::UMemory => "umemory",
                     // One instance PER MANIFEST ROW, so this label is shared by all of a
                     // descriptor's exact-public row instances (they are the same AIR shape,
                     // hence the same degree). Deliberately no `_ =>` arm: a new `Ir2Air`

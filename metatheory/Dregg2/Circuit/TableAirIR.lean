@@ -583,18 +583,30 @@ inside a burn-down of transcriptions would have been the wrong shape.
    the manifest materializes; the Lean side authors no values). Emitting 64 fixed artifacts
    instead is not a way out — the bus name still varies with `table_id`.
 
-4. **THE DIFFERENTIAL ORACLE GOES BLIND WITHOUT AN UPGRADE.** `table_air_gates_accept` builds an
-   EMPTY preprocessed window (`RowWindow::from_two_rows(&[], &[])`). Every mutation sweep in this
-   burn-down runs through it, so a `prep`-reading table would be swept against zeros — the
-   instrument would report a clean undetected set while seeing none of the columns the arm is
-   about. ⚑ That is the failure this repo's own doctrine names: a gate that cannot go red. The
-   oracle must take the preprocessed rows BEFORE the first `prep`-reading table is emitted, not
-   after.
+4. **THE DIFFERENTIAL ORACLE GOES BLIND WITHOUT AN UPGRADE.** ✅ **DONE 2026-08-01, ahead of any
+   `prep`-reading emission** — recorded here because the reasoning is what the other three items
+   inherit. `table_air_gates_accept` built an EMPTY preprocessed window
+   (`RowWindow::from_two_rows(&[], &[])`), and every mutation sweep in this burn-down ran through
+   it, so a `prep`-reading table would have been swept against zeros — the instrument reporting a
+   clean undetected set while seeing none of the columns the arm is about. ⚑ That is the failure
+   this repo's own doctrine names: a gate that cannot go red.
+
+   ⚠ **And the fix is the REFUSAL, not the plumbing.** `descriptor_ir2::ir2_air_gates_accept` now
+   takes the preprocessed rows and checks their shape against the AIR's OWN
+   `BaseAir::preprocessed_width` — the authority on whether an arm reads them, so a future arm is
+   covered without editing the oracle — and REFUSES a mismatch rather than substituting zeros. An
+   oracle that zero-filled would not merely be blind: the manifest's first entry is pinned at
+   multiplicity 2, so against an all-zero prep row the honest instance reads UNSAT. A substituted
+   witness makes BOTH verdicts meaningless, not just one.
+   `circuit/tests/ir2_preprocessed_sweep_harness.rs` measures both poles, and it measures the arm
+   that already reads preprocessed columns TODAY (`Ir2Air::ExactPublicTable`) rather than a
+   hypothetical one — including the fact that every `LeanTableAir` currently declares ZERO
+   preprocessed columns, which is what makes the six existing sweeps sound.
 
 **Estimate, said as an estimate and not as a constraint:** one design decision (item 1), a wire
-flag day covering six artifacts and two fingerprints (item 2), an `Ir2Air` variant reshape plus a
-schema-instantiation path (item 3), and an oracle upgrade (item 4). None of it is a reason to leave
-a Rust-authored AIR standing — it is the shape of the work, and the work is the next item, not a
+flag day covering seven artifacts and two fingerprints (item 2), and an `Ir2Air` variant reshape
+plus a schema-instantiation path (item 3) — item 4 is done. None of it is a reason to leave a
+Rust-authored AIR standing — it is the shape of the work, and the work is the next item, not a
 deferral. -/
 
 /-! ## §8 — Tripwires: the grammar golden, and both polarities of `RowHolds`. -/

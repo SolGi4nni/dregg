@@ -451,6 +451,30 @@ pub const MEMORY_TABLE_AIR_JSON: &str =
 pub const UMEM_BOUNDARY_COHORT_TABLE_AIR_JSON: &str =
     include_str!("../descriptors/table-airs/dregg-ir2-umem-boundary-cohort-v1.json");
 
+/// The UNIVERSAL memory op-log table AIR, emitted by
+/// `Dregg2.Circuit.Emit.UMemoryTableEmit.umemoryTable`.
+///
+/// The op log of the ONE Blum multiset over `Domain × κ`, whose cells are `Option`s: the flat
+/// memory's positional serial chain and 30-bit gap range check, a read discipline over BOTH
+/// components of the `(present, value)` pair, canonical-`none` on both images, and the NULLIFIER
+/// insert-only tooth. Its algebra used to be the `Ir2Air::UMemory` arm; those lines are deleted.
+///
+/// ⚑ The Lean file REFUTES two of the sentences that arm asserted in comments:
+///
+/// * *"`prev_serial < serial` (Disciplined), exactly the flat memory's gap shape"* — the second
+///   clause is true and it is the refutation: there is NO magnitude gate on `UM_PREV_SERIAL`, so the
+///   gap gate DEFINES the claimed serial in the field. `wrapped_prev_serial_satisfies_every_gate`
+///   exhibits a nullifier-domain freshness read at serial 1 claiming a prior serial of `p − 5`.
+/// * *"a nullifier-domain write installing `none` is UNSAT"* — true only of REAL rows. The tooth
+///   `is_null·kind·(1 − present)` carries no `is_real` factor; the gating arrives two gates away
+///   through the inverse-witness gate that forces `is_null = is_real`, so
+///   `a_pad_row_spells_the_forbidden_nullifier_write` satisfies every gate.
+///
+/// Both are contained by the `ir2_umem_log` / `ir2_umem_check` legs, which ride at `is_real` — bus
+/// legs, one object out.
+pub const UMEMORY_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-umemory-v1.json");
+
 /// The GENERAL universal-boundary table AIR, emitted by
 /// `Dregg2.Circuit.Emit.UMemBoundaryTableEmit.umemBoundaryTable`.
 ///
@@ -549,6 +573,22 @@ pub fn umem_boundary_cohort_table_air_shared() -> Arc<LeanTableAir> {
         Arc::new(
             parse_table_air(UMEM_BOUNDARY_COHORT_TABLE_AIR_JSON)
                 .expect("the checked-in cohort universal-boundary table AIR must decode"),
+        )
+    }))
+}
+
+/// The decoded universal memory op-log table AIR.
+pub fn umemory_table_air() -> LeanTableAir {
+    (*umemory_table_air_shared()).clone()
+}
+
+/// The decoded universal memory op-log table AIR, parsed ONCE per process.
+pub fn umemory_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(UMEMORY_TABLE_AIR_JSON)
+                .expect("the checked-in universal memory table AIR must decode"),
         )
     }))
 }
@@ -1015,6 +1055,85 @@ mod tests {
         // …and the map-absent comparator does NOT, because it compares within one row.
         let ma = map_absent_table_air();
         assert!(ma.gates.iter().all(|g| !reads_next(&g.body)));
+    }
+
+    /// The universal memory op-log emission decodes at the deployed shape. The counts are derived
+    /// here from the layout constants (one 30-bit decomposition of `decomp_cols(30)` columns) rather
+    /// than transcribed from the Lean `#guard`, so the two sides are independent.
+    #[test]
+    fn the_umemory_emission_decodes_at_the_deployed_shape() {
+        let t = umemory_table_air();
+        assert_eq!(t.name, "dregg-ir2-umemory-v1");
+
+        // Width: the 8-felt `ir2_umem_log` tuple + serial + is_real + gap + its limb block
+        // + the nullifier indicator and its inverse witness.
+        let dc = crate::descriptor_ir2::decomp_cols_pub(30);
+        assert_eq!(dc, 10);
+        assert_eq!(t.width, 8 + 1 + 1 + 1 + dc + 2);
+        assert_eq!(t.width, 23);
+
+        // Gates: 5 booleans + the real prefix + the serial anchor + the serial increment
+        // + 2 read-discipline (the `Option` is a PAIR) + 2 canonical-`none` + the gap definition
+        // + one decomposition (2 top bits + top recomp + whole recomp) + 2 nullifier-forcing
+        // + the insert-only tooth.
+        assert_eq!(t.gates.len(), 5 + 1 + 1 + 1 + 2 + 2 + 1 + 4 + 2 + 1);
+        assert_eq!(t.gates.len(), 20);
+        assert_eq!(t.gate_count_sel(RowSel::All), 17);
+        assert_eq!(t.gate_count_sel(RowSel::Transition), 2);
+        assert_eq!(t.gate_count_sel(RowSel::First), 1);
+        assert_eq!(t.gate_count_sel(RowSel::Last), 0);
+
+        // Interactions: 7 full gap limbs + the DOMAIN nibble, the op log, the two Blum legs, the
+        // closure query.
+        assert_eq!(t.bus_count_on("ir2_byte"), 7 + 1);
+        assert_eq!(t.bus_count_on("ir2_umem_log"), 1);
+        assert_eq!(t.bus_count_on("ir2_umem_check"), 2);
+        assert_eq!(t.bus_count_on("ir2_umem_addrs"), 1);
+        assert_eq!(t.interactions.len(), 12);
+    }
+
+    /// ⚑ **THE TWO SIDES OF `ir2_umem_addrs`, PINNED FROM BOTH ENDS AT ONCE.** The universal op log
+    /// QUERIES the declared-address table; BOTH boundary forms SERVE it. A swap on either side
+    /// leaves every gate green — there is no gate involved — so it is asserted here against the
+    /// three decoded emissions together.
+    #[test]
+    fn the_umem_op_log_queries_the_address_table_both_boundaries_serve() {
+        let um = umemory_table_air();
+        assert_eq!(um.bus_count_op("ir2_umem_addrs", BusOp::Query), 1);
+        assert_eq!(um.bus_count_op("ir2_umem_addrs", BusOp::Provide), 0);
+        for bnd in [umem_boundary_cohort_table_air(), umem_boundary_table_air()] {
+            assert_eq!(bnd.bus_count_op("ir2_umem_addrs", BusOp::Provide), 1);
+            assert_eq!(bnd.bus_count_op("ir2_umem_addrs", BusOp::Query), 0);
+        }
+
+        // The Blum pair: this op PUBLISHES its own `Option` image at its OWN serial and CONSUMES
+        // the prior image at the CLAIMED one.
+        let send = um
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_umem_check" && i.op == BusOp::Send)
+            .expect("one publish");
+        assert_eq!(send.tuple.len(), 5, "(domain, key, present, value, serial)");
+        assert!(matches!(send.tuple[4], WindowExpr::Loc(8)), "UM_SERIAL");
+        let recv = um
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_umem_check" && i.op == BusOp::Receive)
+            .expect("one consume");
+        assert!(
+            matches!(recv.tuple[4], WindowExpr::Loc(6)),
+            "the CLAIMED prior serial"
+        );
+        // Every multiset/log/closure leg rides at `is_real` (column 9), which is what makes a pad
+        // row declare NOTHING — and is exactly the containment the pad-row refutation rests on.
+        for i in um.interactions.iter().filter(|i| i.bus != "ir2_byte") {
+            assert!(matches!(i.mult, WindowExpr::Loc(9)), "{} leg", i.bus);
+        }
+        // …while both byte queries (gap limbs and the domain nibble) are the UNCOUNTED variant, so
+        // a pad row's DOMAIN is range-bound even though nothing else about a pad is.
+        for i in um.interactions.iter().filter(|i| i.bus == "ir2_byte") {
+            assert!(matches!(i.mult, WindowExpr::Const(1)));
+        }
     }
 
     /// A row-filtered gate costs one more degree than its body, because p3's filtered builder

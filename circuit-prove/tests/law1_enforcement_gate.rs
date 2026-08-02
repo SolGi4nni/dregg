@@ -998,7 +998,18 @@ const BASELINE: &[(&str, usize)] = &[
     // witness producer writes the shared nine-column prefix BY NAME, and `UBC_*` back the
     // compile-time `THE_COHORT_IS_THE_GENERAL_PREFIX` assertion that the cohort layout IS that
     // prefix (`UBC_WIDTH == UB_KEY_HI4`).
-    ("circuit/src/descriptor_ir2.rs", 251),
+    // LOWERED 251 -> 236 on 2026-08-01 (sixth pass): the `Ir2Air::UMemory` arm — the OP LOG of the
+    // ONE Blum multiset over `Domain × κ`, i.e. five booleans, the real prefix, the positional
+    // serial chain, a read discipline over BOTH components of the `Option` cell, canonical-`none`
+    // on both images, the serial-gap range check, the NULLIFIER insert-only tooth and the four
+    // `ir2_umem_log`/`ir2_umem_check`/`ir2_umem_addrs` legs — was DELETED and replaced by a seventh
+    // `Ir2Air::LeanTable` instance (`Emit/UMemoryTableEmit.lean` -> `dregg-ir2-umemory-v1.json`).
+    // The VARIANT is gone from the enum. ⓘ Two bus-name constants (`BUS_UMEM_CHECK`,
+    // `BUS_UMEM_ADDRS`) went with it — their only readers were this arm and the two universal
+    // boundary arms, all three Lean-authored now — exactly as `BUS_MEM_CHECK`/`BUS_MEM_ADDRS` did
+    // in the third pass. The `UM_*` COLUMN offsets did NOT go: the witness producer now writes its
+    // row BY NAME through them, because it is the last thing in Rust that knows what a column means.
+    ("circuit/src/descriptor_ir2.rs", 236),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

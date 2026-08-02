@@ -423,7 +423,8 @@ pub fn whole_boundary_fold(leaves: &[HeapLeaf]) -> [BabyBear; HEAP_DIGEST_W] {
 // each real fold link additionally drives a `UMemOp::Read` against the boundary table at
 // `(domain, WIF_KEY) → WIF_VALUE`. Two deployed teeth then bite together:
 //
-//   * the address-closure lookup (`Ir2Air::UMemory` → `BUS_UMEM_ADDRS` ← the boundary
+//   * the address-closure lookup (the Lean-authored `dregg-ir2-umemory-v1` op-log table AIR →
+//     `BUS_UMEM_ADDRS` ← the boundary
 //     table's `(domain, key)` `table_entry`) forces every folded `(domain, key)` to be a
 //     DECLARED boundary cell — a fold row over an address the boundary never declared has no
 //     `table_entry` to balance against and REFUSES (`umemClosed`). This is the
