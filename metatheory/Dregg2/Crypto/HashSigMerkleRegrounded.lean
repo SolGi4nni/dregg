@@ -66,9 +66,19 @@ file closes the LEAF leg only. **The MMR root leg is NOT closed and is not prete
 ⚑ UPDATED 2026-07-28: `MMR.bag_injective` / `MMR.mroot_injective` are DELETED (their CONCLUSIONS
 were refuted at the deployed hash too — `Storage.DeployedFloorRegrounded.mroot_conclusion_false_at_
 deployed`). The MMR leg is now `mroot_binds_or_collides` + a per-instance `MRootColl` residual, and
-does NOT ride the refuted injective `Poseidon2SpongeCR`. The `pkLeaf` sponge peel in
-`HashSigMerkle.merkle_ots_binds_index` still does, and
-have no extractor. That is a real open carrier, named here so it is countable rather than absorbed.
+does NOT ride the refuted injective `Poseidon2SpongeCR`.
+
+⚑ CLOSED 2026-08-01, and the stale sentence is kept because of what it was. It read: "The `pkLeaf`
+sponge peel in `HashSigMerkle.merkle_ots_binds_index` still does, and have no extractor. That is a
+REAL OPEN CARRIER, named here so it is COUNTABLE rather than absorbed." That was the honest thing to
+write at the time — and it is exactly the kind of claim a later lane acts on. The extractor is now
+`pkLeafFind`, the keystone is `pkLeaf_binds_or_collides` with a per-instance residual at a named
+pair, and the binder is gone.
+
+A file whose entire subject is one theorem was left asserting the pre-port state BY THE LANE THAT
+PORTED IT — while that same lane correctly swept three other files. An open-carrier count is a
+running total someone else reads; leaving it stale converts closed work back into open work in the
+next reader's head.
 
 ## Non-fake
 

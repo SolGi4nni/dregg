@@ -67,11 +67,27 @@ def attested_history_conserves_KS :=
 -- ⚑ REPOINTED to the per-instance form. It was registered on `conserves_from_verification`, whose
 -- own docstring says "⚠ BRIDGE ONLY — the four hash premises are REFUTED at deployed BabyBear
 -- width". The instrument was certifying a VACUOUS statement as the CRITICAL-3 closure.
+-- ⚑ AND THE TEETH SLOT WAS POINTED AT THE WRONG TOOTH. It named `tampered_aggregate_cannot_bind`,
+-- the ANTI-GHOST tooth (about reordered chains) — a real theorem, but not the one that shows this
+-- keystone's own residual is LOAD-BEARING. After the port that distinction is the whole content:
+-- `conserves_from_verification_unconditional_false` proves the binding FALSE with `hno` deleted, so
+-- it is the tooth that says the per-instance residual is doing work rather than decorating.
 @[load_bearing_keystone
     satisfiable := Dregg2.Distributed.HistoryAggregation.honest_kernelChained_conserves
-    teeth := Dregg2.Circuit.RecursiveAggregation.tampered_aggregate_cannot_bind]
+    teeth := Dregg2.Circuit.RecursiveAggregation.conserves_from_verification_unconditional_false]
 def conserves_from_verification_KS :=
   @Dregg2.Circuit.RecursiveAggregation.conserves_from_verification_of_noColl
+
+-- (3b) NON-OMISSION FROM VERIFICATION — the SECOND headline S3, previously registered NOWHERE.
+-- A grep for `non_omission_from_verification_of_noColl` under `Verify/` returned a single hit: the
+-- sibling line above. So one of the two headline closures of this campaign carried no keystone
+-- registration at all, and its absence was invisible precisely because the instrument only reports
+-- what it is given.
+@[load_bearing_keystone
+    satisfiable := Dregg2.Distributed.HistoryAggregation.honest_kernelChained_conserves
+    teeth := Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification_unconditional_false]
+def non_omission_from_verification_KS :=
+  @Dregg2.Circuit.RecursiveAggregation.non_omission_from_verification_of_noColl
 
 -- (4) REAL-ENGINE-SOUND (the EngineSound carrier is inhabited).
 @[load_bearing_keystone
