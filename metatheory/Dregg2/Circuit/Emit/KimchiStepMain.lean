@@ -72,7 +72,11 @@ line items, not against a round number.
     transcript words are the MSM's operands, not fixtures the sponge eats.
   * **R4 `ipa`** — `combine_split_commitments` + `bullet_reduce`: `ipaRounds` `Scalar_challenge.endo`
     scalar multiplications of `ipaBlocks` 4-bit blocks each (the row-OVERLAP chaining pattern, no σ
-    hop), each closing on its own challenge, folded by a second `complete_add` chain. ⚑ Its bases
+    hop), each closing on its own challenge, folded by a second `complete_add` chain. ⚑ …and since
+    2026-08-02 each round STARTS at `Scalar_challenge.endo`'s own seed — `acc = p + p` with
+    `p = t + (Endo.base·xt, yt)`, `n_acc = Field.zero` (`scalar_challenge.ml:230-235`) — a `Generic`
+    scale and two `Ops.add_fast`s. It was `dblA T` with both cells free: the wrong point AND a
+    prover-chosen one (§12g). ⚑ Its bases
     are the PREVIOUS PROOF's — `combine_commitments`' own 47 commitments and `bullet_reduce`'s 30
     `(L,R)` — and the 48 of them upstream absorbs are wired so that their coordinate variables ARE
     the transcript's absorbed words (§3b, #3). ⚑ Each of those 48 also carries `Inner_curve.typ`'s
@@ -130,20 +134,21 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8011      8480       10157       10250
-    non-Generic         13778              7320      7322        8706        8729
+    total gates         20023              8315      8784       10461       10554
+    non-Generic         13778              7548      7550        8934        8957
     Poseidon             6292 (31.4%)       902       902        2145        2145   11×572 / 11×195 ✓
-    Generic              6245 (31.2%)       691      1158        1451        1521   —
+    Generic              6245 (31.2%)       767      1234        1527        1597   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1984      1986        2111        2118   —
+    Zero                 2246 (11.2%)      2060      2062        2187        2194   —
     VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd           403  (2.0%)       178       178         178         178   1×159 2×65 3×23
-                    15×1 30×1 / 1×178
+    CompleteAdd           403  (2.0%)       330       330         330         330   1×159 2×65 3×23
+                    15×1 30×1 / 1×330
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10342 → 10250 rows) — **the row count went DOWN, and that is
-the commit.** Two things happened and they pull opposite ways.
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10342 → 10554 rows across two commits) — **and the headline
+is that every scalar-multiplication ladder in the assembly now STARTS WHERE UPSTREAM STARTS IT.**
+Three things happened.
 
   * ⚑ **THE ABSORB SHAPE SHRANK: `absorbs` 71 → 59, −156 rows** (−132 `Poseidon`, −12 `Zero`, −12
     `Generic`). `2·71 = 142` transcript words against the **117** sponge items `verify_one` actually
@@ -156,10 +161,23 @@ the commit.** Two things happened and they pull opposite ways.
     `CompleteAdd` goes 138 → 178 and the run-length family stays `1×`, because every seed row is
     preceded by a `Zero` probe and followed by its ladder's first `VarBaseMul`.
 
-Net −92. ⚑ **AND NO SUB-CIRCUIT LEFT.** `EndoMul` 2432, `VarBaseMul` 1448 and `EndoMulScalar` 408
-are unchanged to the row, and so is every probe count — the fold, `bullet_reduce`, both commitment
-MSMs and all 51 `to_field_checked` chains are exactly where they were. What went is transcript
-blocks the source does not have. (The commit before this took 9431 → 10342 on §6b's `ft_comm` MSM;
+  * ⚑ **AND R4's SEED, WHICH WAS ALSO THE WRONG POINT: +152 `CompleteAdd`, +76 `Generic`, +76
+    `Zero`** (§12g, `scalar_challenge.ml:230-235`). `Scalar_challenge.endo` seeds at
+    `acc = p + p` with `p = t + (Endo.base·xt, yt)` and `n_acc = Field.zero`; `runIpa` seeded at
+    `dblA T` with `qAcc r 0` and `vQN r 0` read by NO row. So the fold was self-consistent arithmetic
+    over a starting point the prover could name, and `2t` is not `2(t + φ(t))` — the seed is now the
+    endomorphism's, emitted as a `Generic` scale and two `Ops.add_fast`s per round, with the `p`
+    intermediate carrying its own σ-only probe. `CompleteAdd` 178 → **330** against upstream's 403.
+
+Net +212 over the two commits. ⚑ **AND NO SUB-CIRCUIT LEFT.** `EndoMul` 2432, `VarBaseMul` 1448 and
+`EndoMulScalar` 408 are unchanged to the row through both — the fold, `bullet_reduce`, both
+commitment MSMs and all 51 `to_field_checked` chains are exactly where they were. What went is
+transcript blocks the source does not have; what arrived is the three ladder seeds.
+⚑ **THE FAMILY, COUNTED.** Three ladder regions × two initialisers = six cells. `ft_comm` already
+had its point seed; the other FIVE were free witnesses this morning and none is now: `pAcc i 0`,
+`vSN i 0` (R3, §12f), `ftcN k 0` (§6b, §12f), `qAcc r 0`, `vQN r 0` (R4, §12g). Each is pinned as a
+2-cell σ class at `shapeSmoke`, as an equality.
+(The commit before these took 9431 → 10342 on §6b's `ft_comm` MSM;
 before that 9417 → 9431 on §3c's `sponge_after_index`; before that 9317 → 9417 on #1's third
 `lowest_128_bits` and §7b's `assert_on_curve`; before that 8713 → 9317 on #3, #1 and #9's second
 consumer.)
@@ -172,8 +190,8 @@ The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff co
 `1×`**, because a 255-bit `scale_fast2` chunk has the same two-row shape as a 128-bit one — and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows, **51 such chains** (23 transcript challenges +
 their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own `lowest_128_bits`
-on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` is `1×178` — 138 plus R3's forty new seed rows — because every add is
-followed by a row of another kind (its σ-only probe, or its ladder's first `VarBaseMul`). The `EndoMul` COUNT is 2432 against upstream's 2465 and `VarBaseMul`
+on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` is `1×330` — 138 plus R3's forty seed rows and R4's 152 — because every add
+is followed by a row of another kind (its σ-only probe, or its ladder's first curve row). The `EndoMul` COUNT is 2432 against upstream's 2465 and `VarBaseMul`
 1448 against 1596, i.e. the fold, `bullet_reduce` and BOTH commitment MSMs are here at full size.
 Only SEVEN gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no
 range-check — and all seven are emitted here.
@@ -184,18 +202,19 @@ range-check — and all seven are emitted here.
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1069     2048            6227 ms              24
-    r2_challenges    1714     2048            2007 ms             116
-    r3_msm           4917     8192            1569 ms             221
-    r4_ipa           7761     8192            1834 ms             372
-    r5_full          8011     8192            1713 ms             378
-    r6_ft_eval0      8480    16384            1490 ms             380
-    r7_absorption   10157    16384            1469 ms             392
-    r8_finalize     10250    16384            5194 ms             399
+    r1_transcript    1069     2048             814 ms              24
+    r2_challenges    1714     2048             785 ms             116
+    r3_msm           4917     8192            1050 ms             221
+    r4_ipa           8065     8192            1123 ms             448
+    r5_full          8315    16384            1417 ms             454
+    r6_ft_eval0      8784    16384            1413 ms             456
+    r7_absorption   10461    16384            1446 ms             468
+    r8_finalize     10554    16384           17070 ms             475
 
-(r1's 6.2 s and r8's 5.2 s are first-touch and last-touch of a co-tenant box; the middle six are the
-steady-state figure. ⚠ the numbers above are from this workstation, not hbox as the previous rung's
-table was — the shape is the measurement, the wall-clock is not.)
+(⚑ `r5_full` crossed 8192 with R4's seed rows and is a 16384-domain circuit now. r8's 17 s is
+last-touch on a loaded box; the seven above it are the steady-state figure. ⚠ the numbers are from
+this workstation, not hbox as the previous rung's table was — the shape is the measurement, the
+wall-clock is not.)
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -210,7 +229,7 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1521 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1597 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
 of the two `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection —
 `ft_comm`'s own MSM LEFT this list on 2026-08-02 (§6b). #2–#11 below name the rest. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
@@ -686,13 +705,18 @@ def vSN (s : StepShape) (i j : Nat) : PVar :=
 def baseIpa (s : StepShape) : Nat := baseSN s + s.msmTerms * s.msmChunks
 def ipx (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p)
 def ipy (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p + 1)
-/-- IPA round `r`'s `endo_mul` base point. -/
-def qT (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 2)
+/-- IPA round `r`'s `endo_mul` base point. ⚑ The per-round stride is `ipaBlocks + 3` and not `+ 2`
+since 2026-08-02: the third slot is `Scalar_challenge.endo`'s own seed intermediate. -/
+def qT (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3)
 /-- IPA round `r`'s accumulator after `e` blocks (`e = 0..ipaBlocks`). -/
-def qAcc (s : StepShape) (r e : Nat) : Nat := r * (s.ipaBlocks + 2) + 1 + e
+def qAcc (s : StepShape) (r e : Nat) : Nat := r * (s.ipaBlocks + 3) + 1 + e
+/-- ⚑ `Scalar_challenge.endo`'s SEED intermediate `p = t + φ(t)` (`scalar_challenge.ml:230-233`:
+`let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in ref G.(p + p)`). `qAcc r 0` is `p + p`,
+so BOTH are rows and neither is a witness. -/
+def qP (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3) + s.ipaBlocks + 2
 /-- The running IPA fold sum after add `a`. -/
-def qSum (s : StepShape) (a : Nat) : Nat := s.ipaRounds * (s.ipaBlocks + 2) + a
-def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 2) + s.ipaRounds
+def qSum (s : StepShape) (a : Nat) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + a
+def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds
 
 def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
 /-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
@@ -700,6 +724,10 @@ challenge variable. -/
 def vQN (s : StepShape) (r e : Nat) : PVar :=
   if e == s.ipaBlocks then vN s (s.ipaChal r) s.emsRows
   else xv (baseQN s + r * s.ipaBlocks + e)
+/-- ⚑ `Field.scale xt Endo.base` — the endomorphism image's x, the SECOND operand of
+`scalar_challenge.ml:232`'s `add_fast`. One `Generic` half per round pins it to `endo·xt`, so the
+seed's provenance is the base and a constant rather than a witness. -/
+def vQEndo (s : StepShape) (r : Nat) : PVar := xv (baseQN s + s.ipaRounds * s.ipaBlocks + r)
 
 /-- ⚑ Upstream's provenance census for `combine_split_commitments`' 47 `without_degree_bound`
 commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed into the transcript.
@@ -830,7 +858,7 @@ bases, and since §6b `t_comm`'s `tCommN` chunks. A CONSTANT base is pinned coor
 and needs no membership check; the one COMPUTED base (`ft_comm`, fold round `FTC_ROUND`) is on the
 curve because the `complete_add` chain that produced it is. -/
 def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s
-def baseOnC (s : StepShape) : Nat := baseQN s + s.ipaRounds * s.ipaBlocks
+def baseOnC (s : StepShape) : Nat := baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds
 def vOcX2 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k)
 def vOcX3 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k + 1)
 
@@ -1147,6 +1175,13 @@ def genericRow (v0 v1 v2 v3 v4 v5 : Option PVar) (c : List Int) : SRow :=
 /-- `w₀ = w₂ + 2^bits·w₁` — the challenge decomposition. -/
 def cSplit (bits : Nat) : List Int := [1, -((2 ^ bits : Nat) : Int), -1, 0, 0]
 /-- An unused generic half. -/ def cNil : List Int := [0, 0, 0, 0, 0]
+
+/-- A `complete_add` row: `o = l + r`, with `Ops.add_fast`'s four stored cells as advice. -/
+def caRow (l r o : PVar × PVar) (c : List Nat) : SRow :=
+  { kind := .completeAdd
+  , perm := [ some l.1, some l.2, some r.1, some r.2, some o.1, some o.2, none ]
+  , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
+              , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
 /-- Pack a list of `Generic` HALVES two to a row (Snarky's own double-generic filling). -/
 def packHalves (hs : List (List (Option PVar) × List Int)) : List SRow :=
@@ -1750,6 +1785,28 @@ def msmRows (s : StepShape) (m : MsmData) (wired : Bool) : List SRow :=
 base point at cols 0,1 IS a σ class of `ipaBlocks` cells, and the FINAL scalar counter (on the tail
 `Zero` row, col 6) is the round's CHALLENGE variable. -/
 
+/-- ⚑ **`Scalar_challenge.endo`'s OWN SEED** (`scalar_challenge.ml:230-234`), verbatim:
+
+    let acc =
+      with_label __LOC__ (fun () ->
+          let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in
+          ref G.(p + p) )
+    in
+    let n_acc = ref Field.zero in
+
+`φ(t) = (endo·xt, yt)` is the endomorphism image — `Endo.base` is the base field's primitive cube
+root, `KimchiRenderEndoMul.endo = PastaCurve.zetaP` — so the seed is `2·(t + φ(t))`, THREE rows: a
+`Generic` half for `endo·xt` and two `Ops.add_fast`s. ⚠ Until 2026-08-02 `runIpa` seeded at `dblA T`
+with `qAcc r 0` and `vQN r 0` read by NO row, which was both a free-witness hole of R3's exact class
+(§12f) and the wrong point: `2t` is not `2(t + φ(t))`, so the fold's arithmetic was self-consistent
+but was not `Scalar_challenge.endo`. -/
+def endoQ (T : Nat × Nat) : Nat × Nat :=
+  (fMul Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo T.1, T.2)
+/-- `p = add_fast t φ(t)`. -/
+def endoP (T : Nat × Nat) : Nat × Nat := addA T (endoQ T)
+/-- `acc₀ = add_fast p p`. -/
+def endoSeed (T : Nat × Nat) : Nat × Nat := dblA (endoP T)
+
 structure IpaData where
   accs : List (List (Nat × Nat))
   blks : List (List EndoBlock)
@@ -1776,7 +1833,7 @@ def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) (ftcOut :
           (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
         (st.1 ++ [(b.xs, b.ys)], st.2.1 ++ [b],
          st.2.2 ++ [16 * st.2.2.getLastD 0 + 8*b.b1 + 4*b.b2 + 2*b.b3 + b.b4]))
-      ([dblA T], [], [0]))
+      ([endoSeed T], [], [0]))
   let pts := rounds.map (fun r => r.1.getLastD (0, 0))
   let st := (List.range (s.ipaRounds - 1)).foldl
     (fun (acc : List (Nat × Nat) × List (List Nat)) a =>
@@ -1860,15 +1917,43 @@ def onCurveRows (s : StepShape) : List SRow :=
     let v := onCVar s k
     onCurveHalves s k v.1 v.2))
 
+/-- **`Scalar_challenge.endo`'s SEED PINS**, two `Generic` halves per round
+(`scalar_challenge.ml:232,235`): `endo·xt − xq = 0` and `n_acc = Field.zero`. ⚑ Both cells were free
+witnesses until 2026-08-02 — `vQN r 0` in exactly R3's way (the counter closes on the challenge from
+`16^{ipaBlocks}·n₀ + bits`, so a free `n₀` buys any bit vector), and `vQEndo r` is new because the
+seed's second operand did not exist as a variable at all. -/
+def ipaSeedPinRows (s : StepShape) : List SRow :=
+  packHalves ((List.range s.ipaRounds).flatMap (fun r =>
+    [ ([some (ipx s (qT s r)), none, some (vQEndo s r)],
+       [ (Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo : Int), 0, -1, 0, 0 ])
+    , ([some (vQN s r 0), none, none], cConst 0) ]))
+
+/-- **Round `r`'s two `Ops.add_fast`s**: `p = t + φ(t)` and `acc₀ = p + p`. The probe between them
+keeps every `CompleteAdd` run at length 1 and materialises `p` as a σ-only boundary value. ⚑ `φ(t)`'s
+`y` IS `t`'s — `(seal (Field.scale xt Endo.base), yt)` — so the row reads `ipy (qT r)` at cols 1
+AND 3, which is upstream's own shape and not a wiring accident. -/
+def ipaSeedRows (s : StepShape) (v : IpaData) (wired : Bool) (r : Nat) : List SRow :=
+  let T := v.bases.getD r (0, 0)
+  let q := endoQ T
+  let p := endoP T
+  [ caRow (ipx s (qT s r), ipy s (qT s r)) (vQEndo s r, ipy s (qT s r))
+          (ipx s (qP s r), ipy s (qP s r)) (completeAddWitness T.1 T.2 q.1 q.2)
+  , probeRow wired (ipx s (qP s r)) (ipy s (qP s r))
+  , caRow (ipx s (qP s r), ipy s (qP s r)) (ipx s (qP s r), ipy s (qP s r))
+          (ipx s (qAcc s r 0), ipy s (qAcc s r 0)) (completeAddWitness p.1 p.2 p.1 p.2) ]
+
 /-- **R4's rows.** -/
 def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   ipaBaseRows s v
+  ++ ipaSeedPinRows s
   ++ onCurveRows s
+  ++ ipaSeedRows s v wired 0
   ++ ipaRoundRows s v 0
   ++ [probeRow wired (ipx s (qAcc s 0 s.ipaBlocks)) (ipy s (qAcc s 0 s.ipaBlocks))]
   ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
        let r := a + 1
-       ipaRoundRows s v r
+       ipaSeedRows s v wired r
+       ++ ipaRoundRows s v r
        ++ [probeRow wired (ipx s (qAcc s r s.ipaBlocks)) (ipy s (qAcc s r s.ipaBlocks))]
        ++ [ipaAddRow s v a]
        ++ [probeRow wired (ipx s (qSum s a)) (ipy s (qSum s a))])
@@ -2036,13 +2121,6 @@ def ftcBaseVar (s : StepShape) (k : Nat) : PVar × PVar :=
   if k == 0 then (vIdxX s 6, vIdxY s 6)
   else if k == 1 then (vTcX s (tCommN s - 1), vTcY s (tCommN s - 1))
   else (ftcAddX s (k - 2), ftcAddY s (k - 2))
-
-/-- A `complete_add` row: `o = l + r`, with `Ops.add_fast`'s four stored cells as advice. -/
-def caRow (l r o : PVar × PVar) (c : List Nat) : SRow :=
-  { kind := .completeAdd
-  , perm := [ some l.1, some l.2, some r.1, some r.2, some o.1, some o.2, none ]
-  , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
-              , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
 /-- Term `k`'s chunk `j` — the same two-row `VarBaseMul` shape R3 uses. ⚑ Chunk 0's `Zero` row wires
 col 2 (bit `5j+0`, the MSB) to `ftcTop`, so `scale_fast2`'s `bits_lsb.(254) = 0`
@@ -3731,7 +3809,10 @@ def circuitEnv (t : StepData) : VarEnv :=
           let a := (t.ipa.accs.getD r []).getD e (0, 0)
           [ (ipx s (qAcc s r e), (a.1 : Int)), (ipy s (qAcc s r e), (a.2 : Int)) ])
       ++ (List.range s.ipaBlocks).map (fun e =>
-          (vQN s r e, ((t.ipa.ns.getD r []).getD e 0 : Int))))
+          (vQN s r e, ((t.ipa.ns.getD r []).getD e 0 : Int)))
+      -- §7's seed: `φ(t)`'s x and the `p = t + φ(t)` intermediate `acc₀ = p + p` doubles.
+      ++ [ (vQEndo s r, ((endoQ T).1 : Int))
+         , (ipx s (qP s r), ((endoP T).1 : Int)), (ipy s (qP s r), ((endoP T).2 : Int)) ])
   ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
       let p := t.ipa.sums.getD a (0, 0)
       [ (ipx s (qSum s a), (p.1 : Int)), (ipy s (qSum s a), (p.2 : Int)) ])
@@ -4087,7 +4168,8 @@ def totalRowsS : Nat := pubS + nRowsS
 -- new 2026-08-02) and §6b's: per `scale_fast2` the initial `add_fast base base` and the odd-branch
 -- `add_fast h (negate g)` (`plonk_curve_ops.ml:157,267`), then `common.ml`'s own `tCommN + 1` adds.
 #guard (placedS.filter (fun g => g.kind == KGateType.completeAdd)).length
-        == (shapeSmoke.msmTerms - 1) + shapeSmoke.msmTerms + (shapeSmoke.ipaRounds - 1)
+        == (shapeSmoke.msmTerms - 1) + shapeSmoke.msmTerms
+           + (shapeSmoke.ipaRounds - 1) + 2 * shapeSmoke.ipaRounds
            + 2 * ftcTerms shapeSmoke + (tCommN shapeSmoke + 1)
 -- ⚑ …and every `CompleteAdd` is still followed by a row of another kind, which is why the shape
 -- diff's `CompleteAdd` family stays `1×n`: R3's seed row is preceded by a `Zero` probe (or the pin
@@ -4510,8 +4592,8 @@ def nTrans : Nat := pubS + (transcriptRows shapeSmoke tS.sp true).length
 -- class, and on how many of its cells lie in R1's row range, so a deleted wire cannot satisfy it.
 -- (`ipaBlocks` `EndoMul` reads + the absorb row + since §7b the three `assert_on_curve` halves,
 -- which read `x` three times and `y` twice.)
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 4
-#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 3
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
+#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 5
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).filter
           (fun c => c.row < nTrans)).length == 1
 #guard ((classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).filter
@@ -4519,7 +4601,7 @@ def nTrans : Nat := pubS + (transcriptRows shapeSmoke tS.sp true).length
 -- …and a CONSTANT base has NO cell in the transcript: it is pinned, not absorbed. Its class is
 -- `ipaBlocks` `EndoMul` reads + the `Inner_curve.constant` pin + segment C's `sponge_after_index`
 -- absorb, because the smoke shape's one constant fold round IS plonk-index commitment 22 (§3c).
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 2
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 4
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).filter
           (fun c => c.row < nTrans)).length == 0
 #guard idxSrc shapeSmoke 22 == some constR0
@@ -4632,6 +4714,7 @@ def witOff : List (List Int) := stepWitness tOffCurve 0 rowsOff
 
 /-- The absolute row of R4's FIRST `assert_on_curve` row, in the `.ipa` rung. -/
 def onCRow0 : Nat := (rungRows tS .msm true).length + (ipaBaseRows shapeSmoke tS.ipa).length
+                     + (ipaSeedPinRows shapeSmoke).length
 def nOnCRows : Nat := (onCurveRows shapeSmoke).length
 /-- A row's own double-`Generic` body, read out of a composed grid. -/
 def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :=
@@ -4667,12 +4750,12 @@ def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :
 -- …and the checked variables ARE the fold's own base coordinates, not a fresh copy: `x`'s class
 -- gains the two `assert_on_curve` halves that read it (`x·x` and `x2·x`) on top of the
 -- `ipaBlocks` `EndoMul` reads and the transcript's absorb row.
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 4
-#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 3
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
+#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 5
 -- …and a CONSTANT base's class gains NOTHING from §7b — pinned, not checked, which is upstream's
 -- own split (`Inner_curve.constant` is a literal and carries no `check`). Its `ipaBlocks + 2` is the
 -- `EndoMul` reads, the pin row and segment C's index absorb, and no `assert_on_curve` half.
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 2
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 4
 -- …and the two intermediates really are `x²` and `x³` of that point.
 #guard tS.ipa.bases.getD absR0 (0, 0) == honPt
 #guard fMul honPt.1 honPt.1 == fMul honPt.1 honPt.1
@@ -4876,7 +4959,7 @@ def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
   else (classCells posS (vIdxX shapeSmoke k)).length == 2
        && (classCells posS (vIdxY shapeSmoke k)).length == 2)
 #guard idxVar shapeSmoke 22 0 == ipx shapeSmoke (qT shapeSmoke constR0)
-#guard (classCells posS (idxVar shapeSmoke 22 0)).length == shapeSmoke.ipaBlocks + 2
+#guard (classCells posS (idxVar shapeSmoke 22 0)).length == shapeSmoke.ipaBlocks + 4
 
 -- …and `index_digest`'s three output lanes: lane 0 is read by the digest permutation's closing
 -- `Zero` row, by its σ-only probe, AND by R1's block-0 absorb row — that last cell is the whole
@@ -5118,7 +5201,7 @@ def ftcJacScale (g : Nat × Nat) (sv : Nat) : Nat × Nat × Nat :=
 #guard (ipaBaseRows shapeSmoke tS.ipa).all (fun r =>
   r.perm.headD none != some (ipx shapeSmoke (qT shapeSmoke FTC_ROUND)))
 #guard (classCells posS (ipx shapeSmoke (qT shapeSmoke FTC_ROUND))).length
-        == shapeSmoke.ipaBlocks + 2
+        == shapeSmoke.ipaBlocks + 4
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke FTC_ROUND))).filter
           (fun c => c.row < nTrans)).length == 0
 
@@ -5205,6 +5288,39 @@ def ZETA_DOM : Nat := Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_DOM_M1 + 1
 #guard (List.range N_TCOMM).all (fun i =>
   let p := Dregg2.Circuit.Emit.MinaWrapGroupGate.TCHUNKS.getD i (0, 0, 0)
   ftcTc i == (p.1, p.2.1))
+
+-- ── §12e′ — ⚠ ⚑ THE ζ-POWER COLLAPSE: NAMED AT FULL RESOLUTION, DELIBERATELY NOT HALF-FIXED ────
+-- `plonk_checks.ml:496-497` computes TWO DIFFERENT values:
+--     zeta_to_domain_size = env.zeta_to_n_minus_1 + F.one     -- ζ^{domain_size} of the PREVIOUS
+--                                                                WRAP PROOF's own domain
+--     zeta_to_srs_length  = pow2pow zeta env.srs_length_log2  -- ζ^{2^srs_length_log2}
+-- and `step_verifier.ml:1053` passes `~srs_length_log2:Common.Max_degree.step_log2` = 16
+-- (`common.ml:7-9`, `Backend.Tick.Rounds.n`). `Common.ft_comm` multiplies by the SECOND at every
+-- Horner step and by the FIRST at the closing scale (`common.ml:251,256`), so upstream's ladder
+-- reads TWO cells and this one reads ONE — `ftcScalOf` sends term `n` to the same scalar block as
+-- terms `1..n−1`, because R6 is compiled at `log2n = FT_LOG2N = 16` and its `zetaN` slot therefore
+-- plays both roles. The collapse is pinned as an EQUALITY here so it is a stated property of the
+-- object and not a reader's inference.
+#guard N_FTC_SCAL == 2
+#guard ftcScalOf (tCommN shapeSmoke) == ftcScalOf 1
+#guard ftcScalV tS.ftw (ftcScalOf (tCommN shapeSmoke)) == ftcScalV tS.ftw (ftcScalOf 1)
+-- ⚠ …and it is WRONG AT EVERY REAL BLOCK, not fitted to one. The multi-block conformance lane
+-- measures `zeta_to_srs_len` = ζ^{2^15} against `zeta_to_domain_size` = ζ^{2^14} on **5/5** devnet
+-- blocks (539508 / 540890 / 540906 / 540922 / 540929). The two pins above this section already
+-- REFUTE the collapse at 539508: the powers differ, and feeding `ZETA_SRS` where
+-- `zeta_to_domain_size` belongs gives a point that is NOT `FT_COMM_GOLD`. So the values are
+-- distinguishable and this assembly cannot distinguish them.
+-- ⚑ **AND THE FIX IS NAMED PRECISELY, BECAUSE THE OBVIOUS ONE IS WRONG.** It is NOT "give `FtcWire`
+-- a third slot": `srs_length_log2 = step_log2 = 16` is CORRECT here, so a `FT_SRS_LOG2` would be
+-- `FT_LOG2N` again and the third slot would compute the same field element twice — a
+-- partially-distinguished power that still reads one value, which LOOKS retired and is not. The
+-- value that is wrong is **R6's DOMAIN**: `ftCfg`'s `log2n`, which this file sets to `FT_LOG2N = 16`
+-- and a previous wrap proof sets to `2^14`. Separating the powers therefore means RE-DOMAINING R6
+-- and re-welding §13's whole `ft_eval0` chain, `zkPolyR`, `omega` and `MinaWrapFtEval0` at the new
+-- domain — a rung, not a hunk. Until that lands, `BRANCH_DOMAIN_LOG2 == FT_LOG2N` is the single
+-- place the conflation is written down, and it is pinned.
+#guard BRANCH_DOMAIN_LOG2 == FT_LOG2N
+#guard FT_N == 2 ^ 16
 #guard ftcSigma == ((Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).1,
                     (Dregg2.Circuit.Emit.MinaWrapGroupGate.SIGMA6).2.1)
 
@@ -5419,6 +5535,23 @@ def nZeroBody (v : Nat) : ZMod pN :=
 -- …and `vSN i 0` is READ by that row for every term (two cells: the pin and chunk 0's `VarBaseMul`).
 #guard (List.range shapeSmoke.msmTerms).all (fun i =>
   (classCells posS (vSN shapeSmoke i 0)).length == 2)
+
+-- ⚑ **AND THE PIN IS WHAT FORCES THE TWO LEADING PAD BITS**, which is why `:158` is the load-bearing
+-- half of the pair rather than tidiness. `chunks_needed ~num_bits:127 = 26` and `26·5 = 130`, so the
+-- ladder carries TWO bits more than a challenge has. Nothing pins those two cells directly. The
+-- ARGUMENT (an argument about the constraint system, not a machine-checked implication — the three
+-- facts it rests on are pinned, the inference is prose): `VarBaseMul`'s own booleanity constraints
+-- force every `bₖ ∈ {0,1}`; with `n₀ = 0` the counter chain gives `n_final = Σₖ bₖ·2^{129−k}`; the
+-- `EndoMulScalar` chain reconstructs `n_final` from 8 rows × 8 crumbs × 2 bits with ITS OWN `n₀ = 0`
+-- pin, so `n_final < 2¹²⁸`; and `2¹³⁰ < p`, so the field equation is an INTEGER one and `b₀ = b₁ = 0`
+-- follows. Remove the `n₀` pin and every step of that collapses.
+#guard 5 * shapeSmoke.msmChunks == 130
+#guard shapeSmoke.chalBits == 128 && shapeStep.chalBits == 128
+#guard 2 ^ 130 < pN
+#guard shapeSmoke.msmChunks == (127 + 4) / 5
+-- …and the endo ladder has NO pad: `4·ipaBlocks = 128` exactly, which is why §12g's leg is only
+-- about the seed.
+#guard 4 * shapeSmoke.ipaBlocks == shapeSmoke.chalBits
 -- ⚑ …and the SAME pin now covers §6b's eight `ft_comm` ladders, which had `:157` and not `:158`:
 -- `ftcN k 0` was free, so the closing `Field.Assert.equal !n_acc scalar` against R6's derived `perm`
 -- / `ζ^n` cell was one equation in two unknowns and `ft_comm` was choosable the same way.
@@ -5426,16 +5559,109 @@ def nZeroBody (v : Nat) : ZMod pN :=
   (tS.ftc.terms.getD k default).td.ns.headD 1 == 0)
 #guard ((ftcNZeroRows shapeSmoke).headD default).coeffs == cConst 0 ++ cConst 0
 
--- ⚠ ⚑ **AND SAY WHAT IS STILL OPEN, at the point of use.** R4's `Scalar_challenge.endo` has the
--- SAME TWO free witnesses and this commit does NOT close them: `scalar_challenge.ml:230-234` seeds
--- the endo accumulator at `acc = p + p` where `p = t + (Endo.base·xt, yt)` — a `Generic` scale and
--- TWO `add_fast`s — and `n_acc := ref Field.zero` at `:235`, while `runIpa` starts at `dblA T` with
--- `qAcc r 0` and `vQN r 0` read by nothing. MEASURED here rather than asserted: the round-0
--- accumulator cell is in a ONE-cell class, which is what "free" looked like for `pAcc i 0` an hour
--- ago. Closing it moves every fold value (upstream's seed is `2(t + φ(t))`, not `2t`), so it is its
--- own rung and not a hunk of this one.
-#guard (classCells posS (ipx shapeSmoke (qAcc shapeSmoke 0 0))).length == 1
-#guard (classCells posS (vQN shapeSmoke 0 0)).length == 1
+-- ── §12g — ⚑ R4's SEED, THE THIRD REGION OF THE SAME FAMILY (`scalar_challenge.ml:230-235`) ────
+-- `Scalar_challenge.endo` had BOTH free witnesses, and its point seed was also the WRONG POINT.
+-- Upstream: `let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in ref G.(p + p)` and
+-- `let n_acc = ref Field.zero`. `runIpa` seeded at `dblA T` — `2t`, not `2(t + φ(t))` — with
+-- `qAcc r 0` and `vQN r 0` read by NO row. So the fold was self-consistent arithmetic that was not
+-- `Scalar_challenge.endo`, over a starting point the prover could name.
+
+-- ⚑ THE SEED IS THE ENDOMORPHISM'S, and it is a different point from what this file used to emit.
+#guard Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo != 1
+#guard (endoQ (tS.ipa.bases.getD absR0 (0, 0))).1 != (tS.ipa.bases.getD absR0 (0, 0)).1
+#guard (endoQ (tS.ipa.bases.getD absR0 (0, 0))).2 == (tS.ipa.bases.getD absR0 (0, 0)).2
+#guard endoSeed (tS.ipa.bases.getD absR0 (0, 0)) != dblA (tS.ipa.bases.getD absR0 (0, 0))
+-- …and `φ(t)` is on the curve, which is what makes `endo` the base-field endomorphism and not a
+-- number: `a = 0` on Pallas, so `(ζx)³ + b = x³ + b` for a cube root of unity.
+#guard (List.range shapeSmoke.ipaRounds).all (fun r =>
+  onCurveA (endoQ (tS.ipa.bases.getD r (0, 0))) == onCurveA (tS.ipa.bases.getD r (0, 0)))
+-- …the seed the assembly RUNS is the emitted rows' own output, round for round.
+#guard (List.range shapeSmoke.ipaRounds).all (fun r =>
+  (tS.ipa.accs.getD r []).getD 0 (0, 0) == endoSeed (tS.ipa.bases.getD r (0, 0)))
+
+-- ⚑⚑ **THE SAME EXHIBIT AS §12f, ON THE ENDO LADDER.** A forged accumulator seed leaves the endo
+-- gate's own eleven DEPLOYED constraints satisfied at every block — `endoMulConstraints`, read-only
+-- — while the round's output moves. The counter chain is untouched, so the wire to the challenge
+-- cell says nothing about it.
+def ipaT0 : Nat × Nat := tS.ipa.bases.getD absR0 (0, 0)
+def ipaSeedForged : Nat × Nat := addA (endoSeed ipaT0) ipaT0
+/-- Round `absR0`'s endo blocks from an ARBITRARY accumulator seed — `endoStep`, the assembly's own
+generator, at the assembly's own bits. -/
+def ipaBlocksFrom (seed : Nat × Nat) : List EndoBlock :=
+  let bits := endoBitsOf shapeSmoke (chalOf shapeSmoke tS.sp (shapeSmoke.ipaChal absR0))
+  ((List.range shapeSmoke.ipaBlocks).foldl
+    (fun (st : List (Nat × Nat) × List EndoBlock) e =>
+      let cur := st.1.getLastD (0, 0)
+      let b := endoStep ipaT0.1 ipaT0.2 cur.1 cur.2
+        (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
+      (st.1 ++ [(b.xs, b.ys)], st.2 ++ [b]))
+    ([seed], [])).2
+/-- The 15 CURR / 15 NEXT cells of endo block `e`, as `ipaRoundRows` lays them out. -/
+def emCells (blks : List EndoBlock) (accs : List (Nat × Nat)) (ns : List Nat) (e : Nat)
+    : List Nat × List Nat :=
+  let b := blks.getD e default
+  let a := accs.getD e (0, 0)
+  let a' := accs.getD (e + 1) (0, 0)
+  ( [ ipaT0.1, ipaT0.2, b.inv, 0, a.1, a.2, ns.getD e 0
+    , b.xr, b.yr, b.s1, b.s3, b.b1, b.b2, b.b3, b.b4 ]
+  , [ 0, 0, 0, 0, a'.1, a'.2, ns.getD (e + 1) 0, 0, 0, 0, 0, 0, 0, 0, 0 ] )
+def emOk (c : List Nat × List Nat) : Bool :=
+  ((endoMulConstraints (R := ZMod pN) (Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo : ZMod pN)
+      (c.1.map (fun n => (n : ZMod pN))) (c.2.map (fun n => (n : ZMod pN)))).take 11).all
+    (fun z => decide (z = 0))
+/-- Block accumulators from an arbitrary seed. -/
+def ipaAccsFrom (seed : Nat × Nat) : List (Nat × Nat) :=
+  let bits := endoBitsOf shapeSmoke (chalOf shapeSmoke tS.sp (shapeSmoke.ipaChal absR0))
+  (List.range shapeSmoke.ipaBlocks).foldl
+    (fun (st : List (Nat × Nat)) e =>
+      let cur := st.getLastD (0, 0)
+      let b := endoStep ipaT0.1 ipaT0.2 cur.1 cur.2
+        (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
+      st ++ [(b.xs, b.ys)])
+    [seed]
+
+-- the helpers reproduce the assembly's OWN accepted rows on the honest seed…
+#guard ipaAccsFrom (endoSeed ipaT0) == tS.ipa.accs.getD absR0 []
+#guard (List.range shapeSmoke.ipaBlocks).all (fun e =>
+  emOk (emCells (ipaBlocksFrom (endoSeed ipaT0)) (ipaAccsFrom (endoSeed ipaT0))
+                (tS.ipa.ns.getD absR0 []) e))
+-- ⚑⚑ …and the FORGED seed's rows are accepted just the same, with a different round output.
+#guard ipaSeedForged != endoSeed ipaT0
+#guard (List.range shapeSmoke.ipaBlocks).all (fun e =>
+  emOk (emCells (ipaBlocksFrom ipaSeedForged) (ipaAccsFrom ipaSeedForged)
+                (tS.ipa.ns.getD absR0 []) e))
+#guard (ipaAccsFrom ipaSeedForged).getLastD (0, 0) != (ipaAccsFrom (endoSeed ipaT0)).getLastD (0, 0)
+
+-- ⚑⚑ **AND THE TWO NEW `Ops.add_fast` ROWS REFUSE IT.** `acc₀ = p + p`'s own gate body is 0 at the
+-- endomorphism seed and NONZERO at the prover's point.
+def ipaDblCellsAt (seed : Nat × Nat) : List Nat :=
+  let p := endoP ipaT0
+  ((completeAddWitness p.1 p.2 p.1 p.2).set 4 seed.1).set 5 seed.2
+#guard caOk (ipaDblCellsAt (endoSeed ipaT0))
+#guard caOk (ipaDblCellsAt ipaSeedForged) == false
+-- …and it is satisfiable at every round, both `add_fast`s.
+#guard (List.range shapeSmoke.ipaRounds).all (fun r =>
+  let T := tS.ipa.bases.getD r (0, 0)
+  let q := endoQ T
+  let p := endoP T
+  caOk (completeAddWitness T.1 T.2 q.1 q.2) && caOk (completeAddWitness p.1 p.2 p.1 p.2))
+-- ⚑ …and the cells that were in a ONE-cell class are not any more. `qAcc r 0`: the seed add's
+-- output and block 0's `EndoMul` input. `vQN r 0`: the `Field.zero` pin and block 0's `n`.
+#guard (List.range shapeSmoke.ipaRounds).all (fun r =>
+  (classCells posS (ipx shapeSmoke (qAcc shapeSmoke r 0))).length == 2
+  && (classCells posS (ipy shapeSmoke (qAcc shapeSmoke r 0))).length == 2
+  && (classCells posS (vQN shapeSmoke r 0)).length == 2)
+-- …and `φ(t)`'s x is read by its pin row and by the `p = t + φ(t)` add, nowhere else.
+#guard (List.range shapeSmoke.ipaRounds).all (fun r =>
+  (classCells posS (vQEndo shapeSmoke r)).length == 2)
+-- ⚑ …so ALL THREE ladder regions now start where upstream starts them: R3's `multiscale_known`
+-- (§12f), §6b's `ft_comm` (`:157` from the start, `:158` here) and R4's `Scalar_challenge.endo`.
+#guard (List.range shapeSmoke.msmTerms).all (fun i =>
+  (classCells posS (vSN shapeSmoke i 0)).length == 2)
+#guard (List.range (ftcTerms shapeSmoke)).all (fun k =>
+  (classCells posS (ftcN shapeSmoke k 0)).length == 2)
+#guard (List.range shapeSmoke.ipaRounds).all (fun r =>
+  (classCells posS (vQN shapeSmoke r 0)).length == 2)
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
