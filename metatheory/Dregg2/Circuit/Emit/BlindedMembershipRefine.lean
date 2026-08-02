@@ -69,8 +69,15 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
   (blindedMembershipDesc level0Lookup level1Lookup blindLookup continuityGate continuityLastFix
    rootPin blindedLeafPin contBody continuity_body_zero_iff
+   blindedMembershipDesc_constraints level0Leg level1Leg blindLeg contSrc
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 BLINDING BLINDED_LEAF
    ROOT_PI BLINDED_LEAF_PI)
+-- ⚑ The descriptor is COMPILER-AUTHORED (`EffectLower.lowerAir blindedMembershipAir`), so every
+-- membership below reaches its constraint list through `blindedMembershipDesc_constraints` (the
+-- compiler's output, by `rfl`) and every gate body through the generic `gateBody_eval` tooth —
+-- never through a hand-written `EmittedExpr` literal, which no longer exists.
+open Dregg2.Circuit.Emit.AirNormalForm
+  (gateBody gateBody_eval liftTuple_emit lowerConstraint_gateBody)
 open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.MerkleMembershipRefine
   (merkleFold2 MerkleMembers2 MembersUnderRoot4 foldNode4 merkleMembers2_as_fold
@@ -97,8 +104,10 @@ def BlindedMembers (hash : List ℤ → ℤ)
 /-- The membership tactic: every constraint we name is literally in `blindedMembershipDesc`. -/
 local macro "bm_mem" : tactic =>
   `(tactic| (show _ ∈ blindedMembershipDesc.constraints;
-             simp [blindedMembershipDesc, level0Lookup, level1Lookup, blindLookup, continuityGate,
-               continuityLastFix, rootPin, blindedLeafPin]))
+             rw [blindedMembershipDesc_constraints];
+             simp [level0Lookup, level1Lookup, blindLookup, continuityGate,
+               continuityLastFix, rootPin, blindedLeafPin, level0Leg, level1Leg, blindLeg,
+               contBody, liftTuple_emit, lowerConstraint_gateBody]))
 
 /-- A declared arity-4 chip lookup, against the NAMED sound chip table, forces the digest column to be
 the genuine Poseidon2 hash of the four evaluated inputs — on ANY row (lookups are never gated). -/
@@ -225,7 +234,9 @@ theorem blindedMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
     -- where a mod-p congruence cannot thread).
     have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 :=
       eq_of_modEq_canon hc.cur1 hc.parent0
-        ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+        -- ⚑ the continuity residual, read off the COMPILED body (`contBody = gateBody contSrc`)
+        -- by the generic `gateBody_eval` tooth.
+        ((gate_modEq_iff (gateBody_eval contSrc (envAt t 0).loc)).mp
           (activeGateZero hsat 0 hlen0 hlast contBody (by bm_mem)))
     have hroot : (envAt t 0).loc PARENT1 = t.pub ROOT_PI :=
       eq_of_modEq_canon hc.parent1 hc.root (firstPi hsat hlen0 PARENT1 ROOT_PI (by bm_mem))
@@ -341,7 +352,9 @@ theorem concrete_sat :
           blindedLeafPin] <;>
         trivial)
   · intro i _; trivial
-  · intro i _ r hr; simp [blindedMembershipDesc] at hr
+  · intro i _ r hr
+    rw [show blindedMembershipDesc.ranges = [] from rfl] at hr
+    simp at hr
   · exact List.nodup_nil
   · intro op hop; rw [hmemlog] at hop; simp at hop
   · rw [hmemlog]; trivial

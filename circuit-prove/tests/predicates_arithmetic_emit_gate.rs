@@ -161,18 +161,24 @@ fn fact_commit_lookup() -> VmConstraint2 {
 /// The independently-hand-built twin of the Lean `predicateGeDesc` (the "hand AIR semantics"
 /// shape): C1/C2 PI bindings, the C3 slot identity, the C5 diff gate, the C6 range lookup.
 fn hand_built_desc() -> EffectVmDescriptor2 {
-    // C3: SLOT_A − INPUT == 0.
+    // C3: 1*SLOT_A + (-1)*INPUT == 0.
+    //
+    // ⚑ EVERY TERM CARRIES ITS COEFFICIENT, so a unit coefficient is `mul(const 1, x)` and never a
+    // bare `x`. That is the corpus normal form this descriptor is now COMPILED into
+    // (`metatheory/Dregg2/Circuit/Emit/AirNormalForm.lean`, rule 1) — the twin renders the same
+    // polynomial the same way so the `decoded == hand` differential still bites on the BYTES.
+    // `LeanExpr` derives a structural `PartialEq`: writing the bare form here is a RED.
     let c3 = VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
-        LeanExpr::Var(SLOT_A),
+        LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(SLOT_A)),
         LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(INPUT)),
     )));
-    // C5: (DIFF − SLOT_A) + THRESHOLD == 0.
+    // C5: (1*DIFF + (-1)*SLOT_A) + 1*THRESHOLD == 0.
     let c5 = VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
         LeanExpr::add(
-            LeanExpr::Var(DIFF),
+            LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(DIFF)),
             LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(SLOT_A)),
         ),
-        LeanExpr::Var(THRESHOLD),
+        LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(THRESHOLD)),
     )));
     EffectVmDescriptor2 {
         name: "dregg-predicate-arith-ge::threshold-v1".to_string(),
