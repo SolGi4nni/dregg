@@ -1,0 +1,74 @@
+# pickles-stepmain-harness — PROVE the Lean-assembled `step_verifier.verify_one` recursive verifier.
+#
+# The circuit is Lean-authored by `Dregg2.Circuit.Emit.KimchiStepMain` — gate list, coefficients,
+# cross-gate placement (`KimchiPlacement.placeChecked`) and the composed witness grid
+# (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that RUNS
+# it and authors no constraint. No OCaml, no Node, no o1js in this path.
+#
+# FIVE RUNGS, each a superset of the one below, each proved with BOTH polarities:
+#   r1_transcript  the Fp Poseidon sponge, state copy-wired across every block boundary
+#   r2_challenges  `to_field_checked` — chained `EndoMulScalar` rows + the squeeze decomposition
+#   r3_msm         `multiscale_known` — `var_base_mul` terms whose scalar IS the derived challenge
+#   r4_ipa         `Scalar_challenge.endo` fold rounds (the row-OVERLAP chaining) + `complete_add`
+#   r5_full        + the deferred `b(zeta)` product and the PRIMARY_LEN public-input ties
+#
+# THE GATE, per rung (see `src/main.rs`):
+#   (1) HONEST      — the assembled circuit's good witness verify()==true;
+#   (2) WIRING      — desyncing a sigma-ONLY probe cell is REJECTED (probe rows are standalone
+#                     `Zero` rows: a `Zero` gate reads nothing and no gate reads a probe row, so
+#                     that cell is constrained by the copy-permutation AND BY NOTHING ELSE);
+#   (3) NOT-ADJACENCY — the SAME flips on the UNWIRED control (identical rows, byte-identical
+#                     witness, probe rows in NO sigma class) are ACCEPTED;
+#   (4) NON-VACUITY — an unread advice-cell flip is ACCEPTED;
+#   (5) PUBLIC INPUT (r5 only) — the honest proof verified against a tampered public vector is
+#                     REJECTED, and flipping public cell (0,0) AND telling the verifier the new
+#                     value is STILL REJECTED, by the copy-permutation alone.
+#
+# disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
+# z-polynomial), not by a debug assert.
+#
+# SCOPE. INNER-KIMCHI FIDELITY of the assembled recursive verifier. NOT a soundness proof, NOT
+# "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER proof of a
+# `verify_one`-shaped circuit and wrap is a later rung.
+#
+# REGENERATE the fixtures (only when the Lean assembly changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiStepMain \
+#     && DREGG_SM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean \
+#     && cp /tmp/pickles-stepmain/stepmain_smoke_*.json \
+#           fixtures/pickles-stepmain-harness/fixtures/
+#
+# RUN the committed gate (RELEASE — a debug prove is minutes):
+#   cargo test --release --manifest-path metatheory/fixtures/pickles-stepmain-harness/Cargo.toml
+# RUN a SCALE rung set (any emitted tag, all five rungs, timed):
+#   DREGG_SM=step lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean
+#   cargo run --release --manifest-path .../Cargo.toml -- /tmp/pickles-stepmain step
+
+[package]
+name = "pickles-stepmain-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

@@ -1,0 +1,492 @@
+// PROVE the Lean-assembled `step_verifier.verify_one` recursive verifier, rung by rung.
+//
+// The circuit (Lean-authored by `Dregg2.Circuit.Emit.KimchiStepMain`) is the recursive verifier in
+// the five named sub-circuits `verify_one` runs:
+//
+//   r1_transcript  the Fp Poseidon SPONGE — an init pin, `absorbs` absorb blocks (a Generic absorb
+//                  row + an 11-row Poseidon permutation + its output Zero row), then `chals`
+//                  squeeze permutations. The sponge STATE crosses every block boundary as a sigma
+//                  class: no prior rung had ever copy-wired a Poseidon gate to anything.
+//   r2_challenges  `to_field_checked` — 8 chained EndoMulScalar rows per challenge, the (n,a,b)
+//                  accumulators hopping row->row through sigma (row k's n8/a8/b8 at cols 1/4/5 IS
+//                  row k+1's n0/a0/b0 at cols 0/2/3), plus a Generic decomposition row tying the
+//                  reconstructed n8 back to the SPONGE OUTPUT variable.
+//   r3_msm         `multiscale_known` — var_base_mul terms of 26 five-bit chunks, summed by a
+//                  complete_add chain. Each term's scalar counter chain CLOSES ON ITS CHALLENGE:
+//                  the final n' cell and the challenge's final n8 cell are the SAME VARIABLE.
+//   r4_ipa         `Scalar_challenge.endo` fold rounds — 32 four-bit endo_mul blocks each, chained
+//                  by ROW OVERLAP (not sigma), each closing on its own challenge, folded by a
+//                  second complete_add chain.
+//   r5_full        + the deferred b(zeta) = prod(1 + u_i * zeta^(2^(k-1-i))) Generic chain over the
+//                  challenge variables, and the PRIMARY_LEN public-input ties. Placed through
+//                  `placeChecked`, so an inert public word REFUSES rather than passing green.
+//
+// WHAT IT DOES. Reads the Lean-emitted circuit JSON (gate typ/wires/coeffs, the 15-wide witness
+// grid, the public vector, and the sigma-only probe rows), builds the pure-Rust kimchi objects, and
+// PROVES + VERIFIES through the SAME `proof-systems` (tag 0.3.0) front door mina-rust uses.
+//
+//   (1) HONEST        verify()==true on the assembled rung.
+//   (2) WIRING        flip col 0 of a probe row -> REJECTED. Probe rows are standalone `Zero` rows
+//                     carrying a copy of a sub-circuit boundary value; a `Zero` gate reads nothing
+//                     and no gate reads a probe row, so that cell is constrained by the
+//                     copy-permutation AND BY NOTHING ELSE. The rejection IS sigma.
+//   (3) NOT-ADJACENCY the SAME flips on the UNWIRED circuit (identical rows, identical witness,
+//                     probe rows in NO sigma class) are ACCEPTED. So (2) is the WIRE.
+//   (4) NON-VACUITY   flip an unread advice cell (col 12) of a probe row -> ACCEPTED.
+//   (5) PUBLIC INPUT  (rungs with public_input_size > 0) the honest proof against a tampered public
+//                     vector is REJECTED; and flipping public cell (0,0) AND telling the verifier
+//                     the new value -- so the public row's own constraint w0[0] = p0 still holds --
+//                     is STILL REJECTED, by the copy-permutation alone.
+//
+// disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
+// z-polynomial), not by a debug assert.
+//
+// House Law #1: the CIRCUIT (gates/coeffs/witness + cross-gate placement) is Lean-authored;
+// `proof-systems` is the Rust PROVER that RUNS it. No OCaml, no Node, no o1js in this path.
+//
+// SCOPE. INNER-KIMCHI FIDELITY of the assembled recursive verifier. NOT a soundness proof, NOT
+// "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER proof of a
+// `verify_one`-shaped circuit, and wrap is a later rung.
+
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::Instant;
+
+use groupmap::GroupMap;
+use mina_curves::pasta::{Fp, Vesta, VestaParameters};
+use mina_poseidon::{
+    constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, sponge::DefaultFqSponge,
+    sponge::DefaultFrSponge,
+};
+use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof};
+use serde::Deserialize;
+
+use kimchi::{
+    circuits::{
+        gate::{CircuitGate, GateType},
+        wires::{GateWires, Wire, COLUMNS},
+    },
+    proof::ProverProof,
+    prover_index::{testing::new_index_for_test_with_lookups, ProverIndex},
+    verifier::{batch_verify, Context},
+};
+
+type BaseSponge = DefaultFqSponge<VestaParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
+type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
+type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
+
+/// The five rungs, in assembly order. Each is a superset of the one before it.
+const RUNGS: [&str; 5] = [
+    "r1_transcript",
+    "r2_challenges",
+    "r3_msm",
+    "r4_ipa",
+    "r5_full",
+];
+
+// ---- the Lean-emitted JSON shape ----
+
+#[derive(Deserialize, Clone)]
+struct GateJson {
+    typ: u64,
+    wires: Vec<[usize; 2]>,
+    coeffs: Vec<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct CircuitJson {
+    name: String,
+    public_input_size: usize,
+    public_input: Vec<String>,
+    num_rows: usize,
+    /// Absolute rows of the sigma-ONLY probes. Emitted WITH the circuit so the tampers aim at what
+    /// the Lean schedule produced, not at a hand-copied constant a drift would invalidate.
+    probe_rows: Vec<usize>,
+    gates: Vec<GateJson>,
+    witness: Vec<Vec<String>>,
+}
+
+fn fixtures_dir() -> PathBuf {
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures"))
+}
+
+fn parse_fp(s: &str) -> Fp {
+    Fp::from_str(s).unwrap_or_else(|_| panic!("not a decimal field element: {s:?}"))
+}
+
+fn gate_type_from_ordinal(o: u64) -> GateType {
+    match o {
+        0 => GateType::Zero,
+        1 => GateType::Generic,
+        2 => GateType::Poseidon,
+        3 => GateType::CompleteAdd,
+        4 => GateType::VarBaseMul,
+        5 => GateType::EndoMul,
+        6 => GateType::EndoMulScalar,
+        _ => panic!("unsupported gate ordinal {o} for the step_main rung"),
+    }
+}
+
+fn load_path(path: &Path) -> CircuitJson {
+    let raw =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+}
+
+fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fp>> {
+    c.gates
+        .iter()
+        .map(|g| {
+            assert_eq!(g.wires.len(), 7, "kimchi PERMUTS = 7 wires per gate");
+            let wires: GateWires = core::array::from_fn(|i| Wire {
+                row: g.wires[i][0],
+                col: g.wires[i][1],
+            });
+            let coeffs: Vec<Fp> = g.coeffs.iter().map(|s| parse_fp(s)).collect();
+            CircuitGate::new(gate_type_from_ordinal(g.typ), wires, coeffs)
+        })
+        .collect()
+}
+
+fn build_witness(c: &CircuitJson) -> [Vec<Fp>; COLUMNS] {
+    assert_eq!(
+        c.witness.len(),
+        COLUMNS,
+        "witness must have {COLUMNS} columns"
+    );
+    core::array::from_fn(|col| {
+        let column = &c.witness[col];
+        assert_eq!(
+            column.len(),
+            c.num_rows,
+            "each witness column is num_rows long"
+        );
+        column.iter().map(|s| parse_fp(s)).collect()
+    })
+}
+
+fn public_of(c: &CircuitJson) -> Vec<Fp> {
+    assert_eq!(
+        c.public_input.len(),
+        c.public_input_size,
+        "the emitted public vector must be public_input_size long"
+    );
+    c.public_input.iter().map(|s| parse_fp(s)).collect()
+}
+
+// disable_gates_checks = true: skip the prover's debug preflight so a tampered witness (gate OR
+// permutation) is rejected by the PROOF, returning Err rather than panicking.
+fn index_for(c: &CircuitJson) -> Idx {
+    let mut index = new_index_for_test_with_lookups::<FULL_ROUNDS, Vesta>(
+        build_gates(c),
+        c.public_input_size,
+        0,
+        vec![],
+        None,
+        true,
+        None,
+        false,
+    );
+    index.compute_verifier_index_digest::<BaseSponge>();
+    index
+}
+
+fn prove_and_verify(
+    index: &Idx,
+    group_map: &<Vesta as CommitmentCurve>::Map,
+    witness: [Vec<Fp>; COLUMNS],
+    public_input: &[Fp],
+) -> Result<(), String> {
+    let proof: ProverProof<Vesta, OpeningProof<Vesta, FULL_ROUNDS>, FULL_ROUNDS> =
+        ProverProof::create::<BaseSponge, ScalarSponge, _>(
+            group_map,
+            witness,
+            &[],
+            index,
+            &mut rand::rngs::OsRng,
+        )
+        .map_err(|e| format!("prove rejected: {e:?}"))?;
+
+    let vk = index.verifier_index.as_ref().expect("verifier index");
+    let ctx = Context {
+        verifier_index: vk,
+        proof: &proof,
+        public_input,
+    };
+    batch_verify::<FULL_ROUNDS, Vesta, BaseSponge, ScalarSponge, OpeningProof<Vesta, FULL_ROUNDS>>(
+        group_map,
+        &[ctx],
+    )
+    .map_err(|e| format!("verify rejected: {e:?}"))?;
+    Ok(())
+}
+
+/// A flip of witness cell (col,row) by +1, returning a fresh tampered witness.
+fn tamper(c: &CircuitJson, col: usize, row: usize) -> [Vec<Fp>; COLUMNS] {
+    let mut w = build_witness(c);
+    w[col][row] += Fp::from(1u64);
+    w
+}
+
+fn gate_census(c: &CircuitJson) -> [usize; 7] {
+    let mut n = [0usize; 7];
+    for g in &c.gates {
+        n[g.typ as usize] += 1;
+    }
+    n
+}
+
+/// Which probe rows to tamper. Every probe at small scale; at scale a spread SAMPLE, because each
+/// tamper is a full prove. The sample always contains the FIRST and the LAST probe (the ends of the
+/// chain) plus evenly spaced interior ones, and the chosen rows are printed.
+fn probe_sample(probes: &[usize], budget: usize) -> Vec<usize> {
+    if probes.len() <= budget {
+        return probes.to_vec();
+    }
+    let n = probes.len();
+    (0..budget)
+        .map(|i| probes[i * (n - 1) / (budget - 1)])
+        .collect()
+}
+
+struct RungOutcome {
+    rows: usize,
+    domain: usize,
+    probes_tested: usize,
+    honest_ms: u128,
+}
+
+/// The whole four/five-polarity gate for ONE rung. Panics on any falsification.
+fn run_rung(dir: &Path, tag: &str, rung: &str, budget: usize) -> RungOutcome {
+    let wired = load_path(&dir.join(format!("stepmain_{tag}_{rung}.json")));
+    let unwired = load_path(&dir.join(format!("stepmain_{tag}_{rung}_unwired.json")));
+
+    // The control must be a control: same rows, same gate types, byte-identical witness, DIFFERENT
+    // wires. If the witnesses ever diverge, (3) proves nothing.
+    assert_eq!(unwired.num_rows, wired.num_rows);
+    assert_eq!(
+        unwired.gates.iter().map(|g| g.typ).collect::<Vec<_>>(),
+        wired.gates.iter().map(|g| g.typ).collect::<Vec<_>>()
+    );
+    assert_eq!(unwired.witness, wired.witness);
+    assert_ne!(
+        unwired
+            .gates
+            .iter()
+            .map(|g| g.wires.clone())
+            .collect::<Vec<_>>(),
+        wired
+            .gates
+            .iter()
+            .map(|g| g.wires.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let gm = <Vesta as CommitmentCurve>::Map::setup();
+    let iw = index_for(&wired);
+    let iu = index_for(&unwired);
+    let pub_w = public_of(&wired);
+    let cen = gate_census(&wired);
+
+    println!(
+        "-- {} : {} rows (public {}), domain d1 = {} --",
+        wired.name, wired.num_rows, wired.public_input_size, iw.cs.domain.d1.size
+    );
+    println!(
+        "   gates: Poseidon={} EndoMulScalar={} VarBaseMul={} EndoMul={} CompleteAdd={} Generic={} Zero={}",
+        cen[2], cen[6], cen[4], cen[5], cen[3], cen[1], cen[0]
+    );
+
+    // (1) HONEST.
+    let t = Instant::now();
+    prove_and_verify(&iw, &gm, build_witness(&wired), &pub_w).unwrap_or_else(|e| {
+        panic!(
+            "[FATAL] {rung}: honest {}-row rung REJECTED: {e}",
+            wired.num_rows
+        )
+    });
+    let honest = t.elapsed();
+    println!(
+        "[1 HONEST   ] verify()==true on the {}-row {rung} (MEASURED {:?})",
+        wired.num_rows, honest
+    );
+
+    // (2) WIRING BINDS, at a spread of sigma-only probes.
+    let sample = probe_sample(&wired.probe_rows, budget);
+    for &r in &sample {
+        assert!(
+            prove_and_verify(&iw, &gm, tamper(&wired, 0, r), &pub_w).is_err(),
+            "[FALSIFICATION] {rung}: probe-row {r} col-0 desync ACCEPTED on the WIRED circuit"
+        );
+    }
+    println!(
+        "[2 WIRING   ] {}/{} sigma-only probes REJECT a col-0 desync (rows {:?})",
+        sample.len(),
+        wired.probe_rows.len(),
+        sample
+    );
+
+    // (3) NOT-ADJACENCY control.
+    prove_and_verify(&iu, &gm, build_witness(&unwired), &pub_w)
+        .unwrap_or_else(|e| panic!("[FATAL] {rung}: honest UNWIRED witness REJECTED: {e}"));
+    for &r in &sample {
+        assert!(
+            prove_and_verify(&iu, &gm, tamper(&unwired, 0, r), &pub_w).is_ok(),
+            "[FALSIFICATION] {rung}: probe-row {r} flip REJECTED on the UNWIRED circuit - (2) was not the wire"
+        );
+    }
+    println!("[3 CONTROL  ] the SAME flips ACCEPTED on the UNWIRED circuit -> (2) is the WIRE, not adjacency");
+
+    // (4) NON-VACUITY: an advice cell no gate reads and no cycle contains.
+    let p0 = wired.probe_rows[0];
+    assert!(
+        prove_and_verify(&iw, &gm, tamper(&wired, 12, p0), &pub_w).is_ok(),
+        "[FALSIFICATION] {rung}: unread advice cell (col 12, row {p0}) flip REJECTED - the rejections may be vacuous"
+    );
+    println!("[4 NONVACU  ] unread advice cell (col 12, row {p0}) flip ACCEPTED (non-vacuity)");
+
+    // (5) PUBLIC INPUT, when the rung has one.
+    if wired.public_input_size > 0 {
+        // (5a) the honest proof against a TAMPERED public vector.
+        let mut bad = pub_w.clone();
+        bad[0] += Fp::from(1u64);
+        assert!(
+            prove_and_verify(&iw, &gm, build_witness(&wired), &bad).is_err(),
+            "[FALSIFICATION] {rung}: honest proof ACCEPTED against a tampered public vector"
+        );
+        // (5b) the sigma leg: flip public cell (0,0) AND tell the verifier the new value, so the
+        // public row's own constraint w0[0] = p0 still holds. Only the copy-permutation can refuse.
+        assert!(
+            prove_and_verify(&iw, &gm, tamper(&wired, 0, 0), &bad).is_err(),
+            "[FALSIFICATION] {rung}: public cell (0,0) flip WITH a matching public vector ACCEPTED - the public word is not wired in"
+        );
+        let last = wired.public_input_size - 1;
+        let mut bad_last = pub_w.clone();
+        bad_last[last] += Fp::from(1u64);
+        assert!(
+            prove_and_verify(&iw, &gm, tamper(&wired, 0, last), &bad_last).is_err(),
+            "[FALSIFICATION] {rung}: public cell ({last},0) flip WITH a matching public vector ACCEPTED"
+        );
+        println!(
+            "[5 PUBLIC   ] {} public words: a tampered public vector REJECTED, and the sigma leg (flip cell (i,0) AND tell the verifier) REJECTED at i=0 and i={last}",
+            wired.public_input_size
+        );
+    }
+
+    RungOutcome {
+        rows: wired.num_rows,
+        domain: iw.cs.domain.d1.size as usize,
+        probes_tested: sample.len(),
+        honest_ms: honest.as_millis(),
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // No args: the COMMITTED fixture subset (see `stepmain_tests::COMMITTED` for why it is a
+    // subset). With a directory: every rung the driver emitted there.
+    let (dir, tag, budget, rungs): (PathBuf, String, usize, Vec<&str>) = match args.len() {
+        0 => (
+            fixtures_dir(),
+            "smoke".to_string(),
+            usize::MAX,
+            vec!["r1_transcript", "r5_full"],
+        ),
+        1 => (
+            PathBuf::from(&args[0]),
+            "step".to_string(),
+            8,
+            RUNGS.to_vec(),
+        ),
+        _ => (
+            PathBuf::from(&args[0]),
+            args[1].clone(),
+            args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8),
+            RUNGS.to_vec(),
+        ),
+    };
+
+    println!("== step_main harness: the LEAN-ASSEMBLED `verify_one` RECURSIVE VERIFIER ==");
+    println!("   dir={} tag={tag}", dir.display());
+    let mut summary = Vec::new();
+    for rung in rungs {
+        let o = run_rung(&dir, &tag, rung, budget);
+        summary.push((rung, o));
+        println!();
+    }
+    println!("== SUMMARY ==");
+    for (rung, o) in &summary {
+        println!(
+            "   {rung:<14} {:>6} rows  domain {:>6}  honest prove+verify {:>7} ms  probes {:>3}",
+            o.rows, o.domain, o.honest_ms, o.probes_tested
+        );
+    }
+    println!(
+        "== VERDICT: five sub-circuits of `step_verifier.verify_one` ASSEMBLE from Lean, PROVE"
+    );
+    println!("   pure-Rust with verify()==true, and BIND at every sub-circuit boundary. ==");
+}
+
+// =====================================================================================
+// Committed CI gate. `cargo test --release --manifest-path .../Cargo.toml`.
+// =====================================================================================
+#[cfg(test)]
+mod stepmain_tests {
+    use super::*;
+
+    /// The COMMITTED subset of the ladder. All five rungs are emitted by the driver and were proved
+    /// at both scales (see the header), but the rungs are CUMULATIVE — r5 contains r4 contains r3 —
+    /// so committing all ten fixtures would put ~3 MB of five-times-redundant JSON in the tree and
+    /// re-churn all of it on every assembly change. The two committed here are the ones that are
+    /// not redundant with each other: `r1_transcript` ISOLATES the genuinely new capability (a
+    /// copy-wired Poseidon sponge — nothing before this had wired a `Poseidon` gate to anything) at
+    /// minimum cost, and `r5_full` is the SUPERSET, the only rung carrying the public input.
+    /// Regenerate/prove the other three with the driver + `harness <dir> <tag>` (Cargo.toml header).
+    const COMMITTED: [&str; 2] = ["r1_transcript", "r5_full"];
+
+    // Both committed rungs, both polarities, EVERY probe (not a sample).
+    #[test]
+    fn committed_rungs_prove_and_bind() {
+        let dir = fixtures_dir();
+        for rung in COMMITTED {
+            run_rung(&dir, "smoke", rung, usize::MAX);
+        }
+    }
+
+    // The full rung really is the assembled verifier: strictly larger than the transcript rung, and
+    // carrying all SEVEN gate types Mina's own step circuits use (measured on the `step-zkapp-proved`
+    // blob: Zero/Generic/Poseidon/CompleteAdd/VarBaseMul/EndoMul/EndoMulScalar and nothing else — no
+    // lookup, no foreign-field, no range-check). A regression that quietly shrank it to a toy, or
+    // dropped a sub-circuit's gate family, shows here rather than behind a green prove.
+    #[test]
+    fn full_rung_is_the_whole_assembly_with_seven_gate_types() {
+        let dir = fixtures_dir();
+        let r1 = load_path(&dir.join("stepmain_smoke_r1_transcript.json"));
+        let full = load_path(&dir.join("stepmain_smoke_r5_full.json"));
+        assert!(
+            full.num_rows > r1.num_rows,
+            "the full rung ({} rows) does not extend the transcript rung ({} rows)",
+            full.num_rows,
+            r1.num_rows
+        );
+        assert!(!r1.probe_rows.is_empty() && !full.probe_rows.is_empty());
+        let cen = gate_census(&full);
+        for (ord, name) in [
+            (0usize, "Zero"),
+            (1, "Generic"),
+            (2, "Poseidon"),
+            (3, "CompleteAdd"),
+            (4, "VarBaseMul"),
+            (5, "EndoMul"),
+            (6, "EndoMulScalar"),
+        ] {
+            assert!(cen[ord] > 0, "the full rung emits no {name} gate");
+        }
+        // The closing rung carries Step's public input path.
+        assert!(full.public_input_size > 0);
+        assert_eq!(full.public_input.len(), full.public_input_size);
+        // The transcript rung does NOT (it is placed at pubSize 0) - so the public-input legs of
+        // the gate are attributable to r5 alone.
+        assert_eq!(r1.public_input_size, 0);
+    }
+}
