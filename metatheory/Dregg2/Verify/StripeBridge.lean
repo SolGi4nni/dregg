@@ -7,7 +7,11 @@ gated by the Stripe registry discharge; conservation, fail-closed, and the state
 are inherited from §HARD-iii FOR ANY gate, and the discharge composes `stripe_attest_sound` to prove
 a committed mint corresponds to a VERIFIED Stripe payment.
 
-K2 (the attested transition) + K3 (the gated lifecycle) of docs/STRIPE-KERNEL-BUILD-PLAN.md.
+K2 (the attested transition) + K3 (the gated lifecycle) of the Stripe kernel build plan. ⚠ THAT
+PLAN IS NOT IN THE REPO: this line cited `docs/STRIPE-KERNEL-BUILD-PLAN.md`, which exists nowhere —
+not under `docs/`, not under `.docs-history-noclaude/`, and never in git history. K1/K2/K3 are
+local names shared with `Verify/StripeAttest.lean` (K1) and `Verify/StripeBridgeV2.lean` (the K2/K3
+re-weld), not a followable citation.
 The §8 crypto soundness of the witness (the DECO zkTLS proof) stays the CryptoKernel oracle.
 -/
 import Dregg2.Verify.StripeAttest

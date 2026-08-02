@@ -378,7 +378,83 @@ def ShieldedRingApexStep (pre post : RecChainedState) : Prop :=
 above.  The explicit `tracePublishedCommit t = pc` premise is load-bearing: without it a descriptor
 theorem could decode an unrelated public commitment.  This is stronger than recognizing six
 `[nullifier, root, value_binding]` lanes: it binds creators, allocation rows, kernel endpoints, and
-the receipt chain. -/
+the receipt chain.
+
+⚑⚑ **THE RESIDUAL IS ALREADY DISCHARGED — BY THE PARAMETERS. MEASURED 2026-08-01, NOT PORTED.**
+
+The body opens `Poseidon2SpongeCR hash → …`, a floor `HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+PROVES FALSE at deployed BabyBear (infinite `List Int` into ~2³¹ values, pigeonhole). The floor is in the
+VALUE, not the signature, so no floor binder appears in the type of anything that mentions this def and no
+binder-keyed census can see it.
+
+That matters MORE here than at the other two prop-body carriers, because of how this def is used.
+`DescriptorRefinesShirkRefuted.descriptorRefines_vacuous_babyBear` transfers verbatim: at any
+field-bounded sponge THIS def holds for every descriptor `d`, including with `ShieldedRingApexStep`
+replaced by anything at all. And this def is never DISCHARGED anywhere in the tree — its only live uses
+are the alias `ShieldedRingApexRefinementResidual` and the `hmarket` hypothesis of
+`shieldedRingApexStep_of_accept` / `starkMarketClaimExtraction_of_shielded_descriptor` /
+`starkMarketClaimExtraction_of_effect_step`. A named residual that is TRUE at deployed parameters is not a
+residual: the "exact remaining descriptor refinement" that the shielded-ring apex advertises as its last
+piece of honest work is, at the parameters we deploy at, no work.
+
+MEASURED surface: 5 exact-word mentions of the def (+5 of the alias). 2 comments, this def, the alias,
+three `hmarket` binders, two `FloorRatchetBaseline` rows. Small — which is why this is the cheapest of the
+three to port and the one whose port changes a claim rather than a plumbing detail.
+
+⚠ The three consumers are NOT rescued by their explicit `hCR : Poseidon2SpongeCR hash` binder. That binder
+makes them visibly floor-carrying, but it is a SECOND vacuity, not a repair of this one: with `hCR` refuted
+they are unusable, and with `hmarket` free they assert nothing about the ring circuit either way. Both have
+to go.
+
+MEASURED AGAIN (second pass, comments and string literals stripped mechanically): **2 code sites for
+the def (itself + the alias) and 4 for `ShieldedRingApexRefinementResidual` (its own line + the three
+`hmarket` binders), 3 comment mentions, 2 `FloorRatchetBaseline` rows.** Nothing produces it. This is
+the SMALLEST of the three prop-body carriers and the only one whose port changes a claim rather than a
+plumbing detail — and it is in NO sentinel list (`FloorCensus.sentinelPropBody` is
+`[descriptorRefines]` alone), so its port needs no `FloorCensus.lean` edit, and a `FloorRatchetBaseline`
+row left stale by a port is green (that file is emitted as `baseline ∩ current`).
+
+⚠ **THE `apexCommitFloor_unsatisfiable` CITATION BELOW WAS STALE WHEN IT WAS WRITTEN — corrected
+2026-08-01.** `ApexPremiseVacuity.ApexCommitFloor` is the five-conjunct list `compressInjective cmb ∧
+compressInjective compress ∧ compressNInjective compressN ∧ cellLeafInjective CH ∧ RestHashIffFrame RH`,
+and `apexCommitFloor_unsatisfiable` kills it through the FIFTH conjunct by Cantor. `CommitSurface` at
+HEAD carries NONE of those five: `1f53df6d2` deleted the four injectivity fields and the fifth is
+`RestHashIffFrameFin RH`. The bundle has a CLOSED inhabitant — the anonymous `noncomputable example :
+CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348` — so `(S : CommitSurface) → ¬ P S`
+is no longer free and a refutability pole at the bundle is stateable for the first time.
+
+The reason to reach for `CommitMap` survives, but it is a DIFFERENT reason and the port must be
+written on the real one: `ApexFloorFree.descriptorRefinesFree_false_at_False_kstep` needs a commit map
+that HITS the opaque published value `tracePublishedCommit emptyTrace` (that is `collapseMap`'s whole
+job), and `S.commit = recStateCommit S.CH S.RH S.cmb S.compress S.compressN` cannot be chosen to hit an
+opaque target. The map must be ARBITRARY; the bundle is not empty.
+
+⚑ The refutation here has a shape ready-made for it, which is why this def is the one to do first:
+`ApexFloorFree.satisfied2_emptyTrace` satisfies EVERY descriptor at `emptyTrace`, and
+`ShieldedRingApexStep.log_length` forces `post.log.length = pre.log.length + 2` — so a decode to two
+empty-log states refutes the ported obligation outright (`0 = 0 + 2`). ⚠ It must go in as an ANONYMOUS
+`example` if its type still mentions `CommitSurface`: that makes it a `#floor_ratchet` `bundle-user`
+carrier and the gate hard-errors on a new named one (the discipline of
+`Verify/RestFrameFiniteSupportSuccessor.lean` §6).
+
+HONEST REPLACEMENT: delete the antecedent — the same DELETION that landed for
+`ClosureAll.ClosedLogExtract` and `CircuitCompleteness.descriptorComplete` on 2026-07-25
+(`FloorCensus.portedPropBody`) — and state the def over a bare `ApexFloorFree.CommitMap` instead of
+`S : CommitSurface`, for the arbitrary-map reason just corrected.
+`ApexFloorFree.descriptorRefinesFree` is the shape to copy; it already carries the
+`tracePublishedCommit t = pc` link this def carries, and
+`ApexFloorFree.descriptorRefinesFree_false_at_False_kstep` shows the resulting obligation is REFUTABLE,
+which is the acceptance test this def fails today.
+
+Do NOT re-ground on `SpongeCollisionShirk.SpongeColl` at a named pair — no proof here feeds the sponge a
+pair, so a per-instance side condition would be decoration and a fresh carrier. Do NOT re-ground on
+`OrBreak (SpongeCollision hash) _`: refuted wholesale by
+`SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`.
+
+⚠ AND THE PORT DOES NOT FINISH THE JOB HERE. Deleting the antecedent makes this def refutable; it does not
+make it PROVED. What is left afterwards is the genuine, still-open obligation the header describes —
+six-lane recognition ⟹ the whole `FusedDrexClearing` — which nothing in the tree discharges. The port
+converts a free hypothesis into an honest open one. That is the whole of its value, and it is worth it. -/
 def ShieldedRingDescriptorRefines (S : CommitSurface) (hash : List Int → Int)
     (d : EffectVmDescriptor2) : Prop :=
   Poseidon2SpongeCR hash →

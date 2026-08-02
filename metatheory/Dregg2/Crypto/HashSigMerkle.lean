@@ -22,9 +22,19 @@ composed with the opening's correctness) and `merkle_ots_binds_index` (THE BINDI
 verifying signature's OTS pubkey IS the one committed at that index — you cannot swap keys —
 so its OTS layer verifies under the GENUINE key and `lamport_forgery_breaks_hash` applies to it).
 
-The hash carriers stay HYPOTHESES (`Poseidon2SpongeCR hash`), never Lean axioms. §Non-vacuity
-witnesses TRUE (a concrete 2-key instance verifies, by `decide`) and FALSE (a swapped-in wrong
-key at an index is REJECTED; an honest index-1 signature REPLAYED at index 0 is REJECTED).
+⚑ **OFF `Poseidon2SpongeCR` ENTIRELY (2026-08-01).** `merkle_ots_binds_index` used to take that
+floor and spend it TWICE — once on the MMR root peel, once on the key leaf. It is FALSE at deployed
+BabyBear (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the binding tooth was VACUOUSLY
+TRUE at the parameters the scheme would run at. Each peel now carries its OWN per-instance,
+decidable, REFUTABLE residual at the pair a TOTAL extractor names: `MMR.MRootColl hash s.openLog
+(keyLog …)` for the log, `SpongeColl hash (pkLeafFind s.pk (publicKey …))` for the key (§1½). Both
+are discharged for FREE by the honest signer, so `merkle_ots_binds_index_fires` states the binding
+with NO cryptographic hypothesis at all. No Lean axioms anywhere; no `_of_CR` twin minted — a
+consumer still holding the floor rewires through the tree's UNIVERSAL bridge
+`Poseidon2Binding.spongeColl_refutable_of_injective`.
+
+§Non-vacuity witnesses TRUE (a concrete 2-key instance verifies, by `decide`) and FALSE (a swapped-in
+wrong key at an index is REJECTED; an honest index-1 signature REPLAYED at index 0 is REJECTED).
 -/
 import Dregg2.Crypto.HashSig
 import Dregg2.Lightclient.MMR
@@ -32,8 +42,9 @@ import Dregg2.Lightclient.MMR
 namespace Dregg2.Crypto.HashSigMerkle
 
 open Dregg2.Crypto.HashSig
-open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides Opens)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Lightclient.MMR (mroot mroot_binds_or_collides mrootFind MRootColl
+  mrootColl_dischargeable Opens)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 open Dregg2.Substrate.Heap (refSponge)
 
 /-! ## §1 — committing an OTS public key as one MMR leaf.
@@ -69,6 +80,103 @@ theorem pkEncode_injective {ℓ : ℕ} {pk pk' : Fin ℓ → Bool → ℤ}
 
 #assert_axioms finRange_getElem?
 #assert_axioms pkEncode_injective
+
+/-! ### §1½ — ⚑ THE KEY-LEAF EXTRACTOR (the sound replacement for this file's OWN floor peel).
+
+`merkle_ots_binds_index` used to take `(hCR : Poseidon2SpongeCR hash)` and peel the key leaf with
+`hCR _ _ hleaf`. That floor is literal injectivity of a `List ℤ → ℤ` sponge, which
+`HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed BabyBear parameters, so
+the binding tooth of the many-time signature said NOTHING at the parameters the scheme would actually
+run at. Its sibling — the MMR root peel — had already been ported (`MMR.mroot_binds_or_collides` +
+`MRootColl`), and the inline `fun hc => hc.1 (hCR _ _ hc.2)` at the call site was the last thing
+pinning this file to the floor.
+
+The replacement is the same shape MMR uses one level up: a TOTAL extractor (`pkLeafFind`) that HANDS
+BACK the specific pair of flattened public keys the sponge would have to collide at, an UNCONDITIONAL
+correctness theorem (`pkLeaf_binds_or_collides`, NO hypothesis on `hash`), and a per-instance,
+REFUTABLE side condition at the named pair.
+
+⚠ Deliberately NOT `∃ xs ys, xs ≠ ys ∧ hash xs = hash ys`: pigeonhole makes that unconditionally TRUE
+at deployed parameters (`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`), so it would carry no
+more content than `True`. And deliberately NOT `∀ xs ys, ¬ …`, which is the refuted floor wearing a
+disjunction.
+
+⚑ NO local `_of_CR` twin: a consumer still holding the floor rewires through the tree's UNIVERSAL
+bridge `Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`, quantified over the PAIR — so
+this port is a net carrier DECREASE rather than a relocation. -/
+
+/-- **⚑ THE KEY-LEAF EXTRACTOR (TOTAL).** The two flattened public keys are EXACTLY what `pkLeaf`
+absorbs, so when two DISTINCT keys share a committed leaf this pair IS the sponge collision. A
+computation, not `Classical.choose`: `DecidableEq (List ℤ)` is real. -/
+def pkLeafFind {ℓ : ℕ} (pk pk' : Fin ℓ → Bool → ℤ) : List ℤ × List ℤ :=
+  (pkEncode pk, pkEncode pk')
+
+/-- **⚑ THE EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two OTS public keys committed to the
+SAME leaf EITHER are equal, OR the pair `pkLeafFind` returns is a GENUINE collision of the deployed
+sponge. Nothing is assumed about `hash`, so — unlike the peel it replaces — this holds at deployed
+BabyBear parameters. -/
+theorem pkLeaf_binds_or_collides (hash : List ℤ → ℤ) {ℓ : ℕ} (pk pk' : Fin ℓ → Bool → ℤ)
+    (h : pkLeaf hash pk = pkLeaf hash pk') :
+    pk = pk' ∨ SpongeColl hash (pkLeafFind pk pk') := by
+  by_cases he : pkEncode pk = pkEncode pk'
+  · exact Or.inl (pkEncode_injective he)
+  · exact Or.inr ⟨he, h⟩
+
+/-- The committed key leaf BINDS the key, on the per-instance residual at the named pair. The
+`.resolve_right` of the dichotomy above; the floor version of this statement is deleted, not kept. -/
+theorem pkLeaf_binds (hash : List ℤ → ℤ) {ℓ : ℕ} {pk pk' : Fin ℓ → Bool → ℤ}
+    (hno : ¬ SpongeColl hash (pkLeafFind pk pk'))
+    (h : pkLeaf hash pk = pkLeaf hash pk') : pk = pk' :=
+  (pkLeaf_binds_or_collides hash pk pk' h).resolve_right hno
+
+/-- **DISCHARGEABLE / FIRES.** The honest signer — who commits ONE key at an index — discharges the
+residual for EVERY hash, with no cryptographic assumption at all. This is what the deleted floor could
+never do: `Poseidon2SpongeCR` is unavailable at the deployed sponge even to an honest party. -/
+theorem pkLeafColl_dischargeable (hash : List ℤ → ℤ) {ℓ : ℕ} (pk : Fin ℓ → Bool → ℤ) :
+    ¬ SpongeColl hash (pkLeafFind pk pk) := fun hc => hc.1 rfl
+
+/-- Two distinct one-bit keys, used by the teeth below. -/
+def pkZero : Fin 1 → Bool → ℤ := fun _ _ => 0
+/-- The second of the two distinct one-bit keys. -/
+def pkOne : Fin 1 → Bool → ℤ := fun _ _ => 1
+
+theorem pkZero_ne_pkOne : pkZero ≠ pkOne := by
+  intro h
+  have := congrFun (congrFun h 0) false
+  simp [pkZero, pkOne] at this
+
+/-- **LOAD-BEARING.** Dropping the per-instance side condition makes the key-leaf binding FALSE: at
+the collapsing sponge two DISTINCT keys share a leaf. So the hypothesis does real work; it is not
+decoration. -/
+theorem pkLeaf_binds_unconditional_false :
+    ¬ (∀ (hash : List ℤ → ℤ) {ℓ : ℕ} (pk pk' : Fin ℓ → Bool → ℤ),
+        pkLeaf hash pk = pkLeaf hash pk' → pk = pk') :=
+  fun hall => pkZero_ne_pkOne (hall (fun _ => 0) pkZero pkOne rfl)
+
+/-- **REFUTABLE.** On that same collapsing sponge the extractor RETURNS a genuine collision, so the
+new side condition really FAILS — it is not `True` in disguise, and the ported theorem cannot
+discharge itself by taking the right branch. -/
+theorem pkLeafColl_refutable :
+    SpongeColl (fun _ : List ℤ => (0 : ℤ)) (pkLeafFind pkZero pkOne) := by
+  refine ⟨?_, rfl⟩
+  simp [pkLeafFind, pkEncode, pkZero, pkOne]
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so the port is a strict WEAKENING of the premise it replaces. Stated contrapositively, so it assumes
+no floor content and the ratchet reads it as the tooth it is. -/
+theorem pkLeafColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {ℓ : ℕ} {pk pk' : Fin ℓ → Bool → ℤ}
+    (hc : SpongeColl hash (pkLeafFind pk pk')) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
+#assert_axioms pkLeaf_binds_or_collides
+#assert_axioms pkLeaf_binds
+#assert_axioms pkLeafColl_dischargeable
+#assert_axioms pkZero_ne_pkOne
+#assert_axioms pkLeaf_binds_unconditional_false
+#assert_axioms pkLeafColl_refutable
+#assert_axioms pkLeafColl_refutes_poseidon2CR
+#assert_not_depends_on Dregg2.Crypto.HashSigMerkle.pkLeaf_binds_or_collides [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Crypto.HashSigMerkle.pkLeaf_binds [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
 
 /-! ## §2 — the many-time scheme: key log, master root, sign, verify. -/
 
@@ -135,35 +243,66 @@ theorem merkle_ots_correct (hash : List ℤ → ℤ) (H : ℤ → ℤ) {ℓ N : 
 /-- **THE BINDING TOOTH (`merkle_ots_binds_index`).** ANY verifying signature at index `i` —
 whatever pubkey and opening the adversary supplied — carries EXACTLY the OTS public key
 committed at index `i` when the master key was minted, and its OTS layer verifies under that
-GENUINE key. So a key swap at an index is impossible under the one CR floor:
-`MMR.mroot_binds_or_collides` pins the opened log to the genuine key log (its per-instance residual
-discharged from `hCR` inline — this file's OWN floor use is the `pkLeaf` sponge peel below, which is
-the PQ-signature cone's port to make, not the MMR port's), the leaf at `i` pins the pubkey hash,
-CR peels the sponge, `pkEncode_injective` recovers the key. Consequence: a verifying forgery at index `i` on
-a fresh message IS a verifying Lamport forgery against `sks i` — `lamport_forgery_breaks_hash`
-applies verbatim to the second conjunct, closing the many-time reduction onto the one-time atom.
-Genuinely refutable: for a `pk` different from the committed one the first conjunct is FALSE
-(witnessed at §4, `demo_wrong_key_rejected`). -/
-theorem merkle_ots_binds_index (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+GENUINE key. So a key swap at an index is impossible: `MMR.mroot_binds_or_collides` pins the opened
+log to the genuine key log, the leaf at `i` pins the pubkey hash, and `pkLeaf_binds` (§1½) recovers
+the key. Consequence: a verifying forgery at index `i` on a fresh message IS a verifying Lamport
+forgery against `sks i` — `lamport_forgery_breaks_hash` applies verbatim to the second conjunct,
+closing the many-time reduction onto the one-time atom. Genuinely refutable: for a `pk` different
+from the committed one the first conjunct is FALSE (witnessed at §4, `demo_wrong_key_rejected`).
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor is FALSE at deployed BabyBear
+(`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so this tooth was VACUOUSLY TRUE where the
+scheme would actually run. It now carries TWO per-instance, decidable, refutable residuals — one per
+sponge peel it makes, each INDEXED BY the pair a TOTAL extractor names for the objects in play:
+
+  * `hnoLog : ¬ MRootColl hash s.openLog (keyLog hash H sks)` — the MMR root peel, at the pair
+    `MMR.mrootFind` returns for the SUBMITTED opening log and the GENUINE key log;
+  * `hnoKey : ¬ SpongeColl hash (pkLeafFind s.pk (publicKey H (sks i)))` — the key-leaf peel, at the
+    pair `pkLeafFind` returns for the CLAIMED and the COMMITTED public key.
+
+Both are discharged for FREE by the honest signer (`mrootColl_dischargeable`,
+`pkLeafColl_dischargeable`) and both genuinely FAIL at a colliding sponge (`mrootColl_refutable`,
+`pkLeafColl_refutable`). The old hypothesis IMPLIES each of them through the tree's UNIVERSAL bridge
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`, so the statement is strictly STRONGER
+with an unchanged conclusion, and no per-site `_of_CR` twin is minted. -/
+theorem merkle_ots_binds_index (hash : List ℤ → ℤ)
     (H : ℤ → ℤ) {ℓ N : ℕ} (sks : Fin N → SecretKey ℤ ℓ) (i : Fin N)
     {m : Fin ℓ → Bool} {s : Sig ℓ} (hidx : s.idx = i.val)
-    (hv : mverify hash H (masterKey hash H sks) m s) :
+    (hv : mverify hash H (masterKey hash H sks) m s)
+    (hnoLog : ¬ MRootColl hash s.openLog (keyLog hash H sks))
+    (hnoKey : ¬ SpongeColl hash (pkLeafFind s.pk (publicKey H (sks i)))) :
     s.pk = publicKey H (sks i) ∧ verify H (publicKey H (sks i)) m s.ots := by
   obtain ⟨hroot, hopen, hver⟩ := hv
   -- the opening's log recomposes the master root ⇒ it IS the genuine key log:
   have hlog : s.openLog = keyLog hash H sks :=
-    (mroot_binds_or_collides hash hroot).resolve_right (fun hc => hc.1 (hCR _ _ hc.2))
+    (mroot_binds_or_collides hash hroot).resolve_right hnoLog
   rw [hlog, hidx] at hopen
   -- leaf `i` of the genuine log is the committed pubkey's hash; the opening placed the
   -- claimed pubkey's hash there:
   have hleaf : pkLeaf hash s.pk = pkLeaf hash (publicKey H (sks i)) :=
     Option.some.inj ((hopen : _ = some _).symm.trans (keyLog_getElem? hash H sks i))
-  -- CR peels the sponge, the encoding peels the flattening:
-  have hpk : s.pk = publicKey H (sks i) := pkEncode_injective (hCR _ _ hleaf)
+  -- the key-leaf extractor peels the sponge, `pkEncode_injective` peels the flattening:
+  have hpk : s.pk = publicKey H (sks i) := pkLeaf_binds hash hnoKey hleaf
   exact ⟨hpk, hpk ▸ hver⟩
+
+/-- **THE PORTED TOOTH FIRES — for EVERY hash, with NO cryptographic hypothesis.** On an HONEST
+signature both residuals are discharged at zero cost (`mrootColl_dischargeable` for the log the
+signer actually committed, `pkLeafColl_dischargeable` for the key it actually holds), so the binding
+genuinely bites at deployed BabyBear parameters. This is the three-way separation the pre-cutover
+form could not make: `Poseidon2SpongeCR` was unavailable to the honest signer too. -/
+theorem merkle_ots_binds_index_fires (hash : List ℤ → ℤ) (H : ℤ → ℤ) {ℓ N : ℕ}
+    (sks : Fin N → SecretKey ℤ ℓ) (i : Fin N) (m : Fin ℓ → Bool) :
+    (msign hash H sks i m).pk = publicKey H (sks i)
+      ∧ verify H (publicKey H (sks i)) m (msign hash H sks i m).ots :=
+  merkle_ots_binds_index hash H sks i rfl (merkle_ots_correct hash H sks i m)
+    (mrootColl_dischargeable hash (keyLog hash H sks))
+    (pkLeafColl_dischargeable hash (publicKey H (sks i)))
 
 #assert_axioms merkle_ots_correct
 #assert_axioms merkle_ots_binds_index
+#assert_axioms merkle_ots_binds_index_fires
+#assert_not_depends_on Dregg2.Crypto.HashSigMerkle.merkle_ots_binds_index [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
+#assert_not_depends_on Dregg2.Crypto.HashSigMerkle.merkle_ots_binds_index_fires [Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR]
 
 /-! ## §4 — NON-VACUITY: witnesses TRUE and FALSE on a concrete 2-key instance.
 

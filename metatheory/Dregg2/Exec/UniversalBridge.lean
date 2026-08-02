@@ -73,8 +73,8 @@ open Dregg2.Crypto.MemoryChecking (Op Kind step step_write step_read step_other 
 open Dregg2.Crypto.UniversalMemory (Domain UAddr boundaryCells)
 open Dregg2.Substrate
 open Dregg2.Authority (Cap)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.MapMerkleRoot (opensToMerkle mapRoot)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
+open Dregg2.Circuit.MapMerkleRoot (opensToMerkle mapRoot MapRootSpongeColl openHeap)
 open Dregg2.Lightclient
 
 /-! ## §1 — THE PROJECTION TABLE: every executor-state cell gets a universal address.
@@ -875,36 +875,142 @@ in the FULL `(holder, target, rights, op)` tuple — nothing the flat leaf binds
 /-- The cap-cell VALUE codec: the cap edge's non-key content as one sponge value. -/
 def capCellValue (hash : List ℤ → ℤ) (target rights op : ℤ) : ℤ := hash [target, rights, op]
 
-/-- **`cap_leaf_value_codec`** — the generic `Heap.leafOf` over `capCellValue` binds the full
-cap tuple: two equal generic leaves force equal `(holder, target, rights, op)`. Two CR
-applications (outer leaf, inner value), no new combinatorics. -/
-theorem cap_leaf_value_codec (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ}
+/-! ### §5a — ⚑ THE CAP-LEAF EXTRACTORS (the sound replacement for the two `Poseidon2SpongeCR` peels).
+
+Both codec lemmas below used to consume `Poseidon2SpongeCR hash` — literal injectivity of a map
+from `List ℤ` into one BabyBear felt, which `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+PROVES FALSE by pigeonhole. So the claim "nothing the flat leaf binds is lost" held only under a
+hypothesis the deployed sponge cannot satisfy, i.e. it said nothing about the deployed cap plane.
+
+What replaces each is the shape the campaign's sound ports use: a TOTAL, DECIDABLE extractor that
+hands back the SPECIFIC pair of absorbed lists at which the deployed sponge collided, an
+UNCONDITIONAL `_binds_or_collides` naming that pair (NO hypothesis on `hash`, hence TRUE at deployed
+parameters), and a PER-INSTANCE `¬ SpongeColl hash (…Find …)` side condition on the keystone, bound
+at exactly that pair.
+
+⚠ Deliberately NOT `P ∨ ∃ xs ys, xs ≠ ys ∧ hash xs = hash ys`: the same pigeonhole that refutes the
+floor ESTABLISHES that existential, so the disjunction would be literally `True`
+(`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`). And deliberately NOT a `∀ xs ys, ¬ Coll`
+side condition, which IS the refuted injectivity rewritten. The disjunct has to name A PAIR. -/
+
+/-- **⚑ THE FLAT CAP-LEAF EXTRACTOR.** The flat live leaf absorbs ONE 4-list, so there is exactly
+one place two absorptions can break: if the two 4-lists differ they ARE the collision. Total and
+decidable (`DecidableEq (List ℤ)` is real), so no `Classical.choose` enters the walk. When the lists
+agree the spec delivers the tuple equality outright and the returned value is never read. -/
+def capFlatFind (h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ) : List ℤ × List ℤ :=
+  ([h₁, t₁, r₁, o₁], [h₂, t₂, r₂, o₂])
+
+/-- **⚑ THE FLAT EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two flat cap leaves with the SAME
+digest EITHER agree on the whole `(holder, target, rights, op)` tuple, OR the pair `capFlatFind`
+returns is a GENUINE collision of the deployed sponge. Nothing is assumed about `hash`, so unlike
+`cap_leaf_flat_injective`'s old form this holds at deployed BabyBear parameters. -/
+theorem capFlat_binds_or_collides (hash : List ℤ → ℤ) (h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ)
+    (heq : hash [h₁, t₁, r₁, o₁] = hash [h₂, t₂, r₂, o₂]) :
+    (h₁ = h₂ ∧ t₁ = t₂ ∧ r₁ = r₂ ∧ o₁ = o₂)
+      ∨ SpongeColl hash (capFlatFind h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂) := by
+  by_cases hne : [h₁, t₁, r₁, o₁] = [h₂, t₂, r₂, o₂]
+  · refine Or.inl ?_
+    simp only [List.cons.injEq, and_true] at hne
+    exact ⟨hne.1, hne.2.1, hne.2.2.1, hne.2.2.2⟩
+  · exact Or.inr ⟨hne, heq⟩
+
+/-- **⚑ THE 2-LEVEL CAP-CELL EXTRACTOR.** The generic `Heap.leafOf` route absorbs TWICE — the outer
+2-list `[holder, capCellValue …]` and the inner 3-list `[target, rights, op]` — so the walk goes
+outer first: if the two outer 2-lists differ they ARE the collision; otherwise they agree
+slot-for-slot, which forces the holders equal AND the two inner DIGESTS equal, so the inner 3-lists
+are the next place to break. If nothing differs the spec delivers equality and the returned pair is
+a trivially non-colliding one. -/
+def capLeafFind (hash : List ℤ → ℤ) (h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ) : List ℤ × List ℤ :=
+  if [h₁, capCellValue hash t₁ r₁ o₁] ≠ [h₂, capCellValue hash t₂ r₂ o₂] then
+    ([h₁, capCellValue hash t₁ r₁ o₁], [h₂, capCellValue hash t₂ r₂ o₂])
+  else if [t₁, r₁, o₁] ≠ [t₂, r₂, o₂] then ([t₁, r₁, o₁], [t₂, r₂, o₂])
+  else ([t₁, r₁, o₁], [t₁, r₁, o₁])
+
+/-- **⚑ THE 2-LEVEL EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two generic cap-cell leaves
+over the encoded value with the SAME digest EITHER agree on the whole `(holder, target, rights, op)`
+tuple, OR the pair `capLeafFind` returns is a GENUINE collision of the deployed sponge — at the
+outer leaf absorption if the leaves' preimages differ, at the inner value absorption otherwise. -/
+theorem capLeaf_binds_or_collides (hash : List ℤ → ℤ) (h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ)
     (heq : Heap.leafOf hash (h₁, capCellValue hash t₁ r₁ o₁)
          = Heap.leafOf hash (h₂, capCellValue hash t₂ r₂ o₂)) :
-    h₁ = h₂ ∧ t₁ = t₂ ∧ r₁ = r₂ ∧ o₁ = o₂ := by
-  have houter := hCR _ _ heq
-  injection houter with hh hrest
-  injection hrest with hv _
-  have hinner := hCR _ _ hv
-  injection hinner with ht hrest2
-  injection hrest2 with hr hrest3
-  injection hrest3 with ho _
-  exact ⟨hh, ht, hr, ho⟩
+    (h₁ = h₂ ∧ t₁ = t₂ ∧ r₁ = r₂ ∧ o₁ = o₂)
+      ∨ SpongeColl hash (capLeafFind hash h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂) := by
+  unfold capLeafFind
+  by_cases houter : [h₁, capCellValue hash t₁ r₁ o₁] ≠ [h₂, capCellValue hash t₂ r₂ o₂]
+  · rw [if_pos houter]
+    exact Or.inr ⟨houter, heq⟩
+  · rw [if_neg houter]
+    -- the outer preimages agree slot-for-slot: the holders are equal and the VALUE digests are.
+    have houter' := not_not.mp houter
+    rw [List.cons.injEq, List.cons.injEq] at houter'
+    obtain ⟨hh, hv, _⟩ := houter'
+    by_cases hinner : [t₁, r₁, o₁] ≠ [t₂, r₂, o₂]
+    · rw [if_pos hinner]
+      exact Or.inr ⟨hinner, hv⟩
+    · rw [if_neg hinner]
+      have hinner' := not_not.mp hinner
+      rw [List.cons.injEq, List.cons.injEq, List.cons.injEq] at hinner'
+      obtain ⟨ht, hr, ho, _⟩ := hinner'
+      exact Or.inl ⟨hh, ht, hr, ho⟩
 
-/-- The FLAT live leaf (`siteCapEdgeLeaf`'s 4-ary shape) binds the same tuple under the same
-floor — so the two leaf forms are interchangeable carriers of the cap edge: each is injective
-in `(holder, target, rights, op)`. -/
-theorem cap_leaf_flat_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **(CANARY — the residual is DISCHARGEABLE, for every hash.)** One and the same cap tuple never
+equivocates with itself: the extractor bottoms out at an equal pair, so an honest committer pays no
+cryptographic assumption at all. This is what the deleted floor could never do — `Poseidon2SpongeCR`
+is unavailable at the deployed sponge even to an honest party. -/
+theorem capFlatFind_dischargeable (hash : List ℤ → ℤ) (h t r o : ℤ) :
+    ¬ SpongeColl hash (capFlatFind h t r o h t r o) := fun hc => hc.1 rfl
+
+/-- **(CANARY — the residual is DISCHARGEABLE, for every hash.)** The 2-level companion. -/
+theorem capLeafFind_dischargeable (hash : List ℤ → ℤ) (h t r o : ℤ) :
+    ¬ SpongeColl hash (capLeafFind hash h t r o h t r o) := by
+  unfold capLeafFind
+  rw [if_neg (by simp), if_neg (by simp)]
+  exact fun hc => hc.1 rfl
+
+/-- **(CANARY — the collision branch is REACHABLE, so the disjunction is not a free pass.)** At a
+degenerate sponge two genuinely different cap tuples share a leaf and the extractor really does hand
+back a colliding pair. Both branches are live across sponges, which is what makes the dichotomy
+informative rather than a disguised equality. -/
+theorem capFlatFind_refutable :
+    SpongeColl (fun _ => (0 : ℤ)) (capFlatFind 0 0 0 0 1 0 0 0) := ⟨by decide, rfl⟩
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so each keystone below is a strict WEAKENING of the premise it replaces. Stated contrapositively, so
+it assumes no floor content and the ratchet reads it as the tooth it is. -/
+theorem capFlatColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ}
+    (hc : SpongeColl hash (capFlatFind h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂)) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
+
+/-- **`cap_leaf_value_codec`** — the generic `Heap.leafOf` over `capCellValue` binds the full
+cap tuple: two equal generic leaves force equal `(holder, target, rights, op)`.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The two CR applications (outer leaf, inner value)
+are now the two levels of `capLeafFind`, and what the keystone carries is the DECIDABLE per-instance
+residual at the ONE pair that extractor names for THESE two tuples — not injectivity of the sponge.
+Dischargeable (`capLeafFind_dischargeable`), reachable (`capFlatFind_refutable` at the flat twin),
+and it REFUTES the old premise (`capFlatColl_refutes_poseidon2CR`), so this is strictly STRONGER
+with an unchanged conclusion. A caller still holding the floor discharges through the tree's
+UNIVERSAL bridge `Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`, which is quantified
+over the PAIR — no per-site `_of_CR` twin, so the port is a NET carrier decrease. -/
+theorem cap_leaf_value_codec (hash : List ℤ → ℤ)
     {h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ}
+    (hno : ¬ SpongeColl hash (capLeafFind hash h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂))
+    (heq : Heap.leafOf hash (h₁, capCellValue hash t₁ r₁ o₁)
+         = Heap.leafOf hash (h₂, capCellValue hash t₂ r₂ o₂)) :
+    h₁ = h₂ ∧ t₁ = t₂ ∧ r₁ = r₂ ∧ o₁ = o₂ :=
+  (capLeaf_binds_or_collides hash h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ heq).resolve_right hno
+
+/-- The FLAT live leaf (`siteCapEdgeLeaf`'s 4-ary shape) binds the same tuple on the same KIND of
+per-instance residual — so the two leaf forms remain interchangeable carriers of the cap edge, each
+binding `(holder, target, rights, op)` up to a NAMED collision of the deployed sponge rather than
+up to a floor it does not satisfy. ⚑ Ported off `Poseidon2SpongeCR` (2026-08-01) alongside its
+2-level twin; `capFlat_binds_or_collides` is the unconditional form. -/
+theorem cap_leaf_flat_injective (hash : List ℤ → ℤ)
+    {h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ : ℤ}
+    (hno : ¬ SpongeColl hash (capFlatFind h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂))
     (heq : hash [h₁, t₁, r₁, o₁] = hash [h₂, t₂, r₂, o₂]) :
-    h₁ = h₂ ∧ t₁ = t₂ ∧ r₁ = r₂ ∧ o₁ = o₂ := by
-  have hl := hCR _ _ heq
-  injection hl with hh hr1
-  injection hr1 with ht hr2
-  injection hr2 with hr hr3
-  injection hr3 with ho _
-  exact ⟨hh, ht, hr, ho⟩
+    h₁ = h₂ ∧ t₁ = t₂ ∧ r₁ = r₂ ∧ o₁ = o₂ :=
+  (capFlat_binds_or_collides hash h₁ t₁ r₁ o₁ h₂ t₂ r₂ o₂ heq).resolve_right hno
 
 /-! ## §6 — ADAPTER (b): the index-domain MMR boundary derivation
 (`.docs-history-noclaude/UNIVERSAL-MEMORY.md:115-121`).
@@ -1031,22 +1137,48 @@ opening at the opened root) and the opened root equals the published, PI-pinned 
 `mapRoot hash d peerHeap = publishedRoot`), THEN the read value IS B's committed published field:
 `some readValue = Heap.get peerHeap readAddr`. The circuit's cross-cell read REFINES the executor's
 `ObservedFieldEquals` carrier — per-cell membership against the published root, anchored at
-`boundary_init_root_derived`'s `hsem` for the single address `readAddr`. -/
-theorem crossCellRead_refines_observedField (hCR : Poseidon2SpongeCR hash)
+`boundary_init_root_derived`'s `hsem` for the single address `readAddr`.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor is FALSE at deployed BabyBear
+(`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so the OFE theorem — the thing that
+makes a cross-cell read a verified fact rather than a free-witnessed assertion — said nothing at the
+prover's own parameters. It now carries the DECIDABLE per-instance residual at the ONE pair
+`MapMerkleRoot.mapRootFind` names for the TWO heaps actually in play: the heap the circuit's
+accepted opening supplies (`openHeap hopen`, canonical by proof irrelevance) and peer B's genuine
+committed field heap. Dischargeable when the two coincide
+(`MapMerkleRoot.mapRootSpongeColl_dischargeable`), refutable at a degenerate sponge
+(`mapRootSpongeColl_refutable`), and it REFUTES the old premise
+(`mapRootSpongeColl_refutes_poseidon2CR`) — strictly STRONGER, conclusion unchanged. A caller
+holding the floor rewires through `Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`.
+
+⚑ Stated at `MapRootSpongeColl` rather than at `MapMerkleRoot.OpenColl`, because `OpenColl` would
+name `hgenuine.choose` — a heap only PROVABLY root-equal to `peerHeap` — where this names
+`peerHeap` itself, the object the statement is about.
+
+⚑ `hps : Heap.SortedKeys peerHeap` is GONE, not silently dead: the port reaches the conclusion by
+binding the two HEAPS (`mapRoot_injective`) instead of comparing two OPENINGS, and that route never
+needed the peer heap to be sorted. One fewer hypothesis, so the statement is stronger on that axis
+too. Callers drop the argument.
+
+⚑ HONEST PRICE (inherited from `mapRoot_injective`, and this is the arity-2 MODEL): the residual is
+a collision search on ONE BabyBear felt, ≈2^15.5 queries. That is a BREAK, not a security level.
+Porting the floor off does not make the arity-2 model safe; it makes the price VISIBLE. -/
+theorem crossCellRead_refines_observedField
     {openedRoot publishedRoot readAddr readValue : ℤ} {peerHeap : Heap.FeltHeap}
     (hopen : opensToMerkle hash d openedRoot readAddr (some readValue))
     (hpi : openedRoot = publishedRoot)
-    (hps : Heap.SortedKeys peerHeap) (hpl : peerHeap.length = 2 ^ d)
-    (hcommit : mapRoot hash d peerHeap = publishedRoot) :
+    (hpl : peerHeap.length = 2 ^ d)
+    (hcommit : mapRoot hash d peerHeap = publishedRoot)
+    (hno : ¬ MapRootSpongeColl hash d (openHeap hopen) peerHeap) :
     some readValue = Heap.get peerHeap readAddr := by
-  -- the genuine committed peer heap is ITSELF an opening at (publishedRoot, readAddr).
-  have hgenuine : opensToMerkle hash d publishedRoot readAddr (Heap.get peerHeap readAddr) :=
-    ⟨peerHeap, hps, hpl, hcommit, rfl⟩
-  -- the circuit's accepted opening is at the same root (by the PI pin) and key.
-  have hopen' : opensToMerkle hash d publishedRoot readAddr (some readValue) := hpi ▸ hopen
-  -- anti-forge: root + key determine the read, so the two read values agree.
-  exact Dregg2.Circuit.MapMerkleRoot.opensToMerkle_functional hash d hopen' hgenuine
-    (fun hc => hc.1 (hCR _ _ hc.2))
+  obtain ⟨_hsorted, hlen, hroot, hget⟩ := hopen.choose_spec
+  -- the opening's own heap and the genuine committed peer heap publish the SAME binary root…
+  have hheap : openHeap hopen = peerHeap :=
+    Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d (h₁ := openHeap hopen) hlen hpl hno
+      (hroot.trans (hpi.trans hcommit.symm))
+  -- …so, absent a collision at that named pair, they ARE the same heap and the reads agree.
+  calc some readValue = Heap.get (openHeap hopen) readAddr := hget.symm
+    _ = Heap.get peerHeap readAddr := by rw [hheap]
 
 /-- **`cross_cell_read_pins_observedValue` — the carrier is SOUND.** When the §8 portal's
 `observedFields` triple `(sourceCell, sourceField, readValue)` is the one the circuit's MapOp::Read
@@ -1054,7 +1186,7 @@ leg accepted against the authenticated published peer root, the carrier value IS
 field. This discharges the prose precondition on `TurnCtx.observedFields` (`Program.lean:1097-1108`)
 with a circuit fact: `observedValue` is not free-witnessed — it equals the committed value the read
 opened against the published commitment. -/
-theorem cross_cell_read_pins_observedValue (hCR : Poseidon2SpongeCR hash)
+theorem cross_cell_read_pins_observedValue
     (ctx : TurnCtx) (sourceCell : ℤ) (sourceField : FieldName)
     {openedRoot publishedRoot readAddr readValue committedValue : ℤ}
     {peerHeap : Heap.FeltHeap}
@@ -1065,10 +1197,11 @@ theorem cross_cell_read_pins_observedValue (hCR : Poseidon2SpongeCR hash)
     -- the circuit accepted the read against the authenticated published root:
     (hopen : opensToMerkle hash d openedRoot readAddr (some readValue))
     (hpi : openedRoot = publishedRoot)
-    (hps : Heap.SortedKeys peerHeap) (hpl : peerHeap.length = 2 ^ d)
-    (hcommit : mapRoot hash d peerHeap = publishedRoot) :
+    (hpl : peerHeap.length = 2 ^ d)
+    (hcommit : mapRoot hash d peerHeap = publishedRoot)
+    (hno : ¬ MapRootSpongeColl hash d (openHeap hopen) peerHeap) :
     ctx.observedValue sourceCell sourceField = some committedValue := by
-  have h := crossCellRead_refines_observedField hash d hCR hopen hpi hps hpl hcommit
+  have h := crossCellRead_refines_observedField hash d hopen hpi hpl hcommit hno
   rw [hfield] at h
   -- `h : some readValue = some committedValue`; close the rewritten carrier goal.
   rw [hcarrier]; exact h
@@ -1079,7 +1212,7 @@ turn copies B's COMMITTED field.** Combining the circuit refinement with the pro
 ADMITTED and the carrier triple was produced by the circuit's MapOp::Read leg against the
 authenticated published peer root, then the admitted turn's `new[localField]` EQUALS peer B's
 committed field value `committedValue`. The cross-cell read is verified, never asserted. -/
-theorem cross_cell_read_admits_observedFieldEquals (hCR : Poseidon2SpongeCR hash)
+theorem cross_cell_read_admits_observedFieldEquals
     (ctx : TurnCtx) (localField : FieldName) (sourceCell : ℤ) (sourceField : FieldName)
     (o n : Value)
     {openedRoot publishedRoot readAddr readValue committedValue : ℤ}
@@ -1089,8 +1222,9 @@ theorem cross_cell_read_admits_observedFieldEquals (hCR : Poseidon2SpongeCR hash
     (hfield : Heap.get peerHeap readAddr = some committedValue)
     (hopen : opensToMerkle hash d openedRoot readAddr (some readValue))
     (hpi : openedRoot = publishedRoot)
-    (hps : Heap.SortedKeys peerHeap) (hpl : peerHeap.length = 2 ^ d)
+    (hpl : peerHeap.length = 2 ^ d)
     (hcommit : mapRoot hash d peerHeap = publishedRoot)
+    (hno : ¬ MapRootSpongeColl hash d (openHeap hopen) peerHeap)
     -- the carrier triple the portal opened is the value the circuit accepted:
     (hcarrier : ctx.observedValue sourceCell sourceField = some readValue) :
     n.scalar localField = some committedValue := by
@@ -1102,7 +1236,7 @@ theorem cross_cell_read_admits_observedFieldEquals (hCR : Poseidon2SpongeCR hash
   have hvr : v = readValue := (Option.some_inj.mp hv).symm
   subst hvr
   -- …which the refinement pins to B's committed field.
-  have hpin := crossCellRead_refines_observedField hash d hCR hopen hpi hps hpl hcommit
+  have hpin := crossCellRead_refines_observedField hash d hopen hpi hpl hcommit hno
   rw [hfield] at hpin
   rw [hn, Option.some_inj.mp hpin]
 
@@ -1157,19 +1291,27 @@ variable (hash : List ℤ → ℤ) (d : Nat)
 commitment is the 8-felt arity-3 IMT — see this section's header and
 `WholeImageFoldRealization.crossCellRead_wholeImage8`). If the published peer root is the binary fold of
 peer B's committed `2^d`-leaf field heap (`hcommit`) AND equals the binary fold of the declared
-whole-boundary view `boundaryHeap` (`hpin`, the in-circuit whole-boundary fold pin), then under the
-named CR floor the committed peer heap EQUALS that boundary view: a single extra or altered leaf
+whole-boundary view `boundaryHeap` (`hpin`, the in-circuit whole-boundary fold pin), then — absent a
+sponge collision at the ONE pair `mapRootFind` names for these two heaps — the committed peer heap
+EQUALS that boundary view: a single extra or altered leaf
 moves the binary root, so the peer can hold NOTHING the boundary never declared. The binary-Merkle
 companion of `UniversalMemory.boundary_image_eq_of_root` — `mapRoot_injective` where the flat
-companion uses `Heap.root_injective`. -/
-theorem crossCellRead_whole_image (hCR : Poseidon2SpongeCR hash)
+companion uses `Heap.root_injective`.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The no-extra-cells direction is exactly where a
+vacuous premise is most expensive — it is the only thing forbidding a hidden peer cell behind the
+published root — and the floor is refuted at deployed BabyBear. The residual `hno` is decidable,
+dischargeable when the pin is honest (`MapMerkleRoot.mapRootSpongeColl_dischargeable`) and refutable
+(`mapRootSpongeColl_refutable`). Callers still holding the floor route through
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`. -/
+theorem crossCellRead_whole_image
     {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
     (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hno : ¬ MapRootSpongeColl hash d peerHeap boundaryHeap)
     (hcommit : mapRoot hash d peerHeap = publishedRoot)
     (hpin : mapRoot hash d boundaryHeap = publishedRoot) :
     peerHeap = boundaryHeap :=
-  Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d hpl hbl
-    (fun hc => hc.1 (hCR _ _ hc.2)) (hcommit.trans hpin.symm)
+  Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d hpl hbl hno (hcommit.trans hpin.symm)
 
 /-- **`crossCellRead_whole_image_sem` — the committed peer heap agrees with the declared image at
 EVERY address (no extra cells, in lookup terms).** The lookup-world consequence: once the published
@@ -1180,16 +1322,17 @@ open to their declared value, and EVERY address OFF the declared list is ABSENT 
 The arity-2 MODEL realization of `UniversalMemory.boundary_whole_image_sem` (⚠ the doc said
 "deployed binary-Merkle"; the deployed-shape statement is
 `WholeImageFoldRealization.crossCellRead_wholeImage8_sem`). -/
-theorem crossCellRead_whole_image_sem (hCR : Poseidon2SpongeCR hash)
+theorem crossCellRead_whole_image_sem
     {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
     {init : ℤ → Option ℤ} {as : List ℤ}
     (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hno : ¬ MapRootSpongeColl hash d peerHeap boundaryHeap)
     (hcommit : mapRoot hash d peerHeap = publishedRoot)
     (hpin : mapRoot hash d boundaryHeap = publishedRoot)
     (hbsem : ∀ k, Heap.get boundaryHeap k = if k ∈ as then init k else none) :
     ∀ k, Heap.get peerHeap k = if k ∈ as then init k else none := by
   intro k
-  rw [crossCellRead_whole_image hash d hCR hpl hbl hcommit hpin]
+  rw [crossCellRead_whole_image hash d hpl hbl hno hcommit hpin]
   exact hbsem k
 
 /-- **`cross_cell_read_no_extra_cell` — a peer cell OFF the declared boundary is ABSENT.** The
@@ -1197,16 +1340,17 @@ no-extra-cells punch the per-cell subset view could not reach: under the whole-b
 any address `k ∉ as` (never declared) is `none` in the committed peer heap — the peer cannot hide a
 cell behind the published root. A cross-cell read returning `none` at an undeclared address is
 therefore SOUND (the peer genuinely has no such cell). -/
-theorem cross_cell_read_no_extra_cell (hCR : Poseidon2SpongeCR hash)
+theorem cross_cell_read_no_extra_cell
     {publishedRoot : ℤ} {peerHeap boundaryHeap : Heap.FeltHeap}
     {init : ℤ → Option ℤ} {as : List ℤ} {k : ℤ}
     (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hno : ¬ MapRootSpongeColl hash d peerHeap boundaryHeap)
     (hcommit : mapRoot hash d peerHeap = publishedRoot)
     (hpin : mapRoot hash d boundaryHeap = publishedRoot)
     (hbsem : ∀ k, Heap.get boundaryHeap k = if k ∈ as then init k else none)
     (hk : k ∉ as) :
     Heap.get peerHeap k = none := by
-  have h := crossCellRead_whole_image_sem hash d hCR hpl hbl hcommit hpin hbsem k
+  have h := crossCellRead_whole_image_sem hash d hpl hbl hno hcommit hpin hbsem k
   rwa [if_neg hk] at h
 
 /-- **`cross_cell_read_whole_image_teeth` — the no-extra-cells REFUSAL.** A committed peer heap that
@@ -1214,13 +1358,13 @@ DIFFERS from the declared whole-boundary view (e.g. holds an extra cell, or alte
 CANNOT share the whole-boundary fold root: the binary anti-ghost (`mapRoot_injective`) discriminates.
 This is the two-valued tooth showing the whole-image pin is not vacuous — the contrapositive of
 `crossCellRead_whole_image`. -/
-theorem cross_cell_read_whole_image_teeth (hCR : Poseidon2SpongeCR hash)
+theorem cross_cell_read_whole_image_teeth
     {peerHeap boundaryHeap : Heap.FeltHeap}
     (hpl : peerHeap.length = 2 ^ d) (hbl : boundaryHeap.length = 2 ^ d)
+    (hno : ¬ MapRootSpongeColl hash d peerHeap boundaryHeap)
     (hne : peerHeap ≠ boundaryHeap) :
     mapRoot hash d peerHeap ≠ mapRoot hash d boundaryHeap :=
-  fun heq => hne (Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d hpl hbl
-    (fun hc => hc.1 (hCR _ _ hc.2)) heq)
+  fun heq => hne (Dregg2.Circuit.MapMerkleRoot.mapRoot_injective hash d hpl hbl hno heq)
 
 end CrossCellReadWholeImage
 
@@ -1236,26 +1380,27 @@ section CrossCellReadNonVacuity
 `#guard`/`example` witnesses computable while exercising the same `opensToMerkle` opening. -/
 private def peerHeapEx : Heap.FeltHeap := [(4, 777)]
 
-private theorem peerHeapEx_sorted : Heap.SortedKeys peerHeapEx := by
-  simp [peerHeapEx, Heap.SortedKeys, Heap.keys]
-
 private theorem peerHeapEx_len : peerHeapEx.length = 2 ^ 0 := rfl
 
 /-- The honest read of `(4 ↦ 777)` against the peer's committed root opens to the committed value —
-the positive witness (the Rust `cross_cell_read_proves_committed_peer_state` test). -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (hopen : opensToMerkle hash 0 (mapRoot hash 0 peerHeapEx) 4 (some 777)) :
+the positive witness (the Rust `cross_cell_read_proves_committed_peer_state` test). Post-port it
+assumes the PER-INSTANCE residual at the named pair rather than the refuted floor, so the witness
+now exhibits the conclusion firing under a hypothesis the deployed sponge can actually satisfy. -/
+example (hash : List ℤ → ℤ)
+    (hopen : opensToMerkle hash 0 (mapRoot hash 0 peerHeapEx) 4 (some 777))
+    (hno : ¬ MapRootSpongeColl hash 0 (openHeap hopen) peerHeapEx) :
     some (777 : ℤ) = Heap.get peerHeapEx 4 :=
-  crossCellRead_refines_observedField hash 0 hCR hopen rfl
-    peerHeapEx_sorted peerHeapEx_len rfl
+  crossCellRead_refines_observedField hash 0 hopen rfl
+    peerHeapEx_len rfl hno
 
 /-- TOOTH (forged field value): a read claiming value `778` against the SAME committed root cannot
 also open to the genuine `777` — the two openings would contradict `opensToMerkle_functional`. The
 Lean shadow of `cross_cell_read_forged_field_value_refuses`. -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    (hforged : opensToMerkle hash 0 (mapRoot hash 0 peerHeapEx) 4 (some 778)) : False := by
-  have h := crossCellRead_refines_observedField hash 0 hCR hforged rfl
-    peerHeapEx_sorted peerHeapEx_len rfl
+example (hash : List ℤ → ℤ)
+    (hforged : opensToMerkle hash 0 (mapRoot hash 0 peerHeapEx) 4 (some 778))
+    (hno : ¬ MapRootSpongeColl hash 0 (openHeap hforged) peerHeapEx) : False := by
+  have h := crossCellRead_refines_observedField hash 0 hforged rfl
+    peerHeapEx_len rfl hno
   -- `some 778 = Heap.get peerHeapEx 4 = some 777`, a contradiction.
   rw [show Heap.get peerHeapEx 4 = some 777 from rfl] at h
   have : (778 : ℤ) = 777 := Option.some_inj.mp h
@@ -1283,18 +1428,26 @@ private theorem peerHeapEx_whole_image_sem :
 /-- The honest whole-image read: with the published peer root pinned to the binary fold of the
 declared whole-boundary view (here the peer heap IS its own one-cell boundary view),
 `crossCellRead_whole_image_sem` forces the committed peer to agree with the declared image
-EVERYWHERE — the no-extra-cells direction the per-cell subset opening could not see. -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+EVERYWHERE — the no-extra-cells direction the per-cell subset opening could not see.
+
+⚑ **THE PORT MADE THIS WITNESS FLOOR-FREE.** Here the peer heap IS its own boundary view, so the
+per-instance residual is DISCHARGED for EVERY `hash` with no cryptographic assumption at all
+(`MapMerkleRoot.mapRootSpongeColl_dischargeable`) — where the pre-cutover form needed an `hCR` no
+deployed sponge supplies, and therefore exhibited nothing at deployed parameters. -/
+example (hash : List ℤ → ℤ) :
     ∀ k, Heap.get peerHeapEx k
       = if k ∈ [(4 : ℤ)] then (if k = 4 then some (777 : ℤ) else none) else none :=
-  crossCellRead_whole_image_sem hash 0 hCR peerHeapEx_len peerHeapEx_len rfl rfl
+  crossCellRead_whole_image_sem hash 0 peerHeapEx_len peerHeapEx_len
+    (Dregg2.Circuit.MapMerkleRoot.mapRootSpongeColl_dischargeable hash 0 peerHeapEx) rfl rfl
     peerHeapEx_whole_image_sem
 
 /-- TOOTH (no extra cell): a concrete off-list address (addr 5) is ABSENT in the committed peer
-(`cross_cell_read_no_extra_cell`) — a hidden cell cannot survive the whole-boundary fold pin. -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+(`cross_cell_read_no_extra_cell`) — a hidden cell cannot survive the whole-boundary fold pin.
+Floor-free since the port, on the same self-discharge. -/
+example (hash : List ℤ → ℤ) :
     Heap.get peerHeapEx 5 = none :=
-  cross_cell_read_no_extra_cell hash 0 hCR peerHeapEx_len peerHeapEx_len rfl rfl
+  cross_cell_read_no_extra_cell hash 0 peerHeapEx_len peerHeapEx_len
+    (Dregg2.Circuit.MapMerkleRoot.mapRootSpongeColl_dischargeable hash 0 peerHeapEx) rfl rfl
     peerHeapEx_whole_image_sem (by decide)
 
 end CrossCellReadNonVacuity
@@ -1443,6 +1596,12 @@ end NonVacuity
 #assert_axioms cross_cell_read_whole_image_teeth
 #assert_axioms cross_cell_read_pins_observedValue
 #assert_axioms cross_cell_read_admits_observedFieldEquals
+#assert_axioms capFlat_binds_or_collides
+#assert_axioms capLeaf_binds_or_collides
+#assert_axioms capFlatFind_dischargeable
+#assert_axioms capLeafFind_dischargeable
+#assert_axioms capFlatFind_refutable
+#assert_axioms capFlatColl_refutes_poseidon2CR
 #assert_axioms cap_leaf_value_codec
 #assert_axioms cap_leaf_flat_injective
 #assert_axioms boundaryCells_indexRange_reconstructs

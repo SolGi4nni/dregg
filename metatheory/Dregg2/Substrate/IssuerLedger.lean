@@ -13,9 +13,11 @@ to "the canonical value model", and closes the E4 gap:
   * **§1 — the canonical conserved invariant** (`ConservedLedger := ExactLedger`): the per-asset
     exact law `∀ a, recTotalAsset k a = 0` is THE conservation invariant of the forward
     model. Every committed kernel step preserves it, each by INSTANTIATING a probe theorem (never
-    re-proved): transfer / escrow create-release-refund / bridge lock-cancel / genesis / fresh-cell
-    creation / the reformed `issuerMoveK` mint. Packaged as `step_preserves_ledger` (the canonical
-    "the model is closed under every verb" statement) + `genesis_starts_conserved`.
+    re-proved): transfer / genesis / fresh-cell creation / the reformed `issuerMoveK` mint. Packaged
+    as `step_preserves_ledger` (the canonical "the model is closed under every verb" statement) +
+    `genesis_starts_conserved`. (The escrow create-release-refund and bridge lock-cancel legs are no
+    longer restated here — F1b/F2b deleted those kernel verbs and their holding-store; escrow/bridge
+    conservation is now the factories' own proved keystones, §1's note below.)
 
   * **§2 — E4, THE NEW OBLIGATION (the keystone new proof).** Asset-typed bound notes
     (`AssetBoundNote` = `ShieldedValue.BoundNote` + `asset : AssetId`) and the pool-pseudo-cell
@@ -49,8 +51,8 @@ to "the canonical value model", and closes the E4 gap:
 
   * **§4 — THE MIGRATION TOUCH-LIST** (a doc block): the precise, mechanical list of what the
     eventual live VK rotation mutates (E1 issuer-well availability waiver · E2 mint-cap retarget ·
-    E3 transitional escrow term dies at S3 · E5 fee legs onto the per-asset ledger · E6 pot
-    genesis), so the rotation step is bookkeeping, not design.
+    E3 transitional escrow term — MOOT, it DIED with F1b · E5 fee legs onto the per-asset ledger ·
+    E6 pot genesis), so the rotation step is bookkeeping, not design.
 
 Standalone (not in the anchor): the KERNEL rotation has LANDED (see §6 STATUS — `AssetId :=
 CellId`, issuer-move verbs live, `reachable_total_zero`); this module remains the forward model for
@@ -498,12 +500,14 @@ probe named, here turned into a concrete edit):
   TOUCHES: the capability table / VK (the mint-authority predicate), the SDK mint-grant path. This is
   the one real (small) capability migration.
 
-  **E3 — the transitional escrow term dies at S3.** `ConservedLedger` carries `+ escrowHeldAsset`
-  until the storage-as-cell-programs migration makes escrows pot-CELLS. At S3 the term is deleted and
-  the law collapses to the pure `∀ a, Σ_c bal c a = 0`. TOUCHES: `recTotalAsset` →
-  `recTotalAsset`, the escrow verbs → settle-to-escrow-pot (the same pot pattern as bridge/fee). No
-  new proof: `escrow*_preserves` already preserve the combined measure, and the pot settle theorem
-  (`bridgeFinalizeToPot_preserves_exact`) is the template.
+  **E3 — the transitional escrow term DIED (F1b + the factory cutover): DONE, not pending.**
+  `ConservedLedger` used to carry `+ escrowHeldAsset` pending the storage-as-cell-programs migration.
+  That migration landed: F1b deleted the holding-store and `escrowHeldAsset` with it
+  (`Exec/RecordKernel.lean:302`, `:996-997`), the escrow/obligation/bridge verbs became factory cells
+  that hold value in their OWN `bal` column (`Apps/{EscrowFactory,ObligationFactory,BridgeCell}.lean`
+  — the same pot pattern as bridge/fee), and `ConservedLedger` is now literally `ExactLedger`
+  (`IssuerLedger.lean:88`), the pure `∀ a, Σ_c bal c a = 0` over `recTotalAsset`
+  (`RecordKernel.lean:665`). No new proof was needed.
 
   **E4 — the shielded value-binding LANDS (this module).** `BoundNote` → `AssetBoundNote` (the
   `asset : AssetId` field), `noteSpend` gains an amount gated on the spent note

@@ -416,7 +416,13 @@ structure RecordKernelState where
   (`recTotalAsset` reads `bal`, never `heaps`). DEFAULTS EMPTY (the additive extension, exactly as
   `nullifiers`/`commitments`/`slotCaveats` were added — a cell that never heap-writes is unaffected).
   The WIRE/CIRCUIT binding of `heap_root` (registers 8→16, PI v3, the state-commitment conjunct)
-  rides THE ONE ROTATION; until then the field is Lean-side only and uncommitted. -/
+  RODE THE ONE ROTATION, and THAT ROTATION IS TAKEN: `heaps` is pinned by the frame apex
+  (`Circuit/StateCommit.lean:289`, `∧ k'.heaps = k.heaps` in `RestHashIffFrame`), the register is
+  deployed limb `B_HEAP_ROOT = 28` (`Circuit/Emit/EffectVmEmitRotationV3.lean:1951`) bound against
+  tamper by `Circuit/RotationLayout.lean`'s `rotatedCommit_binds_heapRoot` (by NAME — the line moved
+  163→202 the same day it was cited), and the wire action
+  is tag 56 (`Circuit/ActionDispatch.lean:139`, codec at `Exec/FFI.lean:718`). The field is
+  COMMITTED every turn — NOT Lean-side only. -/
   heaps : CellId → List (ℤ × ℤ) := fun _ => []
   /-- **THE NULLIFIER ACCUMULATOR ROOT** (VK-epoch flip; the O(1)-wire double-spend frontier,
   `docs/SUPERSEDED/NULLIFIER-ACCUMULATOR-DESIGN.md` §3/§10). The Poseidon2 sorted-tree root of the spent-note

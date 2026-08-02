@@ -14,8 +14,14 @@ Poseidon2 CR, STARK extractability) and the external Web-PKI / honest-Stripe flo
 plugs that constructed verifier in at the Stripe kind: the registry-accept premise of `stripe_attest_sound`
 is now the accepting bit of a proved-sound relation. The prover/`find` stays untrusted.
 
-K1/K5 of `docs/STRIPE-KERNEL-BUILD-PLAN.md`; composes with `Apps.BridgeCell`'s proved finalize/cancel
-lifecycle (the `witnessed(vk)` finality-gate IS this discharge).
+K1/K5 of the Stripe kernel build plan. ⚠ PROVENANCE MISSING: that plan was cited here as
+`docs/STRIPE-KERNEL-BUILD-PLAN.md` and no such file exists anywhere in the repo — not under `docs/`,
+not under `.docs-history-noclaude/`, and never in git history — so the K-numbering below has no
+followable source. The K-labels are kept because `Verify/StripeBridge.lean` and
+`Verify/StripeBridgeV2.lean` index off them; read them as local names, not as a citation.
+
+Composes with `Apps.BridgeCell`'s proved finalize/cancel lifecycle (the `witnessed(vk)`
+finality-gate IS this discharge).
 -/
 import Dregg2.Crypto.Deco
 

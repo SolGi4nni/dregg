@@ -9,18 +9,23 @@ state carries only a fixed-width `Digest8` root, and the *transaction* supplies 
 non-membership + insert witness verified against that root. The wire carries the commitment, never
 the set.
 
-## Where this sits in the migration (READ THIS)
+## Where this sits in the migration (READ THIS) — THE FLIP IS FIRED; THIS IS NO LONGER A BLOCKER
 This is a WELD onto proven infra. It models the accumulator step over a standalone `NfAccState` (the
-two roots) — EXACTLY the two `Digest8` fields the VK-epoch flip adds to `RecordKernelState`
-(`nullifierRoot`, `revokedRoot`). It is kept as a self-contained model deliberately: literally adding
-those fields to `RecordKernelState` is NOT a free additive step — the full-state FRAME theorems
-(`Transfer.TransferSpec`, `StateCommit.RestHashIffFrame`, the `RotatedKernelRefinement*` `fr*` frame
-structures, every effect's `↔`-spec) each PIN every kernel field, and pinning the new roots forces
-the rest-hash `RH` to ABSORB them — which is the VK-epoch commitment change itself. That flip is
-ember-gated and coordinated with the parked umem VK epoch (design §6; do NOT fire piecemeal). So the
-proofs live here over `NfAccState` now; the flip wires `NfAccState`'s roots INTO `RecordKernelState`
-and extends `RH`/the frame apex in one flag-day. See the module comment in `Dregg2.lean` and the
-weld report for the exact touch-list.
+two roots). Those roots are NOW kernel fields: `RecordKernelState.nullifierRoot`
+(`Exec/RecordKernel.lean:433`), `.revokedRoot` (`:442`) and the grow-only `.commitmentsRoot`
+(`:452`), each defaulting to the empty-tree root. The flip was NOT a free additive step — the
+full-state FRAME theorems (`Transfer.TransferSpec`, `StateCommit.RestHashIffFrame`, the
+`RotatedKernelRefinement*` `fr*` frame structures, every effect's `↔`-spec) each PIN every kernel
+field, so pinning the new roots forced the rest-hash `RH` to ABSORB them — the VK-epoch commitment
+change itself. It was fired as ONE flag-day (ember-authorized, coordinated with the umem VK epoch,
+design §6) and `RH` absorbs all three: `Circuit/StateCommit.lean:290-291`
+(`∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot ∧ k'.commitmentsRoot =
+k.commitmentsRoot`, inside `RestHashIffFrame`). The `NfAccState` model is KEPT — the proofs below
+are stated over it and the kernel reaches them through the `toNfAccState` projection, without
+re-proving any crypto (`Exec/NullifierAccumulatorKernelBridge.lean:7-8`, which records the same:
+"`RecordKernelState` now carries the two Poseidon2 accumulator roots … landed in the VK-epoch apex
+and absorbed by `StateCommit.RestHashIffFrame`"). Downstream files that cited this section as an
+open ember-gate are stale by that citation alone.
 
 ## The reused, already-proven core (NOT re-proved here)
 The sorted/indexed-Merkle-tree non-membership + fresh-key insert are fully proved over the DEPLOYED

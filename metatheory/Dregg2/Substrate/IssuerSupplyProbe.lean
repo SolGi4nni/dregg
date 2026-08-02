@@ -10,15 +10,17 @@ modulo-burn dies and the value law is exact.
 value-binding leg cannot even be STATED over the existing executor state (see §5 + the honest
 ledger §7). Concretely:
 
-  * **Transparent + escrow (transitional)**: PASS. The issuer-supply view is exact BY CONSTRUCTION
-    wherever issuers are live accounts (`issuerView_exact`), and every committed step — transfer,
-    escrow create/release/refund, bridge lock/cancel, fresh-cell creation, the reformed
-    issuer-move mint — PRESERVES the exact invariant, each proved by INSTANTIATING an existing
-    conservation theorem (never re-proved). The TRANSITIONAL invariant (before the
-    storage-as-cell-programs migration, while `escrows : List EscrowRecord` parks value OFF-ledger)
-    reads `∀ a, recTotalAsset k a = 0` — the cell-sum ALONE is ≠ 0 while value
-    is parked (`escrow_create_debits_per_asset` witnesses the debit), so the holding-store term is
-    load-bearing until S3 turns escrows into pot-cells.
+  * **Transparent**: PASS. The issuer-supply view is exact BY CONSTRUCTION wherever issuers are live
+    accounts (`issuerView_exact`), and every committed step — transfer, fresh-cell creation, the
+    reformed issuer-move mint — PRESERVES the exact invariant, each proved by INSTANTIATING an
+    existing conservation theorem (never re-proved). The invariant reads
+    `∀ a, recTotalAsset k a = 0` and that is now the PURE cell-sum: the TRANSITIONAL escrow term this
+    probe carried (the off-ledger holding-store `escrows : List EscrowRecord` and its
+    `escrowHeldAsset` summand) is GONE — F1b deleted both (`Exec/RecordKernel.lean:302`, `:996-997`)
+    and `recTotalAsset k a = ∑ c ∈ k.accounts, k.bal c a` (`RecordKernel.lean:665`) mentions no
+    escrow. Escrow/obligation/bridge value now parks in factory cells' OWN `bal` columns
+    (`Apps/{EscrowFactory,ObligationFactory,BridgeCell}.lean`), so the SAME cell-sum covers it and
+    the S3 "turn escrows into pot-cells" migration this bullet was waiting on has HAPPENED.
   * **Mint**: PASS, with the equivalence PROVED as a commuting square (`mint_is_issuer_move`):
     debiting the issuer's well in the VIEW of a current-law mint IS the per-asset transfer
     issuer→recipient — pointwise equal ledgers. Mint INTO the issuer's own well is a view-NOOP
@@ -39,10 +41,13 @@ ledger §7). Concretely:
     Modulo-burn dies: burn = an ordinary move to a pot-cell whose program is the (non-)spending policy.
   * **Shielded pool**: PARTIAL — the precise candidate is stated and its LEDGER half is PROVED; its
     VALUE-BINDING half is NOT REPRESENTABLE over the existing state (§5).
-  * **Bridge**: the one existing non-conserving verb (`bridgeFinalizeKAsset`, the disclosed outflow)
-    provably BREAKS exactness (`bridgeFinalize_breaks_exact`); modelling the foreign chain as a
-    bridge-pot CELL restores it (`bridgeFinalizeToPot_preserves_exact`, instantiating
-    `escrow_settle_conserves_combined_per_asset`) — the same pot-cell move that killed fee-burn.
+  * **Bridge**: the probe's one non-conserving verb (`bridgeFinalizeKAsset`, the disclosed outflow)
+    provably BROKE exactness, and modelling the foreign chain as a bridge-pot CELL restored it. Both
+    teeth (`bridgeFinalize_breaks_exact` / `bridgeFinalizeToPot_preserves_exact`) are GONE with the
+    verb — see §6 below: they rode the bridge-tagged `escrows` records F1b deleted
+    (`Exec/RecordKernel.lean:302`, `Exec/Handlers/Bridge.lean:2-11`). `Apps/BridgeCell.lean` holds
+    locked value in a CELL from the start, so the pot-cell move — the same one that killed fee-burn —
+    is the DEFAULT and no kernel verb needs a conservation exemption.
 
 Standalone probe: NOT imported by the anchor. `#assert_axioms` on every theorem.
 -/
@@ -62,25 +67,28 @@ open Dregg2.Circuit.Argus
 
 /-! ## §1 — The invariant + the issuer-supply view over the EXISTING `RecordKernelState`.
 
-`ExactLedger` is the R2 value law in its TRANSITIONAL form: the per-asset cell-ledger sum PLUS the
-off-ledger escrow holding-store equals ZERO for every asset. (After the S3 storage-as-cell-programs
-migration parks escrowed value in pot-CELLS, the `escrowHeldAsset` term dies and the law collapses
-to the pure `∀ a, Σ_{c ∈ accounts} bal c a = 0`. Until then the holding-store term is load-bearing:
-`escrow_create_debits_per_asset` proves the bare cell-sum moves on a lock.)
+`ExactLedger` is the R2 value law in its PURE form: the per-asset cell-ledger sum equals ZERO for
+every asset. It was written here in a TRANSITIONAL form carrying an off-ledger escrow holding-store
+summand; that term is GONE. F1b deleted the store and `escrowHeldAsset` with it
+(`Exec/RecordKernel.lean:302`, `:996-997`), so `recTotalAsset k a = ∑ c ∈ k.accounts, k.bal c a`
+(`RecordKernel.lean:665`) IS the bare cell-sum and the law below already reads
+`∀ a, Σ_{c ∈ accounts} bal c a = 0`. The S3 storage-as-cell-programs migration this section deferred
+to has happened: escrow/obligation/bridge value parks in factory CELLS' own `bal` columns
+(`Apps/{EscrowFactory,ObligationFactory,BridgeCell}.lean`), inside the same sum.
 
 `issuerView` is the issuer-supply ADJUSTED ledger over the EXISTING state: the issuer of `a`
-carries −(circulating supply of `a`), where circulating = cell-ledger + escrow-parked
-(`recTotalAsset`, the EXISTING combined conserved quantity). -/
+carries −(circulating supply of `a`), where circulating = the cell-ledger sum (`recTotalAsset`). -/
 
-/-- **The R2 exact value law (transitional form).** Per asset: cell-ledger sum + escrow-parked
-value = 0. The escrow term is the OFF-LEDGER holding-store (`escrows : List EscrowRecord`) — value
-parked outside any cell until the S3 migration makes escrows pot-cells. -/
+/-- **The R2 exact value law.** Per asset: the cell-ledger sum = 0. Formerly the TRANSITIONAL form
+(cell-sum + escrow-parked); the escrow holding-store `escrows : List EscrowRecord` and its
+`escrowHeldAsset` summand were deleted by F1b (`Exec/RecordKernel.lean:302`, `:996-997`), so no value
+parks outside a cell and this is the pure form. -/
 def ExactLedger (k : RecordKernelState) : Prop :=
   ∀ a : AssetId, recTotalAsset k a = 0
 
 /-- **Circulating supply of `a`** in the CURRENT model: everything the existing conservation
-theorems conserve — the cell-ledger total plus the escrow-parked total (`recTotalAsset`,
-`Dregg2/Exec/RecordKernel.lean`). This is exactly what the issuer's well must carry NEGATIVELY. -/
+theorems conserve — the cell-ledger total (`recTotalAsset`, `Exec/RecordKernel.lean:665`; there is no
+longer an escrow-parked addend, F1b). This is exactly what the issuer's well must carry NEGATIVELY. -/
 def circulating (k : RecordKernelState) (a : AssetId) : ℤ := recTotalAsset k a
 
 section View
@@ -93,7 +101,7 @@ def issuerBal (k : RecordKernelState) : CellId → AssetId → ℤ :=
   fun c a => k.bal c a - (if c = issuerOf a then circulating k a else 0)
 
 /-- The issuer-supply view STATE: the existing state with `bal` replaced by the adjusted ledger
-(accounts/escrows/everything else untouched). -/
+(accounts/caps/everything else untouched). -/
 def issuerView (k : RecordKernelState) : RecordKernelState :=
   { k with bal := issuerBal issuerOf k }
 
@@ -592,7 +600,7 @@ DEFAULT there and no kernel verb needs a conservation exemption. -/
 /-- Demo issuer map: asset `_ ↦ cell 1`. -/
 def issDemo : AssetId → CellId := fun _ => 1
 
-/-- Genesis-shaped state: live cells {1 (the issuer), 2}, zero ledger, no escrows; actor 9 holds
+/-- Genesis-shaped state: live cells {1 (the issuer), 2}, zero ledger; actor 9 holds
 mint authority over the issuer cell 1. -/
 def kGen : RecordKernelState :=
   { accounts := {1, 2}
@@ -679,9 +687,13 @@ def kPool : RecordKernelState :=
     the RECIPIENT cell; the issuer-move gates it over the ISSUER. The commuting square is about
     LEDGERS, not gates — the cutover must migrate mint capabilities from recipient-shaped to
     issuer-shaped, a real (small) migration, not a relabeling.
-  * **E3 — the transitional escrow term.** Until S3 (storage-as-cell-programs), `ExactLedger`
-    carries `+ escrowHeldAsset` for the off-ledger holding-store. Honest: the pure cell-sum is
-    ≠ 0 while value is parked. The S3 migration (escrows → pot-cells) deletes the term.
+  * **E3 — the transitional escrow term: CLOSED, not an escape hatch any more.** `ExactLedger`
+    carried `+ escrowHeldAsset` for the off-ledger holding-store, so the pure cell-sum was ≠ 0 while
+    value was parked. F1b deleted the store and the measure (`Exec/RecordKernel.lean:302`, `:996-997`)
+    and the S3 migration landed as factory CELLS
+    (`Apps/{EscrowFactory,ObligationFactory,BridgeCell}.lean`): parked value sits in a cell's own
+    `bal` column, inside `recTotalAsset`
+    (`RecordKernel.lean:665`). Nothing parks outside a cell; the law here IS the pure cell-sum.
   * **E4 — the shielded value-binding is NOT REPRESENTABLE today.** The pool-cell candidate's
     ledger half is proved; the pool↔notes half (`bal (poolOf a) a = Σ unspent hidden values of a`)
     cannot be stated: notes carry no asset and no executor-visible value, and `noteSpend` takes no
@@ -710,8 +722,9 @@ literally (everything is parametric in `issuerOf : AssetId → CellId`, which IS
 function; making it the identity is the §2.2 simplification, available but not load-bearing).
 
 **What W1 (value unification) should ACTUALLY implement — the shape that survived:**
-  1. the per-asset ledger as THE law: `∀ a, Σ_{c ∈ accounts} bal c a (+ transitional escrow term)
-     = 0`, with `issuerOf` the registry (identity once AssetId := CellId lands);
+  1. the per-asset ledger as THE law: `∀ a, Σ_{c ∈ accounts} bal c a = 0` — with NO escrow addend,
+     the transitional term having died with the holding-store (`Exec/RecordKernel.lean:302`,
+     `:996-997`) — and `issuerOf` the registry (identity once AssetId := CellId lands);
   2. mint/burn = `issuerMoveK`-shaped transfers (authority over the ISSUER, no availability gate
      at the well, policy in the issuer's program) — migrating mint caps recipient→issuer (E2);
   3. fee prologue/epilogue legs re-landed on the per-asset ledger (killing E5), with the burn

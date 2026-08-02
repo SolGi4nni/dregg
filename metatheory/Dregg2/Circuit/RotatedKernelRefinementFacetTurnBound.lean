@@ -250,7 +250,69 @@ the rung needs to tie the witness turn to the published one). -/
 the TURN-BOUND faithful arm: any satisfying witness of `d` whose published commitment `pc` decodes to
 `pre`/`post` forces `dispatchArmFacetTB fcaps provided pc.turn pre post` — the faithful step ON THE
 PUBLISHED TURN. The turn-identity binding lives inside the discharge (the value-rung's witness turn IS
-`pc.turn`); the conclusion's turn is the light client's `pc.turn`, not a free existential. -/
+`pc.turn`); the conclusion's turn is the light client's `pc.turn`, not a free existential.
+
+⚑ **PROP-BODY FLOOR CARRIER. MEASURED 2026-08-01, NOT PORTED.** The body opens
+`Poseidon2SpongeCR hash → …`, a floor `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at
+deployed BabyBear. Because it sits in the VALUE, no floor binder appears in the type of anything that
+mentions this def, so a binder-keyed census sees nothing. `DescriptorRefinesShirkRefuted`'s argument
+transfers verbatim: at any field-bounded sponge `descriptorRefinesTB` holds for EVERY `fcaps`/`provided`,
+including at an unsatisfiable turn-bound arm — the "authority over the PUBLISHED turn" that §6 claims to
+close is, at deployed parameters, discharged by the parameters rather than by the circuit.
+
+MEASURED surface: 10 exact-word mentions, of which 6 are comments. The 3 live sites are this def, the
+lowering `descriptorRefinesTB_to_descriptorRefines`, and the `hrefines` binder of
+`lightclient_transfer_faithful_turnbound`; the tenth is the `FloorRatchetBaseline` row.
+
+⚑ THE ANTECEDENT IS DEAD HERE TOO, and this def is where that is easiest to read: NOTHING IN THE TREE
+DISCHARGES `descriptorRefinesTB`. It is carried as a hypothesis at
+`lightclient_transfer_faithful_turnbound` and consumed nowhere else, so no proof anywhere reads the
+`hCR` its body introduces. `descriptorRefinesTB_to_descriptorRefines` merely forwards that `hCR` into
+`CircuitSoundness.descriptorRefines`, whose antecedent is dead by the same measurement — floor-to-floor
+plumbing with no reader at either end.
+
+MEASURED AGAIN (second pass, comments and string literals stripped mechanically): **3 code sites, 9
+comment mentions, plus 2 `FloorRatchetBaseline` rows.** The 3 are this def, `descriptorRefinesTB_to_
+descriptorRefines`, and the `hrefines` binder of `lightclient_transfer_faithful_turnbound` — nothing
+produces it, confirming the paragraph above.
+
+⚠ **THE "SECOND, INDEPENDENT REASON" BELOW WAS STALE WHEN IT WAS WRITTEN — corrected 2026-08-01.**
+`ApexPremiseVacuity.ApexCommitFloor` is the five-conjunct list `compressInjective cmb ∧
+compressInjective compress ∧ compressNInjective compressN ∧ cellLeafInjective CH ∧ RestHashIffFrame
+RH`, and `apexCommitFloor_unsatisfiable` kills it through the FIFTH conjunct by Cantor. `CommitSurface`
+at HEAD carries NONE of those five: `1f53df6d2` deleted the four injectivity fields and the fifth is
+`RestHashIffFrameFin RH`. The bundle has a CLOSED inhabitant — the anonymous `noncomputable example :
+CommitSurface` at `Verify/RestFrameFiniteSupportSuccessor.lean:348`. So `lightclient_transfer_faithful_
+turnbound` is NOT inapplicable for a second reason, and `(S : CommitSurface) → ¬ P S` is no longer free:
+a refutability pole at the bundle is stateable for the first time. The remaining reason to reach for
+`CommitMap` is that `ApexFloorFree`'s refutation needs a map that HITS the opaque `tracePublishedCommit
+emptyTrace` (that is what `collapseMap` is for) and `S.commit = recStateCommit …` cannot be chosen to
+hit an opaque target — the map must be ARBITRARY, not the bundle empty.
+
+⚑ The tooth may not be a NAMED theorem: a type mentioning `CommitSurface` is a `#floor_ratchet`
+`bundle-user` carrier and the gate hard-errors on a new one, so it goes in as an anonymous `example`
+(the discipline of `Verify/RestFrameFiniteSupportSuccessor.lean` §6). Whether `CommitSurface` is still
+computed into `Surface.bundles` after the drain needs a root `#floor_ratchet` run, which the root cannot
+elaborate today; that run is step 0 of the port.
+
+⚑ This def is in NO sentinel list (`FloorCensus.sentinelPropBody` is `[descriptorRefines]` alone), so
+unlike `CircuitSoundness.descriptorRefines` its port needs no `FloorCensus.lean` edit — and a
+`FloorRatchetBaseline` row left stale by a port is green, since that file is emitted as
+`baseline ∩ current`. With `ShieldedRingDescriptorRefines` (5 sites), this is one of the two prop-body
+carriers a single lane can land alone.
+
+HONEST REPLACEMENT: delete the antecedent, exactly as `ClosureAll.ClosedLogExtract` and
+`CircuitCompleteness.descriptorComplete` were deleted on 2026-07-25 (`FloorCensus.portedPropBody`), and
+state it over a bare `ApexFloorFree.CommitMap` rather than the `CommitSurface` bundle (for the
+arbitrary-map reason just corrected, NOT for the uninhabitedness one). Do NOT
+re-ground on `¬ SpongeColl` at a named pair: there is no pair in play, so a per-instance side condition
+here would be decoration. Do NOT re-ground on `OrBreak (SpongeCollision hash) _` — refuted wholesale by
+`SpongeCollisionShirk.bareDisjunction_is_not_a_regrounding`.
+
+WHY IT WAITS: this def is smaller than `CircuitSoundness.descriptorRefines` but sits DOWNSTREAM of it
+through `descriptorRefinesTB_to_descriptorRefines`, whose conclusion is that def. Porting this one first
+leaves the lowering forwarding a live `hCR` into a dead antecedent, which reads as a genuine consumer and
+is the exact shape that made this class invisible. The two go in one commit, in that order. -/
 def descriptorRefinesTB (S : CommitSurface) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (fcaps : FacetCaps) (provided : AuthProvided) : Prop :=
   Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash →

@@ -11,12 +11,15 @@ enforce today — an honest PARTIAL (some constraint not expressible) is as valu
 
 ## The reframe that makes escrow a cell program (and the side-table redundant)
 
-dregg1/dregg2 escrow today lives in an OFF-LEDGER side-table `k.escrows`
-(`RecordKernel.lean:483`): `createEscrowKAsset` does a SINGLE-cell *debit* and parks an
-`EscrowRecord`; settle does a SINGLE-cell *credit* and marks the record resolved. The price
-of that design is a BESPOKE conserved quantity `recTotalAsset = recTotalAsset +
-escrowHeldAsset` and a whole family of bespoke side-table conservation theorems
-(`escrow_settle_conserves_combined`, `heldSum_markResolved_found`, …).
+dregg1/dregg2 escrow USED TO live in an OFF-LEDGER side-table `k.escrows`: `createEscrowKAsset` did
+a SINGLE-cell *debit* and parked an `EscrowRecord`; settle did a SINGLE-cell *credit* and marked the
+record resolved. The price of that design was a BESPOKE conserved quantity
+`recTotalAsset = recTotalAsset + escrowHeldAsset` and a whole family of bespoke side-table
+conservation theorems (`escrow_settle_conserves_combined`, `heldSum_markResolved_found`, …).
+ALL GONE: F1b deleted the store and the measure (`Exec/RecordKernel.lean:302`, `:996-997`) and
+`structure RecordKernelState` (`RecordKernel.lean:309`) has no `escrows` field at ANY line — the
+`EscrowRecord` TYPE survives only for the FFI `WState` wire codec (`RecordKernel.lean:231-238`).
+This probe is the argument that made that deletion legal; read the tenses accordingly.
 
 The cell-program rebuild does the OPPOSITE move, and it is the SAME move the cap crown made
 for sealed boxes: **the escrow cell HOLDS the value in its own per-asset `bal` column.** A
@@ -230,7 +233,7 @@ def escrowRefund (k : RecordKernelState) (e depositor : CellId) (asset : AssetId
 
 The payoff of the side-table-free design: an escrow settle is an ordinary per-asset `move`, so
 the EXISTING kernel value law `recKExecAsset_conserves_per_asset` applies VERBATIM — with NO
-bespoke `recTotalAsset` quantity. What's deposited is exactly what's released-or-
+bespoke combined conserved quantity. What's deposited is exactly what's released-or-
 refunded: every asset's TOTAL supply over the live accounts is FIXED. The `write` of the state
 slot does not touch `bal`, so it is invisible to `recTotalAsset`. -/
 
@@ -612,7 +615,7 @@ theorem gated_release_requires_discharge (g : Int → Int → Bool) (k : RecordK
 /-! ## §VERDICT (DREGG3 §6 R3) — PASS.
 
 ESCROW IS FULLY CAPTURED as a factory-born cell program + a release-safety contract, with NO
-`escrows` side-table and NO bespoke `recTotalAsset` quantity:
+`escrows` side-table and NO bespoke combined conserved quantity:
 
   * FACTORY (`escrowFactory`): six deal-term slots + the state-machine `admitTable [(0,1),(0,2)]`
     — `escrowFactory_conforms` PROVED. The escrow `program` is drawn entirely from the EXISTING
@@ -647,11 +650,14 @@ ESCROW IS FULLY CAPTURED as a factory-born cell program + a release-safety contr
     second"); the v1 fix there is the proposed `FieldLteOther` variant. So R3 PASSES for
     escrow and identifies queue as the family that may keep a verb (or get a new caveat).
 
-  W2 CONSEQUENCE: the escrow verb family (`createEscrow`/`releaseEscrow`/`refundEscrow` + the
-  `escrows` side-table + `escrowHeldAsset` + `recTotalAsset` + the whole
-  `heldSum_markResolved_found` accounting) can be DELETED once this lands as a real factory +
-  the BountyBoardGated app is re-pointed at `escrowFactory` instead of the verbs. The verified
-  surface GROWS (the app inherits the kernel value theorem; the bespoke side-table theory dies).
+  W2 CONSEQUENCE — TAKEN: the escrow verb family (`createEscrow`/`releaseEscrow`/`refundEscrow` +
+  the `escrows` side-table + `escrowHeldAsset` + the combined quantity + the whole
+  `heldSum_markResolved_found` accounting) IS DELETED. It landed as a real factory
+  (`Apps/EscrowFactory.lean`), BountyBoardGated was re-pointed, and F1b then removed the kernel
+  surface (`Exec/RecordKernel.lean:302`, `:996-997`; the handler cluster in
+  `Exec/Handlers/Escrow.lean:5-7`). `recTotalAsset` is now the plain cell-sum
+  (`RecordKernel.lean:665`). The verified surface GREW as predicted (the app inherits the kernel
+  value theorem; the bespoke side-table theory died).
 
 RESIDUALS (honest): (1) this probe models the escrow cell-program at the kernel-state level
 (`recKExecAsset` + record slots); wiring it through `stateStepGuarded`/the full forest gated

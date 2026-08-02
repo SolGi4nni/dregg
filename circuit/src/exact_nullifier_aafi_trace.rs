@@ -837,13 +837,15 @@ mod tests {
         const STAGED: &str =
             include_str!("../descriptors/by-name/faithful-note-spend-exact-v3.json");
         let descriptor = parse_vm_descriptor2(STAGED).expect("Lean-emitted v3 descriptor parses");
-        // Nine-lane epoch: `V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS+1) + 2*8*WIDE_CARRIERS`
-        // = 2442 + 2*185 + 2*496 = 3804 (was 2442 + 2*179 + 2*480 = 3760); constraints
-        // 1258 + 4 TID_P2 wide lookups + 6 outer continuity windows + 6 outer last-row
-        // boundaries = 1274. Decomposed at `exact_nullifier_aafi_rotated_trace.rs`.
-        assert_eq!(descriptor.trace_width, 3804);
+        // KEY-NONET epoch (`76c3f7b9b` + the re-emit): `V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS+1)
+        // + 2*8*WIDE_CARRIERS` = 2442 + 2*188 + 2*504 = 3826 — the SAME formula the 3804 carried,
+        // re-evaluated at `NUM_PRE_LIMBS = 187` / `WIDE_CARRIERS = 63` (was 2442 + 2*185 + 2*496
+        // = 3804). Constraints 1274 -> 1282: one `boundary` and one `window_gate` per new pre-limb
+        // (child_vk lane 8 at 184, contract_hash lane 8 at 185, the owner key's lane 8 at 186),
+        // plus one wide-chip absorption lookup per BLOCK for the new carrier. 3+3+2, nothing over.
+        assert_eq!(descriptor.trace_width, 3826);
         assert_eq!(descriptor.public_input_count, 76);
-        assert_eq!(descriptor.constraints.len(), 1274);
+        assert_eq!(descriptor.constraints.len(), 1282);
         let state16: Vec<_> = descriptor
             .constraints
             .iter()

@@ -48,8 +48,10 @@ deterministic backbone (they are what the win relation rests on), explicitly dem
 
 The reduction closes the WIDE component of the anchor binding.  A state forgery whose wide
 inputs AGREE while the states differ is NOT caught by the wide floor — it is a collision of
-the receipt-root sponge (`Poseidon2SpongeCR hash`, the 1-felt residual, ~237 consumers, NOT
-part of this sweep) or of the kernel commit (`CommitSurface.commit_binds`, its own field).
+the receipt-root sponge — ⚑ as of 2026-08-01 that leg is no longer the refuted floor
+`Poseidon2SpongeCR hash` but the per-instance `SpongeColl hash (receiptRootFind hash L L')`, a
+FOURTH named disjunct at the exact-Prop backbone, worth ≈2^15.5 queries at the 1-felt root — or of
+the kernel commit (`CommitSurface.commit_binds`, its own field).
 Those are the SEPARATELY-priced residuals, named at `stateDecode8_pre_faithful`.  What is
 NOT yet closed: the exact-Prop AIR layer and the computational game layer are still bridged
 per-instance (the game samples a tag; the deployed trace fixes `deployedTag`).
@@ -88,7 +90,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationR
   (Poseidon2Width8 chainFrom8 chainFrom8_len chainFrom8_snoc wireCommitR8 WireColl
    wireCommitR8_binds_or_collides chunk31 chunk31_length chunkCount chainCollFind
    wireCommit8Find IsCollW)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR SpongeColl)
 open Dregg2.Crypto.FloorGames
   (Game Adversary Hard gameAdv gameAdv_mem_unit hashGame HashCRHardQuant)
 open Dregg2.Crypto.ConcreteSecurity (Negl PolyBounded not_negl_one)
@@ -146,13 +148,40 @@ fields remain in the digest because both belong to `Turn`. -/
 def turnDigest (hash : List ℤ → ℤ) (t : Turn) : ℤ :=
   factHash hash t.actor [t.src, t.dst, t.amt]
 
-theorem turnDigest_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
-    {a b : Turn} (h : turnDigest hash a = turnDigest hash b) : a = b := by
-  have hp := hCR _ _ h
-  cases a
-  cases b
-  simp only [turnDigest, factHash, List.cons.injEq, Nat.cast_inj] at hp
-  simp_all
+/-- The exact preimage the turn-digest absorption feeds the sponge, named so the collision event
+below is stated at precisely the list the digest is taken of (`turnDigest hash t = hash (turnPre t)`
+by `rfl`). -/
+def turnPre (t : Turn) : List ℤ := t.actor :: [t.src, t.dst, t.amt]
+
+/-- **⚑ THE TURN-DIGEST EXTRACTOR.** One absorption, so there is exactly one place two digests can
+break: if the two preimages differ they ARE the collision. Total and decidable. -/
+def turnDigestFind (a b : Turn) : List ℤ × List ℤ := (turnPre a, turnPre b)
+
+/-- **⚑ THE TURN-DIGEST EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two turns with the same
+receipt digest EITHER are the same turn, OR the pair `turnDigestFind` returns is a GENUINE collision
+of the deployed sponge. Nothing is assumed about `hash`, so — unlike `turnDigest_binds`'s old form —
+this holds at deployed BabyBear parameters. -/
+theorem turnDigest_binds_or_collides (hash : List ℤ → ℤ) (a b : Turn)
+    (h : turnDigest hash a = turnDigest hash b) :
+    a = b ∨ SpongeColl hash (turnDigestFind a b) := by
+  by_cases hne : turnPre a = turnPre b
+  · refine Or.inl ?_
+    cases a
+    cases b
+    simp only [turnPre, List.cons.injEq, Nat.cast_inj] at hne
+    simp_all
+  · exact Or.inr ⟨hne, h⟩
+
+/-- **`turnDigest_binds`, PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor is FALSE at
+deployed BabyBear (`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so this said nothing
+about the deployed committer. What it carries now is the DECIDABLE per-instance residual at the ONE
+pair `turnDigestFind` names for THESE two turns; the honest single-turn case discharges it for every
+sponge, and a caller holding the floor supplies
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`. -/
+theorem turnDigest_binds (hash : List ℤ → ℤ)
+    {a b : Turn} (hno : ¬ SpongeColl hash (turnDigestFind a b))
+    (h : turnDigest hash a = turnDigest hash b) : a = b :=
+  (turnDigest_binds_or_collides hash a b h).resolve_right hno
 
 /-- Receipt-index root with the executor's prepend update.  The empty root has a
 one-word preimage; every action step has a two-word preimage, so log length is
@@ -161,32 +190,117 @@ def receiptRoot (hash : List ℤ → ℤ) : List Turn → ℤ
   | [] => factHash hash 0 []
   | t :: ts => factHash hash (receiptRoot hash ts) [turnDigest hash t]
 
-theorem receiptRoot_binds (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
-    Function.Injective (receiptRoot hash) := by
+/-- The exact preimage each receipt-root absorption feeds the sponge — one word at the empty log,
+two at every prepend (`receiptRoot hash L = hash (receiptPre hash L)` by `rfl` on either
+constructor). The length difference is what makes an empty/non-empty equivocation a genuine
+collision rather than a length coincidence. -/
+def receiptPre (hash : List ℤ → ℤ) : List Turn → List ℤ
+  | [] => [0]
+  | t :: ts => [receiptRoot hash ts, turnDigest hash t]
+
+/-- **⚑ THE RECEIPT-ROOT EXTRACTOR.** Two logs folding to the same root break in exactly one of
+three places, and the walk visits them in the order the fold does: the OUTER absorption (differing
+preimages — this also catches every length mismatch), then the DEEPER root (recursively), then this
+step's TURN DIGEST. Total and decidable, so it is a computation and never `Classical.choose` of an
+existential; it bottoms out at a trivially non-colliding pair when nothing differs. -/
+def receiptRootFind (hash : List ℤ → ℤ) : List Turn → List Turn → List ℤ × List ℤ
+  | [], [] => ([], [])
+  | [], y :: ys => (receiptPre hash [], receiptPre hash (y :: ys))
+  | x :: xs, [] => (receiptPre hash (x :: xs), receiptPre hash [])
+  | x :: xs, y :: ys =>
+      if receiptPre hash (x :: xs) ≠ receiptPre hash (y :: ys) then
+        (receiptPre hash (x :: xs), receiptPre hash (y :: ys))
+      else if (receiptRootFind hash xs ys).1 ≠ (receiptRootFind hash xs ys).2 then
+        receiptRootFind hash xs ys
+      else turnDigestFind x y
+
+/-- **THE EXTRACTOR BOTTOMS OUT AT AN EQUAL PAIR** on one and the same log — the honest committer,
+who publishes ONE receipt index, pays no cryptographic assumption at all. -/
+theorem receiptRootFind_self (hash : List ℤ → ℤ) :
+    ∀ L : List Turn, (receiptRootFind hash L L).1 = (receiptRootFind hash L L).2
+  | [] => rfl
+  | _ :: xs => by
+      rw [receiptRootFind, if_neg (by simp),
+        if_neg (not_not.mpr (receiptRootFind_self hash xs))]
+      rfl
+
+/-- **⚑ THE RECEIPT-ROOT EXTRACTOR IS CORRECT — UNCONDITIONAL, NO FLOOR.** Two logs folding to the
+SAME receipt-index root are EITHER the same log, OR the pair `receiptRootFind` returns is a GENUINE
+collision of the deployed sponge. Nothing is assumed about `hash`, so this holds at deployed
+parameters — where the old `Function.Injective (receiptRoot hash)` was refuted on BOTH sides at once
+(`List Turn` is infinite, one BabyBear felt is not, so the premise `Poseidon2SpongeCR hash` AND the
+conclusion `Function.Injective (receiptRoot hash)` are each false by the same pigeonhole). -/
+theorem receiptRoot_binds_or_collides (hash : List ℤ → ℤ) :
+    ∀ xs ys : List Turn, receiptRoot hash xs = receiptRoot hash ys →
+      xs = ys ∨ SpongeColl hash (receiptRootFind hash xs ys) := by
   intro xs
   induction xs with
   | nil =>
       intro ys h
       cases ys with
-      | nil => rfl
+      | nil => exact Or.inl rfl
       | cons y ys =>
-          have hp := hCR _ _ h
-          simp [receiptRoot, factHash] at hp
+          refine Or.inr ⟨?_, h⟩
+          rw [receiptRootFind]
+          simp [receiptPre]
   | cons x xs ih =>
       intro ys h
       cases ys with
       | nil =>
-          have hp := hCR _ _ h
-          simp [receiptRoot, factHash] at hp
+          refine Or.inr ⟨?_, h⟩
+          rw [receiptRootFind]
+          simp [receiptPre]
       | cons y ys =>
-          have hp := hCR _ _ h
-          simp only [receiptRoot, factHash, List.cons.injEq] at hp
-          obtain ⟨hroot, hdigest, _⟩ := hp
-          have htail : xs = ys := ih hroot
-          have hhead : x = y := turnDigest_binds hash hCR hdigest
-          subst ys
-          subst y
-          rfl
+          by_cases hpre : receiptPre hash (x :: xs) ≠ receiptPre hash (y :: ys)
+          · rw [receiptRootFind, if_pos hpre]
+            exact Or.inr ⟨hpre, h⟩
+          · have hpre' := not_not.mp hpre
+            simp only [receiptPre, List.cons.injEq, and_true] at hpre'
+            obtain ⟨hroot, hdigest⟩ := hpre'
+            by_cases hdeep :
+                (receiptRootFind hash xs ys).1 ≠ (receiptRootFind hash xs ys).2
+            · rw [receiptRootFind, if_neg hpre, if_pos hdeep]
+              rcases ih ys hroot with rfl | hc
+              · exact absurd (receiptRootFind_self hash xs) hdeep
+              · exact Or.inr hc
+            · rw [receiptRootFind, if_neg hpre, if_neg hdeep]
+              rcases turnDigest_binds_or_collides hash x y hdigest with rfl | hc
+              · rcases ih ys hroot with rfl | hc2
+                · exact Or.inl rfl
+                · exact absurd (not_not.mp hdeep) hc2.1
+              · exact Or.inr hc
+
+/-- **`receiptRoot_binds`, PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The old form asserted
+`Function.Injective (receiptRoot hash)` under `Poseidon2SpongeCR hash` — a refuted premise carried to
+a refuted conclusion, which says nothing in either direction. It now carries the DECIDABLE
+per-instance residual at the ONE pair `receiptRootFind` names for THESE two logs. Dischargeable by
+the honest committer (`receiptRootFind_self`), refutable (`receiptRootColl_refutable`), and it
+REFUTES the old premise (`receiptRootColl_refutes_poseidon2CR`) — strictly STRONGER, conclusion
+unchanged on the pair.
+
+⚑ HONEST PRICE: the receipt root is ONE BabyBear felt, so this residual is worth ≈2^15.5 queries.
+That is a BREAK, not a security level. The port does not make the 1-felt receipt root safe; it makes
+the price VISIBLE where a refuted floor had assumed it away. -/
+theorem receiptRoot_binds (hash : List ℤ → ℤ) {xs ys : List Turn}
+    (hno : ¬ SpongeColl hash (receiptRootFind hash xs ys))
+    (h : receiptRoot hash xs = receiptRoot hash ys) : xs = ys :=
+  (receiptRoot_binds_or_collides hash xs ys h).resolve_right hno
+
+/-- **REFUTABLE.** At the constant sponge the extractor really does hand back a colliding pair, so
+`¬ SpongeColl … (receiptRootFind …)` is not free — the residual is not `True` in disguise, and the
+disjunction above is not a free pass. -/
+theorem receiptRootColl_refutable (t : Turn) :
+    SpongeColl (fun _ => (0 : ℤ)) (receiptRootFind (fun _ => (0 : ℤ)) [] [t]) := by
+  refine ⟨?_, rfl⟩
+  rw [receiptRootFind]
+  simp [receiptPre]
+
+/-- **A REFUTATION, NOT A NEW FLOOR.** Exhibiting the residual REFUTES `Poseidon2SpongeCR` outright,
+so the port is a strict WEAKENING of the premise it replaces. Stated contrapositively, so it assumes
+no floor content and the ratchet reads it as the tooth it is. -/
+theorem receiptRootColl_refutes_poseidon2CR {hash : List ℤ → ℤ} {xs ys : List Turn}
+    (hc : SpongeColl hash (receiptRootFind hash xs ys)) : ¬ Poseidon2SpongeCR hash :=
+  fun hCR => hc.1 (hCR _ _ hc.2)
 
 /-- Exactly eight felts, with width carried by the type rather than a side premise. -/
 structure Felt8 where
@@ -243,8 +357,17 @@ two SEPARATELY-priced residuals of the `pre = pre'` branch.
 because the deployed `single_perm_compress` REFUTES it, so the theorem was VACUOUSLY TRUE at deployed
 parameters.  The `WireColl` disjunct is now priced by §R's reduction (negligible under the wide
 collision floor `HashCRHardQuant (wideFamily D) Eff`).  The `pre = pre'` branch is closed by TWO named
-residuals: the kernel commit and `hReceiptCR : Poseidon2SpongeCR hash` (the 1-felt receipt-root
-sponge — a NAMED, still-open residual, ~237 files of consumers, NOT part of this sweep).
+residuals: the kernel commit and the RECEIPT-ROOT one.
+
+⚑ **THE RECEIPT-ROOT RESIDUAL IS NOW A FOURTH DISJUNCT TOO (2026-08-01).**  It used to be
+`hReceiptCR : Poseidon2SpongeCR hash` — the 1-felt receipt-root sponge's injectivity, which
+`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES FALSE at deployed parameters, so
+this theorem was vacuous on that leg exactly as it had been on the wide-CR and kernel-commit legs.
+It is now `SpongeColl hash (receiptRootFind hash pre.log pre'.log)`: the deployed receipt sponge
+collided at the SPECIFIC pair a TOTAL extractor hands back for THESE two logs — the same kind of
+object as `WireColl` and `S.CommitColl` beside it, priced rather than assumed away.  The theorem now
+carries NO floor at all.  ⚑ HONEST PRICE: one BabyBear felt, so ≈2^15.5 queries — a BREAK, not a
+security level; the port makes that visible where the floor had hidden it.
 
 ⚑ **THE KERNEL-COMMIT RESIDUAL IS A THIRD DISJUNCT, AND IT NAMES A PAIR (2026-08-01, corrected the
 same day).**  This used to read "`CommitSurface.commit_binds` (the kernel commit, UNCONDITIONAL)", and
@@ -259,7 +382,7 @@ priced rather than free.  The shape is: the endpoints agree, OR the deployed wid
 equivocated at a named pair, OR the kernel surface collided at a named pair. -/
 theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW)
-    (hash : List ℤ → ℤ) (hReceiptCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (S : CommitSurface) (pc : PublishedCommit8)
     {pre post pre' post' : RecChainedState}
     (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable pre.kernel)
@@ -268,7 +391,8 @@ theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
     (h' : StateDecode8 permW hW hash S pc pre' post') :
     pre = pre' ∨ WireColl permW (kernelPayload S pre.kernel pc.turn)
       (receiptRoot hash pre.log) (kernelPayload S pre'.kernel pc.turn)
-      (receiptRoot hash pre'.log) ∨ S.CommitColl pre.kernel pre'.kernel pc.turn := by
+      (receiptRoot hash pre'.log) ∨ S.CommitColl pre.kernel pre'.kernel pc.turn
+      ∨ SpongeColl hash (receiptRootFind hash pre.log pre'.log) := by
   have hwide :
       wireCommitR8 permW (kernelPayload S pre.kernel pc.turn) (receiptRoot hash pre.log) =
         wireCommitR8 permW (kernelPayload S pre'.kernel pc.turn) (receiptRoot hash pre'.log) := by
@@ -283,9 +407,11 @@ theorem stateDecode8_pre_faithful (permW : List ℤ → List ℤ)
   rcases S.commit_binds_or_collides pre.kernel pre'.kernel pc.turn h.preWF h'.preWF hfin hfin'
     hkcommit with hk | hbrk
   swap
-  · exact Or.inr (Or.inr hbrk)
+  · exact Or.inr (Or.inr (Or.inl hbrk))
+  rcases receiptRoot_binds_or_collides hash pre.log pre'.log hroot with hlog | hrc
+  swap
+  · exact Or.inr (Or.inr (Or.inr hrc))
   refine Or.inl ?_
-  have hlog : pre.log = pre'.log := receiptRoot_binds hash hReceiptCR hroot
   cases pre
   cases pre'
   simp_all
@@ -298,13 +424,14 @@ REDUCTION `stateCommit_binds_advantage_bound` (§R).
 ⚑ **NO WIDE CR FLOOR IS CARRIED.** The old form took `hWideCR : Poseidon2WideCR permW` — DELETED,
 because the deployed `single_perm_compress` REFUTES it, so the theorem was VACUOUSLY TRUE at deployed
 parameters.  The `WireColl` disjunct is priced by §R's reduction; the `post = post'` branch is closed
-by the kernel commit and `hReceiptCR : Poseidon2SpongeCR hash` (the 1-felt receipt-root sponge
-residual, NOT part of this sweep).  The kernel commit's residual is the THIRD disjunct
-`S.CommitColl` — see the `pre` twin for why `CommitSurface.commit_binds` could not stay
-"unconditional", and why the intermediate `S.StateBreak` disjunct was no better. -/
+by the kernel commit and the receipt-root residual.  The kernel commit's residual is the THIRD
+disjunct `S.CommitColl` — see the `pre` twin for why `CommitSurface.commit_binds` could not stay
+"unconditional", and why the intermediate `S.StateBreak` disjunct was no better — and (⚑ 2026-08-01)
+the receipt root's is the FOURTH, `SpongeColl hash (receiptRootFind hash post.log post'.log)`,
+replacing the refuted `hReceiptCR : Poseidon2SpongeCR hash` binder. -/
 theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW)
-    (hash : List ℤ → ℤ) (hReceiptCR : Poseidon2SpongeCR hash)
+    (hash : List ℤ → ℤ)
     (S : CommitSurface) (pc : PublishedCommit8)
     {pre post pre' post' : RecChainedState}
     (hfin : Dregg2.Circuit.RestFrameFin.FiniteRepresentable post.kernel)
@@ -313,7 +440,8 @@ theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
     (h' : StateDecode8 permW hW hash S pc pre' post') :
     post = post' ∨ WireColl permW (kernelPayload S post.kernel pc.turn)
       (receiptRoot hash post.log) (kernelPayload S post'.kernel pc.turn)
-      (receiptRoot hash post'.log) ∨ S.CommitColl post.kernel post'.kernel pc.turn := by
+      (receiptRoot hash post'.log) ∨ S.CommitColl post.kernel post'.kernel pc.turn
+      ∨ SpongeColl hash (receiptRootFind hash post.log post'.log) := by
   have hwide :
       wireCommitR8 permW (kernelPayload S post.kernel pc.turn) (receiptRoot hash post.log) =
         wireCommitR8 permW (kernelPayload S post'.kernel pc.turn) (receiptRoot hash post'.log) := by
@@ -328,9 +456,11 @@ theorem stateDecode8_post_faithful (permW : List ℤ → List ℤ)
   rcases S.commit_binds_or_collides post.kernel post'.kernel pc.turn h.postWF h'.postWF hfin hfin'
     hkcommit with hk | hbrk
   swap
-  · exact Or.inr (Or.inr hbrk)
+  · exact Or.inr (Or.inr (Or.inl hbrk))
+  rcases receiptRoot_binds_or_collides hash post.log post'.log hroot with hlog | hrc
+  swap
+  · exact Or.inr (Or.inr (Or.inr hrc))
   refine Or.inl ?_
-  have hlog : post.log = post'.log := receiptRoot_binds hash hReceiptCR hroot
   cases post
   cases post'
   simp_all
@@ -996,8 +1126,13 @@ theorem stateCommitRom_verdict :
   [{ actor := 1, src := 1, dst := 2, amt := 3 }] == 7
 
 #assert_axioms kernelPayload_length
+#assert_axioms turnDigest_binds_or_collides
 #assert_axioms turnDigest_binds
+#assert_axioms receiptRootFind_self
+#assert_axioms receiptRoot_binds_or_collides
 #assert_axioms receiptRoot_binds
+#assert_axioms receiptRootColl_refutable
+#assert_axioms receiptRootColl_refutes_poseidon2CR
 #assert_axioms wireCommitR8_length
 #assert_axioms stateDecode8_pre_faithful
 #assert_axioms stateDecode8_post_faithful

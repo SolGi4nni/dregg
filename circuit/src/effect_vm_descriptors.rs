@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "67cb088af4aac76d8cebe25d20fe105ecd3bb6f5152101f4a3d00f32ab11dbfd";
+    "4357d90651b028503aa174b5ef5657037b63ddd836eb75047c078a89a2165177";
 
 /// The wire-name suffix marking a descriptor as the rotated+umem WELD
 /// ([`weld_umem_into_rotated_descriptor`]). A descriptor whose `name` ends with this is a STAGED
@@ -1274,7 +1274,7 @@ fn canonicity_splice_of(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> us
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "8efec5f786f763592a29fd8e360f9905c697f904e620ada1513f52915d4cc510";
+    "edddd822c969033200194b849d04bd4bdbf58409d6770c54a8f065073df214ef";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -4003,74 +4003,104 @@ mod tests {
         // way the rc FOLD's +16/+20 split did. Cross-check on the narrow side, where the same
         // arithmetic must hold with no compaction at all: `GRAD_ROT_WIDTH(1819) + REFUSE_AUX_SPAN
         // (45) = 1864`, the committed narrow `mint`/`revoke`/`setField-*` width (was 1752).
+        // ⚑ FLAG DAY 2026-08-01 (the KEY NONET): **+22 on ALL FIFTY-SEVEN members, delta spread
+        // ZERO** — and as with the fields-canonicity block above, the uniformity is the check.
+        //
+        // `76c3f7b9b` took the rotated pre-limb region 184 -> 187 (the owner key's ninth lane, the
+        // one carrying the Ed25519 sign bit, plus the child_vk and contract_hash ninth lanes at
+        // 184/185) and re-typed FIFTEEN Rust geometry pins to match — `CAP_OPEN_BASE` 1819 -> 1841,
+        // `CAP_OPEN_WIDTH` 2148 -> 2170, the cap-WRITE narrow 2291 -> 2313 — but it did NOT
+        // re-emit, and said so: "descriptors, registry TSVs, PROVENANCE.json and VKs are all still
+        // at 184 and MUST be regenerated". They stayed at 184 for the rest of the day because the
+        // emit could not run (`CapOpenEmit.lean` still forwarded carrier 61 into a lemma that had
+        // moved to 62, so every emitter's import path was red). With the emit repaired, this is
+        // that re-emit, and the numbers below are read off it.
+        //
+        // ⚑ THE NEW NUMBERS ARE RIGHT BECAUSE TWO INDEPENDENT READINGS AGREE, not because they are
+        // what the emitter printed. Every failing producer test named its own width in the message,
+        // and each is now the committed one: `revokeDelegationWriteCapOpen` "trace width 2190 < the
+        // wide producer's 2212" -> 2212 here; `refreshDelegationWriteCapOpen` / `attenuateCapOpenEff`
+        // 2197 -> 2219; `supplyMint` 1725 -> 1747; `heapWrite` "row 0 is 2153 wide" -> 2153. The
+        // Rust producer was computing the 187 geometry all along; only the committed bytes were old.
+        // On the narrow side the same delta lands on the constants `trace_rotated.rs` pins by
+        // literal: `supplyMint` 1841 = `CAP_OPEN_BASE`, cap-open 2170 = `CAP_OPEN_WIDTH`, cap-WRITE
+        // 2313 = `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN`.
+        //
+        // ⚠ The +22 is NOT decomposed into a formula here on purpose. Three new pre-limbs riding
+        // two blocks and a 7-lane graduation is not 3, 6 or 21, and writing an arithmetic story
+        // that happens to total 22 would be a guess wearing a derivation's clothes. What is
+        // asserted is what was measured: a flat +22 on all 57, agreeing with an independently
+        // re-typed Rust constant.
         const WIDE_MEMBER_GEOMETRY: [(&str, usize); 57] = [
-            ("transferVmDescriptor2R24", 1782),
-            ("burnVmDescriptor2R24", 1778),
-            ("mintVmDescriptor2R24", 1773),
-            ("noteSpendVmDescriptor2R24", 2064),
-            ("noteCreateVmDescriptor2R24", 2064),
-            ("cellSealVmDescriptor2R24", 1773),
-            ("cellDestroyVmDescriptor2R24", 1773),
-            ("refusalVmDescriptor2R24", 2281),
-            ("setPermsVmDescriptor2R24", 1773),
-            ("setVKVmDescriptor2R24", 1773),
-            ("exerciseVmDescriptor2R24", 1773),
-            ("pipelinedSendVmDescriptor2R24", 1773),
-            ("refreshVmDescriptor2R24", 1773),
-            ("incrementNonceVmDescriptor2R24", 1773),
-            ("revokeVmDescriptor2R24", 1773),
-            ("introduceVmDescriptor2R24", 1773),
-            ("attenuateVmDescriptor2R24", 1773),
-            ("revokeCapabilityVmDescriptor2R24", 1773),
-            ("customVmDescriptor2R24", 1749),
-            ("setFieldDynVmDescriptor2R24", 1741),
-            ("grantCapVmDescriptor2R24", 1773),
-            ("makeSovereignVmDescriptor2R24", 1809),
-            ("createCellVmDescriptor2R24", 2064),
-            ("factoryVmDescriptor2R24", 1773),
-            ("spawnVmDescriptor2R24", 1773),
-            ("receiptArchiveVmDescriptor2R24", 1773),
-            ("cellUnsealVmDescriptor2R24", 1773),
-            ("emitEventVmDescriptor2R24", 1773),
-            ("setFieldVmDescriptor2-0R24", 1773),
-            ("setFieldVmDescriptor2-1R24", 1773),
-            ("setFieldVmDescriptor2-2R24", 1773),
-            ("setFieldVmDescriptor2-3R24", 1773),
-            ("setFieldVmDescriptor2-4R24", 1773),
-            ("setFieldVmDescriptor2-5R24", 1773),
-            ("setFieldVmDescriptor2-6R24", 1773),
-            ("setFieldVmDescriptor2-7R24", 1773),
-            ("delegateCapOpenVmDescriptor2R24", 2054),
-            ("introduceCapOpenVmDescriptor2R24", 2054),
-            ("grantCapCapOpenVmDescriptor2R24", 2054),
-            ("revokeCapOpenVmDescriptor2R24", 2054),
-            ("refreshDelegationCapOpenVmDescriptor2R24", 2054),
-            ("revokeCapabilityCapOpenVmDescriptor2R24", 2054),
-            ("transferCapOpenEffVmDescriptor2R24", 2064),
-            ("attenuateCapOpenEffVmDescriptor2R24", 2197),
-            ("transferFeeVmDescriptor2R24", 1741),
-            ("transferCapOpenTBVmDescriptor2R24", 2064),
-            ("heapWriteVmDescriptor2R24", 2131),
-            ("delegateWriteCapOpenVmDescriptor2R24", 2054),
-            ("introduceWriteCapOpenVmDescriptor2R24", 2054),
-            ("delegateAttenWriteCapOpenVmDescriptor2R24", 2054),
+            ("transferVmDescriptor2R24", 1804),
+            ("burnVmDescriptor2R24", 1800),
+            ("mintVmDescriptor2R24", 1795),
+            ("noteSpendVmDescriptor2R24", 2086),
+            ("noteCreateVmDescriptor2R24", 2086),
+            ("cellSealVmDescriptor2R24", 1795),
+            ("cellDestroyVmDescriptor2R24", 1795),
+            ("refusalVmDescriptor2R24", 2303),
+            ("setPermsVmDescriptor2R24", 1795),
+            ("setVKVmDescriptor2R24", 1795),
+            ("exerciseVmDescriptor2R24", 1795),
+            ("pipelinedSendVmDescriptor2R24", 1795),
+            ("refreshVmDescriptor2R24", 1795),
+            ("incrementNonceVmDescriptor2R24", 1795),
+            ("revokeVmDescriptor2R24", 1795),
+            ("introduceVmDescriptor2R24", 1795),
+            ("attenuateVmDescriptor2R24", 1795),
+            ("revokeCapabilityVmDescriptor2R24", 1795),
+            ("customVmDescriptor2R24", 1771),
+            ("setFieldDynVmDescriptor2R24", 1763),
+            ("grantCapVmDescriptor2R24", 1795),
+            ("makeSovereignVmDescriptor2R24", 1831),
+            ("createCellVmDescriptor2R24", 2086),
+            ("factoryVmDescriptor2R24", 1795),
+            ("spawnVmDescriptor2R24", 1795),
+            ("receiptArchiveVmDescriptor2R24", 1795),
+            ("cellUnsealVmDescriptor2R24", 1795),
+            ("emitEventVmDescriptor2R24", 1795),
+            ("setFieldVmDescriptor2-0R24", 1795),
+            ("setFieldVmDescriptor2-1R24", 1795),
+            ("setFieldVmDescriptor2-2R24", 1795),
+            ("setFieldVmDescriptor2-3R24", 1795),
+            ("setFieldVmDescriptor2-4R24", 1795),
+            ("setFieldVmDescriptor2-5R24", 1795),
+            ("setFieldVmDescriptor2-6R24", 1795),
+            ("setFieldVmDescriptor2-7R24", 1795),
+            ("delegateCapOpenVmDescriptor2R24", 2076),
+            ("introduceCapOpenVmDescriptor2R24", 2076),
+            ("grantCapCapOpenVmDescriptor2R24", 2076),
+            ("revokeCapOpenVmDescriptor2R24", 2076),
+            ("refreshDelegationCapOpenVmDescriptor2R24", 2076),
+            ("revokeCapabilityCapOpenVmDescriptor2R24", 2076),
+            ("transferCapOpenEffVmDescriptor2R24", 2086),
+            ("attenuateCapOpenEffVmDescriptor2R24", 2219),
+            ("transferFeeVmDescriptor2R24", 1763),
+            ("transferCapOpenTBVmDescriptor2R24", 2086),
+            ("heapWriteVmDescriptor2R24", 2153),
+            ("delegateWriteCapOpenVmDescriptor2R24", 2076),
+            ("introduceWriteCapOpenVmDescriptor2R24", 2076),
+            ("delegateAttenWriteCapOpenVmDescriptor2R24", 2076),
             // ⚑ FLAG DAY 2026-07-28: 1878 → 2014. The two REMOVE write twins gained the TOMBSTONE
             // after-spine (Lean `CapOpenEmit.removeTombstoneConstraints`), so their NARROW host is
-            // now `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` = 2119, the same as the UPDATE twin.
-            // Before it, their committed AFTER cap-root group carried ZERO gates.
+            // `CAP_OPEN_WIDTH + CAP_OPEN_AFTER_SPINE_SPAN` (2119 then, 2313 after the key nonet),
+            // the same as the UPDATE twin. Before it, their committed AFTER cap-root group carried
+            // ZERO gates.
             //
-            // ⚠ 2014, not the UPDATE twin's 2021, and the seven-column gap is the interesting part:
-            // a tombstone has no LEAF, only a constant digest, so the shared `afterSpineCols` layout
-            // leaves its 7 leaf-field columns unread — and the E1 dead-column scan strips exactly
-            // that run (`e1_compact_generated.rs` gained `(1016, 1023)` on both members). The narrow
-            // widths coincide because the narrow member is not compacted; the wide ones do not.
-            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2190),
-            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2190),
-            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2197),
-            ("spawnWriteCapOpenVmDescriptor2R24", 2054),
-            ("spawnCapOpenVmDescriptor2R24", 2054),
-            ("exerciseCapOpenVmDescriptor2R24", 2054),
-            ("supplyMintVmDescriptor2R24", 1725),
+            // ⚠ The seven-column gap to the UPDATE twin is the interesting part and it SURVIVES the
+            // key nonet unchanged (2212 against 2219, as it was 2190 against 2197): a tombstone has
+            // no LEAF, only a constant digest, so the shared `afterSpineCols` layout leaves its 7
+            // leaf-field columns unread — and the E1 dead-column scan strips exactly that run
+            // (`e1_compact_generated.rs` carries the pair on both members). The narrow widths
+            // coincide because the narrow member is not compacted; the wide ones do not.
+            ("revokeDelegationWriteCapOpenVmDescriptor2R24", 2212),
+            ("revokeCapabilityWriteCapOpenVmDescriptor2R24", 2212),
+            ("refreshDelegationWriteCapOpenVmDescriptor2R24", 2219),
+            ("spawnWriteCapOpenVmDescriptor2R24", 2076),
+            ("spawnCapOpenVmDescriptor2R24", 2076),
+            ("exerciseCapOpenVmDescriptor2R24", 2076),
+            ("supplyMintVmDescriptor2R24", 1747),
         ];
 
         let mut n = 0usize;

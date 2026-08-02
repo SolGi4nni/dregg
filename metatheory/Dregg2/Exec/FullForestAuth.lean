@@ -589,23 +589,31 @@ theorem gatedNode_check_eq_use (s s' : RecChainedState)
     gateOK na s = true ∧ execFullA s a = some s' :=
   (execFullAGated_some_iff s s' na a).mp h
 
-/-! ## §4.5 — the STAGED gated HEAP WRITE (REFINEMENT-DESIGN Decision 1, splice phase 2).
+/-! ## §4.5 — the gated HEAP WRITE (REFINEMENT-DESIGN Decision 1, splice phase 2).
 
 The heap update is a `write`-verb instance (`Substrate.HeapKernel.heapStepGuarded`, built ON the
 proven `stateStepGuarded` gate stack). Here it receives the SAME per-node credential gate
 `execFullForestG` applies (`gateOK` in front, fail-closed) — so the gated heap write carries the
 full stack: credential ∧ cap-authority ∧ caveats ∧ not-revoked ∧ heap-atoms ∧ kernel authority ∧
-membership ∧ lifecycle ∧ slot caveats. The `FullActionA` heap-update CONSTRUCTOR (which would make
-this reachable as a forest NODE) rides THE ONE ROTATION: adding it today forces a wire tag
-(`FFI.encodeActionW` / `CodecRoundtrip/Action`) and a circuit dispatch arm
-(`Circuit/ActionDispatch.actionTag` 56/56, `EffectEmitRegistry`) — exactly the wire/circuit binding
-the rotation owns. At rotation time the dispatch arm routes to THIS def; the gate semantics are
-pinned NOW by `execHeapWriteG_some_iff` (the `execFullAGated_some_iff` shape). -/
+membership ∧ lifecycle ∧ slot caveats. The `FullActionA` heap-update CONSTRUCTOR (which makes the
+heap write reachable as a forest NODE) rode THE ONE ROTATION — adding it forced a wire tag and a
+circuit dispatch arm, exactly the wire/circuit binding the rotation owns. THAT ROTATION IS TAKEN:
+`.heapWriteA` is dispatch tag 56 (`Circuit/ActionDispatch.lean:139`), the wire codec encodes and
+parses it (`Exec/FFI.lean:718`/`:955`, round-tripped in the all-arms guard at `:1029`), the
+descriptor is registered (`Circuit/EffectEmitRegistry.lean:124`), and the frame apex binds `heaps`
+(`Circuit/StateCommit.lean:289`). The `execFullA` arm the tag routes to is the ATOM-FREE wire face
+`HeapKernel.heapStepGuardedW`, definitionally (`Circuit/Spec/heapwrite.lean:87-90`,
+`execFullA_heapWriteA_eq`, by `rfl`); THIS def is its atom-carrying sibling — `(coll, key)`
+addressing plus the `HeapAtom` guard list the wire shape does not carry — and its gate semantics are
+pinned by `execHeapWriteG_some_iff` (the `execFullAGated_some_iff` shape). -/
 
-/-- **`execHeapWriteG` — the credential-gated heap write (STAGED for the rotation's dispatch
-arm).** `if gateOK na s then heapStepGuarded … else none`: the SAME fail-closed gate front
-`execFullAGated` puts on every forest node, on the spliced `write`-verb heap instance. NOT a new
-turn entry — the per-effect gated step the rotation's `FullActionA` arm will route to. -/
+/-- **`execHeapWriteG` — the credential-gated heap write (the ATOM-CARRYING form).**
+`if gateOK na s then heapStepGuarded … else none`: the SAME fail-closed gate front `execFullAGated`
+puts on every forest node, on the spliced `write`-verb heap instance. NOT a new turn entry. The
+rotation's `.heapWriteA` arm routes to the atom-free wire face `HeapKernel.heapStepGuardedW`
+(`Circuit/Spec/heapwrite.lean:87-90`); THIS def is the `(coll, key)`-addressed step that additionally
+gates on a `HeapAtom` list, exercised at the production carriers in
+`Exec/GatedForestCfg.lean:325-341`. -/
 def execHeapWriteG (hash : List ℤ → ℤ) (s : RecChainedState)
     (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
       (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)

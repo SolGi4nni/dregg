@@ -45,8 +45,10 @@ ALIASES (a cap check reads a nullifier's value — the tag is semantically load-
 intra-proof double-spend read is refused.
 
 Axiom hygiene: `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} everywhere. Crypto
-enters ONLY as the named `Poseidon2SpongeCR` hypothesis (the cap-root floor), never as an axiom.
-Lean/design only — no circuit Rust here.
+enters ONLY as a DECIDABLE PER-INSTANCE residual — `¬ Heap.HeapRootColl hash h₁ h₂`, "the deployed
+sponge does not collide at the ONE pair `Heap.rootFind` names for these two heaps" — never as an
+axiom, and (since 2026-08-01) no longer as the refuted `Poseidon2SpongeCR` floor this file used to
+carry at five keystones. Lean/design only — no circuit Rust here.
 -/
 import Dregg2.Crypto.MemoryChecking
 import Dregg2.Substrate.Heap
@@ -57,7 +59,6 @@ namespace Dregg2.Crypto.UniversalMemory
 open Dregg2.Crypto.MemoryChecking
 open Dregg2.Substrate
 open Dregg2.Substrate.Heap (FeltHeap)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 
 universe u v
 
@@ -486,7 +487,7 @@ boundary's declared init image must EQUAL the committed PRE-state, not be prover
 (the init image is the GIVEN, so no memcheck pinning is needed — it is even simpler than the
 final side). Welded to the circuit by pinning the computed boundary-init root to a committed
 pre-state map root supplied as a public input, this is the soundness theorem behind the
-in-circuit init binding: under the named `Poseidon2SpongeCR` floor (`Heap.root_injective`),
+in-circuit init binding: absent a sponge collision at the named pair (`Heap.root_injective`),
 a boundary whose init image differs from the committed pre-state produces a DIFFERENT
 sorted-Poseidon2 leaf list, hence a different root, hence the pin REFUSES. The bound boundary
 init root = the committed map root, by canonicity, NO crypto in the derivation itself
@@ -498,18 +499,40 @@ theorem boundary_init_root_derived (hash : List ℤ → ℤ) {h : FeltHeap}
     Heap.root hash h = Heap.root hash (boundaryCells init as) :=
   boundary_root_derived hash hs has hsem
 
-/-- **`boundary_init_root_bound` — the binding is sound (the anti-forgery tooth).** Under the
-named CR floor, a committed pre-state map `hcommitted` and the prover's declared init heap
-`hdeclared` carry the SAME root iff they ARE the same map. So pinning the boundary-init root to
-the committed root forces the declared init heap to be the committed pre-state — a tampered init
-image CANNOT keep the published root. The init-side companion of `nullifier_fresh_binds_root`. -/
-theorem boundary_init_root_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+/-- **`boundary_init_root_bound` — the binding is sound (the anti-forgery tooth).** A committed
+pre-state map `hcommitted` and the prover's declared init heap `hdeclared` carrying the SAME root
+ARE the same map. So pinning the boundary-init root to the committed root forces the declared init
+heap to be the committed pre-state — a tampered init image CANNOT keep the published root. The
+init-side companion of `nullifier_fresh_binds_root`.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The floor is FALSE at deployed BabyBear
+(`Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so this statement said nothing about
+the deployed prover. What it assumes now is `Heap.root_injective`'s own per-instance residual: the
+deployed sponge does NOT collide at the ONE pair `Heap.rootFind` returns for THESE two heaps.
+Decidable, dischargeable by the honest committer with no cryptographic assumption at all
+(`Heap.heapRootColl_dischargeable`, when the two heaps coincide), refutable at the constant sponge
+(`Heap.heapRootColl_refutable`) — and it REFUTES the old premise outright
+(`Heap.heapRootColl_refutes_poseidon2CR`), so this is strictly STRONGER with an unchanged
+conclusion. A caller still holding the floor rewires through the tree's UNIVERSAL bridge
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _` — no per-site `_of_CR` twin. -/
+theorem boundary_init_root_bound (hash : List ℤ → ℤ)
     {hcommitted hdeclared : FeltHeap}
+    (hno : ¬ Heap.HeapRootColl hash hdeclared hcommitted)
     (hroot : Heap.root hash hdeclared = Heap.root hash hcommitted) :
     hdeclared = hcommitted :=
-  -- `hCR` is still this cone's (refuted) floor; it DERIVES the per-instance residual
-  -- `Heap.root_injective` now takes. Porting `UniversalMemory` itself is its own cone.
-  Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hroot
+  Heap.root_injective hash hno hroot
+
+/-- **THE FLOOR-FREE DICHOTOMY behind `boundary_init_root_bound`** — NO hypothesis on `hash` at
+all, so unlike the pre-cutover form it is TRUE at deployed BabyBear parameters. A declared init
+image publishing the committed root either IS the committed pre-state, or the equivocation is a
+GENUINE collision of the deployed sponge at the pair `Heap.rootFind` hands back. This is the
+theorem the keystone is a `.resolve_right` of; it is stated so the boundary cone has the
+dichotomy locally and no consumer has to reach for the floor to get one. -/
+theorem boundary_init_root_binds_or_collides (hash : List ℤ → ℤ)
+    {hcommitted hdeclared : FeltHeap}
+    (hroot : Heap.root hash hdeclared = Heap.root hash hcommitted) :
+    hdeclared = hcommitted ∨ Heap.HeapRootColl hash hdeclared hcommitted :=
+  Heap.root_binds_or_collides hash hroot
 
 /-! ### §4c — the WHOLE-IMAGE boundary equality (the no-extra-cells direction).
 
@@ -531,8 +554,8 @@ extra cells, no hidden cell). The two directions stated separately:
   * `boundary_whole_image_sem` — its consequence in lookup terms: the committed heap agrees with
     the declared image at EVERY address, INCLUDING absence off the declared list.
 
-NO new crypto: the CR floor enters once, exactly as in `boundary_init_root_bound`. This is the
-SAME `Poseidon2SpongeCR` tooth, applied to the whole-image fold instead of a per-cell opening.
+NO new crypto: the residual enters once, exactly as in `boundary_init_root_bound`. This is the
+SAME `Heap.HeapRootColl` tooth, applied to the whole-image fold instead of a per-cell opening.
 The deferred work is entirely the in-circuit AIR that COMPUTES `Heap.root hash (boundaryCells
 …)` over the universal boundary table and pins it to the committed-root public input; that fold
 rides the universal-map rotation (it needs the rotation's per-domain sorted-leaf fold chip). The
@@ -540,32 +563,37 @@ Lean obligation it must discharge is precisely the hypothesis `hpin` below. -/
 
 /-- **`boundary_image_eq_of_root` — the committed heap IS the boundary view (no extra cells).**
 If the committed pre-state heap `hcommitted` carries the SAME root as the sorted-Poseidon2 fold
-of the ENTIRE declared boundary image `boundaryCells init as`, then under the named CR floor the
+of the ENTIRE declared boundary image `boundaryCells init as`, then — absent a sponge collision at
+the ONE pair `Heap.rootFind` names for this pin (`hno`, the per-instance residual that replaced the
+refuted `Poseidon2SpongeCR` floor here on 2026-08-01) — the
 committed heap EQUALS that boundary view as a leaf list. This is the structural no-extra-cells
 fact: the committed heap can hold NOTHING the boundary did not declare, because a single extra
 or altered leaf moves the root. The whole-image companion of `boundary_init_root_bound`, against
 the recomputed fold rather than a separately-declared heap. -/
-theorem boundary_image_eq_of_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem boundary_image_eq_of_root (hash : List ℤ → ℤ)
     {hcommitted : FeltHeap} {init : ℤ → Option ℤ} {as : List ℤ}
+    (hno : ¬ Heap.HeapRootColl hash hcommitted (boundaryCells init as))
     (hpin : Heap.root hash hcommitted = Heap.root hash (boundaryCells init as)) :
     hcommitted = boundaryCells init as :=
-  Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hpin
+  Heap.root_injective hash hno hpin
 
 /-- **`boundary_whole_image_sem` — the committed heap agrees with the declared image EVERYWHERE.**
-The lookup-world consequence of `boundary_image_eq_of_root`: under the CR floor, pinning the
+The lookup-world consequence of `boundary_image_eq_of_root`: on the same per-instance residual,
+pinning the
 committed pre-state root to the whole-boundary fold forces the committed heap's `get` to equal
 the declared image at EVERY address — declared cells open to their declared value, and every
 address OFF the declared list is absent. This is the full whole-image equality `hsem` that the
 per-cell subset realization (`satisfied2U_init_root`'s hypothesis) had to ASSUME: here it is
 DERIVED from the single whole-boundary root pin, with the no-extra-cells direction included.
 (`as` sorted is needed for the boundary view to be the canonical sorted leaf list it folds as.) -/
-theorem boundary_whole_image_sem (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem boundary_whole_image_sem (hash : List ℤ → ℤ)
     {hcommitted : FeltHeap} {init : ℤ → Option ℤ} {as : List ℤ}
     (has : as.Pairwise (· < ·))
+    (hno : ¬ Heap.HeapRootColl hash hcommitted (boundaryCells init as))
     (hpin : Heap.root hash hcommitted = Heap.root hash (boundaryCells init as)) :
     ∀ a, Heap.get hcommitted a = if a ∈ as then init a else none := by
   intro a
-  rw [boundary_image_eq_of_root hash hCR hpin]
+  rw [boundary_image_eq_of_root hash hno hpin]
   exact get_boundaryCells has a
 
 /-! ### §4d — the WORKING domain is INERT in the commitment (never-projected ⇒ a theorem).
@@ -648,28 +676,38 @@ theorem recursive_levels_disjoint [DecidableEq κ]
 `open_through_umem_ref` two-level bind made a theorem: `boundary_init_root_bound` applied at TWO
 levels.
   * LEVEL 1 — the outer service umem's declared image carries the committed boundary root
-    (`houter`) ⟹ under the CR floor the declared OUTER image IS the committed working umem
-    (`outerDeclared = outerCommitted`).
+    (`houter`) ⟹ absent an outer-level collision the declared OUTER image IS the committed
+    working umem (`outerDeclared = outerCommitted`).
   * the bound outer umem NAMES `childRoot` at the ref address (`hnames`, the `UmemRef` cell), and
     that named root IS the genuine inner umem's committed root (`hchildRoot`).
-  * LEVEL 2 — the declared inner heap is pinned to the named child root (`hchild`) ⟹ under the
-    SAME CR floor the declared INNER image IS the committed child heap
+  * LEVEL 2 — the declared inner heap is pinned to the named child root (`hchild`) ⟹ absent an
+    inner-level collision the declared INNER image IS the committed child heap
     (`childDeclared = childCommitted`).
 Two independent `boundary_init_root_bound` teeth; the levels are tag-disjoint
 (`recursive_levels_disjoint`), so they cannot forge each other. The conclusion also re-exposes the
-named child root through the (now-forced) outer DECLARED image — what the reader actually holds. -/
-theorem recursive_open_sound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+named child root through the (now-forced) outer DECLARED image — what the reader actually holds.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01).** The two levels now carry TWO SEPARATE
+per-instance residuals — `hnoOuter` at the outer pair and `hnoInner` at the inner pair — which is
+strictly more informative than the single floor binder they replace: the composition's crypto
+reliance is visibly two independent events at two named pairs, not one global assumption reused.
+Both are decidable and both are dischargeable by an honest committer at that level
+(`Heap.heapRootColl_dischargeable`). A caller still holding the floor supplies each with
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`. -/
+theorem recursive_open_sound (hash : List ℤ → ℤ)
     {outerCommitted outerDeclared childCommitted childDeclared : FeltHeap}
     {refKey childRoot : ℤ}
+    (hnoOuter : ¬ Heap.HeapRootColl hash outerDeclared outerCommitted)
+    (hnoInner : ¬ Heap.HeapRootColl hash childDeclared childCommitted)
     (houter : Heap.root hash outerDeclared = Heap.root hash outerCommitted)
     (hnames : Heap.get outerCommitted refKey = some childRoot)
     (hchildRoot : Heap.root hash childCommitted = childRoot)
     (hchild : Heap.root hash childDeclared = childRoot) :
     outerDeclared = outerCommitted ∧ childDeclared = childCommitted ∧
       Heap.get outerDeclared refKey = some childRoot := by
-  have h1 : outerDeclared = outerCommitted := boundary_init_root_bound hash hCR houter
+  have h1 : outerDeclared = outerCommitted := boundary_init_root_bound hash hnoOuter houter
   have h2 : childDeclared = childCommitted :=
-    boundary_init_root_bound hash hCR (hchild.trans hchildRoot.symm)
+    boundary_init_root_bound hash hnoInner (hchild.trans hchildRoot.symm)
   exact ⟨h1, h2, by rw [h1]; exact hnames⟩
 
 /-! ## §5 — THE NULLIFIER WIN: freshness is a memory property (no Merkle path intra-proof).
@@ -766,14 +804,22 @@ theorem nullifier_fresh_sound [DecidableEq κ] {β : Type v}
 
 /-- **`nullifier_fresh_binds_root` — cross-proof persistence rides the boundary root.** Load the
 initial nullifier view from the committed map `nmap`; then the intra-proof freshness read pins
-absence in `nmap` — and, under the ONE named CR floor, in ANY heap publishing the same root
-(`root_injective`): a prover cannot keep the published nullifier root while hiding a spent
-nullifier. The Merkle machinery appears HERE, at the boundary, once — never per access. -/
-theorem nullifier_fresh_binds_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+absence in `nmap` — and, absent a sponge collision at the ONE pair `Heap.rootFind` names for this
+equivocation, in ANY heap publishing the same root (`root_injective`): a prover cannot keep the
+published nullifier root while hiding a spent nullifier. The Merkle machinery appears HERE, at the
+boundary, once — never per access.
+
+⚑ **PORTED OFF `Poseidon2SpongeCR` (2026-08-01)** — the floor is refuted at deployed BabyBear, so
+the anti-double-spend tooth used to be vacuous exactly where it matters. It now carries the
+decidable per-instance residual `hno`; the honest single-map case discharges it outright
+(`Heap.heapRootColl_dischargeable`), and a caller holding the floor rewires through
+`Poseidon2Binding.spongeColl_refutable_of_injective _ hCR _`. -/
+theorem nullifier_fresh_binds_root (hash : List ℤ → ℤ)
     {nmap nmap' : FeltHeap} {init : UAddr ℤ → Option ℤ}
     {pre post : List (Op (UAddr ℤ) (Option ℤ))}
     {rop : Op (UAddr ℤ) (Option ℤ)} {x : ℤ}
     (hload : ∀ a : ℤ, init (Domain.nullifiers, a) = Heap.get nmap a)
+    (hno : ¬ Heap.HeapRootColl hash nmap' nmap)
     (hroot : Heap.root hash nmap' = Heap.root hash nmap)
     (hcons : Consistent init (pre ++ rop :: post))
     (hread : rop.kind = .read) (haddr : rop.addr = (Domain.nullifiers, x))
@@ -782,7 +828,7 @@ theorem nullifier_fresh_binds_root (hash : List ℤ → ℤ) (hCR : Poseidon2Spo
     Heap.get nmap' x = none ∧ x ∉ Heap.keys nmap' := by
   have habs := (nullifier_fresh_sound hcons hread haddr hnone hio).1
   rw [hload] at habs
-  have heq : nmap' = nmap := Heap.root_injective hash (fun hc => hc.1 (hCR _ _ hc.2)) hroot
+  have heq : nmap' = nmap := Heap.root_injective hash hno hroot
   rw [heq]
   exact ⟨habs, (Heap.get_eq_none_iff nmap x).mp habs⟩
 
@@ -982,12 +1028,17 @@ the direction the per-cell subset opening could not see. -/
 
 /-- `boundary_whole_image_sem` fires structurally on a concrete committed heap = its boundary
 view: the heap agrees with the declared image at the declared address AND is absent off-list.
-(Stated against an abstract CR `hash`/`hCR` since the theorem rides the named floor; the pin
-hypothesis is given by `rfl` on the matching heap, exercising the whole-image route end to end.) -/
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+
+⚑ **THE PORT MADE THIS WITNESS FLOOR-FREE.** It used to need an abstract `hCR` because the keystone
+rode the named floor; the per-instance residual is DISCHARGED here for EVERY `hash`, with no
+cryptographic assumption at all — the honest committer publishes ONE heap, so the extractor bottoms
+out at an equal pair (`Heap.heapRootColl_dischargeable`). That is precisely what the deleted floor
+could never do: `Poseidon2SpongeCR` is unavailable at the deployed sponge even to an honest party,
+so the pre-cutover witness exhibited nothing at deployed parameters. -/
+example (hash : List ℤ → ℤ)
     (init : ℤ → Option ℤ) (as : List ℤ) (has : as.Pairwise (· < ·)) :
     ∀ a, Heap.get (boundaryCells init as) a = if a ∈ as then init a else none :=
-  boundary_whole_image_sem hash hCR has rfl
+  boundary_whole_image_sem hash has (Heap.heapRootColl_dischargeable hash _) rfl
 
 /-! ### Working-inert non-vacuity — a working write moves the working boundary but NOT a
 committed one, and the committed root is unchanged. -/
@@ -1023,18 +1074,20 @@ example :
 /-! ### Recursive-open non-vacuity — the two-level bind fires on a concrete UmemRef shape.
 
 The inner umem `[(0, 99)]` has root `R`; the outer umem holds `R` at ref key `5` (a `UmemRef`).
-Both binds discharge by `rfl` on the matching declared/committed heaps. Stated against the
-abstract CR floor (as every boundary binder is): the recursive open is the keystone, twice. -/
+Both binds discharge by `rfl` on the matching declared/committed heaps, and — since the port —
+BOTH per-instance residuals discharge outright too, at every `hash`, so the two-level bind fires at
+DEPLOYED parameters rather than only under a hypothesis nothing satisfies. -/
 
-example (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) :
+example (hash : List ℤ → ℤ) :
     ([((5 : ℤ), Heap.root hash [((0 : ℤ), (99 : ℤ))])] : FeltHeap)
         = [((5 : ℤ), Heap.root hash [((0 : ℤ), (99 : ℤ))])]
       ∧ ([((0 : ℤ), (99 : ℤ))] : FeltHeap) = [((0 : ℤ), (99 : ℤ))]
       ∧ Heap.get ([((5 : ℤ), Heap.root hash [((0 : ℤ), (99 : ℤ))])] : FeltHeap) 5
           = some (Heap.root hash [((0 : ℤ), (99 : ℤ))]) :=
-  recursive_open_sound hash hCR (refKey := 5)
+  recursive_open_sound hash (refKey := 5)
     (outerCommitted := [((5 : ℤ), Heap.root hash [((0 : ℤ), (99 : ℤ))])])
     (childCommitted := [((0 : ℤ), (99 : ℤ))]) (childDeclared := [((0 : ℤ), (99 : ℤ))])
+    (Heap.heapRootColl_dischargeable hash _) (Heap.heapRootColl_dischargeable hash _)
     rfl (by simp) rfl rfl
 
 end NonVacuity
@@ -1053,6 +1106,7 @@ end NonVacuity
 #assert_axioms boundary_root_from_memcheck
 #assert_axioms boundary_init_root_derived
 #assert_axioms boundary_init_root_bound
+#assert_axioms boundary_init_root_binds_or_collides
 #assert_axioms boundary_image_eq_of_root
 #assert_axioms boundary_whole_image_sem
 #assert_axioms working_commitment_inert

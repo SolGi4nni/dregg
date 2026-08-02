@@ -330,13 +330,14 @@ section Witnesses
 -- produces.  Two independently authored objects — and NOT the literal 1829 that stood here, which
 -- was a constant against its own derivation and moved at the 2026-08-01 key-nonet flag day without
 -- catching anything.
+-- ⚑ It CALLS the model, it does not re-spell it. The formula stood here inlined and referred to
+-- `CHIP_OUT_LANES` unqualified, which does not resolve in this file's open set — so the module
+-- failed to elaborate and, being on every emitter's import path, took `emit_descriptors.py` down
+-- with it. `gradRotWidthOf` is the same arithmetic, authored once beside the emission it models
+-- (`EffectVmEmitRotationV3`), where its own `#guard` pins it against `v3Of`.
 #guard transferV3Avail.traceWidth
-  == (Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail.traceWidth
-        + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.APPENDIX_SPAN)
-     + (CHIP_OUT_LANES - 1)
-       * (Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail.hashSites.length
-          + (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.rotV3Appendix
-              Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail.traceWidth).length)
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf
+       Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail
 -- `CAP_OPEN_SPAN` is limb-count INDEPENDENT (7 + 8 + 16·17 + 8 + 2 + 32), so the cap-open widths
 -- move exactly with the base — stated as that relation, not as the sum's value.
 #guard transferCapOpenEffV3Avail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN

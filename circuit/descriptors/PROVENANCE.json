@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "mode": "stamp-existing",
-  "dregg2_tree_hash": "2475534ae633f0a0ac1e7a8ca9583dfdc4f09ea3",
-  "repo_head": "43a95316e214153fe04a4f197b663f9818e1f5a7",
+  "mode": "emit",
+  "dregg2_tree_hash": "63dc4fa6ce52c2d9c53783da7291ceec2d41a7f6",
+  "repo_head": "86bd9ce18c70eb3abf828c9a5af1ece597ac61cd",
   "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
@@ -15,10 +15,11 @@
     "EmitWideUMemWeldRegistryProbe.lean",
     "EmitLayoutManifest.lean",
     "EmitByName.lean",
+    "EmitTableAirs.lean",
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-08-02T00:42:52Z",
+  "generated_utc": "2026-08-02T01:38:38Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -90,8 +91,8 @@
     "dregg-effectvm-transfer-v1.json": "b56667151f2c531aadc17cc7d9f46c7813716df25302c78f9274069dd2a63166",
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
-    "rotation-v3-staged-registry.tsv": "67cb088af4aac76d8cebe25d20fe105ecd3bb6f5152101f4a3d00f32ab11dbfd",
-    "rotation-wide-registry-staged.tsv": "8efec5f786f763592a29fd8e360f9905c697f904e620ada1513f52915d4cc510"
+    "rotation-v3-staged-registry.tsv": "4357d90651b028503aa174b5ef5657037b63ddd836eb75047c078a89a2165177",
+    "rotation-wide-registry-staged.tsv": "edddd822c969033200194b849d04bd4bdbf58409d6770c54a8f065073df214ef"
   },
   "by_name_sha256": {
     "accumulator-nonrev.json": "ad8f91b437b6d35aa07f609434eb97c9d43ecdb1ab778496fe5128baa32a6ff4",
@@ -125,7 +126,7 @@
     "dregg-solana-lightclient-verify-v1.json": "551e8a95b582da2e0abd783fb5dd3624cde79da54d934e0b15acf068e20060a0",
     "dregg-tm-lightclient-verify-v1.json": "c38475ab9c478c89c013a2f581835758828f704c32f440efced7814736e13fbb",
     "dyck-parse.json": "8bed9ebfd9d29f6a877e8b8d4e9119ecb475deff6216d5c8bd4a6ce9ced5f882",
-    "faithful-note-spend-exact-v3.json": "df654baea5a922badb8cd287fda6955d30a931b940f221b80fed284b3b7fbfc5",
+    "faithful-note-spend-exact-v3.json": "2f557397423b48028adaebf0dc17b86560b4504c2e56ef24d9bf7322a69660b6",
     "faithful-note-spend-v2.json": "113f8be9d1eb5804754756773e5b3a6c6dc1af2384d56fff3102f635096f1f3b",
     "field-delta-result-range.json": "2038274b162dc192a097f79305b7912a101597114821710c16f5ea1f64828840",
     "guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json": "a49a2c78c59477b5f180678da8bd5c31a81aa925af094c9082f20c41c3f5d36a",
@@ -184,7 +185,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "a30d058fc3c32590d19fd45f825f0a2d5ca987efd6d93cf635f4d9a3ec9ca925",
     "circuit/src/cap_reshape_descriptor.rs": "dde91b8af93dada783dbb4851108e779e4b285e46d6aa60171aaf44ad857a128",
-    "circuit/src/effect_vm_descriptors.rs": "13526dddef24355fbbb3a5e573edd7cdeeeaa59a11b191ff1a4607badc839aae",
+    "circuit/src/effect_vm_descriptors.rs": "a676edf3236042aae124c013132d41ab20d3a3b53ad340291d8e593b7430e6e9",
     "circuit/src/lean_descriptor_air.rs": "de4caf0447da34707187d69ba851c71aa37044ff177f30a1a42f58bdf61a1316"
   }
 }

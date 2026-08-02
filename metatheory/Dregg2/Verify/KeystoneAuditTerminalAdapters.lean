@@ -5,7 +5,9 @@ The integrity guarantee (C) pins two adapter keystones the campaign once labelle
 TERMINAL-CRYPTO-FLOOR:
 
   • `Exec.UniversalBridge.cap_leaf_value_codec` — the generic `Heap.leafOf` over the cap-cell value
-    codec binds the FULL `(holder, target, rights, op)` tuple, under `Poseidon2SpongeCR hash`.
+    codec binds the FULL `(holder, target, rights, op)` tuple. ⚑ Since 2026-08-01 it no longer carries
+    `Poseidon2SpongeCR hash` (refuted at deployed BabyBear) but the DECIDABLE per-instance residual
+    `¬ SpongeColl hash (capLeafFind hash …)` at the pair its extractor names for these two tuples.
   • `Exec.UniversalBridge.index_boundary_mroot_derived` — the receipt-index MMR root reconstructed from
     the final index cells equals today's root (list canonicity; the `hash` is threaded through `MMR.mroot`
     but the proof uses NO collision-resistance at all).
@@ -16,9 +18,14 @@ realizable trivially (any `hash` works). So both weld by supplying the realizabl
 concrete instance, exactly as `published_position_pins_value` did:
 
   • `cap_leaf_value_codec` — satisfiable: `hash := encodeSponge`, equal tuples ⇒ equal generic leaves ⇒
-    the conclusion `(h₁,t₁,r₁,o₁) = (h₂,t₂,r₂,o₂)` is EXERCISED (all four equalities fire). Teeth: the
-    flat-leaf injective sibling `cap_leaf_flat_injective` over `encodeSponge` discriminates — DISTINCT
-    tuples produce DISTINCT leaves, so the codec is not `:= True`.
+    the conclusion `(h₁,t₁,r₁,o₁) = (h₂,t₂,r₂,o₂)` is EXERCISED (all four equalities fire). ⚑ Post-port
+    the satisfiable witness needs NO realizable carrier for its crypto hypothesis: equal tuples make the
+    extractor bottom out at an equal pair, so `capLeafFind_dischargeable` discharges the residual at
+    EVERY sponge — a strictly better witness than one standing on `encodeSponge_cr`. Teeth: the
+    flat-leaf sibling `cap_leaf_flat_injective` over `encodeSponge` discriminates — DISTINCT
+    tuples produce DISTINCT leaves, so the codec is not `:= True`; there the residual really is
+    load-bearing and is routed through the tree's UNIVERSAL bridge
+    `Poseidon2Binding.spongeColl_refutable_of_injective`.
   • `index_boundary_mroot_derived` — satisfiable: a concrete log `L := [7, 8]` and a `fin'` returning the
     log rows at positions `0, 1`, where `hsem` holds; the conclusion `mroot L = mroot (reconstructed)`
     FIRES (the reconstruction recovers `L`). Teeth: the reconstruction `boundaryCells` DISCRIMINATES — a
@@ -37,9 +44,9 @@ open Dregg2.Verify.KeystoneLint
 namespace Dregg2.Verify.KeystoneAuditTerminalAdapters
 
 open Dregg2.Exec.UniversalBridge (capCellValue cap_leaf_value_codec cap_leaf_flat_injective
-  index_boundary_mroot_derived indexRange)
+  capLeafFind_dischargeable index_boundary_mroot_derived indexRange)
 open Dregg2.Crypto.UniversalMemory (boundaryCells)
-open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR spongeColl_refutable_of_injective)
 open Dregg2.Circuit.FloorsNonVacuous (encodeSponge encodeSponge_cr)
 open Dregg2.Substrate.Heap (leafOf)
 
@@ -50,11 +57,13 @@ set_option autoImplicit false
 /-- **`cap_leaf_value_codec_satisfiable`.** The conclusion FIRES on the realized carrier `encodeSponge`:
 two EQUAL cap tuples `(1,2,3,4)` produce the same generic leaf (`heq` is `rfl`), so `cap_leaf_value_codec`
 yields `1 = 1 ∧ 2 = 2 ∧ 3 = 3 ∧ 4 = 4` — the tuple-binding conclusion exercised on a concrete instance,
-the `Poseidon2SpongeCR` hypothesis discharged by `encodeSponge_cr`. -/
+the crypto hypothesis discharged with NO assumption on the sponge at all (the two tuples are equal, so
+the extractor returns an equal pair — `capLeafFind_dischargeable`). -/
 theorem cap_leaf_value_codec_satisfiable :
     ((1 : ℤ) = 1 ∧ (2 : ℤ) = 2 ∧ (3 : ℤ) = 3 ∧ (4 : ℤ) = 4) :=
-  cap_leaf_value_codec encodeSponge encodeSponge_cr
-    (h₁ := 1) (t₁ := 2) (r₁ := 3) (o₁ := 4) (h₂ := 1) (t₂ := 2) (r₂ := 3) (o₂ := 4) rfl
+  cap_leaf_value_codec encodeSponge
+    (h₁ := 1) (t₁ := 2) (r₁ := 3) (o₁ := 4) (h₂ := 1) (t₂ := 2) (r₂ := 3) (o₂ := 4)
+    (capLeafFind_dischargeable encodeSponge 1 2 3 4) rfl
 
 /-- **`cap_leaf_value_codec_teeth`.** The cap-leaf codec DISCRIMINATES: distinct tuples produce DISTINCT
 leaves under `encodeSponge` (the flat-leaf injective sibling, contrapositive) — so a leaf equality is a
@@ -63,8 +72,9 @@ were equal, injectivity would force `1 = 9`, absurd. -/
 theorem cap_leaf_value_codec_teeth :
     encodeSponge [1, 2, 3, 4] ≠ encodeSponge [9, 2, 3, 4] := by
   intro heq
-  have h := cap_leaf_flat_injective encodeSponge encodeSponge_cr
-    (h₁ := 1) (t₁ := 2) (r₁ := 3) (o₁ := 4) (h₂ := 9) (t₂ := 2) (r₂ := 3) (o₂ := 4) heq
+  have h := cap_leaf_flat_injective encodeSponge
+    (h₁ := 1) (t₁ := 2) (r₁ := 3) (o₁ := 4) (h₂ := 9) (t₂ := 2) (r₂ := 3) (o₂ := 4)
+    (spongeColl_refutable_of_injective encodeSponge encodeSponge_cr _) heq
   exact absurd h.1 (by decide)
 
 /-! ## §2 — `index_boundary_mroot_derived` — the index-domain canonicity adapter (WELDED). -/

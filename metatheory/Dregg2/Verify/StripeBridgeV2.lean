@@ -3,10 +3,15 @@
 
 The v1 `Verify/StripeBridge.lean` welded the Stripe attestation onto an escrow *release*
 (`escrowReleaseGated`) — releasing pre-escrowed funds silently assumes the money is already
-in hand, so it is the WRONG primitive for "money-in". Per the reserve design (theorem 17,
-`docs/STRIPE-RESERVE-DESIGN-AND-PROOF-STRATEGY.md §2.2`), the chosen model is
-**mint-against-backing**: the attestation gates the *admission of a provisional batch*
-(liveness — recognizing a payment), never its *finality* (soundness).
+in hand, so it is the WRONG primitive for "money-in". Per the reserve design (theorem 17, §2.2),
+the chosen model is **mint-against-backing**: the attestation gates the *admission of a provisional
+batch* (liveness — recognizing a payment), never its *finality* (soundness).
+
+⚠ PROVENANCE MISSING: that design was cited here as
+`docs/STRIPE-RESERVE-DESIGN-AND-PROOF-STRATEGY.md §2.2` and no such file exists anywhere in the repo
+— not under `docs/`, not under `.docs-history-noclaude/`, and never in git history — so "theorem 17"
+and "§2.2" cannot be followed. What IS checkable is in Lean and named below: the mint-against-backing
+model is realized here, and `Verify/StripeReserve.lean` carries the reserve side.
 
 This module re-targets the K2/K3 weld from the escrow release onto the **provisional-mint step**
 of the intent-escrow lifecycle. The mint-provisional IS `Intent.Lifecycle.publish` (a real

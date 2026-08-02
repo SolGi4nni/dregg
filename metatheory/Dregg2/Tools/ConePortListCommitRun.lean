@@ -21,11 +21,13 @@ superseded — the cutover REMOVED those floor binders):
     unported endpoint-shaped consumer) — the negative control;
   * the endpoint itself REFUSES (`floor APPLIED` — an ENDPOINT; it needed the hand S2 in
     `Circuit/ListCommitRegrounded`);
-  * the 2 structure-bundle defs (`accountsComponent`, `listComponent`) REFUSE at the
-    COMPILER-LIFTED AUX sink: the elaborator lifted their floor-consuming field proofs into
-    `_proof_1` constants, so the floor flows into an aux decl (the design's risk-#3 shape,
-    observed live) — the bundle is the port unit, a design decision plus aux contraction, never a
-    mechanical rewrite;
+  * `listComponent` REFUSES at the COMPILER-LIFTED AUX sink: the elaborator lifted its
+    floor-consuming field proof into a `_proof_1` constant, so the floor flows into an aux decl
+    (the design's risk-#3 shape, observed live) — the bundle is the port unit, a design decision
+    plus aux contraction, never a mechanical rewrite. `accountsComponent`, the other bundle, was
+    CUT OVER BY HAND 2026-08-01 and now REFUSES as NOT-A-CARRIER: the design decision the tool
+    could not make was that the residual belongs in the bundle's own `postClause` field (which is
+    already indexed by `(pre, args, post)`), so `ActiveComponent.binds` needed no re-type at all;
   * `leakyExhibit` (below) REFUSES as LEAKY — the floor application's arguments are
     `obtain`-locals, so the side condition would need quantification the tool cannot invent;
   * `listDigest_congr` REFUSES as not-a-carrier (negative control).
@@ -155,10 +157,13 @@ def targets : List Target :=
     -- remaining consumers are the two bundle defs below — the cluster's residual, named.
   , { decl := `Dregg2.Circuit.ListCommit.ListDigestBindsList,
       expected := .refuse "ENDPOINT" }
-    -- the 2 structure bundles: REFUSE at the compiler-lifted `_proof_1` AUX sink (risk-#3 live);
-    -- the bundle (not the theorem) is the port unit — design decision + aux contraction.
+    -- `accountsComponent` was CUT OVER 2026-08-01 (`Circuit/AccountsCommit.lean`): its floor binders
+    -- are GONE — the residual moved INTO its `postClause` as the per-instance `AccountsResid`, which
+    -- needed no re-type of `ActiveComponent`. It now refuses as NOT-A-CARRIER, and this re-pin IS
+    -- the standing build-time proof of that cutover. `listComponent` is the remaining bundle and
+    -- still REFUSES at the compiler-lifted `_proof_1` AUX sink (risk-#3 live).
   , { decl := `Dregg2.Circuit.AccountsCommit.accountsComponent,
-      expected := .refuse "COMPILER-LIFTED AUX" }
+      expected := .refuse "not a carrier" }
   , { decl := `Dregg2.Circuit.EffectCommit2.listComponent,
       expected := .refuse "COMPILER-LIFTED AUX" }
     -- the leaky shape: REFUSES — proof-local binders in the floor application's arguments.

@@ -135,6 +135,7 @@ EMITTERS = [
     "EmitWideUMemWeldRegistryProbe.lean",    # ADDITIVE/STAGED: the WIDE+umem welded registry (covers wide V3)
     "EmitLayoutManifest.lean",               # the rotated COLUMN LAYOUT, exported from Lean AS RUST
     "EmitByName.lean",                       # the by-name/ dispatch surface descriptor_by_name() serves
+    "EmitTableAirs.lean",                    # the table-airs/ SHARED table AIRs (see below)
     "EmitCertF.lean",                        # the ring-3 Cert-F IR2 descriptor (cert_f_air.rs include_str!s it)
     "EmitCertFMarket4.lean",                 # the market4 (3-asset/4-order, ε>0) Cert-F IR2 descriptor
 ]
@@ -2437,8 +2438,33 @@ def split_wide_umem_weld(stdout: str, written):
             "(expected 57)"
         )
 
+    # ⚑ THE BARE HALF COMES FROM *THIS RUN*, NEVER FROM DISK.
+    #
+    # This read was `(DESC / WIDE_REGISTRY_TSV).read_text()` — the CHECKED-IN wide registry, i.e.
+    # the artifact this very emit is about to replace. On a steady-state tree the two are equal and
+    # the gate looked fine; the moment the Lean geometry moves, it compares THIS run's welded
+    # members against the PREVIOUS run's bare members, they differ at `trace_width` / `constraints`
+    # / `tables`, and the emit refuses — reporting the derivation as broken when the derivation is
+    # correct and the on-disk file is simply old. Measured 2026-08-01: after the key-nonet flag day
+    # (`76c3f7b9b`, pre-limbs 184 -> 187) this made the FIRST re-emit across the flag day impossible,
+    # which is the exact run the geometry change requires. A gate that can only pass when nothing
+    # changed is not a gate on the emission.
+    #
+    # `EmitWideRegistryProbe.lean` is emitter #4 and this one is #7, both handed the same `written`
+    # buffer, so the freshly-emitted bare registry is always in hand here. There is NO disk
+    # fallback: if it is absent the EMITTERS order was changed underneath this gate, and reading a
+    # stale file instead is how the gate would go quietly blind again.
+    fresh_wide = written.get(WIDE_REGISTRY_TSV)
+    if fresh_wide is None:
+        sys.exit(
+            f"emit_descriptors: {WIDE_REGISTRY_TSV} was not emitted before the wide+umem weld "
+            "probe, so the reality gate has no BARE half to re-derive from. It must never fall "
+            "back to the checked-in file — that compares this run against the artifact it is "
+            "replacing. Restore the EMITTERS order (EmitWideRegistryProbe.lean before "
+            "EmitWideUMemWeldRegistryProbe.lean)."
+        )
     bare = {}
-    for ln in (DESC / WIDE_REGISTRY_TSV).read_text().splitlines():
+    for ln in fresh_wide.splitlines():
         if not ln.strip():
             continue
         k, _n, j = ln.split("\t", 2)
@@ -2524,6 +2550,43 @@ def split_by_name(stdout: str, written):
         if filename in BY_NAME_NEWLINE_TERMINATED:
             blob += "\n"
         write_file(f"by-name/{filename}", blob, written)
+
+
+def split_table_airs(stdout: str, written):
+    """`EmitTableAirs.lean` prints one `<filename>\tjson` line per checked-in SHARED table AIR —
+    the same `<file>\tjson` shape as `EmitByName.lean` — routed to
+    `circuit/descriptors/table-airs/<filename>`.
+
+    ⚑ **The emitter existed and was never invoked.** `EmitTableAirs.lean` has been the byte source
+    for `table-airs/*.json` since those artifacts landed (2026-08-01), and it was absent from
+    `EMITTERS`, so the seven files were checked in with NO emitter reproducing them. Two things
+    followed, and the second is the expensive one:
+
+      * the drift gate could not see them — the checked-in bytes and the Lean emission were free to
+        diverge exactly the way `by-name/predicate-arith.json` once did; and
+      * the coverage check at the END of this driver counts any descriptor no emitter reproduced as
+        a ROUTING GAP and refuses the whole install — so these seven blocked EVERY re-emit of every
+        other descriptor, which is how a geometry flag day sat un-re-emitted.
+
+    Unlike `by-name/`, all seven carry a trailing newline, so there is no per-file convention set to
+    keep in sync: the newline `IO.println` produces is the newline on disk."""
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    if not lines:
+        sys.exit("emit_descriptors: table-airs emitter produced no lines")
+    for ln in lines:
+        if ln.count("\t") != 1:
+            sys.exit(
+                f"emit_descriptors: table-airs line malformed (want `file\\tjson`): {ln[:80]!r}"
+            )
+        filename, blob = ln.split("\t", 1)
+        if not filename.endswith(".json"):
+            sys.exit(f"emit_descriptors: table-airs key is not a .json file: {filename!r}")
+        if not blob.startswith('{"name":"'):
+            sys.exit(
+                f"emit_descriptors: table-airs {filename} payload is not a table-AIR JSON: "
+                f"{blob[:60]!r}"
+            )
+        write_file(f"table-airs/{filename}", blob + "\n", written)
 
 
 def split_cert_f(stdout: str, written):
@@ -2929,6 +2992,8 @@ def main():
             split_wide_umem_weld(out, written)
         elif lean.endswith("EmitByName.lean"):
             split_by_name(out, written)
+        elif lean.endswith("EmitTableAirs.lean"):
+            split_table_airs(out, written)
         elif lean.endswith("EmitCertFMarket4.lean"):
             split_cert_f_market4(out, written)
         elif lean.endswith("EmitCertF.lean"):

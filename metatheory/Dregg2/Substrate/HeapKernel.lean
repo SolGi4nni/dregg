@@ -45,15 +45,31 @@ under the existing frame discipline. Concretely:
     (`heapStep_atom_violation_fails`), the metadata clock advances (`heapStep_obsadvance`),
     sortedness is an invariant (`heapStep_sorted`).
 
-## What rides THE ONE ROTATION (deliberately NOT here)
+## THE ONE ROTATION — TAKEN (this was the held-out half; it LANDED)
 
-The WIRE/CIRCUIT binding: the `FullActionA` heap-update constructor (blocked Lean-side by the
-exhaustive wire/circuit enumerations — `FFI.encodeActionW`, `CodecRoundtrip/Action.WfActionW`,
-`Circuit/ActionDispatch.actionTag` (56/56) / `fullActionStep`, `Circuit/EffectEmitRegistry` — each
-of which is a wire tag / descriptor allocation), the `heap_root` register in the deployed layout,
-and the state-commitment conjunct (`Circuit/StateCommit.RestHashIffFrame` does not yet bind
-`heaps`). The GATED step the rotation's dispatch arm will route to is staged NOW:
-`FullForestAuth.execHeapWriteG` (the same `gateOK` front `execFullForestG` applies per node).
+The WIRE/CIRCUIT binding was once deliberately NOT here: the `FullActionA` heap-update constructor
+was blocked Lean-side by the exhaustive wire/circuit enumerations (each arm a wire tag / descriptor
+allocation, so it could not be added piecemeal), the `heap_root` register was absent from the
+deployed layout, and the state-commitment conjunct did not bind `heaps`. ALL THREE ARE ALLOCATED:
+
+  * the constructor is DISPATCHED at tag 56 — `Circuit/ActionDispatch.lean:139`
+    (`.heapWriteA _ _ _ _ _ => 56`); the wire codec encodes and parses it
+    (`Exec/FFI.lean:718` / `:955`) and it round-trips as a named representative in the all-arms
+    guard (`Exec/FFI.lean:1029`); the descriptor is registered
+    (`Circuit/EffectEmitRegistry.lean:124`/`:141`, `heapWriteAAirName`).
+  * the `heap_root` register IS the deployed layout's limb `B_HEAP_ROOT = 28`
+    (`Circuit/Emit/EffectVmEmitRotationV3.lean:1951`), tamper-bound by
+    `Circuit/RotationLayout.lean` (`rotatedCommit_binds_heapRoot` — cited by NAME, not line: this
+    citation was written as `:163` and the theorem moved to `:202` within a day, in a tree under
+    concurrent edit).
+  * the state-commitment conjunct BINDS `heaps` — `Circuit/StateCommit.lean:289`
+    (`∧ k'.heaps = k.heaps`, inside `RestHashIffFrame`).
+
+The executor arm the wire tag routes to is the WIRE-FACE step `heapStepGuardedW` (§8), definitionally
+(`Circuit/Spec/heapwrite.lean:87-90`, `execFullA_heapWriteA_eq`, by `rfl`).
+`FullForestAuth.execHeapWriteG` is its atom-carrying sibling — `(coll, key)` addressing plus the
+`HeapAtom` guard list, under the same `gateOK` front `execFullForestG` applies per node — which the
+atom-free wire shape does not carry.
 
 ## Axiom hygiene
 

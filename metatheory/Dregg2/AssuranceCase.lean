@@ -374,10 +374,14 @@ DAG:
     pinned to the SAME published value"). That hypothesis is now DERIVED, not assumed: the receipt
     index the epoch publishes is an MMR (`Lightclient/MMR.lean`), history keys are dense positions,
     and `published_position_pins_value` (a thin lift of `MMR.mroot_binds_position`) proves —
-    adversarial-server included (the prover's openings may be against its OWN log `L'`; CR forces
-    `L' = L`) — that any two roots opening at the same dense position of the published index are
-    EQUAL. So "both proofs bind their root to the same value" burns down to MMR openings under the
-    ONE named `Poseidon2SpongeCR` floor; no out-of-band PI equation survives. The remaining protocol
+    adversarial-server included (the prover's openings may be against its OWN log `L'`; absent a
+    sponge collision at the pair `MMR.mrootFind` names, `L' = L`) — that any two roots opening at
+    the same dense position of the published index are
+    EQUAL. So "both proofs bind their root to the same value" burns down to MMR openings under a
+    DECIDABLE PER-INSTANCE residual `¬ MMR.MRootColl hash L' L` (⚑ 2026-08-01: NOT `Poseidon2SpongeCR`
+    — that floor is refuted at deployed BabyBear and was drained from this cone; the residual is
+    worth ≈2^15.5 queries at the deployed 1-felt MMR root, which is the honest price);
+    no out-of-band PI equation survives. The remaining protocol
     obligation is exactly MMR §6's `CommitBindsMMR` layout fact (the node writes both roots at their
     dense positions), discharged-by-construction at the flag-day layout (HORIZONLOG rotation rider).
   • THE EXECUTOR IS A MEMORY PROGRAM (`Exec.UniversalBridge`, the universal-map rotation's long
@@ -464,8 +468,9 @@ A re-pin of the integrity apex under its descriptive name (the §149/umem streng
 executor-is-a-memory-program keystone IS the integrity guarantee, so this delegates to
 `integrity_guarantee`. Retained as a named handle because the corpus references the memory-program
 phrasing; the published-MMR discharge (`transfer_published_index_pins_receipt`, pinned below) turns
-the cross-AIR PI-binding hypothesis the §2 apex carried into an MMR opening under the SAME
-`Poseidon2SpongeCR` floor — no out-of-band root equation survives. -/
+the cross-AIR PI-binding hypothesis the §2 apex carried into an MMR opening under a per-instance
+`¬ MMR.MRootColl` residual (⚑ ported off `Poseidon2SpongeCR` 2026-08-01) — no out-of-band root
+equation survives. -/
 theorem integrity_guarantee_memory_program
     (C : Dregg2.Exec.UniversalBridge.UCodec) {s s' : RecChainedState} {t : Turn}
     (h : recCexec s t = some s') :

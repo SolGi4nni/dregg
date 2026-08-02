@@ -239,17 +239,20 @@ theorem transfer_published_index_pins_receipt_teeth
 
 The §149 PI-discharge keystone `argus_published_index_pins_receipt` (welded above) calls
 `published_position_pins_value` as its mechanism: two openings of ONE published index position pin ONE
-value, adversarial-server included (`mroot hash L' = mroot hash L`). It carries `Poseidon2SpongeCR hash`
-as a hypothesis — REALIZED here by `encodeSponge`/`encodeSponge_cr` (the SAME `hash₀` the receipt welds
-use), so it is NOT terminal: a concrete published index fires its conclusion. Satisfiable: `L = L' :=
+value, adversarial-server included (`mroot hash L' = mroot hash L`). ⚑ Since 2026-08-01 it no longer
+carries `Poseidon2SpongeCR hash` (refuted at deployed BabyBear) but the DECIDABLE per-instance
+residual `¬ MMR.MRootColl hash L' L` at the two logs it names — and at the honest single-log witness
+below that residual DISCHARGES for EVERY sponge (`MMR.mrootColl_dischargeable`), so this weld no
+longer needs the realized `encodeSponge_cr` carrier at all. Satisfiable: `L = L' :=
 Lpub`, position `1` opens to `222` on both, the published roots are self-equal (`rfl`), and the
 conclusion `r' = r` (`222 = 222`) is EXERCISED. Teeth: a tampered value does NOT open at the dense
 position (`¬ Opens Lpub 1 999`), so the position-binding is a real constraint, not `:= True`. -/
 
 /-- **`published_position_pins_value_satisfiable`.** The conclusion `r' = r` FIRES on the concrete
-published index `Lpub` under the realized CR carrier `hash₀`: both opens are `Opens Lpub 1 222`, the
+published index `Lpub`: both opens are `Opens Lpub 1 222`, the
 roots coincide (`rfl`), and `published_position_pins_value` yields `222 = 222` — exercised on a real
-opening, not vacuous. -/
+opening, not vacuous. ⚑ Post-port the crypto hypothesis is discharged with NO assumption on the
+sponge: one and the same log never equivocates with itself. -/
 theorem published_position_pins_value_satisfiable :
     ∃ (L L' : List ℤ) (i : ℕ) (r' r : ℤ),
       mroot hash₀ L' = mroot hash₀ L ∧ Opens L' i r' ∧ Opens L i r ∧ r' = r := by
@@ -259,7 +262,7 @@ theorem published_position_pins_value_satisfiable :
   · have hp' : Opens Lpub 1 222 := by decide
     have hp : Opens Lpub 1 222 := by decide
     exact published_position_pins_value (L := Lpub) (L' := Lpub) (i := 1) (r' := 222) (r := 222)
-      hash₀ hash₀_cr rfl hp' hp
+      hash₀ rfl (Dregg2.Lightclient.MMR.mrootColl_dischargeable hash₀ Lpub) hp' hp
 
 /-- **`published_position_pins_value_teeth`.** The position-binding DISCRIMINATES: a tampered value does
 NOT open at the dense position of `Lpub` (`¬ Opens Lpub 1 999`), so an opening is a real constraint on

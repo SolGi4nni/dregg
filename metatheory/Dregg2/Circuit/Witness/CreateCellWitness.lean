@@ -55,7 +55,8 @@ theorem execute_produces_satisfying_witness
   effect2triple_circuit_full_complete S (createCellE LE cN hN hLE DBal hDBal DSide hDSide)
     (createCellRestFrameEncodes S LE cN hN hLE DBal hDBal DSide hDSide hRest)
     (createCellGuardEncodes LE cN hN hLE DBal hDBal DSide hDSide) s args s'
-    ((apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mpr hspec)
+    ((apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mpr hspec)
 
 theorem satisfying_witness_proves_full_state
     (hRest : RestIffNoAccountsBalBorn S.RH) (hLog : logHashInjective S.LH)

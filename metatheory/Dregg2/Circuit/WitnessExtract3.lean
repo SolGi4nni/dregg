@@ -204,7 +204,8 @@ theorem createCellA_extract
     (hPI : PIBindsDigestsTriple S (Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide)
       s args s' a) :
     CreateCellSpec s args.actor args.newCell s' :=
-  (Inst.CreateCellA.apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mp
+  (Inst.CreateCellA.apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mp
     (effect2triple_extract S (Inst.CreateCellA.createCellE LE cN hN hLE DBal hDBal DSide hDSide)
       (Inst.CreateCellA.createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest)
       (Inst.CreateCellA.createCellGuardDecodes LE cN hN hLE DBal hDBal DSide hDSide)

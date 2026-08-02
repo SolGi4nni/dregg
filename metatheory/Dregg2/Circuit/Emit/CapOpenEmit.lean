@@ -1937,26 +1937,45 @@ theorem v3RegistryCapOpenWide_binds (hash : List ℤ → ℤ) (permW : List ℤ 
       (envAt t k).pub (h.piCount + 8 + m) = (envAt t' l).pub (h.piCount + 8 + m))
     -- The 8 state-commit carrier columns are field-canonical (`0 ≤ · < p`, the deployed range-check
     -- invariant): lifts each mod-`p` publish congruence to the ℤ carrier equality the CR floor needs.
+    --
+    -- ⚑ THE CARRIER INDEX IS `wideCommitCarrier`, NOT A TRANSCRIBED NUMBER. It read `61` and that
+    -- one literal was the whole emit outage: `76c3f7b9b` took the pre-limb region 184 -> 187, which
+    -- moved `wideNumCarriers` 62 -> 63 and the state-commit carrier 61 -> 62 in
+    -- `wideAppend_binds_published`'s hypotheses. This file forwards those hypotheses verbatim, so
+    -- the stale literal made them a DIFFERENT proposition, `CapOpenEmit` failed to elaborate, and
+    -- `CapOpenEmit` is on every emitter's import path -- so `scripts/emit_descriptors.py` could not
+    -- run AT ALL and every descriptor, registry TSV and VK stayed frozen at the 184 geometry while
+    -- Rust had already moved to 187. Same class, same day, one module over from the
+    -- `preLimbsWide_length = 184` literal that commit repaired. Stated against the layout, the next
+    -- widening is free here instead of a tree-wide outage.
     (hcCanonB : ∀ m, m < 8 →
       0 ≤ (envAt t a).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t a).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0) < 2013265921)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921)
     (hcCanonB' : ∀ m, m < 8 →
       0 ≤ (envAt t' b).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t' b).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0) < 2013265921)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921)
     (hcCanonA : ∀ m, m < 8 →
       0 ≤ (envAt t k).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t k).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0) < 2013265921)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921)
     (hcCanonA' : ∀ m, m < 8 →
       0 ≤ (envAt t' l).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t' l).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0) < 2013265921) :
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921) :
     ((preLimbsWide bb (envAt t a).loc = preLimbsWide bb (envAt t' b).loc
         ∧ (envAt t a).loc (bb + B_IROOT) = (envAt t' b).loc (bb + B_IROOT))
       ∨ WireColl permW (preLimbsWide bb (envAt t a).loc) ((envAt t a).loc (bb + B_IROOT))
@@ -2133,26 +2152,45 @@ theorem v3RegistryCapOpenWriteWide_binds (hash : List ℤ → ℤ) (permW : List
       (envAt t k).pub (h.piCount + 8 + m) = (envAt t' l).pub (h.piCount + 8 + m))
     -- The 8 state-commit carrier columns are field-canonical (`0 ≤ · < p`, the deployed range-check
     -- invariant): lifts each mod-`p` publish congruence to the ℤ carrier equality the CR floor needs.
+    --
+    -- ⚑ THE CARRIER INDEX IS `wideCommitCarrier`, NOT A TRANSCRIBED NUMBER. It read `61` and that
+    -- one literal was the whole emit outage: `76c3f7b9b` took the pre-limb region 184 -> 187, which
+    -- moved `wideNumCarriers` 62 -> 63 and the state-commit carrier 61 -> 62 in
+    -- `wideAppend_binds_published`'s hypotheses. This file forwards those hypotheses verbatim, so
+    -- the stale literal made them a DIFFERENT proposition, `CapOpenEmit` failed to elaborate, and
+    -- `CapOpenEmit` is on every emitter's import path -- so `scripts/emit_descriptors.py` could not
+    -- run AT ALL and every descriptor, registry TSV and VK stayed frozen at the 184 geometry while
+    -- Rust had already moved to 187. Same class, same day, one module over from the
+    -- `preLimbsWide_length = 184` literal that commit repaired. Stated against the layout, the next
+    -- widening is free here instead of a tree-wide outage.
     (hcCanonB : ∀ m, m < 8 →
       0 ≤ (envAt t a).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t a).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0) < 2013265921)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921)
     (hcCanonB' : ∀ m, m < 8 →
       0 ≤ (envAt t' b).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t' b).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth) 61).getD m 0) < 2013265921)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideBeforeCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921)
     (hcCanonA : ∀ m, m < 8 →
       0 ≤ (envAt t k).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t k).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0) < 2013265921)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921)
     (hcCanonA' : ∀ m, m < 8 →
       0 ≤ (envAt t' l).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0)
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0)
         ∧ (envAt t' l).loc ((Dregg2.Circuit.Emit.EffectVmEmitRotationWide.carrierCols
-            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth) 61).getD m 0) < 2013265921) :
+            (Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAfterCBase h.traceWidth)
+            Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCommitCarrier).getD m 0) < 2013265921) :
     ((preLimbsWide bb (envAt t a).loc = preLimbsWide bb (envAt t' b).loc
         ∧ (envAt t a).loc (bb + B_IROOT) = (envAt t' b).loc (bb + B_IROOT))
       ∨ WireColl permW (preLimbsWide bb (envAt t a).loc) ((envAt t a).loc (bb + B_IROOT))

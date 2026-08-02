@@ -52,6 +52,48 @@ provably cannot: SATISFIABLE at every hash on an honest seam, REFUTABLE at a los
 and LOAD-BEARING (dropping the residual leaves a REFUTED statement — including a two-step chain that
 MINTS 400 while satisfying the genesis pin and the verified root tooth).
 
+⚑ **2026-08-01, second pass — the LOG leg's teeth, which did not exist.** `ChainKernelColl` carried
+all four discriminations; `ChainLogColl` — the residual of the OTHER headline S3
+(`RecursiveAggregation.non_omission_from_verification_of_noColl`) — carried none, and
+`ChainLogColl []`/`ChainLogColl [s]` are `False` by definition, so the lift is exactly where they
+were needed. Built: `seamLogColl_fires_at_the_diagonal_seam`, `noSeamLogColl_not_provable`,
+`logChained_of_verified_unconditional_false` and `chainLogColl_fires_at_the_omitting_chain` (firing
+at that theorem's own counterexample — a two-step chain that DROPS a receipt while satisfying the
+genesis log pin, the verified root tooth and a uniform turn-context). Two firing companions were also
+added on the kernel side, where the load-bearing claims cited a theorem proved at a DIFFERENT witness
+than their own counterexample: `seamKernelColl_fires_at_the_diagonal_seam` and
+`seamStateColl_fires_at_the_diagonal_seam`.
+
+⚠ **WHAT THE `_unconditional_false` THEOREMS IN THIS FILE DO NOT REACH, said once at the top.** Every
+one of them refutes an `hno`-deleted keystone OF THIS FILE, all of which hypothesise `ChainBound`
+DIRECTLY. The two HEADLINE S3s live one layer up in `RecursiveAggregation` and replace `ChainBound`
+with `es : EngineSound …` + `hroot : verify agg.root = true` — a STRICTLY STRONGER hypothesis set, so
+none of these theorems says anything about them, and both S3 docstrings claimed one did. Their teeth
+are `RecursiveAggregation.non_omission_from_verification_unconditional_false` and
+`…conserves_from_verification_unconditional_false` (§5b there), which inhabit `EngineSound` at the
+counterexample chains — verification genuinely does NOT exclude the omitting or the minting history.
+
+⚑ And the honest price is now a THEOREM, not a comment: `¬ SeamLogColl` is NOT free for an honest
+prover once the receipt log is non-empty (`seamLogColl_fires_at_honest_seam_with_colliding_log`
+exhibits an honest seam between two genuine executor steps where it holds). The discharge is
+`noSeamLogColl_of_honest_of_noSelfColl` / `noChainLogColl_of_honest` — a FINITE self-collision check
+over the receipt pairs the node already holds; per-instance and decidable, a price rather than a
+floor, but not zero. `noLogFeltsColl_self_of_short` pins where it starts (two receipts, not one) and
+`noChainLogColl_at_the_honest_two_step_chain` witnesses that the discharge is reachable on a real
+chain.
+
+⚑⚑ **BREAKING, and say what broke.** `logChained_of_verified_or_collides` / `_of_noColl` now take
+`SeamTurnMatch` (the per-seam turn-context match) instead of `SeamStruct`, and so do
+`RecursiveAggregation.non_omission_from_verification_or_collides` / `_of_noColl`. The log recovery
+never read `SeamStruct`'s `AccountsWF` / `FiniteRepresentable` arms — and carrying them made the S3's
+load-bearing tooth UNSTATABLE, since no `ChainStep` here satisfies `AccountsWF`, so any counterexample
+had to shed the envelope along with `hno`. Narrowed, the refutation is exact. Callers holding
+`SeamStruct` insert `seamTurnMatch_of_seamStruct`; the two `⚠ BRIDGE ONLY` forms
+(`logChained_of_verified_orBreak`, `non_omission_from_verification_orBreak`) keep the wide signature,
+so `Lightclient/NonOmissionAttack` and everything else outside these two modules is untouched. The
+KERNEL leg's teeth still shed the envelope — that residual is unchanged and named on
+`root_tooth_pins_kernel_unconditional_false`.
+
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
 Verified with `lake build Dregg2.Distributed.HistoryAggregation`.
 -/
@@ -1099,38 +1141,85 @@ def ChainLogColl : List ChainStep → Prop
       SeamLogColl CH RH cmb compress compressN s s'
         ∨ ChainLogColl (s' :: rest)
 
+/-- **`SeamTurnMatch steps`** — the per-seam turn-context match, and NOTHING else. This is the ONLY
+arm of `SeamStruct` the log recovery reads: `root_tooth_pins_log` carries no `AccountsWF` and no
+`FiniteRepresentable` obligation, because the receipt-log limb of the rotated commit is a plain
+sponge over the log, not the finite-support kernel frame.
+
+⚑ **BREAKING (2026-08-01), and why.** `logChained_of_verified_or_collides` / `_of_noColl` previously
+took the whole `SeamStruct` and ignored four fifths of it. That was not merely untidy: it made the
+S3's load-bearing tooth UNSTATABLE, because no `ChainStep` in this file satisfies `AccountsWF` (see
+`root_tooth_pins_kernel_unconditional_false`), so any counterexample refuting the `hno`-deleted form
+had to drop the structural envelope too — leaving "hno is what excludes it" a claim about a proof
+term rather than a theorem. With the hypothesis narrowed to what the proof consumes,
+`logChained_of_verified_unconditional_false` refutes the `hno`-deleted `logChained_of_verified_-
+of_noColl` EXACTLY, envelope intact (the headline S3 one layer up,
+`RecursiveAggregation.non_omission_from_verification_of_noColl`, is a DIFFERENT statement and takes
+its own tooth — `RecursiveAggregation.non_omission_from_verification_unconditional_false`).
+`seamTurnMatch_of_seamStruct` re-derives the old callers; the two `⚠ BRIDGE ONLY` forms keep their
+`SeamStruct` signature so nothing outside this file and `RecursiveAggregation` had to change. -/
+def SeamTurnMatch : List ChainStep → Prop
+  | []              => True
+  | [_]             => True
+  | s :: s' :: rest => s.turn = s'.turn ∧ SeamTurnMatch (s' :: rest)
+
+/-- The structural envelope entails the turn-match arm — so every caller holding `SeamStruct` keeps
+its conclusion, and the narrowing above gives up nothing. -/
+theorem seamTurnMatch_of_seamStruct : ∀ steps : List ChainStep,
+    SeamStruct steps → SeamTurnMatch steps
+  | [], _ => trivial
+  | [_], _ => trivial
+  | _ :: s' :: rest, h => ⟨h.1.1, seamTurnMatch_of_seamStruct (s' :: rest) h.2⟩
+
 /-- **⚑⚑ `logChained_of_verified_or_collides` — WHOLE-HISTORY NON-OMISSION, UNCONDITIONAL.** From the
-genesis log pin, the VERIFIED root tooth, and `SeamStruct`'s turn-match arm, the receipt log chains
-across the WHOLE history, OR the NAMED residual `ChainLogColl` holds at one of the chain's own seams.
-An omitting node must exhibit a sponge collision at a pair this theorem names. -/
+genesis log pin, the VERIFIED root tooth, and the per-seam turn match, the receipt log chains across
+the WHOLE history, OR the NAMED residual `ChainLogColl` holds at one of the chain's own seams. An
+omitting node must exhibit a sponge collision at a pair this theorem names. -/
 theorem logChained_of_verified_or_collides (g : RecChainedState) :
     ∀ steps : List ChainStep,
       LogGenesisPin g steps →
       ChainBound CH RH cmb compress compressN steps →
-      SeamStruct steps →
+      SeamTurnMatch steps →
       LogChained g steps ∨ ChainLogColl CH RH cmb compress compressN steps
   | [], _, _, _ => Or.inl trivial
   | [_], hgen, _, _ => Or.inl ⟨hgen, trivial⟩
-  | s :: s' :: rest, hgen, hbound, hstruct => by
+  | s :: s' :: rest, hgen, hbound, hmatch => by
     obtain ⟨htooth, hboundrest⟩ := hbound
-    obtain ⟨⟨hturn, _, _⟩, hstructrest⟩ := hstruct
+    obtain ⟨hturn, hmatchrest⟩ := hmatch
     rcases root_tooth_pins_log_or_collides CH RH cmb compress compressN s s' hturn htooth with
       hseam | hc
     · rcases logChained_of_verified_or_collides s.post (s' :: rest)
-          hseam.symm hboundrest hstructrest with htail | hc
+          hseam.symm hboundrest hmatchrest with htail | hc
       · exact Or.inl ⟨hgen, htail⟩
       · exact Or.inr (Or.inr hc)
     · exact Or.inr (Or.inl hc)
 
-/-- **S3** — whole-history log continuity from the PER-INSTANCE chain residual. -/
+/-- **S3** — whole-history log continuity from the PER-INSTANCE chain residual.
+
+⚑ **WHAT `hno` COSTS AN HONEST NODE, stated here rather than in a neighbouring comment.** Unlike the
+kernel leg — where `noSeamKernelColl_of_honest` refutes the residual at an honest seam for FREE, at
+every hash — `¬ ChainLogColl` is a real obligation once any step's receipt log is non-empty:
+`LogRootColl L L` retains its `LogFeltsColl L L` disjunct even when the two logs are EQUAL, so an
+honest seam still carries "two distinct turns of that same log collide under `compressN`".
+`seamLogColl_fires_at_honest_seam_with_colliding_log` EXHIBITS an honest seam, between two genuine
+executor steps, where the residual holds. The discharge is `noChainLogColl_of_honest`: every seam
+honest, plus at each step the FINITE self-collision check over the `|log|²` receipt pairs that step
+already holds. That check is per-instance and decidable — it is a price, not a floor — but it is not
+zero, and `noSeamLogColl_of_honest_nil` is the only corner where it is.
+
+⚑ **AND `hno` IS LOAD-BEARING, exactly.** Delete it and this theorem is FALSE at the same envelope —
+`logChained_of_verified_unconditional_false`, on a two-step chain that satisfies `LogGenesisPin`,
+`ChainBound` and `SeamTurnMatch` and still DROPS a receipt, with `chainLogColl_fires_at_the_omitting_-
+chain` firing at that witness. Nothing is dropped alongside `hno` in that refutation (which is why
+the hypothesis is `SeamTurnMatch` and not `SeamStruct` — see the note on `SeamTurnMatch`). -/
 theorem logChained_of_verified_of_noColl (g : RecChainedState) (steps : List ChainStep)
     (hgen : LogGenesisPin g steps)
     (hbound : ChainBound CH RH cmb compress compressN steps)
-    (hstruct : SeamStruct steps)
+    (hmatch : SeamTurnMatch steps)
     (hno : ¬ ChainLogColl CH RH cmb compress compressN steps) :
     LogChained g steps :=
   (logChained_of_verified_or_collides CH RH cmb compress compressN g steps hgen hbound
-    hstruct).resolve_right hno
+    hmatch).resolve_right hno
 
 /-- The log-chain residual cashes out as a bare sponge existential (⚠ loses the seam). -/
 theorem ChainLogColl.toSponge : ∀ {steps : List ChainStep},
@@ -1143,14 +1232,16 @@ theorem ChainLogColl.toSponge : ∀ {steps : List ChainStep},
     · exact ChainLogColl.toSponge (steps := s' :: rest) hrest
 
 /-- ⚠ **BRIDGE ONLY (2026-08-01).** Re-derived from the port.
-`logChained_of_verified_or_collides` is the form that discriminates. -/
+`logChained_of_verified_or_collides` is the form that discriminates. Keeps the wider `SeamStruct`
+hypothesis (adapted through `seamTurnMatch_of_seamStruct`) so its external callers are unaffected. -/
 theorem logChained_of_verified_orBreak (g : RecChainedState) (steps : List ChainStep)
     (hgen : LogGenesisPin g steps)
     (hbound : ChainBound CH RH cmb compress compressN steps)
     (hstruct : SeamStruct steps) :
     OrBreak (SpongeCollision compressN) (LogChained g steps) :=
   Or.imp_right (ChainLogColl.toSponge CH RH cmb compress compressN)
-    (logChained_of_verified_or_collides CH RH cmb compress compressN g steps hgen hbound hstruct)
+    (logChained_of_verified_or_collides CH RH cmb compress compressN g steps hgen hbound
+      (seamTurnMatch_of_seamStruct steps hstruct))
 
 /-- ⚠ **BRIDGE ONLY (drained 2026-08-01).** `logChained_of_verified_orBreak` above is the deployed-true
 whole-history non-omission statement: the log chains at every folded step, or the omitting node
@@ -1291,20 +1382,73 @@ theorem noSeamKernelColl_of_honest (s s' : ChainStep) (hst : s.post = s'.pre) :
   · rw [hst] at hk
     exact noRecStateCommitColl_diag CH RH cmb compress compressN s'.pre.kernel s'.turn hk
 
-/-- **TOOTH (SATISFIABLE, AT EVERY HASH) — log leg.** At an honest seam over an empty receipt log the
-log residual is refuted at every hash. ⚑ Note the honest asymmetry: at a NON-empty log
-`LogRootColl`'s second disjunct also covers a receipt collision BETWEEN TWO TURNS OF THAT LOG, which
-is a genuine deployed break event and not something a diagonal argument may discharge — the residual
-carries more content there, not less. -/
-theorem noSeamLogColl_of_honest_nil (s s' : ChainStep) (hst : s.post = s'.pre)
-    (hnil : s'.pre.log = []) : ¬ SeamLogColl CH RH cmb compress compressN s s' := by
+/-- **⚑⚑ TOOTH (DISCHARGEABLE) — the log leg, and THE HONEST NODE'S ACTUAL PRICE, stated as a
+theorem rather than as a comment.** At an honest seam the log residual reduces to exactly ONE
+obligation, and — unlike the kernel leg's — it is NOT free: the node must know that no two turns of
+its OWN receipt log collide under the deployed sponge. Given that, `¬ SeamLogColl` follows at every
+choice of the five portal functions.
+
+⚑ The asymmetry, precisely: `LogRootColl L L'` keeps its `LogFeltsColl L L'` disjunct even when the
+two logs are EQUAL, so at `L = L' = s'.pre.log` the honest seam still carries "two distinct turns of
+that same log collide under `compressN`". A diagonal argument cannot discharge that once the log is
+non-empty — `seamLogColl_fires_at_honest_seam_with_colliding_log` below EXHIBITS an honest seam,
+between two genuine executor steps, where the residual FIRES. What makes it payable rather than a
+floor in disguise is that it is a FINITE check over the `|log|²` pairs the node already holds, not a
+quantification over all inputs; `noSeamLogColl_of_honest_nil` is the `|log| = 0` corner where the
+price is zero. (This is the log leg's analogue of `AccountsCommit.accountsResid_dischargeable`, which
+by contrast costs the honest prover nothing at all.) -/
+theorem noSeamLogColl_of_honest_of_noSelfColl (s s' : ChainStep) (hst : s.post = s'.pre)
+    (hself : ¬ LogFeltsColl compressN s'.pre.log s'.pre.log) :
+    ¬ SeamLogColl CH RH cmb compress compressN s s' := by
   rintro (hsp | hl)
   · exact hsp.1 (by rw [hst])
   · rw [hst] at hl
-    rcases hl with ⟨hne, -⟩ | ⟨t, ht, -, -, -⟩
+    rcases hl with ⟨hne, -⟩ | hfl
     · exact hne rfl
-    · rw [hnil] at ht
-      exact absurd ht (by simp)
+    · exact hself hfl
+
+/-- **TOOTH (SATISFIABLE, AT EVERY HASH) — log leg, the zero-price corner.** At an honest seam over
+an EMPTY receipt log the log residual is refuted at every hash — the `|log| = 0` instance of
+`noSeamLogColl_of_honest_of_noSelfColl`, where the self-collision obligation is vacuous. ⚠ This is
+the ONLY corner where the log leg is free; see the dischargeable theorem above for the general
+price. -/
+theorem noSeamLogColl_of_honest_nil (s s' : ChainStep) (hst : s.post = s'.pre)
+    (hnil : s'.pre.log = []) : ¬ SeamLogColl CH RH cmb compress compressN s s' :=
+  noSeamLogColl_of_honest_of_noSelfColl CH RH cmb compress compressN s s' hst
+    (by rw [hnil]; rintro ⟨t, ht, -⟩; exact absurd ht (by simp))
+
+/-- **WHERE THE HONEST PRICE STARTS.** A receipt log holding at most ONE turn cannot self-collide:
+`LogFeltsColl L L` needs two members of `L` with DISTINCT receipt-felt encodings, and a
+zero-or-one-element list has no such pair — at every sponge. So the self-collision obligation of
+`noSeamLogColl_of_honest_of_noSelfColl` is free up to one receipt and starts costing at two, which is
+exactly where `seamLogColl_fires_at_honest_seam_with_colliding_log` lives. -/
+theorem noLogFeltsColl_self_of_short : ∀ L : List Dregg2.Exec.Turn, L.length ≤ 1 →
+    ¬ LogFeltsColl compressN L L
+  | [], _ => by rintro ⟨t, ht, -⟩; exact absurd ht (by simp)
+  | [_], _ => by
+      rintro ⟨t, ht, t', ht', hne, -⟩
+      rw [List.mem_singleton.mp ht, List.mem_singleton.mp ht'] at hne
+      exact hne rfl
+  | _ :: _ :: _, h => by simp at h
+
+/-- **⚑ TOOTH (DISCHARGEABLE, CHAIN LEVEL) — the price `non_omission_from_verification_of_noColl`
+actually charges.** The S3 of the whole-history non-omission headline carries `¬ ChainLogColl`, not
+`¬ SeamLogColl`; this is what an honest node pays to discharge it. Every seam of the chain honest
+(`s.post = s'.pre` along the list) plus, at every step, the finite self-collision check on that
+step's own pre-log, refutes the chain residual outright — at every choice of the five portal
+functions, no injective one need be picked. -/
+theorem noChainLogColl_of_honest : ∀ steps : List ChainStep,
+    List.IsChain (fun s s' => s.post = s'.pre) steps →
+    (∀ s ∈ steps, ¬ LogFeltsColl compressN s.pre.log s.pre.log) →
+    ¬ ChainLogColl CH RH cmb compress compressN steps
+  | [], _, _ => fun h => h
+  | [_], _, _ => fun h => h
+  | s :: s' :: rest, hch, hself => by
+    rintro (hc | hrest)
+    · exact noSeamLogColl_of_honest_of_noSelfColl CH RH cmb compress compressN s s'
+        (List.isChain_cons_cons.mp hch).1 (hself s' (by simp)) hc
+    · exact noChainLogColl_of_honest (s' :: rest) (List.isChain_cons_cons.mp hch).2
+        (fun x hx => hself x (List.mem_cons_of_mem s hx)) hrest
 
 /-- A SECOND genuine executor step, from a genesis holding `500`. Needed by the chain-level tooth:
 every chain built from `honestStep` alone starts AND ends at total `100`, so no such chain can
@@ -1335,6 +1479,31 @@ theorem seamKernelColl_refutable :
   intro h
   exact absurd (congrArg Dregg2.Exec.balOf h) (by decide)
 
+/-- **⚑ TOOTH (REFUTABLE, AT THE DIAGONAL SEAM) — the residual fires at the witness that refutes the
+kernel tooth.** `root_tooth_pins_kernel_unconditional_false` below refutes the `hno`-deleted kernel
+recovery at the seam `(honestStep, honestStep)` — a step against ITSELF, whose post-kernel (cell `0`
+holds `90`) and pre-kernel (`100`) differ while the constant portal pins their roots. The residual
+FIRES at exactly that seam, through the same `MovedColl` leaf disjunct as
+`seamKernelColl_refutable`. ⚑ This is the theorem the load-bearing claim needs: `seamKernelColl_-
+refutable` fires at `(honestStep, richStep)`, which is NOT the counterexample, so citing it there
+would leave the discrimination unproved at the pair that matters. -/
+theorem seamKernelColl_fires_at_the_diagonal_seam :
+    SeamKernelColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) honestStep honestStep := by
+  refine Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl ⟨?_, rfl⟩)))))
+  intro h
+  exact absurd (congrArg Dregg2.Exec.balOf h) (by decide)
+
+/-- **⚑ TOOTH (REFUTABLE, AT THE DIAGONAL SEAM) — the commitment-level twin.** The same service for
+`root_tooth_pins_state_unconditional_false`, whose counterexample is the diagonal seam at the
+`CH := balOf`, `compress := snd` portal: the two cell-digests differ (`10` vs `0`) while the constant
+root combiner `cmb` maps them together, which is exactly the `CompressColl cmb` disjunct
+`SeamStateColl` names. So the commitment-level residual, too, excludes its own counterexample. -/
+theorem seamStateColl_fires_at_the_diagonal_seam :
+    SeamStateColl (fun _ v => Dregg2.Exec.balOf v) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ b => b) (fun _ => (0 : ℤ)) honestStep honestStep :=
+  Or.inr ⟨fun h => absurd h.1 (by decide), rfl⟩
+
 /-- **TOOTH (NOT PROVABLE).** Since some instantiation satisfies the seam residual, `¬ SeamKernelColl`
 is not a schema true of every portal/seam choice — a genuine per-instance obligation, discharged case
 by case, never a floor in disguise. -/
@@ -1345,12 +1514,107 @@ theorem noSeamKernelColl_not_provable :
       ¬ SeamKernelColl CH RH cmb compress compressN s s' :=
   fun h => h _ _ _ _ _ honestStep richStep seamKernelColl_refutable
 
+/-! ### The LOG leg's teeth. `ChainLogColl` is the residual of the second headline S3
+(`RecursiveAggregation.non_omission_from_verification_of_noColl`); it had none of the three
+discriminations `ChainKernelColl` carries, which is what the audit of 2026-08-01 found. Built here:
+REFUTABLE at a lossy sponge, NOT PROVABLE, LOAD-BEARING at the chain level, and FIRING at exactly the
+witness that refutes the residual-free statement. -/
+
+/-- **⚑ TOOTH (REFUTABLE, AT THE DIAGONAL SEAM) — the log leg.** At the all-constant sponge the log
+seam residual FIRES at the DIAGONAL seam `(honestStep, honestStep)` — the very witness that refutes
+`root_tooth_pins_log_unconditional_false`. The step's post-log carries the receipt it just recorded
+while its own pre-log does not, so the two receipt-felt lists differ; the constant sponge maps them
+together, which `LogRootColl`'s first disjunct sees. So `¬ SeamLogColl` is not a tautology — a lossy
+sponge is CAUGHT at this seam, and the omission the keystone claims to catch is exactly what the
+residual excludes. -/
+theorem seamLogColl_fires_at_the_diagonal_seam :
+    SeamLogColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) honestStep honestStep := by
+  refine Or.inr (Or.inl ⟨?_, rfl⟩)
+  intro h
+  have hlen : honestStep.post.log.length = honestStep.pre.log.length := by
+    simpa [logFelts] using congrArg List.length h
+  exact absurd hlen (by decide)
+
+/-- **TOOTH (NOT PROVABLE) — the log leg.** Since some instantiation satisfies the log seam residual,
+`¬ SeamLogColl` is not a schema true of every portal/seam choice: a genuine per-instance obligation,
+never `compressNInjective` in disguise. -/
+theorem noSeamLogColl_not_provable :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (s s' : ChainStep),
+      ¬ SeamLogColl CH RH cmb compress compressN s s' :=
+  fun h => h _ _ _ _ _ honestStep honestStep seamLogColl_fires_at_the_diagonal_seam
+
+/-- A SECOND genuine turn, distinct from `honestTurn` in its amount (`40` against `10`) — so a log
+holding both carries two turns with DIFFERENT receipt-felt encodings. (Structurally the same shape as
+`ConsensusExec.tamperedTurn`; named separately here because nothing about it is an attack — it is an
+ordinary second transfer, used only to reach a two-receipt log.) -/
+def secondTurn : Dregg2.Exec.Turn := { actor := 0, src := 0, dst := 1, amt := 40 }
+
+/-- The second genuine executor step: from `honestStep`'s post-state, cell `0` transfers a further
+`40` to cell `1`. Its post-log is `[secondTurn, honestTurn]` — the first log in this file with two
+DISTINCT receipts, which is what the honest-price tooth needs. -/
+def honestLogStep2 : ChainStep where
+  pre := honestStep.post
+  turn := secondTurn
+  post := (recCexec honestStep.post secondTurn).get (by decide)
+  commits := (Option.some_get _).symm
+
+/-- A third genuine executor step, continuing from `honestLogStep2`'s post-state. Exists so that
+`(honestLogStep2, honestLogStep3)` is an HONEST seam — `honestLogStep2.post = honestLogStep3.pre` by
+`rfl` — whose shared log already holds two distinct receipts. -/
+def honestLogStep3 : ChainStep where
+  pre := honestLogStep2.post
+  turn := honestTurn
+  post := (recCexec honestLogStep2.post honestTurn).get (by decide)
+  commits := (Option.some_get _).symm
+
+/-- **⚑⚑ TOOTH (THE HONEST OBLIGATION IS REAL — the log residual FIRES AT AN HONEST SEAM).** The
+seam `(honestLogStep2, honestLogStep3)` is honest: the post-state genuinely IS the next pre-state,
+both built by the verified executor. Yet at the constant sponge `SeamLogColl` HOLDS, through
+`LogFeltsColl`'s "two turns of that log collide" disjunct at the named pair
+`(secondTurn, honestTurn)`.
+
+⚑ This is the theorem the comment on `noSeamLogColl_of_honest_nil` used to assert and nothing
+proved: `¬ SeamLogColl` is NOT free for an honest prover once the receipt log is non-empty, so
+`noSeamKernelColl_of_honest`'s "at EVERY hash, no hypothesis" shape has NO log-leg analogue. What the
+honest node pays instead is `noSeamLogColl_of_honest_of_noSelfColl`'s finite self-collision check —
+and the hypothesis there is NOT removable, because this witness satisfies everything else. -/
+theorem seamLogColl_fires_at_honest_seam_with_colliding_log :
+    SeamLogColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) honestLogStep2 honestLogStep3 := by
+  refine Or.inr (Or.inr ⟨secondTurn, ?_, honestTurn, ?_, ?_, rfl⟩)
+  · rw [show honestLogStep2.post.log = [secondTurn, honestTurn] from rfl]; simp
+  · rw [show honestLogStep3.pre.log = [secondTurn, honestTurn] from rfl]; simp
+  · decide
+
+/-- **⚑ TOOTH (THE DISCHARGE IS REACHABLE — `noChainLogColl_of_honest` is not vacuous).** Its two
+hypotheses are jointly satisfiable on a REAL chain: the two-step honest chain
+`[honestStep, honestLogStep2]` (genuine executor steps, the second consuming the first's post-state)
+meets both at EVERY choice of the five portal functions, so the chain residual is refuted there with
+no injective hash picked. Without this, the dischargeability theorem could have been true of an empty
+hypothesis set — the exact vacuity this campaign is about. -/
+theorem noChainLogColl_at_the_honest_two_step_chain :
+    ¬ ChainLogColl CH RH cmb compress compressN [honestStep, honestLogStep2] :=
+  noChainLogColl_of_honest CH RH cmb compress compressN [honestStep, honestLogStep2]
+    (List.isChain_pair.mpr rfl)
+    (by
+      intro s hs
+      rcases List.mem_cons.mp hs with rfl | hs
+      · exact noLogFeltsColl_self_of_short compressN _ (by decide)
+      · rcases List.mem_cons.mp hs with rfl | hs
+        · exact noLogFeltsColl_self_of_short compressN _ (by decide)
+        · exact absurd hs (by simp))
+
 /-- **⚑⚑ TOOTH (LOAD-BEARING) — the log seam residual, at FULL strength.** `root_tooth_pins_log_-
 of_noColl` with `hno` DELETED is FALSE — and nothing else was dropped, because that theorem carries
 no structural side conditions beyond the turn-match. At the constant sponge two genuine executor
 steps share a root while their receipt logs differ by exactly the receipt one of them recorded, which
 is the omission the keystone claims to catch. (The dual reading: delete nothing from
-`root_tooth_pins_log_orBreak` and it is STILL `True`.) -/
+`root_tooth_pins_log_orBreak` and it is STILL `True`.) The companion that identifies `hno` as the
+side condition excluding THIS counterexample is `seamLogColl_fires_at_the_diagonal_seam`, at the same
+seam and the same portal. -/
 theorem root_tooth_pins_log_unconditional_false :
     ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
         (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
@@ -1372,10 +1636,12 @@ root while their cell-`0` balances differ (`90` vs `100`).
 `FiniteRepresentable`) ALONG WITH `hno`, because a `ChainStep` carries a real `recCexec` witness and
 the only such witnesses in this file run over `teethGenesis`, which is not `AccountsWF` (its dead
 cells hold `.record [("balance", .int 0)]`, not the kernel default) and not a `denote` image. What
-identifies `hno` as the load-bearing one is the companion `seamKernelColl_refutable`: the residual
-FIRES at exactly this witness, so it is the side condition that excludes the counterexample. Building
-an `AccountsWF`-and-`FiniteRepresentable` `ChainStep` pair (a `FinKernelState`-backed genesis plus a
-representability proof for the post-transfer cell map) is the named, unported strengthening. -/
+identifies `hno` as the load-bearing one is the companion `seamKernelColl_fires_at_the_diagonal_seam`
+— the residual FIRES at exactly THIS witness `(honestStep, honestStep)`, so it is the side condition
+that excludes the counterexample. (⚠ `seamKernelColl_refutable` fires at `(honestStep, richStep)`, a
+DIFFERENT seam; it establishes refutability in general but says nothing about this counterexample.)
+Building an `AccountsWF`-and-`FiniteRepresentable` `ChainStep` pair (a `FinKernelState`-backed genesis
+plus a representability proof for the post-transfer cell map) is the named, unported strengthening. -/
 theorem root_tooth_pins_kernel_unconditional_false :
     ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
         (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
@@ -1393,7 +1659,9 @@ theorem root_tooth_pins_kernel_unconditional_false :
 with `hno` deleted is FALSE at a portal that is NOT constant in the leaf/node layer: with
 `CH := balOf`, `compress := snd` and a constant outer sponge the tooth still holds by `rfl` while the
 two cell-digests differ (`10` vs `0`). Same precise caveat as above about the structural envelope,
-which this theorem does not carry at all. -/
+which this theorem does not carry at all. The companion that identifies `hno` as the side condition
+excluding THIS counterexample is `seamStateColl_fires_at_the_diagonal_seam`, at the same seam and the
+same portal. -/
 theorem root_tooth_pins_state_unconditional_false :
     ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
         (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
@@ -1417,7 +1685,14 @@ excludes it (`chainKernelColl_fires_at_the_minting_chain` below, at the SAME wit
 
 ⚠ Same precise caveat as `root_tooth_pins_kernel_unconditional_false`: `SeamStruct` is dropped along
 with `hno` for the same `ChainStep`-constructibility reason, and the companion firing theorem is what
-identifies `hno` as the side condition doing the work. -/
+identifies `hno` as the side condition doing the work.
+
+⚠ **Scope.** This refutes `verified_history_conserves_of_noColl`, whose hypothesis is `ChainBound`
+DIRECTLY — NOT the headline S3 `RecursiveAggregation.conserves_from_verification_of_noColl`, which
+replaces `ChainBound` with the strictly stronger `es : EngineSound …` + `hroot`. That one's tooth is
+`RecursiveAggregation.conserves_from_verification_unconditional_false`, which carries the engine
+soundness explicitly (`RecursiveAggregation.minting_engine_sound`: a verifying aggregate genuinely
+attests this minting chain, so verification is not what excludes the mint). -/
 theorem verified_history_conserves_unconditional_false :
     ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
         (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
@@ -1437,6 +1712,53 @@ theorem chainKernelColl_fires_at_the_minting_chain :
     ChainKernelColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
       (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) [honestStep, richStep] :=
   Or.inl seamKernelColl_refutable
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING) — the CHAIN-LEVEL LOG residual, on the NON-OMISSION headline.**
+`logChained_of_verified_of_noColl` with `hno` DELETED is FALSE: at the constant portal the two-step
+chain `[honestStep, honestStep]` satisfies the genesis LOG pin AND the verified root tooth AND the
+per-seam turn match, yet its second step's pre-log is EMPTY while its first step's post-log holds the
+receipt that step recorded — a receipt DROPPED across a seam the roots did not pin. That is exactly
+the omission the headline claims to exclude, and `ChainLogColl` is what excludes it
+(`chainLogColl_fires_at_the_omitting_chain` below, at the SAME witness).
+
+⚑ **NOTHING IS DROPPED ALONGSIDE `hno`.** The hypotheses here are, verbatim, the other three of
+`logChained_of_verified_of_noColl`; the witness satisfies all of them. This is the discrimination the
+kernel-leg teeth (`root_tooth_pins_kernel_unconditional_false`,
+`verified_history_conserves_unconditional_false`) still cannot make, because they must shed
+`AccountsWF`/`FiniteRepresentable` to have a witness at all — which is why the log S3's hypothesis
+was narrowed to `SeamTurnMatch` rather than a caveat being written.
+
+⚠ **AND IT STOPS HERE. This theorem does NOT refute
+`RecursiveAggregation.non_omission_from_verification_of_noColl`** — the headline S3 — with `hno`
+deleted, and an earlier draft of this docstring said "hence" it did. That S3 replaces `ChainBound`
+with `es : EngineSound …` and `hroot : verify agg.root = true`, a STRICTLY STRONGER hypothesis set
+(it delivers `ChainBound` and four public pins besides), and refuting a weaker-hypothesis statement
+establishes nothing about a stronger one. The theorem that does refute it, at its own hypotheses, is
+`RecursiveAggregation.non_omission_from_verification_unconditional_false`, which carries the engine
+soundness explicitly (`RecursiveAggregation.omitting_engine_sound`: a verifying aggregate genuinely
+attests this omitting chain). -/
+theorem logChained_of_verified_unconditional_false :
+    ¬ ∀ (CH : Dregg2.Exec.CellId → Dregg2.Exec.Value → ℤ)
+        (RH : Dregg2.Exec.RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ)
+        (compressN : List ℤ → ℤ) (g : RecChainedState) (steps : List ChainStep),
+        LogGenesisPin g steps →
+        ChainBound CH RH cmb compress compressN steps →
+        SeamTurnMatch steps →
+        LogChained g steps := by
+  intro hall
+  have h := hall (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+    (fun _ => (0 : ℤ)) teethGenesis [honestStep, honestStep] rfl ⟨rfl, trivial⟩ ⟨rfl, trivial⟩
+  exact absurd (congrArg List.length h.2.1) (by decide)
+
+/-- **⚑ THE LOG RESIDUAL COVERS THE OMITTING CHAIN.** The chain-level log residual FIRES at exactly
+the witness that refutes the `hno`-deleted non-omission headline — so the ported theorem is not
+merely narrower, it is narrower *precisely where the unported one is false*. The chain-level twin of
+`chainKernelColl_fires_at_the_minting_chain`, and the third of the three discriminations
+`ChainLogColl` was missing. -/
+theorem chainLogColl_fires_at_the_omitting_chain :
+    ChainLogColl (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) (fun _ _ => (0 : ℤ))
+      (fun _ _ => (0 : ℤ)) (fun _ => (0 : ℤ)) [honestStep, honestStep] :=
+  Or.inl seamLogColl_fires_at_the_diagonal_seam
 
 end Portal
 
@@ -1458,18 +1780,31 @@ end Portal
 #assert_axioms Dregg2.Distributed.HistoryAggregation.kernelChained_of_verified_of_noColl
 #assert_axioms Dregg2.Distributed.HistoryAggregation.verified_history_conserves_or_collides
 #assert_axioms Dregg2.Distributed.HistoryAggregation.verified_history_conserves_of_noColl
+#assert_axioms Dregg2.Distributed.HistoryAggregation.seamTurnMatch_of_seamStruct
 #assert_axioms Dregg2.Distributed.HistoryAggregation.logChained_of_verified_or_collides
 #assert_axioms Dregg2.Distributed.HistoryAggregation.logChained_of_verified_of_noColl
 -- teeth: SATISFIABLE / REFUTABLE / NOT PROVABLE / LOAD-BEARING.
 #assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamKernelColl_of_honest
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamLogColl_of_honest_of_noSelfColl
 #assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamLogColl_of_honest_nil
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noLogFeltsColl_self_of_short
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noChainLogColl_of_honest
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noChainLogColl_at_the_honest_two_step_chain
 #assert_axioms Dregg2.Distributed.HistoryAggregation.seamKernelColl_refutable
+#assert_axioms Dregg2.Distributed.HistoryAggregation.seamKernelColl_fires_at_the_diagonal_seam
+#assert_axioms Dregg2.Distributed.HistoryAggregation.seamStateColl_fires_at_the_diagonal_seam
 #assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamKernelColl_not_provable
 #assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_log_unconditional_false
 #assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_kernel_unconditional_false
 #assert_axioms Dregg2.Distributed.HistoryAggregation.root_tooth_pins_state_unconditional_false
 #assert_axioms Dregg2.Distributed.HistoryAggregation.verified_history_conserves_unconditional_false
 #assert_axioms Dregg2.Distributed.HistoryAggregation.chainKernelColl_fires_at_the_minting_chain
+-- ⚑ the LOG leg's teeth (2026-08-01): `ChainLogColl` had NONE of the three before this.
+#assert_axioms Dregg2.Distributed.HistoryAggregation.seamLogColl_fires_at_the_diagonal_seam
+#assert_axioms Dregg2.Distributed.HistoryAggregation.noSeamLogColl_not_provable
+#assert_axioms Dregg2.Distributed.HistoryAggregation.seamLogColl_fires_at_honest_seam_with_colliding_log
+#assert_axioms Dregg2.Distributed.HistoryAggregation.logChained_of_verified_unconditional_false
+#assert_axioms Dregg2.Distributed.HistoryAggregation.chainLogColl_fires_at_the_omitting_chain
 
 -- ⚠ BRIDGE ONLY (the free-disjunct twins of 2026-08-01, retained and re-derived through the port).
 #assert_axioms Dregg2.Distributed.HistoryAggregation.turnReceipt_binds_orBreak

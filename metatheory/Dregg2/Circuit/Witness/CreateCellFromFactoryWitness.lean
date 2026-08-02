@@ -66,7 +66,8 @@ theorem execute_produces_satisfying_witness
     (createFromFactoryGuardEncodes LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
     s args s'
     ((apex_iff_createFromFactoryCircuitSpec LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth
-        s args s').mpr hspec)
+        s args s'
+        (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mpr hspec)
 
 /-- **`satisfying_witness_proves_full_state`** — a satisfying quint witness proves the full
 `CreateFromFactoryCircuitSpec` (factory install + born-empty authority + 8 global frame fields).

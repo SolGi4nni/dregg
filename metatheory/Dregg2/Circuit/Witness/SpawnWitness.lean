@@ -62,7 +62,8 @@ theorem execute_produces_satisfying_witness
   effect2quint_circuit_full_complete S (spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs)
     (fun k k' h => (hRest k k').mpr h)
     (spawnGuardEncodes LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs) s args s'
-    ((apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s').mpr hspec)
+    ((apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mpr hspec)
 
 theorem satisfying_witness_proves_full_state
     (hRest : RestIffNoSpawnTouched S.RH) (hLog : logHashInjective S.LH)

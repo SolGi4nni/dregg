@@ -824,13 +824,15 @@ mod tests {
         let desc = descriptor_by_name(NAME).expect("exact FNSP-v3 must dispatch by exact name");
         assert_eq!(desc.name, NAME);
         // `ROTATED_TRACE_WIDTH = V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS + 1) + 2*8*WIDE_CARRIERS`
-        // = 2442 + 2*185 + 2*496 = 3804 (was 3760 at 178 limbs / 60 carriers; the delta is
-        // 2*6 payload limbs + 2*16 carrier columns = 44).
-        assert_eq!(desc.trace_width, 3804);
+        // = 2442 + 2*188 + 2*504 = 3826 at the 2026-08-01 KEY NONET (`76c3f7b9b` took the region
+        // 184 -> 187 and the carriers 62 -> 63; the delta is 2*3 pre-limbs + 2*8 carrier columns
+        // = 22). It was 3804 at 184/62, and 3760 at 178/60.
+        assert_eq!(desc.trace_width, 3826);
         assert_eq!(desc.public_input_count, 76);
-        // 1258 + 4 TID_P2 wide lookups + 6 outer continuity windows + 6 outer last-row boundaries
-        // = 1274 — decomposed at `exact_nullifier_aafi_rotated_trace.rs`'s twin of this assertion.
-        assert_eq!(desc.constraints.len(), 1274);
+        // 1274 + 3 boundary + 3 window_gate + 2 wide-chip lookups = 1282 — one boundary and one
+        // window gate per NEW pre-limb (184/185/186), and one absorption lookup per BLOCK for the
+        // new wide carrier. Decomposed at `exact_nullifier_aafi_rotated_trace.rs`'s twin.
+        assert_eq!(desc.constraints.len(), 1282);
         assert_eq!(
             desc.tables.iter().map(|table| table.id).collect::<Vec<_>>(),
             vec![0, 9, 1, 84, 85]
@@ -846,8 +848,10 @@ mod tests {
                 .count()
         };
         assert_eq!(lookup_counts(TID_P2_STATE16), 128);
-        // 2 blocks x WIDE_NUM_CARRIERS: 2*60 -> 2*62 at the nine-lane epoch.
-        assert_eq!(lookup_counts(TID_P2), 124);
+        // 2 blocks x WIDE_NUM_CARRIERS: 2*60 -> 2*62 at the nine-lane epoch, and 2*62 -> 2*63
+        // = 126 at the 2026-08-01 KEY NONET (`76c3f7b9b`: `wideNumCarriers` 62 -> 63, the extra
+        // carrier absorbing pre-limbs 184..186). One absorption lookup per carrier per block.
+        assert_eq!(lookup_counts(TID_P2), 126);
         assert_eq!(lookup_counts(84), 48, "15-bit range-table lookups");
         assert_eq!(lookup_counts(85), 132, "16-bit range-table lookups");
         assert_eq!(

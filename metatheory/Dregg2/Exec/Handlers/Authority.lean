@@ -9,10 +9,12 @@ kernel palette from `Dregg2.Exec.AuthTurn` (`recKDelegate`/`recKDelegateAtten`/`
 their frame/non-amplification lemmas) and `Dregg2.Exec.Caps`.
 
 Every effect of this batch is balance-NEUTRAL: it edits the `caps` cap-graph (or merely the actor's
-own c-list) and NEVER the `bal` ledger or the `escrows` holding-store, so the COMBINED per-asset
-measure `recTotalAsset` is UNCHANGED at every asset — `delta = 0`, and `conserves` is the
-trivial `caps`-only frame (`recTotalAsset` reads `bal`+`accounts`, `escrowHeldAsset` reads `escrows`;
-neither touches `caps`, so both reduce on the post-state by `ring`).
+own c-list) and NEVER the `bal` ledger, so the per-asset measure `recTotalAsset` is UNCHANGED at every
+asset — `delta = 0`, and `conserves` is the trivial `caps`-only frame. `recTotalAsset` reads
+`bal`+`accounts` and NOTHING else: F1b deleted the escrow holding-store and its `escrowHeldAsset`
+summand (`Exec/RecordKernel.lean:302`, `:996-997`), so the measure is the plain cell-sum
+`recTotalAsset k a = ∑ c ∈ k.accounts, k.bal c a` (`RecordKernel.lean:665`), which does not mention
+`caps` — it reduces on the post-state by `simp only [recTotalAsset]`.
 
 Two faces:
 
@@ -44,7 +46,7 @@ Two faces:
 EVAL-VERIFIED (`§TEETH`): a delegation whose delegator lacks connectivity to the target is REJECTED
 (`none`); a within-rights delegation by a connected delegator SUCCEEDS (`some`) and the granted cap is
 provably subset-held; a revoke/attenuate/dropRef ALWAYS succeeds (`some`) and only shrinks the actor's
-reach; and every authority effect leaves the combined per-asset measure UNCHANGED.
+reach; and every authority effect leaves the per-asset measure UNCHANGED.
 
 Pure, computable, `#eval`-able. Verified standalone: `lake build Dregg2.Exec.Handlers.Authority`.
 -/
@@ -59,15 +61,16 @@ open Dregg2.Exec.Handler
 open Dregg2.Exec.TurnExecutorFull (acceptsEffects attenuateSlotF)
 open scoped BigOperators
 
-/-! ## §0 — The `caps`-only frame: an authority edit conserves the combined per-asset measure.
+/-! ## §0 — The `caps`-only frame: an authority edit conserves the per-asset measure.
 
 Every step of this batch produces a post-state of the form `{ k with caps := … }` (or merely re-binds
-`caps`). `recTotalAsset k b = recTotalAsset k b + escrowHeldAsset k b` reads `bal`+`accounts`
-(via `recTotalAsset`) and `escrows` (via `escrowHeldAsset`) — NEVER `caps`. So a `caps`-only edit leaves
-the combined measure UNCHANGED at every asset. This single frame lemma discharges `conserves` for the
-whole cluster (composed with each step's `caps`-only post-state shape). -/
+`caps`). `recTotalAsset k b` reads `bal`+`accounts` and NOTHING else — it is the plain cell-sum
+`∑ c ∈ k.accounts, k.bal c b` (`Exec/RecordKernel.lean:665`); the old `+ escrowHeldAsset` summand went
+with the holding-store in F1b (`RecordKernel.lean:302`, `:996-997`). So a `caps`-only edit leaves the
+measure UNCHANGED at every asset. This single frame lemma discharges `conserves` for the whole cluster
+(composed with each step's `caps`-only post-state shape). -/
 
-/-- A `caps`-only re-binding leaves the combined per-asset measure fixed at every asset. The shared
+/-- A `caps`-only re-binding leaves the per-asset measure fixed at every asset. The shared
 `conserves` engine for the whole authority cluster: `recTotalAsset` (= `∑ bal`) ignores `caps`. -/
 theorem capsOnly_recTotalAsset_fixed (k : RecordKernelState) (f : Caps) (b : AssetId) :
     recTotalAsset { k with caps := f } b = recTotalAsset k b := by
@@ -388,7 +391,7 @@ def revokeEffect (holder target : CellId) : ClosedEffect :=
 A delegation by a delegator WITHOUT connectivity to the target is REJECTED (`none` — the Granovetter
 premise is unmet); a within-rights delegation by a CONNECTED delegator SUCCEEDS (`some`) and the
 granted cap is an attenuation of the held cap (provably subset-held); a revoke/attenuate/dropRef ALWAYS
-succeeds (`some` — total, self-limiting); and every authority effect leaves the combined per-asset
+succeeds (`some` — total, self-limiting); and every authority effect leaves the per-asset
 measure UNCHANGED (`delta = 0`). -/
 
 /-- A 2-cell, 1-asset fixture: cells 0 and 1 are live accounts; cell 0 holds 100 of asset 0; cell 0
@@ -447,13 +450,13 @@ def readOnlyCert : Dregg2.Exec.CapTP.HandoffCert CellId (List Auth) :=
 -- the cert handoff is still authority-gated: an introducer holding NO edge to the target is REJECTED.
 #guard ((execEffect (validateHandoffCertEffect { readOnlyCert with introducer := 1 } 9) asCert).isSome) == false
 
--- §TEETH-8 (CONSERVATION): a within-rights delegation leaves the combined per-asset measure UNCHANGED.
+-- §TEETH-8 (CONSERVATION): a within-rights delegation leaves the per-asset measure UNCHANGED.
 #guard ((execEffect (delegateEffect 0 1 7) as0).map
         (fun k => (recTotalAsset as0 0, recTotalAsset k 0))) == some (100, 100)  --  some (100, 100)
--- §TEETH-9 (CONSERVATION): a revoke leaves the combined per-asset measure UNCHANGED.
+-- §TEETH-9 (CONSERVATION): a revoke leaves the per-asset measure UNCHANGED.
 #guard ((execEffect (revokeEffect 0 7) as0).map (fun k => recTotalAsset k 0)) == some 100  --  some 100
 -- §TEETH-10 (turn conserves): a turn = [delegate; attenuate; revoke] runs through the registry foldlM
--- and the combined measure is unchanged (every authority effect has `delta = 0`).
+-- and the per-asset measure is unchanged (every authority effect has `delta = 0`).
 #guard ((execTurn [delegateEffect 0 1 7, attenuateEffect 0 1 [], revokeEffect 1 7] as0).map
         (fun k => recTotalAsset k 0)) == some 100  --  some 100
 

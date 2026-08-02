@@ -246,7 +246,8 @@ theorem spawnA_extract
     (hPI : PIBindsDigestsQuint S
       (Inst.SpawnA.spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs) s args s' a) :
     SpawnFullSpec s args.actor args.child args.target s' :=
-  (Inst.SpawnA.apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s').mp
+  (Inst.SpawnA.apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mp
     (effect2quint_extract S
       (Inst.SpawnA.spawnE LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs)
       (Inst.SpawnA.spawnRestFrameDecodes S LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs
@@ -280,7 +281,8 @@ theorem createCellFromFactoryA_extract
         DAuth hDAuth) s args s' a) :
     Inst.CreateCellFromFactoryA.CreateFromFactoryCircuitSpec s args.actor args.newCell args.vk s' :=
   (Inst.CreateCellFromFactoryA.apex_iff_createFromFactoryCircuitSpec LE cN hN hLE DBal hDBal DCell hDCell
-      DSC hDSC DAuth hDAuth s args s').mp
+      DSC hDSC DAuth hDAuth s args s'
+      (Dregg2.Circuit.ListCommitRegrounded.noColl_of_carriers hN hLE _ _)).mp
     (effect2quint_extract S
       (Inst.CreateCellFromFactoryA.createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC
         DAuth hDAuth)

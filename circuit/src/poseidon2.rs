@@ -584,9 +584,52 @@ pub fn wire_commit_8_chip(pre_limbs: &[BabyBear], iroot: BabyBear) -> [BabyBear;
 /// (`Digest1`: *"There is no security boundary where that is acceptable"*). Neither fix reaches
 /// the other: no widening of the squeeze removes an append-collision in the preimage, and no
 /// repair of the preimage removes a birthday collision in a 31-bit codomain. Use [`hash_bytes_8`]
-/// wherever the sink can hold eight felts (`2^123.63`); the sinks that cannot — `HeapLeaf`'s
-/// one-felt `addr`/`value` fields and the `MapOp` value width in the emitted AIR — are owned by
-/// the value-widening campaign, which is a constraint change and not a later phase of this one.
+/// wherever the sink can hold eight felts (`2^123.63`).
+///
+/// # ⚑ THE CALLER SWEEP, 2026-08-01 — who is still allowed to call this, and why
+///
+/// Every production caller was classified. **Do not add one without landing in a class below.**
+/// 306 grep hits over 59 files reduce to ~10 production files; the rest are HOMONYMS — three
+/// crates define a LOCAL `fn hash_bytes` over blake3 (`dungeon-on-dregg/src/campaign.rs`,
+/// `dreggnet-offerings/src/operation.rs`, `fhegg-fhe/src/distributed_bfv_correlation.rs`) and
+/// several more have local VARIABLES named `*_hash_bytes`.
+///
+/// **MIGRATED to [`hash_bytes_8`] (the felt was the only binding):**
+/// * `zkoracle-prove`'s `content_commitment` / `template_commitment` — reached a committed,
+///   chain-linked `TurnReceipt` slot via `dungeon_on_dregg::narrator::attestation_commit_field`.
+///   Exhibit: `dungeon-on-dregg/tests/attestation_commit_wide_old_admits_new_rejects.rs`
+///   (41,522 evaluations / 3.27 s to a byte-identical narration event).
+/// * `cell::program::eval::hash_preimage32` — the Poseidon2 hash-LOCK behind `PreimageGate` /
+///   `KeyRotationGate`, where a forged preimage was not merely accepted but INSTALLED as the
+///   cell's key set. Exhibit: `cell/tests/preimage_gate_wide_old_admits_new_rejects.rs`
+///   (67,066 evaluations / 0.82 s). Schema epoch 22 → 23.
+///
+/// **LEFT, because a BYTE-EXACT companion is committed alongside** (each call site names where
+/// its companion lives, because the argument is not reconstructible from the line):
+/// `storage::bucket_commitment::fold_leaves` and `starbridge-apps/site-host`'s `content_root`,
+/// whose `coll = hash_bytes(key)` is a heap collection id while the key itself is bound
+/// injectively inside the 8-felt object/asset digest that rides into `wire_commit_8`'s `pre`.
+///
+/// **LEFT, not security-bearing:** the two `hash_bytes(DOMAIN)` tags in those same two folds —
+/// compile-time constants with no free parameter, so no search exists at any price and the
+/// birthday figure does not apply.
+///
+/// **NAMED, NOT MIGRATED — the sink is one felt in a place Rust does not own.** Each says so at
+/// its own definition, with the cost and the owner: `exec_lean::nullifier::addr_of` (the
+/// `MapAbsent` IMT key; **Lean emit work**, and ⚑ it needs the base-2^29 NONET — a KEY needs
+/// injectivity over 256 bits and eight lanes carry 247.26, so **`2^123.63` is a hash-NODE figure
+/// and does not transfer**), `wasm`'s `fact_hash` → column `PREDICATE_SYM` of the deployed
+/// `predicate-arith*` goldens, `sandstorm_bridge::cell::{var_addr, var_value_felt}` (whose whole
+/// `/var` ROOT is one felt, so widening only the leaves would be a containment below the bar),
+/// and the sel4 `crypto-floor` portal returns.
+///
+/// ⓘ **The squeeze has NO in-AIR counterpart** — measured across `metatheory/` and
+/// `circuit/descriptors/` twice, on 2026-08-01. `BytesLanes.lean` stops at the PREIMAGE and
+/// defines no sponge; every Lean hash carrier is felt-/`Nat`-domain; the "in-AIR `hash_bytes`
+/// recompute" named at `effect_vm/authority_digest_weld.rs:57` is an arity-2 felt-domain chip
+/// lookup in a gadget with zero production callers. Changing this function's SQUEEZE rotates no
+/// VK and re-emits no descriptor. Changing its PREIMAGE (`bytes_to_lanes`) is a different
+/// question and does reshape one descriptor — see `circuit-prove/src/zkoracle_leaf_adapter.rs`.
 pub fn hash_bytes(data: &[u8]) -> BabyBear {
     hash_many(&BabyBear::bytes_to_lanes(data))
 }

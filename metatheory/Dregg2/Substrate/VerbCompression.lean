@@ -86,7 +86,17 @@ frames), `Exec.Caps`'s REAL rights lattice (`ExecAuth = Finset Auth`, the genuin
 separation theorems are stated against atom CONJUNCTIONS — the deployed guard shape
 (`caveatsAdmit` / `heapAtomsAdmit` are both `.all`). The executor-state bridge (interpreting
 `RecordKernelState` itself into the one map) rides THE ONE ROTATION; this module settles the
-guard-class mathematics that rotation decision needs. Every theorem `#assert_axioms`-pinned.
+guard-class mathematics that rotation decision needs.
+
+⛑ AND THAT BRIDGE LANDED — `Exec/UniversalBridge.lean` IS it, and cites these very lines as its
+motivation (`Exec/UniversalBridge.lean:4-5`). It proves the commuting square for ALL THREE
+compressed verbs against the LIVE executable steps (`stateStepGuarded` / `recCexec` /
+`createCellStep`): `gwrite_is_memory_program` / `move_is_memory_program` /
+`create_is_memory_program` state that the projection of the executor's post-state EQUALS the fold
+of the verb's emitted Blum trace over the projection of the pre-state, where `uproj` is TOTAL over
+all 17 `RecordKernelState` fields plus the receipt log (the `registers` domain deliberately empty —
+per-proof VM transients, never persistent state). So "rides THE ONE ROTATION" reads as a completed
+dependency, not a pending one. Every theorem `#assert_axioms`-pinned.
 -/
 import Dregg2.Substrate.Heap
 import Dregg2.Substrate.VerbRegistry

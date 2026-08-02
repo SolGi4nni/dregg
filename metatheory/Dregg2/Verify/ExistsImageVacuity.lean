@@ -32,8 +32,9 @@ An ∃-image predicate carries content iff one of two things holds:
   * **INJECTIVITY of `f`** on the domain of interest — then the ∃ is a DECODE: the witness is unique
     and every property of it transfers (`inImage_determines_witness_of_injective`,
     `property_transfers_of_injective`). This is why `CircuitSoundness.StateDecode` (whose
-    `CommitSurface` carries `commit_binds`) and `CapRootBridge.capOpensTo` (functional under
-    `Poseidon2SpongeCR`) are NOT instances.
+    `CommitSurface` carries `commit_binds`) and `CapRootBridge.capOpensTo` (functional by
+    `capOpensTo_functional`, up to the per-instance `CapOpenColl` residual — ⚑ NOT
+    `Poseidon2SpongeCR`, that carrier was drained 2026-08-01) are NOT instances.
 
 And the counting rule that decides "is `f` plausibly surjective at deployed parameters":
 
@@ -227,7 +228,8 @@ theorem inImage_determines_witness_of_injective {α : Type u} {β : Type v} {f :
 
 /-- …and therefore every property of the genuine witness transfers to any witness the predicate
 supplies. This is the content `CommitSurface.commit_binds` buys for `StateDecode`, and
-`Poseidon2SpongeCR` buys for `CapRootBridge.capOpensTo`. -/
+`Heap.root_binds_or_collides` buys for `CapRootBridge.capOpensTo` (⚑ since 2026-08-01; it used to be
+bought with `Poseidon2SpongeCR`, which is false at deployed BabyBear and so bought nothing). -/
 theorem property_transfers_of_injective {α : Type u} {β : Type v} {f : α → β}
     (hinj : Function.Injective f) (P : α → Prop) {w w' : α} (hP : P w) (h : f w' = f w) : P w' := by
   rwa [hinj h]
@@ -375,9 +377,11 @@ end StarkResidualInstance
   * `Dregg2.Circuit.LightClientFusion.dProduced:90` — the apex ∃-body already carries the
     authorization conjunct `kstep pi.effect pre post` alongside the two commitment equations. This is
     the shape §3 prescribes, landed.
-  * `Dregg2.Circuit.CapRootBridge.capOpensTo:154` / `CapsEncodes:141` — functional under
-    `Poseidon2SpongeCR` (`capOpensTo_functional:157`); `CapsEncodes` additionally carries
-    `FaithfulCapTree hash caps h`.
+  * `Dregg2.Circuit.CapRootBridge.capOpensTo` / `CapsEncodes` — functional up to the per-instance
+    `CapOpenColl` residual (`capOpensTo_functional`); ⚑ the `Poseidon2SpongeCR` carrier was drained
+    2026-08-01, and the two hidden heaps are now NAMED (`capOpenHeap`/`capsHeap`, the
+    `DeployedMapDenotation.OpenResidS` move) so the residual is indexed by the pair rather than
+    quantified outside it. `CapsEncodes` additionally carries `FaithfulCapTree hash caps h`.
   * `Dregg2.Circuit.MapMerkleRoot.opensToMerkle:220` / `writesToMerkle:225` (and the `8` variants at
     `:561` / `:566`) — the existential is over a whole sorted heap with `Heap.get h k = o` pinned, and
     both root equations constrain the SAME heap.

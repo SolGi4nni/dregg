@@ -51,8 +51,14 @@ the apex" in its own header, for an UNRELATED reason: it discharges `Poseidon2Sp
 the SOLE residual for the whole state, and `Poseidon2SpongeCR` (bounded-hash injectivity) is ITSELF
 refuted at deployed BabyBear width by the SAME pigeonhole argument that refutes `compressInjective`
 (`ApexPremiseVacuity`'s LEGS 1-4) — a WIDTH problem, not the DOMAIN/cardinality problem this file
-answers. `restHashIffFrame_fin`/`restHashIffFrame_of_fin` are themselves already grandfathered on
-`Verify.FloorRatchetBaseline` for exactly that width reason. Using them here at the UNBOUNDED
+answers. ⛑ `restHashIffFrame_fin`/`restHashIffFrame_of_fin` were grandfathered on
+`Verify.FloorRatchetBaseline` for exactly that width reason and were PORTED OFF the floor on
+2026-08-01: each now carries a per-instance, refutable residual at the pair a TOTAL extractor names
+(`FinFrameHash.frameCollFind` / `restCollFind`), with the floor-free cores
+`frameHashFin_binds_or_collides` / `restHash_binds_or_collides` beneath them. The call below
+therefore threads the tree's UNIVERSAL bridge `spongeColl_refutable_of_injective` rather than
+`refSponge_CR` directly — the witness is unchanged in strength and still carries no hypothesis.
+Using them here at the UNBOUNDED
 reference sponge (`Poseidon2Binding.Reference.refSponge`, genuinely `Poseidon2SpongeCR` by
 `refSponge_CR`, NOT BabyBear-bounded — the same abstract-but-not-deployed pole
 `ApexPremiseVacuity §3.2`'s `pairCompress` occupies for `compressInjective`) is the correct, honest
@@ -118,7 +124,9 @@ change. -/
 theorem restHashIffFrameFin_satisfiable :
     RestHashIffFrameFin (RH_fin Reference.refSponge) := by
   rintro k k' ⟨f, rfl⟩ ⟨f', rfl⟩
-  exact restHashIffFrame_of_fin Reference.refSponge Reference.refSponge_CR f f'
+  exact restHashIffFrame_of_fin Reference.refSponge f f'
+    (Dregg2.Circuit.Poseidon2Binding.spongeColl_refutable_of_injective
+      Reference.refSponge Reference.refSponge_CR _)
 
 /-- **CONCRETE EXHIBIT — not the trivial diagonal.** Two DISTINCT reachable states
 (`rootedInit`/`finInit`, differing only in the nullifier-accumulator root) get DISTINCT rest hashes:
