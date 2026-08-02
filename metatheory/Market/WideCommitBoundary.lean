@@ -906,7 +906,8 @@ theorem stateCommitRom_binds (Q : ℕ → ℕ)
     (fun l => Q l + deployedExtractorBudget)
     (fun l => by
       show Q l + (2 * deployedBlockCount + 2) ≤ Q l + deployedExtractorBudget
-      simp only [deployedExtractorBudget])
+      simp only [deployedExtractorBudget]
+      omega)
     hQ stateCommitRom_card_R A hA
 
 /-- **⚑ THE `Classical.choice` COLLISION-ANSWERER IS EXCLUDED AT THE STATE-COMMIT LAYER** — §P's

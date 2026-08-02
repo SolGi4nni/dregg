@@ -173,10 +173,16 @@ def customBindingCols : List Nat :=
   , CUSTOM_VK_TEETH_COL, CUSTOM_VK_TEETH_COL + 1
   , CUSTOM_VK_TEETH_COL + 2, CUSTOM_VK_TEETH_COL + 3 ]
 
--- The concrete deployed column indices at the FIELDS-CANONICITY geometry (were 1679..1686 at the
--- rc-FOLD geometry, 1663..1670 at the 184-limb geometry, 1619..1626 before it).
-#guard customBindingCols
-  == [68, 69, 70, 71, 72, 73, 74, 75, 1791, 1792, 1793, 1794, 1795, 1796, 1797, 1798]
+-- ⚑ The concrete indices used to be spelled here (1619..1626, then 1663..1670, then 1679..1686,
+-- then 1791..1798 — retyped once per flag day, red once per flag day, and detecting nothing in
+-- between, because they were `CUSTOM_{COMMIT,VK}_TEETH_COL` checked against their own definitions).
+-- What the list actually claims is its SHAPE: the eight v1 commitment limbs, then two contiguous
+-- four-column teeth windows at the emitter's own teeth bases.  That holds at any geometry.
+#guard customBindingCols.length == 16
+#guard customBindingCols.take 8 == [68, 69, 70, 71, 72, 73, 74, 75]
+#guard customBindingCols.drop 8
+  == (List.range 4).map (CUSTOM_COMMIT_TEETH_COL + ·) ++ (List.range 4).map (CUSTOM_VK_TEETH_COL + ·)
+#guard customBindingCols.Nodup
 
 /-- Does an `EmittedExpr` read any of the custom binding columns? -/
 def readsBindingCol : EmittedExpr → Bool
@@ -219,7 +225,7 @@ def constrainsBindingCol : VmConstraint2 → Bool
 -- commitment column IS detected, and one reading an unrelated column is NOT.
 #guard constrainsBindingCol (.base (.gate (.var 72))) == true
 #guard constrainsBindingCol (.base (.gate (.var 71))) == true
-#guard constrainsBindingCol (.base (.gate (.var 1791))) == true
+#guard constrainsBindingCol (.base (.gate (.var CUSTOM_COMMIT_TEETH_COL))) == true
 #guard constrainsBindingCol (.base (.gate (.var 54))) == false
 #guard constrainsBindingCol (.windowGate ⟨.nxt 72, true⟩) == true
 

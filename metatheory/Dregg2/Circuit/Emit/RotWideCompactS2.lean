@@ -205,35 +205,6 @@ def s2DeadCols (bb laneBase : Nat) : List Nat :=
 theorem s2DeadCols_length (bb laneBase : Nat) : (s2DeadCols bb laneBase).length = 1008 := by
   simp [s2DeadCols, s2CarrierCols]
 
-/-- How many S2-dead columns sit strictly below `c` — the SPEC form, walked off the explicit
-`s2DeadCols` list. -/
-private def deadBelow (bb laneBase c : Nat) : Nat :=
-  ((s2DeadCols bb laneBase).filter (fun d => decide (d < c))).length
-
-/-! ⚑ **THE GATE THIS FILE DID NOT HAVE, AND THE DEFECT IT WOULD HAVE CAUGHT.**
-
-§2's band offsets are deliberately LITERAL — every proof here is discharged by `omega`, which treats
-a `def` as an opaque atom and so cannot see `B_SPAN - B_STATE_COMMIT`. That is a real constraint, but
-it made every one of them a hand-carried number with no gate, and on 2026-08-01 (`rotatedNumPreLimbs`
-184 → 187) the file was re-typed HALF WAY: `s2CarrierCols`, `s2DeadCols` and `isDeadCol` moved to
-188 / 251 / 882 / 1008 while `dropIdx`, `isS2LookupL`, `s2Plan`, `keptOk` and `compactOk` stayed at
-185 / 247 / 432 / 494 / 868 / 992. ONE FILE, TWO GEOMETRIES, and every `#guard` in it still passed —
-the compaction would have deleted one band and remapped survivors through another.
-
-The weld below is the two-source form that cannot be half-typed: `dropIdx`'s O(1) arithmetic against
-the explicit `s2DeadCols` list, sampled across the whole width. They agree only when every cut base
-and every cut span in `dropIdx` is the band `s2DeadCols` actually deletes. -/
-#guard (List.range 130).all
-  (fun k => decide (dropIdx 0 1200 (k * 10) == k * 10 - deadBelow 0 1200 (k * 10)))
-
--- ...and the bands themselves are the EMITTER's, not this file's opinion of them.
-#guard (s2CarrierCols 0).head? == some Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT
-#guard (s2CarrierCols 0).length
-  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN - Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT
-#guard (s2DeadCols 0 1200).take
-    (2 * (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN - Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT))
-  == s2CarrierCols 0 ++ s2CarrierCols Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN
-
 /-- O(1) membership in the dead-column set (the list `s2DeadCols` is the SPEC; this is the
 computable form the emit-time gates and the index map run on). -/
 def isDeadCol (bb laneBase c : Nat) : Bool :=
@@ -270,6 +241,35 @@ theorem dropIdx_id_of_low (bb laneBase c : Nat) (h1 : c ≤ bb + 188) (h2 : c �
   have h3 : c ≤ bb + 439 := by omega
   rw [if_pos h1, if_pos h3, if_pos h2]
   omega
+
+/-- How many S2-dead columns sit strictly below `c` — the SPEC form, walked off the explicit
+`s2DeadCols` list. -/
+private def deadBelow (bb laneBase c : Nat) : Nat :=
+  ((s2DeadCols bb laneBase).filter (fun d => decide (d < c))).length
+
+/-! ⚑ **THE GATE THIS FILE DID NOT HAVE, AND THE DEFECT IT WOULD HAVE CAUGHT.**
+
+§2's band offsets are deliberately LITERAL — every proof here is discharged by `omega`, which treats
+a `def` as an opaque atom and so cannot see `B_SPAN - B_STATE_COMMIT`. That is a real constraint, but
+it made every one of them a hand-carried number with no gate, and on 2026-08-01 (`rotatedNumPreLimbs`
+184 → 187) the file was re-typed HALF WAY: `s2CarrierCols`, `s2DeadCols` and `isDeadCol` moved to
+188 / 251 / 882 / 1008 while `dropIdx`, `isS2LookupL`, `s2Plan`, `keptOk` and `compactOk` stayed at
+185 / 247 / 432 / 494 / 868 / 992. ONE FILE, TWO GEOMETRIES, and every `#guard` in it still passed —
+the compaction would have deleted one band and remapped survivors through another.
+
+The weld below is the two-source form that cannot be half-typed: `dropIdx`'s O(1) arithmetic against
+the explicit `s2DeadCols` list, sampled across the whole width. They agree only when every cut base
+and every cut span in `dropIdx` is the band `s2DeadCols` actually deletes. -/
+#guard (List.range 130).all
+  (fun k => decide (dropIdx 0 1200 (k * 10) == k * 10 - deadBelow 0 1200 (k * 10)))
+
+-- ...and the bands themselves are the EMITTER's, not this file's opinion of them.
+#guard (s2CarrierCols 0).head? == some Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT
+#guard (s2CarrierCols 0).length
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN - Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT
+#guard (s2DeadCols 0 1200).take
+    (2 * (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN - Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_STATE_COMMIT))
+  == s2CarrierCols 0 ++ s2CarrierCols Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN
 
 /-! ## §3 — the EXPECTED S2 stratum (what the member must carry for the deletion to be sound).
 
