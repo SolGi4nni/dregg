@@ -17,6 +17,12 @@ open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRowEnv VmRange holdsVm_gate_false holdsVm_piFirst_true)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.PredicatesInRangeEmit
+-- ⚑ `predicateInRangeDesc` is COMPILER-AUTHORED (`EffectLower.lowerAir`): its gate bodies are
+-- `AirNormalForm.gateBody <src>`, so each residual is read off the COMPILED body through
+-- `gateBody_eval`, and `lowerConstraint_gateBody` / `lowerPiPinLeg` expose the lowered constraint's
+-- constructor to `holdsVm_gate_false` and to `decide`.
+open Dregg2.Circuit.Emit.AirNormalForm (gateBody gateBody_eval lowerConstraint_gateBody)
+open Dregg2.Circuit.Emit.EffectLower (lowerPiPinLeg)
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -146,31 +152,25 @@ theorem predicateInRange_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → 
   have hc3 : (envAt t 0).loc SLOT_A = (envAt t 0).loc INPUT := by
     have h := hsat.rowConstraints 0 h0 c3SlotGate mem_c3
     rw [hlast] at h
-    simp only [c3SlotGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    have hkey : c3Body.eval (envAt t 0).loc
-        = (envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT := by
-      simp only [c3Body, EmittedExpr.eval]; ring
-    rw [hkey, Int.modEq_zero_iff_dvd] at h
+    simp only [c3SlotGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false, gateBody_eval, c3Src, Dregg2.Circuit.Expr.eval] at h
+    rw [Int.modEq_zero_iff_dvd] at h
     obtain ⟨k, hk⟩ := h
     omega
   have hc5lo : (envAt t 0).loc DIFF_LO = (envAt t 0).loc SLOT_A - (envAt t 0).loc LO := by
     have h := hsat.rowConstraints 0 h0 c5LoGate mem_c5lo
     rw [hlast] at h
-    simp only [c5LoGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    have hkey : c5LoBody.eval (envAt t 0).loc
-        = (envAt t 0).loc DIFF_LO - (envAt t 0).loc SLOT_A + (envAt t 0).loc LO := by
-      simp only [c5LoBody, EmittedExpr.eval]; ring
-    rw [hkey, Int.modEq_zero_iff_dvd] at h
+    simp only [c5LoGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false, gateBody_eval, c5LoSrc, Dregg2.Circuit.Expr.eval] at h
+    rw [Int.modEq_zero_iff_dvd] at h
     obtain ⟨k, hk⟩ := h
     omega
   have hc5hi : (envAt t 0).loc DIFF_HI = (envAt t 0).loc HI - (envAt t 0).loc SLOT_A := by
     have h := hsat.rowConstraints 0 h0 c5HiGate mem_c5hi
     rw [hlast] at h
-    simp only [c5HiGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    have hkey : c5HiBody.eval (envAt t 0).loc
-        = (envAt t 0).loc DIFF_HI - (envAt t 0).loc HI + (envAt t 0).loc SLOT_A := by
-      simp only [c5HiBody, EmittedExpr.eval]; ring
-    rw [hkey, Int.modEq_zero_iff_dvd] at h
+    simp only [c5HiGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false, gateBody_eval, c5HiSrc, Dregg2.Circuit.Expr.eval] at h
+    rw [Int.modEq_zero_iff_dvd] at h
     obtain ⟨k, hk⟩ := h
     omega
   exact ⟨by omega, by omega, by omega, by omega, hc2⟩
@@ -249,7 +249,7 @@ theorem inWitness_satisfies :
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
         c1LoPin, c1HiPin, c2FactPin, c3SlotGate, c5LoGate, c5HiGate, c6LoRange, c6HiRange,
-        factHashLookup, factCommitLookup, g0, g1] <;>
+        factHashLookup, factCommitLookup, lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
       first
         | exact gllo0
         | exact gllo1
@@ -261,7 +261,10 @@ theorem inWitness_satisfies :
         | exact gpc1
         | decide
   rowHashes := by intro i _; trivial
-  rowRanges := by intro i _ r hr; simp only [predicateInRangeDesc, List.not_mem_nil] at hr
+  rowRanges := by
+    intro i _ r hr
+    rw [show predicateInRangeDesc.ranges = [] from rfl] at hr
+    simp at hr
   memAddrsNodup := List.nodup_nil
   memClosed := by intro op hop; rw [memLog_pred] at hop; simp at hop
   memDisciplined := by rw [memLog_pred]; trivial

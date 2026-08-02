@@ -65,6 +65,12 @@ open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRowEnv VmRange holdsVm_gate_false holdsVm_piFirst_true)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.PredicatesArithmeticEmit
+-- ⚑ `predicateGeDesc` is COMPILER-AUTHORED (`EffectLower.lowerAir predicateGeAir`): its gate
+-- bodies are `AirNormalForm.gateBody <src>`, not hand-written `EmittedExpr` literals. Every
+-- residual below is read off the COMPILED body by the generic `gateBody_eval` tooth, and the
+-- lowered constraints are exposed to `decide` by `lowerConstraint_gateBody` / `lowerPiPinLeg`.
+open Dregg2.Circuit.Emit.AirNormalForm (gateBody gateBody_eval lowerConstraint_gateBody)
+open Dregg2.Circuit.Emit.EffectLower (lowerPiPinLeg)
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -181,10 +187,10 @@ theorem predicateGe_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} 
   have hc3 : (envAt t 0).loc SLOT_A = (envAt t 0).loc INPUT := by
     have h := hsat.rowConstraints 0 h0 c3SlotGate mem_c3
     rw [hlast] at h
-    simp only [c3SlotGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    have hkey : c3Body.eval (envAt t 0).loc
-        = (envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT := by
-      simp only [c3Body, EmittedExpr.eval]; ring
+    simp only [c3SlotGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false] at h
+    have hkey : (gateBody c3Src).eval (envAt t 0).loc
+        = (envAt t 0).loc SLOT_A - (envAt t 0).loc INPUT := gateBody_eval c3Src (envAt t 0).loc
     rw [hkey, Int.modEq_zero_iff_dvd] at h
     obtain ⟨k, hk⟩ := h
     omega
@@ -192,10 +198,14 @@ theorem predicateGe_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} 
   have hc5 : (envAt t 0).loc DIFF = (envAt t 0).loc SLOT_A - (envAt t 0).loc THRESHOLD := by
     have h := hsat.rowConstraints 0 h0 c5DiffGate mem_c5
     rw [hlast] at h
-    simp only [c5DiffGate, VmConstraint2.holdsAt, holdsVm_gate_false] at h
-    have hkey : c5Body.eval (envAt t 0).loc
+    simp only [c5DiffGate, VmConstraint2.holdsAt, lowerConstraint_gateBody,
+      holdsVm_gate_false] at h
+    have hkey : (gateBody c5Src).eval (envAt t 0).loc
         = (envAt t 0).loc DIFF - (envAt t 0).loc SLOT_A + (envAt t 0).loc THRESHOLD := by
-      simp only [c5Body, EmittedExpr.eval]; ring
+      rw [gateBody_eval]
+      show (envAt t 0).loc DIFF
+          - ((envAt t 0).loc SLOT_A + (-1) * (envAt t 0).loc THRESHOLD) = _
+      ring
     rw [hkey, Int.modEq_zero_iff_dvd] at h
     obtain ⟨k, hk⟩ := h
     omega
@@ -355,7 +365,7 @@ theorem geWitness_satisfies :
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
         c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, c6RangeLookup,
-        factHashLookup, factCommitLookup, g0, g1] <;>
+        factHashLookup, factCommitLookup, lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
       first
         | exact gl0
         | exact gl1
@@ -365,7 +375,10 @@ theorem geWitness_satisfies :
         | exact gpc1
         | decide
   rowHashes := by intro i _; trivial
-  rowRanges := by intro i _ r hr; simp only [predicateGeDesc, List.not_mem_nil] at hr
+  rowRanges := by
+    intro i _ r hr
+    rw [show predicateGeDesc.ranges = [] from rfl] at hr
+    simp at hr
   memAddrsNodup := List.nodup_nil
   memClosed := by intro op hop; rw [memLog_pred] at hop; simp at hop
   memDisciplined := by rw [memLog_pred]; trivial

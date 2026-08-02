@@ -70,8 +70,14 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.ChipNarrowLookup (narrowTable chip_lookup_narrow_sound_of_wide_table)
 open Dregg2.Circuit.Emit.MerkleMembershipEmit
   (merkleMembershipDesc level0Lookup level1Lookup continuityGate continuityLastFix rootPin contBody
-   continuity_body_zero_iff
+   continuity_body_zero_iff merkleDesc_constraints level0Leg level1Leg contSrc
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 ROOT_PI)
+-- ⚑ The descriptor is COMPILER-AUTHORED (`EffectLower.lowerAir` of `merkleAir`), so every
+-- statement below reaches its constraint list through `merkleDesc_constraints` (the compiler's
+-- output, by `rfl`) and every gate body through the generic `gateBody_eval` tooth — never through
+-- a hand-written `EmittedExpr` literal, which no longer exists.
+open Dregg2.Circuit.Emit.AirNormalForm
+  (gateBody gateBody_eval liftTuple_emit lowerConstraint_gateBody)
 
 set_option autoImplicit false
 
@@ -134,11 +140,16 @@ theorem merkleMembers2_as_fold (hash : List ℤ → ℤ) (leaf s0a s0b s0c s1a s
 
 /-! ## §2 — extracting the row facts from `Satisfied2` (the descriptor's own constraints). -/
 
-/-- The membership tactic: every constraint we name is literally in `merkleMembershipDesc`. -/
+/-- The membership tactic: every constraint we name is literally in `merkleMembershipDesc`.
+⚑ Routed through `merkleDesc_constraints` — the COMPILER's output list, by `rfl` — because the
+descriptor is now `lowerAir merkleAir` and no list literal survives to `simp` on. `liftTuple_emit`
+re-establishes that a lowered chip leg's tuple IS the `chipLookupTupleNarrow` bytes it was lifted
+from, and `lowerConstraint_gateBody` that a lowered gate IS `.base (.gate (gateBody src))`. -/
 local macro "mm_mem" : tactic =>
   `(tactic| (show _ ∈ merkleMembershipDesc.constraints;
-             simp [merkleMembershipDesc, level0Lookup, level1Lookup, continuityGate,
-               continuityLastFix, rootPin]))
+             rw [merkleDesc_constraints];
+             simp [level0Lookup, level1Lookup, continuityGate, continuityLastFix, rootPin,
+               level0Leg, level1Leg, contBody, liftTuple_emit, lowerConstraint_gateBody]))
 
 /-- A declared arity-4 chip lookup, against the NAMED sound chip table, forces the digest column to
 be the genuine Poseidon2 hash of the four evaluated input columns — on ANY row (the lookup is not
@@ -230,9 +241,13 @@ theorem merkleMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {mi
   -- chain continuity: CUR1 = PARENT0 (the levels chain). The `when_transition` gate binds
   -- `CUR1 − PARENT0 ≡ 0 [ZMOD p]`; both cells are canonical, so this lifts to a genuine ℤ equality
   -- (load-bearing: `CUR1` is re-hashed into the level-1 digest, where mod-`p` cannot thread).
+  -- ⚑ the continuity residual, read off the COMPILED body by the generic `gateBody_eval` tooth
+  -- (`contBody` is `AirNormalForm.gateBody contSrc`, not a hand-written literal).
+  have hcontKey : contBody.eval (envAt t 0).loc
+      = (envAt t 0).loc CUR1 - (envAt t 0).loc PARENT0 := gateBody_eval contSrc (envAt t 0).loc
   have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 :=
     eq_of_modEq_canon hc.cur1 hc.parent0
-      ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+      ((gate_modEq_iff hcontKey).mp
         (activeGateZero hsat 0 hlen0 hlast contBody (by mm_mem)))
   -- root pin: PARENT1 = the public root PI (first row); mod-`p` lifted by canonicality of both.
   have hroot : (envAt t 0).loc PARENT1 = t.pub ROOT_PI :=
@@ -322,7 +337,9 @@ theorem concrete_sat :
           level0Lookup, level1Lookup, continuityGate, continuityLastFix, rootPin] <;>
         trivial)
   · intro i _; trivial
-  · intro i _ r hr; simp [merkleMembershipDesc] at hr
+  · intro i _ r hr
+    rw [show merkleMembershipDesc.ranges = [] from rfl] at hr
+    simp at hr
   · exact List.nodup_nil
   · intro op hop; rw [hmemlog] at hop; simp at hop
   · rw [hmemlog]; trivial

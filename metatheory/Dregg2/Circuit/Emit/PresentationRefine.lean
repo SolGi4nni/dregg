@@ -70,6 +70,10 @@ open Dregg2.Circuit.DescriptorIR2
    memLog mapLog)
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff eqToModEq)
 open Dregg2.Circuit.Emit.PresentationEmit
+-- ⚑ `presentationFreshnessDesc` is COMPILER-AUTHORED (`EffectLower.lowerAir`), so no list literal
+-- survives to `simp` on: every membership below goes through `presentationFreshnessDesc_constraints`
+-- (the compiler's output, by `rfl`) and every gate residual through the generic `gateBody_eval`.
+open Dregg2.Circuit.Emit.AirNormalForm (gateBody gateBody_eval lowerConstraint_gateBody)
 open Dregg2.Crypto
 
 set_option autoImplicit false
@@ -136,14 +140,14 @@ theorem presentation_satisfied2_fresh
   -- diff range lookup: DIFF ∈ [0, 2^30) (an honest ℤ bound — the lookup is not a field congruence).
   have hdr : 0 ≤ (envAt t 0).loc DIFF ∧ (envAt t 0).loc DIFF < 2 ^ FRESH_BITS := by
     have hmem : diffRangeLookup ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
+      rw [presentationFreshnessDesc_constraints]
       exact List.mem_append_right _ (by simp)
     have h : Lookup.holdsAt t.tf (envAt t 0) ⟨.range, [.var DIFF]⟩ := hrow _ hmem
     exact lookup_replaces_range FRESH_BITS t.tf hrange (envAt t 0) DIFF h
   -- hi range lookup: HI ∈ [0, 2^30).
   have hhr : 0 ≤ (envAt t 0).loc HI ∧ (envAt t 0).loc HI < 2 ^ FRESH_BITS := by
     have hmem : hiRangeLookup ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
+      rw [presentationFreshnessDesc_constraints]
       exact List.mem_append_right _ (by simp)
     have h : Lookup.holdsAt t.tf (envAt t 0) ⟨.range, [.var HI]⟩ := hrow _ hmem
     exact lookup_replaces_range FRESH_BITS t.tf hrange (envAt t 0) HI h
@@ -156,13 +160,15 @@ theorem presentation_satisfied2_fresh
   -- congruence is the genuine ℤ identity `DIFF + HI = p/2`.
   have hbe : (envAt t 0).loc DIFF + (envAt t 0).loc HI = HALF_P := by
     have hmem : boundGate ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
+      rw [presentationFreshnessDesc_constraints]
       exact List.mem_append_right _ (by simp)
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.gate boundBody) := hrow _ hmem
     rw [hl, holdsVm_gate_false] at h
     have hmod : (envAt t 0).loc DIFF + (envAt t 0).loc HI ≡ HALF_P [ZMOD 2013265921] :=
-      (gate_modEq_iff (by simp only [boundBody, HALF_P, EmittedExpr.eval]; ring)).mp h
+      -- ⚑ the residual read off the COMPILED body (`boundBody = gateBody boundSrc`) by the generic
+      -- `gateBody_eval` tooth; `boundSrc.rhs` IS the `HALF_P` literal.
+      (gate_modEq_iff (gateBody_eval boundSrc (envAt t 0).loc)).mp h
     rw [Int.modEq_iff_dvd] at hmod
     obtain ⟨k, hk⟩ := hmod
     simp only [HALF_P] at hk ⊢
@@ -174,14 +180,18 @@ theorem presentation_satisfied2_fresh
   -- windows on the two block heights, the field subtraction is wrap-free, so this is the ℤ identity.
   have hdc : (envAt t 0).loc DIFF = (envAt t 0).loc NOT_AFTER - (envAt t 0).loc VERIFIER := by
     have hmem : diffBindGate ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
+      rw [presentationFreshnessDesc_constraints]
       exact List.mem_append_right _ (by simp)
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.gate diffBindBody) := hrow _ hmem
     rw [hl, holdsVm_gate_false] at h
     have hmod : (envAt t 0).loc DIFF
         ≡ (envAt t 0).loc NOT_AFTER - (envAt t 0).loc VERIFIER [ZMOD 2013265921] :=
-      (gate_modEq_iff (by simp only [diffBindBody, EmittedExpr.eval]; ring)).mp h
+      (gate_modEq_iff (by
+        rw [show diffBindBody = gateBody diffBindSrc from rfl, gateBody_eval]
+        show (envAt t 0).loc DIFF
+            - ((envAt t 0).loc NOT_AFTER + (-1) * (envAt t 0).loc VERIFIER) = _
+        ring)).mp h
     rw [Int.modEq_iff_dvd] at hmod
     obtain ⟨k, hk⟩ := hmod
     simp only [HALF_P] at hbound
@@ -194,7 +204,8 @@ theorem presentation_satisfied2_fresh
     intro j hj
     have hmem : (VmConstraint2.base (.piBinding VmRow.first j j))
         ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc, summaryPins]
+      rw [presentationFreshnessDesc_constraints]
+      simp only [summaryPins]
       exact List.mem_append_left _ (List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩)
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.piBinding VmRow.first j j) := hrow _ hmem
@@ -203,7 +214,7 @@ theorem presentation_satisfied2_fresh
     exact eq_of_modEq_canon h hl0 hl1 hp0 hp1
   · -- verifier piBinding (mod `p`) → verifier anchoring (lifted off canonicality of both sides).
     have hmem : verifierPin ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
+      rw [presentationFreshnessDesc_constraints]
       exact List.mem_append_right _ (by simp)
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.piBinding VmRow.first VERIFIER PI_VERIFIER) := hrow _ hmem
@@ -303,7 +314,7 @@ theorem honest_satisfies :
     intro i hi c hc
     have hlen2 : honestTrace.rows.length = 2 := rfl
     rw [hlen2] at hi ⊢
-    simp only [presentationFreshnessDesc] at hc
+    rw [presentationFreshnessDesc_constraints] at hc
     have hi2 : i = 0 ∨ i = 1 := by omega
     rcases hi2 with rfl | rfl
     · -- row 0 (first, not last): piBindings + gates + lookups all fire.
@@ -327,13 +338,15 @@ theorem honest_satisfies :
         · show VmConstraint.holdsVm (envAt honestTrace 0) (0 == 0) (0 + 1 == 2) (.gate diffBindBody)
           rw [show (0 + 1 == 2) = false from rfl, holdsVm_gate_false]
           exact eqToModEq (by show diffBindBody.eval honestRow = 0
-                              simp only [diffBindBody, EmittedExpr.eval, honestRow_diff,
+                              simp only [diffBindBody, gateBody_eval, diffBindSrc,
+                                Dregg2.Circuit.Expr.eval, honestRow_diff,
                                 honestRow_notafter, honestRow_verifier]
                               norm_num)
         · show VmConstraint.holdsVm (envAt honestTrace 0) (0 == 0) (0 + 1 == 2) (.gate boundBody)
           rw [show (0 + 1 == 2) = false from rfl, holdsVm_gate_false]
           exact eqToModEq (by show boundBody.eval honestRow = 0
-                              simp only [boundBody, EmittedExpr.eval, honestRow_diff, honestRow_hi]
+                              simp only [boundBody, gateBody_eval, boundSrc,
+                                Dregg2.Circuit.Expr.eval, honestRow_diff, honestRow_hi]
                               norm_num)
         · exact honest_range_lookup 0 DIFF 500 rfl (by norm_num) (by norm_num [FRESH_BITS])
         · exact honest_range_lookup 0 HI 1006632460 rfl (by norm_num) (by norm_num [FRESH_BITS])
@@ -349,8 +362,9 @@ theorem honest_satisfies :
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at htail
         rcases htail with rfl | rfl | rfl | rfl | rfl | rfl | rfl
         · simp [verifierPin, VmConstraint2.holdsAt, VmConstraint.holdsVm]
-        · simp [diffBindGate, VmConstraint2.holdsAt, VmConstraint.holdsVm]
-        · simp [boundGate, VmConstraint2.holdsAt, VmConstraint.holdsVm]
+        · simp [diffBindGate, lowerConstraint_gateBody, VmConstraint2.holdsAt,
+            VmConstraint.holdsVm]
+        · simp [boundGate, lowerConstraint_gateBody, VmConstraint2.holdsAt, VmConstraint.holdsVm]
         · exact honest_range_lookup 1 DIFF 500 rfl (by norm_num) (by norm_num [FRESH_BITS])
         · exact honest_range_lookup 1 HI 1006632460 rfl (by norm_num) (by norm_num [FRESH_BITS])
         · -- diffBindLast (boundary .last) on row 1 (last) — FIRES; holds by construction.
@@ -358,7 +372,8 @@ theorem honest_satisfies :
             (.boundary VmRow.last diffBindBody)
           rw [show (1 + 1 == 2) = true from rfl, holdsVm_boundaryLast_true]
           exact eqToModEq (by show diffBindBody.eval honestRow = 0
-                              simp only [diffBindBody, EmittedExpr.eval, honestRow_diff,
+                              simp only [diffBindBody, gateBody_eval, diffBindSrc,
+                                Dregg2.Circuit.Expr.eval, honestRow_diff,
                                 honestRow_notafter, honestRow_verifier]
                               norm_num)
         · -- boundLast (boundary .last) on row 1 (last) — FIRES; holds by construction.
@@ -366,13 +381,15 @@ theorem honest_satisfies :
             (.boundary VmRow.last boundBody)
           rw [show (1 + 1 == 2) = true from rfl, holdsVm_boundaryLast_true]
           exact eqToModEq (by show boundBody.eval honestRow = 0
-                              simp only [boundBody, EmittedExpr.eval, honestRow_diff, honestRow_hi]
+                              simp only [boundBody, gateBody_eval, boundSrc,
+                                Dregg2.Circuit.Expr.eval, honestRow_diff, honestRow_hi]
                               norm_num)
   · intro i _
     simp only [presentationFreshnessDesc]
     exact True.intro
   · intro i _ r hr
-    simp [presentationFreshnessDesc] at hr
+    rw [show presentationFreshnessDesc.ranges = [] from rfl] at hr
+    simp at hr
   · intro op hop
     simp [hml] at hop
   · rw [hml]; exact True.intro
@@ -435,7 +452,7 @@ theorem expired_not_satisfied (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (m
   have hi0 : 0 < expiredTrace.rows.length := by
     rw [show expiredTrace.rows.length = 2 from rfl]; omega
   have hmem : diffRangeLookup ∈ presentationFreshnessDesc.constraints := by
-    simp only [presentationFreshnessDesc]
+    rw [presentationFreshnessDesc_constraints]
     exact List.mem_append_right _ (by simp)
   have hc : Lookup.holdsAt expiredTrace.tf (envAt expiredTrace 0) ⟨.range, [.var DIFF]⟩ :=
     h.rowConstraints 0 hi0 diffRangeLookup hmem
