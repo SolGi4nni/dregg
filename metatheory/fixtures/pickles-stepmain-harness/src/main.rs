@@ -432,7 +432,7 @@ fn main() {
         );
     }
     println!(
-        "== VERDICT: five sub-circuits of `step_verifier.verify_one` ASSEMBLE from Lean, PROVE"
+        "== VERDICT: seven sub-circuits of `step_verifier.verify_one` ASSEMBLE from Lean, PROVE"
     );
     println!("   pure-Rust with verify()==true, and BIND at every sub-circuit boundary. ==");
 }

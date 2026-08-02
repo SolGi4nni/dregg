@@ -29,7 +29,7 @@ SOURCE of the pinned real-block bytes; the Lean here reproduces them and refuses
 No Rust AIR, no hand-written constraints. This aggregate authors nothing new — it only forces the
 already-authored six into the build graph so their negative assertions can go red.
 
-## WHAT IS ROOTED HERE (the six Mina wrap welds)
+## WHAT IS ROOTED HERE (the six Mina wrap welds + the synthesized-circuit weld)
 
   * `Dregg2.Bridge.MinaWrapChallengesWeld` — Fiat-Shamir challenges + opening wires == real block 539508
   * `Dregg2.Bridge.MinaWrapDeferred`       — `expandDeferred`: the deferred-value expansion, refutable
@@ -37,6 +37,11 @@ already-authored six into the build graph so their negative assertions can go re
   * `Dregg2.Bridge.MinaWrapFtEval0Weld`    — `ft_eval0` + the `gateLinConst` reproduction (six gate bodies)
   * `Dregg2.Bridge.MinaWrapPublicInput`    — the wrap public-input slot layout + `publicComm` gold
   * `Dregg2.Bridge.TickShifts`             — the derived coset tick-shifts (one `powFast` body, no twin)
+  * `Dregg2.Bridge.StepMainFtEval0RealBlock` — ⚑ the SYNTHESIZED `ft_eval0` circuit's own straight-line
+      program (the one `KimchiStepMain`'s `r6_ft_eval0` rows execute) run on block 539508's Step wire:
+      it reproduces `FT_EVAL0` and the constant term byte-for-byte, with four red paths (a bent coset
+      shift, the identity shifts, `er` in place of the base endo, a wrong domain). Rooted HERE and not
+      in `FFI.lean` for the same reason the weld it sits beside is: one-block fixtures.
 
 (The DAG is redundant on purpose: `MinaWrapFtEval0Weld` transitively pulls Deferred/DeferredWeld/
 PublicInput/TickShifts, and `MinaWrapChallengesWeld` is a second top. All six are imported explicitly
@@ -53,6 +58,7 @@ import Dregg2.Bridge.MinaWrapDeferredWeld
 import Dregg2.Bridge.MinaWrapFtEval0Weld
 import Dregg2.Bridge.MinaWrapPublicInput
 import Dregg2.Bridge.TickShifts
+import Dregg2.Bridge.StepMainFtEval0RealBlock
 
 namespace Dregg2.MinaBridgeGuards
 
