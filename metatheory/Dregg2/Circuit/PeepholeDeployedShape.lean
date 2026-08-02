@@ -348,15 +348,25 @@ open Dregg2.Circuit.Emit.DfaRoutingEmit (dfaRoutingDesc)
 the two chip lookups. No window gate at all. -/
 theorem predicateNeq_noPlainWindowGate : NoPlainWindowGate predicateNeqDesc.constraints := by
   intro w hw
-  simp only [predicateNeqDesc, Dregg2.Circuit.Emit.PredicatesNeqEmit.c1ThresholdPin,
+  -- ⚑ The descriptor is COMPILER-authored (`lowerAir`), so `predicateNeqDesc` no longer unfolds to
+  -- a list of the seven constraint names: reach the list through the module's own `rfl` lemma, and
+  -- expose the two `.gate` legs' constructor through `lowerConstraint_gateBody` (`cgH` is a stuck
+  -- `match` that `simp` alone will not see past).
+  rw [Dregg2.Circuit.Emit.PredicatesNeqEmit.predicateNeqDesc_constraints] at hw
+  simp only [Dregg2.Circuit.Emit.PredicatesNeqEmit.c1ThresholdPin,
     Dregg2.Circuit.Emit.PredicatesNeqEmit.c2FactPin,
     Dregg2.Circuit.Emit.PredicatesNeqEmit.c3SlotGate,
     Dregg2.Circuit.Emit.PredicatesNeqEmit.c5DiffGate,
     Dregg2.Circuit.Emit.PredicatesNeqEmit.cNzGate,
     Dregg2.Circuit.Emit.PredicatesNeqEmit.factHashLookup,
     Dregg2.Circuit.Emit.PredicatesNeqEmit.factCommitLookup,
-    List.mem_cons, List.not_mem_nil] at hw
-  simp at hw
+    Dregg2.Circuit.Emit.AirNormalForm.lowerConstraint_gateBody,
+    List.mem_cons, List.not_mem_nil, or_false] at hw
+  -- Seven constructor clashes: two `.base .piBinding` pins, three `.base .gate` compiled bodies,
+  -- two `.lookup` weld legs. Not one of them is a `.windowGate`, so the class holds VACUOUSLY here
+  -- — which is the point of the pairing with `dfaRoutingDesc` below.
+  rcases hw with h | h | h | h | h | h | h
+  all_goals (exfalso; simp at h)
 
 theorem predicateNeq_frontier_noop : frontierCollapse predicateNeqDesc = predicateNeqDesc :=
   frontierCollapse_id_of_noPlain _ predicateNeq_noPlainWindowGate
