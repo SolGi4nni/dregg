@@ -230,14 +230,24 @@ permutations are the app logic and `group_map` (#5).
     EVERY transcript challenge — and shows the on-curve row refusing it, and shows that substituting
     a VALID on-curve quotient chunk moves `ft_comm` and the fold, which is the difference between
     consuming a commitment and merely absorbing one.
-  * ⚠ **THE RESIDUE, counted.** Of the committed shape's 142 R1-absorbed words, **31 are still free
-    `msgVal` witnesses** (45 before §6b, 46 before §3c). They are `check_bulletproof`'s
-    `Shifted_value` scalar absorptions — `combined_inner_product`, the opening's `z_1`/`z_2`,
-    `delta` and `sg` (`step_verifier.ml:245-330`) — and they leave the list when
-    `check_bulletproof`'s tail is assembled (#5), not before.
+    ⚠ What that does NOT do: an ON-CURVE substitution is refused by no rung here. The check that
+    would refuse it is the IPA opening — `verified`, #11, still a witnessed boolean. The same is
+    true of the 48 fold commitments since #3; what changed for `t_comm` is that it stopped being a
+    word nothing reads.
+  * ⚠ **THE RESIDUE, counted — and the inherited count was wrong about WHAT it is.** Of the
+    committed shape's 142 R1-absorbed words, **31 are still free `msgVal` witnesses** (45 before
+    §6b, 46 before §3c). The previous rung called them "the `Shifted_value` / opening scalar
+    absorptions"; read at source they are not. `verify_one` absorbs **117** sponge items, and only
+    **SIX** of the 31 stand for ones this file has not wired — `sg_old[0]`'s two coordinates (the
+    fold's accumulator seed, which gets no round), `check_bulletproof`'s `absorb sponge Scalar
+    advice.combined_inner_product` as field+bit (`step_verifier.ml:79-81,256`) and `absorb sponge PC
+    delta` (`:321`). The other **25 are `absorbs = 71` overshooting 117**: a SHAPE correction, not a
+    sub-circuit.
 
-So: the sponge input is derived for the verifier key AND for the quotient commitment, and it is not
-for `check_bulletproof`'s scalars. Both halves matter; the second is 31/142 from where it started.
+So: the sponge input is derived for the verifier key AND for the quotient commitment. What is left
+is six unwired absorptions and a shape that swallows 25 words upstream never feeds it — and saying
+that, rather than "31 scalar absorptions", is the difference between a residue and a backlog item
+that would never have been checked.
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -1249,9 +1259,18 @@ before §6b) — and a prover who grinds them steers every squeeze, not by break
 three `lowest_128_bits` range-check both parts since 2026-08-02) but by choosing the sponge's INPUT.
 What they should be is now a SHORTER list than it was: `sponge_after_index` left it (§3c) and
 `ft_comm`'s seven `t_comm` chunks left it (§6b, 14 words) — and the latter left it by being
-CONSUMED, not merely absorbed. What remains is `check_bulletproof`'s `Shifted_value` scalar
-absorptions (`combined_inner_product`, `z_1`, `z_2`, `delta`, `sg`). §12b pins the count as an
-equality. -/
+CONSUMED, not merely absorbed.
+
+⚠ ⚑ AND WHAT THE 31 ACTUALLY ARE, read at source rather than inherited. Only **six** of them stand
+for absorptions `verify_one` really performs and this file has not wired: `sg_old[0]`'s two
+coordinates (commitment 0 is where `combine_split_commitments`' fold STARTS, so it gets no round and
+no block), and `check_bulletproof`'s `absorb sponge Scalar advice.combined_inner_product` (2 sponge
+items — `absorb_scalar (x, b)` is `Field x` then `Bits [b]`, `step_verifier.ml:79-81,256`) and
+`absorb sponge PC delta` (`:321`). The other **25** are `absorbs = 71` OVERSHOOTING: `verify_one`
+absorbs `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items and this shape swallows 142. That
+is a SHAPE correction, not a sub-circuit — and the previous rung's note called all 31 "the
+`Shifted_value` / opening scalar absorptions", which over-counts them by four. §12b pins the count
+as an equality. -/
 def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
 
 /-- ⚑ The VARIABLE absorbed at lane `j` of transcript block `b`. For a block that carries one of the
@@ -4254,8 +4273,7 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 -- commitment absorbs `msgVal` fixtures that no row pins; block 0 lane 0 is no longer one of them
 -- (§3c wires `index_digest` there), and since §6b seven of them carry `t_comm`'s quotient chunks,
 -- so of `2·absorbs = 142` absorbed words **31 are free where 45 were before §6b**. EQUALITY, so
--- assembling one of the rest moves this number — and so does un-assembling `ft_comm`. What remains
--- is `check_bulletproof`'s `Shifted_value` scalar absorptions.
+-- assembling one of the rest moves this number — and so does un-assembling `ft_comm`.
 #guard shapeStep.absorbs - (absRoundList shapeStep).length == 23
 #guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 23
 #guard (List.range shapeStep.absorbs).foldl
@@ -4280,6 +4298,14 @@ def foldMulOf (sq : Nat) : ZMod pN :=
            msgVar shapeStep b j == vIdxD shapeStep 0)) 0 == 1
 #guard msgVar shapeStep 0 0 == vIdxD shapeStep 0
 #guard msgValOf shapeStep (stepBases shapeStep) 0 0 == indexDigest
+-- ⚠ ⚑ …and the 31 are NOT 31 unwired upstream absorptions, which is what the inherited note said.
+-- `verify_one` absorbs `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items (index_digest,
+-- padded `sg_old`, `x_hat`, 15 `w_comm`, `z_comm`, 7 `t_comm`, `combined_inner_product` as
+-- field+bit, 15 `(L,R)` pairs, `delta` — `step_verifier.ml:534-567`, `:256,315,321`), and this shape
+-- swallows 142. SIX of the 31 are real and unwired (`sg_old[0]`, `combined_inner_product`, `delta`);
+-- the other 25 are `absorbs` overshooting, which is a shape correction and not a sub-circuit.
+#guard 2 * shapeStep.absorbs == 142
+#guard 2 * shapeStep.absorbs - 117 == 25
 -- …and the SEGMENT-C count, which is the other half and the bigger one: the `Not_opt` prefix was
 -- 58 `hmVal` fixtures and is now `sponge_after_index`'s 56 derived words plus the two app-state
 -- words. **58 free → 2.**
@@ -4938,6 +4964,13 @@ def ftcSwap0 : FtcData := runFtcWith shapeSmoke tS.ftw (tcSwapped 0)
                      tS.ftw.zetaVal).res != (tS.ftc.terms.getD 1 default).res
 -- …and so does each SCALAR: bend `perm` by one and `f_comm` moves, so `ft_comm` does.
 #guard (ftcScaleTerm ftcSigma (tS.ftw.permVal + 1)).res != (tS.ftc.terms.getD 0 default).res
+-- ⚠ ⚑ **AND SAY WHAT THAT DOES NOT DO.** An ON-CURVE substitution is REFUSED by no rung in this
+-- assembly. It moves `ft_comm`, R4 round `FTC_ROUND`'s base, the fold and every downstream value —
+-- and the check that would refuse it is the IPA opening, i.e. `verified`, which is simplification
+-- #11 and is still a witnessed boolean. What §6b buys is narrower and is the thing that was
+-- missing: `t_comm` is no longer a word the sponge eats and NOTHING reads. It is an
+-- `Inner_curve.typ` value carrying a membership check, an operand of a sub-circuit, and a term in
+-- the point R4 folds — so a grind on it is refused (below) instead of being invisible.
 
 -- ⚑⚑ **THE FORMULA, AGAINST A GOLD o1-labs' OWN `SRS::verify` PINNED.** Everything above checks
 -- the assembly against itself and against `PastaCurve`. This checks `common.ml:246-256` — the shape
