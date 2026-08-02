@@ -175,7 +175,9 @@ def TR_AVAIL_BB : Nat := AVAIL_WIDTH
 
 #guard TR_AVAIL_BB == transferVmDescriptorAvail.traceWidth
 #guard transferAvailV3W.piCount == 46
-#guard transferAvailV3W.traceWidth == 1829   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+-- MODEL vs EMISSION (was the literal 1829 — decoration; the key nonet moved it).
+#guard transferAvailV3W.traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf transferVmDescriptorAvail
 #guard graduableWide transferVmDescriptorAvail
 -- the Rust avail-pad key survives every wrapper (all append-only on the name)
 #guard transferAvailV3W.name.startsWith "dregg-effectvm-transfer-v1-avail"
@@ -183,9 +185,11 @@ def TR_AVAIL_BB : Nat := AVAIL_WIDTH
 /-- The AVAIL wide membership teeth columns: past the avail wide carriers
 (`1717 + 992 = 2709..2710` — the avail mirror of `MEMBERSHIP_TEETH_COL_WIDE = 2699`). The teeth
 PI slots are UNCHANGED (50..51 — the avail rotated face publishes the same 46 + 4 rc PIs). -/
-def MEMBERSHIP_TEETH_COL_AVAIL_WIDE : Nat := 2821   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+def MEMBERSHIP_TEETH_COL_AVAIL_WIDE : Nat := transferAvailV3W.traceWidth + wideAppendixSpan
 
-#guard MEMBERSHIP_TEETH_COL_AVAIL_WIDE == transferAvailV3W.traceWidth + wideAppendixSpan
+-- ⚑ This was the literal `2821` with the relation below as its `#guard`.  The relation was the only
+-- real content, so it is now the DEFINITION and the guard is gone: a teeth column that follows the
+-- carriers cannot fall behind them, and a flag day moves it without anyone editing a number.
 
 /-- The crown AVAIL wide host BEFORE the teeth-column width bump (named so the membership /
 peel lemmas can `show` into it — `{ … with traceWidth := … }` keeps constraints verbatim). -/

@@ -159,7 +159,11 @@ def FEE_AVAIL_BB : Nat := FEE_AVAIL_WIDTH
 #guard FEE_AVAIL_BB == transferFeeVmDescriptorAvail.traceWidth
 #guard FEE_AVAIL_BB == 204
 #guard transferFeeAvailV3W.piCount == 47
-#guard transferFeeAvailV3W.traceWidth == 1835   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+-- MODEL vs EMISSION (was the literal 1835 — a constant against its own definition, moved by the
+-- 2026-08-01 key nonet).  `gradRotWidthOf` is the graduation model; the left side is what
+-- `v3OfFrozenWide` actually emitted for the FEE avail face.
+#guard transferFeeAvailV3W.traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf transferFeeVmDescriptorAvail
 #guard graduableWide transferFeeVmDescriptorAvail
 -- the Rust avail-pad key (TRANSFER_FEE_AVAIL_PAD = 16) survives every wrapper
 #guard transferFeeAvailV3W.name.startsWith "dregg-effectvm-transfer-v1-fee-avail"

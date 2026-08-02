@@ -244,7 +244,10 @@ def makeSovereignV3DeployedWide : EffectVmDescriptor2 :=
 #guard makeSovereignV3Deployed.traceWidth == makeSovereignV3.traceWidth + 32
 #guard makeSovereignV3DeployedWide.piCount == 78
 #guard makeSovereignV3DeployedWide.traceWidth == makeSovereignV3.traceWidth + wideAppendixSpan + 32
-#guard makeSovereignV3.traceWidth == 1819   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+-- MODEL vs EMISSION (was the literal 1819 — decoration the key nonet moved).
+#guard makeSovereignV3.traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf
+       Dregg2.Circuit.Emit.EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor
 #guard MS_WIDE_BB == 188
 
 /-- **THE FULL PEEL — `Satisfied2 makeSovereignV3Deployed ⟹ Satisfied2 makeSovereignV3`** (gate →
@@ -507,7 +510,9 @@ def transferV3MembershipWide : EffectVmDescriptor2 :=
 #guard transferV3.piCount == 46
 #guard transferV3Membership.piCount == 52
 #guard transferV3Membership.traceWidth == transferV3.traceWidth + 2
-#guard transferV3.traceWidth == 1819   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+-- MODEL vs EMISSION (was the literal 1819 — decoration the key nonet moved).
+#guard transferV3.traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor
 #guard transferV3MembershipWide.piCount == 68
 #guard transferV3MembershipWide.traceWidth == transferV3.traceWidth + wideAppendixSpan + 2
 

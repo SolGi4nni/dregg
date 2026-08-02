@@ -588,8 +588,14 @@ theorem RingEndpointAccepted.receipt_transition {permW : List ℤ → List ℤ}
 -- must allocate exactly the appendix `wideAppend` appends, and the appended carrier blocks must end
 -- exactly at the declared width.  The old `589` / `1581` were constants checked against their own
 -- definitions; they moved together at the key-nonet flag day and detected nothing on the way.
-#guard Col.postLimbs == Col.preLimbs + Dregg2.Circuit.Emit.rotatedNumPreLimbs + 1
-#guard Col.receiptLanes == Col.postLimbs + Dregg2.Circuit.Emit.rotatedNumPreLimbs + 1
+-- ⚑ THE GATE THAT WOULD HAVE CAUGHT THE MISBINDING.  `wideAppend` absorbs each block's iroot at the
+-- emitter's own in-block offset `B_IROOT`; this module's `preIroot`/`postIroot` are where the host
+-- PUTS it.  They agree only when the host's block stride is the extent the chain reads — and they
+-- did NOT agree at HEAD, which is what let the BEFORE chain swallow `postLimbs`.
+#guard Col.preIroot == Col.preLimbs + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
+#guard Col.postIroot == Col.postLimbs + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
+#guard Col.preIroot < Col.postLimbs
+#guard Col.postIroot < Col.receiptLanes
 #guard shieldedRingEndpointHost.traceWidth == Col.hostWidth
 #guard shieldedRingEndpointDescriptor.traceWidth == Col.hostWidth + wideAppendixSpan
 #guard wideAfterCBase Col.hostWidth + wideCarrierBlockSpan

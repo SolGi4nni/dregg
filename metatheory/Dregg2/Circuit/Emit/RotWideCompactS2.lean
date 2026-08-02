@@ -179,9 +179,8 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
 
 /-- One rotated block's S2 carrier/digest columns: the 1-felt `state_commit` digest at
-`base + 185` (`B_STATE_COMMIT`) and the 61 chain carriers at `base + 186 .. base + 246`
-(62 columns). The 184 pre-iroot limbs and the iroot (`base + 0 .. base + 184`) are NOT here — the
-wide chain absorbs them; they stay.
+`base + B_STATE_COMMIT` and the chain carriers up to `base + B_SPAN - 1`. The pre-iroot limbs and
+the iroot (`base + 0 .. base + B_IROOT`) are NOT here — the wide chain absorbs them; they stay.
 
 ⚑ The band literals here stay LITERAL rather than `B_STATE_COMMIT`/`B_SPAN`: every proof in §2 is
 discharged by `omega`, which treats a `def` as an opaque atom and so cannot see that
@@ -198,13 +197,40 @@ discharged by `omega`, which treats a `def` as an opaque atom and so cannot see 
 def s2CarrierCols (base : Nat) : List Nat := (List.range 63).map (base + 188 + ·)
 
 /-- ALL columns the S2 deletion removes from a member whose rotated BEFORE block sits at `bb`
-(AFTER at `bb + 247` = `B_SPAN`) and whose S2 chip-lane region starts at `laneBase`: the two
-62-column carrier bands plus the contiguous `124 × 7 = 868` graduated lane columns. 992 columns. -/
+(AFTER at `bb + B_SPAN`) and whose S2 chip-lane region starts at `laneBase`: the two carrier bands
+plus the contiguous `2 · (rotV3SitesAt 0).length × 7` graduated lane columns. -/
 def s2DeadCols (bb laneBase : Nat) : List Nat :=
   s2CarrierCols bb ++ s2CarrierCols (bb + 251) ++ (List.range 882).map (laneBase + ·)
 
 theorem s2DeadCols_length (bb laneBase : Nat) : (s2DeadCols bb laneBase).length = 1008 := by
   simp [s2DeadCols, s2CarrierCols]
+
+/-- How many S2-dead columns sit strictly below `c` — the SPEC form, walked off the explicit
+`s2DeadCols` list. -/
+private def deadBelow (bb laneBase c : Nat) : Nat :=
+  ((s2DeadCols bb laneBase).filter (fun d => decide (d < c))).length
+
+/-! ⚑ **THE GATE THIS FILE DID NOT HAVE, AND THE DEFECT IT WOULD HAVE CAUGHT.**
+
+§2's band offsets are deliberately LITERAL — every proof here is discharged by `omega`, which treats
+a `def` as an opaque atom and so cannot see `B_SPAN - B_STATE_COMMIT`. That is a real constraint, but
+it made every one of them a hand-carried number with no gate, and on 2026-08-01 (`rotatedNumPreLimbs`
+184 → 187) the file was re-typed HALF WAY: `s2CarrierCols`, `s2DeadCols` and `isDeadCol` moved to
+188 / 251 / 882 / 1008 while `dropIdx`, `isS2LookupL`, `s2Plan`, `keptOk` and `compactOk` stayed at
+185 / 247 / 432 / 494 / 868 / 992. ONE FILE, TWO GEOMETRIES, and every `#guard` in it still passed —
+the compaction would have deleted one band and remapped survivors through another.
+
+The weld below is the two-source form that cannot be half-typed: `dropIdx`'s O(1) arithmetic against
+the explicit `s2DeadCols` list, sampled across the whole width. They agree only when every cut base
+and every cut span in `dropIdx` is the band `s2DeadCols` actually deletes. -/
+#guard (List.range 130).all
+  (fun k => decide (dropIdx 0 1200 (k * 10) == k * 10 - deadBelow 0 1200 (k * 10)))
+
+-- ...and the bands themselves are the EMITTER's, not this file's opinion of them.
+#guard (s2CarrierCols 0).head? == some B_STATE_COMMIT
+#guard (s2CarrierCols 0).length == B_SPAN - B_STATE_COMMIT
+#guard (s2DeadCols 0 1200).take (2 * (B_SPAN - B_STATE_COMMIT))
+  == s2CarrierCols 0 ++ s2CarrierCols B_SPAN
 
 /-- O(1) membership in the dead-column set (the list `s2DeadCols` is the SPEC; this is the
 computable form the emit-time gates and the index map run on). -/
@@ -234,12 +260,12 @@ def cutBelow (lo span c : Nat) : Nat := if c ≤ lo then 0 else min span (c - lo
 /-- The compaction index map: a surviving column falls by the number of deleted columns below
 it. O(1); strictly monotone on survivors; the identity below the first deleted column. -/
 def dropIdx (bb laneBase c : Nat) : Nat :=
-  c - (cutBelow (bb + 185) 62 c + cutBelow (bb + 432) 62 c + cutBelow laneBase 868 c)
+  c - (cutBelow (bb + 188) 63 c + cutBelow (bb + 439) 63 c + cutBelow laneBase 882 c)
 
-theorem dropIdx_id_of_low (bb laneBase c : Nat) (h1 : c ≤ bb + 185) (h2 : c ≤ laneBase) :
+theorem dropIdx_id_of_low (bb laneBase c : Nat) (h1 : c ≤ bb + 188) (h2 : c ≤ laneBase) :
     dropIdx bb laneBase c = c := by
   unfold dropIdx cutBelow
-  have h3 : c ≤ bb + 432 := by omega
+  have h3 : c ≤ bb + 439 := by omega
   rw [if_pos h1, if_pos h3, if_pos h2]
   omega
 
@@ -266,8 +292,8 @@ of the two carrier bands). -/
 def isS2LookupL (bb : Nat) (l : Lookup) : Bool :=
   l.table == TableId.poseidon2 &&
     match lookupOut0? l with
-    | some c => (decide (bb + 185 ≤ c) && decide (c < bb + 247))
-        || (decide (bb + 432 ≤ c) && decide (c < bb + 494))
+    | some c => (decide (bb + 188 ≤ c) && decide (c < bb + 251))
+        || (decide (bb + 439 ≤ c) && decide (c < bb + 502))
     | none => false
 
 /-- Is this constraint an S2 chain lookup? -/
@@ -283,7 +309,7 @@ def s2LookupsOf (M : EffectVmDescriptor2) (bb : Nat) : List Lookup :=
 
 /-- The S2 walk plan: the 124 sites with their graduated lane bases. -/
 def s2Plan (bb laneBase : Nat) : List (VmHashSite × Nat) :=
-  (rotV3SitesAt bb ++ rotV3SitesAt (bb + 247)).mapIdx (fun j s => (s, laneBase + 7 * j))
+  (rotV3SitesAt bb ++ rotV3SitesAt (bb + 251)).mapIdx (fun j s => (s, laneBase + 7 * j))
 
 /-- The EXPECTED graduated S2 lookups (the S2 sites are col-only, so the `sites` resolution
 argument of `siteLookup` is irrelevant — `[]` emits the same tuple the full-list graduation
@@ -323,7 +349,7 @@ def keptOk (bb laneBase : Nat) (c : VmConstraint2) : Bool :=
   (refs2 c).all (fun r => !isDeadCol bb laneBase r)
     && (match c with
         | .base (.transition hi lo) =>
-            decide (sbCol hi < bb + 185) && decide (saCol lo < bb + 185)
+            decide (sbCol hi < bb + 188) && decide (saCol lo < bb + 188)
               && decide (sbCol hi ≤ laneBase) && decide (saCol lo ≤ laneBase)
         | _ => true)
 
@@ -332,7 +358,7 @@ def keptOk (bb laneBase : Nat) (c : VmConstraint2) : Bool :=
     falsifier of the "dead stratum" verdict);
   * every surviving constraint / hash site / range tooth avoids the dead columns;
   * the walk plan is well-formed;
-  * the three dead bands are pairwise disjoint (`bb + 494 ≤ laneBase` — exact width bookkeeping);
+  * the three dead bands are pairwise disjoint (`bb + 502 ≤ laneBase` — exact width bookkeeping);
   * every override column is a dead column (the expansion touches nothing that survives). -/
 def compactOk (M : EffectVmDescriptor2) (bb laneBase : Nat) : Bool :=
   s2LookupsOf M bb == s2Lookups bb laneBase
@@ -340,24 +366,24 @@ def compactOk (M : EffectVmDescriptor2) (bb laneBase : Nat) : Bool :=
     && M.hashSites.all (fun s => (refsSite s).all (fun r => !isDeadCol bb laneBase r))
     && M.ranges.all (fun r => !isDeadCol bb laneBase r.wire)
     && planOk (s2Plan bb laneBase)
-    && decide (bb + 494 ≤ laneBase)
+    && decide (bb + 502 ≤ laneBase)
     && (s2Plan bb laneBase).all
         (fun p => (overrideColsOf p.1 p.2).all (isDeadCol bb laneBase))
-    && decide (992 ≤ M.traceWidth)
+    && decide (1008 ≤ M.traceWidth)
 
 /-! ## §4 — `compactS2`: the deletion itself. -/
 
-/-- **`compactS2 M bb laneBase`** — the S2-deleted member: the 124 chain lookups dropped, every
-surviving column reference remapped through `dropIdx`, the width down by exactly 992, the main
+/-- **`compactS2 M bb laneBase`** — the S2-deleted member: the chain lookups dropped, every
+surviving column reference remapped through `dropIdx`, the width down by exactly `s2DeadCols`, the main
 table arity following. Name, PI count, and every published value are UNCHANGED (the retired
 PI slots 42/43 stay as producer-zeroed slots — they bound nothing before and bind nothing now). -/
 def compactS2 (M : EffectVmDescriptor2) (bb laneBase : Nat) : EffectVmDescriptor2 :=
   let g := dropIdx bb laneBase
   { name := M.name
-  , traceWidth := M.traceWidth - 992
+  , traceWidth := M.traceWidth - 1008
   , piCount := M.piCount
   , tables := M.tables.map (fun td =>
-      if td.id = TableId.main then { td with arity := td.arity - 992 } else td)
+      if td.id = TableId.main then { td with arity := td.arity - 1008 } else td)
   , constraints := (M.constraints.filter (fun c => !isS2 bb c)).map (mapC2 g)
   , hashSites := M.hashSites.map (mapSite g)
   , ranges := M.ranges.map (mapRange g) }

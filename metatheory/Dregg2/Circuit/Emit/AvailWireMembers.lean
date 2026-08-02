@@ -403,13 +403,23 @@ section Witnesses
 -- The wide graduation declares the 15-bit range table beside the five EPOCH tables.
 #guard (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail).tables.length == 6
 #guard (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail).tables.length == 6
--- The wire members: piCount 50 (42 v1 + 4 rotated commit pins + 4 rc), the avail-shifted widths
--- (transfer: graduated 1829 + 45 refuse = 1874; burn: 1827 + 45 = 1872), name-marked `-v1-avail`.
--- ⚑ +112 at the FIELDS-CANONICITY flag day (`APPENDIX_SPAN` 539 → 651).
+-- The wire members: piCount 50 (42 v1 + 4 rotated commit pins + 4 rc), name-marked `-v1-avail`.
+-- ⚑ The widths were the literals 1874 / 1872 — constants against their own definitions, which the
+-- 2026-08-01 key nonet moved without either of them detecting anything.  What they were standing in
+-- for is the WRAPPER RELATION: the wire member is the wide-graduated face plus the deployed refuse
+-- weld's 45 aux columns (`fcDep base 2 + 1 - base = 2·REFUSE_STRIDE + 13`, which the flag day does
+-- NOT move).  That relation holds at any rotated geometry and still reds if a wrapper changes.
 #guard transferV3AvailWire.piCount == 50
 #guard burnV3AvailWire.piCount == 50
-#guard transferV3AvailWire.traceWidth == 1874
-#guard burnV3AvailWire.traceWidth == 1872
+#guard transferV3AvailWire.traceWidth
+  == (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail).traceWidth + 45
+#guard burnV3AvailWire.traceWidth
+  == (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail).traceWidth + 45
+-- ...and the wide-graduated faces themselves are the graduation MODEL, not transcriptions.
+#guard (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail).traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail
+#guard (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail).traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
 #guard transferV3AvailWire.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 #guard burnV3AvailWire.name

@@ -96,9 +96,13 @@ def deployedSetFieldMembers : List (String × EffectVmDescriptor2) :=
 
 #guard deployedSetFieldMembers.length == 8
 -- WIDTH IS UNMOVED by the value8 weld (the pins add no column); it moves only with the rotated
--- geometry itself (178 → 184 took it 1692 → 1736; the rc FOLD 1736 → 1752; the FIELDS-CANONICITY
--- flag day 1752 → 1864, `APPENDIX_SPAN` 539 → 651).
-#guard deployedSetFieldMembers.all fun (_, d) => d.traceWidth == 1864
+-- geometry itself.  ⚑ Stated as the graduated transfer face plus the deployed refuse weld's 45 aux
+-- columns, NOT as a literal: the literal `1864` was a constant against its own definition, it had
+-- already been retyped three flag days running (1692 → 1736 → 1752 → 1864), and the 2026-08-01 key
+-- nonet made it red again while detecting nothing.
+#guard deployedSetFieldMembers.all fun (_, d) =>
+  d.traceWidth
+    == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor + 45
 -- PI LAYOUT: 46 rotated prefix + 8 value8 completion pins (46..53) + 4 rc pins (54..57) = 58.
 #guard deployedSetFieldMembers.all fun (k, d) =>
   d.piCount == 58 && !d.name.isEmpty && !d.constraints.isEmpty

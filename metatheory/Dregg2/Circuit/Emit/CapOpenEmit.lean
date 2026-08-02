@@ -1698,10 +1698,12 @@ theorem v3RegistryCapOpenDep_length : v3RegistryCapOpenDep.length = 45 := by
 #guard v3RegistryCapOpenDep.length == 45
 -- the deployed registry is name-stable with the bare registry (a NAME-stable weld).
 #guard v3RegistryCapOpenDep.map (·.1) == v3RegistryCapOpen.map (·.1)
--- position 0 (transfer) now carries the welded (width-1864) descriptor.
--- ⚑ 1752 → 1864 at the FIELDS-CANONICITY flag day (`APPENDIX_SPAN` 539 → 651).
+-- position 0 (transfer) now carries the WELDED descriptor: the bare entry widened by exactly the
+-- deployed refuse weld's 45 aux columns.  ⚑ This was the literal `some 1864`, which said nothing the
+-- relation does not and went red at the 2026-08-01 key nonet while detecting nothing.
 #guard (v3RegistryCapOpenDep[0]?.map (·.1)) == some "transferVmDescriptor2R24"
-#guard (v3RegistryCapOpenDep[0]?.map (·.2.traceWidth)) == some 1864
+#guard (v3RegistryCapOpenDep[0]?.map (·.2.traceWidth))
+  == (v3RegistryCapOpen[0]?.map (fun e => e.2.traceWidth + 45))
 -- the cap-open tail is untouched (the deployed prover's authority route).
 #guard (v3RegistryCapOpenDep[43]?.map (·.1)) == some "attenuateCapOpenEffVmDescriptor2R24"
 

@@ -3,7 +3,7 @@
 
 The generic circuit apex historically collapsed a deployed state commitment to one `ℤ`.
 This module keeps the deployed shape: the commitment is the eight-felt result of the
-`wireCommitR8` chain over a 184-limb kernel payload, with the receipt-log root absorbed
+`wireCommitR8` chain over a `rotatedNumPreLimbs`-limb kernel payload, with the receipt-log root absorbed
 last.  The payload's first limb is the already-proved `CommitSurface.commit`; the
 remaining 183 lanes are domain-separated headroom for the deployed layout.  Thus the
 wide chain adds no new trust: the wide commitment recovers the entire payload and receipt
@@ -74,6 +74,7 @@ No axiom, `sorry`, `admit`, or native decision procedure.
 -/
 import Dregg2.Circuit.CircuitSoundness
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
+import Dregg2.Circuit.Emit.RotatedLayout
 import Dregg2.Circuit.InjectiveFloorRegrounded
 import Dregg2.Crypto.CostAdversary
 import Dregg2.Crypto.RomChainedReduction
@@ -108,11 +109,17 @@ open Dregg2.Crypto.RomChainedReduction
 
 set_option autoImplicit false
 
-/-- The deployed endpoint payload width. ⚑ This literal MIRRORS
-`Dregg2.Circuit.Emit.RotatedLayout.rotatedNumPreLimbs` (178 → 184 at the ninth-lane flag day); the
-boundary deliberately does NOT import the emit tower, so the pin is the `#guard` at the foot of this
-file plus `deployed_blockCount`, which both move together with it. -/
-def kernelPayloadWidth : Nat := 184
+/-- The deployed endpoint payload width — READ from
+`Dregg2.Circuit.Emit.RotatedLayout.rotatedNumPreLimbs`, not mirrored.
+
+⚑ It was the literal `184` with a comment saying it mirrors that constant, a `#guard` at the foot of
+this file pinning it against its own definition, and `deployed_blockCount` carrying the matching
+schedule by hand.  When the 2026-08-01 KEY-NONET flag day took the extent to 187, none of that went
+red: the width, the block count, the query budget and the ROM carrier's chain length all agreed WITH
+EACH OTHER about a payload the deployed committer had stopped folding, and §Q's "the model IS the
+deployed object" became false silently.  The whole schedule below is now derived from this one
+constant, and this one constant is read from the layout. -/
+def kernelPayloadWidth : Nat := Dregg2.Circuit.Emit.rotatedNumPreLimbs
 
 /-- A full-width kernel payload.  Limb zero is the binding full-kernel commitment;
 the remaining positions are explicit zero headroom in this abstract boundary codec.
@@ -124,8 +131,9 @@ def kernelPayload (S : CommitSurface) (k : RecordKernelState) (t : BoundaryTurn)
 set_option maxRecDepth 1000 in
 theorem kernelPayload_length (S : CommitSurface) (k : RecordKernelState) (t : BoundaryTurn) :
     (kernelPayload S k t).length = kernelPayloadWidth := by
-  change 1 + (List.replicate 183 (0 : ℤ)).length = 184
-  rw [List.length_replicate]
+  unfold kernelPayload
+  rw [List.length_cons, List.length_replicate]
+  decide
 
 /-- The variable preimage of the deployed `hash_fact` chip.  Its fixed namespace
 and padding words do not affect the injectivity argument, so the boundary keeps
@@ -412,7 +420,7 @@ def stateBreakToWireBreak (D : WideKeyed) (S : CommitSurface) (hash : List ℤ �
 
 /-- **⚑ WIN-PRESERVATION — the reduction, at the game level.** Every tag the state forger wins, the
 extracted wire-commit equivocator wins: the wide inputs are distinct (the forgery's side condition),
-of EQUAL length (both `kernelPayload`s are 184 limbs), with EQUAL `wireCommitR8` (the equal published
+of EQUAL length (both `kernelPayload`s are `kernelPayloadWidth` limbs), with EQUAL `wireCommitR8` (the equal published
 commit).  That is exactly `wireCommitBreakGame`'s win. -/
 theorem state_wins_imp (D : WideKeyed) (S : CommitSurface) (hash : List ℤ → ℤ)
     (t : BoundaryTurn) (A : Adversary (stateCommitBreakGame D S hash t)) (l : ℕ) (tag : D.Tag)
@@ -698,12 +706,12 @@ theorem hashFloor_isPolyTime_inhabited (D : WideKeyed) :
 /-! ## §Q — the deployed chain, AS AN ORACLE COMPUTATION.
 
 ⚑ **THE MODEL THE RE-GROUNDING NEEDS, ON THE REAL OBJECT.** `wireCommitR8` is a CHAINED absorption:
-the 4-limb head, fifty-eight 3-limb `chunk31` chunks each re-absorbing the previous 8-felt digest,
+the 4-limb head, the body's 3-limb `chunk31` chunks each re-absorbing the previous 8-felt digest,
 the receipt root last.  `wireCommitComp` is that chain as an ORACLE PROGRAM — one `query` node per
 absorption step, the previous ANSWER threaded into the next query point — and `wireCommitComp_eval`
 proves its run at the deployed permutation IS `wireCommitR8`, step for step.  NOTHING in this
 section is idealized: the oracle type is the deployed `List ℤ → List ℤ`, and the budget
-(`wireCommitComp_queryBounded`: exactly 62 queries at the proved 184-limb payload width) is a fact
+(`wireCommitComp_queryBounded`: exactly `deployedBlockCount + 1` queries at the proved payload width) is a fact
 of the deployed schedule. -/
 
 /-- The deployed fold IS the generic chain: `chainFrom8` is `chainEval` at the fixed-width
@@ -732,7 +740,7 @@ theorem wireCommitComp_eval (permW : List ℤ → List ℤ) (l : List ℤ) (ir :
   rfl
 
 /-- Every chunk of a body whose length is divisible by 3 is EXACTLY 3 limbs wide — the deployed
-180-limb body (184 minus the 4-limb head) feeds only 3-wide blocks, which is what pins the chained
+body (`kernelPayloadWidth` minus the 4-limb head) feeds only 3-wide blocks, which is what pins the chained
 carrier's block type in §S. -/
 theorem chunk31_three_wide :
     ∀ (xs : List ℤ), xs.length % 3 = 0 → ∀ c ∈ chunk31 xs, c.length = 3
@@ -747,20 +755,34 @@ theorem chunk31_three_wide :
         simp only [List.length_cons] at h
         omega
 
-/-- The deployed block count: a 184-limb payload's chain absorbs `60 + 1 = 61` blocks after the
-head. -/
-theorem deployed_blockCount (l : List ℤ) (ir : ℤ) (hlen : l.length = 184) :
-    (chunk31 (l.drop 4) ++ [[ir, 0, 0]]).length = 61 := by
-  rw [List.length_append, chunk31_length, List.length_drop, hlen]
-  show chunkCount (184 - 4) + 1 = 61
-  decide
+/-- The absorption BLOCKS the deployed chain feeds after the 4-limb head: one per `chunk31` chunk of
+the body, plus the receipt-root block.  DERIVED from `kernelPayloadWidth`, so a rotation flag day
+moves the schedule here instead of leaving this section modelling a payload nothing emits. -/
+def deployedBlockCount : Nat := chunkCount (kernelPayloadWidth - 4) + 1
 
-/-- **THE DEPLOYED COMMITTER PAYS EXACTLY 62 QUERIES** — 1 head + 60 chunks + 1 iroot block, at the
-proved 184-limb payload width.  The budget is a fact of the schedule, not a declaration. -/
-theorem wireCommitComp_queryBounded (l : List ℤ) (ir : ℤ) (hlen : l.length = 184) :
-    QueryBounded 62 (wireCommitComp l ir) := by
+/-- The extractor re-walks BOTH chains and pays two queries besides — `romChained_binds`'s budget,
+as a function of the schedule rather than a transcribed total. -/
+def deployedExtractorBudget : Nat := 2 * deployedBlockCount + 2
+
+/-- The schedule's two derived totals, evaluated once.  These are the ONLY place a number appears,
+and they are consequences of `kernelPayloadWidth`, not inputs to it. -/
+theorem deployedBlockCount_eq : deployedBlockCount = 62 := by decide
+
+theorem deployedExtractorBudget_eq : deployedExtractorBudget = 126 := by decide
+
+/-- The deployed block count: the payload's body feeds `chunk31` chunks, then the iroot block. -/
+theorem deployed_blockCount (l : List ℤ) (ir : ℤ) (hlen : l.length = kernelPayloadWidth) :
+    (chunk31 (l.drop 4) ++ [[ir, 0, 0]]).length = deployedBlockCount := by
+  rw [List.length_append, chunk31_length, List.length_drop, hlen]
+  rfl
+
+/-- **THE DEPLOYED COMMITTER PAYS ONE QUERY PER BLOCK PLUS THE HEAD'S**, at the proved payload
+width.  The budget is a fact of the schedule, not a declaration — and not a literal, which is what
+let it go on describing a 184-limb payload after the extent moved. -/
+theorem wireCommitComp_queryBounded (l : List ℤ) (ir : ℤ) (hlen : l.length = kernelPayloadWidth) :
+    QueryBounded (deployedBlockCount + 1) (wireCommitComp l ir) := by
   unfold wireCommitComp
-  refine QueryBounded.query 61 _ _ (fun h => ?_)
+  refine QueryBounded.query deployedBlockCount _ _ (fun h => ?_)
   have hq := chainComp_queryBounded (fun acc c => acc ++ c)
     (chunk31 (l.drop 4) ++ [[ir, 0, 0]]) h
   rwa [deployed_blockCount l ir hlen] at hq
@@ -774,10 +796,11 @@ theorem commit8_as_oracleComp (permW : List ℤ → List ℤ) (hW : Poseidon2Wid
   rw [wireCommitComp_eval]
   rfl
 
-/-- The deployed committer program is 62-query-bounded at the real payload. -/
+/-- The deployed committer program is `deployedBlockCount + 1`-query-bounded at the real payload. -/
 theorem commit8_queryBounded (hash : List ℤ → ℤ) (S : CommitSurface) (s : RecChainedState)
     (t : BoundaryTurn) :
-    QueryBounded 62 (wireCommitComp (kernelPayload S s.kernel t) (receiptRoot hash s.log)) :=
+    QueryBounded (deployedBlockCount + 1)
+      (wireCommitComp (kernelPayload S s.kernel t) (receiptRoot hash s.log)) :=
   wireCommitComp_queryBounded _ _ (kernelPayload_length S s.kernel t)
 
 /-! ## §S — the state-commit binding, RE-GROUNDED on the keyed sampled-oracle floor.
@@ -786,8 +809,8 @@ theorem commit8_queryBounded (hash : List ℤ → ℤ) (S : CommitSurface) (s : 
 shape is kept — a state forgery becomes a collision — but the GAME moves to the model where a
 collision floor is PROVABLE: the hash is a SAMPLED ORACLE the adversary can only QUERY
 (`Dregg2.Crypto.RomChainedReduction`, resting on `KeyedRomFloor.keyedRom_hard` — the birthday
-bound, a theorem).  The carrier below is §Q's DEPLOYED SCHEDULE: a 4-limb head, then 61 three-limb
-blocks (60 `chunk31` chunks + the iroot block — `deployed_blockCount`, `chunk31_three_wide`), each
+bound, a theorem).  The carrier below is §Q's DEPLOYED SCHEDULE: a 4-limb head, then `deployedBlockCount` three-limb
+blocks (the body's `chunk31` chunks + the iroot block — `deployed_blockCount`, `chunk31_three_wide`), each
 step re-absorbing the previous digest, tag-separated by the four-tag space `WideKeyed` samples.
 The binding takes NO floor hypothesis — `stateCommitRom_binds`'s only inputs are a polynomial query
 budget and the forger — and §P's `Classical.choice` collision-answerer is PROVABLY excluded at this
@@ -821,7 +844,7 @@ def stateCommitRomFamily : KeyedRomFamily where
   rDec := fun _ => inferInstance
   rNe := fun l => ⟨⟨0, by positivity⟩⟩
 
-/-- **THE DEPLOYED-SCHEDULE CHAINED CARRIER**: 4-limb head, 61 three-limb blocks, step encoding
+/-- **THE DEPLOYED-SCHEDULE CHAINED CARRIER**: 4-limb head, `deployedBlockCount` three-limb blocks, step encoding
 `(digest, block)` — §Q's fixed-width concatenation `acc ++ c`, made type-level, which is what turns
 its injectivity into a LAYOUT fact.  The context is the tag both chains share, exactly as in §R's
 `stateCommitBreakGame`, where one sampled tag prices both commits. -/
@@ -829,7 +852,7 @@ def stateCommitRomCarrier : RomChainedCarrier stateCommitRomFamily where
   Ctx := fun _ => Fin 4
   Hd := fun l => Fin 4 → Fin (2 ^ l)
   Blk := fun l => Fin 3 → Fin (2 ^ l)
-  len := fun _ => 61
+  len := fun _ => deployedBlockCount
   hdDec := fun _ => inferInstance
   blkDec := fun _ => inferInstance
   encHd := fun _ c h => (c, Sum.inl h)
@@ -841,7 +864,7 @@ def stateCommitRomCarrier : RomChainedCarrier stateCommitRomFamily where
 
 /-- The carrier's chain length IS §Q's deployed block count — the schedule weld. -/
 theorem stateCommitRomCarrier_len_eq_deployed (l : ℕ) (xs : List ℤ) (ir : ℤ)
-    (hlen : xs.length = 184) :
+    (hlen : xs.length = kernelPayloadWidth) :
     stateCommitRomCarrier.len l = (chunk31 (xs.drop 4) ++ [[ir, 0, 0]]).length := by
   rw [deployed_blockCount xs ir hlen]
   rfl
@@ -870,16 +893,20 @@ theorem stateCommitRom_compressing (l : ℕ) :
 A query-bounded chained forger against the deployed state-commit schedule has NEGLIGIBLE advantage:
 the eight-felt chained anchor binds the head and every block of its payload except with negligible
 probability, over the sampled tag-separated oracle.  Budget accounting: the forger's `Q` plus the
-extractor's re-walk of both chains (`2·61 + 2 = 124`).  This is what the deleted
+extractor's re-walk of both chains (`deployedExtractorBudget = 2·deployedBlockCount + 2`).  This is what the deleted
 `stateCommit_binds_from_polyTime` pretended to be — same reduction shape, but what sits under it is
 `keyedRom_hard` (proved) instead of a floor §P refutes. -/
 theorem stateCommitRom_binds (Q : ℕ → ℕ)
-    (hQ : PolyBounded (fun l => (((Q l + 124 : ℕ) : ℝ) * ((Q l + 124 : ℕ) : ℝ) + 1)))
+    (hQ : PolyBounded (fun l => (((Q l + deployedExtractorBudget : ℕ) : ℝ)
+      * ((Q l + deployedExtractorBudget : ℕ) : ℝ) + 1)))
     (A : Adversary (romChainedGame stateCommitRomFamily stateCommitRomCarrier))
     (hA : RomChainedEff stateCommitRomFamily stateCommitRomCarrier Q A) :
     Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A) :=
-  romChained_binds stateCommitRomFamily stateCommitRomCarrier Q (fun l => Q l + 124)
-    (fun l => by show Q l + (2 * 61 + 2) ≤ Q l + 124; omega)
+  romChained_binds stateCommitRomFamily stateCommitRomCarrier Q
+    (fun l => Q l + deployedExtractorBudget)
+    (fun l => by
+      show Q l + (2 * deployedBlockCount + 2) ≤ Q l + deployedExtractorBudget
+      simp only [deployedExtractorBudget])
     hQ stateCommitRom_card_R A hA
 
 /-- **⚑ THE `Classical.choice` COLLISION-ANSWERER IS EXCLUDED AT THE STATE-COMMIT LAYER** — §P's
@@ -888,7 +915,8 @@ of the query-bounded class: any forger with non-negligible advantage is outside 
 to know a collision of an oracle it never queried
 (`RomOracle.OracleComp.eval_congr_of_agree_on_queried` forbids that). -/
 theorem stateCommitRom_choiceForger_excluded (Q : ℕ → ℕ)
-    (hQ : PolyBounded (fun l => (((Q l + 124 : ℕ) : ℝ) * ((Q l + 124 : ℕ) : ℝ) + 1)))
+    (hQ : PolyBounded (fun l => (((Q l + deployedExtractorBudget : ℕ) : ℝ)
+      * ((Q l + deployedExtractorBudget : ℕ) : ℝ) + 1)))
     (A : Adversary (romChainedGame stateCommitRomFamily stateCommitRomCarrier))
     (hnn : ¬ Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A)) :
     ¬ RomChainedEff stateCommitRomFamily stateCommitRomCarrier Q A :=
@@ -901,10 +929,11 @@ theorem stateCommitRom_top_false :
     ¬ Hard (keyedRomGame stateCommitRomFamily) (fun _ => True) :=
   keyedRom_top_false stateCommitRomFamily stateCommitRom_compressing
 
-/-- **⚑⚑ THE WHOLE VERDICT AT THE DEPLOYED SCHEDULE AND A CONCRETE BUDGET** (`Q = 124` — enough for
-a forger to compute both its chains honestly, §Q's 62 queries each).  Four facts at once:
+/-- **⚑⚑ THE WHOLE VERDICT AT THE DEPLOYED SCHEDULE AND A CONCRETE BUDGET**
+(`Q = deployedExtractorBudget` — enough for a forger to compute both its chains honestly, §Q's
+`deployedBlockCount + 1` queries each).  Four facts at once:
 
-  1. the re-grounded binding FIRES: every `124`-query chained forger's advantage is negligible;
+  1. the re-grounded binding FIRES: every such chained forger's advantage is negligible;
   2. the class is INHABITED (a fixed-answer 0-query member), and its advantage is negligible by 1 —
      the general defanging of the DISTINCT fixed-pair refuter shape (the one that wins with
      probability `1` against the fixed public function) is `fixedChainedForger_negl`: admitted by
@@ -913,7 +942,7 @@ a forger to compute both its chains honestly, §Q's 62 queries each).  Four fact
      the negligible advantage is earned against a live event;
   4. the UNRESTRICTED floor at the same game is FALSE — the query bound does the work.
 
-The budget `124` is not special: `stateCommitRom_binds` takes any polynomially bounded `Q`. -/
+The budget is not special: `stateCommitRom_binds` takes any polynomially bounded `Q`. -/
 theorem stateCommitRom_verdict :
     (∀ A, RomChainedEff stateCommitRomFamily stateCommitRomCarrier (fun _ => 124) A →
         Negl (gameAdv (romChainedGame stateCommitRomFamily stateCommitRomCarrier) A))
@@ -925,9 +954,10 @@ theorem stateCommitRom_verdict :
             (romChainedGame stateCommitRomFamily stateCommitRomCarrier).wins l H p)
       ∧ ¬ Hard (keyedRomGame stateCommitRomFamily) (fun _ => True) := by
   have hpoly : PolyBounded
-      (fun l => ((((fun _ : ℕ => 124) l + 124 : ℕ) : ℝ)
-        * (((fun _ : ℕ => 124) l + 124 : ℕ) : ℝ) + 1)) := by
-    refine ⟨0, 61505, ?_⟩   -- (124 + 124)² + 1 = 248² + 1 (was 240² + 1 at the 178-limb schedule)
+      (fun l => ((((fun _ : ℕ => 124) l + deployedExtractorBudget : ℕ) : ℝ)
+        * (((fun _ : ℕ => 124) l + deployedExtractorBudget : ℕ) : ℝ) + 1)) := by
+    simp only [deployedExtractorBudget_eq]
+    refine ⟨0, 62501, ?_⟩   -- (124 + 126)² + 1 = 250² + 1 at the 187-limb schedule
     filter_upwards with n
     norm_num
   refine ⟨fun A hA => stateCommitRom_binds (fun _ => 124) hpoly A hA, ?_, ?_,
@@ -954,7 +984,13 @@ theorem stateCommitRom_verdict :
     have h0 : (⟨0, hpos⟩ : Fin (2 ^ l)) = ⟨1, h2⟩ := congrFun (congrArg Prod.fst h) 0
     simp [Fin.ext_iff] at h0
 
-#guard kernelPayloadWidth == 184
+-- ⚑ CROSS-SOURCE GATE (was `kernelPayloadWidth == 184`, a constant against its own definition that
+-- the key-nonet flag day moved without reddening).  The boundary codec's payload width against the
+-- verified layout's extent, and the whole modelled schedule against that width.
+#guard kernelPayloadWidth == Dregg2.Circuit.Emit.rotatedNumPreLimbs
+#guard deployedBlockCount == chunkCount (Dregg2.Circuit.Emit.rotatedNumPreLimbs - 4) + 1
+#guard deployedExtractorBudget == 2 * deployedBlockCount + 2
+#guard stateCommitRomCarrier.len 0 == deployedBlockCount
 #guard receiptRoot (fun xs => xs.sum)
   [{ actor := 1, src := 1, dst := 2, amt := 3 }] == 7
 

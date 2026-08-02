@@ -42,6 +42,7 @@ import Dregg2.Circuit.StateCommitReduce
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Circuit.OodRomBound
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
+import Dregg2.Circuit.Emit.RotatedLayout
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.EffectTransfer
 import Mathlib.Data.List.OfFn
@@ -618,9 +619,16 @@ structure RotatedContext where
 abbrev RotatedContextProvider := CellId → Value → RotatedContext
 
 /-- One exact deployed pre-iroot position.  The indices mirror
-`cell::commitment::compute_rotated_pre_limbs` and `trace_rotated.rs` at HEAD. -/
+`cell::commitment::compute_rotated_pre_limbs` and `trace_rotated.rs` at HEAD.
+
+⚑ The INDEX TYPE is `Fin rotatedNumPreLimbs`, not `Fin 184`.  A replica that carries its own idea of
+the extent stays GREEN against its own length lemma while the deployed payload moves underneath it —
+which is exactly what happened at the 2026-08-01 key-nonet flag day (184 → 187): this file would
+have gone on committing a 184-limb object `wireCommitR8` no longer folds, self-consistently and
+undetectably.  Every position past the old extent falls to the `ctx.residual` default, so widening
+the index changes no named limb. -/
 noncomputable def rotatedLimb (fold8 : AuthorityFold8) (ctx : RotatedContext)
-    (v : Value) (i : Fin 184) : Int :=
+    (v : Value) (i : Fin Dregg2.Circuit.Emit.rotatedNumPreLimbs) : Int :=
   let d := decodedRotatedCell v
   match i.1 with
   | 1 => d.balance % splitMod
@@ -652,7 +660,7 @@ noncomputable def rotatedPreLimbs (fold8 : AuthorityFold8) (ctx : RotatedContext
   List.ofFn (rotatedLimb fold8 ctx v)
 
 theorem rotatedPreLimbs_length (fold8 : AuthorityFold8) (ctx : RotatedContext) (v : Value) :
-    (rotatedPreLimbs fold8 ctx v).length = 184 := by
+    (rotatedPreLimbs fold8 ctx v).length = Dregg2.Circuit.Emit.rotatedNumPreLimbs := by
   unfold rotatedPreLimbs
   exact List.length_ofFn
 

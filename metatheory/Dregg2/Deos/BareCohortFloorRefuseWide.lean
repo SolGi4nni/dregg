@@ -56,7 +56,14 @@ def WIDE_WIDTH : Nat :=
   Dregg2.Deos.BareCohortFloorRefuseDeployed.GRAD_ROT_WIDTH
     + Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppendixSpan
 
-#guard WIDE_WIDTH == 2811   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+-- ⚑ `WIDE_WIDTH == 2811` stood here: a constant checked against its own one-line definition, which
+-- the 2026-08-01 key nonet moved.  Both of its components are gated at their own sources
+-- (`GRAD_ROT_WIDTH` against the emitted graduated member, `wideAppendixSpan` against
+-- `wideNumCarriers`), so what is left here is the RELATION — the wide member is the graduated one
+-- plus exactly two carrier blocks, and nothing may sit between them.
+#guard WIDE_WIDTH
+  == Dregg2.Deos.BareCohortFloorRefuseDeployed.GRAD_ROT_WIDTH
+     + 2 * Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideCarrierBlockSpan
 
 /-! ## §1 — the WIDE aux column layout (aux base = the member's OWN width, past the wide carriers). -/
 
@@ -262,9 +269,11 @@ theorem satisfied2_of_gentianWideBareRefuse (hash : List ℤ → ℤ) (d : Effec
 
 section Witnesses
 
--- The wide refuse reads the SAME deployed caveat tag columns as V3 (683/690/697/704).
-#guard ebDep 0 == 683
-#guard ebDep 3 == 704
+-- ⚑ `ebDep 0 == 683` and `ebDep 3 == 704` stood here.  `ebDep` is IMPORTED verbatim from
+-- `BareCohortFloorRefuseDeployed` (see the `open` at the head of this file), so restating its values
+-- here checked nothing this file owns — and the 2026-08-01 key nonet moved `CAVEAT_BASE`, so both
+-- went red anyway.  The columns are gated where they are DEFINED, against the emitter's own caveat
+-- site walk.  What this file owns is the aux layout below, and that is what it pins.
 -- The three-block wide weld adds 3 × 13 = 39 gates (each block: 8 is-zero + 3 fold + 1 refuse = 13).
 #guard (wideRefuseGates WIDE_WIDTH).length == 39
 -- The aux blocks ride PAST the wide member width (aux base = the member's own width; no carrier collision).

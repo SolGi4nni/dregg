@@ -1347,6 +1347,26 @@ theorem graduable_rotateV3 {d : EffectVmDescriptor} (h : graduable d = true) :
 /-- The graduated rotated descriptor of a cohort member. -/
 def v3Of (d : EffectVmDescriptor) : EffectVmDescriptor2 := graduateV1 (rotateV3 d)
 
+/-- **THE GRADUATION MODEL, AS ONE NAMED SOURCE.**  The width a v1 face `d` reaches once it is
+rotated and graduated: its own face, plus the rotated appendix, plus `CHIP_OUT_LANES - 1` lane
+columns per chip site (its own sites plus the appendix's).
+
+⚑ This exists so that no consumer ever pins a rotated member's width to a LITERAL again.  A literal
+is a constant checked against its own definition — it cannot go red for any reason except that the
+geometry moved, its only repair is retyping, and on 2026-08-01 (`rotatedNumPreLimbs` 184 → 187) a
+dozen of them went red at once across the tree and took the whole emitter cone, and with it
+`check-descriptor-drift.sh`, offline while detecting nothing.  `X.traceWidth == gradRotWidthOf f`
+is a different thing: the MODEL against what `graduateV1 ∘ rotateV3*` actually emitted.  It rides
+every rotation flag day unchanged and still reds if graduation's per-site lane count, the appendix's
+site walk, or the face's own chip sites move. -/
+def gradRotWidthOf (d : EffectVmDescriptor) : Nat :=
+  (d.traceWidth + APPENDIX_SPAN)
+    + (CHIP_OUT_LANES - 1) * (d.hashSites.length + (rotV3Appendix d.traceWidth).length)
+
+/-- The model IS the emission, for the plain rotation. -/
+#guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).traceWidth
+  == gradRotWidthOf EffectVmEmitTransfer.transferVmDescriptor
+
 /-- A `Satisfied2` witness of the rotated graduation yields the FULL v1 denotation of the
 ORIGINAL descriptor on every row — the per-effect soundness chains lift to v3 by THIS one
 composition. -/
