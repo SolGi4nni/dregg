@@ -247,7 +247,15 @@ for bp in baseline_paths:
         if bp is baseline_paths[0]:
             sys.stderr.write("check-floor-baseline-preflight: FAIL — cannot read %s\n" % bp)
             sys.exit(1)
-baseline = {q.rsplit('.', 1)[-1] for q in re.findall(r'"([A-Za-z0-9_.À-￿]+)"', bsrc)}
+# ⚑ A ROW IS A PAIR — `name ⊣ floor+floor+…` — since the 2026-08-01 re-key. The old parser was
+# `re.findall(r'"([A-Za-z0-9_.À-￿]+)"')`, whose character class admits neither the SPACE nor the `+`
+# in a keyed row, so it matched a keyed row NOWHERE and parsed the whole baseline as empty. It
+# survived only because every row was still LEGACY (name-only) on the day the key landed; the first
+# `#floor_ratchet_emit` that keyed them would have tripped the `< 100` floor below on every commit.
+# Rows are read LINE-WISE (an array element, not any quoted string in the prose) and the floor set
+# is stripped: this gate asks only "is this declaration recorded", which is the NAME half.
+_ROW_RE = re.compile(r'^\s*"([^"\n]+)"[,\]]?\s*$', re.M)
+baseline = {r.split(' ⊣ ', 1)[0].rsplit('.', 1)[-1] for r in _ROW_RE.findall(bsrc)}
 if len(baseline) < 100:
     sys.stderr.write(
         "check-floor-baseline-preflight: FAIL — parsed only %d name(s) from FloorRatchetBaseline\n"
