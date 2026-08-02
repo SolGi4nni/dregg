@@ -28,6 +28,16 @@
 //   r7_absorption  + the fr-sponge: an OPT-SPONGE over the carried bulletproof challenges with a
 //                  per-block keep MASK (the `Field.if_` state mux), the 43-column evaluation
 //                  absorption at zeta and zeta*omega, and `hash_messages_for_next_step_proof`.
+//   r8_finalize    + `finalize_other_proof`'s TAIL - the rung at which the deferred values stop
+//                  being computed and start BINDING: the second challenge polynomial at
+//                  zeta*omega so b_actual = challenge_poly(zeta) + r*challenge_poly(zeta*omega),
+//                  the THREE `Shifted_value.Type1.to_field` unshifts (Type1 over Fp - the value's
+//                  own field) of the statement's combined_inner_product, b and plonk.perm,
+//                  `xi_correct` against the fr-sponge's own squeeze, and
+//                  `Boolean.all [xi_correct; b_correct; cip_correct; plonk_checks_passed]` behind
+//                  the `should_verify` mux, ASSERTED. The four statement words are the FIRST FOUR
+//                  public words, so leg (5) below aims the public tamper straight at a deferred
+//                  value.
 //
 // WHAT IT DOES. Reads the Lean-emitted circuit JSON (gate typ/wires/coeffs, the 15-wide witness
 // grid, the public vector, and the sigma-only probe rows), builds the pure-Rust kimchi objects, and
@@ -84,7 +94,7 @@ type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>
 type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
 
 /// The five rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 7] = [
+const RUNGS: [&str; 8] = [
     "r1_transcript",
     "r2_challenges",
     "r3_msm",
@@ -92,6 +102,7 @@ const RUNGS: [&str; 7] = [
     "r5_full",
     "r6_ft_eval0",
     "r7_absorption",
+    "r8_finalize",
 ];
 
 // ---- the Lean-emitted JSON shape ----
@@ -400,7 +411,7 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec!["r1_transcript", "r7_absorption"],
+            vec!["r1_transcript", "r8_finalize"],
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -452,7 +463,7 @@ mod stepmain_tests {
     /// is the SUPERSET; `r6_ft_eval0` is committed too but only READ (the census test below), not
     /// proved in CI, because it is r7 minus the sponge segments. Regenerate/prove the other four
     /// with the driver + `harness <dir> <tag>` (Cargo.toml header).
-    const COMMITTED: [&str; 2] = ["r1_transcript", "r7_absorption"];
+    const COMMITTED: [&str; 2] = ["r1_transcript", "r8_finalize"];
 
     struct Fixture {
         wired: CircuitJson,
@@ -573,7 +584,7 @@ mod stepmain_tests {
     // the circuit rather than merely declared.
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        let f = fixture("r7_absorption");
+        let f = fixture("r8_finalize");
         assert!(f.wired.public_input_size > 0);
         // (a) the honest proof against a TAMPERED public vector.
         let mut bad = f.public.clone();
@@ -676,5 +687,50 @@ mod stepmain_tests {
         assert!(r6.public_input_size > 0 && r7.public_input_size > 0);
         assert!(r7.probe_rows.len() > r6.probe_rows.len());
         assert_eq!(r1.public_input_size, 0);
+    }
+
+    // r8 is `finalize_other_proof`'s TAIL, and it is the rung that makes the deferred values BIND.
+    // It must be (a) strictly larger than r7, (b) Generic/Zero-ONLY on top of it (it is scalar
+    // arithmetic plus the `Field.equal` boolean gadgets - not one new curve gate, not one new
+    // Poseidon permutation), and (c) still carrying the PRIMARY_LEN public-input path whose FIRST
+    // FOUR words are now the statement's deferred values. A regression that relabelled r7 as r8
+    // would pass every prove and say nothing; this is what catches it.
+    #[test]
+    fn finalize_rung_binds_the_deferred_values() {
+        let dir = fixtures_dir();
+        let r7 = load_path(&dir.join("stepmain_smoke_r7_absorption.json"));
+        let r8 = load_path(&dir.join("stepmain_smoke_r8_finalize.json"));
+        let c7 = gate_census(&r7);
+        let c8 = gate_census(&r8);
+        assert!(
+            r8.num_rows > r7.num_rows,
+            "r8 ({} rows) does not extend r7 ({} rows) - the finalize rung is empty",
+            r8.num_rows,
+            r7.num_rows
+        );
+        // (b) Generic/Zero only: every OTHER family is unchanged.
+        for (ord, name) in [
+            (2usize, "Poseidon"),
+            (3, "CompleteAdd"),
+            (4, "VarBaseMul"),
+            (5, "EndoMul"),
+            (6, "EndoMulScalar"),
+        ] {
+            assert_eq!(
+                c7[ord], c8[ord],
+                "r8 changed the {name} family - the finalize rung is not scalar arithmetic"
+            );
+        }
+        // …and it really adds Generic rows (the unshifts, the two b-polynomial legs, the four
+        // `Field.equal` gadgets and the `Boolean.all` mux are all double-Generic halves).
+        assert!(
+            c8[1] >= c7[1] + 30,
+            "r8 added only {} Generic rows - `finalize_other_proof`'s tail is missing",
+            c8[1] - c7[1]
+        );
+        // (c) the public-input path, and MORE sigma-only probes than r7.
+        assert!(r8.public_input_size > 0);
+        assert_eq!(r8.public_input.len(), r8.public_input_size);
+        assert!(r8.probe_rows.len() > r7.probe_rows.len());
     }
 }
