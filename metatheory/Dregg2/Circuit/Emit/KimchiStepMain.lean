@@ -34,7 +34,7 @@ The recursive verifier is exercised by the branches that HAVE previous proofs:
 **That ≈ 6.7k-row `verify_one` is this file's target**, and the committed shape is sized against its
 line items, not against a round number.
 
-## THE FIVE SUB-CIRCUITS
+## THE SEVEN SUB-CIRCUITS
 
   * **R1 `transcript`** — the Fp Poseidon SPONGE: an init pin, `absorbs` absorb blocks (a `Generic`
     absorb row + an 11-row `Poseidon` permutation + its output `Zero` row), then `chals` squeeze
@@ -66,6 +66,16 @@ line items, not against a round number.
     `placeChecked` (not `place`) with `Contract ⟨pubWords, AUX⟩`, so a public word no gate reads
     REFUSES rather than sitting inert, and the circuit's own ids cannot be silently absorbed into
     the public input.
+  * **R6 `ft_eval0`** — `scalars_env` + the linearization CONSTANT TERM + `ft_eval0` +
+    `Plonk_checks.checked`'s `perm` scalar (`step_verifier.ml:1019-1071,1131-1136`,
+    `plonk_checks.ml:254-548`), compiled by §8b onto double-`Generic` rows and pinned value-for-value
+    against `KimchiVerify.gateLinConst` / `ftEval0R` / the 67 constraint bodies list-by-list (§13),
+    each with a red control. Its `ft_eval0` output IS the `ft` column R5's `combined_inner_product`
+    folds — upstream's own `combine ~ft:ft_eval0`.
+  * **R7 `absorption`** — the fr-sponge (`step_verifier.ml:950-1006`, `step_main.ml:525-567`): an
+    OPT-SPONGE over the carried bulletproof challenges with a per-block `keep` MASK (the `Field.if_`
+    state mux, `:998-1003`), the **43 evaluation columns absorbed at ζ and ζω** in
+    `to_absorption_sequence` order, the ξ′/r′ squeezes, and `hash_messages_for_next_step_proof`.
 
 ## ⚑ THE SHAPE ORACLE — MEASURED against Mina's own compiled step circuit
 
@@ -75,31 +85,46 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 **`step-zkapp-proved` is branch 4 — the step branch that RUNS `verify_one` on a side-loaded proof**:
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-01):
 
-    gate            Mina step-zkapp-proved     shapeStep    run-lengths (Mina / here)
-    total gates            20023                  6459
-    non-Generic            13778                  6182
-    Poseidon                6292 (31.4%)          1034        11×572    / 11×94    ✓ EXACT
-    Generic                 6245 (31.2%)           277        —
-    EndoMul                 2465 (12.3%)          2432        32×77+1×1 / 32×76    ✓ EXACT
-    Zero                    2246 (11.2%)          1432        —
-    VarBaseMul              1596  (8.0%)           988        1×1596    / 1×988    ✓ EXACT
-    EndoMulScalar            776  (3.9%)           184        / 8×23  — upstream also runs
-                    2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd              403  (2.0%)           112        1×159 2×65 3×23 15×1 30×1 / 1×112
+    gate            Mina step-zkapp-proved   r5_full   r6_ft_eval0  r7_absorption  run-lengths
+    total gates            20023               6555       7024          8569
+    non-Generic            13778               6183       6185          7536
+    Poseidon                6292 (31.4%)       1034       1034          2266    11×572 / 11×206 ✓
+    Generic                 6245 (31.2%)        372        839          1033    —
+    EndoMul                 2465 (12.3%)       2432       2432          2432    32×77+1×1 / 32×76 ✓
+    Zero                    2246 (11.2%)       1433       1435          1554    —
+    VarBaseMul              1596  (8.0%)        988        988           988    1×1596 / 1×988    ✓
+    EndoMulScalar            776  (3.9%)        184        184           184    / 8×23 — upstream
+                    also runs 2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
+    CompleteAdd              403  (2.0%)        112        112           112    1×159 2×65 3×23
+                    15×1 30×1 / 1×112
 
-The RUN LENGTHS are the fidelity signal, and four of six match EXACTLY: a `Poseidon` permutation is
-11 rows, a 128-bit `Scalar_challenge.endo` is 32 `EndoMul` rows, a `var_base_mul` chunk is a lone
-`VarBaseMul` row followed by its `Zero`, and a 128-bit `to_field_checked` is 8 `EndoMulScalar` rows —
-and the `EndoMul` COUNT is 2432 against upstream's 2465, i.e. the fold/`bullet_reduce` machinery is
-here at full size. The two run-length families that differ are named below (#4, #6). Only SEVEN gate
-types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no range-check — and all
-seven are emitted here.
+The RUN LENGTHS are the fidelity signal, and all six families are unchanged by R6/R7: a `Poseidon`
+permutation is 11 rows (206 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
+`EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
+128-bit `to_field_checked` is 8 `EndoMulScalar` rows. The `EndoMul` COUNT is 2432 against upstream's
+2465, i.e. the fold/`bullet_reduce` machinery is here at full size. Only SEVEN gate types appear in
+any Mina step or wrap circuit — no lookup, no foreign-field, no range-check — and all seven are
+emitted here.
 
-⚑ The two shortfalls are NOT of the same kind. `EndoMulScalar`/`CompleteAdd`/`VarBaseMul` are short
-because some widths and some fold shapes are not instantiated (cheap, mechanical). `Generic` (277 vs
-6245) and `Poseidon` (1034 vs 6292) are short because two named sub-circuits are NOT BUILT: the
-`ft_eval0` / `Plonk_checks.checked` scalar arithmetic, and the evaluation-absorption + app-logic
-hashing. Those are the frontier, and #4/#5 below say so.
+⚑ **THE `Generic` SHORTFALL WAS MIS-ATTRIBUTED, and this is the correction.** The prior header wrote
+that the `ft_eval0` / `Plonk_checks.checked` sub-circuit was "≈5,900 `Generic` rows — the single
+largest remaining sub-circuit". MEASURED (2026-08-02): the constant term is **467 `Generic` rows
+here** (934 operations, two per double-generic row), and upstream's own generated
+`Scalars.Tick.constant_term` (`plonk_checks/scalars.ml`, 3,295 lines) carries **~2,000 arithmetic
+operators** — so even Snarky's unshared emission of it is ~1,000–1,500 rows, not 5,900. The
+difference between 467 and that is real and named: `gateLinConst` is the STRUCTURED six-body form,
+which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
+`Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
+
+The remaining `Generic` gap (1033 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+branch's own `rule.main` application logic (which is not `verify_one` at all), the per-challenge
+`lowest_128_bits ~constrain_low_bits:true` range checks (#1 below), the SECOND `combine` and the
+`Shifted_value` unshifts of `combined_inner_product`/`b_correct` (#4), `equal_g`, `group_map`, and
+the `Boolean.all` finalisation. #4–#8 below name them.
+
+⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations. `verify_one`'s own
+sponge work is now assembled; the remaining 366 permutations are the app logic and the pieces #5
+names (the real `sponge_after_index` over the plonk index, `group_map`).
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -125,18 +150,33 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      255-bit width is expressible with `msmChunks = 51` and is not in the committed shape.**
   3. The MSM base points are `basePts` (distinct on-curve Pallas points), not the previous proof's
      actual commitments; the SCALARS are the circuit's own derived challenges.
-  4. The deferred rung computes `b(ζ)` and `combined_inner_product` — TWO of
-     `finalize_other_proof`'s four outputs. **`ft_eval0` (`step_verifier.ml:1066-1071`) and
-     `Plonk_checks.checked` (`:1131-1136`) are NOT assembled**, and with them the `scalars_env` /
-     `combined_evals` blocks. That is where the `Generic` shortfall in the table above lives: 6245
-     vs 327, i.e. ≈5,900 `Generic` rows of scalar arithmetic. It is the single largest remaining
-     sub-circuit and it is UNDONE WORK, not a theorem of the model.
-  5. No `group_map` (`step_verifier.ml:214-237`), no opt-sponge masking
-     (`branch_data.proofs_verified_mask`), no `equal_g`, no dummy/`should_verify` muxing, no
-     `hash_messages_for_next_step_proof`. Those, plus the app-logic `rule.main`, are most of the
-     Poseidon shortfall (572 permutations upstream vs 94 here).
+  4. **`combined_inner_product` is HALF of upstream's.** `finalize_other_proof` computes
+     `combine ~ft:ft_eval0 … + r * combine ~ft:ft_eval1 …` (`step_verifier.ml:1076-1085`): TWO
+     ξ-Horner folds, one per evaluation point, r-weighted. R5 assembles ONE (at ζ), and neither the
+     second fold nor `Shifted_value.Type1.to_field`'s unshift of the deferred word is here. Same for
+     `b_correct`: `challenge_poly ζ` is assembled, `+ r · challenge_poly ζω` and the unshift are not.
+  5. **Named and NOT assembled**, each a real sub-circuit: `group_map` (`step_verifier.ml:214-237`);
+     `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`; the real `sponge_after_index`
+     (the plonk index is hashed here from 57 FIXTURE words, not from the actual commitments);
+     `x_hat blinding`; `lagrange_commitment` / `public_input_commitment_dynamic`'s domain selection;
+     `actual_evaluation`'s per-column chunk Horner (`combined_evals`; our columns are single-chunk,
+     though `ζ^n = pow2_pow ζ 16` IS assembled in R6); the `xi_correct` boolean equality; the
+     `Boolean.all [xi_correct; b_correct; …]` finalisation and its assert; dummy/`should_verify`
+     muxing; and the app-logic `rule.main`.
   6. Every challenge is derived at ONE width (128 bits, 8 `EndoMulScalar` rows). Upstream also uses
      16/32/64/192/256-bit `to_field_checked` (the 1/2/4/12/16-row runs in the table).
+  7. R6's `β`/`γ`/`α`/`ζ` are R2's RAW challenge variables. Upstream lifts α and ζ through
+     `ScalarChallenge::to_field` (which R4's `Scalar_challenge.endo` rounds assemble) and leaves β/γ
+     raw. The lift is not wired INTO R6's inputs. The real-block instance
+     (`Dregg2.Bridge.StepMainFtEval0RealBlock`) supplies the genuinely lifted α and ζ, and the same
+     program returns block 539508's `ft_eval0` — so the arithmetic is exercised on lifted values even
+     though the assembly's own wire is not yet the lift.
+  8. R6's seven coset shifts are `FT_SHIFTS` (distinct nonzero fixtures), not `TickShifts.tickShiftsFp
+     16`. The Blake2b derivation is off this module's hot path; the REAL shifts are what the
+     real-block instance runs, and §13's bent-shift red control shows the value depends on them.
+  9. R7's opt-sponge mask is a fixed `keep` pattern (the first half of the blocks kept), standing for
+     `branch_data.proofs_verified_mask` / `Vector.trim_front actual_width_mask`. The mask VARIABLE is
+     in the circuit and both branches occur; what is not here is deriving it from `branch_data`.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
