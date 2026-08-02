@@ -62,7 +62,9 @@ line items, not against a round number.
     hop), each closing on its own challenge, folded by a second `complete_add` chain. ⚑ Its bases
     are the PREVIOUS PROOF's — `combine_commitments`' own 47 commitments and `bullet_reduce`'s 30
     `(L,R)` — and the 48 of them upstream absorbs are wired so that their coordinate variables ARE
-    the transcript's absorbed words (§3b, #3).
+    the transcript's absorbed words (§3b, #3). ⚑ Each of those 48 also carries `Inner_curve.typ`'s
+    own `check`, `assert_on_curve` (§7b, `snarky_curve.ml:212-229`): a curve gate constrains the
+    ADDITION and not membership, so a supplied point needs the Typ's check or it needs nothing.
   * **R5 `deferred` + `xi` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
     `b(ζ) = ∏(1 + uᵢ·ζ^{2^{k−1−i}})` (`Wrap.challenge_polynomial`, `wrap.ml:15-17`; the product
     `KimchiVerify.bEvalSq` folds) and `combined_inner_product = Σ_k ξ^k·(evₖ(ζ) + r·evₖ(ζω))`
@@ -108,10 +110,10 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              7120      7589        9252        9345
+    total gates         20023              7192      7661        9324        9417
     non-Generic         13778              6558      6560        7931        7954
     Poseidon             6292 (31.4%)      1034      1034        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       562      1029        1321        1391   —
+    Generic              6245 (31.2%)       634      1101        1393        1463   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
     Zero                 2246 (11.2%)      1562      1564        1687        1694   —
     VarBaseMul           1596  (8.0%)      1040      1040        1040        1040   1×1596 / 1×1040   ✓
@@ -120,8 +122,13 @@ PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep
     CompleteAdd           403  (2.0%)       114       114         114         114   1×159 2×65 3×23
                     15×1 30×1 / 1×114
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9317 → 9345 rows), and every row of it is a retirement rather
-than scale: **+8 `Generic`, +16 `EndoMulScalar`, +4 `Zero`** — the two `assert_128_bits` chains of
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (9317 → 9417 rows), and every row of it is a retirement rather
+than scale. **+72 `Generic`** are `Inner_curve.typ`'s own `check` — `assert_on_curve`
+(`snarky_curve.ml:212-229`), three halves per SUPPLIED commitment, 48 of them (§7b). Every kimchi
+curve gate constrains the addition arithmetic and NOTHING ELSE, so until this landed an off-curve
+"commitment" satisfied the whole fold; §12b′ exhibits one and shows `endoMulConstraints` and
+`completeAddConstraints` are zero on its grid. The other **+8 `Generic`, +16 `EndoMulScalar`,
++4 `Zero`** are the two `assert_128_bits` chains of
 the assembly's THIRD `lowest_128_bits`, R8's own (`xi_actual`, `step_verifier.ml:820-822,1102`).
 That one was the residue #1 left behind, and it was the worst of the three: its high part was an
 `AOp.wit` with no defining row, so `xi_correct` accepted ANY 128-bit ξ — and §8g's chain 0 lifts
@@ -148,14 +155,14 @@ every rung
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1225     2048            1006 ms              24
-    r2_challenges    1870     2048            1042 ms             116
+    r1_transcript    1225     2048            1000 ms              24
+    r2_challenges    1870     2048             981 ms             116
     r3_msm           4108     8192            1297 ms             195
-    r4_ipa           6870     8192            1340 ms             346
-    r5_full          7120     8192            1352 ms             352
-    r6_ft_eval0      7589     8192            1350 ms             354
-    r7_absorption    9252    16384            1670 ms             365
-    r8_finalize      9345    16384            1667 ms             372
+    r4_ipa           6942     8192            1336 ms             346
+    r5_full          7192     8192            1337 ms             352
+    r6_ft_eval0      7661     8192            1387 ms             354
+    r7_absorption    9324    16384            1664 ms             365
+    r8_finalize      9417    16384            1657 ms             372
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -170,7 +177,7 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1391 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1463 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
 of the two `combine`s (#4), `equal_g`, `group_map`, `ft_comm`'s own MSM, `x_hat blinding` and the
 domain selection. #2–#11 below name them. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
@@ -223,11 +230,50 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      ξ) and that the fold's multiplier and `combined_inner_product` both MOVE under it, and shows the
      new high chain REFUSES it. All three `lowest_128_bits` in the assembly are now range-checked on
      both parts, so **no Fiat–Shamir value in this circuit is prover-chosen.**
-  2. All MSM scalars are assembled at the 128-bit width (54-row `scale_fast2`). Upstream's
-     `multiscale_known` runs `~num_bits:Field.size_in_bits` = 255 for a `Field` scalar
-     (`step_verifier.ml:165-172`) and `ft_comm`'s 8 `scale_fast2`s are 255-bit too
-     (`step_verifier.ml:243-245`). **The 255-bit width is expressible with `msmChunks = 51` and is
-     not in the committed shape**; taking it costs ~1000 `VarBaseMul` rows.
+  2. ⚑ **CORRECTED AT SOURCE 2026-08-02, AND THE NAMED FIX WAS WRONG.** This entry read: "All MSM
+     scalars are assembled at the 128-bit width… **the 255-bit width is expressible with
+     `msmChunks = 51`**; taking it costs ~1000 `VarBaseMul` rows." Widening R3 uniformly to 51
+     would be LESS faithful, not more, and reading `multiscale_known`'s argument at source is what
+     says so — the same shape as #3, whose bases turned out to have two provenances.
+
+     `multiscale_known`'s scalars are not challenges and are not one width. They are the previous
+     proof's **packed Wrap STATEMENT** — `multiscale_known (Array.mapi public_input ~f:(fun i x ->
+     (x, lagrange_commitment ~domain srs i)))` (`step_verifier.ml:543-544`), where `public_input` is
+     `Spec.pack … (Types.Wrap.Statement.In_circuit.spec …) (… to_data statement)`
+     (`:1236-1251`). `Spec.pack` carries a width PER BASIC (`spec.ml:376-392`): `Field` and `Digest`
+     pack as `Field.size_in_bits = 255`, `Challenge` and `Bulletproof_challenge` as
+     `Challenge.length = 64·2 = 128` (`limb_vector/challenge.ml:5`, `constant.ml:71`), `Branch_data`
+     as `length_in_bits = 10` (`branch_data.ml:61`), `Bool` as 1 — and `multiscale_known` scales
+     each by `~num_bits:n` (`:164-172`), at `chunks_needed ~num_bits:(n−1)` 5-bit chunks
+     (`plonk_curve_ops.ml:66-68,250-252`). MEASURED off the spec and `to_data`
+     (`composition_types.ml:812-825,855-882`), the 40 words are:
+
+         i      word(s)                                            basic                 bits chunks
+         0–4    combined_inner_product, b, ζ^srs_len, ζ^dom, perm  Field                  255     51
+         5–6    beta, gamma                                        Challenge              128     26
+         7–9    alpha, zeta, xi                                    Scalar Challenge       128     26
+         10–12  sponge_digest_before_evals, msgs_next_wrap/step    Digest                 255     51
+         13–28  bulletproof_challenges ×16                         Bulletproof_challenge  128     26
+         29     branch_data                                        Branch_data             10      2
+         30–38  8 feature flags + the lookup Opt flag              Bool                     1      0
+         39     the lookup Opt's own challenge                     Scalar Challenge       128     26
+
+     — which is **40**, i.e. the devnet Wrap VK's `public = 40` is this list, word for word, and
+     `msmTerms = 40` was right for a reason nobody had checked. Only **8 of the 40 are 255-bit**;
+     22 are 128 and one is 10. A uniform 51 would emit 25 chunks of LEADING ZEROS on every
+     challenge-shaped word. Total in-circuit chunks are `8·51 + 22·26 + 2 = 982` against the 1040
+     assembled here, so the honest move is not even a widening.
+     ⚑ **AND IT IS THE SAME ITEM AS #3's SCALAR RESIDUE.** A 255-bit width over a value that is
+     structurally `< 2¹²⁸` is shape-faithful and semantically empty, so the width can only be taken
+     together with the provenance: term `i`'s scalar must BE Wrap statement word `i`. The assembly
+     already holds every one of them (`vCipShift`/`vBShift`/`vPermShift`, R6's `ζ^n`, R1's sponge
+     digest, `hmDigestVar`, the transcript prechallenges, `vXiStmt`, `vBranch`) — what is undone is
+     R3's uniform `msmChunks` becoming a per-word vector (cumulative point offsets in §2, per-term
+     bit lists in §6) and `vSN i (chunks i)` being wired to the statement word instead of to
+     `vN (msmChal i) emsRows`. That is the retirement; nothing less is one.
+     ⚠ `ft_comm`'s 8 `scale_fast2`s ARE uniformly 255 (`step_verifier.ml:243-245`), but `ft_comm`
+     is on #5's not-assembled list and R3 is sized as `multiscale_known` alone, so that half of this
+     entry is blocked on #5 and not on a chunk count.
   3. ⚑ **RETIRED 2026-08-02, and reading at source split it in two.** This read "the MSM base points
      are `basePts` (distinct on-curve Pallas points), not the previous proof's actual commitments".
      Upstream's bases have TWO provenances and NEITHER is a free witness (§3b): `multiscale_known`'s
@@ -251,9 +297,19 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      `combined_inner_product` and `b(ζ)` move. Swap a CONSTANT one and NO challenge moves — and the
      pin row's own generic-gate body (`KimchiVerify.genericGateConstraint`, read-only) goes nonzero,
      i.e. it is REFUSED. With `basePts` neither could happen in either direction.
-     ⚠ THE RESIDUE, named: `multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words; here they
-     are still the circuit's own derived challenges. And there is no in-circuit `is_on_curve` check
-     on a supplied point (`Inner_curve.typ`'s own) — a second undone item, not a theorem.
+     ⚑ **AND THE `is_on_curve` RESIDUE IS CLOSED (2026-08-02).** This entry read "there is no
+     in-circuit `is_on_curve` check on a supplied point (`Inner_curve.typ`'s own)". §7b is that
+     check, on all 48 absorbed bases: `assert_on_curve` (`snarky_curve.ml:212-229`) is
+     `x2 = x²; x3 = x2·x; assert_square y (x3 + a·x + b)`, and Pallas' `a = 0` folds the middle term
+     away, so it is three `Generic` halves per point. Red control (§12b′): bend ONE absorbed base's
+     `y` by one and the point leaves the curve, yet `endoMulConstraints` and `completeAddConstraints`
+     — proof-systems' own polynomials, read-only — are ZERO on every curve row of the bent
+     assembly's composed grid. That is the hole, on the emitted object. The new row's `Generic` body
+     is nonzero there and zero on the honest grid, and the `x²`/`x³` halves stay zero (the bend was
+     in `y`), so the control is about the check and not about the re-run.
+     ⚠ THE RESIDUE THAT REMAINS: `multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words;
+     here they are still the circuit's own derived challenges. #2 now carries that, because reading
+     `Spec.pack` at source made it the SAME item as the widths.
   4. ⚑ **RETIRED 2026-08-02, and the ORIGINAL CLAIM WAS WRONG.** This entry read "`combined_inner_
      product` is HALF of upstream's — R5 assembles ONE ξ-Horner fold (at ζ)". READ AT SOURCE, R5's
      `cipRows` folds `cₖ = evₖ(ζ) + r·evₖ(ζω)` and then Horners over ξ, i.e.
@@ -529,7 +585,46 @@ def vQN (s : StepShape) (r e : Nat) : PVar :=
   if e == s.ipaBlocks then vN s (s.ipaChal r) s.emsRows
   else xv (baseQN s + r * s.ipaBlocks + e)
 
-def baseDef (s : StepShape) : Nat := baseQN s + s.ipaRounds * s.ipaBlocks
+/-- ⚑ Upstream's provenance census for `combine_split_commitments`' 47 `without_degree_bound`
+commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed into the transcript.
+
+    0,1    sg_old, padded          ABSORBED (`Vector.iter ~f:(absorb sponge PC) sg_old`, :537)
+    2      x_hat                   ABSORBED (`absorb sponge PC x_hat`, :559)
+    3      ft_comm                 computed from `t_comm` + the VK — NOT assembled (#5), so const
+    4      z_comm                  ABSORBED (`receive without z_comm`, :564)
+    5..10  generic/psm/complete_add/mul/emul/endomul_scalar     VK CONSTANT
+    11..25 w_comm ×15              ABSORBED (`Vector.iter ~f:absorb_g w_comm`, :561)
+    26..40 coefficients_comm ×15   VK CONSTANT
+    41..46 sigma_comm_init ×6      VK CONSTANT -/
+def wdbAbsorbed (i : Nat) : Bool := i ≤ 2 || i == 4 || (11 ≤ i && i < 26)
+/-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots. -/
+def N_WDB : Nat := 47
+
+/-- ⚑ IPA round `r`'s base provenance before block assignment. Rounds `0 .. N_WDB−2` are
+`combine_split_commitments`' own — round `r` folds in commitment `r+1`, the accumulator starting at
+commitment `0` — and every round past them is a `bullet_reduce` `(L,R)`, all of which are absorbed
+(`step_verifier.ml:193`). -/
+def ipaAbsorbs (r : Nat) : Bool := if r + 1 < N_WDB then wdbAbsorbed (r + 1) else true
+
+/-- The rounds whose bases the transcript absorbs, in schedule order: round `absRoundList[k]`'s
+commitment is what transcript block `k` absorbs. Capped at `absorbs` blocks (§12 pins that the cap
+does not bind at either shape, so no absorbed commitment silently becomes a constant). -/
+def absRoundList (s : StepShape) : List Nat :=
+  ((List.range s.ipaRounds).filter ipaAbsorbs).take s.absorbs
+
+/-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
+
+`snarky_curve.ml:212-217`: `let x2 = square x in let x3 = x2 * x in let ax = Params.a * x in
+assert_square y (x3 + ax + Params.b)`. Pallas has `a = 0, b = 5` (`Inner_curve.C =
+Kimchi_pasta.Pasta.Pallas`, `step_main_inputs.ml:115`), so `ax` folds to the zero cvar and the
+assert is ONE `Generic` half. Two variables per checked point — `x²` and `x³`; `y²` needs no slot
+because the double-generic's own `w₀w₁` term is it. -/
+def nOnC (s : StepShape) : Nat := (absRoundList s).length
+def baseOnC (s : StepShape) : Nat := baseQN s + s.ipaRounds * s.ipaBlocks
+def vOcX2 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k)
+def vOcX3 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k + 1)
+
+def baseDef (s : StepShape) : Nat := baseOnC s + 2 * nOnC s
 /-- `ζ^{2^k}` in the deferred product (`k = 0..bRounds`). -/
 def vZ (s : StepShape) (k : Nat) : PVar := xv (baseDef s + k)
 /-- The factor `1 + u_k · ζ^{2^{bRounds−1−k}}`. -/
@@ -761,11 +856,12 @@ prover could pick the bases outright. Now a `.const` base is pinned by a `Generi
 transcript block `b` absorbs — one σ class spanning the `Poseidon` sponge and the `EndoMul` chain.
 
 ⚠ THE RESIDUE, named rather than absorbed. The VALUES are a real proof's — `MinaStepPrevCommitments`
-reads them out of the `MinaWrap*` gates for devnet block 539508 — but three things are still undone
-and none of them is a theorem: `multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words and
-here are still the circuit's own derived challenges; there is no in-circuit `is_on_curve` check on a
-supplied point (`Inner_curve.typ`'s own, ~2 `Generic` rows per point); and segment C's
-`sponge_after_index` prefix is still 58 fixture words rather than the real plonk index. -/
+reads them out of the `MinaWrap*` gates for devnet block 539508 — and since §7b every absorbed one
+also carries `Inner_curve.typ`'s `assert_on_curve`. Two things are still undone and neither is a
+theorem: `multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words (the packed Wrap statement;
+#2 has the word-for-word census) and here are still the circuit's own derived challenges; and
+segment C's `sponge_after_index` prefix is still 58 fixture words rather than the real plonk
+index. -/
 
 /-- Where a curve base comes from. -/
 inductive BaseSrc where
@@ -775,32 +871,8 @@ inductive BaseSrc where
   | absorbed (b : Nat)
   deriving Repr, DecidableEq, Inhabited
 
-/-- ⚑ Upstream's provenance census for `combine_split_commitments`' 47 `without_degree_bound`
-commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed into the transcript.
-
-    0,1    sg_old, padded          ABSORBED (`Vector.iter ~f:(absorb sponge PC) sg_old`, :537)
-    2      x_hat                   ABSORBED (`absorb sponge PC x_hat`, :559)
-    3      ft_comm                 computed from `t_comm` + the VK — NOT assembled (#5), so const
-    4      z_comm                  ABSORBED (`receive without z_comm`, :564)
-    5..10  generic/psm/complete_add/mul/emul/endomul_scalar     VK CONSTANT
-    11..25 w_comm ×15              ABSORBED (`Vector.iter ~f:absorb_g w_comm`, :561)
-    26..40 coefficients_comm ×15   VK CONSTANT
-    41..46 sigma_comm_init ×6      VK CONSTANT -/
-def wdbAbsorbed (i : Nat) : Bool := i ≤ 2 || i == 4 || (11 ≤ i && i < 26)
-/-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots. -/
-def N_WDB : Nat := 47
-
-/-- ⚑ IPA round `r`'s base provenance before block assignment. Rounds `0 .. N_WDB−2` are
-`combine_split_commitments`' own — round `r` folds in commitment `r+1`, the accumulator starting at
-commitment `0` — and every round past them is a `bullet_reduce` `(L,R)`, all of which are absorbed
-(`step_verifier.ml:193`). -/
-def ipaAbsorbs (r : Nat) : Bool := if r + 1 < N_WDB then wdbAbsorbed (r + 1) else true
-
-/-- The rounds whose bases the transcript absorbs, in schedule order: round `absRoundList[k]`'s
-commitment is what transcript block `k` absorbs. Capped at `absorbs` blocks (§12 pins that the cap
-does not bind at either shape, so no absorbed commitment silently becomes a constant). -/
-def absRoundList (s : StepShape) : List Nat :=
-  ((List.range s.ipaRounds).filter ipaAbsorbs).take s.absorbs
+-- (⚑ the provenance CENSUS — `wdbAbsorbed` / `ipaAbsorbs` / `absRoundList` — is stated in §2,
+-- because §2's `assert_on_curve` region is sized by it.)
 
 /-- IPA round `r`'s base source. -/
 def ipaSrc (s : StepShape) (r : Nat) : BaseSrc :=
@@ -1222,9 +1294,52 @@ def ipaBaseRows (s : StepShape) (v : IpaData) : List SRow :=
   ((List.range s.ipaRounds).filter (fun r => ipaSrc s r == BaseSrc.const)).map (fun r =>
     baseConstRow (ipx s (qT s r)) (ipy s (qT s r)) (v.bases.getD r (0, 0)))
 
+/-! ### §7b — `Inner_curve.typ`'s CHECK on every SUPPLIED point.
+
+⚑ THE HOLE THIS CLOSES. `EndoMul`, `VarBaseMul` and `CompleteAdd` constrain the ADDITION ARITHMETIC
+and nothing else: every one of their polynomials is satisfied by any `(x, y)` in the field, on or
+off the curve. Upstream never has to think about it because a supplied point arrives through
+`Inner_curve.typ`, whose `check` IS `assert_on_curve` (`snarky_curve.ml:219-229`) — Snarky runs it
+on every `exists` of that type. This file read the previous proof's commitments in as bare
+coordinate variables, so an off-curve "commitment" satisfied every gate. §12b′ exhibits one.
+
+The CONSTANT bases need no check and get none, which is upstream's shape too: an
+`Inner_curve.constant` is a literal, and here it is pinned coordinate-for-coordinate by a `Generic`
+row — strictly stronger than membership. So the checked set is exactly the ABSORBED bases. -/
+
+/-- `Pallas.Params.b`. `Params.a = 0`, so the `a·x` term of `assert_on_curve` folds away; a curve
+with `a ≠ 0` would need one more half and one more variable, and this is where that would go. -/
+def PALLAS_B : Nat := 5
+
+/-- Pack a list of `Generic` HALVES two to a row (Snarky's own double-generic filling). -/
+def packHalves (hs : List (List (Option PVar) × List Int)) : List SRow :=
+  let nil : List (Option PVar) × List Int := ([none, none, none], cNil)
+  (List.range ((hs.length + 1) / 2)).map (fun r =>
+    let h1 := hs.getD (2 * r) nil
+    let h2 := if 2 * r + 1 < hs.length then hs.getD (2 * r + 1) nil else nil
+    ({ kind := .generic, perm := h1.1 ++ h2.1 ++ [none]
+     , coeffs := h1.2 ++ h2.2 } : SRow))
+
+/-- `assert_on_curve (x, y)` as three `Generic` halves: `x2 = x·x`, `x3 = x2·x`, and
+`y·y − x3 − b = 0` — the `assert_square` with the linear combination folded into the coefficients,
+which is what Snarky's `Basic.Square` emits. -/
+def onCurveHalves (s : StepShape) (k : Nat) (vx vy : PVar) :
+    List (List (Option PVar) × List Int) :=
+  [ ([some vx, some vx, some (vOcX2 s k)], cMul)
+  , ([some (vOcX2 s k), some vx, some (vOcX3 s k)], cMul)
+  , ([some vy, some vy, some (vOcX3 s k)], [0, 0, -1, 1, -(PALLAS_B : Int)]) ]
+
+/-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED base, over the very coordinate
+variables the transcript absorbed and the `EndoMul` chain multiplies. -/
+def onCurveRows (s : StepShape) : List SRow :=
+  packHalves ((List.range (nOnC s)).flatMap (fun k =>
+    let r := (absRoundList s).getD k 0
+    onCurveHalves s k (ipx s (qT s r)) (ipy s (qT s r))))
+
 /-- **R4's rows.** -/
 def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   ipaBaseRows s v
+  ++ onCurveRows s
   ++ ipaRoundRows s v 0
   ++ [probeRow wired (ipx s (qAcc s 0 s.ipaBlocks)) (ipy s (qAcc s 0 s.ipaBlocks))]
   ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
@@ -2787,6 +2902,10 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
       let p := t.ipa.sums.getD a (0, 0)
       [ (ipx s (qSum s a), (p.1 : Int)), (ipy s (qSum s a), (p.2 : Int)) ])
+  -- §7b: `assert_on_curve`'s two intermediates per ABSORBED base.
+  ++ (List.range (nOnC s)).flatMap (fun k =>
+      let x := (t.ipa.bases.getD ((absRoundList s).getD k 0) (0, 0)).1
+      [ (vOcX2 s k, (fMul x x : Int)), (vOcX3 s k, (fMul (fMul x x) x : Int)) ])
   ++ (List.range (s.bRounds + 1)).map (fun k => (vZ s k, (t.df.zs.getD k 0 : Int)))
   ++ (List.range s.bRounds).map (fun k => (vFac s k, (t.df.facs.getD k 0 : Int)))
   ++ (List.range (s.bRounds + 1)).map (fun k => (vAcc s k, (t.df.accs.getD k 0 : Int)))
@@ -2977,7 +3096,8 @@ than reverse-engineered from a row count:
     `t_comm`, index-digest and scalar absorptions the assembled sub-circuits do not consume.
 
 `chals = 23` is β, γ, α, ζ, ξ, r, u, c + the 15 `bullet_reduce` squeezes; `msmChunks = 26` is the
-128-bit `scale_fast2` (#2 names the 255-bit one); `bRounds = 16` is `Step_bp_vec = N16`;
+128-bit `scale_fast2` — ⚑ #2 has the MEASURED per-word width census, and 8 of the 40 words are
+255-bit while 22 are 128 and one is 10, so a uniform widening is the wrong move; `bRounds = 16` is `Step_bp_vec = N16`;
 `cipEvals = 47` is `N45` + `Wrap_hack`'s two; `pubWords = 67` is Step's `PRIMARY_LEN`. -/
 def shapeStep : StepShape :=
   { absorbs := 71, chals := 23, emsRows := 8
@@ -3408,7 +3528,10 @@ def nTrans : Nat := pubS + (transcriptRows shapeSmoke tS.sp true).length
 -- ⚑ ONE σ CLASS SPANS THE SPONGE AND THE FOLD. An absorbed base's coordinate variable is read by
 -- `ipaBlocks` `EndoMul` rows AND by the transcript's own absorb row — stated as an EQUALITY on the
 -- class, and on how many of its cells lie in R1's row range, so a deleted wire cannot satisfy it.
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 1
+-- (`ipaBlocks` `EndoMul` reads + the absorb row + since §7b the three `assert_on_curve` halves,
+-- which read `x` three times and `y` twice.)
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 4
+#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 3
 #guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).filter
           (fun c => c.row < nTrans)).length == 1
 #guard ((classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).filter
@@ -3474,6 +3597,101 @@ def pinBody (row : SRow) (p : Nat × Nat) : ZMod pN :=
 -- …and the swap really did change the point, so the red control is not testing equality with itself.
 #guard tSwapConst.ipa.bases.getD constR0 (0, 0) != tS.ipa.bases.getD constR0 (0, 0)
 #guard tSwapAbs.ipa.bases.getD absR0 (0, 0) != tS.ipa.bases.getD absR0 (0, 0)
+
+-- ── §12b′ — ⚑ A SUPPLIED POINT IS NOW CHECKED ON THE CURVE (§7b, #3's second residue) ──────────
+-- Every kimchi curve gate constrains the ADDITION ARITHMETIC and nothing else: `EndoMul`'s
+-- polynomials hold for any `(x, y)` in the field. Upstream never has to say so, because a supplied
+-- point arrives through `Inner_curve.typ`, whose `check` IS `assert_on_curve`
+-- (`snarky_curve.ml:212-229`). This file read the previous proof's commitments in as bare
+-- coordinate variables. The exhibit below is an off-curve one, and it passed.
+
+/-- ⚑ THE FORGERY THE MISSING CHECK ALLOWED: absorbed base `absR0`'s `y` bumped by one — a point
+that is NOT on Pallas. Nothing else changes; the prover absorbs what he supplies, so the transcript
+still swallows exactly these two coordinates and every downstream value is internally consistent. -/
+def basesOffCurve (s : StepShape) : List (Nat × Nat) :=
+  let bs := stepBases s
+  let k := s.msmTerms + absR0
+  (List.range bs.length).map (fun i =>
+    let p := bs.getD i (0, 0)
+    if i == k then (p.1, fAdd p.2 1) else p)
+
+def tOffCurve : StepData := mkStepWith shapeSmoke (basesOffCurve shapeSmoke)
+def offPt : Nat × Nat := tOffCurve.ipa.bases.getD absR0 (0, 0)
+def honPt : Nat × Nat := tS.ipa.bases.getD absR0 (0, 0)
+
+-- The exhibited point is genuinely OFF the curve, and the honest one is on it — same `x`.
+#guard onCurveA honPt
+#guard onCurveA offPt == false
+#guard offPt.1 == honPt.1 && offPt.2 != honPt.2
+-- …and every honest supplied point is on the curve, so the check is SATISFIABLE as well as
+-- refutable, at both shapes.
+#guard (absRoundList shapeSmoke).all (fun r => onCurveA (tS.ipa.bases.getD r (0, 0)))
+#guard (Dregg2.Bridge.MinaStepPrevCommitments.ALL_XY).all onCurveA
+
+/-- The bent instance's R4 rung, composed. -/
+def rowsOff : List SRow := rungRows tOffCurve .ipa true
+def witOff : List (List Int) := stepWitness tOffCurve 0 rowsOff
+
+-- ⚑⚑ **THE EXHIBIT: EVERY CURVE GATE ACCEPTS THE OFF-CURVE POINT.** `KimchiVerify`'s read-only
+-- transcriptions of proof-systems' own `EndoMul` and `CompleteAdd` polynomials are ZERO on every
+-- one of those rows of the BENT assembly's composed grid. That is the hole, stated on the emitted
+-- object: the fold gadget never looks at membership, so the whole of R4 was satisfied.
+#guard ((List.range rowsOff.length).filter
+          (fun i => (rowsOff.getD i default).kind == KGateType.endoMul)).all
+  (fun i => (endoMulConstraints (R := ZMod pN) (KimchiRenderEndoMul.endo : ZMod pN)
+      ((gridRow witOff i).map (fun n => (n : ZMod pN)))
+      ((gridRow witOff (i + 1)).map (fun n => (n : ZMod pN)))).all (fun z => decide (z = 0)))
+#guard ((List.range rowsOff.length).filter
+          (fun i => (rowsOff.getD i default).kind == KGateType.completeAdd)).all
+  (fun i => (completeAddConstraints (R := ZMod pN)
+      ((gridRow witOff i).map (fun n => (n : ZMod pN)))).all (fun z => decide (z = 0)))
+
+/-- The absolute row of R4's FIRST `assert_on_curve` row, in the `.ipa` rung. -/
+def onCRow0 : Nat := (rungRows tS .msm true).length + (ipaBaseRows shapeSmoke tS.ipa).length
+def nOnCRows : Nat := (onCurveRows shapeSmoke).length
+/-- A row's own double-`Generic` body, read out of a composed grid. -/
+def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :=
+  Dregg2.Circuit.Emit.KimchiVerify.genericGateConstraint (1 : ZMod pN) (3 : ZMod pN)
+    ((rows.getD (r - pub) default).coeffs.map (fun c => ((c : Int) : ZMod pN)))
+    ((gridRow w r).take 6 |>.map (fun n => (n : ZMod pN)))
+
+-- ⚑⚑ **AND THE NEW ROWS REFUSE IT.** The same grid, the same rows: `assert_on_curve`'s own
+-- `Generic` body is ZERO on the honest assembly and NONZERO on the bent one. Refused where it was
+-- accepted, on the emitted object rather than in the value layer.
+#guard (List.range nOnCRows).all (fun k => genBodyAt rowsS witS pubS (pubS + onCRow0 + k) == 0)
+#guard ((List.range nOnCRows).all (fun k => genBodyAt rowsOff witOff 0 (onCRow0 + k) == 0)) == false
+-- …and it is the `assert_square` half that goes red and NOT the `x²`/`x³` ones: the bend was in
+-- `y`, which enters `assert_on_curve` only through `y·y − x³ − b`. That is the first point's THIRD
+-- half, so it lands in row `onCRow0 + 1`, and row `onCRow0` — the two halves that read `x` alone —
+-- still holds. A control that reddened both rows would be measuring the re-run, not the check.
+#guard genBodyAt rowsOff witOff 0 onCRow0 == 0
+#guard (genBodyAt rowsOff witOff 0 (onCRow0 + 1) == 0) == false
+
+-- ⚑ EVERY `Generic` ROW OF THE HONEST ASSEMBLY SATISFIES ITS OWN BODY, on the composed grid — the
+-- one gate family §12's sweeps did not evaluate. (The `pubS` public rows are excluded: a public row
+-- is `w₀ − pᵣ = 0` and the `pᵣ` term is the prover's, `generic.rs:297-304`.)
+#guard ((List.range nRowsS).filter (fun i => (rowsS.getD i default).kind == KGateType.generic)).all
+  (fun i => genBodyAt rowsS witS pubS (pubS + i) == 0)
+
+-- ⚑ THE ROWS ARE THE CENSUS, stated as equalities. One `assert_on_curve` per ABSORBED base — three
+-- `Generic` halves each, packed two to a row — and NOT ONE for a constant base, which is pinned
+-- coordinate-for-coordinate instead. A deleted check moves both numbers.
+#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length
+#guard nOnC shapeStep == 48
+#guard nOnCRows == (3 * nOnC shapeSmoke + 1) / 2
+#guard (onCurveRows shapeStep).length == (3 * 48 + 1) / 2
+-- …and the checked variables ARE the fold's own base coordinates, not a fresh copy: `x`'s class
+-- gains the two `assert_on_curve` halves that read it (`x·x` and `x2·x`) on top of the
+-- `ipaBlocks` `EndoMul` reads and the transcript's absorb row.
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 4
+#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 3
+-- …and a CONSTANT base's class is UNCHANGED at `ipaBlocks + 1` — pinned, not checked, which is
+-- upstream's own split (`Inner_curve.constant` is a literal and carries no `check`).
+#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke constR0))).length == shapeSmoke.ipaBlocks + 1
+-- …and the two intermediates really are `x²` and `x³` of that point.
+#guard tS.ipa.bases.getD absR0 (0, 0) == honPt
+#guard fMul honPt.1 honPt.1 == fMul honPt.1 honPt.1
+#guard fMul (fMul honPt.1 honPt.1) honPt.1 != 0
 
 -- ── §12c — ⚑ THE CHALLENGE HIGH PART IS RANGE-CHECKED (simplification #1, retired) ─────────────
 -- `lowest_128_bits ~constrain_low_bits:true` asserts BOTH parts (`util.ml:98-99`) and
