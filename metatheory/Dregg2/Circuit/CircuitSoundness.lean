@@ -403,12 +403,74 @@ ANY `Satisfied2` witness of `d` whose published commitments (`pc`) decode (via a
 family of these. The hash, surface, and memory boundary (`minit`/`mfin`/`maddrs`) are quantified — a
 witness under ANY boundary that publishes commitments decoding to `pre`/`post` must induce the step. -/
 
-/-- **`descriptorRefines d kstep`** — the per-effect refinement obligation: under the named hash CR
-carrier (`Poseidon2SpongeCR hash` — the floor the per-descriptor published-PI↔limb binding
-`EffectVmEmitRotationV3.rotV3_binds_published` consumes), every `Satisfied2` witness of `d` whose
-published commitments decode to `pre`/`post` forces `kstep pre post`. The `Poseidon2SpongeCR`
-antecedent is GENUINE — it is exactly what each effect's discharge needs to tie the published
-commitment to the decoded kernel before invoking its `Satisfied2 ⟹ fullActionStep` keystone. -/
+/-- **`descriptorRefines d kstep`** — the per-effect refinement obligation: every `Satisfied2` witness
+of `d` whose published commitments decode to `pre`/`post` forces `kstep pre post`.
+
+⚑⚑ **THE FLOOR IS IN THE BODY, AND IT IS DEAD. MEASURED 2026-08-01, NOT PORTED.**
+
+The body opens `Poseidon2SpongeCR hash → …` — a floor `HashFloorHonesty.poseidon2SpongeCR_false_babyBear`
+PROVES FALSE at deployed BabyBear (infinite `List ℤ` into ~2³¹ values, pigeonhole). Because it sits in the
+VALUE and not the signature, **no floor binder appears anywhere in the type of any theorem that mentions
+this def**, and every binder-keyed ruler reads those theorems as clean. `DescriptorRefinesShirkRefuted`
+proves the consequence outright: `descriptorRefines S hash d (fun _ _ => False)` HOLDS at every
+field-bounded sponge. A refinement obligation discharged at an unsatisfiable `kstep` constrains the
+circuit in no way at all.
+
+**What the previous version of this docblock claimed, and what is actually true.** It said the antecedent
+is "GENUINE — exactly what each effect's discharge needs", citing
+`EffectVmEmitRotationV3.rotV3_binds_published`. Measured over the whole tree: `rotV3_binds_published` is
+APPLIED NOWHERE — its only non-comment occurrences are its own `theorem` line, its `#assert_axioms`, and a
+`FloorRatchetBaseline` row. And not one in-tree discharge of `descriptorRefines` READS the antecedent:
+
+  * `ClosureAll.effectDecodeBridge_of_closedLogExtract` — the funnel every closed-path producer goes
+    through (`hrefinesAllClosed` → `ClosureForest.hrefines_forest_closed` → `descriptorRefines_complete`
+    and its 31-tag census) — opens `intro _hCR …` and never mentions it again;
+  * `WitnessRealizing.descriptorRefines_trivial` drops it;
+  * `RotatedKernelRefinementFacetTurnBound.descriptorRefinesTB_to_descriptorRefines` only FORWARDS it into
+    `descriptorRefinesTB`, whose body opens with the same dead antecedent;
+  * the only genuine reads are inside the refuted twin (`DescriptorRefinesReduce.descriptorRefines_of_R`)
+    and the refutations themselves.
+
+So the honest replacement here is a **DELETION**, not a re-grounding — the identical finding that carried
+the two landed 2026-07-25 prop-body ports (`ClosureAll.ClosedLogExtract`,
+`CircuitCompleteness.descriptorComplete`; see `FloorCensus.portedPropBody`). Deleting the antecedent is
+strictly STRENGTHENING and needs no bridge lemma.
+
+⚠ **DO NOT re-ground this one on `¬ SpongeColl` at a named pair.** The per-instance residual
+(`SpongeCollisionShirk.SpongeColl`, bridge `noSpongeColl_of_spongeCR`) is the right target for a site that
+FEEDS the floor a specific pair of lists. This def feeds it nothing. Manufacturing a pair here would mint a
+side condition no proof consumes — decoration, and a fresh carrier. Equally, do NOT port onto
+`DescriptorRefinesReduce.descriptorRefinesR`: it is `↔`-equivalent to this def
+(`descriptorRefinesR_iff_refines`) and provably just as vacuous
+(`DescriptorRefinesShirkRefuted.descriptorRefinesR_vacuous_babyBear`).
+
+**The target already exists and already passes the acceptance test:**
+`ApexFloorFree.descriptorRefinesFree` — no antecedent, `CommitMap` in place of the (separately refuted)
+`CommitSurface` bundle, publication link carried — and
+`ApexFloorFree.descriptorRefinesFree_false_at_False_kstep` REFUTES it at `fun _ _ => False`, which is the
+falsifier this def and its twin both fail.
+
+**BLAST RADIUS, MEASURED (241 exact-word mentions, 39 files).** 156 are inside comments and carry nothing.
+Of the 85 in code: 2 are the census/baseline pins, 4 are `open` lines, and 29 are `hrefines`-family
+HYPOTHESIS binders — and every one of those 29 consumers ALSO binds `hCR : Poseidon2SpongeCR hash`
+explicitly, so the consumer half of the surface is already visible to a binder-keyed census and is not
+what this class hides. The silent carriers are the ~21 PRODUCERS (statements that CONCLUDE it with no
+floor binder), plus two prop-body aliases that inherit the hiding — `CircuitSoundnessAssembled.EffectDecodeBridge`
+(`:= descriptorRefines …`) and the `WitnessRealizing.LeafRefinement.refines` structure FIELD.
+
+**WHY IT IS NOT PORTED HERE, and what the port costs.** The port is one edit to this body plus ~6 producer
+proofs; it is NOT a 241-site change. What couples it into a single indivisible commit is the instrument:
+
+  1. `FloorCensus.sentinelPropBody = [descriptorRefines]` and `FloorRatchet` gate (d) BOTH fail closed if
+     this def stops being discovered as a prop-body carrier. The port must move the name into
+     `FloorCensus.portedPropBody` in the SAME commit, or the whole tree goes red.
+  2. `DescriptorRefinesShirkRefuted`'s four refutations become UNPROVABLE the moment the antecedent goes —
+     that is the port succeeding, but a falsity theorem may not simply vanish; it has to be retired to a
+     tombstone in the same commit, with the acceptance test re-pointed at `descriptorRefinesFree`.
+  3. Each of the 29 consumers drops an argument at its `hrefines e hCR …` application sites, and sheds
+     `hCR` where nothing else in the proof reads it.
+
+None of the three is a reason to keep the antecedent; they are the work order. -/
 def descriptorRefines (S : CommitSurface) (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor2) (kstep : RecChainedState → RecChainedState → Prop) : Prop :=
   Poseidon2SpongeCR hash →
@@ -760,7 +822,9 @@ advance is DERIVED, not assumed). Its crypto residual is EXACTLY `Poseidon2Spong
 sponge-shaped CR fields — root/node/frame/leaf — all reduce to that one hash floor via
 the historical `Freshness.poseidon2CommitSurface`, now the floor-free `spongeCommitSurface`) plus the
 PROVED nonce-monotone invariant;
-the deployed replacement is `CommitFaithfulRegrounded.no_replay_faithful`; the sole non-crypto
+the deployed replacement is `CommitFaithfulRegrounded.no_replay_faithful` — ⚠ WITH THE CAVEAT that
+its `FaithfulBreak` opens with a global-existential `SpongeCollision compressN` and so holds freely
+at deployed width; prefer a per-instance `¬ CommitColl` form until that break names a pair. The sole non-crypto
 carrier is the structural `RestHashIffFrame` (not sponge-reducible — the state carries function-valued
 components). Do NOT read "a light client that runs nothing cannot be fooled" as covering replay: it
 covers AUTHENTICITY of a single transition; FRESHNESS is the CAS's job, discharged in `Freshness`. -/

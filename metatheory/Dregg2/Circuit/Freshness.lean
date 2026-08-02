@@ -44,8 +44,12 @@ target — `CommitSurface`'s four injectivity FIELDS are DELETED (refuted at dep
 pigeonhole), and `Poseidon2SpongeCR` is refuted at the same width
 (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so reducing four false premises to one false
 premise bought nothing. `poseidon2CommitSurface` is now `spongeCommitSurface` and carries NO crypto
-floor. The live binding consumer is `CommitFaithfulRegrounded.commit_binds_nonce_faithful` /
-`no_replay_faithful`, which use the deployed residue-fold leaf and return concrete collision events;
+floor. ⚠ The theorems long called "the live binding consumer" here —
+`CommitFaithfulRegrounded.commit_binds_nonce_faithful` / `no_replay_faithful` — do NOT return
+concrete collision events as this header claimed: their `FaithfulBreak` OPENS with
+`SpongeCollision compressN`, a global existential free at any field-bounded sponge, so the
+disjunction holds unconditionally at deployed width. Prefer the per-instance forms below until that
+break is narrowed to a named pair;
 the parametric statements here carry the per-instance `¬ S.CommitColl` residual instead of a refuted
 premise or a free disjunct.
 
@@ -277,9 +281,13 @@ on the Poseidon2-grounded surface force equal agent nonce, "with the crypto resi
 SINGLE `Poseidon2SpongeCR`". Both halves of that sentence were the problem — the reduction target is
 REFUTED at deployed BabyBear width, so the theorem held vacuously, and the reduction ran through the
 four `CommitSurface` injectivity fields that are now deleted. The live consumer this file's header
-already names is `CommitFaithfulRegrounded.commit_binds_nonce_faithful` (deployed residue-fold leaf,
-returns concrete collision events). For the parametric statement use `commit_binds_nonce` above,
-which carries the `OrBreak S.StateBreak` disjunct instead of a refuted premise. -/
+already names is `CommitFaithfulRegrounded.commit_binds_nonce_faithful`. ⚠ BUT SEE THE HEADER
+CORRECTION: that theorem's break event `FaithfulBreak` OPENS with `SpongeCollision compressN`, a
+GLOBAL EXISTENTIAL that is free at any field-bounded sponge, so it is not the guarantee it reads as.
+For the parametric statement use the per-instance `¬ S.CommitColl` forms, which name the pair.
+⚑ AND NOT `OrBreak S.StateBreak`, which an earlier draft of this very sentence recommended:
+`CircuitSoundness.CommitSurface.orBreak_stateBreak_iff_True` proves that disjunction is literally
+`True` at deployed width. Recommending it as the repair was recommending the defect. -/
 
 /-- **`sponge_no_replay`** — NO REPLAY over the sponge-shaped surface: a fixed pre-anchor opens the
 CAS gate at most once, given the chain's per-instance residual. The non-residual part of the whole
