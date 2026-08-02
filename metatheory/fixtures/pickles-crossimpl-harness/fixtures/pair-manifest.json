@@ -20,7 +20,12 @@
     "ipab0",
     "frdigest",
     "frpair",
-    "frphase2"
+    "frphase2",
+    "rootunity_fq",
+    "zkpoly_fq",
+    "permscalar_fq",
+    "publiceval_fq",
+    "ipab0_fq"
   ],
   "pairs": {
     "bpoly": {
@@ -83,6 +88,11 @@
       "first_out": "0000000000000000000000000000000000000000000000000000000000000001",
       "last_out": "3ea49b9db54cd81b51f4beef19f8ca49b6e31631e94335bbfcda5da2a2539371"
     },
+    "ipab0_fq": {
+      "count": 200,
+      "first_out": "0000000000000000000000000000000000000000000000000000000000000001",
+      "last_out": "306d9af018c764b271a9a4cfa5b8237c4ed8ea9b28c39f09d3757059f3dc5a60"
+    },
     "linconst": {
       "count": 276,
       "first_out": "393bf2d7f35d41cde9918df3cb63c7ac2e1b58282a09dab505d81a14bc36a2e0",
@@ -98,15 +108,30 @@
       "first_out": "2030e37b59cf1b58a35b313c5a7621f3b4fbf42903e1fadc430062ef48037284",
       "last_out": "198b80bee058b7d858d98165480edcb8a9a71c9fdfc8d62627aaaf57ae763e01"
     },
+    "permscalar_fq": {
+      "count": 120,
+      "first_out": "34b4b9bb74f796cd428f14d2a8b9bf047eac7eb5569c3ed2bf4771d32fe81c76",
+      "last_out": "09e898770cc0d9892825193d0f7b36228978187f84c350eb39907834c0e889a6"
+    },
     "publiceval": {
       "count": 348,
       "first_out": "0000000000000000000000000000000000000000000000000000000000000000",
       "last_out": "0c14f8f13fefe0d7affc3fac23671f493a1223f99fc9dfdba4791e1ba363e0c9"
     },
+    "publiceval_fq": {
+      "count": 348,
+      "first_out": "0000000000000000000000000000000000000000000000000000000000000000",
+      "last_out": "180483fadb20689995da44aa9ebe110269685d991e70f710ae2acafbe8489ca6"
+    },
     "rootunity": {
       "count": 25,
       "first_out": "40000000000000000000000000000000224698fc094cf91b992d30ed00000000",
       "last_out": "365bd233e19a77476101c7698b1c063f5b7353922f426d682549375fb22e49d3"
+    },
+    "rootunity_fq": {
+      "count": 25,
+      "first_out": "40000000000000000000000000000000224698fc0994a8dd8c46eb2100000000",
+      "last_out": "2d68745baaeb95e8f869d3029268c3aed8040159ef7b5d4413d61370c2c53be5"
     },
     "shifts": {
       "count": 16,
@@ -127,7 +152,12 @@
       "count": 180,
       "first_out": "0000000000000000000000000000000000000000000000000000000000000001",
       "last_out": "055d6679f504108b0043fa32bb7f452e2d42d350d802acb2c6a20f75d3442c20"
+    },
+    "zkpoly_fq": {
+      "count": 180,
+      "first_out": "0000000000000000000000000000000000000000000000000000000000000001",
+      "last_out": "2438578e8b01d708bb09f7f2cfb87e9ade1e75853f2945c46f916e5d975e50a9"
     }
   },
-  "total": 3564
+  "total": 4437
 }

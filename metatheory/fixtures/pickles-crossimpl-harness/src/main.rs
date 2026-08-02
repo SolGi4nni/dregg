@@ -407,31 +407,35 @@ fn v1_flags() -> FeatureFlags {
     }
 }
 
-fn mk_evals(
-    w: &[Fp; COLUMNS],
-    wn: &[Fp; COLUMNS],
-    coeff: &[Fp; COLUMNS],
-    s: &[Fp; PERMUTS - 1],
-    z: PointEvaluations<Fp>,
-    sel: &[Fp; 6],
-) -> ProofEvaluations<PointEvaluations<Fp>> {
-    let pe = |zeta: Fp, zo: Fp| PointEvaluations {
+/// ⚑ GENERIC OVER THE PASTA FIELD since 2026-08-02. It was `Fp`-only, which is the shape a tree
+/// with no `Field (ZMod qN)` instance settles into; `permscalar_fq` needs the same builder at `Fq`.
+/// Making it generic rather than copying it keeps ONE definition of the v1 evaluation shape — a
+/// second copy is a second thing to drift.
+fn mk_evals<FF: Field>(
+    w: &[FF; COLUMNS],
+    wn: &[FF; COLUMNS],
+    coeff: &[FF; COLUMNS],
+    s: &[FF; PERMUTS - 1],
+    z: PointEvaluations<FF>,
+    sel: &[FF; 6],
+) -> ProofEvaluations<PointEvaluations<FF>> {
+    let pe = |zeta: FF, zo: FF| PointEvaluations {
         zeta,
         zeta_omega: zo,
     };
-    let zero = pe(Fp::zero(), Fp::zero());
+    let zero = pe(FF::zero(), FF::zero());
     ProofEvaluations {
         public: None,
         w: core::array::from_fn(|i| pe(w[i], wn[i])),
         z,
-        s: core::array::from_fn(|i| pe(s[i], Fp::zero())),
-        coefficients: core::array::from_fn(|i| pe(coeff[i], Fp::zero())),
-        generic_selector: pe(sel[0], Fp::zero()),
-        poseidon_selector: pe(sel[1], Fp::zero()),
-        complete_add_selector: pe(sel[2], Fp::zero()),
-        mul_selector: pe(sel[3], Fp::zero()),
-        emul_selector: pe(sel[4], Fp::zero()),
-        endomul_scalar_selector: pe(sel[5], Fp::zero()),
+        s: core::array::from_fn(|i| pe(s[i], FF::zero())),
+        coefficients: core::array::from_fn(|i| pe(coeff[i], FF::zero())),
+        generic_selector: pe(sel[0], FF::zero()),
+        poseidon_selector: pe(sel[1], FF::zero()),
+        complete_add_selector: pe(sel[2], FF::zero()),
+        mul_selector: pe(sel[3], FF::zero()),
+        emul_selector: pe(sel[4], FF::zero()),
+        endomul_scalar_selector: pe(sel[5], FF::zero()),
         range_check0_selector: Some(zero),
         range_check1_selector: Some(zero),
         foreign_field_add_selector: Some(zero),
@@ -1310,6 +1314,276 @@ fn pair_frphase2(out: &mut Vec<String>, lines: &mut usize) {
 // §4 — driver
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// §3d — THE Fq SIDE OF THE `[Field F]` LAYER.
+//
+// ⚑ WHY THESE EXIST, AND WHY THEY COULD NOT BEFORE 2026-08-02.
+// `KimchiVerify.permScalar`, `publicEval` and `ipaB0` are declared under `variable {F} [Field F]`
+// and have NO `[CommRing R]` mirror (unlike `cipR`/`ftEval0R`/`zkPolyR`, which `cipR_eq` /
+// `ftEval0R_eq` weld to their originals). Instantiating them needs a real `Field` instance at the
+// modulus. `PastaBasePrime.lean` supplied `Fact (Nat.Prime pN)` on 2026-07-29 and the Fp half of
+// this layer landed on 2026-08-02; `PastaScalarPrime.lean` supplies `Fact (Nat.Prime qN)` today and
+// this is the Fq half.
+//
+// ⚑ AND Fq IS NOT THE DECORATIVE ONE. Pallas's SCALAR field is where the Wrap verifier's arithmetic
+// lives: ζ, α, β, γ, every claimed evaluation, every IPA challenge, and every scalar that
+// multiplies a Pallas point. `Dregg2/Bridge/MinaWrapFtEval0.lean` and `MinaRealBlockGate` compute
+// at `ZMod qN` for exactly that reason. Until today the Lean side could not type the shipped
+// `[Field F]` definitions there at all, so the Fq evidence in this tree was `#guard`s on ONE block.
+//
+// ⚑ THE ROOT OF UNITY IS DERIVED ON THE LEAN SIDE, at `qN`. `MinaWrapFtEval0.rootOfUnity` is
+// modulus-parametric (`GENERATOR = 5` raised to the odd part of `m − 1`, squared down); its only
+// prior check at `qN` was ONE `#guard` at log2 = 14 against a carried block constant.
+// `rootunity_fq` measures it against arkworks over 25 domain sizes, and the other three pairs feed
+// it as an input column so a drift is red at the input.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// rootunity_fq — arkworks' `Radix2EvaluationDomain::<Fq>::group_gen` against
+/// `Dregg2.Bridge.MinaWrapFtEval0.rootOfUnity qN`.
+fn pair_rootunity_fq(out: &mut Vec<String>, lines: &mut usize) {
+    let mut case = 0usize;
+    for l in 1u32..=25 {
+        let d = Radix2EvaluationDomain::<Fq>::new(1usize << l).unwrap();
+        rec(
+            out,
+            "rootunity_fq",
+            case,
+            &[hx_u64(l as u64)],
+            &[hx_fq(&d.group_gen)],
+        );
+        case += 1;
+    }
+    *lines += case;
+}
+
+/// zkpoly_fq — `permutation_vanishing_polynomial(domain, 3).evaluate(&zeta)` over Fq against
+/// `KimchiVerify.zkPolyR` at `ZMod qN`. Localises a `permscalar_fq` divergence: that pair COMPOSES
+/// this quantity, so a bad Fq zk-vanishing polynomial would otherwise surface only there.
+fn pair_zkpoly_fq(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0016);
+    let mut case = 0usize;
+    let logs: Vec<u32> = vec![2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let bank = edge_fq();
+    for &l in &logs {
+        let d = Radix2EvaluationDomain::<Fq>::new(1usize << l).unwrap();
+        for z in &bank {
+            let v = permutation_vanishing_polynomial(d, 3).evaluate(z);
+            rec(
+                out,
+                "zkpoly_fq",
+                case,
+                &[hx_u64(l as u64), hx_fq(&d.group_gen), hx_fq(z)],
+                &[hx_fq(&v)],
+            );
+            case += 1;
+            *lines += 1;
+        }
+        for _ in 0..8 {
+            let z = r.fq();
+            let v = permutation_vanishing_polynomial(d, 3).evaluate(&z);
+            rec(
+                out,
+                "zkpoly_fq",
+                case,
+                &[hx_u64(l as u64), hx_fq(&d.group_gen), hx_fq(&z)],
+                &[hx_fq(&v)],
+            );
+            case += 1;
+            *lines += 1;
+        }
+    }
+}
+
+/// permscalar_fq — `ConstraintSystem::<Fq>::perm_scalars` against `KimchiVerify.permScalar` at
+/// `ZMod qN`. The Fq twin of `permscalar`; same sweep shape, Fq bank, Fq domain.
+fn pair_permscalar_fq(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0017);
+    let mut case = 0usize;
+    let logs: Vec<u32> = vec![2, 4, 8, 12, 16];
+    let bank = edge_fq();
+    for &l in &logs {
+        let d = Radix2EvaluationDomain::<Fq>::new(1usize << l).unwrap();
+        let zkp_of = |zeta: &Fq| permutation_vanishing_polynomial(d, 3).evaluate(zeta);
+        let one = |case: &mut usize,
+                   lines: &mut usize,
+                   out: &mut Vec<String>,
+                   zeta: Fq,
+                   alpha: Fq,
+                   beta: Fq,
+                   gamma: Fq,
+                   zzo: Fq,
+                   w: [Fq; COLUMNS],
+                   s: [Fq; PERMUTS - 1]| {
+            let evals = mk_evals(
+                &w,
+                &[Fq::zero(); COLUMNS],
+                &[Fq::zero(); COLUMNS],
+                &s,
+                PointEvaluations {
+                    zeta: Fq::zero(),
+                    zeta_omega: zzo,
+                },
+                &[Fq::zero(); 6],
+            );
+            let a21 = alpha.pow([21u64]);
+            let v = ConstraintSystem::<Fq>::perm_scalars(
+                &evals,
+                beta,
+                gamma,
+                [a21, Fq::zero(), Fq::zero()].into_iter(),
+                zkp_of(&zeta),
+            );
+            let mut ins = vec![
+                hx_u64(l as u64),
+                hx_fq(&d.group_gen),
+                hx_fq(&zeta),
+                hx_fq(&alpha),
+                hx_fq(&beta),
+                hx_fq(&gamma),
+                hx_fq(&zzo),
+            ];
+            ins.extend(w.iter().map(hx_fq));
+            ins.extend(s.iter().map(hx_fq));
+            rec(out, "permscalar_fq", *case, &ins, &[hx_fq(&v)]);
+            *case += 1;
+            *lines += 1;
+        };
+        for bi in 0..bank.len() {
+            let zeta = bank[bi];
+            let alpha = bank[(bi + 1) % bank.len()];
+            let beta = bank[(bi + 2) % bank.len()];
+            let gamma = bank[(bi + 3) % bank.len()];
+            let w: [Fq; COLUMNS] = core::array::from_fn(|i| bank[(bi + i) % bank.len()]);
+            let sg: [Fq; PERMUTS - 1] =
+                core::array::from_fn(|i| bank[(bi + 2 * i + 4) % bank.len()]);
+            let zzo = bank[(bi + 5) % bank.len()];
+            one(&mut case, lines, out, zeta, alpha, beta, gamma, zzo, w, sg);
+        }
+        for _ in 0..12 {
+            let zeta = r.fq();
+            let alpha = r.fq();
+            let beta = r.fq();
+            let gamma = r.fq();
+            let w: [Fq; COLUMNS] = core::array::from_fn(|_| r.fq());
+            let sg: [Fq; PERMUTS - 1] = core::array::from_fn(|_| r.fq());
+            let zzo = r.fq();
+            one(&mut case, lines, out, zeta, alpha, beta, gamma, zzo, w, sg);
+        }
+    }
+}
+
+/// publiceval_fq — `KimchiVerify.publicEval` at `ZMod qN` against ark-poly's
+/// `evaluate_all_lagrange_coefficients` over Fq, dotted with the negated public inputs.
+///
+/// ⚠ OFF-DOMAIN ONLY, by the SAME `x^n ≠ 1` predicate on both sides, for the reason `publiceval`
+/// documents: on the domain ark-poly returns the indicator vector and kimchi's `batch_inversion`
+/// returns 0, and `publicEval` faithfully reproduces KIMCHI. The split is asserted, not swept.
+fn pair_publiceval_fq(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0031);
+    let mut case = 0usize;
+    let bank = edge_fq();
+    for l in 1u32..=6 {
+        let n = 1usize << l;
+        let d = Radix2EvaluationDomain::<Fq>::new(n).unwrap();
+        for m in [0usize, 1, 2, 5] {
+            if m > n {
+                continue;
+            }
+            for bi in 0..bank.len() {
+                let x = bank[bi];
+                if x.pow([n as u64]) == Fq::one() {
+                    continue;
+                }
+                let pubs: Vec<Fq> = (0..m).map(|i| bank[(bi + i + 1) % bank.len()]).collect();
+                let lag = d.evaluate_all_lagrange_coefficients(x);
+                let v = pubs
+                    .iter()
+                    .enumerate()
+                    .fold(Fq::zero(), |acc, (i, p)| acc + (-*p) * lag[i]);
+                let mut ins = vec![hx_u64(l as u64), hx_fq(&d.group_gen), hx_fq(&x)];
+                ins.extend(pubs.iter().map(hx_fq));
+                rec(out, "publiceval_fq", case, &ins, &[hx_fq(&v)]);
+                case += 1;
+                *lines += 1;
+            }
+        }
+    }
+    for _ in 0..128 {
+        let l = 1 + (r.below(6) as u32);
+        let n = 1usize << l;
+        let d = Radix2EvaluationDomain::<Fq>::new(n).unwrap();
+        let m = ((r.below(6)) as usize).min(n);
+        let x = r.fq();
+        let pubs: Vec<Fq> = (0..m).map(|_| r.fq()).collect();
+        if x.pow([n as u64]) == Fq::one() {
+            continue;
+        }
+        let lag = d.evaluate_all_lagrange_coefficients(x);
+        let v = pubs
+            .iter()
+            .enumerate()
+            .fold(Fq::zero(), |acc, (i, p)| acc + (-*p) * lag[i]);
+        let mut ins = vec![hx_u64(l as u64), hx_fq(&d.group_gen), hx_fq(&x)];
+        ins.extend(pubs.iter().map(hx_fq));
+        rec(out, "publiceval_fq", case, &ins, &[hx_fq(&v)]);
+        case += 1;
+        *lines += 1;
+    }
+}
+
+/// ipab0_fq — `KimchiVerify.ipaB0` at `ZMod qN` against `b_poly` composed by upstream's own
+/// `combined_inner_product`, both at Fq. ⚑ THIS IS THE ONE THAT MATTERS MOST HERE: the Wrap
+/// proof's IPA round challenges ARE Fq elements (they are `DefaultFqSponge` outputs lifted by the
+/// endo map into the scalar field), so `b0` at `ZMod qN` is the deployed instantiation and `b0` at
+/// `ZMod pN` is the Step-side one.
+fn pair_ipab0_fq(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0032);
+    let mut case = 0usize;
+    let bank = edge_fq();
+    let lens = [0usize, 1, 2, 3, 15, 16];
+    let one_case = |out: &mut Vec<String>,
+                    case: &mut usize,
+                    lines: &mut usize,
+                    k: usize,
+                    evalscale: Fq,
+                    zeta: Fq,
+                    zetaw: Fq,
+                    chals: &[Fq]| {
+        let v = combined_inner_product(
+            &Fq::one(),
+            &evalscale,
+            &[vec![vec![b_poly(chals, zeta)], vec![b_poly(chals, zetaw)]]],
+        );
+        let mut ins = vec![
+            hx_u64(k as u64),
+            hx_fq(&evalscale),
+            hx_fq(&zeta),
+            hx_fq(&zetaw),
+        ];
+        ins.extend(chals.iter().map(hx_fq));
+        rec(out, "ipab0_fq", *case, &ins, &[hx_fq(&v)]);
+        *case += 1;
+        *lines += 1;
+    };
+    for &k in &lens {
+        for bi in 0..bank.len() {
+            let evalscale = bank[bi];
+            let zeta = bank[(bi + 1) % bank.len()];
+            let zetaw = bank[(bi + 2) % bank.len()];
+            let chals: Vec<Fq> = (0..k).map(|i| bank[(bi + i + 3) % bank.len()]).collect();
+            one_case(out, &mut case, lines, k, evalscale, zeta, zetaw, &chals);
+        }
+    }
+    for _ in 0..128 {
+        let k = lens[(r.below(lens.len() as u64)) as usize];
+        let evalscale = r.fq();
+        let zeta = r.fq();
+        let zetaw = r.fq();
+        let chals: Vec<Fq> = (0..k).map(|_| r.fq()).collect();
+        one_case(out, &mut case, lines, k, evalscale, zeta, zetaw, &chals);
+    }
+}
+
 fn build_all() -> (Vec<String>, usize) {
     let mut out: Vec<String> = Vec::new();
     let mut n = 0usize;
@@ -1342,6 +1616,13 @@ fn build_all() -> (Vec<String>, usize) {
     pair_frdigest(&mut out, &mut n);
     pair_frpair(&mut out, &mut n);
     pair_frphase2(&mut out, &mut n);
+    // ⚑ THE Fq SIDE of the `[Field F]` layer, reachable since `PastaScalarPrime` installed
+    // `Fact (Nat.Prime qN)` (2026-08-02). Pallas's SCALAR field is where the Wrap verifier computes.
+    pair_rootunity_fq(&mut out, &mut n);
+    pair_zkpoly_fq(&mut out, &mut n);
+    pair_permscalar_fq(&mut out, &mut n);
+    pair_publiceval_fq(&mut out, &mut n);
+    pair_ipab0_fq(&mut out, &mut n);
     (out, n)
 }
 
@@ -1570,7 +1851,7 @@ mod tests {
         let (b, nb) = build_all();
         assert_eq!(na, nb);
         assert_eq!(a, b);
-        assert!(na >= 3500, "record count collapsed: {na}");
+        assert!(na >= 4400, "record count collapsed: {na}");
     }
 
     /// ⚑ The `ENDO` literal `MinaWrapDeferred` bakes in IS Vesta's `endo_r`, measured against
@@ -1607,6 +1888,55 @@ mod tests {
         assert!(count("frdigest") >= 100, "frdigest collapsed");
         assert!(count("frpair") >= 100, "frpair collapsed");
         assert!(count("frphase2") >= 20, "frphase2 collapsed");
+    }
+
+    /// ⚑ THE Fq SIDE of the `[Field F]` layer. `KimchiVerify.permScalar`, `publicEval` and `ipaB0`
+    /// have no `[CommRing R]` mirror, so instantiating them at `ZMod qN` needed a real `Field`
+    /// instance there — `Fact (Nat.Prime qN)`, landed 2026-08-02 in `PastaScalarPrime.lean`. These
+    /// five pairs are what makes that instance a RESULT rather than a definition, and Fq is the
+    /// field the Wrap verifier actually computes in.
+    #[test]
+    fn fq_field_layer_pairs_populated() {
+        assert!(count("rootunity_fq") >= 25, "rootunity_fq collapsed");
+        assert!(count("zkpoly_fq") >= 100, "zkpoly_fq collapsed");
+        assert!(count("permscalar_fq") >= 100, "permscalar_fq collapsed");
+        assert!(count("publiceval_fq") >= 200, "publiceval_fq collapsed");
+        assert!(count("ipab0_fq") >= 100, "ipab0_fq collapsed");
+    }
+
+    /// The two Pasta fields are DIFFERENT fields, so the Fq pairs must not be the Fp pairs wearing
+    /// a new label. Every `_fq` pair's first output differs from its Fp twin's — a copy-paste that
+    /// forgot to swap the field is caught here and not six weeks later.
+    #[test]
+    fn fq_pairs_are_not_the_fp_pairs_relabelled() {
+        let (out, _) = build_all();
+        // ⚠ the WHOLE output block, not the first record: `zkpoly`'s first case is `zeta = 0`,
+        // whose value is 1 in BOTH fields, so a first-record check passes on a relabelled copy.
+        // Measured — this assertion caught exactly that on its first run.
+        let first = |pair: &str| -> String {
+            out.iter()
+                .filter(|l| l.starts_with(&format!("{pair}\t")))
+                .map(|l| l.split('\t').nth(3).unwrap())
+                .collect::<Vec<_>>()
+                .join("|")
+        };
+        for (a, b) in [
+            ("rootunity", "rootunity_fq"),
+            ("zkpoly", "zkpoly_fq"),
+            ("permscalar", "permscalar_fq"),
+            ("publiceval", "publiceval_fq"),
+            ("ipab0", "ipab0_fq"),
+        ] {
+            assert!(
+                !first(a).is_empty() && !first(b).is_empty(),
+                "{a}/{b} empty"
+            );
+            assert_ne!(
+                first(a),
+                first(b),
+                "{b} reproduces {a} record-for-record: wrong Pasta field?"
+            );
+        }
     }
 
     /// ⚑ THE ON-DOMAIN SPLIT, MEASURED. `publiceval` sweeps only `x ∉ H` because the two sides of

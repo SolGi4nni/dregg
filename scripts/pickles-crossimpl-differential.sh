@@ -31,7 +31,7 @@
 # that drifted between the two languages is itself a RED diff rather than a silent
 # comparison-of-different-things.
 #
-# ⚠ THIS IS A FIDELITY DIFFERENTIAL, NOT A SOUNDNESS PROOF. Two implementations agreeing on 4794
+# ⚠ THIS IS A FIDELITY DIFFERENTIAL, NOT A SOUNDNESS PROOF. Two implementations agreeing on 5667
 # inputs is strong evidence they compute the same function and NO evidence that the function is the
 # right one. Where dregg's Lean and the Rust are wrong in the SAME way, this is silent.
 #
@@ -65,10 +65,36 @@
 # `permof` and `permscalar` sweep IDENTICAL inputs against the same `perm_scalars`, so a divergence
 # between dregg's two spellings of that scalar shows as exactly one of the two blocks going red.
 #
-# ⚠ STILL UNREACHED, named rather than papered over: there is no `Fact (Nat.Prime qN)`, so `ZMod qN`
-# — the field `MinaRealBlockGate`/`MinaWrapFtEval0` work at — is still not a `Field`. And `ftComm`
-# needs an `[AddCommGroup G] [Module F G]` carrier it has nowhere; its ENTIRE theorem-level evidence
-# in this tree is one KAT at `ℚ` (`ftComm_kat`, `55 = 100 − 15·3`).
+# ── AND THE SAME LAYER AT Fq — the other residue, closed 2026-08-02 ───────────
+# This block used to read: "STILL UNREACHED, named rather than papered over: there is no
+# `Fact (Nat.Prime qN)`, so `ZMod qN` — the field `MinaRealBlockGate`/`MinaWrapFtEval0` work at — is
+# still not a `Field`."
+#
+# ⚑ `metatheory/Dregg2/Circuit/Emit/PastaScalarPrime.lean` now installs `Fact (Nat.Prime qN)`: the
+# same kernel-checked recursive Lucas/Pratt certificate, `#assert_axioms`-clean, no `native_decide`,
+# and it is CHEAP — the whole file elaborates in 2.81 s (`qN − 1 = 2^32·3^2·1709·24859·A·B` with `A`
+# 81 bits and `B` 114 bits, a shallower tree than `pN`'s 69/143-bit pair). Its red path is proven
+# three ways (corrupted exponent, a square witness, and the crown aimed at `pN`).
+#
+# So `rootunity_fq`, `zkpoly_fq`, `permscalar_fq`, `publiceval_fq` and `ipab0_fq` are real pairs at
+# the OTHER deployed field. That matters more than symmetry: Pallas's SCALAR field is where the WRAP
+# verifier computes — ζ, α, β, γ, every claimed evaluation and every IPA challenge — which is why
+# `MinaWrapFtEval0` and `MinaRealBlockGate` are written at `ZMod qN`. Before this the Lean side
+# could not TYPE `permScalar`/`publicEval`/`ipaB0` there at all, and every Fq check in the tree was
+# a `#guard` on ONE block. `fq_pairs_are_not_the_fp_pairs_relabelled` asserts each `_fq` block
+# differs from its Fp twin record-for-record — it caught a first-record-only version of itself,
+# because `zkpoly` at `ζ = 0` is 1 in both fields.
+#
+# ⚑ `rootunity_fq` also gives `MinaWrapFtEval0.rootOfUnity` its first sweep at `qN`: its only prior
+# check there was ONE `#guard` at log2 = 14 against a carried block constant.
+#
+# ── `ftComm` — the OTHER named residue, closed differently ─────────────────────
+# `ftComm` needs an `[AddCommGroup G] [Module F G]` carrier, so it is not a value-pair here. Its
+# entire theorem-level evidence WAS one KAT at `ℚ` (`ftComm_kat`, `55 = 100 − 15·3`) while seven
+# same-named theorems in two other files were about two DIFFERENT objects.
+# `metatheory/Dregg2/Circuit/Emit/FtCommWeld.lean` names the three objects and welds them:
+# `PicklesFinalize.picklesFtComm` at its honest slot IS `KimchiVerify.ftComm` for every `[Field F]`,
+# and that assembly reproduces o1-labs' `ft_comm` on Mina block 539508's real Pallas points.
 #
 # ── THE SECOND SPONGE COPY, previously diffed by NOTHING ───────────────────────
 # `sponge_fp`/`sponge_fq`/`challenge` drive `PastaPoseidonFq.SpongeSt`. `KimchiVerify.frSpongeDigest`
@@ -134,10 +160,12 @@ LEAN_EMITTER="EmitConformanceVectors.lean"
 PAIRS=(endo endo_fq endolift bpoly bpolymod cip linconst zkpoly rootunity permof permscalar shifts
        sponge_fp sponge_fq challenge emulconsts
        publiceval ipab0 frdigest frpair frphase2
+       rootunity_fq zkpoly_fq permscalar_fq publiceval_fq ipab0_fq
        om_endo om_bpoly shift1 unshift1 shift1b unshift1b shift2 unshift2)
 # The record floor. A RATCHET: raise it when the sweep grows.
-# 2026-08-01 3800 (23 pairs) → 2026-08-02 4700 (29 pairs: the `[Field F]` layer and the Fr-sponge).
-FLOOR=4700
+# 2026-08-01 3800 (23 pairs) → 2026-08-02 4700 (29 pairs: the `[Field F]` layer and the Fr-sponge)
+# → 2026-08-02 5600 (34 pairs: the SAME `[Field F]` layer at Fq, off `Fact (Nat.Prime qN)`).
+FLOOR=5600
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

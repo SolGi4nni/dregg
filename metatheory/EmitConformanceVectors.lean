@@ -54,9 +54,13 @@ this was: two `#guard`s at `ℚ` for `publicEval`, one at `ℚ` for `ipaB0`, one
 `[Field K]`-generic `rfl` for `permScalar` — and NO theorem anywhere in the tree mentions
 `publicEval` or `ipaB0` at all.
 
-⚠ STILL UNREACHED, and named rather than papered over: there is **no `Fact (Nat.Prime qN)`**, so
-`ZMod qN` — the field `MinaRealBlockGate` and `MinaWrapFtEval0` work at — is still not a `Field`.
-Nothing in this file needs it; a `Fq`-side `[Field F]` sweep would.
+⚑ AND THE Fq SIDE IS NOW SWEPT TOO. This header used to say: "STILL UNREACHED, and named rather
+than papered over: there is **no `Fact (Nat.Prime qN)`**, so `ZMod qN` — the field
+`MinaRealBlockGate` and `MinaWrapFtEval0` work at — is still not a `Field`."
+`Dregg2/Circuit/Emit/PastaScalarPrime.lean` supplies it, by the same kernel-checked Lucas/Pratt
+route and in 2.81 s of elaboration. §18 sweeps `rootunity_fq`, `zkpoly_fq`, `permscalar_fq`,
+`publiceval_fq` and `ipab0_fq` — and Fq is the field the WRAP verifier computes in, so this is the
+deployed instantiation and not a symmetry exercise.
 
 ⚑ THE SECOND SPONGE, also new in §15. The `sponge_fp`/`sponge_fq`/`challenge` pairs drive
 `PastaPoseidonFq.SpongeSt`. `KimchiVerify.frSpongeDigest`/`frSqueezePair` — what C3's `challengesOk`
@@ -74,6 +78,9 @@ import Dregg2.Circuit.Emit.PicklesRecursion
 -- ⚑ THE ONE LINE THAT MAKES THE `[Field F]` LAYER REACHABLE: `Fact (Nat.Prime pN)`, hence
 -- `Field (ZMod pN)` by Mathlib's `ZMod.instField`.
 import Dregg2.Circuit.Emit.PastaBasePrime
+-- ⚑ AND THE SAME LINE FOR THE SCALAR FIELD: `Fact (Nat.Prime qN)`, hence `Field (ZMod qN)`. This is
+-- what §18 needs; without it `permScalar`/`publicEval`/`ipaB0` do not TYPE at `ZMod qN` at all.
+import Dregg2.Circuit.Emit.PastaScalarPrime
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -446,10 +453,12 @@ def emitRootUnity : List String := Id.run do
 
 /-- ⚑ `permof` — `MinaWrapDeferred.permOf` vs kimchi's `ConstraintSystem::perm_scalars`.
 
-NOT `KimchiVerify.permScalar`: that one is declared under `variable {F : Type} [Field F]` and the
-tree has no `Field (ZMod pN)` instance, so it is UNEVALUABLE at the deployed field and cannot be
-differentially tested at all. `permOf` is dregg's `Nat`-with-explicit-modulus copy of the same
-`derive_plonk` scalar, it IS evaluable, and it is the copy the Wrap public input goes through.
+⚠ THIS DOCSTRING WAS STALE AND IS CORRECTED. It said: "NOT `KimchiVerify.permScalar`: that one is
+declared under `variable {F : Type} [Field F]` and the tree has no `Field (ZMod pN)` instance, so it
+is UNEVALUABLE at the deployed field and cannot be differentially tested at all." `permScalar` IS
+swept — by `permscalar` at `ZMod pN` (§15) and `permscalar_fq` at `ZMod qN` (§18), over these exact
+inputs. `permOf` is dregg's `Nat`-with-explicit-modulus copy of the same `derive_plonk` scalar and
+it is the copy the Wrap public input goes through, which is why BOTH are emitted.
 
 `permOf` bakes `alpha ^ PERM_ALPHA0` (α^21) rather than taking `alpha0`, so the Rust is fed
 `alpha.pow(21)`. And because `permOf` reaches `omega ^ (n−3)` through `powMod`
@@ -951,6 +960,167 @@ deployed verifier that ζ is assumed to be sponge-derived and therefore off-doma
 -- and the deployed field really is a `Field`: the inverse `publicEval` needs is the real one.
 #guard ((7 : ZMod pN)⁻¹ * 7) == 1
 
+/-! ## §18 — ⚑ THE Fq SIDE OF THE `[Field F]` LAYER.
+
+`permScalar`, `publicEval` and `ipaB0` have NO `[CommRing R]` mirror — unlike `cipR` / `ftEval0R` /
+`zkPolyR`, which `cipR_eq` / `ftEval0R_eq` weld to their `[Field F]` originals. Instantiating them
+needs a genuine `Field` instance at the modulus. §15 got the Fp half on 2026-08-02 off
+`Fact (Nat.Prime pN)`; this is the Fq half, off `Fact (Nat.Prime qN)`
+(`Dregg2/Circuit/Emit/PastaScalarPrime.lean`, kernel-checked Lucas/Pratt, no `native_decide`).
+
+⚑ AND Fq IS THE DEPLOYED ONE FOR THE WRAP SIDE. Pallas's SCALAR field is where the Wrap verifier's
+ζ, α, β, γ, claimed evaluations and IPA challenges all live — `MinaWrapFtEval0` and
+`MinaRealBlockGate` compute at `ZMod qN` for exactly that reason. Until `Fact (Nat.Prime qN)` the
+Lean side could not TYPE the shipped `[Field F]` definitions there, so every Fq check in this tree
+was a `#guard` on ONE block. These five pairs sweep the function.
+
+⚑ THE ROOT OF UNITY IS DERIVED HERE TOO, AND AT `qN` FOR THE FIRST TIME OVER A SWEEP.
+`MinaWrapFtEval0.rootOfUnity` is modulus-parametric; its only previous check at `qN` was one
+`#guard` at log2 = 14 against a carried block constant (`MinaWrapFtEval0Weld.lean:154`).
+`rootunity_fq` measures it against arkworks at 25 sizes, and the other four feed it as an INPUT
+column, so a drift is red at the input rather than silently shared. -/
+
+/-- The `2^log2n`-th root of unity of `ZMod qN`, as a `Nat`. ⚠ Fully qualified on purpose: this
+file already has `rootOfUnity` bound to `MinaWrapDeferred`'s `pN`-only spelling. -/
+def rootOfUnityFq (log2n : Nat) : Nat :=
+  (Dregg2.Bridge.MinaWrapFtEval0.rootOfUnity qN log2n).val
+
+/-- α^21 in `ZMod qN`. -/
+def alpha21Fq (a : Nat) : ZMod qN := powFast (toFq a) 21
+
+def emitRootUnityFq : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for l in List.range 25 do
+    out := out ++ [mkRec "rootunity_fq" case [l + 1] [rootOfUnityFq (l + 1)]]
+    case := case + 1
+  return out
+
+def emitZkpolyFq : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  let mut s := 0x16
+  for l in zkLogs do
+    let n := 2 ^ l
+    let om := rootOfUnityFq l
+    for z in edgeFq do
+      let v := ofFq (zkPolyR n (toFq om) (toFq z))
+      out := out ++ [mkRec "zkpoly_fq" case [l, om, z] [v]]
+      case := case + 1
+    for _ in List.range 8 do
+      let (s1, z) := smFe qN s
+      s := s1
+      let v := ofFq (zkPolyR n (toFq om) (toFq z))
+      out := out ++ [mkRec "zkpoly_fq" case [l, om, z] [v]]
+      case := case + 1
+  return out
+
+def emitPermScalarFq : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  let mut s := 0x17
+  for l in permLogs do
+    let n := 2 ^ l
+    let om := rootOfUnityFq l
+    for bi in List.range edgeFq.length do
+      let zeta := edgeFq.getD bi 0
+      let alpha := bk edgeFq (bi + 1)
+      let beta := bk edgeFq (bi + 2)
+      let gamma := bk edgeFq (bi + 3)
+      let w := (List.range 15).map (fun i => bk edgeFq (bi + i))
+      let sg := (List.range 6).map (fun i => bk edgeFq (bi + 2 * i + 4))
+      let zzo := bk edgeFq (bi + 5)
+      let v := ofFq (permScalar n (toFq om) (toFq zeta) (toFq beta) (toFq gamma) (alpha21Fq alpha)
+        (w.map toFq) (sg.map toFq) (toFq zzo))
+      out := out ++ [mkRec "permscalar_fq" case
+        ([l, om, zeta, alpha, beta, gamma, zzo] ++ w ++ sg) [v]]
+      case := case + 1
+    for _ in List.range 12 do
+      let (s1, zeta) := smFe qN s
+      let (s2, alpha) := smFe qN s1
+      let (s3, beta) := smFe qN s2
+      let (s4, gamma) := smFe qN s3
+      let mut st := s4
+      let mut w : List Nat := []
+      for _ in List.range 15 do
+        let (sx, v) := smFe qN st; st := sx; w := w ++ [v]
+      let mut sg : List Nat := []
+      for _ in List.range 6 do
+        let (sx, v) := smFe qN st; st := sx; sg := sg ++ [v]
+      let (s5, zzo) := smFe qN st
+      s := s5
+      let v := ofFq (permScalar n (toFq om) (toFq zeta) (toFq beta) (toFq gamma) (alpha21Fq alpha)
+        (w.map toFq) (sg.map toFq) (toFq zzo))
+      out := out ++ [mkRec "permscalar_fq" case
+        ([l, om, zeta, alpha, beta, gamma, zzo] ++ w ++ sg) [v]]
+      case := case + 1
+  return out
+
+def emitPublicEvalFq : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for l in List.range 6 do
+    let ll := l + 1
+    let n := 2 ^ ll
+    let om := rootOfUnityFq ll
+    for m in pubLens do
+      if m ≤ n then
+        for bi in List.range edgeFq.length do
+          let x := edgeFq.getD bi 0
+          if powFast (toFq x) n != 1 then
+            let pubs := (List.range m).map (fun i => bk edgeFq (bi + i + 1))
+            let v := ofFq (publicEval n (toFq om) (toFq x) (pubs.map toFq))
+            out := out ++ [mkRec "publiceval_fq" case ([ll, om, x] ++ pubs) [v]]
+            case := case + 1
+  let mut s := 0x31
+  for _ in List.range 128 do
+    let (s1, li) := smBelow s 6
+    let ll := li + 1
+    let n := 2 ^ ll
+    let om := rootOfUnityFq ll
+    let (s2, m0) := smBelow s1 6
+    let m := min m0 n
+    let (s3, x) := smFe qN s2
+    let mut st := s3
+    let mut pubs : List Nat := []
+    for _ in List.range m do
+      let (sx, p) := smFe qN st; st := sx; pubs := pubs ++ [p]
+    s := st
+    if powFast (toFq x) n != 1 then
+      let v := ofFq (publicEval n (toFq om) (toFq x) (pubs.map toFq))
+      out := out ++ [mkRec "publiceval_fq" case ([ll, om, x] ++ pubs) [v]]
+      case := case + 1
+  return out
+
+def emitIpaB0Fq : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for k in ipaB0Lens do
+    for bi in List.range edgeFq.length do
+      let evalscale := edgeFq.getD bi 0
+      let zeta := bk edgeFq (bi + 1)
+      let zetaw := bk edgeFq (bi + 2)
+      let chals := (List.range k).map (fun i => bk edgeFq (bi + i + 3))
+      let v := ofFq (ipaB0 (toFq evalscale) (toFq zeta) (toFq zetaw) (chals.map toFq))
+      out := out ++ [mkRec "ipab0_fq" case ([k, evalscale, zeta, zetaw] ++ chals) [v]]
+      case := case + 1
+  let mut s := 0x32
+  for _ in List.range 128 do
+    let (s1, ki) := smBelow s ipaB0Lens.length
+    let k := ipaB0Lens.getD ki 0
+    let (s2, evalscale) := smFe qN s1
+    let (s3, zeta) := smFe qN s2
+    let (s4, zetaw) := smFe qN s3
+    let mut st := s4
+    let mut chals : List Nat := []
+    for _ in List.range k do
+      let (sx, c) := smFe qN st; st := sx; chals := chals ++ [c]
+    s := st
+    let v := ofFq (ipaB0 (toFq evalscale) (toFq zeta) (toFq zetaw) (chals.map toFq))
+    out := out ++ [mkRec "ipab0_fq" case ([k, evalscale, zeta, zetaw] ++ chals) [v]]
+    case := case + 1
+  return out
+
 /-! ## §14 — the whole emission, in the harnesses' order. -/
 
 def allRecords : List String :=
@@ -966,6 +1136,9 @@ def allRecords : List String :=
     ++ emitPublicEval ++ emitIpaB0
     -- the SECOND sponge copy — the one the Fr-sponge weld is built on
     ++ emitFrDigest ++ emitFrPair ++ emitFrPhase2
+    -- ⚑ the Fq side of the `[Field F]` layer, reachable since `PastaScalarPrime` installed
+    -- `Fact (Nat.Prime qN)`. Pallas' SCALAR field is where the Wrap verifier computes.
+    ++ emitRootUnityFq ++ emitZkpolyFq ++ emitPermScalarFq ++ emitPublicEvalFq ++ emitIpaB0Fq
     -- the openmina half
     ++ emitOmEndo ++ emitOmBpoly ++ emitShifts1 ++ emitShifts2
 
