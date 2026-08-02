@@ -34,7 +34,7 @@ The recursive verifier is exercised by the branches that HAVE previous proofs:
 **That ≈ 6.7k-row `verify_one` is this file's target**, and the committed shape is sized against its
 line items, not against a round number.
 
-## THE SEVEN SUB-CIRCUITS
+## THE EIGHT SUB-CIRCUITS
 
   * **R1 `transcript`** — the Fp Poseidon SPONGE: an init pin, `absorbs` absorb blocks (a `Generic`
     absorb row + an 11-row `Poseidon` permutation + its output `Zero` row), then `chals` squeeze
@@ -101,12 +101,12 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              6616      7085        8644        8709
-    non-Generic         13778              6216      6218        7579        7582
+    total gates         20023              6620      7089        8648        8713
+    non-Generic         13778              6218      6220        7581        7584
     Poseidon             6292 (31.4%)      1034      1034        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       400       867        1065        1127   —
+    Generic              6245 (31.2%)       402       869        1067        1129   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1458      1460        1581        1584   —
+    Zero                 2246 (11.2%)      1460      1462        1583        1586   —
     VarBaseMul           1596  (8.0%)       988       988         988         988   1×1596 / 1×988    ✓
     EndoMulScalar         776  (3.9%)       192       192         200         200   / 8×24, 8×25 ✓ —
                     upstream also runs 2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
@@ -127,15 +127,18 @@ and all seven are emitted here.
 · byte-identical UNWIRED control ACCEPTED · unread advice ACCEPTED · (r5–r8) public-vector tamper
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
-    rung             rows   domain   honest prove+verify
-    r1_transcript    1225     2048            6385 ms
-    r2_challenges    1548     2048            6557 ms
-    r3_msm           3636     4096            5080 ms
-    r4_ipa           6370     8192            2337 ms
-    r5_full          6616     8192            2873 ms
-    r6_ft_eval0      7085     8192            2114 ms
-    r7_absorption    8644    16384           12395 ms
-    r8_finalize      8709    16384           12971 ms
+    rung             rows   domain   honest prove+verify   σ-only probes emitted
+    r1_transcript    1225     2048             956 ms              24
+    r2_challenges    1548     2048             936 ms              70
+    r3_msm           3636     4096            1076 ms             145
+    r4_ipa           6370     8192            1292 ms             296
+    r5_full          6620     8192            1289 ms             302
+    r6_ft_eval0      7089     8192            1320 ms             304
+    r7_absorption    8648    16384            1937 ms             313
+    r8_finalize      8713    16384            1680 ms             316
+
+(the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
+`pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
 
 ⚑ **THE `Generic` SHORTFALL WAS MIS-ATTRIBUTED, and this is the correction.** The prior header wrote
 that the `ft_eval0` / `Plonk_checks.checked` sub-circuit was "≈5,900 `Generic` rows — the single
@@ -147,14 +150,14 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1127 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1129 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the per-challenge
 `lowest_128_bits ~constrain_low_bits:true` range checks (#1 below), the `sg_evals` prefix of the two
 `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection. #1–#11 below name
-them. ⚑ R8 spends 62 `Generic` rows on `finalize_other_proof`'s tail; the +28 rows since the r8
-commit are §8g's two `to_field_checked` chains, which RETIRE simplification #10 rather than add
-scale, and #8's retirement costs ZERO rows (the same seven `eLit` slots now hold derived values).
-That is the trade this file is supposed to be making.
+them. ⚑ R8 spends 62 `Generic` rows on `finalize_other_proof`'s tail; the +32 rows since the r8
+commit are §8g's two `to_field_checked` chains (28) and §8h's `branch_data` unpack (4), which RETIRE
+simplifications #10 and #9 rather than add scale, and #8's retirement costs ZERO rows (the same seven
+`eLit` slots now hold DERIVED values). That is the trade this file is supposed to be making.
 
 ⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations. `verify_one`'s own
 sponge work is now assembled; the remaining 366 permutations are the app logic and the pieces #5
@@ -163,7 +166,7 @@ names (the real `sponge_after_index` over the plonk index, `group_map`).
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
 is a later rung. What is reportable is INNER-KIMCHI FIDELITY of the assembled recursive verifier:
-the Lean-authored five-sub-circuit assembly is accepted by a pure-Rust kimchi prover, and every
+the Lean-authored eight-rung assembly is accepted by a pure-Rust kimchi prover, and every
 sub-circuit boundary BINDS.
 
 ## ⚑ THE σ-ONLY PROBES
@@ -193,7 +196,10 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      leg and the `Shifted_value.Type1.to_field` unshifts. **Still open:** the `sg_evals` prefix
      entries (`vEz 0/1`, `vEw 0/1`) are `evVal` fixtures where upstream puts the b-polynomial of the
      CARRIED old bulletproof challenges, masked by `Vector.trim_front actual_width_mask` — so the
-     two `combine`s' first two v-entries are not yet computed from the carried challenges.
+     two `combine`s' first two v-entries are not yet computed from the carried challenges. ⚑ The
+     mask half of that is no longer missing (§8h, #9 below); what remains is the b-polynomial of the
+     carried challenges at ζ and ζω, which is R5's `deferredRows` ladder run on a SECOND challenge
+     vector.
   5. **Named and NOT assembled**, each a real sub-circuit: `group_map` (`step_verifier.ml:214-237`);
      `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`; the real `sponge_after_index`
      (the plonk index is hashed here from 57 FIXTURE words, not from the actual commitments);
