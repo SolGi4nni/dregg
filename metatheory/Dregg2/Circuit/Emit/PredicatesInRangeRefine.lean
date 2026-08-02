@@ -248,8 +248,7 @@ theorem inWitness_satisfies :
     interval_cases i <;>
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
-        c1LoPin, c1HiPin, c2FactPin, c3SlotGate, c5LoGate, c5HiGate, c6LoRange, c6HiRange,
-        factHashLookup, factCommitLookup, lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
+        lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
       first
         | exact gllo0
         | exact gllo1

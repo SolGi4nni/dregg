@@ -184,8 +184,7 @@ theorem neqWitness_satisfies :
     interval_cases i <;>
       fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
-        c1ThresholdPin, c2FactPin, c3SlotGate, c5DiffGate, cNzGate,
-        factHashLookup, factCommitLookup, lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
+        lowerPiPinLeg, lowerConstraint_gateBody, g0, g1] <;>
       first
         | exact gph0
         | exact gph1
