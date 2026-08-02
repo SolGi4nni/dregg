@@ -175,6 +175,7 @@
   "table-airs_sha256": {
     "dregg-ir2-byte-v1.json": "6fe248c8c675a2db6fb33b80e1c25ed05210b2e110e40aaa7431122336ce23cc",
     "dregg-ir2-map-absent-v1.json": "e619e2b79eebf47b48a6f046c6ecc62ad65916960f3252136658fd5ad4d10cc7",
+    "dregg-ir2-map-ops-v1.json": "acf57179bd6d50abde7cb110a181a4b6f3f1db0b509c6ee7fb87a960555e063b",
     "dregg-ir2-mem-boundary-v1.json": "0ec7043140091975a8b7e82c09d9d9d0650afc27682423c7f58a11bb3e7a4aaa",
     "dregg-ir2-memory-v1.json": "45bf4f7cce796cb18d3771dac0a624848981d8795dfc35f540cf0d92ffca6973",
     "dregg-ir2-umem-boundary-cohort-v1.json": "6c36e86984b2500a68d7ab99698d4a304a7610c72cc17160946d177187247939",

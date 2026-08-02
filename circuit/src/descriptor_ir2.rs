@@ -467,9 +467,10 @@ fn exact_public_bus_name(table_id: usize) -> String {
 /// as integers, lexicographically over `(hi4, lo27)`). The flat 30-bit address regime of the
 /// EPOCH memory boundary cannot order hash-image keys; this one can.
 const KEY_LO_BITS: usize = 27;
-/// `2^27` as a field constant base for the canonical decomposition.
-const KEY_HI_BASE: u64 = 1 << KEY_LO_BITS;
-/// The top nibble value excluded from carrying a nonzero low limb (`p − 1 = 15 · 2^27`).
+/// The top nibble value excluded from carrying a nonzero low limb (`p − 1 = 15 · 2^27`). Read by
+/// the WITNESS producer only: the split BASE `2^27` went with the last Rust-authored canonical
+/// decomposition (the `Ir2Air::MapOps` cutover), and its author is now
+/// `TableAirIR.KEY_HI_BASE`.
 const KEY_HI_MAX: u64 = 15;
 
 /// The `hash_fact` domain-separation marker (`poseidon2::hash_fact` state[5]).
@@ -2090,6 +2091,31 @@ pub fn map_absent_rows_for(
         .ok_or_else(|| "descriptor assembles no map-absent table".to_string())
 }
 
+/// The HONEST map RECONCILIATION rows the deployed prover would assemble — `build_traces`' own
+/// output. Exposed for the same reason as [`map_absent_rows_for`]: a differential must mutate a
+/// genuine row, because a hand-built one would be a second author of the 898-column layout.
+pub fn map_ops_rows_for(
+    desc: &EffectVmDescriptor2,
+    base_trace: &[Vec<BabyBear>],
+    map_heaps: &[Vec<HeapLeaf>],
+) -> Result<Vec<Vec<BabyBear>>, String> {
+    let layout = check_descriptor2(desc)?;
+    let presence = Presence::of(desc, &layout);
+    let traces = build_traces(
+        desc,
+        &layout,
+        presence,
+        base_trace,
+        &MemBoundaryWitness::default(),
+        map_heaps,
+        &UMemBoundaryWitness::default(),
+        true,
+    )?;
+    traces
+        .map_ops
+        .ok_or_else(|| "descriptor assembles no map-ops table".to_string())
+}
+
 /// The HONEST byte (nibble) table rows the deployed prover would assemble for this descriptor and
 /// trace — `build_traces`' own output, multiplicity histogram included, not a re-derivation.
 /// Exposed for the same reason as [`map_absent_rows_for`]: a differential must mutate a genuine
@@ -2512,14 +2538,7 @@ const MAP_K_DEC0: usize = MAP_A_DEC0 + MA_DECOMP_COLS; // 844 (key)
 const MAP_B_DEC0: usize = MAP_K_DEC0 + MA_DECOMP_COLS; // 857 (low_next)
 const MAP_CMP_LO0: usize = MAP_B_DEC0 + MA_DECOMP_COLS; // 870 (low_addr < key)
 const MAP_CMP_HI0: usize = MAP_CMP_LO0 + MA_CMP_COLS; // 883 (key < low_next)
-const MAP_WIDTH: usize = MAP_CMP_HI0 + MA_CMP_COLS; // 897 (op≤3 uses only [0, 421))
-
-/// The 8-felt column group starting at `base` (a digest lane group: root, leaf, sibling, or
-/// chain node). Returns the `CHIP_OUT_LANES` contiguous column indices.
-#[inline]
-fn map_group8(base: usize) -> [usize; CHIP_OUT_LANES] {
-    core::array::from_fn(|i| base + i)
-}
+pub(crate) const MAP_WIDTH: usize = MAP_CMP_HI0 + MA_CMP_COLS; // 898 (op≤3 uses only [0, 422))
 
 /// The width of the map-log permutation-check tuple: the 8-felt pre-root and 8-felt post-root
 /// groups bracketing `[key, value, op]` — Phase H-HEAP-8 widened it `5 → 19`.
@@ -2573,95 +2592,6 @@ fn root8_mismatch(claimed: &[BabyBear], genuine: &[BabyBear]) -> String {
             fmt_root8(genuine)
         ),
     }
-}
-
-/// The arity-16 `node8` chip-lookup tuple `[16, L8 (8), R8 (8), out8 (8)]` (Phase H-HEAP-8): the
-/// in-circuit `perm(L8 ‖ R8)[0..8]` heap-node compression, with `(cur8, sib8)` ordered by the
-/// direction bit — `dir = 0` ⇒ cur LEFT (`node8(cur, sib)`), `dir = 1` ⇒ cur RIGHT
-/// (`node8(sib, cur)`), matching `heap_node8` / `recompose_membership_8` / Lean `recomposeUp8`.
-fn node8_lookup_tuple<AB>(
-    local: &[AB::Var],
-    cur8: &[usize; CHIP_OUT_LANES],
-    sib8: &[usize; CHIP_OUT_LANES],
-    dir: &AB::Expr,
-    out8: &[usize; CHIP_OUT_LANES],
-) -> Vec<AB::Expr>
-where
-    AB: AirBuilder,
-    AB::F: PrimeField32,
-{
-    let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-    t.push(AB::Expr::from_u64(CHIP_NODE8_ARITY as u64));
-    // in0..7 = L8 = (1−dir)·cur + dir·sib.
-    for i in 0..CHIP_OUT_LANES {
-        let c: AB::Expr = local[cur8[i]].into();
-        let s: AB::Expr = local[sib8[i]].into();
-        t.push((AB::Expr::ONE - dir.clone()) * c + dir.clone() * s);
-    }
-    // in8..15 = R8 = (1−dir)·sib + dir·cur.
-    for i in 0..CHIP_OUT_LANES {
-        let c: AB::Expr = local[cur8[i]].into();
-        let s: AB::Expr = local[sib8[i]].into();
-        t.push((AB::Expr::ONE - dir.clone()) * s + dir.clone() * c);
-    }
-    // out0..7 = the node8 digest.
-    for i in 0..CHIP_OUT_LANES {
-        t.push(local[out8[i]].into());
-    }
-    t
-}
-
-/// The 19-felt map-log RECEIVE tuple read off the `MapOps` table columns:
-/// `[root8 (8), key, value, op, new_root8 (8)]`. The main effect AIR SENDs the byte-identical
-/// tuple built from the descriptor's `MapOpSpec` root/new_root 8-felt groups (see the send site).
-fn map_log_tuple<AB>(local: &[AB::Var]) -> Vec<AB::Expr>
-where
-    AB: AirBuilder,
-    AB::F: PrimeField32,
-{
-    let mut t: Vec<AB::Expr> = Vec::with_capacity(MAP_LOG_WIDTH);
-    for c in map_group8(MAP_ROOT) {
-        t.push(local[c].into());
-    }
-    t.push(local[MAP_KEY].into());
-    t.push(local[MAP_VALUE].into());
-    t.push(local[MAP_OP].into());
-    for c in map_group8(MAP_NEW_ROOT) {
-        t.push(local[c].into());
-    }
-    t
-}
-
-/// The DECLARED leaf-input column list for a `MapOp` absorb, parametric in the value
-/// column (`MAP_VALUE` for the new leaf, `MAP_OLD_VALUE` for the committed old leaf).
-///
-/// LAW#1: the leaf-absorb arity is DATA, not a hardcoded constant. Both the AIR
-/// (`chip_absorb_tuple`) and the trace assembly (`absorb_tuple` in `assemble`) read the SAME
-/// list, so prover and verifier agree on the leaf shape by construction.
-///
-/// Today the `MapOp` leaf is the arity-`HEAP_LEAF_ARITY` indexed-Merkle-tree leaf
-/// `hash[addr, value, next_addr]` — the SAME ordered preimage
-/// `heap_root::HeapLeaf::preimage` folds, so the producer's committed digest and this
-/// declared column list are one schema, not two transcriptions of one. The arity moved 2 → 3
-/// on 2026-07-12 (`919b2b0b8d`) when the map tree became an IMT and the MAX sentinel leaf was
-/// retired into the terminal pointer.
-///
-/// ⚠ The Lean DENOTATION has not moved with it: `DescriptorIR2.opensTo` / `writesTo` still
-/// commit arity-2 `Substrate.Heap.leafOf` leaves, and under the CR floor an arity-3 IMT root
-/// is NEVER an arity-2 `mapRoot` (`Dregg2.Circuit.MapReconcileImtRepoint.imtRoot_ne_mapRoot`),
-/// so `MapOp.holdsAt` is refuted at every deployed pre-root. The cutover is
-/// `docs/DESIGN-mapop-denotation-move.md`. Do NOT describe this list as "what the denotation
-/// opens against" until that lands.
-///
-/// The 7-field cap leaf is a SEPARATE object (a binary-Merkle opening via generic chip
-/// `Lookup`s — Lean `DeployedCapOpen`), not a `MapOp` leaf; see the module-level note and the
-/// returned ledger.
-#[inline]
-fn map_leaf_input_cols(value_col: usize) -> [usize; crate::heap_root::HEAP_LEAF_ARITY] {
-    // IMT leaf `hash[addr, value, next_addr]` (arity 2 → 3): the Lean `imtLeafHash`. Both the old
-    // and new leaf share the same key column and the same `MAP_NEXT` pointer column (a value update
-    // holds the pointer fixed; the pointer binds the linked chain into the committed digest).
-    [MAP_KEY, value_col, MAP_NEXT]
 }
 
 // -- Chip table layout. A row is EITHER a sponge-absorb permutation (`is_fact = 0`:
@@ -2847,8 +2777,6 @@ pub enum Ir2Air {
     /// same permutation constraints and width as [`Ir2Air::Chip`], but serve only the fixed
     /// `[16, input_state16, output_state16]` bus; it is absent from every legacy descriptor.
     ChipState16,
-    /// The map-ops table (in-row sorted-Poseidon2 openings).
-    MapOps,
     /// ⚑ **A WHOLE Lean-authored TABLE AIR, interpreted** — the shared auxiliary instances whose
     /// algebra used to be hand-written Rust arms of this very `match`.
     ///
@@ -2938,7 +2866,6 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
             Ir2Air::Chip | Ir2Air::ChipState16 => CHIP_WIDTH,
-            Ir2Air::MapOps => MAP_WIDTH,
             Ir2Air::LeanTable(t) => t.width,
             // The committed column is the multiplicity; the manifest itself is preprocessed.
             Ir2Air::ExactPublicTable { .. } => 1,
@@ -3021,192 +2948,6 @@ where
         }
     }
     builder.assert_zero(recomposed - value_expr);
-}
-
-/// Emit one CANONICAL BabyBear decomposition `value = hi4 · 2^27 + lo27` over a 13-column
-/// block `[hi4, lo27 limbs (10), is15, inv15]`. Uniqueness (and hence integer-faithfulness of
-/// the lexicographic comparators) is the `is15 · lo27 = 0` tooth: `p − 1 = 15 · 2^27`, so the
-/// only admissible composite with `hi4 = 15` is `p − 1` itself — the non-canonical alias
-/// `value + p` of any small value is UNSAT. `gate` activates the is15-forcing leg (pad rows
-/// stay all-zero). Returns `(hi4, lo27)` as expressions for the comparators.
-fn eval_canon_decomp<AB>(
-    builder: &mut AB,
-    value_expr: AB::Expr,
-    block: &[AB::Var],
-    gate: AB::Expr,
-) -> (AB::Expr, AB::Expr)
-where
-    AB: AirBuilder + InteractionBuilder,
-    AB::F: PrimeField32,
-{
-    let hi4: AB::Expr = block[0].into();
-    let limbs: Vec<AB::Var> = block[1..1 + decomp_cols(KEY_LO_BITS)].to_vec();
-    let is15: AB::Expr = block[1 + decomp_cols(KEY_LO_BITS)].into();
-    let inv15: AB::Expr = block[2 + decomp_cols(KEY_LO_BITS)].into();
-    let fifteen = AB::Expr::from_u64(KEY_HI_MAX);
-    // hi4 is a nibble (the shared limb table is exactly [0, 16)).
-    let bus = LookupBus::new(BUS_BYTE);
-    bus.lookup_key(builder, [hi4.clone()], AB::Expr::ONE);
-    // lo27 = value − hi4·2^27, decomposed to 27 bits.
-    let lo27 = value_expr - hi4.clone() * AB::Expr::from_u64(KEY_HI_BASE);
-    eval_decomp(builder, lo27.clone(), &limbs, KEY_LO_BITS);
-    // is15 forced: boolean; (hi4 − 15)·is15 = 0; (hi4 − 15)·inv15 = gate − is15.
-    builder.assert_zero(is15.clone() * (is15.clone() - AB::Expr::ONE));
-    builder.assert_zero((hi4.clone() - fifteen.clone()) * is15.clone());
-    builder.assert_zero((hi4.clone() - fifteen) * inv15 - (gate - is15.clone()));
-    // THE UNIQUENESS TOOTH: hi4 = 15 admits only lo27 = 0 (the value p − 1).
-    builder.assert_zero(is15 * lo27.clone());
-    (hi4, lo27)
-}
-
-/// Emit one lexicographic STRICT-LT comparator `a < b` over canonical `(hi4, lo27)`
-/// decompositions, on a 13-column block `[s, dhi, dlo, dlo limbs (10)]`, gated by `gate`
-/// (degree ≤ 1). When the gate fires: `s = 1` ⇒ `b.hi4 ≥ a.hi4 + 1` (dhi a nibble);
-/// `s = 0` ⇒ `b.hi4 = a.hi4` and `b.lo27 ≥ a.lo27 + 1` (dlo 27-bit). Since the
-/// decompositions are unique-canonical, this is integer `<` on the felts — full-felt keys
-/// (hash images) compare soundly, which the 30-bit flat-address regime could never do.
-#[allow(clippy::too_many_arguments)]
-fn eval_lex_lt<AB>(
-    builder: &mut AB,
-    a_hi4: AB::Expr,
-    a_lo27: AB::Expr,
-    b_hi4: AB::Expr,
-    b_lo27: AB::Expr,
-    block: &[AB::Var],
-    gate: AB::Expr,
-    transition_only: bool,
-) where
-    AB: AirBuilder + InteractionBuilder,
-    AB::F: PrimeField32,
-{
-    let s: AB::Expr = block[0].into();
-    let dhi: AB::Var = block[1];
-    let dlo: AB::Var = block[2];
-    let dlo_limbs: Vec<AB::Var> = block[3..3 + decomp_cols(KEY_LO_BITS)].to_vec();
-    builder.assert_zero(s.clone() * (s.clone() - AB::Expr::ONE));
-    // dhi/dlo are committed columns, range-bound unconditionally (pads carry 0); their
-    // VALUES are pinned by the gated branch equations.
-    let bus = LookupBus::new(BUS_BYTE);
-    bus.lookup_key(builder, [dhi.into()], AB::Expr::ONE);
-    eval_decomp(builder, dlo.into(), &dlo_limbs, KEY_LO_BITS);
-    let one = AB::Expr::ONE;
-    let c_dhi =
-        dhi.into() - gate.clone() * s.clone() * (b_hi4.clone() - a_hi4.clone() - one.clone());
-    let c_eq = gate.clone() * (one.clone() - s.clone()) * (b_hi4 - a_hi4);
-    let c_dlo = dlo.into() - gate * (one.clone() - s) * (b_lo27 - a_lo27 - one);
-    if transition_only {
-        let mut tb = builder.when_transition();
-        tb.assert_zero(c_dhi);
-        tb.assert_zero(c_eq);
-        tb.assert_zero(c_dlo);
-    } else {
-        builder.assert_zero(c_dhi);
-        builder.assert_zero(c_eq);
-        builder.assert_zero(c_dlo);
-    }
-}
-
-// ========================================================================================
-// GATE-COUNTED range-check helpers (gap-#5 AAFI). Twins of [`eval_decomp`] /
-// [`eval_canon_decomp`] / [`eval_lex_lt`] whose BYTE-BUS LOOKUP COUNTS are multiplied by the
-// `gate` selector, so a row where `gate = 0` sends ZERO byte queries. This is what lets the
-// AAFI pointer-bracket range block ride the shared `MapOps` AIR WITHOUT pulling the byte table
-// into op≤3-only descriptors: on op≠4 rows `gate = is_aafi = 0`, every byte send is 0, and the
-// byte-table presence (and hence the op≤3 table set + degree_bits) is byte-identical. The
-// row-local recomposition/boolean asserts already vanish when `gate = 0` and the witnessed
-// columns are zero (the pad convention), so only the counts change. `gate` must be degree ≤ 3.
-fn eval_decomp_counted<AB>(
-    builder: &mut AB,
-    value_expr: AB::Expr,
-    limbs: &[AB::Var],
-    bits: usize,
-    gate: AB::Expr,
-) where
-    AB: AirBuilder + InteractionBuilder,
-    AB::F: PrimeField32,
-{
-    let bus = LookupBus::new(BUS_BYTE);
-    let (n, top_bits) = limb_geom(bits);
-    let partial = top_bits < LIMB_BITS;
-    let limb_base = AB::Expr::from_u64(1 << LIMB_BITS);
-    let mut recomposed = AB::Expr::ZERO;
-    let mut weight = AB::Expr::ONE;
-    for i in 0..n {
-        let limb: AB::Expr = limbs[i].into();
-        recomposed += limb.clone() * weight.clone();
-        weight = weight.clone() * limb_base.clone();
-        if i == n - 1 && partial {
-            let mut top_recomp = AB::Expr::ZERO;
-            let mut bw = AB::Expr::ONE;
-            for b in 0..top_bits {
-                let bit: AB::Expr = limbs[n + b].into();
-                builder.assert_zero(bit.clone() * (bit.clone() - AB::Expr::ONE));
-                top_recomp += bit * bw.clone();
-                bw = bw.clone() + bw;
-            }
-            builder.assert_zero(top_recomp - limb);
-        } else {
-            bus.lookup_key(builder, [limb], gate.clone());
-        }
-    }
-    builder.assert_zero(recomposed - value_expr);
-}
-
-fn eval_canon_decomp_counted<AB>(
-    builder: &mut AB,
-    value_expr: AB::Expr,
-    block: &[AB::Var],
-    gate: AB::Expr,
-) -> (AB::Expr, AB::Expr)
-where
-    AB: AirBuilder + InteractionBuilder,
-    AB::F: PrimeField32,
-{
-    let hi4: AB::Expr = block[0].into();
-    let limbs: Vec<AB::Var> = block[1..1 + decomp_cols(KEY_LO_BITS)].to_vec();
-    let is15: AB::Expr = block[1 + decomp_cols(KEY_LO_BITS)].into();
-    let inv15: AB::Expr = block[2 + decomp_cols(KEY_LO_BITS)].into();
-    let fifteen = AB::Expr::from_u64(KEY_HI_MAX);
-    let bus = LookupBus::new(BUS_BYTE);
-    bus.lookup_key(builder, [hi4.clone()], gate.clone());
-    let lo27 = value_expr - hi4.clone() * AB::Expr::from_u64(KEY_HI_BASE);
-    eval_decomp_counted(builder, lo27.clone(), &limbs, KEY_LO_BITS, gate.clone());
-    builder.assert_zero(is15.clone() * (is15.clone() - AB::Expr::ONE));
-    builder.assert_zero((hi4.clone() - fifteen.clone()) * is15.clone());
-    builder.assert_zero((hi4.clone() - fifteen) * inv15 - (gate - is15.clone()));
-    builder.assert_zero(is15 * lo27.clone());
-    (hi4, lo27)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn eval_lex_lt_counted<AB>(
-    builder: &mut AB,
-    a_hi4: AB::Expr,
-    a_lo27: AB::Expr,
-    b_hi4: AB::Expr,
-    b_lo27: AB::Expr,
-    block: &[AB::Var],
-    gate: AB::Expr,
-) where
-    AB: AirBuilder + InteractionBuilder,
-    AB::F: PrimeField32,
-{
-    let s: AB::Expr = block[0].into();
-    let dhi: AB::Var = block[1];
-    let dlo: AB::Var = block[2];
-    let dlo_limbs: Vec<AB::Var> = block[3..3 + decomp_cols(KEY_LO_BITS)].to_vec();
-    builder.assert_zero(s.clone() * (s.clone() - AB::Expr::ONE));
-    let bus = LookupBus::new(BUS_BYTE);
-    bus.lookup_key(builder, [dhi.into()], gate.clone());
-    eval_decomp_counted(builder, dlo.into(), &dlo_limbs, KEY_LO_BITS, gate.clone());
-    let one = AB::Expr::ONE;
-    let c_dhi =
-        dhi.into() - gate.clone() * s.clone() * (b_hi4.clone() - a_hi4.clone() - one.clone());
-    let c_eq = gate.clone() * (one.clone() - s.clone()) * (b_hi4 - a_hi4);
-    let c_dlo = dlo.into() - gate * (one.clone() - s) * (b_lo27 - a_lo27 - one);
-    builder.assert_zero(c_dhi);
-    builder.assert_zero(c_eq);
-    builder.assert_zero(c_dlo);
 }
 
 /// **THE row-local constraint walk — the one place a descriptor's own algebra becomes an AIR.**
@@ -3738,325 +3479,6 @@ where
                         local[CHIP_MULT].into() * is_fact,
                     );
                 }
-            }
-
-            // ----------------------------------------------------------------
-            Ir2Air::MapOps => {
-                let is_real: AB::Expr = local[MAP_IS_REAL].into();
-                let op: AB::Expr = local[MAP_OP].into();
-                builder.assert_zero(is_real.clone() * (is_real.clone() - AB::Expr::ONE));
-                // op ∈ {0 (read), 1 (write), 3 (insert), 4 (aafi-insert)}. Absent (2) is received
-                // by the map-absent table; the map-log multiset partitions by op code. op=4 is the
-                // gap-#5 AAFI two-path insert, gated below by `is_aafi`.
-                //
-                // ⚠ "no descriptor emits it yet; op≤3 rows are byte-identical" used to sit on op=4
-                // and is FALSE at HEAD, in both halves. Histogram of `"op":"…"` over all SEVEN
-                // committed registries under `circuit/descriptors/`: `aafi_insert` 24 rows,
-                // `absent` 24, `write` 4, `insert` 0, `read` 0. op=4 is the insert op the deployed
-                // descriptors actually carry; op=3 and op=0 are the ones nothing emits. Treating
-                // the `is_aafi` leg as dead code is how the deployed accumulator write gets missed.
-                builder.assert_zero(
-                    op.clone()
-                        * (op.clone() - AB::Expr::ONE)
-                        * (op.clone() - AB::Expr::from_u64(3))
-                        * (op.clone() - AB::Expr::from_u64(4)),
-                );
-                for lvl in 0..HEAP_TREE_DEPTH {
-                    let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
-                    builder.assert_zero(dir.clone() * (dir - AB::Expr::ONE));
-                }
-
-                // Selector: the old-leaf/old-path legs apply to read/write (op ∈ {0,1})
-                // but are vacuous for insert (op = 3). `not_insert` is the unique degree-2
-                // polynomial that is 1 at op = 0 and op = 1, and 0 at op = 3.
-                let inv6 =
-                    AB::Expr::from_u64(BabyBear::new(6).inverse().expect("6 != 0").as_u32() as u64);
-                let not_insert: AB::Expr =
-                    AB::Expr::ONE - inv6.clone() * op.clone() * (op.clone() - AB::Expr::ONE);
-                // -- AAFI (op=4) selectors. To respect the frozen map-ops degree budget (4), the
-                //    aafi selector is a COMMITTED boolean column `MAP_S` (degree 1), not an
-                //    `op(op-1)(op-3)` polynomial (degree 3). It is pinned to op=4 below. --
-                let s: AB::Expr = local[MAP_S].into();
-                let not_aafi: AB::Expr = AB::Expr::ONE - s.clone();
-                let aafi_gate: AB::Expr = is_real.clone() * s.clone();
-                // s is boolean; s ⇒ op=4; and op=4 ⇒ s (so the gates cannot be disabled on an op=4
-                // row nor enabled elsewhere). The last is degree 4 = the budget ceiling.
-                builder.assert_zero(s.clone() * (s.clone() - AB::Expr::ONE));
-                builder.assert_zero(s.clone() * (op.clone() - AB::Expr::from_u64(4)));
-                builder.assert_zero(
-                    op.clone()
-                        * (op.clone() - AB::Expr::ONE)
-                        * (op.clone() - AB::Expr::from_u64(3))
-                        * (AB::Expr::ONE - s.clone()),
-                );
-                // `rw_sel` fires the read/write OLD-leaf absorb at op∈{0,1} only (= `not_insert` with
-                // its op=4 value repaired from −1 to 0 via +s). `not_insert3` fires the shared PATH1
-                // old-chain at op∈{0,1,4} (op=4 folds the bracketing low leaf → GATE a).
-                let rw_sel: AB::Expr = not_insert.clone() + s.clone();
-                let not_insert3: AB::Expr = not_insert.clone() + AB::Expr::from_u64(2) * s.clone();
-
-                // A read returns the committed value: old_value = value on read rows. The `(op − 3)`
-                // factor disables it for insert (op = 3); on aafi (op = 4) the fill pins
-                // `MAP_OLD_VALUE := MAP_VALUE` so this leg is satisfied trivially (no extra degree).
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - op.clone())
-                        * (op.clone() - AB::Expr::from_u64(3))
-                        * (local[MAP_OLD_VALUE].into() - local[MAP_VALUE].into()),
-                );
-
-                // Leaf digests ride the chip bus as absorb lookups (gated by is_real — pad rows
-                // query nothing). The old-leaf lookup is suppressed on insert rows.
-                //
-                // LAW#1 / parametric leaf: the absorb arity is NOT a hardcoded `2`. The map-op
-                // declares its leaf as a list of INPUT COLUMNS (`map_leaf_input_cols`), and the
-                // absorb tuple is built generically from that list by `chip_absorb_tuple` — the
-                // Rust twin of the Lean `chipLookupTuple` (`arity :: padTo CHIP_RATE ins ++
-                // [digest]`). Today the declared list is the arity-3 IMT shape
-                // `[MAP_KEY, value, MAP_NEXT]` (`heap_root::HeapLeaf::preimage`); a wider
-                // leaf would extend the column list with ZERO new branches here. The 7-field cap
-                // leaf does NOT ride this op — it is a binary-Merkle membership opening realized
-                // as generic chip `Lookup`s (Lean `DeployedCapOpen.leafLookup`, arity 7), the
-                // SAME `chip_absorb_tuple` primitive at a different arity. See the module note.
-                let p2 = LookupBus::new(BUS_P2);
-                // Phase B-GATE: the 17-wide tuple is `[arity, padTo CHIP_RATE inputs, out0..out7]`.
-                // `digest_col` is out0 (the chained leaf digest); `lane1_base..+6` are the 7
-                // exposed lanes 1..7 (witnessed in the appended leaf-lane columns). The map-op
-                // CONSTRAINS only out0 via the fact-chain seed below — lanes 1..7 are carried so
-                // the lookup matches the 17-wide chip row, then ignored.
-                let chip_absorb_tuple =
-                    |inputs: &[usize], digest_col: usize, lane1_base: usize| -> Vec<AB::Expr> {
-                        debug_assert!(
-                            inputs.len() <= CHIP_RATE,
-                            "map-op leaf arity {} exceeds CHIP_RATE {CHIP_RATE}",
-                            inputs.len()
-                        );
-                        let mut t: Vec<AB::Expr> = Vec::with_capacity(CHIP_TUPLE_LEN);
-                        t.push(AB::Expr::from_u64(inputs.len() as u64));
-                        for &c in inputs {
-                            t.push(local[c].into());
-                        }
-                        for _ in inputs.len()..CHIP_RATE {
-                            t.push(AB::Expr::ZERO);
-                        }
-                        t.push(local[digest_col].into());
-                        for i in 0..CHIP_OUT_LANES - 1 {
-                            t.push(local[lane1_base + i].into());
-                        }
-                        t
-                    };
-                // The declared leaf input columns for read/write/insert: `[key, value-col]`. The
-                // old leaf reads the committed `MAP_OLD_VALUE`, the new leaf the written
-                // `MAP_VALUE` — same declared key column, the value column distinguishes them.
-                let old_leaf_cols = map_leaf_input_cols(MAP_OLD_VALUE);
-                let new_leaf_cols = map_leaf_input_cols(MAP_VALUE);
-                p2.lookup_key(
-                    builder,
-                    chip_absorb_tuple(&old_leaf_cols, MAP_OLD_LEAF, MAP_OLD_LEAF + 1),
-                    is_real.clone() * rw_sel.clone(),
-                );
-                p2.lookup_key(
-                    builder,
-                    chip_absorb_tuple(&new_leaf_cols, MAP_NEW_LEAF, MAP_NEW_LEAF + 1),
-                    is_real.clone(),
-                );
-                // -- AAFI (op=4): the bracketing LOW leaf digest into the SAME `MAP_OLD_LEAF` group,
-                //    but from `[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_NEXT]` (low_oldNext) — a DIFFERENT
-                //    absorb than read/write (which reads `MAP_KEY, MAP_OLD_VALUE`), so it is its own
-                //    lookup, gated to op=4. The shared PATH1 old-chain (gated `not_insert3`, which
-                //    fires op∈{0,1,4}) then folds `MAP_OLD_LEAF` to `MAP_ROOT` = GATE (a). --
-                p2.lookup_key(
-                    builder,
-                    chip_absorb_tuple(
-                        &[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_NEXT],
-                        MAP_OLD_LEAF,
-                        MAP_OLD_LEAF + 1,
-                    ),
-                    aafi_gate.clone(),
-                );
-
-                // The sibling-sharing chains ride the 8-felt `node8` compression on BUS_P2 (Phase
-                // H-HEAP-8): each level absorbs `perm(L8 ‖ R8)[0..8]` at arity 16, `(cur8, sib8)`
-                // ordered by the direction bit (dir = 0 ⇒ cur LEFT: node8(cur, sib); dir = 1 ⇒ cur
-                // RIGHT: node8(sib, cur)) — the in-circuit twin of `heap_node8` / `recompose_up8`.
-                // Write/read share one path; insert opens the NEW leaf against the NEW root (no old
-                // leaf at a fresh key). The old-path absorbs are gated by `not_insert`; the new path
-                // is always active. The final link IS root8 / new_root8 (level DEPTH-1's output).
-                let mut cur_old = map_group8(MAP_OLD_LEAF);
-                let mut cur_new = map_group8(MAP_NEW_LEAF);
-                for lvl in 0..HEAP_TREE_DEPTH {
-                    let sib8 = map_group8(MAP_SIB0 + CHIP_OUT_LANES * lvl);
-                    let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
-                    let last = lvl + 1 == HEAP_TREE_DEPTH;
-                    let out_old = if last {
-                        map_group8(MAP_ROOT)
-                    } else {
-                        map_group8(MAP_OLD_CHAIN0 + CHIP_OUT_LANES * lvl)
-                    };
-                    // GATE (a) on op=4: the shared PATH1 old-chain folds `MAP_OLD_LEAF` (the low
-                    // leaf on aafi, the read/write leaf on op∈{0,1}) → `MAP_ROOT`. `not_insert3`
-                    // fires op∈{0,1,4}; op=3 (insert has no old leaf) stays off.
-                    p2.lookup_key(
-                        builder,
-                        node8_lookup_tuple::<AB>(&local, &cur_old, &sib8, &dir, &out_old),
-                        is_real.clone() * not_insert3.clone(),
-                    );
-                    cur_old = out_old;
-                    let out_new = if last {
-                        map_group8(MAP_NEW_ROOT)
-                    } else {
-                        map_group8(MAP_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
-                    };
-                    // The op≤3 new-leaf chain folds over PATH1 → `MAP_NEW_ROOT`. On aafi (op=4) the
-                    // appended leaf folds over PATH2 instead (GATE d2 below), so gate this off with
-                    // `not_aafi` — `MAP_NEW_CHAIN0` is REUSED as the PATH2 append chain on op=4.
-                    p2.lookup_key(
-                        builder,
-                        node8_lookup_tuple::<AB>(&local, &cur_new, &sib8, &dir, &out_new),
-                        is_real.clone() * not_aafi.clone(),
-                    );
-                    cur_new = out_new;
-                }
-
-                // ============================================================================
-                // AAFI (op=4) TWO-PATH INSERT gates — each ↔ an `imtInsert` step ↔ an
-                // `AafiInsertWitness8` field. All ride `aafi_gate = is_real·is_aafi` (zero on op≤3),
-                // so op≤3 rows see NONE of these lookups/asserts (byte-identical). GATE (a) is the
-                // shared PATH1 old-chain above (low leaf → MAP_ROOT), fed by the low-leaf absorb.
-                // ----------------------------------------------------------------------------
-                // PATH2 direction bits are boolean.
-                for lvl in 0..HEAP_TREE_DEPTH {
-                    let dir2: AB::Expr = local[MAP_DIR2_0 + lvl].into();
-                    builder.assert_zero(s.clone() * dir2.clone() * (dir2 - AB::Expr::ONE));
-                }
-
-                // GATE (b) — pointer-bracket range `low.addr < k < low.next_addr` (≡ Lean
-                // `ImtAbsent`, the double-spend tooth: a present / out-of-gap k has no bracket).
-                // Portable from the MapAbsent arm; the decomposed values are `is_aafi`-gated so op≤3
-                // rows decompose ZERO (their real key/next columns are NOT touched).
-                let (a_hi4, a_lo27) = eval_canon_decomp_counted(
-                    builder,
-                    s.clone() * local[MAP_LOW_ADDR].into(),
-                    &local[MAP_A_DEC0..MAP_A_DEC0 + MA_DECOMP_COLS],
-                    s.clone(),
-                );
-                let (k_hi4, k_lo27) = eval_canon_decomp_counted(
-                    builder,
-                    s.clone() * local[MAP_KEY].into(),
-                    &local[MAP_K_DEC0..MAP_K_DEC0 + MA_DECOMP_COLS],
-                    s.clone(),
-                );
-                let (b_hi4, b_lo27) = eval_canon_decomp_counted(
-                    builder,
-                    s.clone() * local[MAP_NEXT].into(),
-                    &local[MAP_B_DEC0..MAP_B_DEC0 + MA_DECOMP_COLS],
-                    s.clone(),
-                );
-                eval_lex_lt_counted(
-                    builder,
-                    a_hi4,
-                    a_lo27,
-                    k_hi4.clone(),
-                    k_lo27.clone(),
-                    &local[MAP_CMP_LO0..MAP_CMP_LO0 + MA_CMP_COLS],
-                    s.clone(),
-                );
-                eval_lex_lt_counted(
-                    builder,
-                    k_hi4,
-                    k_lo27,
-                    b_hi4,
-                    b_lo27,
-                    &local[MAP_CMP_HI0..MAP_CMP_HI0 + MA_CMP_COLS],
-                    s.clone(),
-                );
-
-                // GATE (c) — PATH1 low UPDATE → R1 (≡ `imtLowUpdate_binds`): the SAME low leaf with
-                // `next_addr := k`, absorbed from `[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_KEY]` (so
-                // `low_new.addr == low_old.addr`, `low_new.value == low_old.value`, `low_new.next ==
-                // k` hold by construction — the same columns as gate (a)/(b)), folded up the SAME
-                // PATH1 siblings to `MAP_R1`.
-                p2.lookup_key(
-                    builder,
-                    chip_absorb_tuple(
-                        &[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_KEY],
-                        MAP_LOW_NEW,
-                        MAP_LOW_NEW + 1,
-                    ),
-                    aafi_gate.clone(),
-                );
-                {
-                    let mut cur = map_group8(MAP_LOW_NEW);
-                    for lvl in 0..HEAP_TREE_DEPTH {
-                        let sib8 = map_group8(MAP_SIB0 + CHIP_OUT_LANES * lvl);
-                        let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
-                        let out = if lvl + 1 == HEAP_TREE_DEPTH {
-                            map_group8(MAP_R1)
-                        } else {
-                            map_group8(MAP_LOW_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
-                        };
-                        p2.lookup_key(
-                            builder,
-                            node8_lookup_tuple::<AB>(&local, &cur, &sib8, &dir, &out),
-                            aafi_gate.clone(),
-                        );
-                        cur = out;
-                    }
-                }
-
-                // GATE (d1) — PATH2 free-slot EMPTY under R1: `MAP_FREE_EMPTY` is pinned to the
-                // constant `heap_empty_subtree_root_8(0)` = ZERO8, then folds up PATH2 to `MAP_R1`.
-                // Proves the slot at `free_index` was EMPTY before the append (no overwrite), and —
-                // since ZERO8 ≠ the low leaf's digest — that PATH2 ≠ the low position.
-                for i in 0..CHIP_OUT_LANES {
-                    builder.assert_zero(s.clone() * local[MAP_FREE_EMPTY + i].into());
-                }
-                {
-                    let mut cur = map_group8(MAP_FREE_EMPTY);
-                    for lvl in 0..HEAP_TREE_DEPTH {
-                        let sib8 = map_group8(MAP_SIB2_0 + CHIP_OUT_LANES * lvl);
-                        let dir: AB::Expr = local[MAP_DIR2_0 + lvl].into();
-                        let out = if lvl + 1 == HEAP_TREE_DEPTH {
-                            map_group8(MAP_R1)
-                        } else {
-                            map_group8(MAP_FREE_EMPTY_CHAIN0 + CHIP_OUT_LANES * lvl)
-                        };
-                        p2.lookup_key(
-                            builder,
-                            node8_lookup_tuple::<AB>(&local, &cur, &sib8, &dir, &out),
-                            aafi_gate.clone(),
-                        );
-                        cur = out;
-                    }
-                }
-
-                // GATE (d2) — PATH2 APPEND → new_root (≡ `pathRecompute_binds_updates`, second
-                // path): the appended leaf `MAP_NEW_LEAF` = hash[MAP_KEY, MAP_VALUE, MAP_NEXT]
-                // (already absorbed above; `next` inherits `low_oldNext = MAP_NEXT`) folds up the
-                // SAME PATH2 siblings → `MAP_NEW_ROOT`. Only `free_index` changed empty→append.
-                {
-                    let mut cur = map_group8(MAP_NEW_LEAF);
-                    for lvl in 0..HEAP_TREE_DEPTH {
-                        let sib8 = map_group8(MAP_SIB2_0 + CHIP_OUT_LANES * lvl);
-                        let dir: AB::Expr = local[MAP_DIR2_0 + lvl].into();
-                        let out = if lvl + 1 == HEAP_TREE_DEPTH {
-                            map_group8(MAP_NEW_ROOT)
-                        } else {
-                            map_group8(MAP_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
-                        };
-                        p2.lookup_key(
-                            builder,
-                            node8_lookup_tuple::<AB>(&local, &cur, &sib8, &dir, &out),
-                            aafi_gate.clone(),
-                        );
-                        cur = out;
-                    }
-                }
-
-                // The table carries EXACTLY the gathered log (mapTableFaithful): the 8-felt root and
-                // new_root groups bracket the key/value/op — a 19-felt log tuple.
-                let map_log = PermutationCheckBus::new(BUS_MAP_LOG);
-                map_log.receive(builder, map_log_tuple::<AB>(&local), is_real);
             }
 
             // ----------------------------------------------------------------
@@ -6629,7 +6051,10 @@ fn instance_airs(
         ));
     }
     if presence.map_ops {
-        airs.push(Ir2Air::MapOps);
+        // The Lean-authored map reconciliation table AIR — `Emit/MapOpsTableEmit.lean`.
+        airs.push(Ir2Air::LeanTable(
+            crate::table_air::map_ops_table_air_shared(),
+        ));
     }
     if presence.map_absent {
         // The Lean-authored table AIR. Decoded once per assembly from the checked-in emission;
@@ -7951,7 +7376,6 @@ mod tests {
                     Ir2Air::Main { .. } => "main",
                     Ir2Air::Chip => "chip",
                     Ir2Air::ChipState16 => "chip_state16",
-                    Ir2Air::MapOps => "map_ops",
                     // The label is the Lean author's own emitted name, so a second table AIR
                     // gets its own row here without touching this match.
                     Ir2Air::LeanTable(t) => match t.name.as_str() {
@@ -7962,6 +7386,7 @@ mod tests {
                         "dregg-ir2-umemory-v1" => "umemory",
                         "dregg-ir2-umem-boundary-cohort-v1" => "umem_boundary_cohort",
                         "dregg-ir2-umem-boundary-v1" => "umem_boundary",
+                        "dregg-ir2-map-ops-v1" => "map_ops",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }

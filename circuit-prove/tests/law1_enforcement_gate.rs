@@ -1009,7 +1009,25 @@ const BASELINE: &[(&str, usize)] = &[
     // boundary arms, all three Lean-authored now — exactly as `BUS_MEM_CHECK`/`BUS_MEM_ADDRS` did
     // in the third pass. The `UM_*` COLUMN offsets did NOT go: the witness producer now writes its
     // row BY NAME through them, because it is the last thing in Rust that knows what a column means.
-    ("circuit/src/descriptor_ir2.rs", 236),
+    // LOWERED 236 -> 204 on 2026-08-02 (seventh pass): the `Ir2Air::MapOps` arm — the map
+    // RECONCILIATION table, i.e. the row guard and op membership, the AAFI selector's three pins,
+    // the read discipline, 32 direction booleans across TWO independent paths, the pointer-bracket
+    // range block (three canonical splits + two lexicographic comparators) and FIVE node8 Merkle
+    // folds totalling 84 chip legs — was DELETED and replaced by an eighth `Ir2Air::LeanTable`
+    // instance (`Emit/MapOpsTableEmit.lean` -> `dregg-ir2-map-ops-v1.json`, 331 KB, the largest of
+    // the eight). The VARIANT is gone from the enum, so `Ir2Air` is now Main / Chip / ChipState16 /
+    // LeanTable / ExactPublicTable.
+    // ⓘ SEVEN helpers went with it, and TWO of them were ALREADY DEAD AT HEAD: `eval_canon_decomp`
+    // and `eval_lex_lt` (the UNCOUNTED canonical-split and comparator emitters) lost their last
+    // caller in the `Ir2Air::MapAbsent` cutover on 2026-08-01 and were left standing — 20 of the 32
+    // sites this pass retires are theirs and the three GATE-COUNTED twins'. The rest are
+    // `map_group8`, `node8_lookup_tuple`, `map_log_tuple`, `map_leaf_input_cols` and `KEY_HI_BASE`.
+    // A ratchet counts what is THERE, not what runs, so dead Rust-authored algebra scores exactly
+    // like live Rust-authored algebra — which is the correct behaviour and is why they are deleted
+    // rather than left as harmless.
+    // The `MAP_*` COLUMN offsets did NOT go: the witness producer writes its row BY NAME through
+    // them, because it is the last thing in Rust that knows what a column means.
+    ("circuit/src/descriptor_ir2.rs", 204),
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

@@ -57,7 +57,8 @@ open Dregg2.Circuit.DescriptorIR2 (WindowExpr)
 open Dregg2.Circuit.TableAirIR
   (BusOp BusInteraction TableAir TableGate emitTableAirJson
    v k eSub eOneMinus gBool gAll decompGates decompQueries limbGeom decompCols
-   canonHi canonLo canonDecompGates canonDecompQueries lexLtGates lexLtQueries)
+   canonHi canonLo canonDecompGates canonDecompQueries lexLtGates lexLtQueries
+   group8 chipAbsorbTuple node8Tuple foldCurAt foldOutAt foldQueries)
 
 set_option autoImplicit false
 
@@ -80,12 +81,6 @@ before it, so a layout drift on either side cannot be silent. -/
 def DEPTH : Nat := 16
 /-- `CHIP_OUT_LANES`. -/
 def LANES : Nat := 8
-/-- `CHIP_RATE`. -/
-def RATE : Nat := 16
-/-- `CHIP_NODE8_ARITY`. -/
-def NODE8_ARITY : ℤ := 16
-/-- `HEAP_LEAF_ARITY`. -/
-def LEAF_ARITY : ℤ := 3
 /-- `KEY_LO_BITS`. -/
 def LO_BITS : Nat := 27
 /-- `2 ^ KEY_LO_BITS` — the canonical split base. -/
@@ -166,35 +161,21 @@ beside a different filter, which `TableGate.transition_weakens` says is invisibl
 that reads the body alone. The list THIS file builds is unchanged — `lexLtGates` is still the
 concatenation — and the emitted artifact is byte-identical. -/
 
-/-! ## §3 — The chip tuples. -/
+/-! ## §3 — The chip tuples.
 
-/-- The 8-felt group at `base`. -/
-def group8 (base : Nat) : List WindowExpr := (List.range LANES).map (fun i => v (base + i))
+⚠ **HOISTED, 2026-08-02 (eighth pass).** `group8` / `leafTuple` / `node8Tuple` / `foldCur` /
+`foldOut` were defined HERE. `MapOps` is the second table to fold a Merkle path through the arity-16
+`node8` compression — four paths, over two independent sibling/direction blocks — so they now live
+in `TableAirIR` §6c: the same move §0 and §2 record for `v`/`k`/`decompGates` and for the comparator,
+and for the same reason. `leafTuple` generalized to `chipAbsorbTuple` (arity from the declared column
+LIST, as the Rust closure's own doc claims), and the per-level chain became `foldQueries`. The
+emitted artifact is byte-identical; only the authorship moved. -/
 
-/-- The arity-3 IMT leaf absorb `[3, addr, value, next, 0×13, out0..7]` (25 wide). -/
-def leafTuple (addrC valC nextC leafC : Nat) : List WindowExpr :=
-  k LEAF_ARITY :: v addrC :: v valC :: v nextC ::
-  ((List.range (RATE - 3)).map (fun _ => k 0) ++ group8 leafC)
-
-/-- The arity-16 `node8` compression tuple `[16, L8, R8, out8]` (25 wide), with
-`L8 = (1−dir)·cur + dir·sib` and `R8 = (1−dir)·sib + dir·cur`. -/
-def node8Tuple (curBase sibBase outBase dirC : Nat) : List WindowExpr :=
-  let d : WindowExpr := v dirC
-  k NODE8_ARITY ::
-  ((List.range LANES).map (fun i =>
-      .add (.mul (eOneMinus d) (v (curBase + i))) (.mul d (v (sibBase + i)))) ++
-   (List.range LANES).map (fun i =>
-      .add (.mul (eOneMinus d) (v (sibBase + i))) (.mul d (v (curBase + i)))) ++
-   group8 outBase)
-
-/-- The digest column group the fold reads at level `lvl`: the leaf at level 0, then the chain
-columns, with the LAST level's output being the committed root. -/
-def foldCur (lvl : Nat) : Nat :=
-  if lvl = 0 then MA_LO_LEAF else MA_LO_CHAIN0 + LANES * (lvl - 1)
+/-- The digest column group the fold reads at level `lvl`. -/
+abbrev foldCur (lvl : Nat) : Nat := foldCurAt MA_LO_LEAF MA_LO_CHAIN0 lvl
 
 /-- The digest column group the fold WRITES at level `lvl`. -/
-def foldOut (lvl : Nat) : Nat :=
-  if lvl + 1 = DEPTH then MA_ROOT else MA_LO_CHAIN0 + LANES * lvl
+abbrev foldOut (lvl : Nat) : Nat := foldOutAt MA_LO_CHAIN0 MA_ROOT DEPTH lvl
 
 /-- The 19-felt map-log tuple `[root8, key, value, op, new_root8]`. `.absent` carries the
 canonical value `0` and op code `2`. -/
@@ -245,12 +226,9 @@ def mapAbsentInteractions : List BusInteraction :=
   lexLtQueries BUS_BYTE MA_CMP_LO0 (k 1) ++
   lexLtQueries BUS_BYTE MA_CMP_HI0 (k 1) ++
   -- the low leaf's arity-3 absorb, at multiplicity `is_real`.
-  [⟨BUS_P2, .query, gReal, leafTuple MA_LO_ADDR MA_LO_VALUE MA_LO_NEXT MA_LO_LEAF⟩] ++
+  [⟨BUS_P2, .query, gReal, chipAbsorbTuple [MA_LO_ADDR, MA_LO_VALUE, MA_LO_NEXT] MA_LO_LEAF⟩] ++
   -- the depth-many `node8` folds up ONE path to the committed root.
-  (List.range DEPTH).map (fun lvl =>
-    (⟨BUS_P2, .query, gReal,
-      node8Tuple (foldCur lvl) (MA_LO_SIB0 + LANES * lvl) (foldOut lvl) (MA_LO_DIR0 + lvl)⟩ :
-        BusInteraction)) ++
+  foldQueries BUS_P2 MA_LO_LEAF MA_LO_CHAIN0 MA_ROOT MA_LO_SIB0 MA_LO_DIR0 DEPTH gReal ++
   -- the gathered absent sub-log.
   [⟨BUS_MAP_LOG, .receive, gReal, mapLogTuple⟩]
 
@@ -288,7 +266,7 @@ Counts derived from the layout, not transcribed: `1 + DEPTH + LANES + 3·9 + 2·
 -- Each gadget's own contribution, so a regression names the gadget rather than the total. ⓘ The
 -- canonical-split / comparator rows moved to `TableAirIR` §6b with the gadgets themselves; what is
 -- pinned HERE is the part this table authors.
-#guard (leafTuple 1 2 3 4).length == 25
+#guard (chipAbsorbTuple [1, 2, 3] 4).length == 25
 #guard (node8Tuple 10 20 30 40).length == 25
 #guard mapLogTuple.length == 19
 
@@ -302,13 +280,12 @@ theorem mapAbsent_is_row_local : ∀ g ∈ mapAbsentTable.gates, g.sel = .all :=
   obtain ⟨_, _, rfl⟩ := hg
   rfl
 
-/-- The fold really walks ONE path: level 0 reads the leaf, level `lvl+1` reads what level `lvl`
-wrote, and the last level writes the COMMITTED root. Stated as a chain equation so a
-transcription that short-circuits the path (writing the root early, or re-reading the leaf) is
-refuted rather than merely uncounted. -/
-theorem fold_is_a_chain (lvl : Nat) (h : lvl + 1 < DEPTH) : foldOut lvl = foldCur (lvl + 1) := by
-  have h0 : ¬ (lvl + 1 = DEPTH) := by omega
-  simp [foldOut, foldCur, h0]
+/-- The fold really walks ONE path — level 0 reads the leaf, level `lvl+1` reads what level `lvl`
+wrote, and the last level writes the COMMITTED root — instantiated at THIS table's blocks. The
+general statements are `TableAirIR.fold_{is_a_chain,ends_at_root,starts_at_leaf}`; what is pinned
+here is that the four column blocks handed to the emitter are the right four. -/
+theorem fold_is_a_chain (lvl : Nat) (h : lvl + 1 < DEPTH) : foldOut lvl = foldCur (lvl + 1) :=
+  Dregg2.Circuit.TableAirIR.fold_is_a_chain MA_LO_LEAF MA_LO_CHAIN0 MA_ROOT DEPTH lvl h
 
 /-- …and it TERMINATES at the committed root, not at a chain column. -/
 theorem fold_ends_at_root : foldOut (DEPTH - 1) = MA_ROOT := by decide

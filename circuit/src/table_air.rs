@@ -491,6 +491,31 @@ pub const UMEMORY_TABLE_AIR_JSON: &str =
 pub const UMEM_BOUNDARY_TABLE_AIR_JSON: &str =
     include_str!("../descriptors/table-airs/dregg-ir2-umem-boundary-v1.json");
 
+/// The map RECONCILIATION table AIR, emitted by
+/// `Dregg2.Circuit.Emit.MapOpsTableEmit.mapOpsTable`.
+///
+/// One row per map op: the 8-felt pre-root and post-root, the key/value/op code, the read/write
+/// Merkle path, and — since gap-#5 — the whole APPEND-AT-FREE-INDEX (`op = 4`) two-path insert with
+/// its pointer-bracket range block. Its algebra used to be ~320 lines of hand-written Rust in
+/// `descriptor_ir2.rs::Ir2Air::MapOps`; those lines are deleted and this string is what replaced
+/// them.
+///
+/// ⚑ The Lean file proves the AAFI selector pin in BOTH directions (`s_is_the_op4_indicator`) —
+/// which is the entire licence for a COMMITTED degree-1 `is_aafi` standing in for the degree-3
+/// polynomial that would blow the map-ops budget of 4 — and then REFUTES the sentence the deleted
+/// arm's comment implies:
+///
+/// * `an_aafi_row_with_no_opening_satisfies_every_gate` — NOT ONE of this table's 84 chip legs is a
+///   gate. A row with `root = new_root = 0`, an honest pointer bracket and an ALL-ZERO opening (no
+///   leaf digest, no sibling, no chain node) satisfies every one of the 91 emitted gates at
+///   `is_real = 1`. The Merkle content is 70% of the interactions and 0% of the algebra.
+/// * `a_pad_row_can_spell_an_aafi_insert` — the AAFI ROW-LOCAL gates carry `s` alone, no `is_real`
+///   factor, where every chip leg rides `aafi_gate = is_real·s`. So a PAD row must still carry a
+///   real bracket and still SENDS the range block's 35 byte queries; what makes it inert is the
+///   `ir2_map_log` receive riding at `is_real` — a bus leg, one object out.
+pub const MAP_OPS_TABLE_AIR_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-map-ops-v1.json");
+
 /// The decoded map-absent table AIR. Panics on a malformed artifact — the artifact is
 /// `include_str!`d, so a failure here is a build-time defect, not a runtime input.
 pub fn map_absent_table_air() -> LeanTableAir {
@@ -605,6 +630,25 @@ pub fn umem_boundary_table_air_shared() -> Arc<LeanTableAir> {
         Arc::new(
             parse_table_air(UMEM_BOUNDARY_TABLE_AIR_JSON)
                 .expect("the checked-in general universal-boundary table AIR must decode"),
+        )
+    }))
+}
+
+/// The decoded map reconciliation table AIR.
+pub fn map_ops_table_air() -> LeanTableAir {
+    (*map_ops_table_air_shared()).clone()
+}
+
+/// The decoded map reconciliation table AIR, parsed ONCE per process. ⚑ The largest of the eight
+/// artifacts at 331 KB — 84 chip lookups, each a 25-felt tuple with a direction-mixed L8/R8 block —
+/// so the `OnceLock` matters more here than anywhere else: `instance_airs` runs on both the prove
+/// and the verify path.
+pub fn map_ops_table_air_shared() -> Arc<LeanTableAir> {
+    static CACHED: OnceLock<Arc<LeanTableAir>> = OnceLock::new();
+    Arc::clone(CACHED.get_or_init(|| {
+        Arc::new(
+            parse_table_air(MAP_OPS_TABLE_AIR_JSON)
+                .expect("the checked-in map-ops table AIR must decode"),
         )
     }))
 }
@@ -1134,6 +1178,107 @@ mod tests {
         for i in um.interactions.iter().filter(|i| i.bus == "ir2_byte") {
             assert!(matches!(i.mult, WindowExpr::Const(1)));
         }
+    }
+
+    /// The map reconciliation emission decodes at the deployed shape. ⚑ Every count is DERIVED
+    /// here from the deployed layout constants (`HEAP_TREE_DEPTH`, `CHIP_OUT_LANES`,
+    /// `decomp_cols_pub(27)`) and the width is compared against the REAL `MAP_WIDTH` the trace
+    /// producer writes — two independent sources, not a transcription of the Lean `#guard`.
+    ///
+    /// ⚠ This is also where the stale Rust comment gets caught: `descriptor_ir2.rs` annotates
+    /// `MAP_WIDTH` `// 897`, and the constant is **898**. Nothing read the comment, so nothing was
+    /// wrong; the assertion below is what makes the two sources have to agree.
+    #[test]
+    fn the_map_ops_emission_decodes_at_the_deployed_shape() {
+        let t = map_ops_table_air();
+        assert_eq!(t.name, "dregg-ir2-map-ops-v1");
+
+        let depth = crate::heap_root::HEAP_TREE_DEPTH;
+        let lanes = crate::descriptor_ir2::CHIP_OUT_LANES;
+        let dc = crate::descriptor_ir2::decomp_cols_pub(27);
+        assert_eq!((depth, lanes, dc), (16, 8, 10));
+        // The width against the DEPLOYED constant the witness producer sizes its row from.
+        assert_eq!(t.width, crate::descriptor_ir2::MAP_WIDTH);
+        assert_eq!(t.width, 898);
+
+        // Gates: the row guard + the op membership + DEPTH PATH1 direction booleans + the three
+        // AAFI selector pins + the read discipline + DEPTH PATH2 direction booleans + three
+        // canonical splits (9 each) + two comparators (9 each) + the LANES empty-slot pins.
+        assert_eq!(
+            t.gates.len(),
+            1 + 1 + depth + 3 + 1 + depth + 3 * 9 + 2 * 9 + lanes
+        );
+        assert_eq!(t.gates.len(), 91);
+        // ⚑ Purely row-local: a reconciliation row is a complete statement about ONE map op, and
+        // the log ORDER lives in the `ir2_map_log` multiset rather than in an adjacency gate.
+        assert_eq!(t.gate_count_sel(RowSel::All), 91);
+        assert_eq!(t.gate_count_sel(RowSel::Transition), 0);
+        assert_eq!(t.gate_count_sel(RowSel::First), 0);
+        assert_eq!(t.gate_count_sel(RowSel::Last), 0);
+
+        // Interactions: three arity-3 leaf absorbs + the two interleaved PATH1 chains + three
+        // canonical-split query blocks (7 each) + two comparator query blocks (7 each) + the
+        // updated-low absorb + three AAFI folds of DEPTH levels each + the gathered log.
+        assert_eq!(
+            t.interactions.len(),
+            3 + 2 * depth + 3 * 7 + 2 * 7 + 1 + 3 * depth + 1
+        );
+        assert_eq!(t.interactions.len(), 120);
+        assert_eq!(t.bus_count_on("ir2_p2"), 4 + 5 * depth);
+        assert_eq!(t.bus_count_on("ir2_p2"), 84);
+        assert_eq!(t.bus_count_on("ir2_byte"), 35);
+        assert_eq!(t.bus_count_on("ir2_map_log"), 1);
+
+        // ⚑ SIDES. This table SERVES nothing: every chip and byte leg is a QUERY, and the log is a
+        // RECEIVE. A swap leaves every gate green and makes the bus unsatisfiable in one direction
+        // and vacuous in the other.
+        assert_eq!(t.bus_count_op("ir2_p2", BusOp::Query), 84);
+        assert_eq!(t.bus_count_op("ir2_p2", BusOp::Provide), 0);
+        assert_eq!(t.bus_count_op("ir2_byte", BusOp::Query), 35);
+        assert_eq!(t.bus_count_op("ir2_byte", BusOp::Provide), 0);
+        assert_eq!(t.bus_count_op("ir2_map_log", BusOp::Receive), 1);
+        assert_eq!(t.bus_count_op("ir2_map_log", BusOp::Send), 0);
+    }
+
+    /// ⚑ THE TWO TABLES THAT RECEIVE ON `ir2_map_log`, pinned together. `MapOps` receives the
+    /// read / write / insert / aafi-insert sub-log and `MapAbsent` the `absent` one; the main
+    /// instance SENDs both. The 19-felt tuple shape must agree across all three or the multiset
+    /// cannot balance, and no gate on either table would notice.
+    #[test]
+    fn the_map_log_is_received_by_two_tables_at_one_tuple_shape() {
+        let ops = map_ops_table_air();
+        let absent = map_absent_table_air();
+        for t in [&ops, &absent] {
+            assert_eq!(t.bus_count_op("ir2_map_log", BusOp::Receive), 1);
+            assert_eq!(t.bus_count_op("ir2_map_log", BusOp::Send), 0);
+            let recv = t
+                .interactions
+                .iter()
+                .find(|i| i.bus == "ir2_map_log")
+                .expect("one receive");
+            // [root8, key, value, op, new_root8] — the Phase H-HEAP-8 19-felt log entry.
+            assert_eq!(
+                recv.tuple.len(),
+                2 * crate::descriptor_ir2::CHIP_OUT_LANES + 3
+            );
+            assert_eq!(recv.tuple.len(), 19);
+        }
+        // ⚠ The op code: `MapAbsent` pins it to the CONSTANT 2, `MapOps` reads a COLUMN — which is
+        // exactly why `op = 2` has to be UNSAT on the map-ops side (Lean `the_absent_op_is_unsat`)
+        // rather than merely unused. Two tables receiving the same tuple at the same op code would
+        // let one launder the other's entry.
+        let a_recv = absent
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_map_log")
+            .unwrap();
+        assert!(matches!(a_recv.tuple[10], WindowExpr::Const(2)));
+        let o_recv = ops
+            .interactions
+            .iter()
+            .find(|i| i.bus == "ir2_map_log")
+            .unwrap();
+        assert!(matches!(o_recv.tuple[10], WindowExpr::Loc(10)));
     }
 
     /// A row-filtered gate costs one more degree than its body, because p3's filtered builder

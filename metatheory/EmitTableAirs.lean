@@ -18,6 +18,7 @@ import Dregg2.Circuit.Emit.MemoryTableEmit
 import Dregg2.Circuit.Emit.UMemoryTableEmit
 import Dregg2.Circuit.Emit.UMemBoundaryCohortTableEmit
 import Dregg2.Circuit.Emit.UMemBoundaryTableEmit
+import Dregg2.Circuit.Emit.MapOpsTableEmit
 
 open Dregg2.Circuit.TableAirIR (TableAir emitTableAirJson)
 
@@ -31,9 +32,10 @@ def tableAirs : List (String × TableAir) :=
   , ("dregg-ir2-umem-boundary-cohort-v1.json",
       Dregg2.Circuit.Emit.UMemBoundaryCohortTableEmit.cohortTable)
   , ("dregg-ir2-umem-boundary-v1.json",
-      Dregg2.Circuit.Emit.UMemBoundaryTableEmit.umemBoundaryTable) ]
+      Dregg2.Circuit.Emit.UMemBoundaryTableEmit.umemBoundaryTable)
+  , ("dregg-ir2-map-ops-v1.json",      Dregg2.Circuit.Emit.MapOpsTableEmit.mapOpsTable) ]
 
-#guard tableAirs.length == 7
+#guard tableAirs.length == 8
 
 def main : IO Unit := do
   for (file, t) in tableAirs do

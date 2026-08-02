@@ -440,6 +440,8 @@ const UMEM_BOUNDARY_COHORT_TABLE_AIR_ARTIFACT: &[u8] =
     include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-umem-boundary-cohort-v1.json");
 const UMEM_BOUNDARY_TABLE_AIR_ARTIFACT: &[u8] =
     include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-umem-boundary-v1.json");
+const MAP_OPS_TABLE_AIR_ARTIFACT: &[u8] =
+    include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-map-ops-v1.json");
 /// Every Lean-emitted table AIR on the batch, by artifact path. The closures below splice this in
 /// whole rather than listing rows, so a new table lands in both at once.
 const TABLE_AIR_ARTIFACTS: &[(&str, &[u8])] = &[
@@ -471,6 +473,10 @@ const TABLE_AIR_ARTIFACTS: &[(&str, &[u8])] = &[
         "circuit/descriptors/table-airs/dregg-ir2-umem-boundary-v1.json",
         UMEM_BOUNDARY_TABLE_AIR_ARTIFACT,
     ),
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-map-ops-v1.json",
+        MAP_OPS_TABLE_AIR_ARTIFACT,
+    ),
 ];
 const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
     ("circuit/src/descriptor_ir2.rs", DESCRIPTOR_IR2_AIR_SOURCE),
@@ -486,6 +492,7 @@ const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
     TABLE_AIR_ARTIFACTS[4],
     TABLE_AIR_ARTIFACTS[5],
     TABLE_AIR_ARTIFACTS[6],
+    TABLE_AIR_ARTIFACTS[7],
 ];
 
 fn air_fingerprint_for_parts(
@@ -573,7 +580,7 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
         TURN_VERIFIER_WRAPPER_SOURCE,
     ),
     // The verifier rebuilds the batch AIR set from the descriptor, and that set now includes
-    // SEVEN Lean-emitted table AIRs. Both the decoder and every emission are part of what the
+    // EIGHT Lean-emitted table AIRs. Both the decoder and every emission are part of what the
     // verifier IS. ⓘ The `Ir2Air::Memory` cutover added the fourth, and
     // `the_air_closure_covers_every_emitted_table_air_artifact` went RED on the omission before
     // this line existed — which is the directory-reading tooth working as designed.
@@ -585,6 +592,7 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
     TABLE_AIR_ARTIFACTS[4],
     TABLE_AIR_ARTIFACTS[5],
     TABLE_AIR_ARTIFACTS[6],
+    TABLE_AIR_ARTIFACTS[7],
 ];
 
 fn update_len_prefixed_hash(hasher: &mut blake3::Hasher, bytes: &[u8]) {

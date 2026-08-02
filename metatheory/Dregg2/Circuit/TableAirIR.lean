@@ -533,6 +533,104 @@ def lexLtQueries (byteBus : String) (b0 : Nat) (mult : WindowExpr) : List BusInt
 #guard (decompGates 27 (v 0) 100).length == 5
 #guard (decompQueries 27 "b" 100 (k 1)).length == 6
 
+/-! ### §6c — The CHIP-BUS TUPLE gadgets, emitted.
+
+⚠ **HOISTED, and for the reason §6 and §6b already name.** `group8` / `leafTuple` / `node8Tuple`
+were `MapAbsentTableEmit`'s private emitters. `MapOps` is the SECOND table to fold a Merkle path
+through the arity-16 `node8` compression, and a per-table copy of a direction-mixed tuple is exactly
+the drift this file exists to prevent — the more so because `MapOps` alone folds FOUR paths over TWO
+independent sibling/direction blocks, so a copy would have to be right five times rather than once.
+
+These are the Lean authors of the Rust `chip_absorb_tuple` (the `MapOps` arm's local closure, itself
+the twin of `DescriptorIR2.chipLookupTuple`) and `node8_lookup_tuple` (`descriptor_ir2.rs`).
+
+⚑ The two chip geometries are taken from `DescriptorIR2` rather than re-declared: a table AIR and a
+main descriptor query the SAME chip bus, so a second copy of `CHIP_RATE` here would be a second
+authority on what a chip row looks like. -/
+
+/-- `CHIP_OUT_LANES` — the 8-felt digest group every Merkle lane rides at. -/
+def LANES : Nat := Dregg2.Circuit.DescriptorIR2.CHIP_OUT_LANES
+/-- `CHIP_RATE` — the padded input-lane count of a chip absorb tuple. -/
+def RATE : Nat := Dregg2.Circuit.DescriptorIR2.CHIP_RATE
+/-- `CHIP_NODE8_ARITY` — the full-width `perm(L8 ‖ R8)` compression arity. -/
+def NODE8_ARITY : ℤ := 16
+
+#guard LANES == 8
+#guard RATE == 16
+
+/-- The 8-felt digest group at `base`. -/
+def group8 (base : Nat) : List WindowExpr := (List.range LANES).map (fun i => v (base + i))
+
+/-- The chip ABSORB tuple `[arity, padTo RATE ins, out0..out7]` (25 wide) — the Lean twin of the
+Rust `chip_absorb_tuple`. ⚑ The arity tag is DATA (`ins.length`), not a hardcoded constant: a wider
+leaf extends the declared column list and changes NOTHING else here, which is the property the Rust
+closure's own doc claims and which a per-table copy would quietly lose.
+
+⚠ `ins.length` must be one of `CHIP_ADMITTED_ARITIES` — the deployed chip's degree-7 admission
+product has exactly seven roots and `≤ RATE` is strictly weaker (`DescriptorIR2`, the arity note). -/
+def chipAbsorbTuple (ins : List Nat) (digest : Nat) : List WindowExpr :=
+  k (ins.length : ℤ) ::
+    (ins.map v ++ (List.range (RATE - ins.length)).map (fun _ => k 0) ++ group8 digest)
+
+/-- The arity-16 `node8` compression tuple `[16, L8, R8, out8]` (25 wide), with
+`L8 = (1−dir)·cur + dir·sib` and `R8 = (1−dir)·sib + dir·cur` — the Lean twin of the Rust
+`node8_lookup_tuple`, and the in-circuit face of `heap_node8` / `recomposeUp8`.
+
+⚠ The direction MIX is what costs the tuple its SECOND degree, and it is why `ir2_degree_budget`
+reads 4 rather than 3 on every table that folds a path. -/
+def node8Tuple (curBase sibBase outBase dirC : Nat) : List WindowExpr :=
+  let d : WindowExpr := v dirC
+  k NODE8_ARITY ::
+  ((List.range LANES).map (fun i =>
+      .add (.mul (eOneMinus d) (v (curBase + i))) (.mul d (v (sibBase + i)))) ++
+   (List.range LANES).map (fun i =>
+      .add (.mul (eOneMinus d) (v (sibBase + i))) (.mul d (v (curBase + i)))) ++
+   group8 outBase)
+
+/-- One level of a Merkle FOLD: the digest group the level reads is the leaf at level 0 and the
+chain column block after that; the group it writes is the chain block, except at the last level
+where it is the COMMITTED root. Both consumers walk this shape, and stating it once is what makes
+`fold_is_a_chain` (below) a property of the emitter rather than of one table's transcription. -/
+def foldCurAt (leaf chain0 : Nat) (lvl : Nat) : Nat :=
+  if lvl = 0 then leaf else chain0 + LANES * (lvl - 1)
+
+/-- …and the group it WRITES. `depth` is the tree depth; `root` is the committed terminal. -/
+def foldOutAt (chain0 root depth : Nat) (lvl : Nat) : Nat :=
+  if lvl + 1 = depth then root else chain0 + LANES * lvl
+
+/-- The `depth`-many `node8` queries that fold ONE path from `leaf` to `root`, at multiplicity
+`mult`, reading sibling block `sib0` and direction bits `dir0`. -/
+def foldQueries (bus : String) (leaf chain0 root sib0 dir0 depth : Nat) (mult : WindowExpr) :
+    List BusInteraction :=
+  (List.range depth).map (fun lvl =>
+    (⟨bus, .query, mult,
+      node8Tuple (foldCurAt leaf chain0 lvl) (sib0 + LANES * lvl)
+        (foldOutAt chain0 root depth lvl) (dir0 + lvl)⟩ : BusInteraction))
+
+/-- The fold really walks ONE path: level `lvl+1` reads what level `lvl` wrote. A transcription
+that short-circuits the path — writing the root early, or re-reading the leaf — is REFUTED by this
+rather than merely uncounted. -/
+theorem fold_is_a_chain (leaf chain0 root depth lvl : Nat) (h : lvl + 1 < depth) :
+    foldOutAt chain0 root depth lvl = foldCurAt leaf chain0 (lvl + 1) := by
+  have h0 : ¬ (lvl + 1 = depth) := by omega
+  simp [foldOutAt, foldCurAt, h0]
+
+/-- …and it TERMINATES at the committed root. -/
+theorem fold_ends_at_root (chain0 root depth : Nat) (h : 0 < depth) :
+    foldOutAt chain0 root depth (depth - 1) = root := by
+  have : depth - 1 + 1 = depth := by omega
+  simp [foldOutAt, this]
+
+/-- …and STARTS at the leaf. -/
+theorem fold_starts_at_leaf (leaf chain0 : Nat) : foldCurAt leaf chain0 0 = leaf := by
+  simp [foldCurAt]
+
+-- Per-gadget contributions, so a regression names the gadget rather than a total.
+#guard (group8 0).length == 8
+#guard (chipAbsorbTuple [1, 2, 3] 100).length == 25
+#guard (node8Tuple 10 20 30 40).length == 25
+#guard (foldQueries "b" 1 2 3 4 5 16 (k 1)).length == 16
+
 /-! ## §7 — ⚠ WHAT THIS TOOL STILL CANNOT EXPRESS: `ExactPublicTable`, PRICED.
 
 Ten of the eleven hand-written `Ir2Air` arms are expressible in the vocabulary above. **One is
