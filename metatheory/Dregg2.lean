@@ -707,6 +707,7 @@ import Dregg2.Verify.KeystoneAuditRunnable      -- Wave 4 HARD (12): the COMMITT
 import Dregg2.Verify.KeystoneAuditSystemRoots   -- Wave 4 HARD (1): runnable_binds_same_system_roots — a concrete VmRowEnv satisfying wideHashSites over the realizable encodeSponge CR carrier
 import Dregg2.Verify.KeystoneAuditArgusReceipt  -- Wave 4 HARD (3+1): argus_circuit_executor_receipts_agree + {argus,transfer}_published_index_pins_receipt + published_position_pins_value — concrete writeCell0 receipt + MMR opening over realized injective carriers
 import Dregg2.Verify.KeystoneAuditTerminalAdapters -- the two UniversalBridge leaf/index adapters WELDED (cap_leaf_value_codec + index_boundary_mroot_derived over realizable encodeSponge / canonicity) — NONE left terminal
+import Dregg2.Verify.FreeConclusionGate -- ⛑ THE FREE-CONCLUSION GATE (`#free_conclusion_ratchet`, invoked inside that module over all 12 audit corpora). `#floor_ratchet` catches a declaration that ASSUMES a refuted hypothesis; `#keystone_audit` catches a keystone with no satisfiability witness and no teeth. NEITHER catches a keystone whose CONCLUSION is satisfied unconditionally, and that shipped THREE TIMES in one session with every gate green — `verified_history_conserves_orBreak`, `root_tooth_pins_kernel_orBreak`, `conserves_from_verification_orBreak`, all concluding `OrBreak (StateBreakP …) claim`, which `orBreak_stateBreakP_iff_True` proves is literally `True` at every field-bounded sponge. They passed `#keystone_audit` HONESTLY (real satisfiability, real teeth — neither check is about the conclusion's information content), `#assert_axioms` audits the PROOF and never the STATEMENT, and `#floor_ratchet` cannot see them BY CONSTRUCTION because the `_orBreak` twin has no floor hypothesis at all: the port from vacuous-by-false-hypothesis to vacuous-by-free-disjunct moves a declaration OFF the carrier surface, so the existing instrument registers the defect as a WIN. The freeness witnesses are DERIVED from the tree's own `_iff_True`/`_trivial` theorems (never a hand list) and must PROVE THEY DISCRIMINATE — `OrBreak.broke`'s `?P ∨ ?Break` is a real theorem in this tree that would flag every disjunction, and it is rejected against opaque probes. Baseline EMPTY (measured over 83 keystones, not assumed); the SOUND per-instance shape `concl ∨ Coll h a b` is pinned CLEAN on every run so porting never becomes a build error. Bite demonstrated: `scripts/free_conclusion_canary.lean` (EXIT=1), wiring + corpus coverage: `scripts/free_conclusion_check.sh`.
 
 -- REFINEMENT wave R2 (2026-06-11): THE HEAP's Lean foundation (REFINEMENT-DESIGN Decision 1).
 import Dregg2.Substrate.Heap              -- R2 keystone: the openable sorted-map semantics — the cap_root machinery generalized to a generic leaf (get/set/sorted-insert/non-membership via the REUSED sorted_gap_excludes; ext_get canonicity; root_deterministic + root_injective under the ONE named Poseidon2SpongeCR floor)
@@ -1705,3 +1706,11 @@ import Dregg2.Verify.FloorRatchet
 
 #floor_ratchet
 #teeth_wired
+
+-- ⛑ THE FREE-CONCLUSION GATE, invoked HERE so it sees the corpus through the ROOT's imports rather
+-- than through `Verify/FreeConclusionGate`'s own import list. That list is a FAIL-OPEN surface: a new
+-- `KeystoneAudit*` module nobody adds to it is invisible, the same class as the un-called
+-- initializer. `FreeConclusionGate`'s header ASSERTED this invocation existed as its second defence
+-- before it did — a gate documenting a backstop it lacked, at the exact line documenting its own
+-- weakest surface. Now it exists.
+#free_conclusion_ratchet

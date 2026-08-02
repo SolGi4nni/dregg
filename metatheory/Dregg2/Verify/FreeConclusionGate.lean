@@ -9,14 +9,16 @@ the machinery FAILS CLOSED (`minKeystones`) if that ever stops being true.
 
 ⚑ **AN IMPORT LIST IS A FAIL-OPEN SURFACE, so it is not the only defence.** A new `KeystoneAudit*`
 module that nobody adds here would be invisible to the gate — the same class as the un-called
-initializer. ⚠ AND THE SECOND DEFENCE THIS PARAGRAPH CLAIMED DOES NOT EXIST — corrected rather than
-quietly dropped, because a gate documenting a backstop it does not have is the worst possible place
-for that sin. It said "the invocation of `#free_conclusion_ratchet` at the end of `Dregg2.lean`,
-which sees the corpus through the ROOT's imports rather than through this list". There is no such
-invocation: the only occurrence of that name in `Dregg2.lean` is prose inside its own import comment.
-So exactly ONE structural defence stands — the scale gate below, which catches a LOSS and not a
-missing addition — plus the textual corpus check in `scripts/free_conclusion_check.sh`. Adding the
-root invocation is real remaining work and it is what would close the fail-open. This module exists
+initializer. Two things stand against it: the scale gate below (which only catches a LOSS, not a
+missing addition), and the invocation of `#free_conclusion_ratchet` at the end of `Dregg2.lean`,
+which sees the corpus through the ROOT's imports rather than through this list.
+
+⚑ THAT SECOND SENTENCE WAS FALSE WHEN FIRST WRITTEN AND IS NOW TRUE — recorded rather than quietly
+fixed, because a gate documenting a backstop it does not have is the worst possible place for "a name
+is a claim", and this was at the exact line documenting its own weakest surface. An audit measured it:
+the only occurrence of `#free_conclusion_ratchet` in the root was prose inside an import comment. The
+invocation was then added. If you are reading this and want to check rather than trust it — which is
+the whole lesson — `rg -n '^#free_conclusion_ratchet' Dregg2.lean` must return a line. This module exists
 so the gate is buildable and testable on its own — `lake build Dregg2.Verify.FreeConclusionGate`,
 no root build required — and so `scripts/free_conclusion_canary.lean` has one import to name.
 -/
