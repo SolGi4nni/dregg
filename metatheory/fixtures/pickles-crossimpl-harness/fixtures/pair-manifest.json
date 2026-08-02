@@ -10,11 +10,17 @@
     "zkpoly",
     "rootunity",
     "permof",
+    "permscalar",
     "shifts",
     "sponge_fp",
     "sponge_fq",
     "challenge",
-    "emulconsts"
+    "emulconsts",
+    "publiceval",
+    "ipab0",
+    "frdigest",
+    "frpair",
+    "frphase2"
   ],
   "pairs": {
     "bpoly": {
@@ -57,6 +63,26 @@
       "first_out": "1955abb8af556360261c069d1c8aeb8444bd73be7b3163adbe2e2610a9922c78",
       "last_out": "189947c6fedce0f4914af16f94ce3b0bb69a0fe59959862759dedb690f9f3a55"
     },
+    "frdigest": {
+      "count": 148,
+      "first_out": "2fadbe2852044d028597455bc2abbd1bc873af205dfabb8a304600f3e09eeba8",
+      "last_out": "0d6a5a0295f8b4f37fe4fcd8e0828855f79c41a220ff9a2f84ea5786d55b3270"
+    },
+    "frpair": {
+      "count": 148,
+      "first_out": "00000000000000000000000000000000c873af205dfabb8a304600f3e09eeba8,000000000000000000000000000000006eb386213ce7994f87c8970f7db8cdc3",
+      "last_out": "0000000000000000000000000000000098e91be0b1c1d82da9d4caab5ada9237,00000000000000000000000000000000c4ae64ec9a83459d13192f692cc52805"
+    },
+    "frphase2": {
+      "count": 24,
+      "first_out": "373e498e8759afc1957c296440815b32d8a89ad60f61861362da3a08a22e7ef7",
+      "last_out": "0d99ff17353397fce70860e3bc1619af4e69bbdff72404168255e5f9f1c08f06"
+    },
+    "ipab0": {
+      "count": 200,
+      "first_out": "0000000000000000000000000000000000000000000000000000000000000001",
+      "last_out": "3ea49b9db54cd81b51f4beef19f8ca49b6e31631e94335bbfcda5da2a2539371"
+    },
     "linconst": {
       "count": 276,
       "first_out": "393bf2d7f35d41cde9918df3cb63c7ac2e1b58282a09dab505d81a14bc36a2e0",
@@ -66,6 +92,16 @@
       "count": 120,
       "first_out": "2030e37b59cf1b58a35b313c5a7621f3b4fbf42903e1fadc430062ef48037284",
       "last_out": "198b80bee058b7d858d98165480edcb8a9a71c9fdfc8d62627aaaf57ae763e01"
+    },
+    "permscalar": {
+      "count": 120,
+      "first_out": "2030e37b59cf1b58a35b313c5a7621f3b4fbf42903e1fadc430062ef48037284",
+      "last_out": "198b80bee058b7d858d98165480edcb8a9a71c9fdfc8d62627aaaf57ae763e01"
+    },
+    "publiceval": {
+      "count": 348,
+      "first_out": "0000000000000000000000000000000000000000000000000000000000000000",
+      "last_out": "0c14f8f13fefe0d7affc3fac23671f493a1223f99fc9dfdba4791e1ba363e0c9"
     },
     "rootunity": {
       "count": 25,
@@ -93,5 +129,5 @@
       "last_out": "055d6679f504108b0043fa32bb7f452e2d42d350d802acb2c6a20f75d3442c20"
     }
   },
-  "total": 2576
+  "total": 3564
 }

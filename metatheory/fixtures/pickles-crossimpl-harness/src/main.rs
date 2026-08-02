@@ -22,10 +22,12 @@ use kimchi::circuits::wires::{COLUMNS, PERMUTS};
 use kimchi::linearization::expr_linearization;
 use kimchi::proof::{PointEvaluations, ProofEvaluations};
 
+use kimchi::plonk_sponge::FrSponge as _;
+
 use mina_poseidon::constants::PlonkSpongeConstantsKimchi;
 use mina_poseidon::pasta::{fp_kimchi, fq_kimchi, FULL_ROUNDS};
 use mina_poseidon::poseidon::{ArithmeticSponge, Sponge as _};
-use mina_poseidon::sponge::{DefaultFqSponge, ScalarChallenge};
+use mina_poseidon::sponge::{DefaultFqSponge, DefaultFrSponge, ScalarChallenge};
 use mina_poseidon::FqSponge as _;
 
 use poly_commitment::commitment::{b_poly, combined_inner_product};
@@ -645,22 +647,34 @@ fn pair_rootunity(out: &mut Vec<String>, lines: &mut usize) {
 
 /// permof — kimchi's `ConstraintSystem::perm_scalars` against `MinaWrapDeferred.permOf`.
 ///
-/// ⚑ WHY `permOf` AND NOT `KimchiVerify.permScalar`. `permScalar` is declared under
-/// `variable {F : Type} [Field F]` and the tree has NO `Field (ZMod pN)` instance (no in-kernel
-/// primality proof of the 255-bit Pasta prime; `native_decide` is forbidden). It is therefore
-/// UNEVALUABLE at the deployed field and cannot be differentially tested at all — see the driver
-/// script's UNCOVERED list. `MinaWrapDeferred.permOf` is dregg's `Nat`-with-explicit-modulus copy of
-/// the SAME `derive_plonk` scalar, it IS evaluable, and it is the copy the Wrap public input
-/// actually goes through.
+/// ⚑ TWO LEAN COPIES, ONE RUST REFERENCE — and the second copy only became reachable on
+/// 2026-08-02. This body is emitted TWICE, under `permof` and under `permscalar`, with the same
+/// seed and therefore byte-identical INPUT columns:
 ///
-/// `permOf` bakes `alpha^PERM_ALPHA0` (α^21) rather than taking `alpha0`, so the Rust is fed
-/// `alpha.pow(21)` as its first α — the same quantity `Alphas::get_alphas(Permutation, 3)` yields.
-/// `zkp_zeta` is fed from `permutation_vanishing_polynomial`, so this pair COMPOSES the zkpoly pair.
+///   `permof`     ↔ `MinaWrapDeferred.permOf`      — the `Nat`-with-explicit-modulus copy that
+///                                                    bakes α^21 and that the Wrap public input
+///                                                    actually flows through.
+///   `permscalar` ↔ `KimchiVerify.permScalar`      — the `[Field F]`-typed SHIPPED def, the one
+///                                                    `derivePlonk_perm_is_K5_permScalar` welds
+///                                                    `PicklesFinalize.permScalarR` to.
+///
+/// ⚑ THE CORRECTED CLAIM. Until 2026-08-02 this docstring said `permScalar` "cannot be
+/// differentially tested at all" because "the tree has NO `Field (ZMod pN)` instance". That was
+/// FALSE at the time it was written: `Dregg2/Circuit/Emit/PastaBasePrime.lean:122` has installed
+/// `Fact (Nat.Prime pN)` — a kernel-checked recursive Lucas/Pratt certificate, no `native_decide` —
+/// since 2026-07-29, and Mathlib's `ZMod.instField` fires off it. What was missing was one `import`
+/// line in the Lean emitter, not an instance. Both copies are swept here now, so a divergence
+/// BETWEEN the two Lean spellings shows up as exactly one of the two blocks going red.
+///
+/// The Rust is fed `alpha.pow(21)` as its first α — the same quantity
+/// `Alphas::get_alphas(Permutation, 3)` yields — because `permOf` bakes that exponent internally;
+/// `permScalar` takes `alpha0` directly and is handed the same value. `zkp_zeta` is fed from
+/// `permutation_vanishing_polynomial`, so this pair COMPOSES the zkpoly pair.
 ///
 /// ⚑ AND IT REACHES THE REAL DOMAIN. `permOf` computes `omega^(n-3)` through `powMod`
 /// (square-and-multiply), not `Monoid.npow`, so log2 = 16 — the actual Tick/step domain — is in the
 /// sweep here even though `zkpoly` has to stop at 2^10.
-fn pair_permof(out: &mut Vec<String>, lines: &mut usize) {
+fn pair_permof(out: &mut Vec<String>, lines: &mut usize, name: &str) {
     let mut r = Rng::new(0x0000_0000_0000_0007);
     let mut case = 0usize;
     let logs: Vec<u32> = vec![2, 4, 8, 12, 16];
@@ -708,7 +722,7 @@ fn pair_permof(out: &mut Vec<String>, lines: &mut usize) {
             ];
             ins.extend(w.iter().map(hx_fp));
             ins.extend(s.iter().map(hx_fp));
-            rec(out, "permof", *case, &ins, &[hx_fp(&v)]);
+            rec(out, name, *case, &ins, &[hx_fp(&v)]);
             *case += 1;
             *lines += 1;
         };
@@ -930,6 +944,369 @@ fn pair_emulconsts(out: &mut Vec<String>, lines: &mut usize) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// §3b — THE `[Field F]` LAYER, reachable since 2026-08-02.
+//
+// `KimchiVerify.publicEval`, `permScalar` and `ipaB0` were reported as "unreachable at the deployed
+// field, no CommRing mirror, cannot be differentially tested at all". The stated reason — no
+// `Field (ZMod pN)` instance in the tree — was measured false: `PastaBasePrime.lean:122` installs
+// `Fact (Nat.Prime pN)` from a kernel-checked Lucas/Pratt certificate and Mathlib's `ZMod.instField`
+// fires off it. The Lean emitter now imports it and all three are swept here.
+//
+// Before this block their ENTIRE evidence in the tree was: two `#guard`s at `ℚ` (`publicEval`), one
+// `#guard` at `ℚ` (`ipaB0`), one `#guard` at `ℚ` plus one `[Field K]`-generic `rfl`
+// (`permScalar`). No theorem mentions `publicEval` or `ipaB0` anywhere at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// publiceval — `KimchiVerify.publicEval` at `ZMod pN` against **ark-poly's**
+/// `EvaluationDomain::evaluate_all_lagrange_coefficients`, dotted with the negated public inputs.
+///
+/// ⚑ WHY ark-poly AND NOT kimchi. kimchi has NO callable public-evaluation function: the quantity
+/// is an inline block in `ProverProof::oracles` (`kimchi/src/verifier.rs:332-379`) and openmina does
+/// not reimplement it (`wrap.rs:197` delegates straight back to kimchi's `oracles()`). Transcribing
+/// that block into this harness would measure agreement with a copy, which is nothing. arkworks'
+/// `evaluate_all_lagrange_coefficients` is an upstream `pub fn`, written with no knowledge of this
+/// repo, that computes exactly `L_i(x) = ω^i(x^n − 1) / (n(x − ω^i))` — and
+/// `publicEval = Σ_i (−pub_i)·L_i(x)` is that identity, so the pair is real.
+///
+/// ⚠ OFF-DOMAIN ONLY, and the boundary is a MEASURED BEHAVIOURAL SPLIT, not an omission.
+/// At `x = ω^i` the two references genuinely disagree:
+///   * ark-poly detects `Z_H(x) = 0` and returns the **indicator vector**, so its answer is the
+///     mathematically correct `p(ω^i) = −pub_i` (`ark-poly-0.5.0/src/domain/mod.rs:167-190`);
+///   * kimchi's `batch_inversion` maps 0 ↦ 0, the `(x^n − 1)` factor is 0, and its answer is **0** —
+///     wrong, undetected, and relied on being unreachable because ζ comes from a sponge.
+/// dregg's `publicEval` uses Mathlib's `0⁻¹ = 0` and therefore reproduces KIMCHI's 0, i.e. it is
+/// faithful to the deployed verifier and not to the mathematics. Sweeping `x ∈ H` here would be a
+/// permanent red against ark-poly, so the sweep skips it on BOTH sides by the same predicate
+/// (`x^n ≠ 1`) and the split is pinned by `public_eval_on_domain_split_is_measured` below plus the
+/// matching Lean `#guard`s in `EmitConformanceVectors.lean` §15. Documented AND detected.
+fn pair_publiceval(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0021);
+    let mut case = 0usize;
+    let bank = edge_fp();
+    // Small domains only: the Lean side reaches `x^n` through `Monoid.npow`, which is linear
+    // recursion under the interpreter. l ≤ 6 keeps the whole sweep at ~4k multiplications.
+    for l in 1u32..=6 {
+        let n = 1usize << l;
+        let d = Radix2EvaluationDomain::<Fp>::new(n).unwrap();
+        for m in [0usize, 1, 2, 5] {
+            if m > n {
+                continue;
+            }
+            for bi in 0..bank.len() {
+                let x = bank[bi];
+                // the same skip predicate the Lean side applies, so the case numbering agrees
+                if x.pow([n as u64]) == Fp::one() {
+                    continue;
+                }
+                let pubs: Vec<Fp> = (0..m).map(|i| bank[(bi + i + 1) % bank.len()]).collect();
+                let lag = d.evaluate_all_lagrange_coefficients(x);
+                let v = pubs
+                    .iter()
+                    .enumerate()
+                    .fold(Fp::zero(), |acc, (i, p)| acc + (-*p) * lag[i]);
+                let mut ins = vec![hx_u64(l as u64), hx_fp(&d.group_gen), hx_fp(&x)];
+                ins.extend(pubs.iter().map(hx_fp));
+                rec(out, "publiceval", case, &ins, &[hx_fp(&v)]);
+                case += 1;
+                *lines += 1;
+            }
+        }
+    }
+    for _ in 0..128 {
+        let l = 1 + (r.below(6) as u32);
+        let n = 1usize << l;
+        let d = Radix2EvaluationDomain::<Fp>::new(n).unwrap();
+        // clamped to the domain size: `evaluate_all_lagrange_coefficients` returns exactly `n`
+        // coefficients, so a public vector longer than the domain has no Lagrange basis to sit in.
+        let m = ((r.below(6)) as usize).min(n);
+        let x = r.fp();
+        let pubs: Vec<Fp> = (0..m).map(|_| r.fp()).collect();
+        if x.pow([n as u64]) == Fp::one() {
+            continue;
+        }
+        let lag = d.evaluate_all_lagrange_coefficients(x);
+        let v = pubs
+            .iter()
+            .enumerate()
+            .fold(Fp::zero(), |acc, (i, p)| acc + (-*p) * lag[i]);
+        let mut ins = vec![hx_u64(l as u64), hx_fp(&d.group_gen), hx_fp(&x)];
+        ins.extend(pubs.iter().map(hx_fp));
+        rec(out, "publiceval", case, &ins, &[hx_fp(&v)]);
+        case += 1;
+        *lines += 1;
+    }
+}
+
+/// ipab0 — `KimchiVerify.ipaB0` at `ZMod pN` against `poly_commitment::commitment::b_poly`
+/// composed by `poly_commitment::commitment::combined_inner_product`.
+///
+/// ⚑ THE COMBINE IS UPSTREAM'S TOO, not this file's. `b0` itself is inline in
+/// `poly-commitment/src/ipa.rs:206-216` (`SRS::verify`) and has no `pub fn` on either reference, so
+/// a naive pair would have to write the `b(ζ) + evalscale·b(ζω)` fold here — which would measure
+/// only that dregg agrees with a line this harness wrote. It does not: kimchi's own
+/// `combined_inner_product(polyscale, evalscale, polys)` at `polyscale = 1` and
+/// `polys = [[[b(ζ)], [b(ζω)]]]` evaluates `Σ_j evalscale^j · evals[j]` through arkworks'
+/// `DensePolynomial::eval_polynomial` and returns exactly `b(ζ) + evalscale·b(ζω)`. Two upstream
+/// `pub fn`s, no transcribed arithmetic.
+///
+/// ⚑ AND IT COVERS `bEval`, WHICH THE `bpoly` PAIR DOES NOT. `bpoly` diffs `bEvalSq`; `ipaB0` is
+/// defined over `bEval`, a different Lean definition tied to `bEvalSq` only by `bEvalSq_eq_bEval`.
+/// This is the first differential that runs `bEval` itself.
+///
+/// Lengths include 0 (the empty product = 1 on both sides) and 16 (the real Tick round count).
+fn pair_ipab0(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0022);
+    let mut case = 0usize;
+    let bank = edge_fp();
+    let lens = [0usize, 1, 2, 3, 15, 16];
+    let one_case = |out: &mut Vec<String>,
+                    case: &mut usize,
+                    lines: &mut usize,
+                    k: usize,
+                    evalscale: Fp,
+                    zeta: Fp,
+                    zetaw: Fp,
+                    chals: &[Fp]| {
+        let v = combined_inner_product(
+            &Fp::one(),
+            &evalscale,
+            &[vec![vec![b_poly(chals, zeta)], vec![b_poly(chals, zetaw)]]],
+        );
+        let mut ins = vec![
+            hx_u64(k as u64),
+            hx_fp(&evalscale),
+            hx_fp(&zeta),
+            hx_fp(&zetaw),
+        ];
+        ins.extend(chals.iter().map(hx_fp));
+        rec(out, "ipab0", *case, &ins, &[hx_fp(&v)]);
+        *case += 1;
+        *lines += 1;
+    };
+    for &k in &lens {
+        for bi in 0..bank.len() {
+            let evalscale = bank[bi];
+            let zeta = bank[(bi + 1) % bank.len()];
+            let zetaw = bank[(bi + 2) % bank.len()];
+            let chals: Vec<Fp> = (0..k).map(|i| bank[(bi + i + 3) % bank.len()]).collect();
+            one_case(out, &mut case, lines, k, evalscale, zeta, zetaw, &chals);
+        }
+    }
+    for _ in 0..128 {
+        let k = lens[(r.below(lens.len() as u64)) as usize];
+        let evalscale = r.fp();
+        let zeta = r.fp();
+        let zetaw = r.fp();
+        let chals: Vec<Fp> = (0..k).map(|_| r.fp()).collect();
+        one_case(out, &mut case, lines, k, evalscale, zeta, zetaw, &chals);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §3c — THE SECOND SPONGE COPY.
+//
+// The `sponge_fp` / `sponge_fq` / `challenge` pairs drive `PastaPoseidonFq.SpongeSt`. The Fr-sponge
+// — `KimchiVerify.frSpongeDigest` and `frSqueezePair`, which C3's `challengesOk` runs on — is built
+// on `PastaPoseidon.Ref.absorbAll`, a DIFFERENT Lean spelling that nothing was diffing.
+// `PastaSpongeWeld.two_sponge_copies_agree` now proves the two spellings compute the same function;
+// these three pairs measure THAT function against o1-labs' `DefaultFrSponge`, which is what makes
+// the theorem worth having.
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn fr_sponge() -> DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS> {
+    DefaultFrSponge::from(fp_kimchi::static_params())
+}
+
+/// frdigest — `mina_poseidon::DefaultFrSponge` absorb-then-`digest()` against
+/// `PastaPoseidon.Ref.hash`, the sponge copy the Fr-sponge weld is built on.
+///
+/// `FrSponge::digest` is one `sponge.squeeze()` (`kimchi/src/plonk_sponge.rs:51-53`); `Ref.hash` is
+/// `absorbAll` (whose `[]` clause supplies the closing permutation) projected to lane 0. Lengths
+/// 0..6 straddle the rate boundary twice — 0 is the bare permutation of the zero state, 2 and 4 are
+/// exact rate blocks, and it was an exact-rate input that carried the 2026-07-27 double-permute
+/// defect in this very schedule.
+fn pair_frdigest(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0023);
+    let mut case = 0usize;
+    let bank = edge_fp();
+    for k in 0usize..=6 {
+        for bi in 0..bank.len() {
+            let xs: Vec<Fp> = (0..k).map(|i| bank[(bi + i) % bank.len()]).collect();
+            let mut sp = fr_sponge();
+            for x in &xs {
+                sp.absorb(x);
+            }
+            let v = sp.digest();
+            let mut ins = vec![hx_u64(k as u64)];
+            ins.extend(xs.iter().map(hx_fp));
+            rec(out, "frdigest", case, &ins, &[hx_fp(&v)]);
+            case += 1;
+            *lines += 1;
+        }
+    }
+    for _ in 0..64 {
+        let k = (r.below(9)) as usize;
+        let xs: Vec<Fp> = (0..k).map(|_| r.fp()).collect();
+        let mut sp = fr_sponge();
+        for x in &xs {
+            sp.absorb(x);
+        }
+        let v = sp.digest();
+        let mut ins = vec![hx_u64(k as u64)];
+        ins.extend(xs.iter().map(hx_fp));
+        rec(out, "frdigest", case, &ins, &[hx_fp(&v)]);
+        case += 1;
+        *lines += 1;
+    }
+}
+
+/// frpair — two successive `FrSponge::challenge()` calls against `KimchiVerify.frSqueezePair`.
+///
+/// ⚑ THE RATE BOUNDARY IS THE CONTENT. `challenge()` is `squeeze(CHALLENGE_LENGTH_IN_LIMBS = 2)`,
+/// and each real squeeze appends exactly `HIGH_ENTROPY_LIMBS = 2` limbs, so the limb cache is
+/// drained by ONE challenge and the second challenge forces another `sponge.squeeze()`. That second
+/// squeeze runs from `Squeezed(1)` with `1 ≠ rate = 2`, so it reads lane 1 of the SAME state with no
+/// further permutation. `frSqueezePair` encodes exactly that (lane 0 and lane 1 of one permuted
+/// state, each truncated to 128 bits) and `PastaSpongeWeld.frSqueezePair_is_two_challenges` proves
+/// it. A reading that permuted twice would produce a correct first value and a wrong second — the
+/// half-right this pair separates.
+fn pair_frpair(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0024);
+    let mut case = 0usize;
+    let bank = edge_fp();
+    for k in 0usize..=6 {
+        for bi in 0..bank.len() {
+            let xs: Vec<Fp> = (0..k).map(|i| bank[(bi + i) % bank.len()]).collect();
+            let mut sp = fr_sponge();
+            for x in &xs {
+                sp.absorb(x);
+            }
+            let c0: ScalarChallenge<Fp> = sp.challenge();
+            let c1: ScalarChallenge<Fp> = sp.challenge();
+            let mut ins = vec![hx_u64(k as u64)];
+            ins.extend(xs.iter().map(hx_fp));
+            rec(out, "frpair", case, &ins, &[hx_fp(&c0.0), hx_fp(&c1.0)]);
+            case += 1;
+            *lines += 1;
+        }
+    }
+    for _ in 0..64 {
+        let k = (r.below(9)) as usize;
+        let xs: Vec<Fp> = (0..k).map(|_| r.fp()).collect();
+        let mut sp = fr_sponge();
+        for x in &xs {
+            sp.absorb(x);
+        }
+        let c0: ScalarChallenge<Fp> = sp.challenge();
+        let c1: ScalarChallenge<Fp> = sp.challenge();
+        let mut ins = vec![hx_u64(k as u64)];
+        ins.extend(xs.iter().map(hx_fp));
+        rec(out, "frpair", case, &ins, &[hx_fp(&c0.0), hx_fp(&c1.0)]);
+        case += 1;
+        *lines += 1;
+    }
+}
+
+/// The 43 `absorb_evaluations` points as a flat `(ζ, ζω)` vector, in kimchi's own order:
+/// z, the six gate selectors, the 15 witness columns, the 15 coefficient columns, the 6 σ columns.
+/// Every optional gate/lookup field is `None`, which is what `dummy_with_witness_evaluations`
+/// installs and what the v1 (no-lookup) circuit this tree targets has.
+fn mk_fr_evals(pts: &[(Fp, Fp)]) -> ProofEvaluations<PointEvaluations<Vec<Fp>>> {
+    let pe = |i: usize| PointEvaluations {
+        zeta: vec![pts[i].0],
+        zeta_omega: vec![pts[i].1],
+    };
+    let mut e = ProofEvaluations::dummy_with_witness_evaluations(
+        [Fp::zero(); COLUMNS],
+        [Fp::zero(); COLUMNS],
+    )
+    .map(&|p: PointEvaluations<Fp>| PointEvaluations {
+        zeta: vec![p.zeta],
+        zeta_omega: vec![p.zeta_omega],
+    });
+    e.z = pe(0);
+    e.generic_selector = pe(1);
+    e.poseidon_selector = pe(2);
+    e.complete_add_selector = pe(3);
+    e.mul_selector = pe(4);
+    e.emul_selector = pe(5);
+    e.endomul_scalar_selector = pe(6);
+    e.w = core::array::from_fn(|i| pe(7 + i));
+    e.coefficients = core::array::from_fn(|i| pe(7 + COLUMNS + i));
+    e.s = core::array::from_fn(|i| pe(7 + 2 * COLUMNS + i));
+    e
+}
+
+/// The number of `absorb_evaluations` points: 1 + 6 + 15 + 15 + 6.
+const FR_PTS: usize = 1 + 6 + COLUMNS + COLUMNS + (PERMUTS - 1);
+
+/// frphase2 — the WHOLE phase-2 Fr-sponge schedule against `KimchiVerify.frSpongeDigest`.
+///
+/// ⚑ THIS IS THE PAIR THAT TESTS `frEvalPointOrder`. The Rust side absorbs
+/// `digest`, `prev_challenge_digest`, `ft_eval1`, `public_evals[ζ]`, `public_evals[ζω]` and then
+/// calls o1-labs' own `FrSponge::absorb_evaluations` (`kimchi/src/plonk_sponge.rs:55-155`), which
+/// destructures `ProofEvaluations` and pushes the points in ITS order. The Lean side builds the
+/// stream from `frEvalPointOrder`, a hand-written list. Nothing is shared but the paper, so an
+/// order that drifted — a σ column ahead of a coefficient column, a selector transposed, the 7th σ
+/// wrongly included — is RED here. Until now `frEvalPointOrder`'s only check was a `decide` on its
+/// first SEVEN entries.
+///
+/// `prev_challenge_digest` is the digest of a FRESH sponge with nothing absorbed, which is what
+/// `verifier.rs` feeds at `prev_challenges = []` and what `Ref.hash []` is on the Lean side.
+fn pair_frphase2(out: &mut Vec<String>, lines: &mut usize) {
+    let mut r = Rng::new(0x0000_0000_0000_0025);
+    let mut case = 0usize;
+    let bank = edge_fp();
+    let one_case = |out: &mut Vec<String>,
+                    case: &mut usize,
+                    lines: &mut usize,
+                    digest: Fp,
+                    ft1: Fp,
+                    pz: Fp,
+                    pzw: Fp,
+                    pts: &[(Fp, Fp)]| {
+        let prev_digest = fr_sponge().digest();
+        let mut sp = fr_sponge();
+        sp.absorb(&digest);
+        sp.absorb(&prev_digest);
+        sp.absorb(&ft1);
+        sp.absorb(&pz);
+        sp.absorb(&pzw);
+        sp.absorb_evaluations(&mk_fr_evals(pts));
+        let v = sp.digest();
+        let mut ins = vec![hx_fp(&digest), hx_fp(&ft1), hx_fp(&pz), hx_fp(&pzw)];
+        ins.extend(pts.iter().map(|p| hx_fp(&p.0)));
+        ins.extend(pts.iter().map(|p| hx_fp(&p.1)));
+        rec(out, "frphase2", *case, &ins, &[hx_fp(&v)]);
+        *case += 1;
+        *lines += 1;
+    };
+    for bi in 0..bank.len() {
+        let digest = bank[bi];
+        let ft1 = bank[(bi + 1) % bank.len()];
+        let pz = bank[(bi + 2) % bank.len()];
+        let pzw = bank[(bi + 3) % bank.len()];
+        let pts: Vec<(Fp, Fp)> = (0..FR_PTS)
+            .map(|i| {
+                (
+                    bank[(bi + i) % bank.len()],
+                    bank[(bi + 2 * i + 1) % bank.len()],
+                )
+            })
+            .collect();
+        one_case(out, &mut case, lines, digest, ft1, pz, pzw, &pts);
+    }
+    for _ in 0..12 {
+        let digest = r.fp();
+        let ft1 = r.fp();
+        let pz = r.fp();
+        let pzw = r.fp();
+        let pts: Vec<(Fp, Fp)> = (0..FR_PTS).map(|_| (r.fp(), r.fp())).collect();
+        one_case(out, &mut case, lines, digest, ft1, pz, pzw, &pts);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // §4 — driver
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -948,11 +1325,23 @@ fn build_all() -> (Vec<String>, usize) {
     pair_linconst(&mut out, &mut n);
     pair_zkpoly(&mut out, &mut n);
     pair_rootunity(&mut out, &mut n);
-    pair_permof(&mut out, &mut n);
+    // ⚑ SAME BODY, SAME SEED, TWO LEAN COPIES: `permof` diffs `MinaWrapDeferred.permOf`,
+    // `permscalar` diffs the `[Field F]`-typed `KimchiVerify.permScalar` that was reported
+    // unreachable. Identical input columns, so a divergence between the two Lean spellings shows up
+    // as exactly one of the two blocks going red.
+    pair_permof(&mut out, &mut n, "permof");
+    pair_permof(&mut out, &mut n, "permscalar");
     pair_shifts(&mut out, &mut n);
     pair_sponge(&mut out, &mut n);
     pair_challenge(&mut out, &mut n);
     pair_emulconsts(&mut out, &mut n);
+    // the `[Field F]` layer, reachable since PastaBasePrime installed `Fact (Nat.Prime pN)`
+    pair_publiceval(&mut out, &mut n);
+    pair_ipab0(&mut out, &mut n);
+    // the SECOND sponge copy — the one the Fr-sponge weld is built on
+    pair_frdigest(&mut out, &mut n);
+    pair_frpair(&mut out, &mut n);
+    pair_frphase2(&mut out, &mut n);
     (out, n)
 }
 
@@ -1181,7 +1570,7 @@ mod tests {
         let (b, nb) = build_all();
         assert_eq!(na, nb);
         assert_eq!(a, b);
-        assert!(na >= 1200, "record count collapsed: {na}");
+        assert!(na >= 3500, "record count collapsed: {na}");
     }
 
     /// ⚑ The `ENDO` literal `MinaWrapDeferred` bakes in IS Vesta's `endo_r`, measured against
@@ -1201,5 +1590,139 @@ mod tests {
         assert!(count("permof") >= 100, "permof collapsed");
         assert!(count("rootunity") >= 25, "rootunity collapsed");
         assert_eq!(count("emulconsts"), 1);
+    }
+
+    /// The pairs added on 2026-08-02: the `[Field F]` layer and the second sponge copy.
+    /// `permscalar` must have EXACTLY as many cases as `permof` — they are the same body under two
+    /// names, and a count that drifted would mean one of the two Lean copies stopped being swept.
+    #[test]
+    fn field_layer_and_fr_sponge_pairs_populated() {
+        assert_eq!(
+            count("permscalar"),
+            count("permof"),
+            "permscalar and permof must sweep the same inputs"
+        );
+        assert!(count("publiceval") >= 200, "publiceval collapsed");
+        assert!(count("ipab0") >= 100, "ipab0 collapsed");
+        assert!(count("frdigest") >= 100, "frdigest collapsed");
+        assert!(count("frpair") >= 100, "frpair collapsed");
+        assert!(count("frphase2") >= 20, "frphase2 collapsed");
+    }
+
+    /// ⚑ THE ON-DOMAIN SPLIT, MEASURED. `publiceval` sweeps only `x ∉ H` because the two sides of
+    /// that boundary genuinely disagree, and a documented divergence that no gate can see is not a
+    /// detected one. This asserts BOTH halves of the split on the Rust side:
+    ///
+    ///   * ark-poly returns the INDICATOR vector at a domain point, so its `p(ω^i)` is the
+    ///     mathematically correct `−pub_i`;
+    ///   * the closed form kimchi (`verifier.rs:332-379`) and dregg's `publicEval` share carries a
+    ///     `(x^n − 1)` factor which is ZERO there, so their answer is 0 regardless of `pub`.
+    ///
+    /// The matching Lean half — `publicEval` returning 0 at every domain point — is pinned by
+    /// `#guard`s in `EmitConformanceVectors.lean` §15, which run on every differential invocation.
+    #[test]
+    fn public_eval_on_domain_split_is_measured() {
+        let n = 8usize;
+        let d = Radix2EvaluationDomain::<Fp>::new(n).unwrap();
+        for i in 0..n {
+            let x = d.group_gen.pow([i as u64]);
+            // the closed form's leading factor vanishes on the domain
+            assert!(
+                d.evaluate_vanishing_polynomial(x).is_zero(),
+                "x^n - 1 should vanish at omega^{i}"
+            );
+            // ark-poly special-cases it and returns e_i
+            let lag = d.evaluate_all_lagrange_coefficients(x);
+            for (j, l) in lag.iter().enumerate() {
+                if j == i {
+                    assert_eq!(*l, Fp::one(), "lagrange[{j}] at omega^{i}");
+                } else {
+                    assert!(l.is_zero(), "lagrange[{j}] at omega^{i}");
+                }
+            }
+        }
+        // and off the domain the two agree, which is the regime the pair sweeps
+        let x = Fp::from(7u64);
+        assert!(!d.evaluate_vanishing_polynomial(x).is_zero());
+    }
+
+    /// ⚑ `absorb_evaluations` really does push exactly the 43 points `frEvalPointOrder` lists, in
+    /// that order, and NOT the optional gate/lookup selectors. Measured by absorbing into two
+    /// sponges — one through `absorb_evaluations`, one through 86 manual `absorb`s in
+    /// `frEvalPointOrder`'s order — and requiring the digests to match. If kimchi's order or its
+    /// optional-field handling changed, `frphase2` would go red for a reason this test localises.
+    #[test]
+    fn absorb_evaluations_is_the_43_point_order() {
+        let pts: Vec<(Fp, Fp)> = (0..FR_PTS)
+            .map(|i| (Fp::from(i as u64 + 3), Fp::from(i as u64 + 101)))
+            .collect();
+        let mut a = fr_sponge();
+        a.absorb_evaluations(&mk_fr_evals(&pts));
+        let da = a.digest();
+
+        let mut b = fr_sponge();
+        for p in &pts {
+            b.absorb(&p.0);
+            b.absorb(&p.1);
+        }
+        let db = b.digest();
+        assert_eq!(da, db, "absorb_evaluations is not the flat 43-point order");
+        assert_eq!(FR_PTS, 43);
+
+        // non-vacuity: a transposed pair changes the digest
+        let mut swapped = pts.clone();
+        swapped.swap(7, 8);
+        let mut c = fr_sponge();
+        c.absorb_evaluations(&mk_fr_evals(&swapped));
+        assert_ne!(da, c.digest(), "absorb order is not load-bearing");
+    }
+
+    /// ⚑ Two consecutive `FrSponge::challenge()` calls really are lanes 0 and 1 of ONE permuted
+    /// state: `HIGH_ENTROPY_LIMBS = CHALLENGE_LENGTH_IN_LIMBS = 2`, so the limb cache is drained by
+    /// exactly one challenge and the second forces a fresh `sponge.squeeze()` which, from
+    /// `Squeezed(1)` at rate 2, reads lane 1 with NO permutation. This is what
+    /// `KimchiVerify.frSqueezePair` encodes; it is asserted here rather than assumed.
+    #[test]
+    fn two_challenges_are_two_lanes_of_one_state() {
+        let mut sp = fr_sponge();
+        sp.absorb(&Fp::from(1u64));
+        sp.absorb(&Fp::from(2u64));
+        sp.absorb(&Fp::from(3u64));
+        let c0: ScalarChallenge<Fp> = sp.challenge();
+        let c1: ScalarChallenge<Fp> = sp.challenge();
+        assert_ne!(c0.0, c1.0, "the two challenges collapsed");
+        // both are 128-bit truncations
+        for c in [c0.0, c1.0] {
+            let bytes = c.into_bigint().to_bytes_be();
+            assert!(
+                bytes[..bytes.len() - 16].iter().all(|b| *b == 0),
+                "Fr challenge exceeded 128 bits"
+            );
+        }
+        // and the raw digest of the same stream is NOT either challenge (it is untruncated)
+        let mut sp2 = fr_sponge();
+        sp2.absorb(&Fp::from(1u64));
+        sp2.absorb(&Fp::from(2u64));
+        sp2.absorb(&Fp::from(3u64));
+        let d = sp2.digest();
+        assert_ne!(d, c0.0);
+    }
+
+    /// ⚑ `ipab0` is a composition of TWO upstream `pub fn`s and no arithmetic written here:
+    /// `combined_inner_product` at `polyscale = 1` over `[[b(ζ)], [b(ζω)]]` IS
+    /// `b(ζ) + evalscale·b(ζω)`. Asserted so that a change in kimchi's fold shape is caught here
+    /// rather than showing up as an unlocalisable `ipab0` red.
+    #[test]
+    fn ipab0_is_upstreams_own_combine() {
+        let chals = [Fp::from(3u64), Fp::from(5u64), Fp::from(7u64)];
+        let zeta = Fp::from(11u64);
+        let zetaw = Fp::from(13u64);
+        let evalscale = Fp::from(17u64);
+        let bz = b_poly(&chals, zeta);
+        let bzw = b_poly(&chals, zetaw);
+        let v = combined_inner_product(&Fp::one(), &evalscale, &[vec![vec![bz], vec![bzw]]]);
+        assert_eq!(v, bz + evalscale * bzw);
+        // and the empty-challenge case: b_poly of an empty slice is the empty product 1
+        assert_eq!(b_poly(&[] as &[Fp], zeta), Fp::one());
     }
 }

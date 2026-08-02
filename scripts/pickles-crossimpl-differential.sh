@@ -31,7 +31,7 @@
 # that drifted between the two languages is itself a RED diff rather than a silent
 # comparison-of-different-things.
 #
-# ⚠ THIS IS A FIDELITY DIFFERENTIAL, NOT A SOUNDNESS PROOF. Two implementations agreeing on 3806
+# ⚠ THIS IS A FIDELITY DIFFERENTIAL, NOT A SOUNDNESS PROOF. Two implementations agreeing on 4794
 # inputs is strong evidence they compute the same function and NO evidence that the function is the
 # right one. Where dregg's Lean and the Rust are wrong in the SAME way, this is silent.
 #
@@ -44,21 +44,64 @@
 # the `emulSel = 0` selector patterns — which is the regime EVERY pre-existing fixture in this tree
 # lived in, and exactly why the defect survived until 2026-08-01.
 #
-# ── WHAT IS NOT COVERED, and it is a FINDING ───────────────────────────────────
-# `KimchiVerify.publicEval`, `ftEval0`, `permScalar`, `combinedInnerProduct`, `zkPoly`, `ipaB0` and
-# `ftComm` are declared under `variable {F : Type} [Field F]`, and this tree has NO
-# `Field (ZMod pN)` instance (no in-kernel primality proof of the 255-bit Pasta prime;
-# `native_decide` forbidden). They cannot be instantiated at the DEPLOYED field at all, so no
-# differential can reach them. Three have CommRing mirrors and are diffed through those (`cipR`,
-# `zkPolyR`, `ftEval0R` — the last still uncovered, see below); `publicEval`, `permScalar` and
-# `ipaB0` have NO mirror and are unreachable. `permof` therefore diffs `MinaWrapDeferred.permOf`,
-# dregg's separate `Nat`-with-explicit-modulus copy of the same `derive_plonk` scalar.
+# ── THE `[Field F]` LAYER — the 2026-08-01 "unreachable" claim was STALE, and is now SWEPT ─────
+# This block used to read: "`KimchiVerify.publicEval`, `ftEval0`, `permScalar`,
+# `combinedInnerProduct`, `zkPoly`, `ipaB0` and `ftComm` are declared under `variable {F : Type}
+# [Field F]`, and this tree has NO `Field (ZMod pN)` instance … They cannot be instantiated at the
+# DEPLOYED field at all, so no differential can reach them."
 #
-# STILL UNCOVERED, both reachable and both real work: `KimchiVerify.ftEval0R` against openmina's
-# `plonk_checks::ft_eval0` (pub, and openmina is the only Rust with a standalone one), and
-# `MinaWrapDeferred.expandDeferred` against `mina_tree::proofs::step::expand_deferred` (pub; its
-# inputs are nested wire structs from `mina-p2p-messages` — `AllEvals`, `StatementProofState`,
-# `branch_data` — so driving it over many inputs is a decoder exercise on top of this one).
+# ⚑ MEASURED 2026-08-02: `Field (ZMod pN)` synthesizes and is COMPUTABLE.
+# `metatheory/Dregg2/Circuit/Emit/PastaBasePrime.lean:122` has installed `Fact (Nat.Prime pN)` since
+# 2026-07-29 (commit `8ba2591c3`) — a kernel-checked recursive Lucas/Pratt certificate,
+# `#assert_axioms`-clean, no `native_decide` — and Mathlib's `ZMod.instField` fires off it. The
+# blocker was ONE MISSING IMPORT in `EmitConformanceVectors.lean`, not a missing instance; the claim
+# was three days out of date when it was written. `(7 : ZMod pN)⁻¹ * 7` evaluates to 1 under the
+# interpreter with no `noncomputable` marker.
+#
+# So `permscalar`, `publiceval` and `ipab0` are now real pairs at the deployed field. That matters
+# because the total prior evidence for those three definitions was: two `#guard`s at `ℚ`
+# (`publicEval`), one `#guard` at `ℚ` (`ipaB0`), one `#guard` at `ℚ` plus one `[Field K]`-generic
+# `rfl` (`permScalar`) — and NO theorem anywhere in the tree mentions `publicEval` or `ipaB0` at all.
+# `permof` and `permscalar` sweep IDENTICAL inputs against the same `perm_scalars`, so a divergence
+# between dregg's two spellings of that scalar shows as exactly one of the two blocks going red.
+#
+# ⚠ STILL UNREACHED, named rather than papered over: there is no `Fact (Nat.Prime qN)`, so `ZMod qN`
+# — the field `MinaRealBlockGate`/`MinaWrapFtEval0` work at — is still not a `Field`. And `ftComm`
+# needs an `[AddCommGroup G] [Module F G]` carrier it has nowhere; its ENTIRE theorem-level evidence
+# in this tree is one KAT at `ℚ` (`ftComm_kat`, `55 = 100 − 15·3`).
+#
+# ── THE SECOND SPONGE COPY, previously diffed by NOTHING ───────────────────────
+# `sponge_fp`/`sponge_fq`/`challenge` drive `PastaPoseidonFq.SpongeSt`. `KimchiVerify.frSpongeDigest`
+# and `frSqueezePair` — what C3's `challengesOk` actually runs on — are built on
+# `PastaPoseidon.Ref.absorbAll`, a DIFFERENT Lean spelling of the same sponge. The differential's
+# green covered the sponge that does not feed the weld.
+#   * `metatheory/Dregg2/Circuit/Emit/PastaSpongeWeld.lean` proves the two Lean spellings compute the
+#     same function at every input (`two_sponge_copies_agree`, by induction — they are one algorithm:
+#     `SpongeSt.absorb1`/`squeeze1` are written against `Core.perm`/`Core.absorbAt`, and
+#     `core_is_Ref_at_Fp` already tied `Core` to `Ref`; what was missing was that the state machine's
+#     schedule and the whole-list fold place the closing permutation in the same place).
+#   * `frdigest`, `frpair` and `frphase2` measure that function against o1-labs' `DefaultFrSponge`
+#     (`absorb` / `challenge` / `digest` / `absorb_evaluations`).
+# ⚑ `frphase2` is the first thing that tests `frEvalPointOrder` — the 43-point `absorb_evaluations`
+# order — against kimchi's own destructuring. Its only previous check was a `decide` on the first
+# SEVEN entries.
+#
+# ── WHAT IS STILL NOT COVERED ──────────────────────────────────────────────────
+# `KimchiVerify.ftEval0R` against openmina's `plonk_checks::ft_eval0` (`pub`, and openmina is the
+# only Rust with a standalone one — drivable with plain field elements plus `PlonkMinimal` and
+# `make_scalars_env`, no wire structs), and `MinaWrapDeferred.expandDeferred` against
+# `mina_tree::proofs::step::expand_deferred` (pub; its inputs are nested wire structs from
+# `mina-p2p-messages` — `AllEvals`, `StatementProofState`, `branch_data` — so driving it over many
+# inputs is a decoder exercise on top of this one).
+#
+# ⚠ `publiceval` sweeps OFF-DOMAIN ONLY, and the boundary is a MEASURED SPLIT, not an omission. At
+# `x = ω^i` ark-poly returns the indicator vector (the correct `p(ω^i) = −pubᵢ`) while kimchi's
+# `batch_inversion` maps 0 ↦ 0 and its `(ζⁿ−1)` factor vanishes, so kimchi — and dregg's
+# `publicEval`, faithfully — returns 0. Both halves are asserted:
+# `public_eval_on_domain_split_is_measured` (Rust) and `EmitConformanceVectors.lean` §17 (Lean).
+# Likewise the empty-slice split (`b_poly(&[], x) == 1` vs `challenge_polynomial(&[])` PANICKING) is
+# asserted on both sides — `ipab0_is_upstreams_own_combine` and
+# `empty_challenge_slice_panics_in_openmina`.
 #
 # ── NO FALLBACK ────────────────────────────────────────────────────────────────
 # A missing cargo, a missing lake, an empty vector file, a record count below the floor, a PAIR that
@@ -88,11 +131,13 @@ LEAN_EMITTER="EmitConformanceVectors.lean"
 
 # The pairs that MUST be present on both sides with a nonzero count. A pair that vanishes is a
 # coverage loss, and a coverage loss that exits 0 is the thing this file refuses to be.
-PAIRS=(endo endo_fq endolift bpoly bpolymod cip linconst zkpoly rootunity permof shifts
+PAIRS=(endo endo_fq endolift bpoly bpolymod cip linconst zkpoly rootunity permof permscalar shifts
        sponge_fp sponge_fq challenge emulconsts
+       publiceval ipab0 frdigest frpair frphase2
        om_endo om_bpoly shift1 unshift1 shift1b unshift1b shift2 unshift2)
 # The record floor. A RATCHET: raise it when the sweep grows.
-FLOOR=3800
+# 2026-08-01 3800 (23 pairs) → 2026-08-02 4700 (29 pairs: the `[Field F]` layer and the Fr-sponge).
+FLOOR=4700
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

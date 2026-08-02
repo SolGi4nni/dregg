@@ -39,14 +39,32 @@
 #   challenge   PastaPoseidonFq.challenge (low-128 squeeze)         ↔ mina_poseidon DefaultFqSponge::challenge
 #   emulconsts  the three EndomulScalar quotients 11/6, −5/2, 2/3   ↔ ark-ff field inverses
 #
-# ⚑ NOT `KimchiVerify.permScalar`, and this is a FINDING not an omission: `permScalar` — like
-# `publicEval`, `ftEval0`, `combinedInnerProduct`, `zkPoly`, `ipaB0` and `ftComm` — is declared under
-# `variable {F : Type} [Field F]`, and the tree has NO `Field (ZMod pN)` instance (no in-kernel
-# primality proof of the 255-bit Pasta prime; `native_decide` forbidden). Those definitions are
-# UNEVALUABLE at the deployed field and cannot be differentially tested at all. The ones with a
-# CommRing mirror (`cipR`, `zkPolyR`, `ftEval0R`) are testable through the mirror; `permScalar`,
-# `publicEval` and `ipaB0` have no mirror. `permOf` is dregg's separate `Nat`-with-explicit-modulus
-# copy of the same `derive_plonk` scalar and IS evaluable, so that is the copy this pair diffs.
+# THE PAIRS ADDED 2026-08-02 — the `[Field F]` layer and the second sponge copy:
+#   permscalar  KimchiVerify.permScalar (at ZMod pN)               ↔ kimchi ConstraintSystem::perm_scalars
+#   publiceval  KimchiVerify.publicEval (at ZMod pN)               ↔ ark_poly evaluate_all_lagrange_coefficients · (−pub)
+#   ipab0       KimchiVerify.ipaB0 (at ZMod pN)                    ↔ b_poly ∘ combined_inner_product (polyscale = 1)
+#   frdigest    PastaPoseidon.Ref.hash                             ↔ mina_poseidon DefaultFrSponge absorb…digest
+#   frpair      KimchiVerify.frSqueezePair                         ↔ two DefaultFrSponge challenge()s
+#   frphase2    KimchiVerify.frSpongeDigest + frEvalPointOrder     ↔ FrSponge::absorb_evaluations then digest
+#
+# ⚑ THE CORRECTED CLAIM. This block used to say `permScalar` — "like `publicEval`, `ftEval0`,
+# `combinedInnerProduct`, `zkPoly`, `ipaB0` and `ftComm`" — is declared under `[Field F]` and "the
+# tree has NO `Field (ZMod pN)` instance … UNEVALUABLE at the deployed field and cannot be
+# differentially tested at all". That was FALSE when written: `PastaBasePrime.lean:122` installed
+# `Fact (Nat.Prime pN)` on 2026-07-29 from a kernel-checked Lucas/Pratt certificate (no
+# `native_decide`), and Mathlib's `ZMod.instField` fires off it. One missing `import` in the Lean
+# emitter, not a missing instance. `permof` (`MinaWrapDeferred.permOf`, the `Nat`-with-explicit-
+# modulus copy the Wrap public input flows through) and `permscalar` (the shipped `[Field F]` def)
+# now sweep IDENTICAL inputs, so a divergence between dregg's two spellings is exactly one red block.
+#
+# ⚠ `publiceval` uses ark-poly, not kimchi, because kimchi has no callable public-evaluation
+# function (it is inline in `verifier.rs:332-379`) and openmina delegates back to it — transcribing
+# that block here would measure agreement with a copy. It sweeps OFF-DOMAIN only: at `x = ω^i`
+# ark-poly returns the indicator vector while kimchi's `batch_inversion` maps 0 ↦ 0, so kimchi (and
+# dregg, faithfully) returns 0. Both halves of that split are asserted in §5.
+#
+# ⚠ STILL UNREACHED: no `Fact (Nat.Prime qN)`, so `ZMod qN` is not a `Field`; and `ftComm` needs an
+# `[AddCommGroup G] [Module F G]` carrier that does not exist here.
 #
 # ⚑ DETERMINISTIC INPUTS ONLY. No `rand`, no clock. Inputs come from a SplitMix64 expansion of a
 # fixed per-pair seed plus an explicit adversarial bank (0, 1, 2, p−1, (p−1)/2, 2^128, 2^128−1,

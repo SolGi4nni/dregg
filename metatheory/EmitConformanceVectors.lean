@@ -34,19 +34,46 @@ sweep does NOT: `MinaWrapDeferred.permOf` computes the same `omega ^ (n−3)` th
 (square-and-multiply), so it reaches log2 = 16 — the real domain — and carries the same zk
 polynomial with it.
 
-⚠ WHAT IS UNEVALUABLE, and it is a finding. `KimchiVerify.publicEval`, `ftEval0`, `permScalar`,
-`combinedInnerProduct`, `zkPoly`, `ipaB0` and `ftComm` are declared under
-`variable {F : Type} [Field F]`, and this tree has NO `Field (ZMod pN)` instance (no in-kernel
-primality proof of the 255-bit Pasta prime; `native_decide` forbidden). They cannot be instantiated
-at the deployed field AT ALL, so no differential can reach them. The ones with a CommRing mirror
-(`cipR`, `zkPolyR`, `ftEval0R`) are reached through the mirror. `publicEval`, `permScalar` and
-`ipaB0` have NO mirror and are named as uncovered by `scripts/pickles-crossimpl-differential.sh`.
+⚑ THE `[Field F]` LAYER IS REACHED — the claim that stood here until 2026-08-02 was STALE.
+
+This header used to say: "`KimchiVerify.publicEval`, `ftEval0`, `permScalar`, `combinedInnerProduct`,
+`zkPoly`, `ipaB0` and `ftComm` are declared under `variable {F : Type} [Field F]`, and this tree has
+NO `Field (ZMod pN)` instance … they cannot be instantiated at the deployed field AT ALL, so no
+differential can reach them."
+
+**Measured 2026-08-02: `Field (ZMod pN)` synthesizes, and it is COMPUTABLE.**
+`Dregg2/Circuit/Emit/PastaBasePrime.lean:122` has installed `instance : Fact (Nat.Prime pN)` since
+2026-07-29 (commit `8ba2591c3`) — a kernel-checked recursive Lucas/Pratt certificate, `#assert_axioms`-
+clean, no `native_decide` — and Mathlib's `ZMod.instField` fires off it. `(7 : ZMod pN)⁻¹ * 7`
+evaluates to `1` under the interpreter without a `noncomputable` marker. What was missing was one
+`import` line in THIS file, not an instance in the tree. The line is below.
+
+So the `[Field F]` layer is now swept at the deployed field: `permscalar` (`permScalar`),
+`publiceval` (`publicEval`) and `ipab0` (`ipaB0`) in §15. That matters because their evidence before
+this was: two `#guard`s at `ℚ` for `publicEval`, one at `ℚ` for `ipaB0`, one at `ℚ` plus one
+`[Field K]`-generic `rfl` for `permScalar` — and NO theorem anywhere in the tree mentions
+`publicEval` or `ipaB0` at all.
+
+⚠ STILL UNREACHED, and named rather than papered over: there is **no `Fact (Nat.Prime qN)`**, so
+`ZMod qN` — the field `MinaRealBlockGate` and `MinaWrapFtEval0` work at — is still not a `Field`.
+Nothing in this file needs it; a `Fq`-side `[Field F]` sweep would.
+
+⚑ THE SECOND SPONGE, also new in §15. The `sponge_fp`/`sponge_fq`/`challenge` pairs drive
+`PastaPoseidonFq.SpongeSt`. `KimchiVerify.frSpongeDigest`/`frSqueezePair` — what C3's `challengesOk`
+actually runs on — are built on `PastaPoseidon.Ref.absorbAll`, a different Lean spelling that nothing
+was diffing. `Dregg2/Circuit/Emit/PastaSpongeWeld.lean` proves the two spellings equal for every
+input; `frdigest`, `frpair` and `frphase2` here measure that function against o1-labs'
+`DefaultFrSponge`. `frphase2` is the first thing that tests `frEvalPointOrder` against kimchi's own
+`absorb_evaluations` — its only previous check was a `decide` on the first seven entries.
 -/
 import Dregg2.Circuit.Emit.KimchiVerify
 import Dregg2.Bridge.MinaWrapDeferred
 import Dregg2.Bridge.TickShifts
 import Dregg2.Circuit.Emit.PastaPoseidonFq
 import Dregg2.Circuit.Emit.PicklesRecursion
+-- ⚑ THE ONE LINE THAT MAKES THE `[Field F]` LAYER REACHABLE: `Fact (Nat.Prime pN)`, hence
+-- `Field (ZMod pN)` by Mathlib's `ZMod.instField`.
+import Dregg2.Circuit.Emit.PastaBasePrime
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -55,7 +82,8 @@ namespace Dregg2.ConformanceVectors
 
 open Dregg2.Circuit.Emit.PastaField (pN qN)
 open Dregg2.Circuit.Emit.KimchiVerify
-  (endoMap bEvalSq cipR zkPolyR gateLinConst GateEvals)
+  (endoMap bEvalSq cipR zkPolyR gateLinConst GateEvals
+   publicEval permScalar ipaB0 frSqueezePair frSpongeDigest frEvalPointOrder)
 open Dregg2.Bridge.MinaWrapDeferred (endoLift bPolyMod rootOfUnity permOf shiftType1 unshiftType1)
 open Dregg2.Circuit.Emit.PicklesRecursion
   (type1OfField type1ToField type2OfField type2ToField shift1Fp shift2Fq)
@@ -668,16 +696,276 @@ def emitShifts2 : List String :=
   emitBlock "shift2" shift2Inputs (fun x => (type2OfField shift2Fq (toFq x)).val)
   ++ emitBlock "unshift2" shift2Inputs (fun t => (type2ToField shift2Fq (toFq t)).val)
 
+/-! ## §15 — THE `[Field F]` LAYER, at the deployed field.
+
+`permScalar`, `publicEval` and `ipaB0` are the three definitions the 2026-08-01 cross-impl lane
+reported as "unreachable at the deployed field, no CommRing mirror, no differential can reach them".
+The stated reason — no `Field (ZMod pN)` instance — was measured false (see this file's header).
+They are swept here.
+
+⚑ `permscalar` runs over the SAME inputs as `permof`, from the same seed, so the two records differ
+only in which Lean definition produced the output column. `MinaWrapDeferred.permOf` and
+`KimchiVerify.permScalar` are two spellings of one `derive_plonk` scalar and NOTHING welds them
+(`derivePlonk_perm_is_K5_permScalar` welds `permScalarR`, not `permOf`); this is the first thing that
+compares them, and it does it through o1-labs' `perm_scalars` rather than to each other. -/
+
+/-- α^21 in `ZMod pN`, the `PERM_ALPHA0` power `permOf` bakes and `permScalar` takes as `alpha0`.
+`powFast` (square-and-multiply) rather than `Monoid.npow`, for the same interpreter reason §8 gives. -/
+def alpha21 (a : Nat) : ZMod pN := powFast (toFp a) 21
+
+/-- ⚑ `permscalar` — `KimchiVerify.permScalar` at `ZMod pN`, over `emitPermOf`'s exact sweep. -/
+def emitPermScalar : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  let mut s := 7
+  for l in permLogs do
+    let n := 2 ^ l
+    let om := rootOfUnity l
+    for bi in List.range edgeFp.length do
+      let zeta := edgeFp.getD bi 0
+      let alpha := bk edgeFp (bi + 1)
+      let beta := bk edgeFp (bi + 2)
+      let gamma := bk edgeFp (bi + 3)
+      let w := (List.range 15).map (fun i => bk edgeFp (bi + i))
+      let sg := (List.range 6).map (fun i => bk edgeFp (bi + 2 * i + 4))
+      let zzo := bk edgeFp (bi + 5)
+      let v := ofFp (permScalar n (toFp om) (toFp zeta) (toFp beta) (toFp gamma) (alpha21 alpha)
+        (w.map toFp) (sg.map toFp) (toFp zzo))
+      out := out ++ [mkRec "permscalar" case ([l, om, zeta, alpha, beta, gamma, zzo] ++ w ++ sg) [v]]
+      case := case + 1
+    for _ in List.range 12 do
+      let (s1, zeta) := smFe pN s
+      let (s2, alpha) := smFe pN s1
+      let (s3, beta) := smFe pN s2
+      let (s4, gamma) := smFe pN s3
+      let mut st := s4
+      let mut w : List Nat := []
+      for _ in List.range 15 do
+        let (sx, v) := smFe pN st; st := sx; w := w ++ [v]
+      let mut sg : List Nat := []
+      for _ in List.range 6 do
+        let (sx, v) := smFe pN st; st := sx; sg := sg ++ [v]
+      let (s5, zzo) := smFe pN st
+      s := s5
+      let v := ofFp (permScalar n (toFp om) (toFp zeta) (toFp beta) (toFp gamma) (alpha21 alpha)
+        (w.map toFp) (sg.map toFp) (toFp zzo))
+      out := out ++ [mkRec "permscalar" case ([l, om, zeta, alpha, beta, gamma, zzo] ++ w ++ sg) [v]]
+      case := case + 1
+  return out
+
+/-- ⚑ `publiceval` — `KimchiVerify.publicEval` at `ZMod pN` against ark-poly's
+`evaluate_all_lagrange_coefficients` dotted with the negated public inputs.
+
+⚠ OFF-DOMAIN ONLY, by the SAME predicate on both sides (`x^n ≠ 1`), because at a domain point the
+two genuinely disagree: ark-poly detects `Z_H(x) = 0` and returns the indicator vector (giving the
+correct `p(ω^i) = −pubᵢ`), while the closed form kimchi and `publicEval` share carries a `(xⁿ − 1)`
+factor that is zero there and returns 0 regardless of `pub`. `publicEval` is therefore faithful to
+the DEPLOYED verifier and not to the mathematics — a real property of kimchi, pinned by §16 below
+and by `public_eval_on_domain_split_is_measured` on the Rust side, not swept under the sweep. -/
+def pubLens : List Nat := [0, 1, 2, 5]
+
+def emitPublicEval : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for l in List.range 6 do
+    let ll := l + 1
+    let n := 2 ^ ll
+    let om := rootOfUnity ll
+    for m in pubLens do
+      if m ≤ n then
+        for bi in List.range edgeFp.length do
+          let x := edgeFp.getD bi 0
+          if powFast (toFp x) n != 1 then
+            let pubs := (List.range m).map (fun i => bk edgeFp (bi + i + 1))
+            let v := ofFp (publicEval n (toFp om) (toFp x) (pubs.map toFp))
+            out := out ++ [mkRec "publiceval" case ([ll, om, x] ++ pubs) [v]]
+            case := case + 1
+  let mut s := 0x21
+  for _ in List.range 128 do
+    let (s1, li) := smBelow s 6
+    let ll := li + 1
+    let n := 2 ^ ll
+    let om := rootOfUnity ll
+    let (s2, m0) := smBelow s1 6
+    let m := min m0 n
+    let (s3, x) := smFe pN s2
+    let mut st := s3
+    let mut pubs : List Nat := []
+    for _ in List.range m do
+      let (sx, p) := smFe pN st; st := sx; pubs := pubs ++ [p]
+    s := st
+    if powFast (toFp x) n != 1 then
+      let v := ofFp (publicEval n (toFp om) (toFp x) (pubs.map toFp))
+      out := out ++ [mkRec "publiceval" case ([ll, om, x] ++ pubs) [v]]
+      case := case + 1
+  return out
+
+/-- ⚑ `ipab0` — `KimchiVerify.ipaB0` at `ZMod pN` against `b_poly` composed by kimchi's own
+`combined_inner_product` at `polyscale = 1`. First differential that runs `bEval` itself: the
+`bpoly` pair diffs `bEvalSq`, and `bEvalSq_eq_bEval` is the only thing joining them. -/
+def ipaB0Lens : List Nat := [0, 1, 2, 3, 15, 16]
+
+def emitIpaB0 : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for k in ipaB0Lens do
+    for bi in List.range edgeFp.length do
+      let evalscale := edgeFp.getD bi 0
+      let zeta := bk edgeFp (bi + 1)
+      let zetaw := bk edgeFp (bi + 2)
+      let chals := (List.range k).map (fun i => bk edgeFp (bi + i + 3))
+      let v := ofFp (ipaB0 (toFp evalscale) (toFp zeta) (toFp zetaw) (chals.map toFp))
+      out := out ++ [mkRec "ipab0" case ([k, evalscale, zeta, zetaw] ++ chals) [v]]
+      case := case + 1
+  let mut s := 0x22
+  for _ in List.range 128 do
+    let (s1, ki) := smBelow s ipaB0Lens.length
+    let k := ipaB0Lens.getD ki 0
+    let (s2, evalscale) := smFe pN s1
+    let (s3, zeta) := smFe pN s2
+    let (s4, zetaw) := smFe pN s3
+    let mut st := s4
+    let mut chals : List Nat := []
+    for _ in List.range k do
+      let (sx, c) := smFe pN st; st := sx; chals := chals ++ [c]
+    s := st
+    let v := ofFp (ipaB0 (toFp evalscale) (toFp zeta) (toFp zetaw) (chals.map toFp))
+    out := out ++ [mkRec "ipab0" case ([k, evalscale, zeta, zetaw] ++ chals) [v]]
+    case := case + 1
+  return out
+
+/-! ## §16 — THE SECOND SPONGE COPY, diffed for the first time.
+
+`sponge_fp`/`sponge_fq`/`challenge` drive `PastaPoseidonFq.SpongeSt`. `frSpongeDigest` and
+`frSqueezePair` — what C3 runs on — are built on `PastaPoseidon.Ref.absorbAll`.
+`Dregg2/Circuit/Emit/PastaSpongeWeld.lean` proves the two Lean spellings equal at every input
+(`two_sponge_copies_agree`, `frSqueezePair_is_two_challenges`, `frSpongeDigest_is_squeeze`); these
+three pairs measure that function against o1-labs' `DefaultFrSponge`, which is the half a theorem
+between two Lean definitions cannot supply. -/
+
+def emitFrDigest : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for k in List.range 7 do
+    for bi in List.range edgeFp.length do
+      let xs := (List.range k).map (fun i => bk edgeFp (bi + i))
+      out := out ++ [mkRec "frdigest" case ([k] ++ xs)
+        [Dregg2.Circuit.Emit.PastaPoseidon.Ref.hash xs]]
+      case := case + 1
+  let mut s := 0x23
+  for _ in List.range 64 do
+    let (s1, k) := smBelow s 9
+    let mut st := s1
+    let mut xs : List Nat := []
+    for _ in List.range k do
+      let (sx, x) := smFe pN st; st := sx; xs := xs ++ [x]
+    s := st
+    out := out ++ [mkRec "frdigest" case ([k] ++ xs)
+      [Dregg2.Circuit.Emit.PastaPoseidon.Ref.hash xs]]
+    case := case + 1
+  return out
+
+def emitFrPair : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for k in List.range 7 do
+    for bi in List.range edgeFp.length do
+      let xs := (List.range k).map (fun i => bk edgeFp (bi + i))
+      let c := frSqueezePair xs
+      out := out ++ [mkRec "frpair" case ([k] ++ xs) [c.1, c.2]]
+      case := case + 1
+  let mut s := 0x24
+  for _ in List.range 64 do
+    let (s1, k) := smBelow s 9
+    let mut st := s1
+    let mut xs : List Nat := []
+    for _ in List.range k do
+      let (sx, x) := smFe pN st; st := sx; xs := xs ++ [x]
+    s := st
+    let c := frSqueezePair xs
+    out := out ++ [mkRec "frpair" case ([k] ++ xs) [c.1, c.2]]
+    case := case + 1
+  return out
+
+/-- The number of `absorb_evaluations` points; `frEvalPointOrder.length`, written out so the
+harness's `FR_PTS` and this agree by a number that is checked below rather than by coincidence. -/
+def frPts : Nat := frEvalPointOrder.length
+
+#guard frPts == 43
+
+def emitFrPhase2 : List String := Id.run do
+  let mut out : List String := []
+  let mut case := 0
+  for bi in List.range edgeFp.length do
+    let digest := edgeFp.getD bi 0
+    let ft1 := bk edgeFp (bi + 1)
+    let pz := bk edgeFp (bi + 2)
+    let pzw := bk edgeFp (bi + 3)
+    let evZ := (List.range frPts).map (fun i => bk edgeFp (bi + i))
+    let evZW := (List.range frPts).map (fun i => bk edgeFp (bi + 2 * i + 1))
+    out := out ++ [mkRec "frphase2" case ([digest, ft1, pz, pzw] ++ evZ ++ evZW)
+      [frSpongeDigest digest ft1 pz pzw evZ evZW]]
+    case := case + 1
+  let mut s := 0x25
+  for _ in List.range 12 do
+    let (s1, digest) := smFe pN s
+    let (s2, ft1) := smFe pN s1
+    let (s3, pz) := smFe pN s2
+    let (s4, pzw) := smFe pN s3
+    let mut st := s4
+    let mut evZ : List Nat := []
+    let mut evZW : List Nat := []
+    for _ in List.range frPts do
+      let (sa, a) := smFe pN st
+      let (sb, b) := smFe pN sa
+      st := sb
+      evZ := evZ ++ [a]
+      evZW := evZW ++ [b]
+    s := st
+    out := out ++ [mkRec "frphase2" case ([digest, ft1, pz, pzw] ++ evZ ++ evZW)
+      [frSpongeDigest digest ft1 pz pzw evZ evZW]]
+    case := case + 1
+  return out
+
+/-! ## §17 — the on-domain split of `publicEval`, PINNED.
+
+The `publiceval` pair sweeps `x ∉ H` because ark-poly and kimchi disagree there. A documented
+divergence no gate can see is not a detected one, so the Lean half of the split is asserted here (and
+the Rust half in `public_eval_on_domain_split_is_measured`). These run on every invocation of
+`scripts/pickles-crossimpl-differential.sh`, because a `#guard` that fails prints an elaboration
+error and the driver refuses any vector file containing the word `error`.
+
+⚑ WHAT THIS SAYS: at every domain point `publicEval` returns 0 no matter what the public input is —
+faithful to `verifier.rs:332-379`, whose `batch_inversion` maps `0 ↦ 0` and whose `(ζⁿ − 1)` factor
+vanishes, and NOT to the Lagrange value `−pubᵢ` that ark-poly returns. It is a property of the
+deployed verifier that ζ is assumed to be sponge-derived and therefore off-domain. -/
+
+#guard (List.range 8).all (fun i =>
+  publicEval 8 (toFp (rootOfUnity 3)) (powFast (toFp (rootOfUnity 3)) i)
+    [(1 : ZMod pN), 2, 3, 4] == 0)
+
+-- non-vacuity: OFF the domain the same call is NOT zero, so the guard above is about the domain and
+-- not about `publicEval` being constantly zero.
+#guard publicEval 8 (toFp (rootOfUnity 3)) (7 : ZMod pN) [(1 : ZMod pN), 2, 3, 4] != 0
+
+-- and the deployed field really is a `Field`: the inverse `publicEval` needs is the real one.
+#guard ((7 : ZMod pN)⁻¹ * 7) == 1
+
 /-! ## §14 — the whole emission, in the harnesses' order. -/
 
 def allRecords : List String :=
   emitEndo ++ emitEndoFq ++ emitEndoLift
     ++ emitBpoly "bpoly" false ++ emitBpoly "bpolymod" true
-    ++ emitCip ++ emitLinconst ++ emitZkpoly ++ emitRootUnity ++ emitPermOf
+    ++ emitCip ++ emitLinconst ++ emitZkpoly ++ emitRootUnity
+    ++ emitPermOf ++ emitPermScalar
     ++ emitShifts
     ++ emitSponge "sponge_fp" fpParams edgeFp 48 8
     ++ emitSponge "sponge_fq" fqParams edgeFq 0 0
     ++ emitChallenge ++ emitEmulConsts
+    -- the `[Field F]` layer, reachable since `PastaBasePrime` installed `Fact (Nat.Prime pN)`
+    ++ emitPublicEval ++ emitIpaB0
+    -- the SECOND sponge copy — the one the Fr-sponge weld is built on
+    ++ emitFrDigest ++ emitFrPair ++ emitFrPhase2
     -- the openmina half
     ++ emitOmEndo ++ emitOmBpoly ++ emitShifts1 ++ emitShifts2
 

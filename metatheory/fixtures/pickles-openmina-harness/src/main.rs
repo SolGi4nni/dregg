@@ -397,6 +397,32 @@ mod tests {
         assert!(count("unshift2") >= 140, "unshift2 collapsed");
     }
 
+    /// ⚑ THE EMPTY-SLICE SPLIT, MEASURED rather than documented.
+    ///
+    /// `bpoly` (the kimchi harness) sweeps `k = 0` and `poly_commitment::commitment::b_poly` returns
+    /// the empty product `1` there. openmina's `challenge_polynomial` on the same input PANICS —
+    /// `prod` calls `fun(0)` unconditionally on an empty `chals`. That is why `om_bpoly`'s length
+    /// list starts at 1, and until now that asymmetry lived only in a doc comment: if a future
+    /// openmina made `challenge_polynomial(&[])` return 1 (or 0, or anything), nothing here would
+    /// notice and the reason for the narrowed sweep would silently evaporate.
+    ///
+    /// This asserts BOTH halves of the split on the openmina side: the panic is real, and the k = 1
+    /// case that brackets it is not. The kimchi half (`b_poly(&[], x) == 1`) is asserted in the
+    /// crossimpl harness's `ipab0_is_upstreams_own_combine`.
+    #[test]
+    fn empty_challenge_slice_panics_in_openmina() {
+        let x = Fp::from(7u64);
+        let r = std::panic::catch_unwind(|| challenge_polynomial(&[] as &[Fp])(x));
+        assert!(
+            r.is_err(),
+            "openmina's challenge_polynomial no longer panics on an empty slice — the om_bpoly \
+             sweep starts at k = 1 BECAUSE of that panic, so this is a real change in the reference"
+        );
+        // …and one challenge is fine, so the panic is about emptiness and not about the call shape.
+        let one = challenge_polynomial(&[Fp::from(3u64)])(x);
+        assert_eq!(one, Fp::one() + Fp::from(3u64) * x);
+    }
+
     /// ⚑ The Type1 constant really is `2^255 + 1` and the scale really is `2⁻¹` — measured through
     /// openmina's own accessor, not read off a doc comment. `of_field(c) = 0` pins `c`, and
     /// `of_field(c + 2) = 1` pins the halving.
