@@ -339,7 +339,8 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      (`common.ml:238-256` — the `t_comm` Horner and the `sigma_comm_last` scale; R3 is sized as
      `multiscale_known` alone); `group_map` (`step_verifier.ml:214-237`);
      `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`; the real `sponge_after_index`
-     (the plonk index is hashed here from 57 FIXTURE words, not from the actual commitments);
+     (the plonk index is hashed here from `N_HM_FIX = 58` FIXTURE words, not from the actual
+     commitments — and R1's own transcript absorbs 46 more, §3b's `msgVal`);
      `x_hat blinding`; `lagrange_commitment` / `public_input_commitment_dynamic`'s domain selection;
      `actual_evaluation`'s per-column chunk Horner (`combined_evals`; our columns are single-chunk,
      though `ζ^n = pow2_pow ζ 16` IS assembled in R6); `Evals.validate_feature_flags`; and the
