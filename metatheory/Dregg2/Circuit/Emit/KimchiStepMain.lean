@@ -63,7 +63,8 @@ line items, not against a round number.
     `KimchiVerify.combinedInnerProduct`, transcribed READ-ONLY from `verifier.rs`) — both as
     `Generic` chains over the CHALLENGE variables. ⚑ Its ξ is §8g's chain 0: a full
     `to_field_checked` of the STATEMENT's ξ word (`let xi = scalar xi`, `step_verifier.ml:1012`),
-    the word R8's `xi_correct` ties to the fr-sponge. Then the closing tie of every one of the
+    the word R8's `xi_correct` ties to the fr-sponge. ⚑ It also unpacks §8h's `branch_data` — the
+    two `proofs_verified_mask` bits R7's opt-sponge muxes with. Then the closing tie of every one of the
     `pubWords` public words to a computed circuit variable. This rung turns the public input on:
     `placeChecked` (not `place`) with `Contract ⟨pubWords, AUX⟩`, so a public word no gate reads
     REFUSES rather than sitting inert, and the circuit's own ids cannot be silently absorbed into
@@ -75,8 +76,9 @@ line items, not against a round number.
     each with a red control. Its `ft_eval0` output IS the `ft` column R5's `combined_inner_product`
     folds — upstream's own `combine ~ft:ft_eval0`.
   * **R7 `absorption`** — the fr-sponge (`step_verifier.ml:950-1013`, `step_main.ml:525-567`): an
-    OPT-SPONGE over the carried bulletproof challenges with a per-block `keep` MASK (the `Field.if_`
-    state mux, `:998-1003`), the **43 evaluation columns absorbed at ζ and ζω** in
+    OPT-SPONGE over the carried bulletproof challenges muxed by §8h's DERIVED
+    `branch_data.proofs_verified_mask` bits (the `Field.if_` state mux, `:998-1003`), the
+    **43 evaluation columns absorbed at ζ and ζω** in
     `to_absorption_sequence` order, the ξ′/r′ squeezes, `hash_messages_for_next_step_proof`, and
     ⚑ §8g's chain 1 — `to_field_checked` of the SECOND squeeze, which IS the `r` the C8 fold and
     `b_correct` multiply by (`let r = scalar (Scalar_challenge.create r_actual)`, `:1013`).
@@ -99,25 +101,41 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              6602      7071        8616        8681
-    non-Generic         13778              6206      6208        7559        7562
+    total gates         20023              6616      7085        8644        8709
+    non-Generic         13778              6216      6218        7579        7582
     Poseidon             6292 (31.4%)      1034      1034        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       396       863        1057        1119   —
+    Generic              6245 (31.2%)       400       867        1065        1127   —
     EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      1456      1458        1577        1580   —
+    Zero                 2246 (11.2%)      1458      1460        1581        1584   —
     VarBaseMul           1596  (8.0%)       988       988         988         988   1×1596 / 1×988    ✓
-    EndoMulScalar         776  (3.9%)       184       184         184         184   / 8×23 — upstream
-                    also runs 2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
+    EndoMulScalar         776  (3.9%)       192       192         200         200   / 8×24, 8×25 ✓ —
+                    upstream also runs 2×42 8×28 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       112       112         112         112   1×159 2×65 3×23
                     15×1 30×1 / 1×112
 
 The RUN LENGTHS are the fidelity signal, and all six families are unchanged by R6/R7/R8: a `Poseidon`
 permutation is 11 rows (206 of them now, upstream 572), a 128-bit `Scalar_challenge.endo` is 32
 `EndoMul` rows, a `var_base_mul` chunk is a lone `VarBaseMul` row followed by its `Zero`, and a
-128-bit `to_field_checked` is 8 `EndoMulScalar` rows. The `EndoMul` COUNT is 2432 against upstream's
-2465, i.e. the fold/`bullet_reduce` machinery is here at full size. Only SEVEN gate types appear in
-any Mina step or wrap circuit — no lookup, no foreign-field, no range-check — and all seven are
-emitted here.
+128-bit `to_field_checked` is 8 `EndoMulScalar` rows — **25 such chains now** (23 transcript
+challenges + §8g's deferred ξ and r), against upstream's 28 8-row runs. The `EndoMul` COUNT is 2432
+against upstream's 2465, i.e. the fold/`bullet_reduce` machinery is here at full size. Only SEVEN
+gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no range-check —
+and all seven are emitted here.
+
+⚑ MEASURED PROVE (hbox, co-tenant, `taskset -c 0-15 nice -n 15`, 2026-08-02): every rung
+`verify()==true`, and every rung keeps all five polarities — honest ACCEPT · σ-only desync REJECTED
+· byte-identical UNWIRED control ACCEPTED · unread advice ACCEPTED · (r5–r8) public-vector tamper
+REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
+
+    rung             rows   domain   honest prove+verify
+    r1_transcript    1225     2048            6385 ms
+    r2_challenges    1548     2048            6557 ms
+    r3_msm           3636     4096            5080 ms
+    r4_ipa           6370     8192            2337 ms
+    r5_full          6616     8192            2873 ms
+    r6_ft_eval0      7085     8192            2114 ms
+    r7_absorption    8644    16384           12395 ms
+    r8_finalize      8709    16384           12971 ms
 
 ⚑ **THE `Generic` SHORTFALL WAS MIS-ATTRIBUTED, and this is the correction.** The prior header wrote
 that the `ft_eval0` / `Plonk_checks.checked` sub-circuit was "≈5,900 `Generic` rows — the single
@@ -129,13 +147,14 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1119 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1127 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the per-challenge
 `lowest_128_bits ~constrain_low_bits:true` range checks (#1 below), the `sg_evals` prefix of the two
 `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection. #1–#11 below name
-them. ⚑ R8 spends 62 `Generic` rows on `finalize_other_proof`'s tail and 24 of the +86 since
-2026-08-01 are R2's endo lift — cheap rows that RETIRE two named simplifications rather than add
-scale, which is the trade this file is supposed to be making.
+them. ⚑ R8 spends 62 `Generic` rows on `finalize_other_proof`'s tail; the +28 rows since the r8
+commit are §8g's two `to_field_checked` chains, which RETIRE simplification #10 rather than add
+scale, and #8's retirement costs ZERO rows (the same seven `eLit` slots now hold derived values).
+That is the trade this file is supposed to be making.
 
 ⚑ Likewise `Poseidon` (2266 vs 6292): R7 brings the count to 206 permutations. `verify_one`'s own
 sponge work is now assembled; the remaining 366 permutations are the app logic and the pieces #5
@@ -201,13 +220,22 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      (`shifts[0] = 1`, six distinct QNRs outside the domain), and carries the RED CONTROL that makes
      it a retirement rather than a rename: `FT_SHIFTS_WERE_FIXTURES` gives a DIFFERENT `ft_eval0` at
      the same wire, as does a one-unit bend in any derived shift.
-  9. R7's opt-sponge mask is a fixed `keep` pattern (the first half of the blocks kept), standing for
-     `branch_data.proofs_verified_mask` / `Vector.trim_front actual_width_mask`. The mask VARIABLE is
-     in the circuit and both branches occur; what is not here is deriving it from `branch_data`.
-     ⚑ The missing piece is small and named: `branch_data` is ONE field element packing
-     `4·domain_log2 + pack(mask)` (`branch_data.ml:95-101`), so retiring this is a statement word,
-     an unpack row, booleanity + prefix-mask rows (`Proofs_verified.Prefix_mask`), and aliasing
-     `sgKeep` to the two mask bits. It is not blocked on a sub-circuit that does not exist.
+  9. ⚑ **RETIRED 2026-08-02.** This read "R7's opt-sponge mask is a fixed `keep` pattern (the first
+     half of the blocks kept)… what is not here is deriving it from `branch_data`." §8h derives it.
+     `branch_data` is ONE field element packing `4·domain_log2 + (m₀ + 2·m₁)`
+     (`branch_data.ml:95-101`), and it is now the assembly's **fifth statement word**: the two
+     `proofs_verified_mask` bits are Boolean circuit variables, booleanity-constrained by a row, tied
+     to that word by `Checked.pack` emitted as a row, and the opt-sponge's mux reads THEM. Reading at
+     source also corrected the pattern: `Prefix_mask.there` is `N0 ↦ [ff;ff] · N1 ↦ [ff;tt] ·
+     N2 ↦ [tt;tt]` (`pickles_base/proofs_verified.ml:75-81`), so a set bit is a SUFFIX and the
+     one-previous-proof instance keeps the SECOND slot — the opposite of what the fixed pattern did.
+     Red control (§14a): the other two legal prefix masks each give a DIFFERENT opt-sponge digest,
+     and that digest is segment B's first absorbed word, so `branch_data` reaches the fr-sponge, both
+     squeezes, §8g's ξ and r, and `combined_inner_product`.
+     ⚠ NEWLY VISIBLE, and named rather than absorbed: `hash_messages_for_next_step_proof` (segment C)
+     masks the SAME carried challenges upstream (`step_verifier.ml:1182-1185`) and here absorbs them
+     unmasked. That is one `Vector.map2` away and it is a second consumer of the derived mask, not a
+     second mask.
  10. ⚑ **RETIRED 2026-08-02 — the fr-sponge now FEEDS the fold, not merely gets checked against it.**
      This entry read: "the ξ/r the C8 fold multiplies by are R1's transcript challenges, not
      `endoMap` of R7's squeeze… R8's `xi_correct` binds the STATEMENT's ξ to the fr-sponge squeeze
@@ -477,7 +505,26 @@ def vPermShift (s : StepShape) : PVar := xv (baseStmt s + 2)
 /-- `xi`'s RAW prechallenge — `xi_correct` compares it against the fr-sponge's own squeeze, and
 §8g's chain `0` LIFTS it into the multiplier the C8 fold uses. -/
 def vXiStmt (s : StepShape) : PVar := xv (baseStmt s + 3)
-def N_STMT : Nat := 4
+
+/-! ⚑ **`branch_data`, the fifth statement word** (`step_main.ml:53,70-72`;
+`composition_types/branch_data.ml:88-101`). It is ONE field element that PACKS the two
+`Proofs_verified.Prefix_mask` bits and `domain_log2`:
+
+    Checked.pack {proofs_verified_mask; domain_log2} = 4·domain_log2 + pack(mask)
+
+and `Vector.trim_front branch_data.proofs_verified_mask` is what gates the opt-sponge's absorptions.
+§8h emits `pack` as rows, so the mask bits are Boolean circuit VARIABLES tied to a statement word
+rather than a constant pattern — the retirement of the module header's simplification #9. -/
+def vBranch (s : StepShape) : PVar := xv (baseStmt s + 4)
+/-- `domain_log2`, the packed word's high part. -/
+def vDomLog2 (s : StepShape) : PVar := xv (baseStmt s + 5)
+/-- `proofs_verified_mask ! i` — a Boolean variable. `Prefix_mask.there` is
+`N0 ↦ [ff;ff] · N1 ↦ [ff;tt] · N2 ↦ [tt;tt]` (`pickles_base/proofs_verified.ml:75-81`), so the SET
+bits are a SUFFIX: with one previous proof it is slot 1 that is kept, not slot 0. -/
+def vMask (s : StepShape) (i : Nat) : PVar := xv (baseStmt s + 6 + i)
+/-- The mask's own packing `m₀ + 2·m₁`, `Checked.pack`'s inner `pack`. -/
+def vMaskPack (s : StepShape) : PVar := xv (baseStmt s + 8)
+def N_STMT : Nat := 9
 
 /-! ### The DEFERRED challenges ξ and r (§8g) — the fold's own multipliers.
 
@@ -1714,8 +1761,11 @@ structure SegSpec where
   ws : List (PVar × Nat)
   /-- squeeze permutations after the absorb blocks. -/
   squeezes : Nat
-  /-- per absorb-block `keep` mask: `some (var, val)` masks, `none` does not. -/
+  /-- whether the segment muxes its state with a per-block `keep` bit. -/
   masked : Bool
+  /-- ⚑ For a MASKED segment, the `keep` VARIABLE and BIT of each absorb block. Both come from
+  §8h's unpacking of the `branch_data` statement word — this is not a schedule constant. -/
+  keep : Nat → PVar × Nat := fun _ => (xv 0, 0)
   deriving Inhabited
 
 def SegSpec.nb (g : SegSpec) : Nat := (g.ws.length + 1) / 2
@@ -1731,9 +1781,10 @@ structure SegData where
   afters : List (List Nat)
   deriving Repr, Inhabited
 
-/-- `keep` for absorb block `b` of a masked segment: the first half of the blocks are the ACTUAL
-previous proof's challenges (`Vector.trim_front actual_width_mask`), the rest are masked out. -/
-def segKeep (nb b : Nat) : Nat := if 2 * b < nb then 1 else 0
+/-- `keep` bit of absorb block `b`, out of the spec. -/
+def SegSpec.keepBit (g : SegSpec) (b : Nat) : Nat := (g.keep b).2
+/-- …and its variable. -/
+def SegSpec.keepVar (g : SegSpec) (b : Nat) : PVar := (g.keep b).1
 
 def runSeg (g : SegSpec) : SegData :=
   (List.range g.blocks).foldl
@@ -1748,7 +1799,7 @@ def runSeg (g : SegSpec) : SegData :=
       let ss := permStates post
       let after := ss.getLastD post
       let next :=
-        if b < g.nb && g.masked && segKeep g.nb b == 0 then pre else after
+        if b < g.nb && g.masked && g.keepBit b == 0 then pre else after
       { states := d.states ++ [next], perms := d.perms ++ [ss]
       , afters := d.afters ++ [after] })
     { states := [[0, 0, 0]], perms := [], afters := [] }
@@ -1762,8 +1813,9 @@ def sgD (base nb sq b j : Nat) : PVar :=
   xv (base + 3 * (nb + sq + 1) + 5 * nb + 3 * b + j)
 def sgP (base nb sq b j : Nat) : PVar :=
   xv (base + 3 * (nb + sq + 1) + 8 * nb + 3 * b + j)
-/-- The per-block `keep` mask variable. -/
-def sgKeep (base nb sq b : Nat) : PVar := xv (base + 3 * (nb + sq + 1) + 11 * nb + b)
+-- ⚑ There is no per-block `keep` VARIABLE region any more: since §8h a masked segment's mux reads
+-- `g.keepVar b`, which is one of the two `branch_data` mask bits. The id slots the old region
+-- occupied stay reserved in `segVarCount` so no other region moves.
 
 /-- **One segment's rows.** -/
 def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow :=
@@ -1788,7 +1840,7 @@ def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow 
               (List.range 3).map (fun j =>
                 genericRow (some (sgAfter base nb sq b j)) (some (sgSt base nb sq b j))
                            (some (sgD base nb sq b j))
-                           (some (sgKeep base nb sq b)) (some (sgD base nb sq b j))
+                           (some (g.keepVar b)) (some (sgD base nb sq b j))
                            (some (sgP base nb sq b j)) (cSub ++ cMul))
               ++ [ genericRow (some (sgSt base nb sq b 0)) (some (sgP base nb sq b 0))
                               (some (sgSt base nb sq (b + 1) 0))
@@ -1816,13 +1868,13 @@ def segEnv (base : Nat) (g : SegSpec) (d : SegData) : VarEnv :=
       (List.range 2).map (fun j =>
         (sgPost base nb sq b j,
          (fAdd (pre.getD j 0) ((g.ws.getD (2 * b + j) (xv 0, 0)).2) : Int))))
+  -- (the `keep` VARIABLE's value is owned by §8h — it is a `branch_data` mask bit, not a segment id)
   ++ (if g.masked then
         (List.range nb).flatMap (fun b =>
           let pre := d.states.getD b []
           let aft := d.afters.getD b []
-          let k := segKeep nb b
-          [(sgKeep base nb sq b, (k : Int))]
-          ++ (List.range 3).flatMap (fun j =>
+          let k := g.keepBit b
+          (List.range 3).flatMap (fun j =>
               let dv := fSub (aft.getD j 0) (pre.getD j 0)
               [ (sgAfter base nb sq b j, (aft.getD j 0 : Int))
               , (sgD base nb sq b j, (dv : Int))
@@ -1838,11 +1890,50 @@ commitments as 56 coordinates, the two challenge-polynomial commitments (4 coord
 unpadded bulletproof challenges. -/
 def StepShape.hmWords (s : StepShape) : Nat := 61 + 2 * s.bRounds
 
+/-! ### §8h — `branch_data`'s `proofs_verified_mask`, UNPACKED.
+
+`step_main.ml:53,70-72`, `composition_types/branch_data.ml:88-101`, `pickles_base/
+proofs_verified.ml:70-100`. The opt-sponge's per-absorption `keep` is
+`Vector.trim_front branch_data.proofs_verified_mask` — two Boolean variables of the STATEMENT, not a
+schedule constant. `Checked.pack` recombines them with `domain_log2` into the single field element
+the statement carries: `4·domain_log2 + (m₀ + 2·m₁)`. These are the rows for that, and `optSpec`
+below reads the two bits.
+
+⚑ `Prefix_mask.there` is `N0 ↦ [ff;ff] · N1 ↦ [ff;tt] · N2 ↦ [tt;tt]`, so a set bit is a SUFFIX and
+the committed instance (ONE previous proof, `N1`) keeps slot 1 and drops slot 0 — the OPPOSITE of
+the "first half kept" pattern this rung ran until 2026-08-02. -/
+
+/-- `Prefix_mask.there N1` — the honest instance's mask, one previous proof of two slots. -/
+def MASK_BITS : List Nat := [0, 1]
+/-- `domain_log2` — `Common.Max_degree.step_log2`, the same 16 `FT_LOG2N` is. -/
+def BRANCH_DOMAIN_LOG2 : Nat := 16
+/-- `Branch_data.Checked.pack` (`branch_data.ml:95-101`). -/
+def branchPacked : Nat :=
+  (4 * BRANCH_DOMAIN_LOG2 + MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0) % pN
+
+/-- Which previous proof absorb block `b` of the opt-sponge carries: each of the two previous proofs
+contributes `bRounds` challenge words and a block absorbs two, so the blocks split at `bRounds/2`. -/
+def optProofOf (s : StepShape) (b : Nat) : Nat := if 2 * b < s.bRounds then 0 else 1
+/-- ⚑ Block `b`'s `keep` — the mask VARIABLE and its bit, both from `branch_data`. -/
+def optKeep (s : StepShape) (b : Nat) : PVar × Nat :=
+  (vMask s (optProofOf s b), MASK_BITS.getD (optProofOf s b) 0)
+
+/-- **§8h's rows.** Booleanity of both mask bits (`Boolean.typ`'s own check) and `Checked.pack`,
+which ties them to the `branch_data` statement word. -/
+def branchRows (s : StepShape) (wired : Bool) : List SRow :=
+  [ genericRow (some (vMask s 0)) (some (vMask s 0)) (some (vMask s 0))
+               (some (vMask s 1)) (some (vMask s 1)) (some (vMask s 1)) (cMul ++ cMul)
+  , genericRow (some (vMask s 0)) (some (vMask s 1)) (some (vMaskPack s))
+               (some (vDomLog2 s)) (some (vMaskPack s)) (some (vBranch s))
+               ([1, 2, -1, 0, 0] ++ [4, 1, -1, 0, 0])
+  , probeRow wired (vMask s 0) (vMask s 1)
+  , probeRow wired (vBranch s) (vMaskPack s) ]
+
 def optSpec (s : StepShape) (d : SpongeData) : SegSpec :=
   { ws := (List.range s.optWords).map (fun i =>
       let c := i % s.chals
       (vN s c s.emsRows, chalOf s d c))
-  , squeezes := 1, masked := true }
+  , squeezes := 1, masked := true, keep := optKeep s }
 
 def frSpec (s : StepShape) (dg : PVar × Nat) (ftVal : Nat) : SegSpec :=
   { ws := [ dg, (vEw s 3, evVal 3 1), (vEz s 2, evZOf ftVal 2), (vEw s 2, evVal 2 1) ]
@@ -2039,7 +2130,7 @@ def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
 sub-circuit so a public tie reaches all five. ⚑ The FIRST FOUR are the statement's deferred values;
 R8's `Boolean.all` assert is what makes them a claim the circuit refuses to lie about. -/
 def exposedVars (s : StepShape) : List PVar :=
-  ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s
+  ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s, vBranch s
    , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
    , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
@@ -2286,6 +2377,7 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ msmRows s t.msm wired
   ++ ipaRows s t.ipa wired
   ++ deferredRows s wired
+  ++ branchRows s wired
   ++ xiDefRows s t.defc wired
   ++ cipRows s wired
   ++ closingRows s
@@ -2361,7 +2453,11 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ segEnv (baseSegC s) t.specC t.segC
   -- R8: the four STATEMENT words and the compiled finalize program's slots.
   ++ [ (vCipShift s, (t.fin.cipShift : Int)), (vBShift s, (t.fin.bShift : Int))
-     , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int)) ]
+     , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int))
+     -- §8h: `branch_data` and the two `proofs_verified_mask` bits it packs.
+     , (vBranch s, (branchPacked : Int)), (vDomLog2 s, (BRANCH_DOMAIN_LOG2 : Int))
+     , (vMask s 0, (MASK_BITS.getD 0 0 : Int)), (vMask s 1, (MASK_BITS.getD 1 0 : Int))
+     , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int)) ]
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values
@@ -2446,7 +2542,8 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let b := endoConstRow s ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
   let c := msmRows s t.msm wired
   let d := ipaRows s t.ipa wired
-  let e := deferredRows s wired ++ xiDefRows s t.defc wired ++ cipRows s wired ++ closingRows s
+  let e := deferredRows s wired ++ branchRows s wired ++ xiDefRows s t.defc wired
+           ++ cipRows s wired ++ closingRows s
   let f := ftRows s t.ft wired
   let g := absRows t wired
   let h := finRows s t.ft t.fin wired
@@ -2535,8 +2632,11 @@ shape with fewer columns is not a smaller `verify_one`, it is a different one. -
 def shapeSmoke : StepShape :=
   { absorbs := 2, chals := 5, emsRows := 8
   , msmTerms := 3, msmChunks := 26
+  -- ⚑ `bRounds` is EVEN so the opt-sponge's rate-2 blocks do not straddle the two previous proofs:
+  -- each proof contributes `bRounds` challenge words and a block absorbs two, so a block belongs to
+  -- exactly one mask bit. (`shapeStep`'s 16 is even for the same reason — `Step_bp_vec = N16`.)
   , ipaRounds := 3, ipaBlocks := 32
-  , bRounds := 3, cipEvals := 47, pubWords := 12 }
+  , bRounds := 4, cipEvals := 47, pubWords := 12 }
 
 /-! ## §12 — the in-CI pins, on the SMOKE instance (`#guard`, interpreter-reduced).
 
@@ -3188,15 +3288,59 @@ The three segments' arithmetic, against `PastaPoseidon.Ref.perm` — the same re
 -- `keep = 0` block leaves the state EXACTLY where it was — `Field.if_` on all three lanes
 -- (`step_verifier.ml:998-1003`). Both branches occur, so neither is untested.
 #guard (List.range tS.specA.nb).all (fun b =>
-  if segKeep tS.specA.nb b == 1
+  if tS.specA.keepBit b == 1
   then tS.segA.states.getD (b + 1) [] == tS.segA.afters.getD b []
   else tS.segA.states.getD (b + 1) [] == tS.segA.states.getD b [])
-#guard (List.range tS.specA.nb).any (fun b => segKeep tS.specA.nb b == 1)
-#guard (List.range tS.specA.nb).any (fun b => segKeep tS.specA.nb b == 0)
+#guard (List.range tS.specA.nb).any (fun b => tS.specA.keepBit b == 1)
+#guard (List.range tS.specA.nb).any (fun b => tS.specA.keepBit b == 0)
 -- …and a masked-out block's DISCARDED permutation output is genuinely different from the state it
 -- keeps, so the mux is deciding something.
 #guard (List.range tS.specA.nb).all (fun b =>
-  segKeep tS.specA.nb b == 1 || tS.segA.afters.getD b [] != tS.segA.states.getD b [])
+  tS.specA.keepBit b == 1 || tS.segA.afters.getD b [] != tS.segA.states.getD b [])
+
+-- ── §14a — ⚑ THE MASK COMES FROM `branch_data` (simplification #9, retired) ────────────────────
+-- Every block's `keep` is one of TWO variables, and those two are the `proofs_verified_mask` bits
+-- `Checked.pack` ties to the `branch_data` statement word. Not a schedule constant: the pattern
+-- `optProofOf` decides is only WHICH bit a block reads, and the bits themselves are circuit
+-- variables a public word pins.
+#guard (List.range tS.specA.nb).all (fun b =>
+  tS.specA.keepVar b == vMask shapeSmoke (optProofOf shapeSmoke b))
+#guard (List.range tS.specA.nb).all (fun b =>
+  tS.specA.keepVar b == vMask shapeSmoke 0 || tS.specA.keepVar b == vMask shapeSmoke 1)
+-- ⚑ `Prefix_mask.there N1 = [false; true]`: the SET bit is a SUFFIX, so with one previous proof the
+-- FIRST slot is dropped and the SECOND is kept. (The pattern this rung ran until 2026-08-02 kept the
+-- first half — the opposite, and it was a constant.)
+#guard MASK_BITS == [0, 1]
+#guard tS.specA.keepBit 0 == 0 && tS.specA.keepBit (tS.specA.nb - 1) == 1
+-- ⚑ `Checked.pack {mask; domain_log2} = 4·domain_log2 + pack(mask)` (`branch_data.ml:95-101`) —
+-- the identity §8h's second `Generic` row emits, and the value the public word carries.
+#guard branchPacked == 4 * BRANCH_DOMAIN_LOG2 + MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0
+#guard branchPacked == 66
+-- …the bits are Boolean (the row `m² = m` is what enforces it in-circuit), and `domain_log2` is the
+-- Step domain the rest of the rung runs at.
+#guard MASK_BITS.all (fun m => m * m == m)
+#guard BRANCH_DOMAIN_LOG2 == FT_LOG2N
+-- ⚑ …and the mask VARIABLES really are wired: each reaches its §8h rows AND the opt-sponge mux rows
+-- it gates, and `branch_data` reaches §8h's pack row and the closing public tie.
+#guard (classCells posS (vMask shapeSmoke 0)).length ≥ 5
+#guard (classCells posS (vMask shapeSmoke 1)).length ≥ 5
+#guard (classCells posS (vBranch shapeSmoke)).length ≥ 2
+#guard (exposedVars shapeSmoke).getD 4 (xv 0) == vBranch shapeSmoke
+
+-- ⚑⚑ **THE BITING RED CONTROL FOR #9.** Re-run segment A at the OTHER two legal prefix masks. `N2`
+-- ([tt;tt], both previous proofs real) and `N0` ([ff;ff], none) each give a DIFFERENT opt-sponge
+-- digest — so the mask is deciding the value, and `branch_data` is what decides the mask. And the
+-- digest is segment B's FIRST absorbed word, so a different `branch_data` moves the fr-sponge, its
+-- two squeezes, §8g's ξ and r, and `combined_inner_product` with them.
+def segAWith (bits : List Nat) : SegData :=
+  runSeg { tS.specA with keep := fun b => (xv 0, bits.getD (optProofOf shapeSmoke b) 0) }
+def segADigest (bits : List Nat) : Nat := ((segAWith bits).states.getLastD []).getD 0 0
+#guard segADigest MASK_BITS == (tS.segA.states.getLastD []).getD 0 0
+#guard segADigest [1, 1] != segADigest MASK_BITS
+#guard segADigest [0, 0] != segADigest MASK_BITS
+#guard segADigest [1, 1] != segADigest [0, 0]
+-- …and the digest IS what segment B absorbs first, so the cascade above is a wire and not a story.
+#guard (tS.specB.ws.getD 0 (xv 0, 0)).2 == segADigest MASK_BITS
 
 -- ⚑ SEGMENT B ABSORBS R5's AND R6's OWN VARIABLES: the digest of segment A, `ft_eval1`, the two
 -- public-polynomial evaluations, then the 43 columns at ζ and ζω INTERLEAVED
@@ -3245,7 +3389,7 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
         == (rungRows tS .msm true).length + (ipaRows shapeSmoke tS.ipa true).length
 #guard (rungRows tS .full true).length
         == (rungRows tS .ipa true).length + (deferredRows shapeSmoke true).length
-           + (xiDefRows shapeSmoke tS.defc true).length
+           + (branchRows shapeSmoke true).length + (xiDefRows shapeSmoke tS.defc true).length
            + (cipRows shapeSmoke true).length + (closingRows shapeSmoke).length
 #guard (rungRows tS .ftEval0 true).length
         == (rungRows tS .full true).length + (ftRows shapeSmoke tS.ft true).length
