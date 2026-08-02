@@ -50,28 +50,60 @@ also DROPS the `Poseidon2Width8` carrier at `recStateCommit_binds_kernel_faithfu
 ⚠ NOT at `cellLeafColl_faithful8_reduces`, which still binds `hW : Poseidon2Width8 permW` and applies
 it twice; an earlier draft of this header claimed the drop there.
 
-⚠⚑ AND `FaithfulBreak` OPENS WITH `SpongeCollision compressN` — a GLOBAL EXISTENTIAL, free at any
-field-bounded sponge (`Circuit/SpongeCollisionShirk.orBreak_spongeCollision_iff_True`). So every
-`… ∨ FaithfulBreak …` in this file holds unconditionally at deployed width, INCLUDING
-`transfer_circuit_full_sound_faithful` (§, the full-transfer-soundness headline), which has no
-per-instance twin and whose docstring still sells "no `cellLeafInjective` / `compressInjective` /
-`compressNInjective` premise occurs" as a strength. It is not one: the premise left, and a free
-disjunct arrived. Narrowing `FaithfulBreak` to a named pair is the open work, and it is the reason
-`Circuit/Freshness.lean` no longer calls these "the live binding consumer" without a caveat.
+⚑⚑ **2026-08-01 (later the same day) — `FaithfulBreak` IS NARROWED, AND THE HEADLINE HAS A TWIN.**
+The paragraph above is kept because its diagnosis was right, but its CONCLUSION ("`FaithfulBreak`
+cannot be narrowed IN PLACE at all") was wrong, and acting on it left the file's biggest theorem
+free. What was actually true is that `FaithfulBreak` could not be narrowed WITHOUT CHANGING ITS
+ARITY: a per-instance leg must name the opening, so the definition takes `(k, k', t)`. It now does.
 
-`FaithfulBreak` and its seven consumers are RETAINED and re-derived through the port. ⚠ THE HEADER
-SAID they are "labelled `⚠ BRIDGE ONLY`" — exactly ONE of them is (`recStateCommit_binds_kernel_faithful`).
-The other seven keep affirmative docstrings, several of which read as guarantees
-(`nonce_difference_reduces`: "cannot share the faithful root unless a concrete commitment collision
-is exhibited"; `no_replay_faithful` likewise). Since this header is the only place the flag day is
-findable, it was wrong about where it is findable.  Teeth at the end of §4: SATISFIABLE at every deployment on the
-diagonal, REFUTABLE at the all-constant deployment, NOT PROVABLE, and LOAD-BEARING.
+* **`FaithfulBreak` now names a pair in EVERY leg** (not only the sponge one the brief asked for —
+  all five disjuncts were the same shape, so narrowing one would have left the dichotomy free).
+  The sponge leg is `FrameCNColl` at the TWO ORDERED FRAME-LEAF LISTS of this opening; the combiner
+  and node legs are `CompressColl` at the argument quadruples the extraction visits; the two leaf
+  legs are `FaithfulLeafBreak` — the deployed eight-lane authority digest / wide chain AT THE NAMED
+  TAGGED PREIMAGES, via `cellLeafColl_faithful8_reduces`. `noFaithfulBreak_diag` REFUTES the whole
+  disjunction on the diagonal at EVERY deployment; `faithfulBreak_refutable` FIRES it at the
+  all-constant one; `faithfulBreak_sharper_than_global` shows both at ONE sponge.
+* **The pre-narrowing shape is RETAINED as `FaithfulBreakGlobal`, WITH TEETH** —
+  `faithfulBreakGlobal_free_of_fieldBounded` PROVES it outright at every field-bounded sponge and
+  `orFaithfulBreakGlobal_iff_True` proves `P ∨ FaithfulBreakGlobal … ↔ True`. That refutation is the
+  tombstone: the old shape is not merely deprecated here, it is machine-checked to say nothing. The
+  three consumers that genuinely are global→global (`stateBreak_faithful_reduces`,
+  `recStateCommit_binds_kernel_faithful_global`, `transfer_circuit_full_sound_faithful`) keep it and
+  are labelled `⚠ BRIDGE ONLY`; every other consumer is ported in place.
+* **`transfer_circuit_full_sound_faithful` HAS A TWIN.** `transfer_circuit_full_sound_faithful_or_collides`
+  returns `TransferSpec k t k' ∨ TransferFaithfulColl …`, the residual being the frame sponge at
+  `(k, k')` over THIS turn's carrier and the moved node at `(k'.cell, recTransfer k.cell …)` — the
+  two raw layers the proof visits, at the pairs it visits them at, through
+  `StateCommitLeafRegrounded.frameDigest_binds_or_collides` / `movedDigest_binds_or_collides`
+  instead of `StateCommitReduce`'s free `_orBreak` twins. Its docstring no longer sells the absent
+  injectivity premise as a strength. `FaithfulCommitSurface.commit_binds_nonce` likewise gained
+  `commit_binds_nonce_or_collides` / `_of_noColl`.
+* Teeth for the transfer residual: `noTransferFaithfulColl_of_spec` (SATISFIABLE at EVERY deployment
+  — an honest post-state never trips it), `transferFaithfulColl_refutable` (it FIRES on the minted
+  bystander cell at a lossy wide permutation), `noTransferFaithfulColl_not_provable`.
+* `commit_binds_nonce_faithful_unconditional_false` is the LOAD-BEARING canary for the nonce twin.
+  ⚠ `recStateCommit_binds_kernel_faithful_unconditional_false` does NOT cover it: that pair differs
+  only in `nullifiers`, so its agent nonces AGREE and it refutes nothing about the nonce conclusion.
+  The new one needed a `FinKernelState` with a NON-EMPTY `CanonMap` (`finNonce`), which the tree did
+  not have; it is now here and reusable.
+
+⚠ STILL OPEN, and named rather than hidden: `transfer_circuit_full_sound_faithful_of_noColl` has NO
+`*_unconditional_false` canary. `finNonce` supplies the `FiniteRepresentable` half now, but the
+witness also needs a satisfying `satisfiedS` assignment whose `cSRestFrame` gate holds — i.e. an
+INHABITANT of `RestHashIffFrameFin`, which the tree still does not have (`Verify/
+RestFrameFiniteSupportSuccessor` proves the predicate satisfiable-and-refutable, not inhabited by a
+named `RH`). Dropping `hRest` from the refuted statement would NOT be a fix: refuting a
+weaker-hypothesis statement does not refute the stronger one. That is undone work, not a theorem of
+the model.
 
 No `sorry`, `admit`, `native_decide`, or new axiom.  Every theorem is audited below.
 -/
 import Dregg2.Tactics
 import Dregg2.Circuit.CommitDifferential
 import Dregg2.Circuit.StateCommitReduce
+import Dregg2.Circuit.StateCommitLeafRegrounded
+import Dregg2.Circuit.SpongeCollisionShirk
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Circuit.OodRomBound
 import Dregg2.Circuit.Emit.EffectVmEmitRotationR
@@ -91,11 +123,16 @@ open Dregg2.Circuit.RestFrameFin (FiniteRepresentable RestHashIffFrameFin)
 open Dregg2.Circuit.Transfer
 open Dregg2.Crypto.ProbCrypto (winProb)
 open Dregg2.Circuit.CollisionReduce (CellCollision SpongeCollision CompressCollision)
-open Dregg2.Circuit.StateCommitReduce (StateBreakP recStateCommit_binds_kernel_orBreak
-  recStateCommit_binds_kernel_or_collidesFin)
+-- ⚑ `recStateCommit_binds_kernel_orBreak` is NO LONGER OPENED (2026-08-01): after the port this
+-- file threads no `_orBreak` BINDING twin at term level.  `StateBreakP` survives only inside the
+-- two retained `⚠ BRIDGE ONLY` reductions.  (`StateCommitReduceRaw`'s header still lists this module
+-- among the three that thread them — stale as of this commit, and its to-fix.)
+open Dregg2.Circuit.StateCommitReduce (StateBreakP recStateCommit_binds_kernel_or_collidesFin)
 -- ⚑ the PER-INSTANCE residual vocabulary (2026-08-01, the free-disjunct port).
 open Dregg2.Circuit.StateCommitLeafRegrounded (CellLeafColl RecStateCommitColl
-  noRecStateCommitColl_diag)
+  noRecStateCommitColl_diag CompressColl FrameCNColl FrameLeafColl FrameColl MovedLeafColl
+  MovedColl CellDigestColl frameLeaves frameDigest_binds_or_collides movedDigest_binds_or_collides)
+open Dregg2.Circuit.SpongeCollisionShirk (FieldBounded spongeCollision_of_fieldBounded)
 
 set_option autoImplicit false
 
@@ -940,17 +977,45 @@ theorem cellCollision_faithful8_reduces (fold8 : AuthorityFold8)
 
 /-! ## 4. Whole-kernel and freshness keystones on the live eight-lane leaf. -/
 
-def FaithfulBreak (fold8 : AuthorityFold8) (permW : List Int → List Int)
+/-- ⚰ **TOMBSTONE — this WAS `FaithfulBreak` until 2026-08-01, and it says NOTHING.** A five-way
+disjunction of GLOBAL existentials; its first disjunct `SpongeCollision compressN` is supplied by
+pigeonhole at every field-bounded sponge, i.e. at every sponge this surface deploys. Retained, not
+deleted, because a refuted shape with a visible refutation is the only kind that stays refuted:
+`faithfulBreakGlobal_free_of_fieldBounded` PROVES it outright and `orFaithfulBreakGlobal_iff_True`
+proves every `P ∨ FaithfulBreakGlobal …` is literally `True`. The live event is `FaithfulBreak`
+below, which names the pair. -/
+def FaithfulBreakGlobal (fold8 : AuthorityFold8) (permW : List Int → List Int)
     (cmb compress : Int → Int → Int) (compressN : List Int → Int) : Prop :=
   SpongeCollision compressN ∨ CompressCollision cmb ∨ CompressCollision compress
     ∨ AuthorityDigest8Collision fold8 ∨ WireCommit8Collision permW
 
+/-- **⚑⚑ THE TOMBSTONE'S TEETH.** At any deployed-shaped (field-bounded) sponge the retired break
+event HOLDS, with no adversary and no hypothesis about the other four primitives — the same
+pigeonhole that refutes the injectivity floors ESTABLISHES it. -/
+theorem faithfulBreakGlobal_free_of_fieldBounded (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+    (hb : FieldBounded compressN) : FaithfulBreakGlobal fold8 permW cmb compress compressN :=
+  Or.inl (spongeCollision_of_fieldBounded hb)
+
+/-- **⚑⚑ THE TOMBSTONE'S TEETH, AS AN EQUIVALENCE.** Over an ARBITRARY good branch: at a deployed
+sponge `P ∨ FaithfulBreakGlobal …` is `True` for EVERY `P`, so no theorem of that shape — including
+the ones retained below as `⚠ BRIDGE ONLY` — discriminates at the parameters we deploy at. -/
+theorem orFaithfulBreakGlobal_iff_True (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+    (hb : FieldBounded compressN) (P : Prop) :
+    (P ∨ FaithfulBreakGlobal fold8 permW cmb compress compressN) ↔ True :=
+  ⟨fun _ => trivial,
+   fun _ => Or.inr (faithfulBreakGlobal_free_of_fieldBounded fold8 permW cmb compress compressN hb)⟩
+
+/-- ⚠ **BRIDGE ONLY.** Both sides are global existentials, so this records a strength relation
+between two events that are each `True` at deployed parameters. The live reduction is
+`cellLeafColl_faithful8_reduces` (per-instance, named pair). -/
 theorem stateBreak_faithful_reduces (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) :
     StateBreakP (CH_faithful8 fold8 permW ctx) cmb compress compressN →
-      FaithfulBreak fold8 permW cmb compress compressN := by
+      FaithfulBreakGlobal fold8 permW cmb compress compressN := by
   rintro (hs | hcmb | hcomp | hcell)
   · exact Or.inl hs
   · exact Or.inr (Or.inl hcmb)
@@ -959,30 +1024,37 @@ theorem stateBreak_faithful_reduces (fold8 : AuthorityFold8)
     · exact Or.inr (Or.inr (Or.inr (Or.inl ha)))
     · exact Or.inr (Or.inr (Or.inr (Or.inr hwide)))
 
-/-! ### ⚑⚑ `FaithfulBreak` IS FREE AT DEPLOYED PARAMETERS — the per-instance port (2026-08-01).
+/-! ### ⚑⚑ THE PER-INSTANCE PORT, AND THE NARROWING (2026-08-01).
 
-`FaithfulBreak` OPENS with `SpongeCollision compressN`, a GLOBAL existential that
+The retired `FaithfulBreakGlobal` OPENED with `SpongeCollision compressN`, a GLOBAL existential that
 `SpongeCollisionShirk.spongeCollision_of_fieldBounded` SUPPLIES at every field-bounded sponge — i.e.
-at every sponge this surface deploys. So `P ∨ FaithfulBreak …` holds by its right disjunct alone,
-unconditionally, and `recStateCommit_binds_kernel_faithful` — which `Circuit/Freshness`'s header
-calls "the live binding consumer" for the deployed residue-fold leaf — says nothing at the parameters
-we deploy at. The other four disjuncts are the same shape (`∃ x y, x ≠ y ∧ fold8 x = fold8 y`, …), so
-narrowing only the sponge one would not help: EVERY disjunct of `FaithfulBreak` is a global
-existential, and any one of them being satisfiable makes the whole dichotomy true.
+at every sponge this surface deploys. So `P ∨ FaithfulBreakGlobal …` holds by its right disjunct
+alone, unconditionally (`orFaithfulBreakGlobal_iff_True`), and the consumers that returned it said
+nothing at the parameters we deploy at. Its other four disjuncts are the same shape
+(`∃ x y, x ≠ y ∧ fold8 x = fold8 y`, …), so narrowing only the sponge one would not have helped:
+EVERY disjunct was a global existential, and any one of them being satisfiable makes the whole
+dichotomy true. That is why the narrowing below rewrites ALL FIVE legs, not just the sponge.
 
-**`FaithfulBreak` therefore cannot be repaired by narrowing it in place.** It is defined without
-reference to the pair `(k, k', t)` in play, and a per-instance residual must name that pair — so the
-replacement is a DIFFERENT predicate with more arguments, not a tightening of this one. That is what
-`FaithfulCommitColl` below is. `FaithfulBreak` and all seven of its consumers are RETAINED and
-re-derived through the port (`⚠ BRIDGE ONLY`), which costs nothing: nothing outside this file
-consumes them (`Freshness` names them only in prose; `grep` over the tree finds no term-level use).
+⚠ **AN EARLIER DRAFT OF THIS PARAGRAPH CONCLUDED "`FaithfulBreak` cannot be repaired by narrowing it
+in place", and that was wrong.** What is true is only that it cannot be narrowed WITHOUT CHANGING ITS
+ARITY: a per-instance leg must name the opening `(k, k', t)`, and the old definition did not take
+one. It takes one now. Two ports therefore exist, and both are live:
 
-The residual is `StateCommitLeafRegrounded.RecStateCommitColl` AT THE FAITHFUL LEAF — the four
-commitment primitives stated at the SPECIFIC argument pairs the extraction visits — and its leaf
-disjuncts still reduce, per-instance, to a genuine eight-lane authority collision or a genuine wide
-chain collision (`cellLeafColl_faithful8_reduces`), which is exactly the guarantee `CH_faithful8` was
-built to deliver. Note the port also DROPS `hW : Poseidon2Width8 permW`: the width contract was only
-needed to unpack the scalar carrier on the way to the global reduction. -/
+* `FaithfulCommitColl` = `StateCommitLeafRegrounded.RecStateCommitColl` AT THE FAITHFUL LEAF — the
+  four commitment primitives at the SPECIFIC argument pairs the whole-kernel extraction visits. This
+  is the residual the `_or_collides` / `_of_noColl` pairs below return, and it DROPS
+  `hW : Poseidon2Width8 permW` (the width contract was only needed to unpack the scalar carrier on
+  the way to the global reduction).
+* `FaithfulBreak` (narrowed, §4 below) = the same four primitives PLUS the leaf disjuncts already
+  cashed out through `cellLeafColl_faithful8_reduces` to the deployed eight-lane authority digest and
+  wide chain, at the named preimages. This is what the consumers now return in place of the free
+  global event, so their affirmative docstrings are affirmations again.
+
+⚠ ONE of `FaithfulBreakGlobal`'s consumers genuinely is global→global and stays
+(`stateBreak_faithful_reduces`); the other retained two (`recStateCommit_binds_kernel_faithful_global`,
+`transfer_circuit_full_sound_faithful`) are `⚠ BRIDGE ONLY` re-derivations that record the strength
+relation. Nothing outside this file consumes any of them (`Freshness`/`CircuitSoundness` name them in
+prose only; `grep` over the tree finds no term-level use), so the narrowing broke no consumer. -/
 
 /-- A collision of the complete eight-lane authority digest AT A NAMED PAIR of tagged preimages. -/
 def AuthorityDigest8Coll (fold8 : AuthorityFold8) (x y : AuthorityInput) : Prop :=
@@ -1000,6 +1072,17 @@ theorem AuthorityDigest8Coll.toGlobal {fold8 : AuthorityFold8} {x y : AuthorityI
 /-- A named `WireCommit8Coll` is a genuine `WireCommit8Collision` (⚠ loses the pair). -/
 theorem WireCommit8Coll.toGlobal {permW : List Int → List Int} {l l' : List Int} {ir ir' : Int}
     (h : WireCommit8Coll permW l l' ir ir') : WireCommit8Collision permW := ⟨l, l', ir, ir', h.1, h.2⟩
+
+/-- **⚑ THE FAITHFUL LEAF'S BREAK AT A NAMED `(c, v, w)`.** The deployed guarantee `CH_faithful8`
+was built to deliver, stated about the TWO openings in play and nothing else: either the complete
+eight-lane authority digest agrees on the two NAMED tagged preimages, or the 184-limb-plus-iroot wide
+chain agrees on the two NAMED limb openings. No `∃ two colliding inputs` anywhere, so pigeonhole does
+not supply it: `noFaithfulLeafBreak_diag` refutes it at `v = w` for EVERY deployment. -/
+def FaithfulLeafBreak (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (c : CellId) (v w : Value) : Prop :=
+  AuthorityDigest8Coll fold8 (rotatedAuthorityInput v) (rotatedAuthorityInput w)
+    ∨ WireCommit8Coll permW (rotatedPreLimbs fold8 (ctx c v) v)
+        (rotatedPreLimbs fold8 (ctx c w) w) (ctx c v).iroot (ctx c w).iroot
 
 /-- **⚑ THE PER-INSTANCE LEAF REDUCTION.** A collision of the scalar compatibility view AT A NAMED
 `(c, v, w)` is never a lane-0 residue: it reduces to equality of ALL EIGHT authority lanes on the two
@@ -1032,6 +1115,79 @@ theorem cellLeafColl_faithful8_reduces (fold8 : AuthorityFold8)
     · exact Or.inl ⟨ha, hd⟩
     · exact Or.inr ⟨Or.inl (fun heq =>
         hd (rotatedPreLimbs_eq_implies fold8 (ctx c v) (ctx c w) heq).2), hcommit⟩
+
+/-- `cellLeafColl_faithful8_reduces` at the named event. -/
+theorem faithfulLeafBreak_of_cellLeafColl (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (c : CellId) (v w : Value)
+    (hc : CellLeafColl (CH_faithful8 fold8 permW ctx) c v w) :
+    FaithfulLeafBreak fold8 permW ctx c v w :=
+  cellLeafColl_faithful8_reduces fold8 permW hW ctx c v w hc
+
+/-- **⚑⚑ `FaithfulBreak` — NARROWED 2026-08-01: EVERY LEG NAMES A PAIR.** The five commitment
+primitives of the live eight-lane surface, each stated AT THE SPECIFIC ARGUMENTS the whole-kernel
+extraction visits for THIS opening `(k, k', t)` — never `∃ two colliding inputs`. Leg by leg:
+
+1. the root combiner `cmb` at the two `(cellDigest, RH)` children;
+2. the node hash `compress` at the `cellDigest` split (frame child ⊕ moved child);
+3. the sponge `compressN` at the TWO ORDERED FRAME-LEAF LISTS (`FrameCNColl`) — the named-pair
+   replacement for the global `SpongeCollision compressN` this definition used to OPEN with;
+4. the leaf, at whichever untouched carrier cell equivocates — an `∃ c ∈` over the FINITE frame
+   carrier OF THIS OPENING, indexed BY the claim rather than quantified outside it;
+5. the node hash again at the moved leaf pair, and the leaf at `src` and at `dst`.
+
+Every leaf leg is already cashed out to the deployed surface by `FaithfulLeafBreak`: a genuine
+eight-lane authority collision or a genuine wide-chain collision, at named preimages.
+`noFaithfulBreak_diag` refutes the whole disjunction on the diagonal at EVERY choice of
+`fold8`/`permW`/`ctx`/`cmb`/`compress`/`compressN`/`RH` — contrast `FaithfulBreakGlobal`, which
+`faithfulBreakGlobal_free_of_fieldBounded` supplies for free. -/
+def FaithfulBreak (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) (RH : RecordKernelState → Int)
+    (k k' : RecordKernelState) (t : Turn) : Prop :=
+  CompressColl cmb
+      (cellDigest (CH_faithful8 fold8 permW ctx) compress compressN k t) (RH k)
+      (cellDigest (CH_faithful8 fold8 permW ctx) compress compressN k' t) (RH k')
+    ∨ CompressColl compress
+        (frameDigest (CH_faithful8 fold8 permW ctx) compressN k (k.accounts \ {t.src, t.dst}))
+        (movedDigest (CH_faithful8 fold8 permW ctx) compress k.cell t.src t.dst)
+        (frameDigest (CH_faithful8 fold8 permW ctx) compressN k' (k.accounts \ {t.src, t.dst}))
+        (movedDigest (CH_faithful8 fold8 permW ctx) compress k'.cell t.src t.dst)
+    ∨ FrameCNColl (CH_faithful8 fold8 permW ctx) compressN k k' (k.accounts \ {t.src, t.dst})
+    ∨ (∃ c ∈ k.accounts \ {t.src, t.dst},
+        FaithfulLeafBreak fold8 permW ctx c (k.cell c) (k'.cell c))
+    ∨ CompressColl compress
+        (CH_faithful8 fold8 permW ctx t.src (k.cell t.src))
+        (CH_faithful8 fold8 permW ctx t.dst (k.cell t.dst))
+        (CH_faithful8 fold8 permW ctx t.src (k'.cell t.src))
+        (CH_faithful8 fold8 permW ctx t.dst (k'.cell t.dst))
+    ∨ FaithfulLeafBreak fold8 permW ctx t.src (k.cell t.src) (k'.cell t.src)
+    ∨ FaithfulLeafBreak fold8 permW ctx t.dst (k.cell t.dst) (k'.cell t.dst)
+
+/-- **⚑ THE NARROWING IS A NARROWING.** Every leg of `FaithfulBreak` implies the corresponding leg of
+the retired `FaithfulBreakGlobal`, so the new event is CONTAINED in the old one at every opening —
+`FaithfulBreak` is strictly the stronger conclusion, and nothing the old shape claimed is given up.
+Together with `faithfulBreak_sharper_than_global` (the old one holds where the new one is refuted)
+this pins the containment as PROPER at deployed parameters. -/
+theorem faithfulBreakGlobal_of_faithfulBreak (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (ctx : RotatedContextProvider)
+    (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+    (RH : RecordKernelState → Int) {k k' : RecordKernelState} {t : Turn}
+    (h : FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t) :
+    FaithfulBreakGlobal fold8 permW cmb compress compressN := by
+  have leaf : ∀ {c : CellId} {v w : Value}, FaithfulLeafBreak fold8 permW ctx c v w →
+      FaithfulBreakGlobal fold8 permW cmb compress compressN := by
+    rintro c v w (ha | hw)
+    · exact Or.inr (Or.inr (Or.inr (Or.inl ha.toGlobal)))
+    · exact Or.inr (Or.inr (Or.inr (Or.inr hw.toGlobal)))
+  rcases h with hr | hn | hcn | ⟨_, -, hl⟩ | hm | hl | hl
+  · exact Or.inr (Or.inl hr.extracts)
+  · exact Or.inr (Or.inr (Or.inl hn.extracts))
+  · exact Or.inl ⟨_, _, hcn.1, hcn.2⟩
+  · exact leaf hl
+  · exact Or.inr (Or.inr (Or.inl hm.extracts))
+  · exact leaf hl
+  · exact leaf hl
 
 /-- **`FaithfulCommitColl` — THE PER-INSTANCE RESIDUAL of the live eight-lane whole-kernel binding.**
 The four commitment primitives (`cmb`, `compress`, `compressN`, and the faithful leaf `CH_faithful8`)
@@ -1126,22 +1282,50 @@ theorem stateBreakP_of_recStateCommitColl (CH : CellId → Value → Int)
     · exact StateBreakP.ofCompress CH cmb compress compressN hn2
     · exact StateBreakP.ofCell CH cmb compress compressN hc
 
-/-- ⚠ The named residual cashes out as the FREE `FaithfulBreak`. -/
+/-- ⚠ The named residual cashes out as the FREE `FaithfulBreakGlobal` — the direction that forgets
+the pair. Only the retained `⚠ BRIDGE ONLY` theorems travel this way. -/
+theorem faithfulBreakGlobal_of_faithfulCommitColl (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) (RH : RecordKernelState → Int)
+    {k k' : RecordKernelState} {t : Turn}
+    (h : FaithfulCommitColl fold8 permW ctx cmb compress compressN RH k k' t) :
+    FaithfulBreakGlobal fold8 permW cmb compress compressN :=
+  stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN
+    (stateBreakP_of_recStateCommitColl (CH_faithful8 fold8 permW ctx) RH cmb compress compressN h)
+
+/-- **⚑ THE NAMED RESIDUAL, CASHED OUT TO THE DEPLOYED SURFACE — STILL PER-INSTANCE.** Every leaf
+disjunct of `FaithfulCommitColl` is pushed through `cellLeafColl_faithful8_reduces` to a genuine
+eight-lane authority collision or a genuine wide-chain collision AT THE PAIR THAT LEAF WAS OPENED AT;
+the combiner/node/sponge disjuncts are already at their named argument tuples. Nothing is forgotten,
+so unlike `faithfulBreakGlobal_of_faithfulCommitColl` this direction is usable on a live path. -/
 theorem faithfulBreak_of_faithfulCommitColl (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     {k k' : RecordKernelState} {t : Turn}
     (h : FaithfulCommitColl fold8 permW ctx cmb compress compressN RH k k' t) :
-    FaithfulBreak fold8 permW cmb compress compressN :=
-  stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN
-    (stateBreakP_of_recStateCommitColl (CH_faithful8 fold8 permW ctx) RH cmb compress compressN h)
+    FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t := by
+  rcases h with hroot | hnode | hframe | hmoved
+  · exact Or.inl hroot
+  · exact Or.inr (Or.inl hnode)
+  · rcases hframe with hcn | ⟨c, hc, hl⟩
+    · exact Or.inr (Or.inr (Or.inl hcn))
+    · exact Or.inr (Or.inr (Or.inr (Or.inl
+        ⟨c, hc, faithfulLeafBreak_of_cellLeafColl fold8 permW hW ctx c _ _ hl⟩)))
+  · rcases hmoved with hn | hl | hl
+    · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl hn))))
+    · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl
+        (faithfulLeafBreak_of_cellLeafColl fold8 permW hW ctx t.src _ _ hl))))))
+    · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr
+        (faithfulLeafBreak_of_cellLeafColl fold8 permW hW ctx t.dst _ _ hl))))))
 
-/-- ⚠ **BRIDGE ONLY (2026-08-01).** `FaithfulBreak` is a five-way disjunction of GLOBAL existentials
-whose first disjunct pigeonhole supplies at every deployed sponge, so this dichotomy is `True` as
-stated and the binding it announces is carried by the break branch. Re-derived from
-`recStateCommit_binds_kernel_faithful_or_collides` by forgetting the argument pair; retained only so
-the strength relation is machine-checked. -/
+/-- **⚑⚑ THE LIVE BINDING CONSUMER, NARROWED.** Equal live-wide faithful roots determine the entire
+kernel, OR one of the five commitment primitives collides AT AN ARGUMENT PAIR THIS OPENING NAMES.
+No injectivity hypothesis and — since 2026-08-01 — no global collision existential either: the break
+disjunct is `FaithfulBreak … k k' t`, which `noFaithfulBreak_diag` refutes on the diagonal at EVERY
+deployment. This is what `Circuit/Freshness`'s "the live binding consumer" can now mean without a
+caveat. -/
 theorem recStateCommit_binds_kernel_faithful (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
@@ -1151,8 +1335,28 @@ theorem recStateCommit_binds_kernel_faithful (fold8 : AuthorityFold8)
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
-    k = k' ∨ FaithfulBreak fold8 permW cmb compress compressN :=
+    k = k' ∨ FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t :=
   Or.imp_right (faithfulBreak_of_faithfulCommitColl fold8 permW hW ctx cmb compress compressN RH)
+    (recStateCommit_binds_kernel_faithful_or_collides fold8 permW ctx cmb compress compressN RH
+      hRest k k' t hwf hwf' hfin hfin' hroot)
+
+/-- ⚠ **BRIDGE ONLY (2026-08-01).** The pre-narrowing conclusion: `FaithfulBreakGlobal` is a five-way
+disjunction of GLOBAL existentials whose first disjunct pigeonhole supplies at every deployed sponge,
+so THIS dichotomy is `True` as stated (`orFaithfulBreakGlobal_iff_True`) and the binding it announces
+is carried by the break branch. Retained only so the strength relation to the narrowed theorem above
+is machine-checked. Do not consume it. -/
+theorem recStateCommit_binds_kernel_faithful_global (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) (RH : RecordKernelState → Int)
+    (hRest : RestHashIffFrameFin RH) (k k' : RecordKernelState) (t : Turn)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+      recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
+    k = k' ∨ FaithfulBreakGlobal fold8 permW cmb compress compressN :=
+  Or.imp_right
+    (faithfulBreakGlobal_of_faithfulCommitColl fold8 permW hW ctx cmb compress compressN RH)
     (recStateCommit_binds_kernel_faithful_or_collides fold8 permW ctx cmb compress compressN RH
       hRest k k' t hwf hwf' hfin hfin' hroot)
 
@@ -1166,13 +1370,15 @@ def KernelEquivocation (fold8 : AuthorityFold8) (permW : List Int → List Int)
     recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t
 
+/-- An equivocation at this named opening EXHIBITS a collision of one of the five primitives at an
+argument pair the opening itself names — not merely "some collision exists somewhere". -/
 theorem kernelEquivocation_reduces (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrameFin RH) (k k' : RecordKernelState) (t : Turn)
     (heqv : KernelEquivocation fold8 permW ctx cmb compress compressN RH k k' t) :
-    FaithfulBreak fold8 permW cmb compress compressN := by
+    FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t := by
   rcases heqv with ⟨hwf, hwf', hfin, hfin', hne, hroot⟩
   rcases recStateCommit_binds_kernel_faithful fold8 permW hW ctx cmb compress compressN RH hRest
       k k' t hwf hwf' hfin hfin' hroot with hk | hb
@@ -1203,7 +1409,8 @@ theorem kernelEquivocation_refl_false (fold8 : AuthorityFold8) (permW : List Int
   intro h
   exact h.2.2.2.2.1 rfl
 
-/-- Faithful nonce binding in reduction form. -/
+/-- Faithful nonce binding in reduction form, at the NAMED opening: equal faithful roots give equal
+agent nonces unless one of the five primitives collides at an argument pair this opening names. -/
 theorem commit_binds_nonce_faithful (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
@@ -1214,14 +1421,16 @@ theorem commit_binds_nonce_faithful (fold8 : AuthorityFold8)
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
     nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨
-      FaithfulBreak fold8 permW cmb compress compressN := by
+      FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t := by
   rcases recStateCommit_binds_kernel_faithful fold8 permW hW ctx cmb compress compressN RH hRest
       k k' t hwf hwf' hfin hfin' hroot with hk | hb
   · exact Or.inl (congrArg (fun s => nonceOf (s.cell agent)) hk)
   · exact Or.inr hb
 
 /-- Pairwise replay tooth: two states with different agent nonces cannot share the faithful root
-unless a concrete commitment collision is exhibited. -/
+unless a concrete commitment collision is exhibited AT AN ARGUMENT PAIR THOSE TWO STATES NAME. (Until
+2026-08-01 the conclusion was `FaithfulBreakGlobal`, and this sentence was false: that event holds at
+every deployed sponge, so the two states could share the root with nothing exhibited at all.) -/
 theorem nonce_difference_reduces (fold8 : AuthorityFold8)
     (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
@@ -1232,7 +1441,7 @@ theorem nonce_difference_reduces (fold8 : AuthorityFold8)
     (hnonce : nonceOf (k.cell agent) ≠ nonceOf (k'.cell agent))
     (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
       recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
-    FaithfulBreak fold8 permW cmb compress compressN := by
+    FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t := by
   rcases commit_binds_nonce_faithful fold8 permW hW ctx cmb compress compressN RH hRest
       k k' t agent hwf hwf' hfin hfin' hroot with hn | hb
   · exact absurd hn hnonce
@@ -1241,7 +1450,8 @@ theorem nonce_difference_reduces (fold8 : AuthorityFold8)
 /-! ### The faithful commitment surface and the full cross-turn no-replay consumer. -/
 
 /-- The deployed binding surface without impossible injectivity fields.  Its only structural
-carrier is the rest-frame correspondence; every hash failure is returned as `FaithfulBreak`. -/
+carrier is the rest-frame correspondence; every hash failure is returned as `S.Break k k' t`, the
+narrowed per-opening `FaithfulBreak`. -/
 structure FaithfulCommitSurface where
   fold8 : AuthorityFold8
   permW : List Int → List Int
@@ -1257,13 +1467,16 @@ noncomputable def FaithfulCommitSurface.commit (S : FaithfulCommitSurface)
     (k : RecordKernelState) (t : Turn) : Int :=
   recStateCommit (CH_faithful8 S.fold8 S.permW S.ctx) S.RH S.cmb S.compress S.compressN k t
 
-abbrev FaithfulCommitSurface.Break (S : FaithfulCommitSurface) : Prop :=
-  FaithfulBreak S.fold8 S.permW S.cmb S.compress S.compressN
+/-- The surface's break event AT A NAMED OPENING (narrowed 2026-08-01: it used to be a 0-ary
+`FaithfulBreakGlobal` and therefore `True` at every deployed sponge). -/
+abbrev FaithfulCommitSurface.Break (S : FaithfulCommitSurface) (k k' : RecordKernelState)
+    (t : Turn) : Prop :=
+  FaithfulBreak S.fold8 S.permW S.ctx S.cmb S.compress S.compressN S.RH k k' t
 
 theorem FaithfulCommitSurface.commit_binds_kernel (S : FaithfulCommitSurface)
     (k k' : RecordKernelState) (t : Turn) (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
-    (hroot : S.commit k t = S.commit k' t) : k = k' ∨ S.Break :=
+    (hroot : S.commit k t = S.commit k' t) : k = k' ∨ S.Break k k' t :=
   recStateCommit_binds_kernel_faithful S.fold8 S.permW S.width8 S.ctx
     S.cmb S.compress S.compressN S.RH
     S.restFrame k k' t hwf hwf' hfin hfin' hroot
@@ -1273,7 +1486,7 @@ theorem FaithfulCommitSurface.commit_binds_nonce (S : FaithfulCommitSurface)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (hroot : S.commit k t = S.commit k' t) :
-    nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨ S.Break :=
+    nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨ S.Break k k' t :=
   commit_binds_nonce_faithful S.fold8 S.permW S.width8 S.ctx
     S.cmb S.compress S.compressN S.RH S.restFrame
     k k' t agent hwf hwf' hfin hfin' hroot
@@ -1296,11 +1509,13 @@ def FaithfulCommitChain.LiveCommitMatches {S : FaithfulCommitSurface} {agent : C
   C.commitAt i = preCommit
 
 /-- Full cross-turn no replay on the deployed faithful surface: one live pre-anchor cannot match two
-different indices unless the proof exhibits a concrete authority/Poseidon collision. -/
+different indices unless the proof exhibits a concrete authority/Poseidon collision AT AN ARGUMENT
+PAIR THE TWO OPENED STATES NAME.  (Before 2026-08-01 the break disjunct was `FaithfulBreakGlobal`
+and the sentence was false — that event holds at every deployed sponge.) -/
 theorem no_replay_faithful {S : FaithfulCommitSurface} {agent : CellId} {t : Turn}
     (C : FaithfulCommitChain S agent t) {i j : Nat} {preCommit : Int}
     (hi : C.LiveCommitMatches i preCommit) (hj : C.LiveCommitMatches j preCommit) :
-    i = j ∨ S.Break := by
+    i = j ∨ S.Break (C.seq i) (C.seq j) t := by
   by_cases hij : i = j
   · exact Or.inl hij
   · apply Or.inr
@@ -1340,6 +1555,28 @@ theorem FaithfulCommitSurface.commit_binds_kernel_of_noColl (S : FaithfulCommitS
     (hno : ¬ S.CommitColl k k' t)
     (hroot : S.commit k t = S.commit k' t) : k = k' :=
   (S.commit_binds_kernel_or_collides k k' t hwf hwf' hfin hfin' hroot).resolve_right hno
+
+/-- **⚑ THE SURFACE NONCE BINDING, PORTED.** `commit_binds_nonce` had no per-instance twin: it
+returned `S.Break`, which before the narrowing was `FaithfulBreakGlobal` and free. This returns the
+NAMED residual at the opening `(k, k', t)`. -/
+theorem FaithfulCommitSurface.commit_binds_nonce_or_collides (S : FaithfulCommitSurface)
+    (k k' : RecordKernelState) (t : Turn) (agent : CellId)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hroot : S.commit k t = S.commit k' t) :
+    nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨ S.CommitColl k k' t :=
+  commit_binds_nonce_faithful_or_collides S.fold8 S.permW S.ctx S.cmb S.compress S.compressN S.RH
+    S.restFrame k k' t agent hwf hwf' hfin hfin' hroot
+
+/-- **S3** — the surface nonce binding from the per-instance side condition at the named opening. -/
+theorem FaithfulCommitSurface.commit_binds_nonce_of_noColl (S : FaithfulCommitSurface)
+    (k k' : RecordKernelState) (t : Turn) (agent : CellId)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hno : ¬ S.CommitColl k k' t)
+    (hroot : S.commit k t = S.commit k' t) :
+    nonceOf (k.cell agent) = nonceOf (k'.cell agent) :=
+  (S.commit_binds_nonce_or_collides k k' t agent hwf hwf' hfin hfin' hroot).resolve_right hno
 
 /-- **⚑⚑ FULL CROSS-TURN NO-REPLAY AT DEPLOYED PARAMETERS.** One live pre-anchor cannot match two
 different indices unless the NAMED residual fires at exactly the pair of states those two indices
@@ -1389,14 +1626,38 @@ theorem no_replay_faithful_on_adversary_failure {S : FaithfulCommitSurface}
     exact congrArg (fun k => nonceOf (k.cell agent)) hs
   exact hNo i j ⟨C.wf i, C.wf j, C.finrep i, C.finrep j, hstate, hroot⟩
 
-/-! ### Full transfer soundness, with collisions returned instead of injectivity assumed. -/
+/-! ### Full transfer soundness, with collisions returned instead of injectivity assumed.
 
-/-- Faithful reduction-form twin of `StateCommit.transfer_circuit_full_sound`.  A satisfying
-full-state transfer witness reconstructs the complete `TransferSpec`; if a digest cannot be opened
-uniquely, the proof returns the concrete faithful break.  No `cellLeafInjective`,
-`compressInjective`, or `compressNInjective` premise occurs. -/
-theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
-    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+⚑⚑ **THE HEADLINE GOT ITS TWIN (2026-08-01).** `transfer_circuit_full_sound_faithful` routed through
+`StateCommitReduce.frameDigestBindsCells_orBreak` and `movedDigestBindsCells_orBreak`, BOTH of which
+return the free `StateBreakP` (`orBreak_stateBreakP_iff_True`), and its docstring sold the ABSENCE of
+the `cellLeafInjective` / `compressInjective` / `compressNInjective` premises as a strength. It is not
+one on its own: the premise left, and a free disjunct arrived. The per-instance replacements for both
+raw layers are `StateCommitLeafRegrounded.frameDigest_binds_or_collides` /
+`movedDigest_binds_or_collides`, whose residuals name the pairs; the twin below routes through those
+and drops `Poseidon2Width8` as well (only the global cash-out ever needed it). -/
+
+/-- **`TransferFaithfulColl` — THE PER-INSTANCE RESIDUAL OF FULL-TRANSFER SOUNDNESS.** The two raw
+digest layers the proof visits, stated at the pairs it visits them at: the frame sponge (and its
+leaves) at `(k, k')` over THIS turn's carrier, and the moved node (and its two leaves) at
+`(k'.cell, recTransfer k.cell …)` — precisely the comparison the `cSMovedBind` gate makes. Note the
+moved pair is NOT `(k.cell, k'.cell)`: full-transfer soundness compares the post state against the
+SPEC's debit/credit of the pre leaves, so this residual is genuinely different from
+`FaithfulCommitColl`'s and cannot be borrowed from it. -/
+def TransferFaithfulColl (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (compress : Int → Int → Int) (compressN : List Int → Int)
+    (k k' : RecordKernelState) (t : Turn) : Prop :=
+  FrameColl (CH_faithful8 fold8 permW ctx) compressN k k' (frameCarrier k t)
+    ∨ MovedColl (CH_faithful8 fold8 permW ctx) compress
+        k'.cell (recTransfer k.cell t.src t.dst t.amt) t.src t.dst
+
+/-- **⚑⚑ FULL-TRANSFER SOUNDNESS AT DEPLOYED PARAMETERS.** A satisfying full-state transfer witness
+reconstructs the COMPLETE `TransferSpec` — the guard, the whole cell map, and all eighteen non-cell
+frame components — OR the NAMED residual `TransferFaithfulColl` holds at exactly the two digest
+openings this witness produced. No injectivity hypothesis, no global collision existential, and no
+`Poseidon2Width8` carrier. -/
+theorem transfer_circuit_full_sound_faithful_or_collides (fold8 : AuthorityFold8)
+    (permW : List Int → List Int)
     (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrameFin RH) (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
@@ -1404,7 +1665,7 @@ theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
     (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
     (h : satisfiedS cmb compress
       (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k')) :
-    TransferSpec k t k' ∨ FaithfulBreak fold8 permW cmb compress compressN := by
+    TransferSpec k t k' ∨ TransferFaithfulColl fold8 permW ctx compress compressN k k' t := by
   obtain ⟨hsat, _hcommit⟩ := h
   have e0 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vSrcPre (by decide)
@@ -1459,15 +1720,15 @@ theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
   have hfdeq : frameDigest (CH_faithful8 fold8 permW ctx) compressN k (frameCarrier k t) =
       frameDigest (CH_faithful8 fold8 permW ctx) compressN k' (frameCarrier k t) :=
     (sframereuse_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hframegate
-  rcases StateCommitReduce.frameDigestBindsCells_orBreak
-      (CH_faithful8 fold8 permW ctx) cmb compress compressN k k' (frameCarrier k t) hfdeq with
+  rcases frameDigest_binds_or_collides
+      (CH_faithful8 fold8 permW ctx) compressN k k' (frameCarrier k t) hfdeq with
     hcellframe | hb
   · have hmoveq : movedDigest (CH_faithful8 fold8 permW ctx) compress k'.cell t.src t.dst =
         movedDigest (CH_faithful8 fold8 permW ctx) compress
           (recTransfer k.cell t.src t.dst t.amt) t.src t.dst :=
       (smovedbind_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hmovedgate
-    rcases StateCommitReduce.movedDigestBindsCells_orBreak
-        (CH_faithful8 fold8 permW ctx) cmb compress compressN k'.cell
+    rcases movedDigest_binds_or_collides
+        (CH_faithful8 fold8 permW ctx) compress k'.cell
         (recTransfer k.cell t.src t.dst t.amt) t.src t.dst hmoveq with hmove | hb
     · obtain ⟨hmsrc, hmdst⟩ := hmove
       have hcellmap : k'.cell = recTransfer k.cell t.src t.dst t.amt := by
@@ -1494,23 +1755,86 @@ theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
       exact Or.inl ⟨⟨hauth, hnn, hav, hne, hsrc, hdst⟩, hcellmap,
         hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA,
         hHeaps, hNR, hRR, hCR⟩
-    · exact Or.inr (stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN hb)
-  · exact Or.inr (stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN hb)
+    · exact Or.inr (Or.inr hb)
+  · exact Or.inr (Or.inl hb)
+
+/-- **S3** — the full `TransferSpec` from the PER-INSTANCE side condition at the two digest openings
+this witness produced. -/
+theorem transfer_circuit_full_sound_faithful_of_noColl (fold8 : AuthorityFold8)
+    (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) (RH : RecordKernelState → Int)
+    (hRest : RestHashIffFrameFin RH) (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (hno : ¬ TransferFaithfulColl fold8 permW ctx compress compressN k k' t)
+    (h : satisfiedS cmb compress
+      (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k')) :
+    TransferSpec k t k' :=
+  (transfer_circuit_full_sound_faithful_or_collides fold8 permW ctx cmb compress compressN RH
+    hRest k t k' hwf hwf' hfin hfin' h).resolve_right hno
+
+/-- ⚠ The transfer residual cashes out as the FREE `FaithfulBreakGlobal` — the direction that
+forgets the pair, used only to re-derive the retained bridge below.  Both `FrameColl.extracts` and
+`MovedColl.extracts` are TOTAL (they hand back the colliding pair), so the loss happens here and
+nowhere earlier. -/
+theorem faithfulBreakGlobal_of_transferFaithfulColl (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) {k k' : RecordKernelState} {t : Turn}
+    (h : TransferFaithfulColl fold8 permW ctx compress compressN k k' t) :
+    FaithfulBreakGlobal fold8 permW cmb compress compressN := by
+  rcases h with hf | hm
+  · rcases hf.extracts with hs | hc
+    · exact Or.inl hs
+    · rcases cellCollision_faithful8_reduces fold8 permW hW ctx hc with ha | hwide
+      · exact Or.inr (Or.inr (Or.inr (Or.inl ha)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inr hwide)))
+  · rcases hm.extracts with hn | hc
+    · exact Or.inr (Or.inr (Or.inl hn))
+    · rcases cellCollision_faithful8_reduces fold8 permW hW ctx hc with ha | hwide
+      · exact Or.inr (Or.inr (Or.inr (Or.inl ha)))
+      · exact Or.inr (Or.inr (Or.inr (Or.inr hwide)))
+
+/-- ⚠ **BRIDGE ONLY (2026-08-01).** The pre-twin shape of the full-transfer headline. Its break
+disjunct `FaithfulBreakGlobal` is supplied by pigeonhole at every deployed sponge
+(`orFaithfulBreakGlobal_iff_True`), so this dichotomy is `True` as stated and reconstructs nothing.
+⚠ THE OLD DOCSTRING SOLD THE ABSENCE of `cellLeafInjective` / `compressInjective` /
+`compressNInjective` as a strength; it was not one on its own — the premise left and a free disjunct
+arrived. Re-derived from `transfer_circuit_full_sound_faithful_or_collides` by forgetting the pair;
+retained only so the strength relation is machine-checked. Consume the twin instead. -/
+theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) (RH : RecordKernelState → Int)
+    (hRest : RestHashIffFrameFin RH) (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (hwf : AccountsWF k) (hwf' : AccountsWF k')
+    (hfin : FiniteRepresentable k) (hfin' : FiniteRepresentable k')
+    (h : satisfiedS cmb compress
+      (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k')) :
+    TransferSpec k t k' ∨ FaithfulBreakGlobal fold8 permW cmb compress compressN :=
+  Or.imp_right
+    (faithfulBreakGlobal_of_transferFaithfulColl fold8 permW hW ctx cmb compress compressN)
+    (transfer_circuit_full_sound_faithful_or_collides fold8 permW ctx cmb compress compressN RH
+      hRest k t k' hwf hwf' hfin hfin' h)
 
 -- ⚑⚑ the PER-INSTANCE port (2026-08-01) — the statements that discriminate at deployed parameters.
 #assert_axioms cellLeafColl_faithful8_reduces
+#assert_axioms faithfulLeafBreak_of_cellLeafColl
+#assert_axioms faithfulBreak_of_faithfulCommitColl
 #assert_axioms recStateCommit_binds_kernel_faithful_or_collides
 #assert_axioms recStateCommit_binds_kernel_faithful_of_noColl
 #assert_axioms commit_binds_nonce_faithful_or_collides
 #assert_axioms nonce_difference_reduces_perInstance
 #assert_axioms FaithfulCommitSurface.commit_binds_kernel_or_collides
 #assert_axioms FaithfulCommitSurface.commit_binds_kernel_of_noColl
+#assert_axioms FaithfulCommitSurface.commit_binds_nonce_or_collides
+#assert_axioms FaithfulCommitSurface.commit_binds_nonce_of_noColl
 #assert_axioms no_replay_faithful_or_collides
 #assert_axioms no_replay_faithful_of_noColl
--- ⚠ the free-disjunct bridges, retained and re-derived through the port.
-#assert_axioms stateBreakP_of_recStateCommitColl
-#assert_axioms faithfulBreak_of_faithfulCommitColl
-#assert_axioms stateBreak_faithful_reduces
+#assert_axioms transfer_circuit_full_sound_faithful_or_collides
+#assert_axioms transfer_circuit_full_sound_faithful_of_noColl
+-- ⚑ the consumers NARROWED IN PLACE onto the per-opening `FaithfulBreak` (2026-08-01).
 #assert_axioms recStateCommit_binds_kernel_faithful
 #assert_axioms kernelEquivocation_reduces
 #assert_axioms recStateCommit_binds_kernel_faithful_on_adversary_failure
@@ -1521,6 +1845,15 @@ theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
 #assert_axioms FaithfulCommitSurface.commit_binds_nonce
 #assert_axioms no_replay_faithful
 #assert_axioms no_replay_faithful_on_adversary_failure
+-- ⚠ the free-disjunct bridges at the RETIRED `FaithfulBreakGlobal`, retained WITH its refutation.
+#assert_axioms faithfulBreakGlobal_free_of_fieldBounded
+#assert_axioms orFaithfulBreakGlobal_iff_True
+#assert_axioms faithfulBreakGlobal_of_faithfulBreak
+#assert_axioms stateBreakP_of_recStateCommitColl
+#assert_axioms faithfulBreakGlobal_of_faithfulCommitColl
+#assert_axioms faithfulBreakGlobal_of_transferFaithfulColl
+#assert_axioms stateBreak_faithful_reduces
+#assert_axioms recStateCommit_binds_kernel_faithful_global
 #assert_axioms transfer_circuit_full_sound_faithful
 
 /-! ## 4. Both poles fire. -/
@@ -1568,9 +1901,11 @@ theorem no_free_decode_gap (fold : AuthorityFold) :
 
 /-! ### ⚑⚑ TEETH FOR THE PER-INSTANCE RESIDUAL — SATISFIABLE, REFUTABLE, LOAD-BEARING.
 
-The three discriminations `FaithfulBreak` provably cannot make: it is a disjunction of global
-existentials, each of which pigeonhole supplies at deployed parameters, so `P ∨ FaithfulBreak …` is
-`True` — never satisfiable-but-unprovable, never load-bearing. -/
+The three discriminations `FaithfulBreakGlobal` provably cannot make: it is a disjunction of global
+existentials, each of which pigeonhole supplies at deployed parameters, so
+`P ∨ FaithfulBreakGlobal …` is `True` (`orFaithfulBreakGlobal_iff_True`) — never
+satisfiable-but-unprovable, never load-bearing. The narrowed `FaithfulBreak` makes all three; its own
+teeth are in the block after this one. -/
 
 /-- **TOOTH (SATISFIABLE, AT EVERY HASH).** On the diagonal every disjunct of the residual demands an
 argument-pair DISEQUALITY that `rfl` refutes, so `¬ S.CommitColl` is inhabited for EVERY choice of
@@ -1645,6 +1980,218 @@ theorem recStateCommit_binds_kernel_faithful_unconditional_false (RH : RecordKer
       (Dregg2.Circuit.RestFrameFin.finiteRepresentable_of_denote _)
       rfl)
 
+/-! ### ⚑⚑ TEETH FOR THE NARROWED `FaithfulBreak` — THE THREE THINGS THE OLD SHAPE COULD NOT DO.
+
+`FaithfulBreakGlobal` is PROVABLE at every deployed sponge, so it is neither refutable nor
+load-bearing anywhere. The narrowed event is refuted at the honest opening at EVERY deployment
+(`noFaithfulBreak_diag`), FIRES at a lossy one (`faithfulBreak_refutable`), and therefore is not a
+schema (`noFaithfulBreak_not_provable`). `faithfulBreak_sharper_than_global` puts both facts at ONE
+and the same sponge — the acceptance test for the narrowing. -/
+
+/-- The leaf event is refuted at an EQUAL opening, for every `fold8`/`permW`/`ctx`: both disjuncts
+demand a disequality that `rfl` refutes.  Nothing about the hash is assumed. -/
+theorem noFaithfulLeafBreak_diag (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (c : CellId) (v : Value) :
+    ¬ FaithfulLeafBreak fold8 permW ctx c v v := by
+  rintro (ha | hw)
+  · exact ha.1 rfl
+  · rcases hw.1 with h | h <;> exact h rfl
+
+/-- **⚑⚑ TOOTH (SATISFIABLE, AT EVERY DEPLOYMENT).** On the diagonal every one of the seven
+disjuncts of `FaithfulBreak` demands an argument-pair DISEQUALITY that `rfl` refutes, so
+`¬ FaithfulBreak … k k t` is inhabited for EVERY choice of
+`fold8`/`permW`/`ctx`/`cmb`/`compress`/`compressN`/`RH` — no injective instantiation is picked, and
+no field-boundedness escape hatch exists. THIS is what the old `FaithfulBreakGlobal` could not do:
+`faithfulBreakGlobal_free_of_fieldBounded` proves the negation of this statement for it. -/
+theorem noFaithfulBreak_diag (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
+    (compressN : List Int → Int) (RH : RecordKernelState → Int)
+    (k : RecordKernelState) (t : Turn) :
+    ¬ FaithfulBreak fold8 permW ctx cmb compress compressN RH k k t := by
+  rintro (hr | hn | hcn | ⟨c, -, hl⟩ | hm | hl | hl)
+  · exact hr.1 ⟨rfl, rfl⟩
+  · exact hn.1 ⟨rfl, rfl⟩
+  · exact hcn.1 rfl
+  · exact noFaithfulLeafBreak_diag fold8 permW ctx c (k.cell c) hl
+  · exact hm.1 ⟨rfl, rfl⟩
+  · exact noFaithfulLeafBreak_diag fold8 permW ctx t.src (k.cell t.src) hl
+  · exact noFaithfulLeafBreak_diag fold8 permW ctx t.dst (k.cell t.dst) hl
+
+/-- A context provider whose iroot READS the opening — the deployed shape (each cell/turn carries its
+own inbound root), used so the wide-chain leg has a genuinely distinct named pair to fire on. -/
+private def rotatedContextDemoIroot : RotatedContextProvider := fun _ v =>
+  { residual := fun i => 300 + i.1
+    iroot := match v with | .int n => n | _ => 0 }
+
+/-- **TOOTH (REFUTABLE, LEAF LAYER).** At the all-constant wide permutation the 184-limb chain
+collapses (`wireCommitR8_constantWide`), so two openings with DIFFERENT inbound roots produce the
+SAME eight-lane carrier: the named wide-chain collision genuinely fires. -/
+theorem faithfulLeafBreak_refutable (c : CellId) :
+    FaithfulLeafBreak constantAuthorityFold8 constantWide rotatedContextDemoIroot c
+      (Value.int 0) (Value.int 1) := by
+  refine Or.inr ⟨Or.inr ?_, ?_⟩
+  · intro h
+    simp [rotatedContextDemoIroot] at h
+  · simp only [wireCommitR8_constantWide]
+
+/-- **⚑ TOOTH (REFUTABLE — the narrowed break FIRES).** At a lossy deployment two kernels differing
+at the moved cells equivocate the faithful leaf, and `FaithfulBreak` CATCHES it through its `src`
+leaf disjunct. So `¬ FaithfulBreak` is not a tautology: a lossy eight-lane deployment is caught here,
+not defined away. -/
+theorem faithfulBreak_refutable :
+    FaithfulBreak constantAuthorityFold8 constantWide rotatedContextDemoIroot
+      (fun _ _ => (0 : Int)) (fun _ _ => (0 : Int)) (fun _ => (0 : Int)) (fun _ => (0 : Int))
+      ({ kS0 with cell := fun _ => Value.int 0 }) ({ kS0 with cell := fun _ => Value.int 1 })
+      goodTurnS :=
+  Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl (faithfulLeafBreak_refutable goodTurnS.src))))))
+
+/-- **TOOTH (NOT PROVABLE).** Some instantiation satisfies the narrowed break, so `¬ FaithfulBreak`
+is not a schema true of every deployment — a genuine per-instance obligation. -/
+theorem noFaithfulBreak_not_provable :
+    ¬ ∀ (fold8 : AuthorityFold8) (permW : List Int → List Int) (ctx : RotatedContextProvider)
+        (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+        (RH : RecordKernelState → Int) (k k' : RecordKernelState) (t : Turn),
+      ¬ FaithfulBreak fold8 permW ctx cmb compress compressN RH k k' t :=
+  fun h => h _ _ _ _ _ _ _ _ _ goodTurnS faithfulBreak_refutable
+
+/-- **⚑⚑ THE ACCEPTANCE TEST FOR THE NARROWING.** At ONE AND THE SAME deployed-shaped sponge: the
+retired `FaithfulBreakGlobal` HOLDS (so `P ∨ FaithfulBreakGlobal …` says nothing about `P`), while
+the narrowed `FaithfulBreak` is REFUTED at the honest opening (so `P ∨ FaithfulBreak … k k t` forces
+`P`). The replacement survives where the retired shape provably does not. -/
+theorem faithfulBreak_sharper_than_global (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+    (RH : RecordKernelState → Int) (hb : FieldBounded compressN)
+    (k : RecordKernelState) (t : Turn) :
+    FaithfulBreakGlobal fold8 permW cmb compress compressN
+      ∧ ¬ FaithfulBreak fold8 permW ctx cmb compress compressN RH k k t :=
+  ⟨faithfulBreakGlobal_free_of_fieldBounded fold8 permW cmb compress compressN hb,
+    noFaithfulBreak_diag fold8 permW ctx cmb compress compressN RH k t⟩
+
+/-! ### ⚑ TOOTH (LOAD-BEARING) FOR THE NONCE TWIN.
+
+`recStateCommit_binds_kernel_faithful_unconditional_false` above is NOT this tooth: its two witness
+kernels differ only in `nullifiers`, so their agent nonces AGREE and it says nothing about the nonce
+conclusion.  A nonce canary needs a pair differing in a CELL, i.e. a `FinKernelState` with a
+non-empty `CanonMap` — which the tree did not have until here. -/
+
+section NonceCanary
+
+open Dregg2.Circuit.FinKernelState (FinKernelState finInit denote denote_finInit CanonMap SortedMap
+  lookupList)
+
+/-- A one-cell finite kernel whose cell `0` carries `nonce = 1`.  `accounts = {0}` is what makes it
+`AccountsWF`; being a `denote` image is what makes it `FiniteRepresentable`.  Both structural side
+conditions of the nonce binding therefore hold of it, so the canary below refutes the residual-free
+statement WITH the envelope in place, not by dodging it. -/
+private def finNonce : FinKernelState :=
+  { finInit with
+    accounts := {0}
+    cell := ⟨⟨[(0, Value.record [("nonce", Value.int 1)])], by simp⟩, by
+      intro p hp
+      simp only [List.mem_singleton] at hp
+      subst hp
+      exact fun h => Value.noConfusion h⟩ }
+
+private theorem accountsWF_denote_finNonce : AccountsWF (denote finNonce) := by
+  intro c hc
+  have hc0 : (0 : CellId) ≠ c := by
+    intro h
+    exact hc (by simp [finNonce, denote, ← h])
+  simp [denote, finNonce, CanonMap.get, SortedMap.get, SortedMap.lookup, lookupList, hc0]
+  rfl
+
+private theorem nonceOf_denote_finNonce : nonceOf ((denote finNonce).cell 0) = 1 := by
+  simp [denote, finNonce, CanonMap.get, SortedMap.get, SortedMap.lookup, lookupList, nonceOf,
+    nonceField, Value.scalar, Value.field]
+
+private theorem nonceOf_denote_finInit : nonceOf ((denote finInit).cell 0) = 0 := by
+  rw [denote_finInit]
+  simp [nonceOf, Value.scalar, Value.field]
+
+/-- **⚑⚑ TOOTH (LOAD-BEARING).** Delete the per-instance side condition from
+`FaithfulCommitSurface.commit_binds_nonce_of_noColl` and the statement is FALSE — not weaker, FALSE —
+for EVERY rest hash, honest or not, with the entire structural envelope (`AccountsWF`,
+`FiniteRepresentable`) still in place.  At the all-constant deployment two such kernels whose agent-`0`
+nonces are `0` and `1` share the faithful root.  So `hno` carries the argument at the nonce layer too,
+and the nonce twin is not a relabeling of the whole-kernel one. -/
+theorem commit_binds_nonce_faithful_unconditional_false (RH : RecordKernelState → Int) :
+    ¬ (∀ (fold8 : AuthorityFold8) (permW : List Int → List Int) (ctx : RotatedContextProvider)
+        (cmb compress : Int → Int → Int) (compressN : List Int → Int)
+        (k k' : RecordKernelState) (t : Turn) (agent : CellId),
+        AccountsWF k → AccountsWF k' → FiniteRepresentable k → FiniteRepresentable k' →
+        recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+          recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t →
+        nonceOf (k.cell agent) = nonceOf (k'.cell agent)) := by
+  intro hall
+  have h := hall constantAuthorityFold8 constantWide (fun _ _ => rotatedContextDemo)
+    (fun _ _ => 0) (fun _ _ => 0) (fun _ => 0) _ _ goodTurnS 0
+    Dregg2.Circuit.StateCommitReduce.accountsWF_denote_finInit
+    accountsWF_denote_finNonce
+    (Dregg2.Circuit.RestFrameFin.finiteRepresentable_of_denote _)
+    (Dregg2.Circuit.RestFrameFin.finiteRepresentable_of_denote _)
+    rfl
+  rw [nonceOf_denote_finInit, nonceOf_denote_finNonce] at h
+  exact absurd h (by decide)
+
+end NonceCanary
+
+/-! ### ⚑ TEETH FOR THE TRANSFER RESIDUAL (`TransferFaithfulColl`). -/
+
+/-- **TOOTH (SATISFIABLE, AT EVERY DEPLOYMENT).** An HONEST post-state — one whose cell map really is
+the spec's debit/credit of the pre leaves — never trips the transfer residual, for EVERY
+`fold8`/`permW`/`ctx`/`compress`/`compressN`. So `¬ TransferFaithfulColl` is the ordinary case, not a
+claim that some hash is injective. (The honest opening is the transfer analogue of the diagonal: the
+moved leg compares `k'.cell` against `recTransfer k.cell …`, which agree exactly when the witness is
+honest.) -/
+theorem noTransferFaithfulColl_of_spec (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (compress : Int → Int → Int) (compressN : List Int → Int)
+    (k k' : RecordKernelState) (t : Turn)
+    (hcell : k'.cell = recTransfer k.cell t.src t.dst t.amt) :
+    ¬ TransferFaithfulColl fold8 permW ctx compress compressN k k' t := by
+  have hframe : ∀ c ∈ frameCarrier k t, k.cell c = k'.cell c := by
+    intro c hc
+    have hmem := Finset.mem_sdiff.mp hc
+    have h1 : c ≠ t.src := fun h => hmem.2 (by simp [h])
+    have h2 : c ≠ t.dst := fun h => hmem.2 (by simp [h])
+    rw [hcell]
+    simp only [recTransfer, if_neg h1, if_neg h2]
+  rintro (hf | hm)
+  · rcases hf with ⟨hne, -⟩ | ⟨c, hc, hl⟩
+    · refine hne ?_
+      show frameLeaves (CH_faithful8 fold8 permW ctx) k (frameCarrier k t) =
+        frameLeaves (CH_faithful8 fold8 permW ctx) k' (frameCarrier k t)
+      unfold frameLeaves
+      refine List.map_congr_left ?_
+      intro c hcs
+      rw [hframe c ((Finset.mem_sort (· ≤ ·)).mp hcs)]
+    · exact hl.1 (hframe c hc)
+  · rcases hm with hn | hl | hl
+    · exact hn.1 ⟨by rw [hcell], by rw [hcell]⟩
+    · exact hl.1 (by rw [hcell])
+    · exact hl.1 (by rw [hcell])
+
+/-- **⚑ TOOTH (REFUTABLE — the transfer residual FIRES).** At the all-constant wide permutation the
+faithful leaf separates nothing, so `StateCommit`'s own MINTED-BYSTANDER forgery (`forgedThirdCell`:
+cells 0/1 honestly debited/credited, cell 2 minted 50 → 999) equivocates the frame sponge's leaf at
+cell 2 — and the residual catches it through `FrameLeafColl`.  This is the exact forgery the injective
+toy portal rejects and a lossy deployment would not; `¬ TransferFaithfulColl` is a real commitment. -/
+theorem transferFaithfulColl_refutable :
+    TransferFaithfulColl constantAuthorityFold8 constantWide rotatedContextDemoIroot
+      (fun _ _ => (0 : Int)) (fun _ => (0 : Int)) kS0 forgedThirdCell goodTurnS := by
+  refine Or.inl (Or.inr ⟨2, by decide, ?_, ?_⟩)
+  · intro h
+    simp [kS0, forgedThirdCell] at h
+  · exact CH_faithful8_constantWide_const _ _ _ _ _ _
+
+/-- **TOOTH (NOT PROVABLE).** Hence `¬ TransferFaithfulColl` is not a schema true of every
+deployment. -/
+theorem noTransferFaithfulColl_not_provable :
+    ¬ ∀ (fold8 : AuthorityFold8) (permW : List Int → List Int) (ctx : RotatedContextProvider)
+        (compress : Int → Int → Int) (compressN : List Int → Int)
+        (k k' : RecordKernelState) (t : Turn),
+      ¬ TransferFaithfulColl fold8 permW ctx compress compressN k k' t :=
+  fun h => h _ _ _ _ _ _ _ goodTurnS transferFaithfulColl_refutable
+
 #assert_axioms plus4_collision
 #assert_axioms constantAuthorityFold_collision
 #assert_axioms constantAuthorityFold8_collision
@@ -1658,6 +2205,17 @@ theorem recStateCommit_binds_kernel_faithful_unconditional_false (RH : RecordKer
 #assert_axioms faithfulCommitColl_refutable
 #assert_axioms noFaithfulCommitColl_not_provable
 #assert_axioms recStateCommit_binds_kernel_faithful_unconditional_false
+-- teeth for the NARROWED `FaithfulBreak` and for the transfer residual (2026-08-01).
+#assert_axioms noFaithfulLeafBreak_diag
+#assert_axioms noFaithfulBreak_diag
+#assert_axioms faithfulLeafBreak_refutable
+#assert_axioms faithfulBreak_refutable
+#assert_axioms noFaithfulBreak_not_provable
+#assert_axioms faithfulBreak_sharper_than_global
+#assert_axioms noTransferFaithfulColl_of_spec
+#assert_axioms transferFaithfulColl_refutable
+#assert_axioms noTransferFaithfulColl_not_provable
+#assert_axioms commit_binds_nonce_faithful_unconditional_false
 
 /-! ## 5. The honest floor.
 

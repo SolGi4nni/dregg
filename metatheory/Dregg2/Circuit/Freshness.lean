@@ -44,12 +44,14 @@ target — `CommitSurface`'s four injectivity FIELDS are DELETED (refuted at dep
 pigeonhole), and `Poseidon2SpongeCR` is refuted at the same width
 (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so reducing four false premises to one false
 premise bought nothing. `poseidon2CommitSurface` is now `spongeCommitSurface` and carries NO crypto
-floor. ⚠ The theorems long called "the live binding consumer" here —
-`CommitFaithfulRegrounded.commit_binds_nonce_faithful` / `no_replay_faithful` — do NOT return
-concrete collision events as this header claimed: their `FaithfulBreak` OPENS with
-`SpongeCollision compressN`, a global existential free at any field-bounded sponge, so the
-disjunction holds unconditionally at deployed width. Prefer the per-instance forms below until that
-break is narrowed to a named pair;
+floor. ⚑ THE CAVEAT THAT STOOD HERE IS SPENT — AND ITS HISTORY IS THE POINT. It said the theorems
+long called "the live binding consumer" (`CommitFaithfulRegrounded.commit_binds_nonce_faithful` /
+`no_replay_faithful`) do NOT return concrete collision events, because `FaithfulBreak` opened with a
+global-existential `SpongeCollision compressN` — free at any field-bounded sponge, so the disjunction
+held unconditionally. That was TRUE when written and is FALSE now: `FaithfulBreak` has been NARROWED
+to open at a named pair (`CompressColl cmb`), and the free version carries the explicit name
+`FaithfulBreakGlobal`. They DO now return concrete events. Cite objects by NAME, not by describing
+their shape — a correction can go stale faster than what it corrected, and this one did, within a day;
 the parametric statements here carry the per-instance `¬ S.CommitColl` residual instead of a refuted
 premise or a free disjunct.
 
@@ -281,10 +283,9 @@ on the Poseidon2-grounded surface force equal agent nonce, "with the crypto resi
 SINGLE `Poseidon2SpongeCR`". Both halves of that sentence were the problem — the reduction target is
 REFUTED at deployed BabyBear width, so the theorem held vacuously, and the reduction ran through the
 four `CommitSurface` injectivity fields that are now deleted. The live consumer this file's header
-already names is `CommitFaithfulRegrounded.commit_binds_nonce_faithful`. ⚠ BUT SEE THE HEADER
-CORRECTION: that theorem's break event `FaithfulBreak` OPENS with `SpongeCollision compressN`, a
-GLOBAL EXISTENTIAL that is free at any field-bounded sponge, so it is not the guarantee it reads as.
-For the parametric statement use the per-instance `¬ S.CommitColl` forms, which name the pair.
+already names is `CommitFaithfulRegrounded.commit_binds_nonce_faithful`, and since `FaithfulBreak`
+was narrowed to open at a named pair it is now a real guarantee (the free form is explicitly
+`FaithfulBreakGlobal`). For the parametric statement use the per-instance `¬ S.CommitColl` forms.
 ⚑ AND NOT `OrBreak S.StateBreak`, which an earlier draft of this very sentence recommended:
 `CircuitSoundness.CommitSurface.orBreak_stateBreak_iff_True` proves that disjunction is literally
 `True` at deployed width. Recommending it as the repair was recommending the defect. -/

@@ -823,8 +823,11 @@ sponge-shaped CR fields — root/node/frame/leaf — all reduce to that one hash
 the historical `Freshness.poseidon2CommitSurface`, now the floor-free `spongeCommitSurface`) plus the
 PROVED nonce-monotone invariant;
 the deployed replacement is `CommitFaithfulRegrounded.no_replay_faithful` — ⚠ WITH THE CAVEAT that
-its `FaithfulBreak` opens with a global-existential `SpongeCollision compressN` and so holds freely
-at deployed width; prefer a per-instance `¬ CommitColl` form until that break names a pair. The sole non-crypto
+⚑ THIS CAVEAT IS NOW SPENT AND THE TEXT IS CORRECTED. It read "its `FaithfulBreak` opens with a
+global-existential `SpongeCollision compressN` and so holds freely at deployed width" — TRUE when
+written, FALSE since: `FaithfulBreak` was NARROWED and now opens with `CompressColl cmb` at a named
+pair, and the free version was renamed `FaithfulBreakGlobal`. A correction can go stale faster than
+the claim it corrected, which is why it names the object rather than describing it. The sole non-crypto
 carrier is the structural `RestHashIffFrame` (not sponge-reducible — the state carries function-valued
 components). Do NOT read "a light client that runs nothing cannot be fooled" as covering replay: it
 covers AUTHENTICITY of a single transition; FRESHNESS is the CAS's job, discharged in `Freshness`. -/
