@@ -39,11 +39,19 @@ line items, not against a round number.
 
 ## THE EIGHT SUB-CIRCUITS
 
-  * **R1 `transcript`** — the Fp Poseidon SPONGE: an init pin, `absorbs` absorb blocks (a `Generic`
-    absorb row + an 11-row `Poseidon` permutation + its output `Zero` row), then `chals` squeeze
-    permutations. The sponge STATE crosses every block boundary as a σ class — the thing no prior
-    rung had: `KimchiRenderPoseidon` proved ONE permutation with an IDENTITY permutation
-    (`sevenNones`, self-wired), so a `Poseidon` gate had never been copy-wired to anything.
+  * **R1 `transcript`** — the Fp Poseidon SPONGE: an init pin, then `absorbs` absorb blocks (a
+    `Generic` absorb row + an 11-row `Poseidon` permutation + its output `Zero` row) and `chals`
+    squeeze permutations **INTERLEAVED IN `incrementally_verify_proof`'s OWN ORDER** (§2b, the
+    schedule, `step_verifier.ml:534-574` then `:247-340`). The sponge STATE crosses every block
+    boundary as a σ class — the thing no prior rung had: `KimchiRenderPoseidon` proved ONE
+    permutation with an IDENTITY permutation (`sevenNones`, self-wired), so a `Poseidon` gate had
+    never been copy-wired to anything.
+    ⚑ …and since 2026-08-02 the interleaving is upstream's. R1 used to run **all** `absorbs` absorb
+    blocks and **then** all `chals` squeezes, with its absorb order the `ipaAbsorbs` FILTER order
+    (`z_comm` ahead of `w_comm`, the gammas ahead of `t_comm`). Both were wrong of an order-sensitive
+    object, and the all-absorbs-first shape is what made `combined_inner_product` unwireable: an
+    absorption at any position would have made β/γ/α/ζ depend on a value the transcript determines.
+    Upstream absorbs it at `:256`, AFTER ζ at `:568`, so it has no cycle — and neither does this now.
   * **R2 `challenges`** — `to_field_checked` (`scalar_challenge.ml:12-128`, `bits_per_row = 16`)
     TWICE per squeezed challenge, because `lowest_128_bits ~constrain_low_bits:true` range-checks
     BOTH parts (`util.ml:98-99`) and `assert_n_bits ~n:128` IS a `to_field_checked`
@@ -82,6 +90,14 @@ line items, not against a round number.
     the transcript's absorbed words (§3b, #3). ⚑ Each of those 48 also carries `Inner_curve.typ`'s
     own `check`, `assert_on_curve` (§7b, `snarky_curve.ml:212-229`): a curve gate constrains the
     ADDITION and not membership, so a supplied point needs the Typ's check or it needs nothing.
+    ⚑ …and since 2026-08-02 the fold chain STARTS WHERE `combine_split_commitments` starts it:
+    `~init` at commitment 0 (`step_verifier.ml:606`), i.e. **`sg_old[0]`**, whose two coordinates are
+    transcript block `oSgOld0`'s absorbed words. `ipaRounds` adds, not `ipaRounds − 1`.
+    ⚑ …and R4 now carries **`check_bulletproof`'s TAIL** (`:321-327`): `absorb sponge PC delta`, the
+    LAST squeeze `c`, and `lhs = Scalar_challenge.endo q c + delta` — one more 32-block `EndoMul`
+    ladder over the fold output plus one `Ops.add_fast`. That is what makes `delta` and `c` words
+    something READS. ⚠ `equal_g lhs rhs` (`:340`) is NOT here: `rhs` is the IPA opening, i.e.
+    `verified` (#11), still a witnessed boolean.
   * **R5 `deferred` + `xi` + `cip` + `closing`** — two of `finalize_other_proof`'s deferred words:
     `b(ζ) = ∏(1 + uᵢ·ζ^{2^{k−1−i}})` (`Wrap.challenge_polynomial`, `wrap.ml:15-17`; the product
     `KimchiVerify.bEvalSq` folds) and `combined_inner_product = Σ_k ξ^k·(evₖ(ζ) + r·evₖ(ζω))`
@@ -134,53 +150,47 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8315      8784       10461       10554
-    non-Generic         13778              7548      7550        8934        8957
+    total gates         20023              8362      8831       10508       10601
+    non-Generic         13778              7595      7597        8981        8999
     Poseidon             6292 (31.4%)       902       902        2145        2145   11×572 / 11×195 ✓
-    Generic              6245 (31.2%)       767      1234        1527        1597   —
-    EndoMul              2465 (12.3%)      2432      2432        2432        2432   32×77+1×1 / 32×76 ✓
-    Zero                 2246 (11.2%)      2060      2062        2187        2194   —
+    Generic              6245 (31.2%)       767      1234        1527        1602   —
+    EndoMul              2465 (12.3%)      2464      2464        2464        2464   32×77+1×1 / 32×77 ✓
+    Zero                 2246 (11.2%)      2062      2064        2189        2200   —
     VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd           403  (2.0%)       330       330         330         330   1×159 2×65 3×23
-                    15×1 30×1 / 1×330
+    CompleteAdd           403  (2.0%)       334       334         334         334   1×159 2×65 3×23
+                    15×1 30×1 / 1×334
 
-⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10342 → 10554 rows across two commits) — **and the headline
-is that every scalar-multiplication ladder in the assembly now STARTS WHERE UPSTREAM STARTS IT.**
-Three things happened.
+⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10554 → 10601 rows, +47) — **and the headline is that R1 now
+FEEDS THE SPONGE IN `verify_one`'S OWN ORDER, which is what closed the last three absorptions.**
+The +47 is small and it is the whole point: what landed is not scale, it is the schedule.
 
-  * ⚑ **THE ABSORB SHAPE SHRANK: `absorbs` 71 → 59, −156 rows** (−132 `Poseidon`, −12 `Zero`, −12
-    `Generic`). `2·71 = 142` transcript words against the **117** sponge items `verify_one` actually
-    absorbs — twelve whole rate-2 blocks that stood for nothing upstream feeds. `absorbs` is now
-    `⌈117/2⌉` and §12b pins the item census against the wiring census as an equality. `Poseidon`
-    goes 2277 → 2145, i.e. 195 permutations rather than 207: TWELVE FEWER PERMUTATIONS OF NOTHING.
-  * ⚑ **R3's LADDER SEED LANDED: +40 `CompleteAdd`, +24 `Generic`** (`plonk_curve_ops.ml:157-158`).
-    Forty `add_fast base base` rows and twenty `Generic` halves pinning `n_acc = Field.zero`, plus
-    four more halves for §6b's eight `ft_comm` ladders, which carried `:157` and not `:158`.
-    `CompleteAdd` goes 138 → 178 and the run-length family stays `1×`, because every seed row is
-    preceded by a `Zero` probe and followed by its ladder's first `VarBaseMul`.
+  * ⚑ **R1 INTERLEAVED (§2b).** Absorb blocks and squeezes now sit where
+    `incrementally_verify_proof` puts them, and the absorb ORDER is upstream's rather than the
+    `ipaAbsorbs` filter's (which had `z_comm` ahead of `w_comm` and the gammas ahead of `t_comm`).
+    **Zero rows** — `absorbs` is still 59 and `chals` still 23; only the order moved. Every
+    challenge VALUE moved with it, and with them every ladder the challenges drive.
+  * ⚑ **`sg_old[0]` CLOSED: +1 `CompleteAdd`, +2 `Zero`, +2 on-curve halves.**
+    `combine_split_commitments`' `~init` (`step_verifier.ml:606`) — the fold chain starts at
+    commitment 0, so `ipaRounds` adds instead of `ipaRounds − 1`.
+  * ⚑ **`combined_inner_product` CLOSED: +1 `Generic`, +1 `Zero`.** One `Boolean.typ` check for the
+    bit; the FIELD half is `vCipShift`, which R8 already binds. The absorption itself costs no block
+    — block `oCip` was one of the three that carried a `msgVal` fixture.
+  * ⚑ **`delta` CLOSED: +32 `EndoMul`, +3 `CompleteAdd`, +1 `Generic`, +8 `Zero`.**
+    `check_bulletproof`'s `lhs = Scalar_challenge.endo q c + delta` (`:325-327`) — one 32-block endo
+    ladder over the fold output at the LAST squeeze, seeded like every other, plus the closing add.
 
-  * ⚑ **AND R4's SEED, WHICH WAS ALSO THE WRONG POINT: +152 `CompleteAdd`, +76 `Generic`, +76
-    `Zero`** (§12g, `scalar_challenge.ml:230-235`). `Scalar_challenge.endo` seeds at
-    `acc = p + p` with `p = t + (Endo.base·xt, yt)` and `n_acc = Field.zero`; `runIpa` seeded at
-    `dblA T` with `qAcc r 0` and `vQN r 0` read by NO row. So the fold was self-consistent arithmetic
-    over a starting point the prover could name, and `2t` is not `2(t + φ(t))` — the seed is now the
-    endomorphism's, emitted as a `Generic` scale and two `Ops.add_fast`s per round, with the `p`
-    intermediate carrying its own σ-only probe. `CompleteAdd` 178 → **330** against upstream's 403.
-
-Net +212 over the two commits. ⚑ **AND NO SUB-CIRCUIT LEFT.** `EndoMul` 2432, `VarBaseMul` 1448 and
-`EndoMulScalar` 408 are unchanged to the row through both — the fold, `bullet_reduce`, both
-commitment MSMs and all 51 `to_field_checked` chains are exactly where they were. What went is
-transcript blocks the source does not have; what arrived is the three ladder seeds.
-⚑ **THE FAMILY, COUNTED.** Three ladder regions × two initialisers = six cells. `ft_comm` already
-had its point seed; the other FIVE were free witnesses this morning and none is now: `pAcc i 0`,
-`vSN i 0` (R3, §12f), `ftcN k 0` (§6b, §12f), `qAcc r 0`, `vQN r 0` (R4, §12g). Each is pinned as a
-2-cell σ class at `shapeSmoke`, as an equality.
-(The commit before these took 9431 → 10342 on §6b's `ft_comm` MSM;
-before that 9417 → 9431 on §3c's `sponge_after_index`; before that 9317 → 9417 on #1's third
-`lowest_128_bits` and §7b's `assert_on_curve`; before that 8713 → 9317 on #3, #1 and #9's second
-consumer.)
+⚑ **AND THE 77th ENDO BLOCK IS UPSTREAM'S OWN.** `EndoMul` 2432 → **2464 against Mina's 2465**, and
+the run-length family goes `32×76` → **`32×77`**, which is exactly Mina's `32×77 1×1`. The region
+conformance script's `ipa` anchor had already measured the split as `combine_split_commitments 46 |
+bullet_reduce 30 | check_bulletproof 1` and was comparing only the first two against our 76; the
+block we were missing was the one `delta` needed. `VarBaseMul` 1448, `EndoMulScalar` 408 and
+`Poseidon` 2145 are unchanged to the row — no other sub-circuit moved.
+(The two commits before these took 10342 → 10554 on the three ladder seeds and the absorb-shape
+correction; before that 9431 → 10342 on §6b's `ft_comm` MSM; before that 9417 → 9431 on §3c's
+`sponge_after_index`; before that 9317 → 9417 on #1's third `lowest_128_bits` and §7b's
+`assert_on_curve`.)
 
 The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff compares are INTACT
 (⚠ the prior header said "six"; `stepmain-shape-diff.mjs` prints run lengths for `Poseidon`,
@@ -190,9 +200,11 @@ The RUN LENGTHS are the fidelity signal, and all FIVE families the shape-diff co
 `1×`**, because a 255-bit `scale_fast2` chunk has the same two-row shape as a 128-bit one — and a
 128-bit `to_field_checked` is 8 `EndoMulScalar` rows, **51 such chains** (23 transcript challenges +
 their 23 `assert_128_bits hi`, §8g's deferred ξ and r, r's high part, and R8's own `lowest_128_bits`
-on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` is `1×330` — 138 plus R3's forty seed rows and R4's 152 — because every add
-is followed by a row of another kind (its σ-only probe, or its ladder's first curve row). The `EndoMul` COUNT is 2432 against upstream's 2465 and `VarBaseMul`
-1448 against 1596, i.e. the fold, `bullet_reduce` and BOTH commitment MSMs are here at full size.
+on BOTH parts), against upstream's 28 8-row runs. `CompleteAdd` is `1×334` — 330 plus the fold's
+`~init` add and `check_bulletproof`'s three — because every add is followed by a row of another kind
+(its σ-only probe, or its ladder's first curve row). The `EndoMul` COUNT is **2464 against upstream's
+2465** and `VarBaseMul` 1448 against 1596, i.e. the fold, `bullet_reduce`, `check_bulletproof`'s tail
+and BOTH commitment MSMs are here at full size.
 Only SEVEN gate types appear in any Mina step or wrap circuit — no lookup, no foreign-field, no
 range-check — and all seven are emitted here.
 
@@ -202,19 +214,19 @@ range-check — and all seven are emitted here.
 REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
 
     rung             rows   domain   honest prove+verify   σ-only probes emitted
-    r1_transcript    1069     2048             814 ms              24
-    r2_challenges    1714     2048             785 ms             116
-    r3_msm           4917     8192            1050 ms             221
-    r4_ipa           8065     8192            1123 ms             448
-    r5_full          8315    16384            1417 ms             454
-    r6_ft_eval0      8784    16384            1413 ms             456
-    r7_absorption   10461    16384            1446 ms             468
-    r8_finalize     10554    16384           17070 ms             475
+    r1_transcript    1069     2048             752 ms              24
+    r2_challenges    1714     2048             734 ms             116
+    r3_msm           4917     8192            1027 ms             221
+    r4_ipa           8110     8192             979 ms             452
+    r5_full          8362    16384            1180 ms             459
+    r6_ft_eval0      8831    16384            1224 ms             461
+    r7_absorption   10508    16384            1247 ms             473
+    r8_finalize     10601    16384            1242 ms             480
 
-(⚑ `r5_full` crossed 8192 with R4's seed rows and is a 16384-domain circuit now. r8's 17 s is
-last-touch on a loaded box; the seven above it are the steady-state figure. ⚠ the numbers are from
-this workstation, not hbox as the previous rung's table was — the shape is the measurement, the
-wall-clock is not.)
+(⚠ **`r8`'s 17.1 s in the previous rung's table was a loaded box and NOT the assembly.** Measured
+again here at 10,601 rows — 47 MORE than the 10,554 that produced the 17 s — it is **1.24 s**, in
+line with r5–r7. The prior note said as much; this is the re-measurement that settles it. ⚠ the
+numbers are from this workstation, not hbox — the shape is the measurement, the wall-clock is not.)
 
 (the harness tampers 8 probes per rung, evenly spread through the schedule; the ratchet floor for
 `pickles-stepmain-harness` is 9 `#[test]` functions and it declares 9.)
@@ -229,7 +241,7 @@ difference between 467 and that is real and named: `gateLinConst` is the STRUCTU
 which shares the 15 Poseidon S-boxes and one α power chain across all 67 constraints, where
 `Scalars.Tick` is a fully expanded `PolishToken` tree. Same value — pinned in §13 — fewer operations.
 
-The remaining `Generic` gap (1597 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
+The remaining `Generic` gap (1602 vs 6245) is therefore NOT one missing sub-circuit. It is: the zkApp
 branch's own `rule.main` application logic (which is not `verify_one` at all), the `sg_evals` prefix
 of the two `combine`s (#4), `equal_g`, `group_map`, `x_hat blinding` and the domain selection —
 `ft_comm`'s own MSM LEFT this list on 2026-08-02 (§6b). #2–#11 below name the rest. ⚑ R8 spends 70 `Generic` rows on `finalize_other_proof`'s
@@ -254,12 +266,15 @@ blocks the shape correction deleted. `verify_one`'s own sponge work is now assem
     the squeeze of that sponge — is now R1's FIRST absorbed word, so the transcript is a function of
     the verifier key. §12d exhibits the grind that was open until this landed: one plonk-index word,
     chosen by addition in under 48 tries, drives `index_digest` to a value the prover picked and
-    MOVES EVERY transcript challenge — and the pin row's own generic-gate body refuses it now.
+    MOVES EVERY transcript challenge (it is R1's FIRST absorbed word, so nothing precedes it) — and
+    the pin row's own generic-gate body refuses it now.
   * **AND FOR `t_comm`, BECAUSE `ft_comm` NOW CONSUMES IT.** §6b assembles `Common.ft_comm`'s eight
     `scale_fast2`s; the seven quotient commitments are the MSM's operands, carry `Inner_curve.typ`'s
     `assert_on_curve`, and R4 round 2's base is the MSM's output rather than a supplied point.
     §12e exhibits the grind — one `t_comm` coordinate, chosen by addition in under 64 tries, moves
-    EVERY transcript challenge — and shows the on-curve row refusing it, and shows that substituting
+    ζ AND EVERY LATER CHALLENGE (β, γ and α are squeezed BEFORE `receive without t_comm`, `:563-567`,
+    so upstream does not let a quotient chunk move them either) — and shows the on-curve row
+    refusing it, and shows that substituting
     a VALID on-curve quotient chunk moves `ft_comm` and the fold, which is the difference between
     consuming a commitment and merely absorbing one.
     ⚠ What that does NOT do: an ON-CURVE substitution is refused by no rung here. The check that
@@ -276,21 +291,42 @@ blocks the shape correction deleted. `verify_one`'s own sponge work is now assem
     21, read-only) ACCEPTING the forged ladder row for row, and shows the two new rows refusing
     them. ⚑ The `n_acc` pin covers §6b's eight `ft_comm` ladders too: they carried `:157` and not
     `:158`.
-  * ⚠ **THE ABSORB SHAPE WAS SWALLOWING WORDS UPSTREAM NEVER FEEDS IT, and that was being reported
-    as a backlog.** `absorbs` was **71** — `2·71 = 142` field elements — against the **117** sponge
-    items `verify_one` actually absorbs (`ABSORB_ITEMS`, §2, item by item). The previous rung
-    reported all 31 free words as unwired absorptions; twenty-five of them stood for nothing.
-    `absorbs = absorbBlocksNeeded = ⌈117/2⌉ = 59` now, so **7 of the 118 words are free**: the SIX
-    real unwired absorptions — `sg_old[0]`'s two coordinates (the fold's accumulator seed, which
-    gets no round), `check_bulletproof`'s `absorb sponge Scalar advice.combined_inner_product` as
-    field+bit (`step_verifier.ml:79-81,256`) and `absorb sponge PC delta` (`:321`) — plus ONE pad
-    lane, because 117 is odd and this file models one commitment per rate-2 block. §12b pins the
-    item census against the wiring census as an EQUALITY.
+  * ⚑⚑ **AND R1 IS INTERLEAVED TO UPSTREAM'S ABSORB/SQUEEZE ORDER, WHICH IS WHAT CLOSED THE LAST
+    THREE ABSORPTIONS** (2026-08-02, §2b + §12i). R1 ran all `absorbs` absorb blocks and then all
+    `chals` squeezes, in the `ipaAbsorbs` filter's order rather than `verify_one`'s. Read at source
+    (`step_verifier.ml:534-574`, `:247-340`) the order is: `index_digest` · `sg_old ×2` · `x_hat` ·
+    `w_comm ×15` · **β** · **γ** · `z_comm` · **α** · `t_comm ×7` · **ζ** · `combined_inner_product`
+    · **u** · fifteen × (`(L,R)` then a **prechallenge**) · `delta` · **c**. The schedule is now
+    that, and `absorbs` is DERIVED from it (§12b pins `absorbs == absorbBlocksOf`, at both shapes).
+    Three closures follow, each with its CONSUMER:
+      – **`sg_old[0]`** is `combine_split_commitments`' `~init` accumulator (`:606`): R4's
+        `complete_add` chain starts at it, `ipaRounds` adds instead of `ipaRounds − 1`.
+      – **`combined_inner_product`** (field + bit, `:79-81,256`) is absorbed AFTER ζ, so it is not a
+        cycle; §12i pins that β/γ/α/ζ and `ft_eval0` are IDENTICAL with the word set to zero, and
+        that every later squeeze MOVES. The absorbed field word IS `vCipShift` — the statement word
+        R8's `combined_inner_product_correct` ties to R5's Horner output — so it is CONSUMED, not
+        merely absorbed. The bit carries `Boolean.typ`'s own `b² = b`.
+      – **`delta`** (`:321`) is consumed by `lhs = Scalar_challenge.endo q c + delta` (`:325-327`):
+        one more 32-block `EndoMul` ladder over the fold output at the LAST squeeze, plus one
+        `Ops.add_fast`. ⚠ `equal_g lhs rhs` is not here — that is `verified` (#11).
+    **So `UNWIRED_ITEMS` is EMPTY and 1 of the 118 absorbed words is free**: block `oDigest`'s second
+    lane. 117 is odd, this file models one commitment per rate-2 block, and one lane therefore
+    carries nothing upstream feeds. **That is STRUCTURAL — there is no absorption behind it.**
+  * ⚠ ⚑ **AND THE PRICE, STATED RATHER THAN QUIET.** Closing `cip` needed one more thing than the
+    interleaving: `optSpec` (segment A, the opt-sponge) absorbed **R1's own transcript challenges**
+    for its `2·bRounds` words, and so did `hmSpec`'s tail. Upstream both absorb `prev_challenges`
+    (`step_verifier.ml:953-959`, `step_main.ml:80`) — the PREVIOUS proofs' carried challenges, a
+    `Per_proof_witness` field with no relationship to this transcript. That false wire made
+    `cip` a function of every transcript challenge, so absorbing it at ANY position was a cycle; the
+    interleaving alone would not have fixed it. `prev_challenges` is now its own witness vector, read
+    by BOTH segments (one σ class across two sponges, so segment C's public digest moves when one is
+    bent). What that COSTS: `2·bRounds` words that were derived cells are now prover-supplied,
+    bound by `verified` (#11) exactly as upstream binds them, and by nothing in `verify_one`.
 
-So: the sponge input is derived for the verifier key AND for the quotient commitment, and both MSM
-ladders start where upstream starts them. What is left is six unwired absorptions and one pad lane —
-and saying that, rather than "31 scalar absorptions", is the difference between a residue and a
-backlog item that would never have been checked.
+So: the sponge input is derived for the verifier key and for the quotient commitment, both MSM
+ladders and every endo ladder start where upstream starts them, the blocks are fed in upstream's
+order, and every item `verify_one` absorbs is a word some row here READS. What is left of the
+transcript residue is one structural pad lane.
 
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
@@ -617,6 +653,10 @@ structure StepShape where
   /-- evaluation columns folded by `combined_inner_product`
   (`NUM_COMMITMENTS_WITHOUT_DEGREE_BOUND = N45`, + `sg_old` padding = 47). -/
   cipEvals : Nat
+  /-- ⚑ `t_comm`'s quotient chunks this shape absorbs (`N_TCOMM = 7` upstream). A FIELD since the
+  R1 interleaving: `absorbs` is now DERIVED from the schedule, so sizing `t_comm` off `absorbs`
+  would be circular. -/
+  tComms : Nat
   /-- the public-input width (`PRIMARY_LEN`). -/
   pubWords : Nat
   deriving Repr, Inhabited, DecidableEq
@@ -702,6 +742,34 @@ challenge variable — the cross-sub-circuit wire. -/
 def vSN (s : StepShape) (i j : Nat) : PVar :=
   if j == s.msmChunks then vN s (s.msmChal i) s.emsRows else xv (baseSN s + i * s.msmChunks + j)
 
+/-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots — `combine_split_commitments`' commitment count. -/
+def N_WDB : Nat := 47
+/-- `bullet_reduce`'s fifteen `absorb (PC :: PC) gammas_i` (`step_verifier.ml:199`) — every fold
+round past `combine_split_commitments`'. TWO transcript blocks each, then one `squeeze_scalar`. -/
+def gamRounds (s : StepShape) : List Nat :=
+  (List.range s.ipaRounds).filter (fun r => N_WDB ≤ r + 1)
+/-- ⚑ The transcript squeezes upstream takes at SCHEDULED positions (§2b): β, γ, α, ζ, `u`, one per
+`bullet_reduce` round, and `c`. **21** at the committed shape; `chals − 21` is what this file still
+takes off the transcript that upstream takes off the fr-sponge (ξ and r, §8g). -/
+def sqScheduled (s : StepShape) : Nat := 6 + (gamRounds s).length / 2
+-- ⚑ THE SCHEDULE'S OWN ORDER since the R1 interleaving (`step_verifier.ml:563-568`): β then γ then
+-- α then ζ, squeezes 0..3. They were `ζ,α,β,γ = 0,1,2,3` when R1 had no schedule and the numbering
+-- was arbitrary. ⚑ These four are ALL squeezed BEFORE `combined_inner_product` is absorbed (`:256`),
+-- which is the whole reason `cip` can be a transcript word at all — §12i pins it.
+def StepShape.betaChal (_s : StepShape) : Nat := 0
+def StepShape.gammaChal (_s : StepShape) : Nat := 1
+def StepShape.alphaChal (_s : StepShape) : Nat := 2
+def StepShape.zetaChal (_s : StepShape) : Nat := 3
+/-- ⚑ `c = squeeze_scalar sponge` (`:322`) — the LAST scheduled transcript squeeze, and the scalar
+`lhs = Scalar_challenge.endo q c + delta` multiplies the fold output by. -/
+def StepShape.cChal (s : StepShape) : Nat := sqScheduled s - 1
+/-- ⚑ The `bRounds` challenges `b(ζ) = ∏(1 + uₖ·ζ^{2^{…}})` folds over. Upstream these are the
+previous proof's `bulletproof_challenges` (`step_verifier.ml:937-938,1124-1128`); this file still
+takes them off the transcript (the round-robin sharing #4 names), and takes them from the squeezes
+AFTER ζ — which at the committed shape ARE `u` and `bullet_reduce`'s fifteen. It was `k + 1` when ζ
+was challenge 0; at ζ = 3 that would have made ζ one of its own `uₖ`. -/
+def StepShape.uChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 1 + k
+
 def baseIpa (s : StepShape) : Nat := baseSN s + s.msmTerms * s.msmChunks
 def ipx (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p)
 def ipy (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p + 1)
@@ -714,9 +782,26 @@ def qAcc (s : StepShape) (r e : Nat) : Nat := r * (s.ipaBlocks + 3) + 1 + e
 `let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in ref G.(p + p)`). `qAcc r 0` is `p + p`,
 so BOTH are rows and neither is a witness. -/
 def qP (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3) + s.ipaBlocks + 2
-/-- The running IPA fold sum after add `a`. -/
+/-- The running IPA fold sum after add `a`. ⚑ `a = 0 .. ipaRounds−1` since the `~init` wiring: the
+chain STARTS at commitment 0 (`sg_old[0]`, `qInit`) and folds in every round's output, so there is
+one add per round and `qSum (ipaRounds−1)` is `combined_polynomial`. It was `ipaRounds − 1` adds
+starting at round 0's output, i.e. `combine_split_commitments` with its `~init` dropped. -/
 def qSum (s : StepShape) (a : Nat) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + a
-def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds
+/-- ⚑ **`sg_old[0]`** — `combine_split_commitments`' `~init` accumulator (`step_verifier.ml:606`,
+`~init:(function `Finite x -> `Finite x | …)`), whose two coordinates ARE transcript block
+`oSgOld0`'s absorbed words. It gets no fold ROUND; it is the point the chain starts at. -/
+def qInit (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds
+/-- ⚑ `check_bulletproof`'s TAIL (`:325-327`): `lhs = Scalar_challenge.endo q c + delta`, one more
+`Scalar_challenge.endo` over the fold output `q` and one `Ops.add_fast` with `delta`. `qLhsP` is the
+seed intermediate `p = t + φ(t)`. -/
+def qLhsP (s : StepShape) : Nat := qInit s + 1
+def qLhsAcc (s : StepShape) (e : Nat) : Nat := qInit s + 2 + e
+/-- ⚑ **`delta`** — `absorb sponge PC delta` (`:321`); its two coordinates are transcript block
+`oDelta`'s absorbed words and the second operand of the closing `add_fast`. -/
+def qDel (s : StepShape) : Nat := qInit s + s.ipaBlocks + 3
+/-- `lhs` itself. -/
+def qLhsOut (s : StepShape) : Nat := qInit s + s.ipaBlocks + 4
+def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 5
 
 def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
 /-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
@@ -728,6 +813,14 @@ def vQN (s : StepShape) (r e : Nat) : PVar :=
 `scalar_challenge.ml:232`'s `add_fast`. One `Generic` half per round pins it to `endo·xt`, so the
 seed's provenance is the base and a constant rather than a witness. -/
 def vQEndo (s : StepShape) (r : Nat) : PVar := xv (baseQN s + s.ipaRounds * s.ipaBlocks + r)
+/-- The `c`-endo tail's own counter chain; at `e = ipaBlocks` it IS `c`'s challenge variable, so the
+value the ladder multiplies by is the one `to_field_checked` decoded from the LAST squeeze. -/
+def vLhsN (s : StepShape) (e : Nat) : PVar :=
+  if e == s.ipaBlocks then vN s (sqScheduled s - 1) s.emsRows
+  else xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + e)
+/-- …and its seed's `endo·x_q`. -/
+def vLhsEndo (s : StepShape) : PVar :=
+  xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks)
 
 /-- ⚑ Upstream's provenance census for `combine_split_commitments`' 47 `without_degree_bound`
 commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed into the transcript.
@@ -741,8 +834,6 @@ commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed in
     26..40 coefficients_comm ×15   VK CONSTANT
     41..46 sigma_comm_init ×6      VK CONSTANT -/
 def wdbAbsorbed (i : Nat) : Bool := i ≤ 2 || i == 4 || (11 ≤ i && i < 26)
-/-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots. -/
-def N_WDB : Nat := 47
 
 /-- ⚑ IPA round `r`'s base provenance before block assignment. Rounds `0 .. N_WDB−2` are
 `combine_split_commitments`' own — round `r` folds in commitment `r+1`, the accumulator starting at
@@ -750,14 +841,23 @@ commitment `0` — and every round past them is a `bullet_reduce` `(L,R)`, all o
 (`step_verifier.ml:193`). -/
 def ipaAbsorbs (r : Nat) : Bool := if r + 1 < N_WDB then wdbAbsorbed (r + 1) else true
 
-/-- The rounds whose bases the transcript absorbs, in schedule order: round `absRoundList[k]`'s
-commitment is what transcript block `k + 1` absorbs. ⚑ Block **0** is not in this list — it is
-`index_digest`, which upstream absorbs BEFORE any commitment (`absorb sponge Field index_digest`,
-`step_verifier.ml:535`, ahead of `Vector.iter ~f:(absorb sponge PC) sg_old` at `:537`). Capped at
-`absorbs − 1` blocks (§12 pins that the cap does not bind at either shape, so no absorbed
-commitment silently becomes a constant). -/
+/-- ⚑ The fold rounds the transcript absorbs BEFORE β, in `incrementally_verify_proof`'s own order:
+`sg_old[1]` and `x_hat` (`step_verifier.ml:538,560`) and `w_comm ×15` (`:562`) — census commitments
+1, 2 and 11..25, i.e. rounds 0, 1 and 10..24. ⚠ Commitment 0 (`sg_old[0]`) is NOT a round at all:
+it is where `combine_split_commitments` STARTS its accumulator (`~init`, `:606`). -/
+def preRounds (s : StepShape) : List Nat :=
+  (List.range s.ipaRounds).filter (fun r => ipaAbsorbs r && r + 1 < N_WDB && r + 1 != 4)
+/-- `receive without z_comm` (`:565`) — census commitment 4, round 3, absorbed BETWEEN γ and α. -/
+def zRounds (s : StepShape) : List Nat :=
+  (List.range s.ipaRounds).filter (fun r => ipaAbsorbs r && r + 1 == 4)
+
+/-- The rounds whose bases the transcript absorbs, IN UPSTREAM'S ABSORPTION ORDER. ⚑ Since the R1
+interleaving this is `preRounds ++ zRounds ++ gamRounds` and not the raw `ipaAbsorbs` filter: the
+filter puts `z_comm` (round 3) ahead of `w_comm` (rounds 10..24) and the gammas ahead of `t_comm`,
+which is NOT the order `verify_one` feeds the sponge, and a sponge is order-sensitive. §12b pins
+that the two are the same SET and a different LIST. -/
 def absRoundList (s : StepShape) : List Nat :=
-  ((List.range s.ipaRounds).filter ipaAbsorbs).take (s.absorbs - 1)
+  preRounds s ++ zRounds s ++ gamRounds s
 
 /-! ### ⚑ `verify_one`'s SPONGE-ITEM CENSUS — what `absorbs` is supposed to be a count OF.
 
@@ -799,17 +899,19 @@ def N_ABSORB_ITEMS : Nat := (ABSORB_ITEMS.map (·.2)).foldl (· + ·) 0
 
 /-- ⚑ The absorptions `verify_one` performs that this file does NOT yet wire to a variable a
 sub-circuit reads. Named individually so the residue is a LIST and not an adjective. -/
-def UNWIRED_ITEMS : List (String × Nat) :=
-  [ -- `combine_split_commitments` starts its accumulator AT commitment 0 (`:606`, `~init`), so
-    -- `sg_old[0]` gets no fold ROUND and this file gives it no transcript block.
-    ("sg_old[0]", 2)
-    -- absorbed AFTER `sponge_digest_before_evaluations` is squeezed (`:574` precedes `:256`), so
-    -- upstream has no cycle; R1's model runs ALL absorb blocks before ALL squeezes, which does.
-  , ("combined_inner_product, field+bit", 2)
-    -- consumed by `lhs = Scalar_challenge.endo q c + delta` (`:326-327`), the `check_bulletproof`
-    -- tail this file has not assembled.
-  , ("delta", 2) ]
-/-- **6.** -/
+def UNWIRED_ITEMS : List (String × Nat) := []
+/-- **0** since 2026-08-02. The three that were here are closed WITH their consumers:
+
+  * `sg_old[0]` — absorbed at block `oSgOld0` and consumed as `combine_split_commitments`' `~init`
+    accumulator (`:606`), the point R4's `complete_add` chain starts at.
+  * `combined_inner_product` as field+bit — absorbed at `oCip`, which is where `:256` puts it: AFTER
+    ζ (`:568`), so it is not a cycle. The field half IS `vCipShift`, the statement word R8's
+    `combined_inner_product_correct` ties to R5's Horner output.
+  * `delta` — absorbed at `oDelta` and consumed by `lhs = Scalar_challenge.endo q c + delta`
+    (`:325-327`), one endo ladder over the fold output at the LAST transcript squeeze plus one
+    `Ops.add_fast`.
+
+⚠ What remains is the ONE PAD LANE, which is not an item: 117 is odd. -/
 def N_UNWIRED_ITEMS : Nat := (UNWIRED_ITEMS.map (·.2)).foldl (· + ·) 0
 
 /-- The absorb-block count a shape needs to feed `N_ABSORB_ITEMS` items at rate 2 — `⌈117/2⌉ = 59`.
@@ -828,10 +930,12 @@ transcript blocks stop being free, and the on-curve region below is sized by it.
 /-- `Commitment_lengths.create ~t:(of_int 7)` (`commitment_lengths.ml:6-11`) — the quotient
 polynomial's chunk count, hence `Array.length t_comm` in `common.ml:248`. -/
 def N_TCOMM : Nat := 7
-/-- …as many as THIS shape has FREE transcript blocks for, capped at 7. The smoke shape carries
-three, the same way it carries three fold rounds instead of 76; §12b″ pins that the cap does not bind
-at the committed shape, so no `t_comm` chunk silently stays a free witness. -/
-def tCommN (s : StepShape) : Nat := min N_TCOMM (s.absorbs - 1 - (absRoundList s).length)
+/-- …as many as THIS shape carries, capped at 7. The smoke shape carries three, the same way it
+carries five fold rounds instead of 76; §12b″ pins that the cap does not bind at the committed shape,
+so no `t_comm` chunk silently stays a free witness. ⚑ Read off `s.tComms` and no longer off
+`absorbs − 1 − |absRoundList|`: since the R1 interleaving `absorbs` is DERIVED from the schedule and
+the schedule contains the `t_comm` blocks, so the old form was circular. -/
+def tCommN (s : StepShape) : Nat := min N_TCOMM s.tComms
 /-- `ft_comm`'s `scale_fast2` count: `plonk.perm · sigma_comm_last`, the `n−1` Horner steps in
 `plonk.zeta_to_srs_length`, and the closing `plonk.zeta_to_domain_size` scale. **Eight** at
 `tCommN = 7`, which is `common.ml:246,251,256` counted. -/
@@ -845,6 +949,96 @@ def FTC_CHUNKS : Nat := 51
 `3` is `ft_comm` (`step_verifier.ml:606`), and round `r` folds commitment `r+1`, so it is round 2. -/
 def FTC_ROUND : Nat := 2
 
+/-! ### ⚑⚑ §2b — **THE TRANSCRIPT SCHEDULE**: `incrementally_verify_proof`'s OWN absorb/squeeze
+INTERLEAVING, read at source.
+
+Until 2026-08-02 R1 ran **all** `absorbs` absorb blocks and **then** all `chals` squeeze blocks, and
+its absorb order was the `ipaAbsorbs` FILTER order (z_comm ahead of w_comm, the gammas ahead of
+`t_comm`). Neither is `verify_one`'s. A sponge is order-sensitive, so both were fidelity defects; and
+the all-absorbs-first shape is what made `combined_inner_product` unwireable — absorbing it would
+have made β/γ/α/ζ depend on a value the transcript itself determines. Upstream has no such cycle
+because it absorbs it AFTER ζ.
+
+`step_verifier.ml:529-574` then `:247-340`, in order, with the sponge item counts:
+
+    :534   absorb Field index_digest                    1   (+1 PAD lane — 117 is odd)
+    :538   Vector.iter (absorb PC) sg_old ×2            4   ⚑ sg_old[0] is the fold's `~init`
+    :560   absorb PC x_hat                              2
+    :562   Vector.iter absorb_g w_comm ×15             30
+    :563   let beta  = sample ()                          SQUEEZE
+    :564   let gamma = sample ()                          SQUEEZE
+    :565   let z_comm = receive without z_comm          2
+    :566   let alpha = sample_scalar ()                   SQUEEZE
+    :567   let t_comm = receive without t_comm         14
+    :568   let zeta  = sample_scalar ()                   SQUEEZE
+    :573   sponge_before_evaluations = Sponge.copy sponge     ⚑ THE FORK
+    :574   sponge_digest_before_evaluations = squeeze_field   (off the COPY's twin — see below)
+    :256   absorb Scalar advice.combined_inner_product  2   ⚑ AFTER ζ. This is why there is no cycle.
+    :264   let u = group_map (squeeze_field sponge)        SQUEEZE
+    :199   ×15  absorb (PC :: PC) gammas_i              60   (two blocks per round)
+    :200   ×15  squeeze_scalar                            SQUEEZE
+    :321   absorb PC delta                              2
+    :322   let c = squeeze_scalar sponge                  SQUEEZE
+
+**117 items, 59 rate-2 blocks, 21 transcript squeezes.** ⚠ THE FORK, stated rather than elided: the
+copy at `:573` is taken BEFORE the `:574` squeeze, so `check_bulletproof` continues from the state ζ
+left and the digest permutation is a SIDE branch — the same `Sponge.copy` shape §3c already models
+for `index_digest`. This file's linear chain IS the copy's; `sponge_digest_before_evaluations` is not
+modelled as a block (nothing here consumes it — it is `verify_one`'s return value, absorbed by
+`step_main.ml:45` into the sponge `finalize_other_proof` runs, which is segment A/B's business).
+
+⚠ `chals = 23` against upstream's 21: the two extra are ξ and r, which upstream squeezes from the
+**fr-sponge** (`:1008-1009`, §8g) and which this file still also allocates as transcript squeezes for
+the round-robin `msmChal`/`ipaChal` sharing. They are scheduled at the END, after `c`, and named. -/
+
+/-- Absorb-block ORDINALS, in upstream's order. Block indices are `absBlock` of these. -/
+def oDigest : Nat := 0
+/-- ⚑ `sg_old[0]` — `combine_split_commitments`' `~init` accumulator (`:606`), absorbed at `:538`
+and consumed by R4's `complete_add` chain rather than by a fold round. -/
+def oSgOld0 : Nat := 1
+def oPre : Nat := 2
+def oZ (s : StepShape) : Nat := oPre + (preRounds s).length
+def oTc (s : StepShape) : Nat := oZ s + (zRounds s).length
+/-- ⚑ `absorb sponge Scalar advice.combined_inner_product` (`:256`) — field then bit (`:79-81`). -/
+def oCip (s : StepShape) : Nat := oTc s + tCommN s
+def oGam (s : StepShape) : Nat := oCip s + 1
+/-- ⚑ `absorb sponge PC delta` (`:321`), consumed by `lhs = Scalar_challenge.endo q c + delta`. -/
+def oDelta (s : StepShape) : Nat := oGam s + (gamRounds s).length
+/-- **`absorbs`, DERIVED from the schedule.** §12b pins `s.absorbs == absorbBlocksOf s` at both
+shapes, so a shape cannot swallow a block the source does not feed. -/
+def absorbBlocksOf (s : StepShape) : Nat := oDelta s + 1
+
+/-- ⚑ How many SQUEEZE blocks follow absorb block `a`. Additive rather than a chain of `else if`, so
+a shape whose `zRounds` or `t_comm` list is empty still gets both of the squeezes that bracket it. -/
+def sqAfter (s : StepShape) (a : Nat) : Nat :=
+  (if a + 1 == oZ s then 2 else 0)                              -- β (:563), γ (:564)
+  + (if a + 1 == oTc s then 1 else 0)                           -- α (:566)
+  + (if a + 1 == oCip s then 1 else 0)                          -- ζ (:568)
+  + (if a == oCip s then 1 else 0)                              -- u = group_map … (:264)
+  + (if oGam s ≤ a && a < oDelta s && (a - oGam s) % 2 == 1 then 1 else 0)   -- prechallenge (:200)
+  -- `c` (:322), then the `chals − 21` this file still takes off the transcript rather than off the
+  -- fr-sponge (ξ and r, §8g).
+  + (if a == oDelta s then 1 + (s.chals - sqScheduled s) else 0)
+
+/-- **R1's BLOCK SCHEDULE.** `some a` = absorb block `a`; `none` = a squeeze block. -/
+def tSched (s : StepShape) : List (Option Nat) :=
+  (List.range (absorbBlocksOf s)).flatMap (fun a =>
+    some a :: List.replicate (sqAfter s a) none)
+
+/-- Block `i`'s absorb ordinal, if it is an absorb block. -/
+def blockAbs (s : StepShape) (i : Nat) : Option Nat := (tSched s).getD i none
+
+/-- Absorb block `a`'s BLOCK index. -/
+def absBlock (s : StepShape) (a : Nat) : Nat :=
+  a + ((List.range a).map (sqAfter s)).foldl (· + ·) 0
+
+/-- The block index of each squeeze, in order. -/
+def sqBlocks (s : StepShape) : List Nat :=
+  let l := tSched s
+  (((l.zip (List.range l.length)).filter (fun p => p.1 == none)).map (·.2))
+/-- ⚑ Squeeze `c`'s block — the state R2 reads challenge `c` out of is `vSt s (sqBlock s c + 1) 0`. -/
+def sqBlock (s : StepShape) (c : Nat) : Nat := (sqBlocks s).getD c 0
+
 /-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
 
 `snarky_curve.ml:212-217`: `let x2 = square x in let x3 = x2 * x in let ax = Params.a * x in
@@ -854,11 +1048,13 @@ assert is ONE `Generic` half. Two variables per checked point — `x²` and `x³
 because the double-generic's own `w₀w₁` term is it.
 
 ⚑ The checked set is every SUPPLIED commitment the transcript absorbs: the `absRoundList` fold
-bases, and since §6b `t_comm`'s `tCommN` chunks. A CONSTANT base is pinned coordinate-for-coordinate
-and needs no membership check; the one COMPUTED base (`ft_comm`, fold round `FTC_ROUND`) is on the
-curve because the `complete_add` chain that produced it is. -/
-def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s
-def baseOnC (s : StepShape) : Nat := baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds
+bases, since §6b `t_comm`'s `tCommN` chunks, and since the R1 interleaving `sg_old[0]` and `delta`.
+A CONSTANT base is pinned coordinate-for-coordinate and needs no membership check; the one COMPUTED
+base (`ft_comm`, fold round `FTC_ROUND`) is on the curve because the `complete_add` chain that
+produced it is. -/
+def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 2
+def baseOnC (s : StepShape) : Nat :=
+  baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks + 1
 def vOcX2 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k)
 def vOcX3 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k + 1)
 
@@ -985,7 +1181,43 @@ false. §16g exhibits that. It is now a statement word, tied by a closing row li
 four, so the mux branch is a PUBLIC CLAIM a consumer reads rather than a prover's private
 choice — which is exactly upstream's semantics for a dummy previous proof. -/
 def vShouldVerify (s : StepShape) : PVar := xv (baseStmt s + 9)
-def N_STMT : Nat := 10
+/-- ⚑ **`advice.combined_inner_product`'s BIT.** `Other_field.Packed` is `(Field.t, Boolean.var)` and
+`absorb_scalar (x, b)` feeds `Field x` then `Bits [b]` (`step_verifier.ml:79-81`), so
+`absorb sponge Scalar advice.combined_inner_product` (`:256`) is TWO sponge items and the second is
+this. It carries `Boolean.typ`'s own `b² = b` check; the FIELD half is `vCipShift`, the statement
+word R8's `combined_inner_product_correct` already ties to R5's Horner output — which is what makes
+this a CONSUMED absorption rather than one more word the sponge eats. -/
+def vCipBit (s : StepShape) : PVar := xv (baseStmt s + 10)
+/-- …and its VALUE. ⚠ THE SIMPLIFICATION, named where it is made: `Other_field.Packed` splits an
+`Fq` scalar into a 254-bit `Field.t` and a top BIT because `Fq > Fp`; this file absorbs the statement
+word itself and a Boolean-constrained companion bit rather than emitting the split, so the bit is a
+constrained witness at 0 in the honest instance. What that does NOT weaken: the FIELD half is
+`vCipShift`, and R8 binds it. -/
+def CIP_BIT : Nat := 0
+def N_STMT : Nat := 11
+
+/-! ### ⚑ `prev_challenges` — the PREVIOUS proofs' carried bulletproof challenges.
+
+`step_verifier.ml:953-959` (`Opt_sponge.absorb opt_sponge (keep, chal)` over `prev_challenges`) and
+`step_main.ml:80` (`old_bulletproof_challenges = prev_challenges`): segments A and C absorb THE SAME
+vector, and it is a field of `Per_proof_witness` — the previous proof's own statement, checked by
+`verified` (#11) and by nothing in `verify_one`.
+
+⚠ ⚑ **THIS RETIRES A FALSE WIRE, AND THE TRADE IS STATED RATHER THAN QUIET.** Until 2026-08-02
+`optSpec` and `hmSpec` absorbed `vN s (i % chals) emsRows` — R1's OWN transcript challenges — for
+these `2·bRounds` words. Upstream those two vectors have no relationship: `prev_challenges` come from
+the previous proof's statement, not from this transcript. That false wire cost more than fidelity: it
+made segment A, hence the fr-sponge, hence ξ and r, hence `combined_inner_product` a function of
+EVERY transcript challenge — so absorbing `cip` into the transcript at ANY position was a cycle, and
+the interleaving alone would not have fixed it. What is LOST is that these words were derived cells
+and are now witnesses; what is GAINED is that they are the ones upstream has, and that `cip` can be
+absorbed. Both segments read the SAME variables, so they are still one σ class across two sponges and
+segment C's public digest moves when one is bent. -/
+def basePrevC (s : StepShape) : Nat := baseStmt s + N_STMT
+/-- Carried challenge `i` — proof `i / bRounds`, round `i % bRounds`. -/
+def vPrevChal (s : StepShape) (i : Nat) : PVar := xv (basePrevC s + i)
+/-- A deterministic fixture standing for one carried challenge. -/
+def prevChalVal (i : Nat) : Nat := (19 + 4000037 * i + 7 * i * i) % pN
 
 /-! ### The DEFERRED challenges ξ and r (§8g) — the fold's own multipliers.
 
@@ -1008,7 +1240,7 @@ def N_DEFC : Nat := 2
 /-- One deferred chain's variable block: `n/a/b` at every `EndoMulScalar` row boundary, the
 `lowest_128_bits` high part, and the lift's two cells. -/
 def defcStride (s : StepShape) : Nat := 3 * (s.emsRows + 1) + 3
-def baseDefC (s : StepShape) : Nat := baseStmt s + N_STMT
+def baseDefC (s : StepShape) : Nat := basePrevC s + 2 * s.bRounds
 def vDN (s : StepShape) (c k : Nat) : PVar := xv (baseDefC s + c * defcStride s + k)
 def vDA (s : StepShape) (c k : Nat) : PVar :=
   xv (baseDefC s + c * defcStride s + (s.emsRows + 1) + k)
@@ -1234,26 +1466,35 @@ inductive BaseSrc where
 -- (⚑ the provenance CENSUS — `wdbAbsorbed` / `ipaAbsorbs` / `absRoundList` — is stated in §2,
 -- because §2's `assert_on_curve` region is sized by it.)
 
+/-- Position `k` of `absRoundList` as an ABSORB ORDINAL: the `preRounds ++ zRounds` prefix sits at
+`oPre …`, the `gamRounds` tail at `oGam …` (§2b). -/
+def absOrdOfIdx (s : StepShape) (k : Nat) : Nat :=
+  let np := (preRounds s).length + (zRounds s).length
+  if k < np then oPre + k else oGam s + (k - np)
+
 /-- IPA round `r`'s base source. ⚑ Round `FTC_ROUND` is `ft_comm` and is COMPUTED since §6b — it was
 an `Inner_curve.constant` carrying the real block's `COMBINE_XY[3]` until 2026-08-02. -/
+
 def ipaSrc (s : StepShape) (r : Nat) : BaseSrc :=
   if r == FTC_ROUND then .computed
   else match (absRoundList s).findIdx? (fun x => x == r) with
-  | some k => .absorbed (k + 1)
+  | some k => .absorbed (absOrdOfIdx s k)
   | none => .const
 
-/-- Transcript block `b`'s commitment, as an IPA round — the inverse of `ipaSrc`. ⚑ Block 0 carries
-NO commitment: it is `index_digest`'s block. -/
-def blockRound (s : StepShape) (b : Nat) : Option Nat :=
-  if b == 0 then none else (absRoundList s)[b - 1]?
+/-- Absorb block `a`'s commitment, as an IPA round — the inverse of `ipaSrc`. ⚑ Blocks `oDigest`,
+`oSgOld0`, the `t_comm` run, `oCip` and `oDelta` carry no ROUND: `index_digest` is a bare `Field`,
+`sg_old[0]` is the fold's `~init`, and the other three are consumed elsewhere. -/
+def blockRound (s : StepShape) (a : Nat) : Option Nat :=
+  if oPre ≤ a && a < oTc s then (absRoundList s)[a - oPre]?
+  else if oGam s ≤ a && a < oDelta s then
+    (absRoundList s)[(a - oGam s) + (preRounds s).length + (zRounds s).length]?
+  else none
 
-/-- ⚑ Transcript block `b`'s `t_comm` CHUNK, if it carries one. `receive without t_comm`
-(`step_verifier.ml:567`) absorbs the seven quotient commitments after `z_comm` and before ζ, so they
-take the blocks immediately after the fold's own — the first `tCommN` that carried a `msgVal`
-fixture. -/
-def tCommBlock (s : StepShape) (b : Nat) : Option Nat :=
-  let l := (absRoundList s).length
-  if l < b && b ≤ l + tCommN s then some (b - l - 1) else none
+/-- ⚑ Absorb block `a`'s `t_comm` CHUNK, if it carries one. `receive without t_comm`
+(`step_verifier.ml:567`) absorbs the seven quotient commitments after `z_comm` (hence after α) and
+before ζ, which is exactly the `oTc … oCip` run of the schedule. -/
+def tCommBlock (s : StepShape) (a : Nat) : Option Nat :=
+  if oTc s ≤ a && a < oCip s then some (a - oTc s) else none
 
 /-- ⚑ R3 is `multiscale_known` — the x_hat MSM — and every one of ITS bases is an SRS Lagrange
 commitment inside `Inner_curve.constant`. There is no absorbed base in R3, upstream or here. -/
@@ -1376,60 +1617,63 @@ def idxDigestState : List Nat :=
   Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm idxAfterState
 def indexDigest : Nat := idxDigestState.getD 0 0
 
-/-- A transcript word that carries NEITHER a commitment, NOR a `t_comm` chunk, NOR the index
-digest — the blocks standing for the `Shifted_value` / opening scalar absorptions, which no assembled
-sub-circuit consumes.
+/-- A transcript word no row pins and no sub-circuit derives.
 
-⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** A `vMsg`
-word is a free variable: no row pins it, no sub-circuit derives it, and the absorb row eats it. At
-`shapeStep` that is **7 of the 118 absorbed words** — and a prover who grinds them steers every
-squeeze, not by breaking a decomposition (all three `lowest_128_bits` range-check both parts since
-2026-08-02) but by choosing the sponge's INPUT. What they should be is now a SHORTER list than it
-was: `sponge_after_index` left it (§3c) and `ft_comm`'s seven `t_comm` chunks left it (§6b, 14
-words) — and the latter left it by being CONSUMED, not merely absorbed.
+⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** At
+`shapeStep` it is now **ONE of the 118 absorbed words**: block `oDigest`'s SECOND LANE. `verify_one`
+feeds `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items, 117 is ODD, and this file models one
+commitment per rate-2 block, so exactly one lane of the `⌈117/2⌉` blocks carries nothing upstream
+absorbs. **That is STRUCTURAL, not a hole**: there is no absorption missing behind it, and "closing"
+it would mean inventing a word `verify_one` does not feed. It is a consequence of the per-block (not
+per-element) rate model — the same simplification the opt-sponge prefix carries, named once.
 
-⚠ ⚑ AND WHAT THEY ACTUALLY ARE, read at source rather than inherited. **SIX** of the seven stand for
-absorptions `verify_one` really performs and this file has not wired (`UNWIRED_ITEMS`, §2):
-`sg_old[0]`'s two coordinates (commitment 0 is where `combine_split_commitments`' fold STARTS, so it
-gets no round and no block), and `check_bulletproof`'s `absorb sponge Scalar
-advice.combined_inner_product` (2 sponge items — `absorb_scalar (x, b)` is `Field x` then `Bits [b]`,
-`step_verifier.ml:79-81,256`) and `absorb sponge PC delta` (`:321`). The **seventh** is block 0's
-second lane: `verify_one` feeds `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items, 117 is
-odd, and one lane of the `⌈117/2⌉` rate-2 blocks therefore carries nothing upstream absorbs.
-
-⚠ ⚑ **THE COUNT USED TO BE 31, AND 25 OF THOSE WERE NOT ABSORPTIONS AT ALL.** `absorbs` was **71**
-until 2026-08-02 — `2·71 = 142` words against 117 items — and the previous rung reported the whole
-31 as a backlog of unwired absorptions. Twenty-five of them stood for nothing: the shape swallowed
-words `verify_one` never feeds it. `absorbs` is now `absorbBlocksNeeded = ⌈117/2⌉` and §12b pins the
-item census against the wiring census as an EQUALITY, so neither can drift into the other. -/
+⚑ The count was **7 until 2026-08-02** (and 31 before that, of which 25 were phantom blocks). The six
+that left are the three real unwired absorptions, closed with their consumers by the R1 interleaving:
+`sg_old[0]` (the fold's `~init` accumulator, `:606`), `combined_inner_product` as field+bit (`:256`,
+tied by R8's `combined_inner_product_correct` to R5's Horner output) and `delta` (`:321`, consumed by
+`lhs = Scalar_challenge.endo q c + delta`, `:326-327`). -/
 def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
 
-/-- ⚑ The VARIABLE absorbed at lane `j` of transcript block `b`. For a block that carries one of the
-previous proof's commitments this IS the fold's base-point variable; for block 0 lane 0 it is
-`index_digest`, the squeeze of `sponge_after_index`.
-
-⚠ Lane 1 of block 0 is still a `vMsg`: upstream `index_digest` is a single `Field` absorption and
-`sg_old[0]`'s x-coordinate shares its rate-2 block, whereas this file models one commitment per
-block. That is the SAME per-block-vs-per-element simplification the opt-sponge prefix carries, named
-once and not twice. -/
-def msgVar (s : StepShape) (b j : Nat) : PVar :=
-  match blockRound s b with
+/-- ⚑ The VARIABLE absorbed at lane `j` of ABSORB BLOCK `a` (an absorb ORDINAL since the R1
+interleaving, not a block index — `absBlock s a` is where it sits in the schedule). Every one of them
+is a variable some sub-circuit reads except block `oDigest`'s second lane, the pad. -/
+def msgVar (s : StepShape) (a j : Nat) : PVar :=
+  match blockRound s a with
   | some r => if j == 0 then ipx s (qT s r) else ipy s (qT s r)
   | none =>
-    match tCommBlock s b with
+    match tCommBlock s a with
     | some i => if j == 0 then vTcX s i else vTcY s i
-    | none => if b == 0 && j == 0 then vIdxD s 0 else vMsg s b j
+    | none =>
+      if a == oDigest then (if j == 0 then vIdxD s 0 else vMsg s a j)
+      -- ⚑ `sg_old[0]`: the fold's `~init` accumulator point, R4's own `complete_add` chain head.
+      else if a == oSgOld0 then (if j == 0 then ipx s (qInit s) else ipy s (qInit s))
+      -- ⚑ `advice.combined_inner_product`: the STATEMENT word R8 binds, then its `Boolean.var`.
+      else if a == oCip s then (if j == 0 then vCipShift s else vCipBit s)
+      -- ⚑ `delta`: the second operand of `check_bulletproof`'s closing `add_fast`.
+      else if a == oDelta s then (if j == 0 then ipx s (qDel s) else ipy s (qDel s))
+      else vMsg s a j
 
-/-- …and its VALUE. -/
-def msgValOf (s : StepShape) (bs : List (Nat × Nat)) (b j : Nat) : Nat :=
-  match blockRound s b with
+/-- …and its VALUE. `cipW` is `(field, bit)` of `advice.combined_inner_product`, threaded in because
+it is computed from ξ, r and `ft_eval0` — all of which the transcript fixes BEFORE this block
+(`:568` precedes `:256`), which is exactly why absorbing it is not a cycle. -/
+def msgValOf (s : StepShape) (bs : List (Nat × Nat)) (cipW : Nat × Nat) (a j : Nat) : Nat :=
+  match blockRound s a with
   | some r => let p := ipaBaseOf s bs r; if j == 0 then p.1 else p.2
   | none =>
-    match tCommBlock s b with
+    match tCommBlock s a with
     | some i =>
       let p := Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.getD i (0, 0)
       if j == 0 then p.1 else p.2
-    | none => if b == 0 && j == 0 then indexDigest else msgVal b j
+    | none =>
+      if a == oDigest then (if j == 0 then indexDigest else msgVal a j)
+      else if a == oSgOld0 then
+        (let p := Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+         if j == 0 then p.1 else p.2)
+      else if a == oCip s then (if j == 0 then cipW.1 else cipW.2)
+      else if a == oDelta s then
+        (let p := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
+         if j == 0 then p.1 else p.2)
+      else msgVal a j
 
 /-! ## §4 — R1, the TRANSCRIPT SPONGE.
 
@@ -1443,7 +1687,12 @@ then `absorbAt _ 0`). One absorb block:
 
 A squeeze block is the same without the absorb row. The `Poseidon` gate at row `j` reads the NEXT
 row's cols 0,1,2 as its output state, which is why the closing `Zero` row exists and why the state
-chains across the eleven rows through the gate reference rather than through σ. -/
+chains across the eleven rows through the gate reference rather than through σ.
+
+⚑ **THE BLOCKS ARE INTERLEAVED AS §2b's SCHEDULE SAYS**, not "all absorbs, then all squeezes". The
+row COUNT is unchanged by that — `absorbs` absorb rows, `blocks` permutations, one probe per squeeze
+plus one at the last absorb — but every squeeze's POSITION moves, so every challenge value moves and
+with it every ladder the challenges drive. -/
 
 /-- The 56 states of one permutation, `s(0) = st` through `s(55)`, ONE round per step. -/
 def permStates (st : List Nat) : List (List Nat) :=
@@ -1482,54 +1731,59 @@ structure SpongeData where
   msgs : List (List Nat)
   deriving Repr, Inhabited
 
-/-- R1's trajectory, PARAMETRISED on the value of `index_digest` (§3c) AND on ONE absorbed word,
-block `bt` lane `jt` — the two grinds §12d and §12b″ run. One implementation, so both controls
-re-run the assembly's own sponge rather than a second copy of it; `bt ≥ absorbs` overrides nothing. -/
-def runSpongeAt (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) (bt jt w : Nat) : SpongeData :=
+/-- R1's trajectory, PARAMETRISED on the value of `index_digest` (§3c), on the absorbed
+`combined_inner_product` pair, AND on ONE absorbed word, absorb block `bt` lane `jt` — the grinds
+§12d, §12b″ and §12i run. One implementation, so every control re-runs the assembly's own sponge
+rather than a second copy of it; `bt ≥ absorbs` overrides nothing.
+
+⚑ `msgs` is indexed by BLOCK (empty at a squeeze block), `vPost`/`vMsg`/`msgVar` by absorb ORDINAL. -/
+def runSpongeAt (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) (cipW : Nat × Nat)
+    (bt jt w : Nat) : SpongeData :=
   (List.range s.blocks).foldl
     (fun d b =>
       let pre := d.states.getLastD [0, 0, 0]
-      let ms := if b < s.absorbs then
-          [ (if b == bt && jt == 0 then w
-             else if b == 0 then dig else msgValOf s bs b 0)
-          , (if b == bt && jt == 1 then w else msgValOf s bs b 1) ] else []
+      let ms := match blockAbs s b with
+        | none => []
+        | some a =>
+          [ (if a == bt && jt == 0 then w
+             else if a == oDigest then dig else msgValOf s bs cipW a 0)
+          , (if a == bt && jt == 1 then w else msgValOf s bs cipW a 1) ]
       let post :=
-        if b < s.absorbs then
-          [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
-        else pre
+        if ms.isEmpty then pre
+        else [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
       let ss := permStates post
       { states := d.states ++ [ss.getLastD post], perms := d.perms ++ [ss]
       , msgs := d.msgs ++ [ms] })
     { states := [[0, 0, 0]], perms := [], msgs := [] }
 
 /-- …with no word overridden. -/
-def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) : SpongeData :=
-  runSpongeAt s bs dig s.blocks 0 0
+def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) (cipW : Nat × Nat)
+    : SpongeData := runSpongeAt s bs dig cipW s.absorbs 0 0
 
 /-- …at the DERIVED digest, which is the only instance the assembly emits. -/
-def runSponge (s : StepShape) (bs : List (Nat × Nat)) : SpongeData :=
-  runSpongeWith s bs indexDigest
+def runSponge (s : StepShape) (bs : List (Nat × Nat)) (cipW : Nat × Nat) : SpongeData :=
+  runSpongeWith s bs indexDigest cipW
 
 /-- **R1's rows.** -/
 def transcriptRows (s : StepShape) (d : SpongeData) (wired : Bool) : List SRow :=
   [ genericRow (some (vSt s 0 0)) none none (some (vSt s 0 1)) none none (cConst 0 ++ cConst 0)
   , genericRow (some (vSt s 0 2)) none none none none none (cConst 0 ++ cNil) ]
   ++ (List.range s.blocks).flatMap (fun b =>
-      (if b < s.absorbs then
-         -- ⚑ `msgVar` — for the blocks that carry a commitment this is the FOLD'S OWN BASE-POINT
-         -- variable, so the sponge row and the `EndoMul` chain share one σ class.
-         [ genericRow (some (vSt s b 0)) (some (msgVar s b 0)) (some (vPost s b 0))
-                      (some (vSt s b 1)) (some (msgVar s b 1)) (some (vPost s b 1))
-                      (cAdd ++ cAdd) ]
-       else [])
-      ++ (if b < s.absorbs then
-            permBlockRows (vPost s b 0) (vPost s b 1) (vSt s b 2)
-                          (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b [])
-          else
-            permBlockRows (vSt s b 0) (vSt s b 1) (vSt s b 2)
-                          (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b []))
-      ++ (if b + 1 == s.absorbs || s.absorbs ≤ b then
-            [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)] else []))
+      match blockAbs s b with
+      | some a =>
+        -- ⚑ `msgVar` — for the blocks that carry a commitment this is the FOLD'S OWN BASE-POINT
+        -- variable, so the sponge row and the `EndoMul` chain share one σ class.
+        [ genericRow (some (vSt s b 0)) (some (msgVar s a 0)) (some (vPost s a 0))
+                     (some (vSt s b 1)) (some (msgVar s a 1)) (some (vPost s a 1))
+                     (cAdd ++ cAdd) ]
+        ++ permBlockRows (vPost s a 0) (vPost s a 1) (vSt s b 2)
+                         (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b [])
+        ++ (if a + 1 == s.absorbs then
+              [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)] else [])
+      | none =>
+        permBlockRows (vSt s b 0) (vSt s b 1) (vSt s b 2)
+                      (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b [])
+        ++ [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)])
 
 /-! ## §5 — R2, CHALLENGE DERIVATION (`to_field_checked`).
 
@@ -1540,9 +1794,9 @@ challenge. One `EndoMulScalar` row eats 8 crumbs and folds `n ↦ 4n + xⱼ`, `a
 all permutation columns and the chain hops row→row through σ; col 6 holds crumb `x₀`, unwired. -/
 
 def chalOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
-  ((d.states.getD (s.absorbs + c + 1) []).getD 0 0) % 2 ^ s.chalBits
+  ((d.states.getD (sqBlock s c + 1) []).getD 0 0) % 2 ^ s.chalBits
 def hiOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
-  ((d.states.getD (s.absorbs + c + 1) []).getD 0 0) / 2 ^ s.chalBits
+  ((d.states.getD (sqBlock s c + 1) []).getD 0 0) / 2 ^ s.chalBits
 
 /-- ⚑ `Endo.Wrap_inner_curve.scalar` (`endo.ml:7`) — the SCALAR-challenge endomorphism of `Fp`, the
 constant `to_field_checked` scales `a₈` by. NOT `FT_ENDO`, which is the BASE endomorphism
@@ -1651,7 +1905,7 @@ def rangeRows (s : StepShape) (c : Nat) (src : PVar) (v : Nat) (wired : Bool) : 
 `lowest_128_bits`' OTHER range check, over the high part (`~constrain_low_bits:true` asserts both;
 `step_verifier.ml:186-187`). -/
 def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : List SRow :=
-  tfcRows s (r2Vars s c) (vSt s (s.absorbs + c + 1) 0) true (chalOf s d c) wired
+  tfcRows s (r2Vars s c) (vSt s (sqBlock s c + 1) 0) true (chalOf s d c) wired
   ++ rangeRows s c (vHi s c) (hiOf s d c) wired
 
 /-! ## §6 — R3, the COMMITMENT MSM (`multiscale_known` / `ft_comm`).
@@ -1814,53 +2068,105 @@ structure IpaData where
   bases : List (Nat × Nat)
   sums : List (Nat × Nat)
   addCells : List (List Nat)
+  /-- ⚑ `check_bulletproof`'s tail (`:325-327`): `Scalar_challenge.endo q c`'s accumulator trace,
+  its blocks, its counter chain, and the closing `add_fast` with `delta`. -/
+  lhsAccs : List (Nat × Nat) := []
+  lhsBlks : List EndoBlock := []
+  lhsNs : List Nat := []
+  lhsAdd : List Nat := []
   deriving Repr, Inhabited
+
+/-- One `Scalar_challenge.endo` ladder over base `T` at prechallenge `v`, seeded at
+`scalar_challenge.ml:230-235`. Shared by the fold's rounds and by `check_bulletproof`'s tail. -/
+def runEndo (s : StepShape) (T : Nat × Nat) (v : Nat)
+    : List (Nat × Nat) × List EndoBlock × List Nat :=
+  let bits := endoBitsOf s v
+  (List.range s.ipaBlocks).foldl
+    (fun (st : List (Nat × Nat) × List EndoBlock × List Nat) e =>
+      let cur := st.1.getLastD (0, 0)
+      let b := endoStep T.1 T.2 cur.1 cur.2
+        (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
+      (st.1 ++ [(b.xs, b.ys)], st.2.1 ++ [b],
+       st.2.2 ++ [16 * st.2.2.getLastD 0 + 8*b.b1 + 4*b.b2 + 2*b.b3 + b.b4]))
+    ([endoSeed T], [], [0])
 
 /-- ⚑ `ftcOut` is `Common.ft_comm`'s ASSEMBLED value — round `FTC_ROUND`'s base since §6b. The
 supplied list still carries `COMBINE_XY[3]` (the real block's own `ft_comm`) and the assembly
-IGNORES it: that round's base is computed, so a supplied one would be a second copy. -/
+IGNORES it: that round's base is computed, so a supplied one would be a second copy.
+
+⚑ THE FOLD CHAIN NOW STARTS AT COMMITMENT 0. `combine_split_commitments` is called with
+`~init:(function `Finite x -> `Finite x | …)` (`step_verifier.ml:606`), i.e. the accumulator IS
+`sg_old[0]`; every round's output is folded into it, so there are `ipaRounds` adds and not
+`ipaRounds − 1`. Until 2026-08-02 the chain started at round 0's output and `sg_old[0]` was one of
+the three transcript words nothing read. -/
 def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) (ftcOut : Nat × Nat)
     : IpaData :=
   let bases := (List.range s.ipaRounds).map (fun r =>
     if ipaSrc s r == BaseSrc.computed then ftcOut else ipaBaseOf s allB r)
   let rounds := (List.range s.ipaRounds).map (fun r =>
-    let T := bases.getD r (0, 0)
-    let bits := endoBitsOf s (chalOf s d (s.ipaChal r))
-    (List.range s.ipaBlocks).foldl
-      (fun (st : List (Nat × Nat) × List EndoBlock × List Nat) e =>
-        let cur := st.1.getLastD (0, 0)
-        let b := endoStep T.1 T.2 cur.1 cur.2
-          (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
-        (st.1 ++ [(b.xs, b.ys)], st.2.1 ++ [b],
-         st.2.2 ++ [16 * st.2.2.getLastD 0 + 8*b.b1 + 4*b.b2 + 2*b.b3 + b.b4]))
-      ([endoSeed T], [], [0]))
+    runEndo s (bases.getD r (0, 0)) (chalOf s d (s.ipaChal r)))
   let pts := rounds.map (fun r => r.1.getLastD (0, 0))
-  let st := (List.range (s.ipaRounds - 1)).foldl
+  let st := (List.range s.ipaRounds).foldl
     (fun (acc : List (Nat × Nat) × List (List Nat)) a =>
-      let l := if a == 0 then pts.getD 0 (0, 0) else acc.1.getLastD (0, 0)
-      let r := pts.getD (a + 1) (0, 0)
+      let l := if a == 0 then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+               else acc.1.getLastD (0, 0)
+      let r := pts.getD a (0, 0)
       let cells := completeAddWitness l.1 l.2 r.1 r.2
       (acc.1 ++ [(cells.getD 4 0, cells.getD 5 0)], acc.2 ++ [cells]))
     ([], [])
+  -- ⚑ `check_bulletproof`'s tail: `cq = Scalar_challenge.endo q c`, `lhs = cq + delta`.
+  let q := st.1.getLastD (0, 0)
+  let lhs := runEndo s q (chalOf s d s.cChal)
+  let cq := lhs.1.getLastD (0, 0)
+  let dl := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
   { accs := rounds.map (·.1), blks := rounds.map (·.2.1), ns := rounds.map (·.2.2)
-  , bases := bases, sums := st.1, addCells := st.2 }
+  , bases := bases, sums := st.1, addCells := st.2
+  , lhsAccs := lhs.1, lhsBlks := lhs.2.1, lhsNs := lhs.2.2
+  , lhsAdd := completeAddWitness cq.1 cq.2 dl.1 dl.2 }
 
-def ipaRoundRows (s : StepShape) (v : IpaData) (r : Nat) : List SRow :=
+/-- One endo ladder's variable slots — the fold's rounds and `check_bulletproof`'s tail differ only
+in where their points and counters live. -/
+structure EndoSlots where
+  /-- the base point's index. -/
+  base : Nat
+  /-- the seed intermediate `p = t + φ(t)`. -/
+  p : Nat
+  /-- accumulator point after `e` blocks. -/
+  acc : Nat → Nat
+  /-- counter after `e` blocks; at `e = ipaBlocks` it is the challenge variable. -/
+  n : Nat → PVar
+  /-- `endo · x_t`. -/
+  endoX : PVar
+
+def roundSlots (s : StepShape) (r : Nat) : EndoSlots :=
+  { base := qT s r, p := qP s r, acc := qAcc s r, n := vQN s r, endoX := vQEndo s r }
+/-- ⚑ The tail's base is the FOLD OUTPUT `q = combined_polynomial + …` — a computed point, not a
+supplied one, so it needs no pin and no `assert_on_curve`. -/
+def lhsSlots (s : StepShape) : EndoSlots :=
+  { base := qSum s (s.ipaRounds - 1), p := qLhsP s, acc := qLhsAcc s
+  , n := vLhsN s, endoX := vLhsEndo s }
+
+def endoRoundRows (s : StepShape) (sl : EndoSlots) (bl : List EndoBlock) : List SRow :=
   (List.range s.ipaBlocks).map (fun e =>
-    let b := (v.blks.getD r []).getD e default
+    let b := bl.getD e default
     ({ kind := .endoMul
-     , perm := [ some (ipx s (qT s r)), some (ipy s (qT s r)), none, none
-               , some (ipx s (qAcc s r e)), some (ipy s (qAcc s r e)), some (vQN s r e) ]
+     , perm := [ some (ipx s sl.base), some (ipy s sl.base), none, none
+               , some (ipx s (sl.acc e)), some (ipy s (sl.acc e)), some (sl.n e) ]
      , advice := [ (2, (b.inv : Int)), (3, 0), (7, (b.xr : Int)), (8, (b.yr : Int))
                  , (9, (b.s1 : Int)), (10, (b.s3 : Int)), (11, (b.b1 : Int)), (12, (b.b2 : Int))
                  , (13, (b.b3 : Int)), (14, (b.b4 : Int)) ] } : SRow))
   ++ [ { kind := .zero
-       , perm := [ none, none, none, none, some (ipx s (qAcc s r s.ipaBlocks))
-                 , some (ipy s (qAcc s r s.ipaBlocks)), some (vQN s r s.ipaBlocks) ] } ]
+       , perm := [ none, none, none, none, some (ipx s (sl.acc s.ipaBlocks))
+                 , some (ipy s (sl.acc s.ipaBlocks)), some (sl.n s.ipaBlocks) ] } ]
 
+def ipaRoundRows (s : StepShape) (v : IpaData) (r : Nat) : List SRow :=
+  endoRoundRows s (roundSlots s r) (v.blks.getD r [])
+
+/-- ⚑ The `a`-th fold add. `a = 0`'s LEFT operand is `qInit` — `sg_old[0]`, the `~init` accumulator
+(`step_verifier.ml:606`) whose two coordinates ARE transcript block `oSgOld0`'s absorbed words. -/
 def ipaAddRow (s : StepShape) (v : IpaData) (a : Nat) : SRow :=
-  let lp := if a == 0 then qAcc s 0 s.ipaBlocks else qSum s (a - 1)
-  let rp := qAcc s (a + 1) s.ipaBlocks
+  let lp := if a == 0 then qInit s else qSum s (a - 1)
+  let rp := qAcc s a s.ipaBlocks
   let c := v.addCells.getD a []
   { kind := .completeAdd
   , perm := [ some (ipx s lp), some (ipy s lp), some (ipx s rp), some (ipy s rp)
@@ -1902,12 +2208,16 @@ def onCurveHalves (s : StepShape) (k : Nat) (vx vy : PVar) :
   , ([some (vOcX2 s k), some vx, some (vOcX3 s k)], cMul)
   , ([some vy, some vy, some (vOcX3 s k)], [0, 0, -1, 1, -(PALLAS_B : Int)]) ]
 
-/-- The `k`-th CHECKED point's coordinate VARIABLES: the `absRoundList` fold bases, then `t_comm`'s
-`tCommN` chunks — every SUPPLIED commitment the transcript swallows. -/
+/-- The `k`-th CHECKED point's coordinate VARIABLES: the `absRoundList` fold bases, `t_comm`'s
+`tCommN` chunks, and — since the R1 interleaving — `sg_old[0]` and `delta`. Every SUPPLIED commitment
+the transcript swallows, and no other. -/
 def onCVar (s : StepShape) (k : Nat) : PVar × PVar :=
   let l := (absRoundList s).length
+  let t := l + tCommN s
   if k < l then let r := (absRoundList s).getD k 0; (ipx s (qT s r), ipy s (qT s r))
-  else (vTcX s (k - l), vTcY s (k - l))
+  else if k < t then (vTcX s (k - l), vTcY s (k - l))
+  else if k == t then (ipx s (qInit s), ipy s (qInit s))
+  else (ipx s (qDel s), ipy s (qDel s))
 
 /-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED commitment, over the very coordinate
 variables the transcript absorbed and the `EndoMul` (or, for `t_comm`, the `VarBaseMul`) chain
@@ -1922,41 +2232,69 @@ def onCurveRows (s : StepShape) : List SRow :=
 witnesses until 2026-08-02 — `vQN r 0` in exactly R3's way (the counter closes on the challenge from
 `16^{ipaBlocks}·n₀ + bits`, so a free `n₀` buys any bit vector), and `vQEndo r` is new because the
 seed's second operand did not exist as a variable at all. -/
+def seedPinHalves (s : StepShape) (sl : EndoSlots) : List (List (Option PVar) × List Int) :=
+  [ ([some (ipx s sl.base), none, some sl.endoX],
+     [ (Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo : Int), 0, -1, 0, 0 ])
+  , ([some (sl.n 0), none, none], cConst 0) ]
+
 def ipaSeedPinRows (s : StepShape) : List SRow :=
-  packHalves ((List.range s.ipaRounds).flatMap (fun r =>
-    [ ([some (ipx s (qT s r)), none, some (vQEndo s r)],
-       [ (Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo : Int), 0, -1, 0, 0 ])
-    , ([some (vQN s r 0), none, none], cConst 0) ]))
+  packHalves ((List.range s.ipaRounds).flatMap (fun r => seedPinHalves s (roundSlots s r))
+              ++ seedPinHalves s (lhsSlots s))
 
 /-- **Round `r`'s two `Ops.add_fast`s**: `p = t + φ(t)` and `acc₀ = p + p`. The probe between them
 keeps every `CompleteAdd` run at length 1 and materialises `p` as a σ-only boundary value. ⚑ `φ(t)`'s
 `y` IS `t`'s — `(seal (Field.scale xt Endo.base), yt)` — so the row reads `ipy (qT r)` at cols 1
 AND 3, which is upstream's own shape and not a wiring accident. -/
-def ipaSeedRows (s : StepShape) (v : IpaData) (wired : Bool) (r : Nat) : List SRow :=
-  let T := v.bases.getD r (0, 0)
+def endoSeedRows (s : StepShape) (sl : EndoSlots) (T : Nat × Nat) (wired : Bool) : List SRow :=
   let q := endoQ T
   let p := endoP T
-  [ caRow (ipx s (qT s r), ipy s (qT s r)) (vQEndo s r, ipy s (qT s r))
-          (ipx s (qP s r), ipy s (qP s r)) (completeAddWitness T.1 T.2 q.1 q.2)
-  , probeRow wired (ipx s (qP s r)) (ipy s (qP s r))
-  , caRow (ipx s (qP s r), ipy s (qP s r)) (ipx s (qP s r), ipy s (qP s r))
-          (ipx s (qAcc s r 0), ipy s (qAcc s r 0)) (completeAddWitness p.1 p.2 p.1 p.2) ]
+  [ caRow (ipx s sl.base, ipy s sl.base) (sl.endoX, ipy s sl.base)
+          (ipx s sl.p, ipy s sl.p) (completeAddWitness T.1 T.2 q.1 q.2)
+  , probeRow wired (ipx s sl.p) (ipy s sl.p)
+  , caRow (ipx s sl.p, ipy s sl.p) (ipx s sl.p, ipy s sl.p)
+          (ipx s (sl.acc 0), ipy s (sl.acc 0)) (completeAddWitness p.1 p.2 p.1 p.2) ]
+
+def ipaSeedRows (s : StepShape) (v : IpaData) (wired : Bool) (r : Nat) : List SRow :=
+  endoSeedRows s (roundSlots s r) (v.bases.getD r (0, 0)) wired
+
+/-- ⚑ **`check_bulletproof`'s TAIL** (`step_verifier.ml:321-327`), the consumer that makes `delta` an
+absorbed word something READS:
+
+    absorb sponge PC delta ;
+    let c = squeeze_scalar sponge in
+    let lhs = let cq = Scalar_challenge.endo q c in cq + delta in
+
+One `Scalar_challenge.endo` over the fold output `q = qSum (ipaRounds−1)` at the LAST transcript
+squeeze, seeded at `scalar_challenge.ml:230-235` like every other round, then one `Ops.add_fast` with
+`delta` — whose two coordinate variables ARE transcript block `oDelta`'s absorbed words.
+
+⚠ WHAT THIS DOES NOT DO, at the point of use: `lhs` is not compared with `rhs`. `equal_g lhs rhs`
+(`:340`) is the IPA opening's own equality and `rhs` needs `scale_fast2 u advice.b`,
+`challenge_polynomial_commitment`, `z_1`, `z_2` and `Generators.h` — that is `verified` (#11), still a
+witnessed boolean here. What IS closed is that `delta` and `c` are no longer words the sponge eats
+and nothing reads: bend either and this ladder's own gate polynomials move. -/
+def lhsRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
+  let sl := lhsSlots s
+  endoSeedRows s sl (v.sums.getLastD (0, 0)) wired
+  ++ endoRoundRows s sl v.lhsBlks
+  ++ [ probeRow wired (ipx s (sl.acc s.ipaBlocks)) (ipy s (sl.acc s.ipaBlocks))
+     , caRow (ipx s (sl.acc s.ipaBlocks), ipy s (sl.acc s.ipaBlocks))
+             (ipx s (qDel s), ipy s (qDel s))
+             (ipx s (qLhsOut s), ipy s (qLhsOut s)) v.lhsAdd
+     , probeRow wired (ipx s (qLhsOut s)) (ipy s (qLhsOut s)) ]
 
 /-- **R4's rows.** -/
 def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   ipaBaseRows s v
   ++ ipaSeedPinRows s
   ++ onCurveRows s
-  ++ ipaSeedRows s v wired 0
-  ++ ipaRoundRows s v 0
-  ++ [probeRow wired (ipx s (qAcc s 0 s.ipaBlocks)) (ipy s (qAcc s 0 s.ipaBlocks))]
-  ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
-       let r := a + 1
+  ++ (List.range s.ipaRounds).flatMap (fun r =>
        ipaSeedRows s v wired r
        ++ ipaRoundRows s v r
        ++ [probeRow wired (ipx s (qAcc s r s.ipaBlocks)) (ipy s (qAcc s r s.ipaBlocks))]
-       ++ [ipaAddRow s v a]
-       ++ [probeRow wired (ipx s (qSum s a)) (ipy s (qSum s a))])
+       ++ [ipaAddRow s v r]
+       ++ [probeRow wired (ipx s (qSum s r)) (ipy s (qSum s r))])
+  ++ lhsRows s v wired
 
 /-! ## §6b — `Common.ft_comm`'s MSM: the sub-circuit that makes `t_comm` MEAN something.
 
@@ -2251,10 +2589,10 @@ word and of the fr-sponge's second squeeze — NOT transcript challenges. The fo
 squeeze, not merely checked against it. -/
 def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr : Nat) : DefData :=
   let zs := (List.range s.bRounds).foldl
-    (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [liftOf s d 0]
+    (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [liftOf s d s.zetaChal]
   let st := (List.range s.bRounds).foldl
     (fun (acc : List Nat × List Nat) k =>
-      let f := fAdd 1 (fMul (liftOf s d (k + 1)) (zs.getD (s.bRounds - 1 - k) 0))
+      let f := fAdd 1 (fMul (liftOf s d (s.uChal k)) (zs.getD (s.bRounds - 1 - k) 0))
       (acc.1 ++ [f], acc.2 ++ [fMul (acc.2.getLastD 1) f]))
     ([], [1])
   let ez := (List.range s.cipEvals).map (fun k => evZOf ftVal k)
@@ -2274,11 +2612,11 @@ def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) (xi rr : Nat) : DefDat
 /-- **R5a's rows.** -/
 def deferredRows (s : StepShape) (wired : Bool) : List SRow :=
   [ genericRow (some (vAcc s 0)) none none none none none (cConst 1 ++ cNil)
-  , genericRow (some (vZ s 0)) (some (vLift s 0)) none none none none (cEq ++ cNil) ]
+  , genericRow (some (vZ s 0)) (some (vLift s s.zetaChal)) none none none none (cEq ++ cNil) ]
   ++ (List.range s.bRounds).map (fun k =>
       genericRow (some (vZ s k)) (some (vZ s k)) (some (vZ s (k+1))) none none none (cMul ++ cNil))
   ++ (List.range s.bRounds).map (fun k =>
-      genericRow (some (vLift s (k+1))) (some (vZ s (s.bRounds - 1 - k))) (some (vFac s k))
+      genericRow (some (vLift s (s.uChal k))) (some (vZ s (s.bRounds - 1 - k))) (some (vFac s k))
                  (some (vAcc s k)) (some (vFac s k)) (some (vAcc s (k+1))) (cMulPlus1 ++ cMul))
   ++ [ probeRow wired (vAcc s s.bRounds) (vZ s s.bRounds) ]
 
@@ -2305,6 +2643,12 @@ def cipRows (s : StepShape) (wired : Bool) : List SRow :=
                    (some (vTk s i)) (some (vCk s (s.cipEvals - 1 - i))) (some (vCa s (i+1)))
                    (cMul ++ cAdd) ])
   ++ [ probeRow wired (vCa s s.cipEvals) (vCk s 0) ]
+  -- ⚑ `absorb sponge Scalar advice.combined_inner_product` (`:79-81,256`) absorbs the FIELD half and
+  -- then a `Bits [b]` — `Other_field.Packed`'s `Boolean.var`. `Boolean.typ`'s own check is `b² = b`,
+  -- and without it the "bit" is an arbitrary field element the prover feeds the sponge.
+  ++ [ genericRow (some (vCipBit s)) (some (vCipBit s)) (some (vCipBit s)) none none none
+                  (cMul ++ cNil)
+     , probeRow wired (vCipBit s) (vCipShift s) ]
 
 /-! ## §8b — the ARITHMETIC COMPILER: a straight-line program over `Generic` rows.
 
@@ -2725,11 +3069,8 @@ def vColZ (s : StepShape) (k : Nat) : PVar := vEz s (EV_PREFIX + k)
 /-- …and at ζω. -/
 def vColW (s : StepShape) (k : Nat) : PVar := vEw s (EV_PREFIX + k)
 
-/-- Which challenge plays ζ / α / β / γ in the deferred scalar arithmetic. -/
-def StepShape.zetaChal (_s : StepShape) : Nat := 0
-def StepShape.alphaChal (_s : StepShape) : Nat := 1
-def StepShape.betaChal (_s : StepShape) : Nat := 2
-def StepShape.gammaChal (_s : StepShape) : Nat := 3
+-- (Which challenge plays ζ / α / β / γ is §2b's — `StepShape.betaChal` and friends, positions the
+-- transcript SCHEDULE fixes rather than an arbitrary numbering.)
 
 /-- The wire the ft program reads: each field is a SOURCE OP, so the same program compiles against
 the assembled circuit's variables (`.inp`) and against a real block's field values (`.lit`). -/
@@ -3225,10 +3566,12 @@ def branchRows (s : StepShape) (wired : Bool) : List SRow :=
   , probeRow wired (vMask s 0) (vMask s 1)
   , probeRow wired (vBranch s) (vMaskPack s) ]
 
-def optSpec (s : StepShape) (d : SpongeData) : SegSpec :=
-  { ws := (List.range s.optWords).map (fun i =>
-      let c := i % s.chals
-      (vN s c s.emsRows, chalOf s d c))
+/-- ⚑ Segment A absorbs **`prev_challenges`** (`step_verifier.ml:953-959`), the previous proofs'
+CARRIED bulletproof challenges — a `Per_proof_witness` field, not this transcript's squeezes. It took
+`vN s (i % chals) emsRows` until 2026-08-02; see `vPrevChal` for what that false wire cost. Segment C
+absorbs the SAME variables (`step_main.ml:80`), so they are one σ class across two sponges. -/
+def optSpec (s : StepShape) : SegSpec :=
+  { ws := (List.range s.optWords).map (fun i => (vPrevChal s i, prevChalVal i))
   , squeezes := 1, masked := true, keep := optKeep s }
 
 def frSpec (s : StepShape) (dg : PVar × Nat) (ftVal : Nat) : SegSpec :=
@@ -3266,7 +3609,7 @@ def idxDigestRows (s : StepShape) (wired : Bool) : List SRow :=
                 (vIdxD s 0) (vIdxD s 1) (vIdxD s 2) (permStates idxAfterState)
   ++ [probeRow wired (vIdxD s 0) (vIdxD s 1)]
 
-def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) (d : SpongeData) : SegSpec :=
+def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) : SegSpec :=
   -- ⚑ §3c: the `Not_opt` prefix is `sponge_after_index`'s own absorption — the 28 plonk-index
   -- commitments as 56 coordinates, 27 of them THE FOLD'S OWN `.const` base variables — then the two
   -- app-state words, which are the only fixtures left in it.
@@ -3274,11 +3617,11 @@ def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) (d : SpongeData) : SegSpe
       ++ (List.range N_HM_APP).map (fun i => (vHm s i, hmVal i))
       ++ [ (mpx s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).1)
          , (mpy s (pSum s (s.msmTerms - 2)), (t.sums.getLastD (0, 0)).2)
-         , (ipx s (qSum s (s.ipaRounds - 2)), (v.sums.getLastD (0, 0)).1)
-         , (ipy s (qSum s (s.ipaRounds - 2)), (v.sums.getLastD (0, 0)).2) ]
-      ++ (List.range (2 * s.bRounds)).map (fun i =>
-          let c := i % s.chals
-          (vN s c s.emsRows, chalOf s d c))
+         , (ipx s (qSum s (s.ipaRounds - 1)), (v.sums.getLastD (0, 0)).1)
+         , (ipy s (qSum s (s.ipaRounds - 1)), (v.sums.getLastD (0, 0)).2) ]
+      -- ⚑ `old_bulletproof_challenges = prev_challenges` (`step_main.ml:80`) — the SAME vector
+      -- segment A absorbs, so segment C's public digest moves when one of them is bent.
+      ++ (List.range (2 * s.bRounds)).map (fun i => (vPrevChal s i, prevChalVal i))
   , squeezes := 1, masked := true, maskFrom := N_HM_FIX / 2, keep := hmKeepAt s MASK_BITS }
 
 /-! ## §8f — R8, `finalize_other_proof`'s TAIL: the deferred values BIND.
@@ -3466,7 +3809,7 @@ def exposedVars (s : StepShape) : List PVar :=
    , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
    , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
-   , ipx s (qSum s (s.ipaRounds - 2)), ipy s (qSum s (s.ipaRounds - 2)) ]
+   , ipx s (qSum s (s.ipaRounds - 1)), ipy s (qSum s (s.ipaRounds - 1)) ]
    ++ (List.range s.chals).map (fun c => vN s c s.emsRows)
    -- ⚑ `0 .. bRounds−1`, NOT `0 .. bRounds`: `vAcc bRounds` and `vZ bRounds` are already the head
    -- entries, and at `shapeStep`'s 67 words the inclusive range made TWO of Step's public words
@@ -3515,7 +3858,7 @@ def bwOf (s : StepShape) (d : SpongeData) : Nat :=
   let zws := (List.range s.bRounds).foldl
     (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [zetaw]
   (List.range s.bRounds).foldl
-    (fun acc k => fMul acc (fAdd 1 (fMul (liftOf s d (k+1)) (zws.getD (s.bRounds - 1 - k) 0)))) 1
+    (fun acc k => fMul acc (fAdd 1 (fMul (liftOf s d (s.uChal k)) (zws.getD (s.bRounds - 1 - k) 0)))) 1
 
 /-- `b_actual = challenge_poly ζ + r · challenge_poly ζω` (`step_verifier.ml:1124-1128`), computed
 DIRECTLY here so §16 can pin the emitted program's own slot against it. `rv` is §8g's DEFERRED r. -/
@@ -3528,7 +3871,7 @@ def finWireOf (s : StepShape) (f : FtData) : FinWire :=
   , bZeta := .inp (vAcc s s.bRounds)
   , cipActual := .inp (vCa s s.cipEvals)
   , permActual := .inp (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm)
-  , u := fun k => .inp (vLift s (k + 1))
+  , u := fun k => .inp (vLift s (s.uChal k))
   , xiSqueeze := .inp (frSqueezeVar s)
   , cipShift := .inp (vCipShift s)
   , bShift := .inp (vBShift s)
@@ -3566,7 +3909,7 @@ def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
   , (vPermShift s, (shiftT1 permA : Int))
   , (vXiStmt s, ((sqv % 2 ^ 128 : Nat) : Int))
   , (vShouldVerify s, 1) ]
-  ++ (List.range s.bRounds).map (fun k => (vLift s (k + 1), (liftOf s d (k + 1) : Int)))
+  ++ (List.range s.bRounds).map (fun k => (vLift s (s.uChal k), (liftOf s d (s.uChal k) : Int)))
 
 /-- The HONEST config: `lowest_128_bits`' high part, and — because every `Field.equal` leg holds —
 `bit = 1`, `inv = 0` in all four gadgets, with `verified = should_verify = 1`. §16 re-runs this at
@@ -3690,28 +4033,43 @@ first and `runDef` is fed from it. Nothing the fr-sponge absorbs depends on `com
 (segment B absorbs the digest of segment A, `ft_eval1`, the two public-poly evaluations and the 43
 columns — R6's and R5's fixtures), so the order is a chain and not a cycle. -/
 def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
-  let sp := runSponge s bs
+  -- ⚑⚑ **PASS 1 — the transcript through ζ.** `absorb sponge Scalar advice.combined_inner_product`
+  -- (`step_verifier.ml:256`) comes AFTER `let zeta = sample_scalar ()` (`:568`), so blocks 0 …
+  -- `sqBlock zetaChal` do not depend on it and β/γ/α/ζ are already exact in this pass. §12i pins
+  -- that as an EQUALITY over the four, which is the machine-checked form of "upstream has no cycle".
+  let sp0 := runSponge s bs (0, 0)
+  let ft0 := runFt s sp0
+  -- ⚑ segment A reads `prev_challenges` and NOT the transcript, so nothing below depends on a
+  -- squeeze taken after ζ. That is the other half of why two passes suffice.
+  let specA := optSpec s
+  let segA := runSeg specA
+  let dg : PVar × Nat :=
+    (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
+     (segA.states.getLastD []).getD 0 0)
+  let specB0 := frSpec s dg ft0.out
+  let defc0 := runDefc (runSeg specB0) specB0
+  -- ⚑ the SHIFTED value, because that is what `:257-259` unwraps and absorbs
+  -- (`Shifted_value.Type2.Shifted_value x -> x`) and it is exactly `vCipShift`, the statement word
+  -- R8's `combined_inner_product_correct` ties back to this same Horner output.
+  let cipV := shiftT1 ((runDef s sp0 ft0.out (defc0.lift s 0) (defc0.lift s 1)).ca.getLastD 0)
+  -- **PASS 2 — the real transcript**, carrying `(combined_inner_product, its `Boolean.var`)`.
+  let sp := runSponge s bs (cipV, CIP_BIT)
   let msm := runMsm s bs sp
-  -- ⚑ R6 first: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds — and since §6b
+  -- ⚑ R6 next: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds — and since §6b
   -- its `perm` / `ζ^n` slots are also `Common.ft_comm`'s scalars, so R6 runs BEFORE the fold. That
-  -- is a chain and not a cycle: `runFt` reads only the transcript sponge, and fold round
+  -- is a chain and not a cycle: `runFt` reads only β/γ/α/ζ, and fold round
   -- `FTC_ROUND`'s base is `ft_comm`'s output rather than a supplied commitment.
   let ft := runFt s sp
   let ftw := ftcWireOf s ft
   let ftc := runFtc s ftw
   let ipa := runIpa s bs sp ftc.out
   let ftv := ft.out
-  let specA := optSpec s sp
-  let segA := runSeg specA
-  let dg : PVar × Nat :=
-    (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
-     (segA.states.getLastD []).getD 0 0)
   let specB := frSpec s dg ftv
   let segB := runSeg specB
   -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
   let defc := runDefc segB specB
   let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1)
-  let specC := hmSpec s msm ipa sp
+  let specC := hmSpec s msm ipa
   { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
   , defc := defc, df := df
   , fin := runFin s sp ft df segB specB (defc.lift s 1)
@@ -3756,17 +4114,19 @@ def circuitEnv (t : StepData) : VarEnv :=
   (List.range (s.blocks + 1)).flatMap (fun b =>
     let st := t.sp.states.getD b []
     (List.range 3).map (fun j => (vSt s b j, (st.getD j 0 : Int))))
-  ++ (List.range s.absorbs).flatMap (fun b =>
+  -- ⚑ `vPost` is indexed by absorb ORDINAL and the sponge trajectory by BLOCK, so the schedule
+  -- (`absBlock`) is what relates them since the R1 interleaving.
+  ++ (List.range s.absorbs).flatMap (fun a =>
+      let b := absBlock s a
       let pre := t.sp.states.getD b []
       let ms := t.sp.msgs.getD b []
       (List.range 2).map (fun j =>
-        (vPost s b j, (((pre.getD j 0 + ms.getD j 0) % pN : Nat) : Int))))
-  -- ⚑ only the blocks that carry NO commitment still own a `vMsg` fixture; a commitment block's
-  -- absorbed variables are the fold's base-point variables and take their values from R4's block.
-  ++ (List.range s.absorbs).flatMap (fun b =>
-      match blockRound s b with
-      | some _ => []
-      | none => (List.range 2).map (fun j => (vMsg s b j, (msgVal b j : Int))))
+        (vPost s a j, (((pre.getD j 0 + ms.getD j 0) % pN : Nat) : Int))))
+  -- ⚑ ONE `vMsg` cell is left at `shapeStep`: block `oDigest`'s second lane, the rate-2 pad an odd
+  -- item count forces. Every other absorbed word is a variable some sub-circuit reads.
+  ++ (List.range s.absorbs).flatMap (fun a =>
+      (List.range 2).filterMap (fun j =>
+        if msgVar s a j == vMsg s a j then some (vMsg s a j, (msgVal a j : Int)) else none))
   ++ (List.range s.chals).flatMap (fun c =>
       let accs := emsAccs s (chalOf s t.sp c)
       (List.range (s.emsRows + 1)).flatMap (fun k =>
@@ -3813,15 +4173,31 @@ def circuitEnv (t : StepData) : VarEnv :=
       -- §7's seed: `φ(t)`'s x and the `p = t + φ(t)` intermediate `acc₀ = p + p` doubles.
       ++ [ (vQEndo s r, ((endoQ T).1 : Int))
          , (ipx s (qP s r), ((endoP T).1 : Int)), (ipy s (qP s r), ((endoP T).2 : Int)) ])
-  ++ (List.range (s.ipaRounds - 1)).flatMap (fun a =>
+  ++ (List.range s.ipaRounds).flatMap (fun a =>
       let p := t.ipa.sums.getD a (0, 0)
       [ (ipx s (qSum s a), (p.1 : Int)), (ipy s (qSum s a), (p.2 : Int)) ])
-  -- §7b: `assert_on_curve`'s two intermediates per ABSORBED commitment — the fold's bases and,
-  -- since §6b, `t_comm`'s chunks.
+  -- ⚑ `sg_old[0]` (the fold's `~init`), `delta`, and `check_bulletproof`'s `endo q c + delta` tail.
+  ++ (let g := Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+      let dl := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
+      let q := t.ipa.sums.getLastD (0, 0)
+      [ (ipx s (qInit s), (g.1 : Int)), (ipy s (qInit s), (g.2 : Int))
+      , (ipx s (qDel s), (dl.1 : Int)), (ipy s (qDel s), (dl.2 : Int))
+      , (vLhsEndo s, ((endoQ q).1 : Int))
+      , (ipx s (qLhsP s), ((endoP q).1 : Int)), (ipy s (qLhsP s), ((endoP q).2 : Int))
+      , (ipx s (qLhsOut s), (t.ipa.lhsAdd.getD 4 0 : Int))
+      , (ipy s (qLhsOut s), (t.ipa.lhsAdd.getD 5 0 : Int)) ]
+      ++ (List.range (s.ipaBlocks + 1)).flatMap (fun e =>
+          let a := t.ipa.lhsAccs.getD e (0, 0)
+          [ (ipx s (qLhsAcc s e), (a.1 : Int)), (ipy s (qLhsAcc s e), (a.2 : Int)) ])
+      ++ (List.range s.ipaBlocks).map (fun e => (vLhsN s e, (t.ipa.lhsNs.getD e 0 : Int))))
+  -- §7b: `assert_on_curve`'s two intermediates per ABSORBED commitment — the fold's bases, `t_comm`'s
+  -- chunks, and since the R1 interleaving `sg_old[0]` and `delta`.
   ++ (List.range (nOnC s)).flatMap (fun k =>
       let l := (absRoundList s).length
       let x := if k < l then (t.ipa.bases.getD ((absRoundList s).getD k 0) (0, 0)).1
-               else (ftcTc (k - l)).1
+               else if k < l + tCommN s then (ftcTc (k - l)).1
+               else if k == l + tCommN s then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY.1
+               else Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
       [ (vOcX2 s k, (fMul x x : Int)), (vOcX3 s k, (fMul (fMul x x) x : Int)) ])
   -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
   -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.
@@ -3865,6 +4241,9 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- R7: the three sponge segments, `sponge_after_index`'s own pinned commitments and its squeeze,
   -- and the two APP-STATE words that are all that is left of the old fixture prefix (§3c).
   ++ (List.range N_HM_APP).map (fun i => (vHm s i, (hmVal i : Int)))
+  -- ⚑ `prev_challenges` — segments A and C absorb these SAME variables (`step_verifier.ml:956`,
+  -- `step_main.ml:80`).
+  ++ (List.range (2 * s.bRounds)).map (fun i => (vPrevChal s i, (prevChalVal i : Int)))
   ++ (idxOwn s).flatMap (fun k =>
       [ (vIdxX s k, (idxVal k 0 : Int)), (vIdxY s k, (idxVal k 1 : Int)) ])
   ++ (List.range 3).map (fun j => (vIdxD s j, (idxDigestState.getD j 0 : Int)))
@@ -3875,7 +4254,7 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ [ (vCipShift s, (t.fin.cipShift : Int)), (vBShift s, (t.fin.bShift : Int))
      , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int))
      -- §8h: `branch_data` and the two `proofs_verified_mask` bits it packs.
-     , (vShouldVerify s, 1)
+     , (vShouldVerify s, 1), (vCipBit s, (CIP_BIT : Int))
      , (vBranch s, (branchPacked : Int)), (vDomLog2 s, (BRANCH_DOMAIN_LOG2 : Int))
      , (vMask s 0, (MASK_BITS.getD 0 0 : Int)), (vMask s 1, (MASK_BITS.getD 1 0 : Int))
      , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int)) ]
@@ -4062,7 +4441,7 @@ def shapeStep : StepShape :=
   { absorbs := 59, chals := 23, emsRows := 8
   , msmTerms := 40, msmChunks := 26
   , ipaRounds := 76, ipaBlocks := 32
-  , bRounds := 16, cipEvals := 47, pubWords := 67 }
+  , bRounds := 16, cipEvals := 47, tComms := 7, pubWords := 67 }
 
 /-- A small shape for the fast in-CI pins (the committed one is emitted by the driver).
 
@@ -4073,7 +4452,7 @@ def shapeSmoke : StepShape :=
   -- ⚑ `absorbs` is 7 since §6b: block 0 is `index_digest`'s, blocks 1–3 carry the three absorbed
   -- fold commitments, blocks 4–6 carry `tCommN = 3` `t_comm` chunks. It still leaves ONE free
   -- `vMsg` block (block 0's second lane), which is what lets the smoke pins see the residue at all.
-  { absorbs := 7, chals := 5, emsRows := 8
+  { absorbs := 10, chals := 8, emsRows := 8
   , msmTerms := 3, msmChunks := 26
   -- ⚑ `bRounds` is EVEN so the opt-sponge's rate-2 blocks do not straddle the two previous proofs:
   -- each proof contributes `bRounds` challenge words and a block absorbs two, so a block belongs to
@@ -4083,7 +4462,7 @@ def shapeSmoke : StepShape :=
   -- vacuous. At 5, rounds 0/1/3 are absorbed, 2 is computed and 4 is a verifier-key constant —
   -- all three provenances present.
   , ipaRounds := 5, ipaBlocks := 32
-  , bRounds := 4, cipEvals := 47, pubWords := 12 }
+  , bRounds := 4, cipEvals := 47, tComms := 3, pubWords := 12 }
 
 /-! ## §12 — the in-CI pins, on the SMOKE instance (`#guard`, interpreter-reduced).
 
@@ -4162,14 +4541,18 @@ def totalRowsS : Nat := pubS + nRowsS
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
         == shapeSmoke.msmTerms * shapeSmoke.msmChunks
            + ftcTerms shapeSmoke * FTC_CHUNKS
+-- ⚑ `EndoMul` is `ipaRounds` fold ladders PLUS ONE — `check_bulletproof`'s `Scalar_challenge.endo q
+-- c` (`:326`), the consumer that makes `delta` and the last squeeze mean something.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMul)).length
-        == shapeSmoke.ipaRounds * shapeSmoke.ipaBlocks
+        == (shapeSmoke.ipaRounds + 1) * shapeSmoke.ipaBlocks
 -- …and `CompleteAdd` is the two summation chains, R3's OWN `add_fast base base` per term (§12f,
 -- new 2026-08-02) and §6b's: per `scale_fast2` the initial `add_fast base base` and the odd-branch
 -- `add_fast h (negate g)` (`plonk_curve_ops.ml:157,267`), then `common.ml`'s own `tCommN + 1` adds.
+-- ⚑ The fold chain is `ipaRounds` adds and not `ipaRounds − 1` since the `~init` wiring (`:606`),
+-- and the tail adds three: `endo`'s two seed `add_fast`s and the closing `cq + delta` (`:327`).
 #guard (placedS.filter (fun g => g.kind == KGateType.completeAdd)).length
         == (shapeSmoke.msmTerms - 1) + shapeSmoke.msmTerms
-           + (shapeSmoke.ipaRounds - 1) + 2 * shapeSmoke.ipaRounds
+           + shapeSmoke.ipaRounds + 2 * shapeSmoke.ipaRounds + 3
            + 2 * ftcTerms shapeSmoke + (tCommN shapeSmoke + 1)
 -- ⚑ …and every `CompleteAdd` is still followed by a row of another kind, which is why the shape
 -- diff's `CompleteAdd` family stays `1×n`: R3's seed row is preceded by a `Zero` probe (or the pin
@@ -4273,7 +4656,7 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
 #guard (List.range shapeSmoke.blocks).all (fun b =>
   let pre := tS.sp.states.getD b []
   let ms := tS.sp.msgs.getD b []
-  let post := if b < shapeSmoke.absorbs then
+  let post := if (blockAbs shapeSmoke b).isSome then
       [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
     else pre
   tS.sp.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
@@ -4284,7 +4667,7 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
   ((emsAccs shapeSmoke (chalOf shapeSmoke tS.sp c)).getLastD (0,2,2)).1
     == chalOf shapeSmoke tS.sp c)
 #guard (List.range shapeSmoke.chals).all (fun c =>
-  (tS.sp.states.getD (shapeSmoke.absorbs + c + 1) []).getD 0 0
+  (tS.sp.states.getD (sqBlock shapeSmoke c + 1) []).getD 0 0
     == chalOf shapeSmoke tS.sp c + 2 ^ shapeSmoke.chalBits * hiOf shapeSmoke tS.sp c)
 -- ⚑ …and every emitted `EndoMulScalar` ROW satisfies the gate's own eleven constraints on the
 -- ASSEMBLED grid (`endomulScalarConstraints`, read-only), with the three polynomial constants.
@@ -4345,11 +4728,36 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
         (tS.msm.terms.getD i default).accs.getLastD (0, 0))
    let tot := (pts.drop 1).foldl (fun acc p => jAdd acc (jOf p)) (jOf (pts.getD 0 (0, 0)))
    jacEqM pN (jOf (tS.msm.sums.getLastD (0, 0))) tot)
+-- ⚑ …and R4's fold starts at `sg_old[0]` (`~init`, `step_verifier.ml:606`), so the Jacobian oracle
+-- is seeded there and not at round 0's output. `ipaRounds` adds, one per round.
 #guard
   (let pts := (List.range shapeSmoke.ipaRounds).map (fun r =>
         (tS.ipa.accs.getD r []).getLastD (0, 0))
-   let tot := (pts.drop 1).foldl (fun acc p => jAdd acc (jOf p)) (jOf (pts.getD 0 (0, 0)))
+   let tot := pts.foldl (fun acc p => jAdd acc (jOf p))
+                (jOf Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY)
    jacEqM pN (jOf (tS.ipa.sums.getLastD (0, 0))) tot)
+#guard tS.ipa.sums.length == shapeSmoke.ipaRounds
+#guard tS.ipa.addCells.length == shapeSmoke.ipaRounds
+-- ⚑ …and `check_bulletproof`'s tail really computes `endo q c + delta`: the ladder's own counter
+-- closes on `c`'s challenge variable, its accumulator is `Scalar_challenge.endo`'s seed run, and the
+-- closing `add_fast` is `cq + delta` over the block's own opening point.
+#guard tS.ipa.lhsAccs.getD 0 (0, 0) == endoSeed (tS.ipa.sums.getLastD (0, 0))
+#guard tS.ipa.lhsNs.getLastD 0 == chalOf shapeSmoke tS.sp shapeSmoke.cChal
+#guard tS.ipa.lhsAccs.length == shapeSmoke.ipaBlocks + 1
+#guard (List.range shapeSmoke.ipaBlocks).all (fun e =>
+  let T := tS.ipa.sums.getLastD (0, 0)
+  let b := tS.ipa.lhsBlks.getD e default
+  let a := tS.ipa.lhsAccs.getD e (0, 0)
+  let a' := tS.ipa.lhsAccs.getD (e + 1) (0, 0)
+  let q1r : Nat × Nat := (KimchiRenderEndoMul.xqOf b.b1 T.1, T.2)
+  let q2r : Nat × Nat := (KimchiRenderEndoMul.xqOf b.b3 T.1, T.2)
+  let q1 := if b.b2 == 1 then jOf q1r else jNeg (jOf q1r)
+  let q2 := if b.b4 == 1 then jOf q2r else jNeg (jOf q2r)
+  jacEqM pN (jOf a') (jAdd (jDbl (jAdd (jDbl (jOf a)) q1)) q2))
+#guard jacEqM pN (jOf (tS.ipa.lhsAdd.getD 4 0, tS.ipa.lhsAdd.getD 5 0))
+         (jAdd (jOf (tS.ipa.lhsAccs.getLastD (0, 0)))
+               (jOf Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY))
+#guard onCurveA (tS.ipa.lhsAdd.getD 4 0, tS.ipa.lhsAdd.getD 5 0)
 
 -- Every add is the distinct-x `add_fast` case (`inf = 0`, `same_x = 0`), so leaving col 6 unwired
 -- at 0 is correct and no add silently lands on the point at infinity.
@@ -4368,13 +4776,13 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
 
 -- ⚑ THE DEFERRED `b(ζ)` IS THE CHALLENGE POLYNOMIAL: the assembled product equals the direct fold
 -- `∏ (1 + u_k · ζ^{2^{bRounds−1−k}})`, and `ζ` IS challenge 0.
-#guard tS.df.zs.getD 0 0 == liftOf shapeSmoke tS.sp 0
+#guard tS.df.zs.getD 0 0 == liftOf shapeSmoke tS.sp shapeSmoke.zetaChal
 #guard (List.range shapeSmoke.bRounds).all (fun k =>
   tS.df.zs.getD (k + 1) 0 == fMul (tS.df.zs.getD k 0) (tS.df.zs.getD k 0))
 #guard tS.df.accs.getLastD 0
         == (List.range shapeSmoke.bRounds).foldl
              (fun acc k => fMul acc
-               (fAdd 1 (fMul (liftOf shapeSmoke tS.sp (k + 1))
+               (fAdd 1 (fMul (liftOf shapeSmoke tS.sp (shapeSmoke.uChal k))
                              (tS.df.zs.getD (shapeSmoke.bRounds - 1 - k) 0)))) 1
 -- …and it is NOT the trivial product (a degenerate `b` would make the rung vacuous).
 #guard tS.df.accs.getLastD 0 != 1
@@ -4479,13 +4887,20 @@ def foldMulOf (sq : Nat) : ZMod pN :=
         == (Dregg2.Bridge.MinaStepPrevCommitments.LAGRANGE_XY.take shapeSmoke.msmTerms
             ++ REAL_IPA_XY.take shapeSmoke.ipaRounds)
 
--- ⚑ THE PROVENANCE CENSUS IS EXERCISED, and the `absorbs` cap does NOT bind — every round upstream
--- absorbs really does get a transcript block, at BOTH shapes. (Stated as the equality against the
--- uncapped filter; a floor would hold with the cap silently swallowing rounds.)
-#guard (absRoundList shapeStep).length
-        == ((List.range shapeStep.ipaRounds).filter ipaAbsorbs).length
-#guard (absRoundList shapeSmoke).length
-        == ((List.range shapeSmoke.ipaRounds).filter ipaAbsorbs).length
+-- ⚑ THE PROVENANCE CENSUS IS EXERCISED — every round upstream absorbs really does get a transcript
+-- block, at BOTH shapes. ⚑ Stated as a MULTISET equality against the `ipaAbsorbs` filter and as a
+-- LIST **in**equality against it, because since the R1 interleaving `absRoundList` is upstream's
+-- absorption ORDER (`w_comm` before `z_comm`, `t_comm` before the gammas) and the filter's ascending
+-- order is NOT: a sponge is order-sensitive, so "same set" is the wrong pin on its own.
+#guard (absRoundList shapeStep).mergeSort (· ≤ ·)
+        == (List.range shapeStep.ipaRounds).filter ipaAbsorbs
+#guard (absRoundList shapeSmoke).mergeSort (· ≤ ·)
+        == (List.range shapeSmoke.ipaRounds).filter ipaAbsorbs
+#guard absRoundList shapeStep != (List.range shapeStep.ipaRounds).filter ipaAbsorbs
+-- …and the order really is `sg_old[1] · x_hat · w_comm ×15 · z_comm · gammas ×30`.
+#guard (absRoundList shapeStep).take 3 == [0, 1, 10]
+#guard (absRoundList shapeStep).getD 16 0 == 24 && (absRoundList shapeStep).getD 17 0 == 3
+#guard (absRoundList shapeStep).drop 18 == List.range' (N_WDB - 1) 30
 -- …and BOTH provenances really occur at the committed shape: 18 fold commitments + 30
 -- `bullet_reduce` gammas absorbed, 28 verifier-key / computed constants.
 #guard (absRoundList shapeStep).length == 48
@@ -4497,65 +4912,194 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 #guard (absRoundList shapeSmoke).length == 3
 -- …and R3 carries NO absorbed base, which is `multiscale_known`'s own shape.
 #guard (List.range shapeStep.msmTerms).all (fun i => msmSrc i == BaseSrc.const)
--- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently, and
--- **stated at `shapeStep` because the smoke shape has almost none of them.** A block with no
--- commitment absorbs `msgVal` fixtures that no row pins; block 0 lane 0 is no longer one of them
--- (§3c wires `index_digest` there), and since §6b seven of them carry `t_comm`'s quotient chunks,
--- so of `2·absorbs = 118` absorbed words **7 are free where 31 were at `absorbs = 71` and 45 before
--- §6b**. EQUALITY, so assembling one of the rest moves this number — and so does un-assembling
--- `ft_comm`, and so does widening the shape back out.
+-- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently. A free word
+-- is a `msgVal` fixture no row pins. Of `2·absorbs = 118` absorbed words **ONE** is free — the pad
+-- lane an odd item count forces — where 7 were before the R1 interleaving, 31 at `absorbs = 71` and
+-- 45 before §6b. EQUALITY, so un-assembling any consumer moves this number.
 #guard shapeStep.absorbs - (absRoundList shapeStep).length == 11
 #guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 11
 #guard (List.range shapeStep.absorbs).foldl
         (fun n b => n + (List.range 2).countP (fun j =>
-           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 7
--- ⚑ …and the FOURTEEN that left are exactly `t_comm`'s, block for block and lane for lane. Stated
--- against `T_COMM_XY` so a block that merely stopped being a `vMsg` without carrying a commitment
--- would not satisfy it.
+           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 1
+-- ⚑ …and the SIX that left the free list are exactly the three closures, block for block and lane
+-- for lane, each against the variable its CONSUMER reads.
+#guard msgVar shapeStep oSgOld0 0 == ipx shapeStep (qInit shapeStep)
+        && msgVar shapeStep oSgOld0 1 == ipy shapeStep (qInit shapeStep)
+#guard msgVar shapeStep (oCip shapeStep) 0 == vCipShift shapeStep
+        && msgVar shapeStep (oCip shapeStep) 1 == vCipBit shapeStep
+#guard msgVar shapeStep (oDelta shapeStep) 0 == ipx shapeStep (qDel shapeStep)
+        && msgVar shapeStep (oDelta shapeStep) 1 == ipy shapeStep (qDel shapeStep)
+-- ⚑ …and `t_comm`'s FOURTEEN, block for block and lane for lane, at their SCHEDULE position (after
+-- `z_comm`/α and before ζ, `step_verifier.ml:567`) rather than after the gammas.
 #guard (List.range shapeStep.absorbs).foldl
         (fun n b => n + (List.range 2).countP (fun _ => tCommBlock shapeStep b != none)) 0 == 14
 #guard (List.range (tCommN shapeStep)).all (fun i =>
-  let b := (absRoundList shapeStep).length + 1 + i
+  let b := oTc shapeStep + i
   tCommBlock shapeStep b == some i
   && msgVar shapeStep b 0 == vTcX shapeStep i && msgVar shapeStep b 1 == vTcY shapeStep i
-  && msgValOf shapeStep (stepBases shapeStep) b 0 == (ftcTc i).1
-  && msgValOf shapeStep (stepBases shapeStep) b 1 == (ftcTc i).2)
+  && msgValOf shapeStep (stepBases shapeStep) (0, 0) b 0 == (ftcTc i).1
+  && msgValOf shapeStep (stepBases shapeStep) (0, 0) b 1 == (ftcTc i).2)
 -- …and exactly ONE absorbed word of R1's transcript is `index_digest`, at BLOCK 0 — upstream's own
 -- position (`absorb sponge Field index_digest` precedes `Vector.iter ~f:(absorb sponge PC) sg_old`,
--- `step_verifier.ml:535,537`).
+-- `step_verifier.ml:534,538`).
 #guard (List.range shapeStep.absorbs).foldl
         (fun n b => n + (List.range 2).countP (fun j =>
            msgVar shapeStep b j == vIdxD shapeStep 0)) 0 == 1
 #guard msgVar shapeStep 0 0 == vIdxD shapeStep 0
-#guard msgValOf shapeStep (stepBases shapeStep) 0 0 == indexDigest
--- ── ⚑ THE ABSORB SHAPE IS `verify_one`'s OWN ITEM COUNT (the 25-word overshoot, retired) ───────
--- The previous rung read the 31 free words as 31 unwired absorptions; read at source, only SIX were.
--- The other 25 were `absorbs = 71` swallowing words upstream never feeds it. `absorbs` is now
--- `⌈117/2⌉`, so the shape and the source agree BY CONSTRUCTION rather than by a number someone
--- chose. Every pin below is an EQUALITY: widening `absorbs` back out reds three of them at once.
+#guard msgValOf shapeStep (stepBases shapeStep) (0, 0) 0 0 == indexDigest
+-- ── ⚑ THE ABSORB SHAPE IS `verify_one`'s OWN ITEM COUNT, AND SO IS ITS ORDER ───────────────────
+-- `absorbs` is `⌈117/2⌉` AND is now DERIVED from the schedule, so the shape, the item census and the
+-- absorption ORDER agree by construction rather than by three numbers someone chose. Every pin is an
+-- EQUALITY: widening `absorbs` back out, or reordering a run, reds several at once.
 #guard N_ABSORB_ITEMS == 117
 #guard (ABSORB_ITEMS.map (·.2)) == [1, 4, 2, 30, 2, 14, 2, 60, 2]
 #guard absorbBlocksNeeded == 59
 #guard shapeStep.absorbs == absorbBlocksNeeded
+#guard shapeStep.absorbs == absorbBlocksOf shapeStep
+#guard shapeSmoke.absorbs == absorbBlocksOf shapeSmoke
 #guard 2 * shapeStep.absorbs == 118
--- ⚑ …and the residue is now ONE pad lane, not twenty-five phantom words. 117 is odd, `index_digest`
--- is the single unpaired `Field`, and every later item is a point or a `(field, bit)` pair.
+-- ⚑ …and the residue is ONE pad lane. 117 is odd, `index_digest` is the single unpaired `Field`,
+-- every later item is a point or a `(field, bit)` pair, and this file models ONE per rate-2 block.
+-- **That is STRUCTURAL — there is no absorption behind it to close.**
 #guard 2 * shapeStep.absorbs - N_ABSORB_ITEMS == 1
--- ⚑⚑ **THE ITEM CENSUS AND THE WIRING CENSUS AGREE, AS AN EQUALITY.** The items `verify_one`
--- absorbs, less the six this file has not wired, are EXACTLY the words a row here reads:
--- `index_digest` + the 48 fold commitments + `t_comm`'s 7 chunks = 111. A deleted wire moves the
--- right-hand side; a phantom absorption moves the left; neither can be absorbed into the other.
-#guard N_UNWIRED_ITEMS == 6
-#guard N_ABSORB_ITEMS - N_UNWIRED_ITEMS
-        == 1 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep
-#guard 1 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep == 111
--- …so the 7 free words ARE the six unwired items plus the pad lane, counted two ways.
-#guard 2 * shapeStep.absorbs - (1 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep)
-        == N_UNWIRED_ITEMS + 1
--- …and the cap that sizes `t_comm` still does not bind: three blocks are left over, one per
--- unwired item, so `tCommN` is 7 because `N_TCOMM` is 7 and not because the shape ran out.
-#guard shapeStep.absorbs - 1 - (absRoundList shapeStep).length == N_TCOMM + 3
-#guard tCommN shapeStep == N_TCOMM
+-- ⚑⚑ **THE ITEM CENSUS AND THE WIRING CENSUS AGREE, AS AN EQUALITY, AND `UNWIRED_ITEMS` IS EMPTY.**
+-- Every item `verify_one` absorbs is a word some row here reads: `index_digest` + `sg_old[0]` + the
+-- 48 fold commitments + `t_comm`'s 7 chunks + `cip` (field+bit) + `delta` = 117.
+#guard N_UNWIRED_ITEMS == 0 && UNWIRED_ITEMS == []
+#guard N_ABSORB_ITEMS
+        == 1 + 2 + 2 * (absRoundList shapeStep).length + 2 * tCommN shapeStep + 2 + 2
+#guard 2 * shapeStep.absorbs - N_ABSORB_ITEMS == N_UNWIRED_ITEMS + 1
+-- …and the `t_comm` cap does not bind: `tCommN` is 7 because `N_TCOMM` is 7.
+#guard tCommN shapeStep == N_TCOMM && shapeStep.tComms == N_TCOMM
+
+-- ── ⚑⚑ §12i — **THE SCHEDULE, AND WHY `combined_inner_product` IS NOT A CYCLE** ────────────────
+-- `absorb sponge Scalar advice.combined_inner_product` is at `step_verifier.ml:256`, INSIDE
+-- `check_bulletproof`, which runs on the sponge forked at `:573` — after `let zeta = sample_scalar
+-- ()` at `:568`. So β, γ, α and ζ are fixed before it. The previous rung's diagnosis stopped at "R1
+-- runs all absorb blocks before all squeezes"; that was true and not the whole blocker (segment A
+-- absorbing R1's own challenges was the other half, see `vPrevChal`). These pin BOTH halves.
+#guard sqBlock shapeStep shapeStep.betaChal == absBlock shapeStep (oZ shapeStep - 1) + 1
+#guard sqBlock shapeStep shapeStep.gammaChal == sqBlock shapeStep shapeStep.betaChal + 1
+#guard sqBlock shapeStep shapeStep.alphaChal == absBlock shapeStep (oTc shapeStep - 1) + 1
+#guard sqBlock shapeStep shapeStep.zetaChal == absBlock shapeStep (oCip shapeStep - 1) + 1
+-- ⚑ the four are squeezed STRICTLY BEFORE `cip`'s block, and every later squeeze strictly after.
+#guard (List.range 4).all (fun c => sqBlock shapeStep c < absBlock shapeStep (oCip shapeStep))
+#guard ((List.range shapeStep.chals).drop 4).all
+        (fun c => absBlock shapeStep (oCip shapeStep) < sqBlock shapeStep c)
+-- ⚑ `c` is the squeeze that FOLLOWS `delta` (`:321-322`), and it is the last scheduled one.
+#guard sqBlock shapeStep shapeStep.cChal == absBlock shapeStep (oDelta shapeStep) + 1
+#guard shapeStep.cChal == sqScheduled shapeStep - 1 && sqScheduled shapeStep == 21
+-- ⚑ …and the schedule really is `absorbs + chals` blocks with the absorb ordinals in order.
+#guard (tSched shapeStep).length == shapeStep.blocks
+#guard (tSched shapeStep).filterMap id == List.range shapeStep.absorbs
+#guard (tSched shapeSmoke).filterMap id == List.range shapeSmoke.absorbs
+#guard (sqBlocks shapeStep).length == shapeStep.chals
+-- ⚑⚑ **AND THE NON-CIRCULARITY, MEASURED.** Re-run R1 with the `cip` word set to ZERO: β, γ, α, ζ
+-- are IDENTICAL (so `ft_eval0`, the fr-sponge, ξ, r and the Horner chain that produces `cip` are
+-- all unchanged, which is what makes the two-pass assembly exact) — and every squeeze after it
+-- MOVES, so the absorption is live rather than inert.
+def spNoCip : SpongeData := runSponge shapeSmoke (stepBases shapeSmoke) (0, 0)
+#guard (List.range 4).all (fun c => chalOf shapeSmoke spNoCip c == chalOf shapeSmoke tS.sp c)
+-- ⚑ …so R6's `ft_eval0` — which reads ζ, α, β, γ and NOTHING else off the transcript — is the same
+-- value in both passes. That is the fact the two-pass `mkStepWith` rests on, stated on the value
+-- rather than on the four inputs, so a future R6 that reached a later squeeze would red HERE.
+#guard (runFt shapeSmoke spNoCip).out == tS.ft.out
+#guard ((List.range shapeSmoke.chals).drop 4).all (fun c =>
+  chalOf shapeSmoke spNoCip c != chalOf shapeSmoke tS.sp c)
+-- ⚑ …and the word the transcript actually swallowed IS the statement word R8 binds — which is what
+-- makes it a CONSUMED absorption and not one more thing the sponge eats.
+#guard (tS.sp.msgs.getD (absBlock shapeSmoke (oCip shapeSmoke)) []).getD 0 0 == tS.fin.cipShift
+#guard (tS.sp.msgs.getD (absBlock shapeSmoke (oCip shapeSmoke)) []).getD 1 0 == CIP_BIT
+#guard tS.fin.cipShift == shiftT1 (tS.df.ca.getLastD 0)
+
+-- ── ⚑⚑ §12j — **THE THREE CLOSURES, EACH WITH THE WITNESS ITS HOLE ADMITTED** ──────────────────
+-- A wire without an exhibited alternative is unverified. For each of the three: the word was a
+-- `msgVal` FIXTURE the sponge ate and no row read, so a prover could absorb one value and act on
+-- another — and nothing in the assembly could tell. Each block below constructs the witness that
+-- bought, shows the emitted gate polynomials ACCEPTING it in the shape that had no consumer, and
+-- shows the new row REFUSING it.
+
+/-- The absolute row of a `CompleteAdd` whose LEFT operand is `v` — the emitted row itself, found in
+the schedule rather than counted by hand. -/
+def caRowIxOf (v : PVar) : Nat :=
+  (((rowsS.zip (List.range nRowsS)).find? (fun ri =>
+      ri.1.kind == KGateType.completeAdd && ri.1.perm.getD 0 none == some v)).map (·.2)).getD 0
+/-- …its 15 cells off the composed grid, with cols `i`/`i+1` overridden. -/
+def caCellsAt (ix : Nat) (i : Nat) (p : Nat × Nat) : List Nat :=
+  let r := gridRow witS (pubS + ix)
+  (List.range r.length).map (fun j =>
+    if j == i then p.1 else if j == i + 1 then p.2 else r.getD j 0)
+def caHolds (cells : List Nat) : Bool :=
+  (completeAddConstraints (R := ZMod pN) (cells.map (fun n => (n : ZMod pN)))).all
+    (fun z => decide (z = 0))
+
+-- ── (a) `sg_old[0]` — `combine_split_commitments`' `~init` (`step_verifier.ml:606`) ─────────────
+/-- ⚑ THE WITNESS: another of the block's OWN on-curve commitments. `assert_on_curve` cannot refuse
+it and neither can any curve gate — which is precisely why a fold that never READ the accumulator's
+starting point could be handed any of them. -/
+def sgAlt : Nat × Nat := Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 29 (0, 0)
+#guard onCurveA sgAlt && sgAlt != Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+-- the fold's FIRST add really reads `qInit`, and `qInit` really is block `oSgOld0`'s absorbed word.
+#guard caRowIxOf (ipx shapeSmoke (qInit shapeSmoke)) > 0
+#guard msgVar shapeSmoke oSgOld0 0 == ipx shapeSmoke (qInit shapeSmoke)
+-- ⚑⚑ ACCEPTED BEFORE — with no row reading it, `sg_old[0]` sat in exactly ONE cell (the absorb row)
+-- and the fold was self-consistent whatever it held. Now its class spans the sponge, the add and
+-- `assert_on_curve`, which is the difference between absorbing a commitment and consuming one.
+#guard (classCells posS (ipx shapeSmoke (qInit shapeSmoke))).length ≥ 4
+-- ⚑⚑ REFUSED AFTER: `completeAddConstraints` — proof-systems' own, read-only — is 0 on the honest
+-- row and NONZERO with the substitute in the accumulator's slot.
+#guard caHolds (gridRow witS (pubS + caRowIxOf (ipx shapeSmoke (qInit shapeSmoke))))
+#guard caHolds (caCellsAt (caRowIxOf (ipx shapeSmoke (qInit shapeSmoke))) 0 sgAlt) == false
+
+-- ── (b) `combined_inner_product` — `absorb sponge Scalar advice.cip` (`:256`) ───────────────────
+/-- ⚑ THE WITNESS: the prover absorbs the honest `cip` and CLAIMS a different one — or claims the
+honest one and absorbs a different one. Before, the two were unrelated objects: `vCipShift` was a
+statement word R8 compared, `oCip`'s lane was a `msgVal` fixture, and NO cell joined them. -/
+def cipForged : Nat := fAdd tS.fin.cipShift 1
+def spCip : SpongeData :=
+  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest (cipForged, CIP_BIT)
+    (oCip shapeSmoke) 0 cipForged
+-- ⚑⚑ ACCEPTED BEFORE: with the word a fixture, R1's blocks were all still exactly `Ref.perm` of
+-- their own absorbed state — a `Poseidon` gate constrains the permutation, never its input.
+#guard (List.range shapeSmoke.blocks).all (fun b =>
+  let pre := spCip.states.getD b []
+  let ms := spCip.msgs.getD b []
+  let post := if ms.isEmpty then pre
+    else [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
+  spCip.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
+-- ⚑⚑ REFUSED AFTER, twice over. (i) the absorbed word IS `vCipShift`, so a claimed `cip` that is not
+-- the Horner chain's output fails R8's `Shifted_value.Type1` unshift comparison…
+#guard fAdd (fAdd cipForged cipForged) SHIFT_C != tS.df.ca.getLastD 0
+#guard fAdd (fAdd tS.fin.cipShift tS.fin.cipShift) SHIFT_C == tS.df.ca.getLastD 0
+-- …and (ii) absorbing a different word MOVES every squeeze from `u` onward, so the bulletproof
+-- challenges, `check_bulletproof`'s `c` and the whole tail move with it — while β/γ/α/ζ, which are
+-- squeezed BEFORE `:256`, do not. That split is upstream's own and it is why this is not a cycle.
+#guard (List.range 4).all (fun c => chalOf shapeSmoke spCip c == chalOf shapeSmoke tS.sp c)
+#guard ((List.range shapeSmoke.chals).drop 4).all (fun c =>
+  chalOf shapeSmoke spCip c != chalOf shapeSmoke tS.sp c)
+-- …and the BIT is Boolean-constrained, so the second lane is not a second free field element.
+#guard fMul CIP_BIT CIP_BIT == CIP_BIT
+#guard (fMul 2 2 == 2) == false
+
+-- ── (c) `delta` — `absorb sponge PC delta` (`:321`), `lhs = endo q c + delta` (`:326-327`) ──────
+/-- ⚑ THE WITNESS: another real on-curve point in `delta`'s slot. Membership cannot refuse it; only
+a row that READS it can. -/
+def delAlt : Nat × Nat := Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 28 (0, 0)
+#guard onCurveA delAlt && delAlt != Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
+#guard msgVar shapeSmoke (oDelta shapeSmoke) 0 == ipx shapeSmoke (qDel shapeSmoke)
+-- ⚑⚑ ACCEPTED BEFORE: one cell, the absorb row. REFUSED AFTER: the closing `add_fast` reads it, so
+-- its class spans the sponge, that row and `assert_on_curve`…
+#guard (classCells posS (ipx shapeSmoke (qDel shapeSmoke))).length ≥ 4
+-- …and the emitted `CompleteAdd` body is 0 on `cq + delta` and NONZERO on `cq + delta'`.
+#guard caHolds (gridRow witS (pubS + caRowIxOf (ipx shapeSmoke (qLhsAcc shapeSmoke
+                  shapeSmoke.ipaBlocks))))
+#guard caHolds (caCellsAt (caRowIxOf (ipx shapeSmoke (qLhsAcc shapeSmoke shapeSmoke.ipaBlocks)))
+                  2 delAlt) == false
+-- ⚑ …and the ladder that produces `cq` multiplies by the LAST transcript squeeze, `c` (`:322`), not
+-- by a challenge chosen for it: its counter chain closes on `c`'s own `to_field_checked` cell.
+#guard vLhsN shapeSmoke shapeSmoke.ipaBlocks
+        == vN shapeSmoke shapeSmoke.cChal shapeSmoke.emsRows
+#guard tS.ipa.lhsNs.getLastD 0 == chalOf shapeSmoke tS.sp shapeSmoke.cChal
 -- …and the SEGMENT-C count, which is the other half and the bigger one: the `Not_opt` prefix was
 -- 58 `hmVal` fixtures and is now `sponge_after_index`'s 56 derived words plus the two app-state
 -- words. **58 free → 2.**
@@ -4568,9 +5112,9 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 #guard (List.range N_IDX_WORDS).all (fun i =>
   (tS.specC.ws.getD i (xv 0, 0)) == (idxVar shapeSmoke (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
 #guard N_HM_APP == 2 && N_IDX_WORDS == 56 && N_HM_FIX == 58
--- …and at the SMOKE shape only block 0's second lane is free (blocks 4–6 carry `t_comm`), which is
--- why the transcript count above is stated at the committed shape on purpose.
-#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none) == 4
+-- …and at the SMOKE shape too the ONLY free word is block `oDigest`'s second lane, the pad.
+#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none)
+        == 4 + tCommN shapeSmoke
 #guard (List.range shapeSmoke.absorbs).foldl
         (fun n b => n + (List.range 2).countP (fun j =>
            msgVar shapeSmoke b j == vMsg shapeSmoke b j)) 0 == 1
@@ -4743,10 +5287,18 @@ def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :
 -- ⚑ THE ROWS ARE THE CENSUS, stated as equalities. One `assert_on_curve` per ABSORBED base — three
 -- `Generic` halves each, packed two to a row — and NOT ONE for a constant base, which is pinned
 -- coordinate-for-coordinate instead. A deleted check moves both numbers.
-#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length + tCommN shapeSmoke
-#guard nOnC shapeStep == 48 + 7
+#guard nOnC shapeSmoke == (absRoundList shapeSmoke).length + tCommN shapeSmoke + 2
+#guard nOnC shapeStep == 48 + 7 + 2
 #guard nOnCRows == (3 * nOnC shapeSmoke + 1) / 2
-#guard (onCurveRows shapeStep).length == (3 * 55 + 1) / 2
+#guard (onCurveRows shapeStep).length == (3 * 57 + 1) / 2
+-- ⚑ …and the two that arrived with the R1 interleaving are `sg_old[0]` and `delta`, at the tail of
+-- the checked list and over the very variables the fold's `~init` and the `cq + delta` add read.
+#guard onCVar shapeStep (48 + 7) == (ipx shapeStep (qInit shapeStep), ipy shapeStep (qInit shapeStep))
+#guard onCVar shapeStep (48 + 8) == (ipx shapeStep (qDel shapeStep), ipy shapeStep (qDel shapeStep))
+#guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve
+         Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
+#guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve
+         Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
 -- …and the checked variables ARE the fold's own base coordinates, not a fresh copy: `x`'s class
 -- gains the two `assert_on_curve` halves that read it (`x·x` and `x2·x`) on top of the
 -- `ipaBlocks` `EndoMul` reads and the transcript's absorb row.
@@ -4768,7 +5320,10 @@ def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :
 -- and stopped there, which left the decomposition row as one equation in two unknowns.
 
 /-- The transcript squeeze challenge `c` is split out of. -/
-def sqOf (c : Nat) : Nat := (tS.sp.states.getD (shapeSmoke.absorbs + c + 1) []).getD 0 0
+def sqOf (c : Nat) : Nat := (tS.sp.states.getD (sqBlock shapeSmoke c + 1) []).getD 0 0
+/-- The honest `(combined_inner_product, bit)` pair transcript block `oCip` absorbs — the statement
+word R8 binds, so a control that re-runs the sponge feeds it what the assembly feeds it. -/
+def cipWordOf (t : StepData) : Nat × Nat := (t.fin.cipShift, CIP_BIT)
 def TWO128 : Nat := 2 ^ 128 % pN
 def INV_TWO128 : Nat := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv TWO128
 /-- ⚑ THE FORGERY THE MISSING CHECK ALLOWED: the prover picks ANY 128-bit low part and the
@@ -5004,7 +5559,8 @@ def groundDigest : Nat := idxDigestAtLast groundWord
 #guard groundWord != idxWordAt (N_IDX_WORDS - 1)
 
 /-- R1's transcript at the GROUND digest — the assembly's own `runSpongeWith`, one word changed. -/
-def spGround : SpongeData := runSpongeWith shapeSmoke (stepBases shapeSmoke) groundDigest
+def spGround : SpongeData :=
+  runSpongeWith shapeSmoke (stepBases shapeSmoke) groundDigest (cipWordOf tS)
 
 -- ⚑⚑ **AND IT STEERS EVERY SQUEEZE.** One plonk-index word, chosen by the prover, and EVERY
 -- transcript challenge moves — β, γ, α, ζ, ξ, and with them the x_hat MSM's scalars, the fold's
@@ -5327,9 +5883,13 @@ def ZETA_DOM : Nat := Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_DOM_M1 + 1
 -- ⚑⚑ THE GRIND THAT WAS OPEN UNTIL THIS LANDED (§12d's shape, aimed at `t_comm`).
 /-- The transcript block `t_comm`'s LAST chunk occupies — the last absorb block, so a candidate
 costs TWO permutations rather than twelve. -/
-def tcBlk : Nat := (absRoundList shapeSmoke).length + tCommN shapeSmoke
+def tcOrd : Nat := oCip shapeSmoke - 1
+/-- …as a BLOCK index. ⚑ Since the R1 interleaving the very next block is ζ's squeeze (`:568`
+immediately follows `receive without t_comm` at `:567`), so a candidate still costs TWO permutations
+and the challenge it steers is ζ rather than the old numbering's challenge 0. -/
+def tcBlk : Nat := absBlock shapeSmoke tcOrd
 def tcHon : Nat := (ftcTc (tCommN shapeSmoke - 1)).2
-/-- Transcript challenge 0 when that word is `w` and every earlier one is honest. -/
+/-- ζ when that word is `w` and every earlier one is honest. -/
 def tcChalAt (w : Nat) : Nat :=
   let pre := tS.sp.states.getD tcBlk []
   ((Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
@@ -5337,12 +5897,14 @@ def tcChalAt (w : Nat) : Nat :=
        [ (pre.getD 0 0 + (ftcTc (tCommN shapeSmoke - 1)).1) % pN
        , (pre.getD 1 0 + w) % pN, pre.getD 2 0 ])).getD 0 0) % 2 ^ shapeSmoke.chalBits
 
--- the block really is `t_comm`'s last, and the helper reproduces the assembly's OWN challenge on
--- the honest word — so what follows measures the grind and not a second sponge.
-#guard tcBlk == shapeSmoke.absorbs - 1
-#guard tCommBlock shapeSmoke tcBlk == some (tCommN shapeSmoke - 1)
-#guard msgVar shapeSmoke tcBlk 1 == vTcY shapeSmoke (tCommN shapeSmoke - 1)
-#guard tcChalAt tcHon == chalOf shapeSmoke tS.sp 0
+-- the block really is `t_comm`'s last, ζ really is the squeeze that follows it, and the helper
+-- reproduces the assembly's OWN challenge on the honest word — so what follows measures the grind
+-- and not a second sponge.
+#guard tcOrd == oCip shapeSmoke - 1
+#guard sqBlock shapeSmoke shapeSmoke.zetaChal == tcBlk + 1
+#guard tCommBlock shapeSmoke tcOrd == some (tCommN shapeSmoke - 1)
+#guard msgVar shapeSmoke tcOrd 1 == vTcY shapeSmoke (tCommN shapeSmoke - 1)
+#guard tcChalAt tcHon == chalOf shapeSmoke tS.sp shapeSmoke.zetaChal
 
 /-- …and the SEARCH: the first additive offset whose challenge hits the prover's target. -/
 def tcGrindT : Nat :=
@@ -5352,33 +5914,39 @@ def tcGround : Nat := (tcHon + tcGrindT) % pN
 
 -- ⚑⚑ **THE GRIND SUCCEEDS.** The block's real quotient commitment MISSES the chosen target; the
 -- prover finds a word that HITS it, by addition, in under 64 tries.
-#guard chalOf shapeSmoke tS.sp 0 % GRIND_MOD != 0
+#guard chalOf shapeSmoke tS.sp shapeSmoke.zetaChal % GRIND_MOD != 0
 #guard tcGrindT != 0
 #guard tcChalAt tcGround % GRIND_MOD == 0
 #guard tcGround != tcHon
 
 /-- R1's transcript at the ground word — the assembly's OWN `runSpongeAt`, one word changed. -/
 def spTc : SpongeData :=
-  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest tcBlk 1 tcGround
+  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest (cipWordOf tS) tcOrd 1 tcGround
 
 -- ⚑⚑ **AND IT STEERS EVERY SQUEEZE.** One `t_comm` coordinate, chosen by the prover, and EVERY
 -- transcript challenge moves — with them the x_hat MSM's scalars, the fold's weights and
 -- `combined_inner_product`. That is Fiat–Shamir's INPUT becoming prover-chosen, and it is exactly
 -- what absorbing `t_comm` WITHOUT consuming it would have left untouched.
-#guard (List.range shapeSmoke.chals).all (fun c =>
+-- ⚠ ⚑ …every squeeze taken AFTER the `t_comm` run, which since the R1 interleaving is ζ onwards and
+-- not all of them: β, γ and α are squeezed BEFORE `receive without t_comm` (`:563-566` precede
+-- `:567`), so upstream itself does not let a quotient chunk move them. Stated as the exact split
+-- rather than as "every challenge", which was true only of the all-absorbs-first shape.
+#guard ((List.range shapeSmoke.chals).drop shapeSmoke.zetaChal).all (fun c =>
   chalOf shapeSmoke spTc c != chalOf shapeSmoke tS.sp c)
+#guard ((List.range shapeSmoke.chals).take shapeSmoke.zetaChal).all (fun c =>
+  chalOf shapeSmoke spTc c == chalOf shapeSmoke tS.sp c)
 #guard (spTc.states.getLastD []).getD 0 0 != (tS.sp.states.getLastD []).getD 0 0
 
 -- ⚑ **THE HOLE, ON THE EMITTED OBJECT.** R1 itself never objects: with the ground word absorbed,
 -- every sponge block is still exactly `Ref.perm` of its own absorbed state. A `Poseidon` gate
 -- constrains the permutation and NOT what was fed to it, so before §6b nothing in the assembly
 -- could refuse this.
-#guard (List.range shapeSmoke.absorbs).all (fun b =>
+#guard (List.range shapeSmoke.blocks).all (fun b =>
   let pre := spTc.states.getD b []
   let ms := spTc.msgs.getD b []
-  spTc.states.getD (b + 1) []
-    == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
-         [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ])
+  let post := if ms.isEmpty then pre
+    else [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
+  spTc.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
 
 /-- `assert_on_curve`'s `assert_square` half as its OWN `Generic` body — `y·y − x³ − b`
 (`snarky_curve.ml:212-217`), the third half `onCurveHalves` emits. -/
@@ -6107,13 +6675,21 @@ def segCDigest (bits : List Nat) : Nat := ((segCWith bits).states.getLastD []).g
 #guard (List.range shapeSmoke.frCols).all (fun k =>
   (tS.specB.ws.getD (4 + 2 * k) (xv 0, 0)).1 == vColZ shapeSmoke k
   && (tS.specB.ws.getD (5 + 2 * k) (xv 0, 0)).1 == vColW shapeSmoke k)
--- …and segment A absorbs R2's challenges, segment C R3's and R4's fold outputs.
+-- ⚑ …and segments A and C absorb `prev_challenges` — THE SAME VARIABLES, which is upstream's own
+-- shape (`step_verifier.ml:956` and `step_main.ml:80` read one vector) and NOT R2's challenges. That
+-- false wire is what made `combined_inner_product` a cycle; see `vPrevChal` for what it cost and what
+-- it bought. Segment C also absorbs R3's and R4's fold outputs.
 #guard (List.range tS.specA.ws.length).all (fun i =>
-  (tS.specA.ws.getD i (xv 0, 0)).1 == vN shapeSmoke (i % shapeSmoke.chals) shapeSmoke.emsRows)
+  (tS.specA.ws.getD i (xv 0, 0)).1 == vPrevChal shapeSmoke i)
+#guard (List.range (2 * shapeSmoke.bRounds)).all (fun i =>
+  (tS.specC.ws.getD (N_HM_FIX + 4 + i) (xv 0, 0)) == (tS.specA.ws.getD i (xv 0, 0)))
+-- …and NO segment absorbs a transcript challenge variable any more.
+#guard (tS.specA.ws.map (·.1)).all (fun v =>
+  ((List.range shapeSmoke.chals).any (fun c => v == vN shapeSmoke c shapeSmoke.emsRows)) == false)
 #guard (tS.specC.ws.getD N_HM_FIX (xv 0, 0)).1
         == mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
 #guard (tS.specC.ws.getD (N_HM_FIX + 2) (xv 0, 0)).1
-        == ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 2))
+        == ipx shapeSmoke (qSum shapeSmoke (shapeSmoke.ipaRounds - 1))
 
 -- ⚑ THE SPONGE IS NOT DEGENERATE: the three digests differ from each other and from zero, so a
 -- sponge that silently absorbed nothing would show.
@@ -6302,7 +6878,8 @@ def rLS : Nat := rFoldS
 /-- The lifted bulletproof challenges, in `bEval`'s own list order (factor `k` carries the exponent
 `2^{bRounds−1−k}`). -/
 def usS : List (ZMod pN) :=
-  (List.range shapeSmoke.bRounds).map (fun k => ((liftOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN))
+  (List.range shapeSmoke.bRounds).map (fun k =>
+    ((liftOf shapeSmoke tS.sp (shapeSmoke.uChal k) : Nat) : ZMod pN))
 
 -- ── (a) `to_field_checked`'s CLOSING LINE — the endo lift, retiring simplification #7 ──────────
 -- ⚑ The `EndoMulScalar` chain's `a₈`/`b₈` cells, combined by R2's new row, ARE
@@ -6352,12 +6929,12 @@ def usS : List (ZMod pN) :=
 #guard (((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
          == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN)
               ((List.range shapeSmoke.bRounds).map
-                 (fun k => ((chalOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN)))
+                 (fun k => ((chalOf shapeSmoke tS.sp (shapeSmoke.uChal k) : Nat) : ZMod pN)))
             + ((rLS : Nat) : ZMod pN)
               * Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
                   (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN))
                   ((List.range shapeSmoke.bRounds).map
-                     (fun k => ((chalOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN)))) == false
+                     (fun k => ((chalOf shapeSmoke tS.sp (shapeSmoke.uChal k) : Nat) : ZMod pN)))) == false
 -- ⚑ …and — since §8g — the `r` that weights the second leg is `endoMap` of the fr-sponge's SECOND
 -- squeeze, so BENDING THAT SQUEEZE MOVES `b_actual` too. This is #10's red control on the
 -- `b_correct` side: the value is derived from the sponge, not fixed by the transcript.

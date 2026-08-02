@@ -126,6 +126,18 @@ and `Common.ft_comm`'s Horner consumes them. Named here because `KimchiStepMain`
 that MSM and the DATA is not what blocks it. -/
 def T_COMM_XY : List Pt := flat Dregg2.Circuit.Emit.MinaWrapGroupGate.TCHUNKS
 
+/-- ⚑ `sg_old[0]` — the first of `Wrap_hack.Checked.pad_commitments`' two slots
+(`step_verifier.ml:536-538`) and the point `combine_split_commitments` STARTS its accumulator at
+(`~init`, `:606`). It is `COMBINE_XY`'s own head: the fold list begins at it, which is exactly why it
+gets no fold ROUND while still being absorbed. -/
+def SG_OLD0_XY : Pt := COMBINE_XY.headD (0, 0)
+
+/-- ⚑ `opening.delta` — `absorb sponge PC delta` (`step_verifier.ml:321`) and the second operand of
+`check_bulletproof`'s closing `lhs = Scalar_challenge.endo q c + delta` (`:325-327`). -/
+def DELTA_XY : Pt :=
+  ((Dregg2.Circuit.Emit.MinaWrapOpeningGate.DELTA).1,
+   (Dregg2.Circuit.Emit.MinaWrapOpeningGate.DELTA).2.1)
+
 /-- `y^2 = x^3 + 5` over Pallas' base field. -/
 def onCurve (p : Pt) : Bool :=
   (p.2 * p.2) % pN == (p.1 * p.1 % pN * p.1 + 5) % pN
