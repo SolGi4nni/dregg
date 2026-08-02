@@ -325,20 +325,26 @@ theorem transferCapOpenEffV3TBAvail_rejects_mismatched_src (hash : List ℤ → 
 
 section Witnesses
 
--- The hardened rotated base is 10 wider than the bare (`transferV3.traceWidth = 1691`): the avail
--- witness pad shifts the cap-open appendix (and the TB columns) uniformly. DERIVATION at the
--- 184-limb geometry: `(EFFECT_VM_WIDTH + AVAIL_PAD) + APPENDIX_SPAN + 7·N_ROT_SITES`
--- `= 198 + 537 + 7·138 = 1701` (was `198 + 521 + 7·134 = 1657`).
-#guard transferV3Avail.traceWidth == 1829   -- ⚑ +112 at the FIELDS-CANONICITY flag day
+-- ⚑ The hardened rotated base is the availability-padded v1 face, rotated and graduated: its width
+-- is the GRADUATION MODEL applied to that face, checked against the width the emitter ACTUALLY
+-- produces.  Two independently authored objects — and NOT the literal 1829 that stood here, which
+-- was a constant against its own derivation and moved at the 2026-08-01 key-nonet flag day without
+-- catching anything.
+#guard transferV3Avail.traceWidth
+  == (Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail.traceWidth
+        + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.APPENDIX_SPAN)
+     + (CHIP_OUT_LANES - 1)
+       * (Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail.hashSites.length
+          + (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.rotV3Appendix
+              Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail.traceWidth).length)
+-- `CAP_OPEN_SPAN` is limb-count INDEPENDENT (7 + 8 + 16·17 + 8 + 2 + 32), so the cap-open widths
+-- move exactly with the base — stated as that relation, not as the sum's value.
 #guard transferCapOpenEffV3Avail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
--- `CAP_OPEN_SPAN = 329` is limb-count INDEPENDENT (7 + 8 + 16·17 + 8 + 2 + 32), so the cap-open
--- widths move exactly with the base: 1701 + 329 (was 1657 + 329 = 1986).
-#guard transferCapOpenEffV3Avail.traceWidth == 2158
 -- ⚑ 2026-07-30: the TB weld adds NO column any more. The `actor`/`dst` columns it used to append
 -- were read by nothing, so their pins published prover-chosen felts (`UnforcedPiPins`); both are
 -- deleted, leaving the `src` pin, which lands on a column `targetBindGate` reads.
 #guard transferCapOpenEffV3TBAvail.traceWidth == transferV3Avail.traceWidth + CAP_OPEN_SPAN
-#guard transferCapOpenEffV3TBAvail.traceWidth == 2158
+#guard transferCapOpenEffV3TBAvail.traceWidth == transferCapOpenEffV3Avail.traceWidth
 -- PI shape unchanged: 46 (42 v1 + 4 rotated commit pins); TB adds the ONE turn-identity pin.
 #guard transferCapOpenEffV3Avail.piCount == 46
 #guard transferCapOpenEffV3TBAvail.piCount == 47

@@ -618,9 +618,13 @@ theorem dfa_zeroLane_bRawGate_mem : bRawGate (.var ZERO_LANE) ∈ dfaRoutingDesc
 -- each recognised BY ITS CLUSTER (the inverse gate confirmed by its matching product gate).
 #guard (bZeroTestSites (deployedRefuseGates GRAD_ROT_WIDTH)).length == 12
 -- The three floor-refuse raw gates, at the real deployed floor columns.
+-- ⚑ The GATE is the line above: what the SCANNER extracts from the emitted gate list, against the
+-- three floor columns the weld's own column model names.  The literal restatement that used to
+-- follow it (`== [1831, 1847, 1863]`) was a constant checked against its own definition, and the
+-- 2026-08-01 key-nonet flag day moved all three at once — red, and detecting nothing the derived
+-- form above does not already catch.
 #guard bZeroCols (deployedRefuseGates GRAD_ROT_WIDTH)
   == [fcDep GRAD_ROT_WIDTH 0, fcDep GRAD_ROT_WIDTH 1, fcDep GRAD_ROT_WIDTH 2]
-#guard bZeroCols (deployedRefuseGates GRAD_ROT_WIDTH) == [1831, 1847, 1863]
 -- The whole weld is 39 gates; the recogniser accounts for 12 + 12 + 3 of them by shape.
 #guard (deployedRefuseGates GRAD_ROT_WIDTH).length == 39
 

@@ -132,7 +132,7 @@ def ringClearing (c0 c1 a0 a1 : Nat) (m0 m1 : ℤ)
 #assert_axioms ringNodes_wantPos
 #assert_axioms ringKernel_settles
 
-/-! ## The exact 27-lane endpoint surface and 184-limb wide commitment. -/
+/-! ## The exact 27-lane endpoint surface and `rotatedNumPreLimbs`-limb wide commitment. -/
 
 /-- Semantic fields carried by the endpoint AIR.  `noteClaim i` is the deployed
 `[nullifier, merkleRoot, valueBinding]` prefix for leg `i`. -/
@@ -163,14 +163,17 @@ def ringKernelPayload (f : RingEndpointFields) (post : Bool) : List ℤ :=
     1, 1, 1, 1, 1, 1, 2,
     f.noteClaim 0 0, f.noteClaim 1 0, f.noteClaim 0 1,
     f.noteClaim 1 1, f.noteClaim 0 2, f.noteClaim 1 2] : List ℤ) ++
-    List.replicate 163 0
+    List.replicate (Dregg2.Circuit.Emit.rotatedNumPreLimbs - 21) 0
 
+/-- ⚑ The payload is `rotatedNumPreLimbs` lanes because that is what `wireCommitR8` folds — not
+because someone wrote 184 twice.  A fixture that carries its own idea of the extent stays GREEN
+against its own `#guard` while the deployed chain has moved underneath it; this statement is what
+makes the next widening red here instead of silent. -/
 theorem ringKernelPayload_length (f : RingEndpointFields) (post : Bool) :
-    (ringKernelPayload f post).length = 184 := by
-  -- `length_append` + `length_replicate` as REWRITES: the 163-element tail is never unfolded,
-  -- only its length is read off. The explicit prefix costs 21 `length_cons` steps.
-  simp only [ringKernelPayload, List.length_append, List.length_replicate, List.length_cons,
-    List.length_nil]
+    (ringKernelPayload f post).length = Dregg2.Circuit.Emit.rotatedNumPreLimbs := by
+  -- `length_append` + `length_replicate` as REWRITES: the padding tail is never unfolded, only its
+  -- length is read off. The explicit prefix costs 21 `length_cons` steps.
+  simp [ringKernelPayload, Dregg2.Circuit.Emit.rotatedNumPreLimbs]
 
 /-- The deployed endpoint's genuine eight-lane wide commitment. -/
 def ringCommit8 (permW : List ℤ → List ℤ)
@@ -331,11 +334,20 @@ def preReceipt : Nat := 188
 def midReceipt : Nat := 189
 def postReceipt : Nat := 190
 def preLimbs : Nat := 191
-def preIroot : Nat := 375
-def postLimbs : Nat := 376
-def postIroot : Nat := 560
-def receiptLanes : Nat := 561
-def hostWidth : Nat := 589
+/-- ⚑ The two payload blocks are `rotatedNumPreLimbs` limbs plus an iroot EACH, and they are laid
+out from that ONE verified extent — never from a transcribed column.  These read 375/376/560/561/589
+until the 2026-08-01 key-nonet flag day (`rotatedNumPreLimbs` 184 → 187), and the literals did not
+merely go stale: `wideAppend`'s chain reads `preLimbs + 0 .. preLimbs + rotatedNumPreLimbs`, so at a
+187-limb chain over a 184-limb layout the BEFORE commitment would have absorbed `preIroot`,
+`postLimbs` and `postLimbs + 1` AS BEFORE-LIMBS — a silent misbinding that every `#guard` in this
+file still passed, because the fixture and the layout agreed with each other about a shape the
+system had stopped emitting. -/
+def preIroot : Nat := preLimbs + Dregg2.Circuit.Emit.rotatedNumPreLimbs
+def postLimbs : Nat := preIroot + 1
+def postIroot : Nat := postLimbs + Dregg2.Circuit.Emit.rotatedNumPreLimbs
+def receiptLanes : Nat := postIroot + 1
+/-- The host closes past the four fact sites' seven lane columns each. -/
+def hostWidth : Nat := receiptLanes + 4 * 7
 
 end Col
 
@@ -472,7 +484,7 @@ private def endpointActionConstraints : List VmConstraint2 :=
      (Col.receiptLanes + 21)]
 
 private def payloadConstraints : List VmConstraint2 :=
-  (List.range 184).flatMap (fun j =>
+  (List.range Dregg2.Circuit.Emit.rotatedNumPreLimbs).flatMap (fun j =>
     [payloadPin Col.preLimbs j preBalanceSource,
      payloadPin Col.postLimbs j postBalanceSource]) ++
   [eqCol Col.preIroot Col.preReceipt, eqCol Col.postIroot Col.postReceipt]
@@ -571,15 +583,26 @@ theorem RingEndpointAccepted.receipt_transition {permW : List ℤ → List ℤ}
     Dregg2.Intent.Ring.MatchNode.toRingNode,
     RingEndpointFields.turn0, RingEndpointFields.turn1, RingLeg.toTurn]
 
-#guard shieldedRingEndpointHost.traceWidth == 589
+-- ⚑ GEOMETRY GATES, none of them a literal any more.  The host's two payload blocks must be
+-- exactly the extent the wide chain reads (`preLimbs + 0 .. + rotatedNumPreLimbs`), the descriptor
+-- must allocate exactly the appendix `wideAppend` appends, and the appended carrier blocks must end
+-- exactly at the declared width.  The old `589` / `1581` were constants checked against their own
+-- definitions; they moved together at the key-nonet flag day and detected nothing on the way.
+#guard Col.postLimbs == Col.preLimbs + Dregg2.Circuit.Emit.rotatedNumPreLimbs + 1
+#guard Col.receiptLanes == Col.postLimbs + Dregg2.Circuit.Emit.rotatedNumPreLimbs + 1
+#guard shieldedRingEndpointHost.traceWidth == Col.hostWidth
+#guard shieldedRingEndpointDescriptor.traceWidth == Col.hostWidth + wideAppendixSpan
+#guard wideAfterCBase Col.hostWidth + wideCarrierBlockSpan
+  == shieldedRingEndpointDescriptor.traceWidth
+-- NON-MOVEMENT PINS — the public surface of this endpoint is the wire contract and must not move.
 #guard shieldedRingEndpointHost.piCount == 11
-#guard shieldedRingEndpointDescriptor.traceWidth == 1581
 #guard shieldedRingEndpointDescriptor.piCount == 27
 #guard shieldedRingEndpointDescriptor.name == "shielded-ring-clear-2-endpoint-wide"
 
 #guard (ringKernelPayload
   { creator0 := 1, creator1 := 2, asset0 := 0, asset1 := 1,
-    amount0 := 3, amount1 := 4, noteClaim := fun _ _ => 0 } false).length == 184
+    amount0 := 3, amount1 := 4, noteClaim := fun _ _ => 0 } false).length
+  == Dregg2.Circuit.Emit.rotatedNumPreLimbs
 #guard (endpointPostLog
   { creator0 := 1, creator1 := 2, asset0 := 0, asset1 := 1,
     amount0 := 3, amount1 := 4, noteClaim := fun _ _ => 0 } []).length == 2

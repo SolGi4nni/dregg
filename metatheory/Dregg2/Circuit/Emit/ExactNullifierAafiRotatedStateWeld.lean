@@ -15,7 +15,9 @@ This module closes the Lean side of that boundary, additively and without emitti
   faithful-eight `.nullifier` group;
 * the complete BEFORE payload is transition-carried, so the first-row commitment and last-row
   FNS3 weld refer to one state rather than two unrelated row witnesses;
-* all 177 non-nullifier payload lanes (including iroot) are preserved into the AFTER state.
+* every non-nullifier payload lane (including iroot) is preserved into the AFTER state — the count
+  is `ROTATED_PAYLOAD_WIDTH - 8`, stated as that partition below and NOT as a literal, because the
+  literal (177 at the 184-limb geometry) is exactly what the key-nonet flag day silently falsified.
 
 The descriptor is deliberately not emitted or registered as a production artifact here.  The
 remaining production seam is the Rust witness/refinement cutover: populate these two rotated
@@ -46,14 +48,16 @@ set_option autoImplicit false
 /-- The exact AAFI circuit remains the core. -/
 def CORE_WIDTH : Nat := V3_TRACE_WIDTH
 
-/-- One rotated payload is the verified 184 pre-iroot limbs plus iroot. -/
+/-- One rotated payload is the verified pre-iroot limbs plus iroot.  The extent is read from
+`RotatedLayout.rotatedNumPreLimbs` and never re-spelled here. -/
 def ROTATED_PAYLOAD_WIDTH : Nat := rotatedNumPreLimbs + 1
 
 def BEFORE_BLOCK_BASE : Nat := CORE_WIDTH
 def AFTER_BLOCK_BASE : Nat := BEFORE_BLOCK_BASE + ROTATED_PAYLOAD_WIDTH
 def ROTATED_HOST_WIDTH : Nat := AFTER_BLOCK_BASE + ROTATED_PAYLOAD_WIDTH
 
-/-- Each wide chain owns sixty-two eight-felt carriers. -/
+/-- Each wide chain owns `wideNumCarriers` eight-felt carriers (`EffectVmEmitRotationWide`, one per
+emitted wide lookup — 63 at the key-nonet geometry). -/
 def BEFORE_CARRIER_BASE : Nat := ROTATED_HOST_WIDTH
 def AFTER_CARRIER_BASE : Nat := BEFORE_CARRIER_BASE + wideCarrierBlockSpan
 def WELDED_TRACE_WIDTH : Nat := ROTATED_HOST_WIDTH + wideAppendixSpan
@@ -68,24 +72,60 @@ def nullifierOffsets : List Nat :=
   (List.finRange 8).map (layoutGroupCol .nullifier)
 
 /-- Every payload lane except the faithful-eight nullifier checkpoint is preserved.  This includes
-the iroot at offset 184: the exact append mutates only the nullifier accumulator component. -/
+the iroot, the last lane of the payload (`ROTATED_PAYLOAD_WIDTH - 1`): the exact append mutates only
+the nullifier accumulator component. -/
 def stableFrameOffsets : List Nat :=
   (List.range ROTATED_PAYLOAD_WIDTH).filter fun off => !nullifierOffsets.contains off
 
+/-! ### The geometry pins — which of these is a GATE, and against what
+
+⚑ A pin of a constant against its OWN definition is DECORATION.  It cannot go red for any reason
+except that the definition moved, and its only available "repair" is retyping the literal.  The
+2026-08-01 KEY-NONET flag day (`rotatedNumPreLimbs` 184 → 187) is the proof: every literal in this
+block that named a quantity the flag day MOVES went red at once, took the whole emitter cone —
+and with it `check-descriptor-drift.sh` — offline, and detected nothing whatsoever.  Those literals
+are gone.  What is left is one of three things, and each says which it is:
+
+* a **cross-source gate** — a relation between two independently authored objects;
+* a **placement-vs-allocation** relation — a region walk against a declared width;
+* a **non-movement pin** — a literal on a quantity this flag day must NOT have moved, which is a
+  real gate precisely because a widening that reached it would go red here. -/
+
+-- ⚑ CROSS-SOURCE GATE.  `ROTATED_PAYLOAD_WIDTH` derives from the SCALAR extent
+-- `RotatedLayout.rotatedNumPreLimbs`; `rotated187.occupied` is the layout's independently authored
+-- column ENUMERATION (singles ++ groups ++ carrier octets ++ their ninth lanes ++ the fields
+-- nonet).  Under `rotated187_legal`'s `disjoint` + `inBounds` the two agree only on a COMPLETE
+-- tiling, so this goes red on exactly the shape the key-nonet flag day exists to forbid: an extent
+-- bumped with no columns behind it, or a column allocated past a stale extent.
+#guard ROTATED_PAYLOAD_WIDTH == rotated187.occupied.length + 1
+
+-- NON-MOVEMENT PIN.  The exact-AAFI core sits BELOW both rotated blocks; a rotation flag day must
+-- not reach it.  2442 is `ExactNullifierAafiDescriptorPlan.V3_TRACE_WIDTH`, computed there from the
+-- FNS3 step schedule — a widening that moved the core goes red HERE.
 #guard CORE_WIDTH == 2442
-#guard ROTATED_PAYLOAD_WIDTH == 185
-#guard BEFORE_BLOCK_BASE == 2442
-#guard AFTER_BLOCK_BASE == 2627
-#guard ROTATED_HOST_WIDTH == 2812
-#guard BEFORE_CARRIER_BASE == 2812
-#guard AFTER_CARRIER_BASE == 3308
-#guard WELDED_TRACE_WIDTH == 3804
+#guard BEFORE_BLOCK_BASE == CORE_WIDTH
+
+-- PLACEMENT vs ALLOCATION.  The left side WALKS the regions (core, two payload blocks, two wide
+-- carrier blocks of `wideCarrierBlockSpan` each); the right side is the width this descriptor
+-- ALLOCATES (`ROTATED_HOST_WIDTH + wideAppendixSpan`).  Two allocation policies in two modules: a
+-- carrier block that outgrew its appendix would put its last carrier column outside the declared
+-- trace width, and that is what this catches.
+#guard AFTER_CARRIER_BASE + wideCarrierBlockSpan == WELDED_TRACE_WIDTH
+
+-- NON-MOVEMENT PIN — the PUBLIC ABI.  76 felts is the wire-visible contract (`piCount` in the
+-- emitted descriptor and in every verifier that reads it).  The flag day must not move it.
 #guard CORE_PI_COUNT == 60
 #guard PI_BEFORE_ROTATED_COMMIT_BASE == 60
 #guard PI_AFTER_ROTATED_COMMIT_BASE == 68
 #guard WELDED_PI_COUNT == 76
+
+-- NON-MOVEMENT PIN + PARTITION.  The nullifier group's columns are unmoved by the flag day (every
+-- column 0..183 keeps its meaning), the group really is INSIDE the carried payload, and the stable
+-- frame is exactly its complement — stated as a partition of `ROTATED_PAYLOAD_WIDTH`, never as the
+-- literal 177 the flag day falsified.
 #guard nullifierOffsets == [26, 68, 69, 70, 71, 72, 73, 74]
-#guard stableFrameOffsets.length == 177
+#guard nullifierOffsets.all (fun off => decide (off < ROTATED_PAYLOAD_WIDTH))
+#guard stableFrameOffsets.length + nullifierOffsets.length == ROTATED_PAYLOAD_WIDTH
 
 /-! ## 2. Actual weld gates -/
 
@@ -140,14 +180,20 @@ def exactNullifierAafiRotatedStateDescriptor : EffectVmDescriptor2 :=
   , hashSites := []
   , ranges := [] }
 
-#guard beforePayloadContinuity.length == 185
-#guard stableFrameConstraints.length == 177
-#guard fns3WeldConstraints.length == 16
-#guard wideStateLookups.length == 124
+-- EMITTED-LIST relations, stated against the geometry they claim to cover rather than against a
+-- literal count.  Every payload lane gets exactly one carry gate; every payload lane is either
+-- frozen across the transition or one of the eight welded nullifier lanes; the wide chain emits one
+-- lookup per carrier per block.
+#guard beforePayloadContinuity.length == ROTATED_PAYLOAD_WIDTH
+#guard stableFrameConstraints.length + nullifierOffsets.length == ROTATED_PAYLOAD_WIDTH
+#guard fns3WeldConstraints.length == 2 * nullifierOffsets.length
+#guard wideStateLookups.length == 2 * wideNumCarriers
 #guard wideStatePins.length == 16
-#guard retainedCorePins.length == 60
+#guard retainedCorePins.length == CORE_PI_COUNT
 #guard (v3PublicPins.take CORE_PI_COUNT).map (fun p => p.pi) == List.range 60
-#guard exactNullifierAafiRotatedStateDescriptor.traceWidth == 3804
+-- NON-MOVEMENT PIN — the emitted public ABI.  (The trace width is NOT pinned to a literal here: it
+-- is `WELDED_TRACE_WIDTH` by construction, and its real check is the placement-vs-allocation guard
+-- above.)
 #guard exactNullifierAafiRotatedStateDescriptor.piCount == 76
 #guard exactNullifierAafiRotatedStateDescriptor.tables.length == 5
 #guard exactNullifierAafiRotatedStateDescriptor.tables.map (fun t => t.id) ==
@@ -331,7 +377,7 @@ theorem satisfying_last_row_preserves_stable_frame
   · exact hz
 
 /-- Both wide lookup chains of a satisfying trace really compute the commitment primitive over
-their own row's 184 limbs and iroot. -/
+their own row's `rotatedNumPreLimbs` limbs and iroot. -/
 theorem satisfying_row_computes_wide_state_commits
     (permW : List ℤ → List ℤ) (scalarHash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
@@ -402,14 +448,14 @@ structure CarriedRotatedState where
 def outerCommit (permW : List ℤ → List ℤ) (s : CarriedRotatedState) : List ℤ :=
   wireCommitR8 permW s.limbs s.iroot
 
-/-- Semantic projection of the emitted 185-cell payload. -/
+/-- Semantic projection of the emitted `ROTATED_PAYLOAD_WIDTH`-cell payload. -/
 def payloadAt (s : CarriedRotatedState) (off : Nat) : ℤ :=
   if off = rotatedNumPreLimbs then s.iroot else s.limbs.getD off 0
 
 def PreservesStableFrame (before after : CarriedRotatedState) : Prop :=
   ∀ off ∈ stableFrameOffsets, payloadAt before off = payloadAt after off
 
-/-- Direct rejection tooth for every one of the 177 emitted identity lanes. -/
+/-- Direct rejection tooth for every emitted identity lane (`stableFrameOffsets`). -/
 theorem changed_stable_frame_cell_rejected {before after : CarriedRotatedState}
     {off : Nat} (hoff : off ∈ stableFrameOffsets)
     (hchanged : payloadAt before off ≠ payloadAt after off) :
@@ -435,7 +481,7 @@ theorem changed_payload_moves_or_wire_collides (permW : List ℤ → List ℤ)
     · exact Or.inr hcoll
   · exact Or.inl hcommit
 
-/-- The 177-lane frame-specific form used by the emitted identity gates. -/
+/-- The stable-frame-specific form used by the emitted identity gates. -/
 theorem changed_stable_frame_moves_or_wire_collides (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW) (left right : CarriedRotatedState) (off : Nat)
     (_hoff : off ∈ stableFrameOffsets)

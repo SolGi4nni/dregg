@@ -4,7 +4,7 @@
 `BareCohortFloorRefuse` proves the bare-descriptor dodge closed at the gadget's ABSTRACT columns
 (`CarrierBoundFloorGadget.CARRIER_BASE = EFFECT_VM_WIDTH + 200`, a single decode/refuse block). But the
 DEPLOYED flag-day emit must (a) read the REAL deployed caveat-manifest columns (`caveat_tag_col k`
-= `CAVEAT_BASE + 1 + 7·k` = 683/690/697/704 at the 184-limb geometry — the columns the deployed `caveatCommit`
+= `CAVEAT_BASE + 1 + 7·k`, which MOVES with `B_SPAN` on every rotation flag day — the columns the deployed `caveatCommit`
 hash-site actually commits to PI 45, so the `hbind` hypothesis is discharged by the LIVE caveat pin,
 not a free assumption), and (b) carry THREE decode/refuse blocks (escrow 17 / discharge 18 / vault 19)
 at DISJOINT aux columns on ONE bare member (`GRAD_ROT_WIDTH + b·REFUSE_STRIDE + …`, the Rust
@@ -259,15 +259,20 @@ theorem declared_tag_unsat_at (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
 
 The deployed flag-day welds THREE decode+refuse blocks (escrow 17 / discharge 18 / vault 19) at DISJOINT
 aux columns onto every bare cohort member. The column layout mirrors the Rust `bare_floor_refuse_weld`
-deployed alignment exactly: the caveat tag columns `ebDep` (shared, 683/690/697/704) and per-block
-disjoint aux `bcDep/icDep/ocDep/fcDep b` at `GRAD_ROT_WIDTH + b·REFUSE_STRIDE + …`. -/
+deployed alignment exactly: the caveat tag columns `ebDep` (shared, `CAVEAT_BASE + 1 + 7k`) and
+per-block disjoint aux `bcDep/icDep/ocDep/fcDep b` at `<member width> + b·REFUSE_STRIDE + …`.
+⚠ No absolute column is spelled as a literal anywhere in this file: the 2026-08-01 key-nonet flag
+day moved every one of them, and the literals that named them were decoration that went red without
+detecting anything. Read the expressions. -/
 
 /-- REFUSE_STRIDE — the per-tag-block aux stride (Rust twin `bare_floor_refuse_weld::REFUSE_STRIDE`). -/
 def REFUSE_STRIDE : Nat := 16
 /-- The chip-lookup SITE count of a graduated rotated cohort member (Rust twin
-`trace_rotated::N_ROT_SITES = 2 · (1 + (NUM_PRE_LIMBS − 4) / 3) + 16`): each of the two rotated
-blocks contributes `1 + (rotatedNumPreLimbs − 4)/3` chain-absorption sites, plus the 16
-caveat-region + v1-face sites. DERIVED from the ONE verified limb count, never carried. -/
+`trace_rotated::N_ROT_SITES = ROT_APPENDIX_SITES + V1_FACE_SITES`): the emitted rotated appendix's
+own sites — both rotated blocks' chain absorptions plus the caveat region's — read straight off
+`rotV3Appendix`, plus the four a graduated v1 face contributes. DERIVED from the emitted geometry,
+never carried; the only hand number left is the v1 face's four, and the `GRAD_ROT_WIDTH` gate below
+is what checks it. -/
 def N_ROT_SITES : Nat :=
   (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.rotV3Appendix EFFECT_VM_WIDTH).length + 4
 
@@ -275,39 +280,76 @@ def N_ROT_SITES : Nat :=
 an EXPRESSION over the named constants rather than a hand-carried literal: the un-graduated rotated
 width `EFFECT_VM_WIDTH + APPENDIX_SPAN` (Rust `ROT_WIDTH`) plus the `CHIP_OUT_LANES − 1 = 7` appended
 lane columns Phase B-GATE lays per chip site.
-⚑ FLAG DAY (`rotatedNumPreLimbs` 178 → 184): `APPENDIX_SPAN` 521 → 537 and `N_ROT_SITES` 134 → 138,
-so `709 + 7·134 = 1647` becomes `725 + 7·138 = 1691`.
-⚑ FLAG DAY (rc FOLD): `C_SPAN` 43 → 45 (`APPENDIX_SPAN` 537 → 539) and the caveat region gains the
-two rc-absorbing chip sites (`N_ROT_SITES` 138 → 140), so `1691` becomes `727 + 7·140 = 1707`.
-`N_ROT_SITES` is no longer hand arithmetic: it READS `rotV3Appendix`, plus the four sites a graduated
-v1 face contributes — the site count and the emitted geometry can no longer disagree. -/
+
+⚑ This is a MODEL of graduation, not the graduation. It has survived four flag days by being an
+expression (178 → 184 → the rc fold → the fields-canonicity region → the 2026-08-01 key nonet) —
+but an expression that agrees with the emitter by accident is still a hand-carry, so the pin below
+checks it against `graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)`, the deployed
+member's ACTUAL emitted width. Do not restore a literal here; restore the comparison. -/
 def GRAD_ROT_WIDTH : Nat :=
   (EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.APPENDIX_SPAN)
     + (CHIP_OUT_LANES - 1) * N_ROT_SITES
 /-- CAVEAT_BASE (Rust twin `trace_rotated::CAVEAT_BASE = V1_WIDTH + 2·B_SPAN`) — again an expression,
-not a literal: the caveat region opens exactly past the v1 face and BOTH rotated blocks. The v13
-169-limb value was 642, the 178-limb value 666; the 184-limb `B_SPAN` (239 → 247) moves the region a
-further +16 to 682, and the refuse-weld decode gates must read the caveat type-tag columns at THIS
-base (else they alias the after-block chain carriers). -/
+not a literal: the caveat region opens exactly past the v1 face and BOTH rotated blocks, and moves
+with `B_SPAN` on every rotation flag day. The refuse-weld decode gates must read the caveat
+type-tag columns at THIS base, else they alias the after-block chain carriers — which is what the
+manifest-band gate below checks, against the emitter's own caveat site walk. -/
 def CAVEAT_BASE : Nat :=
   EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.CAVEAT_REGION_OFF
 
--- The derived widths PINNED at the 184-limb + rc-FOLD geometry (was 138 / 1691 / 682).
-#guard N_ROT_SITES == 140
-#guard GRAD_ROT_WIDTH == 1819 -- ⚑ +112 at the FIELDS-CANONICITY flag day (APPENDIX_SPAN 539 → 651)
-#guard CAVEAT_BASE == 682     -- UNMOVED: the rc fold grows the region's TAIL, not its base
+/-- The FIRST in-region offset of the caveat region's ABSORPTION CHAIN, read out of
+`EffectVmEmitRotationV3`'s own site walk rather than restated.  Everything strictly below it is a
+manifest felt, which is where this module's tag columns must live. -/
+private def caveatChainFirstOff : Nat :=
+  ((Dregg2.Circuit.Emit.EffectVmEmitRotationV3.caveatV3SitesAt 0).map (·.digestCol)).foldl
+    Nat.min Dregg2.Circuit.Emit.EffectVmEmitRotationV3.C_SPAN
+
+/-! ⚑ **THE PINS BELOW, AND WHY THEY ARE NOT LITERALS ANY MORE.**
+
+`N_ROT_SITES == 140`, `GRAD_ROT_WIDTH == 1819` and `CAVEAT_BASE == 682` stood here until the
+2026-08-01 KEY-NONET flag day (`rotatedNumPreLimbs` 184 → 187) moved all three.  Every one of them
+was a constant checked against its OWN definition one arithmetic step away — DECORATION, not a
+gate: it could not go red for any reason except that its definition moved, and its only available
+"repair" was retyping the number.  They went red together, took `Dregg2.Deos` out of the build, and
+with it the whole-corpus re-derivation gate — while detecting nothing.  The Rust twins are no
+second source either: `layout_generated.rs` is EMITTED from `EmitLayoutManifest.lean` and
+`trace_rotated.rs` derives `N_ROT_SITES`/`GRAD_ROT_WIDTH`/`CAVEAT_BASE` from it, so a literal here
+was a copy of this file's own arithmetic taking the long way round.
+
+What replaces them is two relations between independently authored objects. -/
+
+-- ⚑ CROSS-SOURCE GATE.  The left side is this module's arithmetic MODEL of graduation: the
+-- un-graduated rotated width, plus `CHIP_OUT_LANES − 1` lane columns per chip site, with the site
+-- count read from `rotV3Appendix` and the v1 face's four sites hand-carried in `N_ROT_SITES`.  The
+-- right side is the width `graduateV1 ∘ rotateV3FrozenAuthority` ACTUALLY produces for the deployed
+-- standard graduated rotated member (the transfer face, `transferVmDescriptor2R24`).  If the v1
+-- face gains or loses a chip site, or graduation changes its per-site lane count, or the transfer
+-- face's own width moves, this goes red — and it is the MODEL that has to move, not a literal.
+#guard GRAD_ROT_WIDTH == (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozen
+  Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor).traceWidth
 
 /-- The deployed caveat count column. -/
 def ccDep : Nat := CAVEAT_BASE
-/-- The deployed caveat entry-base / type-tag columns (683/690/697/704). Rust twin `caveat_tag_col`. -/
+/-- The deployed caveat entry-base / type-tag columns. Rust twin `caveat_tag_col`. -/
 def ebDep (k : Nat) : Nat := CAVEAT_BASE + 1 + 7 * k
+
+-- ⚑ CROSS-SOURCE GATE.  `ccDep`/`ebDep` MODEL the caveat region as `[count][4 × 7-felt entry]`;
+-- `caveatV3SitesAt` is where `EffectVmEmitRotationV3` ACTUALLY lays that region's absorption chain.
+-- Every tag column the refuse gates read must sit in the manifest band strictly BELOW the first
+-- chain digest column — otherwise the decode aliases a carrier, which is the exact failure
+-- `CAVEAT_BASE` was introduced to prevent.  This subsumes the old `CAVEAT_BASE == 682`: the band is
+-- expressed relative to `CAVEAT_BASE`, and the emitter's own site walk supplies its upper edge, so
+-- it follows the region wherever a flag day puts it and still bites if the region's SHAPE changes.
+#guard (List.range 4).all fun k =>
+  decide (ccDep < ebDep k) && decide (ebDep k + 7 ≤ CAVEAT_BASE + caveatChainFirstOff)
+
 /-- The per-block disjoint decode-aux columns at a PER-MEMBER aux base (Rust twins
 `bit_col`/`inv_col`/`or_col`/`floor_col`, recovered by `refuse_aux_base`). The aux base is the member's
 OWN `traceWidth` (§HETEROGENEOUS GEOMETRY): a standard graduated member bases its refuse at
-`GRAD_ROT_WIDTH = 1707` (its own width); a DISTINCT V1Face member — `setFieldDyn` / `custom`, four fewer
-chip sites — bases its refuse at ITS width (`setFieldDyn` 1679 = 1707 − 4·7; `custom` 1687, the same
-1679 plus its 8 commit/VK teeth), so the block always rides the member's OWN free headroom (never the
-fixed 1707 that would leave a 28-column dead gap on a 1679-wide member). -/
+`GRAD_ROT_WIDTH` (its own width); a DISTINCT V1Face member — `setFieldDyn` / `custom`, four fewer
+chip sites — bases its refuse at ITS width (`setFieldDyn` = `GRAD_ROT_WIDTH − 4·7`; `custom` is that
+plus its 8 commit/VK teeth), so the block always rides the member's OWN free headroom (never the
+fixed graduated width, which would leave a 28-column dead gap on the narrower member). -/
 def bcDep (auxBase b k : Nat) : Nat := auxBase + b * REFUSE_STRIDE + k
 def icDep (auxBase b k : Nat) : Nat := auxBase + b * REFUSE_STRIDE + 4 + k
 def ocDep (auxBase b j : Nat) : Nat := auxBase + b * REFUSE_STRIDE + 8 + j
@@ -504,51 +546,49 @@ theorem satisfied2_of_gentianDeployedBareRefuse (hash : List ℤ → ℤ) (d : E
 
 section Witnesses
 
--- The deployed caveat tag columns match the Rust `caveat_tag_col` 184-limb pins (683/690/697/704).
-#guard ebDep 0 == 683
-#guard ebDep 1 == 690
-#guard ebDep 2 == 697
-#guard ebDep 3 == 704
--- STANDARD geometry (auxBase = GRAD_ROT_WIDTH = 1707): the three aux blocks are DISJOINT (no
--- bit/inv/or/floor column aliases across blocks). Floor cols 1719/1735/1751, separated by REFUSE_STRIDE.
-#guard fcDep GRAD_ROT_WIDTH 0 == 1831
-#guard fcDep GRAD_ROT_WIDTH 1 == 1847
-#guard fcDep GRAD_ROT_WIDTH 2 == 1863
-#guard ([ bcDep GRAD_ROT_WIDTH 0 0, bcDep GRAD_ROT_WIDTH 0 1, bcDep GRAD_ROT_WIDTH 0 2,
-          bcDep GRAD_ROT_WIDTH 0 3, icDep GRAD_ROT_WIDTH 0 0, icDep GRAD_ROT_WIDTH 0 1,
-          icDep GRAD_ROT_WIDTH 0 2, icDep GRAD_ROT_WIDTH 0 3,
-          ocDep GRAD_ROT_WIDTH 0 0, ocDep GRAD_ROT_WIDTH 0 1, ocDep GRAD_ROT_WIDTH 0 2, fcDep GRAD_ROT_WIDTH 0,
-          bcDep GRAD_ROT_WIDTH 1 0, bcDep GRAD_ROT_WIDTH 1 1, bcDep GRAD_ROT_WIDTH 1 2,
-          bcDep GRAD_ROT_WIDTH 1 3, icDep GRAD_ROT_WIDTH 1 0, icDep GRAD_ROT_WIDTH 1 1,
-          icDep GRAD_ROT_WIDTH 1 2, icDep GRAD_ROT_WIDTH 1 3,
-          ocDep GRAD_ROT_WIDTH 1 0, ocDep GRAD_ROT_WIDTH 1 1, ocDep GRAD_ROT_WIDTH 1 2, fcDep GRAD_ROT_WIDTH 1,
-          bcDep GRAD_ROT_WIDTH 2 0, bcDep GRAD_ROT_WIDTH 2 1, bcDep GRAD_ROT_WIDTH 2 2,
-          bcDep GRAD_ROT_WIDTH 2 3, icDep GRAD_ROT_WIDTH 2 0, icDep GRAD_ROT_WIDTH 2 1,
-          icDep GRAD_ROT_WIDTH 2 2, icDep GRAD_ROT_WIDTH 2 3,
-          ocDep GRAD_ROT_WIDTH 2 0, ocDep GRAD_ROT_WIDTH 2 1, ocDep GRAD_ROT_WIDTH 2 2, fcDep GRAD_ROT_WIDTH 2 ]).dedup.length == 36
--- The aux blocks start PAST the graduated rotated width (the traceWidth widening the flag-day pays).
-#guard fcDep GRAD_ROT_WIDTH 2 ≥ GRAD_ROT_WIDTH
-#guard fcDep GRAD_ROT_WIDTH 2 + 1 == 1864
+/-- Every aux column the three-block deployed weld occupies at aux base `auxBase` — the object the
+disjointness / containment teeth below quantify over, rather than three floor columns spelled as
+literals.  12 per block: 4 bit + 4 inv + 3 or + 1 floor. -/
+private def deployedAuxCols (auxBase : Nat) : List Nat :=
+  (List.range 3).flatMap fun b =>
+    (List.range 4).map (bcDep auxBase b) ++ (List.range 4).map (icDep auxBase b)
+      ++ (List.range 3).map (ocDep auxBase b) ++ [fcDep auxBase b]
+
+/-! ⚑ The absolute column literals that stood here — `ebDep 0..3 == 683/690/697/704`, the three
+floor columns, the two widened trace widths — were pins of a constant against its own definition,
+and the 2026-08-01 key-nonet flag day moved every one of them at once.  They are replaced by the
+PROPERTIES they were standing in for, none of which names an absolute column: the aux blocks are
+pairwise disjoint, they ride at or above the member's OWN data, and they fit inside the width the
+weld declares.  Those hold at any geometry and still go red if the weld's shape breaks. -/
+
+-- STANDARD geometry (auxBase = the member's own `GRAD_ROT_WIDTH`): the three aux blocks are
+-- DISJOINT — no bit/inv/or/floor column aliases across blocks, at `REFUSE_STRIDE` apart.
+#guard (deployedAuxCols GRAD_ROT_WIDTH).dedup.length == 36
+#guard (deployedAuxCols GRAD_ROT_WIDTH).length == 36
+-- The aux blocks start AT OR PAST the graduated rotated width (they ride the member's free
+-- headroom; the traceWidth widening below is what pays for them).
+#guard (deployedAuxCols GRAD_ROT_WIDTH).all (fun c => decide (GRAD_ROT_WIDTH ≤ c))
 -- The three-block weld adds 3 × 13 = 39 gates (each block: 8 is-zero + 3 fold-into + 1 refuse = 13).
 #guard (deployedRefuseGates GRAD_ROT_WIDTH).length == 39
--- DISTINCT V1Face geometry (auxBase = 1679 = GRAD_ROT_WIDTH − 4 chip sites·7): setFieldDyn / custom
--- base their refuse at 1679 (floor cols 1691/1707/1723) and widen to 1724 over their OWN base — NOT
--- the fixed 1707 that would over-widen to 1752 and strand a 28-column dead gap.
-#guard fcDep (GRAD_ROT_WIDTH - 28) 0 == 1803
-#guard fcDep (GRAD_ROT_WIDTH - 28) 2 == 1835
-#guard fcDep (GRAD_ROT_WIDTH - 28) 2 + 1 == 1836
 private def toyBare : EffectVmDescriptor2 :=
   { name := "toy", traceWidth := GRAD_ROT_WIDTH, piCount := 46, tables := [], constraints := [],
     hashSites := [], ranges := [] }
--- Standard member: widens 1707 → 1752 (byte-identical to the pre-heterogeneous weld at the new geometry).
-#guard (gentianDeployedBareRefuse toyBare).traceWidth == 1864
+-- Standard member: every aux column the weld writes is inside the width the weld declares.
+#guard (deployedAuxCols toyBare.traceWidth).all
+  (fun c => decide (c < (gentianDeployedBareRefuse toyBare).traceWidth))
 #guard (gentianDeployedBareRefuse toyBare).constraints.length == 39
 #guard (gentianDeployedBareRefuse toyBare).piCount == 46
 private def toyDistinct : EffectVmDescriptor2 :=
   { name := "toy-distinct", traceWidth := GRAD_ROT_WIDTH - 28, piCount := 46, tables := [],
     constraints := [], hashSites := [], ranges := [] }
--- Distinct-geometry member: widens 1791 → 1836 over its OWN 1791 base (per-member geometry respected).
-#guard (gentianDeployedBareRefuse toyDistinct).traceWidth == 1836
+-- DISTINCT V1Face geometry (auxBase = `GRAD_ROT_WIDTH − 4 chip sites·7`): `setFieldDyn` / `custom`
+-- base their refuse at THEIR OWN width and widen over it — not at the standard graduated width,
+-- which would over-widen and strand a 28-column dead gap.  Same two properties, narrower member.
+#guard (deployedAuxCols toyDistinct.traceWidth).all
+  (fun c => decide (toyDistinct.traceWidth ≤ c))
+#guard (deployedAuxCols toyDistinct.traceWidth).all
+  (fun c => decide (c < (gentianDeployedBareRefuse toyDistinct).traceWidth))
+#guard (gentianDeployedBareRefuse toyDistinct).traceWidth < (gentianDeployedBareRefuse toyBare).traceWidth
 #guard (gentianDeployedBareRefuse toyDistinct).constraints.length == 39
 #guard (refuseGatesAt (tagSettleEscrow : ℤ) ebDep (bcDep GRAD_ROT_WIDTH 0) (icDep GRAD_ROT_WIDTH 0)
   (ocDep GRAD_ROT_WIDTH 0) (fcDep GRAD_ROT_WIDTH 0)).length == 13
