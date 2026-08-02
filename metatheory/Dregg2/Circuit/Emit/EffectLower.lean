@@ -116,6 +116,7 @@ import Dregg2.Circuit.WitnessExtract
 import Dregg2.Circuit.Emit.AirBuilder
 import Dregg2.Circuit.Emit.EffectLowerCore
 import Dregg2.Circuit.Inst.transfer
+import Dregg2.Circuit.Emit.BalanceComponentBindsOrCollides
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.DfaRoutingTableEmit
 
@@ -247,13 +248,28 @@ theorem satisfied_of_lowered {St Args : Type} (name : String) (E : EffectSpec2 S
 
 /-! ## §4 — transfer: what the pass EMITS for the balance-movement effect.
 
-Transfer's `EffectSpec2` is `Inst.Transfer.balanceE` (`Dregg2/Circuit/Inst/transfer.lean:122`);
-its derived circuit is `balanceGuardGates ++ [cE2RestF, cE2Bind, cE2Log]` — the single `propBit`
-guard gate at wire `0` plus the three digest EQ gates. `transferLoweredDesc` is the pass's output
-on exactly that, and `transferLoweredDesc_is_lowering` pins the identity by `rfl` for EVERY carried
-digest `D` (the lowering reads no digest, so the emitted object is `D`-independent). -/
+Transfer's `EffectSpec2` is `Emit.BalanceComponentBindsOrCollides.balanceEFree` — transfer's spec at
+the FLOOR-FREE `bal` component, reached through the component-parametric
+`Inst.Transfer.balanceEOf`, so its view / growing log / 17-clause rest frame / `propBit` guard
+sub-system are literally the SAME OBJECT `Inst.Transfer.balanceE` uses. Its derived circuit is
+`balanceGuardGates ++ [cE2RestF, cE2Bind, cE2Log]` — the single `propBit` guard gate at wire `0`
+plus the three digest EQ gates. `transferLoweredDesc` is the pass's output on exactly that, and
+`transferLoweredDesc_is_lowering` pins the identity by `rfl` for EVERY carried digest `D` (the
+lowering reads no digest, so the emitted object is `D`-independent).
 
-open Dregg2.Circuit.Inst.Transfer (balanceE balanceGuardGates cBitGuard BalanceArgs)
+⚑ **WHY `balanceEFree` AND NOT `balanceE`.** `balanceE` takes `(hD : Function.Injective D)` at
+`D : (CellId → AssetId → ℤ) → ℤ`, and `Verify.InjSpelledFloors.balDigest_not_injective` proves that
+hypothesis FALSE by CARDINALITY — an uncountable function space cannot inject into `ℤ`, at any
+parameters, for any hash, in any field. Every statement in this section originally bound it and was
+therefore VACUOUS; `#floor_ratchet` red-flagged all three (class `inj-spelled`). They are now stated
+at the floor-free spec, whose component `binds`/`encodes` are proved with NO hypothesis on `D` at
+all — the residual is a NAMED, REFUTABLE `BalColl D` at the ONE pair the witness supplies, handed
+back rather than assumed away. -/
+
+open Dregg2.Circuit.Inst.Transfer (balanceGuardGates cBitGuard BalanceArgs)
+open Dregg2.Circuit.Emit.BalanceComponentBindsOrCollides
+  (BalColl balExpected balanceEFree balanceFreeGuardDecodes balanceFreeRestFrameDecodes
+   apexFree_iff_balanceMovementSpec apexFree_or_collides)
 open Dregg2.Exec (RecChainedState CellId AssetId)
 
 /-- The lowered transfer AIR's identity. Distinct from the deployed
@@ -269,11 +285,10 @@ def transferLoweredDesc : EffectVmDescriptor2 :=
   lowerCS transferLoweredName 72 1 (balanceGuardGates ++ [cE2RestF, cE2Bind, cE2Log]) {}
 
 /-- **`transferLoweredDesc` IS `lowerEffect` applied to transfer's spec** — by `rfl`, for every
-carried ledger digest. This is what makes §5's measurements and the §6 refinement statements about
-the GENERAL PASS rather than about a hand-written lookalike. -/
-theorem transferLoweredDesc_is_lowering
-    (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
-    transferLoweredDesc = lowerEffect transferLoweredName (balanceE D hD) := rfl
+carried ledger digest and with NO hypothesis on it. This is what makes §5's measurements and the §6
+refinement statements about the GENERAL PASS rather than about a hand-written lookalike. -/
+theorem transferLoweredDesc_is_lowering (D : (CellId → AssetId → ℤ) → ℤ) :
+    transferLoweredDesc = lowerEffect transferLoweredName (balanceEFree D) := rfl
 
 /-! ### §4a — the emitted shape, executed. -/
 
@@ -443,6 +458,35 @@ open Dregg2.Circuit.LogCommitRegrounded (LogColl)
 /-- The columns transfer's lowered gates read: the guard bit and the six digest wires. -/
 def transferGateCols : List Nat := [0, 66, 67, 68, 69, 70, 71]
 
+/-- **THE SHARED CORE of the two keystone forms below** — the pass's soundness carried all the way
+to the framework's derived apex, at the floor-free spec. Stated once so the `hnoBal` form and the
+disjunctive form are the SAME derivation with the residual discharged at different places, rather
+than two proofs that can drift. No hypothesis on `D`. -/
+theorem transferLowered_apexFree
+    (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv) (isFirst : Bool)
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hRest : RestIffNoBal S.RH)
+    (s : RecChainedState) (args : BalanceArgs) (s' : RecChainedState)
+    (hno : ¬ LogColl S.LH s'.log (args.t :: s.log))
+    (hrow : env.loc = encodeE2 S (balanceEFree D) s args s')
+    (hcanon : ∀ c ∈ effectCircuit2 (balanceEFree D),
+      (0 ≤ c.lhs.eval env.loc ∧ c.lhs.eval env.loc < P)
+        ∧ (0 ≤ c.rhs.eval env.loc ∧ c.rhs.eval env.loc < P))
+    (hsat : ∀ vc ∈ transferLoweredDesc.constraints,
+      vc.holdsAt hash tf env isFirst false) :
+    (balanceEFree D).apex s args s' := by
+  -- the emitted descriptor IS the pass's output on transfer's spec
+  rw [transferLoweredDesc_is_lowering D] at hsat
+  -- soundness of the pass: the framework's derived circuit is satisfied over ℤ by this row
+  have hsatZ : satisfied (effectCircuit2 (balanceEFree D)) env.loc :=
+    satisfied_of_lowered transferLoweredName (balanceEFree D) hash tf env isFirst hcanon hsat
+  rw [hrow] at hsatZ
+  -- the framework's crown jewel, at the PORTED log side condition (no refuted carrier)
+  exact effect2_circuit_full_sound S (balanceEFree D)
+    (balanceFreeRestFrameDecodes S D hRest)
+    (balanceFreeGuardDecodes D)
+    s args s' (hno := hno) hsatZ
+
 /-- **`transferLowered_refines_balanceMovement` — THE PHASE-1 KEYSTONE.**
 
 A row of a trace satisfying the EMITTED descriptor `transferLoweredDesc`, which is the honest
@@ -450,55 +494,86 @@ A row of a trace satisfying the EMITTED descriptor `transferLoweredDesc`, which 
 complete declarative `BalanceMovementSpec` — the SAME apex
 `RotatedKernelRefinement*.transfer_descriptorRefines` reaches from the hand-authored side.
 
-⚑ **IT DOES NOT CARRY `logHashInjective`, DELIBERATELY.** `Inst.Transfer.transfer_full_sound` takes
-that carrier, and `StateCommit.lean:251` records it PROVED FALSE at deployed BabyBear parameters —
-a theorem under it is VACUOUS at deployment. So this rung does NOT route through
-`transfer_full_sound`; it calls `effect2_circuit_full_sound` directly at its own weaker side
-condition `hno`, the ported `_or_collides` form (`LogCommitRegrounded.lean:70,152`): a NAMED,
-REFUTABLE non-collision at the ONE pair of logs THIS witness supplies. By
-`LogCommitRegrounded.noLogColl_of_inj` the old carrier implies `hno` at every pair, so this
-statement is strictly STRONGER than the `transfer_full_sound` route, not a weakening of it.
+⚑ **IT CARRIES NEITHER OF THE TWO REFUTED DIGEST FLOORS, AND THAT IS THE WHOLE POINT.**
 
-Remaining carried portals, none refuted: `RestIffNoBal S.RH`, `Function.Injective D`, and the
-deployed canonicality envelope the mod-`p` row denotation genuinely requires. -/
+*The log side.* `Inst.Transfer.transfer_full_sound` takes `logHashInjective`, and
+`StateCommit.lean:251` records it PROVED FALSE at deployed BabyBear parameters — a theorem under it
+is VACUOUS at deployment. So this rung does NOT route through `transfer_full_sound`; it calls
+`effect2_circuit_full_sound` directly at its own weaker side condition `hno`, the ported
+`_or_collides` form (`LogCommitRegrounded.lean:70,152`): a NAMED, REFUTABLE non-collision at the ONE
+pair of logs THIS witness supplies. By `LogCommitRegrounded.noLogColl_of_inj` the old carrier
+implies `hno` at every pair, so this statement is strictly STRONGER than the `transfer_full_sound`
+route, not a weakening of it.
+
+*The ledger side.* ⚠ **The first version of this theorem dodged the log floor and then took a WORSE
+one**, in a doc-comment that called it unrefuted: `(hD : Function.Injective D)` at
+`D : (CellId → AssetId → ℤ) → ℤ`, which `Verify.InjSpelledFloors.balDigest_not_injective` refutes by
+CARDINALITY — an uncountable function space into a countable `ℤ`, false at every parameter, for
+every hash, in every field. `#floor_ratchet` caught it (class `inj-spelled`). The repair is the SAME
+idiom one component down: `Emit.BalanceComponentBindsOrCollides.balComponentFree` proves its `binds`
+and `encodes` with no hypothesis on `D` at all, and this rung takes `hnoBal` — a NAMED, REFUTABLE
+non-collision at the ONE pair `(s'.kernel.bal, balExpected s args)` this witness supplies. Both poles
+of that event are exhibited (`balColl_satisfiable` / `balColl_refutable_on_agreement`), and
+`balColl_refutes_inj` says what a returned collision costs: the digest floor itself.
+
+⚑ **The conclusion is UNCHANGED** — the complete 21-conjunct `BalanceMovementSpec`, guard and full
+whole-ledger equality and grown log and all 18 frame clauses. Nothing was weakened to remove the
+floor; see `transferLowered_refines_balanceMovement_or_collides` for the hypothesis-FREE form, which
+carries the residual in the conclusion instead.
+
+Carried portals after the repair, checked against `Verify/InjSpelledFloors.lean` and the ratchet's
+refuted set: `RestIffNoBal S.RH` (unrefuted — a structural iff on the rest hash), `¬ LogColl`,
+`¬ BalColl` (both REFUTABLE per-pair events, neither a floor), and the deployed canonicality
+envelope the mod-`p` row denotation genuinely requires. No injectivity assumption anywhere. -/
 theorem transferLowered_refines_balanceMovement
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv) (isFirst : Bool)
-    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
     (hRest : RestIffNoBal S.RH)
     (s : RecChainedState) (args : BalanceArgs) (s' : RecChainedState)
     (hno : ¬ LogColl S.LH s'.log (args.t :: s.log))
-    (hrow : env.loc = encodeE2 S (balanceE D hD) s args s')
-    (hcanon : ∀ c ∈ effectCircuit2 (balanceE D hD),
+    (hnoBal : ¬ BalColl D s'.kernel.bal (balExpected s args))
+    (hrow : env.loc = encodeE2 S (balanceEFree D) s args s')
+    (hcanon : ∀ c ∈ effectCircuit2 (balanceEFree D),
       (0 ≤ c.lhs.eval env.loc ∧ c.lhs.eval env.loc < P)
         ∧ (0 ≤ c.rhs.eval env.loc ∧ c.rhs.eval env.loc < P))
     (hsat : ∀ vc ∈ transferLoweredDesc.constraints,
       vc.holdsAt hash tf env isFirst false) :
-    BalanceMovementSpec s args.t args.a s' := by
-  -- the emitted descriptor IS the pass's output on transfer's spec
-  rw [transferLoweredDesc_is_lowering D hD] at hsat
-  -- soundness of the pass: the framework's derived circuit is satisfied over ℤ by this row
-  have hsatZ : satisfied (effectCircuit2 (balanceE D hD)) env.loc :=
-    satisfied_of_lowered transferLoweredName (balanceE D hD) hash tf env isFirst hcanon hsat
-  rw [hrow] at hsatZ
-  -- the framework's crown jewel, at the PORTED log side condition (no refuted carrier)
-  have hapex : (balanceE D hD).apex s args s' :=
-    effect2_circuit_full_sound S (balanceE D hD)
-      (Dregg2.Circuit.Inst.Transfer.balanceRestFrameDecodes S D hD hRest)
-      (Dregg2.Circuit.Inst.Transfer.balanceGuardDecodes D hD)
-      s args s' (hno := hno) hsatZ
-  exact (Dregg2.Circuit.Inst.Transfer.apex_iff_balanceMovementSpec D hD s args s').mp hapex
+    BalanceMovementSpec s args.t args.a s' :=
+  (apexFree_iff_balanceMovementSpec D s args s' hnoBal).mp
+    (transferLowered_apexFree hash tf env isFirst S D hRest s args s' hno hrow hcanon hsat)
+
+/-- **The hypothesis-FREE form.** Drop `hnoBal` and the residual moves into the conclusion: a
+satisfying row of the EMITTED descriptor either forces the complete `BalanceMovementSpec`, or HANDS
+BACK a genuine equivocation of the deployed ledger digest at the named pair. Nothing at all is
+assumed about `D`. -/
+theorem transferLowered_refines_balanceMovement_or_collides
+    (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv) (isFirst : Bool)
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hRest : RestIffNoBal S.RH)
+    (s : RecChainedState) (args : BalanceArgs) (s' : RecChainedState)
+    (hno : ¬ LogColl S.LH s'.log (args.t :: s.log))
+    (hrow : env.loc = encodeE2 S (balanceEFree D) s args s')
+    (hcanon : ∀ c ∈ effectCircuit2 (balanceEFree D),
+      (0 ≤ c.lhs.eval env.loc ∧ c.lhs.eval env.loc < P)
+        ∧ (0 ≤ c.rhs.eval env.loc ∧ c.rhs.eval env.loc < P))
+    (hsat : ∀ vc ∈ transferLoweredDesc.constraints,
+      vc.holdsAt hash tf env isFirst false) :
+    BalanceMovementSpec s args.t args.a s'
+      ∨ BalColl D s'.kernel.bal (balExpected s args) :=
+  apexFree_or_collides D s args s'
+    (transferLowered_apexFree hash tf env isFirst S D hRest s args s' hno hrow hcanon hsat)
 
 /-- **The converse (emission).** A genuine balance-movement step's honest witness satisfies every
-gate the pass emitted — the compiler does not over-constrain. -/
+gate the pass emitted — the compiler does not over-constrain. Floor-free: no hypothesis on `D`. -/
 theorem transferLowered_emits
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv) (isFirst : Bool)
-    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
     (s : RecChainedState) (args : BalanceArgs) (s' : RecChainedState)
-    (hrow : env.loc = encodeE2 S (balanceE D hD) s args s')
-    (h : satisfiedE2 S (balanceE D hD) (encodeE2 S (balanceE D hD) s args s')) :
-    ∀ c ∈ effectCircuit2 (balanceE D hD),
+    (hrow : env.loc = encodeE2 S (balanceEFree D) s args s')
+    (h : satisfiedE2 S (balanceEFree D) (encodeE2 S (balanceEFree D) s args s')) :
+    ∀ c ∈ effectCircuit2 (balanceEFree D),
       (lowerConstraint c).holdsAt hash tf env isFirst false := by
-  refine lowered_of_satisfied transferLoweredName (balanceE D hD) hash tf env isFirst ?_
+  refine lowered_of_satisfied transferLoweredName (balanceEFree D) hash tf env isFirst ?_
   rw [hrow]; exact h
 
 /-! ## §8 — ⚑ THE FUSION: the deployed descriptor IS this pass's output (2026-08-01).
@@ -683,7 +758,9 @@ was never blocked on syntax. -/
 #assert_axioms lowered_rejects_component_forge
 #assert_axioms lowered_ne_deployed
 #assert_axioms lowered_json_ne_deployed_json
+#assert_axioms transferLowered_apexFree
 #assert_axioms transferLowered_refines_balanceMovement
+#assert_axioms transferLowered_refines_balanceMovement_or_collides
 #assert_axioms transferLowered_emits
 -- Phase 2.
 #assert_axioms refuse_bites

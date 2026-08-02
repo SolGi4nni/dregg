@@ -118,11 +118,18 @@ def balComponent (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injec
   funcComponent (β := CellId → AssetId → ℤ) (·.bal) D hD
     (fun s args => recTransferBal s.kernel.bal args.t.src args.t.dst args.a args.t.amt)
 
-/-- **`balanceE`** — the `EffectSpec2` for `balanceA`, supplied to the v2 framework. -/
-def balanceE (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
+/-- **`balanceEOf`** — transfer's `EffectSpec2` PARAMETRIC IN ITS `bal` COMPONENT.
+
+Everything the balance-movement effect's spec holds EXCEPT which `ActiveComponent` commits the
+ledger: the chained view, the growing log, the 17-clause rest frame and the whole `propBit` guard
+sub-system. Factored out so a SECOND component — the floor-free
+`Emit.BalanceComponentBindsOrCollides.balComponentFree`, whose `binds` needs no injectivity — reaches
+the SAME spec without a second copy of the frame. Two frames that agree today are two frames that
+disagree later, and `RestIffNoBal` would then bind only one of them. -/
+def balanceEOf (A : ActiveComponent RecChainedState BalanceArgs) :
     EffectSpec2 RecChainedState BalanceArgs where
   view         := chainView
-  active       := balComponent D hD
+  active       := A
   logUpdate    := some (fun s args => args.t :: s.log)
   restFrame    := fun k k' =>
     (k'.accounts = k.accounts ∧ k'.cell = k.cell ∧ k'.caps = k.caps
@@ -141,12 +148,28 @@ def balanceE (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective
   guardLocal   := balanceGuardLocal
   guardWidth_le := by decide
 
-/-! ### §1a — the per-effect obligations for `balanceE`. -/
+/-- **`balanceE`** — the `EffectSpec2` for `balanceA`, supplied to the v2 framework. The `bal`
+component is the whole-function digest, so this spec CARRIES `Function.Injective D`, which
+`Verify.InjSpelledFloors.balDigest_not_injective` proves FALSE by cardinality at every parameter.
+It is grandfathered (`FloorRatchetBaselineInline`) and it is not the route any new statement should
+take; `Emit.BalanceComponentBindsOrCollides.balanceEFree` is the floor-free spec at the same frame. -/
+def balanceE (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
+    EffectSpec2 RecChainedState BalanceArgs :=
+  balanceEOf (balComponent D hD)
 
-/-- **`GuardDecodes2 (balanceE …)`** — the single bit gate on the guard witness decodes to
-`admitGuardA`. -/
-theorem balanceGuardDecodes (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
-    GuardDecodes2 (balanceE D hD) := by
+/-! ### §1a — the per-effect obligations.
+
+⚑ ALL THREE ARE PROVED AT `balanceEOf A`, FOR AN ARBITRARY COMPONENT. None of them reads `active`:
+`GuardDecodes2`/`GuardEncodes2` touch only the guard sub-system and `RestFrameDecodes2` only the
+rest frame, both of which `balanceEOf` fixes. Proving them once at the component-parametric spec is
+what lets the floor-free component (`Emit.BalanceComponentBindsOrCollides`) reuse the SAME proofs
+rather than a transcribed copy — and it drops the vacuous `Function.Injective D` binder from the
+proof itself, leaving it only on the three thin `balanceE` wrappers the tree already grandfathered. -/
+
+/-- **`GuardDecodes2 (balanceEOf …)`** — the single bit gate on the guard witness decodes to
+`admitGuardA`, at ANY `bal` component. -/
+theorem balanceOfGuardDecodes (A : ActiveComponent RecChainedState BalanceArgs) :
+    GuardDecodes2 (balanceEOf A) := by
   intro s args s' hsat
   change satisfied balanceGuardGates (balanceGuardEncode s args s') at hsat
   show balanceGuardProp s args
@@ -154,9 +177,10 @@ theorem balanceGuardDecodes (D : (CellId → AssetId → ℤ) → ℤ) (hD : Fun
   simp only [Constraint.holds, cBitGuard, vBitGuard, Expr.eval, balanceGuardEncode, if_pos] at hg
   exact propBit_eq_one.mp hg
 
-/-- **`GuardEncodes2 (balanceE …)`** — `admitGuardA` encodes to the satisfied bit gate. -/
-theorem balanceGuardEncodes (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
-    GuardEncodes2 (balanceE D hD) := by
+/-- **`GuardEncodes2 (balanceEOf …)`** — `admitGuardA` encodes to the satisfied bit gate, at ANY
+`bal` component. -/
+theorem balanceOfGuardEncodes (A : ActiveComponent RecChainedState BalanceArgs) :
+    GuardEncodes2 (balanceEOf A) := by
   intro s args s' hg
   show satisfied balanceGuardGates (balanceGuardEncode s args s')
   intro c hc
@@ -165,11 +189,24 @@ theorem balanceGuardEncodes (D : (CellId → AssetId → ℤ) → ℤ) (hD : Fun
   simp only [Constraint.holds, cBitGuard, vBitGuard, Expr.eval, balanceGuardEncode, if_pos]
   exact propBit_eq_one.mpr hg
 
+/-- The rest-frame portal at ANY `bal` component: `RestIffNoBal RH`'s soundness side. -/
+theorem balanceOfRestFrameDecodes (S : Surface2) (A : ActiveComponent RecChainedState BalanceArgs)
+    (hRest : RestIffNoBal S.RH) : RestFrameDecodes2 S (balanceEOf A) :=
+  fun k k' h => (hRest k k').mp h
+
+/-- **`GuardDecodes2 (balanceE …)`** — the `balanceE` instance of `balanceOfGuardDecodes`. -/
+theorem balanceGuardDecodes (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
+    GuardDecodes2 (balanceE D hD) := balanceOfGuardDecodes (balComponent D hD)
+
+/-- **`GuardEncodes2 (balanceE …)`** — the `balanceE` instance of `balanceOfGuardEncodes`. -/
+theorem balanceGuardEncodes (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
+    GuardEncodes2 (balanceE D hD) := balanceOfGuardEncodes (balComponent D hD)
+
 /-- The `balanceE` rest-frame portal (the `→`): `RestIffNoBal RH`'s soundness side (the SAME `bal`-omitting
 rest frame the burn/mint use — reused from `EffectCommit2`). -/
 theorem balanceRestFrameDecodes (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
     (hD : Function.Injective D) (hRest : RestIffNoBal S.RH) :
-    RestFrameDecodes2 S (balanceE D hD) := fun k k' h => (hRest k k').mp h
+    RestFrameDecodes2 S (balanceE D hD) := balanceOfRestFrameDecodes S (balComponent D hD) hRest
 
 /-! ### §1b — the apex ↔ `BalanceMovementSpec` bridge.
 

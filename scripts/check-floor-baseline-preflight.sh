@@ -27,9 +27,49 @@
 #       floor or a floor BUNDLE  -> it is a carrier;
 #     * a `def`/`abbrev`/`instance`/`structure`/`inductive` whose WHOLE declaration mentions one
 #       -> it is a carrier or a carrier-maker (the prop-body and bundle classes: a `Prop` def whose
-#       VALUE carries a floor hands every user a floor with no floor binder anywhere in sight).
+#       VALUE carries a floor hands every user a floor with no floor binder anywhere in sight);
+#     * ⚑ a declaration with an INLINE `(h.. : Function.Injective f)` BINDER whose `f`'s declared
+#       type is a signature this tree REFUTES -> it is a carrier of class `inj-spelled`, even
+#       though it names no floor at all (2026-08-02; see the next block).
 #
-#   A carrier whose NAME is not recorded in `Dregg2/Verify/FloorRatchetBaseline.lean` FAILS.
+#   A carrier whose NAME is not recorded in `Dregg2/Verify/FloorRatchetBaseline.lean` (or in
+#   `FloorRatchetBaselineInline.lean`, the inline-spelled half) FAILS.
+#
+# ═══ THE SECOND HOLE, AND WHY IT WAS INVISIBLE HERE FOR A WEEK ═══════════════════════════
+#   `#floor_ratchet` learned to read INLINE injectivity on 2026-07-25 (`Verify/InjSpelling`):
+#   `Poseidon2SpongeCR f` IS `Function.Injective f` at `f : List ℤ → ℤ`, so a binder spelled the
+#   second way is the identical hypothesis under no floor NAME. THIS PREFLIGHT NEVER LEARNED IT.
+#   It detected carriers with `FLOOR_RE.findall` over floor NAMES only, so on 2026-08-01 commit
+#   `1f00267c8` — which landed THREE declarations binding `(hD : Function.Injective D)` at
+#   `D : (CellId → AssetId → ℤ) → ℤ`, a digest `Verify/InjSpelledFloors.balDigest_not_injective`
+#   refutes by CARDINALITY (uncountable domain, countable codomain: no such injection exists at
+#   any parameters) — it printed `OK ... no unbaselined carrier` while the root gate rejected the
+#   very same commit. The instrument reported green on the exact wound it exists to catch.
+#
+#   The fix mirrors the gate rather than guessing: the REFUTED SIGNATURE SET is DERIVED, two ways,
+#   the same two `Verify/InjSpelling` uses --
+#     * SOURCE B  an in-tree `theorem .. (f : α → β) : ¬ Function.Injective f` (the strong kind:
+#                 NO function of that signature is injective), parsed from `InjSpelledFloors.lean`;
+#     * SOURCE A  a sentinel floor `F` DEFINED as plain injectivity — literally
+#                 `Function.Injective f`, or its eta-spelling `∀ a b, f a = f b → a = b` — whose
+#                 parameter type gives the same `(α, β)` pair.
+#   Hypothesis position ONLY, exactly like the gate: `¬ Function.Injective f` in a CONCLUSION is a
+#   REFUTATION and is never a carrier (which is why the refutations themselves need no exemption).
+#   A signature with no in-tree refutation is NOT gated — a widening encoding or a parametric
+#   `β → ℤ` may be perfectly injective and gating it would be noise, and a noisy gate gets deleted.
+#   (Source A is restricted to sentinels the census marks `true` = REFUTED, so a presence-required
+#   floor like `BindingHashCR` contributes no signature. 19 signatures derived on 2026-08-02.)
+#
+#   ⚑ IT REPRODUCES THE WOUND, WHICH IS THE ONLY EVIDENCE THAT COUNTS:
+#       bash scripts/check-floor-baseline-preflight.sh --rev 1f00267c8
+#     BEFORE: `OK — 2 file(s) scanned, 23 floor name(s), 1972 baseline entries; no unbaselined
+#             carrier.`  exit 0
+#     AFTER : exit 1, naming `transferLoweredDesc_is_lowering`, `transferLowered_emits` and
+#             `transferLowered_refines_balanceMovement`, each `inj-spelled:balDigest_not_injective`
+#             — the same three declarations and the same refutation `#floor_ratchet` named.
+#   AND IT IS NOT NOISY: swept over the last 250 `metatheory`-touching commits (each judged against
+#   its own parent, as `--rev` does), the new half turns exactly ONE commit from green to red —
+#   `1f00267c8` — and no other. 1 of 250, and it is the true positive.
 #
 #   Matching is on the floor's and the declaration's LAST NAME COMPONENT, the same convention (and
 #   the same acknowledged over-match) `scripts/check-ratchet-darkness.sh` uses: a binder spells a
@@ -43,12 +83,24 @@
 #     * floors reached through a chain of `Prop` defs / structure fields declared in OTHER,
 #       unchanged files — the fixpoint needs the environment;
 #     * the 10 refuted floors the ratchet DERIVES beyond the 17 parsed sentinels;
-#     * a declaration whose short name collides with an unrelated baseline entry.
+#     * a declaration whose short name collides with an unrelated baseline entry;
+#     * an inline `Function.Injective f` whose `f` is typed by a `variable`/`section` binder or by
+#       autobound implicits rather than in the signature itself — the type text is not there to
+#       match, so no signature is attributed and the site is skipped.
+#   ⚠ ONE ASYMMETRY RUNS THE OTHER WAY, and it is not new with the inline half: this scans FILES,
+#   `#floor_ratchet` scans the ENVIRONMENT of `metatheory/Dregg2.lean`. A module NOT reachable from
+#   that root is invisible to the gate and visible here. Measured 2026-08-02 on the whole tree with
+#   the base pinned empty: 41 absolute unbaselined carriers, 36 named and 5 inline, and every one of
+#   the 5 sits in the UNROOTED `*Rung2*` cluster. The set-difference-against-HEAD rule below is what
+#   keeps that from blocking anybody — those carriers are in HEAD's blob too, so they are reported
+#   only if a change INTRODUCES them.
 #   The remedy for a hit is always the same and is never "delete the check": either port the
 #   declaration off the floor, or record it in the baseline WITH ITS REASON.
 #
 # ═══ NON-VACUITY (a gate that scans for nothing passes everything) ═══════════════════════
 #   * fewer than 15 floor sentinels parsed, or `Poseidon2SpongeCR` missing  -> FAIL
+#   * fewer than 8 REFUTED INLINE SIGNATURES derived, or the whole-ledger
+#     digest `(CellId → AssetId → ℤ) → ℤ` missing from them                 -> FAIL
 #   * fewer than 100 baseline names parsed                                  -> FAIL
 #   * a named file that does not exist                                      -> FAIL
 #   Zero files to scan is NOT a failure (most commits touch no Lean), but it is announced.
@@ -132,8 +184,15 @@ except OSError:
     sys.stderr.write("check-floor-baseline-preflight: FAIL — cannot read %s\n" % census)
     sys.exit(1)
 m = re.search(r'def\s+sentinelFloors\s*:.*?:=\s*\[(.*?)\n\s*\]', src, re.S)
-sentinels = re.findall(r'`([A-Za-z0-9_.]+)\s*,\s*(?:true|false)\s*\)', m.group(1)) if m else []
-shorts = sorted({s.rsplit('.', 1)[-1] for s in sentinels})
+sentinels = re.findall(r'`([A-Za-z0-9_.]+)\s*,\s*(true|false)\s*\)', m.group(1)) if m else []
+shorts = sorted({s.rsplit('.', 1)[-1] for s, _ in sentinels})
+# ⚑ The census's own `Bool` is `true` IFF THE TREE HOLDS A REFUTATION (`FloorCensus.lean:186` —
+# "BindingHashCR is refuted only at a chosen bad instance — presence-required only"). The named
+# classes below scan for ALL sentinels, refuted or not, because a presence-required floor is still
+# floor content. The INLINE class must NOT: `#floor_ratchet` derives its inline signature set from
+# the REFUTED floors alone, and gating `Function.Injective f` at a signature nothing refutes is
+# exactly the noise `Verify/InjSpelling` refuses to make.
+refuted_shorts = sorted({s.rsplit('.', 1)[-1] for s, b in sentinels if b == 'true'})
 
 if len(shorts) < 15 or "Poseidon2SpongeCR" not in shorts:
     sys.stderr.write(
@@ -214,6 +273,135 @@ def strip_comments(s: str) -> str:
         out.append(s[i]); i += 1
     return ''.join(out)
 
+# ── ⚑ THE REFUTED INLINE SIGNATURES, DERIVED (never hand-written) ────────────────────────────
+# Mirrors `Verify/InjSpelling`: a `Function.Injective f` HYPOTHESIS is a carrier exactly when this
+# tree refutes injectivity AT `f`'s SIGNATURE. Two derivations, the gate's own two.
+
+def norm_type(t: str) -> str:
+    """Compare types as TEXT, canonically: `->` as the arrow, every dotted name reduced to its LAST
+    component (the same convention the rest of this script uses for declaration and floor names),
+    all whitespace gone. So `Dregg2.Exec.CellId -> AssetId -> Int` and `CellId → AssetId → ℤ`
+    compare unequal only where they genuinely differ."""
+    t = t.replace('->', '→')
+    t = re.sub(r'[A-Za-z_À-￿][A-Za-z0-9_.\'À-￿]*',
+               lambda m: m.group(0).rsplit('.', 1)[-1], t)
+    return re.sub(r'\s+', '', t)
+
+# SOURCE B — an unconditional non-injectivity theorem: `theorem T (f : α → β) : ¬ Function.Injective f`
+# says NO function of that signature is injective. Strength: total, no deployed parameter.
+inj_sigs = {}          # normalized type text -> the refutation/floor that gates it
+injfile = os.path.join(mt_dir, "Dregg2/Verify/InjSpelledFloors.lean")
+try:
+    isrc = strip_comments(open(injfile, encoding='utf-8', errors='replace').read())
+except OSError:
+    isrc = ""
+for nm, var, ty in re.findall(
+        r'theorem\s+([A-Za-z_][A-Za-z0-9_.\']*)\s*\(\s*([A-Za-z_][A-Za-z0-9_\']*)\s*:\s*'
+        r'(.+?)\)\s*:\s*(?:¬|Not\b)\s*Function\.Injective\s+\2\b', isrc, re.S):
+    inj_sigs.setdefault(norm_type(ty), nm)
+
+# SOURCE A — a SENTINEL FLOOR that IS plain injectivity. `Poseidon2SpongeCR f` is spelled
+# `∀ xs ys, sponge xs = sponge ys → xs = ys`, which is `Function.Injective sponge`; writing the
+# inline form is writing the floor, so the two must not have different prices. Floors that are NOT
+# plain injectivity (`compressInjective`'s 2-to-1 form, `cellLeafInjective`'s per-index form) simply
+# do not match and contribute no signature — exactly as in the gate.
+try:
+    hits = subprocess.run(
+        ["grep", "-rlE", r'^\s*def\s+(' + '|'.join(re.escape(s) for s in refuted_shorts) + r')\b',
+         "--include=*.lean", mt_dir],
+        capture_output=True, text=True, timeout=60).stdout.split()
+except Exception:
+    hits = []
+for hp in hits:
+    try:
+        hsrc = open(hp, encoding='utf-8', errors='replace').read()
+    except OSError:
+        continue
+    for fl, var, ty, body in re.findall(
+            r'^\s*def\s+(' + '|'.join(re.escape(s) for s in refuted_shorts) + r')\s*'
+            r'\(\s*([A-Za-z_][A-Za-z0-9_\']*)\s*:\s*(.+?)\)\s*:\s*Prop\s*:=\s*(.+?)(?=\n\s*\n|\n\S)',
+            hsrc, re.S | re.M):
+        b = ' '.join(body.split())
+        v = re.escape(var)
+        if (re.fullmatch(r'Function\.Injective\s+' + v, b)
+                or re.fullmatch(r'∀[^,]*,\s*' + v + r'\s+(\w+)\s*=\s*' + v
+                                + r'\s+(\w+)\s*→\s*\1\s*=\s*\2', b)):
+            inj_sigs.setdefault(norm_type(ty), fl)
+
+BAL_SIG = norm_type("(CellId → AssetId → ℤ) → ℤ")
+if len(inj_sigs) < 8 or BAL_SIG not in inj_sigs:
+    sys.stderr.write(
+        "check-floor-baseline-preflight: FAIL — derived only %d refuted inline-injectivity\n"
+        "  signature(s) (need >= 8, and the whole-ledger digest `(CellId → AssetId → ℤ) → ℤ`\n"
+        "  among them). Either `Dregg2/Verify/InjSpelledFloors.lean` moved/changed shape, or the\n"
+        "  parse broke. Until this is fixed EVERY floor spelled `Function.Injective f` is ungated\n"
+        "  here again — which is exactly how commit 1f00267c8's three vacuous keystones printed\n"
+        "  OK on this script while `#floor_ratchet` rejected them. Fix the parse; do not\n"
+        "  hand-write the list.\n"
+        "  derived: %s\n" % (len(inj_sigs), ", ".join(sorted(inj_sigs)) or "(none)"))
+    sys.exit(1)
+
+_OPENS, _CLOSES = '([{⦃⟨', ')]}⦄⟩'
+
+def binder_groups(s: str):
+    """The DEPTH-1 bracketed binder groups of a signature, as inner text. Balanced, so a nested
+    function type `(D : (CellId → AssetId → ℤ) → ℤ)` yields ONE group, not two."""
+    out, depth, start = [], 0, None
+    for i, c in enumerate(s):
+        if c in _OPENS:
+            if depth == 0:
+                start = i + 1
+            depth += 1
+        elif c in _CLOSES:
+            depth -= 1
+            if depth <= 0:
+                if start is not None:
+                    out.append(s[start:i])
+                start, depth = None, 0
+    return out
+
+def split_binder(inner: str):
+    """`names : type` at the first DEPTH-0 colon of a binder group; (None, None) if untyped."""
+    depth = 0
+    for i, c in enumerate(inner):
+        if c in _OPENS:
+            depth += 1
+        elif c in _CLOSES:
+            depth -= 1
+        elif c == ':' and depth == 0 and inner[i + 1:i + 2] not in ('=', ':'):
+            return inner[:i].strip(), inner[i + 1:].strip()
+    return None, None
+
+INJ_BINDER_RE = re.compile(r'^Function\.Injective\s+([A-Za-z_][A-Za-z0-9_\']*)$')
+
+def inline_inj_floors(sig: str):
+    """The refuted signatures a declaration ASSUMES inline. Hypothesis position only: we read the
+    BINDERS, never the conclusion, so `¬ Function.Injective f` as a CONCLUSION (a refutation — the
+    content this campaign wants more of) is not a carrier and needs no exemption."""
+    binders, _concl = split_sig(sig)
+    typed, injected = {}, []
+    for inner in binder_groups(binders):
+        names, ty = split_binder(inner)
+        if names is None:
+            continue
+        ty = ' '.join(ty.split())
+        m = INJ_BINDER_RE.match(ty)
+        if m:
+            injected.append(m.group(1))
+        else:
+            for nm in names.replace('{', ' ').replace('}', ' ').split():
+                typed[nm] = ty
+    found = []
+    for f in injected:
+        ty = typed.get(f)
+        if ty is None:
+            continue                     # typed elsewhere (`variable`, autobound): undercount, stated
+        fl = inj_sigs.get(norm_type(ty))
+        if fl and fl not in found:
+            found.append(fl)
+    return sorted(found)
+
+
 DECL_RE = re.compile(
     r'^\s*(?:@\[[^\]]*\]\s*)*(?:private\s+|protected\s+|partial\s+|noncomputable\s+|unsafe\s+)*'
     r'(theorem|lemma|example|def|abbrev|instance|structure|inductive|class)\s+'
@@ -239,6 +427,9 @@ INSTRUMENT = {
     "Dregg2/Verify/FloorRatchetSpecimens.lean",
     "Dregg2/Verify/FloorCensus.lean",
     "Dregg2/Verify/InjSpelling.lean",
+    # The inline half's DERIVATION SOURCE, for the same reason `FloorCensus` is here: this is where
+    # you go to ADD a refutation, and the check must never fire on the edit it asks for.
+    "Dregg2/Verify/InjSpelledFloors.lean",
 }
 
 # ── ANTI-FLOOR is EXEMPT, mirroring `FloorRatchet.antiFloor` ─────────────────────────────────
@@ -290,23 +481,31 @@ def carriers(text: str):
     """{short name: (kind, name, [floors])} for every unbaselined carrier in this source text."""
     text = strip_comments(text)
     out = {}
-    hits = list(DECL_RE.finditer(text))
-    for idx, mt in enumerate(hits):
+    decls = list(DECL_RE.finditer(text))
+    for idx, mt in enumerate(decls):
         kind, name = mt.group(1), mt.group(2)
-        end = hits[idx + 1].start() if idx + 1 < len(hits) else len(text)
+        end = decls[idx + 1].start() if idx + 1 < len(decls) else len(text)
         chunk = text[mt.end():end]
+        cut = chunk.find(':=')
+        sig = chunk if cut < 0 else chunk[:cut]
+        # ⚑ THE INLINE SPELLING, on EVERY declaration kind. A `def` is gated too: the gate's own
+        # inline surface holds `Inst.Transfer.balanceE`, a `def` whose only floor is the
+        # `(hD : Function.Injective D)` parameter, and a preflight that skipped non-`Prop` defs
+        # here would let the next one in for free. Hypothesis position only, so a refutation
+        # (`¬ Function.Injective f` as the CONCLUSION) is never a hit and needs no exemption.
+        found = ["inj-spelled:" + f for f in inline_inj_floors(sig)]
+        # …and the NAMED classes, exactly as before.
         if kind in SIG_ONLY:
-            cut = chunk.find(':=')
-            chunk = chunk if cut < 0 else chunk[:cut]
-        elif kind not in BUNDLE_LIKE:
+            chunk = sig
+            if not is_anti_floor(chunk):
+                found += FLOOR_RE.findall(chunk)
+        elif kind in BUNDLE_LIKE:
+            found += FLOOR_RE.findall(chunk)
+        elif re.search(r':\s*Prop\s*$', sig.strip()):
             # def / abbrev: the prop-body class only. A data def spelling a floor name is data.
-            sig, _sep, _body = chunk.partition(':=')
-            if not re.search(r':\s*Prop\s*$', sig.strip()):
-                continue
-        found = sorted(set(FLOOR_RE.findall(chunk)))
+            found += FLOOR_RE.findall(chunk)
+        found = sorted(set(found))
         if not found:
-            continue
-        if kind in SIG_ONLY and is_anti_floor(chunk):
             continue
         short = name.rsplit('.', 1)[-1]
         if short in baseline:
@@ -354,7 +553,11 @@ if violations:
         "  deployed BabyBear parameters — and are not recorded in FloorRatchetBaseline. A theorem\n"
         "  under a refuted floor is VACUOUSLY TRUE at deployment: it says nothing about the\n"
         "  shipping system. `lake build Dregg2` WILL fail on these, for every other lane, hours\n"
-        "  from now.\n\n")
+        "  from now.\n\n"
+        "  An `inj-spelled:` tag means the binder reads `Function.Injective f` and names no floor:\n"
+        "  it is the SAME hypothesis, and the refutation named after the colon is the theorem that\n"
+        "  proves it false at your `f`'s signature. `(CellId → AssetId → ℤ) → ℤ` is refuted by\n"
+        "  CARDINALITY, not by parameters — an uncountable domain cannot inject into ℤ, ever.\n\n")
     for rel, kind, name, found in violations:
         sys.stderr.write("    %s\n      %s %s   carries: %s\n" % (rel, kind, name, ", ".join(found)))
     sys.stderr.write(
@@ -370,8 +573,8 @@ if violations:
     sys.exit(1)
 
 print("check-floor-baseline-preflight: OK — %d file(s) scanned, %d floor name(s), "
-      "%d baseline entries; no unbaselined carrier."
-      % (scanned, len(shorts) + len(bundle_shorts), len(baseline)))
+      "%d refuted inline signature(s), %d baseline entries; no unbaselined carrier."
+      % (scanned, len(shorts) + len(bundle_shorts), len(inj_sigs), len(baseline)))
 PY
 rc=$?
 
