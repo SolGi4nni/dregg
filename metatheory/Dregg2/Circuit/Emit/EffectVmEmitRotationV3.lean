@@ -1363,7 +1363,7 @@ def gradRotWidthOf (d : EffectVmDescriptor) : Nat :=
   (d.traceWidth + APPENDIX_SPAN)
     + (CHIP_OUT_LANES - 1) * (d.hashSites.length + (rotV3Appendix d.traceWidth).length)
 
-/-- The model IS the emission, for the plain rotation. -/
+-- The model IS the emission, for the plain rotation.
 #guard (v3Of EffectVmEmitTransfer.transferVmDescriptor).traceWidth
   == gradRotWidthOf EffectVmEmitTransfer.transferVmDescriptor
 

@@ -178,10 +178,10 @@ anchors — UNCHANGED). -/
 def transferFeeAvailWide : EffectVmDescriptor2 :=
   wideAppend transferFeeV3AvailWire FEE_AVAIL_BB (FEE_AVAIL_BB + B_SPAN)
 
--- Geometry pins: the avail fee member mirrors the bare wide fee member (+16 pad): 67 PIs,
--- width 2715 (= 1723 + wideAppendixSpan 992).
+-- Geometry pins: the avail fee member mirrors the bare wide fee member (+16 pad): 67 PIs, and the
+-- wide-graduated fee face plus the wide appendix.  ⚑ The literal `2827` stood beside that relation
+-- and said nothing it does not; the key nonet moved the literal and left the relation true.
 #guard transferFeeAvailWide.piCount == 67
-#guard transferFeeAvailWide.traceWidth == 2827
 #guard transferFeeAvailWide.traceWidth == transferFeeAvailV3W.traceWidth + wideAppendixSpan
 #guard transferFeeAvailWide.name == "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged"
 -- The bare wide fee twin for reference: the SAME 67-PI layout, fee-avail-shifted columns.

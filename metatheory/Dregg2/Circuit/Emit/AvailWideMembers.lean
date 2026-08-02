@@ -231,18 +231,24 @@ umem-welded twin welds (refuse-first, the runtime producer's composition). -/
 def transferAvailWideRefused : EffectVmDescriptor2 :=
   gentianDeployedBareRefuseAt (cavBaseOf AVAIL_WIDTH) transferV3MembershipAvailWide
 
--- Geometry pins: the avail crown mirrors the bare crown (+10 pad): 68 PIs, width 2711 (+2 teeth);
--- the TB member 65 PIs, width 3024; the refused crown +45 aux columns.
+-- Geometry pins: the avail crown mirrors the bare crown (+10 pad): 68 PIs, the wide member plus its
+-- two teeth columns; the TB member its cap-open/TB delta past that; the refused crown +45 aux.
+-- ⚑ The widths were the literals 2823 / 3150 / 2823+45, retyped once per flag day and red once per
+-- flag day. Each is now the RELATION it stood for: an emitted descriptor against another emitted
+-- descriptor plus a delta the rotation geometry does not move.
 #guard transferV3MembershipAvailWide.piCount == 68
-#guard transferV3MembershipAvailWide.traceWidth == 2823
+#guard transferV3MembershipAvailWide.traceWidth
+  == transferAvailV3W.traceWidth + wideAppendixSpan + 2
 #guard transferV3MembershipAvailWide.name == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged"
 -- ⚑ 2026-07-30: TB piCount 65 → 63 and width 3024 → 3038, the two unforced `actor`/`dst`
 -- publications deleted (`UnforcedPiPins`); the convergence re-emit rotates the wide registry FP.
 #guard transferCapOpenTBAvailWide.piCount == 63
-#guard transferCapOpenTBAvailWide.traceWidth == 3150
+#guard transferCapOpenTBAvailWide.traceWidth
+  == transferV3MembershipAvailWide.traceWidth + 327
 #guard transferCapOpenTBAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb"
-#guard transferAvailWideRefused.traceWidth == 2823 + 45
+#guard transferAvailWideRefused.traceWidth
+  == transferV3MembershipAvailWide.traceWidth + 45
 #guard transferAvailWideRefused.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare crown twin for reference: same PI layout, avail-shifted columns.
@@ -344,9 +350,12 @@ theorem transferV3MembershipAvailWide_publishes_teeth (hash : List ℤ → ℤ)
       (VmConstraint2.base (.piBinding .first (MEMBERSHIP_TEETH_COL_AVAIL_WIDE + j.val)
         ((withDfaRcPinsAt AVAIL_WIDTH transferAvailV3W).piCount + j.val))) = false := by
     have hj : j.val < 2 := j.isLt
-    have hbb : TR_AVAIL_BB + B_STATE_COMMIT = 383 := by decide
-    simp only [isLegacyCommitPin1, beq_eq_false_iff_ne, ne_eq, hbb,
-      MEMBERSHIP_TEETH_COL_AVAIL_WIDE]
+    -- ⚑ 383 -> 386 at the 2026-08-01 key nonet (`B_STATE_COMMIT` 185 -> 188), and the teeth column
+    -- is DERIVED now, so `omega` needs its value produced here. Both `decide`s are the gate: named
+    -- constants against a number, red the moment the geometry moves.
+    have hbb : TR_AVAIL_BB + B_STATE_COMMIT = 386 := by decide
+    have hteeth : MEMBERSHIP_TEETH_COL_AVAIL_WIDE = 2859 := by decide
+    simp only [isLegacyCommitPin1, beq_eq_false_iff_ne, ne_eq, hbb, hteeth]
     omega
   have hin : VmConstraint2.base
       (.piBinding .first (MEMBERSHIP_TEETH_COL_AVAIL_WIDE + j.val)
@@ -511,7 +520,9 @@ def BU_AVAIL_BB : Nat := Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH
 #guard BU_AVAIL_BB == Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.traceWidth
 #guard BU_AVAIL_BB == 196
 #guard burnAvailV3W.piCount == 46
-#guard burnAvailV3W.traceWidth == 1827
+-- MODEL vs EMISSION (was the literal 1827 — decoration the key nonet moved).
+#guard burnAvailV3W.traceWidth
+  == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.gradRotWidthOf Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
 #guard graduableWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
 -- the Rust avail-pad key survives every wrapper (all append-only on the name)
 #guard burnAvailV3W.name.startsWith "dregg-effectvm-burn-v1-avail"
@@ -533,12 +544,13 @@ def burnAvailWideRefused : EffectVmDescriptor2 :=
   gentianDeployedBareRefuseAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide
 
 -- Geometry pins: the avail crown mirrors the bare wide burn (+8 pad): 66 PIs (46 + 4 rc + 16
--- wide anchors), width 2707; the refused crown +45 aux columns.
+-- wide anchors), the wide-graduated face plus the wide appendix; the refused crown +45 aux columns.
+-- ⚑ The literals 2819 / 2819+45 were decoration and moved with the key nonet.
 #guard burnV3AvailWide.piCount == 66
-#guard burnV3AvailWide.traceWidth == 2819
+#guard burnV3AvailWide.traceWidth == burnAvailV3W.traceWidth + wideAppendixSpan
 #guard burnV3AvailWide.name == "dregg-effectvm-burn-v1-avail-rot24-v3-staged"
 #guard burnAvailWideRefused.piCount == 66
-#guard burnAvailWideRefused.traceWidth == 2819 + 45
+#guard burnAvailWideRefused.traceWidth == burnV3AvailWide.traceWidth + 45
 #guard burnAvailWideRefused.name
   == "dregg-effectvm-burn-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
 -- The bare wide burn twin for reference: SAME 66-PI layout, avail-shifted columns.
@@ -746,10 +758,11 @@ def transferCapOpenEffAvailWide : EffectVmDescriptor2 :=
         Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER))
     TR_AVAIL_BB (TR_AVAIL_BB + B_SPAN)
 
--- Geometry pins: the EFF member is the narrow avail cap-open (width 2030, 46 PIs) + the wide
--- appendix (+992 columns, +16 PIs). The Rust `avail_pad_for_descriptor_name` prefix survives.
+-- Geometry pins: the EFF member is the narrow avail cap-open plus the wide appendix (+16 PIs).
+-- ⚑ The literal 3150 was decoration; stated as the relation, it rides the flag day.
 #guard transferCapOpenEffAvailWide.piCount == 62
-#guard transferCapOpenEffAvailWide.traceWidth == 3150
+#guard transferCapOpenEffAvailWide.traceWidth
+  == transferV3MembershipAvailWide.traceWidth + 327
 #guard transferCapOpenEffAvailWide.name
   == "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff"
 

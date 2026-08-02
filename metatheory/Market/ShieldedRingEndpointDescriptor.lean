@@ -173,7 +173,10 @@ theorem ringKernelPayload_length (f : RingEndpointFields) (post : Bool) :
     (ringKernelPayload f post).length = Dregg2.Circuit.Emit.rotatedNumPreLimbs := by
   -- `length_append` + `length_replicate` as REWRITES: the padding tail is never unfolded, only its
   -- length is read off. The explicit prefix costs 21 `length_cons` steps.
-  simp [ringKernelPayload, Dregg2.Circuit.Emit.rotatedNumPreLimbs]
+  unfold ringKernelPayload
+  rw [List.length_append, List.length_replicate]
+  simp only [List.length_cons, List.length_nil]
+  decide
 
 /-- The deployed endpoint's genuine eight-lane wide commitment. -/
 def ringCommit8 (permW : List ℤ → List ℤ)
