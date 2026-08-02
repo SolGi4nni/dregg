@@ -76,6 +76,15 @@ line items, not against a round number.
     OPT-SPONGE over the carried bulletproof challenges with a per-block `keep` MASK (the `Field.if_`
     state mux, `:998-1003`), the **43 evaluation columns absorbed at ζ and ζω** in
     `to_absorption_sequence` order, the ξ′/r′ squeezes, and `hash_messages_for_next_step_proof`.
+  * **R8 `finalize`** — ⚑ `finalize_other_proof`'s TAIL, the rung at which the deferred values stop
+    being computed and start BINDING (`step_verifier.ml:1076-1147`, `step_main.ml:121,522`): the
+    second challenge polynomial at `ζω = domain#generator·ζ` so `b_actual = challenge_poly ζ +
+    r·challenge_poly ζω`; the **three `Shifted_value.Type1.to_field` unshifts** of the statement's
+    `combined_inner_product`, `b` and `plonk.perm` (Type1 over **`Fp`** — the value's own field, see
+    §8f); `xi_correct` against the fr-sponge's own squeeze; and `Boolean.all [xi_correct; b_correct;
+    combined_inner_product_correct; plonk_checks_passed]` behind the `should_verify` mux, ASSERTED.
+    The four statement words are the **first four public words**, so a prover who claims a different
+    deferred value is refused rather than believed.
 
 ## ⚑ THE SHAPE ORACLE — MEASURED against Mina's own compiled step circuit
 
@@ -150,33 +159,49 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      255-bit width is expressible with `msmChunks = 51` and is not in the committed shape.**
   3. The MSM base points are `basePts` (distinct on-curve Pallas points), not the previous proof's
      actual commitments; the SCALARS are the circuit's own derived challenges.
-  4. **`combined_inner_product` is HALF of upstream's.** `finalize_other_proof` computes
-     `combine ~ft:ft_eval0 … + r * combine ~ft:ft_eval1 …` (`step_verifier.ml:1076-1085`): TWO
-     ξ-Horner folds, one per evaluation point, r-weighted. R5 assembles ONE (at ζ), and neither the
-     second fold nor `Shifted_value.Type1.to_field`'s unshift of the deferred word is here. Same for
-     `b_correct`: `challenge_poly ζ` is assembled, `+ r · challenge_poly ζω` and the unshift are not.
+  4. ⚑ **RETIRED 2026-08-02, and the ORIGINAL CLAIM WAS WRONG.** This entry read "`combined_inner_
+     product` is HALF of upstream's — R5 assembles ONE ξ-Horner fold (at ζ)". READ AT SOURCE, R5's
+     `cipRows` folds `cₖ = evₖ(ζ) + r·evₖ(ζω)` and then Horners over ξ, i.e.
+     `Σₖ ξᵏ(ez_k + r·ew_k)` — which IS `combine(ζ) + r·combine(ζω)` term-for-term, and IS
+     `KimchiVerify.cipR`'s own body. The r-weighted second fold was never absent; it was folded per
+     COLUMN instead of per POINT. What WAS absent is now R8: `b_correct`'s `+ r·challenge_poly ζω`
+     leg and the `Shifted_value.Type1.to_field` unshifts. **Still open:** the `sg_evals` prefix
+     entries (`vEz 0/1`, `vEw 0/1`) are `evVal` fixtures where upstream puts the b-polynomial of the
+     CARRIED old bulletproof challenges, masked by `Vector.trim_front actual_width_mask` — so the
+     two `combine`s' first two v-entries are not yet computed from the carried challenges.
   5. **Named and NOT assembled**, each a real sub-circuit: `group_map` (`step_verifier.ml:214-237`);
      `equal_g` and the `check_bulletproof` tail's `scale_fast` of `sg`; the real `sponge_after_index`
      (the plonk index is hashed here from 57 FIXTURE words, not from the actual commitments);
      `x_hat blinding`; `lagrange_commitment` / `public_input_commitment_dynamic`'s domain selection;
      `actual_evaluation`'s per-column chunk Horner (`combined_evals`; our columns are single-chunk,
-     though `ζ^n = pow2_pow ζ 16` IS assembled in R6); the `xi_correct` boolean equality; the
-     `Boolean.all [xi_correct; b_correct; …]` finalisation and its assert; dummy/`should_verify`
-     muxing; and the app-logic `rule.main`.
+     though `ζ^n = pow2_pow ζ 16` IS assembled in R6); `Evals.validate_feature_flags`; and the
+     app-logic `rule.main`. (`xi_correct`, the `Boolean.all` finalisation and its assert, and the
+     `should_verify` mux left this list on 2026-08-02 — they are R8.)
   6. Every challenge is derived at ONE width (128 bits, 8 `EndoMulScalar` rows). Upstream also uses
      16/32/64/192/256-bit `to_field_checked` (the 1/2/4/12/16-row runs in the table).
-  7. R6's `β`/`γ`/`α`/`ζ` are R2's RAW challenge variables. Upstream lifts α and ζ through
-     `ScalarChallenge::to_field` (which R4's `Scalar_challenge.endo` rounds assemble) and leaves β/γ
-     raw. The lift is not wired INTO R6's inputs. The real-block instance
-     (`Dregg2.Bridge.StepMainFtEval0RealBlock`) supplies the genuinely lifted α and ζ, and the same
-     program returns block 539508's `ft_eval0` — so the arithmetic is exercised on lifted values even
-     though the assembly's own wire is not yet the lift.
+  7. ⚑ **RETIRED 2026-08-02.** `to_field_checked` is the `EndoMulScalar` chain, then
+     `Field.Assert.equal n scalar`, then **`Field.(scale a endo + b)`** (`scalar_challenge.ml:125-129`)
+     — R2 emitted the first two and stopped. It now emits the third: ONE `Generic` row per challenge
+     turning the chain's own `a₈`/`b₈` cells into `vLift c`, pinned in §16 against
+     `KimchiVerify.endoMap ENDO_R` with the `FT_ENDO`-for-`endo_r` cube-root conflation as its red
+     control. `plonk.zeta`/`plonk.alpha` (R6), the deferred ξ/r (R5's `combined_inner_product`) and
+     every bulletproof challenge (R5's and R8's `challenge_polynomial`) now read the LIFTED value;
+     β/γ stay raw, which is upstream's own split (`map_challenges ~f:Fn.id ~scalar`).
   8. R6's seven coset shifts are `FT_SHIFTS` (distinct nonzero fixtures), not `TickShifts.tickShiftsFp
      16`. The Blake2b derivation is off this module's hot path; the REAL shifts are what the
      real-block instance runs, and §13's bent-shift red control shows the value depends on them.
   9. R7's opt-sponge mask is a fixed `keep` pattern (the first half of the blocks kept), standing for
      `branch_data.proofs_verified_mask` / `Vector.trim_front actual_width_mask`. The mask VARIABLE is
      in the circuit and both branches occur; what is not here is deriving it from `branch_data`.
+ 10. ⚑ **NEW, and it is the ORDER.** Upstream squeezes ξ′/r′ from the fr-sponge and THEN folds
+     `combined_inner_product` with `scalar xi` (`step_verifier.ml:1006-1013,1078-1085`). Here the
+     fr-sponge is R7 and the fold is R5, so the ξ/r the C8 fold multiplies by are R1's transcript
+     challenges, not `endoMap` of R7's squeeze. R8's `xi_correct` therefore binds the STATEMENT's ξ
+     to the fr-sponge squeeze (which is the check upstream writes) but does not yet make that word
+     the fold's own multiplier. Closing it is a row-schedule reordering, not new arithmetic.
+ 11. R8's `verified` bit (the kimchi `verify` result the mux ANDs with `finalized`) is a witnessed
+     boolean, booleanity-constrained and nothing else — the accumulator/`check_bulletproof` verdict
+     it stands for is not assembled.
 
 ## ⚑ SAY THE SUBSTRATE OUT LOUD
 
@@ -304,7 +329,24 @@ def baseHi (s : StepShape) : Nat := baseB s + nN s
 /-- The high part of challenge `c`'s squeeze decomposition. -/
 def vHi (s : StepShape) (c : Nat) : PVar := xv (baseHi s + c)
 
-def baseMsm (s : StepShape) : Nat := baseHi s + s.chals
+/-! ### The `to_field_checked` OUTPUT (`scalar_challenge.ml:125-129`).
+
+`to_field_checked` is the `EndoMulScalar` chain, then `Field.Assert.equal n scalar`, then
+**`Field.(scale a endo + b)`** — the endomorphism LIFT of the prechallenge. R2 emitted the first two
+and stopped; these are the variables of the third, so `vLift c` IS `ScalarChallenge::to_field`
+(`KimchiVerify.endoMap ENDO_R`) of the squeeze and the chain's `a₈`/`b₈` cells become load-bearing
+rather than merely constrained. -/
+def baseLift (s : StepShape) : Nat := baseHi s + s.chals
+/-- `a₈ · endo_r` — the lift's product half. -/
+def vLiftT (s : StepShape) (c : Nat) : PVar := xv (baseLift s + c)
+/-- ⚑ **The LIFTED challenge** `a₈·endo_r + b₈`. This is what `plonk.zeta`/`plonk.alpha`, the
+deferred `ξ`/`r` and every bulletproof challenge ARE upstream; the raw `vN c emsRows` is the
+prechallenge the curve gadgets consume. -/
+def vLift (s : StepShape) (c : Nat) : PVar := xv (baseLift s + s.chals + c)
+/-- `Endo.Wrap_inner_curve.scalar`, pinned by one `Generic` row and shared by every lift. -/
+def vEndoR (s : StepShape) : PVar := xv (baseLift s + 2 * s.chals)
+
+def baseMsm (s : StepShape) : Nat := baseLift s + 2 * s.chals + 1
 def mpx (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p)
 def mpy (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p + 1)
 /-- MSM term `i`'s base point. -/
@@ -386,7 +428,27 @@ def nbB (s : StepShape) : Nat := (4 + 2 * (s.cipEvals - 4) + 1) / 2
 def baseSegC (s : StepShape) : Nat := baseSegB s + segVarCount (nbB s) 2
 /-- Segment C (`hash_messages_for_next_step_proof`), one squeeze. -/
 def nbC (s : StepShape) : Nat := (61 + 2 * s.bRounds + 1) / 2
-def baseFtS (s : StepShape) : Nat := baseSegC s + segVarCount (nbC s) 1
+
+/-! ### The STATEMENT words R8 binds (§8f).
+
+Upstream these are the Wrap proof-state's `Deferred_values` — `combined_inner_product`, `b` and
+`plonk.perm` in `Shifted_value.Type1` form, and the `Scalar_challenge` `xi` — carried in the step
+circuit's statement and CHECKED against what the circuit recomputes. They are exposed as the first
+four public words, so a prover who supplies a different deferred value is refused by R8's
+`Boolean.all` assert rather than believed. ⚠ In rungs r5–r7 (below the rung that checks them) they
+are statement inputs and nothing else; r8 is the rung that binds them. -/
+def baseStmt (s : StepShape) : Nat := baseSegC s + segVarCount (nbC s) 1
+/-- `combined_inner_product`, `Shifted_value.Type1`. -/
+def vCipShift (s : StepShape) : PVar := xv (baseStmt s)
+/-- `b`, `Shifted_value.Type1`. -/
+def vBShift (s : StepShape) : PVar := xv (baseStmt s + 1)
+/-- `plonk.perm`, `Shifted_value.Type1` (`Plonk_checks.checked` compares the SHIFTED words). -/
+def vPermShift (s : StepShape) : PVar := xv (baseStmt s + 2)
+/-- `xi`'s RAW prechallenge — `xi_correct` compares it against the fr-sponge's own squeeze. -/
+def vXiStmt (s : StepShape) : PVar := xv (baseStmt s + 3)
+def N_STMT : Nat := 4
+
+def baseFtS (s : StepShape) : Nat := baseStmt s + N_STMT
 
 /-- The challenge that plays ξ (the polynomial-combination challenge) in `combined_inner_product`. -/
 def StepShape.xiChal (s : StepShape) : Nat := s.chals - 1
@@ -525,6 +587,13 @@ def chalOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
 def hiOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
   ((d.states.getD (s.absorbs + c + 1) []).getD 0 0) / 2 ^ s.chalBits
 
+/-- ⚑ `Endo.Wrap_inner_curve.scalar` (`endo.ml:7`) — the SCALAR-challenge endomorphism of `Fp`, the
+constant `to_field_checked` scales `a₈` by. NOT `FT_ENDO`, which is the BASE endomorphism
+`5^((p−1)/3)` the linearization reads; conflating the two cube roots is the defect
+`MinaWrapFtEval0Weld` closed, and §16's red control shows it here. -/
+def ENDO_R : Nat :=
+  8503465768106391777493614032514048814691664078728891710322960303815233784505
+
 /-- The `8·emsRows` base-4 crumbs of a challenge, MSB-first. -/
 def crumbsOf (s : StepShape) (v : Nat) : List Nat :=
   (List.range (8 * s.emsRows)).map (fun j => v / 4 ^ (8 * s.emsRows - 1 - j) % 4)
@@ -539,6 +608,17 @@ def emsAccs (s : StepShape) (v : Nat) : List (Nat × Nat × Nat) :=
     [(0, 2, 2)]
   (List.range (s.emsRows + 1)).map (fun k => all.getD (8 * k) (0, 2, 2))
 
+/-- The `(a₈, b₈)` accumulators and the LIFT `a₈·endo_r + b₈` of challenge `c`. -/
+def liftOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
+  let a := (emsAccs s (chalOf s d c)).getD s.emsRows (0, 2, 2)
+  fAdd (fMul a.2.1 ENDO_R) a.2.2
+def liftTOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
+  fMul ((emsAccs s (chalOf s d c)).getD s.emsRows (0, 2, 2)).2.1 ENDO_R
+
+/-- The one row that pins `endo_r`, emitted once ahead of the challenge chains. -/
+def endoConstRow (s : StepShape) : List SRow :=
+  [ genericRow (some (vEndoR s)) none none none none none (cConst (ENDO_R : Int) ++ cNil) ]
+
 /-- **R2's rows** for challenge `c`. -/
 def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : List SRow :=
   let cr := crumbsOf s (chalOf s d c)
@@ -552,7 +632,13 @@ def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : Li
                    ++ [(14, 0)] } : SRow))
   ++ [ genericRow (some (vSt s (s.absorbs + c + 1) 0)) (some (vHi s c))
                   (some (vN s c s.emsRows)) none none none (cSplit s.chalBits ++ cNil)
-     , probeRow wired (vN s c s.emsRows) (vA s c s.emsRows) ]
+     -- ⚑ `to_field_checked`'s CLOSING LINE: `Field.(scale a endo + b)`. Two halves of one row, and
+     -- the `a₈`/`b₈` cells the `EndoMulScalar` chain produced now carry a value the rest of the
+     -- assembly reads.
+     , genericRow (some (vA s c s.emsRows)) (some (vEndoR s)) (some (vLiftT s c))
+                  (some (vLiftT s c)) (some (vB s c s.emsRows)) (some (vLift s c)) (cMul ++ cAdd)
+     , probeRow wired (vN s c s.emsRows) (vA s c s.emsRows)
+     , probeRow wired (vLift s c) (vB s c s.emsRows) ]
 
 /-! ## §6 — R3, the COMMITMENT MSM (`multiscale_known` / `ft_comm`).
 
@@ -741,14 +827,14 @@ def evZOf (ftVal : Nat) (k : Nat) : Nat := if k == 3 then ftVal else evVal k 0
 
 def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) : DefData :=
   let zs := (List.range s.bRounds).foldl
-    (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [chalOf s d 0]
+    (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [liftOf s d 0]
   let st := (List.range s.bRounds).foldl
     (fun (acc : List Nat × List Nat) k =>
-      let f := fAdd 1 (fMul (chalOf s d (k + 1)) (zs.getD (s.bRounds - 1 - k) 0))
+      let f := fAdd 1 (fMul (liftOf s d (k + 1)) (zs.getD (s.bRounds - 1 - k) 0))
       (acc.1 ++ [f], acc.2 ++ [fMul (acc.2.getLastD 1) f]))
     ([], [1])
-  let xi := chalOf s d s.xiChal
-  let rr := chalOf s d s.rChal
+  let xi := liftOf s d s.xiChal
+  let rr := liftOf s d s.rChal
   let ez := (List.range s.cipEvals).map (fun k => evZOf ftVal k)
   let ew := (List.range s.cipEvals).map (fun k => evVal k 1)
   let dk := (List.range s.cipEvals).map (fun k => fMul rr (ew.getD k 0))
@@ -766,11 +852,11 @@ def runDef (s : StepShape) (d : SpongeData) (ftVal : Nat) : DefData :=
 /-- **R5a's rows.** -/
 def deferredRows (s : StepShape) (wired : Bool) : List SRow :=
   [ genericRow (some (vAcc s 0)) none none none none none (cConst 1 ++ cNil)
-  , genericRow (some (vZ s 0)) (some (vN s 0 s.emsRows)) none none none none (cEq ++ cNil) ]
+  , genericRow (some (vZ s 0)) (some (vLift s 0)) none none none none (cEq ++ cNil) ]
   ++ (List.range s.bRounds).map (fun k =>
       genericRow (some (vZ s k)) (some (vZ s k)) (some (vZ s (k+1))) none none none (cMul ++ cNil))
   ++ (List.range s.bRounds).map (fun k =>
-      genericRow (some (vN s (k+1) s.emsRows)) (some (vZ s (s.bRounds - 1 - k))) (some (vFac s k))
+      genericRow (some (vLift s (k+1))) (some (vZ s (s.bRounds - 1 - k))) (some (vFac s k))
                  (some (vAcc s k)) (some (vFac s k)) (some (vAcc s (k+1))) (cMulPlus1 ++ cMul))
   ++ [ probeRow wired (vAcc s s.bRounds) (vZ s s.bRounds) ]
 
@@ -787,10 +873,10 @@ from the top over `Generic` rows, two per evaluation column:
 def cipRows (s : StepShape) (wired : Bool) : List SRow :=
   [ genericRow (some (vCa s 0)) none none none none none (cConst 0 ++ cNil) ]
   ++ (List.range s.cipEvals).flatMap (fun k =>
-      [ genericRow (some (vN s s.rChal s.emsRows)) (some (vEw s k)) (some (vDk s k))
+      [ genericRow (some (vLift s s.rChal)) (some (vEw s k)) (some (vDk s k))
                    (some (vEz s k)) (some (vDk s k)) (some (vCk s k)) (cMul ++ cAdd) ])
   ++ (List.range s.cipEvals).flatMap (fun i =>
-      [ genericRow (some (vCa s i)) (some (vN s s.xiChal s.emsRows)) (some (vTk s i))
+      [ genericRow (some (vCa s i)) (some (vLift s s.xiChal)) (some (vTk s i))
                    (some (vTk s i)) (some (vCk s (s.cipEvals - 1 - i))) (some (vCa s (i+1)))
                    (cMul ++ cAdd) ])
   ++ [ probeRow wired (vCa s s.cipEvals) (vCk s 0) ]
@@ -1427,14 +1513,19 @@ def FT_MDS9 : List Nat := Dregg2.Circuit.Emit.PastaPoseidon.mdsN.flatten
 does NOT read column 3, so the `ft` override below is not circular. -/
 def ftInputEnv (s : StepShape) (d : SpongeData) : VarEnv :=
   (List.range s.chals).map (fun c => (vN s c s.emsRows, (chalOf s d c : Int)))
+  ++ (List.range s.chals).map (fun c => (vLift s c, (liftOf s d c : Int)))
   ++ (List.range s.cipEvals).flatMap (fun k =>
       [(vEz s k, (evVal k 0 : Int)), (vEw s k, (evVal k 1 : Int))])
 
+/-- ⚑ `Plonk.In_circuit.map_challenges ~f:Fn.id ~scalar plonk` (`step_verifier.ml:920-923`): the
+`Scalar_challenge` fields α and ζ go through `scalar = SC.to_field_checked`, β and γ are `Challenge`
+fields and stay RAW. So R6 reads `vLift` for α/ζ and `vN` for β/γ — upstream's own split, and the
+retirement of the module header's simplification #7. -/
 def ftWireOf (s : StepShape) : FtWire :=
   { ez := fun k => .inp (vColZ s k)
   , ew := fun k => .inp (vColW s k)
-  , zeta := .inp (vN s s.zetaChal s.emsRows)
-  , alpha := .inp (vN s s.alphaChal s.emsRows)
+  , zeta := .inp (vLift s s.zetaChal)
+  , alpha := .inp (vLift s s.alphaChal)
   , beta := .inp (vN s s.betaChal s.emsRows)
   , gamma := .inp (vN s s.gammaChal s.emsRows)
   , pZeta := .inp (vEz s 2) }
@@ -1466,7 +1557,7 @@ def runFt (s : StepShape) (d : SpongeData) : FtData :=
   let p0 := ftProgOf W (ftCfgRaw 1 0)
   let v0 := aEval lk p0.prog
   -- `denom` is the slot the `dchk` multiplication reads; recompute it directly from ζ and ω^{n−3}.
-  let zeta := (lk (vN s s.zetaChal s.emsRows)).toNat % pN
+  let zeta := (lk (vLift s s.zetaChal)).toNat % pN
   let omInv3 := v0.getD p0.slots.omInv3 0
   let denom := fMul (fSub zeta omInv3) (fSub zeta 1)
   let dInv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv denom
@@ -1662,16 +1753,192 @@ def hmSpec (s : StepShape) (t : MsmData) (v : IpaData) (d : SpongeData) : SegSpe
           (vN s c s.emsRows, chalOf s d c))
   , squeezes := 1, masked := false }
 
+/-! ## §8f — R8, `finalize_other_proof`'s TAIL: the deferred values BIND.
+
+`step_verifier.ml:1076-1147`. R5–R7 compute the deferred quantities; NOTHING yet compares them with
+what the proof CLAIMS. This rung is that comparison, and it is the semantically load-bearing part of
+`finalize_other_proof`:
+
+  * **`ζω = domain#generator · plonk.zeta`** (`:934`) and the SECOND challenge polynomial
+    `b(ζω) = ∏(1 + uₖ·(ζω)^{2^{k}})` over the LIFTED bulletproof challenges, so
+    **`b_actual = challenge_poly ζ + r · challenge_poly ζω`** (`:1124-1128`) — the `+ r·…` leg the
+    module header's simplification #4 named as absent.
+  * **THREE `Shifted_value.Type1.to_field` unshifts** (`shifted_value.ml:133-135`: `t + t + c`) of
+    `combined_inner_product` (`:1105-1109`), `b` (`:1126-1127`) and — inside
+    `Plonk_checks.checked` (`plonk_checks.ml:536-544`) — `plonk.perm`.
+    ⚑ **THE FIELD KEY.** A Type1 shift keys on the VALUE's own field, not the circuit's. These three
+    are the Wrap proof-state's `fp` block, so the shift is **Type1 over `Fp`**: `c = 2^255 + 1`,
+    `scale = 1/2` (`shift1`, `step_verifier.ml:825`; `PicklesStatementDiff` §1). The step statement's
+    own `fq` block is Type2/`Fq` — subtract-only, no halving (`impls.ml:135`,
+    `PicklesStepStatementDiff` §1) — and §16 shows both wrong readings diverge here.
+  * **`xi_correct`** (`:1102-1104`) — the fr-sponge's own squeeze, `lowest_128_bits`-decomposed,
+    against the statement's `xi`.
+  * **`Boolean.all [xi_correct; b_correct; combined_inner_product_correct; plonk_checks_passed]`**
+    (`:1141-1147`), each leg a REAL `Field.equal` gadget (`d·inv = 1 − bit`, `d·bit = 0`, `bit² =
+    bit`), and the `should_verify` mux `verified && finalized || not should_verify`
+    (`step_main.ml:121`, asserted at `:522`) closing on `= 1`. -/
+
+/-- `Shifted_value.Type1.Shift.create (module Fp)`: `c = 2^{255} + 1` (`shifted_value.ml:122-126`,
+`Fp.size_in_bits = 255`). -/
+def SHIFT_C : Nat := (2 ^ 255 + 1) % pN
+/-- …and `scale = 1/2`, as the `Fp` representative. -/
+def SHIFT_INV2 : Nat := (pN + 1) / 2
+/-- `Shifted_value.Type1.of_field` — `(x − c)·½`. -/
+def shiftT1 (x : Nat) : Nat := fMul (fSub x SHIFT_C) SHIFT_INV2
+/-- `Shifted_value.Type1.to_field` — `t + t + c`, the map the circuit emits. -/
+def unshiftT1 (t : Nat) : Nat := fAdd (fAdd t t) SHIFT_C
+/-- `Shifted_value.Type2.of_field` — subtract-only, `x − 2^255`. The WRONG-KIND reading, carried so
+§16's control is about the rule and not about a typo. -/
+def shiftT2 (x : Nat) : Nat := fSub x (2 ^ 255 % pN)
+
+/-- The wire R8 reads: every field a SOURCE OP, so the rung's program can also be run on bent inputs
+(§16's red controls) without touching the assembly. -/
+structure FinWire where
+  /-- ζ, LIFTED (`plonk.zeta`). -/
+  zeta : AOp
+  /-- `r`, LIFTED (`scalar (Scalar_challenge.create r_actual)`). -/
+  r : AOp
+  /-- `challenge_poly ζ` — R5's `vAcc bRounds`. -/
+  bZeta : AOp
+  /-- R5's `combined_inner_product` output. -/
+  cipActual : AOp
+  /-- R6's `Plonk_checks.checked` `perm` scalar. -/
+  permActual : AOp
+  /-- the LIFTED bulletproof challenges `u₀..u_{rounds−1}`. -/
+  u : Nat → AOp
+  /-- the fr-sponge's first squeeze (R7 segment B). -/
+  xiSqueeze : AOp
+  cipShift : AOp
+  bShift : AOp
+  permShift : AOp
+  xiStmt : AOp
+
+/-- What R8 bakes in, plus the witnesses its own rows CHECK. -/
+structure FinCfg where
+  rounds : Nat
+  omega : Nat
+  shiftC : Nat
+  /-- `lowest_128_bits`' discarded high part. -/
+  hiXi : Nat
+  /-- per `Field.equal` gadget: the witnessed inverse and the result bit. -/
+  eqInv : List Nat
+  eqBit : List Nat
+  /-- the kimchi `verified` bit and `should_verify` (`step_main.ml:36,121`). -/
+  verified : Nat
+  shouldVerify : Nat
+  deriving Repr, Inhabited
+
+structure FinSlots where
+  zetaw : Nat
+  bwZeta : Nat
+  bActual : Nat
+  cipUsed : Nat
+  bUsed : Nat
+  permUsed : Nat
+  xiActual : Nat
+  xc : Nat
+  bc : Nat
+  cc : Nat
+  pc : Nat
+  finalized : Nat
+  out : Nat
+  deriving Repr, Inhabited
+
+/-- **The finalize program.** -/
+def finBuild (W : FinWire) (C : FinCfg) : AM FinSlots := do
+  let zero ← eLit 0
+  let one ← eLit 1
+  let shiftC ← eLit C.shiftC
+  let two128 ← eLit (2 ^ 128 % pN)
+  let omega ← eLit C.omega
+  let zeta ← em W.zeta
+  let r ← em W.r
+  -- ── b_correct's SECOND leg (`:1124-1128`) ─────────────────────────────────────────────────
+  let zetaw ← eMul omega zeta
+  let zws ← (List.range C.rounds).foldlM (fun acc _ => do
+      let y ← eMul (acc.getLastD zetaw) (acc.getLastD zetaw); pure (acc ++ [y])) [zetaw]
+  let bw ← (List.range C.rounds).foldlM (fun acc k => do
+      let u ← em (W.u k)
+      let t ← eMul u (zws.getD (C.rounds - 1 - k) 0)
+      let f ← eAdd one t
+      eMul acc f) one
+  let bz ← em W.bZeta
+  let rbw ← eMul r bw
+  let bAct ← eAdd bz rbw
+  -- ── the THREE Type1/Fp unshifts ───────────────────────────────────────────────────────────
+  let unshift : Nat → AM Nat := fun t => do let tt ← eAdd t t; eAdd tt shiftC
+  let cipUsed ← unshift (← em W.cipShift)
+  let bUsed ← unshift (← em W.bShift)
+  let permUsed ← unshift (← em W.permShift)
+  -- ── xi_actual = lowest_128_bits(squeeze) ──────────────────────────────────────────────────
+  let sq ← em W.xiSqueeze
+  let hi ← eWit C.hiXi
+  let hiHigh ← eMul hi two128
+  let xiAct ← eSub sq hiHigh
+  let xiStmt ← em W.xiStmt
+  -- ── `Field.equal`, the real gadget: `d·inv = 1 − bit`, `d·bit = 0`, `bit² = bit`. ─────────
+  let mkEq : Nat → Nat → Nat → AM Nat := fun i x y => do
+    let d ← eSub x y
+    let iv ← eWit (C.eqInv.getD i 0)
+    let bb ← eWit (C.eqBit.getD i 0)
+    let bb2 ← eMul bb bb
+    let _ ← eEq bb2 bb
+    let p ← eMul d iv
+    let q ← eSub one bb
+    let _ ← eEq p q
+    let sZ ← eMul d bb
+    let _ ← eEq sZ zero
+    pure bb
+  let cipAct ← em W.cipActual
+  let permAct ← em W.permActual
+  let xc ← mkEq 0 xiAct xiStmt
+  let bc ← mkEq 1 bUsed bAct
+  let cc ← mkEq 2 cipUsed cipAct
+  let pc ← mkEq 3 permUsed permAct
+  -- ── `Boolean.all` and the `should_verify` mux, asserted ───────────────────────────────────
+  let f1 ← eMul xc bc
+  let f2 ← eMul f1 cc
+  let fin ← eMul f2 pc
+  let ver ← eWit C.verified
+  let ver2 ← eMul ver ver
+  let _ ← eEq ver2 ver
+  let sv ← eWit C.shouldVerify
+  let sv2 ← eMul sv sv
+  let _ ← eEq sv2 sv
+  let vf ← eMul ver fin
+  let svf ← eMul sv vf
+  let nsv ← eSub one sv
+  let out ← eAdd svf nsv
+  let _ ← eEq out one
+  pure { zetaw := zetaw, bwZeta := bw, bActual := bAct, cipUsed := cipUsed, bUsed := bUsed
+       , permUsed := permUsed, xiActual := xiAct, xc := xc, bc := bc, cc := cc, pc := pc
+       , finalized := fin, out := out }
+
+structure FinProg where
+  prog : Array AOp
+  slots : FinSlots
+  deriving Repr, Inhabited
+
+def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
+  let r := (finBuild W C).run #[]
+  { prog := r.2, slots := r.1 }
+
 /-- The circuit variables EXPOSED as the public output — `pubWords` of them, drawn from every
-sub-circuit so a public tie reaches all five. -/
+sub-circuit so a public tie reaches all five. ⚑ The FIRST FOUR are the statement's deferred values;
+R8's `Boolean.all` assert is what makes them a claim the circuit refuses to lie about. -/
 def exposedVars (s : StepShape) : List PVar :=
-  ([ vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
+  ([ vCipShift s, vBShift s, vPermShift s, vXiStmt s
+   , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
    , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
    , ipx s (qSum s (s.ipaRounds - 2)), ipy s (qSum s (s.ipaRounds - 2)) ]
    ++ (List.range s.chals).map (fun c => vN s c s.emsRows)
-   ++ (List.range (s.bRounds + 1)).map (fun k => vAcc s k)
-   ++ (List.range (s.bRounds + 1)).map (fun k => vZ s k)
+   -- ⚑ `0 .. bRounds−1`, NOT `0 .. bRounds`: `vAcc bRounds` and `vZ bRounds` are already the head
+   -- entries, and at `shapeStep`'s 67 words the inclusive range made TWO of Step's public words
+   -- carry the same circuit variable (measured 2026-08-02; the smoke shape's 12-word `take` cut
+   -- before the collision, so the distinctness pin never saw it — §12 now pins BOTH shapes).
+   ++ (List.range s.bRounds).map (fun k => vAcc s k)
+   ++ (List.range s.bRounds).map (fun k => vZ s k)
    ++ (List.range (s.blocks + 1)).map (fun b => vSt s b 0)).take s.pubWords
 
 /-- **R5b's rows**: every public word tied to a computed circuit variable, two per `Generic` row
@@ -1687,6 +1954,103 @@ def closingRows (s : StepShape) : List SRow :=
       genericRow (some (ev.getD (2*r) (xv 0))) (some (.external (2*r))) none none none none
                  (cEq ++ cNil))
 
+/-! ### R8's wire, environment and data. -/
+
+/-- R6's `ft_eval0`, as a value. -/
+def FtData.out (f : FtData) : Nat := f.vals.getD f.fp.slots.ftEval0 0
+
+/-- The finalize program's slots start after the ft program's. -/
+def baseFin (s : StepShape) (f : FtData) : Nat := baseFtS s + f.fp.prog.size
+
+/-- The fr-sponge's FIRST squeeze — R7 segment B's state after its first squeeze permutation, the
+same convention R1 uses (`chalOf` reads lane 0 of the state after squeeze `c`'s permutation). -/
+def frSqueezeVar (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s + 1) 0
+def frSqueezeVal (segB : SegData) (specB : SegSpec) : Nat :=
+  (segB.states.getD (specB.nb + 1) []).getD 0 0
+
+/-- `b(ζω)` — the SECOND challenge polynomial, over the lifted bulletproof challenges. -/
+def bwOf (s : StepShape) (d : SpongeData) : Nat :=
+  let zetaw := fMul FT_OMEGA (liftOf s d s.zetaChal)
+  let zws := (List.range s.bRounds).foldl
+    (fun acc _ => let x := acc.getLastD 0; acc ++ [fMul x x]) [zetaw]
+  (List.range s.bRounds).foldl
+    (fun acc k => fMul acc (fAdd 1 (fMul (liftOf s d (k+1)) (zws.getD (s.bRounds - 1 - k) 0)))) 1
+
+/-- `b_actual = challenge_poly ζ + r · challenge_poly ζω` (`step_verifier.ml:1124-1128`), computed
+DIRECTLY here so §16 can pin the emitted program's own slot against it. -/
+def bActualOf (s : StepShape) (d : SpongeData) (df : DefData) : Nat :=
+  fAdd (df.accs.getLastD 0) (fMul (liftOf s d s.rChal) (bwOf s d))
+
+def finWireOf (s : StepShape) (f : FtData) : FinWire :=
+  { zeta := .inp (vLift s s.zetaChal)
+  , r := .inp (vLift s s.rChal)
+  , bZeta := .inp (vAcc s s.bRounds)
+  , cipActual := .inp (vCa s s.cipEvals)
+  , permActual := .inp (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm)
+  , u := fun k => .inp (vLift s (k + 1))
+  , xiSqueeze := .inp (frSqueezeVar s)
+  , cipShift := .inp (vCipShift s)
+  , bShift := .inp (vBShift s)
+  , permShift := .inp (vPermShift s)
+  , xiStmt := .inp (vXiStmt s) }
+
+/-- Everything R8 needs, evaluated ONCE. -/
+structure FinData where
+  fp : FinProg
+  vals : Array Nat
+  bActual : Nat
+  cipShift : Nat
+  bShift : Nat
+  permShift : Nat
+  xiStmt : Nat
+  xiHi : Nat
+  deriving Repr, Inhabited
+
+/-- R8's `.inp` lookup: the lifted challenges, R5's two outputs, R6's `perm` slot, R7's squeeze, and
+the four statement words — every one of them a variable another rung's rows compute. -/
+def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
+    (segB : SegData) (specB : SegSpec) : VarEnv :=
+  let sqv := frSqueezeVal segB specB
+  let permA := f.vals.getD f.fp.slots.perm 0
+  [ (vLift s s.zetaChal, (liftOf s d s.zetaChal : Int))
+  , (vLift s s.rChal, (liftOf s d s.rChal : Int))
+  , (vAcc s s.bRounds, (df.accs.getLastD 0 : Int))
+  , (vCa s s.cipEvals, (df.ca.getLastD 0 : Int))
+  , (aVarAt (baseFtS s) f.fp.prog f.fp.slots.perm, (permA : Int))
+  , (frSqueezeVar s, (sqv : Int))
+  , (vCipShift s, (shiftT1 (df.ca.getLastD 0) : Int))
+  , (vBShift s, (shiftT1 (bActualOf s d df) : Int))
+  , (vPermShift s, (shiftT1 permA : Int))
+  , (vXiStmt s, ((sqv % 2 ^ 128 : Nat) : Int)) ]
+  ++ (List.range s.bRounds).map (fun k => (vLift s (k + 1), (liftOf s d (k + 1) : Int)))
+
+/-- The HONEST config: `lowest_128_bits`' high part, and — because every `Field.equal` leg holds —
+`bit = 1`, `inv = 0` in all four gadgets, with `verified = should_verify = 1`. §16 re-runs this at
+bent inputs, where the honest witness is `bit = 0` and the assert FAILS. -/
+def finCfgOf (s : StepShape) (hi : Nat) : FinCfg :=
+  { rounds := s.bRounds, omega := FT_OMEGA, shiftC := SHIFT_C, hiXi := hi
+  , eqInv := List.replicate 4 0, eqBit := List.replicate 4 1
+  , verified := 1, shouldVerify := 1 }
+
+def runFin (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
+    (segB : SegData) (specB : SegSpec) : FinData :=
+  let sqv := frSqueezeVal segB specB
+  let permA := f.vals.getD f.fp.slots.perm 0
+  let p := finProgOf (finWireOf s f) (finCfgOf s (sqv / 2 ^ 128))
+  let lk := envLookupAt (envIndex (finInputEnv s d f df segB specB))
+  { fp := p, vals := aEval lk p.prog, bActual := bActualOf s d df
+  , cipShift := shiftT1 (df.ca.getLastD 0), bShift := shiftT1 (bActualOf s d df)
+  , permShift := shiftT1 permA, xiStmt := sqv % 2 ^ 128, xiHi := sqv / 2 ^ 128 }
+
+/-- **R8's rows**: the compiled finalize program plus its σ-only probes. -/
+def finRows (s : StepShape) (f : FtData) (fn : FinData) (wired : Bool) : List SRow :=
+  let base := baseFin s f
+  let V := aVarAt base fn.fp.prog
+  aRows base fn.fp.prog
+  ++ [ probeRow wired (V fn.fp.slots.finalized) (V fn.fp.slots.bActual)
+     , probeRow wired (V fn.fp.slots.cipUsed) (V fn.fp.slots.xiActual)
+     , probeRow wired (V fn.fp.slots.permUsed) (V fn.fp.slots.bUsed) ]
+
 /-! ## §9 — the whole assembly: rows, environment, placement, witness. -/
 
 /-- Everything the schedule and the environment read, evaluated ONCE. -/
@@ -1697,6 +2061,7 @@ structure StepData where
   ipa : IpaData
   ft : FtData
   df : DefData
+  fin : FinData
   segA : SegData
   segB : SegData
   segC : SegData
@@ -1705,9 +2070,6 @@ structure StepData where
   specC : SegSpec
   deriving Inhabited
 
-/-- R6's `ft_eval0`, as a value. -/
-def FtData.out (f : FtData) : Nat := f.vals.getD f.fp.slots.ftEval0 0
-
 def mkStep (s : StepShape) : StepData :=
   let sp := runSponge s
   let msm := runMsm s sp
@@ -1715,15 +2077,18 @@ def mkStep (s : StepShape) : StepData :=
   -- ⚑ R6 first: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds.
   let ft := runFt s sp
   let ftv := ft.out
+  let df := runDef s sp ftv
   let specA := optSpec s sp
   let segA := runSeg specA
   let dg : PVar × Nat :=
     (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
      (segA.states.getLastD []).getD 0 0)
   let specB := frSpec s dg ftv
+  let segB := runSeg specB
   let specC := hmSpec s msm ipa sp
-  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, df := runDef s sp ftv
-  , segA := segA, segB := runSeg specB, segC := runSeg specC
+  { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, df := df
+  , fin := runFin s sp ft df segB specB
+  , segA := segA, segB := segB, segC := runSeg specC
   , specA := specA, specB := specB, specC := specC }
 
 /-- **R7's rows** — the three sponge segments of §8e. -/
@@ -1737,6 +2102,7 @@ def absRows (t : StepData) (wired : Bool) : List SRow :=
 def stepRows (t : StepData) (wired : Bool) : List SRow :=
   let s := t.sh
   transcriptRows s t.sp wired
+  ++ endoConstRow s
   ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
   ++ msmRows s t.msm wired
   ++ ipaRows s t.ipa wired
@@ -1745,6 +2111,7 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ closingRows s
   ++ ftRows s t.ft wired
   ++ absRows t wired
+  ++ finRows s t.ft t.fin wired
 
 /-- The CIRCUIT's variable → value assignment (public words are added by `stepEnv`). -/
 def circuitEnv (t : StepData) : VarEnv :=
@@ -1763,7 +2130,9 @@ def circuitEnv (t : StepData) : VarEnv :=
       (List.range (s.emsRows + 1)).flatMap (fun k =>
         let a := accs.getD k (0, 2, 2)
         [ (vN s c k, (a.1 : Int)), (vA s c k, (a.2.1 : Int)), (vB s c k, (a.2.2 : Int)) ])
-      ++ [ (vHi s c, (hiOf s t.sp c : Int)) ])
+      ++ [ (vHi s c, (hiOf s t.sp c : Int))
+         , (vLiftT s c, (liftTOf s t.sp c : Int)), (vLift s c, (liftOf s t.sp c : Int)) ])
+  ++ [ (vEndoR s, (ENDO_R : Int)) ]
   ++ (List.range s.msmTerms).flatMap (fun i =>
       let td := t.msm.terms.getD i default
       [ (mpx s (pT s i), (td.T.1 : Int)), (mpy s (pT s i), (td.T.2 : Int)) ]
@@ -1800,6 +2169,10 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ segEnv (baseSegA s) t.specA t.segA
   ++ segEnv (baseSegB s) t.specB t.segB
   ++ segEnv (baseSegC s) t.specC t.segC
+  -- R8: the four STATEMENT words and the compiled finalize program's slots.
+  ++ [ (vCipShift s, (t.fin.cipShift : Int)), (vBShift s, (t.fin.bShift : Int))
+     , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int)) ]
+  ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values
 are READ OUT of the circuit env at the exposed variables — so a public word and the variable the
@@ -1860,23 +2233,33 @@ pubWords` through `placeChecked`. Each rung is a superset of the one below, so a
 hide behind a smaller circuit. -/
 
 inductive Rung where
-  | transcript | challenges | msm | ipa | full | ftEval0 | absorb
+  | transcript | challenges | msm | ipa | full | ftEval0 | absorb | finalize
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "r1_transcript" | .challenges => "r2_challenges" | .msm => "r3_msm"
   | .ipa => "r4_ipa" | .full => "r5_full" | .ftEval0 => "r6_ft_eval0"
-  | .absorb => "r7_absorption"
+  | .absorb => "r7_absorption" | .finalize => "r8_finalize"
 
-/-- Rung `k`'s rows. -/
+/-- Rung `k`'s rows.
+
+⚑ **EVERY sub-circuit's row-set function is REACHED FROM HERE.** `rungRows` is the ONLY entry point
+the emit driver has, and a sub-circuit whose rows live in a function nobody calls proves nothing:
+measured on 2026-08-01, `cipRows` was absent from this `match` while every probe of every proved r5
+still passed, so the `combined_inner_product` Horner chain the commit subject named was in NO proved
+circuit and `vCa cipEvals` reached the public tie as a FREE variable. §15 now pins each rung's length
+as the sum of its own sub-lists AND pins `stepRows = rungRows .finalize`, so a row-set that drops out
+of this function is a red, not a silence. -/
 def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let s := t.sh
   let a := transcriptRows s t.sp wired
-  let b := (List.range s.chals).flatMap (challengeRows s t.sp wired)
+  let b := endoConstRow s ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
   let c := msmRows s t.msm wired
   let d := ipaRows s t.ipa wired
   let e := deferredRows s wired ++ cipRows s wired ++ closingRows s
   let f := ftRows s t.ft wired
+  let g := absRows t wired
+  let h := finRows s t.ft t.fin wired
   match k with
   | .transcript => a
   | .challenges => a ++ b
@@ -1884,7 +2267,8 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   | .ipa => a ++ b ++ c ++ d
   | .full => a ++ b ++ c ++ d ++ e
   | .ftEval0 => a ++ b ++ c ++ d ++ e ++ f
-  | .absorb => a ++ b ++ c ++ d ++ e ++ f ++ absRows t wired
+  | .absorb => a ++ b ++ c ++ d ++ e ++ f ++ g
+  | .finalize => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at and above it. -/
 def rungPub (s : StepShape) : Rung → Nat
@@ -1971,8 +2355,8 @@ build` and cover every structural property the harness cannot see. Nullary `def`
 evaluates the chains ONCE. -/
 
 def tS : StepData := mkStep shapeSmoke
-def rowsS : List SRow := rungRows tS .absorb true
-def rowsUS : List SRow := rungRows tS .absorb false
+def rowsS : List SRow := rungRows tS .finalize true
+def rowsUS : List SRow := rungRows tS .finalize false
 def nRowsS : Nat := rowsS.length
 def pubS : Nat := shapeSmoke.pubWords
 def gatesS : List PGate := stepGates rowsS
@@ -2042,6 +2426,11 @@ def totalRowsS : Nat := pubS + nRowsS
 #guard (exposedVars shapeSmoke).length == pubS
 -- …and the exposed variables are DISTINCT, so 67 public words tie 67 different circuit values.
 #guard ((exposedVars shapeSmoke).map varIx).dedup.length == pubS
+-- ⚑ …AT THE COMMITTED SHAPE TOO. The smoke shape takes 12 of a 25-long list and so cannot see a
+-- collision that only appears past word 12; this is the pin that does. (It found one: `vAcc bRounds`
+-- and `vZ bRounds` were each exposed twice at `pubWords = 67`.)
+#guard ((exposedVars shapeStep).map varIx).dedup.length == shapeStep.pubWords
+#guard (exposedVars shapeStep).length == shapeStep.pubWords
 
 -- ── The CROSS-SUB-CIRCUIT WIRES (the claim this file exists to make) ───────────────────────────
 -- ⚑ ONE VARIABLE, THREE GATE TYPES. Challenge `c`'s value cell is in the `EndoMulScalar` chain
@@ -2063,16 +2452,16 @@ def totalRowsS : Nat := pubS + nRowsS
 
 -- ⚑ THE WIRED/UNWIRED DIFFERENCE IS EXACTLY THE PROBES: every probe cell is in a σ cycle in the
 -- WIRED circuit and self-wired (in NO cycle) in the UNWIRED one.
-#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsS ⟨r, 0⟩ != (⟨r, 0⟩ : Cell))
-#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsS ⟨r, 1⟩ != (⟨r, 1⟩ : Cell))
-#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsUS ⟨r, 0⟩ == (⟨r, 0⟩ : Cell))
-#guard (rungProbeRows tS .absorb).all (fun r => permLookup pairsUS ⟨r, 1⟩ == (⟨r, 1⟩ : Cell))
-#guard (rungProbeRows tS .absorb).length ≥ 10
+#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsS ⟨r, 0⟩ != (⟨r, 0⟩ : Cell))
+#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsS ⟨r, 1⟩ != (⟨r, 1⟩ : Cell))
+#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsUS ⟨r, 0⟩ == (⟨r, 0⟩ : Cell))
+#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsUS ⟨r, 1⟩ == (⟨r, 1⟩ : Cell))
+#guard (rungProbeRows tS .finalize).length ≥ 10
 
 -- ⚑ IT CAN GO RED. Desync ONE mid-chain probe cell and the σ check FAILS, so the `= true` above
 -- is a gate rather than a tautology. (`toGrid` is first-wins, so the prepended override lands.)
 #guard
-  (let probe := (rungProbeRows tS .absorb).getD ((rungProbeRows tS .absorb).length / 2) 0
+  (let probe := (rungProbeRows tS .finalize).getD ((rungProbeRows tS .finalize).length / 2) 0
    let ix := envIndex (stepEnv tS)
    let broken := Dregg2.Circuit.Emit.WitnessBuilder.toGrid 15 totalRowsS
      (((⟨probe, 0⟩ : Cell), (7 : Int))
@@ -2203,13 +2592,13 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
 
 -- ⚑ THE DEFERRED `b(ζ)` IS THE CHALLENGE POLYNOMIAL: the assembled product equals the direct fold
 -- `∏ (1 + u_k · ζ^{2^{bRounds−1−k}})`, and `ζ` IS challenge 0.
-#guard tS.df.zs.getD 0 0 == chalOf shapeSmoke tS.sp 0
+#guard tS.df.zs.getD 0 0 == liftOf shapeSmoke tS.sp 0
 #guard (List.range shapeSmoke.bRounds).all (fun k =>
   tS.df.zs.getD (k + 1) 0 == fMul (tS.df.zs.getD k 0) (tS.df.zs.getD k 0))
 #guard tS.df.accs.getLastD 0
         == (List.range shapeSmoke.bRounds).foldl
              (fun acc k => fMul acc
-               (fAdd 1 (fMul (chalOf shapeSmoke tS.sp (k + 1))
+               (fAdd 1 (fMul (liftOf shapeSmoke tS.sp (k + 1))
                              (tS.df.zs.getD (shapeSmoke.bRounds - 1 - k) 0)))) 1
 -- …and it is NOT the trivial product (a degenerate `b` would make the rung vacuous).
 #guard tS.df.accs.getLastD 0 != 1
@@ -2222,20 +2611,20 @@ def rowKindAt (r : Nat) : KGateType := (rowsS.getD (r - pubS) default).kind
 #guard
   ((tS.df.ca.getLastD 0 : ZMod pN)
     == Dregg2.Circuit.Emit.KimchiVerify.cipR
-         ((chalOf shapeSmoke tS.sp shapeSmoke.xiChal : ZMod pN))
-         ((chalOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+         ((liftOf shapeSmoke tS.sp shapeSmoke.xiChal : ZMod pN))
+         ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
          (tS.df.ez.map (fun n => (n : ZMod pN))) (tS.df.ew.map (fun n => (n : ZMod pN))))
 -- …and it CAN go red: swapping ξ for r gives a different value (so the equality is discriminating,
 -- not two names for zero).
 #guard
   (((tS.df.ca.getLastD 0 : ZMod pN)
      == Dregg2.Circuit.Emit.KimchiVerify.cipR
-          ((chalOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
-          ((chalOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+          ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+          ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
           (tS.df.ez.map (fun n => (n : ZMod pN)))
           (tS.df.ew.map (fun n => (n : ZMod pN)))) == false)
 -- The two combiner challenges are distinct (a collision would make the red control vacuous).
-#guard chalOf shapeSmoke tS.sp shapeSmoke.xiChal != chalOf shapeSmoke tS.sp shapeSmoke.rChal
+#guard liftOf shapeSmoke tS.sp shapeSmoke.xiChal != liftOf shapeSmoke tS.sp shapeSmoke.rChal
 
 /-! ## §13 — R6: the COMPILED `ft_eval0` against dregg's own verified value layer.
 
@@ -2250,8 +2639,8 @@ def ftVal (i : Nat) : Nat := ftS.vals.getD i 0
 /-- The ft program's inputs, resolved the way the program resolves them. -/
 def ftLkS : PVar → Int := envLookupAt (envIndex (ftInputEnv shapeSmoke tS.sp))
 def ftInp (v : PVar) : Nat := (ftLkS v).toNat % pN
-def zetaS : Nat := ftInp (vN shapeSmoke shapeSmoke.zetaChal shapeSmoke.emsRows)
-def alphaS : Nat := ftInp (vN shapeSmoke shapeSmoke.alphaChal shapeSmoke.emsRows)
+def zetaS : Nat := ftInp (vLift shapeSmoke shapeSmoke.zetaChal)
+def alphaS : Nat := ftInp (vLift shapeSmoke shapeSmoke.alphaChal)
 def betaS : Nat := ftInp (vN shapeSmoke shapeSmoke.betaChal shapeSmoke.emsRows)
 def gammaS : Nat := ftInp (vN shapeSmoke shapeSmoke.gammaChal shapeSmoke.emsRows)
 /-- The 43 columns, as the `GateEvals` slicing sees them. -/
@@ -2554,10 +2943,47 @@ The three segments' arithmetic, against `PastaPoseidon.Ref.perm` — the same re
 #guard (tS.segA.states.getLastD []).getD 0 0 != (tS.segB.states.getLastD []).getD 0 0
 #guard (tS.segB.states.getLastD []).getD 0 0 != (tS.segC.states.getLastD []).getD 0 0
 
-/-! ## §15 — the LADDER is monotone and the new rungs really add their sub-circuit. -/
+/-! ## §15 — the LADDER is monotone, REACHED BY THE EMITTER, and each rung really adds its
+sub-circuit.
+
+⚑ THE REACHED-BY-THE-EMITTER PINS ARE THE FIRST BLOCK, and they exist because of a measured defect:
+`cipRows` once lived in a function `rungRows` never called, so `r5_full` was proved seven times
+without the `combined_inner_product` chain its own commit subject named, and `vCa cipEvals` reached
+the public tie as a FREE variable — while every σ probe, every control and every public-input leg
+passed. A length identity per rung, stated as the SUM OF ITS OWN SUB-LISTS, is what turns that from
+a silence into a red; `stepRows == rungRows .finalize` closes the same hole on the other emitter. -/
+
+-- Each rung IS the rung below plus exactly its own sub-circuit's rows.
+#guard (rungRows tS .challenges true).length
+        == (rungRows tS .transcript true).length + (endoConstRow shapeSmoke).length
+           + ((List.range shapeSmoke.chals).flatMap (challengeRows shapeSmoke tS.sp true)).length
+#guard (rungRows tS .msm true).length
+        == (rungRows tS .challenges true).length + (msmRows shapeSmoke tS.msm true).length
+#guard (rungRows tS .ipa true).length
+        == (rungRows tS .msm true).length + (ipaRows shapeSmoke tS.ipa true).length
+#guard (rungRows tS .full true).length
+        == (rungRows tS .ipa true).length + (deferredRows shapeSmoke true).length
+           + (cipRows shapeSmoke true).length + (closingRows shapeSmoke).length
+#guard (rungRows tS .ftEval0 true).length
+        == (rungRows tS .full true).length + (ftRows shapeSmoke tS.ft true).length
+#guard (rungRows tS .absorb true).length
+        == (rungRows tS .ftEval0 true).length + (absRows tS true).length
+#guard (rungRows tS .finalize true).length
+        == (rungRows tS .absorb true).length + (finRows shapeSmoke tS.ft tS.fin true).length
+-- …and the OTHER emitter (`stepRows`, the schedule) is the top rung, row for row.
+#guard (stepRows tS true).map (fun r => r.kind) == (rungRows tS .finalize true).map (fun r => r.kind)
+#guard (stepRows tS true).length == (rungRows tS .finalize true).length
+-- …and each sub-list is NON-EMPTY, so "the sum matches" cannot be satisfied by a vanished rung.
+#guard (cipRows shapeSmoke true).length > 0 && (deferredRows shapeSmoke true).length > 0
+#guard (ftRows shapeSmoke tS.ft true).length > 0 && (absRows tS true).length > 0
+#guard (finRows shapeSmoke tS.ft tS.fin true).length > 0 && (endoConstRow shapeSmoke).length > 0
 
 #guard (rungRows tS .full true).length < (rungRows tS .ftEval0 true).length
 #guard (rungRows tS .ftEval0 true).length < (rungRows tS .absorb true).length
+#guard (rungRows tS .absorb true).length < (rungRows tS .finalize true).length
+-- R8 is `Generic`-only over R7 (it is scalar arithmetic + the boolean gadgets).
+#guard ((rungRows tS .finalize true).drop (rungRows tS .absorb true).length).all
+        (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero)
 -- R6 is `Generic`-only (it is scalar arithmetic; every other gate family is unchanged by it).
 #guard ((rungRows tS .ftEval0 true).drop (rungRows tS .full true).length).all
         (fun r => r.kind == KGateType.generic || r.kind == KGateType.zero)
@@ -2569,5 +2995,181 @@ The three segments' arithmetic, against `PastaPoseidon.Ref.perm` — the same re
 -- …and the compiled ft program is a real program, not a stub.
 #guard ftS.fp.prog.size ≥ 900
 #guard (aHalfSlots ftS.fp.prog).length ≥ 700
+
+/-! ## §16 — R8: `finalize_other_proof`'s tail, against the value layer.
+
+Every scalar R8 emits is pinned against the READ-ONLY `KimchiVerify` object it claims to compute, on
+the SAME inputs, each with a red control that BITES. A rung that proves but computes the wrong scalar
+is the failure mode this section exists to catch. -/
+
+def finS : FinData := tS.fin
+def finVal (i : Nat) : Nat := finS.vals.getD i 0
+def zetaLS : Nat := liftOf shapeSmoke tS.sp shapeSmoke.zetaChal
+def rLS : Nat := liftOf shapeSmoke tS.sp shapeSmoke.rChal
+/-- The lifted bulletproof challenges, in `bEval`'s own list order (factor `k` carries the exponent
+`2^{bRounds−1−k}`). -/
+def usS : List (ZMod pN) :=
+  (List.range shapeSmoke.bRounds).map (fun k => ((liftOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN))
+
+-- ── (a) `to_field_checked`'s CLOSING LINE — the endo lift, retiring simplification #7 ──────────
+-- ⚑ The `EndoMulScalar` chain's `a₈`/`b₈` cells, combined by R2's new row, ARE
+-- `ScalarChallenge::to_field(endo_r)` of the squeeze — `KimchiVerify.endoMap`, the same map
+-- `MinaRealBlockTranscript.derived_zeta` checks on a real block. So `plonk.zeta`/`plonk.alpha`, ξ, r
+-- and every bulletproof challenge are now the LIFTED values upstream uses, not the prechallenges.
+#guard (List.range shapeSmoke.chals).all (fun c =>
+  ((liftOf shapeSmoke tS.sp c : Nat) : ZMod pN)
+    == Dregg2.Circuit.Emit.KimchiVerify.endoMap ((ENDO_R : Nat) : ZMod pN)
+         (chalOf shapeSmoke tS.sp c))
+-- …and it BITES on the constant: the BASE endo `FT_ENDO` in place of the SCALAR endo `endo_r` — the
+-- exact cube-root conflation `MinaWrapFtEval0Weld` closed — gives a different lift.
+#guard (((liftOf shapeSmoke tS.sp 0 : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.endoMap ((FT_ENDO : Nat) : ZMod pN)
+              (chalOf shapeSmoke tS.sp 0)) == false
+#guard ENDO_R != FT_ENDO
+-- …and on the challenge: challenge 1's lift is not challenge 0's.
+#guard (((liftOf shapeSmoke tS.sp 0 : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.endoMap ((ENDO_R : Nat) : ZMod pN)
+              (chalOf shapeSmoke tS.sp 1)) == false
+-- …and the lift is NOT the identity on any challenge (a degenerate endo would make the pin vacuous).
+#guard (List.range shapeSmoke.chals).all (fun c =>
+  liftOf shapeSmoke tS.sp c != chalOf shapeSmoke tS.sp c)
+
+-- ── (b) `b_correct` — BOTH legs (`step_verifier.ml:1124-1128`) ────────────────────────────────
+-- ⚑ `b_actual = challenge_poly ζ + r · challenge_poly ζω`. `KimchiVerify.ipaB0` is exactly
+-- `bEval ζ + evalscale · bEval ζω`; `bEvalSq` is its ladder form (`bEvalSq_eq_bEval`, a theorem for
+-- every CommRing), which is what runs at `ZMod pN`. The `+ r·…` leg is the one the module header
+-- named as ABSENT — it is here, and it is this value.
+#guard ((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS
+           + ((rLS : Nat) : ZMod pN)
+             * Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
+                 (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN)) usS
+-- …and the compiled slot IS the direct computation (the program is a compiler, not an oracle).
+#guard finVal finS.fp.slots.bActual == finS.bActual
+#guard finVal finS.fp.slots.zetaw == fMul FT_OMEGA zetaLS
+-- ⚑ …and the SECOND leg is load-bearing: dropping it (i.e. `b(ζ)` alone) is a DIFFERENT value.
+#guard (((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS) == false
+-- ⚑ …and ζω really is ω·ζ, not ζ: evaluating the second polynomial at ζ moves the answer.
+#guard (((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS
+            + ((rLS : Nat) : ZMod pN)
+              * Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN) usS) == false
+-- ⚑ …and the RAW prechallenges in place of the lifted ones move it (so (a) is load-bearing HERE).
+#guard (((finVal finS.fp.slots.bActual : Nat) : ZMod pN)
+         == Dregg2.Circuit.Emit.KimchiVerify.bEvalSq ((zetaLS : Nat) : ZMod pN)
+              ((List.range shapeSmoke.bRounds).map
+                 (fun k => ((chalOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN)))
+            + ((rLS : Nat) : ZMod pN)
+              * Dregg2.Circuit.Emit.KimchiVerify.bEvalSq
+                  (((fMul FT_OMEGA zetaLS : Nat) : ZMod pN))
+                  ((List.range shapeSmoke.bRounds).map
+                     (fun k => ((chalOf shapeSmoke tS.sp (k + 1) : Nat) : ZMod pN)))) == false
+-- …and neither b-polynomial is the trivial product.
+#guard finS.bActual != 0 && bwOf shapeSmoke tS.sp != 1
+
+-- ── (c) The THREE `Shifted_value.Type1.to_field` unshifts, and the FIELD KEY ───────────────────
+-- ⚑ The shift constants are what `Shift.create (module Fp)` builds: `c = 2^255 + 1` and `½`.
+#guard ((SHIFT_C : Nat) : ZMod pN) == (2 : ZMod pN) ^ 255 + 1
+#guard 2 * SHIFT_INV2 % pN == 1
+-- ⚑ Type1 ROUND-TRIPS, so the encoding is an encoding and not a digest.
+#guard unshiftT1 (shiftT1 (finS.bActual)) == finS.bActual
+#guard unshiftT1 (shiftT1 7) == 7 && unshiftT1 (shiftT1 (pN - 1)) == pN - 1
+-- ⚑ **THE FIELD KEY IS LOAD-BEARING.** A Type2 reading (subtract-only, `x − 2^255`, the STEP
+-- statement's own `fq` block, `impls.ml:135`) and the raw unshifted value BOTH diverge from the
+-- Type1/`Fp` reading these three words wear. Getting this wrong misencodes SILENTLY.
+#guard shiftT1 finS.bActual != shiftT2 finS.bActual
+#guard shiftT1 finS.bActual != finS.bActual
+#guard unshiftT1 (shiftT2 finS.bActual) != finS.bActual
+-- ⚑ …and the circuit's own emitted unshift slots hit the three actual values.
+#guard finVal finS.fp.slots.cipUsed == tS.df.ca.getLastD 0
+#guard finVal finS.fp.slots.bUsed == finS.bActual
+#guard finVal finS.fp.slots.permUsed == ftS.vals.getD ftS.fp.slots.perm 0
+-- …and `combined_inner_product` really is the value R5's Horner chain produced, which §12 already
+-- pinned against `KimchiVerify.cipR`. So the unshift lands on `cipR`, not on a local name for it.
+#guard ((finVal finS.fp.slots.cipUsed : Nat) : ZMod pN)
+        == Dregg2.Circuit.Emit.KimchiVerify.cipR
+             ((liftOf shapeSmoke tS.sp shapeSmoke.xiChal : ZMod pN))
+             ((liftOf shapeSmoke tS.sp shapeSmoke.rChal : ZMod pN))
+             (tS.df.ez.map (fun n => (n : ZMod pN))) (tS.df.ew.map (fun n => (n : ZMod pN)))
+
+-- ── (d) `xi_correct` — the fr-sponge's own squeeze ────────────────────────────────────────────
+-- ⚑ `xi_actual = lowest_128_bits (squeeze sponge)` (`step_verifier.ml:820-822,1102`), and the
+-- squeeze is R7 segment B's — an assembly variable, not a fixture.
+#guard finVal finS.fp.slots.xiActual == finS.xiStmt
+#guard finS.xiStmt == Dregg2.Circuit.Emit.KimchiVerify.low128 (frSqueezeVal tS.segB tS.specB)
+#guard finS.xiStmt < 2 ^ 128
+-- …and the squeeze is NOT already 128 bits (so the decomposition is doing work).
+#guard finS.xiHi != 0
+-- …and it is NOT R1's transcript ξ: the two sponges are different objects, which is why the check
+-- is a check. (⚠ NAMED REMAINDER: the ξ the C8 fold multiplies by is still R1's, not `endoMap` of
+-- this squeeze — see simplification #10.)
+#guard finS.xiStmt != chalOf shapeSmoke tS.sp shapeSmoke.xiChal
+
+-- ── (e) `Boolean.all` and the `should_verify` mux ─────────────────────────────────────────────
+-- ⚑ ALL FOUR legs are 1 on the honest instance, the conjunction is 1, and the muxed output is 1 —
+-- which is the value the rung's last row ASSERTS.
+#guard [finVal finS.fp.slots.xc, finVal finS.fp.slots.bc, finVal finS.fp.slots.cc,
+        finVal finS.fp.slots.pc, finVal finS.fp.slots.finalized, finVal finS.fp.slots.out]
+        == [1, 1, 1, 1, 1, 1]
+
+/-- Re-run R8's program with ONE statement word bent and the `Field.equal` witnesses set the way an
+HONEST prover would then have to set them (`bit = 0`, `inv = d⁻¹`), so the control is about the
+CHECK and not about a witness nobody could produce. Returns the `out` slot — the value the last row
+asserts equals 1. -/
+def finOutBent (which : Nat) (sv : Nat) : Nat :=
+  let s := shapeSmoke
+  let d := tS.sp
+  let sqv := frSqueezeVal tS.segB tS.specB
+  let base := finInputEnv s d tS.ft tS.df tS.segB tS.specB
+  -- bend the `which`-th statement word (0 = cip, 1 = b, 2 = perm, 3 = xi)
+  let tgt : PVar :=
+    match which with
+    | 0 => vCipShift s | 1 => vBShift s | 2 => vPermShift s | _ => vXiStmt s
+  let env := base.map (fun p => if p.1 == tgt then (p.1, p.2 + 1) else p)
+  -- the honest witnesses for the bent instance: the bent leg's difference is `±2` (an unshift
+  -- doubles) or `−1` (the raw ξ word), so `bit = 0` and `inv = d⁻¹` there, `bit = 1` elsewhere.
+  let dv : Nat := if which == 3 then pN - 1 else 2
+  let inv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv dv
+  let idx : Nat := match which with | 0 => 2 | 1 => 1 | 2 => 3 | _ => 0
+  let C : FinCfg :=
+    { finCfgOf s (sqv / 2 ^ 128) with
+      eqInv := (List.replicate 4 0).set idx inv
+      eqBit := (List.replicate 4 1).set idx 0
+      shouldVerify := sv }
+  let p := finProgOf (finWireOf s tS.ft) C
+  (aEval (envLookupAt (envIndex env)) p.prog).getD p.slots.out 0
+
+-- ⚑ **THE RED CONTROLS BITE, ONE PER DEFERRED WORD.** Bend the statement's `combined_inner_product`,
+-- its `b`, its `plonk.perm` or its `xi` by ONE, give the equality gadget the witnesses an honest
+-- prover would then have to give, and the assert `out = 1` FAILS. That is the whole point of the
+-- rung: the deferred values BIND.
+#guard (List.range 4).all (fun i => finOutBent i 1 != 1)
+-- …and the UNBENT re-run through the same helper is 1, so the reds are about the bend.
+#guard finVal finS.fp.slots.out == 1
+-- ⚑ **BOTH BRANCHES OF THE `should_verify` MUX OCCUR.** With `should_verify = 0` the dummy path
+-- accepts the very same bent statement — `verified && finalized ||| not should_verify`
+-- (`step_main.ml:121`). A mux with one reachable branch is decoration.
+#guard (List.range 4).all (fun i => finOutBent i 0 == 1)
+
+-- ── (f) NO FREE VARIABLE reaches the public vector ────────────────────────────────────────────
+-- ⚑ Every exposed variable's copy class has a cell OUTSIDE its closing row, i.e. some row COMPUTES
+-- it. This is the shape of the defect that hid `cipRows`: a public word tied to a variable no gate
+-- writes passes every probe and every control while binding nothing.
+#guard (exposedVars shapeSmoke).all (fun v => (classCells posS v).length ≥ 2)
+-- …and the four STATEMENT words are among them, each reaching R8's rows.
+#guard (classCells posS (vCipShift shapeSmoke)).length ≥ 2
+#guard (classCells posS (vBShift shapeSmoke)).length ≥ 2
+#guard (classCells posS (vPermShift shapeSmoke)).length ≥ 2
+#guard (classCells posS (vXiStmt shapeSmoke)).length ≥ 2
+-- …and every `.inp` source of R8's program is a variable the assembly's OTHER rows carry, so the
+-- rung reads the assembly rather than a private island.
+#guard (finS.fp.prog.toList.filterMap (fun o =>
+          match o with | .inp v => some v | _ => none)).all
+        (fun v => (classCells posS v).length ≥ 2)
+#guard (finS.fp.prog.toList.filter (fun o =>
+          match o with | .inp _ => true | _ => false)).length ≥ 10
+-- …and R8's program is a real program, not a stub.
+#guard finS.fp.prog.size ≥ 80
 
 end Dregg2.Circuit.Emit.KimchiStepMain

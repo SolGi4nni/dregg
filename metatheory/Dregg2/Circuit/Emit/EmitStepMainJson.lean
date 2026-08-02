@@ -99,6 +99,6 @@ pub={sh.pubWords} =="
   let tc1 ← IO.monoMsNow
   IO.println s!"    chain evaluation (sponge + vbm + endo + deferred): {tc1 - tc0} ms"
   for k in [Rung.transcript, Rung.challenges, Rung.msm, Rung.ipa, Rung.full,
-            Rung.ftEval0, Rung.absorb] do
+            Rung.ftEval0, Rung.absorb, Rung.finalize] do
     let _ ← emitRung dir tag t k
     pure ()
