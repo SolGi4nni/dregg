@@ -462,6 +462,13 @@ would trade one floor for another. The floor-free alternatives are to weaken the
 kernel-endpoint half and name the log clause as a separate per-instance residual, or to carry the log
 link as an explicit non-crypto premise. Neither is taken here.
 
+⚑ **THE FIRST OF THE TWO IS NOW TAKEN — § "THE SOUND HALF OF THE SHIELDED RUNG", below.**
+`ShieldedRingDescriptorRefinesKernel` is the kernel-endpoint rung (floor-free, bundle-free, publication
+link carried) and `ShieldedRingLogResidual` is the log clause as a quantifier-free per-instance
+proposition naming the pair AND the extracted clearing. `shielded_lightclient_kernel_endpoints_free` is
+the apex over it. THIS def is unchanged and is still what all three consumers take; the retirement is
+the open decision and the section names the sites it touches.
+
 Do NOT re-ground on `SpongeCollisionShirk.SpongeColl` at a named pair — no proof here feeds the sponge a
 pair, so a per-instance side condition would be decoration and a fresh carrier. Do NOT re-ground on
 `OrBreak (SpongeCollision hash) _`: refuted wholesale by
@@ -583,8 +590,20 @@ reintroduces a refuted floor; supplying it honestly means either weakening the c
 kernel-endpoint half or naming a per-instance log residual. That decision is the NEXT step and is
 deliberately not taken here.
 
+⚑ **CORRECTION — IT IS TAKEN IN THE NEXT SECTION, AND IT IS ONE MOVE, NOT TWO.** "Weaken the conclusion
+to its kernel-endpoint half" and "name a per-instance log residual" read above as alternatives; they are
+the two halves of one decomposition, and the section below lands both together
+(`ShieldedRingDescriptorRefinesKernel` + `ShieldedRingLogResidual`, reassembled by
+`shieldedRingApexStep_of_kernelEndpoints_and_residual`). Nothing here is deleted or rewired.
+
 ⚠ `descriptorRefinesTB` is the same shape and is WORSE: it carries no `tracePublishedCommit t = pc`
-link at all, so its `pc` is unconstrained. The correction above applies verbatim to its annotation.
+link at all, so its `pc` is unconstrained. The correction above applies verbatim to its annotation —
+⚑ AND THE "WORSE" IS NOW MEASURED, not just asserted:
+`RotatedKernelRefinementFacetTurnBound.descriptorRefinesTBKernelUnlinked_forces_no_decode` proves that
+without the link even the kernel-endpoint half holds only where its own premise is empty, for a reason
+that has nothing to do with the log (a decode is two equations in `pc.turn`, so it survives moving `pc`
+to any turn, including a self-transfer the admit guard refuses). The kernel-endpoint repair therefore
+transfers to that def ONLY with the publication link restored — `descriptorRefinesTBKernelFree`, §8 there.
 -/
 
 section FloorFreeShieldedRung
@@ -671,6 +690,288 @@ theorem shieldedRingDescriptorRefinesFree_false_at_collapseMap
 #assert_axioms shieldedRingDescriptorRefinesFree_false_at_collapseMap
 
 end FloorFreeShieldedRung
+
+/-! ## ⚑ THE SOUND HALF OF THE SHIELDED RUNG — kernel endpoints proved, the log clause NAMED.
+
+The section above measured that `ShieldedRingDescriptorRefinesFree` — the antecedent-deleted port of
+`ShieldedRingDescriptorRefines` — holds only where its own premise is EMPTY
+(`shieldedRingDescriptorRefinesFree_forces_no_decode`), and left the repair open with two named
+alternatives: weaken the conclusion to its kernel-endpoint half and name the log clause as a separate
+per-instance residual, or carry the log link as an explicit non-crypto premise. This section lands the
+FIRST, additively. Nothing above changes; no consumer is rewired.
+
+**Why the kernel-endpoint half survives the argument that killed the whole one.** The refutation
+manufactures a SECOND decode of the same commitment — `(pre, ⟨post.kernel, pre.log⟩)` — which agrees
+with the given one on every field `StateDecodeC` reads. That collapse is fatal only to a conclusion
+that reads `.log`. `ShieldedRingApexKernelStep` reads neither endpoint's log:
+`shieldedRingApexKernelStep_log_blind` is `Iff.rfl`, i.e. the collapse is not merely survivable, it is
+INVISIBLE to the conclusion. The full step is FALSE at every collapsed pair
+(`not_shieldedRingApexStep_log_collapse`, at every `pre`/`post` whatsoever) — that theorem IS the engine
+of `shieldedRingDescriptorRefinesFree_forces_no_decode`, and it has no analogue one rung down.
+
+**The residual is per-instance and quantifier-free.** `ShieldedRingLogResidual f pre post` is the single
+equation `post.log = ringReceiptLog (settlementsOf f.clearing.nodes) pre.log`. It names the pair AND the
+extracted clearing; it quantifies over nothing. It is therefore neither a universally quantified side
+condition (which would be `logHashInjective` rewritten) nor a disjunct with a global existential (free —
+`SpongeCollisionShirk.orBreak_spongeCollision_iff_True`). The apex below carries it in exactly that
+position: the residual appears as an implication ON THE PAIR AND CLEARING BOUND BY THE EXISTENTIAL, so a
+consumer that discharges it for its own decoded instance recovers the full `ShieldedRingApexStep` and one
+that cannot still keeps the kernel endpoints.
+
+⚠ **WHAT IS STILL TRUE OF `ShieldedRingDescriptorRefines`, AND WHAT IS NOT DECIDED HERE.** The old def is
+UNCHANGED and is still what all three consumers take: the `hmarket` binders of
+`shieldedRingApexStep_of_accept`, `starkMarketClaimExtraction_of_shielded_descriptor` and
+`lightclient_market_seam_of_shielded_descriptor` (all in this file), through the alias
+`ShieldedRingApexRefinementResidual`. Retiring it in favour of the rung below would change what the
+shielded apex ADVERTISES — those three would export kernel endpoints plus a named log residual instead of
+the whole fused step — so it is an operator decision, not proof work. The proof work is done here; the
+open item is the retirement, and it touches exactly those three theorems, the alias at its definition
+site, the prose reference in `Market/ShieldedClearing.lean`, and the two
+`Dregg2/Verify/FloorRatchetBaseline.lean` rows (`ShieldedRingApexRefinementResidual ⊣ Poseidon2SpongeCR`,
+`ShieldedRingDescriptorRefines ⊣ Poseidon2SpongeCR`), which are emitted as `baseline ∩ current` and go
+green when the def they name stops carrying the floor.
+-/
+
+section ShieldedKernelEndpointRung
+
+open Dregg2.Circuit.ApexFloorFree
+  (CommitMap StateDecodeC WitnessDecodesC descriptorRefinesFree lightclient_unfoolable_free
+   emptyTrace satisfied2_emptyTrace state0 state1 kernel0 kernel1 kernel0_wf kernel1_wf collapseMap)
+
+/-- A settled ring leaves the spent-note nullifier set alone: every leg is a `recKExecAsset` transfer,
+which rewrites `bal` and nothing else (`recKExecAsset_shape`). The `AccountsWF` induction of §1 at a
+different projection; it is what makes the kernel-endpoint conclusion REFUTABLE at the exhibited
+boundary, where the two decoded kernels differ in `nullifiers` alone. -/
+theorem settleRing_preserves_nullifiers :
+    ∀ {r : Ring} {k k' : RecordKernelState},
+      settleRing k r = some k' → k'.nullifiers = k.nullifiers := by
+  intro r
+  induction r with
+  | nil =>
+      intro k k' hsettle
+      simp only [settleRing_nil, Option.some.injEq] at hsettle
+      subst hsettle
+      rfl
+  | cons l rest ih =>
+      intro k k' hsettle
+      rw [settleRing_cons] at hsettle
+      cases hstep : recKExecAsset k l.toTurn l.asset with
+      | none => simp [hstep] at hsettle
+      | some mid =>
+          rw [hstep] at hsettle
+          rw [ih hsettle, recKExecAsset_shape hstep]
+
+/-- **`ShieldedRingApexKernelStep pre post` — the KERNEL-ENDPOINT half of `ShieldedRingApexStep`.**
+`ShieldedRingApexStep` minus its third conjunct: a fused, fair, kernel-real two-leg clearing whose
+settlement endpoints ARE the two states' kernels. Everything the shielded apex claims about WHICH
+transition happened — the `CycleValid` + `LegFused` ring, the positive wants, the real `settleRing`
+execution — is retained; only the receipt-chain link is dropped.
+
+This is the part of `ShieldedRingDescriptorRefines` that needs no hash floor: the decode pins kernels,
+this conclusion reads kernels, and nothing in either mentions a sponge. -/
+def ShieldedRingApexKernelStep (pre post : RecChainedState) : Prop :=
+  ∃ f : FusedDrexClearing, f.clearing.pre = pre.kernel ∧ f.clearing.post = post.kernel
+
+/-- The full shielded step entails its kernel-endpoint half — so this rung claims strictly less than the
+one above it, and nothing that could discharge that one fails to discharge this. -/
+theorem ShieldedRingApexStep.kernelStep {pre post : RecChainedState}
+    (h : ShieldedRingApexStep pre post) : ShieldedRingApexKernelStep pre post := by
+  obtain ⟨f, hpre, hpost, _hlog⟩ := h
+  exact ⟨f, hpre, hpost⟩
+
+/-- ⚑ **LOG-BLINDNESS, DEFINITIONALLY.** The kernel-endpoint conclusion does not read either state's
+receipt chain: replacing both logs by anything at all is the SAME proposition, by `Iff.rfl`.
+
+This is stated because of what it is placed against. `StateDecodeC` is log-blind in exactly this sense,
+which is why `shieldedRingDescriptorRefinesFree_forces_no_decode` can feed the rung a second, forged pair
+`(pre, ⟨post.kernel, pre.log⟩)` and extract `False` from the log-forcing conclusion. Against THIS
+conclusion the same move yields nothing: the forged pair satisfies it exactly when the real one does. -/
+theorem shieldedRingApexKernelStep_log_blind (pre post : RecChainedState) (l l' : List Turn) :
+    ShieldedRingApexKernelStep ⟨pre.kernel, l⟩ ⟨post.kernel, l'⟩
+      ↔ ShieldedRingApexKernelStep pre post := Iff.rfl
+
+/-- ⚑ **THE ENGINE OF THE REFUTATION, ISOLATED.** At the log-collapsed pair the FULL shielded step is
+false — for EVERY `pre` and `post`, at no hypothesis. `ShieldedRingApexStep.log_length` demands
+`post.log.length = pre.log.length + 2`, and the collapsed pair's post log IS `pre.log`.
+
+Read with `shieldedRingApexKernelStep_log_blind`, this is the exact boundary between the half that
+survives and the half that does not: the same forged pair is invisible to the kernel-endpoint conclusion
+and fatal to the log-bearing one. -/
+theorem not_shieldedRingApexStep_log_collapse (pre post : RecChainedState) :
+    ¬ ShieldedRingApexStep pre ⟨post.kernel, pre.log⟩ := by
+  intro h
+  have hlen := ShieldedRingApexStep.log_length h
+  simp only at hlen
+  omega
+
+/-- **`ShieldedRingLogResidual f pre post` — THE LOG CLAUSE, NAMED, PER INSTANCE.** The receipt-chain
+link of `ShieldedRingApexStep`, as a proposition about ONE named pair and ONE named clearing: the post
+state's receipt chain IS the one that clearing's settlement list forces on the pre state's.
+
+⚑ It quantifies over NOTHING. It is not `∀ pre post, …` (a universal side condition over decoded pairs is
+`ClosureLog.StateDecodeLog`'s `logHashInjective` rewritten, which is the refuted floor this port exists to
+avoid), and it is not `_ ∨ ∃ collision` (free — `SpongeCollisionShirk.orBreak_spongeCollision_iff_True`).
+It names `f`, `pre` and `post`, and it is discharged — or not — for the instance in hand. -/
+def ShieldedRingLogResidual (f : FusedDrexClearing) (pre post : RecChainedState) : Prop :=
+  post.log = ringReceiptLog (settlementsOf f.clearing.nodes) pre.log
+
+/-- **THE DECOMPOSITION.** Kernel endpoints plus the named log residual reassemble the full shielded
+step, with no floor and no side condition anywhere. -/
+theorem shieldedRingApexStep_of_kernelEndpoints_and_residual {f : FusedDrexClearing}
+    {pre post : RecChainedState} (hpre : f.clearing.pre = pre.kernel)
+    (hpost : f.clearing.post = post.kernel) (hres : ShieldedRingLogResidual f pre post) :
+    ShieldedRingApexStep pre post :=
+  ⟨f, hpre, hpost, hres⟩
+
+/-- **`ShieldedRingDescriptorRefinesKernel C hash d` — THE SOUND RUNG.** `ShieldedRingDescriptorRefines`
+with the refuted `Poseidon2SpongeCR` antecedent gone, the `CommitSurface` bundle replaced by a bare
+commit map, and the conclusion weakened to its kernel-endpoint half. Like
+`ShieldedRingDescriptorRefinesFree` it is an `abbrev` for `ApexFloorFree.descriptorRefinesFree` — same
+quantifier prefix, same `Satisfied2` premise, same `tracePublishedCommit t = pc` publication link, same
+decode — so it mints no second obligation shape; only the `kstep` differs. -/
+abbrev ShieldedRingDescriptorRefinesKernel (C : CommitMap) (hash : List Int → Int)
+    (d : EffectVmDescriptor2) : Prop :=
+  descriptorRefinesFree C hash d ShieldedRingApexKernelStep
+
+/-- **NO STRENGTH ASKED THAT THE PORTED RUNG DID NOT ASK.** Anything discharging the whole-step
+floor-free rung discharges this one. (The converse is exactly the log residual, and
+`shieldedRingLogResidual_unconditional_false` shows it is not free.) -/
+theorem shieldedRingDescriptorRefinesKernel_of_free (C : CommitMap) (hash : List Int → Int)
+    (d : EffectVmDescriptor2) (h : ShieldedRingDescriptorRefinesFree C hash d) :
+    ShieldedRingDescriptorRefinesKernel C hash d :=
+  fun minit mfin maddrs t pc pre post hsat hlink hdec =>
+    ShieldedRingApexStep.kernelStep (h minit mfin maddrs t pc pre post hsat hlink hdec)
+
+/-! ### ⚑ TEETH. -/
+
+/-- **SATISFIABLE — the conclusion FIRES on real market data, at EVERY pair of logs.** The genuine fused,
+funded bilateral swap of `shieldedRingApexStep_realizable` inhabits the kernel-endpoint conclusion at any
+receipt chains whatsoever. So the rung's conclusion is not an empty proposition, and the log-blindness
+above is exhibited rather than only asserted. -/
+theorem shieldedRingApexKernelStep_realizable (l l' : List Turn) :
+    ShieldedRingApexKernelStep ⟨fusedSettlePre, l⟩ ⟨fusedSettlePost, l'⟩ :=
+  ⟨fusedDrexWitness, rfl, rfl⟩
+
+/-- **SATISFIABLE — the residual FIRES too**, at the honest pair the same witness settles: the receipt
+chain the fused clearing forces on the empty log. A residual that could not hold would make the
+decomposition a dressed-up refutation. -/
+theorem shieldedRingLogResidual_realizable :
+    ShieldedRingLogResidual fusedDrexWitness ⟨fusedSettlePre, []⟩
+      ⟨fusedSettlePost, ringReceiptLog (settlementsOf fusedCycle) []⟩ := rfl
+
+/-- **REFUTABLE — the residual is not the constant `True`.** At the SAME clearing and the SAME kernel
+endpoints, with the post receipt chain left empty, it FAILS. Together with the previous theorem: the
+residual separates two pairs that the kernel-endpoint conclusion cannot tell apart. -/
+theorem shieldedRingLogResidual_refutable :
+    ¬ ShieldedRingLogResidual fusedDrexWitness ⟨fusedSettlePre, []⟩ ⟨fusedSettlePost, []⟩ := by
+  intro h
+  have hlen := ShieldedRingApexStep.log_length
+    (shieldedRingApexStep_of_kernelEndpoints_and_residual (f := fusedDrexWitness) rfl rfl h)
+  simp at hlen
+
+/-- ⚑⚑ **DROPPING THE RESIDUAL MAKES THE RUNG FALSE.** The log clause is NOT a consequence of the kernel
+endpoints: there is no implication from "this fused clearing's endpoints are the pair's kernels" to the
+full shielded step. The counterexample is the real fused witness against an empty post log — the clearing
+is genuine, the endpoints are exact, and the receipt chain is wrong.
+
+So the decomposition is not bookkeeping. Deleting `ShieldedRingLogResidual` from
+`shieldedRingApexStep_of_kernelEndpoints_and_residual` yields a FALSE theorem, which is what makes
+carrying it honest work rather than decoration. -/
+theorem shieldedRingLogResidual_unconditional_false :
+    ¬ ∀ (f : FusedDrexClearing) (pre post : RecChainedState),
+        f.clearing.pre = pre.kernel → f.clearing.post = post.kernel →
+        ShieldedRingApexStep pre post := by
+  intro h
+  have hlen := ShieldedRingApexStep.log_length
+    (h fusedDrexWitness ⟨fusedSettlePre, []⟩ ⟨fusedSettlePost, []⟩ rfl rfl)
+  simp at hlen
+
+/-- The kernel-endpoint conclusion is FALSE at the exhibited decode boundary: `state0`/`state1` differ in
+`nullifiers` alone, and a settled ring never touches `nullifiers`
+(`settleRing_preserves_nullifiers`), so no fused clearing has those two kernels as endpoints.
+
+⚠ Note which fact does the work. It is NOT the log — the two states there have equal (empty) logs, so the
+`log_length` refutation of the whole-step rung says nothing here. The kernel-endpoint conclusion is
+refuted on KERNEL content, which is what a kernel-endpoint rung ought to be refutable on. -/
+theorem not_shieldedRingApexKernelStep_state0_state1 :
+    ¬ ShieldedRingApexKernelStep state0 state1 := by
+  rintro ⟨f, hpre, hpost⟩
+  have hnul := settleRing_preserves_nullifiers f.clearing.settled
+  rw [hpre, hpost] at hnul
+  have h0 : ([0] : List Nat) = [] := hnul
+  simp at h0
+
+/-- ⚑ **REFUTABLE — the sound rung passes the standing acceptance test.** At the exhibited commit map
+`ApexFloorFree.collapseMap emptyTrace`, for EVERY hash and EVERY descriptor (the deployed `Rfix e`
+included), the kernel-endpoint rung is FALSE. It is therefore a claim about the circuit and not a
+statement the parameters discharge — the failure that `DescriptorRefinesShirkRefuted` set the test for,
+and that `ShieldedRingDescriptorRefines` fails at deployed BabyBear.
+
+⚠ And it is refuted DIFFERENTLY from `shieldedRingDescriptorRefinesFree_false_at_collapseMap`. That one
+runs through `shieldedRingDescriptorRefinesFree_forces_no_decode`, i.e. through a fact that holds at EVERY
+decode — which is why the whole-step rung had no satisfiable pole with circuit content. This one is
+refuted at ONE exhibited boundary, by that boundary's kernel content, while
+`shieldedRingApexKernelStep_realizable` inhabits the same conclusion at real market endpoints. Both poles
+are live. -/
+theorem shieldedRingDescriptorRefinesKernel_refutable (hash : List Int → Int)
+    (d : EffectVmDescriptor2) :
+    ¬ ShieldedRingDescriptorRefinesKernel (collapseMap emptyTrace) hash d := fun h =>
+  not_shieldedRingApexKernelStep_state0_state1
+    (h (fun _ => 0) (fun _ => (0, 0)) [] emptyTrace (tracePublishedCommit emptyTrace)
+      state0 state1 (satisfied2_emptyTrace hash d _ _) rfl stateDecodeC_collapseMap_state0_state1)
+
+/-- ★ **THE SOUND SHIELDED APEX.** From a verifying batch against `vkOfRegistry R` and EXACTLY
+`[StarkSound hash R]`, the existence rung `WitnessDecodesC`, and the kernel-endpoint rung — NO
+`Poseidon2SpongeCR`, NO `CommitSurface` — there exist decoded endpoints whose `C`-commitments ARE the
+published roots and a fused, fair, kernel-real two-leg clearing whose settlement endpoints ARE those
+kernels; and the log clause is carried as an implication ON THAT NAMED PAIR AND THAT NAMED CLEARING, so
+discharging it for the instance in hand recovers the whole `ShieldedRingApexStep`.
+
+This is the floor-free counterpart of `shieldedRingApexStep_of_accept`, which is NOT rewired onto it: that
+theorem and its two downstream consumers still take `ShieldedRingApexRefinementResidual`, and swapping
+them changes what the shielded apex advertises. See the section header for the retirement decision and
+the exact list of sites it touches. -/
+theorem shielded_lightclient_kernel_endpoints_free
+    (C : CommitMap) (hash : List Int → Int) (R : Registry) [StarkSound hash R]
+    (marketEffect : EffectIdx)
+    (hmarket : ShieldedRingDescriptorRefinesKernel C hash (R marketEffect))
+    (pi : BatchPublicInputs) (π : BatchProof) (heffect : pi.effect = marketEffect)
+    (hwitdec : WitnessDecodesC hash R C pi)
+    (hacc : verifyBatch (vkOfRegistry R) pi π = Verdict.accept) :
+    ∃ (pre post : RecChainedState) (f : FusedDrexClearing),
+      StateDecodeC C pi.toPublished pre post ∧
+      f.clearing.pre = pre.kernel ∧
+      f.clearing.post = post.kernel ∧
+      (ShieldedRingLogResidual f pre post → ShieldedRingApexStep pre post) ∧
+      pi.pre = C pre.kernel pi.turn ∧
+      pi.post = C post.kernel pi.turn := by
+  have hrefine : descriptorRefinesFree C hash (R pi.effect) ShieldedRingApexKernelStep := by
+    simpa only [heffect] using hmarket
+  obtain ⟨pre, post, hdec, hstep, hpre, hpost⟩ :=
+    lightclient_unfoolable_free C hash R (fun _ => ShieldedRingApexKernelStep) pi π hrefine hwitdec
+      hacc
+  obtain ⟨f, hfpre, hfpost⟩ := hstep
+  exact ⟨pre, post, f, hdec, hfpre, hfpost,
+    fun hres => shieldedRingApexStep_of_kernelEndpoints_and_residual hfpre hfpost hres, hpre, hpost⟩
+
+#assert_axioms settleRing_preserves_nullifiers
+#assert_axioms ShieldedRingApexKernelStep
+#assert_axioms ShieldedRingApexStep.kernelStep
+#assert_axioms shieldedRingApexKernelStep_log_blind
+#assert_axioms not_shieldedRingApexStep_log_collapse
+#assert_axioms ShieldedRingLogResidual
+#assert_axioms shieldedRingApexStep_of_kernelEndpoints_and_residual
+#assert_axioms ShieldedRingDescriptorRefinesKernel
+#assert_axioms shieldedRingDescriptorRefinesKernel_of_free
+#assert_axioms shieldedRingApexKernelStep_realizable
+#assert_axioms shieldedRingLogResidual_realizable
+#assert_axioms shieldedRingLogResidual_refutable
+#assert_axioms shieldedRingLogResidual_unconditional_false
+#assert_axioms not_shieldedRingApexKernelStep_state0_state1
+#assert_axioms shieldedRingDescriptorRefinesKernel_refutable
+#assert_axioms shielded_lightclient_kernel_endpoints_free
+
+end ShieldedKernelEndpointRung
 
 /-- **`DrexClearingEffectRefinementResidual` (OPEN):** the missing per-effect/whole-turn descriptor
 theorem.  Besides matching kernel endpoints, the extracted step must denote the exact list of ordinary

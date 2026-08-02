@@ -74,6 +74,10 @@ imported keystones. NEW names only.
 -/
 import Dregg2.Circuit.RotatedKernelRefinementFacet
 import Dregg2.Circuit.Emit.CapOpenTurnPins
+-- §8's floor-free rung is stated over `ApexFloorFree.CommitMap`/`StateDecodeC` and refuted at
+-- `ApexFloorFree.collapseMap`. No cycle: `ApexFloorFree` imports only `Dregg2.Circuit.CircuitSoundness`,
+-- which this file already sits above.
+import Dregg2.Circuit.ApexFloorFree
 
 namespace Dregg2.Circuit.RotatedKernelRefinementFacetTurnBound
 
@@ -328,7 +332,17 @@ so copying that route trades one refuted floor for another.
 WHY IT WAITS: this def is smaller than `CircuitSoundness.descriptorRefines` but sits DOWNSTREAM of it
 through `descriptorRefinesTB_to_descriptorRefines`, whose conclusion is that def. Porting this one first
 leaves the lowering forwarding a live `hCR` into a dead antecedent, which reads as a genuine consumer and
-is the exact shape that made this class invisible. The two go in one commit, in that order. -/
+is the exact shape that made this class invisible. The two go in one commit, in that order.
+
+⚑ **THE SOUND HALF NOW EXISTS ALONGSIDE THIS DEF — §8, below.** `descriptorRefinesTBKernelFree` is the
+kernel-endpoint rung (no floor, no bundle, publication link RESTORED) and `FacetLogResidual` is the log
+clause as a quantifier-free per-instance proposition naming the pair and the published turn;
+`dispatchArmFacetTB_of_kernelArm_and_residual` reassembles them. ⚠ And §8 MEASURES the "worse" this
+annotation asserts: `descriptorRefinesTBKernelUnlinked_forces_no_decode` proves that with THIS def's own
+quantifier prefix — no `tracePublishedCommit t = pc` — even the log-free kernel-endpoint half holds only
+where its own premise is empty, at every commit map, for a reason that has nothing to do with the log. So
+the port here needs the link restored, not merely the antecedent deleted and the conclusion weakened.
+THIS def is unchanged and is still what both its consumers take; the retirement is the open decision. -/
 def descriptorRefinesTB (S : CommitSurface) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (fcaps : FacetCaps) (provided : AuthProvided) : Prop :=
   Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash →
@@ -530,6 +544,254 @@ theorem transfer_descriptorRefines_facetTB_realized (hash : List ℤ → ℤ)
   have hfaithAuth : authorizedFacetB fcaps provided pc.turn = true :=
     transferAuthoritySourceCanon_authorizes hash fcaps provided pre pc.turn hauth
   exact ⟨⟨hfaithAuth, hnn, hav, hne, hls, hld, hacc⟩, hrest⟩
+
+/-! ## §8 — ⚑ THE SOUND HALF, AND THE PRECISE REASON THIS DEF IS WORSE PLACED THAN THE SHIELDED TWIN.
+
+`descriptorRefinesTB`'s annotation (§6) records two findings and takes neither: the
+`Poseidon2SpongeCR` antecedent in its VALUE is dead and refuted, and DELETING it is not the repair,
+because the conclusion `dispatchArmFacetTB` is LOG-FORCING while `StateDecode` is LOG-BLIND
+(`Market.ProtocolAssurance.shieldedRingDescriptorRefinesFree_forces_no_decode`, proved for the shielded
+twin, transfers verbatim). This section lands the same repair the shielded twin got — the
+kernel-endpoint half plus a named per-instance log residual — ADDITIVELY, and then measures the ONE
+place where this def is genuinely worse.
+
+⚑⚑ **THE KERNEL-ENDPOINT HALF IS STATABLE HERE, BUT ONLY WITH THE PUBLICATION LINK RESTORED.** The §6
+annotation is right that `descriptorRefinesTB` carries no `tracePublishedCommit t = pc`, and that is not
+a cosmetic gap: `descriptorRefinesTBKernelUnlinked_forces_no_decode` proves that WITHOUT the link even
+the log-free kernel-endpoint rung holds only where its own premise is empty — for a reason that has
+nothing to do with the log. `StateDecodeC C pc pre post` is two equations in `pc.turn`, so from ANY
+decode one manufactures a decode at ANY OTHER turn `τ` (take `pc' := ⟨C pre.kernel τ, C post.kernel τ,
+τ⟩`), and the unlinked rung then demands the faithful arm on EVERY published turn — including a
+degenerate self-transfer `⟨0,0,0,0⟩`, which `admitGuardAFacet`'s `src ≠ dst` conjunct refuses.
+`descriptorRefinesTBKernelUnlinked_false` therefore refutes it at EVERY commit map, no exhibited
+boundary needed.
+
+So the honest kernel-endpoint rung here is `descriptorRefinesTBKernelFree`, which RESTORES the link (a
+strictly weaker obligation — the apex already holds `tracePublishedCommit t = pi.toPublished` from
+`StarkSound.extract` and throws it away, exactly as `ApexFloorFree.descriptorRefinesFree` observed of
+`CircuitSoundness.descriptorRefines`). With the link restored the free-turn attack is closed and the
+rung has both poles: `descriptorRefinesTBKernelFree_refutable` and
+`dispatchArmFacetTBKernel_owner_fires`.
+
+⚠ **NOTHING BELOW IS WIRED IN.** `descriptorRefinesTB` is unchanged and is still what its two consumers
+take: `descriptorRefinesTB_to_descriptorRefines` and the `hrefines` binder of
+`lightclient_transfer_faithful_turnbound` (both in §6 above). Retiring it in favour of
+`descriptorRefinesTBKernelFree` would change what the turn-bound apex advertises — it would export the
+kernel-endpoint arm plus a named log residual rather than the whole faithful arm — and it would also
+have to decide whether `descriptorRefinesTB_to_descriptorRefines`'s target,
+`CircuitSoundness.descriptorRefines`, is ported in the same commit (§6: "the two go in one commit, in
+that order"). That is an operator decision. The proof work is done here; the open item is the
+retirement, and it touches exactly those two theorems plus the two
+`Dregg2/Verify/FloorRatchetBaseline.lean` rows naming `descriptorRefinesTB` and
+`descriptorRefinesTB_to_descriptorRefines`, which are emitted as `baseline ∩ current`. -/
+
+section KernelEndpointRungTB
+
+open Dregg2.Circuit.ApexFloorFree
+  (CommitMap StateDecodeC emptyTrace satisfied2_emptyTrace state0 state1 kernel0 kernel1 kernel0_wf
+   kernel1_wf kernel1_ne_kernel0 collapseMap)
+
+/-- **`dispatchArmFacetTBKernel fcaps provided pubTurn pre post` — the KERNEL-ENDPOINT half of
+`dispatchArmFacetTB`.** The turn-bound faithful arm with its receipt-chain clause discharged by
+construction: the spec is asked at the post state's KERNEL paired with the log the spec itself forces,
+so its `st'.log = tr :: st.log` conjunct is `rfl` and every remaining conjunct — the deployed two-axis
+authority over the PUBLISHED turn, non-negativity, availability, distinctness, liveness, accepts, the
+`recTransferBal` ledger movement and the 16-field frame — reads kernels alone.
+
+Stated this way rather than by restating twenty conjuncts, so it is by CONSTRUCTION the same spec, not a
+second one that could drift from it. -/
+def dispatchArmFacetTBKernel (fcaps : FacetCaps) (provided : AuthProvided) (pubTurn : Turn)
+    (pre post : RecChainedState) : Prop :=
+  ∃ a : AssetId,
+    BalanceMovementSpecFacet fcaps provided pre pubTurn a ⟨post.kernel, pubTurn :: pre.log⟩
+
+/-- **`FacetLogResidual pubTurn pre post` — THE LOG CLAUSE, NAMED, PER INSTANCE.** The receipt-chain
+advance of `BalanceMovementSpecFacet`, as a proposition about ONE named pair and ONE named published
+turn. It quantifies over nothing: not `∀ pre post, …` (a universal side condition over decoded pairs is
+`ClosureLog.StateDecodeLog`'s `logHashInjective` rewritten — the refuted floor this port exists to
+avoid), and not `_ ∨ ∃ collision` (free — `SpongeCollisionShirk.orBreak_spongeCollision_iff_True`). -/
+def FacetLogResidual (pubTurn : Turn) (pre post : RecChainedState) : Prop :=
+  post.log = pubTurn :: pre.log
+
+/-- ⚑ **POST-LOG BLINDNESS, DEFINITIONALLY.** The kernel-endpoint arm does not read the post state's
+receipt chain: replacing it by anything at all is the SAME proposition, by `Iff.rfl`.
+
+This is the exact move the log-forcing rung dies to. `StateDecodeC` reads `pre.kernel`, `post.kernel`
+and their well-formedness and NEVER `.log`, so from any decode of `(pre, post)` the forged pair
+`(pre, ⟨post.kernel, pre.log⟩)` decodes the same commitment; against `dispatchArmFacetTB` that yields
+`pre.log = pubTurn :: pre.log` (`not_dispatchArmFacetTB_log_collapse`), and against this conclusion it
+yields nothing. -/
+theorem dispatchArmFacetTBKernel_post_log_blind (fcaps : FacetCaps) (provided : AuthProvided)
+    (pubTurn : Turn) (pre post : RecChainedState) (l : List Turn) :
+    dispatchArmFacetTBKernel fcaps provided pubTurn pre ⟨post.kernel, l⟩
+      ↔ dispatchArmFacetTBKernel fcaps provided pubTurn pre post := Iff.rfl
+
+/-- ⚑ **THE ENGINE OF THE REFUTATION, ISOLATED.** At the log-collapsed pair the FULL turn-bound arm is
+false — for EVERY `pre`, `post` and published turn, at no hypothesis: the spec demands
+`post.log = pubTurn :: pre.log` and the collapsed pair's post log IS `pre.log`. -/
+theorem not_dispatchArmFacetTB_log_collapse (fcaps : FacetCaps) (provided : AuthProvided)
+    (pubTurn : Turn) (pre post : RecChainedState) :
+    ¬ dispatchArmFacetTB fcaps provided pubTurn pre ⟨post.kernel, pre.log⟩ := by
+  rintro ⟨_a, hspec⟩
+  have hlog : pre.log = pubTurn :: pre.log := hspec.2.2.1
+  have hlen := congrArg List.length hlog
+  simp at hlen
+
+/-- The full turn-bound arm entails its kernel-endpoint half — this rung claims strictly less. -/
+theorem dispatchArmFacetTB.kernelArm (fcaps : FacetCaps) (provided : AuthProvided) (pubTurn : Turn)
+    (pre post : RecChainedState) (h : dispatchArmFacetTB fcaps provided pubTurn pre post) :
+    dispatchArmFacetTBKernel fcaps provided pubTurn pre post := by
+  obtain ⟨a, hspec⟩ := h
+  refine ⟨a, ?_⟩
+  have heq : (⟨post.kernel, pubTurn :: pre.log⟩ : RecChainedState) = post := by
+    rw [← (hspec.2.2.1 : post.log = pubTurn :: pre.log)]
+  rwa [heq]
+
+/-- **THE DECOMPOSITION.** Kernel endpoints plus the named log residual reassemble the full turn-bound
+faithful arm, with no floor and no side condition anywhere. -/
+theorem dispatchArmFacetTB_of_kernelArm_and_residual (fcaps : FacetCaps) (provided : AuthProvided)
+    (pubTurn : Turn) (pre post : RecChainedState)
+    (hk : dispatchArmFacetTBKernel fcaps provided pubTurn pre post)
+    (hres : FacetLogResidual pubTurn pre post) :
+    dispatchArmFacetTB fcaps provided pubTurn pre post := by
+  obtain ⟨a, hspec⟩ := hk
+  refine ⟨a, ?_⟩
+  have heq : (⟨post.kernel, pubTurn :: pre.log⟩ : RecChainedState) = post := by
+    rw [← (hres : post.log = pubTurn :: pre.log)]
+  rwa [heq] at hspec
+
+/-- **SATISFIABLE — the kernel-endpoint arm FIRES on the owner path.** The same pole the full arm has
+(`dispatchArmFacetTB_owner_fires`), one rung down: an owner-authorized PUBLISHED transfer with a valid
+value movement inhabits it. So neither the rung's conclusion nor
+`facetLogResidual_unconditional_false`'s hypothesis is an empty proposition. -/
+theorem dispatchArmFacetTBKernel_owner_fires (fcaps : FacetCaps) (provided : AuthProvided)
+    (pc : PublishedCommit) (pre post : RecChainedState) (a : AssetId)
+    (howner : pc.turn.actor = pc.turn.src)
+    (hval : BalanceMovementSpec pre pc.turn a post) :
+    dispatchArmFacetTBKernel fcaps provided pc.turn pre post :=
+  dispatchArmFacetTB.kernelArm fcaps provided pc.turn pre post
+    (dispatchArmFacetTB_owner fcaps provided pc pre post a howner hval)
+
+/-- ⚑⚑ **DROPPING THE RESIDUAL MAKES THE RUNG FALSE.** Wherever the kernel-endpoint arm holds at all,
+the implication "kernel-endpoint arm ⟹ full turn-bound arm" is FALSE: the log-collapse of that very pair
+satisfies the kernel arm (`dispatchArmFacetTBKernel_post_log_blind`, definitionally) and refutes the full
+one (`not_dispatchArmFacetTB_log_collapse`). So `FacetLogResidual` is honest work and not decoration.
+
+Stated from an inhabitant rather than unconditionally, because a `¬ ∀` whose antecedent is never
+satisfied is exactly the emptiness this section exists to rule out. -/
+theorem facetLogResidual_unconditional_false (fcaps : FacetCaps) (provided : AuthProvided)
+    (pubTurn : Turn) (pre post : RecChainedState)
+    (hk : dispatchArmFacetTBKernel fcaps provided pubTurn pre post) :
+    ¬ ∀ (pre' post' : RecChainedState),
+        dispatchArmFacetTBKernel fcaps provided pubTurn pre' post' →
+        dispatchArmFacetTB fcaps provided pubTurn pre' post' := by
+  intro hall
+  exact not_dispatchArmFacetTB_log_collapse fcaps provided pubTurn pre post
+    (hall pre ⟨post.kernel, pre.log⟩ hk)
+
+/-- **`descriptorRefinesTBKernelFree C hash d fcaps provided` — THE SOUND RUNG.** `descriptorRefinesTB`
+with the refuted `Poseidon2SpongeCR` antecedent gone, the `CommitSurface` bundle replaced by a bare
+commit map, the conclusion weakened to its kernel-endpoint half, AND the publication link
+`tracePublishedCommit t = pc` RESTORED. The link is not decoration here: without it the rung is refuted
+at every commit map (`descriptorRefinesTBKernelUnlinked_false`), log or no log. -/
+def descriptorRefinesTBKernelFree (C : CommitMap) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (fcaps : FacetCaps) (provided : AuthProvided) : Prop :=
+  ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace) (pc : PublishedCommit) (pre post : RecChainedState),
+    Satisfied2 hash d minit mfin maddrs t →
+    tracePublishedCommit t = pc →
+    StateDecodeC C pc pre post →
+    dispatchArmFacetTBKernel fcaps provided pc.turn pre post
+
+/-- **`descriptorRefinesTBKernelUnlinked` — the same rung with `descriptorRefinesTB`'s OWN quantifier
+prefix**, i.e. with the publication link still absent. Minted only to be refuted; it is the shape the
+deployed def has, one rung down. -/
+def descriptorRefinesTBKernelUnlinked (C : CommitMap) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (fcaps : FacetCaps) (provided : AuthProvided) : Prop :=
+  ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace) (pc : PublishedCommit) (pre post : RecChainedState),
+    Satisfied2 hash d minit mfin maddrs t →
+    StateDecodeC C pc pre post →
+    dispatchArmFacetTBKernel fcaps provided pc.turn pre post
+
+/-- ⚑⚑ **THE MEASUREMENT: WITHOUT THE PUBLICATION LINK, EVEN THE KERNEL-ENDPOINT HALF ENTAILS THAT
+NOTHING DECODES.** If the unlinked rung holds then no pair of chained states decodes any published
+commitment at any commit map. The proof uses nothing about the hash and nothing about the log: a decode
+is two equations in `pc.turn`, so it survives replacing `pc` by `⟨C pre.kernel τ, C post.kernel τ, τ⟩`
+for ANY turn `τ`; at the degenerate self-transfer `τ = ⟨0,0,0,0⟩` the arm's `admitGuardAFacet` demands
+`τ.src ≠ τ.dst`.
+
+⚠ This is the precise sense in which `descriptorRefinesTB` is WORSE placed than the shielded twin. There,
+weakening the conclusion to its kernel-endpoint half is the whole repair; here it is not enough, and the
+publication link has to be restored first. -/
+theorem descriptorRefinesTBKernelUnlinked_forces_no_decode
+    (C : CommitMap) (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (fcaps : FacetCaps) (provided : AuthProvided)
+    (h : descriptorRefinesTBKernelUnlinked C hash d fcaps provided)
+    (pc : PublishedCommit) (pre post : RecChainedState)
+    (hdec : StateDecodeC C pc pre post) : False := by
+  obtain ⟨_a, hspec⟩ :=
+    h (fun _ => 0) (fun _ => (0, 0)) [] emptyTrace
+      ⟨C pre.kernel ⟨0, 0, 0, 0⟩, C post.kernel ⟨0, 0, 0, 0⟩, ⟨0, 0, 0, 0⟩⟩ pre post
+      (satisfied2_emptyTrace hash d _ _) ⟨rfl, rfl, hdec.preWF, hdec.postWF⟩
+  exact hspec.1.2.2.2.1 rfl
+
+/-- ⚑ **REFUTED AT EVERY COMMIT MAP** — the premise of the measurement above is inhabited everywhere,
+since `ApexFloorFree.state0` is well-formed and `⟨C kernel0 τ, C kernel0 τ, τ⟩` decodes it by `rfl`. No
+exhibited boundary and no opaque published value is needed: the unlinked shape is empty at every
+parameter. -/
+theorem descriptorRefinesTBKernelUnlinked_false (C : CommitMap) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor2) (fcaps : FacetCaps) (provided : AuthProvided) :
+    ¬ descriptorRefinesTBKernelUnlinked C hash d fcaps provided := fun h =>
+  descriptorRefinesTBKernelUnlinked_forces_no_decode C hash d fcaps provided h
+    ⟨C kernel0 ⟨0, 0, 0, 0⟩, C kernel0 ⟨0, 0, 0, 0⟩, ⟨0, 0, 0, 0⟩⟩ state0 state0
+    ⟨rfl, rfl, kernel0_wf, kernel0_wf⟩
+
+/-- ⚑ **REFUTABLE — the LINKED sound rung passes the standing acceptance test.** At the exhibited commit
+map `ApexFloorFree.collapseMap emptyTrace`, for EVERY hash and EVERY descriptor (the deployed `Rfix e`
+included), every `fcaps` and every `provided`, the kernel-endpoint rung is FALSE. `state0`'s kernel has
+NO live accounts, and `admitGuardAFacet` demands the published source be one — a KERNEL refutation, which
+is what a kernel-endpoint rung ought to be refutable on, and it says nothing about the log.
+
+Contrast, at the same descriptor and a deployed-shaped sponge: `descriptorRefinesTB S hash d fcaps
+provided` HOLDS, because `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes its antecedent. One
+obligation is discharged by the PARAMETERS; this one is a claim about the circuit. -/
+theorem descriptorRefinesTBKernelFree_refutable (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (fcaps : FacetCaps) (provided : AuthProvided) :
+    ¬ descriptorRefinesTBKernelFree (collapseMap emptyTrace) hash d fcaps provided := by
+  intro h
+  have hdec : StateDecodeC (collapseMap emptyTrace) (tracePublishedCommit emptyTrace) state0 state1 := by
+    refine ⟨?_, ?_, kernel0_wf, kernel1_wf⟩
+    · show (tracePublishedCommit emptyTrace).pubPre
+          = collapseMap emptyTrace kernel0 (tracePublishedCommit emptyTrace).turn
+      unfold collapseMap
+      rw [if_pos rfl]
+    · show (tracePublishedCommit emptyTrace).pubPost
+          = collapseMap emptyTrace kernel1 (tracePublishedCommit emptyTrace).turn
+      unfold collapseMap
+      rw [if_neg kernel1_ne_kernel0]
+  obtain ⟨_a, hspec⟩ :=
+    h (fun _ => 0) (fun _ => (0, 0)) [] emptyTrace (tracePublishedCommit emptyTrace) state0 state1
+      (satisfied2_emptyTrace hash d _ _) rfl hdec
+  have hmem : (tracePublishedCommit emptyTrace).turn.src ∈ (∅ : Finset CellId) :=
+    hspec.1.2.2.2.2.1
+  simp at hmem
+
+#assert_axioms dispatchArmFacetTBKernel
+#assert_axioms FacetLogResidual
+#assert_axioms dispatchArmFacetTBKernel_post_log_blind
+#assert_axioms not_dispatchArmFacetTB_log_collapse
+#assert_axioms dispatchArmFacetTB.kernelArm
+#assert_axioms dispatchArmFacetTB_of_kernelArm_and_residual
+#assert_axioms dispatchArmFacetTBKernel_owner_fires
+#assert_axioms facetLogResidual_unconditional_false
+#assert_axioms descriptorRefinesTBKernelFree
+#assert_axioms descriptorRefinesTBKernelUnlinked
+#assert_axioms descriptorRefinesTBKernelUnlinked_forces_no_decode
+#assert_axioms descriptorRefinesTBKernelUnlinked_false
+#assert_axioms descriptorRefinesTBKernelFree_refutable
+
+end KernelEndpointRungTB
 
 /-! ## §7 — Axiom hygiene. -/
 
