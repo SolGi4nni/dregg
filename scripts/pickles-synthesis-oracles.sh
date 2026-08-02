@@ -63,12 +63,12 @@ TS_ORACLES=(
 # its own red path (corrupted candidate → exit 1) alongside the live green diff.
 MIGRATED="custom-gate-diff.mjs pickles-placement-oracle.mjs mina-canonical-circuit-oracle.mjs stepmain-region-conformance.mjs pickles-r3-branchdata-oracle.ts"
 
-# `stepmain-region-conformance.mjs` additionally carries FIVE falsifiers of its own (`--falsify`):
-# each bends the Lean gate list by the smallest possible amount — one Poseidon round constant, one
-# wire inside a Poseidon body, one retyped VarBaseMul, one Generic selector coefficient, one wire
-# inside an EndoMul-32 body — and DEMANDS the conformance vector move. A gate-by-gate diff that a
-# bent coefficient does not move would be decoration, so it runs them here, not on request.
-EXTRA_FLAGS_stepmain_region_conformance_mjs="--falsify"
+# `stepmain-region-conformance.mjs` additionally carries SIX falsifiers of its own (`--falsify`, passed
+# in the loop below): five bend the Lean gate list by the smallest possible amount — one Poseidon round
+# constant, one wire inside a Poseidon body, one retyped VarBaseMul, one Generic selector coefficient,
+# one wire inside an EndoMul-32 body — and DEMAND the conformance vector move; the sixth drops the
+# σ-probe rows so the ledger's OTHER leg bites too (a divergence that stops being observed is a stale
+# allowance and must be red). A gate-by-gate diff a bent coefficient does not move would be decoration.
 is_migrated() { case " $MIGRATED " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 fails=0
