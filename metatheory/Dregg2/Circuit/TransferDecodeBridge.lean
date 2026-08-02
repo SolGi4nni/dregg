@@ -151,10 +151,14 @@ structure TransferEncodeResidual (hash : List ℤ → ℤ)
   -- the admissibility guard (the cap-tree/authority + the side guards — NOT ledger-committed).
   guardAuth : authorizedB pre.kernel.caps tr = true
   guardNonNeg : 0 ≤ tr.amt
-  -- ⚠⚠ AVAILABILITY — a NAMED residual leg (NOT ledger-committed, NOT circuit-forced): the mod-p balance
-  -- gate + 30-bit range check do NOT enforce `amt ≤ bal` (wrap-class gap, RotatedKernelRefinement §3), so
-  -- availability joins `guardAuth`/`guardNonNeg` as an explicit residual the assembly threads — exposing
-  -- the real dependency, pending the EMBER-GATED denotation fix. Not faked as circuit-forced.
+  -- ⚠⚠ AVAILABILITY — a NAMED residual leg here because this bridge targets the BARE `rotatedEncodes`
+  -- decode of `transferV3`, whose mod-p balance gate + 30-bit range check do NOT enforce `amt ≤ bal`
+  -- (wrap-class gap, RotatedKernelRefinement §3). So availability joins `guardAuth`/`guardNonNeg` as an
+  -- explicit residual the assembly threads — exposing the real dependency, not faked as circuit-forced.
+  -- ⚑ ON THE DEPLOYED PATH IT IS NOT A RESIDUAL AT ALL: the borrow-chain fix landed and the hardened
+  -- members ride the wire (`EmitRotationV3.lean:119-120`), so availability is FORCED by the deployed
+  -- borrow chain and the `_availFix` `ext` slot carries NO `availOf` — `availOf` is DISCHARGED at the
+  -- apex (`ClosureFinalAvail.lean:162-164`). This leg is a fact about the BARE bridge, not a live gap.
   guardAvail : tr.amt ≤ pre.kernel.bal tr.src a
   guardDistinct : tr.src ≠ tr.dst
   guardLiveSrc : tr.src ∈ pre.kernel.accounts
@@ -239,7 +243,8 @@ def transfer_decodeBridge (hash : List ℤ → ℤ) (S : CommitSurface)
   -- the non-ledger residual.
   guardAuth := res.guardAuth
   guardNonNeg := res.guardNonNeg
-  -- availability rides the residual's NAMED leg (NOT circuit-forced under mod-p).
+  -- availability rides the residual's NAMED leg (not circuit-forced by the BARE mod-p face this bridge
+  -- targets; on the deployed hardened wire it is forced and discharged — ClosureFinalAvail.lean:162-164).
   guardAvail := res.guardAvail
   guardDistinct := res.guardDistinct
   guardLiveSrc := res.guardLiveSrc

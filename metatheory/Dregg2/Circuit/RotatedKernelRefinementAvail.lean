@@ -37,13 +37,24 @@ the kernel refinement:
     (`pre.bal src a < tr.amt`, the audit's forgery class) riding a satisfying hardened witness
     is UNSAT.
 
-## What this module is NOT (the remaining deployment step, EMBER-GATED)
+## The deployment step — DONE (GAP 1-6 VK epoch flip)
 
-The live registry still routes the BARE `transferVmDescriptor` (`v3RegistryBare`); flipping the
-transfer entry to `transferV3Avail` is a descriptor-JSON/FP + VK regen (with the Rust assembly
-realizing the 15-bit range table — the `transfer_avail_weld.rs` teeth) and is deliberately NOT
-done here. Until that flip, production availability rides `rotatedEncodes.guardAvail` exactly as
-the audit documents; this module is the proof that the flip CLOSES the forgery.
+The live registry routes the HARDENED transfer member, not the bare `transferVmDescriptor`:
+`EmitRotationV3.lean`'s `availOverride` (cited by NAME — it sat at `:119` when this was written and a
+concurrent commit moved it to `:134`; `Dregg2.lean:1020` and `:1022` cite the post-move numbers, so a
+reader comparing the two would otherwise see the tree contradict itself) maps the cohort key
+`transferVmDescriptor2R24` → `Emit.AvailWireMembers.transferV3AvailWire` (the wire wrapper over
+THIS module's `transferV3Avail`). The flip was materialized into the re-keyed VK epoch —
+descriptor-JSON/FP + VK regen with the Rust assembly realizing the 15-bit range table (the
+`transfer_avail_weld.rs` teeth); `Emit/EffectVmEmitTransfer.lean:224` records the gap "CLOSED AND
+DEPLOYED" and `:235` "the flip is DONE". Production transfer availability is therefore
+circuit-FORCED, and `availOf` is discharged all the way to the apex
+(`ClosureFinalAvail.lean:162-164`). This module is the refinement proof that the deployed flip
+CLOSES the forgery; the bare-path `rotatedEncodes.guardAvail` residual survives only in
+`RotatedKernelRefinement`, which nothing deployed reads. The in-library `v3RegistryBare` entry is
+still the bare def — the wire coincides with it through `EmitRotationV3`'s override, and re-keying
+that list member-for-member is the one named follow-up (`Emit/AvailWireMembers.lean` §"What
+consumes it").
 
 ## Axiom hygiene
 

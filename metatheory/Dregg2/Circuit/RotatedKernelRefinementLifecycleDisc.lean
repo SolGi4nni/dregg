@@ -368,19 +368,30 @@ private def cell0 : CellId := 0
     wrong payload is the prover lying to ITSELF about its own effect, not fooling a verifier about the
     lifecycle STATE). Named, not laundered.
 
-  * **The `disc` sub-limb COMMITMENT realization is ember-gated (a VK epoch).** Realizing this gate on the
-    deployed path means COMMITTING the disc beside `lifecycle_felt` in the per-cell commitment
-    (`cell_state.rs::compute_commitment`) — either a 33rd `pre_limbs` column or a re-fold of `B_LIFECYCLE`
-    to `H(disc_felt, payload_felt)`. Either changes `ROT_WIDTH` / the AFTER-block offsets / all 36 rotated
-    descriptor JSONs / the registry fingerprint / the VK — a global flag-day. So the COMMITMENT change is
-    the EMBER-GATED deploy step; THIS module proves the gate + teeth against the FIX (committed-root)
-    descriptor, the same beachhead shape as `RotatedKernelRefinementCellSeal`/`…Lifecycle`.
+  * **The `disc` sub-limb COMMITMENT realization — ✅ THE FLAG-DAY COMMITTED.** Realizing this gate on the
+    deployed path meant COMMITTING the disc beside `lifecycle_felt` in the per-cell commitment
+    (`cell_state.rs::compute_commitment`), changing `ROT_WIDTH` / the AFTER-block offsets / all 36 rotated
+    descriptor JSONs / the registry fingerprint / the VK — a global flag-day, and it was taken: the disc
+    (the `u8 0..4`) is its OWN sub-limb at in-block offset `B_DISC = 32`, the NEW last pre-iroot limb,
+    beside the opaque `lifecycle_felt` at 29 (`Emit/EffectVmEmitRotationV3.lean:4372`). The per-effect
+    `gDiscTransition` proved here is realized on the LIVE wire as a selector-gated constant force on the
+    disc limb — no trusted post-cell, no free PI, so a ledgerless client's `verify_vm_descriptor2` ALONE
+    rejects a frozen seal / a Destroyed→Live resurrection / a wrong-disc archive
+    (`Emit/EffectVmEmitRotationV3.lean:4373-4377`, §5.LD `discForceGate`). THIS module is the gate + teeth
+    against the FIX (committed-root) descriptor the wire now carries, the same shape as
+    `RotatedKernelRefinementCellSeal`/`…Lifecycle`.
 
   * **Layer divergence on `receiptArchive`.** The KERNEL spec `ReceiptArchiveSpec` writes a record SLOT
     and FREEZES the `lifecycle` side-table (`cellstateaudit.lean:241`); the DEPLOYED `apply_receipt_archive`
     moves the side-table disc to `Archived(4)` (`rotation_witness.rs:460`). The light client sees the
     DEPLOYED disc (PI[38] carries `lifecycle_felt`), so this module gates the DEPLOYED disc transition.
-    Reconciling the two layers (one disc semantics) is WAVE-3 work, named here. -/
+    ✅ THE RECONCILIATION LANDED (`RotatedKernelRefinementLifecycle.lean:1120`, "GAP-1 RECONCILIATION"):
+    the spec the light client is owed is the lifecycle-SIDE move `lifecycle[cell] := Archived`, exactly
+    the cellUnseal/cellDestroy shape — `ReceiptArchiveLifecycleSpec` "is the reconciled deployed
+    semantics" (`:1126-1127`) and `receiptArchive_descriptorRefines_sat` forces it from
+    `Satisfied2 hash receiptArchiveV3` through the disc gate, the LIVE realization of
+    `receiptArchive_disc_forced` below. `Spec.CellStateAudit.ReceiptArchiveSpec`'s record-slot write
+    stays as the toy executor's own bespoke fact; it is no longer a competing disc semantics. -/
 
 /-! ## §7 — axiom-hygiene tripwires. -/
 

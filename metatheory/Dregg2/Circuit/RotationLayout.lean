@@ -1,9 +1,15 @@
 /-
 # Dregg2.Circuit.RotationLayout — THE ROTATED COMMITMENT LAYOUT (the one VK epoch's state shape).
 
-The staged Lean expression of `.docs-history-noclaude/UNIVERSAL-MAP-ROTATION.md` §2.1/§2.4/§2.6 — the flag-day
-commitment layout, expressed and PROVEN here BEFORE any wire flip (the live v1 path is untouched;
-the cutover commit consumes this module's shape, `.docs-history-noclaude/ROTATION-CUTOVER.md`):
+The Lean expression of `.docs-history-noclaude/UNIVERSAL-MAP-ROTATION.md` §2.1/§2.4/§2.6 — the flag-day
+commitment layout. Written and PROVEN here BEFORE the wire flip (`.docs-history-noclaude/ROTATION-CUTOVER.md`),
+⛑ **AND THE FLIP HAPPENED**: post-G4 the live chained commit IS the rotated wide commitment
+(`Lightclient/NonOmissionAttack.lean:32-35` — `circuit/src/effect_vm/trace_rotated.rs`,
+`B_IROOT = 37`, `state_commit = hash_many [d, iroot]`, and `turn/src/executor/proof_verify.rs:349`
+"iroot … absorbed INTO the v9 commitment, which the proof binds"), and this module's
+`rotatedCommit` is pinned against the ACTUALLY-PUBLISHED Rust commit by
+`Circuit/RotatedCommitDifferential.lean:3-13`. There is no untouched live v1 path left to protect;
+what the layout IS:
 
   * **registers 8 → 16** (§2.1): sixteen NAMED register limbs, direct in the commitment (the one
     state structure that is correctly NOT a map — `.docs-history-noclaude/EPOCH-DESIGN.md` §"Per-structure choices").
@@ -36,8 +42,14 @@ The four map-root limbs are DERIVED boundary views under the universal-memory re
 commit to; THIS module pins what the commitment absorbs.
 
 Axiom hygiene: `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; crypto only as the
-named `Poseidon2SpongeCR` hypothesis. Lean/design layer: no Rust rides this module until the
-cutover commit regenerates descriptors against it.
+named `Poseidon2SpongeCR` hypothesis.
+
+⚠ **WHAT DEPLOYMENT TOOK FROM THIS MODULE IS THE SHAPE, NOT THE ROSTER — do not read a column
+count off this file.** The `hash (limbs ++ [iroot])` shape and its `CommitBindsMMR` discharge are
+the deployed ones (above). The limb ENUMERATION below is the design-stage model and the deployed
+geometry has moved past it in three independent ways; the single source for any actual column is
+`Emit/RotatedLayout.rotated187` (`Emit/RotatedLayout.lean:153,157`) — see
+`RotatedLimbs.toList_length` (§1) for the reconciliation.
 -/
 import Dregg2.Lightclient.MMR
 import Dregg2.Substrate.Heap
@@ -106,7 +118,34 @@ def RotatedLimbs.toList (s : RotatedLimbs) : List ℤ :=
   , s.capRoot, s.nullifierRoot, s.heapRoot
   , s.lifecycle, s.epoch, s.committedHeight ]
 
-/-- 1 cells root + 16 registers + 3 map roots + 3 scalars = 23 limbs (24 with the index root). -/
+/-- 1 cells root + 16 registers + 3 map roots + 3 scalars = 23 limbs (24 with the index root).
+
+⚠ **23 IS THE DESIGN-STAGE ROSTER, NOT A DEPLOYED COLUMN COUNT, and the two are not related by a
+single conversion factor** — a reader who needs a number must take it from
+`Emit/RotatedLayout.rotated187`, whose `rotatedNumPreLimbs = 187`
+(`Emit/RotatedLayout.lean:153,157`). The deployed geometry differs from this list in THREE
+independent ways, only the third of which is a semantic-vs-wire widening:
+
+  1. **The register file is `r0..r23`, not `r0..r15`.** `r23` carries the authority residue that no
+     named limb holds — permissions / VK / lifecycle-payload / delegate / delegation / program /
+     mode / token_id / visibility / commitments / proved_state / side-table roots / fields[8..16] —
+     at limb-list index 24 (`RotatedCommitDifferential.lean:18-19`; `rotated187`'s `.authority`
+     group has lane0 = 24). So `NUM_REGISTERS = 16` here is a count this file's own
+     `resolve` totality is stated against, NOT the deployed register count.
+  2. **There are FOUR map roots**, `commitments_root` joining cap/nullifier/heap
+     (`rotated187.groups`), beside the perms / vk / fields / revoked / cells groups the same
+     enumeration commits.
+  3. **Each faithful root is an 8-felt GROUP, not a scalar limb** (lane 0 + seven completion
+     columns), and each `fields[slot]` and each 32-byte carrier is a **9-lane NONET** after the
+     2026-07-31 fields-nonet and 2026-08-01 key-nonet flag days — one scalar limb here is up to
+     nine columns there.
+
+The intermediate object, for orientation: the differential states the published commitment over a
+**32**-element scalar limb list `[cells_root, r0..r23, cap_root, nullifier_root, commitments_root,
+heap_root, lifecycle, epoch, committed_height]` (`RotatedCommitDifferential.lean:11-13`) — this
+roster with (1) and (2) applied. `187` is the COLUMN TILING once (3) is applied on top, plus the
+scalars neither list names (`disc`, `mode`) and the perms / vk / revoked groups; `rotated187` is a
+complete tiling of `0..186` with no pads, so it is the only count that is checked. -/
 theorem RotatedLimbs.toList_length (s : RotatedLimbs) : s.toList.length = 23 := rfl
 
 /-- The limb list binds the structure: equal lists force equal `RotatedLimbs` (positional

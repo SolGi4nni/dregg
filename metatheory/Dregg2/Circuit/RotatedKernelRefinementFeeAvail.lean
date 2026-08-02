@@ -25,11 +25,17 @@ its rotated-path discharge:
   * **`feeWire_fee_forgery_unsat` / `feeWire_amount_forgery_unsat`** — THE TEETH: both wrap-forgery
     witnesses are UNSAT against the hardened WIRE member.
 
-## What this module is NOT (the remaining deployment step, EMBER-GATED)
+## The deployment step — DONE (the fee key rides the GAP 1-6 flip)
 
-The live registry still routes the bare `withDfaRcPins transferFeeV3`; the flip
-(`EmitRotationV3.lean` override → `rotation-v3-staged-registry.tsv` regen → VK) is the ONE
-big-bang regen, deliberately not done here.
+The live registry no longer routes the bare `withDfaRcPins transferFeeV3`. `EmitRotationV3.lean:124`
+overrides the cohort key `transferFeeVmDescriptor2R24` with
+`Emit.AvailWireMembers.transferFeeV3AvailWire` — the §11.8 fee availability weld (MID-linked
+borrow/carry chains closing the wrap through BOTH debit legs, amount AND fee) under the same fee pin
++ rc wrapper, per the routing note at `EmitRotationV3.lean:113-118`. That override is what
+`scripts/emit-descriptors.sh` mints into `rotation-v3-staged-registry.tsv`, and the flip was carried
+into the re-keyed VK epoch with the rest of GAP 1-6
+(`RotatedKernelRefinementMintBurnAvail.lean:41-48`). This module is that wire member's rotated-path
+discharge; the fee wrap is UNSAT on what the prover actually runs.
 
 ## Axiom hygiene
 

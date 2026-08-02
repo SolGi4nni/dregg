@@ -31,13 +31,24 @@ availability discharge is proven (`availability_and_exact_move_forced` /
 ## What consumes it
 
 `EmitRotationV3.lean` (the descriptor emit executable) overrides the two cohort keys with these
-members, so `scripts/emit-descriptors.sh` mints the hardened bytes into
-`circuit/descriptors/rotation-v3-staged-registry.tsv` — the ember-gated VK regen then re-keys the
-federation over them. The BARE defs (`transferVmDescriptor` / `burnVmDescriptor` and their whole
-registry pipeline) stay untouched for the bare-path proofs; only the WIRE routes to hardened.
-The named follow-up (HORIZONLOG): re-key the in-library `v3RegistryBare` transfer/burn entries +
-the apex `Rfix` over these members so the committed-registry object and the wire coincide again
-member-for-member.
+members (`EmitRotationV3.lean:119-125` — `availOverride` maps `transferVmDescriptor2R24` →
+`transferV3AvailWire`, `burnVmDescriptor2R24` → `burnV3AvailWire`, plus the cap-open and fee'd
+transfer keys), so `scripts/emit-descriptors.sh` mints the hardened bytes into
+`circuit/descriptors/rotation-v3-staged-registry.tsv`. ✅ THE VK REGEN LANDED and re-keyed the
+federation over them — descriptor-JSON/FP + VK regen with the Rust assembly realizing the 15-bit
+range table (`RotatedKernelRefinementMintBurnAvail.lean:41-48`, "The deployment step — DONE (GAP 1-6
+VK epoch flip)"; commits aa282f8c0 → 1e12d8886 → 764225f0c → 72469afd0 "deployed VK IS `vkOfRegistry
+RfixAvail`"). The BARE defs (`transferVmDescriptor` / `burnVmDescriptor` and their whole registry
+pipeline) stay untouched for the bare-path proofs; only the WIRE routes to hardened.
+
+✅ THE APEX RE-KEY ALSO LANDED, as a PARALLEL registry rather than a mutation: `RfixAvail`
+(`ClosureTransferAvail.lean:405`) is `Rfix` with exactly the two debiting tags flipped to the
+deployed hardened members, and `ClosureFinalAvail.lightclient_unfoolable_closed_final_avail` is the
+closed apex over it (`ClosureTransferAvail.lean:52-58`; `CircuitSoundnessAssembled.Rfix` is
+deliberately unchanged — it stays the bare-face registry the STARK-side enumeration reads). What is
+STILL a named follow-up (HORIZONLOG) is only the in-library `v3RegistryBare` transfer/burn entries:
+they remain the bare defs, so the committed-registry object coincides with the wire through
+`EmitRotationV3`'s override rather than member-for-member.
 
 ## Axiom hygiene
 

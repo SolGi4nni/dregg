@@ -27,15 +27,21 @@ Just as `transfer_descriptorRefines`, the honest split is:
     receipt log, and the CROSS-cell ledger frame `recTransferBal`) is NAMED as explicit decode legs in
     `rotatedEncodesBurn` / `rotatedEncodesMint` — not assumed away.
 
-⚠⚠ DEBT-A FINDING (burn availability is a DEPLOYED FORGERY). The mod-`p` migration REMOVED burn
-availability (`amt ≤ bal cell a`) from the circuit-forced bucket: the debit gate is now a field
-congruence and `BURN_AMOUNT_LO` is un-range-checked, so with `p < 2^31` an over-burn wraps into the
-30-bit range. This is WORSE than transfer's twin — burn's ledger frame CREDITS the well `(a,a)` by `amt`,
-so the over-burn INFLATES well supply = mint-from-nothing (§3, `⚠⚠ BURN AVAILABILITY IS NOT
-CIRCUIT-FORCED`, concrete forgery given). Availability is therefore relocated to a NAMED
-`rotatedEncodesBurn.guardAvail` residual pending the EMBER-GATED denotation fix. Mint has NO availability
-gate (the well is negative-capable) → NO mint-side forgery. The mod-`p` conservation teeth
-(`burn_debit_forced` / `mint_credit_forced`) still forbid wrong-amount witnesses.
+⚠⚠ DEBT-A FINDING (burn availability WAS a deployed forgery; it is now the shape of this BARE path
+only). The mod-`p` migration REMOVED burn availability (`amt ≤ bal cell a`) from the circuit-forced
+bucket: the bare debit gate is a field congruence and `BURN_AMOUNT_LO` is un-range-checked, so with
+`p < 2^31` an over-burn wraps into the 30-bit range. This is WORSE than transfer's twin — burn's ledger
+frame CREDITS the well `(a,a)` by `amt`, so the over-burn INFLATES well supply = mint-from-nothing (§3,
+`⚠⚠ BURN AVAILABILITY IS NOT CIRCUIT-FORCED`, concrete forgery given). Availability is therefore a NAMED
+`rotatedEncodesBurn.guardAvail` residual ON THE BARE DESCRIPTOR. ✅ THE DENOTATION FIX AND THE DEPLOYMENT
+BOTH LANDED: `RotatedKernelRefinementMintBurnAvail.lean:41-48` ("The deployment step — DONE (GAP 1-6 VK
+epoch flip)") records that the live registry routes the HARDENED burn avail member — `EmitRotationV3.lean:121`
+maps `burnVmDescriptor2R24` → `Emit.AvailWireMembers.burnV3AvailWire` — materialized into the re-keyed VK
+epoch with the Rust 15-bit range table (commits aa282f8c0 → 1e12d8886 → 764225f0c → 72469afd0), so
+production burn availability is circuit-FORCED and the well-supply-inflation forgery is UNSAT on the wire.
+Mint has NO availability gate (the well is negative-capable) → NO mint-side forgery. The mod-`p`
+conservation teeth (`burn_debit_forced` / `mint_credit_forced`) still forbid wrong-amount witnesses on the
+bare path.
 
 The both-polarity teeth (`burn_descriptorRefines_rejects_wrong_debit`, … `_wrong_credit` for mint)
 witness that the circuit genuinely bites: a decode claiming a moved-limb post NOT `≡ pre ∓ amount [ZMOD
@@ -185,8 +191,12 @@ structure rotatedEncodesBurn (hash : List ℤ → ℤ)
   -- so an underflow `pre.bal − amt + p ∈ [0, 2^30)` passes the range while over-burning. This is WORSE
   -- than the transfer twin: burn's ledger frame CREDITS the well `(a,a)` by `amt` (`recTransferBal cell a
   -- a amt`), so an over-burn INFLATES well supply — a mint-from-nothing. Relocated here as an honest,
-  -- visible admissibility obligation (joining `guardAuth`) pending the EMBER-GATED denotation fix
-  -- (range-check `BURN_AMOUNT_LO < p − 2^30`, a borrow / no-underflow bit, or a field `p ≥ 2^{2·bits}`).
+  -- visible admissibility obligation (joining `guardAuth`). ⚑ ON THE DEPLOYED PATH IT IS DISCHARGED, NOT
+  -- ASSUMED: the borrow-chain fix shipped and the live registry routes the hardened burn member
+  -- (`EmitRotationV3.lean:121` → `AvailWireMembers.burnV3AvailWire`; "The deployment step — DONE" at
+  -- `RotatedKernelRefinementMintBurnAvail.lean:41-48`), where `burn_availability_and_exact_move_forced` derives
+  -- this leg from the witness and `rotatedEncodesBurnAvail.toEncodes` rebuilds THIS structure with
+  -- `guardAvail` proven. Nothing deployed reads the bare residual.
   guardAvail : amt ≤ pre.kernel.bal cell a
   guardLiveCell : cell ∈ pre.kernel.accounts
   guardLiveWell : a ∈ pre.kernel.accounts
@@ -259,17 +269,23 @@ there, the credit manufactures the well side). Mod-`p` alone does not pin the �
 picks a `p`-shifted decomposition.
 
 An INEQUALITY has no mod-`p`-faithful restatement (order is not preserved mod `p`), so — unlike
-`burn_debit_forced` — burn availability CANNOT be restated-and-proved. It is a genuine forgery the
-migration exposed. Classification (deployed gap vs modeling gap) and the fix are DENOTATION changes owned
-by the migration lane / EMBER-GATED: range-check `BURN_AMOUNT_LO` to `< p − 2^30`, add a borrow /
-no-underflow bit, or a field with `p ≥ 2^{2·BAL_LIMB_BITS}`.
+`burn_debit_forced` — burn availability CANNOT be restated-and-proved on THIS bare gate set. It was a
+genuine deployed forgery the migration exposed. ✅ THE DENOTATION FIX SHIPPED, and it is the borrow
+option: the §8¾ hardened burn descriptor decomposes the debit into 15-bit limbs with a borrow chain and
+a no-final-borrow gate, range-checks the amount and operand limbs, and DERIVES availability in-circuit
+(`RotatedKernelRefinementMintBurnAvail.burn_availability_and_exact_move_forced`, with the over-burn
+UNSAT via `burn_descriptorRefinesAvail_rejects_overburn`). The live registry routes that member
+(`EmitRotationV3.lean:121`), so the forgery above is a fact about the BARE gate set only.
 
 ⚑ HONEST RELOCATION (not laundering): burn availability is therefore moved OUT of the circuit-forced
 bucket and NAMED as an explicit `rotatedEncodesBurn.guardAvail` decode residual — joining `guardAuth` /
 `guardLiveCell` / … as an admissibility leg the per-cell value block does not carry — with this note as
 its provenance. `burn_descriptorRefines` sources availability from `henc.guardAvail`, so a wrong-amount /
-non-conserving burn is still refused by `burn_debit_forced` (mod-`p`), but the availability leg now rides
-an honest, visible assumption pending the denotation fix. -/
+non-conserving burn is still refused by `burn_debit_forced` (mod-`p`), while the availability leg rides an
+honest, visible assumption. On the DEPLOYED path that assumption is discharged, not assumed:
+`RotatedKernelRefinementMintBurnAvail` derives it from the witness and `ClosureFinalAvail.lean:162-164`
+carries it to the apex ("availability … is FORCED by the deployed borrow chain — the `_availFix` `ext`
+slot carries NO `availOf`: `availOf` is DISCHARGED at the apex"). -/
 
 set_option maxHeartbeats 800000 in
 /-- **`burn_descriptorRefines` — THE BURN CIRCUIT→KERNEL REFINEMENT.** Satisfying the LIVE rotated burn

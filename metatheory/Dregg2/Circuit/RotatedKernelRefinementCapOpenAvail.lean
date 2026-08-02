@@ -53,18 +53,26 @@ the one `RotatedKernelRefinementAvail` already discharges. The cap-open route's 
 is therefore exactly these hardened members + the emission retarget — there is no separate facet
 `guardAvail` to discharge.
 
-## Deployment (mirrors the cohort flip; NO VK regen here)
+## Deployment — DONE (the cap-open keys ride the flip; the regen HAPPENED)
 
-`EmitRotationV3.lean` overrides `transferCapOpenEffVmDescriptor2R24` and emits the TB key from the
-hardened members, so the ACK-gated `scripts/emit-descriptors.sh` regen mints the hardened bytes.
-The committed registry/VK stay bare until the ember-gated regen. The Rust producer is
-descriptor-name-driven (`avail_pad_for_descriptor_name` — the `dregg-effectvm-transfer-v1-avail`
-prefix routes the generic transfer weld fill), so pre-regen the fleet keeps proving byte-identically.
-Named follow-ups (HORIZONLOG class, same as transfer/burn): the in-library `v3RegistryCapOpen`
-tail + apex `Rfix` re-key over these members, and the 8-felt WIDE twins of the avail cap-open
-members (`EmitWideRegistryProbe` hosts stay bare-based until their own flip; the SDK wide route
-stays self-consistent — a resolved wide descriptor's name derives pad 0 — but the wrap window
-stays open on the wide leg until then).
+`EmitRotationV3.lean:122-123` overrides `transferCapOpenEffVmDescriptor2R24` with
+`transferCapOpenEffV3Avail`, and `:149-154` mints the TB key from `transferCapOpenEffV3TBAvail`; the
+routing note at `EmitRotationV3.lean:52-56` states both LIVE cap-open keys route the HARDENED
+members. ✅ THE COMMITTED REGISTRY IS NO LONGER BARE — `circuit/descriptors/rotation-v3-staged-registry.tsv`
+carries `transferCapOpenEffVmDescriptor2R24 → dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff`
+and `transferCapOpenTBVmDescriptor2R24 → …-capopen-eff-tb` (the `-avail` face in the committed bytes),
+alongside the flipped cohort keys `transferVmDescriptor2R24`/`burnVmDescriptor2R24` at
+`…-v1-avail-…`. The Rust producer is descriptor-name-driven (`avail_pad_for_descriptor_name` — the
+`dregg-effectvm-transfer-v1-avail` prefix routes the generic transfer weld fill), which is why the
+regen did not disturb the fleet's fill path.
+
+Named follow-ups that REMAIN (HORIZONLOG class): the in-library `v3RegistryCapOpen` tail still holds
+the bare-based members — the wire coincides with it through `EmitRotationV3`'s override rather than
+member-for-member — and the apex `Rfix` re-key does NOT cover these keys (`ClosureTransferAvail.lean:405`
+`RfixAvail` flips EXACTLY the two debiting cohort tags, transfer and burn). Also open: the 8-felt WIDE
+twins of the avail cap-open members (`EmitWideRegistryProbe` hosts stay bare-based until their own flip;
+the SDK wide route stays self-consistent — a resolved wide descriptor's name derives pad 0 — but the
+wrap window stays open on the wide leg until then).
 
 ## Axiom hygiene
 

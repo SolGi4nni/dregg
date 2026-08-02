@@ -44,13 +44,23 @@ combinatorics (NOT re-proved), then INSTANTIATED at `K := Digest8Key`:
 ## Honest scope (residuals, NOT closed here)
 
 This is the leaf-widening SOUNDNESS proof-half. NOT here (named residuals): the value-widening
-(`hash_many → hash_many_8`, `felt_to_bytes32 → digest8_to_bytes32`, Rust-calls-Lean); the widened
+(`hash_many → hash_many_8`, `felt_to_bytes32 → digest8_to_bytes32`, Rust-calls-Lean); and the widened
 in-circuit chip ROW (`NonMemberRowInner` rides the DEPLOYED narrow `DeployedCapOpen.Satisfied` — the
-8-felt-addr opening `Opens` is left abstract, its realizing chip is the leaf-widening Rust re-emit);
-the update/insert keystone (`update_sound8` analogue, needs the mechanical `ℤ → [LinearOrder K]`
-generalization of `SortedTreeNonMembership.{mem_sortedInsert,sortedInsert_sorted}`); and the
-EMBER-GATED frozen kernel flip (`NullifierAccumulator.lean:12-23`, "do NOT fire piecemeal"). The
-deploy stays gated; the DEPLOYED sorted-tree descriptor bytes are untouched (byte-safe additive).
+8-felt-addr opening `Opens` is left abstract, its realizing chip is the leaf-widening Rust re-emit).
+The DEPLOYED sorted-tree descriptor bytes are untouched (byte-safe additive).
+
+TWO residuals this section once listed are CLOSED, and nothing here is gated on them:
+
+  * the update/insert keystone (`update_sound8` analogue) LANDED — `Circuit/SortedTreeInsertWide8.lean`
+    carries the mechanical `ℤ → [LinearOrder K]` generalization
+    (`sortedInsertW`/`mem_sortedInsertW`/`sortedInsert_sortedW`), the generic wrapper `update_soundW`
+    over THIS file's `SpineCommitsW`/`keysOfW`, and the `K := Digest8Key` instantiation
+    `update_sound_digest8`, plus the insert/exclude duality `insert_then_no_nonmembership_digest8`
+    against `nonMembership_soundW`.
+  * the frozen kernel flip is FIRED, not ember-gated — `RecordKernelState` carries
+    `nullifierRoot`/`revokedRoot`/`commitmentsRoot` (`Exec/RecordKernel.lean:433`/`:442`/`:452`) and
+    `RestHashIffFrame` absorbs all three (`Circuit/StateCommit.lean:290-291`). See the corrected
+    `Exec/NullifierAccumulator.lean` migration section.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The `Digest8Key` `LinearOrder` is

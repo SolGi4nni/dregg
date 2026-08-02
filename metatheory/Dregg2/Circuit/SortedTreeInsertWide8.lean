@@ -59,11 +59,16 @@ additively, to keep the hyperactive tree untouched.)
 
 This closes the felt-width site-#10 LEAN side: the compare-gadget (`LexCompare8Emit`), the
 non-membership leaf-widening (`SortedTreeNonMembershipWide8`), and now the insert-side (`update_sound8`
-analogue) are all proven. NOT here (named residuals, NON-Lean / gated): the value-widening
-(`hash_many → hash_many_8`, `felt_to_bytes32 → digest8_to_bytes32`, Rust-calls-Lean); the widened
-in-circuit chip ROW re-emit (Rust, the realizing chip for the abstract `Opens`); and the EMBER-GATED
-frozen kernel flip (`NullifierAccumulator.lean:12-23`, "do NOT fire piecemeal"). The deploy stays
-gated; the DEPLOYED sorted-tree descriptor bytes are untouched (byte-safe additive).
+analogue) are all proven. NOT here (named residuals, both NON-Lean): the value-widening
+(`hash_many → hash_many_8`, `felt_to_bytes32 → digest8_to_bytes32`, Rust-calls-Lean) and the widened
+in-circuit chip ROW re-emit (Rust, the realizing chip for the abstract `Opens`). The DEPLOYED
+sorted-tree descriptor bytes are untouched (byte-safe additive).
+
+The kernel flip this section once named as a third, EMBER-GATED residual is FIRED — not a blocker on
+anything here: `RecordKernelState` carries `nullifierRoot`/`revokedRoot`/`commitmentsRoot`
+(`Exec/RecordKernel.lean:433`/`:442`/`:452`) and `StateCommit.RestHashIffFrame` absorbs all three
+(`Circuit/StateCommit.lean:290-291`); the kernel reaches the proofs of `Exec/NullifierAccumulator`
+through the `toNfAccState` projection (`Exec/NullifierAccumulatorKernelBridge.lean:7-8`).
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The `Digest8Key` `LinearOrder` is

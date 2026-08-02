@@ -22,12 +22,18 @@ obligations in `rotatedEncodes`. The honest line is exactly here: a wrong-amount
 witness is UNSAT *because the circuit forces the movement mod `p`* (§3), NOT because the decode
 happens to assert it.
 
-⚠⚠ DEBT-A FINDING: the mod-`p` migration REMOVED availability (`amt ≤ bal src a`) from the
-circuit-forced bucket. The deployed balance gate is now a field congruence and the amount limb is
-un-range-checked, so with `p < 2^31` an underflow wraps into the 30-bit range (§3, `⚠⚠ AVAILABILITY IS
-NOT CIRCUIT-FORCED` — a wrap-class gap, concrete forgery given). Availability is therefore relocated to
-a NAMED `rotatedEncodes.guardAvail` residual pending the EMBER-GATED denotation fix. The conservation
-teeth (`debit_forced`/`credit_forced`, mod-`p`) still forbid wrong-amount/mint witnesses.
+⚠⚠ DEBT-A FINDING — the shape of THIS module's BARE path, no longer the shape of the wire. The mod-`p`
+migration REMOVED availability (`amt ≤ bal src a`) from the circuit-forced bucket. The bare balance gate
+is a field congruence and the amount limb is un-range-checked, so with `p < 2^31` an underflow wraps into
+the 30-bit range (§3, `⚠⚠ AVAILABILITY IS NOT CIRCUIT-FORCED` — a wrap-class gap, concrete forgery
+given). Availability is therefore a NAMED `rotatedEncodes.guardAvail` residual ON THE BARE DESCRIPTOR.
+✅ THE DENOTATION FIX AND THE REGISTRY/VK FLIP BOTH LANDED: the hardened borrow-chain weld is proved in
+`RotatedKernelRefinementAvail` and the LIVE registry routes it, not this bare def — `EmitRotationV3.lean:119`
+`availOverride` maps `transferVmDescriptor2R24` → `Emit.AvailWireMembers.transferV3AvailWire`
+(`EmitRotationV3.lean:120`), and `Emit/EffectVmEmitTransfer.lean:224` records the gap "CLOSED AND
+DEPLOYED", :235 "the flip is DONE". So `guardAvail` below is a fact about the bare-path proof, NOT a live
+deployment gap. The conservation teeth (`debit_forced`/`credit_forced`, mod-`p`) still forbid
+wrong-amount/mint witnesses on the bare path.
 
 ## What is proved
 
@@ -265,8 +271,11 @@ structure rotatedEncodes (hash : List ℤ → ℤ)
   -- `transferV3Avail = v3OfFrozenWide transferVmDescriptorAvail`, 15-bit borrow-weld teeth lowered
   -- per-width) this leg is CIRCUIT-FORCED — `availability_and_exact_move_forced` derives it (plus the
   -- exact ℤ debit) from the witness, and `rotatedEncodesAvail.toEncodes` rebuilds THIS structure with
-  -- `guardAvail` proven. The residual remains here only until the EMBER-GATED registry flip
-  -- (`v3RegistryBare` transfer entry → `transferV3Avail` + 15-bit range table realization + VK regen).
+  -- `guardAvail` proven. ✅ THE REGISTRY FLIP LANDED — the live wire routes the hardened member, not the
+  -- bare entry: `EmitRotationV3.lean:119-120` (`availOverride` maps `transferVmDescriptor2R24` →
+  -- `AvailWireMembers.transferV3AvailWire`), materialized into the re-keyed VK epoch with the Rust
+  -- 15-bit range table (`Emit/EffectVmEmitTransfer.lean:224` "CLOSED AND DEPLOYED", :235 "the flip is
+  -- DONE"). This leg therefore survives ONLY as the BARE-path decode residual; nothing deployed reads it.
   guardAvail : tr.amt ≤ pre.kernel.bal tr.src a
   guardDistinct : tr.src ≠ tr.dst
   guardLiveSrc : tr.src ∈ pre.kernel.accounts
@@ -405,10 +414,13 @@ mask-recon (`5cfa7e5d7`) the migration already surfaced: a gate reconstructs a v
 `p`, so mod-`p` alone does not pin the ℤ value, and the adversary picks a `p`-shifted decomposition.
 
 An INEQUALITY has no mod-`p`-faithful restatement (order is not preserved mod `p`), so — unlike
-`debit_forced`/`credit_forced` — availability CANNOT be restated-and-proved. It is a genuine gap the
-migration exposed. Classification (deployed gap vs a modeling gap) and the fix are DENOTATION changes
-owned by the migration lane / EMBER-GATED: range-check the AMOUNT limb to `< p − 2^30`, add a
-borrow / no-underflow bit, or a field with `p ≥ 2^{2·BAL_LIMB_BITS}`.
+`debit_forced`/`credit_forced` — availability CANNOT be restated-and-proved on THIS bare gate set. It was
+a genuine deployed gap the migration exposed. ✅ THE DENOTATION FIX SHIPPED, and it is the borrow option:
+the §11.7 hardened descriptor DECOMPOSES the debit into 15-bit limbs with a borrow chain (`before = after
++ amount`, no residual reaches `p`), range-checks the AMOUNT limb and the operands, and DERIVES
+availability in-circuit — `transferAvail_derives_availability`, with the forgery above UNSAT
+(`transferAvail_forgery_unsat`); see `Emit/EffectVmEmitTransfer.lean:224-235`. The live registry routes
+that member (`EmitRotationV3.lean:119-120`), so the forgery below is a fact about the BARE gate set only.
 
 ⚑ HONEST RELOCATION (not laundering): availability is therefore moved OUT of the circuit-forced bucket
 and NAMED as an explicit `rotatedEncodes.guardAvail` decode residual — joining `guardAuth` /
@@ -416,17 +428,25 @@ and NAMED as an explicit `rotatedEncodes.guardAvail` decode residual — joining
 its provenance. This is the audit's accepted pattern (cf. the cap-open "explicit DEPLOYED-GAP
 assumption" correction), NOT a canonicality dressing. `transfer_descriptorRefines` sources availability
 from `henc.guardAvail`, so a wrong-amount / non-conserving move is still refused by `debit_forced`
-(mod-`p`), but the availability leg now rides an honest, visible assumption pending the denotation fix. -/
+(mod-`p`), while the availability leg rides an honest, visible assumption. On the DEPLOYED path that
+assumption is discharged, not assumed: `RotatedKernelRefinementAvail` derives it from the witness and
+`ClosureFinalAvail.lean:162-164` carries it to the apex ("availability … is FORCED by the deployed borrow
+chain — the `_availFix` `ext` slot carries NO `availOf`: `availOf` is DISCHARGED at the apex"). -/
 
 set_option maxHeartbeats 800000 in
 /-- **`transfer_descriptorRefines` — THE CIRCUIT→KERNEL REFINEMENT (the template).** Satisfying the
 LIVE rotated transfer descriptor (`Satisfied2 hash transferV3 …`, with the chip/range table side
 conditions the rotated denotation already requires) together with `rotatedEncodes` forces the
-KERNEL's balance-movement step `BalanceMovementSpec pre.kernel tr a post`. The ledger movement and
-the AVAILABILITY guard come FROM THE WITNESS (`debit_forced` / `credit_forced` /
-`availability_forced`); the kernel-side residual (authority / liveness / the 16-field frame / the
-log) comes from the decode. Equivalently this is the `.balanceA tr a` arm of `fullActionStep pre _
-post`. -/
+KERNEL's balance-movement step `BalanceMovementSpec pre.kernel tr a post`. ⚠ READ THE PROOF: on this
+BARE path every `BalanceMovementSpec` leg is taken from `henc` — the ledger movement is
+`henc.hledgerFrame` and AVAILABILITY is `henc.guardAvail`, alongside authority / liveness / the
+16-field frame / the log. `hsat` is not consumed here; the circuit's teeth act by REFUTATION, not by
+supply — `debit_forced`/`credit_forced` (§4, mod-`p`) pin the moved limb, so a decode claiming any
+other movement is UNSAT (`descriptorRefines_rejects_wrong_amount`). There is no `availability_forced`
+in this file: the mod-`p` migration deleted it (§3), and the theorem that DOES source availability
+from the witness lives on the deployed hardened path
+(`RotatedKernelRefinementAvail.availability_and_exact_move_forced`). Equivalently this is the
+`.balanceA tr a` arm of `fullActionStep pre _ post`. -/
 theorem transfer_descriptorRefines (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hside : RotTableSide permOut hash t)
