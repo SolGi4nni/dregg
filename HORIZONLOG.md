@@ -1,5 +1,73 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 2 (inter-step) — the tie between `step_main`'s two `messages_for_next_step_proof` hashes is BUILT and holds byte-for-byte, and it does NOT refuse the substituted commitment: it PROPAGATES it
+
+`7b368a6c6` ended on "the refusal belongs to the next step's `verify_one`, through segment C's
+reconstruction plus the wrap-proof tie (`step_main.ml:83-86,108`) — outside this circuit by
+construction." **`586a7a5a7` (§18) builds that consumer. The substituted chain closes.**
+
+**MEASURED on the emitted segments** (`KimchiStepMain.lean` §18, 27 `#guard`, interpreter-reduced):
+
+* **(a) THE HONEST CHAIN CLOSES.** Segment C at step `N+1` — fed step `N`'s app state, its `G` and
+  `finalize_other_proof`'s returned bulletproof challenges — reconstructs step `N`'s public word 7
+  (segment D's squeeze) EXACTLY. Not a definition: the two segments have different word lists,
+  lengths, masks and app-state fixtures, and coincide only if the mask, the per-proof interleave
+  (`composition_types.ml:595-607`), the `Sponge.copy` point and the rate-2 block alignment are all
+  right. Segment C's own app fixture gives a different digest, so the identity carries the chained
+  state rather than ignoring it.
+* **(b) THE SUBSTITUTED CHAIN CLOSES TOO — the deliverable, stated as the failure it is.** §17(e)'s
+  witness (one absorbed fold commitment swapped, `G` re-solved by one `Fq` inverse and three scalar
+  multiplications) moves step `N`'s public word 7; step `N+1` carries `sg_old := G_resolved` and the
+  reconstruction reproduces the MOVED word. **ACCEPTED before, ACCEPTED after.**
+* **(c) AND A FAMILY OF THEM.** `z₁`/`z₂` are words of neither segment, so re-solving at `z₁=z₂=1`
+  reaches a third commitment whose chain closes just as well.
+* **(d) THE DIRECTION IT DOES REFUSE, and it is not nothing.** Move word 7 at `N` and carry the
+  HONEST `G` at `N+1` → the reconstruction no longer matches. Same for the carried challenges, the
+  app state, and either coordinate of the commitment alone. **The tie FORCES `sg_old` at `N+1` to be
+  the `G` used at `N`** — the fake commitment must be carried, not laundered away.
+* **(e) AND WHAT IT DOES NOT COVER.** With `Prefix_mask.there N1 = [false;true]`
+  (`pickles_base/proofs_verified.ml:75-81`) slot 0 is the `Wrap_hack` dummy: bending its commitment
+  or any of its challenges leaves the reconstruction where it was, and with both bits on it bites —
+  so the control is about the mask, not the slot.
+
+⚑ **THREE CORRECTIONS AT SOURCE.**
+1. **The tie has no `Field.Assert.equal` in it.** The reconstructed digest is SUBSTITUTED into the
+   wrap statement (`step_main.ml:83-84`) and handed to `verify` (`:108`), which packs it
+   (`step_verifier.ml:1237-1245`) and feeds it to `multiscale_known` (`:543-545`). Its only
+   in-circuit wire is **x_hat MSM term 12's SCALAR** (`composition_types.ml:854-882` orders the
+   packed statement `fp ×5 · challenge ×2 · scalar_challenge ×3 · digest ×3`, and
+   `messages_for_next_step_proof` is the third digest; `Digest` packs at `Field.size_in_bits = 255`,
+   `spec.ml:381-382`). That wire is named simplification #2's residue and taking it would not move
+   the verdict, so it was not taken.
+2. **What actually refuses a substituted `G` is the accumulator check**, in prose at
+   `per_proof_witness.ml:12-32`: `challenge_polynomial_commitment` must OPEN at ζ to `E_c`, and
+   `E_c = f_c(ζ)` over `prev_challenges`. The construction is `step_verifier.ml:935-948` feeding
+   `combine`'s prefix (`:1076-1102`). TWO legs, and this assembly has neither.
+3. **Leg one is measurably FALSE here, not merely unassembled** (§18(f)): the `sg_evals` prefix
+   `vEz 0/1` / `vEw 0/1` are `evVal` fixtures and are not `bEvalSq ζ prev_challenges`; and `f_c`
+   over `prev_challenges` differs from `f_c` over the challenges segment D absorbs, so conflating
+   them would close the leg vacuously. That is simplification #4's residue, now with a name and a
+   consequence.
+
+⚠ **WHAT IS STILL BOUND ONLY BY ASSUMPTION.** Leg two — `sg_old` opening to `E_c` — is `verified`
+(#11), a witnessed boolean. It is the last thing between a substituted commitment and acceptance
+**at every step of the recursion, not only at this one.** And with `G` fixed, `z₁`/`z₂` leave a
+two-dimensional discrete log in `⟨G + b·u, H⟩` — the IPA opening's own hardness, an ASSUMPTION and
+not a gate. Nothing here is "the opening is now checked."
+
+**ZERO ROWS.** 10,746 unchanged, `cargo test` 9/9 (ratchet floor 9), region conformance GREEN
+byte-exact off a fixture regenerated from this emission, `EndoMul` `32×77` intact along with the
+other four run-length families. Rows that do not buy the refusal are not the deliverable, and the
+373-row `rhs`/`equal_g` set §17 prices would not have bought it either.
+
+⚑ **SCOPE, unchanged.** INNER-KIMCHI FIDELITY of the assembled recursive verifier. NOT a soundness
+proof, NOT machine-checked Pickles, NOT a Mina-valid proof; wrap is a later rung.
+
+⚑ **NEXT, and it is now ordered rather than guessed.** (i) `E_c = f_c(ζ)` — R5's `deferredRows`
+ladder on `vPrevChal` at ζ/ζω wired into `vEz 0/1` / `vEw 0/1`, which makes `prev_challenges` reach
+a public word for the first time; (ii) #2's per-word MSM widths, which is the tie's own emitted wire
+(term 12 at 51 chunks); (iii) `verified` — and (iii) is not a rung, it is the IPA opening.
+
 ## ⚑⚑⚑ AUGUST 1 (third pass) — `step_verifier.verify_one` ASSEMBLES: 6,459 rows, five rungs, every boundary binds — and the 17,806-row target was the WRONG CIRCUIT
 
 `KimchiComposeStepFragment` had proved the MSM *shape* at scale and the brief pointed at
