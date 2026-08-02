@@ -870,7 +870,8 @@ gates }` serde form — the same bytes `caml_pasta_f{p,q}_plonk_circuit_serializ
 (`mina/src/lib/crypto/kimchi_bindings/stubs/src/gate_vector.rs:96-104`), which is why mina-rust reads
 them with a five-line `serde_json::from_reader` (`mina-rust/crates/ledger/src/proofs/provers.rs:38-49`).
 So Mina's canonical circuits are already serialized and publicly released. Route (b) — coaxing o1js to
-dump wrap — was not needed for *Mina's* wrap.
+dump wrap — was not *needed* for Mina's own wrap, but it was run anyway and it also succeeded; it
+yields the object route (a) cannot (§13.9).
 
 Fetched from `https://github.com/o1-labs/circuit-blobs/releases/download/berkeley-devnet/`, cached in
 `~/.mina/circuit-blobs/berkeley-devnet/` (mina-rust's own resolution order, `circuit_blobs.rs:126-152`):
@@ -1067,3 +1068,88 @@ node scripts/mina-canonical-circuit-oracle.mjs --circuit wrap-transaction --cand
 The last form is the one the Lean wrap lane will use: a gate-by-gate diff against the canonical blob
 that cites the first divergence by `g<i>.{typ,w<j>,c<k>}`. The md5 is the total statement; the
 gate walk localizes it.
+
+### §13.9 — Route (b) ALSO succeeded: o1js dumps a *zkApp's own* wrap circuit, and it needs no patch
+
+Versions: `bridge/mina-zkapp` runs **o1js 2.15.0** (all measurements); `~/dev/o1js` is 0.16.2 (source
+reading only).
+
+Two paths are genuinely closed, and both refuse loudly rather than lying:
+- `Snarky.constraintSystem.toJson` is hard-wired to **Fp/Tick**: `o1js/src/bindings/ocaml/lib/
+  snarky_bindings.ml:3-4` (`Backend = Kimchi_backend.Pasta.Vesta_based_plonk`, `Impl = Pickles.Impls.
+  Step`) feeding `:66`. Handed an Fq constraint system it throws `expected instance of
+  WasmFpGateVector` — wasm-bindgen type-checks.
+- `Pickles.compile`'s returned object exposes no wrap CS: `o1js/src/bindings/ocaml/lib/
+  pickles_bindings.ml:666-678` = `provers`/`verify`/`tag`/`getVerificationKey` only (same in 2.15,
+  `dist/node/bindings.d.ts:705-724`).
+
+**No o1js line needs adding**, because the Fq serializer is already exported to JS
+(`dist/node/bindings/compiled/node_bindings/kimchi_wasm.d.cts:135`
+`caml_pasta_fq_plonk_circuit_serialize(public_input_size, v: WasmFqGateVector)`) and the wrap
+constraint system is handed to JS on *every* compile through the key cache: `zkprogram.js:399-419`
+passes `config.storable`, and `MlWrapProvingKeyHeader = [0, typeEqual, snarkKeysHeader,
+constraintSystem]` (`prover-keys.d.ts`) — element `[3]` **is** the wrap `Plonk_constraint_system.t`
+over Fq/Tock. Wrapping `config.storable` captures it.
+
+⚑ `public_input_size` is not readable from that record (it lives in an `int Set_once.t` whose slot
+moves between mina revisions), so it is **derived** as `gate_vector_len − rows()` and then *proved*:
+`md5(caml_pasta_fq_plonk_gate_vector_digest(pis, gv))` must equal the header's own
+`constraintSystemHash`. It does, for step and wrap. A wrong `pis` fails the check, so the dump is
+self-validating.
+
+Measured, one-method ZkProgram (`hash`, 13 step rows):
+
+```
+wrap: rows=5930  gate_vector_len=5970  => public_input_size=40
+      md5 0b1f9c222920aa7f0fad89069c9935c0 == header constraintSystemHash  (and == Snarky…digest())
+      sha256 efaf8530f92b9a99951dfd76cc74d07fec1aabe5c06e7070ead993039de283f1
+      Generic 569 · Poseidon 1001 · Zero 831 · CompleteAdd 258 · VarBaseMul 663 ·
+      EndoMulScalar 184 · EndoMul 2464
+VK  : hash 4040917133316808944890942500628956278268896086468428608382382035080335568884
+      data 2396 base64 chars
+```
+
+**Three things this settles.**
+
+1. **A third, independent confirmation of §13.2's digest chain.** `Snarky.constraintSystem.digest`
+   returns the **md5 hex** (`snarky_bindings.ml:62-63`, `Md5.to_hex`), and an independently written
+   BCS re-serialization reproduces it through `sha256("kimchi-circuit0" ‖ bcs) → md5` — agreeing with
+   both the wasm `gate_vector_digest` and the OCaml header hash. Three producers, one number.
+2. **Wrap is not fixed in SIZE either, not just in content.** A trivial zkApp's wrap is **5,970 rows**
+   (wrap domain 2^13) against Mina's transaction wrap at 15,122 (2^14). So "one canonical wrap VK per
+   proofs-verified arity" fails on the row count before it fails on the coefficients. §13.5 stands
+   reinforced.
+3. **But the per-zkApp variation is tiny, and it is coefficients only.** Compiling two different
+   ZkPrograms in one process and diffing their wraps: gate count equal (5970), `public_input_size`
+   equal (40), **gate-type sequence equal, wiring equal**, coefficients differing in **25 of 5970
+   gates** (0.42%), first at row 79 (`Generic`). That is the baked-in step-VK-commitment constants and
+   nothing else — the o1js-side analogue of §13.3's ≤4.6%, and tighter.
+
+**Shape comparability (for anyone wiring a new diff).** The RAW `caml_pasta_f{p,q}_plonk_circuit_
+serialize` output needs **zero normalization** against a circuit-blob — same producer, same serde:
+`{public_input_size, gates:[{typ, wires×7, coeffs:[64-char lowercase LE hex]}]}`. The *public*
+`Provable.constraintSystem(f)` wrapper is what needs normalizing: it hoists `publicInputSize`, renames
+`typ`→`type`, and converts coefficients to **decimal strings** (`gatesFromJson`, LE per
+`bindings/crypto/bigint-helpers.js:42-51`).
+
+⚠ **Do not key a comparator off o1js's `GateType` TS union.** `dist/node/bindings.d.ts:468` declares
+`'VarbaseMul'`; the runtime emits kimchi's `VarBaseMul` (capital B,
+`kimchi/src/circuits/gate.rs:96`), and o1js's *other* enum `lib/provable/gates.d.ts:120` spells it
+correctly. The two o1js declarations disagree with each other; the runtime string is the one that
+matches a blob.
+
+### §13.10 — `--candidate` measured, green and red
+
+Documenting a mode is not having one, so both paths were run against the real 15,122-gate wrap
+(199,052 compared entries: one `public_input_size` + `typ`/7 wires/coeffs per gate):
+
+```
+identity            -> GREEN, ALL 199052 entries BYTE-EXACT, exit 0
+one coefficient bit -> RED   DIVERGE at entry #132179 (g9021.c2): ref 0000…  cand 0100…, exit 1
+```
+
+The first run of this exposed a real defect and it is worth naming: a `--dump` file carries
+`gates` as a **count** and `gate_list` as the array, and the naive `cand.gates ?? cand.gate_list`
+happily diffed a number against 199k entries and reported a *length mismatch* — RED for the wrong
+reason, which is the shape of an oracle that would also go red on a correct candidate. Candidate
+resolution now requires an actual array and refuses otherwise.

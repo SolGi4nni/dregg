@@ -215,7 +215,14 @@ if (candidatePath) {
   // Localizing mode: diff a candidate gate list (e.g. a Lean emission) against the canonical blob.
   const { publicInputSize, gates } = await loadCircuit(keys[0]);
   const cand = JSON.parse(readFileSync(candidatePath, 'utf8'));
-  const candGates = cand.gates ?? cand.gate_list ?? cand;
+  // Accept a raw kimchi blob (`{public_input_size, gates:[...]}`), this script's `--dump`
+  // (`{gates: <count>, gate_list:[...]}`), or a bare array. `gates` is only the gate list when it IS
+  // one — in a `--dump` it is the COUNT, and silently diffing a number against 199k entries is the
+  // shape of an oracle that reports RED for the wrong reason.
+  const candGates = Array.isArray(cand) ? cand
+    : Array.isArray(cand.gate_list) ? cand.gate_list
+    : Array.isArray(cand.gates) ? cand.gates
+    : (() => { throw new Error(`${candidatePath}: no gate list (expected .gates[] or .gate_list[] or a bare array)`); })();
   await runOracle({
     shape: 'gates',
     label: `mina canonical ${keys[0]} vs ${candidatePath} (gate-by-gate)`,
