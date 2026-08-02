@@ -192,6 +192,14 @@ named simplification, not scale.
 sponge work is now assembled; the remaining 366 permutations are the app logic and the pieces #5
 names (the real `sponge_after_index` over the plonk index, `group_map`).
 
+⚑ **WHERE FIAT-SHAMIR STANDS, stated at the resolution it is actually at.** All three
+`lowest_128_bits` in the assembly now range-check BOTH parts (#1), so given the sponge state no
+challenge is prover-chosen; and `should_verify` is a public statement word (§16g), so the rung that
+binds the deferred values cannot be switched off invisibly. What is NOT yet true is that the sponge
+INPUT is derived: 46 of the committed shape's 142 absorbed words are `msgVal` free variables
+standing for `sponge_after_index`, `t_comm` and the scalar absorptions (§3b, #5). A prover grinds
+those and steers every squeeze. Both halves matter and only one of them is done.
+
 It is **NOT** a soundness proof, **NOT** "machine-checked Pickles", **NOT** a Mina-valid proof; the
 kimchi proof the harness produces is an **INNER** proof of a `verify_one`-shaped circuit, and wrap
 is a later rung. What is reportable is INNER-KIMCHI FIDELITY of the assembled recursive verifier:
@@ -926,7 +934,17 @@ def ipaBaseOf (s : StepShape) (bs : List (Nat × Nat)) (r : Nat) : Nat × Nat :=
   bs.getD (s.msmTerms + r) (0, 0)
 
 /-- A transcript word that carries NO commitment — the blocks standing for `t_comm`, the index
-digest and the scalar absorptions, which the assembled sub-circuits do not consume. -/
+digest and the scalar absorptions, which the assembled sub-circuits do not consume.
+
+⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** A `vMsg`
+word is a free variable: no row pins it, no sub-circuit derives it, and the absorb row eats it. At
+`shapeStep` that is `absorbs − 48 = 23` blocks, i.e. **46 of the 142 absorbed words**, and a prover
+who grinds them steers every squeeze — not by breaking a decomposition (all three `lowest_128_bits`
+range-check both parts since 2026-08-02) but by choosing the sponge's INPUT. What each of those
+words should be is exactly #5's not-assembled list: the real `sponge_after_index` over the plonk
+index, `ft_comm`'s `t_comm` Horner, and the `Shifted_value` scalar absorptions. Until those are
+assembled, "no challenge is prover-chosen GIVEN the transcript" is the true statement and "the
+transcript is derived" is not. §12 pins the 23. -/
 def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
 
 /-- ⚑ The VARIABLE absorbed at lane `j` of transcript block `b`. For a block that carries one of the
@@ -3537,6 +3555,16 @@ def foldMulOf (sq : Nat) : ZMod pN :=
 #guard (absRoundList shapeSmoke).length == 2
 -- …and R3 carries NO absorbed base, which is `multiscale_known`'s own shape.
 #guard (List.range shapeStep.msmTerms).all (fun i => msmSrc i == BaseSrc.const)
+-- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently. A block
+-- with no commitment absorbs two `msgVal` fixtures that no row pins — 23 blocks, 46 words, out of
+-- `2·absorbs = 142`. That is the last place a prover still steers Fiat-Shamir, and it is #5's
+-- not-assembled list (`sponge_after_index`, `ft_comm`'s `t_comm`, the scalar absorptions), not a
+-- theorem. Equality, so assembling one of them moves this number.
+#guard shapeStep.absorbs - (absRoundList shapeStep).length == 23
+#guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 23
+-- …and at the SMOKE shape every absorb block carries a commitment, which is why the smoke pins
+-- cannot see this one: it is stated at the committed shape on purpose.
+#guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none) == 0
 -- …so the pin rows are exactly the constants, one `Generic` row per point.
 #guard (msmBaseRows shapeSmoke tS.msm).length == shapeSmoke.msmTerms
 #guard (ipaBaseRows shapeSmoke tS.ipa).length
