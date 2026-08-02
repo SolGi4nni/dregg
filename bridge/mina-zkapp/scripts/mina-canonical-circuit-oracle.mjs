@@ -41,7 +41,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runOracle } from './diff-oracle.mjs';
 
 // ── GateType declaration order == the BCS variant index.
@@ -194,6 +195,11 @@ function gateVector(gates, limit = Infinity) {
 }
 
 // ── main
+// `isMain` gates every ACTION below so that `import { loadCircuit } from './mina-canonical-circuit-
+// oracle.mjs'` gets the blob resolver as a LIBRARY (stepmain-region-conformance.mjs uses it) instead
+// of running the whole oracle — four blobs, 46 MB, and a `process.exit` — as an import side effect.
+// Same pattern `diff-oracle.mjs` already uses for its CLI.
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 const argv = process.argv.slice(2);
 const arg = (flag) => { const i = argv.indexOf(flag); return i >= 0 ? argv[i + 1] : undefined; };
 const only = arg('--circuit');
@@ -201,7 +207,7 @@ const candidatePath = arg('--candidate');
 const dumpPath = arg('--dump');
 const keys = only ? [only] : Object.keys(CIRCUITS);
 
-if (dumpPath) {
+if (isMain && dumpPath) {
   const { spec, publicInputSize, gates } = await loadCircuit(keys[0]);
   const d = circuitDigest(publicInputSize, gates);
   writeFileSync(dumpPath, JSON.stringify({ circuit: keys[0], stem: spec.stem, public_input_size: publicInputSize,
@@ -211,7 +217,7 @@ if (dumpPath) {
   process.exit(0);
 }
 
-if (candidatePath) {
+if (isMain && candidatePath) {
   // Localizing mode: diff a candidate gate list (e.g. a Lean emission) against the canonical blob.
   const { publicInputSize, gates } = await loadCircuit(keys[0]);
   const cand = JSON.parse(readFileSync(candidatePath, 'utf8'));
@@ -234,7 +240,7 @@ if (candidatePath) {
 // Default mode: recompute each pinned circuit's shape + digest from the blob bytes and diff against
 // the o1-labs filename md5 + openmina's constants.rs rows/primary.
 const loaded = [];
-for (const k of keys) loaded.push([k, await loadCircuit(k)]);
+if (isMain) for (const k of keys) loaded.push([k, await loadCircuit(k)]);
 
 const reference = () => {
   const v = [];
@@ -314,10 +320,12 @@ const extra = () => {
   }
 };
 
-await runOracle({
-  shape: 'gates',
-  label: `mina canonical circuits (${keys.join(', ')}) — recomputed digest vs o1-labs asset md5 + openmina constants.rs`,
-  reference,
-  candidate,
-  extra,
-});
+if (isMain) {
+  await runOracle({
+    shape: 'gates',
+    label: `mina canonical circuits (${keys.join(', ')}) — recomputed digest vs o1-labs asset md5 + openmina constants.rs`,
+    reference,
+    candidate,
+    extra,
+  });
+}
