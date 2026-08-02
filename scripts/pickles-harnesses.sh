@@ -57,6 +57,7 @@ HARNESSES=(
   "publicinput|pickles-publicinput-harness|10|the PUBLIC-INPUT path of place: pubSize>0 proved, PI tamper rejected, sigma-wire + non-vacuity controls, at 3 words and at step_main's 67"
   "stepfragment|pickles-stepfragment-harness|9|the 132-row step_main fragment: 6 chained var_base_mul + endo_mul + a 6-long complete_add chain"
   "stepmain|pickles-stepmain-harness|9|step_verifier.verify_one ASSEMBLED: a copy-wired Poseidon sponge, chained EndoMulScalar CLOSED by to_field_checked's endo lift, an MSM whose scalar IS the derived challenge, endo_mul fold rounds, deferred b(zeta)+combined_inner_product, ft_eval0 + Plonk_checks.checked + the six-gate linearization constant term, the 43-column evaluation absorption with opt-sponge masking, and finalize_other_proof's TAIL - both b legs, the three Type1/Fp unshifts, xi_correct and the asserted Boolean.all behind should_verify - PRIMARY_LEN 67, all seven gate types in one circuit"
+  "crossimpl|pickles-crossimpl-harness|9|the CROSS-IMPLEMENTATION differential: dregg's Lean Pickles/kimchi value layer against o1-labs' proof-systems 0.3.0 over a deterministic sweep of 2576 inputs (random + structured + adversarial), 15 function pairs, byte-identical vectors. THE ONLY EVIDENCE IN THE TREE ABOUT THE FUNCTION rather than about one devnet block's value; run the whole differential with scripts/pickles-crossimpl-differential.sh"
 )
 DECLARED_COUNT=${#HARNESSES[@]}
 

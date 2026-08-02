@@ -1,0 +1,98 @@
+# pickles-crossimpl-harness — the CROSS-IMPLEMENTATION DIFFERENTIAL between dregg's Lean
+# Pickles/kimchi verifier logic and o1-labs' `proof-systems` 0.3.0 (the Rust that Mina devnet and
+# mainnet actually run, and the same tag openmina links).
+#
+# ⚑ WHAT THIS IS, AND WHAT THE OTHER pickles-* HARNESSES ARE NOT. Every other harness in this
+# directory proves something about ONE object: a Lean-emitted gate list proves+verifies, an emitted
+# witness matches an o1js gold, a statement packs byte-exactly against ONE devnet block. That is
+# evidence about A VALUE AT ONE INPUT. This crate is evidence about THE FUNCTION: it drives BOTH
+# implementations over a deterministic sweep of MANY inputs — random, structured and adversarial —
+# and requires the two output vectors to be BYTE-IDENTICAL.
+#
+# ⚑ SUBSTRATE. No AIR, no circuit, no `Builder`. This is a differential TEST HARNESS: it CALLS the
+# upstream Rust and compares text. The Lean side is not touched by this crate at all — it is emitted
+# separately by `metatheory/EmitConformanceVectors.lean` (`lake env lean --run`) and the two files
+# are diffed by `scripts/pickles-crossimpl-differential.sh`. House Law #1 is not in play: nothing
+# here authors a constraint.
+#
+# ⚑ WHY NOT A TRANSCRIPTION. Every pair below calls a `pub fn` of `proof-systems` that was written
+# by o1-labs with no knowledge of this repo. Where kimchi has no callable entry point for a quantity
+# (its `ft_eval0` is INLINE in `verifier.rs:412-489`, never a function), the pair is NOT faked by
+# copying kimchi's body into this file — it is reported as UNCOVERED by the driver script. An
+# agreement between a Lean function and a Rust transcription of the same paper formula measures
+# nothing.
+#
+# THE PAIRS (each `#[test]`-gated for a nonzero case count, and diffed by the driver):
+#   endo        Dregg2.Circuit.Emit.KimchiVerify.endoMap            ↔ mina_poseidon ScalarChallenge::to_field
+#   endolift    Dregg2.Bridge.MinaWrapDeferred.endoLift             ↔ (same, Fp)  — dregg's SECOND copy
+#   bpoly       KimchiVerify.bEvalSq                                ↔ poly_commitment::commitment::b_poly
+#   bpolymod    MinaWrapDeferred.bPolyMod                           ↔ (same)      — dregg's SECOND copy
+#   cip         KimchiVerify.cipR                                   ↔ poly_commitment::commitment::combined_inner_product
+#   linconst    KimchiVerify.gateLinConst                           ↔ kimchi PolishToken::evaluate(linearization.constant_term)
+#   endo_fq     KimchiVerify.endoMap over Fq                        ↔ (same, Fq) — a wrong-Pasta-field copy is caught
+#   zkpoly      KimchiVerify.zkPolyR                                ↔ kimchi permutation_vanishing_polynomial(·,3).evaluate(ζ)
+#   permof      MinaWrapDeferred.permOf                             ↔ kimchi ConstraintSystem::perm_scalars
+#   shifts      Dregg2.Bridge.TickShifts.tickShiftsFp               ↔ kimchi permutation::Shifts::new(&domain).shifts()
+#   rootunity   MinaWrapDeferred.rootOfUnity                        ↔ ark_poly Radix2EvaluationDomain::group_gen
+#   sponge_fp   PastaPoseidonFq absorb1/squeeze1 at fpParams        ↔ mina_poseidon ArithmeticSponge<Fp> absorb/squeeze
+#   sponge_fq   PastaPoseidonFq absorb1/squeeze1 at fqParams        ↔ mina_poseidon ArithmeticSponge<Fq> absorb/squeeze
+#   challenge   PastaPoseidonFq.challenge (low-128 squeeze)         ↔ mina_poseidon DefaultFqSponge::challenge
+#   emulconsts  the three EndomulScalar quotients 11/6, −5/2, 2/3   ↔ ark-ff field inverses
+#
+# ⚑ NOT `KimchiVerify.permScalar`, and this is a FINDING not an omission: `permScalar` — like
+# `publicEval`, `ftEval0`, `combinedInnerProduct`, `zkPoly`, `ipaB0` and `ftComm` — is declared under
+# `variable {F : Type} [Field F]`, and the tree has NO `Field (ZMod pN)` instance (no in-kernel
+# primality proof of the 255-bit Pasta prime; `native_decide` forbidden). Those definitions are
+# UNEVALUABLE at the deployed field and cannot be differentially tested at all. The ones with a
+# CommRing mirror (`cipR`, `zkPolyR`, `ftEval0R`) are testable through the mirror; `permScalar`,
+# `publicEval` and `ipaB0` have no mirror. `permOf` is dregg's separate `Nat`-with-explicit-modulus
+# copy of the same `derive_plonk` scalar and IS evaluable, so that is the copy this pair diffs.
+#
+# ⚑ DETERMINISTIC INPUTS ONLY. No `rand`, no clock. Inputs come from a SplitMix64 expansion of a
+# fixed per-pair seed plus an explicit adversarial bank (0, 1, 2, p−1, (p−1)/2, 2^128, 2^128−1,
+# 2^255 mod p, (2^255+1) mod p — the Type1 shift constant — 2^254, and a >128-bit challenge). The
+# SAME generator is written twice, once here and once in Lean; the vector files carry the INPUTS as
+# well as the outputs, so a generator that drifted is itself a RED diff.
+#
+# RUN (one command, green or bust, includes the red-path self-test):
+#   scripts/pickles-crossimpl-differential.sh
+#
+# RUN just this side:
+#   cargo run --release --manifest-path metatheory/fixtures/pickles-crossimpl-harness/Cargo.toml -- <out.tsv>
+#   cargo test --release --manifest-path metatheory/fixtures/pickles-crossimpl-harness/Cargo.toml
+#
+# ⚠ STANDALONE WORKSPACE ON PURPOSE — same reason as every sibling: it pins
+# `o1-labs/proof-systems` at tag 0.3.0, a different rev than the breadstuffs workspace's
+# `emberian/proof-systems` patch, so folding it in would force a version unification that breaks the
+# pinned kimchi. The EMPTY `[workspace]` table is the only mechanism that detaches a nested package.
+
+[package]
+name = "pickles-crossimpl-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# `[[bin]]` (not `examples/`) so `scripts/check-dark-modules.py` sees a declaration for src/main.rs.
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+ark-poly = { version = "0.5.0" }
+ark-ec = { version = "0.5.0" }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks) — same as every sibling harness,
+# so the resolved `kimchi` is bit-for-bit the one openmina builds.
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
