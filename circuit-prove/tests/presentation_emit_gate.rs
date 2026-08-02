@@ -97,17 +97,28 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         col: VERIFIER,
         pi_index: PI_VERIFIER,
     }));
-    // diff-binding gate: (DIFF + (-1)*NOT_AFTER) + VERIFIER == 0.
+    // diff-binding gate: (1*DIFF + (-1)*NOT_AFTER) + 1*VERIFIER == 0.
+    //
+    // ⚑ EVERY TERM CARRIES ITS COEFFICIENT, so a unit coefficient is `mul(const 1, x)` and never a
+    // bare `x`. That is the corpus normal form this descriptor is now COMPILED into
+    // (`metatheory/Dregg2/Circuit/Emit/AirNormalForm.lean`, rule 1) — the twin renders the same
+    // polynomial the same way so the `decoded == hand` differential still bites on the BYTES.
+    // `LeanExpr` derives a structural `PartialEq`: writing the bare form here is a RED.
     constraints.push(VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
         LeanExpr::add(
-            LeanExpr::Var(DIFF),
+            LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(DIFF)),
             LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(NOT_AFTER)),
         ),
-        LeanExpr::Var(VERIFIER),
+        LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(VERIFIER)),
     ))));
-    // bound gate: (DIFF + HI) + (-p/2) == 0.
+    // bound gate: (1*DIFF + 1*HI) + (-p/2) == 0. The trailing head CONSTANT stays bare — only
+    // TERMS carry coefficients (`AirNormalForm` rule 3: a zero head-constant is elided, a non-zero
+    // one is written as `const k`).
     constraints.push(VmConstraint2::Base(VmConstraint::Gate(LeanExpr::add(
-        LeanExpr::add(LeanExpr::Var(DIFF), LeanExpr::Var(HI)),
+        LeanExpr::add(
+            LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(DIFF)),
+            LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(HI)),
+        ),
         LeanExpr::Const(-(HALF_P as i64)),
     ))));
     // range lookups.
@@ -127,16 +138,19 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
         row: VmRow::Last,
         body: LeanExpr::add(
             LeanExpr::add(
-                LeanExpr::Var(DIFF),
+                LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(DIFF)),
                 LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(NOT_AFTER)),
             ),
-            LeanExpr::Var(VERIFIER),
+            LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(VERIFIER)),
         ),
     }));
     constraints.push(VmConstraint2::Base(VmConstraint::Boundary {
         row: VmRow::Last,
         body: LeanExpr::add(
-            LeanExpr::add(LeanExpr::Var(DIFF), LeanExpr::Var(HI)),
+            LeanExpr::add(
+                LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(DIFF)),
+                LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(HI)),
+            ),
             LeanExpr::Const(-(HALF_P as i64)),
         ),
     }));

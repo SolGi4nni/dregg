@@ -82,10 +82,18 @@ fn chip4_lookup(input_cols: [usize; 4], out_col: usize) -> VmConstraint2 {
 /// shape): two arity-4 child→parent chip lookups, the chain-continuity gate (`CUR1 - PARENT0`), and
 /// the root pin (`PARENT1 == PI[0]`).
 fn hand_built_desc() -> EffectVmDescriptor2 {
-    // `CUR1 - PARENT0` — the level-tie body, shared by the transition gate and the last-row boundary.
+    // `1*CUR1 + (-1)*PARENT0` — the level-tie body, shared by the transition gate and the last-row
+    // boundary.
+    //
+    // ⚑ EVERY TERM CARRIES ITS COEFFICIENT, so the unit coefficient is `mul(const 1, x)` and never
+    // a bare `x`. That is the corpus normal form the descriptor is now COMPILED into
+    // (`metatheory/Dregg2/Circuit/Emit/AirNormalForm.lean`, rule 1) — this twin renders the same
+    // polynomial the same way so the `decoded == hand` differential still bites on the BYTES. The
+    // shapes are not interchangeable here: `LeanExpr` derives a structural `PartialEq`, so writing
+    // the bare form is a RED, which is exactly what this assertion is for.
     let cont_body = || {
         LeanExpr::add(
-            LeanExpr::Var(CUR1),
+            LeanExpr::mul(LeanExpr::Const(1), LeanExpr::Var(CUR1)),
             LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(PARENT0)),
         )
     };
