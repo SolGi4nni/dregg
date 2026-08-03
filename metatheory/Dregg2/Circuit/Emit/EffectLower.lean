@@ -300,18 +300,40 @@ theorem transferLoweredDesc_is_lowering (D : (CellId → AssetId → ℤ) → �
 
 /-! ### §4a — the emitted shape, executed. -/
 
-#guard transferLoweredDesc.name == "dregg-transfer-v2-lowered"
-#guard transferLoweredDesc.traceWidth == 72
-#guard transferLoweredDesc.piCount == 7
-#guard transferLoweredDesc.constraints.length == 11
-#guard transferLoweredDesc.tables.length == 0
-#guard transferLoweredDesc.hashSites.length == 0
-#guard transferLoweredDesc.ranges.length == 0
+/-- The emitted shape. ⚑ These were `#guard`s; as `rfl` theorems they are now **kernel** facts, which
+the guards never were — `#guard` runs the unsafe compiled evaluator. This conversion did not gain a
+∀, but it did gain a name, a term, and a genuinely stronger checker. -/
+theorem transferLoweredDesc_shape :
+    transferLoweredDesc.name = "dregg-transfer-v2-lowered" ∧
+    transferLoweredDesc.traceWidth = 72 ∧
+    transferLoweredDesc.piCount = 7 ∧
+    transferLoweredDesc.constraints.length = 11 ∧
+    transferLoweredDesc.tables.length = 0 ∧
+    transferLoweredDesc.hashSites.length = 0 ∧
+    transferLoweredDesc.ranges.length = 0 :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-! **THE BYTE GOLDEN** — the same `#guard emitVmJson2 … == <literal>` pin every hand-authored
-emitter carries, here on a descriptor NOBODY hand-wrote: these bytes are the compiler's output. -/
-#guard emitVmJson2 transferLoweredDesc ==
-  "{\"name\":\"dregg-transfer-v2-lowered\",\"ir\":2,\"trace_width\":72,\"public_input_count\":7,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":0}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":66}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":67}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":68}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":69}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":70}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":71}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":66,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":67,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":68,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":69,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":70,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":71,\"pi_index\":6}],\"hash_sites\":[],\"ranges\":[]}"
+/-! **THE BYTE GOLDEN** — the same pin every hand-authored emitter carries, here on a descriptor
+NOBODY hand-wrote: these bytes are the compiler's output.
+
+⚑ It is a **named theorem**, not a `#guard`. This one legitimately is about ONE object — there is no
+∀ hiding in it — so the conversion gained only a name. That is still the whole point: a fact the
+emit gate reports is now a term the rest of the tree can cite and axiom accounting can see, at
+identical cost.
+
+⚠ MEASURED, so the label is right: the kernel does NOT reach this one. `rfl` at
+`maxRecDepth 40000` dies on `(deterministic) timeout at whnf` (200000 heartbeats) — the ~2.3 KB
+string is built by too many appends. So it stays on the compiled evaluator, which is EXACTLY where
+the `#guard` had it, and `#assert_compiled` says so. Contrast `transferLoweredDesc_shape` directly
+above: those seven pins were `#guard`s too and DID reach the kernel, so they are `rfl` and take the
+stronger `#assert_axioms`. Same conversion, two different honest outcomes. -/
+theorem transferLoweredDesc_emits_golden_json :
+    emitVmJson2 transferLoweredDesc =
+  "{\"name\":\"dregg-transfer-v2-lowered\",\"ir\":2,\"trace_width\":72,\"public_input_count\":7,\"tables\":[],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":0}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":66}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":67}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":68}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":69}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":70}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":71}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":66,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":67,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":68,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":69,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":70,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":71,\"pi_index\":6}],\"hash_sites\":[],\"ranges\":[]}" := by
+  native_decide
+
+#assert_axioms transferLoweredDesc_shape
+#assert_compiled transferLoweredDesc_emits_golden_json
 
 /-! ### §4b — NON-VACUITY and the anti-ghost tooth.
 

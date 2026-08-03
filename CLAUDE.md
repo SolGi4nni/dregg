@@ -93,6 +93,21 @@ pair is how a below-bar result reads as a win.
 wire-format decision and therefore yours", check whether anything actually holds
 the old format. Usually nothing does.
 
+### ⚑ In Lean: a fact worth asserting is worth naming — not `#guard`ing
+
+The doctrine above says *land the right design*. Its Lean-side twin is: **assert facts as named
+theorems.** `#guard e` checks one closed instance, leaves **no term** anything can build on, and is
+invisible to axiom accounting. It is not a cheaper check either — Lean implements it as
+`unsafe evalExpr Bool`, the same compiled evaluator `native_decide` runs on, so a `#guard` is a
+`native_decide` theorem with the name, the term and the axiom record deleted. It does not avoid
+trusting the compiler; it trusts the compiler *silently*.
+
+This is the same sin as a Rust case-test called "translation validation". Moving case-tests into
+Lean did not make them verification. Default to `theorem foo … := by decide/rfl` + `#assert_axioms`;
+where only the compiler reaches, `by native_decide` + `#assert_compiled`; and where the guard was one
+instance of a general fact, **prove the general fact**. Policy and the conversion recipe:
+`metatheory/docs/GUARD-DISCIPLINE.md`. Ratchet: `scripts/check-guard-discipline.py`.
+
 ### Say what you broke
 
 Freedom to break is not freedom to be quiet. Every breaking change states, in the

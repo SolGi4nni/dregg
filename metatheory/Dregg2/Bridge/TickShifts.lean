@@ -151,12 +151,28 @@ def TICK_SHIFTS_16_ORACLE : List Nat :=
     430348682428487492383428014506756320686619984007091686553051322507181255952,
     326625242707153437805405281465150497418605074624614708160829052937679007395 ]
 
-/- ⚑⚑ **DERIVED == EXTRACTED.** Seven values, byte-exact against `Shifts::new`. -/
-#guard (tickShiftsFp 16).map (fun x => x.val) == TICK_SHIFTS_16_ORACLE
+/-- ⚑⚑ **DERIVED == EXTRACTED.** Seven values, byte-exact against `Shifts::new`.
 
-/- …and the derivation really produces seven distinct field elements. -/
-#guard (tickShiftsFp 16).length == 7
-#guard (tickShiftsFp 16).getD 0 0 == (1 : ZMod pN)
+This is the file's load-bearing claim and it is now a NAMED THEOREM, not a `#guard`. The assertion
+is unchanged — same expression, same object, same evaluator: `#guard` is implemented as
+`unsafe evalExpr Bool`, exactly the engine `native_decide` runs on (`Dregg2.Tactics`,
+`#assert_compiled` §). What the theorem adds is a name §6b can cite, a term in the environment, and
+an axiom record — `#assert_compiled` below states out loud that this rests on compiled evaluation,
+which the `#guard` rested on just as much while showing nothing. -/
+theorem tickShiftsFp_16_matches_oracle :
+    (tickShiftsFp 16).map (fun x => x.val) = TICK_SHIFTS_16_ORACLE := by native_decide
+
+/-- …and the derivation really produces seven field elements at the emitted domain. -/
+theorem tickShiftsFp_16_length : (tickShiftsFp 16).length = 7 := by native_decide
+
+/-- ⚑ **∀-GAIN.** The identity shift leads the list AT EVERY DOMAIN — the cons is structural, so the
+kernel closes this by `rfl` without evaluating one Blake2b block. The `#guard` this replaces asserted
+it at `d = 16` only, and paid a full compiled run of the sampler to learn it. -/
+theorem tickShiftsFp_getD_zero (d : Nat) : (tickShiftsFp d).getD 0 0 = (1 : ZMod pN) := rfl
+
+/-- The instance the `#guard` asserted, over the same object, now a corollary of the ∀. -/
+theorem tickShiftsFp_16_getD_zero : (tickShiftsFp 16).getD 0 0 = (1 : ZMod pN) :=
+  tickShiftsFp_getD_zero 16
 
 /-! ### §5b — the field is the STEP field, pinned by the domain generator.
 
@@ -164,19 +180,23 @@ The Fp and Fq `Shifts::new` sequences share only `shifts[1]` and then diverge (t
 both). This anchor states we took the Fp branch: `rootOfUnity pN 16` is exactly the Radix2 domain
 generator `tick_shifts_export` printed as `Fp GROUP_GEN`, so the shifts sit over the same field the
 Step domain does. -/
-#guard (MinaWrapFtEval0.rootOfUnity pN 16).val ==
-  15891333241237338948802440868534957611422987089162911289567511717843897011994
+theorem rootOfUnity_pN_16_is_the_step_domain_generator :
+    (MinaWrapFtEval0.rootOfUnity pN 16).val =
+      15891333241237338948802440868534957611422987089162911289567511717843897011994 := by
+  native_decide
 
 /-! ### §5c — the counter mechanics are as transcribed. -/
 
-/- The first candidate is at `i = 8` and it IS the first non-identity shift (a QNR at the start of
+/-- The first candidate is at `i = 8` and it IS the first non-identity shift (a QNR at the start of
 the stream). -/
-#guard candOf 8 == TICK_SHIFTS_16_ORACLE.getD 1 0
-/- `i = 9` is a quadratic RESIDUE over Fp, so it is rejected — the reason the second shift is not the
-next counter. (Over Fq it is accepted; the branch really depends on the field.) -/
-#guard (isQNR ((candOf 9 : Nat) : ZMod pN)) == false
-/- …and the second accepted shift is the `i = 14` candidate, the next QNR. -/
-#guard candOf 14 == TICK_SHIFTS_16_ORACLE.getD 2 0
+theorem candOf_8_is_first_shift : candOf 8 = TICK_SHIFTS_16_ORACLE.getD 1 0 := by native_decide
+
+/-- `i = 9` is a quadratic RESIDUE over Fp, so it is rejected — the reason the second shift is not
+the next counter. (Over Fq it is accepted; the branch really depends on the field.) -/
+theorem candOf_9_is_rejected : isQNR ((candOf 9 : Nat) : ZMod pN) = false := by native_decide
+
+/-- …and the second accepted shift is the `i = 14` candidate, the next QNR. -/
+theorem candOf_14_is_second_shift : candOf 14 = TICK_SHIFTS_16_ORACLE.getD 2 0 := by native_decide
 
 /-! ## §5d — ⚑ the STEP `endo_coefficient`, DERIVED (a bonus config the weld was conflating).
 
@@ -193,15 +213,29 @@ self-consistent, entirely wrong `linConstTerm`"). This derives the correct one. 
 Step (Fp) side. Derived, not carried. -/
 def stepEndoCoefficient : ZMod pN := powFast ((5 : Nat) : ZMod pN) ((pN - 1) / 3)
 
-/- ⚑ MEASURED == o1-labs' `mina_poseidon::sponge::endo_coefficient::<Fp>()` (oracle
-`tick_shifts_export`, `ENDO Pallas.endos().0`). It is a cube root of unity, and NOT `ENDO`. -/
-#guard stepEndoCoefficient.val ==
-  20444556541222657078399132219657928148671392403212669005631716460534733845831
-#guard stepEndoCoefficient ^ 3 == (1 : ZMod pN)
-#guard stepEndoCoefficient !=
-  ((8503465768106391777493614032514048814691664078728891710322960303815233784505 : Nat) : ZMod pN)
+/-- ⚑ MEASURED == o1-labs' `mina_poseidon::sponge::endo_coefficient::<Fp>()` (oracle
+`tick_shifts_export`, `ENDO Pallas.endos().0`). -/
+theorem stepEndoCoefficient_matches_oracle :
+    stepEndoCoefficient.val =
+      20444556541222657078399132219657928148671392403212669005631716460534733845831 := by
+  native_decide
 
-/-! ## §6 — cheap structural theorems for axiom hygiene (the heavy pins stay `#guard`). -/
+/-- It is a cube root of unity. -/
+theorem stepEndoCoefficient_cube : stepEndoCoefficient ^ 3 = (1 : ZMod pN) := by native_decide
+
+/-- ⚑ …and it is NOT `ENDO` — the conflation `MinaWrapFtEval0Weld` §6 committed. -/
+theorem stepEndoCoefficient_ne_endo :
+    stepEndoCoefficient ≠
+      ((8503465768106391777493614032514048814691664078728891710322960303815233784505 : Nat) :
+        ZMod pN) := by
+  native_decide
+
+/-! ## §6 — structural theorems, and the ∀ facts the single-instance pins were instances of.
+
+⚑ This section used to be headed *"cheap structural theorems for axiom hygiene (the heavy pins stay
+`#guard`)"* — a split that put every claim a reader cares about on the side that produces no term
+and no axiom record. The heavy pins are now theorems too (§5); what follows is the part that gained
+a **∀**. -/
 
 /-- `tickShiftsFp` always leads with the identity shift, WITHOUT evaluating the sampler — the cons is
 structural. -/
@@ -214,8 +248,80 @@ theorem u32BE_length (i : Nat) : (u32BE i).length = 4 := rfl
 theorem blockOfBytes_length (bs : List Nat) : (blockOfBytes bs).length = 16 := by
   simp [blockOfBytes]
 
+/-- ⚑ **∀-GAIN.** The sampler NEVER overruns its six slots — at every domain size, every fuel, every
+starting counter, every accumulator. `#guard (tickShiftsFp 16).length == 7` was one instance of this;
+the instance cannot see that the `acc.length ≥ 6` early-out is what bounds the loop, so it could not
+distinguish "the bound holds" from "64 fuel happened to run out at seven". -/
+theorem sampleAux_length_le (n : Nat) :
+    ∀ (fuel i : Nat) (acc : List (ZMod pN)),
+      (sampleAux n fuel i acc).length ≤ max acc.length 6
+  | 0, _, acc => by simp [sampleAux]
+  | fuel + 1, i, acc => by
+      rw [sampleAux]
+      dsimp only
+      split_ifs with h6 hacc
+      · exact Nat.le_max_left _ _
+      · have ih := sampleAux_length_le n fuel (i + 1) (acc ++ [((candOf i : Nat) : ZMod pN)])
+        simp only [List.length_append, List.length_cons, List.length_nil] at ih
+        omega
+      · exact sampleAux_length_le n fuel (i + 1) acc
+
+/-- ⚑ **∀-GAIN.** `tickShiftsFp` is at most seven shifts at EVERY domain — the `Shifts::new` arity,
+proved rather than observed at `d = 16`. -/
+theorem tickShiftsFp_length_le (d : Nat) : (tickShiftsFp d).length ≤ 7 := by
+  have h := sampleAux_length_le (2 ^ d) 64 8 ([] : List (ZMod pN))
+  simp only [List.length_nil] at h
+  simp only [tickShiftsFp, List.length_cons]
+  omega
+
+/-- ⚑ **∀-GAIN.** The outer distinctness check really rejects a repeat — for every prior set and
+every candidate, not just along the one accepted trace the pins walk. This is the `while
+shifts.contains` line of `permutation.rs` as a statement about all inputs. -/
+theorem dup_of_mem (prior : List (ZMod pN)) (c : ZMod pN) (h : c ∈ prior) :
+    dup prior c = true := by
+  simp only [dup, List.any_eq_true, List.mem_cons, decide_eq_true_eq]
+  exact ⟨c, Or.inr h, rfl⟩
+
+/-- ⚑ **∀-GAIN.** `accept` never admits a duplicate — for every domain, prior set and candidate. -/
+theorem accept_not_dup (n : Nat) (prior : List (ZMod pN)) (c : ZMod pN)
+    (h : accept n prior c = true) : dup prior c = false := by
+  simp only [accept, Bool.and_eq_true, Bool.not_eq_true'] at h
+  exact h.2
+
+/-- ⚑ **∀-GAIN.** `u32BE` really IS `i.to_be_bytes()` — big-endian, for every `i < 2^32`. NO `#guard`
+in this file ever checked the encoder itself; they checked `candOf` at three counters and inherited
+the encoding. This states it directly, over all inputs in range. -/
+theorem u32BE_bigEndian (i : Nat) (h : i < 2 ^ 32) :
+    (u32BE i).foldl (fun a b => a * 256 + b) 0 = i := by
+  simp only [u32BE, List.foldl_cons, List.foldl_nil]
+  omega
+
 #assert_axioms tickShiftsFp_head
+#assert_axioms tickShiftsFp_getD_zero
+#assert_axioms tickShiftsFp_16_getD_zero
 #assert_axioms u32BE_length
+#assert_axioms u32BE_bigEndian
 #assert_axioms blockOfBytes_length
+#assert_axioms sampleAux_length_le
+#assert_axioms tickShiftsFp_length_le
+#assert_axioms dup_of_mem
+#assert_axioms accept_not_dup
+
+/-! ### §6b — the compiled pins, ACCOUNTED FOR.
+
+⚑ Each name below was a `#guard` and is now a theorem resting on a `native_decide` oracle axiom.
+`#assert_compiled` states that out loud: the fact is true by compiled evaluation — which is exactly
+what the `#guard` was, with the axiom record deleted. Nothing here got weaker; the trust got
+VISIBLE. If any of these ever becomes kernel-reachable, `#assert_compiled` REFUSES it and demands
+the stronger `#assert_axioms` — the ratchet points the right way. -/
+#assert_compiled tickShiftsFp_16_matches_oracle
+#assert_compiled tickShiftsFp_16_length
+#assert_compiled rootOfUnity_pN_16_is_the_step_domain_generator
+#assert_compiled candOf_8_is_first_shift
+#assert_compiled candOf_9_is_rejected
+#assert_compiled candOf_14_is_second_shift
+#assert_compiled stepEndoCoefficient_matches_oracle
+#assert_compiled stepEndoCoefficient_cube
+#assert_compiled stepEndoCoefficient_ne_endo
 
 end Dregg2.Bridge.TickShifts

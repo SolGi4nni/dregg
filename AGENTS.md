@@ -44,6 +44,31 @@ from a moving train; the record is the territory — and the reading IS the job.
   pessimistic ones ("X is undone / a hole"). Truth = `CLAIMS.md`, the `Dregg2.lean`
   annotations, `lake … Claims.lean` — not a memory's mood. A named residual ≠ a hole.
 
+## ⚑ Do not reach for `#guard`. A fact worth asserting is worth naming.
+
+Full policy: **`metatheory/docs/GUARD-DISCIPLINE.md`**. Gate: `scripts/check-guard-discipline.py`
+(in `local-gates.sh`), a per-module downward ratchet.
+
+`#guard e` evaluates ONE closed instance, produces **no term anything can build on**, and is
+invisible to axiom accounting. And it is not even a cheaper check: Lean 4.30 implements it
+(`Lean/Elab/Tactic/Guard.lean:154-167`) as `unsafe evalExpr Bool` — the **same compiled evaluator
+`native_decide` runs on**. So `#guard e` is exactly `theorem _ : e = true := by native_decide` with
+the NAME, the TERM and the AXIOM RECORD deleted. It does not avoid trusting the compiler; it trusts
+the compiler *silently*, which is why `#assert_axioms` is structurally blind to all 15,850 of them
+(measured 2026-08-02, 1,159 files).
+
+This is the sin this repo already forbids in Rust — *"case-tests prove NOTHING about all inputs"*.
+Moving the case-tests into Lean did not make them verification.
+
+- Default `theorem foo : … := by decide` / `by rfl` + `#assert_axioms foo`. Where the kernel
+  reaches, this is **strictly stronger** than the guard was.
+- Where only the compiler reaches: `by native_decide` + **`#assert_compiled foo`** — a confession,
+  not a certificate, and it REFUSES a kernel-clean fact so nothing gets laundered downward.
+- ⚑ Where the guard was one instance of a general fact, **prove the general fact** and keep the
+  instance as a corollary. That is where the actual gain is.
+- `#guard` survives only for a throwaway nothing will ever cite — and if nothing will cite it, ask
+  why it exists.
+
 ## Use `cargo nextest`, not bare `cargo test`
 
 `cargo-nextest` is installed. It gives per-test timing, parallelism, and — the

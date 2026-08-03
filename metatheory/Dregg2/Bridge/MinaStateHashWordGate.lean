@@ -842,20 +842,35 @@ def HEADERS : List Header := [B539795, B539796, B539797, B539798, B539799, B5395
 -- public-input words the ACCEPTED `kimchi::verifier::verify` consumed. This is simultaneously the
 -- fidelity check on `endoMap` over real Mina data: a wrong endomorphism expansion changes 32 of
 -- the 93 preimage elements and none of these could hold.
-#guard HEADERS.all headerOk == true
-#guard HEADERS.length == 6
+theorem every_real_block_header_derives_its_public_words :
+    HEADERS.all headerOk = true := by native_decide
+
+theorem six_headers_measured : HEADERS.length = 6 := by native_decide
+
+/-- The Prop-level reading of the accept, so a consumer cites it instead of re-running it. -/
+theorem headerOk_of_mem (h : Header) (hh : h ∈ HEADERS) : headerOk h = true := by
+  have := every_real_block_header_derives_its_public_words
+  simp only [List.all_eq_true] at this
+  exact this h hh
 
 -- ⚑ THE ANCHOR. 539508 is the block `docs/MINA-REAL-BLOCK-GATE.md` drives all the way through the
 -- in-kernel ladder, and this is `MinaWrapPublicCommGate.PUBLIC_INPUT[12]` — the literal C3/C5/C8
 -- and rungs 5a-5h are stated over. `MinaWrapPublicInputFromHeader` proves the equality against
 -- that module; the number is repeated here so it is checkable in one place.
-#guard word12 B539508.stateHash B539508.accComm B539508.accChals
-  == 24322017899265084126163599635783679345976168424021275192497824834098868742353
-#guard word11 B539508.mnwComm B539508.mnwChals
-  == 16694176452625101103339288558027392732723822717830151635447913532282294450543
+theorem anchor_block_word12 :
+    word12 B539508.stateHash B539508.accComm B539508.accChals =
+      24322017899265084126163599635783679345976168424021275192497824834098868742353 := by
+  native_decide
 
--- The six word-12s are DISTINCT, so the accepts are not one value six times.
-#guard (HEADERS.map (fun h => word12 h.stateHash h.accComm h.accChals)).eraseDups.length == 6
+theorem anchor_block_word11 :
+    word11 B539508.mnwComm B539508.mnwChals =
+      16694176452625101103339288558027392732723822717830151635447913532282294450543 := by
+  native_decide
+
+/-- The six word-12s are DISTINCT, so the accepts are not one value six times. -/
+theorem the_six_word12_are_distinct :
+    (HEADERS.map (fun h => word12 h.stateHash h.accComm h.accChals)).eraseDups.length = 6 := by
+  native_decide
 
 /-! ### ⚑ THE FALSIFIER — every ORDERED foreign-header assignment, 30 of them.
 
@@ -863,36 +878,38 @@ Each line is `block A's proof served under block B's stateHash`. In the same ext
 `kimchi::verifier::verify` returns `Err` on **30 / 30** of exactly these, and the extractor asserts
 per word that NOTHING but word 12 moves. So the refusals below are the observable half of a
 refusal o1-labs' own verifier already makes — not a property of our transcription. -/
-#guard word12 B539795.stateHash B539796.accComm B539796.accChals != B539796.word12Gold
-#guard word12 B539795.stateHash B539797.accComm B539797.accChals != B539797.word12Gold
-#guard word12 B539795.stateHash B539798.accComm B539798.accChals != B539798.word12Gold
-#guard word12 B539795.stateHash B539799.accComm B539799.accChals != B539799.word12Gold
-#guard word12 B539795.stateHash B539508.accComm B539508.accChals != B539508.word12Gold
-#guard word12 B539796.stateHash B539795.accComm B539795.accChals != B539795.word12Gold
-#guard word12 B539796.stateHash B539797.accComm B539797.accChals != B539797.word12Gold
-#guard word12 B539796.stateHash B539798.accComm B539798.accChals != B539798.word12Gold
-#guard word12 B539796.stateHash B539799.accComm B539799.accChals != B539799.word12Gold
-#guard word12 B539796.stateHash B539508.accComm B539508.accChals != B539508.word12Gold
-#guard word12 B539797.stateHash B539795.accComm B539795.accChals != B539795.word12Gold
-#guard word12 B539797.stateHash B539796.accComm B539796.accChals != B539796.word12Gold
-#guard word12 B539797.stateHash B539798.accComm B539798.accChals != B539798.word12Gold
-#guard word12 B539797.stateHash B539799.accComm B539799.accChals != B539799.word12Gold
-#guard word12 B539797.stateHash B539508.accComm B539508.accChals != B539508.word12Gold
-#guard word12 B539798.stateHash B539795.accComm B539795.accChals != B539795.word12Gold
-#guard word12 B539798.stateHash B539796.accComm B539796.accChals != B539796.word12Gold
-#guard word12 B539798.stateHash B539797.accComm B539797.accChals != B539797.word12Gold
-#guard word12 B539798.stateHash B539799.accComm B539799.accChals != B539799.word12Gold
-#guard word12 B539798.stateHash B539508.accComm B539508.accChals != B539508.word12Gold
-#guard word12 B539799.stateHash B539795.accComm B539795.accChals != B539795.word12Gold
-#guard word12 B539799.stateHash B539796.accComm B539796.accChals != B539796.word12Gold
-#guard word12 B539799.stateHash B539797.accComm B539797.accChals != B539797.word12Gold
-#guard word12 B539799.stateHash B539798.accComm B539798.accChals != B539798.word12Gold
-#guard word12 B539799.stateHash B539508.accComm B539508.accChals != B539508.word12Gold
-#guard word12 B539508.stateHash B539795.accComm B539795.accChals != B539795.word12Gold
-#guard word12 B539508.stateHash B539796.accComm B539796.accChals != B539796.word12Gold
-#guard word12 B539508.stateHash B539797.accComm B539797.accChals != B539797.word12Gold
-#guard word12 B539508.stateHash B539798.accComm B539798.accChals != B539798.word12Gold
-#guard word12 B539508.stateHash B539799.accComm B539799.accChals != B539799.word12Gold
+/-- **Every ordered foreign-header assignment refuses, as ONE bounded ∀ over the product** —
+`HEADERS × HEADERS`, skipping only the diagonal (`a.stateHash == b.stateHash`, which
+`the_six_stateHashes_are_distinct` below pins to be exactly `a = b`). -/
+def foreignStateHashRefuses : Bool :=
+  HEADERS.all (fun a => HEADERS.all (fun b =>
+    (a.stateHash == b.stateHash) ||
+      (word12 a.stateHash b.accComm b.accChals != b.word12Gold)))
+
+/-- ⚑ **∀-GAIN, AND STRICTLY STRONGER THAN WHAT IT REPLACES.** This was **THIRTY hand-written
+`#guard` lines**, one per ordered pair. Thirty transcribed instances cannot see the shape of their
+own product: a pair silently omitted from the list is indistinguishable from a pair that refuses,
+and the reader has to count to 30 by eye to know the battery is complete. The quantifier cannot omit
+a pair. Same objects, same evaluator, same assertion at each of the thirty points — plus the fact
+that thirty is all of them. -/
+theorem no_foreign_stateHash_reproduces_word12 : foreignStateHashRefuses = true := by native_decide
+
+/-- The six `stateHash`es are DISTINCT, so the diagonal skipped above is exactly `a = b` and the ∀
+really does range over all thirty OFF-diagonal assignments — not fewer. Without this the quantified
+form could be satisfied by a coincidence that made two rows equal. -/
+theorem the_six_stateHashes_are_distinct :
+    (HEADERS.map (fun h => h.stateHash)).eraseDups.length = 6 := by native_decide
+
+/-- The Prop-level reading, so a consumer can CITE the refusal rather than re-derive it: no header
+served under a foreign `stateHash` reproduces the word-12 an accepted verification consumed. -/
+theorem foreign_stateHash_refuses (a b : Header) (ha : a ∈ HEADERS) (hb : b ∈ HEADERS)
+    (hne : a.stateHash ≠ b.stateHash) :
+    word12 a.stateHash b.accComm b.accChals ≠ b.word12Gold := by
+  have h := no_foreign_stateHash_reproduces_word12
+  simp only [foreignStateHashRefuses, List.all_eq_true] at h
+  have hab := (List.all_eq_true.mp (h a ha)) b hb
+  simp only [Bool.or_eq_true, beq_iff_eq, bne_iff_ne, ne_eq] at hab
+  exact hab.resolve_left hne
 
 -- …and the same, as the DECISION refusing rather than two numbers differing.
 #guard headerOk { B539796 with stateHash := B539795.stateHash } == false
@@ -1062,6 +1079,25 @@ def wireOf (h : Header) : String :=
 #assert_axioms the_welded_run_chains
 #assert_axioms headerOk_false_of_word12
 #assert_axioms minaStateHashWordGate_eq_decision
+
+/-! ### ⚑ The §4 pins, ACCOUNTED FOR.
+
+These names were `#guard`s. `#guard` runs `unsafe evalExpr` — the same compiled evaluator
+`native_decide` runs on (`Dregg2.Tactics`, `#assert_compiled` §) — so nothing here changed strength;
+what changed is that each fact now has a name, a term, and an AXIOM RECORD. §4's own header used to
+say "not one of them is a kernel `decide`", which was true and invisible. It is now countable.
+
+`headerOk_of_mem` and `foreign_stateHash_refuses` are the Prop-level readings and inherit the same
+oracle, which is why they are pinned here rather than with `#assert_axioms`. -/
+#assert_compiled every_real_block_header_derives_its_public_words
+#assert_compiled six_headers_measured
+#assert_compiled headerOk_of_mem
+#assert_compiled anchor_block_word12
+#assert_compiled anchor_block_word11
+#assert_compiled the_six_word12_are_distinct
+#assert_compiled no_foreign_stateHash_reproduces_word12
+#assert_compiled the_six_stateHashes_are_distinct
+#assert_compiled foreign_stateHash_refuses
 
 #print axioms word12_preimage_carries_the_chain_accumulator
 #print axioms headerOk_entails

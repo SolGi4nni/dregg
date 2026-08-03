@@ -74,6 +74,67 @@ elab "#assert_all_clean" "[" ids:ident,* "]" : command => do
     n := n + 1
   logInfo m!"#assert_all_clean: {n} keystones pinned kernel-clean"
 
+/-! ## `#assert_compiled` — the COMPILER-TRUSTED pin, for the facts a `#guard` used to hide.
+
+⚑ **THE MEASUREMENT THAT MOTIVATES THIS COMMAND.** `#guard e` is implemented (Lean 4.30,
+`Lean/Elab/Tactic/Guard.lean:154-167`) as
+
+    let v ← unsafe evalExpr (checkMeta := false) Bool (mkConst ``Bool) e
+
+— the **unsafe compiled evaluator**, the same engine `native_decide` runs on. So a `#guard` is not
+a weaker check than a `native_decide` theorem; it is the SAME check with three things deleted:
+
+  * the **name** — nothing can cite it, so nothing composes on it;
+  * the **term** — no declaration enters the environment, so no later proof can use it;
+  * the **axiom record** — `collectAxioms` sees nothing, so `#assert_axioms` cannot account for it
+    and the compiler-trust is INVISIBLE.
+
+That last one is the wound. A `#guard` does not avoid trusting the compiler; it trusts the compiler
+*silently*. `theorem foo : e = true := by native_decide` asserts the identical fact at the identical
+cost and makes the trust show up in `#print axioms foo`.
+
+`#assert_compiled foo` is the pin for that class. It passes iff every axiom `foo` rests on is either
+kernel-clean (`Dregg2.cleanAxioms`) or a `native_decide` oracle axiom, AND at least one such oracle
+axiom is present. Both halves are load-bearing:
+
+  * a `sorry`/faked-green axiom is still a hard ERROR — this is not a laxer `#assert_axioms`, it
+    widens the allow-list by exactly one named class and nothing else;
+  * **zero oracle axioms is ALSO an error** — if the fact is kernel-clean, it must be pinned with
+    the STRONGER `#assert_axioms`, and quietly accepting it here would let a kernel-clean keystone
+    get labelled compiler-trusted and lose its real pin. The command therefore has a red path in
+    both directions, and cannot be used to launder a proof downward.
+
+Read the label literally: `#assert_compiled foo` says **"`foo` is true by compiled evaluation, and I
+am saying so out loud."** It is strictly more honest than the `#guard` it replaces and strictly
+weaker than `#assert_axioms`. Never write it under a fact that `decide`/`rfl` closes. -/
+
+/-- A `native_decide` oracle axiom. Lean 4.30 emits a per-declaration axiom named
+`<decl>._native.native_decide.ax_<i>_<j>` rather than the older single `Lean.ofReduceBool`, so BOTH
+shapes are recognised: the legacy global names, and any name containing the `native_decide` marker
+component. (Matching on the component, not a string prefix of the declaration, is what keeps this
+independent of which declaration generated it.) -/
+def Dregg2.isNativeOracleAxiom (a : Lean.Name) : Bool :=
+  a == ``Lean.ofReduceBool || a == ``Lean.ofReduceNat ||
+    a.components.any (fun c => c == `native_decide || c == `_native)
+
+open Lean Elab Command in
+/-- `#assert_compiled foo` — see the section note above. Errors if `foo` rests on any axiom that is
+neither kernel-clean nor a `native_decide` oracle, and ALSO errors if `foo` rests on no oracle at
+all (in which case `#assert_axioms` is the correct, stronger pin). -/
+elab "#assert_compiled" id:ident : command => do
+  let name ← liftCoreM <| realizeGlobalConstNoOverloadWithInfo id
+  let axs ← Lean.collectAxioms name
+  let bad := axs.filter (fun a =>
+    !Dregg2.cleanAxioms.contains a && !Dregg2.isNativeOracleAxiom a)
+  unless bad.isEmpty do
+    throwError "compiled-pin FAIL: {name} depends on axioms {bad.toList}, which are neither \
+      kernel-clean nor a native_decide oracle (a faked-green axiom cannot hide behind a \
+      compiled-evaluation label)"
+  unless axs.any Dregg2.isNativeOracleAxiom do
+    throwError "compiled-pin REFUSED: {name} rests on NO compiled-evaluation oracle — it is \
+      kernel-clean, so pin it with the STRONGER `#assert_axioms {name}`. Labelling a \
+      kernel-clean fact 'compiled' throws away its real pin"
+
 /-! ## `#assert_not_depends_on` — the SEMANTICS-FREEDOM tripwire (proof-term closure guard).
 
 `#assert_axioms` pins which AXIOMS a proof rests on. It says nothing about which DEFINITIONS a proof
