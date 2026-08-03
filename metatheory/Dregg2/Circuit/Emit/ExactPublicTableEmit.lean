@@ -82,13 +82,28 @@ Four things this table asserted only in Rust prose, with what each turns out to 
    height. The byte table at least forces `value = row index`; this one does not even do that.
 
 ## Axiom hygiene
-No `sorry`, no `native_decide`, no new axiom.
+No `sorry`, no new axiom. Every shape pin, both wire goldens and both `RowHolds` poles are `decide`
+— the KERNEL — and carry `#assert_axioms`.
+
+⚑ ONE compiled pin, and it is a CONFESSION rather than a regression: the 63 428-byte family
+artifact (`the_family_artifact_is_a_json_array_of_63428_bytes`) is past kernel reach (`decide`
+exhausts `maxRecDepth 100000` at `maxHeartbeats 10000000` — measured), so it is `native_decide`
+under `#assert_compiled`. That fact was ALREADY compiler-trusted when it was a `#guard`; `#guard`
+runs the same `unsafe evalExpr` (`metatheory/docs/GUARD-DISCIPLINE.md`) and simply left no axiom
+record. The line above used to read "no `native_decide`" and was true only because the compiler
+trust was hiding somewhere `#assert_axioms` structurally cannot look.
 -/
 import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.ExactPublicTableEmit
 
 open Dregg2.Circuit.TableAirIR (TRowEnv)
+
+-- ⚑ Every shape pin below is `decide`, i.e. the KERNEL, where the `#guard`s it replaces ran the
+-- compiled evaluator. The family is 64 members wide and the emitter builds strings, so kernel
+-- reduction needs the headroom; buying it here is what lets `#assert_axioms` be the pin instead of
+-- `#assert_compiled`.
+set_option maxRecDepth 100000
 
 open Dregg2.Circuit.TableAirIR
 
@@ -163,29 +178,43 @@ def exactPublicFamily : List TableAir :=
 
 /-! ## §2 — Shape pins, derived from the layout rather than transcribed. -/
 
-#guard exactPublicFamily.length == EP_MAX_ARITY
-#guard epPrepWidth 17 == 19
-#guard epMultCol 17 == 18
-#guard exactPublicName 17 == "dregg-ir2-exact-public-a17-v1"
-#guard exactPublicBus 17 == "ir2_exact_public_a17"
+theorem the_family_has_one_member_per_arity :
+    exactPublicFamily.length = EP_MAX_ARITY := by decide
 
--- ⚑ EVERY member, at EVERY arity, is well-formed and has exactly the shape the deleted arm had:
--- ONE gate, ONE bus leg, on the SERVING side, at committed width 1.
-#guard exactPublicFamily.all (fun t => t.wellFormed)
-#guard exactPublicFamily.all (fun t => t.gates.length == 1 && t.busCount == 1)
-#guard exactPublicFamily.all (fun t => t.width == 1 && t.defCount == 0)
-#guard exactPublicFamily.all (fun t => t.gateCountSel .all == 1)
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  (exactPublicTable (i + 1)).busCountOp (exactPublicBus (i + 1)) .provide == 1)
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  (exactPublicTable (i + 1)).busCountOp (exactPublicBus (i + 1)) .query == 0)
--- ⚑ THE LOGUP FIELD COUNT, per arity: the served tuple is `arity + 1` wide (id ‖ values), and it is
--- what the query side must present. A family whose members drifted here would balance nothing.
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  (epTuple (i + 1)).length == i + 2)
--- …and the declared preprocessed width covers the tuple AND the pin, with nothing spare.
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  epPrepWidth (i + 1) == (epTuple (i + 1)).length + 1)
+/-- The layout AS RENDERED at a deployed arity — the two column indices and the two names the
+artifact and the descriptor have to agree on. Point-valued on purpose: `toString` is the part that
+cannot be read off `epMultCol`'s definition. -/
+theorem the_deployed_arity_17_member_renders :
+    epPrepWidth 17 = 19 ∧ epMultCol 17 = 18 ∧
+    exactPublicName 17 = "dregg-ir2-exact-public-a17-v1" ∧
+    exactPublicBus 17 = "ir2_exact_public_a17" := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+/-- ⚑ **EVERY member, at EVERY arity, is well-formed and has exactly the shape the deleted arm
+had**: ONE gate, ONE bus leg, at committed width 1 with no definitions, and the single gate
+`.all`-scoped. Four guards over the same quantifier, now one theorem over it. -/
+theorem every_member_has_the_deleted_arms_shape :
+    exactPublicFamily.all (fun t =>
+      t.wellFormed && t.gates.length == 1 && t.busCount == 1 &&
+        t.width == 1 && t.defCount == 0 && t.gateCountSel .all == 1) = true := by
+  decide
+
+/-- ⚑ …and every member is on the SERVING side of its own bus and on no other side of it — the
+distinction that makes the bus satisfiable in one direction rather than vacuous in the other. -/
+theorem every_member_serves_its_bus_and_never_queries_it :
+    (List.range EP_MAX_ARITY).all (fun i =>
+      ((exactPublicTable (i + 1)).busCountOp (exactPublicBus (i + 1)) .provide == 1) &&
+        ((exactPublicTable (i + 1)).busCountOp (exactPublicBus (i + 1)) .query == 0)) = true := by
+  decide
+
+/-- ⚑ **THE LOGUP FIELD COUNT, per arity**: the served tuple is `arity + 1` wide (id ‖ values), which
+is what the query side must present, and the declared preprocessed width covers that tuple AND the
+pin with nothing spare. A family whose members drifted here would balance nothing. -/
+theorem the_logup_field_count_is_arity_plus_one :
+    (List.range EP_MAX_ARITY).all (fun i =>
+      ((epTuple (i + 1)).length == i + 2) &&
+        (epPrepWidth (i + 1) == (epTuple (i + 1)).length + 1)) = true := by
+  decide
 
 /-- ⚑ **THE FAMILY IS ROW-LOCAL AT EVERY ARITY**, which is a claim about the selector and not about
 the body: nothing here reads the next row, so no member has a wrap-row hazard and none needs a
@@ -194,11 +223,13 @@ accept strictly more (`TableGate.transition_weakens`), so this is pinned rather 
 theorem the_family_is_row_local : exactPublicFamily.all (fun t => t.isRowLocal) = true := by
   decide
 
--- ⚑ …and the one gate reads the committed CAPACITY column, at every arity: without this the
--- row-locality pin above would be about a gate that reads no committed column at all.
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  let t := exactPublicTable (i + 1)
-  t.gates.all (fun g => TExpr.readsColIn t.defs g.body EP_MULT))
+/-- ⚑ …and the one gate reads the committed CAPACITY column, at every arity: without this the
+row-locality pin above would be about a gate that reads no committed column at all. -/
+theorem the_one_gate_reads_the_committed_capacity :
+    (List.range EP_MAX_ARITY).all (fun i =>
+      let t := exactPublicTable (i + 1)
+      t.gates.all (fun g => TExpr.readsColIn t.defs g.body EP_MULT)) = true := by
+  decide
 
 /-! ## §3 — The wire golden, byte-pinned at two arities.
 
@@ -206,19 +237,24 @@ The whole family is a function of `EP_MAX_ARITY`, so pinning every member's byte
 same emitter 64 times. What is pinned instead is the SMALLEST member and one deployed arity, plus
 the family's length and per-member shape above — which together move if the emitter moves. -/
 
-#guard emitTableAirJson (exactPublicTable 1) ==
-  "{\"name\":\"dregg-ir2-exact-public-a1-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\"prep_width\":3,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"prep\",\"c\":2}}}}],\"interactions\":[{\"bus\":\"ir2_exact_public_a1\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"prep\",\"c\":0},{\"t\":\"prep\",\"c\":1}]}]}"
+theorem the_arity_1_member_emits_golden : emitTableAirJson (exactPublicTable 1) =
+  "{\"name\":\"dregg-ir2-exact-public-a1-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\"prep_width\":3,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"prep\",\"c\":2}}}}],\"interactions\":[{\"bus\":\"ir2_exact_public_a1\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"prep\",\"c\":0},{\"t\":\"prep\",\"c\":1}]}]}" := by
+  decide
 
-#guard emitTableAirJson (exactPublicTable 3) ==
-  "{\"name\":\"dregg-ir2-exact-public-a3-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\"prep_width\":5,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"prep\",\"c\":4}}}}],\"interactions\":[{\"bus\":\"ir2_exact_public_a3\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"prep\",\"c\":0},{\"t\":\"prep\",\"c\":1},{\"t\":\"prep\",\"c\":2},{\"t\":\"prep\",\"c\":3}]}]}"
+theorem the_arity_3_member_emits_golden : emitTableAirJson (exactPublicTable 3) =
+  "{\"name\":\"dregg-ir2-exact-public-a3-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\"prep_width\":5,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"prep\",\"c\":4}}}}],\"interactions\":[{\"bus\":\"ir2_exact_public_a3\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"prep\",\"c\":0},{\"t\":\"prep\",\"c\":1},{\"t\":\"prep\",\"c\":2},{\"t\":\"prep\",\"c\":3}]}]}" := by
+  decide
 
 /-- The family artifact's byte source. -/
 def EXACT_PUBLIC_FAMILY_JSON : String := emitTableAirFamilyJson exactPublicFamily
 
--- The artifact is an ARRAY, and its first member is the arity-1 table byte for byte.
-#guard EXACT_PUBLIC_FAMILY_JSON.length == 63428
-#guard (EXACT_PUBLIC_FAMILY_JSON.take 1).endsWith "["
-#guard (EXACT_PUBLIC_FAMILY_JSON.drop (EXACT_PUBLIC_FAMILY_JSON.length - 1)) == "]"
+/-- The artifact is an ARRAY of exactly this many bytes, opening and closing as one. The length is
+the number a re-emission has to reproduce, so it is the load-bearing half. -/
+theorem the_family_artifact_is_a_json_array_of_63428_bytes :
+    (EXACT_PUBLIC_FAMILY_JSON.length == 63428) &&
+      (EXACT_PUBLIC_FAMILY_JSON.take 1).endsWith "[" &&
+      (EXACT_PUBLIC_FAMILY_JSON.drop (EXACT_PUBLIC_FAMILY_JSON.length - 1)) == "]" := by
+  native_decide
 
 /-! ## §4 — ⚑ WHAT THE ONE GATE FORCES, both directions.
 
@@ -277,17 +313,22 @@ theorem the_gates_bind_no_table_id :
     ep2.RowHolds (epRow 2 0 30 40 2) false false := by
   refine ⟨by decide, by decide⟩
 
--- …and that is decidable on the EMITTED object rather than read off two witnesses: no gate of any
--- member reads the id column or any manifest value column of the preprocessed matrix.
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  let t := exactPublicTable (i + 1)
-  (List.range (i + 2)).all (fun c =>
-    t.gates.all (fun g => !TExpr.readsPrepColIn t.defs g.body c)))
--- …while the pinned column IS read, at every arity. (Without this the pin above would be a claim
--- about a gate that reads nothing.)
-#guard (List.range EP_MAX_ARITY).all (fun i =>
-  let t := exactPublicTable (i + 1)
-  t.gates.all (fun g => TExpr.readsPrepColIn t.defs g.body (epMultCol (i + 1))))
+/-- …and that is decidable on the EMITTED object rather than read off two witnesses: no gate of any
+member reads the id column or any manifest value column of the preprocessed matrix. -/
+theorem no_gate_reads_the_id_or_any_manifest_value :
+    (List.range EP_MAX_ARITY).all (fun i =>
+      let t := exactPublicTable (i + 1)
+      (List.range (i + 2)).all (fun c =>
+        t.gates.all (fun g => !TExpr.readsPrepColIn t.defs g.body c))) = true := by
+  decide
+
+/-- …while the pinned column IS read, at every arity. Without this the refutation above would be a
+claim about a gate that reads nothing. -/
+theorem the_pinned_multiplicity_column_is_read_at_every_arity :
+    (List.range EP_MAX_ARITY).all (fun i =>
+      let t := exactPublicTable (i + 1)
+      t.gates.all (fun g => TExpr.readsPrepColIn t.defs g.body (epMultCol (i + 1)))) = true := by
+  decide
 
 /-- ⚑ **THE PAD DISCIPLINE IS NOT THIS AIR'S.** *"Rows past `rows.len()` are all-zero pads carrying
 multiplicity ZERO, so they contribute nothing to the bus"* — the conclusion is true of the matrix
@@ -341,7 +382,22 @@ against `Ir2Air::Main`'s query side, and it lives with the batch soundness resul
 ⚑ That is not a weakening introduced by the port: the deleted Rust arm had the identical content,
 and the difference is that the scope is now stated in the object rather than in a comment. -/
 
-#guard ep2.busCount == 1
-#guard ep2.gates.length == 1
+/-- The stand-in member really is the one-gate, one-bus-leg object the scope note describes. -/
+theorem ep2_has_one_gate_and_one_bus_leg :
+    ep2.busCount = 1 ∧ ep2.gates.length = 1 := by
+  refine ⟨by decide, by decide⟩
+
+#assert_axioms the_family_has_one_member_per_arity
+#assert_axioms the_deployed_arity_17_member_renders
+#assert_axioms every_member_has_the_deleted_arms_shape
+#assert_axioms every_member_serves_its_bus_and_never_queries_it
+#assert_axioms the_logup_field_count_is_arity_plus_one
+#assert_axioms the_one_gate_reads_the_committed_capacity
+#assert_axioms the_arity_1_member_emits_golden
+#assert_axioms the_arity_3_member_emits_golden
+#assert_compiled the_family_artifact_is_a_json_array_of_63428_bytes
+#assert_axioms no_gate_reads_the_id_or_any_manifest_value
+#assert_axioms the_pinned_multiplicity_column_is_read_at_every_arity
+#assert_axioms ep2_has_one_gate_and_one_bus_leg
 
 end Dregg2.Circuit.Emit.ExactPublicTableEmit

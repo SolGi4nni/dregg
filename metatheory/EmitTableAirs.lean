@@ -39,7 +39,10 @@ def tableAirs : List (String × TableAir) :=
   , ("dregg-ir2-chip-v1.json",         Dregg2.Circuit.Emit.ChipTableEmit.chipTable)
   , ("dregg-ir2-chip-state16-v1.json", Dregg2.Circuit.Emit.ChipTableEmit.chipState16Table) ]
 
-#guard tableAirs.length == 10
+/-- The routing table serves every singleton table AIR there is. This is the SOLE checked property
+of `tableAirs`, so it is a theorem rather than a `#guard`: a table added to the tree and forgotten
+here emits no artifact at all, and nothing else in the file would notice. -/
+theorem tableAirs_routes_all_ten : tableAirs.length = 10 := by decide
 
 /-- ⚑ The FAMILY artifact: a table AIR that is a SCHEMA rather than a singleton.
 `Ir2Air::ExactPublicTable` is a family indexed by the declared tuple ARITY (`TableAirIR` §7 item 3),
@@ -50,7 +53,13 @@ def tableAirFamilies : List (String × List TableAir) :=
   [ ("dregg-ir2-exact-public-v1.json",
       Dregg2.Circuit.Emit.ExactPublicTableEmit.exactPublicFamily) ]
 
-#guard tableAirFamilies.length == 1
+/-- …and exactly one of them is a FAMILY rather than a singleton. The count is what a reader checks
+the `main` loop against: a second family routed here but not rendered by `emitTableAirFamilyJson`
+would emit a singleton's bytes under a family's filename. -/
+theorem tableAirFamilies_routes_the_one_family : tableAirFamilies.length = 1 := by decide
+
+#assert_axioms tableAirs_routes_all_ten
+#assert_axioms tableAirFamilies_routes_the_one_family
 
 def main : IO Unit := do
   for (file, t) in tableAirs do

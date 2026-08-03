@@ -1309,37 +1309,82 @@ def prepDemo : TableAir :=
   , gates := [ gAll (eSub (v 0) (p 2)) ]
   , interactions := [ ⟨"ir2_exact_public_a2", .provide, v 0, [p 0, p 1]⟩ ] }
 
--- The wire tag, byte-pinned: `prep` carries a COLUMN (`c`), where `shr` carries an INDEX (`i`).
-#guard TExpr.toJson (p 3) == "{\"t\":\"prep\",\"c\":3}"
-#guard emitTableAirJson prepDemo ==
-  "{\"name\":\"prep-demo\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\"prep_width\":3,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"prep\",\"c\":2}}}}],\"interactions\":[{\"bus\":\"ir2_exact_public_a2\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"prep\",\"c\":0},{\"t\":\"prep\",\"c\":1}]}]}"
+/-- The wire tag, byte-pinned: `prep` carries a COLUMN (`c`), where `shr` carries an INDEX (`i`). -/
+theorem prep_json_tag_carries_a_column :
+    TExpr.toJson (p 3) = "{\"t\":\"prep\",\"c\":3}" := by decide
 
-#guard prepDemo.wellFormed == true
--- ⚑ THE TWO COLUMN SPACES DO NOT ANSWER FOR EACH OTHER. A gate reading preprocessed column 0 does
--- NOT read committed column 0, and vice versa — the pin a coverage claim or a mutation sweep rests
--- on, and the one a single merged predicate would silently get wrong in whichever direction the
--- reader assumed.
-#guard TExpr.readsColIn [] (p 0) 0 == false
-#guard TExpr.readsPrepColIn [] (p 0) 0 == true
-#guard TExpr.readsColIn [] (v 0) 0 == true
-#guard TExpr.readsPrepColIn [] (v 0) 0 == false
--- …and the preprocessed predicate CHASES `shr` exactly as the committed one does.
-#guard TExpr.readsPrepColIn [.mul (p 5) (k 2)] (s 0) 5 == true
-#guard TExpr.readsPrepColIn [.mul (p 5) (k 2)] (s 0) 4 == false
--- ⚑ A `prep` read is NOT a next-row read: there is no `prepNxt`, so an `.all`-scoped gate reading
--- one is not the wrap-row hazard `readsNext` refuses, and `isRowLocal` says so.
-#guard TExpr.readsNextIn [] (p 0) == false
-#guard prepDemo.isRowLocal == true
+set_option maxRecDepth 8000 in
+/-- The whole `prepDemo` emission, byte for byte — the artifact half of everything below. The
+`maxRecDepth` raise is what buys the KERNEL rather than the compiled evaluator the `#guard` used:
+this is `decide`, so `#assert_axioms` below can be the strong pin and not `#assert_compiled`. -/
+theorem prepDemo_emits_golden : emitTableAirJson prepDemo =
+    "{\"name\":\"prep-demo\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\"prep_width\":3,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"prep\",\"c\":2}}}}],\"interactions\":[{\"bus\":\"ir2_exact_public_a2\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":0},\"tuple\":[{\"t\":\"prep\",\"c\":0},{\"t\":\"prep\",\"c\":1}]}]}" := by
+  decide
 
--- ⚑ THE BOUND IS IN THE PREPROCESSED SPACE. Both poles, and both directions of the confusion: an
--- out-of-range `prep` is REFUSED even though the same index is a legal committed column elsewhere,
--- and widening `width` does not launder it.
-#guard ({ prepDemo with gates := [gAll (p 3)] } : TableAir).prepsInRange == false
-#guard ({ prepDemo with width := 64, gates := [gAll (p 3)] } : TableAir).wellFormed == false
-#guard ({ prepDemo with interactions := [⟨"b", .provide, p 9, [p 0]⟩] } : TableAir).wellFormed == false
-#guard ({ prepDemo with defs := [p 7], gates := [gAll (v 0)] } : TableAir).prepsInRange == false
-#guard ({ prepDemo with prepWidth := 8, defs := [p 7], gates := [gAll (v 0)] }
-          : TableAir).prepsInRange == true
+theorem prepDemo_wellFormed : prepDemo.wellFormed = true := by decide
+
+/-- ⚑ **THE TWO COLUMN SPACES DO NOT ANSWER FOR EACH OTHER**, at EVERY column index rather than at
+index 0. A gate reading preprocessed column `c` does NOT read committed column `c`, and vice versa —
+the pin a coverage claim or a mutation sweep rests on, and the one a single merged predicate would
+silently get wrong in whichever direction the reader assumed. The range is wider than any table in
+this file declares, so no member of the family sits outside it. -/
+theorem the_two_column_spaces_never_answer_for_each_other :
+    (List.range 8).all (fun c =>
+      (!TExpr.readsColIn [] (p c) c) && TExpr.readsPrepColIn [] (p c) c &&
+        TExpr.readsColIn [] (v c) c && (!TExpr.readsPrepColIn [] (v c) c)) = true := by decide
+
+/-- …and the preprocessed predicate CHASES `shr` exactly as the committed one does, landing on the
+ONE column the definition reads and no other. Stated as an iff against `c == 5` so the negative pole
+is every other index, not the single hand-picked `4`. -/
+theorem the_prep_predicate_chases_shr_to_exactly_one_column :
+    (List.range 8).all (fun c =>
+      TExpr.readsPrepColIn [.mul (p 5) (k 2)] (s 0) c == (c == 5)) = true := by decide
+
+/-- ⚑ A `prep` read is NOT a next-row read, at any column: there is no `prepNxt`, so an `.all`-scoped
+gate reading one is not the wrap-row hazard `readsNext` refuses. -/
+theorem a_prep_read_is_never_a_next_row_read :
+    (List.range 8).all (fun c => !TExpr.readsNextIn [] (p c)) = true := by decide
+
+/-- …and `isRowLocal` says so of the table that does it. -/
+theorem prepDemo_is_row_local : prepDemo.isRowLocal = true := by decide
+
+/-- ⚑ **THE BOUND IS IN THE PREPROCESSED SPACE.** An out-of-range `prep` in a GATE is refused, even
+though the same index is a legal committed column elsewhere. -/
+theorem an_out_of_range_prep_gate_is_refused :
+    ({ prepDemo with gates := [gAll (p 3)] } : TableAir).prepsInRange = false := by decide
+
+/-- …and widening `width` does NOT launder it — the direction the two spaces make easy to get wrong. -/
+theorem widening_width_does_not_launder_an_out_of_range_prep :
+    ({ prepDemo with width := 64, gates := [gAll (p 3)] } : TableAir).wellFormed = false := by decide
+
+/-- …the bus leg is bounded too: an out-of-range `prep` in a MULTIPLICITY is refused. -/
+theorem an_out_of_range_prep_in_a_bus_leg_is_refused :
+    ({ prepDemo with interactions := [⟨"b", .provide, p 9, [p 0]⟩] } : TableAir).wellFormed = false := by
+  decide
+
+/-- …and so is one hiding in a DEFINITION, which no gate-body scan would reach. -/
+theorem an_out_of_range_prep_in_a_definition_is_refused :
+    ({ prepDemo with defs := [p 7], gates := [gAll (v 0)] } : TableAir).prepsInRange = false := by
+  decide
+
+/-- ⚑ …and the TRUE pole, without which the four refusals above could be a predicate that is simply
+always `false`: declare the width the definition needs and the same table is admitted. -/
+theorem a_wide_enough_prepWidth_admits_the_definition :
+    ({ prepDemo with prepWidth := 8, defs := [p 7], gates := [gAll (v 0)] }
+      : TableAir).prepsInRange = true := by decide
+
+#assert_axioms prep_json_tag_carries_a_column
+#assert_axioms prepDemo_emits_golden
+#assert_axioms prepDemo_wellFormed
+#assert_axioms the_two_column_spaces_never_answer_for_each_other
+#assert_axioms the_prep_predicate_chases_shr_to_exactly_one_column
+#assert_axioms a_prep_read_is_never_a_next_row_read
+#assert_axioms prepDemo_is_row_local
+#assert_axioms an_out_of_range_prep_gate_is_refused
+#assert_axioms widening_width_does_not_launder_an_out_of_range_prep
+#assert_axioms an_out_of_range_prep_in_a_bus_leg_is_refused
+#assert_axioms an_out_of_range_prep_in_a_definition_is_refused
+#assert_axioms a_wide_enough_prepWidth_admits_the_definition
 
 /-- ⚑ **THE PREPROCESSED LEAF IS READ FROM THE PREPROCESSED ROW.** The pin gate accepts exactly when
 the committed column equals preprocessed column 2 — a witness where the two DIFFER is refused, and a
