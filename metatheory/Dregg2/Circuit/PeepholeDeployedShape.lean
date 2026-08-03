@@ -319,12 +319,12 @@ argument; the collapse is the identity there for the same reason. -/
 theorem transferGraduated_frontier_noop :
     frontierCollapse (graduateV1 Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor)
       = graduateV1 Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor :=
-  graduateV1_frontier_noop _
+  graduateV1_frontier_noop _ _
 
 theorem transferGraduated_batch_noop :
     generalBatchPeephole (graduateV1 Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor)
       = graduateV1 Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor :=
-  graduateV1_batch_noop _
+  graduateV1_batch_noop _ _
 
 /-- The v1 EMBEDDING (the other route the registry carries) wraps every constraint in `.base`. -/
 theorem embedV1_noPlainWindowGate (d : EffectVmDescriptor) :

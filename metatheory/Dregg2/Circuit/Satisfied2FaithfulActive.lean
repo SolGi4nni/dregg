@@ -229,7 +229,7 @@ theorem row0_faithful_constraints_hold (hash : List ℤ → ℤ) :
   rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl] at hc
   have hc' := hc
   rw [graduateV1] at hc'
-  simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc'
+  simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc'
   rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨i, hi, rfl⟩) | ⟨r, hr, rfl⟩
   · -- a re-anchored base constraint — discharged on the ACTIVE row (`true false`).
     show c₀.holdsVm envReal true false
@@ -253,7 +253,7 @@ theorem row1_faithful_constraints_hold (hash : List ℤ → ℤ) :
   rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl] at hc
   have hc' := hc
   rw [graduateV1] at hc'
-  simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc'
+  simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc'
   rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨i, hi, rfl⟩) | ⟨r, hr, rfl⟩
   · -- a re-anchored base constraint, on the LAST row (`false true`). `.base`'s `holdsAt` is `holdsVm`,
     -- independent of `tf`, so the real-file last-row discharge (`row1_constraints_hold`) applies verbatim.
@@ -290,13 +290,13 @@ theorem tfOf2_memory_nil : tfOf2 transferV3 realRow lastRow .memory = [] := by
     rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
       tfOf, List.filterMap_eq_nil_iff]
     intro c hc
-    rcases constraints_graduateV1_shapes _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+    rcases constraints_graduateV1_shapes _ _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
     · rfl
     · show (if l.table = TableId.memory then _ else none) = none
       rw [if_neg]
       have : l.table = TableId.poseidon2 ∨ l.table = TableId.range := by
         rw [graduateV1] at hc
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc
+        simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc
         rcases hc with (⟨c₀, _, hc1⟩ | ⟨i, _, hc1⟩) | ⟨r, _, hc1⟩
         · exact absurd hc1 (by simp)
         · left; injection hc1 with hc1; rw [← hc1]; rfl
@@ -311,13 +311,13 @@ theorem tfOf2_mapOps_nil : tfOf2 transferV3 realRow lastRow .mapOps = [] := by
     rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
       tfOf, List.filterMap_eq_nil_iff]
     intro c hc
-    rcases constraints_graduateV1_shapes _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+    rcases constraints_graduateV1_shapes _ _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
     · rfl
     · show (if l.table = TableId.mapOps then _ else none) = none
       rw [if_neg]
       have : l.table = TableId.poseidon2 ∨ l.table = TableId.range := by
         rw [graduateV1] at hc
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc
+        simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc
         rcases hc with (⟨c₀, _, hc1⟩ | ⟨i, _, hc1⟩) | ⟨r, _, hc1⟩
         · exact absurd hc1 (by simp)
         · left; injection hc1 with hc1; rw [← hc1]; rfl
