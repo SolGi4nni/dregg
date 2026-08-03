@@ -907,7 +907,9 @@ theorem foreign_stateHash_refuses (a b : Header) (ha : a ∈ HEADERS) (hb : b �
     word12 a.stateHash b.accComm b.accChals ≠ b.word12Gold := by
   have h := no_foreign_stateHash_reproduces_word12
   simp only [foreignStateHashRefuses, List.all_eq_true] at h
-  have hab := (List.all_eq_true.mp (h a ha)) b hb
+  have hb' := h a ha
+  simp only [List.all_eq_true] at hb'
+  have hab := hb' b hb
   simp only [Bool.or_eq_true, beq_iff_eq, bne_iff_ne, ne_eq] at hab
   exact hab.resolve_left hne
 
