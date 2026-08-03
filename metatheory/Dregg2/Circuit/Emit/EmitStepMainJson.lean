@@ -22,8 +22,16 @@ witness composition (`WitnessBuilder.compose`), render+write — because that sp
 is what governs whether the assembly reaches full `verify_one` scale.
 
 House Law #1: the CIRCUIT is Lean-authored; `proof-systems` (the harness) is the Rust PROVER.
+
+⚑ IMPORTS `…KimchiStepMainCore`, NOT THE UMBRELLA (2026-08-02, with the split). Every name this
+driver uses — `mkStep`, `rungRows`, `stepGates`, `placedOf`, `stepWitness`, `rungProbeRows`,
+`stepPublic`, `renderStepCircuit`, `Rung`, `shapeStep`/`shapeSmoke` — is §1–§11, i.e. Core, which
+elaborates in ~11 s. The umbrella additionally pulls the thirteen PIN modules (837 `#guard`s,
+~15 min of interpretation), and EMITTING a circuit does not depend on any of them. So the emit →
+prove loop no longer waits on the pins. ⚠ This does NOT unroot a guard: `Dregg2.PicklesSynthesis`
+(a `defaultTargets` root) imports the umbrella, so every pin module still runs in `lake build`.
 -/
-import Dregg2.Circuit.Emit.KimchiStepMain
+import Dregg2.Circuit.Emit.KimchiStepMainCore
 
 open Dregg2.Circuit.Emit.KimchiStepMain
 open Dregg2.Circuit.Emit.KimchiPlacement (PGate PlacedGate)

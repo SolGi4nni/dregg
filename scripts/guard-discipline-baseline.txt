@@ -390,7 +390,29 @@
 18	Dregg2/Circuit/Emit/KimchiRenderPublicInput.lean
 11	Dregg2/Circuit/Emit/KimchiRenderVarBaseMul.lean
 12	Dregg2/Circuit/Emit/KimchiRootAirEval.lean
-814	Dregg2/Circuit/Emit/KimchiStepMain.lean
+# ── 2026-08-02 — KimchiStepMain.lean (row 814) was SPLIT, not converted. It is now an umbrella
+# carrying zero guards; its pins moved verbatim into thirteen …PinsNN modules so they elaborate in
+# PARALLEL (15.7 min of serial interpretation -> a ~2 min critical path). No guard was added,
+# removed, reworded or weakened by the split — the mover's gate is a multiset comparison of every
+# `#guard` line, source against the union of the outputs.
+# ⚠ SAY THE DELTA OUT LOUD: the thirteen rows sum to 837, the retired row was 814. The +23 are
+# guards a CONCURRENT lane (the `combine` `Opt.Maybe` mux, §12l) had added to the monolith in the
+# working tree between this ledger's HEAD extract (a7d30783d) and the split; `git commit --only` is
+# path-granular so they are swept in with the file. They are that lane's to burn down, not a
+# population the split created.
+77	Dregg2/Circuit/Emit/KimchiStepMainPins01.lean
+74	Dregg2/Circuit/Emit/KimchiStepMainPins02.lean
+76	Dregg2/Circuit/Emit/KimchiStepMainPins03.lean
+71	Dregg2/Circuit/Emit/KimchiStepMainPins04.lean
+62	Dregg2/Circuit/Emit/KimchiStepMainPins05.lean
+74	Dregg2/Circuit/Emit/KimchiStepMainPins06.lean
+57	Dregg2/Circuit/Emit/KimchiStepMainPins07.lean
+72	Dregg2/Circuit/Emit/KimchiStepMainPins08.lean
+42	Dregg2/Circuit/Emit/KimchiStepMainPins09.lean
+73	Dregg2/Circuit/Emit/KimchiStepMainPins10.lean
+50	Dregg2/Circuit/Emit/KimchiStepMainPins11.lean
+46	Dregg2/Circuit/Emit/KimchiStepMainPins12.lean
+63	Dregg2/Circuit/Emit/KimchiStepMainPins13.lean
 48	Dregg2/Circuit/Emit/KimchiVerify.lean
 7	Dregg2/Circuit/Emit/LastRowFrameHardening.lean
 15	Dregg2/Circuit/Emit/LexCompare8Emit.lean
