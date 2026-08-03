@@ -29,8 +29,10 @@ for ξ, whose single `vXiStmt` serves both `finalize_other_proof`'s `deferred_va
 (`:319-321`) — **no permutation, `state.(1)`**. ζ and the digest are lane 0 and lane 1 of ONE
 permutation output, and `transcriptRows`' squeeze block already emits and probes both.
 
-⚑ **BOTH DIRECTIONS, WITH THE RETIRED WIRING AS THE MIDDLE LEG** (`…Pins17`, **10 named theorems,
-zero `#guard`s**). Bending word 10 moves both fr-sponge squeezes, §8g's lifted ξ and r, the committed
+⚑ **BOTH DIRECTIONS, WITH THE RETIRED WIRING AS THE MIDDLE LEG** (`…Pins17`, **11 named theorems,
+zero `#guard`s**; a twelfth in `…Pins07`, converted from the two segment-B word-count guards. ⚠ The
+landing commit `9525085e6` said TEN — an undercount, corrected here rather than rewritten there).
+Bending word 10 moves both fr-sponge squeezes, §8g's lifted ξ and r, the committed
 shape's scalar vector **at index 10 alone**, and R8's `out` slot **1 → 0** (a refusal, measured
 against the honest instance's own 1). Under the RETIRED seedless segment B — `frSpec` as it stood
 this morning — the same bend moves **nothing**, and the two wirings disagree in the first place.
