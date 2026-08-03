@@ -868,4 +868,57 @@ def dfConflated : DefData :=
   runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA
     (fun i => chainChals shapeSmoke tS.sp (i % shapeSmoke.bRounds)) MASK_BITS
 
+-- ── §21 — `multiscale_known`'s SCALARS ARE THE WRAP STATEMENT'S WORDS ──────────────────────────
+
+/-- The transcript's challenge accessor, and the same with challenge `c` bent by one. Bending the
+ACCESSOR rather than the sponge is what isolates the wiring: it asks which challenges the scalar
+vector READS, not what a different transcript would produce. -/
+def chalS : Nat → Nat := chalOf shapeSmoke tS.sp
+/-- …with challenge `c` bent by one. -/
+def chalSBent (c : Nat) : Nat → Nat := fun k => if k == c then chalS k + 1 else chalS k
+
+/-- ⚑ The HONEST scalar vector — the packed Wrap statement, at the smoke assembly's own data. -/
+def scalHon : Nat → Nat := msmScalars shapeSmoke chalS tS.ft tS.fin tS.segC
+/-- …with statement word `w` bent by one, and NOTHING else touched. -/
+def scalBentW (w : Nat) : Nat → Nat := fun i => if i == w then scalHon i + 1 else scalHon i
+/-- …and the honest vector recomputed under a bent transcript challenge. -/
+def scalHonBentChal (c : Nat) : Nat → Nat :=
+  msmScalars shapeSmoke (chalSBent c) tS.ft tS.fin tS.segC
+
+/-- ⚠ **THE RETIRED WIRING** — `vSN i (msmChunksAt i) = vN (i % chals) emsRows`, i.e. term `i`'s
+scalar is transcript challenge `i % chals`. Kept HERE and nowhere else, because it is the thing §21's
+control refutes. -/
+def scalOld : Nat → Nat := fun i => chalS (i % shapeSmoke.chals)
+/-- …and the retired wiring under a bent transcript challenge. -/
+def scalOldBentChal (c : Nat) : Nat → Nat := fun i => chalSBent c (i % shapeSmoke.chals)
+
+/-- The x_hat MSM run at an arbitrary scalar vector, on the honest bases. -/
+def msmAt (f : Nat → Nat) : MsmData := runMsm shapeSmoke (stepBases shapeSmoke) f
+/-- …and its OUTPUT, `multiscale_known`'s sum — the point that becomes `x_hat`. -/
+def xhatAt (f : Nat → Nat) : Nat × Nat := (msmAt f).sums.getLastD (0, 0)
+
+/-- ⚑ The COMMITTED shape's scalar vector as a function of the challenge accessor ALONE. The three
+data arguments are `default` deliberately: the claim under test is which arguments the vector
+DEPENDS ON, and a real `FtData`/`FinData`/`SegData` at `shapeStep` would cost the whole 10k-row
+assembly to say the same thing. -/
+def stepScal (ch : Nat → Nat) : List Nat :=
+  (List.range shapeStep.msmTerms).map
+    (msmScalars shapeStep ch (default : FtData) (default : FinData) (default : SegData))
+/-- A challenge accessor that is injective on `0..chals`, and the same bent at `c`. -/
+def chalInj : Nat → Nat := fun c => 1000 + c
+def chalInjBent (c : Nat) : Nat → Nat := fun k => if k == c then 1001 + k else 1000 + k
+
+/-- R6's compiled ft program at the COMMITTED shape, built here so §21 can pin `FT_SLOT_ZETAN`
+against the program's own slot without running `mkStep shapeStep`. -/
+def ftProgStep : FtProg := ftProgOf (ftWireOf shapeStep) (ftCfgRaw 1 0)
+
+/-- ⚑ **THE COMMITTED SHAPE'S OWN ASSEMBLY.** Every other fixture here is the smoke one, because the
+pins are about SHAPE and smoke is cheap. This exists for exactly one claim §21 cannot make at smoke:
+that all FORTY packed statement words fit the ladders §20 sized for them. Smoke reaches three. -/
+def tStep : StepData := mkStep shapeStep
+
+/-- …and the forty scalars it hands `multiscale_known`. -/
+def stepScalHon : Nat → Nat :=
+  msmScalars shapeStep (chalOf shapeStep tStep.sp) tStep.ft tStep.fin tStep.segC
+
 end Dregg2.Circuit.Emit.KimchiStepMain

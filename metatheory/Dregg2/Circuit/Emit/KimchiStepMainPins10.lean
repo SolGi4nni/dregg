@@ -170,9 +170,13 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (classCells (posAt .msm) tS.ftw.permV).length == 1
 #guard (classCells (posAt .ipa) tS.ftw.permV).length == 1
 #guard (classCells (posAt .ftEval0) tS.ftw.permV).length == 4
-#guard (classCells (posAt .msm) tS.ftw.zetaV).length == 1
-#guard (classCells (posAt .ipa) tS.ftw.zetaV).length == 1
-#guard (classCells (posAt .ftEval0) tS.ftw.zetaV).length == 3
+-- ⚑ …and since §21 the `ζ^n` cell carries ONE MORE CELL AT EVERY RUNG FROM `r3_msm` UP than `perm`
+-- does: it is Wrap statement WORD 2/3 as well as `ft_comm`'s scalar, so the x_hat ladder's own
+-- terminal counter lands in its class. That asymmetry between the two §6b scalars is exactly §21 —
+-- `perm` is word 4 and its cell there is `vPermShift`, R8's statement word, not this derived one.
+#guard (classCells (posAt .msm) tS.ftw.zetaV).length == 2
+#guard (classCells (posAt .ipa) tS.ftw.zetaV).length == 2
+#guard (classCells (posAt .ftEval0) tS.ftw.zetaV).length == 4
 -- …and `sigma_comm_last`'s `Inner_curve.constant` pin is R7's (§3c), so term 0's BASE reads the same
 -- way: the ladder, the doubling and the odd-branch add at `r3_msm`, plus the pin and segment C's
 -- absorb from `r7_absorption`.

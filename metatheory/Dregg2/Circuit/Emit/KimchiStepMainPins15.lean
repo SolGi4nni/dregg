@@ -28,13 +28,14 @@ against. Measured there, the `x_hat` cluster is **31 ladders**, chunk widths in 
 and the list below is that sequence, element for element. Two independent objects: an OCaml `spec`
 read by hand, and a compiled circuit measured by a script that has never seen this file.
 
-⚠ AND WHAT IS STILL NOT CLOSED. The umbrella's #2 has two halves and this is one of them. Term `i`'s
-scalar is still `vN (msmChal i) emsRows` — a shared transcript challenge — and NOT Wrap statement
-word `i`; a 255-bit width over a value that is structurally `< 2¹²⁸` is shape-faithful and
-semantically empty until the provenance lands too. And the nine one-bit words, which Mina folds out
-of circuit entirely (`multiscale_known`'s constant partition, `step_verifier.ml:133-140`), still
-carry their seed `CompleteAdd` and their fold add here — nine points Mina never adds in-circuit.
-Both are named below rather than left to a reader.
+⚑ **AND WHAT WAS STILL NOT CLOSED IS CLOSED — §21, `…Pins16`, 2026-08-03.** This paragraph read:
+"Term `i`'s scalar is still `vN (msmChal i) emsRows` — a shared transcript challenge — and NOT Wrap
+statement word `i`; a 255-bit width over a value that is structurally `< 2¹²⁸` is shape-faithful and
+semantically empty until the provenance lands too. And the nine one-bit words … still carry their
+seed `CompleteAdd` and their fold add here." Both halves landed: `StepShape.msmChal` is DELETED and
+`vSN i (msmChunksAt i)` is `stmtVar i` (Core §2c), and `msmRows` runs `multiscale_known`'s
+NON-CONSTANT partition, so the nine emit no base, no seed and no add. The residue §21 leaves is
+THREE words with no in-circuit source (10, 11, 39), named at their own cells.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
 
@@ -167,22 +168,21 @@ row count is the NON-ZERO term count, not `msmTerms`. -/
 theorem n_acc_pins_skip_the_zero_chunk_terms :
     ((msmNZeroRows shapeStep).length
        = (((List.range shapeStep.msmTerms).filter (fun i => msmChunksAt i != 0)).length + 1) / 2
-     ∧ vSN shapeStep 30 0 = vN shapeStep (shapeStep.msmChal 30) shapeStep.emsRows) := by
+     ∧ vSN shapeStep 30 0 = stmtVar shapeStep 30) := by
   native_decide
 #assert_compiled n_acc_pins_skip_the_zero_chunk_terms
 
-/-- ⚠ **THE RESIDUE, NAMED.** Mina folds the nine constant-scalar words into `constant_part` OUTSIDE
-the circuit (`step_verifier.ml:133-140`), so it emits neither a seed `add_fast base base` nor a fold
-add for them. This file still does: `msmDblRow` runs for ALL `msmTerms` and the `complete_add` chain
-is still `msmTerms − 1` long — measured here on the smoke shape, where the emission is cheap — and at
-the committed shape NINE of the forty words are the zero-chunk ones. Nine points Mina never adds
-in-circuit: an over-count, not a hole, and this theorem is what will red when it is closed. -/
-theorem the_constant_words_still_carry_a_seed_and_an_add :
-    (((msmRows shapeSmoke tS.msm true).filter
-        (fun r => r.kind == KGateType.completeAdd)).length
-       = shapeSmoke.msmTerms + (shapeSmoke.msmTerms - 1)
-     ∧ ((List.range shapeStep.msmTerms).filter (fun i => msmChunksAt i == 0)).length = 9) := by
+/-- ⚑ **RETIRED 2026-08-03 by §21 — and it went red exactly as it said it would.** This carried
+`the_constant_words_still_carry_a_seed_and_an_add`: "`msmDblRow` runs for ALL `msmTerms` and the
+`complete_add` chain is still `msmTerms − 1` long… nine points Mina never adds in-circuit… this
+theorem is what will red when it is closed." It is closed — `msmRows` runs the NON-CONSTANT
+partition — and the replacement is `…Pins16.the_constant_words_emit_no_base_no_seed_and_no_add`,
+whose 30-add fold chain is Mina's own compiled run length. What survives here is the census the
+partition is taken on. -/
+theorem nine_of_the_forty_words_are_the_constant_partition :
+    (((List.range shapeStep.msmTerms).filter (fun i => msmChunksAt i == 0)).length = 9
+     ∧ (msmLive shapeStep).length + 9 = shapeStep.msmTerms) := by
   native_decide
-#assert_compiled the_constant_words_still_carry_a_seed_and_an_add
+#assert_compiled nine_of_the_forty_words_are_the_constant_partition
 
 end Dregg2.Circuit.Emit.KimchiStepMain

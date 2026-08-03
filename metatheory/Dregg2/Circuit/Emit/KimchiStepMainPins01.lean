@@ -244,10 +244,11 @@ buys the same factor and costs each pin its own failure site. -/
     (fun i => (endomulScalarConstraints (R := ZMod pN) cA cB cC
         ((gridRow witS (pubS + i)).map (fun n => (n : ZMod pN)))).all (fun z => decide (z = 0))))
 
--- ⚑ THE MSM SCALAR IS THE CHALLENGE. Term `i`'s var_base_mul counter chain closes on the value the
--- `EndoMulScalar` chain decoded — the σ wire, checked as an arithmetic identity too.
-#guard (List.range shapeSmoke.msmTerms).all (fun i =>
-  (tS.msm.terms.getD i default).ns.getLastD 0 == chalOf shapeSmoke tS.sp (shapeSmoke.msmChal i))
+-- ⚑ THE MSM SCALAR IS THE WRAP STATEMENT WORD (§21, 2026-08-03). This read "…IS THE CHALLENGE" and
+-- compared against `chalOf (msmChal i)`, the round-robin that is now DELETED: `multiscale_known`'s
+-- scalars are the packed statement, not this transcript's squeezes. The value pin lives in
+-- `…Pins16.msm_counters_close_on_the_packed_statement_words` as a NAMED theorem; R4's fold DOES close
+-- on its own challenge, and that half stays here.
 #guard (List.range shapeSmoke.ipaRounds).all (fun r =>
   (tS.ipa.ns.getD r []).getLastD 0 == chalOf shapeSmoke tS.sp (shapeSmoke.ipaChal r))
 

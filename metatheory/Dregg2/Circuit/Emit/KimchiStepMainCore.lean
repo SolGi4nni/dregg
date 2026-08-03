@@ -81,9 +81,11 @@ structure StepShape where
 def StepShape.blocks (s : StepShape) : Nat := s.absorbs + s.chals
 /-- Bits a challenge carries (`emsRows` rows × 8 crumbs × 2 bits). -/
 def StepShape.chalBits (s : StepShape) : Nat := 16 * s.emsRows
-/-- Which challenge MSM term `i` consumes (upstream re-uses ξ across the fold, so sharing is the
-faithful shape and it merges the two chains' final counter cells into ONE σ class). -/
-def StepShape.msmChal (s : StepShape) (i : Nat) : Nat := i % s.chals
+/-! ⚑ **RETIRED 2026-08-03 (§21).** There was a `StepShape.msmChal i = i % chals` here — "which
+challenge MSM term `i` consumes". `multiscale_known` consumes NO challenge: term `i`'s scalar is Wrap
+statement WORD `i` (`step_verifier.ml:543-544,1236-1251`), and the round-robin was a placeholder that
+made a 255-bit ladder run over a structurally `< 2¹²⁸` value. The wiring is `stmtVar` (§2c); the old
+expression survives only inside §12m's red control, where it is the thing being refuted. -/
 /-- Which challenge IPA round `r` consumes. -/
 def StepShape.ipaChal (s : StepShape) (r : Nat) : Nat := (s.msmTerms + r) % s.chals
 
@@ -96,12 +98,18 @@ WRAP STATEMENT — `multiscale_known (Array.mapi public_input ~f:(fun i x -> (x,
 carries a width PER BASIC (`spec.ml:305-395`, `pack_basic`):
 
     Unit                  → no word at all
-    Field                 → `Packed_bits (x, Field.size_in_bits)`            255
+    Field                 → `` `Field x ``   ⚠ NOT `Packed_bits`             255
     Bool                  → `Packed_bits (x, 1)`                               1
     Digest                → `Packed_bits (x, Field.size_in_bits)`            255
     Challenge             → `Packed_bits (x, Challenge.length)`              128
     Branch_data           → `Packed_bits (…, Branch_data.length_in_bits)`     10
     Bulletproof_challenge → `Packed_bits (pre, Challenge.length)`            128
+
+⚠ ⚑ **CORRECTED 2026-08-03: the `Field` arm is `` [| `Field x |] `` and this block said
+`Packed_bits` (`spec.ml:373-374`).** The WIDTH is 255 either way — `multiscale_known` scales the
+`` `Field `` case at `~num_bits:Field.size_in_bits` (`step_verifier.ml:159-165`) — so `msmBits` does
+not move. What the constructor decides is the CONSTANT PARTITION, which matches
+`` `Field (Constant c) | `Packed_bits (Constant c, _) `` (`:135-137`), i.e. both.
 
 ⚠ There is **no `Scalar_challenge` basic**. `Scalar chal` is a `T.t` CONSTRUCTOR whose `pack` is
 `p.pack chal` on the SAME seven (`spec.ml:94-99`), so `Vector (Scalar Challenge, N3)` packs at 128
@@ -256,13 +264,9 @@ def pSum (s : StepShape) (a : Nat) : Nat := pT s s.msmTerms + a
 def nMsmPts (s : StepShape) : Nat := pT s s.msmTerms + s.msmTerms
 
 def baseSN (s : StepShape) : Nat := baseMsm s + 2 * nMsmPts s
-/-- MSM term `i`'s scalar counter at chunk boundary `j`. At `j = msmChunksAt i` it IS the term's
-challenge variable — the cross-sub-circuit wire. ⚠ On a ZERO-chunk term (`msmBits i = 1`) the two
-coincide at `j = 0`, so the term has no counter cell of its own at all — which is what a ladder with
-no chunk rows means, and why `msmNZeroRows` must skip those terms rather than pin a challenge to 0. -/
-def vSN (s : StepShape) (i j : Nat) : PVar :=
-  if j == msmChunksAt i then vN s (s.msmChal i) s.emsRows
-  else xv (baseSN s + msmChunkPrefix i + j)
+-- ⚑ `vSN` — MSM term `i`'s scalar counter chain — is **§2c**, below `baseFtS`: since 2026-08-03 its
+-- terminal cell is the STATEMENT WORD `stmtVar i`, and two of the forty words live in R6's compiled
+-- program (`baseFtS`) and one in segment C's sponge state. It cannot be stated here.
 
 /-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots — `combine_split_commitments`' commitment count. -/
 def N_WDB : Nat := 47
@@ -815,7 +819,39 @@ word itself and a Boolean-constrained companion bit rather than emitting the spl
 constrained witness at 0 in the honest instance. What that does NOT weaken: the FIELD half is
 `vCipShift`, and R8 binds it. -/
 def CIP_BIT : Nat := 0
-def N_STMT : Nat := 11
+
+/-! ### ⚑ The THREE Wrap statement words with no in-circuit source (§21).
+
+`multiscale_known`'s scalars are the packed Wrap statement, forty words. Twenty-eight of them are
+already variables this assembly DERIVES (§2c's `stmtVar`); nine are the one-bit words, which emit no
+ladder at all; **three are not here, and each one is a named absence rather than a wire to something
+convenient.** They get their own cells so that the MSM's σ class for word `i` is word `i`'s and not
+some unrelated challenge's.
+
+  * **word 10 — `sponge_digest_before_evaluations`.** Upstream this word IS the fr-sponge's FIRST
+    absorbed item: `step_main.ml:41-46` seeds `Sponge.create` with
+    `proof_state.sponge_digest_before_evaluations` and hands that sponge to `finalize_other_proof`,
+    whose own absorbs (`step_verifier.ml:962-965`) start at `challenge_digest`. **Segment B here
+    starts at `challenge_digest` — the seed absorb is MISSING**, which is why the word has no
+    derived cell. (`verify_one`'s `sponge_digest_before_evaluations_actual` is a different object: it
+    is compared against `unfinalized`'s copy at `:1269-1271`, not against this statement word.)
+  * **word 11 — `messages_for_next_wrap_proof`.** `step_main.ml:84` SUBSTITUTES it into the
+    statement from `verify_one`'s own argument; nothing inside `verify_one` derives it.
+  * **word 39 — the lookup `Opt`'s inner `Scalar Challenge`** (`spec.ml:123-140`,
+    `composition_types.ml:655-666`). This assembly models no lookup.
+
+⚠ So THREE of the forty x_hat scalars are prover-chosen here. That is the residue §21 leaves, and it
+is smaller and more precisely placed than the shared transcript challenge it replaces. -/
+def vStmtDigest (s : StepShape) : PVar := xv (baseStmt s + 11)
+/-- Wrap statement word 11 — see `vStmtDigest`. -/
+def vStmtWrapMsgs (s : StepShape) : PVar := xv (baseStmt s + 12)
+/-- Wrap statement words 30..38 — the eight `Plonk_types.Features` flags and the lookup `Opt`'s own
+flag bit. `msmChunksAt = 0` on all nine, so NO row ever reads these cells; they exist so that
+`stmtVar` is total and injective on the statement rather than folding nine words onto one name. -/
+def vStmtFlag (s : StepShape) (k : Nat) : PVar := xv (baseStmt s + 13 + k)
+/-- Wrap statement word 39 — see `vStmtDigest`. -/
+def vStmtLookup (s : StepShape) : PVar := xv (baseStmt s + 22)
+def N_STMT : Nat := 23
 
 /-! ### ⚑ `prev_challenges` — the PREVIOUS proofs' carried bulletproof challenges.
 
@@ -1178,6 +1214,102 @@ def bpEq (s : StepShape) : PVar := xv (baseBpT s + 28)
 def nBpVars (s : StepShape) : Nat := N_GM + N_SF * ftcStride + 29
 
 def baseFtS (s : StepShape) : Nat := baseBp s + nBpVars s
+
+/-! ## ⚑⚑ §2c — **`multiscale_known`'s SCALARS ARE THE WRAP STATEMENT'S WORDS.**
+
+`x_hat = multiscale_known (Array.mapi public_input ~f:(fun i x -> (x, lagrange_commitment ~domain
+srs i)))` (`step_verifier.ml:543-544`) over
+
+    public_input = Spec.pack (module Impl) (Types.Wrap.Statement.In_circuit.spec …)
+                     (Types.Wrap.Statement.In_circuit.to_data … statement)        (`:1236-1251`)
+
+so term `i`'s SCALAR is packed statement word `i`. §1b gave each word its own WIDTH; this gives each
+word its own VALUE, and the two only mean something together — a 255-bit ladder over a `< 2¹²⁸`
+transcript challenge is shape-faithful and semantically empty.
+
+`to_data`'s own order (`composition_types.ml:823-880`, read at source) and where this assembly
+already holds each word:
+
+    i      statement word                          this assembly's variable        provenance
+    0      combined_inner_product  (Type1)         `vCipShift`      R5's Horner output, R8 binds it
+    1      b                       (Type1)         `vBShift`        R8's `b_correct`
+    2      zeta_to_srs_length      (Type1)         R6's `ζ^n` slot  DERIVED (see below)
+    3      zeta_to_domain_size     (Type1)         R6's `ζ^n` slot  DERIVED (see below)
+    4      perm                    (Type1)         `vPermShift`     R8's `Plonk_checks.checked`
+    5,6    beta, gamma                             `vN β/γ emsRows` R2's decoded prechallenge
+    7,8    alpha, zeta                             `vN α/ζ emsRows` R2's decoded prechallenge
+    9      xi                                      `vXiStmt`        R8's `xi_correct`, §8g's lift
+    10     sponge_digest_before_evaluations        `vStmtDigest`    ⚠ NO SOURCE (§8f)
+    11     messages_for_next_wrap_proof            `vStmtWrapMsgs`  ⚠ NO SOURCE (§8f)
+    12     messages_for_next_step_proof            segment C's squeeze — `hmDigestVar`
+    13–28  bulletproof_challenges ×16              `vN (uChal k) emsRows`  R8's `b_correct` folds
+                                                                    these SAME sixteen
+    29     branch_data                             `vBranch`        §8h unpacks it
+    30–38  the eight feature flags + the Opt flag  `vStmtFlag k`    ⚑ ZERO chunks — no row reads it
+    39     the lookup Opt's Scalar Challenge       `vStmtLookup`    ⚠ NO SOURCE (§8f)
+
+⚑ **THE SCALARS ARE `Bulletproof_challenge.pack`'s PRECHALLENGE, NOT THE LIFT.** `pack_basic`'s
+`Bulletproof_challenge` arm is `let { Sc.inner = pre } = Bulletproof_challenge.pack x in
+[| `Packed_bits (pre, Challenge.length) |]` (`spec.ml:390-393`), and `Scalar chal` packs its inner
+too (`:94-99`). So words 5–9, 13–28 and 39 are the RAW `vN c emsRows` cells and NOT `vLift c` — the
+endo image is what the curve gadgets consume, the prechallenge is what the statement carries. Getting
+this backwards would put a `> 2¹²⁸` value under a 130-bit ladder and the counter chain would not
+close.
+
+⚑ **`Field` PACKS AS `` `Field x ``, NOT AS `` `Packed_bits (x, 255) ``** — `pack_basic`'s `Field`
+arm is `[| `Field x |]` (`spec.ml:373-374`), and `multiscale_known` scales THAT case at
+`~num_bits:Field.size_in_bits` (`step_verifier.ml:159-165`). The WIDTH is 255 either way, so §1b's
+`msmBits` is unchanged; §1b's docblock said `Packed_bits` and that was wrong at source. `Digest` IS
+`Packed_bits (x, Field.size_in_bits)` (`:379-380`).
+
+⚠ ⚑ **WORDS 2 AND 3 ARE ONE VARIABLE HERE AND TWO UPSTREAM, and that is a DIVERGENCE, not a
+simplification.** At `log2n = srs_length_log2 = 16` the two are the same field element
+(`plonk_checks.ml:496-497`), and §6b already feeds BOTH of `ft_comm`'s scalar roles from R6's single
+derived `ζ^n` cell. Upstream they are two unconstrained statement words that happen to be equal;
+here they are one derived cell, so this assembly's σ has ONE class where Snarky has two and the
+value is COMPUTED where upstream's is claimed. Strictly more constrained, and stated rather than
+elided. ⚠ Also: `Plonk_checks.checked` compares the list `[ perm ]` and NOTHING ELSE
+(`plonk_checks.ml:537-544`) — `zeta_to_srs_length`/`zeta_to_domain_size` are never checked in-circuit
+upstream at all. -/
+
+/-- ⚑ R6's `ζ^n` slot index in the compiled ft program (`ftBuild`'s `zetaN`, the `log2n`-fold
+squaring of ζ). A LITERAL here and a derivation there — §21 pins the two against each other at both
+committed shapes, which a constant checked against its own definition would not do. -/
+def FT_SLOT_ZETAN : Nat := 55
+
+/-- ⚑ **Wrap statement word `i`'s CIRCUIT VARIABLE.** See §2c's table. Beyond word 39 the statement
+has no more words; a shape carrying more MSM terms than the statement has words falls back to the
+retired round-robin, and §10 pins that the committed shape does not reach it. -/
+def stmtVar (s : StepShape) (i : Nat) : PVar :=
+  if i == 0 then vCipShift s
+  else if i == 1 then vBShift s
+  else if i < 4 then xv (baseFtS s + FT_SLOT_ZETAN)
+  else if i == 4 then vPermShift s
+  else if i == 5 then vN s s.betaChal s.emsRows
+  else if i == 6 then vN s s.gammaChal s.emsRows
+  else if i == 7 then vN s s.alphaChal s.emsRows
+  else if i == 8 then vN s s.zetaChal s.emsRows
+  else if i == 9 then vXiStmt s
+  else if i == 10 then vStmtDigest s
+  else if i == 11 then vStmtWrapMsgs s
+  -- ⚑ segment C's SQUEEZE, spelled out rather than reached for: `hmDigestVar` is `sgSt (baseSegC s)
+  -- … (nbC s + 1) 0` and `sgSt` is §8e, below this point. §21 pins the two expressions equal, which
+  -- makes this a gate between two sources rather than an alias.
+  else if i == 12 then xv (baseSegC s + 3 * (nbC s + 1))
+  else if i < 29 then vN s (s.uChal (i - 13)) s.emsRows
+  else if i == 29 then vBranch s
+  else if i < 39 then vStmtFlag s (i - 30)
+  else if i == 39 then vStmtLookup s
+  else vN s (i % s.chals) s.emsRows
+
+/-- MSM term `i`'s scalar counter at chunk boundary `j`. At `j = msmChunksAt i` it IS **Wrap
+statement word `i`** — the cross-sub-circuit wire, and since 2026-08-03 a wire to the value the word
+actually carries rather than to a round-robin transcript challenge. ⚠ On a ZERO-chunk term
+(`msmBits i = 1`) the two coincide at `j = 0`, so the term has no counter cell of its own at all —
+which is what a ladder with no chunk rows means. -/
+def vSN (s : StepShape) (i j : Nat) : PVar :=
+  if j == msmChunksAt i then stmtVar s i
+  else xv (baseSN s + msmChunkPrefix i + j)
 
 /-! ## §3 — the row-schedule primitives. -/
 
@@ -1743,16 +1875,28 @@ structure MsmData where
   addCells : List (List Nat)
   deriving Repr, Inhabited
 
-def runMsm (s : StepShape) (bases : List (Nat × Nat)) (d : SpongeData) : MsmData :=
-  let bs := (List.range s.msmTerms).map (fun i => bitsOf i (chalOf s d (s.msmChal i)))
+/-- ⚑ **`multiscale_known`'s NON-CONSTANT PARTITION** (`step_verifier.ml:133-140`): the terms whose
+scalar is not a `Field.Constant`, which upstream is exactly the terms that emit a ladder. The nine
+one-bit statement words are `Spec.T.Constant` (`composition_types.ml:794-812`) / `Field.zero`
+(`spec.ml:397`), fold into `constant_part` OUT of circuit, and get **no base pin, no
+`add_fast base base` seed, no ladder and no fold add**. `chunks_needed ~num_bits:0 = 0` lands on the
+same partition without a special case, so this list is `msmChunksAt ≠ 0`. -/
+def msmLive (s : StepShape) : List Nat :=
+  (List.range s.msmTerms).filter (fun i => msmChunksAt i != 0)
+
+/-- ⚑ Since 2026-08-03 the scalars are supplied — they are the packed Wrap STATEMENT (§2c), not a
+function of the sponge — and the fold runs over the NON-CONSTANT partition only. -/
+def runMsm (s : StepShape) (bases : List (Nat × Nat)) (scal : Nat → Nat) : MsmData :=
+  let live := msmLive s
+  let bs := (List.range s.msmTerms).map (fun i => bitsOf i (scal i))
   let tds := (List.range s.msmTerms).map (fun i =>
     let T := msmBaseOf bases i
     runVbm T (dblA T) (bs.getD i []))
   let pts := (List.range s.msmTerms).map (fun i => (tds.getD i default).accs.getLastD (0, 0))
-  let st := (List.range (s.msmTerms - 1)).foldl
+  let st := (List.range (live.length - 1)).foldl
     (fun (acc : List (Nat × Nat) × List (List Nat)) a =>
-      let l := if a == 0 then pts.getD 0 (0, 0) else acc.1.getLastD (0, 0)
-      let r := pts.getD (a + 1) (0, 0)
+      let l := if a == 0 then pts.getD (live.getD 0 0) (0, 0) else acc.1.getLastD (0, 0)
+      let r := pts.getD (live.getD (a + 1) 0) (0, 0)
       let cells := completeAddWitness l.1 l.2 r.1 r.2
       (acc.1 ++ [(cells.getD 4 0, cells.getD 5 0)], acc.2 ++ [cells]))
     ([], [])
@@ -1781,10 +1925,16 @@ def msmChunkRows (s : StepShape) (m : MsmData) (i j : Nat) : List SRow :=
                 , (7, bt (5*j)), (8, bt (5*j+1)), (9, bt (5*j+2)), (10, bt (5*j+3))
                 , (11, bt (5*j+4)) ] } ]
 
-/-- The `a`-th `complete_add` of the MSM chain: `Rₐ = Lₐ + Pₐ₊₁`, `L₀ = P₀`, `Lₐ = Rₐ₋₁`. -/
+/-- The `a`-th `complete_add` of the MSM chain: `Rₐ = Lₐ + Pₐ₊₁`, `L₀ = P₀`, `Lₐ = Rₐ₋₁`.
+⚑ Over the NON-CONSTANT partition since 2026-08-03 (`msmLive`), i.e. `live.length − 1` adds — which
+is Mina's own `List.reduce_exn` over `non_constant_part` (`step_verifier.ml:180-182`) and is what
+its compiled step circuit's single run of **30 consecutive `CompleteAdd` rows** is. -/
 def msmAddRow (s : StepShape) (m : MsmData) (a : Nat) : SRow :=
-  let lp := if a == 0 then pAcc s 0 (msmChunksAt 0) else pSum s (a - 1)
-  let rp := pAcc s (a + 1) (msmChunksAt (a + 1))
+  let live := msmLive s
+  let i0 := live.getD 0 0
+  let i1 := live.getD (a + 1) 0
+  let lp := if a == 0 then pAcc s i0 (msmChunksAt i0) else pSum s (a - 1)
+  let rp := pAcc s i1 (msmChunksAt i1)
   let c := m.addCells.getD a []
   { kind := .completeAdd
   , perm := [ some (mpx s lp), some (mpy s lp), some (mpx s rp), some (mpy s rp)
@@ -1793,14 +1943,17 @@ def msmAddRow (s : StepShape) (m : MsmData) (a : Nat) : SRow :=
               , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
 /-- **R3's base pins** — `multiscale_known`'s bases are `Inner_curve.constant (lagrange_commitment
-~domain srs i)` (`step_verifier.ml:150,165-172,543-544`), so ALL `msmTerms` of them are pinned.
-Before 2026-08-02 every one was a free witness the prover chose. -/
+~domain srs i)` (`step_verifier.ml:150,165-172,543-544`), so every one that reaches the circuit is
+pinned. Before 2026-08-02 every one was a free witness the prover chose.
+⚑ Over `msmLive` since 2026-08-03: a CONSTANT-scalar term's base is folded into `constant_part`
+outside the circuit (`:133-152`), so upstream pins no in-circuit base for it either. -/
 def msmBaseRows (s : StepShape) (m : MsmData) : List SRow :=
-  (List.range s.msmTerms).map (fun i =>
+  (msmLive s).map (fun i =>
     baseConstRow (mpx s (pT s i)) (mpy s (pT s i)) (m.terms.getD i default).T)
 
 /-- **`scale_fast_unpack`'s OWN SEED**, `Ops.add_fast base base` (`plonk_curve_ops.ml:157`) — one
-`CompleteAdd` row per MSM term, DEFINING `pAcc i 0` instead of leaving it a witness.
+`CompleteAdd` row per LADDER (`msmLive`, since 2026-08-03), DEFINING `pAcc i 0` instead of leaving
+it a witness.
 
 ⚑ THE HOLE THIS CLOSES. The ladder is `accₖ₊₁ = [2]accₖ + (2bₖ−1)·T`, so
 `acc_N = 2^{5·msmChunksAt i}·acc₀ + Σₖ (2bₖ−1)·2^{5·msmChunksAt i−1−k}·T`. Doubling is a BIJECTION on the
@@ -1842,16 +1995,22 @@ def msmNZeroRows (s : StepShape) : List SRow :=
 
 /-- **R3's rows.** ⚑ Per-term chunk counts since §1b: a term whose statement word is one bit emits
 NO `VarBaseMul` row, which is what makes the emitted `x_hat` region **31 ladders** at Mina's own
-widths rather than 40 at a uniform 26. Its seed, probe and fold add stay, so the sum is still over
-all `msmTerms` points — that residue is named in the umbrella's #2. -/
+widths rather than 40 at a uniform 26.
+⚑⚑ …and since 2026-08-03 the whole REGION is the non-constant partition (`msmLive`): the nine
+one-bit words get no base pin, no `add_fast base base` seed, no probe and no fold add, because
+`multiscale_known` folds their bases into `constant_part` outside the circuit
+(`step_verifier.ml:133-152`). The fold chain is `live − 1 = 30` `CompleteAdd`s, which is the single
+run of thirty consecutive `CompleteAdd` rows in Mina's own compiled `step-zkapp-proved`. -/
 def msmRows (s : StepShape) (m : MsmData) (wired : Bool) : List SRow :=
+  let live := msmLive s
+  let i0 := live.getD 0 0
   msmBaseRows s m
   ++ msmNZeroRows s
-  ++ [msmDblRow s m 0]
-  ++ ((List.range (msmChunksAt 0)).flatMap (msmChunkRows s m 0))
-  ++ [probeRow wired (mpx s (pAcc s 0 (msmChunksAt 0))) (mpy s (pAcc s 0 (msmChunksAt 0)))]
-  ++ (List.range (s.msmTerms - 1)).flatMap (fun a =>
-       let i := a + 1
+  ++ [msmDblRow s m i0]
+  ++ ((List.range (msmChunksAt i0)).flatMap (msmChunkRows s m i0))
+  ++ [probeRow wired (mpx s (pAcc s i0 (msmChunksAt i0))) (mpy s (pAcc s i0 (msmChunksAt i0)))]
+  ++ (List.range (live.length - 1)).flatMap (fun a =>
+       let i := live.getD (a + 1) 0
        [msmDblRow s m i]
        ++ ((List.range (msmChunksAt i)).flatMap (msmChunkRows s m i))
        ++ [probeRow wired (mpx s (pAcc s i (msmChunksAt i))) (mpy s (pAcc s i (msmChunksAt i)))]
@@ -4494,6 +4653,50 @@ structure StepData where
   specD : SegSpec
   deriving Inhabited
 
+/-! ### ⚑ §2c's VALUE side — the packed Wrap statement, word by word. -/
+
+/-- ⚠ Wrap statement word 10's VALUE. `vStmtDigest` has no in-circuit source (§8f), so this is a
+deterministic fixture and the ladder's scalar is the prover's here. -/
+def STMT_DIGEST_VAL : Nat := (31 + 7000019 * 10 + 13 * 101) % pN
+/-- ⚠ Wrap statement word 11's VALUE — see `STMT_DIGEST_VAL`. -/
+def STMT_WRAPMSG_VAL : Nat := (41 + 7000019 * 11 + 13 * 121) % pN
+/-- ⚠ Wrap statement word 39's VALUE — the lookup `Opt`'s inner `Scalar Challenge`, so it is a
+`Challenge`-width word and must stay under `2¹²⁸` or its 26-chunk ladder cannot close. -/
+def STMT_LOOKUP_VAL : Nat := (53 + 7000019 * 39 + 13 * 1521) % 2 ^ 128
+
+/-- ⚑ **`Spec.pack … (Wrap.Statement.In_circuit.to_data statement)`**, evaluated — the forty scalars
+`multiscale_known` multiplies the SRS Lagrange commitments by, in `to_data`'s own order (§2c).
+
+⚠ **EVERY ENTRY IS THE VALUE `circuitEnv` ASSIGNS TO `stmtVar i`, and it has to be.** The chunk rows
+constrain `n_final = Σ bits` and `n_final` IS `stmtVar i`, so a scalar that disagreed with the
+statement word's own cell would emit a witness the prover rejects. The two are written once each and
+§21 pins them equal term by term.
+
+⚑ **THE TRANSCRIPT ENTERS ONLY THROUGH `ch`, AND ONLY AT THE WORDS THAT ARE PRECHALLENGES.** That
+is what makes §21's red control statable: bending `ch` at a challenge some word CARRIES moves the
+vector; bending it at one no word carries — at the committed shape, `u`, the fifteen `bullet_reduce`
+prechallenges past ζ are words 13–28, so what is left over is `c`, ξ and r — moves NOTHING. Under
+the retired round-robin every challenge moved forty terms. -/
+def msmScalars (s : StepShape) (ch : Nat → Nat) (ft : FtData) (fin : FinData)
+    (segC : SegData) (i : Nat) : Nat :=
+  if i == 0 then fin.cipShift
+  else if i == 1 then fin.bShift
+  else if i < 4 then ft.vals.getD FT_SLOT_ZETAN 0
+  else if i == 4 then fin.permShift
+  else if i == 5 then ch s.betaChal
+  else if i == 6 then ch s.gammaChal
+  else if i == 7 then ch s.alphaChal
+  else if i == 8 then ch s.zetaChal
+  else if i == 9 then fin.xiStmt
+  else if i == 10 then STMT_DIGEST_VAL
+  else if i == 11 then STMT_WRAPMSG_VAL
+  else if i == 12 then (segC.states.getLastD []).getD 0 0
+  else if i < 29 then ch (s.uChal (i - 13))
+  else if i == 29 then branchPacked
+  else if i < 39 then 0
+  else if i == 39 then STMT_LOOKUP_VAL
+  else ch (i % s.chals)
+
 /-- ⚑ THE DEPENDENCY ORDER, and why the fr-sponge now runs BEFORE the fold. Since §8g the C8 fold's
 own multipliers are `to_field_checked` of the fr-sponge's two squeezes, so segment B is evaluated
 first and `runDef` is fed from it. Nothing the fr-sponge absorbs depends on `combined_inner_product`
@@ -4527,7 +4730,6 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
                           FT_OMEGA prevChalVal MASK_BITS).ca.getLastD 0)
   -- **PASS 2 — the real transcript**, carrying `(combined_inner_product, its `Boolean.var`)`.
   let sp := runSponge s bs (cipV, CIP_BIT)
-  let msm := runMsm s bs sp
   -- ⚑ R6 next: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds — and since §6b
   -- its `perm` / `ζ^n` slots are also `Common.ft_comm`'s scalars, so R6 runs BEFORE the fold. That
   -- is a chain and not a cycle: `runFt` reads only β/γ/α/ζ, and fold round
@@ -4560,10 +4762,18 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   -- segment C's own trajectory past the index prefix — the two hashes are SIBLINGS off one copy,
   -- not a chain.
   let specD := hmOutSpec s sp gA
+  let fin := runFin s sp ft df segB specB (defc.lift s 1) ver
+  let segC := runSeg specC
+  -- ⚑⚑ **R3 IS LAST IN THE CHAIN SINCE §21**, because its scalars ARE the Wrap statement's words and
+  -- three of them (`combined_inner_product`, `b`, `perm` in `Shifted_value.Type1` form, plus ξ) are
+  -- R8's own cells and one is segment C's squeeze. Nothing above depends on `msm`: segment C absorbs
+  -- `sg_old` (§12k's correction), not the x_hat sum, and R8 does not read it. The chain is
+  -- `sponge → ft → fold → fr-sponge → finalize → segment C → x_hat`, still no cycle.
+  let msm := runMsm s bs (msmScalars s (chalOf s sp) ft fin segC)
   { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
   , defc := defc, df := df, bp := bp, gXY := gA
-  , fin := runFin s sp ft df segB specB (defc.lift s 1) ver
-  , segA := segA, segB := segB, segC := runSeg specC, segD := runSeg specD
+  , fin := fin
+  , segA := segA, segB := segB, segC := segC, segD := runSeg specD
   , specA := specA, specB := specB, specC := specC, specD := specD }
 
 /-- The assembly on the HONEST supplied commitments — block 539508's own. -/
@@ -4647,14 +4857,16 @@ def circuitEnv (t : StepData) : VarEnv :=
         [ (vDN s c k, (a.1 : Int)), (vDA s c k, (a.2.1 : Int)), (vDB s c k, (a.2.2 : Int)) ])
       ++ [ (vDHi s c, (t.defc.hi.getD c 0 : Int))
          , (vDLiftT s c, (liftTVal s v : Int)), (vDLift s c, (liftVal s v : Int)) ])
-  ++ (List.range s.msmTerms).flatMap (fun i =>
+  -- ⚑ Over `msmLive` since §21: a constant-scalar word owns no base, no `acc₀` and no counter cell
+  -- here because it owns no ROW there.
+  ++ (msmLive s).flatMap (fun i =>
       let td := t.msm.terms.getD i default
       [ (mpx s (pT s i), (td.T.1 : Int)), (mpy s (pT s i), (td.T.2 : Int)) ]
       ++ (List.range (msmChunksAt i + 1)).flatMap (fun j =>
           let a := td.accs.getD (5 * j) (0, 0)
           [ (mpx s (pAcc s i j), (a.1 : Int)), (mpy s (pAcc s i j), (a.2 : Int)) ])
       ++ (List.range (msmChunksAt i)).map (fun j => (vSN s i j, (td.ns.getD (5 * j) 0 : Int))))
-  ++ (List.range (s.msmTerms - 1)).flatMap (fun a =>
+  ++ (List.range ((msmLive s).length - 1)).flatMap (fun a =>
       let p := t.msm.sums.getD a (0, 0)
       [ (mpx s (pSum s a), (p.1 : Int)), (mpy s (pSum s a), (p.2 : Int)) ])
   ++ (List.range s.ipaRounds).flatMap (fun r =>
@@ -4783,7 +4995,12 @@ def circuitEnv (t : StepData) : VarEnv :=
      , (vShouldVerify s, 1), (vCipBit s, (CIP_BIT : Int))
      , (vBranch s, (branchPacked : Int)), (vDomLog2 s, (BRANCH_DOMAIN_LOG2 : Int))
      , (vMask s 0, (MASK_BITS.getD 0 0 : Int)), (vMask s 1, (MASK_BITS.getD 1 0 : Int))
-     , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int)) ]
+     , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int))
+     -- ⚑ §2c's three sourceless statement words. Their ONLY consumer is the x_hat ladder, which is
+     -- exactly what "no in-circuit source" means; the nine one-bit words get no entry because no row
+     -- reads them.
+     , (vStmtDigest s, (STMT_DIGEST_VAL : Int)), (vStmtWrapMsgs s, (STMT_WRAPMSG_VAL : Int))
+     , (vStmtLookup s, (STMT_LOOKUP_VAL : Int)) ]
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 
 /-- The full environment: the circuit's variables, then the `pubWords` public words, whose values

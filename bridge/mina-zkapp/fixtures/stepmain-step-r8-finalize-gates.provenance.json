@@ -1,13 +1,13 @@
 {
   "schema": "pickles-emit-provenance/1",
   "fixture": "stepmain-step-r8-finalize-gates.json.gz",
-  "artifact_sha256": "25e247c4b36004bf88de2ff992e3e6193bf23fa06bcb177071768aa7239eb260",
-  "refreshed_at": "2026-08-03T08:03:08.175Z",
+  "artifact_sha256": "7666f97a20e060a5dcbde87c80dd2f8348f12966709a921004c92e7973d94af8",
+  "refreshed_at": "2026-08-03T09:17:08.700Z",
   "refreshed_from": "/tmp/pickles-stepmain/stepmain_step_r8_finalize.json (⚠ FIXTURE STALE)",
   "cone": {
     "root": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
     "files": 112,
-    "digest": "25dd11c585a6931fadbfd6693f5a628b91c86b39ec35a752b4a8e0daa36d2c17",
+    "digest": "ccc040f8c413c6fadcee505df593752c543b51ce05a1e311ddc6ca15d5effae0",
     "files_detail": [
       {
         "rel": "Dregg2/Authority/ClearanceGraph.lean",
@@ -59,7 +59,7 @@
       },
       {
         "rel": "Dregg2/Circuit/DescriptorIR2.lean",
-        "sha": "5c4c8fa63c5897943597f6922be92030b3e2bdb3e69588748fd10662489454c6"
+        "sha": "245996106936fdf381b5ead5c75211b2bc096969b3c9a82815408a762f64e810"
       },
       {
         "rel": "Dregg2/Circuit/Emit/AirBuilder.lean",
@@ -127,7 +127,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainCore.lean",
-        "sha": "fbe80a89ceb6b6eb839f32b2df88cbd40e66db42e916ddd30bf9bbd4594e1069"
+        "sha": "39f92df67c02b7f3eae7695d3e8c6943167cbb2c189d5aa9fa6bcb2cfd546aad"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainField.lean",
@@ -460,15 +460,13 @@
     ]
   },
   "git": {
-    "head": "bce3989f660e5448cb07d5d737b744478e051289",
+    "head": "a17de6260993030cbc9af2796c0e13880049402d",
     "cone_dirty_at_head": [
-      "etatheory/Dregg2/Circuit/DescriptorIR2.lean",
-      "metatheory/Dregg2/Circuit/Emit/EmitStepMainJson.lean",
-      "metatheory/Dregg2/Circuit/Emit/KimchiStepMainCore.lean"
+      "etatheory/Dregg2/Circuit/Emit/KimchiStepMainCore.lean"
     ]
   },
-  "gates": 10708,
-  "probe_rows": 488,
-  "num_rows": 10708,
+  "gates": 10663,
+  "probe_rows": 470,
+  "num_rows": 10663,
   "public_input_size": 67
 }

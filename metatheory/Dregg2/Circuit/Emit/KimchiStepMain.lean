@@ -61,14 +61,19 @@ line items, not against a round number.
     at cols 0/2/3), `n₀=0, a₀=2, b₀=2` PINNED by `Generic` rows, and a `Generic` decomposition row
     tying the chain's reconstructed `n₈` back to the SPONGE OUTPUT variable. `EndoMulScalar` had
     never been chained and had never been wired to another gate type.
-  * **R3 `msm`** — TWO MSMs. `multiscale_known`, the x_hat MSM: `msmTerms` `var_base_mul` scalar
+  * **R3 `msm`** — TWO MSMs. `multiscale_known`, the x_hat MSM: `var_base_mul` scalar
     multiplications
     of `msmChunksAt i` 5-bit chunks — PER STATEMENT WORD since §20 (`bits_per_chunk = 5`,
-    `plonk_curve_ops.ml:64-68`), so nine of the forty emit no ladder at all — summed by a
-    `complete_add` chain. ⚑ Each term's scalar counter chain CLOSES ON ITS CHALLENGE: term `i`'s
-    final `n'` cell (col 5) and its challenge's final `n₈` cell (col 1) are the SAME VARIABLE, so
-    the value `EndoMulScalar` decoded is the value `VarBaseMul` multiplies by — one σ class spanning
-    three gate types and three sub-circuits.
+    `plonk_curve_ops.ml:64-68`) — summed by a `complete_add` chain over
+    **`multiscale_known`'s NON-CONSTANT PARTITION** (§21): the nine one-bit statement words are
+    `Spec.T.Constant` / `Field.zero` and fold OUT of circuit (`step_verifier.ml:133-152`), so the
+    region is **31 ladders, 31 seeds, 31 base pins and 30 adds** and not 40/40/40/39.
+    ⚑⚑ …and since §21 each term's scalar counter chain CLOSES ON ITS **WRAP STATEMENT WORD**, not on
+    a round-robin transcript challenge: term `i`'s final `n'` cell (col 5) IS `stmtVar i` — for word
+    0 that is `vCipShift`, for word 12 segment C's squeeze, for word 13+k the k-th bulletproof
+    prechallenge R8's `b_correct` folds. `StepShape.msmChal` is DELETED. Bending statement word `i`
+    now MOVES `x_hat`, and bending a transcript challenge no word carries (`c`, ξ, r) moves nothing;
+    both directions are `…Pins16`.
     ⚑ …and since 2026-08-02 the ladder STARTS where upstream starts it: `add_fast base base` as a
     `CompleteAdd` row per term and `n_acc = Field.zero` as a `Generic` pin
     (`plonk_curve_ops.ml:157-158`). Both were free witnesses; §12f exhibits what that bought a
@@ -187,22 +192,50 @@ o1-labs publishes Mina's compiled circuits as `*_gates.json` release blobs (kimc
 `Circuit { public_input_size, gates }` serde form; `bridge/mina-zkapp/scripts/
 mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' own asset filename).
 **`step-zkapp-proved` is branch 4 — the step branch that RUNS `verify_one` on a side-loaded proof**:
-PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
+PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` **2026-08-03, off
+a STAMPED emission the conformance gate produced itself** (`--emit`):
 
-    gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8444      8913       10734       10826
-    non-Generic         13778              7595      7597        9115        9138
-    Poseidon             6292 (31.4%)       902       902        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       849      1316        1619        1688   —
-    EndoMul              2465 (12.3%)      2464      2464        2464        2464   32×77+1×1 / 32×77 ✓
-    Zero                 2246 (11.2%)      2071      2073        2211        2218   —
-    VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
-    EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
+    gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  r9_opening
+    total gates         20023              8281      8750       10571       10663      11145
+    non-Generic         13778              7445      7447        8965        8988       9417
+    Poseidon             6292 (31.4%)       902       902        2266        2266       2266  11×572 / 11×206 ✓
+    Generic              6245 (31.2%)       836      1303        1606        1675       1728  —
+    EndoMul              2465 (12.3%)      2464      2464        2464        2464       2464  32×77+1×1 / 32×77 ✓
+    Zero                 2246 (11.2%)      1996      1998        2136        2143       2358  —
+    VarBaseMul           1596  (8.0%)      1390      1390        1390        1390       1594  1×1596 / 1×1594 ✓
+    EndoMulScalar         776  (3.9%)       376       376         392         408        408  8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
-    CompleteAdd           403  (2.0%)       334       334         334         334   1×159 2×65 3×23
-                    15×1 30×1 / 1×334
+    CompleteAdd           403  (2.0%)       317       317         317         317        327  1×159 2×65 3×23
+                    15×1 30×1 / 1×327
 
-⚑⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10822 → 10826 rows, +4): **`combine`'s `Opt.Maybe` MUX —
+⚠ **THE PREVIOUS TABLE WAS STALE AND SAID SO NOWHERE.** It read `r8_finalize 10826` with
+`VarBaseMul 1448` — and `1448 = 1040 + 408` is the count at the UNIFORM `msmChunks = 26` that §20
+DELETED in the very commit this table sat in. The rows column therefore spanned TWO rungs' movement,
+not one, and the `r9_opening` column §19 added had never been carried at all. Re-measured in full
+rather than patched. **Never grade a rung off a table you did not just produce, either.**
+
+⚑⚑ MOVEMENT IN THIS COMMIT (§21, `…Pins16`): **the x_hat MSM's scalars became the Wrap STATEMENT's
+words, and `multiscale_known`'s CONSTANT PARTITION left the circuit — −45 rows in R3.** Exactly
+9 `Generic` (the constant words' base pins), 18 `CompleteAdd` (9 seeds + 9 fold adds) and 18 `Zero`
+(their probes): `msmRows shapeStep` goes 2178 → 2133 with `VarBaseMul` UNCHANGED at 982, because the
+nine emitted no ladder row to begin with. The fold chain is now **30 adds over 31 terms**, which is
+Mina's own single run of thirty consecutive `CompleteAdd` rows.
+
+  * ⚑ **NOT ONE RUN-LENGTH FAMILY MOVED**, re-measured off the stamped emission: `EndoMul 32×77`
+    (exactly Mina's), `Poseidon 11×206`, `EndoMulScalar 8×51`, `VarBaseMul 1×1594`,
+    `CompleteAdd 1×327`.
+  * ⚑ **THE SMOKE SHAPE IS UNTOUCHED at 4,023 rows** — its three terms are words 0–2, all `Field`,
+    so it has no constant partition at all. The committed harness fixtures move only in their WITNESS
+    values, and all nine rungs re-prove in RELEASE with all five polarities.
+  * ⚠ **AND IT CHANGES NO VERDICT.** §17(e) and §18(b) re-run unchanged — the
+    substituted-with-re-solved-`G` witness is ACCEPTED before and ACCEPTED after. `x_hat` is a public
+    word and a segment-C absorption; making its scalars the statement's words moves what an HONEST
+    prover must claim. It relates nothing to `sg_old`'s opening, which is `verified` (#11).
+
+⚑⚑ MOVEMENT IN THE COMMIT BEFORE (§20, the per-word MSM widths, 1040 → 982 chunks): see
+simplification #2. Its own table update never happened — that is the staleness named above.
+
+⚑⚑ MOVEMENT BEFORE THAT (10822 → 10826 rows, +4): **`combine`'s `Opt.Maybe` MUX —
 `branch_data.proofs_verified_mask`'s LAST ignoring consumer, closed — AND IT MOVES PUBLIC WORD 9 AT
 THE DEPLOYED MASK, which is the opposite of what the residue predicted.**
 
@@ -612,17 +645,70 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      terms, because on those `vSN i 0` IS the term's challenge variable and a `w₀ = 0` half over it
      would pin a shared challenge. The emitted total goes 1040 → **982**: the fix is not a widening.
 
-     ⚠ **WHAT IS STILL OPEN, and it is the half that carries the meaning.** Term `i`'s scalar is
-     still `vN (msmChal i) emsRows` — a shared transcript challenge — and NOT Wrap statement word
-     `i`. A 255-bit width over a value that is structurally `< 2¹²⁸` is shape-faithful and
-     semantically empty; the width can only be *taken* together with the provenance. The assembly
-     already holds every one of the forty (`vCipShift`/`vBShift`/`vPermShift`, R6's `ζ^n`, R1's
-     sponge digest, `hmDigestVar`, the transcript prechallenges, `vXiStmt`, `vBranch`), so what is
-     undone is wiring `vSN i (msmChunksAt i)` to the statement word. ⚠ And the nine constant words
-     still carry a seed `CompleteAdd` and a fold add here where Mina emits neither — nine points
-     Mina never adds in-circuit (`…Pins15.the_constant_words_still_carry_a_seed_and_an_add`).
+     ⚑⚑ **AND THE PROVENANCE HALF LANDED TOO — §21, `…Pins16`, 2026-08-03. #2 IS FULLY RETIRED.**
+     This paragraph read "term `i`'s scalar is still `vN (msmChal i) emsRows` — a shared transcript
+     challenge — and NOT Wrap statement word `i`… a 255-bit width over a value that is structurally
+     `< 2¹²⁸` is shape-faithful and semantically empty", and it predicted the two remaining items;
+     both are done. `StepShape.msmChal` is DELETED, `vSN i (msmChunksAt i)` is `stmtVar i`, and
+     `msmRows` runs `multiscale_known`'s NON-CONSTANT partition. See §21 below.
      ⚠ `ft_comm`'s eight `scale_fast2`s ARE uniformly 255 (`step_verifier.ml:240-242`) and stay at
      `FTC_CHUNKS = 51`: two `VarBaseMul` regions, two genuinely different scalar widths.
+
+     **§21 — THE SCALARS, word by word** (`composition_types.ml:823-880` for the order,
+     `spec.ml:358-395` for `pack_basic`, both read at source):
+
+         i      word                                    wired to                    provenance
+         0,1,4  cip, b, perm (all `Shifted_value.Type1`) `vCipShift`/`vBShift`/`vPermShift`  R8 binds
+         2,3    ζ^srs_len, ζ^dom                        R6's `ζ^n` cell             DERIVED
+         5–8    β, γ, α, ζ                              `vN c emsRows`              R2 decodes
+         9      ξ                                       `vXiStmt`                   R8's `xi_correct`
+         10     sponge_digest_before_evaluations        `vStmtDigest`      ⚠ NO IN-CIRCUIT SOURCE
+         11     messages_for_next_wrap_proof            `vStmtWrapMsgs`    ⚠ NO IN-CIRCUIT SOURCE
+         12     messages_for_next_step_proof            segment C's squeeze         §8e′ computes it
+         13–28  bulletproof_challenges ×16              `vN (uChal k) emsRows`      R8's `b_correct`
+         29     branch_data                             `vBranch`                   §8h unpacks it
+         30–38  8 feature flags + the Opt's flag        no cell reaches a row       CONSTANT partition
+         39     the lookup Opt's Scalar Challenge       `vStmtLookup`      ⚠ NO IN-CIRCUIT SOURCE
+
+     ⚑ **FOUR SOURCE CORRECTIONS THIS RUNG MADE, each one refuting something written here.**
+     (a) `pack_basic`'s `Field` arm is `` [| `Field x |] ``, **not** `` `Packed_bits (x, 255) ``
+     (`spec.ml:373-374`); `multiscale_known` scales that case at `~num_bits:Field.size_in_bits`
+     (`:159-165`). §1b's docblock said `Packed_bits` and was wrong — the WIDTH is unaffected.
+     (b) `Plonk_checks.checked` compares the list **`[ perm ]` and nothing else**
+     (`plonk_checks.ml:537-544`): `zeta_to_srs_length`/`zeta_to_domain_size` are never checked
+     in-circuit upstream at all, so wiring words 2/3 to R6's DERIVED `ζ^n` is strictly MORE
+     constrained than upstream. ⚠ It also merges two upstream statement variables into ONE cell
+     here, which is a σ divergence and is pinned as one.
+     (c) The scalars are `Bulletproof_challenge.pack`'s PRECHALLENGE (`Sc.inner`, `spec.ml:390-393`),
+     so words 5–9/13–28/39 are `vN c emsRows` and **not** `vLift c`. Taking the lift would put a
+     `> 2¹²⁸` value under a 130-bit ladder and the counter chain could not close.
+     (d) Words 13–28 are the STEP proof's sixteen IPA challenges carried in the WRAP statement
+     (`per_proof_witness.ml:66-72`, `Types.Step_bp_vec`) — the SAME sixteen `finalize_other_proof`
+     folds for `b_correct` (`:1113-1128`). They are not `prev_challenges`, and they are not a fresh
+     witness vector.
+
+     ⚑ **THE RED CONTROL PAIR, which is what makes the width mean something** (`…Pins16`): bending
+     statement word `i` MOVES `x_hat`; bending transcript challenge `c` / ξ / r — which no statement
+     word carries — moves NOTHING, while the SAME bend under the retired round-robin moves it. Under
+     `msmChal i = i % 23` all twenty-three challenges moved all forty terms and no statement word
+     moved any.
+
+     ⚑ **AND THE CONSTANT PARTITION, decided by MINA'S OWN COMPILED CIRCUIT.** `List.reduce_exn` over
+     `non_constant_part` (`:180-182`) is one contiguous run of `|non_constant| − 1` `CompleteAdd`
+     rows, and `step-zkapp-proved` has exactly one run of **THIRTY**. Forty terms would give
+     thirty-nine. So the nine one-bit words get no base pin, no `add_fast base base` seed, no probe
+     and no fold add: **−45 rows at the committed shape** (9 base + 9 seed + 9 add + 18 probes), and
+     the ladder census is untouched because they emitted no `VarBaseMul` row to begin with.
+     ⚠ A one-bit VARIABLE word would still cost a seed upstream (`plonk_curve_ops.ml:157` runs before
+     the chunk loop); the nine are dropped because of the PARTITION, not because of the width.
+
+     ⚠ **THE RESIDUE §21 LEAVES: three of the forty scalars are prover-chosen here** — words 10, 11
+     and 39, each at its own named cell rather than aliased to something convenient. Word 10's
+     absence is a MEASURABLE gap one rung out: upstream seeds the fr-sponge with
+     `sponge_digest_before_evaluations` (`step_main.ml:41-46`) and **segment B here starts at
+     `challenge_digest`** — the seed absorb is not emitted, which is why the word has no derived
+     cell. Word 11 is substituted into the statement by `step_main.ml:84` from outside `verify_one`;
+     word 39 needs a lookup this assembly does not model.
   3. ⚑ **RETIRED 2026-08-02, and reading at source split it in two.** This read "the MSM base points
      are `basePts` (distinct on-curve Pallas points), not the previous proof's actual commitments".
      Upstream's bases have TWO provenances and NEITHER is a free witness (§3b): `multiscale_known`'s
@@ -656,9 +742,10 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      assembly's composed grid. That is the hole, on the emitted object. The new row's `Generic` body
      is nonzero there and zero on the honest grid, and the `x²`/`x³` halves stay zero (the bend was
      in `y`), so the control is about the check and not about the re-run.
-     ⚠ THE RESIDUE THAT REMAINS: `multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words;
-     here they are still the circuit's own derived challenges. #2 now carries that, because reading
-     `Spec.pack` at source made it the SAME item as the widths.
+     ⚑ **AND THE RESIDUE THIS ENTRY CARRIED IS CLOSED (§21, 2026-08-03).** It read
+     "`multiscale_known`'s SCALARS are upstream's PUBLIC INPUT words; here they are still the
+     circuit's own derived challenges." They are the statement's words now; #2 carries the detail,
+     because reading `Spec.pack` at source made it the SAME item as the widths.
   4. ⚑ **RETIRED 2026-08-02, and the ORIGINAL CLAIM WAS WRONG.** This entry read "`combined_inner_
      product` is HALF of upstream's — R5 assembles ONE ξ-Horner fold (at ζ)". READ AT SOURCE, R5's
      `cipRows` folds `cₖ = evₖ(ζ) + r·evₖ(ζω)` and then Horners over ξ, i.e.
@@ -977,3 +1064,4 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins12
 import Dregg2.Circuit.Emit.KimchiStepMainPins13
 import Dregg2.Circuit.Emit.KimchiStepMainPins14
 import Dregg2.Circuit.Emit.KimchiStepMainPins15
+import Dregg2.Circuit.Emit.KimchiStepMainPins16

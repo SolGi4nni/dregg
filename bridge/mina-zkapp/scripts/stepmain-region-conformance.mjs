@@ -345,9 +345,15 @@ const LEDGER = {
   // §20 (`…Pins15`) deleted that field and gave each word `msmChunksAt i`, so the emitted x_hat
   // cluster is now **31 ladders, 2×1 26×22 51×8, 982 chunks** — Mina's own vector, element for
   // element, and 58 chunks FEWER than the uniform 26 it replaced. The gate is what noticed the
-  // allowance had gone stale; this comment is the retirement. ⚠ The other half of #2 is NOT closed:
-  // term `i`'s scalar is still a shared transcript challenge and not statement word `i`, and this
-  // instrument cannot see that — a width is a shape and a provenance is not.
+  // allowance had gone stale; this comment is the retirement.
+  // ⚑⚑ AND THE OTHER HALF OF #2 CLOSED THE SAME DAY (§21, `…Pins16`): term `i`'s scalar IS Wrap
+  // statement word `i` now, not a shared transcript challenge. ⚠ **THIS INSTRUMENT CANNOT SEE THAT
+  // AND MUST NOT BE QUOTED AS EVIDENCE FOR IT** — a signature set is base-free and a σ class is
+  // compared by CLASSIFICATION (SELF / IN r,c / EXT), so re-pointing a ladder's terminal counter at
+  // a different EXT variable leaves every key here identical. The provenance is exhibited in Lean
+  // (bend the word → `x_hat` moves; bend an unread challenge → it does not); the width is what this
+  // gate sees. What §21 DID move here: the nine constant words' base pins and probes left the
+  // circuit, which is `probe-rows` 488→470 and `generic/exact-value-census` 696/3301→678/3283.
   'xhat/ladder-seed-unwired': {
     why: 'UNRECORDED — ALLOCATION, classified 2026-08-03',
     expect: '93/186 cells SELF (acc/scalar seed 0, chunk bits 93) in the UNSPLICED emission (mina: 0)',
@@ -399,8 +405,14 @@ const LEDGER = {
     // halves are `msmNZeroRows`' — the nine one-bit statement words no longer run a ladder, so they no
     // longer own an `n_acc = 0` half, and `packHalves` re-pairs the remaining 31. The digest moved
     // because the circuit did; a digest that moved on its own would be the tripwire firing.
-    expect: '696/3301 halves differ by EXACT coefficient vector [e46bba1943a6acd0]; 502 of those differ '
-      + 'by SHAPE FAMILY (constants→K, sign-normalized), so 194 are the same family carrying our constants',
+    // ⚑ MOVED AGAIN 2026-08-03 by §21 (`multiscale_known`'s CONSTANT PARTITION): 696/3301
+    // [e46bba1943a6acd0] → this. Exactly 18 halves left, all of them exact-misses and all of them
+    // family-MATCHES (194 → 176, while the 502 family-misses are unchanged): they are the NINE
+    // constant statement words' `Inner_curve.constant` base pins, two halves each, which upstream
+    // never emits because it folds those bases into `constant_part` outside the circuit
+    // (`step_verifier.ml:133-152`). The circuit moved; the instrument did not.
+    expect: '678/3283 halves differ by EXACT coefficient vector [daacc3a37f552f8b]; 502 of those differ '
+      + 'by SHAPE FAMILY (constants→K, sign-normalized), so 176 are the same family carrying our constants',
     note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
       + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
       + "`[1,0,0,0,-k]` is Snarky's own `Equal (var, constant)` row (`plonk_constraint_system.ml:1668-1678`).",
@@ -444,7 +456,9 @@ const LEDGER = {
   },
   'probe-rows': {
     why: 'header "THE σ-ONLY PROBES" (not on the #1–#11 list)',
-    expect: '488 standalone Zero rows (mina: 0)',
+    // ⚑ 488 → 470 on 2026-08-03 (§21): the nine constant statement words lost their per-term probe
+    // and their fold-add probe along with the rows those probes were about.
+    expect: '470 standalone Zero rows (mina: 0)',
     note: 'standalone `Zero` rows placed into σ classes so a flip isolates the wire. Mina has none. Spliced out here.',
   },
   'scope/unassembled-subcircuits': {

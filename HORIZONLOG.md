@@ -1,5 +1,91 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 3 (Pickles-in-Lean §21) — the x_hat MSM's scalars ARE the Wrap statement's words now, and bending word `i` MOVES x_hat
+
+§20 landed the per-word ladder WIDTHS and said, in its own closing paragraph, what it had not done:
+*"term `i`'s scalar is still a shared transcript challenge, not Wrap statement word `i`. A 255-bit
+width over a structurally `< 2^128` value is shape-faithful and SEMANTICALLY EMPTY."* That is this
+rung. `StepShape.msmChal` (`i % chals`) is **DELETED**; `vSN i (msmChunksAt i)` is `stmtVar i`, read
+off `Types.Wrap.Statement.In_circuit.to_data` (`composition_types.ml:823-880`) and `Spec.pack`'s
+`pack_basic` (`spec.ml:358-395`) **at source, in `~/dev/mina`, not relayed**.
+
+**THE ANSWER TO THE TWO QUESTIONS, PLAINLY.** Yes — every one of the forty MSM terms' scalars is now
+its Wrap statement word (28 wired to cells this circuit DERIVES, 9 folded out of circuit entirely,
+**3 named as having no in-circuit source**). And yes — bending statement word `i` MOVES `x_hat`,
+while bending a transcript challenge no word carries does NOT. Both directions are exhibited
+(`…Pins16`, 13 named theorems, zero `#guard`s).
+
+⚑ **FOUR SOURCE CORRECTIONS, each refuting something this file or the brief already said.**
+
+* **`pack_basic`'s `Field` arm is `` [| `Field x |] ``, NOT `` `Packed_bits (x, 255) ``**
+  (`spec.ml:373-374`); `multiscale_known` scales that case at `~num_bits:Field.size_in_bits`
+  (`step_verifier.ml:159-165`). Core §1b's docblock said `Packed_bits`. The WIDTH is 255 either way,
+  so `msmBits` does not move — but the constructor is what the constant partition matches on.
+* **`Plonk_checks.checked` compares the list `[ perm ]` and NOTHING ELSE** (`plonk_checks.ml:537-544`).
+  `zeta_to_srs_length` / `zeta_to_domain_size` are *never checked in-circuit upstream at all*. So
+  wiring words 2/3 to R6's DERIVED `ζ^n` — the cell §6b already feeds `ft_comm` from — is strictly
+  MORE constrained than upstream, not a simplification. ⚠ It also merges two upstream statement
+  variables into ONE cell here; that is a σ divergence and is pinned as one (40 words, 39 cells).
+* **The scalars are `Bulletproof_challenge.pack`'s PRECHALLENGE (`Sc.inner`)**, so words 5–9, 13–28
+  and 39 are `vN c emsRows` and **not** `vLift c`. Taking the lift would put a `> 2^128` value under
+  a 130-bit ladder and the counter chain could not close — a pin now forbids the conflation.
+* **Words 13–28 are the STEP proof's sixteen IPA challenges carried in the WRAP statement**
+  (`per_proof_witness.ml:66-72`, `Types.Step_bp_vec = N16`) — the SAME sixteen `finalize_other_proof`
+  folds for `b_correct` (`:1113-1128`). Not `prev_challenges`, and not a fresh witness vector.
+
+⚑ **THE RED CONTROL PAIR — the thing that makes the width mean something.** Bending statement word
+`w` by one and touching nothing else changes `multiscale_known`'s output for every `w` in range.
+Bending transcript challenge `c` leaves the NEW scalar vector — and hence `x_hat` — IDENTICAL, while
+the SAME bend under the retired round-robin MOVES it (the middle leg is what stops leg 1 being
+satisfied by an `x_hat` that depends on nothing). At the COMMITTED shape both directions bite where
+they should: challenges 0/3/19 are β/ζ/word-28 and MOVE the vector; challenges 20/21/22 are `c`, ξ
+and r, which no statement word carries, and they move NOTHING. Under `msmChal i = i % 23` all
+twenty-three moved all forty terms and no statement word moved any.
+
+⚑⚑ **AND THE CONSTANT PARTITION LEFT THE CIRCUIT — decided by MINA'S OWN COMPILED BLOB, not by us.**
+`multiscale_known` partitions on `` `Field (Constant c) | `Packed_bits (Constant c, _) `` and folds
+those bases outside the circuit (`step_verifier.ml:133-152`), so its `List.reduce_exn` over
+`non_constant_part` (`:180-182`) is `|non_constant| − 1` `CompleteAdd` rows **in one contiguous run**
+— and `step-zkapp-proved` has exactly one run of **THIRTY**. Forty terms would give thirty-nine. So
+the nine one-bit words get no base pin, no `add_fast base base` seed, no probe and no fold add:
+**−45 rows** (9 `Generic`, 18 `CompleteAdd`, 18 `Zero`), `msmRows shapeStep` 2178 → 2133, ladder
+census UNCHANGED at 982 chunks because they emitted no `VarBaseMul` row to begin with.
+⚠ A one-bit VARIABLE word would still cost a seed upstream (`plonk_curve_ops.ml:157` runs before the
+chunk loop). The nine are dropped because of the PARTITION, not because of the width.
+
+⚠ **THE RESIDUE, COUNTED: THREE of the forty scalars are prover-chosen here**, each at its own named
+cell rather than aliased to something convenient — words 10 (`sponge_digest_before_evaluations`),
+11 (`messages_for_next_wrap_proof`) and 39 (the lookup `Opt`'s inner `Scalar Challenge`).
+⚑ **Word 10's absence is a MEASURABLE gap one rung out and is the next thing to close:** upstream
+seeds the fr-sponge with it (`step_main.ml:41-46` absorbs `proof_state.sponge_digest_before_
+evaluations` into the sponge it hands `finalize_other_proof`), and **segment B here starts at
+`challenge_digest`** — the seed absorb is not emitted. Word 11 is substituted from outside
+`verify_one` (`step_main.ml:84`); word 39 needs a lookup this assembly does not model.
+
+⚠ **THE COMMITTED SHAPE TABLE WAS STALE AND SAID SO NOWHERE.** It read `r8_finalize 10826` with
+`VarBaseMul 1448` — and `1448 = 1040 + 408` is the count at the UNIFORM `msmChunks = 26` **that §20
+deleted in the very commit the table sat in.** §20 landed the widths and never re-measured its own
+table; the `r9_opening` column §19 added had never been carried at all. Re-measured in full off a
+STAMPED emission the conformance gate produced itself. *Never grade a rung off a table you did not
+just produce, either.*
+
+⚑ **MEASURED, all of it, this session.** Nine rungs emit and `placeChecked` accepts every one
+(`r9_opening` 11,145 rows at the committed shape, 4,023 at smoke — unchanged, because smoke's three
+terms are words 0–2, all `Field`, so it has no constant partition). All nine rungs prove + verify in
+**RELEASE** with all five polarities (honest / σ-probe REJECTED / same flips ACCEPTED unwired /
+unread advice ACCEPTED / public tamper + σ leg REJECTED), honest `r9_opening` 1.00 s.
+**NOT ONE run-length family moved**: `EndoMul 32×77` (exactly Mina's), `Poseidon 11×206`,
+`EndoMulScalar 8×51`, `VarBaseMul 1×1594`, `CompleteAdd 1×327`.
+All **sixteen** `KimchiStepMain*` modules elaborate green.
+
+⚠ **AND IT CHANGES NO VERDICT — say it here and not at the bottom.** The substitution exhibit is
+re-run and is literally unchanged: `substituted_assembly_still_closes_equal_g : tSwapAbs.bp.ver = 1`
+— **ACCEPTED**, before and after. `x_hat` is a public word and a segment-C absorption; making its
+scalars the statement's words moves what an HONEST prover must claim. It relates nothing to
+`sg_old`'s opening, which is the accumulator check's second leg (`per_proof_witness.ml:12-32`) and is
+`verified` (#11), a witnessed boolean and not a rung. §19 moved 482 rows, §20 moved the widths, §21
+moved 45 and the meaning of every scalar — and none of the four changed that verdict.
+
 ## ⚑⚑⚑⚑ AUGUST 2 (Mina→dregg) — the half of the braid that verified into a void now REFUSES a turn, and the descriptor that does it is COMPILED, not written
 
 **THE GAP, MEASURED FIRST — and three of the brief's four premises were wrong or weaker at source.**
