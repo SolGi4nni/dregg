@@ -115,11 +115,9 @@ section Falsity
 
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 
-local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+local notation "Slive" => S_live CH RH cmb compress compressN hRest
 
 /-- **The dead slot is FALSE.** Any `ClosedLogExtract Slive LH hash Rfix 15` — in particular the
 `other 15` member every `ClosureReadouts` bundle carries — yields `False`, given ANY decodable
@@ -176,18 +174,16 @@ the honest transfer witness on the empty-cell boundary. The apexes that consume 
 theorem closureReadouts_uninstantiable
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (hLog : logHashInjective LH)
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) : False := by
   obtain ⟨pc, pubLogPre, pubLogPost, pre, post, hdec⟩ :=
     stateDecodeLog_inhabited
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hLog
+      (S_live CH RH cmb compress compressN hRest) LH hLog
       ⟨0, 0, 0, 0⟩
   exact closedLogExtract_emptyTag_false hdec (rds.other 15)
 
@@ -198,12 +194,10 @@ a realizable point. -/
 theorem closureReadouts_uninstantiable_concrete
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       Dregg2.Circuit.Poseidon2Binding.Reference.refLH
       Dregg2.Circuit.FloorsNonVacuous.encodeSponge
       State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) : False :=
@@ -222,8 +216,6 @@ false member — is simply gone. Nothing else changes: same shared carriers, sam
 structure ClosureReadoutsLive
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (State : Type)
     (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
@@ -244,9 +236,13 @@ structure ClosureReadoutsLive
   hNPermsVK : compressNInjective cnPermsVK
   hNBirth : compressNInjective cnBirth
   hNNotes : compressNInjective cnNotes
+  /-- ⚑ ADDED 2026-08-02 alongside `ClosureReadouts.hNProgram`, for the identical reason: the
+  setProgram rung audits the record-slot root with the SURFACE sponge and so needs
+  `compressNInjective compressN`, which `S_live` no longer carries. See that field's doc. -/
+  hNProgram : compressNInjective compressN
   -- the transfer slot: pre-built by `ClosureTransfer.closedLogExtract_transfer_closed`.
   transfer : ClosedLogExtract
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0
+    (S_live CH RH cmb compress compressN hRest) LH hash Rfix 0
   -- NO `other` field: the dead tags are NOT quantified over — that member was FALSE
   -- (`closureReadouts_uninstantiable`); the live tags below cover everything the apex can reach.
   -- the per-effect NAMED decode-extraction readouts (Satisfied2 ⟹ encode), grouped by family.
@@ -455,21 +451,20 @@ the only change. (The converse map cannot exist under the realizable floors —
 def ClosureReadoutsLive.of
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) :
-    @ClosureReadoutsLive CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    @ClosureReadoutsLive CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc where
   hNCellSeal := rds.hNCellSeal
   hNLife := rds.hNLife
   hNPermsVK := rds.hNPermsVK
   hNBirth := rds.hNBirth
   hNNotes := rds.hNNotes
+  hNProgram := rds.hNProgram
   transfer := rds.transfer
   rdMint := rds.rdMint
   rdBurn := rds.rdBurn
@@ -511,16 +506,14 @@ same proven genuine discharger as before. -/
 theorem closedLogExtract_all_genuine_live
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadoutsLive CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadoutsLive CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) :
     ∀ e, LiveTag e → ClosedLogExtract
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix e := by
+      (S_live CH RH cmb compress compressN hRest) LH hash Rfix e := by
   rintro e ⟨fa, rfl⟩
   cases fa with
   | balanceA _ _ => exact rds.transfer
@@ -533,7 +526,7 @@ theorem closedLogExtract_all_genuine_live
   | incrementNonceA _ _ _ => exact closedLogExtract_incrementNonce_closed rds.rdIncNonce
   | setPermissionsA _ _ _ => exact closedLogExtract_setPermissions_closed rds.rdSetPermissions
   | setVKA _ _ _ => exact closedLogExtract_setVK_closed rds.rdSetVK
-  | setProgramA _ _ _ => exact closedLogExtract_setProgram_closed compressN hCompressN rds.rdSetProgram
+  | setProgramA _ _ _ => exact closedLogExtract_setProgram_closed compressN rds.hNProgram rds.rdSetProgram
   | introduceA _ _ _ => exact closedLogExtract_introduce_closed Scap rds.rdIntroduce
   | delegateAttenA _ _ _ _ => exact closedLogExtract_delegateAtten_closed Scap rds.rdDelegateAtten
   | attenuateA _ _ _ => exact closedLogExtract_attenuate_closed Scap rds.rdAttenuate
@@ -601,36 +594,34 @@ tag-liveness check `hlive` — which the OLD conclusion forced anyway (`liveTag_
 theorem lightclient_unfoolable_closed_final_live
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     [StarkSound hash Rfix]
-    (rds : @ClosureReadoutsLive CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadoutsLive CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (_e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     (pi : BatchPublicInputs) (π : BatchProof)
     (hlive : LiveTag pi.effect)
     (hwitdec : WitnessDecodes hash Rfix
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pi)
+      (S_live CH RH cmb compress compressN hRest) pi)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_live hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
+    (S_live CH RH cmb compress compressN hRest) LH
     (closedLogExtract_all_genuine_live rds) mkLog pi π hlive hwitdec hacc
 
 /-! ## §7 — the gap is closed, teeth on both sides.

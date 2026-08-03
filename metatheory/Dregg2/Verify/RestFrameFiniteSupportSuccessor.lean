@@ -169,6 +169,89 @@ theorem restHashIffFrameFin_not_provable :
     ¬ ∀ RH : RecordKernelState → ℤ, RestHashIffFrameFin RH :=
   fun h => restHashIffFrameFin_refutable (h (fun _ => 0))
 
+/-! ## §3b — ⚑ REFUTED AT DEPLOYED WIDTH TOO (2026-08-02), AND NOTHING GATES IT.
+
+§3's counterexample is the CONSTANT rest-hash — a degenerate instance, which is the doctrine's
+required refutability pole and says nothing whatever about the deployed sponge. This section is the
+other question, and it has the other answer: at DEPLOYED BABYBEAR WIDTH the successor is false too,
+by the SAME pigeonhole that kills `compressInjective`/`compressNInjective`/`cellLeafInjective`. The
+`denote`-image of `FinKernelState` is INFINITE — vary one limb of the VK-epoch nullifier-accumulator
+root over `ℕ` and every member is `FiniteRepresentable` by construction — while a bounded `RH` lands
+in ~2³¹ values, so two image states must collide, and the biconditional's forward direction then
+demands a frame equality they provably do not have.
+
+So restricting `RestHashIffFrame`'s domain to finitely-representable states repaired the CARDINALITY
+obstruction (§2 is a genuine satisfiability witness at the unbounded reference sponge, which
+`RestHashIffFrame` could never have) and left the WIDTH obstruction exactly where it was. Both were
+always there; only the first one had been measured.
+
+⚠ **WRITING THIS ARMS NOTHING, AND THAT IS THE FINDING.** `#floor_ratchet` DERIVES its refuted-floor
+set, and the derivation requires an injectivity SHAPE — `FloorCensus.injShape` (the telescoped body
+is an fvar equation) or `injShapeAnd` (a conjunction of them). `RestHashIffFrameFin`'s body is an
+`∀`-`Iff` over an 18-fold conjunction, so it is not a candidate however many refutations the tree
+holds, and it is not a named sentinel either. This is the identical gap
+`RestFrameCardinalityFloor`'s header records for the predecessor, inherited whole by the successor.
+
+⚑ The concrete cost of the blindness: `CircuitSoundness.CommitSurface` was REMOVED from
+`FloorRatchet.sentinelBundles` on 2026-08-01 on the strength of this field being "satisfiable". It
+is — at the reference sponge of §2. At deployed width it is not, and no instrument in the tree can
+tell those two apart. `RestHashIffFrameFin` has ~120 binder sites and ZERO baseline rows, and after
+`ClosureSurface.S_live` shed its four injectivity parameters (2026-08-02) it is the SOLE surviving
+obstruction between the whole closure tower and a deployed light client — the one carrier the ratchet
+cannot count. Arming it would mean adding it to `FloorCensus.sentinelFloors`, which promotes it,
+re-promotes `CommitSurface` to a floor BUNDLE, and turns ~120 binder sites plus every `bundle-user`
+into fresh carriers needing a deliberate `#floor_ratchet_emit!` RAISE of the baseline. That is a
+decision about the instrument's scope, not a proof, and it is left named rather than taken. -/
+
+/-- The `ℕ`-indexed family of REACHABLE finite states, differing only in limb 0 of the VK-epoch
+nullifier-accumulator root. Every member is `FiniteRepresentable` BY CONSTRUCTION, which is what
+makes `RestHashIffFrameFin` genuinely assert something about them — unlike
+`RestFrameCardinalityFloor.balFam`, whose members are ordinary `RecordKernelState`s with no finite
+representative and which the successor therefore (correctly) says nothing about. -/
+def rootFam (n : Nat) : FinKernelState :=
+  { finInit with nullifierRoot := fun i => if i = 0 then (n : ℤ) else 0 }
+
+/-- The family reads its index back out of the denotation (non-degeneracy: without this the
+pigeonhole below could be riding a constant family). -/
+theorem rootFam_root (n : Nat) : (denote (rootFam n)).nullifierRoot 0 = (n : ℤ) := rfl
+
+/-- **⚑ A rest-hash with FINITE RANGE cannot satisfy `RestHashIffFrameFin`.** The `denote`-image is
+infinite and the biconditional separates it, so `n ↦ RH (denote (rootFam n))` is an injection of `ℕ`
+into `Set.range RH`. -/
+theorem restHashIffFrameFin_false_of_finite_range (RH : RecordKernelState → ℤ)
+    (hfin : (Set.range RH).Finite) : ¬ RestHashIffFrameFin RH := by
+  intro h
+  refine (Set.infinite_of_injective_forall_mem
+    (f := fun n : Nat => RH (denote (rootFam n))) ?_ (fun n => Set.mem_range_self _)) hfin
+  intro n m hnm
+  obtain ⟨_hAcc, _hCaps, _hBal, _hNul, _hRev, _hCom, _hSC, _hFac, _hLif, _hDC, _hDel, _hDgs, _hDE,
+    _hDEA, _hHeaps, hNR, _hRR, _hCR⟩ :=
+    (h (denote (rootFam n)) (denote (rootFam m))
+        (finiteRepresentable_of_denote _) (finiteRepresentable_of_denote _)).mp hnm
+  have h0 : ((m : ℤ)) = ((n : ℤ)) := by
+    have hz := congrFun hNR 0
+    rwa [rootFam_root, rootFam_root] at hz
+  exact (Nat.cast_injective h0).symm
+
+/-- **⚑⚑ REFUTED AT THE DEPLOYED WIDTH.** `RestHashIffFrameFin RH` is FALSE for every rest-hash
+whose values lie in the BabyBear window `[0, 2^31 - 2^27 + 1)`. The window is where the deployed
+commitment lives, so this is not an abstract curiosity: it is the statement that the surviving field
+of `CircuitSoundness.CommitSurface` — and hence the surviving parameter of `ClosureSurface.S_live` —
+has no deployed instance, exactly as the four deleted injectivity fields had none. -/
+theorem restHashIffFrameFin_false_babyBear (RH : RecordKernelState → ℤ)
+    (hb : ∀ k, 0 ≤ RH k ∧ RH k < (2013265921 : ℤ)) : ¬ RestHashIffFrameFin RH :=
+  restHashIffFrameFin_false_of_finite_range RH
+    (Set.Finite.subset (Set.finite_Ico (0 : ℤ) 2013265921)
+      (by rintro _ ⟨k, rfl⟩; exact ⟨(hb k).1, (hb k).2⟩))
+
+/-- **FIRES (the width binder is LOAD-BEARING).** The reference rest-hash of §2 DOES satisfy the
+successor, and it is unbounded — so `restHashIffFrameFin_false_babyBear`'s hypothesis is not
+decoration: drop it and the theorem is false. The two poles are the same predicate at two widths. -/
+theorem restHashIffFrameFin_width_load_bearing :
+    RestHashIffFrameFin (RH_fin Reference.refSponge)
+      ∧ ¬ ∀ RH : RecordKernelState → ℤ, ¬ RestHashIffFrameFin RH :=
+  ⟨restHashIffFrameFin_satisfiable, fun hall => hall _ restHashIffFrameFin_satisfiable⟩
+
 /-! ## §4 — ONE DOWNSTREAM CONSUMER, RE-DERIVED.
 
 `StateCommit.stateCircuit_rejects_field_tamper` is the smallest real theorem in the tree carrying
@@ -472,6 +555,9 @@ end Inhabitant
 #assert_axioms restHashIffFrameFin_fires
 #assert_axioms restHashIffFrameFin_refutable
 #assert_axioms restHashIffFrameFin_not_provable
+#assert_axioms restHashIffFrameFin_false_of_finite_range
+#assert_axioms restHashIffFrameFin_false_babyBear
+#assert_axioms restHashIffFrameFin_width_load_bearing
 #assert_axioms stateCircuit_rejects_field_tamper_fin
 #assert_axioms lifeAll_not_finrep
 #assert_axioms lifeAll'_not_finrep

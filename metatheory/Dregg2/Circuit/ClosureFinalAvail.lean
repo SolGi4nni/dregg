@@ -100,12 +100,10 @@ theorem closedLogExtract_transport
 section PerEffect
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
 
-local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+local notation "Slive" => S_live CH RH cmb compress compressN hRest
 
 /-- **`closedLogExtract_all_genuine_avail`** — `∀ e, ClosedLogExtract … RfixAvail e`. The two BALANCE-
 DEBITING tags (transfer 0, burn 4) ride the `ClosureTransferAvail` `_availFix` slots (availability
@@ -116,7 +114,7 @@ burn availability discharge is now threaded to the registry the light client ver
 theorem closedLogExtract_all_genuine_avail {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (availTransfer : ClosedLogExtract Slive LH hash RfixAvail 0)
     (availBurn : ClosedLogExtract Slive LH hash RfixAvail 4) :
@@ -155,7 +153,8 @@ structure ClosedWitnessAvail
 From a verifying batch against `vkOfRegistry RfixAvail` and EXACTLY the standard crypto foundations —
   * `StarkSound hash RfixAvail` (the audited p3 batch-STARK extraction at the deployed hardened registry;
     realizable via `AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail`, the umem memory-legs route),
-  * the `S_live` `CommitSurface` CR fields,
+  * the `S_live` rest-frame obligation `RestHashIffFrameFin RH` (its four injectivity parameters were
+    deleted 2026-08-02),
   * `logHashInjective LH` (carried inside `ClosedWitnessAvail.mkLog`),
   * `ClosedWitnessAvail hash S_live LH pi` (the ONE prover-witness floor, parametric in `pi.effect`) —
 there EXIST decoded endpoints and a genuine FULL kernel+log transition `kstepAll pi.effect pre post` whose
@@ -164,40 +163,40 @@ availability leg (`amt ≤ bal`) is FORCED by the deployed borrow chain — the 
 NO `availOf`: `availOf` is DISCHARGED at the apex.
 
 ⛑ `Poseidon2SpongeCR hash` SHED 2026-07-31 (it fed only `descriptorRefines`'s dead def-body antecedent).
-⚠ The `S_live` CR fields REMAIN and are refuted at every parameter (`Verify.ApexPremiseVacuity`), so this
-hardened apex is still not applicable; `ApexFloorFree.lightclient_unfoolable_free` is. -/
+⚰ `S_live`'s four injectivity PARAMETERS SHED 2026-08-02. ⚠ `RestHashIffFrameFin RH` REMAINS and is
+refuted at deployed BabyBear width
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), so this hardened apex is
+still not applicable at deployed parameters; `ApexFloorFree.lightclient_unfoolable_free` is. -/
 theorem lightclient_unfoolable_closed_final_avail
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash RfixAvail]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitnessAvail hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
+      (S_live CH RH cmb compress compressN hRest) LH pi)
     (hacc : verifyBatch (vkOfRegistry RfixAvail) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn := by
   -- the single published-effect refinement rung, from the single `ext`/`mkLog` of the hardened floor.
   -- FLOOR-FREE: `descriptorRefinesFree_of_closedLogExtract` introduces no `Poseidon2SpongeCR`.
   have hrefine :
       Dregg2.Circuit.ApexFloorFree.descriptorRefinesFree
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+        (S_live CH RH cmb compress compressN hRest).commit
         hash (RfixAvail pi.effect) (kstepAll pi.effect) := by
     intro minit mfin maddrs t pc pre post hsat _hlink hdecC
     obtain ⟨pubLogPre, pubLogPost, hdecLog⟩ := hcw.mkLog pc pre post
       ⟨hdecC.preBinds, hdecC.postBinds, hdecC.preWF, hdecC.postWF⟩
     exact hcw.ext minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   exact lightclient_unfoolable_one hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) RfixAvail kstepAll pi
+    (S_live CH RH cmb compress compressN hRest) RfixAvail kstepAll pi
     hrefine π hcw.wit hacc
 
 /-! ## §5 — non-vacuity: `ClosedWitnessAvail` is BUILT from the genuine readouts + the `_availFix` slots.
@@ -215,7 +214,7 @@ at every other tag the proven `<e>_closedLog` rung. Witnesses `ClosedWitnessAvai
 theorem closedWitnessAvail_of_readouts {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (availTransfer : ClosedLogExtract Slive LH hash RfixAvail 0)
     (availBurn : ClosedLogExtract Slive LH hash RfixAvail 4)

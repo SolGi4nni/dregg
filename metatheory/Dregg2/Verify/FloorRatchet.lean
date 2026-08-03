@@ -254,10 +254,14 @@ own chip REFUTES the deleted field — so keep the list to bundles too big to fa
 -- `compNInj`/`leafInj`) are DELETED, so the bundle is no longer floor-carrying and the sentinel
 -- would fail closed. Its one remaining field is `restFrame : RestFrameFin.RestHashIffFrameFin RH`,
 -- whose body is `Iff`-headed and satisfiable (`RestFrameFiniteSupportSuccessor` constructs a closed
--- inhabitant), so nothing in the fixpoint fires on it. ⚠ The four floors did NOT stop existing —
--- `ClosureSurface.S_live` and ~250 downstream sites still bind `compressInjective`/
--- `compressNInjective`/`cellLeafInjective` DIRECTLY, as ordinary hypotheses, and the `binder` class
--- still gates every one of them. What fell is the BUNDLE surface, not the binder surface.
+-- inhabitant), so nothing in the fixpoint fires on it. ⛑ 2026-08-02: the BINDER surface followed —
+-- `ClosureSurface.S_live`'s four parameters, which had become inert when the fields went, are deleted
+-- along with every binder that only existed to feed them. ⚠ AND THE REMOVAL OF THIS SENTINEL IS NOT A
+-- CLEAN WIN. `restFrame` is satisfiable at the UNBOUNDED reference sponge and REFUTED at deployed
+-- BabyBear width by pigeonhole
+-- (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), and this gate cannot
+-- tell those apart: `RestHashIffFrameFin` is `Iff`-headed, so `injShape`/`injShapeAnd` reject it and it
+-- can never enter `refutedFloors` however many refutations exist. ~120 binder sites, ZERO rows.
 def sentinelBundles : List Name :=
   [ `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
   , `Dregg2.Circuit.ClosureLog.StateDecodeLog

@@ -88,12 +88,10 @@ set_option autoImplicit false
 section
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 
 local notation "Slive" =>
-  S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+  S_live CH RH cmb compress compressN hRest
 
 /-- **`kernelConfigSoundAvail` — verifyBatch-accept over `RfixAvail` ⟹ a REAL kernel-config transition with
 availability DISCHARGED.**
@@ -137,7 +135,7 @@ theorem kernelConfigSoundAvail
     (href : DeployedRefines RfixAvail perm RATE toNat params vk
         (fullChecks core A toNat params.powBits) initState logN view)
     -- ★ config-side: the genuine per-effect readouts (off-debit tags) + the two `_availFix` bundles.
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     -- ★ the HARDENED transfer readout bundle (feeds `closedLogExtract_transfer_closed_availFix`).
     (readoutT : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)

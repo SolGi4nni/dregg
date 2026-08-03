@@ -64,8 +64,8 @@ heterogeneous effects.
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on `lightclient_unfoolable_circuit_sound_turn`
 + the realizable floors entering as Prop/Type hypotheses (`StarkSound` instance, `Poseidon2SpongeCR`, the
-`S_live` CR fields, `logHashInjective` inside `mkLog`, the `ClosureReadouts` per-step prover-witness
-bundle). NEW file; imports read-only.
+`S_live` rest-frame obligation, `logHashInjective` inside `mkLog`, the `ClosureReadouts` per-step
+prover-witness bundle). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.ClosureFinal
 
@@ -101,27 +101,25 @@ this term names `closedLogExtract_all_genuine`, which names every `<e>_closedLog
 theorem hrefines_forest_closed
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post) :
     ∀ e, descriptorRefines
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) hash
+      (S_live CH RH cmb compress compressN hRest) hash
       (Rfix e) (dispatchArm e) :=
   -- `kstepAll = dispatchArm` definitionally, so `hrefinesAllClosed`'s `kstepAll e` family IS the
   -- `dispatchArm e` family the whole-turn fold consumes.
   hrefinesAllClosed
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash
+    (S_live CH RH cmb compress compressN hRest) LH hash
     (closedLogExtract_all_genuine rds) mkLog
 
 /-! ## §2 — `lightclient_unfoolable_circuit_sound_turn`: THE WHOLE-TURN CLOSED APEX.
@@ -144,36 +142,34 @@ single-step floors of `lightclient_unfoolable_circuit_sound`, now per-STEP: NO t
 theorem lightclient_unfoolable_circuit_sound_turn
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (hCR : Poseidon2SpongeCR hash)
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     {start fin : RecChainedState}
     (c : TurnDecodeChain hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) start fin)
+      (S_live CH RH cmb compress compressN hRest) start fin)
     (hidx : ∀ d ∈ c.steps, ∃ e : EffectIdx, d.descr = Rfix e)
     (te : TurnEndpoints hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) c) :
+      (S_live CH RH cmb compress compressN hRest) c) :
     ∃ (acts : List FullActionA) (s s' : RecChainedState),
       execFullTurnA s acts = some s' ∧
-      te.tp.pubPre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      te.tp.pubPre = (S_live CH RH cmb compress compressN hRest).commit
         s.kernel te.tp.turn ∧
-      te.tp.pubPost = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      te.tp.pubPost = (S_live CH RH cmb compress compressN hRest).commit
         s'.kernel te.tp.turn :=
   -- the whole-turn fold, with its carried per-effect family CLOSED from the genuine per-step readouts.
   lightclient_turn_unfoolable_forest hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix hCR
+    (S_live CH RH cmb compress compressN hRest) Rfix hCR
     (hrefines_forest_closed hash LH rds mkLog) c hidx te
 
 /-! ## §3 — NON-VACUITY: a MIXED-effect turn is genuinely covered.
@@ -190,20 +186,18 @@ rung. The whole-turn family genuinely covers heterogeneous effects, not transfer
 theorem closedLogExtract_family_covers_mixed
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) :
     Dregg2.Circuit.ClosureAll.ClosedLogExtract
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 52 ∧
+        (S_live CH RH cmb compress compressN hRest) LH hash Rfix 52 ∧
     Dregg2.Circuit.ClosureAll.ClosedLogExtract
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 2 ∧
+        (S_live CH RH cmb compress compressN hRest) LH hash Rfix 2 ∧
     Dregg2.Circuit.ClosureAll.ClosedLogExtract
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 3 :=
+        (S_live CH RH cmb compress compressN hRest) LH hash Rfix 3 :=
   ⟨closedLogExtract_all_genuine rds 52,
    closedLogExtract_all_genuine rds 2,
    closedLogExtract_all_genuine rds 3⟩
@@ -219,12 +213,10 @@ obligation is vacuous over the empty step list). -/
 def emptyChain
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (start : RecChainedState) :
     TurnDecodeChain hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) start start where
+      (S_live CH RH cmb compress compressN hRest) start start where
   steps := []
   sat := by intro d hd; simp at hd
   headPre := by simp
@@ -239,34 +231,32 @@ floors), so the headline is non-vacuous. -/
 theorem lightclient_unfoolable_circuit_sound_turn_empty
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (hCR : Poseidon2SpongeCR hash)
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     (start : RecChainedState) (tp : PublishedCommit)
-    (hpre : tp.pubPre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+    (hpre : tp.pubPre = (S_live CH RH cmb compress compressN hRest).commit
       start.kernel tp.turn)
-    (hpost : tp.pubPost = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+    (hpost : tp.pubPost = (S_live CH RH cmb compress compressN hRest).commit
       start.kernel tp.turn) :
     ∃ (acts : List FullActionA) (s s' : RecChainedState),
       execFullTurnA s acts = some s' ∧
-      tp.pubPre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      tp.pubPre = (S_live CH RH cmb compress compressN hRest).commit
         s.kernel tp.turn ∧
-      tp.pubPost = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      tp.pubPost = (S_live CH RH cmb compress compressN hRest).commit
         s'.kernel tp.turn := by
   let te : TurnEndpoints hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      (S_live CH RH cmb compress compressN hRest)
       (emptyChain hash start) :=
     { tp := tp
       headOpen := by simp [emptyChain, hpre]

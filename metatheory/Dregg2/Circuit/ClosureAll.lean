@@ -59,7 +59,7 @@ the LEDGER-root commitment cannot certify, now carrying the log binding as the N
 
 ## The closed apex's EXACT carried floor set
 
-`{StarkSound hash Rfix, the S_live Poseidon/Merkle CR carrier set,
+`{StarkSound hash Rfix, the S_live rest-frame obligation `RestHashIffFrameFin`,
 logHashInjective LH (the log-CR floor), WitnessDecodes-class extraction (the per-effect
 ClosedLogExtract — the circuit witness + the named log floor, NOT a per-effect EffectDecodeBridge
 decode residual)}`. No per-effect `EffectDecodeBridge`/`LedgerSurfaceReadout`/decode residual remains
@@ -70,10 +70,12 @@ beyond the circuit witness + those floors.
 drops. The apex now routes through `ApexFloorFree.lightclient_unfoolable_free`, which introduces no
 floor at all.
 
-⚠ AND THE SET IS STILL NOT REALIZABLE, which is the honest reading of that shed: the `S_live` CR
-carriers ARE the `CommitSurface` fields, and `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`
-refutes that bundle at EVERY parameter (Cantor on `restFrame`). One refuted hypothesis fewer is not
-"applicable". `ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`, is the applicable
+⚰ `S_live`'s FOUR injectivity carriers left the set on 2026-08-02, with the `CommitSurface` fields they
+filled. ⚠ AND THE SET IS STILL NOT REALIZABLE, which is the honest reading of both sheds: the survivor
+`RestHashIffFrameFin RH` is refuted at deployed BabyBear width by pigeonhole
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), and NO gate defends it —
+it is `Iff`-headed, so `#floor_ratchet`'s shape-derived floor set can never contain it. Refuted
+hypotheses fewer is not "applicable". `ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`, is the applicable
 statement; migrating this chain onto it needs `StateDecodeLog`/`ClosedLogExtract` restated at a
 `CommitMap` and the rest-hash refinement of `Verify.RestFrameFiniteSupportSuccessor`.
 
@@ -150,13 +152,11 @@ advance). transfer / cellSeal / revoke are RE-EXPORTED from `ClosureLog`. -/
 section PerEffect
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ}
 
 /-- The live commitment surface, with the section's CR carriers. -/
-local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+local notation "Slive" => S_live CH RH cmb compress compressN hRest
 
 /-! ### transfer / cellSeal / revoke — RE-EXPORTED from `ClosureLog`. -/
 
@@ -1700,8 +1700,6 @@ published receipt-prepend, and the encode-minus-log) — the `WitnessDecodes`-cl
 theorem closedLogExtract_transfer
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} (hash : List ℤ → ℤ)
     (extract : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
@@ -1718,7 +1716,7 @@ theorem closedLogExtract_transfer
           Dregg2.Circuit.RotatedKernelRefinement.rotatedEncodes hash minit mfin maddrs t
             pre post tr _a)) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
+      (S_live CH RH cmb compress compressN hRest) LH hash Rfix 0 := by
   intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- v12 big-bang: `Rfix 0` is `transferV3Membership` definitionally (the teeth-exposing transfer —
   -- rc + the two membership teeth PI pins at 50..51, `v3RegistryHeap` tail pos 60; both wraps

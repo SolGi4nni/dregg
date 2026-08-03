@@ -79,12 +79,10 @@ set_option autoImplicit false
 section PerEffect
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
 
-local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+local notation "Slive" => S_live CH RH cmb compress compressN hRest
 
 /-! ## §1 — the `Satisfied2`-style readouts (carry `RotTableSide` + receipt + encode-minus-log).
 
@@ -900,8 +898,6 @@ off-cohort indices are not real effects). -/
 structure ClosureReadouts
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (State : Type)
     (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
@@ -922,12 +918,20 @@ structure ClosureReadouts
   hNPermsVK : compressNInjective cnPermsVK
   hNBirth : compressNInjective cnBirth
   hNNotes : compressNInjective cnNotes
+  /-- ⚑ ADDED 2026-08-02, in the same commit that deleted `S_live`'s four injectivity PARAMETERS.
+  The setProgram rung (`closedLogExtract_setProgram_closed`) audits the record-slot root with the
+  SURFACE sponge, so it genuinely needs `compressNInjective compressN` — the one place in the cone
+  where a proof READ a deleted parameter rather than merely passing it on. It sits here, beside the
+  five cn-carriers it is exactly like, instead of as a binder whose implicit value no call site
+  could infer once it left `S_live`'s type. This is not new floor content: the bundle already
+  carried `compressNInjective` five times over and stays a `#floor_ratchet` sentinel BUNDLE. -/
+  hNProgram : compressNInjective compressN
   -- the transfer slot: pre-built by `ClosureTransfer.closedLogExtract_transfer_closed`.
   transfer : ClosedLogExtract
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0
+    (S_live CH RH cmb compress compressN hRest) LH hash Rfix 0
   -- the off-cohort indices (not real effects): the uniform `ClosedLogExtract` fallback.
   other : ∀ e, ClosedLogExtract
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix e
+    (S_live CH RH cmb compress compressN hRest) LH hash Rfix e
   -- the per-effect NAMED decode-extraction readouts (Satisfied2 ⟹ encode), grouped by family.
   rdMint : ∀ minit mfin maddrs t pubLogPost pre post,
     MintTraceReadout (LH := LH) (hash := hash) minit mfin maddrs t pubLogPost pre post
@@ -1140,16 +1144,14 @@ soundness rungs are LOAD-BEARING in every cohort slot. -/
 theorem closedLogExtract_all_genuine
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) :
     ∀ e, ClosedLogExtract
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix e := by
+      (S_live CH RH cmb compress compressN hRest) LH hash Rfix e := by
   intro e
   match e with
   | 0 => exact rds.transfer
@@ -1162,7 +1164,7 @@ theorem closedLogExtract_all_genuine
   | 7 => exact closedLogExtract_incrementNonce_closed rds.rdIncNonce
   | 8 => exact closedLogExtract_setPermissions_closed rds.rdSetPermissions
   | 9 => exact closedLogExtract_setVK_closed rds.rdSetVK
-  | 13 => exact closedLogExtract_setProgram_closed compressN hCompressN rds.rdSetProgram
+  | 13 => exact closedLogExtract_setProgram_closed compressN rds.hNProgram rds.rdSetProgram
   | 10 => exact closedLogExtract_introduce_closed Scap rds.rdIntroduce
   | 11 => exact closedLogExtract_delegateAtten_closed Scap rds.rdDelegateAtten
   | 12 => exact closedLogExtract_attenuate_closed Scap rds.rdAttenuate
@@ -1191,46 +1193,46 @@ From the genuine readout bundle (every cohort slot discharged by CALLING its pro
 rung) + the realizable crypto floors, the light client concludes a genuine full kernel+log transition.
 The proven `RotatedKernelRefinement*` soundness rungs are LOAD-BEARING; the carried set is the per-effect
 decode-extraction (`WitnessDecodes` class, named `<e>TraceReadout`) + the crypto floors
-(`StarkSound` + `S_live` CR fields/`logHashInjective`/`Scap`/the `compressN` carriers) — NOT the whole
+(`StarkSound` + the `S_live` rest-frame obligation/`logHashInjective`/`Scap`/the `compressN` carriers) — NOT the whole
 refinement.
 
 ⛑ `Poseidon2SpongeCR hash` SHED 2026-07-31 (it only fed `descriptorRefines`'s dead def-body antecedent;
-see `ClosureAll.lightclient_unfoolable_closed`). ⚠ The five `S_live` CR binders REMAIN and are refuted
-at every parameter (`Verify.ApexPremiseVacuity`), so this apex is still not applicable — the applicable
-statement is `ApexFloorFree.lightclient_unfoolable_free`. -/
+see `ClosureAll.lightclient_unfoolable_closed`). ⚰ FOUR of the five `S_live` CR binders SHED 2026-08-02.
+⚠ The survivor `RestHashIffFrameFin RH` REMAINS and is refuted at deployed BabyBear width
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), so this apex is still not
+applicable at deployed parameters — the applicable statement is
+`ApexFloorFree.lightclient_unfoolable_free`. -/
 
 theorem lightclient_unfoolable_closed_final_genuine
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     [StarkSound hash Rfix]
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     (pi : BatchPublicInputs) (π : BatchProof)
     (hwitdec : WitnessDecodes hash Rfix
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pi)
+      (S_live CH RH cmb compress compressN hRest) pi)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_closed hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
+    (S_live CH RH cmb compress compressN hRest) LH
     (closedLogExtract_all_genuine rds) mkLog pi π hwitdec hacc
 
 /-! ## §9 — axiom hygiene. -/

@@ -154,7 +154,8 @@ CR fields, `logHashInjective` (inside `ClosedWitness.mkLog`), `ClosedWitness`}. 
 From a verifying batch against `vkOfRegistry Rfix` and EXACTLY the standard crypto foundations of a verified
 SNARK soundness proof —
   * `StarkSound hash Rfix` (the audited p3 batch-STARK extraction),
-  * the `S_live` `CommitSurface` CR fields (the decode-faithfulness floor),
+  * the `S_live` rest-frame obligation `RestHashIffFrameFin RH` (the decode-faithfulness floor; its
+    four injectivity parameters were deleted 2026-08-02),
   * `logHashInjective LH` (the log-CR floor, carried inside `ClosedWitness.mkLog`),
   * `ClosedWitness hash Rfix S_live LH pi` (the ONE prover-witness floor, parametric in `pi.effect`) —
 there EXIST decoded endpoints and a genuine FULL kernel+log transition `kstepAll pi.effect pre post` whose
@@ -162,41 +163,41 @@ endpoints commit to the published `(pi.pre, pi.post)`. NO `∀ e` family of per-
 per-effect prover-witness is subsumed under the single `ClosedWitness` floor at the published effect.
 
 ⛑ `Poseidon2SpongeCR hash` SHED 2026-07-31 (it fed only `descriptorRefines`'s dead def-body antecedent).
-⚠ The `S_live` CR fields REMAIN and are refuted at every parameter
-(`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`), so this headline is still not applicable;
+⚰ `S_live`'s four injectivity PARAMETERS SHED 2026-08-02 (they filled `CommitSurface` fields deleted the
+day before; the body ignored them). ⚠ `RestHashIffFrameFin RH` REMAINS and is refuted at deployed
+BabyBear width (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), so this
+headline is still not applicable at deployed parameters;
 `ApexFloorFree.lightclient_unfoolable_free` is the applicable one. -/
 theorem lightclient_unfoolable_circuit_sound
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitness hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
+      (S_live CH RH cmb compress compressN hRest) LH pi)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn := by
   -- the single published-effect refinement rung, from the single `ext`/`mkLog` of the witness floor.
   -- FLOOR-FREE: `descriptorRefinesFree_of_closedLogExtract` introduces no `Poseidon2SpongeCR`.
   have hrefine :
       Dregg2.Circuit.ApexFloorFree.descriptorRefinesFree
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+        (S_live CH RH cmb compress compressN hRest).commit
         hash (Rfix pi.effect) (kstepAll pi.effect) := by
     intro minit mfin maddrs t pc pre post hsat _hlink hdecC
     obtain ⟨pubLogPre, pubLogPost, hdecLog⟩ := hcw.mkLog pc pre post
       ⟨hdecC.preBinds, hdecC.postBinds, hdecC.preWF, hdecC.postWF⟩
     exact hcw.ext minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   exact lightclient_unfoolable_one hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix kstepAll pi
+    (S_live CH RH cmb compress compressN hRest) Rfix kstepAll pi
     hrefine π hcw.wit hacc
 
 /-! ## §4 — non-vacuity: `ClosedWitness` is BUILT from the genuine readout bundle (rungs load-bearing).
@@ -214,25 +215,23 @@ NON-VACUOUS and keeps the soundness rungs load-bearing. -/
 theorem closedWitness_of_readouts
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     (pi : BatchPublicInputs)
     (hwitdec : WitnessDecodes hash Rfix
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pi) :
+      (S_live CH RH cmb compress compressN hRest) pi) :
     ClosedWitness hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi where
+      (S_live CH RH cmb compress compressN hRest) LH pi where
   wit := hwitdec
   ext := closedLogExtract_all_genuine rds pi.effect
   mkLog := mkLog
@@ -244,32 +243,30 @@ floors. -/
 theorem lightclient_unfoolable_circuit_sound_of_readouts
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     [StarkSound hash Rfix]
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     (pi : BatchPublicInputs) (π : BatchProof)
     (hwitdec : WitnessDecodes hash Rfix
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pi)
+      (S_live CH RH cmb compress compressN hRest) pi)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_circuit_sound hash LH pi π
     (closedWitness_of_readouts rds mkLog pi hwitdec) hacc
