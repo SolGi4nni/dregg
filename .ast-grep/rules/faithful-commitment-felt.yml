@@ -73,10 +73,21 @@ files:
 # ⚑ THE RULE IS NAME-BOUND, SO IT MUST NAME EVERY ALIAS (widened 2026-08-01).
 #
 # `fold_bytes32_to_bb` is not the only spelling of this arithmetic. Two functions elsewhere in
-# the tree have BYTE-IDENTICAL bodies under different names —
+# the tree squeeze 32 bytes into ONE felt under different names —
 #
 #   circuit/src/cap_root.rs:269           pub fn fold_bytes32(b)  -> hash_many(bytes32_to_8_limbs(b))
 #   circuit/src/openable_fields_root.rs   pub fn fold_value32(b)  -> hash_many(bytes32_to_8_limbs(b))
+#
+# ⚑ CORRECTED 2026-08-02: this block used to call those two "BYTE-IDENTICAL bodies" to
+# `fold_bytes32_to_bb`. They are byte-identical TO EACH OTHER, but NOT to it, and the
+# difference is the whole security story. `fold_bytes32_to_bb` is a Horner fold with a fixed
+# MIX constant (`helpers.rs:439`) — an onto F_p-LINEAR form, so a colliding pair is solved for
+# directly. `fold_bytes32`/`fold_value32` run the 8 limbs through the Poseidon2 sponge, which
+# is not linear. Both still land in ~31 bits, so both belong to this rule; but the sponge pair
+# is not "the same function renamed". (It is not safe either: `cap_root.rs`'s own doc records
+# that the per-limb mod-`p` wrap happens UPSTREAM of the sponge, so an aliased input pair is
+# CONSTRUCTED and the sponge cannot undo it.) Calling them identical is how a reader concludes
+# one audit covers both.
 #
 # — and for this rule's entire life they were INVISIBLE TO IT even inside files it already
 # scanned. Measured: `cell/src/commitment.rs:561` is `cap_root::fold_bytes32(cap.target)`, the
@@ -85,13 +96,42 @@ files:
 # class; the class is "32 bytes squeezed to one felt in a commitment position", and every name
 # that spells it has to be listed here or the next rename is a fresh blind spot.
 rule:
-  any:
-    - pattern: fold_bytes32_to_bb($_)
-    - pattern: $$$::fold_bytes32_to_bb($_)
-    - pattern: fold_bytes32($_)
-    - pattern: $$$::fold_bytes32($_)
-    - pattern: fold_value32($_)
-    - pattern: $$$::fold_value32($_)
+  all:
+    - any:
+        - pattern: fold_bytes32_to_bb($_)
+        - pattern: $$$::fold_bytes32_to_bb($_)
+        - pattern: fold_bytes32($_)
+        - pattern: $$$::fold_bytes32($_)
+        - pattern: fold_value32($_)
+        - pattern: $$$::fold_value32($_)
+      # ⚑ `#[cfg(test)]` BODIES ARE OUT OF SCOPE — AND WERE ALWAYS *STATED* TO BE (fixed 2026-08-02).
+      #
+      # The `files:` rationale above has said since this rule was written that "non-commitment folds
+      # (… tests) are out of scope by design -- the fold is sound THERE." Nothing implemented that.
+      # ast-grep scans a whole file, and every one of these producers keeps its `#[cfg(test)] mod`
+      # in the SAME file as the producer, so the rule matched test code too.
+      #
+      # That is not a cosmetic over-reach; it inverted the rule's meaning. The ten test-side hits at
+      # HEAD are all ANTI-VACUITY WITNESSES: each one recomputes the RETIRED lossy encoding in order
+      # to assert the current committed root is NOT it —
+      #     let legacy = CanonicalHeapTree8::new(… fold_bytes32_to_bb(&n.0) …).root8();
+      #     assert_ne!(set.root8(), legacy);
+      # — i.e. the tests that PROVE the degradation was removed were themselves reported as the
+      # degradation. A gate that reds on its own refutation teaches everyone to stop reading it.
+      #
+      # WHAT THIS PERMITS, EXACTLY: a `fold_*` call lexically inside a `mod` whose IMMEDIATELY
+      # preceding sibling is a `#[cfg(test)]` attribute. Nothing else. Measured, not assumed:
+      # a `mod tests` WITHOUT the attribute is still flagged (a rename buys no escape), a
+      # `#[cfg(feature = "…")] mod` is still flagged (only `test` is excluded), and nested closures
+      # and nested `mod`s inside a `#[cfg(test)] mod` are excluded with it. This is NOT an
+      # allowlist — no path or call site is named, and production code cannot reach it.
+    - not:
+        inside:
+          kind: mod_item
+          stopBy: end
+          follows:
+            kind: attribute_item
+            regex: "cfg\\(test\\)"
 message: >-
   Degraded felt in a state-commitment position: `fold_bytes32_to_bb` folds 32
   bytes -> ONE BabyBear (~31-bit). A committed component must bind its source at
@@ -141,14 +181,28 @@ files:
   - "cell/src/shielded_note_set.rs"
   - "node/src/turn_proving.rs"
 rule:
-  pattern: "[$X; 8]"
-  kind: array_expression
-  not:
-    any:
-      - pattern: "[0; 8]"
-      - pattern: "[0u32; 8]"
-      - pattern: "[$_::ZERO; 8]"
-      - pattern: "[$_::ONE; 8]"
+  all:
+    - pattern: "[$X; 8]"
+      kind: array_expression
+      not:
+        any:
+          - pattern: "[0; 8]"
+          - pattern: "[0u32; 8]"
+          - pattern: "[$_::ZERO; 8]"
+          - pattern: "[$_::ONE; 8]"
+    # ⚑ SAME `#[cfg(test)]` EXCLUSION AS THE RULE ABOVE (2026-08-02). Kept in step deliberately:
+    # a test that builds a `[scalar; 8]` as a LEGACY EXHIBIT — to assert the committed root is
+    # not the degenerate splat — is the refutation of this rule, not a violation of it, exactly
+    # as on the `degraded-felt-commitment` side. This rule happens to have no test-side hits at
+    # HEAD, so the change is behaviour-preserving today; it is here so the next anti-vacuity
+    # witness someone writes does not red the gate the day they write it.
+    - not:
+        inside:
+          kind: mod_item
+          stopBy: end
+          follows:
+            kind: attribute_item
+            regex: "cfg\\(test\\)"
 message: >-
   Replicated felt in a state-commitment position: `[X; 8]` splats ONE scalar
   across all 8 lanes — a degenerate 8-felt that is STILL ~31-bit (the lane-0

@@ -28,6 +28,40 @@
 # `sgconfig.yml` come along in the extract, so the RULE is judged at the revision too, which is
 # the half a rule-file edit would otherwise smuggle past a committed-code scan.
 #
+# ── ⚑ THIS GATE HAS NEVER PASSED, AND NINE DOCS SAY IT DOES (measured 2026-08-02) ────────
+# Run at HEAD from a clean --rev extract it reported TWELVE errors. Twelve, not zero, on a
+# gate a dozen documents cite as green. Judged on merit the twelve split cleanly, and the two
+# halves needed OPPOSITE treatment:
+#
+#   TEN were inside `#[cfg(test)]` bodies, and every one of them is an ANTI-VACUITY WITNESS —
+#   code that recomputes the RETIRED lossy encoding purely to assert the current committed
+#   root is NOT it (`assert_ne!(set.root8(), legacy)`). The gate was reporting the tests that
+#   PROVE the degradation was removed as if they were the degradation. The rule's `files:`
+#   rationale had said "tests … are out of scope by design" since the day it was written;
+#   nothing implemented it. Now implemented, structurally — see the rule file.
+#
+#   TWO are REAL, in production, and the gate is RIGHT to red on them:
+#     * cell/src/commitment.rs:561   `cap_root::fold_bytes32(cap.target)` — the cap-tree leaf's
+#       target field in the DEPLOYED canonical state commitment.
+#     * node/src/turn_proving.rs:1159 `nullifier_to_field` — its image IS `PI[NOTESPEND_NULLIFIER]`
+#       and ALSO the key the double-spend freshness search and the consensus anchor run on.
+#
+# ⚠ THE TWO ARE LEFT RED ON PURPOSE. They are not allowlisted and must not be: suppressing
+# them is the containment-below-the-bar move, and this gate exists to keep them visible.
+# Repairing them is NOT a Rust edit — both change what the circuit commits to and opens
+# (`CapLeaf` is a 7-field Poseidon2 leaf opened in-circuit; `PI[NOTESPEND_NULLIFIER]` is an AIR
+# public input), so the repair is a LEAN-AUTHORED AIR change plus a VK epoch and a re-genesis,
+# on the exact_cap_root / exact-nullifier tracks. Saying that plainly is the point; a Rust-side
+# re-encoding would be the drift, not the fix.
+#
+# Until they land, this gate is RED AT HEAD. Read that as the gate working. What it does NOT
+# yet do is distinguish a NET-NEW fold from these two — a ratchet baseline (the shape of
+# scripts/guard-discipline-baseline.txt: counts that may only fall) is the missing piece.
+#
+# Refuse AND anchor are pinned by scripts/check-no-degraded-felt-selftest.py (12 arms), which
+# runs the REAL rule file with only its `files:` scope re-pointed — including the arms proving
+# a `mod tests` WITHOUT `#[cfg(test)]` still reds, so the narrowing bought no escape hatch.
+#
 # Usage:  scripts/check-no-degraded-felt.sh
 #         scripts/check-no-degraded-felt.sh --rev HEAD   # clean extract (churn-safe)
 # Exit:   0 = clean (all folds in commitment producers are justified);
@@ -42,7 +76,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --rev) REV="${2:-}"; [ -n "$REV" ] || { echo "check-no-degraded-felt: --rev needs a revision" >&2; exit 2; }; shift 2 ;;
     --rev=*) REV="${1#--rev=}"; shift ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,66p' "$0"; exit 0 ;;
     *) echo "check-no-degraded-felt: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
 done
