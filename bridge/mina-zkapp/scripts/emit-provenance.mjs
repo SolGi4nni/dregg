@@ -16,7 +16,7 @@
 // falsely, and `pickles-harnesses.sh` reading `git ls-files` — THE INDEX, not HEAD — and printing
 // `ok` for a harness HEAD did not carry.
 //
-// ## THE SHAPE OF THE FIX: REFUSE, AND ON TWO INDEPENDENT LEGS
+// ## THE SHAPE OF THE FIX: REFUSE, ON TWO INDEPENDENT CONTENT LEGS
 //
 // A warning inside a green run is invisible, so nothing here warns. Every check below either returns
 // a provenance record or THROWS, and the message names STALENESS rather than letting the divergence
@@ -72,7 +72,7 @@ const TOOLCHAIN = ['lean-toolchain', 'lake-manifest.json', 'lakefile.lean', 'lak
 /**
  * The transitive `import Dregg2.*` closure of one Lean driver, hashed by CONTENT.
  *
- * Returns `{ root, files: [{rel, sha, mtimeMs}], digest, newestMs, newestRel }`. `digest` is
+ * Returns `{ root, files: [{rel, sha}], digest }`. `digest` is
  * sha256 over `rel + '\0' + sha` for every member in SORTED order, so it is independent of the
  * traversal order and of where the tree lives on disk.
  *
@@ -88,7 +88,7 @@ export function leanConeDigest(rootRel, { metaRoot = META_ROOT } = {}) {
     const abs = join(metaRoot, rel);
     if (!existsSync(abs)) throw new Error(`emit cone: ${rel} is imported but does not exist under ${metaRoot}`);
     const buf = readFileSync(abs);
-    files.push({ rel, sha: sha256(buf), mtimeMs: statSync(abs).mtimeMs });
+    files.push({ rel, sha: sha256(buf) });
     for (const m of buf.toString('utf8').matchAll(/^import\s+([A-Za-z0-9_.]+)/gm)) {
       if (m[1].startsWith('Dregg2')) visit(`${m[1].split('.').join('/')}.lean`);
     }
@@ -99,13 +99,14 @@ export function leanConeDigest(rootRel, { metaRoot = META_ROOT } = {}) {
     const abs = join(metaRoot, t);
     if (!existsSync(abs)) continue; // lakefile.lean XOR lakefile.toml; absence of one is not a defect
     seen.add(t);
-    files.push({ rel: t, sha: sha256(readFileSync(abs)), mtimeMs: statSync(abs).mtimeMs });
+    files.push({ rel: t, sha: sha256(readFileSync(abs)) });
   }
   files.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
   const digest = sha256(files.map((f) => `${f.rel}\0${f.sha}`).join('\n'));
-  let newest = files[0];
-  for (const f of files) if (f.mtimeMs > newest.mtimeMs) newest = f;
-  return { root: rootRel, files, digest, newestMs: newest.mtimeMs, newestRel: newest.rel };
+  // ⚠ NO mtime is carried out of here, on purpose. A `newestMs` field is all the invitation the
+  // next reader needs to re-add the clock leg that this floor RETIRED for refusing honest artifacts
+  // in every fresh checkout (see the header, and `--stale-self-test` leg F3b which would go red).
+  return { root: rootRel, files, digest };
 }
 
 /** `git rev-parse HEAD` + whether the cone is clean at HEAD. Never throws — a non-git tree is a
