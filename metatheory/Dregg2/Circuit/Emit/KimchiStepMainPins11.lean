@@ -108,9 +108,23 @@ is the failure mode this section exists to catch. -/
 -- ⚑ The shift constants are what `Shift.create (module Fp)` builds: `c = 2^255 + 1` and `½`.
 #guard ((SHIFT_C : Nat) : ZMod pN) == (2 : ZMod pN) ^ 255 + 1
 #guard 2 * SHIFT_INV2 % pN == 1
--- ⚑ Type1 ROUND-TRIPS, so the encoding is an encoding and not a digest.
-#guard unshiftT1 (shiftT1 (finS.bActual)) == finS.bActual
-#guard unshiftT1 (shiftT1 7) == 7 && unshiftT1 (shiftT1 (pN - 1)) == pN - 1
+/-- **`type1_round_trips_at_three_points`** — ⚑ Type1 ROUND-TRIPS, so the encoding is an encoding
+and not a digest: `unshiftT1 ∘ shiftT1` is the identity at the live value, at a small point, and at
+the top of `Fp`. Two `#guard`s, converted 2026-08-03 (`metatheory/docs/GUARD-DISCIPLINE.md`).
+
+⚠ **AND THIS ONE IS THREE INSTANCES OF A GENERAL FACT THAT IS NOT PROVED HERE.** `shiftT1 x =
+(x − SHIFT_C) · SHIFT_INV2` and `unshiftT1 t = t + t + SHIFT_C` over `ZMod pN`, so
+`∀ x, unshiftT1 (shiftT1 x) = x` follows from `2 · SHIFT_INV2 = 1` (pinned two lines above) by
+`ring`-level reasoning in `ZMod pN` — no evaluation, no `native_decide`, and it would retire the
+three points AND the `#assert_compiled` under them. It is left as the named next step rather than
+claimed: three points is what this theorem says, and a reader must not read a ∀ into it. -/
+theorem type1_round_trips_at_three_points :
+    (unshiftT1 (shiftT1 (finS.bActual)) == finS.bActual
+     && unshiftT1 (shiftT1 7) == 7
+     && unshiftT1 (shiftT1 (pN - 1)) == pN - 1) = true := by
+  native_decide
+
+#assert_compiled type1_round_trips_at_three_points
 -- ⚑ **THE FIELD KEY IS LOAD-BEARING.** A Type2 reading (subtract-only, `x − 2^255`, the STEP
 -- statement's own `fq` block, `impls.ml:135`) and the raw unshifted value BOTH diverge from the
 -- Type1/`Fp` reading these three words wear. Getting this wrong misencodes SILENTLY.

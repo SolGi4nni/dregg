@@ -159,10 +159,20 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- the σ probe on the state, AND R1's block-0 absorb row.
 -- The reportable object is the full assembly; the lower rungs are sub-circuits and this is where
 -- that costs something.
-#guard (classCells (posAt .transcript) (vIdxD shapeSmoke 0)).length == 1
-#guard (classCells (posAt .ftEval0) (vIdxD shapeSmoke 0)).length == 1
-#guard (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 4
-#guard (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 4
+/-- **`the_index_digest_word_class_grows_with_the_rung`** — ⚑ FOUR `#guard`s that were four
+instances of ONE fact, converted 2026-08-03 (`metatheory/docs/GUARD-DISCIPLINE.md`). The claim is
+not "this rung has 4 cells"; it is that `vIdxD 0`'s class GROWS as sub-circuits land — 1 at
+`r1_transcript`, still 1 at `r6_ftEval0`, then 4 once `r7_absorb` wires the block-28 state lane and
+4 again at `r9_opening`. Written as ONE statement over the rungs in order, a rung whose count FELL
+while another ROSE can no longer pass, which four independent equalities allowed. -/
+theorem the_index_digest_word_class_grows_with_the_rung :
+    ((classCells (posAt .transcript) (vIdxD shapeSmoke 0)).length == 1
+     && (classCells (posAt .ftEval0) (vIdxD shapeSmoke 0)).length == 1
+     && (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 4
+     && (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 4) = true := by
+  native_decide
+
+#assert_compiled the_index_digest_word_class_grows_with_the_rung
 -- …and the plonk-index pin rows are R7's too, so the same reading applies to the 56 absorbed words.
 #guard (classCells (posAt .ftEval0) (vIdxX shapeSmoke 27)).length == 0
 #guard (classCells (posAt .absorb) (vIdxX shapeSmoke 27)).length == 2
@@ -173,12 +183,23 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- else — and they are DERIVED at `r6_ft_eval0` and above. Stated the way `index_digest`'s and
 -- `vDLift 1`'s are, because the reportable object is the full assembly and the lower rungs are
 -- sub-circuits. Equalities, not floors.
-#guard (classCells (posAt .msm) tS.ftw.permV).length == 1
-#guard (classCells (posAt .ipa) tS.ftw.permV).length == 1
+-- (the `permV` profile is one statement, below.)
 -- ⚑ THREE, not four, since `permClaimed` was deleted (2026-08-03): R6 used to close with
 -- `eEq perm permClaimed`, a row whose only novel operand was a variable no other row read — an
 -- assert that could not fail. Its deletion took exactly one cell out of `perm`'s class.
-#guard (classCells (posAt .ftEval0) tS.ftw.permV).length == 3
+/-- **`the_permutation_word_class_per_rung`** — the same conversion for `perm`: 1 cell at `r3_msm`
+and at `r4_ipa`, THREE at `r6_ftEval0`. ⚑ Three and not four since `permClaimed` was deleted
+(2026-08-03) — R6 used to close with `eEq perm permClaimed`, a row whose only novel operand was a
+variable no other row read, i.e. an assert that could not fail. Its deletion took exactly one cell
+out of this class, and that is the motion this statement exists to hold: a FOURTH here would be the
+vacuous row coming back. -/
+theorem the_permutation_word_class_per_rung :
+    ((classCells (posAt .msm) tS.ftw.permV).length == 1
+     && (classCells (posAt .ipa) tS.ftw.permV).length == 1
+     && (classCells (posAt .ftEval0) tS.ftw.permV).length == 3) = true := by
+  native_decide
+
+#assert_compiled the_permutation_word_class_per_rung
 -- ⚑ …and since §21 the `ζ^n` cell carries ONE MORE CELL AT EVERY RUNG FROM `r3_msm` UP than `perm`
 -- does: it is Wrap statement WORD 2/3 as well as `ft_comm`'s scalar, so the x_hat ladder's own
 -- terminal counter lands in its class. That asymmetry between the two §6b scalars is exactly §21 —

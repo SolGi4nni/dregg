@@ -79,12 +79,22 @@ set_option maxRecDepth 100000
         == mpx shapeSmoke (pSum shapeSmoke (shapeSmoke.msmTerms - 2))
 -- …and both of them are public words of their OWN at the committed shape, so nothing was lost by
 -- taking them out of this hash — they were never unobserved.
-#guard (exposedVars shapeStep).getD 14 (xv 0)
-        == mpx shapeStep (pSum shapeStep (shapeStep.msmTerms - 2))
--- ⚑ CORRECTED 2026-08-03 (§19): the exposed point is `q = p_prime + lr_prod`, the one
+-- ⚑ CORRECTED 2026-08-03 (§19): the exposed point at 16/17 is `q = p_prime + lr_prod`, the one
 -- `Scalar_challenge.endo q c` reads, not the bare fold sum. `uc` is inside it now.
-#guard (exposedVars shapeStep).getD 16 (xv 0) == ipx shapeStep (qPrime shapeStep)
-#guard (exposedVars shapeStep).getD 17 (xv 0) == ipy shapeStep (qPrime shapeStep)
+/-- **`the_exposed_opening_words_are_the_derived_points`** — slots 14, 16 and 17 of the committed
+statement carry VARIABLES this assembly derives, not witnesses: 14 is the MSM fold's `x`, and the
+16/17 pair is `q = p_prime + lr_prod`'s. Stated together because they are one claim about one
+region, and because a slot silently ceasing to be derived is invisible when each is its own guard.
+⚠ Three `#guard`s, converted 2026-08-03 (`metatheory/docs/GUARD-DISCIPLINE.md`): the expressions
+are unchanged, and the gain is a NAMED TERM the axiom sweep can see. -/
+theorem the_exposed_opening_words_are_the_derived_points :
+    ((exposedVars shapeStep).getD 14 (xv 0)
+        == mpx shapeStep (pSum shapeStep (shapeStep.msmTerms - 2))
+     && (exposedVars shapeStep).getD 16 (xv 0) == ipx shapeStep (qPrime shapeStep)
+     && (exposedVars shapeStep).getD 17 (xv 0) == ipy shapeStep (qPrime shapeStep)) = true := by
+  native_decide
+
+#assert_compiled the_exposed_opening_words_are_the_derived_points
 
 -- ⚑ …and the CORRECTION IS NOT VACUOUS at the level of the public vector: the digest word moved.
 -- (Both layouts absorb the same 58-word prefix and the same 2·bRounds challenges; only the four

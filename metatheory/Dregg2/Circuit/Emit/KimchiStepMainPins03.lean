@@ -122,12 +122,23 @@ set_option maxRecDepth 100000
 -- which read `x` three times and `y` twice.)
 -- ⚑ `+ 7` and not `+ 6` since the segment-C correction: fold round 0's base IS `sg_old[1]`,
 -- so its class now also spans the INNER `hash_messages_for_next_step_proof_opt`'s absorb row.
-#guard (classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 7
-#guard (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
-#guard ((classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).filter
+/-- **`the_absorbed_ipa_base_is_read_once_in_the_transcript`** — ⚑ FOUR `#guard`s over ONE point,
+converted 2026-08-03 (`metatheory/docs/GUARD-DISCIPLINE.md`). Both coordinates of the ABSORBED fold
+base have a class of `ipaBlocks` `EndoMul` reads plus their `assert_on_curve` halves (`x` three
+times, `y` twice), and — the half that is the actual tooth — EXACTLY ONE of those cells lies in the
+transcript's row range. One cell is what makes it absorbed; zero would make it a pin, and more than
+one would mean the transcript reads it somewhere nobody accounted for. Stating the four together
+keeps the length and the transcript share from drifting apart. -/
+theorem the_absorbed_ipa_base_is_read_once_in_the_transcript :
+    ((classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 7
+     && (classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).length == shapeSmoke.ipaBlocks + 6
+     && ((classCells posS (ipx shapeSmoke (qT shapeSmoke absR0))).filter
           (fun c => c.row < nTrans)).length == 1
-#guard ((classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).filter
-          (fun c => c.row < nTrans)).length == 1
+     && ((classCells posS (ipy shapeSmoke (qT shapeSmoke absR0))).filter
+          (fun c => c.row < nTrans)).length == 1) = true := by
+  native_decide
+
+#assert_compiled the_absorbed_ipa_base_is_read_once_in_the_transcript
 -- …and a CONSTANT base has NO cell in the transcript: it is pinned, not absorbed. Its class is
 -- `ipaBlocks` `EndoMul` reads + the `Inner_curve.constant` pin + segment C's `sponge_after_index`
 -- absorb, because the smoke shape's one constant fold round IS plonk-index commitment 22 (§3c).
