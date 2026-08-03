@@ -61,9 +61,21 @@ exactly the gate designed to refuse it, and the refusal takes THREE shapes:
 `bits: 32` both rows would have PASSED, because every field element is below `2^32`. The vacuity
 was real and the fix is load-bearing.
 
-The algebraic refusals arrive as plonky3 debug-assertion PANICS, not `Err`s, and the first run of
-the test read that as its own failure. The production consumer already wraps prove/verify in
-`catch_unwind` for exactly this reason; the test now does the same.
+⚑ **AND THE REFUSAL SHAPE IS PROFILE-DEPENDENT — the DEPLOYED profile gets the clean one.** Both
+builds refuse all four forgeries; they differ in HOW:
+
+  * **debug** — plonky3's `check_constraints` is a debug assertion, so an unsatisfied algebraic gate
+    PANICS (`check_constraints.rs:133`, `failed constraints = [#0]`). The first run of this test let
+    that escape and reported the descriptor's own refusal as a test failure.
+  * **release** — that assertion is compiled out, the prover proceeds, and its OWN self-verify
+    catches it: `prover refused: IR v2 batch self-verify failed: OodEvaluationMismatch
+    { index: Some(0) }`. A clean `Err`.
+  * the RANGE teeth return an `Err` in both.
+
+Release is what ships, so in production a forged head is an ordinary `Err` that
+`mina_head_verifier.rs` maps to `WitnessedPredicateError::Rejected`; the `catch_unwind` that wraps
+it (and now wraps the test helper) is belt-and-braces for the debug profile, not the load-bearing
+path. **`cargo test --release -p dregg-turn --test mina_anchored_head_lands`: 7 passed, 0 failed.**
 
 **THE LANDING.** `turn/src/executor/mina_head_verifier.rs` registers under
 `Custom { mina_head_predicate_vk() }` in `registry_with_real_verifiers()`. A cell program carrying
