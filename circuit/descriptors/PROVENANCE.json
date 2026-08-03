@@ -1,8 +1,8 @@
 {
   "version": 1,
   "mode": "stamp-existing",
-  "dregg2_tree_hash": "61eb1435100c747c4f609a20e934cb055dec87cc",
-  "repo_head": "b221dcff8eb3770191b3800c16656317034380cc",
+  "dregg2_tree_hash": "5cd4546658fca5fe25734cb8156647ce0ae70e72",
+  "repo_head": "0a24ea9940839994bae73949f5789e391cfb5102",
   "source_dirty": false,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
@@ -19,7 +19,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-08-03T00:32:50Z",
+  "generated_utc": "2026-08-03T00:38:23Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
