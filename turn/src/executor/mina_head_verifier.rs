@@ -76,16 +76,24 @@
 //!
 //! # Named residuals — do NOT read past these
 //!
-//! * **The limb decomposition is checked HERE, not in the AIR.** `minaLcVerifyDesc` PI-binds the
-//!   eighteen limb columns but carries no gate relating them to a 32-byte value. Injectivity comes
-//!   from [`Faithful9::from_key_lanes9`] (Lean `keyToLanes9`: nine base-`2^29` lanes, `8·29+24 =
-//!   256` exactly, image exactly `2^256`, machine-checked left inverse) and the equality is
-//!   enforced by this verifier. That is a real refusal — the turn dies — but it is an executor
-//!   check, not an in-circuit one, and a proof consumed by any OTHER route would not get it.
-//! * **`LINK_OK` / `PICKLES_OK` / `CANON_OK` are witnessed carriers**, not re-derived in-AIR. The
-//!   Pickles carrier rides the undischarged IPA/FRI floor. So this refuses a bent proof word only
-//!   as strongly as the witness generator is honest about the carrier bit — the in-AIR derivation
-//!   is `LightClientMinaHashFold` + the `proofBind` seam, and it has not landed.
+//! * **The lane↔bytes EQUALITY is checked HERE; the lane WIDTHS are checked in the AIR.**
+//!   ⚑ NARROWED 2026-08-03. `minaLcVerifyDesc` now range-checks all eighteen lane columns — eight
+//!   low lanes `< 2^29` per hash plus the ninth `< 2^22` — so a nonet that is not a canonical Pasta
+//!   field element has no satisfying witness. What is still an EXECUTOR check is the equality to a
+//!   specific 32-byte value: injectivity comes from [`Faithful9::from_key_lanes9`] (Lean
+//!   `keyToLanes9`: nine base-`2^29` lanes, `8·29+24 = 256` exactly, machine-checked left inverse)
+//!   and the comparison is made below. That is a real refusal — the turn dies — but a proof
+//!   consumed by any OTHER route would get the widths and not the equality.
+//! * **`LINK_OK` and `PICKLES_OK` are witnessed carriers**, not re-derived in-AIR; the Pickles
+//!   carrier rides the undischarged IPA/FRI floor. So this refuses a bent proof word only as
+//!   strongly as the witness generator is honest about those two bits. ⚑ `CANON_OK` is no longer
+//!   one of them for the anchor and the tip: `LightClientMinaAir` §1a derives their canonicality
+//!   from the emitted lookups (`mina_anchor_and_tip_are_canonical`), and
+//!   `shifted_anchor_old_admits_new_rejects` exhibits the `+p` anchor alias that the witnessed bit
+//!   admitted and the descriptor now refuses. The per-BLOCK canonicality of the exhibited segment
+//!   stays witnessed — those rows are not columns of a single-row descriptor.
+//! * ⚑ **A witness generator MUST fill the eighteen lane columns**, or every honest turn is UNSAT.
+//!   They are the same `Faithful9` decomposition `check_head_binding` already computes.
 //! * **Not fork choice.** An accepted proof says "this head sits `k`-deep above THIS pinned anchor
 //!   on a parent-linked, proof-carrying segment". It does not say "and the network selected it".
 //! * **Not "machine-checked", not "Mina-valid".** The dregg-side STARK inherits the undischarged

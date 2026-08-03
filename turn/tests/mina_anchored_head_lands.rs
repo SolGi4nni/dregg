@@ -32,9 +32,20 @@
 //! * `the_landing_refuses_a_head_the_turn_did_not_prove` — the executor-side binding: a VERIFYING
 //!   proof of head A does not license recording head B.
 //!
-//! ⚠ Scope, said plainly: `LINK_OK` / `PICKLES_OK` / `CANON_OK` are witnessed carriers on the
-//! undischarged IPA/FRI floor, and the dregg-side STARK inherits the undischarged FRI floor. This
-//! is an ANCHORED SEGMENT, not fork choice. Not "machine-checked", not "Mina-valid".
+//! * `the_anchor_substitution_is_refused_by_the_descriptor` — ⚑ **THE CANONICALITY RUNG
+//!   (2026-08-03).** The pinned anchor is the real devnet genesis hash PLUS ONE PASTA MODULUS,
+//!   which chains to the identical tip state hash. `CANON_OK` still reads `1`; the descriptor
+//!   refuses it anyway, on the 22-bit TOP-LANE lookup at column 20.
+//! * `the_forged_anchor_passes_the_encoder_and_fails_the_field` — and the refusal is the FIELD
+//!   canonicality tooth, not a malformed-nonet accident: lane 8 of the forgery is below the
+//!   `Faithful9` `2^24` ceiling and above the Pasta `2^22` one.
+//!
+//! ⚠ Scope, said plainly. `LINK_OK` and `PICKLES_OK` remain witnessed carriers on the undischarged
+//! IPA/FRI floor. `CANON_OK` is DERIVED for the two `Fp` elements this descriptor publishes — the
+//! anchor and the tip — by eighteen lookups on the lane columns it already carried; the PER-BLOCK
+//! canonicality `LightClientMina.canonOk` quantifies over is not, because a single-row descriptor
+//! has no per-block columns. The dregg-side STARK inherits the undischarged FRI floor. This is an
+//! ANCHORED SEGMENT, not fork choice. Not "machine-checked", not "Mina-valid".
 
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_by_name::descriptor_by_name;
@@ -210,8 +221,43 @@ impl Drop for QuietPanics {
     }
 }
 
-const ANCHOR: [u8; 32] = [0x5au8; 32];
-const TIP: [u8; 32] = [0x17u8; 32];
+/// ⚑ **THE ANCHOR IS A REAL MINA STATE HASH, NOT A FILL BYTE.** Devnet genesis
+/// `3NL93SipJfAMNDBRfQ8Uo8LPovC74mnJZfZYB5SK7mTtkL72dsPx`, as `Fp` element
+/// `9114416221768123787477325283664893678899335531281108607736543138013422200977` in 32 LITTLE-ENDIAN
+/// bytes (`LightClientMinaHashFold.DEVNET_GENESIS_STATE_HASH`; the same decode
+/// `bridge/src/mina_observer.rs::decode_state_hash` performs).
+///
+/// It used to be `[0x5a; 32]`, and the canonicality rung (2026-08-03) REFUSED that — correctly. A
+/// 32-byte fill pattern is not a Pasta field element: `0x5a5a…5a`'s ninth `Faithful9` lane is
+/// 5,921,370, above the `2^22` ceiling that makes the nonet's value `< 2^254 < p`. The fixture was
+/// asserting that the descriptor accepts a "state hash" Mina could never have produced.
+const ANCHOR: [u8; 32] = [
+    0x91, 0xa8, 0xea, 0xb2, 0x14, 0xc0, 0xe9, 0xec, 0xe2, 0xa7, 0x7b, 0x0c, 0xe5, 0x5c, 0xbe, 0x90,
+    0x3f, 0x6b, 0x4c, 0xef, 0x3b, 0x3a, 0x7a, 0x95, 0xd2, 0xed, 0xd9, 0x18, 0xa7, 0x93, 0x26, 0x14,
+];
+
+/// Devnet block **539508**'s state hash `3NLmVB6Fs3dm4kXNkgwheHXzJXNpCCwEDe76RpTVeBTNujm12zNk` — the
+/// block whose Wrap proof o1-labs' own `kimchi::verifier::verify` accepts (`MinaRealBlockGate`).
+const TIP: [u8; 32] = [
+    0xe4, 0x68, 0xd8, 0x48, 0xac, 0x5d, 0x04, 0x1c, 0xb3, 0x5c, 0x4f, 0xcf, 0x04, 0x16, 0xd7, 0xce,
+    0xe1, 0xf9, 0xc5, 0xa1, 0x80, 0x7c, 0x7e, 0xf3, 0x02, 0xdd, 0xd7, 0x0b, 0xcb, 0x72, 0xe3, 0x39,
+];
+
+/// ⚑ **THE ANCHOR SUBSTITUTION: the SAME devnet genesis anchor plus ONE PASTA MODULUS.**
+///
+/// Poseidon's `absorbAt` enters every input through `(state + x) % p`, so a segment presented under
+/// `A + p` chains to the IDENTICAL tip state hash as one under `A`
+/// (`LightClientMinaHashFold.stateChain_anchor_shift_collides`, proved structurally). The
+/// governance-pinned weak-subjectivity anchor therefore does not, by itself, pin the history.
+///
+/// This value is a perfectly legal `Faithful9` nonet — its ninth lane is 5,514,899, BELOW the
+/// encoder's own `2^24` ceiling — so the 32-byte-string canonicity gate admits it and so did the
+/// witnessed `CANON_OK` bit. It is refused by the descriptor's 22-bit TOP-LANE table and by nothing
+/// else. Lean twin: `LightClientMinaAir.shifted_anchor_old_admits_new_rejects`.
+const SHIFTED_ANCHOR: [u8; 32] = [
+    0x92, 0xa8, 0xea, 0xb2, 0x01, 0xf1, 0x16, 0x86, 0xfe, 0xa0, 0xc8, 0x15, 0xe1, 0xf5, 0x04, 0xb3,
+    0x3f, 0x6b, 0x4c, 0xef, 0x3b, 0x3a, 0x7a, 0x95, 0xd2, 0xed, 0xd9, 0x18, 0xa7, 0x93, 0x26, 0x54,
+];
 
 /// The descriptor this tree serves is the one the Lean module declares.
 #[test]
@@ -220,9 +266,22 @@ fn the_served_descriptor_is_the_lean_compiled_one() {
     assert_eq!(d.name, MINA_LC_VERIFY_DESCRIPTOR);
     assert_eq!(d.trace_width, MINA_LC_WIDTH);
     assert_eq!(d.public_input_count, MINA_LC_PI_COUNT);
-    // 8 gates + 3 range lookups + 20 PI pins, one per source leg.
-    assert_eq!(d.constraints.len(), 31);
-    assert_eq!(d.tables.len(), 1);
+    // 8 gates + 3 slack lookups + 16 lane lookups (two `.limbs` legs) + 2 top-lane lookups
+    // + 20 PI pins = 49, from 35 source legs (`minaHeadAir_leg_count`,
+    // `minaLcVerifyDesc_constraint_count`).
+    assert_eq!(d.constraints.len(), 49);
+    // `range` at 24 bits (the slack teeth), `range_w29` (wire 98, the sixteen low lanes),
+    // `range_w22` (wire 91, the two TOP lanes — the canonicality tooth).
+    assert_eq!(d.tables.len(), 3);
+    let widths: Vec<usize> = d
+        .tables
+        .iter()
+        .map(|t| match t.sem {
+            dregg_circuit::descriptor_ir2::TableSem::Range { bits } => bits,
+            _ => panic!("every table of this descriptor is a range table"),
+        })
+        .collect();
+    assert_eq!(widths, vec![24, 29, 22]);
 }
 
 /// ⚑ POSITIVE POLARITY. A genuinely verified anchored head PROVES and VERIFIES, and its recorded
@@ -279,6 +338,57 @@ fn a_bent_proof_word_is_refused_by_the_descriptor() {
     let err = descriptor_accepts(h, &ANCHOR, &TIP)
         .expect_err("a block whose Wrap proof does not verify must be REFUSED");
     eprintln!("bent proof word refused: {err}");
+}
+
+/// ⚑⚑ **THE ANCHOR SUBSTITUTION IS REFUSED BY THE DESCRIPTOR — the canonicality rung, on the
+/// deployed prover.**
+///
+/// Every column is the honest row's; the ONLY difference is that the pinned weak-subjectivity
+/// anchor is the real devnet genesis hash plus one Pasta modulus, which chains to the identical tip
+/// state hash. `CANON_OK` still reads `1` — a prover simply sets it, and before 2026-08-03 nothing
+/// in the circuit disagreed. The 22-bit top-lane lookup on column 20 (`ANCHOR_STATE 8`) has no
+/// satisfying table row: 5,514,899 >= 2^22.
+///
+/// ⚑ This is the carrier stopping being a witness, measured end to end: the same forged input the
+/// witnessed boolean waved through is now refused by an emitted constraint.
+#[test]
+fn the_anchor_substitution_is_refused_by_the_descriptor() {
+    let _quiet = QuietPanics::new();
+    let h = honest(300, 400_000, 400_010, 290);
+    assert_eq!(
+        h.canon_ok, 1,
+        "the forger sets the canonicality carrier to 1 — that is the whole point"
+    );
+    // The honest anchor is accepted with everything else identical.
+    descriptor_accepts(h, &ANCHOR, &TIP)
+        .expect("the genuine devnet genesis anchor must still be ACCEPTED");
+    let err = descriptor_accepts(h, &SHIFTED_ANCHOR, &TIP)
+        .expect_err("the +p anchor alias must be REFUSED by the descriptor, not by an executor");
+    assert!(
+        err.contains("wire 20"),
+        "the refusal must come from the TOP-LANE table on the anchor's ninth lane, got: {err}"
+    );
+    eprintln!("anchor substitution refused: {err}");
+}
+
+/// The forged anchor is a LEGAL nine-lane encoding — so the refusal above is the field-canonicality
+/// tooth doing work the 32-byte-string encoder gate cannot do. Lane 8 of the shifted anchor sits
+/// below the encoder's `2^24` ceiling and above the Pasta `2^22` one; the honest anchor's sits below
+/// both. Without this, "the shifted anchor is refused" could be a malformed-nonet accident.
+#[test]
+fn the_forged_anchor_passes_the_encoder_and_fails_the_field() {
+    let honest_lanes = key_lanes_u32(&ANCHOR);
+    let forged_lanes = key_lanes_u32(&SHIFTED_ANCHOR);
+    assert!(forged_lanes[8] < (1 << 24), "a legal Faithful9 nonet");
+    assert!(
+        forged_lanes[8] >= (1 << 22),
+        "not a canonical Pasta element"
+    );
+    assert!(honest_lanes[8] < (1 << 22), "the real anchor is canonical");
+    // …and the low lanes are unremarkable in both, so nothing else distinguishes them.
+    for i in 0..8 {
+        assert!(honest_lanes[i] < (1 << 29) && forged_lanes[i] < (1 << 29));
+    }
 }
 
 /// ⚑ THE DEPLOYED OBSERVER'S OWN ACCEPTING INPUT. Anchor at 1000, settlement submitted at 0, ONE

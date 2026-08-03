@@ -46,9 +46,28 @@ one-line structural collision, not a birthday event (`MinaStateQuery.poseidonPai
 which is why that file's `PoseidonPairCR` was deleted as FALSE). Applied to a light client this is an
 ANCHOR SUBSTITUTION: a segment presented under anchor `A + p` chains to exactly the same tip state
 hash as one under `A` (`stateChain_anchor_shift_collides`, §4 — proved structurally, no permutation
-evaluated). The 254-bit width gate closes it, and the closure is exact rather than approximate:
+evaluated). The 254-bit window closes it, and the closure is exact rather than approximate:
 `p > 2^254` (`pow254_lt_pN`), so `< 2^254` ⟹ canonical, and the whole `+k·p` alias family collapses
 to a point in range (`mina_alias_collapses_in_range`).
+
+⚑ **CORRECTED 2026-08-03 — the WINDOW is right; `minaRowWidthGates` is NOT the gate that enforces it
+at the deployed field, and no descriptor carries it.** `minaRowWidthGates_forces` is stated over
+`Assignment = Nat → ℤ`, i.e. over the INTEGERS. The deployed denotation is mod `P = 2013265921`
+(BabyBear), and its recomposition gate `v − Σ_{i<254} 2^i·bᵢ = 0` read mod `P` is satisfiable for
+EVERY field element — 254 free bits reach every residue — so as an emitted constraint it refuses
+nothing. Worse, it addresses a 255-bit Pasta element as ONE column, and a BabyBear column holds
+30.9 bits; there is no such column. `minaRowWidthGates` is a free-floating `List VmConstraint2` that
+appears in no `EffectVmDescriptor2`, and it could not be added to one as written.
+
+**The enforcement that DID land** is `Circuit/Emit/LightClientMinaAir.lean` §1a, at the
+representation BabyBear actually has — the NINE LANES: eight `.limbs` lookups at 29 bits plus ONE at
+**22** on the top lane, `2^232 · 2^22 = 2^254` exactly, both widths wrap-free
+(`RangeFieldContainment.wrap_free_iff_le_29`). Eighteen lookups, no gate, no aux column, and the
+`+p`-shifted REAL devnet genesis anchor is exhibited as refused
+(`LightClientMinaAir.shifted_anchor_old_admits_new_rejects`) — a row the pre-rung predicate accepted
+with `CANON_OK` witnessed `1`. ⚠ SCOPE: that gate covers the descriptor's two published `Fp`
+elements (the anchor and the tip), not the per-block rows this file's `canonOk` quantifies over;
+those are not columns of a single-row descriptor.
 
 ## The ties proved here (mirroring the four chains' fold theorems)
 

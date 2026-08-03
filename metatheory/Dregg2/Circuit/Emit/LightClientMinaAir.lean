@@ -24,14 +24,18 @@ object, not a record beside a claim.
 
 `minaLcVerifyDesc` is `EffectLower.lowerAir` applied to `minaHeadAir` (§3), an `EffectAir` source in
 the widened vocabulary (`Circuit/EffectAirIR.lean`). There is **no hand-written `VmConstraint2` list
-in this file** — eight `.gate` legs, three `.lookup` legs against a declared range table, twenty
-`.pin` legs, and the `VmConstraint2`s are the compiler's business. It is the second deployed
-descriptor in the tree authored this way (`DfaRoutingTableEmit.tableRoutingDesc` was the first,
-2026-08-01) and the first authored that way from scratch rather than by fusing a hand-written twin.
+in this file** — eight `.gate` legs, three `.lookup` legs against a declared range table, **two
+`.limbs` legs and two narrow-table `.lookup` legs for the canonicality rung**, twenty `.pin` legs,
+and the `VmConstraint2`s are the compiler's business. It is the second deployed descriptor in the
+tree authored this way (`DfaRoutingTableEmit.tableRoutingDesc` was the first, 2026-08-01) and the
+first authored that way from scratch rather than by fusing a hand-written twin.
 
-The vocabulary was ADEQUATE: `EffectAir.mainRailOk` is `true` by `rfl` (`minaHeadAir_mainRailOk`), so
-no leg lowered to `EffectLower.refuseConstraints`. Nothing had to be added to `EffectAirIR` and
-nothing had to be hand-written around it. That is the finding, stated plainly as §3 asks.
+The vocabulary was ADEQUATE, twice: `EffectAir.mainRailOk` is `true` by `rfl`
+(`minaHeadAir_mainRailOk`), so no leg lowered to `EffectLower.refuseConstraints`. ⚑ The canonicality
+rung needed the `.limbs` leg that landed for the peer-chain tallies — a nine-lane Pasta element is
+exactly "a quantity no felt can hold", the construct that leg exists for — and needed **nothing
+else**: no new `AirLeg` constructor, no new lowering, no hand-written gate. That is the finding,
+stated plainly as §3 asks.
 
 ## ⚑ THE TOOTH: `blockchain_length` and the witnessed depth are DERIVED, not witnessed
 
@@ -68,24 +72,75 @@ field element is already in `[0, 2^32)` and the lookup refuses nothing. A slack 
 element `p − 5`, and refusing it is the entire job. `mina_wrapped_slack_is_outside_the_range` states
 the gap as a theorem; `MINA_RANGE_BITS` documents the arithmetic.
 
-## NAMED verified CARRIERS (and what they are NOT)
+## NAMED verified CARRIERS — ⚑ ONE OF THE THREE IS NO LONGER A WITNESS
 
-`LINK_OK` / `PICKLES_OK` / `CANON_OK` are witnessed boolean columns forced `= 1`, and they are the
-SAME three results `LightClientMinaGate`'s wire gate already takes as `lk` / `pk` / `cn`. They are
-NOT re-derived in-AIR here:
+`LINK_OK` / `PICKLES_OK` / `CANON_OK` are the three results `LightClientMinaGate`'s wire gate takes
+as `lk` / `pk` / `cn`. They shipped here as witnessed boolean columns forced `= 1` — pinned to the
+statement, so BENDING one is refused, but with **nothing in the circuit computing them**. §1a and §5a
+change that for the third:
 
-  * `LINK_OK`    — the Poseidon parent-linkage fold over the exhibited segment. DERIVED (not
-    trusted) one module over, in `Circuit/Emit/LightClientMinaHashFold.lean`.
-  * `PICKLES_OK` — the per-block Pickles/Kimchi Wrap-proof result. The IPA/FRI arc;
-    `Circuit/Emit/MinaRealBlockGate.lean` renders it on a real devnet block.
-  * `CANON_OK`   — the state-row canonicality result, derived from the Lean-authored width gate
-    `LightClientMinaHashFold.minaRowWidthGates`.
+  * `LINK_OK`    — the Poseidon parent-linkage fold over the exhibited segment. STILL A WITNESS
+    HERE. Derived one module over (`Circuit/Emit/LightClientMinaHashFold.lean`) at a Poseidon over
+    **Pasta `Fp`**, which at BabyBear is non-native arithmetic; and the fold is a per-BLOCK object
+    while this descriptor is one row, so it is not a lane away.
+  * `PICKLES_OK` — the per-block Pickles/Kimchi Wrap-proof result. STILL A WITNESS, and it is the
+    expensive one by three orders of magnitude — see §1b. `Circuit/Emit/MinaRealBlockGate.lean`
+    renders it on a real devnet block, natively.
+  * `CANON_OK`   — ⚑ **DERIVED, for the two `Fp` elements this descriptor publishes.** Eighteen
+    lookups on the lane columns it already carried, no new column and no gate: `canonAccepts`,
+    `mina_anchor_and_tip_are_canonical`. `shifted_anchor_old_admits_new_rejects` exhibits the row
+    the witnessed bit waved through and the emitted descriptor now refuses.
 
-⚠ So a STARK over this descriptor proves the ANCHORING / DEPTH / HEIGHT-DERIVATION logic given those
-three results — precisely the guarantee `minaVerifyDecision` gives, now portable and now bindable to
-a state write. Folding the three carriers into their own bound sub-proofs is the next rung; the PI
-anchors below are the hook it attaches to. This is stated as a residual, not as a caveat that ends
-the work.
+⚠ **Say the residual exactly.** `LightClientMina.canonOk` quantifies over EVERY exhibited block's
+four state-row field elements; this descriptor's columns hold the ANCHOR and the TIP and nothing
+else, so what is derived is canonicality of those two — which is precisely what the anchor-substitution
+attack on the record (`stateChain_anchor_shift_collides`) needs, and precisely not the whole per-block
+predicate. The per-block half stays witnessed, and it stays witnessed because the descriptor is
+SINGLE-ROW, not because the vocabulary is short (§3's `mainRailOk` is still `true`).
+
+⚠ **And what the replaced gate was.** `LightClientMinaHashFold.minaRowWidthGates` is the tree's Mina
+canonicality AIR: four 254-bit `StakeWidthRange.widthGate`s, 1020 constraints per state row, with a
+forcing lemma stated over `Assignment = Nat → ℤ`. The deployed denotation is mod `p`, and at
+`P = 2013265921` a 254-bit recomposition reaches every residue — the gate refuses nothing, and it
+gates a 255-bit Pasta element in one 30.9-bit column besides. It is in no descriptor and cannot be.
+§1a is its replacement at the representation BabyBear actually has: nine lanes.
+
+⚠ So a STARK over this descriptor proves the ANCHORING / DEPTH / HEIGHT-DERIVATION logic AND the
+canonicality of the two published field elements, given `LINK_OK` and `PICKLES_OK`.
+
+## ⚑ §1b — WHAT AN IN-AIR PICKLES VERIFIER WOULD COST (measured, so the next rung is priced)
+
+Counted off the Lean verifier this tree already carries (`KimchiVerify`, `MinaWrap*`,
+`PastaPoseidon`), for ONE Wrap verification: **131 × 255-bit curve scalar multiplications** (40
+`public_comm` Lagrange terms + 1 `f_comm` + 9 `ft_comm` + 47 ξ-aggregate + 34 opening, of which 30
+are the 15 IPA rounds' L/R), **106 Poseidon-over-Pasta permutations** (55 full rounds, width 3,
+x^7), and ≈1,500 field multiplications in the scalar formulas — **≈1.06 M Pasta-field
+multiplications** in total, ≈935 K of them inside the curve ladders. The `sg == ⟨s, srs.g⟩` leg is a
+**32,768-term SRS MSM** on top and is not discharged in-kernel anywhere.
+
+⚑ **The felts-per-`Fp` figure is TWO different numbers, and conflating them is how this gets
+underpriced.** For STORAGE it is **9 lanes at 29 bits** — the encoding this file already uses, and
+29 is the last wrap-free width (`RangeFieldContainment.wrap_free_iff_le_29`). For MULTIPLICATION it
+is not: a limb product must not wrap, so `2b + log₂(k) < 30.9`, which at `k = ⌈255/b⌉` forces
+**b ≈ 13 and k ≈ 20 limbs**. A 29-bit limb cannot be multiplied at BabyBear at all — its square is
+`2^58`.
+
+So one non-native Pasta multiplication is schoolbook `k² = 400` limb products, `2k − 1 = 39`
+accumulator columns, a modular reduction of the same order, and ~40 carry rungs each with a range
+lookup: **≈10³ BabyBear constraints per Pasta multiplication**, and the carry chain is exactly the
+`LimbTally` shape, so the vocabulary exists.
+
+**One Wrap verification is then ≈10⁹ constraints.** At a generous ~100 constraints packed per row
+that is **~10⁷ rows ≈ 2^23.3**, and a trace of 2^23 rows × ~10² columns is ~10⁹ felts ≈ 4 GB
+committed — before the 32,768-term SRS MSM leg, which multiplies it again. Against this descriptor's
+**49 constraints and 8 rows**, that is seven orders of magnitude.
+
+⚑ **So: not a week and not a season at this construction.** The number says the construction is
+wrong, not that the schedule is long — the reachable shapes are RECURSION (verify the Pasta proof on
+the Pasta side once, as `MinaShrinkPartition`/the shrink terminal already do, and carry a small
+statement across) or a proof system over a field that can hold `Fp`. `CANON_OK` was landed instead
+because it is the one carrier whose content is arithmetic BabyBear can actually hold: an inequality
+on nine lanes, which costs 18 lookups.
 
 ## Public inputs — ⚑ these ARE the dregg state write
 
@@ -119,13 +174,29 @@ loses nothing. Injectivity is machine-checked (`lanes9ToField_fieldToLanes9`,
 
 ## Both polarities, on the EMITTED object (§6, §7)
 
-* ACCEPT — `minaLcAir_complete`: an honest row over a genuinely accepted update satisfies
-  `airAccepts`; and `minaLcAir_no_forgery` carries acceptance all the way to `MinaValidAt`.
-* REFUSE — four named refusing witnesses, each a CONCRETE assignment, each `¬ airAccepts`:
+* ACCEPT — `honest_row_accepted` on the REAL devnet genesis anchor and the REAL block-539508 tip
+  (`honest_anchor_lanes_decode_the_devnet_genesis` pins the lanes against the Base58Check decimal);
+  `minaLcAir_complete` is the general statement; `minaLcAir_no_forgery` carries acceptance all the
+  way to `MinaValidAt`.
+* REFUSE — FIVE named refusing witnesses, each a CONCRETE assignment, each `¬ airAccepts`:
   `losing_fork_refused` (a shallower fork), `bent_proof_word_refused` (`PICKLES_OK = 0`),
   `forged_height_refused` (the free-`blockchain_length` liar), `observer_arithmetic_refused` (the
-  deployed observer's unanchored subtraction). A refusal that some assignment satisfies is
-  decoration; these are exhibited, not asserted.
+  deployed observer's unanchored subtraction), and ⚑ `shifted_anchor_refused` — the `+p` ANCHOR
+  SUBSTITUTION, which `shifted_anchor_old_admits_new_rejects` shows the PRE-RUNG predicate accepted
+  with `CANON_OK` witnessed `1`. A refusal that some assignment satisfies is decoration; these are
+  exhibited, not asserted.
+
+## ⚑ WHAT THIS BREAKS (flag day, stated so it is findable)
+
+`dregg-mina-lightclient-verify::v1` changes shape: **31 → 49 constraints**, **1 → 3 declared
+tables** (adding `range_w29` at wire id 98 and `range_w22` at wire id 91). `traceWidth` (30) and
+`piCount` (20) are UNCHANGED, so `turn/src/executor/mina_head_verifier.rs`'s `MINA_LC_PI_COUNT` and
+the PI layout are untouched. **Re-emit** `circuit/descriptors/by-name/dregg-mina-lightclient-verify-v1.json`
+(`EmitByName.lean`) and **rotate the VK** for this descriptor. Any previously produced proof over the
+old shape now fails to verify, which is the intent: the old shape accepted the shifted anchor.
+⚠ A witness generator that leaves the eighteen lane columns unfilled now produces an UNSAT row —
+`mina_head_verifier.rs` must write the anchor's and the tip's nine `Faithful9` lanes, which is the
+same decomposition `check_head_binding` already computes.
 
 ## Scope — do NOT overclaim
 
@@ -148,6 +219,8 @@ Compiled descriptor + non-vacuous per-gate `iff` lemmas + the load-bearing `mina
 read-only.
 -/
 import Dregg2.Circuit.Emit.EffectLowerCore
+import Dregg2.Circuit.LimbTally
+import Dregg2.Circuit.Emit.PastaField
 import Dregg2.Bridge.LightClientMinaGate
 
 set_option autoImplicit false
@@ -160,7 +233,9 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId TableDef rangeTableDef emitVmJson2 rangeRows
    range_row_mem_iff)
-open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LookupLeg PiPinLeg)
+open Dregg2.Circuit.EffectAirIR (EffectAir AirLeg LookupLeg PiPinLeg LimbsLeg)
+open Dregg2.Circuit.LimbTally (limbValue LimbsInRange limbValue_nonneg limbValue_lt)
+open Dregg2.Circuit.Emit.PastaField (pN)
 open Dregg2.Bridge.LightClientMina
 open Dregg2.Bridge.LightClientMinaGate
 
@@ -243,6 +318,96 @@ ceiling (`mina_wrapped_slack_is_outside_the_range`). And 2^24 excludes no honest
 ~3-minute blocks, height 16.7M is roughly 95 years of chain. -/
 def MINA_RANGE_BITS : Nat := 24
 
+/-! ## §1a — ⚑ THE CANONICALITY CARRIER, DERIVED: `CANON_OK`'s content on the two `Fp` elements this
+descriptor actually carries, as lookups on the lane columns it already has.
+
+## The defect this closes, and why the existing gate could not close it
+
+`LightClientMinaHashFold.minaRowWidthGates` is the tree's canonicality AIR for Mina: four
+`StakeWidthRange.widthGate`s at 254 bits — `4 × (254 + 1) = 1020` constraints per state row — with a
+forcing lemma `minaRowWidthGates_forces`. ⚠ **That lemma is stated over `Assignment = Nat → ℤ`, and
+the deployed denotation is mod `p`.** Its recomposition gate is `v − Σ_{i<254} 2^i·bᵢ = 0`; over
+BabyBear (`P = 2013265921`) the 254 free bits can hit EVERY residue, so every field element has a
+satisfying bit assignment and the gate refuses nothing — the `range_vacuous_at_or_above_31` class in
+bit-decomposition clothing. It is worse than vacuous: it gates a 255-bit Pasta element sitting in ONE
+BabyBear column, and no such column exists. `minaRowWidthGates` is not, and cannot be, part of any
+emitted descriptor; it is a free-floating `List VmConstraint2` no `EffectVmDescriptor2` carries.
+
+## What replaces it — and it costs NO new columns and NO gates
+
+At BabyBear a Pasta `Fp` element is not a felt, it is the NINE LANES this descriptor already
+publishes (`ANCHOR_STATE`, `TIP_STATE`). So canonicality is a statement about a limb vector, and it
+is TWO WIDTHS OF LOOKUP and nothing else — the shape `KeyCanonicity9Emit` established for the key
+nonet, at the Pasta threshold instead of the byte-window one:
+
+    lanes 0..7  <  2^29     -- eight lookups, the `.limbs` leg (`MINA_LANE_BITS`)
+    lane  8     <  2^22     -- ONE lookup, on a NARROWER table (`MINA_TOP_LANE_BITS`)
+
+⚑ `2^22 · 2^232 = 2^254` EXACTLY, and `2^254 < pN` (`pow254_lt_mina_p`), so the two legs force the
+denoted value below the Pasta modulus: `mina_lane_canon_forces_canonical`. Both widths are wrap-free
+(`≤ 29`, `RangeFieldContainment.wrap_free_iff_le_29`), so unlike the 254-bit gate they BITE at the
+deployed field.
+
+⚠ The completeness cost, said out loud: `< 2^254` REFUSES the canonical band `[2^254, pN)`, which is
+`pN − 2^254 = 45560315531419706090280762371685220353 ≈ 2^125.1` wide — a `2^-129` fraction of the
+field. `LightClientMinaHashFold` already took this trade (`MINA_FIELD_BITS = 254`); both real devnet
+state hashes are in the window and proved so there.
+
+## Why the top lane at 22 and not the encoder's 24
+
+`Faithful9`/`KeyLanes9` pins lane 8 below `2^24` because the encoder's image is exactly `2^256`. That
+is the 32-BYTE-STRING canonicity, and it is strictly weaker than the FIELD one: the anchor-substitution
+witness `DEVNET_GENESIS_STATE_HASH + pN` is a perfectly legal nonet with lane 8 = 5514899 — below
+`2^24`, so the encoder's own gate ADMITS it — and it chains to the identical tip state hash
+(`LightClientMinaHashFold.stateChain_anchor_shift_collides`). Only the 22-bit table refuses it. -/
+
+/-- The lane width of the nine-lane Pasta-`Fp` encoding: base `2^29`, the maximum wrap-free width at
+BabyBear (`RangeFieldContainment.wrap_free_iff_le_29`). -/
+def MINA_LANE_BITS : Nat := 29
+
+/-- ⚑ **The TOP lane's width, and it is the whole canonicality gate: 22, not the encoder's 24.**
+`8 · 29 = 232` and `22 + 232 = 254`, so `lane 8 < 2^22` is EXACTLY `value < 2^254`, which is
+EXACTLY canonicality (`2^254 < pN`). At 24 the nonet is merely a well-formed 32-byte string and the
+`+pN`-shifted anchor passes. -/
+def MINA_TOP_LANE_BITS : Nat := 22
+
+/-- The wire-id base for width-tagged range tables, the same convention `EffectVmEmitV2.rangeTidW`
+and `FaithfulNoteSpendDescriptorPlan.rangeTid` carry (Rust: `descriptor_ir2.rs`'s
+`RANGE_W_TID_BASE = 64`, wire base 69). Re-stated locally rather than imported, as
+`FaithfulNoteSpendDescriptorPlan` also does; `mina_range_table_wire_ids` pins the arithmetic. -/
+def RANGE_W_TID_BASE : Nat := 64
+
+/-- A width-tagged range table id. -/
+def minaRangeTid (bits : Nat) : TableId := .custom (RANGE_W_TID_BASE + bits)
+
+/-- The 29-bit LANE table (lanes 0..7 of each nine-lane state hash). -/
+def minaLaneTable : TableDef :=
+  ⟨minaRangeTid MINA_LANE_BITS, "range_w29", 1, .rangeLimb MINA_LANE_BITS⟩
+
+/-- ⚑ The 22-bit TOP-LANE table — the narrower one, and the only leg that separates a canonical
+Pasta element from a merely well-formed 32-byte nonet. -/
+def minaTopLaneTable : TableDef :=
+  ⟨minaRangeTid MINA_TOP_LANE_BITS, "range_w22", 1, .rangeLimb MINA_TOP_LANE_BITS⟩
+
+/-- The eight LOW lane columns of the pinned anchor state hash (cols 12..19). -/
+def anchorLowLanes : List Nat :=
+  [ANCHOR_STATE 0, ANCHOR_STATE 1, ANCHOR_STATE 2, ANCHOR_STATE 3,
+   ANCHOR_STATE 4, ANCHOR_STATE 5, ANCHOR_STATE 6, ANCHOR_STATE 7]
+
+/-- The eight LOW lane columns of the verified tip state hash (cols 21..28). -/
+def tipLowLanes : List Nat :=
+  [TIP_STATE 0, TIP_STATE 1, TIP_STATE 2, TIP_STATE 3,
+   TIP_STATE 4, TIP_STATE 5, TIP_STATE 6, TIP_STATE 7]
+
+/-- The FULL nine-lane column vector of a state hash, least-significant lane first — the vector whose
+`LimbTally.limbValue` at radix `2^29` IS the `Fp` element. -/
+def nonetOf (low : List Nat) (top : Nat) : List Nat := low ++ [top]
+
+/-- **The `Fp` element a nine-lane column vector denotes**, in the limb vocabulary the compiler's
+`.limbs` leg is defined against (`LimbTally.limbValue`) rather than a private sum. -/
+def stateValue (a : Assignment) (low : List Nat) (top : Nat) : ℤ :=
+  limbValue MINA_LANE_BITS a (nonetOf low top)
+
 /-! ## §2 — the SOURCE constraints, in the framework's own gate algebra (`Circuit.Expr`).
 
 These are `Constraint`s (`lhs = rhs`), NOT `VmConstraint2`s. The compiler normalizes each through
@@ -291,6 +456,18 @@ def minaRangeTable : TableDef := rangeTableDef MINA_RANGE_BITS
 def rangeLeg (col : Nat) : AirLeg :=
   .lookup { table := TableId.range, tuple := [Expr.var col] }
 
+/-- ⚑ **The eight LOW lanes of a state hash, as ONE `.limbs` leg** — the (e) capability
+`EffectAirIR` gained for the peer-chain tallies, used here for what it was built for: a quantity no
+felt can hold, checked as `k` lookups at a width the field enforces. Lowers to eight range queries
+against the 29-bit table (`EffectLower.lowerLimbsLeg`). -/
+def lowLanesLeg (cols : List Nat) : AirLeg :=
+  .limbs { cols := cols, bits := MINA_LANE_BITS, table := minaRangeTid MINA_LANE_BITS }
+
+/-- ⚑ **The TOP lane, on the NARROW table** — one lookup, and the entire difference between "this
+nonet decodes a 32-byte string" and "this nonet denotes a canonical Pasta field element". -/
+def topLaneLeg (col : Nat) : AirLeg :=
+  .lookup { table := minaRangeTid MINA_TOP_LANE_BITS, tuple := [Expr.var col] }
+
 /-- The nine anchor-state PI pins (cols 12..20 → PI 0..8), written out so the emission pin below
 reduces with no fold. -/
 def anchorStatePins : List AirLeg :=
@@ -320,7 +497,7 @@ def tipStatePins : List AirLeg :=
 is in the deployed IR's language: `AirLeg`, `LookupLeg` and `PiPinLeg` are the source, and the
 `VmConstraint2`s are what `EffectLower.lowerAir` produces. -/
 def minaHeadAir : EffectAir :=
-  { tables := [minaRangeTable]
+  { tables := [minaRangeTable, minaLaneTable, minaTopLaneTable]
   , legs   :=
       [ .gate blockLenC
       , .gate witDepthC
@@ -332,7 +509,12 @@ def minaHeadAir : EffectAir :=
       , rangeLeg DEPTH_SLACK
       , .gate linkC
       , .gate picklesC
-      , .gate canonC ]
+      , .gate canonC
+      -- ⚑ §1a — the DERIVED canonicality of the two `Fp` elements this descriptor carries.
+      , lowLanesLeg anchorLowLanes
+      , topLaneLeg (ANCHOR_STATE 8)
+      , lowLanesLeg tipLowLanes
+      , topLaneLeg (TIP_STATE 8) ]
       ++ anchorStatePins ++ tipStatePins
       ++ [ .pin ⟨VmRow.first, BLOCK_LEN, PI_BLOCK_LEN⟩
          , .pin ⟨VmRow.first, REQ_DEPTH, PI_REQ_DEPTH⟩ ] }
@@ -345,8 +527,38 @@ theorem minaHeadAir_mainRailOk : minaHeadAir.mainRailOk = true := by rfl
 /-- Every declared PI pin indexes a slot the descriptor declares. -/
 theorem minaHeadAir_pinsFit : minaHeadAir.pinsFit MINA_PI_COUNT = true := by rfl
 
-/-- The source carries 31 legs: 8 gates + 3 range lookups + 20 PI pins. -/
-theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 31 := by rfl
+/-- The source carries 35 legs: 8 gates + 3 slack lookups + 2 `.limbs` + 2 top-lane lookups + 20 PI
+pins. ⚑ A `.limbs` leg is ONE leg and EIGHT constraints — `minaLcVerifyDesc_constraint_count` is the
+number a dropped lane moves, and this one is not. -/
+theorem minaHeadAir_leg_count : minaHeadAir.legs.length = 35 := by rfl
+
+/-- ⚑ **THE LIMBED QUANTITIES ARE COUNTED, AND A DROPPED LANE MOVES A NUMBER.** Two nine-lane state
+hashes ⟹ two `.limbs` legs lowering to `8 + 8 = 16` per-limb range lookups (`totalRangeLookups`; this
+descriptor declares no one-wire `RangeLeg`s, so the 16 are exactly the lane queries). The capacity a
+single limbed quantity reaches is `29 · 8 = 232` bits — the LOW half of an `Fp` element, with lane 8
+gated separately and MORE NARROWLY, which is the whole gadget. -/
+theorem minaHeadAir_limbs_shape :
+    minaHeadAir.limbsCount = 2 ∧ minaHeadAir.totalRangeLookups = 16
+      ∧ minaHeadAir.maxLimbedCapacityBits = 232 := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ **THE WIRE IDS THE DESCRIPTOR COMMITS**, so the Rust reader's width recovery
+(`descriptor_ir2.rs::range_bits_for`, `bits = tid − RANGE_W_TID_WIRE_BASE` with wire base 69) lands
+on 29 and 22 and not on some other width. A forger cannot loosen either bound without changing these
+bytes, hence the VK. -/
+theorem mina_range_table_wire_ids :
+    (minaRangeTid MINA_LANE_BITS).wireId = 98 ∧ (minaRangeTid MINA_TOP_LANE_BITS).wireId = 91
+      ∧ TableId.range.wireId = 2 := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- Both declared lane widths are WRAP-FREE at BabyBear, so neither lookup is the vacuous kind three
+shipped descriptors were. (`RangeFieldContainment.wrap_free_iff_le_29` is the general statement; this
+is it at the two widths this descriptor declares.) -/
+theorem mina_lane_widths_are_wrap_free :
+    Dregg2.Circuit.RangeFieldContainment.Wrapfree MINA_LANE_BITS
+      ∧ Dregg2.Circuit.RangeFieldContainment.Wrapfree MINA_TOP_LANE_BITS := by
+  refine ⟨?_, ?_⟩ <;>
+    rw [Dregg2.Circuit.RangeFieldContainment.wrap_free_iff_le_29] <;> decide
 
 /-- **`minaLcVerifyDesc` — COMPILER OUTPUT.** The Mina anchored-head light-client verify decision as
 an IR-v2 AIR. Not modelled beside a hand-written twin; there is no twin.
@@ -370,13 +582,41 @@ form is the normalizer's business, and §4/§5 pin their MEANING through
 theorem minaLcVerifyDesc_name : minaLcVerifyDesc.name = "dregg-mina-lightclient-verify::v1" := rfl
 theorem minaLcVerifyDesc_width : minaLcVerifyDesc.traceWidth = MINA_LC_WIDTH := rfl
 theorem minaLcVerifyDesc_piCount : minaLcVerifyDesc.piCount = MINA_PI_COUNT := rfl
-theorem minaLcVerifyDesc_tables : minaLcVerifyDesc.tables = [minaRangeTable] := rfl
+theorem minaLcVerifyDesc_tables :
+    minaLcVerifyDesc.tables = [minaRangeTable, minaLaneTable, minaTopLaneTable] := rfl
 theorem minaLcVerifyDesc_hashSites : minaLcVerifyDesc.hashSites = [] := rfl
 theorem minaLcVerifyDesc_ranges : minaLcVerifyDesc.ranges = [] := rfl
 
-/-- The compiler emitted exactly one constraint per source leg — nothing vanished and nothing was
-invented. (`EffectLower.lowerLeg_ne_nil` is the general statement; this is it at this descriptor.) -/
-theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 31 := rfl
+/-- The compiler emitted 49 constraints from 35 legs: one per leg, except the two `.limbs` legs which
+lower to EIGHT lookups each. ⚑ A dropped lane moves this number and nothing else does — which is why
+the count is pinned separately from the leg count. (`EffectLower.lowerLeg_ne_nil` is the general
+statement that no leg can vanish; this is the exact arithmetic at this descriptor.) -/
+theorem minaLcVerifyDesc_constraint_count : minaLcVerifyDesc.constraints.length = 49 := rfl
+
+/-- ⚑ **THE SIXTEEN LANE LOOKUPS AND THE TWO TOP-LANE LOOKUPS, AT THEIR EMITTED POSITIONS.** `rfl` on
+a slice of the compiler's output: constraints 11..18 are the anchor's low lanes at 29 bits, 19 is the
+anchor's TOP lane on the NARROW table, 20..27 the tip's low lanes, 28 the tip's top lane. A leg that
+lost a lane, or a top-lane query that drifted onto the wide table, moves this. -/
+theorem minaLcVerifyDesc_canon_lookups :
+    (minaLcVerifyDesc.constraints.drop 11).take 18 =
+      [ .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 0)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 1)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 2)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 3)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 4)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 5)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 6)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (ANCHOR_STATE 7)]⟩
+      , .lookup ⟨minaRangeTid MINA_TOP_LANE_BITS, [.var (ANCHOR_STATE 8)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 0)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 1)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 2)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 3)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 4)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 5)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 6)]⟩
+      , .lookup ⟨minaRangeTid MINA_LANE_BITS, [.var (TIP_STATE 7)]⟩
+      , .lookup ⟨minaRangeTid MINA_TOP_LANE_BITS, [.var (TIP_STATE 8)]⟩ ] := rfl
 
 /-- ⚑ **THE THREE SLACK LOOKUPS, AT THEIR EMITTED POSITIONS.** `rfl` on a slice of the compiler's
 output: constraint 3 is the segment tooth, 5 the anchor tooth, 7 the depth tooth. A leg that lowered
@@ -394,7 +634,7 @@ theorem minaLcVerifyDesc_slack_lookups :
 write, in one `rfl`. Nine pinned-anchor limbs, nine verified-tip limbs, the DERIVED height, the depth
 policy met. A reordering, a dropped pin or a re-indexed slot moves this. -/
 theorem minaLcVerifyDesc_pins :
-    minaLcVerifyDesc.constraints.drop 11 =
+    minaLcVerifyDesc.constraints.drop 29 =
       [ .base (.piBinding VmRow.first (ANCHOR_STATE 0) (PI_ANCHOR_STATE 0))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 1) (PI_ANCHOR_STATE 1))
       , .base (.piBinding VmRow.first (ANCHOR_STATE 2) (PI_ANCHOR_STATE 2))
@@ -470,14 +710,47 @@ accepts this row"; the twenty PI pins are the addressing / state-write layer aro
 def inRange (a : Assignment) (col : Nat) : Prop :=
   0 ≤ a col ∧ a col < (2 : ℤ) ^ MINA_RANGE_BITS
 
-/-- **`airAccepts a`** — the emitted verify logic accepts row `a`. -/
-def airAccepts (a : Assignment) : Prop :=
+/-- ⚑ **`verifyAccepts a` — THE PRE-RUNG PREDICATE, AND IT IS KEPT ONLY AS THE FALSIFIER'S LEFT
+HALF.** This is verbatim what `airAccepts` was before the canonicality legs landed: eight gate
+residuals and three slack ranges, with `CANON_OK` a witnessed bit and the eighteen lane columns free.
+It is NOT a compatibility surface and nothing but §7 reads it — `shifted_anchor_old_admits_new_rejects`
+exhibits a row this predicate ACCEPTS and `airAccepts` REFUSES, which is the whole claim of the rung
+and is unstateable without naming the thing that was refuted. -/
+def verifyAccepts (a : Assignment) : Prop :=
   blockLenC.holds a
   ∧ witDepthC.holds a
   ∧ segSlackC.holds a ∧ inRange a SEG_SLACK
   ∧ anchSlackC.holds a ∧ inRange a ANCH_SLACK
   ∧ depthSlackC.holds a ∧ inRange a DEPTH_SLACK
   ∧ linkC.holds a ∧ picklesC.holds a ∧ canonC.holds a
+
+/-- **One nine-lane state hash's canonicality legs**, as the emitted lookups denote them: the eight
+low lanes in `[0, 2^29)` (the `.limbs` leg, one query per lane) and the top lane in `[0, 2^22)` (the
+narrow table). -/
+def laneCanon (a : Assignment) (low : List Nat) (top : Nat) : Prop :=
+  LimbsInRange MINA_LANE_BITS a low
+    ∧ 0 ≤ a top ∧ a top < (2 : ℤ) ^ MINA_TOP_LANE_BITS
+
+/-- **`canonAccepts a`** — ⚑ THE DERIVED CARRIER. Both `Fp` elements this descriptor publishes are
+canonical Pasta field elements, forced by eighteen lookups and no gate. -/
+def canonAccepts (a : Assignment) : Prop :=
+  laneCanon a anchorLowLanes (ANCHOR_STATE 8) ∧ laneCanon a tipLowLanes (TIP_STATE 8)
+
+/-- The canonicality legs are DECIDABLE on a concrete row — so "the emitted descriptor accepts this
+real devnet head" is a computation, not a sentence a reader checks by eye. -/
+instance decLaneCanon (a : Assignment) (low : List Nat) (top : Nat) :
+    Decidable (laneCanon a low top) := by unfold laneCanon; infer_instance
+
+instance decCanonAccepts (a : Assignment) : Decidable (canonAccepts a) := by
+  unfold canonAccepts; infer_instance
+
+/-- **`airAccepts a`** — the emitted logic accepts row `a`: the verify arithmetic AND the derived
+canonicality of the anchor and tip state hashes. -/
+def airAccepts (a : Assignment) : Prop := verifyAccepts a ∧ canonAccepts a
+
+/-- Acceptance is strictly stronger than the pre-rung predicate. (The converse is FALSE, and §7
+exhibits the witness rather than asserting it.) -/
+theorem airAccepts_imp_verifyAccepts {a : Assignment} (h : airAccepts a) : verifyAccepts a := h.1
 
 /-- **THE RANGE TOOTH IS THE EMITTED ONE.** A slack column in `inRange` is exactly a column whose
 singleton row is in the declared range table — so `airAccepts`'s interval is the emitted lookup's
@@ -511,6 +784,119 @@ theorem mina_wrapped_slack_is_outside_the_range (k : ℤ) (hk : 0 < k)
   rw [hb] at hk'
   omega
 
+/-! ## §5a — ⚑ THE CANONICALITY DERIVATION: eighteen lookups ⟹ two canonical Pasta elements.
+
+No gate, no auxiliary column, no hash. The whole argument is that a nine-lane vector whose low eight
+lanes are below `2^29` and whose top lane is below `2^22` denotes a value below `2^29·8+22 = 2^254`,
+and `2^254 < p`. -/
+
+/-- Splitting a limb vector splits its value — the one lemma the nine-lane bound needs, and it is
+about `LimbTally.limbValue` rather than a private sum, so the bound below is a statement about the
+quantity the `.limbs` leg denotes. -/
+theorem limbValue_append (bits : Nat) (a : Assignment) :
+    ∀ (l m : List Nat), limbValue bits a (l ++ m)
+      = limbValue bits a l + (2 : ℤ) ^ (bits * l.length) * limbValue bits a m := by
+  intro l
+  induction l with
+  | nil => intro m; simp
+  | cons c cs ih =>
+      intro m
+      have hsplit : (2 : ℤ) ^ (bits * (cs.length + 1))
+          = (2 : ℤ) ^ bits * (2 : ℤ) ^ (bits * cs.length) := by
+        rw [← pow_add]; ring_nf
+      simp only [List.cons_append, Dregg2.Circuit.LimbTally.limbValue_cons, ih m,
+        List.length_cons, hsplit]
+      ring
+
+/-- Appending the top lane is one more radix step: the nonet's value is the low half plus
+`2^232 · lane₈`. -/
+theorem stateValue_split (a : Assignment) (low : List Nat) (top : Nat) (hlen : low.length = 8) :
+    stateValue a low top
+      = limbValue MINA_LANE_BITS a low + (2 : ℤ) ^ 232 * a top := by
+  have h := limbValue_append MINA_LANE_BITS a low [top]
+  rw [hlen] at h
+  have htop : limbValue MINA_LANE_BITS a [top] = a top := by
+    simp [Dregg2.Circuit.LimbTally.limbValue]
+  rw [htop] at h
+  unfold stateValue nonetOf
+  rw [h]
+  norm_num [MINA_LANE_BITS]
+
+/-- ⚑ **THE BOUND: the two lookup widths force the denoted `Fp` element below `2^254`.**
+`8 · 29 = 232` and `232 + 22 = 254`, so the window is EXACT — a top lane one bit wider would admit
+`2^255`. Both directions of the arithmetic are visible: the low half contributes at most `2^232 − 1`
+(`LimbTally.limbValue_lt` at eight limbs) and the top lane at most `(2^22 − 1)·2^232`. -/
+theorem laneCanon_value_bounds {a : Assignment} {low : List Nat} {top : Nat}
+    (hlen : low.length = 8) (h : laneCanon a low top) :
+    0 ≤ stateValue a low top ∧ stateValue a low top < (2 : ℤ) ^ 254 := by
+  obtain ⟨hlow, htop0, htoplt⟩ := h
+  have hsplit := stateValue_split a low top hlen
+  have hlo0 : 0 ≤ limbValue MINA_LANE_BITS a low := limbValue_nonneg hlow
+  have hlolt : limbValue MINA_LANE_BITS a low < (2 : ℤ) ^ 232 := by
+    have := limbValue_lt hlow
+    rwa [hlen, show MINA_LANE_BITS * 8 = 232 from rfl] at this
+  have hpow : (0 : ℤ) < (2 : ℤ) ^ 232 := by positivity
+  have htop' : a top ≤ (2 : ℤ) ^ MINA_TOP_LANE_BITS - 1 := by linarith
+  have hmul : (2 : ℤ) ^ 232 * a top ≤ (2 : ℤ) ^ 232 * ((2 : ℤ) ^ MINA_TOP_LANE_BITS - 1) :=
+    mul_le_mul_of_nonneg_left htop' (le_of_lt hpow)
+  have hcap : (2 : ℤ) ^ 232 * (2 : ℤ) ^ MINA_TOP_LANE_BITS = (2 : ℤ) ^ 254 := by
+    rw [← pow_add]; norm_num [MINA_TOP_LANE_BITS]
+  constructor
+  · rw [hsplit]; nlinarith
+  · rw [hsplit]; nlinarith
+
+/-- **`2^254 < p`** — the arithmetic fact the exactness rests on (`p` is a 255-bit prime just above
+`2^254`; `LightClientMinaHashFold.pow254_lt_pN` is the same fact at that module's own abbreviation). -/
+theorem pow254_lt_mina_p : 2 ^ 254 < pN := by decide
+
+/-- ⚑ **THE CARRIER'S CONTENT, DERIVED.** A row satisfying the eighteen lane lookups publishes two
+CANONICAL Pasta field elements. This is what the witnessed `CANON_OK` bit asserted about these two
+values and what the emitted constraints now force. -/
+theorem mina_lane_canon_forces_canonical {a : Assignment} {low : List Nat} {top : Nat}
+    (hlen : low.length = 8) (h : laneCanon a low top) :
+    0 ≤ stateValue a low top ∧ stateValue a low top < (pN : ℤ) := by
+  obtain ⟨h0, hlt⟩ := laneCanon_value_bounds hlen h
+  have hp : ((2 : ℕ) ^ 254 : ℤ) < (pN : ℤ) := by exact_mod_cast pow254_lt_mina_p
+  push_cast at hp
+  exact ⟨h0, lt_trans hlt hp⟩
+
+/-- The two published `Fp` elements of an accepted row are canonical — the descriptor-level form. -/
+theorem mina_anchor_and_tip_are_canonical {a : Assignment} (h : airAccepts a) :
+    stateValue a anchorLowLanes (ANCHOR_STATE 8) < (pN : ℤ)
+      ∧ stateValue a tipLowLanes (TIP_STATE 8) < (pN : ℤ) :=
+  ⟨(mina_lane_canon_forces_canonical rfl h.2.1).2,
+   (mina_lane_canon_forces_canonical rfl h.2.2).2⟩
+
+/-- ⚑ **THE `+k·p` ALIAS FAMILY COLLAPSES**, at the lane encoding rather than at a `Nat`. Poseidon's
+`absorbAt` enters every input through `(state + x) % p`, so the sponge cannot distinguish `v` from
+`v + k·p` (`LightClientMinaHashFold.stateChain_anchor_shift_collides` turns that into an ANCHOR
+SUBSTITUTION against a real devnet anchor). Under the emitted lane lookups only `k = 0` is
+witnessable: one period already leaves the `2^254` window. -/
+theorem mina_alias_collapses_under_lane_gates {a : Assignment} {low : List Nat} {top : Nat}
+    (hlen : low.length = 8) (h : laneCanon a low top) (v : ℤ) (k : Nat) (hv : 0 ≤ v)
+    (hval : stateValue a low top = v + (k : ℤ) * (pN : ℤ)) : k = 0 := by
+  by_contra hk
+  have hk1 : (1 : ℤ) ≤ (k : ℤ) := by exact_mod_cast Nat.one_le_iff_ne_zero.mpr hk
+  have hp0 : (0 : ℤ) < (pN : ℤ) := by norm_num [pN]
+  have hkp : (pN : ℤ) ≤ (k : ℤ) * (pN : ℤ) := le_mul_of_one_le_left (le_of_lt hp0) hk1
+  have hlt := (laneCanon_value_bounds hlen h).2
+  have hp : ((2 : ℕ) ^ 254 : ℤ) < (pN : ℤ) := by exact_mod_cast pow254_lt_mina_p
+  push_cast at hp
+  rw [hval] at hlt
+  linarith
+
+/-- ⚑ **THE LANE LOOKUPS ARE THE EMITTED ONES.** A lane column in the acceptance predicate's interval
+is exactly a column whose singleton row is in the declared table — so `canonAccepts` is the emitted
+lookups' denotation and not a second private notion of "in range". -/
+theorem lane_in_table_iff (a : Assignment) (col : Nat) :
+    (0 ≤ a col ∧ a col < (2 : ℤ) ^ MINA_LANE_BITS) ↔ [a col] ∈ rangeRows MINA_LANE_BITS :=
+  (range_row_mem_iff (a col) MINA_LANE_BITS).symm
+
+/-- …and the same for the narrow top-lane table. -/
+theorem top_lane_in_table_iff (a : Assignment) (col : Nat) :
+    (0 ≤ a col ∧ a col < (2 : ℤ) ^ MINA_TOP_LANE_BITS) ↔ [a col] ∈ rangeRows MINA_TOP_LANE_BITS :=
+  (range_row_mem_iff (a col) MINA_TOP_LANE_BITS).symm
+
 /-- **THE COMPILER CARRIES THE MEANING.** Each emitted gate holds on a transition row exactly when its
 SOURCE constraint holds mod `p`. Stated over an arbitrary source constraint (the general lemma is
 `EffectLower.lowerConstraint_holdsAt_iff`); the eight `iff`s of §4 then say what each emitted gate
@@ -542,7 +928,7 @@ theorem minaLcAir_sound (a : Assignment) (segLen anchorH submitH reqDepth : Nat)
     (hacc : airAccepts a) :
     minaVerifyDecision segLen anchorH submitH (anchorH + segLen - submitH) reqDepth
       linkB picklesB canonB = true := by
-  obtain ⟨hbl, hwd, hss, ⟨hss0, _⟩, has, ⟨has0, _⟩, hds, ⟨hds0, _⟩, hlkC, hpkC, hcnC⟩ := hacc
+  obtain ⟨hbl, hwd, hss, ⟨hss0, _⟩, has, ⟨has0, _⟩, hds, ⟨hds0, _⟩, hlkC, hpkC, hcnC⟩ := hacc.1
   rw [blockLenC_holds_iff] at hbl
   rw [witDepthC_holds_iff] at hwd
   rw [segSlackC_holds_iff] at hss
@@ -636,9 +1022,11 @@ theorem minaLcAir_complete (a : Assignment) (segLen anchorH submitH reqDepth : N
     (hcn : a CANON_OK = (if canonB then (1 : ℤ) else 0))
     (hfit : anchorH + segLen < 2 ^ MINA_RANGE_BITS)
     (hsub : reqDepth + submitH ≤ anchorH + segLen)
+    (hcanon : canonAccepts a)
     (hdecT : minaVerifyDecision segLen anchorH submitH (anchorH + segLen - submitH) reqDepth
       linkB picklesB canonB = true) :
     airAccepts a := by
+  refine ⟨?_, hcanon⟩
   unfold minaVerifyDecision at hdecT
   simp only [Bool.and_eq_true, decide_eq_true_eq] at hdecT
   obtain ⟨⟨⟨⟨⟨hseg, hanch⟩, _hdep⟩, hlk1⟩, hpk1⟩, hcn1⟩ := hdecT
@@ -674,23 +1062,88 @@ nothing witnesses is decoration; these are the four shapes this campaign actuall
 losing fork, a bent proof word, a forged `blockchain_length`, and the deployed observer's own
 unanchored subtraction. -/
 
-/-- A row from its twelve logic-column values, index-ordered (`SEG_LEN` … `BLOCK_LEN`). Columns above
-`BLOCK_LEN` are the PI anchors and read `0` here — the refusals below are about the LOGIC, and the
-pins are the addressing layer around it. -/
+/-- A row from its column values, index-ordered from `SEG_LEN`. A list shorter than the trace width
+reads `0` above its end — the four LOGIC refusals below leave the lane columns at `0` (which is a
+canonical `Fp` element, so they are refused by the logic and not incidentally by the lane gates). -/
 def rowOf (vs : List ℤ) : Assignment := fun w => vs.getD w 0
 
-/-- **THE HONEST ROW.** Anchor pinned at height 1000; 300 exhibited, linked, proof-carrying blocks;
-the settlement submitted at 1010; Samasika `k = 290`. Derived tip 1300, derived witnessed depth 290 —
-the requirement met exactly. All three carriers true. ACCEPTED. -/
-def honestRow : Assignment := rowOf [300, 1000, 1010, 290, 290, 299, 10, 0, 1, 1, 1, 1300]
+/-- The base-`2^29` lanes of Mina devnet **genesis**'s state hash
+`3NL93SipJfAMNDBRfQ8Uo8LPovC74mnJZfZYB5SK7mTtkL72dsPx` — the natural weak-subjectivity anchor for a
+devnet light client. ⚑ Provenance: `LightClientMinaHashFold.DEVNET_GENESIS_STATE_HASH`, itself a
+Base58Check decode with a VERIFIED checksum that `bridge/src/mina_observer.rs::decode_state_hash`
+reproduces. `honest_anchor_lanes_decode_the_devnet_genesis` pins the recomposition against that
+decimal, so these nine digits are a GATE on the decode and not a transcription. -/
+def GENESIS_ANCHOR_LANES : List ℤ :=
+  [317368465, 122552485, 518650043, 481937944, 112457995, 488503206, 390747624, 350427965, 1320595]
 
-theorem honest_row_accepted : airAccepts honestRow := by
-  refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ?_, ?_⟩ <;>
-    simp only [blockLenC_holds_iff, witDepthC_holds_iff, segSlackC_holds_iff, anchSlackC_holds_iff,
-      depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
-      honestRow, rowOf, SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
-      DEPTH_SLACK, LINK_OK, PICKLES_OK, CANON_OK, BLOCK_LEN, MINA_RANGE_BITS, List.getD,
-      List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;> norm_num
+/-- The lanes of devnet block **539508**'s state hash — the block whose Wrap proof o1-labs'
+`kimchi::verifier::verify` accepts (`MinaRealBlockGate`). Used as the verified TIP. -/
+def DEVNET_TIP_LANES : List ℤ :=
+  [148400356, 2288994, 332868807, 237767070, 530455789, 507531490, 336317945, 425818875, 3793778]
+
+/-- ⚑ **THE SHIFTED ANCHOR'S LANES** — the SAME devnet genesis anchor plus ONE Pasta modulus. This is
+the input `LightClientMinaHashFold.stateChain_anchor_shift_collides` proves chains to the IDENTICAL
+tip state hash, i.e. the anchor substitution the Poseidon sponge's `(state + x) % p` absorb permits.
+`shifted_anchor_is_the_genesis_plus_p` proves the `+p` relation rather than asserting it. -/
+def SHIFTED_ANCHOR_LANES : List ℤ :=
+  [317368466, 280463373, 304627617, 166445611, 112458544, 488503206, 390747624, 350427965, 5514899]
+
+/-- The twelve logic-column values shared by the honest row and the shifted-anchor row: anchor pinned
+at height 1000; 300 exhibited, linked, proof-carrying blocks; the settlement submitted at 1010;
+Samasika `k = 290`. Derived tip 1300, derived witnessed depth 290 — the requirement met exactly. ⚑ All
+three carriers, INCLUDING `CANON_OK`, read `1`. -/
+def honestLogicCols : List ℤ := [300, 1000, 1010, 290, 290, 299, 10, 0, 1, 1, 1, 1300]
+
+/-- **THE HONEST ROW** — the logic columns above, the pinned anchor's nine lanes, the verified tip's
+nine lanes. ACCEPTED. -/
+def honestRow : Assignment := rowOf (honestLogicCols ++ GENESIS_ANCHOR_LANES ++ DEVNET_TIP_LANES)
+
+/-- ⚑ **THE SHIFTED-ANCHOR ROW** — byte-for-byte the honest row except that the pinned anchor's lanes
+are the `+p` alias. Every gate holds, every slack is in range, and every carrier bit reads `1`. -/
+def shiftedAnchorRow : Assignment :=
+  rowOf (honestLogicCols ++ SHIFTED_ANCHOR_LANES ++ DEVNET_TIP_LANES)
+
+/-- The row's logic columns, unfolded — shared by every §7 proof so the `List.getD` walk happens
+once per column rather than once per theorem. -/
+private theorem honest_verify_cols :
+    verifyAccepts honestRow ∧ verifyAccepts shiftedAnchorRow := by
+  constructor <;>
+  · refine ⟨?_, ?_, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ⟨?_, ?_⟩, ?_, ?_, ?_⟩ <;>
+      simp only [blockLenC_holds_iff, witDepthC_holds_iff, segSlackC_holds_iff, anchSlackC_holds_iff,
+        depthSlackC_holds_iff, linkC_holds_iff, picklesC_holds_iff, canonC_holds_iff,
+        honestRow, shiftedAnchorRow, honestLogicCols, GENESIS_ANCHOR_LANES, SHIFTED_ANCHOR_LANES,
+        DEVNET_TIP_LANES, rowOf,
+        SEG_LEN, ANCHOR_H, SUBMIT_H, WIT_DEPTH, REQ_DEPTH, SEG_SLACK, ANCH_SLACK,
+        DEPTH_SLACK, LINK_OK, PICKLES_OK, CANON_OK, BLOCK_LEN, MINA_RANGE_BITS, List.getD,
+        List.cons_append, List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] <;>
+      norm_num
+
+/-- ⚑ **THE HONEST ROW IS ACCEPTED — on real devnet lanes.** The verify arithmetic AND the eighteen
+canonicality lookups. Without this the rung would be satisfied by a descriptor that refuses
+everything, and the two real state hashes are exactly the values the gate must not refuse. -/
+theorem honest_row_accepted : airAccepts honestRow :=
+  ⟨honest_verify_cols.1, by decide⟩
+
+/-- The honest anchor's nine lanes recompose to the devnet genesis state hash — the decimal
+`LightClientMinaHashFold.DEVNET_GENESIS_STATE_HASH` records and `bridge/src/mina_observer.rs` decodes.
+Two independent spellings of one value; a drift in either goes red here. -/
+theorem honest_anchor_lanes_decode_the_devnet_genesis :
+    stateValue honestRow anchorLowLanes (ANCHOR_STATE 8)
+      = 9114416221768123787477325283664893678899335531281108607736543138013422200977 := by
+  decide
+
+/-- …and the verified tip's lanes recompose to devnet block 539508's state hash. -/
+theorem honest_tip_lanes_decode_the_devnet_block :
+    stateValue honestRow tipLowLanes (TIP_STATE 8)
+      = 26183698926150821166089117776323498226609958862529648923082869093695686732004 := by
+  decide
+
+/-- ⚑ **THE FORGED ANCHOR IS THE HONEST ONE PLUS EXACTLY ONE PASTA MODULUS.** Proved on the lane
+vectors, so "this is the `+p` alias" is arithmetic rather than a claim in a comment. -/
+theorem shifted_anchor_is_the_genesis_plus_p :
+    stateValue shiftedAnchorRow anchorLowLanes (ANCHOR_STATE 8)
+      = stateValue honestRow anchorLowLanes (ANCHOR_STATE 8) + (pN : ℤ) := by
+  decide
 
 /-- ⚑ **REFUSED — A LOSING FORK.** The same pinned anchor and the same submitted height, but only 295
 exhibited blocks against the honest 300: derived tip 1295, derived depth 285, five short of `k = 290`.
@@ -703,7 +1156,7 @@ def losingForkRow : Assignment := rowOf [295, 1000, 1010, 285, 290, 294, 10, -5,
 
 theorem losing_fork_refused : ¬ airAccepts losingForkRow := by
   intro h
-  have hds0 := h.2.2.2.2.2.2.2.1.1
+  have hds0 := h.1.2.2.2.2.2.2.2.1.1
   simp only [losingForkRow, rowOf, DEPTH_SLACK, List.getD, List.getElem?_cons_zero,
     List.getElem?_cons_succ, Option.getD_some] at hds0
   norm_num at hds0
@@ -715,7 +1168,7 @@ def bentProofRow : Assignment := rowOf [300, 1000, 1010, 290, 290, 299, 10, 0, 1
 
 theorem bent_proof_word_refused : ¬ airAccepts bentProofRow := by
   intro h
-  have hpk := h.2.2.2.2.2.2.2.2.2.1
+  have hpk := h.1.2.2.2.2.2.2.2.2.2.1
   rw [picklesC_holds_iff] at hpk
   simp only [bentProofRow, rowOf, PICKLES_OK, List.getD, List.getElem?_cons_zero,
     List.getElem?_cons_succ, Option.getD_some] at hpk
@@ -733,7 +1186,7 @@ def forgedHeightRow : Assignment := rowOf [5, 1000, 1010, 290, 290, 4, 10, 0, 1,
 
 theorem forged_height_refused : ¬ airAccepts forgedHeightRow := by
   intro h
-  have hbl := h.1
+  have hbl := h.1.1
   rw [blockLenC_holds_iff] at hbl
   simp only [forgedHeightRow, rowOf, BLOCK_LEN, ANCHOR_H, SEG_LEN, List.getD,
     List.getElem?_cons_zero, List.getElem?_cons_succ, Option.getD_some] at hbl
@@ -750,21 +1203,78 @@ def unanchoredRow : Assignment := rowOf [1, 1000, 0, 1001, 290, 0, -1000, 711, 1
 
 theorem observer_arithmetic_refused : ¬ airAccepts unanchoredRow := by
   intro h
-  have has0 := h.2.2.2.2.2.1.1
+  have has0 := h.1.2.2.2.2.2.1.1
   simp only [unanchoredRow, rowOf, ANCH_SLACK, List.getD, List.getElem?_cons_zero,
     List.getElem?_cons_succ, Option.getD_some] at has0
   norm_num at has0
 
+/-- ⚑⚑ **REFUSED — THE ANCHOR SUBSTITUTION, AND THIS IS THE RUNG.** The pinned weak-subjectivity
+anchor is the real devnet genesis hash PLUS ONE PASTA MODULUS
+(`shifted_anchor_is_the_genesis_plus_p`), which `LightClientMinaHashFold.stateChain_anchor_shift_collides`
+proves chains to the IDENTICAL tip state hash — so the forger presents a genuine-looking segment under
+an anchor nobody pinned, and every Poseidon step agrees.
+
+Its top lane is `5514899`: BELOW `2^24`, so it is a perfectly legal nine-lane encoding of a 32-byte
+string and the `Faithful9`/`KeyLanes9` nonet gate admits it. It is refused ONLY by the 22-bit
+top-lane table — the one leg that separates "well-formed nonet" from "canonical Pasta element". -/
+theorem shifted_anchor_refused : ¬ airAccepts shiftedAnchorRow := by
+  intro h
+  have htop := h.2.1.2.2
+  revert htop
+  decide
+
+/-- ⚑⚑⚑ **OLD ADMITS, NEW REJECTS — the rung stated as one theorem.** The very same row that the
+PRE-RUNG predicate ACCEPTS (`verifyAccepts`: every gate, every slack, and `CANON_OK` witnessed `1` by
+a prover who simply set it) is REFUSED by the emitted descriptor. Nothing about the row changed; the
+carrier stopped being a bit somebody wrote down.
+
+This is the object the whole `PICKLES_OK`/`LINK_OK`/`CANON_OK` question is about, at the one carrier
+whose content the descriptor's own columns can express. -/
+theorem shifted_anchor_old_admits_new_rejects :
+    verifyAccepts shiftedAnchorRow ∧ ¬ airAccepts shiftedAnchorRow :=
+  ⟨honest_verify_cols.2, shifted_anchor_refused⟩
+
+/-- ⚑ **AND THE REFUSAL IS THE NARROW TABLE'S, NOT THE ENCODER'S.** The forged top lane passes the
+32-byte nonet width (`< 2^24`, `KeyLanes9.KTOP`) and fails the Pasta-canonical width (`< 2^22`), while
+the honest anchor's passes both. So the 22-bit leg is load-bearing and the 24-bit one would have been
+decoration — `MINA_TOP_LANE_BITS` is not a free parameter. -/
+theorem the_top_lane_width_is_load_bearing :
+    shiftedAnchorRow (ANCHOR_STATE 8) < (2 : ℤ) ^ 24
+      ∧ ¬ (shiftedAnchorRow (ANCHOR_STATE 8) < (2 : ℤ) ^ MINA_TOP_LANE_BITS)
+      ∧ honestRow (ANCHOR_STATE 8) < (2 : ℤ) ^ MINA_TOP_LANE_BITS := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
 /-- ⚑ **THE POLARITY PAIR, AS ONE STATEMENT.** The emitted logic DISCRIMINATES: it accepts the honest
-anchored head and refuses all four forgery shapes. A descriptor that accepted everything, or refused
-everything, fails this. -/
+anchored head on REAL devnet lanes and refuses all five forgery shapes. A descriptor that accepted
+everything, or refused everything, fails this. -/
 theorem mina_air_discriminates :
     airAccepts honestRow
       ∧ ¬ airAccepts losingForkRow
       ∧ ¬ airAccepts bentProofRow
       ∧ ¬ airAccepts forgedHeightRow
-      ∧ ¬ airAccepts unanchoredRow :=
+      ∧ ¬ airAccepts unanchoredRow
+      ∧ ¬ airAccepts shiftedAnchorRow :=
   ⟨honest_row_accepted, losing_fork_refused, bent_proof_word_refused, forged_height_refused,
-   observer_arithmetic_refused⟩
+   observer_arithmetic_refused, shifted_anchor_refused⟩
+
+/-! ## §8 — axiom hygiene, on the canonicality rung's load-bearing facts. -/
+
+#assert_axioms limbValue_append
+#assert_axioms stateValue_split
+#assert_axioms laneCanon_value_bounds
+#assert_axioms pow254_lt_mina_p
+#assert_axioms mina_lane_canon_forces_canonical
+#assert_axioms mina_anchor_and_tip_are_canonical
+#assert_axioms mina_alias_collapses_under_lane_gates
+#assert_axioms mina_lane_widths_are_wrap_free
+#assert_axioms honest_row_accepted
+#assert_axioms honest_anchor_lanes_decode_the_devnet_genesis
+#assert_axioms shifted_anchor_is_the_genesis_plus_p
+#assert_axioms shifted_anchor_refused
+#assert_axioms shifted_anchor_old_admits_new_rejects
+#assert_axioms the_top_lane_width_is_load_bearing
+#assert_axioms mina_air_discriminates
+#assert_axioms minaLcAir_sound
+#assert_axioms minaLcAir_no_forgery
 
 end Dregg2.Circuit.Emit.LightClientMinaAir
