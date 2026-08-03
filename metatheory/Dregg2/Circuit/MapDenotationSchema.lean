@@ -151,7 +151,7 @@ def narrowSchema : MapLeafSchema where
   HeapOk := Heap.SortedKeys
   heapOk_sorted := fun _ h => h
   SizeOk := fun d h => h.length = 2 ^ d
-  commit := mapRoot
+  commit := fun hash d h _ => mapRoot hash d h
 
 /-- **The DEPLOYED LEAF at DENSE occupancy** — the arity-3 indexed-Merkle fold of the same heap.
 `commit` relinks and folds `imtLeafHash`; `HeapOk` adds the one thing sortedness does not give,
@@ -165,7 +165,41 @@ def imtSchema (sent : ℤ) : MapLeafSchema where
   HeapOk := fun h => Heap.SortedKeys h ∧ ∀ x ∈ Heap.keys h, x < sent
   heapOk_sorted := fun _ h => h.1
   SizeOk := fun d h => h.length = 2 ^ d
-  commit := fun hash d h => perfectRoot hash d ((imtChainOf sent h).map (imtLeafHash hash))
+  commit := fun hash d h _ => perfectRoot hash d ((imtChainOf sent h).map (imtLeafHash hash))
+
+/-! ### ⚑ THE TWO ANCHORS ABOVE DISCARD THEIR OCCUPANCY PROOF, AND IT IS SAID HERE RATHER THAN HIDDEN.
+
+`MapLeafSchema.commit` became `… → (h : Heap.FeltHeap) → SizeOk d h → ℤ` on 2026-08-03, so the
+DEPLOYED instance (`padImtSchema`, whose `commit` is `padImtRoot`) cannot be evaluated above capacity
+— the Lean twin of `heap_root.rs:560`'s release-active `assert!(leaves.len() <= capacity)` and its
+own comment, "*Fail loudly rather than silently truncate*".
+
+`narrowSchema` and `imtSchema` are the RETIRED anchors: the arity-2 fold `heap_root.rs` stopped
+computing on 2026-07-12, and the DENSE-occupancy way-point. They exist only so the deployed
+statements have something to be conservative over, and their commits (`mapRoot`; the dense arity-3
+fold) `_`-discard the proof. So they still inherit `perfectRoot_over_capacity_collides` — above
+`2 ^ d` the fold reads only the first `2 ^ d` entries and neither anchor binds. The theorem below is
+that fact, on the anchor, by name; it is a residual on RETIRED objects, not an open hole on a live
+one, because `DescriptorIR2.opensTo` is `padImtSchema` and nothing deployed rides these. -/
+
+/-- **★ THE RETIRED ANCHOR STILL EQUIVOCATES ABOVE CAPACITY.** A full arity-2 heap and the same heap
+with one more entry publish ONE `mapRoot`, for EVERY hash, with no floor — the anchor's own copy of
+the defect `padImtRoot` no longer has. Named so a reader who takes `narrowSchema` for a binding
+commitment finds the limit next to it. -/
+theorem narrow_anchor_over_capacity_collides (hash : List ℤ → ℤ) (d : Nat)
+    {h : Heap.FeltHeap} (hlen : h.length = 2 ^ d) (e : ℤ × ℤ) :
+    mapRoot hash d (h ++ [e]) = mapRoot hash d h ∧ h ++ [e] ≠ h := by
+  have hmap : (h.map (Heap.leafOf hash)).length = 2 ^ d := by rw [List.length_map, hlen]
+  obtain ⟨hroot, _⟩ := Dregg2.Circuit.MapMerkleRoot.perfectRoot_over_capacity_collides_witness
+    hash d (h.map (Heap.leafOf hash)) hmap (Heap.leafOf hash e)
+  refine ⟨?_, ?_⟩
+  · show perfectRoot hash d ((h ++ [e]).map (Heap.leafOf hash))
+      = perfectRoot hash d (h.map (Heap.leafOf hash))
+    rw [List.map_append]
+    exact hroot
+  · intro hc
+    have := congrArg List.length hc
+    simp at this
 
 /-- The IMT schema's admissibility unfolds to exactly its two conjuncts. -/
 theorem imtSchema_heapOk_iff (sent : ℤ) (h : Heap.FeltHeap) :
@@ -176,28 +210,35 @@ theorem imtSchema_heapOk_iff (sent : ℤ) (h : Heap.FeltHeap) :
 Each body mirrors its deployed counterpart CONJUNCT FOR CONJUNCT, in the same order and the same
 orientation, with `Heap.SortedKeys` replaced by `S.HeapOk` and `mapRoot` by `S.commit`. -/
 
-/-- **`opensToMerkleS S hash d r k o`** — some admissible `2^d`-leaf heap committed by `r` under
-schema `S` reads `o` at `k`. -/
-def opensToMerkleS (S : MapLeafSchema) (hash : List ℤ → ℤ) (d : Nat) (r k : ℤ)
-    (o : Option ℤ) : Prop :=
-  ∃ h : Heap.FeltHeap, S.HeapOk h ∧ S.SizeOk d h ∧ S.commit hash d h = r ∧ Heap.get h k = o
-
-/-- **`writesToMerkleS S hash d r k v r'`** — the sorted insert-or-update of `(k, v)` moves the
-committed root `r` to `r'` under schema `S`. -/
-def writesToMerkleS (S : MapLeafSchema) (hash : List ℤ → ℤ) (d : Nat) (r k v r' : ℤ) : Prop :=
-  ∃ h : Heap.FeltHeap, S.HeapOk h ∧ S.SizeOk d h
-    ∧ S.SizeOk d (Heap.set h k v)
-    ∧ S.commit hash d h = r ∧ r' = S.commit hash d (Heap.set h k v)
+/-! ⚑ **THE LOCAL `opensToMerkleS` / `writesToMerkleS` ARE GONE (2026-08-03).** They were verbatim
+duplicates of `DeployedMapDenotation`'s, sitting under an `open` of the very names they shadowed and
+an `export` of them at the foot of the file — two shapes that agreed until one of them moved, which
+is exactly what happened when the occupancy became a binder. There is ONE of each in the tree now;
+this file `open`s and re-`export`s it. -/
 
 /-- **★ CONSERVATIVE EXTENSION (opening).** The DEPLOYED `opensToMerkle` — hence
-`DescriptorIR2.opensTo` — IS the narrow instance, definitionally. -/
+`DescriptorIR2.opensTo` — IS the narrow instance.
+
+⚠ **NO LONGER `rfl`, and the reason is the repair.** The schema denotation now BINDS the occupancy
+(`∃ hz : S.SizeOk d h, S.commit … hz = r`) instead of conjoining it, because the commitment is a
+function of it; the retired `opensToMerkle` still conjoins a bare `h.length = 2 ^ d` beside a
+`mapRoot` that ignores it. `Exists` and `And` are different inductives, so the two are equivalent and
+not definitionally equal. The STATEMENT is unchanged — still an equality of `Prop`s — only the proof
+moved from `rfl` to `propext` of the evident bijection. -/
 theorem opensToMerkleS_narrow (hash : List ℤ → ℤ) (d : Nat) (r k : ℤ) (o : Option ℤ) :
-    opensToMerkleS narrowSchema hash d r k o = opensToMerkle hash d r k o := rfl
+    opensToMerkleS narrowSchema hash d r k o = opensToMerkle hash d r k o := by
+  refine propext ⟨?_, ?_⟩
+  · rintro ⟨h, hs, hz, hr, hg⟩; exact ⟨h, hs, hz, hr, hg⟩
+  · rintro ⟨h, hs, hz, hr, hg⟩; exact ⟨h, hs, hz, hr, hg⟩
 
 /-- **★ CONSERVATIVE EXTENSION (write).** The DEPLOYED `writesToMerkle` — hence
-`DescriptorIR2.writesTo` — IS the narrow instance, definitionally. -/
+`DescriptorIR2.writesTo` — IS the narrow instance. ⚠ `propext`, not `rfl`, for the reason on the
+opening form. -/
 theorem writesToMerkleS_narrow (hash : List ℤ → ℤ) (d : Nat) (r k v r' : ℤ) :
-    writesToMerkleS narrowSchema hash d r k v r' = writesToMerkle hash d r k v r' := rfl
+    writesToMerkleS narrowSchema hash d r k v r' = writesToMerkle hash d r k v r' := by
+  refine propext ⟨?_, ?_⟩
+  · rintro ⟨h, hs, hz, hz', hr, he⟩; exact ⟨h, hs, hz, hz', hr, he⟩
+  · rintro ⟨h, hs, hz, hz', hr, he⟩; exact ⟨h, hs, hz, hz', hr, he⟩
 
 /-- **`MapOp.holdsAtS S hash env m`** — the per-row map-op denotation at leaf schema `S`. The body is
 `DescriptorIR2.MapOp.holdsAt`'s, kind for kind, at the schema's commitment. -/
@@ -323,8 +364,9 @@ of its projection IS the committed root every arity-3 gate law names
 (`perfectRoot hash d (c.map imtLeafHash)`). So the new denotation and `MapAbsentImtGate`'s
 acceptance predicate speak about the SAME felt. -/
 theorem imtSchema_commit_of_chain (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) (c : List ImtLeaf)
-    (hlk : ImtLinkedTo sent c) :
-    (imtSchema sent).commit hash d (imtToHeap c) = perfectRoot hash d (c.map (imtLeafHash hash)) := by
+    (hlk : ImtLinkedTo sent c) (hz : (imtSchema sent).SizeOk d (imtToHeap c)) :
+    (imtSchema sent).commit hash d (imtToHeap c) hz
+      = perfectRoot hash d (c.map (imtLeafHash hash)) := by
   show perfectRoot hash d ((imtChainOf sent (imtToHeap c)).map (imtLeafHash hash))
     = perfectRoot hash d (c.map (imtLeafHash hash))
   rw [imtChainOf_imtToHeap sent c hlk]
@@ -415,7 +457,7 @@ theorem topGap_holdsAtS_holds_where_retired_is_refuted :
     ∧ _
   rw [traceOf_loc, rowOf_root, rowOf_newRoot, rowOf_key]
   refine ⟨⟨imtToHeap depSpine, depHeap_heapOk, depHeap_length, ?_, ?_⟩, rfl⟩
-  · exact imtSchema_commit_of_chain depSent refSponge MAP_TREE_DEPTH depSpine depSpine_linkedTo
+  · exact imtSchema_commit_of_chain depSent refSponge MAP_TREE_DEPTH depSpine depSpine_linkedTo _
   · exact topGap_imt_absence_fires.2.1
 
 end Payoff
@@ -439,6 +481,7 @@ are `docs/DESIGN-mapop-denotation-move.md`. -/
 #assert_axioms imtChainOf_imtToHeap
 #assert_axioms imtSchema_chain_imtSorted
 #assert_axioms imtSchema_commit_of_chain
+#assert_axioms narrow_anchor_over_capacity_collides
 #assert_axioms spineC_linkedTo
 #assert_axioms depSpine_linkedTo
 #assert_axioms depHeap_heapOk

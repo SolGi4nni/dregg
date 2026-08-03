@@ -201,8 +201,8 @@ pins them.
 `heap_root.rs` actually computes — see the header. -/
 def CommittedContents (hash : List ℤ → ℤ) (cd : CommittedRowsDecl) (R : ℤ) (t : VmTrace) : Prop :=
   ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-    ∧ h.length ≤ 2 ^ cd.depth
-    ∧ padImtRoot MAP_SENTINEL hash cd.depth h = R ∧ t.tf cd.id = rowsOfHeap h
+    ∧ ∃ hz : h.length ≤ 2 ^ cd.depth,
+      padImtRoot MAP_SENTINEL hash cd.depth h hz = R ∧ t.tf cd.id = rowsOfHeap h
 
 /-! ## §2b — ⚑ THE WITNESS-EXPLICIT FORMS AND THE NAMED RESIDUAL.
 
@@ -225,8 +225,8 @@ That is the trap `MapMerkleRoot` §5b.E refuses and `DeployedMapDenotation` §6'
 def CommittedContentsBy (hash : List ℤ → ℤ) (cd : CommittedRowsDecl) (R : ℤ) (t : VmTrace)
     (m : Heap.FeltHeap) : Prop :=
   Heap.SortedKeys m ∧ (∀ x ∈ Heap.keys m, x < MAP_SENTINEL)
-    ∧ m.length ≤ 2 ^ cd.depth
-    ∧ padImtRoot MAP_SENTINEL hash cd.depth m = R ∧ t.tf cd.id = rowsOfHeap m
+    ∧ ∃ hz : m.length ≤ 2 ^ cd.depth,
+      padImtRoot MAP_SENTINEL hash cd.depth m hz = R ∧ t.tf cd.id = rowsOfHeap m
 
 /-- The existential form, for consumers that never see the heap (e.g. `Satisfied2Committed`). -/
 theorem CommittedContentsBy.contents {hash : List ℤ → ℤ} {cd : CommittedRowsDecl} {R : ℤ}
@@ -246,9 +246,19 @@ hence total — and it is a genuine equivocation of the deployed commitment, not
 pass.
 
 ⛑ REBOUND 2026-07-30 from `MapRootColl1`, which named a collision of the retired arity-2 dense fold
-`heap_root.rs` no longer computes. -/
+`heap_root.rs` no longer computes.
+
+⚑ **THE OCCUPANCY IS IN THE PREDICATE NOW (2026-08-03), and it was the ONE place in this cone where
+it was missing entirely.** `CommittedContents`, `CommittedContentsBy` and `CommitsAutomatonBy` all
+carried `length ≤ 2 ^ depth` in their own definitions; this residual carried NOTHING, so it was
+satisfiable for free by two over-capacity heaps — where `padImtRoot` is not binding at all and the
+"equivocation" costs no work and refutes nothing (`over_capacity_roots_collide`). A residual that
+cheap is a free pass, which is the exact failure the paragraph above forbids in the OTHER direction.
+`padImtRoot`'s obligation makes it unstatable; the bounds are binders here so the predicate still
+type-checks and now means what its name says. -/
 def PadImtRootColl (hash : List ℤ → ℤ) (d : Nat) (m₁ m₂ : Heap.FeltHeap) : Prop :=
-  m₁ ≠ m₂ ∧ padImtRoot MAP_SENTINEL hash d m₁ = padImtRoot MAP_SENTINEL hash d m₂
+  m₁ ≠ m₂ ∧ ∃ hz₁ : m₁.length ≤ 2 ^ d, ∃ hz₂ : m₂.length ≤ 2 ^ d,
+    padImtRoot MAP_SENTINEL hash d m₁ hz₁ = padImtRoot MAP_SENTINEL hash d m₂ hz₂
 
 /-- ⚑ **THE RESIDUAL IS NOT A FREE PASS — TAKING IT REFUTES THE DEPLOYED SCHEMA'S `Good`.**
 
@@ -277,13 +287,13 @@ carrier of the refuted floor, which is what `#floor_ratchet` exists to red on an
 "migrate the vacuity to a new address" failure looks like. The contrapositive is one `fun hc => …`
 at the use site and needs no export. -/
 theorem padImtRootColl_refutes_injective_and_padFree (hash : List ℤ → ℤ) (d : Nat)
-    {m₁ m₂ : Heap.FeltHeap} (hlen₁ : m₁.length ≤ 2 ^ d) (hlen₂ : m₂.length ≤ 2 ^ d)
-    (hc : PadImtRootColl hash d m₁ m₂) :
+    {m₁ m₂ : Heap.FeltHeap} (hc : PadImtRootColl hash d m₁ m₂) :
     ¬ (Function.Injective hash ∧ PadFree3 hash) := by
   rintro ⟨hinj, hpf⟩
+  obtain ⟨hne, hlen₁, hlen₂, hroot⟩ := hc
   rcases DeployedMapDenotation.padImtRoot_binds_or_ghost_or_collides MAP_SENTINEL hash d
-      hlen₁ hlen₂ hc.2 with heq | hg₁ | hg₂ | hcc
-  · exact hc.1 heq
+      hlen₁ hlen₂ hroot with heq | hg₁ | hg₂ | hcc
+  · exact hne heq
   · exact DeployedMapDenotation.padGhost3_refuted hpf MAP_SENTINEL m₁ hg₁
   · exact DeployedMapDenotation.padGhost3_refuted hpf MAP_SENTINEL m₂ hg₂
   · exact hcc.1 (hinj hcc.2)
@@ -293,8 +303,8 @@ theorem padImtRootColl_refutes_injective_and_padFree (hash : List ℤ → ℤ) (
 def CommitsAutomatonBy (hash : List ℤ → ℤ) (m : Heap.FeltHeap) (R : ℤ)
     (d : TableDfa Nat Nat) : Prop :=
   Heap.SortedKeys m ∧ (∀ x ∈ Heap.keys m, x < MAP_SENTINEL)
-    ∧ m.length ≤ 2 ^ MAP_TREE_DEPTH
-    ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH m = R
+    ∧ ∃ hz : m.length ≤ 2 ^ MAP_TREE_DEPTH,
+      padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH m hz = R
     ∧ ∀ s y : Nat, s < ASTATES → y < ASYM →
         Heap.get m ((keyOf s y : Nat) : ℤ) = some ((d.step s y : Nat) : ℤ)
 
@@ -385,11 +395,14 @@ theorem lookup_replaces_mapOp_or_collides (hash : List ℤ → ℤ)
   · subst hne
     refine Or.inl ?_
     have g₁ := committed_lookup_getBy hash cd R t hc hmem
-    have g₂ := hcommit.2.2.2.2 s y hs hy
+    have g₂ := hcommit.2.2.choose_spec.2 s y hs hy
     rw [g₁] at g₂
     simpa using g₂
   · refine Or.inr ⟨hne, ?_⟩
-    rw [← hd, hc.2.2.2.1, hd, hcommit.2.2.2.1]
+    obtain ⟨hza, hra, -⟩ := hcommit.2.2
+    obtain ⟨hzc, hrc, -⟩ := hc.2.2
+    revert hrc; revert hzc; rw [hd]; intro hzc hrc
+    exact ⟨hzc, hza, hrc.trans hra.symm⟩
 
 /-! ## §4 — ⚑ THE ATTESTATION: one root, one table content. -/
 
@@ -426,7 +439,10 @@ theorem committedRoot_binds_contents_or_collides (hash : List ℤ → ℤ)
     rw [g₁] at g₂
     simpa using g₂
   · refine Or.inr ⟨hne, ?_⟩
-    rw [h₁.2.2.2.1, ← hdep, h₂.2.2.2.1]
+    obtain ⟨hz₁, hr₁, -⟩ := h₁.2.2
+    obtain ⟨hz₂, hr₂, -⟩ := h₂.2.2
+    revert hr₂; revert hz₂; rw [hdep]; intro hz₂ hr₂
+    exact ⟨hz₁, hz₂, hr₁.trans hr₂.symm⟩
 
 /-! ## §5 — NON-VACUITY: the predicate is inhabited, and inhabited AT the automaton commitment. -/
 
@@ -455,7 +471,7 @@ depth — so the committed-rows route and the map-op route commit the SAME objec
 theorem committedContents_automaton (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) (tid : TableId)
     (rootE : EmittedExpr) :
     CommittedContents hash ⟨tid, 2, rootE, MAP_TREE_DEPTH⟩
-      (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d))
+      (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d) (le_of_eq (autoHeap_length d)))
       (committedTrace tid (autoHeap d)) :=
   committedContents_inhabited hash tid MAP_TREE_DEPTH rootE (autoHeap d)
     (autoHeap_sorted d) (autoHeap_keys_lt d) (le_of_eq (autoHeap_length d))
@@ -464,7 +480,9 @@ theorem committedContents_automaton (hash : List ℤ → ℤ) (d : TableDfa Nat 
 `irreducible` barrier hides the body from elaboration but the equation lemma survives — nothing here
 ever unfolds a `2^16`-leaf heap). -/
 theorem autoRoot_eq (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) :
-    autoRoot hash d = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d) := by
+    autoRoot hash d
+      = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d)
+          (le_of_eq (autoHeap_length d)) := by
   unfold autoRoot
   exact rfl
 
