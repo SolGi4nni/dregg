@@ -94,6 +94,12 @@ def turnIdentityCols (base : EffectVmDescriptor2) (name : String) (n : Nat) : Li
   let d := effCapOpenV3TB base name n
   [(capOpenCols base.traceWidth).src, authActorCol d, authDstCol d]
 
+/-- The turn identity is THREE columns — an absorb the `padTo16` lift puts at the admitted arity
+16. Named, because `withTurnAuth` now carries the chip's admitted-arity obligation. -/
+theorem turnIdentityCols_length (base : EffectVmDescriptor2) (name : String) (n : Nat) :
+    (turnIdentityCols base name n).length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by
+  simp [turnIdentityCols, Dregg2.Circuit.DescriptorIR2.CHIP_RATE]
+
 /-! ## §2 — the composed descriptor. -/
 
 /-- **`authWeldedCapOpenTB base name n nb`** — the deployed cap-open turn-bound descriptor, plus
@@ -102,6 +108,7 @@ constraint is preserved verbatim, so every crown keystone lifts unchanged. -/
 def authWeldedCapOpenTB (base : EffectVmDescriptor2) (name : String) (n nb : Nat) :
     EffectVmDescriptor2 :=
   withTurnAuth (withActorDst (effCapOpenV3TB base name n)) nb (turnIdentityCols base name n)
+    (turnIdentityCols_length base name n)
 
 /-- Every constraint of the turn-bound cap-open survives the weld: the crown is KEPT, not replaced.
 So `effCapOpenV3TB_authorizes` (the membership leg) and `effCapOpenV3TB_hsrc` lift verbatim, and the

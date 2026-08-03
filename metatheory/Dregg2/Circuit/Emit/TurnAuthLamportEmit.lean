@@ -237,6 +237,44 @@ deployed chip seeds ALL sixteen lanes and drops none of the real inputs. -/
 def padTo16 (w nb : Nat) (ins : List Nat) : List Nat :=
   ins ++ List.replicate (Dregg2.Circuit.DescriptorIR2.CHIP_RATE - ins.length) (zpadCol w nb)
 
+/-- An 8-felt column group has exactly `W = 8` columns. -/
+theorem gcols_length (g : Fin W → Nat) : (gcols g).length = W := by
+  simp [gcols]
+
+/-- A padded absorb has exactly the `node8` arity 16 whenever the real inputs fit. -/
+theorem padTo16_length (w nb : Nat) (ins : List Nat)
+    (h : ins.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
+    (padTo16 w nb ins).length = Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by
+  simp [padTo16]; omega
+
+/-- **A padded absorb is at an ADMITTED arity.** `CHIP_RATE = 16` is a root of the deployed
+degree-7 admission product, so `padTo16` is exactly the "pad up to the next admitted arity" the
+chip's budget prescribes — but only when the real inputs FIT. At `ins.length > 16` the `Nat`
+subtraction saturates, `padTo16` is the identity, and the absorb lands at an arity the chip AIR
+refuses; that is the case this hypothesis exists to exclude. -/
+theorem padTo16_admitted (w nb : Nat) (ins : List Nat)
+    (h : ins.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
+    Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted
+      (((padTo16 w nb ins).map EmittedExpr.var).length) := by
+  rw [List.length_map, padTo16_length w nb ins h]
+  exact of_decide_eq_true (Eq.refl true)
+
+/-- The absorb-arity discharger for this gadget: every `wideHash` here absorbs a `padTo16` block,
+so the obligation reduces to "the real inputs fit", which is decidable for the generated groups and
+a named hypothesis for the caller-supplied turn identity. -/
+macro "turn_absorb_arity" : tactic =>
+  `(tactic| first
+      | assumption
+      | exact padTo16_admitted _ _ _ (by first
+          | assumption
+          | simp [gcols, W, Dregg2.Circuit.DescriptorIR2.CHIP_RATE]
+          | (simp only [foldIns]; split <;>
+              simp [gcols, W, Dregg2.Circuit.DescriptorIR2.CHIP_RATE])
+          | decide)
+      | fail "TURN-AUTH ABSORB ARITY NOT ADMITTED — this wideHash absorbs a block the deployed \
+              chip AIR refuses (CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16]). A padTo16 block \
+              is at arity 16 ONLY when the real inputs fit; supply `ins.length ≤ CHIP_RATE`.")
+
 /-- The gate pinning the pad column to zero. -/
 def zpadGates (w nb : Nat) : List VmConstraint2 := [cgH (Head.lin 1 (zpadCol w nb))]
 
@@ -249,8 +287,11 @@ with a fixed injection, so it inherits `permOut`'s preimage/collision resistance
 def Hsig (permOut : List ℤ → List ℤ) : List ℤ → List ℤ := fun blk => permOut (blk ++ SIGPAD)
 
 /-- The wide Poseidon2 lookup forcing an 8-felt output group from an input column list. -/
-def wideHash (ins : List Nat) (out : List Nat) : VmConstraint2 :=
-  .lookup { table := TableId.poseidon2, tuple := chipLookupTupleN (ins.map EmittedExpr.var) out }
+def wideHash (ins : List Nat) (out : List Nat)
+    (hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (ins.map EmittedExpr.var).length :=
+      by turn_absorb_arity) : VmConstraint2 :=
+  .lookup { table := TableId.poseidon2
+          , tuple := chipLookupTupleN (ins.map EmittedExpr.var) out hAdm }
 
 /-- **`sigLookups`** — per bit `k`, force `sigH k = permOut (sig k)`. -/
 def sigLookups (w nb : Nat) : List VmConstraint2 :=
@@ -282,10 +323,18 @@ def pairLookups (w nb : Nat) : List VmConstraint2 :=
 def foldIns (w nb k : Nat) : List Nat :=
   (if k = 1 then gcols (pairG w nb 0) else gcols (accG w nb (k - 1))) ++ gcols (pairG w nb k)
 
+/-- A fold input block is two 8-felt groups (`pair ‖ pair` or `acc ‖ pair`), so it fits the rate
+and its `padTo16` lands on the admitted arity 16. -/
+theorem foldIns_length_le (w nb k : Nat) :
+    (foldIns w nb k).length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by
+  unfold foldIns
+  split <;> simp [gcols, W, Dregg2.Circuit.DescriptorIR2.CHIP_RATE]
+
 /-- **`accLookups`** — the running authority-root fold over every public-key pair. -/
 def accLookups (w nb : Nat) : List VmConstraint2 :=
   (List.range (ELL nb - 1)).map (fun i =>
-    wideHash (padTo16 w nb (foldIns w nb (i + 1))) (gcols (accG w nb (i + 1))))
+    wideHash (padTo16 w nb (foldIns w nb (i + 1))) (gcols (accG w nb (i + 1)))
+      (padTo16_admitted _ _ _ (foldIns_length_le w nb (i + 1))))
 
 /-- **`authRootPins`** — the folded authority root is PUBLISHED: its 8 felts are pinned to
 `PI[pcBase .. pcBase+7]`. The light client ANCHORS these from the owner's committed authority root,
@@ -297,8 +346,9 @@ def authRootPins (w nb pcBase : Nat) : List VmConstraint2 :=
 /-- **`turnDigestLookup`** — the message digest felts are `permOut` of the TURN IDENTITY columns.
 `turnIn` is supplied by the caller: `src`, `actor`, `dst`, and whatever else the turn is. THIS is
 what makes `actor` and `dst` load-bearing. -/
-def turnDigestLookup (w nb : Nat) (turnIn : List Nat) : VmConstraint2 :=
-  wideHash (padTo16 w nb turnIn) (tdCols w nb)
+def turnDigestLookup (w nb : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by first | assumption | decide) : VmConstraint2 :=
+  wideHash (padTo16 w nb turnIn) (tdCols w nb) (padTo16_admitted w nb turnIn hIn)
 
 /-- The recomposition head for block `q`: `Σ_{i<31} m[31q+i]·2ⁱ − td[q]`. -/
 def reconHead (w nb q : Nat) : Head :=
@@ -329,10 +379,11 @@ def allCanonGates (w nb : Nat) : List VmConstraint2 :=
 /-- **`lamportAuthConstraints w nb pcBase turnIn`** — THE WHOLE IN-AIR AUTHORIZATION: the signature
 verify, the public-key fold to a published authority root, and the binding of the signed message to
 the turn identity. -/
-def lamportAuthConstraints (w nb pcBase : Nat) (turnIn : List Nat) : List VmConstraint2 :=
+def lamportAuthConstraints (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by first | assumption | decide) : List VmConstraint2 :=
   sigLookups w nb ++ selectGates w nb ++ msgBitGates w nb
     ++ pairLookups w nb ++ accLookups w nb ++ authRootPins w nb pcBase
-    ++ [turnDigestLookup w nb turnIn] ++ msgReconGates w nb ++ allCanonGates w nb
+    ++ [turnDigestLookup w nb turnIn hIn] ++ msgReconGates w nb ++ allCanonGates w nb
     ++ zpadGates w nb
 
 /-! ## §3 — structural `#guard`s (the generators produce the budgeted shapes). -/
@@ -404,20 +455,10 @@ theorem map_var_eval (a : Assignment) (cols : List Nat) :
     ((cols.map EmittedExpr.var).map (fun e => e.eval a)) = cols.map a := by
   simp [List.map_map, Dregg2.Exec.CircuitEmit.EmittedExpr.eval, Function.comp_def]
 
-/-- An 8-felt column group has exactly `W = 8` columns. -/
-theorem gcols_length (g : Fin W → Nat) : (gcols g).length = W := by
-  simp [gcols]
-
 /-- A group's VALUES read lane-by-lane over `Fin W` (the shape lane-wise congruence needs). -/
 theorem gval_eq (a : Assignment) (g : Fin W → Nat) :
     gval a g = (List.finRange W).map (fun j => a (g j)) := by
   simp [gval, gcols, List.map_map, Function.comp_def]
-
-/-- A padded absorb has exactly the `node8` arity 16 whenever the real inputs fit. -/
-theorem padTo16_length (w nb : Nat) (ins : List Nat)
-    (h : ins.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
-    (padTo16 w nb ins).length = Dregg2.Circuit.DescriptorIR2.CHIP_RATE := by
-  simp [padTo16]; omega
 
 /-- Reading a padded absorb's inputs: the real columns followed by the fixed zero tail. -/
 theorem padTo16_vals (a : Assignment) (w nb : Nat) (ins : List Nat) (hz : a (zpadCol w nb) = 0) :
@@ -428,10 +469,14 @@ theorem padTo16_vals (a : Assignment) (w nb : Nat) (ins : List Nat) (hz : a (zpa
 /-! ## §5 — the wide-lookup forcing lever (the deployed chip, at full 8-felt squeeze width). -/
 
 /-- The `Lookup` a `wideHash` wraps. -/
-def wideHashLk (ins out : List Nat) : Lookup :=
-  { table := TableId.poseidon2, tuple := chipLookupTupleN (ins.map EmittedExpr.var) out }
+def wideHashLk (ins out : List Nat)
+    (hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (ins.map EmittedExpr.var).length :=
+      by turn_absorb_arity) : Lookup :=
+  { table := TableId.poseidon2, tuple := chipLookupTupleN (ins.map EmittedExpr.var) out hAdm }
 
-theorem wideHash_eq (ins out : List Nat) : wideHash ins out = .lookup (wideHashLk ins out) := rfl
+theorem wideHash_eq (ins out : List Nat)
+    (hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (ins.map EmittedExpr.var).length) :
+    wideHash ins out hAdm = .lookup (wideHashLk ins out hAdm) := rfl
 
 /-- **`wideHash_forces`** — against a SOUND wide chip table (`ChipTableSoundN`, the exact lever the
 cap crown's `nodeLookup` rides), a `wideHash` lookup forces its output column block to be the genuine
@@ -440,11 +485,13 @@ tuple. -/
 theorem wideHash_forces (permOut : List ℤ → List ℤ)
     (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (env : VmRowEnv)
     (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
-    (ins out : List Nat) (hlen : ins.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
-    (hhold : (wideHashLk ins out).holdsAt tf env) :
+    (ins out : List Nat)
+    (hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (ins.map EmittedExpr.var).length)
+    (hlen : ins.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
+    (hhold : (wideHashLk ins out hAdm).holdsAt tf env) :
     out.map env.loc = permOut (ins.map env.loc) := by
   have h := chip_lookup_sound_N permOut (tf TableId.poseidon2) hChip env.loc
-    (ins.map EmittedExpr.var) out (by simpa using hlen) hhold
+    (ins.map EmittedExpr.var) out hAdm hhold
   rw [h, map_var_eval]
 
 /-! ## §6 — `AuthCore`: the row-local denotational facts the gadget's constraints ARE.
@@ -457,7 +504,8 @@ structure AuthCore (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase 
     (turnIn : List Nat) (env : VmRowEnv) : Prop where
   /-- every signature block hashes to its digest block (the wide chip lookup). -/
   sigHashed  : ∀ k < ELL nb,
-    (wideHashLk (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k))).holdsAt tf env
+    (wideHashLk (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k))
+      (padTo16_admitted _ _ _ (by rw [gcols_length]; decide))).holdsAt tf env
   /-- the per-lane SELECT gate: the hashed signature equals the public-key entry for the message bit. -/
   selectZero : ∀ k < ELL nb, ∀ j : Fin W,
     evalH (selectHead w nb k j) env.loc ≡ 0 [ZMOD 2013265921]
@@ -466,15 +514,19 @@ structure AuthCore (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase 
   /-- each public-key pair is compressed (the rate-16 absorb of `pk0 ‖ pk1`). -/
   pairHashed : ∀ k < ELL nb,
     (wideHashLk (padTo16 w nb (gcols (pk0G w nb k) ++ gcols (pk1G w nb k)))
-      (gcols (pairG w nb k))).holdsAt tf env
+      (gcols (pairG w nb k))
+      (padTo16_admitted _ _ _ (by simp [gcols, W, Dregg2.Circuit.DescriptorIR2.CHIP_RATE]))).holdsAt tf env
   /-- the running authority-root fold. -/
   accHashed  : ∀ k, 1 ≤ k → k < ELL nb →
-    (wideHashLk (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k))).holdsAt tf env
+    (wideHashLk (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k))
+      (padTo16_admitted _ _ _ (foldIns_length_le w nb k))).holdsAt tf env
   /-- the folded authority root is pinned to the 8 published PI slots. -/
   rootPinned : ∀ j : Fin W,
     env.loc (accG w nb (ELL nb - 1) j) ≡ env.pub (pcBase + j.val) [ZMOD 2013265921]
   /-- the turn-identity digest felts are `permOut` of the TURN IDENTITY columns. -/
-  turnHashed : (wideHashLk (padTo16 w nb turnIn) (tdCols w nb)).holdsAt tf env
+  turnHashed : ∀ hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted
+      (((padTo16 w nb turnIn).map EmittedExpr.var).length),
+    (wideHashLk (padTo16 w nb turnIn) (tdCols w nb) hAdm).holdsAt tf env
   /-- the signed bits recompose to the turn-digest felts. -/
   reconZero  : ∀ q < nb, evalH (reconHead w nb q) env.loc ≡ 0 [ZMOD 2013265921]
   /-- the arity-16 pad column is zero (so every absorb's tail is the fixed `SIGPAD`). -/
@@ -530,6 +582,7 @@ DEFINITIONALLY `Dregg2.Crypto.HashSig.verify` at `D := List ℤ`, `H := permOut`
 forgery tooth applies to THIS emitted object with no new reduction and no new hardness carrier. -/
 theorem lamport_verify_forced (permOut : List ℤ → List ℤ)
     (tf : Dregg2.Circuit.DescriptorIR2.TraceFamily) (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
     (env : VmRowEnv)
     (hChip : ChipTableSoundN permOut (tf TableId.poseidon2))
     (hcore : AuthCore tf w nb pcBase turnIn env)
@@ -539,6 +592,7 @@ theorem lamport_verify_forced (permOut : List ℤ → List ℤ)
   intro k
   -- the chip lookup: the digest block IS the permutation of the PADDED signature block.
   have hlk := wideHash_forces permOut tf env hChip _ _
+    (padTo16_admitted _ _ _ (by rw [gcols_length]; decide))
     (by rw [padTo16_length _ _ _ (by rw [gcols_length]; decide)])
     (hcore.sigHashed k.val k.isLt)
   -- the select gate, lane by lane: the digest block IS the selected public-key block.
@@ -582,29 +636,32 @@ descriptor — `check_descriptor2` refuses any descriptor with a non-empty `hash
 there and would have been unassemblable by the deployed prover. Booleanity comes from the emitted
 `binGate` instead, lifted to ℤ by `boolGate_exact` (`p`'s primality + the canonicality envelope) —
 the same route `CapOpenEmit` uses for its mask bits. -/
-def withTurnAuth (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat) : EffectVmDescriptor2 :=
+def withTurnAuth (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) : EffectVmDescriptor2 :=
   { base with
     traceWidth  := base.traceWidth + AUTH_SPAN nb
     piCount     := base.piCount + W
     constraints := base.constraints
-      ++ lamportAuthConstraints base.traceWidth nb base.piCount turnIn }
+      ++ lamportAuthConstraints base.traceWidth nb base.piCount turnIn hIn }
 
 -- A graduated v2 descriptor carries NO v1 range/hash-site carriers; the deployed
 -- `check_descriptor2` refuses one that does.
-#guard (withTurnAuth ⟨"b", 3, 0, [], [], [], []⟩ NB [0, 1, 2]).ranges.isEmpty
-#guard (withTurnAuth ⟨"b", 3, 0, [], [], [], []⟩ NB [0, 1, 2]).hashSites.isEmpty
+#guard (withTurnAuth ⟨"b", 3, 0, [], [], [], []⟩ NB [0, 1, 2] (by decide)).ranges.isEmpty
+#guard (withTurnAuth ⟨"b", 3, 0, [], [], [], []⟩ NB [0, 1, 2] (by decide)).hashSites.isEmpty
 
 /-- Every base constraint survives the widening (so every existing keystone lifts verbatim). -/
 theorem withTurnAuth_base_constraints (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
     (c : VmConstraint2) (hc : c ∈ base.constraints) :
-    c ∈ (withTurnAuth base nb turnIn).constraints :=
+    c ∈ (withTurnAuth base nb turnIn hIn).constraints :=
   List.mem_append_left _ hc
 
 /-- Every gadget constraint is in the widened descriptor. -/
 theorem withTurnAuth_auth_constraints (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
     (c : VmConstraint2)
-    (hc : c ∈ lamportAuthConstraints base.traceWidth nb base.piCount turnIn) :
-    c ∈ (withTurnAuth base nb turnIn).constraints :=
+    (hc : c ∈ lamportAuthConstraints base.traceWidth nb base.piCount turnIn hIn) :
+    c ∈ (withTurnAuth base nb turnIn hIn).constraints :=
   List.mem_append_right _ hc
 
 /-! ### Membership of each generated block in the gadget's constraint list. -/
@@ -624,10 +681,12 @@ theorem mem_pairLookups (w nb k : Nat) (hk : k < ELL nb) :
   List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
 
 theorem mem_accLookups (w nb k : Nat) (hk1 : 1 ≤ k) (hk : k < ELL nb) :
-    wideHash (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k)) ∈ accLookups w nb :=
-  List.mem_map.mpr ⟨k - 1, List.mem_range.mpr (by omega), by
-    have : k - 1 + 1 = k := by omega
-    rw [this]⟩
+    wideHash (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k))
+      (padTo16_admitted _ _ _ (foldIns_length_le w nb k)) ∈ accLookups w nb := by
+  -- ⚠ substitute `k = j + 1` rather than rewriting `k - 1 + 1 = k`: the admission proof now
+  -- DEPENDS on `k`, so the rewrite motive is not type correct.
+  obtain ⟨j, rfl⟩ : ∃ j, k = j + 1 := ⟨k - 1, by omega⟩
+  exact List.mem_map.mpr ⟨j, List.mem_range.mpr (by omega), rfl⟩
 
 theorem mem_authRootPins (w nb pcBase : Nat) (j : Fin W) :
     (VmConstraint2.base (.piBinding VmRow.first (accG w nb (ELL nb - 1) j) (pcBase + j.val)))
@@ -640,13 +699,15 @@ theorem mem_msgReconGates (w nb q : Nat) (hq : q < nb) :
 
 /-! ### Lifting each block into `lamportAuthConstraints` (nine left-associated appends). -/
 
-theorem auth_mem_sig (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
+theorem auth_mem_sig (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (k : Nat) (hk : k < ELL nb) :
     wideHash (padTo16 w nb (gcols (sigG w nb k))) (gcols (sigHG w nb k))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (mem_sigLookups w nb k hk)))))))))
 
-theorem auth_mem_select (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb)
+theorem auth_mem_select (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (k : Nat) (hk : k < ELL nb)
     (j : Fin W) : cgH (selectHead w nb k j) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_selectGates w nb k hk j)))))))))
@@ -655,41 +716,49 @@ theorem mem_msgBitGates (w nb k : Nat) (hk : k < ELL nb) :
     binGate (mCol w nb k) ∈ msgBitGates w nb :=
   List.mem_map.mpr ⟨k, List.mem_range.mpr hk, rfl⟩
 
-theorem auth_mem_msgbit (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
+theorem auth_mem_msgbit (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (k : Nat) (hk : k < ELL nb) :
     binGate (mCol w nb k) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_msgBitGates w nb k hk))))))))
 
-theorem auth_mem_pair (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk : k < ELL nb) :
+theorem auth_mem_pair (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (k : Nat) (hk : k < ELL nb) :
     wideHash (padTo16 w nb (gcols (pk0G w nb k) ++ gcols (pk1G w nb k))) (gcols (pairG w nb k))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inl (.inl (.inr (mem_pairLookups w nb k hk)))))))
 
-theorem auth_mem_acc (w nb pcBase : Nat) (turnIn : List Nat) (k : Nat) (hk1 : 1 ≤ k)
+theorem auth_mem_acc (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (k : Nat) (hk1 : 1 ≤ k)
     (hk : k < ELL nb) :
     wideHash (padTo16 w nb (foldIns w nb k)) (gcols (accG w nb k))
-      ∈ lamportAuthConstraints w nb pcBase turnIn := by
+      (padTo16_admitted _ _ _ (foldIns_length_le w nb k))
+      ∈ lamportAuthConstraints w nb pcBase turnIn hIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inl (.inr (mem_accLookups w nb k hk1 hk))))))
 
-theorem auth_mem_root (w nb pcBase : Nat) (turnIn : List Nat) (j : Fin W) :
+theorem auth_mem_root (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (j : Fin W) :
     (VmConstraint2.base (.piBinding VmRow.first (accG w nb (ELL nb - 1) j) (pcBase + j.val)))
       ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inl (.inr (mem_authRootPins w nb pcBase j)))))
 
-theorem auth_mem_turn (w nb pcBase : Nat) (turnIn : List Nat) :
+theorem auth_mem_turn (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
     turnDigestLookup w nb turnIn ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inl (.inr (by simp))))
 
-theorem auth_mem_recon (w nb pcBase : Nat) (turnIn : List Nat) (q : Nat) (hq : q < nb) :
+theorem auth_mem_recon (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (q : Nat) (hq : q < nb) :
     cgH (reconHead w nb q) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inl (.inl (.inr (mem_msgReconGates w nb q hq)))
 
-theorem auth_mem_zpad (w nb pcBase : Nat) (turnIn : List Nat) :
+theorem auth_mem_zpad (w nb pcBase : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
     cgH (Head.lin 1 (zpadCol w nb)) ∈ lamportAuthConstraints w nb pcBase turnIn := by
   simp only [lamportAuthConstraints, List.mem_append]
   exact .inr (by simp [zpadGates])
@@ -698,46 +767,47 @@ theorem auth_mem_zpad (w nb pcBase : Nat) (turnIn : List Nat) :
 trace satisfying the widened descriptor, every gadget constraint bites: `isFirst = true` (the
 authority-root PI pins fire) and `isLast = false` (the gates are on their active domain). -/
 theorem authCore_of_satisfied (base : EffectVmDescriptor2) (nb : Nat) (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
+    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn hIn) minit mfin maddrs t)
     (hlen : 2 ≤ t.rows.length) (hcanon : AuthRowCanon (envAt t 0)) :
     AuthCore t.tf base.traceWidth nb base.piCount turnIn (envAt t 0) := by
   have hi : 0 < t.rows.length := by omega
   have hnotlast : ((0 : Nat) + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; omega
   have hrow := fun c hc => hsat.rowConstraints 0 hi c
-    (withTurnAuth_auth_constraints base nb turnIn c hc)
+    (withTurnAuth_auth_constraints base nb turnIn hIn c hc)
   set w := base.traceWidth
   set pc := base.piCount
   refine { sigHashed := ?_, selectZero := ?_, msgBool := ?_, pairHashed := ?_
          , accHashed := ?_, rootPinned := ?_, turnHashed := ?_, reconZero := ?_
          , zpadZero := ?_ }
   · intro k hk
-    have h := hrow _ (auth_mem_sig w nb pc turnIn k hk)
+    have h := hrow _ (auth_mem_sig w nb pc turnIn hIn k hk)
     exact h
   · intro k hk j
-    have h := hrow _ (auth_mem_select w nb pc turnIn k hk j)
+    have h := hrow _ (auth_mem_select w nb pc turnIn hIn k hk j)
     simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
     rwa [headToExpr_eval] at h
   · intro k hk
-    have h := hrow _ (auth_mem_msgbit w nb pc turnIn k hk)
+    have h := hrow _ (auth_mem_msgbit w nb pc turnIn hIn k hk)
     simp only [binGate, cg, gBin, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast,
       Dregg2.Exec.CircuitEmit.EmittedExpr.eval] at h
     exact boolExact (hcanon.cells _) h
   · intro k hk
-    exact hrow _ (auth_mem_pair w nb pc turnIn k hk)
+    exact hrow _ (auth_mem_pair w nb pc turnIn hIn k hk)
   · intro k hk1 hk
-    exact hrow _ (auth_mem_acc w nb pc turnIn k hk1 hk)
+    exact hrow _ (auth_mem_acc w nb pc turnIn hIn k hk1 hk)
   · intro j
-    have h := hrow _ (auth_mem_root w nb pc turnIn j)
+    have h := hrow _ (auth_mem_root w nb pc turnIn hIn j)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
     exact h rfl
-  · exact hrow _ (auth_mem_turn w nb pc turnIn)
+  · exact fun _ => hrow _ (auth_mem_turn w nb pc turnIn hIn)
   · intro q hq
-    have h := hrow _ (auth_mem_recon w nb pc turnIn q hq)
+    have h := hrow _ (auth_mem_recon w nb pc turnIn hIn q hq)
     simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
     rwa [headToExpr_eval] at h
-  · have h := hrow _ (auth_mem_zpad w nb pc turnIn)
+  · have h := hrow _ (auth_mem_zpad w nb pc turnIn hIn)
     simp only [cgH, cg, VmConstraint2.holdsAt, VmConstraint.holdsVm, hnotlast] at h
     rw [headToExpr_eval] at h
     simp only [evalH_lin, one_mul] at h
@@ -751,18 +821,19 @@ Poseidon2 preimage of the public-key entry for that bit — i.e. `HashSig.verify
 hypothesis but the canonicality envelope (which is what a BabyBear trace IS) and the chip's own
 soundness (the lever the cap crown already rides). -/
 theorem turn_auth_forced (permOut : List ℤ → List ℤ) (base : EffectVmDescriptor2) (nb : Nat)
-    (turnIn : List Nat) (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hChip : ChipTableSoundN permOut (t.tf TableId.poseidon2))
-    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
+    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn hIn) minit mfin maddrs t)
     (hlen : 2 ≤ t.rows.length)
     (hcanon : AuthRowCanon (envAt t 0)) :
     Dregg2.Crypto.HashSig.verify (Hsig permOut)
       (pkOf (envAt t 0) base.traceWidth nb)
       (msgOf (envAt t 0) base.traceWidth nb)
       (sigOf (envAt t 0) base.traceWidth nb) :=
-  lamport_verify_forced permOut t.tf base.traceWidth nb base.piCount turnIn (envAt t 0) hChip
-    (authCore_of_satisfied base nb turnIn hash minit mfin maddrs t hsat hlen hcanon) hcanon
+  lamport_verify_forced permOut t.tf base.traceWidth nb base.piCount turnIn hIn (envAt t 0) hChip
+    (authCore_of_satisfied base nb turnIn hIn hash minit mfin maddrs t hsat hlen hcanon) hcanon
 
 #assert_axioms turn_auth_forced
 
@@ -804,7 +875,9 @@ theorem turn_digest_forced (permOut : List ℤ → List ℤ)
     (hlenIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) :
     (tdCols w nb).map env.loc = permOut (turnAbsorb env.loc turnIn) := by
   have h := wideHash_forces permOut tf env hChip (padTo16 w nb turnIn) (tdCols w nb)
-    (by rw [padTo16_length _ _ _ hlenIn]) hcore.turnHashed
+    (padTo16_admitted w nb turnIn hlenIn)
+    (by rw [padTo16_length _ _ _ hlenIn])
+    (hcore.turnHashed (padTo16_admitted w nb turnIn hlenIn))
   rwa [padTo16_vals env.loc w nb turnIn hcore.zpadZero] at h
 
 /-- **`msg_recomposes`** — the signed bits recompose to the turn-digest felts, mod `p`. -/
@@ -907,10 +980,11 @@ owner did not sign hits the hash of a preimage the owner NEVER revealed — so i
 unrevealed preimage, or produced a distinct value with the same Poseidon2 image. There is no third
 option, and neither is available to a prover that lacks the owner's secret. -/
 theorem air_forgery_breaks_hash (permOut : List ℤ → List ℤ) (base : EffectVmDescriptor2) (nb : Nat)
-    (turnIn : List Nat) (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (turnIn : List Nat)
+    (hIn : turnIn.length ≤ Dregg2.Circuit.DescriptorIR2.CHIP_RATE) (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hChip : ChipTableSoundN permOut (t.tf TableId.poseidon2))
-    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn) minit mfin maddrs t)
+    (hsat : Satisfied2 hash (withTurnAuth base nb turnIn hIn) minit mfin maddrs t)
     (hlen : 2 ≤ t.rows.length)
     (hcanon : AuthRowCanon (envAt t 0))
     -- the owner's authority key is an honest Lamport public key (the light client's anchor names it)
@@ -928,7 +1002,7 @@ theorem air_forgery_breaks_hash (permOut : List ℤ → List ℤ) (base : Effect
               ≠ sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)
             ∧ Hsig permOut (sigOf (envAt t 0) base.traceWidth nb k)
                 = Hsig permOut (sk.pre k (msgOf (envAt t 0) base.traceWidth nb k)))) := by
-  have hver := turn_auth_forced permOut base nb turnIn hash minit mfin maddrs t hChip hsat hlen
+  have hver := turn_auth_forced permOut base nb turnIn hIn hash minit mfin maddrs t hChip hsat hlen
     hcanon
   rw [hpk] at hver
   exact Dregg2.Crypto.HashSig.lamport_forgery_breaks_hash (Hsig permOut) sk m
