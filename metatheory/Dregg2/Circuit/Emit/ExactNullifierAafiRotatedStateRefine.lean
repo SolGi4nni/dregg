@@ -136,8 +136,11 @@ theorem state16_lookup_holds_of_execution (perm16 : List ℤ → List ℤ) (a : 
   unfold state16TableOf
   rw [List.mem_map]
   refine ⟨step, hstep, ?_⟩
+  -- ⚠ do NOT unfold `padTo`/`padToE`: `map_eval_padToE` carries the emitted block straight onto
+  -- the tabulated one, and `padTo` is `take`-shaped now, so unfolding leaves a `List.take` to
+  -- re-align across.
   simp only [chipLookupTupleState16, chipLookupTupleN, chipRowState16, chipRowN,
-    padToE, padTo, List.map_cons, List.map_append, List.map_replicate, List.map_map,
+    map_eval_padToE, List.map_cons, List.map_append, List.map_map,
     Function.comp_def, EmittedExpr.eval, List.length_map]
   rw [hexec]
 
