@@ -56,7 +56,7 @@ New follow-up lanes surfaced while fixing (each named, none laundered):
   The 2026-07-24 record, unchanged: The VK-hash constant
   (`c14b5fc0…`) had drifted from the authoritative fork pin (`0a4a554e…`): the
   VK-custody wound made real. It is reconciled, and `check-p3-rev.sh` now FAILS
-  rather than WARNs — plus it is finally WIRED into CI (`ci.yml` `p3-rev-lockstep`);
+  rather than WARNs — plus it is finally WIRED into CI (`ci.yml` `p3-rev-lockstep`) (⚠ location stale: the `p3-rev-lockstep` GitHub job was DELETED 2026-07-29 with eight siblings — see the manifest comment at `.github/workflows/ci.yml:816`. The gate now runs as the `p3-rev` row of `scripts/local-gates.sh`, which is the stricter bar; nothing on GitHub runs it.);
   it had been in NO workflow since it was written, so even its armed half only ran
   when a human typed it. It turned out NOT to need ember's ceremony call: nothing
   external pins `compute_recursive_vk_hash()`, and the apex anchor is independent.

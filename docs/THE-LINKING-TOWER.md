@@ -53,7 +53,7 @@ bottom rung is the chain of custody from the verified source to those bytes.
   2026-07-15 bump to `0a4a554e` and sat stale at `c14b5fc0` — 19 fork commits,
   spanning a nondeterministic-VK-fingerprint fix and an IVC mixed-root forgery
   fix — until 2026-07-24, when `scripts/check-p3-rev.sh` was re-armed to FAIL on
-  it (it previously only WARNed) and wired into `ci.yml` (`p3-rev-lockstep`).
+  it (it previously only WARNed) and wired into `ci.yml` (`p3-rev-lockstep`) (⚠ location stale: the `p3-rev-lockstep` GitHub job was DELETED 2026-07-29 with eight siblings — see the manifest comment at `.github/workflows/ci.yml:816`. The gate now runs as the `p3-rev` row of `scripts/local-gates.sh`, which is the stricter bar; nothing on GitHub runs it.).
   ⚑ **"A forgotten rev-mirror is now a red CI check" was measured false on
   2026-08-02, and the way it failed is worse than the plain unguarded case.**
   The mirror was forgotten AGAIN: `d7ba0c4d3` (2026-07-30) moved the
