@@ -226,14 +226,14 @@ theorem every_scheduled_variable_has_a_witness_entry :
 
 /-- …and it is not vacuous: `rowsS` really does wire variables (a schedule of all-`none` perms would
 satisfy the `all` above trivially). ⚑ An EQUALITY, not a bound — a bound is what "a deleted chain
-would still satisfy" looks like. `3861` rows carry `12959` wired permutation cells; both numbers move
+would still satisfy" looks like. `3869` rows carry `12977` wired permutation cells; both numbers move
 deliberately or not at all. ⚑ It was `4025`/`13054` until §23 (`…Pins18`) made the sponge LAZY:
 five permutations left the assembly (one per segment squeeze that a preceding absorb block already
 supplies, two of them segment B's) plus §3c's whole `index_digest` block, and the transcript went
 from `absorbs + chals = 18` permutations to `tBlocks = 11`. **−164 rows, −95 cells**, and the pad
 lane moved from block 0's second lane to the last lane of the pre-β run. -/
 theorem the_schedule_wires_variables :
-    (rowsS.length = 3861 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 12959) := by
+    (rowsS.length = 3869 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 12977) := by
   native_decide
 #assert_compiled the_schedule_wires_variables
 

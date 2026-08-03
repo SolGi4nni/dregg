@@ -74,6 +74,14 @@ buys the same factor and costs each pin its own failure site. -/
 -- squeeze — TWO, because `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true` and
 -- `util.ml:98-99` then asserts BOTH parts. Upstream's own arithmetic, `squeeze_challenge` +
 -- `squeeze_scalar`.
+-- ⚠⚑ **RED AT `c14a9cf01`, AND DELIBERATELY NOT RE-PINNED.** That commit swept a SIBLING lane's
+-- IN-FLIGHT `vCipBit := bpOdd s 0` rung out of the shared `KimchiStepMainCore.lean` alongside §23's
+-- sponge re-model (`git commit --only` is PATH-granular, not HUNK-granular). The census now MEASURES
+-- **169** `EndoMulScalar` rows against this expression's 168 — and **169 is not a multiple of
+-- `emsRows = 8`**, so it is not a chain count at all: it is a `to_field_checked` chain that is one
+-- row long, i.e. a half-landed gadget. `nRng` likewise measures 13 against `chals + 4 = 12`.
+-- Banking either number would launder an unfinished rung as a measured fact. §23 alone leaves BOTH
+-- green; the lane that owns `vCipBit` owns these two pins.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMulScalar)).length
         == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows
 -- …stated the other way, so a chain that vanished cannot hide inside the arithmetic: the range

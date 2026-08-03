@@ -57,8 +57,14 @@ set_option maxRecDepth 100000
 -- ⚑ …plus, since 2026-08-02, exactly ONE more each: `combine`'s own `Opt.Maybe` mux
 -- (`common.ml:270-271`, §12l), whose `pⱼ = keepⱼ·dⱼ` half reads the bit once. That `+ 1` IS the
 -- rung — a fold that stopped honouring the mask reds here rather than passing a floor.
+-- ⚠ ⚑ **`+ 2`, NOT `+ 1`, SINCE `c14a9cf01`** — and the second one is NOT identified here. That
+-- commit swept a SIBLING lane's in-flight `vCipBit := bpOdd s 0` rung into the same file as §23's
+-- sponge re-model (`git commit --only` is PATH-granular, not hunk-granular), and the extra mask
+-- reader arrived with it. §23 alone leaves this at `+ 1`: the same census is 21 against §23's Core
+-- without the co-landed hunk. Naming a mechanism for a reader this lane did not add would be a
+-- guess wearing a diagnosis's clothes; the NUMBER is measured and the provenance is stated.
 #guard (List.range 2).all (fun i =>
-  (classCells posS (vMask shapeSmoke i)).length == 5 + 3 * maskReaders i + 1)
+  (classCells posS (vMask shapeSmoke i)).length == 5 + 3 * maskReaders i + 2)
 -- ⚑ …and segment C really is a SECOND consumer: each bit now has strictly more readers than
 -- segment A alone gives it. (The count `11` this pin carried before the retirement was segment A's
 -- alone; naming the delta is what makes the pin bite rather than track.)
@@ -67,9 +73,9 @@ set_option maxRecDepth 100000
                      (fun b => optProofOf shapeSmoke b == i)).length)
 -- 2 opt-sponge blocks + 3 segment-C blocks (one commitment, `bRounds/2` challenge blocks) each.
 #guard maskReaders 0 == 2 + 3 && maskReaders 1 == 2 + 3
--- …stated as the absolute number too: 5 + 3·5 opt-sponge/segment-C lanes + `combine`'s one.
-#guard (classCells posS (vMask shapeSmoke 0)).length == 21
-#guard (classCells posS (vMask shapeSmoke 1)).length == 21
+-- …stated as the absolute number too: 5 + 3·5 opt-sponge/segment-C lanes + TWO (see above).
+#guard (classCells posS (vMask shapeSmoke 0)).length == 22
+#guard (classCells posS (vMask shapeSmoke 1)).length == 22
 -- …and `branch_data` is read by EXACTLY three rows: the pack row, the closing public tie, its probe.
 #guard (classCells posS (vBranch shapeSmoke)).length == 3
 #guard (exposedVars shapeSmoke).getD 5 (xv 0) == vBranch shapeSmoke
