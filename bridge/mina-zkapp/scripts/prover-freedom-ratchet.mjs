@@ -63,9 +63,35 @@ import { join } from 'node:path';
 
 const STEP_SRC = 'Dregg2/Circuit/Emit/KimchiStepProverChoice.lean';
 const WRAP_SRC = 'Dregg2/Circuit/Emit/KimchiWrapProverChoice.lean';
+const WRAP_ASSEMBLY = 'Dregg2/Circuit/Emit/KimchiWrapMain.lean';
 const WRAP_DRIVER = 'Dregg2/Circuit/Emit/EmitWrapMainJson.lean';
-const WRAP_ARTIFACT = '/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json';
+const WRAP_CONFORMANCE = fileURLToPath(new URL('./wrapmain-region-conformance.mjs', import.meta.url));
 const WRAP_EMIT_CMD = '(cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)';
+
+// ── ⚑ THE RUNG IS DERIVED, NOT TYPED HERE ─────────────────────────────────────────────────────────
+// ⚠ 2026-08-03, MEASURED AND FIXED. This file hard-coded `wrapmain_wrap_w5_key.json` and
+// `num_rows: 1999` while `wrapmain-region-conformance.mjs` had already moved its own `TOP_RUNG` to
+// `w8_ftcomm` — so the artifact binding named a rung THREE BELOW what ships, and nothing anywhere
+// said so. It was fail-CLOSED (the `name` pin refuses a different rung), which is why it kept
+// passing and why nobody looked: a green that is correct about the wrong object.
+//
+// ⚑ THE FIX IS NOT "TYPE `w8_ftcomm` INSTEAD", AND THAT MATTERS. The census's wrap counts are
+// stated at `rowsWrapKey = rungRows tWrap .key true` — `KimchiWrapProverChoice`'s own header
+// records why (`rungRows tWrap .key true` alone is 16 min 55 s to elaborate, because `rungRows`
+// binds every rung's row family in a `let` above the `match`). Re-pointing the artifact to
+// `w8_ftcomm` would bind the pins to a circuit they are NOT about, which is the same defect with
+// the numbers swapped. So BOTH rungs are derived and the DISTANCE BETWEEN THEM is ratcheted:
+//
+//   census rung  ← `rowsWrapKey`'s own `rungRows tWrap .<rung>`   (KimchiWrapProverChoice.lean)
+//   top rung     ← `const TOP_RUNG`                               (wrapmain-region-conformance.mjs)
+//   the ladder   ← `def Rung.tag`'s arms, in order                (KimchiWrapMain.lean)
+//   the shapes   ← the MEASURED rung table in the same file's header
+//
+// Four sources, none of them this file, and every one of them RED-IF-UNREADABLE. The gap is a
+// `max` pin at 3: it may FALL freely (the census moving up, or rungs being retired), and a RISE —
+// a ninth rung landing while the census stays at `.key` — is RED. That is the motion that made
+// this file wrong in the first place, and it is now the thing it watches.
+const RUNG_GAP_CEILING = 3;
 
 // ── ⚑ THE COMMITTED CEILINGS ──────────────────────────────────────────────────────────────────────
 // Each row: the census THEOREM it is read out of, the sub-expression that carries the number, the
@@ -227,29 +253,123 @@ function printRows(rows, { verbose }) {
   }
 }
 
+// ── ⚑ THE LADDER, DERIVED FROM FOUR SOURCES OUTSIDE THIS FILE ─────────────────────────────────────
+// Every reader below is a pure function of TEXT, so `--self-test` can bend each one on an in-memory
+// copy and require the derivation to refuse. A reader that returns `{ err }` is RED, never a default:
+// this file's whole rule is that a pin it cannot READ is a red, and a rung it cannot read is worse,
+// because everything downstream would then bind to whatever was typed here.
+
+/** `KimchiWrapMain.Rung.tag`'s arms in ladder order — `[{ ctor: 'key', tag: 'w5_key' }, …]`. */
+function readRungLadder(text) {
+  const i = text.indexOf('def Rung.tag');
+  if (i < 0) return { err: '`def Rung.tag` is not in ' + WRAP_ASSEMBLY + ' — the rung ladder was renamed or moved' };
+  const end = text.indexOf('\n\n', i);
+  const blk = text.slice(i, end < 0 ? text.length : end);
+  const arms = [...blk.matchAll(/\.([A-Za-z][A-Za-z0-9_]*)\s*=>\s*"(w\d+_[A-Za-z0-9_]+)"/g)]
+    .map((m) => ({ ctor: m[1], tag: m[2] }));
+  if (arms.length < 2) return { err: `\`Rung.tag\` yielded ${arms.length} arm(s) — the scrape stopped matching and the ladder cannot be ordered` };
+  return { arms };
+}
+
+/** The MEASURED rung table in the same header: `tag -> { wrap, pub, derived }`. The `*` marks the
+ *  two WRAP figures that file DERIVES rather than measures, and the flag is carried, not dropped. */
+function readRungShapes(text) {
+  const rows = [...text.matchAll(/^ {4}(w\d+_[a-z]+)\s+(\d+)\s+(\d+)(\*?)\s+(\d+)\s/gm)]
+    .map((m) => ({ tag: m[1], smoke: Number(m[2]), wrap: Number(m[3]), derived: m[4] === '*', pub: Number(m[5]) }));
+  if (rows.length < 2) return { err: `the MEASURED rung table in ${WRAP_ASSEMBLY} yielded ${rows.length} row(s) — its layout changed and this gate stopped reading the row counts it binds against` };
+  return { rows };
+}
+
+/** The rung the WRAP census states its counts at, read off `rowsWrapKey`'s own definition. */
+function readCensusRung(text) {
+  const m = text.match(/def\s+rowsWrapKey\b[^\n]*?rungRows\s+\w+\s+\.([A-Za-z][A-Za-z0-9_]*)/);
+  if (!m) return { err: '`def rowsWrapKey … := rungRows tWrap .<rung> …` is not in ' + WRAP_SRC + ' — the census moved the rung it grades and this gate would otherwise keep binding the old one' };
+  return { ctor: m[1] };
+}
+
+/** `wrapmain-region-conformance.mjs`'s own top-rung constant — an INDEPENDENT answer to "what ships". */
+function readTopRung(text) {
+  const m = text.match(/^const TOP_RUNG = '([A-Za-z0-9_]+)';/m);
+  if (!m) return { err: "`const TOP_RUNG = '…';` is not in wrapmain-region-conformance.mjs — the conformance gate's own top-rung constant moved" };
+  return { tag: m[1] };
+}
+
+/** Resolve the four readers into the census rung, the top rung, the gap and the committed shape. */
+function deriveLadder(src) {
+  const L = readRungLadder(src.assembly);
+  if (L.err) return { err: L.err };
+  const S = readRungShapes(src.assembly);
+  if (S.err) return { err: S.err };
+  const C = readCensusRung(src.wrap);
+  if (C.err) return { err: C.err };
+  const T = readTopRung(src.conformance);
+  if (T.err) return { err: T.err };
+
+  const censusIx = L.arms.findIndex((a) => a.ctor === C.ctor);
+  if (censusIx < 0) return { err: `\`rowsWrapKey\` grades \`.${C.ctor}\`, which is not a constructor of \`Rung\` (${L.arms.map((a) => '.' + a.ctor).join(' ')}) — the census and the assembly disagree about what a rung IS` };
+  const topIx = L.arms.findIndex((a) => a.tag === T.tag);
+  if (topIx < 0) return { err: `the conformance gate's TOP_RUNG \`${T.tag}\` is not on \`Rung.tag\`'s ladder (${L.arms.map((a) => a.tag).join(' ')})` };
+  if (topIx !== L.arms.length - 1) return { err: `the conformance gate's TOP_RUNG \`${T.tag}\` is rung ${topIx + 1} of ${L.arms.length} — it is ITSELF below the top (\`${L.arms[L.arms.length - 1].tag}\`), so re-pointing this file at it would inherit that` };
+
+  const censusTag = L.arms[censusIx].tag;
+  const shape = S.rows.find((r) => r.tag === censusTag);
+  if (!shape) return { err: `the MEASURED rung table has no row for \`${censusTag}\` — the row count this gate binds the emission against is not stated anywhere it can read` };
+  const topShape = S.rows.find((r) => r.tag === T.tag);
+  if (!topShape) return { err: `the MEASURED rung table has no row for the top rung \`${T.tag}\`` };
+
+  return { arms: L.arms, censusTag, censusIx, topTag: T.tag, topIx, gap: topIx - censusIx, shape, topShape };
+}
+
+/** The gap, graded in this file's own idiom. Not a `printRows` pin from a Lean statement — a
+ *  derived one — so it is built into the same row shape and printed and gated with the rest. */
+function gradeLadder(d) {
+  if (d.err) {
+    return [{ pin: { src: 'ladder', thm: 'rung-ladder', expr: 'census rung / TOP_RUNG / Rung.tag', ceiling: RUNG_GAP_CEILING, dir: 'max', what: 'the rung derivation itself' }, err: d.err, ok: false }];
+  }
+  return [{
+    pin: {
+      src: 'ladder', thm: 'rung-ladder', expr: `ladder distance ${d.censusTag} -> ${d.topTag}`,
+      ceiling: RUNG_GAP_CEILING, dir: 'max',
+      what: `⚑ THE RUNGS THE CENSUS DOES NOT SEE. The wrap pins are stated at \`${d.censusTag}\` (${d.shape.wrap} rows) and the assembly ships \`${d.topTag}\` (${d.topShape.wrap}${d.topShape.derived ? ' DERIVED' : ''} rows), so nothing above \`${d.censusTag}\` is graded for free cells at all. The gap may FALL — moving the census up is the work — and a RISE is a new rung landing with no census behind it.`,
+    },
+    value: d.gap,
+    ok: OK.max(d.gap, RUNG_GAP_CEILING),
+  }];
+}
+
 // ── the artifact binding ──────────────────────────────────────────────────────────────────────────
 // ⚠ NOT a freedom measurement — see the header. It answers ONE question: are the census's counts
 // stated at the shape of a circuit that was actually emitted? A pin over `shapeWrap` is worth
 // nothing if `shapeWrap` is not the thing on disk.
-const ARTIFACT_PINS = [
-  { key: 'name', want: 'wrapmain_wrap_w5_key', why: 'the rung the census states `rowsWrapKey` at. A different rung graded here would bind the pins to a circuit they are not about.' },
-  { key: 'public_input_size', want: 22, why: '⚑ `shapeWrap.pubWords = 22` — the census pin, as the emitted circuit\'s OWN primary length. This is the one place a census number is answerable to bytes on disk.' },
-  { key: 'num_rows', want: 1999, why: 'the `w5_key` rung\'s emitted row count (MEASURED 2026-08-03)' },
-];
+//
+// ⚑ AND THE `want`s ARE READ, NOT TYPED. `num_rows` and `public_input_size` come from the MEASURED
+// rung table in `KimchiWrapMain`'s own header, so this is a docstring TABLE against BYTES ON DISK —
+// two sources — rather than a number this file copied and then had to remember to update. That copy
+// is exactly what went stale here: `num_rows: 1999` was right, and right about `w5_key`, and the
+// file had no way to notice it was three rungs adrift.
+function artifactPins(d) {
+  return [
+    { key: 'name', want: `wrapmain_wrap_${d.censusTag}`, why: `the rung \`rowsWrapKey\` states the census at, read out of ${WRAP_SRC}. A different rung graded here would bind the pins to a circuit they are not about.` },
+    { key: 'public_input_size', want: d.shape.pub, why: `⚑ the emitted circuit's OWN primary length, against the MEASURED rung table's \`pub\` column. At and above \`w4_bind\` this is \`shapeWrap.pubWords\`; below it, 0.` },
+    { key: 'num_rows', want: d.shape.pub + d.shape.wrap, why: `\`${d.censusTag}\`'s \`pub + rows\` from the MEASURED rung table in ${WRAP_ASSEMBLY}${d.shape.derived ? ' — ⚠ that file marks this wrap figure DERIVED (`*`), not measured, so a mismatch here is the FIRST measurement of it and the derivation is what to re-check' : ''}` },
+  ];
+}
 
-function bindArtifact() {
+function bindArtifact(d) {
+  if (d.err) return { code: 1, lines: [`   RED  artifact/ladder  ⚑ ${d.err}`] };
+  const artifact = `/tmp/pickles-wrapmain/wrapmain_wrap_${d.censusTag}.json`;
   const cone = leanConeDigest(WRAP_DRIVER);
-  if (!existsSync(WRAP_ARTIFACT))
-    return { code: 3, lines: [`⚑ --artifact: no emission at ${WRAP_ARTIFACT}. Emit it:  ${WRAP_EMIT_CMD}`] };
+  if (!existsSync(artifact))
+    return { code: 3, lines: [`⚑ --artifact: no emission at ${artifact}. Emit it:  ${WRAP_EMIT_CMD}`] };
   try {
-    requireFreshArtifact({ artifact: WRAP_ARTIFACT, cone, emitCmd: WRAP_EMIT_CMD });
+    requireFreshArtifact({ artifact, cone, emitCmd: WRAP_EMIT_CMD });
   } catch (e) {
     return { code: isStale(e) ? 3 : 1, lines: [e.message] };
   }
-  const j = JSON.parse(readFileSync(WRAP_ARTIFACT, 'utf8'));
+  const j = JSON.parse(readFileSync(artifact, 'utf8'));
   const lines = [];
   let bad = 0;
-  for (const p of ARTIFACT_PINS) {
+  for (const p of artifactPins(d)) {
     const got = j[p.key];
     const ok = got === p.want;
     if (!ok) bad++;
@@ -324,10 +444,53 @@ function selfTest(sources) {
   leg('a RESHAPED census statement reds', !!rHit && !rHit.ok && !!rHit.err,
     rHit?.err ? 'refused, naming the expression it stopped watching' : 'NOT refused');
 
+  // ── ⚑ THE LADDER'S OWN RED PATHS. The rung is DERIVED from four files now, and a derivation that
+  //     cannot refuse is worse than a typed constant: it looks like a gate. Each leg bends ONE
+  //     source on an in-memory copy and requires the derivation to refuse or the gap to rise.
+  const S = ladderSources();
+  const honestD = deriveLadder(S);
+  leg('ladder anchor: the four sources as committed', !honestD.err && gradeLadder(honestD)[0].ok,
+    honestD.err ? `⚑ ${honestD.err}` : `census ${honestD.censusTag} · top ${honestD.topTag} · gap ${honestD.gap} (ceiling ≤ ${RUNG_GAP_CEILING})`);
+
+  const bend = (over) => deriveLadder({ ...S, ...over });
+  leg('a RENAMED `Rung.tag` refuses (the ladder cannot be ordered)',
+    !!bend({ assembly: S.assembly.replace('def Rung.tag', 'def Rung.tagRENAMED') }).err, 'refused');
+  leg('a MOVED census rung refuses when it is not a `Rung` constructor',
+    !!bend({ wrap: S.wrap.replace(/(def\s+rowsWrapKey\b[^\n]*?rungRows\s+\w+\s+)\.[A-Za-z][A-Za-z0-9_]*/,
+      '$1.notARung') }).err, 'refused');
+  leg('a TOP_RUNG off the ladder refuses',
+    !!bend({ conformance: S.conformance.replace(/^const TOP_RUNG = '[A-Za-z0-9_]+';/m, "const TOP_RUNG = 'w99_nowhere';") }).err,
+    'refused');
+  {
+    // A NINTH rung lands on the ladder while the conformance gate's TOP_RUNG stays where it is.
+    // That is the EXACT motion that made this file stale, one level up: an instrument left pointing
+    // at a rung that is no longer the top. The derivation must refuse, not grade.
+    const i = S.assembly.indexOf('def Rung.tag');
+    const end = S.assembly.indexOf('\n\n', i);
+    const grown = S.assembly.slice(0, end) + '\n  | .w9probe => "w9_probe"' + S.assembly.slice(end);
+    const g = bend({ assembly: grown });
+    leg('a NINTH rung above the conformance gate\'s TOP_RUNG refuses', !!g.err,
+      g.err ? 'refused, naming the rung that is no longer the top' : 'NOT refused');
+  }
+  {
+    // …and the gap itself must bite. Move the census DOWN to the first rung: the distance to the
+    // top rises past the ceiling and this has to red, or "the census does not see the top three
+    // rungs" is an observation nobody is holding to a number.
+    const first = readRungLadder(S.assembly).arms[0].ctor;
+    const lowered = S.wrap.replace(/(def\s+rowsWrapKey\b[^\n]*?rungRows\s+\w+\s+)\.[A-Za-z][A-Za-z0-9_]*/, `$1.${first}`);
+    const g = bend({ wrap: lowered });
+    const row = gradeLadder(g)[0];
+    leg('the census dropping to the FIRST rung reds (the gap is a ratchet)', !g.err && !row.ok,
+      g.err ? `⚑ derivation refused instead: ${g.err}` : `gap ${row.value} against ceiling ≤ ${RUNG_GAP_CEILING}`);
+  }
+  leg('a rung table that stopped parsing refuses',
+    !!bend({ assembly: S.assembly.replace(/^ {4}(w\d+_[a-z]+\s+\d+\s+\d+\*?\s+\d+\s)/gm, '$1') }).err,
+    'refused');
+
   const bad = legs.filter((x) => !x).length;
   console.log(bad
     ? `\nprover-freedom-ratchet --self-test: ${bad} LEG(S) FAILED`
-    : `\nprover-freedom-ratchet --self-test: ${legs.length} legs green (1 honest anchor + 4 red paths)`);
+    : `\nprover-freedom-ratchet --self-test: ${legs.length} legs green (2 honest anchors + 9 red paths)`);
   return bad ? 1 : 0;
 }
 
@@ -345,16 +508,32 @@ for (const [k, rel] of Object.entries(SRC_PATH)) {
   sources[k] = readFileSync(p, 'utf8');
 }
 
+/** The three texts the rung derivation reads. ⚠ MISSING IS EXIT 1, never a typed fallback — the
+ *  whole point of deriving the rung is that this file no longer knows one. */
+function ladderSources() {
+  const asmPath = join(META_ROOT, WRAP_ASSEMBLY);
+  for (const [what, p] of [['the wrap assembly', asmPath], ['the wrap conformance gate', WRAP_CONFORMANCE]]) {
+    if (!existsSync(p)) {
+      console.error(`⚑ prover-freedom-ratchet: ${what} is MISSING at ${p}.\n`
+        + '   The rung this gate binds is DERIVED from that file. A missing source is RED, never a default —\n'
+        + '   defaulting would re-create the stale `w5_key` hard-code this derivation replaced.');
+      process.exit(1);
+    }
+  }
+  return { assembly: readFileSync(asmPath, 'utf8'), wrap: sources.wrap, conformance: readFileSync(WRAP_CONFORMANCE, 'utf8') };
+}
+
 if (argv.includes('--self-test')) process.exit(selfTest(sources));
 
 console.log('── prover-freedom-ratchet — the census\'s free-cell counts against their COMMITTED ceilings ──\n');
-const rows = grade(sources);
+const derived = deriveLadder(ladderSources());
+const rows = [...grade(sources), ...gradeLadder(derived)];
 printRows(rows, { verbose: argv.includes('--list') });
 
 let code = rows.some((r) => !r.ok) ? 1 : 0;
 if (argv.includes('--artifact')) {
   console.log('\n── artifact binding (shape only — freedom is not visible in the emitted bytes) ──');
-  const a = bindArtifact();
+  const a = bindArtifact(derived);
   for (const l of a.lines) console.log(l);
   if (a.code !== 0) code = code || a.code;
 }
@@ -364,5 +543,7 @@ console.log(bad
   ? `\nprover-freedom-ratchet: ${bad} PIN(S) RED over ${rows.length} — a prover-chosen cell moved the wrong way, or a pin stopped being readable.\n`
     + '   ⚠ Raising a ceiling is a COMMIT that says which count moved, in which direction, and why the new number is right.\n'
     + '     Re-baselining to "whatever the census says now" certifies the regression.'
-  : `\nprover-freedom-ratchet: ${rows.length} pins within their committed ceilings (${PINS.filter((p) => p.dir === 'max').length} max · ${PINS.filter((p) => p.dir === 'eq').length} eq · ${PINS.filter((p) => p.dir === 'min').length} min)`);
+  : `\nprover-freedom-ratchet: ${rows.length} pins within their committed ceilings `
+    + `(${PINS.filter((p) => p.dir === 'max').length} max · ${PINS.filter((p) => p.dir === 'eq').length} eq · ${PINS.filter((p) => p.dir === 'min').length} min · 1 derived rung-gap)`
+    + `\n   census rung ${derived.censusTag} · ships ${derived.topTag} · ${derived.gap} rung(s) ungraded for free cells`);
 process.exit(code);

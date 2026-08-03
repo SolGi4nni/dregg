@@ -629,7 +629,10 @@ GATES=(
   # coefficient shaved to `q-2`) and that `--report` EXITS NON-ZERO on divergence. Until 2026-08-03
   # `--report` exited 0 before the vector diff in both region-conformance scripts, so every GREEN from
   # that path was a formatting success. The full gate needs a fresh wrap emission and is in
-  # `pickles-synthesis-oracles.sh`; this row is the part that is answerable on any tree.
+  # `pickles-synthesis-oracles.sh` — which is now REACHED, by the `pickles-synthesis-oracles` row in
+  # `GATES_ALL`. ⚠ Until 2026-08-03 it was reached by NOTHING: not a row here, not a job in
+  # `.github/workflows/ci.yml`, and these two comments were the only mentions of it in the tree. A
+  # delegation to a script nobody runs is the same fail-open as running only the `-red` path.
   "wrapmain-conformance-red|180|node bridge/mina-zkapp/scripts/wrapmain-region-conformance.mjs --self-test"
   # ⚑ TWO INSTRUMENTS THAT WERE IN NO SCRIPT AT ALL until 2026-08-03, and both were self-certifying.
   # `stepmain-shape-diff.mjs` printed two tables and exited 0 — no comparison, no failure counter —
@@ -640,7 +643,8 @@ GATES=(
   # the shape-diff grades Mina's own gate list against itself as the honest anchor and then bends it
   # four ways; the curve oracle bends a synthetic coeff-free gate list four ways plus an EMPTY-SET
   # anchor (an oracle that is green over no rows is the shape the old file had). The full gates need
-  # an emission and live in `pickles-synthesis-oracles.sh`.
+  # an emission and live in `pickles-synthesis-oracles.sh` — see the `pickles-synthesis-oracles` row
+  # in `GATES_ALL`, which is what makes that sentence a pointer rather than a dead end.
   "stepmain-shape-diff-red|120|node bridge/mina-zkapp/scripts/stepmain-shape-diff.mjs --self-test"
   "curve-gate-oracle-red|180|node bridge/mina-zkapp/scripts/curve-gate-oracle.mjs --self-test"
   # ⚑ AND THE FLOOR THOSE GATES DELEGATE FRESHNESS TO, with its own red path. Its THIRD leg — "the
@@ -725,6 +729,28 @@ GATES_ALL=(
   # then proves the gate goes RED on a bent key and on absent input. The green-only invocation is a
   # strict subset, so a second row would add budget and no coverage.
   "foreign-vk-registration|2400|bash scripts/foreign-vk-registration-gate.sh --self-test"
+  # ⚑ THE REAL CONFORMANCE GRADES, and until 2026-08-03 NOTHING RAN THEM. The everyday table above
+  # carries `wrapmain-conformance-red`, `stepmain-shape-diff-red` and `curve-gate-oracle-red` — the
+  # `--self-test` halves — and its own comments delegate "the full gate" to
+  # `scripts/pickles-synthesis-oracles.sh`. MEASURED: `grep -rn pickles-synthesis-oracles scripts/
+  # .github/` returned that script and those two COMMENTS, and nothing else. The script exists, is
+  # green-or-bust, runs eleven real diffs (`wrapmain-region-conformance` bare,
+  # `stepmain-region-conformance --falsify --stale-self-test`, `stepmain-shape-diff` bare,
+  # `curve-gate-oracle` bare, `prover-freedom-ratchet` bare, the three .ts statement oracles and the
+  # cross-implementation differential) — and was reachable from no runner and no CI job. A `-red`
+  # row proves an instrument CAN go red; it says nothing about the tree. This row is the other half.
+  # ⚠ WHY `--all` AND NOT THE CHEAP SET, and neither reason is budget alone:
+  #   * it needs o1-labs' circuit blobs, resolved from `$MINA_CIRCUIT_BLOBS_BASE_DIR`,
+  #     `~/.mina/circuit-blobs` or `/usr/local/lib/mina/circuit-blobs` and otherwise FETCHED — a
+  #     network dependency the everyday table does not have;
+  #   * the wrap half needs a `DREGG_WM=wrap` emission at the top rung and REFUSES (exit 3) without
+  #     one rather than skipping — which is exactly why it is worth running, and also why it cannot
+  #     be a row people hit on every commit;
+  #   * the .ts oracles need `bridge/mina-zkapp` `npm ci`, and the cross-impl differential cold-builds
+  #     kimchi + arkworks unless `PICKLES_XI_RUST_VECTORS` points at pre-made vectors.
+  # It is invoked WITHOUT `--no-ts`/`--no-xi` on purpose: a missing ts-node prints `RED` and exits
+  # non-zero, and narrowing the invocation here would re-create the delegation this row closes.
+  "pickles-synthesis-oracles|14400|bash scripts/pickles-synthesis-oracles.sh"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
