@@ -51,7 +51,7 @@ Symmetrically, `LightClientMina.witnessedDepth_unbounded_without_anchor_bound` e
 observer's arithmetic (`tip_height.saturating_sub(submitted_height)`) witnessing depth **1001 from a
 one-block segment** when the anchor sits at 1000 and the submitted height at 0. That row is REFUSED
 here by an explicit witness (`observer_arithmetic_refused`, §7): `ANCH_SLACK = 0 − 1000 = −1000` is
-outside `[0, 2^32)` and the range lookup has no satisfying table row.
+outside `[0, 2^24)` and the range lookup has no satisfying table row.
 
 ## The three slack teeth (the ≤ relations, wrap-free)
 
@@ -62,8 +62,11 @@ lookup against the declared range table — the same shape `LightClientEthAir`'s
     G4  ANCH_SLACK  + ANCHOR_H  = SUBMIT_H    +  range(ANCH_SLACK)    ⟹  anchorH ≤ submittedH
     G5  DEPTH_SLACK + REQ_DEPTH = WIT_DEPTH   +  range(DEPTH_SLACK)   ⟹  reqDepth ≤ witDepth
 
-32 bits is the honest width: Mina's `blockchain_length` is a `u32` on the wire, so every height,
-depth and slack this AIR reads is representable, and no legal value is excluded by the interval.
+⚑ The width is **24 bits, and the ceiling is the FIELD, not the wire.** The obvious choice —
+32, because Mina's `blockchain_length` is a `u32` — is VACUOUS: `p = 2013265921 < 2^32`, so every
+field element is already in `[0, 2^32)` and the lookup refuses nothing. A slack of `−5` IS the field
+element `p − 5`, and refusing it is the entire job. `mina_wrapped_slack_is_outside_the_range` states
+the gap as a theorem; `MINA_RANGE_BITS` documents the arithmetic.
 
 ## NAMED verified CARRIERS (and what they are NOT)
 
@@ -86,24 +89,33 @@ the work.
 
 ## Public inputs — ⚑ these ARE the dregg state write
 
-    PI[0..8]   ANCHOR_STATE[i]  — the OPERATOR-PINNED weak-subjectivity anchor state hash, as nine
-                                  radix-2^31 MSB-first limbs (⌈255/31⌉ = 9; a Pasta `Fp` is ~255
-                                  bits). The trust root the whole acceptance is relative to.
-    PI[9..17]  TIP_STATE[i]     — the VERIFIED head's Mina protocol-state hash, nine limbs.
+    PI[0..8]   ANCHOR_STATE[i]  — the OPERATOR-PINNED weak-subjectivity anchor state hash, as its
+                                  nine `Faithful9` KEY LANES. The trust root the whole acceptance
+                                  is relative to.
+    PI[9..17]  TIP_STATE[i]     — the VERIFIED head's Mina protocol-state hash, nine lanes.
     PI[18]     BLOCK_LEN        — the verified head's `blockchain_length` (DERIVED by G1).
     PI[19]     REQ_DEPTH        — the Samasika confirmation depth `k` the acceptance met (290 on
                                   mainnet). Published so a verifier sees WHICH depth policy was met
                                   rather than trusting the prover picked a real one.
 
-Nine limbs, not one felt, and for the reason the repo already paid for once: a single BabyBear anchor
-felt binds a **31-bit projection** of a 255-bit hash, so two distinct Mina heads agreeing in 31 bits
-would both verify (`LightClientEthAir`'s felt-width close, same disease). `31 * 9 = 279 ≥ 255`.
+⚑ NINE LANES, NOT ONE FELT, and NOT nine 31-bit slices either. The repo has paid for both mistakes:
+a single BabyBear anchor felt binds a ~31-BIT PROJECTION of a 256-bit hash, so two distinct Mina
+heads agreeing in 31 bits would both verify; and a "radix-2^31" slicing is not representable at all,
+since BabyBear's `p = 2013265921 < 2^31` means a 31-bit limb can exceed the modulus and alias. The
+encoding is the tree's own PROVEN one — `Faithful9::from_key_lanes9` / Lean `keyToLanes9`: the 32
+bytes as one little-endian 256-bit number in its NINE base-`2^29` digits, lanes 0..=7 below `2^29`
+and lane 8 below `2^24`, `8·29 + 24 = 256` EXACTLY, so the image is exactly `2^256` and the encoding
+loses nothing. Injectivity is machine-checked (`lanes9ToField_fieldToLanes9`,
+`fieldToLanes9_injective`, `nine_lanes_is_the_minimum : P^8 < 2^256 ≤ P^9`).
 
-⚠ NAMED and NOT closed here: the limbs are PI-bound but not arithmetically tied to the `LINK_OK`
-fold's terminal digest inside this AIR. That tie is `LightClientMinaHashFold`'s object and the
-`proofBind` recursion seam; until it lands, `TIP_STATE` is bound to the trace and to the state write
-but its equality with the fold's output is enforced by the witness generator, not by a gate here.
-Say it that way, always.
+⚠ TWO NAMED residuals on the anchors, and they are different:
+  1. This AIR PI-binds the eighteen lane columns but carries NO GATE relating them to a 32-byte
+     value. The lane-vector ↔ head equality is enforced by the CONSUMER
+     (`turn/src/executor/mina_head_verifier.rs::check_head_binding`, which refuses the turn), not
+     in-circuit. That is a real refusal, and it is an executor check.
+  2. `TIP_STATE` is not arithmetically tied to the `LINK_OK` fold's terminal digest inside this AIR
+     either. That tie is `LightClientMinaHashFold`'s object and the `proofBind` recursion seam;
+     until it lands, the equality is the witness generator's, not a gate's. Say it that way.
 
 ## Both polarities, on the EMITTED object (§6, §7)
 
@@ -191,16 +203,17 @@ def CANON_OK : Nat := 10
 `ANCHOR_H + SEG_LEN`, so the one field a liar sets for free is not settable at all. PI-bound. -/
 def BLOCK_LEN : Nat := 11
 
-/-- The number of ~31-bit limbs a Pasta `Fp` state hash is exposed as: `⌈255/31⌉ = 9`. A SINGLE
-BabyBear felt would bind a 31-bit projection, and two heads agreeing in 31 bits would both verify. -/
+/-- The number of lanes a 32-byte Mina state hash is exposed as: NINE, the tree's proven
+`Faithful9` key encoding (`8·29 + 24 = 256` exactly, image exactly `2^256`). A SINGLE BabyBear felt
+would bind a ~31-bit PROJECTION, and two heads agreeing in it would both verify. -/
 def STATE_LIMBS : Nat := 9
 
-/-- **PUBLIC ANCHOR (limb `i`)** — the operator-pinned weak-subjectivity anchor state hash, radix
-`2^31`, MOST-SIGNIFICANT-limb-first. Columns 12..20, PI slots 0..8. -/
+/-- **PUBLIC ANCHOR (lane `i`)** — the operator-pinned weak-subjectivity anchor state hash, as its
+`Faithful9` key lanes (base `2^29`, least-significant first). Columns 12..20, PI slots 0..8. -/
 def ANCHOR_STATE (i : Nat) : Nat := 12 + i
 
-/-- **PUBLIC / STATE-WRITE (limb `i`)** — the VERIFIED head's Mina protocol-state hash, radix
-`2^31`, MSB-first. Columns 21..29, PI slots 9..17. -/
+/-- **PUBLIC / STATE-WRITE (lane `i`)** — the VERIFIED head's Mina protocol-state hash, as its
+`Faithful9` key lanes. Columns 21..29, PI slots 9..17. -/
 def TIP_STATE (i : Nat) : Nat := 12 + STATE_LIMBS + i
 
 /-- Total main-trace width: 11 logic/carrier columns + the derived height + two nine-limb anchors. -/
@@ -217,9 +230,18 @@ def PI_REQ_DEPTH : Nat := 2 * STATE_LIMBS + 1
 /-- Number of public inputs: two nine-limb hashes + the height + the depth policy. -/
 def MINA_PI_COUNT : Nat := 2 * STATE_LIMBS + 2
 
-/-- The slack range width. Mina's `blockchain_length` is a `u32` on the wire, so 32 bits admits
-every legal height, depth and slack and excludes no honest value. -/
-def MINA_RANGE_BITS : Nat := 32
+/-- The slack range width. ⚑ **24, AND THE CEILING IS THE FIELD, NOT THE WIRE.**
+
+The obvious choice is 32 — Mina's `blockchain_length` is a `u32` — and it is **VACUOUS**. BabyBear's
+`p = 2013265921 < 2^31 < 2^32`, so EVERY field element already lies in `[0, 2^32)` and a 32-bit
+range lookup constrains nothing at all. A slack of `−5` is the field element `p − 5`, and the whole
+point of the tooth is that `p − 5` must be REFUSED.
+
+So the interval has to sit strictly inside the field with room to spare: `2^24 = 16,777,216`, while
+the smallest wrapped negative is `p − 2^24 = 1,996,488,705`, two orders of magnitude above the
+ceiling (`mina_wrapped_slack_is_outside_the_range`). And 2^24 excludes no honest value — at Mina's
+~3-minute blocks, height 16.7M is roughly 95 years of chain. -/
+def MINA_RANGE_BITS : Nat := 24
 
 /-! ## §2 — the SOURCE constraints, in the framework's own gate algebra (`Circuit.Expr`).
 
@@ -394,13 +416,14 @@ theorem minaLcVerifyDesc_pins :
       , .base (.piBinding VmRow.first BLOCK_LEN PI_BLOCK_LEN)
       , .base (.piBinding VmRow.first REQ_DEPTH PI_REQ_DEPTH) ] := rfl
 
-/-- Layout sanity, as theorems rather than guards: the two nine-limb anchors are contiguous, disjoint
-and inside the declared width, and nine radix-`2^31` limbs cover a 255-bit Pasta `Fp`. -/
+/-- Layout sanity, as theorems rather than guards: the two nine-lane anchors are contiguous,
+disjoint and inside the declared width, and nine base-`2^29` lanes cover a 256-bit value exactly
+(`8·29 + 24 = 256`). -/
 theorem mina_layout_wellformed :
     ANCHOR_STATE 0 = 12 ∧ ANCHOR_STATE 8 = 20 ∧ TIP_STATE 0 = 21 ∧ TIP_STATE 8 = 29
       ∧ TIP_STATE 8 < MINA_LC_WIDTH ∧ BLOCK_LEN < ANCHOR_STATE 0
       ∧ PI_TIP_STATE 8 < PI_BLOCK_LEN ∧ PI_REQ_DEPTH < MINA_PI_COUNT
-      ∧ 31 * STATE_LIMBS ≥ 255 := by
+      ∧ 29 * (STATE_LIMBS - 1) + 24 = 256 := by
   refine ⟨rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- The three carriers are real hidden trace columns and none is PI-bound: a carrier a verifier could
@@ -462,6 +485,30 @@ denotation, not a second private notion of "in range". -/
 theorem inRange_iff_mem_rangeRows (a : Assignment) (col : Nat) :
     inRange a col ↔ [a col] ∈ rangeRows MINA_RANGE_BITS :=
   (range_row_mem_iff (a col) MINA_RANGE_BITS).symm
+
+/-- ⚑ **THE RANGE TOOTH IS NOT VACUOUS — the interval sits strictly inside the deployed field.**
+`2^24 < p`. At 31 or 32 bits this is FALSE and the lookup refuses nothing, because every BabyBear
+element is already below `2^31`. This is the whole reason `MINA_RANGE_BITS` is 24. -/
+theorem mina_range_is_inside_the_field :
+    (2 : ℤ) ^ MINA_RANGE_BITS < Dregg2.Circuit.Emit.EffectLower.P := by
+  norm_num [MINA_RANGE_BITS, Dregg2.Circuit.Emit.EffectLower.P]
+
+/-- ⚑ **AND THE WRAP IS REFUSED.** A slack the prover wanted to be `−k` for any `0 < k ≤ 2^24` is,
+in the deployed mod-`p` reading, the element `p − k` — and `p − k ≥ p − 2^24 = 1996488705`, far above
+the interval ceiling. So "the slack is non-negative" is enforced with NO field-wrap escape, which is
+exactly what makes G3/G4/G5 the `≤` relations they are named for.
+
+⚠ This statement is FALSE at `MINA_RANGE_BITS = 31` (`p − 1 < 2^31`): the wrapped value would land
+INSIDE the interval and every one of the three teeth would admit its own negation. -/
+theorem mina_wrapped_slack_is_outside_the_range (k : ℤ) (hk : 0 < k)
+    (hk' : k ≤ (2 : ℤ) ^ MINA_RANGE_BITS) :
+    ¬ (0 ≤ Dregg2.Circuit.Emit.EffectLower.P - k
+        ∧ Dregg2.Circuit.Emit.EffectLower.P - k < (2 : ℤ) ^ MINA_RANGE_BITS) := by
+  rintro ⟨_, hlt⟩
+  have hp : (Dregg2.Circuit.Emit.EffectLower.P : ℤ) = 2013265921 := rfl
+  have hb : ((2 : ℤ) ^ MINA_RANGE_BITS) = 16777216 := by norm_num [MINA_RANGE_BITS]
+  rw [hp, hb] at hlt hk'
+  omega
 
 /-- **THE COMPILER CARRIES THE MEANING.** Each emitted gate holds on a transition row exactly when its
 SOURCE constraint holds mod `p`. Stated over an arbitrary source constraint (the general lemma is
@@ -568,7 +615,7 @@ theorem minaLcAir_no_forgery (L : MinaLeaf) (ts : MinaTrustedState L) (u : MinaU
 
 /-- **COMPLETENESS (the non-vacuity partner).** An honest prover CAN fill the row: for any update the
 exported decision accepts, the row that reads its true projections and fills the three slacks with
-their genuine values satisfies `airAccepts` — given that the heights fit the declared 32-bit interval
+their genuine values satisfies `airAccepts` — given that the heights fit the declared 24-bit interval
 (every Mina `blockchain_length` does) and that the settlement was submitted at or below the witnessed
 tip (`hsub`, which is what "the settlement is in this segment's past" means).
 
@@ -646,7 +693,7 @@ theorem honest_row_accepted : airAccepts honestRow := by
 
 /-- ⚑ **REFUSED — A LOSING FORK.** The same pinned anchor and the same submitted height, but only 295
 exhibited blocks against the honest 300: derived tip 1295, derived depth 285, five short of `k = 290`.
-The prover fills every column honestly, so every GATE holds; `DEPTH_SLACK = −5` is outside `[0, 2^32)`
+The prover fills every column honestly, so every GATE holds; `DEPTH_SLACK = −5` is outside `[0, 2^24)`
 and the range lookup has no satisfying table row.
 
 ⚑ This is the shallower branch of a genuine disagreement refused by the DESCRIPTOR, not by an
@@ -696,7 +743,7 @@ theorem forged_height_refused : ¬ airAccepts forgedHeightRow := by
 the anchor at 1000 and the submitted height at 0, a ONE-BLOCK segment "witnesses" depth 1001, and
 `mina_observer::observe_settlement`'s `tip_height.saturating_sub(submitted_height)` accepts it.
 
-Here `ANCH_SLACK = SUBMIT_H − ANCHOR_H = −1000` is outside `[0, 2^32)`. The descriptor refuses the
+Here `ANCH_SLACK = SUBMIT_H − ANCHOR_H = −1000` is outside `[0, 2^24)`. The descriptor refuses the
 deployed observer's own accepting input. -/
 def unanchoredRow : Assignment := rowOf [1, 1000, 0, 1001, 290, 0, -1000, 711, 1, 1, 1, 1001]
 

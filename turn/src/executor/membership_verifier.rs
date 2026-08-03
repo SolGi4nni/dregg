@@ -1068,6 +1068,19 @@ pub fn registry_with_real_verifiers() -> WitnessedPredicateRegistry {
         oracle_predicate_vk(),
         Arc::new(OracleWitnessedPredicateVerifier::new()),
     );
+    // ⚑ THE MINA→DREGG LANDING. `Custom { mina_head_predicate_vk() }` dispatches to the Mina
+    // anchored-head verifier, so a cell program carrying
+    // `StateConstraint::Witnessed { wp }` at that vk REFUSES the turn
+    // (`ProgramError::WitnessedPredicateRejected` → `TurnError::ProgramViolation`) unless a STARK
+    // over the Lean-compiled `dregg-mina-lightclient-verify::v1` descriptor verifies against the
+    // CELL-PROGRAM-PINNED weak-subjectivity anchor and the head the turn actually records. This
+    // needs no host-injected context: the trust anchor is the cell's own state and the descriptor
+    // is resolved by `descriptor_by_name` (fail-closed on a miss), so it belongs in THIS
+    // constructor rather than `..._full`.
+    r.register_custom(
+        super::mina_head_verifier::mina_head_predicate_vk(),
+        super::mina_head_verifier::mina_head_verifier(),
+    );
     r
 }
 

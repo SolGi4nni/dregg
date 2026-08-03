@@ -791,6 +791,16 @@ pub use membership_verifier::{
     ThresholdSigVerifier, register_threshold_sig_verifier, threshold_sig_proof_bytes,
 };
 
+/// ⚑ THE MINA→DREGG LANDING: a `StateConstraint::Witnessed` verifier that REFUSES a turn unless a
+/// STARK over the Lean-compiled `dregg-mina-lightclient-verify::v1` descriptor verifies against the
+/// CELL-PROGRAM-PINNED Mina weak-subjectivity anchor and the head the turn actually records. Lives
+/// here (not in `cell/`) because it depends on `dregg-circuit`.
+pub mod mina_head_verifier;
+pub use mina_head_verifier::{
+    MINA_LC_VERIFY_DESCRIPTOR, MINA_MIN_CONFIRMATION_DEPTH, MinaAnchoredHeadStarkVerifier,
+    MinaHeadProofWire, mina_head_predicate_vk, mina_head_verifier,
+};
+
 /// The OWNER-SIGNED ENVELOPE keystone: an `Authorization::Custom` verifier that
 /// gates a host-keyed worker cell's authority-widening actions on the OWNER key
 /// (`RenterAnchor.pubkey`), not the host-held cell key.
