@@ -18,7 +18,10 @@ FILES = [
     ".github/workflows/pages-wasm.yml",
     "wasm/Cargo.toml",
     "circuit-prove/src/recursive_witness_bundle.rs",
+    ".github/workflows/ci.yml",
+    ".github/workflows/feature-surface.yml",
 ]
+MATHLIB_REV = "1c2b90b13009c65b090d95a83c98e248deafb6f1"
 OLD = "0a4a554e144f4e60107555ea7a11cd9969d6208b"
 NEW = "fc3c6dfac26e2082653d2a617a1740446ce33f05"
 
@@ -111,6 +114,31 @@ arm("R8 Cargo.lock resolves TWO different shas for the fork",
 arm("R9 ABBREVIATED pin naming a DIFFERENT rev -> MISMATCH, never 'vanished'",
     lambda d: edit(d, "Cargo.toml", lambda s: s.replace('rev = "fc3c6df"', 'rev = "0a4a554"')),
     must_contain="is NOT a prefix", must_not_contain="has vanished")
+
+# ---- the three mirrors this gate did not watch until 2026-08-02 --------------
+arm("R10 ci.yml wasm/forge sibling-clone REV= drifts",
+    lambda d: edit(d, ".github/workflows/ci.yml", lambda s: s.replace("REV=" + NEW, "REV=" + OLD, 1)),
+    must_contain="ci.yml sets REV=")
+
+arm("R11 feature-surface.yml shard clone REV= drifts",
+    lambda d: edit(d, ".github/workflows/feature-surface.yml",
+                   lambda s: s.replace("REV=" + NEW, "REV=" + OLD)),
+    must_contain="feature-surface.yml sets REV=")
+
+arm("R12 ci.yml loses its REV= pin entirely (unguarded again)",
+    lambda d: edit(d, ".github/workflows/ci.yml", lambda s: s.replace("REV=" + NEW, "REV=$(git rev-parse HEAD)")),
+    must_contain="has no `REV=<hex>` sibling-clone pin")
+
+# ⚑ THE ANTI-FALSE-POSITIVE ANCHOR. ci.yml also pins MATHLIB_REV at a 40-hex sha. A blind
+# 40-hex grep — the shape every other mirror uses — would report it as fork drift. This arm
+# is why ci.yml got a scoped `REV=` matcher instead of joining blind_files.
+arm("A2 MATHLIB_REV in ci.yml is NOT read as fork drift (pristine still PASSES)",
+    None, expect_fail=False, must_contain="OK: all lockstep", must_not_contain=MATHLIB_REV)
+
+arm("A3 an ABBREVIATED but CORRECT REV= is accepted (prefix, not equality)",
+    lambda d: edit(d, ".github/workflows/feature-surface.yml",
+                   lambda s: s.replace("REV=" + NEW, "REV=fc3c6df")),
+    expect_fail=False, must_contain="OK: all lockstep")
 
 # ---- report ------------------------------------------------------------------
 width = max(len(n) for n, *_ in results)

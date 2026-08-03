@@ -136,6 +136,49 @@ for rel in "${blind_files[@]}"; do
   fi
 done
 
+# --- ⚑ MIRRORS THIS GATE NEVER WATCHED AT ALL (added 2026-08-02).
+#
+# Three more workflow steps clone the fork as a `[patch]` sibling, and none was in any list
+# above: `.github/workflows/ci.yml` (the wasm job AND the forge-ci-runner job) and
+# `.github/workflows/feature-surface.yml` (every deos-zed-full shard). Their own comments say
+# they "must stay in lockstep or the VK forks" — and they were two fork commits stale, unread
+# by the gate whose entire job is that sentence. A gate that reports OK while naming four of
+# seven mirrors is the same failure as one that greps nothing: it just fails later.
+#
+# They cannot join blind_files: `ci.yml` also carries MATHLIB_REV (`1c2b90b1…`), an unrelated
+# 40-hex pin a blind grep would report as fork drift. So match the ASSIGNMENT form these steps
+# actually use — `REV=<hex>` — which is exactly the token the clone consumes, and nothing else.
+# 7--40 hex here too: an abbreviated REV= is the same trap the authoritative pin just sprang.
+rev_assign_files=(
+  ".github/workflows/ci.yml"
+  ".github/workflows/feature-surface.yml"
+)
+for rel in "${rev_assign_files[@]}"; do
+  f="$repo_root/$rel"
+  if [[ ! -f "$f" ]]; then
+    echo "FAIL: consumer file missing: $rel" >&2
+    status=1
+    continue
+  fi
+  seen=0
+  while IFS= read -r rev; do
+    [[ -z "$rev" ]] && continue
+    seen=$((seen + 1))
+    if [[ "$P3_REV" != "$rev"* ]]; then
+      echo "FAIL: $rel sets REV=$rev for the sibling clone, expected $P3_REV" >&2
+      echo "      That step is a \`[patch]\` target, so this job builds a DIFFERENT verifier" >&2
+      echo "      than the workspace resolves." >&2
+      status=1
+    fi
+  done < <(grep -oE 'REV=[0-9a-f]{7,40}' "$f" | sed 's/^REV=//' | sort -u)
+  if [[ "$seen" -eq 0 ]]; then
+    echo "FAIL: $rel has no \`REV=<hex>\` sibling-clone pin — either the clone step was" >&2
+    echo "      removed (drop $rel from rev_assign_files) or it was rewritten into a form" >&2
+    echo "      this check cannot see, in which case it is unguarded again." >&2
+    status=1
+  fi
+done
+
 # --- Authoritative workspace pin: isolate the plonky3-recursion rev only
 # (base Plonky3/Plonky3 is legitimately a different rev in the same file).
 #

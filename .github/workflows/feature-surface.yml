@@ -170,7 +170,7 @@ jobs:
       - name: Fetch the plonky3-recursion fork as a sibling (deos-zed-full patch target)
         run: |
           set -euo pipefail
-          REV=0a4a554e144f4e60107555ea7a11cd9969d6208b
+          REV=fc3c6dfac26e2082653d2a617a1740446ce33f05
           if [ ! -d ../plonky3-recursion/.git ]; then
             git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
             git -C ../plonky3-recursion fetch --depth 1 origin "$REV"
