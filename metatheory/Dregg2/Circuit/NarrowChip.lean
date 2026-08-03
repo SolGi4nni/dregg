@@ -71,7 +71,8 @@ theorem chip_lookup_sound_narrow (hash : List ℤ → ℤ) (tbl : Table)
     simpa [List.length_map] using chipArity_le_rate hAdm
   have hpads := List.append_inj htail
     (by rw [padTo_length hlenm, padTo_length (chipArity_le_rate hwlen)])
-  have hins : ins.map (·.eval a) = ws := padTo_inj hlens hpads.1
+  have hins : ins.map (·.eval a) = ws :=
+    padTo_inj hlenm (chipArity_le_rate hwlen) hlens hpads.1
   have hd : a digestCol = hash ws := by
     have hblock : [a digestCol] = [hash ws] := hpads.2
     simpa using hblock

@@ -443,12 +443,22 @@ board sizes: admitted at n ∈ {4, 5, 6, 7, 10} and REFUSED everywhere else, inc
 deployed automatafl board, where `feltCount 11 = 9`** — the same arity 9 that made the wide blinded
 membership descriptor unprovable in `57105f387`. Nothing was emitted through this adapter (it has no
 callers, and the corpus scan finds no arity-9 chip lookup on disk), so this is a trap that had not
-been sprung, not a shipped defect. Explicit padding makes the arity 16 for every shape that fits. -/
-def commitBoardHashIns (n : Nat) : List EmittedExpr :=
+been sprung, not a shipped defect. Explicit padding makes the arity 16 for every shape that fits.
+
+⚑ **`hn` now rides on the FUNCTION, not only on its caller (2026-08-03).** It used to live solely
+on the emitting constructor `commitBoardHashLookup`, which was enough — no emission path bypassed
+it — but it left `padToE CHIP_RATE` applied to an unbounded `feltCount n` right here, so the width
+this definition's own name claims held only because a caller happened to carry the bound. `padTo`'s
+obligation makes that structural: at `n ≥ 16` the block does not exist rather than existing at the
+wrong width. -/
+def commitBoardHashIns (n : Nat)
+    (hn : feltCount n ≤ CHIP_RATE := by first | assumption | exact of_decide_eq_true (Eq.refl true)) :
+    List EmittedExpr :=
   padToE CHIP_RATE ((List.range (feltCount n)).map (fun j => EmittedExpr.var (PACK_FELT n j)))
+    (by simpa [List.length_map, List.length_range] using hn)
 
 theorem commitBoardHashIns_length {n : Nat} (hn : feltCount n ≤ CHIP_RATE) :
-    (commitBoardHashIns n).length = CHIP_RATE := by
+    (commitBoardHashIns n hn).length = CHIP_RATE := by
   simp only [commitBoardHashIns, padToE, List.length_append, List.length_replicate,
     List.length_map, List.length_range]
   omega
@@ -465,7 +475,7 @@ def commitBoardHashLookup (n : Nat) (outCols : List Nat)
     (hn : feltCount n ≤ CHIP_RATE := by first | assumption | exact of_decide_eq_true (Eq.refl true)) :
     VmConstraint2 :=
   .lookup { table := TableId.poseidon2
-          , tuple := chipLookupTupleN (commitBoardHashIns n) outCols
+          , tuple := chipLookupTupleN (commitBoardHashIns n hn) outCols
               (by rw [commitBoardHashIns_length hn]; exact of_decide_eq_true (Eq.refl true)) }
 
 -- The arity is 16 at the DEPLOYED automatafl board (n = 11), where the old form emitted 9.

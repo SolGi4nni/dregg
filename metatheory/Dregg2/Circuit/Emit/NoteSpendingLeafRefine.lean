@@ -220,7 +220,8 @@ theorem factSite_block (permOut : List ℤ → List ℤ) (tf : TraceFamily) (env
   have hpadR : (padTo CHIP_RATE ins).length = CHIP_RATE := padTo_length (by rw [hlen7]; decide)
   have hsplit := List.append_inj htail (by rw [hpadL, hpadR])
   have hins : firingIns env inputCols = ins :=
-    padTo_inj (by rw [firingIns_length, hlen7]) hsplit.1
+    padTo_inj (firingIns_length_le env inputCols) (by rw [hlen7]; decide)
+      (by rw [firingIns_length, hlen7]) hsplit.1
   rw [hins]; exact hsplit.2
 
 /-! ## §4 — extraction plumbing from `Satisfied2` on the spend row (row 0, a non-last row). -/

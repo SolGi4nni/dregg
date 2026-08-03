@@ -335,6 +335,20 @@ def ehCarrierIn (w s : Nat) : List Nat :=
   if s = 0 then (List.range EH_CARRIER).map (ehAccInCol w)
   else (List.range EH_CARRIER).map (ehCarrierCol w (s - 1))
 
+/-- **`padToE`'s obligation, DISCHARGED BY CONSTRUCTION here rather than assumed.** The carrier is
+exactly `EH_CARRIER` and the fresh chunk is a `take`, hence at most `EH_FRESH_PER_STEP`, so this
+site never needed a hypothesis from a caller: it is category (b), provably bounded, and propagates
+no obligation onward. -/
+theorem ehStepInputs_fits (w s : Nat) :
+    ((((ehCarrierIn w s) ++ (ehFreshChunk w s)).map ev)).length
+      ≤ EH_CARRIER + EH_FRESH_PER_STEP := by
+  have hc : (ehCarrierIn w s).length = EH_CARRIER := by
+    unfold ehCarrierIn; split <;> simp
+  have hf : (ehFreshChunk w s).length ≤ EH_FRESH_PER_STEP := by
+    unfold ehFreshChunk; exact List.length_take_le _ _
+  simp only [List.length_map, List.length_append, hc]
+  omega
+
 /-- Step `s`'s absorbed inputs: `carrier(8) ‖ fresh(3)`, PADDED — **arity 11 at every step**.
  
 ⚠ **This used to read "arity 11 (10 on the last step)", and that parenthesis was a defect.** There
@@ -346,20 +360,16 @@ assignment — this pin could never have proved. Padding the block to the full `
 every step arity 11, which is the arity the surrounding prose already claimed and the shape the
 deployed group discipline uses. `padToE` fills with literal zeros, which is what the short chunk's
 missing lanes evaluated to anyway. -/
+
 def ehStepInputs (w s : Nat) : List EmittedExpr :=
   padToE (EH_CARRIER + EH_FRESH_PER_STEP) (((ehCarrierIn w s) ++ (ehFreshChunk w s)).map ev)
+    (ehStepInputs_fits w s)
 
 /-- **Every step absorbs EXACTLY `carrier ‖ 3` = 11 felts** — an ADMITTED chip arity, at every
 step including the last, which is the whole point of the pad. -/
 theorem ehStepInputs_length (w s : Nat) :
-    (ehStepInputs w s).length = EH_CARRIER + EH_FRESH_PER_STEP := by
-  have hc : (ehCarrierIn w s).length = EH_CARRIER := by
-    unfold ehCarrierIn; split <;> simp
-  have hf : (ehFreshChunk w s).length ≤ EH_FRESH_PER_STEP := by
-    unfold ehFreshChunk; exact List.length_take_le _ _
-  simp only [ehStepInputs, padToE, List.length_append, List.length_replicate, List.length_map,
-    List.length_append, hc]
-  omega
+    (ehStepInputs w s).length = EH_CARRIER + EH_FRESH_PER_STEP :=
+  padToE_length (ehStepInputs_fits w s)
 
 /-- The absorb arity the chip AIR is asked for, at every step, is admitted. -/
 theorem ehStepInputs_admitted (w s : Nat) : ChipArityAdmitted (ehStepInputs w s).length := by

@@ -150,7 +150,7 @@ theorem chipRowShaped_decode_unique (r : List ℤ)
   have hpad : (padTo CHIP_RATE ins₁).length = (padTo CHIP_RATE ins₂).length := by
     rw [padTo_length hlen₁, padTo_length hlen₂]
   obtain ⟨hpe, hoe⟩ := List.append_inj htail hpad
-  exact ⟨padTo_inj hlens hpe, hoe⟩
+  exact ⟨padTo_inj hlen₁ hlen₂ hlens hpe, hoe⟩
 
 /-- **The genuineness ↔ shape + output split.** A row is a genuine `chipRowN permOut ins` iff it is
 `ChipRowShaped` AND its recovered output block equals `permOut` of its recovered inputs. This ISOLATES

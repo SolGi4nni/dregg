@@ -140,26 +140,37 @@ forces so the parent verifier's op-list is invariant. -/
 def Canonical (K : Nat) (m : List TableShape) : Prop := m.length = K
 
 /-- **The shape morphism — `pad`.** Pad the manifest with zero-width dummy tables to the canonical
-length `K`. For `|m| ≤ K` this lands at exactly `K`; padding an already-canonical manifest is identity. -/
-def pad (K : Nat) (m : List TableShape) : List TableShape :=
+length `K`. For `|m| ≤ K` this lands at exactly `K`; padding an already-canonical manifest is identity.
+
+⚑ **`hFits` is the obligation, and it rides on the PRE-pad length.** `K - m.length` is `Nat`
+subtraction and SATURATES, so an over-long manifest is padded by ZERO dummies and comes back
+UNCHANGED — longer than `K` and therefore not `Canonical K`. TRUNCATION IS NOT THE FIX HERE:
+`m.take K` would silently DROP real tables out of the committed execution while
+`publishedContent_pad` / `publish_pad` / `semantics_pad` claim the content is preserved, which
+would make those three theorems FALSE. So the correct instrument is a refusal, not a truncation.
+See `canonStep` (§7) for what the unconditional canonicaliser does with an over-long manifest, now
+stated as theorems rather than left silent. -/
+def pad (K : Nat) (m : List TableShape)
+    (hFits : m.length ≤ K := by first | assumption | simp | omega) : List TableShape :=
+  let _ := hFits
   m ++ List.replicate (K - m.length) dummy
 
 /-! ## §2 — the morphism is length-canonicalizing and an identity on canonical shapes. -/
 
 /-- The padded manifest has the canonical length `K` (when the input fits, `|m| ≤ K`). -/
 theorem length_pad_le {K : Nat} {m : List TableShape} (h : m.length ≤ K) :
-    (pad K m).length = K := by
+    (pad K m h).length = K := by
   simp only [pad, List.length_append, List.length_replicate]
   omega
 
 /-- `pad K m` is CANONICAL at `K` (for `|m| ≤ K`) — the canonicalization lands at the fixed length. -/
 theorem canonical_pad {K : Nat} {m : List TableShape} (h : m.length ≤ K) :
-    Canonical K (pad K m) := length_pad_le h
+    Canonical K (pad K m h) := length_pad_le h
 
 /-- **Padding an already-canonical manifest is the IDENTITY.** `K - |m| = 0` dummies are appended.
 This is the structural fixed point: the canonical shape is fixed by canonicalization. -/
 theorem pad_canonical_id {K : Nat} {m : List TableShape} (h : m.length = K) :
-    pad K m = m := by
+    pad K m (Nat.le_of_eq h) = m := by
   simp only [pad, h, Nat.sub_self, List.replicate_zero, List.append_nil]
 
 /-! ## §3 — padding preserves the published commitment (the sponge input is unchanged). -/
@@ -175,8 +186,8 @@ theorem publishedContent_replicate_dummy (n : Nat) :
 
 /-- **`publishedContent_pad`.** Padding leaves the published content byte-identical: the appended
 dummies contribute the empty list. -/
-theorem publishedContent_pad (K : Nat) (m : List TableShape) :
-    publishedContent (pad K m) = publishedContent m := by
+theorem publishedContent_pad (K : Nat) (m : List TableShape) (h : m.length ≤ K) :
+    publishedContent (pad K m h) = publishedContent m := by
   unfold publishedContent pad
   rw [List.map_append, List.flatten_append]
   have hd : publishedContent (List.replicate (K - m.length) dummy) = [] :=
@@ -186,8 +197,8 @@ theorem publishedContent_pad (K : Nat) (m : List TableShape) :
 
 /-- **`publish_pad`.** Padding preserves the published PI commitment — the sponge INPUT is unchanged,
 so the digest is too. This direction needs NO collision-resistance. -/
-theorem publish_pad (hash : List ℤ → ℤ) (K : Nat) (m : List TableShape) :
-    publish hash (pad K m) = publish hash m := by
+theorem publish_pad (hash : List ℤ → ℤ) (K : Nat) (m : List TableShape) (h : m.length ≤ K) :
+    publish hash (pad K m h) = publish hash m := by
   unfold publish; rw [publishedContent_pad]
 
 /-! ## §4 — padding preserves the committed-execution semantics (dummies carry none). -/
@@ -203,8 +214,8 @@ theorem filter_replicate_dummy (n : Nat) :
 
 /-- **`semantics_pad`.** Padding preserves the non-dummy semantic content, UNCONDITIONALLY — the
 appended dummies are filtered away. -/
-theorem semantics_pad {K : Nat} {m : List TableShape} :
-    semantics (pad K m) = semantics m := by
+theorem semantics_pad {K : Nat} {m : List TableShape} {h : m.length ≤ K} :
+    semantics (pad K m h) = semantics m := by
   unfold semantics pad
   rw [List.filter_append, filter_replicate_dummy, List.append_nil]
 
@@ -243,7 +254,7 @@ theorem normalize_to_shape_sound
         ∧ publish hash m' = pi
         ∧ Canonical K m'
         ∧ SemanticsPreserved m m' := by
-  refine ⟨pad K m, ?_, ?_, ?_, ?_⟩
+  refine ⟨pad K m hlen, ?_, ?_, ?_, ?_⟩
   · -- satisfaction is preserved under the content-determined circuit
     exact (hSat m (pad K m) (semantics_pad).symm).mp hsat
   · -- the published commitment is unchanged
@@ -251,7 +262,7 @@ theorem normalize_to_shape_sound
   · -- the normalized manifest is canonical
     exact canonical_pad hlen
   · -- semantics + published content preserved
-    exact ⟨semantics_pad, publishedContent_pad K m⟩
+    exact ⟨semantics_pad, publishedContent_pad K m hlen⟩
 
 /-! ### The faithfulness/anti-ghost leg, AS A SECURITY REDUCTION (§R).
 
@@ -426,15 +437,46 @@ example (D : DomainSeparatedSponge)
 /-! ## §7 — THE DEPTH-1 FIXED POINT (the structural version of `running_vk_perpetually_constant`). -/
 
 /-- The fork's per-fold canonicalization map: re-normalize the running manifest to the canonical
-shape. The VK-shape transition `RecursiveAggregation.step` projects through this. -/
-def canonStep (K : Nat) : List TableShape → List TableShape := pad K
+shape. The VK-shape transition `RecursiveAggregation.step` projects through this.
+
+⚑ **THE BRANCH IS EXPLICIT NOW, AND ITS OVER-LONG ARM IS A THEOREM.** `canonStep` must be a total
+endofunction — `canon_perpetually_constant` iterates it — so it cannot take `pad`'s obligation.
+Until 2026-08-03 it was literally `pad K`, and every theorem about it carried `m.length ≤ K` while
+the FUNCTION was applied unconditionally: an over-long manifest went through, was padded by
+`K - |m| = 0` dummies, came out UNCHANGED, and was simply not `Canonical K` — with nothing in the
+file saying so. That is a USAGE gap, not a proof gap; the theorems were all true.
+
+What it does now is the same thing, said out loud: `canonStep_over_long_is_id` names the identity
+arm and ★ `canonStep_over_long_not_canonical` proves the result FAILS the `Canonical K` check.
+`Canonical` is decidable and is the predicate the parent verifier's fixed op-list rests on, so an
+over-long manifest is now REFUSED by a check that exists rather than passing silently. -/
+def canonStep (K : Nat) (m : List TableShape) : List TableShape :=
+  if h : m.length ≤ K then pad K m h else m
+
+/-- On the honest domain `canonStep` IS `pad` — no behaviour changed for any manifest that fits. -/
+theorem canonStep_of_fits {K : Nat} {m : List TableShape} (h : m.length ≤ K) :
+    canonStep K m = pad K m h := dif_pos h
+
+/-- **★ WHAT AN OVER-LONG MANIFEST DOES TODAY, NAMED.** It is returned UNCHANGED: the
+"canonicaliser" is the identity on exactly the inputs it exists to normalise. -/
+theorem canonStep_over_long_is_id {K : Nat} {m : List TableShape} (h : K < m.length) :
+    canonStep K m = m := dif_neg (Nat.not_le.mpr h)
+
+/-- **★ AND SO IT IS NOT CANONICAL — the failure a `Canonical K` check CATCHES.** This is the
+detection half: the over-long arm does not produce a shape the parent verifier's fixed op-list can
+accept, and that is a proved refusal rather than an unstated one. -/
+theorem canonStep_over_long_not_canonical {K : Nat} {m : List TableShape} (h : K < m.length) :
+    ¬ Canonical K (canonStep K m) := by
+  rw [canonStep_over_long_is_id h, Canonical]
+  omega
 
 /-- **`canonical_is_fixed_point` (= `step_canonical(canonical) = canonical`).** The canonical shape is a
 FIXED POINT of canonicalization — STRUCTURALLY, not measured. (`RecursiveAggregation` carries the depth-4
 fixed point as a MEASURED hypothesis `hfix : step anchor = anchor`; here it is PROVED for the canonical
 shape, with no measurement.) -/
 theorem canonical_is_fixed_point {K : Nat} {m : List TableShape} (h : Canonical K m) :
-    canonStep K m = m := pad_canonical_id h
+    canonStep K m = m := by
+  rw [canonStep_of_fits (Nat.le_of_eq h)]; exact pad_canonical_id h
 
 /-- **`canon_fixed_at_depth_one` (THE FORK'S DELIVERABLE — fixed point at DEPTH 1).** ONE
 canonicalization lands at the fixed point: applying `canonStep` again is the identity. This is the
@@ -442,7 +484,7 @@ transient-killer — `RecursiveAggregation`'s fixed point sits at the MEASURED d
 transient); canonical normalization reaches it at depth 1. -/
 theorem canon_fixed_at_depth_one {K : Nat} {m : List TableShape} (hlen : m.length ≤ K) :
     canonStep K (canonStep K m) = canonStep K m :=
-  canonical_is_fixed_point (canonical_pad hlen)
+  canonical_is_fixed_point (by rw [canonStep_of_fits hlen]; exact canonical_pad hlen)
 
 /-- **`canon_perpetually_constant` (the structural twin of `running_vk_perpetually_constant`).** Off the
 DEPTH-1 fixed point, every further fold leaves the shape unchanged: `∀ n, (canonStep K)^[n] m = m` for
@@ -454,8 +496,10 @@ theorem canon_perpetually_constant {K : Nat} {m : List TableShape} (h : Canonica
 
 /-- The running fold's shape step: combine the two children's real (non-dummy) tables, then
 re-canonicalize to the fixed length `K`. -/
-def foldStep (K : Nat) (a b : List TableShape) : List TableShape :=
-  pad K (semantics a ++ semantics b)
+def foldStep (K : Nat) (a b : List TableShape)
+    (hFits : (semantics a ++ semantics b).length ≤ K := by first | assumption | simp | omega) :
+    List TableShape :=
+  pad K (semantics a ++ semantics b) hFits
 
 /-- **`step_canonical_id` (folding two canonical-shaped proofs yields a canonical-shaped proof — the
 manifest count is STABLE at `K`).** Given the combined real tables fit (`|semantics a ++ semantics b| ≤
@@ -463,7 +507,7 @@ K`, the aggregation circuit's bounded-non-primitives design invariant), the fold
 at `K`. So the running VK's manifest count is a fixed point — depth-invariant from the first fold. -/
 theorem step_canonical_id {K : Nat} {a b : List TableShape}
     (hcomb : (semantics a ++ semantics b).length ≤ K) :
-    Canonical K (foldStep K a b) :=
+    Canonical K (foldStep K a b hcomb) :=
   canonical_pad hcomb
 
 /-! ## §NV — non-vacuity: the morphism FIRES on a real canonical shape. -/
@@ -497,6 +541,30 @@ theorem non_canonical_not_fixed : canonStep 3 [realTable] ≠ [realTable] := by
   have hcl := congrArg List.length h
   simp [canonStep, pad] at hcl
 
+/-! ### §NV-b — the over-long arm, EXHIBITED. An accepted-before / refused-after pair at `K = 3`. -/
+
+/-- FOUR real tables against a canonical length of THREE — the over-long manifest. -/
+def overLongManifest : List TableShape := List.replicate 4 realTable
+
+theorem overLongManifest_over_long : 3 < overLongManifest.length := by decide
+
+/-- **★ ACCEPTED-BEFORE, in the precise sense that matters**: the padded manifest is the input,
+byte for byte. `pad` appended `3 - 4 = 0` dummies, so the "canonicalisation" did nothing at all —
+and nothing in the old file said this arm existed. -/
+theorem overLong_canonStep_is_id : canonStep 3 overLongManifest = overLongManifest :=
+  canonStep_over_long_is_id overLongManifest_over_long
+
+/-- **★ REFUSED-AFTER**: the result is NOT `Canonical 3`, and that is now a theorem a consumer can
+cite rather than a silence a consumer walks past. `Canonical` is decidable, so this is the check a
+parent verifier already has in hand. -/
+theorem overLong_not_canonical : ¬ Canonical 3 (canonStep 3 overLongManifest) :=
+  canonStep_over_long_not_canonical overLongManifest_over_long
+
+/-- **★ AND `pad` ITSELF NO LONGER ACCEPTS IT.** The obligation is satisfiable (`realCanon`
+elaborates at length 1 ≤ 3) and refutable (there is no proof of `4 ≤ 3`), so the gate is a gate:
+it is not a blanket refusal, and it is not a rubber stamp. -/
+theorem overLong_obligation_is_false : ¬ (overLongManifest.length ≤ 3) := by decide
+
 /-- **The DEPTH-1 fixed point FIRES on the witness** — one canonicalization of the real single-table
 manifest lands at a fixed point: applying `canonStep` again is the identity. A real, non-vacuous
 instance of the transient-killer. -/
@@ -521,6 +589,12 @@ carrier is `Poseidon2SpongeCR`, taken as a hypothesis). -/
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publishRom_nonNegl_forger_excluded
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_floor_top_false_babyBear
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.publish_floor_bot_vacuous
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canonStep_of_fits
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canonStep_over_long_is_id
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canonStep_over_long_not_canonical
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.overLong_canonStep_is_id
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.overLong_not_canonical
+#assert_axioms Dregg2.Circuit.NormalizeToShapeSound.overLong_obligation_is_false
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canonical_is_fixed_point
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canon_fixed_at_depth_one
 #assert_axioms Dregg2.Circuit.NormalizeToShapeSound.canon_perpetually_constant

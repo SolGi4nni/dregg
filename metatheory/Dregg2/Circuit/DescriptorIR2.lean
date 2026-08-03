@@ -1382,32 +1382,209 @@ arity tag disambiguates padding (an arity-2 absorb of `[a, b]` is NOT the arity-
 `[a, b, 0]`). `chip_lookup_sound` is the lever theorem: against a SOUND chip table, the lookup
 ENFORCES the hash equation — exactly what a v1 in-row hash site enforced, at lookup cost. -/
 
-/-- Pad a value tuple to `n` with zeros. -/
-def padTo (n : Nat) (xs : List ℤ) : List ℤ := xs ++ List.replicate (n - xs.length) 0
+/-- **The pad-fits discharger** — the side condition that makes `padTo`/`padToE` a pad and not a
+no-op. `Nat` subtraction SATURATES: `n - xs.length = 0` when `xs` is over-long, so an unguarded
+`padTo n xs` returns `xs` UNCHANGED and the result is `xs.length`, not `n`. Every way the bound is
+available, and no fourth:
 
-/-- Pad an expression tuple to `n` with literal zeros. -/
-def padToE (n : Nat) (es : List EmittedExpr) : List EmittedExpr :=
+* `assumption` — the site carries `xs.length ≤ n` as a named hypothesis (the levers, and every
+  emitter that took the obligation);
+* `chipArity_le_rate (by assumption)` — the site carries the STRONGER `ChipArityAdmitted`
+  (the three chip lookup/row constructors and everything that restates their tuple);
+* `of_decide_eq_true (Eq.refl true)` — the spine is a LITERAL, so `List.length` reduces through it
+  in the KERNEL and the width constant unfolds. This fires even when the lane EXPRESSIONS are
+  parametric (`cols.map .var`, section variables): the length of a literal-spine block does not
+  depend on what is in the lanes. ⚠ Bare `decide` is NOT used and must not be — it refuses an
+  expected type containing free variables, which is exactly how the sibling lane's first attempt
+  failed. `simp` follows, for the goals that need `List.length_map`/`List.length_range` first.
+* otherwise it FAILS, loudly. Neither kernel reduction nor `simp` can prove the bound for an
+  ABSTRACT input — which is what makes this a gate rather than a computation. -/
+macro "pad_fits" : tactic =>
+  `(tactic| first
+      | assumption
+      | exact chipArity_le_rate (by assumption)
+      | exact of_decide_eq_true (Eq.refl true)
+      | (simp; done)
+      | (simp; omega)
+      | fail "SATURATING PAD — the absorb block does not fit the width it claims. `padTo n xs` \
+              pads by `n - xs.length`, which is `Nat` subtraction and SATURATES: above `n` inputs \
+              NOTHING is appended and the block comes out at `xs.length`, wider than `n`, with \
+              every downstream slot shifted. A width check on the RESULT does not catch this — \
+              CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] has HOLES a saturated pad lands in \
+              (9 inputs past a `padToE 5` fact block reaches 11, and 14 reaches 16, both ADMITTED). \
+              The obligation is on the PRE-pad length, where it says what the name says. Either \
+              carry `xs.length ≤ n` from the caller, or shrink the block.")
+
+/-- **`padTo n xs` — the value-tuple pad, EXACTLY `n` slots for EVERY input.**
+
+⚑ **This is `take`-shaped on purpose, and that choice is the fix, not a detail.** It used to be
+`xs ++ List.replicate (n - xs.length) 0`, and `n - xs.length` is `Nat` subtraction, which
+SATURATES: on an over-long spine NOTHING was appended and the result came back at `xs.length`,
+wider than `n`, with every downstream slot shifted. The only statement of the width was
+`padTo_length`'s HYPOTHESIS, so each of the ~15 consumers either carried the bound or silently
+inherited the hole. `padTo_length` is now UNCONDITIONAL — there is no hypothesis left to drop.
+
+⚠ **Why truncation is the right instrument HERE and NOT on `padToE`.** `padTo` is the MODEL side:
+it appears only inside `chipRow` / `chipRowN` / `chipRowNarrow` / `chipRowState16`, whose first
+component is the ARITY TAG `ins.length`. Truncating an over-long input therefore cannot hide it —
+the tag still reads the true length, and the deployed degree-7 admission product
+(`CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16]`) refuses EVERY value above `CHIP_RATE` with no
+holes (`over_rate_arity_always_refused`). `padToE`, by contrast, is the EMISSION side, where the
+same truncation WOULD hide the input — a nine-column block behind a `padToE 5` fact site would come
+out at the ADMITTED arity 7 with four columns silently dropped. That is why the two take opposite
+instruments: total-correctness here, a refusal there. -/
+def padTo (n : Nat) (xs : List ℤ) : List ℤ := xs.take n ++ List.replicate (n - xs.length) 0
+
+/-- **`padToE n es` — the EXPRESSION-tuple pad, and it takes the OBLIGATION rather than truncating.**
+
+⚑ **`hFits` rides on the PRE-pad length.** This is the emission side: the result becomes a lookup
+tuple in a descriptor on disk, and the arity the chip AIR is asked for is that tuple's OWN length.
+A saturated pad here is the sibling lane's exhibited defect (`ebc1e1e61`): a nine-input block behind
+a `padToE 5` fact site rode out at width `9 + 2 = 11`, and a fourteen-input one at `14 + 2 = 16`,
+both ADMITTED arities — see `saturated_pad_lands_on_admitted_arity`. And truncating instead would be
+strictly WORSE: it would land the nine-input site at the admitted arity 7 with FOUR COLUMNS SILENTLY
+DROPPED. Neither answer is correct for an over-long absorb block, so the function must not be
+callable there. It is an `autoParam`, so every honest site discharges it silently and an over-long
+one FAILS TO ELABORATE; it is a `Prop` and does not appear in the result, so no emitted wire byte
+moves. -/
+def padToE (n : Nat) (es : List EmittedExpr) (hFits : es.length ≤ n := by pad_fits) :
+    List EmittedExpr :=
+  let _ := hFits
   es ++ List.replicate (n - es.length) (.const 0)
 
-theorem padTo_length {n : Nat} {xs : List ℤ} (h : xs.length ≤ n) : (padTo n xs).length = n := by
-  simp [padTo]
+/-- **★ The padded tuple has the width its name claims — UNCONDITIONALLY.** The bound has left the
+hypothesis entirely: there is no longer any way for a consumer to fail to carry it, because there
+is nothing to carry. This is the whole repair on the model side. -/
+theorem padTo_length_eq (n : Nat) (xs : List ℤ) : (padTo n xs).length = n := by
+  simp only [padTo, List.length_append, List.length_take, List.length_replicate]
   omega
 
-/-- Padding is injective on tuples of equal length. -/
-theorem padTo_inj {n : Nat} {xs ys : List ℤ} (hlen : xs.length = ys.length)
-    (h : padTo n xs = padTo n ys) : xs = ys :=
-  (List.append_inj h hlen).1
+/-- The old name, kept as the bounded corollary the existing proofs cite. Its hypothesis is now
+REDUNDANT, not load-bearing — `padTo_length_eq` holds without it. -/
+theorem padTo_length {n : Nat} {xs : List ℤ} (_h : xs.length ≤ n) : (padTo n xs).length = n :=
+  padTo_length_eq n xs
+
+/-- On the honest domain the pad is the plain append it always was — no behaviour changed for any
+tuple that fits, which is every tuple the arity gate admits. -/
+theorem padTo_of_fits {n : Nat} {xs : List ℤ} (h : xs.length ≤ n) :
+    padTo n xs = xs ++ List.replicate (n - xs.length) 0 := by
+  rw [padTo, List.take_of_length_le h]
+
+/-- The expression side's width, from its own obligation. -/
+theorem padToE_length {n : Nat} {es : List EmittedExpr} (h : es.length ≤ n) :
+    (padToE n es h).length = n := by
+  simp [padToE]
+  omega
+
+/-- Padding is injective on tuples of equal length that FIT. ⚑ The bound is genuinely needed now
+(two over-long tuples agreeing on their first `n` entries pad to the same block), and it is present
+at every call site — both levers derive it from `chipArity_le_rate`. -/
+theorem padTo_inj {n : Nat} {xs ys : List ℤ} (hx : xs.length ≤ n) (hy : ys.length ≤ n)
+    (hlen : xs.length = ys.length) (h : padTo n xs = padTo n ys) : xs = ys := by
+  rw [padTo_of_fits hx, padTo_of_fits hy] at h
+  exact (List.append_inj h hlen).1
 
 /-- Evaluation commutes with padding. -/
-theorem map_eval_padToE (n : Nat) (es : List EmittedExpr) (a : Assignment) :
-    (padToE n es).map (·.eval a) = padTo n (es.map (·.eval a)) := by
-  simp [padToE, padTo, List.map_append, List.map_replicate, EmittedExpr.eval]
+theorem map_eval_padToE (n : Nat) (es : List EmittedExpr) (a : Assignment) (h : es.length ≤ n) :
+    (padToE n es h).map (·.eval a) = padTo n (es.map (·.eval a)) := by
+  rw [padTo_of_fits (by simpa using h)]
+  simp [padToE, List.map_append, List.map_replicate, EmittedExpr.eval]
+
+/-! ### §7-sat — the saturating pad, as NAMED FACTS. What the old shape did, and what refuses it now.
+
+⚠ These are the class, asserted rather than described. The first two are about the OLD body — the
+plain `xs ++ replicate (n - xs.length) 0` that `padTo` was until 2026-08-03 — and they are what
+`padTo_length_eq` now makes impossible. The last two are the two live gates: the emission side's
+obligation, and the arity tag that catches an over-long MODEL row with no holes. -/
+
+/-- **★ THE CLASS, named.** For an OVER-LONG spine the old body appended NOTHING: it returned `xs`. -/
+theorem saturating_pad_is_a_no_op {n : Nat} {xs : List ℤ} (h : n ≤ xs.length) :
+    xs ++ List.replicate (n - xs.length) (0 : ℤ) = xs := by
+  have : n - xs.length = 0 := Nat.sub_eq_zero_of_le h
+  simp [this]
+
+/-- **★ SO THE OLD BODY'S WIDTH CLAIM WAS FALSE THERE**, while `padTo_length`'s hypothesis was the
+only thing standing between a consumer and the wire. Contrast `padTo_length_eq`, which holds for
+every input with no hypothesis at all — that IS the repair. -/
+theorem saturating_pad_is_not_n {n : Nat} {xs : List ℤ} (h : n < xs.length) :
+    (xs ++ List.replicate (n - xs.length) (0 : ℤ)).length ≠ n := by
+  rw [saturating_pad_is_a_no_op (Nat.le_of_lt h)]
+  omega
+
+/-- **★ AND A RESULT-SIDE WIDTH CHECK HAS HOLES IT LANDS IN** — why the emission side needed the
+obligation and not a bigger `if`. The witness the sibling lane exhibited: a NINE-input block behind
+a `padToE 5` fact site rides out at width `9 + 2 = 11`, and a FOURTEEN-input one at `14 + 2 = 16`,
+BOTH ADMITTED. So checking the POST-pad width is not a weaker gate; at these two arities it is no
+gate at all. -/
+theorem saturated_pad_lands_on_admitted_arity :
+    (¬ ChipArityAdmitted 9 ∧ ChipArityAdmitted (9 + 2))
+      ∧ (¬ ChipArityAdmitted 14 ∧ ChipArityAdmitted (14 + 2)) := by
+  refine ⟨⟨?_, ?_⟩, ?_, ?_⟩ <;> decide
+
+/-- **★ THE MODEL SIDE'S GATE, AND IT HAS NO HOLES.** Above `CHIP_RATE` the deployed admission
+product refuses EVERY arity — so a `chipRow`/`chipRowN` built from an over-long input, which
+`padTo` now truncates to exactly `CHIP_RATE`, still carries the TRUE length in its arity tag and is
+refused there. This is why truncation is safe on the model side and only there: the tag is not
+padded, so the over-length cannot hide behind it. (Contrast the 9/14 holes above, which live BELOW
+the rate and are exactly why `padToE` refuses instead of truncating.) -/
+theorem over_rate_arity_always_refused :
+    ∀ k, k ≤ 64 → CHIP_RATE < k → ¬ ChipArityAdmitted k := by decide
+
+/-! #### The gate, EXHIBITED — satisfiable, refutable, and NOT a blanket refusal.
+
+The shape is the live one: a `padToE 5` fact block, the same width the four repaired `hash_fact`
+sites assert. Four inputs elaborate; NINE and FOURTEEN — the two arities the old post-pad width
+check ADMITTED — do not, because their obligation is false. -/
+
+/-- A four-column fact block: FITS, and the pad is real (five slots from four columns). -/
+def factColsFour : List EmittedExpr := (List.range 4).map .var
+
+/-- A NINE-column block — the arity that rode out at width 11 under the saturating pad. -/
+def factColsNine : List EmittedExpr := (List.range 9).map .var
+
+/-- A FOURTEEN-column block — the arity that rode out at width 16. -/
+def factColsFourteen : List EmittedExpr := (List.range 14).map .var
+
+/-- **★ ACCEPTED: four columns pad to five.** The `autoParam` fires silently and the block is the
+width its name claims — the obligation is SATISFIABLE, so this is a gate and not a wall. -/
+theorem factFour_pads_to_five : (padToE 5 factColsFour).length = 5 :=
+  padToE_length (by decide)
+
+/-- **★ REFUSED: nine columns.** The obligation is FALSE, so `padToE 5 factColsNine` does not
+elaborate — and the arity it would have ridden out at (`9 + 2 = 11`) is one the chip AIR ADMITS,
+which is precisely why a post-pad width check could not have caught it. -/
+theorem factNine_obligation_is_false : ¬ (factColsNine.length ≤ 5) := by decide
+
+/-- **★ REFUSED: fourteen columns**, landing at the admitted arity `14 + 2 = 16`. -/
+theorem factFourteen_obligation_is_false : ¬ (factColsFourteen.length ≤ 5) := by decide
+
+/-- **★ AND THE REFUSAL IS MECHANICAL, not merely arithmetic.** Both over-long blocks fail to
+ELABORATE against `padToE 5`, while the four-column one elaborates — the accepted-before /
+refused-after pair, executed by the elaborator rather than asserted in prose. -/
+example : True := by
+  fail_if_success (have _ := padToE 5 factColsNine; trivial)
+  fail_if_success (have _ := padToE 5 factColsFourteen; trivial)
+  have _ := padToE 5 factColsFour
+  trivial
+
+/-- **★ AND THE MODEL SIDE NEEDS NO SUCH REFUSAL, PROVED.** `padTo` at the SAME width is exactly
+five slots for the nine-column block too — total-correct, no obligation, no saturation. The
+over-length is not lost: it is carried untruncated in `chipRow`'s arity tag, where
+`over_rate_arity_always_refused` bites. -/
+theorem padTo_is_exact_even_at_nine :
+    (padTo 5 ((List.range 9).map (fun i => (i : ℤ)))).length = 5 := padTo_length_eq _ _
 
 /-- The chip ROW of an absorb (Phase B-GATE, 17-wide): `(arity, padded inputs, hash inputs ::
 lanes)`. The output BLOCK is `hash ins :: lanes`, where `lanes` are the `CHIP_OUT_LANES - 1`
 exposed permutation lanes 1..7 (genuine distinct felts the chip AIR binds; their VALUES are not
 a function of `hash` alone, so they ride existentially in the table-soundness predicate). Lane 0
-is the squeezed digest `hash ins` — the single felt every single-output site binds, UNCHANGED. -/
+is the squeezed digest `hash ins` — the single felt every single-output site binds, UNCHANGED.
+
+⚑ **This row's input block is EXACTLY `CHIP_RATE` wide for every `ins`** (`padTo_length_eq`), and
+its FIRST component is the untruncated arity tag `ins.length`. So an over-long absorb cannot hide
+in the padded block: it is visible in the tag, and `over_rate_arity_always_refused` says the
+deployed admission product refuses every tag above the rate. That is the whole reason the model
+side can afford a total-correct pad where the emission side cannot. -/
 def chipRow (hash : List ℤ → ℤ) (ins : List ℤ) (lanes : List ℤ) : List ℤ :=
   (ins.length : ℤ) :: padTo CHIP_RATE ins ++ (hash ins :: lanes)
 
@@ -1433,8 +1610,8 @@ one was the one in production. -/
 def chipLookupTuple (ins : List EmittedExpr) (digestCol : Nat) (laneCols : List Nat)
     (hAdm : ChipArityAdmitted ins.length := by chip_arity_admitted) :
     List EmittedExpr :=
-  let _ := hAdm
-  (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins ++ (.var digestCol :: laneCols.map .var)
+  (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins (chipArity_le_rate hAdm)
+    ++ (.var digestCol :: laneCols.map .var)
 
 /-- A chip table is SOUND when every row is a genuine `(arity, padded inputs, hash inputs ::
 lanes)` tuple of the permutation (the chip AIR's own faithfulness — the per-permutation
@@ -1463,6 +1640,8 @@ theorem chip_lookup_sound (hash : List ℤ → ℤ) (tbl : Table) (hSound : Chip
     (hmem : (chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a) ∈ tbl) :
     a digestCol = hash (ins.map (·.eval a)) := by
   obtain ⟨ws, lanes, hwlen, _hlanes, hrow⟩ := hSound _ hmem
+  have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
+    simpa [List.length_map] using chipArity_le_rate hAdm
   have hev : (chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a))
           ++ (a digestCol :: laneCols.map a) := by
@@ -1475,11 +1654,10 @@ theorem chip_lookup_sound (hash : List ℤ → ℤ) (tbl : Table) (hSound : Chip
     have hcast : (ins.length : ℤ) = (ws.length : ℤ) := hl
     have := Int.natCast_inj.mp hcast
     simpa [List.length_map] using this
-  have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
-    simpa [List.length_map] using chipArity_le_rate hAdm
   have hpads := List.append_inj htail
-    (by rw [padTo_length hlenm, padTo_length (chipArity_le_rate hwlen)])
-  have hins : ins.map (·.eval a) = ws := padTo_inj hlens hpads.1
+    (by rw [padTo_length_eq, padTo_length_eq])
+  have hins : ins.map (·.eval a) = ws :=
+    padTo_inj hlenm (chipArity_le_rate hwlen) hlens hpads.1
   -- the output blocks are equal lists; their HEADS give the digest equation
   have hblock : a digestCol :: laneCols.map a = hash ws :: lanes := hpads.2
   have hd : a digestCol = hash ws := (List.cons.injEq _ _ _ _).mp hblock |>.1
@@ -1507,7 +1685,8 @@ width, supplied downstream where the wide digest is bound. -/
 
 /-- The WIDE chip ROW: `(arity, padded inputs, permOut inputs)`, where `permOut ins` is the full
 `W`-felt squeezed output of the genuine permutation. (The legacy `chipRow hash` is the `W = 1`
-instance with `permOut := fun xs => [hash xs]`.) -/
+instance with `permOut := fun xs => [hash xs]`.) Its input block is exactly `CHIP_RATE` wide for
+every `ins` — see `chipRow` for why the untruncated arity tag is what keeps that safe. -/
 def chipRowN (permOut : List ℤ → List ℤ) (ins : List ℤ) : List ℤ :=
   (ins.length : ℤ) :: padTo CHIP_RATE ins ++ permOut ins
 
@@ -1523,8 +1702,8 @@ proved about vacuously. `hAdm` is a `Prop` and does not appear in the result, so
 bytes are untouched. -/
 def chipLookupTupleN (ins : List EmittedExpr) (digestCols : List Nat)
     (hAdm : ChipArityAdmitted ins.length := by chip_arity_admitted) : List EmittedExpr :=
-  let _ := hAdm
-  (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins ++ digestCols.map .var
+  (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins (chipArity_le_rate hAdm)
+    ++ digestCols.map .var
 
 /-- A WIDE chip table is SOUND when every row is a genuine `(arity, padded inputs, W-felt output)`
 tuple of the permutation — the chip AIR's faithfulness at full squeeze width.
@@ -1550,6 +1729,8 @@ theorem chip_lookup_sound_N (permOut : List ℤ → List ℤ) (tbl : Table)
     (hmem : (chipLookupTupleN ins digestCols hAdm).map (·.eval a) ∈ tbl) :
     digestCols.map a = permOut (ins.map (·.eval a)) := by
   obtain ⟨ws, hwlen, hrow⟩ := hSound _ hmem
+  have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
+    simpa [List.length_map] using chipArity_le_rate hAdm
   have hev : (chipLookupTupleN ins digestCols hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a)) ++ digestCols.map a := by
     simp [chipLookupTupleN, List.map_cons, List.map_append, map_eval_padToE, EmittedExpr.eval,
@@ -1562,12 +1743,11 @@ theorem chip_lookup_sound_N (permOut : List ℤ → List ℤ) (tbl : Table)
     have hcast : (ins.length : ℤ) = (ws.length : ℤ) := hl
     have := Int.natCast_inj.mp hcast
     simpa [List.length_map] using this
-  have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
-    simpa [List.length_map] using chipArity_le_rate hAdm
   -- equal-length padded blocks ⇒ split the tail uniquely (inputs vs the W-felt output block)
   have hpads := List.append_inj htail
-    (by rw [padTo_length hlenm, padTo_length (chipArity_le_rate hwlen)])
-  have hins : ins.map (·.eval a) = ws := padTo_inj hlens hpads.1
+    (by rw [padTo_length_eq, padTo_length_eq])
+  have hins : ins.map (·.eval a) = ws :=
+    padTo_inj hlenm (chipArity_le_rate hwlen) hlens hpads.1
   -- the output block: `digestCols.map a = permOut ws`, then rewrite ws ↦ evaluated inputs
   have hd : digestCols.map a = permOut ws := hpads.2
   rw [hins]
@@ -2263,6 +2443,17 @@ def brokenEngine : ProofEngine :=
 #assert_axioms memLog_embedV1
 #assert_axioms memCheck_nil
 #assert_axioms embedV1_satisfied_iff
+#assert_axioms padTo_length_eq
+#assert_axioms padTo_of_fits
+#assert_axioms padToE_length
+#assert_axioms saturating_pad_is_a_no_op
+#assert_axioms saturating_pad_is_not_n
+#assert_axioms saturated_pad_lands_on_admitted_arity
+#assert_axioms over_rate_arity_always_refused
+#assert_axioms factFour_pads_to_five
+#assert_axioms factNine_obligation_is_false
+#assert_axioms factFourteen_obligation_is_false
+#assert_axioms padTo_is_exact_even_at_nine
 #assert_axioms padTo_inj
 #assert_axioms map_eval_padToE
 #assert_axioms chip_lookup_sound
