@@ -259,6 +259,12 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-midnight-lightclient-verify::v1",
         MIDNIGHT_LIGHTCLIENT_VERIFY_JSON,
     ),
+    // ⚑ The Mina anchored-head verify AIR — the fifth, and the first of the five with a consumer
+    // that REFUSES a dregg state transition on it (`dregg_turn::executor::mina_head_verifier`).
+    (
+        "dregg-mina-lightclient-verify::v1",
+        MINA_LIGHTCLIENT_VERIFY_JSON,
+    ),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -446,6 +452,23 @@ const SOLANA_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-solana-lightclient-verify-v1.json");
 const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-midnight-lightclient-verify-v1.json");
+
+/// ⚑ THE FIFTH PEER-CHAIN LIGHTCLIENT VERIFY AIR, AND THE ONE THAT IS CONSUMED. Authored in
+/// `metatheory/Dregg2/Circuit/Emit/LightClientMinaAir.lean` as COMPILER OUTPUT — `minaLcVerifyDesc`
+/// is `EffectLower.lowerAir` of the `EffectAir` source `minaHeadAir`, with no hand-written
+/// `VmConstraint2` in the module — and re-derived onto `by-name/` by `EmitByName.lean`.
+///
+/// Unlike its four siblings this descriptor has a CONSUMER that refuses on it:
+/// `dregg_turn::executor::mina_head_verifier` dispatches it from a `StateConstraint::Witnessed`, so
+/// a turn is REFUSED (`TurnError::ProgramViolation`) unless the proof verifies against the
+/// cell-program-pinned Mina weak-subjectivity anchor and the head the turn actually records.
+///
+/// Its gates DERIVE the published `blockchain_length` (`BLOCK_LEN = ANCHOR_H + SEG_LEN`) and the
+/// witnessed depth (`WIT_DEPTH + SUBMIT_H = BLOCK_LEN`) rather than witnessing them, so the one
+/// field a truncated peer reply leaves standing is not settable. `LINK_OK`/`PICKLES_OK`/`CANON_OK`
+/// remain NAMED carriers on the undischarged IPA/FRI floor.
+const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-mina-lightclient-verify-v1.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

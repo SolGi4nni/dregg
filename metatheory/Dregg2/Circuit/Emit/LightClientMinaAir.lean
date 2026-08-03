@@ -507,7 +507,8 @@ theorem mina_wrapped_slack_is_outside_the_range (k : ℤ) (hk : 0 < k)
   rintro ⟨_, hlt⟩
   have hp : (Dregg2.Circuit.Emit.EffectLower.P : ℤ) = 2013265921 := rfl
   have hb : ((2 : ℤ) ^ MINA_RANGE_BITS) = 16777216 := by norm_num [MINA_RANGE_BITS]
-  rw [hp, hb] at hlt hk'
+  rw [hp, hb] at hlt
+  rw [hb] at hk'
   omega
 
 /-- **THE COMPILER CARRIES THE MEANING.** Each emitted gate holds on a transition row exactly when its
@@ -583,7 +584,7 @@ theorem minaLcAir_sound (a : Assignment) (segLen anchorH submitH reqDepth : Nat)
   have hcn' : canonB = true := by
     rw [hcn] at hcnC; cases canonB with | true => rfl | false => simp at hcnC
   unfold minaVerifyDecision
-  simp only [hlk', hpk', hcn', Bool.and_eq_true, decide_eq_true_eq, Bool.and_true, and_true]
+  simp only [hlk', hpk', hcn', Bool.and_eq_true, decide_eq_true_eq, Bool.and_true]
   exact ⟨⟨hseg, hanch⟩, hdep⟩
 
 /-- **THE PAYOFF: a satisfying AIR row ENTAILS Mina anchored validity.** If a row reads update `u`'s
