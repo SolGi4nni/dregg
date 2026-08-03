@@ -35,7 +35,8 @@ build` and cover every structural property the harness cannot see.
 ⚠ **MEASURED 2026-08-02, and it CORRECTS what this banner used to say** ("nullary `def`s so the
 interpreter evaluates the chains ONCE"): a nullary `def` is **not** cached across `#guard` COMMANDS.
 `#guard` compiles and interprets its term afresh every time, so `tS`/`placedS`/`witS` are rebuilt
-once per pin — 77 pins here, ~1.4 s each. Sharing happens only WITHIN one command. That is why the
+once per pin — **74** pins here (it said 77 against a measured 78; four decorations left on
+2026-08-03), ~1.4 s each. Sharing happens only WITHIN one command. That is why the
 pins are split across thirteen PARALLEL modules rather than batched into fewer commands: batching
 buys the same factor and costs each pin its own failure site. -/
 
@@ -82,9 +83,12 @@ buys the same factor and costs each pin its own failure site. -/
 -- count and must not be: a total that went back to a multiple of `emsRows` would mean the 16-bit
 -- range check on `domain_log2` is gone, and with it the pin that makes `(m₀, m₁, domain_log2)` a
 -- function of `branch_data` rather than a choice. `RNG_DOMLOG2_ROWS` is named, not inlined.
+-- ⚑ `#guard RNG_DOMLOG2_ROWS == 1` USED TO SIT BELOW THIS PIN AND IS DELETED (2026-08-03): the
+-- constant is `def RNG_DOMLOG2_ROWS : Nat := 1`, so the guard was `1 == 1` with the name thrown
+-- away. What CAN refuse is the pair below — the emitted census, and the non-divisibility that a
+-- 16-bit chain gone back to a full 128-bit one would break.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMulScalar)).length
         == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS
-#guard RNG_DOMLOG2_ROWS == 1
 #guard ((2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS) % shapeSmoke.emsRows != 0
 -- …stated the other way, so a chain that vanished cannot hide inside the arithmetic: the range
 -- chains are `chals + 3` of the total.
@@ -99,18 +103,34 @@ buys the same factor and costs each pin its own failure site. -/
 #guard (finRows shapeSmoke tS.ft tS.fin true).length
         == (aRows (baseFin shapeSmoke tS.ft) tS.fin.fp.prog).length
            + 2 * (shapeSmoke.emsRows + 6) + 3
--- ⚑ `chals + 5` since 2026-08-03: `N_DEFC` deferred chains, R8's two `lowest_128_bits` halves, and
--- §8h's `domain_log2` block. (It was `chals + 4`.)
-#guard nRng shapeSmoke == shapeSmoke.chals + 5
-#guard RNG_DOMLOG2 shapeSmoke == shapeSmoke.chals + N_DEFC + 2
-#guard RNG_FIN_LO shapeSmoke == RNG_FIN_HI shapeSmoke + 1
+-- ⚑ THREE MORE DECORATIONS DELETED HERE (2026-08-03), with `RNG_DOMLOG2_ROWS == 1` above:
+--     `#guard nRng shapeSmoke == shapeSmoke.chals + 5`
+--     `#guard RNG_DOMLOG2 shapeSmoke == shapeSmoke.chals + N_DEFC + 2`
+--     `#guard RNG_FIN_LO shapeSmoke == RNG_FIN_HI shapeSmoke + 1`
+-- `nRng s := s.chals + N_DEFC + 3`, `RNG_DOMLOG2 s := s.chals + N_DEFC + 2`, `RNG_FIN_LO s :=
+-- s.chals + N_DEFC + 1`, `RNG_FIN_HI s := s.chals + N_DEFC`, `N_DEFC := 2` — every one of those
+-- three guards restated the body of its own `def` (the third, one `def` against its neighbour in the
+-- same block). They read no emitted object, so there is no second source to disagree; each is `rfl`
+-- with the name, the term and the axiom record deleted. `chals + 5` was the range-chain count as a
+-- CLAIM, and the claim is made where it can refuse: the `EndoMulScalar` census above, and the
+-- `rangeRows`/`finRows` lengths below, which are read off the emitted rows.
 -- ⚑ `VarBaseMul` is R3's `multiscale_known` AND §6b's `ft_comm` — the second MSM runs at
 -- `FTC_CHUNKS = 51`, `step_verifier.ml:240-242`'s uniform 255 bits, while R3's are PER STATEMENT
 -- WORD (§1b) — `msmChunkPrefix`, not `msmTerms · a constant`.
 -- ⚠ …AND §19's FOUR: `p_prime`'s `uc` and `rhs`'s three, all `scale_fast2 ~num_bits:255` hence
--- `FTC_CHUNKS` again. `rowsS` has been the `.opening` rung since §19 and this line still read
--- `msmTerms · msmChunks + ftcTerms · FTC_CHUNKS` — 282 against an emitted 486. RED AT HEAD, found
--- 2026-08-03 while retiring #2, not caused by it.
+-- `FTC_CHUNKS` again. `rowsS` has been the `.opening` rung since §19.
+-- ⚑ **GREEN, AND THE "RED AT HEAD" THAT USED TO CLOSE THIS NOTE WAS STALE THE COMMIT IT WAS WRITTEN
+-- IN** (corrected 2026-08-03). §20 (`dca30f544`) landed `msmChunkPrefix` AND `N_SF * FTC_CHUNKS`
+-- AND the "282 against an emitted 486" label in ONE commit, so the file has carried a red flag over
+-- a line that already agreed with the emitter. ⚠ And **486 was never this line's number**: it is
+-- `3 · 26 + 4 · 51 + 4 · 51`, the count at the OLD uniform MSM width, which §20's own per-word
+-- widths (§1b) replaced — the emission moved to `153 + 204 + 204` in the same change.
+-- ⚑ MEASURED OFF THE EMITTER, not off this line: `DREGG_SM=smoke DREGG_SM_RUNGS=r9_opening lake env
+-- lean --run …/EmitStepMainJson.lean`, then `typ == 4` counted in
+-- `/tmp/pickles-stepmain/stepmain_smoke_r9_opening.json` — **561**, wired and unwired alike.
+-- ⚠ GRADE THIS PIN AGAINST `r9_opening`. `placedS` is `rungRows tS .opening`, and `r8_finalize` is a
+-- DIFFERENT rung: it is missing §19's four ladders and reads 357, so grading the `.opening` census
+-- by the finalize artifact manufactures a red of exactly `N_SF * FTC_CHUNKS`.
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
         == msmChunkPrefix shapeSmoke.msmTerms
            + ftcTerms shapeSmoke * FTC_CHUNKS
@@ -126,8 +146,11 @@ buys the same factor and costs each pin its own failure site. -/
 -- and the tail adds three: `endo`'s two seed `add_fast`s and the closing `cq + delta` (`:327`).
 -- ⚠ …and the tail is FOUR, not three: §19 added `p_prime = fold_sum + uc`'s own `Ops.add_fast`
 -- (`Pins14.ipa_rung_grew_by_the_q_prime_add`). §19's own set adds `N_SF` `scale_fast2` seeds and
--- odd-branches (two each) plus the `G + b_u` and `rhs` adds. Both terms were missing: 35 against an
--- emitted 46. RED AT HEAD, found 2026-08-03.
+-- odd-branches (two each) plus the `G + b_u` and `rhs` adds.
+-- ⚑ **GREEN** — the "35 against an emitted 46. RED AT HEAD" that used to close this note was the
+-- same stale flag as the `VarBaseMul` one: `dca30f544` added the `+ 4` and the `+ 2 * N_SF + 2` and
+-- the label together. `typ == 3` in `stepmain_smoke_r9_opening.json` is **46**, against this line's
+-- `5 + 19 + 12 + 10`. (46 is the number the old note quoted, and it is right; 486 above was not.)
 #guard (placedS.filter (fun g => g.kind == KGateType.completeAdd)).length
         == (shapeSmoke.msmTerms - 1) + shapeSmoke.msmTerms
            + shapeSmoke.ipaRounds + 2 * shapeSmoke.ipaRounds + 4
@@ -322,7 +345,11 @@ buys the same factor and costs each pin its own failure site. -/
 -- closes on `c`'s challenge variable, its accumulator is `Scalar_challenge.endo`'s seed run, and the
 -- closing `add_fast` is `cq + delta` over the block's own opening point.
 -- ⚠ THE BASE IS `qPrime`, NOT THE FOLD SUM, since §19 (`Pins14.lhs_endo_base_is_q_prime`,
--- `q_prime_is_not_the_fold_sum`). These two lines still named the fold sum. RED AT HEAD.
+-- `q_prime_is_not_the_fold_sum`) — and the two lines below name it.
+-- ⚑ The "These two lines still named the fold sum. RED AT HEAD." that used to close this note was
+-- the THIRD stale red in this file, all three written by `dca30f544` in the commit that fixed them.
+-- `git log -S "endoSeed tS.ipa.qPrimePt"` returns that one commit: the rewrite and the red flag over
+-- it are the same hunk. Corrected 2026-08-03 by elaborating this module.
 #guard tS.ipa.lhsAccs.getD 0 (0, 0) == endoSeed tS.ipa.qPrimePt
 #guard tS.ipa.lhsNs.getLastD 0 == chalOf shapeSmoke tS.sp shapeSmoke.cChal
 #guard tS.ipa.lhsAccs.length == shapeSmoke.ipaBlocks + 1
