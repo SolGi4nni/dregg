@@ -214,7 +214,6 @@ end RungPilot
 #check (rung_spec_sound : LiveRefinesSpec rung_program (canonForm rung_program))
 #check (rung_spec_exact : LiveExact rung_program (canonForm rung_program))
 
-set_option linter.unusedSimpArgs false in
 open Dregg2.Metatheory.TypedLinearPredicateDescriptorIR2.InterchainRung in
 /-- **REGENERATION.** The hand `InterchainRung.program_holds_iff` (6 `simp` lines over 16 names +
 the shared `add_neg_*_zero_iff` lemmas), reproduced with the synthesized `holds_iff_canonForm`
@@ -226,7 +225,7 @@ theorem rung_holds_iff_synth (tag payload : BabyBear) :
     simp [canonForm, canonAtom, RungPilot.program, RungPilot.source,
       RungPilot.a0, RungPilot.a1, RungPilot.a2, RungPilot.a3,
       RungPilot.atomTerms, RungPilot.i0, RungPilot.i1,
-      AffineTerm.eqConst, AffineTerm.evalField, Formula.Holds, inputOf, Reaches])
+      AffineTerm.eqConst, Formula.Holds, inputOf, Reaches])
 
 /-! ## 6. Kernel hygiene and the load-bearing canaries. -/
 

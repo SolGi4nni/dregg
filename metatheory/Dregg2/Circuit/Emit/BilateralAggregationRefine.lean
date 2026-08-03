@@ -67,7 +67,6 @@ open Dregg2.Circuit.Emit.EffectVmEmitBilateralAgg
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt gate_modEq_iff)
 
 set_option autoImplicit false
-set_option linter.unusedSimpArgs false
 
 /-! ## §0 — The running (prefix) sum and its determination from a seed + step recurrence. -/
 
@@ -402,7 +401,7 @@ theorem cellCell_eq (hcanon : AggTraceCanon t) {i a b : Nat}
 theorem seed_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) : cumAt t 0 ≡ isAgentAt t 0 [ZMOD 2013265921] := by
   have h := boundaryFirst_forces hsat hpos mem_firstCumSeed
-  simp only [firstCumSeed, EmittedExpr.eval] at h
+  simp only [EmittedExpr.eval] at h
   simp only [cumAt, isAgentAt, rowAt]
   exact (gate_modEq_iff (by ring)).mp h
 
@@ -410,7 +409,7 @@ theorem seed_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin
 theorem seed_n_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) : nActiveAt t 0 ≡ consistentAt t 0 [ZMOD 2013265921] := by
   have h := boundaryFirst_forces hsat hpos mem_firstNSeed
-  simp only [firstNSeed, EmittedExpr.eval] at h
+  simp only [EmittedExpr.eval] at h
   simp only [nActiveAt, consistentAt, rowAt]
   exact (gate_modEq_iff (by ring)).mp h
 
@@ -421,7 +420,7 @@ theorem step_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin
   have hi : i < t.rows.length := by omega
   have hnl : i + 1 ≠ t.rows.length := by omega
   have h := window_forces hsat hi hnl mem_cumAgentTransition rfl
-  simp only [cumAgentTransition, WindowExpr.eval, envAt] at h
+  simp only [WindowExpr.eval, envAt] at h
   simp only [cumAt, isAgentAt, rowAt, envAt]
   exact (gate_modEq_iff (by ring)).mp h
 
@@ -432,7 +431,7 @@ theorem step_n_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin m
   have hi : i < t.rows.length := by omega
   have hnl : i + 1 ≠ t.rows.length := by omega
   have h := window_forces hsat hi hnl mem_cumActiveTransition rfl
-  simp only [cumActiveTransition, WindowExpr.eval, envAt] at h
+  simp only [WindowExpr.eval, envAt] at h
   simp only [nActiveAt, consistentAt, rowAt, envAt]
   exact (gate_modEq_iff (by ring)).mp h
 
@@ -440,7 +439,7 @@ theorem step_n_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin m
 theorem last_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) : cumAt t (t.rows.length - 1) ≡ 1 [ZMOD 2013265921] := by
   have h := boundaryLast_forces hsat hpos mem_lastCumIsOne
-  simp only [lastCumIsOne, EmittedExpr.eval] at h
+  simp only [EmittedExpr.eval] at h
   simp only [cumAt, rowAt]
   exact (gate_modEq_iff (by ring)).mp h
 
@@ -469,7 +468,7 @@ theorem isAgent_cases (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin 
   · have hje : j = t.rows.length - 1 := by omega
     rw [hje]; exact hcanon.lastAgentBool
   · have h := gate_forces hsat hj hnl mem_boolIsAgent
-    simp only [boolGate, EmittedExpr.eval] at h
+    simp only [EmittedExpr.eval] at h
     exact bool_of_boolGate h
       (hcanon.cells j (Agg.schCol Sched.IS_AGENT_CELL)).1
       (hcanon.cells j (Agg.schCol Sched.IS_AGENT_CELL)).2
@@ -483,7 +482,7 @@ theorem consistent_cases (hsat : Satisfied2 hash bilateralAggDescriptor minit mf
   · have hje : j = t.rows.length - 1 := by omega
     rw [hje]; exact hcanon.lastConsistentBool
   · have h := gate_forces hsat hj hnl mem_boolConsistent
-    simp only [boolGate, EmittedExpr.eval] at h
+    simp only [EmittedExpr.eval] at h
     exact bool_of_boolGate h
       (hcanon.cells j Agg.CONSISTENT_INDICATOR_COL).1
       (hcanon.cells j Agg.CONSISTENT_INDICATOR_COL).2
@@ -532,13 +531,13 @@ theorem bilateralAgg_refines
     have hi : i < t.rows.length := by omega
     have hnl : i + 1 ≠ t.rows.length := by omega
     have h := gate_forces hsat hi hnl (mem_scheduleReplay_counts k hk)
-    simp only [cg3Eq, colEqCol, EmittedExpr.eval] at h
+    simp only [EmittedExpr.eval] at h
     exact cellCell_eq hcanon ((gate_modEq_iff (by ring)).mp h)
   · -- replayRoots on a non-final cell
     have hi : i < t.rows.length := by omega
     have hnl : i + 1 ≠ t.rows.length := by omega
     have h := gate_forces hsat hi hnl (mem_scheduleReplay_roots k hk)
-    simp only [cg3Eq, colEqCol, EmittedExpr.eval] at h
+    simp only [EmittedExpr.eval] at h
     exact cellCell_eq hcanon ((gate_modEq_iff (by ring)).mp h)
   · -- exactlyOneAgent: cum(last) = prefixSum is_agent (field recurrence + envelope), cum(last) = 1
     have key := running_sum_canon t.rows.length hsize (cumAt t) (isAgentAt t)
@@ -598,7 +597,7 @@ theorem witTrace_satisfies :
       simp only [cg2PiBind, cg3Eq, colEqCol, boolGate, paddingGate, cumAgentTransition,
         cumActiveTransition, firstCumSeed, firstNSeed, lastCumIsOne, lastNEqPi,
         VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        witTrace, envAt, wr0, wr1, wpub, EmittedExpr.eval, WindowExpr.eval,
+        witTrace, envAt, wpub, EmittedExpr.eval, WindowExpr.eval,
         Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
       decide
   rowHashes := by intro i _; trivial

@@ -356,7 +356,6 @@ theorem bit_decodes (hash : List ℤ → ℤ) (legA legB : Nat)
 
 /-! ## §7 — the OR-fold step: a boolean OR of `escrowBitZ pre` with `escrowBitZ [tag]`. -/
 
-set_option linter.unusedSimpArgs false in
 /-- The boolean OR `o + b − o·b` of `escrowBitZ pre` and `escrowBitZ [tag]` is `escrowBitZ
 (pre ++ [tag])` — the running-OR fold step, over the integral domain ℤ. -/
 theorem orStep {pre : List ℤ} {tag o b oNext : ℤ}
@@ -366,7 +365,7 @@ theorem orStep {pre : List ℤ} {tag o b oNext : ℤ}
   rw [hg, ho, hb]
   simp only [escrowBitZ, List.mem_append, List.mem_cons, List.not_mem_nil, or_false]
   by_cases hp : tagEscrowZ ∈ pre <;> by_cases ht : tagEscrowZ = tag <;>
-    simp only [hp, ht, or_true, or_false, true_or, false_or, if_true, if_false] <;> ring
+    simp only [hp, ht, or_true, or_false, if_true, if_false] <;> ring
 
 /-! ## §8 — THE DECODE KEYSTONE: the floor column is the escrow decode of the manifest tags. -/
 

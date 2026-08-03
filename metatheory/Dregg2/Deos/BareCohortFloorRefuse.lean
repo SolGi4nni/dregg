@@ -415,7 +415,6 @@ theorem bare_gate_holdsT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDesc
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
 
-set_option linter.unusedSimpArgs false in
 /-- The tag-parametric OR-fold step. -/
 theorem orStepT {tag : ℤ} {pre : List ℤ} {tg o b oNext : ℤ}
     (ho : o = tagBitZ tag pre) (hb : b = tagBitZ tag [tg]) (hg : oNext = o + b - o * b) :
@@ -423,7 +422,7 @@ theorem orStepT {tag : ℤ} {pre : List ℤ} {tg o b oNext : ℤ}
   rw [hg, ho, hb]
   simp only [tagBitZ, List.mem_append, List.mem_cons, List.not_mem_nil, or_false]
   by_cases hp : tag ∈ pre <;> by_cases ht : tag = tg <;>
-    simp only [hp, ht, or_true, or_false, true_or, false_or, if_true, if_false] <;> ring
+    simp only [hp, ht, or_true, or_false, if_true, if_false] <;> ring
 
 /-- A per-slot is-zero gadget forces `bitCol k = tagBitZ T [tagColumn]` (tag-parametric). -/
 theorem bit_decodesT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDescriptor2)

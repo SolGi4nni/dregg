@@ -324,7 +324,22 @@ theorem forgeTrace_chipSound : ChipTableSound concreteFoldHash (forgeTrace.tf .p
 theorem forgeTrace_memLog : Dregg2.Circuit.DescriptorIR2.memLog foldDescPreFix forgeTrace = [] := rfl
 theorem forgeTrace_mapLog : Dregg2.Circuit.DescriptorIR2.mapLog foldDescPreFix forgeTrace = [] := rfl
 
-set_option linter.unusedSimpArgs false in
+-- Two `first` blocks below, one per row of the 2-row forge (`interval_cases i`): row 0 is the
+-- first/active row, row 1 the last/summary row.
+--
+-- WHY `unusedTactic` STAYS — MEASURED by removal (2026-08-02), it is a FALSE POSITIVE. Dropping the
+-- suppression reports "'decide' tactic does nothing" on the row-1 alternative
+-- `| (simp only [VmConstraint2.holdsAt]; decide)`. That `decide` is NOT dead: delete it and the
+-- `simp only` still SUCCEEDS as a tactic (it rewrites) so `first` COMMITS to that alternative and
+-- leaves the goal open — this theorem then fails `unsolved goals` on case «1».«4» and leaks
+-- `sorryAx` into `forge_satisfied2_prefix`, which its `#assert_axioms` catches. Obeying the hint
+-- would silently un-prove the pole that says the deployed DSL fold AIR ADMITTED the forge.
+--
+-- The `linter.unusedSimpArgs` suppression that used to sit on this same line was the OPPOSITE case
+-- and is GONE. It hid exactly one genuinely redundant argument: the row-1 alternative listed
+-- `holdsVm_gate_false` without using it (now deleted). The row-0 alternative still lists it because
+-- there it IS used — which is why this pair was never safe to blanket file-wide: the two `first`
+-- blocks differ, and the same arg is real in one and dead in the other.
 set_option linter.unusedTactic false in
 theorem forgeTrace_rowConstraints_prefix :
     ∀ i < forgeTrace.rows.length, ∀ c ∈ foldDescPreFix.constraints,
@@ -349,7 +364,7 @@ theorem forgeTrace_rowConstraints_prefix :
         | exact True.intro
         | (intro hcon; exact Bool.noConfusion hcon)
         | (intro _; decide)
-        | (simp only [VmConstraint2.holdsAt, holdsVm_gate_false]; decide)
+        | (simp only [VmConstraint2.holdsAt]; decide)
         | (simp only [factHashLookup, VmConstraint2.holdsAt, Lookup.holdsAt]; decide)
 
 /-- **The forge WAS accepted (the non-vacuity pole).** The 2-row forge `Satisfied2`s the PRE-FIX

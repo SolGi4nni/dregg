@@ -414,7 +414,7 @@ theorem satTrace_satisfied2 (hash : List ℤ → ℤ) :
     -- (C) removal_count_carry window (onTransition): vacuous on the last row.
     · intro hcon; exact Bool.noConfusion hcon
     -- (B) first-row REMOVAL_COUNT = 0 anchor: satRow's REMOVAL_COUNT is 0.
-    · intro _; rw [hloc]; simp [firstRcBody, EmittedExpr.eval, satRow, REMOVAL_COUNT, FACT_HASH, ROW_TYPE]
+    · intro _; rw [hloc]; simp [firstRcBody, satRow, REMOVAL_COUNT, FACT_HASH, ROW_TYPE]
     · intro _; rw [hloc, hpub]; simp [satRow, PI4_CARRIER, FACT_HASH, ROW_TYPE]
     · intro hcon; exact Bool.noConfusion hcon
     · exact True.intro
@@ -576,8 +576,21 @@ theorem goodTrace_mapLog : Dregg2.Circuit.DescriptorIR2.mapLog foldDesc goodTrac
 -- unfolded), so the accepting witness's per-row obligations discharge by `decide`. The `first`
 -- combinator dispatches each constraint shape (a vacuous wrong-row guard via `Bool.noConfusion`, a
 -- fired equality via `decide`, the fact-hash lookup via unfolding); some alternatives are redundant on
--- one row but exercised on the other, so the two per-branch linters are scoped off here.
-set_option linter.unusedSimpArgs false in
+-- one row but exercised on the other, so the per-branch linter is scoped off here.
+--
+-- WHY `unusedTactic` STAYS — MEASURED by removal (2026-08-02), it is a FALSE POSITIVE. Dropping the
+-- suppression reports "'decide' tactic does nothing" on the summary-row alternative
+-- `| (simp only [VmConstraint2.holdsAt]; decide)` below. That `decide` is NOT dead: delete it and
+-- the `simp only` still SUCCEEDS as a tactic (it rewrites) so `first` COMMITS to that alternative
+-- and leaves the goal open — this theorem then fails `unsolved goals` on case «1».«4» and leaks
+-- `sorryAx` into `goodTrace_satisfied`, which its `#assert_axioms` catches. Obeying the hint would
+-- silently un-prove the accept pole; the hint is wrong, not the code.
+--
+-- The `linter.unusedSimpArgs` suppression that used to sit on this same line was the OPPOSITE case
+-- and is GONE. It hid exactly one genuinely redundant argument: the SUMMARY-row alternative listed
+-- `EffectVmEmit.holdsVm_gate_false` without using it (now deleted). The REMOVAL-row alternative
+-- above still lists it because there it IS used — which is why this pair was never safe to blanket
+-- file-wide: the two `first` blocks differ, and one arg is real in one and dead in the other.
 set_option linter.unusedTactic false in
 theorem goodTrace_rowConstraints :
     ∀ i < goodTrace.rows.length, ∀ c ∈ foldDesc.constraints,
@@ -605,8 +618,7 @@ theorem goodTrace_rowConstraints :
         | exact True.intro
         | (intro hcon; exact Bool.noConfusion hcon)
         | (intro _; decide)
-        | (simp only [VmConstraint2.holdsAt,
-            Dregg2.Circuit.Emit.EffectVmEmit.holdsVm_gate_false]; decide)
+        | (simp only [VmConstraint2.holdsAt]; decide)
         | (simp only [factHashLookup, VmConstraint2.holdsAt, Lookup.holdsAt]; decide)
 
 /-- **Non-vacuity (accept, with a REAL removal row).** The 2-row removal+summary witness satisfies the

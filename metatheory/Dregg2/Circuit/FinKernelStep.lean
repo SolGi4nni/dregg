@@ -37,9 +37,6 @@ open Dregg2.Exec.TurnExecutorFull (FullAction recKMint recKBurn recCreditCell)
 open Dregg2.Exec.TurnExecutor (Action)
 
 set_option autoImplicit false
-set_option linter.unusedVariables false
-set_option linter.deprecated false
-set_option linter.unusedSimpArgs false
 
 universe u v
 
@@ -65,7 +62,7 @@ theorem eraseList_sublist (k : K) : ∀ l : List (K × V), List.Sublist (eraseLi
       unfold eraseList
       by_cases h : k' = k
       · rw [if_pos h]; exact (eraseList_sublist k rest).cons _
-      · rw [if_neg h]; exact (eraseList_sublist k rest).cons₂ _
+      · rw [if_neg h]; exact (eraseList_sublist k rest).cons_cons _
 
 /-- Membership in an erase implies membership in the input (via the sublist). -/
 theorem mem_eraseList {k : K} {p : K × V} {l : List (K × V)} (h : p ∈ eraseList k l) : p ∈ l :=
@@ -388,13 +385,13 @@ theorem finTransfer_denote (turn : Turn) (f : FinKernelState) :
     denote (finTransfer turn f) = (recKExec (denote f) turn).getD (denote f) := by
   unfold finTransfer
   cases h : recKExec (denote f) turn with
-  | none => simp only [h, Option.getD_none]
+  | none => simp only [Option.getD_none]
   | some k' =>
-      simp only [h, Option.getD_some]
+      simp only [Option.getD_some]
       rw [recKExec_shape h, denote_with_cell]
       refine cell_update_ext f ?_
       funext c
-      simp only [CanonMap.get_insertNZ, CanonMap.get_set_eq, denote_cell, denote_caps]
+      simp only [CanonMap.get_insertNZ, denote_cell]
       unfold recTransfer
       by_cases h1 : c = turn.src
       · subst h1; simp
@@ -407,13 +404,13 @@ theorem finMint_denote (actor cell : CellId) (amt : ℤ) (f : FinKernelState) :
     denote (finMint actor cell amt f) = (recKMint (denote f) actor cell amt).getD (denote f) := by
   unfold finMint
   cases h : recKMint (denote f) actor cell amt with
-  | none => simp only [h, Option.getD_none]
+  | none => simp only [Option.getD_none]
   | some k' =>
-      simp only [h, Option.getD_some]
+      simp only [Option.getD_some]
       rw [recKMint_shape h, denote_with_cell]
       refine cell_update_ext f ?_
       funext c
-      simp only [CanonMap.get_insertNZ, CanonMap.get_set_eq, denote_cell, denote_caps]
+      simp only [CanonMap.get_insertNZ, denote_cell]
       unfold recCreditCell
       by_cases h1 : c = cell
       · subst h1; simp
@@ -424,13 +421,13 @@ theorem finBurn_denote (actor cell : CellId) (amt : ℤ) (f : FinKernelState) :
     denote (finBurn actor cell amt f) = (recKBurn (denote f) actor cell amt).getD (denote f) := by
   unfold finBurn
   cases h : recKBurn (denote f) actor cell amt with
-  | none => simp only [h, Option.getD_none]
+  | none => simp only [Option.getD_none]
   | some k' =>
-      simp only [h, Option.getD_some]
+      simp only [Option.getD_some]
       rw [recKBurn_shape h, denote_with_cell]
       refine cell_update_ext f ?_
       funext c
-      simp only [CanonMap.get_insertNZ, CanonMap.get_set_eq, denote_cell, denote_caps]
+      simp only [CanonMap.get_insertNZ, denote_cell]
       unfold recCreditCell
       by_cases h1 : c = cell
       · subst h1; simp
@@ -442,13 +439,13 @@ theorem finDelegate_denote (delegator recipient t : CellId) (f : FinKernelState)
       = (recKDelegate (denote f) delegator recipient t).getD (denote f) := by
   unfold finDelegate
   cases h : recKDelegate (denote f) delegator recipient t with
-  | none => simp only [h, Option.getD_none]
+  | none => simp only [Option.getD_none]
   | some k' =>
-      simp only [h, Option.getD_some]
+      simp only [Option.getD_some]
       rw [recKDelegate_shape h, denote_with_caps]
       refine caps_update_ext f ?_
       funext l
-      simp only [CanonMap.get_insertNZ, CanonMap.get_set_eq, denote_cell, denote_caps]
+      simp only [CanonMap.get_set_eq, denote_caps]
       unfold grant
       by_cases h1 : l = recipient
       · subst h1; simp
@@ -461,7 +458,7 @@ theorem finRevoke_denote (holder t : CellId) (f : FinKernelState) :
   rw [denote_with_caps]
   refine caps_update_ext f ?_
   funext l
-  simp only [CanonMap.get_insertNZ, CanonMap.get_set_eq, denote_cell, denote_caps]
+  simp only [CanonMap.get_set_eq, denote_caps]
   by_cases h1 : l = holder
   · subst h1; simp
   · simp [h1]

@@ -83,7 +83,6 @@ open Dregg2.Circuit.Emit.EffectVmEmitBilateralAgg
 open Dregg2.Circuit.Emit.BilateralAggregationRefine
 
 set_option autoImplicit false
-set_option linter.unusedSimpArgs false
 
 /-! ## §0 — Prefix-sum arithmetic over a NONNEGATIVE contribution column.
 
@@ -326,7 +325,7 @@ theorem cheatTrace_satisfies :
       simp only [cg2PiBind, cg3Eq, colEqCol, boolGate, paddingGate, cumAgentTransition,
         cumActiveTransition, firstCumSeed, firstNSeed, lastCumIsOne, lastNEqPi,
         VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        cheatTrace, envAt, cwr0, cwr1, cwr2, cpub, EmittedExpr.eval, WindowExpr.eval,
+        cheatTrace, envAt, cpub, EmittedExpr.eval, WindowExpr.eval,
         Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
       decide
   rowHashes := by intro i _; trivial

@@ -82,7 +82,6 @@ open Dregg2.Circuit.Emit.BilateralAggregationRung2 (UniqueAgent bilateralAgg_run
 open WindowExpr (loc nxt)
 
 set_option autoImplicit false
-set_option linter.unusedSimpArgs false
 
 /-! ## §1 — The compacted (v3) layout: schedule block unchanged, expected block DELETED. -/
 
@@ -291,8 +290,8 @@ theorem contractT_expandT (t : VmTrace) : contractT (expandT t) = t := by
 fixed point). -/
 theorem getD_map_fixed (f : Assignment → Assignment) (hf : f zeroAsg = zeroAsg) :
     ∀ (l : List Assignment) (i : Nat), (l.map f).getD i zeroAsg = f (l.getD i zeroAsg)
-  | [], i => by simp [List.getD_nil, hf]
-  | _ :: _, 0 => by simp [List.getD_cons_zero]
+  | [], i => by simp [hf]
+  | _ :: _, 0 => by simp
   | _ :: l, (i + 1) => by
       simpa [List.getD_cons_succ] using getD_map_fixed f hf l i
 
@@ -856,7 +855,7 @@ theorem gapTrace_satisfies :
       simp only [cg2PiBind, cg3Eq, colEqCol, boolGate, paddingGate, cumAgentTransition,
         cumActiveTransition, firstCumSeed, firstNSeed, lastCumIsOne, lastNEqPi,
         VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        gapTrace, envAt, g0, g1, g2, gpub, EmittedExpr.eval, WindowExpr.eval,
+        gapTrace, envAt, gpub, EmittedExpr.eval, WindowExpr.eval,
         Nat.reduceAdd, Nat.reduceBEq, reduceIte, reduceCtorEq] <;>
       decide
   rowHashes := by intro i _; trivial
