@@ -28,8 +28,28 @@
 //!
 //! ## The constructor discipline
 //!
-//! The inner `[BabyBear; 9]` is private and there is **exactly one way in**:
-//! [`Faithful9::from_field_lanes9`]. There is deliberately **no** `From<[BabyBear; 9]>`, no
+//! The inner `[BabyBear; 9]` is private and there are **exactly two ways in**, one per nine-lane
+//! encoder the deployed geometry carries:
+//!
+//! * [`Faithful9::from_field_lanes9`] — the FIELDS encoder ([`crate::effect_vm::field_limbs9`],
+//!   Lean `fieldToLanes9`), whose lanes 0/1 are pinned to the deployed kernel u64 ABI.
+//! * [`Faithful9::from_key_lanes9`] — the KEY encoder ([`crate::effect_vm::key_limbs9`], Lean
+//!   `keyToLanes9`), the base-`2^29` nonet whose image is exactly `2^256`.
+//!
+//! ⚑ **The second one is not a widening of the wall — it is the same claim about a second
+//! encoder.** Both are injective, both have a TOTAL decoder in this crate that is a left inverse
+//! ([`Faithful9::to_field_bytes`] / [`Faithful9::to_key_bytes`]), and both carry that as a
+//! machine-checked Lean theorem. The invariant a sink may rely on is unchanged: *a `Faithful9`
+//! came out of an encoder that no two distinct 32-byte values share*. A constructor that could not
+//! say that does not belong here, whatever its arity.
+//!
+//! ⚠ The two encodings are DIFFERENT and are not interchangeable. Feeding a field value to
+//! `from_key_lanes9` (or a key to `from_field_lanes9`) produces a well-typed `Faithful9` carrying
+//! the wrong lanes for its column group, which no type can catch — the columns are what disambiguate,
+//! so read [`crate::effect_vm::PUBKEY_NONET_LANE_COL`] / `ROTATED_FIELD_LANE_COL` at the write site
+//! and never a hand-built index array.
+//!
+//! There is deliberately **no** `From<[BabyBear; 9]>`, no
 //! `from_lanes`, and **no `_DANGER` escape hatch** — `Faithful8`'s own docs record that "a wall with
 //! an escape hatch is a convention", and its `from_lossy_31bit_DANGER` is why that sentence had to
 //! be written. Do not add one here. If a caller has nine bare felts and no 32-byte source, it does
@@ -82,12 +102,47 @@ impl Faithful9 {
         Self(crate::effect_vm::field_limbs9(b))
     }
 
-    /// The 32-byte value this vector encodes. Total, and the exact inverse of
+    /// **THE OWNER-KEY CONSTRUCTOR.** The base-`2^29` nine-lane encoding of a 32-byte canonical
+    /// key ([`crate::effect_vm::key_limbs9`], Lean `keyToLanes9`): the 32 bytes read as one
+    /// little-endian 256-bit number, in its nine base-`2^29` digits. Lanes 0..=7 are below `2^29`,
+    /// lane 8 below `2^24`, and `8 · 29 + 24 = 256` exactly — so the **image is exactly `2^256`**
+    /// and the encoding step loses nothing.
+    ///
+    /// ⚑ **A KEY NEEDS INJECTIVITY, NOT COLLISION RESISTANCE**, and the two have been confused in
+    /// this constructor's place before. The right figure is "`2^256` image, injective"; the
+    /// `2^123.63` birthday bound is the answer for a *hash node* and says nothing useful about an
+    /// encoder. What it replaced — `canonical_32_to_felts_8`, eight lanes of `8+8+8+6 = 30` bits —
+    /// discarded bits 6-7 of bytes 3, 7, …, 31, and because RFC 8032 §5.1.2 puts an Ed25519 public
+    /// key's x-sign in bit 7 of byte 31, a point `A` and its negation `−A` packed to the identical
+    /// octet at **cost zero**. Eight lanes could not have been repaired by re-chunking:
+    /// `p^8 < 2^256`, so every eight-lane encoding of 32 bytes is non-injective before a masking
+    /// question is asked.
+    ///
+    /// The inverse is [`Faithful9::to_key_bytes`].
+    #[inline]
+    pub fn from_key_lanes9(canonical: &[u8; 32]) -> Self {
+        Self(crate::effect_vm::key_limbs9(canonical))
+    }
+
+    /// The 32-byte value this vector encodes **as a FIELD**. Total, and the exact inverse of
     /// [`Faithful9::from_field_lanes9`] — a `Faithful9` can always be read back, which is precisely
     /// what no `Faithful8` constructor supports.
     #[inline]
     pub fn to_field_bytes(&self) -> [u8; 32] {
         crate::effect_vm::field_from_lanes9(&self.0)
+    }
+
+    /// The 32-byte value this vector encodes **as a KEY**. Total, and the exact inverse of
+    /// [`Faithful9::from_key_lanes9`].
+    ///
+    /// ⚑ **This is the anti-vacuity instrument for the key path.** "The digests differ" is not
+    /// evidence that a nine-lane write bound the source; recovering the 32 bytes from the nine
+    /// committed lanes is. Totality is deliberate: a forged vector (lane 8 at `2^24`, every lane
+    /// under `2^29`) must decode to *something* — the all-zero key, as it happens — rather than
+    /// panic, or the canonicity envelope's exhibit could not be written down.
+    #[inline]
+    pub fn to_key_bytes(&self) -> [u8; 32] {
+        crate::effect_vm::key_from_lanes9(&self.0)
     }
 
     /// The 9 lanes, by value. Reading out is unrestricted.
