@@ -52,7 +52,7 @@ use mina_p2p_messages::rpc::{GetBestTipV2, GetTransitionChainV2};
 use mina_p2p_messages::v2;
 
 use bundle::BundleEntry;
-use chain::{verify_anchor, BestTipWithProof};
+use chain::{BestTipWithProof, verify_anchor};
 
 /// The devnet chain-id string, exactly as openmina hands it to the transport:
 /// the pnet pre-shared key is `Blake2b256(this string's bytes)`
@@ -317,9 +317,7 @@ fn verify_pair(opts: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         // "the rule preferred the head". Printing them is how a fixture's consumer
         // gets the value the gate will actually accept.
         let pd = v2::DataHashLibStateHashStableV1(
-            MinaHash::try_hash(&parent_ps)
-                .expect("parent hashes")
-                .into(),
+            MinaHash::try_hash(&parent_ps).expect("parent hashes").into(),
         )
         .0
         .to_decimal();
@@ -430,6 +428,7 @@ async fn run(opts: &Opts) -> Result<(), Box<dyn std::error::Error>> {
         Cmd::BestChain => unreachable!("bestchain is dispatched at the top of run"),
     }
 }
+
 
 // ===========================================================================
 // bestchain — THE CANDIDATE SET
@@ -591,13 +590,12 @@ async fn bestchain(opts: &Opts) -> Result<(), Box<dyn std::error::Error>> {
 /// command fails if any mutation is ACCEPTED, or if the untouched control is
 /// refused.
 fn verify_bestchain(opts: &Opts) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = opts
-        .dir
-        .as_ref()
-        .ok_or("verify-bestchain needs --dir PATH")?;
+    let dir = opts.dir.as_ref().ok_or("verify-bestchain needs --dir PATH")?;
     let entries = bundle::verify_bundle(dir)?;
 
-    eprintln!("mina-tip: verify-bestchain (openmina decode + Poseidon merkle-list fold, offline)");
+    eprintln!(
+        "mina-tip: verify-bestchain (openmina decode + Poseidon merkle-list fold, offline)"
+    );
     for e in &entries {
         eprintln!(
             "mina-tip:   cand-{:02} height {} depth {} root {} -> tip {} (peer {})",
@@ -670,10 +668,7 @@ fn verify_bestchain(opts: &Opts) -> Result<(), Box<dyn std::error::Error>> {
             bundle::besttip_path(dir, e.idx),
             bundle::besttip_path(&scratch, e.idx),
         )?;
-        std::fs::copy(
-            bundle::ps_path(dir, e.idx),
-            bundle::ps_path(&scratch, e.idx),
-        )?;
+        std::fs::copy(bundle::ps_path(dir, e.idx), bundle::ps_path(&scratch, e.idx))?;
     }
     let honest = std::fs::read_to_string(bundle::manifest_path(dir))?;
     let lied = honest.replacen(
@@ -687,10 +682,7 @@ fn verify_bestchain(opts: &Opts) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(bundle::manifest_path(&scratch), &lied)?;
     let manifest_leg = match bundle::verify_bundle(&scratch) {
         Err(e) => {
-            eprintln!(
-                "mina-tip:   RED  {:<20} REFUSED by the bytes — {e}",
-                "R7 lying-manifest"
-            );
+            eprintln!("mina-tip:   RED  {:<20} REFUSED by the bytes — {e}", "R7 lying-manifest");
             true
         }
         Ok(_) => {

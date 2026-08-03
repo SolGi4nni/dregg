@@ -293,10 +293,12 @@ def rotatedEncodesAvail_of_floors (hash : List ℤ → ℤ) (S : CommitSurface)
 section PerEffect
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ}
 
-local notation "Slive" => S_live CH RH cmb compress compressN hRest
+local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
 
 /-- **`transfer_descriptorRefinesAvail_closedLog` — transfer CLOSED WITH LOG on the HARDENED path.**
 The mirror of `ClosureLog.transfer_descriptorRefines_closedLog` over the DEPLOYED welded wide crown
@@ -350,7 +352,7 @@ theorem closedLogExtract_transfer_closed_avail
     (ledger : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pre post : RecChainedState)
       (hsat : Satisfied2 hash weldedTransferAvailWide minit mfin maddrs t),
-      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hRest)
+      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         pre post (readout minit mfin maddrs t pre post hsat).1
         (readout minit mfin maddrs t pre post hsat).2.1
         (readout minit mfin maddrs t pre post hsat).2.2.srcPre.balLo
@@ -371,7 +373,7 @@ theorem closedLogExtract_transfer_closed_avail
       (hsat : Satisfied2 hash weldedTransferAvailWide minit mfin maddrs t),
       Dregg2.Exec.authorizedB pre.kernel.caps (readout minit mfin maddrs t pre post hsat).1 = true) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hRest) LH hash R 0 := by
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash R 0 := by
   intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- the registry's transfer entry IS the deployed hardened member.
   rw [hR0] at hsat
@@ -430,7 +432,7 @@ theorem closedLogExtract_transfer_closed_availFix
     (ledger : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pre post : RecChainedState)
       (hsat : Satisfied2 hash weldedTransferAvailWide minit mfin maddrs t),
-      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hRest)
+      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         pre post (readout minit mfin maddrs t pre post hsat).1
         (readout minit mfin maddrs t pre post hsat).2.1
         (readout minit mfin maddrs t pre post hsat).2.2.srcPre.balLo
@@ -450,7 +452,7 @@ theorem closedLogExtract_transfer_closed_availFix
       (hsat : Satisfied2 hash weldedTransferAvailWide minit mfin maddrs t),
       Dregg2.Exec.authorizedB pre.kernel.caps (readout minit mfin maddrs t pre post hsat).1 = true) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hRest) LH hash RfixAvail 0 :=
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash RfixAvail 0 :=
   closedLogExtract_transfer_closed_avail (LH := LH) hash RfixAvail RfixAvail_transfer
     readout hpub ledger fcaps authWitness toyAuthOf
 
@@ -514,7 +516,7 @@ theorem closedLogExtract_burn_closed_avail
       (pubLogPost : ℤ) (pre post : RecChainedState),
       BurnTraceReadoutAvail hash LH minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hRest) LH hash R 4 := by
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash R 4 := by
   intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   rw [hR4] at hsat
   obtain ⟨actor, cell, a, amt, permOut, hside, hpub, logNeeds⟩ :=
@@ -529,7 +531,7 @@ theorem closedLogExtract_burn_closed_availFix
       (pubLogPost : ℤ) (pre post : RecChainedState),
       BurnTraceReadoutAvail hash LH minit mfin maddrs t pubLogPost pre post) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hRest) LH hash RfixAvail 4 :=
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash RfixAvail 4 :=
   closedLogExtract_burn_closed_avail (LH := LH) hash RfixAvail RfixAvail_burn readout
 
 end PerEffect

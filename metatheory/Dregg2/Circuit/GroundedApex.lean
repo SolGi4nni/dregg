@@ -264,37 +264,39 @@ soundness column is now PROVEN, not carried. -/
 theorem lightclient_unfoolable_grounded_live
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hRest)
+      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hRest)
+        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         LH pc pubLogPre pubLogPost pre post)
     (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (pre₀ post₀ : RecChainedState)
     (hpreWF : AccountsWF pre₀.kernel) (hpostWF : AccountsWF post₀.kernel)
-    (hpre : pi.pre = (S_live CH RH cmb compress compressN hRest).commit
+    (hpre : pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
       pre₀.kernel pi.turn)
-    (hpost : pi.post = (S_live CH RH cmb compress compressN hRest).commit
+    (hpost : pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
       post₀.kernel pi.turn)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hRest)
+      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_grounded hash
-    (S_live CH RH cmb compress compressN hRest) Rfix hCR kstepAll
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix hCR kstepAll
     (descriptorRefines_complete hash LH rds mkLog) pi π
     pre₀ post₀ hpreWF hpostWF hpre hpost hacc
 

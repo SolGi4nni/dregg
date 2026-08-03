@@ -99,18 +99,20 @@ the fat `buildWitness` bundled are GONE (they are determined by the kernel move,
 theorem transfer_descriptorComplete_reduced
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     (pre post : RecChainedState) (turn : BoundaryTurn)
     (hpreWF : AccountsWF pre.kernel) (hpostWF : AccountsWF post.kernel)
     (floor : TransferSatFloor hash
-      (S_live CH RH cmb compress compressN hRest) pre post turn) :
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pre post turn) :
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
       Satisfied2 hash transferV3 minit mfin maddrs t ∧
       tracePublishedCommit t = commitOf
-        (S_live CH RH cmb compress compressN hRest) pre post turn ∧
-      StateDecode (S_live CH RH cmb compress compressN hRest)
-        (commitOf (S_live CH RH cmb compress compressN hRest)
+        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pre post turn ∧
+      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (commitOf (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
           pre post turn) pre post :=
   ⟨floor.minit, floor.mfin, floor.maddrs, floor.t, floor.hsat, floor.hpub,
    stateDecode_construct _ pre post turn hpreWF hpostWF⟩

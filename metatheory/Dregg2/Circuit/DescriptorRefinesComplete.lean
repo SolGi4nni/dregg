@@ -88,20 +88,22 @@ carrier sits inside each `descriptorRefines`; the proof consumes NO axiom beyond
 theorem descriptorRefines_complete
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hRest)
+      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hRest)
+        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
         LH pc pubLogPre pubLogPost pre post) :
     DescriptorRefinesComplete
-      (S_live CH RH cmb compress compressN hRest) hash :=
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) hash :=
   -- `kstepAll = dispatchArm` definitionally, so the `dispatchArm e` family `hrefines_forest_closed`
   -- yields IS the `kstepAll e` family `DescriptorRefinesComplete` names.
   hrefines_forest_closed hash LH rds mkLog

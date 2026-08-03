@@ -46,48 +46,13 @@ sha256 for all emitted descriptors, the by-name goldens, and the five FP-bearing
 Rust files. Anyone — CI, a federation operator pre-epoch-flip — verifies with:
 
 ```
-python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD  # ⇐ THE ONE THAT RUNS
-python3 scripts/emit_descriptors.py --verify-provenance             # same, on the working tree
-python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD --strict   # + ceremony clause
-python3 scripts/emit_descriptors.py --verify-by-name-routing        # the routing round trip
+python3 scripts/emit_descriptors.py --verify-provenance            # hashes match the stamp
+python3 scripts/emit_descriptors.py --verify-provenance --strict   # + clean source, tree hash
+                                                                    #   matches THIS checkout
+python3 scripts/emit_descriptors.py --verify-by-name-routing       # the routing round trip
 ```
 
 No Lean toolchain needed.
-
-#### ⚑ Which form to run, and why the answer changed (2026-08-02)
-
-**`--rev HEAD` is the standing form.** It materialises the revision in a detached, `git
-status`-clean worktree and asks the only question that is always answerable: *are the
-committed bytes what the committed stamp pins?* Wired as the `provenance` row of
-`scripts/local-gates.sh` and as a CI step ahead of the drift gate. ~5s, python + git.
-
-Without `--rev` the check grades **the working tree**, and in a tree worked by ~10 lanes that
-means any sibling's in-flight emission reds it for everyone. That is not a hypothetical: it is
-why this gate spent months at **zero invocations** while being fully implemented, and it
-compounded into a loop with `--stamp-existing`, whose only repair path REFUSES while
-`metatheory/Dregg2` is dirty — which it never isn't. Forcing it with
-`DREGG_VK_REGEN_ALLOW_DIRTY=1` records `source_dirty=true`, which the checker then refuses: a
-stamp that looks taken and attests nothing. Three lanes hit that wall on 2026-08-01, all three
-correctly declined, and the artifacts stayed unstamped. **The escape is a detached worktree on
-the WRITE side too** — `git worktree add --detach`, stamp there, commit the stamp. `f0a34748f`
-did exactly that and got `source_dirty=false` while ten lanes churned the shared tree.
-
-⚠ **`source_dirty` is checked WITHOUT `--strict`.** It used to be strict-only, which made the
-one clause that catches a force-stamp reachable only through the form nothing ran. It is a
-property of the committed stamp — always answerable, at any revision.
-
-⚠ **`--strict` is for a ceremony, not for a gate.** Its extra clause compares the stamp's tree
-hash against this checkout's `HEAD:metatheory/Dregg2`, which moves on **any** commit to any of
-~2300 Lean modules — so as a standing check it is red within minutes of a stamp and permanently
-after. Run it at an epoch flip, against the deploy revision. The question it gestures at ("are
-the descriptors stale with respect to Lean?") is not answerable by comparing a tree hash anyway;
-it is answered by RE-DERIVING, which is `scripts/check-descriptor-drift.sh --rev HEAD`.
-
-The gate's own red-proof is `--self-test-provenance` (the `provenance-red` local-gates row): it
-drives a mutated descriptor byte, a dropped stamp row, a stamp row whose artifact is gone, and a
-`source_dirty=true` stamp, each measured as a **delta against HEAD's baseline findings** (so a
-co-tenant's unrelated red cannot disable the proof), plus restore-to-baseline in both directions
-and a vacuity floor. Scratch copies only.
 
 `--verify-by-name-routing` is the leg the hash checks structurally cannot carry.
 Every hash check starts from a file that EXISTS and asks whether the stamp covers
@@ -159,28 +124,8 @@ invariant is `provenance_json_pins_match_checked_in_descriptor_bytes`
 
 Every authorized install or re-stamp appends one row to the git-tracked
 `docs/VK-REGEN-LOG.md`: UTC, operator@host, mode (`emit` vs `stamp-existing`),
-the Dregg2 tree hash, repo HEAD, the dirty bit, the changed files, and a
-machine-readable `epoch:N` trailer. Rows are append-only by convention; git
-history is the tamper-evidence.
-
-⚑ **AND THE AUDIT TRAIL IS NOT ITS OWN GATE.** `CANONICAL_STATE_SCHEMA_EPOCH`
-(`persist/src/lib.rs`) is a **Rust constant any commit can bump**, while only
-`emit_descriptors.py` appends here — so on 2026-08-01 `6441705e8` moved the epoch
-20 → 21 with no emit and no row, and the log stopped reconstructing the epoch
-history. A check inside the emit path would reproduce that blind spot exactly.
-The check is therefore keyed on the **constant** and lives outside this script:
-
-* `scripts/check-schema-epoch-log.py` (a `scripts/local-gates.sh` row, with its
-  own `--self-test`) — the last `epoch:N` row must equal the constant, the
-  SCHEMA EPOCH LEDGER must be complete against `git log -p -- persist/src/lib.rs`,
-  and an unparseable epoch cell is **RED, never green**.
-* `dregg_persist::schema_epoch_log_row` — the same comparison one altitude closer,
-  so it reds for a lane that edits the constant and runs `cargo test -p
-  dregg-persist` without ever running a gate script.
-
-Bumping the epoch is therefore a two-line ceremony: an **event row** and a
-**ledger row** saying what re-genesised, what re-emits, and what now refuses to
-load. Never widen the comparison to clear a red.
+the Dregg2 tree hash, repo HEAD, the dirty bit, and the changed files. Rows are
+append-only by convention; git history is the tamper-evidence.
 
 ### Control 4 — DIFFERENTIAL: covered-relation non-regression (design only)
 
@@ -207,39 +152,20 @@ and faking it with a name-only diff would launder regressions as green.
 ## 3. Operator protocol (the happy path)
 
 1. Review + commit the Lean change under `metatheory/Dregg2/`.
-2. ⚑ **Emit from a detached worktree, not the shared tree.** In a live swarm
-   `metatheory/Dregg2` is never clean, so an emit in place either REFUSES or
-   (with `DREGG_VK_REGEN_ALLOW_DIRTY=1`) mints `source_dirty=true` — a stamp the
-   checker refuses, which is the loop that left ten table AIRs unstamped for two
-   days. Do this instead:
-   ```
-   git worktree add --detach /tmp/emit-wt HEAD && cd /tmp/emit-wt
-   DREGG_VK_REGEN_ACK="$(git rev-parse HEAD:metatheory/Dregg2)" scripts/emit-descriptors.sh
-   ```
-   The tree is clean by construction, so `source_dirty=false` without anyone
-   having to hold the shared tree still. (`ALLOW_DIRTY` remains, for the case
-   where you genuinely mean it — but it is no longer the only way through.)
-3. Review the printed change set; copy the results back and commit descriptors +
-   FP files + `PROVENANCE.json` + the `docs/VK-REGEN-LOG.md` row together.
-4. Consumers/federation operators, at the deploy rev before rebuilding/flipping:
-   `python3 scripts/emit_descriptors.py --verify-provenance --rev <deploy-sha> --strict`.
-   This is the one place `--strict` belongs — you are asserting that *this exact
-   revision's* Lean source is what the stamp attests.
-5. Standing gates (**wired 2026-08-02, no longer a follow-up**): the `provenance`
-   and `provenance-red` rows of `scripts/local-gates.sh`, and a
-   `Descriptor provenance stamp` step in `ci.yml` ahead of the drift gate. Both
-   run `--verify-provenance --rev HEAD` — non-strict, because the strict clause
-   reds on any unrelated `metatheory/` commit and a permanently-red gate is
-   furniture. The Rust mirror
-   (`effect_vm_descriptors.rs::provenance_json_pins_match_checked_in_descriptor_bytes`)
-   covers the same bytes on every `cargo test -p dregg-circuit`, and as of the
-   same date discovers descriptor SUBDIRECTORIES instead of naming two legs — it
-   had been structurally blind to `table-airs/` since that directory landed.
-6. ⚠ **NOT wired into `scripts/git-hooks/pre-push`,** deliberately and for now:
-   HEAD carries an unrelated by-name routing GHOST at the time of writing, so a
-   pre-push row would block every lane's push over a defect that is not theirs.
-   Wire it there once HEAD is clean — that is the position where this class stops
-   reaching `main` at all, and it is one line.
+2. `DREGG_VK_REGEN_ACK="$(git rev-parse HEAD:metatheory/Dregg2)" scripts/emit-descriptors.sh`
+3. Review the printed change set; commit descriptors + FP files +
+   `PROVENANCE.json` + the `docs/VK-REGEN-LOG.md` row together.
+4. Consumers/federation operators: `python3 scripts/emit_descriptors.py
+   --verify-provenance --strict` at the deploy rev before rebuilding/flipping.
+5. CI: the `descriptor-drift` job keeps re-deriving from Lean; adding a
+   `--verify-provenance` step to it (after the first stamp is committed) is a
+   one-line follow-up.
+
+Bootstrap note: the initial committed stamp is `mode=stamp-existing` (hashed
+from the on-disk set, not witnessed from an emit run) and records
+`source_dirty=true` because in-flight lanes had uncommitted Lean at stamp time.
+The first authorized `emit`-mode regen on a clean tree replaces it with a
+witnessed, strict-clean stamp.
 
 Exit codes: `0` ok/no-op · `1` routing/verify failure · `2` emitter failed ·
 `3` regen refused (unauthorized byte-changing install; tree untouched).

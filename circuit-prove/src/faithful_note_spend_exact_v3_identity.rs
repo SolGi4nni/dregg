@@ -122,9 +122,21 @@ pub const PUBLIC_ABI: &[PublicAbiSlot] = &[
     },
 ];
 
-const EXPECTED_TRACE_WIDTH: usize = 3804;
+// ⚑ FLAG DAY 2026-08-01 (the KEY NONET, `76c3f7b9b` + the re-emit): 3804 -> 3826, 1274 -> 1282.
+// Both re-typed from the SAME decomposition the old numbers carried, re-evaluated — not pasted
+// off the new bytes:
+//
+//   trace_width = V3_TRACE_WIDTH(2442) + 2*(NUM_PRE_LIMBS + 1) + 2*8*WIDE_CARRIERS
+//               = 2442 + 2*188 + 2*8*63 = 2442 + 376 + 1008 = 3826
+//                 (was  2442 + 2*185 + 2*8*62 = 2442 + 370 +  992 = 3804)
+//   constraints = 1274 + 3 boundary + 3 window_gate + 2 wide-chip lookups = 1282
+//                 — one boundary and one window gate per NEW pre-limb (`child_vk` lane 8 at 184,
+//                   `contract_hash` lane 8 at 185, the owner key's lane 8 at 186), and one extra
+//                   absorption lookup per BLOCK for the one new wide carrier (62 -> 63).
+//   public_inputs UNCHANGED at 76 — the nonet grows the committed region, not the interface.
+const EXPECTED_TRACE_WIDTH: usize = 3826;
 const EXPECTED_PUBLIC_INPUTS: usize = 76;
-const EXPECTED_CONSTRAINTS: usize = 1274;
+const EXPECTED_CONSTRAINTS: usize = 1282;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedPublicAbiSlot {
@@ -665,7 +677,8 @@ mod tests {
 
     const EXECUTABLE_HEADER: &str = concat!(
         "{\"name\":\"faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state\",",
-        "\"ir\":2,\"trace_width\":3804,\"public_input_count\":76,"
+        // KEY NONET 2026-08-01: 3804 -> 3826 (see EXPECTED_TRACE_WIDTH's decomposition).
+        "\"ir\":2,\"trace_width\":3826,\"public_input_count\":76,"
     );
 
     fn whitespace_and_top_level_key_reordered_json() -> String {
@@ -673,7 +686,7 @@ mod tests {
             .strip_prefix(EXECUTABLE_HEADER)
             .expect("executable descriptor header remains recognized");
         format!(
-            "{{\n  \"public_input_count\" : 76,\n  \"trace_width\" : 3804,\n  \
+            "{{\n  \"public_input_count\" : 76,\n  \"trace_width\" : 3826,\n  \
              \"name\" : \"{PREDICATE_NAME}\",\n  \"ir\" : 2,\n  {body}\n"
         )
     }

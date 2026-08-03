@@ -487,11 +487,13 @@ step HAS a satisfying trace publishing the kernel's own commitment); the authori
 theorem descriptorComplete_transfer
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
-    (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hRest)
+    (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
       hash compressN) :
-    descriptorComplete (S_live CH RH cmb compress compressN hRest)
+    descriptorComplete (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
       hash (RfixBare 0) (kstepAll 0) :=
   descriptorComplete_of_satFloor _ hash (RfixBare 0) (kstepAll 0) <| by
     intro pre post turn hstep _hpreWF _hpostWF
@@ -760,10 +762,12 @@ bundle: a genuine transfer kernel step HAS an accepting proof, carrying ONLY `St
 theorem lightclient_complete_transfer
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     [StarkComplete hash RfixBare]
-    (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hRest)
+    (bw : CompletenessWitnesses (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
       hash compressN)
     (pre post : RecChainedState) (turn : BoundaryTurn)
     (hstep : kstepAll 0 pre post)
@@ -771,9 +775,9 @@ theorem lightclient_complete_transfer
     ∃ (pi : BatchPublicInputs) (π : BatchProof),
       pi.effect = 0 ∧
       verifyBatch (vkOfRegistry RfixBare) pi π = Verdict.accept ∧
-      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         pre.kernel turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
         post.kernel turn :=
   lightclient_complete_assembled hash _ 0 pre post turn
     (descriptorComplete_transfer hash bw) hstep hpreWF hpostWF

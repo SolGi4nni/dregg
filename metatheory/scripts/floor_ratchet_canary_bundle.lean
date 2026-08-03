@@ -21,10 +21,9 @@ vacuous as a floor binder and the gate had nothing to say. Thirty-two such bundl
 grandfathered; the worst was `Dregg2.Circuit.CircuitSoundness.CommitSurface` — FOUR refuted floors
 as fields, reached by 409 declarations. ⚑ 2026-08-01: those four fields are DELETED, so that bundle
 is no longer floor-carrying and it is off `sentinelBundles`. This canary is unaffected — it always
-rode `Poseidon2RealizedSponge`, whose `spongeCR` field is still a live refuted floor. (⛑ 2026-08-02:
-the binder surface followed — `ClosureSurface.S_live`'s four now-inert parameters and the ~130
-downstream sites feeding them are deleted. ⚠ Its survivor `RestHashIffFrameFin` is refuted at deployed
-width and is `Iff`-headed, so this gate can never see it.)
+rode `Poseidon2RealizedSponge`, whose `spongeCR` field is still a live refuted floor. (⚠ what fell
+is the BUNDLE surface, not the binder surface: `ClosureSurface.S_live` and ~130 downstream sites
+still bind `compressInjective`/`compressNInjective`/`cellLeafInjective` directly.)
 
 ## What this file asserts
 

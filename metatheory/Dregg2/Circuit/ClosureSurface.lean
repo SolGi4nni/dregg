@@ -66,26 +66,22 @@ post`, decode FORCED (the conclusion is about the StateDecode-pinned endpoints),
 
 ## The carrier set (no new floor beyond the hash CR)
 
-The bridge adds NO floor beyond `StarkSound` and the per-effect circuit residual:
-  * `S_live` is built from the five primitives + `RestHashIffFrameFin`, and NOTHING ELSE. ⚰ Its four
-    `compressInjective`/`compressNInjective`/`cellLeafInjective` parameters are DELETED (2026-08-02);
-    they were inert from 2026-08-01, when the `CommitSurface` FIELDS they filled were deleted as
-    refuted at deployed BabyBear width. So the three rungs below now carry NO refuted predicate at
-    all, and `Verify.ClosureSurfaceApplicable` exhibits them over a CLOSED surface.
+The bridge adds NO floor beyond the named Poseidon/Merkle CR set + `StarkSound`:
+  * `S_live` is built from the five primitives + `RestHashIffFrameFin`. ⚑ Its four
+    `compressInjective`/`compressNInjective`/`cellLeafInjective` parameters are INERT since
+    2026-08-01 (the `CommitSurface` fields they filled are deleted as refuted); see `S_live`'s
+    docstring for the measured cost of removing them and why this pass did not.
   * The binding is `CommitSurface.commit_binds_of_noColl` — no injectivity carrier, no new axiom.
   * The per-effect `<effect>Encodes` is the residual the rung ALREADY carried (it is NOT a new floor;
     it is the `WitnessDecodes`-class decode the apex already enumerates).
   * The `.log` residual is inside `<effect>Encodes` (`logAdv`) — NOT a new carried Prop; it is the
     named structural limit of the kernel-only surface.
-  * ⚠ `RestHashIffFrameFin RH` SURVIVES, and it is refuted at deployed BabyBear width by pigeonhole
-    (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`). The rungs are
-    applicable at the reference pole, not at the running chain. No gate defends this one: it is
-    `Iff`-headed, so `#floor_ratchet`'s shape-derived floor set can never contain it.
 
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The CR carriers no longer enter the
-`CommitSurface`, `S_live`, or any rung here.
+`CommitSurface` at all (its four injectivity fields are deleted); they survive only as `S_live`'s
+inert parameters and as this file's own theorem binders, never as axioms.
 NEW file; imports are read-only.
 -/
 import Dregg2.Circuit.TransferDecodeBridge
@@ -124,36 +120,36 @@ recStateCommit` seam.
 ⚠ The intermediate `commit_binds_orBreak` form this text used to cite is DELETED: its
 `OrBreak S.StateBreak` disjunct is free at every BabyBear-bounded sponge, so it said nothing.
 
-⚰ **THE FOUR CR PARAMETERS ARE DELETED (2026-08-02).** `hCmb`/`hCompress`/`hCompressN`/`hLeaf` had
-exactly one job: filling the four `CommitSurface` injectivity FIELDS, which were themselves deleted
-on 2026-08-01 as refuted at deployed BabyBear width by pigeonhole. Between those two dates they were
-`_`-prefixed and the body IGNORED them — so every theorem taking `S_live` was inapplicable at
-deployed parameters SOLELY because of arguments its own proof term was logically independent of.
+⚑ **THE FOUR CR PARAMETERS ARE NOW INERT (2026-08-01), AND THAT IS A NAMED, MEASURED HALT — NOT A
+DESIGN CHOICE.** `hCmb`/`hCompress`/`hCompressN`/`hLeaf` had exactly one job: filling the four
+`CommitSurface` injectivity FIELDS. Those fields are DELETED (each is refuted at deployed BabyBear
+width by pigeonhole — see the tombstone on `CircuitSoundness.CommitSurface`), so these four
+parameters now do nothing. The old docstring called them "the realizable Poseidon/Merkle hash floor";
+they are not realizable.
 
-The surgery, measured by doing it: 133 positional application sites (a uniform textual pattern) and
-the declarations left binding `{hCmb : compressInjective cmb}` &c. with the binder appearing nowhere
-in their type — a hard error at every one of THEIR call sites, so their signatures changed too. Two
-of those are `ClosureFanoutGenuine.ClosureReadouts` and `ClosureReadoutsRealizable.ClosureReadoutsLive`,
-which took the four as STRUCTURE PARAMETERS; both remain `#floor_ratchet` sentinel BUNDLES through
-their five `compressNInjective` cn-carrier fields, which the deletion does not touch. The one place a
-proof genuinely READ a deleted parameter is the setProgram rung
-(`closedLogExtract_setProgram_closed compressN hCompressN …`, which needs `compressNInjective` on the
-SURFACE sponge); that hypothesis moved to a bundle field `hNProgram`, beside the five already there,
-rather than being laundered away.
+⚠ **They are still here, and here is exactly what deleting them costs and why it did not happen in
+this pass.** MEASURED, not estimated: 132 application sites across 20 files pass them positionally
+(a uniform textual pattern, mechanically removable), but 26 DECLARATIONS would then be left binding
+`{hCmb : compressInjective cmb}` &c. with the binder appearing nowhere in their type — which is a
+hard error at every one of THEIR call sites, so their signatures must change too. Two of those 26 are
+`ClosureFanoutGenuine.ClosureReadouts` and `ClosureReadoutsRealizable.ClosureReadoutsLive`, which take
+the four as STRUCTURE PARAMETERS, are themselves `#floor_ratchet` sentinel bundles, and are applied
+positionally via `@ClosureReadouts CH RH cmb compress compressN hCmb …`. And the whole cone from this
+module upward CANNOT BE ELABORATED in the tree as it stands: a co-tenant's in-flight rotation-width
+work reds `Deos/BareCohortFloorRefuseDeployed` and `Circuit/Emit/ExactFieldsRefusalEmit` on trace-width
+`#guard`s, so `BareCohortFloorRefuseDeployed.olean` does not exist and nothing above it compiles. A
+26-signature surgery through two sentinel bundles, performed blind, is not a drain — it is a wager.
 
-⚠ **AND THE RUNGS ARE STILL NOT APPLICABLE AT DEPLOYED WIDTH.** `S_live`'s surviving argument
-`RestHashIffFrameFin RH` is refuted at BabyBear width by the SAME pigeonhole — the `denote`-image of
-`FinKernelState` is infinite, a bounded `RH` lands in ~2³¹ values
-(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`, 2026-08-02). What the
-deletion bought is a CLOSED surface at the reference pole
-(`Verify.ClosureSurfaceApplicable.S_liveRef`) and three rungs applicable over it with no refuted
-predicate in their statements; what it did not buy is a deployed instance. ⚑ And NO GATE defends the
-survivor: `#floor_ratchet` derives its floor set from an injectivity SHAPE
-(`FloorCensus.injShape`/`injShapeAnd`) and `RestHashIffFrameFin` is `Iff`-headed, so its ~120 binder
-sites carry ZERO baseline rows and always will. -/
+⚠ **AND SHEDDING THEM WOULD NOT BY ITSELF DE-VACUATE ANYTHING.** Every one of those callers binds
+`compressInjective`/`compressNInjective`/`cellLeafInjective` in its OWN signature; those are the same
+refuted predicates one layer out, and the `#floor_ratchet` `binder` class already gates all of them.
+Shedding the BUNDLE (done) is not shedding the BINDERS (not done). That is the carrier-census
+cluster-2 sweep, and it is the next wave — do it when the rotation-width cone is green. -/
 def S_live
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (_hCmb : compressInjective cmb) (_hCompress : compressInjective compress)
+    (_hCompressN : compressNInjective compressN) (_hLeaf : cellLeafInjective CH)
     (hRest : RestHashIffFrameFin RH) : CommitSurface where
   CH := CH; RH := RH; cmb := cmb; compress := compress; compressN := compressN
   restFrame := hRest
@@ -164,8 +160,10 @@ seam between the surface and the full-state commitment — they are the same fun
 @[simp] theorem S_live_commit
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
+    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
     (hRest : RestHashIffFrameFin RH) (k : RecordKernelState) (t : Dregg2.Exec.Turn) :
-    (S_live CH RH cmb compress compressN hRest).commit k t
+    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit k t
       = recStateCommit CH RH cmb compress compressN k t := rfl
 
 /-! ## §2 — the GENERIC decode-bridge: `StateDecode S_live` + a per-effect `fullActionStep` ⟹ `kstepAll`.
@@ -211,6 +209,8 @@ per-effect `rotatedEncodes` decode (the circuit's own residual — NOT a surface
 theorem transfer_descriptorRefines_closed
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
@@ -220,7 +220,7 @@ theorem transfer_descriptorRefines_closed
       Dregg2.Circuit.RotatedKernelRefinement.transferV3 minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Dregg2.Exec.Turn) (a : AssetId) (pc : PublishedCommit)
     (hdec : StateDecode
-      (S_live CH RH cmb compress compressN hRest) pc pre post)
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pc pre post)
     (henc : Dregg2.Circuit.RotatedKernelRefinement.rotatedEncodes hash minit mfin maddrs t pre post tr a) :
     kstepAll 0 pre post :=
   closedBridge_of_step (.balanceA tr a) hdec (by rfl)
@@ -245,13 +245,15 @@ the kernel-only surface cannot bind. NO surface seam. -/
 theorem cellSeal_descriptorRefines_closed
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN0 : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN0} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrameFin RH}
     (compressN : List Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem
       → Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem)
     (hN : Dregg2.Circuit.StateCommit.compressNInjective compressN)
     (pre post : RecChainedState) (actor cell : CellId) (pc : PublishedCommit)
     (hdec : StateDecode
-      (S_live CH RH cmb compress compressN0 hRest) pc pre post)
+      (S_live CH RH cmb compress compressN0 hCmb hCompress hCompressN hLeaf hRest) pc pre post)
     (henc : Dregg2.Circuit.RotatedKernelRefinementCellSeal.cellSealGenuineEncodes
       compressN pre post actor cell) :
     kstepAll 52 pre post :=
@@ -280,10 +282,12 @@ theorem revoke_descriptorRefines_closed
     (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
+    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
+    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : RestHashIffFrameFin RH}
     (pre post : RecChainedState) (holder tt : CellId) (pc : PublishedCommit)
     (hdec : StateDecode
-      (S_live CH RH cmb compress compressN hRest) pc pre post)
+      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pc pre post)
     (henc : Dregg2.Circuit.RotatedKernelRefinementCapFamily.RevokeCapsTreeEncodes
       Scap pre post holder tt) :
     kstepAll 2 pre post :=
@@ -296,12 +300,9 @@ theorem revoke_descriptorRefines_closed
 
 /-! ## §6 — the carrier ledger + axiom hygiene.
 
-The three closed rungs add NO floor beyond {`StarkSound` + the per-effect circuit residual}:
-  * `S_live`'s binding is `CommitSurface.commit_binds_of_noColl`, which carries NO injectivity: the
-    residual is `S.CommitColl`, a collision at the NAMED argument pairs the extraction visits. The
-    four `compressInjective`/`compressNInjective`/`cellLeafInjective` parameters are GONE (2026-08-02);
-    the only surviving surface obligation is `RestHashIffFrameFin RH`, which is satisfiable at the
-    reference sponge and refuted at deployed BabyBear width.
+The three closed rungs add NO floor beyond {the named Poseidon/Merkle CR set + `StarkSound`}:
+  * `S_live`'s binding is `recStateCommit_binds_kernel` over `compressInjective`/`compressNInjective`/
+    `cellLeafInjective`/`RestHashIffFrame` — the SAME CR set `CommitSurface` already carries.
   * each rung's per-effect `<effect>Encodes` is the residual the landed rung ALREADY carried (the
     `WitnessDecodes`-class extraction); it is NOT a new floor.
   * the `.log` advance is a FIELD of `<effect>Encodes` (`logAdv`), NOT a new carried Prop — it is the

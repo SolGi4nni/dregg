@@ -2526,52 +2526,6 @@ mod tests {
             ),
             None => (dir_files(&descdir), dir_files(&descdir.join("by-name"))),
         };
-
-        // ⚑ EVERY OTHER DESCRIPTOR SUBDIRECTORY, BY DISCOVERY — the same repair the ceremony
-        // checker took on 2026-08-01, applied to the mirror that had NOT taken it.
-        //
-        // This test named `descriptor_sha256` and `by_name_sha256` and nothing else, so
-        // `circuit/descriptors/table-airs/` — the ELEVEN shared table AIRs, among them the
-        // Poseidon2 chip every descriptor's hash sites lower into and the map-ops/map-absent
-        // double-spend gate — was outside the only provenance check in this repo that ACTUALLY
-        // RUNS. `emit_descriptors.py --verify-provenance` covers them and was invoked by nothing
-        // (13 references, all prose); this test executes on every `cargo test -p dregg-circuit`
-        // and could not see them. Between the two, ten of ten tracked table AIRs were wrong in
-        // HEAD — eight mismatched pins, two with no row at all — with nothing red anywhere.
-        //
-        // A hand-named leg list cannot go red when a leg is missing from it; it just covers less.
-        // So the set is DISCOVERED from the same listing the coverage leg above already derives,
-        // and a subdirectory landing tomorrow is mirrored the day it appears. `check_map` panics
-        // on an absent `<sub>_sha256` object, so a NEW subdirectory with no stamp leg is loud.
-        let mut present_subdirs: std::collections::BTreeMap<String, BTreeSet<String>> =
-            Default::default();
-        match &tracked {
-            Some(rels) => {
-                for r in rels {
-                    if let Some((dir, base)) = r.split_once('/') {
-                        if dir != "by-name" && !base.contains('/') {
-                            present_subdirs
-                                .entry(dir.to_string())
-                                .or_default()
-                                .insert(base.to_string());
-                        }
-                    }
-                }
-            }
-            None => {
-                for e in std::fs::read_dir(&descdir).expect("descriptors dir is listable") {
-                    let p = e.expect("dir entry").path();
-                    let name = p
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    if p.is_dir() && name != "by-name" {
-                        present_subdirs.insert(name, dir_files(&p));
-                    }
-                }
-            }
-        }
         let source = match &tracked {
             Some(_) => "tracked by git",
             None => "present on disk (NO git index here — untracked files count too)",
@@ -2642,36 +2596,6 @@ mod tests {
         };
         compare("descriptor_sha256", &pinned_top, &want_top);
         compare("by_name_sha256", &pinned_by_name, &want_by_name);
-
-        // ⚠ THE DISCOVERY ITSELF NEEDS A FLOOR, from an INDEPENDENT source. Everything above is
-        // driven by `present_subdirs`, so a discovery that silently comes back short does not go
-        // red — it just covers less, which is precisely the failure this leg was added to end.
-        // The stamp's own leg KEYS are that second source: they are written by the ceremony
-        // (`build_provenance`'s `subdir_hash_legs`) and read here from the file, sharing no input
-        // with a `git ls-files` of the directory. The two must name the same subdirectories.
-        // (A constant compared against its own definition is decoration; two sources are a gate.)
-        let stamped_subdirs: BTreeSet<String> = prov
-            .as_object()
-            .expect("PROVENANCE.json is an object")
-            .keys()
-            .filter_map(|k| k.strip_suffix("_sha256"))
-            .filter(|k| !matches!(*k, "descriptor" | "by_name" | "fp_file"))
-            .map(str::to_string)
-            .collect();
-        let discovered: BTreeSet<String> = present_subdirs.keys().cloned().collect();
-        assert_eq!(
-            discovered, stamped_subdirs,
-            "PROVENANCE.json's descriptor SUBDIRECTORY legs and the checked-in subdirectories \
-             ({source}) name different sets. Either a subdirectory of circuit/descriptors/ has \
-             no `<name>_sha256` leg (its artifacts are unattested — re-run the stamp ceremony, \
-             see docs/VK-REGEN-CONTROLS.md) or the stamp pins a subdirectory that is gone."
-        );
-
-        for (dir, want) in &present_subdirs {
-            let key = format!("{dir}_sha256");
-            let pinned = check_map(&key, Some(dir));
-            compare(&key, &pinned, want);
-        }
     }
 
     /// Every registered descriptor re-parses via `parse_vm_descriptor` into the

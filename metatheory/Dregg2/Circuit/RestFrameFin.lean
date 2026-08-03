@@ -112,19 +112,12 @@ changing shape), gated on both states being `FiniteRepresentable`.
 
 ⚑ Unlike `RestHashIffFrame`, this one HAS INSTANCES — see
 `Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, a CLOSED proof (no carried
-hypothesis) at `FinFrameHash.RH_fin Reference.refSponge`, and the NAMED closed surface built on it,
-`Verify.ClosureSurfaceApplicable.S_liveRef`. (The older ANONYMOUS `example : CommitSurface` in
-`RestFrameFiniteSupportSuccessor` §6 is kept; it was left unnamed because a declaration mentioning
-`CommitSurface` was then a `#floor_ratchet` `bundle-user` carrier. It is not one since the bundle's
-four injectivity fields were deleted 2026-08-01, which is why `S_liveRef` may be named.)
-
-⚠ **AND "HAS INSTANCES" MEANS AT THE UNBOUNDED REFERENCE SPONGE, NOT AT DEPLOYED WIDTH.**
-`restHashIffFrameFin_false_babyBear` (2026-08-02) refutes this predicate for EVERY rest-hash whose
-values lie in the BabyBear window, by the same pigeonhole that killed the four injectivity fields: the
-`denote`-image is infinite and a bounded `RH` is not. So `CommitSurface` still has no deployed
-inhabitant, and NO GATE SAYS SO — this body is `Iff`-headed, so `#floor_ratchet`'s shape-derived
-floor set (`FloorCensus.injShape`/`injShapeAnd`) can never contain it. ~120 binder sites, ZERO
-baseline rows. -/
+hypothesis) at `FinFrameHash.RH_fin Reference.refSponge`, and
+and the ANONYMOUS `example : CommitSurface` at
+`Verify/RestFrameFiniteSupportSuccessor.lean:348` for the constructed surface built on it. That
+single fact is the whole point of the file. ⚑ CORRECTED: this named `Circuit.CommitSurfaceInhabited`,
+which DOES NOT EXIST — the inhabitant is deliberately anonymous, because naming it would mint a
+`bundle-user` carrier in the floor ratchet. -/
 def RestHashIffFrameFin (RH : RecordKernelState → ℤ) : Prop :=
   ∀ k k' : RecordKernelState, FiniteRepresentable k → FiniteRepresentable k' →
     (RH k = RH k' ↔
