@@ -832,7 +832,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "4357d90651b028503aa174b5ef5657037b63ddd836eb75047c078a89a2165177";
+    "c2bfb64b69ba5e099f1cc5c21cbfda157e464b9a15673bbee80849bf897f2f50";
 
 /// The wire-name suffix marking a descriptor as the rotated+umem WELD
 /// ([`weld_umem_into_rotated_descriptor`]). A descriptor whose `name` ends with this is a STAGED
@@ -1274,7 +1274,7 @@ fn canonicity_splice_of(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> us
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "edddd822c969033200194b849d04bd4bdbf58409d6770c54a8f065073df214ef";
+    "21a468846290eb2ff6475aa030ba978157795c820fd09a1fd0967a325ca6e48b";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open

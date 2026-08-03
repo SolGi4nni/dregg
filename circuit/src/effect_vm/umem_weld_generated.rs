@@ -44,7 +44,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 375,
         trace_width: 1811,
         pi_count: 68,
-        constraints: 689,
+        constraints: 707,
         name: "dregg-effectvm-transfer-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -53,7 +53,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 369,
         trace_width: 1807,
         pi_count: 66,
-        constraints: 683,
+        constraints: 701,
         name: "dregg-effectvm-burn-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -62,7 +62,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 355,
         trace_width: 1802,
         pi_count: 67,
-        constraints: 669,
+        constraints: 687,
         name: "dregg-effectvm-mint-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -71,7 +71,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 319,
         trace_width: 2093,
         pi_count: 67,
-        constraints: 633,
+        constraints: 651,
         name: "dregg-effectvm-noteSpend-v1-rot24-v3-insert-heapopen-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -80,7 +80,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 317,
         trace_width: 2093,
         pi_count: 67,
-        constraints: 631,
+        constraints: 649,
         name: "dregg-effectvm-noteCreate-v1-rot24-v3-insert-heapopen-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -89,7 +89,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 268,
         trace_width: 1802,
         pi_count: 67,
-        constraints: 582,
+        constraints: 600,
         name: "dregg-effectvm-cellseal-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -98,7 +98,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 267,
         trace_width: 1802,
         pi_count: 67,
-        constraints: 581,
+        constraints: 599,
         name: "dregg-effectvm-celldestroy-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -107,7 +107,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 419,
         trace_width: 2310,
         pi_count: 90,
-        constraints: 733,
+        constraints: 751,
         name: "dregg-effectvm-refusal-v2-rot24-v4-write-exact-fields-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -116,7 +116,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 280,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 594,
+        constraints: 612,
         name: "dregg-effectvm-setPermissionsA-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -125,7 +125,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 280,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 594,
+        constraints: 612,
         name: "dregg-effectvm-setVK-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -134,7 +134,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 264,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 578,
+        constraints: 596,
         name: "dregg-effectvm-exerciseA-holdlayer-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -143,7 +143,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 264,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 578,
+        constraints: 596,
         name: "dregg-effectvm-pipelinedSendA-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -152,7 +152,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 264,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 578,
+        constraints: 596,
         name: "dregg-effectvm-refreshDelegation-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -161,7 +161,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 355,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 669,
+        constraints: 687,
         name: "dregg-effectvm-incrementNonce-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -170,7 +170,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 266,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 580,
+        constraints: 598,
         name: "dregg-effectvm-revokeDelegation-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -179,7 +179,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 264,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 578,
+        constraints: 596,
         name: "dregg-effectvm-introduce-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -188,7 +188,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 257,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 571,
+        constraints: 589,
         name: "dregg-effectvm-attenuateA-v1-genuine-norecompute-tick-rot24-v3-capwrite-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -197,7 +197,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 256,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 570,
+        constraints: 588,
         name: "dregg-effectvm-attenuateA-v1-genuine-norecompute-tick-rot24-v3-capwrite-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -206,7 +206,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 277,
         trace_width: 1778,
         pi_count: 98,
-        constraints: 591,
+        constraints: 609,
         name: "dregg-effectvm-custom-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -215,7 +215,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 229,
         trace_width: 1770,
         pi_count: 67,
-        constraints: 543,
+        constraints: 561,
         name: "dregg-effectvm-setfield-dyn-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -224,7 +224,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 259,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 573,
+        constraints: 591,
         name: "dregg-effectvm-attenuateA-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -233,7 +233,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 285,
         trace_width: 1838,
         pi_count: 78,
-        constraints: 599,
+        constraints: 617,
         name: "dregg-effectvm-makesovereign-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -242,7 +242,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 318,
         trace_width: 2093,
         pi_count: 67,
-        constraints: 632,
+        constraints: 650,
         name: "dregg-effectvm-createCell-v1-rot24-v3-insert-heapopen-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -251,7 +251,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 283,
         trace_width: 1802,
         pi_count: 83,
-        constraints: 597,
+        constraints: 615,
         name: "dregg-effectvm-createcellfromfactory-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -260,7 +260,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 267,
         trace_width: 1802,
         pi_count: 67,
-        constraints: 581,
+        constraints: 599,
         name: "dregg-effectvm-spawnA-v3-actorrow-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -269,7 +269,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 267,
         trace_width: 1802,
         pi_count: 67,
-        constraints: 581,
+        constraints: 599,
         name: "dregg-effectvm-receiptArchiveA-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -278,7 +278,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 267,
         trace_width: 1802,
         pi_count: 67,
-        constraints: 581,
+        constraints: 599,
         name: "dregg-effectvm-cellunseal-v2-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -287,7 +287,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 355,
         trace_width: 1802,
         pi_count: 66,
-        constraints: 669,
+        constraints: 687,
         name: "dregg-effectvm-emitEvent-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -296,7 +296,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -305,7 +305,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -314,7 +314,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -323,7 +323,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -332,7 +332,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -341,7 +341,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -350,7 +350,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -359,7 +359,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 334,
         trace_width: 1802,
         pi_count: 74,
-        constraints: 648,
+        constraints: 666,
         name: "dregg-effectvm-setfield-v1-rot24-v3-staged-gentian-deployed-bare-refuse-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -368,7 +368,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 294,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 608,
+        constraints: 626,
         name: "dregg-effectvm-delegateAtten-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -377,7 +377,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 300,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 614,
+        constraints: 632,
         name: "dregg-effectvm-introduce-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -386,7 +386,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 294,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 608,
+        constraints: 626,
         name: "dregg-effectvm-grantCap-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -395,7 +395,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 300,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 614,
+        constraints: 632,
         name: "dregg-effectvm-revoke-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -404,7 +404,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 300,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 614,
+        constraints: 632,
         name: "dregg-effectvm-refresh-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -413,7 +413,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 294,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 608,
+        constraints: 626,
         name: "dregg-effectvm-revokeCapability-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -422,7 +422,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 411,
         trace_width: 2093,
         pi_count: 62,
-        constraints: 725,
+        constraints: 743,
         name: "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -431,7 +431,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 333,
         trace_width: 2226,
         pi_count: 62,
-        constraints: 647,
+        constraints: 665,
         name: "dregg-effectvm-attenuateA-v1-rot24-v3-capopen-eff-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -440,7 +440,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 347,
         trace_width: 1770,
         pi_count: 67,
-        constraints: 661,
+        constraints: 679,
         name: "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -449,7 +449,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 299,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 613,
+        constraints: 631,
         name: "dregg-effectvm-delegate-v1-rot24-v3-insert-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -458,7 +458,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 299,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 613,
+        constraints: 631,
         name: "dregg-effectvm-introduce-v1-rot24-v3-insert-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -467,7 +467,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 300,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 614,
+        constraints: 632,
         name: "dregg-effectvm-delegateAtten-v1-rot24-v3-insert-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -476,7 +476,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 332,
         trace_width: 2219,
         pi_count: 62,
-        constraints: 646,
+        constraints: 664,
         name: "dregg-effectvm-revoke-v1-rot24-v3-remove-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -485,7 +485,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 331,
         trace_width: 2219,
         pi_count: 62,
-        constraints: 645,
+        constraints: 663,
         name: "dregg-effectvm-revokeCapability-v1-rot24-v3-remove-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -494,7 +494,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 332,
         trace_width: 2226,
         pi_count: 62,
-        constraints: 646,
+        constraints: 664,
         name: "dregg-effectvm-refresh-v1-rot24-v3-write-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -503,7 +503,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 309,
         trace_width: 2083,
         pi_count: 63,
-        constraints: 623,
+        constraints: 641,
         name: "dregg-effectvm-spawn-v1-rot24-v3-insert-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -512,7 +512,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 303,
         trace_width: 2083,
         pi_count: 63,
-        constraints: 617,
+        constraints: 635,
         name: "dregg-effectvm-spawn-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -521,7 +521,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 300,
         trace_width: 2083,
         pi_count: 62,
-        constraints: 614,
+        constraints: 632,
         name: "dregg-effectvm-exercise-v1-rot24-v3-capopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -530,7 +530,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 411,
         trace_width: 2093,
         pi_count: 63,
-        constraints: 725,
+        constraints: 743,
         name: "dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff-tb-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -539,7 +539,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 260,
         trace_width: 2160,
         pi_count: 20,
-        constraints: 574,
+        constraints: 592,
         name: "dregg-effectvm-heapWrite-v1-rot24-v3-write-heapopen-umem-wide-welded-staged",
     },
     UMemWeldRow {
@@ -548,7 +548,7 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
         splice: 312,
         trace_width: 1754,
         pi_count: 62,
-        constraints: 626,
+        constraints: 644,
         name: "dregg-effectvm-mint-v1-rot24-v3-staged-umem-wide-welded-staged",
     },
 ];
@@ -558,4 +558,4 @@ pub const UMEM_WELD_TABLE: &[UMemWeldRow] = &[
 /// `registry_fp` (it replaces the deleted `WIDE_UMEM_WELD_REGISTRY_FP`, which was the
 /// sha256 of the deleted TSV).
 pub const UMEM_WELD_TABLE_FP: &str =
-    "a2ba86b0d3bef0b2090e35090c80ce557bdb65b889ffc44b15887a2c2306b494";
+    "2357c2313f7232628a8d2ddca1feea95d6529853b587f51163d00e31139c8adc";

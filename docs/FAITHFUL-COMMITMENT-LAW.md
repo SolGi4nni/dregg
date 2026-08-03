@@ -343,11 +343,71 @@ day; go read `persist::PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH`. The key o
 fields octet, is welded to nothing and read lane-wise by nobody, so the encoding can be replaced
 **wholesale**: the nonet needs no `NoWrap` leg, no cube gate and no aux columns, and its canonicity
 envelope is two legs and zero gates (eight lookups at 29 bits, one at 24 — `canonicalKey9_iff_in_image`
-proves the two together are exactly the image). ⚠ *Rung:* authored and proved in Lean, **not emitted
-into any member and not consumed by a verifier**; the column map is still a parameter because lane
-8's column does not exist. Related and wanting the same flag day: the E10 free-felt AFTER-owner limb
-(`circuit/tests/zzz_e10_freeze_owner_falsifier.rs`), which is a **missing constraint** and needs no
-collision at all.
+proves the two together are exactly the image). Related and wanting the same flag day: the E10
+free-felt AFTER-owner limb (`circuit/tests/zzz_e10_freeze_owner_falsifier.rs`), which is a **missing
+constraint** and needs no collision at all.
+
+✅ **RUNG, 2026-08-02 — EMITTED AND ON THE WIRE.** The sentence above read *"authored and proved in
+Lean, not emitted into any member and not consumed by a verifier; the column map is still a
+parameter because lane 8's column does not exist"* and every clause of it is now false.
+`KeyCanonicity9Emit.keyCanonical9Wire` is applied by `EmitRotationV3.lean` and both wide registry
+probes; the committed registries carry **960 lookups at 29 bits and 120 more at 24** (narrow;
+912 / 114 wide) where they carried **zero at 29** the day before. `deployedKeyCanon9Cols` leaves
+nothing free but the face width. Geometry did not move — `traceWidth`, `piCount` and the table list
+are `rfl`-unchanged, so this rotated the AIR fingerprint and both registry FPs and **not** the
+schema epoch. The exhibit is `circuit/tests/key_nonet_canonicity_envelope_old_admits_new_rejects.rs`:
+one forged trace, accepted without the 18 lookups and UNSAT with them.
+
+### ⚑ THE OTHER TWO CARRIER OCTETS — `child_vk` (89..96 ‖ 184) and `contract_hash` (97..104 ‖ 185)
+
+**Priced 2026-08-02. This is a SECOND cutover, and the reason is the PRODUCER, not the Lean.**
+
+The 187-limb grow bought three ninth lanes — `ROTATED_OCTET_NINTH_LANES = [184, 185, 186]` — and
+**one is used.** Columns 184 and 185 are emitted, tiled, `#guard`-ed and absorbed by `wireCommitR`,
+and **no producer writes them**: both twins still fill those two octets with
+`Faithful8::from_bytes32` (`turn/src/rotation_witness.rs:725,731` ·
+`cell/src/commitment.rs:1360,1364`), which is `bytes32_to_8_limbs` — eight 4-byte little-endian
+chunks reduced `mod p`.
+
+**How weak, exactly.** A chunk is uniform on `[0, 2^32)` and `p = 2013265921`, so every limb value
+has **2 or 3** preimages (3 when the value is below `2^32 − 2p = 268435454`, else 2). Therefore
+**every committed octet is shared by between `2^8 = 256` and `3^8 = 6561` distinct 32-byte values**
+— expected `2^8.88`, matching the `256 − 8·log₂ p = 8.74` bits pigeonhole loses — and a sibling is
+constructed by **one addition**: add `p` to any 4-byte window whose value is below `2^32 − p`. That
+is `O(1)`, not a birthday bound, and it is `O(1)` *for the attacker's own chosen bytes*, which is
+what these two carriers hold: a factory child VK (`apply.rs`'s `effective_vk`) and a hatchery
+`HpresProof::Attested` content hash. Both are also PI-published on `factoryVmDescriptor2R24` —
+`child_vk8 → PI[47..54]`, `contract_hash8 → PI[55..62]` — so the ambiguity reaches a light client
+that has no ledger to disambiguate against.
+
+**What the fix is NOT.** It is *not* "their own Lean emit face". `keyCanonical9At (col : KeyColMap)`
+is column-agnostic and `lane_bounds_atCols` proves the forcing for **any** nine columns; only
+`deployedKeyCols` (which spells `B_PUBKEY_OCTET`) and the named capstones are owner-key-specific.
+The Lean delta is a `deployedCarrierCols (octetBase ninthLane : Nat)` generalization of one `def`
+plus three instantiations and their `#guard`s — on the order of 80 lines in a file that already
+exists, not a new module. **Whoever schedules this should not inherit the earlier estimate.**
+
+**What it IS, and why it is a separate flag day.** The producers must stop using a different
+encoder, and that changes committed VALUES rather than adding constraints:
+
+1. **Both producer twins** switch to `Faithful9::from_key_lanes9` over new
+   `CHILD_VK_NONET_LANE_COL` / `CONTRACT_HASH_NONET_LANE_COL` consts, derived positionally from
+   `ROTATED_OCTET_BASES` / `ROTATED_OCTET_NINTH_LANES` with the same const-gate `PUBKEY_NONET_LANE_COL`
+   carries. Four call sites; the consts are the review.
+2. **Limbs 89..104 change meaning** — `bytes32_to_8_limbs` and `key_limbs9` are different encoders,
+   so every factory / hatchery-mint `state_commit` moves. That is a **RE-GENESIS**, i.e. a
+   `CANONICAL_STATE_SCHEMA_EPOCH` bump (read the constant; the number is deliberately not written
+   here) *and* a `VK-REGEN-LOG` row, where the owner-key envelope needed neither.
+3. **The factory PI face grows** `63 → 65`: the octet pins publish 8 lanes each and a nonet needs 9,
+   or the published half stays ambiguous while the committed half is not — which is the wound moved
+   rather than closed. Every consumer of `PI[47..62]` re-indexes.
+4. Only then does the envelope apply, and it applies verbatim.
+
+**Sequencing, stated so it cannot be read as a deferral.** (2) and (3) are the work; the envelope is
+the cheap part and must not land first — an envelope over `bytes32_to_8_limbs` columns would force
+them into the image of a map that is not injective on its domain, which is precisely the containment
+`KeyCanonicity9Emit`'s own header refuses for the eight-lane owner octet. So the order is forced by
+correctness, not chosen by cost: **encoder, then PI face, then envelope.**
 
 ### The `_DANGER` sites = the burn-down list — **EMPTY as of 2026-08-02**
 
