@@ -1,5 +1,64 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 2 (Mina→dregg) — the half of the braid that verified into a void now REFUSES a turn, and the descriptor that does it is COMPILED, not written
+
+**THE GAP, MEASURED FIRST — and three of the brief's four premises were wrong or weaker at source.**
+
+* Not "`mina_head` decides but does not write". `bridge/src/mina_head.rs::MinaVerifiedHead` has **no
+  non-test caller anywhere in the repo**, no `Serialize`, no fs, no store; its mutations are two
+  `&mut self` assignments at `:393-396`. And there is **no production `impl MinaForkChoiceGate`** at
+  all — only `ScriptedGate` / `AbsentGate` / `CountingGate`. Nothing decides in production either.
+* **ABSENT** confirmed by enumeration: no variant of `turn::action::Effect` (36) or
+  `dregg_circuit::effect_vm::Effect` (29) carries a Mina verification result, state hash,
+  protocol-state blob or finalized height. Every `Mina` string in turn/cell/circuit is a doc-comment
+  analogy ("analogous to Mina's AccountUpdate").
+* **There was no prior art in the other direction to mirror.** `Effect::BridgeMint` does refuse on an
+  `UntrustedRoot` — but against `trusted_federation_roots: Vec<AttestedRoot>`, and an `AttestedRoot`
+  is blocklace block id + Cordial Miners round + federation quorum. That is ANOTHER DREGG FEDERATION.
+  Its only setter caller in the repo is a test.
+* Mina was the **one peer chain of five with a PROVEN, `@[export]`ed verify decision and NO emitted
+  AIR.** Eth/Tendermint/Solana/Midnight each have a `LightClient*Air.lean`; Mina had none.
+
+**THE RUNG.** `Dregg2/Circuit/Emit/LightClientMinaAir.lean` — and it is COMPILER OUTPUT.
+`minaLcVerifyDesc = EffectLower.lowerAir … minaHeadAir`; there is no hand-written `VmConstraint2` in
+the module. `minaHeadAir_mainRailOk = true` by `rfl` records the finding the brief asked for: the
+compiler's vocabulary was ADEQUATE, no leg lowered to `refuseConstraints`, nothing had to be
+hand-written around it. Second compiled descriptor in the tree, first authored that way from scratch.
+
+**THE TOOTH.** `blockchain_length` is not a witness column:
+`BLOCK_LEN = ANCHOR_H + SEG_LEN` and `WIT_DEPTH + SUBMIT_H = BLOCK_LEN`. The published height IS the
+pinned anchor plus the exhibited segment. This is the `mina-tip` wound in circuit form — a reply read
+at 1,544 of 61,193 bytes left `blockchain_length` standing because it is the one field a liar sets
+for free. Here it is not settable.
+
+**A DEFECT CAUGHT BEFORE IT LANDED.** The three `≤` teeth first rode a 32-bit range interval, which
+is **VACUOUS at BabyBear**: `p = 2013265921 < 2^32`, so every field element is already in `[0, 2^32)`
+and the lookups would have refused nothing. A slack of `−5` IS the field element `p − 5`, and
+refusing it is the entire job. Now 24 bits, with `mina_range_is_inside_the_field` and
+`mina_wrapped_slack_is_outside_the_range` as theorems. ⚠ `dregg-tm-lightclient-verify::v1` declares
+`bits: 64` on its range table — same shape, unaudited, not this lane's cone.
+
+**BOTH POLARITIES, TWICE.** In Lean on the emitted logic (`mina_air_discriminates`): honest head
+ACCEPTED; losing fork, bent proof word, forged height, and the deployed observer's own accepting
+input all REFUSED, each an exhibited assignment. In Rust on the descriptor the tree serves
+(`turn/tests/mina_anchored_head_lands.rs`) — ⚑ **the first prove/verify round trip of any peer-chain
+lightclient verify AIR in this tree.** The other four are `include_str!`'d and name-dispatched and
+have never been proved; "producible by a node" was a claim about DISPATCH.
+
+**THE LANDING.** `turn/src/executor/mina_head_verifier.rs` registers under
+`Custom { mina_head_predicate_vk() }` in `registry_with_real_verifiers()`. A cell program carrying
+`StateConstraint::Witnessed { wp }` at that vk REFUSES the turn — `eval.rs:1906` → `execute_tree.rs:1206`
+`TurnError::ProgramViolation` — unless (1) the proof's anchor lanes ARE the cell-program-pinned WS
+anchor, (2) its tip lanes ARE the slot the turn writes, (3) the published Samasika depth met is ≥ 290,
+(4) the STARK verifies. Refusals 1–3 are `check_head_binding`, a pure function of authoritative
+state, separated deliberately: a refusal that cannot be exhibited without minting a STARK is a
+refusal nobody checks.
+
+**STILL OPEN, named.** The lane-vector ↔ head equality is enforced by the CONSUMER, not by a gate.
+`LINK_OK`/`PICKLES_OK`/`CANON_OK` remain witnessed carriers on the undischarged IPA/FRI floor. This
+decides an ANCHORED SEGMENT, not fork choice — and the anchor a serving peer supplies is its frontier
+root at k, not an operator's pin. Not "machine-checked", not "Mina-valid".
+
 ## ⚑⚑⚑⚑ AUGUST 2 (`combine`'s mux) — the proofs-verified mask's LAST ignoring consumer is closed, and it MOVES public word 9 at the DEPLOYED mask, which is the opposite of what the residue predicted
 
 `eada74d58` ended on a named next rung: *"⚠ Still named, not closed: `combine`'s `Opt.Maybe` mux
