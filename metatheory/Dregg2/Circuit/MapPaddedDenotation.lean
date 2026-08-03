@@ -327,7 +327,7 @@ theorem padded_ghost2 (a v : ℤ) (d : Nat) :
     = perfectRoot _ d (padTo d (([] : Heap.FeltHeap).map (Heap.leafOf (ghostSpongeAt [a, v]))) _)
   have hleaf : Heap.leafOf (ghostSpongeAt [a, v]) (a, v) = padDigest := ghostSpongeAt_hit [a, v]
   simp only [List.map_cons, List.map_nil, hleaf]
-  exact padTo_singleton_pad d _ _
+  exact congrArg (perfectRoot (ghostSpongeAt [a, v]) d) (padTo_singleton_pad d _ _)
 
 /-- **⚑⚑ THE GHOST AT THE DEPLOYED TREE — arity-3 IMT leaves, deployed relink, zero padding.** Same
 shape at the commitment `heap_root.rs` actually computes. Both heaps are `HeapOk` for the deployed
@@ -355,8 +355,9 @@ theorem padded_ghost3 (a v sent : ℤ) (ha : a < sent) (d : Nat) :
   have hchain : imtChainOf sent [(a, v)] = [(⟨a, v, sent⟩ : ImtLeaf)] := rfl
   have hleaf : imtLeafHash (ghostSpongeAt [a, v, sent]) (⟨a, v, sent⟩ : ImtLeaf) = padDigest :=
     ghostSpongeAt_hit [a, v, sent]
-  simp only [hchain, List.map_cons, List.map_nil, hleaf]
-  exact padTo_singleton_pad d _ _
+  have hnil : imtChainOf sent ([] : Heap.FeltHeap) = [] := rfl
+  simp only [hchain, hnil, List.map_cons, List.map_nil, hleaf]
+  exact congrArg (perfectRoot (ghostSpongeAt [a, v, sent]) d) (padTo_singleton_pad d _ _)
 
 /-- **⚑⚑ OPTION (a) IS REFUTED.** There is NO theorem "the padded root is injective on sorted heaps
 of admissible sparse occupancy", not even under the tower's injectivity idealisation — which is
@@ -364,10 +365,11 @@ of admissible sparse occupancy", not even under the tower's injectivity idealisa
 conclusion is `False`.) -/
 theorem padded_injectivity_is_refuted :
     ¬ (∀ (hash : List ℤ → ℤ), Function.Injective hash → ∀ (d : Nat) (h₁ h₂ : Heap.FeltHeap),
-        Heap.SortedKeys h₁ → Heap.SortedKeys h₂ → h₁.length ≤ 2 ^ d → h₂.length ≤ 2 ^ d →
-        padMapRoot hash d h₁ = padMapRoot hash d h₂ → h₁ = h₂) := by
+        Heap.SortedKeys h₁ → Heap.SortedKeys h₂ →
+        ∀ (hz₁ : h₁.length ≤ 2 ^ d) (hz₂ : h₂.length ≤ 2 ^ d),
+        padMapRoot hash d h₁ hz₁ = padMapRoot hash d h₂ hz₂ → h₁ = h₂) := by
   intro hbad
-  obtain ⟨hinj, hs₁, hs₂, hz₁, hz₂, hroot, _, _⟩ := padded_ghost2 0 0 1
+  obtain ⟨hinj, hs₁, hs₂, -, -, hz₁, hz₂, hroot, _, _⟩ := padded_ghost2 0 0 1
   exact absurd (hbad _ hinj 1 _ _ hs₁ hs₂ hz₁ hz₂ hroot) (by simp)
 
 /-- **⚑⚑ AND IT IS REFUTED AT THE DEPLOYED TREE, AT THE DEPLOYED DEPTH.** Arity-3 leaves, the
@@ -375,11 +377,11 @@ deployed relink, `MAP_TREE_DEPTH = 16`, terminal sentinel free. (Anti-floor cont
 theorem padded_imt_injectivity_is_refuted (sent : ℤ) (hs : 0 < sent) :
     ¬ (∀ (hash : List ℤ → ℤ), Function.Injective hash → ∀ (h₁ h₂ : Heap.FeltHeap),
         Heap.SortedKeys h₁ → Heap.SortedKeys h₂ →
-        h₁.length ≤ 2 ^ MAP_TREE_DEPTH → h₂.length ≤ 2 ^ MAP_TREE_DEPTH →
-        padImtRoot sent hash MAP_TREE_DEPTH h₁ = padImtRoot sent hash MAP_TREE_DEPTH h₂ →
+        ∀ (hz₁ : h₁.length ≤ 2 ^ MAP_TREE_DEPTH) (hz₂ : h₂.length ≤ 2 ^ MAP_TREE_DEPTH),
+        padImtRoot sent hash MAP_TREE_DEPTH h₁ hz₁ = padImtRoot sent hash MAP_TREE_DEPTH h₂ hz₂ →
         h₁ = h₂) := by
   intro hbad
-  obtain ⟨hinj, ⟨hs₁, _⟩, ⟨hs₂, _⟩, hz₁, hz₂, hroot, _, _⟩ :=
+  obtain ⟨hinj, ⟨hs₁, _⟩, ⟨hs₂, _⟩, -, -, hz₁, hz₂, hroot, _, _⟩ :=
     padded_ghost3 0 0 sent hs MAP_TREE_DEPTH
   exact absurd (hbad _ hinj _ _ hs₁ hs₂ hz₁ hz₂ hroot) (by simp)
 
@@ -447,25 +449,43 @@ not die here, in either direction:
     statement shape they have in `MapMerkleRoot`. -/
 
 theorem padMapRoot_dense (hash : List ℤ → ℤ) (d : Nat) {h : Heap.FeltHeap}
-    (hlen : h.length = 2 ^ d) : padMapRoot hash d h = mapRoot hash d h := by
-  show perfectRoot hash d (padTo d (h.map (Heap.leafOf hash)))
+    (hlen : h.length = 2 ^ d) : padMapRoot hash d h (le_of_eq hlen) = mapRoot hash d h := by
+  show perfectRoot hash d (padTo d (h.map (Heap.leafOf hash)) _)
     = perfectRoot hash d (h.map (Heap.leafOf hash))
-  rw [padTo_dense (by rw [List.length_map]; exact hlen)]
+  exact congrArg (perfectRoot hash d) (padTo_dense (by rw [List.length_map]; exact hlen))
 
 theorem padImtRoot_dense (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) {h : Heap.FeltHeap}
-    (hlen : h.length = 2 ^ d) : padImtRoot sent hash d h = (imtSchema sent).commit hash d h := by
-  have hd : padTo d ((imtChainOf sent h).map (imtLeafHash hash))
-      = (imtChainOf sent h).map (imtLeafHash hash) :=
-    padTo_dense (by rw [List.length_map, imtChainOf_length]; exact hlen)
-  simp only [padImtRoot, hd, Dregg2.Circuit.MapDenotationSchema.imtSchema]
+    (hlen : h.length = 2 ^ d) :
+    padImtRoot sent hash d h (le_of_eq hlen)
+      = (imtSchema sent).commit hash d h (by exact hlen) := by
+  show perfectRoot hash d (padTo d ((imtChainOf sent h).map (imtLeafHash hash)) _)
+    = perfectRoot hash d ((imtChainOf sent h).map (imtLeafHash hash))
+  exact congrArg (perfectRoot hash d)
+    (padTo_dense (by rw [List.length_map, imtChainOf_length]; exact hlen))
 
 /-- A DENSE opening is a PADDED opening: the padded denotation CONTAINS the deployed-today one, so
 nothing that held before is lost by relaxing the occupancy. -/
 theorem opensToMerkle_to_padded (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o : Option ℤ}
     (h : opensToMerkle hash d r k o) : opensToMerkleS padNarrowSchema hash d r k o := by
   obtain ⟨m, hs, hlen, hr, hg⟩ := h
-  exact ⟨m, hs, le_of_eq hlen, by rw [show padNarrowSchema.commit hash d m = padMapRoot hash d m from rfl,
-    padMapRoot_dense hash d hlen]; exact hr, hg⟩
+  refine ⟨m, hs, le_of_eq hlen, ?_, hg⟩
+  show padMapRoot hash d m (le_of_eq hlen) = r
+  rw [padMapRoot_dense hash d hlen]
+  exact hr
+
+/-- The retired dense denotation, transported into the schema-parametric one. ⚠ It used to be `rfl`;
+the schema now BINDS the occupancy (`∃ hz : SizeOk d h, commit … hz = r`) while `opensToMerkle`
+conjoins a bare length beside a `mapRoot` that ignores it, and `Exists` is not `And`. Same content,
+one destructure. -/
+theorem opensToMerkle_toS {hash : List ℤ → ℤ} {d : Nat} {r k : ℤ} {o : Option ℤ}
+    (h : opensToMerkle hash d r k o) : opensToMerkleS narrowSchema hash d r k o := by
+  obtain ⟨m, hs, hz, hr, hg⟩ := h
+  exact ⟨m, hs, hz, hr, hg⟩
+
+theorem writesToMerkle_toS {hash : List ℤ → ℤ} {d : Nat} {r k v r' : ℤ}
+    (h : writesToMerkle hash d r k v r') : writesToMerkleS narrowSchema hash d r k v r' := by
+  obtain ⟨m, hs, hz, hz', hr, he⟩ := h
+  exact ⟨m, hs, hz, hz', hr, he⟩
 
 /-- **★ CONSERVATIVITY 1/3 — `opensToMerkle_functional`, recovered from the schema-level tooth.**
 Statement shape identical to `MapMerkleRoot.opensToMerkle_functional`, with the refuted
@@ -473,19 +493,21 @@ Statement shape identical to `MapMerkleRoot.opensToMerkle_functional`, with the 
 theorem narrow_opensToMerkle_functional (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
     (d : Nat) {r k : ℤ} {o₁ o₂ : Option ℤ}
     (h₁ : opensToMerkle hash d r k o₁) (h₂ : opensToMerkle hash d r k o₂) : o₁ = o₂ :=
-  opensToMerkleS_functional_of_good narrowTeeth hinj d h₁ h₂
+  opensToMerkleS_functional_of_good narrowTeeth hinj d (opensToMerkle_toS h₁) (opensToMerkle_toS h₂)
 
 /-- **★ CONSERVATIVITY 2/3 — `opensToMerkle_some_excludes_none`, recovered. -/
 theorem narrow_opensToMerkle_some_excludes_none (hash : List ℤ → ℤ)
     (hinj : Function.Injective hash) (d : Nat) {r k v : ℤ}
     (h₁ : opensToMerkle hash d r k (some v)) (h₂ : opensToMerkle hash d r k none) : False :=
-  opensToMerkleS_some_excludes_none_of_good narrowTeeth hinj d h₁ h₂
+  opensToMerkleS_some_excludes_none_of_good narrowTeeth hinj d
+    (opensToMerkle_toS h₁) (opensToMerkle_toS h₂)
 
 /-- **★ CONSERVATIVITY 3/3 — `writesToMerkle_functional`, recovered. -/
 theorem narrow_writesToMerkle_functional (hash : List ℤ → ℤ) (hinj : Function.Injective hash)
     (d : Nat) {r k v r₁ r₂ : ℤ}
     (h₁ : writesToMerkle hash d r k v r₁) (h₂ : writesToMerkle hash d r k v r₂) : r₁ = r₂ :=
-  writesToMerkleS_functional_of_good narrowTeeth hinj d h₁ h₂
+  writesToMerkleS_functional_of_good narrowTeeth hinj d
+    (writesToMerkle_toS h₁) (writesToMerkle_toS h₂)
 
 /-! ## §9 — THE TEETH BITE AT THE DEPLOYED PADDING CONSTANT (the non-vacuity exhibit).
 
@@ -502,9 +524,14 @@ leaf in a `2^16`-leaf tree, which is what `heap_root.rs` actually builds and wha
 def biteHeap : Heap.FeltHeap := [(1, 7)]
 /-- Its terminal sentinel. -/
 def biteSent : ℤ := 3
+theorem bite_sizeOk : (padImtSchema biteSent).SizeOk MAP_TREE_DEPTH biteHeap := by
+  show biteHeap.length ≤ 2 ^ MAP_TREE_DEPTH
+  show 1 ≤ 2 ^ MAP_TREE_DEPTH
+  exact Nat.one_le_pow _ 2 (by norm_num)
+
 /-- Its committed root, at the deployed depth. NAMED, never evaluated. -/
 noncomputable def biteRoot : ℤ :=
-  (padImtSchema biteSent).commit oddSponge MAP_TREE_DEPTH biteHeap
+  (padImtSchema biteSent).commit oddSponge MAP_TREE_DEPTH biteHeap bite_sizeOk
 
 theorem bite_heapOk : (padImtSchema biteSent).HeapOk biteHeap := by
   refine ⟨by simp [Heap.SortedKeys, Heap.keys, biteHeap], ?_⟩
@@ -513,11 +540,6 @@ theorem bite_heapOk : (padImtSchema biteSent).HeapOk biteHeap := by
   subst hx
   show (1 : ℤ) < biteSent
   norm_num [biteSent]
-
-theorem bite_sizeOk : (padImtSchema biteSent).SizeOk MAP_TREE_DEPTH biteHeap := by
-  show biteHeap.length ≤ 2 ^ MAP_TREE_DEPTH
-  show 1 ≤ 2 ^ MAP_TREE_DEPTH
-  exact Nat.one_le_pow _ 2 (by norm_num)
 
 /-- **★ THE TREE PRESENTS THE KEY.** The padded, deployed-shape denotation is INHABITED on a SPARSE
 tree — which is precisely what the dense `opensToMerkle` is not. -/

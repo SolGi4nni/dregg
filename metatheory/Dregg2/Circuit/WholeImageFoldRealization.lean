@@ -94,7 +94,7 @@ open Dregg2.Circuit.DeployedHeapTree.Heap8Scheme (heapLeafDigest8 heapLeafColl8F
 open Dregg2.Circuit.DeployedHeapTree.Reference8 (badHeapScheme8)
 open Dregg2.Circuit.MapMerkleRoot (zeroDigest8 perfectRoot8 perfectRoot8Find
   perfectRoot8_binds_or_collides mapLeaf8Find map_leaf8_binds_or_collides
-  linkHeap linkHeap_length linkHeap_injective SENTINEL_MAX8)
+  linkHeap linkHeap_length linkHeap_injective SENTINEL_MAX8 foldLevel8)
 
 variable (S8 : Heap8Scheme)
 
@@ -111,7 +111,8 @@ def padDigest8 : Digest8 := zeroDigest8
 
 /-- **`padTo8 d L`** — the deployed occupancy discipline at 8-felt width: the real leaf digests are a
 contiguous sorted PREFIX and every position `≥ L.length` holds `padDigest8`. The `Digest8` twin of
-`MapPaddedDenotation.padTo`. -/
+`MapPaddedDenotation.padTo`.
+
 ⚑ **IT TAKES THE OBLIGATION**, for the reason `DeployedMapDenotation.padTo` does and at the width
 that actually ships: `compute_canonical_heap_root_8` (`heap_root.rs:1015-1019`) and
 `CanonicalHeapTree8::new` (`:1149-1153`) each carry a RELEASE-ACTIVE
@@ -200,8 +201,10 @@ theorem foldLevel8_take :
     | l :: r :: rest =>
       have h2 : 2 * (m + 1) = 2 * m + 1 + 1 := by ring
       rw [h2, List.take_succ_cons, List.take_succ_cons]
-      show heapNodeOf8 S8 l r :: foldLevel8 S8 (rest.take (2 * m))
-        = (heapNodeOf8 S8 l r :: foldLevel8 S8 rest).take (m + 1)
+      show Dregg2.Circuit.DeployedHeapTree.Heap8Scheme.heapNodeOf8 S8 l r
+          :: foldLevel8 S8 (rest.take (2 * m))
+        = (Dregg2.Circuit.DeployedHeapTree.Heap8Scheme.heapNodeOf8 S8 l r
+          :: foldLevel8 S8 rest).take (m + 1)
       rw [List.take_succ_cons, ih rest]
 
 /-- **★★ THE 8-FELT FOLD READS ONLY THE FIRST `2 ^ d` LEAVES — THE ROOT CAUSE, AT THE LIVE WIDTH.**
@@ -325,7 +328,8 @@ vector to `2 ^ d`, and fold the perfect `node8` tree (`perfectRoot8` ≡ `heap_n
 
 This is `MapPaddedDenotation.padImtRoot` moved from `ℤ` to `Digest8` — the SAME shape move, at the
 width the deployment actually commits (`cell/src/state.rs:311` `heap_root : Faithful8`,
-absorbed into the rotated commitment at `HEAP_ROOT_GROUP`, `cell/src/commitment.rs:1229`). -/
+absorbed into the rotated commitment at `HEAP_ROOT_GROUP`, `cell/src/commitment.rs:1229`).
+
 ⚑ **IT TAKES THE CAPACITY OBLIGATION, because the builders it corresponds to DO.**
 `compute_canonical_heap_root_8` (`heap_root.rs:1015`) and `CanonicalHeapTree8::new` (`:1149`) each
 `assert!(leaves.len() <= capacity)` in RELEASE, so the deployed 8-felt builder does not commit an
@@ -387,7 +391,8 @@ theorem padGhost8_refuted (hpf : PadFree8 S8) (h : Heap.FeltHeap) : ¬ PadGhost8
 perfect-tree descent over the two padded digest vectors; if that found a genuine chip collision, that
 is the answer. Otherwise the descent has already forced the two DIGEST VECTORS equal, so any
 collision is at the arity-3 leaf absorb and the linked-leaf scan supplies the pair. Total, decidable,
-and independent of anything assumed about the chip. -/
+and independent of anything assumed about the chip.
+
 ⚑ **IT STAYS TOTAL AND BOTTOMS OUT WHERE THE COMMITMENT REFUSES TO EXIST** — the same call
 `DeployedMapDenotation.padImtRootFind` takes. This is diagnostic instrumentation with no deployed
 counterpart, and `PadImtRoot8Coll` needs it at arbitrary heaps; above capacity it returns the
@@ -586,8 +591,10 @@ objects genuinely disagree, at the chip's own width, with no floor assumed. -/
 /-- The arity-2 leaf fold at 8-felt width: `mapRoot`'s shape (`hash [addr, value]`, no successor
 pointer) transported to `Digest8` so it is comparable with `padImtRoot8`. Authored HERE and used ONLY
 by §4 — it is not a deployed object and nothing else may consume it. -/
-def arity2Root8 (d : Nat) (h : Heap.FeltHeap) : Digest8 :=
-  perfectRoot8 S8 d (padTo8 d (h.map (fun e => S8.chipAbsorb8 [e.1, e.2])))
+def arity2Root8 (d : Nat) (h : Heap.FeltHeap) (hFits : h.length ≤ 2 ^ d := by heap_fits8) :
+    Digest8 :=
+  perfectRoot8 S8 d (padTo8 d (h.map (fun e => S8.chipAbsorb8 [e.1, e.2]))
+    (by rw [List.length_map]; exact hFits))
 
 /-- **`honestChipAbsorb8`** — an INJECTIVE, PAD-FREE reference chip: `Encodable.encode` shifted off
 zero. Not a Poseidon2 and not claimed to be one; its job is to make both residual branches CONCRETELY
@@ -670,7 +677,9 @@ theorem badHeapScheme8_padImtRoot8Coll : PadImtRoot8Coll badHeapScheme8 0 [(1, 1
         [((2 : ℤ), (2 : ℤ), SENTINEL_MAX8)] = _
     rw [mapLeaf8Find, if_pos hleaf]
   show Coll8 badHeapScheme8.chipAbsorb8 (padImtRoot8Find badHeapScheme8 0 [(1, 1)] [(2, 2)])
-  rw [padImtRoot8Find, if_neg hcond, hml]
+  have hz : ([((1 : ℤ), (1 : ℤ))] : Heap.FeltHeap).length ≤ 2 ^ 0
+      ∧ ([((2 : ℤ), (2 : ℤ))] : Heap.FeltHeap).length ≤ 2 ^ 0 := ⟨by simp, by simp⟩
+  rw [padImtRoot8Find, dif_pos hz, if_neg hcond, hml]
   exact hleaf
 
 /-! ### §5b — THE NON-VACUITY WITNESS: the cone fires with ZERO residual hypotheses left.
