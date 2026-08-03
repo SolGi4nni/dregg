@@ -62,6 +62,8 @@ import Dregg2.Circuit.Poseidon2BabyBearW16
 
 namespace Dregg2.Circuit.Emit.Poseidon2RoundGates
 
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR (TExpr v k eSub shareVals)
 open Dregg2.Circuit.TableAirIR.TExpr (sharesBelow)
 
@@ -450,7 +452,7 @@ def permAuxWitness (input : List Nat) : List ℤ :=
 /-- The row window a permutation witness induces: the input state at `in0`, the aux block at
 `aux0`, everything else zero. -/
 def permEnv (in0 aux0 : Nat) (input : List Nat) :
-    Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv :=
+    Dregg2.Circuit.TableAirIR.TRowEnv :=
   let inv : List ℤ := input.map (fun x => (x : ℤ))
   let aux : List ℤ := permAuxWitness input
   let loc : Nat → ℤ := fun c =>
@@ -490,8 +492,8 @@ def permGatesAcceptWitness (in0 aux0 : Nat) (input : List Nat) : Bool :=
 honest witness breaks it. A check that no witness refutes is decoration. -/
 def permGatesAcceptPerturbed (in0 aux0 : Nat) (input : List Nat) (col : Nat) : Bool :=
   let base := permEnv in0 aux0 input
-  let env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv :=
-    ⟨fun c => if c == col then base.loc c + 1 else base.loc c, base.nxt, base.pub⟩
+  let env : Dregg2.Circuit.TableAirIR.TRowEnv :=
+    ⟨fun c => if c == col then base.loc c + 1 else base.loc c, base.nxt, base.prep⟩
   (permGateBodies aux0 ((List.range WIDTH).map (fun i => v (in0 + i)))).all
     (fun b => b.evalWith #[] env % 2013265921 == 0)
 
@@ -519,20 +521,20 @@ or re-associated gate would survive. -/
 private def measSeed : List TExpr := (List.range WIDTH).map (fun i => v (1 + i))
 
 /-- The 352 gate VALUES of the shared emission on a row window. -/
-def sharedGateValues (aux0 : Nat) (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv) : List ℤ :=
+def sharedGateValues (aux0 : Nat) (env : Dregg2.Circuit.TableAirIR.TRowEnv) : List ℤ :=
   let (ds, gs) := permEmission aux0 0 measSeed
   let sv := shareVals ds env
   gs.map (fun b => b.evalWith sv env % 2013265921)
 
 /-- …and of the TREE emission on the same window. -/
-def treeGateValues (aux0 : Nat) (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv) : List ℤ :=
+def treeGateValues (aux0 : Nat) (env : Dregg2.Circuit.TableAirIR.TRowEnv) : List ℤ :=
   (permGateBodies aux0 measSeed).map (fun b => b.evalWith #[] env % 2013265921)
 
 /-- The KAT witness, perturbed at one column (`0` = unperturbed). -/
 private def bumpEnv (col d : Nat) (input : List Nat) :
-    Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv :=
+    Dregg2.Circuit.TableAirIR.TRowEnv :=
   let base := permEnv 1 33 input
-  ⟨fun c => if c == col then base.loc c + (d : ℤ) else base.loc c, base.nxt, base.pub⟩
+  ⟨fun c => if c == col then base.loc c + (d : ℤ) else base.loc c, base.nxt, base.prep⟩
 
 private def katState' : List Nat := [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3]
 
@@ -608,7 +610,7 @@ a DIFFERENT circuit. -/
 /-- Nodes in a `TExpr` tree — the unit the prover's per-row constraint evaluation pays, once
 per row of the quotient domain (blow-up 64). -/
 def nodeCount : TExpr → Nat
-  | .loc _ | .nxt _ | .const _ | .shr _ => 1
+  | .loc _ | .nxt _ | .const _ | .shr _ | .prep _ => 1
   | .add a b => 1 + nodeCount a + nodeCount b
   | .mul a b => 1 + nodeCount a + nodeCount b
 
@@ -631,7 +633,7 @@ def roundNodeTotal (r : Nat) : Nat :=
 
 /-- Nodes that are ARITHMETIC — the prover's actual per-row work, leaves excluded. -/
 def opCount : TExpr → Nat
-  | .loc _ | .nxt _ | .const _ | .shr _ => 0
+  | .loc _ | .nxt _ | .const _ | .shr _ | .prep _ => 0
   | .add a b => 1 + opCount a + opCount b
   | .mul a b => 1 + opCount a + opCount b
 
@@ -646,6 +648,7 @@ def dagSize (bs : List TExpr) : Nat := Id.run do
     | .nxt c => key s!"N{c}" t
     | .const z => key s!"K{z}" t
     | .shr i => key s!"S{i}" t
+    | .prep c => key s!"P{c}" t
     | .add a b => let (ia, t) := go a t; let (ib, t) := go b t; key s!"+{ia},{ib}" t
     | .mul a b => let (ia, t) := go a t; let (ib, t) := go b t; key s!"*{ia},{ib}" t
   for b in bs do

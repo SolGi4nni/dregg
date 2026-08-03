@@ -59,7 +59,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.UMemBoundaryCohortTableEmit
 
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
    v n k eSub eOneMinus gBool gAll gTrans)
@@ -129,6 +130,7 @@ def cohortInteractions : List BusInteraction :=
 def cohortTable : TableAir :=
   { name         := "dregg-ir2-umem-boundary-cohort-v1"
   , width        := UBC_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := cohortGates
   , interactions := cohortInteractions }
@@ -167,7 +169,7 @@ def cohortTable : TableAir :=
 /-! ## §4 — THE SINGLE-ROW TOOTH, PROVED — and the line the prose does not draw. -/
 
 /-- The transition gate, unpacked: on any non-final row the NEXT window's guard vanishes. -/
-theorem next_is_a_pad {rows : List VmRowEnv}
+theorem next_is_a_pad {rows : List TRowEnv}
     (hh : cohortTable.Holds rows) (i : Nat) (hlt : i < rows.length) (h : i + 1 < rows.length) :
     rows[i].nxt UBC_IS_REAL ≡ 0 [ZMOD 2013265921] := by
   have hg := hh i hlt ⟨.transition, n UBC_IS_REAL⟩ (by simp [cohortTable, cohortGates, gTrans])
@@ -183,7 +185,7 @@ theorem next_is_a_pad {rows : List VmRowEnv}
 ⚠ Two things this does NOT say, both of which the prose runs together:
   * it does not force row 0 to be real (a cohort with no declared address is admissible), and
   * it says nothing about what a PAD row SERVES — see §4b. -/
-theorem every_row_after_the_first_is_a_pad {rows : List VmRowEnv}
+theorem every_row_after_the_first_is_a_pad {rows : List TRowEnv}
     (hc : Coherent rows) (hh : cohortTable.Holds rows) :
     ∀ i, ∀ h : i + 1 < rows.length, rows[i + 1].loc UBC_IS_REAL ≡ 0 [ZMOD 2013265921] := by
   intro i h
@@ -195,7 +197,7 @@ theorem every_row_after_the_first_is_a_pad {rows : List VmRowEnv}
 /-- **CANONICAL `none`.** On a real row an absent INIT cell carries payload 0 — what makes the
 committed `(present, value)` pair a faithful encoding of `Option` (Lean `optOf`) rather than a pair
 that merely happens to agree with one. -/
-theorem canonical_none_is_forced {rows : List VmRowEnv} (hh : cohortTable.Holds rows)
+theorem canonical_none_is_forced {rows : List TRowEnv} (hh : cohortTable.Holds rows)
     (i : Nat) (h : i < rows.length)
     (hr : rows[i].loc UBC_IS_REAL = 1) (hp : rows[i].loc UBC_INIT_PRESENT = 0) :
     rows[i].loc UBC_INIT_VALUE ≡ 0 [ZMOD 2013265921] := by
@@ -211,7 +213,7 @@ theorem canonical_none_is_forced {rows : List VmRowEnv} (hh : cohortTable.Holds 
 /-- A TWO-ROW window: a real row 0 declaring `(domain 3, key 5)`, and a PAD row 1 that declares
 nothing to the multiset — its Blum legs ride at `is_real = 0` — but SERVES `(domain 3, key 9)` to
 `ir2_umem_addrs` at multiplicity 7, because `UBC_ADDR_MULT` is read by no gate. -/
-def padServesRow0 : VmRowEnv :=
+def padServesRow0 : TRowEnv :=
   ⟨fun c =>
       if c = UBC_DOMAIN then 3
       else if c = UBC_KEY then 5
@@ -222,7 +224,7 @@ def padServesRow0 : VmRowEnv :=
 
 /-- The pad that serves a SECOND key. Its `nxt` is all-zero, which is what a coherent two-row
 trace's second window carries: `rows[1].nxt` is the wrap row and the tooth does not bind it. -/
-def padServesRow1 : VmRowEnv :=
+def padServesRow1 : TRowEnv :=
   ⟨fun c =>
       if c = UBC_DOMAIN then 3
       else if c = UBC_KEY then 9
@@ -293,7 +295,7 @@ def UMEM_BOUNDARY_COHORT_JSON : String := emitTableAirJson cohortTable
 -- THE WIRE PIN. Byte length plus the structural `#guard`s in §3 (6 gates, 4 interactions in a fixed
 -- per-bus/per-side split, width 9). (The checked-in artifact is these bytes plus ONE trailing
 -- newline, which `JsonCursor` skips as whitespace.)
-#guard UMEM_BOUNDARY_COHORT_JSON.length == 1436
+#guard UMEM_BOUNDARY_COHORT_JSON.length == 1451
 
 /-- The emission is not empty and not a stub. -/
 theorem cohortTable_is_not_empty : cohortTable.gates ≠ [] := by

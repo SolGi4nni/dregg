@@ -149,6 +149,7 @@ def memBoundaryInteractions : List BusInteraction :=
 def memBoundaryTable : TableAir :=
   { name         := "dregg-ir2-mem-boundary-v1"
   , width        := MB_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := memBoundaryGates
   , interactions := memBoundaryInteractions }

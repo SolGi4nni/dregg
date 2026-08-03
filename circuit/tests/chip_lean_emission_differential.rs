@@ -440,6 +440,7 @@ fn inline_all_shares(
     dregg_circuit::table_air::LeanTableAir {
         name: t.name.clone(),
         width: t.width,
+        prep_width: t.prep_width,
         defs: Vec::new(),
         gates: t
             .gates

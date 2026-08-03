@@ -235,6 +235,7 @@ def mapAbsentInteractions : List BusInteraction :=
 def mapAbsentTable : TableAir :=
   { name         := "dregg-ir2-map-absent-v1"
   , width        := MA_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := mapAbsentGates
   , interactions := mapAbsentInteractions }
@@ -449,7 +450,7 @@ def MAP_ABSENT_JSON : String := emitTableAirJson mapAbsentTable
 -- artifact re-emits. The ALGEBRA is byte-for-byte the same object; the ENCODING is not.
 -- (The checked-in artifact is these bytes plus ONE trailing newline, which is `by-name/`'s
 -- convention and which `JsonCursor` skips as whitespace.)
-#guard MAP_ABSENT_JSON.length == 80827
+#guard MAP_ABSENT_JSON.length == 80842
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin above
 while asserting nothing. -/

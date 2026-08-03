@@ -74,9 +74,10 @@ import Dregg2.Circuit.Emit.Poseidon2RoundGates
 
 namespace Dregg2.Circuit.Emit.ChipTableEmit
 
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate emitTableAirJson v k s eSub eOneMinus gBool gAll)
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.Poseidon2RoundGates
   (WIDTH POSEIDON2_AUX_COLS TOTAL_ROUNDS permGateBodies permEmission permOutLane permFinalState
    permBlocks permAuxWitness nodeCount opCount totalNodes)
@@ -346,6 +347,7 @@ def chipState16Interactions : List BusInteraction :=
 def chipTable : TableAir :=
   { name         := "dregg-ir2-chip-v1"
   , width        := CHIP_WIDTH
+  , prepWidth    := 0
   , defs         := chipDefs
   , gates        := (chipGateBodies false).map gAll
   , interactions := chipInteractions }
@@ -355,6 +357,7 @@ and a different bus interface. -/
 def chipState16Table : TableAir :=
   { name         := "dregg-ir2-chip-state16-v1"
   , width        := CHIP_WIDTH
+  , prepWidth    := 0
   , defs         := chipDefs
   , gates        := (chipGateBodies true).map gAll
   , interactions := chipState16Interactions }
@@ -440,6 +443,9 @@ def readCols (t : TableAir) : List Nat := Id.run do
     | .nxt c => s.insert c
     | .const _ => s
     | .shr i => (dv.getD i {}).fold (fun acc c => acc.insert c) s
+    -- ⚠ A `prep` reads a DIFFERENT column space, so it contributes NO committed column here. The
+    -- chip declares `prepWidth = 0` and has none; the case exists because the grammar does.
+    | .prep _ => s
     | .add a b => go b dv (go a dv s)
     | .mul a b => go b dv (go a dv s)
   for d in t.defs do
@@ -472,17 +478,17 @@ assumed. Without it these three theorems would be vacuously about `#[]`. -/
 /-- The 31 arity/selector/seeding gates of the LEGACY variant. -/
 def chipSelectorTable : TableAir :=
   { name := "chip-selectors (ANALYSIS ONLY, not emitted)"
-  , width := CHIP_WIDTH, defs := [], gates := (chipSelectorBodies false).map gAll, interactions := [] }
+  , width := CHIP_WIDTH, prepWidth := 0, defs := [], gates := (chipSelectorBodies false).map gAll, interactions := [] }
 
 /-- The 32 arity/selector/seeding gates of the STATE16 variant. -/
 def chipState16SelectorTable : TableAir :=
   { name := "chip-state16-selectors (ANALYSIS ONLY, not emitted)"
-  , width := CHIP_WIDTH, defs := [], gates := (chipSelectorBodies true).map gAll, interactions := [] }
+  , width := CHIP_WIDTH, prepWidth := 0, defs := [], gates := (chipSelectorBodies true).map gAll, interactions := [] }
 
 /-- The 8 output bindings. -/
 def chipOutTable : TableAir :=
   { name := "chip-out-bindings (ANALYSIS ONLY, not emitted)"
-  , width := CHIP_WIDTH, defs := [], gates := chipOutBodies.map gAll, interactions := [] }
+  , width := CHIP_WIDTH, prepWidth := 0, defs := [], gates := chipOutBodies.map gAll, interactions := [] }
 
 /-- ⚑ **THE HYPOTHESIS THE TRANSPORT NEEDS, DECIDED.** Not one gate of the three sub-tables reads a
 shared definition, so their verdicts are independent of the definition vector. A future edit that
@@ -505,7 +511,7 @@ theorem chipTable_gates_split :
   simp [chipTable, chipSelectorTable, chipGateBodies, List.map_append, List.append_assoc]
 
 /-- …so anything the selector sub-table refuses, the EMITTED table refuses. -/
-theorem selector_of_chip {env : VmRowEnv} {f l : Bool} (h : chipTable.RowHolds env f l) :
+theorem selector_of_chip {env : TRowEnv} {f l : Bool} (h : chipTable.RowHolds env f l) :
     chipSelectorTable.RowHolds env f l := by
   refine TableAir.rowHoldsWith_of_shareFree selector_block_is_share_free.1
     (sv := chipTable.shareVals env) ?_
@@ -519,7 +525,7 @@ theorem chipState16Table_gates_split :
   simp [chipState16Table, chipState16SelectorTable, chipGateBodies, List.map_append,
     List.append_assoc]
 
-theorem state16_selector_of_chip {env : VmRowEnv} {f l : Bool}
+theorem state16_selector_of_chip {env : TRowEnv} {f l : Bool}
     (h : chipState16Table.RowHolds env f l) : chipState16SelectorTable.RowHolds env f l := by
   refine TableAir.rowHoldsWith_of_shareFree selector_block_is_share_free.2.1
     (sv := chipState16Table.shareVals env) ?_
@@ -527,7 +533,7 @@ theorem state16_selector_of_chip {env : VmRowEnv} {f l : Bool}
   exact h g (by rw [chipState16Table_gates_split]; exact List.mem_append_left _ hg)
 
 /-- …and the OUTPUT bindings are the emitted table's tail. -/
-theorem out_of_chip {env : VmRowEnv} {f l : Bool} (h : chipTable.RowHolds env f l) :
+theorem out_of_chip {env : TRowEnv} {f l : Bool} (h : chipTable.RowHolds env f l) :
     chipOutTable.RowHolds env f l := by
   refine TableAir.rowHoldsWith_of_shareFree selector_block_is_share_free.2.2
     (sv := chipTable.shareVals env) ?_
@@ -570,7 +576,7 @@ private theorem not_dvd_small {q : ℤ} (hq : q ≠ 0) (hlt : q.natAbs < 2013265
 
 /-! ### §7.0 — Reading a gate off the emitted list. -/
 
-private theorem sel_gate {env : VmRowEnv} {f l : Bool}
+private theorem sel_gate {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) {b : TExpr}
     (hb : b ∈ chipSelectorBodies false) : b.evalWith #[] env ≡ 0 [ZMOD 2013265921] :=
   h (gAll b) (List.mem_map_of_mem hb)
@@ -579,14 +585,14 @@ private theorem mem_sel (b : TExpr) (hb : b ∈ chipSelectorBodies false) :
     b ∈ chipSelectorBodies false := hb
 
 /-- Evaluation of the emitted product expression IS the integer product. -/
-private theorem eMinus_eval (ae : TExpr) (c : ℤ) (env : VmRowEnv) :
+private theorem eMinus_eval (ae : TExpr) (c : ℤ) (env : TRowEnv) :
     (eMinus ae c).evalWith #[] env = ae.evalWith #[] env - c := by
   unfold eMinus
   split
   · next h => simp [h]
   · simp [eSub, k, TExpr.evalWith]; ring
 
-private theorem fold_eval (ae : TExpr) (env : VmRowEnv) :
+private theorem fold_eval (ae : TExpr) (env : TRowEnv) :
     ∀ (cs : List ℤ) (acc : TExpr),
       (cs.foldl (fun a c => TExpr.mul a (eMinus ae c)) acc).evalWith #[] env
         = cs.foldl (fun a c => a * (ae.evalWith #[] env - c)) (acc.evalWith #[] env) := by
@@ -597,7 +603,7 @@ private theorem fold_eval (ae : TExpr) (env : VmRowEnv) :
     intro acc
     simpa [TExpr.evalWith, eMinus_eval] using ih (TExpr.mul acc (eMinus ae c))
 
-theorem eProdMinus_eval (ae : TExpr) (env : VmRowEnv) (cs : List ℤ) :
+theorem eProdMinus_eval (ae : TExpr) (env : TRowEnv) (cs : List ℤ) :
     (eProdMinus ae cs).evalWith #[] env = prodMinus (ae.evalWith #[] env) cs := by
   cases cs with
   | nil => simp [eProdMinus, prodMinus, k, TExpr.evalWith]
@@ -695,36 +701,36 @@ private theorem prodMinus_congr6 {A c : ℤ} (h : A ≡ c [ZMOD 2013265921]) (r0
 
 /-! ### §7.0b — Gate bodies, evaluated. -/
 
-private theorem gBool_eval (c : Nat) (env : VmRowEnv) :
+private theorem gBool_eval (c : Nat) (env : TRowEnv) :
     (gBool c).evalWith #[] env = env.loc c * (env.loc c - 1) := by
   simp only [gBool, v, k, TExpr.evalWith]; ring
 
-private theorem gArityMember_eval (env : VmRowEnv) :
+private theorem gArityMember_eval (env : TRowEnv) :
     gArityMember.evalWith #[] env = prodMinus (env.loc CHIP_ARITY) ARITIES := by
   simp [gArityMember, eProdMinus_eval, eArity, v, TExpr.evalWith]
 
-private theorem gFactArity_eval (env : VmRowEnv) :
+private theorem gFactArity_eval (env : TRowEnv) :
     gFactArity.evalWith #[] env = env.loc CHIP_IS_FACT * env.loc CHIP_ARITY := by
   simp [gFactArity, eIsFact, eArity, v, TExpr.evalWith]
 
-private theorem gPin_eval (fc : Nat) (c : ℤ) (env : VmRowEnv) :
+private theorem gPin_eval (fc : Nat) (c : ℤ) (env : TRowEnv) :
     (TExpr.mul (v fc) (eSub eArity (k c))).evalWith #[] env
       = env.loc fc * (env.loc CHIP_ARITY - c) := by
   simp only [eArity, eSub, k, v, TExpr.evalWith]; ring
 
-private theorem gForce_eval (roots : List ℤ) (fc : Nat) (env : VmRowEnv) :
+private theorem gForce_eval (roots : List ℤ) (fc : Nat) (env : TRowEnv) :
     (TExpr.mul (eProdMinus eArity roots) (eOneMinus (v fc))).evalWith #[] env
       = prodMinus (env.loc CHIP_ARITY) roots * (1 - env.loc fc) := by
   simp only [eOneMinus, eSub, k, v, TExpr.evalWith, eProdMinus_eval, eArity]; ring
 
-private theorem eQ01Guard_eval (env : VmRowEnv) :
+private theorem eQ01Guard_eval (env : TRowEnv) :
     eQ01Guard.evalWith #[] env
       = prodMinus (env.loc CHIP_ARITY) Q01_ROOTS - Q01_PAD * env.loc CHIP_IS_FACT := by
   simp [eQ01Guard, eSub, k, v, TExpr.evalWith, eProdMinus_eval, eArity, eIsFact]; ring
 
 /-- The input-zeroing gate of lane `i` is one of the emitted selector gates. Split out because it
 is the one gate reached through a `List.map`, not a literal. -/
-private theorem sel_inputZero {env : VmRowEnv} {f l : Bool}
+private theorem sel_inputZero {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) (i : Nat) (hi : i < CHIP_NODE8_ARITY) :
     (gInputZero i).evalWith #[] env ≡ 0 [ZMOD 2013265921] := by
   refine sel_gate h ?_
@@ -735,7 +741,7 @@ private theorem sel_inputZero {env : VmRowEnv} {f l : Bool}
 /-! ### §7.2 — TRUE: each flag is EXACTLY `[arity == c]`, on the emitted gates. -/
 
 /-- `big` is high EXACTLY on arity 7 — both directions, on the emitted gate list. -/
-theorem big_high_iff_arity_seven {env : VmRowEnv} {f l : Bool}
+theorem big_high_iff_arity_seven {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) :
     (env.loc CHIP_BIG ≡ 1 [ZMOD 2013265921]) ↔ (env.loc CHIP_ARITY ≡ 7 [ZMOD 2013265921]) := by
   have hpin := sel_gate h (b := gBigPin) (by simp [chipSelectorBodies])
@@ -748,7 +754,7 @@ theorem big_high_iff_arity_seven {env : VmRowEnv} {f l : Bool}
     prodMinus_congr6 hA 0 2 3 4 11 16
 
 /-- `wide` is high EXACTLY on arity 11. -/
-theorem wide_high_iff_arity_eleven {env : VmRowEnv} {f l : Bool}
+theorem wide_high_iff_arity_eleven {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) :
     (env.loc CHIP_WIDE ≡ 1 [ZMOD 2013265921]) ↔ (env.loc CHIP_ARITY ≡ 11 [ZMOD 2013265921]) := by
   have hpin := sel_gate h (b := gWidePin) (by simp [chipSelectorBodies])
@@ -762,7 +768,7 @@ theorem wide_high_iff_arity_eleven {env : VmRowEnv} {f l : Bool}
     prodMinus_congr6 hA 0 2 3 4 7 16
 
 /-- `node8` is high EXACTLY on arity 16. -/
-theorem node8_high_iff_arity_sixteen {env : VmRowEnv} {f l : Bool}
+theorem node8_high_iff_arity_sixteen {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) :
     (env.loc CHIP_NODE8 ≡ 1 [ZMOD 2013265921]) ↔ (env.loc CHIP_ARITY ≡ 16 [ZMOD 2013265921]) := by
   have hpin := sel_gate h (b := gNode8Pin) (by simp [chipSelectorBodies])
@@ -785,7 +791,7 @@ accepted row whose `arity` column holds `2013265921`. -/
 
 /-- **TRUE, over residues.** An accepting row's arity is congruent to one of the seven declared
 values — and to nothing else. Primality is what rules out extra roots. -/
-theorem arity_in_declared_set {env : VmRowEnv} {f l : Bool}
+theorem arity_in_declared_set {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) :
     ∃ c ∈ ARITIES, env.loc CHIP_ARITY ≡ c [ZMOD 2013265921] := by
   have hg := sel_gate h (b := gArityMember) (by simp [chipSelectorBodies])
@@ -813,7 +819,7 @@ via `flag_high_imp_arity`. Crediting the membership gate is wrong, and it matter
 gate a future narrowing of the arity set would touch. -/
 
 /-- At most one selector flag is high, so `seed456` is boolean. -/
-theorem seed456_is_boolean {env : VmRowEnv} {f l : Bool}
+theorem seed456_is_boolean {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) :
     (eSeed456.evalWith #[] env ≡ 0 [ZMOD 2013265921]) ∨
     (eSeed456.evalWith #[] env ≡ 1 [ZMOD 2013265921]) := by
@@ -867,7 +873,7 @@ theorem q01_at_every_arity :
     ARITIES.map (fun a => prodMinus a Q01_ROOTS) = [Q01_PAD, 0, 0, 0, 0, 0, 0] := by decide
 
 /-- A fact row carries arity 0 — the gate that makes no hybrid absorb/fact state expressible. -/
-theorem fact_row_has_arity_zero {env : VmRowEnv} {f l : Bool}
+theorem fact_row_has_arity_zero {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) (hf : env.loc CHIP_IS_FACT ≡ 1 [ZMOD 2013265921]) :
     env.loc CHIP_ARITY ≡ 0 [ZMOD 2013265921] := by
   have hg := sel_gate h (b := gFactArity) (by simp [chipSelectorBodies])
@@ -880,7 +886,7 @@ theorem fact_row_has_arity_zero {env : VmRowEnv} {f l : Bool}
 
 /-- **THE CANCELLATION CANCELS.** On a fact row the whole `q01` guard vanishes, so `in0`/`in1` are
 FREE there — which is what lets a fact row carry `l` and `r`. -/
-theorem q01_guard_vanishes_on_fact_rows {env : VmRowEnv} {f l : Bool}
+theorem q01_guard_vanishes_on_fact_rows {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) (hf : env.loc CHIP_IS_FACT ≡ 1 [ZMOD 2013265921]) :
     eQ01Guard.evalWith #[] env ≡ 0 [ZMOD 2013265921] := by
   have hA := fact_row_has_arity_zero h hf
@@ -894,7 +900,7 @@ theorem q01_guard_vanishes_on_fact_rows {env : VmRowEnv} {f l : Bool}
 
 /-- …and on a PAD row (arity 0, not a fact) it does NOT vanish, so `in0`/`in1` are forced to zero.
 The two poles of the same guard — a cancellation that cancelled everywhere would be a hole. -/
-theorem pad_row_zeroes_in0_and_in1 {env : VmRowEnv} {f l : Bool}
+theorem pad_row_zeroes_in0_and_in1 {env : TRowEnv} {f l : Bool}
     (h : chipSelectorTable.RowHolds env f l) (hf : env.loc CHIP_IS_FACT ≡ 0 [ZMOD 2013265921])
     (hA : env.loc CHIP_ARITY ≡ 0 [ZMOD 2013265921]) :
     env.loc CHIP_IN0 ≡ 0 [ZMOD 2013265921] ∧
@@ -938,7 +944,7 @@ theorem out_binds_final_aux (i : Nat) :
 /-- **THE ANTI-LAUNDERING CRUX.** A witness whose `out[i]` is not the permutation's `i`-th final
 lane is refused by the EMITTED table. Stated over `chipTable` (not the sub-table) via
 `out_of_chip`. -/
-theorem forged_out_lane_is_unsat {env : VmRowEnv} {f l : Bool} (i : Nat) (hi : i < CHIP_OUT_LANES)
+theorem forged_out_lane_is_unsat {env : TRowEnv} {f l : Bool} (i : Nat) (hi : i < CHIP_OUT_LANES)
     (hne : ¬ (env.loc (CHIP_OUT + i) ≡ env.loc (CHIP_AUX0 + 336 + i) [ZMOD 2013265921])) :
     ¬ chipTable.RowHolds env f l := by
   intro h
@@ -960,13 +966,13 @@ theorem forged_out_lane_is_unsat {env : VmRowEnv} {f l : Bool} (i : Nat) (hi : i
 /-- **On a ZERO-multiplicity row the state16 pin forces NOTHING** — not even mod `p`: the body is
 literally `0`. That is intended (a zero-multiplicity pad stays free to be the arity-0 chip row), and
 it is the answer to "what does it force there": nothing at all. -/
-theorem state16_pin_vacuous_at_zero_multiplicity (env : VmRowEnv)
+theorem state16_pin_vacuous_at_zero_multiplicity (env : TRowEnv)
     (h : env.loc CHIP_MULT_STATE16 = 0) : gState16Pin.evalWith #[] env = 0 := by
   simp [gState16Pin, eArity, eSub, k, v, TExpr.evalWith, h]
 
 /-- On a NONZERO-multiplicity row it pins arity to 16 — so the fixed length tag cannot be laundered
 through a seed-from-zero absorb row. -/
-theorem state16_nonzero_mult_forces_arity_sixteen {env : VmRowEnv} {f l : Bool}
+theorem state16_nonzero_mult_forces_arity_sixteen {env : TRowEnv} {f l : Bool}
     (h : chipState16SelectorTable.RowHolds env f l)
     (hm : ¬ (env.loc CHIP_MULT_STATE16 ≡ 0 [ZMOD 2013265921])) :
     env.loc CHIP_ARITY ≡ 16 [ZMOD 2013265921] := by
@@ -983,7 +989,7 @@ multiplicity with `mult_state16 · (1 − is_fact)`. But the gates make `mult_st
 is_fact ≡ 1` UNSATISFIABLE — the pin forces arity 16, `is_fact` forces arity 0, and `16 ≢ 0`. So on
 every satisfying row the guard equals `mult_state16` exactly and cannot fire. It is not WRONG; it is
 a factor that can never do anything, which this repo's own doctrine says not to keep. -/
-theorem state16_bus_guard_is_dead {env : VmRowEnv} {f l : Bool}
+theorem state16_bus_guard_is_dead {env : TRowEnv} {f l : Bool}
     (h : chipState16SelectorTable.RowHolds env f l)
     (hm : ¬ (env.loc CHIP_MULT_STATE16 ≡ 0 [ZMOD 2013265921])) :
     env.loc CHIP_IS_FACT ≡ 0 [ZMOD 2013265921] ∧
@@ -1029,7 +1035,7 @@ def selRow (arity isFact big s4 s5 s6 wide node8 : ℤ) (ins : List ℤ) : List 
     [0, isFact, big, s4, s5, s6, wide, node8])
 
 /-- A row vector, as a window (`nxt`/`pub` unused: this table is row-local). -/
-def rowEnv (row : List ℤ) : VmRowEnv := ⟨fun c => row.getD c 0, fun _ => 0, fun _ => 0⟩
+def rowEnv (row : List ℤ) : TRowEnv := ⟨fun c => row.getD c 0, fun _ => 0, fun _ => 0⟩
 
 #guard (selRow 0 0 0 0 0 0 0 0 (List.replicate 16 0)).length == CHIP_NODE8 + 1
 
@@ -1309,8 +1315,8 @@ def chipDagSize : Nat :=
 -- tuple, a multiplicity or an offset moves the length, and any edit to the SHAPE moves §5.
 -- ⚠ 159 KB each, against 3,098,882 / 3,098,539 for the tree spelling — **19.5×**. The wire shrink
 -- is the SIDE EFFECT; the point is `chipOpTotal`.
-#guard CHIP_JSON.length == 159180
-#guard CHIP_STATE16_JSON.length == 158837
+#guard CHIP_JSON.length == 159195
+#guard CHIP_STATE16_JSON.length == 158852
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin above
 while asserting nothing. -/

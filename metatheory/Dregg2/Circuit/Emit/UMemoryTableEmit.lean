@@ -88,7 +88,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.UMemoryTableEmit
 
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
    v n k eSub eOneMinus gBool gAll gFirst gTrans decompGates decompQueries limbGeom decompCols)
@@ -225,6 +226,7 @@ def umemInteractions : List BusInteraction :=
 def umemoryTable : TableAir :=
   { name         := "dregg-ir2-umemory-v1"
   , width        := UM_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := umemGates
   , interactions := umemInteractions }
@@ -280,7 +282,7 @@ refute the sentences AS STATED, on the emitted object. -/
 /-! ### §4a — The serial column IS the positional index (+1). -/
 
 /-- The first-row gate, unpacked: row 0 carries serial 1. -/
-theorem first_row_serial_is_one {rows : List VmRowEnv}
+theorem first_row_serial_is_one {rows : List TRowEnv}
     (hh : umemoryTable.Holds rows) (h : 0 < rows.length) :
     rows[0].loc UM_SERIAL ≡ 1 [ZMOD 2013265921] := by
   have hg := hh 0 h ⟨.first, eSub (v UM_SERIAL) (k 1)⟩
@@ -292,7 +294,7 @@ theorem first_row_serial_is_one {rows : List VmRowEnv}
   omega
 
 /-- The transition gate, unpacked: on any non-final row the NEXT window's serial is one more. -/
-theorem serial_step {rows : List VmRowEnv}
+theorem serial_step {rows : List TRowEnv}
     (hh : umemoryTable.Holds rows) (i : Nat) (hlt : i < rows.length) (h : i + 1 < rows.length) :
     rows[i].nxt UM_SERIAL ≡ rows[i].loc UM_SERIAL + 1 [ZMOD 2013265921] := by
   have hg := hh i hlt ⟨.transition, eSub (eSub (n UM_SERIAL) (v UM_SERIAL)) (k 1)⟩
@@ -310,7 +312,7 @@ universal-memory soundness argument counts against.
 ⚠ `Coherent` is not decoration: without it `rows[i].nxt` is an unconstrained function and the
 increment chain says nothing about `rows[i+1]`, so the whole claim would be about a machine that does
 not exist. -/
-theorem serial_is_positional {rows : List VmRowEnv}
+theorem serial_is_positional {rows : List TRowEnv}
     (hc : Coherent rows) (hh : umemoryTable.Holds rows) :
     ∀ i, ∀ h : i < rows.length,
       rows[i].loc UM_SERIAL ≡ (i : ℤ) + 1 [ZMOD 2013265921] := by
@@ -504,7 +506,7 @@ enters) at the NULLIFIER domain, reading an absent cell — the freshness shape 
 prior serial of `p − 5` at its own serial 1, with the 5-gap honestly decomposed: limb 0 is 5, every
 other limb and both top bits are 0. The indicator is 1, as gate (19) forces at `domain = 3` on a real
 row, and the inverse witness is 0, as gate (19) then permits. -/
-def wrapRow : VmRowEnv :=
+def wrapRow : TRowEnv :=
   ⟨fun c =>
       if c = UM_DOMAIN then NULLIFIER_DOMAIN
       else if c = UM_PREV_SERIAL then WRAP_PREV
@@ -543,7 +545,7 @@ nullifier domain, a WRITE (`kind = 1`), installing an ABSENT cell (`present = 0`
 claims WAS present (`prev_present = 1`, payload 9). The indicator is 0 — which gate (19) does not
 merely permit but FORCES at `is_real = 0` (`is_null_eq_real_on_domain`) — and that zero is what
 disarms the tooth. -/
-def padNullifierDelete : VmRowEnv :=
+def padNullifierDelete : TRowEnv :=
   ⟨fun c =>
       if c = UM_DOMAIN then NULLIFIER_DOMAIN
       else if c = UM_KIND then 1
@@ -578,7 +580,7 @@ theorem a_pad_row_spells_the_forbidden_nullifier_write :
 on a REAL row is REFUSED, in BOTH spellings of the indicator. With `is_null = 1` the tooth fires;
 with `is_null = 0` the inverse-witness gate fires instead. A prover has no third choice, which is
 what makes `a_nullifier_write_cannot_install_none` a real tooth rather than a hypothesis. -/
-def realNullifierDelete (isNull : ℤ) : VmRowEnv :=
+def realNullifierDelete (isNull : ℤ) : TRowEnv :=
   ⟨fun c =>
       if c = UM_DOMAIN then NULLIFIER_DOMAIN
       else if c = UM_KIND then 1
@@ -597,7 +599,7 @@ theorem a_real_nullifier_delete_is_refused_either_way :
 
 /-- The honest pole: a real nullifier-domain FRESHNESS READ at serial 1 — absent cell, absent claimed
 prior cell, prior serial 0 — is ACCEPTED. -/
-def honestRow : VmRowEnv :=
+def honestRow : TRowEnv :=
   ⟨fun c =>
       if c = UM_DOMAIN then NULLIFIER_DOMAIN
       else if c = UM_SERIAL then 1
@@ -679,7 +681,7 @@ def UMEMORY_JSON : String := emitTableAirJson umemoryTable
 -- offset moves the length, and any edit to the SHAPE moves §3. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which is the `by-name/` convention and which `JsonCursor` skips
 -- as whitespace.)
-#guard UMEMORY_JSON.length == 5782
+#guard UMEMORY_JSON.length == 5797
 
 /-- The emission is not empty and not a stub. -/
 theorem umemoryTable_is_not_empty : umemoryTable.gates ≠ [] := by

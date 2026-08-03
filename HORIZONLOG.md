@@ -1,5 +1,302 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 2 (`combine`'s mux) — the proofs-verified mask's LAST ignoring consumer is closed, and it MOVES public word 9 at the DEPLOYED mask, which is the opposite of what the residue predicted
+
+`eada74d58` ended on a named next rung: *"⚠ Still named, not closed: `combine`'s `Opt.Maybe` mux
+(`common.ml:264-271`) — upstream drops slot 0 under `Prefix_mask.there N1`, `cipRows` folds all 47
+unconditionally. §8h derived the mask; this consumer still ignores it."* **This is that rung, as
+`KimchiStepMainCore`'s `cipRows` + §12l. 10,822 → 10,826 rows (+3 `Generic`, +1 `Zero`).**
+
+⚠ ⚑ **THE VERDICT FIRST: §17(e) AND §18(b) ARE RE-RUN AND ARE UNCHANGED.** The
+substituted-with-re-solved-`G` witness is **ACCEPTED** before and **ACCEPTED** after.
+`combined_inner_product` is a value R8 ties to a statement word; moving it moves what an HONEST
+prover must claim. It relates nothing to `sg_old`'s opening, which is `verified` (#11) — a witnessed
+boolean, and not a rung. This rung closes a mask-consumption hole, not the substitution.
+
+**⚑ AND THE BRIEF'S PREMISE WAS WRONG AT SOURCE — this is the measurable part.** The rung was queued
+with the honest caveat that *"with `Prefix_mask.there N1 = [false; true]`, slot 0 is the `Wrap_hack`
+dummy — so under the deployed mask, dropping it should be a no-op on the value"*, and that if it
+were value-identical the correct output was a measurement plus a structural pin, not a closure.
+**It is not value-identical, at any legal mask.** Read at source, quoted with line numbers:
+
+  * `common.ml:263-272`, the `Maybe` arm at `:270-271` —
+    `| Maybe (b, fx) -> Field.if_ b ~then_:(fx + (xi * acc)) ~else_:acc`.
+    **The `else_` branch is bare `acc`. It does not multiply by ξ.**
+  * `pickles_types/pcs_batch.ml:85-94` — `combine_split_evaluations` flattens the arrays,
+    **REVERSES**, seeds `init` with the LAST element and folds the rest, so the list is Horner'd
+    **from its tail** and slot 0 is the **LAST** fold step.
+  * Therefore dropping slot 0 removes `c₀` **and takes one ξ power off every one of the other 46
+    terms.** The dummy's VALUE is what the mask makes irrelevant; the ξ-power shift is what it does
+    not. `combined_inner_product` at `[0,1]` is `cipR ξ r (ez.drop 1) (ew.drop 1)` — one shorter,
+    every surviving term one ξ power lower.
+  * `step_verifier.ml:916` `actual_width_mask = branch_data.proofs_verified_mask`; `:940-948`
+    `sg_evals pt = Vector.map2 mask sg_olds`; `:1080-1095` those become `[| Opt.Maybe (keep, eval) |]`
+    PREPENDED to `[x_hat] :: [ft] :: a` — prefix entries 0 and 1.
+  * `pickles_base/proofs_verified.ml:75-81` — a set bit is a SUFFIX (`N1 ↦ [ff;tt]`), and
+    `wrap_hack.ml:26-28`'s `pad_vector` is `Vector.extend_front_exn`, so slot 0 IS the dummy. Both
+    halves of the brief's mask reading were CORRECT; only the value consequence was not.
+
+**THE MASK NOW REACHES EVERY CONSUMER `verify_one` HAS.** Its file has exactly three
+(`step_verifier.ml:944` `sg_evals` → `combine`; `:954` the opt-sponge; `:1182-1186` the inner hash),
+and `:944` was the one still ignored. (`wrap_verifier.ml:513` / `wrap_main.ml:173-195` are the WRAP
+circuit, a different object, out of scope by construction.)
+
+**MEASURED (§12l, interpreter-reduced `#guard`, all 17 split modules `lake build` green):**
+
+  * The emitted fold equals `KimchiVerify.cipR` — the read-only transcription of `verifier.rs` —
+    **over the sub-list each mask keeps**, at all THREE legal masks. `Prefix_mask.back` admits
+    exactly three and refuses `[1,0]`, so that is the whole domain, not a sample.
+  * ⚑ **RED CONTROL AT A MASK WHERE SLOT 0 IS NOT THE DUMMY:** at `[1,1]` — the `N2` instance —
+    dropping vs folding slot 0 gives a DIFFERENT `combined_inner_product` (public word 9).
+  * ⚑ **AND IT BITES AT THE DEPLOYED MASK TOO.** `[0,1]` is not `cipR` over all 47 (which is
+    exactly what `cipRows` computed until today), and it is not the zero-the-entry reading either —
+    three distinct field elements.
+  * **BOTH DIRECTIONS.** Bending slot 0's carried challenges moves `E_c` at slot 0 and LEAVES `cip`
+    at `[0,1]`, and MOVES it at `[1,1]`. Bending slot 1's moves it at both. So the pin is the mask
+    refusing the term, not a bend failing to reach the ladder.
+  * The mask bit's σ class grew by **exactly one cell** — `combine`'s `pⱼ = keepⱼ·dⱼ` half — pinned
+    in §14a as the closed form `5 + 3·maskReaders i + 1`, so a fold that stops reading the bit reds
+    rather than passing a floor.
+  * The ROWS do not depend on the mask's VALUE: `keepⱼ` is `vMask j`, the circuit variable §8h
+    booleanity-checks and `Checked.pack` ties to `branch_data`. All three masks emit the SAME gate
+    list and differ only in the witness — which is what upstream's statement word means.
+  * The fusion commutes with the mux: upstream runs `combine … + r·combine …` (two muxed folds),
+    this region runs one over `cₖ = evₖ(ζ) + r·evₖ(ζω)`; both `combine` calls take the SAME `keep`,
+    so the two agree, and the pins compare against the two-fold form.
+
+**RE-RUN, off a FRESH emission (`DREGG_SM=step`):**
+
+  * `stepmain-shape-diff.mjs` — **all five run-length families INTACT**: `EndoMul 32×77` exactly
+    Mina's (not regressed), `Poseidon 11×206`, `VarBaseMul 1×1448`, `EndoMulScalar 8×51`,
+    `CompleteAdd 1×334`. `Generic` 1685 → 1688, `Zero` 2217 → 2218.
+  * `stepmain-region-conformance.mjs` — **GREEN, byte-exact**, off a gz fixture regenerated from
+    this emission, with **all ten falsifiers biting**. ⚑ **The Generic shape-family SET did NOT
+    change**: the exact-value miss digest is unchanged and the family-miss count is still 501, so
+    the mux's three half-shapes (`cSub`/`cMul`/`cAdd`) are ones Snarky already emits. Two ledger
+    counts moved and are updated: `exact-value-census` 3303 → 3309 halves, `probe-rows` 486 → 487.
+  * `pickles-stepmain-harness` — `cargo test --release` **9/9** (ratchet floor 9), and the full
+    step-scale run keeps **all five polarities at every rung**: honest `verify()==true`, σ-only
+    desync REJECTED, byte-identical UNWIRED control ACCEPTED, unread advice ACCEPTED, and (r5–r8)
+    public-vector tamper REJECTED with the σ leg REJECTED at `i=0` and `i=66`.
+
+**WHAT RE-EMITS:** every rung of `stepmain_{step,smoke}_*` (ids shift — the mux's six cells are a new
+region between `vCa` and `baseHm`), the eight committed smoke harness fixtures, and
+`bridge/mina-zkapp/fixtures/stepmain-step-r8-finalize-gates.json.gz`.
+
+**⚠ TWO NAMED RESIDUES THIS RUNG LEAVES, neither hidden:**
+
+  1. **This rung's ~23 new assertions are `#guard`s, and the policy landed MID-RUNG saying they
+     should not be.** `e70f2f656` added `CLAUDE.md`'s "a fact worth asserting is worth naming",
+     `metatheory/docs/GUARD-DISCIPLINE.md` and the per-module ratchet
+     `scripts/check-guard-discipline.py`. ⚠ **The ratchet does NOT flag them** — the concurrent
+     `KimchiStepMainPins01…13` split re-baselined at the post-mux counts, so the guards are BAKED
+     INTO the baseline rather than converted, and a green ratchet is not evidence here. They are
+     load-bearing by the policy's own criteria (a) *its failure changes a reported result* and
+     (b) *it is cited as evidence* — this entry cites them. They should be
+     `theorem … := by native_decide` + `#assert_compiled` (`Dregg2/Tactics.lean`), and **nine of
+     them collapse into ONE bounded quantifier over the three legal prefix masks**, which is
+     exactly the case the policy prizes. NOT DONE, and named here so it is findable.
+  2. **`sg_old`'s OPENING is still `verified` (#11)** — leg two of `per_proof_witness.ml:12-32`'s
+     accumulator check, a witnessed boolean and an ASSUMPTION at every step of the recursion. This
+     rung did not touch it and says so where the claim is made.
+
+## ⚑⚑⚑⚑ AUGUST 2 (the seam) — a Mina VERIFICATION KEY DERIVED from a Lean-assembled circuit, and o1js's OWN OCaml reader PARSES it
+
+The dregg↔Mina scoping lane drew this edge as **"ABSENT — and this is the critical path: there is no
+wrap circuit, and no VK-derivation path of any kind"**, with *"every real Mina VK in the repo"* coming
+from o1js `.compile()` on TypeScript. **It is no longer absent.** `metatheory/fixtures/pickles-vk-derive`
+(`2341bb66d`) takes the gate list `Dregg2.Circuit.Emit.KimchiWrapMain` emits — Pallas/Fq, the side a
+zkApp account's key actually lives on — through kimchi's constraint system and **Mina's own SRS** to the
+28 `wrap_index` commitments, and writes them as the base64 binprot of
+`Side_loaded_verification_key.Stable.V2`.
+
+⚑ **THE GATE, AND IT IS o1js's, NOT OURS.** `Pickles.sideLoaded.vkToCircuit` — the OCaml binprot reader
+compiled into o1js — **PARSED all three derived keys**, and `VerificationKey.checkValidity({data,hash})`
+returned **true** for each, with three distinct in-circuit hashes. The four refusals come back as
+**Mina's own exceptions**, not ours: `Invalid_curve_point` for a bent commitment, `Bigint.bin_read_t:
+Expected 32 bytes, got 31` for a truncation, `((Read_error Unit_code 450) "")` for the binprot nil, and
+`of_bigint: input exceeds field size` for a non-canonical limb. That third one is worth reading twice:
+the reader names **offset 450** and the constructor **`Unit_code`** — Mina telling us, in its own words,
+where the `Pickles_types.Vector` nil is.
+
+⚑ **THE DERIVATION IS A DERIVATION, on THREE independent levers.** A key that does not move when the
+circuit moves is a transcription. Measured: one gate **COEFFICIENT** `+1` moves **exactly `coeff[0]`**
+and holds the other 27; one **WIRE** re-pointed moves **`sigma[col]`** and no selector; one gate
+**RETYPED** moves the **selector** and no sigma. ⓘ An earlier draft of the wire test asserted
+`moved.len() >= 2` **from intuition and it was false** — a permutation class living entirely inside
+column 0 moves `sigma[0]` alone. The test caught the guess; the assertion now states only what is
+derivable from what `sigma_comm[i]` commits to.
+
+⚑ **A CROSS-IMPLEMENTATION PIN THAT DID NOT EXIST ANYWHERE.** The VK hash this crate computes in Rust
+(`mina-poseidon`, prefix `MinaSideLoadedVk****`, 56 coordinate fields **then** one packed 6-bit one-hot
+word) **EQUALS** the hash o1js computes in-circuit — on the three derived keys *and* on three keys o1js
+itself emitted. openmina has no equivalent: its VK-hash path is exercised only for self-consistency,
+and no test in that tree pins a concrete hash against an independently-computed reference.
+
+**TWO CORRECTIONS TO THE RECORD** this lane was briefed with, both wrong at source:
+* `bridge/mina-zkapp/fixtures/mina-devnet-wrap-*-vk.json` are **kimchi `VerifierIndex` serializations**,
+  not the object a node parses. The account object is `{data, hash}`, `data` = base64 binprot.
+* the wire is **1796 bytes, not 1794**. A reader sized at `2 + 28*64` decodes garbage: there are **two
+  0x00 `Vector` nils**, one after `sigma_comm[6]` and one after `coefficients_comm[14]`.
+
+⚠ **WHAT THIS IS NOT.** This is the **KEY**. Not a proof, not a verifying proof, and **nothing was
+deployed, registered or submitted**. A node that PARSES is not a node that VERIFIES.
+`KimchiWrapMain` §13 still names by sub-circuit what the wrap assembly does not emit, and that list —
+not the key — is what stands between here and a proof a node accepts.
+
+
+## ⚑⚑⚑ AUGUST 2 (the last table arm) — `Ir2Air` is `Main | LeanTable`, the burn-down is 11 OF 11, and the bus name that blocked a Lean-emitted schema moved out of a STRING and into a TUPLE FIELD
+
+`ca0970378` ended on an ordered next step: `ExactPublicTable` was the one arm of the eleven the table
+IR could not express, and §7 priced it as four items. **All four are discharged and the arm is
+DELETED — the enum VARIANT, not just its body.** `Emit/ExactPublicTableEmit.lean` →
+`circuit/descriptors/table-airs/dregg-ir2-exact-public-v1.json`.
+
+⚑ **WHAT THAT MAKES TRUE THAT WAS NOT TRUE BEFORE.** `Ir2Air` has two arms: one interprets the MAIN
+descriptor, one interprets a Lean-authored TABLE. **There is no place in that enum where a
+constraint can be written**, so law #1's failure mode — *"the Rust AIR crate is right there, every
+step compiles"* — has no entry point on the IR-v2 path at all, and a new shared table is now an
+EMISSION rather than a variant. The AIR fingerprint's source closure covers the whole instance
+family through two files plus a directory, instead of through a `match` whose arms a reader had to
+enumerate by hand. `descriptor_ir2.rs`'s law-#1 row moves **180 → 179**, and the gate stays GREEN.
+
+**THE TWO IR ADDITIONS, both landed WITH an emitter** (§7 item 1's rule: a constructor with a
+decoder, a denotation and no emitter is a reference without a referent):
+
+* **`TExpr.prep c`** — a SECOND column space, the verifier-RECOMPUTED preprocessed matrix. It is
+  where a manifest's values and pinned multiplicities entirely live, and `readsCol` answers `false`
+  on it *deliberately*: that predicate is a question about COMMITTED columns, and a merged one
+  would make every coverage pin quietly wrong in whichever direction its reader assumed.
+  `readsPrepColWith` is the preprocessed twin and it CHASES `shr` exactly as the committed one does.
+* **`TableAir.prepWidth`** — its own declared bound, because `width` bounds a different matrix. The
+  family reads `width = 1` against `prepWidth = arity + 2`, so a `prep` index checked against
+  `width` would pass nothing.
+
+ⓘ **§7 item 1's PRICE was right, with one addition it could not see.** It said one constructor plus
+one case in five `TExpr` functions and their five Rust mirrors. That is what landed — plus a SIXTH
+on each side (`maxPrep` / `max_prep`, item 2's bound) and the denotation's row window going
+`VmRowEnv → TRowEnv`: the third field went from documented-as-unused (`pub`; a shared table has no
+public inputs) to READ, and reusing that slot would have been a pun in the type every table theorem
+is stated over. Same field count, so **no witness moved**; 65 type ascriptions across the eleven
+table files did. **No main-descriptor file moved and no new refusal landed on the main decode
+path**, exactly as priced.
+
+⚑ **THE ONE DESIGN CHANGE, and it is what made a Lean-emitted schema possible at all.** §7 had
+recorded *"emitting 64 fixed artifacts is not a way out — the bus name still varies with
+`table_id`"*, and that was true of the deployed shape: one bus `ir2_exact_public_{table_id}` per
+declared table, a number no artifact can know. The fix is **not** a substitution hole in a wire
+string. It is to stop spending a STRING on a separation a FIELD carries:
+
+* the bus is `ir2_exact_public_a{arity}` — a function of the arity, which the artifact knows;
+* the TABLE ID is preprocessed column 0, the first field of every served tuple, and `Ir2Air::Main`
+  prepends the same descriptor-derived constant to every query.
+
+⚠ **The separation is exactly as strong, and the tooth says so rather than the prose.** LogUp
+balance is a multiset equality over TUPLES; the id is a tuple field; and the served copy lives in
+the matrix the verifier REBUILDS rather than accepts.
+`the_id_field_separates_two_tables_sharing_one_bus` proves two arity-2 tables on ONE bus do not
+pool: a trace querying table A with a row only table B declares is REFUSED at the deployed prover.
+Drop the id from the tuple — the single edit that turns this into a weakening — and that forgery
+BALANCES. ⓘ The pre-existing co-batch hazard (two descriptors declaring the same wire id pool their
+capacity, `prove_vm_descriptors2_batch`'s own note) is preserved and NOT widened; asserted, not
+described.
+
+**THE ARTIFACT IS A FAMILY, which is new**: a JSON ARRAY of the object the singleton path already
+decodes, element `i` at arity `i + 1`, 64 members, 63,428 bytes. No new grammar — the element
+renderer is `emitTableAirJson` unchanged.
+
+⚑ **THE TEN EXISTING ARTIFACTS RE-EMIT BYTE-IDENTICALLY**, in the `defs` precedent's exact sense:
+each gains the literal `,"prep_width":0` after its width and changes in **NO OTHER BYTE**, verified
+by stripping that 15-byte string and diffing all ten. `ir2_degree_budget` is UNCHANGED — the pin is
+degree 1 and the served leg degree 2, at every arity, exactly as the deleted arm.
+
+★ **FOUR COMMENT-ONLY CLAIMS, and THREE are refutations.**
+
+1. *"The multiplicities are PINNED to descriptor-derived constants, not left free"* — **TRUE**, in
+   both directions, and the gate is an EQUALITY not a `≤` (`capacity_is_the_declared_multiplicity`,
+   `the_pin_refuses_a_free_capacity`, `the_pin_refuses_a_short_capacity`).
+2. ⚠ *"The manifest values … are PREPROCESSED, so they are verifier-known by construction"* — true
+   of the PLUMBING, and the sentence a reader takes away is false of the AIR:
+   `the_gates_bind_no_manifest_value` / `the_gates_bind_no_table_id` — **not one manifest value, and
+   not the id the whole separation rests on, is bound by any gate.** The tuple is 100% of this
+   table's soundness content and 0% of its algebra; what binds it is the verifier rebuilding the
+   matrix, one object out.
+3. ⚠ *"Rows past `rows.len()` are all-zero pads carrying multiplicity ZERO, so they contribute
+   nothing to the bus"* — a property of `ExactPublicManifest::preprocessed`'s `resize`, **not of the
+   gate**: `a_pad_shaped_row_is_admitted_at_any_capacity_the_matrix_declares` exhibits a pad-SHAPED
+   all-zero tuple accepted at capacity 5 the moment the preprocessed column reads 5.
+4. ⚠ *"a one-row manifest still commits two rows"* (`MIN_EXACT_PUBLIC_HEIGHT`) — a p3 fact this AIR
+   neither knows nor enforces. Every gate is `.all`-scoped, so `gates_admit_every_height` holds for
+   the same reason it does of the byte table — and WEAKER, because the byte table at least forces
+   `value = row index` and this one does not.
+
+⚠ **AND A FIFTH, FOUND BY MEASURING RATHER THAN READING, which was ALREADY FALSE AT HEAD.**
+`MAX_EXACT_PUBLIC_CELLS` says *"`2^25` cells bounds the preprocessed commitment at ~134 MB of
+`BabyBear`"*. **It does not: the worst admissible case is EXACTLY 2.00x it, and was before this
+port too.** The cap counts `rows.len() * arity`; the matrix the
+verifier materializes and commits is `next_pow2(distinct) * prep_width` — one column wider than
+`arity`, and `next_pow2` rounds a cap-saturating row count UP. Worst admissible case, computed from
+the three constants by `the_preprocessed_allocation_bound_is_measured_not_asserted`: **67,108,864
+cells / 268.4 MB before this port, 69,206,016 / 276.8 MB after** — so the port widened an
+already-2×-wrong bound by a further 3%. The figure in the doc is now the measured one. ⓘ **The CAP
+is deliberately unchanged**: tightening it to the materialized size would refuse manifests the
+four-way `⟨s, srs.g⟩` cut is sized for, which is a workload decision and not this port's to take.
+
+⚑ **THE SWEEP IS THE BAR, AND THIS IS THE FIRST ONE THAT READS PREPROCESSED COLUMNS.**
+`exactpublic_lean_emission_differential.rs`: the deployed instance ROUND-TRIPS, the committed
+capacity column is caught on every row *including the pad*, and the PREPROCESSED matrix is swept
+cell by cell with the undetected set pinned **exactly** — `{id, v0, v1}` on every row, the pinned
+multiplicity on none. An instrument reporting "4 of 4 preprocessed columns gated" would be lying
+about which mechanism protects what; one reporting "0 of 4", which is what an empty preprocessed
+window produced before `ir2_air_gates_accept` learned to REFUSE one (§7 item 4, landed 2026-08-01
+ahead of this port), would have been lying about all of it while looking clean.
+
+⚠ **AND WHAT THIS ARM CANNOT MEASURE, said rather than left implied.** Every other table
+differential here pairs a bus-verdict tooth with a CONSTRAINT-verdict one. **This one has no
+constraint-verdict forgery at the deployed prover, and the reason is structural**:
+`batch_airs_and_matrices` derives the committed capacities and the preprocessed pin from the SAME
+descriptor walk, so a prover cannot make them disagree. The gate's false pole is reachable only at
+the evaluator, and it is measured there.
+`the_pin_gate_is_unreachable_as_a_prover_refusal_and_that_is_structural` is the record.
+
+ⓘ **`ir2_preprocessed_sweep_harness.rs`'s §3 assertion is now FALSE of one table and is RE-STATED,
+not deleted.** It read *"every Lean-authored table AIR declares ZERO preprocessed columns"* — the
+fact that made the ten singleton sweeps sound. It is now a per-table pin: the ten at 0, the family
+at `arity + 2`. Deleting it would have silently retired the property the other sweeps rest on.
+
+**WHAT BROKE, AND WHAT MUST BE RE-EMITTED OR RE-GENESISED.**
+
+* The table-air WIRE FORMAT gained a `prep_width` key and a `prep` expression tag. All TEN
+  pre-existing artifacts re-emit (+15 bytes each, `,"prep_width":0`, nothing else). A table-air JSON
+  in the pre-`prep_width` grammar now REFUSES to load.
+* ONE NEW artifact, and the first that is an ARRAY: `dregg-ir2-exact-public-v1.json` (63,429 B).
+  Eleven artifacts on the batch now.
+* `Ir2Air::ExactPublicTable` is DELETED — the variant. `Ir2Air::LeanTable` became a STRUCT variant
+  carrying `{ air, prep }`, because the Lean side authors the ALGEBRA and the descriptor supplies
+  the DATA.
+* **THE EXACT-PUBLIC BUS RENAMED AND THE QUERY TUPLE WIDENED BY ONE**:
+  `ir2_exact_public_{table_id}` → `ir2_exact_public_a{arity}`, tuple `[table_id, ...row]`. Every VK
+  over a descriptor declaring an exact-public table ROTATES. Treat pre-cutover proof identities as
+  non-interoperable. Re-genesis.
+* `air_fingerprint()` and `verifier_source_closure_fingerprint()` BOTH move (both splice
+  `TABLE_AIR_ARTIFACTS` whole, and `descriptor_ir2.rs` / `table_air.rs` both changed). The new
+  family artifact is added to that list, so it is covered rather than sitting in JSON the
+  fingerprint does not read.
+* **Schema epoch UNCHANGED** — no persisted shape moved. A rebuild, and a re-genesis of any chain
+  carrying an exact-public-bearing VK.
+
+⚠ **`PROVENANCE.json` NOT re-stamped.** `--stamp-existing` refuses while `metatheory/` is dirty, and
+it is: eight sibling files (`Bridge/MinaStateHashWordGate`, `Bridge/TickShifts`,
+`Emit/KimchiStepMain`, `PicklesSynthesis`, `Tactics`, `Emit/EffectLower`, plus two untracked
+`KimchiWrapMain`/`EmitWrapMainJson`) carry in-flight work. Forcing it would record
+`source_dirty=true` — a stamp that looks taken and is not. Left unstamped, deliberately.
+
+⚑ **NEXT.** `TableAirIR` §7 is closed; the burn-down is 11 of 11 and there is no twelfth item. The
+named residuals it leaves are (i) the exact-public ALLOCATION cap, now measured and knowingly 2×
+looser than documented, which wants a workload input before it is tightened; and (ii) the co-batch
+same-wire-id pooling hazard, unchanged and now asserted rather than described.
+
+
 ## ⚑⚑⚑ AUGUST 2 (mina→dregg) — the light client read the TIP and threw away the CHAIN: 1,544 of 61,193 bytes, and the discarded half was the anchor
 
 `e7f51e252`. The scope note this tree has recited since 07-30 — *"the opening check accepts an

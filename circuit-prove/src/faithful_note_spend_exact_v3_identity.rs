@@ -450,6 +450,13 @@ const CHIP_TABLE_AIR_ARTIFACT: &[u8] =
     include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-chip-v1.json");
 const CHIP_STATE16_TABLE_AIR_ARTIFACT: &[u8] =
     include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-chip-state16-v1.json");
+// ⚑ The EXACT-PUBLIC FAMILY, added 2026-08-02 with the `Ir2Air::ExactPublicTable` cutover — the
+// eleventh and last hand-written arm, and the only artifact here that is a JSON ARRAY (one member
+// per declared tuple arity) rather than a single table. Its omission would be the same class of
+// hole the chip's nearly was: the algebra that pins a manifest's served capacity could change while
+// the identity stood still.
+const EXACT_PUBLIC_TABLE_AIR_ARTIFACT: &[u8] =
+    include_bytes!("../../circuit/descriptors/table-airs/dregg-ir2-exact-public-v1.json");
 /// Every Lean-emitted table AIR on the batch, by artifact path. The closures below splice this in
 /// whole rather than listing rows, so a new table lands in both at once.
 const TABLE_AIR_ARTIFACTS: &[(&str, &[u8])] = &[
@@ -493,6 +500,10 @@ const TABLE_AIR_ARTIFACTS: &[(&str, &[u8])] = &[
         "circuit/descriptors/table-airs/dregg-ir2-chip-state16-v1.json",
         CHIP_STATE16_TABLE_AIR_ARTIFACT,
     ),
+    (
+        "circuit/descriptors/table-airs/dregg-ir2-exact-public-v1.json",
+        EXACT_PUBLIC_TABLE_AIR_ARTIFACT,
+    ),
 ];
 const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
     ("circuit/src/descriptor_ir2.rs", DESCRIPTOR_IR2_AIR_SOURCE),
@@ -511,6 +522,7 @@ const AIR_IMPLEMENTATION_SOURCES: &[(&str, &[u8])] = &[
     TABLE_AIR_ARTIFACTS[7],
     TABLE_AIR_ARTIFACTS[8],
     TABLE_AIR_ARTIFACTS[9],
+    TABLE_AIR_ARTIFACTS[10],
 ];
 
 fn air_fingerprint_for_parts(
@@ -597,10 +609,11 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
         "turn-prover/src/faithful_note_spend_exact_v3_verifier.rs",
         TURN_VERIFIER_WRAPPER_SOURCE,
     ),
-    // The verifier rebuilds the batch AIR set from the descriptor, and that set now includes
-    // EIGHT Lean-emitted table AIRs. Both the decoder and every emission are part of what the
-    // verifier IS. ⓘ The `Ir2Air::Memory` cutover added the fourth, and
-    // `the_air_closure_covers_every_emitted_table_air_artifact` went RED on the omission before
+    // The verifier rebuilds the batch AIR set from the descriptor, and since 2026-08-02 that set
+    // is ENTIRELY Lean-emitted: `Ir2Air` is `Main | LeanTable`, so every table instance the
+    // verifier assembles walks one of the ELEVEN artifacts below. Both the decoder and every
+    // emission are part of what the verifier IS. ⓘ The `Ir2Air::Memory` cutover added the fourth,
+    // and `the_air_closure_covers_every_emitted_table_air_artifact` went RED on the omission before
     // this line existed — which is the directory-reading tooth working as designed.
     ("circuit/src/table_air.rs", TABLE_AIR_INTERPRETER_SOURCE),
     TABLE_AIR_ARTIFACTS[0],
@@ -613,6 +626,7 @@ const VERIFIER_SOURCE_CLOSURE: &[(&str, &[u8])] = &[
     TABLE_AIR_ARTIFACTS[7],
     TABLE_AIR_ARTIFACTS[8],
     TABLE_AIR_ARTIFACTS[9],
+    TABLE_AIR_ARTIFACTS[10],
 ];
 
 fn update_len_prefixed_hash(hasher: &mut blake3::Hasher, bytes: &[u8]) {

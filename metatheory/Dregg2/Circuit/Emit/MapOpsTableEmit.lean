@@ -73,7 +73,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MapOpsTableEmit
 
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate emitTableAirJson
    v k eSub eOneMinus gBool gAll decompCols
@@ -312,6 +313,7 @@ def mapOpsInteractions : List BusInteraction :=
 def mapOpsTable : TableAir :=
   { name         := "dregg-ir2-map-ops-v1"
   , width        := MAP_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := mapOpsGates
   , interactions := mapOpsInteractions }
@@ -486,7 +488,7 @@ theorem neg_inv15_is_right : (-15) * NEG_INV15 = -(2013265921 - 1) := by decide
 /-- An `op = 4` AAFI reconciliation row with an HONEST pointer bracket `0 < 1 < 2` and an ALL-ZERO
 Merkle opening: no leaf digest, no sibling, no chain node, `root = new_root = 0`. Only the three
 `inv15` witnesses and two limb columns are non-zero besides the bracket itself. -/
-def openingFreeRow : VmRowEnv :=
+def openingFreeRow : TRowEnv :=
   ⟨fun c =>
       if c = MAP_IS_REAL then 1
       else if c = MAP_OP then 4
@@ -524,7 +526,7 @@ theorem an_aafi_row_with_no_opening_satisfies_every_gate :
 /-- …and the CONTRAST, so the refutation is not read as "no gate bites here": the SAME row with the
 bracket REVERSED (`low_addr = 5`, `key = 1`, so `low_addr < key` is false) is REFUSED by the
 comparator's low-word branch. A table AIR no assignment refutes is decoration. -/
-def reversedBracketRow : VmRowEnv :=
+def reversedBracketRow : TRowEnv :=
   ⟨fun c =>
       if c = MAP_IS_REAL then 1
       else if c = MAP_OP then 4
@@ -547,7 +549,7 @@ theorem a_reversed_bracket_is_refused :
 /-! ### §5d — ⚠ THE SECOND REFUTATION: `op = 2` is UNSAT, and a PAD row can still spell an insert. -/
 
 /-- The `openingFreeRow` with the `absent` op code substituted. -/
-def absentOpRow : VmRowEnv :=
+def absentOpRow : TRowEnv :=
   ⟨fun c => if c = MAP_OP then 2 else if c = MAP_IS_REAL then 1 else 0, fun _ => 0, fun _ => 0⟩
 
 /-- ⚑ **`absent` (op = 2) IS UNSAT IN THIS TABLE**, on the emitted gate list — so "absent is
@@ -556,7 +558,7 @@ convention. The membership product evaluates to `2·1·(−1)·(−2) = 4 ≢ 0`
 theorem the_absent_op_is_unsat : ¬ mapOpsTable.RowHolds absentOpRow true true := by decide
 
 /-- The `openingFreeRow` with the row guard DROPPED: a PAD row spelling a complete AAFI insert. -/
-def padAafiRow : VmRowEnv :=
+def padAafiRow : TRowEnv :=
   ⟨fun c =>
       if c = MAP_OP then 4
       else if c = MAP_S then 1
@@ -591,7 +593,7 @@ theorem a_pad_row_can_spell_an_aafi_insert :
 /-- …and the pad is NOT free: dropping `is_real` does not switch the range block off. The same pad
 with the bracket reversed is still REFUSED, which is the non-vacuity contrast for the theorem above
 and the precise sense in which the gates are stricter than `aafi_gate` suggests. -/
-def padReversedBracketRow : VmRowEnv :=
+def padReversedBracketRow : TRowEnv :=
   ⟨fun c =>
       if c = MAP_OP then 4
       else if c = MAP_S then 1
@@ -654,7 +656,7 @@ def MAP_OPS_JSON : String := emitTableAirJson mapOpsTable
 -- the identity is the compiled `include_bytes!` closure in
 -- `circuit-prove/src/faithful_note_spend_exact_v3_identity.rs`. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which `JsonCursor` skips as whitespace.)
-#guard MAP_OPS_JSON.length == 338985
+#guard MAP_OPS_JSON.length == 339000
 
 /-- The emission is not empty and not a stub — the shape that would satisfy every count pin in §4
 while asserting nothing. -/

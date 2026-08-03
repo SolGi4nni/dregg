@@ -58,7 +58,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.UMemBoundaryTableEmit
 
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
    v n k eSub eOneMinus gBool gAll gTrans decompCols
@@ -195,6 +196,7 @@ def umemBoundaryInteractions : List BusInteraction :=
 def umemBoundaryTable : TableAir :=
   { name         := "dregg-ir2-umem-boundary-v1"
   , width        := UB_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := umemBoundaryGates
   , interactions := umemBoundaryInteractions }
@@ -305,7 +307,7 @@ def wrapLoc (domain dgap sdinv : ℤ) : Nat → ℤ := fun c =>
 Row 0's step DOWN needs `dgap = 0 − 1 ≡ p − 1` with inverse witness `p − 1` (`(p−1)² ≡ 1`); row 1's
 step back UP needs `dgap = 1`, an honest nibble, with inverse witness `1`. So **exactly one of the
 two gaps is out of range** — and it is out of range only against a LOOKUP. -/
-def wrapTrace : List VmRowEnv :=
+def wrapTrace : List TRowEnv :=
   [ ⟨wrapLoc 1 2013265920 2013265920, wrapLoc 0 1 1, fun _ => 0⟩
   , ⟨wrapLoc 0 1 1, wrapLoc 1 0 0, fun _ => 0⟩
   , ⟨wrapLoc 1 0 0, fun _ => 0, fun _ => 0⟩ ]

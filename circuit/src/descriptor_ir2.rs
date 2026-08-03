@@ -445,22 +445,58 @@ const BUS_UMEM_LOG: &str = "ir2_umem_log";
 /// 128-row ceiling on any contents-bound trace. The four-way `⟨s, srs.g⟩` cut needs 1,048,704
 /// manifest rows — 8,193x that — and the eight-way 524,416.
 ///
-/// [`Ir2Air::ExactPublicTable`] realizes the whole manifest as ONE multiplicity-bearing instance
+/// The exact-public table AIR realizes the whole manifest as ONE multiplicity-bearing instance
 /// (the shape the byte table has always had), so the cost of a row is now one row of one
 /// preprocessed matrix, not one instance. The caps below are therefore an ALLOCATION bound on the
 /// verifier — which materializes and commits the preprocessed manifest itself — and nothing else:
-/// `2^21` rows covers the four-way cut with headroom, and `2^25` cells bounds the preprocessed
-/// commitment at ~134 MB of `BabyBear`.
+/// `2^21` rows covers the four-way cut with headroom.
+///
+/// ⚠ **AND THE SECOND HALF OF THAT SENTENCE WAS WRONG BY 2x, MEASURED 2026-08-02.** It read
+/// *"`2^25` cells bounds the preprocessed commitment at ~134 MB of `BabyBear`"*. It does not, and
+/// it did not before the Lean port either — for two compounding reasons the cap does not see:
+///
+/// * the cap counts `rows.len() * arity`, while the committed matrix is
+///   `next_pow2(distinct) * prep_width` — one column WIDER than `arity` (the pinned multiplicity,
+///   and since the port the table id too), and
+/// * `next_pow2` rounds a cap-saturating row count UP: at arity 31 the cell cap admits 1,082,401
+///   rows and the committed height is `2^21`.
+///
+/// Worst admissible case, computed from these three constants by
+/// `exactpublic_lean_emission_differential::the_preprocessed_allocation_bound_is_measured_not_asserted`:
+/// **69,206,016 cells = 276.8 MB**, against 67,108,864 / 268.4 MB before the port. So the port
+/// widened a bound that was already 2.00x its stated figure, by a further 3%. The number here is
+/// now the measured one; the CAP is deliberately unchanged, because tightening it to the real
+/// materialized size would refuse manifests the four-way cut is sized for, and that is a workload
+/// decision rather than a correctness one.
 const MAX_EXACT_PUBLIC_ROWS: usize = 1 << 21;
 const MAX_EXACT_PUBLIC_ARITY: usize = 64;
 const MAX_EXACT_PUBLIC_CELLS: usize = 1 << 25;
 
-/// The committed height floor of an [`Ir2Air::ExactPublicTable`] instance: p3 needs a
-/// power-of-two height and a two-row window, so a one-row manifest still commits two rows.
+/// The committed height floor of an exact-public instance: p3 needs a power-of-two height and a
+/// two-row window, so a one-row manifest still commits two rows.
+///
+/// ⚠ **A p3 requirement this file enforces, and NOT something the AIR knows.** Every gate of the
+/// Lean-emitted family is `.all`-scoped, so it bounds no height at all
+/// (`ExactPublicTableEmit.gates_admit_every_height`); a reader taking "still commits two rows" for
+/// an in-circuit tooth would be reading a fact about `ProverData::from_airs_and_degrees` as one
+/// about the constraints.
 const MIN_EXACT_PUBLIC_HEIGHT: usize = 2;
 
-fn exact_public_bus_name(table_id: usize) -> String {
-    format!("ir2_exact_public_{table_id}")
+/// ⚑ The exact-public LogUp bus, named by the declared tuple ARITY.
+///
+/// **FLAG DAY 2026-08-02.** It was `ir2_exact_public_{table_id}`. The serving AIR is now a
+/// Lean-emitted FAMILY indexed by arity (`ExactPublicTableEmit.lean`), and an artifact cannot know
+/// a table id — so the id moved from the bus NAME into the served TUPLE, as preprocessed column 0,
+/// with `Ir2Air::Main` prepending the same descriptor-derived constant to every query.
+///
+/// ⚠ The per-table separation is exactly as strong. LogUp balance is a multiset equality over
+/// TUPLES; the id is a tuple field; and the served copy lives in the matrix the verifier REBUILDS
+/// from the descriptor rather than accepting from the prover. Two tables at the same arity share a
+/// bus and cannot pool, because their tuples differ in field 0. The one thing that DOES pool is
+/// unchanged: two descriptors in one batch declaring the SAME wire id, which
+/// [`prove_vm_descriptors2_batch`] documents.
+fn exact_public_bus_name(arity: usize) -> String {
+    format!("ir2_exact_public_a{arity}")
 }
 
 /// The low-limb width of the CANONICAL BabyBear key decomposition
@@ -785,6 +821,7 @@ pub(crate) fn eval_table_expr<AB>(
     e: &crate::table_air::TableExpr,
     local: &[AB::Var],
     next: &[AB::Var],
+    prep: &[AB::Var],
     dv: &[AB::Expr],
 ) -> AB::Expr
 where
@@ -797,11 +834,17 @@ where
         TE::Nxt(i) => next[*i].into(),
         TE::Const(c) => const_to_expr::<AB>(*c),
         TE::Shr(i) => dv.get(*i).cloned().unwrap_or_else(|| AB::Expr::ZERO),
+        // ⚑ A DIFFERENT COLUMN SPACE — the verifier-recomputed preprocessed row, never the
+        // committed one. `LeanTableAir::check` has already bounded every index here against the
+        // emission's own `prep_width`, so this slice access is in range by decode.
+        TE::Prep(i) => prep[*i].into(),
         TE::Add(a, b) => {
-            eval_table_expr::<AB>(a, local, next, dv) + eval_table_expr::<AB>(b, local, next, dv)
+            eval_table_expr::<AB>(a, local, next, prep, dv)
+                + eval_table_expr::<AB>(b, local, next, prep, dv)
         }
         TE::Mul(a, b) => {
-            eval_table_expr::<AB>(a, local, next, dv) * eval_table_expr::<AB>(b, local, next, dv)
+            eval_table_expr::<AB>(a, local, next, prep, dv)
+                * eval_table_expr::<AB>(b, local, next, prep, dv)
         }
     }
 }
@@ -1802,10 +1845,11 @@ struct Ir2RowLocalBuilder<'a> {
     /// `RowWindow::from_two_rows(&[], &[])` until 2026-08-01, on the reasoning that the two AIRs
     /// this builder then served (`Ir2Air::Main`, `Ir2Air::LeanTable`) carry no preprocessed
     /// columns. That was true and it made the instrument BLIND BY CONSTRUCTION to the one arm
-    /// that does read them (`Ir2Air::ExactPublicTable`, whose manifest values and pinned
-    /// multiplicities live entirely here), and it would have gone on being true-looking the
-    /// moment a Lean-authored table declared a preprocessed matrix
-    /// (`TableAirIR` §7, item 4).
+    /// that does read them (the then-hand-written `Ir2Air::ExactPublicTable`, whose manifest values
+    /// and pinned multiplicities live entirely here). ⓘ That arm is now a Lean-authored
+    /// `Ir2Air::LeanTable` declaring `prep_width = arity + 2` — so the sentence "neither declares
+    /// preprocessed columns" has stopped being true of the batch, exactly as this note anticipated,
+    /// and the contract below is what makes that a non-event rather than a silent blinding.
     ///
     /// The window is now whatever [`ir2_air_gates_accept`] was handed, and that entry point
     /// REFUSES rather than substituting zeros when an AIR's `preprocessed_width()` and the
@@ -2002,9 +2046,9 @@ pub fn ir2_eval_accepts(
 /// ## Why this exists, and what it fixes
 ///
 /// Every mutation sweep in the table-AIR cutover runs through the row-local builder, and that
-/// builder used to hand every AIR an EMPTY preprocessed window. For `Ir2Air::Main` and
-/// `Ir2Air::LeanTable` that is currently correct — neither declares preprocessed columns — but it
-/// made the instrument structurally blind to `Ir2Air::ExactPublicTable`, whose manifest VALUES and
+/// builder used to hand every AIR an EMPTY preprocessed window. For `Ir2Air::Main` and the ten
+/// singleton `Ir2Air::LeanTable`s that is correct — none declares preprocessed columns — but it
+/// made the instrument structurally blind to the exact-public arm, whose manifest VALUES and
 /// PINNED multiplicities live *entirely* in the preprocessed matrix and whose one gate reads
 /// nothing else. An arm that a sweep cannot reach is an arm no sweep can certify, and the moment a
 /// Lean-authored table declares a preprocessed matrix (`TableAirIR` §7, item 4) the same harness
@@ -2100,7 +2144,7 @@ pub fn ir2_air_gates_accept(
 /// assumed one — and the day the table IR grows a preprocessed matrix, this call REFUSES instead
 /// of sweeping against zeros.
 pub fn table_air_gates_accept(t: &LeanTableAir, rows: &[Vec<BabyBear>]) -> bool {
-    ir2_air_gates_accept(&Ir2Air::LeanTable(Arc::new(t.clone())), rows, &[])
+    ir2_air_gates_accept(&Ir2Air::lean_table(Arc::new(t.clone())), rows, &[])
 }
 
 /// The HONEST map-absent table rows the deployed prover would assemble for this descriptor,
@@ -2302,18 +2346,12 @@ pub fn exact_public_instance_for(
         .find(|(id, _)| *id == table_id)
         .ok_or_else(|| format!("descriptor declares no exact-public table with id {table_id}"))?;
     let main_rows = manifest.main_trace();
-    let prep = manifest.preprocessed::<P3BabyBear>();
-    let pw = manifest.arity + 1;
-    let prep_rows: Vec<Vec<BabyBear>> = prep
-        .values
-        .chunks(pw)
-        .map(|c| c.iter().map(|&x| from_p3(x)).collect())
-        .collect();
-    Ok((
-        Ir2Air::ExactPublicTable { table_id, manifest },
-        main_rows,
-        prep_rows,
-    ))
+    let prep_rows: Vec<Vec<BabyBear>> = PrepMatrix {
+        values: manifest.preprocessed_cells(),
+        width: manifest.prep_width(),
+    }
+    .rows();
+    Ok((exact_public_lean_instance(&manifest)?, main_rows, prep_rows))
 }
 
 /// `i64`-valued convenience wrapper over [`ir2_eval_accepts`] so callers (the faithfulness
@@ -2724,6 +2762,15 @@ const CHIP_WIDTH: usize = CHIP_MULT_NARROW + 1;
 /// keyed by `manifest_key_unique`) survive either way; the counting ones need the pin.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExactPublicManifest {
+    /// ⚑ The declared table's WIRE ID, which since the Lean cutover (2026-08-02) is a VALUE rather
+    /// than part of a bus name: it is preprocessed column 0 and the first field of every served
+    /// tuple, and `Ir2Air::Main` prepends the same descriptor-derived constant to every query.
+    ///
+    /// That move is what let the AIR become a per-ARITY family the Lean side can emit — an artifact
+    /// cannot know a table id, and it does not have to when the id is data. The separation is
+    /// unchanged in strength: LogUp balance is a multiset equality over TUPLES, and this column
+    /// lives in the matrix the verifier REBUILDS rather than accepts.
+    table_id: usize,
     /// The DISTINCT declared rows, in first-declaration order (so the committed table is a
     /// function of the descriptor alone and prover and verifier build it identically).
     rows: Vec<Vec<u32>>,
@@ -2735,6 +2782,11 @@ pub struct ExactPublicManifest {
     /// The committed height: `rows.len()` rounded up to a power of two, floored at
     /// [`MIN_EXACT_PUBLIC_HEIGHT`]. Rows past `rows.len()` are all-zero pads carrying
     /// multiplicity ZERO, so they contribute nothing to the bus.
+    ///
+    /// ⚠ **That last clause is a property of THIS function, not of the AIR** — the Lean file's
+    /// `a_pad_shaped_row_is_admitted_at_any_capacity_the_matrix_declares` exhibits a pad-shaped
+    /// all-zero tuple accepted at capacity 5 the moment the preprocessed column reads 5. The gate
+    /// mirrors whatever this writes; the discipline is here.
     height: usize,
 }
 
@@ -2743,7 +2795,7 @@ impl ExactPublicManifest {
     ///
     /// Order is FIRST-DECLARATION order over the Lean-emitted list, so this is a pure function of
     /// the descriptor: the verifier's rebuild is byte-identical to the prover's.
-    fn of(rows: &[Vec<u32>], arity: usize) -> Self {
+    fn of(table_id: usize, rows: &[Vec<u32>], arity: usize) -> Self {
         let mut index: BTreeMap<&[u32], usize> = BTreeMap::new();
         let mut distinct: Vec<Vec<u32>> = Vec::new();
         let mut mults: Vec<u32> = Vec::new();
@@ -2762,6 +2814,7 @@ impl ExactPublicManifest {
             .next_power_of_two()
             .max(MIN_EXACT_PUBLIC_HEIGHT);
         Self {
+            table_id,
             rows: distinct,
             mults,
             arity,
@@ -2769,23 +2822,31 @@ impl ExactPublicManifest {
         }
     }
 
-    /// The column index of the pinned multiplicity inside the preprocessed matrix.
-    const fn mult_col(&self) -> usize {
-        self.arity
+    /// The declared preprocessed width: the table id, `arity` value columns, the pinned
+    /// multiplicity. ⚑ Pinned against the Lean-emitted member's own `prep_width` in
+    /// [`exact_public_lean_instance`], so a layout drift between the two sides REFUSES.
+    const fn prep_width(&self) -> usize {
+        self.arity + 2
     }
 
-    /// The preprocessed matrix: `arity` value columns then the pinned multiplicity, padded to
-    /// [`Self::height`] with all-zero rows (value zeros AND multiplicity zero, so a pad neither
-    /// offers capacity nor names a tuple).
-    fn preprocessed<F: PrimeCharacteristicRing + Send + Sync>(&self) -> RowMajorMatrix<F> {
-        let width = self.arity + 1;
-        let mut values: Vec<F> = Vec::with_capacity(self.height * width);
+    /// The preprocessed matrix: `[table_id, value_0 … value_{arity−1}, multiplicity]`, padded to
+    /// [`Self::height`] with all-zero rows (id zero, value zeros AND multiplicity zero, so a pad
+    /// neither offers capacity nor names a real table's tuple).
+    ///
+    /// ⚠ The id column is written on REAL rows only; a pad carries id `0`, which
+    /// `check_descriptor2` makes unreachable as a declared exact-public wire id (it refuses any id
+    /// at or below `TID_P2_STATE16`). A pad therefore names no real table's tuple AND offers no
+    /// capacity — two independent reasons, and the second is the one the gate mirrors.
+    fn preprocessed_cells(&self) -> Vec<u32> {
+        let width = self.prep_width();
+        let mut values: Vec<u32> = Vec::with_capacity(self.height * width);
         for (row, &mult) in self.rows.iter().zip(self.mults.iter()) {
-            values.extend(row.iter().map(|&v| F::from_u64(u64::from(v))));
-            values.push(F::from_u64(u64::from(mult)));
+            values.push(self.table_id as u32);
+            values.extend(row.iter().copied());
+            values.push(mult);
         }
-        values.resize(self.height * width, F::ZERO);
-        RowMajorMatrix::new(values, width)
+        values.resize(self.height * width, 0);
+        values
     }
 
     /// The committed MAIN trace: one column, the multiplicity the AIR pins to the preprocessed
@@ -2798,8 +2859,23 @@ impl ExactPublicManifest {
     }
 }
 
-/// The five-table interpreter AIR. One Rust type covering every instance of the batch
-/// (the batch prover is monomorphic in the AIR type), entirely descriptor-driven.
+/// **THE IR-v2 INTERPRETER AIR — two arms, and neither authors a constraint.** One Rust type
+/// covering every instance of the batch (the batch prover is monomorphic in the AIR type), entirely
+/// descriptor-driven.
+///
+/// ⚑ **`Main | LeanTable`, since 2026-08-02.** It was twelve arms — eleven of them hand-written
+/// shared-table algebra, in direct violation of architectural law #1 (*"circuits are emitted from
+/// Lean; Rust only INTERPRETS"*). All eleven are DELETED, variants included, in the order
+/// map-absent · byte · memory-boundary · memory · universal-boundary-cohort · universal-boundary ·
+/// universal-memory · map-ops · chip · chip-state16 · exact-public. What is left is one arm that
+/// interprets the MAIN descriptor and one that interprets a Lean-authored TABLE.
+///
+/// What that makes true, which was not true before: **a new shared table is now an EMISSION, not a
+/// variant.** There is no place in this enum where a constraint can be written, so the failure mode
+/// law #1 exists to prevent — "the Rust AIR crate is right there, every step compiles" — has no
+/// entry point on this path. It also means the AIR fingerprint's source closure covers the whole
+/// instance family through two files and a directory of artifacts, rather than through a `match`
+/// whose arms a reader had to enumerate by hand.
 #[derive(Clone)]
 pub enum Ir2Air {
     /// The main instance: the descriptor's own constraints + bus interactions.
@@ -2813,10 +2889,17 @@ pub enum Ir2Air {
     /// algebra used to be hand-written Rust arms of this very `match`.
     ///
     /// The wire object ([`crate::table_air::LeanTableAir`]) carries this table's own width, its
-    /// gates as `WindowExpr` trees each under a ROW SELECTOR, and its bus interactions with a
-    /// per-row MULTIPLICITY EXPRESSION. Those are the two fields a descriptor `Gate`/`Lookup`
-    /// could not carry — the reason a padded, sorted shared table needed a new IR rather than a
-    /// reuse of the main one. `Loc(c)`/`Nxt(c)` read column `c` of THIS table's current/next row.
+    /// gates as `TableExpr` trees each under a ROW SELECTOR, its bus interactions with a per-row
+    /// MULTIPLICITY EXPRESSION, its shared DEFINITION list, and — since the eleventh port — its
+    /// declared PREPROCESSED width. The first two are the fields a descriptor `Gate`/`Lookup`
+    /// could not carry, which is why a padded, sorted shared table needed a new IR rather than a
+    /// reuse of the main one. `Loc(c)`/`Nxt(c)` read column `c` of THIS table's current/next row;
+    /// `Prep(c)` reads column `c` of a SECOND, verifier-recomputed column space.
+    ///
+    /// ⚑ **THIS IS NOW THE ONLY TABLE ARM.** `Ir2Air` is `Main | LeanTable`: one arm interprets the
+    /// MAIN descriptor and one interprets a Lean-authored TABLE. No arm of this enum authors a
+    /// constraint, so architectural law #1 is true of the whole IR-v2 instance family rather than
+    /// of ten elevenths of it, and a new shared table is a new EMISSION rather than a new variant.
     ///
     /// The instances, in the order they came off the hand-written path:
     ///
@@ -2866,23 +2949,138 @@ pub enum Ir2Air {
     ///   no `is_real` factor of its own, the gating arrives two gates away through the
     ///   inverse-witness gate that forces `is_null = is_real`, and a PAD row spelling exactly the
     ///   forbidden op satisfies every gate.
-    LeanTable(Arc<LeanTableAir>),
-    /// ⚑ **A WHOLE Lean-emitted exact-public manifest, as ONE multiplicity-bearing instance** —
-    /// the shape the byte table has always had, generalized from "value = row index" to
-    /// "row = the manifest's row, held in a preprocessed column".
-    ///
-    /// The manifest values and their multiplicities are PREPROCESSED, so they are verifier-known
-    /// by construction: `verify_vm_descriptors2_batch` rebuilds the AIR from the descriptor and
-    /// `ProverData::from_airs_and_degrees` re-derives and re-commits the preprocessed matrix from
-    /// that AIR — the verifier never accepts a prover-supplied table, it recomputes it. The single
-    /// committed main column is the multiplicity, pinned to the preprocessed one.
-    ///
-    /// This replaces one-instance-per-row. The manifest ceiling was never geometric: see
-    /// [`MAX_EXACT_PUBLIC_ROWS`].
-    ExactPublicTable {
-        table_id: usize,
-        manifest: Arc<ExactPublicManifest>,
+    /// * **exact-public manifests** (`ExactPublicTableEmit.lean` →
+    ///   `dregg-ir2-exact-public-v1.json`) — ⚑ the ELEVENTH and LAST arm, and the only one whose
+    ///   emission is a FAMILY: one member per declared tuple ARITY. A whole verifier-known finite
+    ///   multiset as ONE multiplicity-bearing instance — the shape the byte table has always had,
+    ///   generalized from "value = row index" to "row = the manifest's row, held in a preprocessed
+    ///   column". This is the arm that needed [`crate::table_air::TableExpr::Prep`] and
+    ///   [`crate::table_air::LeanTableAir::prep_width`]; see [`exact_public_lean_instance`].
+    LeanTable {
+        /// The decoded Lean emission — the only author of this instance's algebra.
+        air: Arc<LeanTableAir>,
+        /// ⚑ **THE PREPROCESSED MATRIX, when the emission declares one.** `Some` exactly when
+        /// `air.prep_width > 0`; [`Ir2Air::lean_table_with_prep`] is the only constructor that can
+        /// set it and it REFUSES the two mismatched shapes.
+        ///
+        /// The Lean side authors the ALGEBRA and this carries the DATA — which is the split the
+        /// arm needs and the reason `LeanTable` is a struct variant rather than a newtype: the
+        /// manifest VALUES come from the descriptor, and `preprocessed_trace` must materialize them
+        /// at whatever field p3 instantiates the AIR over.
+        prep: Option<Arc<PrepMatrix>>,
     },
+}
+
+/// ⚑ **A verifier-recomputed PREPROCESSED matrix**, as canonical BabyBear representatives.
+///
+/// Held field-independently because `BaseAir::preprocessed_trace` is generic in `F` (p3
+/// instantiates the AIR at `P3BabyBear` on the prover's folder and at the symbolic builders'
+/// expression types when it sizes the quotient), so the cells cannot be stored as `F`.
+///
+/// ⚠ Nothing here is prover-supplied. `verify_vm_descriptors2_batch` rebuilds the AIR from the
+/// descriptor and `ProverData::from_airs_and_degrees` re-derives and re-commits this matrix from
+/// that AIR — the verifier never accepts a prover's table, it recomputes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrepMatrix {
+    values: Vec<u32>,
+    width: usize,
+}
+
+impl PrepMatrix {
+    /// The row count. (`values.len() / width`; the constructor refuses a ragged matrix.)
+    #[must_use]
+    pub fn height(&self) -> usize {
+        if self.width == 0 {
+            0
+        } else {
+            self.values.len() / self.width
+        }
+    }
+
+    /// The declared column count.
+    #[must_use]
+    pub const fn width(&self) -> usize {
+        self.width
+    }
+
+    /// The cells as canonical BabyBear felts, row-major — what a differential sweeps.
+    #[must_use]
+    pub fn rows(&self) -> Vec<Vec<BabyBear>> {
+        self.values
+            .chunks(self.width)
+            .map(|c| c.iter().map(|&x| BabyBear::new(x)).collect())
+            .collect()
+    }
+
+    fn materialize<F: PrimeCharacteristicRing + Send + Sync>(&self) -> RowMajorMatrix<F> {
+        RowMajorMatrix::new(
+            self.values
+                .iter()
+                .map(|&v| F::from_u64(u64::from(v)))
+                .collect(),
+            self.width,
+        )
+    }
+}
+
+impl Ir2Air {
+    /// A Lean-authored table instance that declares NO preprocessed columns — the ten singleton
+    /// tables.
+    ///
+    /// # Panics
+    /// If the emission declares preprocessed columns. The artifacts are `include_str!`d compile-time
+    /// constants, so that is a build-time defect in the same class as a malformed artifact, not a
+    /// runtime input — and it is a panic rather than a silent `None` because an AIR whose
+    /// `preprocessed_width()` is nonzero with no matrix behind it makes p3 index an empty slice.
+    #[must_use]
+    pub fn lean_table(air: Arc<LeanTableAir>) -> Self {
+        assert_eq!(
+            air.prep_width, 0,
+            "table air \"{}\" declares {} preprocessed columns but was built without a matrix",
+            air.name, air.prep_width
+        );
+        Ir2Air::LeanTable { air, prep: None }
+    }
+
+    /// A Lean-authored table instance WITH its verifier-recomputed preprocessed matrix.
+    ///
+    /// # Errors
+    /// Returns the reason the pair is inconsistent: the emission declaring no preprocessed columns,
+    /// or the matrix width disagreeing with the emission's declared `prep_width`. ⚑ The AIR's own
+    /// declaration is the authority in both directions, which is the same contract
+    /// [`ir2_air_gates_accept`] enforces on a sweep.
+    pub fn lean_table_with_prep(
+        air: Arc<LeanTableAir>,
+        prep: Arc<PrepMatrix>,
+    ) -> Result<Self, String> {
+        if air.prep_width == 0 {
+            return Err(format!(
+                "table air \"{}\" declares no preprocessed columns but was handed a matrix",
+                air.name
+            ));
+        }
+        if prep.width() != air.prep_width {
+            return Err(format!(
+                "table air \"{}\" declares prep_width {} but the matrix is {} wide",
+                air.name,
+                air.prep_width,
+                prep.width()
+            ));
+        }
+        Ok(Ir2Air::LeanTable {
+            air,
+            prep: Some(prep),
+        })
+    }
+
+    /// The decoded Lean emission behind a table instance, if this is one.
+    #[must_use]
+    pub fn lean_table_air(&self) -> Option<&LeanTableAir> {
+        match self {
+            Ir2Air::LeanTable { air, .. } => Some(air),
+            Ir2Air::Main { .. } => None,
+        }
+    }
 }
 
 /// Public re-export wrapper of the resolved main layout (kept opaque; constructed by
@@ -2890,35 +3088,38 @@ pub enum Ir2Air {
 #[derive(Clone, Debug)]
 pub struct MainLayoutPub(MainLayout);
 
-// `Send` joins `Sync` here because `Ir2Air::ExactPublicTable` materializes a preprocessed
+// `Send` joins `Sync` here because a `LeanTable` may materialize a preprocessed
 // `RowMajorMatrix<F>`, and p3's `DenseMatrix::new` requires `F: Clone + Send + Sync`. Every `F`
 // this AIR is instantiated at (`P3BabyBear`, the symbolic builders' expression types) already is.
 impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
     fn width(&self) -> usize {
         match self {
             Ir2Air::Main { layout, .. } => layout.0.width,
-            Ir2Air::LeanTable(t) => t.width,
-            // The committed column is the multiplicity; the manifest itself is preprocessed.
-            Ir2Air::ExactPublicTable { .. } => 1,
+            Ir2Air::LeanTable { air, .. } => air.width,
         }
     }
 
+    /// ⚑ **THE EMISSION IS THE AUTHORITY.** This reads the decoded artifact's own `prep_width`, not
+    /// a per-arm constant — which is what makes `ir2_air_gates_accept`'s fail-closed shape contract
+    /// cover a new preprocessed-reading table without anyone editing the oracle.
     fn preprocessed_width(&self) -> usize {
         match self {
-            Ir2Air::ExactPublicTable { manifest, .. } => manifest.arity + 1,
-            _ => 0,
+            Ir2Air::Main { .. } => 0,
+            Ir2Air::LeanTable { air, .. } => air.prep_width,
         }
     }
 
     fn preprocessed_trace(&self) -> Option<RowMajorMatrix<F>> {
         match self {
-            Ir2Air::ExactPublicTable { manifest, .. } => Some(manifest.preprocessed()),
-            _ => None,
+            Ir2Air::Main { .. } => None,
+            Ir2Air::LeanTable { prep, .. } => prep.as_ref().map(|m| m.materialize()),
         }
     }
 
-    /// The table AIR reads only its OWN row of the preprocessed manifest, so prover and verifier
-    /// open the preprocessed columns at `zeta` alone.
+    /// A table AIR reads only its OWN row of the preprocessed matrix, so prover and verifier open
+    /// the preprocessed columns at `zeta` alone. ⚑ Structurally, not by convention: the table
+    /// grammar has no next-row preprocessed leaf at all (`TableAirIR`'s `TRowEnv` carries no
+    /// `prepNxt`), so no emission can read one.
     fn preprocessed_next_row_columns(&self) -> Vec<usize> {
         Vec::new()
     }
@@ -2926,7 +3127,7 @@ impl<F: PrimeCharacteristicRing + Send + Sync> BaseAir<F> for Ir2Air {
     fn num_public_values(&self) -> usize {
         match self {
             Ir2Air::Main { desc, .. } => desc.public_input_count,
-            _ => 0,
+            Ir2Air::LeanTable { .. } => 0,
         }
     }
 
@@ -3133,8 +3334,15 @@ where
                 }
 
                 // -- Lean-emitted exact-public tables. Unlike chip/range subset tables,
-                //    every manifest row has fixed unit capacity on its own AIR instance,
-                //    so global LogUp balance proves exact multiset equality.
+                //    the served capacity is PINNED to the declared multiplicity on the serving
+                //    instance, so global LogUp balance proves exact multiset equality.
+                //
+                //    ⚑ FLAG DAY (2026-08-02, the `ExactPublicTable` Lean cutover): the bus is
+                //    named by ARITY and the TABLE ID is the first TUPLE FIELD, where it used to be
+                //    part of the bus name and absent from the tuple. That is what let the serving
+                //    AIR become a per-arity family a Lean artifact can name; the separation is
+                //    unchanged in strength, because LogUp balance is a multiset equality over
+                //    tuples and the served id lives in the verifier-rebuilt preprocessed matrix.
                 for k in &desc.constraints {
                     let VmConstraint2::Lookup(l) = k else {
                         continue;
@@ -3143,9 +3351,10 @@ where
                         continue;
                     };
                     if matches!(table.sem, TableSem::ExactPublicRows { .. }) {
-                        let tuple: Vec<AB::Expr> =
-                            l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
-                        let bus_name = exact_public_bus_name(table.id);
+                        let mut tuple: Vec<AB::Expr> =
+                            vec![AB::Expr::from_u64(table.id as u64)];
+                        tuple.extend(l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)));
+                        let bus_name = exact_public_bus_name(table.arity);
                         LookupBus::new(&bus_name).lookup_key(builder, tuple, AB::Expr::ONE);
                     }
                 }
@@ -3243,7 +3452,7 @@ where
             // Gates first, then interactions, each in the emitted order, so the assembled AIR is
             // constraint-identical to the deleted arm (checked by
             // `circuit/tests/mapabsent_lean_emission_differential.rs`).
-            Ir2Air::LeanTable(t) => {
+            Ir2Air::LeanTable { air: t, .. } => {
                 // ⚑ **THE DEFINITION PRELUDE — this is the memoisation, and it is the whole point
                 // of the `defs` list.** Each shared sub-expression is evaluated ONCE per row into
                 // an `AB::Expr` and every `TableExpr::Shr` then CLONES that value. On the prover's
@@ -3257,9 +3466,21 @@ where
                 //
                 // The left-to-right pass is sound because `LeanTableAir::check` has already
                 // REFUSED any definition that references a later one.
+                // ⚑ THE PREPROCESSED ROW. Empty unless the emission declares `prep_width > 0`;
+                // `LeanTableAir::check` has bounded every `Prep` index against that declaration, so
+                // a table that reads none cannot reach past this slice. ⚠ `preprocessed()` is not
+                // called at all for a prep-free table, so the ten singleton tables reach the
+                // builder's preprocessed window exactly as often as they did before this leaf
+                // existed: never.
+                let prep: Vec<AB::Var> = if t.prep_width == 0 {
+                    Vec::new()
+                } else {
+                    builder.preprocessed().current_slice()[..t.prep_width].to_vec()
+                };
+
                 let mut dv: Vec<AB::Expr> = Vec::with_capacity(t.defs.len());
                 for d in &t.defs {
-                    let value = eval_table_expr::<AB>(d, &local, &next, &dv);
+                    let value = eval_table_expr::<AB>(d, &local, &next, &prep, &dv);
                     dv.push(value);
                 }
                 for g in &t.gates {
@@ -3276,7 +3497,7 @@ where
                         TableRowSel::Last => Some(builder.is_last_row()),
                         TableRowSel::Transition => Some(builder.is_transition()),
                     };
-                    let body = eval_table_expr::<AB>(&g.body, &local, &next, &dv);
+                    let body = eval_table_expr::<AB>(&g.body, &local, &next, &prep, &dv);
                     builder.assert_zero(match sel {
                         Some(s) => s * body,
                         None => body,
@@ -3286,9 +3507,9 @@ where
                     let tuple: Vec<AB::Expr> = it
                         .tuple
                         .iter()
-                        .map(|e| eval_table_expr::<AB>(e, &local, &next, &dv))
+                        .map(|e| eval_table_expr::<AB>(e, &local, &next, &prep, &dv))
                         .collect();
-                    let mult = eval_table_expr::<AB>(&it.mult, &local, &next, &dv);
+                    let mult = eval_table_expr::<AB>(&it.mult, &local, &next, &prep, &dv);
                     match it.op {
                         TableBusOp::Query => {
                             LookupBus::new(&it.bus).lookup_key(builder, tuple, mult);
@@ -3304,28 +3525,6 @@ where
                         }
                     }
                 }
-            }
-
-            // ----------------------------------------------------------------
-            Ir2Air::ExactPublicTable { table_id, manifest } => {
-                // The manifest row this table row offers, straight out of the preprocessed
-                // (verifier-recomputed) matrix — nothing here trusts a committed value.
-                let prep = builder.preprocessed();
-                let prep_row = prep.current_slice();
-                let entry: Vec<AB::Expr> = prep_row[..manifest.arity]
-                    .iter()
-                    .map(|&value| value.into())
-                    .collect();
-                let pinned: AB::Expr = prep_row[manifest.mult_col()].into();
-
-                // The one committed column is the capacity this row offers, and it is PINNED to
-                // the manifest's own count. Free capacity here would demote the permutation to a
-                // containment; see `ExactPublicManifest`.
-                let multiplicity: AB::Expr = local[0].into();
-                builder.assert_zero(multiplicity.clone() - pinned);
-
-                let bus_name = exact_public_bus_name(*table_id);
-                LookupBus::new(&bus_name).table_entry(builder, entry, multiplicity);
             }
         }
     }
@@ -3789,7 +3988,7 @@ pub fn chip_air_row_accepts(arity: u32, inputs: &[BabyBear]) -> bool {
         height: 1,
         failed: false,
     };
-    Ir2Air::LeanTable(crate::table_air::chip_table_air_shared()).eval(&mut builder);
+    Ir2Air::lean_table(crate::table_air::chip_table_air_shared()).eval(&mut builder);
     !builder.failed
 }
 
@@ -5771,14 +5970,60 @@ fn exact_public_manifests(desc: &EffectVmDescriptor2) -> Vec<(usize, Arc<ExactPu
         .filter_map(|table| match &table.sem {
             TableSem::ExactPublicRows { rows } => Some((
                 table.id,
-                Arc::new(ExactPublicManifest::of(rows, table.arity)),
+                Arc::new(ExactPublicManifest::of(table.id, rows, table.arity)),
             )),
             _ => None,
         })
         .collect()
 }
 
-/// The `Ir2Air::ExactPublicTable` instance MAIN traces for a descriptor, in
+/// ⚑ **ONE EXACT-PUBLIC INSTANCE: the Lean-emitted ALGEBRA, plus the descriptor's DATA.**
+///
+/// This is the whole of what replaced the hand-written `Ir2Air::ExactPublicTable` arm. The gate and
+/// the bus leg come from `dregg-ir2-exact-public-v1.json`, selected by ARITY; the preprocessed
+/// cells come from the manifest. Nothing here authors a constraint.
+///
+/// # Errors
+/// Returns the reason the pair cannot be assembled, and both directions are fail-closed:
+///
+/// * the arity is outside the emitted family (a descriptor declaring a wider manifest than the
+///   Lean emission covers is REFUSED, never served by a nearby member);
+/// * the emitted member's declared `prep_width` disagrees with the manifest layout this file
+///   materializes. ⚑ That is the tooth on the LAYOUT itself: the Lean side says
+///   `prepWidth = arity + 2` and this side writes `[id, values.., mult]`, and if either moved
+///   without the other the instance refuses to assemble rather than serving a matrix whose columns
+///   mean something else.
+fn exact_public_lean_instance(manifest: &Arc<ExactPublicManifest>) -> Result<Ir2Air, String> {
+    // ⚑ THE CEILING IS PINNED ACROSS THE TWO SIDES. `check_descriptor2` admits an arity against
+    // THIS file's `MAX_EXACT_PUBLIC_ARITY`; the emitted family covers `1 ..= EP_MAX_ARITY` from the
+    // Lean side. If those two ever drift, a descriptor could pass admission and then find no member
+    // — so the drift is REFUSED here rather than surfacing as a missing instance (a dropped LogUp
+    // server, i.e. an unsatisfiable bus) or a panic deep in assembly.
+    let family_len = crate::table_air::exact_public_table_air_family().len();
+    if family_len != MAX_EXACT_PUBLIC_ARITY {
+        return Err(format!(
+            "the emitted exact-public family covers {family_len} arities but this file admits \
+             {MAX_EXACT_PUBLIC_ARITY}; re-emit `dregg-ir2-exact-public-v1.json` or re-pin the cap"
+        ));
+    }
+    let air = crate::table_air::exact_public_table_air_for(manifest.arity)?;
+    if air.prep_width != manifest.prep_width() {
+        return Err(format!(
+            "exact-public arity {}: the emitted member declares prep_width {} but the manifest \
+             layout is {} wide",
+            manifest.arity,
+            air.prep_width,
+            manifest.prep_width()
+        ));
+    }
+    let prep = Arc::new(PrepMatrix {
+        values: manifest.preprocessed_cells(),
+        width: manifest.prep_width(),
+    });
+    Ir2Air::lean_table_with_prep(air, prep)
+}
+
+/// The exact-public table instance MAIN traces for a descriptor, in
 /// [`exact_public_manifests`] order — one committed multiplicity column per table, the values
 /// themselves riding in the AIR's preprocessed matrix.
 fn exact_public_table_traces(desc: &EffectVmDescriptor2) -> Vec<Vec<Vec<BabyBear>>> {
@@ -5788,7 +6033,7 @@ fn exact_public_table_traces(desc: &EffectVmDescriptor2) -> Vec<Vec<Vec<BabyBear
         .collect()
 }
 
-/// The number of `Ir2Air::ExactPublicTable` instances a descriptor contributes — ONE per declared
+/// The number of exact-public table instances a descriptor contributes — ONE per declared
 /// exact-public table (it was one per declared manifest ROW until 2026-07-29). Zero for a
 /// table-free descriptor.
 fn exact_public_instance_count(desc: &EffectVmDescriptor2) -> usize {
@@ -5811,55 +6056,62 @@ fn instance_airs(
         layout: MainLayoutPub(layout),
     }];
     if presence.chip {
-        airs.push(Ir2Air::LeanTable(crate::table_air::chip_table_air_shared()));
+        airs.push(Ir2Air::lean_table(crate::table_air::chip_table_air_shared()));
     }
     if presence.chip_state16 {
-        airs.push(Ir2Air::LeanTable(
+        airs.push(Ir2Air::lean_table(
             crate::table_air::chip_state16_table_air_shared(),
         ));
     }
     if presence.byte {
         // The Lean-authored byte (nibble) table AIR — `Dregg2/Circuit/Emit/ByteTableEmit.lean`.
-        airs.push(Ir2Air::LeanTable(crate::table_air::byte_table_air_shared()));
+        airs.push(Ir2Air::lean_table(crate::table_air::byte_table_air_shared()));
     }
     if presence.memory {
         // The Lean-authored memory op-log table AIR — `Emit/MemoryTableEmit.lean`.
-        airs.push(Ir2Air::LeanTable(
+        airs.push(Ir2Air::lean_table(
             crate::table_air::memory_table_air_shared(),
         ));
         // The Lean-authored memory-boundary table AIR — `Emit/MemBoundaryTableEmit.lean`.
-        airs.push(Ir2Air::LeanTable(
+        airs.push(Ir2Air::lean_table(
             crate::table_air::mem_boundary_table_air_shared(),
         ));
     }
     if presence.map_ops {
         // The Lean-authored map reconciliation table AIR — `Emit/MapOpsTableEmit.lean`.
-        airs.push(Ir2Air::LeanTable(
+        airs.push(Ir2Air::lean_table(
             crate::table_air::map_ops_table_air_shared(),
         ));
     }
     if presence.map_absent {
         // The Lean-authored table AIR. Decoded once per assembly from the checked-in emission;
         // presence is a function of the descriptor alone, so the verifier rebuilds the same set.
-        airs.push(Ir2Air::LeanTable(
+        airs.push(Ir2Air::lean_table(
             crate::table_air::map_absent_table_air_shared(),
         ));
     }
     if presence.umem {
         // The Lean-authored universal memory op-log table AIR — `Emit/UMemoryTableEmit.lean`.
-        airs.push(Ir2Air::LeanTable(
+        airs.push(Ir2Air::lean_table(
             crate::table_air::umemory_table_air_shared(),
         ));
         airs.push(if presence.umem_cohort {
             // The Lean-authored cohort boundary — `Emit/UMemBoundaryCohortTableEmit.lean`.
-            Ir2Air::LeanTable(crate::table_air::umem_boundary_cohort_table_air_shared())
+            Ir2Air::lean_table(crate::table_air::umem_boundary_cohort_table_air_shared())
         } else {
             // …and the Lean-authored general boundary — `Emit/UMemBoundaryTableEmit.lean`.
-            Ir2Air::LeanTable(crate::table_air::umem_boundary_table_air_shared())
+            Ir2Air::lean_table(crate::table_air::umem_boundary_table_air_shared())
         });
     }
-    for (table_id, manifest) in exact_public_manifests(desc) {
-        airs.push(Ir2Air::ExactPublicTable { table_id, manifest });
+    for (_, manifest) in exact_public_manifests(desc) {
+        // ⚑ The Lean-emitted arity member + the descriptor's own manifest cells. `expect` rather
+        // than a silent skip: a dropped instance is a dropped LogUp server, i.e. an unsatisfiable
+        // bus at best and an unserved query at worst, and `check_descriptor2` has already bounded
+        // the arity inside the emitted family.
+        airs.push(
+            exact_public_lean_instance(&manifest)
+                .expect("a checked exact-public manifest must have an emitted family member"),
+        );
     }
     airs
 }
@@ -6382,7 +6634,7 @@ where
 // ============================================================================
 
 /// Admit a descriptor to the multi-descriptor batch iff its instance list is a `Ir2Air::Main`
-/// followed by `Ir2Air::ExactPublicTable`s — i.e. the ONLY tables it declares are
+/// followed by exact-public table instances — i.e. the ONLY tables it declares are
 /// [`TableSem::ExactPublicRows`], and its `Presence` set is empty.
 ///
 /// **Why exact-public tables are admissible and the others are not.** An `ExactPublicTable`
@@ -6439,9 +6691,8 @@ fn require_main_or_exact_public(
 
 /// **The instance index of descriptor `k`'s `Ir2Air::Main`** in a multi-descriptor batch.
 ///
-/// The batch emits, per descriptor in order: one main instance, then one
-/// `Ir2Air::ExactPublicTable` instance per declared exact-public TABLE (`desc.tables` in
-/// declaration order). So
+/// The batch emits, per descriptor in order: one main instance, then one exact-public table
+/// instance per declared exact-public TABLE (`desc.tables` in declaration order). So
 ///
 /// ```text
 /// main_index(k) = Σ_{j < k} (1 + tables_j)   tables_j = exact_public_instance_count(descs[j])
@@ -6500,7 +6751,7 @@ pub fn batch_instance_owner(
 /// single-descriptor path applies, applied per descriptor.
 ///
 /// Instance order per descriptor: MAIN (the caller's base trace, the caller's public inputs),
-/// then one `Ir2Air::ExactPublicTable` per declared exact-public table — the AIRs from
+/// then one exact-public table instance per declared exact-public table — the AIRs from
 /// [`instance_airs`]'s tail, the traces from [`exact_public_table_traces`], in the same order,
 /// each with an EMPTY public-value vector exactly as the single-descriptor path's
 /// `pvs.resize(airs.len(), vec![])` gives them.
@@ -6568,9 +6819,9 @@ fn batch_airs_and_matrices(
 
         // The exact-public TABLE instances, AIRs and traces derived from the SAME descriptor walk
         // (`exact_public_manifests`, `desc.tables` in order) so the two lists cannot slip.
-        for (table_id, manifest) in exact_public_manifests(desc) {
+        for (_, manifest) in exact_public_manifests(desc) {
             matrices.push(to_matrix(&manifest.main_trace()));
-            airs.push(Ir2Air::ExactPublicTable { table_id, manifest });
+            airs.push(exact_public_lean_instance(&manifest)?);
             pvs.push(vec![]);
         }
     }
@@ -6588,7 +6839,7 @@ fn batch_airs_and_matrices(
 /// descriptor `k`. It now ADMITS descriptors declaring [`TableSem::ExactPublicRows`] tables (and
 /// only those — every witness-bearing table instance is still refused by
 /// [`require_main_or_exact_public`]), emitting per descriptor: its main instance, then one
-/// `Ir2Air::ExactPublicTable` instance per declared exact-public TABLE. So
+/// exact-public table instance per declared exact-public TABLE. So
 ///
 /// ```text
 /// main_index(k) = Σ_{j < k} (1 + tables_j)   tables_j = exact-public tables of descriptor j
@@ -6604,8 +6855,8 @@ fn batch_airs_and_matrices(
 ///
 /// ## ⚑ SECOND FLAG DAY, same date: the stride was one instance per manifest ROW
 ///
-/// Until [`Ir2Air::ExactPublicTable`] landed, this path emitted one instance per declared manifest
-/// ROW, and `MAX_EXACT_PUBLIC_ROWS` was 128 because of it. Both the batch instance COUNT and the
+/// Until the single-instance exact-public realization landed, this path emitted one instance per
+/// declared manifest ROW, and `MAX_EXACT_PUBLIC_ROWS` was 128 because of it. Both the COUNT and the
 /// admissible manifest size change; a four-slice contents-bound cut over 128-row manifests goes
 /// from 516 instances to 8. Proofs are minted per run, so nothing needs migrating, but any test
 /// asserting `degree_bits.len()` against the old stride goes red — which is the intended failure.
@@ -6753,8 +7004,8 @@ where
         // `ProverData::from_airs_and_degrees` below re-derives and re-commits from these AIRs —
         // so the verifier checks the proof against the table it computed, never one the prover
         // supplied, and a manifest the prover altered gives a different preprocessed commitment.
-        for (table_id, manifest) in exact_public_manifests(desc) {
-            airs.push(Ir2Air::ExactPublicTable { table_id, manifest });
+        for (_, manifest) in exact_public_manifests(desc) {
+            airs.push(exact_public_lean_instance(&manifest)?);
             pvs.push(vec![]);
         }
     }
@@ -6960,7 +7211,7 @@ mod tests {
     /// index, names the slice. Both are asserted here because a verifier that rebuilt the list in
     /// any other order would be verifying a different AIR set than the prover committed.
     ///
-    /// ⚑ It was 10 instances (one per manifest ROW) until `Ir2Air::ExactPublicTable` landed.
+    /// ⚑ It was 10 instances (one per manifest ROW) until the single-instance realization landed.
     ///
     /// The bent-cell leg is the point of the whole change: there is deliberately NO prover-side
     /// multiset pre-flight on this path (unlike `build_traces`'s `check` replay), so the ONLY
@@ -7019,7 +7270,10 @@ mod tests {
         // Measured verdict (release, 2026-07-29):
         //   IR v2 multi-descriptor self-verify failed: LookupError(
         //     "GlobalCumulativeMismatch(None): ir2_exact_public_11")
-        // — the DEPLOYED verifier's global LogUp sum, naming the bent descriptor's OWN bus.
+        // — the DEPLOYED verifier's global LogUp sum. ⚠ The bus NAME in that message changed on
+        // 2026-08-02 (it keys on the ARITY now, `ir2_exact_public_a{n}`, with the table id in the
+        // tuple), so it no longer names the bent descriptor's own table. The verdict CLASS is what
+        // this tooth reads and that is unchanged.
         let deployed = crate::refusal::DEPLOYED_VERIFIER_REFUSAL_MARKERS
             .iter()
             .any(|m| reason.contains(m));
@@ -7158,7 +7412,9 @@ mod tests {
                     Ir2Air::Main { .. } => "main",
                     // The label is the Lean author's own emitted name, so a second table AIR
                     // gets its own row here without touching this match.
-                    Ir2Air::LeanTable(t) => match t.name.as_str() {
+                    // Deliberately no `_ =>` arm: an unregistered table AIR must fail HERE, not
+                    // slip through under a catch-all with an unbudgeted degree.
+                    Ir2Air::LeanTable { air: t, .. } => match t.name.as_str() {
                         "dregg-ir2-map-absent-v1" => "map_absent",
                         "dregg-ir2-byte-v1" => "byte",
                         "dregg-ir2-mem-boundary-v1" => "boundary",
@@ -7169,15 +7425,14 @@ mod tests {
                         "dregg-ir2-map-ops-v1" => "map_ops",
                         "dregg-ir2-chip-v1" => "chip",
                         "dregg-ir2-chip-state16-v1" => "chip_state16",
+                        // ⚑ The exact-public FAMILY: one label for all 64 arity members, which is
+                        // right because they are the same shape and the same degree — the pin is
+                        // degree 1, the served leg degree 2, at every arity.
+                        n if n.starts_with("dregg-ir2-exact-public-a") => "exact_public_table",
                         other => {
                             panic!("unregistered Lean table AIR \"{other}\" in the degree ledger")
                         }
                     },
-                    // One instance PER MANIFEST ROW, so this label is shared by all of a
-                    // descriptor's exact-public row instances (they are the same AIR shape,
-                    // hence the same degree). Deliberately no `_ =>` arm: a new `Ir2Air`
-                    // variant must fail HERE, not slip through under a catch-all.
-                    Ir2Air::ExactPublicTable { .. } => "exact_public_table",
                 };
                 (name.to_string(), deg)
             })
@@ -7623,7 +7878,7 @@ mod tests {
         let airs = instance_airs(&desc, layout, presence);
         assert!(matches!(
             airs.as_slice(),
-            [Ir2Air::Main { .. }, Ir2Air::LeanTable(t)]
+            [Ir2Air::Main { .. }, Ir2Air::LeanTable { air: t, .. }]
                 if t.name == "dregg-ir2-chip-state16-v1"
         ));
 
@@ -7645,7 +7900,7 @@ mod tests {
         assert!(
             instance_airs(&legacy, legacy_layout, legacy_presence)
                 .iter()
-                .all(|air| !matches!(air, Ir2Air::LeanTable(t)
+                .all(|a| !matches!(a, Ir2Air::LeanTable { air: t, .. }
                     if t.name == "dregg-ir2-chip-state16-v1"))
         );
     }
@@ -9216,14 +9471,14 @@ mod tests {
         assert!(
             airs.iter().any(|a| matches!(
                 a,
-                Ir2Air::LeanTable(t) if t.name == "dregg-ir2-umem-boundary-cohort-v1"
+                Ir2Air::LeanTable { air: t, .. } if t.name == "dregg-ir2-umem-boundary-cohort-v1"
             )),
             "the Lean-emitted cohort boundary AIR must be in the instance set"
         );
         assert!(
             !airs.iter().any(|a| matches!(
                 a,
-                Ir2Air::LeanTable(t) if t.name == "dregg-ir2-umem-boundary-v1"
+                Ir2Air::LeanTable { air: t, .. } if t.name == "dregg-ir2-umem-boundary-v1"
             )),
             "the general boundary AIR must NOT be committed for a cohort descriptor"
         );

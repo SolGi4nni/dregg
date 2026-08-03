@@ -59,6 +59,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.ByteTableEmit
 
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson v n k eSub gFirst gTrans)
 
@@ -109,6 +111,7 @@ def byteInteractions : List BusInteraction :=
 def byteTable : TableAir :=
   { name         := "dregg-ir2-byte-v1"
   , width        := BT_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := byteGates
   , interactions := byteInteractions }
@@ -133,13 +136,12 @@ about the AIR. §4a proves the AIR forces `value = row index`; §4b proves it do
 height, which is why the verifier's separate pin is the thing that actually refuses the widening
 attack. -/
 
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.TableAirIR (TableGate)
 
 /-! ### §4a — The AIR forces `value = row index`. -/
 
 /-- The first-row gate, unpacked: row 0's value vanishes. -/
-theorem first_row_is_zero {rows : List VmRowEnv}
+theorem first_row_is_zero {rows : List TRowEnv}
     (hh : byteTable.Holds rows) (h : 0 < rows.length) :
     rows[0].loc BT_VALUE ≡ 0 [ZMOD 2013265921] := by
   have hg := hh 0 h ⟨.first, v BT_VALUE⟩ (by simp [byteTable, byteGates, gFirst])
@@ -147,7 +149,7 @@ theorem first_row_is_zero {rows : List VmRowEnv}
   simpa [v, TExpr.evalWith] using hg (by simp)
 
 /-- The transition gate, unpacked: on any non-final row the NEXT window value is one more. -/
-theorem step {rows : List VmRowEnv}
+theorem step {rows : List TRowEnv}
     (hh : byteTable.Holds rows) (i : Nat) (hlt : i < rows.length) (h : i + 1 < rows.length) :
     rows[i].nxt BT_VALUE ≡ rows[i].loc BT_VALUE + 1 [ZMOD 2013265921] := by
   have hg := hh i hlt ⟨.transition, eSub (n BT_VALUE) (.add (v BT_VALUE) (k 1))⟩
@@ -165,7 +167,7 @@ the table's HEIGHT and nothing else.
 
 ⚠ `Coherent` is not decoration in this statement: without it `rows[i].nxt` is an unconstrained
 function and the increment chain says nothing about `rows[i+1]`. -/
-theorem value_is_the_row_index {rows : List VmRowEnv}
+theorem value_is_the_row_index {rows : List TRowEnv}
     (hc : Coherent rows) (hh : byteTable.Holds rows) :
     ∀ i, ∀ h : i < rows.length,
       rows[i].loc BT_VALUE ≡ (i : ℤ) [ZMOD 2013265921] := by
@@ -188,7 +190,7 @@ theorem value_is_the_row_index {rows : List VmRowEnv}
 exactly the key `i` — as an integer in `[0, p)`, not merely up to a multiple of `p`. So a
 height-`n` byte table serves `[0, n)` and NOTHING else, which is the sentence a range bound is
 read off. -/
-theorem served_key_is_canonical {rows : List VmRowEnv}
+theorem served_key_is_canonical {rows : List TRowEnv}
     (hc : Coherent rows) (hh : byteTable.Holds rows) (hn : rows.length ≤ 2013265921)
     (i : Nat) (h : i < rows.length) :
     rows[i].loc BT_VALUE % 2013265921 = (i : ℤ) := by
@@ -202,13 +204,13 @@ theorem served_key_is_canonical {rows : List VmRowEnv}
 /-! ### §4b — ⚠ …and the AIR does NOT bound the height. -/
 
 /-- Row `i` of the honest increment trace: value `i`, next-value `i + 1`. -/
-def mkRow (i : Nat) : VmRowEnv :=
+def mkRow (i : Nat) : TRowEnv :=
   ⟨fun c => if c = BT_VALUE then (i : ℤ) else 0
   , fun c => if c = BT_VALUE then ((i : ℤ) + 1) else 0
   , fun _ => 0⟩
 
 /-- The honest increment trace of length `m`. -/
-def indexTrace (m : Nat) : List VmRowEnv := (List.range m).map mkRow
+def indexTrace (m : Nat) : List TRowEnv := (List.range m).map mkRow
 
 @[simp] theorem indexTrace_length (m : Nat) : (indexTrace m).length = m := by
   simp [indexTrace]
@@ -268,7 +270,7 @@ def BYTE_JSON : String := emitTableAirJson byteTable
 -- THE WIRE GOLDEN, byte-pinned in full: this table is small enough that the whole emission is
 -- the golden, so there is no gap between "the shape pins pass" and "these are the bytes".
 #guard BYTE_JSON ==
-  "{\"name\":\"dregg-ir2-byte-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"defs\":[],\"gates\":[{\"sel\":\"first\",\"body\":{\"t\":\"loc\",\"c\":0}},{\"sel\":\"transition\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}}}}}],\"interactions\":[{\"bus\":\"ir2_byte\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":1},\"tuple\":[{\"t\":\"loc\",\"c\":0}]}]}"
+  "{\"name\":\"dregg-ir2-byte-v1\",\"kind\":\"table_air\",\"ir\":2,\"width\":2,\"prep_width\":0,\"defs\":[],\"gates\":[{\"sel\":\"first\",\"body\":{\"t\":\"loc\",\"c\":0}},{\"sel\":\"transition\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"nxt\",\"c\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":0},\"r\":{\"t\":\"const\",\"v\":1}}}}}],\"interactions\":[{\"bus\":\"ir2_byte\",\"op\":\"provide\",\"mult\":{\"t\":\"loc\",\"c\":1},\"tuple\":[{\"t\":\"loc\",\"c\":0}]}]}"
 
 /-- The emission is not empty and not a stub. -/
 theorem byteTable_is_not_empty : byteTable.gates ≠ [] := by

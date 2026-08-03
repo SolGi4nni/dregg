@@ -27,13 +27,19 @@
 //!    zero-filled would report a clean undetected set for exactly the columns the arm is about.
 //!    This is the repo's own doctrine — *a gate that cannot go red is not a gate* — applied to the
 //!    instrument rather than to the circuit;
-//! 3. the SIX Lean-authored table AIRs genuinely declare no preprocessed columns, so the empty
-//!    matrix `table_air_gates_accept` passes is a CHECKED shape and not an assumed one (§3).
+//! 3. the preprocessed width of every Lean-authored table AIR is PINNED (§3) — the ten singletons
+//!    at 0, so the empty matrix `table_air_gates_accept` passes is a CHECKED shape and not an
+//!    assumed one, and the exact-public family at `arity + 2`.
 //!
-//! ⚠ What this does NOT do: it does not port `Ir2Air::ExactPublicTable` to Lean. That arm is priced
-//! in `TableAirIR` §7 and needs a `prep` expression leaf, a declared preprocessed width on the wire,
-//! and a parameterized schema. This is item 4 of that list, landed on its own because the other
-//! three cannot be measured honestly until it is.
+//! ⓘ **AND THE ARM IT MEASURES IS NOW LEAN-AUTHORED.** This file landed on 2026-08-01 as item 4 of
+//! `TableAirIR` §7, deliberately AHEAD of the port, because the other three items cannot be measured
+//! honestly until the instrument can see the columns. The port landed 2026-08-02
+//! (`Emit/ExactPublicTableEmit.lean`), `Ir2Air::ExactPublicTable` is DELETED, and the exact-public
+//! instance this file exercises is now an `Ir2Air::LeanTable` carrying a Lean-emitted family member
+//! plus the descriptor's manifest cells. The measurements below are unchanged in content and are
+//! deliberately kept pointed at the INSTRUMENT; the arm's own emission differential —
+//! including the PREPROCESSED-matrix sweep this refusal made possible — is
+//! `exactpublic_lean_emission_differential.rs`.
 
 use dregg_circuit::descriptor_ir2::{
     EffectVmDescriptor2, LookupSpec, TableDef2, TableSem, VmConstraint2, exact_public_instance_for,
@@ -96,18 +102,21 @@ fn the_exact_public_instance_is_reachable_by_the_row_local_oracle() {
         "one committed column"
     );
     assert!(
-        prep_rows.iter().all(|r| r.len() == 3),
-        "arity 2 + the pinned multiplicity"
+        prep_rows.iter().all(|r| r.len() == 4),
+        "the table id + arity 2 + the pinned multiplicity"
     );
 
     // ⚑ THE ROUND-TRIP: the preprocessed rows ARE the declared manifest, deduplicated, with the
     // duplicate's multiplicity folded into the pin — and the committed column MIRRORS the pin.
-    assert_eq!(prep_rows[0][0], BabyBear::new(3));
-    assert_eq!(prep_rows[0][1], BabyBear::new(4));
-    assert_eq!(prep_rows[0][2], BabyBear::new(2), "declared TWICE");
-    assert_eq!(prep_rows[1][2], BabyBear::ONE);
-    assert_eq!(main_rows[0][0], prep_rows[0][2]);
-    assert_eq!(main_rows[1][0], prep_rows[1][2]);
+    // ⚠ Column 0 is the TABLE ID since the Lean cutover: it moved out of the bus NAME and into the
+    // served tuple, which is what let the serving AIR become a per-arity Lean-emitted family.
+    assert_eq!(prep_rows[0][0], BabyBear::new(TID as u32), "the table id");
+    assert_eq!(prep_rows[0][1], BabyBear::new(3));
+    assert_eq!(prep_rows[0][2], BabyBear::new(4));
+    assert_eq!(prep_rows[0][3], BabyBear::new(2), "declared TWICE");
+    assert_eq!(prep_rows[1][3], BabyBear::ONE);
+    assert_eq!(main_rows[0][0], prep_rows[0][3]);
+    assert_eq!(main_rows[1][0], prep_rows[1][3]);
 
     assert!(
         ir2_air_gates_accept(&air, &main_rows, &prep_rows),
@@ -155,7 +164,7 @@ fn every_committed_multiplicity_cell_is_pinned_to_the_preprocessed_manifest() {
     // recomputes the preprocessed matrix from the descriptor, so this cannot happen on the wire —
     // it is asserted here to show the gate reads BOTH sides rather than only the committed one.)
     let mut forged_prep = prep_rows.clone();
-    forged_prep[0][2] = forged_prep[0][2] + BabyBear::ONE;
+    forged_prep[0][3] = forged_prep[0][3] + BabyBear::ONE;
     assert!(
         !ir2_air_gates_accept(&air, &main_rows, &forged_prep),
         "the pin gate must refuse a preprocessed multiplicity that disagrees with the committed one"
@@ -195,7 +204,7 @@ fn an_absent_preprocessed_matrix_is_refused_not_zero_filled() {
     );
     // The wrong HEIGHT and the wrong WIDTH are refused too, not truncated or padded.
     assert!(!ir2_air_gates_accept(&air, &main_rows, &prep_rows[..1]));
-    let narrowed: Vec<Vec<BabyBear>> = prep_rows.iter().map(|r| r[..2].to_vec()).collect();
+    let narrowed: Vec<Vec<BabyBear>> = prep_rows.iter().map(|r| r[..3].to_vec()).collect();
     assert!(!ir2_air_gates_accept(&air, &main_rows, &narrowed));
 }
 
@@ -211,7 +220,7 @@ fn a_preprocessed_matrix_supplied_to_a_prep_free_air_is_refused() {
     // AIR cannot read.
     let air = |prep: &[Vec<BabyBear>]| {
         ir2_air_gates_accept(
-            &dregg_circuit::descriptor_ir2::Ir2Air::LeanTable(std::sync::Arc::new(t.clone())),
+            &dregg_circuit::descriptor_ir2::Ir2Air::lean_table(std::sync::Arc::new(t.clone())),
             &rows,
             prep,
         )
@@ -227,14 +236,30 @@ fn a_preprocessed_matrix_supplied_to_a_prep_free_air_is_refused() {
 // §3 — THE EMPTY WINDOW `table_air_gates_accept` PASSES IS A CHECKED SHAPE.
 // -------------------------------------------------------------------------------------------
 
-/// Every Lean-authored table AIR on the batch declares ZERO preprocessed columns today, so the
-/// empty matrix `table_air_gates_accept` passes through is what the shape contract DEMANDS rather
-/// than what the harness assumes. ⓘ This is the fact that makes the six existing differentials'
-/// sweeps sound; it is asserted rather than described, so the day it stops being true this reds
-/// instead of the sweeps quietly going blind.
+/// ⚑ **THE SENTENCE THIS TEST USED TO ASSERT IS NOW FALSE OF ONE TABLE, AND IT IS RE-STATED RATHER
+/// THAN DELETED.**
+///
+/// It read *"every Lean-authored table AIR declares ZERO preprocessed columns"*, which is what made
+/// the empty matrix `table_air_gates_accept` passes a CHECKED shape rather than an assumed one, and
+/// therefore what made the ten singleton differentials' sweeps sound. The `ExactPublicTable` port
+/// (2026-08-02) emitted the first preprocessed-reading table, so the claim is now per-table: the
+/// ten singletons declare 0 and the exact-public family declares `arity + 2`.
+///
+/// ⓘ Deleting it would have silently retired the property the other sweeps rest on. Keeping it as
+/// an exhaustive pin means a THIRD shape — a table that grows preprocessed columns without a sweep
+/// that reads them — reds here instead of the sweeps quietly going blind.
 #[test]
-fn every_lean_table_air_declares_no_preprocessed_columns() {
+fn the_preprocessed_width_of_every_lean_table_air_is_pinned() {
     use p3_air::BaseAir;
+    let pw_of = |t: dregg_circuit::table_air::LeanTableAir| {
+        let air = dregg_circuit::descriptor_ir2::Ir2Air::LeanTable {
+            air: std::sync::Arc::new(t),
+            prep: None,
+        };
+        <dregg_circuit::descriptor_ir2::Ir2Air as BaseAir<
+            p3_baby_bear::BabyBear,
+        >>::preprocessed_width(&air)
+    };
     for t in [
         map_absent_table_air(),
         byte_table_air(),
@@ -245,16 +270,26 @@ fn every_lean_table_air_declares_no_preprocessed_columns() {
         umem_boundary_table_air(),
     ] {
         let name = t.name.clone();
-        let air = dregg_circuit::descriptor_ir2::Ir2Air::LeanTable(std::sync::Arc::new(t));
-        let pw = <dregg_circuit::descriptor_ir2::Ir2Air as BaseAir<
-            p3_baby_bear::BabyBear,
-        >>::preprocessed_width(&air);
+        let pw = pw_of(t);
         assert_eq!(
             pw, 0,
-            "{name} declares {pw} preprocessed columns — every sweep that runs through \
-             `table_air_gates_accept` now REFUSES it rather than sweeping it against zeros, and \
-             the table IR needs the `prep` leaf priced in TableAirIR §7 before it can be emitted"
+            "{name} declares {pw} preprocessed columns — the sweep in its own differential runs \
+             through `table_air_gates_accept`, which passes an EMPTY matrix, so a nonzero width \
+             here means that sweep is now refused (not silently blind) and needs the preprocessed \
+             matrix threaded through it"
         );
+    }
+
+    // …and the one table that DOES read them, at every emitted arity.
+    for arity in 1..=dregg_circuit::table_air::exact_public_table_air_family().len() {
+        let t = dregg_circuit::table_air::exact_public_table_air_for(arity)
+            .expect("the family covers its own length");
+        assert_eq!(
+            t.prep_width,
+            arity + 2,
+            "the exact-public member at arity {arity} must declare [id, values.., mult]"
+        );
+        assert_eq!(t.width, 1, "one committed column: the capacity");
     }
 }
 

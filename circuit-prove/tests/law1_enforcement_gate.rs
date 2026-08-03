@@ -1038,7 +1038,27 @@ const BASELINE: &[(&str, usize)] = &[
     // `max_constraint_degree` lost its hardcoded `Some(7)`: the chip's degree now comes out of the
     // emitted definition list through `LeanTableAir::def_degrees`, and `ir2_degree_budget` is
     // UNCHANGED because sharing is a change of representation, not of degree.
-    ("circuit/src/descriptor_ir2.rs", 180),
+    // ⚑ RE-PINNED 2026-08-02, 180 -> 179: the `Ir2Air::ExactPublicTable` arm — the ELEVENTH AND
+    // LAST hand-written table AIR in this file, and the smallest (one `assert_zero` pinning a
+    // committed capacity column to a preprocessed one, plus one `table_entry` leg) — was DELETED
+    // and replaced by an `Ir2Air::LeanTable` walking a Lean-emitted FAMILY
+    // (`Emit/ExactPublicTableEmit.lean` -> `dregg-ir2-exact-public-v1.json`, 64 members, one per
+    // declared tuple arity). The VARIANT is gone from the enum.
+    // ⚑ **SO `Ir2Air` IS NOW `Main | LeanTable`, and that is the point of the number rather than
+    // the number itself.** One arm interprets the MAIN descriptor and one interprets a
+    // Lean-authored TABLE; there is no arm of that enum where a constraint can be written, so law
+    // #1's failure mode — "the Rust AIR crate is right there, every step compiles" — has no entry
+    // point on the IR-v2 path at all, and a new shared table is an EMISSION rather than a variant.
+    // ⓘ The delta is ONE because the arm was one `assert_zero`; the eleven ports together moved
+    // this row 287 -> 179. What the last one cost was in the IR, not in the constraint: a `prep`
+    // expression leaf reading a SECOND (verifier-recomputed) column space, its own declared
+    // `prep_width` bound, and a schema rather than a table — `TableAirIR` §7, all four items.
+    // ⓘ `exact_public_bus_name` did NOT go dead and did not shrink this row: it keys on the ARITY
+    // now (`ir2_exact_public_a{n}`) with the table id moved into the served tuple, because an
+    // artifact cannot know a table id — which is what made a per-arity Lean-emitted family
+    // possible. `Ir2Air::Main`'s QUERY side still calls it, so the name is a genuine coupling
+    // between this file and the Lean author, exactly like `ir2_p2` / `ir2_p2_narrow`.
+    ("circuit/src/descriptor_ir2.rs", 179), // 155 of 179 #[cfg(test)]
     ("circuit/src/descriptor_ir2_canonical.rs", 48),
     ("circuit/src/direct_logic_frontend.rs", 3),
     ("circuit/src/dsl/accumulator.rs", 10),

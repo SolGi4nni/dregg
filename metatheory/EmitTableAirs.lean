@@ -20,8 +20,9 @@ import Dregg2.Circuit.Emit.UMemBoundaryCohortTableEmit
 import Dregg2.Circuit.Emit.UMemBoundaryTableEmit
 import Dregg2.Circuit.Emit.MapOpsTableEmit
 import Dregg2.Circuit.Emit.ChipTableEmit
+import Dregg2.Circuit.Emit.ExactPublicTableEmit
 
-open Dregg2.Circuit.TableAirIR (TableAir emitTableAirJson)
+open Dregg2.Circuit.TableAirIR (TableAir emitTableAirJson emitTableAirFamilyJson)
 
 /-- The routing table: artifact filename ↦ its Lean author. -/
 def tableAirs : List (String × TableAir) :=
@@ -40,6 +41,19 @@ def tableAirs : List (String × TableAir) :=
 
 #guard tableAirs.length == 10
 
+/-- ⚑ The FAMILY artifact: a table AIR that is a SCHEMA rather than a singleton.
+`Ir2Air::ExactPublicTable` is a family indexed by the declared tuple ARITY (`TableAirIR` §7 item 3),
+so its artifact is a JSON ARRAY of the same object every line above emits — element `i` is arity
+`i + 1`. It is routed separately because the renderer is `emitTableAirFamilyJson`, not because the
+grammar differs: the elements are ordinary table AIRs. -/
+def tableAirFamilies : List (String × List TableAir) :=
+  [ ("dregg-ir2-exact-public-v1.json",
+      Dregg2.Circuit.Emit.ExactPublicTableEmit.exactPublicFamily) ]
+
+#guard tableAirFamilies.length == 1
+
 def main : IO Unit := do
   for (file, t) in tableAirs do
     IO.println s!"{file}\t{emitTableAirJson t}"
+  for (file, ts) in tableAirFamilies do
+    IO.println s!"{file}\t{emitTableAirFamilyJson ts}"

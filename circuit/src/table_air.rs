@@ -151,6 +151,17 @@ pub enum TableExpr {
     /// reference only STRICTLY EARLIER definitions ([`LeanTableAir::check`] refuses otherwise), so
     /// one left-to-right pass resolves the whole list.
     Shr(usize),
+    /// ⚑ **The PREPROCESSED leaf**: column `c` of this row of the table's preprocessed matrix.
+    ///
+    /// A DIFFERENT COLUMN SPACE from `Loc`/`Nxt`. The preprocessed matrix is not committed by the
+    /// prover — the verifier rebuilds it from the descriptor and commits it itself — so a value
+    /// read here is verifier-known by construction, which is the whole content of an exact-public
+    /// manifest. Bounded by [`LeanTableAir::prep_width`], never by `width`; a decoder that checked
+    /// it against `width` would be checking a bound in the wrong space.
+    ///
+    /// ⚠ There is no next-row form. Every preprocessed-reading arm declares
+    /// `preprocessed_next_row_columns() == []` and reads `current_slice()` alone.
+    Prep(usize),
     /// Field addition.
     Add(Box<TableExpr>, Box<TableExpr>),
     /// Field multiplication.
@@ -164,7 +175,7 @@ impl TableExpr {
     pub(crate) fn max_var(&self) -> Option<usize> {
         match self {
             TableExpr::Loc(i) | TableExpr::Nxt(i) => Some(*i),
-            TableExpr::Const(_) | TableExpr::Shr(_) => None,
+            TableExpr::Const(_) | TableExpr::Shr(_) | TableExpr::Prep(_) => None,
             TableExpr::Add(a, b) | TableExpr::Mul(a, b) => match (a.max_var(), b.max_var()) {
                 (Some(x), Some(y)) => Some(x.max(y)),
                 (Some(x), None) | (None, Some(x)) => Some(x),
@@ -179,8 +190,27 @@ impl TableExpr {
     pub fn max_share(&self) -> Option<usize> {
         match self {
             TableExpr::Shr(i) => Some(*i),
-            TableExpr::Loc(_) | TableExpr::Nxt(_) | TableExpr::Const(_) => None,
+            TableExpr::Loc(_) | TableExpr::Nxt(_) | TableExpr::Const(_) | TableExpr::Prep(_) => {
+                None
+            }
             TableExpr::Add(a, b) | TableExpr::Mul(a, b) => match (a.max_share(), b.max_share()) {
+                (Some(x), Some(y)) => Some(x.max(y)),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+
+    /// The maximum PREPROCESSED column index referenced, if any — the Lean `TExpr.maxPrep`.
+    ///
+    /// ⚠ A `Shr` contributes NOTHING here: its `Prep` reads are its DEFINITION's, and
+    /// [`LeanTableAir::check`] scans every definition in its own right, so the whole list is
+    /// covered without chasing through the share.
+    pub fn max_prep(&self) -> Option<usize> {
+        match self {
+            TableExpr::Prep(c) => Some(*c),
+            TableExpr::Loc(_) | TableExpr::Nxt(_) | TableExpr::Const(_) | TableExpr::Shr(_) => None,
+            TableExpr::Add(a, b) | TableExpr::Mul(a, b) => match (a.max_prep(), b.max_prep()) {
                 (Some(x), Some(y)) => Some(x.max(y)),
                 (Some(x), None) | (None, Some(x)) => Some(x),
                 (None, None) => None,
@@ -199,7 +229,9 @@ impl TableExpr {
     pub(crate) fn degree_with(&self, def_degrees: &[usize]) -> usize {
         match self {
             TableExpr::Const(_) => 0,
-            TableExpr::Loc(_) | TableExpr::Nxt(_) => 1,
+            // A preprocessed cell is a committed column of the preprocessed commitment: degree 1,
+            // exactly as a main-trace column is.
+            TableExpr::Loc(_) | TableExpr::Nxt(_) | TableExpr::Prep(_) => 1,
             TableExpr::Shr(i) => def_degrees.get(*i).copied().unwrap_or(usize::MAX),
             TableExpr::Add(a, b) => a.degree_with(def_degrees).max(b.degree_with(def_degrees)),
             TableExpr::Mul(a, b) => a
@@ -237,8 +269,19 @@ pub struct TableInteraction {
 pub struct LeanTableAir {
     /// The emitted name (the artifact's identity).
     pub name: String,
-    /// This table's own column count.
+    /// This table's own COMMITTED column count.
     pub width: usize,
+    /// ⚑ **THE DECLARED PREPROCESSED WIDTH** — the column count [`TableExpr::Prep`] indexes, and
+    /// `0` for a table that reads none.
+    ///
+    /// A SEPARATE bound because it is a separate column space: `width` bounds the trace the prover
+    /// commits, this bounds the matrix the VERIFIER rebuilds and commits. The exact-public family
+    /// reads `width = 1` against `prep_width = arity + 2`, so a `Prep` index checked against
+    /// `width` would pass nothing and a `Loc` index checked against this would pass almost
+    /// anything. `BaseAir::preprocessed_width` for an `Ir2Air::LeanTable` is exactly this number,
+    /// which is what makes the sweep oracle's fail-closed shape contract key on the AIR's own
+    /// declaration rather than on a list of arms.
+    pub prep_width: usize,
     /// ⚑ **THE SHARED DEFINITION LIST** — the sub-expressions the interpreter computes ONCE per
     /// row, which every [`TableExpr::Shr`] then reads.
     ///
@@ -377,6 +420,34 @@ impl LeanTableAir {
             }
         }
 
+        // ⚑ THE PREPROCESSED BOUND, in its OWN space. The Lean `TableAir.prepsInRange`. Every
+        // `Prep` — definitions included, since a share resolves to one — must name a declared
+        // preprocessed column, or the evaluator would index past `current_slice()` and panic
+        // inside p3 rather than refusing here.
+        let pw = self.prep_width;
+        let mut prep_out_of_range = |e: &TableExpr, what: &str| -> Result<(), String> {
+            match e.max_prep() {
+                Some(m) if m >= pw => Err(format!(
+                    "table air \"{}\": {} reads preprocessed column {} but declares \
+                     prep_width {}",
+                    self.name, what, m, pw
+                )),
+                _ => Ok(()),
+            }
+        };
+        for (di, d) in self.defs.iter().enumerate() {
+            prep_out_of_range(d, &format!("definition {di}"))?;
+        }
+        for (gi, g) in self.gates.iter().enumerate() {
+            prep_out_of_range(&g.body, &format!("gate {gi}"))?;
+        }
+        for (ii, i) in self.interactions.iter().enumerate() {
+            prep_out_of_range(&i.mult, &format!("interaction {ii} multiplicity"))?;
+            for (ti, t) in i.tuple.iter().enumerate() {
+                prep_out_of_range(t, &format!("interaction {ii} tuple element {ti}"))?;
+            }
+        }
+
         let mut worst: Option<usize> = None;
         {
             // A `Shr` reads its DEFINITION's columns, so the column bound is resolved through the
@@ -451,7 +522,9 @@ impl LeanTableAir {
 fn reads_next_with(e: &TableExpr, def_verdicts: &[bool]) -> bool {
     match e {
         TableExpr::Nxt(_) => true,
-        TableExpr::Loc(_) | TableExpr::Const(_) => false,
+        // ⚠ `Prep` is a CURRENT-row read and there is no next-row preprocessed leaf, so it is not
+        // the wrap-row hazard this predicate exists to refuse.
+        TableExpr::Loc(_) | TableExpr::Const(_) | TableExpr::Prep(_) => false,
         TableExpr::Shr(i) => def_verdicts.get(*i).copied().unwrap_or(true),
         TableExpr::Add(a, b) | TableExpr::Mul(a, b) => {
             reads_next_with(a, def_verdicts) || reads_next_with(b, def_verdicts)
@@ -498,6 +571,18 @@ fn parse_table_expr(c: &mut JsonCursor) -> Result<TableExpr, String> {
                 return Err(format!("table expr `shr` index {i} is negative"));
             }
             TableExpr::Shr(i as usize)
+        }
+        // ⚠ `prep` carries a COLUMN (`c`), like `loc`/`nxt`; `shr` carries an INDEX (`i`). The keys
+        // differ, so a decoder that read the wrong one resolves NOTHING rather than resolving
+        // something wrong.
+        "prep" => {
+            c.expect(b',')?;
+            c.expect_key("c")?;
+            let i = c.parse_int()?;
+            if i < 0 {
+                return Err(format!("table expr `prep` column {i} is negative"));
+            }
+            TableExpr::Prep(i as usize)
         }
         "add" | "mul" => {
             c.expect(b',')?;
@@ -621,6 +706,14 @@ pub fn parse_table_air(src: &str) -> Result<LeanTableAir, String> {
         return Err(format!("table air \"{name}\" declares width {width}"));
     }
     c.expect(b',')?;
+    c.expect_key("prep_width")?;
+    let prep_width = c.parse_int()?;
+    if prep_width < 0 {
+        return Err(format!(
+            "table air \"{name}\" declares prep_width {prep_width}"
+        ));
+    }
+    c.expect(b',')?;
     c.expect_key("defs")?;
     let defs = parse_expr_array(&mut c)?;
     c.expect(b',')?;
@@ -649,12 +742,95 @@ pub fn parse_table_air(src: &str) -> Result<LeanTableAir, String> {
     let t = LeanTableAir {
         name,
         width: width as usize,
+        prep_width: prep_width as usize,
         defs,
         gates,
         interactions,
     };
     t.check()?;
     Ok(t)
+}
+
+/// **Decode a Lean-emitted table AIR FAMILY** — a JSON ARRAY of the object [`parse_table_air`]
+/// decodes, mirroring `TableAirIR.emitTableAirFamilyJson`.
+///
+/// ⚑ It exists because one of the eleven ported arms is not a table but a SCHEMA:
+/// `Ir2Air::ExactPublicTable` was a family indexed by the declared tuple ARITY, and a single
+/// descriptor may declare tables at several arities at once. The elements are ordinary table AIRs —
+/// this adds no grammar, only a top-level array — and each is `check`ed exactly as a singleton is.
+pub fn parse_table_air_family(src: &str) -> Result<Vec<LeanTableAir>, String> {
+    // The elements are whole table-air objects, and `parse_table_air` owns the object grammar
+    // (including its `check`). Split on the top-level array structure by tracking brace depth
+    // inside the array, then hand each element to the singleton decoder verbatim, so the two
+    // paths cannot drift.
+    let bytes = src.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'[' {
+        return Err("table air family must be a JSON array".to_string());
+    }
+    i += 1;
+    let mut out: Vec<LeanTableAir> = Vec::new();
+    loop {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return Err("table air family: unterminated array".to_string());
+        }
+        if bytes[i] == b']' {
+            break;
+        }
+        if bytes[i] != b'{' {
+            return Err(format!(
+                "table air family: element {} does not begin with an object",
+                out.len()
+            ));
+        }
+        let start = i;
+        let mut depth = 0usize;
+        let mut in_string = false;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if in_string {
+                // The emitted names and bus strings carry no escapes (`TableAirIR` renders them
+                // verbatim), so a backslash cannot appear inside one; a quote always closes.
+                if b == b'"' {
+                    in_string = false;
+                }
+            } else if b == b'"' {
+                in_string = true;
+            } else if b == b'{' {
+                depth += 1;
+            } else if b == b'}' {
+                depth -= 1;
+                if depth == 0 {
+                    i += 1;
+                    break;
+                }
+            }
+            i += 1;
+        }
+        if depth != 0 {
+            return Err(format!(
+                "table air family: element {} is unterminated",
+                out.len()
+            ));
+        }
+        out.push(parse_table_air(&src[start..i])?);
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b',' {
+            i += 1;
+        }
+    }
+    if out.is_empty() {
+        return Err("table air family declares no members".to_string());
+    }
+    Ok(out)
 }
 
 // ================================================================================================
@@ -816,6 +992,77 @@ pub const CHIP_TABLE_AIR_JSON: &str =
 /// unsatisfiable, so the factor never differs from 1 anywhere it could matter.
 pub const CHIP_STATE16_TABLE_AIR_JSON: &str =
     include_str!("../descriptors/table-airs/dregg-ir2-chip-state16-v1.json");
+
+/// ⚑ The EXACT-PUBLIC manifest table AIR FAMILY, emitted by
+/// `Dregg2.Circuit.Emit.ExactPublicTableEmit.exactPublicFamily`.
+///
+/// ⚑ **The ELEVENTH and LAST hand-written arm.** `Ir2Air::ExactPublicTable` realized one declared
+/// `TableSem::ExactPublicRows` manifest as ONE multiplicity-bearing batch instance: a single
+/// committed capacity column pinned to a preprocessed one, plus a `table_entry` leg serving the
+/// manifest tuple. Those lines are DELETED — the enum VARIANT too — and this array is what replaced
+/// them. `Ir2Air` is now `Main | LeanTable`.
+///
+/// It is a FAMILY rather than a table because the arm was a schema: element `i` is arity `i + 1`,
+/// up to `MAX_EXACT_PUBLIC_ARITY`, and one descriptor may declare tables at several arities at once.
+///
+/// ⚑ **And the bus name moved out of the string and into the tuple**, which is what made a
+/// per-arity family expressible at all. The deployed shape spent one bus `ir2_exact_public_{id}`
+/// per declared table — a number no artifact can know. The bus is now `ir2_exact_public_a{arity}`
+/// and the TABLE ID is preprocessed column 0, the first field of every served tuple and of every
+/// query. The separation is exactly as strong: LogUp balance is a multiset equality over TUPLES,
+/// the id is a tuple field, and it lives in the matrix the verifier REBUILDS rather than accepts.
+///
+/// ⚑ The Lean file proves the pin in BOTH directions (`capacity_is_the_declared_multiplicity`,
+/// `the_pin_refuses_a_free_capacity`, `..._a_short_capacity` — the gate is an EQUALITY, not a
+/// `≤`) and REFUTES three of the deleted arm's comment-only claims:
+///
+/// * `the_gates_bind_no_manifest_value` / `the_gates_bind_no_table_id` — NOT ONE manifest value,
+///   and not the id the whole per-instance separation rests on, is bound by any gate. The tuple is
+///   100% of this table's soundness content and 0% of its algebra; what binds it is the verifier
+///   rebuilding the matrix, one object out.
+/// * `a_pad_shaped_row_is_admitted_at_any_capacity_the_matrix_declares` — *"pads carry
+///   multiplicity ZERO so they contribute nothing"* is a property of
+///   `ExactPublicManifest::preprocessed`'s `resize`, not of the gate.
+/// * `gates_admit_every_height` — every gate is `.all`-scoped, so this AIR does not bound its own
+///   committed height and `MIN_EXACT_PUBLIC_HEIGHT` is a p3 fact it neither knows nor enforces.
+pub const EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON: &str =
+    include_str!("../descriptors/table-airs/dregg-ir2-exact-public-v1.json");
+
+/// The decoded exact-public family, parsed ONCE per process.
+///
+/// ⚠ The length is NOT pinned here — `descriptor_ir2` pins it against its own
+/// `MAX_EXACT_PUBLIC_ARITY` when it selects a member, so a drift between the emitted family and the
+/// deployed ceiling REFUSES at selection rather than silently serving the wrong schema.
+pub fn exact_public_table_air_family() -> &'static [LeanTableAir] {
+    static CACHED: OnceLock<Vec<LeanTableAir>> = OnceLock::new();
+    CACHED.get_or_init(|| {
+        parse_table_air_family(EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON)
+            .expect("the checked-in exact-public table AIR family must decode")
+    })
+}
+
+/// The arity-`arity` member of the exact-public family, shared.
+///
+/// # Errors
+/// Returns the reason the arity is outside the emitted family — which is the fail-closed half: a
+/// descriptor declaring a wider manifest than the Lean emission covers is REFUSED rather than
+/// served by a nearby member.
+pub fn exact_public_table_air_for(arity: usize) -> Result<Arc<LeanTableAir>, String> {
+    static CACHED: OnceLock<Vec<Arc<LeanTableAir>>> = OnceLock::new();
+    let all = CACHED.get_or_init(|| {
+        exact_public_table_air_family()
+            .iter()
+            .map(|t| Arc::new(t.clone()))
+            .collect()
+    });
+    if arity == 0 || arity > all.len() {
+        return Err(format!(
+            "exact-public arity {arity} is outside the emitted family 1..={}",
+            all.len()
+        ));
+    }
+    Ok(Arc::clone(&all[arity - 1]))
+}
 
 /// The decoded map-absent table AIR. Panics on a malformed artifact — the artifact is
 /// `include_str!`d, so a failure here is a build-time defect, not a runtime input.
@@ -1134,7 +1381,7 @@ mod tests {
     /// A wire object that reads past its declared width is REFUSED at decode time.
     #[test]
     fn a_column_past_the_width_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"all","body":{"t":"loc","c":7}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[],"gates":[{"sel":"all","body":{"t":"loc","c":7}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("reads column 7"), "got: {err}");
     }
@@ -1144,11 +1391,11 @@ mod tests {
     /// first — a relation no sorted table means and one the algebra alone cannot show.
     #[test]
     fn an_unscoped_next_row_read_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"all","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[],"gates":[{"sel":"all","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("reads the next row"), "got: {err}");
         // …and the same body under `.transition` is fine.
-        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"transition","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
+        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[],"gates":[{"sel":"transition","body":{"t":"nxt","c":0}}],"interactions":[]}"#;
         assert!(parse_table_air(ok).is_ok());
     }
 
@@ -1156,7 +1403,7 @@ mod tests {
     /// `.all` would turn a padded table's transition gate into a wrap-row constraint.
     #[test]
     fn an_unknown_selector_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"sometimes","body":{"t":"loc","c":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[],"gates":[{"sel":"sometimes","body":{"t":"loc","c":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("unknown row selector"), "got: {err}");
     }
@@ -1167,18 +1414,18 @@ mod tests {
     /// the refusal that makes the one-pass resolution sound rather than lucky.
     #[test]
     fn a_forward_definition_reference_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"shr","i":1},{"t":"loc","c":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"shr","i":1},{"t":"loc","c":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse a forward reference");
         assert!(err.contains("not strictly earlier"), "got: {err}");
         // …and a SELF reference, which is the cycle of length one.
-        let selfref = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"shr","i":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let selfref = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"shr","i":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
         assert!(
             parse_table_air(selfref)
                 .expect_err("must refuse a self reference")
                 .contains("not strictly earlier")
         );
         // …and the same list in TOPOLOGICAL order decodes.
-        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":0},{"t":"mul","l":{"t":"shr","i":0},"r":{"t":"shr","i":0}}],"gates":[{"sel":"all","body":{"t":"shr","i":1}}],"interactions":[]}"#;
+        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"loc","c":0},{"t":"mul","l":{"t":"shr","i":0},"r":{"t":"shr","i":0}}],"gates":[{"sel":"all","body":{"t":"shr","i":1}}],"interactions":[]}"#;
         let t = parse_table_air(ok).expect("a topologically ordered list decodes");
         assert_eq!(t.def_count(), 2);
         // …and the shared square really is degree 2, not degree 1: a `Shr` is NOT a leaf.
@@ -1191,9 +1438,9 @@ mod tests {
     #[test]
     fn an_out_of_range_share_is_refused() {
         for bad in [
-            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#,
-            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":0}],"gates":[],"interactions":[{"bus":"b","op":"query","mult":{"t":"shr","i":3},"tuple":[{"t":"loc","c":0}]}]}"#,
-            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":0}],"gates":[],"interactions":[{"bus":"b","op":"query","mult":{"t":"const","v":1},"tuple":[{"t":"shr","i":9}]}]}"#,
+            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#,
+            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"loc","c":0}],"gates":[],"interactions":[{"bus":"b","op":"query","mult":{"t":"shr","i":3},"tuple":[{"t":"loc","c":0}]}]}"#,
+            r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"loc","c":0}],"gates":[],"interactions":[{"bus":"b","op":"query","mult":{"t":"const","v":1},"tuple":[{"t":"shr","i":9}]}]}"#,
         ] {
             let err = parse_table_air(bad).expect_err("must refuse an out-of-range share");
             assert!(err.contains("only"), "got: {err}");
@@ -1206,18 +1453,18 @@ mod tests {
     /// emitter that hoists the read into a shared value.
     #[test]
     fn a_next_row_read_through_a_definition_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"nxt","c":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"nxt","c":0}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse a shared next-row read under .all");
         assert!(err.contains("reads the next row"), "got: {err}");
         // …and TWO definitions deep, so the chase is not one level.
-        let deep = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"nxt","c":0},{"t":"add","l":{"t":"shr","i":0},"r":{"t":"const","v":1}}],"gates":[{"sel":"all","body":{"t":"shr","i":1}}],"interactions":[]}"#;
+        let deep = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"nxt","c":0},{"t":"add","l":{"t":"shr","i":0},"r":{"t":"const","v":1}}],"gates":[{"sel":"all","body":{"t":"shr","i":1}}],"interactions":[]}"#;
         assert!(
             parse_table_air(deep)
                 .expect_err("must chase through two definitions")
                 .contains("reads the next row")
         );
         // …and the same shape under `.transition` decodes, so the refusal is about SCOPE.
-        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"nxt","c":0}],"gates":[{"sel":"transition","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let ok = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"nxt","c":0}],"gates":[{"sel":"transition","body":{"t":"shr","i":0}}],"interactions":[]}"#;
         assert!(parse_table_air(ok).is_ok());
     }
 
@@ -1226,7 +1473,7 @@ mod tests {
     /// evaluator and panic on the slice index.
     #[test]
     fn a_column_past_the_width_inside_a_definition_is_refused() {
-        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"defs":[{"t":"loc","c":7}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
+        let bad = r#"{"name":"x","kind":"table_air","ir":2,"width":2,"prep_width":0,"defs":[{"t":"loc","c":7}],"gates":[{"sel":"all","body":{"t":"shr","i":0}}],"interactions":[]}"#;
         let err = parse_table_air(bad).expect_err("must refuse");
         assert!(err.contains("reads column 7"), "got: {err}");
     }
@@ -1695,5 +1942,64 @@ mod tests {
         // The map-absent table is unfiltered, so no gate pays the selector.
         let ma = map_absent_table_air();
         assert!(ma.gates.iter().all(|g| g.sel == RowSel::All));
+    }
+
+    /// ⚑ **THE PREPROCESSED BOUND IS IN ITS OWN SPACE, and it REFUSES.** A `prep` index past the
+    /// declared `prep_width` is rejected at DECODE, not left to panic inside p3's evaluator on a
+    /// slice that is one column short.
+    ///
+    /// ⚠ Both directions of the confusion are exercised: widening `width` does not launder an
+    /// out-of-range `prep`, and the two spaces are checked separately.
+    #[test]
+    fn an_out_of_range_prep_column_is_refused_at_decode() {
+        let ok = "{\"name\":\"t\",\"kind\":\"table_air\",\"ir\":2,\"width\":1,\
+                  \"prep_width\":2,\"defs\":[],\"gates\":[{\"sel\":\"all\",\"body\":\
+                  {\"t\":\"prep\",\"c\":1}}],\"interactions\":[]}";
+        let t = parse_table_air(ok).expect("an in-range prep column decodes");
+        assert_eq!(t.prep_width, 2);
+        assert_eq!(t.gates[0].body, TableExpr::Prep(1));
+
+        // …and one column past the declaration is REFUSED, even though `width` is irrelevant to it.
+        let bad = ok.replace("\"c\":1}}]", "\"c\":2}}]");
+        let err = parse_table_air(&bad).expect_err("prep column 2 of a prep_width-2 table");
+        assert!(err.contains("preprocessed column 2"), "{err}");
+
+        // A `prep` inside a DEFINITION is bounded too — the case a check that only walked gates and
+        // interactions would miss, because a `Shr` hides it from every syntactic scan downstream.
+        let in_def = ok
+            .replace("\"defs\":[]", "\"defs\":[{\"t\":\"prep\",\"c\":7}]")
+            .replace("{\"t\":\"prep\",\"c\":1}}]", "{\"t\":\"shr\",\"i\":0}}]");
+        let err = parse_table_air(&in_def).expect_err("a definition may not read past prep_width");
+        assert!(err.contains("definition 0"), "{err}");
+    }
+
+    /// ⚑ **THE EXACT-PUBLIC FAMILY DECODES, and every member is `check`ed exactly as a singleton
+    /// is.** The family is the eleventh port's artifact and the only one that is a JSON ARRAY.
+    #[test]
+    fn the_exact_public_family_decodes_at_every_arity() {
+        let family = exact_public_table_air_family();
+        assert_eq!(family.len(), 64);
+        for (i, t) in family.iter().enumerate() {
+            let arity = i + 1;
+            assert_eq!(t.name, format!("dregg-ir2-exact-public-a{arity}-v1"));
+            assert_eq!(t.width, 1);
+            assert_eq!(t.prep_width, arity + 2);
+            assert_eq!(t.gates.len(), 1);
+            assert_eq!(t.interactions.len(), 1);
+            // The pin is degree 1 and the served leg degree 2, at EVERY arity — which is why
+            // `ir2_degree_budget` is unchanged by this port.
+            assert_eq!(t.max_degree(), 2, "arity {arity}");
+        }
+    }
+
+    /// …and the family decoder is fail-closed on the shapes a hand-edited artifact would take.
+    #[test]
+    fn a_malformed_family_is_refused() {
+        assert!(parse_table_air_family("{}").is_err(), "not an array");
+        assert!(parse_table_air_family("[]").is_err(), "no members");
+        assert!(parse_table_air_family("[1]").is_err(), "not an object");
+        // A truncated member is refused rather than silently dropped.
+        let one = &EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON[..EXACT_PUBLIC_TABLE_AIR_FAMILY_JSON.len() / 2];
+        assert!(parse_table_air_family(one).is_err(), "truncated");
     }
 }

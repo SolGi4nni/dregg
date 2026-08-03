@@ -61,7 +61,8 @@ import Dregg2.Circuit.TableAirIR
 
 namespace Dregg2.Circuit.Emit.MemoryTableEmit
 
-open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.TableAirIR (TRowEnv)
+
 open Dregg2.Circuit.TableAirIR
   (TExpr BusOp BusInteraction TableAir TableGate Coherent emitTableAirJson
    v n k eSub eOneMinus gBool gAll gFirst gTrans decompGates decompQueries limbGeom decompCols)
@@ -154,6 +155,7 @@ def memoryInteractions : List BusInteraction :=
 def memoryTable : TableAir :=
   { name         := "dregg-ir2-memory-v1"
   , width        := MEM_WIDTH
+  , prepWidth    := 0
   , defs         := []
   , gates        := memoryGates
   , interactions := memoryInteractions }
@@ -210,7 +212,7 @@ the witness that refutes the third sentence AS STATED, on the emitted object. -/
 /-! ### §4a — The serial column IS the positional index (+1). -/
 
 /-- The first-row gate, unpacked: row 0 carries serial 1. -/
-theorem first_row_serial_is_one {rows : List VmRowEnv}
+theorem first_row_serial_is_one {rows : List TRowEnv}
     (hh : memoryTable.Holds rows) (h : 0 < rows.length) :
     rows[0].loc MEM_SERIAL ≡ 1 [ZMOD 2013265921] := by
   have hg := hh 0 h ⟨.first, eSub (v MEM_SERIAL) (k 1)⟩
@@ -222,7 +224,7 @@ theorem first_row_serial_is_one {rows : List VmRowEnv}
   omega
 
 /-- The transition gate, unpacked: on any non-final row the NEXT window's serial is one more. -/
-theorem serial_step {rows : List VmRowEnv}
+theorem serial_step {rows : List TRowEnv}
     (hh : memoryTable.Holds rows) (i : Nat) (hlt : i < rows.length) (h : i + 1 < rows.length) :
     rows[i].nxt MEM_SERIAL ≡ rows[i].loc MEM_SERIAL + 1 [ZMOD 2013265921] := by
   have hg := hh i hlt ⟨.transition, eSub (eSub (n MEM_SERIAL) (v MEM_SERIAL)) (k 1)⟩
@@ -240,7 +242,7 @@ index `MemoryChecking.DisciplinedFrom` counts against.
 ⚠ `Coherent` is not decoration: without it `rows[i].nxt` is an unconstrained function and the
 increment chain says nothing about `rows[i+1]`, so the whole claim would be about a machine that
 does not exist. -/
-theorem serial_is_positional {rows : List VmRowEnv}
+theorem serial_is_positional {rows : List TRowEnv}
     (hc : Coherent rows) (hh : memoryTable.Holds rows) :
     ∀ i, ∀ h : i < rows.length,
       rows[i].loc MEM_SERIAL ≡ (i : ℤ) + 1 [ZMOD 2013265921] := by
@@ -352,7 +354,7 @@ def WRAP_PREV : ℤ := 2013265916
 /-- A ONE-ROW window (first AND last, so the two transition gates are vacuous and the wrap row
 never enters) claiming a prior serial of `p − 5` at its own serial 1, with the 5-gap honestly
 decomposed: limb 0 is 5, every other limb and both top bits are 0. -/
-def wrapRow : VmRowEnv :=
+def wrapRow : TRowEnv :=
   ⟨fun c =>
       if c = MEM_PREV_SERIAL then WRAP_PREV
       else if c = MEM_SERIAL then 1
@@ -383,7 +385,7 @@ theorem wrapped_prev_serial_satisfies_every_gate :
 /-- …and the CONTRAST, so the refutation above is not read as "no gate bites here": the honest
 window with `prev_serial = 0` and `gap = 0` is also accepted, and a window whose gap column
 disagrees with its limbs is REFUSED. A table AIR no assignment refutes is decoration. -/
-def honestRow : VmRowEnv :=
+def honestRow : TRowEnv :=
   ⟨fun c => if c = MEM_SERIAL then 1 else if c = MEM_IS_REAL then 1 else 0
   , fun _ => 0, fun _ => 0⟩
 
@@ -423,7 +425,7 @@ def MEMORY_JSON : String := emitTableAirJson memoryTable
 -- offset moves the length, and any edit to the SHAPE moves §3. (The checked-in artifact is these
 -- bytes plus ONE trailing newline, which is the `by-name/` convention and which `JsonCursor` skips
 -- as whitespace.)
-#guard MEMORY_JSON.length == 3843
+#guard MEMORY_JSON.length == 3858
 
 /-- The emission is not empty and not a stub. -/
 theorem memoryTable_is_not_empty : memoryTable.gates ≠ [] := by
