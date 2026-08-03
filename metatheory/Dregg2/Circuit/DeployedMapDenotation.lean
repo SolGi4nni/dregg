@@ -239,6 +239,51 @@ theorem padTo_length {d : Nat} {L : List ℤ} (h : L.length ≤ 2 ^ d) : (padTo 
 theorem padTo_dense {d : Nat} {L : List ℤ} (h : L.length = 2 ^ d) : padTo d L = L := by
   simp only [padTo, h, Nat.sub_self, List.replicate_zero, List.append_nil]
 
+/-! ### §3-cap — ⚑ WHAT AN OVER-CAPACITY HEAP DOES, as theorems rather than as a silence.
+
+⚠ **The width guarantee lives only in `padTo_length`'s HYPOTHESIS, and this is what is on the other
+side of it.** `2 ^ d - L.length` is `Nat` subtraction and SATURATES, so a vector with MORE than
+`2 ^ d` live leaves is padded by ZERO digests and handed to `perfectRoot _ d` over-long. Every
+binding theorem in this file (`padImtRoot_binds_or_ghost_or_collides`, `padVec_length`, and the
+twenty-six `padTo_length` uses across the map cone) carries `L.length ≤ 2 ^ d`, so all of them are
+TRUE — and all of them are SILENT exactly there. `padImtRoot` itself (§4) takes an arbitrary
+`h : Heap.FeltHeap` with no capacity condition, so the silence is reachable from the model's own
+entry point.
+
+The two theorems below say what happens, and the second is the reason it matters: over capacity the
+commitment is NOT BINDING, and the collision needs NO hash break — it holds for EVERY `hash`.
+
+⚠ **NOT CLOSED HERE.** The fix is `padTo`'s own obligation, propagated to `padImtRoot` / `padVec` /
+`padImtRootFind` and the map cone's 91 application sites across 16 files (measured 2026-08-03: 11
+sites in this file alone). That is a lane, not a hunk, and it is NOT done. What is done is that the
+gap is now a pair of named, refutable facts instead of an absence — a reader who takes
+`padImtRoot_binds_or_ghost_or_collides` for a binding result has `over_capacity_roots_collide`
+sitting next to it saying where it stops. -/
+
+/-- **★ OVER CAPACITY THE PAD IS THE IDENTITY.** Above `2 ^ d` live leaves nothing is appended: the
+"padded" vector is the input, longer than the tree the fold is shaped for. -/
+theorem padTo_saturates_over_capacity {d : Nat} {L : List ℤ} (h : 2 ^ d ≤ L.length) :
+    padTo d L = L := by
+  have hz : 2 ^ d - L.length = 0 := Nat.sub_eq_zero_of_le h
+  simp only [padTo, hz, List.replicate_zero, List.append_nil]
+
+/-- **★ AND THE COMMITMENT STOPS BINDING THERE — FOR EVERY HASH, WITH NO CRYPTO ASSUMPTION.** Two
+DIFFERENT over-capacity leaf vectors fold to the SAME `padImtRoot`-shaped root, because
+`perfectRoot _ 0` reads the head and the saturated pad left the tail in place to be ignored. This is
+a floor-free equivocation: it is not a `SpongeColl`, it needs no `PadHit`, and no injectivity
+hypothesis excludes it. It is the exact statement `padImtRoot_binds_or_ghost_or_collides` cannot
+make once its `L.length ≤ 2 ^ d` hypothesis is dropped. -/
+theorem over_capacity_roots_collide (hash : List ℤ → ℤ) :
+    perfectRoot hash 0 (padTo 0 [1, 2]) = perfectRoot hash 0 (padTo 0 [1])
+      ∧ ([1, 2] : List ℤ) ≠ [1] := by
+  refine ⟨rfl, ?_⟩
+  simp
+
+/-- The two witnesses really are over capacity at depth `0` — the hypothesis of every binding
+theorem in this file is FALSE on them, which is why they are outside its reach rather than a
+counterexample to it. -/
+theorem over_capacity_witness_exceeds : ¬ (([1, 2] : List ℤ).length ≤ 2 ^ 0) := by decide
+
 /-- **`PadHit L`** — the committed leaf-digest vector `L` CONTAINS the padding constant.
 
 ⚠ Read what this quantifies over: the POSITIONS OF A GIVEN, FINITE, COMMITTED vector — decidable,
@@ -666,6 +711,9 @@ def padImtTeeth (sent : ℤ) : MapLeafTeeth (padImtSchema sent) where
 #assert_axioms imtChainOf_injective
 #assert_axioms imtLeafFind_spec
 #assert_axioms padTo_length
+#assert_axioms padTo_saturates_over_capacity
+#assert_axioms over_capacity_roots_collide
+#assert_axioms over_capacity_witness_exceeds
 #assert_axioms padTo_dense
 #assert_axioms append_replicate_eq_or_hit
 #assert_axioms padHit_singleton

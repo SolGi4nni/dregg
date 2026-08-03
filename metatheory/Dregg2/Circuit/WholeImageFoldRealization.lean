@@ -124,6 +124,35 @@ theorem padTo8_length {d : Nat} {L : List Digest8} (h : L.length ≤ 2 ^ d) :
 theorem padTo8_dense {d : Nat} {L : List Digest8} (h : L.length = 2 ^ d) : padTo8 d L = L := by
   simp only [padTo8, h, Nat.sub_self, List.replicate_zero, List.append_nil]
 
+/-! ### ⚑ The `Digest8` twin's over-capacity arm — the same silence, at the deployed width.
+
+`2 ^ d - L.length` saturates here exactly as it does at `ℤ`, and `padTo8_length`'s hypothesis is
+again the only place the width is claimed. Both of its consumers
+(`padImtRoot8_binds_or_ghost_or_collides`) carry `L.length ≤ 2 ^ d`, so they are TRUE and SILENT
+above capacity — while `padImtRoot8` itself takes an arbitrary heap. Stated, with the same teeth as
+`DeployedMapDenotation.over_capacity_roots_collide`. ⚠ NOT CLOSED: the fix is `padTo8`'s own
+obligation propagated to `padImtRoot8`, which is the `Digest8` half of the same map-cone lane. -/
+
+/-- **★ OVER CAPACITY THE 8-FELT PAD IS THE IDENTITY** — nothing is appended, and the vector handed
+to `perfectRoot8 _ d` is longer than the tree that fold is shaped for. -/
+theorem padTo8_saturates_over_capacity {d : Nat} {L : List Digest8} (h : 2 ^ d ≤ L.length) :
+    padTo8 d L = L := by
+  have hz : 2 ^ d - L.length = 0 := Nat.sub_eq_zero_of_le h
+  simp only [padTo8, hz, List.replicate_zero, List.append_nil]
+
+/-- **★ AND THE WIDE COMMITMENT STOPS BINDING THERE, FLOOR-FREE.** Two DIFFERENT over-capacity
+digest vectors fold to the SAME root for EVERY sponge: `perfectRoot8 _ 0` reads the head and the
+saturated pad left the tail in place to be ignored. No `Coll8`, no `PadHit8`, no injectivity
+hypothesis rules this out — it is simply outside what
+`padImtRoot8_binds_or_ghost_or_collides` can speak about. -/
+theorem over_capacity_roots8_collide (a b : Digest8) :
+    perfectRoot8 S8 0 (padTo8 0 [a, b]) = perfectRoot8 S8 0 (padTo8 0 [a]) := rfl
+
+/-- The witness really is over capacity at depth `0`. -/
+theorem over_capacity_witness8_exceeds (a b : Digest8) :
+    ¬ (([a, b] : List Digest8).length ≤ 2 ^ 0) := by
+  simp
+
 /-- **`PadHit8 L`** — a position of the LIVE prefix already holds the padding constant. -/
 def PadHit8 (L : List Digest8) : Prop := padDigest8 ∈ L
 
@@ -551,6 +580,9 @@ theorem demo_declared_cell_survives (peerCells : Heap.FeltHeap) (hpl : peerCells
   rw [sentinelHeap_injective hpeq]
   rfl
 
+#assert_axioms padTo8_saturates_over_capacity
+#assert_axioms over_capacity_roots8_collide
+#assert_axioms over_capacity_witness8_exceeds
 #assert_axioms append_replicate_eq_or_hit8
 #assert_axioms padTo8_eq_or_hit
 #assert_axioms padImtRoot8_binds_or_ghost_or_collides
