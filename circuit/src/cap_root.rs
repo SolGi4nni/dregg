@@ -264,8 +264,22 @@ impl CapLeaf {
 /// undo the collision; for attacker-chosen `target`/`breadstuff` bytes the pair is CONSTRUCTED,
 /// not searched. In-tree exhibit: `exact_cap_root`'s alias canary. Being "the single shared
 /// implementation" makes producer and verifier AGREE on the collision — which is why the failure
-/// over-includes rather than forging — it does not make the map binding. Migration target is the
-/// already-written `exact_cap_root` (Stage 2b).
+/// over-includes rather than forging — it does not make the map binding.
+///
+/// ⚑ **THE REPLACEMENT IS SPECIFIED, IN LEAN, AND THIS BODY IS NOT IT** (2026-08-02).
+/// `metatheory/Dregg2/Circuit/CapLeafTargetLanes9.lean` is the authority: it models THIS map for
+/// the first time (`capFoldLimbs`), REFUTES its injectivity on an exhibited pair
+/// (`capFoldLimbs_not_injective`), and fixes the replacement — nine injective lanes
+/// (`KeyLanes9.keyToLanes9`, Rust twin `Faithful9::from_key_lanes9`) in an **arity-16** leaf
+/// block, that arity being forced by `DescriptorIR2.CHIP_ADMITTED_ARITIES` rather than chosen.
+/// Both poles are pinned by execution in `circuit/tests/cap_leaf_target_lanes9_pins.rs`.
+///
+/// Until the cutover lands, note what the two losses are and that they are INDEPENDENT: the
+/// encoder above is ≥ `2^8`-to-1 with the sibling constructed by one 32-bit add, AND the squeeze
+/// to one felt leaves a `30.907`-bit image (`225.09` bits destroyed, `2^15.45` birthday). Fixing
+/// only the encoder lands at `2^30.907` — below this tree's own ~124-bit bar — so the leaf must
+/// widen, not merely re-chunk. `exact_cap_root` (Stage 2b) remains the Rust-side shape, but it
+/// has no Lean authority and its 60-felt preimage is not an admitted chip arity.
 pub fn fold_bytes32(bytes: &[u8; 32]) -> BabyBear {
     hash_many(&crate::effect_vm::bytes32_to_8_limbs(bytes))
 }

@@ -63,11 +63,23 @@ fn join_u64(lo: BabyBear, hi: BabyBear) -> u64 {
 ///
 /// ⚠ **NOT injective, and NOT "canonical".** The word "canonical" used to appear here and is
 /// exactly what invited the re-inventions. The mod-`p` reduction identifies a 4-byte chunk `x`
-/// with `x + p`, and a uniformly random chunk needs reducing with probability
-/// `1 − p/2^32 = 53.1%`, so a colliding pair is CONSTRUCTED in `O(1)` — no grind — wherever the
+/// with `x + p`, so a colliding pair is CONSTRUCTED in `O(1)` — no grind — wherever the
 /// bytes are attacker-chosen. It is deterministic and identical on both projectors, which is why
 /// a collision over-includes (an honest turn goes UNSAT) rather than authorizing a forgery; that
 /// is an availability property, not a binding one.
+///
+/// ⚑ **THE ALIAS RATE IS 100%, NOT 53.1% — corrected 2026-08-02.** This doc used to say "a
+/// uniformly random chunk needs reducing with probability `1 − p/2^32 = 53.1%`", and every reader
+/// since has taken 53.1% for the rate at which a chunk HAS an alias. It is not; it is the rate at
+/// which a chunk IS the non-canonical representative, which is a different and more flattering
+/// question. `2p = 4026531842 < 2^32`, so `[0, 2^32)` covers every residue class at least twice:
+/// `2^32 − 2p = 268435454` residues have THREE `u32` representatives and the other `1744830467`
+/// have TWO. **Every chunk value has a sibling**, so every 32-byte value has at least `2^8 = 256`
+/// byte-distinct siblings with an identical limb vector (`2^256/p^8 = 2^8.74` on average).
+/// Measured by execution — `10000/10000` — in `circuit/tests/degraded_felt_wound_measure.rs`, and
+/// proved in general as `every_chunk_has_a_sibling` in
+/// `metatheory/Dregg2/Circuit/CapLeafTargetLanes9.lean`, which also refutes this encoder's
+/// injectivity (`capFoldLimbs_not_injective`) on the exhibited pair.
 ///
 /// The canonical codec is `dregg_codec::Limbs16` (16 little-endian u16 limbs, injective) with
 /// `dregg_codec::Digest8` for committed fixed-width slots. Migrating this call graph onto it is

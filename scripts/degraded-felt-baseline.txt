@@ -1,0 +1,49 @@
+# degraded-felt-baseline.txt — per-producer counts of DEGRADED 256->31-bit folds sitting in a
+# state-commitment position. A BURNDOWN LEDGER, and the answer to a question the gate itself
+# cannot answer.
+#
+# ⚑ WHY THIS FILE EXISTS. `scripts/check-no-degraded-felt.sh` is RED at HEAD and is SUPPOSED to
+# be: two real wounds are in production and are deliberately NOT allowlisted, because suppressing
+# them is the containment-below-the-bar move. But a gate that is permanently red cannot tell you
+# that a THIRD fold just landed — the exit code was already 1. That is the "red as steady state
+# hides everything" failure, and it is what this ledger closes.
+#
+# So there are two verdicts, and they are different questions:
+#   scripts/check-no-degraded-felt.sh            -> "is the tree clean?"   RED (2 standing wounds)
+#   scripts/check-no-degraded-felt.sh --ratchet  -> "did anything NEW land?" GREEN, until it isn't
+#
+# ⚠ THIS IS NOT A SUPPRESSION. Neither wound is allowlisted, neither is hidden, and the default
+# invocation still fails. A row here does not excuse a fold; it RECORDS one, so the number can only
+# be made smaller. Adding a row is not a way to make a new fold acceptable — it is a way to make a
+# new fold ATTRIBUTABLE, and the gate refuses a row that grows.
+#
+# The gate reds when a producer goes ABOVE its row (a net-new fold), BELOW it (a stale row — retire
+# the number when you repair, do not leave a row that can absorb a future fold), or carries folds
+# with no row at all. So this file may only ever SHRINK, and TOTAL is one honest number.
+#
+# format: <count><TAB><path relative to repo root>
+
+# ── THE TWO STANDING WOUNDS (measured 2026-08-02; both judged on merit, see below) ──────────
+#
+# cell/src/commitment.rs:561 — `cap_root::fold_bytes32(cap.target.as_bytes())`, the cap-tree
+#   leaf's `target` in the DEPLOYED canonical state commitment. A REAL degradation, quantified:
+#   the encoder `bytes32_to_8_limbs` is at least 2^8-to-1 (2^8.74 average) with the sibling
+#   CONSTRUCTED by one 32-bit add, and the squeeze to one felt destroys 225.09 of 256 bits.
+#   Specification for the repair is Lean-authored and landed:
+#   `metatheory/Dregg2/Circuit/CapLeafTargetLanes9.lean` (nine injective lanes, arity-16 leaf).
+#   Cutover NOT done — 45 production Rust sites + 6 Lean modules.
+#
+# node/src/turn_proving.rs:1159 — `nullifier_to_field`. ⚑ JUDGED ON MERIT AND IT IS NOT THE
+#   WOUND THE RULE'S HEADER DESCRIBES. The consensus anchor MIGRATED on 2026-07-31:
+#   `NullifierSet::root8()` is `exact_linked_append_root8` (16 x u16, injective) —
+#   `cell/src/nullifier_set.rs:512-520`. Double-spend refusal runs on RAW 32 bytes at four
+#   independent layers, all UPSTREAM of this fold (`turn/src/executor/apply.rs:1594`,
+#   `node/src/blocklace_sync.rs:7773`, `persist/src/commit_log.rs:675`,
+#   `cell/src/nullifier_set.rs:167`). A fold collision therefore makes an honest spend fail to
+#   PROVE (availability), and cannot make a replay accept. Kept red and rowed rather than
+#   allowlisted, because the fold is still the in-circuit leaf address and the row is cheaper
+#   than an argument.
+
+1	cell/src/commitment.rs
+1	node/src/turn_proving.rs
+TOTAL 2

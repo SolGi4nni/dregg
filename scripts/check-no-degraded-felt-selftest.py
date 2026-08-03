@@ -108,6 +108,61 @@ arm("B1 one file, production REFUSED and its cfg(test) exhibit PERMITTED",
     "fn accumulator_leaf(x: &[u8;32]) -> B {\n    fold_bytes32_to_bb(x)\n}\n\n"
     "#[cfg(test)]\nmod tests {\n    fn t() { let legacy = fold_bytes32_to_bb(&y); }\n}\n", [2])
 
+# ── THE RATCHET ARMS ────────────────────────────────────────────────────────────
+# `check-no-degraded-felt.sh --ratchet` grades the scan against
+# `scripts/degraded-felt-baseline.txt`. The arms above pin what the RULE matches; these
+# pin that the LEDGER can go red. A ratchet whose red path is never exercised is the
+# "documented ≠ detected" failure one layer up: the gate would report PASS forever and
+# nobody would learn that its comparison had rotted.
+#
+# Each arm mutates a COPY of the baseline in a scratch tree (the real one is never
+# touched) and asserts the exit code. 0 = nothing new, 1 = moved, 2 = unusable ledger.
+
+GATE = os.path.join(REPO, "scripts/check-no-degraded-felt.sh")
+BASELINE = os.path.join(REPO, "scripts/degraded-felt-baseline.txt")
+
+
+def ratchet_arm(name, mutate, expect_exit):
+    """Run the REAL gate with a mutated baseline injected via a scratch copy."""
+    if not (os.path.exists(GATE) and os.path.exists(BASELINE)):
+        results.append((name, False, "missing gate/baseline", expect_exit))
+        return
+    original = open(BASELINE).read()
+    mutated = mutate(original)
+    d = tempfile.mkdtemp(prefix="feltratchet.")
+    try:
+        if mutated is None:
+            os.rename(BASELINE, os.path.join(d, "saved"))
+        else:
+            open(os.path.join(d, "saved"), "w").write(original)
+            open(BASELINE, "w").write(mutated)
+        p = subprocess.run([GATE, "--ratchet"], capture_output=True, text=True, cwd=REPO)
+        got = p.returncode
+    finally:
+        if mutated is None:
+            os.rename(os.path.join(d, "saved"), BASELINE)
+        else:
+            open(BASELINE, "w").write(original)
+        shutil.rmtree(d, ignore_errors=True)
+    results.append((name, got == expect_exit, f"exit {got}", f"exit {expect_exit}"))
+
+
+ratchet_arm("T1 the ledger as committed reports NOTHING NEW (exit 0)",
+            lambda s: s, 0)
+ratchet_arm("T2 a producer ABOVE its row (net-new fold) REDS",
+            lambda s: s.replace("1\tcell/src/commitment.rs", "0\tcell/src/commitment.rs")
+                       .replace("TOTAL 2", "TOTAL 1"), 1)
+ratchet_arm("T3 a producer with folds and NO row REDS (never add a row instead)",
+            lambda s: s.replace("1\tnode/src/turn_proving.rs\n", "")
+                       .replace("TOTAL 2", "TOTAL 1"), 1)
+ratchet_arm("T4 a STALE row above the real count REDS (headroom is not allowed)",
+            lambda s: s.replace("1\tcell/src/commitment.rs", "2\tcell/src/commitment.rs")
+                       .replace("TOTAL 2", "TOTAL 3"), 1)
+ratchet_arm("T5 a TOTAL that disagrees with its rows is FATAL, not a pass",
+            lambda s: s.replace("TOTAL 2", "TOTAL 7"), 2)
+ratchet_arm("T6 a MISSING ledger is FATAL, not a pass",
+            lambda s: None, 2)
+
 width = max(len(n) for n, *_ in results)
 allok = True
 for name, ok, got, exp in results:

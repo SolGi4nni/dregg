@@ -33,20 +33,18 @@ use super::{
 /// by construction, one XOR from any id. It is now one `CHIP_NODE8_ARITY` absorb over the
 /// base-`2^29` **nonet** `‖ 0⁷`, first four output lanes — the same permutation
 /// `dregg_commit::typed::compress_member` rides.
+///
+/// ## ⚑ 2026-08-02 — the inline copy is GONE
+///
+/// The nonet loop used to be re-typed here, in the body, which meant the twin corpus in
+/// `commit/tests/key_octet_f2_twins_and_the_hole.rs` pinned three transcriptions and could not
+/// see the fourth: an unnamed inline copy is exactly the copy a twin test cannot reach. It now
+/// calls [`crate::effect_vm::key_limbs9`], which the corpus DOES pin. Zero felts moved — the
+/// hoisted body is the same loop — and the drift surface is one name shorter.
 pub fn canonical_id_to_felts_4(canonical: &[u8; 32]) -> [BabyBear; 4] {
     use crate::descriptor_ir2::{CHIP_NODE8_ARITY, chip_absorb_all_lanes};
     let mut ins = [BabyBear::ZERO; 16];
-    for (i, slot) in ins[..9].iter_mut().enumerate() {
-        let bit = i * 29;
-        let mut acc: u64 = 0;
-        for k in 0..5usize {
-            if let Some(byte) = canonical.get(bit / 8 + k) {
-                acc |= u64::from(*byte) << (8 * k);
-            }
-        }
-        acc >>= bit % 8;
-        *slot = BabyBear::new((acc & ((1u64 << 29) - 1)) as u32);
-    }
+    ins[..9].copy_from_slice(&crate::effect_vm::key_limbs9(canonical));
     let out = chip_absorb_all_lanes(CHIP_NODE8_ARITY, &ins);
     [out[0], out[1], out[2], out[3]]
 }
@@ -1485,9 +1483,18 @@ pub fn try_generate_effect_vm_trace_ext(
     //
     // Surface the first NoteSpend row's folded nullifier (param0) into
     // PI[NOTESPEND_NULLIFIER]. The AIR's per-row gated constraint pins every
-    // sel::NOTE_SPEND row's param0 to this slot, and the off-AIR verifier
-    // reconstructs the same value from the SCHEMA_NOTE_SPEND binding proof's
-    // fields[0]. Sentinel: ZERO when no NoteSpend row is present. Multiple
+    // sel::NOTE_SPEND row's param0 to this slot.
+    //
+    // ⚠ CORRECTED 2026-08-02. This comment used to continue "and the off-AIR verifier
+    // reconstructs the same value from the SCHEMA_NOTE_SPEND binding proof's fields[0]".
+    // THAT VERIFIER DOES NOT EXIST — `grep -rn NOTESPEND_NULLIFIER turn/src` returns only an
+    // unrelated test name, and no crate outside `circuit/` reads the constant at all. The
+    // binding proof does carry the RAW 32 bytes as `fields[0]`
+    // (`turn/src/executor/proof_verify.rs`), but nothing folds them and nothing compares them
+    // to PI 198. So this slot is pinned felt-to-felt against the trace's own param0 and
+    // NOTHING ELSE. See the same correction above `pi::NOTESPEND_NULLIFIER`.
+    //
+    // Sentinel: ZERO when no NoteSpend row is present. Multiple
     // NoteSpend rows must share the same folded nullifier (the per-row
     // constraint forces it) — multi-distinct-nullifier proofs need PI
     // extension (deferred, same as EmitEvent's EMIT_EVENT_COUNT > 1 note).

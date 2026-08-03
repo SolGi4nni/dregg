@@ -743,10 +743,21 @@ pub const OWNER_CELL_ID_LEN: usize = 4;
 //   (1) this PI slot — a single felt carrying `fold_bytes32_to_bb(nullifier)`.
 //   (2) AIR per-row constraint (air.rs), gated by `sel::NOTE_SPEND`: every
 //       NoteSpend row's `param0` MUST equal `PI[NOTESPEND_NULLIFIER]`.
-//   (3) off-AIR equality (turn::executor::proof_verify): the verifier
-//       reconstructs `PI[NOTESPEND_NULLIFIER]` from the SCHEMA_NOTE_SPEND
-//       binding proof's `fields[0]` (the cross-proof source) and the
-//       PI-match loop rejects any proof whose PI disagrees.
+//   (3) ⚠ DOES NOT EXIST. MEASURED 2026-08-02. This tooth was described here as
+//       "off-AIR equality (turn::executor::proof_verify): the verifier reconstructs
+//       `PI[NOTESPEND_NULLIFIER]` from the SCHEMA_NOTE_SPEND binding proof's `fields[0]`
+//       and the PI-match loop rejects any proof whose PI disagrees." No crate performs it.
+//       `grep -rn NOTESPEND_NULLIFIER turn/src` matches only an unrelated test NAME
+//       (`membership_verifier.rs`), and no crate outside `circuit/` references the constant
+//       — not `verifier/`, not `lightclient/`, not `sdk/`. The binding proof does carry the
+//       nullifier's RAW 32 bytes in `fields[0]`, but nothing folds them and nothing compares
+//       the result to this slot.
+//
+//       So the count is TWO teeth, not three, and the missing one is the ONLY one that would
+//       have tied this felt to the 256-bit source. Approach A's "all reference the SAME
+//       folded nullifier" is true of (1) and (2) — which reference each other, in-circuit,
+//       and nothing else. Left described-and-absent rather than quietly deleted, because a
+//       reader who counted three teeth needs to see which one they were counting.
 //
 // Single felt (one slot, not 8): matches the in-trace `param0` width the
 // AIR already pins. The full 256-bit binding of the nullifier lives in the

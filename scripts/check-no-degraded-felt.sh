@@ -62,21 +62,45 @@
 # runs the REAL rule file with only its `files:` scope re-pointed — including the arms proving
 # a `mod tests` WITHOUT `#[cfg(test)]` still reds, so the narrowing bought no escape hatch.
 #
+# ── ⚑ `--ratchet` (added 2026-08-02): THE VERDICT A PERMANENTLY-RED GATE CANNOT GIVE ───────
+# The two production wounds above are deliberately not allowlisted, so this gate's exit code is
+# already 1 and STAYS 1. That means it can no longer answer the question it was built to answer:
+# "did a THIRD degrading fold just land?" A net-new fold changes nothing observable — red before,
+# red after. That is "red as steady state hides everything", and it is the residual the lane that
+# narrowed the `files:` scope named on its way out.
+#
+# `--ratchet` grades the scan against `scripts/degraded-felt-baseline.txt`: per-producer counts
+# that may only ever SHRINK. It reds when a producer goes ABOVE its row (net-new), BELOW it (a
+# stale row that could absorb a future fold — retire the number when you repair), or has folds
+# with no row at all.
+#
+# ⚠ IT IS NOT A SUPPRESSION AND MUST NOT BECOME ONE. The default invocation is unchanged and
+# still fails on the two wounds. A row RECORDS a fold so it is attributable; it never excuses one.
+# The two verdicts answer different questions and both are wanted:
+#     scripts/check-no-degraded-felt.sh            -> "is the tree clean?"      RED (2 wounds)
+#     scripts/check-no-degraded-felt.sh --ratchet  -> "did anything NEW land?"  GREEN until it isn't
+#
 # Usage:  scripts/check-no-degraded-felt.sh
 #         scripts/check-no-degraded-felt.sh --rev HEAD   # clean extract (churn-safe)
+#         scripts/check-no-degraded-felt.sh --ratchet    # net-new only, against the baseline
+#         scripts/check-no-degraded-felt.sh --ratchet --rev HEAD
 # Exit:   0 = clean (all folds in commitment producers are justified);
+#             with --ratchet: no fold moved against the baseline;
 #         1 = an un-justified degraded fold reached a commitment position;
-#         2 = environment problem (ast-grep not installed / bad --rev).
+#             with --ratchet: a producer rose above / fell below its row, or is unrowed;
+#         2 = environment problem (ast-grep not installed / bad --rev / unreadable baseline).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 REV=""
+RATCHET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --rev) REV="${2:-}"; [ -n "$REV" ] || { echo "check-no-degraded-felt: --rev needs a revision" >&2; exit 2; }; shift 2 ;;
     --rev=*) REV="${1#--rev=}"; shift ;;
-    -h|--help) sed -n '2,66p' "$0"; exit 0 ;;
+    --ratchet) RATCHET=1; shift ;;
+    -h|--help) sed -n '2,84p' "$0"; exit 0 ;;
     *) echo "check-no-degraded-felt: unknown argument '$1' (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -217,6 +241,73 @@ fi
 # `sg scan` exits non-zero when an error-severity diagnostic survives
 # suppression. Unused `ast-grep-ignore` directives are help-level only and do
 # NOT fail the scan, so a stale allowlist comment never breaks CI on its own.
+if [ "$RATCHET" -eq 1 ]; then
+  BASELINE="$ROOT/scripts/degraded-felt-baseline.txt"
+  [ -f "$BASELINE" ] || {
+    echo "check-no-degraded-felt: FATAL — missing $BASELINE." >&2
+    echo "  The ratchet cannot report a pass without the ledger it grades against." >&2
+    exit 2; }
+  # `--json=compact` so the counts come from the tool's own structured output rather than a
+  # regex over the human renderer. `sg scan` exits non-zero when errors survive, and here that
+  # is the EXPECTED case, so the exit status is deliberately not the signal.
+  SCAN_JSON="$("$SG" scan --config "$ROOT/sgconfig.yml" --json=compact "${SCOPED_PATHS[@]}" 2>/dev/null || true)"
+  [ -n "$SCAN_JSON" ] || {
+    echo "check-no-degraded-felt: FATAL — the scan produced NO json. A ratchet that cannot" >&2
+    echo "  read the scan must not report a pass." >&2
+    exit 2; }
+  BASELINE="$BASELINE" SCAN_JSON="$SCAN_JSON" python3 - <<'PY'
+import json, os, sys
+rows, total_declared = {}, None
+for ln in open(os.environ["BASELINE"]):
+    s = ln.strip()
+    if not s or s.startswith("#"):
+        continue
+    if s.startswith("TOTAL "):
+        total_declared = int(s.split()[1]); continue
+    n, path = s.split("\t", 1)
+    rows[path.strip()] = int(n)
+if total_declared is None:
+    print("check-no-degraded-felt: FATAL — baseline has no TOTAL line.", file=sys.stderr); sys.exit(2)
+if sum(rows.values()) != total_declared:
+    print(f"check-no-degraded-felt: FATAL — baseline rows sum to {sum(rows.values())} but "
+          f"TOTAL says {total_declared}. A ledger that does not add up is not a ledger.",
+          file=sys.stderr); sys.exit(2)
+
+seen = {}
+for m in json.loads(os.environ["SCAN_JSON"]):
+    if m.get("severity") != "error":
+        continue
+    seen[m["file"]] = seen.get(m["file"], 0) + 1
+
+bad = []
+for path, n in sorted(seen.items()):
+    base = rows.get(path)
+    if base is None:
+        bad.append(f"  NET-NEW  {path}: {n} degraded fold(s), NO baseline row. This producer was "
+                   f"clean. Repair it — do not add a row.")
+    elif n > base:
+        bad.append(f"  ROSE     {path}: {n} > {base}. A net-new degraded fold landed in a "
+                   f"producer that already had one.")
+for path, base in sorted(rows.items()):
+    n = seen.get(path, 0)
+    if n < base:
+        bad.append(f"  STALE    {path}: {n} < {base}. Repaired — RETIRE the row (a row above the "
+                   f"real count is headroom a future fold can land in unnoticed).")
+
+t = sum(seen.values())
+if bad:
+    print("check-no-degraded-felt --ratchet: FAIL", file=sys.stderr)
+    print("\n".join(bad), file=sys.stderr)
+    print(f"\n  baseline TOTAL {total_declared}, measured {t}. "
+          f"scripts/degraded-felt-baseline.txt may only SHRINK.", file=sys.stderr)
+    sys.exit(1)
+print(f"check-no-degraded-felt --ratchet: PASS — {t} degraded fold(s) across "
+      f"{len(seen)} producer(s), all at or below baseline (TOTAL {total_declared}).")
+print("  ⚠ PASS here means NOTHING NEW LANDED. The tree is NOT clean: run without --ratchet.")
+PY
+  exit $?
+fi
+
 if "$SG" scan --config "$ROOT/sgconfig.yml" "${SCOPED_PATHS[@]}"; then
   echo "check-no-degraded-felt: PASS — no un-justified degraded felt in a commitment position."
   exit 0
