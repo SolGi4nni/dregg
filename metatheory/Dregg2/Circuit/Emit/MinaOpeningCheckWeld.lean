@@ -296,7 +296,10 @@ real satisfying value for its conclusion.
   * **It is not a satisfying ASSIGNMENT.** §5 says the reference residual is `O` at the real
     block; it does not materialise the 573,377-gate witness (every RCB intermediate, quotient and
     carry column) that would make `acceptB` return `true`. That is the PROVER's job and the
-    subject of the witness-generation perimeter, not the kernel's. The gap is named, and the
+    subject of the witness-generation perimeter, not the kernel's. ⚑ And `573,377` is a count of
+    the EMITTED gates — one degree-2 constraint per Pasta multiply, no limb ranges, no carry pins,
+    and no enforcement of the multiply at `p_felt` (`PastaField` §6.4). At an encoding sound at
+    BabyBear the same statement is ~10³× that; see `PastaMsmAir` §5b's caption. The gap is named, and the
     terminal gadget's own satisfiability — the one genuinely new gate here — IS exhibited, in
     `PastaMsmAir` §3b.
   * **P10 is untouched**, exactly as in `PastaMsmAir` §6.1. The relation HOLDING is not the
