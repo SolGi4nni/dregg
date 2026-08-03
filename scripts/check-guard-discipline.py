@@ -51,13 +51,45 @@ green — which is the same as no gate. So: a PER-MODULE baseline in
     instrument this policy pushes work TOWARD. Counting them would point the ratchet
     backwards. `check-guard-modules.py` is the gate that they actually run.
 
+═══ ⚑⚑ THE REFRESH GATE — measured 2026-08-02, and it is why this file has arm (d) ══
+Every arm above guards the CENSUS against the BASELINE. Nothing guarded the BASELINE
+itself, and `--update-baseline` rewrote it unconditionally. So the ratchet could be turned
+UP by the one operation that exists to turn it down, and a green afterwards certified the
+new number rather than the old one.
+
+⚑ IT ALREADY HAPPENED, AND NOT IN THE SHAPE ANYONE WATCHES FOR. Between `a7d30783d`
+(the baseline commit) and `a819016de` (a refresh) the ledger went 15,656 → 15,665. **No row
+was raised.** `Dregg2/Circuit/Emit/KimchiStepMain.lean` (814) was REMOVED and thirteen
+`…Pins01–13` rows totalling **837** were ADDED — a module SPLIT. Twenty-three guards a
+concurrent rung had just written entered the baseline as part of what read like two
+legitimate operations: a burned-down module retiring its row, and arm (c) being obeyed by
+giving new guard-carrying modules their rows. Both arms were satisfied at every step. A
+rename is how a population grows without any row growing, and only the TOTAL can see it.
+
+So the refresh is now itself gated, on three things:
+
+  (d1) **no surviving row may RISE** — the in-place shape of the same sin;
+  (d2) **the TOTAL may not rise** — which is what catches a split/rename, since the pieces
+       of a genuine split sum to at most the original;
+  (d3) **every refresh records PROVENANCE** — sha, dirtiness, totals, and a `--reason`
+       written into the baseline header. A refresh from a DIRTY tree is recorded as dirty,
+       because that is what the laundered one was: a lane refreshing from its own churn.
+
+⚠ AND THE OVERRIDE IS DELIBERATELY LOUD, NOT ABSENT. `--allow-increase` exists, and it
+still requires `--reason`, and it stamps `INCREASED` with the delta into the header. A ban
+with no escape hatch gets routed around by hand-editing the file, which is the silent
+outcome this gate exists to prevent. The wound was never that the number went up. It was
+that nothing said so.
+
 ═══ USAGE ═════════════════════════════════════════════════════════════════════════
   python3 scripts/check-guard-discipline.py                 # working tree, ratcheted
   python3 scripts/check-guard-discipline.py --rev HEAD      # clean extract of HEAD (churn-safe)
   python3 scripts/check-guard-discipline.py --top 25        # + the worst offenders
-  python3 scripts/check-guard-discipline.py --update-baseline
+  python3 scripts/check-guard-discipline.py --update-baseline --reason "converted N in <module>"
+  python3 scripts/check-guard-discipline.py --update-baseline --allow-increase --reason "..."
   python3 scripts/check-guard-discipline.py --self-test     # red-proof (synthetic tree)
 Exit: 0 ratchet-green · 1 violation or stale row or vacuous scan · 2 environment error
+       3 REFUSED refresh (the baseline would have risen)
 """
 
 from __future__ import annotations
@@ -153,20 +185,146 @@ def read_baseline(path: Path) -> dict[str, int]:
     return out
 
 
-def write_baseline(path: Path, counts: dict[str, int], total_files: int) -> None:
+PROV_PREFIX = "# BASELINE-PROVENANCE"
+
+
+def read_provenance(path: Path) -> list[str]:
+    """The refresh log carried in the baseline header, oldest first."""
+    if not path.exists():
+        return []
+    return [ln.rstrip() for ln in path.read_text(encoding="utf-8").splitlines()
+            if ln.startswith(PROV_PREFIX)]
+
+
+def _head_sha_and_dirt() -> tuple[str, bool]:
+    """(sha, tree-is-dirty). ⚑ Dirtiness is RECORDED, not refused: the laundered refresh of
+    2026-08-02 was a lane rewriting the ledger from its own uncommitted churn, so 'which tree
+    did this number come from' is the question the header has to be able to answer."""
+    root = repo_root()
+    try:
+        sha = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        return ("unknown", True)
+    try:
+        st = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--", "metatheory"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+        return (sha, bool(st))
+    except Exception:
+        return (sha, True)
+
+
+def write_baseline(path: Path, counts: dict[str, int], total_files: int,
+                   provenance: list[str] | None = None) -> None:
     total = sum(counts.values())
     lines = [
         "# guard-discipline-baseline.txt — per-module `#guard` counts. A BURNDOWN LEDGER.",
         "# The gate (scripts/check-guard-discipline.py) reds when a module goes ABOVE its row,",
         "# BELOW it (a stale row — retire the number when you convert), or carries guards with",
         "# no row at all. So this file may only ever SHRINK. Policy: metatheory/docs/GUARD-DISCIPLINE.md.",
+        "#",
+        "# ⚑ A REFRESH IS ITSELF GATED. `--update-baseline` REFUSES to raise any row or the TOTAL",
+        "# (the total is what catches a module SPLIT, which grows the population while no row grows —",
+        "# that is how 23 guards entered this file on 2026-08-02). Raising it at all requires",
+        "# `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:",
+        "# the whole point is that every rise is attributable.",
         f"# TOTAL {total} guards across {len(counts)} modules ({total_files} .lean files scanned).",
         "# format: <count><TAB><path relative to metatheory/>",
-        "",
     ]
+    lines.extend(provenance or [])
+    lines.append("")
     for p in sorted(counts):
         lines.append(f"{counts[p]}\t{p}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def refresh_baseline(path: Path, counts: dict[str, int], n_files: int,
+                     reason: str | None, allow_increase: bool,
+                     quiet: bool = False, only: list[str] | None = None) -> int:
+    """⚑ THE REFRESH GATE. Returns 0 on a written baseline, 3 on a REFUSED one.
+
+    Arms (d1) no row may rise, (d2) the total may not rise, (d3) provenance is mandatory.
+    Kept separate from `evaluate` on purpose: `evaluate` grades a census against a ledger,
+    this grades a proposed LEDGER against the standing one, and conflating them is exactly
+    how the refresh path ended up ungated.
+
+    ⚑ `only` is the SWARM primitive, and it is not a convenience. The tree is shared: when a
+    lane converts guards in three modules, a whole-census refresh would also absorb every
+    OTHER lane's in-flight guard-carrying module — which is the laundering shape again, just
+    with someone else's work as the payload. `--only` retires exactly the rows a lane earned
+    and leaves every other row at its standing value, so a lane can never bake in a number it
+    did not produce. The d1/d2 arms still apply to the resulting ledger."""
+    def say(*a):
+        if not quiet:
+            print(*a)
+
+    old = read_baseline(path)
+    if only is not None:
+        sel = set(only)
+        merged = dict(old)
+        for p in sel:
+            if p in counts:
+                merged[p] = counts[p]
+            else:
+                merged.pop(p, None)
+        untouched = sorted(p for p in counts if p not in old and p not in sel)
+        counts = merged
+        say(f"── targeted refresh: {len(sel)} row(s) named; "
+            f"{len(untouched)} unlisted guard-carrying module(s) LEFT ALONE ──")
+        for p in untouched[:10]:
+            say(f"     (untouched) {p}")
+    old_total, new_total = sum(old.values()), sum(counts.values())
+    rises = [(p, old[p], counts[p]) for p in sorted(counts)
+             if p in old and counts[p] > old[p]]
+    added = {p: n for p, n in counts.items() if p not in old}
+
+    say(f"── proposed refresh: {old_total} → {new_total} guards "
+        f"({len(old)} → {len(counts)} rows) ──")
+    if rises:
+        say(f"   rows that would RISE: {len(rises)}")
+        for p, a, b in rises:
+            say(f"     +{b - a}  {p}: {a} → {b}")
+    if added:
+        say(f"   rows that would be ADDED: {len(added)} carrying {sum(added.values())} guards")
+        for p in sorted(added, key=lambda k: -added[k])[:10]:
+            say(f"     +{added[p]}  {p}")
+
+    refusals: list[str] = []
+    if rises and not allow_increase:
+        refusals.append(
+            f"(d1) {len(rises)} row(s) would RISE — the ratchet only turns DOWN. Convert or "
+            "delete those guards, or re-run with `--allow-increase --reason '…'` and say why")
+    if new_total > old_total and not allow_increase:
+        refusals.append(
+            f"(d2) the TOTAL would RISE {old_total} → {new_total} (+{new_total - old_total}) "
+            "with no row rising by itself — this is the SPLIT/RENAME shape that laundered 23 "
+            "guards on 2026-08-02. A genuine split's pieces sum to at most the original")
+    if not reason:
+        refusals.append(
+            "(d3) `--reason` is REQUIRED — a refresh with no recorded reason is exactly the "
+            "silent one this gate exists to prevent")
+
+    if refusals:
+        say("")
+        for r in refusals:
+            say(f"REFUSED: {r}")
+        say("")
+        say("The baseline was NOT written.")
+        return 3
+
+    sha, dirty = _head_sha_and_dirt()
+    delta = new_total - old_total
+    verdict = "INCREASED" if delta > 0 else ("DECREASED" if delta < 0 else "LEVEL")
+    prov = read_provenance(path)
+    prov.append(
+        f"{PROV_PREFIX} {sha}{'-DIRTY' if dirty else ''} {old_total}→{new_total} "
+        f"({delta:+d}) {verdict} — {reason}")
+    write_baseline(path, counts, n_files, prov)
+    say(f"wrote {path} — {new_total} guards across {len(counts)} modules  [{verdict} {delta:+d}]")
+    if verdict == "INCREASED":
+        say("⚑ this refresh RAISED the ledger. It is stamped INCREASED in the header and is "
+            "greppable; say so in the commit too.")
+    return 0
 
 
 def evaluate(counts: dict[str, int], n_files: int, baseline: dict[str, int],
@@ -325,15 +483,110 @@ def run_self_test() -> int:
         # baseline update retires the rows and re-greens
         (mt / "sub/New.lean").unlink()
         c5, n5 = scan(mt)
-        write_baseline(bl, c5, n5)
-        rc = evaluate(c5, n5, read_baseline(bl), False, "self-test", 0, quiet=True)
+        rc = refresh_baseline(bl, c5, n5, "self-test retire", False, quiet=True)
         check("--update-baseline retires the rows and re-greens", rc == 0, f"rc={rc}")
+        rc = evaluate(c5, n5, read_baseline(bl), False, "self-test", 0, quiet=True)
+        check("…and the retired baseline greens the census", rc == 0, f"rc={rc}")
 
         # the ratchet is one-way: the retired (smaller) baseline now REJECTS a regrowth
         _mk(mt, "A.lean", "#guard 1 == 1\n#guard 2 == 2\n#guard 3 == 3\n")
         c6, n6 = scan(mt)
         rc = evaluate(c6, n6, read_baseline(bl), False, "self-test", 0, quiet=True)
         check("the ratchet is ONE-WAY: regrowth past the retired row fails", rc == 1, f"rc={rc}")
+
+        # ── ⚑ THE REFRESH GATE (arms d1/d2/d3) ────────────────────────────────────
+        # The census arms above all grade a tree against the ledger. These grade a proposed
+        # LEDGER against the standing one — the path that was ungated until 2026-08-02.
+        # `bl` currently holds {A:2, sub/B:1}; the tree currently holds A at 3 (the regrowth
+        # the arm above just proved reds).
+
+        # (d1) a refresh that would RAISE a row is REFUSED, even with a reason.
+        c7, n7 = scan(mt)          # A.lean == 3, above its row of 2
+        before = bl.read_text(encoding="utf-8")
+        rc = refresh_baseline(bl, c7, n7, "trying to bake in a regrowth", False, quiet=True)
+        check("REFUSED (d1): a refresh that RAISES a row is refused", rc == 3, f"rc={rc}")
+        check("(d1) …and the baseline on disk is UNTOUCHED by the refusal",
+              bl.read_text(encoding="utf-8") == before, "the file was rewritten anyway")
+
+        # (d2) ⚑ THE MEASURED SHAPE. Split a baselined module into pieces that SUM HIGHER.
+        # No row rises (the original's row vanishes, the pieces are new rows), and arm (c)
+        # would even DEMAND those new rows exist. Only the TOTAL sees it.
+        _mk(mt, "A.lean", "#guard 1 == 1\n#guard 2 == 2\n")     # back to its row of 2
+        c8, n8 = scan(mt)
+        rc = refresh_baseline(bl, c8, n8, "restore", False, quiet=True)
+        check("CONTROL: a LEVEL refresh is accepted", rc == 0, f"rc={rc}")
+        (mt / "sub/B.lean").unlink()                             # the 1-guard module, "split"…
+        _mk(mt, "sub/B1.lean", "#guard 3 == 3\n")                # …into two pieces summing to 2
+        _mk(mt, "sub/B2.lean", "#guard 4 == 4\n")
+        c9, n9 = scan(mt)
+        split_rises = [p for p in c9 if p in read_baseline(bl) and c9[p] > read_baseline(bl)[p]]
+        check("(d2) the SPLIT raises the total while NO row rises (the shape itself)",
+              sum(c9.values()) > sum(read_baseline(bl).values()) and not split_rises,
+              f"rises={split_rises}, total {sum(read_baseline(bl).values())}→{sum(c9.values())}")
+        rc = refresh_baseline(bl, c9, n9, "split B into B1/B2", False, quiet=True)
+        check("REFUSED (d2): a SPLIT whose pieces sum HIGHER is refused", rc == 3, f"rc={rc}")
+
+        # …and a split whose pieces sum to AT MOST the original still passes — the gate blocks
+        # laundering, not splitting.
+        (mt / "sub/B2.lean").unlink()
+        c10, n10 = scan(mt)
+        rc = refresh_baseline(bl, c10, n10, "split B into B1 alone", False, quiet=True)
+        check("a LEVEL split (pieces sum to the original) is ACCEPTED", rc == 0, f"rc={rc}")
+
+        # (d3) provenance is mandatory, and it is RECORDED.
+        (mt / "A.lean").write_text("#guard 1 == 1\n", encoding="utf-8")   # a real burndown
+        c11, n11 = scan(mt)
+        rc = refresh_baseline(bl, c11, n11, None, False, quiet=True)
+        check("REFUSED (d3): a refresh with NO --reason is refused", rc == 3, f"rc={rc}")
+        rc = refresh_baseline(bl, c11, n11, "converted A's second guard", False, quiet=True)
+        check("a legitimate DOWNWARD refresh with a reason is ACCEPTED", rc == 0, f"rc={rc}")
+        prov = read_provenance(bl)
+        check("…and it STAMPED provenance into the header",
+              any("DECREASED" in ln and "converted A's second guard" in ln for ln in prov),
+              f"provenance={prov}")
+        check("…and provenance ACCUMULATES (earlier refreshes are still on the record)",
+              len(prov) >= 3, f"{len(prov)} provenance line(s)")
+
+        # the override exists, is LOUD, and still needs a reason.
+        _mk(mt, "sub/Loud.lean", "#guard 5 == 5\n#guard 6 == 6\n")
+        c12, n12 = scan(mt)
+        rc = refresh_baseline(bl, c12, n12, None, True, quiet=True)
+        check("--allow-increase STILL requires --reason", rc == 3, f"rc={rc}")
+        rc = refresh_baseline(bl, c12, n12, "new module, paid for later", True, quiet=True)
+        check("--allow-increase with a reason is ACCEPTED", rc == 0, f"rc={rc}")
+        check("…and the rise is stamped INCREASED (greppable, never silent)",
+              any("INCREASED" in ln for ln in read_provenance(bl)),
+              f"provenance={read_provenance(bl)}")
+
+        # ── ⚑ `--only`: a lane retires ITS rows and cannot absorb a sibling's ─────────
+        # The shared-tree shape: this lane converted a guard in A.lean while a SIBLING lane
+        # has an unlisted, guard-carrying module in flight. A whole-census refresh would bake
+        # the sibling's guards into the ledger — the laundering shape with someone else's work
+        # as the payload. `--only A.lean` must retire A's row and leave the sibling alone.
+        (mt / "sub/Loud.lean").unlink()
+        _mk(mt, "A.lean", "#guard 1 == 1\n")
+        c13, n13 = scan(mt)
+        rc = refresh_baseline(bl, c13, n13, "reset for the --only arm", True, quiet=True)
+        check("setup: ledger holds A at 1", rc == 0 and read_baseline(bl).get("A.lean") == 1,
+              f"rc={rc} row={read_baseline(bl).get('A.lean')}")
+        _mk(mt, "sub/SiblingWip.lean", "#guard 7 == 7\n#guard 8 == 8\n#guard 9 == 9\n")
+        (mt / "A.lean").write_text("", encoding="utf-8")   # this lane converted A's last guard
+        c14, n14 = scan(mt)
+        rc = refresh_baseline(bl, c14, n14, "retire A", False, quiet=True, only=["A.lean"])
+        after = read_baseline(bl)
+        check("--only retires the NAMED row", rc == 0 and "A.lean" not in after,
+              f"rc={rc}, A.lean={after.get('A.lean')}")
+        check("⚑ --only does NOT absorb the sibling's unlisted module",
+              "sub/SiblingWip.lean" not in after, f"sibling row={after.get('sub/SiblingWip.lean')}")
+        rc = evaluate(c14, n14, after, False, "self-test", 0, quiet=True)
+        check("…and the sibling's module still REDS as unlisted (its lane must own it)",
+              rc == 1, f"rc={rc}")
+        # …and --only is still subject to (d1): it cannot raise the row it names either.
+        _mk(mt, "A.lean", "#guard 1 == 1\n#guard 2 == 2\n")
+        rc = refresh_baseline(bl, *scan(mt), "sneak A back up", False, quiet=True,
+                              only=["A.lean"])
+        check("--only is STILL subject to (d1)/(d2): it cannot raise its own row",
+              rc == 3, f"rc={rc}")
 
         # floors: a blinded (empty) scan must FAIL rather than green
         rc = evaluate({}, 0, {}, True, "self-test-blinded", 0, quiet=True)
@@ -352,7 +605,17 @@ def main() -> int:
     ap.add_argument("--rev", help="scan a clean `git archive` extract of this revision (churn-safe)")
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     ap.add_argument("--update-baseline", action="store_true",
-                    help="rewrite the baseline from the current census (retire converted rows)")
+                    help="rewrite the baseline from the current census (retire converted rows). "
+                         "REFUSES to raise any row or the total; requires --reason")
+    ap.add_argument("--reason", help="why this refresh happens — stamped into the baseline header "
+                                     "with the sha. Required by --update-baseline")
+    ap.add_argument("--allow-increase", action="store_true",
+                    help="⚑ permit a refresh that RAISES a row or the total. Still requires "
+                         "--reason, and stamps INCREASED into the header")
+    ap.add_argument("--only", action="append", metavar="PATH",
+                    help="⚑ retire ONLY these rows (repeatable, paths relative to metatheory/). "
+                         "Every other row keeps its standing value — so a lane in a shared tree "
+                         "cannot absorb a sibling's in-flight guards. Use this by default")
     ap.add_argument("--top", type=int, default=0, help="also print the N heaviest modules")
     ap.add_argument("--self-test", action="store_true", help="red-proof against a synthetic tree")
     ap.add_argument("--metatheory-dir", type=Path, help="override the metatheory dir (testing)")
@@ -378,10 +641,8 @@ def main() -> int:
         counts, n_files = scan(mt)
 
         if args.update_baseline:
-            write_baseline(args.baseline, counts, n_files)
-            print(f"wrote {args.baseline} — {sum(counts.values())} guards across "
-                  f"{len(counts)} modules")
-            return 0
+            return refresh_baseline(args.baseline, counts, n_files,
+                                    args.reason, args.allow_increase, only=args.only)
 
         return evaluate(counts, n_files, read_baseline(args.baseline),
                         enforce_floors=True, label=label, top=args.top)

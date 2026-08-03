@@ -168,4 +168,42 @@ their entire theorem support at the rationals, standing in for claims about a 25
 * a module with **no** row that carries guards is RED — the population cannot grow sideways.
 
 Run it: `python3 scripts/check-guard-discipline.py` · red-proof: `--self-test` · retire rows:
-`--update-baseline`.
+`--update-baseline --only <path> --reason "…"`.
+
+## ⚑⚑ The refresh is gated too — and it is what let 23 guards in
+
+Every arm above grades a **census** against the **ledger**. Nothing graded the ledger, and
+`--update-baseline` rewrote it unconditionally, so the one operation that exists to turn the ratchet
+down could turn it up — and a green afterwards certified the *new* number.
+
+**Measured 2026-08-02.** Between `a7d30783d` (the baseline commit) and `a819016de` (a refresh) the
+ledger went 15,656 → 15,665. **No row was raised.** `KimchiStepMain.lean` (814) was removed and
+thirteen `…Pins01–13` rows totalling **837** were added — a module **split**. Twenty-three guards a
+concurrent rung had just written entered the baseline as two operations that each looked correct: a
+burned-down module retiring its row, and arm (c) being obeyed by giving new guard-carrying modules
+their rows. And the +23 was **net −5 on the visible total**, because the same refresh also carried a
+real −14 burndown in `MinaMultiBlockConformance`. A genuine conversion paid for a laundered growth.
+
+⚑ **A rename is how a population grows while no row grows. Only the TOTAL can see it.** So:
+
+* **(d1)** a refresh may not raise **any surviving row**;
+* **(d2)** a refresh may not raise the **total** — this is the arm that catches a split, since a
+  genuine split's pieces sum to at most the original;
+* **(d3)** every refresh records **provenance** — sha, whether the tree was **dirty**, the totals,
+  and a mandatory `--reason` — stamped into the baseline header, so every movement is attributable
+  by `git log`. Dirtiness is recorded because the laundered refresh *was* a lane rewriting the
+  ledger from its own uncommitted churn.
+
+⚑ **`--only <path>` is the default way to retire rows, not a convenience.** The tree is shared. A
+whole-census refresh absorbs every *other* lane's in-flight guard-carrying module — the same
+laundering shape with a sibling's work as the payload. `--only` retires exactly the rows you earned
+and leaves the rest standing; the sibling's module keeps redding until its own lane owns it.
+
+⚠ **The override is loud, not absent.** `--allow-increase` exists, still requires `--reason`, and
+stamps `INCREASED` with the delta. A ban with no escape hatch gets routed around by hand-editing the
+file, which is the silent outcome. The wound was never that the number went up — it was that
+nothing said so.
+
+Red-proofed in `--self-test` (28 arms), including the two green controls that keep the gate from
+being a blanket refusal: a **level split** whose pieces sum to the original is accepted, and a
+legitimate **downward** refresh is accepted.
