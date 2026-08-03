@@ -1,0 +1,739 @@
+// pickles-wrapmain-harness — PROVE the Lean-assembled `wrap_main` rungs.
+//
+// ⚑ THIS IS THE WRAP SIDE, AND IT IS A DIFFERENT CURVE AND A DIFFERENT FIELD FROM THE STEP ONE.
+// `wrap_main_inputs.ml:4,6` sets `Me = Tock`, `Impl = Impls.Wrap`, so the wrap circuit's native
+// field is `Tock.Field = Fq` and a wrap kimchi proof is committed on **Pallas**, whose scalar field
+// is Fq. The step harness proves over Vesta/Fp. Everything below is Pallas/Fq: the prover index,
+// both sponges, and every coefficient and witness cell parsed out of the Lean emission.
+//
+// The circuit is Lean-authored by `Dregg2.Circuit.Emit.KimchiWrapMain` — gate list, coefficients,
+// cross-gate placement (`KimchiPlacement.placeChecked`) and the composed witness grid
+// (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that
+// RUNS it and authors no constraint. No OCaml, no Node, no o1js in this path.
+//
+// FOUR RUNGS, each a superset of the one below, each proved with BOTH polarities:
+//   w1_transcript  the Fq Poseidon sponge of `wrap_verifier.ml:516-646` + `check_bulletproof`'s
+//                  continuation, driven by the REAL rate-2 state machine (`poseidon.rs:107-146`):
+//                  beta and gamma share ONE permutation, and the digest squeeze is the FORK at
+//                  `:645-646` that does not advance the transcript
+//   w2_challenges  `to_field_checked` over Fq (`scalar_challenge.ml:12-136`) — chained
+//                  EndoMulScalar rows with the n0=0/a0=2/b0=2 seeds PINNED, the lowest_128_bits
+//                  decomposition, and a SECOND chain over the HIGH part (`util.ml:98` asserts it
+//                  unconditionally), closed by `Field.(scale a endo + b)` at Pallas's endo scalar
+//   w3_branch      `One_hot_vector.of_index` + `Pseudo.choose` + `Util.ones_vector` +
+//                  `Branch_data.Checked.pack` (`wrap_main.ml:164-199`) — the wrap-specific
+//                  selection sub-circuit, which has no step-side analogue at all
+//   w4_bind        the closing ties: the wrap statement words this assembly DERIVES become public
+//                  words through `placeChecked`, so a word no gate reads REFUSES
+//
+// THE GATE, per rung:
+//   (1) HONEST      — the assembled circuit's good witness verify()==true;
+//   (2) WIRING      — desyncing a sigma-ONLY probe cell is REJECTED (probe rows are standalone
+//                     `Zero` rows: a `Zero` gate reads nothing and no gate reads a probe row, so
+//                     that cell is constrained by the copy-permutation AND BY NOTHING ELSE);
+//   (3) NOT-ADJACENCY — the SAME flips on the UNWIRED control (identical rows, byte-identical
+//                     witness, probe rows in NO sigma class) are ACCEPTED;
+//   (4) NON-VACUITY — an unread advice-cell flip is ACCEPTED;
+//   (5) PUBLIC INPUT (w4 only) — the honest proof verified against a tampered public vector is
+//                     REJECTED, and flipping public cell (i,0) AND telling the verifier the new
+//                     value is STILL REJECTED, by the copy-permutation alone, at i=0 and i=last.
+//
+// disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
+// z-polynomial), not by a debug assert.
+//
+// SCOPE. INNER-KIMCHI FIDELITY of four assembled sub-circuits of `wrap_main`. NOT a soundness
+// proof, NOT "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER
+// Pallas/Fq proof of a `wrap_main`-SHAPED circuit, and `KimchiWrapMain` §13 names by sub-circuit
+// everything that is not here (W-KEY, W-XHAT, W-SPLIT, W-FTCOMM, W-COMBINE, W-BULLET,
+// W-FINALIZE, W-WRAPHACK, W-PREV).
+//
+// REGENERATE the fixtures (only when the Lean assembly changes):
+//   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
+//     && DREGG_WM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean \
+//     && cp /tmp/pickles-wrapmain/wrapmain_smoke_*.json \
+//           fixtures/pickles-wrapmain-harness/fixtures/
+//
+// RUN the committed gate (RELEASE — a debug prove is minutes):
+//   cargo test --release --manifest-path metatheory/fixtures/pickles-wrapmain-harness/Cargo.toml
+// RUN the wrap-scale rung set (all four rungs, timed):
+//   DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean
+//   cargo run --release --manifest-path .../Cargo.toml -- /tmp/pickles-wrapmain wrap
+
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::Instant;
+
+use groupmap::GroupMap;
+use mina_curves::pasta::{Fq, Pallas, PallasParameters};
+use mina_poseidon::{
+    constants::PlonkSpongeConstantsKimchi, pasta::FULL_ROUNDS, sponge::DefaultFqSponge,
+    sponge::DefaultFrSponge,
+};
+use poly_commitment::{commitment::CommitmentCurve, ipa::OpeningProof};
+use serde::Deserialize;
+
+use kimchi::{
+    circuits::{
+        gate::{CircuitGate, GateType},
+        wires::{GateWires, Wire, COLUMNS},
+    },
+    proof::ProverProof,
+    prover_index::{testing::new_index_for_test_with_lookups, ProverIndex},
+    verifier::{batch_verify, Context},
+};
+
+// ⚑ Pallas-committed, Fq-scalar. `kimchi/src/curve.rs:62-72,87-97`: a proof on curve G runs its
+// phase-1 sponge with `G::other_curve_sponge_params()` over `G::BaseField` and its phase-2 with
+// `G::sponge_params()` over `G::ScalarField`. For Pallas that is fp_kimchi then fq_kimchi — the
+// mirror of the step harness, which is the whole point.
+type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
+type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
+type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
+
+/// The four rungs, in assembly order. Each is a superset of the one before it.
+const RUNGS: [&str; 4] = ["w1_transcript", "w2_challenges", "w3_branch", "w4_bind"];
+
+// ---- the Lean-emitted JSON shape (identical schema to the step side's) ----
+
+#[derive(Deserialize, Clone)]
+struct GateJson {
+    typ: u64,
+    wires: Vec<[usize; 2]>,
+    coeffs: Vec<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct CircuitJson {
+    #[allow(dead_code)]
+    name: String,
+    public_input_size: usize,
+    public_input: Vec<String>,
+    num_rows: usize,
+    /// Absolute rows of the sigma-ONLY probes. Emitted WITH the circuit so the tampers aim at what
+    /// the Lean schedule produced, not at a hand-copied constant a drift would invalidate.
+    probe_rows: Vec<usize>,
+    gates: Vec<GateJson>,
+    witness: Vec<Vec<String>>,
+}
+
+fn fixtures_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
+}
+
+/// ⚑ `Fq`, not `Fp`. A step-side coefficient reduced mod p would parse here and mean something
+/// else, so this is the one-line difference that decides which circuit is being proved.
+fn parse_fq(s: &str) -> Fq {
+    Fq::from_str(s).unwrap_or_else(|_| panic!("not a decimal Fq element: {s:?}"))
+}
+
+fn gate_type_from_ordinal(o: u64) -> GateType {
+    match o {
+        0 => GateType::Zero,
+        1 => GateType::Generic,
+        2 => GateType::Poseidon,
+        3 => GateType::CompleteAdd,
+        4 => GateType::VarBaseMul,
+        5 => GateType::EndoMul,
+        6 => GateType::EndoMulScalar,
+        _ => panic!("wrap_main emits only the seven gate types Mina uses; got ordinal {o}"),
+    }
+}
+
+fn load_path(path: &Path) -> CircuitJson {
+    let s = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    serde_json::from_str(&s).unwrap_or_else(|e| panic!("bad JSON in {}: {e}", path.display()))
+}
+
+fn build_gates(c: &CircuitJson) -> Vec<CircuitGate<Fq>> {
+    c.gates
+        .iter()
+        .enumerate()
+        .map(|(row, g)| {
+            assert_eq!(
+                g.wires.len(),
+                7,
+                "row {row}: a kimchi row has 7 permutable columns"
+            );
+            let mut w: GateWires = std::array::from_fn(|_| Wire { row: 0, col: 0 });
+            for (i, rc) in g.wires.iter().enumerate() {
+                w[i] = Wire {
+                    row: rc[0],
+                    col: rc[1],
+                };
+            }
+            let coeffs: Vec<Fq> = g.coeffs.iter().map(|s| parse_fq(s)).collect();
+            CircuitGate::new(gate_type_from_ordinal(g.typ), w, coeffs)
+        })
+        .collect()
+}
+
+fn build_witness(c: &CircuitJson) -> [Vec<Fq>; COLUMNS] {
+    assert_eq!(c.witness.len(), COLUMNS, "the composed grid is 15 columns");
+    let cols: Vec<Vec<Fq>> = c
+        .witness
+        .iter()
+        .map(|col| {
+            assert_eq!(col.len(), c.num_rows, "every column is num_rows long");
+            col.iter().map(|s| parse_fq(s)).collect()
+        })
+        .collect();
+    std::array::from_fn(|i| cols[i].clone())
+}
+
+fn public_of(c: &CircuitJson) -> Vec<Fq> {
+    assert_eq!(
+        c.public_input.len(),
+        c.public_input_size,
+        "the emitted public vector must have public_input_size entries"
+    );
+    c.public_input.iter().map(|s| parse_fq(s)).collect()
+}
+
+// disable_gates_checks = true: skip the prover's debug preflight so a tampered witness (gate OR
+// permutation) is rejected by the PROOF, returning Err rather than panicking.
+fn index_for(c: &CircuitJson) -> Idx {
+    let mut index = new_index_for_test_with_lookups::<FULL_ROUNDS, Pallas>(
+        build_gates(c),
+        c.public_input_size,
+        0,
+        vec![],
+        None,
+        true,
+        None,
+        false,
+    );
+    index.compute_verifier_index_digest::<BaseSponge>();
+    index
+}
+
+fn prove_and_verify(
+    index: &Idx,
+    group_map: &<Pallas as CommitmentCurve>::Map,
+    witness: [Vec<Fq>; COLUMNS],
+    public_input: &[Fq],
+) -> Result<(), String> {
+    let proof: ProverProof<Pallas, OpeningProof<Pallas, FULL_ROUNDS>, FULL_ROUNDS> =
+        ProverProof::create::<BaseSponge, ScalarSponge, _>(
+            group_map,
+            witness,
+            &[],
+            index,
+            &mut rand::rngs::OsRng,
+        )
+        .map_err(|e| format!("prove rejected: {e:?}"))?;
+
+    let vk = index.verifier_index.as_ref().expect("verifier index");
+    let ctx = Context {
+        verifier_index: vk,
+        proof: &proof,
+        public_input,
+    };
+    batch_verify::<FULL_ROUNDS, Pallas, BaseSponge, ScalarSponge, OpeningProof<Pallas, FULL_ROUNDS>>(
+        group_map,
+        &[ctx],
+    )
+    .map_err(|e| format!("verify rejected: {e:?}"))?;
+    Ok(())
+}
+
+/// A flip of witness cell (col,row) by +1, returning a fresh tampered witness.
+fn tamper(c: &CircuitJson, col: usize, row: usize) -> [Vec<Fq>; COLUMNS] {
+    let mut w = build_witness(c);
+    w[col][row] += Fq::from(1u64);
+    w
+}
+
+fn gate_census(c: &CircuitJson) -> [usize; 7] {
+    let mut n = [0usize; 7];
+    for g in &c.gates {
+        n[g.typ as usize] += 1;
+    }
+    n
+}
+
+#[allow(dead_code)]
+/// Maximal run lengths of one gate type — the fidelity signal the region-conformance diff reads.
+fn run_lengths(c: &CircuitJson, typ: u64) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut cur = 0usize;
+    for g in &c.gates {
+        if g.typ == typ {
+            cur += 1;
+        } else if cur > 0 {
+            out.push(cur);
+            cur = 0;
+        }
+    }
+    if cur > 0 {
+        out.push(cur);
+    }
+    out
+}
+
+/// Which probe rows to tamper. Every probe at small scale; at scale a spread SAMPLE, because each
+/// tamper is a full prove. The sample always contains the FIRST and the LAST probe plus evenly
+/// spaced interior ones, and the chosen rows are printed.
+fn probe_sample(probes: &[usize], budget: usize) -> Vec<usize> {
+    if probes.len() <= budget {
+        return probes.to_vec();
+    }
+    let n = probes.len();
+    (0..budget)
+        .map(|i| probes[i * (n - 1) / (budget - 1)])
+        .collect()
+}
+
+struct RungOutcome {
+    rows: usize,
+    domain: usize,
+    probes_tested: usize,
+    honest_ms: u128,
+}
+
+/// The whole five-polarity gate for ONE rung. Panics on any falsification.
+fn run_rung(dir: &Path, tag: &str, rung: &str, budget: usize) -> RungOutcome {
+    let wired = load_path(&dir.join(format!("wrapmain_{tag}_{rung}.json")));
+    let unwired = load_path(&dir.join(format!("wrapmain_{tag}_{rung}_unwired.json")));
+
+    // The control must be a control: same rows, same gate types, byte-identical witness, DIFFERENT
+    // wires. If the witnesses ever diverge, (3) proves nothing.
+    assert_eq!(unwired.num_rows, wired.num_rows);
+    assert_eq!(
+        unwired.gates.iter().map(|g| g.typ).collect::<Vec<_>>(),
+        wired.gates.iter().map(|g| g.typ).collect::<Vec<_>>()
+    );
+    assert_eq!(unwired.witness, wired.witness);
+    assert_ne!(
+        unwired
+            .gates
+            .iter()
+            .map(|g| g.wires.clone())
+            .collect::<Vec<_>>(),
+        wired
+            .gates
+            .iter()
+            .map(|g| g.wires.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let gm = <Pallas as CommitmentCurve>::Map::setup();
+    let iw = index_for(&wired);
+    let iu = index_for(&unwired);
+    let pub_w = public_of(&wired);
+    let cen = gate_census(&wired);
+
+    println!(
+        "-- {} : {} rows (public {}), domain d1 = {} --",
+        wired.name, wired.num_rows, wired.public_input_size, iw.cs.domain.d1.size
+    );
+    println!(
+        "   gates: Poseidon={} EndoMulScalar={} VarBaseMul={} EndoMul={} CompleteAdd={} Generic={} Zero={}",
+        cen[2], cen[6], cen[4], cen[5], cen[3], cen[1], cen[0]
+    );
+
+    // (1) HONEST.
+    let t = Instant::now();
+    prove_and_verify(&iw, &gm, build_witness(&wired), &pub_w).unwrap_or_else(|e| {
+        panic!(
+            "[FATAL] {rung}: honest {}-row rung REJECTED: {e}",
+            wired.num_rows
+        )
+    });
+    let honest = t.elapsed();
+    println!(
+        "[1 HONEST   ] verify()==true on the {}-row {rung} (MEASURED {:?})",
+        wired.num_rows, honest
+    );
+
+    // (2) WIRING BINDS, at a spread of sigma-only probes.
+    let sample = probe_sample(&wired.probe_rows, budget);
+    for &r in &sample {
+        assert!(
+            prove_and_verify(&iw, &gm, tamper(&wired, 0, r), &pub_w).is_err(),
+            "[FALSIFICATION] {rung}: probe-row {r} col-0 desync ACCEPTED on the WIRED circuit"
+        );
+    }
+    println!(
+        "[2 WIRING   ] {}/{} sigma-only probes REJECT a col-0 desync (rows {:?})",
+        sample.len(),
+        wired.probe_rows.len(),
+        sample
+    );
+
+    // (3) NOT-ADJACENCY control.
+    prove_and_verify(&iu, &gm, build_witness(&unwired), &pub_w)
+        .unwrap_or_else(|e| panic!("[FATAL] {rung}: honest UNWIRED witness REJECTED: {e}"));
+    for &r in &sample {
+        assert!(
+            prove_and_verify(&iu, &gm, tamper(&unwired, 0, r), &pub_w).is_ok(),
+            "[FALSIFICATION] {rung}: probe-row {r} flip REJECTED on the UNWIRED circuit - (2) was not the wire"
+        );
+    }
+    println!("[3 CONTROL  ] the SAME flips ACCEPTED on the UNWIRED circuit -> (2) is the WIRE, not adjacency");
+
+    // (4) NON-VACUITY: an advice cell no gate reads and no cycle contains.
+    let p0 = wired.probe_rows[0];
+    assert!(
+        prove_and_verify(&iw, &gm, tamper(&wired, 12, p0), &pub_w).is_ok(),
+        "[FALSIFICATION] {rung}: unread advice cell (col 12, row {p0}) flip REJECTED - the rejections may be vacuous"
+    );
+    println!("[4 NONVACU  ] unread advice cell (col 12, row {p0}) flip ACCEPTED (non-vacuity)");
+
+    // (5) PUBLIC INPUT, when the rung has one.
+    if wired.public_input_size > 0 {
+        let mut bad = pub_w.clone();
+        bad[0] += Fq::from(1u64);
+        assert!(
+            prove_and_verify(&iw, &gm, build_witness(&wired), &bad).is_err(),
+            "[FALSIFICATION] {rung}: honest proof ACCEPTED against a tampered public vector"
+        );
+        assert!(
+            prove_and_verify(&iw, &gm, tamper(&wired, 0, 0), &bad).is_err(),
+            "[FALSIFICATION] {rung}: public cell (0,0) flip WITH a matching public vector ACCEPTED - the public word is not wired in"
+        );
+        let last = wired.public_input_size - 1;
+        let mut bad_last = pub_w.clone();
+        bad_last[last] += Fq::from(1u64);
+        assert!(
+            prove_and_verify(&iw, &gm, tamper(&wired, 0, last), &bad_last).is_err(),
+            "[FALSIFICATION] {rung}: public cell ({last},0) flip WITH a matching public vector ACCEPTED"
+        );
+        println!(
+            "[5 PUBLIC   ] {} public words: a tampered public vector REJECTED, and the sigma leg (flip cell (i,0) AND tell the verifier) REJECTED at i=0 and i={last}",
+            wired.public_input_size
+        );
+    }
+
+    RungOutcome {
+        rows: wired.num_rows,
+        domain: iw.cs.domain.d1.size as usize,
+        probes_tested: sample.len(),
+        honest_ms: honest.as_millis(),
+    }
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (dir, tag, budget, rungs): (PathBuf, String, usize, Vec<&str>) = match args.len() {
+        0 => (
+            fixtures_dir(),
+            "smoke".to_string(),
+            usize::MAX,
+            vec!["w1_transcript", "w4_bind"],
+        ),
+        1 => (
+            PathBuf::from(&args[0]),
+            "wrap".to_string(),
+            8,
+            RUNGS.to_vec(),
+        ),
+        _ => (
+            PathBuf::from(&args[0]),
+            args[1].clone(),
+            args.get(2).and_then(|s| s.parse().ok()).unwrap_or(8),
+            RUNGS.to_vec(),
+        ),
+    };
+
+    println!("== wrap_main harness: the LEAN-ASSEMBLED WRAP-SIDE sub-circuits, over Pallas/Fq ==");
+    println!("   dir={} tag={tag}", dir.display());
+    let mut summary = Vec::new();
+    for rung in rungs {
+        let o = run_rung(&dir, &tag, rung, budget);
+        summary.push((rung, o));
+        println!();
+    }
+    println!("== SUMMARY ==");
+    for (rung, o) in &summary {
+        println!(
+            "   {rung:<14} {:>6} rows  domain {:>6}  honest prove+verify {:>7} ms  probes {:>3}",
+            o.rows, o.domain, o.honest_ms, o.probes_tested
+        );
+    }
+    println!("== VERDICT: four sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on");
+    println!("   PALLAS with verify()==true, and BIND at every sub-circuit boundary. The rest of");
+    println!("   `wrap_main` is named by sub-circuit in KimchiWrapMain §13. ==");
+}
+
+// =====================================================================================
+// Committed CI gate. `cargo test --release --manifest-path .../Cargo.toml`.
+// =====================================================================================
+#[cfg(test)]
+mod wrapmain_tests {
+    use super::*;
+
+    /// The fixture subset actually PROVED in CI: the bottom rung and the top one. w2/w3 are read
+    /// for their census without proving, because each prove is seconds and the ladder pins
+    /// (`KimchiWrapMain` §12b) already establish that they are supersets.
+    const COMMITTED: [&str; 2] = ["w1_transcript", "w4_bind"];
+
+    struct Fixture {
+        wired: CircuitJson,
+        unwired: CircuitJson,
+        iw: Idx,
+        iu: Idx,
+        gm: <Pallas as CommitmentCurve>::Map,
+        public: Vec<Fq>,
+    }
+
+    fn load(rung: &str) -> CircuitJson {
+        load_path(&fixtures_dir().join(format!("wrapmain_smoke_{rung}.json")))
+    }
+
+    fn fixture(rung: &str) -> Fixture {
+        let wired = load(rung);
+        let unwired = load(&format!("{rung}_unwired"));
+        let iw = index_for(&wired);
+        let iu = index_for(&unwired);
+        let public = public_of(&wired);
+        Fixture {
+            wired,
+            unwired,
+            iw,
+            iu,
+            gm: <Pallas as CommitmentCurve>::Map::setup(),
+            public,
+        }
+    }
+
+    #[test]
+    fn honest_rungs_verify() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &f.public)
+                .unwrap_or_else(|e| panic!("{rung}: honest witness REJECTED: {e}"));
+        }
+    }
+
+    #[test]
+    fn every_sigma_probe_binds() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            assert!(!f.wired.probe_rows.is_empty(), "{rung}: no probes emitted");
+            for &r in &f.wired.probe_rows {
+                assert!(
+                    prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, r), &f.public).is_err(),
+                    "{rung}: probe row {r} col-0 desync ACCEPTED on the WIRED circuit"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unwired_control_accepts_the_same_flips() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            prove_and_verify(&f.iu, &f.gm, build_witness(&f.unwired), &f.public)
+                .unwrap_or_else(|e| panic!("{rung}: honest UNWIRED witness REJECTED: {e}"));
+            for &r in &f.wired.probe_rows {
+                assert!(
+                    prove_and_verify(&f.iu, &f.gm, tamper(&f.unwired, 0, r), &f.public).is_ok(),
+                    "{rung}: probe row {r} flip REJECTED on the UNWIRED control - the wiring test was not about the wire"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn control_differs_only_in_the_placement() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            assert_eq!(f.unwired.num_rows, f.wired.num_rows);
+            assert_eq!(
+                f.unwired.gates.iter().map(|g| g.typ).collect::<Vec<_>>(),
+                f.wired.gates.iter().map(|g| g.typ).collect::<Vec<_>>()
+            );
+            assert_eq!(
+                f.unwired
+                    .gates
+                    .iter()
+                    .map(|g| g.coeffs.clone())
+                    .collect::<Vec<_>>(),
+                f.wired
+                    .gates
+                    .iter()
+                    .map(|g| g.coeffs.clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                f.unwired.witness, f.wired.witness,
+                "{rung}: the control's witness must be byte-identical"
+            );
+            assert_ne!(
+                f.unwired
+                    .gates
+                    .iter()
+                    .map(|g| g.wires.clone())
+                    .collect::<Vec<_>>(),
+                f.wired
+                    .gates
+                    .iter()
+                    .map(|g| g.wires.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn unread_advice_cells_are_accepted() {
+        for rung in COMMITTED {
+            let f = fixture(rung);
+            let p0 = f.wired.probe_rows[0];
+            assert!(
+                prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 12, p0), &f.public).is_ok(),
+                "{rung}: an unread advice cell flip was REJECTED - the rejections may be vacuous"
+            );
+        }
+    }
+
+    #[test]
+    fn public_input_binds_and_is_wired_in() {
+        let f = fixture("w4_bind");
+        assert!(
+            f.wired.public_input_size > 0,
+            "w4_bind must carry public words"
+        );
+        let mut bad = f.public.clone();
+        bad[0] += Fq::from(1u64);
+        assert!(
+            prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &bad).is_err(),
+            "the honest proof was ACCEPTED against a tampered public vector"
+        );
+        for i in [0usize, f.wired.public_input_size - 1] {
+            let mut b = f.public.clone();
+            b[i] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, i), &b).is_err(),
+                "public cell ({i},0) flip WITH a matching public vector ACCEPTED - the word is not wired in"
+            );
+        }
+    }
+
+    /// ⚑ w1 IS the Fq Poseidon sponge, and the run-length family says so: every `Poseidon` run is
+    /// exactly 11 rows (one permutation), and the assembly emits NO curve gate at this rung — the
+    /// four families `wrap-transaction` spends 2528 + 2417 + 492 rows on are W-XHAT / W-COMBINE /
+    /// W-BULLET and are not here.
+    #[test]
+    fn transcript_rung_is_the_fq_poseidon_sponge() {
+        let c = load("w1_transcript");
+        let cen = gate_census(&c);
+        assert!(
+            cen[2] > 0 && cen[2] % 11 == 0,
+            "Poseidon rows must be whole 11-row permutations, got {}",
+            cen[2]
+        );
+        for (i, n) in run_lengths(&c, 2).iter().enumerate() {
+            assert_eq!(*n, 11, "Poseidon run {i} is {n} rows, not one permutation");
+        }
+        assert_eq!(cen[4], 0, "no VarBaseMul at w1");
+        assert_eq!(cen[5], 0, "no EndoMul at w1");
+        assert_eq!(cen[3], 0, "no CompleteAdd at w1");
+        assert_eq!(cen[6], 0, "no EndoMulScalar at w1 - that is w2");
+        assert!(cen[1] > 0, "the absorb rows are Generic");
+        assert_eq!(
+            c.public_input_size, 0,
+            "w1 is placed below the closing rung"
+        );
+    }
+
+    /// ⚑ w2 adds BOTH `lowest_128_bits` chains per challenge and nothing else in the
+    /// `EndoMulScalar` family: the count is EXACTLY `2 * chals * 8`, `==` and not `>=`, so a third
+    /// chain or a missing high chain is a red.
+    #[test]
+    fn challenge_rung_adds_both_lowest_128_bits_chains() {
+        let w1 = load("w1_transcript");
+        let w2 = load("w2_challenges");
+        let c1 = gate_census(&w1);
+        let c2 = gate_census(&w2);
+        assert!(
+            w2.num_rows > w1.num_rows,
+            "w2 must be a strict superset of w1"
+        );
+        assert_eq!(c2[2], c1[2], "w2 adds no Poseidon rows");
+        assert!(c2[6] > 0, "w2 must emit EndoMulScalar chains");
+        assert_eq!(c2[6] % 8, 0, "every to_field_checked chain is 8 rows");
+        for (i, n) in run_lengths(&w2, 6).iter().enumerate() {
+            assert_eq!(
+                *n, 8,
+                "EndoMulScalar run {i} is {n} rows, not one 128-bit chain"
+            );
+        }
+        // The smoke shape squeezes 8 `chal`s; both halves of each get a chain.
+        assert_eq!(
+            c2[6],
+            2 * 8 * 8,
+            "expected 2 chains per challenge of 8 rows each"
+        );
+        assert_eq!(c2[4] + c2[5] + c2[3], 0, "w2 emits no curve gate either");
+    }
+
+    /// ⚑ w3 is the wrap-specific selection sub-circuit and w4 closes the public tie. w3 adds only
+    /// `Generic`/`Zero`; w4 adds only the closing halves and turns the public input ON.
+    #[test]
+    fn branch_and_bind_rungs_close_the_selection() {
+        let w2 = load("w2_challenges");
+        let w3 = load("w3_branch");
+        let w4 = load("w4_bind");
+        let c2 = gate_census(&w2);
+        let c3 = gate_census(&w3);
+        let c4 = gate_census(&w4);
+        assert!(
+            w3.num_rows > w2.num_rows && w4.num_rows > w3.num_rows,
+            "the ladder is monotone"
+        );
+        for k in [2usize, 3, 4, 5, 6] {
+            assert_eq!(
+                c3[k], c2[k],
+                "w3 adds only Generic/Zero rows (family {k} moved)"
+            );
+            assert_eq!(c4[k], c3[k], "w4 adds only Generic rows (family {k} moved)");
+        }
+        assert_eq!(w2.public_input_size, 0);
+        assert_eq!(w3.public_input_size, 0);
+        assert!(w4.public_input_size > 0, "w4 is the closing rung");
+        assert_eq!(w4.public_input.len(), w4.public_input_size);
+        // ⚑ `placeChecked` refuses an inert public word, so a nonempty public vector that placed
+        // at all is evidence every declared word is READ by some gate.
+        assert_eq!(
+            w4.gates.len(),
+            w4.num_rows,
+            "placement produced a gate per row (incl. the public rows)"
+        );
+    }
+
+    /// ⚑ THE FIELD. Every coefficient and witness cell parses as an `Fq` element, and the whole
+    /// emission is Pallas-committed. A step-side (mod p) emission would still parse — both primes
+    /// are 255 bits — so the real check is that the honest witness VERIFIES on Pallas, which
+    /// `honest_rungs_verify` does; this pins the complementary half: the wrap circuit's Poseidon
+    /// coefficients are NOT the step circuit's.
+    #[test]
+    fn the_emission_is_over_fq_and_not_fp() {
+        let c = load("w1_transcript");
+        // fp_kimchi's first Poseidon round constant, from the step side's own gate emitter. If the
+        // wrap emission carried it, the sponge would be the wrong instantiation.
+        const FP_KIMCHI_RC0: &str =
+            "21155079365419562533580730049431973842736068869601348388420898564282378592202";
+        let pos: Vec<&GateJson> = c.gates.iter().filter(|g| g.typ == 2).collect();
+        assert!(!pos.is_empty());
+        assert_eq!(
+            pos[0].coeffs.len(),
+            15,
+            "a Poseidon row carries 15 round constants"
+        );
+        assert!(
+            !pos[0].coeffs.iter().any(|s| s == FP_KIMCHI_RC0),
+            "the wrap emission carries an fp_kimchi round constant - wrong Poseidon instantiation"
+        );
+        for g in &c.gates {
+            for s in &g.coeffs {
+                let _ = parse_fq(s);
+            }
+        }
+        for col in &c.witness {
+            for s in col {
+                let _ = parse_fq(s);
+            }
+        }
+    }
+}

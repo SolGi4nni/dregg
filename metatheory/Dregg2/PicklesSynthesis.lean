@@ -50,6 +50,16 @@ never `EffectVmEmitV2`):
       `WitnessBuilder`; every row satisfies its `KimchiVerify` constraint body ON THE ASSEMBLED GRID,
       σ holds on that grid (falsifiably), and the point/scalar semantics are cross-checked against
       `PastaCurve`'s independent Jacobian formulas. Proved pure-Rust by `pickles-stepfragment-harness`
+  * `Dregg2.Circuit.Emit.KimchiWrapMain` — ⚑ **`wrap_main`, the OTHER half of Pickles recursion**,
+    and a different field and curve from the step side: `wrap_main_inputs.ml:4,6` sets `Me = Tock`
+    and `Impl = Impls.Wrap`, so the wrap circuit computes over **Fq** with **Vesta** as its inner
+    curve and a **Pallas**-committed proof, where the step side is Fp/Pallas/Vesta. Four rungs
+    assembled: the Fq Poseidon transcript of `wrap_verifier.ml:516-646` driven by the REAL rate-2
+    state machine and pinned against a real accepted proof's own β/γ/α′/ζ′; `to_field_checked` over
+    Fq at Pallas's endo scalar with both `lowest_128_bits` halves range-checked; the branch
+    selection (`One_hot_vector` · `Pseudo.choose` · `ones_vector`'s `Field.equal` gadget ·
+    `Branch_data.Checked.pack`), which has no step-side analogue at all; and the closing public tie.
+    Its §13 names by sub-circuit everything `wrap_main` still has that this does not.
   * `Dregg2.Circuit.Emit.KimchiStepMain` — **`step_verifier.verify_one` itself**, in the SEVEN named
       sub-circuits it runs: the Fp Poseidon transcript SPONGE (state copy-wired across every block
       boundary — no prior rung had copy-wired a `Poseidon` gate at all), `to_field_checked`'s chained
@@ -98,6 +108,7 @@ import Dregg2.Circuit.Emit.KimchiComposeMSM
 import Dregg2.Circuit.Emit.KimchiComposeStepFragment
 import Dregg2.Circuit.Emit.KimchiRenderPublicInput
 import Dregg2.Circuit.Emit.KimchiStepMain
+import Dregg2.Circuit.Emit.KimchiWrapMain
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff

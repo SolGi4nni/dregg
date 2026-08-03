@@ -1,0 +1,60 @@
+# pickles-wrapmain-harness — PROVE the Lean-assembled `wrap_main` rungs.
+#
+# ⚑ THE WRAP SIDE IS PALLAS/Fq, NOT VESTA/Fp. `wrap_main_inputs.ml:4,6` sets `Me = Tock`,
+# `Impl = Impls.Wrap`, so the wrap circuit's native field is `Tock.Field = Fq` and a wrap kimchi
+# proof is committed on Pallas. Everything this crate proves is over that pair.
+#
+# The circuit is Lean-authored by `Dregg2.Circuit.Emit.KimchiWrapMain` — gate list, coefficients,
+# cross-gate placement (`KimchiPlacement.placeChecked`) and the composed witness grid
+# (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that RUNS
+# it and authors no constraint. No OCaml, no Node, no o1js in this path.
+#
+# FOUR RUNGS, each a superset of the one below, each proved with BOTH polarities — see src/main.rs
+# for the five-polarity gate and for what each rung is at source in `wrap_main.ml`/`wrap_verifier.ml`.
+#
+# SCOPE. INNER-KIMCHI FIDELITY of four assembled sub-circuits of `wrap_main`. NOT a soundness proof,
+# NOT "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER Pallas/Fq
+# proof of a `wrap_main`-SHAPED circuit. `KimchiWrapMain` §13 names by sub-circuit everything that
+# is NOT here (W-KEY, W-XHAT, W-SPLIT, W-FTCOMM, W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK,
+# W-PREV) — read it before quoting a fraction.
+#
+# REGENERATE the fixtures (only when the Lean assembly changes):
+#   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
+#     && DREGG_WM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean \
+#     && cp /tmp/pickles-wrapmain/wrapmain_smoke_*.json fixtures/pickles-wrapmain-harness/fixtures/
+#
+# RUN the committed gate (RELEASE — a debug prove is minutes):
+#   cargo test --release --manifest-path metatheory/fixtures/pickles-wrapmain-harness/Cargo.toml
+# RUN the wrap-scale rung set (all four rungs, timed):
+#   DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean
+#   cargo run --release --manifest-path .../Cargo.toml -- /tmp/pickles-wrapmain wrap
+
+[package]
+name = "pickles-wrapmain-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }
