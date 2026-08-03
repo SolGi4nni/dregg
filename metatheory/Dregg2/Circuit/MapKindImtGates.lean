@@ -1081,12 +1081,51 @@ section Growth
 /-- A one-live-leaf sparse tree at the DEPLOYED depth, and a FRESH key written into it. -/
 def growSent : ℤ := 100
 def growHeap : Heap.FeltHeap := [(1, 2)]
-noncomputable def growRoot : ℤ := padImtRoot growSent oddSponge MAP_TREE_DEPTH growHeap
-noncomputable def growNewRoot : ℤ :=
-  padImtRoot growSent oddSponge MAP_TREE_DEPTH (Heap.set growHeap 5 7)
 
 theorem growHeap_ok : (padImtSchema growSent).HeapOk growHeap :=
   heapOk_singleton (by norm_num [growSent])
+
+/-- The pre-heap's occupancy, NAMED — because `growRoot` is indexed by it and the denotation is
+handed this very term, not a re-derived twin. -/
+theorem growHeap_sz : (padImtSchema growSent).SizeOk MAP_TREE_DEPTH growHeap := by
+  show growHeap.length ≤ 2 ^ MAP_TREE_DEPTH
+  show 1 ≤ 2 ^ MAP_TREE_DEPTH
+  exact Nat.one_le_pow _ 2 (by norm_num)
+
+/-- The post-heap's occupancy, likewise NAMED. -/
+theorem growHeap_set_sz :
+    (padImtSchema growSent).SizeOk MAP_TREE_DEPTH (Heap.set growHeap 5 7) := by
+  show (Heap.set growHeap 5 7).length ≤ 2 ^ MAP_TREE_DEPTH
+  rw [Heap.length_set_fresh growHeap 5 7 (by decide)]
+  show 1 + 1 ≤ 2 ^ MAP_TREE_DEPTH
+  calc (2 : Nat) = 2 ^ 1 := rfl
+    _ ≤ 2 ^ MAP_TREE_DEPTH := Nat.pow_le_pow_right (by norm_num) (by decide)
+
+/-- ⚑ THE PRE- AND POST-ROOTS, NAMED AS THE SCHEMA'S OWN `commit` AT A NAMED OCCUPANCY PROOF.
+
+Until 2026-08-03 these two were `padImtRoot … (by heap_fits)`, and `padImt_write_admits_growth`
+below then had to identify a root carrying the `autoParam`'s occupancy term with one carrying the
+term `refine` introduced. They are equal by PROOF IRRELEVANCE and `padImtRoot` IS this schema's
+`commit`, but the unifier does not get there for free: with the occupancy argument differing it
+falls back on δ, and `padImtRoot` at `MAP_TREE_DEPTH = 16` is `perfectRoot` over
+`List.replicate (2 ^ 16 - 1) padDigest`. That is the `whnf` timeout, and it is a FORMULATION, not a
+budget. In `commit` form at a NAMED proof the denotation is handed the SAME term and the two `rfl`s
+below are syntactic. Measured: the declaration goes from `(deterministic) timeout at whnf` to
+elaborating with heartbeats to spare, with no `set_option` anywhere. -/
+noncomputable def growRoot : ℤ :=
+  (padImtSchema growSent).commit oddSponge MAP_TREE_DEPTH growHeap growHeap_sz
+noncomputable def growNewRoot : ℤ :=
+  (padImtSchema growSent).commit oddSponge MAP_TREE_DEPTH (Heap.set growHeap 5 7) growHeap_set_sz
+
+/-- **★ THE COMMITTED FELT DID NOT MOVE.** `commit` form is a RESTATEMENT and not a new object:
+`padImtSchema`'s `commit` FIELD is `padImtRoot`, and the capacity argument is a `Prop` the body
+never reads, so proof irrelevance does the rest. Stated as theorems rather than asserted in the
+docstring above, so that a later edit to `padImtSchema.commit` which DID move the felt reddens here
+instead of quietly re-basing §8's exhibit onto a different commitment. -/
+theorem growRoot_eq : growRoot = padImtRoot growSent oddSponge MAP_TREE_DEPTH growHeap := rfl
+
+theorem growNewRoot_eq :
+    growNewRoot = padImtRoot growSent oddSponge MAP_TREE_DEPTH (Heap.set growHeap 5 7) := rfl
 
 theorem growHeap_set_ok : (padImtSchema growSent).HeapOk (Heap.set growHeap 5 7) := by
   have hset : Heap.set growHeap 5 7 = [(1, 2), (5, 7)] := by norm_num [growHeap, Heap.set]
@@ -1106,32 +1145,13 @@ theorem padImt_write_admits_growth :
     ∧ (5 : ℤ) ∉ Heap.keys growHeap
     ∧ (Heap.set growHeap 5 7).length = growHeap.length + 1 := by
   have hfresh : (5 : ℤ) ∉ Heap.keys growHeap := by decide
-  -- ⚠⚠ RED AT HEAD, AND IT IS A FORMULATION PROBLEM, NOT A HEARTBEAT BUDGET. This declaration
-  -- times out at `whnf` (200000 heartbeats). `growRoot`/`growNewRoot` are `padImtRoot` at a heap
-  -- whose `hFits` was elaborated by `heap_fits` AT THE DEFINITION, while the goal carries the one
-  -- `refine` introduces; the two roots differ only by PROOF IRRELEVANCE, but closing that gap makes
-  -- `whnf` cross `.commit`'s delta as well, and at `MAP_TREE_DEPTH = 16` `padTo` is
-  -- `List.replicate (2 ^ 16 - 1) padDigest` under `perfectRoot`.
-  -- ⚑ MEASURED 2026-08-03, so the next reader does not repeat it: rewriting this through
-  -- `MapLeafSchema.commit_congr` — the named proof-irrelevance step whose own docstring says
-  -- "every such rewrite in the cone goes through this lemma instead" — does NOT close it. The
-  -- timeout survives, because unifying `commit_congr`'s implicit occupancy arguments against this
-  -- goal reduces the same spine. The two `rfl`s below are the ORIGINAL shape, kept so the site
-  -- states its intent honestly rather than wearing a repair that does not work.
-  -- ⚠ DO NOT "fix" this with `set_option maxHeartbeats`. What this site wants is what every other
-  -- depth-16 exhibit in this file already does (§9's `Bite16`): NAME the root as the schema's own
-  -- `commit` and never write a goal in `padImtRoot` form at all, so no `rfl` ever has to identify
-  -- two depth-16 root terms. That is a restatement of `growRoot`/`growNewRoot`, not a tactic swap.
-  refine ⟨⟨growHeap, growHeap_ok, ?_, ?_, rfl, rfl⟩, hfresh,
+  -- ⚠ DO NOT reach for `set_option maxHeartbeats` if this ever reddens again. Both occupancy
+  -- witnesses are handed to the denotation BY NAME — the same terms `growRoot`/`growNewRoot` are
+  -- indexed by — so each `rfl` identifies a root with ITSELF and nothing crosses `.commit`'s δ.
+  -- Re-deriving either occupancy proof inline (or letting `refine` invent it as a `?_`) puts the
+  -- depth-16 `padTo` spine back under `whnf` and the timeout returns.
+  exact ⟨⟨growHeap, growHeap_ok, growHeap_sz, growHeap_set_sz, rfl, rfl⟩, hfresh,
     Heap.length_set_fresh growHeap 5 7 hfresh⟩
-  · show growHeap.length ≤ 2 ^ MAP_TREE_DEPTH
-    show 1 ≤ 2 ^ MAP_TREE_DEPTH
-    exact Nat.one_le_pow _ 2 (by norm_num)
-  · show (Heap.set growHeap 5 7).length ≤ 2 ^ MAP_TREE_DEPTH
-    rw [Heap.length_set_fresh growHeap 5 7 hfresh]
-    show 1 + 1 ≤ 2 ^ MAP_TREE_DEPTH
-    calc (2 : Nat) = 2 ^ 1 := rfl
-      _ ≤ 2 ^ MAP_TREE_DEPTH := Nat.pow_le_pow_right (by norm_num) (by decide)
 
 end Growth
 
@@ -1140,8 +1160,24 @@ end Growth
 Each of the four arms gets BOTH polarities on the shape `heap_root.rs` actually builds — a
 `2^16`-leaf commitment holding ONE live leaf, everything else `EMPTY_SUBTREE_ROOTS` — because a law
 with no inhabited instance at the deployed depth is the ∃-image mistake this campaign spent days
-refuting. Nothing here evaluates a root or a `2^16` object: every root is NAMED as the schema's own
-`commit`, and every path is the symbolic `leftPadPath` / `slot1Path` recursion of §3. -/
+refuting. Nothing here evaluates a root or a `2^16` object: every root is a NAMED constant and every
+path is the symbolic `leftPadPath` / `slot1Path` recursion of §3.
+
+⚑ TWO ROOT FORMS, and the difference is load-bearing rather than cosmetic — an earlier draft of this
+paragraph said "every root is NAMED as the schema's own `commit`", which read as if the distinction
+did not exist and cost a lane a day:
+
+* `padImtRoot sent oddSponge MAP_TREE_DEPTH h` with the capacity obligation left to the `heap_fits`
+  `autoParam`. Fine wherever the root only ever meets ITSELF, or meets a `pathRecompute` result
+  through a NAMED equation (`bite_path_leaf`, `aafiR1_eq`, `aafiNewRoot_eq`). ⚠ `aafiR1` is under
+  the sentinel `5`, not `biteSent`, so it is not `padImtSchema biteSent`'s commitment at all.
+* `(padImtSchema sent).commit oddSponge MAP_TREE_DEPTH h hz` at a NAMED occupancy proof `hz`.
+  REQUIRED of any root a `writesToMerkleS` / `opensToMerkleS` goal must be matched against with the
+  denotation's own occupancy binder in hand — `aafiNewRoot` here, `growRoot`/`growNewRoot` in §8.
+  In `padImtRoot` form those matches differ from the goal only by PROOF IRRELEVANCE, the unifier
+  falls through to δ rather than seeing it, and `padImtRoot` at depth 16 is `perfectRoot` over
+  `List.replicate (2 ^ 16 - 1) padDigest`: a `whnf` timeout, which is a FORMULATION and never a
+  heartbeat budget. -/
 
 section Bite16
 
@@ -1155,7 +1191,9 @@ def biteSent : ℤ := 100
 witness for such a tree at all; this is the occupancy `CanonicalHeapTree::new` produces. -/
 def biteHeap : Heap.FeltHeap := [(1, 7)]
 def biteLeaf : ImtLeaf := ⟨1, 7, biteSent⟩
-/-- The committed root, NAMED as the schema's own `commit` — never evaluated. -/
+/-- The committed root — a NAMED constant, never evaluated. It stays in `padImtRoot` form (the first
+of the two forms above): every goal it meets is a pre-root, where the denotation's `commit … biteHeap
+biteHeap_sz` is on the OTHER side of the `rfl` and the heap argument is syntactically the same. -/
 noncomputable def biteRoot : ℤ := padImtRoot biteSent oddSponge MAP_TREE_DEPTH biteHeap
 /-- The deployed membership path of position `0` at depth 16, built symbolically. -/
 noncomputable def biteSteps : List (Bool × ℤ) := leftPadPath oddSponge MAP_TREE_DEPTH
@@ -1326,7 +1364,19 @@ theorem bite_insert_preroot_is_unforced :
 /-- The intermediate root after the low-pointer update — which is the padded commitment of the SAME
 one-entry heap with terminal pointer `5` (`imtChainOf 5 [(1,7)] = [⟨1,7,5⟩]`). -/
 noncomputable def aafiR1 : ℤ := padImtRoot 5 oddSponge MAP_TREE_DEPTH [(1, 7)]
-noncomputable def aafiNewRoot : ℤ := padImtRoot biteSent oddSponge MAP_TREE_DEPTH [(1, 7), (5, 2)]
+/-- The post-heap's occupancy, NAMED — `aafiNewRoot` is indexed by it. -/
+theorem aafiHeap_sz : (padImtSchema biteSent).SizeOk MAP_TREE_DEPTH [(1, 7), (5, 2)] := by
+  show ([(1, 7), (5, 2)] : Heap.FeltHeap).length ≤ 2 ^ MAP_TREE_DEPTH
+  exact two_le_two_pow_depth
+
+/-- ⚑ THE AAFI POST-ROOT, NAMED AS THE SCHEMA'S OWN `commit` — the same definitional move as
+`growRoot`/`growNewRoot` in §8's `Growth`, and for the same reason. As `padImtRoot … (by heap_fits)`
+this constant forced `bite_aafi_grows` to REACH `.commit` form from `padImtRoot` form, which sends
+`whnf` across the δ and then down the depth-16 `padTo` spine; in `commit` form the obligation there
+is `commit_congr` on the heap equation and nothing else. `aafiNewRoot_eq` below still states the
+`perfectRoot` unfolding, so nothing about the committed felt is hidden by the change. -/
+noncomputable def aafiNewRoot : ℤ :=
+  (padImtSchema biteSent).commit oddSponge MAP_TREE_DEPTH [(1, 7), (5, 2)] aafiHeap_sz
 /-- PATH2 — the free-slot path, at the FIRST PADDING POSITION (`free_index = next_free_index = 1`). -/
 noncomputable def aafiSteps2 : List (Bool × ℤ) :=
   slot1Path oddSponge (imtLeafHash oddSponge ⟨1, 7, 5⟩) MAP_TREE_DEPTH
@@ -1432,26 +1482,12 @@ theorem bite_aafi_grows :
     rw [hset]
     show 2 ≤ 2 ^ MAP_TREE_DEPTH
     exact two_le_two_pow_depth
-  · -- ⚠⚠ RED AT HEAD — the SECOND `whnf` timeout, and the same shape as
-    -- `padImt_write_admits_growth`. The `show` is the site that dies: it states the goal in
-    -- `padImtRoot` form when the goal is in `.commit` form, so `whnf` must cross the delta AND the
-    -- depth-16 `padTo`; and `rw [hset]` then rewrites UNDER the capacity proof, whose type mentions
-    -- the very heap being rewritten.
-    -- ⚑ MEASURED 2026-08-03: replacing all three lines with
-    --   `exact (padImtSchema biteSent).commit_congr oddSponge MAP_TREE_DEPTH _ _ hset`
-    -- does NOT close it either — the timeout simply moves from the `show` to the `exact`. So
-    -- `commit_congr` is the right instrument for the SIX dependent-motive `rw` sites in this file
-    -- (it closed all of them) and is NOT sufficient here. The difference is that those sites
-    -- transport a goal already in `.commit` form, while this one has to REACH `.commit` form from
-    -- a root constant defined in `padImtRoot` form.
-    -- ⚠ DO NOT raise `maxHeartbeats`. The repair is to define `aafiNewRoot` as
-    -- `(padImtSchema biteSent).commit oddSponge MAP_TREE_DEPTH [(1, 7), (5, 2)] _` — the form
-    -- `biteRoot` already uses (`MapPaddedDenotation` §9, `bite_sizeOk`) — so that this obligation
-    -- is `commit_congr` and nothing else. That is a definitional change with its own re-proof
-    -- obligations (`aafiNewRoot_eq`, `bite_aafi_row`), which is why it is named here, not smuggled.
-    show aafiNewRoot = padImtRoot biteSent oddSponge MAP_TREE_DEPTH (Heap.set biteHeap 5 2)
-    rw [hset]
-    rfl
+  · -- ⚠ DO NOT raise `maxHeartbeats` if this ever reddens again. `aafiNewRoot` is in `commit`
+    -- form, so this obligation is exactly the schema's proof-irrelevance step transported along
+    -- ONE heap equation. ⚑ The direction matters: `hset.symm`, not `hset` — with `hset` the
+    -- unifier is left to reduce `Heap.set biteHeap 5 2` against `aafiNewRoot`'s literal heap and
+    -- falls through to δ on `padImtRoot`, i.e. the depth-16 `padTo` spine, which is the timeout.
+    exact (padImtSchema biteSent).commit_congr oddSponge MAP_TREE_DEPTH _ _ hset.symm
 
 end Bite16
 
@@ -1487,6 +1523,8 @@ end Bite16
 #assert_axioms denseSchema_write_forces_key_present
 #assert_axioms narrow_write_forces_key_present
 #assert_axioms imtSchema_write_forces_key_present
+#assert_axioms growRoot_eq
+#assert_axioms growNewRoot_eq
 #assert_axioms padImt_write_admits_growth
 #assert_axioms bite_read_row
 #assert_axioms bite_read_fires
