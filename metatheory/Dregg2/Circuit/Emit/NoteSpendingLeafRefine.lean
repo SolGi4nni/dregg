@@ -68,7 +68,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmConstraint VmRow)
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId WindowConstraint WindowExpr Satisfied2 VmTrace
    TraceFamily envAt zeroAsg ChipTableSoundN chipRowN chip_lookup_sound_N chipLookupTupleN CHIP_RATE
-   padTo padToE padTo_length padTo_inj map_eval_padToE memOpsOf mapOpsOf memLog mapLog opRow
+   padTo padToE padTo_length padTo_of_fits padTo_inj map_eval_padToE memOpsOf mapOpsOf memLog mapLog opRow
    memCheck_nil)
 open Dregg2.Circuit.Emit.NoteSpendingLeafEmit
   (noteSpendLeafDesc noteSpendConstraints unlessSite whenSite factTuple IS_MERKLE NS_FACT_MARK K0
@@ -183,7 +183,10 @@ theorem factTuple_eval_form (env : VmRowEnv) (fire hold : EmittedExpr)
     (factTuple fire hold outputCol inputCols laneBase).map (·.eval env.loc)
       = ((7 : ℤ) :: padTo CHIP_RATE (firingIns env inputCols))
           ++ (env.loc outputCol :: factLaneVals env laneBase) := by
-  unfold factTuple firingIns firing5 factLaneVals padTo
+  -- ⚠ `padTo` is `take`-shaped now (total-correct, no obligation); `padTo_of_fits` puts it back
+  -- into the plain-append form this congruence chain walks, using the bound this site already has.
+  rw [padTo_of_fits (firingIns_length_le env inputCols)]
+  unfold factTuple firingIns firing5 factLaneVals
   simp only [CHIP_RATE, NS_FACT_MARK, List.map_cons, List.map_append, List.map_nil, List.map_map,
     Function.comp_def, EmittedExpr.eval, hf, hh, one_mul, zero_mul, add_zero,
     List.length_append, List.length_map, List.length_range, List.length_cons, List.length_nil,

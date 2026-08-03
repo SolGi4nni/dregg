@@ -156,8 +156,11 @@ theorem siteLookupN_tuple_eval (permW : List ℤ → List ℤ) (env : VmRowEnv)
     (hgen : digestCols.map env.loc = permW (ins.map (·.eval env.loc))) :
     (siteLookupN ins digestCols hAdm).tuple.map (·.eval env.loc)
       = chipRowN permW (ins.map (·.eval env.loc)) := by
-  simp only [siteLookupN, chipLookupTupleN, chipRowN, padToE, padTo, List.map_cons,
-    List.map_append, List.map_replicate, List.map_map, Function.comp_def, EmittedExpr.eval,
+  -- ⚠ do NOT unfold `padTo`/`padToE` here: `map_eval_padToE` carries the emitted block onto the
+  -- tabulated one directly, and `padTo` is now `take`-shaped (total-correct), so unfolding it
+  -- leaves a `List.take` the two sides would have to be re-aligned across.
+  simp only [siteLookupN, chipLookupTupleN, chipRowN, map_eval_padToE, List.map_cons,
+    List.map_append, List.map_map, Function.comp_def, EmittedExpr.eval,
     List.length_map, hgen]
 
 /-- **THE COMPLETENESS LEG (`←`).** A row whose carriers are the genuine chain satisfies ALL sixty-three
