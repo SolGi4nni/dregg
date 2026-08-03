@@ -37,10 +37,32 @@ by even one field would not reproduce sixteen 128-bit challenges and a 255-bit d
     not derived — the fold is affine in it and it enters at exactly one index. So §4's equality at
     slot 0 is **NOT a discrimination on slot 0**; it is a discrimination on the other 46 legs, and
     §4b is the part that carries content. Said here, in the file, rather than left for a reader to
-    infer from a green `#guard`.
+    infer from a green pin.
   * **The slot order at 5-7: MEASURED, and `MinaWrapPublicInput` is WRONG.** See §5.
 
-Compiled, not kernel: every pin below is `#guard`, and that is the point of the file.
+## ⚑ COMPILED, NOT KERNEL — and now SAID OUT LOUD (2026-08-02)
+
+Every claim below rests on the compiled evaluator, exactly as it always did: `#guard e` is
+implemented as `unsafe evalExpr Bool` (Lean 4.30, `Lean/Elab/Tactic/Guard.lean:154-167`), the same
+engine `native_decide` runs on. What changed is that the claims are now **named theorems** with an
+axiom record, pinned by `#assert_compiled`, instead of anonymous commands that trusted the compiler
+*silently* and were structurally invisible to `#assert_axioms`. Same expressions, same objects, same
+evaluator, same cost — plus a name, a term in the environment, and a countable oracle.
+
+**Which conversions gained a ∀ and which only gained a name** (`metatheory/docs/GUARD-DISCIPLINE.md`
+§3). THREE gained a bounded quantifier, and each is strictly stronger than the instances it
+replaces, because a transcribed instance cannot see the shape of its own index set:
+
+  * `every_evaluation_column_is_absorbed` — all **43** columns move ξ, where two `#guard`s named
+    column 42 and column 20's ζω half. An omitted column was indistinguishable from a refusing one.
+  * `every_bulletproof_challenge_is_read` — all **16** challenges move `b`, where two `#guard`s
+    named the first and the last.
+  * `only_the_to_data_order_reproduces_perm` — of all **six** assignments of (β, γ, α) to slots
+    5/6/7, exactly `to_data`'s reproduces slot 4. Two `#guard`s tested one wrong rotation and the
+    right one; §5's own header says these guards "are the ONLY thing standing between the tree and a
+    silent re-rotation", and four of the six rotations were not being stood in front of.
+
+Everything else gained a name.
 -/
 import Dregg2.Bridge.MinaWrapDeferred
 
@@ -198,9 +220,9 @@ def E539508 : WrapEvals :=
     betaChal := BETA_CHAL, gammaChal := GAMMA_CHAL, alphaChal := ALPHA_CHAL,
     zetaChal := ZETA_CHAL, domainLog2 := DOMAIN_LOG2 }
 
-/- The real block's tape passes the shape gate — so §9 of `MinaWrapDeferred` is not refusing
+/-- The real block's tape passes the shape gate — so §9 of `MinaWrapDeferred` is not refusing
 everything. -/
-#guard wrapEvalsOk E539508
+theorem block_539508_passes_the_shape_gate : wrapEvalsOk E539508 = true := by native_decide
 
 /-! ## §2 — ⚑ THE FIXTURE IS THE SAME BLOCK: five wire values appear in BOTH extractions.
 
@@ -208,14 +230,15 @@ everything. -/
 out of a re-walk of the binprot proof. They agree. A walk that had desynchronised by one field
 would not reproduce a 255-bit digest and sixteen 128-bit challenges. -/
 
-/- The `Fr`-sponge's SEED is public-input slot 10. -/
-#guard SPONGE_DIGEST == w539508 10
-/- The sixteen bulletproof challenges are slots 13-28, in order. -/
-#guard BP_CHALS == (List.range 16).map (fun j => w539508 (13 + j))
-/- ζ′ is slot 8 — the one plonk challenge both readings already agreed about. -/
-#guard ZETA_CHAL == w539508 8
-/- `branch_data` packs to slot 29: `pvBits 3 + 4 · 16 = 67`. -/
-#guard 3 + 4 * DOMAIN_LOG2 == w539508 29
+/-- The `Fr`-sponge's SEED is public-input slot 10. -/
+theorem sponge_digest_is_slot_10 : SPONGE_DIGEST = w539508 10 := by native_decide
+/-- The sixteen bulletproof challenges are slots 13-28, in order. -/
+theorem bp_chals_are_slots_13_to_28 :
+    BP_CHALS = (List.range 16).map (fun j => w539508 (13 + j)) := by native_decide
+/-- ζ′ is slot 8 — the one plonk challenge both readings already agreed about. -/
+theorem zeta_chal_is_slot_8 : ZETA_CHAL = w539508 8 := by native_decide
+/-- `branch_data` packs to slot 29: `pvBits 3 + 4 · 16 = 67`. -/
+theorem branch_data_packs_to_slot_29 : 3 + 4 * DOMAIN_LOG2 = w539508 29 := by native_decide
 
 /-! ## §3 — ⚑⚑ FIVE OF THE SIX WORDS, FROM THE BLOCK'S OWN BYTES, WITH NO CARRIER.
 
@@ -224,77 +247,135 @@ Nothing below reads `FT_EVAL0` and nothing below reads the slot it is compared a
 /-- The six words the block's bytes produce. -/
 def D : DeferredWords := expandDeferred E539508 FT_EVAL0
 
-/- ⚑ **`xi`** — slot 9. The whole `Fr`-sponge: the seed, the fresh 32-challenge sub-sponge, the
+/-- ⚑ **`xi`** — slot 9. The whole `Fr`-sponge: the seed, the fresh 32-challenge sub-sponge, the
 `ft_eval1` and public-input absorbs, and all 43 columns in `to_absorption_sequence` order. A single
 wrong element anywhere in that stream moves it. -/
-#guard D.xi == w539508 9
+theorem xi_is_slot_9 : D.xi = w539508 9 := by native_decide
 
-/- ⚑ **`b`** — slot 1. This one is downstream of the sponge's SECOND squeeze, so it also pins that
+/-- ⚑ **`b`** — slot 1. This one is downstream of the sponge's SECOND squeeze, so it also pins that
 two successive `challenge()`s are lanes 0 and 1 of one permutation rather than two permutations. -/
-#guard D.b == w539508 1
+theorem b_is_slot_1 : D.b = w539508 1 := by native_decide
 
-/- ⚑ **`zeta_to_srs_length`** — slot 2. `ζ^(2^16)` with the constant 16, through the endo lift and
+/-- ⚑ **`zeta_to_srs_length`** — slot 2. `ζ^(2^16)` with the constant 16, through the endo lift and
 the Type1 shift. -/
-#guard D.zetaToSrsLength == w539508 2
+theorem zeta_to_srs_length_is_slot_2 : D.zetaToSrsLength = w539508 2 := by native_decide
 
-/- ⚑ **`zeta_to_domain_size`** — slot 3. `ζ^(2^domain_log2)`, and it coincides with slot 2 because
+/-- ⚑ **`zeta_to_domain_size`** — slot 3. `ζ^(2^domain_log2)`, and it coincides with slot 2 because
 this block's `domain_log2` IS 16 — the coincidence `MinaWrapPublicInput` observed. -/
-#guard D.zetaToDomainSize == w539508 3
+theorem zeta_to_domain_size_is_slot_3 : D.zetaToDomainSize = w539508 3 := by native_decide
 
-/- ⚑⚑ **`perm`** — slot 4, and the densest of the five: it reads β, γ, α, ζ, the derived ω, `z(ζω)`,
+/-- ⚑⚑ **`perm`** — slot 4, and the densest of the five: it reads β, γ, α, ζ, the derived ω, `z(ζω)`,
 six `σ(ζ)` and six `w(ζ)`, in `derive_plonk`'s fold order, NEGATED, then Type1-shifted. -/
-#guard D.perm == w539508 4
+theorem perm_is_slot_4 : D.perm = w539508 4 := by native_decide
 
-/- …and the five together, as one object, so a reader cannot take four. -/
-#guard D.b == w539508 1 && D.zetaToSrsLength == w539508 2 && D.zetaToDomainSize == w539508 3
-       && D.perm == w539508 4 && D.xi == w539508 9
+/-- …and the five together, as one object, so a reader cannot take four. (A corollary now, where the
+`#guard` was a sixth independent compiled run of the same five sponges.) -/
+theorem the_five_words_together :
+    D.b = w539508 1 ∧ D.zetaToSrsLength = w539508 2 ∧ D.zetaToDomainSize = w539508 3
+    ∧ D.perm = w539508 4 ∧ D.xi = w539508 9 :=
+  ⟨b_is_slot_1, zeta_to_srs_length_is_slot_2, zeta_to_domain_size_is_slot_3, perm_is_slot_4,
+   xi_is_slot_9⟩
 
 /-! ### §3b — NON-VACUITY: each of the five moves when its own inputs move.
 
 Without these, "the function returns the right five numbers" is compatible with a function that
 returns five constants. One control per distinct leg of the derivation. -/
 
-/- The sponge SEED is read: slot 10 is not decoration. -/
-#guard (expandDeferred { E539508 with spongeDigest := SPONGE_DIGEST + 1 } FT_EVAL0).xi
-       != w539508 9
-/- `ft_eval1` is absorbed BEFORE ξ is squeezed, so it moves ξ. -/
-#guard (expandDeferred { E539508 with ftEval1 := FT_EVAL1 + 1 } FT_EVAL0).xi != w539508 9
-/- So is the accumulator-challenge digest — 32 challenges compressed into one absorb. -/
-#guard (expandDeferred { E539508 with
-          oldChals := OLD_CHALS.set 0 ((OLD_CHALS.getD 0 []).set 0 0) } FT_EVAL0).xi
-       != w539508 9
-/- The LAST evaluation column is absorbed too: a stream that stopped early passes every earlier
-control and fails this one. -/
-#guard (expandDeferred { E539508 with evals := EVALS.set 42 (0, 0) } FT_EVAL0).xi != w539508 9
-/- …and the ζω half of a column, not only the ζ half. -/
-#guard (expandDeferred { E539508 with
-          evals := EVALS.set 20 ((EVALS.getD 20 (0, 0)).1, 0) } FT_EVAL0).xi != w539508 9
+/-- The sponge SEED is read: slot 10 is not decoration. -/
+theorem xi_reads_the_seed :
+    (expandDeferred { E539508 with spongeDigest := SPONGE_DIGEST + 1 } FT_EVAL0).xi
+      ≠ w539508 9 := by native_decide
+/-- `ft_eval1` is absorbed BEFORE ξ is squeezed, so it moves ξ. -/
+theorem xi_reads_ft_eval1 :
+    (expandDeferred { E539508 with ftEval1 := FT_EVAL1 + 1 } FT_EVAL0).xi ≠ w539508 9 := by
+  native_decide
+/-- So is the accumulator-challenge digest — 32 challenges compressed into one absorb. -/
+theorem xi_reads_the_accumulator_digest :
+    (expandDeferred { E539508 with
+        oldChals := OLD_CHALS.set 0 ((OLD_CHALS.getD 0 []).set 0 0) } FT_EVAL0).xi
+      ≠ w539508 9 := by native_decide
 
-/- ζ′ moves both zeta powers. -/
-#guard (expandDeferred { E539508 with zetaChal := ZETA_CHAL + 1 } FT_EVAL0).zetaToSrsLength
-       != w539508 2
-/- …and the DOMAIN moves only `zeta_to_domain_size`: at `domain_log2 = 15` slots 2 and 3 stop
+/-- ⚑ **∀-GAIN.** **EVERY ONE** of the 43 evaluation columns is absorbed into the ξ stream — not
+just the last one. The two `#guard`s this replaces named column 42 ("a stream that stopped early
+passes every earlier control and fails this one") and column 20; between them they could not
+distinguish a column the absorb SKIPS from a column that is genuinely read, because a skipped index
+is exactly as invisible as one nobody transcribed. The bounded quantifier ranges over the whole
+column set, so a dropped column is now a red build. -/
+theorem every_evaluation_column_is_absorbed :
+    ∀ j, j < 43 → (expandDeferred { E539508 with evals := EVALS.set j (0, 0) } FT_EVAL0).xi
+      ≠ w539508 9 := by native_decide
+
+/-- The LAST evaluation column, the instance the `#guard` asserted — now a corollary of the ∀. -/
+theorem xi_reads_the_last_column :
+    (expandDeferred { E539508 with evals := EVALS.set 42 (0, 0) } FT_EVAL0).xi ≠ w539508 9 :=
+  every_evaluation_column_is_absorbed 42 (by decide)
+
+/-- …and the ζω half of a column, not only the ζ half. (NOT an instance of the ∀ above, which zeroes
+both halves — this is the finer claim that the second component enters the stream at all.) -/
+theorem xi_reads_the_zetaw_half :
+    (expandDeferred { E539508 with
+        evals := EVALS.set 20 ((EVALS.getD 20 (0, 0)).1, 0) } FT_EVAL0).xi ≠ w539508 9 := by
+  native_decide
+
+/-- ζ′ moves both zeta powers. -/
+theorem zeta_chal_moves_zeta_to_srs_length :
+    (expandDeferred { E539508 with zetaChal := ZETA_CHAL + 1 } FT_EVAL0).zetaToSrsLength
+      ≠ w539508 2 := by native_decide
+/-- …and the DOMAIN moves only `zeta_to_domain_size`: at `domain_log2 = 15` slots 2 and 3 stop
 coinciding. This is the pin that says the srs exponent is the CONSTANT 16 and not the domain. -/
-#guard (expandDeferred { E539508 with domainLog2 := 15 } FT_EVAL0).zetaToSrsLength == w539508 2
-#guard (expandDeferred { E539508 with domainLog2 := 15 } FT_EVAL0).zetaToDomainSize != w539508 3
+theorem srs_exponent_is_the_constant_16 :
+    (expandDeferred { E539508 with domainLog2 := 15 } FT_EVAL0).zetaToSrsLength = w539508 2 := by
+  native_decide
+theorem domain_size_exponent_is_the_domain :
+    (expandDeferred { E539508 with domainLog2 := 15 } FT_EVAL0).zetaToDomainSize ≠ w539508 3 := by
+  native_decide
 
-/- `perm` reads β, γ and α in THREE DISTINCT ROLES — each on its own. -/
-#guard (expandDeferred { E539508 with betaChal := BETA_CHAL + 1 } FT_EVAL0).perm != w539508 4
-#guard (expandDeferred { E539508 with gammaChal := GAMMA_CHAL + 1 } FT_EVAL0).perm != w539508 4
-#guard (expandDeferred { E539508 with alphaChal := ALPHA_CHAL + 1 } FT_EVAL0).perm != w539508 4
-/- …and it reads `z(ζω)` (column 0's SECOND component) and the σ column. -/
-#guard (expandDeferred { E539508 with
-          evals := EVALS.set 0 ((EVALS.getD 0 (0, 0)).1, 0) } FT_EVAL0).perm != w539508 4
-#guard (expandDeferred { E539508 with evals := EVALS.set 37 (0, 0) } FT_EVAL0).perm != w539508 4
-/- …and the LAST of the six `w` it folds over, at index 7+5 = 12. -/
-#guard (expandDeferred { E539508 with evals := EVALS.set 12 (0, 0) } FT_EVAL0).perm != w539508 4
+/-- `perm` reads β in its own role. -/
+theorem perm_reads_beta :
+    (expandDeferred { E539508 with betaChal := BETA_CHAL + 1 } FT_EVAL0).perm ≠ w539508 4 := by
+  native_decide
+/-- `perm` reads γ in its own role. -/
+theorem perm_reads_gamma :
+    (expandDeferred { E539508 with gammaChal := GAMMA_CHAL + 1 } FT_EVAL0).perm ≠ w539508 4 := by
+  native_decide
+/-- `perm` reads α in its own role. -/
+theorem perm_reads_alpha :
+    (expandDeferred { E539508 with alphaChal := ALPHA_CHAL + 1 } FT_EVAL0).perm ≠ w539508 4 := by
+  native_decide
+/-- …and it reads `z(ζω)` (column 0's SECOND component). -/
+theorem perm_reads_z_at_zetaw :
+    (expandDeferred { E539508 with
+        evals := EVALS.set 0 ((EVALS.getD 0 (0, 0)).1, 0) } FT_EVAL0).perm ≠ w539508 4 := by
+  native_decide
+/-- …and the σ column. -/
+theorem perm_reads_sigma :
+    (expandDeferred { E539508 with evals := EVALS.set 37 (0, 0) } FT_EVAL0).perm
+      ≠ w539508 4 := by native_decide
+/-- …and the LAST of the six `w` it folds over, at index 7+5 = 12. -/
+theorem perm_reads_the_last_w :
+    (expandDeferred { E539508 with evals := EVALS.set 12 (0, 0) } FT_EVAL0).perm
+      ≠ w539508 4 := by native_decide
 
-/- `b` reads all sixteen bulletproof challenges, first and last. -/
-#guard (expandDeferred { E539508 with bpChals := BP_CHALS.set 0 0 } FT_EVAL0).b != w539508 1
-#guard (expandDeferred { E539508 with bpChals := BP_CHALS.set 15 0 } FT_EVAL0).b != w539508 1
-/- ⚑ …and it is downstream of the sponge: a moved seed moves `b` as well as ξ, which is what makes
+/-- ⚑ **∀-GAIN.** **EVERY ONE** of the sixteen bulletproof challenges is read by `b`. The two
+`#guard`s this replaces named the first and the last, which is the classic pair that cannot see a
+hole in the middle of its own range. -/
+theorem every_bulletproof_challenge_is_read :
+    ∀ j, j < 16 → (expandDeferred { E539508 with bpChals := BP_CHALS.set j 0 } FT_EVAL0).b
+      ≠ w539508 1 := by native_decide
+
+/-- The first, the instance the `#guard` asserted — now a corollary of the ∀. -/
+theorem b_reads_the_first_challenge :
+    (expandDeferred { E539508 with bpChals := BP_CHALS.set 0 0 } FT_EVAL0).b ≠ w539508 1 :=
+  every_bulletproof_challenge_is_read 0 (by decide)
+/-- …and the last. -/
+theorem b_reads_the_last_challenge :
+    (expandDeferred { E539508 with bpChals := BP_CHALS.set 15 0 } FT_EVAL0).b ≠ w539508 1 :=
+  every_bulletproof_challenge_is_read 15 (by decide)
+/-- ⚑ …and it is downstream of the sponge: a moved seed moves `b` as well as ξ, which is what makes
 `r` the sponge's second squeeze rather than an independent constant. -/
-#guard (expandDeferred { E539508 with spongeDigest := SPONGE_DIGEST + 1 } FT_EVAL0).b != w539508 1
+theorem b_is_downstream_of_the_sponge :
+    (expandDeferred { E539508 with spongeDigest := SPONGE_DIGEST + 1 } FT_EVAL0).b
+      ≠ w539508 1 := by native_decide
 
 /-! ### §3c — the derived ω is the right root of unity, and the generator is not a guess.
 
@@ -302,11 +383,13 @@ coinciding. This is the pin that says the srs exponent is the CONSTANT 16 and no
 EXACT order is pinned here; §3's `perm` is the independent falsifier, since a wrong ω changes
 `zkp(ζ)` and therefore slot 4. -/
 
-/- Order exactly `2^16`: a 2^16-th root that is not a 2^15-th root. -/
-#guard powMod (rootOfUnity 16) (2 ^ 16) pN == 1
-#guard powMod (rootOfUnity 16) (2 ^ 15) pN != 1
-/- …and the ladder is consistent across sizes: `ω_16^2 = ω_15`. -/
-#guard rootOfUnity 16 * rootOfUnity 16 % pN == rootOfUnity 15
+/-- Order exactly `2^16`: a 2^16-th root… -/
+theorem omega_16_is_a_2_16th_root : powMod (rootOfUnity 16) (2 ^ 16) pN = 1 := by native_decide
+/-- …that is not a 2^15-th root. -/
+theorem omega_16_is_not_a_2_15th_root : powMod (rootOfUnity 16) (2 ^ 15) pN ≠ 1 := by native_decide
+/-- …and the ladder is consistent across sizes: `ω_16^2 = ω_15`. -/
+theorem omega_ladder_16_to_15 : rootOfUnity 16 * rootOfUnity 16 % pN = rootOfUnity 15 := by
+  native_decide
 
 /-! ## §4 — `combined_inner_product`, and EXACTLY what it does and does not say.
 
@@ -316,29 +399,39 @@ legs — two accumulator b-polynomials at both points, the public evaluation pai
 columns, ξ, r, the fold order and the Type1 shift — jointly put slot 0 within one scalar's reach,
 at exactly the index kimchi's `ft_eval0` occupies. §4b is where the content is. -/
 
-#guard D.cip == w539508 0
+theorem cip_is_slot_0 : D.cip = w539508 0 := by native_decide
 
 /-! ### §4b — non-vacuity of the fold: with `FT_EVAL0` HELD FIXED, every other leg moves it.
 
 These are discriminations, because nothing here re-solves for `FT_EVAL0`. -/
 
-/- The accumulator challenges enter the fold as b-polynomial evaluations at the HEAD of the poly
+/-- The accumulator challenges enter the fold as b-polynomial evaluations at the HEAD of the poly
 list (`wrap.ml:60-66`), before the public polynomial — `MinaRealBlockGate` §3 pins the same prefix
 on the Wrap side of this block. ⚑ This control is NOT isolating: `oldChals` also feeds
 `challengesDigest`, so it moves ξ and r too. It says the value is read, not by which path. -/
-#guard (expandDeferred { E539508 with
-          oldChals := OLD_CHALS.set 1 ((OLD_CHALS.getD 1 []).set 15 0) } FT_EVAL0).cip
-       != w539508 0
-/- The public evaluation pair is at index 2. -/
-#guard (expandDeferred { E539508 with pubEval := (PUB_EVAL.1 + 1, PUB_EVAL.2) } FT_EVAL0).cip
-       != w539508 0
-/- `ft_eval1` is at index 3 of the ζω column — the slot `FT_EVAL0` occupies in the ζ column. -/
-#guard (expandDeferred { E539508 with ftEval1 := FT_EVAL1 + 1 } FT_EVAL0).cip != w539508 0
-/- The first and last of the 43 columns. -/
-#guard (expandDeferred { E539508 with evals := EVALS.set 0 (0, 0) } FT_EVAL0).cip != w539508 0
-#guard (expandDeferred { E539508 with evals := EVALS.set 42 (0, 0) } FT_EVAL0).cip != w539508 0
-/- And the carried scalar itself is read, so slot 0 is not being reproduced without it. -/
-#guard (expandDeferred E539508 (FT_EVAL0 + 1)).cip != w539508 0
+theorem cip_reads_the_accumulator_challenges :
+    (expandDeferred { E539508 with
+        oldChals := OLD_CHALS.set 1 ((OLD_CHALS.getD 1 []).set 15 0) } FT_EVAL0).cip
+      ≠ w539508 0 := by native_decide
+/-- The public evaluation pair is at index 2. -/
+theorem cip_reads_the_public_evaluation :
+    (expandDeferred { E539508 with pubEval := (PUB_EVAL.1 + 1, PUB_EVAL.2) } FT_EVAL0).cip
+      ≠ w539508 0 := by native_decide
+/-- `ft_eval1` is at index 3 of the ζω column — the slot `FT_EVAL0` occupies in the ζ column. -/
+theorem cip_reads_ft_eval1 :
+    (expandDeferred { E539508 with ftEval1 := FT_EVAL1 + 1 } FT_EVAL0).cip ≠ w539508 0 := by
+  native_decide
+/-- The first of the 43 columns. -/
+theorem cip_reads_the_first_column :
+    (expandDeferred { E539508 with evals := EVALS.set 0 (0, 0) } FT_EVAL0).cip
+      ≠ w539508 0 := by native_decide
+/-- …and the last. -/
+theorem cip_reads_the_last_column :
+    (expandDeferred { E539508 with evals := EVALS.set 42 (0, 0) } FT_EVAL0).cip
+      ≠ w539508 0 := by native_decide
+/-- And the carried scalar itself is read, so slot 0 is not being reproduced without it. -/
+theorem cip_reads_the_carried_ft_eval0 :
+    (expandDeferred E539508 (FT_EVAL0 + 1)).cip ≠ w539508 0 := by native_decide
 
 /-! ## §5 — ⚑⚑ THE SLOT ORDER AT 5-7: MEASURED, and the sibling was CORRECTED.
 
@@ -358,38 +451,68 @@ The disagreement was invisible to every instrument that file had:
     moves the list, it just moves the wrong slot;
   * the width signature cannot help — all three are 128-bit challenges.
 
-What DOES see it is `perm`, which reads β, γ and α in three distinct roles. So the guards below are
-the ONLY thing standing between the tree and a silent re-rotation, and they must stay. -/
+What DOES see it is `perm`, which reads β, γ and α in three distinct roles. So the theorems below are
+the ONLY thing standing between the tree and a silent re-rotation, and they must stay.
 
-/- ⚑ The wire's β is at slot 5, its γ at slot 6, its α′ at slot 7 — NOT `alpha, beta, gamma`. -/
-#guard BETA_CHAL == w539508 5
-#guard GAMMA_CHAL == w539508 6
-#guard ALPHA_CHAL == w539508 7
+⚑ UPDATED 2026-08-02. That sentence was written under two `#guard`s, which stood in front of exactly
+TWO of the six assignments of (β, γ, α) to slots 5/6/7 — `to_data`'s, and one wrong rotation. Four
+rotations had nothing in front of them, and an untested rotation is indistinguishable from a refused
+one. `only_the_to_data_order_reproduces_perm` now quantifies over all six. -/
 
-/- ⚑ …and the corrected `WIRE_539508` now carries each value under its own name. Before the fix
-these three fields held each other's values. -/
-#guard WIRE_539508.beta == BETA_CHAL
-#guard WIRE_539508.gamma == GAMMA_CHAL
-#guard WIRE_539508.alpha == ALPHA_CHAL
+/-- ⚑ The wire's β is at slot 5 — NOT `alpha, beta, gamma`. -/
+theorem beta_is_slot_5 : BETA_CHAL = w539508 5 := by native_decide
+/-- …its γ at slot 6. -/
+theorem gamma_is_slot_6 : GAMMA_CHAL = w539508 6 := by native_decide
+/-- …and its α′ at slot 7. -/
+theorem alpha_is_slot_7 : ALPHA_CHAL = w539508 7 := by native_decide
 
-/- ⚑⚑ **AND THE ARITHMETIC AGREES WITH `to_data`.** `permOf` under the RETIRED naming — reading
-slot 5 as α, slot 6 as β and slot 7 as γ — does NOT reproduce slot 4. This is the discrimination
-that made the correction a measurement rather than a re-reading, and it is kept in the retired
-direction so a regression is caught. -/
-#guard (expandDeferred { E539508 with
-          betaChal := w539508 6, gammaChal := w539508 7,
-          alphaChal := w539508 5 } FT_EVAL0).perm != w539508 4
+/-- ⚑ …and the corrected `WIRE_539508` now carries β under its own name. Before the fix these three
+fields held each other's values. -/
+theorem wire_beta_is_beta : WIRE_539508.beta = BETA_CHAL := by native_decide
+/-- …γ under its own name. -/
+theorem wire_gamma_is_gamma : WIRE_539508.gamma = GAMMA_CHAL := by native_decide
+/-- …and α′ under its own name. -/
+theorem wire_alpha_is_alpha : WIRE_539508.alpha = ALPHA_CHAL := by native_decide
 
-/- …and under the CORRECTED naming it does, so the guard above is a discrimination and not a
+/-- ⚑⚑ **∀-GAIN, and this is the one §5's own header asked for.** That header says these guards
+"are the ONLY thing standing between the tree and a silent re-rotation" — but two `#guard`s stood in
+front of exactly TWO of the six assignments of (β, γ, α) to slots 5/6/7: `to_data`'s, and one wrong
+rotation. Four rotations had nothing in front of them, and an untested rotation is indistinguishable
+from a refused one.
+
+This quantifies over **all six**: `permOf` reproduces slot 4 **iff** the assignment is `to_data`'s
+`(5, 6, 7)`. Both polarities in one statement — it is simultaneously the discrimination (five
+rotations fail) and the proof that the discrimination is not a function that rejects everything (one
+succeeds), which is what the two `#guard`s needed each other for. -/
+theorem only_the_to_data_order_reproduces_perm :
+    ∀ p ∈ [(5, 6, 7), (5, 7, 6), (6, 5, 7), (6, 7, 5), (7, 5, 6), (7, 6, 5)],
+      ((expandDeferred { E539508 with
+          betaChal := w539508 p.1, gammaChal := w539508 p.2.1,
+          alphaChal := w539508 p.2.2 } FT_EVAL0).perm = w539508 4) ↔ p = (5, 6, 7) := by
+  native_decide
+
+/-- The RETIRED naming — reading slot 5 as α, slot 6 as β and slot 7 as γ — does NOT reproduce slot
+4. The instance the `#guard` asserted, kept in the retired direction so a regression is caught; now
+a corollary of the ∀ above. -/
+theorem the_retired_naming_does_not_reproduce_perm :
+    (expandDeferred { E539508 with
+        betaChal := w539508 6, gammaChal := w539508 7,
+        alphaChal := w539508 5 } FT_EVAL0).perm ≠ w539508 4 := by
+  intro hp
+  exact absurd ((only_the_to_data_order_reproduces_perm (6, 7, 5) (by decide)).mp hp) (by decide)
+
+/-- …and under the CORRECTED naming it does, so the theorem above is a discrimination and not a
 function that rejects everything. -/
-#guard (expandDeferred { E539508 with
-          betaChal := WIRE_539508.beta, gammaChal := WIRE_539508.gamma,
-          alphaChal := WIRE_539508.alpha } FT_EVAL0).perm == w539508 4
+theorem the_corrected_naming_reproduces_perm :
+    (expandDeferred { E539508 with
+        betaChal := WIRE_539508.beta, gammaChal := WIRE_539508.gamma,
+        alphaChal := WIRE_539508.alpha } FT_EVAL0).perm = w539508 4 := by native_decide
 
-/- The corrected layout reassembles the pinned forty. Definitional in the round-trip direction —
+/-- The corrected layout reassembles the pinned forty. Definitional in the round-trip direction —
 which is precisely why the round trip was never the test — but it pins that the correction did not
 lose a slot. -/
-#guard publicInputWords WIRE_539508 D == PUBLIC_INPUT
+theorem the_layout_reassembles_the_pinned_forty :
+    publicInputWords WIRE_539508 D = PUBLIC_INPUT := by native_decide
 
 /-! ## §6 — ⚑ THE CENSUS, CLOSED TO 39 + 1.
 
@@ -432,13 +555,79 @@ file measures the derived constant term against `MinaRealBlockGate.LCT`. Consequ
     than a formalization. `FT_EVAL0` above stays SOLVED-FROM-SLOT-0 until that line lands, and is
     the comparand it must hit. -/
 
-/- The forty words this file assembles ARE the pinned public input, so `publicCommOf` at them is
+/-- The forty words this file assembles ARE the pinned public input, so `publicCommOf` at them is
 `PUBLIC_COMM_GOLD` by `MinaWrapPublicInput`'s own §4 pin. Stated as the list equality, because that
 is the whole content: the MSM is already welded one file over. -/
-#guard (publicInputWords WIRE_539508 D).length == 40
+theorem the_assembled_words_are_forty : (publicInputWords WIRE_539508 D).length = 40 := by
+  native_decide
 
-/- …and the six words it contributes are exactly `DEFERRED_539508`, the projection
+/-- …and the six words it contributes are exactly `DEFERRED_539508`, the projection
 `MinaWrapPublicInput` could only exhibit. -/
-#guard D == DEFERRED_539508
+theorem the_six_words_are_the_pinned_projection : D = DEFERRED_539508 := by native_decide
+
+/-! ## §7 — the axiom record. ⚑ EVERY fact above rests on the COMPILED evaluator, and now says so.
+
+`#assert_compiled` (`Dregg2/Tactics.lean`) passes iff every axiom the named theorem rests on is
+either kernel-clean or a `native_decide` oracle, **and at least one oracle is present** — so it
+cannot launder a kernel-clean fact downward, and a `sorry` or a fresh `axiom` is still a hard error.
+Read it literally: it says "this is true by compiled evaluation, and I am saying so out loud." That
+was already true of the `#guard`s these replace; the pin makes it COUNTABLE.
+
+The corollaries (`xi_reads_the_last_column`, `b_reads_the_first_challenge`,
+`b_reads_the_last_challenge`, `the_retired_naming_does_not_reproduce_perm`, `the_five_words_together`)
+inherit their parents' oracles, so they are pinned by the same command. -/
+
+#assert_compiled block_539508_passes_the_shape_gate
+#assert_compiled sponge_digest_is_slot_10
+#assert_compiled bp_chals_are_slots_13_to_28
+#assert_compiled zeta_chal_is_slot_8
+#assert_compiled branch_data_packs_to_slot_29
+#assert_compiled xi_is_slot_9
+#assert_compiled b_is_slot_1
+#assert_compiled zeta_to_srs_length_is_slot_2
+#assert_compiled zeta_to_domain_size_is_slot_3
+#assert_compiled perm_is_slot_4
+#assert_compiled the_five_words_together
+#assert_compiled xi_reads_the_seed
+#assert_compiled xi_reads_ft_eval1
+#assert_compiled xi_reads_the_accumulator_digest
+#assert_compiled every_evaluation_column_is_absorbed
+#assert_compiled xi_reads_the_last_column
+#assert_compiled xi_reads_the_zetaw_half
+#assert_compiled zeta_chal_moves_zeta_to_srs_length
+#assert_compiled srs_exponent_is_the_constant_16
+#assert_compiled domain_size_exponent_is_the_domain
+#assert_compiled perm_reads_beta
+#assert_compiled perm_reads_gamma
+#assert_compiled perm_reads_alpha
+#assert_compiled perm_reads_z_at_zetaw
+#assert_compiled perm_reads_sigma
+#assert_compiled perm_reads_the_last_w
+#assert_compiled every_bulletproof_challenge_is_read
+#assert_compiled b_reads_the_first_challenge
+#assert_compiled b_reads_the_last_challenge
+#assert_compiled b_is_downstream_of_the_sponge
+#assert_compiled omega_16_is_a_2_16th_root
+#assert_compiled omega_16_is_not_a_2_15th_root
+#assert_compiled omega_ladder_16_to_15
+#assert_compiled cip_is_slot_0
+#assert_compiled cip_reads_the_accumulator_challenges
+#assert_compiled cip_reads_the_public_evaluation
+#assert_compiled cip_reads_ft_eval1
+#assert_compiled cip_reads_the_first_column
+#assert_compiled cip_reads_the_last_column
+#assert_compiled cip_reads_the_carried_ft_eval0
+#assert_compiled beta_is_slot_5
+#assert_compiled gamma_is_slot_6
+#assert_compiled alpha_is_slot_7
+#assert_compiled wire_beta_is_beta
+#assert_compiled wire_gamma_is_gamma
+#assert_compiled wire_alpha_is_alpha
+#assert_compiled only_the_to_data_order_reproduces_perm
+#assert_compiled the_retired_naming_does_not_reproduce_perm
+#assert_compiled the_corrected_naming_reproduces_perm
+#assert_compiled the_layout_reassembles_the_pinned_forty
+#assert_compiled the_assembled_words_are_forty
+#assert_compiled the_six_words_are_the_pinned_projection
 
 end Dregg2.Bridge.MinaWrapDeferredWeld
