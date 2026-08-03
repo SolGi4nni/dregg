@@ -93,8 +93,13 @@ type BaseSponge = DefaultFqSponge<VestaParameters, PlonkSpongeConstantsKimchi, F
 type ScalarSponge = DefaultFrSponge<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
 type Idx = ProverIndex<FULL_ROUNDS, Vesta, poly_commitment::ipa::SRS<Vesta>>;
 
-/// The five rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 8] = [
+/// The rungs, in assembly order. Each is a superset of the one before it.
+///
+/// `r9_opening` (2026-08-03) is `check_bulletproof`'s opening side: `group_map`, `p_prime`'s `uc`
+/// term, `rhs`'s three `scale_fast2`s and `equal_g` — 482 rows, whose only structural purchase is
+/// that R8's `verified` stops being a free witness. It refuses no on-curve substitution, and the
+/// Lean side says so by name (`substituted_assembly_still_closes_equal_g`).
+const RUNGS: [&str; 9] = [
     "r1_transcript",
     "r2_challenges",
     "r3_msm",
@@ -103,6 +108,7 @@ const RUNGS: [&str; 8] = [
     "r6_ft_eval0",
     "r7_absorption",
     "r8_finalize",
+    "r9_opening",
 ];
 
 // ---- the Lean-emitted JSON shape ----
@@ -443,9 +449,18 @@ fn main() {
         );
     }
     println!(
-        "== VERDICT: eight sub-circuits of `step_verifier.verify_one` ASSEMBLE from Lean, PROVE"
+        "== VERDICT: nine sub-circuits of `step_verifier.verify_one` ASSEMBLE from Lean, PROVE"
     );
     println!("   pure-Rust with verify()==true, and BIND at every sub-circuit boundary. ==");
+    // ⚠ AND SAY WHAT `r9_opening` DOES NOT ADD. It emits `check_bulletproof`'s opening side, so
+    // `verified` (#11) is `equal_g`'s output cell instead of a free witness. It does NOT refuse an
+    // on-curve substitution: `G`, `z_1` and `z_2` have no binder inside `verify_one`, the honest
+    // witness this harness proves SOLVES `G` off `lhs`, and a substituting prover solves its own.
+    // The Lean side names that fact rather than leaving it to a reader
+    // (`substituted_assembly_still_closes_equal_g`). A proved r9 is a proved ASSEMBLY, not a
+    // proved OPENING.
+    println!("== ⚠ r9_opening proves the ASSEMBLY, not the OPENING: `equal_g` refuses no on-curve");
+    println!("   substitution — `G`, `z_1`, `z_2` are free, and the honest witness solves `G`. ==");
 }
 
 // =====================================================================================
