@@ -177,6 +177,42 @@ def scan(mt: Path) -> tuple[dict[str, int], int]:
     return counts, n_files
 
 
+def audit_baseline_integrity(path: Path) -> list[str]:
+    """⚑ THE LEDGER CHECKS ITSELF, so the refresh gate cannot be walked around with an editor.
+
+    (d1)/(d2)/(d3) live in `refresh_baseline`, which is a TOOL — and a tool is only a gate for
+    the people who run it. Nothing stops an editor from typing a row upward. What DOES stop it
+    being silent: the header carries `# TOTAL <n>`, and the last `BASELINE-PROVENANCE` line
+    carries the total that refresh produced. Both must equal the sum of the rows. A hand-edit
+    that raises a row and does not forge two more numbers is DETECTED at gate time, by anyone
+    running the gate, without needing the history."""
+    if not path.exists():
+        return []
+    rows = read_baseline(path)
+    total = sum(rows.values())
+    text = path.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    m = re.search(r'^#\s*TOTAL\s+(\d+)\s+guards', text, re.MULTILINE)
+    if m is None:
+        findings.append("the baseline header has no `# TOTAL <n> guards` line — it was not "
+                        "written by the gated refresh")
+    elif int(m.group(1)) != total:
+        findings.append(
+            f"the baseline header says TOTAL {m.group(1)} but its rows sum to {total} "
+            f"({total - int(m.group(1)):+d}) — the ledger was EDITED without going through "
+            "`--update-baseline`, which is the one path that records why")
+
+    prov = read_provenance(path)
+    if prov:
+        pm = re.search(r'(\d+)\s*(?:→|->)\s*(\d+)', prov[-1])
+        if pm and int(pm.group(2)) != total:
+            findings.append(
+                f"the last BASELINE-PROVENANCE line ends at {pm.group(2)} but the rows sum to "
+                f"{total} — a row moved after the last recorded refresh")
+    return findings
+
+
 def read_baseline(path: Path) -> dict[str, int]:
     if not path.exists():
         return {}
@@ -600,6 +636,34 @@ def run_self_test() -> int:
         check("--only is STILL subject to (d1)/(d2): it cannot raise its own row",
               rc == 3, f"rc={rc}")
 
+        # ── ⚑ arm (e): the LEDGER checks itself, so an EDITOR cannot walk around the tool ──
+        _mk(mt, "A.lean", "#guard 1 == 1\n")
+        c15, n15 = scan(mt)
+        rc = refresh_baseline(bl, c15, n15, "clean state for the integrity arm", True, quiet=True)
+        check("setup: a gate-written baseline is self-consistent",
+              rc == 0 and not audit_baseline_integrity(bl),
+              f"rc={rc} findings={audit_baseline_integrity(bl)}")
+        # hand-edit a row UPWARD without touching the header — the editor's shortcut
+        txt = bl.read_text(encoding="utf-8")
+        hand = txt.replace("1\tA.lean", "9\tA.lean")
+        check("the hand-edit actually changed a row", hand != txt, "replacement did not apply")
+        bl.write_text(hand, encoding="utf-8")
+        f_e = audit_baseline_integrity(bl)
+        check("RED (e): a HAND-RAISED row is DETECTED (header TOTAL no longer adds up)",
+              any("EDITED without going through" in x for x in f_e), f"findings={f_e}")
+        check("(e) …and the provenance tail is caught too (a row moved after the last refresh)",
+              any("after the last recorded refresh" in x for x in f_e), f"findings={f_e}")
+        # …and a header with no TOTAL at all (a file not written by the gate) is refused
+        bl.write_text("5\tA.lean\n", encoding="utf-8")
+        check("RED (e): a baseline with NO header was not written by the gated refresh",
+              any("no `# TOTAL" in x for x in audit_baseline_integrity(bl)),
+              f"findings={audit_baseline_integrity(bl)}")
+        # CONTROL: regenerating through the gate makes it self-consistent again
+        rc = refresh_baseline(bl, c15, n15, "regenerate after the hand-edit", True, quiet=True)
+        check("CONTROL: a gate-written refresh restores integrity",
+              rc == 0 and not audit_baseline_integrity(bl),
+              f"rc={rc} findings={audit_baseline_integrity(bl)}")
+
         # floors: a blinded (empty) scan must FAIL rather than green
         rc = evaluate({}, 0, {}, True, "self-test-blinded", 0, quiet=True)
         check("a BLINDED scan trips the non-vacuity floors", rc == 1, f"rc={rc}")
@@ -656,8 +720,20 @@ def main() -> int:
             return refresh_baseline(args.baseline, counts, n_files,
                                     args.reason, args.allow_increase, only=args.only)
 
-        return evaluate(counts, n_files, read_baseline(args.baseline),
-                        enforce_floors=True, label=label, top=args.top)
+        rc = evaluate(counts, n_files, read_baseline(args.baseline),
+                      enforce_floors=True, label=label, top=args.top)
+        # ⚑ arm (e) — the LEDGER's own integrity. Reported after the census so a hand-edit
+        # cannot be mistaken for a census finding, and it reds independently.
+        integrity = audit_baseline_integrity(args.baseline)
+        if integrity:
+            print("")
+            print("⚑ RED — the BASELINE ITSELF does not add up (a refresh was bypassed):")
+            for f in integrity:
+                print(f"   {f}")
+            print("")
+            print("FAIL: baseline integrity")
+            rc = 1
+        return rc
     except Exception as e:  # noqa: BLE001
         print(f"check-guard-discipline: FATAL — {e}", file=sys.stderr)
         return 2

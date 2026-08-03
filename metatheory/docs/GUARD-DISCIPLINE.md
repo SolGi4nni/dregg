@@ -216,6 +216,14 @@ stamps `INCREASED` with the delta. A ban with no escape hatch gets routed around
 file, which is the silent outcome. The wound was never that the number went up — it was that
 nothing said so.
 
-Red-proofed in `--self-test` (28 arms), including the two green controls that keep the gate from
-being a blanket refusal: a **level split** whose pieces sum to the original is accepted, and a
-legitimate **downward** refresh is accepted.
+⚑ **(e) And the ledger checks itself, because a tool is only a gate for the people who run it.**
+(d1)–(d3) live in `--update-baseline`. Nothing stops an editor from typing a row upward. So the
+header carries `# TOTAL <n>` and the last `BASELINE-PROVENANCE` line carries the total that refresh
+produced, and **the ordinary gate run** verifies both against the sum of the rows. A hand-edit that
+raises a row and does not forge two more numbers reds for anyone running the gate, with no access to
+history required. A baseline with no header at all is refused as "not written by the gated refresh".
+
+Red-proofed in `--self-test` (35 arms), including the green controls that keep this from being a
+blanket refusal: a **level split** whose pieces sum to the original is accepted, a legitimate
+**downward** refresh is accepted, and a gate-written refresh **restores** integrity after a
+hand-edit.
