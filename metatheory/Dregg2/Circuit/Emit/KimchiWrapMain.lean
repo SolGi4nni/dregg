@@ -210,7 +210,23 @@ family we actually emit can no longer be laundered through the ledger.
 'fixtures/wrapmain*'` was EMPTY: the `.gz` and its sidecar were described in the script's own header
 as "added 2026-08-03", and neither was ever committed — so `haveFix` was permanently false and the
 `fixture/in-sync-with-live-emission` leg could never fire. A documented fixture is not a committed
-one. It is committed now, under the top rung's name.
+one.
+
+⚠ ⚑ **AND THE SENTENCE THAT STOOD HERE — "It is committed now, under the top rung's name" — WAS
+ITSELF FALSE, re-checked 2026-08-03.** `git log --all -- 'bridge/mina-zkapp/fixtures/wrapmain-*'` is
+still empty and `bridge/mina-zkapp/fixtures/` holds only the step fixture and the two devnet wrap
+VKs. So the correction inherited the defect it was correcting: a second documented fixture, one
+sentence below the paragraph explaining why that is not a real one.
+
+**The fixture is PENDING, and the reason is the emission, not an oversight.**
+`wrapmain-region-conformance.mjs` names `wrapmain-wrap-w8-ftcomm-gates.json.gz`, and producing it
+needs `DREGG_WM=wrap lake env lean --run …/EmitWrapMainJson.lean` at the TOP rung — a wrap-scale
+emission under `lean --run`'s interpreter, which is what the `*` in the rung table above is about:
+it is hours, and it had not finished when either sentence was written. Until it lands, `haveFix` is
+false, `requireFreshFixture` is unreachable, and the `fixture/in-sync-with-live-emission` leg
+reports `absent`. ⚠ That leg is a `conform(…, 'absent', 'absent')` equality, so it is GREEN while
+absent — the gate is live only for the run that has a live emission anyway. Read "conformance
+green" at that resolution until the `.gz` is on disk.
 
 ⚑ And the wrap side has a cross-check the step side never had: **`wrap-blockchain` is an
 independently compiled `wrap_main`** and its non-Generic gate stream is byte-identical to

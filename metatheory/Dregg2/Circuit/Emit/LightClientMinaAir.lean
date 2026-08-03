@@ -37,7 +37,12 @@ exactly "a quantity no felt can hold", the construct that leg exists for — and
 else**: no new `AirLeg` constructor, no new lowering, no hand-written gate. That is the finding,
 stated plainly as §3 asks.
 
-## ⚑ THE TOOTH: `blockchain_length` and the witnessed depth are DERIVED, not witnessed
+## ⚑ `blockchain_length` is a FUNCTION OF TWO WITNESSES here — the tooth is one module over
+
+⚠ This heading used to read *"THE TOOTH: `blockchain_length` and the witnessed depth are DERIVED,
+not witnessed"*, and the body below already retracts it. A heading a reader takes away unread is
+the same claim as a paragraph; it is corrected here rather than left to be refuted three lines
+down.
 
 The wound this AIR exists to close is the one the `mina-tip` lane measured: a peer's reply was read
 at 1,544 of 61,193 bytes, `tip.proof` was dropped, and *"what survived was `blockchain_length`, the
