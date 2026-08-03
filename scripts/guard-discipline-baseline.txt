@@ -2,7 +2,7 @@
 # The gate (scripts/check-guard-discipline.py) reds when a module goes ABOVE its row,
 # BELOW it (a stale row — retire the number when you convert), or carries guards with
 # no row at all. So this file may only ever SHRINK. Policy: metatheory/docs/GUARD-DISCIPLINE.md.
-# TOTAL 15656 guards across 1156 modules (2280 .lean files scanned).
+# TOTAL 15665 guards across 1168 modules (2296 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 
 5	Dregg2/Agent/Mandate.lean
@@ -118,7 +118,7 @@
 12	Dregg2/Bridge/MinaChainSelectionDifferential.lean
 7	Dregg2/Bridge/MinaCheckpoint.lean
 8	Dregg2/Bridge/MinaForkChoiceGate.lean
-49	Dregg2/Bridge/MinaMultiBlockConformance.lean
+35	Dregg2/Bridge/MinaMultiBlockConformance.lean
 13	Dregg2/Bridge/MinaStateHashDerive.lean
 31	Dregg2/Bridge/MinaStateHashWordGate.lean
 25	Dregg2/Bridge/MinaStepPrevCommitments.lean
@@ -390,16 +390,6 @@
 18	Dregg2/Circuit/Emit/KimchiRenderPublicInput.lean
 11	Dregg2/Circuit/Emit/KimchiRenderVarBaseMul.lean
 12	Dregg2/Circuit/Emit/KimchiRootAirEval.lean
-# ── 2026-08-02 — KimchiStepMain.lean (row 814) was SPLIT, not converted. It is now an umbrella
-# carrying zero guards; its pins moved verbatim into thirteen …PinsNN modules so they elaborate in
-# PARALLEL (15.7 min of serial interpretation -> a ~2 min critical path). No guard was added,
-# removed, reworded or weakened by the split — the mover's gate is a multiset comparison of every
-# `#guard` line, source against the union of the outputs.
-# ⚠ SAY THE DELTA OUT LOUD: the thirteen rows sum to 837, the retired row was 814. The +23 are
-# guards a CONCURRENT lane (the `combine` `Opt.Maybe` mux, §12l) had added to the monolith in the
-# working tree between this ledger's HEAD extract (a7d30783d) and the split; `git commit --only` is
-# path-granular so they are swept in with the file. They are that lane's to burn down, not a
-# population the split created.
 77	Dregg2/Circuit/Emit/KimchiStepMainPins01.lean
 74	Dregg2/Circuit/Emit/KimchiStepMainPins02.lean
 76	Dregg2/Circuit/Emit/KimchiStepMainPins03.lean
