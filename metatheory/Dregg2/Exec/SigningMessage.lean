@@ -11,7 +11,7 @@ field-for-field from dregg1 (`turn/src/executor/authorize.rs:1713-1880`, `turn/s
     domain separator (`sigMsg*_hasPrefix`), and no two kinds share a separator
     (`domainSep_injective`): cross-protocol preimage collision is impossible.
   * **Binding** — tampering any bound field changes the preimage: a different `target`,
-    `mayDelegate`, `commitmentMode`, `federationId`, `nonce`, `actionHash`, `ephemeralPk`, or
+    `mayDelegate`, `commitmentMode`, `federationId`, `turnNonce`, `actionHash`, `ephemeralPk`, or
     `expiresAt` yields a different preimage, so a signature over one `(action, resource)` cannot
     be replayed against another.
 
@@ -19,8 +19,23 @@ The digest `CryptoKernel.verify` checks is `BLAKE3(preimage)` (or, for `Custom`,
 the predicate AIR absorbs). BLAKE3's collision/preimage resistance is assumed at the §8 portal
 (`CryptoKernel`); what this module proves is that the preimage commits to the right fields.
 
-OPEN: the Rust `bytes == bytes` differential is the ultimate byte-fidelity certification; the
-`#eval`s here confirm each separator literal equals `ascii "dregg-…"` of the dregg1 domain string.
+## ⚑ v2 → v3: this module was STALE on the Full path, and the stale field was the replay closure
+
+Measured 2026-08-02. Five of the six builders here were byte-faithful to Rust. The SIXTH — the
+Signature path, `sigMsgFull` — modelled `b"dregg-action-sig-v2:"` with NO `turn_nonce`, while
+`TurnExecutor::compute_signing_message` (`turn/src/executor/authorize.rs:2293-2333`) has signed
+`b"dregg-action-sig-v3:" ‖ federation_id ‖ turn_nonce.to_le_bytes() ‖ …` since the Full-commitment
+replay closure landed. The omitted field is exactly the one that makes a captured Full-commitment
+signature single-use (`turn/tests/nonce_replay_full_commitment.rs`): without it an adversary who
+reads the public on-ledger nonce and receipt head lifts a signed action onto the advanced pair and
+re-commits it. `§7b` exhibits that replay over the retained v2 shape (`sigMsgFullV2`) and proves the
+v3 shape forecloses it.
+
+The drift was invisible because the fidelity check was a constant against its own restatement —
+`sepFull = ascii "dregg-action-sig-v2:"` — with no second source. That is now a real gate:
+`scripts/check-signing-message-fidelity.py` reads the Rust byte-string literals AND these `List
+UInt8` literals and REFUSES on disagreement (`--self-test` proves it reds). A pin against its own
+definition is decoration; two independent sources are a gate.
 
 Reuses only byte primitives defined here.
 -/
@@ -68,8 +83,15 @@ def ascii (s : String) : ByteString := s.toUTF8.toList
 
 The `#eval`s in §8 certify each literal equals `ascii "…"` of the matching dregg1 string. -/
 
-/-- `b"dregg-action-sig-v2:"` — the Signature-path separator. -/
+/-- `b"dregg-action-sig-v3:"` — the Signature-path separator (`authorize.rs:2301`). v2 added the
+federation bind; **v3 added the `turn_nonce` bind** (the Full-commitment replay closure). -/
 def sepFull : ByteString :=
+  [100,114,101,103,103,45,97,99,116,105,111,110,45,115,105,103,45,118,51,58]
+
+/-- `b"dregg-action-sig-v2:"` — the SUPERSEDED Signature-path separator, retained ONLY so §7b can
+exhibit the replay the v3 bump closed. Nothing verifies against it; `sepFullV2_ne_sepFull` pins that
+a v2 preimage can never be read as a v3 one. -/
+def sepFullV2 : ByteString :=
   [100,114,101,103,103,45,97,99,116,105,111,110,45,115,105,103,45,118,50,58]
 /-- `b"dregg-partial-sig-v2:"` — the partial-commitment separator. -/
 def sepPartial : ByteString :=
@@ -145,11 +167,31 @@ Each `def` mirrors one Rust `compute_*` function, appending bytes in the same or
 separator is the prefix. These produce the preimage — the message fed to `BLAKE3` or the AIR — not
 the hash. -/
 
-/-- **(1) Signature path** (`compute_signing_message`, `authorize.rs:1750`):
-`sepFull · federation_id · target · method · args · effect.hash()* · [may_delegate] ·
-[commitment_mode] · balance_change · postcard(preconditions)`. -/
-def sigMsgFull (a : SigningAction) (federationId : Bytes32) : ByteString :=
+/-- **(1) Signature path** (`compute_signing_message`, `authorize.rs:2293-2333`):
+`sepFull · federation_id · turn_nonce · target · method · args · effect.hash()* · [may_delegate] ·
+[commitment_mode] · balance_change · postcard(preconditions)`.
+
+⚑ `turn_nonce` sits immediately after `federation_id`, matching the Rust `hasher.update` order
+(`:2302-2303`). It is what makes a Full-commitment signature single-use: after a commit the agent
+nonce advances, so a replay must carry `N+1` while the signature was computed over `N`. -/
+def sigMsgFull (a : SigningAction) (federationId : Bytes32) (turnNonce : UInt64) : ByteString :=
   sepFull
+    ++ federationId
+    ++ u64le turnNonce
+    ++ a.target
+    ++ a.method
+    ++ a.args.flatten
+    ++ a.effectHashes.flatten
+    ++ [a.mayDelegate]
+    ++ [a.commitmentMode]
+    ++ balByte a.balanceChange
+    ++ a.precondBytes
+
+/-- **(1-legacy) The SUPERSEDED v2 Signature preimage** — identical to `sigMsgFull` except it carries
+NO `turn_nonce` (and the v2 separator). Retained ONLY as the object §7b's replay theorem is stated
+over; nothing in the tree verifies against it. -/
+def sigMsgFullV2 (a : SigningAction) (federationId : Bytes32) : ByteString :=
+  sepFullV2
     ++ federationId
     ++ a.target
     ++ a.method
@@ -159,6 +201,12 @@ def sigMsgFull (a : SigningAction) (federationId : Bytes32) : ByteString :=
     ++ [a.commitmentMode]
     ++ balByte a.balanceChange
     ++ a.precondBytes
+
+/-- The v2 preimage a signer committed to **at turn nonce `n`** — the historical shape, which simply
+does not read `n`. Making the nonce an explicit (ignored) parameter is what lets §7b state the replay
+as a real equation between two DISTINCT nonces rather than a tautology. -/
+def sigMsgFullAtNonceV2 (a : SigningAction) (federationId : Bytes32) (_n : UInt64) : ByteString :=
+  sigMsgFullV2 a federationId
 
 /-- **(2) Partial commitment** (`compute_partial_signing_message`, `authorize.rs:1801`):
 `sepPartial · federation_id · action.hash() · position · turn_nonce`. -/
@@ -282,9 +330,9 @@ theorem u64le_inj {x y : UInt64} (h : u64le x = u64le y) : x = y := by
 /-! ## §5 — Structural correctness §A: domain separator present as prefix, per kind. -/
 
 /-- `sigMsgFull` begins with the `.kFull` domain separator. -/
-theorem sigMsgFull_hasPrefix (a : SigningAction) (fid : Bytes32) :
-    (domainSep .kFull) <+: (sigMsgFull a fid) := by
-  refine ⟨fid ++ a.target ++ a.method ++ a.args.flatten ++ a.effectHashes.flatten
+theorem sigMsgFull_hasPrefix (a : SigningAction) (fid : Bytes32) (n : UInt64) :
+    (domainSep .kFull) <+: (sigMsgFull a fid n) := by
+  refine ⟨fid ++ u64le n ++ a.target ++ a.method ++ a.args.flatten ++ a.effectHashes.flatten
           ++ [a.mayDelegate] ++ [a.commitmentMode] ++ balByte a.balanceChange ++ a.precondBytes, ?_⟩
   simp only [domainSep, sigMsgFull, List.append_assoc]
 
@@ -341,65 +389,140 @@ Proved by cancelling the common prefix and reading off the field difference. -/
 
 /-- Binding (Full · target): a different target ⇒ a different preimage (both targets equal-length 32-byte cell ids). -/
 theorem sigMsgFull_binds_target
-    (a a' : SigningAction) (fid : Bytes32)
+    (a a' : SigningAction) (fid : Bytes32) (n : UInt64)
     (hlen : a.target.length = a'.target.length)
     (h : a.target ≠ a'.target)
     (hrest : a.method = a'.method ∧ a.args = a'.args ∧ a.effectHashes = a'.effectHashes ∧
              a.mayDelegate = a'.mayDelegate ∧ a.commitmentMode = a'.commitmentMode ∧
              a.balanceChange = a'.balanceChange ∧ a.precondBytes = a'.precondBytes) :
-    sigMsgFull a fid ≠ sigMsgFull a' fid := by
+    sigMsgFull a fid n ≠ sigMsgFull a' fid n := by
   obtain ⟨hm, harg, heff, hmd, hcm, hbc, hpc⟩ := hrest
   intro heq
   apply h
   simp only [sigMsgFull, hm, harg, heff, hmd, hcm, hbc, hpc, List.append_assoc] at heq
-  -- cancel sepFull, fid (2), then target is the equal-length head of the rest.
-  exact List.append_inj_left (List.append_cancel_left (List.append_cancel_left heq)) hlen
+  -- cancel sepFull, fid, u64le n (3), then target is the equal-length head of the rest.
+  exact List.append_inj_left
+    (List.append_cancel_left (List.append_cancel_left (List.append_cancel_left heq))) hlen
 
 /-- Binding (Full · may_delegate): a different `mayDelegate` byte ⇒ a different preimage (relay cannot toggle `may_delegate`). -/
 theorem sigMsgFull_binds_mayDelegate
-    (a a' : SigningAction) (fid : Bytes32)
+    (a a' : SigningAction) (fid : Bytes32) (n : UInt64)
     (heq : a.target = a'.target ∧ a.method = a'.method ∧ a.args = a'.args ∧
            a.effectHashes = a'.effectHashes ∧ a.commitmentMode = a'.commitmentMode ∧
            a.balanceChange = a'.balanceChange ∧ a.precondBytes = a'.precondBytes)
     (h : a.mayDelegate ≠ a'.mayDelegate) :
-    sigMsgFull a fid ≠ sigMsgFull a' fid := by
+    sigMsgFull a fid n ≠ sigMsgFull a' fid n := by
   obtain ⟨ht, hm, harg, heff, hcm, hbc, hpc⟩ := heq
   intro hcontra
   apply h
   simp only [sigMsgFull, ht, hm, harg, heff, hcm, hbc, hpc, List.append_assoc] at hcontra
-  -- cancel sepFull, fid, target, method, args, effects (6), then [md] is the differing head.
-  have hc := List.append_cancel_left (List.append_cancel_left (List.append_cancel_left
-    (List.append_cancel_left (List.append_cancel_left (List.append_cancel_left hcontra)))))
-  exact (List.cons.injEq .. |>.mp hc).1
-
-/-- Binding (Full · commitment_mode): a different `commitmentMode` byte ⇒ a different preimage (prevents cross-context replay). -/
-theorem sigMsgFull_binds_commitmentMode
-    (a a' : SigningAction) (fid : Bytes32)
-    (heq : a.target = a'.target ∧ a.method = a'.method ∧ a.args = a'.args ∧
-           a.effectHashes = a'.effectHashes ∧ a.mayDelegate = a'.mayDelegate ∧
-           a.balanceChange = a'.balanceChange ∧ a.precondBytes = a'.precondBytes)
-    (h : a.commitmentMode ≠ a'.commitmentMode) :
-    sigMsgFull a fid ≠ sigMsgFull a' fid := by
-  obtain ⟨ht, hm, harg, heff, hmd, hbc, hpc⟩ := heq
-  intro hcontra
-  apply h
-  simp only [sigMsgFull, ht, hm, harg, heff, hmd, hbc, hpc, List.append_assoc] at hcontra
-  -- cancel sepFull, fid, target, method, args, effects, [md] (7), then [cm] is the differing head.
+  -- cancel sepFull, fid, nonce, target, method, args, effects (7), then [md] is the differing head.
   have hc := List.append_cancel_left (List.append_cancel_left (List.append_cancel_left
     (List.append_cancel_left (List.append_cancel_left (List.append_cancel_left
     (List.append_cancel_left hcontra))))))
   exact (List.cons.injEq .. |>.mp hc).1
 
+/-- Binding (Full · commitment_mode): a different `commitmentMode` byte ⇒ a different preimage (prevents cross-context replay). -/
+theorem sigMsgFull_binds_commitmentMode
+    (a a' : SigningAction) (fid : Bytes32) (n : UInt64)
+    (heq : a.target = a'.target ∧ a.method = a'.method ∧ a.args = a'.args ∧
+           a.effectHashes = a'.effectHashes ∧ a.mayDelegate = a'.mayDelegate ∧
+           a.balanceChange = a'.balanceChange ∧ a.precondBytes = a'.precondBytes)
+    (h : a.commitmentMode ≠ a'.commitmentMode) :
+    sigMsgFull a fid n ≠ sigMsgFull a' fid n := by
+  obtain ⟨ht, hm, harg, heff, hmd, hbc, hpc⟩ := heq
+  intro hcontra
+  apply h
+  simp only [sigMsgFull, ht, hm, harg, heff, hmd, hbc, hpc, List.append_assoc] at hcontra
+  -- cancel sepFull, fid, nonce, target, method, args, effects, [md] (8); [cm] is the differing head.
+  have hc := List.append_cancel_left (List.append_cancel_left (List.append_cancel_left
+    (List.append_cancel_left (List.append_cancel_left (List.append_cancel_left
+    (List.append_cancel_left (List.append_cancel_left hcontra)))))))
+  exact (List.cons.injEq .. |>.mp hc).1
+
 /-- Binding (Full · federation_id): a different federation id ⇒ a different preimage (prevents cross-federation replay; equal-length 32-byte ids). -/
 theorem sigMsgFull_binds_federationId
-    (a : SigningAction) (fid fid' : Bytes32)
+    (a : SigningAction) (fid fid' : Bytes32) (n : UInt64)
     (hlen : fid.length = fid'.length) (h : fid ≠ fid') :
-    sigMsgFull a fid ≠ sigMsgFull a fid' := by
+    sigMsgFull a fid n ≠ sigMsgFull a fid' n := by
   intro hcontra
   apply h
   simp only [sigMsgFull, List.append_assoc] at hcontra
   -- cancel sepFull (1), then fid is the equal-length head of the rest.
   exact List.append_inj_left (List.append_cancel_left hcontra) hlen
+
+/-! ## §7b — ⚑ THE v2→v3 REPLAY: OLD ADMITS, NEW REJECTS.
+
+The v3 bump added ONE field, `turn_nonce`, and it is the field that makes a Full-commitment
+signature single-use. This section exhibits the replay the v2 shape admitted and proves the v3 shape
+forecloses it — over the SAME action, the SAME federation, the SAME everything except the nonce.
+
+The attack the OLD shape admitted (`turn/tests/nonce_replay_full_commitment.rs`): neither
+`turn.nonce` nor `turn.previous_receipt_hash` carries its own action-level signature, and the
+executor verifies no turn-level signature over them. Both are PUBLIC on-ledger. So an adversary who
+observes a committed Full-commitment action lifts its signature onto the advanced `(nonce, head)`
+pair and re-commits it — the executor recomputes the message, gets the SAME bytes (the nonce is not
+in them), `verify_strict` accepts, and the action runs again. Cost to the attacker: reading the
+public ledger and one resubmission. Gain: one full re-execution of a signed action per observation
+— a value-draining replay for any action with a `balance_change`. -/
+
+/-- The replayed action: a transfer carrying a `balance_change` of `-5` — the shape whose
+re-execution actually moves value. (Concrete so §7b's witnesses are closed terms.) -/
+def replayA : SigningAction :=
+  { target := [1,1,1], method := [2,2], args := [[3],[4]], effectHashes := [[9,9]],
+    mayDelegate := 0, commitmentMode := 0, balanceChange := some (-5), precondBytes := [7,7] }
+
+/-- **`sigMsgFullV2_admits_nonce_replay` — THE FORGERY, EXHIBITED.** Two DISTINCT turn nonces (0 and
+1) whose v2 Full-commitment preimages are BYTE-IDENTICAL. A signature the honest signer produced for
+turn nonce 0 is therefore a valid signature for turn nonce 1: the captured signature replays onto the
+advanced nonce. Concrete witness, no hypotheses — this is the admission the v3 bump closed. -/
+theorem sigMsgFullV2_admits_nonce_replay :
+    ∃ n n' : UInt64, n ≠ n' ∧
+      sigMsgFullAtNonceV2 replayA [0] n = sigMsgFullAtNonceV2 replayA [0] n' :=
+  ⟨0, 1, by decide, rfl⟩
+
+/-- The general shape of the defect: the v2 preimage is CONSTANT in the turn nonce, for every action
+and every federation. So the replay above is not a lucky pair — every v2 Full signature replays onto
+every other nonce. -/
+theorem sigMsgFullV2_ignores_turnNonce (a : SigningAction) (fid : Bytes32) (n n' : UInt64) :
+    sigMsgFullAtNonceV2 a fid n = sigMsgFullAtNonceV2 a fid n' := rfl
+
+/-- **`sigMsgFull_binds_turnNonce` — THE CLOSURE (NEW REJECTS).** A different turn nonce ⇒ a
+different v3 preimage. After a commit the agent nonce advances to `N+1`, so any submittable replay
+must carry `N+1` while the signature was computed over `N`; the recomputed message differs and
+verification fails. This is the theorem the module had for the Partial path
+(`sigMsgPartial_binds_nonce`) and structurally COULD NOT have for the Full path, because the v2
+builder had no nonce argument to bind. -/
+theorem sigMsgFull_binds_turnNonce
+    (a : SigningAction) (fid : Bytes32) (n n' : UInt64) (h : n ≠ n') :
+    sigMsgFull a fid n ≠ sigMsgFull a fid n' := by
+  intro hcontra
+  apply h
+  apply u64le_inj
+  simp only [sigMsgFull, List.append_assoc] at hcontra
+  -- cancel sepFull, fid (2); the `u64le` heads then front the SAME tail.
+  have hc := List.append_cancel_left (List.append_cancel_left hcontra)
+  exact List.append_inj_left hc (by simp [u64le])
+
+/-- **`v3_rejects_the_v2_replay` — the same-witness contrast.** On the EXACT pair the v2 shape
+identified (nonces 0 and 1, `replayA`, federation `[0]`), the v3 preimages DIFFER. Old admits, new
+rejects, same witness — the contrast is exactly the `turn_nonce` field. -/
+theorem v3_rejects_the_v2_replay :
+    sigMsgFull replayA [0] 0 ≠ sigMsgFull replayA [0] 1 :=
+  sigMsgFull_binds_turnNonce replayA [0] 0 1 (by decide)
+
+/-- The v2 separator is NOT the v3 separator: a preimage built under the superseded domain can never
+be read as a v3 one, so the retained `sigMsgFullV2` cannot be laundered back into the live path. -/
+theorem sepFullV2_ne_sepFull : sepFullV2 ≠ sepFull := by decide
+
+/-- ...and therefore no v2 preimage is ever a v3 preimage, for any action/federation/nonce. -/
+theorem sigMsgFullV2_ne_sigMsgFull (a a' : SigningAction) (fid fid' : Bytes32) (n : UInt64) :
+    sigMsgFullV2 a fid ≠ sigMsgFull a' fid' n := by
+  intro hcontra
+  apply sepFullV2_ne_sepFull
+  have hlen : sepFullV2.length = sepFull.length := rfl
+  simp only [sigMsgFullV2, sigMsgFull, List.append_assoc] at hcontra
+  exact List.append_inj_left hcontra hlen
 
 /-- Binding (Partial · nonce): a different turn nonce ⇒ a different preimage (cross-turn replay defense). -/
 theorem sigMsgPartial_binds_nonce
@@ -463,8 +586,8 @@ def demoA : SigningAction :=
 def demoA' : SigningAction := { demoA with target := [1,1,2] }
 
 -- Tamper witnesses (all `false`):
-#guard (decide (sigMsgFull demoA [0] = sigMsgFull demoA' [0])) == false  --  false: retarget ⇒ different preimage
-#guard (decide (sigMsgFull demoA [0] = sigMsgFull demoA [9])) == false  --  false: different federation ⇒ different preimage
+#guard (decide (sigMsgFull demoA [0] 0 = sigMsgFull demoA' [0] 0)) == false  --  false: retarget ⇒ different preimage
+#guard (decide (sigMsgFull demoA [0] 0 = sigMsgFull demoA [9] 0)) == false  --  false: different federation ⇒ different preimage
 #guard (decide (u64le 1 = u64le 2)) == false  --  false: encoder injective
 -- Encoder round-trips:
 #guard (u64leDecode (u64le 123456789)) == 123456789  --  123456789
@@ -472,8 +595,10 @@ def demoA' : SigningAction := { demoA with target := [1,1,2] }
 -- Separator distinctness:
 #guard (decide (domainSep .kFull = domainSep .kPartial)) == false  --  false
 #guard (decide (domainSep .kCustom = domainSep .kStealth)) == false  --  false
--- Byte-literal fidelity (all `true`):
-#guard (decide (sepFull    = ascii "dregg-action-sig-v2:"))  --  true
+-- Byte-literal fidelity (all `true`). ⚠ These are ONE-SOURCE: they check a Lean constant against a
+-- Lean restatement of it, so they were structurally incapable of seeing the v2→v3 drift and did not.
+-- The real gate is `scripts/check-signing-message-fidelity.py`, which reads the RUST literals.
+#guard (decide (sepFull    = ascii "dregg-action-sig-v3:"))  --  true
 #guard (decide (sepPartial = ascii "dregg-partial-sig-v2:"))  --  true
 #guard (decide (sepCustom  = ascii "dregg-custom-sig-v1:"))  --  true
 #guard (decide (sepStealth = ascii "dregg-stealth-sig-v1:"))  --  true
@@ -495,6 +620,12 @@ def demoA' : SigningAction := { demoA with target := [1,1,2] }
 #assert_axioms sigMsgFull_binds_mayDelegate
 #assert_axioms sigMsgFull_binds_commitmentMode
 #assert_axioms sigMsgFull_binds_federationId
+#assert_axioms sigMsgFullV2_admits_nonce_replay
+#assert_axioms sigMsgFullV2_ignores_turnNonce
+#assert_axioms sigMsgFull_binds_turnNonce
+#assert_axioms v3_rejects_the_v2_replay
+#assert_axioms sepFullV2_ne_sepFull
+#assert_axioms sigMsgFullV2_ne_sigMsgFull
 #assert_axioms sigMsgPartial_binds_nonce
 #assert_axioms sigMsgPartial_binds_actionHash
 #assert_axioms sigMsgStealth_binds_ephemeralPk

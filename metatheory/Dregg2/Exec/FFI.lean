@@ -2352,6 +2352,76 @@ authority (`.unchecked`); every CHILD gates on its delegation edge (`liftChildre
 def liftForestG : WForest → DForest
   | ⟨na, cavs, a, kids⟩ => ⟨mkGAuthRoot (liftAuthW na) (liftCaveatsW cavs), a, liftChildrenG kids⟩
 
+/-! ## §WG2b — ⚑ THE HEADER'S WRITE-SET IS THE EXECUTED WRITE-SET (`eraseAuth` is auth-orthogonal).
+
+The production entry (`§WG3`) builds its admission header from `eraseAuth w.turn.root` and feeds the
+UN-erased tree to the gate (`liftForestG w.turn.root`). A reader arriving at `execFullForestAuthStep`
+sees `eraseAuth` — the very function the ★ BUG-3 FENCE ★ (`§WH-diagnostic`) calls "an UNGATED
+auth-bypass" — and reasonably suspects the header path is that bypass. It is not, and the difference
+is worth stating precisely because the two uses are 600 lines apart and look identical:
+
+  * the BYPASS is `eraseAuth` in the **executed object**: `execHandlerTurnStep` runs
+    `execHandlerTurn (lowerForestA (eraseAuth root))`, so the credential never gates anything. That
+    path carries no `@[export]`.
+  * the HEADER is `eraseAuth` in the **write-set argument only**. `turnHdrOf` consumes a
+    `FullForestA` and reads it for exactly one thing — `turnWriteSet`, the freeze/conflict cell set.
+    `TurnHdr` has no credential field to lose, and the executed object beside it is the un-erased
+    `liftForestG root`.
+
+`eraseForestG_liftForestG` below is the fact that makes that reading a THEOREM rather than a reading:
+lifting a wire node to the gated tree and then erasing the gate decoration returns EXACTLY the tree
+the header's write-set was extracted from. Composed with `FullForestAuth.lowerForestG_actions_eq_eraseG`
+(the gated lowering's actions ARE `lowerForestA (eraseG f)`), the cells `admissible`'s NotFrozen leg
+checks are exactly the cells the gated executor's action list touches — no action runs outside the set
+the freeze gate saw. Without this the freeze gate would be checking a write-set nobody had tied to the
+executed run. -/
+
+/-- Erasing the gate decoration from a lifted wire CHILD-edge list returns the ungated edges — the
+mutual companion of `eraseForestG_liftForestG`. -/
+theorem eraseChildrenG_liftChildrenG : ∀ (kids : List WChild),
+    Dregg2.Exec.FullForestAuth.eraseChildrenG (liftChildrenG kids) = eraseAuthChildren kids
+  | [] => rfl
+  | ⟨h, k, pc, sub⟩ :: rest => by
+      show (⟨h, k, pc, Dregg2.Exec.FullForestAuth.eraseG
+              (liftForestGChild h k pc sub)⟩ : FullChildA)
+             :: Dregg2.Exec.FullForestAuth.eraseChildrenG (liftChildrenG rest)
+           = ⟨h, k, pc, eraseAuth sub⟩ :: eraseAuthChildren rest
+      rw [eraseChildrenG_liftChildrenG rest]
+      cases sub with
+      | mk na cavs a kids =>
+        show (⟨h, k, pc, ⟨a, Dregg2.Exec.FullForestAuth.eraseChildrenG (liftChildrenG kids)⟩⟩
+               : FullChildA) :: _ = _
+        rw [eraseChildrenG_liftChildrenG kids]
+        rfl
+
+/-- **`eraseForestG_liftForestG` — the auth-orthogonality of the header projection.** Lifting a wire
+`WForest` into the gated `DForest` and erasing the gate decoration gives back EXACTLY `eraseAuth` of
+that wire node. So the `FullForestA` the production entry hands `turnHdrOf` (and hence the write-set
+`admissible`'s NotFrozen leg checks) is the very tree the gated executor runs — `eraseAuth` in the
+header drops only credential/caveat data, never a cell, an action, or an edge. -/
+theorem eraseForestG_liftForestG (w : WForest) :
+    eraseForestG (liftForestG w) = eraseAuth w := by
+  cases w with
+  | mk na cavs a kids =>
+    show (⟨a, Dregg2.Exec.FullForestAuth.eraseChildrenG (liftChildrenG kids)⟩ : FullForestA)
+         = ⟨a, eraseAuthChildren kids⟩
+    rw [eraseChildrenG_liftChildrenG kids]
+
+/-- The consequence the freeze gate actually rides: the header's write-set is extracted from the
+lowering of the EXECUTED gated tree. (`turnWriteSet` folds `actionWriteSet` over
+`lowerForestA (eraseAuth root)`; by the theorem above that list is `lowerForestA (eraseForestG
+(liftForestG root))`, which `lowerForestG_actions_eq_eraseG` identifies with the gated executor's own
+action sequence.) -/
+theorem turnHdr_writeSet_covers_gated_run (w : WForest) :
+    (Dregg2.Exec.FullForestAuth.lowerForestG (liftForestG w)).map Prod.snd
+      = lowerForestA (eraseAuth w) := by
+  rw [Dregg2.Exec.FullForestAuth.lowerForestG_actions_eq_eraseG]
+  exact congrArg lowerForestA (eraseForestG_liftForestG w)
+
+#assert_axioms eraseChildrenG_liftChildrenG
+#assert_axioms eraseForestG_liftForestG
+#assert_axioms turnHdr_writeSet_covers_gated_run
+
 /-! ## §WG3 — the GATED complete-turn export. -/
 
 /-- **C entry point — marshal the COMPLETE TURN, run the GATED `execFullForestG`, marshal back.**

@@ -97,6 +97,18 @@ GATES=(
   "check-guard-discipline-red|60|python3 scripts/check-guard-discipline.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
+  # A BYTE-FIDELITY MODEL THAT CERTIFIED ITSELF. `Dregg2/Exec/SigningMessage.lean` exists so the
+  # §8 AuthPortal's opaque `stmt` is the preimage dregg1 ACTUALLY signs — "one byte differently
+  # and the portal verifies the wrong message", in its own words. Its fidelity check was
+  # `sepFull = ascii "dregg-action-sig-v2:"`: a Lean constant against a Lean restatement of it.
+  # ONE SOURCE, so it could not go red when Rust moved — and Rust moved, to v3, inserting
+  # `turn_nonce` (the Full-commitment replay closure, `authorize.rs:2293`). The model sat on v2
+  # WITHOUT the nonce and every guard in the file stayed green. Measured 2026-08-02: five of six
+  # builders faithful, the sixth stale by exactly the security fix. This gate reads the RUST
+  # literals and the Rust field order as the second source; `--self-test` mutates a COPY (v3→v2,
+  # nonce deleted, fields transposed) and refuses if any mutation stays green.
+  "signing-message-fidelity|60|python3 scripts/check-signing-message-fidelity.py"
+  "signing-message-fidelity-red|60|python3 scripts/check-signing-message-fidelity.py --self-test"
   # A SCHEMA EPOCH THAT MOVED AND SAID SO NOWHERE. `docs/VK-REGEN-LOG.md` is how a reader
   # reconstructs what each `CANONICAL_STATE_SCHEMA_EPOCH` re-genesised. On 2026-08-01 its last
   # row read "Schema epoch UNCHANGED at 20" while `persist/src/lib.rs` read 21 — `6441705e8`
@@ -163,6 +175,43 @@ GATES=(
   "feature-t3-ratchet|60|bash scripts/feature-t3-sweep.sh --self-test"
   "ci-invariants-structural|900|bash scripts/ci-invariants.sh structural"
   "descriptor-drift|1800|bash scripts/check-descriptor-drift.sh --rev HEAD"
+  # ⚑ A FULLY-IMPLEMENTED GATE THAT NOTHING RAN. `emit_descriptors.py --verify-provenance` has
+  # existed for months, checks every descriptor byte against `circuit/descriptors/PROVENANCE.json`,
+  # and was invoked by NO `.sh`, NO `.yml` and NO `.py` — 13 references in the tree, every one of
+  # them prose. `check-descriptor-drift.sh:130` names it IN A COMMENT and invokes only
+  # `--verify-by-name-routing`, whose UNSTAMPED leg reads `by_name_sha256` alone and therefore
+  # cannot see the subdirectory legs at all.
+  # ⚑ MEASURED at `ca0970378` by this row's own `--rev`: EIGHT of the shared table AIRs did not
+  # match their stamped sha256 and TWO (`chip-v1`, `chip-state16-v1` — the Poseidon2 chip every
+  # descriptor's hash sites lower into) had NO stamp row whatsoever. Ten of ten tracked artifacts
+  # wrong, in HEAD, with nothing red. Repaired in the stamp by `f0a34748f`.
+  # ⚑ WHY IT WENT UNRUN IS THE REAL DEFECT, and `--rev HEAD` is the fix. The gate used to grade
+  # THE WORKING TREE, which in a ~10-lane shared tree means any sibling's in-flight emission reds
+  # it — right now a co-tenant's uncommitted `EmitByName.lean` edit makes the working-tree form
+  # report a GHOST — and `--stamp-existing`, its only repair path, REFUSES while `metatheory/` is
+  # dirty, which it never is. `DREGG_VK_REGEN_ALLOW_DIRTY=1` then records `source_dirty=true`,
+  # which `--strict` refuses: a stamp that looks taken and isn't. Three lanes hit that wall in one
+  # day and all three correctly declined, so the artifacts stayed unstamped. A gate whose only
+  # correct invocation is impossible under the conditions the repo actually operates in does not
+  # get fixed; it gets routed around.
+  # So this row asks the question that is ALWAYS ANSWERABLE: are the COMMITTED bytes what the
+  # COMMITTED stamp pins? Detached clean worktree, HEAD-vs-HEAD, no Lean, no cargo, ~5s.
+  # ⚠ `--strict` is deliberately NOT here. Its extra clause compares the stamp's tree hash against
+  # `HEAD:metatheory/Dregg2`, which moves on any commit to any of 2300 Lean modules — red within
+  # minutes of any stamp and permanently after, i.e. furniture. Its honest question ("are the
+  # descriptors stale w.r.t. Lean?") is answered by RE-DERIVING, which is the `descriptor-drift`
+  # row above. `source_dirty` was moved OUT of `--strict` into the always-checked set for the
+  # mirror-image reason: it is a property of the committed stamp, always answerable, and it was
+  # the one clause that would have caught the force-stamp.
+  "provenance|300|python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD"
+  # The `-red` row is not optional: "nothing has drifted" is a NEGATIVE assertion and passes just
+  # as happily on a broken reader — which is what this gate was, for months, at zero invocations.
+  # Drives all four defect shapes the ten table AIRs were actually in (a moved byte, a dropped
+  # stamp row, a row whose artifact is gone, a `source_dirty=true` stamp) plus BOTH directions on
+  # the byte and the stamp (restore -> green, so the red was the mutation and not the machinery),
+  # the clean control, and the VACUITY FLOOR — an empty walk must refuse, not report PASS over
+  # zero artifacts. Scratch copies in a temp worktree; the shared tree is never touched.
+  "provenance-red|300|python3 scripts/emit_descriptors.py --self-test-provenance"
   # A Lean emitter asking the poseidon2 chip for an arity the chip AIR does not admit. The
   # descriptor it produces CAN NEVER BE SATISFIED, and nothing said so: `57105f387` found the wide
   # blinded membership tooth had been asking for arity 9 SINCE THE DAY IT WAS WRITTEN, and it
@@ -606,6 +655,14 @@ GATES_ALL=(
   # table above and reds if a harness is added, deleted or loses a property; THIS row is what makes
   # the properties themselves checkable.
   "pickles-harnesses|5400|bash scripts/pickles-harnesses.sh"
+  # A verification key DERIVED from Lean-emitted wrap gates, REGISTERED on an account by Mina's own
+  # OCaml transaction logic (js_of_ocaml, in-process — nothing is submitted to any network). Expensive
+  # because it re-derives the keys from the Lean emission every run rather than trusting a fixture:
+  # `cargo run --release` on pickles-vk-derive, then o1js LocalBlockchain.
+  # ⚑ ONE row, and it is the `--self-test` one on purpose: that flag runs the whole green path AND
+  # then proves the gate goes RED on a bent key and on absent input. The green-only invocation is a
+  # strict subset, so a second row would add budget and no coverage.
+  "foreign-vk-registration|2400|bash scripts/foreign-vk-registration-gate.sh --self-test"
 )
 
 want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -qx "$1"; }
