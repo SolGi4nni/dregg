@@ -138,6 +138,13 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     commitments then feed a FRESH Fq sponge (`:521-530`) in `index_to_field_elements` order, 56
     coordinates and one squeeze. §14b pins that squeeze against the digest Rust kimchi computes for
     the same `VerifierIndex` — so `index_digest` is DERIVED here, not fixtured.
+  * **W6 `xhat`** — §15. ⚑ **THE PUBLIC-INPUT MSM** (`wrap_verifier.ml:539-616`), and the first
+    curve gadget in this file: 67 entries at `15 × 255 · 40 × 128 · 12 × 1`, `scale_fast2`'s split
+    and its top-bit zero asserts, `add_fast base base` and `n_acc = 0` both CONSTRAINED, the
+    correction reduce, the `Cond_add` mux, `Inner_curve.negate` and `x_hat blinding`. Its output is
+    the pair `:617` absorbs, so the transcript's `x_hat` stops being a fixture VALUE. ⚠ Its scalars
+    are W-PREV's free witnesses and `x_hat` therefore STAYS on `WRAP_UNCONSUMED` — §2c says why at
+    length, and §15's own header says it again where the rows are.
 
 ## ⚑ MEASURED — the emitted ladder, and the shape oracle it is scored against
 
@@ -147,6 +154,7 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w3_branch            489         1430       0    wrap_main.ml:164-199
     w4_bind              492         1441      22    wrap_main.ml:419-439 + :189-199
     w5_key               972         1977      22    wrap_verifier.ml:189-204 + :521-530
+    w6_xhat             SEE §15      SEE §15    22    wrap_verifier.ml:539-616
 
 At the committed shape the transcript feeds **120 sponge items** and takes **23 squeezes**, of which
 21 are 128-bit challenges (§2b is the item-by-item census).
@@ -169,7 +177,7 @@ independently compiled `wrap_main`** and its non-Generic gate stream is byte-ide
 fact is checked against both blobs.
 
 ⚠ **NOT ASSEMBLED, named by sub-circuit** (§13): W-PREV, W-FINALIZE, W-WRAPHACK,
-W-OPENINGS, W-XHAT, W-SPLIT, W-FTCOMM, W-COMBINE, W-BULLET, and W-CLOSE's three curve-side asserts.
+W-OPENINGS, W-SPLIT, W-FTCOMM, W-COMBINE, W-BULLET, and W-CLOSE's three curve-side asserts.
 Each is a row-emitter this file does not have; none is a value this file fakes and calls derived.
 
 ## ⚑ THE SIX DEFECT CLASSES, CHECKED AS EMITTED (§12)
@@ -229,6 +237,7 @@ import Dregg2.Circuit.Emit.KimchiCustomGates
 import Dregg2.Circuit.Emit.PastaPoseidonFq
 import Dregg2.Circuit.Emit.MinaRealBlockTranscript
 import Dregg2.Circuit.Emit.MinaWrapPublicCommGate
+import Dregg2.Circuit.Emit.KimchiWrapMainField
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 
@@ -248,15 +257,13 @@ set_option maxHeartbeats 4000000
 /-! ## §0 — **Fq**, and the Fq gate constants.
 
 Every value in this file lives mod `qN`. Nothing is shared with `KimchiStepMain`, which is mod `pN`;
-a single `% pN` reaching this file would be a silent field confusion, so the arithmetic is defined
-here and §11a/§11b pin the two constants that a copy-paste would get wrong. -/
+a single `% pN` reaching this file would be a silent field confusion.
 
-/-- `x + y` over `Fq`. -/
-def qAdd (x y : Nat) : Nat := (x + y) % qN
-/-- `x − y` over `Fq`. -/
-def qSub (x y : Nat) : Nat := (x + qN - y % qN) % qN
-/-- `x · y` over `Fq`. -/
-def qMul (x y : Nat) : Nat := (x * y) % qN
+⚑ **`qAdd` / `qSub` / `qMul` / `qInv` and the whole Vesta value layer moved to
+`KimchiWrapMainField` at `w6_xhat`** — same namespace, so nothing here is renamed. The reason is
+NOT tidiness: `wrap_verifier.ml:617` absorbs the x_hat MSM's OUTPUT into the transcript, so §15's
+value has to exist before §2's schedule, and Lean is order-sensitive. §11a/§11b still pin the two
+constants a copy-paste would get wrong. -/
 
 /-- ⚑ **`Endo.Step_inner_curve.scalar`** (`endo.ml:16`) — `Pasta_bindings.Pallas.endo_scalar ()`,
 an element of `Backend.Tock.Field = Fq`, and the constant `to_field_checked` scales `a₈` by INSIDE
@@ -303,6 +310,24 @@ structure WrapShape where
   `WRAP_PRIMARY_LEN = 40`; §10 carries the slot-by-slot census of which 40 and which of them this
   rung derives. Setting this to 40 with undERIVED words would be a public vector of fixtures. -/
   pubWords : Nat
+  /-- ⚑ How many of `wrap_verifier.ml:539-548`'s **67** public-input entries the x_hat MSM emits
+  (§15). At the committed wrap shape this IS `XHAT_TERMS_FULL` and `xhatSel` is the identity; the
+  smoke shape emits a NAMED spread that reaches all three widths and both partitions. It is NOT a
+  claim that the statement has fewer words — `xhatBits` is over all 67 either way. -/
+  xhatTerms : Nat
+  /-- ⚑ **THE PAIR `wrap_verifier.ml:617` ABSORBS** — §15's MSM output, carried in the SHAPE rather
+  than recomputed inside `schedule`.
+
+  ⚠ This is a MEMO WITH A PROOF OBLIGATION, not a fixture, and the difference is enforced in two
+  places: `xhat_smoke_shape_absorbs_the_msm_output` closes it by `rfl` IN THE KERNEL for the smoke
+  shape, and `EmitWrapMainJson` REFUSES to emit any shape — committed or `DREGG_WM`-supplied —
+  whose `xhatXY` is not `xhatOut xhatTerms`. A wrong pair cannot reach a proved circuit.
+
+  ⚑ It is here because of a MEASUREMENT. `schedule` feeds the whole transcript, so a dozen §12/§14b
+  kernel theorems reduce it; with the MSM inline each of them re-ran 77 five-bit ladder chunks
+  (1805 at the wrap shape) in the kernel, and the file went from 150 s and ~1 GB to unfinished at
+  9.6 GB. Memoising the pair turns a dozen full MSM reductions into one. -/
+  xhatXY : Nat × Nat
   deriving Repr, Inhabited, DecidableEq
 
 /-- ⚑ Mina's own wrap public-input width — `mina-canonical-circuit-oracle.mjs` reports
@@ -400,7 +425,12 @@ source in this tree at all and get a deterministic filler, which is named here a
 to be a commitment. -/
 def wrapFixture (tag i : Nat) : Nat := (11 + 1000003 * (17 * tag + i)) % qN
 
-/-- Item `i` of tag `t`'s VALUE. -/
+/-- Item `i` of tag `t`'s VALUE.
+
+⚠ ⚑ **TAG 2 (`x_hat`) IS NO LONGER HERE.** At `w6_xhat` the absorbed `x_hat` pair is `xhatOut
+s.xhatTerms` — §15's MSM output — and `schedule` reads it directly, because `itemVal` has no shape
+to read it with. `RC_XHAT` survives only as `xhat_derived_is_not_the_old_fixture`'s red control: the
+value the transcript used to absorb, kept so the change is exhibited rather than merely asserted. -/
 def itemVal (t i : Nat) : Nat :=
   match t with
   | 0 => RC_DIGEST
@@ -411,11 +441,16 @@ def itemVal (t i : Nat) : Nat :=
   | 5 => RC_TCOMM.getD i (wrapFixture 5 i)
   | _ => wrapFixture t i
 
-/-- **THE EVENT LIST**, in `wrap_verifier.ml`'s own order. -/
+/-- **THE EVENT LIST**, in `wrap_verifier.ml`'s own order.
+
+⚑ **`x_hat` IS DERIVED HERE.** `wrap_verifier.ml:539-616` computes the MSM and `:617` absorbs its
+output, and the MSM reads no sponge state — so the schedule can and must carry §15's value. Before
+`w6_xhat` this slot held `RC_XHAT`, a real proof's public-input commitment standing in for a value
+no row computed. -/
 def schedule (s : WrapShape) : List Ev :=
   [ Ev.abs T_DIGEST RC_DIGEST ]
   ++ (List.range (2 * s.prevs)).map (fun i => Ev.abs T_SGOLD (itemVal T_SGOLD i))
-  ++ (List.range 2).map (fun i => Ev.abs T_XHAT (itemVal T_XHAT i))
+  ++ [ Ev.abs T_XHAT s.xhatXY.1, Ev.abs T_XHAT s.xhatXY.2 ]
   ++ (List.range (2 * s.wComms)).map (fun i => Ev.abs T_WCOMM (itemVal T_WCOMM i))
   ++ [ Ev.sq .chal, Ev.sq .chal ]                                   -- beta, gamma
   ++ (List.range 2).map (fun i => Ev.abs T_ZCOMM (itemVal T_ZCOMM i))
@@ -448,6 +483,16 @@ CONSUMED**, because the sub-circuits that consume them — W-XHAT (`x_hat`), W-C
 named-and-not-assembled list. Padding the count, or wiring a commitment to a gadget that merely
 re-reads it, is metric-gaming; the count is reported as it is.
 
+⚠ ⚑ **`x_hat` DID NOT LEAVE THIS LIST AT `w6_xhat`, AND THE ENTRY WAS REWRITTEN RATHER THAN
+DELETED.** §15 emits the whole MSM and `wrap_verifier.ml:617`'s absorbed pair IS the ladder's output
+— `x_hat` is no longer a value the prover hands the sponge. But the 67 SCALARS that MSM consumes are
+the packed previous STEP statement, which `wrap_main.ml:201-256` obtains by
+`exists ~request:Req.Proof_state`; they are free here and free upstream, and what ties them there is
+W-FINALIZE, W-WRAPHACK and `assert_eq_plonk`. An MSM over free scalars spans the group, so the
+prover's reach into the transcript is UNCHANGED in size and only changed in shape. Striking the
+entry on the strength of "a sub-circuit now computes it" is exactly the metric-gaming this census
+exists to refuse. The count stays **8**.
+
 ⚑ **`index_digest` LEFT THIS LIST AT `w5_key` AND IT LEFT BY BEING DERIVED.** §14 emits `choose_key`
 and the index sponge, and `keyRows`' closing tie puts the squeeze and the transcript's first absorbed
 word in ONE σ class; `key_digest_is_the_index_digest` pins the value against a digest Rust kimchi
@@ -455,7 +500,7 @@ computed for the same index. ⚠ Below `w5_key` the digest is still a free witne
 the rung, not the file, is what closed it. -/
 def WRAP_UNCONSUMED : List String :=
   [ "sg_old — needs W-COMBINE (~init of combine_split_commitments)"
-  , "x_hat — needs W-XHAT (the Cond_add/Add_with_correction MSM)"
+  , "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's free witnesses"
   , "w_comm — needs W-COMBINE"
   , "z_comm — needs W-COMBINE"
   , "t_comm — needs W-FTCOMM (Common.ft_comm's 8 scale_fast2s)"
@@ -843,9 +888,14 @@ def qPow (x : Nat) : Nat → Nat
     if (n + 1) % 2 == 1 then qMul x h else h
 decreasing_by simp_wf; omega
 
-/-- `x⁻¹` over `Fq` by Fermat, `0` at zero — which is what Snarky's `Field.equal` witnesses when the
-difference vanishes (the `r·z = 0` leg is what makes the value irrelevant there). -/
-def qInv (x : Nat) : Nat := if x == 0 then 0 else qPow x (qN - 2)
+/-! ⚑ `x⁻¹` over `Fq` is `KimchiWrapMainField.qInv` since `w6_xhat` — one definition, not two.
+
+⚠ The version that used to live here was `if x == 0 then 0 else qPow x (qN - 2)`, and `qPow` above
+is WELL-FOUNDED recursion (`decreasing_by simp_wf; omega`). That is fine for the interpreter and
+hostile to the kernel: `WellFounded.fix` does not reduce by `rfl` without unfolding its accessibility
+proof. Every ladder cell in §15 is three inverses deep, so the Field module's FUEL-BOUNDED
+`qPowAux` is what a `decide` can actually reach. `qPow` stays because `Field.equal`'s witness layer
+below still calls it and nothing kernel-reduces that. -/
 
 /-- W3's variable block, based at `base`. -/
 structure BranchVars where
@@ -1306,15 +1356,343 @@ def closingRows (t : WrapData) : List WRow :=
     (([ some (.external i : PVar), some ((exposedVars t).getD i (.external 0)), none
       ] : List (Option PVar)), cEq)))
 
+/-! ## §15 — ⚑ **W-XHAT**: `wrap_verifier.ml:539-616`, the public-input MSM.
+
+Read end to end at source. `x_hat` is built in five movements and this file emits all five:
+
+  * **THE EXPANSION** (`:542-548`). `wrap_main.ml:404-411` hands `incrementally_verify_proof` the
+    packed previous STEP statement with every `` `Field `` already through `split_field`; `:542-548`
+    turns each such pair into TWO entries, `(x, Field.size_in_bits)` and `((b :> Field.t), 1)`.
+    57 packed words + 10 splits = **67 entries**, at `15 × 255 · 40 × 128 · 12 × 1`
+    (`KimchiWrapMainField` §15a, cross-checked against a Rust binary's own census AND against
+    Mina's own compiled `VarBaseMul 2417`).
+  * **THE PARTITION** (`:550-582`). `` `Field (Constant c, _) `` goes to `constant_part`; everything
+    else to `non_constant_part`, where a one-bit entry becomes `` `Cond_add `` with an explicit
+    `assert_ (Constraint.boolean b)` and everything else `` `Add_with_correction `` at
+    `Ops.scale_fast2'`. ⚑ **`constant_part` IS EMPTY HERE** — the STEP statement's spec has no
+    `Spec.T.Constant` and no `Opt` node, so all 67 entries are in-circuit. That is the MIRROR of the
+    step side, where nine one-bit WRAP-statement words leave the circuit entirely.
+  * **THE CORRECTION** (`:584-596`). The `Add_with_correction` corrections are reduced by
+    `Ops.add_fast` and become the fold's `~init` (there is nothing else to fold in, `constant_part`
+    being empty). A correction is `negate (pow2pow g actual_shift)`, which cancels `scale_fast2`'s
+    `+ 2 ^ actual_bits_used`.
+  * **THE FOLD** (`:598-609`). `List.foldi terms ~init` in entry order — `Cond_add` is
+    `Inner_curve.if_ b ~then_:(Ops.add_fast g acc) ~else_:acc`, `Add_with_correction` is
+    `Ops.add_fast acc (Ops.scale_fast2' … g x ~num_bits:n)`, in that argument order.
+  * **THE CLOSE** (`:610-617`). `Inner_curve.negate`, then `x_hat blinding` adds
+    `Inner_curve.constant (Lazy.force Generators.h)`, then `:617` ABSORBS the pair.
+
+## ⚑ THE DEFECT CLASSES, INSIDE THIS SUB-CIRCUIT
+
+  1. **Free ladder seeds.** `scale_fast_unpack` opens with `let acc = ref (add_fast base base)` and
+     `let n_acc = ref Field.zero` (`plonk_curve_ops.ml:157-158`) — the exact two cells the step side
+     found free in R3, where a prover could solve for `acc₀` because doubling is a bijection. Every
+     ladder here emits `xhDblRow` (a `CompleteAdd` DEFINING `acc₀`) and an `n₀ = 0` `Generic` half;
+     `xhat_every_ladder_seed_is_pinned` reads both off the EMITTED row list, per ladder.
+  2. **Prover-chosen decompositions, BOTH halves.** `scale_fast2'` splits `x = 2·s_div_2 + s_odd`
+     (`:285-291`) and `scale_fast2` then asserts the TOP bits of `s_div_2` zero
+     (`:262-265`) — `bits_lsb[i] = 0` for `i` from `num_bits − 1` to `actual_bits_used − 1`. That is
+     **one** bit at width 255 and **three** at width 128, because a 128-bit entry's ladder actually
+     runs at 130. ⚑ Those bits are chunk 0's, and in the witness layout they are NEXT-row cells that
+     would ordinarily be ADVICE — an advice cell cannot be σ-tied to anything, so the emitter moves
+     them into permutation columns and pins them with `Generic` halves. Emitting the split without
+     them is the containment §13 refused to ship.
+  3. **Absorbed-but-not-consumed.** ⚠ `x_hat` **stays on `WRAP_UNCONSUMED`** and the entry text is
+     rewritten rather than deleted. See §15c of `KimchiWrapMainField`: the 67 scalars are the
+     witnessed previous STEP statement, free here and free upstream, and what ties them there is
+     W-FINALIZE / W-WRAPHACK / `assert_eq_plonk`. Moving `x_hat` off the census on the strength of
+     an MSM over free scalars would be metric-gaming.
+  4. **Constants pinned against their own definitions.** Every base, correction and `Generators.h`
+     comes from `MinaStepSrsLagrange`, and `MinaStepSrsLagrangePin` proves the SRS construction that
+     produced them reproduces the DEVNET SRS coordinate for coordinate.
+  6. **Wrong seed points.** `add_fast base base` is `2T` and that is what upstream seeds with here
+     — unlike `Scalar_challenge.endo`, which seeds at `2(t + φ(t))` and which the step side had
+     wrong for a while. The two are different gadgets and the difference is stated, not assumed.
+
+## ⚑ THREE PLACES THIS SUB-CIRCUIT IS STRICTER THAN UPSTREAM
+
+  * **The base pins.** `lagrange_with_correction` short-circuits to a pure constant when every
+    branch domain agrees (`wrap_verifier.ml:277-279`), and `lagrange` never does — it always folds
+    `Σ bⱼ · gⱼ` over the one-hot vector, which Snarky spends NO row on because the `gⱼ` are
+    `Inner_curve.constant` and `Checked.mul` takes its `Constant` branch. This file pins each base as
+    a constant. Under §9's emitted `Σ bⱼ = 1` at equal domains the two agree; it is stricter, and it
+    is therefore not a row-count conformance claim.
+  * **`Inner_curve.negate`.** `snarky_curve.ml:206` is `(x, F.negate y)`, a `Cvar` scale — zero rows.
+    This file emits one `Generic` half so the negated ordinate is a constrained cell the blinding
+    add reads.
+  * **The mux.** `Field.if_` is three halves per coordinate here (`d = t − e`, `m = b·d`,
+    `r = m + e`). Snarky's `assert_r1cs b (then_ − else_) (r − else_)` reduces the same two linear
+    combinations and lands in the same place, but this file's decomposition is explicit rather than
+    whatever `reduce_lincom` chose. -/
+
+/-- The entries this shape emits (`xhatSel`), and the projections the layout indexes by. -/
+def xhSel (s : WrapShape) : List Nat := xhatSel s.xhatTerms
+def xhN (s : WrapShape) : Nat := (xhSel s).length
+def xhAt (s : WrapShape) (k : Nat) : Nat := (xhSel s).getD k 0
+def xhChunks (s : WrapShape) (k : Nat) : Nat := xhatChunksAt (xhAt s k)
+def xhChunkPrefix (s : WrapShape) (k : Nat) : Nat :=
+  ((List.range k).map (fun m => xhChunks s m)).foldl (· + ·) 0
+def xhTotalChunks (s : WrapShape) : Nat := xhChunkPrefix s (xhN s)
+/-- Positions of the `Add_with_correction` entries within the selection. -/
+def xhLadders (s : WrapShape) : List Nat :=
+  (List.range (xhN s)).filter (fun k => xhChunks s k != 0)
+
+/-- Region A's per-entry stride. Slots: 0/1 base, 2/3 correction, 4 scalar, 5 `s_div_2`, 6 `s_odd`,
+7/8 the `add_fast h (negate g)` alternative, 9..14 the mux intermediates `(d,m,r)` for x then y,
+15/16 the fold output, 17/18 the `Cond_add` sum, 19 `−yT`. -/
+def XH_STRIDE : Nat := 20
+
+/-- The x_hat region starts after the key sponge, so nothing below `w6_xhat` moves. -/
+def baseXh (s : WrapShape) (sp : SpAcc) : Nat := baseKeySp s sp + (keySponge s sp).next
+def xhBaseB (s : WrapShape) (sp : SpAcc) : Nat := baseXh s sp + XH_STRIDE * xhN s
+def xhBaseC (s : WrapShape) (sp : SpAcc) : Nat :=
+  xhBaseB s sp + 2 * (xhTotalChunks s + xhN s)
+def xhBaseD (s : WrapShape) (sp : SpAcc) : Nat := xhBaseC s sp + xhTotalChunks s
+def xhBaseE (s : WrapShape) (sp : SpAcc) : Nat := xhBaseD s sp + 3 * xhN s
+def xhBaseF (s : WrapShape) (sp : SpAcc) : Nat := xhBaseE s sp + 2 * (xhLadders s).length
+
+/-- Entry `k`'s slot `o`. -/
+def xA (s : WrapShape) (sp : SpAcc) (k o : Nat) : PVar :=
+  .external (baseXh s sp + XH_STRIDE * k + o)
+/-- Entry `k`'s accumulator point at chunk boundary `j` (`j = 0 .. chunks`). -/
+def xAccX (s : WrapShape) (sp : SpAcc) (k j : Nat) : PVar :=
+  .external (xhBaseB s sp + 2 * (xhChunkPrefix s k + k + j))
+def xAccY (s : WrapShape) (sp : SpAcc) (k j : Nat) : PVar :=
+  .external (xhBaseB s sp + 2 * (xhChunkPrefix s k + k + j) + 1)
+/-- ⚑ Entry `k`'s scalar counter at chunk boundary `j`. At `j = chunks` it IS `s_div_2`'s own
+variable — `plonk_curve_ops.ml:207`'s `Field.Assert.equal !n_acc scalar` as a σ class rather than as
+a row, which is what makes the ladder's bits the multiplier `scale_fast2` actually used. -/
+def xCnt (s : WrapShape) (sp : SpAcc) (k j : Nat) : PVar :=
+  if j == xhChunks s k then xA s sp k 5
+  else .external (xhBaseC s sp + xhChunkPrefix s k + j)
+/-- Entry `k`'s `t`-th top-bit-zero cell (`plonk_curve_ops.ml:262-265`). -/
+def xZb (s : WrapShape) (sp : SpAcc) (k t : Nat) : PVar :=
+  .external (xhBaseD s sp + 3 * k + t)
+/-- The `a`-th partial sum of the correction reduce. -/
+def xCorrSum (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar × PVar :=
+  (.external (xhBaseE s sp + 2 * a), .external (xhBaseE s sp + 2 * a + 1))
+/-- `Generators.h`'s two cells, and the negated ordinate of the fold's output. -/
+def xhHVar (s : WrapShape) (sp : SpAcc) : PVar × PVar :=
+  (.external (xhBaseF s sp), .external (xhBaseF s sp + 1))
+def xNegY (s : WrapShape) (sp : SpAcc) : PVar := .external (xhBaseF s sp + 2)
+
+def nXhVars (s : WrapShape) (sp : SpAcc) : Nat := xhBaseF s sp + 3 - baseXh s sp
+
+/-- The fold's `~init` — the last correction partial sum, or the single correction when there is
+only one `Add_with_correction` entry. -/
+def xInitVar (s : WrapShape) (sp : SpAcc) : PVar × PVar :=
+  let m := (xhLadders s).length
+  if m ≤ 1 then (xA s sp ((xhLadders s).headD 0) 2, xA s sp ((xhLadders s).headD 0) 3)
+  else xCorrSum s sp (m - 2)
+
+/-- The accumulator AFTER entry `k`: the mux output on a `Cond_add`, the fold `add_fast`'s output on
+an `Add_with_correction`. -/
+def xFoldOut (s : WrapShape) (sp : SpAcc) (k : Nat) : PVar × PVar :=
+  if xhChunks s k == 0 then (xA s sp k 11, xA s sp k 14) else (xA s sp k 15, xA s sp k 16)
+/-- …and the accumulator entry `k` READS. -/
+def xFoldIn (s : WrapShape) (sp : SpAcc) (k : Nat) : PVar × PVar :=
+  if k == 0 then xInitVar s sp else xFoldOut s sp (k - 1)
+
+/-- One `complete_add` row — `Ops.add_fast l r = o`. Cols 0..5 are the six point coordinates, col 6
+is `inf` (self-wired, and zero for every add this sub-circuit makes), cols 7..10 carry `same_x`,
+the slope, `inf_z` and `x21_inv`. -/
+def caRowQ (l r o : PVar × PVar) (c : List Nat) : WRow :=
+  { kind := .completeAdd
+  , perm := [some l.1, some l.2, some r.1, some r.2, some o.1, some o.2, none]
+  , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
+              , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
+
+/-- A CONSTANT-point pin: two `Generic` halves, one row. -/
+def ptConstRow (vx vy : PVar) (p : Nat × Nat) : WRow :=
+  genericRow (some vx) none none (some vy) none none (cConst (p.1 : Int) ++ cConst (p.2 : Int))
+
+/-- The two rows of entry `k`'s chunk `j`.
+CURR `w₀=xT w₁=yT w₂=x₀ w₃=y₀ w₄=n w₅=n' w₆=Ø w₇..w₁₄ = x₁y₁..x₄y₄`;
+NEXT `w₀=x₅ w₁=y₅ w₂..w₆=b₀..b₄ w₇..w₁₁=s₀..s₄`.
+⚑ On chunk 0 the first `xhatTopZeros` bit cells move from ADVICE into PERMUTATION columns, because
+`scale_fast2`'s `Field.Assert.equal Field.zero bits_lsb.(i)` has to reach them and an advice cell is
+in no σ class. -/
+def xhChunkRows (s : WrapShape) (sp : SpAcc) (k j : Nat) : List WRow :=
+  let i := xhAt s k
+  let td := xhatLadder i
+  let bits := xhatBitsOf i
+  let tz := if j == 0 then xhatTopZeros i else 0
+  let ax : Nat → Int := fun n => ((td.accs.getD n (0, 0)).1 : Int)
+  let ay : Nat → Int := fun n => ((td.accs.getD n (0, 0)).2 : Int)
+  let sl : Nat → Int := fun n => (td.slopes.getD n 0 : Int)
+  let bt : Nat → Int := fun n => (bits.getD n 0 : Int)
+  [ { kind := .varBaseMul
+    , perm := [ some (xA s sp k 0), some (xA s sp k 1)
+              , some (xAccX s sp k j), some (xAccY s sp k j)
+              , some (xCnt s sp k j), some (xCnt s sp k (j + 1)), none ]
+    , advice := [ (7, ax (5*j+1)), (8, ay (5*j+1)), (9, ax (5*j+2)), (10, ay (5*j+2))
+                , (11, ax (5*j+3)), (12, ay (5*j+3)), (13, ax (5*j+4)), (14, ay (5*j+4)) ] }
+  , { kind := .zero
+    , perm := [ some (xAccX s sp k (j+1)), some (xAccY s sp k (j+1)) ]
+              ++ (List.range 5).map (fun t => if t < tz then some (xZb s sp k t) else none)
+    , advice := ((List.range 5).filter (fun t => t ≥ tz)).map (fun t => (2 + t, bt (5*j+t)))
+                ++ (List.range 5).map (fun t => (7 + t, sl (5*j+t))) } ]
+
+/-- **W-XHAT's ROWS.** -/
+def xhatRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let sel := xhSel s
+  let n := xhN s
+  let lad := xhLadders s
+  let m := lad.length
+  -- (1) every base and every correction is a PINNED CONSTANT.
+  let basePins : List WRow :=
+    (List.range n).map (fun k => ptConstRow (xA s sp k 0) (xA s sp k 1) (xhatBase (xhAt s k)))
+  let corrPins : List WRow :=
+    lad.map (fun k => ptConstRow (xA s sp k 2) (xA s sp k 3) (xhatCorr (xhAt s k)))
+  -- (2) the correction reduce (`wrap_verifier.ml:588-596`), left-associated.
+  let corrVal : Nat → Nat × Nat := fun a =>
+    ((lad.take (a + 2)).drop 1).foldl (fun acc k => addAQ acc (xhatCorr (xhAt s k)))
+      (xhatCorr (xhAt s (lad.headD 0)))
+  let corrRows : List WRow :=
+    (List.range (m - 1)).map (fun a =>
+      let l := if a == 0 then (xA s sp (lad.headD 0) 2, xA s sp (lad.headD 0) 3)
+               else xCorrSum s sp (a - 1)
+      let lv := if a == 0 then xhatCorr (xhAt s (lad.headD 0)) else corrVal (a - 1)
+      let rv := xhatCorr (xhAt s (lad.getD (a + 1) 0))
+      caRowQ l (xA s sp (lad.getD (a + 1) 0) 2, xA s sp (lad.getD (a + 1) 0) 3)
+        (xCorrSum s sp a) (caWitnessQ lv.1 lv.2 rv.1 rv.2))
+  -- (3) the fold, entry by entry, in `List.foldi` order.
+  let entryRows : List WRow :=
+    (List.range n).flatMap (fun k =>
+      let i := xhAt s k
+      let accIn := xFoldIn s sp k
+      let accInV := xhatFoldAt sel k
+      if xhChunks s k == 0 then
+        -- `` `Cond_add `` (`wrap_verifier.ml:573-577,602-605`).
+        let g := xhatBase i
+        let sum := addAQ g accInV
+        packHalves [ ([some (xA s sp k 4), some (xA s sp k 4), some (xA s sp k 4)], cBool) ]
+        ++ [ caRowQ (xA s sp k 0, xA s sp k 1) accIn (xA s sp k 17, xA s sp k 18)
+               (caWitnessQ g.1 g.2 accInV.1 accInV.2) ]
+        ++ packHalves
+             [ ([some (xA s sp k 17), some accIn.1, some (xA s sp k 9)], [1, -1, -1, 0, 0])
+             , ([some (xA s sp k 4), some (xA s sp k 9), some (xA s sp k 10)], cMul)
+             , ([some (xA s sp k 10), some accIn.1, some (xA s sp k 11)], cAdd)
+             , ([some (xA s sp k 18), some accIn.2, some (xA s sp k 12)], [1, -1, -1, 0, 0])
+             , ([some (xA s sp k 4), some (xA s sp k 12), some (xA s sp k 13)], cMul)
+             , ([some (xA s sp k 13), some accIn.2, some (xA s sp k 14)], cAdd) ]
+      else
+        -- `` `Add_with_correction `` — `Ops.scale_fast2'` then `Ops.add_fast acc _`.
+        let g := xhatBase i
+        let td := xhatLadder i
+        let h := td.accs.getLastD (0, 0)
+        let alt := addAQ h (negAQ g)
+        let scaled := xhatScaled i
+        let ch := xhChunks s k
+        -- `Boolean.typ` on `s_odd`, `Field.Assert.equal (2·s_div_2 + s_odd) x`, `n₀ = 0`,
+        -- `−yT`, and `scale_fast2`'s top-bit zeros.
+        packHalves
+          ([ ([some (xA s sp k 6), some (xA s sp k 6), some (xA s sp k 6)], cBool)
+           , ([some (xA s sp k 4), some (xA s sp k 5), some (xA s sp k 6)], cSplit 1)
+           , ([some (xCnt s sp k 0), none, none], cConst 0)
+           , ([some (xA s sp k 1), some (xA s sp k 19), none], [1, 1, 0, 0, 0]) ]
+           ++ (List.range (xhatTopZeros i)).map (fun tt =>
+                ([some (xZb s sp k tt), none, none], cConst 0)))
+        -- `let acc = ref (add_fast base base)` (`plonk_curve_ops.ml:157`).
+        ++ [ caRowQ (xA s sp k 0, xA s sp k 1) (xA s sp k 0, xA s sp k 1) (xAccX s sp k 0, xAccY s sp k 0)
+               (caWitnessQ g.1 g.2 g.1 g.2) ]
+        ++ (List.range ch).flatMap (xhChunkRows s sp k)
+        ++ [ probeRow wired (xAccX s sp k ch) (xAccY s sp k ch) ]
+        -- `add_fast h (G.negate g)`, then the `s_odd` mux, then the fold add.
+        ++ [ caRowQ (xAccX s sp k ch, xAccY s sp k ch) (xA s sp k 0, xA s sp k 19)
+               (xA s sp k 7, xA s sp k 8) (caWitnessQ h.1 h.2 g.1 (qSub 0 g.2)) ]
+        ++ packHalves
+             [ ([some (xAccX s sp k ch), some (xA s sp k 7), some (xA s sp k 9)], [1, -1, -1, 0, 0])
+             , ([some (xA s sp k 6), some (xA s sp k 9), some (xA s sp k 10)], cMul)
+             , ([some (xA s sp k 10), some (xA s sp k 7), some (xA s sp k 11)], cAdd)
+             , ([some (xAccY s sp k ch), some (xA s sp k 8), some (xA s sp k 12)], [1, -1, -1, 0, 0])
+             , ([some (xA s sp k 6), some (xA s sp k 12), some (xA s sp k 13)], cMul)
+             , ([some (xA s sp k 13), some (xA s sp k 8), some (xA s sp k 14)], cAdd) ]
+        ++ [ caRowQ accIn (xA s sp k 11, xA s sp k 14) (xA s sp k 15, xA s sp k 16)
+               (caWitnessQ accInV.1 accInV.2 scaled.1 scaled.2) ]
+        ++ [ probeRow wired (xA s sp k 15) (xA s sp k 16) ])
+  -- (4) `Inner_curve.negate`, `Generators.h`, `x_hat blinding`, and the ABSORB tie.
+  let last := xFoldOut s sp (n - 1)
+  let lastV := xhatFoldAt sel n
+  let neg := negAQ lastV
+  let xw : PVar × PVar :=
+    (((sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 0 default).wordV,
+     ((sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 1 default).wordV)
+  basePins ++ corrPins ++ corrRows ++ entryRows
+  ++ packHalves [ ([some last.2, some (xNegY s sp), none], [1, 1, 0, 0, 0]) ]
+  ++ [ ptConstRow (xhHVar s sp).1 (xhHVar s sp).2 XHAT_H ]
+  ++ [ caRowQ (last.1, xNegY s sp) (xhHVar s sp) xw
+         (caWitnessQ neg.1 neg.2 XHAT_H.1 XHAT_H.2) ]
+  ++ [ probeRow wired xw.1 xw.2 ]
+
+/-- W-XHAT's variable environment. -/
+def xhatEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let sel := xhSel s
+  let n := xhN s
+  let lad := xhLadders s
+  let m := lad.length
+  let corrVal : Nat → Nat × Nat := fun a =>
+    ((lad.take (a + 2)).drop 1).foldl (fun acc k => addAQ acc (xhatCorr (xhAt s k)))
+      (xhatCorr (xhAt s (lad.headD 0)))
+  (List.range n).flatMap (fun k =>
+    let i := xhAt s k
+    let g := xhatBase i
+    let accInV := xhatFoldAt sel k
+    let outV := xhatFoldAt sel (k + 1)
+    [ (xA s sp k 0, (g.1 : Int)), (xA s sp k 1, (g.2 : Int))
+    , (xA s sp k 4, (xhatScalar i : Int)) ]
+    ++ (if xhChunks s k == 0 then
+          let sum := addAQ g accInV
+          [ (xA s sp k 17, (sum.1 : Int)), (xA s sp k 18, (sum.2 : Int))
+          , (xA s sp k 9, (qSub sum.1 accInV.1 : Int))
+          , (xA s sp k 10, (qMul (xhatScalar i) (qSub sum.1 accInV.1) : Int))
+          , (xA s sp k 11, (outV.1 : Int))
+          , (xA s sp k 12, (qSub sum.2 accInV.2 : Int))
+          , (xA s sp k 13, (qMul (xhatScalar i) (qSub sum.2 accInV.2) : Int))
+          , (xA s sp k 14, (outV.2 : Int)) ]
+        else
+          let c := xhatCorr i
+          let td := xhatLadder i
+          let h := td.accs.getLastD (0, 0)
+          let alt := addAQ h (negAQ g)
+          let sc := xhatScaled i
+          [ (xA s sp k 2, (c.1 : Int)), (xA s sp k 3, (c.2 : Int))
+          , (xA s sp k 5, (xhatSDiv2 i : Int)), (xA s sp k 6, (xhatSOdd i : Int))
+          , (xA s sp k 7, (alt.1 : Int)), (xA s sp k 8, (alt.2 : Int))
+          , (xA s sp k 19, (qSub 0 g.2 : Int))
+          , (xA s sp k 9, (qSub h.1 alt.1 : Int))
+          , (xA s sp k 10, (qMul (xhatSOdd i) (qSub h.1 alt.1) : Int))
+          , (xA s sp k 11, (sc.1 : Int))
+          , (xA s sp k 12, (qSub h.2 alt.2 : Int))
+          , (xA s sp k 13, (qMul (xhatSOdd i) (qSub h.2 alt.2) : Int))
+          , (xA s sp k 14, (sc.2 : Int))
+          , (xA s sp k 15, (outV.1 : Int)), (xA s sp k 16, (outV.2 : Int)) ]
+          ++ (List.range (xhChunks s k + 1)).flatMap (fun j =>
+               [ (xAccX s sp k j, ((td.accs.getD (5 * j) (0, 0)).1 : Int))
+               , (xAccY s sp k j, ((td.accs.getD (5 * j) (0, 0)).2 : Int)) ])
+          ++ (List.range (xhChunks s k)).map (fun j =>
+               (xCnt s sp k j, (td.ns.getD (5 * j) 0 : Int)))
+          ++ (List.range (xhatTopZeros i)).map (fun tt => (xZb s sp k tt, (0 : Int)))))
+  ++ (List.range (m - 1)).flatMap (fun a =>
+       [ ((xCorrSum s sp a).1, ((corrVal a).1 : Int))
+       , ((xCorrSum s sp a).2, ((corrVal a).2 : Int)) ])
+  ++ [ ((xhHVar s sp).1, (XHAT_H.1 : Int)), ((xhHVar s sp).2, (XHAT_H.2 : Int))
+     , (xNegY s sp, (qSub 0 (xhatFoldAt sel n).2 : Int)) ]
+
 /-! ## §7 — rows, environment, rungs. -/
 
 inductive Rung where
-  | transcript | challenges | branch | bind | key
+  | transcript | challenges | branch | bind | key | xhat
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "w1_transcript" | .challenges => "w2_challenges"
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
+  | .xhat => "w6_xhat"
 
 /-- **THE ROW SCHEDULE**, in the order `wrap_main` runs it. Every sub-circuit's row-set function is
 REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a silence. -/
@@ -1325,43 +1703,59 @@ def rungRows (t : WrapData) (k : Rung) (wired : Bool) : List WRow :=
   let c := branchRows s (baseBr s t.sp) t.br wired
   let d := closingRows t
   let e := keyRows t wired
+  let f := xhatRows t wired
   match k with
   | .transcript => a
   | .challenges => a ++ b
   | .branch => a ++ b ++ c
   | .bind => a ++ b ++ c ++ d
   | .key => a ++ b ++ c ++ d ++ e
+  | .xhat => a ++ b ++ c ++ d ++ e ++ f
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it. -/
 def rungPub (s : WrapShape) : Rung → Nat
   | .bind => s.pubWords
   | .key => s.pubWords
+  | .xhat => s.pubWords
   | _ => 0
 
-def circuitEnv (t : WrapData) : VarEnv :=
+/-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
+and every slope of §15's ladders, and each of those is three `qInv`s deep. Folding it into one
+shape-wide `circuitEnv` made EVERY pin below `w6_xhat` — §12's witness-grid guards, §14b's placement
+theorems — reduce the whole MSM: measured, that took the module from 150 s and ~1 GB to a hard
+~10 GB ceiling inside `#assert_namespace_axioms`. A rung's environment is now exactly the variables
+its own rows define, which is also the more faithful statement. -/
+def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   spongeEnv (baseSp t.sh) t.sp ++ challengeEnv t ++ branchEnv t.sh (baseBr t.sh t.sp) t.br
-  ++ keyEnv t
+  ++ keyEnv t ++ (match k with | .xhat => xhatEnv t | _ => [])
+
+/-- The closing rung's environment — what `w6_xhat` sees, i.e. everything. -/
+def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .xhat
 
 /-- The full environment: the circuit's variables, then the public words, whose values are READ OUT
 of the circuit env at the exposed variables — so a public word and the variable its closing row ties
 it to hold ONE value by construction, exactly as a copy class does. -/
-def wrapEnv (t : WrapData) : VarEnv :=
-  let ce := circuitEnv t
+def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
+  let ce := circuitEnvAt t k
   let ix := envIndex ce
   ce ++ (List.range t.sh.pubWords).map (fun i =>
     ((.external i : PVar), envLookupAt ix ((exposedVars t).getD i (.external 0))))
 
-def wrapPublic (t : WrapData) : List Int :=
-  let ix := envIndex (circuitEnv t)
+def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .xhat
+
+def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
+  let ix := envIndex (circuitEnvAt t k)
   (List.range t.sh.pubWords).map (fun i =>
     envLookupAt ix ((exposedVars t).getD i (.external 0)))
+
+def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .xhat
 
 def wrapGates (rows : List WRow) : List PGate :=
   rows.map (fun r => { kind := r.kind, permVars := r.perm, coeffs := r.coeffs })
 
 /-- The composed 15 × `(pubSize + nRows)` witness grid. -/
-def wrapWitness (t : WrapData) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
-  let ix := envIndex (wrapEnv t)
+def wrapWitnessAt (t : WrapData) (k : Rung) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
+  let ix := envIndex (wrapEnvAt t k)
   let n := rows.length
   compose 15 (pubSize + n)
     (((List.range pubSize).map (fun i => ((⟨i, 0⟩ : Cell), envLookupAt ix (.external i))))
@@ -1412,12 +1806,16 @@ def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedG
        ++ qs "gates" ++ ":[" ++ String.intercalate "," (gs.map renderGate) ++ "],"
        ++ qs "witness" ++ ":[" ++ String.intercalate "," (w.map renderIntList) ++ "]}"
 
+/-- The closing rung's witness — kept for callers that do not carry a `Rung`. -/
+def wrapWitness (t : WrapData) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
+  wrapWitnessAt t .xhat pubSize rows
+
 def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
   let rows := rungRows t k wired
   let p := rungPub t.sh k
   renderWrapCircuit name p (p + rows.length)
-    (placedOf t.sh p (wrapGates rows)) (wrapWitness t p rows)
-    (if p == 0 then [] else wrapPublic t) (rungProbeRows t k)
+    (placedOf t.sh p (wrapGates rows)) (wrapWitnessAt t k p rows)
+    (if p == 0 then [] else wrapPublicAt t k) (rungProbeRows t k)
 
 /-! ## §8 — the committed shape.
 
@@ -1436,12 +1834,27 @@ def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :
     there by sub-circuit. -/
 def shapeWrap : WrapShape :=
   { prevs := 2, ipaRounds := 16, wComms := 15, tComms := 7, emsRows := 8
-  , branches := 5, pubWords := 22 }
+  , branches := 5, pubWords := 22, xhatTerms := XHAT_TERMS_FULL
+  -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
+  -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
+  -- more reduced, and this file has no `native_decide`.
+  , xhatXY :=
+      (6973349748470811774665624614295557563348933104923108212588295688322547163703,
+       1199758266189089410290822284576834678458612987293835616056766066485823483380) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=
   { prevs := 2, ipaRounds := 3, wComms := 3, tComms := 2, emsRows := 8
-  , branches := 3, pubWords := 6 }
+  , branches := 3, pubWords := 6
+  -- ⚑ FOUR ENTRIES, and `xhatSel` makes them `[0, 1, 11, 31]` — a 255-bit value, its 1-bit parity,
+  -- a 128-bit challenge and `should_finalize`. That reaches BOTH partitions, all three widths, both
+  -- top-zero counts (1 and 3) and both `Cond_add` branches (§15's `xhat_smoke_selection…`). A
+  -- PREFIX of four would have been four 255-bit-or-parity entries and no 128-bit ladder at all.
+  , xhatTerms := 4
+  -- ⚑ `xhatOut 4`, closed by `rfl` IN THE KERNEL by `xhat_smoke_shape_absorbs_the_msm_output`.
+  , xhatXY :=
+      (4540311387296887296605982795215119295335555531712524220453453455546153730279,
+       11283496326094021030386317030760887506195633516319791115868214161613562698434) }
 
 
 /-! ## §11 — the CONSTANT PINS, each against an INDEPENDENT source.
@@ -1548,7 +1961,10 @@ def rowsUW : List WRow := rungRows tW .bind false
 def nRowsW : Nat := rowsW.length
 def gatesW : List PGate := wrapGates rowsW
 def placedW : List PlacedGate := placedOf shapeSmoke shapeSmoke.pubWords gatesW
-def gridW : List (List Int) := wrapWitness tW shapeSmoke.pubWords rowsW
+/-- ⚑ At `.bind`, not at the closing rung: `rowsW` IS the `w4_bind` row list, and asking for the
+`w6_xhat` environment here would make every §12 guard reduce §15's ladders for cells no `w4_bind`
+row has. That is the measurement that cost this module its build. -/
+def gridW : List (List Int) := wrapWitnessAt tW .bind shapeSmoke.pubWords rowsW
 
 /-! ### §12a — ⚑ **THE REALITY GATE: this file's sponge IS upstream's.**
 
@@ -1893,6 +2309,146 @@ theorem key_rows_are_generic_and_poseidon_only :
     ∧ ((keyRows tKey true).filter (fun r => r.kind == KGateType.endoMulScalar)).length = 0 := by
   refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
+/-! ### §15f — ⚑ **W-XHAT'S PINS, AS NAMED THEOREMS.**
+
+Read off the EMITTED row list wherever the claim is about a row. Every one is kernel-clean and
+accounted for by `#assert_namespace_axioms` below; there are no new `#guard`s in this section.
+
+⚠ These reduce the smoke instance's x_hat rows, which is 77 five-bit chunks of Vesta ladder in the
+kernel. That is the reason there are eight of them and not thirty: each one is a real reduction of
+the same object, and the marginal fact is not worth the marginal minute. -/
+
+/-- The smoke instance's W-XHAT rows, materialised once so the pins share one term. -/
+def xhRows : List WRow := xhatRows tKey true
+
+/-- Does the emitted row list contain the `Generic` constant pin `vx = p.1`, `vy = p.2`?
+
+⚑ Deliberately compares `kind` / `perm` / `coeffs` and NOT the whole row. `WRow` carries the
+`advice` cells, and a structural equality on a `CompleteAdd` row forces `caWitnessQ` — three `qInv`
+apiece — for every row against every candidate. Written as `List.contains` this one theorem took the
+file from 150 s and ~1 GB to 9.7 GB and unfinished. The pin is about the CONSTRAINT, and the
+constraint is the gate kind, the wires and the coefficients. -/
+def xhHasConstRow (vx vy : PVar) (p : Nat × Nat) : Bool :=
+  let r := ptConstRow vx vy p
+  xhRows.any (fun w => w.kind == r.kind && w.perm == r.perm && w.coeffs == r.coeffs)
+
+/-- ⚑ **THE MEMO'S OBLIGATION, IN THE KERNEL.** `shapeSmoke.xhatXY` — the pair `schedule` hands the
+transcript at `wrap_verifier.ml:617` — IS §15's MSM output. Without this the field would be a
+fixture with a good docstring. (The wrap shape's copy is discharged by `EmitWrapMainJson`'s refusal
+at every emission; 1805 chunks is out of the kernel's reach and this file has no `native_decide`.) -/
+theorem xhat_smoke_shape_absorbs_the_msm_output :
+    shapeSmoke.xhatXY = xhatOut shapeSmoke.xhatTerms := by rfl
+
+/-- ⚑ **AND IT IS A DIFFERENT OBJECT FROM THE ONE THIS FILE USED TO ABSORB.** `RC_XHAT` is a real
+accepted proof's public-input commitment, which stood in for `x_hat` through five rungs. The derived
+pair is not it — so `w6_xhat` changed the transcript rather than confirming it, and every challenge
+below the absorb moved. Saying that out loud is the point: a rung that "derives" a value it already
+had would be deriving nothing. -/
+theorem xhat_derived_is_not_the_old_fixture :
+    shapeSmoke.xhatXY.1 ≠ RC_XHAT.getD 0 0 ∧ shapeSmoke.xhatXY.2 ≠ RC_XHAT.getD 1 0
+    ∧ shapeWrap.xhatXY.1 ≠ RC_XHAT.getD 0 0 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **DEFECT CLASS 1, IN A NEW PLACE AND IN THE PLACE THE STEP SIDE FOUND IT.**
+`scale_fast_unpack` opens `let acc = ref (add_fast base base)` / `let n_acc = ref Field.zero`
+(`plonk_curve_ops.ml:157-158`). Doubling is a bijection on the group, so a FREE `acc₀` lets a prover
+steer the ladder's output to any point at all, and a free `n₀` lets him choose which bit vector the
+ladder actually multiplied by. Per ladder this reads BOTH off the emitted rows: a `CompleteAdd` whose
+two input point-pairs are the base's own cells and whose output is `acc₀`, and a `Generic` half
+pinning `n₀` to zero. -/
+theorem xhat_every_ladder_seed_is_pinned :
+    (xhLadders shapeSmoke).all (fun k =>
+      xhRows.any (fun w => w.kind == KGateType.completeAdd
+        && w.perm == [ some (xA shapeSmoke tKey.sp k 0), some (xA shapeSmoke tKey.sp k 1)
+                     , some (xA shapeSmoke tKey.sp k 0), some (xA shapeSmoke tKey.sp k 1)
+                     , some (xAccX shapeSmoke tKey.sp k 0), some (xAccY shapeSmoke tKey.sp k 0)
+                     , none ])
+      && xhRows.any (fun w => w.kind == KGateType.generic
+           && w.perm.contains (some (xCnt shapeSmoke tKey.sp k 0))
+           && w.coeffs.contains 0)) = true := by decide
+
+/-- ⚑ **DEFECT CLASS 2, BOTH HALVES, INSIDE THE LADDER.** `scale_fast2` asserts the top bits of
+`s_div_2` zero (`plonk_curve_ops.ml:262-265`) — ONE bit at width 255 and THREE at width 128, because
+a 128-bit entry's ladder actually runs at 130. Those cells live in chunk 0's NEXT row, which in the
+`VarBaseMul` witness layout is ADVICE; an advice cell is in no σ class and cannot be asserted. This
+says the emitter moved every one of them into a PERMUTATION column AND that a `Generic` half pins it
+to zero. Emitting the split without them is the containment §13 refused to ship. -/
+theorem xhat_top_bits_are_range_checked :
+    (xhLadders shapeSmoke).all (fun k =>
+      (List.range (xhatTopZeros (xhAt shapeSmoke k))).all (fun tt =>
+        xhRows.any (fun w => w.kind == KGateType.zero
+          && w.perm.contains (some (xZb shapeSmoke tKey.sp k tt)))
+        && xhRows.any (fun w => w.kind == KGateType.generic
+             && w.perm.contains (some (xZb shapeSmoke tKey.sp k tt))))) = true
+  ∧ ((xhLadders shapeSmoke).map (fun k => xhatTopZeros (xhAt shapeSmoke k))) = [1, 3] := by
+  refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑ **DEFECT CLASS 4: NO BASE IS A FREE WITNESS.** Every entry's base — and every correction, and
+`Generators.h` — is pinned by a `Generic` constant row to the value `MinaStepSrsLagrange` holds,
+whose SRS construction `MinaStepSrsLagrangePin` proves reproduces the devnet SRS. Before this rung
+the wrap side emitted no curve base at all; the step side's R3 spent a night with all forty free. -/
+theorem xhat_every_base_and_correction_is_pinned :
+    (List.range (xhN shapeSmoke)).all (fun k =>
+      xhHasConstRow (xA shapeSmoke tKey.sp k 0) (xA shapeSmoke tKey.sp k 1)
+        (xhatBase (xhAt shapeSmoke k))) = true
+  ∧ (xhLadders shapeSmoke).all (fun k =>
+      xhHasConstRow (xA shapeSmoke tKey.sp k 2) (xA shapeSmoke tKey.sp k 3)
+        (xhatCorr (xhAt shapeSmoke k))) = true
+  ∧ xhHasConstRow (xhHVar shapeSmoke tKey.sp).1 (xhHVar shapeSmoke tKey.sp).2 XHAT_H = true := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE CLOSING TIE.** `x_hat blinding`'s `CompleteAdd` writes its output into the very cells the
+transcript absorbs at `wrap_verifier.ml:617` — not a σ class BETWEEN two variables but the same two
+variables, which is the strongest form the tie can take. So the sponge cannot be fed an `x_hat` the
+MSM did not produce. -/
+theorem xhat_output_is_the_absorbed_word :
+    ((xhRows.filter (fun w => w.kind == KGateType.completeAdd)).getLast?.map (fun w =>
+        (w.perm.getD 4 none, w.perm.getD 5 none)))
+      = some
+          (some ((tKey.sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 0 default).wordV,
+           some ((tKey.sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 1 default).wordV)
+    := by decide
+
+/-- ⚑ **DEFECT CLASS 3: THE CENSUS DID NOT MOVE, AND THE ENTRY SAYS WHY.** `x_hat` is still on
+`WRAP_UNCONSUMED` because W-XHAT's 67 scalars are `exists ~request:Req.Proof_state`'s free witnesses
+(§2c, §15c). Eight entries before this rung, eight after. -/
+theorem xhat_does_not_move_the_unconsumed_census :
+    WRAP_UNCONSUMED.length = 8
+    ∧ WRAP_UNCONSUMED.getD 1 ""
+        = "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's free witnesses" := by
+  refine ⟨rfl, ?_⟩
+  decide
+
+/-- The `w6_xhat` rung is a strict superset of `w5_key` and its length is the sum of its parts, the
+WIRED and UNWIRED circuits differ ONLY in the probe rows' permutation columns, and `placeChecked`
+accepts it with no inert public word. §12b's shape, at the rung that first emits curve gates. -/
+theorem xhat_rung_is_a_ladder_step_and_places :
+    (rungRows tKey .xhat true).length
+      = (rungRows tKey .key true).length + xhRows.length
+    ∧ (rungRows tKey .key true).length < (rungRows tKey .xhat true).length
+    ∧ (((rungRows tKey .xhat true).zip (rungRows tKey .xhat false)).filter
+        (fun p => p.1.perm != p.2.perm)).length
+        = ((rungRows tKey .xhat true).filter (fun r => r.probe)).length
+    ∧ refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .xhat true)) = none
+    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .xhat true)) = [] := by
+  refine ⟨rfl, ?_, rfl, rfl, rfl⟩
+  decide
+
+/-- ⚑ **THE GATE CENSUS OF THE SUB-CIRCUIT.** Two rows per five-bit chunk (`VarBaseMul` + its `Zero`
+tail, `varbasemul.rs:135-140`), and a `CompleteAdd` for every `add_fast` upstream makes: one seed and
+one `G.negate` adjust and one fold add per ladder, one per `Cond_add`, `m − 1` for the correction
+reduce, and one for `x_hat blinding`. A row-set that quietly stopped emitting one of them reds
+here rather than in a conformance report six weeks out. -/
+theorem xhat_gate_census :
+    (xhRows.filter (fun r => r.kind == KGateType.varBaseMul)).length
+      = xhTotalChunks shapeSmoke
+    ∧ (xhRows.filter (fun r => r.kind == KGateType.completeAdd)).length
+      = 3 * (xhLadders shapeSmoke).length
+        + (xhN shapeSmoke - (xhLadders shapeSmoke).length)
+        + ((xhLadders shapeSmoke).length - 1) + 1
+    ∧ (xhRows.filter (fun r => r.kind == KGateType.poseidon)).length = 0 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
 /-! ## §13 — ⚑ WHAT IS LEFT, BY SUB-CIRCUIT.
 
 Named, not estimated; each entry is a row emitter this file does not have, and each carries the
@@ -1905,8 +2461,17 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      absorb leaves the state at `Absorbed 2`, so the squeeze's permutation is the 28th) and right
      that the output IS the transcript's first absorbed word. What it did not say is that the fold
      runs over `Inner_curve.constant` keys and is therefore not a curve MSM at all.
-  2. **W-XHAT** `wrap_verifier.ml:539-616` — the public-input MSM, and it is NOT the step side's
-     `multiscale_known`. ⚑ **MEASURED: 67 scalars, at widths 15 × 255 · 40 × 128 · 12 × 1.** The
+  2. ✅ **W-XHAT — LANDED at `w6_xhat`** (§15). The census the sizing note below predicted is
+     confirmed three ways: read at source, printed independently by `xhat_lagrange_export.rs`, and
+     — the strongest of the three — closed against Mina's own compiled wrap circuit, whose
+     `VarBaseMul 2417` is EXACTLY `1805` (W-XHAT) `+ 408` (W-FTCOMM) `+ 204` (W-BULLET's four
+     `scale_fast`). ⚠ What the note did NOT say: `lagrange` is a one-hot fold and not a bare
+     constant (`wrap_verifier.ml:207-224`), the constant partition is EMPTY on this side (the STEP
+     statement's spec has no `Constant` and no `Opt` node), `bp_log2` is `Tock`'s 15 and not
+     `Tick`'s 16, and `lagrange_with_correction` computes its shift at `chunks_needed ~num_bits:n`
+     rather than `n − 1` — upstream's own TODO, harmless at 255 and 128 and checked as such.
+     The ORIGINAL sizing note, kept because it was right:
+     ⚑ **MEASURED: 67 scalars, at widths 15 × 255 · 40 × 128 · 12 × 1.** The
      STEP statement packs to **57** words (`composition_types.ml:1268-1276,1427-1436,1453-1459` at
      `bp_log2 = Backend.Tock.Rounds.n = 15` and `max_proofs_verified = 2`), of which 10 are `` `Field ``
      and 47 `` `Packed_bits ``; `wrap_verifier.ml:542-548` turns each `` `Field `` into TWO entries
