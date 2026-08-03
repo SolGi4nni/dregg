@@ -394,14 +394,12 @@ fn row_cells(h: Header) -> Vec<i64> {
     r[VSET_OK] = h.vset_ok as i64;
     r[EPOCH_OK] = h.epoch_ok as i64;
 
-    for i in 0..TALLY_RUNGS {
-        r[TOTAL_POW_0 + i] = tally.total[i];
-        r[SIGNED_POW_0 + i] = tally.signed[i];
-        r[TDIFF_CARRY_0 + i] = tally.carry[i];
-    }
-    for i in 0..=TALLY_RUNGS {
-        r[TDIFF_0 + i] = tally.diff[i];
-    }
+    // The tally block, columns 15..31: four total-power limbs, four signed-power limbs, five
+    // difference limbs, four offset carries — contiguous, LSB first, exactly as §1 lays them out.
+    r[TOTAL_POW_0..TOTAL_POW_0 + TALLY_RUNGS].copy_from_slice(&tally.total);
+    r[SIGNED_POW_0..SIGNED_POW_0 + TALLY_RUNGS].copy_from_slice(&tally.signed);
+    r[TDIFF_0..TDIFF_0 + TALLY_RUNGS + 1].copy_from_slice(&tally.diff);
+    r[TDIFF_CARRY_0..TDIFF_CARRY_0 + TALLY_RUNGS].copy_from_slice(&tally.carry);
 
     r[TRUSTED_NEXT_VALS_ROOT] = h.next_vals as i64;
     for (i, l) in h.app_hash.iter().enumerate() {
@@ -637,27 +635,35 @@ fn the_served_descriptor_is_the_lean_emitted_one() {
     };
 
     // The 29-bit TIME table — the wrap-free repair, still load-bearing for the three time teeth.
-    assert_eq!(bits_of(TID_TIME_RANGE), TM_BITS);
+    //
+    // ⚠ Every check below reads the width OUT OF THE SERVED DESCRIPTOR (`served_time_bits`) rather
+    // than out of this file's `TM_BITS`. A constant compared against its own definition is
+    // decoration; these are the emitted object measured against the field it is evaluated in, so a
+    // re-emission that moved the width would red them.
+    let served_time_bits = bits_of(TID_TIME_RANGE);
+    assert_eq!(served_time_bits, TM_BITS);
     assert!(
-        (1i64 << TM_BITS) < P,
+        (1i64 << served_time_bits) < P,
         "the declared interval must sit INSIDE the field — the containment leg, FALSE at 64 bits"
     );
     assert!(
-        (1i64 << (TM_BITS + 1)) <= P,
+        (1i64 << (served_time_bits + 1)) <= P,
         "and it must be WRAP-FREE: p - 2^bits >= 2^bits, so a negative slack of any magnitude the \
          interval can itself reach lands outside it. False at 30, false at 64."
     );
 
     // ⚑ The TALLY tables. 16 bits × 4 limbs is exactly a `u64`; 8 bits is the carry's byte bus.
-    assert_eq!(bits_of(TID_TALLY_LIMB), TM_LIMB_BITS);
+    let served_limb_bits = bits_of(TID_TALLY_LIMB);
+    assert_eq!(served_limb_bits, TM_LIMB_BITS);
     assert_eq!(bits_of(TID_TALLY_CARRY), TM_CARRY_BITS);
+    let served_capacity: u128 = 1u128 << (served_limb_bits * TALLY_RUNGS);
     assert_eq!(
-        (1u128 << (TM_LIMB_BITS * TALLY_RUNGS)),
+        served_capacity,
         1u128 << 64,
         "four 16-bit limbs must tile a u64 exactly, without slack or truncation"
     );
     assert!(
-        (MAX_TOTAL_VOTING_POWER as u128) < (1u128 << (TM_LIMB_BITS * TALLY_RUNGS)),
+        (MAX_TOTAL_VOTING_POWER as u128) < served_capacity,
         "…and the tiled capacity must contain CometBFT's MaxTotalVotingPower"
     );
     assert!(
