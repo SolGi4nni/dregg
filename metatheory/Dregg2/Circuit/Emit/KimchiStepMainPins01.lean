@@ -74,16 +74,18 @@ buys the same factor and costs each pin its own failure site. -/
 -- squeeze — TWO, because `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true` and
 -- `util.ml:98-99` then asserts BOTH parts. Upstream's own arithmetic, `squeeze_challenge` +
 -- `squeeze_scalar`.
--- ⚠⚑ **RED AT `c14a9cf01`, AND DELIBERATELY NOT RE-PINNED.** That commit swept a SIBLING lane's
--- IN-FLIGHT `vCipBit := bpOdd s 0` rung out of the shared `KimchiStepMainCore.lean` alongside §23's
--- sponge re-model (`git commit --only` is PATH-granular, not HUNK-granular). The census now MEASURES
--- **169** `EndoMulScalar` rows against this expression's 168 — and **169 is not a multiple of
--- `emsRows = 8`**, so it is not a chain count at all: it is a `to_field_checked` chain that is one
--- row long, i.e. a half-landed gadget. `nRng` likewise measures 13 against `chals + 4 = 12`.
--- Banking either number would launder an unfinished rung as a measured fact. §23 alone leaves BOTH
--- green; the lane that owns `vCipBit` owns these two pins.
+-- ⚑ **PLUS ONE, AND THE ODD ROW IS THE POINT (re-pinned 2026-08-03 by the lane `fad5c51a5` named).**
+-- `c14a9cf01` swept this lane's in-flight rung into §23's commit and left the number at 168 against a
+-- measured 169, correctly refusing to bank a half-landed gadget. The gadget landed: the 169th row is
+-- `Branch_data.typ`'s `~assert_16_bits` (`per_proof_witness.ml:166-168`), which is
+-- `to_field_checked ~num_bits:16` — 8 crumbs, **ONE** `EndoMulScalar` row. So 169 is not a chain
+-- count and must not be: a total that went back to a multiple of `emsRows` would mean the 16-bit
+-- range check on `domain_log2` is gone, and with it the pin that makes `(m₀, m₁, domain_log2)` a
+-- function of `branch_data` rather than a choice. `RNG_DOMLOG2_ROWS` is named, not inlined.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMulScalar)).length
-        == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows
+        == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS
+#guard RNG_DOMLOG2_ROWS == 1
+#guard ((2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS) % shapeSmoke.emsRows != 0
 -- …stated the other way, so a chain that vanished cannot hide inside the arithmetic: the range
 -- chains are `chals + 3` of the total.
 #guard ((List.range shapeSmoke.chals).flatMap
@@ -97,7 +99,10 @@ buys the same factor and costs each pin its own failure site. -/
 #guard (finRows shapeSmoke tS.ft tS.fin true).length
         == (aRows (baseFin shapeSmoke tS.ft) tS.fin.fp.prog).length
            + 2 * (shapeSmoke.emsRows + 6) + 3
-#guard nRng shapeSmoke == shapeSmoke.chals + 4
+-- ⚑ `chals + 5` since 2026-08-03: `N_DEFC` deferred chains, R8's two `lowest_128_bits` halves, and
+-- §8h's `domain_log2` block. (It was `chals + 4`.)
+#guard nRng shapeSmoke == shapeSmoke.chals + 5
+#guard RNG_DOMLOG2 shapeSmoke == shapeSmoke.chals + N_DEFC + 2
 #guard RNG_FIN_LO shapeSmoke == RNG_FIN_HI shapeSmoke + 1
 -- ⚑ `VarBaseMul` is R3's `multiscale_known` AND §6b's `ft_comm` — the second MSM runs at
 -- `FTC_CHUNKS = 51`, `step_verifier.ml:240-242`'s uniform 255 bits, while R3's are PER STATEMENT

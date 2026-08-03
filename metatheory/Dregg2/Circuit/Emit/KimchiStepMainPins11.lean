@@ -194,6 +194,11 @@ theorem cipUsed_is_not_the_unmasked_fold :
 #guard (classCells posS (vShouldVerify shapeSmoke)).length == 6
 -- …and it is in `finInputEnv`, i.e. R8 reaches it as an `.inp` and not as a private cell.
 #guard (finS.fp.prog.toList.filter (fun o => o == AOp.inp (vShouldVerify shapeSmoke))).length == 1
+-- ⚠ ⚑ **THIS COUNT IS R8'S PROGRAM, NOT THE ASSEMBLY'S.** `ftBuild` compiles a SECOND straight-line
+-- program, so the assembly's free-witness count is 9 + R6's — **ten** since `permClaimed` was
+-- deleted on 2026-08-03, eleven before. `KimchiStepProverChoice`'s
+-- `the_assembly_compiles_ten_free_witness_slots` states it over BOTH programs; quote that one when
+-- the subject is the assembly.
 -- …and NO `.wit` slot of R8's program holds it any more. ⚑ **NOR DOES `verified` SINCE §19** — the
 -- witnesses that remain are exactly the four `Field.equal` inverse/bit pairs and
 -- `lowest_128_bits`' high part (range-checked by §12c′'s chain). `verified` (#11) was the tenth and

@@ -756,7 +756,9 @@ mod stepmain_tests {
         }
         // …and EXACTLY TWO further `to_field_checked` chains - 16 EndoMulScalar rows - which are
         // the THIRD `lowest_128_bits` in the assembly: `xi_actual = lowest_128_bits (squeeze
-        // fr_sponge)` (`step_verifier.ml:820-822,1102`), whose high part `util.ml:98` asserts
+        // fr_sponge)` (`step_verifier.ml:821-822`; `lowest_128_bits` is `:99-101` and `xi_correct`
+        // itself is `:1010-1013` — `:1102` is `combine ~ft:ft_eval1`, a fifth wrong citation of the
+        // same line, corrected 2026-08-03), whose high part `util.ml:98` asserts
         // unconditionally and whose low part `util.ml:99` asserts because
         // `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true`. It was +0 until
         // 2026-08-02: R8 split a field element with NOTHING constraining either half, so any

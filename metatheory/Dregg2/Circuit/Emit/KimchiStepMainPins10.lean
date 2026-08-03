@@ -175,7 +175,10 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- sub-circuits. Equalities, not floors.
 #guard (classCells (posAt .msm) tS.ftw.permV).length == 1
 #guard (classCells (posAt .ipa) tS.ftw.permV).length == 1
-#guard (classCells (posAt .ftEval0) tS.ftw.permV).length == 4
+-- ⚑ THREE, not four, since `permClaimed` was deleted (2026-08-03): R6 used to close with
+-- `eEq perm permClaimed`, a row whose only novel operand was a variable no other row read — an
+-- assert that could not fail. Its deletion took exactly one cell out of `perm`'s class.
+#guard (classCells (posAt .ftEval0) tS.ftw.permV).length == 3
 -- ⚑ …and since §21 the `ζ^n` cell carries ONE MORE CELL AT EVERY RUNG FROM `r3_msm` UP than `perm`
 -- does: it is Wrap statement WORD 2/3 as well as `ft_comm`'s scalar, so the x_hat ladder's own
 -- terminal counter lands in its class. That asymmetry between the two §6b scalars is exactly §21 —
@@ -207,18 +210,22 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (classCells (posAt .absorb) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 2
 #guard (classCells (posAt .opening) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 3
 -- …and the ξ chain's `EndoMulScalar` rows are in r5 while the r chain's are not.
+-- ⚑ **PLUS `RNG_DOMLOG2_ROWS` FROM r5 UP (2026-08-03)**, and the `+ 1` is the whole point of it:
+-- `Branch_data.typ`'s `~assert_16_bits` (`per_proof_witness.ml:166-168`) is a `to_field_checked` at
+-- `~num_bits:16`, i.e. ONE `EndoMulScalar` row, not a `chalBits`-wide chain. A count that stayed a
+-- multiple of `emsRows` would mean the 16-bit chain is not there.
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
-        == (2 * shapeSmoke.chals + 1) * shapeSmoke.emsRows
+        == (2 * shapeSmoke.chals + 1) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS
 #guard ((rungRows tS .ftEval0 true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
-        == (2 * shapeSmoke.chals + 1) * shapeSmoke.emsRows
+        == (2 * shapeSmoke.chals + 1) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS
 -- …and R7 adds TWO: `r_actual`'s own chain and the `assert_128_bits` of its high part.
 #guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
-        == (2 * shapeSmoke.chals + 3) * shapeSmoke.emsRows
+        == (2 * shapeSmoke.chals + 3) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS
 -- ⚑ …and R8 adds TWO MORE — the THIRD `lowest_128_bits`, `xi_actual`'s, both parts (§12c′). This is
 -- the pin that would have caught the hole: before it landed, R8's EndoMulScalar delta was ZERO and
 -- the finalize rung split a field element with nothing constraining either half.
 #guard ((rungRows tS .finalize true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
-        == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows
+        == (2 * shapeSmoke.chals + 5) * shapeSmoke.emsRows + RNG_DOMLOG2_ROWS
 
 #guard (rungRows tS .full true).length < (rungRows tS .ftEval0 true).length
 #guard (rungRows tS .ftEval0 true).length < (rungRows tS .absorb true).length
