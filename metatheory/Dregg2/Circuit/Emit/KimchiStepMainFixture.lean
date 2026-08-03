@@ -636,18 +636,81 @@ the emitter runs, with only `ms` varying, so every measurement below is about th
 def cipAtMask (ms : List Nat) : Nat :=
   (runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA prevChalVal ms).ca.getLastD 0
 
+/-- ⚑ **THE WHOLE LEGAL DOMAIN OF THE MASK.** `Prefix_mask.there`
+(`pickles_base/proofs_verified.ml:75-81`) is `N0 ↦ [ff;ff] · N1 ↦ [ff;tt] · N2 ↦ [tt;tt]`, and
+`Prefix_mask.back` (`:83-91`) `invalid_arg`s on anything else — `[1,0]` in particular is NOT a mask
+the circuit can legally see. So a quantifier over this list ranges over EVERY mask, and the ∀ §12l
+states is not three transcribed instances that happen to be all of them. -/
+def LEGAL_MASKS : List (List Nat) := [[1, 1], [0, 1], [0, 0]]
+
+/-- How many of `combine`'s `Maybe` prefix slots a mask DROPS. ⚑ Because `pcs_batch.ml:85-94` folds
+from the list's TAIL and `common.ml:271`'s `else_` is bare `acc`, a dropped slot is not a zeroed
+term: `d` is the ξ-power SHIFT applied to every survivor. -/
+def dropOf (ms : List Nat) : Nat :=
+  (List.range N_CIP_MASKED).countP (fun j => ms.getD j 0 == 0)
+
 /-- …and `cipR` — the READ-ONLY transcription of `verifier.rs` — over the sub-list a mask keeps. -/
 def cipRKept (ms : List Nat) : ZMod pN :=
-  let d := (List.range N_CIP_MASKED).countP (fun j => ms.getD j 0 == 0)
   Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
-    (cipEzS.drop d) (cipEwS.drop d)
+    (cipEzS.drop (dropOf ms)) (cipEwS.drop (dropOf ms))
+
+/-- `cipR` over the FULL 47 — what `cipRows` computed until 2026-08-02, i.e. the value this rung
+CORRECTS. -/
+def cipRFull : ZMod pN :=
+  Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S) cipEzS cipEwS
+
+/-- The "zero the dropped entries and still fold all 47" reading — the mux a careless emission
+writes, and a THIRD field element distinct from both of the above wherever the mask drops. -/
+def cipRZeroed (ms : List Nat) : ZMod pN :=
+  Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
+    ((List.range cipEzS.length).map (fun i => if i < dropOf ms then 0 else cipEzS.getD i 0))
+    ((List.range cipEwS.length).map (fun i => if i < dropOf ms then 0 else cipEwS.getD i 0))
+
+/-- Upstream's TWO-fold form at a mask (`step_verifier.ml:1097-1101`): `combine … + r · combine …`
+over the kept sub-list. This region runs ONE fused fold over `cₖ = evₖ(ζ) + r·evₖ(ζω)`; that the two
+agree is the fusion commuting with the mux, and §12l states it at every legal mask. -/
+def cipFusedAt (ms : List Nat) : ZMod pN :=
+  (List.range (shapeSmoke.cipEvals - dropOf ms)).foldl
+      (fun acc k => acc + (foldMulOf sq1S) ^ k * (cipEzS.drop (dropOf ms)).getD k 0) 0
+    + (foldMulOf sq2S)
+      * (List.range (shapeSmoke.cipEvals - dropOf ms)).foldl
+          (fun acc k => acc + (foldMulOf sq1S) ^ k * (cipEwS.drop (dropOf ms)).getD k 0) 0
 
 def dfBent0 (ms : List Nat) : DefData :=
   runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA
     (fun i => if i == 0 then fAdd (prevChalVal i) 1 else prevChalVal i) ms
 
+/-- ⚑⚑ **THE LAW OF `combine`'s MUX, AT EVERY MASK THE CIRCUIT CAN LEGALLY SEE.** Six facts at each
+of the three legal masks. §12l carried TEN of the eighteen as hand-written `#guard` instances; the
+instances could not see the shape of their own domain — a mask silently omitted from the battery is
+indistinguishable from a mask that holds, and clauses (iv) and (v) were stated only at the DEPLOYED
+mask, so nothing said they hold at `[0,0]` too. The quantifier cannot omit a mask. -/
+def cipMaskLaw : Bool :=
+  LEGAL_MASKS.all (fun m =>
+    -- (i) the EMITTED fold IS `cipR` over the sub-list the mask KEEPS.
+    ((cipAtMask m : ZMod pN) == cipRKept m)
+    -- (ii) …and the single fused fold IS upstream's two combined folds.
+    && ((cipAtMask m : ZMod pN) == cipFusedAt m)
+    -- (iii) bending slot 0's carried challenges moves `cip` EXACTLY when the mask KEEPS slot 0 —
+    --       so the pin is the mask refusing the term, not the bend failing to reach the ladder.
+    && (((dfBent0 m).ca.getLastD 0 != cipAtMask m) == (m.getD 0 0 == 1))
+    -- (iv) ⚑ THE FINDING. It is `cipR` over the full 47 EXACTLY when the mask drops nothing, so at
+    --      EVERY dropping mask the value this rung emits is NOT the value it emitted before.
+    && (((cipAtMask m : ZMod pN) == cipRFull) == (dropOf m == 0))
+    -- (v) …and never the "zero the entry" reading, wherever the two can differ at all.
+    && (dropOf m == 0 || ((cipAtMask m : ZMod pN) != cipRZeroed m))
+    -- (vi) …and no two legal masks give the same circuit output, so the mask is not a parameter the
+    --      value quietly ignores.
+    && LEGAL_MASKS.all (fun m' => (m == m') || (cipAtMask m != cipAtMask m')))
+
 def cipRowVars : List PVar :=
   (cipRows shapeSmoke true).flatMap (fun r => r.perm.filterMap id)
+
+/-- ⚑ **∀-GAIN over the MASKED SLOTS.** `cipRows` reads each mask bit exactly once — stated for
+every `j < N_CIP_MASKED` rather than as one transcribed line per slot, so a slot the emitter forgets
+to mux cannot pass by being absent from the battery. -/
+def cipReadsEachMaskBitOnce : Bool :=
+  (List.range N_CIP_MASKED).all (fun j => cipRowVars.countP (· == vMask shapeSmoke j) == 1)
 
 -- ── the values §15 pins ────────────────────────────────────────
 def posAt (k : Rung) : List (PVar × Cell) :=

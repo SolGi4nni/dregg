@@ -62,19 +62,24 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
 #guard (stepRows tS true).length == (rungRows tS .finalize true).length
 -- …and each sub-list is NON-EMPTY, so "the sum matches" cannot be satisfied by a vanished rung.
 #guard (cipRows shapeSmoke true).length > 0 && (deferredRows shapeSmoke true).length > 0
--- ⚑ …and `cipRows`' own length as a CLOSED FORM of what it emits, so the mux cannot quietly lose a
--- masked step: the `acc₀ = 0` pin, one A-row per column, then the B-fold packed two halves to a row
--- at `2` halves per `Some` step and `5` per `Maybe` one, then two probes and the `cip` bit's
--- booleanity row with its probe.
-#guard (cipRows shapeSmoke true).length
-        == 1 + shapeSmoke.cipEvals
-           + (2 * (shapeSmoke.cipEvals - N_CIP_MASKED) + 5 * N_CIP_MASKED + 1) / 2
-           + 4
--- …and the mux is what makes it longer than the unconditional fold would be. Stated as the DELTA
--- against the shape this rung replaced — `1 + cipEvals` A-rows, `cipEvals` unconditional B-rows and
--- the three-row trailer — because four rows is the whole cost of this rung.
-#guard (cipRows shapeSmoke true).length
-        == (1 + shapeSmoke.cipEvals + shapeSmoke.cipEvals + 3) + 4
+/-- ⚑ `cipRows`' own length as a CLOSED FORM of what it emits, so the mux cannot quietly lose a
+masked step: the `acc₀ = 0` pin, one A-row per column, then the B-fold packed two halves to a row at
+`2` halves per `Some` step and `5` per `Maybe` one, then two probes and the `cip` bit's booleanity
+row with its probe. Gains a NAME, not a ∀ — `shapeSmoke` is the one assembly this file measures. -/
+theorem cipRows_length_closed_form :
+    (cipRows shapeSmoke true).length
+      = 1 + shapeSmoke.cipEvals
+        + (2 * (shapeSmoke.cipEvals - N_CIP_MASKED) + 5 * N_CIP_MASKED + 1) / 2
+        + 4 := by native_decide
+#assert_compiled cipRows_length_closed_form
+
+/-- …and the mux is what makes it longer than the unconditional fold would be. Stated as the DELTA
+against the shape this rung replaced — `1 + cipEvals` A-rows, `cipEvals` unconditional B-rows and
+the three-row trailer — because four rows is the whole cost of this rung. -/
+theorem cipRows_length_is_the_unmuxed_shape_plus_four :
+    (cipRows shapeSmoke true).length
+      = (1 + shapeSmoke.cipEvals + shapeSmoke.cipEvals + 3) + 4 := by native_decide
+#assert_compiled cipRows_length_is_the_unmuxed_shape_plus_four
 -- ⚑ …and §8i's own sub-list, which is the rung this file last added. Its length is stated as the
 -- CLOSED FORM of what it emits — the `zetaw` row, ζω's `bRounds − 1` squaring halves packed two to
 -- a row, `N_EC · bRounds` fused factor rows and `N_EC` probes — so a ladder that quietly loses a

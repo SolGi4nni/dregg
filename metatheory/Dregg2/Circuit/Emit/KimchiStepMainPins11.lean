@@ -121,18 +121,21 @@ is the failure mode this section exists to catch. -/
 #guard finVal finS.fp.slots.cipUsed == tS.df.ca.getLastD 0
 #guard finVal finS.fp.slots.bUsed == finS.bActual
 #guard finVal finS.fp.slots.permUsed == ftS.vals.getD ftS.fp.slots.perm 0
--- …and `combined_inner_product` really is the value R5's Horner chain produced, which §12 already
--- pinned against `KimchiVerify.cipR`. So the unshift lands on `cipR`, not on a local name for it.
--- ⚑ …over the SLOTS `combine` KEEPS (`.drop 1` at `MASK_BITS = [0,1]`), since 2026-08-02: §12l's
--- mux drops prefix slot 0 and a dropped slot consumes NO ξ power (`common.ml:271`). So the STATEMENT
--- word R8 binds is the masked fold, and the unmasked one — which this pin carried until the mux
--- landed — is a DIFFERENT field element. Both directions, so the `.drop` is not decoration.
-#guard ((finVal finS.fp.slots.cipUsed : Nat) : ZMod pN)
-        == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
-             (cipEzS.drop 1) (cipEwS.drop 1)
-#guard (((finVal finS.fp.slots.cipUsed : Nat) : ZMod pN)
-         == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
-              cipEzS cipEwS) == false
+/-- …and `combined_inner_product` really is the value R5's Horner chain produced, which §12 already
+pinned against `KimchiVerify.cipR`. So the unshift lands on `cipR`, not on a local name for it.
+⚑ …over the SLOTS `combine` KEEPS, since 2026-08-02: §12l's mux drops prefix slot 0 and a dropped
+slot consumes NO ξ power (`common.ml:271`), so the STATEMENT word R8 binds is the MASKED fold. Stated
+against `cipRKept MASK_BITS` — §12l's own definition at the deployed mask — rather than a hand-copied
+`.drop 1`, so the two sections cannot drift apart on what "kept" means. -/
+theorem cipUsed_is_the_masked_fold :
+    ((finVal finS.fp.slots.cipUsed : Nat) : ZMod pN) = cipRKept MASK_BITS := by native_decide
+#assert_compiled cipUsed_is_the_masked_fold
+
+/-- ⚑ …and the UNMASKED fold — which this pin carried until the mux landed — is a DIFFERENT field
+element. Both directions, so the `.drop` is not decoration. -/
+theorem cipUsed_is_not_the_unmasked_fold :
+    (((finVal finS.fp.slots.cipUsed : Nat) : ZMod pN) == cipRFull) = false := by native_decide
+#assert_compiled cipUsed_is_not_the_unmasked_fold
 
 -- ── (d) `xi_correct` — the fr-sponge's own squeeze ────────────────────────────────────────────
 -- ⚑ `xi_actual = lowest_128_bits (squeeze sponge)` (`step_verifier.ml:820-822,1102`), and the

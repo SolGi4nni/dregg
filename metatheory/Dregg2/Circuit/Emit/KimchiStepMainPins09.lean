@@ -118,88 +118,111 @@ set_option maxRecDepth 100000
 -- shift is what it does not. So this rung MOVES public word 9 at the deployed mask, and the three
 -- legal masks give three different values.
 
--- ⚑ THE THREE LEGAL MASKS, each against `cipR` over ITS OWN kept sub-list. `Prefix_mask.back`
--- (`proofs_verified.ml:83-91`) admits exactly these three and REFUSES `[1,0]`, so this is the whole
--- domain and not a sample of it.
-#guard ((cipAtMask [1, 1] : ZMod pN)) == cipRKept [1, 1]
-#guard ((cipAtMask [0, 1] : ZMod pN)) == cipRKept [0, 1]
-#guard ((cipAtMask [0, 0] : ZMod pN)) == cipRKept [0, 0]
--- …and the emitted assembly runs the DEPLOYED one.
-#guard cipAtMask MASK_BITS == tS.df.ca.getLastD 0 && MASK_BITS == [0, 1]
+/-- ⚑⚑ **THE ∀-GAIN: TEN TRANSCRIBED INSTANCES BECOME ONE BOUNDED QUANTIFIER OVER THE WHOLE LEGAL
+DOMAIN.** `cipMaskLaw` (the `…Fixture`) is `LEGAL_MASKS.all` of six clauses, and it replaces exactly
+these ten `#guard` lines:
 
--- ⚑⚑ **RED CONTROL 1 — AT A MASK WHERE SLOT 0 IS NOT THE DUMMY (`[1,1]`, the `N2` instance),
--- DROPPING SLOT 0 vs FOLDING IT GIVES A DIFFERENT `combined_inner_product`.** This is the control
--- the brief asked for and it bites: at `[1,1]` slot 0 carries a live previous proof's `E_c`.
-#guard cipAtMask [1, 1] != cipAtMask [0, 1]
--- ⚑⚑ **RED CONTROL 2 — AND IT BITES AT THE DEPLOYED MASK TOO, which is the finding.** The value
--- this rung emits is NOT the value it emitted before, even though slot 0 is the dummy at `[0,1]`.
--- Stated against `cipR` over the FULL 47 — which is what `cipRows` computed until 2026-08-02 and is
--- also exactly `cipAtMask [1,1]`, so RED CONTROL 1 and this one are one fact seen from two sides.
-#guard ((cipAtMask [0, 1] : ZMod pN)
-         == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
-              cipEzS cipEwS) == false
--- …and all THREE are pairwise different, so no two masks are the same circuit output.
-#guard [cipAtMask [1, 1], cipAtMask [0, 1], cipAtMask [0, 0]].dedup.length == 3
--- ⚠ …and it is NOT the "zero the entry" reading, which is the mux a careless emission would write.
--- Zeroing slot 0's `E_c` and folding all 47 gives a THIRD value, different from both.
-#guard ((cipAtMask [0, 1] : ZMod pN)
-         == Dregg2.Circuit.Emit.KimchiVerify.cipR (foldMulOf sq1S) (foldMulOf sq2S)
-              (cipEzS.set 0 0) (cipEwS.set 0 0)) == false
+  * three `cipAtMask m == cipRKept m`, one per mask                      → clause (i)
+  * one `(List.range 3).all` fusion identity over an INLINE literal list → clause (ii)
+  * two `dfBent0` controls (`== ` at the deployed mask, `!=` at `[1,1]`) → clause (iii)
+  * one "not `cipR` over the full 47", stated only at `[0,1]`            → clause (iv)
+  * one "not the zero-the-entry reading", stated only at `[0,1]`         → clause (v)
+  * `cipAtMask [1,1] != cipAtMask [0,1]` and the three-way `dedup`       → clause (vi)
 
--- ⚑⚑ **BOTH DIRECTIONS ON THE VALUES.** Bending a slot the mask EXCLUDES must not move the fold;
--- bending a slot it KEEPS must. `dfBent` above bends slot 1 (kept) and moves `ca`; this is the
--- other half, on slot 0's carried challenges — which DO move `E_c` at slot 0 and DO move segments
--- A and C's inputs, and must now leave `combined_inner_product` exactly where it was.
-#guard (dfBent0 MASK_BITS).ez.getD 0 0 != tS.df.ez.getD 0 0
-#guard (dfBent0 MASK_BITS).ew.getD 0 0 != tS.df.ew.getD 0 0
-#guard (dfBent0 MASK_BITS).ca.getLastD 0 == tS.df.ca.getLastD 0
--- …and at `[1,1]`, where the mask keeps slot 0, the SAME bend does move it. So the pin above is the
--- mask refusing the term, not the bend failing to reach the ladder.
-#guard (dfBent0 [1, 1]).ca.getLastD 0 != cipAtMask [1, 1]
--- …and the KEPT slot's bend still moves it at the deployed mask — the pair of this control.
--- (§18(f)'s `dfBent` is the same bend at index `bRounds`; stated here too so the two directions
--- read as one measurement rather than as two sections that happen to agree.)
-#guard (runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA
-          (fun i => if i == shapeSmoke.bRounds then fAdd (prevChalVal i) 1 else prevChalVal i)
-          MASK_BITS).ca.getLastD 0 != tS.df.ca.getLastD 0
+⚑ **AND IT IS STRICTLY STRONGER, in two ways that matter here.** (a) The instances could not see the
+shape of their own domain: a mask omitted from the battery is indistinguishable from a mask that
+holds, and the reader had to know by eye that `Prefix_mask.back` admits three. The quantifier ranges
+over `LEGAL_MASKS`, whose docstring IS the source reading that says three is all of them. (b)
+Clauses (iv) and (v) — the FINDING — were asserted only at the deployed `[0,1]`. Nothing said they
+hold at `[0,0]`, the other dropping mask. Now they do, and as a biconditional against `dropOf m == 0`
+rather than as a single inequality, so the `[1,1]` direction (where the emitted value IS the full
+47-term fold) is asserted too instead of being left unstated. -/
+theorem cip_mask_law : cipMaskLaw = true := by native_decide
+#assert_compiled cip_mask_law
 
--- ⚑⚑ **BENDING A MASK BIT MOVES WHAT THE MUX SELECTS — ON THE EMITTED ROWS, not only the values.**
--- `vMask j` is §8h's derived bit and `cipRows` reads it: bit 0's σ class gains the mux's product
--- half, bit 1's likewise. Exact counts, not floors — §8h's booleanity row reads each bit three
--- times, `Checked.pack` once, its probe once, segment A's and segment C's muxes once per masked
--- block, and now `combine` once.
-#guard cipRowVars.countP (· == vMask shapeSmoke 0) == 1
-#guard cipRowVars.countP (· == vMask shapeSmoke 1) == 1
--- …and the mux cells are read exactly where they are written: `sⱼ` twice (its own half and the
--- difference), `dⱼ` twice, `pⱼ` twice plus its probe.
-#guard (List.range N_CIP_MASKED).all (fun j =>
-  cipRowVars.countP (· == vCs shapeSmoke j) == 2
-  && cipRowVars.countP (· == vCd shapeSmoke j) == 2
-  && cipRowVars.countP (· == vCp shapeSmoke j) == 3)
--- ⚑ …and the mask bit really is IN a σ class with §8h's rows and not a second variable that happens
--- to hold the same number: `vMask 0`'s class spans `branchRows`' booleanity + pack + probe, the two
--- masked segments' muxes, and `combine`'s.
-#guard (classCells posS (vMask shapeSmoke 0)).length
-        > (classCells posUS (vMask shapeSmoke 0)).length
--- (the CLOSED FORM of that class — `5 + 3·maskReaders i + 1`, the trailing `1` being this mux — is
--- §14a's `maskReaders` pin, which already enumerated every other consumer; it is not restated here.)
--- ⚑ …and the UNMASKED slots are untouched: `combine` folds `j ≥ 2` with `Some`, so no `vMask` cell
--- appears in their halves and `vCk 2`'s class is exactly the A-row and the B-step that reads it.
-#guard (classCells posS (vCk shapeSmoke 2)).length == 2
+/-- The Prop-level reading of clause (i), so a consumer can CITE it rather than re-derive it: at
+EVERY legal mask the emitted `combined_inner_product` is `cipR` over the sub-list the mask keeps. -/
+theorem cipAtMask_eq_cipRKept (m : List Nat) (hm : m ∈ LEGAL_MASKS) :
+    ((cipAtMask m : ZMod pN)) = cipRKept m := by
+  have h := cip_mask_law
+  simp only [cipMaskLaw, List.all_eq_true] at h
+  have hm' := h m (by simpa using hm)
+  simp only [Bool.and_eq_true, beq_iff_eq] at hm'
+  exact hm'.1.1.1.1.1
 
--- ⚑ **THE FUSION COMMUTES WITH THE MUX**, stated as an identity rather than as the prose above.
--- Upstream runs `combine … + r * combine …` (`step_verifier.ml:1097-1101`) — TWO muxed folds — and
--- this region runs ONE over `cₖ = evₖ(ζ) + r·evₖ(ζω)`. Both `combine` calls take the SAME `keep`,
--- so the two agree; `cipR` over the kept sub-list IS the two-fold form, which is what the pins above
--- compare against.
-#guard (List.range 3).all (fun t =>
-  let ms : List Nat := [[1,1],[0,1],[0,0]].getD t []
-  let d := (List.range N_CIP_MASKED).countP (fun j => ms.getD j 0 == 0)
-  ((cipAtMask ms : ZMod pN))
-    == (List.range (shapeSmoke.cipEvals - d)).foldl
-         (fun acc k => acc + (foldMulOf sq1S) ^ k * (cipEzS.drop d).getD k 0) 0
-       + (foldMulOf sq2S)
-         * (List.range (shapeSmoke.cipEvals - d)).foldl
-             (fun acc k => acc + (foldMulOf sq1S) ^ k * (cipEwS.drop d).getD k 0) 0)
+/-- ⚠ The two sides of the next theorem are CLOSED, enormous terms (`cipRFull` is the whole 47-term
+fold over the smoke assembly). A `rw`/`▸`/`simp` step on them asks the elaborator to `whnf` the fold
+and it times out. This lemma does the Bool bookkeeping over VARIABLES — pure `Eq.trans`, no motive —
+so the concrete instance is only ever an APPLICATION and nothing is ever evaluated. -/
+private theorem iff_of_beq_eq_beq {α β : Type} [BEq α] [LawfulBEq α] [BEq β] [LawfulBEq β]
+    {a a' : α} {b b' : β} (h : (a == a') = (b == b')) : a = a' ↔ b = b' :=
+  ⟨fun he => eq_of_beq (h.symm.trans (beq_of_eq he)),
+   fun he => eq_of_beq (h.trans (beq_of_eq he))⟩
+
+/-- ⚑ The Prop-level reading of clause (iv) — **THE FINDING**, citable: the emitted value is the
+full 47-term fold EXACTLY when the mask drops nothing. Contrapositive: at both dropping masks (the
+deployed `[0,1]` included) `cipRows` now emits a DIFFERENT field element than it did before. -/
+theorem cipAtMask_eq_cipRFull_iff_drops_nothing (m : List Nat) (hm : m ∈ LEGAL_MASKS) :
+    ((cipAtMask m : ZMod pN)) = cipRFull ↔ dropOf m = 0 := by
+  have h := cip_mask_law
+  simp only [cipMaskLaw, List.all_eq_true] at h
+  have hm' := h m (by simpa using hm)
+  simp only [Bool.and_eq_true] at hm'
+  exact iff_of_beq_eq_beq (eq_of_beq hm'.1.1.2)
+
+-- …and the emitted assembly runs the DEPLOYED one, which is the instance the ∀ does not name.
+theorem cip_deployed_mask_is_the_assembly :
+    (cipAtMask MASK_BITS == tS.df.ca.getLastD 0 && MASK_BITS == [0, 1]) = true := by native_decide
+#assert_compiled cip_deployed_mask_is_the_assembly
+
+-- ⚑⚑ **THE BEND REACHES THE LADDER.** Clause (iii) says slot 0's bend moves `cip` exactly when the
+-- mask keeps slot 0. That is only informative if the bend reaches `E_c` AT ALL, which these two say:
+-- at the deployed mask it moves slot 0's `ez`/`ew` — it is the MASK refusing the term downstream,
+-- not a bend that never landed.
+theorem slot0_bend_reaches_Ec :
+    ((dfBent0 MASK_BITS).ez.getD 0 0 != tS.df.ez.getD 0 0
+     && (dfBent0 MASK_BITS).ew.getD 0 0 != tS.df.ew.getD 0 0) = true := by native_decide
+#assert_compiled slot0_bend_reaches_Ec
+
+/-- …and the KEPT slot's bend still moves `cip` at the deployed mask — the pair of that control.
+(§18(f)'s `dfBent` is the same bend at index `bRounds`; stated here too so the two directions read
+as one measurement rather than as two sections that happen to agree.) -/
+theorem kept_slot_bend_moves_cip :
+    ((runDef shapeSmoke tS.sp ftS.out xiFoldS rFoldS FT_OMEGA
+        (fun i => if i == shapeSmoke.bRounds then fAdd (prevChalVal i) 1 else prevChalVal i)
+        MASK_BITS).ca.getLastD 0 != tS.df.ca.getLastD 0) = true := by native_decide
+#assert_compiled kept_slot_bend_moves_cip
+
+/-- ⚑ **∀-GAIN over the MASKED SLOTS.** `cipRows` reads each mask bit EXACTLY once — two transcribed
+lines (`vMask 0`, `vMask 1`) become one quantifier over `List.range N_CIP_MASKED`, so a slot the
+emitter forgets to mux cannot pass by being absent from the battery. -/
+theorem cip_reads_each_mask_bit_once : cipReadsEachMaskBitOnce = true := by native_decide
+#assert_compiled cip_reads_each_mask_bit_once
+
+/-- …and the mux cells are read exactly where they are written: `sⱼ` twice (its own half and the
+difference), `dⱼ` twice, `pⱼ` twice plus its probe. Already quantified over the masked slots; it
+gains a NAME, not a ∀. -/
+theorem cip_mux_cells_read_where_written :
+    ((List.range N_CIP_MASKED).all (fun j =>
+      cipRowVars.countP (· == vCs shapeSmoke j) == 2
+      && cipRowVars.countP (· == vCd shapeSmoke j) == 2
+      && cipRowVars.countP (· == vCp shapeSmoke j) == 3)) = true := by native_decide
+#assert_compiled cip_mux_cells_read_where_written
+
+/-- ⚑ …and the mask bit really is IN a σ class with §8h's rows and not a second variable that
+happens to hold the same number: `vMask 0`'s class spans `branchRows`' booleanity + pack + probe, the
+two masked segments' muxes, and `combine`'s. (The CLOSED FORM — `5 + 3·maskReaders i + 1`, the
+trailing `1` being this mux — is §14a's `maskReaders` pin, which already enumerated every other
+consumer; it is not restated here.) -/
+theorem mask_bit_class_grows_with_the_mux :
+    ((classCells posS (vMask shapeSmoke 0)).length
+      > (classCells posUS (vMask shapeSmoke 0)).length) = true := by native_decide
+#assert_compiled mask_bit_class_grows_with_the_mux
+
+/-- ⚑ …and the UNMASKED slots are untouched: `combine` folds `j ≥ 2` with `Some`, so no `vMask` cell
+appears in their halves and `vCk 2`'s class is exactly the A-row and the B-step that reads it. -/
+theorem unmasked_slot_class_untouched :
+    (classCells posS (vCk shapeSmoke 2)).length = 2 := by native_decide
+#assert_compiled unmasked_slot_class_untouched
 
 end Dregg2.Circuit.Emit.KimchiStepMain
