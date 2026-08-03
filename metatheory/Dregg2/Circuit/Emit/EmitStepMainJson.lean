@@ -8,10 +8,11 @@ verifies. Carries the `main` (kept OUT of `KimchiStepMain` so that module roots 
 
     lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean              # the committed shape
     DREGG_SM=smoke  lake env lean --run …                                      # the CI fixture shape
-    DREGG_SM=A,C,E,M,K,I,B,D,V,P lake env lean --run …                         # an arbitrary rung
+    DREGG_SM=A,C,E,M,I,B,D,V,P,W lake env lean --run …                         # an arbitrary rung
 
-The eleven-field spec is `absorbs,chals,emsRows,msmTerms,msmChunks,ipaRounds,ipaBlocks,bRounds,
-cipEvals,tComms,pubWords`. ⚑ `tComms` is new since the R1 interleaving: `absorbs` is DERIVED from the
+The ten-field spec is `absorbs,chals,emsRows,msmTerms,ipaRounds,ipaBlocks,bRounds,cipEvals,tComms,
+pubWords`. ⚑ `msmChunks` is GONE (2026-08-03): the MSM chunk count is per statement WORD
+(`msmChunksAt`, §1b), so there is nothing shape-wide left to pass. ⚑ `tComms` is new since the R1 interleaving: `absorbs` is DERIVED from the
 transcript schedule now (`absorbBlocksOf`), so sizing `t_comm` off `absorbs` would be circular.
 The shape comes through the ENVIRONMENT, not `argv`: `lean --run` does not forward
 trailing arguments through `lake env`, and a silently-ignored argument emitting the DEFAULT shape
@@ -80,9 +81,9 @@ render+write {t4 - t3} ms | TOTAL {t4 - t0} ms"
 
 def parseShape (spec : String) : Option StepShape :=
   match spec.splitOn "," with
-  | [a, c, e, m, k, i, b, d, ce, tc, pw] =>
+  | [a, c, e, m, i, b, d, ce, tc, pw] =>
       some { absorbs := a.toNat!, chals := c.toNat!, emsRows := e.toNat!
-           , msmTerms := m.toNat!, msmChunks := k.toNat!
+           , msmTerms := m.toNat!
            , ipaRounds := i.toNat!, ipaBlocks := b.toNat!
            , bRounds := d.toNat!, cipEvals := ce.toNat!, tComms := tc.toNat!
            , pubWords := pw.toNat! }
@@ -117,8 +118,8 @@ quotient chunks (tComms={sh.tComms}); `Common.ft_comm`'s Horner needs at least t
     throw (IO.userError s!"emit: chals={sh.chals} < {sqScheduled sh} scheduled transcript \
 squeezes (β γ α ζ u, one per bullet_reduce round, c)")
   IO.println s!"== step_main assembly: absorbs={sh.absorbs} chals={sh.chals} ems={sh.emsRows} \
-msm={sh.msmTerms}x{sh.msmChunks} ipa={sh.ipaRounds}x{sh.ipaBlocks} b={sh.bRounds} \
-pub={sh.pubWords} =="
+msm={sh.msmTerms} terms / {msmChunkPrefix sh.msmTerms} chunks ipa={sh.ipaRounds}x{sh.ipaBlocks} \
+b={sh.bRounds} pub={sh.pubWords} =="
   let tc0 ← IO.monoMsNow
   let t := mkStep sh
   -- ⚑ `t.ftc.terms` is in the force since `Common.ft_comm`'s MSM landed: it is eight 255-bit

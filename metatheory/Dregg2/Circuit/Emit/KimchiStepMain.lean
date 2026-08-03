@@ -63,7 +63,8 @@ line items, not against a round number.
     never been chained and had never been wired to another gate type.
   * **R3 `msm`** — TWO MSMs. `multiscale_known`, the x_hat MSM: `msmTerms` `var_base_mul` scalar
     multiplications
-    of `msmChunks` 5-bit chunks (`bits_per_chunk = 5`, `plonk_curve_ops.ml:66`), summed by a
+    of `msmChunksAt i` 5-bit chunks — PER STATEMENT WORD since §20 (`bits_per_chunk = 5`,
+    `plonk_curve_ops.ml:64-68`), so nine of the forty emit no ladder at all — summed by a
     `complete_add` chain. ⚑ Each term's scalar counter chain CLOSES ON ITS CHALLENGE: term `i`'s
     final `n'` cell (col 5) and its challenge's final `n₈` cell (col 1) are the SAME VARIABLE, so
     the value `EndoMulScalar` decoded is the value `VarBaseMul` multiplies by — one σ class spanning
@@ -554,23 +555,22 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
      ξ) and that the fold's multiplier and `combined_inner_product` both MOVE under it, and shows the
      new high chain REFUSES it. All three `lowest_128_bits` in the assembly are now range-checked on
      both parts, so **no Fiat–Shamir value in this circuit is prover-chosen.**
-  2. ⚑ **CORRECTED AT SOURCE 2026-08-02, AND THE NAMED FIX WAS WRONG.** This entry read: "All MSM
-     scalars are assembled at the 128-bit width… **the 255-bit width is expressible with
-     `msmChunks = 51`**; taking it costs ~1000 `VarBaseMul` rows." Widening R3 uniformly to 51
-     would be LESS faithful, not more, and reading `multiscale_known`'s argument at source is what
-     says so — the same shape as #3, whose bases turned out to have two provenances.
+  2. ⚑ **RETIRED (WIDTHS) 2026-08-03 — §20, `…Pins15`. The provenance half is still open.**
+     This entry has been wrong twice. It first read "the 255-bit width is expressible with
+     `msmChunks = 51`; taking it costs ~1000 `VarBaseMul` rows", which would have been a uniform
+     WIDENING and less faithful, not more. It was then corrected to a per-word census that got
+     `Backend.Tick.Rounds.n` and the ninth one-bit word right and said so — and the campaign brief
+     that carried it forward "corrected" both of those to 15 and 8, which is wrong; see below.
 
-     `multiscale_known`'s scalars are not challenges and are not one width. They are the previous
-     proof's **packed Wrap STATEMENT** — `multiscale_known (Array.mapi public_input ~f:(fun i x ->
-     (x, lagrange_commitment ~domain srs i)))` (`step_verifier.ml:543-544`), where `public_input` is
-     `Spec.pack … (Types.Wrap.Statement.In_circuit.spec …) (… to_data statement)`
-     (`:1236-1251`). `Spec.pack` carries a width PER BASIC (`spec.ml:376-392`): `Field` and `Digest`
-     pack as `Field.size_in_bits = 255`, `Challenge` and `Bulletproof_challenge` as
-     `Challenge.length = 64·2 = 128` (`limb_vector/challenge.ml:5`, `constant.ml:71`), `Branch_data`
-     as `length_in_bits = 10` (`branch_data.ml:61`), `Bool` as 1 — and `multiscale_known` scales
-     each by `~num_bits:n` (`:164-172`), at `chunks_needed ~num_bits:(n−1)` 5-bit chunks
-     (`plonk_curve_ops.ml:66-68,250-252`). MEASURED off the spec and `to_data`
-     (`composition_types.ml:812-825,855-882`), the 40 words are:
+     `multiscale_known`'s scalars are the previous proof's **packed Wrap STATEMENT** —
+     `multiscale_known (Array.mapi public_input ~f:(fun i x -> (x, lagrange_commitment ~domain srs
+     i)))` (`step_verifier.ml:543-544`) over `Spec.pack … (Types.Wrap.Statement.In_circuit.spec …)`
+     (`:1236-1251`) — and `Spec.pack` carries a width PER BASIC (`spec.ml:305-395`). `Field` and
+     `Digest` at `Field.size_in_bits = 255`, `Challenge` / `Scalar Challenge` /
+     `Bulletproof_challenge` at `Challenge.length = 64·2 = 128` (`limb_vector/challenge.ml:5`,
+     `constant.ml:70`), `Branch_data` at `length_in_bits = 10` (`branch_data.ml:61`), `Bool` at 1;
+     scaled at `chunks_needed ~num_bits:(n−1)` 5-bit chunks (`plonk_curve_ops.ml:64-68,250-256`).
+     The census (`composition_types.ml:785-823`, `to_data` at `:825-880`) is
 
          i      word(s)                                            basic                 bits chunks
          0–4    combined_inner_product, b, ζ^srs_len, ζ^dom, perm  Field                  255     51
@@ -579,27 +579,50 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
          10–12  sponge_digest_before_evals, msgs_next_wrap/step    Digest                 255     51
          13–28  bulletproof_challenges ×16                         Bulletproof_challenge  128     26
          29     branch_data                                        Branch_data             10      2
-         30–38  8 feature flags + the lookup Opt flag              Bool                     1      0
-         39     the lookup Opt's own challenge                     Scalar Challenge       128     26
+         30–37  the eight feature flags                            Bool                     1      0
+         38     the lookup Opt's OWN flag bit                      Bool                     1      0
+         39     the lookup Opt's inner scalar challenge            Scalar Challenge       128     26
 
-     — which is **40**, i.e. the devnet Wrap VK's `public = 40` is this list, word for word, and
-     `msmTerms = 40` was right for a reason nobody had checked. Only **8 of the 40 are 255-bit**;
-     22 are 128 and one is 10. A uniform 51 would emit 25 chunks of LEADING ZEROS on every
-     challenge-shaped word. Total in-circuit chunks are `8·51 + 22·26 + 2 = 982` against the 1040
-     assembled here, so the honest move is not even a widening.
-     ⚑ **AND IT IS THE SAME ITEM AS #3's SCALAR RESIDUE.** A 255-bit width over a value that is
-     structurally `< 2¹²⁸` is shape-faithful and semantically empty, so the width can only be taken
-     together with the provenance: term `i`'s scalar must BE Wrap statement word `i`. The assembly
-     already holds every one of them (`vCipShift`/`vBShift`/`vPermShift`, R6's `ζ^n`, R1's sponge
-     digest, `hmDigestVar`, the transcript prechallenges, `vXiStmt`, `vBranch`) — what is undone is
-     R3's uniform `msmChunks` becoming a per-word vector (cumulative point offsets in §2, per-term
-     bit lists in §6) and `vSN i (chunks i)` being wired to the statement word instead of to
-     `vN (msmChal i) emsRows`. That is the retirement; nothing less is one.
-     ⚠ `ft_comm`'s 8 `scale_fast2`s ARE uniformly 255 (`step_verifier.ml:240-242`), and since
-     2026-08-02 they are ASSEMBLED at that width — §6b, `FTC_CHUNKS = 51`. That is a SECOND
-     `VarBaseMul` region with its own chunk count, which is why `msmChunks` stays 26: the two MSMs
-     have genuinely different scalar widths and collapsing them would be wrong in both directions.
-     R3's own per-word width vector remains this entry's residue.
+     ⚠ **TWO "CORRECTIONS" THAT WERE THEMSELVES WRONG, both refuted at source AND in Mina's compiled
+     circuit.** (a) The bulletproof run is **16, not 15**: the vector is `Vector (B
+     Bulletproof_challenge, Backend.Tick.Rounds.n)`, `Backend.Tick = Vesta_based_plonk`
+     (`pickles/backend/backend.ml:1-4`), `Vesta_based_plonk.Rounds = Rounds.Step = Nat.N16`
+     (`vesta_based_plonk.ml:51`, `kimchi_pasta_basic.ml:17`). `Rounds.Wrap = Nat.N15` is real and is
+     the WRAP proof's own IPA round count on Pallas, not this vector's length. (b) `Features` does
+     carry **8** and not 9 (`composition_types.ml:786-812`) — and the ninth one-bit word was never a
+     feature flag: it is the lookup `Opt`'s own flag, which `Spec.pack` emits ahead of the inner spec
+     in all three polarities (`spec.ml:123-140`). The count was right for the reason stated.
+     ⚑ (c) There is no `Scalar_challenge` BASIC. `Scalar chal` is a `T.t` constructor whose `pack` is
+     `p.pack chal` (`spec.ml:94-99`), so it packs at the `Challenge` width. That one the brief had
+     right, and it moves nothing.
+
+     ⚑ **THE REALITY GATE.** Measured off `step-zkapp-proved`, the o1-labs circuit blob — Mina's own
+     compiled step circuit — the `x_hat` `var_base_mul` cluster is **31 ladders**, chunk widths in
+     row order `51,51,51,51,51, 26,26,26,26,26, 51,51,51, 26×16, 2, 26`, **982 chunks**. That is the
+     census above with the nine one-bit words dropped, element for element: `multiscale_known`
+     PARTITIONS on `` `Packed_bits (Constant c, _) `` (`step_verifier.ml:133-140`) and folds the
+     constant scalars outside the circuit, and `chunks_needed ~num_bits:0 = 0` lands on exactly that
+     without a special case. `…Pins15.x_hat_widths_are_minas_own_compiled_ladders` states the
+     equality.
+
+     **WHAT LANDED.** `StepShape.msmChunks` is DELETED; `msmBits` / `msmChunksAt` / `msmChunkPrefix`
+     (Core §1b) give statement word `i` its own width; `pT` / `pAcc` / `pSum` / `nMsmPts` / `vSN` /
+     `baseIpa` are cumulative prefix sums instead of a constant stride; `bitsOf` takes the term index;
+     `msmRows` and `circuitEnv` range over `msmChunksAt i`; and `msmNZeroRows` SKIPS the zero-chunk
+     terms, because on those `vSN i 0` IS the term's challenge variable and a `w₀ = 0` half over it
+     would pin a shared challenge. The emitted total goes 1040 → **982**: the fix is not a widening.
+
+     ⚠ **WHAT IS STILL OPEN, and it is the half that carries the meaning.** Term `i`'s scalar is
+     still `vN (msmChal i) emsRows` — a shared transcript challenge — and NOT Wrap statement word
+     `i`. A 255-bit width over a value that is structurally `< 2¹²⁸` is shape-faithful and
+     semantically empty; the width can only be *taken* together with the provenance. The assembly
+     already holds every one of the forty (`vCipShift`/`vBShift`/`vPermShift`, R6's `ζ^n`, R1's
+     sponge digest, `hmDigestVar`, the transcript prechallenges, `vXiStmt`, `vBranch`), so what is
+     undone is wiring `vSN i (msmChunksAt i)` to the statement word. ⚠ And the nine constant words
+     still carry a seed `CompleteAdd` and a fold add here where Mina emits neither — nine points
+     Mina never adds in-circuit (`…Pins15.the_constant_words_still_carry_a_seed_and_an_add`).
+     ⚠ `ft_comm`'s eight `scale_fast2`s ARE uniformly 255 (`step_verifier.ml:240-242`) and stay at
+     `FTC_CHUNKS = 51`: two `VarBaseMul` regions, two genuinely different scalar widths.
   3. ⚑ **RETIRED 2026-08-02, and reading at source split it in two.** This read "the MSM base points
      are `basePts` (distinct on-curve Pallas points), not the previous proof's actual commitments".
      Upstream's bases have TWO provenances and NEITHER is a free witness (§3b): `multiscale_known`'s
@@ -953,3 +976,4 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins11
 import Dregg2.Circuit.Emit.KimchiStepMainPins12
 import Dregg2.Circuit.Emit.KimchiStepMainPins13
 import Dregg2.Circuit.Emit.KimchiStepMainPins14
+import Dregg2.Circuit.Emit.KimchiStepMainPins15

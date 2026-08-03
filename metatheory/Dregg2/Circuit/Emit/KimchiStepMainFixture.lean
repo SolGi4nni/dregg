@@ -411,11 +411,11 @@ def msmBitsForged : List Nat :=
   (tS.msm.bits.getD 0 []).set 0 (1 - (tS.msm.bits.getD 0 []).headD 0)
 
 /-- …and the counter seed that makes the chain still close on the SAME challenge cell:
-`n₀ = (n_final − N(bits′))·2^{−5·msmChunks}`, one field inversion. -/
+`n₀ = (n_final − N(bits′))·2^{−5·msmChunksAt 0}`, one field inversion. -/
 def msmN0Forged : Nat :=
   fMul (fSub ((tS.msm.terms.getD 0 default).ns.getLastD 0)
              ((nTraceFrom 0 msmBitsForged).getLastD 0))
-       (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv (2 ^ (5 * shapeSmoke.msmChunks) % pN))
+       (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv (2 ^ (5 * msmChunksAt 0) % pN))
 
 /-- `msmNZeroRows`' first row, as its own `Generic` body — half 1 is `w₀ = 0` over `vSN i 0`. -/
 def msmNZeroRow0 : SRow := (msmNZeroRows shapeSmoke).headD default

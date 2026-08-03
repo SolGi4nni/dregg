@@ -55,10 +55,11 @@ structure StepShape where
   chals : Nat
   /-- `EndoMulScalar` rows per challenge; each eats 8 crumbs = 16 bits (`bits_per_row = 16`). -/
   emsRows : Nat
-  /-- `var_base_mul` terms in the commitment MSM. -/
+  /-- `var_base_mul` terms in the commitment MSM — the packed Wrap STATEMENT's word count. ⚑ There
+  is no companion `msmChunks` field: the chunk count is PER WORD (§1b, `msmChunksAt`), because
+  `Spec.pack` gives each statement word its own bit width and a uniform one emitted twenty-five
+  chunks of leading zeros on every challenge-shaped word. -/
   msmTerms : Nat
-  /-- 5-bit chunks per MSM term (`bits_per_chunk = 5`); `26` is upstream's 128-bit `scale_fast2`. -/
-  msmChunks : Nat
   /-- `Scalar_challenge.endo` scalar multiplications in the IPA/commitment fold. -/
   ipaRounds : Nat
   /-- 4-bit `endo_mul` blocks per round (`32` is upstream's 128-bit `endo`). -/
@@ -85,6 +86,108 @@ faithful shape and it merges the two chains' final counter cells into ONE σ cla
 def StepShape.msmChal (s : StepShape) (i : Nat) : Nat := i % s.chals
 /-- Which challenge IPA round `r` consumes. -/
 def StepShape.ipaChal (s : StepShape) (r : Nat) : Nat := (s.msmTerms + r) % s.chals
+
+/-! ### ⚑⚑ §1b — **`Spec.pack`'s PER-WORD SCALAR WIDTHS.**
+
+`multiscale_known`'s scalars are NOT one width and never were. They are the previous proof's PACKED
+WRAP STATEMENT — `multiscale_known (Array.mapi public_input ~f:(fun i x -> (x, lagrange_commitment
+~domain srs i)))` (`step_verifier.ml:543-544`) over `public_input = Spec.pack (module Impl)
+(Types.Wrap.Statement.In_circuit.spec …) (… to_data statement)` (`:1236-1251`) — and `Spec.pack`
+carries a width PER BASIC (`spec.ml:305-395`, `pack_basic`):
+
+    Unit                  → no word at all
+    Field                 → `Packed_bits (x, Field.size_in_bits)`            255
+    Bool                  → `Packed_bits (x, 1)`                               1
+    Digest                → `Packed_bits (x, Field.size_in_bits)`            255
+    Challenge             → `Packed_bits (x, Challenge.length)`              128
+    Branch_data           → `Packed_bits (…, Branch_data.length_in_bits)`     10
+    Bulletproof_challenge → `Packed_bits (pre, Challenge.length)`            128
+
+⚠ There is **no `Scalar_challenge` basic**. `Scalar chal` is a `T.t` CONSTRUCTOR whose `pack` is
+`p.pack chal` on the SAME seven (`spec.ml:94-99`), so `Vector (Scalar Challenge, N3)` packs at 128
+exactly like `B Challenge`. `Challenge.length = 64 · Nat.to_int N2 = 128` — `Challenge.Constant =
+Constant.Make (Nat.N2)` (`limb_vector/challenge.ml:5`) and `Constant.Make.length = 64 * Nat.to_int
+N.n` (`limb_vector/constant.ml:70`; `make.ml:11` is the same line for the var side).
+`Branch_data.length_in_bits = 10` (`composition_types/branch_data.ml:61`, 2 bits `proofs_verified`
++ 8 bits `domain_log2`).
+
+The statement's own order is `Types.Wrap.Statement.In_circuit.spec`
+(`composition_types.ml:785-823`), and `to_data` (`:825-880`) is what fills it:
+
+    Vector (B Field, N5)                              cip, b, ζ^srs_len, ζ^dom, perm     5 × 255
+    Vector (B Challenge, N2)                          β, γ                               2 × 128
+    Vector (Scalar Challenge, N3)                     α, ζ, ξ                            3 × 128
+    Vector (B Digest, N3)                             sponge_digest, msgs_next_wrap/step 3 × 255
+    Vector (B Bulletproof_challenge, Tick.Rounds.n)   bulletproof_challenges            16 × 128
+    Vector (B Branch_data, N1)                        branch_data                        1 ×  10
+    feature_flags_spec                                f1..f8                             8 ×   1
+    Lookup_parameters.opt_spec                        the Opt's OWN flag + its Scalar     1 ×   1
+                                                                                       + 1 × 128
+
+**= 40**, which IS the devnet Wrap VK's `public = 40`.
+
+⚑ **TWO CORRECTIONS TO THE CAMPAIGN BRIEF, both read at source and both confirmed by MINA'S OWN
+COMPILED CIRCUIT.**
+
+* `Backend.Tick.Rounds.n` is **16, not 15**. `Backend.Tick = Kimchi_backend.Pasta.Vesta_based_plonk`
+  (`pickles/backend/backend.ml:1-4`), `Vesta_based_plonk.Rounds = Rounds.Step`
+  (`pasta/vesta_based_plonk.ml:51`), `Rounds.Step = Nat.N16` (`pasta/basic/kimchi_pasta_basic.ml:17`).
+  `Rounds.Wrap = Nat.N15` is real but is the WRAP proof's own IPA round count on Pallas
+  (`pallas_based_plonk.ml:52`); this vector is the wrap STATEMENT's `bulletproof_challenges`, sized by
+  the Tick rounds.
+* `feature_flags_spec` carries **8** bools (`composition_types.ml:786-812`, `f1`..`f8`) — and the
+  NINTH one-bit word is the lookup `Opt`'s own flag, which `Spec.pack`'s `Opt` case emits ahead of
+  the inner spec in all three polarities (`spec.ml:123-140`: `zero`/`one`/`p.pack Bool b`). So nine
+  one-bit words is right, and it is 8 + 1 rather than 9 features.
+
+⚑ **MEASURED, off `step-zkapp-proved` — the o1-labs circuit blob, Mina's OWN compiled step circuit.**
+The `x_hat` ladder cluster there is **31 `var_base_mul` ladders**, chunk widths in row order
+
+    51,51,51,51,51, 26,26,26,26,26, 51,51,51, 26×16, 2, 26      (982 chunks, `51×8 26×22 2×1`)
+
+which is this census word for word — five `Field`, five `Challenge`+`Scalar Challenge`, three
+`Digest`, **sixteen** bulletproof challenges, one `Branch_data`, then the lookup challenge. And the
+nine one-bit words emit **NO LADDER AT ALL**: `multiscale_known` PARTITIONS on `` `Packed_bits
+(Constant c, _) `` (`step_verifier.ml:133-140`) and folds the constant scalars' bases outside the
+circuit, and the feature flags at `Flag.Yes`/`Flag.No` are `Spec.T.Constant` (`:794-802`) while the
+`Opt`'s flag word is `Field.zero` (`spec.ml:397`). 40 statement words, 31 in-circuit ladders — and
+`chunks_needed ~num_bits:0 = 0` lands on exactly that count without a special case. -/
+
+/-- `Ops.chunks_needed ~num_bits` — `(num_bits + bits_per_chunk − 1) / bits_per_chunk` at
+`bits_per_chunk = 5` (`plonk_curve_ops.ml:64-68`). -/
+def chunksNeeded (numBits : Nat) : Nat := (numBits + 4) / 5
+
+/-- `Field.size_in_bits` — what `Field` and `Digest` pack at (`spec.ml:377,379`). -/
+def W_FIELD : Nat := 255
+/-- `Challenge.length` — what `Challenge`, `Scalar Challenge` and `Bulletproof_challenge` pack at. -/
+def W_CHAL : Nat := 128
+/-- `Branch_data.length_in_bits`. -/
+def W_BRANCH : Nat := 10
+/-- `Bool` packs as ONE bit (`spec.ml:375`). -/
+def W_BOOL : Nat := 1
+
+/-- ⚑ Wrap statement word `i`'s PACKED BIT WIDTH, in `In_circuit.spec`'s own order. Beyond word 39
+the statement has no more words, so a shape carrying more MSM terms than the statement has words
+gets the challenge width — stated rather than defaulted, and §10 pins that the committed shape does
+not reach it. -/
+def msmBits (i : Nat) : Nat :=
+  if i < 5 then W_FIELD             -- Vector (B Field, N5)
+  else if i < 10 then W_CHAL        -- Vector (B Challenge, N2) ++ Vector (Scalar Challenge, N3)
+  else if i < 13 then W_FIELD       -- Vector (B Digest, N3)
+  else if i < 29 then W_CHAL        -- Vector (B Bulletproof_challenge, Tick.Rounds.n = N16)
+  else if i == 29 then W_BRANCH     -- Vector (B Branch_data, N1)
+  else if i < 39 then W_BOOL        -- f1..f8 ++ the lookup Opt's own flag bit
+  else if i == 39 then W_CHAL       -- the lookup Opt's inner `Struct [Scalar Challenge]`
+  else W_CHAL
+
+/-- ⚑ MSM term `i`'s 5-bit chunk count — `multiscale_known`'s own `Ops.chunks_needed
+~num_bits:(n − 1)` (`step_verifier.ml:172-174`, `plonk_curve_ops.ml:250-256`). **Zero** on the nine
+one-bit words, which is why a faithful emission has 31 ladders and not 40. -/
+def msmChunksAt (i : Nat) : Nat := chunksNeeded (msmBits i - 1)
+
+/-- Chunks over the MSM terms below `n` — the CUMULATIVE offset the point and counter regions index
+by, now that the per-term stride is not constant. -/
+def msmChunkPrefix (n : Nat) : Nat := ((List.range n).map msmChunksAt).foldl (· + ·) 0
 
 /-! ## §2 — the variable space.
 
@@ -143,19 +246,23 @@ def vEndoR (s : StepShape) : PVar := xv (baseLift s + 2 * s.chals)
 def baseMsm (s : StepShape) : Nat := baseLift s + 2 * s.chals + 1
 def mpx (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p)
 def mpy (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p + 1)
-/-- MSM term `i`'s base point. -/
-def pT (s : StepShape) (i : Nat) : Nat := i * (s.msmChunks + 2)
-/-- MSM term `i`'s accumulator at chunk boundary `j` (`j = 0..msmChunks`). -/
-def pAcc (s : StepShape) (i j : Nat) : Nat := i * (s.msmChunks + 2) + 1 + j
+/-- MSM term `i`'s base point. ⚑ CUMULATIVE since §1b: term `i` owns `msmChunksAt i + 2` points
+(its base and its `msmChunksAt i + 1` accumulator boundaries), and the widths differ per word. -/
+def pT (_s : StepShape) (i : Nat) : Nat := msmChunkPrefix i + 2 * i
+/-- MSM term `i`'s accumulator at chunk boundary `j` (`j = 0..msmChunksAt i`). -/
+def pAcc (s : StepShape) (i j : Nat) : Nat := pT s i + 1 + j
 /-- The running MSM sum after add `a`. -/
-def pSum (s : StepShape) (a : Nat) : Nat := s.msmTerms * (s.msmChunks + 2) + a
-def nMsmPts (s : StepShape) : Nat := s.msmTerms * (s.msmChunks + 2) + s.msmTerms
+def pSum (s : StepShape) (a : Nat) : Nat := pT s s.msmTerms + a
+def nMsmPts (s : StepShape) : Nat := pT s s.msmTerms + s.msmTerms
 
 def baseSN (s : StepShape) : Nat := baseMsm s + 2 * nMsmPts s
-/-- MSM term `i`'s scalar counter at chunk boundary `j`. At `j = msmChunks` it IS the term's
-challenge variable — the cross-sub-circuit wire. -/
+/-- MSM term `i`'s scalar counter at chunk boundary `j`. At `j = msmChunksAt i` it IS the term's
+challenge variable — the cross-sub-circuit wire. ⚠ On a ZERO-chunk term (`msmBits i = 1`) the two
+coincide at `j = 0`, so the term has no counter cell of its own at all — which is what a ladder with
+no chunk rows means, and why `msmNZeroRows` must skip those terms rather than pin a challenge to 0. -/
 def vSN (s : StepShape) (i j : Nat) : PVar :=
-  if j == s.msmChunks then vN s (s.msmChal i) s.emsRows else xv (baseSN s + i * s.msmChunks + j)
+  if j == msmChunksAt i then vN s (s.msmChal i) s.emsRows
+  else xv (baseSN s + msmChunkPrefix i + j)
 
 /-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots — `combine_split_commitments`' commitment count. -/
 def N_WDB : Nat := 47
@@ -185,7 +292,7 @@ AFTER ζ — which at the committed shape ARE `u` and `bullet_reduce`'s fifteen.
 was challenge 0; at ζ = 3 that would have made ζ one of its own `uₖ`. -/
 def StepShape.uChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 1 + k
 
-def baseIpa (s : StepShape) : Nat := baseSN s + s.msmTerms * s.msmChunks
+def baseIpa (s : StepShape) : Nat := baseSN s + msmChunkPrefix s.msmTerms
 def ipx (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p)
 def ipy (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p + 1)
 /-- IPA round `r`'s `endo_mul` base point. ⚑ The per-round stride is `ipaBlocks + 3` and not `+ 2`
@@ -365,8 +472,9 @@ def tCommN (s : StepShape) : Nat := min N_TCOMM s.tComms
 def ftcTerms (s : StepShape) : Nat := tCommN s + 1
 /-- `Ops.chunks_needed ~num_bits:(Field.size_in_bits − 1) = ⌈254/5⌉` — the chunk count EVERY
 `ft_comm` scale runs at (`plonk_curve_ops.ml:66-70,254-257`; `scale_fast2 ~num_bits:255` via
-`step_verifier.ml:240-242`). ⚠ NOT `msmChunks`: `multiscale_known`'s scalars carry a width PER BASIC
-(#2) and `ft_comm`'s are uniformly 255-bit. -/
+`step_verifier.ml:240-242`). ⚠ NOT `msmChunksAt`: `multiscale_known`'s scalars carry a width PER
+BASIC (§1b) and `ft_comm`'s are uniformly 255-bit, so the two `VarBaseMul` regions keep two
+independent chunk counts. -/
 def FTC_CHUNKS : Nat := 51
 /-- ⚑ The fold round whose base `Common.ft_comm` COMPUTES. `combine_split_commitments`' commitment
 `3` is `ft_comm` (`step_verifier.ml:606`), and round `r` folds commitment `r+1`, so it is round 2. -/
@@ -1619,9 +1727,11 @@ def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : Li
 `runVbm` (read-only) runs `accₖ₊₁ = [2]accₖ + (2bₖ−1)·T`, `nₖ₊₁ = 2nₖ+bₖ`, so with `n₀ = 0` the
 final counter IS the scalar — and that cell is wired to the CHALLENGE variable, not a fresh one. -/
 
-/-- The `5·msmChunks` bits of `v`, MSB-first. -/
-def bitsOf (s : StepShape) (v : Nat) : List Nat :=
-  (List.range (5 * s.msmChunks)).map (fun k => v / 2 ^ (5 * s.msmChunks - 1 - k) % 2)
+/-- The `5·msmChunksAt i` bits of `v`, MSB-first — MSM term `i`'s own width (§1b). Empty on the nine
+one-bit statement words, which is exactly a ladder with no chunk rows. -/
+def bitsOf (i : Nat) (v : Nat) : List Nat :=
+  let n := 5 * msmChunksAt i
+  (List.range n).map (fun k => v / 2 ^ (n - 1 - k) % 2)
 /-- The `4·ipaBlocks` bits of `v`, MSB-first. -/
 def endoBitsOf (s : StepShape) (v : Nat) : List Nat :=
   (List.range (4 * s.ipaBlocks)).map (fun k => v / 2 ^ (4 * s.ipaBlocks - 1 - k) % 2)
@@ -1634,7 +1744,7 @@ structure MsmData where
   deriving Repr, Inhabited
 
 def runMsm (s : StepShape) (bases : List (Nat × Nat)) (d : SpongeData) : MsmData :=
-  let bs := (List.range s.msmTerms).map (fun i => bitsOf s (chalOf s d (s.msmChal i)))
+  let bs := (List.range s.msmTerms).map (fun i => bitsOf i (chalOf s d (s.msmChal i)))
   let tds := (List.range s.msmTerms).map (fun i =>
     let T := msmBaseOf bases i
     runVbm T (dblA T) (bs.getD i []))
@@ -1673,8 +1783,8 @@ def msmChunkRows (s : StepShape) (m : MsmData) (i j : Nat) : List SRow :=
 
 /-- The `a`-th `complete_add` of the MSM chain: `Rₐ = Lₐ + Pₐ₊₁`, `L₀ = P₀`, `Lₐ = Rₐ₋₁`. -/
 def msmAddRow (s : StepShape) (m : MsmData) (a : Nat) : SRow :=
-  let lp := if a == 0 then pAcc s 0 s.msmChunks else pSum s (a - 1)
-  let rp := pAcc s (a + 1) s.msmChunks
+  let lp := if a == 0 then pAcc s 0 (msmChunksAt 0) else pSum s (a - 1)
+  let rp := pAcc s (a + 1) (msmChunksAt (a + 1))
   let c := m.addCells.getD a []
   { kind := .completeAdd
   , perm := [ some (mpx s lp), some (mpy s lp), some (mpx s rp), some (mpy s rp)
@@ -1693,7 +1803,7 @@ def msmBaseRows (s : StepShape) (m : MsmData) : List SRow :=
 `CompleteAdd` row per MSM term, DEFINING `pAcc i 0` instead of leaving it a witness.
 
 ⚑ THE HOLE THIS CLOSES. The ladder is `accₖ₊₁ = [2]accₖ + (2bₖ−1)·T`, so
-`acc_N = 2^{5·msmChunks}·acc₀ + Σₖ (2bₖ−1)·2^{5·msmChunks−1−k}·T`. Doubling is a BIJECTION on the
+`acc_N = 2^{5·msmChunksAt i}·acc₀ + Σₖ (2bₖ−1)·2^{5·msmChunksAt i−1−k}·T`. Doubling is a BIJECTION on the
 group, so for ANY target point the prover solves for `acc₀` — and nothing else in R3 objects: the
 base is pinned (`msmBaseRows`), the bits are the chunk rows' own advice, and the counter chain closes
 on the challenge variable, none of which say a word about the seed. `multiscale_known`'s output —
@@ -1715,26 +1825,36 @@ two lines, one `Generic` half per MSM term.
 
 ⚑ `Field.zero` is a CONSTANT upstream; here `vSN i 0` was a variable no row read. The chunk rows
 constrain `n' = 32·n + Σ_t 2^{4−t}·b_t`, so the chain closes on
-`n_final = 32^{msmChunks}·n₀ + (the bits as an integer)` — and `n_final` IS the challenge variable
-(`vSN i msmChunks = vN (msmChal i) emsRows`). With `n₀` free a prover picks ANY bit vector and solves
-`n₀ = (n_final − bits)·32^{−msmChunks}`; the bits he picks are the multiplier the ladder actually
-uses. That is the acc₀ hole through the other cell, and §12f exhibits it too. -/
+`n_final = 32^{msmChunksAt i}·n₀ + (the bits as an integer)` — and `n_final` IS the challenge variable
+(`vSN i (msmChunksAt i) = vN (msmChal i) emsRows`). With `n₀` free a prover picks ANY bit vector and
+solves `n₀ = (n_final − bits)·32^{−msmChunksAt i}`; the bits he picks are the multiplier the ladder actually
+uses. That is the acc₀ hole through the other cell, and §12f exhibits it too.
+
+⚠ **ONLY THE TERMS THAT RUN A LADDER.** On a zero-chunk term `vSN i 0` IS `vSN i (msmChunksAt i)`,
+i.e. the term's CHALLENGE variable (§2), so a `w₀ = 0` half over it would pin that challenge — and
+challenges are shared round-robin (`msmChal i = i % chals`), so it would pin R2's chain, R4's fold
+and the deferred values with it. Upstream has no `n_acc` there either: `scale_fast_unpack ~num_bits:0`
+runs zero chunk iterations and its `Field.Assert.equal !n_acc scalar` (`plonk_curve_ops.ml:207`) is
+about a scalar this file does not model. -/
 def msmNZeroRows (s : StepShape) : List SRow :=
-  packHalves ((List.range s.msmTerms).map (fun i =>
+  packHalves (((List.range s.msmTerms).filter (fun i => msmChunksAt i != 0)).map (fun i =>
     ([some (vSN s i 0), none, none], cConst 0)))
 
-/-- **R3's rows.** -/
+/-- **R3's rows.** ⚑ Per-term chunk counts since §1b: a term whose statement word is one bit emits
+NO `VarBaseMul` row, which is what makes the emitted `x_hat` region **31 ladders** at Mina's own
+widths rather than 40 at a uniform 26. Its seed, probe and fold add stay, so the sum is still over
+all `msmTerms` points — that residue is named in the umbrella's #2. -/
 def msmRows (s : StepShape) (m : MsmData) (wired : Bool) : List SRow :=
   msmBaseRows s m
   ++ msmNZeroRows s
   ++ [msmDblRow s m 0]
-  ++ ((List.range s.msmChunks).flatMap (msmChunkRows s m 0))
-  ++ [probeRow wired (mpx s (pAcc s 0 s.msmChunks)) (mpy s (pAcc s 0 s.msmChunks))]
+  ++ ((List.range (msmChunksAt 0)).flatMap (msmChunkRows s m 0))
+  ++ [probeRow wired (mpx s (pAcc s 0 (msmChunksAt 0))) (mpy s (pAcc s 0 (msmChunksAt 0)))]
   ++ (List.range (s.msmTerms - 1)).flatMap (fun a =>
        let i := a + 1
        [msmDblRow s m i]
-       ++ ((List.range s.msmChunks).flatMap (msmChunkRows s m i))
-       ++ [probeRow wired (mpx s (pAcc s i s.msmChunks)) (mpy s (pAcc s i s.msmChunks))]
+       ++ ((List.range (msmChunksAt i)).flatMap (msmChunkRows s m i))
+       ++ [probeRow wired (mpx s (pAcc s i (msmChunksAt i))) (mpy s (pAcc s i (msmChunksAt i)))]
        ++ [msmAddRow s m a]
        ++ [probeRow wired (mpx s (pSum s a)) (mpy s (pSum s a))])
 
@@ -4530,10 +4650,10 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (List.range s.msmTerms).flatMap (fun i =>
       let td := t.msm.terms.getD i default
       [ (mpx s (pT s i), (td.T.1 : Int)), (mpy s (pT s i), (td.T.2 : Int)) ]
-      ++ (List.range (s.msmChunks + 1)).flatMap (fun j =>
+      ++ (List.range (msmChunksAt i + 1)).flatMap (fun j =>
           let a := td.accs.getD (5 * j) (0, 0)
           [ (mpx s (pAcc s i j), (a.1 : Int)), (mpy s (pAcc s i j), (a.2 : Int)) ])
-      ++ (List.range s.msmChunks).map (fun j => (vSN s i j, (td.ns.getD (5 * j) 0 : Int))))
+      ++ (List.range (msmChunksAt i)).map (fun j => (vSN s i j, (td.ns.getD (5 * j) 0 : Int))))
   ++ (List.range (s.msmTerms - 1)).flatMap (fun a =>
       let p := t.msm.sums.getD a (0, 0)
       [ (mpx s (pSum s a), (p.1 : Int)), (mpy s (pSum s a), (p.2 : Int)) ])
@@ -4552,11 +4672,18 @@ def circuitEnv (t : StepData) : VarEnv :=
       let p := t.ipa.sums.getD a (0, 0)
       [ (ipx s (qSum s a), (p.1 : Int)), (ipy s (qSum s a), (p.2 : Int)) ])
   -- ⚑ `sg_old[0]` (the fold's `~init`), `delta`, and `check_bulletproof`'s `endo q c + delta` tail.
+  -- ⚑⚑ `q` IS `qPrimePt` SINCE §19 — `p_prime + lr_prod`, with the `uc` term in it. ⚠ This block
+  -- read `sums.getLast` for one build after §19 landed and the `qPrime` cells had no entry at all,
+  -- so the `Ops.add_fast` output was 0 and the endo seed was taken at the OLD point: the honest
+  -- r4_ipa witness was REJECTED by the prover (`rest of division by vanishing polynomial`) while
+  -- every σ-class and row-count pin stayed green. A row schedule and a witness environment are two
+  -- places, and only the prover reads both.
   ++ (let g := Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
       let dl := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
-      let q := t.ipa.sums.getLastD (0, 0)
+      let q := t.ipa.qPrimePt
       [ (ipx s (qInit s), (g.1 : Int)), (ipy s (qInit s), (g.2 : Int))
       , (ipx s (qDel s), (dl.1 : Int)), (ipy s (qDel s), (dl.2 : Int))
+      , (ipx s (qPrime s), (q.1 : Int)), (ipy s (qPrime s), (q.2 : Int))
       , (vLhsEndo s, ((endoQ q).1 : Int))
       , (ipx s (qLhsP s), ((endoP q).1 : Int)), (ipy s (qLhsP s), ((endoP q).2 : Int))
       , (ipx s (qLhsOut s), (t.ipa.lhsAdd.getD 4 0 : Int))
@@ -4837,13 +4964,13 @@ than reverse-engineered from a row count:
     gammas), the 7 that carry `t_comm`'s quotient chunks (§6b), and **three** for the absorptions
     still unwired — `sg_old[0]`, `combined_inner_product` as field+bit, `delta` (`UNWIRED_ITEMS`).
 
-`chals = 23` is β, γ, α, ζ, ξ, r, u, c + the 15 `bullet_reduce` squeezes; `msmChunks = 26` is the
-128-bit `scale_fast2` — ⚑ #2 has the MEASURED per-word width census, and 8 of the 40 words are
-255-bit while 22 are 128 and one is 10, so a uniform widening is the wrong move; `bRounds = 16` is `Step_bp_vec = N16`;
+`chals = 23` is β, γ, α, ζ, ξ, r, u, c + the 15 `bullet_reduce` squeezes; there is no `msmChunks`
+any more — §1b gives statement word `i` its own width, 8 of the 40 at 255, 22 at 128, one at 10 and
+nine at 1, so the emitted `x_hat` region is Mina's own 31 ladders; `bRounds = 16` is `Step_bp_vec = N16`;
 `cipEvals = 47` is `N45` + `Wrap_hack`'s two; `pubWords = 67` is Step's `PRIMARY_LEN`. -/
 def shapeStep : StepShape :=
   { absorbs := 59, chals := 23, emsRows := 8
-  , msmTerms := 40, msmChunks := 26
+  , msmTerms := 40
   , ipaRounds := 76, ipaBlocks := 32
   , bRounds := 16, cipEvals := 47, tComms := 7, pubWords := 67 }
 
@@ -4857,7 +4984,7 @@ def shapeSmoke : StepShape :=
   -- fold commitments, blocks 4–6 carry `tCommN = 3` `t_comm` chunks. It still leaves ONE free
   -- `vMsg` block (block 0's second lane), which is what lets the smoke pins see the residue at all.
   { absorbs := 10, chals := 8, emsRows := 8
-  , msmTerms := 3, msmChunks := 26
+  , msmTerms := 3
   -- ⚑ `bRounds` is EVEN so the opt-sponge's rate-2 blocks do not straddle the two previous proofs:
   -- each proof contributes `bRounds` challenge words and a block absorbs two, so a block belongs to
   -- exactly one mask bit. (`shapeStep`'s 16 is even for the same reason — `Step_bp_vec = N16`.)

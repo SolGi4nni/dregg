@@ -41,7 +41,7 @@ set_option maxRecDepth 100000
 #guard tCommN shapeSmoke == 3 && ftcTerms shapeSmoke == 4
 #guard FTC_CHUNKS == (254 + 4) / 5 && 5 * FTC_CHUNKS == 255
 -- …and it is a DIFFERENT width from R3's, which is exactly what #2's warning is about.
-#guard FTC_CHUNKS != shapeSmoke.msmChunks
+#guard FTC_CHUNKS != msmChunksAt 5
 
 -- ⚑ THE ROW CENSUS, as an equality over its own sub-lists: the two `Shifted_value.Type2` splits,
 -- `ftcTerms` ladders and `common.ml`'s add chain. A vanished sub-list moves this number.

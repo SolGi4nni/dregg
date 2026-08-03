@@ -339,17 +339,30 @@ function localize(MG, mb, LG, lb, len, withCoeffs) {
 // RED three ways: a divergence with no entry (an unrecorded one, or a bug); an entry no longer
 // observed (a stale allowance); an entry whose form moved.
 const LEDGER = {
-  'xhat/scalar-widths': {
-    why: '#2 per-word MSM scalar widths',
-    expect: 'mina 2×1 26×22 51×8 (982 chunks) vs lean 26×40 (1040)',
-    note: 'Mina scales Wrap statement word i by ITS OWN width (`Spec.pack`); ours is uniform `msmChunks`. '
-      + "⚑ Mina's measured width vector 8×51 + 22×26 + 1×2 = 982 chunks is #2's transcribed table WORD FOR WORD.",
-  },
+  // ⚑⚑ RETIRED 2026-08-03 — `xhat/scalar-widths` stopped being observed. It read "mina 2×1 26×22
+  // 51×8 (982 chunks) vs lean 26×40 (1040)": Mina scales Wrap statement word `i` by ITS OWN width
+  // (`Spec.pack`, `spec.ml:305-395`) and ours was a uniform `StepShape.msmChunks`. `KimchiStepMain`
+  // §20 (`…Pins15`) deleted that field and gave each word `msmChunksAt i`, so the emitted x_hat
+  // cluster is now **31 ladders, 2×1 26×22 51×8, 982 chunks** — Mina's own vector, element for
+  // element, and 58 chunks FEWER than the uniform 26 it replaced. The gate is what noticed the
+  // allowance had gone stale; this comment is the retirement. ⚠ The other half of #2 is NOT closed:
+  // term `i`'s scalar is still a shared transcript challenge and not statement word `i`, and this
+  // instrument cannot see that — a width is a shape and a provenance is not.
   'xhat/ladder-seed-unwired': {
-    why: 'UNRECORDED',
-    expect: '120/240 cells SELF in the UNSPLICED emission (mina: 0)',
-    note: "each x_hat ladder's accumulator seed (row+0 cols 2,3 = x0,y0), scalar seed (col 4 = n) and "
-      + 'the two leading pad bits (row+1 cols 2,3,4) are in NO permutation class; Mina puts all six in one.',
+    why: 'UNRECORDED — ALLOCATION, classified 2026-08-03',
+    expect: '93/186 cells SELF (acc/scalar seed 0, chunk bits 93) in the UNSPLICED emission (mina: 0)',
+    note: '⚑ THE SEED HALF IS CLOSED AND THIS ENTRY SAID OTHERWISE. It read "the accumulator seed '
+      + '(row+0 cols 2,3 = x0,y0) and scalar seed (col 4 = n) are in NO permutation class". MEASURED '
+      + '2026-08-03 over the whole x_hat cluster: that leg is 0/93 at every width — §12f\'s '
+      + '`msmDblRow` defines `pAcc i 0` and §12g\'s `msmNZeroRows` pins `vSN i 0`, and both cells are '
+      + 'σ-classed. What remains is ENTIRELY row+1 cols 2,3,4: the first three of the five chunk BITS. '
+      + 'Those are ADVICE cells here and `Boolean.var`s upstream (`exists (Typ.array ~length:num_bits '
+      + 'Field.typ)`, `plonk_curve_ops.ml:155-160`), so Snarky gives each one a variable and hence a '
+      + 'permutation class. ⚠ NOT A DROPPED CONSTRAINT: kimchi\'s `VarBaseMul` gate body reads exactly '
+      + 'those next-row cells, constrains each boolean, and ties their weighted sum to `n\' = 32n + Σ` '
+      + '— the ladder\'s own arithmetic, cross-checked against an independent Jacobian oracle in '
+      + '`KimchiStepMainPins01`. It is an ALLOCATION difference: same constraint set, no variable. '
+      + 'Nothing in the assembly needs to σ-tie a chunk bit to anything, which is why it costs zero.',
   },
   // ⚑ RETIRED 2026-08-02 — `ftcomm/scalar-seed-unwired` stopped being observed (0/8, was 8/8). The
   // Lean side has pinned that cell as WIRED all along (`KimchiStepMain` §12f,
@@ -382,7 +395,11 @@ const LEDGER = {
   // statement. ⚑ 2026-08-02: this replaced ONE opaque entry ("550 halves in 172 shapes").
   'generic/exact-value-census': {
     why: 'INSTRUMENT — the byte tripwire, not a divergence claim',
-    expect: '695/3309 halves differ by EXACT coefficient vector [0a02613d9570c5af]; 501 of those differ '
+    // ⚑ MOVED 2026-08-03 by §20 (per-word MSM widths): 695/3309 [0a02613d9570c5af] → this. The eight
+    // halves are `msmNZeroRows`' — the nine one-bit statement words no longer run a ladder, so they no
+    // longer own an `n_acc = 0` half, and `packHalves` re-pairs the remaining 31. The digest moved
+    // because the circuit did; a digest that moved on its own would be the tripwire firing.
+    expect: '696/3301 halves differ by EXACT coefficient vector [e46bba1943a6acd0]; 502 of those differ '
       + 'by SHAPE FAMILY (constants→K, sign-normalized), so 194 are the same family carrying our constants',
     note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
       + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
@@ -390,7 +407,9 @@ const LEDGER = {
   },
   'generic/empty-second-half': {
     why: 'UNRECORDED — COMPILER WASTE, classified 2026-08-02',
-    expect: '165 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
+    // ⚑ 165 → 166 on 2026-08-03: §20 left `msmNZeroRows` with 31 halves to pack instead of 40, and
+    // an odd count leaves one more tail. The mechanism this entry describes, one instance larger.
+    expect: '166 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
     note: 'A half constraining nothing. NOT a dropped constraint and NOT padding of an operand — measured by '
       + 'construction: no permutation-classed cell, no live witness value, and every host row carries a real '
       + "equation in its first half. It is our per-site packing (`packHalves`, `aRows`) against Snarky's ONE "
@@ -399,7 +418,7 @@ const LEDGER = {
   },
   'generic/row-equality-not-sigma-tie': {
     why: 'UNRECORDED — a ROW where upstream unions, classified 2026-08-02',
-    expect: '114 halves [1 -1 0 0 0] (mina: 0); a global pending_generic_gate would save 82 rows, and '
+    expect: '114 halves [1 -1 0 0 0] (mina: 0); a global pending_generic_gate would save 83 rows, and '
       + 'converting these to σ-ties a further 57',
     note: '`Field.Assert.equal x y` on two plain variables is `Union_find.union` and emits NO ROW at all '
       + '(`plonk_constraint_system.ml:1650-1653`); only unequal SCALES fall through to a generic row (`:1655`). '
@@ -425,12 +444,12 @@ const LEDGER = {
   },
   'probe-rows': {
     why: 'header "THE σ-ONLY PROBES" (not on the #1–#11 list)',
-    expect: '487 standalone Zero rows (mina: 0)',
+    expect: '488 standalone Zero rows (mina: 0)',
     note: 'standalone `Zero` rows placed into σ classes so a flip isolates the wire. Mina has none. Spliced out here.',
   },
   'scope/unassembled-subcircuits': {
     why: '#5 group_map · equal_g · check_bulletproof `scale_fast` of sg · rule.main',
-    expect: 'Poseidon 206/572 VBM51 8/20',
+    expect: 'Poseidon 206/572 VBM51 16/20',
     note: 'Mina gadget instances with no counterpart here. SUBSET-NESS, not failure — counted so a shrinkage is visible.',
   },
 };
@@ -540,10 +559,14 @@ function measure(M, L, fixture = 'absent', witness = null) {
   const seedCheck = (units, cols, off) => { let n = 0; for (const u of units) { const rr = rawRowOf(u.s + off); for (const j of cols) if (rawSelf(rr, j)) n++; } return n; };
   const lVbm26 = lLad.filter((x) => x.chunks === 26), lVbm51 = lLad.filter((x) => x.chunks === 51);
   const lEndo = runsOf(LG, 'EndoMul').filter((r) => r.n === 32).map((r) => ({ s: r.s }));
-  const xhatSeed = seedCheck(lVbm26, [2, 3, 4], 0) + seedCheck(lVbm26, [2, 3, 4], 1);
+  // ⚑ OVER THE WHOLE x_hat CLUSTER, not just its 26-chunk ladders. Since §20 gave each Wrap
+  // statement word its own width the cluster carries 51/26/2-chunk ladders together, and keying on
+  // `lVbm26` would have measured 22 of the 31 and silently stopped seeing the rest.
+  const xhatSeedAcc = seedCheck(lX, [2, 3, 4], 0), xhatSeedBits = seedCheck(lX, [2, 3, 4], 1);
+  const xhatSeed = xhatSeedAcc + xhatSeedBits;
   const ftSeed = seedCheck(lVbm51, [4], 0);
   const ipaSeed = seedCheck(lEndo, [4, 5, 6], 0);
-  if (xhatSeed) diverge('xhat/ladder-seed-unwired', `${xhatSeed}/${lVbm26.length * 6} cells SELF in the UNSPLICED emission (mina: 0)`);
+  if (xhatSeed) diverge('xhat/ladder-seed-unwired', `${xhatSeed}/${lX.length * 6} cells SELF (acc/scalar seed ${xhatSeedAcc}, chunk bits ${xhatSeedBits}) in the UNSPLICED emission (mina: 0)`);
   if (ftSeed) diverge('ftcomm/scalar-seed-unwired', `${ftSeed}/${lVbm51.length} cells SELF in the UNSPLICED emission (mina: 0)`);
   if (ipaSeed) diverge('ipa/endo-seed-unwired', `${ipaSeed}/${lEndo.length * 3} cells SELF in the UNSPLICED emission (mina: 0)`);
 
@@ -674,7 +697,7 @@ function report(R, src, M, L, prov, cone) {
   console.log(`              mina 8 ladders × 51 chunks   |   lean 8 × 51        ✓ COUNT AND WIDTH ALIGNED`);
   console.log(`   x_hat    anchor = the ladder cluster immediately before ft_comm (gap ≤ 1000 rows)`);
   console.log(`              mina ${String(R.xhat.mina.n).padStart(2)} ladders  ${R.xhat.mina.widths.padEnd(18)} = ${R.xhat.mina.chunks} chunks  (40 Wrap statement words, 9 of them Bool → 0 chunks)`);
-  console.log(`              lean ${String(R.xhat.lean.n).padStart(2)} ladders  ${R.xhat.lean.widths.padEnd(18)} = ${R.xhat.lean.chunks} chunks  (40 terms × 26, uniform; adjacent terms merge into one run)`);
+  console.log(`              lean ${String(R.xhat.lean.n).padStart(2)} ladders  ${R.xhat.lean.widths.padEnd(18)} = ${R.xhat.lean.chunks} chunks  (Spec.pack per-word widths, KimchiStepMainCore §1b; the 9 Bool words emit no ladder)`);
   console.log(`   ipa      anchor = EndoMul-32 blocks clustered at gap ≤ 100 rows`);
   console.log(`              mina ${R.ipa.mina.join(' + ')}  — combine_split_commitments ${R.ipa.mina[0]} | bullet_reduce ${R.ipa.mina[1]} | check_bulletproof ${R.ipa.mina.slice(2).join('+') || 0}`);
   console.log(`              lean ${R.ipa.lean.join(' + ')}  — one contiguous cluster; ${R.ipa.mina[0]} + ${R.ipa.mina[1]} = ${R.ipa.mina[0] + R.ipa.mina[1]} matches ours EXACTLY`);

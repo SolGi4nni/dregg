@@ -135,7 +135,7 @@ set_option maxRecDepth 100000
 #guard msmSeedForged != msmSeedHon
 #guard onCurveA msmT0 && onCurveA msmSeedHon && onCurveA msmSeedForged
 -- ⚑ the COUNTER CHAIN IS UNTOUCHED by a forged seed: the forged ladder's `n` cells are the honest
--- ones, so the σ class that closes `vSN 0 msmChunks` on the challenge variable — the only thing R3
+-- ones, so the σ class that closes `vSN 0 (msmChunksAt 0)` on the challenge variable — the only thing R3
 -- constrained about this term — is satisfied by the forgery exactly as by the honest witness.
 #guard msmForged.ns == (tS.msm.terms.getD 0 default).ns
 -- ⚑⚑ **AND THE OUTPUT IS A DIFFERENT POINT.** `multiscale_known`'s result is `x_hat`: a PUBLIC word
@@ -143,12 +143,12 @@ set_option maxRecDepth 100000
 #guard msmForged.accs.getLastD (0, 0) != (tS.msm.terms.getD 0 default).accs.getLastD (0, 0)
 
 -- the cell helper reproduces the ASSEMBLY's own accepted rows on the honest term…
-#guard (List.range shapeSmoke.msmChunks).all (fun j =>
+#guard (List.range (msmChunksAt 0)).all (fun j =>
   vbmOk (vbmChunkCells (tS.msm.terms.getD 0 default) (tS.msm.bits.getD 0 []) j))
 -- ⚑⚑ **THE HOLE, ON THE EMITTED GATE POLYNOMIAL.** Every `VarBaseMul` row of the FORGED ladder
 -- satisfies the same 21 constraints. A curve gate constrains the STEP and not the START, so before
 -- this commit there was nothing in R3 that could refuse a chosen `acc₀`.
-#guard (List.range shapeSmoke.msmChunks).all (fun j =>
+#guard (List.range (msmChunksAt 0)).all (fun j =>
   vbmOk (vbmChunkCells msmForged (tS.msm.bits.getD 0 []) j))
 
 -- ⚑⚑ **AND THE ASSEMBLED VERSION REFUSES IT.** The seed row's own gate body is 0 on
@@ -172,7 +172,7 @@ set_option maxRecDepth 100000
 -- the trace helper reproduces the assembly's own counter chain from `n₀ = 0`…
 #guard (nTraceFrom 0 (tS.msm.bits.getD 0 [])) == (tS.msm.terms.getD 0 default).ns
 -- ⚑⚑ **THE FORGERY: DIFFERENT BITS, THE SAME CHALLENGE CELL.** The chain from the prover's seed
--- closes on exactly the value `vSN 0 msmChunks` is wired to, so `Field.Assert.equal !n_acc scalar`
+-- closes on exactly the value `vSN 0 (msmChunksAt 0)` is wired to, so `Field.Assert.equal !n_acc scalar`
 -- (`:208`) — the wire R3 was relying on — is satisfied by a bit vector the prover chose.
 #guard msmBitsForged != tS.msm.bits.getD 0 []
 #guard msmN0Forged != 0
@@ -202,10 +202,10 @@ set_option maxRecDepth 100000
 -- `EndoMulScalar` chain reconstructs `n_final` from 8 rows × 8 crumbs × 2 bits with ITS OWN `n₀ = 0`
 -- pin, so `n_final < 2¹²⁸`; and `2¹³⁰ < p`, so the field equation is an INTEGER one and `b₀ = b₁ = 0`
 -- follows. Remove the `n₀` pin and every step of that collapses.
-#guard 5 * shapeSmoke.msmChunks == 130
+#guard 5 * msmChunksAt 5 == 130
 #guard shapeSmoke.chalBits == 128 && shapeStep.chalBits == 128
 #guard 2 ^ 130 < pN
-#guard shapeSmoke.msmChunks == (127 + 4) / 5
+#guard msmChunksAt 5 == (127 + 4) / 5
 -- …and the endo ladder has NO pad: `4·ipaBlocks = 128` exactly, which is why §12g's leg is only
 -- about the seed.
 #guard 4 * shapeSmoke.ipaBlocks == shapeSmoke.chalBits

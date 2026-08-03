@@ -91,10 +91,16 @@ buys the same factor and costs each pin its own failure site. -/
 #guard nRng shapeSmoke == shapeSmoke.chals + 4
 #guard RNG_FIN_LO shapeSmoke == RNG_FIN_HI shapeSmoke + 1
 -- ⚑ `VarBaseMul` is R3's `multiscale_known` AND §6b's `ft_comm` — the second MSM runs at
--- `FTC_CHUNKS = 51`, `step_verifier.ml:240-242`'s uniform 255 bits, not at `msmChunks`.
+-- `FTC_CHUNKS = 51`, `step_verifier.ml:240-242`'s uniform 255 bits, while R3's are PER STATEMENT
+-- WORD (§1b) — `msmChunkPrefix`, not `msmTerms · a constant`.
+-- ⚠ …AND §19's FOUR: `p_prime`'s `uc` and `rhs`'s three, all `scale_fast2 ~num_bits:255` hence
+-- `FTC_CHUNKS` again. `rowsS` has been the `.opening` rung since §19 and this line still read
+-- `msmTerms · msmChunks + ftcTerms · FTC_CHUNKS` — 282 against an emitted 486. RED AT HEAD, found
+-- 2026-08-03 while retiring #2, not caused by it.
 #guard (placedS.filter (fun g => g.kind == KGateType.varBaseMul)).length
-        == shapeSmoke.msmTerms * shapeSmoke.msmChunks
+        == msmChunkPrefix shapeSmoke.msmTerms
            + ftcTerms shapeSmoke * FTC_CHUNKS
+           + N_SF * FTC_CHUNKS
 -- ⚑ `EndoMul` is `ipaRounds` fold ladders PLUS ONE — `check_bulletproof`'s `Scalar_challenge.endo q
 -- c` (`:326`), the consumer that makes `delta` and the last squeeze mean something.
 #guard (placedS.filter (fun g => g.kind == KGateType.endoMul)).length
@@ -104,10 +110,15 @@ buys the same factor and costs each pin its own failure site. -/
 -- `add_fast h (negate g)` (`plonk_curve_ops.ml:157,267`), then `common.ml`'s own `tCommN + 1` adds.
 -- ⚑ The fold chain is `ipaRounds` adds and not `ipaRounds − 1` since the `~init` wiring (`:606`),
 -- and the tail adds three: `endo`'s two seed `add_fast`s and the closing `cq + delta` (`:327`).
+-- ⚠ …and the tail is FOUR, not three: §19 added `p_prime = fold_sum + uc`'s own `Ops.add_fast`
+-- (`Pins14.ipa_rung_grew_by_the_q_prime_add`). §19's own set adds `N_SF` `scale_fast2` seeds and
+-- odd-branches (two each) plus the `G + b_u` and `rhs` adds. Both terms were missing: 35 against an
+-- emitted 46. RED AT HEAD, found 2026-08-03.
 #guard (placedS.filter (fun g => g.kind == KGateType.completeAdd)).length
         == (shapeSmoke.msmTerms - 1) + shapeSmoke.msmTerms
-           + shapeSmoke.ipaRounds + 2 * shapeSmoke.ipaRounds + 3
+           + shapeSmoke.ipaRounds + 2 * shapeSmoke.ipaRounds + 4
            + 2 * ftcTerms shapeSmoke + (tCommN shapeSmoke + 1)
+           + 2 * N_SF + 2
 -- ⚑ …and every `CompleteAdd` is still followed by a row of another kind, which is why the shape
 -- diff's `CompleteAdd` family stays `1×n`: R3's seed row is preceded by a `Zero` probe (or the pin
 -- block) and followed by its ladder's first `VarBaseMul`.
@@ -246,7 +257,7 @@ buys the same factor and costs each pin its own failure site. -/
 #guard (List.range shapeSmoke.msmTerms).all (fun i =>
   let td := tS.msm.terms.getD i default
   let bits := tS.msm.bits.getD i []
-  (List.range (5 * shapeSmoke.msmChunks)).all (fun k =>
+  (List.range (5 * msmChunksAt i)).all (fun k =>
     let a := td.accs.getD k (0, 0)
     let a' := td.accs.getD (k + 1) (0, 0)
     let q := if bits.getD k 0 == 1 then jOf td.T else jNeg (jOf td.T)
@@ -254,12 +265,15 @@ buys the same factor and costs each pin its own failure site. -/
 
 -- ⚑ THE SCALAR CELL IS TIED TO THE POINT: with `acc₀ = [2]T` the chain closes to
 -- `acc_final = [2^{5C} + 2n + 1]·T`, `n` the value in the last chunk's `n'` cell — checked against
--- `PastaCurve.scMulM`, an independent 255-bit double-and-add.
+-- `PastaCurve.scMulM`, an independent double-and-add. ⚠ FACTORED AS `2·(2^{5C−1} + n) + 1`, and
+-- that is not cosmetic: `scMulM` reads `List.range 255` bits (`PastaCurve.lean:296`) and at the
+-- 255-bit words `C = 51`, so `2^{255} + 2n + 1` needs bit 255 and the oracle would silently DROP it.
+-- The factored scalar is `< 2^255` at every width the census carries.
 #guard (List.range shapeSmoke.msmTerms).all (fun i =>
   let td := tS.msm.terms.getD i default
-  match scMulM pN (2 ^ (5 * shapeSmoke.msmChunks) + 2 * td.ns.getLastD 0 + 1) (jOf td.T) with
+  match scMulM pN (2 ^ (5 * msmChunksAt i - 1) + td.ns.getLastD 0) (jOf td.T) with
   | none => false
-  | some R => jacEqM pN (jOf (td.accs.getLastD (0, 0))) R)
+  | some H => jacEqM pN (jOf (td.accs.getLastD (0, 0))) (jAdd (jDbl H) (jOf td.T)))
 
 -- ⚑ EVERY endo_mul BLOCK is `accₑ₊₁ = [2]([2]accₑ + Q₁) + Q₂` with `Qₖ = ±φ^{b}(T)` — the
 -- endomorphism selection included — same independent Jacobian oracle.
@@ -294,11 +308,13 @@ buys the same factor and costs each pin its own failure site. -/
 -- ⚑ …and `check_bulletproof`'s tail really computes `endo q c + delta`: the ladder's own counter
 -- closes on `c`'s challenge variable, its accumulator is `Scalar_challenge.endo`'s seed run, and the
 -- closing `add_fast` is `cq + delta` over the block's own opening point.
-#guard tS.ipa.lhsAccs.getD 0 (0, 0) == endoSeed (tS.ipa.sums.getLastD (0, 0))
+-- ⚠ THE BASE IS `qPrime`, NOT THE FOLD SUM, since §19 (`Pins14.lhs_endo_base_is_q_prime`,
+-- `q_prime_is_not_the_fold_sum`). These two lines still named the fold sum. RED AT HEAD.
+#guard tS.ipa.lhsAccs.getD 0 (0, 0) == endoSeed tS.ipa.qPrimePt
 #guard tS.ipa.lhsNs.getLastD 0 == chalOf shapeSmoke tS.sp shapeSmoke.cChal
 #guard tS.ipa.lhsAccs.length == shapeSmoke.ipaBlocks + 1
 #guard (List.range shapeSmoke.ipaBlocks).all (fun e =>
-  let T := tS.ipa.sums.getLastD (0, 0)
+  let T := tS.ipa.qPrimePt
   let b := tS.ipa.lhsBlks.getD e default
   let a := tS.ipa.lhsAccs.getD e (0, 0)
   let a' := tS.ipa.lhsAccs.getD (e + 1) (0, 0)

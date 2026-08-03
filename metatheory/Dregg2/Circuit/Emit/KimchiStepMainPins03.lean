@@ -133,10 +133,10 @@ set_option maxRecDepth 100000
 #guard idxSrc shapeSmoke 22 == some constR0
 -- …and R3's bases likewise: pinned, never absorbed. ⚑ `+ 3` and not `+ 1` since §12f: the seed row
 -- `add_fast base base` reads the base TWICE (cols 0,1 and 2,3) on top of the pin row and the
--- `msmChunks` `VarBaseMul` reads.
+-- `msmChunksAt 0` `VarBaseMul` reads.
 #guard ((classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).filter
           (fun c => c.row < nTrans)).length == 0
-#guard (classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).length == shapeSmoke.msmChunks + 3
+#guard (classCells posS (mpx shapeSmoke (pT shapeSmoke 0))).length == msmChunksAt 0 + 3
 
 -- ⚑⚑ **THE BITING RED CONTROL FOR #3: BENDING A SUPPLIED COMMITMENT MOVES THE MSM.** With
 -- `basePts` this was impossible in both directions — the bases were unabsorbed, so a swapped

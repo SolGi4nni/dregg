@@ -199,6 +199,40 @@ theorem the_substitution_moves_public_word_seven :
       ≠ hmOutDigestOf shapeSmoke tS.sp tS.gXY := by native_decide
 #assert_compiled the_substitution_moves_public_word_seven
 
+/-! ### ⚑⚑ THE CLASS THIS RUNG BROKE, AND THE PIN THAT NOW CATCHES IT.
+
+`qPrime` was added to the row schedule and NOT to `circuitEnv`, and the `Ops.add_fast` output was a
+silent `0` while the endo seed was taken at the OLD point. Every σ-class pin, every row-count pin and
+every closed form in this file stayed GREEN; the *prover* rejected the honest `r4_ipa` witness with
+`Prover("rest of division by vanishing polynomial")`.
+
+**A row schedule and a witness environment are two places, and only the prover read both.** This is
+the pin that makes them one: every variable any row WIRES must have an entry in `stepEnv`, not a
+default. It is an `all`, so a single unwired-but-scheduled cell reds. -/
+
+/-- ⚑ Every permutation-column variable of every row has a witness value — none falls through
+`envLookupAt`'s `getD … 0` default. Stated over the top rung, so it covers §19 and everything below
+it. -/
+theorem every_scheduled_variable_has_a_witness_entry :
+    (let ix := envIndex (stepEnv tS)
+     rowsS.all (fun r => r.perm.all (fun o =>
+       match o with
+       | none => true
+       | some v => (ix.getD (varIx v) none).isSome))) = true := by
+  native_decide
+#assert_compiled every_scheduled_variable_has_a_witness_entry
+
+/-- …and it is not vacuous: `rowsS` really does wire variables (a schedule of all-`none` perms would
+satisfy the `all` above trivially). ⚑ An EQUALITY, not a bound — a bound is what "a deleted chain
+would still satisfy" looks like. `4011` rows carry `13041` wired permutation cells; both numbers move
+deliberately or not at all. ⚑ It was `3861`/`12441` until §20 gave R3's ladders their per-word widths
+(`…Pins15`): the smoke shape's three MSM terms are Wrap statement words 0–2, all `Field`, so they run
+at 51 chunks instead of 26 and the rung gains `3·25·2 = 150` rows. -/
+theorem the_schedule_wires_variables :
+    (rowsS.length = 4011 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 13041) := by
+  native_decide
+#assert_compiled the_schedule_wires_variables
+
 /-! ### The row-set, as a closed form of what it emits. -/
 
 /-- ⚑ `bpRows`' length, summand by summand: `group_map`'s 44 halves packed two to a row plus its

@@ -1,13 +1,13 @@
 {
   "schema": "pickles-emit-provenance/1",
   "fixture": "stepmain-step-r8-finalize-gates.json.gz",
-  "artifact_sha256": "b3466e0d5c76861221b38a73e8f27daf7b4b05cae5f3fb85d1f5e9f4d0cae3f1",
-  "refreshed_at": "2026-08-03T01:55:14.275Z",
-  "refreshed_from": "/tmp/pickles-stepmain/stepmain_step_r8_finalize.json (== fixture)",
+  "artifact_sha256": "25e247c4b36004bf88de2ff992e3e6193bf23fa06bcb177071768aa7239eb260",
+  "refreshed_at": "2026-08-03T08:03:08.175Z",
+  "refreshed_from": "/tmp/pickles-stepmain/stepmain_step_r8_finalize.json (⚠ FIXTURE STALE)",
   "cone": {
     "root": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
     "files": 112,
-    "digest": "672c321aad7930e55f129a10dc8542f091fd45cad89933c5d8d879cec53b5057",
+    "digest": "25dd11c585a6931fadbfd6693f5a628b91c86b39ec35a752b4a8e0daa36d2c17",
     "files_detail": [
       {
         "rel": "Dregg2/Authority/ClearanceGraph.lean",
@@ -59,7 +59,7 @@
       },
       {
         "rel": "Dregg2/Circuit/DescriptorIR2.lean",
-        "sha": "67cb7642ac32ba7a630889e9eaa36b448e6bd67211f6ad8ddc3e5af999fe3c9c"
+        "sha": "5c4c8fa63c5897943597f6922be92030b3e2bdb3e69588748fd10662489454c6"
       },
       {
         "rel": "Dregg2/Circuit/Emit/AirBuilder.lean",
@@ -87,7 +87,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
-        "sha": "44378f188ee6f62fece3cde9933f752faa10cb027914fa5fefe9ecf1ba06ae5a"
+        "sha": "c8089de2e91596759e2559350794b801bb66dc63963f45a3e47742122b36aca1"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiComposeStepFragment.lean",
@@ -127,7 +127,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainCore.lean",
-        "sha": "387f3874551225059a86d988fcff0b6a847f8f380b8495ab0806f67721b1579c"
+        "sha": "fbe80a89ceb6b6eb839f32b2df88cbd40e66db42e916ddd30bf9bbd4594e1069"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainField.lean",
@@ -227,7 +227,7 @@
       },
       {
         "rel": "Dregg2/Circuit/RestFrameFin.lean",
-        "sha": "8600d3a5a92d9041cd430fe8456ca5f9ada2f5a350d3dbe969242eda75178453"
+        "sha": "9177e6ead38e54d1436cb141234e79b98240f8170f067c0005c3b6a58235960f"
       },
       {
         "rel": "Dregg2/Circuit/StateCommit.lean",
@@ -460,11 +460,15 @@
     ]
   },
   "git": {
-    "head": "d0cf0426dd10bfa24337a9767856b2f0808370f8",
-    "cone_dirty_at_head": []
+    "head": "bce3989f660e5448cb07d5d737b744478e051289",
+    "cone_dirty_at_head": [
+      "etatheory/Dregg2/Circuit/DescriptorIR2.lean",
+      "metatheory/Dregg2/Circuit/Emit/EmitStepMainJson.lean",
+      "metatheory/Dregg2/Circuit/Emit/KimchiStepMainCore.lean"
+    ]
   },
-  "gates": 10826,
-  "probe_rows": 487,
-  "num_rows": 10826,
+  "gates": 10708,
+  "probe_rows": 488,
+  "num_rows": 10708,
   "public_input_size": 67
 }
