@@ -68,6 +68,16 @@
 //! implementation, so a table AIR cannot be audited by a laxer copy. That matters most for
 //! `dregg-ir2-map-absent-v1`, whose 17 `ir2_p2` queries are the live in-circuit double-spend gate.
 //!
+//! ⚑ **…AND THE SAME WOUND RECURRED ONE LEVEL DOWN, 2026-08-02.** `ExactPublicTable` emits a
+//! FAMILY — a JSON **array** of table-air objects, one per declared tuple arity — and the singleton
+//! `parse_table_air` refuses an array at byte 0. So from the hour that artifact landed this gate
+//! was RED again, on a parse error, having audited none of the family's tuples: the corpus that had
+//! grown was once more the one the gate stopped reading. The array form now routes to the DEPLOYED
+//! `parse_table_air_family` and every member is scanned. ⚠ The general lesson is the one
+//! `36e80c2db` already paid for on two other tools — *a reader that sniffs a SINGLETON grammar goes
+//! blind, not red, the day the emitter learns to emit a family* — and this gate was the third tool
+//! with the same sniff and was not fixed with them.
+//!
 //! ⚠ **One directory is excluded and it is named here**: `circuit/tests/fixtures/
 //! chip-arity-gate-redproof/`, which holds the pre-`57105f387` arity-9 descriptor this gate's own
 //! red-proof runs against. `redproof_fixture_is_red` asserts the exclusion is not hiding a green:
@@ -250,11 +260,22 @@ fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>, Vec<FoundTable>
                 // refuse it — a refusal here reads as "the gate found something" while actually
                 // meaning "the gate stopped reading this corpus".
                 if looks_like_table_air(&head) {
-                    match parse_table_air(&text) {
-                        Ok(t) => tables.push(FoundTable {
+                    // ⚑ …and a table AIR may be emitted as a FAMILY — a JSON ARRAY of the same
+                    // object, one member per declared tuple arity (`ExactPublicTable`). The
+                    // singleton decoder refuses an array at byte 0, which is the identical
+                    // "the gate stopped reading this corpus" failure one level down: the gate went
+                    // RED naming a parse error while auditing none of the family's chip tuples.
+                    // Both forms route to their own DEPLOYED decoder.
+                    let parsed = if text.trim_start().starts_with('[') {
+                        dregg_circuit::table_air::parse_table_air_family(&text)
+                    } else {
+                        parse_table_air(&text).map(|t| vec![t])
+                    };
+                    match parsed {
+                        Ok(ts) => tables.extend(ts.into_iter().map(|t| FoundTable {
                             origin: rel(root, &p),
                             table: t,
-                        }),
+                        })),
                         Err(e) => unparsable.push(format!("{}: {e}", rel(root, &p))),
                     }
                     continue;
