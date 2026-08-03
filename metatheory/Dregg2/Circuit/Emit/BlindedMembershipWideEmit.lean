@@ -437,10 +437,24 @@ lanes are binding-preserving (`packBlind` stays injective in `(leaf, r)` — `pa
 seeding is the genuine `seed456` path so every one of the 8 leaf lanes enters the permutation, and
 11 is the arity the wide MD commit step already rides.
 
-⚑ NOTHING GATES A LEAN EMITTER'S CHOSEN ABSORB ARITY AGAINST THE CHIP'S ADMITTED SET. That missing
-gate is why an unprovable descriptor sat here byte-pinned and green. A second instance is already on
-disk: `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json` carries TID_P2 lookups at arity 8
-and 14. -/
+⚑ **BOTH HALVES OF THIS PARAGRAPH WERE STALE — CORRECTED 2026-08-03, EACH RE-MEASURED.**
+
+It read: "NOTHING GATES A LEAN EMITTER'S CHOSEN ABSORB ARITY AGAINST THE CHIP'S ADMITTED SET. That
+missing gate is why an unprovable descriptor sat here byte-pinned and green. A second instance is
+already on disk: `guarded-hiding-span-m0-wide-blinded-commit-blind5-v1.json` carries TID_P2 lookups
+at arity 8 and 14."
+
+* **The gate exists now.** All four tuple constructors (`chipLookupTuple`, `chipLookupTupleN`,
+  `chipLookupTupleNarrow`, `TableAirIR.chipAbsorbTuple`) and both site-level constructors
+  (`siteLookup`, `siteLookupNarrow`) carry `ChipArityAdmitted` as an `autoParam`, so an absorb at 8,
+  9 or 14 FAILS TO ELABORATE. `Dregg2.Circuit.ChipArityBite` asserts that refusal on every rail, with
+  positive controls at every admitted arity.
+* **The named descriptor no longer carries 8 and 14.** Re-read on 2026-08-03: its three `table: 1`
+  (`TID_P2`) lookups carry arity tags **11, 16, 16** — it was re-emitted by the §3b padding this
+  very docstring describes, and the sentence accusing it was simply never updated. Swept across
+  ALL of `circuit/descriptors/by-name/*.json`, the whole `TID_P2` arity histogram is
+  `{16: 90, 11: 127, 7: 19, 4: 11}` — **every on-disk descriptor is at an admitted arity, none
+  inadmissible.** -/
 
 /-- The 11 input expressions of the wide blinding absorb: the 8 leaf lanes, the blinding, then the
 two zero pads that put the row on the deployed wide arity (see §3b). -/
