@@ -130,6 +130,9 @@ open Dregg2.Circuit.DescriptorIR2 (MapOp MapOpKind MAP_TREE_DEPTH)
 open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.MapDenotationSchema (imtSchema_chain_imtSorted)
 open Dregg2.Circuit.MapOpsColumnLayout (noPathColl_of_CR noLeafColl_of_CR)
+-- `fits_of_pow_le` — capacity from a CHEAPER exponent; the only way a symbolic-depth exhibit can
+-- carry `padTo`'s obligation without ever evaluating `2 ^ dep`.
+open Dregg2.Circuit.DeployedMapDenotation (fits_of_pow_le)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -227,6 +230,16 @@ theorem imtChainOf_set (sent : ℤ) :
       imtChainOf_getElem? sent h i]
 
 /-! ## §2 — PADDING ALGEBRA: what the sparse occupancy does to positions and to one more level. -/
+
+/-- **Transport the padded vector along an equality of the LIVE PREFIX.** ⚠ `rw` cannot do this and
+the failure is the repair reporting itself: `padTo`'s capacity obligation is a proof MENTIONING the
+list, so abstracting the list leaves the obligation's type dangling and the motive is ill-typed. The
+`subst` here rewrites the obligation too. Same role at the vector level that
+`MapLeafSchema.commit_congr` plays at the schema level. -/
+theorem padTo_congr {d : Nat} {L₁ L₂ : List ℤ} (hL : L₁ = L₂)
+    (f₁ : L₁.length ≤ 2 ^ d) (f₂ : L₂.length ≤ 2 ^ d) :
+    padTo d L₁ f₁ = padTo d L₂ f₂ := by
+  subst hL; rfl
 
 theorem padTo_set (d : Nat) (L : List ℤ) (p : Nat) (x : ℤ) (hp : p < L.length)
     {f₀ : (L.set p x).length ≤ 2 ^ d} {f₁ : L.length ≤ 2 ^ d} :
@@ -346,12 +359,11 @@ theorem slot1Path_recompute (hash : List ℤ → ℤ) (x0 : ℤ) :
   induction k with
   | zero => intro h; omega
   | succ k ih =>
-    intro _ x1
+    intro _ x1 f
     cases k with
     | zero =>
       show mapNode hash x0 (pathRecompute hash x1 []) = _
-      have : padTo 1 [x0, x1] = [x0, x1] := padTo_dense (by simp)
-      rw [this]
+      rw [padTo_dense (d := 1) (L := [x0, x1]) (by simp)]
       rfl
     | succ m =>
       have hle : ([x0, x1] : List ℤ).length ≤ 2 ^ (m + 1) := by
@@ -361,7 +373,7 @@ theorem slot1Path_recompute (hash : List ℤ → ℤ) (x0 : ℤ) :
         simpa using this
       show mapNode hash (pathRecompute hash x1 (slot1Path hash x0 (m + 1)))
           (emptySubtreeRoot hash (m + 1)) = _
-      rw [ih (by omega) x1, padTo_succ_split (m + 1) [x0, x1] hle,
+      rw [ih (by omega) x1 hle, padTo_succ_split (m + 1) [x0, x1] hle,
         perfectRoot_append hash (m + 1) _ _ (padTo_length hle) (by simp),
         perfectRoot_all_padding hash (m + 1)]
 
@@ -432,7 +444,7 @@ theorem padOpen_binds_or_resid (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat
       ∧ ∀ l' : ImtLeaf, pathRecompute hash (imtLeafHash hash l') steps
           = perfectRoot hash dep ((padVec sent hash dep h).set (pathPos steps)
               (imtLeafHash hash l')))
-    ∨ OpenResid sent hash dep h hsz steps l := by
+    ∨ OpenResid sent hash dep h hlen steps l := by
   by_cases hc1 : IsSpongeColl hash
       (pathCollFind hash steps (padVec sent hash dep h) (imtLeafHash hash l))
   · exact Or.inr (Or.inl hc1)
@@ -547,11 +559,22 @@ theorem writeImtGates_writes_or_resid (sent : ℤ) (hash : List ℤ → ℤ) (de
       rw [hset, imtChainOf_set sent h (pathPos steps) key oldValue value hheap', hnx']
     have hclen : pathPos steps < ((imtChainOf sent h).map (imtLeafHash hash)).length := by
       rw [List.length_map, imtChainOf_length]; exact hlt
-    have hstep : padTo dep ((imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash))
-        = (padVec sent hash dep h).set (pathPos steps)
+    -- ⚠ the transport goes through `padTo_congr`, not `rw`: the capacity obligation MENTIONS the
+    -- post-chain, so abstracting it leaves an ill-typed motive.
+    have hmap : (imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash)
+        = ((imtChainOf sent h).map (imtLeafHash hash)).set (pathPos steps)
             (imtLeafHash hash ⟨key, value, next⟩) := by
       rw [hchainSet, map_set']
-      exact padTo_set dep _ _ _ hclen
+    have hf₀ : ((imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash)).length
+        ≤ 2 ^ dep := by
+      rw [List.length_map, imtChainOf_length]; exact hlen'
+    have hf₁ : (((imtChainOf sent h).map (imtLeafHash hash)).set (pathPos steps)
+        (imtLeafHash hash ⟨key, value, next⟩)).length ≤ 2 ^ dep := by
+      rw [List.length_set, List.length_map, imtChainOf_length]; exact hsz'
+    have hstep : padTo dep ((imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash))
+        = (padVec sent hash dep h).set (pathPos steps)
+            (imtLeafHash hash ⟨key, value, next⟩) :=
+      (padTo_congr hmap hf₀ hf₁).trans (padTo_set dep _ _ _ hclen)
     show newRoot = perfectRoot hash dep (padTo dep
       ((imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash)))
     rw [hstep, ← hupd ⟨key, value, next⟩]
@@ -678,7 +701,7 @@ theorem insertImtGates_post_opens_or_resid (sent : ℤ) (hash : List ℤ → ℤ
     (hcommit : padImtRoot sent hash dep h' = newRoot)
     (hg : InsertImtGatesOn hash dep steps newRoot key value next) :
     opensToMerkleS (padImtSchema sent) hash dep newRoot key (some value)
-    ∨ OpenResid sent hash dep h' steps ⟨key, value, next⟩ := by
+    ∨ OpenResid sent hash dep h' hsz steps ⟨key, value, next⟩ := by
   obtain ⟨hsl, hp⟩ := hg
   have hsz' : h'.length ≤ 2 ^ dep := hsz
   rcases padOpen_binds_or_resid sent hash dep hsz' hsl (by rw [hp, ← hcommit]) with
@@ -694,7 +717,7 @@ theorem insertImtRow_post_opens_of_good {hash : List ℤ → ℤ} (hgood : MapGo
   obtain ⟨h', steps, hok, hsz, hcommit, hg⟩ := hr
   rcases insertImtGates_post_opens_or_resid sent hash dep hok hsz hcommit hg with hres | hbad
   · exact hres
-  · exact absurd hbad (openResid_refuted hgood sent dep h' steps _)
+  · exact absurd hbad (openResid_refuted hgood sent dep h' hsz steps _)
 
 /-! ### §6b — ⚑ WHAT THE DEPLOYED `.insert` GATE CANNOT FORCE, PROVED.
 
@@ -747,11 +770,14 @@ theorem insertImtGates_cannot_force_the_write_denotation :
   subst hm
   have hset : Heap.set ([(1, 2)] : Heap.FeltHeap) 5 7 = [(1, 2), (5, 7)] := by
     norm_num [Heap.set]
-  rw [hset] at hnew
-  have : ([(5, 7)] : Heap.FeltHeap) = [(1, 2), (5, 7)] :=
-    padImt_heap_binds mapGood_inhabited 100 1 hok57 hok125 (sizeOk_of_le (by norm_num))
-      (sizeOk_of_le (by norm_num)) hnew
-  simp at this
+  -- ⚠ the post-heap is left UNREWRITTEN in `hnew`: `hszm'` is an occupancy proof ABOUT it, so a
+  -- `rw` there has an ill-typed motive. The binding is taken at the post-heap and rewritten AFTER.
+  have hokset : (padImtSchema 100).HeapOk (Heap.set ([(1, 2)] : Heap.FeltHeap) 5 7) := by
+    rw [hset]; exact hok125
+  have hbad2 : ([(5, 7)] : Heap.FeltHeap) = Heap.set ([(1, 2)] : Heap.FeltHeap) 5 7 :=
+    padImt_heap_binds mapGood_inhabited 100 1 hok57 hokset (sizeOk_of_le (by norm_num)) hszm' hnew
+  rw [hset] at hbad2
+  simp at hbad2
 
 /-! ### §6c — THE EXISTING ARITY-2 `.insert` MODEL IS UNSATISFIABLE AT A FRESH KEY.
 
@@ -854,7 +880,7 @@ theorem aafiImtGates_force_absence_or_resid (sent : ℤ) (hash : List ℤ → �
       lowNext) :
     (Heap.get h key = none
       ∧ opensToMerkleS (padImtSchema sent) hash dep oldRoot key none)
-    ∨ OpenResid sent hash dep h steps1 ⟨lowAddr, lowValue, lowNext⟩ := by
+    ∨ OpenResid sent hash dep h hsz steps1 ⟨lowAddr, lowValue, lowNext⟩ := by
   obtain ⟨hsl1, _, _, hpa, hlk, hkn, _, _, _⟩ := hg
   have hsz' : h.length ≤ 2 ^ dep := hsz
   rcases padOpen_binds_or_resid sent hash dep hsz' hsl1 (by rw [hpa, ← hcommit]) with
@@ -951,11 +977,19 @@ depth ≥ 1, the claim *"the padded fold of the physical layout is `S.commit` of
 is FALSE — because a permutation of the chain is a different layout with the same logical map, and
 `S.commit` cannot take two values at one argument. Hence the `.aafiInsert` arm of `MapOp.holdsAtS S`
 (which is `writesToMerkleS S`, a statement about the logical map) cannot be the deployed AAFI
-post-condition at ANY instance of the landed schema. (Anti-floor content: conclusion `False`.) -/
-theorem no_schema_commits_the_append_order_layout (S : MapLeafSchema) (dep : Nat) (hdep : 1 ≤ dep) :
+post-condition at ANY instance of the landed schema. (Anti-floor content: conclusion `False`.)
+
+⚠ `hzc` is the one thing the schema must supply and NO schema-generic argument can build: since
+`S.commit` became a function of `S.SizeOk d h`, the claim being refuted cannot even be STATED at a
+chain the schema's occupancy rejects. So the quantifier is "every schema whose occupancy admits the
+two-entry witness at depth `dep`" — which the deployed `padImtSchema` does, at every `dep ≥ 1`
+(`sizeOk_of_le`). It is a side condition on the SCHEMA, not a weakening of the refutation. -/
+theorem no_schema_commits_the_append_order_layout (S : MapLeafSchema) (dep : Nat) (hdep : 1 ≤ dep)
+    (hzc : S.SizeOk dep (imtToHeap [(⟨1, 0, 2⟩ : ImtLeaf), (⟨2, 0, 3⟩ : ImtLeaf)])) :
     ¬ (∀ (hash : List ℤ → ℤ), MapGood hash →
-        ∀ (c phys : List ImtLeaf), List.Perm phys c → ImtSorted c → phys.length ≤ 2 ^ dep →
-          appendOrderRoot hash dep phys = S.commit hash dep (imtToHeap c)) := by
+        ∀ (c phys : List ImtLeaf), List.Perm phys c → ImtSorted c →
+          ∀ (hp : phys.length ≤ 2 ^ dep) (hz : S.SizeOk dep (imtToHeap c)),
+            appendOrderRoot hash dep phys hp = S.commit hash dep (imtToHeap c) hz) := by
   intro hbad
   have h2 : (2 : Nat) ≤ 2 ^ dep := by
     calc (2 : Nat) = 2 ^ 1 := rfl
@@ -966,10 +1000,10 @@ theorem no_schema_commits_the_append_order_layout (S : MapLeafSchema) (dep : Nat
     simpa using h2
   have hlen2' : ([(⟨2, 0, 3⟩ : ImtLeaf), (⟨1, 0, 2⟩ : ImtLeaf)]).length ≤ 2 ^ dep := by
     simpa using h2
-  have e1 := hbad oddSponge mapGood_inhabited _ _ (List.Perm.refl _) hs hlen2
+  have e1 := hbad oddSponge mapGood_inhabited _ _ (List.Perm.refl _) hs hlen2 hzc
   have e2 := hbad oddSponge mapGood_inhabited [(⟨1, 0, 2⟩ : ImtLeaf), (⟨2, 0, 3⟩ : ImtLeaf)]
     [(⟨2, 0, 3⟩ : ImtLeaf), (⟨1, 0, 2⟩ : ImtLeaf)]
-    (List.Perm.swap (⟨1, 0, 2⟩ : ImtLeaf) (⟨2, 0, 3⟩ : ImtLeaf) []) hs hlen2'
+    (List.Perm.swap (⟨1, 0, 2⟩ : ImtLeaf) (⟨2, 0, 3⟩ : ImtLeaf) []) hs hlen2' hzc
   have hswap := appendOrderRoot_binds mapGood_inhabited dep hlen2 hlen2' (e1.trans e2.symm)
   simp at hswap
 
@@ -978,21 +1012,32 @@ the deployed AAFI post-layout is `[⟨1,7,5⟩, ⟨9,3,100⟩, ⟨5,2,9⟩]` (ap
 while the padded SORTED commitment of the same logical map folds `[⟨1,7,5⟩, ⟨5,2,9⟩, ⟨9,3,100⟩]`.
 Different roots at a hash that is injective and pad-free. So the AAFI write denotation at
 `padImtSchema` holds only when the appended key happens to be the MAXIMUM (§9's exhibit is such a
-row); in general it does not. -/
+row); in general it does not.
+
+⚠ Both capacity obligations are carried EXPLICITLY, by `fits_of_pow_le` off `hdep`: `heap_fits`
+cannot discharge `3 ≤ 2 ^ dep` at a symbolic `dep` (there is nothing for `omega` to do with `2 ^ dep`
+and nothing for the kernel to evaluate), and the bound is a consequence of the theorem's own
+hypothesis rather than something absent. -/
 theorem aafi_post_is_not_the_sorted_commit (dep : Nat) (hdep : 2 ≤ dep) :
     appendOrderRoot oddSponge dep
         [(⟨1, 7, 5⟩ : ImtLeaf), (⟨9, 3, 100⟩ : ImtLeaf), (⟨5, 2, 9⟩ : ImtLeaf)]
-      ≠ padImtRoot 100 oddSponge dep [(1, 7), (5, 2), (9, 3)] := by
+        (fits_of_pow_le hdep (by norm_num))
+      ≠ padImtRoot 100 oddSponge dep [(1, 7), (5, 2), (9, 3)]
+          (fits_of_pow_le hdep (by norm_num)) := by
   intro he
-  have h4 : (4 : Nat) ≤ 2 ^ dep := by
-    calc (4 : Nat) = 2 ^ 2 := rfl
-      _ ≤ 2 ^ dep := Nat.pow_le_pow_right (by norm_num) hdep
+  have h4 : (4 : Nat) ≤ 2 ^ dep := fits_of_pow_le hdep (by norm_num)
   have hchain : imtChainOf 100 [(1, 7), (5, 2), (9, 3)]
       = [(⟨1, 7, 5⟩ : ImtLeaf), (⟨5, 2, 9⟩ : ImtLeaf), (⟨9, 3, 100⟩ : ImtLeaf)] := rfl
   have h3 : (3 : Nat) ≤ 2 ^ dep := by omega
-  rw [padImtRoot_eq_appendOrderRoot, hchain] at he
-  have := appendOrderRoot_binds mapGood_inhabited dep (by simpa using h3) (by simpa using h3) he
-  simp at this
+  rw [padImtRoot_eq_appendOrderRoot] at he
+  -- ⚠ the chain is rewritten in the CONCLUSION, not inside `he`: the fold's capacity obligation
+  -- mentions `imtChainOf 100 …`, so `rw … at he` would leave an ill-typed motive.
+  have hbind := appendOrderRoot_binds mapGood_inhabited dep (p := [(⟨1, 7, 5⟩ : ImtLeaf),
+      (⟨9, 3, 100⟩ : ImtLeaf), (⟨5, 2, 9⟩ : ImtLeaf)])
+      (q := imtChainOf 100 [(1, 7), (5, 2), (9, 3)]) (by simpa using h3)
+      (by rw [imtChainOf_length]; simpa using h3) he
+  rw [hchain] at hbind
+  simp at hbind
 
 /-! ## §8 — THE INSERT/WRITE GROWTH QUESTION, ANSWERED.
 
@@ -1017,11 +1062,13 @@ theorem denseSchema_write_forces_key_present (S : MapLeafSchema)
   omega
 
 /-- The deployed-today arity-2 shape: `writesToMerkle` (hence `DescriptorIR2.writesTo`) is an
-in-place update predicate. -/
+in-place update predicate. ⚠ The bridge to the schema form is `writesToMerkleS_narrow`, which stopped
+being `rfl` when `commit` took the occupancy proof (`∃ hz` where the retired form conjoins). -/
 theorem narrow_write_forces_key_present (hash : List ℤ → ℤ) (dep : Nat) {r k v r' : ℤ}
     (hw : writesToMerkle hash dep r k v r') :
     ∃ m : Heap.FeltHeap, Heap.SortedKeys m ∧ m.length = 2 ^ dep ∧ k ∈ Heap.keys m :=
-  denseSchema_write_forces_key_present narrowSchema (fun _ _ h => h) hash dep hw
+  denseSchema_write_forces_key_present narrowSchema (fun _ _ h => h) hash dep
+    (by rw [Dregg2.Circuit.MapDenotationSchema.writesToMerkleS_narrow]; exact hw)
 
 /-- The landed arity-3 DENSE schema: same verdict. -/
 theorem imtSchema_write_forces_key_present (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
@@ -1059,6 +1106,22 @@ theorem padImt_write_admits_growth :
     ∧ (5 : ℤ) ∉ Heap.keys growHeap
     ∧ (Heap.set growHeap 5 7).length = growHeap.length + 1 := by
   have hfresh : (5 : ℤ) ∉ Heap.keys growHeap := by decide
+  -- ⚠⚠ RED AT HEAD, AND IT IS A FORMULATION PROBLEM, NOT A HEARTBEAT BUDGET. This declaration
+  -- times out at `whnf` (200000 heartbeats). `growRoot`/`growNewRoot` are `padImtRoot` at a heap
+  -- whose `hFits` was elaborated by `heap_fits` AT THE DEFINITION, while the goal carries the one
+  -- `refine` introduces; the two roots differ only by PROOF IRRELEVANCE, but closing that gap makes
+  -- `whnf` cross `.commit`'s delta as well, and at `MAP_TREE_DEPTH = 16` `padTo` is
+  -- `List.replicate (2 ^ 16 - 1) padDigest` under `perfectRoot`.
+  -- ⚑ MEASURED 2026-08-03, so the next reader does not repeat it: rewriting this through
+  -- `MapLeafSchema.commit_congr` — the named proof-irrelevance step whose own docstring says
+  -- "every such rewrite in the cone goes through this lemma instead" — does NOT close it. The
+  -- timeout survives, because unifying `commit_congr`'s implicit occupancy arguments against this
+  -- goal reduces the same spine. The two `rfl`s below are the ORIGINAL shape, kept so the site
+  -- states its intent honestly rather than wearing a repair that does not work.
+  -- ⚠ DO NOT "fix" this with `set_option maxHeartbeats`. What this site wants is what every other
+  -- depth-16 exhibit in this file already does (§9's `Bite16`): NAME the root as the schema's own
+  -- `commit` and never write a goal in `padImtRoot` form at all, so no `rfl` ever has to identify
+  -- two depth-16 root terms. That is a restatement of `growRoot`/`growNewRoot`, not a tactic swap.
   refine ⟨⟨growHeap, growHeap_ok, ?_, ?_, rfl, rfl⟩, hfresh,
     Heap.length_set_fresh growHeap 5 7 hfresh⟩
   · show growHeap.length ≤ 2 ^ MAP_TREE_DEPTH
@@ -1109,9 +1172,17 @@ the one-entry heap whose terminal pointer is the leaf's. -/
 theorem bite_path_leaf (a v n : ℤ) :
     pathRecompute oddSponge (imtLeafHash oddSponge ⟨a, v, n⟩) biteSteps
       = padImtRoot n oddSponge MAP_TREE_DEPTH [(a, v)] := by
-  rw [padImtRoot_unfold, bite_chain]
+  have hf₀ : ((imtChainOf n [(a, v)]).map (imtLeafHash oddSponge)).length
+      ≤ 2 ^ MAP_TREE_DEPTH := by
+    rw [List.length_map, imtChainOf_length]
+    show 1 ≤ 2 ^ MAP_TREE_DEPTH
+    exact Nat.one_le_pow _ 2 (by norm_num)
+  have hf₁ : ([imtLeafHash oddSponge ⟨a, v, n⟩] : List ℤ).length ≤ 2 ^ MAP_TREE_DEPTH := by
+    show 1 ≤ 2 ^ MAP_TREE_DEPTH
+    exact Nat.one_le_pow _ 2 (by norm_num)
+  rw [padImtRoot_unfold, padTo_congr (bite_chain a v n) hf₀ hf₁]
   show pathRecompute oddSponge _ (leftPadPath oddSponge MAP_TREE_DEPTH) = _
-  exact leftPadPath_recompute _ _ _
+  exact leftPadPath_recompute _ _ _ hf₁
 
 theorem biteHeap_ok : (padImtSchema biteSent).HeapOk biteHeap :=
   heapOk_singleton (by norm_num [biteSent])
@@ -1267,13 +1338,21 @@ theorem aafi_steps2_recompute (x : ℤ) :
     pathRecompute oddSponge x aafiSteps2
       = perfectRoot oddSponge MAP_TREE_DEPTH
           (padTo MAP_TREE_DEPTH [imtLeafHash oddSponge ⟨1, 7, 5⟩, x]) :=
-  slot1Path_recompute _ _ MAP_TREE_DEPTH (by decide) x
+  slot1Path_recompute _ _ MAP_TREE_DEPTH (by decide) x two_le_two_pow_depth
 
 theorem aafiR1_eq : aafiR1
     = perfectRoot oddSponge MAP_TREE_DEPTH
         (padTo MAP_TREE_DEPTH [imtLeafHash oddSponge ⟨1, 7, 5⟩]) := by
+  have hf₀ : ((imtChainOf 5 [((1 : ℤ), (7 : ℤ))]).map (imtLeafHash oddSponge)).length
+      ≤ 2 ^ MAP_TREE_DEPTH := by
+    rw [List.length_map, imtChainOf_length]
+    show 1 ≤ 2 ^ MAP_TREE_DEPTH
+    exact Nat.one_le_pow _ 2 (by norm_num)
+  have hf₁ : ([imtLeafHash oddSponge ⟨1, 7, 5⟩] : List ℤ).length ≤ 2 ^ MAP_TREE_DEPTH := by
+    show 1 ≤ 2 ^ MAP_TREE_DEPTH
+    exact Nat.one_le_pow _ 2 (by norm_num)
   show padImtRoot 5 oddSponge MAP_TREE_DEPTH [(1, 7)] = _
-  rw [padImtRoot_unfold, bite_chain]
+  rw [padImtRoot_unfold, padTo_congr (bite_chain 1 7 5) hf₀ hf₁]
 
 theorem bite_chain2 : (imtChainOf biteSent [(1, 7), (5, 2)]).map (imtLeafHash oddSponge)
     = [imtLeafHash oddSponge ⟨1, 7, 5⟩, imtLeafHash oddSponge ⟨5, 2, biteSent⟩] := rfl
@@ -1281,8 +1360,16 @@ theorem bite_chain2 : (imtChainOf biteSent [(1, 7), (5, 2)]).map (imtLeafHash od
 theorem aafiNewRoot_eq : aafiNewRoot
     = perfectRoot oddSponge MAP_TREE_DEPTH (padTo MAP_TREE_DEPTH
         [imtLeafHash oddSponge ⟨1, 7, 5⟩, imtLeafHash oddSponge ⟨5, 2, biteSent⟩]) := by
+  have hf₀ : ((imtChainOf biteSent [((1 : ℤ), (7 : ℤ)), ((5 : ℤ), (2 : ℤ))]).map
+      (imtLeafHash oddSponge)).length ≤ 2 ^ MAP_TREE_DEPTH := by
+    rw [List.length_map, imtChainOf_length]
+    show 2 ≤ 2 ^ MAP_TREE_DEPTH
+    exact two_le_two_pow_depth
+  have hf₁ : ([imtLeafHash oddSponge ⟨1, 7, 5⟩,
+      imtLeafHash oddSponge ⟨5, 2, biteSent⟩] : List ℤ).length ≤ 2 ^ MAP_TREE_DEPTH :=
+    two_le_two_pow_depth
   show padImtRoot biteSent oddSponge MAP_TREE_DEPTH [(1, 7), (5, 2)] = _
-  rw [padImtRoot_unfold, bite_chain2]
+  rw [padImtRoot_unfold, padTo_congr bite_chain2 hf₀ hf₁]
 
 theorem cons_pad_append :
     ([imtLeafHash oddSponge ⟨1, 7, 5⟩, padDigest] : List ℤ)
@@ -1304,7 +1391,12 @@ theorem bite_aafi_row :
     bite_steps_length, aafi_steps2_length, ?_, bite_path_leaf 1 7 biteSent,
     by norm_num, by norm_num [biteSent], bite_path_leaf 1 7 5, ?_, ?_⟩
   · rw [bite_steps_pos, aafi_steps2_pos]; decide
-  · rw [aafi_steps2_recompute, cons_pad_append, aafi_free_slot_is_padding, aafiR1_eq]
+  · have hfCons : ([imtLeafHash oddSponge ⟨1, 7, 5⟩, padDigest] : List ℤ).length
+        ≤ 2 ^ MAP_TREE_DEPTH := two_le_two_pow_depth
+    have hfApp : (([imtLeafHash oddSponge ⟨1, 7, 5⟩] ++ [padDigest] : List ℤ)).length
+        ≤ 2 ^ MAP_TREE_DEPTH := two_le_two_pow_depth
+    rw [aafi_steps2_recompute, padTo_congr cons_pad_append hfCons hfApp,
+      aafi_free_slot_is_padding, aafiR1_eq]
   · rw [aafi_steps2_recompute, aafiNewRoot_eq]
 
 /-- **★ THE `.aafiInsert` LAW FIRES — the DOUBLE-SPEND TOOTH at the deployed padded commitment.**
@@ -1340,7 +1432,24 @@ theorem bite_aafi_grows :
     rw [hset]
     show 2 ≤ 2 ^ MAP_TREE_DEPTH
     exact two_le_two_pow_depth
-  · show aafiNewRoot = padImtRoot biteSent oddSponge MAP_TREE_DEPTH (Heap.set biteHeap 5 2)
+  · -- ⚠⚠ RED AT HEAD — the SECOND `whnf` timeout, and the same shape as
+    -- `padImt_write_admits_growth`. The `show` is the site that dies: it states the goal in
+    -- `padImtRoot` form when the goal is in `.commit` form, so `whnf` must cross the delta AND the
+    -- depth-16 `padTo`; and `rw [hset]` then rewrites UNDER the capacity proof, whose type mentions
+    -- the very heap being rewritten.
+    -- ⚑ MEASURED 2026-08-03: replacing all three lines with
+    --   `exact (padImtSchema biteSent).commit_congr oddSponge MAP_TREE_DEPTH _ _ hset`
+    -- does NOT close it either — the timeout simply moves from the `show` to the `exact`. So
+    -- `commit_congr` is the right instrument for the SIX dependent-motive `rw` sites in this file
+    -- (it closed all of them) and is NOT sufficient here. The difference is that those sites
+    -- transport a goal already in `.commit` form, while this one has to REACH `.commit` form from
+    -- a root constant defined in `padImtRoot` form.
+    -- ⚠ DO NOT raise `maxHeartbeats`. The repair is to define `aafiNewRoot` as
+    -- `(padImtSchema biteSent).commit oddSponge MAP_TREE_DEPTH [(1, 7), (5, 2)] _` — the form
+    -- `biteRoot` already uses (`MapPaddedDenotation` §9, `bite_sizeOk`) — so that this obligation
+    -- is `commit_congr` and nothing else. That is a definitional change with its own re-proof
+    -- obligations (`aafiNewRoot_eq`, `bite_aafi_row`), which is why it is named here, not smuggled.
+    show aafiNewRoot = padImtRoot biteSent oddSponge MAP_TREE_DEPTH (Heap.set biteHeap 5 2)
     rw [hset]
     rfl
 
