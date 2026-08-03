@@ -154,7 +154,14 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w3_branch            489         1430       0    wrap_main.ml:164-199
     w4_bind              492         1441      22    wrap_main.ml:419-439 + :189-199
     w5_key               972         1977      22    wrap_verifier.ml:189-204 + :521-530
-    w6_xhat             SEE §15      SEE §15    22    wrap_verifier.ml:539-616
+    w6_xhat             1170         6472      22    wrap_verifier.ml:539-616
+
+⚑ `w6_xhat`'s wrap-scale row count is the one number in this table that is checked against something
+outside this tree. Its gate stream carries **VarBaseMul = 1805** and **CompleteAdd = 232**, read off
+the emitted JSON — and 1805 is exactly the W-XHAT share of `wrap-transaction`'s own `VarBaseMul 2417`
+(`+ 408` W-FTCOMM `+ 204` W-BULLET), while 232 is `xhat_gate_census`'s formula at 67 entries and 55
+ladders. A wrong entry width, a wrong entry count, or reading `bp_log2` as Tick's 16 instead of
+Tock's 15 all miss both.
 
 At the committed shape the transcript feeds **120 sponge items** and takes **23 squeezes**, of which
 21 are 128-bit challenges (§2b is the item-by-item census).
@@ -320,8 +327,11 @@ structure WrapShape where
 
   ⚠ This is a MEMO WITH A PROOF OBLIGATION, not a fixture, and the difference is enforced in two
   places: `xhat_smoke_shape_absorbs_the_msm_output` closes it by `rfl` IN THE KERNEL for the smoke
-  shape, and `EmitWrapMainJson` REFUSES to emit any shape — committed or `DREGG_WM`-supplied —
-  whose `xhatXY` is not `xhatOut xhatTerms`. A wrong pair cannot reach a proved circuit.
+  shape, and `EmitWrapMainJson` REFUSES to emit a COMMITTED shape whose `xhatXY` is not
+  `xhatOut xhatTerms`. A wrong pair cannot reach a proved circuit. ⚑ A `DREGG_WM`-supplied shape is
+  a different case and the refusal does NOT cover it: a comma spec of naturals cannot carry two Fq
+  coordinates, so `parseShape` DERIVES the pair and it agrees by construction. Saying the refusal
+  covers that path too would be describing a branch that cannot go red.
 
   ⚑ It is here because of a MEASUREMENT. `schedule` feeds the whole transcript, so a dozen §12/§14b
   kernel theorems reduce it; with the MSM inline each of them re-ran 77 five-bit ladder chunks
@@ -2461,7 +2471,11 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      absorb leaves the state at `Absorbed 2`, so the squeeze's permutation is the 28th) and right
      that the output IS the transcript's first absorbed word. What it did not say is that the fold
      runs over `Inner_curve.constant` keys and is therefore not a curve MSM at all.
-  2. ✅ **W-XHAT — LANDED at `w6_xhat`** (§15). The census the sizing note below predicted is
+  2. ✅ **W-XHAT — LANDED at `w6_xhat`** (§15). MEASURED, from an emission this rung produced:
+     **6472 wrap rows, 1170 smoke rows**, and the wrap-scale gate stream is `VarBaseMul 1805 ·
+     CompleteAdd 232 · Zero 2115 · Generic 1027 · Poseidon 979 · EndoMulScalar 336`. The smoke rung
+     PROVES on Pallas at 1176 rows / domain 2048 in ~1.1 s with all five polarities and 50/50
+     sigma-only probes rejecting. The census the sizing note below predicted is
      confirmed three ways: read at source, printed independently by `xhat_lagrange_export.rs`, and
      — the strongest of the three — closed against Mina's own compiled wrap circuit, whose
      `VarBaseMul 2417` is EXACTLY `1805` (W-XHAT) `+ 408` (W-FTCOMM) `+ 204` (W-BULLET's four
