@@ -64,7 +64,7 @@ rev of the same URL via `[patch]`, so the override is a path patch), and every
 
 ```sh
 git clone https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-git -C ../plonky3-recursion checkout 993efecd724261fff3fd894c06cc2525b5532e28
+git -C ../plonky3-recursion checkout fc3c6dfac26e2082653d2a617a1740446ce33f05
 ```
 
 ### A. Run a node and watch it execute a verified turn

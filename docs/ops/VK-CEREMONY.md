@@ -123,13 +123,20 @@ cargo test -p circuit-prove derive_deployed_apex_vk_identity_and_check_fixture -
 #     lookup_recursive_vk accepts iff hash == compute_recursive_vk_hash().
 sed -n '180,186p' circuit-prove/src/recursive_witness_bundle.rs
 
-# (c) The RECURSION_P3_REV embedded id (":122") vs the real dep rev (Cargo.toml:246).
-#     RECONCILED 2026-07-24 — both now 0a4a554e, and scripts/check-p3-rev.sh FAILS if
-#     they ever diverge again (it only WARNed before, which is how they stayed split
-#     from 2026-07-15). No longer a cutover item; this read should show them EQUAL.
-grep -n 'RECURSION_P3_REV' circuit-prove/src/recursive_witness_bundle.rs   # 0a4a554e…
-grep -n 'plonky3-recursion' Cargo.toml                                     # rev 0a4a554e
+# (c) The RECURSION_P3_REV embedded id vs the real dep rev (Cargo.toml:349-352).
+#     ⚑ RECONCILED TWICE. The 2026-07-24 reconcile to 0a4a554e did NOT hold: d7ba0c4d3
+#     (2026-07-30) moved the authoritative pin to fc3c6df and left the constant and four
+#     other mirrors at 0a4a554e for three days. The gate could not say so — the new pin
+#     was abbreviated to seven hex and the gate matched 40-hex only, so it reported the
+#     authoritative pin as VANISHED rather than DRIFTED. Both fixed in d06baa9e0; the
+#     gate now resolves an abbreviated pin through Cargo.lock. This read must show EQUAL.
+grep -n 'RECURSION_P3_REV' circuit-prove/src/recursive_witness_bundle.rs   # fc3c6dfac26e…
+grep -n 'plonky3-recursion' Cargo.toml                                     # rev fc3c6df
+grep -m1 'plonky3-recursion?rev=' Cargo.lock            # resolves #fc3c6dfac26e… (authority)
 bash scripts/check-p3-rev.sh                                               # must be rc=0
+#     ⚠ "must be rc=0" was ASPIRATIONAL, not observed: this gate had never once exited 0
+#     before 2026-08-02. It does now (d06baa9e0), and a 10-arm refuse+anchor harness
+#     pins both poles — scripts/check-p3-rev-selftest.py.
 
 # (d) The append-only regen log the ceremony inherits (last row = the "before").
 tail -3 docs/VK-REGEN-LOG.md
@@ -318,8 +325,14 @@ Cutover:
    step never needed ceremony output: it only needed to know the real dep rev, which
    `Cargo.lock` independently establishes. Bundling it here is *why* it stayed drifted —
    it inherited a blocked ceremony's schedule while `check-p3-rev.sh` could only WARN.
-   The constant (`recursive_witness_bundle.rs:122`) now reads `0a4a554e…`, matching
-   `Cargo.toml:246`, and the gate FAILS on divergence. Reconciling re-keyed
+   The constant now reads `fc3c6dfac26e…`, matching `Cargo.toml:349-352` and the sha
+   `Cargo.lock` resolves, and the gate FAILS on divergence. ⚑ It read `0a4a554e…` until
+   2026-08-02: the 07-24 reconcile was undone three days earlier by `d7ba0c4d3`, and the
+   gate reported the resulting drift as a *vanished pin* because the new pin was
+   abbreviated to seven hex. Re-reconciled in `d06baa9e0`. The reasoning in this item —
+   that the step needs no ceremony output, only the real dep rev, which `Cargo.lock`
+   independently establishes — held up exactly, and is now what the gate itself does.
+   Reconciling re-keyed
    `compute_recursive_vk_hash()`, which is safe to do outside a ceremony because nothing
    external pins that value (producer and verifier both recompute it, and no frozen hex
    KAT of it exists yet — that is what steps 1-2 above introduce). `DREGG_APEX_RECURSION_VK`

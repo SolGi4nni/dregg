@@ -54,7 +54,19 @@ bottom rung is the chain of custody from the verified source to those bytes.
   spanning a nondeterministic-VK-fingerprint fix and an IVC mixed-root forgery
   fix — until 2026-07-24, when `scripts/check-p3-rev.sh` was re-armed to FAIL on
   it (it previously only WARNed) and wired into `ci.yml` (`p3-rev-lockstep`).
-  A forgotten rev-mirror is now a red CI check. The verifier-source label
+  ⚑ **"A forgotten rev-mirror is now a red CI check" was measured false on
+  2026-08-02, and the way it failed is worse than the plain unguarded case.**
+  The mirror was forgotten AGAIN: `d7ba0c4d3` (2026-07-30) moved the
+  authoritative pin to `fc3c6df` and left all five mirrors — `RECURSION_P3_REV`
+  among them — at `0a4a554e`, two fork commits behind, across a FLAG DAY that
+  moves every preprocessed commitment. The gate did go red, so the sentence is
+  true to the letter; but it went red saying *the authoritative pin has
+  vanished*, because `d7ba0c4d3` abbreviated the pin to seven hex and the gate
+  matched `[0-9a-f]{40}`. A red that names the wrong thing is not a guard: for
+  three days it was indistinguishable from the working tree's ordinary churn,
+  which is precisely how a stale proving-system id survives. Reconciled and the
+  matcher repaired in `d06baa9e0`, which also anchors the gate on `Cargo.lock`
+  (what actually compiles) instead of manifest text. The verifier-source label
   (`:134`) and the program-bytes label (`:103`) remain convention-only.
 - **The bytes are a cache of the Lean, and the cache is gated.** A sha256
   rehash proves only self-consistency — a committed file matching the hash
@@ -211,8 +223,14 @@ gaps at this layer (mod-p wrap forgeries, heap-sortedness double-spend,
 cell-birth takeover), each with its fix in the re-keyed VK epoch. The rule
 that keeps commitment bindings at full strength — every 32-byte component binds its source at the
 8-felt ~124-bit encoding, never a 1-felt fold — is the
-[Faithful-Commitment Law](FAITHFUL-COMMITMENT-LAW.md), enforced by an ast-grep
-CI gate and the `Faithful8` type wall.
+[Faithful-Commitment Law](FAITHFUL-COMMITMENT-LAW.md), policed by an ast-grep
+CI gate and the `Faithful8` type wall. ⚑ **"Enforced" overstated it, measured
+2026-08-02: the gate has never passed.** Two production sites violate the law
+right now — `cell/src/commitment.rs:561` (the cap-tree leaf's `target` in the
+canonical state commitment) and `node/src/turn_proving.rs:1159` (whose image is
+`PI[NOTESPEND_NULLIFIER]` and the double-spend freshness key). So this rule is
+stated and watched, not yet held; the two are named rather than suppressed, and
+each needs a Lean-authored AIR change plus a VK epoch to close.
 
 The rung's **linking** content is the `*BindingFromFold` keystone family
 (`metatheory/Dregg2/Circuit/{Dsl,Sovereign,Membership,BlindedMembership,Custom,Hatchery,Deco,Factory,Bridge,Presentation}BindingFromFold.lean`).

@@ -44,7 +44,16 @@ Two soundness lanes deep-scoped this session (fix-shapes, ready to drive):
   emit pass.
 
 New follow-up lanes surfaced while fixing (each named, none laundered):
-- ~~**RECURSION_P3_REV drift**~~ — **CLOSED 2026-07-24.** The VK-hash constant
+- **RECURSION_P3_REV drift** — **REOPENED AND RE-CLOSED 2026-08-02; the 07-24 closure
+  below did not hold.** The identical drift recurred: `d7ba0c4d3` (2026-07-30) moved the
+  authoritative pin to `fc3c6df` and left the constant at `0a4a554e`, two fork commits
+  behind, for three days. The "now FAILS rather than WARNs" claim was true and still did
+  not help — `d7ba0c4d3` wrote the pin abbreviated to seven hex, the gate matched 40-hex
+  only, and it reported the authoritative pin as *vanished* instead of *drifted*. Fixed at
+  the pin AND the matcher in `d06baa9e0`. The general lesson is the one this entry
+  originally drew, one level up: arming a gate is not the same as the gate being able to
+  say what is wrong, and this backlog scored the arming.
+  The 2026-07-24 record, unchanged: The VK-hash constant
   (`c14b5fc0…`) had drifted from the authoritative fork pin (`0a4a554e…`): the
   VK-custody wound made real. It is reconciled, and `check-p3-rev.sh` now FAILS
   rather than WARNs — plus it is finally WIRED into CI (`ci.yml` `p3-rev-lockstep`);

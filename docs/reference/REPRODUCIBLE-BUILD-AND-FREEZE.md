@@ -100,7 +100,15 @@ Several P0 items the launch-readiness bullet names as open are, at HEAD, **done*
   `RECURSION_P3_REV` (`:122`) was `"c14b5fc0…"`, a *different* rev than the `Cargo.toml:246` pin
   `0a4a554e` — 19 fork commits stale, spanning a nondeterministic-VK-fingerprint fix and an IVC
   mixed-root forgery fix. It now matches, and `scripts/check-p3-rev.sh` FAILS on divergence
-  instead of warning. The tautology above is unaffected and remains open.) The settlement
+  instead of warning. The tautology above is unaffected and remains open.
+  ⚑ **AND IT DRIFTED AGAIN, 2026-07-30..08-02.** "It now matches" held for six days.
+  `d7ba0c4d3` moved the authoritative pin to `fc3c6df` and left this constant plus four
+  other mirrors at `0a4a554e`, across a flag day that moves every preprocessed commitment.
+  The gate FAILED the whole time and said the wrong thing — the new pin was abbreviated to
+  seven hex, the gate matched 40-hex only, so it reported the authoritative pin as *vanished*
+  instead of *drifted*. Fixed at the pin and the matcher in `d06baa9e0`; the gate now
+  resolves an abbreviated pin through `Cargo.lock`, which is the only in-tree statement of
+  what actually compiles.) The settlement
   Groth16 VK *beneath* it IS a real external pin (`DREGG_APEX_RECURSION_VK`,
   `apex_shrink_gnark_export.rs:219-220`, fail-closed by `check_apex_vk_identity_pin`, mirrored by
   `chain/gnark/settlement_circuit.go:122`), but it is produced by a toxic-waste dev ceremony
@@ -116,9 +124,15 @@ Several P0 items the launch-readiness bullet names as open are, at HEAD, **done*
   impossible.** `circuit/src/faithful8.rs` is the 8-felt encoding; `circuit/src/ivc.rs:175,184` define
   `ACCUMULATED_HASH_WIDTH = 8`; `ivc.rs:1423` is the anti-laundering tooth (`assert_eq!(…, 8, "the
   faithful floor is 8 felts")`). The `no-degraded-felt` CI job (`ci.yml:287-299`) is an ast-grep tripwire
-  against a lossy 256→31-bit fold reaching a commitment position. The freeze target is to make 8 the
-  *sole* committed width everywhere the apex binds and delete the last 1-felt escape. **RUNS (8-felt
-  path) — freeze = retire the residual 1-felt path.**
+  against a lossy 256→31-bit fold reaching a commitment position. ⚑ **That tripwire does NOT pass at
+  HEAD, measured 2026-08-02, and the "residual 1-felt path" below is not residual — it is live in the
+  deployed commitment.** Two production sites red it: `cell/src/commitment.rs:561`
+  (`cap_root::fold_bytes32(cap.target)`, the cap-tree leaf's target field in the canonical state
+  commitment) and `node/src/turn_proving.rs:1159` (`nullifier_to_field`, whose image is
+  `PI[NOTESPEND_NULLIFIER]` and the key the double-spend freshness search and the
+  `canonical_spent_nullifier_set` consensus anchor run on). They are deliberately not suppressed;
+  repairing them is a Lean-authored AIR change plus a VK epoch, not a Rust edit. **RUNS (8-felt path
+  where it is welded) — freeze = land the two named 1-felt sites, not merely "retire a residual".**
 - **The non-regression differential (Control 4) is design-only.** `docs/VK-REGEN-CONTROLS.md:92`
   ("Control 4 — DIFFERENTIAL … **Not implemented**") specifies member-for-member, name-stable,
   no-narrowing cover between old and new descriptor sets, with a proposed `emit_descriptors.py
@@ -212,8 +226,10 @@ on the PR that introduces it. **This gate is the whole point of Track D's first 
    the `VK-REGEN-LOG.md` row (Control 3). Degree-independent — descriptor AIR shapes do not change with
    the FRI degree (`FRI-CUTOVER-PLAN.md` §4.3).
 2. **Make 8 the sole committed commitment width:** confirm no 1-felt projection reaches an apex-bound
-   position; the `no-degraded-felt` gate (`ci.yml:287`) plus the `ivc.rs:1423` tooth stay green; delete
-   any dead 1-felt commitment path.
+   position; the `ivc.rs:1423` tooth stays green and the `no-degraded-felt` gate (`ci.yml:287`) must
+   *reach* green — ⚠ it has never been green, so "stay green" was the wrong verb. Two production
+   1-felt sites are live (`cell/src/commitment.rs:561`, `node/src/turn_proving.rs:1159`); landing them
+   IS this rung's work, and each is a Lean-authored AIR change plus a VK epoch.
 3. **Implement Control 4** (`VK-REGEN-CONTROLS.md:92`): `emit_descriptors.py --differential <old-rev>`
    enforcing (i) every old key present, (ii) per-member `piCount` + PI-offset stable, (iii) trace width
    monotone, (iv) old constraint set **embeds** in the new via descriptor-IR2 structured embedding (never

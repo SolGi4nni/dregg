@@ -105,7 +105,7 @@ These are restated in `HORIZONLOG.md` (read it first after any context loss).
   history into one root a light client checks.
 - **Plonky3 + the recursion fork.** Core p3 is pinned to rev `82cfad73` (in the
   root `[workspace.dependencies]`); the recursion fork
-  (`github.com/emberian/plonky3-recursion` rev `72ffc56`, branch `update-plonky3-rev`)
+  (`github.com/emberian/plonky3-recursion` rev `fc3c6df`, branch `update-plonky3-rev`)
   carries `RecursionInput::NativeBatchStark`. These are PURE git deps — no
   `[patch]`, no sibling checkout; a fresh clone resolves identically.
 

@@ -24,7 +24,7 @@ a **path patch** onto `../../plonky3-recursion`, pinned in CI at the pushed
 fork tip:
 
 ```
-rev 0a4a554e144f4e60107555ea7a11cd9969d6208b
+rev fc3c6dfac26e2082653d2a617a1740446ce33f05
 ```
 
 This rev is pinned in lockstep by the three workflows that build the wasm:
@@ -32,12 +32,23 @@ This rev is pinned in lockstep by the three workflows that build the wasm:
 `.github/workflows/publish-sdk-ts.yml` (grep `REV=` / the clone step).
 `scripts/check-p3-rev.sh` enforces the lockstep and fails if any of them drifts or
 loses the pin. (The Pages wasm jobs lived in `pages.yml` until 2026-07-26; that
-workflow is now the cargo-free content path and pins nothing.) To build the wasm
-locally:
+workflow is now the cargo-free content path and pins nothing.)
+
+> ⚑ **This rev changed on 2026-08-02, and the lockstep this paragraph claimed did not
+> hold for the three days before it.** `d7ba0c4d3` (2026-07-30) moved the authoritative
+> root pin to `fc3c6df` — abbreviated to seven hex — while all five mirrors, including
+> the recursive VK's proving-system id `RECURSION_P3_REV`, still advertised the previous
+> rev `0a4a554e`, two fork commits behind. `check-p3-rev.sh` matched `[0-9a-f]{40}` only,
+> so it read no rev from the authoritative source and reported the pin as *vanished*
+> rather than as *drifted*: a red nobody could attribute, and the reason this paragraph
+> could be written at all. Reconciled and the matcher repaired in `d06baa9e0`; the gate
+> now accepts a 7–40 hex pin and resolves it through `Cargo.lock`.
+
+To build the wasm locally:
 
 ```sh
 git clone https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+git -C ../plonky3-recursion checkout fc3c6dfac26e2082653d2a617a1740446ce33f05
 cd wasm && RUSTFLAGS='--cfg getrandom_backend="wasm_js" -C link-arg=-zstack-size=33554432' \
   wasm-pack build . --target web --out-dir pkg --release
 ```
@@ -48,11 +59,14 @@ Both RUSTFLAGS travel together or neither works: `.cargo/config.toml` sets the
 the config flags are dropped, after which getrandom 0.3/0.4 refuse to compile for
 wasm32.
 
-(The root workspace pins the same four crates at the SAME rev `0a4a554e` for
-the native lanes — `Cargo.toml:236-239`, plain git deps, no `[patch]`. The revs
+(The root workspace pins the same four crates at the SAME rev `fc3c6df` for
+the native lanes — `Cargo.toml:349-352`, plain git deps, no `[patch]`. The revs
 are circuit/VK-sensitive, so a bump must move the root pins and the three CI
-`REV=` pins together. The `wasm/Cargo.toml` `[patch]` comment's rev claims are
-stale; the workspace `Cargo.toml` and the CI workflows are the authority.)
+`REV=` pins together — that is exactly what 2026-07-30 did not do. The authority
+is now stated precisely: `Cargo.lock` records the full 40-hex sha cargo actually
+resolved, so it is what COMPILES, and `check-p3-rev.sh` anchors on it rather than
+on manifest text. `scripts/p3-rev.env` is the single hand-maintained declaration
+and the gate fails if the two disagree.)
 
 ---
 
