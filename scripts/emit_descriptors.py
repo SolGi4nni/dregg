@@ -1010,19 +1010,22 @@ def _verify_provenance_findings(strict: bool) -> tuple[list[str], dict[str, int]
     # Poseidon2 chip every descriptor's hash sites lower into among them, checked and unreported.
     # A gate that under-reports its own coverage cannot be audited for the coverage it lacks.
     checked: dict[str, int] = {}
+    # ⚑ THE SNAPSHOT LEG, held apart from the invariant legs. See `_FP_LEG_NOTE` below.
+    snapshot: list[str] = []
 
     def check_set(kind: str, recorded: dict[str, str],
-                  on_disk: dict[str, Path]) -> None:
+                  on_disk: dict[str, Path], sink: list[str] | None = None) -> None:
+        sink = failures if sink is None else sink
         checked[kind] = len(set(recorded) | set(on_disk))
         for name, want in recorded.items():
             p = on_disk.get(name)
             if p is None:
-                failures.append(f"{kind}: {name} recorded in the stamp but MISSING on disk")
+                sink.append(f"{kind}: {name} recorded in the stamp but MISSING on disk")
             elif sha256_hex(p.read_bytes()) != want:
-                failures.append(f"{kind}: {name} does NOT match its stamped sha256")
+                sink.append(f"{kind}: {name} does NOT match its stamped sha256")
         for name in on_disk:
             if name not in recorded:
-                failures.append(f"{kind}: {name} on disk but NOT covered by the stamp")
+                sink.append(f"{kind}: {name} on disk but NOT covered by the stamp")
 
     check_set("descriptor", prov.get("descriptor_sha256", {}), {
         p.name: p for p in DESC.iterdir()
@@ -1052,7 +1055,7 @@ def _verify_provenance_findings(strict: bool) -> tuple[list[str], dict[str, int]
         })
     check_set("fp-file", prov.get("fp_file_sha256", {}), {
         str(p.relative_to(ROOT)): p for p in RUST_FP_FILES if p.exists()
-    })
+    }, sink=snapshot)
 
     # NON-VACUITY FLOOR, and it runs HERE — before the routing leg, before any verdict. Every
     # count above is derived from a directory walk and a JSON object, and both can come back
@@ -1106,6 +1109,38 @@ def _verify_provenance_findings(strict: bool) -> tuple[list[str], dict[str, int]
                 f"strict: stamp tree {prov.get('dregg2_tree_hash')} != this checkout's "
                 f"HEAD:metatheory/Dregg2 {current} (the stamp attests a DIFFERENT source)"
             )
+
+    # ⚑ THE SNAPSHOT LEG IS A CEREMONY CLAUSE, not a standing one — and this is a CORRECTION of a
+    # misclassification, not a relaxation. `fp_file_sha256` pins whole SOURCE files. The repo had
+    # already settled what that means, in the docstring of the one provenance check that runs:
+    #
+    #     "`fp_file_sha256` is deliberately NOT checked here: it pins SOURCE files (this file
+    #      among them) that change on every legitimate edit, so it is a provenance SNAPSHOT, not
+    #      a stable invariant — rigging it would make the test red on every source change."
+    #      — effect_vm_descriptors.rs, provenance_json_pins_match_checked_in_descriptor_bytes
+    #
+    # `provenance_stamp_gap` excludes it for the same reason, in the same words. This function was
+    # the third reader and the only one that hard-failed on it. MEASURED 2026-08-02:
+    # `effect_vm_descriptors.rs` took SIXTEEN commits in seven days — it is the hottest file in
+    # the set — so as a standing gate this clause is red after essentially any Rust edit, until
+    # somebody re-stamps. Found the honest way: the first run of this gate from a clean detached
+    # checkout reported it against the very commit that wired the gate in.
+    #
+    # ⚠ NOTHING IS LESS COVERED. The substantive invariant those files carry — that each `*_FP`
+    # constant equals the sha256 of the descriptor JSON it pins — is NOT this leg; it is
+    # `every_descriptor_fp_matches_its_json_bytes`, which runs on every `cargo test -p
+    # dregg-circuit`, cannot rot, and is untouched. This leg answers a different question ("is the
+    # stamp's snapshot of these five source files current?"), which is a RE-STAMP obligation and
+    # belongs exactly where the tree-hash clause already sits: at a ceremony, under `--strict`.
+    # It is never SILENT — non-strict runs print it by name.
+    if strict:
+        failures.extend(snapshot)
+    elif snapshot:
+        print("verify-provenance: fp-file SNAPSHOT is stale (a re-stamp obligation, NOT "
+              "descriptor drift; `--strict` fails on it, and the *_FP↔JSON invariant is gated by "
+              "`every_descriptor_fp_matches_its_json_bytes` on every cargo test):")
+        for s in snapshot:
+            print(f"  · {s}")
 
     _LAST_MODE[0] = prov.get("mode")
     _LAST_TREE[0] = str(prov.get("dregg2_tree_hash"))
