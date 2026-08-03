@@ -373,7 +373,12 @@ pub fn attestation_commitment(att: &ZkOracleAttestation) -> [u8; 32] {
     h.update(&(pres.recv.len() as u64).to_le_bytes());
     h.update(&pres.recv);
     h.update(&pres.notary_sig);
-    h.update(&att.content_commit.as_u32().to_le_bytes());
+    // The cross-leg content commitment, ALL EIGHT LANES (widened 2026-08-01; it was
+    // `as_u32()` on a single felt, and a wide BLAKE3 seeded from a ~30.91-bit value
+    // inherits that value's 2^15.45 collision set exactly, however wide the output looks).
+    for lane in &att.content_commit {
+        h.update(&lane.as_u32().to_le_bytes());
+    }
     h.update(&(att.field_span.offset as u64).to_le_bytes());
     h.update(&(att.field_span.len as u64).to_le_bytes());
     // THE LIVE AUTHENTIC LEG — the REAL MPC-TLS presentation. On a live narration this,

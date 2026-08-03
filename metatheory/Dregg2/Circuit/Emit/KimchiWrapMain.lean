@@ -2325,8 +2325,9 @@ Read off the EMITTED row list wherever the claim is about a row. Every one is ke
 accounted for by `#assert_namespace_axioms` below; there are no new `#guard`s in this section.
 
 ⚠ These reduce the smoke instance's x_hat rows, which is 77 five-bit chunks of Vesta ladder in the
-kernel. That is the reason there are eight of them and not thirty: each one is a real reduction of
-the same object, and the marginal fact is not worth the marginal minute. -/
+kernel. That is the reason there are NINE of them and not thirty: each one is a real reduction of
+the same object, and the marginal fact is not worth the marginal minute. MEASURED — the nine cost
++0.55 GiB of peak elaboration RSS (8.64 → 9.19 GiB) and no wall time at all. -/
 
 /-- The smoke instance's W-XHAT rows, materialised once so the pins share one term. -/
 def xhRows : List WRow := xhatRows tKey true
@@ -2394,9 +2395,17 @@ theorem xhat_top_bits_are_range_checked :
   refine ⟨?_, ?_⟩ <;> decide
 
 /-- ⚑ **DEFECT CLASS 4: NO BASE IS A FREE WITNESS.** Every entry's base — and every correction, and
-`Generators.h` — is pinned by a `Generic` constant row to the value `MinaStepSrsLagrange` holds,
-whose SRS construction `MinaStepSrsLagrangePin` proves reproduces the devnet SRS. Before this rung
-the wrap side emitted no curve base at all; the step side's R3 spent a night with all forty free. -/
+`Generators.h` — is pinned by a `Generic` constant row to the value `MinaStepSrsLagrange` holds.
+Before this rung the wrap side emitted no curve base at all; the step side's R3 spent a night with
+all forty free.
+
+⚠ SAY THE PIN'S REACH EXACTLY. `MinaStepSrsLagrangePin` closes `SRS::<Pallas>::create(16).g` against
+the devnet blockchain Wrap SRS's **first sixteen generators, thirty-two coordinates**, by `decide`.
+It does NOT observe the Vesta basis these bases actually come from (depth 65536); what it
+establishes is that `SRS::create` — the one deterministic generic function both halves go through —
+reproduces Mina's generators where an independent devnet dump exists to check it against. The step
+from there to `LAGRANGE_XY` is an argument about that function, not a checked equality, and the pin
+module says so in its own header. -/
 theorem xhat_every_base_and_correction_is_pinned :
     (List.range (xhN shapeSmoke)).all (fun k =>
       xhHasConstRow (xA shapeSmoke tKey.sp k 0) (xA shapeSmoke tKey.sp k 1)

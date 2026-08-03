@@ -29,14 +29,23 @@ named row pins it.** The three mechanical instruments are:
     floor. ⚠ `occCount = 1` does NOT by itself mean free — a single read can still determine the
     cell (`vDomLog2` below) — so every (c) verdict names its pin instead of inferring one.
 
-## ⚠ THE CORRECTION THIS MODULE LANDS
+## ⚠ THE CORRECTION THIS MODULE LANDED, AND WHAT WAS DONE ABOUT IT
 
-`…Pins11`'s `.wit` census pins **9**, and 9 is R8's program alone. **`ftBuild` has two more**
-(`…Core:3442,3458`), so the assembly's free-witness count is **11**, at both committed shapes. One of
-those two — `permClaimed` — occupies **exactly one cell**, so `eEq perm permClaimed` is an assert
-nothing can fail: it forces a variable no other row reads. `…Core`'s own docblock at §12's `ftCfgRaw`
-says of both witnesses "CHECKED by a row … so a wrong witness is a refusal rather than an accept";
-that is true of `denomInv` and **false of `permClaimed`**.
+`…Pins11`'s `.wit` census pins **9**, and 9 is R8's program alone — `ftBuild` compiles a second
+program. When this module was written that made the assembly's count **11**; one of R6's two,
+`permClaimed`, occupied **exactly one cell**, so `eEq perm permClaimed` was an assert nothing could
+fail. **It is DELETED (2026-08-03)** together with the sentence in `ftCfgRaw`'s docblock that claimed
+both witnesses were checked by a row. The assembly's count is now **10 = 1 + 9**, and §C2 states it
+against both programs so the number cannot again be quoted off one of them.
+
+## ⚠ WHAT ELSE MOVED ON 2026-08-03, and why the numbers below are not the ones first published
+
+  * **`vCipBit` is DERIVED.** It is `bpOdd s 0` — §19 ladder 0's `s_odd` — because upstream absorbs
+    and scales ONE `Other_field.Packed` pair (`step_verifier.ml:256-259`, `:317`). Zero new rows.
+  * **`branch_data` is PINNED.** `branchRows` gained `Prefix_mask`'s suffix half `m₀·(1−m₁) = 0` and
+    `Branch_data.typ`'s own `~assert_16_bits` chain on `domain_log2`
+    (`per_proof_witness.ml:166-168`).
+  * **Word 39 carries upstream's dummy (`0`)** instead of an invented `Challenge`-width fixture.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
 
@@ -45,6 +54,7 @@ namespace Dregg2.Circuit.Emit.KimchiStepMain
 open Dregg2.Circuit.Emit.KimchiTarget (KGateType K_PERMUTS)
 open Dregg2.Circuit.Emit.KimchiPlacement
 open Dregg2.Circuit.Emit.WitnessBuilder (VarEnv envIxBound)
+open Dregg2.Circuit.Emit.KimchiRenderVarBaseMul (fAdd fMul fInv)
 
 set_option autoImplicit false
 set_option maxRecDepth 100000
@@ -85,23 +95,23 @@ def envVarsNoRowReads (env : VarEnv) (rows : List SRow) : List PVar :=
 /-- The top rung at the COMMITTED shape. `…Fixture` carries `tStep`; the row list is this module's. -/
 def rowsStep : List SRow := rungRows tStep .opening true
 
-/-! ## §C2 — ⚑⚑ THE FREE-WITNESS COUNT IS ELEVEN, NOT NINE.
+/-! ## §C2 — ⚑⚑ THE FREE-WITNESS COUNT IS TEN — IT WAS ELEVEN, AND NINE IS ONE PROGRAM'S.
 
 `…Pins11` pins `(finS.fp.prog.filter isWit).length == 4 * 2 + 1`. That is R8's program. The assembly
-compiles TWO straight-line programs and R6's has two more `.wit` slots, so the census that has been
-quoted as the assembly's is a census of one of its two programs. -/
+compiles TWO straight-line programs, so the census that has been quoted as the assembly's is a census
+of one of its two. R6's had TWO; one of them, `permClaimed`, was an assert that could not fail and is
+**deleted**, so R6 has one and the assembly has **ten**. -/
 
-/-- ⚑ **ELEVEN, and the split is 2 + 9** — at BOTH committed shapes, so this is a fact about the
-emitter and not about a fixture. R6's two are `denomInv` and `permClaimed` (`…Core:3442,3458`); R8's
-nine are `lowest_128_bits`' high part plus four `Field.equal` `(inverse, bit)` pairs
-(`…Core:4314,4321-4322`). -/
-theorem the_assembly_compiles_eleven_free_witness_slots :
-    ((witSlots tS.ft.fp.prog).length = 2
+/-- ⚑ **TEN, and the split is 1 + 9** — at BOTH committed shapes, so this is a fact about the emitter
+and not about a fixture. R6's one is `denomInv` (`ftBuild`'s witnessed-inverse device); R8's nine are
+`lowest_128_bits`' high part plus four `Field.equal` `(inverse, bit)` pairs. -/
+theorem the_assembly_compiles_ten_free_witness_slots :
+    ((witSlots tS.ft.fp.prog).length = 1
      ∧ (witSlots tS.fin.fp.prog).length = 9
-     ∧ (witSlots tStep.ft.fp.prog).length = 2
+     ∧ (witSlots tStep.ft.fp.prog).length = 1
      ∧ (witSlots tStep.fin.fp.prog).length = 9) := by
   native_decide
-#assert_compiled the_assembly_compiles_eleven_free_witness_slots
+#assert_compiled the_assembly_compiles_ten_free_witness_slots
 
 /-- …and the R8 nine are exactly the slots `…Pins11`'s guard counts, named rather than totalled:
 `xiHi`, then `(eqInv, eqBit)` at each of the four `Field.equal` gadgets. An equality against the
@@ -112,7 +122,7 @@ theorem r8s_nine_witnesses_are_xiHi_and_four_equality_gadgets :
   native_decide
 #assert_compiled r8s_nine_witnesses_are_xiHi_and_four_equality_gadgets
 
-/-! ### ⚑ R6's TWO — one pinned, one an assert that cannot fail. -/
+/-! ### ⚑ R6's ONE — pinned; the second was an assert that could not fail and is gone. -/
 
 /-- R6's first witness is the `denomInv` of §9b's witnessed-inverse device, and it IS pinned: the
 slot immediately after it multiplies `denom` by it, and the slot after that asserts the product
@@ -126,32 +136,36 @@ theorem ft_denom_inverse_is_multiplied_and_asserted_against_one :
   native_decide
 #assert_compiled ft_denom_inverse_is_multiplied_and_asserted_against_one
 
-/-- ⚑⚑ **R6's SECOND WITNESS IS AN ASSERT THAT CANNOT FAIL.** `permClaimed` (`…Core:3458`) is
-followed by `eEq perm permClaimed`, and `permClaimed` **occupies exactly one permutation cell in the
+/-- ⚑⚑ **R6'S SECOND WITNESS WAS AN ASSERT THAT COULD NOT FAIL, AND IT IS GONE.** `permClaimed` was
+an `eWit` followed by `eEq perm permClaimed`, and it occupied **exactly one permutation cell in the
 whole emitted schedule** — that assert's own. A row whose only novel operand is a variable no other
-row reads constrains the prover not at all: he sets `permClaimed := perm` and the row closes.
+row reads constrains the prover not at all: he set `permClaimed := perm` and the row closed.
 
-⚠ This is NOT a forgery surface, because the check upstream actually wants IS emitted elsewhere —
+This states the deletion rather than the defect, so a rung that puts a second witness back reds here:
+R6's program has ONE `.wit`, its next slot is the `denom · denomInv` multiplication (not an `aeq`),
+and the program's LAST slot is the `perm` scalar itself rather than an assert.
+
+⚠ It was never a forgery surface, because the check upstream actually wants is emitted elsewhere —
 R8's `permActual` reads `slots.perm`, the COMPUTED slot, and `pc` compares it against the statement's
-`vPermShift` (`…Core:4270,4336`). `permClaimed` is a vestige of the design before R8 existed. What it
-costs is one `Generic` half and one false sentence in `ftCfgRaw`'s docblock. -/
-theorem ft_perm_claimed_is_an_assert_that_cannot_fail :
-    (let w := (witSlots tS.ft.fp.prog).getD 1 0
-     tS.ft.fp.prog.getD (w + 1) default = AOp.aeq tS.ft.fp.slots.perm w
-      ∧ occCount rowsS (aVarAt (baseFtS shapeSmoke) tS.ft.fp.prog w) = 1
-      ∧ occCount rowsStep (aVarAt (baseFtS shapeStep) tStep.ft.fp.prog w) = 1) := by
+`vPermShift`. What it cost was one `Generic` half and one false sentence in `ftCfgRaw`'s docblock;
+both are retired. -/
+theorem r6_has_one_witness_and_no_assert_that_cannot_fail :
+    ((witSlots tS.ft.fp.prog).length = 1
+      ∧ (let w := (witSlots tS.ft.fp.prog).headD 0
+         tS.ft.fp.prog.getD (w + 1) default = AOp.mul (w - 1) w)
+      ∧ tS.ft.fp.prog.getD (tS.ft.fp.prog.size - 1) default
+          = tS.ft.fp.prog.getD tS.ft.fp.slots.perm default) := by
   native_decide
-#assert_compiled ft_perm_claimed_is_an_assert_that_cannot_fail
+#assert_compiled r6_has_one_witness_and_no_assert_that_cannot_fail
 
-/-- …and the pin that says the REAL check is elsewhere, so the paragraph above is not an excuse: R8's
-`permActual` is the ft program's COMPUTED `perm` slot, and the slot `permClaimed` sits in is a
-different one. -/
-theorem r8_checks_the_computed_perm_and_not_the_claimed_one :
+/-- …and the pin that says the REAL check is elsewhere, so the deletion removed no check: R8's
+`permActual` is the ft program's COMPUTED `perm` slot. -/
+theorem r8_checks_the_computed_perm_and_not_a_claimed_one :
     ((finWireOf shapeSmoke tS.ft).permActual
         = AOp.inp (aVarAt (baseFtS shapeSmoke) tS.ft.fp.prog tS.ft.fp.slots.perm)
-     ∧ tS.ft.fp.slots.perm ≠ (witSlots tS.ft.fp.prog).getD 1 0) := by
+     ∧ tS.ft.fp.slots.perm ≠ (witSlots tS.ft.fp.prog).headD 0) := by
   native_decide
-#assert_compiled r8_checks_the_computed_perm_and_not_the_claimed_one
+#assert_compiled r8_checks_the_computed_perm_and_not_a_claimed_one
 
 /-! ## §C3 — THE CELLS THE GRID NEVER READS.
 
@@ -160,29 +174,34 @@ forgery surface — nothing reads them — but each is either a dead entry (whic
 trip over exactly as the `qPrime` regression did, in the other direction) or a cell whose consumer
 this shape does not instantiate. -/
 
-/-- ⚑ **NINETEEN at the committed shape, TWENTY-ONE at the smoke one**, and the difference is the two
+/-- ⚑ **TWENTY at the committed shape, TWENTY-TWO at the smoke one**, and the difference is the two
 sourceless statement words: at `shapeSmoke` there are three MSM terms, so words 11 and 39 have no
-ladder to be read by, and at `shapeStep` they do (§C4). The other nineteen are the same at both. -/
-theorem the_grid_never_reads_nineteen_environment_cells :
-    ((envVarsNoRowReads (circuitEnv tStep) rowsStep).length = 19
-     ∧ (envVarsNoRowReads (circuitEnv tS) rowsS).length = 21) := by
+ladder to be read by, and at `shapeStep` they do (§C4). ⚠ It was nineteen/twenty-one when this
+module landed; `permClaimed`'s deletion took ONE assert output out, and the lazy-sponge rung's
+post-absorb lanes put two dead lanes in. -/
+theorem the_grid_never_reads_twenty_environment_cells :
+    ((envVarsNoRowReads (circuitEnv tStep) rowsStep).length = 20
+     ∧ (envVarsNoRowReads (circuitEnv tS) rowsS).length = 22) := by
   native_decide
-#assert_compiled the_grid_never_reads_nineteen_environment_cells
+#assert_compiled the_grid_never_reads_twenty_environment_cells
 
-/-- …and they are accounted for, family by family, so "nineteen" is a census and not a number.
-**Eighteen are `.aeq` output slots** — `aHalf` gives an `.aeq` no cell of its own (`…Core:2957`), so
-the inert slot every assert produces is an environment entry with no row, three in R6's program and
-fifteen in R8's. **The nineteenth is `vDHi 0`**, the high half of §8g's ξ chain, which `xiDefRows`
-never emits because ξ's source is already a `Challenge.t` and upstream splits nothing there either
-(simplification #1). ⚠ It is carried at value 0 by `circuitEnv`'s `vDHi` map (`…Core:4941`) for both
-chains where only chain 1 has a split. -/
-theorem the_nineteen_are_eighteen_assert_outputs_and_one_dead_split :
+/-- …and they are accounted for, family by family, so "twenty" is a census and not a number.
+**Seventeen are `.aeq` output slots** — `aHalf` gives an `.aeq` no cell of its own, so the inert slot
+every assert produces is an environment entry with no row, TWO in R6's program (it was three, and the
+third was `permClaimed`'s) and fifteen in R8's. **One is `vDHi 0`**, the high half of §8g's ξ chain,
+which `xiDefRows` never emits because ξ's source is already a `Challenge.t` and upstream splits
+nothing there either (simplification #1); it is carried at value 0 by `circuitEnv`'s `vDHi` map for
+both chains where only chain 1 has a split. **The remaining two are post-absorb lanes** the lazy
+sponge no longer reads. -/
+theorem the_twenty_are_seventeen_assert_outputs_and_a_dead_split_and_two_lanes :
     (occCount rowsStep (vDHi shapeStep 0) = 0
      ∧ occCount rowsStep (vDHi shapeStep 1) = 2
-     ∧ ((tStep.ft.fp.prog.toList ++ tStep.fin.fp.prog.toList).countP
-          (fun o => match o with | .aeq _ _ => true | _ => false)) = 18) := by
+     ∧ ((tStep.ft.fp.prog.toList).countP
+          (fun o => match o with | .aeq _ _ => true | _ => false)) = 2
+     ∧ ((tStep.fin.fp.prog.toList).countP
+          (fun o => match o with | .aeq _ _ => true | _ => false)) = 15) := by
   native_decide
-#assert_compiled the_nineteen_are_eighteen_assert_outputs_and_one_dead_split
+#assert_compiled the_twenty_are_seventeen_assert_outputs_and_a_dead_split_and_two_lanes
 
 /-! ## §C4 — THE STATEMENT WORDS WITH NO IN-CIRCUIT SOURCE.
 
@@ -198,14 +217,21 @@ so `x_hat` moves with it, and no row WRITES it.
 proof` at `step_main.ml:364-366` over `Digest.typ`, which is a bare `Field.typ` transport emitting
 ZERO constraints (`composition_types/digest.ml:60-63`) — so it is a witness of the whole step circuit
 upstream too, and this assembly is FAITHFUL. Word 39 is the lookup `Opt`'s inner scalar; with
-`lookup_verification_enabled = false` upstream packs it as a dummy variable and derives it nowhere
-either, so the honest label is the same — **what this assembly does not model is the sub-circuit that
-would derive it if lookups were ON.** -/
+`lookup_verification_enabled = false` upstream packs it as a dummy and derives it nowhere either, so
+the honest label is the same — **what this assembly does not model is the sub-circuit that would
+derive it if lookups were ON.**
+
+⚑ **SINCE 2026-08-03 word 39 at least carries UPSTREAM'S NUMBER.** `STMT_LOOKUP_VAL` was an invented
+`Challenge`-width fixture; it is now `0`, which is what
+`~lookup_parameters:{ zero = { var = { challenge = Field.zero } } }` (`step_main.ml:90-95`) and
+`Common.Lookup_parameters.tick_zero` (`common.ml:105-118`) make the `Opt`'s dummy scalar challenge.
+That pins the VALUE and nothing else: the cell count is unchanged and no row writes it. -/
 theorem the_two_sourceless_statement_words_reach_only_their_own_ladder :
     (occCount rowsStep (vStmtWrapMsgs shapeStep) = 1
      ∧ occCount rowsStep (vStmtLookup shapeStep) = 1
      ∧ stmtVar shapeStep 11 = vStmtWrapMsgs shapeStep
-     ∧ stmtVar shapeStep 39 = vStmtLookup shapeStep) := by
+     ∧ stmtVar shapeStep 39 = vStmtLookup shapeStep
+     ∧ STMT_LOOKUP_VAL = 0) := by
   native_decide
 #assert_compiled the_two_sourceless_statement_words_reach_only_their_own_ladder
 
@@ -245,42 +271,80 @@ theorem the_opening_response_scalars_own_one_cell_each :
   native_decide
 #assert_compiled the_opening_response_scalars_own_one_cell_each
 
-/-- ⚑ **(a/b) THE `combined_inner_product` BIT.** `absorb sponge Scalar advice.combined_inner_product`
-absorbs the FIELD half and then a `Bits [b]` (`step_verifier.ml:79-81,256`). Here the field half is
-`vCipShift`, a statement word R8 binds; the BIT is `vCipBit`, and its four gate cells are the three
-of `Boolean.typ`'s own `b² = b` and the transcript absorb. **Booleanity is all that constrains it**,
-so a prover has TWO transcripts to choose between — every squeeze after `combined_inner_product`
-(`u`, the fifteen prechallenges, `c`) moves with the bit.
+/-- ⚑⚑ **(CLOSED 2026-08-03) THE `combined_inner_product` BIT IS DERIVED.**
+`absorb sponge Scalar advice.combined_inner_product` absorbs the FIELD half and then a `Bits [b]`
+(`step_verifier.ml:79-81,256-259`). This module first measured the bit as a cell whose ONLY
+constraints were `Boolean.typ`'s `b² = b` and the absorb — **booleanity is not a derivation**, so a
+prover had two transcripts and every squeeze after `combined_inner_product` (`u`, the fifteen
+prechallenges, `c`) moved with the bit.
 
-⚠ ONE BIT is not a grind. It is named here because upstream's bit is not free: `Other_field.Packed`
-is `(Field.t, Boolean.var)` and the pair is the SPLIT of the shifted value, so the bit is its parity
-and is derived. **(b) fidelity gap**, and a one-bit forgery surface at the transcript's input. -/
-theorem the_cip_bit_is_boolean_constrained_and_absorbed_and_nothing_else :
-    (occCount (rowsS.filter (fun r => !r.probe)) (vCipBit shapeSmoke) = 4
-     ∧ occCount rowsS (vCipBit shapeSmoke) = 5
-     ∧ CIP_BIT = 0) := by
+**The closure cost no row**, because upstream's two uses are ONE object: `:256-259` destructures the
+same `Other_field.t = (Field.t * Boolean.var)` pair that `scale_fast2 u advice.combined_inner_product`
+(`:317`) consumes, and `plonk_curve_ops.ml:251-253` names it `(s_div_2, s_odd)`. §19's ladder 0
+already emitted that pair and its `Field.Assert.equal (2·s_div_2 + s_odd) s` split row
+(`:290-291`, the `split_field` shape of `wrap_main.ml:69-81`). So `vCipBit = bpOdd 0`, and the
+absorbed bit IS the parity that row forces off `vCipShift`.
+
+⚠ **SAY THE RESIDUAL.** The split row plus the ladder's `bits_lsb.(254) = 0` gives
+`h < 2^254`, which does NOT make the parity unique: `2h + b ≡ x (mod p)` admits the wrong parity at
+`h = (x − b + p)/2 < 2^254` for all but a ~2^−128 fraction of `x`. What changed is that the bit is no
+longer free OF THE ASSEMBLY — flipping it moves `bpDiv2 0`, hence `uc`, `q` and `lhs`, so the second
+transcript costs a re-solved `G`. **Upstream's gadget carries the same residual**
+(`wrap_main.ml:64-67` defers the fit-check to `scale_fast2`, which checks 254 bits, not `< p/2`), so
+this is a fidelity match and not a proof that one transcript remains. -/
+theorem the_cip_bit_is_ladder_zeros_derived_parity :
+    (vCipBit shapeSmoke = bpOdd shapeSmoke 0
+     ∧ vCipBit shapeStep = bpOdd shapeStep 0
+     ∧ msgVar shapeStep (oCip shapeStep) 1 = bpOdd shapeStep 0
+     ∧ bpScalV shapeStep 0 = vCipShift shapeStep
+     ∧ (cipWordOf tS).2 = tS.fin.cipShift % 2
+     ∧ fAdd (fAdd (tS.bp.scals.headD 0 / 2) (tS.bp.scals.headD 0 / 2)) ((cipWordOf tS).2)
+         = tS.fin.cipShift) := by
   native_decide
-#assert_compiled the_cip_bit_is_boolean_constrained_and_absorbed_and_nothing_else
+#assert_compiled the_cip_bit_is_ladder_zeros_derived_parity
 
-/-- ⚑ **(b) `branch_data`'s TWO MASK BITS ARE PROVER-CHOSEN AMONG FOUR, AND UPSTREAM ADMITS THREE.**
-`branchRows` (`…Core:4003-4009`) emits `Boolean.typ`'s `b² = b` on each bit and
-`Branch_data.Checked.pack`'s `4·domain_log2 + (m₀ + 2·m₁) = branch_data`. That is ONE equation over
-`(m₀, m₁, domain_log2, branch_data)` with `branch_data` a statement word and `vDomLog2` occurring
-**in exactly that one cell** — so the prover picks the two bits freely and solves for `domLog2`.
-`Prefix_mask.there` admits only `[0,0]`, `[0,1]`, `[1,1]` (`pickles_base/proofs_verified.ml:75-81`);
-`[1,0]` closes here.
+/-- ⚑⚑ **(CLOSED 2026-08-03) `branch_data`'s TRIPLE IS PINNED.** `branchRows` used to emit only
+`Boolean.typ`'s `b² = b` on each bit and `Branch_data.Checked.pack`'s
+`4·domain_log2 + (m₀ + 2·m₁) = branch_data`. That is ONE equation over four unknowns with
+`branch_data` a statement word and `vDomLog2` occurring **in exactly that one cell** — so the prover
+picked the two bits freely and solved for `domLog2`, and `Prefix_mask.there` admits only `[0,0]`,
+`[0,1]`, `[1,1]` (`pickles_base/proofs_verified.ml:75-81`) while `[1,0]` closed here.
 
-⚠ It is a CLAIM, not a hidden choice: the mask moves `combined_inner_product` (§12l) and the
-opt-sponge digest (§14a), and `branch_data` is Wrap statement word 29, which the x_hat ladder reads.
-⚠ And `vDomLog2` carries no range check, where `per_proof_witness.ml:166-168` allocates `Branch_data`
-with `~assert_16_bits:(Step_verifier.assert_n_bits ~n:16)`. -/
-theorem the_branch_mask_bits_are_only_boolean_and_domain_log2_owns_one_cell :
-    (occCount rowsS (vDomLog2 shapeSmoke) = 1
-     ∧ occCount rowsStep (vDomLog2 shapeStep) = 1
+Two rows landed and each refuses a different thing:
+
+  * **the suffix half `m₀ − m₀·m₁ = 0`** (`m₀ ≤ m₁`) — this is what refuses the illegal `[1,0]`;
+  * **`Branch_data.typ`'s own `~assert_16_bits`** on `domain_log2`
+    (`per_proof_witness.ml:166-168`), a `to_field_checked ~num_bits:16` = ONE `EndoMulScalar` row —
+    this is what refuses the two LEGAL masks that are not the honest one, because
+    `(branch_data − maskPack)·4⁻¹` is a 16-bit integer for exactly one of `{0, 2, 3}` and a
+    full-width field element for the other two.
+
+`vDomLog2` now owns TWO cells (the pack row and the chain's `Field.Assert.equal n scalar` tie), and
+the mask bits carry a third gate row. -/
+theorem the_branch_triple_is_pinned_by_the_suffix_row_and_the_16_bit_chain :
+    (occCount rowsS (vDomLog2 shapeSmoke) = 2
+     ∧ occCount rowsStep (vDomLog2 shapeStep) = 2
      ∧ occCount rowsS (vMaskPack shapeSmoke) = 3
-     ∧ MASK_BITS = [0, 1]) := by
+     ∧ MASK_BITS = [0, 1]
+     ∧ RNG_DOMLOG2_ROWS = 1
+     ∧ 16 * RNG_DOMLOG2_ROWS = 16) := by
   native_decide
-#assert_compiled the_branch_mask_bits_are_only_boolean_and_domain_log2_owns_one_cell
+#assert_compiled the_branch_triple_is_pinned_by_the_suffix_row_and_the_16_bit_chain
+
+/-- ⚑ **THE ILLEGAL MASK, MEASURED IN BOTH POLARITIES.** `[1,0]` satisfies booleanity and, with
+`domain_log2` re-solved, `Checked.pack` — so the pre-fix row set admitted it. The suffix half
+`m₀·(1 − m₁) = 0` is zero on the three `Prefix_mask.there` masks and NONZERO on `[1,0]`, which is the
+whole content of the refusal; and the `domain_log2` the other two legal masks imply is not a 16-bit
+integer, which is the whole content of the second. Stated over the coefficients rather than over a
+re-emitted grid, so it is a fact about the ROW and not about one witness. -/
+theorem the_illegal_mask_is_the_only_one_the_suffix_row_rejects :
+    (([(0, 0), (0, 1), (1, 1)]).all (fun m => fSub m.1 (fMul m.1 m.2) == 0)
+     ∧ fSub 1 (fMul 1 0) ≠ 0
+     ∧ (branchPacked - 2) / 4 = BRANCH_DOMAIN_LOG2
+     ∧ ¬ (fMul (fSub branchPacked 0) (fInv 4) < 2 ^ 16)
+     ∧ ¬ (fMul (fSub branchPacked 3) (fInv 4) < 2 ^ 16)) := by
+  native_decide
+#assert_compiled the_illegal_mask_is_the_only_one_the_suffix_row_rejects
 
 /-- ⚑ **(b, faithful) `prev_challenges`.** Each of the `2·bRounds` carried challenges owns FOUR cells
 — segment A's absorb, segment C's absorb, and its two `f_c` ladder reads (§8i) — and no row writes
@@ -342,17 +406,27 @@ theorem the_combine_prefix_is_derived_and_the_columns_are_supplied :
 The three instruments, at the committed shape, in one statement — so a rung that moves any of them
 without saying so reds in one place. -/
 
-/-- ⚑⚑ **THE CENSUS.** Eleven declared free-witness slots (2 in R6, 9 in R8); nineteen environment
-cells the grid never reads; two statement words with no in-circuit source, each reaching exactly its
-own ladder; nine statement words with no cell at all; and the opening's three free cells
-(`z₁`, `z₂`, `G`) still standing between a substituted commitment and acceptance. -/
+/-- ⚑⚑ **THE CENSUS, 2026-08-03.** TEN declared free-witness slots (1 in R6, 9 in R8); twenty
+environment cells the grid never reads; two statement words with no in-circuit source, each reaching
+exactly its own ladder; nine statement words with no cell at all; and the opening's three free cells
+(`z₁`, `z₂`, `G`) still standing between a substituted commitment and acceptance.
+
+⚑ **WHAT MOVED, AND WHAT DID NOT.** Three cells left the "prover chooses, and the choice changes what
+the circuit accepts" list this rung: `vCipBit` (derived — ladder 0's `s_odd`), and both
+`proofs_verified_mask` bits with `vDomLog2` behind them (pinned by the suffix row and the 16-bit
+chain). `permClaimed` left the free-witness list without ever having been on the changes-acceptance
+one. **`z₁`, `z₂` and `G` did not move, and `equal_g` still accepts a substituted commitment** —
+their binder is the accumulator opening leg, which is a discrete-log assumption in BOTH
+implementations and is not a rung. -/
 theorem the_step_prover_choice_census :
-    ((witSlots tStep.ft.fp.prog).length + (witSlots tStep.fin.fp.prog).length = 11
-     ∧ (envVarsNoRowReads (circuitEnv tStep) rowsStep).length = 19
+    ((witSlots tStep.ft.fp.prog).length + (witSlots tStep.fin.fp.prog).length = 10
+     ∧ (envVarsNoRowReads (circuitEnv tStep) rowsStep).length = 20
      ∧ occCount rowsStep (vStmtWrapMsgs shapeStep) = 1
      ∧ occCount rowsStep (vStmtLookup shapeStep) = 1
      ∧ occCount rowsStep (bpZ1 shapeStep) = 1
-     ∧ occCount rowsStep (bpZ2 shapeStep) = 1) := by
+     ∧ occCount rowsStep (bpZ2 shapeStep) = 1
+     ∧ vCipBit shapeStep = bpOdd shapeStep 0
+     ∧ occCount rowsStep (vDomLog2 shapeStep) = 2) := by
   native_decide
 #assert_compiled the_step_prover_choice_census
 

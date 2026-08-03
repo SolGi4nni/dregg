@@ -142,9 +142,29 @@ pub extern "C" fn dreggcf_poseidon2_2to1(left: u64, right: u64) -> u64 {
 /// as the carried STARK bridges a BLAKE3 commitment (`poseidon2::hash_bytes` over
 /// the 32-byte digest). The `dregg_blake3_hash` portal is `List Nat -> Nat`; the C
 /// shim flattens the list's per-element low bytes into `data` and we return a
-/// single field element (Nat-range). A full 256-bit digest does not fit a Nat
-/// scalar, so the field-reduced form is the faithful Nat-shaped result (the same
-/// reduction the in-circuit Merkle uses).
+/// single field element.
+///
+/// # ⚑ CLASS (A), NAMED NOT MIGRATED — and the old justification here was WRONG
+///
+/// Classified 2026-08-01 in the `hash_bytes` caller sweep. This docstring used to say *"a full
+/// 256-bit digest does not fit a Nat scalar, so the field-reduced form is the faithful
+/// Nat-shaped result"*. **A Lean `Nat` is unbounded** — it holds 2^256 with no trouble, and
+/// `lean_uint64_to_nat` in `scripts/crypto-floor.c` is what actually caps this at 64 bits. So
+/// the width here is a choice of the C ABI (`uint64_t`), not a consequence of the portal type,
+/// and squeezing further to 30.906891 bits via `as_u32()` is a second, unforced loss on top.
+///
+/// A collision costs `2^15.4534` (~44,900 evaluations, milliseconds) and a second preimage
+/// `2^30.91`, so this returns a value that binds a transcript at ~31 bits while the BLAKE3 it
+/// wraps binds it at 256. Whatever the confined executor compares this against is comparing
+/// 31 bits.
+///
+/// **The fix is an ABI change, and it belongs to the executor-PD portal, not to this sweep:**
+/// return the 32-byte digest through the portal (the honest primitive
+/// [`dreggcf_blake3_digest`] already exists right below and is unused by the portal), or —
+/// if a scalar return is structural — at minimum stop discarding the 33 bits `uint64_t`
+/// already carries. Changing this crate's return type alone desynchronises
+/// `scripts/crypto-floor.c` and the Lean portal declaration, which is why it is named here
+/// rather than half-done.
 ///
 /// # Safety
 /// `data` must point to `len` readable bytes (or be null iff `len == 0`).
@@ -207,6 +227,28 @@ pub extern "C" fn dreggcf_nullifier(note: u64) -> u64 {
 /// (not a stub) using the carried hash — the assumption shifts from "HMAC-SHA256
 /// unforgeable" to "BLAKE3-keyed unforgeable", both standard. The C shim packs the
 /// key/msg Nats into bytes.
+///
+/// # ⚑ CLASS (A), NAMED NOT MIGRATED — AND THIS IS THE SHARPEST ONE IN THE FILE
+///
+/// The BLAKE3 keyed hash is EUF-CMA at 256 bits; the last line of this function
+/// (`poseidon2::hash_bytes(tag.as_bytes()).as_u32()`) hands back a **~30.906891-bit MAC tag**.
+/// A truncated MAC is not a MAC at its underlying strength — it is a MAC at the truncation
+/// width. Derived: a forger who can pick two messages finds a tag collision in `2^15.4534`
+/// (~44,900 evaluations); a forger targeting one message's tag succeeds in `2^30.91` offline
+/// evaluations, or ~`2^30.9` online guesses against a verifier with no rate limit. For a
+/// macaroon CAVEAT CHAIN — which is what the portal names this for — that is the whole
+/// attenuation guarantee: forge the tag, drop the caveats.
+///
+/// So the docstring's "the assumption shifts from HMAC-SHA256 unforgeable to BLAKE3-keyed
+/// unforgeable, both standard" is true of the MAC and **not true of this function**: the
+/// operative assumption after the truncation is 31-bit unforgeability, which is not standard
+/// and not satisfied.
+///
+/// **Not migrated here for the same reason as [`dreggcf_blake3_to_field`]:** the width is set
+/// by the `uint64_t` C ABI in `sel4/dregg-pd/executor-pd/scripts/crypto-floor.c` (`:221`,
+/// `lean_uint64_to_nat`) and the Lean portal declaration, not by anything this crate owns — and
+/// the Lean `Nat` the portal returns is unbounded, so nothing forces a scalar at all. Widening
+/// the Rust return alone desynchronises the shim. Owner: the executor-PD portal.
 ///
 /// # Safety
 /// `msg` must point to `msg_len` readable bytes (or null iff `msg_len==0`).

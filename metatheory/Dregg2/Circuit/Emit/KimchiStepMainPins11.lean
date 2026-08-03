@@ -138,7 +138,8 @@ theorem cipUsed_is_not_the_unmasked_fold :
 #assert_compiled cipUsed_is_not_the_unmasked_fold
 
 -- ── (d) `xi_correct` — the fr-sponge's own squeeze ────────────────────────────────────────────
--- ⚑ `xi_actual = lowest_128_bits (squeeze sponge)` (`step_verifier.ml:820-822,1102`), and the
+-- ⚑ `xi_actual = lowest_128_bits (squeeze sponge)` (`step_verifier.ml:821-822`; `xi_correct` itself
+-- is `:1010-1013`, and `lowest_128_bits` is `:99-101` over `util.ml:78-101`), and the
 -- squeeze is R7 segment B's — an assembly variable, not a fixture.
 #guard finVal finS.fp.slots.xiActual == finS.xiStmt
 #guard finS.xiStmt == Dregg2.Circuit.Emit.KimchiVerify.low128 (frSqueezeVal tS.segB tS.specB)

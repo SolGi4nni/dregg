@@ -42,6 +42,7 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::effect_vm::layout_generated::{B_SPAN, B_STATE_COMMIT, ROTATED_FIELD_LANE_COL};
 use dregg_circuit::effect_vm::{field_from_lanes9, field_limbs9};
+use dregg_circuit::effect_vm_descriptors::{WIDE_UMEM_WELD_SUFFIX, welded_wide_members};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 
@@ -324,15 +325,23 @@ fn the_welded_face_and_the_decode_disagree_on_the_same_committed_columns() {
 // THE CENSUS — read off the emitted registries, not asserted from a constant
 // ════════════════════════════════════════════════════════════════════════════════════
 
-const REGISTRIES: [&str; 3] = [
+const REGISTRY_TSVS: [&str; 2] = [
     "descriptors/rotation-v3-staged-registry.tsv",
     "descriptors/rotation-wide-registry-staged.tsv",
-    "descriptors/rotation-wide-umem-welded-registry-staged.tsv",
 ];
+
+/// The label the THIRD deployed set answers to. ⚑ It is NOT a path.
+/// `descriptors/rotation-wide-umem-welded-registry-staged.tsv` was a checked-in 10,049,999-byte
+/// materialization of a computation the prover performs anyway, and `681cd3ec8` deleted it: this
+/// census now DERIVES its welded members with [`welded_wide_members`] —
+/// `weld_umem_into_wide_descriptor` over each bare wide member, the same function the deployed
+/// prover calls, with the domain and canonicity splice index coming from the Lean-emitted
+/// `UMEM_WELD_TABLE`.
+const WELDED_DERIVATION: &str = "<derived> effect_vm_descriptors::welded_wide_members()";
 
 fn members() -> Vec<(String, EffectVmDescriptor2)> {
     let mut out = Vec::new();
-    for path in REGISTRIES {
+    for path in REGISTRY_TSVS {
         let src = std::fs::read_to_string(path).unwrap_or_else(|e| {
             panic!(
                 "cannot read {path}: {e}. This census reads the DEPLOYED descriptor bytes; if a \
@@ -349,6 +358,30 @@ fn members() -> Vec<(String, EffectVmDescriptor2)> {
             out.push((format!("{path}::{key}"), d));
         }
     }
+
+    // ⚑ The welded third: CONSTRUCTED, not read. `welded_wide_members()` runs the weld and checks
+    // each result against its Lean contract row on every construction, so a derivation that
+    // produced the wrong object — wrong width / PI count / constraint count, `umemOp` at the wrong
+    // splice, or a host that is not a deployed wide member — PANICS here instead of handing this
+    // census a plausible-looking descriptor. The census that follows then measures real welded
+    // bytes, exactly as it did when it parsed them out of a file.
+    let derived = welded_wide_members();
+    assert_eq!(
+        derived.len(),
+        57,
+        "the derived welded set must cover all 57 wide members — a short cover would silently \
+         shrink this census rather than fail it"
+    );
+    for (key, d) in derived {
+        assert!(
+            d.name.ends_with(WIDE_UMEM_WELD_SUFFIX),
+            "{key}: derived member name {:?} does not carry {WIDE_UMEM_WELD_SUFFIX} — the \
+             derivation handed back the BARE wide member and the welded set is not being measured",
+            d.name
+        );
+        out.push((format!("{WELDED_DERIVATION}::{key}"), d));
+    }
+
     assert!(!out.is_empty(), "the registry reader found no members");
     out
 }

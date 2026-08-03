@@ -631,6 +631,30 @@ GATES=(
   # that path was a formatting success. The full gate needs a fresh wrap emission and is in
   # `pickles-synthesis-oracles.sh`; this row is the part that is answerable on any tree.
   "wrapmain-conformance-red|180|node bridge/mina-zkapp/scripts/wrapmain-region-conformance.mjs --self-test"
+  # ⚑ TWO INSTRUMENTS THAT WERE IN NO SCRIPT AT ALL until 2026-08-03, and both were self-certifying.
+  # `stepmain-shape-diff.mjs` printed two tables and exited 0 — no comparison, no failure counter —
+  # and it is where HORIZONLOG:350's "all five run-length families INTACT: EndoMul 32×77 exactly
+  # Mina's" came from: a human reading a printed table. `curve-gate-oracle.mjs` printed "MATCH Lean"
+  # while reading o1js alone, so it was green for any Lean emitter whatsoever. Both now carry
+  # verdicts, and these rows are their RED PATHS — answerable on any tree, no Lean and no emission:
+  # the shape-diff grades Mina's own gate list against itself as the honest anchor and then bends it
+  # four ways; the curve oracle bends a synthetic coeff-free gate list four ways plus an EMPTY-SET
+  # anchor (an oracle that is green over no rows is the shape the old file had). The full gates need
+  # an emission and live in `pickles-synthesis-oracles.sh`.
+  "stepmain-shape-diff-red|120|node bridge/mina-zkapp/scripts/stepmain-shape-diff.mjs --self-test"
+  "curve-gate-oracle-red|180|node bridge/mina-zkapp/scripts/curve-gate-oracle.mjs --self-test"
+  # ⚑ AND THE FLOOR THOSE GATES DELEGATE FRESHNESS TO, with its own red path. Its THIRD leg — "the
+  # emit cone was COMMITTED at the stamped HEAD" — was recorded as `cone_dirty_at_head` from the day
+  # the module existed and GATED ON NOWHERE: its only consumers interpolated it into a status line.
+  # MEASURED 2026-08-03: the committed stepmain fixture's sidecar carried
+  # `cone_dirty_at_head: [KimchiStepMainCore.lean]` — the module that decides the emitted gates — so
+  # that session's "conformance GREEN, 31/31 byte-exact" was a grade of a working tree no commit
+  # contains, and legs 1 and 2 were green because they hash THAT SAME TREE. This row proves all three
+  # legs refuse (plus a stamp from outside git, plus two anchors that must still be ACCEPTED), and it
+  # re-measures the one-character display bug that hid the field in plain sight: `gitContext` used to
+  # `.trim()` the porcelain output and then `slice(3)`, so the first path lost its first character
+  # (`etatheory/…`). No Lean, no emission, ~0.2s.
+  "emit-provenance-floor-red|60|node bridge/mina-zkapp/scripts/emit-provenance.mjs --self-test"
   # A CLAIM THE CODE DOES NOT CARRY. Every row above this one checks an ARTIFACT — a
   # target, a manifest, a fence, a caller, a row. None of them reads PROSE, and prose was
   # the carrier of six separate wounds on 2026-07-30 alone, every one found by a person

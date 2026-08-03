@@ -22,16 +22,21 @@
 use dregg_cell::note::Note;
 use dregg_cell::program::{CellProgram, HashKind, StateConstraint};
 use dregg_cell::state::CellState;
-use dregg_cell::{felt_to_bytes32, preconditions::EvalContext};
-use dregg_circuit::poseidon2::{hash_bytes, hash_many};
+use dregg_cell::{digest8_to_bytes32, felt_to_bytes32, preconditions::EvalContext};
+use dregg_circuit::poseidon2::{hash_bytes_8, hash_many};
 
 /// THE KAT: a `PreimageGate` tagged `Poseidon2` accepts exactly the slot word
-/// `felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(preimage))` and rejects
+/// `digest8_to_bytes32(dregg_circuit::poseidon2::hash_bytes_8(preimage))` and rejects
 /// any other — i.e. the digest the gate recomputes internally IS the circuit's
-/// `hash_bytes`. Checked over several preimages (including adversarial high-byte
+/// `hash_bytes_8`. Checked over several preimages (including adversarial high-byte
 /// mutations) so the agreement is structural, not a single lucky vector.
+///
+/// ⚑ The slot word was `felt_to_bytes32(hash_bytes(preimage))` until 2026-08-01 — ONE
+/// felt in bytes 0..4, 28 bytes left zero, against the sibling BLAKE3 arm's full 32. See
+/// `cell::program::eval::hash_preimage32` for what that handed an attacker and
+/// `cell/tests/preimage_gate_wide_old_admits_new_rejects.rs` for the measured exhibit.
 #[test]
-fn preimage_gate_poseidon2_equals_circuit_hash_bytes() {
+fn preimage_gate_poseidon2_equals_circuit_hash_bytes_8() {
     let program = CellProgram::Predicate(vec![StateConstraint::PreimageGate {
         commitment_index: 0,
         hash_kind: HashKind::Poseidon2,
@@ -69,16 +74,16 @@ fn preimage_gate_poseidon2_equals_circuit_hash_bytes() {
 
     for preimage in preimages {
         // The circuit's Poseidon2-of-bytes, encoded to the 32-byte slot word.
-        let circuit_digest = felt_to_bytes32(hash_bytes(&preimage));
+        let circuit_digest = digest8_to_bytes32(hash_bytes_8(&preimage));
 
         let mut state = CellState::new(0);
         state.fields[0] = circuit_digest;
 
         // The cell's Poseidon2 gate accepts the real preimage against the
-        // circuit-computed digest → the cell's internal hash == hash_bytes.
+        // circuit-computed digest → the cell's internal hash == hash_bytes_8.
         assert!(
             program.evaluate(&state, None, Some(&ctx(preimage))).is_ok(),
-            "cell Poseidon2 PreimageGate disagrees with circuit hash_bytes for preimage {preimage:?}"
+            "cell Poseidon2 PreimageGate disagrees with circuit hash_bytes_8 for preimage {preimage:?}"
         );
 
         // A one-byte-flipped preimage must NOT satisfy the same slot.

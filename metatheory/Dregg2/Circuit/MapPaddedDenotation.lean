@@ -202,8 +202,9 @@ over the relinked chain (`relink_next_addrs`), zero-padded to `2^d`. -/
 /-! ### §4a — arity-2 padded. -/
 
 /-- **`padMapRoot hash d h`** — the arity-2 binary fold of the zero-PADDED leaf-digest vector. -/
-def padMapRoot (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap) : ℤ :=
-  perfectRoot hash d (padTo d (h.map (Heap.leafOf hash)))
+def padMapRoot (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ d := by heap_fits) : ℤ :=
+  perfectRoot hash d (padTo d (h.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hFits))
 
 /-- **`PadGhost2 hash h`** — a LIVE arity-2 leaf digest of `h` equals the padding constant. -/
 def PadGhost2 (hash : List ℤ → ℤ) (h : Heap.FeltHeap) : Prop := PadHit (h.map (Heap.leafOf hash))
@@ -220,11 +221,15 @@ theorem padGhost2_refuted {hash : List ℤ → ℤ} (hpf : PadFree2 hash) (h : H
 
 /-- The padded arity-2 root extractor: the node descent if it collides, else the leaf scan. TOTAL. -/
 def padMapRootFind (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : Heap.FeltHeap) : List ℤ × List ℤ :=
-  if SpongeColl hash (perfectRootFind hash d (padTo d (h₁.map (Heap.leafOf hash)))
-                                             (padTo d (h₂.map (Heap.leafOf hash))))
-  then perfectRootFind hash d (padTo d (h₁.map (Heap.leafOf hash)))
-                              (padTo d (h₂.map (Heap.leafOf hash)))
-  else Heap.mapLeafFind hash h₁ h₂
+  if hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d then
+    (if SpongeColl hash (perfectRootFind hash d
+          (padTo d (h₁.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hz.1))
+          (padTo d (h₂.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hz.2)))
+     then perfectRootFind hash d
+          (padTo d (h₁.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hz.1))
+          (padTo d (h₂.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hz.2))
+     else Heap.mapLeafFind hash h₁ h₂)
+  else ([], [])
 
 /-- **★ THE PADDED ARITY-2 ROOT BINDS THE HEAP — UNCONDITIONALLY, up to TWO named residuals.** At
 RELAXED occupancy (`≤ 2^d`, the deployed sparse discipline) two heaps publishing the same padded root
@@ -232,24 +237,28 @@ are EITHER equal, OR one of them presents a live leaf digest equal to the paddin
 sponge genuinely collides at the pair the extractor returns. No floor. -/
 theorem padMapRoot_binds_or_ghost_or_collides (hash : List ℤ → ℤ) (d : Nat) {h₁ h₂ : Heap.FeltHeap}
     (hl₁ : h₁.length ≤ 2 ^ d) (hl₂ : h₂.length ≤ 2 ^ d)
-    (heq : padMapRoot hash d h₁ = padMapRoot hash d h₂) :
+    (heq : padMapRoot hash d h₁ hl₁ = padMapRoot hash d h₂ hl₂) :
     h₁ = h₂ ∨ PadGhost2 hash h₁ ∨ PadGhost2 hash h₂
       ∨ SpongeColl hash (padMapRootFind hash d h₁ h₂) := by
-  by_cases hif : SpongeColl hash (perfectRootFind hash d (padTo d (h₁.map (Heap.leafOf hash)))
-                                                         (padTo d (h₂.map (Heap.leafOf hash))))
+  have hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d := ⟨hl₁, hl₂⟩
+  by_cases hif : SpongeColl hash (perfectRootFind hash d
+      (padTo d (h₁.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hl₁))
+      (padTo d (h₂.map (Heap.leafOf hash)) (by rw [List.length_map]; exact hl₂)))
   · refine Or.inr (Or.inr (Or.inr ?_))
-    rw [padMapRootFind, if_pos hif]
+    rw [padMapRootFind, dif_pos hz, if_pos hif]
     exact hif
-  · have hlen₁ : (padTo d (h₁.map (Heap.leafOf hash))).length = 2 ^ d :=
+  · have hlen₁ : (padTo d (h₁.map (Heap.leafOf hash))
+        (by rw [List.length_map]; exact hl₁)).length = 2 ^ d :=
       padTo_length (by rw [List.length_map]; exact hl₁)
-    have hlen₂ : (padTo d (h₂.map (Heap.leafOf hash))).length = 2 ^ d :=
+    have hlen₂ : (padTo d (h₂.map (Heap.leafOf hash))
+        (by rw [List.length_map]; exact hl₂)).length = 2 ^ d :=
       padTo_length (by rw [List.length_map]; exact hl₂)
     rcases perfectRoot_binds_or_collides hash d hlen₁ hlen₂ heq with hpad | hc
     · rcases padTo_eq_or_hit d hpad with hL | hh₁ | hh₂
       · by_cases hne : h₁ = h₂
         · exact Or.inl hne
         · refine Or.inr (Or.inr (Or.inr ?_))
-          rw [padMapRootFind, if_neg hif]
+          rw [padMapRootFind, dif_pos hz, if_neg hif]
           exact Heap.mapLeafFind_spec hash h₁ h₂ hne hL
       · exact Or.inr (Or.inl hh₁)
       · exact Or.inr (Or.inr (Or.inl hh₂))
@@ -291,7 +300,8 @@ theorem ghostSpongeAt_hit (pre : List ℤ) : ghostSpongeAt pre pre = padDigest :
   omega
 
 /-- `[padDigest]` and `[]` pad to the SAME `2^d`-vector — the entire ghost, in one line. -/
-theorem padTo_singleton_pad (d : Nat) : padTo d [padDigest] = padTo d ([] : List ℤ) := by
+theorem padTo_singleton_pad (d : Nat) (h1 : ([padDigest] : List ℤ).length ≤ 2 ^ d)
+    (h0 : ([] : List ℤ).length ≤ 2 ^ d) : padTo d [padDigest] h1 = padTo d ([] : List ℤ) h0 := by
   obtain ⟨m, hm⟩ : ∃ m, 2 ^ d = m + 1 := ⟨2 ^ d - 1, by have := Nat.one_le_pow d 2 (by norm_num); omega⟩
   simp only [padTo, List.length_cons, List.length_nil, List.nil_append, Nat.sub_zero, hm]
   simp [List.replicate_succ]
@@ -304,16 +314,20 @@ theorem padded_ghost2 (a v : ℤ) (d : Nat) :
     Function.Injective (ghostSpongeAt [a, v])
     ∧ Heap.SortedKeys [(a, v)] ∧ Heap.SortedKeys ([] : Heap.FeltHeap)
     ∧ ([(a, v)] : Heap.FeltHeap).length ≤ 2 ^ d ∧ ([] : Heap.FeltHeap).length ≤ 2 ^ d
-    ∧ padMapRoot (ghostSpongeAt [a, v]) d [(a, v)] = padMapRoot (ghostSpongeAt [a, v]) d []
+    ∧ ∃ hz₁ : ([(a, v)] : Heap.FeltHeap).length ≤ 2 ^ d,
+      ∃ hz₀ : ([] : Heap.FeltHeap).length ≤ 2 ^ d,
+        padMapRoot (ghostSpongeAt [a, v]) d [(a, v)] hz₁
+          = padMapRoot (ghostSpongeAt [a, v]) d [] hz₀
     ∧ Heap.get [(a, v)] a = some v ∧ Heap.get ([] : Heap.FeltHeap) a = none := by
+  have hz₁ : ([(a, v)] : Heap.FeltHeap).length ≤ 2 ^ d := Nat.one_le_pow d 2 (by norm_num)
+  have hz₀ : ([] : Heap.FeltHeap).length ≤ 2 ^ d := Nat.zero_le _
   refine ⟨ghostSpongeAt_injective _, by simp [Heap.SortedKeys, Heap.keys],
-    by simp [Heap.SortedKeys, Heap.keys], ?_, ?_, ?_, by simp, by simp⟩
-  · exact Nat.one_le_pow d 2 (by norm_num)
-  · exact Nat.zero_le _
-  · show perfectRoot _ d (padTo d ([(a, v)].map (Heap.leafOf (ghostSpongeAt [a, v]))))
-      = perfectRoot _ d (padTo d (([] : Heap.FeltHeap).map (Heap.leafOf (ghostSpongeAt [a, v]))))
-    have hleaf : Heap.leafOf (ghostSpongeAt [a, v]) (a, v) = padDigest := ghostSpongeAt_hit [a, v]
-    rw [List.map_cons, List.map_nil, hleaf, padTo_singleton_pad]
+    by simp [Heap.SortedKeys, Heap.keys], hz₁, hz₀, hz₁, hz₀, ?_, by simp, by simp⟩
+  show perfectRoot _ d (padTo d ([(a, v)].map (Heap.leafOf (ghostSpongeAt [a, v]))) _)
+    = perfectRoot _ d (padTo d (([] : Heap.FeltHeap).map (Heap.leafOf (ghostSpongeAt [a, v]))) _)
+  have hleaf : Heap.leafOf (ghostSpongeAt [a, v]) (a, v) = padDigest := ghostSpongeAt_hit [a, v]
+  simp only [List.map_cons, List.map_nil, hleaf]
+  exact padTo_singleton_pad d _ _
 
 /-- **⚑⚑ THE GHOST AT THE DEPLOYED TREE — arity-3 IMT leaves, deployed relink, zero padding.** Same
 shape at the commitment `heap_root.rs` actually computes. Both heaps are `HeapOk` for the deployed
@@ -323,23 +337,26 @@ theorem padded_ghost3 (a v sent : ℤ) (ha : a < sent) (d : Nat) :
     ∧ (Heap.SortedKeys [(a, v)] ∧ ∀ x ∈ Heap.keys [(a, v)], x < sent)
     ∧ (Heap.SortedKeys ([] : Heap.FeltHeap) ∧ ∀ x ∈ Heap.keys ([] : Heap.FeltHeap), x < sent)
     ∧ ([(a, v)] : Heap.FeltHeap).length ≤ 2 ^ d ∧ ([] : Heap.FeltHeap).length ≤ 2 ^ d
-    ∧ padImtRoot sent (ghostSpongeAt [a, v, sent]) d [(a, v)]
-        = padImtRoot sent (ghostSpongeAt [a, v, sent]) d []
+    ∧ ∃ hz₁ : ([(a, v)] : Heap.FeltHeap).length ≤ 2 ^ d,
+      ∃ hz₀ : ([] : Heap.FeltHeap).length ≤ 2 ^ d,
+        padImtRoot sent (ghostSpongeAt [a, v, sent]) d [(a, v)] hz₁
+          = padImtRoot sent (ghostSpongeAt [a, v, sent]) d [] hz₀
     ∧ Heap.get [(a, v)] a = some v ∧ Heap.get ([] : Heap.FeltHeap) a = none := by
+  have hz₁ : ([(a, v)] : Heap.FeltHeap).length ≤ 2 ^ d := Nat.one_le_pow d 2 (by norm_num)
+  have hz₀ : ([] : Heap.FeltHeap).length ≤ 2 ^ d := Nat.zero_le _
   refine ⟨ghostSpongeAt_injective _,
     ⟨by simp [Heap.SortedKeys, Heap.keys], by simpa [Heap.keys] using ha⟩,
     ⟨by simp [Heap.SortedKeys, Heap.keys], by simp [Heap.keys]⟩,
-    Nat.one_le_pow d 2 (by norm_num), Nat.zero_le _, ?_, by simp, by simp⟩
+    hz₁, hz₀, hz₁, hz₀, ?_, by simp, by simp⟩
   show perfectRoot _ d (padTo d ((imtChainOf sent [(a, v)]).map
-        (imtLeafHash (ghostSpongeAt [a, v, sent]))))
+        (imtLeafHash (ghostSpongeAt [a, v, sent]))) _)
     = perfectRoot _ d (padTo d ((imtChainOf sent ([] : Heap.FeltHeap)).map
-        (imtLeafHash (ghostSpongeAt [a, v, sent]))))
+        (imtLeafHash (ghostSpongeAt [a, v, sent]))) _)
   have hchain : imtChainOf sent [(a, v)] = [(⟨a, v, sent⟩ : ImtLeaf)] := rfl
   have hleaf : imtLeafHash (ghostSpongeAt [a, v, sent]) (⟨a, v, sent⟩ : ImtLeaf) = padDigest :=
     ghostSpongeAt_hit [a, v, sent]
-  rw [hchain, List.map_cons, List.map_nil, hleaf]
-  show perfectRoot _ d (padTo d [padDigest]) = perfectRoot _ d (padTo d ([] : List ℤ))
-  rw [padTo_singleton_pad]
+  simp only [hchain, List.map_cons, List.map_nil, hleaf]
+  exact padTo_singleton_pad d _ _
 
 /-- **⚑⚑ OPTION (a) IS REFUTED.** There is NO theorem "the padded root is injective on sorted heaps
 of admissible sparse occupancy", not even under the tower's injectivity idealisation — which is
@@ -400,7 +417,7 @@ def padNarrowSchema : MapLeafSchema where
   HeapOk := Heap.SortedKeys
   heapOk_sorted := fun _ h => h
   SizeOk := fun d h => h.length ≤ 2 ^ d
-  commit := padMapRoot
+  commit := fun hash d h hz => padMapRoot hash d h hz
 
 /-- **TEETH FOR THE arity-2 PADDED schema.** -/
 def padNarrowTeeth : MapLeafTeeth padNarrowSchema where

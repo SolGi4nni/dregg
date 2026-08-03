@@ -106,7 +106,9 @@ fn main() {
     let mut tampered = att;
     if let Some(leg) = tampered.zk_injection.as_mut() {
         let n = leg.public_inputs.len();
-        leg.public_inputs[n - 1] += dregg_zkoracle_prove::attestation::content_commitment(b"x");
+        // Perturb the route commitment by lane 0 of a content commitment over an
+        // unrelated body — any non-zero felt does; this one is deterministic.
+        leg.public_inputs[n - 1] += dregg_zkoracle_prove::attestation::content_commitment(b"x")[0];
     }
     let verdict = verify_zkoracle(&tampered, &config).err();
     let is_refused = matches!(verdict, Some(ZkOracleError::BadZkLeg(_)));

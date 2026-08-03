@@ -46,11 +46,10 @@
 //! the delimiter-guarded unambiguity side-condition mathlib has no API for). This SDK ships
 //! the tractable, load-bearing GENERATE direction; it does not claim the converse.
 
-use crate::attestation::content_commitment;
+use crate::attestation::{ContentCommit, content_commitment};
 use crate::cfg::{CfgError, CompactCert, prove_cfg_compact, verify_cfg_compact};
 use crate::injection::injection_free;
-use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::hash_bytes;
+use dregg_circuit::poseidon2::hash_bytes_8;
 use std::collections::BTreeMap;
 
 /// The attestation scheme tag (pinned; [`verify_render_attestation`] refuses any other).
@@ -160,10 +159,18 @@ pub fn render_with_proof(
 }
 
 /// **A template's structural commitment** — a Poseidon2 sponge over a canonical byte
-/// encoding of the segments (tagged, length-prefixed), the SAME [`hash_bytes`] primitive the
-/// content commitment uses. Binds an attestation to the TEMPLATE it was generated from; a
-/// party holding the template recomputes it ([`verify_render_reproducible`]).
-pub fn template_commitment(template: &Template) -> BabyBear {
+/// encoding of the segments (tagged, length-prefixed), the SAME [`hash_bytes_8`] primitive
+/// the content commitment uses. Binds an attestation to the TEMPLATE it was generated from;
+/// a party holding the template recomputes it ([`verify_render_reproducible`]).
+///
+/// ⚑ **Eight lanes since 2026-08-01** (was one `BabyBear` via `hash_bytes`, `2^15.45` to
+/// collide). A [`RenderAttestation`] can be published WITHOUT the template — that is the
+/// point of [`verify_render_reproducible`], which is only reachable by a party that already
+/// holds one — so `template_commit` is the sole binding of "which template produced this"
+/// for every other reader. Two templates with one commitment is an attribution forgery:
+/// claim output `O` came from an audited template when it came from an unaudited one.
+/// `2^123.63` now; derivation on [`content_commitment`].
+pub fn template_commitment(template: &Template) -> ContentCommit {
     let mut enc = Vec::new();
     for seg in &template.segments {
         match seg {
@@ -180,7 +187,7 @@ pub fn template_commitment(template: &Template) -> BabyBear {
             }
         }
     }
-    hash_bytes(&enc)
+    hash_bytes_8(&enc)
 }
 
 /// **The render attestation** — a thin ProofEnvelope-shaped evidence bundle (mirroring
@@ -195,10 +202,10 @@ pub struct RenderAttestation {
     /// **The output↔cert weld** — the shared [`content_commitment`] over the rendered
     /// output. [`verify_render_attestation`] recomputes it over the presented output and
     /// refuses a mismatch, binding the certificate to the EXACT output bytes.
-    pub output_commit: BabyBear,
+    pub output_commit: ContentCommit,
     /// **The template binding** — [`template_commitment`] over the template that generated
     /// the output. A party holding the template re-derives it ([`verify_render_reproducible`]).
-    pub template_commit: BabyBear,
+    pub template_commit: ContentCommit,
     /// **The well-formed leg** — the deployed [`CompactCert`] over the rendered output (the
     /// leftmost rule sequence, replayed by [`verify_cfg_compact`]). NOT a new leg type.
     pub cfg_cert: CompactCert,

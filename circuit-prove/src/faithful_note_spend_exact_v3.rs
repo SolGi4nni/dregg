@@ -50,9 +50,24 @@ pub const STAGED_PREDICATE_NAME: &str =
     "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state";
 pub const STAGED_TRACE_WIDTH: usize = ROTATED_TRACE_WIDTH;
 pub const STAGED_PUBLIC_INPUT_COUNT: usize = ROTATED_PUBLIC_INPUT_COUNT;
-const EXPECTED_CONSTRAINT_COUNT: usize = 1274;
+// ⚑ FLAG DAY 2026-08-01 (the KEY NONET, `76c3f7b9b` + the re-emit): 1274 -> 1282 and 124 -> 126.
+// The +8 is DECOMPOSED against the emitted bytes, not absorbed as a number:
+//
+//   boundary     414 -> 417  (+3) — one per NEW pre-limb: `child_vk` lane 8 at 184,
+//                                   `contract_hash` lane 8 at 185, the owner key's lane 8 (the
+//                                   Ed25519 sign bit) at 186.
+//   window_gate  244 -> 247  (+3) — the same three limbs, their window gate.
+//   lookup       432 -> 434  (+2) — BOTH on wide-chip table 1 (124 -> 126): `wideNumCarriers`
+//                                   62 -> 63 adds ONE carrier, and the member has TWO blocks
+//                                   (BEFORE + AFTER), so exactly two more absorption lookups.
+//
+// 3 + 3 + 2 = 8, with nothing left over — which is what makes this a re-typing and not a raise.
+// The independent cross-check is `STAGED_TRACE_WIDTH == ROTATED_TRACE_WIDTH == 3826` below: that
+// Rust constant was re-typed by `76c3f7b9b` from the OTHER side, and the emitted descriptor's own
+// `trace_width` moved 3804 -> 3826 to meet it.
+const EXPECTED_CONSTRAINT_COUNT: usize = 1282;
 const EXPECTED_STATE16_LOOKUPS: usize = 128;
-const EXPECTED_WIDE_LOOKUPS: usize = 124;
+const EXPECTED_WIDE_LOOKUPS: usize = 126;
 const EXPECTED_RANGE15_LOOKUPS: usize = 48;
 const EXPECTED_RANGE16_LOOKUPS: usize = 132;
 const EXPECTED_DESCRIPTOR_TABLES: usize = 5;

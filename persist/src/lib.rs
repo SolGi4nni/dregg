@@ -654,7 +654,68 @@ impl PersistentStore {
     /// the geometry is emitted. Verified 2026-08-01, not relayed: `lake env lean --run
     /// EmitLayoutManifest.lean` fails to LOAD — `EffectVmEmitRotationWide.olean` does not exist —
     /// so `emit_descriptors.py` cannot run at all while that lane's edit is in flight.
-    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 22;
+    ///
+    /// ## Epoch 23 — the Poseidon2 hash-LOCK slot goes eight lanes (2026-08-01)
+    ///
+    /// `cell::program::eval::hash_preimage32` — the shared digest behind
+    /// `StateConstraint::PreimageGate` and `StateConstraint::KeyRotationGate` — computed
+    /// `felt_to_bytes32(poseidon2::hash_bytes(preimage))` for `HashKind::Poseidon2`: **ONE
+    /// ~30.906891-bit BabyBear felt in bytes 0..4, twenty-eight of the thirty-two committed bytes
+    /// left ZERO**, while the `HashKind::Blake3` arm sitting next to it in the same `match` used
+    /// all thirty-two. It is now `digest8_to_bytes32(poseidon2::hash_bytes_8(preimage))` — the
+    /// same `Digest8` packing `compute_canonical_capability_root_wide` and the wide
+    /// `heap_root`/`fields_root` already use.
+    ///
+    /// **WHAT THE NARROW SLOT HANDED AN ATTACKER.** Both constraints are hash-LOCKS, whose entire
+    /// content is "only a holder of the committed secret can open this":
+    ///
+    /// * `PreimageGate` — a slot commits `H(secret)`; a turn exhibiting `secret` passes. Against a
+    ///   PUBLISHED commitment that is a second preimage of a 30.906891-bit target: `2^30.91`
+    ///   ≈ 1.5e9 Poseidon2 evaluations, **hours on one core**, and the opener never learns the
+    ///   real secret. A party who also chose the commitment gets the birthday form, `2^15.4534`
+    ///   ≈ 44,900 evaluations, and can open one lock with two different "secrets".
+    /// * `KeyRotationGate` — worse, because the forged preimage is not merely accepted, it is
+    ///   **INSTALLED**: the arm checks `hash_preimage32(kind, preimage) == old_fields[digest_slot]`
+    ///   and then requires `new_state.fields[current_slot] == preimage`. A colliding 32-byte value
+    ///   becomes the cell's current key set at the costs above.
+    ///
+    /// At eight lanes the image is `8 * 30.906891 = 247.255128` bits: collision `2^123.63`, second
+    /// preimage `2^247.26`. Measured old-admits/new-rejects (a real collision, two well-formed
+    /// preimages, the retired encoding ACCEPTING a preimage the committer never chose, and the
+    /// key-rotation arm INSTALLING it): `cell/tests/preimage_gate_wide_old_admits_new_rejects.rs`.
+    ///
+    /// **WHAT MUST BE RE-GENESISED AT 23:** every persisted `CellState.fields[i]` holding a
+    /// Poseidon2-tagged `PreimageGate` commitment or `KeyRotationGate` next-keys digest — and
+    /// therefore every state commitment over such a cell. A store stamped 22 REFUSES to load
+    /// rather than reinterpreting; an un-re-genesised slot is fail-CLOSED (no preimage opens it
+    /// any more), never silently narrow. `HashKind::Blake3` slots are untouched.
+    ///
+    /// **Outside the ledger, same commit, same cause:** every zkOracle `content_commit` /
+    /// `template_commit` (`zkoracle-prove`, now `[BabyBear; 8]` — the serde shape changed, so an
+    /// epoch-22 serialized attestation REFUSES to deserialize rather than reinterpreting), every
+    /// `attested-dm` / `deos-hermes` `attestation_commitment` receipt id, and every
+    /// `dungeon-on-dregg` narration `EmitEvent` `data[SLOT_ATTESTATION_COMMIT]` (and therefore
+    /// every receipt hash over one).
+    ///
+    /// **WHAT DOES *NOT* MOVE: no VK rotates and no descriptor is re-emitted.** Independently
+    /// re-measured 2026-08-01 for this cutover: there is **no emitted descriptor for the preimage
+    /// gate at all** (`circuit/descriptors/by-name/` has none; `descriptor_by_name.rs`'s dispatch
+    /// has no arm), the Lean models it as an opaque portal (`Dregg2.Exec.Program`'s `.preimageGate`
+    /// is `ctx.revealedHash == new.scalar f`, pure equality over a §8 crypto-portal INPUT), and
+    /// `Dregg2.Exec.DeployedConstraint` *refuses* to marshal the arms that read
+    /// `revealed_preimage` at all. Same verdict as epoch 19's: `hash_bytes`' squeeze has no in-AIR
+    /// counterpart anywhere in the tree.
+    ///
+    /// ⚠ **WHAT THIS EPOCH DOES *NOT* CLOSE.** The `hash_bytes` caller sweep classified every
+    /// production caller; three (A) sites are named-and-not-migrated because their sink is one
+    /// felt wide in a place Rust does not own, and each says so at its own definition:
+    /// `exec_lean::nullifier::addr_of` (the `MapAbsent` IMT key — `MA_KEY`/`MA_LO_ADDR`/
+    /// `MA_LO_NEXT`, Lean emit work, and it needs the base-2^29 NONET, not eight lanes, because a
+    /// KEY needs injectivity over 256 bits and 247.26 < 256), `wasm`'s `fact_hash` → column
+    /// `PREDICATE_SYM` of the deployed `predicate-arith*` goldens, and
+    /// `sandstorm_bridge::cell::{var_addr, var_value_felt}` (whose whole `/var` ROOT is one felt,
+    /// so widening only the leaves would be a containment below the bar).
+    pub const CANONICAL_STATE_SCHEMA_EPOCH: u64 = 23;
 
     /// Open a persistent store backed by a file on disk.
     ///

@@ -36,6 +36,20 @@
 //                     — "this file is not the one that emission produced", which catches a rung
 //                     swapped in from a different `DREGG_SM` shape, a truncated write, and a stamp
 //                     carried over from a different run.
+//   leg 3 (GIT)       the emit cone was CLEAN at a real commit when the stamp was written
+//                     — "this tree is a commit". ⚑ ADDED 2026-08-03, and it is the leg the other two
+//                     are structurally blind to: legs 1 and 2 both hash the CURRENT WORKING TREE, so
+//                     an emission from a tree no commit contains satisfies both. `cone_dirty_at_head`
+//                     had been recorded since day one and GATED ON NOWHERE — its only consumers
+//                     interpolated it into a status line. MEASURED: the committed stepmain fixture's
+//                     sidecar carried `cone_dirty_at_head: [KimchiStepMainCore.lean]` beside
+//                     `refreshed_from: "… (⚠ FIXTURE STALE)"`, and the session's whole "conformance
+//                     GREEN, 31/31 byte-exact" rested on it. See `unreproducibleFromGit`.
+//                     It REFUSES on every path: a live artifact at grade time, a COMMITTED FIXTURE
+//                     at grade time AND at write time (so an unreproducible snapshot cannot even be
+//                     created). ⚠ The cost is deliberate — while a cone file is uncommitted, the
+//                     gates that depend on it do not run. That is what "reproducible from git"
+//                     costs, and a field nobody read is what the alternative cost.
 //
 // ⚠ AND WHAT IS DELIBERATELY *NOT* A LEG, having been written, tested and RETIRED the same night:
 // "the artifact's mtime is not older than the newest file in its own cone". It sounded like a second
@@ -110,20 +124,54 @@ export function leanConeDigest(rootRel, { metaRoot = META_ROOT } = {}) {
 }
 
 /** `git rev-parse HEAD` + whether the cone is clean at HEAD. Never throws — a non-git tree is a
- *  legitimate build lane, and the cone digest is the load-bearing leg, not this. */
+ *  legitimate build lane, and the cone digest is the load-bearing leg, not this.
+ *
+ *  ⚠ DO NOT `.trim()` THE STATUS OUTPUT. `git status --porcelain` writes `XY<space>PATH` where `X`
+ *  is the INDEX status and `Y` the worktree one, so an unstaged modification begins with a SPACE
+ *  (` M metatheory/…`). Trimming the whole output ate that leading space on the FIRST line only, and
+ *  the `slice(3)` below then ate the first character of the path — which is how the stepmain fixture
+ *  sidecar came to record `etatheory/Dregg2/Circuit/Emit/KimchiStepMainCore.lean`. One character, on
+ *  one line, in the one field that says the emission is not reproducible from git. */
 export function gitContext(coneRels) {
-  const git = (...a) => execFileSync('git', ['-C', REPO_ROOT, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const raw = (...a) => execFileSync('git', ['-C', REPO_ROOT, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   try {
-    const head = git('rev-parse', 'HEAD');
+    const head = raw('rev-parse', 'HEAD').trim();
     let dirty = [];
     try {
       const paths = (coneRels ?? []).map((r) => join('metatheory', r));
       if (paths.length) {
-        dirty = git('status', '--porcelain', '--', ...paths).split('\n').filter(Boolean).map((l) => l.slice(3));
+        dirty = raw('status', '--porcelain', '--', ...paths)
+          .split('\n').filter(Boolean).map((l) => l.slice(3));
       }
     } catch { dirty = ['<status unavailable>']; }
     return { head, cone_dirty_at_head: dirty };
   } catch { return { head: null, cone_dirty_at_head: [] }; }
+}
+
+/**
+ * ⚑ IS THIS STAMP REPRODUCIBLE FROM GIT AT ALL?
+ *
+ * `cone_dirty_at_head` was recorded by `gitContext` from the day this file existed and GATED ON
+ * NOWHERE: its only consumers interpolated it into a status line. MEASURED 2026-08-03 — the
+ * committed stepmain fixture's sidecar carried
+ *     "cone_dirty_at_head": ["etatheory/Dregg2/Circuit/Emit/KimchiStepMainCore.lean"]
+ * beside `refreshed_from: "… (⚠ FIXTURE STALE)"`, i.e. the fixture behind every "conformance GREEN,
+ * 31/31 byte-exact" statement of that session was stamped from a WORKING TREE THAT EXISTS IN NO
+ * COMMIT, and could not be reproduced from `d245921c7` plus the tree. The freshness floor could not
+ * see it: the cone digest matched, because the cone digest is computed from the same dirty tree.
+ *
+ * So: a cone digest says the artifact matches THIS tree. This says THIS TREE IS A COMMIT.
+ *
+ * Returns `null` when the stamp is git-reproducible, else a one-line reason.
+ */
+export function unreproducibleFromGit(rec) {
+  const g = rec?.git;
+  if (!g || !g.head) return 'the stamp records no git HEAD — it was produced outside a git tree, so nothing can check it out';
+  const d = g.cone_dirty_at_head ?? [];
+  if (d.length)
+    return `${d.length} emit-cone file(s) were UNCOMMITTED at the stamped HEAD ${String(g.head).slice(0, 12)}: `
+      + `${d.slice(0, 4).join(', ')}${d.length > 4 ? ` +${d.length - 4}` : ''}`;
+  return null;
 }
 
 export const provenancePathFor = (dir) => join(dir, PROVENANCE_FILE);
@@ -145,6 +193,11 @@ export function writeProvenance(dir, { cone, command, cwd, artifacts, label }) {
     artifacts: Object.fromEntries(artifacts.map((p) => [basename(p), sha256(readFileSync(p))])),
   };
   writeFileSync(provenancePathFor(dir), `${JSON.stringify(rec, null, 2)}\n`);
+  // ⚠ SAY IT AT STAMP TIME TOO. The gates below refuse on it, but the emitter is where the operator
+  // can still fix it with one `git commit`, and a reader who only ever sees the gate's refusal has
+  // to go looking for which of their own edits caused it.
+  const why = unreproducibleFromGit(rec);
+  if (why) process.stderr.write(`   ⚠ THIS EMISSION IS NOT REPRODUCIBLE FROM GIT — ${why}\n`);
   return rec;
 }
 
@@ -217,6 +270,27 @@ export function requireFreshArtifact({ artifact, cone, emitCmd }) {
       + `rewritten, truncated, or swapped for a rung from a different emit run, after the emission that `
       + `vouches for it.`, emitCmd);
 
+  // ⚑ LEG 3 — THE ONE LEGS 1 AND 2 ARE STRUCTURALLY BLIND TO, AND IT REFUSES.
+  // Both legs above hash the CURRENT WORKING TREE, so an emission from a tree that no commit
+  // contains satisfies both perfectly: the cone digest matches because the cone was hashed from the
+  // same dirty files. MEASURED 2026-08-03 — the sidecar of the committed stepmain fixture behind
+  // that session's "conformance GREEN, 31/31 byte-exact" recorded
+  //     "cone_dirty_at_head": ["…/KimchiStepMainCore.lean"]   (the module that decides the gates)
+  // and NOTHING read the field: its only consumers interpolated it into a ║-banner. The grade could
+  // not be reproduced from `d245921c7` plus the tree by anyone, including the agent that made it.
+  //
+  // ⚠ THIS IS A REFUSAL AND NOT A WARNING, and the cost is deliberate: while a cone file is
+  // uncommitted, this gate does not run. That is the point — a green whose input exists in no commit
+  // is a green nobody can check. `git commit` the cone (this is a greenfield tree; committing is
+  // free) and re-emit. There is no env var here that makes a run green.
+  const gitWhy = unreproducibleFromGit(rec);
+  if (gitWhy)
+    refuse(`${artifact}`,
+      `⚑ IT IS NOT REPRODUCIBLE FROM GIT: ${gitWhy}. The cone digest and the artifact sha256 both `
+      + `MATCH — they are computed from the very tree that is uncommitted, which is why neither can `
+      + `see this. Commit the emit cone and re-emit; the grade then names a commit.`,
+      emitCmd);
+
   return rec;
 }
 
@@ -248,13 +322,42 @@ export function requireFreshFixture({ fixture, sidecar, cone, emitCmd, refreshCm
       + (moved.length ? `; moved: ${moved.slice(0, 6).join(', ')}${moved.length > 6 ? ` +${moved.length - 6}` : ''}` : ''),
       refreshCmd);
   }
+  // ⚑ THE THIRD LEG, AND THE ONE THE OTHER TWO CANNOT SEE. Legs 1 and 2 say the fixture is the
+  // emission of THIS TREE. This says THIS TREE IS A COMMIT — a committed fixture whose sidecar
+  // records a dirty emit cone is reproducible by nobody, which is the whole reason a fixture is
+  // committed. It is a HARD REFUSAL here and not a conform entry: an unreproducible fixture must not
+  // be gradeable at all, and unlike a live /tmp artifact there is no "iterating locally" case for it.
+  const why = unreproducibleFromGit(rec);
+  if (why)
+    refuse(`${basename(fpath)} (committed fixture)`,
+      `⚑ IT IS NOT REPRODUCIBLE FROM GIT: ${why}. It was stamped from a working tree that no commit `
+      + `contains, so the grade it produces cannot be re-derived from this repository by anyone — `
+      + `which is the only thing a COMMITTED fixture is for. Re-emit from a clean checkout of a `
+      + `commit (\`scripts/dregg-clean-build … --sha HEAD --host hbox --keep\`) and refresh it there.`,
+      refreshCmd);
   return rec;
 }
 
-/** Write the committed fixture's sidecar. Called only by a `--refresh-fixture`. */
+/**
+ * Write the committed fixture's sidecar. Called only by a `--refresh-fixture`.
+ *
+ * ⚑ IT REFUSES TO STAMP AN UNREPRODUCIBLE FIXTURE. `requireFreshFixture` refuses to GRADE one, which
+ * is the floor; this refuses to CREATE one, which is where the defect is cheap to fix. The measured
+ * incident is the reason both exist: a `--refresh-fixture` run in a churned working tree wrote a
+ * sidecar naming a dirty `KimchiStepMainCore.lean`, the run printed GREEN, and the fixture was
+ * committed — a snapshot of a circuit that is in no commit, grading as though it were HEAD's.
+ */
 export function writeFixtureSidecar(sidecar, { fixture, cone, from, extra }) {
   const spath = sidecar instanceof URL ? fileURLToPath(sidecar) : sidecar;
   const fpath = fixture instanceof URL ? fileURLToPath(fixture) : fixture;
+  const g = gitContext(cone.files.map((f) => f.rel));
+  const gitWhy = unreproducibleFromGit({ git: g });
+  if (gitWhy)
+    refuse(`${basename(fpath)} (refusing to WRITE the sidecar)`,
+      `⚑ THE EMISSION IS NOT REPRODUCIBLE FROM GIT: ${gitWhy}. A committed fixture stamped from a `
+      + `working tree that no commit contains grades every future run against a circuit nobody can `
+      + `check out. Commit the emit cone first, then re-emit and refresh from that commit.`,
+      'commit the cone, then re-emit from a clean checkout: scripts/dregg-clean-build <target> --sha HEAD --host hbox --keep');
   const rec = {
     schema: PROVENANCE_SCHEMA,
     fixture: basename(fpath),
@@ -263,7 +366,7 @@ export function writeFixtureSidecar(sidecar, { fixture, cone, from, extra }) {
     refreshed_from: from,
     cone: { root: cone.root, files: cone.files.length, digest: cone.digest,
             files_detail: cone.files.map((f) => ({ rel: f.rel, sha: f.sha })) },
-    git: gitContext(cone.files.map((f) => f.rel)),
+    git: g,
     ...extra,
   };
   writeFileSync(spath, `${JSON.stringify(rec, null, 2)}\n`);
@@ -288,4 +391,87 @@ export function runLeanEmit({ driver, dir, env = {}, label, glob }) {
   const rec = writeProvenance(dir, { cone, command: `(cd metatheory && ${cmd})`, cwd: META_ROOT, artifacts: produced, label });
   process.stderr.write(`   emitted ${produced.length} artifact(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s, stamped ${PROVENANCE_FILE}\n`);
   return { cone, rec };
+}
+
+// ── ⚑ THE FLOOR'S OWN RED PATH ────────────────────────────────────────────────────────────────────
+/**
+ * `node scripts/emit-provenance.mjs --self-test`
+ *
+ * The three legs above are the only thing standing between a gate's GREEN and a file nobody emitted,
+ * so each must be shown to REFUSE, and the honest shape must still be ACCEPTED — a floor that reds on
+ * everything proves nothing, and one that reds on nothing is what leg 3 was for its whole life.
+ *
+ * ⚠ It needs NO Lean, no emission and no toolchain: every input is synthesised in a temp dir, and the
+ * "cone" is a two-file fake. What it measures is THIS MODULE, which is the object the region-conformance
+ * gates delegate their whole notion of freshness to.
+ */
+async function selfTest() {
+  const { mkdtempSync, writeFileSync: wf, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const d = mkdtempSync(join(tmpdir(), 'emit-prov-selftest-'));
+  const art = join(d, 'artifact.json');
+  wf(art, '{"gates":[]}\n');
+  const cone = { root: 'X.lean', files: [{ rel: 'X.lean', sha: 'a'.repeat(64) }], digest: 'd'.repeat(64) };
+  const cleanGit = { head: '0'.repeat(40), cone_dirty_at_head: [] };
+  const stamp = (over) => wf(join(d, PROVENANCE_FILE), JSON.stringify({
+    schema: PROVENANCE_SCHEMA, emitted_at: new Date().toISOString(), command: 'fake',
+    cone: { root: cone.root, files: 1, digest: cone.digest, files_detail: cone.files },
+    git: cleanGit, artifacts: { 'artifact.json': sha256(readFileSync(art)) }, ...over,
+  }));
+
+  let bad = 0;
+  const leg = (label, run, wantRefusal) => {
+    let refused = null;
+    try { run(); } catch (e) { refused = e; }
+    const ok = wantRefusal ? (refused !== null && isStale(refused)) : refused === null;
+    if (!ok) bad++;
+    console.log(`   ${ok ? 'ok  ' : 'RED '} ${label.padEnd(62)} ${refused ? (isStale(refused) ? 'REFUSED as STALE' : `threw, NOT as staleness: ${refused.message.slice(0, 50)}`) : 'accepted'}`);
+    if (ok && refused) console.log(`          ${String(refused.message).split('\n')[1]?.trim().slice(0, 140)}`);
+  };
+  const check = () => requireFreshArtifact({ artifact: art, cone, emitCmd: 'fake-emit' });
+
+  console.log('── emit-provenance --self-test (three legs, each must REFUSE; the honest shape must PASS) ──');
+  // (A0) THE ANCHOR.
+  stamp({});
+  leg('A0 anchor: a correct stamp over a clean, committed cone', check, false);
+  // (L0) no stamp at all — the measured `/tmp` survivor.
+  rmSync(join(d, PROVENANCE_FILE));
+  leg('L0 no stamp beside the artifact (a /tmp survivor)', check, true);
+  // (L1) SOURCE: the cone moved.
+  stamp({ cone: { root: cone.root, files: 1, digest: 'e'.repeat(64), files_detail: [{ rel: 'X.lean', sha: 'b'.repeat(64) }] } });
+  leg('L1 stamped from a cone that has since moved', check, true);
+  // (L2) ARTIFACT: right stamp, wrong bytes.
+  stamp({ artifacts: { 'artifact.json': 'f'.repeat(64) } });
+  leg('L2 correct cone, but the artifact is not the one it vouches for', check, true);
+  // ⚑ (L3) GIT: the leg that was recorded and gated on NOWHERE until 2026-08-03. This is the exact
+  //      shape the committed stepmain fixture had — cone digest matching, artifact matching, and the
+  //      emit cone uncommitted at the stamped HEAD.
+  stamp({ git: { head: '0'.repeat(40), cone_dirty_at_head: ['Dregg2/Circuit/Emit/KimchiStepMainCore.lean'] } });
+  leg('L3 cone + artifact BOTH match, but the cone was uncommitted at HEAD', check, true);
+  // (L3b) and a stamp from outside git at all.
+  stamp({ git: { head: null, cone_dirty_at_head: [] } });
+  leg('L3b stamped outside a git tree (no HEAD to check out)', check, true);
+  // (L4) the ANCHOR AGAIN, so the four refusals above are not a floor that reds on everything.
+  stamp({});
+  leg('L4 anchor again: the honest stamp is still ACCEPTED', check, false);
+  // ⚑ (L5) THE DISPLAY BUG THAT HID L3 IN PLAIN SIGHT. `gitContext` used to `.trim()` the whole
+  //      `git status --porcelain` output before splitting, which ate the leading space of the FIRST
+  //      line only — so `slice(3)` then ate the first character of the path and the sidecar recorded
+  //      `etatheory/…`. A path this module reports must be one that exists.
+  const realCone = leanConeDigest('Dregg2/Circuit/Emit/EmitStepMainJson.lean');
+  const g = gitContext(realCone.files.map((f) => f.rel));
+  const mangled = (g.cone_dirty_at_head ?? []).filter((p) => !existsSync(join(REPO_ROOT, p)));
+  if (mangled.length) { console.log(`   RED  L5 gitContext reports paths that do not exist: ${mangled.join(', ')}`); bad++; }
+  else console.log(`   ok   L5 every path gitContext reports EXISTS on disk`.padEnd(70)
+    + ` (${g.cone_dirty_at_head?.length ?? 0} dirty cone file(s) right now)`);
+
+  rmSync(d, { recursive: true, force: true });
+  console.log();
+  if (bad) { console.log(`emit-provenance --self-test: ${bad} LEG(S) FAILED`); process.exit(1); }
+  console.log('emit-provenance --self-test: 8 legs green (3 anchors + 5 refusals, each naming staleness)');
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--self-test')) await selfTest();
+  else { console.error('usage: node scripts/emit-provenance.mjs --self-test'); process.exit(2); }
 }

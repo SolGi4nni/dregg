@@ -21,13 +21,27 @@ use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, parse_vm_descriptor2};
 const STAGED_JSON: &[u8] =
     include_bytes!("../descriptors/by-name/faithful-note-spend-exact-v3.json");
 const EXPECTED_NAME: &str = "faithful-note-spend-v3-plan::exact-aafi-fns3-rotated-wide-state";
-/// The reviewed SHA-256 of the Lean emission at the nine-lane geometry (`NUM_PRE_LIMBS = 184`,
-/// `WIDE_CARRIERS = 62`).  A descriptor byte change must update this deliberately.
-const EXPECTED_SHA256: &str = "df654baea5a922badb8cd287fda6955d30a931b940f221b80fed284b3b7fbfc5";
+/// The reviewed SHA-256 of the Lean emission at the KEY-NONET geometry (`NUM_PRE_LIMBS = 187`,
+/// `WIDE_CARRIERS = 63`).  A descriptor byte change must update this deliberately.
+///
+/// ⚑ FLAG DAY 2026-08-01, re-typed WITH ITS DECOMPOSITION rather than pasted from the new file:
+/// `76c3f7b9b` took the pre-limb region 184 -> 187 (the three key ninth lanes, the last of which
+/// carries the Ed25519 sign bit) and moved `wideNumCarriers` 62 -> 63, but did NOT re-emit. This
+/// is the re-emission, and every number below moved for a named reason:
+///
+///   trace_width  3804 -> 3826  — `ROTATED_TRACE_WIDTH`, which `76c3f7b9b` re-typed to 3826 in
+///                                `trace_rotated.rs` from the other side. The two now agree.
+///   constraints  1274 -> 1282  — +3 `boundary` and +3 `window_gate` (one each per new pre-limb
+///                                184/185/186) and +2 `lookup` on the wide chip table (one new
+///                                carrier × the BEFORE and AFTER blocks). 3+3+2, nothing over.
+///   pi_count      76 ->   76   — UNCHANGED. The nonet grows the committed region, not the
+///                                public interface; a PI move here would be a different defect.
+///   table ids                  — UNCHANGED (same five tables, same order).
+const EXPECTED_SHA256: &str = "2f557397423b48028adaebf0dc17b86560b4504c2e56ef24d9bf7322a69660b6";
 const EXPECTED_TABLE_IDS: [usize; 5] = [0, 9, 1, 84, 85];
-const EXPECTED_TRACE_WIDTH: usize = 3804;
+const EXPECTED_TRACE_WIDTH: usize = 3826;
 const EXPECTED_PUBLIC_INPUT_COUNT: usize = 76;
-const EXPECTED_CONSTRAINT_COUNT: usize = 1274;
+const EXPECTED_CONSTRAINT_COUNT: usize = 1282;
 
 /// The descriptor registry's fingerprint semantics are SHA-256 over the exact Lean-emitted JSON
 /// bytes, without JSON normalization.  This is the same self-contained FIPS 180-4 implementation

@@ -42,17 +42,27 @@
 
 use dregg_cell::state::STATE_SLOTS;
 use dregg_circuit::effect_vm::state;
+use dregg_circuit::effect_vm_descriptors::{WIDE_UMEM_WELD_SUFFIX, welded_wide_members};
 
 /// The Lean module that AUTHORS the per-slot setField descriptor.
 const LEAN_EMIT_SETFIELD: &str = "../metatheory/Dregg2/Circuit/Emit/EffectVmEmitSetField.lean";
 /// The Lean-generated column-layout manifest checked into the circuit crate.
 const GENERATED_LAYOUT: &str = "src/effect_vm/layout_generated.rs";
-/// The three EMITTED registries whose per-slot setField members are the deployed set.
-const REGISTRIES: [&str; 3] = [
+/// The two EMITTED registry TSVs whose per-slot setField members are part of the deployed set.
+const REGISTRY_TSVS: [&str; 2] = [
     "descriptors/rotation-v3-staged-registry.tsv",
     "descriptors/rotation-wide-registry-staged.tsv",
-    "descriptors/rotation-wide-umem-welded-registry-staged.tsv",
 ];
+
+/// The label the THIRD deployed set answers to in this file's messages.
+///
+/// ⚑ **It is not a path, and it must not become one again.**
+/// `descriptors/rotation-wide-umem-welded-registry-staged.tsv` was a checked-in 10,049,999-byte
+/// materialization of a computation the prover performs anyway, and `681cd3ec8` deleted it: the
+/// welded set is now DERIVED by [`welded_wide_members`] — `weld_umem_into_wide_descriptor` over
+/// each bare wide member, the same function `sdk/src/full_turn_proof.rs` already called, with the
+/// domain and the canonicity splice index coming from the Lean-emitted `UMEM_WELD_TABLE`.
+const WELDED_DERIVATION: &str = "<derived> effect_vm_descriptors::welded_wide_members()";
 
 fn read(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_else(|e| {
@@ -115,6 +125,16 @@ fn generated_field_octet_len() -> usize {
         .unwrap_or_else(|| panic!("could not parse a usize out of: {line:?}"))
 }
 
+/// The `i` of a `setFieldVmDescriptor2-{i}R24` key, or `None` for any other key. ONE parser,
+/// shared by the TSV reader and the derivation reader below, so the two sources cannot come to
+/// disagree by drifting apart in how they READ a key.
+fn setfield_slot_of_key(key: &str) -> Option<usize> {
+    key.strip_prefix("setFieldVmDescriptor2-")?
+        .strip_suffix("R24")?
+        .parse::<usize>()
+        .ok()
+}
+
 /// The per-slot `setFieldVmDescriptor2-{i}R24` members actually present in a registry, as the
 /// set of slot indices `i`. This is the EMITTED descriptor set, read off the TSV — not a Rust
 /// constant asserting what the emitted set ought to be.
@@ -123,15 +143,56 @@ fn registry_static_setfield_slots(path: &str) -> Vec<usize> {
     let mut slots: Vec<usize> = src
         .lines()
         .filter_map(|l| l.split('\t').next())
-        .filter_map(|name| {
-            name.strip_prefix("setFieldVmDescriptor2-")?
-                .strip_suffix("R24")?
-                .parse::<usize>()
-                .ok()
-        })
+        .filter_map(setfield_slot_of_key)
         .collect();
     slots.sort_unstable();
     slots
+}
+
+/// The per-slot members of the DERIVED wide+umem welded set — the third deployed set, the one
+/// whose TSV was deleted at `681cd3ec8`.
+///
+/// ⚑ **This CONSTRUCTS every welded member; it does not list `UMEM_WELD_TABLE`'s keys.**
+/// `welded_wide_members()` runs `derive_welded_wide_member` → `weld_umem_into_wide_descriptor` →
+/// `UMemWeldRow::check` for all 57, so a derivation that produced the WRONG object — wrong width,
+/// wrong PI count, wrong constraint count, the `umemOp` at the wrong splice index, or a host that
+/// is not a deployed wide member at all — panics inside the construction and this reader goes RED.
+/// That is strictly more than the file read it replaces could do: the deleted TSV could only ever
+/// be compared against itself.
+fn derived_welded_setfield_slots() -> Vec<usize> {
+    let derived = welded_wide_members();
+    assert_eq!(
+        derived.len(),
+        57,
+        "the derived welded set must cover all 57 wide members; a SHORT cover is how this census \
+         would go quietly vacuous for the members it dropped"
+    );
+    for (key, d) in &derived {
+        assert!(
+            d.name.ends_with(WIDE_UMEM_WELD_SUFFIX),
+            "{key}: the derived member's wire name {:?} does not carry {WIDE_UMEM_WELD_SUFFIX} — \
+             the derivation handed back the BARE wide member, so the welded set is not being \
+             measured at all",
+            d.name
+        );
+    }
+    let mut slots: Vec<usize> = derived
+        .iter()
+        .filter_map(|(key, _)| setfield_slot_of_key(key))
+        .collect();
+    slots.sort_unstable();
+    slots
+}
+
+/// The three deployed sets, each as `(label, per-slot member indices)`. Two are TSV reads; the
+/// third is the derivation that replaced a TSV.
+fn setfield_slots_by_source() -> Vec<(&'static str, Vec<usize>)> {
+    let mut out: Vec<(&'static str, Vec<usize>)> = REGISTRY_TSVS
+        .iter()
+        .map(|p| (*p, registry_static_setfield_slots(p)))
+        .collect();
+    out.push((WELDED_DERIVATION, derived_welded_setfield_slots()));
+    out
 }
 
 /// **THE PIN.** Lean's authored slot type, the generated layout manifest, and the deployed
@@ -177,8 +238,7 @@ fn lean_generated_layout_and_rust_agree_on_the_field_lane_count() {
 #[test]
 fn every_emitted_registry_carries_exactly_one_member_per_field_lane() {
     let expected: Vec<usize> = (0..state::NUM_FIELDS).collect();
-    for registry in REGISTRIES {
-        let slots = registry_static_setfield_slots(registry);
+    for (registry, slots) in setfield_slots_by_source() {
         assert_eq!(
             slots,
             expected,
@@ -289,14 +349,34 @@ def setFieldVmDescriptor (slot : Fin 16) : EffectVmDescriptor :=\n  { name := \"
         "the fabricated arity must differ from the deployed one, or this red-proof proves nothing"
     );
 
-    // (e) The registry reader really found members — an empty parse would make
+    // (e) Every source reader really found members — an empty parse would make
     //     `every_emitted_registry_carries_exactly_one_member_per_field_lane` compare `[]` to
     //     `[]` only if NUM_FIELDS were 0, but a typo'd path or prefix would surface here first.
-    for registry in REGISTRIES {
+    //     The DERIVED source is in this loop too: converting a file read into a function call is
+    //     how a red becomes a no-op, and an empty derivation is precisely that shape.
+    for (source, slots) in setfield_slots_by_source() {
         assert!(
-            !registry_static_setfield_slots(registry).is_empty(),
-            "{registry} yielded no setFieldVmDescriptor2-{{i}}R24 members — the prefix or the \
-             path is wrong, and the emitted-set measurement above would be vacuous"
+            !slots.is_empty(),
+            "{source} yielded no setFieldVmDescriptor2-{{i}}R24 members — the prefix, the path or \
+             the derivation is wrong, and the emitted-set measurement above would be vacuous"
         );
     }
+
+    // (f) ⚑ RED-PROOF OF THE SHARED KEY PARSER, the one reader both the TSV sources and the
+    //     derivation go through. Fed keys that are NOT per-slot members it must report `None`,
+    //     and fed a slot index one PAST the deployed lane count it must report that index —
+    //     i.e. it tracks the key it is given rather than the number we want to see. Without
+    //     this, a parser that returned `Some(i)` for `0..NUM_FIELDS` and nothing else would make
+    //     every source above agree with `expected` no matter what any of them actually contained.
+    assert_eq!(setfield_slot_of_key("transferVmDescriptor2R24"), None);
+    assert_eq!(setfield_slot_of_key("setFieldDynVmDescriptor2R24"), None);
+    assert_eq!(setfield_slot_of_key("setFieldVmDescriptor2-3"), None);
+    assert_eq!(setfield_slot_of_key("setFieldVmDescriptor2-3R24"), Some(3));
+    assert_eq!(
+        setfield_slot_of_key(&format!("setFieldVmDescriptor2-{}R24", state::NUM_FIELDS)),
+        Some(state::NUM_FIELDS),
+        "the parser must be able to REPORT the one-past-the-end slot; the census asserts no \
+         source contains it, and a parser that could not name it would make that assertion \
+         unfalsifiable"
+    );
 }

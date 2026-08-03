@@ -19,8 +19,9 @@
 //! `Faithful8` can only be built through a NAMED constructor — so a degraded
 //! felt in a commitment position is a **compile error**, everywhere, including
 //! files the gate has never heard of. ⚑ "Named" is the honest word and "faithful"
-//! was not: two of the named constructors are residuals, and the list below is
-//! split so that reading it cannot mislead.
+//! is not: the two KEY residuals that made that sentence necessary are DELETED as of
+//! 2026-08-02, but `from_bytes32` still admits an `O(1)`-aliasable octet through the front
+//! door, so the list below stays split and the honest section stays where it is.
 //!
 //! ## The constructor discipline
 //!
@@ -54,23 +55,29 @@
 //!   the named, allowlisted residuals. Every call site is a burn-down list entry, and
 //!   adding one without updating `docs/FAITHFUL-COMMITMENT-LAW.md` is a review-time
 //!   violation — ⚑ now a *test-time* one as well, see the gate below.
-//! * [`Faithful8::from_canonical_key`] — ⚑ **the 30-bit KEY_COMMIT pubkey8 pack, and it is
-//!   NOT a faithful constructor.** Reclassified 2026-08-01: its body IS
-//!   `from_lossy_31bit_DANGER` (reason [`KEY_COMMIT_30BIT_RESIDUAL`]), so it now sits on the
-//!   burn-down list rather than beside the tree roots. It had entered through the FRONT DOOR
-//!   with a doc reading "8+8+8+6 = 30 bits per limb, 240 bits total, faithful" — and 240 bits
-//!   of IMAGE is a `2^120` birthday COLLISION, against this tree's `2^123.63` floor. Below
-//!   floor on the generous reading, and the true figure is `0` bits: sixteen source bits are
-//!   never read, so a colliding key is one bit-flip. Full arithmetic on the constructor.
+//!
+//! ⚑ **THE OWNER-KEY OCTET IS GONE — the burn-down list is EMPTY as of 2026-08-02.** The key's
+//! two entries in this list (`from_canonical_key`, then its successor `from_key_nonet_low8`) are
+//! both **deleted**, not deprecated, together with the reason constant they carried. The last of
+//! them projected the injective base-`2^29` nonet down to its low eight lanes because
+//! `B_PUBKEY_OCTET` is eight columns wide and lane 8 had no home; the 187-limb geometry gives
+//! lane 8 in-block limb 186, so the projection has no reason to exist and there is no
+//! `Faithful8` path to an owner-key octet at all. The successor is [`crate::Faithful9`]'s
+//! `from_key_lanes9` over `effect_vm::PUBKEY_NONET_LANE_COL`.
+//!
+//! ⚠ **An empty burn-down list is not the same claim as "everything here is faithful".** It says
+//! only that nothing currently routes through the hatch. `from_bytes32` still admits through the
+//! front door and is still `O(1)`-aliasable — see the section below, which is the honest one.
 //!
 //! ⚑ **THE BURN-DOWN LIST IS A GATE, NOT A CONVENTION** (2026-08-01).
 //! `circuit/tests/faithful8_key_octet_below_floor.rs` walks every `*.rs` in the workspace,
 //! collects the call sites of `from_lossy_31bit_DANGER` and of every ROUTER (a constructor in
-//! THIS file whose body calls the hatch — `from_canonical_key` is one, derived from the source
-//! rather than transcribed), and fails unless each is named in the law doc's burn-down section,
+//! THIS file whose body calls the hatch — derived from the source rather than transcribed),
+//! and fails unless each is named in the law doc's burn-down section,
 //! and unless each entry the doc carries still has a call. "Adding a `_DANGER` site without
 //! listing it is a review-time violation" was a rule no instrument could enforce; a documented
-//! wound is not a detected one.
+//! wound is not a detected one. The match is BIDIRECTIONAL, which is why deleting the
+//! constructor and deleting its doc rows had to land in one commit.
 //!
 //! ⚑ **The key is the `(file, reason-constant)` pair, not the file path** — corrected the same day
 //! the gate was written. Keyed on paths, it caught a NEW file and was blind inside the three files
@@ -96,12 +103,15 @@
 //!
 //! * [`Faithful8::from_bytes32`] **is** `bytes32_to_8_limbs` — family F1, `O(1)` aliasable for a
 //!   directly-chosen preimage (`v` and `v + p` collide for 53.1% of 4-byte chunks).
-//! * [`Faithful8::from_canonical_key`] **is** `canonical_32_to_felts_8` — family F2, 16 source
+//! * `Faithful8::from_canonical_key` **was** `canonical_32_to_felts_8` — family F2, 16 source
 //!   bits discarded. IMAGE `2^240`; birthday COLLISION `2^120`, i.e. 3.63 bits below the
 //!   `2^123.63` floor; ACTUAL collision `0`, because every fiber holds `2^16` strings and — the
 //!   source being an Ed25519 public key whose x-sign is one of the discarded bits — `A` and `−A`
-//!   pack identically. ⚑ It no longer admits through the front door: as of 2026-08-01 its body
-//!   is the `_DANGER` hatch and it is on the burn-down list.
+//!   pack identically. ⚑ **GONE.** It was reclassified onto the burn-down list on 2026-08-01, its
+//!   successor `from_key_nonet_low8` (the injective nonet's low eight lanes, 232 bits, the SAME
+//!   `A`/`−A` merge) inherited the entry, and both are **deleted 2026-08-02** — the flag day that
+//!   gave lane 8 a column. Successor: [`crate::Faithful9::from_key_lanes9`], image exactly
+//!   `2^256`, injective, with a total decoder that reads the 32 bytes back.
 //! * `Faithful8::from_field_limbs8` **was** `field_limbs8` — family F3, the constructor that fed
 //!   `fields[0..7]`, the only octet in the v9 commitment with no byte-exact companion and therefore
 //!   the one where an alias reached the signed anchor. ⚑ **GONE — deleted 2026-07-31, together with
@@ -115,8 +125,8 @@
 //! ⚑ **THE COUNTING ARGUMENT, which subsumes every entry above.** `p = 2013265921`, so
 //! `log2 p = 30.907` and eight lanes carry **247.26 bits** against a 32-byte field's **256**. No
 //! 8-lane encoding of 32 bytes is injective under ANY chunking — pigeonhole, before you read a line
-//! of code. `from_canonical_key` is the proof by example: it is a re-chunked 8-lane scheme and it
-//! still loses 16 bits.
+//! of code. The retired `from_canonical_key` is the proof by example: it was a re-chunked 8-lane
+//! scheme and it still lost 16 bits.
 //!
 //! And the aliasing is denser than the 8.74-bit deficit suggests: `2p = 4026531842 < 2^32`, so
 //! **every** residue has at least two u32 preimages (`c`, `c + p`) and residues below `2^32 − 2p`
@@ -126,7 +136,7 @@
 //! is **false for a directly-chosen preimage**, and the type then **LAUNDERS** it: a sink cannot
 //! distinguish an aliased octet from a genuinely hard one. That is the anti-launder clause
 //! realized in our own code, and it is why the replacement (`dregg_codec::Digest8`) has
-//! `from_bytes32`, `from_canonical_key`, and the `_DANGER` hatch **deleted, not deprecated** — a
+//! `from_bytes32`, the key packs, and the `_DANGER` hatch **deleted, not deprecated** — a
 //! wall with an escape hatch is a convention.
 //!
 //! Second gap, where most of the remaining wounds live: **the wall covers committed VALUES and
@@ -159,29 +169,26 @@
 
 use crate::field::BabyBear;
 
-/// The `reason` string [`Faithful8::from_canonical_key`] passes to
-/// [`Faithful8::from_lossy_31bit_DANGER`] — i.e. the ONE entry on the burn-down list in
-/// `docs/FAITHFUL-COMMITMENT-LAW.md` as of 2026-08-01.
-///
-/// A residual's reason must name the residual AND WHAT CLOSES IT — but NEVER a remembered epoch
-/// NUMBER. This string said "schema epoch 16" for one commit; `persist::CANONICAL_STATE_SCHEMA_EPOCH`
-/// was ALREADY 16 when it was written and is 20 now. Nothing compared the two, so the gate below
-/// was enforcing doc↔source agreement on a figure that was false the moment it was typed — a pin
-/// between two transcriptions, inside the very constant whose subject is that class. Name the
-/// constant; let whoever reads it look up today's value. The gate
-/// (`circuit/tests/faithful8_key_octet_below_floor.rs`) asserts this string is quoted verbatim in
-/// the doc's burn-down section, so the two cannot drift.
-pub const KEY_NONET_NINTH_LANE_UNBOUND: &str = "KEY_COMMIT nonet lane 8 UNBOUND at the anchor: the encoder is injective (base-2^29 nonet, image \
-     2^256) but B_PUBKEY_OCTET is 8 columns wide in the deployed 184-limb geometry, so state_commit \
-     absorbs lanes 0..=7 only — 232 of 256 key bits, Ed25519 sign bit NOT among them. Closes when \
-     layout_generated.rs is regenerated at NUM_PRE_LIMBS = 187 and lane 8 lands on in-block limb 186";
+// ⚑ `KEY_NONET_NINTH_LANE_UNBOUND` — the reason string the owner-key octet rode into
+// `from_lossy_31bit_DANGER` — is DELETED (2026-08-02), together with `from_key_nonet_low8` and
+// the three rows it owned in `docs/FAITHFUL-COMMITMENT-LAW.md`'s burn-down list. It said
+// "`state_commit` absorbs lanes 0..=7 only — 232 of 256 key bits, Ed25519 sign bit NOT among
+// them", and that sentence is now false: the 187-limb geometry gives lane 8 in-block limb 186,
+// both producers write the full nonet through `Faithful9::from_key_lanes9`, and `wireCommitR`
+// folds `[0, 187)`.
+//
+// It is deleted rather than kept as an empty allowlist entry because a residual retained after
+// its residue is gone is worse than one that means something: the next reader trusts it. The
+// burn-down list is a bidirectional set match — an entry with no call site reds exactly as loudly
+// as a call site with no entry — so the constant, the constructor and the doc rows had to go in
+// ONE commit, and did.
 
 /// An **8-felt commitment octet** — 8 lanes wide, not 1.
 ///
 /// Possession of a `Faithful8` is evidence of **WIDTH ONLY**: that the value was not squeezed
 /// through a single ~31-bit felt. It is **not** evidence that the 8 lanes bind their source
-/// hard — `from_bytes32` and `from_canonical_key` are both `O(1)`-aliasable for a chosen
-/// preimage, so for those two constructors the wall LAUNDERS the alias. See the module docs.
+/// hard — `from_bytes32` is `O(1)`-aliasable for a chosen preimage, so for that constructor the
+/// wall LAUNDERS the alias. See the module docs.
 /// The successor with a genuinely narrow constructor set is `dregg_codec::Digest8`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Faithful8([BabyBear; 8]);
@@ -232,95 +239,21 @@ impl Faithful8 {
         Self(crate::poseidon2::wire_commit_8_chip(pre_limbs, iroot))
     }
 
-    /// The 30-bit KEY-COMMIT octet (the `pubkey8` carrier lane): 8 limbs of `8+8+8+6 = 30` bits
-    /// each over the canonical 32-byte key.
-    ///
-    /// ⚑ **THIS IS A NAMED RESIDUAL, NOT A FAITHFUL CONSTRUCTOR** (reclassified 2026-08-01). Its
-    /// body IS [`Faithful8::from_lossy_31bit_DANGER`], carrying
-    /// [`KEY_COMMIT_30BIT_RESIDUAL`] as the reason — so this octet is on the burn-down list in
-    /// `docs/FAITHFUL-COMMITMENT-LAW.md` instead of standing beside the tree roots. It kept its
-    /// NAME only because its two call sites
-    /// (`cell::commitment::compute_rotated_pre_limbs`, `turn::rotation_witness::produce`) are the
-    /// deployed producers and renaming them is a separate lane; the burn-down gate
-    /// (`circuit/tests/faithful8_key_octet_below_floor.rs`) therefore greps for BOTH names.
-    ///
-    /// ⚠ **SAY WHICH BOUND.** Three different numbers get called "240 bits" and only one of them
-    /// is a security level:
-    ///
-    /// * **IMAGE = `2^240`, exactly.** `lo | mid1<<8 | mid2<<16 | (hi & 0x3F)<<24` sweeps all of
-    ///   `[0, 2^30)` per lane, independently, and `2^30 < p` so nothing reduces. The image is
-    ///   `(2^30)^8` on the nose — `2^-7.26` of the `[0, p)^8` the octet's columns can hold.
-    /// * **COLLISION (birthday, unstructured search) = `2^120`.** That is already BELOW this
-    ///   tree's floor, which is `8 · log₂ p / 2 = 2^123.63` — the "~124-bit" figure the law quotes
-    ///   is itself a birthday bound over a full 8-lane image, and this octet misses it by 3.63
-    ///   bits. 240 bits of image is NOT at floor, which is the whole argument for the
-    ///   reclassification.
-    /// * **COLLISION (actual) = `0` — no search at all.** Every fiber has exactly `2^16` elements:
-    ///   bits 6-7 of bytes 3, 7, 11, 15, 19, 23, 27, 31 are never read. So a second preimage on a
-    ///   raw 32-byte string is one bit-flip.
-    ///
-    /// ⚑ And the "only a *meaningful* colliding value costs anything (~2^120)" escape this doc
-    /// used to offer is **FALSE FOR THIS KEY TYPE.** The source is `Cell::public_key`, an Ed25519
-    /// public key: RFC 8032 §5.1.2 puts the x-sign in **bit 7 of byte 31**, which is one of the
-    /// sixteen discarded bits. So a point `A` and its negation `−A` — both valid, both
-    /// decompressible, both the same order — differ in exactly that bit and pack to the
-    /// **identical octet**. A colliding *valid public key* is free too. Exhibited over the real
-    /// deployed packer and real curve points by
-    /// `circuit/tests/faithful8_key_octet_below_floor.rs`.
-    ///
-    /// What closes it is a NINTH key lane — and ⚠ **say which bound for the FIX as well.** This
-    /// doc read "(`2^278` image, `2^139` birthday)" until 2026-08-01. Those are the CAPACITY of
-    /// nine BabyBear lanes, and `2^278.16 > 2^256` is the tell: a map out of 32 bytes has at most
-    /// `2^256` images. The encoding recommended is the base-`2^29` NONET
-    /// (`Dregg2.Circuit.KeyLanes9.keyToLanes9`): **image exactly `2^256`, INJECTIVE**
-    /// (`keyToLanes9_injective`, from a total decoder and a machine-checked left inverse), so the
-    /// encoding step loses **nothing**, there is no encoding collision to bound, and the binding
-    /// reduces to the sponge that absorbs the lanes. ⚠ Rung: proved in Lean, **not emitted and not
-    /// consumed by a verifier**.
-    ///
-    /// The geometry is `rotatedNumPreLimbs` 184 → 187, `B_SPAN` 247 → 251, a descriptor re-emit and
-    /// a VK rotation. ⚑ **Re-checked 2026-08-01 and the two numbers hold; the epoch did not.**
-    /// `184 → 187` is right and `185` is not: `B_SPAN := n + 3 + (n − 4) / 3` is `Nat` floor
-    /// division while the carrier chain steps every three limbs, so the unwritten invariant is
-    /// `rotatedNumPreLimbs ≡ 1 (mod 3)` — `184 % 3 = 187 % 3 = 1`, `185 % 3 = 2` — and `187` buys
-    /// exactly the three ninth lanes the counting demands (`public_key`, `child_vk`,
-    /// `contract_hash`, all three 8-lane). `187 + 3 + 61 = 251` confirms `B_SPAN`.
-    ///
-    /// ⚑ **THE EPOCH NUMBER IS DELIBERATELY NOT WRITTEN HERE, and that is the correction.** This
-    /// note read "15 → 16" and was stale by four; it was then corrected to "19 → 20" and was stale
-    /// by one **within the hour** (`persist::PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH` moved
-    /// 16 → 17 → 18 → 19 → 20 on 2026-08-01 alone). A remembered epoch in a doc comment is a pin
-    /// against nothing. The move is **one bump of that constant, whatever it reads when you land
-    /// it** — go read it. Not this lane's edit — this lane's edit is that the wall stops
-    /// calling it faithful while that is pending, and that the price is stated against the constant
-    /// rather than against a remembered one.
-    ///
-    /// ## ⚑ 2026-08-01 — the ENCODER moved; the COLUMN COUNT did not
-    ///
-    /// The packing is no longer the 30-bit octet. `dregg_commit::typed::canonical_32_to_lanes_9`
-    /// (twins in `dregg_cell::commitment`, `dregg_storage::commitment`, and inlined in
-    /// `circuit/src/effect_vm/trace.rs`) is the base-`2^29` **nonet**, injective, image exactly
-    /// `2^256`. **So the residual this constructor carries is no longer "the encoding loses 16
-    /// bits" — it is "the ninth lane has nowhere to go".** `B_PUBKEY_OCTET` is eight columns in
-    /// the deployed 184-limb geometry; the 187-limb layout that gives lane 8 in-block limb 186 is
-    /// proved and committed in Lean (`RotatedLayout.rotated187`) and NOT emitted.
-    ///
-    /// It therefore still routes to the hatch, under [`KEY_NONET_NINTH_LANE_UNBOUND`], and it must
-    /// keep routing there until that column exists. What changed is which sentence is true about
-    /// it, and the reason constant now says the true one.
-    ///
-    /// ⚠ Take the LOW eight lanes and no others. Do not "repair" this by re-chunking 256 bits into
-    /// 8 lanes to avoid the loss — that is what the predecessor did, and `p^8 < 2^256` refutes
-    /// every member of that family before a line of code is read.
-    #[inline]
-    pub fn from_key_nonet_low8(nonet: [BabyBear; 9]) -> Self {
-        Self::from_lossy_31bit_DANGER(
-            KEY_NONET_NINTH_LANE_UNBOUND,
-            [
-                nonet[0], nonet[1], nonet[2], nonet[3], nonet[4], nonet[5], nonet[6], nonet[7],
-            ],
-        )
-    }
+    // ⚑ `from_key_nonet_low8` — the owner-key projection — is DELETED (2026-08-02). It took the
+    // injective base-`2^29` nonet and threw lane 8 away, because `B_PUBKEY_OCTET` is eight columns
+    // wide and lane 8 had no home in the 184-limb geometry. That made the signed consensus anchor
+    // a 232-of-256-bit binding of the owner key, and the 24 bits it dropped contain the Ed25519
+    // x-sign (RFC 8032 §5.1.2, bit 7 of byte 31) — so `A` and `−A` committed identically, at cost
+    // zero and with no search.
+    //
+    // Its replacement is not another `Faithful8` constructor. It is [`crate::Faithful9`]'s
+    // `from_key_lanes9` over `effect_vm::PUBKEY_NONET_LANE_COL` (lanes 0..=7 at 105..=112, lane 8
+    // at 186), so there is no `Faithful8` path to an owner-key octet any more and a caller that
+    // wants one gets a compile error — which is the point of the wall.
+    //
+    // ⚠ Do NOT "restore" this as a low-eight helper for some other sink. The retired 30-bit octet
+    // carried 240 bits and this projection carried 232, and BOTH dropped bit 7 of byte 31: neither
+    // was a repair, and no eight-lane encoding of 32 bytes can be one (`p^8 < 2^256`).
 
     // ⚑ `from_field_limbs8` — the v13 FIELDS-OCTET constructor — is DELETED (2026-07-31), and so is
     // the `field_limbs8` encoder behind it. It fed `fields[0..7]`, which are excluded from the
@@ -344,15 +277,19 @@ impl Faithful8 {
     /// (`docs/FAITHFUL-COMMITMENT-LAW.md` — the burn-down list). A call
     /// site of this constructor is an admission: these 8 limbs do NOT each
     /// bind a faithful source (e.g. eight independent ~31-bit Horner folds
-    /// riding in one octet, or — the current entry — a pack that never reads
-    /// sixteen of its source bits). `reason` must name the residual and its
-    /// closure epoch.
+    /// riding in one octet, or a pack that never reads sixteen of its source
+    /// bits). `reason` must name the residual and WHAT CLOSES IT — never a
+    /// remembered schema-epoch NUMBER, which is a pin against nothing.
     ///
-    /// ⚑ **Current list: ONE residual**, the KEY_COMMIT 30-bit pubkey8 pack
-    /// ([`KEY_COMMIT_30BIT_RESIDUAL`]), reached through
-    /// [`Faithful8::from_canonical_key`] from `cell::commitment::compute_rotated_pre_limbs` and
-    /// `turn::rotation_witness::produce`. The list was recorded as "EMPTY (v13 DONE)" until
-    /// 2026-08-01; it was empty only because the key octet had been let in the front door.
+    /// ⚑ **Current list: EMPTY, as of 2026-08-02** — the owner-key octet was the last entry and
+    /// its ninth lane now reaches the anchor, so `from_key_nonet_low8`, its reason constant and
+    /// its three doc rows are all deleted.
+    ///
+    /// ⚠ **This has read "EMPTY" before and been wrong.** It said "EMPTY (v13 DONE)" through
+    /// 2026-08-01 while the key octet sat in the tree — empty only because that octet had been let
+    /// in the FRONT DOOR as a named constructor rather than through this hatch. So an empty list is
+    /// evidence about the hatch and about nothing else; the wall's real limits are in the module
+    /// docs' "WHAT THIS WALL DOES NOT GUARD" section, and `from_bytes32` is still in them.
     ///
     /// Call sites are no longer merely "reviewed against the law doc's allowlist" — that was a
     /// convention with no instrument. `circuit/tests/faithful8_key_octet_below_floor.rs` now

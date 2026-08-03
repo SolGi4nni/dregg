@@ -34,7 +34,17 @@
 //!
 //! Every intermediate carrier is 8 felts (no 31-bit chain waist); the head binds the
 //! limb COUNT so a truncated/extended body cannot collide by padding. The exposed
-//! commitment lane is 1 felt — the same width `content_commitment` itself has.
+//! commitment lane is 1 felt.
+//!
+//! ⚑ **THAT LAST SENTENCE USED TO READ "— the same width `content_commitment` itself has",
+//! AND IT IS NO LONGER TRUE (2026-08-01).** `zkoracle-prove`'s `content_commitment` is now
+//! EIGHT lanes (`hash_bytes_8`, `2^123.63`); this leaf still exposes ONE (`d8[0]`, `2^15.45`
+//! by birthday over `log2 p = 30.906891`). So the width argument that made the two "the same
+//! shape" is gone and the gap now runs the OTHER way: the PI-pinned in-AIR leaf is the narrow
+//! one. Widening the exposed lane is a PI-count change on
+//! `zkoracle-content-commitment-leaf::dregg-zkoracle-v1` (`ZKORACLE_LEAF_COMMIT_PI` becomes a
+//! range, not a slot) — a real descriptor change, and the reason it is stated here instead of
+//! quietly done in a Rust sweep.
 //!
 //! **The named follow-up (NOT done here):** welding this leaf to the attestation's
 //! `content_commitment` requires ONE of: (a) re-pointing the attestation's cross-leg

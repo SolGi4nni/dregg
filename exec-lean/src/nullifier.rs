@@ -134,6 +134,41 @@ impl ShadowNullifierAccumulator {
     /// (the same lift `rotation_witness::root_felt` uses to carry byte roots into the field). This
     /// is the PROVISIONAL leaf key for stage E2 items 1+2; item 3 (the wire-codec fork) pins the
     /// canonical limb-26 nullifier encoding.
+    ///
+    /// # ⚑ CLASS (A) — AND THE ONLY ONE IN THE SWEEP THAT IS GENUINELY **LEAN/EMIT WORK**
+    ///
+    /// Classified 2026-08-01. This is a KEY, not a hash node, and it is the wrong primitive
+    /// twice over: a key needs INJECTIVITY over the 256 bits of a nullifier, and one BabyBear
+    /// lane carries 30.906891 of them. (Eight lanes would still lose — 247.26 < 256, pigeonhole;
+    /// the key answer in this tree is `Digest9Key` / the base-2^29 nonet, `76cc8a4a7`. The
+    /// 2^123.63 hash-NODE figure does not transfer to a key and must not be quoted here.)
+    ///
+    /// **What a collision buys.** The accumulator refuses a key already present, so the gain is
+    /// not a double-spend — it is a targeted, permanent FREEZE: grind a note whose nullifier
+    /// shares this felt with a victim's future nullifier, spend yours first, and the victim's
+    /// note is refused forever as an already-spent double-spend. Against a chosen victim that is
+    /// a second preimage, `2^30.91 ≈ 1.5e9` evaluations — hours on one core. Un-targeted it is
+    /// worse than a cost: with `N` spent notes the chance an HONEST new spend collides is
+    /// `N^2 / 2p`, i.e. ~50% at `N ≈ 2^15.45 ≈ 44,900` notes — the accumulator spontaneously
+    /// bricks a random honest note somewhere around its 45,000th spend, with no attacker at all.
+    ///
+    /// **Why it is NOT migrated in the Rust sweep.** Unlike every other (A) in this sweep, the
+    /// sink here is not a producer-side encoding this crate owns. It is `HeapLeaf::addr` — ONE
+    /// felt — and, downstream, `MA_KEY` / `MA_LO_ADDR` / `MA_LO_NEXT` in the DEPLOYED
+    /// `Ir2Air::MapAbsent` IMT bracket reached through `noteSpendVmDescriptor2R24`
+    /// (`circuit/src/descriptor_ir2.rs`): one felt each, while the roots, leaf digests and node
+    /// folds around them are already `node8`. Widening the Rust lift alone would desynchronise
+    /// the producer from that emitted gate. **This is the Lean/emit item**, and its emitters are
+    /// already proved and unlanded on disk: `metatheory/Dregg2/Circuit/Emit/LexCompare8Emit.lean`,
+    /// `Emit/HeapLeafWideEmit.lean`, `Circuit/MapAbsentImtGateWide.lean`. Landing them is a VK
+    /// rotation + a `CANONICAL_STATE_SCHEMA_EPOCH` bump; landing the Rust half is not a step
+    /// toward it, it is a desynchronisation. Same finding, same words, at
+    /// `persist/src/lib.rs`'s epoch-19 "WHAT THIS EPOCH DOES *NOT* CLOSE".
+    ///
+    /// ⓘ Not currently consensus-bearing: per this module's scope note, the accumulator is
+    /// observed + held in the shadow executor and does NOT yet gate the commit decision (item 3
+    /// threads it into `WireState` / the VK). The freeze above becomes live when item 3 lands,
+    /// which is the reason to land the emitters WITH it rather than after.
     pub fn addr_of(nf: &[u8; 32]) -> BabyBear {
         hash_bytes(nf)
     }

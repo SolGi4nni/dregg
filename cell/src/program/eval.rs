@@ -2917,19 +2917,59 @@ fn evaluate_simple_constraint(
 /// [`StateConstraint::KeyRotationGate`].
 ///
 /// `Poseidon2` is the STARK-native hash: it runs the exact audited
-/// `dregg_circuit::poseidon2` sponge (`hash_bytes`, the same width-16 BabyBear
-/// permutation the whole circuit verifies, KAT-locked to Plonky3's
-/// `default_babybear_poseidon2_16`) over the preimage bytes, then encodes the
-/// resulting field element into the 32-byte slot word via
-/// [`crate::felt_to_bytes32`] — the SAME felt→bytes encoding the capability
-/// root uses. So a Poseidon2-gated slot commitment computed here equals the
-/// circuit's `hash_bytes(preimage)` digest bit-for-bit (see the cross-crate KAT
-/// `cell::tests::poseidon2_hash_matches_circuit`).
+/// `dregg_circuit::poseidon2` sponge (the same width-16 BabyBear permutation the
+/// whole circuit verifies, KAT-locked to Plonky3's
+/// `default_babybear_poseidon2_16`) over the preimage bytes, then packs the
+/// resulting digest into the 32-byte slot word.
+///
+/// # ⚑ WIDENED 2026-08-01 — the hash-LOCK was a 31-bit lock
+///
+/// This was `felt_to_bytes32(poseidon2::hash_bytes(preimage))`: ONE ~30.91-bit
+/// BabyBear felt in bytes `0..4`, **28 of the 32 committed bytes left zero**,
+/// while the `Blake3` arm sitting next to it in this same `match` used all 32.
+/// It is now `digest8_to_bytes32(poseidon2::hash_bytes_8(preimage))` — the
+/// eight-lane companion packed lane-per-4-bytes, the SAME `Digest8` encoding
+/// `compute_canonical_capability_root_wide` and the wide `heap_root`/`fields_root`
+/// already use, injective on the full digest.
+///
+/// **What the narrow version handed an attacker, concretely.** These two gates are
+/// hash-LOCKS, and a lock's whole content is "only a party holding the committed
+/// secret can open it":
+///
+/// * [`StateConstraint::PreimageGate`] — a slot commits `H(secret)` and a turn
+///   exhibiting `secret` passes. Against a PUBLISHED commitment the work is a
+///   second preimage of a `log2 p = 30.906891`-bit target, i.e. `2^30.91 ≈ 1.5e9`
+///   Poseidon2 evaluations — **hours on one core**, and the opener never learns
+///   the real secret. A party that also chose the commitment gets the birthday
+///   form, `2^15.4534 ≈ 44,900` evaluations (milliseconds), and can open one lock
+///   with two different "secrets" — the commitment binds nothing.
+/// * [`StateConstraint::KeyRotationGate`] — worse, because the forged preimage is
+///   not merely accepted, it is **INSTALLED**: the arm below checks
+///   `hash_preimage32(kind, preimage) == old_fields[digest_slot]` and then writes
+///   `new_state.fields[current_slot] == preimage`. So a colliding 32-byte value
+///   becomes the cell's current key set. That is key material, reached without the
+///   committer's consent, at the costs above.
+///
+/// At eight lanes the image is `8 * 30.906891 = 247.255128` bits: collision
+/// `2^123.63`, second preimage `2^247.26`. **The governing number for the
+/// equivocation is the COLLISION one** — the attacker chooses both sides — and it
+/// is the one quoted; for the attack on someone else's published lock the
+/// second-preimage figure governs and is quoted there. Measured
+/// old-admits/new-rejects: `cell/tests/preimage_gate_wide_old_admits_new_rejects.rs`.
+///
+/// **Nothing in-circuit moved.** Measured 2026-08-01 across `metatheory/` and
+/// `circuit/descriptors/`: there is no emitted descriptor for the preimage gate at
+/// all. The Lean models it as an opaque portal — `Dregg2.Exec.Program`'s
+/// `.preimageGate` arm is `ctx.revealedHash == new.scalar f`, pure equality over a
+/// §8 crypto-portal INPUT — and `Dregg2.Exec.DeployedConstraint` *refuses* to
+/// marshal the arms that read `revealed_preimage` at all. So this is a host-side
+/// producer change: no VK rotates, no descriptor is re-emitted. What it DOES break
+/// is stated at the call sites and in `docs/VK-REGEN-LOG.md`.
 fn hash_preimage32(hash_kind: &HashKind, preimage: &[u8; 32]) -> [u8; 32] {
     match hash_kind {
         HashKind::Blake3 => *blake3::hash(preimage).as_bytes(),
         HashKind::Poseidon2 => {
-            crate::felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(preimage))
+            crate::digest8_to_bytes32(dregg_circuit::poseidon2::hash_bytes_8(preimage))
         }
     }
 }

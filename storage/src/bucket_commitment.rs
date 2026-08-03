@@ -119,6 +119,26 @@ fn fold_leaves(leaves: impl IntoIterator<Item = (String, String)>) -> String {
     for (key, leaf) in leaves {
         count += 1;
         // The object's namespace within the cell heap (the sort-key collection).
+        //
+        // ⚑ CLASS (B) — a ONE-FELT `hash_bytes` image, deliberately, because a BYTE-EXACT
+        // companion of the same key is committed alongside and a collision here gains an
+        // attacker nothing. **The companion is `object_leaf` (this file, ~line 177):**
+        // `digest8([key.as_bytes(), content_type, body])`, whose `pack_bytes` is 3 bytes/felt
+        // with a byte-length prefix — injective on the key — and whose eight limbs are pushed
+        // into `limbs` below and absorbed by `wire_commit_8(&pre, heap_root)`. So two objects
+        // whose keys collide under `hash_bytes` still contribute DIFFERENT limbs to `pre`, and
+        // the published root separates them at `hash_many_8`'s 2^123.63, not at this felt's
+        // 2^15.45. `verify_opening` never consults `coll` either: leg (1) recomputes
+        // `object_leaf(key, object)` from the served bytes and leg (2) re-folds the full listed
+        // leaf list. `coll` reaches only `heap_root`, which rides in as the `iroot` argument.
+        //
+        // ⚠ That argument is NOT reconstructible from this line, which is why it is written
+        // here: the ONLY thing making this (B) rather than (A) is that the key is bound twice.
+        // If a future `ObjectOpening` ever serves a MERKLE PATH through this heap instead of
+        // the full leaf list (the module doc contemplates it — "On a dregg node this is a
+        // Merkle path against the cell's committed root"), the path's position is addressed by
+        // `coll` alone and this becomes (A) — migrate it to `hash_bytes_8` spread over eight
+        // `(coll_lane_i, ...)` entries at that moment, not after.
         let coll = hash_bytes(key.as_bytes());
         // `leaf` is the object's own 64-hex wide digest ([`object_leaf`]).
         let d8 = parse_felts8(&leaf).unwrap_or([BabyBear::ZERO; 8]);
@@ -133,6 +153,15 @@ fn fold_leaves(leaves: impl IntoIterator<Item = (String, String)>) -> String {
     // domain string is kept byte-identical to the retired layer's so surviving
     // roots re-verify.
     let mut pre = vec![
+        // ⚑ CLASS (C) — not security-bearing, because there is no attacker input. This is a
+        // COMPILE-TIME CONSTANT: a fixed byte string with no free parameter, so a search is not
+        // available at any price. The only residual is a fixed-domain collision against a
+        // SIBLING scheme's constant, and there is exactly one sibling with a byte-identical
+        // `pre` layout — `starbridge-apps/site-host/src/site.rs`'s `b"site-host-content-root-v1"`
+        // (same `[domain, count, 0, 0] ‖ limbs` + `wire_commit_8(pre, heap_root)`). Whether
+        // those two 30.91-bit images coincide is settled by inspection at build time, not by an
+        // adversary: a priori 2^-30.906891, and neither string can be chosen by anyone at
+        // runtime. It is NOT a birthday event, so 2^15.45 does not apply here.
         hash_bytes(b"dregg-bucket-content-root-v1"),
         BabyBear::new(count),
         BabyBear::ZERO,

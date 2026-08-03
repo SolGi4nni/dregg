@@ -142,6 +142,38 @@ run_one "wrapmain-region-conformance.mjs --self-test (blob-fact red path + --rep
 run_one "wrapmain-region-conformance.mjs (Lean wrap assembly vs 2 compiled wrap_main blobs)" \
   node "scripts/wrapmain-region-conformance.mjs"
 
+# ⚑ THE TWO THAT WERE IN NO SCRIPT AT ALL, AND WHY THEY ARE HERE NOW (2026-08-03).
+#
+# `stepmain-shape-diff.mjs` PRINTED TWO TABLES AND EXITED 0 — no comparison, no failure counter, no
+# verdict — and `grep -rn` found it referenced only from `HORIZONLOG.md` and one docblock. So
+# HORIZONLOG:350 "all five run-length families INTACT: EndoMul 32×77 exactly Mina's" and :878
+# "SHAPE-DIFFED against Mina's own compiled circuit" were a human reading two printed tables. It now
+# carries four verdicts, every reference value read off Mina's blob (run-length sets ⊆ Mina's, gadget
+# counts ≤ Mina's, the seven-type alphabet, whole Poseidon permutations) and a red path whose bites
+# each redden a NAMED verdict.
+#
+# `curve-gate-oracle.mjs` printed `MATCH Lean` while reading o1js and nothing else — the Lean side was
+# a parenthesis in a `console.log`, so it was green for any emitter whatsoever. It now reads our
+# EMITTED step circuit as the second source and its `--self-test` bends that source three ways.
+#
+# ⚠ Both take a `--self-test` that needs NEITHER Lean nor an emission (the shape-diff grades Mina's
+# own gate list against itself as the honest anchor), and a full run that needs the emission and
+# REFUSES (exit 3) without one — the same two-step shape as the wrap gate above.
+# ⚑ AND THE FLOOR ITSELF, before either of them. `emit-provenance.mjs` is what every gate above
+# delegates "is this input fresh" to, and its THIRD leg — the emit cone was COMMITTED at the stamped
+# HEAD — was recorded and gated on NOWHERE until today. This proves all three legs refuse, that a
+# stamp from outside git refuses, and that two honest shapes are still ACCEPTED.
+run_one "emit-provenance.mjs --self-test (the freshness floor's own three legs)" \
+  node "scripts/emit-provenance.mjs" --self-test
+run_one "stepmain-shape-diff.mjs --self-test (4 verdicts must bite, + an honest anchor)" \
+  node "scripts/stepmain-shape-diff.mjs" --self-test
+run_one "stepmain-shape-diff.mjs (run-length families + gadget census vs Mina's step blob)" \
+  node "scripts/stepmain-shape-diff.mjs"
+run_one "curve-gate-oracle.mjs --self-test (bend the Lean side: it must be READ)" \
+  node "scripts/curve-gate-oracle.mjs" --self-test
+run_one "curve-gate-oracle.mjs (VarBaseMul/CompleteAdd coeff-free: o1js AND our emission)" \
+  node "scripts/curve-gate-oracle.mjs"
+
 # ⚑ AND THE ONE INSTRUMENT THAT CAN SEE A FREE CELL. Every oracle above is a SHAPE diff. Measured
 # 2026-08-03: not one prover-chosen cell was visible to any of them AS SUCH — a statement word with no
 # in-circuit source has the same ladder shape as one with a source, and a free booleanity row is

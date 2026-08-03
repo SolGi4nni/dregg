@@ -31,7 +31,9 @@
 //!     is out of bounds and `check_descriptor2` (`descriptor_ir2.rs:1604`) refuses the member — the
 //!     whole v3 registry then fails to load;
 //!   * the **wide** and **welded** `heapWriteVmDescriptor2R24` declare 20 slots and **already pin
-//!     16,17,18,19** to cols 2127..2130 (the heap-splice roots) on the last row. A second pin on the
+//!     16,17,18,19** to cols 2149..2152 (the heap-splice roots) on the last row — 2127..2130 until
+//!     the 2026-08-01 KEY-NONET re-emit, which moved every wide column +22 (`76c3f7b9b` took the
+//!     pre-limb region 184 -> 187). A second pin on the
 //!     same slot forces two unrelated columns equal, so an honest heap-write trace becomes
 //!     UNSATISFIABLE — **and the member still parses**, which is the dangerous half.
 //!
@@ -187,7 +189,7 @@ fn bindability(d: &EffectVmDescriptor2) -> Option<NotBindable> {
 ///   * a **fourth** member leaves the EffectVM PI layout — the pin must then be refused on it too;
 ///   * one of the three **rejoins** it (e.g. `heapWrite` grows a full rotated PI vector) — the pin
 ///     becomes applicable and the Lean exemption is now the thing that is wrong;
-///   * the wide `heapWrite`'s window pins **move off cols 2127..2130** — then whatever now occupies
+///   * the wide `heapWrite`'s window pins **move off cols 2149..2152** — then whatever now occupies
 ///     `PI[16..20)` there is a different claim, and the double-pin analysis has to be redone.
 #[test]
 fn effects_hash_pi_window_bindability_is_pinned() {
@@ -228,14 +230,14 @@ fn effects_hash_pi_window_bindability_is_pinned() {
                 "welded".to_string(),
                 "heapWriteVmDescriptor2R24".to_string(),
                 NotBindable::AlreadyPinned {
-                    slots: vec![(16, 2127), (17, 2128), (18, 2129), (19, 2130)]
+                    slots: vec![(16, 2149), (17, 2150), (18, 2151), (19, 2152)]
                 }
             ),
             (
                 "wide".to_string(),
                 "heapWriteVmDescriptor2R24".to_string(),
                 NotBindable::AlreadyPinned {
-                    slots: vec![(16, 2127), (17, 2128), (18, 2129), (19, 2130)]
+                    slots: vec![(16, 2149), (17, 2150), (18, 2151), (19, 2152)]
                 }
             ),
         ],
@@ -243,7 +245,7 @@ fn effects_hash_pi_window_bindability_is_pinned() {
          `heapWriteVmDescriptor2R24` is the one deployed member not on the EffectVM PI layout: the \
          v3 row publishes 4 slots (a pin at PI 16 is out of bounds and `check_descriptor2` refuses \
          the member), and the two wide rows publish 20 with the window already carrying the \
-         heap-splice roots (a second pin forces `local[2127] = local[ehAccOut 0]`, so an honest \
+         heap-splice roots (a second pin forces `local[2149] = local[ehAccOut 0]`, so an honest \
          heap-write trace is UNSATISFIABLE — and it still parses, so it would land). The Lean twin \
          of this predicate is `EffectVmEffectsHashPin.ehPiWindowBindable`; if this list and that \
          predicate ever disagree, the emit is the thing to believe."

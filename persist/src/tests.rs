@@ -20,8 +20,13 @@ fn new_store() -> PersistentStore {
     PersistentStore::open_in_memory().expect("failed to open in-memory store")
 }
 
+/// A fresh store is sealed to whatever `CANONICAL_STATE_SCHEMA_EPOCH` currently reads.
+///
+/// ⓘ This was called `..._epoch_11` until 2026-08-01, at which point the constant read **22**.
+/// The assertion was always against the constant, so the number in the name was decoration that
+/// had been wrong for nine epochs — renamed rather than re-pinned, because a name is a claim.
 #[test]
-fn fresh_store_is_sealed_to_canonical_state_epoch_11() {
+fn fresh_store_is_sealed_to_the_canonical_state_epoch() {
     let store = new_store();
     let read = store.db.begin_read().unwrap();
     let metadata = read.open_table(crate::tables::METADATA).unwrap();
@@ -32,6 +37,192 @@ fn fresh_store_is_sealed_to_canonical_state_epoch_11() {
             .map(|value| value.value()),
         Some(PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH)
     );
+}
+
+/// The VK-REGEN log as text (compile-time: a missing log is a COMPILE error, not a skip).
+const VK_REGEN_LOG: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../docs/VK-REGEN-LOG.md"
+));
+
+/// The last `epoch:N` an event row of `docs/VK-REGEN-LOG.md` records, with that row's timestamp.
+///
+/// PURE, and that is deliberate: it lets `schema_epoch_log_row_can_go_red` prove every refusal
+/// on strings in memory, so this gate never needs a RED-PROOF SCAFFOLD in the shared tree — the
+/// disarmed-guard class AGENTS.md documents (a lane broke `eval.rs` to prove a point, died
+/// holding it, and misled three other lanes).
+///
+/// `Err` for every unreadable shape. Fail-closed is the whole design: a log with no parseable
+/// epoch row is a FAILURE, because otherwise the first malformed row silently disables the
+/// comparison — a class this repo has ~15 instances of.
+fn last_logged_epoch(log: &str) -> Result<(u64, String), String> {
+    let mut rows = 0usize;
+    let mut last: Option<(u64, String)> = None;
+    for line in log.lines() {
+        let line = line.trim_end();
+        // Event rows only: `| 2026-…Z | operator | … | epoch:N |`. Keyed on the full ISO
+        // timestamp, not on a `| 20` prefix — the SCHEMA EPOCH LEDGER above the event table
+        // has a row whose first cell is the bare number `20`, and a prefix test swallowed it.
+        if !line.starts_with("| 20") || !line.ends_with('|') {
+            continue;
+        }
+        let when = line.split('|').nth(1).unwrap_or("").trim().to_string();
+        if when.len() != 20 || !when.ends_with('Z') || when.as_bytes()[10] != b'T' {
+            continue;
+        }
+        rows += 1;
+        let cell = line[..line.len() - 1].rsplit('|').next().unwrap_or("").trim();
+        let Some(value) = cell.strip_prefix("epoch:") else {
+            return Err(format!(
+                "VK-REGEN-LOG row `{when}` ends in `{cell}`, which is not an `epoch:` cell. \
+                 Unparseable is RED, never green — a log this cannot read is exactly how a gate \
+                 gets switched off silently."
+            ));
+        };
+        if value == "unchanged" || value == "unknown" {
+            continue;
+        }
+        let Ok(n) = value.parse::<u64>() else {
+            return Err(format!(
+                "VK-REGEN-LOG row `{when}`: `epoch:{value}` is not a number, `unchanged` or \
+                 `unknown`."
+            ));
+        };
+        if let Some((prev, ref prev_when)) = last {
+            if n < prev {
+                return Err(format!(
+                    "VK-REGEN-LOG row `{when}` records epoch {n} after `{prev_when}` recorded \
+                     {prev}. The epoch only ratchets up."
+                ));
+            }
+        }
+        last = Some((n, when));
+    }
+
+    // FLOOR — a reader that harvests nothing must not read as clean.
+    if rows < 40 {
+        return Err(format!(
+            "VK-REGEN-LOG: harvested only {rows} event rows; this reader is broken, not the log."
+        ));
+    }
+    last.ok_or_else(|| {
+        "VK-REGEN-LOG carries no `epoch:N` row, so there is nothing to compare the constant \
+         against. That is a failure: the epoch history no longer reconstructs from the log."
+            .to_string()
+    })
+}
+
+/// ⚑ A SCHEMA EPOCH MOVED AND THE LOG DOES NOT SAY SO.
+///
+/// `docs/VK-REGEN-LOG.md` is how a reader reconstructs what each epoch re-genesised. On
+/// 2026-08-01 its last row said "Schema epoch UNCHANGED at 20" while the constant twelve lines
+/// above this test read **21**: `6441705e8` bumped it and ran no emit. The structural defect is
+/// that **the epoch is a Rust constant any commit can bump, while only `emit_descriptors.py`
+/// appends to that log** — so a check inside the emit path reproduces the blind spot exactly.
+///
+/// This test is the body of the gate that sits NEXT TO THE CONSTANT. `cargo test -p
+/// dregg-persist` is what a lane editing `persist/src/lib.rs` runs anyway, and this reds there,
+/// before any gate script or CI job is involved. `scripts/check-schema-epoch-log.py` is the
+/// same comparison plus the ledger-vs-git-history leg, and it welds this test in place (its
+/// TWIN-GONE finding fires if this function is deleted or stops naming the log).
+///
+/// `include_str!` on purpose: a missing log is a COMPILE error, not a skipped test.
+///
+/// ⚠ Never repair a red here by widening what is compared. The constant moving IS a re-genesis;
+/// append the row (what re-genesised · what re-emits · what now refuses to load) and a ledger row.
+#[test]
+fn schema_epoch_log_row() {
+    let (logged, when) = last_logged_epoch(VK_REGEN_LOG).expect("docs/VK-REGEN-LOG.md");
+    assert_eq!(
+        logged,
+        PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH,
+        "CANONICAL_STATE_SCHEMA_EPOCH = {} but the last epoch-bearing row of \
+         docs/VK-REGEN-LOG.md (`{when}`) reads {logged}. A schema epoch moved with no row. \
+         Append an event row AND a ledger row saying what re-genesised, what must be re-emitted, \
+         and what now refuses to load.",
+        PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH
+    );
+}
+
+/// The `-red` half, and it is not optional: `schema_epoch_log_row` is a NEGATIVE assertion,
+/// which passes just as happily when its own reader is broken. Everything here runs on strings
+/// in memory, so the shared tree is never mutated and no window exists in which a sibling lane
+/// can compile a disarmed guard.
+///
+/// An injection that matches NOTHING is itself a failure — each mutation asserts it bit.
+#[test]
+fn schema_epoch_log_row_can_go_red() {
+    let real = VK_REGEN_LOG;
+    let epoch = PersistentStore::CANONICAL_STATE_SCHEMA_EPOCH;
+    let tag = format!("| epoch:{epoch} |");
+    assert!(
+        real.contains(&tag),
+        "the real log no longer carries `{tag}`; this red-proof's injections would match nothing."
+    );
+
+    // CONTROL — the tree as it stands reads clean. Without this, every red below is meaningless.
+    assert_eq!(last_logged_epoch(real).expect("control").0, epoch);
+
+    // 1 · THE ORIGIN STORY, against the REAL constant. `6441705e8` moved the constant and wrote
+    //     no row, so the log went on recording the epoch BEFORE the bump. Rewind the last row
+    //     one epoch and the comparison `schema_epoch_log_row` makes stops holding.
+    let stale = real.replacen(&tag, &format!("| epoch:{} |", epoch - 1), 1);
+    assert_ne!(stale, real, "stale-log injection matched nothing");
+    assert_ne!(
+        last_logged_epoch(&stale).expect("stale").0,
+        epoch,
+        "a constant that moved past the log's last row must NOT compare equal — this is the \
+         6441705e8 shape, and it is the one thing this gate exists to refuse"
+    );
+
+    // 2 · ...and appending the row makes it agree again. A gate that cannot be satisfied is a
+    //     wall, not a gate: the fix is a ROW, never a wider comparison.
+    let rowed = format!(
+        "{}\n| 2026-08-02T00:00:00Z | red-proof | in-memory | {} | {} | no | RED-PROOF | epoch:{epoch} |\n",
+        stale.trim_end(),
+        "0".repeat(40),
+        "0".repeat(40),
+    );
+    assert_eq!(last_logged_epoch(&rowed).expect("rowed").0, epoch);
+
+    // 3 · FAIL-CLOSED: truncated epoch cell.
+    let trunc = real.replacen(&tag, "| epoch: |", 1);
+    assert_ne!(trunc, real, "truncation injection matched nothing");
+    assert!(last_logged_epoch(&trunc).is_err(), "a truncated epoch cell must be RED");
+
+    // 4 · FAIL-CLOSED: an epoch cell that is text but not an epoch.
+    let garbled = real.replacen(&tag, "| epoch:twenty-two |", 1);
+    assert_ne!(garbled, real, "garble injection matched nothing");
+    assert!(last_logged_epoch(&garbled).is_err(), "a garbled epoch cell must be RED");
+
+    // 5 · FAIL-CLOSED, the whole column — the shape this gate exists to refuse. Every event row
+    //     loses its trailing cell, so nothing is epoch-bearing and NOTHING may read as clean.
+    let stripped: String = real
+        .lines()
+        .map(|l| match l.rfind("| epoch:") {
+            Some(i) if l.starts_with("| 20") && l.trim_end().ends_with('|') => {
+                format!("{} |\n", l[..i].trim_end())
+            }
+            _ => format!("{l}\n"),
+        })
+        .collect();
+    assert_ne!(stripped, real, "column-strip injection matched nothing");
+    assert!(
+        last_logged_epoch(&stripped).is_err(),
+        "a log that lost its epoch column must be RED, not green"
+    );
+
+    // 6 · FAIL-CLOSED: a BLIND reader harvests nothing and must not report clean.
+    assert!(last_logged_epoch("").is_err(), "an empty log must be RED");
+    assert!(
+        last_logged_epoch("| when (UTC) | operator |\n|---|---|\n").is_err(),
+        "a log with a header and no rows must be RED"
+    );
+
+    // 7 · the column made non-monotone.
+    let back = real.replacen("| epoch:21 |", "| epoch:5 |", 1);
+    assert_ne!(back, real, "monotonicity injection matched nothing");
+    assert!(last_logged_epoch(&back).is_err(), "a decreasing epoch must be RED");
 }
 
 /// F5: the durable receipt-index HEAD anchor `{ len, root }` round-trips and

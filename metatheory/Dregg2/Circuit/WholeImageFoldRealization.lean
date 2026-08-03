@@ -112,41 +112,157 @@ def padDigest8 : Digest8 := zeroDigest8
 /-- **`padTo8 d L`** — the deployed occupancy discipline at 8-felt width: the real leaf digests are a
 contiguous sorted PREFIX and every position `≥ L.length` holds `padDigest8`. The `Digest8` twin of
 `MapPaddedDenotation.padTo`. -/
-def padTo8 (d : Nat) (L : List Digest8) : List Digest8 :=
+⚑ **IT TAKES THE OBLIGATION**, for the reason `DeployedMapDenotation.padTo` does and at the width
+that actually ships: `compute_canonical_heap_root_8` (`heap_root.rs:1015-1019`) and
+`CanonicalHeapTree8::new` (`:1149-1153`) each carry a RELEASE-ACTIVE
+`assert!(leaves.len() <= capacity)`, so the deployed 8-felt builder REFUSES an over-capacity heap
+rather than folding it. `heap_fits8` discharges every honest site silently; the argument is a `Prop`
+and no felt moves. -/
+macro "heap_fits8" : tactic =>
+  `(tactic| first
+      | assumption
+      | (rw [List.length_map, linkHeap_length]; assumption)
+      | (rw [List.length_map, linkHeap_length]; omega)
+      | omega
+      | exact of_decide_eq_true (Eq.refl true)
+      | (simp only [List.length_cons, List.length_nil, List.length_map]; omega)
+      | fail "OVER-CAPACITY 8-FELT HEAP COMMITMENT — this digest vector does not fit the tree it \
+              claims. `padTo8 d L` pads by `2 ^ d - L.length`, `Nat` subtraction, which SATURATES: \
+              above `2 ^ d` leaves NOTHING is appended and `perfectRoot8 _ d` READS ONLY THE FIRST \
+              `2 ^ d` ENTRIES (`perfectRoot8_eq_take`), so two heaps agreeing on that prefix \
+              publish ONE root for EVERY chip — no `Coll8`, no `PadHit8`, no floor \
+              (`over_capacity_roots8_collide`). The deployed builders REFUSE this input \
+              (`heap_root.rs:1015`, `:1149`, release-active `assert!`s). Carry \
+              `L.length ≤ 2 ^ d` from the caller — do NOT truncate.")
+
+def padTo8 (d : Nat) (L : List Digest8) (hFits : L.length ≤ 2 ^ d := by heap_fits8) :
+    List Digest8 :=
   L ++ List.replicate (2 ^ d - L.length) padDigest8
 
-theorem padTo8_length {d : Nat} {L : List Digest8} (h : L.length ≤ 2 ^ d) :
-    (padTo8 d L).length = 2 ^ d := by
+/-- **★ THE WIDTH IS THE FUNCTION'S OWN, not a consumer's obligation to remember.** -/
+theorem padTo8_length_eq {d : Nat} {L : List Digest8} (h : L.length ≤ 2 ^ d) :
+    (padTo8 d L h).length = 2 ^ d := by
   simp only [padTo8, List.length_append, List.length_replicate]
   omega
 
+theorem padTo8_length {d : Nat} {L : List Digest8} (h : L.length ≤ 2 ^ d) :
+    (padTo8 d L h).length = 2 ^ d := padTo8_length_eq h
+
 /-- **A FULL tree pads to itself** — the padded fold EXTENDS the dense one rather than replacing it. -/
-theorem padTo8_dense {d : Nat} {L : List Digest8} (h : L.length = 2 ^ d) : padTo8 d L = L := by
+theorem padTo8_dense {d : Nat} {L : List Digest8} (h : L.length = 2 ^ d) :
+    padTo8 d L (le_of_eq h) = L := by
   simp only [padTo8, h, Nat.sub_self, List.replicate_zero, List.append_nil]
 
-/-! ### ⚑ The `Digest8` twin's over-capacity arm — the same silence, at the deployed width.
+/-! ### ⚑ THE `Digest8` OVER-CAPACITY ARM: the evidence it existed, and the refusal that closes it.
 
-`2 ^ d - L.length` saturates here exactly as it does at `ℤ`, and `padTo8_length`'s hypothesis is
-again the only place the width is claimed. Both of its consumers
-(`padImtRoot8_binds_or_ghost_or_collides`) carry `L.length ≤ 2 ^ d`, so they are TRUE and SILENT
-above capacity — while `padImtRoot8` itself takes an arbitrary heap. Stated, with the same teeth as
-`DeployedMapDenotation.over_capacity_roots_collide`. ⚠ NOT CLOSED: the fix is `padTo8`'s own
-obligation propagated to `padImtRoot8`, which is the `Digest8` half of the same map-cone lane. -/
+Everything `DeployedMapDenotation` §3-cap says holds verbatim at eight felts, and here it is the
+LIVE width — `compute_canonical_heap_root_8` is what the executor and the cell fold. `padTo8` used
+to be the obligation-free append: `2 ^ d - L.length` saturates, so an over-capacity vector reached
+`perfectRoot8 _ d` unpadded, and that fold READS ONLY THE FIRST `2 ^ d` ENTRIES
+(`perfectRoot8_eq_take`, below). Two heaps agreeing on that prefix published ONE root, for every
+chip, with no `Coll8`, no `PadHit8` and no floor. `padTo8_length`'s hypothesis was the only place
+the width was ever claimed, and `padImtRoot8` took an arbitrary heap.
 
-/-- **★ OVER CAPACITY THE 8-FELT PAD IS THE IDENTITY** — nothing is appended, and the vector handed
-to `perfectRoot8 _ d` is longer than the tree that fold is shaped for. -/
-theorem padTo8_saturates_over_capacity {d : Nat} {L : List Digest8} (h : 2 ^ d ≤ L.length) :
-    padTo8 d L = L := by
+The instrument is a REFUSAL and not truncation, for the three reasons the narrow half gives: the
+deployed builders refuse (`heap_root.rs:1015`, `:1149`, release-active `assert!`s, pinned by
+`circuit/tests/tree_capacity_guard.rs`); below `padTo8` there is only `perfectRoot8`, which returns
+one `Digest8` and carries no length, no tag and no refusal; and `perfectRoot8_eq_take` proves the
+fold ALREADY truncates, so normalising would move no root and close nothing.
+
+`padTo8Saturating` below IS the retired body, kept so the equivocation stays a machine-checked fact
+rather than a paragraph. -/
+
+/-- **`padTo8Saturating` — THE RETIRED, OBLIGATION-FREE BODY.** ⚠ Kept ONLY to state the
+equivocation that used to be reachable; it is not the deployed pad and has no caller. -/
+def padTo8Saturating (d : Nat) (L : List Digest8) : List Digest8 :=
+  L ++ List.replicate (2 ^ d - L.length) padDigest8
+
+/-- **CONSERVATIVITY.** Wherever the retired body was ever correct, the repair changed nothing. -/
+theorem padTo8Saturating_eq_padTo8 {d : Nat} {L : List Digest8} (h : L.length ≤ 2 ^ d) :
+    padTo8Saturating d L = padTo8 d L h := rfl
+
+/-- **★ ONE FOLD LEVEL COMMUTES WITH TRUNCATION AT `Digest8`.** The `node8` twin of
+`MapMerkleRoot.foldLevel_take`; the pairing is LOCAL, so the first `n` parents descend from the
+first `2 * n` children and from nothing else. -/
+theorem foldLevel8_take :
+    ∀ (n : Nat) (xs : List Digest8),
+      foldLevel8 S8 (xs.take (2 * n)) = (foldLevel8 S8 xs).take n := by
+  intro n
+  induction n with
+  | zero => intro xs; simp [foldLevel8]
+  | succ m ih =>
+    intro xs
+    match xs with
+    | [] => simp [foldLevel8]
+    | [x] =>
+      have h2 : 2 * (m + 1) = m + m + 2 := by ring
+      simp [foldLevel8, h2]
+    | l :: r :: rest =>
+      have h2 : 2 * (m + 1) = 2 * m + 1 + 1 := by ring
+      rw [h2, List.take_succ_cons, List.take_succ_cons]
+      show heapNodeOf8 S8 l r :: foldLevel8 S8 (rest.take (2 * m))
+        = (heapNodeOf8 S8 l r :: foldLevel8 S8 rest).take (m + 1)
+      rw [List.take_succ_cons, ih rest]
+
+/-- **★★ THE 8-FELT FOLD READS ONLY THE FIRST `2 ^ d` LEAVES — THE ROOT CAUSE, AT THE LIVE WIDTH.**
+No length hypothesis, no chip hypothesis: whatever sits at position `2 ^ d` or beyond contributes
+NOTHING to the published root, at any depth. -/
+theorem perfectRoot8_eq_take :
+    ∀ (d : Nat) (xs : List Digest8),
+      perfectRoot8 S8 d xs = perfectRoot8 S8 d (xs.take (2 ^ d)) := by
+  intro d
+  induction d with
+  | zero =>
+    intro xs
+    cases xs with
+    | nil => rfl
+    | cons x t => rfl
+  | succ d ih =>
+    intro xs
+    show perfectRoot8 S8 d (foldLevel8 S8 xs)
+      = perfectRoot8 S8 d (foldLevel8 S8 (xs.take (2 ^ (d + 1))))
+    have hp : 2 ^ (d + 1) = 2 * 2 ^ d := by ring
+    rw [hp, foldLevel8_take S8 (2 ^ d) xs, ← ih (foldLevel8 S8 xs)]
+
+/-- **★ OVER CAPACITY THE RETIRED 8-FELT PAD WAS THE IDENTITY** — nothing was appended, and the
+vector handed to `perfectRoot8 _ d` was longer than the tree that fold is shaped for. -/
+theorem padTo8Saturating_saturates_over_capacity {d : Nat} {L : List Digest8}
+    (h : 2 ^ d ≤ L.length) : padTo8Saturating d L = L := by
   have hz : 2 ^ d - L.length = 0 := Nat.sub_eq_zero_of_le h
-  simp only [padTo8, hz, List.replicate_zero, List.append_nil]
+  simp only [padTo8Saturating, hz, List.replicate_zero, List.append_nil]
 
-/-- **★ AND THE WIDE COMMITMENT STOPS BINDING THERE, FLOOR-FREE.** Two DIFFERENT over-capacity
-digest vectors fold to the SAME root for EVERY sponge: `perfectRoot8 _ 0` reads the head and the
-saturated pad left the tail in place to be ignored. No `Coll8`, no `PadHit8`, no injectivity
-hypothesis rules this out — it is simply outside what
-`padImtRoot8_binds_or_ghost_or_collides` can speak about. -/
+/-- **★ AND THE WIDE COMMITMENT STOPPED BINDING THERE, FLOOR-FREE.** Two DIFFERENT over-capacity
+digest vectors folded to the SAME root for EVERY sponge. ⚑ The evidence, preserved verbatim — only
+the subject moved to the retired body, because `perfectRoot8 S8 0 (padTo8 0 [a, b] ?)` no longer
+elaborates. -/
 theorem over_capacity_roots8_collide (a b : Digest8) :
-    perfectRoot8 S8 0 (padTo8 0 [a, b]) = perfectRoot8 S8 0 (padTo8 0 [a]) := rfl
+    perfectRoot8 S8 0 (padTo8Saturating 0 [a, b]) = perfectRoot8 S8 0 (padTo8Saturating 0 [a]) := rfl
+
+/-- **★ AND IT WAS NEVER A `d = 0` CURIOSITY.** At EVERY depth — the deployed `HEAP_TREE_DEPTH = 16`
+included — a full tree and the same tree with ONE extra leaf published the same retired root. -/
+theorem over_capacity_roots8_collide_at_every_depth (d : Nat) (L : List Digest8)
+    (hlen : L.length = 2 ^ d) (x : Digest8) :
+    perfectRoot8 S8 d (padTo8Saturating d (L ++ [x])) = perfectRoot8 S8 d (padTo8Saturating d L)
+      ∧ L ++ [x] ≠ L := by
+  have hge : 2 ^ d ≤ (L ++ [x]).length := by simp [hlen]
+  refine ⟨?_, ?_⟩
+  · rw [padTo8Saturating_saturates_over_capacity hge,
+      padTo8Saturating_saturates_over_capacity (le_of_eq hlen.symm),
+      perfectRoot8_eq_take S8 d (L ++ [x]), perfectRoot8_eq_take S8 d L, ← hlen,
+      List.take_left, List.take_length]
+  · intro hc
+    have := congrArg List.length hc
+    simp at this
+
+/-- ⚑ **THE EXHIBITED PRE-IMAGE IS NOW REFUSED — AND ITS PARTNER IS NOT.** The obligation is FALSE
+on the two-leaf witness at depth `0`, so `padTo8 0 [a, b]` has no proof to supply and does not
+elaborate; it is TRUE on the one-leaf partner, so the pad still admits everything it ever
+legitimately admitted. -/
+theorem colliding_witness8_is_refused_admissible_partner_is_not (a b : Digest8) :
+    ¬ (([a, b] : List Digest8).length ≤ 2 ^ 0) ∧ (([a] : List Digest8).length ≤ 2 ^ 0) := by
+  constructor
+  · simp
+  · simp
 
 /-- The witness really is over capacity at depth `0`. -/
 theorem over_capacity_witness8_exceeds (a b : Digest8) :
@@ -192,7 +308,9 @@ theorem append_replicate_eq_or_hit8 : ∀ (L₁ L₂ : List Digest8) (k₁ k₂ 
       · exact Or.inr (Or.inl (List.mem_cons_of_mem _ hh₁))
       · exact Or.inr (Or.inr (List.mem_cons_of_mem _ hh₂))
 
-theorem padTo8_eq_or_hit (d : Nat) {L₁ L₂ : List Digest8} (h : padTo8 d L₁ = padTo8 d L₂) :
+theorem padTo8_eq_or_hit (d : Nat) {L₁ L₂ : List Digest8}
+    {f₁ : L₁.length ≤ 2 ^ d} {f₂ : L₂.length ≤ 2 ^ d}
+    (h : padTo8 d L₁ f₁ = padTo8 d L₂ f₂) :
     L₁ = L₂ ∨ PadHit8 L₁ ∨ PadHit8 L₂ :=
   append_replicate_eq_or_hit8 L₁ L₂ _ _ h
 
@@ -208,8 +326,15 @@ vector to `2 ^ d`, and fold the perfect `node8` tree (`perfectRoot8` ≡ `heap_n
 This is `MapPaddedDenotation.padImtRoot` moved from `ℤ` to `Digest8` — the SAME shape move, at the
 width the deployment actually commits (`cell/src/state.rs:311` `heap_root : Faithful8`,
 absorbed into the rotated commitment at `HEAP_ROOT_GROUP`, `cell/src/commitment.rs:1229`). -/
-def padImtRoot8 (d : Nat) (h : Heap.FeltHeap) : Digest8 :=
-  perfectRoot8 S8 d (padTo8 d ((linkHeap h).map (heapLeafDigest8 S8)))
+⚑ **IT TAKES THE CAPACITY OBLIGATION, because the builders it corresponds to DO.**
+`compute_canonical_heap_root_8` (`heap_root.rs:1015`) and `CanonicalHeapTree8::new` (`:1149`) each
+`assert!(leaves.len() <= capacity)` in RELEASE, so the deployed 8-felt builder does not commit an
+over-capacity heap — it panics. A total `padImtRoot8` modelled a function the deployment does not
+have, and its extra domain was exactly where the commitment stopped binding. -/
+def padImtRoot8 (d : Nat) (h : Heap.FeltHeap) (hFits : h.length ≤ 2 ^ d := by heap_fits8) :
+    Digest8 :=
+  perfectRoot8 S8 d (padTo8 d ((linkHeap h).map (heapLeafDigest8 S8))
+    (by rw [List.length_map, linkHeap_length]; exact hFits))
 
 /-- **`sentinelHeap h`** — the MIN-sentinel prepend `CanonicalHeapTree8::new` performs before sorting
 (`heap_root.rs:1011`). Callers hand the tree their DECLARED cells; the sentinel is the builder's.
@@ -233,11 +358,13 @@ theorem sentinelHeap_length (h : Heap.FeltHeap) : (sentinelHeap h).length = h.le
 /-- **⚑ `wholeBoundaryFold8 S8 d h` — THE CORRESPONDENT OF `whole_boundary_fold`**, at the level of
 DECLARED boundary cells: prepend the MIN sentinel, then take the deployed-shape padded IMT root. This
 is the `hpin` object the whole-image fold chip pins its published-root PI group to. -/
-def wholeBoundaryFold8 (d : Nat) (h : Heap.FeltHeap) : Digest8 :=
-  padImtRoot8 S8 d (sentinelHeap h)
+def wholeBoundaryFold8 (d : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length + 1 ≤ 2 ^ d := by heap_fits8) : Digest8 :=
+  padImtRoot8 S8 d (sentinelHeap h) (by rw [sentinelHeap_length]; exact hFits)
 
-theorem wholeBoundaryFold8_eq (d : Nat) (h : Heap.FeltHeap) :
-    wholeBoundaryFold8 S8 d h = padImtRoot8 S8 d (sentinelHeap h) := rfl
+theorem wholeBoundaryFold8_eq (d : Nat) (h : Heap.FeltHeap) (hFits : h.length + 1 ≤ 2 ^ d) :
+    wholeBoundaryFold8 S8 d h hFits
+      = padImtRoot8 S8 d (sentinelHeap h) (by rw [sentinelHeap_length]; exact hFits) := rfl
 
 /-! ## §2 — THE BINDING, with NO floor and two NAMED residuals. -/
 
@@ -261,13 +388,26 @@ perfect-tree descent over the two padded digest vectors; if that found a genuine
 is the answer. Otherwise the descent has already forced the two DIGEST VECTORS equal, so any
 collision is at the arity-3 leaf absorb and the linked-leaf scan supplies the pair. Total, decidable,
 and independent of anything assumed about the chip. -/
+⚑ **IT STAYS TOTAL AND BOTTOMS OUT WHERE THE COMMITMENT REFUSES TO EXIST** — the same call
+`DeployedMapDenotation.padImtRootFind` takes. This is diagnostic instrumentation with no deployed
+counterpart, and `PadImtRoot8Coll` needs it at arbitrary heaps; above capacity it returns the
+extractor's own "nothing found" pair, which makes the `Coll8` disjunct FALSE there. Nothing claims
+it over capacity — the binding carries both occupancy facts. -/
 def padImtRoot8Find (d : Nat) (h₁ h₂ : Heap.FeltHeap) : List ℤ × List ℤ :=
-  if Coll8 S8.chipAbsorb8
-      (perfectRoot8Find S8 d (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8)))
-                             (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))))
-  then perfectRoot8Find S8 d (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8)))
-                             (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8)))
-  else mapLeaf8Find S8 (linkHeap h₁) (linkHeap h₂)
+  if hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d then
+    (if Coll8 S8.chipAbsorb8
+        (perfectRoot8Find S8 d
+          (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8))
+            (by rw [List.length_map, linkHeap_length]; exact hz.1))
+          (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))
+            (by rw [List.length_map, linkHeap_length]; exact hz.2)))
+     then perfectRoot8Find S8 d
+          (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8))
+            (by rw [List.length_map, linkHeap_length]; exact hz.1))
+          (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))
+            (by rw [List.length_map, linkHeap_length]; exact hz.2))
+     else mapLeaf8Find S8 (linkHeap h₁) (linkHeap h₂))
+  else ([], [])
 
 /-- **`PadImtRoot8Coll S8 d h₁ h₂`** — the pair `padImtRoot8Find` RETURNS on this heap equivocation is
 a genuine collision of the deployed arity-16 chip.
@@ -285,18 +425,24 @@ padding, eight-lane digests. No floor at the node, none at the leaf. This is the
 whole-image cone below is built from. -/
 theorem padImtRoot8_binds_or_ghost_or_collides (d : Nat) {h₁ h₂ : Heap.FeltHeap}
     (hl₁ : h₁.length ≤ 2 ^ d) (hl₂ : h₂.length ≤ 2 ^ d)
-    (heq : padImtRoot8 S8 d h₁ = padImtRoot8 S8 d h₂) :
+    (heq : padImtRoot8 S8 d h₁ hl₁ = padImtRoot8 S8 d h₂ hl₂) :
     h₁ = h₂ ∨ PadGhost8 S8 h₁ ∨ PadGhost8 S8 h₂ ∨ PadImtRoot8Coll S8 d h₁ h₂ := by
+  have hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d := ⟨hl₁, hl₂⟩
   by_cases hif : Coll8 S8.chipAbsorb8
-      (perfectRoot8Find S8 d (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8)))
-                             (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))))
+      (perfectRoot8Find S8 d
+        (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8))
+          (by rw [List.length_map, linkHeap_length]; exact hl₁))
+        (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))
+          (by rw [List.length_map, linkHeap_length]; exact hl₂)))
   · refine Or.inr (Or.inr (Or.inr ?_))
     show Coll8 S8.chipAbsorb8 (padImtRoot8Find S8 d h₁ h₂)
-    rw [padImtRoot8Find, if_pos hif]
+    rw [padImtRoot8Find, dif_pos hz, if_pos hif]
     exact hif
-  · have hlen₁ : (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8))).length = 2 ^ d :=
+  · have hlen₁ : (padTo8 d ((linkHeap h₁).map (heapLeafDigest8 S8))
+        (by rw [List.length_map, linkHeap_length]; exact hl₁)).length = 2 ^ d :=
       padTo8_length (by rw [List.length_map, linkHeap_length]; exact hl₁)
-    have hlen₂ : (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))).length = 2 ^ d :=
+    have hlen₂ : (padTo8 d ((linkHeap h₂).map (heapLeafDigest8 S8))
+        (by rw [List.length_map, linkHeap_length]; exact hl₂)).length = 2 ^ d :=
       padTo8_length (by rw [List.length_map, linkHeap_length]; exact hl₂)
     rcases perfectRoot8_binds_or_collides S8 d hlen₁ hlen₂ heq with hpad | hc
     · rcases padTo8_eq_or_hit d hpad with hL | hh₁ | hh₂
@@ -304,7 +450,7 @@ theorem padImtRoot8_binds_or_ghost_or_collides (d : Nat) {h₁ h₂ : Heap.FeltH
         · exact Or.inl (linkHeap_injective hlink)
         · refine Or.inr (Or.inr (Or.inr ?_))
           show Coll8 S8.chipAbsorb8 (padImtRoot8Find S8 d h₁ h₂)
-          rw [padImtRoot8Find, if_neg hif]
+          rw [padImtRoot8Find, dif_pos hz, if_neg hif]
           exact hcl
       · exact Or.inr (Or.inl hh₁)
       · exact Or.inr (Or.inr (Or.inl hh₂))
@@ -580,7 +726,12 @@ theorem demo_declared_cell_survives (peerCells : Heap.FeltHeap) (hpl : peerCells
   rw [sentinelHeap_injective hpeq]
   rfl
 
-#assert_axioms padTo8_saturates_over_capacity
+#assert_axioms padTo8Saturating_saturates_over_capacity
+#assert_axioms padTo8Saturating_eq_padTo8
+#assert_axioms foldLevel8_take
+#assert_axioms perfectRoot8_eq_take
+#assert_axioms over_capacity_roots8_collide_at_every_depth
+#assert_axioms colliding_witness8_is_refused_admissible_partner_is_not
 #assert_axioms over_capacity_roots8_collide
 #assert_axioms over_capacity_witness8_exceeds
 #assert_axioms append_replicate_eq_or_hit8

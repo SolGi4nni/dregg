@@ -142,6 +142,14 @@ serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 
+[dev-dependencies]
+# The RETIRED one-felt squeeze (`poseidon2::hash_bytes`) — needed ONLY by
+# `tests/attestation_commit_wide_old_admits_new_rejects.rs`, which reconstructs the
+# pre-2026-08-01 `attestation_commit_field` encoding and searches it for a real collision.
+# Not a runtime dependency: the shipped narrator reaches the field through
+# `dregg-zkoracle-prove`'s `CommitLane` re-export.
+dregg-circuit = { path = "../circuit" }
+
 [features]
 # The REAL attested brain path (Phase E→B): links the `dregg-zkoracle-live` crate's heavy
 # MPC-TLS backend so `BedrockBrain` can make a genuine live Bedrock call and

@@ -90,6 +90,7 @@ use std::collections::BTreeSet;
 use dregg_app_framework::{
     CellId, Effect, Event, FieldElement, TurnReceipt, field_from_u64, symbol,
 };
+use dregg_zkoracle_prove::attestation::{CommitLane, ContentCommit};
 use dregg_zkoracle_prove::{
     AnthropicConfig, EndpointConfig, FixtureNotary, ProveError, ZkOracleAttestation, ZkOracleError,
     build_anthropic_fixture, prove_zkoracle, verify_zkoracle,
@@ -149,11 +150,11 @@ pub const NARRATION_DATA_ARITY: usize = 3;
 /// Honest about the aliasing this admits: a sentinel is not a tag, so a genuine fact that
 /// happens to equal zero reads as absent. For [`SLOT_TEE_PROVENANCE_COMMIT`] that needs a
 /// BLAKE3 preimage of the all-zero digest, so it is not a design case. For
-/// [`SLOT_ATTESTATION_COMMIT`] the fact is a single `BabyBear` felt widened by
-/// `field_from_u64`, so an honest zero lands there roughly once in 2^31 attestations and
-/// reads as "unattested" — fail-CLOSED (a real attestation is under-reported, never a
-/// missing one over-reported), and one more reason that slot's ~31-bit source is a
-/// catalogued felt-width wound (`attestation_commit_field`) rather than a shape to copy.
+/// [`SLOT_ATTESTATION_COMMIT`] the fact is now the EIGHT-lane content commitment packed by
+/// [`content_commit_field`], so an honest zero needs all eight lanes to be zero at once —
+/// `p^-8 = 2^-247.26`, not the `2^-31` the single-felt encoding carried. Either way the
+/// aliasing is fail-CLOSED (a real attestation is under-reported, never a missing one
+/// over-reported).
 pub const ABSENT_FACT: FieldElement = [0u8; 32];
 
 /// The deterministic fixture-notary seed for the attested path's authentic leg. The
@@ -754,12 +755,17 @@ pub fn bound_narration_event_data(receipt: &TurnReceipt) -> Option<&[FieldElemen
 /// * `tee_provenance` keeps the [`TeeProvenance`] PREIMAGE, so the expected slot value is
 ///   RE-DERIVED by [`tee_provenance_commitment`]. Editing any of the four attestation
 ///   fields flips the derived commitment and the tooth fires.
-/// * `attestation_commit` keeps only the zkOracle content commitment felt. The attested
-///   body is not retained (it is the zkOracle attestation's, not the record's), so there
-///   is nothing to re-derive it from and the check is VALUE EQUALITY: it catches an edit
-///   to the receipt's slot or to the recorded felt, not a coordinated edit to both. It is
-///   also the ~31-bit `BabyBear` value flagged on [`attestation_commit_field`] — narrow,
-///   and no wider for being compared here.
+/// * `attestation_commit` keeps only the zkOracle content commitment. The attested body is
+///   not retained (it is the zkOracle attestation's, not the record's), so there is nothing
+///   to re-derive it from and the check is VALUE EQUALITY: it catches an edit to the
+///   receipt's slot or to the recorded value, not a coordinated edit to both.
+///
+///   ⚑ **That value-equality check is precisely why this slot's width is load-bearing**, and
+///   why it went to eight lanes on 2026-08-01 (see [`attestation_commit_field`]). With one
+///   felt, a coordinated edit was not even needed: two genuinely different attested bodies
+///   sharing a narration produced ONE slot value at ~44,900 Poseidon2 evaluations, so a
+///   record could name the wrong response and a receipt would not notice. Eight lanes puts
+///   that at `2^123.63` — a value equality is only as strong as the value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecordedNarration {
     /// The narration prose exactly as the record retains it.
@@ -1006,17 +1012,75 @@ fn narration_event_effect(
     }
 }
 
-/// Encode a zkOracle content commitment ([`dregg_zkoracle_prove`]'s `BabyBear` Poseidon2
-/// sponge over the attested body) as a [`FieldElement`] for the receipt.
+/// Encode a zkOracle content commitment ([`dregg_zkoracle_prove`]'s EIGHT-lane Poseidon2
+/// sponge over the attested body) as a [`FieldElement`] for the receipt: lane `i` occupies
+/// bytes `4i..4i+4`, little-endian. Every lane is a canonical `BabyBear` (`< p < 2^31`), so
+/// four bytes hold it exactly and the map is **injective** — [`attestation_commit_lanes`] is
+/// its total left inverse.
 ///
-/// ⚠ **NARROW — do not build on this, and never re-hash it.** `content_commit` is ONE
-/// `BabyBear` element (~31 bits, ~2^15.5 to collide); zero-padding it into 32 bytes makes
-/// it *look* wide and does not make it wide. It is catalogued as felt-width wound site #18
-/// in `docs/WOUND-felt-width-boundaries-2026-07-19.md`. A wide fold seeded from this value
-/// inherits its 31-bit collision set exactly, so a new commitment must be derived over the
-/// REAL preimages — the shape [`tee_provenance_commitment`] uses.
-fn attestation_commit_field(att: &ZkOracleAttestation) -> FieldElement {
-    field_from_u64(att.content_commit.0 as u64)
+/// # ⚑ WIDENED 2026-08-01 — this WAS felt-width wound site #18, and it is now closed
+///
+/// This was `field_from_u64(att.content_commit.0 as u64)`: ONE `BabyBear` (~30.91 bits)
+/// zero-padded into 32 bytes, which made it *look* wide without being wide. Site #18 of
+/// `docs/WOUND-felt-width-boundaries-2026-07-19.md`.
+///
+/// **Why it was an (A) wound and not a cosmetic one.** This value is
+/// `data[SLOT_ATTESTATION_COMMIT]` of the narration `EmitEvent` — inside a committed,
+/// chain-linked [`TurnReceipt`] whose `receipt_hash` a stranger replays — and
+/// [`RecordedNarration::attestation_commit`] is compared by VALUE EQUALITY, because the
+/// attested body is not retained and there is nothing to re-derive it from. So at this
+/// slot the felt is the ONLY binding between the receipt and the model response. On the
+/// LIVE path ([`narrate_turn_bedrock_attested`]) the body is a real Bedrock envelope whose
+/// `id` / `model` / `usage` / `stopReason` fields the narration text does not determine, so
+/// two genuinely different attested responses carrying the SAME narration were free to land
+/// on one receipt: `data[0]` (the BLAKE3 narration commitment) agreed by construction and
+/// `data[1]` agreed by collision. **The provenance a receipt asserted — which model, which
+/// response, which token count — was swappable for ~44,900 Poseidon2 evaluations.**
+///
+/// ```text
+///   log2 p = 30.906891
+///   ONE felt : 2^(30.906891 / 2)                = 2^15.45   (~44,900 evaluations)
+///   EIGHT    : 2^(8 * 30.906891 / 2) = 2^123.63
+/// ```
+///
+/// COLLISION both times — an equivocating narrator picks both bodies — not second-preimage.
+/// Measured old-admits/new-rejects:
+/// `dungeon-on-dregg/tests/attestation_commit_wide_old_admits_new_rejects.rs`.
+///
+/// 32 bytes hold `8 * 30.906891 = 247.26` bits, so the slot is not the limit; the sponge is.
+/// (A KEY would need injectivity over 256 bits and therefore NINE lanes — `Digest9Key`; this
+/// is a hash NODE compared for equality, so collision resistance is the right property and
+/// eight lanes is the right answer. The two numbers do not transfer.)
+pub fn attestation_commit_field(att: &ZkOracleAttestation) -> FieldElement {
+    content_commit_field(&att.content_commit)
+}
+
+/// [`attestation_commit_field`]'s encoder, over a bare commitment — the form the LIVE
+/// Bedrock path and a re-deriving reader need.
+pub fn content_commit_field(commit: &ContentCommit) -> FieldElement {
+    let mut out = [0u8; 32];
+    for (i, lane) in commit.iter().enumerate() {
+        // `as_u32` is the CANONICAL representative (`< p < 2^31`), so 4 bytes are exact.
+        out[i * 4..i * 4 + 4].copy_from_slice(&lane.as_u32().to_le_bytes());
+    }
+    out
+}
+
+/// **The total left inverse of [`content_commit_field`]** — recover the eight lanes from a
+/// receipt slot. `content_commit_field(&attestation_commit_lanes(&f)) == f` for every `f`
+/// this module emits, which is what makes the encoding injective rather than merely wide.
+///
+/// Total on arbitrary bytes: a 4-byte group that is not a canonical `BabyBear` is reduced by
+/// `BabyBear::new`, so the round-trip is the identity exactly on the emitted images (the
+/// ones that matter) and never panics on a hand-built receipt.
+pub fn attestation_commit_lanes(field: &FieldElement) -> ContentCommit {
+    let mut lanes = [CommitLane::ZERO; 8];
+    for (i, lane) in lanes.iter_mut().enumerate() {
+        let mut w = [0u8; 4];
+        w.copy_from_slice(&field[i * 4..i * 4 + 4]);
+        *lane = CommitLane::new(u32::from_le_bytes(w));
+    }
+    lanes
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1780,8 +1844,12 @@ fn attest_bedrock_narration(
     // LEG 4 — the cross-leg weld: the shared content commitment over the SAME authenticated
     // body. This is the value bound into the receipt (encoded exactly as the fixture path's
     // `attestation_commit_field`).
-    let commit = content_commitment(body);
-    Ok(field_from_u64(commit.0 as u64))
+    //
+    // ⚑ This path is exactly WHY that encoder widened to eight lanes on 2026-08-01: the
+    // Bedrock envelope's `id` / `usage` / `stopReason` are not determined by the narration
+    // text, so `data[0]` (the narration commitment) cannot separate two responses that share
+    // a narration — `data[1]` is the only thing that can, and at one felt it could not.
+    Ok(content_commit_field(&content_commitment(body)))
 }
 
 #[cfg(test)]

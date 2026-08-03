@@ -184,6 +184,20 @@ pub mod poseidon2 {
         let mut limbs: Vec<BabyBear> = Vec::new();
         for (path, asset) in &content.assets {
             let d8 = asset_digest8(path, &asset.content_type, &asset.body);
+            // ⚑ CLASS (B) — a ONE-FELT `hash_bytes` image, deliberately. **The byte-exact
+            // companion is `asset_digest8` on the line above** (this file): it absorbs the path
+            // through `absorb_len_delimited` — a byte-length felt then the INJECTIVE 3-bytes-per
+            // -felt packing — so the path is bound at eight lanes inside `d8`, whose limbs are
+            // pushed into `limbs` and absorbed by `wire_commit_8(&pre, heap_root)` below. Two
+            // paths colliding under `hash_bytes` therefore still produce different `pre`, and
+            // `content_root` separates them at 2^123.63 rather than this felt's 2^15.45. `coll`
+            // reaches only `heap_root`, which enters as the `iroot` argument.
+            //
+            // ⚠ Written here because the argument is invisible from the call site: what makes
+            // this (B) and not (A) is that the path is bound TWICE. A future opening that serves
+            // a Merkle PATH through this heap (rather than the whole limb vector) would address
+            // the leaf by `coll` alone and make it (A). Sibling with the identical argument and
+            // the identical shape: `storage/src/bucket_commitment.rs`'s `fold_leaves`.
             let coll = hash_bytes(path.as_bytes());
             for (i, &limb) in d8.iter().enumerate() {
                 entries.push(((coll, BabyBear::new(i as u32)), limb));
@@ -196,6 +210,12 @@ pub mod poseidon2 {
         // a domain tag. The 4-felt domain header keeps the fold total when content is
         // empty (the publish path forbids that, belt-and-braces).
         let mut pre = vec![
+            // ⚑ CLASS (C) — no attacker input. `DOMAIN` is a compile-time constant with no free
+            // parameter, so no search exists at any price; the a-priori chance of clashing with
+            // the one byte-identically-shaped sibling scheme
+            // (`storage::bucket_commitment`'s `b"dregg-bucket-content-root-v1"`) is 2^-30.906891
+            // and is settled by inspection, not by an adversary. The 2^15.45 birthday figure
+            // does NOT apply: birthday needs a chooser on both sides and there is none.
             hash_bytes(DOMAIN),
             BabyBear::new(content.assets.len() as u32),
             BabyBear::ZERO,

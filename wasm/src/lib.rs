@@ -644,6 +644,23 @@ pub fn generate_predicate_proof(
     let t = threshold as u64;
 
     // Compute fact hash from attribute key.
+    //
+    // ⚑ CLASS (A), NAMED NOT MIGRATED (2026-08-01 `hash_bytes` caller sweep). `fact_hash`
+    // becomes `FactBinding::predicate_sym`, which lands in column `PREDICATE_SYM = 5` of the
+    // DEPLOYED golden `circuit/descriptors/by-name/predicate-arith*.json` and feeds the arity-7
+    // chip lookup producing `FACT_HASH` (col 9) and thence `PI_FACT_COMMITMENT`. Two attribute
+    // keys sharing this felt produce proofs about THE SAME fact: a predicate proved over
+    // `"credit_score"` verifies as a proof over whatever key collides with it — an attribute
+    // substitution, at 2^15.4534 (~44,900 evaluations) for a pair the attacker names, 2^30.91
+    // against a fixed deployed key.
+    //
+    // Why not widened here: the sink is ONE deployed AIR column. Column 5 carries no
+    // pi_binding, no gate and no range in the golden — the AIR treats the image as an opaque
+    // free felt and never recomputes it — so nothing in-circuit checks this Rust, but the
+    // COLUMN is one felt wide, and a `[BabyBear; 8]` fact identity is a descriptor reshape
+    // (width, chip arity, PI count) i.e. Lean emit work + a VK rotation, not a host change.
+    // ⚠ Also: `wasm` does not compile at HEAD (a sibling lane owns it), so this site is
+    // classified and left untouched rather than edited blind.
     let fact_hash = poseidon2::hash_bytes(attribute_key.as_bytes());
     let state_root_bb = BabyBear::new(state_root);
 
@@ -1854,6 +1871,20 @@ pub fn prove_anonymous_membership(
     let blinding = BabyBear::from_u64(u64::from_le_bytes(blinding_bytes));
 
     // Compute the blinded leaf: Poseidon2(agent_id_hash, blinding)
+    //
+    // ⚑ CLASS (A) — the RING-MEMBERSHIP identity, and the whole surface below it is one felt
+    // wide (2026-08-01 sweep). `agent_id_hash` is a 32-byte agent id squeezed to ~30.906891
+    // bits, so two distinct agent ids share a `blinded_leaf` for any blinding, and `set_root`
+    // (`hash_many(member_hashes)` below) is a `Vec<BabyBear>` fold over the same narrow images
+    // — a ring member can be swapped for a colliding id without moving the published root.
+    // Cost: 2^15.4534 for a chosen pair, 2^30.91 against a fixed victim id.
+    //
+    // ⚠ The `MembershipResult` fields (`blinded_leaf: u32`, `set_root: u32`) are the actual
+    // width ceiling here, not this call: even `hash_bytes_8` would be truncated on the way out.
+    // Fixing this is a wasm-surface reshape (u32 → an 8-lane hex, as `presentation_tag_full_hex`
+    // already does for the tag), and `wasm` does not compile at HEAD — a sibling lane owns it.
+    // Classified, not edited blind. Note the honest asymmetry already recorded above: the
+    // presentation TAG was widened to a 256-bit BLAKE3 field; the IDENTITY it tags was not.
     let agent_id_hash = poseidon2::hash_bytes(&agent_id_bytes);
     let blinded_leaf = poseidon2::hash_2_to_1(agent_id_hash, blinding);
 

@@ -37,15 +37,52 @@ use crate::cfg::{CfgError, CompactCert, prove_cfg_compact, verify_cfg_compact};
 use crate::injection::injection_free;
 use crate::zk_leg::{ZkInjectionProof, ZkLegError, prove_injection_leg, verify_injection_leg};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::poseidon2::hash_bytes;
+use dregg_circuit::poseidon2::hash_bytes_8;
+
+/// **One lane of a content commitment.** Re-exported so a consumer can name the lane type
+/// (and pack/unpack a commitment) without taking a direct `dregg-circuit` dependency —
+/// `dungeon-on-dregg`, which encodes a commitment into a receipt slot, has none.
+pub use dregg_circuit::field::BabyBear as CommitLane;
+
+/// **The width of a zkOracle content commitment** — eight BabyBear lanes.
+pub const CONTENT_COMMIT_W: usize = 8;
+
+/// **A zkOracle content commitment** — eight BabyBear lanes, the codomain of
+/// [`content_commitment`] and of [`crate::render::template_commitment`].
+pub type ContentCommit = [BabyBear; CONTENT_COMMIT_W];
 
 /// **The ONE shared content commitment** binding the three legs to a single response — a
-/// Poseidon2 sponge over the authenticated response body, the SAME `hash_bytes` primitive
-/// the content-root uses (4-byte-packed limbs → the Poseidon2 sponge). [`verify_zkoracle`]
-/// recomputes this over the AUTHENTICATED body and refuses any attestation whose committed
-/// value, certificate, or injection field is not about THAT body.
-pub fn content_commitment(response_body: &[u8]) -> BabyBear {
-    hash_bytes(response_body)
+/// Poseidon2 sponge over the authenticated response body ([`hash_bytes_8`], the injective
+/// `bytes_to_lanes` preimage into the rate-4 absorb, squeeze-permute-squeeze to EIGHT
+/// lanes). [`verify_zkoracle`] recomputes this over the AUTHENTICATED body and refuses any
+/// attestation whose committed value, certificate, or injection field is not about THAT
+/// body.
+///
+/// # ⚑ WIDENED 2026-08-01 — this was ONE felt, and the receipt slot is why that mattered
+///
+/// This returned a single `BabyBear` (`hash_bytes`) until today. Inside
+/// [`verify_legs_over_session`] a collision buys little — every downstream leg is re-checked
+/// against `session.response_body` directly — but this value does not stay inside the
+/// verifier. `dungeon_on_dregg::narrator::attestation_commit_field` encodes it into
+/// `data[SLOT_ATTESTATION_COMMIT]` of the narration `EmitEvent`, i.e. into a **committed,
+/// chain-linked `TurnReceipt`** whose `receipt_hash` a stranger replays; and
+/// `RecordedNarration.attestation_commit` is compared by VALUE EQUALITY because the attested
+/// body is not retained, so there is nothing to re-derive it from. There, the felt is the
+/// ONLY binding of the model response to the receipt.
+///
+/// ```text
+///   log2 p = 30.906891
+///   ONE felt : collision ≈ 2^(30.906891 / 2)      = 2^15.45   ≈ 44,900 evaluations
+///   EIGHT    : image = p^8 = 247.255128 bits
+///              collision ≈ 2^(247.255128 / 2)     = 2^123.63
+/// ```
+///
+/// **2^15.45 → 2^123.63**, and it is the COLLISION bound both times — an equivocating
+/// narrator chooses both bodies, so second-preimage (2^30.9 / 2^247.3) is not the governing
+/// number. Measured old-admits/new-rejects:
+/// `dungeon-on-dregg/tests/attestation_commit_wide_old_admits_new_rejects.rs`.
+pub fn content_commitment(response_body: &[u8]) -> ContentCommit {
+    hash_bytes_8(response_body)
 }
 
 /// A committed byte range within the authenticated response body — the location the
@@ -84,9 +121,10 @@ pub struct ZkOracleAttestation {
     /// matcher (contains no `{{`). The field is a substring of the authenticated bytes.
     pub field_span: FieldSpan,
     /// **The cross-leg weld** — the shared [`content_commitment`] over the authenticated
-    /// response body. The verifier recomputes it and refuses a mismatch, binding all three
-    /// legs to the SAME response.
-    pub content_commit: BabyBear,
+    /// response body (EIGHT lanes; see that function for why one was not enough). The
+    /// verifier recomputes it and refuses a mismatch, binding all three legs to the SAME
+    /// response.
+    pub content_commit: ContentCommit,
     /// **The STARK-carried injection leg** (optional) — a real `stark::prove` of the
     /// pinned injection DFA's run over the field ([`crate::zk_leg`]). When present the
     /// verifier checks it FAIL-CLOSED (a wrong-run/forged/injecting proof refuses the
@@ -630,6 +668,43 @@ mod tests {
         let cfg = AnthropicConfig::new(notary.verifying_key());
         let pres = build_anthropic_fixture(&notary, BODY, 1_700_000_000);
         (notary, cfg, pres)
+    }
+
+    /// **THE FLAG DAY REFUSES TO LOAD RATHER THAN REINTERPRET.** `content_commit` widened from
+    /// one `BabyBear` to `[BabyBear; 8]` on 2026-08-01, so a pre-cutover serialized attestation
+    /// carries a bare NUMBER where an eight-element array belongs. CLAUDE.md's rule is that the
+    /// old shape must **refuse**, never be reinterpreted — a scalar silently read as lane 0 (or
+    /// as a one-lane commitment) would carry the retired 2^15.45 binding forward under a wide
+    /// name. This drives the actual deserializer and demands the refusal.
+    #[test]
+    fn a_pre_cutover_serialized_attestation_refuses_to_load() {
+        let (_n, cfg, pres) = setup();
+        let att = prove_zkoracle(pres, b"hello".to_vec(), &cfg.0).expect("attest");
+        let wide = serde_json::to_value(&att).expect("the deployed shape serializes");
+        assert!(
+            wide["content_commit"].is_array(),
+            "the deployed commitment is eight lanes"
+        );
+        assert_eq!(wide["content_commit"].as_array().unwrap().len(), 8);
+
+        // The epoch-22 shape: the same attestation with a SCALAR commitment.
+        let mut stale = wide.clone();
+        stale["content_commit"] = serde_json::json!(12345u32);
+        let err = serde_json::from_value::<ZkOracleAttestation>(stale)
+            .expect_err("a scalar commitment must be REFUSED, not read as a lane");
+        assert!(
+            err.to_string().contains("invalid type") || err.to_string().contains("expected"),
+            "the refusal should name the type mismatch, got: {err}"
+        );
+
+        // A truncated array is refused too — a seven-lane commitment is not a narrow one, it is
+        // not a commitment.
+        let mut short = wide;
+        short["content_commit"] = serde_json::json!([1, 2, 3, 4, 5, 6, 7]);
+        assert!(
+            serde_json::from_value::<ZkOracleAttestation>(short).is_err(),
+            "a short lane vector must be REFUSED"
+        );
     }
 
     /// Locate `needle` in the authenticated response body of `pres` and return its span.

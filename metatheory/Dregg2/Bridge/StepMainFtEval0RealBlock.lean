@@ -74,7 +74,7 @@ def compiledFtLctOf (W : Dregg2.Bridge.MinaWrapFtEval0.SideWire pN) : Nat × Nat
     , beta := .lit (W.betaChal % pN)
     , gamma := .lit (W.gammaChal % pN)
     , pZeta := .lit W.pZeta.val }
-  let cfg : Nat → Nat → FtCfg := fun dInv pC =>
+  let cfg : Nat → FtCfg := fun dInv =>
     { log2n := W.log2n
     , omega := om
     , omegaInv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv om
@@ -84,14 +84,14 @@ def compiledFtLctOf (W : Dregg2.Bridge.MinaWrapFtEval0.SideWire pN) : Nat × Nat
     , cA := match quotientConsts pN with | some (a, _, _) => a.val | none => 0
     , cB := match quotientConsts pN with | some (_, b, _) => b.val | none => 0
     , cC := match quotientConsts pN with | some (_, _, c) => c.val | none => 0
-    , denomInv := dInv, permClaimed := pC }
-  let p0 := ftProgOf wire (cfg 1 0)
+    , denomInv := dInv }
+  let p0 := ftProgOf wire (cfg 1)
   let v0 := aEval (fun _ => 0) p0.prog
   let dinv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv
     (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fMul
       (Dregg2.Circuit.Emit.KimchiStepMain.fSub zt (v0.getD p0.slots.omInv3 0))
       (Dregg2.Circuit.Emit.KimchiStepMain.fSub zt 1))
-  let p1 := ftProgOf wire (cfg dinv (v0.getD p0.slots.perm 0))
+  let p1 := ftProgOf wire (cfg dinv)
   let v1 := aEval (fun _ => 0) p1.prog
   (v1.getD p1.slots.ftEval0 0, v1.getD p1.slots.linConst 0)
 
@@ -117,7 +117,7 @@ def W539508 : FtWire :=
 
 /-- The block's CONFIG: its own `domain_log2`, the DERIVED Tick coset shifts (`TickShifts`), the
 `fp_kimchi` MDS and the BASE endo `5^((p−1)/3)` the weld corrected to. -/
-def C539508 (shifts : List Nat) (dInv pC : Nat) : FtCfg :=
+def C539508 (shifts : List Nat) (dInv : Nat) : FtCfg :=
   { log2n := S539508.log2n
   , omega := OMEGA_STEP
   , omegaInv := OMEGA_INV_STEP
@@ -127,7 +127,7 @@ def C539508 (shifts : List Nat) (dInv pC : Nat) : FtCfg :=
   , cA := match quotientConsts pN with | some (a, _, _) => a.val | none => 0
   , cB := match quotientConsts pN with | some (_, b, _) => b.val | none => 0
   , cC := match quotientConsts pN with | some (_, _, c) => c.val | none => 0
-  , denomInv := dInv, permClaimed := pC }
+  , denomInv := dInv }
 
 def SHIFTS_STEP : List Nat := S539508.sh.map (·.val)
 
@@ -138,7 +138,7 @@ The program takes `denomInv` and the deferred `perm` scalar as WITNESSES and CHE
 them, so one pass with placeholders reads them off and the second is the emitted program. -/
 
 /-- The placeholder pass, only to read `ω^{n−3}` and the actual `perm` scalar. -/
-def P0 : FtProg := ftProgOf W539508 (C539508 SHIFTS_STEP 1 0)
+def P0 : FtProg := ftProgOf W539508 (C539508 SHIFTS_STEP 1)
 def V0 : Array Nat := aEval (fun _ => 0) P0.prog
 
 /-- `(ζ − ω^{n−3})(ζ − 1)`'s inverse — the ONE field inverse `ft_eval0` needs. -/
@@ -149,7 +149,7 @@ def DENOM_INV_STEP : Nat :=
       (Dregg2.Circuit.Emit.KimchiStepMain.fSub ZETA_STEP 1))
 
 /-- **The emitted program**, at block 539508's Step wire. -/
-def P1 : FtProg := ftProgOf W539508 (C539508 SHIFTS_STEP DENOM_INV_STEP (V0.getD P0.slots.perm 0))
+def P1 : FtProg := ftProgOf W539508 (C539508 SHIFTS_STEP DENOM_INV_STEP)
 def V1 : Array Nat := aEval (fun _ => 0) P1.prog
 
 /-- The compiled `ft_eval0`. -/
@@ -251,8 +251,8 @@ def skeleton (prog : Array AOp) : List AOp :=
 #guard P1.slots.perm == PA.slots.perm
 /- …and the skeleton is not trivially equal to everything: a program built at a DIFFERENT domain has
 a different one (`ζ^n` is `log2n` squarings), so the pin above is discriminating. -/
-#guard (skeleton (ftProgOf W539508 (C539508 SHIFTS_STEP 1 0)).prog
-         == skeleton (ftProgOf W539508 { C539508 SHIFTS_STEP 1 0 with log2n := 15 }).prog) == false
+#guard (skeleton (ftProgOf W539508 (C539508 SHIFTS_STEP 1)).prog
+         == skeleton (ftProgOf W539508 { C539508 SHIFTS_STEP 1 with log2n := 15 }).prog) == false
 
 /-! ## §6 — R8's `Shifted_value.Type1` shift, from TWO independent sources.
 

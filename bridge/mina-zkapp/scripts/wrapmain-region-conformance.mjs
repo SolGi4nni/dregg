@@ -36,6 +36,8 @@
 //   node scripts/wrapmain-region-conformance.mjs --report        # …+ the per-region dump. STILL GRADES.
 //   node scripts/wrapmain-region-conformance.mjs --lean <path>   # a specific rung emission
 //   node scripts/wrapmain-region-conformance.mjs --falsify       # prove the diff BITES
+//   node scripts/wrapmain-region-conformance.mjs --emit          # ⚑ emit the input first, then grade
+//   node scripts/wrapmain-region-conformance.mjs --emit --refresh-fixture   # ⚑ re-snapshot the gz
 //
 // ⚑ EXIT CODES.  0 conform · 1 divergence (blob facts or the conformance vector) · 3 stale Lean input.
 // ⚠ 2026-08-03: `--report` used to `exit(process.exitCode ?? 0)` BEFORE the vector diff, so it
@@ -55,7 +57,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { isStale, leanConeDigest, requireFreshArtifact, runLeanEmit } from './emit-provenance.mjs';
+import { gunzipSync } from 'node:zlib';
+import {
+  isStale, leanConeDigest, requireFreshArtifact, requireFreshFixture, runLeanEmit, writeFixtureSidecar,
+} from './emit-provenance.mjs';
 import { loadCircuit } from './mina-canonical-circuit-oracle.mjs';
 
 const WRAP_DIR = '/tmp/pickles-wrapmain';
@@ -73,6 +78,16 @@ const FQ = 289480223093290488558927462521719769633630564819416473796797427483933
 const FP = 28948022309329048855892746252171976963363056481941560715954676764349967630337n;
 
 const LEAN_DEFAULT = '/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json';
+// ⚑ THE COMMITTED FIXTURE — added 2026-08-03, and the reason is that until today this gate had NO
+// path to a Lean side except a live `/tmp` emission. That is not a stricter gate, it is an
+// UNREPRODUCIBLE one: a reader with this repository and no Lean toolchain could not reach the
+// verdict at all, so every "24 entries conform" was a claim about one box's `/tmp` and nothing a
+// second party could re-derive. The step half has carried a gz fixture + sidecar since 2026-08-02;
+// this is that, for wrap. The freshness floor applies to it exactly as it does to a live emission —
+// two content legs plus the git leg, which for a COMMITTED fixture is a hard refusal.
+const LEAN_FIXTURE = new URL('../fixtures/wrapmain-wrap-w5-key-gates.json.gz', import.meta.url);
+const LEAN_FIXTURE_PROV = new URL('../fixtures/wrapmain-wrap-w5-key-gates.provenance.json', import.meta.url);
+const WRAP_REFRESH_CMD = 'node scripts/wrapmain-region-conformance.mjs --emit --refresh-fixture';
 
 const fq = (c) => { let v = BigInt(c) % FQ; if (v < 0n) v += FQ; return v.toString(); };
 const leHex = (h) => BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex')).toString();
@@ -128,19 +143,45 @@ function normalizeLean(j) {
   return { pi: j.public_input_size, gates, raw, probe, name: j.name };
 }
 
+/** The gz fixture carries GATES ONLY — the same slim shape the step half commits. */
+const slimWrap = (j) => JSON.stringify({ name: j.name, public_input_size: j.public_input_size,
+  num_rows: j.num_rows, probe_rows: j.probe_rows, gates: j.gates });
+
 function loadLeanSide(explicit, cone) {
   const live = explicit ?? LEAN_DEFAULT;
-  if (!existsSync(live))
-    throw new Error(`no Lean wrap emission at ${live}. Produce it with\n   ${WRAP_EMIT_CMD}`);
+  const haveLive = existsSync(live);
+  const haveFix = existsSync(LEAN_FIXTURE);
+  if (!haveLive && !haveFix)
+    throw new Error(`no Lean wrap emission: neither ${live} nor the committed fixture. Produce it with\n   ${WRAP_EMIT_CMD}`);
   // ⚑ REFUSE, DO NOT WARN. Two CONTENT legs, both from `emit-provenance.mjs`: an unstamped
   // artifact, one stamped from a cone that has since moved (SOURCE), or one whose own sha256 is not
-  // the sha256 the stamp recorded (ARTIFACT) is REFUSED here — not read and scored.
+  // the sha256 the stamp recorded (ARTIFACT) is REFUSED here — not read and scored. Plus the GIT
+  // leg: a stamp whose emit cone was uncommitted at its own HEAD is not reproducible by anyone.
   // ⚠ There is deliberately NO mtime leg. One was written and RETIRED the same night (`7d9a20bef`,
   // `31b12026f`): it refused an honest artifact from a clean `git worktree` extract, because git
   // stamps checkout-time mtimes, so every CI clone would have read STALE. This comment used to
   // claim that leg; it does not exist, and `emit-provenance.mjs`'s F3b reds if anyone re-adds it.
-  const prov = requireFreshArtifact({ artifact: live, cone, emitCmd: WRAP_EMIT_CMD });
-  return { src: live, prov, j: JSON.parse(readFileSync(live, 'utf8')) };
+  let src, text, prov;
+  if (haveLive) {
+    prov = requireFreshArtifact({ artifact: live, cone, emitCmd: WRAP_EMIT_CMD });
+    src = live; text = slimWrap(JSON.parse(readFileSync(live, 'utf8')));
+  } else {
+    prov = requireFreshFixture({ fixture: LEAN_FIXTURE, sidecar: LEAN_FIXTURE_PROV, cone,
+      emitCmd: WRAP_EMIT_CMD, refreshCmd: WRAP_REFRESH_CMD });
+    src = 'fixture'; text = gunzipSync(readFileSync(LEAN_FIXTURE)).toString('utf8');
+  }
+  // ⚠ NOT a fallback. When both exist the LIVE emission is what gets measured — but the two must
+  // AGREE, and a disagreement is a RED of its own (`conform:fixture/in-sync-with-live-emission`)
+  // rather than a silently-older shape being scored.
+  let fixture = 'absent';
+  if (haveLive && haveFix) {
+    const a = createHash('sha256').update(text).digest('hex');
+    const b = createHash('sha256').update(gunzipSync(readFileSync(LEAN_FIXTURE))).digest('hex');
+    fixture = a === b ? 'in sync'
+      : `STALE: live ${a.slice(0, 12)}… != fixture ${b.slice(0, 12)}… — the wrap assembly moved; refresh with --refresh-fixture`;
+    src = a === b ? `${live} (== fixture)` : `${live} (⚠ FIXTURE STALE)`;
+  }
+  return { src, fixture, prov, j: JSON.parse(text) };
 }
 
 // ── gadget instances ──────────────────────────────────────────────────────────────────────────────
@@ -347,13 +388,16 @@ function blobFacts(M, M2) {
 }
 
 // ── the measurement ───────────────────────────────────────────────────────────────────────────────
-function measure(M, M2, L) {
+function measure(M, M2, L, fixture = 'absent') {
   const MG = M.gates, LG = L.gates;
   const R = { conform: [], diverge: [], regions: [], absent: [] };
   const conform = (name, ref, cand) => R.conform.push({ name, ref, cand });
   const diverge = (key, form) => R.diverge.push({ key, form });
 
   for (const e of blobFacts(M, M2)) conform(e.name, e.ref, e.cand);
+
+  // the committed fixture must track the live emission, or this run scored a shape nobody ships
+  conform('fixture/in-sync-with-live-emission', fixture === 'absent' ? 'absent' : 'in sync', fixture);
 
   // (0c) ⚑ THE FIELD, LEAN SIDE. Every Lean coefficient that is "small negative" must be
   // small-negative in Fq, i.e. `q - c` and not `p - c` — a step-side emission relabelled as wrap is
@@ -741,11 +785,28 @@ try {
   if (isStale(e)) console.error(`   cone: ${wrapCone.files.length} Dregg2 modules under ${wrapCone.root}, digest ${wrapCone.digest.slice(0, 16)}…`);
   process.exit(isStale(e) ? 3 : 1);
 }
-const { src, prov: wrapProv, j: leanJson } = leanSide;
-if (wrapProv) console.log(`   lean emission: ${src}\n   emitted ${wrapProv.emitted_at} · cone ${wrapCone.digest.slice(0, 16)}… over ${wrapCone.files.length} modules (VERIFIED)`
-  + (wrapProv.git?.head ? ` · HEAD ${wrapProv.git.head.slice(0, 12)}${wrapProv.git.cone_dirty_at_head?.length ? ` ⚠ ${wrapProv.git.cone_dirty_at_head.length} cone file(s) dirty` : ' (cone CLEAN at HEAD)'}` : ''));
+const { src, fixture: wrapFixture, prov: wrapProv, j: leanJson } = leanSide;
+if (wrapProv) console.log(`   lean emission: ${src}\n   emitted ${wrapProv.emitted_at ?? wrapProv.refreshed_at} · cone ${wrapCone.digest.slice(0, 16)}… over ${wrapCone.files.length} modules (VERIFIED)`
+  + (wrapProv.git?.head ? ` · HEAD ${wrapProv.git.head.slice(0, 12)}${wrapProv.git.cone_dirty_at_head?.length ? ` ⚠ ${wrapProv.git.cone_dirty_at_head.length} cone file(s) dirty: ${wrapProv.git.cone_dirty_at_head.slice(0, 3).join(', ')}` : ' (cone CLEAN at HEAD)'}` : ''));
+
+// ⚑ REFRESH THE COMMITTED FIXTURE, sidecar written in the SAME action. A fixture and a sidecar that
+// disagree is the fail-open wearing the fix's clothes; and `writeFixtureSidecar` REFUSES outright
+// when the emit cone was dirty at HEAD, so an unreproducible snapshot cannot be created here at all.
+if (argv.includes('--refresh-fixture')) {
+  const { gzipSync } = await import('node:zlib');
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(LEAN_FIXTURE, gzipSync(Buffer.from(slimWrap(leanJson)), { level: 9 }));
+  const rec = writeFixtureSidecar(LEAN_FIXTURE_PROV, {
+    fixture: LEAN_FIXTURE, cone: wrapCone, from: src,
+    extra: { gates: leanJson.gates.length, probe_rows: (leanJson.probe_rows ?? []).length,
+             num_rows: leanJson.num_rows, public_input_size: leanJson.public_input_size },
+  });
+  console.log(`refreshed fixtures/wrapmain-wrap-w5-key-gates.json.gz from ${src} (${leanJson.gates.length} gates)`);
+  console.log(`   + sidecar wrapmain-wrap-w5-key-gates.provenance.json — cone ${rec.cone.digest.slice(0, 16)}… over ${rec.cone.files} modules, HEAD ${String(rec.git.head).slice(0, 9)}`);
+  process.exit(0);
+}
 const L = normalizeLean(leanJson);
-const R = measure(M, M2, L);
+const R = measure(M, M2, L, wrapFixture);
 
 // ⚑ `--report` PRINTS, IT DOES NOT EXCUSE. It used to `process.exit(process.exitCode ?? 0)` right
 // here, skipping the vector diff entirely: every divergence in the report below was rendered and

@@ -1380,7 +1380,7 @@ fn preimage_gate_verifies_hash() {
 
 /// `PreimageGate` on a **Poseidon2**-tagged slot: the gate now computes the
 /// real STARK-native digest. The committed slot word must be the
-/// `felt_to_bytes32` encoding of `dregg_circuit::poseidon2::hash_bytes`, and
+/// `digest8_to_bytes32` encoding of `dregg_circuit::poseidon2::hash_bytes_8`, and
 /// the gate accepts exactly the real preimage and rejects a wrong one. This
 /// is the load-bearing closure of the former `poseidon2-stub:` BLAKE3
 /// stand-in: the same digest the circuit verifies.
@@ -1388,7 +1388,7 @@ fn preimage_gate_verifies_hash() {
 fn preimage_gate_poseidon2_verifies_real_hash() {
     let preimage = [7u8; 32];
     // The canonical Poseidon2 commitment — IDENTICAL to the circuit's.
-    let commitment = crate::felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(&preimage));
+    let commitment = crate::digest8_to_bytes32(dregg_circuit::poseidon2::hash_bytes_8(&preimage));
     let p = CellProgram::Predicate(vec![StateConstraint::PreimageGate {
         commitment_index: 0,
         hash_kind: HashKind::Poseidon2,
@@ -1420,7 +1420,7 @@ fn preimage_gate_poseidon2_verifies_real_hash() {
 
 /// `KeyRotationGate` on a **Poseidon2**-tagged digest register: the preimage
 /// exhibit against the OLD digest uses the real Poseidon2 hash, so an honest
-/// rotation that pre-committed `hash_bytes(next_keys)` exhibits and installs.
+/// rotation that pre-committed `hash_bytes_8(next_keys)` exhibits and installs.
 #[test]
 fn key_rotation_gate_poseidon2_real_hash() {
     let gate = StateConstraint::KeyRotationGate {
@@ -1433,7 +1433,7 @@ fn key_rotation_gate_poseidon2_real_hash() {
     let p = CellProgram::Predicate(vec![gate]);
     let next: [u8; 32] = [0xAB; 32]; // the pre-committed next key-set.
     // Pre-committed digest = the REAL Poseidon2 of `next`.
-    let digest = crate::felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(&next));
+    let digest = crate::digest8_to_bytes32(dregg_circuit::poseidon2::hash_bytes_8(&next));
 
     let ctx = |height: u64, preimage: Option<[u8; 32]>| EvalContext {
         block_height: height,
@@ -1449,7 +1449,8 @@ fn key_rotation_gate_poseidon2_real_hash() {
 
     // Honest rotation at height 200: exhibit `next`, install, re-commit.
     let mut rotated = old.clone();
-    rotated.fields[1] = crate::felt_to_bytes32(dregg_circuit::poseidon2::hash_bytes(&[0xCD; 32]));
+    rotated.fields[1] =
+        crate::digest8_to_bytes32(dregg_circuit::poseidon2::hash_bytes_8(&[0xCD; 32]));
     rotated.fields[2] = next;
     rotated.fields[3] = field_from_u64(200);
     assert!(
