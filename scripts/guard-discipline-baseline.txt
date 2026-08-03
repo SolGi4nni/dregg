@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15500 guards across 1166 modules (2325 .lean files scanned).
+# TOTAL 15493 guards across 1166 modules (2325 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -18,6 +18,7 @@
 # BASELINE-PROVENANCE ef39d6c5d-DIRTY 15582→15504 (-78) DECREASED — limbed-tally re-authoring: the three peer-chain light clients' non-golden #guards became named theorems (only the byte-pinned emitVmJson2 golden remains a guard in each)
 # BASELINE-PROVENANCE 384ae9c70-DIRTY 15504→15502 (-2) DECREASED — §22: two segment-B word-count guards became the named theorem segment_b_absorbs_ninety_one_words_and_is_the_only_padded_segment
 # BASELINE-PROVENANCE 2886249b3-DIRTY 15502→15500 (-2) DECREASED — §23 lazy sponge: two Pins01 guards retired (the retired blocks == absorbs + chals identity, and the squeeze-value read) into named theorems in Pins18
+# BASELINE-PROVENANCE bae5211ee-DIRTY 15500→15493 (-7) DECREASED — PastaMsmBound §6 RE-DERIVED: the seven guards that computed "8,193x the deployed cap" did so against MAX_ROWS/MAX_CELLS mirrors that 2fb3ff01f made stale five days earlier (128/4096 -> 1<<21 / 1<<25). Corrected, and the conclusion INVERTS — the real cut fits in one exact-public table and CELLS bind, not rows. All seven are now named kernel-closed theorems (the_real_cut_fits_in_one_exact_public_table, cells_bind_the_manifest_and_rows_do_not, the_tuple_width_has_room_for_exactly_one_more_limb, the_committed_height_doubles_by_one_hundred_twenty_eight_rows, the_eight_way_cut_fits_with_room_to_spare, the_demonstration_is_a_parameter_choice_not_the_cap), each #assert_axioms-pinned. A guard over a hand-copied mirror of a Rust constant is the decoration class twice over
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -460,7 +461,7 @@
 51	Dregg2/Circuit/Emit/PastaIpaDeferral.lean
 14	Dregg2/Circuit/Emit/PastaIpaFold.lean
 25	Dregg2/Circuit/Emit/PastaMsmAir.lean
-25	Dregg2/Circuit/Emit/PastaMsmBound.lean
+18	Dregg2/Circuit/Emit/PastaMsmBound.lean
 63	Dregg2/Circuit/Emit/PastaMsmLayouts.lean
 25	Dregg2/Circuit/Emit/PastaMsmOnCurve.lean
 20	Dregg2/Circuit/Emit/PastaMsmScalarBound.lean

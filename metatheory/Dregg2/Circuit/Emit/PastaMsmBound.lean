@@ -39,11 +39,21 @@ all-zero rows, the emitted lookup forces, row by row and with no schedule hypoth
 
 ## What it does NOT buy — read §7 before citing this
 
-The row count is bounded by the DEPLOYED exact-public tooth, not by this file: `descriptor_ir2.rs`
-caps a manifest at `MAX_EXACT_PUBLIC_ROWS = 128` rows / `MAX_EXACT_PUBLIC_CELLS = 4096` cells, and
-`instance_airs` spends ONE batch AIR instance per manifest row. Since the balance is a PERMUTATION,
-the manifest row count IS the trace height — so a contents-bound instance is at most 128 rows tall.
-**The theorems below are row-count-independent; the DEMONSTRATION is not.** §7.1 prices it.
+⚑ **RE-PRICED 2026-08-03; the paragraph that stood here was five days stale and its conclusion was
+backwards.** It said the deployed tooth caps a manifest at `MAX_EXACT_PUBLIC_ROWS = 128` rows /
+`MAX_EXACT_PUBLIC_CELLS = 4096` cells and spends ONE batch AIR instance per manifest ROW, so a
+contents-bound instance is at most 128 rows tall and the real cut is 8,193× the cap. `2fb3ff01f`
+(2026-07-29) retired that stride: `Ir2Air::ExactPublicTable` realizes a WHOLE manifest as one
+multiplicity-bearing instance, and the caps are `1 << 21` rows / `1 << 25` cells
+(`circuit/src/descriptor_ir2.rs:471-473`).
+
+**So the real cut FITS in one table** — 1,048,704 manifest rows at 50% of the row cap and 93% of the
+cell cap — and what binds is CELLS, not rows, with room for exactly one more coordinate limb. §6
+carries the re-derivation as named theorems. The manifest row count still IS the trace height (the
+balance is a PERMUTATION), and the committed height is `next_power_of_two` of it: 1,048,704 clears
+`2 ^ 20` by 128 rows, so the instance commits `2 ^ 21` — the two-adicity ceiling is what is left.
+**The theorems below are row-count-independent; the DEMONSTRATION is 124 generators, which is now a
+parameter choice and not a wall.** §7.1 prices the residual that is actually residual.
 
 ## Axiom hygiene
 
@@ -826,14 +836,38 @@ def katRows : List Assignment := [katRow0, katRowOf (5, 7, 1)]
 #guard decide (([katRowOf (5, 7, 1), katRow0].map tupleOf).Perm
                  (exactPublicTable (genManifest 0 1 1 katG katS)))
 
-/-! ## §6 — THE PRICE OF THE TABLE, at the deployed tooth's own limits. -/
+/-! ## §6 — THE PRICE OF THE TABLE, at the deployed tooth's own limits.
 
-/-- The exact-public row cap (`descriptor_ir2.rs:403`). -/
-def MAX_ROWS : Nat := 128
-/-- The exact-public arity cap (`descriptor_ir2.rs:404`). -/
+⚑ **RE-PINNED 2026-08-03, AND THE CONCLUSION IS INVERTED.** These three `def`s mirrored
+`circuit/src/descriptor_ir2.rs`'s caps at **128 rows / 4096 cells**, and they were stale by five
+days: `2fb3ff01f` (2026-07-29) raised them to `1 << 21` and `1 << 25` when `Ir2Air::ExactPublicTable`
+stopped emitting ONE BATCH INSTANCE PER MANIFEST ROW and started realizing a whole manifest as one
+multiplicity-bearing instance. `descriptor_ir2.rs:6855-6861` is that flag day in its own words:
+*"`MAX_EXACT_PUBLIC_ROWS` was 128 because of it. Both the COUNT and the admissible manifest size
+change; a four-slice contents-bound cut over 128-row manifests goes from 516 instances to 8."*
+
+⚠ **So the "8,193× the deployed cap" this section used to compute is FALSE, and not by a margin —
+the real cut FITS.** One slice's contents-bound manifest is 1,048,704 rows against a 2,097,152 row
+cap. What binds is no longer rows: it is CELLS, at 93% of `2 ^ 25`, and the tuple width has room for
+exactly one more limb. `PastaMsmScalarBound`'s §7 note already named this file as the one to
+re-pin; `Dregg2.lean`'s import comment carried the same stale numbers and is corrected with it.
+
+⚑ And the `#guard`s that computed the old conclusion are NAMED THEOREMS now
+(`metatheory/docs/GUARD-DISCIPLINE.md`). A `#guard` over a hand-copied mirror of a Rust constant is
+the decoration class twice over: it checks one closed instance, and it checks it against a number
+this file owns. The mirror is still a mirror — what a theorem buys is that the CONCLUSION is a term
+`#assert_axioms` accounts for, so the next cap raise cannot silently leave a false sentence behind
+the way this one did. -/
+
+/-- The exact-public row cap — `MAX_EXACT_PUBLIC_ROWS = 1 << 21` (`circuit/src/descriptor_ir2.rs:471`).
+⚠ A MIRROR of a Rust constant, not a second source. -/
+def MAX_ROWS : Nat := 2 ^ 21
+/-- The exact-public arity cap — `MAX_EXACT_PUBLIC_ARITY = 64` (`circuit/src/descriptor_ir2.rs:472`).
+The one cap `2fb3ff01f` did not move. -/
 def MAX_ARITY : Nat := 64
-/-- The exact-public cell cap (`descriptor_ir2.rs:405`). -/
-def MAX_CELLS : Nat := 4096
+/-- The exact-public cell cap — `MAX_EXACT_PUBLIC_CELLS = 1 << 25`
+(`circuit/src/descriptor_ir2.rs:473`). ⚑ At this manifest's tuple width THIS is the binding one. -/
+def MAX_CELLS : Nat := 2 ^ 25
 
 /-- The manifest's row count IS the trace height: the balance is a PERMUTATION, and the emitted
 descriptor carries exactly one lookup, fired on every row. -/
@@ -846,20 +880,87 @@ theorem manifest_length (lo w planes : Nat) (gens : List Pt) (scal : List Nat) :
 /-- The manifest's CELL count. -/
 def manifestCells (w planes : Nat) : Nat := planes * (w + 1) * TUP
 
--- ⚑ THE BINDING LIMIT, said in numbers: the row cap is what binds, and it caps a CONTENTS-BOUND
--- instance at 128 rows — 124 real generators across four slices at `(w, planes) = (31, 4)`.
-#guard manifestCells 31 4 == 3840
-#guard 4 * (31 + 1) == MAX_ROWS
-#guard manifestCells 31 4 ≤ MAX_CELLS && TUP ≤ MAX_ARITY
--- …and the REAL cut does not fit by four orders of magnitude. 8,192 generators at 128 planes is
--- 1,048,704 rows at this layout (`PastaIpaDeferral`'s `sliceRows` adds the slice's own `w`
--- accumulation rows on top, 1,056,896), so a per-row exact-public balance would need 1,048,704
--- manifest rows — 8,193× the deployed cap, and one batch AIR INSTANCE each. §7.1.
-#guard 128 * (8192 + 1) == 1048704
-#guard 1048704 / MAX_ROWS == 8193
--- The EIGHT-way cut (4,096 generators, 528,512 rows, padding to `2^20`) is the cut with real
--- headroom, and it does not change this: it needs 528,512 manifest rows, 4,129× the cap.
-#guard 128 * (4096 + 1) == 524416
-#guard 524416 / MAX_ROWS == 4097
+/-- **`the_demonstration_is_a_parameter_choice_not_the_cap`** — the 124-generator demonstration
+(`(w, planes) = (31, 4)`) used to BE the row cap: `4 * (31 + 1) = 128 = MAX_ROWS` was the old pin,
+and it is why every write-up of this file said "at most 128 rows tall". It is now 2^14 times below
+the cap, so the demonstration size is a parameter choice and nothing else. -/
+theorem the_demonstration_is_a_parameter_choice_not_the_cap :
+    4 * (31 + 1) = 128
+    ∧ 128 * 2 ^ 14 = MAX_ROWS
+    ∧ manifestCells 31 4 = 3840
+    ∧ manifestCells 31 4 ≤ MAX_CELLS
+    ∧ TUP ≤ MAX_ARITY := by decide
+
+#assert_axioms the_demonstration_is_a_parameter_choice_not_the_cap
+
+/-- **`the_real_cut_fits_in_one_exact_public_table`** — ⚑ THE RE-DERIVATION, and the sentence it
+replaces said the opposite. One four-way slice is 8,192 generators at 128 planes, i.e. 1,048,704
+manifest rows at this layout (`PastaIpaDeferral`'s `sliceRows` adds the slice's own `w` accumulation
+rows on top of the TRACE, 1,056,896; the MANIFEST is the 1,048,704). Under `2fb3ff01f`'s caps that
+is one table, not 8,193 of them: `descriptor_ir2.rs:1675-1681` refuses on `rows.len()` and
+`rows.len() * arity` against exactly these two numbers, and both hold with room. -/
+theorem the_real_cut_fits_in_one_exact_public_table :
+    128 * (8192 + 1) = 1048704
+    ∧ 1048704 ≤ MAX_ROWS
+    ∧ manifestCells 8192 128 = 31461120
+    ∧ manifestCells 8192 128 ≤ MAX_CELLS
+    ∧ TUP ≤ MAX_ARITY := by decide
+
+#assert_axioms the_real_cut_fits_in_one_exact_public_table
+
+/-- **`cells_bind_the_manifest_and_rows_do_not`** — ⚑ WHICH CAP BINDS, which is the whole content of
+the re-derivation. At `TUP` the cell cap admits 1,118,481 rows, which is BELOW the row cap — so for
+any manifest of this tuple width the row cap is unreachable and `MAX_CELLS` is the live limit. The
+real cut sits at 50% of the rows it may declare and 93% of the cells. Quoting the row figure alone
+would be quoting the flattering number of a pair. -/
+theorem cells_bind_the_manifest_and_rows_do_not :
+    MAX_CELLS / TUP = 1118481
+    ∧ MAX_CELLS / TUP < MAX_ROWS
+    ∧ 1048704 * 100 / MAX_ROWS = 50
+    ∧ manifestCells 8192 128 * 100 / MAX_CELLS = 93 := by decide
+
+#assert_axioms cells_bind_the_manifest_and_rows_do_not
+
+/-- **`the_tuple_width_has_room_for_exactly_one_more_limb`** — the margin, stated so it is
+refutable rather than reassuring. `TUP = 3 + 3·numLimbs = 30` today. At the real cut a width of 31
+still fits; a width of 32 OVERSHOOTS `MAX_CELLS` by 4,096 cells and the descriptor is refused. So
+one more limb of generator coordinate is affordable and two are not — which is the number to check
+before widening the tuple, not the row count. -/
+theorem the_tuple_width_has_room_for_exactly_one_more_limb :
+    TUP = 30
+    ∧ 1048704 * 31 ≤ MAX_CELLS
+    ∧ ¬ (1048704 * 32 ≤ MAX_CELLS)
+    ∧ 1048704 * 32 - MAX_CELLS = 4096 := by decide
+
+#assert_axioms the_tuple_width_has_room_for_exactly_one_more_limb
+
+/-- **`the_committed_height_doubles_by_one_hundred_twenty_eight_rows`** — ⚑ and here is where the
+two-adicity ceiling actually bites. `ExactPublicManifest::of` commits `next_power_of_two` of the
+DISTINCT row count (`circuit/src/descriptor_ir2.rs:2810-2815`). The manifest overshoots `2 ^ 20` by
+exactly 128 rows — one per plane, the `w + 1` accumulation row — so the committed height is `2 ^ 21`
+and the instance pays for 1,048,448 pad rows. Drop the per-plane row and the commitment halves.
+⚠ This is a fact about `ExactPublicManifest::of`, NOT about the AIR: every gate of the emitted
+family is `.all`-scoped and bounds no height at all. -/
+theorem the_committed_height_doubles_by_one_hundred_twenty_eight_rows :
+    2 ^ 20 < 128 * (8192 + 1)
+    ∧ 128 * (8192 + 1) - 2 ^ 20 = 128
+    ∧ 128 * (8192 + 1) ≤ 2 ^ 21
+    ∧ 2 ^ 21 - 128 * (8192 + 1) = 1048448
+    ∧ 128 * 8192 = 2 ^ 20 := by decide
+
+#assert_axioms the_committed_height_doubles_by_one_hundred_twenty_eight_rows
+
+/-- **`the_eight_way_cut_fits_with_room_to_spare`** — 4,096 generators at 128 planes is 524,416
+manifest rows, a quarter of the row cap and under half the cell cap. It was "4,097× the cap"; it is
+now the cut that leaves the most headroom for a wider tuple. -/
+theorem the_eight_way_cut_fits_with_room_to_spare :
+    128 * (4096 + 1) = 524416
+    ∧ 524416 ≤ MAX_ROWS
+    ∧ manifestCells 4096 128 = 15732480
+    ∧ manifestCells 4096 128 ≤ MAX_CELLS
+    ∧ 524416 * 100 / MAX_ROWS = 25
+    ∧ manifestCells 4096 128 * 100 / MAX_CELLS = 46 := by decide
+
+#assert_axioms the_eight_way_cut_fits_with_room_to_spare
 
 end Dregg2.Circuit.Emit.PastaMsmBound
