@@ -515,8 +515,10 @@ impl PersistentStore {
     /// reaches — `turn::rotation_witness:349` (receipt hash → MMR leaf → `iroot`),
     /// `exec_lean::nullifier::addr_of` (→ the nullifier root), and
     /// `cell::program::eval::hash_preimage32` (→ a committed `PreimageGate` / `KeyRotationGate`
-    /// slot). Outside the ledger: every grain `/var` `data_root`
-    /// (`sandstorm_bridge::cell::{var_addr, var_value_felt}`), every `bucket_root` /
+    /// slot). Outside the ledger: every grain `/var` `data_root` (`sandstorm_bridge::cell` —
+    /// then `{var_addr, var_value_felt}`, both DELETED 2026-08-03 when that commitment moved
+    /// to the eight-lane `{var_coll, var_leaf_digest8}` under a `CanonicalHeapTree8` root and
+    /// the wire prefix went `heap1…` → `heap8…`), every `bucket_root` /
     /// `content_root` hex (`storage::bucket_commitment`, `starbridge-apps/site-host`), every
     /// zkOracle `content_commit` / `template_commit`, and every `wasm` `fact_hash` reaching
     /// `PI_FACT_COMMITMENT`. A store at epoch 18 REFUSES to load rather than reinterpreting a

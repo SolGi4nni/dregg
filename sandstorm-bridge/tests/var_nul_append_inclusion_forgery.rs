@@ -28,15 +28,20 @@
 //!   verifies, and the root is still order-free. A refusal that also refused honest witnesses
 //!   would be a DoS, not a fix.
 //!
-//! ## ⚠ What is NOT closed here, with its bound
+//! ## ⚠ What was NOT closed here — and is now closed NEXT DOOR
 //!
-//! `var_value_felt` still squeezes ONE felt, and `HeapLeaf`'s `addr`/`value` are one felt each.
-//! `log2(p) = 30.906891`, so a *searched* collision on a `/var` value costs `2^15.45` ≈ 44,900
-//! evaluations — milliseconds. This file closes the `O(1)` APPEND, which no widening would have
-//! closed, and does not touch the 31-bit codomain, which no preimage repair reaches. That one is
-//! the `HeapLeaf` value-widening campaign (`docs/DESIGN-canonical-byte-felt-codec.md` §2.3 bans
-//! the shape by name) and it is a constraint change, not a later phase of this.
-//! [`the_one_felt_leaf_is_still_the_open_one`] pins it so the green here is not misread.
+//! This file closes the `O(1)` APPEND, which no widening would have closed. It did not touch
+//! the 31-bit CODOMAIN, which no preimage repair reaches: `var_value_felt` squeezed ONE felt,
+//! so a *searched* collision on a `/var` value cost `2^15.4534` ≈ 44,900 evaluations.
+//!
+//! **That one closed on 2026-08-03** — `tests/var_leaf_wide_old_admits_new_rejects.rs` exhibits
+//! the collision (two well-formed settings cards, deterministic search) and drives the retired
+//! verifier into ACCEPTING the wrong card, then shows the deployed eight-lane leaf refusing it.
+//! One `/var` entry is now eight lane leaves under an 8-felt `CanonicalHeapTree8` root:
+//! collision `2^123.6276`.
+//!
+//! [`the_residual_is_now_the_address_not_the_leaf`] carries what is genuinely still open, so
+//! the green here is not misread as "`/var` inclusion is sound".
 
 use sandstorm_bridge::cell::{verify_inclusion, Umem};
 
@@ -210,16 +215,43 @@ fn completeness_the_honest_card_still_verifies() {
     assert!(!verify_inclusion(&er, "empty", b"\0", &ep));
 }
 
-/// ⚠ **NOT A GUARD — A LEDGER.** The `/var` leaf's `value` is still ONE felt. This pins the
-/// residual bound so a reader who sees this file green reads "the append forgery is closed and the
-/// 31-bit leaf is not", never "`/var` inclusion is sound". Delete it when `HeapLeaf` widens.
+/// ⚠ **NOT A GUARD — A LEDGER.** The `/var` LEAF is now eight lanes (`2^123.6276` collision,
+/// `var_leaf_wide_old_admits_new_rejects.rs`), so the residual this file used to carry is closed.
+/// What remains is one size down and a different KIND of failure, and it is written here so a
+/// reader who sees this crate green reads the right thing.
+///
+/// `var_coll` — the ADDRESS base an entry's eight lane leaves hang off — is still ONE felt. Two
+/// `/var` keys colliding on it (`2^15.4534`, ~44,900 evaluations) share all eight lane addresses.
+/// That is **not a forgery**: the key is bound again at full width inside the leaf VALUES by
+/// `var_leaf_digest8`, which `verify_inclusion` recomputes from the claimed key, so neither key
+/// can open the other's card. It is an AVAILABILITY event — `heap_root::assert_addr_unique`
+/// PANICS, refusing to commit an ambiguous root, which is fail-closed.
+///
+/// The eight-fold leaf count moves that bound: an accidental collision becomes likely near
+/// `2^15.4534 / 8 ≈ 5,793` entries rather than `≈ 46,341`, and the depth-16 tree now holds `8191`
+/// entries rather than `65535`. Closing it needs an address space wider than one felt, which is
+/// `HeapLeaf`'s shape and therefore the deployed IMT gate's — the same Lean/emit item named at
+/// `exec_lean::nullifier::addr_of`. Delete this when `HeapLeaf::addr` widens.
 #[test]
-fn the_one_felt_leaf_is_still_the_open_one() {
+fn the_residual_is_now_the_address_not_the_leaf() {
     let bits = f64::from(2_013_265_921u32).log2();
     assert!((bits - 30.906_891).abs() < 1e-5);
-    let searched_collision = bits / 2.0;
+
+    // The address residual: one felt, birthday over the LANE count.
+    let lanes = sandstorm_bridge::cell::VAR_LANES as f64;
+    assert_eq!(lanes, 8.0);
+    let addr_collision = bits / 2.0;
+    assert!((addr_collision - 15.453_445).abs() < 1e-5);
+    let safe_entries = 2f64.powf(addr_collision) / lanes;
     assert!(
-        (searched_collision - 15.453_445).abs() < 1e-5,
-        "a SEARCHED /var value collision costs 2^{searched_collision}; only the O(1) APPEND is closed"
+        (5_600.0..6_000.0).contains(&safe_entries),
+        "an accidental /var address collision becomes likely near {safe_entries} entries"
+    );
+
+    // The leaf residual is GONE: the deployed leaf is eight lanes, over the bar.
+    let leaf_collision = lanes * bits / 2.0;
+    assert!(
+        leaf_collision > 123.0,
+        "the /var LEAF binds at 2^{leaf_collision} — closed 2026-08-03"
     );
 }

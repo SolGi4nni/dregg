@@ -1521,15 +1521,16 @@ mod tests {
             var.commit_root_bytes(),
             "grain_cell_commitment IS the /var heap-root inclusion proofs are checked against"
         );
-        // The SHAPE: it is the real Poseidon2 heap-root, not sha256 — the encoded
-        // dregg_circuit::heap_root::compute_heap_root over the /var leaves (the exact
-        // primitive dregg_cell::compute_heap_root wraps).
+        // The SHAPE: it is the real 8-felt Poseidon2 heap-root, not sha256 and not the
+        // retired 1-felt lane-0 projection — the encoded
+        // dregg_circuit::heap_root::compute_canonical_heap_root_8 over the /var LANE leaves
+        // (the exact primitive dregg_cell::state::compute_heap_root wraps).
         assert_eq!(
             ledger_root,
-            crate::cell::felt_to_bytes32(dregg_circuit::heap_root::compute_heap_root(
-                var.heap_leaves()
-            )),
-            "grain_cell_commitment == the real dregg heap-root over the /var leaves"
+            dregg_cell::commitment::digest8_to_bytes32(
+                dregg_circuit::heap_root::compute_canonical_heap_root_8(var.heap_leaves()).limbs()
+            ),
+            "grain_cell_commitment == the real 8-felt dregg heap-root over the /var lane leaves"
         );
 
         // The federation returns the heap-root as HEX (`hex_encode`, like `state_commitment`);
