@@ -157,7 +157,10 @@ const PERMUTS = 7;
 // (`-1`), the blob writes 32-byte LE hex; both are normalized into [0,p) before any comparison.
 const FP = 28948022309329048855892746252171976963363056481941560715954676764349967630337n;
 
-const LEAN_DIR = '/tmp/pickles-stepmain';
+// ⚑ SETTABLE, and the SAME variable the Lean driver reads. The dir was a hardcoded global on both
+// sides, so two lanes emitting the `step` shape wrote byte-different `stepmain_step_r8_finalize.json`
+// to one path and the later writer silently won. `DREGG_SM_OUT=<dir>` now gives a lane its own.
+const LEAN_DIR = process.env.DREGG_SM_OUT ?? '/tmp/pickles-stepmain';
 const LEAN_DEFAULT = `${LEAN_DIR}/stepmain_step_r8_finalize.json`;
 const LEAN_FIXTURE = new URL('../fixtures/stepmain-step-r8-finalize-gates.json.gz', import.meta.url);
 const LEAN_FIXTURE_PROV = new URL('../fixtures/stepmain-step-r8-finalize-gates.provenance.json', import.meta.url);
@@ -173,7 +176,7 @@ const EMIT_DRIVER = 'Dregg2/Circuit/Emit/EmitStepMainJson.lean';
 // the gap did not grow with the rung, because `rungRows` evaluates every sub-list before it matches
 // on the rung. `DREGG_SM_RUNGS=all` is still there for a sweep that genuinely wants the nine.
 const EMIT_RUNG = 'r8_finalize';
-const EMIT_ENV = { DREGG_SM: 'step', DREGG_SM_RUNGS: EMIT_RUNG };
+const EMIT_ENV = { DREGG_SM: 'step', DREGG_SM_RUNGS: EMIT_RUNG, DREGG_SM_OUT: LEAN_DIR };
 const EMIT_CMD = `(cd metatheory && DREGG_SM=step DREGG_SM_RUNGS=${EMIT_RUNG} lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)`
   + '   — or let the gate do it:  node scripts/stepmain-region-conformance.mjs --emit';
 const REFRESH_CMD = 'node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture';
