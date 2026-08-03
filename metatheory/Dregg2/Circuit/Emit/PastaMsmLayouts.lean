@@ -60,6 +60,25 @@ that decides the question.
 
 ## §D — what the numbers say
 
+⚑ **AND WHAT GATE THEY ARE MEASURED AGAINST — read this before the table.** Every row and every gate
+count here is denominated in the multiply this family EMITS: `PastaField.fpMulCore`, ONE degree-2
+gate of 81 cross-products, with no limb ranges and no carry pins, because `pastaLimbRange`'s six
+caller wrappers have zero call sites anywhere (`PastaField` §6.4). That gate does not enforce the
+multiply in the field the prover works in — its nine quotient limbs are free columns with weights
+nonzero mod `p_felt`, so its `p_felt` reading holds at every operand triple. A multiply that IS sound
+at BabyBear is a different encoding (13-bit limbs, 20 of them) at **≈10³ constraints**
+(`LightClientMinaAir` §1b).
+
+**Which axis moves, precisely.** The ROW column below counts RCB complete ADDITIONS — an algorithmic
+quantity that the multiply's price does not touch. What moves is the cost OF a row: `RCB_GATES = 33`
+is 14 multiply-shaped gates plus 19 add/sub gates, and at the sound encoding that is
+`14 · 10³ + 19 · ~10²` ≈ **1.6·10⁴ constraints per complete add against 33, ~500×**, with a column
+footprint (20 limbs an element, `2k−1 = 39` accumulator columns and ~40 range-checked carry rungs a
+multiply) that no longer fits one row at any width this prover commits. So under a fixed width budget
+the ROW count rises by that same factor too, and `2.016 × 2^21` becomes ~`10³ × 2^21`. The numbers
+below are not softened for that: they are correct counts of the emitted layouts, and the emitted
+layouts are the unsound ones.
+
 Against the deployed geometry (`log_blowup = 6`, `BabyBear::TWO_ADICITY = 27` ⟹ **`2^21` trace rows,
 a p3 panic, not a repo check**; `WRAP_LOG_CEIL = 16` ⟹ a `2^16` root segment; `F ≈ 0.094 ms` per row
 for the FRI fold):
@@ -81,6 +100,14 @@ for the FRI fold):
     coincidence to optimise away: `2^21` is a property of BabyBear's two-adicity, not of the prover,
     so no better algorithm inside this vocabulary reaches it. Going to `log_blowup = 5` would, and
     that WEAKENS a rate; it is not ours to take.
+
+    ⚑ **`2.016×` is the distance from the ceiling FOR THE UNSOUND GATE**, and the conclusion it
+    supports is safe under the correction only because the correction points the same way: a sound
+    multiply is ~10³× dearer, so the sound object is ~2·10³ × `2^21`, not `2.016 ×`. The
+    recommendation in §7.2 — **defer statement (A), do not optimise it** — is therefore reinforced,
+    not overturned. What the correction DOES overturn is any reading of this table as "one more
+    layout trick and it fits": it does not fit by three orders, and the reachable architecture is
+    the Mina-side shrink terminal (`bridge/mina-zkapp/src/MinaShrinkVerify.ts`), not this ladder.
 
 **So: (A) does not fit one dregg proof, and the recommendation is to defer it exactly as Pickles
 does** (`PastaIPA.sVec_eq_bPoly` — `k = 15` challenges determine all `2^15` scalars). See §7.
@@ -1240,8 +1267,11 @@ in-circuit today, and this is why.**
     `descriptor_ir2.rs` rejects `column ≥ trace_width`). It is a shape, not a deployable
     descriptor. No descriptor is added here for the same reason.
   * `MAX_TRACE_WIDTH = 1024` is **advisory** on the deployed IR-v2 path — enforced only on the
-    legacy v1 DSL. The real per-row budget is `MAX_CONSTRAINT_DEGREE = 8`, which both selectors
-    respect at degree 2.
+    legacy v1 DSL, and stated as a MEASUREMENT rather than a source reading by
+    `circuit/tests/pasta_derive_prove.rs::the_v1_width_cap_does_not_bind_the_ir2_path` (2131 columns
+    parse, check and prove). ⚑ So it is NOT what keeps `PastaField.pastaLimbRange` out of the
+    emitted objects, and `PastaMsmAir` §6.5's width objection is retracted there. The real per-row
+    budget is `MAX_CONSTRAINT_DEGREE = 8`, which both selectors respect at degree 2.
   * `F ≈ 0.094 ms/row` is the **FRI-fold term only**; the width term `c·k·n` is separate and is
     not priced here at 442–472 columns.
   * `RCB_COLS = 442` is one fresh column per constraint intermediate — an EMITTER choice. The
@@ -1261,8 +1291,14 @@ completeness sampled.
 **6. Unchanged from `PastaMsmAir` §6.** P10 (passing ≠ knowing) is untouched, and a dregg STARK of
 any of these AIRs inherits it plus the FRI floor. `srs.g` remains the largest piece of trusted data.
 RCB completeness is inherited (RCB'15 Thm 1) — §4's selector forces coordinates, not group elements.
-Canonicity is still ungated. The reality gate and its ten tamper poles are untouched, as they must
-be: they are what says the equation these AIRs force is the equation o1-labs' verifier checks.
+The reality gate and its ten tamper poles are untouched, as they must be: they are what says the
+equation these AIRs force is the equation o1-labs' verifier checks.
+
+⚑ **And "canonicity is still ungated" was too small a name for it.** `pastaLimbRange` is emitted
+NOWHERE — its six caller wrappers have zero call sites — so the emitted objects carry neither limb
+ranges nor carry pins, and at `p_felt` the reduction witness of every add/sub/mul gate is free
+(`PastaField` §6.4). What is missing is not only the CANONICAL representative; it is the field
+arithmetic. Every price in §D is a price for that gate.
 -/
 
 end Dregg2.Circuit.Emit.PastaMsmLayouts

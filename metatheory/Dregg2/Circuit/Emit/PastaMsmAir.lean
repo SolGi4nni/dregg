@@ -503,6 +503,16 @@ closed form is verified against the emitted list and not merely asserted about i
 
 /-! ## §5b — ⚑ THE PRICE AGAINST DREGG'S REAL GEOMETRY.
 
+⚑ **WHAT THE PRICE IS A PRICE OF, before any of the numbers.** Every figure in this section counts
+the gates this family EMITS, and the emitted Pasta multiply is `PastaField.fpMulCore` — ONE degree-2
+gate, 81 cross-products, no limb ranges, no carry pins. That gate does not enforce the multiply at
+BabyBear: its nine quotient limbs are free columns whose weights `p·2^(30 i)` are nonzero mod
+`p_felt`, so its `p_felt` reading is satisfiable at every operand triple (`PastaField` §6.4, computed
+on the emitted bytes). A multiply that IS sound at BabyBear needs the 13-bit/20-limb re-encoding at
+**≈10³ constraints** (`LightClientMinaAir` §1b) rather than 1, so every gate count, row count and
+second below **moves by roughly three orders** against a sound gate. Nothing here is softened for
+that: these are honest counts of the object on disk, and the object on disk is the unsound one.
+
 The deployed root prover, measured (`circuit-prove/src/ivc_turn_chain.rs`,
 `circuit-prove/src/accumulator.rs`, `circuit/src/plonky3_prover.rs`,
 `circuit-prove/tests/root_air_constraint_census.rs`, `docs/DESIGN-tiny-automata-fast-proofs.md`):
@@ -604,9 +614,23 @@ def minaOpeningCheckDesc : EffectVmDescriptor2 :=
 5. **Canonicity is not gated.** The emitted list is the CORE gates. The congruence chain, and
    therefore §4's conclusion, needs no limb ranges — but a deployed descriptor that must reject
    non-canonical limbs pays `PastaField.pastaLimbRange`'s `9·(30+1) = 279` constraints and 270
-   bit columns per ranged element, roughly a 30× column blowup that §5b does NOT include. At that
-   width the check no longer fits `MAX_TRACE_WIDTH = 1024` in one row and must be re-laid-out.
-   The shared K1 residual (the `ℤ ↔ felt` width gap) stands unchanged.
+   bit columns per ranged element, roughly a 30× column blowup that §5b does NOT include.
+
+   ⚠ **The width objection that used to end this item is RETRACTED, and it was hiding the real
+   one.** It read *"at that width the check no longer fits `MAX_TRACE_WIDTH = 1024` in one row"*.
+   `MAX_TRACE_WIDTH` is the **v1 DSL** cap (`dsl::circuit::ProgramDescriptor::validate`) and the
+   IR-v2 path these descriptors ride does not consult it — `check_descriptor2` bounds every column
+   against the descriptor's OWN `trace_width` and nothing else, which
+   `circuit/tests/pasta_derive_prove.rs::the_v1_width_cap_does_not_bind_the_ir2_path` states as a
+   MEASUREMENT: 2131 columns parse, check and prove. §7 of `PastaMsmLayouts` already called the cap
+   advisory. So width is not what keeps `pastaLimbRange` out of the emitted objects; it is out
+   because its six caller wrappers have zero call sites anywhere (`PastaField` §6.4). And the ranges
+   would not close the gap if they were wired: the `fpMul` body still reaches `p² ≈ 2^508`, so the
+   `p_felt` reading still admits any witness whose ℤ body is a nonzero multiple of `p_felt`. Ranges
+   are necessary, not sufficient.
+
+   The shared K1 residual (the `ℤ ↔ felt` width gap) stands unchanged, and `PastaField` §6.4 now
+   says what it costs on the emitted bytes rather than naming it.
 
 6. **The digits are represented inputs, not derived.** As in `pallasLadder_forces`, which
    combination of `{P, φ(P), P+φ(P)}` each digit is remains prover-side; a verifier that must

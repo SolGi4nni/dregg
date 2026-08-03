@@ -710,6 +710,20 @@ def windowedCells (n nbits : Nat) : Nat := windowedRows n nbits * W
    `Dregg2/Bignum.lean`) — UNCHANGED by this file, and NOT closed by having a proof object.
    A windowed emission does not make that gap smaller or larger; it must not be read as closing it.
 
+   ⚑ **AND HOW LARGE THAT GAP IS, ON THIS FILE'S OWN EMITTED BYTES** — priced 2026-08-03 in
+   `PastaField` §6.4 and repeated here because this is the residual the Rust teeth cite. In
+   `windowedRowDesc` there are twelve gates of exactly 81 var×var products (the Pasta multiplies),
+   `"ranges": []`, `"tables": []`, and exactly TWO booleanity gates — on `BIT` and `DBL`. None of
+   the 19 carry/borrow columns is pinned and `PastaField.pastaLimbRange` is emitted nowhere in the
+   tree, so each add/sub gate carries one free carry column with coefficient `±p_pasta` (a unit mod
+   `p_felt`, `p_pasta mod p_felt = 458843762`) and each multiply-shaped gate nine free quotient
+   limbs with nonzero weights — 145 columns, every one local to a single constraint. **The mod-felt
+   reading of those gates is therefore satisfiable at every operand triple**: the emitted object
+   does not constrain the field arithmetic at all, and what a proof of it establishes is what the
+   OTHER gates say. Closing it is a re-encoding (13-bit limbs, 20 of them, ≈10³ constraints a
+   multiply against 1) — a re-emit and a VK epoch. Wiring `pastaLimbRange` in is NOT the fix:
+   ranges bound the search, the body still reaches `p_pasta² ≈ 2^508`.
+
 3. **On-curve-ness is not gated HERE — ⛑ CLOSED DOWNSTREAM, 2026-07-29, and it was a LIVE
    FORGERY.** `condRef false P` is `O = (0 : 1 : 0)`, and RCB Alg. 7 at `Q = O` returns
    `Y₁ · (X₁, Y₁, Z₁)` — a correct projective representative only while `Y₁ ≠ 0`. On Pallas

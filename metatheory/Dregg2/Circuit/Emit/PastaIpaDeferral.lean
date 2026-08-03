@@ -14,6 +14,15 @@ terminal MSM should be DEFERRED rather than optimised — every emitted layout i
 two-adicity ceiling (`4,227,200` rows = `2.016 × 2^21`, and `2^21` is a property of the FIELD), so
 no algorithm in that vocabulary reaches it. Neither lane built the deferral. This is it.
 
+⚑ **WHAT `4,227,200` IS A COUNT OF.** RCB complete ADDITIONS, priced at the multiply this tree
+EMITS: `PastaField.fpMulCore`, one degree-2 gate, no limb ranges, no carry pins, and — computed on
+the emitted bytes in `PastaField` §6.4 — no enforcement of the multiply at `p_felt` at all. A
+multiply sound at BabyBear is ≈10³ constraints rather than 1 (`LightClientMinaAir` §1b), which takes
+one complete add from 33 constraints to ≈1.6·10⁴ and puts the sound object at ~`10³ × 2^21` instead
+of `2.016 ×`. **That reinforces this file's whole construction rather than disturbing it** — the
+correction points the same way the deferral does, and deferral is the only move that survives it.
+The add counts below are not softened: they are correct for the emitted gate.
+
 ## ⚑ A PREMISE THIS FILE HAD TO CORRECT, FROM o1-labs' OWN SOURCE
 
 The recommendation was phrased "defer it identically to Pickles, because that leg is exactly what

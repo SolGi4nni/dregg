@@ -21,6 +21,15 @@ per-block AVERAGE and does not shrink the single indivisible object. Cut in TWO 
 `1,056,896` rows — `50.4%` of the RAW rows and, once the trace is padded to a power of two,
 **100% of the committed `2^21` domain** (§6, §7.4). The cut that leaves real headroom is EIGHT.
 
+⚑ **AND THE GATE THOSE ROWS ARE PRICED AGAINST.** A row is one RCB complete add over
+`PastaField`'s emitted multiply — one degree-2 gate, no limb ranges, no carry pins, and no
+enforcement of the multiply at `p_felt` (`PastaField` §6.4, computed on the emitted bytes; the
+descriptors this file emits inherit it, since the row template is `PastaMsmWindowed.rowGates`
+verbatim). A multiply sound at BabyBear is ≈10³ constraints against 1, taking a complete add from 33
+to ≈1.6·10⁴ — so the four-way cut lands at the ceiling for the UNSOUND object and is ~10³ past it for
+a sound one. Nothing below is softened for that; the cut is a real cut of the object on disk, and the
+object on disk is the one whose field arithmetic is unenforced.
+
 The deployed prover carries several AIR instances per proof and derives each one's `degree_bits`
 from its own trace HEIGHT (`p3_batch_stark`'s `ProverData::from_instances`), so four instances
 ride in one proof and heterogeneous heights are the ordinary case, not an extension.
