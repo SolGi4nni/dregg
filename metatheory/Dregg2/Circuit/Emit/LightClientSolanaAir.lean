@@ -28,9 +28,10 @@ named crypto carriers (below).
 
   * IN-AIR (arithmetic gates over the trace — the stake TALLY logic, the Nomad-class bug locus):
       - the ≥2/3 supermajority `3·rooted ≥ 2·total` as a range-checked non-negative slack
-        `QDIFF = 3·ROOTED_STK − 2·TOTAL_STK ∈ [0, 2^128)` (the u128-saturating `is_supermajority`,
-        wrap-free — a minority gives `QDIFF < 0`, UNSAT);
-      - the `EmptyStakeTable` floor `total > 0` as a range-checked `TPOS = TOTAL_STK − 1 ∈ [0, 2^128)`;
+        `QDIFF = 3·ROOTED_STK − 2·TOTAL_STK ∈ [0, 2^RANGE_BITS)` — wrap-free ONLY because `RANGE_BITS`
+        is 29; at the shipped 128 the wrapped `QDIFF < 0` was ADMITTED (§3b);
+      - the `EmptyStakeTable` floor `total > 0` as a range-checked `TPOS = TOTAL_STK − 1 ∈
+        [0, 2^RANGE_BITS)` — ⚑ at 128 this floor admitted `total = 0` (§3b);
       - the ROOTED flag (`ROOTED_OK = 1` — HOLE-1) and the AUTHORIZED-voter binding (`AUTH_OK = 1` —
         BR-2-A) as forced boolean gates.
   * NAMED verified CARRIERS (witnessed boolean columns, forced `= 1`):
@@ -75,6 +76,7 @@ Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.RangeFieldContainment
 import Dregg2.Bridge.LightClientSolana
 
 set_option autoImplicit false
@@ -99,7 +101,7 @@ projections `solVerifyDecision` composes over (two crypto carriers) plus the two
 def ROOTED_STK : Nat := 0
 /-- Total ACTIVE stake (`total_stake()`); the 2/3 denominator, forced `> 0` via the `TPOS` slack. Witness. -/
 def TOTAL_STK : Nat := 1
-/-- The quorum SLACK `3·ROOTED_STK − 2·TOTAL_STK`; the range tooth forces it into `[0, 2^128)`, i.e.
+/-- The quorum SLACK `3·ROOTED_STK − 2·TOTAL_STK`; the range tooth forces it into `[0, 2^RANGE_BITS)`, i.e.
 `2·total ≤ 3·rooted`. Witness. -/
 def QDIFF : Nat := 2
 /-- The total-positivity SLACK `TOTAL_STK − 1`; the range tooth forces `total ≥ 1` (`EmptyStakeTable`). -/
@@ -146,10 +148,31 @@ def PI_SLOT : Nat := 1 + BANK_ROOT_LIMBS
 /-- Number of public inputs: anchor root + 9 bank-root limbs + slot. -/
 def PI_COUNT : Nat := 11
 
-/-- The range width — the u128 stake tally width the Rust `is_supermajority` uses (`saturating_mul` over
-`u128`). `3·rooted − 2·total ∈ [0, 2^128)` and `total − 1 ∈ [0, 2^128)` for any real stake distribution;
-the interval's floor `≥ 0` is the load-bearing 2/3 + `total > 0` tooth. -/
-def RANGE_BITS : Nat := 128
+/-- The range width. ⚑ **29, AND THE CEILING IS THE FIELD, NOT THE WIRE.**
+
+This was `128` — the `u128` width the Rust `is_supermajority` tally uses. That number describes the
+WIRE and says nothing about the domain the constraint is evaluated in. Over BabyBear
+(`p = 2013265921 < 2^31`) a 128-bit interval contains the whole field, so BOTH lookups were
+satisfied by every assignment (`RangeFieldContainment.range_vacuous_at_or_above_31`).
+
+⚑ What that cost, concretely: `TPOS = TOTAL_STK − 1` is the `EmptyStakeTable` floor. At
+`TOTAL_STK = 0` it fills to `−1`, which rides as `p − 1 = 2013265920` — INSIDE `[0, 2^128)`. So the
+empty stake table passed its own floor, and with `TOTAL_STK = ROOTED_STK = 0` the quorum slack
+`3·0 − 2·0 = 0` passes too: **a block signed by nobody satisfied both teeth.**
+(`sol_empty_stake_table_was_admitted_at_128` / `sol_empty_stake_table_is_refused`.)
+
+29 is the largest width for which a wrapped negative slack lands OUTSIDE the interval
+(`RangeFieldContainment.wrap_free_iff_le_29`); 30 already fails.
+
+⚠ **WHAT 29 BITS COSTS, said out loud.** `2^29 = 536,870,912`, so completeness now needs
+`3·rootedStk < 2^29` — stake tallies below ~1.8e8. Real Solana total stake is ~4e17 lamports
+(≈ 2^58). **Those tallies do not fit in a BabyBear felt AT ALL** — `TOTAL_STK` is one column and one
+column holds 30.9 bits. The 128-bit declaration did not make them fit; it made the shortfall
+INVISIBLE. Full-width tallies need limb decomposition of the tally itself, which `EffectAirIR`'s
+range leg cannot express (one `.lookup` on one `.var`, one declared width). That is the finding: a
+representability limit of the IR, not a constant to widen back. It compounds the already-recorded
+gap that `ROOTED_STK`/`TOTAL_STK` carry no range lookup of their own at all. -/
+def RANGE_BITS : Nat := 29
 
 /-! ## §2 — the emitted gate bodies (the descriptor's OWN constraint polynomials). -/
 
@@ -215,6 +238,73 @@ def solLcVerifyDesc : EffectVmDescriptor2 :=
                     rootedGate, authGate, anchorRootPin] ++ bankRootPins ++ [slotPin]
   , hashSites   := []
   , ranges      := [] }
+
+/-! ## §3b — ⚑ THE WIDTH IS NOT A CONSTANT: containment + wrapped-slack, both as theorems.
+
+A narrowed constant is a constant. What makes a range tooth an `≤` relation is this pair: the
+interval sits strictly INSIDE the field, and a slack the prover wanted negative lands OUTSIDE it.
+Both were FALSE at `RANGE_BITS = 128`. -/
+
+/-- **THE INTERVAL IS INSIDE THE FIELD.** `2^29 = 536870912 < p = 2013265921`. -/
+theorem sol_range_is_inside_the_field :
+    (2 : ℤ) ^ RANGE_BITS < Dregg2.Circuit.Emit.EffectLower.P := by
+  norm_num [RANGE_BITS, Dregg2.Circuit.Emit.EffectLower.P]
+
+/-- ⚑ **AND THE WRAP IS REFUSED.** A slack the prover wanted to be `−k`, for any magnitude
+`0 < k ≤ 2^29`, is in the deployed mod-`p` reading the element `p − k ≥ p − 2^29 = 1476395009` —
+nearly three times the interval ceiling. ⚠ FALSE at 30, and catastrophically false at the shipped
+128, where `p − 1` sat inside and every negative slack was admitted. -/
+theorem sol_wrapped_slack_is_outside_the_range (k : ℤ) (hk : 0 < k)
+    (hk' : k ≤ (2 : ℤ) ^ RANGE_BITS) :
+    ¬ (0 ≤ Dregg2.Circuit.Emit.EffectLower.P - k
+        ∧ Dregg2.Circuit.Emit.EffectLower.P - k < (2 : ℤ) ^ RANGE_BITS) := by
+  rintro ⟨_, hlt⟩
+  have hp : (Dregg2.Circuit.Emit.EffectLower.P : ℤ) = 2013265921 := rfl
+  have hb : ((2 : ℤ) ^ RANGE_BITS) = 536870912 := by norm_num [RANGE_BITS]
+  rw [hp, hb] at hlt
+  rw [hb] at hk'
+  omega
+
+/-- ⚑ **THE ADMITTED VALUE, EXHIBITED — AND IT IS THE EMPTY STAKE TABLE.** `2013265920` is `p − 1`,
+the deployed encoding of `TPOS = TOTAL_STK − 1 = −1`, which is what `TOTAL_STK = 0` fills. The
+shipped 128-bit table CONTAINED it, so the `EmptyStakeTable` floor admitted a stake table with no
+stake in it. -/
+theorem sol_empty_stake_table_was_admitted_at_128 :
+    ([2013265920] : List ℤ) ∈ rangeRows 128 := by
+  rw [range_row_mem_iff]; norm_num
+
+/-- …and the repaired table REFUSES it. One value, admitted then refused. -/
+theorem sol_empty_stake_table_is_refused :
+    ([2013265920] : List ℤ) ∉ rangeRows RANGE_BITS := by
+  rw [range_row_mem_iff]; norm_num [RANGE_BITS]
+
+/-- The gate really does fill to `−1` at an empty stake table, so the refusal above is the RANGE
+tooth and not a gate that happened to fail. -/
+theorem tPos_fills_to_minus_one_at_empty_stake :
+    tPosBody.eval (fun i => if i = TPOS then (-1) else if i = TOTAL_STK then 0 else 0) = 0 := by
+  norm_num [tPosBody, TPOS, TOTAL_STK, Dregg2.Exec.CircuitEmit.EmittedExpr.eval]
+
+/-- And the quorum slack at a sub-2/3 vote (`rooted = 1` of `total = 2`) fills to `3·1 − 2·2 = −1`
+too — the same admitted element, on the other tooth. -/
+theorem qDiff_fills_to_minus_one_below_two_thirds :
+    qDiffBody.eval
+      (fun i => if i = QDIFF then (-1) else if i = ROOTED_STK then 1
+                else if i = TOTAL_STK then 2 else 0) = 0 := by
+  norm_num [qDiffBody, QDIFF, ROOTED_STK, TOTAL_STK, Dregg2.Exec.CircuitEmit.EmittedExpr.eval]
+
+/-- The honest side is untouched: an exact-2/3 rooted stake (`rooted = 2` of `total = 3`) fills
+`QDIFF = 0`, which the 29-bit table admits (Solana's threshold is non-strict `≥ 2/3`). -/
+theorem sol_honest_quorum_slack_is_admitted :
+    ([0] : List ℤ) ∈ rangeRows RANGE_BITS := by
+  rw [range_row_mem_iff]; norm_num [RANGE_BITS]
+
+/-- **THE RANGE TOOTH IS THE EMITTED ONE**, and the declared table is the one at `RANGE_BITS`. -/
+theorem sol_inRange_iff_mem_rangeRows (v : ℤ) :
+    (0 ≤ v ∧ v < (2 : ℤ) ^ RANGE_BITS) ↔ [v] ∈ rangeRows RANGE_BITS :=
+  (range_row_mem_iff v RANGE_BITS).symm
+
+theorem sol_declared_table_is_at_RANGE_BITS :
+    solLcVerifyDesc.tables = [rangeTableDef RANGE_BITS] := rfl
 
 /-! ## §4 — non-vacuous per-gate lemmas (the emitted bodies bite, both directions). -/
 
@@ -322,7 +412,9 @@ theorem solLcAir_no_forgery (L : SolLeaf) (hcr : L.stakeTableCR)
   exact solVerifyDecision_no_forgery L hcr ts u hdec
 
 /-- **Completeness of the range teeth (the honest prover CAN fill the slacks).** For any decision-
-accepting projections whose stakes fit the u128 tally window (`3·rooted < 2^128`, `total < 2^128`), an
+accepting projections whose stakes fit the tally window (`3·rooted < 2^RANGE_BITS`, `total < 2^RANGE_BITS`
+— ⚠ NARROWED from the vacuous 128 to 29; real Solana lamport tallies (≈2^58) do NOT satisfy this and
+never fit a BabyBear felt, see the `RANGE_BITS` docblock), an
 honest row that fills `QDIFF = 3·rooted − 2·total`, `TPOS = total − 1`, and the carrier/gate bits with
 the true results is accepted by the emitted logic. The non-vacuity partner of soundness. -/
 theorem solLcAir_complete (a : Assignment)
@@ -363,7 +455,7 @@ theorem solLcAir_complete (a : Assignment)
 -- side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The rooted bank
 -- root is now NINE `pi_binding`s (cols 9..17 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 solLcVerifyDesc ==
-  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":19,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":128}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":19,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard solLcVerifyDesc.traceWidth == SOL_LC_WIDTH
@@ -414,6 +506,12 @@ example : ¬ (([-1] : List ℤ) ∈ rangeRows RANGE_BITS) := by rw [range_row_me
 #assert_axioms solLcAir_sound
 #assert_axioms solLcAir_no_forgery
 #assert_axioms solLcAir_complete
+-- The width repair: both direction theorems + the exhibited admitted-then-refused value.
+#assert_axioms sol_range_is_inside_the_field
+#assert_axioms sol_wrapped_slack_is_outside_the_range
+#assert_axioms sol_empty_stake_table_was_admitted_at_128
+#assert_axioms sol_empty_stake_table_is_refused
+#assert_axioms tPos_fills_to_minus_one_at_empty_stake
 
 #print axioms solLcAir_sound
 #print axioms solLcAir_no_forgery

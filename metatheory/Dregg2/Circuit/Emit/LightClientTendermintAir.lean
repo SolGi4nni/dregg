@@ -136,15 +136,49 @@ The four range lookups are the LOAD-BEARING teeth: each slack `∈ [0, 2^TM_BITS
 holds with no field-wrap escape. The threshold slack is the exact strict-`>2/3` boundary — a
 sub-quorum (`signedPow = 2, totalPow = 3`) gives `TDIFF = −1`, far outside the interval — UNSAT.
 
+## ⚑ THE WIDTH REPAIR (2026-08-03): `TM_BITS` was 64, and 64 BITS OVER BABYBEAR IS VACUOUS
+
+This descriptor shipped `bits: 64` on its range table. `p = 2013265921 < 2^31 < 2^64`, so **every
+field element was already in the declared interval** and all four lookups refused NOTHING
+(`RangeFieldContainment.range_vacuous_at_or_above_31`, over all widths `≥ 31` and all field
+elements). The `airAccepts` reading below is over `ℤ`, where `−1 ∉ [0, 2^64)` and the teeth look
+sharp; the DEPLOYED reading is mod-`p`, where a slack of `−1` IS the element `p − 1 = 2013265920`,
+and `2013265920 < 2^64`.
+
+⚑ The value that makes it concrete, and it is not a corner case — it is the exact boundary this AIR
+exists to enforce: **the strict `>2/3` threshold at EXACTLY 2/3.** `signedPow = 2, totalPow = 3`
+fills `TDIFF = 3·2 − 2·3 − 1 = −1` (`tdiff_fills_to_minus_one_at_exactly_two_thirds`, §7). The old
+64-bit table ADMITTED `2013265920` (`tm_exactly_two_thirds_was_admitted_at_64`); the 29-bit table
+REFUSES it (`tm_exactly_two_thirds_is_refused`). A Tendermint sub-quorum passed as a supermajority.
+
+`TM_BITS` is now **29** — the MAXIMUM wrap-free width at BabyBear, not a taste: `Wrapfree b ↔
+2^(b+1) ≤ p`, true at 29 and FALSE at 30 (`RangeFieldContainment.wrap_free_iff_le_29`,
+`not_wrap_free_at_30`). Both directions are theorems here: `tm_range_is_inside_the_field` and
+`tm_wrapped_slack_is_outside_the_range`.
+
+⚠ **WHAT 29 BITS COSTS, said out loud rather than left in a constant.** `2^29 = 536,870,912`.
+  · The three TIME-WINDOW slacks are unaffected in any real deployment: at second-resolution a
+    2-week trusting period is `1.21e6` and a clock drift is seconds — four orders below the ceiling.
+    ⚠ At Tendermint's NATIVE nanosecond resolution they do not fit, and the caller must supply
+    seconds. That is a REAL narrowing of the honest domain and it is now visible in
+    `tmLcAir_complete`'s `< 2^TM_BITS` hypotheses, which is where a domain restriction belongs.
+  · The THRESHOLD slack needs `3·signedPow < 2^29`, i.e. voting power below ~1.8e8. Real Tendermint
+    allows `MaxTotalVotingPower ≈ 2^60`. **Those tallies do not fit in a BabyBear felt AT ALL** —
+    range table or no range table, `TOTAL_POW` is one column and one column holds 30.9 bits. The
+    64-bit declaration did not make them fit; it made the SHORTFALL INVISIBLE. Full-width tallies
+    need limb decomposition of the tally itself, which `EffectAirIR`'s range leg cannot express
+    (one `.lookup` on one `.var`, one declared width). **That is the finding**, and it is a
+    representability limit of the IR, not a constant to be widened back.
+
 ## The mod-p ↔ ℤ reading (the shared field-soundness residual)
 
 `airAccepts` reads the emitted gate bodies as ℤ equalities and the range lookups as ℤ intervals (the
 strong reading, exactly as `LightClientEthAir.airAccepts` does). The deployed denotation is mod-`p`
-(`VmConstraint.holdsVm`) and a `2^TM_BITS`-wide range is realized by limb decomposition, not a
-literal table; bridging the two needs full-wire range decomposition, the same field-soundness
-residual every Emit descriptor carries. Not re-litigated here. `TM_BITS = 64` fits real Tendermint
-u64 timestamps and (`MaxTotalVotingPower ≈ 2^60`) the aggregate-power slacks, so completeness is
-real, not toy.
+(`VmConstraint.holdsVm`) and the range is realized by nibble-limb decomposition, not a literal table;
+bridging the two needs full-wire range decomposition, the same field-soundness residual every Emit
+descriptor carries. Not re-litigated here. What the repair above DOES close is the half that was
+never a residual at all: at 64 bits the two readings did not merely differ in strength, the deployed
+one was empty.
 
 ## Axiom hygiene
 
@@ -153,6 +187,7 @@ Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.RangeFieldContainment
 import Dregg2.Bridge.LightClientTendermintGate
 
 set_option autoImplicit false
@@ -252,10 +287,15 @@ def PI_CHAIN_ID_DOMAIN : Nat := 1 + COMMITTED_APP_HASH_LIMBS
 /-- Number of public inputs: next-vals root + 9 app-hash limbs + chain-id domain. -/
 def PI_COUNT : Nat := 11
 
-/-- The range-slack width. `TM_BITS = 64` fits real Tendermint u64 timestamps and (with
-`MaxTotalVotingPower ≈ 2^60`) the aggregate-power slack `3·signedPow − 2·totalPow − 1 < 2^62`, so
-completeness holds for real chain data; the interval's floor `≥ 0` is the load-bearing tooth. -/
-def TM_BITS : Nat := 64
+/-- The range-slack width. ⚑ **29, AND THE CEILING IS THE FIELD, NOT THE WIRE.**
+
+This was `64` — a u64-timestamp-shaped number that describes the WIRE and says nothing about the
+domain the constraint is evaluated in. Over BabyBear (`p = 2013265921 < 2^31`) a 64-bit interval
+contains the whole field, so all four lookups were satisfied by every assignment
+(`RangeFieldContainment.range_vacuous_at_or_above_31`). 29 is the largest width for which a wrapped
+negative slack lands OUTSIDE the interval (`wrap_free_iff_le_29`); 30 already fails. See the module
+header for what the narrowing costs and what it exposes about `EffectAirIR`. -/
+def TM_BITS : Nat := 29
 
 /-! ## §2 — the emitted gate bodies (the descriptor's OWN constraint polynomials). -/
 
@@ -345,6 +385,76 @@ def tmLcVerifyDesc : EffectVmDescriptor2 :=
                     nextValsRootPin] ++ appHashPins ++ [chainDomainPin]
   , hashSites   := []
   , ranges      := [] }
+
+/-! ## §3b — ⚑ THE WIDTH IS NOT A CONSTANT: containment + wrapped-slack, both as theorems.
+
+A narrowed constant is a constant. What makes a range tooth an `≤` relation is exactly this pair:
+the interval sits strictly INSIDE the field, and a slack the prover wanted to be negative lands
+OUTSIDE it. Both were FALSE at `TM_BITS = 64`, and the third theorem exhibits the value that proves
+it — the field encoding of the exactly-2/3 threshold slack, which the old table admitted. -/
+
+/-- **THE INTERVAL IS INSIDE THE FIELD.** `2^29 = 536870912 < p = 2013265921`, so there are field
+elements the table refuses at all — the precondition for it being a check. -/
+theorem tm_range_is_inside_the_field :
+    (2 : ℤ) ^ TM_BITS < Dregg2.Circuit.Emit.EffectLower.P := by
+  norm_num [TM_BITS, Dregg2.Circuit.Emit.EffectLower.P]
+
+/-- ⚑ **AND THE WRAP IS REFUSED.** A slack the prover wanted to be `−k`, for any magnitude
+`0 < k ≤ 2^29` the interval can itself reach, is in the deployed mod-`p` reading the element
+`p − k ≥ p − 2^29 = 1476395009` — nearly three times the interval ceiling. So each of the four
+teeth is the inequality it is named for, with no field-wrap escape.
+
+⚠ This statement is FALSE at `TM_BITS = 30` (`p − 2^30 = 939524097 < 2^30`) and catastrophically
+false at the shipped `TM_BITS = 64`, where `p − 1` sits inside and EVERY negative slack was
+admitted. -/
+theorem tm_wrapped_slack_is_outside_the_range (k : ℤ) (hk : 0 < k)
+    (hk' : k ≤ (2 : ℤ) ^ TM_BITS) :
+    ¬ (0 ≤ Dregg2.Circuit.Emit.EffectLower.P - k
+        ∧ Dregg2.Circuit.Emit.EffectLower.P - k < (2 : ℤ) ^ TM_BITS) := by
+  rintro ⟨_, hlt⟩
+  have hp : (Dregg2.Circuit.Emit.EffectLower.P : ℤ) = 2013265921 := rfl
+  have hb : ((2 : ℤ) ^ TM_BITS) = 536870912 := by norm_num [TM_BITS]
+  rw [hp, hb] at hlt
+  rw [hb] at hk'
+  omega
+
+/-- ⚑ **THE ADMITTED VALUE, EXHIBITED.** `2013265920` is `p − 1`, the deployed encoding of the
+threshold slack `TDIFF = −1` that `signedPow = 2, totalPow = 3` fills (exactly 2/3 — the sub-quorum
+Tendermint's STRICT threshold must reject). The shipped 64-bit table CONTAINED it. -/
+theorem tm_exactly_two_thirds_was_admitted_at_64 :
+    ([2013265920] : List ℤ) ∈ rangeRows 64 := by
+  rw [range_row_mem_iff]; norm_num
+
+/-- …and the repaired table REFUSES it. This pair — one value, admitted then refused — is what makes
+the narrowing a repair rather than a renumbering. -/
+theorem tm_exactly_two_thirds_is_refused :
+    ([2013265920] : List ℤ) ∉ rangeRows TM_BITS := by
+  rw [range_row_mem_iff]; norm_num [TM_BITS]
+
+/-- The gate really does fill to `−1` there, so the refusal above is the RANGE tooth and not a gate
+that happened to fail: `tdiffBody` vanishes at `TDIFF = −1, SIGNED_POW = 2, TOTAL_POW = 3`. -/
+theorem tdiff_fills_to_minus_one_at_exactly_two_thirds :
+    tdiffBody.eval
+      (fun i => if i = TDIFF then (-1) else if i = SIGNED_POW then 2
+                else if i = TOTAL_POW then 3 else 0) = 0 := by
+  norm_num [tdiffBody, TDIFF, SIGNED_POW, TOTAL_POW, Dregg2.Exec.CircuitEmit.EmittedExpr.eval]
+
+/-- The honest side is untouched: a genuine supermajority (`signedPow = 3` of `totalPow = 3`) fills
+`TDIFF = 2`, which the 29-bit table admits. The narrowing refuses the forgery, not the quorum. -/
+theorem tm_honest_supermajority_slack_is_admitted :
+    ([2] : List ℤ) ∈ rangeRows TM_BITS := by
+  rw [range_row_mem_iff]; norm_num [TM_BITS]
+
+/-- **THE RANGE TOOTH IS THE EMITTED ONE.** The interval `airAccepts` reads (§5) is exactly
+membership in the declared table's rows — not a second, private notion of "in range" that could be
+narrowed here while the descriptor keeps shipping the old one. -/
+theorem tm_inRange_iff_mem_rangeRows (v : ℤ) :
+    (0 ≤ v ∧ v < (2 : ℤ) ^ TM_BITS) ↔ [v] ∈ rangeRows TM_BITS :=
+  (range_row_mem_iff v TM_BITS).symm
+
+/-- …and the table the descriptor DECLARES is the one at `TM_BITS`, by `rfl` on the emitted object. -/
+theorem tm_declared_table_is_at_TM_BITS :
+    tmLcVerifyDesc.tables = [rangeTableDef TM_BITS] := rfl
 
 /-! ## §4 — non-vacuous per-gate lemmas (the emitted bodies bite, both directions). -/
 
@@ -514,7 +624,9 @@ theorem tmLcAir_no_forgery (L : CryptoLeaf) [DecidableEq L.Digest]
 /-- **Completeness (the honest prover CAN fill the slacks).** For any decision-accepting projections,
 an honest row that fills the four slacks with the true differences and the carrier bits with the true
 results is accepted by the emitted logic — PROVIDED the honest slacks fit the range interval (the
-`< 2^TM_BITS` conditions; real Tendermint u64 times + `MaxTotalVotingPower ≈ 2^60` satisfy them).
+`< 2^TM_BITS` conditions. ⚠ NARROWED 64 → 29: second-resolution times satisfy them with four orders to
+spare, but NANOSECOND times and `MaxTotalVotingPower ≈ 2^60` do NOT — and never did, since one BabyBear
+column holds 30.9 bits. See the `TM_BITS` docblock).
 This is the non-vacuity partner of soundness: the AIR is satisfiable EXACTLY on accepted updates, not
 vacuously empty. -/
 theorem tmLcAir_complete (a : Assignment)
@@ -575,7 +687,7 @@ theorem tmLcAir_complete (a : Assignment)
 -- either side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The
 -- committed app-hash is now NINE `pi_binding`s (cols 19..27 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 tmLcVerifyDesc ==
-  "{\"name\":\"dregg-tm-lightclient-verify::v1\",\"ir\":2,\"trace_width\":29,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":64}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":9}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":12},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"var\",\"v\":5}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":8}}},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":15},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":17},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":24,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":25,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":26,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":27,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":28,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-tm-lightclient-verify::v1\",\"ir\":2,\"trace_width\":29,\"public_input_count\":11,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":11},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":10}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":9}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":12},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":13},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"var\",\"v\":5}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":14},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":8}}},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":15},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":16},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":17},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":20,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":21,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":22,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":23,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":24,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":25,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":26,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":27,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":28,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard tmLcVerifyDesc.traceWidth == TM_LC_WIDTH
@@ -637,6 +749,12 @@ example : ¬ (([-6] : List ℤ) ∈ rangeRows TM_BITS) := by rw [range_row_mem_i
 #assert_axioms twTrust_body_zero_iff
 #assert_axioms tmLcAir_sound
 #assert_axioms tmLcAir_no_forgery
+-- The width repair: the two direction theorems + the exhibited admitted-then-refused value.
+#assert_axioms tm_range_is_inside_the_field
+#assert_axioms tm_wrapped_slack_is_outside_the_range
+#assert_axioms tm_exactly_two_thirds_was_admitted_at_64
+#assert_axioms tm_exactly_two_thirds_is_refused
+#assert_axioms tdiff_fills_to_minus_one_at_exactly_two_thirds
 
 #print axioms tmLcAir_complete
 #print axioms tmLcAir_no_forgery

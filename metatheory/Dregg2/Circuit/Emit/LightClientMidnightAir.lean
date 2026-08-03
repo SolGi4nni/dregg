@@ -28,10 +28,12 @@ named crypto carriers (below).
 
   * IN-AIR (arithmetic gates over the trace — the weight TALLY logic, the Nomad-class bug locus):
       - the STRICT > 2/3 supermajority `3·signed > 2·total` as a range-checked non-negative slack
-        `WDIFF = 3·SIGNED_WEIGHT − 2·TOTAL_WEIGHT − 1 ∈ [0, 2^128)` (GRANDPA's `threshold`, wrap-free — an
-        EXACTLY-2/3 commit gives `WDIFF = −1`, UNSAT, so the strict boundary is enforced IN-CIRCUIT,
-        unlike Solana's `≥`);
-      - the empty-set floor `total > 0` as a range-checked `TPOS = TOTAL_WEIGHT − 1 ∈ [0, 2^128)`;
+        `WDIFF = 3·SIGNED_WEIGHT − 2·TOTAL_WEIGHT − 1 ∈ [0, 2^RANGE_BITS)` (GRANDPA's `threshold`) — an
+        EXACTLY-2/3 commit gives `WDIFF = −1`, UNSAT. ⚑ That was FALSE at the shipped 128, where
+        `−1` rides as `p − 1` and sat inside the interval: the strict boundary was NOT enforced.
+        It is now, at 29 (§3b);
+      - the empty-set floor `total > 0` as a range-checked `TPOS = TOTAL_WEIGHT − 1 ∈
+        [0, 2^RANGE_BITS)` — ⚑ at 128 this floor admitted `total = 0` (§3b);
       - the ROUND binding (`ROUND_OK = 1` — cross-round) and the ERA binding (`ERA_OK = 1` —
         stale-authority-set) as forced boolean gates.
   * NAMED verified CARRIERS (witnessed boolean columns, forced `= 1`):
@@ -78,6 +80,7 @@ Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.DescriptorIR2
+import Dregg2.Circuit.RangeFieldContainment
 import Dregg2.Bridge.LightClientMidnight
 
 set_option autoImplicit false
@@ -102,7 +105,7 @@ the full 256-bit target root, radix-`2^31`, MSB-first), `ROUND_COL` (18), and `E
 def SIGNED_WEIGHT : Nat := 0
 /-- Total authority weight; the > 2/3 denominator, forced `> 0` via the `TPOS` slack. Witness. -/
 def TOTAL_WEIGHT : Nat := 1
-/-- The quorum SLACK `3·SIGNED_WEIGHT − 2·TOTAL_WEIGHT − 1`; the range tooth forces it into `[0, 2^128)`,
+/-- The quorum SLACK `3·SIGNED_WEIGHT − 2·TOTAL_WEIGHT − 1`; the range tooth forces it into `[0, 2^RANGE_BITS)`,
 i.e. `2·total < 3·signed` (STRICT — exactly-2/3 gives `WDIFF = −1`, UNSAT). Witness. -/
 def WDIFF : Nat := 2
 /-- The total-positivity SLACK `TOTAL_WEIGHT − 1`; the range tooth forces `total ≥ 1`. -/
@@ -154,10 +157,31 @@ def PI_ERA : Nat := 2 + TARGET_ROOT_LIMBS
 /-- Number of public inputs: anchor root + 9 target-root limbs + round + era. -/
 def PI_COUNT : Nat := 12
 
-/-- The range width — a u128 tally width comfortably above the u64 authority-weight sums; `3·signed −
-2·total − 1 ∈ [0, 2^128)` and `total − 1 ∈ [0, 2^128)` for any real weight distribution; the interval's
-floor `≥ 0` is the load-bearing strict > 2/3 + `total > 0` tooth. -/
-def RANGE_BITS : Nat := 128
+/-- The range width. ⚑ **29, AND THE CEILING IS THE FIELD, NOT THE WIRE.**
+
+This was `128` — "a u128 tally width comfortably above the u64 authority-weight sums". Comfortably
+above the WIRE, and meaningless in the domain the constraint is evaluated in: over BabyBear
+(`p = 2013265921 < 2^31`) a 128-bit interval contains the whole field, so BOTH lookups were
+satisfied by every assignment (`RangeFieldContainment.range_vacuous_at_or_above_31`).
+
+⚑ Two things that cost, both concrete. `WDIFF = 3·signed − 2·total − 1` fills to `−1` at EXACTLY
+2/3 (`signed = 2` of `total = 3`) — the sub-quorum this AIR's whole reason for being is to reject —
+and `TPOS = TOTAL_WEIGHT − 1` fills to `−1` at an EMPTY authority set. Both ride as
+`p − 1 = 2013265920`, which `[0, 2^128)` contains. The strict threshold accepted exactly-2/3, and
+the empty-set floor accepted the empty set. (`mid_exactly_two_thirds_was_admitted_at_128` /
+`mid_exactly_two_thirds_is_refused`.)
+
+29 is the largest width for which a wrapped negative slack lands OUTSIDE the interval
+(`RangeFieldContainment.wrap_free_iff_le_29`); 30 already fails.
+
+⚠ **WHAT 29 BITS COSTS, said out loud.** `2^29 = 536,870,912`, so completeness now needs
+`3·signedW < 2^29` — authority weights below ~1.8e8. A real u64 weight sum does not fit, and **it
+never did**: `TOTAL_WEIGHT` is one column and one column holds 30.9 bits. The 128-bit declaration
+did not make u64 tallies fit; it made the shortfall INVISIBLE. Full-width tallies need limb
+decomposition of the tally itself, which `EffectAirIR`'s range leg cannot express (one `.lookup` on
+one `.var`, one declared width). That is the finding: a representability limit of the IR, not a
+constant to widen back. -/
+def RANGE_BITS : Nat := 29
 
 /-! ## §2 — the emitted gate bodies (the descriptor's OWN constraint polynomials). -/
 
@@ -228,6 +252,73 @@ def midLcVerifyDesc : EffectVmDescriptor2 :=
                     roundGate, eraGate, anchorRootPin] ++ targetRootPins ++ [roundPin, eraPin]
   , hashSites   := []
   , ranges      := [] }
+
+/-! ## §3b — ⚑ THE WIDTH IS NOT A CONSTANT: containment + wrapped-slack, both as theorems.
+
+A narrowed constant is a constant. What makes a range tooth an `≤` relation is this pair: the
+interval sits strictly INSIDE the field, and a slack the prover wanted negative lands OUTSIDE it.
+Both were FALSE at `RANGE_BITS = 128`. -/
+
+/-- **THE INTERVAL IS INSIDE THE FIELD.** `2^29 = 536870912 < p = 2013265921`. -/
+theorem mid_range_is_inside_the_field :
+    (2 : ℤ) ^ RANGE_BITS < Dregg2.Circuit.Emit.EffectLower.P := by
+  norm_num [RANGE_BITS, Dregg2.Circuit.Emit.EffectLower.P]
+
+/-- ⚑ **AND THE WRAP IS REFUSED.** A slack the prover wanted to be `−k`, for any magnitude
+`0 < k ≤ 2^29`, is in the deployed mod-`p` reading the element `p − k ≥ p − 2^29 = 1476395009` —
+nearly three times the interval ceiling. ⚠ FALSE at 30, and catastrophically false at the shipped
+128, where `p − 1` sat inside and every negative slack was admitted. -/
+theorem mid_wrapped_slack_is_outside_the_range (k : ℤ) (hk : 0 < k)
+    (hk' : k ≤ (2 : ℤ) ^ RANGE_BITS) :
+    ¬ (0 ≤ Dregg2.Circuit.Emit.EffectLower.P - k
+        ∧ Dregg2.Circuit.Emit.EffectLower.P - k < (2 : ℤ) ^ RANGE_BITS) := by
+  rintro ⟨_, hlt⟩
+  have hp : (Dregg2.Circuit.Emit.EffectLower.P : ℤ) = 2013265921 := rfl
+  have hb : ((2 : ℤ) ^ RANGE_BITS) = 536870912 := by norm_num [RANGE_BITS]
+  rw [hp, hb] at hlt
+  rw [hb] at hk'
+  omega
+
+/-- ⚑ **THE ADMITTED VALUE, EXHIBITED.** `2013265920` is `p − 1`, the deployed encoding of the
+strict-quorum slack `WDIFF = −1` that `signed = 2, total = 3` fills — EXACTLY 2/3, the sub-quorum
+GRANDPA's strict threshold must reject. The shipped 128-bit table CONTAINED it. -/
+theorem mid_exactly_two_thirds_was_admitted_at_128 :
+    ([2013265920] : List ℤ) ∈ rangeRows 128 := by
+  rw [range_row_mem_iff]; norm_num
+
+/-- …and the repaired table REFUSES it. One value, admitted then refused. -/
+theorem mid_exactly_two_thirds_is_refused :
+    ([2013265920] : List ℤ) ∉ rangeRows RANGE_BITS := by
+  rw [range_row_mem_iff]; norm_num [RANGE_BITS]
+
+/-- The gate really does fill to `−1` there, so the refusal above is the RANGE tooth and not a gate
+that happened to fail. -/
+theorem wDiff_fills_to_minus_one_at_exactly_two_thirds :
+    wDiffBody.eval
+      (fun i => if i = WDIFF then (-1) else if i = SIGNED_WEIGHT then 2
+                else if i = TOTAL_WEIGHT then 3 else 0) = 0 := by
+  norm_num [wDiffBody, WDIFF, SIGNED_WEIGHT, TOTAL_WEIGHT,
+            Dregg2.Exec.CircuitEmit.EmittedExpr.eval]
+
+/-- The SAME element is what an EMPTY authority set fills the positivity tooth to: `TPOS =
+TOTAL_WEIGHT − 1 = −1` at `total = 0`. Two independent floors, one admitted value. -/
+theorem tPos_fills_to_minus_one_at_empty_authority_set :
+    tPosBody.eval (fun i => if i = TPOS then (-1) else if i = TOTAL_WEIGHT then 0 else 0) = 0 := by
+  norm_num [tPosBody, TPOS, TOTAL_WEIGHT, Dregg2.Exec.CircuitEmit.EmittedExpr.eval]
+
+/-- The honest side is untouched: a genuine supermajority (`signed = 3` of `total = 3`) fills
+`WDIFF = 2`, which the 29-bit table admits. -/
+theorem mid_honest_supermajority_slack_is_admitted :
+    ([2] : List ℤ) ∈ rangeRows RANGE_BITS := by
+  rw [range_row_mem_iff]; norm_num [RANGE_BITS]
+
+/-- **THE RANGE TOOTH IS THE EMITTED ONE**, and the declared table is the one at `RANGE_BITS`. -/
+theorem mid_inRange_iff_mem_rangeRows (v : ℤ) :
+    (0 ≤ v ∧ v < (2 : ℤ) ^ RANGE_BITS) ↔ [v] ∈ rangeRows RANGE_BITS :=
+  (range_row_mem_iff v RANGE_BITS).symm
+
+theorem mid_declared_table_is_at_RANGE_BITS :
+    midLcVerifyDesc.tables = [rangeTableDef RANGE_BITS] := rfl
 
 /-! ## §4 — non-vacuous per-gate lemmas (the emitted bodies bite, both directions). -/
 
@@ -335,7 +426,9 @@ theorem midLcAir_no_forgery (L : MidLeaf) (hcr : L.authSetCR)
   exact midVerifyDecision_no_forgery L hcr ts u hdec
 
 /-- **Completeness of the range teeth (the honest prover CAN fill the slacks).** For any decision-
-accepting projections whose counted weight fits the u128 tally window (`3·signed < 2^128` — the `total`
+accepting projections whose counted weight fits the tally window (`3·signed < 2^RANGE_BITS` — ⚠ NARROWED
+from the vacuous 128 to 29; real u64 authority-weight sums do NOT satisfy this and never fit a BabyBear
+felt, see the `RANGE_BITS` docblock — the `total`
 bound follows, since `2·total < 3·signed`), an honest row that fills `WDIFF = 3·signed − 2·total − 1`,
 `TPOS = total − 1`, and the carrier/gate bits with the true results is accepted by the emitted logic. The
 non-vacuity partner of soundness. -/
@@ -376,7 +469,7 @@ theorem midLcAir_complete (a : Assignment)
 -- side breaks this `#guard`). Captured from the hbox build's `emitVmJson2` emission. The finalized
 -- target root is now NINE `pi_binding`s (cols 9..17 → PI 1..9), the full 256-bit anchor.
 #guard emitVmJson2 midLcVerifyDesc ==
-  "{\"name\":\"dregg-midnight-lightclient-verify::v1\",\"ir\":2,\"trace_width\":20,\"public_input_count\":12,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":128}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":11}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-midnight-lightclient-verify::v1\",\"ir\":2,\"trace_width\":20,\"public_input_count\":12,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-3},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":2},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":2}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":8,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":11,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":13,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":14,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":15,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":16,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":17,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":18,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":19,\"pi_index\":11}],\"hash_sites\":[],\"ranges\":[]}"
 
 -- Shape pins (robust; a layout drift moves these).
 #guard midLcVerifyDesc.traceWidth == MID_LC_WIDTH
@@ -431,6 +524,13 @@ example : ¬ (([-1] : List ℤ) ∈ rangeRows RANGE_BITS) := by rw [range_row_me
 #assert_axioms midLcAir_sound
 #assert_axioms midLcAir_no_forgery
 #assert_axioms midLcAir_complete
+-- The width repair: both direction theorems + the exhibited admitted-then-refused value.
+#assert_axioms mid_range_is_inside_the_field
+#assert_axioms mid_wrapped_slack_is_outside_the_range
+#assert_axioms mid_exactly_two_thirds_was_admitted_at_128
+#assert_axioms mid_exactly_two_thirds_is_refused
+#assert_axioms wDiff_fills_to_minus_one_at_exactly_two_thirds
+#assert_axioms tPos_fills_to_minus_one_at_empty_authority_set
 
 #print axioms midLcAir_sound
 #print axioms midLcAir_no_forgery
