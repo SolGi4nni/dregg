@@ -155,7 +155,7 @@ theorem z1_and_z2_occur_exactly_once :
 /-- …whereas `u`, which §19 DERIVES, spans the `group_map` dot-product and both ladders that use it
 as a base. Stated as an equality so a lost consumer reds. -/
 theorem u_x_is_consumed_by_group_map_and_both_ladders :
-    (classCells posS (vUx shapeSmoke)).length = 1 + 2 * (FTC_CHUNKS + 3) := by native_decide
+    (classCells posS (vUx shapeSmoke)).length = 2 + 2 * (FTC_CHUNKS + 3) := by native_decide
 #assert_compiled u_x_is_consumed_by_group_map_and_both_ladders
 
 /-! ### ⚑⚑ `verified` IS NO LONGER A WITNESS — the one thing emitting `rhs` actually buys. -/
@@ -170,7 +170,7 @@ theorem verified_is_wired_to_equal_g :
 /-- …and that cell HAS a defining row: `equal_g`'s `Boolean.all` half writes it, and R8's program
 reads it, so its σ class has both ends. -/
 theorem equal_g_output_has_a_defining_row_and_a_consumer :
-    (classCells posS (bpEq shapeSmoke)).length = 4 := by native_decide
+    (classCells posS (bpEq shapeSmoke)).length = 5 := by native_decide
 #assert_compiled equal_g_output_has_a_defining_row_and_a_consumer
 
 /-! ### ⚑⚑ THE SUBSTITUTION VERDICT, RE-RUN ON THE EMITTED CIRCUIT — READ IT LITERALLY.

@@ -142,7 +142,10 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (classCells (posAt .ipa) (vGx shapeSmoke)).length == 3
 #guard (classCells (posAt .ftEval0) (vGx shapeSmoke)).length == 3
 #guard (classCells (posAt .absorb) (vGx shapeSmoke)).length == 4
-#guard (classCells (posAt .opening) (vGx shapeSmoke)).length == 4
+-- ⚑ …and §19 adds the FIFTH: `Ops.add_fast challenge_polynomial_commitment b_u`
+-- (`step_verifier.ml:333`), which is `G`'s first occurrence inside `check_bulletproof`
+-- itself rather than in the statement hash.
+#guard (classCells (posAt .opening) (vGx shapeSmoke)).length == 5
 -- ⚠ ⚑ **AND `index_digest` HAS THE SAME LADDER POSITION, so say it rather than let the retirement
 -- read as unconditional.** §3c's derivation lives in R7 — the permutation is squeezed off segment
 -- C's own state, and segment C is an R7 sub-circuit — while R1 ABSORBS the result at block 0. So

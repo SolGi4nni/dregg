@@ -193,11 +193,15 @@ theorem cipUsed_is_not_the_unmasked_fold :
 #guard (classCells posS (vShouldVerify shapeSmoke)).length == 6
 -- …and it is in `finInputEnv`, i.e. R8 reaches it as an `.inp` and not as a private cell.
 #guard (finS.fp.prog.toList.filter (fun o => o == AOp.inp (vShouldVerify shapeSmoke))).length == 1
--- …and NO `.wit` slot of R8's program holds it any more. The witnesses that remain are exactly the
--- four `Field.equal` inverse/bit pairs, `lowest_128_bits`' high part (range-checked by §12c′'s
--- chain) and #11's `verified` bit — which is the honest census of what R8 still takes on trust.
+-- …and NO `.wit` slot of R8's program holds it any more. ⚑ **NOR DOES `verified` SINCE §19** — the
+-- witnesses that remain are exactly the four `Field.equal` inverse/bit pairs and
+-- `lowest_128_bits`' high part (range-checked by §12c′'s chain). `verified` (#11) was the tenth and
+-- is now `.inp (bpEq)`, `equal_g`'s own output cell, so this count DROPPING from 10 to 9 is the one
+-- thing emitting `rhs` bought. ⚠ It bought no refusal: §19's
+-- `substituted_assembly_still_closes_equal_g` re-runs §17(e) and it is still ACCEPTED.
 #guard (finS.fp.prog.toList.filter (fun o =>
-          match o with | .wit _ => true | _ => false)).length == 4 * 2 + 1 + 1
+          match o with | .wit _ => true | _ => false)).length == 4 * 2 + 1
+#guard (finS.fp.prog.toList.filter (fun o => o == AOp.inp (bpEq shapeSmoke))).length == 1
 
 -- ── (f) NO FREE VARIABLE reaches the public vector ────────────────────────────────────────────
 -- ⚑ Every exposed variable's copy class has a cell OUTSIDE its closing row, i.e. some row COMPUTES

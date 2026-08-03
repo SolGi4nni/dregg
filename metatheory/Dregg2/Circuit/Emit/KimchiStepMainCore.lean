@@ -4148,13 +4148,13 @@ structure BpData where
   deriving Repr, Inhabited
 
 def BpData.u (v : BpData) : Nat × Nat := (v.gm.getD 37 0, v.gm.getD 42 0)
+def BpData.term (v : BpData) (k : Nat) : FtcTerm := v.terms.getD k default
+def BpData.gb (v : BpData) : Nat × Nat := (v.gbCells.getD 4 0, v.gbCells.getD 5 0)
+def BpData.rhs (v : BpData) : Nat × Nat := (v.rhsCells.getD 4 0, v.rhsCells.getD 5 0)
 /-- ⚑ **`equal_g lhs rhs`, as a value** — R8's `verified`. It is COMPUTED from the two points and
 never assumed: a `G` that does not solve the opening leaves this `0`, and `Boolean.all` then refuses
 the witness. -/
 def BpData.ver (v : BpData) : Nat := if v.lhs == v.rhs then 1 else 0
-def BpData.term (v : BpData) (k : Nat) : FtcTerm := v.terms.getD k default
-def BpData.gb (v : BpData) : Nat × Nat := (v.gbCells.getD 4 0, v.gbCells.getD 5 0)
-def BpData.rhs (v : BpData) : Nat × Nat := (v.rhsCells.getD 4 0, v.rhsCells.getD 5 0)
 
 /-- ⚑ **`uc` alone**, which `runIpa` needs before the rest of §19 can be evaluated: `q` depends on
 `uc`, `lhs` depends on `q`, and `rhs`/`equal_g` depend on `lhs`. So the chain is

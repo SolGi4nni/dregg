@@ -81,8 +81,10 @@ set_option maxRecDepth 100000
 -- taking them out of this hash — they were never unobserved.
 #guard (exposedVars shapeStep).getD 14 (xv 0)
         == mpx shapeStep (pSum shapeStep (shapeStep.msmTerms - 2))
-#guard (exposedVars shapeStep).getD 16 (xv 0)
-        == ipx shapeStep (qSum shapeStep (shapeStep.ipaRounds - 1))
+-- ⚑ CORRECTED 2026-08-03 (§19): the exposed point is `q = p_prime + lr_prod`, the one
+-- `Scalar_challenge.endo q c` reads, not the bare fold sum. `uc` is inside it now.
+#guard (exposedVars shapeStep).getD 16 (xv 0) == ipx shapeStep (qPrime shapeStep)
+#guard (exposedVars shapeStep).getD 17 (xv 0) == ipy shapeStep (qPrime shapeStep)
 
 -- ⚑ …and the CORRECTION IS NOT VACUOUS at the level of the public vector: the digest word moved.
 -- (Both layouts absorb the same 58-word prefix and the same 2·bRounds challenges; only the four

@@ -265,12 +265,15 @@ Both halves are measured here, on the emitted object, and neither is inferred fr
 -- read as if the rung closed it. The witness that was ACCEPTED before is ACCEPTED after.
 #guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGResolved
                 (bpBOf tSwapAbs) BP_Z1 BP_Z2
--- …and no row in this assembly relates `G` to the opening: `G`'s ENTIRE class is its
--- `assert_on_curve` halves and segment D's absorb row. `rhs` is not emitted, so there is nothing
--- else for it to be in. (`assert_on_curve` reads `x` three times and `y` twice; segment D's absorb
--- row reads each once. Equalities, so an added consumer would red here rather than pass a floor.)
-#guard (classCells posS (vGx shapeSmoke)).length == 4
-#guard (classCells posS (vGy shapeSmoke)).length == 3
+-- ⚠ ⚑ **CORRECTED 2026-08-03 (§19).** This said "no row in this assembly relates `G` to the
+-- opening: `G`'s ENTIRE class is its `assert_on_curve` halves and segment D's absorb row." `rhs` IS
+-- emitted now, so there is a FIFTH cell — `Ops.add_fast G b_u` (`:333`) — and `G` does reach the
+-- opening. ⚠ AND THE VERDICT BELOW IS UNCHANGED, which is the point: relating `G` to `lhs` does not
+-- refuse the substitution, because the prover solves for `G`. (`assert_on_curve` reads `x` three
+-- times and `y` twice; segment D's absorb row reads each once; §19's `add_fast` reads each once.
+-- Equalities, so a lost consumer reds here rather than passing a floor.)
+#guard (classCells posS (vGx shapeSmoke)).length == 5
+#guard (classCells posS (vGy shapeSmoke)).length == 4
 -- …whereas the fold's `~init` — a commitment this file DOES consume — spans four row families.
 #guard (classCells posS (ipx shapeSmoke (qInit shapeSmoke))).length ≥ 5
 
