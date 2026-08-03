@@ -31,11 +31,17 @@
 // diff reports that as ABSENT REGIONS with their measured Mina sizes, so the gap is a number in the
 // report rather than a silence.
 //
-// USAGE
+// USAGE — ⚠ EVERY invocation is green-or-bust. There is no non-gating mode in this file.
 //   node scripts/wrapmain-region-conformance.mjs                 # green-or-bust
-//   node scripts/wrapmain-region-conformance.mjs --report        # the per-region verdict, readable
+//   node scripts/wrapmain-region-conformance.mjs --report        # …+ the per-region dump. STILL GRADES.
 //   node scripts/wrapmain-region-conformance.mjs --lean <path>   # a specific rung emission
 //   node scripts/wrapmain-region-conformance.mjs --falsify       # prove the diff BITES
+//
+// ⚑ EXIT CODES.  0 conform · 1 divergence (blob facts or the conformance vector) · 3 stale Lean input.
+// ⚠ 2026-08-03: `--report` used to `exit(process.exitCode ?? 0)` BEFORE the vector diff, so it
+// printed every divergence and exited 0 — a GREEN that was a formatting success. Fixed; and the
+// blob-only legs now grade before the Lean side is loaded at all, so a stale tree no longer means
+// this file measured nothing.
 //
 // The Lean side defaults to `/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json` — the TOP rung — produced by
 //   (cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)
@@ -48,6 +54,7 @@
 // so there is no stale path to read at all. See `emit-provenance.mjs`.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { isStale, leanConeDigest, requireFreshArtifact, runLeanEmit } from './emit-provenance.mjs';
 import { loadCircuit } from './mina-canonical-circuit-oracle.mjs';
 
@@ -279,41 +286,84 @@ const LEDGER = {
   },
 };
 
-// ── the measurement ───────────────────────────────────────────────────────────────────────────────
-function measure(M, M2, L) {
-  const MG = M.gates, MG2 = M2.gates, LG = L.gates;
-  const R = { conform: [], diverge: [], regions: [], absent: [] };
-  const conform = (name, ref, cand) => R.conform.push({ name, ref, cand });
-  const diverge = (key, form) => R.diverge.push({ key, form });
+// ── ⚑ THE BLOB FACTS — every leg that reads MINA'S BLOBS ALONE ───────────────────────────────────
+// Split out of `measure` deliberately. Not one of these reads the Lean emission, so they are
+// gradeable when the Lean input is stale — and until 2026-08-03 a stale input meant this file
+// measured NOTHING AT ALL, because the freshness floor exits 3 before `measure` is ever called.
+// `measure` folds them back into `R.conform` so the report and the green-or-bust vector are
+// unchanged; `main` grades them BEFORE the Lean side loads.
+function blobFacts(M, M2) {
+  const F = [];
+  const add = (name, ref, cand) => F.push({ name, ref, cand });
+  const MG = M.gates, MG2 = M2.gates;
 
   // (0) ⚑ THE SECOND SOURCE. `wrap-blockchain` is an independently compiled `wrap_main`; its
   // NON-GENERIC stream must equal `wrap-transaction`'s or every fact below is about one zkApp.
   const nonGeneric = (G) => G.filter((g) => g.typ !== 'Generic');
   const ngA = nonGeneric(MG), ngB = nonGeneric(MG2);
-  conform('two-blobs/non-generic-count', ngA.length, ngB.length);
-  conform('two-blobs/non-generic-typ-stream',
+  add('two-blobs/non-generic-count', ngA.length, ngB.length);
+  add('two-blobs/non-generic-typ-stream',
     createHash('sha256').update(ngA.map((g) => g.typ).join(',')).digest('hex').slice(0, 16),
     createHash('sha256').update(ngB.map((g) => g.typ).join(',')).digest('hex').slice(0, 16));
-  conform('two-blobs/non-generic-coeffs',
+  add('two-blobs/non-generic-coeffs',
     createHash('sha256').update(ngA.map((g) => g.coeffs.join('|')).join(';')).digest('hex').slice(0, 16),
     createHash('sha256').update(ngB.map((g) => g.coeffs.join('|')).join(';')).digest('hex').slice(0, 16));
-  conform('two-blobs/public-input-size', M.pi, M2.pi);
+  add('two-blobs/public-input-size', M.pi, M2.pi);
 
-  // (0b) ⚑ THE FIELD. A wrap coefficient reduced mod p would be a different element; this is the
-  // tripwire that the emission is Fq and not a step-side one relabelled. Every Lean coefficient that
-  // is "small negative" must be small-negative in Fq, i.e. `q - c` and not `p - c`.
-  // ⚠ THE HONEST FORM OF THIS CHECK. There is no intrinsic way to tell an Fq element from an Fp one
-  // by looking at it — both primes are 255 bits — so "is this mod q" cannot be asserted directly.
-  // What CAN be asserted is (a) every coefficient is in range, and (b) NO coefficient is the mod-p
-  // image of a small negative, which is what a step-side emission relabelled as wrap would contain.
-  // The bite that closes the rest is `--falsify`'s "a coefficient reduced mod p instead of mod q",
-  // which moves the Generic family census; and the Poseidon whole-digest below is the positive
-  // evidence, since it matches Mina's own fq_kimchi constants byte for byte.
+  // (0b) ⚑ THE FIELD, RECOVERED FROM THE BLOB RATHER THAN RESTATED.
+  //
+  // ⚠ WHAT THIS BLOCK USED TO BE, and why it is being replaced rather than adjusted:
+  //     conform('field/modulus', FQ.toString(), FQ.toString());
+  // The constant against itself. It is green for ANY value of `FQ` — including `FP`, including a
+  // typo — so the one line in this file that claims "the wrap side is in Fq" carried no measurement
+  // behind it at all. The comment above it conceded "there is no intrinsic way to tell an Fq element
+  // from an Fp one by looking at it", which is true of ONE element and false of a whole blob:
+  //
+  //   q - p = 86663725065984043395317760, so [p, q) is a WINDOW no Fp-encoded value can land in.
+  //
+  // MEASURED (2026-08-03, `loadCircuit` blobs at their pinned md5):
+  //   wrap-transaction   78075 coeffs, max = q-1 exactly,  8022 of them in [p, q)
+  //   wrap-blockchain    73425 coeffs, max = q-1 exactly,  6754 of them in [p, q)
+  //   step-zkapp-proved 156495 coeffs, max = p-1 exactly,     0 of them in [p, q)
+  //
+  // So the modulus is RECOVERABLE: `-1` is a Generic selector coefficient Snarky emits everywhere,
+  // no coefficient can exceed the modulus, hence `max + 1` IS the modulus. The step blob recovers
+  // `p` by the same arithmetic — which is exactly the confusion the old line pretended to guard.
+  // Both wrap blobs are recovered independently, so this is two sources against one constant.
+  const recover = (X) => {
+    const cs = X.gates.flatMap((g) => g.coeffs).map(BigInt);
+    const max = cs.reduce((a, b) => (b > a ? b : a), 0n);
+    return { q: (max + 1n).toString(), aboveP: cs.filter((c) => c >= FP && c < FQ).length, n: cs.length };
+  };
+  const rA = recover(M), rB = recover(M2);
+  add('field/modulus-recovered-from-wrap-transaction', FQ.toString(), rA.q);
+  add('field/modulus-recovered-from-wrap-blockchain', FQ.toString(), rB.q);
+  // …and the positive half, which does not depend on `-1` being present: a blob carrying ANY
+  // coefficient in [p, q) cannot be an Fp encoding. Stated as `> 0` and not as the count, so a blob
+  // refresh that moves 8022 does not red, but a step-side blob relabelled as wrap does.
+  add('field/wrap-transaction-carries-values-no-Fp-encoding-can', true, rA.aboveP > 0);
+  add('field/wrap-blockchain-carries-values-no-Fp-encoding-can', true, rB.aboveP > 0);
+  return F;
+}
+
+// ── the measurement ───────────────────────────────────────────────────────────────────────────────
+function measure(M, M2, L) {
+  const MG = M.gates, LG = L.gates;
+  const R = { conform: [], diverge: [], regions: [], absent: [] };
+  const conform = (name, ref, cand) => R.conform.push({ name, ref, cand });
+  const diverge = (key, form) => R.diverge.push({ key, form });
+
+  for (const e of blobFacts(M, M2)) conform(e.name, e.ref, e.cand);
+
+  // (0c) ⚑ THE FIELD, LEAN SIDE. Every Lean coefficient that is "small negative" must be
+  // small-negative in Fq, i.e. `q - c` and not `p - c` — a step-side emission relabelled as wrap is
+  // what leg two catches. The bite that closes the rest is `--falsify`'s "a coefficient reduced mod
+  // p instead of mod q", which moves the Generic family census; and the Poseidon whole-digest below
+  // is the positive evidence, since it matches Mina's own fq_kimchi constants byte for byte.
   const allLean = LG.flatMap((g) => g.coeffs).map(BigInt);
   conform('field/coeffs-in-range', true, allLean.every((c) => c >= 0n && c < FQ));
   conform('field/no-mod-p-small-negatives', true,
     !allLean.some((c) => c > FP - 1000n && c < FP));
-  conform('field/modulus', FQ.toString(), FQ.toString());
 
   // (1) the public input block — kimchi puts PRIMARY_LEN Generic rows first on both sides.
   conform('pi/rows-are-Generic',
@@ -578,14 +628,102 @@ function falsify(M, M2, leanJson) {
   else console.log(`\n   ${bites.length} bites, all MOVED the candidate vector.`);
 }
 
+// ── ⚑ THE RED PATH FOR THE BLOB FACTS, and for `--report`'s exit code ─────────────────────────────
+// `--falsify` bends the LEAN side and needs a fresh emission. This one bends the MINA side, so it
+// runs in any tree and covers exactly the two things repaired on 2026-08-03: the recovered modulus
+// (which replaced `FQ.toString()` vs `FQ.toString()`) and `--report`'s exit code.
+//
+// ⚠ THE BEND HOOK IS FAIL-CLOSED. `DREGG_WRAPMAIN_BEND` can only substitute a WRONG reference blob,
+// so the only thing it can do to a run is make it RED. There is no env var in this file that can
+// make a run green.
+const BEND = process.env.DREGG_WRAPMAIN_BEND ?? '';
+async function bentReference() {
+  switch (BEND) {
+    // The exact confusion the old `field/modulus` line pretended to guard: the STEP circuit, which
+    // is Fp, loaded where `wrap_main` belongs.
+    case 'step-blob': return await loadCircuit('step-zkapp-proved');
+    // The minimal bend: drop every `q-1` coefficient to `q-2`, so `max + 1` recovers `q-1`.
+    case 'shave-max': {
+      const c = await loadCircuit('wrap-transaction');
+      const gates = c.gates.map((g) => ({ ...g, coeffs: g.coeffs.map((h) => {
+        const v = BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex'));
+        if (v !== FQ - 1n) return h;
+        const w = (FQ - 2n).toString(16).padStart(64, '0');
+        return Buffer.from(w, 'hex').reverse().toString('hex');
+      }) }));
+      return { ...c, gates };
+    }
+    default: return null;
+  }
+}
+
+async function selfTest() {
+  const { execFileSync } = await import('node:child_process');
+  const self = fileURLToPath(import.meta.url);
+  console.log('── wrapmain-region-conformance --self-test (the blob-fact red path + `--report`\'s exit code) ──\n');
+  const legs = [];
+  const leg = (name, ok, detail) => { legs.push({ name, ok, detail }); console.log(`   ${ok ? 'ok  ' : 'RED '} ${name.padEnd(56)} ${detail}`); };
+
+  // (1) THE HONEST ANCHOR. A red path that reds on everything proves nothing.
+  const honest = blobFacts(M, M2);
+  const hBad = honest.filter((e) => String(e.ref) !== String(e.cand));
+  leg('anchor: the honest blobs conform', hBad.length === 0, `${honest.length - hBad.length}/${honest.length} legs`);
+
+  // (2) THE LINE THIS REPLACED COULD NOT HAVE CAUGHT ANY OF IT. Stated as a measurement, so the
+  //     claim "it was decoration" is checked here and not only asserted in a comment.
+  leg('the retired `FQ.toString() vs FQ.toString()` is green under EVERY bend',
+    FQ.toString() === FQ.toString(), 'true — it never read a blob at all');
+
+  // (3) + (4) the two bends, each as a CHILD PROCESS with `--report`, so what is measured is the
+  //     script's real exit code under the flag that used to excuse it.
+  for (const [bend, why] of [['step-blob', 'the Fp step circuit loaded as the wrap reference'],
+                             ['shave-max', 'every q-1 coefficient shaved to q-2']]) {
+    let code = 0, out = '';
+    try {
+      out = execFileSync(process.execPath, [self, '--report'],
+        { env: { ...process.env, DREGG_WRAPMAIN_BEND: bend }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) { code = e.status ?? -1; out = `${e.stdout ?? ''}${e.stderr ?? ''}`; }
+    const named = /RED  blob:field\/modulus-recovered-from-wrap-transaction/.test(out);
+    leg(`--report + ${bend}`, code === 1 && named,
+      `exit ${code}${named ? ', and it NAMES field/modulus-recovered-from-wrap-transaction' : ', but the modulus leg did not name itself'} — ${why}`);
+  }
+
+  const bad = legs.filter((l) => !l.ok).length;
+  console.log(bad
+    ? `\nwrapmain-region-conformance --self-test: ${bad} LEG(S) FAILED`
+    : `\nwrapmain-region-conformance --self-test: ${legs.length} legs green (1 honest anchor + 2 bends that exit 1 under --report)`);
+  process.exit(bad ? 1 : 0);
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const arg = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
 
-const a = await loadCircuit('wrap-transaction');
+const bent = await bentReference();
+const a = bent ?? await loadCircuit('wrap-transaction');
+if (bent) console.log(`⚠ DREGG_WRAPMAIN_BEND=${BEND} — the reference blob is DELIBERATELY WRONG. This run must be RED.`);
 const b = await loadCircuit('wrap-blockchain');
 const M = normalizeMina(a.publicInputSize, a.gates);
 const M2 = normalizeMina(b.publicInputSize, b.gates);
+
+if (argv.includes('--self-test')) await selfTest();
+
+// ⚑ THE BLOB FACTS ARE GRADED HERE — before the Lean side is even looked for. The freshness floor
+// below exits 3 on a stale emission, which is right, but it meant that in a tree whose Lean cone had
+// moved this file measured NOTHING: not the two-blob cross-check, not the field. These legs read
+// only Mina's own compiled blobs, so they are answerable in any tree, and a run that cannot reach
+// the conformance verdict still reds if one of them breaks.
+{
+  const bf = blobFacts(M, M2);
+  const bad = bf.filter((e) => String(e.ref) !== String(e.cand));
+  for (const e of bad) console.log(`RED  blob:${e.name}\n     ref:  ${e.ref}\n     cand: ${e.cand}`);
+  if (bad.length) {
+    console.log(`\nwrapmain-region-conformance: ${bad.length} BLOB FACT(S) RED over ${bf.length} — the reference side is wrong, so nothing below is worth grading`);
+    process.exit(1);
+  }
+  console.log(`   blob facts: ${bf.length}/${bf.length} (2 wrap_main blobs cross-checked; Fq recovered from both as max-coefficient + 1)`);
+}
+
 // ⚑ Emit the input FIRST when asked, so for that run there is no stale path to read.
 if (argv.includes('--emit')) {
   const { readdirSync } = await import('node:fs');
@@ -609,7 +747,13 @@ if (wrapProv) console.log(`   lean emission: ${src}\n   emitted ${wrapProv.emitt
 const L = normalizeLean(leanJson);
 const R = measure(M, M2, L);
 
-if (argv.includes('--report')) { report(R, src, M, L); if (argv.includes('--falsify')) falsify(M, M2, leanJson); process.exit(process.exitCode ?? 0); }
+// ⚑ `--report` PRINTS, IT DOES NOT EXCUSE. It used to `process.exit(process.exitCode ?? 0)` right
+// here, skipping the vector diff entirely: every divergence in the report below was rendered and
+// then discarded, so a `--report` run reported GREEN for a FORMATTING success. It is now a
+// PRINTING MODIFIER on the one gating path — the dump happens first, then the same green-or-bust
+// verdict every other invocation gets. There is deliberately NO non-gating mode in this file: a
+// reader who wants the dump of a red state gets the dump AND the non-zero exit, which is correct.
+if (argv.includes('--report')) report(R, src, M, L);
 
 const ref = referenceVector(R), cand = candidateVector(R);
 const byName = new Map(ref.map((e) => [e.name, e.value]));

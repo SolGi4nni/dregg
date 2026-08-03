@@ -124,6 +124,39 @@ for o in "${MJS_ORACLES[@]}"; do
   fi
 done
 
+# ⚑ THE WRAP HALF, which was in NO gate script at all until 2026-08-03. `wrapmain-region-conformance.mjs`
+# is `stepmain`'s twin over `wrap_main` — a different field (Tock/Fq), a different PRIMARY_LEN, and the
+# thing the step side never had: a SECOND independently compiled blob (`wrap-blockchain`) to cross-check
+# every non-Generic fact against. It carried two defects the census measured at `9b3312500`:
+#   * `--report` exited 0 BEFORE the vector diff, so every divergence was printed and discarded;
+#   * `field/modulus` compared `FQ.toString()` to `FQ.toString()` — the constant to itself, green for
+#     ANY value including `FP`, which is precisely the confusion its docblock said it guarded.
+# Both are repaired. The modulus is now RECOVERED from Mina's own blob (`max coefficient + 1`; measured
+# `q-1` in both wrap blobs and `p-1` in the step blob), and `--self-test` proves it bites.
+# ⚠ TWO STEPS, DELIBERATELY. `--self-test` needs neither Lean nor an emission — it grades Mina's blobs
+# and re-invokes the gate under a fail-closed bend, requiring exit 1 under `--report`. The FULL gate
+# needs a `DREGG_WM=wrap` emission and REFUSES (exit 3) without one, which is the freshness floor
+# working; run it with `--emit` on a box that can build Lean.
+run_one "wrapmain-region-conformance.mjs --self-test (blob-fact red path + --report exit code)" \
+  node "scripts/wrapmain-region-conformance.mjs" --self-test
+run_one "wrapmain-region-conformance.mjs (Lean wrap assembly vs 2 compiled wrap_main blobs)" \
+  node "scripts/wrapmain-region-conformance.mjs"
+
+# ⚑ AND THE ONE INSTRUMENT THAT CAN SEE A FREE CELL. Every oracle above is a SHAPE diff. Measured
+# 2026-08-03: not one prover-chosen cell was visible to any of them AS SUCH — a statement word with no
+# in-circuit source has the same ladder shape as one with a source, and a free booleanity row is
+# BYTE-IDENTICAL to a derived one. `KimchiStepProverChoice.lean` / `KimchiWrapProverChoice.lean` compute
+# those counts in Lean over the actual emitted program; what Lean's build CANNOT notice is a count going
+# UP and then being written into the theorem, which turns the build green again with one more free cell
+# in the circuit. This gate is the second source: 21 counts against CEILINGS committed in the script,
+# each with a direction. Its `--self-test` raises every `max`/`eq` pin and lowers every `min` pin and
+# requires each to bite, renames a census theorem, reshapes a statement — with a CONTROL that the
+# committed census must still pass. ~0.4s, node only, no Lean build and no artifact.
+run_one "prover-freedom-ratchet.mjs --self-test (a RISE in free cells must red)" \
+  node "scripts/prover-freedom-ratchet.mjs" --self-test
+run_one "prover-freedom-ratchet.mjs (21 census counts vs their committed ceilings)" \
+  node "scripts/prover-freedom-ratchet.mjs"
+
 # The .ts oracles are TRANSPILE-ONLY scripts: the non-migrated ones still carry intentional literal-vs-
 # literal falsification controls (e.g. `t2q === LEAN_T2Q_SAMPLE`) that full `tsc` rejects as TS2367 but
 # that are exactly the RED path at runtime, so they run under `ts-node --transpile-only --esm` (no type-

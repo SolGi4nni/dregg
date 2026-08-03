@@ -157,6 +157,17 @@ if (referenceDump) {
   console.log(`wrote ${referenceDump}`);
 }
 
+// ⚑ NOTHING TO DO IS NOT GREEN. Run with no arguments this file used to reach its trailer with
+// `vkPaths` empty, `parsed` empty and the red-path block skipped, print `GATE GREEN` and exit 0 —
+// a verdict about zero keys. Its sibling `mina-proof-parse-gate.mjs` already refuses exactly this;
+// this one did not, and only the caller (`mina-vk-derivation-gate.sh`, which reds below three VK
+// files) kept the fail-open latent rather than live. (2026-08-03)
+if (vkPaths.length === 0 && !selfTest && !referenceDump) {
+  console.error('nothing to do: pass --vk <file> (repeatable), --self-test, or --reference-dump <file>');
+  console.error('⚠ a run that grades no key is NOT green.');
+  process.exit(2);
+}
+
 // ---- the gate ----
 const parsed = [];
 for (const p of vkPaths) {

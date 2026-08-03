@@ -113,14 +113,22 @@ for (const p of proofPaths) {
   // ⚑ THE STRONGER MEASUREMENT. Parsing proves the object is well-formed. Re-PRINTING it with
   // Mina's own printer and comparing to what we handed in proves our printer IS Mina's printer,
   // character for character — the sexp-side analogue of the binprot byte-identity round-trip.
-  let echo;
+  let echo, threw = null;
   try {
     echo = print(r.mlProof);
   } catch (e) {
     echo = null;
+    threw = (e && e.message) || String(e);
   }
   if (echo === null) {
-    console.log(`[parse] ${name.padEnd(42)} mpv=${mpv} b64=${b64.length}  ACCEPTED (re-print threw)`);
+    // ⚑ THIS USED TO BE `ACCEPTED (re-print threw)` WITH NO `failed++`, and the polarity was
+    // INVERTED against the branch below: a re-print that merely DIFFERS counted as a failure, while
+    // a re-print that THREW — the strictly worse outcome, our object is not printable by Mina's own
+    // printer at all — was logged green. The header two lines up calls the re-print "THE STRONGER
+    // MEASUREMENT"; the throw path deleted it. (2026-08-03)
+    failed++;
+    console.log(`[parse] ${name.padEnd(42)} mpv=${mpv} b64=${b64.length}  RE-PRINT THREW — Mina's own printer `
+      + `cannot render the object it just parsed: ${String(threw).replace(/\s+/g, ' ').slice(0, 160)}`);
   } else if (echo === b64) {
     console.log(`[parse] ${name.padEnd(42)} mpv=${mpv} b64=${b64.length}  ACCEPTED + RE-PRINT BYTE-IDENTICAL`);
   } else {

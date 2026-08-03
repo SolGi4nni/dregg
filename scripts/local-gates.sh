@@ -203,7 +203,12 @@ GATES=(
   # row above. `source_dirty` was moved OUT of `--strict` into the always-checked set for the
   # mirror-image reason: it is a property of the committed stamp, always answerable, and it was
   # the one clause that would have caught the force-stamp.
-  "provenance|300|python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD"
+  # ⚠ BUDGET IS MEASURED, NOT GUESSED, and it is generous on purpose: a TIMEOUT is not a verdict,
+  # and this table has already lost a whole session's coverage to one (`gates-executed`, split
+  # 2026-07-27). The cost is a 454 MB detached-worktree checkout plus the four door scans (4344
+  # tracked .rs, 2300 .lean, 26 workflows). MEASURED 2026-08-02: ~18s idle, 109s while sibling
+  # cargo builds saturate the disk — 15% CPU, i.e. I/O-bound, so the tail is contention, not work.
+  "provenance|600|python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD"
   # The `-red` row is not optional: "nothing has drifted" is a NEGATIVE assertion and passes just
   # as happily on a broken reader — which is what this gate was, for months, at zero invocations.
   # Drives all four defect shapes the ten table AIRs were actually in (a moved byte, a dropped
@@ -211,7 +216,12 @@ GATES=(
   # the byte and the stamp (restore -> green, so the red was the mutation and not the machinery),
   # the clean control, and the VACUITY FLOOR — an empty walk must refuse, not report PASS over
   # zero artifacts. Scratch copies in a temp worktree; the shared tree is never touched.
-  "provenance-red|300|python3 scripts/emit_descriptors.py --self-test-provenance"
+  # MEASURED 2026-08-02: 228s under load, which TIMED OUT at 300s on its first wired run — eight
+  # injected faults each re-running the four door scans over inputs the proof never mutates, i.e.
+  # eight identical scans measuring nothing. The delta cases now skip those (the argument for why
+  # that is sound is in `_verify_provenance_findings`, and ONE full-path run keeps it honest):
+  # 95s under the same load, and 9 cases became 11.
+  "provenance-red|600|python3 scripts/emit_descriptors.py --self-test-provenance"
   # A Lean emitter asking the poseidon2 chip for an arity the chip AIR does not admit. The
   # descriptor it produces CAN NEVER BE SATISFIED, and nothing said so: `57105f387` found the wide
   # blinded membership tooth had been asking for arity 9 SINCE THE DAY IT WAS WRITTEN, and it
@@ -593,6 +603,34 @@ GATES=(
   # that the script can print the word RED. The shared tree is never mutated.
   "pickles-harness-ratchet|120|bash scripts/pickles-harnesses.sh --static"
   "pickles-harness-ratchet-red|1800|bash scripts/pickles-harnesses.sh --self-test"
+  # ⚑ THE ONE GATE THAT CAN SEE A FREE CELL. Every Pickles row above this one — the harnesses, the
+  # region-conformance diffs, the byte oracles — is a SHAPE instrument. MEASURED 2026-08-03: not one
+  # prover-chosen cell was visible to any of them AS SUCH, because a statement word with no in-circuit
+  # source has the same ladder shape as one with a source and a free booleanity row is BYTE-IDENTICAL
+  # to a derived one. Words 11/39, `vCipBit`, `branch_data`'s mask bits, `G`/`z₁`/`z₂`, the pad lane
+  # and the wrap transcript's 119 supplied words were all invisible to the gate surface.
+  # `KimchiStepProverChoice.lean` / `KimchiWrapProverChoice.lean` COMPUTE those counts in Lean, over
+  # the actual emitted program, by `native_decide` — but `native_decide` reds when `= 19` stops
+  # holding, and the next commit edits it to `= 20` and the build is green again with nineteen
+  # environment cells having quietly become twenty. This row is the other source: 21 counts against
+  # CEILINGS committed in the script, each with a DIRECTION (a free-cell count may fall, never rise;
+  # a derived-word count may rise, never fall; a structural identity may not move). ~0.4s, node only,
+  # no Lean build and no emitted artifact — it reads the census's own theorem statements, and a pin it
+  # cannot READ is RED, never skipped, because a deleted census pin is how an instrument gets retired
+  # without anyone deciding to.
+  # The `-red` row is not optional: it raises every `max`/`eq` pin by one and lowers every `min` pin
+  # by one and requires each to bite (19 + 2), renames a census theorem, and reshapes a statement —
+  # against a CONTROL that the committed census must still pass, because a ratchet that reds on
+  # everything proves nothing.
+  "prover-freedom-ratchet|120|node bridge/mina-zkapp/scripts/prover-freedom-ratchet.mjs"
+  "prover-freedom-ratchet-red|120|node bridge/mina-zkapp/scripts/prover-freedom-ratchet.mjs --self-test"
+  # And the wrap conformance diff's OWN red path, which needs neither Lean nor an emission: it proves
+  # the blob-fact legs bite (the Fp step circuit loaded where `wrap_main` belongs, and every `q-1`
+  # coefficient shaved to `q-2`) and that `--report` EXITS NON-ZERO on divergence. Until 2026-08-03
+  # `--report` exited 0 before the vector diff in both region-conformance scripts, so every GREEN from
+  # that path was a formatting success. The full gate needs a fresh wrap emission and is in
+  # `pickles-synthesis-oracles.sh`; this row is the part that is answerable on any tree.
+  "wrapmain-conformance-red|180|node bridge/mina-zkapp/scripts/wrapmain-region-conformance.mjs --self-test"
   # A CLAIM THE CODE DOES NOT CARRY. Every row above this one checks an ARTIFACT — a
   # target, a manifest, a fence, a caller, a row. None of them reads PROSE, and prose was
   # the carrier of six separate wounds on 2026-07-30 alone, every one found by a person

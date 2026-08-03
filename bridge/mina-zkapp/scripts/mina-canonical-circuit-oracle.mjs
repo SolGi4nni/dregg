@@ -258,11 +258,24 @@ if (isMain && candidatePath) {
     : Array.isArray(cand.gate_list) ? cand.gate_list
     : Array.isArray(cand.gates) ? cand.gates
     : (() => { throw new Error(`${candidatePath}: no gate list (expected .gates[] or .gate_list[] or a bare array)`); })();
+  // ⚠ NO FALLBACK TO THE REFERENCE'S OWN VALUE. Entry #0 read
+  //     value: cand.public_input_size ?? publicInputSize
+  // so a candidate that declares no primary length — a BARE ARRAY, which this very block accepts two
+  // lines up, or any emission naming the field something else — compared `publicInputSize` to
+  // ITSELF. A permanent green at the head of a gate-by-gate diff, and the same shape as
+  // `wrapmain-region-conformance.mjs`'s retired `field/modulus` line (2026-08-03).
+  // A candidate with no primary length is UNDER-SPECIFIED, not agreeing: it reds by NAME, which
+  // `diff-oracle` reports as `reference names 'public_input_size', candidate names '…ABSENT…'`, so
+  // the verdict says what is missing instead of borrowing a number to agree with.
+  const candPI = Array.isArray(cand) ? undefined : cand.public_input_size;
   await runOracle({
     shape: 'gates',
     label: `mina canonical ${keys[0]} vs ${candidatePath} (gate-by-gate)`,
     reference: () => [{ name: 'public_input_size', value: publicInputSize }, ...gateVector(gates)],
-    candidate: () => [{ name: 'public_input_size', value: cand.public_input_size ?? publicInputSize }, ...gateVector(candGates)],
+    candidate: () => [{
+      name: candPI === undefined ? 'public_input_size:ABSENT-IN-CANDIDATE' : 'public_input_size',
+      value: candPI ?? '(the candidate declares none)',
+    }, ...gateVector(candGates)],
   });
 }
 

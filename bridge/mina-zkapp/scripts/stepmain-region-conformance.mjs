@@ -116,15 +116,24 @@
 //     and REFUSES on any difference (`emit-provenance.mjs`, two independent legs: content + clock);
 //   * there is NO unstamped path. An artifact with no stamp is refused, not scored.
 //
-// USAGE
+// USAGE — ⚠ EVERY invocation is green-or-bust. There is no non-gating mode in this file.
 //   node scripts/stepmain-region-conformance.mjs                  # green-or-bust
 //   node scripts/stepmain-region-conformance.mjs --emit           # ⚑ emit the input first, then grade
 //   node scripts/stepmain-region-conformance.mjs --self-test      # + the harness red path
 //   node scripts/stepmain-region-conformance.mjs --stale-self-test # ⚑ prove the freshness floor bites
-//   node scripts/stepmain-region-conformance.mjs --report         # the per-region verdict, readable
+//   node scripts/stepmain-region-conformance.mjs --report         # ACCEPTED, INERT. See below.
 //   node scripts/stepmain-region-conformance.mjs --lean <path>    # a specific rung emission
 //   node scripts/stepmain-region-conformance.mjs --falsify        # prove the diff bites (10 bites)
 //   node scripts/stepmain-region-conformance.mjs --refresh-fixture
+//
+// ⚑ `--report` WAS A MODE THAT COULD NOT FAIL, and it is now inert (2026-08-03). It read
+//     if (argv.includes('--report')) { report(...); process.exit(0); }
+// placed immediately BEFORE `runOracle`, so it printed every divergence in the per-region dump and
+// then exited 0 — a GREEN that was a formatting success and no verdict at all. It bought nothing
+// even as a dump: `runOracle`'s `extra` callback below calls the SAME `report(...)` on every
+// invocation, so the flag's only effect in this file's whole history was to skip the grade. It is
+// kept as an accepted no-op (it appears in prose and in shell history) and it now falls straight
+// through to the same green-or-bust verdict as a bare run.
 //
 // The Lean side is `/tmp/pickles-stepmain/stepmain_step_r8_finalize.json` when a `lake env lean --run
 // Dregg2/Circuit/Emit/EmitStepMainJson.lean` has been done, else the committed gzip fixture. When BOTH
@@ -947,7 +956,11 @@ if (argv.includes('--refresh-fixture')) {
   console.log(`   + sidecar stepmain-step-r8-finalize-gates.provenance.json — cone ${rec.cone.digest.slice(0, 16)}… over ${rec.cone.files} modules, HEAD ${String(rec.git.head).slice(0, 9)}`);
   process.exit(0);
 }
-if (argv.includes('--report')) { report(R, src, M, L, prov, cone); process.exit(0); }
+// ⚑ NO `--report` BRANCH HERE. What stood here exited 0 before the verdict; see the header. The
+// dump it wanted is printed unconditionally by `extra` below, so the flag is announced and inert.
+if (argv.includes('--report'))
+  console.log('   ⚠ `--report` is INERT: the per-region dump below is printed on EVERY invocation, and this run GRADES.\n'
+    + '     (Until 2026-08-03 this flag exited 0 here, before the conformance verdict.)');
 
 await runOracle({
   shape: 'gates',
