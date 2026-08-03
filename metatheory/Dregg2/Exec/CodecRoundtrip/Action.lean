@@ -69,7 +69,6 @@ local macro "action_arm" : tactic =>
     done))
 
 set_option maxHeartbeats 4000000 in
-set_option linter.unusedSimpArgs false in
 /-- **FILL J production (c): the `FullActionA` (WHAT) decoder roundtrip — all simple arms.** Every
 `isSimpleArm` action (all but `setFieldA`) round-trips through `encodeActionW`/`parseActionW`, now
 INCLUDING the 4 AUTHS-bearing arms (via §8's `cA_step`). This removes nearly all of the WHAT decoder —
