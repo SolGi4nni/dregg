@@ -55,8 +55,15 @@ absorb move nothing.
 **Does NOT.** This is not a Mina-valid proof and not a soundness result.
 
 * The step proof's commitments enter as **sponge inputs**, not as curve points a sub-circuit
-  consumes. `KimchiWrapMain.WRAP_UNCONSUMED` still lists `sg_old`/`x_hat`/`w_comm`/`z_comm`/
-  `t_comm`/`lr`/`delta` as needing W-COMBINE / W-XHAT / W-FTCOMM / W-BULLET.
+  consumes. `KimchiWrapMain.WRAP_UNCONSUMED` still carries all **eight** entries. Two of them now
+  name an EMITTED sub-circuit rather than a missing one — `x_hat`'s MSM at `w6_xhat` (§15) and
+  `ft_comm` at `w8_ftcomm` (§17) — and the census kept them, because emitting a value the prover
+  still hands over freely changes the SHAPE of the prover's reach and not its size. The rest still
+  need W-COMBINE / W-FINALIZE / W-BULLET.
+* ⚑ And neither emitted sub-circuit is in THIS file's object. Everything below emits at
+  `Rung.bind` (`w4_bind`), and `rungRows _ .bind _` stops at `closingRows` — `keyRows`,
+  `xhatRows`, `splitRows` and `ftcRows` are not in the row list. §1 says what that costs on the
+  `x_hat` slot specifically, and `chain_xhat_is_the_step_proofs_not_the_msm_output` exhibits it.
 * The opening — `equal_g`, `verified`, the accumulator check — is not in the wrap circuit at all,
   and `verified` remains a witnessed boolean.
 * The reality gate below is closed by `native_decide`: 28 Poseidon permutations of 255-bit states,
@@ -82,10 +89,24 @@ open Dregg2.Circuit.Emit.PastaPoseidonFq (fqParams newSponge absorbMany challeng
 
 /-! ## §1 — THE SHAPE, MEASURED OFF THE STEP PROOF RATHER THAN CHOSEN.
 
-Four of `WrapShape`'s seven fields are read out of the tape the step proof actually produced. The
-remaining three (`emsRows`, `branches`, `pubWords`) are wrap-instance parameters with no step-side
-source — `wrap_main` is per-zkApp (`wrap_main.ml:96-105`) — and keep `KimchiWrapMain.shapeWrap`'s
-committed values. -/
+Four of `WrapShape`'s **nine** fields are read out of the tape the step proof actually produced. The
+remaining five are taken from `KimchiWrapMain.shapeWrap` unchanged, for two different reasons:
+
+* `emsRows`, `branches`, `pubWords` are wrap-instance parameters with no step-side source —
+  `wrap_main` is per-zkApp (`wrap_main.ml:96-105`).
+* ⚑ `xhatTerms` and `xhatXY` arrived at `w6_xhat` (W-XHAT, `d89815028`) and are **§15's**, not the
+  transcript's. `xhatXY` is a memo carrying `xhatOut xhatTerms`, and copying `shapeWrap`'s pair
+  discharges that obligation by construction — `chain_xhat_is_the_step_proofs_not_the_msm_output`
+  proves it rather than assuming it, which is the committed-shape half that `KimchiWrapMain` itself
+  only closes for `shapeSmoke`.
+
+⚑ **AND THE `x_hat` SLOT IS THE ONE PLACE THE CHAIN OVERRIDES A DERIVED VALUE.** `schedule` absorbs
+`s.xhatXY` at `wrap_verifier.ml:617`; `chainSchedule` absorbs `STEP_PUBCOMM_XY`, the public-input
+commitment kimchi's own verifier absorbed for THIS step proof. It has to: `chain_reality_gate` is a
+claim about what `proof.oracles(...)` computed, and §15's 67 scalars are `xhatScalar =
+wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i` — a deterministic filler, not any statement's words. So the
+MSM is emitted over the RIGHT SHAPE and the WRONG SCALARS, and closing that is W-PREV's job
+(`wrap_main.ml:201-256`'s `exists ~request:Req.Proof_state`), not this file's. §8 states it. -/
 
 def shapeChain : WrapShape :=
   { prevs := STEP_PREVCOMM_XY.length / 2
@@ -94,7 +115,9 @@ def shapeChain : WrapShape :=
   , tComms := STEP_TCOMM_XY.length / 2
   , emsRows := shapeWrap.emsRows
   , branches := shapeWrap.branches
-  , pubWords := shapeWrap.pubWords }
+  , pubWords := shapeWrap.pubWords
+  , xhatTerms := shapeWrap.xhatTerms
+  , xhatXY := shapeWrap.xhatXY }
 
 /-! ## §2 — THE TAPE, and the schedule that carries it.
 
@@ -401,7 +424,7 @@ theorem the_chain_is_not_the_borrowed_fixture :
 
 /-! ## §8 — THE SHAPE WAS MEASURED, NOT CHOSEN.
 
-⚑ A finding worth stating plainly: the five transcript parameters of `KimchiWrapMain.shapeWrap` —
+⚑ A finding worth stating plainly: the four transcript parameters of `KimchiWrapMain.shapeWrap` —
 `prevs = 2`, `ipaRounds = 16`, `wComms = 15`, `tComms = 7` — are exactly what dregg's own step proof
 produces. `shapeWrap`'s docstring derives them from `Backend.Tick.Rounds.n`, `Plonk_types.Columns.n`
 and the devnet wrap VK; this is the independent confirmation, from a proof rather than from a
@@ -420,6 +443,46 @@ theorem chain_shape_is_the_measured_step_shape :
   native_decide
 
 #assert_compiled chain_shape_is_the_measured_step_shape
+
+/-! ### §8b — ⚑ THE ONE SLOT WHERE THE CHAIN OVERRIDES A DERIVED VALUE, exhibited.
+
+W-XHAT (`d89815028`) turned `x_hat` from a fixture into an MSM output, and `schedule` now absorbs
+`s.xhatXY`. This file does not, and cannot: the sponge tape has to be the one kimchi's verifier ran
+on, or §3 is not a reality gate. The theorem below reads BOTH schedules' `T_XHAT` words off the
+emitted event lists — not off the definitions that produced them — and shows they differ. -/
+
+/-- The words the CHAIN's schedule absorbs under `T_XHAT`, read off the emitted event list. -/
+def chainXhatAbsorbed : List Nat :=
+  (chainSchedule shapeChain).filterMap
+    (fun e => match e with | .abs t w => if t == T_XHAT then some w else none | .sq _ => none)
+
+/-- The same for `KimchiWrapMain.schedule` at the same shape. -/
+def wrapXhatAbsorbed : List Nat :=
+  (schedule shapeChain).filterMap
+    (fun e => match e with | .abs t w => if t == T_XHAT then some w else none | .sq _ => none)
+
+/-- **`chain_xhat_is_the_step_proofs_not_the_msm_output`** — ⚑ the substitution, stated rather than
+left for a reader to notice, and the memo obligation discharged for the COMMITTED shape.
+
+* The chain absorbs `STEP_PUBCOMM_XY`, this step proof's real public-input commitment.
+* `schedule` absorbs `shapeChain.xhatXY`, §15's MSM output.
+* They DIFFER — so the override is real, not a relabelling, and §15's MSM is not yet an MSM over
+  dregg's step statement. `xhatScalar` is `wrapFixtureQ`'s filler; the 67 real scalars are
+  W-PREV's (`wrap_main.ml:201-256`), which is named in `KimchiWrapMain.WRAP_UNCONSUMED` and is why
+  `x_hat` stayed on that census when its MSM landed.
+* And `shapeChain.xhatXY = xhatOut shapeChain.xhatTerms` — the obligation `EmitWrapMainJson`
+  enforces at emission time and `xhat_smoke_shape_absorbs_the_msm_output` closes only for
+  `shapeSmoke`. Here it is a theorem at the committed shape. -/
+theorem chain_xhat_is_the_step_proofs_not_the_msm_output :
+    chainXhatAbsorbed = [STEP_PUBCOMM_XY.getD 0 0, STEP_PUBCOMM_XY.getD 1 0]
+    ∧ wrapXhatAbsorbed = [shapeChain.xhatXY.1, shapeChain.xhatXY.2]
+    ∧ chainXhatAbsorbed ≠ wrapXhatAbsorbed
+    ∧ shapeChain.xhatXY = xhatOut shapeChain.xhatTerms
+    ∧ shapeChain.xhatTerms = XHAT_TERMS_FULL
+    ∧ STEP_PUBCOMM_XY.length = 2 := by
+  native_decide
+
+#assert_compiled chain_xhat_is_the_step_proofs_not_the_msm_output
 
 /-! ## §9 — the emission. `WrapData` with the chained trace substituted, nothing else changed.
 
