@@ -176,7 +176,13 @@ const EMIT_DRIVER = 'Dregg2/Circuit/Emit/EmitStepMainJson.lean';
 // the gap did not grow with the rung, because `rungRows` evaluates every sub-list before it matches
 // on the rung. `DREGG_SM_RUNGS=all` is still there for a sweep that genuinely wants the nine.
 const EMIT_RUNG = 'r8_finalize';
-const EMIT_ENV = { DREGG_SM: 'step', DREGG_SM_RUNGS: EMIT_RUNG, DREGG_SM_OUT: LEAN_DIR };
+// ⚑ WIRED ONLY. This gate reads `stepmain_step_r8_finalize.json` and never opens the `_unwired`
+// control, so emitting it costs a second full `rungRows` traversal and a second `placedOf` that
+// this run discards. Measured on the smoke shape: rows 5997→3077 ms, place 131→65 ms, total −33%,
+// with the graded artifact BYTE-IDENTICAL (`cmp`). The control still exists for the harness that
+// actually proves against it — this flag is scoped to the grade.
+const EMIT_ENV = { DREGG_SM: 'step', DREGG_SM_RUNGS: EMIT_RUNG, DREGG_SM_OUT: LEAN_DIR,
+                   DREGG_SM_WIRED_ONLY: '1' };
 const EMIT_CMD = `(cd metatheory && DREGG_SM=step DREGG_SM_RUNGS=${EMIT_RUNG} lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)`
   + '   — or let the gate do it:  node scripts/stepmain-region-conformance.mjs --emit';
 const REFRESH_CMD = 'node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture';
