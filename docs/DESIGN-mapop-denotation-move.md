@@ -713,13 +713,27 @@ is what §3 called co-equal and §6 said the apex needs before it says anything 
 
 What is **not** closed, and must not be laundered:
 
-1. **The deployed builder does not check pad-freeness.** `PadFree` is a decidable per-commitment
-   property; `heap_root.rs` never tests it (the only `assert_ne!` against `ZERO` is a test about the
-   empty *root*, `heap_root.rs:1294`). **The cheap deployed fix is to pad with a DOMAIN-SEPARATED
-   digest instead of a literal zero** — then padding-vs-leaf separation is the *same named CR floor*
-   the tower already carries, and this residual disappears rather than being priced. Binding the live
-   occupancy count into the root would also close it. Either is a small change to
-   `EMPTY_SUBTREE_ROOTS[0]`'s definition plus its 8-felt twin.
+1. **~~The deployed builder does not check pad-freeness.~~ ⚠ CORRECTED 2026-08-03 — IT DOES, AND
+   THIS ITEM'S OWN EVIDENCE WAS KEYED ON THE WRONG TOKEN.** This read: "*`heap_root.rs` never tests
+   it (the only `assert_ne!` against `ZERO` is a test about the empty root, `heap_root.rs:1294`)*".
+   That was a grep for `assert_ne!`, and the guard is not an `assert_ne!`:
+   `circuit/src/heap_root.rs:184` `assert_pad_free` is a **release-active `panic!`** on exactly the
+   `PadGhost3` event — its docblock says "*a `debug_assert` here would be a guard that cannot go red
+   where it matters*" — and **all three builders call it**: `CanonicalHeapTree::new` (`:576`),
+   `compute_canonical_heap_root_8` (`:1025`), `CanonicalHeapTree8::new` (`:1158`). It is
+   polarity-tested both ways in `circuit/tests/heap_padding_ghost.rs` §3
+   (`the_guard_refuses_the_ghost_vector` / `the_guard_passes_an_honest_vector` /
+   `the_guard_is_not_vacuous_against_real_digests`), so it is not a guard that cannot fire.
+
+   **What is still open is narrower and is the part that matters.** The assert runs in the BUILDER,
+   which runs in the PROVER — never in the verifier. So `PadGhost3` is refused for every root an
+   honest builder produces, and is *not* refused for a root an adversary supplies, which is exactly
+   the setting a knowledge-extraction residual is stated in. **The cheap deployed fix is still to pad
+   with a DOMAIN-SEPARATED digest instead of a literal zero** — then padding-vs-leaf separation is
+   the *same named CR floor* the tower already carries, and the residual disappears rather than being
+   priced against an honest-builder-only guard. Binding the live occupancy count into the root would
+   also close it. Either is a small change to `EMPTY_SUBTREE_ROOTS[0]`'s definition plus its 8-felt
+   twin.
 2. **The 1-felt scalar denotation layer remains the wrong width.** At 1 felt the ghost costs ~2^31; the
    deployed tree is 8-felt. This is `MapMerkleRoot`'s own named residue (the §2–§5 scalar model vs the
    §5b `node8` model), and stage 3 should cut the denotation to the 8-felt objects, not the scalar ones.
@@ -734,9 +748,28 @@ What is **not** closed, and must not be laundered:
 5. **⚑ THE PADDING-GHOST CLASS IS A SPREAD, NOT LOCAL TO THE MAP TREE.** Read this session:
    `cap_root.rs:137–188` pads with the same literal constant (`CAP_ZERO8 = [BabyBear::ZERO; …]`,
    `EMPTY_SUBTREE_ROOTS[0]`) under the same contiguous-prefix sparse fold, and `heap_root.rs:48–51`
-   states the sentinels are shared by "the sorted openable trees (heap / cap / fields)". Grepped both
-   files: **there is no leaf-digest-vs-padding guard anywhere** — the only `assert_ne!(_, ZERO)` is a
-   test about the *empty root* (`heap_root.rs:1294`), and the dense reference build literally
+   states the sentinels are shared by "the sorted openable trees (heap / cap / fields)".
+
+   ⚠ **CORRECTED 2026-08-03, SAME WOUND AS ITEM 1 AND THE SAME MIS-KEYED GREP.** This read "*Grepped
+   both files: there is no leaf-digest-vs-padding guard anywhere — the only `assert_ne!(_, ZERO)` is
+   a test about the empty root (`heap_root.rs:1294`)*". Both trees are guarded, and neither guard is
+   an `assert_ne!`: the heap tree by `assert_pad_free` (`heap_root.rs:184`, three call sites — see
+   item 1), and the **cap tree by the deliberately WEAKER `assert_pad_free_tail`**
+   (`heap_root.rs:208`, called at `cap_root.rs:480`). The cap tree cannot take the strong guard
+   *by design* — `new_with_tombstones` places the padding digest at a revoked slot on purpose, so a
+   pad-valued digest at a live position is a TOMBSTONE, not a ghost — so it is checked against the
+   exact ambiguity condition instead: a pad-valued digest is invisible only when the prefix ENDS in
+   padding, i.e. `digests.last() == Some(pad)`. `cap_root.rs:474-479` records why that is the right
+   condition there (the MAX sentinel normally holds the last position, and the assert pins that
+   structural fact rather than assuming it). And the **fields tree is guarded too**, measured while
+   writing this: `openable_fields_root.rs:660` calls the STRONG `assert_pad_free` on its leaf digests
+   immediately before the `resize(capacity, ZERO)` at `:661`, and `CanonicalExactFieldsTree8` carries
+   its own positional refusal at `:246`. So the count is **three of three guarded**, not zero of
+   three — the original grep found none of them because none of them is an `assert_ne!`.
+
+   What survives of this item: all three trees pad with the same literal constant, so the residual is
+   still a spread and the domain-separation fix still belongs to all of them at once — but the claim
+   that nothing guards them was false, and the dense reference build literally
    `leaf_digests.resize(capacity, BabyBear::ZERO)` (`heap_root.rs:1554`), which is exactly the `padTo`
    the Lean models. So the same "a live leaf digest that hits the padding constant makes its entry
    invisible" argument applies verbatim to the CAP tree and the fields tree. **The domain-separated

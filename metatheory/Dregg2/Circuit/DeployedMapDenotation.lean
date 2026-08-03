@@ -62,8 +62,24 @@ has to be at the pair the extractor returns.
   * **The padding is a literal `BabyBear::ZERO`** (`heap_root.rs`'s `EMPTY_SUBTREE_ROOTS[0]`), not a
     domain-separated digest. So `PadGhost3` — "a LIVE leaf digest equals the padding constant" — is a
     reachable event that collision-resistance does not exclude (it is a FIXED-TARGET PREIMAGE of a
-    literal). It rides in the CONCLUSION as a named, per-commitment, refutable residual. Removing it
-    is a **deployed-side** change to `heap_root.rs`, not a Lean one.
+    literal). It rides in the CONCLUSION as a named, per-commitment, refutable residual.
+
+    ⚠ **CORRECTED 2026-08-03 — this bullet used to end "Removing it is a deployed-side change to
+    `heap_root.rs`, not a Lean one", and the deployed side ALREADY MADE IT.** `heap_root.rs:184`
+    `assert_pad_free` is a RELEASE-ACTIVE `panic!` on exactly this event ("*a `debug_assert` here
+    would be a guard that cannot go red where it matters*"), and all three builders call it —
+    `CanonicalHeapTree::new` (`:576`), `compute_canonical_heap_root_8` (`:1025`) and
+    `CanonicalHeapTree8::new` (`:1158`). It is polarity-tested both ways in
+    `circuit/tests/heap_padding_ghost.rs` §3 (`the_guard_refuses_the_ghost_vector`,
+    `the_guard_passes_an_honest_vector`, `the_guard_is_not_vacuous_against_real_digests`).
+
+    So the residual's real scope is NARROWER than "unremoved" and is not what the old sentence said:
+    for every root the HONEST BUILDER produces, `PadGhost3` is refused before the root exists. What
+    the assert does NOT reach is a root an ADVERSARY supplies — the builder runs in the prover, not
+    in the verifier — which is exactly where a knowledge-extraction residual has to bite anyway.
+    That is why the residual stays in the CONCLUSION and why removing it still wants the
+    domain-separated padding digest: separation would turn it into the same named CR floor rather
+    than leaving a preimage event that only an honest builder declines to construct.
   * **`Good` is still an idealisation** where it appears (`_of_good` forms are kept only as the
     strength bridge). Every statement this file exports to the deployed denotation is an
     `_or_resid`/`_or_collides` form with no hash hypothesis.
