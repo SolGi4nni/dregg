@@ -10,11 +10,96 @@
 # it. Re-deriving from Lean is the whole point; this script re-derives.
 #
 # Usage:  scripts/check-descriptor-drift.sh
+#         scripts/check-descriptor-drift.sh --rev HEAD     # clean extract (churn-safe)
+#         scripts/check-descriptor-drift.sh --rev <sha>
 # Exit:   0 = no drift; nonzero = the Lean emission and the checked-in artifacts
 #         disagree (run scripts/emit-descriptors.sh and commit).
+#
+# ── ⚑ WHY `--rev` EXISTS (added 2026-08-02) ────────────────────────────────────
+# Without it this gate grades THE WORKING TREE, and in a shared tree that means ANY
+# lane's uncommitted WIP can hold it down for everybody. Measured: a sibling's
+# in-flight table-AIR emitter (`ExactPublicTableEmit.lean`, untracked) wrote
+# `circuit/descriptors/table-airs/dregg-ir2-exact-public-v1.json` as a JSON ARRAY
+# where the loader expects an OBJECT, and the gate died in the emit step —
+#     emit_descriptors: ... payload is not a table-AIR JSON: '[{"name": ...
+# — for a lane that needed it to confirm byte-identity and whose own change was in
+# HEAD and fine. None of the failing material was in HEAD. The blocked lane
+# correctly refused to "fix" someone else's mid-flight file to clear its own gate,
+# and had no other move.
+#
+# `--rev` is that other move: materialise the revision in a DETACHED, `git status`-
+# clean worktree and run the whole gate there, so another lane's churn is
+# structurally irrelevant to the verdict rather than politely worked around.
+# `scripts/check-guard-modules.py --rev HEAD` is the in-repo precedent and this
+# mirrors its interface. It uses a WORKTREE where that one uses `git archive`,
+# because this gate's tail (`check-drift-taxonomy.sh`) needs a working `git` to
+# resolve its base ref — an archive extract has no `.git` and the taxonomy leg
+# would "skip cleanly", i.e. silently stop being a gate.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ORIG_ROOT="$ROOT"
+REV=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rev) REV="${2:-}"; [ -n "$REV" ] || { echo "check-descriptor-drift: --rev needs a revision" >&2; exit 2; }; shift 2 ;;
+    --rev=*) REV="${1#--rev=}"; shift ;;
+    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    *) echo "check-descriptor-drift: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+  esac
+done
+
+CLEANUP=()
+cleanup() {
+  local rc=$?
+  for c in "${CLEANUP[@]:-}"; do [ -n "$c" ] && eval "$c" || true; done
+  return $rc
+}
+trap cleanup EXIT
+
+# COW/reflink where the filesystem has it (APFS `cp -c`, btrfs/xfs `--reflink`), a real copy
+# otherwise. NEVER a hardlink: lake writes oleans in place and a hardlinked seed would corrupt the
+# warm `.lake` this run borrowed from — the shared-`.lake` hazard that manufactures phantom olean
+# errors and invalidates every timing taken beside it.
+clone_dir() {
+  cp -c -R "$1" "$2" 2>/dev/null && return 0
+  cp --reflink=auto -R "$1" "$2" 2>/dev/null && return 0
+  cp -R "$1" "$2"
+}
+
+if [ -n "$REV" ]; then
+  SHA="$(git -C "$ORIG_ROOT" rev-parse --verify "$REV^{commit}" 2>/dev/null)" || {
+    echo "check-descriptor-drift: FATAL — '$REV' does not resolve to a commit." >&2; exit 2; }
+  WT="$(mktemp -d -t descriptor-drift-rev.XXXXXX)/tree"
+  CLEANUP+=("git -C '$ORIG_ROOT' worktree remove --force '$WT' >/dev/null 2>&1; rm -rf '$(dirname "$WT")'")
+  echo "check-descriptor-drift: materialising $REV ($(echo "$SHA" | cut -c1-12)) in a detached worktree..."
+  git -C "$ORIG_ROOT" worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
+    echo "check-descriptor-drift: FATAL — could not create a detached worktree at $WT" >&2; exit 2; }
+  # ⚠ VERIFY THE CLEAN GUARANTEE rather than assuming it. A worktree that is somehow dirty is a
+  # `--rev` run grading churn again, which is the whole thing this mode exists to stop.
+  if [ -n "$(git -C "$WT" status --porcelain)" ]; then
+    echo "check-descriptor-drift: FATAL — the fresh worktree is NOT clean; refusing to grade it." >&2
+    git -C "$WT" status --porcelain | head -10 >&2
+    exit 2
+  fi
+  # Seed the Lean build cache so this costs a rebuild-of-the-delta rather than a cold multi-hour
+  # build. REFUSED when the toolchain or the lake manifest differ from the revision's, because lake
+  # would then rebuild everything anyway and a mixed cache is worse than a cold one.
+  if [ -d "$ORIG_ROOT/metatheory/.lake" ]; then
+    same=1
+    for f in lean-toolchain lake-manifest.json; do
+      if ! git -C "$ORIG_ROOT" show "$SHA:metatheory/$f" 2>/dev/null | cmp -s - "$ORIG_ROOT/metatheory/$f"; then same=0; fi
+    done
+    if [ "$same" -eq 1 ]; then
+      echo "check-descriptor-drift: seeding .lake from the working tree (COW clone; toolchain + manifest match $REV)..."
+      clone_dir "$ORIG_ROOT/metatheory/.lake" "$WT/metatheory/.lake"
+    else
+      echo "check-descriptor-drift: ⚠ NOT seeding .lake — lean-toolchain/lake-manifest.json differ from $REV; this run pays a cold build."
+    fi
+  fi
+  ROOT="$WT"
+  echo "check-descriptor-drift: grading $REV at $ROOT (the shared working tree is NOT read)"
+fi
 
 # Locate lake (CI puts it on PATH; dev machines may only have the elan path).
 if ! command -v lake >/dev/null 2>&1 && [ -x "$HOME/.elan/bin/lake" ]; then
@@ -144,7 +229,7 @@ done
 echo "check-descriptor-drift:   ${#GUARDED[@]} guarded paths (the driver's change-set)"
 
 SNAP="$(mktemp -d -t descriptor-drift.XXXXXX)"
-trap 'rm -rf "$SNAP"' EXIT
+CLEANUP+=("rm -rf '$SNAP'")
 for p in "${GUARDED[@]}"; do
   mkdir -p "$SNAP/$(dirname "$p")"
   cp -R "$ROOT/$p" "$SNAP/$p"

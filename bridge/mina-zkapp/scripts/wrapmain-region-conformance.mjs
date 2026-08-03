@@ -39,9 +39,22 @@
 // The Lean side defaults to `/tmp/pickles-wrapmain/wrapmain_wrap_w4_bind.json`, produced by
 //   (cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)
 
+// ⚑ FRESHNESS (2026-08-02). This read `/tmp/pickles-wrapmain/…json` with `existsSync` +
+// `readFileSync` and nothing else — the WRAP half of the fail-open MEASURED on the step half, where a
+// four-day-old artifact scored GREEN, exit 0. Same floor now applies: the emission must carry an
+// `EMIT-PROVENANCE.json` stamp naming the Lean source cone, that cone is re-hashed FROM THE CURRENT
+// TREE, and a mismatch REFUSES (exit 3) naming staleness. `--emit` makes the gate emit its own input
+// so there is no stale path to read at all. See `emit-provenance.mjs`.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { isStale, leanConeDigest, requireFreshArtifact, runLeanEmit } from './emit-provenance.mjs';
 import { loadCircuit } from './mina-canonical-circuit-oracle.mjs';
+
+const WRAP_DIR = '/tmp/pickles-wrapmain';
+const WRAP_DRIVER = 'Dregg2/Circuit/Emit/EmitWrapMainJson.lean';
+const WRAP_EMIT_ENV = { DREGG_WM: 'wrap' };
+const WRAP_EMIT_CMD = '(cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)'
+  + '   — or let the gate do it:  node scripts/wrapmain-region-conformance.mjs --emit';
 
 const NAMES = ['Zero', 'Generic', 'Poseidon', 'CompleteAdd', 'VarBaseMul', 'EndoMul', 'EndoMulScalar'];
 const PERMUTS = 7;
@@ -107,12 +120,14 @@ function normalizeLean(j) {
   return { pi: j.public_input_size, gates, raw, probe, name: j.name };
 }
 
-function loadLeanSide(explicit) {
+function loadLeanSide(explicit, cone) {
   const live = explicit ?? LEAN_DEFAULT;
   if (!existsSync(live))
-    throw new Error(`no Lean wrap emission at ${live}. Produce it with\n` +
-      '   (cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)');
-  return { src: live, j: JSON.parse(readFileSync(live, 'utf8')) };
+    throw new Error(`no Lean wrap emission at ${live}. Produce it with\n   ${WRAP_EMIT_CMD}`);
+  // ⚑ REFUSE, DO NOT WARN. An unstamped artifact, one stamped from a cone that has since moved, or
+  // one whose mtime predates its own source is REFUSED here — not read and scored.
+  const prov = requireFreshArtifact({ artifact: live, cone, emitCmd: WRAP_EMIT_CMD });
+  return { src: live, prov, j: JSON.parse(readFileSync(live, 'utf8')) };
 }
 
 // ── gadget instances ──────────────────────────────────────────────────────────────────────────────
@@ -559,7 +574,26 @@ const a = await loadCircuit('wrap-transaction');
 const b = await loadCircuit('wrap-blockchain');
 const M = normalizeMina(a.publicInputSize, a.gates);
 const M2 = normalizeMina(b.publicInputSize, b.gates);
-const { src, j: leanJson } = loadLeanSide(arg('--lean'));
+// ⚑ Emit the input FIRST when asked, so for that run there is no stale path to read.
+if (argv.includes('--emit')) {
+  const { readdirSync } = await import('node:fs');
+  runLeanEmit({
+    driver: WRAP_DRIVER, dir: WRAP_DIR, env: WRAP_EMIT_ENV, label: 'wrapmain wrap rungs',
+    glob: () => readdirSync(WRAP_DIR).filter((f) => f.endsWith('.json') && f.startsWith('wrapmain_')).map((f) => `${WRAP_DIR}/${f}`),
+  });
+}
+const wrapCone = leanConeDigest(WRAP_DRIVER);
+let leanSide;
+try {
+  leanSide = loadLeanSide(arg('--lean'), wrapCone);
+} catch (e) {
+  console.error(`\n${e.message}\n`);
+  if (isStale(e)) console.error(`   cone: ${wrapCone.files.length} Dregg2 modules under ${wrapCone.root}, digest ${wrapCone.digest.slice(0, 16)}…`);
+  process.exit(isStale(e) ? 3 : 1);
+}
+const { src, prov: wrapProv, j: leanJson } = leanSide;
+if (wrapProv) console.log(`   lean emission: ${src}\n   emitted ${wrapProv.emitted_at} · cone ${wrapCone.digest.slice(0, 16)}… over ${wrapCone.files.length} modules (VERIFIED)`
+  + (wrapProv.git?.head ? ` · HEAD ${wrapProv.git.head.slice(0, 12)}${wrapProv.git.cone_dirty_at_head?.length ? ` ⚠ ${wrapProv.git.cone_dirty_at_head.length} cone file(s) dirty` : ' (cone CLEAN at HEAD)'}` : ''));
 const L = normalizeLean(leanJson);
 const R = measure(M, M2, L);
 
