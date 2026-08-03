@@ -804,17 +804,34 @@ async function staleSelfTest(cone, honest) {
   leg('F2 stamped from a cone that has since moved (the assembly changed, nobody re-emitted)',
     () => requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD }));
 
-  // (F3) A CORRECT STAMP, AND AN ARTIFACT OLDER THAN ITS OWN SOURCE — the clock leg, independent of
-  //      the content leg. This is the rsync/restore class (`reference-lane-redproof-leaves-a-stale-
-  //      binary`): the stamp travels with the file and only the mtime betrays it.
+  // (F3) A CORRECT STAMP AND THE WRONG ARTIFACT — leg 2. The stamp's cone is right, but the file
+  //      under the stamped name is not the one that emission produced: a rung swapped in from a
+  //      different `DREGG_SM` shape, a truncated write, a stamp carried over from another run.
   const good = JSON.parse(JSON.stringify(stamp));
   good.cone = { ...good.cone, digest: cone.digest, files_detail: cone.files.map((f) => ({ rel: f.rel, sha: f.sha })) };
   good.artifacts = { 'stepmain_step_r8_finalize.json': createHash('sha256').update(rd(art)).digest('hex') };
   writeFileSync(join(d, 'EMIT-PROVENANCE.json'), JSON.stringify(good));
+  const swapped = JSON.parse(rd(art, 'utf8'));
+  swapped.num_rows = (swapped.num_rows ?? 0) + 1;
+  writeFileSync(art, JSON.stringify(swapped));
+  leg('F3 correct stamp, but the artifact under the stamped name is NOT the one it vouches for',
+    () => requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD }));
+
+  // ⚑ (F3b) THE ANCHOR THAT PAID FOR F3's PREDECESSOR. A fresh `git` checkout stamps checkout-time
+  //      mtimes on every source, so an honest artifact is ALWAYS "older than its own cone" there.
+  //      The mtime leg this replaced refused exactly that, MEASURED from a clean `git worktree add
+  //      HEAD` extract — every CI clone would have read STALE. This leg keeps the retirement
+  //      answerable: back-date the artifact four days, leave the content legs satisfied, and it must
+  //      still be ACCEPTED.
+  copyFileSync(honest, art);
+  good.artifacts = { 'stepmain_step_r8_finalize.json': createHash('sha256').update(rd(art)).digest('hex') };
+  writeFileSync(join(d, 'EMIT-PROVENANCE.json'), JSON.stringify(good));
   const old = new Date('2026-07-29T03:15:00Z');
   utimesSync(art, old, old);
-  leg('F3 correct stamp, artifact mtime PREDATES its own newest source file (restore / rsync class)',
-    () => requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD }));
+  try {
+    requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD });
+    console.log('  ok   F3b fresh-checkout anchor: a correct emission with an ANCIENT mtime is ACCEPTED (mtime is not a leg)');
+  } catch (e) { console.log(`  RED  F3b: mtime alone refused a correct emission — every fresh clone would read STALE: ${String(e.message).slice(0, 120)}`); bad++; }
 
   // (F4) THE FIXTURE LEG: the committed `.gz` whose sidecar names a cone the tree no longer has.
   //      This is the sibling defect — a fixture that predated a fix read 8/8 and 228/228 falsely.
@@ -826,7 +843,7 @@ async function staleSelfTest(cone, honest) {
 
   console.log();
   if (bad) { console.log(`stepmain-region-conformance --stale-self-test: ${bad} LEG(S) FAILED`); process.exit(1); }
-  console.log('stepmain-region-conformance --stale-self-test: 5 legs green (1 anchor + 4 stale shapes REFUSED, each naming staleness)');
+  console.log('stepmain-region-conformance --stale-self-test: 6 legs green (2 anchors + 4 stale shapes REFUSED, each naming staleness)');
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────

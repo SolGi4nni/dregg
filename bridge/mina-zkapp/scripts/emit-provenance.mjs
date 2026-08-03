@@ -28,15 +28,24 @@
 // difference. That is stronger than an mtime rule in both directions — it survives a `touch`, and it
 // does not fire on a file that was rewritten with identical bytes.
 //
-// It is also checked ALONGSIDE an mtime floor, because a pin against its own definition is
-// decoration and two independent sources are a gate:
+// The two legs are both about CONTENT, and they are independent of each other:
 //
-//   leg 1 (CONTENT)  the stamped cone digest == the cone digest of the tree as it is right now;
-//   leg 2 (CLOCK)    the artifact's mtime is not older than the newest file in its own cone.
+//   leg 1 (SOURCE)    the stamped cone digest == the cone digest of the tree as it is right now
+//                     — "the assembly moved and nobody re-emitted";
+//   leg 2 (ARTIFACT)  the file's own sha256 == the sha256 the stamp recorded for it
+//                     — "this file is not the one that emission produced", which catches a rung
+//                     swapped in from a different `DREGG_SM` shape, a truncated write, and a stamp
+//                     carried over from a different run.
 //
-// Leg 1 catches "the assembly moved and nobody re-emitted". Leg 2 catches an artifact restored from
-// a backup, an rsync that rolled an mtime backwards (`reference-lane-redproof-leaves-a-stale-binary`
-// is exactly this class), or a provenance file hand-edited to a digest it did not produce.
+// ⚠ AND WHAT IS DELIBERATELY *NOT* A LEG, having been written, tested and RETIRED the same night:
+// "the artifact's mtime is not older than the newest file in its own cone". It sounded like a second
+// independent source and it is neither independent nor sound. MEASURED: running the gate from a
+// clean `git worktree add HEAD` extract REFUSED the honest artifact — `git` stamps checkout-time
+// mtimes on every file, so `lean-toolchain` was 24 minutes "newer" than an emission that was in fact
+// exactly correct. Every fresh clone and every CI checkout would have reported STALE. And it adds no
+// soundness: the emitter is a function of the cone, so an artifact whose cone digest and own sha256
+// both match IS the emission of that source, whatever its mtime says. A leg that reds on a correct
+// input is not a stricter gate — it is the thing that teaches people to route around floors.
 //
 // ⚠ SCOPE OF THE CONE. Only `Dregg2.*` modules are hashed. Mathlib/Std/the toolchain are pinned by
 // `lean-toolchain` + `lake-manifest.json`, which are hashed as cone members in their own right. The
@@ -198,19 +207,14 @@ export function requireFreshArtifact({ artifact, cone, emitCmd }) {
     refuse(`${artifact}`,
       `the ${PROVENANCE_FILE} beside it stamps ${Object.keys(rec.artifacts ?? {}).length} artifact(s) and `
       + `${name} is not one of them — this file is left over from a DIFFERENT emit run than the stamp.`, emitCmd);
+  // leg 2, INDEPENDENT of leg 1: this file's own bytes against the bytes the stamp recorded. Leg 1
+  // says the SOURCE is right; this says the ARTIFACT is the one that source produced.
   const got = sha256(readFileSync(artifact));
   if (got !== want)
     refuse(`${artifact}`,
       `its bytes (${got.slice(0, 16)}…) are not the bytes the stamp recorded (${want.slice(0, 16)}…) — it was `
-      + `rewritten, truncated or hand-edited after the emission that vouches for it.`, emitCmd);
-
-  // leg 2, INDEPENDENT of leg 1: the clock. Catches a restored/rsynced artifact whose stamp travelled
-  // with it, and a hand-written stamp — neither of which leg 1 can see.
-  const aMs = statSync(artifact).mtimeMs;
-  if (aMs + 1000 < cone.newestMs)
-    refuse(`${artifact}`,
-      `mtime ${new Date(aMs).toISOString()} is OLDER than its own source ${cone.newestRel} `
-      + `(${new Date(cone.newestMs).toISOString()}) — the artifact predates the code that emits it.`, emitCmd);
+      + `rewritten, truncated, or swapped for a rung from a different emit run, after the emission that `
+      + `vouches for it.`, emitCmd);
 
   return rec;
 }
