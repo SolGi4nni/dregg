@@ -238,8 +238,8 @@ that stops propagating through structure FIELDS reports a smaller surface and pa
 exactly what B3 exploited — so these fail the build closed instead.
 
 `CommitSurface` is the worst of them (four refuted floors as fields, reached by 409 declarations);
-`Poseidon2RealizedSponge` is the one the original probe rode in on; `ClosureReadouts`,
-`ClosureReadoutsLive` and `StateDecodeLog` are TRANSITIVE (their floor arrives through fields of
+`Poseidon2RealizedSponge` is the one the original probe rode in on; `ClosureReadouts` and
+`StateDecodeLog` are TRANSITIVE (their floor arrives through fields of
 other bundles / floor-carrying `Prop` defs), so they pin the fixpoint's CLOSURE and not just its
 first step.
 
@@ -249,20 +249,46 @@ delete the line in the same commit as the port. `DeployedCapTree.CapHashScheme` 
 for exactly one afternoon before a co-tenant lane shed its `chipCR : Compress1CR` field
 (`Circuit/CapHashBundleCutoverCheck.lean`) and re-inhabited it with `deployedCapHashScheme`, whose
 own chip REFUTES the deleted field — so keep the list to bundles too big to fall by accident. -/
--- ⚰ `Dregg2.Circuit.CircuitSoundness.CommitSurface` was the first entry and is REMOVED 2026-08-01,
--- for the good reason this docstring names: its four injectivity fields (`cmbInj`/`compInj`/
--- `compNInj`/`leafInj`) are DELETED, so the bundle is no longer floor-carrying and the sentinel
--- would fail closed. Its one remaining field is `restFrame : RestFrameFin.RestHashIffFrameFin RH`,
--- whose body is `Iff`-headed and satisfiable (`RestFrameFiniteSupportSuccessor` constructs a closed
--- inhabitant), so nothing in the fixpoint fires on it. ⚠ The four floors did NOT stop existing —
--- `ClosureSurface.S_live` and ~250 downstream sites still bind `compressInjective`/
--- `compressNInjective`/`cellLeafInjective` DIRECTLY, as ordinary hypotheses, and the `binder` class
--- still gates every one of them. What fell is the BUNDLE surface, not the binder surface.
+-- ⚰ `Dregg2.Circuit.CircuitSoundness.CommitSurface` was the first entry and is REMOVED 2026-08-01.
+-- Its four injectivity fields (`cmbInj`/`compInj`/`compNInj`/`leafInj`) are DELETED, so the joint
+-- fixpoint no longer finds the bundle floor-carrying and the sentinel would FAIL CLOSED and red the
+-- root for every lane. ⚑ **THE REMOVAL WAS THEREFORE FORCED, NOT JUDGED** — given this gate as it
+-- stands there was no other tree that builds — and it is NOT the "the bundle got PORTED" win the
+-- docstring above describes. ⛑ 2026-08-02: the BINDER surface followed — `ClosureSurface.S_live`'s
+-- four parameters, which had become inert when the fields went, are deleted along with every binder
+-- that only existed to feed them.
+--
+-- ⚠ **AND THE STATED REASON WAS HALF WRONG (re-examined 2026-08-03).** The removal was justified on
+-- the surviving field `restFrame : RestFrameFin.RestHashIffFrameFin RH` being "satisfiable". It is
+-- satisfiable ONLY at the UNBOUNDED reference sponge
+-- (`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, at `Reference.refSponge` =
+-- `Encodable.encode`), and it is REFUTED at deployed BabyBear width by the same pigeonhole that
+-- killed the four deleted fields (`restHashIffFrameFin_false_babyBear`, and
+-- `ClosureSurfaceApplicable.no_babyBear_commitSurface`: NO `CommitSurface` has a BabyBear-bounded
+-- rest-hash). So the bundle still has no deployed inhabitant. The operative reason the fixpoint stays
+-- quiet is the SHAPE, not the satisfiability: `RestHashIffFrameFin`'s body is an `∀`-`Iff` over an
+-- 18-fold conjunction, which `FloorCensus.injShape`/`injShapeAnd` reject, so it can never enter
+-- `refutedFloors` however many refutations the tree holds, and it is not a named sentinel.
+-- MEASURED at HEAD: `RestHashIffFrameFin` ~115 binder sites, its every-width-refuted predecessor
+-- `StateCommit.RestHashIffFrame` ~134, `(S : CommitSurface)` 411 — and ZERO baseline rows between
+-- them.
+--
+-- ⚑ **RESTORING THIS ENTRY IS PART OF ANY PROMOTION, NOT A SEPARATE STEP.** The moment
+-- `RestHashIffFrameFin` enters the refuted set — by a widened shape test that recognises the
+-- injectivity BICONDITIONAL `h a = h b ↔ (conjunction of readout equations)`, or by a
+-- `FloorCensus.sentinelFloors` entry — `CommitSurface` becomes floor-carrying again and this line
+-- must come back in the SAME commit, together with the grandfathering the ~660 affected declarations
+-- then need. The two are one decision.
+-- ⚰ `Dregg2.Circuit.ClosureReadoutsRealizable.ClosureReadoutsLive` was the fourth entry and is
+-- REMOVED 2026-08-03 because the STRUCTURE IS DELETED, not because it stopped carrying floors. It
+-- was `ClosureReadouts` with the one member `closureReadouts_uninstantiable` refutes taken out, and
+-- `ClosureReadoutsRealizable.not_nonempty_closureReadouts_refLH` now shows the SURVIVING member
+-- `transfer` is false too (closed, no crypto floor assumed) — so the successor had no inhabitant
+-- either and its whole cone was vacuous. Its 44 baseline rows went with it.
 def sentinelBundles : List Name :=
   [ `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
   , `Dregg2.Circuit.ClosureLog.StateDecodeLog
-  , `Dregg2.Circuit.ClosureFanoutGenuine.ClosureReadouts
-  , `Dregg2.Circuit.ClosureReadoutsRealizable.ClosureReadoutsLive ]
+  , `Dregg2.Circuit.ClosureFanoutGenuine.ClosureReadouts ]
 
 /-- The `antiFloor` SELF-TEST specimens and their required verdicts (`true` = must be exempt).
 Each name is a `Prop`-valued def in `Dregg2.Verify.FloorRatchetSpecimens` whose VALUE is a

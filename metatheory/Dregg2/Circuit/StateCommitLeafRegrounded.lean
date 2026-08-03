@@ -334,10 +334,17 @@ theorem cellDigest_binds_cells_of_noLeafColl (CH : CellId → Value → ℤ)
       · have hk'acc : c ∉ k'.accounts := by rw [← hAcc]; exact hcacc
         rw [hwf c hcacc, hwf' c hk'acc]
 
-/-- **S3 of `StateCommit.recStateCommit_binds_kernel`** — the WHOLE-KERNEL recovery, leaf floor
-removed. This is the binding `CircuitSoundness.CommitSurface.commit_binds` repackages; porting the
-`leafInj` FIELD of that bundle (⚑ the bundle is uninhabitable at deployed parameters — its four
-injectivity fields are all refuted) is the next structural move, and this is the theorem it needs. -/
+/-- **S3 of the whole-kernel recovery, leaf floor removed** — the intermediate rung, still carrying
+the node/sponge legs.
+
+⚠ **STALE PROSE CORRECTED 2026-08-03.** It read "This is the binding `CommitSurface.commit_binds`
+repackages; porting the `leafInj` FIELD of that bundle … is the next structural move". Both halves
+have since happened and moved on: `CommitSurface`'s four injectivity fields (`cmbInj`/`compInj`/
+`compNInj`/`leafInj`) were DELETED on 2026-08-01, and `commit_binds` now repackages
+`StateCommitReduceRaw.recStateCommit_binds_kernel_of_noCollFin`, over `RestHashIffFrameFin`. This
+rung's own `hRest : RestHashIffFrame RH` is refuted at every width
+(`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`), so the statement is vacuous
+independently of its three injectivity binders. -/
 theorem recStateCommit_binds_kernel_of_noLeafColl (CH : CellId → Value → ℤ)
     (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
@@ -358,7 +365,11 @@ theorem recStateCommit_binds_kernel_of_noLeafColl (CH : CellId → Value → ℤ
   simp_all
 
 /-! ## §3c — THE ROOT COMBINER (`compressInjective cmb`), the ONE leg §3b left floor-borne, and the
-FULLY floor-free whole-kernel capstone.
+whole-kernel capstone that sheds ALL FOUR of them. ⚠ **NOT "fully floor-free"** — this heading said
+that until 2026-08-03 and the capstone still binds `RestHashIffFrame RH`, which
+`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` refutes at EVERY width. Read the
+per-theorem docstrings below: the four LEGS go, the rest-frame floor stays, and it is the one that
+makes the capstone vacuous.
 
 `recStateCommit_binds_kernel_of_noLeafColl` above removed only the LEAF floor from
 `StateCommit.recStateCommit_binds_kernel`; it still carries `hCmb : compressInjective cmb`,
@@ -468,12 +479,30 @@ theorem recStateCommit_binds_of_noCmbColl (CH : CellId → Value → ℤ) (RH : 
     cellDigest CH compress compressN k t = cellDigest CH compress compressN k' t ∧ RH k = RH k' :=
   (recStateCommit_binds_or_collides CH RH cmb compress compressN k k' t hroot).resolve_right hno
 
-/-- **S2 of `StateCommit.recStateCommit_binds_kernel` — THE FULLY FLOOR-FREE WHOLE-KERNEL PORT.**
+/-- **S2 of the whole-kernel binding, with the four leaf/node legs removed — ⚠ AND NOT FLOOR-FREE.**
 Equal full-state roots (same turn) force the whole kernel equal, OR a named `RecStateCommitColl`.
-`RestHashIffFrame RH` is the ONE hypothesis kept (F1's concern, a separate campaign — see
-`Verify.RestFrameFiniteSupportSuccessor`); `AccountsWF` is structural, not crypto. None of the four
-apex legs (`compressInjective cmb/compress`, `compressNInjective compressN`, `cellLeafInjective CH`)
-appears as a binder anywhere in this statement. -/
+None of the four apex legs (`compressInjective cmb/compress`, `compressNInjective compressN`,
+`cellLeafInjective CH`) appears as a binder here, and `AccountsWF` is structural, not crypto.
+
+⚠ **THIS HEADING SAID "THE FULLY FLOOR-FREE WHOLE-KERNEL PORT" UNTIL 2026-08-03, AND THAT WAS FALSE.**
+`hRest : RestHashIffFrame RH` is a floor, and `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`
+refutes it for EVERY `RH : RecordKernelState → ℤ` at EVERY width, by Cantor — `bal : CellId → AssetId
+→ ℤ` is a function space over an infinite index and `ℤ` is countable. So this theorem is VACUOUS: no
+`RH` admits the hypothesis, and `∀ RH, RestHashIffFrame RH → …` holds for free. The old wording also
+called it "F1's concern, a separate campaign", which reads as OPEN WORK; it is a PROVED IMPOSSIBILITY,
+landed 2026-07-27, and nothing about widening a digest repairs it.
+
+⛑ **THE LIVE SUCCESSOR IS `StateCommitReduceRaw.recStateCommit_binds_kernel_or_collidesFin`** — this
+statement over `RestFrameFin.RestHashIffFrameFin` plus `FiniteRepresentable` on both states. That one
+IS satisfiable (`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, closed, at the
+UNBOUNDED reference sponge) and is what `CircuitSoundness.CommitSurface.commit_binds` carries. It is
+in turn refuted at DEPLOYED BabyBear width by pigeonhole
+(`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`) — a DIFFERENT and weaker
+statement than this one's every-width refutation, and the distinction is the whole content of the
+successor. This declaration survives only as the predecessor that successor is diffed against; do not
+cite it as a binding result at any width. ⚑ Neither shape is visible to `#floor_ratchet` (both bodies
+are `∀`-`Iff`-headed, which `FloorCensus.injShape`/`injShapeAnd` reject), so no gate says any of
+this. -/
 theorem recStateCommit_binds_kernel_or_collides (CH : CellId → Value → ℤ)
     (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
@@ -493,7 +522,11 @@ theorem recStateCommit_binds_kernel_or_collides (CH : CellId → Value → ℤ)
     · exact Or.inr (Or.inr hcoll)
   · exact Or.inr (Or.inl hrootColl)
 
-/-- **S3 of `StateCommit.recStateCommit_binds_kernel`, fully floor-free.** -/
+/-- **S3 of the same binding — ⚠ AND NOT FLOOR-FREE EITHER.** The heading said "fully floor-free"
+until 2026-08-03. It carries the same `RestHashIffFrame RH`, refuted at EVERY width by
+`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`, so it is vacuous for exactly the
+reason S2 above is. Live successor:
+`StateCommitReduceRaw.recStateCommit_binds_kernel_of_noCollFin`. -/
 theorem recStateCommit_binds_kernel_of_noColl (CH : CellId → Value → ℤ)
     (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
@@ -631,9 +664,17 @@ theorem noRecStateCommitColl_of_carriers {CH : CellId → Value → ℤ} {RH : R
   · exact hr.1 (hCmb _ _ _ _ hr.2)
   · exact noCellDigestColl_of_carriers hCompress hCompressN hLeaf hc
 
-/-- **The deleted-shape bridge for the whole kernel**: `StateCommit.recStateCommit_binds_kernel`'s
-EXACT statement, re-derived THROUGH the port at all four legs simultaneously. Nothing genuinely
-proved was given up — only the pretence that the deployed hash satisfies the four injectivities. -/
+/-- **The deleted-shape bridge for the whole kernel**, re-derived THROUGH the port at all four legs
+simultaneously. Nothing genuinely proved was given up — only the pretence that the deployed hash
+satisfies the four injectivities.
+
+⚠ **THE REFERENT MOVED AND THIS DOCSTRING DID NOT (corrected 2026-08-03).** It said "`StateCommit.
+recStateCommit_binds_kernel`'s EXACT statement". That is no longer true: on 2026-07-31 that theorem
+was rewritten IN PLACE to take `RestFrameFin.RestHashIffFrameFin RH` plus `FiniteRepresentable` on
+both states. What is re-derived here is its PRE-CUTOVER shape, over `RestHashIffFrame RH` — which
+`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` refutes at every width, so this
+bridge, like its two S2/S3 inputs, is vacuous. It is retained as the record of the four-leg
+`no*Coll_of_inj` bridging, not as a live statement about the deployed commitment. -/
 theorem recStateCommit_binds_kernel_of_carriers (CH : CellId → Value → ℤ)
     (RH : RecordKernelState → ℤ) (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
