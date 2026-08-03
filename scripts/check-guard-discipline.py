@@ -57,14 +57,26 @@ itself, and `--update-baseline` rewrote it unconditionally. So the ratchet could
 UP by the one operation that exists to turn it down, and a green afterwards certified the
 new number rather than the old one.
 
-⚑ IT ALREADY HAPPENED, AND NOT IN THE SHAPE ANYONE WATCHES FOR. Between `a7d30783d`
-(the baseline commit) and `a819016de` (a refresh) the ledger went 15,656 → 15,665. **No row
-was raised.** `Dregg2/Circuit/Emit/KimchiStepMain.lean` (814) was REMOVED and thirteen
-`…Pins01–13` rows totalling **837** were ADDED — a module SPLIT. Twenty-three guards a
-concurrent rung had just written entered the baseline as part of what read like two
-legitimate operations: a burned-down module retiring its row, and arm (c) being obeyed by
-giving new guard-carrying modules their rows. Both arms were satisfied at every step. A
-rename is how a population grows without any row growing, and only the TOTAL can see it.
+⚑ IT ALREADY HAPPENED, AND NOT IN THE SHAPE ANYONE WATCHES FOR. Every baseline commit,
+graded by the gate below:
+
+    a7d30783d  CREATE  15,656 across 1,156 rows
+    935d8ef09  15,656 → 15,679  (+23)   rows_up=0  added=837  removed=814   ⚑ REFUSED (d2)
+    a819016de  15,679 → 15,665  (−14)   rows_up=0  added=0    removed=0     — honest
+
+`935d8ef09` is the module SPLIT, and it rewrote the ledger IN THE SAME COMMIT: it removed
+`Dregg2/Circuit/Emit/KimchiStepMain.lean` (814) and added thirteen `…Pins01–13` rows
+totalling **837**. **No row was raised.** Twenty-three guards the same commit had just
+written entered the baseline as two operations that each look correct on their own — a
+burned-down module retiring its row, and arm (c) being obeyed by giving new guard-carrying
+modules their rows. Both arms were satisfied at every step.
+
+⚠ AND THE NEXT REFRESH HID IT FURTHER. `a819016de` was an HONEST −14 (a real burndown in
+`MinaMultiBlockConformance`, 49 → 35). So an auditor reading the two-commit window sees
+15,656 → 15,665 — **net +9** — and reads it as noise. A genuine conversion landed on top of
+a laundered growth and made it unreadable.
+
+A rename is how a population grows without any row growing, and only the TOTAL can see it.
 
 So the refresh is now itself gated, on three things:
 

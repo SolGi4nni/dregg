@@ -176,13 +176,25 @@ Every arm above grades a **census** against the **ledger**. Nothing graded the l
 `--update-baseline` rewrote it unconditionally, so the one operation that exists to turn the ratchet
 down could turn it up — and a green afterwards certified the *new* number.
 
-**Measured 2026-08-02.** Between `a7d30783d` (the baseline commit) and `a819016de` (a refresh) the
-ledger went 15,656 → 15,665. **No row was raised.** `KimchiStepMain.lean` (814) was removed and
-thirteen `…Pins01–13` rows totalling **837** were added — a module **split**. Twenty-three guards a
-concurrent rung had just written entered the baseline as two operations that each looked correct: a
-burned-down module retiring its row, and arm (c) being obeyed by giving new guard-carrying modules
-their rows. And the +23 was **net −5 on the visible total**, because the same refresh also carried a
-real −14 burndown in `MinaMultiBlockConformance`. A genuine conversion paid for a laundered growth.
+**Measured 2026-08-02** — every baseline commit, graded by the gate below:
+
+| commit | movement | rows up | added | removed | verdict |
+|---|---|---|---|---|---|
+| `a7d30783d` | CREATE 15,656 / 1,156 rows | — | — | — | — |
+| `935d8ef09` | 15,656 → 15,679 (**+23**) | **0** | 837 | 814 | ⚑ now **REFUSED (d2)** |
+| `a819016de` | 15,679 → 15,665 (−14) | 0 | 0 | 0 | honest |
+
+`935d8ef09` is the module **split**, and it rewrote the ledger *in the same commit*: it removed
+`KimchiStepMain.lean` (814) and added thirteen `…Pins01–13` rows totalling **837**. **No row was
+raised.** Twenty-three guards that same commit had just written entered the baseline as two
+operations that each look correct on their own — a burned-down module retiring its row, and arm (c)
+being obeyed by giving new guard-carrying modules their rows.
+
+⚠ **And the next refresh hid it further.** `a819016de` was an honest −14 (a real burndown in
+`MinaMultiBlockConformance`, 49 → 35). So an auditor reading the two-commit window sees 15,656 →
+15,665 — **net +9** — and reads it as noise. A genuine conversion landed on top of a laundered
+growth and made it unreadable. That is the shape to distrust: **a small net total over a window in
+which a row disappeared.**
 
 ⚑ **A rename is how a population grows while no row grows. Only the TOTAL can see it.** So:
 
