@@ -189,19 +189,71 @@ mina-canonical-circuit-oracle.mjs`, whose digest reproduces the md5 in o1-labs' 
 PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep` (2026-08-02):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  run-lengths
-    total gates         20023              8440      8909       10730       10822
-    non-Generic         13778              7594      7596        9114        9137
+    total gates         20023              8444      8913       10734       10826
+    non-Generic         13778              7595      7597        9115        9138
     Poseidon             6292 (31.4%)       902       902        2266        2266   11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       846      1313        1616        1685   —
+    Generic              6245 (31.2%)       849      1316        1619        1688   —
     EndoMul              2465 (12.3%)      2464      2464        2464        2464   32×77+1×1 / 32×77 ✓
-    Zero                 2246 (11.2%)      2070      2072        2210        2217   —
+    Zero                 2246 (11.2%)      2071      2073        2211        2218   —
     VarBaseMul           1596  (8.0%)      1448      1448        1448        1448   1×1596 / 1×1448   ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408   8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       334       334         334         334   1×159 2×65 3×23
                     15×1 30×1 / 1×334
 
-⚑⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10746 → 10822 rows, +76): **the ACCUMULATOR CHECK's FIRST
+⚑⚑ MOVEMENT SINCE THE PREVIOUS COMMIT (10822 → 10826 rows, +4): **`combine`'s `Opt.Maybe` MUX —
+`branch_data.proofs_verified_mask`'s LAST ignoring consumer, closed — AND IT MOVES PUBLIC WORD 9 AT
+THE DEPLOYED MASK, which is the opposite of what the residue predicted.**
+
+`verify_one`'s own file has EXACTLY three consumers of the mask: `step_verifier.ml:944` (`sg_evals`,
+which feeds `combine`), `:954` (the opt-sponge, §8e) and `:1182-1186` (the inner hash, segment C).
+The first was the one still ignored — `cipRows` folded all 47 prefix entries unconditionally. It now
+runs `Field.if_ keepⱼ` off §8h's DERIVED bits. (`wrap_verifier.ml:513` / `wrap_main.ml:173-195` are
+the WRAP circuit, a different object and out of scope by construction.)
+
+**READ AT SOURCE, quoted with line numbers, verified in the tree — not relayed:**
+
+  * `common.ml:263-272`, the `Maybe` arm at `:270-271`:
+    `| Maybe (b, fx) -> Field.if_ b ~then_:(fx + (xi * acc)) ~else_:acc`
+  * `pickles_types/pcs_batch.ml:85-94` — `combine_split_evaluations` flattens the arrays, **REVERSES**,
+    seeds `init` with the LAST element and folds the rest, so the list is Horner'd **from its tail**.
+  * `step_verifier.ml:916` — `actual_width_mask = branch_data.proofs_verified_mask`; `:940-948`
+    `sg_evals pt = Vector.map2 mask sg_olds`; `:1080-1095` those become `[| Opt.Maybe (keep, eval) |]`
+    PREPENDED to `[x_hat] :: [ft] :: a`, i.e. prefix entries 0 and 1.
+  * `pickles_base/proofs_verified.ml:75-81` — `there`: `N0 ↦ [ff;ff] · N1 ↦ [ff;tt] · N2 ↦ [tt;tt]`.
+    A set bit is a SUFFIX; the deployed `N1` instance DROPS SLOT 0.
+  * `wrap_hack.ml:26-28` — `pad_vector` is `Vector.extend_front_exn`, so slot 0 IS the dummy.
+
+⚠ ⚑ **THE FINDING INVERTS THE EXPECTATION THE RESIDUE CARRIED.** "Slot 0 is the `Wrap_hack` dummy,
+so at the deployed mask dropping it is a no-op on the value" is **FALSE**. `mul_and_add`'s `else_`
+branch is bare `acc` — it does **not** multiply by ξ — and the fold runs from the list's tail, so
+slot 0 is the LAST step. Dropping it removes `c₀` AND takes one ξ power off every one of the other
+46 terms. The dummy's VALUE is what the mask makes irrelevant; the ξ-power shift is what it does
+not. §12l measures it: the three legal masks give THREE DIFFERENT field elements, and the emitted
+`combined_inner_product` is `cipR` over the **kept sub-list**, not `cipR` over 47 with entry 0
+zeroed — a third, different value again.
+
+  * ⚑ **+3 `Generic` rows and +1 `Zero`.** The two `Maybe` steps become five halves each where they
+    were two (`then_`, the `Field.if_` difference, the mask product, the add), `packHalves`-packed so
+    the 45 `Some` steps keep their exact row pairing; plus the mux's own σ probe. NOT ONE run-length
+    family moved: `EndoMul 32×77` is exactly Mina's, `Poseidon 11×206`, `VarBaseMul 1×1448`,
+    `EndoMulScalar 8×51`, `CompleteAdd 1×334` — re-measured after this rung.
+  * ⚑ **THE ROWS DO NOT DEPEND ON THE MASK'S VALUE, and that is the point.** `keepⱼ` is `vMask j`, a
+    circuit VARIABLE §8h booleanity-checks and `Checked.pack` ties to the `branch_data` statement
+    word, so all three legal masks emit the SAME gate list and differ only in the witness. The mask
+    bit's σ class grew by exactly ONE cell — `combine`'s — which §14a pins as `5 + 3·maskReaders + 1`.
+  * ⚑ **RED CONTROLS THAT BITE, in both directions** (§12l). At `[1,1]` — where slot 0 is a live
+    previous proof and not the dummy — dropping vs folding it gives a DIFFERENT `combined_inner_
+    product`; at the deployed `[0,1]` it is different too, and it is different from the zero-the-entry
+    reading. Bending slot 0's carried challenges moves `E_c` and LEAVES `cip` at `[0,1]` and MOVES it
+    at `[1,1]`; bending slot 1's moves it at both.
+  * ⚠ ⚑ **AND IT CHANGES NO VERDICT. §17(e) AND §18(b) ARE RE-RUN AND ARE UNCHANGED — the
+    substituted-with-re-solved-`G` witness is ACCEPTED before and ACCEPTED after.** `combined_inner_
+    product` is a value R8 ties to a statement word; moving it moves what an HONEST prover must
+    claim. It relates nothing to `sg_old`'s opening, which is `verified` (#11), a witnessed boolean
+    and not a rung.
+
+⚑ MOVEMENT IN THE COMMIT BEFORE (10746 → 10822 rows, +76): **the ACCUMULATOR CHECK's FIRST
 LEG. `E_c = f_c(ζ)` over `prev_challenges` is COMPUTED, where it was four free `evVal` witnesses —
 and the substitution §17(e)/§18(b) exhibits is still ACCEPTED, which is said here and not at the
 bottom.**
@@ -314,10 +366,10 @@ REJECTED and the σ leg REJECTED at `i=0` and `i=66`.
     r2_challenges    1714     2048             845 ms             116
     r3_msm           4917     8192            1021 ms             221
     r4_ipa           8111     8192            1003 ms             452
-    r5_full          8440    16384            1248 ms             463
-    r6_ft_eval0      8909    16384            1248 ms             465
-    r7_absorption   10730    16384            1277 ms             479
-    r8_finalize     10822    16384            1277 ms             486
+    r5_full          8444    16384           10554 ms             464
+    r6_ft_eval0      8913    16384            1264 ms             466
+    r7_absorption   10734    16384            1252 ms             480
+    r8_finalize     10826    16384            1441 ms             487
 
 (⚠ **`r8`'s 17.1 s in the previous rung's table was a loaded box and NOT the assembly.** Measured
 again here at 10,601 rows — 47 MORE than the 10,554 that produced the 17 s — it is **1.24 s**, in
