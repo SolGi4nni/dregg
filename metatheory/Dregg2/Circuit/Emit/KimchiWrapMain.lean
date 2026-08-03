@@ -156,12 +156,20 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w5_key               972         1977      22    wrap_verifier.ml:189-204 + :521-530
     w6_xhat             1170         6472      22    wrap_verifier.ml:539-616
     w7_split            1172        6492*      22    wrap_main.ml:69-81 + :409
+    w8_ftcomm           1491        7338*      22    common.ml:238-256 + wrap_verifier.ml:655-666
 
-⚠ `*` — `w7_split`'s SMOKE figure is MEASURED (`1172 rows, pub 6, 51 probes`, from an emission this
-rung produced); its WRAP figure is DERIVED as `6472 + 20` — ten `split_field` words giving ten
-`Generic` rows and ten σ-probes — and the wrap-scale emission had not finished when this line was
-written. The same derivation gave `1170 + 2 = 1172` at the smoke shape and the emission agreed, but
-a derivation is not a measurement and the table says which is which.
+⚠ `*` — the SMOKE column is MEASURED for every rung, from emissions those rungs produced
+(`w7_split: 1172 rows, pub 6, 51 probes`; `w8_ftcomm: 1491 rows, pub 6, 55 probes`). The two starred
+WRAP figures are DERIVED, because the wrap-scale emission is hours under `lean --run`'s interpreter
+and had not finished when this line was written:
+
+  * `w7_split` = `6472 + 20` — ten `split_field` words, ten `Generic` rows and ten σ-probes;
+  * `w8_ftcomm` = `6492 + 846` — `4` rows of `n₀ = 0` halves, `8 × (1 seed + 51×2 chunk rows + 1
+    probe) = 832`, the fold's `tComms − 1 = 6` `add_fast` rows, and `4` closing rows.
+
+Both derivations are CHECKED at the smoke shape against the emission: `1170 + 2 = 1172` and
+`1172 + 319 = 1491`, and the emission agreed on both to the row. A derivation that reproduces the
+measured shape is still not a measurement, and the star says which is which.
 
 ⚑ `w6_xhat`'s wrap-scale row count is the one number in this table that is checked against something
 outside this tree. Its gate stream carries **VarBaseMul = 1805** and **CompleteAdd = 232**, read off
@@ -539,7 +547,7 @@ def WRAP_UNCONSUMED : List String :=
   , "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's free witnesses"
   , "w_comm — needs W-COMBINE"
   , "z_comm — needs W-COMBINE"
-  , "t_comm — needs W-FTCOMM (Common.ft_comm's 8 scale_fast2s)"
+  , "t_comm — ft_comm EMITTED at w8_ftcomm (§17); its OUTPUT is W-COMBINE/W-BULLET's"
   , "combined_inner_product — needs W-FINALIZE (the xi/r fold)"
   , "lr — needs W-BULLET (bullet_reduce's endo/endo_inv pairs)"
   , "delta — needs W-BULLET (lhs = Scalar_challenge.endo q c + delta)" ]
@@ -1827,16 +1835,294 @@ def splitEnv (t : WrapData) : VarEnv :=
     (xSplitW s sp pa.2,
      (qAdd (qMul 2 (xhatScalar (xhAt s pa.1.1))) (xhatScalar (xhAt s pa.1.2)) : Int)))
 
+/-! ## §17 — ⚑ **W-FTCOMM**: `Common.ft_comm`, and the ONE word §13 had wrong at source.
+
+`wrap_verifier.ml:655-666` calls `Common.ft_comm` (`common.ml:238-256`). Read at source, in
+upstream's own order:
+
+    let scale_fast = scale_fast ~num_bits:Other_field.Packed.Constant.size_in_bits   (* :658-659 *)
+    let _, [ sigma_comm_last ] = Vector.split m.sigma_comm (Permuts_minus_1 + 1)
+    let f_comm = List.reduce_exn ~f:( + ) [ plonk.perm * sigma_comm_last ]
+    let chunked_t_comm =
+      let n = Array.length t_comm in
+      let res = ref t_comm.(n - 1) in
+      for i = n - 2 downto 0 do res := t_comm.(i) + scale !res plonk.zeta_to_srs_length done ;
+      !res
+    f_comm + chunked_t_comm + negate (scale chunked_t_comm plonk.zeta_to_domain_size)
+
+⚠ ⚑ **THEY ARE `scale_fast`, NOT `scale_fast2` — §13 ITEM 4 WAS WRONG AT SOURCE.**
+`wrap_verifier.ml:658-659` SHADOWS `scale_fast` with `Ops.scale_fast ~num_bits:255` and passes THAT
+as `~scale`. The difference is this section's whole shape:
+
+  * `scale_fast` (`plonk_curve_ops.ml:220-222`) is `scale_fast_unpack` and nothing else — no
+    `(s_div_2, s_odd)` split, no `Boolean.typ`, no top-bit-zero loop, no `G.if_` mux and no
+    correction to cancel, because the scalar is already a `Shifted_value.Type1` and
+    `(2^255 + 2s + 1)·g` IS the value `ft_comm` wants.
+  * its chunk count is `num_bits / bits_per_chunk` under a `[%test_eq]` that the division is EXACT
+    (`plonk_curve_ops.ml:149-151`) — **not** `chunks_needed ~num_bits:(n−1)`. At 255 both land on
+    51, so the row census agrees; the derivation does not, and a width that was not a multiple of
+    five would diverge rather than round up.
+  * so a ladder here is one `CompleteAdd` seed + `51 × (VarBaseMul, Zero)` + one `n₀ = 0` half,
+    against §15's ladder which additionally carries four halves, a mux and an alternative add.
+
+⚑ **`List.reduce_exn` ON A SINGLETON APPLIES `f` ZERO TIMES**, so `f_comm` costs one ladder and NO
+`add_fast`. The adds are the six in the fold, `f_comm + chunked_t_comm`, and the final `+ negate …`
+— eight, left-associated as OCaml's `+` is.
+
+## ⚑ THE CENSUS THIS SECTION CLOSES
+
+`VarBaseMul 2417` in Mina's own compiled `wrap-transaction` is `1805` (W-XHAT) `+ 408` (here)
+`+ 204` (W-BULLET's four `scale_fast`), and **408 = 8 × 51**. The eight are `1`
+(`perm · sigma_comm_last`) `+ 6` (the fold at `tComms = 7`) `+ 1` (`zeta_to_domain_size`) —
+`tComms + 1`, which is why the smoke shape's `tComms = 2` gives three.
+
+## ⚑ WHAT WIRES IN, AND WHAT DOES NOT
+
+  * ⚑ **THE FIRST LADDER'S BASE IS W-KEY'S OUTPUT.** `~verification_key:m` is `step_plonk_index`,
+    i.e. `choose_key`'s one-hot fold (`wrap_main.ml:215-220`), so `sigma_comm_last` is the pair of
+    SEALED variables §14 emits at coordinates 12 and 13 — `index_to_field_elements` flattens
+    `sigma_comm` FIRST (`side_loaded_verification_key.ml:159-183`) and `Permuts.n = 7`, so
+    `sigma_comm.(6)` is coordinates 12 and 13. This section READS those variables rather than
+    pinning a constant, and that σ tie is the one place `ft_comm` is not free.
+  * **`t_comm` is witnessed** (`wrap_main.ml:387-396` → `Plonk_types.Messages.typ`), so the seven
+    points are free here exactly as they are upstream, at named fixture values.
+  * ⚠ **The three scalars are DEFERRED VALUES and therefore free.** `plonk.perm`,
+    `plonk.zeta_to_srs_length` and `plonk.zeta_to_domain_size` are checked by the NEXT proof
+    (§13's W-FINALIZE), not here. ⚑ There are **three variables and eight ladders**: all six fold
+    ladders share `zeta_to_srs_length`, so six `Field.Assert.equal !n_acc scalar` land on ONE σ
+    class. That is upstream's shape, and `ftc_six_fold_ladders_share_one_scalar` pins it.
+
+## ⚑ THE DEFECT CLASSES, INSIDE THIS SUB-CIRCUIT
+
+  1. **Free ladder seeds.** Every ladder opens `acc = ref (add_fast base base)` and
+     `n_acc = ref Field.zero` (`plonk_curve_ops.ml:157-158`). Both are emitted — a `CompleteAdd`
+     DEFINING `acc₀ = 2·base` and a `Generic` half pinning `n₀ = 0`, per ladder — and
+     `ftc_every_ladder_seed_is_pinned` reads both off the emitted row list.
+  2. ⚑ **PROVER-CHOSEN DECOMPOSITION, AND HERE IT IS NOT CLOSED — UPSTREAM OR HERE.**
+     `scale_fast_unpack` witnesses `bits_msb` at `Typ.array ~length:255 Field.typ` — 255 FREE cells,
+     booleanity coming from the `EC_scale` gate — and ties them to the scalar ONLY through
+     `Field.Assert.equal !n_acc scalar` over `Fq` (`:207`). `scale_fast2` adds a top-bit-zero that
+     forces `B < 2^254 < q`, hence canonical (§16b); **`scale_fast` has no such loop at all.** `B`
+     ranges over `[0, 2^255)` and `q < 2^255`, so `B` and `B + q` are BOTH admissible for every
+     scalar below `2^255 − q` — all but a `2^-128` fraction. The ladder multiplies by `B`, so the
+     two choices differ by `2q·g ≠ O`. Emitted as upstream has it, and named by
+     `ftc_scale_fast_admits_two_decompositions`, which EXHIBITS the second representative rather
+     than describing it. Emitting a top-bit-zero here would be a DIVERGENCE from `wrap_main`, not a
+     fix to it; §13's stricter-than-upstream list is where such a thing would have to be argued.
+  3. **Absorbed-but-not-consumed.** ⚠ **`t_comm` STAYS ON `WRAP_UNCONSUMED` and the entry is
+     REWRITTEN, not deleted** — exactly as `x_hat` did at `w6_xhat`. This section CONSUMES the seven
+     points into `ft_comm`, but `ft_comm` itself is read by `Split_commitments.combine` and
+     `check_bulletproof` (`wrap_verifier.ml:680,688`), which are W-COMBINE and W-BULLET and are not
+     assembled. A value derived from a free witness and then used by nothing constrains nothing;
+     striking the entry on the strength of "a sub-circuit now computes it" is the metric-gaming
+     §2c exists to refuse. The count stays **8**.
+  4. **Constants pinned against their own definitions.** This section owns NO curve constant: the
+     first base is W-KEY's variable, the rest are the fold's own outputs, and the `t_comm` fixtures
+     are doublings of `MinaStepSrsLagrange` points, which `MinaStepSrsLagrangePin` grounds.
+
+## ⚑ WHERE THIS SECTION IS STRICTER THAN UPSTREAM
+
+  * **`Inner_curve.negate`** is `(x, F.negate y)` — a `Cvar` scale, zero rows (`snarky_curve.ml:206`).
+    This file emits one `Generic` half so the negated ordinate is a constrained cell the closing add
+    reads, exactly as §15 does for the fold's output. Recorded, not claimed as conformance. -/
+
+/-- `Other_field.Packed.Constant.size_in_bits` — the width `wrap_verifier.ml:658-659` fixes for
+every `ft_comm` ladder. -/
+def FTC_BITS : Nat := 255
+/-- ⚑ `scale_fast_unpack`'s OWN chunk count: `num_bits / bits_per_chunk` under a `[%test_eq]` that
+the remainder is zero (`plonk_curve_ops.ml:149-151`). NOT `chunksNeededQ`. -/
+def FTC_CHUNKS : Nat := FTC_BITS / BITS_PER_CHUNK
+
+/-- The ladders `ft_comm` runs: one for `perm`, `tComms − 1` for the `chunked_t_comm` fold, one for
+`zeta_to_domain_size`. -/
+def ftcLadders (s : WrapShape) : Nat := s.tComms + 1
+
+/-- Which of the THREE deferred scalars ladder `l` uses: `0 = perm`, `1 = zeta_to_srs_length`
+(all six fold ladders), `2 = zeta_to_domain_size`. -/
+def ftcScalarIdx (s : WrapShape) (l : Nat) : Nat :=
+  if l == 0 then 0 else if l < s.tComms then 1 else 2
+
+/-- The three deferred values, as FIXTURES — `plonk.perm`, `plonk.zeta_to_srs_length`,
+`plonk.zeta_to_domain_size` are free witnesses here and checked by W-FINALIZE in the next proof. -/
+def ftcSVal (j : Nat) : Nat := wrapFixtureQ 22 j
+
+/-- `messages.t_comm.(j)` — witnessed upstream (`Plonk_types.Messages.typ`), fixtures here, and on
+the curve because they are doublings of real SRS Lagrange bases. -/
+def ftcTVal (j : Nat) : Nat × Nat := dblAQ (xhatBase (j + 1))
+
+/-- A scalar's 255 bits, MSB-first — what `scale_fast_unpack` unpacks at `Field.typ`
+(`plonk_curve_ops.ml:151-156`). -/
+def ftcBitsOf (v : Nat) : List Nat :=
+  (List.range FTC_BITS).map (fun k => v / 2 ^ (FTC_BITS - 1 - k) % 2)
+
+/-- One `scale_fast` ladder, seeded exactly as upstream: `acc₀ = add_fast base base`, `n₀ = 0`. -/
+def ftcLadderOf (T : Nat × Nat) (v : Nat) : TermDataQ := runVbmQ T (addAQ T T) (ftcBitsOf v)
+
+/-- …and the point it leaves: `(2^255 + 2v + 1)·T`. -/
+def ftcScaledOf (T : Nat × Nat) (v : Nat) : Nat × Nat := (ftcLadderOf T v).accs.getLastD (0, 0)
+
+/-- `sigma_comm_last` — `choose_key`'s selected coordinates 12 and 13. -/
+def ftcSigmaLast (t : WrapData) : Nat × Nat :=
+  (keyConst t.br.idx 12, keyConst t.br.idx 13)
+
+/-- `res` after `a` iterations of `common.ml:247-251`, counting DOWN from `t_comm.(n−1)`. -/
+def ftcResVal (s : WrapShape) : Nat → Nat × Nat
+  | 0 => ftcTVal (s.tComms - 1)
+  | a + 1 => addAQ (ftcTVal (s.tComms - 2 - a)) (ftcScaledOf (ftcResVal s a) (ftcSVal 1))
+
+/-- `chunked_t_comm` (`common.ml:246-253`). -/
+def ftcChunked (s : WrapShape) : Nat × Nat := ftcResVal s (s.tComms - 1)
+/-- `f_comm` (`common.ml:245`) — one ladder, no add. -/
+def ftcFComm (t : WrapData) : Nat × Nat := ftcScaledOf (ftcSigmaLast t) (ftcSVal 0)
+/-- `f_comm + chunked_t_comm` (`common.ml:255`). -/
+def ftcSum1 (t : WrapData) : Nat × Nat := addAQ (ftcFComm t) (ftcChunked t.sh)
+/-- `scale chunked_t_comm plonk.zeta_to_domain_size` (`common.ml:256`). -/
+def ftcLastScaled (t : WrapData) : Nat × Nat := ftcScaledOf (ftcChunked t.sh) (ftcSVal 2)
+/-- ⚑ **`ft_comm`** — `f_comm + chunked_t_comm + negate (…)`. -/
+def ftcOut (t : WrapData) : Nat × Nat := addAQ (ftcSum1 t) (negAQ (ftcLastScaled t))
+
+/-- Ladder `l`'s base VALUE: W-KEY's `sigma_comm_last`, then the fold's running `res`. -/
+def ftcBaseVal (t : WrapData) (l : Nat) : Nat × Nat :=
+  if l == 0 then ftcSigmaLast t else ftcResVal t.sh (l - 1)
+
+/-! ### §17a — the variable layout. -/
+
+/-- The ft_comm region starts after W-SPLIT's, so nothing below `w8_ftcomm` moves. -/
+def baseFtc (s : WrapShape) (sp : SpAcc) : Nat := baseSplit s sp + nSplitVars s
+/-- `messages.t_comm.(j)`'s two cells. -/
+def ftcTV (s : WrapShape) (sp : SpAcc) (j : Nat) : PVar × PVar :=
+  (.external (baseFtc s sp + 2 * j), .external (baseFtc s sp + 2 * j + 1))
+/-- The three deferred scalars. -/
+def ftcSV (s : WrapShape) (sp : SpAcc) (j : Nat) : PVar :=
+  .external (baseFtc s sp + 2 * s.tComms + j)
+/-- Per-ladder stride: `chunks + 1` accumulator points and `chunks` interior counters. -/
+def FTC_STRIDE : Nat := 3 * FTC_CHUNKS + 2
+def ftcBaseL (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + 2 * s.tComms + 3
+def ftcAccX (s : WrapShape) (sp : SpAcc) (l j : Nat) : PVar :=
+  .external (ftcBaseL s sp + FTC_STRIDE * l + 2 * j)
+def ftcAccY (s : WrapShape) (sp : SpAcc) (l j : Nat) : PVar :=
+  .external (ftcBaseL s sp + FTC_STRIDE * l + 2 * j + 1)
+/-- ⚑ Ladder `l`'s counter at chunk boundary `j`. At `j = FTC_CHUNKS` it IS the scalar's own
+variable — `plonk_curve_ops.ml:207`'s `Field.Assert.equal !n_acc scalar` as a σ class rather than as
+a row, which is what makes the ladder's bits the multiplier `scale_fast` actually used. -/
+def ftcCnt (s : WrapShape) (sp : SpAcc) (l j : Nat) : PVar :=
+  if j == FTC_CHUNKS then ftcSV s sp (ftcScalarIdx s l)
+  else .external (ftcBaseL s sp + FTC_STRIDE * l + 2 * (FTC_CHUNKS + 1) + j)
+def ftcBaseR (s : WrapShape) (sp : SpAcc) : Nat := ftcBaseL s sp + FTC_STRIDE * ftcLadders s
+/-- The fold's running `res` after `a` iterations. `a = 0` IS `t_comm.(n−1)`, which is a witnessed
+point and not a new cell. -/
+def ftcResVar (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar × PVar :=
+  if a == 0 then ftcTV s sp (s.tComms - 1)
+  else (.external (ftcBaseR s sp + 2 * (a - 1)), .external (ftcBaseR s sp + 2 * (a - 1) + 1))
+def ftcBaseO (s : WrapShape) (sp : SpAcc) : Nat := ftcBaseR s sp + 2 * (s.tComms - 1)
+def ftcSum1V (s : WrapShape) (sp : SpAcc) : PVar × PVar :=
+  (.external (ftcBaseO s sp), .external (ftcBaseO s sp + 1))
+def ftcNegY (s : WrapShape) (sp : SpAcc) : PVar := .external (ftcBaseO s sp + 2)
+def ftcOutV (s : WrapShape) (sp : SpAcc) : PVar × PVar :=
+  (.external (ftcBaseO s sp + 3), .external (ftcBaseO s sp + 4))
+def nFtcVars (s : WrapShape) (sp : SpAcc) : Nat := ftcBaseO s sp + 5 - baseFtc s sp
+
+/-- Ladder `l`'s base VARIABLES: W-KEY's sealed coordinates 12/13, then the fold's `res`. -/
+def ftcBaseVar (t : WrapData) (l : Nat) : PVar × PVar :=
+  let s := t.sh
+  let kv := keyVars s (baseKey s t.sp)
+  if l == 0 then (kv.acc 12 (s.branches - 1), kv.acc 13 (s.branches - 1))
+  else ftcResVar s t.sp (l - 1)
+
+/-- The two rows of ladder `l`'s chunk `j`, laid out exactly as §15's — `scale_fast` and
+`scale_fast2` share `scale_fast_unpack`, so they share the gate. ⚑ The difference is what is NOT
+here: no top-bit-zero cells, so all five bit cells of every chunk stay in ADVICE.
+⚠ `td` and `bits` are PARAMETERS, computed once per ladder by the caller. Recomputing the ladder
+per chunk — which is what a `xhChunkRows`-shaped signature would do — is 51 replays of a 255-step
+chain with three `qInv` per step, per ladder. -/
+def ftcChunkRows (s : WrapShape) (sp : SpAcc) (bv : PVar × PVar) (l : Nat)
+    (td : TermDataQ) (bits : List Nat) (j : Nat) : List WRow :=
+  let ax : Nat → Int := fun n => ((td.accs.getD n (0, 0)).1 : Int)
+  let ay : Nat → Int := fun n => ((td.accs.getD n (0, 0)).2 : Int)
+  let sl : Nat → Int := fun n => (td.slopes.getD n 0 : Int)
+  let bt : Nat → Int := fun n => (bits.getD n 0 : Int)
+  [ { kind := .varBaseMul
+    , perm := [ some bv.1, some bv.2
+              , some (ftcAccX s sp l j), some (ftcAccY s sp l j)
+              , some (ftcCnt s sp l j), some (ftcCnt s sp l (j + 1)), none ]
+    , advice := [ (7, ax (5*j+1)), (8, ay (5*j+1)), (9, ax (5*j+2)), (10, ay (5*j+2))
+                , (11, ax (5*j+3)), (12, ay (5*j+3)), (13, ax (5*j+4)), (14, ay (5*j+4)) ] }
+  , { kind := .zero
+    , perm := [ some (ftcAccX s sp l (j+1)), some (ftcAccY s sp l (j+1))
+              , none, none, none, none, none ]
+    , advice := (List.range 5).map (fun tt => (2 + tt, bt (5*j+tt)))
+                ++ (List.range 5).map (fun tt => (7 + tt, sl (5*j+tt))) } ]
+
+/-- **W-FTCOMM's ROWS.** -/
+def ftcRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let L := ftcLadders s
+  -- (1) every ladder's `n₀ = 0` (`plonk_curve_ops.ml:158`), batched two halves to a row.
+  let seedHalves : List WRow :=
+    packHalves ((List.range L).map (fun l => ([some (ftcCnt s sp l 0), none, none], cConst 0)))
+  -- (2) every ladder: the `acc₀ = 2·base` seed, 51 chunks, a probe on the output.
+  let ladderRows : List WRow :=
+    (List.range L).flatMap (fun l =>
+      let b := ftcBaseVal t l
+      let v := ftcSVal (ftcScalarIdx s l)
+      let td := ftcLadderOf b v
+      [ caRowQ (ftcBaseVar t l) (ftcBaseVar t l) (ftcAccX s sp l 0, ftcAccY s sp l 0)
+          (caWitnessQ b.1 b.2 b.1 b.2) ]
+      ++ (List.range FTC_CHUNKS).flatMap (ftcChunkRows s sp (ftcBaseVar t l) l td (ftcBitsOf v))
+      ++ [ probeRow wired (ftcAccX s sp l FTC_CHUNKS) (ftcAccY s sp l FTC_CHUNKS) ])
+  -- (3) the fold: `res := t_comm.(i) + scale !res zeta_to_srs_length`, `i = n−2 downto 0`.
+  let foldRows : List WRow :=
+    (List.range (s.tComms - 1)).map (fun a =>
+      let lv := ftcTVal (s.tComms - 2 - a)
+      let rv := ftcScaledOf (ftcResVal s a) (ftcSVal 1)
+      caRowQ (ftcTV s sp (s.tComms - 2 - a))
+        (ftcAccX s sp (a + 1) FTC_CHUNKS, ftcAccY s sp (a + 1) FTC_CHUNKS)
+        (ftcResVar s sp (a + 1)) (caWitnessQ lv.1 lv.2 rv.1 rv.2))
+  -- (4) `f_comm + chunked_t_comm`, `Inner_curve.negate`, and the closing add.
+  let lastOut := (ftcAccX s sp (L - 1) FTC_CHUNKS, ftcAccY s sp (L - 1) FTC_CHUNKS)
+  seedHalves ++ ladderRows ++ foldRows
+  ++ [ caRowQ (ftcAccX s sp 0 FTC_CHUNKS, ftcAccY s sp 0 FTC_CHUNKS)
+         (ftcResVar s sp (s.tComms - 1)) (ftcSum1V s sp)
+         (caWitnessQ (ftcFComm t).1 (ftcFComm t).2 (ftcChunked s).1 (ftcChunked s).2) ]
+  ++ packHalves [ ([some lastOut.2, some (ftcNegY s sp), none], [1, 1, 0, 0, 0]) ]
+  ++ [ caRowQ (ftcSum1V s sp) (lastOut.1, ftcNegY s sp) (ftcOutV s sp)
+         (caWitnessQ (ftcSum1 t).1 (ftcSum1 t).2 (ftcLastScaled t).1
+           (qSub 0 (ftcLastScaled t).2)) ]
+  ++ [ probeRow wired (ftcOutV s sp).1 (ftcOutV s sp).2 ]
+
+/-- W-FTCOMM's variable environment. -/
+def ftcEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let L := ftcLadders s
+  (List.range s.tComms).flatMap (fun j =>
+    [ ((ftcTV s sp j).1, ((ftcTVal j).1 : Int)), ((ftcTV s sp j).2, ((ftcTVal j).2 : Int)) ])
+  ++ (List.range 3).map (fun j => (ftcSV s sp j, (ftcSVal j : Int)))
+  ++ (List.range L).flatMap (fun l =>
+      let td := ftcLadderOf (ftcBaseVal t l) (ftcSVal (ftcScalarIdx s l))
+      (List.range (FTC_CHUNKS + 1)).flatMap (fun j =>
+        [ (ftcAccX s sp l j, ((td.accs.getD (5 * j) (0, 0)).1 : Int))
+        , (ftcAccY s sp l j, ((td.accs.getD (5 * j) (0, 0)).2 : Int)) ])
+      ++ (List.range FTC_CHUNKS).map (fun j =>
+           (ftcCnt s sp l j, (td.ns.getD (5 * j) 0 : Int))))
+  ++ (List.range (s.tComms - 1)).flatMap (fun a =>
+      [ ((ftcResVar s sp (a + 1)).1, ((ftcResVal s (a + 1)).1 : Int))
+      , ((ftcResVar s sp (a + 1)).2, ((ftcResVal s (a + 1)).2 : Int)) ])
+  ++ [ ((ftcSum1V s sp).1, ((ftcSum1 t).1 : Int)), ((ftcSum1V s sp).2, ((ftcSum1 t).2 : Int))
+     , (ftcNegY s sp, (qSub 0 (ftcLastScaled t).2 : Int))
+     , ((ftcOutV s sp).1, ((ftcOut t).1 : Int)), ((ftcOutV s sp).2, ((ftcOut t).2 : Int)) ]
+
 /-! ## §7 — rows, environment, rungs. -/
 
 inductive Rung where
-  | transcript | challenges | branch | bind | key | xhat | split
+  | transcript | challenges | branch | bind | key | xhat | split | ftcomm
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "w1_transcript" | .challenges => "w2_challenges"
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
-  | .xhat => "w6_xhat" | .split => "w7_split"
+  | .xhat => "w6_xhat" | .split => "w7_split" | .ftcomm => "w8_ftcomm"
 
 /-- **THE ROW SCHEDULE**, in the order `wrap_main` runs it. Every sub-circuit's row-set function is
 REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a silence. -/
@@ -1849,6 +2135,7 @@ def rungRows (t : WrapData) (k : Rung) (wired : Bool) : List WRow :=
   let e := keyRows t wired
   let f := xhatRows t wired
   let g := splitRows t wired
+  let h := ftcRows t wired
   match k with
   | .transcript => a
   | .challenges => a ++ b
@@ -1857,6 +2144,7 @@ def rungRows (t : WrapData) (k : Rung) (wired : Bool) : List WRow :=
   | .key => a ++ b ++ c ++ d ++ e
   | .xhat => a ++ b ++ c ++ d ++ e ++ f
   | .split => a ++ b ++ c ++ d ++ e ++ f ++ g
+  | .ftcomm => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it. -/
 def rungPub (s : WrapShape) : Rung → Nat
@@ -1864,6 +2152,7 @@ def rungPub (s : WrapShape) : Rung → Nat
   | .key => s.pubWords
   | .xhat => s.pubWords
   | .split => s.pubWords
+  | .ftcomm => s.pubWords
   | _ => 0
 
 /-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
@@ -1878,10 +2167,11 @@ def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   ++ (match k with
       | .xhat => xhatEnv t
       | .split => xhatEnv t ++ splitEnv t
+      | .ftcomm => xhatEnv t ++ splitEnv t ++ ftcEnv t
       | _ => [])
 
-/-- The closing rung's environment — what `w7_split` sees, i.e. everything. -/
-def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .split
+/-- The closing rung's environment — what `w8_ftcomm` sees, i.e. everything. -/
+def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .ftcomm
 
 /-- The full environment: the circuit's variables, then the public words, whose values are READ OUT
 of the circuit env at the exposed variables — so a public word and the variable its closing row ties
@@ -1892,14 +2182,14 @@ def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   ce ++ (List.range t.sh.pubWords).map (fun i =>
     ((.external i : PVar), envLookupAt ix ((exposedVars t).getD i (.external 0))))
 
-def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .split
+def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .ftcomm
 
 def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
   let ix := envIndex (circuitEnvAt t k)
   (List.range t.sh.pubWords).map (fun i =>
     envLookupAt ix ((exposedVars t).getD i (.external 0)))
 
-def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .split
+def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .ftcomm
 
 def wrapGates (rows : List WRow) : List PGate :=
   rows.map (fun r => { kind := r.kind, permVars := r.perm, coeffs := r.coeffs })
@@ -1959,7 +2249,7 @@ def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedG
 
 /-- The closing rung's witness — kept for callers that do not carry a `Rung`. -/
 def wrapWitness (t : WrapData) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
-  wrapWitnessAt t .split pubSize rows
+  wrapWitnessAt t .ftcomm pubSize rows
 
 def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
   let rows := rungRows t k wired
@@ -2707,6 +2997,120 @@ theorem split_deferred_check_canonicalises_but_does_not_bound :
     2 ^ 254 < qN ∧ qN < 2 * 2 ^ 254 ∧ xhatTopZeros 0 = 1 ∧ xhatTopZeros 11 = 3 := by
   refine ⟨?_, ?_, rfl, rfl⟩ <;> decide
 
+/-! ### §17b — ⚑ **W-FTCOMM'S PINS, AS NAMED THEOREMS.**
+
+⚠ These are deliberately written so the KERNEL never reduces a ladder. A `scale_fast` ladder is 255
+`stepVbmQ`s and each is three `qInv`s; the smoke shape runs five of them once `ftcResVal`'s recursion
+is counted. `List.length` and a `kind`/`perm` filter reduce the list SPINE only — the accumulator and
+slope values live in `advice` and stay unforced — so the row pins are cheap, and every pin that
+needs a VALUE is stated over the scalars, which are plain `Nat`. No new `#guard`s. -/
+
+/-- Recompose an MSB-first bit list, exactly as the `EC_scale` gate's `n_acc` chain does
+(`plonk_curve_ops.ml:174-177`: `n' = 2n + b`, five bits per row). -/
+def ftcRecompose (bs : List Nat) : Nat := bs.foldl (fun a b => 2 * a + b) 0
+
+/-- ⚑ **`scale_fast`'s CHUNK COUNT IS A DIVISION, NOT A ROUNDING — AND THE TWO AGREE ONLY HERE.**
+`scale_fast_unpack` takes `num_bits / bits_per_chunk` under a `[%test_eq]` that the remainder is
+zero (`plonk_curve_ops.ml:149-151`); `scale_fast2` takes `chunks_needed ~num_bits:(n−1)`, which
+rounds UP (`:66-70,254-256`). At 255 both are 51, which is why the `408 = 8 × 51` census is
+insensitive to the confusion §13 item 4 shipped. At 128 they are 25 and 26 — the pin names a width
+where the two disagree, so it cannot be satisfied by a definition that quietly used the other one. -/
+theorem ftc_chunks_is_exact_division_and_that_matters :
+    FTC_CHUNKS = 51
+    ∧ FTC_BITS % BITS_PER_CHUNK = 0
+    ∧ FTC_CHUNKS = chunksNeededQ (FTC_BITS - 1)
+    ∧ 128 / BITS_PER_CHUNK ≠ chunksNeededQ (128 - 1) := by
+  refine ⟨rfl, rfl, rfl, by decide⟩
+
+/-- ⚑ **THE LADDER CENSUS, AND THE `408` IT CLOSES.** `tComms + 1` ladders, `51` chunks each, two
+rows per chunk. At the committed wrap shape that is `8 × 51 = 408` `VarBaseMul` rows — exactly
+`wrap-transaction`'s `VarBaseMul 2417` minus W-XHAT's `1805` and W-BULLET's `204`. -/
+theorem ftc_ladder_census :
+    ftcLadders shapeWrap = 8
+    ∧ ftcLadders shapeSmoke = 3
+    ∧ ftcLadders shapeWrap * FTC_CHUNKS = 408
+    ∧ 1805 + ftcLadders shapeWrap * FTC_CHUNKS + 204 = 2417 := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THREE SCALAR VARIABLES, EIGHT LADDERS.** `common.ml:247-251` scales by
+`plonk.zeta_to_srs_length` on EVERY fold iteration, so `tComms − 1` ladders assert `n_acc` against
+ONE variable. A layout that gave each ladder its own scalar cell would be a different circuit — six
+independent witnesses where upstream has one. -/
+theorem ftc_six_fold_ladders_share_one_scalar :
+    ((List.range (ftcLadders shapeWrap)).map (ftcScalarIdx shapeWrap))
+      = [0, 1, 1, 1, 1, 1, 1, 2]
+    ∧ ((List.range (ftcLadders shapeSmoke)).map (ftcScalarIdx shapeSmoke)) = [0, 1, 2] := by
+  refine ⟨rfl, rfl⟩
+
+/-- ⚑ **DEFECT CLASS 2, EXHIBITED RATHER THAN DESCRIBED.** `scale_fast` ties its 255 free bit cells
+to the scalar by `Field.Assert.equal !n_acc scalar` over `Fq` and by NOTHING else — there is no
+top-bit-zero loop, because `scale_fast2`'s lives in `scale_fast2` (`plonk_curve_ops.ml:262-265`).
+This exhibits the second admissible bit string for one of the three actual scalars: `v` and `v + q`
+are DIFFERENT 255-bit strings, both recompose faithfully, both satisfy the only constraint the
+circuit imposes, and the ladder multiplies by whichever the prover supplies. It is upstream's, it is
+emitted unaltered, and adding a bound here would be a divergence from `wrap_main` rather than a fix
+to it. -/
+theorem ftc_scale_fast_admits_two_decompositions :
+    ftcRecompose (ftcBitsOf (ftcSVal 1)) = ftcSVal 1
+    ∧ ftcRecompose (ftcBitsOf (ftcSVal 1 + qN)) = ftcSVal 1 + qN
+    ∧ ftcSVal 1 + qN < 2 ^ FTC_BITS
+    ∧ (ftcSVal 1 + qN) % qN = ftcSVal 1
+    ∧ ftcBitsOf (ftcSVal 1) ≠ ftcBitsOf (ftcSVal 1 + qN) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **EVERY LADDER SEED IS PINNED — BOTH OF THEM, PER LADDER.** `acc₀ = add_fast base base` is a
+`CompleteAdd` row DEFINING the accumulator, and `n₀ = 0` is a `Generic` half; `plonk_curve_ops.ml:
+157-158`. Read off the emitted row list: one `n₀` half per ladder, and the seed `CompleteAdd` count
+is one per ladder plus the fold's `tComms − 1` adds plus the two closing adds. -/
+theorem ftc_every_ladder_seed_is_pinned :
+    ((List.range (ftcLadders shapeSmoke)).all (fun l =>
+      hasHalf (ftcRows tKey true) [some (ftcCnt shapeSmoke tKey.sp l 0), none, none] (cConst 0)))
+      = true
+    ∧ ((ftcRows tKey true).filter (fun r => r.kind == KGateType.completeAdd)).length
+        = ftcLadders shapeSmoke + (shapeSmoke.tComms - 1) + 2 := by
+  refine ⟨rfl, rfl⟩
+
+/-- The gate census of the sub-circuit: two rows per five-bit chunk, no sponge, no `EndoMul`. -/
+theorem ftc_gate_census :
+    ((ftcRows tKey true).filter (fun r => r.kind == KGateType.varBaseMul)).length
+      = ftcLadders shapeSmoke * FTC_CHUNKS
+    ∧ ((ftcRows tKey true).filter (fun r => r.kind == KGateType.poseidon)).length = 0
+    ∧ ((ftcRows tKey true).filter (fun r => r.kind == KGateType.endoMul)).length = 0
+    ∧ ((ftcRows tKey true).filter (fun r => r.probe)).length = ftcLadders shapeSmoke + 1 := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE FIRST LADDER'S BASE IS W-KEY'S SEALED OUTPUT, NOT A CONSTANT.** `sigma_comm.(6)` is
+index-sponge coordinates 12 and 13, so `ft_comm` reads the variables §14's one-hot fold produced.
+This is the σ tie that makes W-FTCOMM depend on the branch selection rather than on a literal. -/
+theorem ftc_first_base_is_the_chosen_keys_sigma_comm_last :
+    ftcBaseVar tKey 0
+      = ((keyVars shapeSmoke (baseKey shapeSmoke tKey.sp)).acc 12 (shapeSmoke.branches - 1),
+         (keyVars shapeSmoke (baseKey shapeSmoke tKey.sp)).acc 13 (shapeSmoke.branches - 1))
+    ∧ ftcSigmaLast tKey = (STEP_VK_XY.getD 12 0, STEP_VK_XY.getD 13 0) := by
+  refine ⟨rfl, rfl⟩
+
+/-- The `w8_ftcomm` rung is a strict superset of `w7_split`, and `placeChecked` accepts it with no
+inert public word. -/
+theorem ftcomm_rung_extends_split_and_places :
+    (rungRows tKey .ftcomm true).length
+      = (rungRows tKey .split true).length + (ftcRows tKey true).length
+    ∧ (rungRows tKey .split true).length < (rungRows tKey .ftcomm true).length
+    ∧ refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .ftcomm true)) = none
+    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .ftcomm true)) = [] := by
+  refine ⟨rfl, ?_, rfl, rfl⟩
+  decide
+
+/-- ⚑ **`t_comm` DOES NOT LEAVE THE UNCONSUMED CENSUS.** The MSM is emitted and the seven points are
+consumed into `ft_comm` — and `ft_comm` is read by W-COMBINE and W-BULLET, which are not assembled,
+so nothing downstream refuses a substituted `t_comm`. The entry is REWRITTEN, exactly as `x_hat`'s
+was at `w6_xhat`; the count stays 8. -/
+theorem ftcomm_does_not_move_the_unconsumed_census :
+    WRAP_UNCONSUMED.length = 8
+    ∧ WRAP_UNCONSUMED.getD 4 ""
+        = "t_comm — ft_comm EMITTED at w8_ftcomm (§17); its OUTPUT is W-COMBINE/W-BULLET's" := by
+  refine ⟨rfl, ?_⟩
+  decide
+
 /-! ## §13 — ⚑ WHAT IS LEFT, BY SUB-CIRCUIT.
 
 Named, not estimated; each entry is a row emitter this file does not have, and each carries the
@@ -2759,7 +3163,11 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      `x_hat`, and nothing bounds `y`. It is not a hole HERE only because `x` is a free witness on
      both sides: **W-SPLIT's constraint pins nothing until W-PREV ties `x`**, which is item 9 and is
      now the first thing this list wants.
-  4. **W-FTCOMM** `wrap_verifier.ml:655-666` — `Common.ft_comm` (`common.ml:238-256`), **eight
+  4. ✅ **W-FTCOMM — LANDED at `w8_ftcomm`** (§17). MEASURED, from an emission this rung produced:
+     **1491 smoke rows**, gate stream `VarBaseMul 230 · CompleteAdd 16 · Zero 331 · Generic 286 ·
+     Poseidon 506 · EndoMulScalar 128`, and the `230 − 77 = 153 = 3 × 51` delta is the smoke shape's
+     three ladders exactly. It PROVES on Pallas at 1497 rows / domain 2048 in 1162 ms with all five
+     polarities. `Common.ft_comm` (`common.ml:238-256`), **eight
      `scale_fast`** at `Other_field.Packed.Constant.size_in_bits = 255`, i.e. 51 chunks each.
      ⚠ **NOT `scale_fast2`, which is what this entry used to say and is wrong at source**:
      `wrap_verifier.ml:658-659` SHADOWS `scale_fast` with `Ops.scale_fast ~num_bits:255` and passes

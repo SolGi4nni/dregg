@@ -11,7 +11,7 @@
 // (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that
 // RUNS it and authors no constraint. No OCaml, no Node, no o1js in this path.
 //
-// SEVEN RUNGS, each a superset of the one below, each proved with BOTH polarities:
+// EIGHT RUNGS, each a superset of the one below, each proved with BOTH polarities:
 //   w1_transcript  the Fq Poseidon sponge of `wrap_verifier.ml:516-646` + `check_bulletproof`'s
 //                  continuation, driven by the REAL rate-2 state machine (`poseidon.rs:107-146`):
 //                  beta and gamma share ONE permutation, and the digest squeeze is the FORK at
@@ -46,6 +46,16 @@
 //                  constraint pins NOTHING; its content lands when W-PREV ties `x`. The gadget is
 //                  upstream's and is emitted faithfully — including the parity being
 //                  boolean-constrained TWICE, which is upstream's duplication and not ours
+//   w8_ftcomm      W-FTCOMM: `Common.ft_comm` (`common.ml:238-256`) — `tComms + 1` ladders at
+//                  `Ops.scale_fast ~num_bits:255`, 51 chunks each, so 8 x 51 = 408 rows at the
+//                  wrap shape, which is exactly `wrap-transaction`'s VarBaseMul 2417 minus
+//                  W-XHAT's 1805 and W-BULLET's 204. ⚑ They are `scale_fast`, NOT `scale_fast2`
+//                  (`wrap_verifier.ml:658-659` shadows it), so there is no split, no mux, no
+//                  correction and — the part that matters — NO top-bit-zero loop: the 255 bit
+//                  cells are tied to the scalar only by `n_acc = scalar` over Fq, and `B` and
+//                  `B + q` both satisfy that. §17 names it and proves it; it is upstream's, and
+//                  bounding it here would be a divergence from `wrap_main`, not a fix to it.
+//                  The first ladder's base is W-KEY's sealed `sigma_comm.(6)`
 //
 // THE GATE, per rung:
 //   (1) HONEST      — the assembled circuit's good witness verify()==true;
@@ -62,11 +72,11 @@
 // disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
 // z-polynomial), not by a debug assert.
 //
-// SCOPE. INNER-KIMCHI FIDELITY of seven assembled sub-circuits of `wrap_main`. NOT a soundness
+// SCOPE. INNER-KIMCHI FIDELITY of eight assembled sub-circuits of `wrap_main`. NOT a soundness
 // proof, NOT "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER
 // Pallas/Fq proof of a `wrap_main`-SHAPED circuit, and `KimchiWrapMain` §13 names by sub-circuit
-// everything that is not here (W-FTCOMM, W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK,
-// W-PREV, and W-CLOSE's curve-side asserts).
+// everything that is not here (W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK, W-PREV, and
+// W-CLOSE's curve-side asserts).
 //
 // REGENERATE the fixtures (only when the Lean assembly changes):
 //   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
@@ -112,7 +122,7 @@ type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>
 type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 
 /// The six rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 7] = [
+const RUNGS: [&str; 8] = [
     "w1_transcript",
     "w2_challenges",
     "w3_branch",
@@ -120,6 +130,7 @@ const RUNGS: [&str; 7] = [
     "w5_key",
     "w6_xhat",
     "w7_split",
+    "w8_ftcomm",
 ];
 
 // ---- the Lean-emitted JSON shape (identical schema to the step side's) ----
@@ -449,7 +460,7 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec!["w1_transcript", "w6_xhat", "w7_split"],
+            vec!["w1_transcript", "w7_split", "w8_ftcomm"],
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -481,7 +492,7 @@ fn main() {
         );
     }
     println!(
-        "== VERDICT: seven sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on"
+        "== VERDICT: eight sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on"
     );
     println!("   PALLAS with verify()==true, and BIND at every sub-circuit boundary. The rest of");
     println!("   `wrap_main` is named by sub-circuit in KimchiWrapMain §13. ==");
@@ -497,7 +508,14 @@ mod wrapmain_tests {
     /// The fixture subset actually PROVED in CI: the bottom rung, the closing rung, and the top
     /// one. w2/w3 are read for their census without proving, because each prove is seconds and the
     /// ladder pins (`KimchiWrapMain` §12b, §14b) already establish that they are supersets.
-    const COMMITTED: [&str; 5] = ["w1_transcript", "w4_bind", "w5_key", "w6_xhat", "w7_split"];
+    const COMMITTED: [&str; 6] = [
+        "w1_transcript",
+        "w4_bind",
+        "w5_key",
+        "w6_xhat",
+        "w7_split",
+        "w8_ftcomm",
+    ];
 
     struct Fixture {
         wired: CircuitJson,

@@ -91,7 +91,7 @@ const FP = 289480223093290488558927462521719769633630564819415607159546767643499
 //   (3) `EMITTED_FAMILIES` names the gate families the top rung is known to emit, and ANY of them
 //       measuring zero is a hard exit-1 BEFORE the vector diff — an ABSENT verdict for a family the
 //       assembly actually emits can no longer be laundered through the ledger.
-const TOP_RUNG = 'w7_split';
+const TOP_RUNG = 'w8_ftcomm';
 const LEAN_DEFAULT = `/tmp/pickles-wrapmain/wrapmain_wrap_${TOP_RUNG}.json`;
 // ⚑ THE COMMITTED FIXTURE. ⚠ 2026-08-03: the comment that used to sit here announced this fixture
 // as "added 2026-08-03" and explained why an unreproducible gate is a bad gate — and the `.gz` was
