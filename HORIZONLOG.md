@@ -38,12 +38,32 @@ refusing it is the entire job. Now 24 bits, with `mina_range_is_inside_the_field
 `mina_wrapped_slack_is_outside_the_range` as theorems. ⚠ `dregg-tm-lightclient-verify::v1` declares
 `bits: 64` on its range table — same shape, unaudited, not this lane's cone.
 
-**BOTH POLARITIES, TWICE.** In Lean on the emitted logic (`mina_air_discriminates`): honest head
-ACCEPTED; losing fork, bent proof word, forged height, and the deployed observer's own accepting
-input all REFUSED, each an exhibited assignment. In Rust on the descriptor the tree serves
-(`turn/tests/mina_anchored_head_lands.rs`) — ⚑ **the first prove/verify round trip of any peer-chain
-lightclient verify AIR in this tree.** The other four are `include_str!`'d and name-dispatched and
-have never been proved; "producible by a node" was a claim about DISPATCH.
+**BOTH POLARITIES, TWICE — AND THE SECOND ONE IS MEASURED.** In Lean on the emitted logic
+(`mina_air_discriminates`): honest head ACCEPTED; losing fork, bent proof word, forged height, and
+the deployed observer's own accepting input all REFUSED, each an exhibited assignment. In Rust on
+the descriptor the tree serves (`turn/tests/mina_anchored_head_lands.rs`) — ⚑ **the first
+prove/verify round trip of any peer-chain lightclient verify AIR in this tree.** The other four are
+`include_str!`'d and name-dispatched and have never been proved; "producible by a node" was a claim
+about DISPATCH.
+
+⚑ **THE RUN, quoted.** The honest anchored head PROVES AND VERIFIES. Each forgery was refused by
+exactly the gate designed to refuse it, and the refusal takes THREE shapes:
+
+  * `forged blockchain_length` → panic, `failed constraints = [#0]` — **#0 IS G1**,
+    `v11 − v1 − v0` = `BLOCK_LEN − ANCHOR_H − SEG_LEN`, on a row where G2/G3/G4/G5 all hold;
+  * `bent proof word` → panic, `failed constraints = [#6]` — the seventh algebraic gate,
+    `PICKLES_OK − 1`;
+  * `losing fork` → `prover refused: row 0: range wire 7 value 2013265916 >= 2^24`;
+  * `observer arithmetic` → `range wire 6 value 2013264921 >= 2^24`.
+
+⚑ **THOSE TWO NUMBERS ARE THE 24-BIT FIX, OBSERVED IN THE DEPLOYED PROVER.** `2013265916` is
+`p − 5`; `2013264921` is `p − 1000` — the wrapped negative slacks, verbatim. At the obvious
+`bits: 32` both rows would have PASSED, because every field element is below `2^32`. The vacuity
+was real and the fix is load-bearing.
+
+The algebraic refusals arrive as plonky3 debug-assertion PANICS, not `Err`s, and the first run of
+the test read that as its own failure. The production consumer already wraps prove/verify in
+`catch_unwind` for exactly this reason; the test now does the same.
 
 **THE LANDING.** `turn/src/executor/mina_head_verifier.rs` registers under
 `Custom { mina_head_predicate_vk() }` in `registry_with_real_verifiers()`. A cell program carrying
