@@ -139,22 +139,27 @@ set_option linter.unusedVariables false
 /-- **`padVec sent hash dep h`** — the digest vector the deployed prover actually folds: relink
 (`relink_next_addrs`), digest at arity 3 (`HeapLeaf::digest`), zero-pad to `2 ^ dep`
 (`CanonicalHeapTree::new`). `padImtRoot` is its `perfectRoot`, by definition. -/
-def padVec (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap) : List ℤ :=
+def padVec (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ dep := by heap_fits) : List ℤ :=
   padTo dep ((imtChainOf sent h).map (imtLeafHash hash))
+    (by rw [List.length_map, imtChainOf_length]; exact hFits)
 
-theorem padImtRoot_eq_padVec (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap) :
-    padImtRoot sent hash dep h = perfectRoot hash dep (padVec sent hash dep h) := rfl
+theorem padImtRoot_eq_padVec (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ dep) :
+    padImtRoot sent hash dep h hFits = perfectRoot hash dep (padVec sent hash dep h hFits) := rfl
 
 /-- The deployed commitment, spelled out at GENERIC depth. ⚠ Stated depth-generically on purpose:
 per `MapDenotationSchema`'s measured discipline, an equation of this shape with `MAP_TREE_DEPTH`
 substituted and closed by a FRESH `rfl` dives into `perfectRoot _ 16 _` and dies at the heartbeat
 limit. Every deployed-depth exhibit below TRANSPORTS this instead of re-deriving it. -/
-theorem padImtRoot_unfold (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap) :
-    padImtRoot sent hash dep h
-      = perfectRoot hash dep (padTo dep ((imtChainOf sent h).map (imtLeafHash hash))) := rfl
+theorem padImtRoot_unfold (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ dep) :
+    padImtRoot sent hash dep h hFits
+      = perfectRoot hash dep (padTo dep ((imtChainOf sent h).map (imtLeafHash hash))
+          (by rw [List.length_map, imtChainOf_length]; exact hFits)) := rfl
 
 theorem padVec_length {sent : ℤ} {hash : List ℤ → ℤ} {dep : Nat} {h : Heap.FeltHeap}
-    (hl : h.length ≤ 2 ^ dep) : (padVec sent hash dep h).length = 2 ^ dep :=
+    (hl : h.length ≤ 2 ^ dep) : (padVec sent hash dep h hl).length = 2 ^ dep :=
   padTo_length (by rw [List.length_map, imtChainOf_length]; exact hl)
 
 /-- **The relink, POSITIONALLY.** Leaf `i` of the deployed chain carries `h`'s entry at `i` and the
@@ -223,15 +228,16 @@ theorem imtChainOf_set (sent : ℤ) :
 
 /-! ## §2 — PADDING ALGEBRA: what the sparse occupancy does to positions and to one more level. -/
 
-theorem padTo_set (d : Nat) (L : List ℤ) (p : Nat) (x : ℤ) (hp : p < L.length) :
-    padTo d (L.set p x) = (padTo d L).set p x := by
+theorem padTo_set (d : Nat) (L : List ℤ) (p : Nat) (x : ℤ) (hp : p < L.length)
+    {f₀ : (L.set p x).length ≤ 2 ^ d} {f₁ : L.length ≤ 2 ^ d} :
+    padTo d (L.set p x) f₀ = (padTo d L f₁).set p x := by
   simp only [padTo, List.length_set]
   rw [set_append_left' L _ p x hp]
 
 /-- Reading a cell of the padded vector: either it is a LIVE cell of the prefix, or the value read
 is the padding constant itself. The one-line decode every arity-3 opener needs. -/
-theorem padTo_getElem? (d : Nat) (L : List ℤ) (p : Nat) (y : ℤ)
-    (hp : (padTo d L)[p]? = some y) : (p < L.length ∧ L[p]? = some y) ∨ y = padDigest := by
+theorem padTo_getElem? (d : Nat) (L : List ℤ) (p : Nat) (y : ℤ) {f : L.length ≤ 2 ^ d}
+    (hp : (padTo d L f)[p]? = some y) : (p < L.length ∧ L[p]? = some y) ∨ y = padDigest := by
   by_cases hlt : p < L.length
   · exact Or.inl ⟨hlt, by rwa [padTo, List.getElem?_append_left hlt] at hp⟩
   · refine Or.inr ?_
@@ -240,8 +246,9 @@ theorem padTo_getElem? (d : Nat) (L : List ℤ) (p : Nat) (y : ℤ)
 
 /-- One padded level splits into the padded level below plus an ALL-PADDING right half — the
 structural fact the depth-16 symbolic paths descend through. -/
-theorem padTo_succ_split (k : Nat) (L : List ℤ) (h : L.length ≤ 2 ^ k) :
-    padTo (k + 1) L = padTo k L ++ List.replicate (2 ^ k) padDigest := by
+theorem padTo_succ_split (k : Nat) (L : List ℤ) (h : L.length ≤ 2 ^ k)
+    {f : L.length ≤ 2 ^ (k + 1)} :
+    padTo (k + 1) L f = padTo k L h ++ List.replicate (2 ^ k) padDigest := by
   have hpow : 2 ^ (k + 1) = 2 ^ k + 2 ^ k := by rw [pow_succ]; ring
   simp only [padTo, List.append_assoc, ← List.replicate_add]
   congr 2
@@ -249,8 +256,9 @@ theorem padTo_succ_split (k : Nat) (L : List ℤ) (h : L.length ≤ 2 ^ k) :
 
 /-- Appending ONE padding cell to the live prefix changes nothing — the deployed AAFI free slot is
 inside the padding, so "the slot was empty" and "the slot is past the prefix" are the same vector. -/
-theorem padTo_snoc_pad (d : Nat) (L : List ℤ) (h : L.length + 1 ≤ 2 ^ d) :
-    padTo d (L ++ [padDigest]) = padTo d L := by
+theorem padTo_snoc_pad (d : Nat) (L : List ℤ) (h : L.length + 1 ≤ 2 ^ d)
+    {f₀ : (L ++ [padDigest]).length ≤ 2 ^ d} {f₁ : L.length ≤ 2 ^ d} :
+    padTo d (L ++ [padDigest]) f₀ = padTo d L f₁ := by
   have hlen : (L ++ [padDigest]).length = L.length + 1 := by simp
   simp only [padTo, hlen, List.append_assoc]
   congr 1
@@ -284,16 +292,18 @@ theorem leftPadPath_pos (hash : List ℤ → ℤ) : ∀ k, pathPos (leftPadPath 
 /-- **★ THE SPARSE LEFTMOST OPENING, at symbolic depth.** One live leaf at position `0`, every other
 cell the padding constant: the path recomputes to the padded root. -/
 theorem leftPadPath_recompute (hash : List ℤ → ℤ) :
-    ∀ (k : Nat) (x : ℤ), pathRecompute hash x (leftPadPath hash k) = perfectRoot hash k (padTo k [x]) := by
+    ∀ (k : Nat) (x : ℤ) (f : ([x] : List ℤ).length ≤ 2 ^ k),
+      pathRecompute hash x (leftPadPath hash k) = perfectRoot hash k (padTo k [x] f) := by
   intro k
   induction k with
-  | zero => intro x; rfl
+  | zero => intro x _; rfl
   | succ k ih =>
-    intro x
+    intro x f
     have hle : ([x] : List ℤ).length ≤ 2 ^ k := by
       simpa using Nat.one_le_pow k 2 (by norm_num)
-    show mapNode hash (pathRecompute hash x (leftPadPath hash k)) (emptySubtreeRoot hash k) = _
-    rw [ih x, padTo_succ_split k [x] hle,
+    show mapNode hash (pathRecompute hash x (leftPadPath hash k)) (emptySubtreeRoot hash k)
+      = perfectRoot hash (k + 1) (padTo (k + 1) [x] f)
+    rw [ih x hle, padTo_succ_split k [x] hle,
       perfectRoot_append hash k _ _ (padTo_length hle) (by simp),
       perfectRoot_all_padding hash k]
 
@@ -330,7 +340,8 @@ other cell the padding constant. This is the path the deployed AAFI append (`fre
 next_free_index`, `heap_root.rs:1124`) uses when the tree holds one live leaf. -/
 theorem slot1Path_recompute (hash : List ℤ → ℤ) (x0 : ℤ) :
     ∀ (k : Nat), 0 < k → ∀ x1 : ℤ,
-      pathRecompute hash x1 (slot1Path hash x0 k) = perfectRoot hash k (padTo k [x0, x1]) := by
+      ∀ f : ([x0, x1] : List ℤ).length ≤ 2 ^ k,
+      pathRecompute hash x1 (slot1Path hash x0 k) = perfectRoot hash k (padTo k [x0, x1] f) := by
   intro k
   induction k with
   | zero => intro h; omega
@@ -377,8 +388,8 @@ def chainAt (sent : ℤ) (h : Heap.FeltHeap) (p : Nat) : ImtLeaf :=
 properties of data the row and the commitment actually hold; none quantifies over the hash's
 domain. -/
 def OpenResid (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
-    (steps : List (Bool × ℤ)) (l : ImtLeaf) : Prop :=
-  IsSpongeColl hash (pathCollFind hash steps (padVec sent hash dep h) (imtLeafHash hash l))
+    (hFits : h.length ≤ 2 ^ dep) (steps : List (Bool × ℤ)) (l : ImtLeaf) : Prop :=
+  IsSpongeColl hash (pathCollFind hash steps (padVec sent hash dep h hFits) (imtLeafHash hash l))
   ∨ IsSpongeColl hash (imtLeafPre (chainAt sent h (pathPos steps)), imtLeafPre l)
   ∨ imtLeafHash hash l = padDigest
 
@@ -398,8 +409,8 @@ theorem mapGood_inhabited : MapGood oddSponge := ⟨oddSponge_injective, oddSpon
 /-- ANTI-LAUNDERING: at a good hash the residual is REFUTED, so `Resid := True` is unbuildable and
 the disjunctions below are informative. -/
 theorem openResid_refuted {hash : List ℤ → ℤ} (hgood : MapGood hash) (sent : ℤ) (dep : Nat)
-    (h : Heap.FeltHeap) (steps : List (Bool × ℤ)) (l : ImtLeaf) :
-    ¬ OpenResid sent hash dep h steps l := by
+    (h : Heap.FeltHeap) (hFits : h.length ≤ 2 ^ dep) (steps : List (Bool × ℤ)) (l : ImtLeaf) :
+    ¬ OpenResid sent hash dep h hFits steps l := by
   rintro (⟨hne, he⟩ | ⟨hne, he⟩ | hpad)
   · exact hne (hgood.1 he)
   · exact hne (hgood.1 he)
@@ -421,7 +432,7 @@ theorem padOpen_binds_or_resid (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat
       ∧ ∀ l' : ImtLeaf, pathRecompute hash (imtLeafHash hash l') steps
           = perfectRoot hash dep ((padVec sent hash dep h).set (pathPos steps)
               (imtLeafHash hash l')))
-    ∨ OpenResid sent hash dep h steps l := by
+    ∨ OpenResid sent hash dep h hsz steps l := by
   by_cases hc1 : IsSpongeColl hash
       (pathCollFind hash steps (padVec sent hash dep h) (imtLeafHash hash l))
   · exact Or.inr (Or.inl hc1)
@@ -489,8 +500,8 @@ occupies. Not a new floor; the same per-deployment premise at the deployed leaf 
 def RwImtRowAt (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
     (oldRoot newRoot key value oldValue next : ℤ) : Prop :=
   ∃ (h : Heap.FeltHeap) (steps : List (Bool × ℤ)),
-    (padImtSchema sent).HeapOk h ∧ (padImtSchema sent).SizeOk dep h ∧
-    padImtRoot sent hash dep h = oldRoot ∧
+    (padImtSchema sent).HeapOk h ∧ ∃ hz : (padImtSchema sent).SizeOk dep h,
+    padImtRoot sent hash dep h hz = oldRoot ∧
     RwImtGatesOn hash dep steps oldRoot newRoot key value oldValue next
 
 /-- **`ReadImtRowAt`** — the `.read` row: `RwImtRowAt` at `oldValue := value`, which IS the deployed
@@ -514,7 +525,7 @@ theorem writeImtGates_writes_or_resid (sent : ℤ) (hash : List ℤ → ℤ) (de
     (hg : RwImtGatesOn hash dep steps oldRoot newRoot key value oldValue next) :
     (Heap.get h key = some oldValue
       ∧ writesToMerkleS (padImtSchema sent) hash dep oldRoot key value newRoot)
-    ∨ OpenResid sent hash dep h steps ⟨key, oldValue, next⟩ := by
+    ∨ OpenResid sent hash dep h hsz steps ⟨key, oldValue, next⟩ := by
   obtain ⟨hsl, hpOld, hpNew⟩ := hg
   have hsz' : h.length ≤ 2 ^ dep := hsz
   rcases padOpen_binds_or_resid sent hash dep hsz' hsl (by rw [hpOld, ← hcommit]) with
@@ -559,7 +570,7 @@ theorem readImtGates_opens_or_resid (sent : ℤ) (hash : List ℤ → ℤ) (dep 
     (hg : RwImtGatesOn hash dep steps oldRoot newRoot key value value next) :
     (opensToMerkleS (padImtSchema sent) hash dep oldRoot key (some value)
       ∧ newRoot = oldRoot)
-    ∨ OpenResid sent hash dep h steps ⟨key, value, next⟩ := by
+    ∨ OpenResid sent hash dep h hsz steps ⟨key, value, next⟩ := by
   obtain ⟨hsl, hpOld, hpNew⟩ := hg
   have hsz' : h.length ≤ 2 ^ dep := hsz
   rcases padOpen_binds_or_resid sent hash dep hsz' hsl (by rw [hpOld, ← hcommit]) with
@@ -582,7 +593,7 @@ theorem readImtRow_opens_of_good {hash : List ℤ → ℤ} (hgood : MapGood hash
   obtain ⟨h, steps, hok, hsz, hcommit, hg⟩ := hr
   rcases readImtGates_opens_or_resid sent hash dep hok hsz hcommit hg with hres | hbad
   · exact hres
-  · exact absurd hbad (openResid_refuted hgood sent dep h steps _)
+  · exact absurd hbad (openResid_refuted hgood sent dep h hsz steps _)
 
 /-- **★ `.write` at a good hash: gates ⇒ the denotation.** -/
 theorem writeImtRow_writes_of_good {hash : List ℤ → ℤ} (hgood : MapGood hash) (sent : ℤ) (dep : Nat)
@@ -592,7 +603,7 @@ theorem writeImtRow_writes_of_good {hash : List ℤ → ℤ} (hgood : MapGood ha
   obtain ⟨h, steps, hok, hsz, hcommit, hg⟩ := hr
   rcases writeImtGates_writes_or_resid sent hash dep hok hsz hcommit hg with hres | hbad
   · exact hres.2
-  · exact absurd hbad (openResid_refuted hgood sent dep h steps _)
+  · exact absurd hbad (openResid_refuted hgood sent dep h hsz steps _)
 
 /-- The deployed padded root BINDS the committed sparse heap, at a good hash — stage 2b's
 `padImtTeeth` applied, so nothing new is assumed. Used by every forgery tooth below. -/
@@ -654,8 +665,8 @@ the only side the deployed table folds a chain to. -/
 def InsertImtRowAt (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
     (newRoot key value next : ℤ) : Prop :=
   ∃ (h' : Heap.FeltHeap) (steps : List (Bool × ℤ)),
-    (padImtSchema sent).HeapOk h' ∧ (padImtSchema sent).SizeOk dep h' ∧
-    padImtRoot sent hash dep h' = newRoot ∧
+    (padImtSchema sent).HeapOk h' ∧ ∃ hz : (padImtSchema sent).SizeOk dep h',
+    padImtRoot sent hash dep h' hz = newRoot ∧
     InsertImtGatesOn hash dep steps newRoot key value next
 
 /-- **★ THE `.insert` OPENER — the honest positive half.** An accepting deployed insert row FORCES
@@ -822,8 +833,8 @@ def AafiImtGatesOn (hash : List ℤ → ℤ) (dep : Nat) (steps1 steps2 : List (
 def AafiImtRowAt (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
     (oldRoot newRoot R1 key value lowAddr lowValue lowNext : ℤ) : Prop :=
   ∃ (h : Heap.FeltHeap) (steps1 steps2 : List (Bool × ℤ)),
-    (padImtSchema sent).HeapOk h ∧ (padImtSchema sent).SizeOk dep h ∧
-    padImtRoot sent hash dep h = oldRoot ∧
+    (padImtSchema sent).HeapOk h ∧ ∃ hz : (padImtSchema sent).SizeOk dep h,
+    padImtRoot sent hash dep h hz = oldRoot ∧
     AafiImtGatesOn hash dep steps1 steps2 oldRoot newRoot R1 key value lowAddr lowValue lowNext
 
 /-- **★ THE `.aafiInsert` OPENER — the double-spend tooth at the DEPLOYED PADDED commitment.** An
@@ -868,7 +879,7 @@ theorem aafiImtRow_forces_absence_of_good {hash : List ℤ → ℤ} (hgood : Map
   obtain ⟨h, steps1, steps2, hok, hsz, hcommit, hg⟩ := hr
   rcases aafiImtGates_force_absence_or_resid sent hash dep hok hsz hcommit hg with hres | hbad
   · exact hres.2
-  · exact absurd hbad (openResid_refuted hgood sent dep h steps1 _)
+  · exact absurd hbad (openResid_refuted hgood sent dep h hsz steps1 _)
 
 /-! ## §7b — ⚑⚑ THE EIGHTH IMPOSSIBILITY: the deployed AAFI POST-root is not a function of the map.
 
@@ -879,14 +890,18 @@ physical layouts of one logical map therefore have one `S.commit` and two padded
 schema models the AAFI post-commitment, at any depth, at any hash good enough for the teeth. -/
 
 /-- The PHYSICAL (append-order) padded fold — `fold_append_order_8`'s 1-felt face. -/
-def appendOrderRoot (hash : List ℤ → ℤ) (dep : Nat) (phys : List ImtLeaf) : ℤ :=
-  perfectRoot hash dep (padTo dep (phys.map (imtLeafHash hash)))
+def appendOrderRoot (hash : List ℤ → ℤ) (dep : Nat) (phys : List ImtLeaf)
+    (hFits : phys.length ≤ 2 ^ dep := by heap_fits) : ℤ :=
+  perfectRoot hash dep (padTo dep (phys.map (imtLeafHash hash))
+    (by rw [List.length_map]; exact hFits))
 
 /-- The deployed SORTED commitment is the physical fold of the RELINKED SORTED layout — so the two
 differ exactly by the placement, which is the whole content of §7b. -/
 theorem padImtRoot_eq_appendOrderRoot (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : Heap.FeltHeap) :
-    padImtRoot sent hash dep h = appendOrderRoot hash dep (imtChainOf sent h) := rfl
+    (h : Heap.FeltHeap) (hFits : h.length ≤ 2 ^ dep) :
+    padImtRoot sent hash dep h hFits
+      = appendOrderRoot hash dep (imtChainOf sent h)
+          (by rw [imtChainOf_length]; exact hFits) := rfl
 
 theorem padHit_map_refuted {hash : List ℤ → ℤ} (hpf : PadFree3 hash) (p : List ImtLeaf) :
     ¬ PadHit (p.map (imtLeafHash hash)) := by
