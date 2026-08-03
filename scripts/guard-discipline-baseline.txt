@@ -8,10 +8,12 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15524 guards across 1166 modules (2302 .lean files scanned).
+# TOTAL 15602 guards across 1166 modules (2302 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
+# BASELINE-PROVENANCE 7a3150244-DIRTY 15524→15523 (-1) DECREASED — table-AIR cone (17b138e1f), quiescent and NOT the reporting lane's: EmitTableAirs' 2 routing-completeness guards are named theorems (tableAirs_routes_all_ten, tableAirFamilies_routes_the_one_family), both by decide with #assert_axioms — the row is RETIRED, not raised. Disposition: converted, gone; the module should never reacquire a row
+# BASELINE-PROVENANCE 7a3150244-DIRTY 15523→15602 (+79) INCREASED — ⚑ DEBT MARKER, NOT APPROVAL. 79 guards in the LIVE wrap_main lane's cone (9fca6a76f, d0cf0426d) — the Pickles wrap-assembly. Rowed rather than converted ONLY because that lane is mid-flight and its Lean must not be edited from here; the guards are its owner's to burn down, and this row exists so the ratchet can go green without laundering the growth into silence. Disposition: CONVERT, not keep — the same treatment the two Wrap welds' 118 got in a7de6a0e2. The row must SHRINK, and no other module may hide behind it
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -410,6 +412,7 @@
 46	Dregg2/Circuit/Emit/KimchiStepMainPins12.lean
 63	Dregg2/Circuit/Emit/KimchiStepMainPins13.lean
 48	Dregg2/Circuit/Emit/KimchiVerify.lean
+79	Dregg2/Circuit/Emit/KimchiWrapMain.lean
 7	Dregg2/Circuit/Emit/LastRowFrameHardening.lean
 15	Dregg2/Circuit/Emit/LexCompare8Emit.lean
 29	Dregg2/Circuit/Emit/LightClientEthAir.lean
@@ -1089,7 +1092,6 @@
 9	EmitLayoutManifest.lean
 7	EmitPastaDerive.lean
 3	EmitPastaDeriveChals.lean
-1	EmitTableAirs.lean
 6	EmitTurnAuthProbe.lean
 4	Market/AggregateBinding.lean
 10	Market/Aggregation.lean
