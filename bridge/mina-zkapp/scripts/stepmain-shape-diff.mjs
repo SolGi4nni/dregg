@@ -71,12 +71,13 @@ import { isStale, leanConeDigest, requireFreshArtifact, requireFreshFixture } fr
 import { loadCircuit } from './mina-canonical-circuit-oracle.mjs';
 
 const EMIT_DRIVER = 'Dregg2/Circuit/Emit/EmitStepMainJson.lean';
-const EMIT_CMD = '(cd metatheory && DREGG_SM=step lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)';
+const EMIT_CMD = '(cd metatheory && DREGG_SM=step DREGG_SM_RUNGS=r8_finalize lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)';
 const REFRESH_CMD = 'node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture';
 const LEAN_DEFAULT = '/tmp/pickles-stepmain/stepmain_step_r8_finalize.json';
 // ⚑ THE SAME committed snapshot the region-conformance gate grades. Named here rather than imported
-// because importing that module RUNS it (it is a gate, not a library) — the two paths are pinned by
-// this comment and by `check-doc-refs.sh`, and a rename that misses one reds this file's fixture leg.
+// because importing that module RUNS it (it is a gate, not a library). ⚠ A rename that misses one of
+// the two copies does not go silently wrong: `existsSync` fails, no fixture is found, and this file
+// REFUSES rather than grading nothing.
 const LEAN_FIXTURE = new URL('../fixtures/stepmain-step-r8-finalize-gates.json.gz', import.meta.url);
 const LEAN_FIXTURE_PROV = new URL('../fixtures/stepmain-step-r8-finalize-gates.provenance.json', import.meta.url);
 

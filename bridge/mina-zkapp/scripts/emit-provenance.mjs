@@ -68,7 +68,7 @@
 // emitted bytes. Editing a pin module does not (and must not) invalidate an emission.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -383,6 +383,24 @@ export function runLeanEmit({ driver, dir, env = {}, label, glob }) {
   const cone = leanConeDigest(driver);
   const cmd = `${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} lake env lean --run ${driver}`.trim();
   process.stderr.write(`   emitting: (cd metatheory && ${cmd})\n`);
+  // ⚑ INVALIDATE THE STAMP BEFORE THE RUN, NOT AFTER IT. The stamp is written at the END, so until
+  // now a run that died partway left the PREVIOUS run's stamp standing over a directory that was
+  // now a mixture of two runs. Measured 2026-08-03: `/tmp/pickles-stepmain` held a nine-rung `smoke`
+  // set from 11:46–11:48 beside a four-rung `step` set from 12:48–16:13, with no stamp at all and
+  // nothing recording that either run had finished.
+  //
+  // Unlinking first makes the invariant "a stamp exists ⟹ the run that wrote it ran to completion",
+  // so a half-finished directory is UNSTAMPED and `requireFreshArtifact` refuses it on leg 0. This
+  // only ever produces MORE refusals — it does not touch the freshness floor's tests.
+  //
+  // The Lean driver stages each artifact as `*.partial` and `rename(2)`s it into place, so the other
+  // half of the hole — a file with the right name and torn bytes — cannot occur either. Any
+  // `*.partial` still lying about is the debris of a death mid-write; clear it so the glob below
+  // cannot mistake one for output.
+  const stamp = provenancePathFor(dir);
+  if (existsSync(stamp)) rmSync(stamp);
+  if (existsSync(dir))
+    for (const f of readdirSync(dir)) if (f.endsWith('.partial')) rmSync(join(dir, f));
   const t0 = Date.now();
   execFileSync('lake', ['env', 'lean', '--run', driver],
     { cwd: META_ROOT, env: { ...process.env, ...env }, stdio: ['ignore', 'inherit', 'inherit'] });

@@ -166,8 +166,15 @@ const LEAN_FIXTURE_PROV = new URL('../fixtures/stepmain-step-r8-finalize-gates.p
 // NOT in it (the driver imports `KimchiStepMainCore`, not the umbrella) and so cannot invalidate an
 // emission by being edited.
 const EMIT_DRIVER = 'Dregg2/Circuit/Emit/EmitStepMainJson.lean';
-const EMIT_ENV = { DREGG_SM: 'step' };
-const EMIT_CMD = '(cd metatheory && DREGG_SM=step lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)'
+// ⚑ ASK FOR THE RUNG THIS GATE GRADES, AND ONLY THAT RUNG. `LEAN_DEFAULT` is `r8_finalize` and
+// nothing here ever reads another rung, but the driver used to emit all nine unconditionally — so
+// `--emit` blocked on ~10 hours of work to produce one artifact, and in practice never finished.
+// Measured on the `step` shape from artifact mtimes: consecutive rungs landed 68–69 min apart, and
+// the gap did not grow with the rung, because `rungRows` evaluates every sub-list before it matches
+// on the rung. `DREGG_SM_RUNGS=all` is still there for a sweep that genuinely wants the nine.
+const EMIT_RUNG = 'r8_finalize';
+const EMIT_ENV = { DREGG_SM: 'step', DREGG_SM_RUNGS: EMIT_RUNG };
+const EMIT_CMD = `(cd metatheory && DREGG_SM=step DREGG_SM_RUNGS=${EMIT_RUNG} lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)`
   + '   — or let the gate do it:  node scripts/stepmain-region-conformance.mjs --emit';
 const REFRESH_CMD = 'node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture';
 

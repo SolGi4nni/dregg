@@ -41,7 +41,7 @@ import { Scalar, Group, Provable } from 'o1js';
 import { isStale, leanConeDigest, requireFreshArtifact, requireFreshFixture } from './emit-provenance.mjs';
 
 const EMIT_DRIVER = 'Dregg2/Circuit/Emit/EmitStepMainJson.lean';
-const EMIT_CMD = '(cd metatheory && DREGG_SM=step lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)';
+const EMIT_CMD = '(cd metatheory && DREGG_SM=step DREGG_SM_RUNGS=r8_finalize lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)';
 const REFRESH_CMD = 'node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture';
 const DEFAULT_LEAN_PATH = '/tmp/pickles-stepmain/stepmain_step_r8_finalize.json';
 const LEAN_FIXTURE = new URL('../fixtures/stepmain-step-r8-finalize-gates.json.gz', import.meta.url);

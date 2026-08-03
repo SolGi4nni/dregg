@@ -56,6 +56,20 @@ cd "$ROOT" || { echo "cannot cd to repo root: $ROOT" >&2; exit 2; }
 
 EXTS='rs|lean|md|toml|sh|sol|go|ts|js'
 
+# --- flags, stripped from "$@" BEFORE the path gathering ---------------------
+# `$#` decides whether the default trees are scanned, so a flag left in the argument
+# vector reads as "scan exactly this one path", which is a file named `--update-lean-baseline`
+# that does not exist — the whole scan silently becomes empty. Strip flags first.
+UPDATE_LEAN_BASELINE="${DOC_REFS_UPDATE_LEAN_BASELINE:-0}"
+declare -a ARGS=()
+for a in "$@"; do
+  case "$a" in
+    --update-lean-baseline) UPDATE_LEAN_BASELINE=1 ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+
 # --- gather target markdown files ------------------------------------------
 declare -a FILES=()
 if [ "$#" -gt 0 ]; then
@@ -64,7 +78,8 @@ if [ "$#" -gt 0 ]; then
       while IFS= read -r f; do FILES+=("$f"); done \
         < <(find "$arg" -type f -name '*.md' 2>/dev/null)
     elif [ -f "$arg" ]; then
-      FILES+=("$arg")
+      # a `.lean` argument belongs to the Lean pass below, which scans COMMENTS ONLY
+      case "$arg" in *.lean) ;; *) FILES+=("$arg") ;; esac
     fi
   done
 else
@@ -98,8 +113,38 @@ else
   done
 fi
 
-if [ "${#FILES[@]}" -eq 0 ]; then
-  echo "check-doc-refs: no markdown files found to scan" >&2
+# --- ⚑ LEAN COMMENTS ARE DOCUMENTATION AND WERE UNGATED UNTIL 2026-08-03 -----
+# This linter scanned `docs/**/*.md` and `site/**/*.md` and root markdown, i.e. exactly the
+# files whose extension is `.md`. But the densest prose in this repository is not in markdown:
+# it is in Lean module headers (`/-! ... -/`) and declaration docstrings (`/-- ... -/`), which
+# cite `file:line` constantly and drift exactly the same way. A citation in `KimchiStepMainCore`
+# naming a module that moved was invisible to every gate in the tree.
+#
+# ⚠ WHAT THIS LEG DOES AND DOES NOT CATCH, stated plainly because the difference matters:
+# it checks REFERENCES (does `path/to/x.lean` still exist; is `:NNN` still within the file).
+# It does NOT check CLAIMS. A docstring asserting "the padding is free here" that has since
+# become false is prose this gate cannot evaluate, and duplicated prose that drifts apart in
+# four copies is a DIFFERENT defect class needing a different instrument (a duplicate-claim
+# detector, or single-sourcing the claim so there is only one copy to drift). Extending this
+# script does not close that; it closes the reference half, which is the half it is about.
+declare -a LFILES=()
+if [ "$#" -gt 0 ]; then
+  for arg in "$@"; do
+    if [ -d "$arg" ]; then
+      while IFS= read -r f; do LFILES+=("$f"); done \
+        < <(find "$arg" -type f -name '*.lean' -not -path '*/.lake/*' 2>/dev/null)
+    elif [ -f "$arg" ]; then
+      case "$arg" in *.lean) LFILES+=("$arg") ;; esac
+    fi
+  done
+else
+  # `.lake/` is build output (vendored dependency sources), not this repository's prose.
+  while IFS= read -r f; do LFILES+=("$f"); done \
+    < <(find . -type f -name '*.lean' -not -path '*/.lake/*' -not -path './.git/*' 2>/dev/null)
+fi
+
+if [ "${#FILES[@]}" -eq 0 ] && [ "${#LFILES[@]}" -eq 0 ]; then
+  echo "check-doc-refs: no markdown or lean files found to scan" >&2
   exit 0
 fi
 
@@ -140,6 +185,57 @@ extract() {
   ' "$@"
 }
 
+# --- the LEAN pass: same token regex, but over COMMENT TEXT ONLY -------------
+# The markdown extractor strips fenced code and scans the rest. For Lean the polarity is
+# inverted: the prose is the minority of the file, so this scans comments and discards code.
+# Scanning Lean code would be actively wrong — `import Dregg2.Circuit.Foo` is not a path, and
+# an identifier like `Nat.lean_x` would resolve to nothing and be reported DEAD.
+#
+# Lean comment forms, all of which open with `/-`: `/- block -/`, `/-- docstring -/`,
+# `/-! module header -/`; block comments NEST, so the depth is tracked across lines. `--`
+# opens a line comment to EOL, but only at depth 0 — inside a block comment it is just text
+# (and `-/` is what closes one, so `--/` must not be mistaken for a nested opener).
+#
+# ⚠ Known and accepted imprecision: a string literal containing `/-` would open a phantom
+# comment. That can only ever ADD candidate tokens, and a candidate must still carry a known
+# extension, contain a `/`, and begin at a real top-level repo entry to be resolved at all —
+# so the failure mode is a missed check, never a fabricated DEAD on a correct reference.
+extract_lean() {
+  awk -v exts="$EXTS" '
+    function emit(txt,   line, re, tok, nextch) {
+      line = txt
+      re = "[A-Za-z0-9_][A-Za-z0-9_./+-]*\\.(" exts ")(:[0-9]+)?"
+      while (match(line, re)) {
+        tok = substr(line, RSTART, RLENGTH)
+        # same prefix-match guard as the markdown pass: `.ts` inside `.tsv`, `.js` in `.json`
+        nextch = substr(line, RSTART + RLENGTH, 1)
+        if (nextch !~ /[A-Za-z0-9_]/) print FILENAME "\t" FNR "\t" tok
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+    FNR == 1 { depth = 0 }
+    {
+      s = $0; out = ""
+      while (length(s) > 0) {
+        if (depth > 0) {
+          o = index(s, "/-"); c = index(s, "-/")
+          if (c > 0 && (o == 0 || c < o)) {
+            out = out " " substr(s, 1, c - 1); depth--; s = substr(s, c + 2)
+          } else if (o > 0) {
+            out = out " " substr(s, 1, o - 1); depth++; s = substr(s, o + 2)
+          } else { out = out " " s; s = "" }
+        } else {
+          o = index(s, "/-"); l = index(s, "--")
+          if (o > 0 && (l == 0 || o < l))      { depth++; s = substr(s, o + 2) }
+          else if (l > 0)                      { out = out " " substr(s, l + 2); s = "" }
+          else                                 { s = "" }
+        }
+      }
+      if (length(out) > 0) emit(out)
+    }
+  ' "$@"
+}
+
 # cache: does top-level component <name> exist at repo root?
 declare -A TOPOK=()
 top_exists() {
@@ -167,6 +263,18 @@ eof_of() {
 dead_count=0
 warn_count=0
 scanned_refs=0
+scanned_lean=0
+dead_lean=0
+DEAD_LEAN_LIST=$(mktemp)
+trap 'rm -f "$DEAD_LEAN_LIST"' EXIT
+
+# `extract`/`extract_lean` read STDIN when handed no file arguments, which would hang the
+# gate rather than fail it. Feed each pass only if it has files.
+emit_all() {
+  [ "${#FILES[@]}"  -gt 0 ] && extract      "${FILES[@]}"
+  [ "${#LFILES[@]}" -gt 0 ] && extract_lean "${LFILES[@]}"
+  return 0
+}
 
 while IFS=$'\t' read -r file lineno tok; do
   [ -n "$tok" ] || continue
@@ -200,6 +308,7 @@ while IFS=$'\t' read -r file lineno tok; do
   top_exists "$first" || continue
 
   scanned_refs=$((scanned_refs + 1))
+  case "$file" in *.lean) scanned_lean=$((scanned_lean + 1)) ;; esac
 
   if [ ! -e "$path" ]; then
     # ⚑ A GITIGNORED PATH IS A BUILD OUTPUT, NOT A REFERENCE — and this gate now BLOCKS on
@@ -231,7 +340,12 @@ while IFS=$'\t' read -r file lineno tok; do
     # message. So the message does the work. Ambiguity is reported AS ambiguity rather than
     # guessed: two candidates means the author picks.
     suggestion=''
-    for pre in bridge/mina-zkapp circuit-prove circuit node sdk turn cell metatheory; do
+    # ⚑ `metatheory/Dregg2` and `orb` are here because the LEAN pass added a large new
+    # population of this exact class: a docstring inside `metatheory/Dregg2/Circuit/…`
+    # writes `Intent/Core.lean` meaning `metatheory/Dregg2/Intent/Core.lean`. The
+    # suggestion is what makes those refusals actionable rather than merely correct.
+    for pre in bridge/mina-zkapp circuit-prove circuit node sdk turn cell metatheory \
+               metatheory/Dregg2 orb web; do
       if [ -e "$pre/$tok" ]; then
         if [ -n "$suggestion" ]; then suggestion='AMBIGUOUS'; break; fi
         suggestion="$pre/$tok"
@@ -245,6 +359,13 @@ while IFS=$'\t' read -r file lineno tok; do
       printf 'DEAD  %s:%s  ->  %s\n' "$file" "$lineno" "$tok"
     fi
     dead_count=$((dead_count + 1))
+    case "$file" in *.lean)
+      dead_lean=$((dead_lean + 1))
+      # ⚑ NO LINE NUMBER in the baseline key. A docstring shifting down by an edit above it
+      # is not new drift, and a baseline that churned on every edit would be regenerated
+      # reflexively — which is how a ratchet stops ratcheting.
+      printf '%s\t%s\n' "${file#./}" "$path" >> "$DEAD_LEAN_LIST" ;;
+    esac
     continue
   fi
 
@@ -256,14 +377,14 @@ while IFS=$'\t' read -r file lineno tok; do
       warn_count=$((warn_count + 1))
     fi
   fi
-done < <(extract "${FILES[@]}")
+done < <(emit_all)
 
 # --- summary ----------------------------------------------------------------
 echo '----------------------------------------------------------------'
-printf 'check-doc-refs: scanned %d resolvable refs across %d markdown files\n' \
-  "$scanned_refs" "${#FILES[@]}"
-printf 'check-doc-refs: %d DEAD, %d WARN (line past EOF)\n' \
-  "$dead_count" "$warn_count"
+printf 'check-doc-refs: scanned %d resolvable refs — %d across %d markdown files, %d in %d lean files\n' \
+  "$scanned_refs" "$((scanned_refs - scanned_lean))" "${#FILES[@]}" "$scanned_lean" "${#LFILES[@]}"
+printf 'check-doc-refs: %d DEAD (%d markdown, %d lean), %d WARN (line past EOF)\n' \
+  "$dead_count" "$((dead_count - dead_lean))" "$dead_lean" "$warn_count"
 
 # --- the scanned-ref FLOOR (a gate that scanned nothing is not a passing gate) ---
 # The extractor is a single awk pass. If it dies, truncates (a UTF-8 `towc` failure
@@ -281,7 +402,68 @@ if [ "$scanned_refs" -lt "$SCANNED_FLOOR" ]; then
   exit 1
 fi
 
-if [ "$dead_count" -gt 0 ]; then
+# --- the LEAN scanned floor, independent of the markdown one -----------------
+# The two passes are separate awk invocations over separate file sets, so the markdown
+# floor above says NOTHING about whether the lean pass ran. Without its own floor, a
+# `find` that stopped matching (a tree move, a `-not -path` typo) would take the lean
+# leg silently to zero while `scanned_refs` stayed comfortably over 3000 on markdown
+# alone — a green that had stopped checking the thing this leg was added for.
+readonly LEAN_SCANNED_FLOOR="${DOC_REFS_LEAN_SCANNED_FLOOR:-2000}"
+if [ "$scanned_lean" -lt "$LEAN_SCANNED_FLOOR" ]; then
+  echo "check-doc-refs: FAIL — only $scanned_lean lean refs scanned (floor $LEAN_SCANNED_FLOOR)." >&2
+  echo "  The lean pass resolves 2654 here across 12341 files; a count this low means the" >&2
+  echo "  LFILES find matched little or the comment scanner stopped entering comments." >&2
+  exit 1
+fi
+
+# --- ⚑ THE LEAN BASELINE: a RATCHET, because 498 was the standing debt on day one ---
+# Gating on `dead_lean > 0` the day this leg landed would have blocked every push in the
+# tree over 498 references nobody in this pass wrote, and the script's own history records
+# what happens next: "Gating on those would have gotten this gate suppressed within a day,
+# which is how a gate stops being one."
+#
+# ⚠ SO IT RATCHETS ON THE SET, NOT THE COUNT. A count baseline greens when one reference is
+# fixed and one is broken, which is precisely the drift this leg exists to catch. The
+# baseline is the (source, target) pairs; ANY pair not in it is a red, whatever the total.
+# Entries that have started resolving are reported so the baseline shrinks — it can only
+# ever shrink without an explicit `--update-lean-baseline`.
+LEAN_BASELINE="$ROOT/scripts/doc-refs-lean-baseline.tsv"
+sort -u "$DEAD_LEAN_LIST" -o "$DEAD_LEAN_LIST"
+
+if [ "$UPDATE_LEAN_BASELINE" = '1' ]; then
+  cp "$DEAD_LEAN_LIST" "$LEAN_BASELINE"
+  printf 'check-doc-refs: WROTE lean baseline (%d entries) to %s\n' \
+    "$(wc -l < "$LEAN_BASELINE" | tr -d ' ')" "${LEAN_BASELINE#"$ROOT"/}"
+  exit 0
+fi
+
+lean_new=0
+lean_fixed=0
+if [ -f "$LEAN_BASELINE" ]; then
+  new_entries=$(comm -23 "$DEAD_LEAN_LIST" <(sort -u "$LEAN_BASELINE"))
+  fixed_entries=$(comm -13 "$DEAD_LEAN_LIST" <(sort -u "$LEAN_BASELINE"))
+  [ -n "$new_entries" ] && lean_new=$(printf '%s\n' "$new_entries" | wc -l | tr -d ' ')
+  [ -n "$fixed_entries" ] && lean_fixed=$(printf '%s\n' "$fixed_entries" | wc -l | tr -d ' ')
+  if [ "$lean_new" -gt 0 ]; then
+    echo >&2
+    echo "check-doc-refs: FAIL — $lean_new NEW dead reference(s) in lean comments:" >&2
+    printf '%s\n' "$new_entries" | sed 's/\t/  ->  /; s/^/  DEAD  /' >&2
+    echo "  These are not in scripts/doc-refs-lean-baseline.tsv. Fix the reference, or if the" >&2
+    echo "  move is intended, re-run with --update-lean-baseline and say so in the commit." >&2
+    exit 1
+  fi
+  if [ "$lean_fixed" -gt 0 ]; then
+    printf 'check-doc-refs: %d baseline lean ref(s) now RESOLVE — run --update-lean-baseline to shrink the debt\n' \
+      "$lean_fixed"
+  fi
+  printf 'check-doc-refs: lean baseline holds (%d dead, all known; 0 new)\n' "$dead_lean"
+else
+  echo "check-doc-refs: no lean baseline at ${LEAN_BASELINE#"$ROOT"/} — run --update-lean-baseline once to record the standing debt" >&2
+  exit 1
+fi
+
+# markdown DEAD is gated absolutely: it has been at zero and stays there.
+if [ "$((dead_count - dead_lean))" -gt 0 ]; then
   exit 1
 fi
 exit 0

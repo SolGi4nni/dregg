@@ -140,7 +140,13 @@ def parseShape (spec : String) : Option StepShape :=
   | _ => none
 
 def main : IO Unit := do
-  let dir := "/tmp/pickles-stepmain"
+  -- ⚑ SETTABLE OUTPUT DIR — the shared `/tmp/pickles-stepmain` made concurrent lanes collide BY
+  -- CONSTRUCTION. Two lanes emitting the `step` shape write byte-different `stepmain_step_r8_*.json`
+  -- to the same path, and whichever finishes last silently wins; the loser's stamp then vouches for
+  -- bytes that are no longer there. Measured 2026-08-03 on hbox: that directory held r5–r9 from a
+  -- run at 11:58–12:00 beside r1–r4 from a *different* run at 13:06–16:19, and nothing in the
+  -- directory recorded that they came from two runs. `DREGG_SM_OUT` lets a lane own its own dir.
+  let dir := (← IO.getEnv "DREGG_SM_OUT").getD "/tmp/pickles-stepmain"
   IO.FS.createDirAll dir
   let spec ← IO.getEnv "DREGG_SM"
   let (tag, sh) :=
