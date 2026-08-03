@@ -40,6 +40,11 @@
       "why": "semantic-rung redeploy 2026-07-31: the live a8935dca contract takes setDreggRoot(newRoot: Field, auth: Signature) \u2014 a bare field and a signature \u2014 and the current source cannot drive it. Deployed fresh rather than fighting it in place."
     }
   ],
+  "alsoLiveOnDevnet": {
+    "record": "devnet-foreign-vk-registration.json",
+    "what": "A SEPARATE account, B62qrKdXQqNnhmszatQHMX9cLTKZUSYqadrBcmAHGAHQANm2b7Td1rm, carrying a verification key DERIVED from Lean-emitted KimchiWrapMain gates rather than from o1js `.compile()`. Registered 2026-08-03, tx 5JuWfccHVCjdiNwAjAqdX8pubUc6ZKBwanz3hC8zz6jmjNn9kH9A, block 541181.",
+    "note": "Nothing to do with this deployment: no shared address, no shared key, and it changes nothing above. It is a key at an address with no contract behind it — a node will store it and check proofs against it, and NO PROOF HAS BEEN PRODUCED FOR THAT CIRCUIT. Cross-referenced here only so a reader of this file learns the other thing exists."
+  },
   "cellFactVkHash": "9997308016474083171937915716298629394339756839892308941866801018480480024150",
   "anchorObligationVkHash": "10130610820071422621356274859911118679752936161191302426443393614469750935103",
   "deployedFrom": "hbox (O1JS_BACKEND=native); deploy 404.1s, anchor 557.6s",
