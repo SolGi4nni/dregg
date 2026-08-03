@@ -235,7 +235,7 @@ set_option maxRecDepth 100000
          Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
 #guard Dregg2.Bridge.MinaStepPrevCommitments.onCurve
          Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
-#guard onCurveA G_XY
+#guard onCurveA tS.gXY
 -- …and the checked variables ARE the fold's own base coordinates, not a fresh copy: `x`'s class
 -- gains the two `assert_on_curve` halves that read it (`x·x` and `x2·x`) on top of the
 -- `ipaBlocks` `EndoMul` reads and the transcript's absorb row.

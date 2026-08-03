@@ -216,7 +216,15 @@ def qLhsAcc (s : StepShape) (e : Nat) : Nat := qInit s + 2 + e
 def qDel (s : StepShape) : Nat := qInit s + s.ipaBlocks + 3
 /-- `lhs` itself. -/
 def qLhsOut (s : StepShape) : Nat := qInit s + s.ipaBlocks + 4
-def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 5
+/-- ⚑ **`q = p_prime + lr_prod`** (`step_verifier.ml:316-320`), i.e. the fold sum PLUS
+`uc = scale_fast2 u advice.combined_inner_product`. §19 emits that `scale_fast2`; this is the
+`Ops.add_fast` output it feeds, and `Scalar_challenge.endo q c` reads THIS point, not `qSum`.
+⚠ The BRACKETING differs from upstream and the value does not: upstream is
+`(combined_polynomial + uc) + lr_prod`, this chain is `(Σ combine + Σ lr) + uc`. Addition on the
+curve is associative and commutative, so the point is the same one; what the difference costs is one
+`Ops.add_fast` placed later in the schedule, and it is said here rather than elided. -/
+def qPrime (s : StepShape) : Nat := qInit s + s.ipaBlocks + 5
+def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 6
 
 def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
 /-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
@@ -454,6 +462,18 @@ def sqBlocks (s : StepShape) : List Nat :=
 /-- ⚑ Squeeze `c`'s block — the state R2 reads challenge `c` out of is `vSt s (sqBlock s c + 1) 0`. -/
 def sqBlock (s : StepShape) (c : Nat) : Nat := (sqBlocks s).getD c 0
 
+/-- ⚑ **`u`'s squeeze index.** `let u = group_map (Sponge.squeeze_field sponge)` (`:263-266`) is the
+squeeze that follows absorb block `oCip`, so its index is the number of squeezes scheduled before
+that block — `4` at both shapes (β, γ, α, ζ). -/
+def uChalIx (s : StepShape) : Nat := ((List.range (oCip s)).map (sqAfter s)).foldl (· + ·) 0
+
+/-- ⚑⚑ **`t`, the argument `group_map` actually gets — the FULL field element.** `:264` is
+`Sponge.squeeze_field`, NOT `squeeze_scalar`: there is no `lowest_128_bits`, no `to_field_checked`
+chain and no endomorphism lift on this path. ⚠ §17's exhibit read `chalOf` here — the LOW 128 bits —
+which is the wrong `t` and hence the wrong `u`; §19 emits `group_map` over this variable and the
+exhibit's `u` values move with it. -/
+def uSqueezeVar (s : StepShape) : PVar := vSt s (sqBlock s (uChalIx s) + 1) 0
+
 /-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
 
 `snarky_curve.ml:212-217`: `let x2 = square x in let x3 = x2 * x in let ax = Params.a * x in
@@ -622,7 +642,10 @@ block 539508's own on-curve points standing in for it. ⚠ What that costs is st
 here relates `G` to the opening, so "the honest `G`" means "an on-curve point in the slot", not "the
 point that closes `equal_g`". §17 measures the digest at BOTH, which is what makes the exhibit
 independent of this choice. -/
-def G_XY : Nat × Nat := Dregg2.Bridge.MinaStepPrevCommitments.GAMMA_XY.getD 27 (0, 0)
+-- ⚠ ⚑ **`G_XY` was DELETED 2026-08-03 (§19).** `G` was a fixture point (`GAMMA_XY[27]`) because
+-- nothing in the assembly related it to anything. §19's `rhs`/`equal_g` do relate it: `G` is now
+-- `solveG`'s output, a FUNCTION of `lhs`, and it lives on `StepData.gXY`. A constant here would be a
+-- second `G` that the opening does not close, and R8's `Boolean.all` would refuse the honest witness.
 
 /-- The OUTER hash's two app-state words — `rule.main`'s OUTPUT state (`step_main.ml:550-557`),
 which no `verify_one` sub-circuit derives. A distinct fixture from segment C's `hmVal`, because it
@@ -940,7 +963,119 @@ def vEcPow (s : StepShape) (l k : Nat) : PVar :=
   if ecPoint l == 0 then vZ s k else vZW s k
 def nEcVars (s : StepShape) : Nat := 1 + s.bRounds + N_EC * ecStride s
 
-def baseFtS (s : StepShape) : Nat := baseEc s + nEcVars s
+/-! ### ⚑⚑ §19 — `check_bulletproof`'s OPENING SIDE: `group_map`, `p_prime`'s `uc`, `rhs`, `equal_g`.
+The variables.
+
+`step_verifier.ml:263-266, 316-320, 328-340`, and this region owns every cell of it:
+
+    let u = group_map (Sponge.squeeze_field sponge)              (* :263-266 *)
+    let p_prime = combined_polynomial + scale_fast2 u advice.combined_inner_product
+    let q = p_prime + lr_prod                                    (* :316-320 *)
+    let rhs =
+      let b_u = scale_fast2 u advice.b in
+      let z_1_g_plus_b_u = scale_fast2 (challenge_polynomial_commitment + b_u) z_1 in
+      let z2_h = scale_fast2 (Inner_curve.constant (Lazy.force Generators.h)) z_2 in
+      z_1_g_plus_b_u + z2_h                                      (* :328-338 *)
+    (`Success (equal_g lhs rhs), challenges)                     (* :340 *)
+
+**FOUR `scale_fast2` ladders, not three** — `uc` is one of them, and it is the one that carries
+`combined_inner_product` (a STATEMENT word, R8's `vCipShift`) onto the curve side. Before §19 that
+word reached only R5's Horner and R8's `Field.equal`; it now also determines `q`, hence `lhs`.
+
+⚑ **AND SAY WHAT `equal_g` DOES NOT DO.** `G = challenge_polynomial_commitment`, `z₁` and `z₂` occur
+at exactly two places each in `step_verifier.ml` (`:253` destructure, `:332-336` use): no absorption
+inside `verify_one`, no pin, no statement word. So for ANY `lhs` a prover sets
+`G := z₁⁻¹·(lhs − z₂·H) − b·u` — one scalar-field inverse and three scalar multiplications — and the
+equality holds. §17 measures that on this assembly's own numbers and §19's rows do not change it.
+What emitting `rhs`/`equal_g` DOES buy is that `verified` (#11) stops being a free witness: R8's
+`ver` slot is this section's Boolean output, so `verified` is now a function of
+`(q, c, δ, b, u, G, z₁, z₂)` — where the last three are still the prover's. That is the true label;
+the row count is not the claim. -/
+
+/-- ⚑ **`z₁`'s fixture value**, a witness with no upstream binder. The circuit cell exists (`bpZ1`)
+and no row determines it, which is the fact §17 exhibits; the value here is what the honest
+assembly's witness carries. -/
+def BP_Z1_VAL : Nat := 987654321098765432109876543210
+def BP_Z2_VAL : Nat := 555555555555555555555555555555
+
+/-- §19's four `scale_fast2` ladders, in `step_verifier.ml`'s own order.
+
+    k  base                              scalar                        source of the scalar
+    0  u = group_map (squeeze)           advice.combined_inner_product  vCipShift — STATEMENT word
+    1  u                                 advice.b                       vBShift   — STATEMENT word
+    2  G + b_u                           z_1                            bpZ1      — FREE WITNESS
+    3  Generators.h  (constant)          z_2                            bpZ2      — FREE WITNESS -/
+def N_SF : Nat := 4
+
+/-- `Snarky_group_map.Checked.wrap`'s cells (`checked_map.ml:20-55`), in emission order. Twelve for
+`potential_xs` (`bw19.ml:78-99`), six per candidate for `y_squared` + `sqrt_flagged`, three for the
+indicator booleans, and five per coordinate for the indicator dot-product. -/
+def N_GM : Nat := 43
+def baseBp (s : StepShape) : Nat := baseEc s + nEcVars s
+/-- `group_map` cell `i`. -/
+def vGm (s : StepShape) (i : Nat) : PVar := xv (baseBp s + i)
+/-- ⚑ **`u`'s two coordinates** — `group_map`'s output, and the base of ladders 0 and 1. It needs no
+`assert_on_curve`: `sqrt_flagged`'s `assert_square` plus `Boolean.Assert.any` and the first-of-three
+selection ARE the on-curve proof, which is why upstream hands the result straight to `scale_fast2`. -/
+def vUx (s : StepShape) : PVar := vGm s 37
+def vUy (s : StepShape) : PVar := vGm s 42
+
+/-- Ladder `k`'s block base. Same stride and same internal layout as §6b's, because it is the same
+gadget: `sfTermRows` emits both. -/
+def bpSfOff (s : StepShape) (k : Nat) : Nat := baseBp s + N_GM + k * ftcStride
+def bpAccX (s : StepShape) (k j : Nat) : PVar := xv (bpSfOff s k + 2 * j)
+def bpAccY (s : StepShape) (k j : Nat) : PVar := xv (bpSfOff s k + 2 * j + 1)
+def bpOff (s : StepShape) (k : Nat) : Nat := bpSfOff s k + 2 * (FTC_CHUNKS + 1)
+def bpTop (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS)
+def bpNegY (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 1)
+def bpHmX (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 2)
+def bpHmY (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 3)
+def bpDX (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 4)
+def bpDY (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 5)
+def bpMX (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 6)
+def bpMY (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 7)
+def bpResX (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 8)
+def bpResY (s : StepShape) (k : Nat) : PVar := xv (bpOff s k + FTC_CHUNKS + 9)
+
+def baseBpT (s : StepShape) : Nat := baseBp s + N_GM + N_SF * ftcStride
+/-- `Generators.h`, pinned coordinate-for-coordinate by one `Generic` row (`Inner_curve.constant`,
+`:336`). ⚑ MEASURED off `SRS::<Pallas>::create`, not adopted from a doc — `GENERATORS_H`. -/
+def bpHx (s : StepShape) : PVar := xv (baseBpT s)
+def bpHy (s : StepShape) : PVar := xv (baseBpT s + 1)
+/-- `challenge_polynomial_commitment + b_u` (`:333`), ladder 2's base. -/
+def bpGbX (s : StepShape) : PVar := xv (baseBpT s + 2)
+def bpGbY (s : StepShape) : PVar := xv (baseBpT s + 3)
+/-- `rhs = z_1_g_plus_b_u + z2_h` (`:337`). -/
+def bpRhsX (s : StepShape) : PVar := xv (baseBpT s + 4)
+def bpRhsY (s : StepShape) : PVar := xv (baseBpT s + 5)
+/-- ⚑ **`z₁` and `z₂` — FREE WITNESSES, and the region says so by giving them cells no row defines.**
+Their only occurrences are ladders 2 and 3's `Shifted_value.Type2` splits, which is exactly upstream's
+count of occurrences. -/
+def bpZ1 (s : StepShape) : PVar := xv (baseBpT s + 6)
+def bpZ2 (s : StepShape) : PVar := xv (baseBpT s + 7)
+/-- Ladder `k`'s `Shifted_value.Type2` pair (`plonk_curve_ops.ml:290-291`). ⚑ FOUR pairs and not two:
+each ladder has its own scalar here, where §6b's eight ladders share two. -/
+def bpDiv2 (s : StepShape) (k : Nat) : PVar := xv (baseBpT s + 8 + 2 * k)
+def bpOdd (s : StepShape) (k : Nat) : PVar := xv (baseBpT s + 9 + 2 * k)
+/-- Ladder `k`'s counter at chunk boundary `j`; at `j = FTC_CHUNKS` it IS the scalar's `s_div_2` —
+`Field.Assert.equal !n_acc scalar` (`plonk_curve_ops.ml:208`), the wire that makes the ladder
+multiply by the value the statement carries and not by one the prover picked. -/
+def bpN (s : StepShape) (k j : Nat) : PVar :=
+  if j == FTC_CHUNKS then bpDiv2 s k else xv (bpOff s k + j)
+/-- `equal_g`'s two `Field.equal` gadgets: per coordinate a difference, a witnessed inverse and the
+result bit (`d·inv = 1 − bit`, `d·bit = 0`, `bit² = bit`), then `Boolean.all` of the two. -/
+def bpEqD (s : StepShape) (i : Nat) : PVar := xv (baseBpT s + 16 + 4 * i)
+def bpEqInv (s : StepShape) (i : Nat) : PVar := xv (baseBpT s + 17 + 4 * i)
+def bpEqBit (s : StepShape) (i : Nat) : PVar := xv (baseBpT s + 18 + 4 * i)
+def bpEqSq (s : StepShape) (i : Nat) : PVar := xv (baseBpT s + 19 + 4 * i)
+def bpEqP (s : StepShape) (i : Nat) : PVar := xv (baseBpT s + 24 + 2 * i)
+def bpEqZ (s : StepShape) (i : Nat) : PVar := xv (baseBpT s + 25 + 2 * i)
+/-- ⚑ **`equal_g lhs rhs`** — and R8's `verified` slot IS this variable since §19, so the boolean
+`check_bulletproof` returns is the boolean `finalize_other_proof`'s `Boolean.all` consumes. -/
+def bpEq (s : StepShape) : PVar := xv (baseBpT s + 28)
+def nBpVars (s : StepShape) : Nat := N_GM + N_SF * ftcStride + 29
+
+def baseFtS (s : StepShape) : Nat := baseBp s + nBpVars s
 
 /-! ## §3 — the row-schedule primitives. -/
 
@@ -1370,6 +1505,11 @@ def chalOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
 def hiOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
   ((d.states.getD (sqBlock s c + 1) []).getD 0 0) / 2 ^ s.chalBits
 
+/-- ⚑ **The value `uSqueezeVar` holds** — the WHOLE squeeze, not `chalOf`'s low `chalBits`. §19's
+`group_map` is a function of this. -/
+def uSqueezeVal (s : StepShape) (d : SpongeData) : Nat :=
+  (d.states.getD (sqBlock s (uChalIx s) + 1) []).getD 0 0
+
 /-- ⚑ `Endo.Wrap_inner_curve.scalar` (`endo.ml:7`) — the SCALAR-challenge endomorphism of `Fp`, the
 constant `to_field_checked` scales `a₈` by. NOT `FT_ENDO`, which is the BASE endomorphism
 `5^((p−1)/3)` the linearization reads; conflating the two cube roots is the defect
@@ -1646,6 +1786,9 @@ structure IpaData where
   lhsBlks : List EndoBlock := []
   lhsNs : List Nat := []
   lhsAdd : List Nat := []
+  /-- ⚑ §19: `q = p_prime + lr_prod` (`:316-320`) — the fold sum PLUS `uc`. `Scalar_challenge.endo`
+  reads THIS point; `sums.getLast` is only `combined_polynomial + lr_prod`. -/
+  qPrimeAdd : List Nat := []
   deriving Repr, Inhabited
 
 /-- One `Scalar_challenge.endo` ladder over base `T` at prechallenge `v`, seeded at
@@ -1672,7 +1815,7 @@ IGNORES it: that round's base is computed, so a supplied one would be a second c
 `ipaRounds − 1`. Until 2026-08-02 the chain started at round 0's output and `sg_old[0]` was one of
 the three transcript words nothing read. -/
 def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) (ftcOut : Nat × Nat)
-    : IpaData :=
+    (ucRes : Nat × Nat) : IpaData :=
   let bases := (List.range s.ipaRounds).map (fun r =>
     if ipaSrc s r == BaseSrc.computed then ftcOut else ipaBaseOf s allB r)
   let rounds := (List.range s.ipaRounds).map (fun r =>
@@ -1686,15 +1829,19 @@ def runIpa (s : StepShape) (allB : List (Nat × Nat)) (d : SpongeData) (ftcOut :
       let cells := completeAddWitness l.1 l.2 r.1 r.2
       (acc.1 ++ [(cells.getD 4 0, cells.getD 5 0)], acc.2 ++ [cells]))
     ([], [])
+  -- ⚑ §19: `q = p_prime + lr_prod` — the fold sum plus `uc = scale_fast2 u cip` (`:316-320`).
+  let q0 := st.1.getLastD (0, 0)
+  let qpc := completeAddWitness q0.1 q0.2 ucRes.1 ucRes.2
+  let q : Nat × Nat := (qpc.getD 4 0, qpc.getD 5 0)
   -- ⚑ `check_bulletproof`'s tail: `cq = Scalar_challenge.endo q c`, `lhs = cq + delta`.
-  let q := st.1.getLastD (0, 0)
   let lhs := runEndo s q (chalOf s d s.cChal)
   let cq := lhs.1.getLastD (0, 0)
   let dl := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
   { accs := rounds.map (·.1), blks := rounds.map (·.2.1), ns := rounds.map (·.2.2)
   , bases := bases, sums := st.1, addCells := st.2
   , lhsAccs := lhs.1, lhsBlks := lhs.2.1, lhsNs := lhs.2.2
-  , lhsAdd := completeAddWitness cq.1 cq.2 dl.1 dl.2 }
+  , lhsAdd := completeAddWitness cq.1 cq.2 dl.1 dl.2
+  , qPrimeAdd := qpc }
 
 /-- One endo ladder's variable slots — the fold's rounds and `check_bulletproof`'s tail differ only
 in where their points and counters live. -/
@@ -1712,10 +1859,11 @@ structure EndoSlots where
 
 def roundSlots (s : StepShape) (r : Nat) : EndoSlots :=
   { base := qT s r, p := qP s r, acc := qAcc s r, n := vQN s r, endoX := vQEndo s r }
-/-- ⚑ The tail's base is the FOLD OUTPUT `q = combined_polynomial + …` — a computed point, not a
-supplied one, so it needs no pin and no `assert_on_curve`. -/
+/-- ⚑ The tail's base is the FOLD OUTPUT `q = p_prime + lr_prod` — a computed point, not a supplied
+one, so it needs no pin and no `assert_on_curve`. ⚑ Since §19 it is `qPrime` and not
+`qSum (ipaRounds−1)`: `p_prime` carries the `uc` term, so `combined_inner_product` reaches `lhs`. -/
 def lhsSlots (s : StepShape) : EndoSlots :=
-  { base := qSum s (s.ipaRounds - 1), p := qLhsP s, acc := qLhsAcc s
+  { base := qPrime s, p := qLhsP s, acc := qLhsAcc s
   , n := vLhsN s, endoX := vLhsEndo s }
 
 def endoRoundRows (s : StepShape) (sl : EndoSlots) (bl : List EndoBlock) : List SRow :=
@@ -1857,9 +2005,12 @@ REFUSED, the same substitution with `G` re-solved ACCEPTED. ⚑ `G`'s binder —
 one rung ABOVE `verify_one` — is ASSEMBLED since 2026-08-02 (segment D, §8e′), and **the re-solved
 witness is STILL ACCEPTED**: what changed is that it now moves the step statement's public
 `messages_for_next_step_proof` (§17(d)–(e)). -/
+/-- ⚑ `q = p_prime + lr_prod`'s VALUE — §19's `uc` folded into the fold sum. -/
+def IpaData.qPrimePt (v : IpaData) : Nat × Nat := (v.qPrimeAdd.getD 4 0, v.qPrimeAdd.getD 5 0)
+
 def lhsRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   let sl := lhsSlots s
-  endoSeedRows s sl (v.sums.getLastD (0, 0)) wired
+  endoSeedRows s sl v.qPrimePt wired
   ++ endoRoundRows s sl v.lhsBlks
   ++ [ probeRow wired (ipx s (sl.acc s.ipaBlocks)) (ipy s (sl.acc s.ipaBlocks))
      , caRow (ipx s (sl.acc s.ipaBlocks), ipy s (sl.acc s.ipaBlocks))
@@ -1878,6 +2029,12 @@ def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
        ++ [probeRow wired (ipx s (qAcc s r s.ipaBlocks)) (ipy s (qAcc s r s.ipaBlocks))]
        ++ [ipaAddRow s v r]
        ++ [probeRow wired (ipx s (qSum s r)) (ipy s (qSum s r))])
+  -- ⚑ §19: `q = p_prime + lr_prod` (`:316-320`) — the `Ops.add_fast` that puts `uc` into the point
+  -- `Scalar_challenge.endo q c` reads. It rides here and not in §19's own block because `lhsRows` is
+  -- its only consumer; `bpResX/Y 0` is `uc`, defined by §19's ladder 0.
+  ++ [ caRow (ipx s (qSum s (s.ipaRounds - 1)), ipy s (qSum s (s.ipaRounds - 1)))
+             (bpResX s 0, bpResY s 0) (ipx s (qPrime s), ipy s (qPrime s)) v.qPrimeAdd
+     , probeRow wired (ipx s (qPrime s)) (ipy s (qPrime s)) ]
   ++ lhsRows s v wired
 
 /-! ## §6b — `Common.ft_comm`'s MSM: the sub-circuit that makes `t_comm` MEAN something.
@@ -2044,31 +2201,83 @@ def ftcBaseVar (s : StepShape) (k : Nat) : PVar × PVar :=
   else if k == 1 then (vTcX s (tCommN s - 1), vTcY s (tCommN s - 1))
   else (ftcAddX s (k - 2), ftcAddY s (k - 2))
 
-/-- Term `k`'s chunk `j` — the same two-row `VarBaseMul` shape R3 uses. ⚑ Chunk 0's `Zero` row wires
-col 2 (bit `5j+0`, the MSB) to `ftcTop`, so `scale_fast2`'s `bits_lsb.(254) = 0`
-(`plonk_curve_ops.ml:262-265`) is a real row: without it the counter identity has two solutions mod
-`p` and the prover picks the point. -/
-def ftcChunkRows (s : StepShape) (d : FtcData) (k j : Nat) : List SRow :=
-  let tm := d.terms.getD k default
+/-- ⚑ ONE `scale_fast2` ladder's variable slots, so the SAME emitter serves `Common.ft_comm`'s eight
+and §19's four. Introduced 2026-08-03 with §19: the alternative was a second spelling of a 110-row
+gadget, and two spellings that agree today are two that disagree later. -/
+structure SfSlots where
+  baseX : PVar
+  baseY : PVar
+  /-- accumulator point at chunk boundary `j = 0..FTC_CHUNKS`. -/
+  accX : Nat → PVar
+  accY : Nat → PVar
+  /-- counter at chunk boundary `j`; at `j = FTC_CHUNKS` it IS the scalar's `s_div_2`. -/
+  n : Nat → PVar
+  /-- `bits_lsb.(254)`, which `plonk_curve_ops.ml:262-265` asserts zero. -/
+  top : PVar
+  negY : PVar
+  hmX : PVar
+  hmY : PVar
+  dX : PVar
+  dY : PVar
+  mX : PVar
+  mY : PVar
+  resX : PVar
+  resY : PVar
+  /-- `Shifted_value.Type2`'s `s_odd` — the `G.if_` selector. -/
+  odd : PVar
+
+/-- Chunk `j` — the same two-row `VarBaseMul` shape R3 uses. ⚑ Chunk 0's `Zero` row wires col 2 (bit
+`5j+0`, the MSB) to `top`, so `scale_fast2`'s `bits_lsb.(254) = 0` (`plonk_curve_ops.ml:262-265`) is a
+real row: without it the counter identity has two solutions mod `p` and the prover picks the point. -/
+def sfChunkRows (sl : SfSlots) (tm : FtcTerm) (j : Nat) : List SRow :=
   let td := tm.td
   let ax : Nat → Int := fun i => ((td.accs.getD i (0, 0)).1 : Int)
   let ay : Nat → Int := fun i => ((td.accs.getD i (0, 0)).2 : Int)
   let bt : Nat → Int := fun i => (td.slopes.getD i 0 : Int)
   let bi : Nat → Int := fun i => (tm.bits.getD i 0 : Int)
-  let g := ftcBaseVar s k
   [ { kind := .varBaseMul
-    , perm := [ some g.1, some g.2
-              , some (ftcAccX s k j), some (ftcAccY s k j)
-              , some (ftcN s k j), some (ftcN s k (j+1)), none ]
+    , perm := [ some sl.baseX, some sl.baseY
+              , some (sl.accX j), some (sl.accY j)
+              , some (sl.n j), some (sl.n (j+1)), none ]
     , advice := [ (7, ax (5*j+1)), (8, ay (5*j+1)), (9, ax (5*j+2)), (10, ay (5*j+2))
                 , (11, ax (5*j+3)), (12, ay (5*j+3)), (13, ax (5*j+4)), (14, ay (5*j+4)) ] }
   , { kind := .zero
-    , perm := [ some (ftcAccX s k (j+1)), some (ftcAccY s k (j+1))
-              , (if j == 0 then some (ftcTop s k) else none), none, none, none, none ]
+    , perm := [ some (sl.accX (j+1)), some (sl.accY (j+1))
+              , (if j == 0 then some sl.top else none), none, none, none, none ]
     , advice := (if j == 0 then [] else [(2, bi (5*j))])
                 ++ [ (3, bi (5*j+1)), (4, bi (5*j+2)), (5, bi (5*j+3)), (6, bi (5*j+4))
                    , (7, bt (5*j)), (8, bt (5*j+1)), (9, bt (5*j+2)), (10, bt (5*j+3))
                    , (11, bt (5*j+4)) ] } ]
+
+/-- **One `scale_fast2`'s rows.** The `G.if_` mux is `d = h − (h−g) ; m = s_odd·d ; res = (h−g) + m`
+per coordinate — Snarky's `Field.if_` (`else_ + b·(then_ − else_)`) with the difference sealed,
+because a double-`Generic` half carries three variables and `res − else_ − b·(then_ − else_)` needs
+four. -/
+def sfTermRows (sl : SfSlots) (tm : FtcTerm) (wired : Bool) : List SRow :=
+  packHalves
+    [ ([some sl.baseY, some sl.negY, none], [1, 1, 0, 0, 0])
+    , ([some sl.top, none, none], cConst 0)
+    , ([some (sl.accX FTC_CHUNKS), some sl.hmX, some sl.dX], [1, -1, -1, 0, 0])
+    , ([some sl.odd, some sl.dX, some sl.mX], cMul)
+    , ([some sl.hmX, some sl.mX, some sl.resX], cAdd)
+    , ([some (sl.accY FTC_CHUNKS), some sl.hmY, some sl.dY], [1, -1, -1, 0, 0])
+    , ([some sl.odd, some sl.dY, some sl.mY], cMul)
+    , ([some sl.hmY, some sl.mY, some sl.resY], cAdd) ]
+  ++ [ caRow (sl.baseX, sl.baseY) (sl.baseX, sl.baseY) (sl.accX 0, sl.accY 0) tm.dblCells ]
+  ++ ((List.range FTC_CHUNKS).flatMap (sfChunkRows sl tm))
+  ++ [ probeRow wired (sl.accX FTC_CHUNKS) (sl.accY FTC_CHUNKS)
+     , caRow (sl.accX FTC_CHUNKS, sl.accY FTC_CHUNKS) (sl.baseX, sl.negY) (sl.hmX, sl.hmY)
+             tm.hMgCells
+     , probeRow wired sl.resX sl.resY ]
+
+/-- §6b's term `k`, as `SfSlots`. -/
+def ftcSlots (s : StepShape) (k : Nat) : SfSlots :=
+  let g := ftcBaseVar s k
+  { baseX := g.1, baseY := g.2
+  , accX := ftcAccX s k, accY := ftcAccY s k, n := ftcN s k
+  , top := ftcTop s k, negY := ftcNegY s k, hmX := ftcHmX s k, hmY := ftcHmY s k
+  , dX := ftcDX s k, dY := ftcDY s k, mX := ftcMX s k, mY := ftcMY s k
+  , resX := ftcResX s k, resY := ftcResY s k, odd := ftcOdd s (ftcScalOf k) }
 
 /-- **`Shifted_value.Type2`'s own rows**, once per DISTINCT scalar: `Field.Assert.equal (2·s_div_2 +
 s_odd) s` (`plonk_curve_ops.ml:290-291`) and `Boolean.typ`'s check on `s_odd`. ⚑ The `s` these read
@@ -2089,29 +2298,9 @@ def ftcNZeroRows (s : StepShape) : List SRow :=
   packHalves ((List.range (ftcTerms s)).map (fun k =>
     ([some (ftcN s k 0), none, none], cConst 0)))
 
-/-- **Term `k`'s rows.** The `G.if_` mux is `d = h − (h−g) ; m = s_odd·d ; res = (h−g) + m` per
-coordinate — Snarky's `Field.if_` (`else_ + b·(then_ − else_)`) with the difference sealed, because a
-double-`Generic` half carries three variables and `res − else_ − b·(then_ − else_)` needs four. -/
+/-- **Term `k`'s rows** — `sfTermRows` at §6b's own slots. -/
 def ftcTermRows (s : StepShape) (d : FtcData) (wired : Bool) (k : Nat) : List SRow :=
-  let tm := d.terms.getD k default
-  let g := ftcBaseVar s k
-  let hx := ftcAccX s k FTC_CHUNKS
-  let hy := ftcAccY s k FTC_CHUNKS
-  let od := ftcOdd s (ftcScalOf k)
-  packHalves
-    [ ([some g.2, some (ftcNegY s k), none], [1, 1, 0, 0, 0])
-    , ([some (ftcTop s k), none, none], cConst 0)
-    , ([some hx, some (ftcHmX s k), some (ftcDX s k)], [1, -1, -1, 0, 0])
-    , ([some od, some (ftcDX s k), some (ftcMX s k)], cMul)
-    , ([some (ftcHmX s k), some (ftcMX s k), some (ftcResX s k)], cAdd)
-    , ([some hy, some (ftcHmY s k), some (ftcDY s k)], [1, -1, -1, 0, 0])
-    , ([some od, some (ftcDY s k), some (ftcMY s k)], cMul)
-    , ([some (ftcHmY s k), some (ftcMY s k), some (ftcResY s k)], cAdd) ]
-  ++ [ caRow g g (ftcAccX s k 0, ftcAccY s k 0) tm.dblCells ]
-  ++ ((List.range FTC_CHUNKS).flatMap (ftcChunkRows s d k))
-  ++ [ probeRow wired hx hy
-     , caRow (hx, hy) (g.1, ftcNegY s k) (ftcHmX s k, ftcHmY s k) tm.hMgCells
-     , probeRow wired (ftcResX s k) (ftcResY s k) ]
+  sfTermRows (ftcSlots s k) (d.terms.getD k default) wired
 
 /-- **The `Ops.add_fast` chain**, in `common.ml`'s order — and its LAST output is the fold's own
 round-`FTC_ROUND` base variable, which is the whole point of the rung. -/
@@ -3530,6 +3719,12 @@ structure FinWire where
   xiStmt : AOp
   /-- `should_verify` — a STATEMENT bool (`step_main.ml:36-37`), not a witness. -/
   shouldVerify : AOp
+  /-- ⚑⚑ **`verified`** (`step_main.ml:121`) — since §19 this is `equal_g lhs rhs`'s own output cell
+  (`bpEq`), i.e. `check_bulletproof`'s returned `` `Success `` boolean, and NOT an `AOp.wit`. That is
+  the whole point of emitting `rhs`: a free witness that R8's assert forces to 1 constrains nothing,
+  while this one is a function of `(q, c, δ, b, u, G, z₁, z₂)`. ⚠ Three of those eight are still the
+  prover's, so this is a WIRING and not a refusal — §17(e) re-runs and is unchanged. -/
+  verified : AOp
 
 /-- What R8 bakes in, plus the witnesses its own rows CHECK. -/
 structure FinCfg where
@@ -3540,10 +3735,6 @@ structure FinCfg where
   /-- per `Field.equal` gadget: the witnessed inverse and the result bit. -/
   eqInv : List Nat
   eqBit : List Nat
-  /-- the kimchi `verified` bit (`step_main.ml:121`; #11 — it is a witness and stays one until
-  `Step_verifier.verify` exists). `should_verify` is NOT here: since 2026-08-02 it is a STATEMENT
-  word the wire reads, because upstream's is one. -/
-  verified : Nat
   deriving Repr, Inhabited
 
 structure FinSlots where
@@ -3624,7 +3815,7 @@ def finBuild (W : FinWire) (C : FinCfg) : AM FinSlots := do
   let f1 ← eMul xc bc
   let f2 ← eMul f1 cc
   let fin ← eMul f2 pc
-  let ver ← eWit C.verified
+  let ver ← em W.verified
   let ver2 ← eMul ver ver
   let _ ← eEq ver2 ver
   let sv ← em W.shouldVerify
@@ -3660,7 +3851,10 @@ def exposedVars (s : StepShape) : List PVar :=
    , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
    , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
-   , ipx s (qSum s (s.ipaRounds - 1)), ipy s (qSum s (s.ipaRounds - 1)) ]
+   -- ⚑ §19: `q = p_prime + lr_prod`, NOT `qSum (ipaRounds−1)`. The exposed word is the point
+   -- `Scalar_challenge.endo q c` actually reads, so `combined_inner_product` reaches the public
+   -- vector through the curve side as well as through R8's `Field.equal`.
+   , ipx s (qPrime s), ipy s (qPrime s) ]
    ++ (List.range s.chals).map (fun c => vN s c s.emsRows)
    -- ⚑ `0 .. bRounds−1`, NOT `0 .. bRounds`: `vAcc bRounds` and `vZ bRounds` are already the head
    -- entries, and at `shapeStep`'s 67 words the inclusive range made TWO of Step's public words
@@ -3728,7 +3922,9 @@ def finWireOf (s : StepShape) (f : FtData) : FinWire :=
   , bShift := .inp (vBShift s)
   , permShift := .inp (vPermShift s)
   , xiStmt := .inp (vXiStmt s)
-  , shouldVerify := .inp (vShouldVerify s) }
+  , shouldVerify := .inp (vShouldVerify s)
+  -- ⚑ §19: `check_bulletproof`'s own returned boolean.
+  , verified := .inp (bpEq s) }
 
 /-- Everything R8 needs, evaluated ONCE. -/
 structure FinData where
@@ -3746,7 +3942,7 @@ structure FinData where
 slot, R7's squeeze, and the four statement words — every one of them a variable another rung's rows
 compute. -/
 def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
-    (segB : SegData) (specB : SegSpec) (rv : Nat) : VarEnv :=
+    (segB : SegData) (specB : SegSpec) (rv ver : Nat) : VarEnv :=
   let sqv := frSqueezeVal segB specB
   let permA := f.vals.getD f.fp.slots.perm 0
   [ (vDLift s 1, (rv : Int))
@@ -3760,23 +3956,25 @@ def finInputEnv (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
   , (vBShift s, (shiftT1 (bActualOf s d df rv) : Int))
   , (vPermShift s, (shiftT1 permA : Int))
   , (vXiStmt s, ((sqv % 2 ^ 128 : Nat) : Int))
-  , (vShouldVerify s, 1) ]
+  , (vShouldVerify s, 1)
+  -- ⚑ §19's `equal_g` output — a cell §19's rows define, read here rather than witnessed.
+  , (bpEq s, (ver : Int)) ]
   ++ (List.range s.bRounds).map (fun k => (vLift s (s.uChal k), (liftOf s d (s.uChal k) : Int)))
 
 /-- The HONEST config: `lowest_128_bits`' high part, and — because every `Field.equal` leg holds —
-`bit = 1`, `inv = 0` in all four gadgets, with `verified = should_verify = 1`. §16 re-runs this at
-bent inputs, where the honest witness is `bit = 0` and the assert FAILS. -/
+`bit = 1`, `inv = 0` in all four gadgets. ⚑ `verified` LEFT this structure with §19: it is no longer
+a witness the config picks but a wire the program reads. §16 re-runs this at bent inputs, where the
+honest witness is `bit = 0` and the assert FAILS. -/
 def finCfgOf (s : StepShape) (hi : Nat) : FinCfg :=
   { rounds := s.bRounds, shiftC := SHIFT_C, hiXi := hi
-  , eqInv := List.replicate 4 0, eqBit := List.replicate 4 1
-  , verified := 1 }
+  , eqInv := List.replicate 4 0, eqBit := List.replicate 4 1 }
 
 def runFin (s : StepShape) (d : SpongeData) (f : FtData) (df : DefData)
-    (segB : SegData) (specB : SegSpec) (rv : Nat) : FinData :=
+    (segB : SegData) (specB : SegSpec) (rv ver : Nat) : FinData :=
   let sqv := frSqueezeVal segB specB
   let permA := f.vals.getD f.fp.slots.perm 0
   let p := finProgOf (finWireOf s f) (finCfgOf s (sqv / 2 ^ 128))
-  let lk := envLookupAt (envIndex (finInputEnv s d f df segB specB rv))
+  let lk := envLookupAt (envIndex (finInputEnv s d f df segB specB rv ver))
   { fp := p, vals := aEval lk p.prog, bActual := bActualOf s d df rv
   , cipShift := shiftT1 (df.ca.getLastD 0), bShift := shiftT1 (bActualOf s d df rv)
   , permShift := shiftT1 permA, xiStmt := sqv % 2 ^ 128, xiHi := sqv / 2 ^ 128 }
@@ -3855,6 +4053,301 @@ def rDefRows (s : StepShape) (dc : DefcData) (wired : Bool) : List SRow :=
   defcRows s dc 1 (frSqueeze2Var s) true wired
   ++ rangeRows s (s.chals + 1) (vDHi s 1) (dc.hi.getD 1 0) wired
 
+/-! ## ⚑⚑ §19 — `group_map`, `p_prime`'s `uc`, `rhs`, `equal_g`: THE ROWS.
+
+The variable region and the honest label are at §19's variable block above. This is the emission.
+
+## `group_map` — `Snarky_group_map.Checked.wrap`, read at `checked_map.ml:20-55`
+
+    let x1, x2, x3 = potential_xs x in
+    let y1, b1 = sqrt_flagged (y_squared ~x:x1) and … and … in
+    Boolean.Assert.any [ b1; b2; b3 ] ;
+    let x1_is_first = (b1 :> Field.t)
+    and x2_is_first = (Boolean.((not b1) && b2) :> Field.t)
+    and x3_is_first = (Boolean.((not b1) && (not b2) && b3) :> Field.t) in
+    ( Field.((x1_is_first * x1) + (x2_is_first * x2) + (x3_is_first * x3)) , …same for y… )
+
+with `sqrt_flagged x = (sqrt_exn (Field.if_ is_square ~then_:x ~else_:(Field.scale x m)), is_square)`
+(`:22-36`) and `sqrt_exn y = exists; assert_square y x` (`:11-15`). ⚑ **This is an indicator
+dot-product, not a `Field.if_` chain**, and it is NOT ~13 rows.
+
+⚑ **`y_squared` folds `a·x` away.** `step_verifier.ml:231-236` passes
+`fun ~x -> (x*x*x) + constant Inner_curve.Params.a * x + constant Inner_curve.Params.b`, and Pallas
+has `a = 0` (`step_main_inputs.ml:115`), so `Field.mul` on a constant-zero operand is `Field.scale …
+0` and emits nothing. `b = 5`.
+
+⚠ **WHERE THIS EMISSION IS AN UPPER BOUND AND SAYS SO.** Snarky's `assert_r1cs` takes arbitrary
+linear combinations as operands, so `(t2 + fu) * t2` is ONE constraint with a two-term left operand.
+This region materialises every linear combination that feeds a multiplication as its own `Generic`
+half. So the emitted half-count is **≥** Snarky's constraint count, never fewer, and the difference is
+in the cheapest rows in the file. The ladders — which are 96% of §19 — are chunk-for-chunk exact.
+
+## The four ladders, the two adds, and `equal_g`
+
+`sfTermRows` at §19's slots, i.e. the same emitter `Common.ft_comm`'s eight ladders run through, at
+`~num_bits:Field.size_in_bits = 255` → `FTC_CHUNKS = 51` five-bit chunks each. Then
+`Ops.add_fast (G, b_u)`, `Ops.add_fast (z_1_g_plus_b_u, z2_h)`, and `equal_g` as two `Field.equal`
+gadgets plus `Boolean.all`.
+
+⚑ **`H` is a pin and `G`, `z₁`, `z₂` are not.** `Inner_curve.constant (Lazy.force Generators.h)`
+(`:336`) is one `Generic` row over a MEASURED constant; `G` arrives already `assert_on_curve`d and
+absorbed by segment D (§8e′); `z₁`/`z₂` arrive as nothing at all, and their cells have no defining
+row, which is the whole content of §17. -/
+
+/-- ⚑ **`group_map`'s 43 cells, evaluated in emission order.** Slot names are in the row emitter
+below; the last two entries of each five-slot dot-product are `u`'s coordinates.
+
+⚠ `db_i` is `(1 − m)·b_i·q_i` and `sel_i = m·q_i + db_i`, which is `Field.if_ b ~then_:q
+~else_:(m·q)` with the `(1−m)` folded into the multiplication's coefficient — one half rather than
+two, and exactly the same value. -/
+def gmVals (t : Nat) : List Nat :=
+  let t2 := fMul t t
+  let tf := fAdd t2 BW_FU
+  let ai := fMul tf t2
+  let alpha := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv ai
+  let t4 := fMul t2 t2
+  let ta := fMul t4 alpha
+  let x1 := fSub BW_SQ3_MU2 (fMul BW_SQ3 ta)
+  let x2 := fSub (fSub 0 BW_U) x1
+  let ti := fMul alpha tf
+  let tf2 := fMul tf tf
+  let tb := fMul tf2 ti
+  let x3 := fSub BW_U (fMul BW_INV3U2 tb)
+  let xs := [x1, x2, x3]
+  let per := xs.flatMap (fun x =>
+    let sq := fMul x x
+    let qv := fAdd (fMul sq x) PALLAS_B
+    let b := if fIsSquare qv then 1 else 0
+    let db := fMul (fSub 1 FP_NONRES) (fMul b qv)
+    let sel := fAdd (fMul FP_NONRES qv) db
+    [sq, qv, b, db, sel, fSqrt sel])
+  let bv : Nat → Nat := fun i => per.getD (6 * i + 2) 0
+  let yv : Nat → Nat := fun i => per.getD (6 * i + 5) 0
+  let p12 := fSub (fAdd 1 (fMul (bv 0) (bv 1))) (fAdd (bv 0) (bv 1))
+  let f2 := fSub (bv 1) (fMul (bv 0) (bv 1))
+  let f3 := fMul p12 (bv 2)
+  let fs := [bv 0, f2, f3]
+  let dot : (Nat → Nat) → List Nat := fun g =>
+    let m := (List.range 3).map (fun i => fMul (fs.getD i 0) (g i))
+    let s12 := fAdd (m.getD 0 0) (m.getD 1 0)
+    m ++ [s12, fAdd s12 (m.getD 2 0)]
+  [t2, tf, ai, alpha, t4, ta, x1, x2, ti, tf2, tb, x3] ++ per ++ [p12, f2, f3]
+    ++ dot (fun i => xs.getD i 0) ++ dot yv
+
+/-- `group_map`'s OUTPUT, off the emitted cells rather than restated. -/
+def gmOut (t : Nat) : Nat × Nat := ((gmVals t).getD 37 0, (gmVals t).getD 42 0)
+
+/-- ⚑ Everything §19 evaluates. `uc` is here AND reaches `runIpa`, because `q` depends on it. -/
+structure BpData where
+  /-- `group_map`'s 43 cells at the transcript's own squeeze. -/
+  gm : List Nat
+  /-- the four `scale_fast2` ladders: `uc`, `b_u`, `z_1·(G + b_u)`, `z_2·H`. -/
+  terms : List FtcTerm
+  /-- their four scalars, in the same order — `s_odd` is the parity of these. -/
+  scals : List Nat
+  /-- `lhs`, so `equal_g`'s difference is read off the assembly rather than recomputed. -/
+  lhs : Nat × Nat
+  /-- `Ops.add_fast challenge_polynomial_commitment b_u` (`:333`). -/
+  gbCells : List Nat
+  /-- `Ops.add_fast z_1_g_plus_b_u z2_h` (`:337`). -/
+  rhsCells : List Nat
+  deriving Repr, Inhabited
+
+def BpData.u (v : BpData) : Nat × Nat := (v.gm.getD 37 0, v.gm.getD 42 0)
+/-- ⚑ **`equal_g lhs rhs`, as a value** — R8's `verified`. It is COMPUTED from the two points and
+never assumed: a `G` that does not solve the opening leaves this `0`, and `Boolean.all` then refuses
+the witness. -/
+def BpData.ver (v : BpData) : Nat := if v.lhs == v.rhs then 1 else 0
+def BpData.term (v : BpData) (k : Nat) : FtcTerm := v.terms.getD k default
+def BpData.gb (v : BpData) : Nat × Nat := (v.gbCells.getD 4 0, v.gbCells.getD 5 0)
+def BpData.rhs (v : BpData) : Nat × Nat := (v.rhsCells.getD 4 0, v.rhsCells.getD 5 0)
+
+/-- ⚑ **`uc` alone**, which `runIpa` needs before the rest of §19 can be evaluated: `q` depends on
+`uc`, `lhs` depends on `q`, and `rhs`/`equal_g` depend on `lhs`. So the chain is
+`group_map → uc → q → lhs → rhs → equal_g` and it is a chain, not a cycle. -/
+def runUc (t cip : Nat) : FtcTerm := ftcScaleTerm (gmOut t) cip
+
+/-- Jacobian → affine, so a SOLVED `G` can be handed to a ladder and to segment D as a commitment. -/
+def jAffOf (P : Nat × Nat × Nat) : Nat × Nat :=
+  let zi := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv P.2.2
+  let z2 := fMul zi zi
+  (fMul P.1 z2, fMul P.2.1 (fMul z2 zi))
+
+/-- ⚑⚑ **`challenge_polynomial_commitment`, SOLVED — and this is the finding, not a shortcut.**
+`G := z₁⁻¹·(lhs − z₂·H) − b·u` (`KimchiStepMainField.bpSolveG`). The assembly has no IPA opening to
+take a real `G` from, and §17 measures that it does not need one: `G`, `z₁` and `z₂` are free
+witnesses, so for ANY `lhs` this identity produces a `G` that closes `equal_g`, at one scalar-field
+inverse and three scalar multiplications. The honest witness this file emits is therefore the SAME
+object a substituting prover would compute — which is why `equal_g` refuses no on-curve substitution
+and why the emitted rows change no verdict.
+
+⚠ It is also why `G` is data-dependent now: it is a function of `lhs`, hence of the transcript, hence
+of every commitment the fold consumed. A bent commitment moves `lhs`, moves the solved `G`, and moves
+segment D's public word — which is §17(d), now true of the emitted witness rather than of an
+exhibit. -/
+def solveG (u : Nat × Nat) (lhs : Nat × Nat) (bAdv z1 z2 : Nat) : Nat × Nat :=
+  jAffOf (bpSolveG u GENERATORS_H lhs bAdv z1 z2)
+
+/-- **§19, evaluated.** `t` is the FULL squeeze, `cip`/`bAdv` the two statement words, `z1`/`z2` the
+two free witnesses, `G` the previous proof's `challenge_polynomial_commitment`. -/
+def runBp (t cip bAdv z1 z2 : Nat) (G lhs : Nat × Nat) : BpData :=
+  let gm := gmVals t
+  let u : Nat × Nat := (gm.getD 37 0, gm.getD 42 0)
+  let t0 := ftcScaleTerm u cip
+  let t1 := ftcScaleTerm u bAdv
+  let gbc := completeAddWitness G.1 G.2 t1.res.1 t1.res.2
+  let gb : Nat × Nat := (gbc.getD 4 0, gbc.getD 5 0)
+  let t2 := ftcScaleTerm gb z1
+  let t3 := ftcScaleTerm GENERATORS_H z2
+  let rc := completeAddWitness t2.res.1 t2.res.2 t3.res.1 t3.res.2
+  { gm := gm, terms := [t0, t1, t2, t3], scals := [cip, bAdv, z1, z2]
+  , lhs := lhs, gbCells := gbc, rhsCells := rc }
+
+/-- Ladder `k`'s base VARIABLES: `u` twice, then `G + b_u`, then the pinned `H`. -/
+def bpBaseVar (s : StepShape) (k : Nat) : PVar × PVar :=
+  if k ≤ 1 then (vUx s, vUy s)
+  else if k == 2 then (bpGbX s, bpGbY s)
+  else (bpHx s, bpHy s)
+
+/-- Ladder `k`'s scalar SOURCE — the cell `Field.Assert.equal (2·s_div_2 + s_odd) s` reads. ⚑ Two of
+the four are statement words the rest of the assembly already binds; two are cells no row defines. -/
+def bpScalV (s : StepShape) (k : Nat) : PVar :=
+  if k == 0 then vCipShift s else if k == 1 then vBShift s
+  else if k == 2 then bpZ1 s else bpZ2 s
+
+def bpSlots (s : StepShape) (k : Nat) : SfSlots :=
+  let g := bpBaseVar s k
+  { baseX := g.1, baseY := g.2
+  , accX := bpAccX s k, accY := bpAccY s k, n := bpN s k
+  , top := bpTop s k, negY := bpNegY s k, hmX := bpHmX s k, hmY := bpHmY s k
+  , dX := bpDX s k, dY := bpDY s k, mX := bpMX s k, mY := bpMY s k
+  , resX := bpResX s k, resY := bpResY s k, odd := bpOdd s k }
+
+/-- **`group_map`'s rows.** Every half is one Snarky operation; the comment on each names it. -/
+def gmRows (s : StepShape) (wired : Bool) : List SRow :=
+  let V := vGm s
+  let hs : List (List (Option PVar) × List Int) :=
+    -- `potential_xs` (`bw19.ml:78-99`)
+    [ ([some (uSqueezeVar s), some (uSqueezeVar s), some (V 0)], cMul)          -- t2 = t·t
+    , ([some (V 0), some (V 1), none], [1, -1, 0, 0, (BW_FU : Int)])            -- tf = t2 + fu
+    , ([some (V 1), some (V 0), some (V 2)], cMul)                              -- ai = tf·t2
+    , ([some (V 3), some (V 2), none], [0, 0, 0, 1, -1])                        -- alpha·ai = 1
+    , ([some (V 0), some (V 0), some (V 4)], cMul)                              -- t4 = t2·t2
+    , ([some (V 4), some (V 3), some (V 5)], cMul)                              -- ta = t4·alpha
+    , ([some (V 5), some (V 6), none], [-(BW_SQ3 : Int), -1, 0, 0, (BW_SQ3_MU2 : Int)])
+    , ([some (V 6), some (V 7), none], [-1, -1, 0, 0, -(BW_U : Int)])           -- x2 = −u − x1
+    , ([some (V 3), some (V 1), some (V 8)], cMul)                              -- ti = alpha·tf
+    , ([some (V 1), some (V 1), some (V 9)], cMul)                              -- tf2 = tf·tf
+    , ([some (V 9), some (V 8), some (V 10)], cMul)                             -- tb = tf2·ti
+    , ([some (V 10), some (V 11), none], [-(BW_INV3U2 : Int), -1, 0, 0, (BW_U : Int)]) ]
+    -- `y_squared` + `sqrt_flagged`, per candidate
+    ++ (List.range 3).flatMap (fun i =>
+        let x := V (if i == 0 then 6 else if i == 1 then 7 else 11)
+        let o := 12 + 6 * i
+        [ ([some x, some x, some (V o)], cMul)                                   -- sq = x·x
+        , ([some (V o), some x, some (V (o+1))], [0, 0, -1, 1, (PALLAS_B : Int)]) -- q = sq·x + b
+        , ([some (V (o+2)), some (V (o+2)), none], [-1, 0, 0, 1, 0])              -- b² = b
+        , ([some (V (o+2)), some (V (o+1)), some (V (o+3))],
+           [0, 0, -1, ((pN + 1 - FP_NONRES : Nat) : Int), 0])                     -- db = (1−m)·b·q
+        , ([some (V (o+1)), some (V (o+3)), some (V (o+4))],
+           [(FP_NONRES : Int), 1, -1, 0, 0])                                      -- sel = m·q + db
+        , ([some (V (o+5)), some (V (o+5)), some (V (o+4))], cMul) ])              -- y² = sel
+    -- `Boolean.Assert.any [b1;b2;b3]` = `(1−b1)(1−b2)(1−b3) = 0`, and the two derived indicators.
+    ++ [ ([some (V 14), some (V 20), some (V 30)], [-1, -1, -1, 1, 1])            -- p12 = (1−b1)(1−b2)
+       , ([some (V 30), some (V 26), none], [1, 0, 0, -1, 0])                     -- p12·(1−b3) = 0
+       , ([some (V 20), some (V 14), some (V 31)], [1, 0, -1, -1, 0])             -- f2 = b2 − b1·b2
+       , ([some (V 30), some (V 26), some (V 32)], cMul) ]                        -- f3 = p12·b3
+    -- the two indicator dot-products.
+    ++ (List.range 2).flatMap (fun c =>
+        let o := 33 + 5 * c
+        let xs : Nat → Nat := fun i =>
+          if c == 0 then (if i == 0 then 6 else if i == 1 then 7 else 11) else 17 + 6 * i
+        [ ([some (V 14), some (V (xs 0)), some (V o)], cMul)
+        , ([some (V 31), some (V (xs 1)), some (V (o+1))], cMul)
+        , ([some (V 32), some (V (xs 2)), some (V (o+2))], cMul)
+        , ([some (V o), some (V (o+1)), some (V (o+3))], cAdd)
+        , ([some (V (o+3)), some (V (o+2)), some (V (o+4))], cAdd) ])
+  packHalves hs ++ [ probeRow wired (vUx s) (vUy s) ]
+
+/-- **`equal_g lhs rhs`** (`step_verifier.ml:69-73`): `Field.equal` per coordinate — the real gadget
+`d·inv = 1 − bit`, `d·bit = 0`, `bit² = bit` — then `Boolean.all` of the two, which for a two-list is
+one `&&`. ⚑ Its output is R8's `verified`. -/
+def bpEqRows (s : StepShape) : List SRow :=
+  let lx := ipx s (qLhsOut s)
+  let ly := ipy s (qLhsOut s)
+  packHalves ((List.range 2).flatMap (fun i =>
+    let l := if i == 0 then lx else ly
+    let r := if i == 0 then bpRhsX s else bpRhsY s
+    [ ([some l, some r, some (bpEqD s i)], cSub)
+    , ([some (bpEqBit s i), some (bpEqBit s i), some (bpEqSq s i)], cMul)
+    , ([some (bpEqSq s i), some (bpEqBit s i), none], cEq)
+    , ([some (bpEqD s i), some (bpEqInv s i), some (bpEqP s i)], cMul)
+    , ([some (bpEqP s i), some (bpEqBit s i), none], [1, 1, 0, 0, -1])
+    , ([some (bpEqD s i), some (bpEqBit s i), some (bpEqZ s i)], cMul)
+    , ([some (bpEqZ s i), none, none], cConst 0) ])
+    ++ [ ([some (bpEqBit s 0), some (bpEqBit s 1), some (bpEq s)], cMul) ])
+
+/-- **§19's rows.** -/
+def bpRows (s : StepShape) (v : BpData) (wired : Bool) : List SRow :=
+  gmRows s wired
+  ++ [ baseConstRow (bpHx s) (bpHy s) GENERATORS_H ]
+  -- `Shifted_value.Type2`'s split, once per ladder, plus `let n_acc = ref Field.zero` (`:158`).
+  ++ packHalves ((List.range N_SF).flatMap (fun k =>
+       [ ([some (bpScalV s k), some (bpDiv2 s k), some (bpOdd s k)], cSplit 1)
+       , ([some (bpOdd s k), some (bpOdd s k), some (bpOdd s k)], cMul)
+       , ([some (bpN s k 0), none, none], cConst 0) ]))
+  -- ladder 1 (`b_u`) must precede the `G + b_u` add that ladder 2's base is.
+  ++ sfTermRows (bpSlots s 0) (v.term 0) wired
+  ++ sfTermRows (bpSlots s 1) (v.term 1) wired
+  ++ [ caRow (vGx s, vGy s) (bpResX s 1, bpResY s 1) (bpGbX s, bpGbY s) v.gbCells
+     , probeRow wired (bpGbX s) (bpGbY s) ]
+  ++ sfTermRows (bpSlots s 2) (v.term 2) wired
+  ++ sfTermRows (bpSlots s 3) (v.term 3) wired
+  ++ [ caRow (bpResX s 2, bpResY s 2) (bpResX s 3, bpResY s 3) (bpRhsX s, bpRhsY s) v.rhsCells
+     , probeRow wired (bpRhsX s) (bpRhsY s) ]
+  ++ bpEqRows s
+
+/-- §19's environment. -/
+def bpEnv (s : StepShape) (v : BpData) : VarEnv :=
+  (List.range N_GM).map (fun i => (vGm s i, (v.gm.getD i 0 : Int)))
+  ++ [ (bpHx s, (GENERATORS_H.1 : Int)), (bpHy s, (GENERATORS_H.2 : Int))
+     , (bpGbX s, (v.gb.1 : Int)), (bpGbY s, (v.gb.2 : Int))
+     , (bpRhsX s, (v.rhs.1 : Int)), (bpRhsY s, (v.rhs.2 : Int))
+     , (bpZ1 s, (v.scals.getD 2 0 : Int)), (bpZ2 s, (v.scals.getD 3 0 : Int)) ]
+  ++ (List.range N_SF).flatMap (fun k =>
+      let tm := v.term k
+      let hx := (tm.td.accs.getLastD (0, 0)).1
+      let hy := (tm.td.accs.getLastD (0, 0)).2
+      let dx := fSub hx tm.hMg.1
+      let dy := fSub hy tm.hMg.2
+      let odd := v.scals.getD k 0 % 2
+      (List.range (FTC_CHUNKS + 1)).flatMap (fun j =>
+        let a := tm.td.accs.getD (5 * j) (0, 0)
+        [ (bpAccX s k j, (a.1 : Int)), (bpAccY s k j, (a.2 : Int)) ])
+      ++ (List.range FTC_CHUNKS).map (fun j =>
+          (bpN s k j, (tm.td.ns.getD (5 * j) 0 : Int)))
+      ++ [ (bpTop s k, (tm.bits.headD 0 : Int))
+         , (bpNegY s k, (fSub 0 tm.td.T.2 : Int))
+         , (bpHmX s k, (tm.hMg.1 : Int)), (bpHmY s k, (tm.hMg.2 : Int))
+         , (bpDX s k, (dx : Int)), (bpDY s k, (dy : Int))
+         , (bpMX s k, (fMul odd dx : Int)), (bpMY s k, (fMul odd dy : Int))
+         , (bpResX s k, (tm.res.1 : Int)), (bpResY s k, (tm.res.2 : Int))
+         , (bpOdd s k, (odd : Int))
+         , (bpDiv2 s k, ((v.scals.getD k 0 / 2 : Nat) : Int)) ])
+  -- ⚑ `equal_g`'s witness, read off the assembly: `d = lhs − rhs` per coordinate. It is ZERO for the
+  -- honest (solved) `G`, and a `G` that does not solve leaves `bit = 0` — which R8's `Boolean.all`
+  -- then refuses. Nothing here assumes it closes; the value is computed.
+  ++ (List.range 2).flatMap (fun i =>
+      let l := if i == 0 then v.lhs.1 else v.lhs.2
+      let r := if i == 0 then v.rhs.1 else v.rhs.2
+      let d := fSub l r
+      let bit := if d == 0 then 1 else 0
+      let iv := if d == 0 then 0 else Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv d
+      [ (bpEqD s i, (d : Int)), (bpEqInv s i, (iv : Int)), (bpEqBit s i, (bit : Int))
+      , (bpEqSq s i, (bit : Int)), (bpEqP s i, (fMul d iv : Int))
+      , (bpEqZ s i, (fMul d bit : Int)) ])
+  ++ [ (bpEq s, ((if v.lhs == v.rhs then 1 else 0 : Nat) : Int)) ]
+
 /-! ## §9 — the whole assembly: rows, environment, placement, witness. -/
 
 /-- Everything the schedule and the environment read, evaluated ONCE. -/
@@ -3876,6 +4369,11 @@ structure StepData where
   segC : SegData
   /-- ⚑ Segment D — the OUTER `hash_messages_for_next_step_proof` (`step_main.ml:525-566`). -/
   segD : SegData
+  /-- ⚑ §19 — `group_map`, the four `scale_fast2`s, `rhs` and `equal_g`. -/
+  bp : BpData
+  /-- ⚑ `challenge_polynomial_commitment`, SOLVED off `lhs` (`solveG`). Segment D absorbs it and
+  §19's ladder 2 consumes it, so it is data and not a constant. -/
+  gXY : Nat × Nat
   specA : SegSpec
   specB : SegSpec
   specC : SegSpec
@@ -3923,21 +4421,34 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let ft := runFt s sp
   let ftw := ftcWireOf s ft
   let ftc := runFtc s ftw
-  let ipa := runIpa s bs sp ftc.out
+  -- ⚑⚑ §19, FIRST HALF. `u = group_map (squeeze_field)` and `uc = scale_fast2 u cip` come BEFORE the
+  -- fold's tail, because `q = p_prime + lr_prod` (`:316-320`) contains `uc` and `lhs` reads `q`.
+  -- The chain is `group_map → uc → q → lhs → G → rhs → equal_g`; every arrow is a dependency and
+  -- none of them closes a cycle, which is why two passes still suffice.
+  let tSq := uSqueezeVal s sp
+  let uc := runUc tSq cipV
+  let ipa := runIpa s bs sp ftc.out uc.res
   let ftv := ft.out
   let specB := frSpec s dg ftv
   let segB := runSeg specB
   -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
   let defc := runDefc segB specB
   let df := runDef s sp ftv (defc.lift s 0) (defc.lift s 1) FT_OMEGA prevChalVal MASK_BITS
+  -- ⚑ §19, SECOND HALF. `advice.b` is R8's statement word, and its VALUE is `bActualOf` — available
+  -- without running the whole finalize program, which is what keeps `G` off a cycle.
+  let bSh := shiftT1 (bActualOf s sp df (defc.lift s 1))
+  let lhsPt : Nat × Nat := (ipa.lhsAdd.getD 4 0, ipa.lhsAdd.getD 5 0)
+  let gA := solveG (gmOut tSq) lhsPt bSh BP_Z1_VAL BP_Z2_VAL
+  let bp := runBp tSq cipV bSh BP_Z1_VAL BP_Z2_VAL gA lhsPt
+  let ver : Nat := bp.ver
   let specC := hmSpec s ipa
   -- ⚑ segment D copies `sponge_after_index` (`step_verifier.ml:1164`), so it does not depend on
   -- segment C's own trajectory past the index prefix — the two hashes are SIBLINGS off one copy,
   -- not a chain.
-  let specD := hmOutSpec s sp G_XY
+  let specD := hmOutSpec s sp gA
   { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
-  , defc := defc, df := df
-  , fin := runFin s sp ft df segB specB (defc.lift s 1)
+  , defc := defc, df := df, bp := bp, gXY := gA
+  , fin := runFin s sp ft df segB specB (defc.lift s 1) ver
   , segA := segA, segB := segB, segC := runSeg specC, segD := runSeg specD
   , specA := specA, specB := specB, specC := specC, specD := specD }
 
@@ -3976,6 +4487,7 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
   ++ ftRows s t.ft wired
   ++ absRows t wired
   ++ finRows s t.ft t.fin wired
+  ++ bpRows s t.bp wired
 
 /-- The CIRCUIT's variable → value assignment (public words are added by `stepEnv`). -/
 def circuitEnv (t : StepData) : VarEnv :=
@@ -4067,7 +4579,7 @@ def circuitEnv (t : StepData) : VarEnv :=
                else if k < l + tCommN s then (ftcTc (k - l)).1
                else if k == l + tCommN s then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY.1
                else if k == l + tCommN s + 1 then Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
-               else G_XY.1
+               else t.gXY.1
       [ (vOcX2 s k, (fMul x x : Int)), (vOcX3 s k, (fMul (fMul x x) x : Int)) ])
   -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
   -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.
@@ -4129,7 +4641,10 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- ⚑ the OUTER hash's own witnesses: its app-state words and `G`, the previous proof's
   -- `opening.challenge_polynomial_commitment` (`step_main.ml:534`).
   ++ (List.range N_HM_APP).map (fun i => (vHmO s i, (hmOVal i : Int)))
-  ++ [ (vGx s, (G_XY.1 : Int)), (vGy s, (G_XY.2 : Int)) ]
+  ++ [ (vGx s, (t.gXY.1 : Int)), (vGy s, (t.gXY.2 : Int)) ]
+  -- ⚑ §19: `group_map`'s cells, the four `scale_fast2` ladders, `H`, `G + b_u`, `rhs`, the two free
+  -- response scalars and `equal_g`'s gadget.
+  ++ bpEnv s t.bp
   -- ⚑ `prev_challenges` — segments A and C absorb these SAME variables (`step_verifier.ml:956`,
   -- `step_main.ml:80`).
   ++ (List.range (2 * s.bRounds)).map (fun i => (vPrevChal s i, (prevChalVal i : Int)))
@@ -4210,12 +4725,15 @@ hide behind a smaller circuit. -/
 
 inductive Rung where
   | transcript | challenges | msm | ipa | full | ftEval0 | absorb | finalize
+  /-- ⚑ §19 — `group_map`, `p_prime`'s `uc`, `rhs`, `equal_g`, and the wire that makes `verified` a
+  function of them instead of a witness. -/
+  | opening
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "r1_transcript" | .challenges => "r2_challenges" | .msm => "r3_msm"
   | .ipa => "r4_ipa" | .full => "r5_full" | .ftEval0 => "r6_ft_eval0"
-  | .absorb => "r7_absorption" | .finalize => "r8_finalize"
+  | .absorb => "r7_absorption" | .finalize => "r8_finalize" | .opening => "r9_opening"
 
 /-- Rung `k`'s rows.
 
@@ -4237,6 +4755,7 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   let f := ftRows s t.ft wired
   let g := absRows t wired
   let h := finRows s t.ft t.fin wired
+  let i := bpRows s t.bp wired
   match k with
   | .transcript => a
   | .challenges => a ++ b
@@ -4246,6 +4765,7 @@ def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
   | .ftEval0 => a ++ b ++ c ++ d ++ e ++ f
   | .absorb => a ++ b ++ c ++ d ++ e ++ f ++ g
   | .finalize => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h
+  | .opening => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h ++ i
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at and above it. -/
 def rungPub (s : StepShape) : Rung → Nat

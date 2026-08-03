@@ -35,7 +35,7 @@ sub-circuit.
 without the `combined_inner_product` chain its own commit subject named, and `vCa cipEvals` reached
 the public tie as a FREE variable — while every σ probe, every control and every public-input leg
 passed. A length identity per rung, stated as the SUM OF ITS OWN SUB-LISTS, is what turns that from
-a silence into a red; `stepRows == rungRows .finalize` closes the same hole on the other emitter. -/
+a silence into a red; `stepRows == rungRows .opening` closes the same hole on the other emitter. -/
 
 -- Each rung IS the rung below plus exactly its own sub-circuit's rows.
 #guard (rungRows tS .challenges true).length
@@ -57,9 +57,13 @@ a silence into a red; `stepRows == rungRows .finalize` closes the same hole on t
         == (rungRows tS .ftEval0 true).length + (absRows tS true).length
 #guard (rungRows tS .finalize true).length
         == (rungRows tS .absorb true).length + (finRows shapeSmoke tS.ft tS.fin true).length
+-- ⚑ §19 — `group_map`, the four `scale_fast2`s, `rhs` and `equal_g`.
+#guard (rungRows tS .opening true).length
+        == (rungRows tS .finalize true).length + (bpRows shapeSmoke tS.bp true).length
+#guard (bpRows shapeSmoke tS.bp true).length > 0 && (gmRows shapeSmoke true).length > 0
 -- …and the OTHER emitter (`stepRows`, the schedule) is the top rung, row for row.
-#guard (stepRows tS true).map (fun r => r.kind) == (rungRows tS .finalize true).map (fun r => r.kind)
-#guard (stepRows tS true).length == (rungRows tS .finalize true).length
+#guard (stepRows tS true).map (fun r => r.kind) == (rungRows tS .opening true).map (fun r => r.kind)
+#guard (stepRows tS true).length == (rungRows tS .opening true).length
 -- …and each sub-list is NON-EMPTY, so "the sum matches" cannot be satisfied by a vanished rung.
 #guard (cipRows shapeSmoke true).length > 0 && (deferredRows shapeSmoke true).length > 0
 /-- ⚑ `cipRows`' own length as a CLOSED FORM of what it emits, so the mux cannot quietly lose a
@@ -122,13 +126,13 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (classCells (posAt .full) (hmDigestVar shapeSmoke)).length == 1
 #guard (classCells (posAt .ftEval0) (hmDigestVar shapeSmoke)).length == 1
 #guard (classCells (posAt .absorb) (hmDigestVar shapeSmoke)).length == 3
-#guard (classCells (posAt .finalize) (hmDigestVar shapeSmoke)).length == 3
+#guard (classCells (posAt .opening) (hmDigestVar shapeSmoke)).length == 3
 -- ⚑ …and the OUTER digest reads exactly the same way, so segment D inherits the same caveat and
 -- gets it said rather than assumed.
 #guard (classCells (posAt .full) (hmOutDigestVar shapeSmoke)).length == 1
 #guard (classCells (posAt .ftEval0) (hmOutDigestVar shapeSmoke)).length == 1
 #guard (classCells (posAt .absorb) (hmOutDigestVar shapeSmoke)).length == 3
-#guard (classCells (posAt .finalize) (hmOutDigestVar shapeSmoke)).length == 3
+#guard (classCells (posAt .opening) (hmOutDigestVar shapeSmoke)).length == 3
 -- ⚑ **`G`'s LADDER POSITION, and it is the honest statement of what segment D bought.** From
 -- `r4_ipa` (where `assert_on_curve` lands) to `r6_ft_eval0`, `G`'s whole class is those three
 -- halves — a witness the circuit checks is on the curve and reads NOWHERE ELSE. `r7_absorption` is
@@ -138,7 +142,7 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (classCells (posAt .ipa) (vGx shapeSmoke)).length == 3
 #guard (classCells (posAt .ftEval0) (vGx shapeSmoke)).length == 3
 #guard (classCells (posAt .absorb) (vGx shapeSmoke)).length == 4
-#guard (classCells (posAt .finalize) (vGx shapeSmoke)).length == 4
+#guard (classCells (posAt .opening) (vGx shapeSmoke)).length == 4
 -- ⚠ ⚑ **AND `index_digest` HAS THE SAME LADDER POSITION, so say it rather than let the retirement
 -- read as unconditional.** §3c's derivation lives in R7 — the permutation is squeezed off segment
 -- C's own state, and segment C is an R7 sub-circuit — while R1 ABSORBS the result at block 0. So
@@ -149,7 +153,7 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (classCells (posAt .transcript) (vIdxD shapeSmoke 0)).length == 1
 #guard (classCells (posAt .ftEval0) (vIdxD shapeSmoke 0)).length == 1
 #guard (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 3
-#guard (classCells (posAt .finalize) (vIdxD shapeSmoke 0)).length == 3
+#guard (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 3
 -- …and the plonk-index pin rows are R7's too, so the same reading applies to the 56 absorbed words.
 #guard (classCells (posAt .ftEval0) (vIdxX shapeSmoke 27)).length == 0
 #guard (classCells (posAt .absorb) (vIdxX shapeSmoke 27)).length == 2
@@ -181,14 +185,14 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- already there. (A floor `≥ 2` would pass here even with the chain deleted — the fold's own reads
 -- alone give 47 — so this is stated as an EQUALITY against the top rung.)
 #guard (classCells (posAt .full) (vDLift shapeSmoke 0)).length
-        == (classCells (posAt .finalize) (vDLift shapeSmoke 0)).length
+        == (classCells (posAt .opening) (vDLift shapeSmoke 0)).length
 #guard (classCells (posAt .full) (vDLift shapeSmoke 0)).length == shapeSmoke.cipEvals + 2
 -- r's is NOT: below the fr-sponge it is exactly the fold's `cipEvals` reads and NO defining row;
 -- `r7_absorption` is the rung that adds the chain's lift row and its probe.
 #guard (classCells (posAt .full) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals
 #guard (classCells (posAt .ftEval0) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals
 #guard (classCells (posAt .absorb) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 2
-#guard (classCells (posAt .finalize) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 3
+#guard (classCells (posAt .opening) (vDLift shapeSmoke 1)).length == shapeSmoke.cipEvals + 3
 -- …and the ξ chain's `EndoMulScalar` rows are in r5 while the r chain's are not.
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.endoMulScalar)).length
         == (2 * shapeSmoke.chals + 1) * shapeSmoke.emsRows

@@ -134,20 +134,20 @@ The substituted witness is accepted at every one of those rungs. -/
           (fun k => prevChalVal (shapeSmoke.bRounds + k))
         == (tS.segC.states.getLastD []).getD 0 0
 
-#guard wordSeven tS G_XY == (stepPublic tS).getD 7 0
+#guard wordSeven tS tS.gXY == (stepPublic tS).getD 7 0
 
 -- ⚑⚑ **(a) THE HONEST CHAIN CLOSES.** Step `N+1`'s segment C, fed step `N`'s app state, `G` and
 -- returned bulletproof challenges, reconstructs step `N`'s public word 7 EXACTLY. This is the
 -- reconstruction-and-comparison, and it is the first time the two hashes are shown to be the two
 -- ends of one chain rather than two sponges that happen to share a copy point.
 #guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tS.ipa).1
-          (chainSlot0 shapeSmoke tS.ipa).2 G_XY (chainChals shapeSmoke tS.sp)
-        == wordSeven tS G_XY
+          (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
+        == wordSeven tS tS.gXY
 -- …and it is not trivially true: segment C's own app-state fixture gives a DIFFERENT digest, so the
 -- identity is carrying the chained app state and not ignoring it.
 #guard hmChainDigest shapeSmoke hmVal (chainSlot0 shapeSmoke tS.ipa).1
-          (chainSlot0 shapeSmoke tS.ipa).2 G_XY (chainChals shapeSmoke tS.sp)
-        != wordSeven tS G_XY
+          (chainSlot0 shapeSmoke tS.ipa).2 tS.gXY (chainChals shapeSmoke tS.sp)
+        != wordSeven tS tS.gXY
 
 -- ⚑⚑ **(b) THE DELIVERABLE. THE SUBSTITUTED CHAIN CLOSES TOO — THE TIE DOES NOT REFUSE IT.**
 -- Step `N` is `tSwapAbs` with `G` re-solved (§17(c)/(e)); its public word 7 has MOVED (§17(d)).
@@ -158,7 +158,7 @@ The substituted witness is accepted at every one of those rungs. -/
         == wordSeven tSwapAbs bpGResolvedA
 -- …and this really is the §17(e) witness and not a re-run of the honest one: the two chains'
 -- digests differ, and `equal_g` still closes on the substituted one.
-#guard wordSeven tSwapAbs bpGResolvedA != wordSeven tS G_XY
+#guard wordSeven tSwapAbs bpGResolvedA != wordSeven tS tS.gXY
 #guard bpCloses (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) bpGResolved
                 (bpBOf tSwapAbs) BP_Z1 BP_Z2
 
@@ -180,7 +180,7 @@ The substituted witness is accepted at every one of those rungs. -/
 -- REFUSED: the reconstruction no longer equals the word the wrap proof was made for. So the fake
 -- commitment cannot be laundered away between steps; it must be carried.
 #guard hmChainDigest shapeSmoke hmOVal (chainSlot0 shapeSmoke tSwapAbs.ipa).1
-          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 G_XY (chainChals shapeSmoke tSwapAbs.sp)
+          (chainSlot0 shapeSmoke tSwapAbs.ipa).2 tS.gXY (chainChals shapeSmoke tSwapAbs.sp)
         != wordSeven tSwapAbs bpGResolvedA
 -- …and each of the other three chained quantities is covered in the same direction:
 --   the carried challenges,

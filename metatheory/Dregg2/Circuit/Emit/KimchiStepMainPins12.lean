@@ -251,14 +251,14 @@ Both halves are measured here, on the emitted object, and neither is inferred fr
 -- rung `G` had no occurrence at all and this difference was ZERO by construction.
 #guard hmOutDigestOf shapeSmoke tS.sp bpGResolvedA != hmOutDigestOf shapeSmoke tS.sp bpGHonestA
 -- …and the digest really is the public word, so this is a statement about the emitted vector.
-#guard hmOutDigestOf shapeSmoke tS.sp G_XY == (tS.segD.states.getLastD []).getD 0 0
-#guard (stepPublic tS).getD 7 0 == (hmOutDigestOf shapeSmoke tS.sp G_XY : Int)
+#guard hmOutDigestOf shapeSmoke tS.sp tS.gXY == (tS.segD.states.getLastD []).getD 0 0
+#guard (stepPublic tS).getD 7 0 == (hmOutDigestOf shapeSmoke tS.sp tS.gXY : Int)
 -- …and it is `G` and not something else in that segment doing it: bending EITHER coordinate alone
 -- moves the digest, and bending nothing leaves it.
-#guard hmOutDigestOf shapeSmoke tS.sp (fAdd G_XY.1 1, G_XY.2)
-        != hmOutDigestOf shapeSmoke tS.sp G_XY
-#guard hmOutDigestOf shapeSmoke tS.sp (G_XY.1, fAdd G_XY.2 1)
-        != hmOutDigestOf shapeSmoke tS.sp G_XY
+#guard hmOutDigestOf shapeSmoke tS.sp (fAdd tS.gXY.1 1, tS.gXY.2)
+        != hmOutDigestOf shapeSmoke tS.sp tS.gXY
+#guard hmOutDigestOf shapeSmoke tS.sp (tS.gXY.1, fAdd tS.gXY.2 1)
+        != hmOutDigestOf shapeSmoke tS.sp tS.gXY
 
 -- ⚠ ⚑⚑ **(e) AND `equal_g` STILL ACCEPTS IT — the deliverable, stated as the failure it is.**
 -- This is exactly `#guard` (c) above, re-asserted after segment D landed so that the record cannot

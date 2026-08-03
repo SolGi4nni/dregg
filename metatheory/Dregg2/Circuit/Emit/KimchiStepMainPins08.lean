@@ -143,7 +143,7 @@ set_option maxRecDepth 100000
 #guard tS.specD.ws.length == N_HM_APP + 2 + shapeSmoke.bRounds
 #guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).1 == vGx shapeSmoke
 #guard (tS.specD.ws.getD (N_HM_APP + 1) (xv 0, 0)).1 == vGy shapeSmoke
-#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).2 == G_XY.1
+#guard (tS.specD.ws.getD N_HM_APP (xv 0, 0)).2 == tS.gXY.1
 -- ⚑ …and its challenge run is `bulletproof_challenges` — the vector `finalize_other_proof` RETURNS
 -- (`step_verifier.ml:1114-1116,1147`), i.e. the LIFTED deferred challenges the `b(ζ)` product folds
 -- over — and NOT segment C's `prev_challenges`. Two hashes, two vectors, and they are disjoint here.

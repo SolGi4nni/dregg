@@ -34,9 +34,9 @@ set_option maxRecDepth 100000
 -- ── the values §12 pins ────────────────────────────────────────
 def tS : StepData := mkStep shapeSmoke
 
-def rowsS : List SRow := rungRows tS .finalize true
+def rowsS : List SRow := rungRows tS .opening true
 
-def rowsUS : List SRow := rungRows tS .finalize false
+def rowsUS : List SRow := rungRows tS .opening false
 
 def nRowsS : Nat := rowsS.length
 
@@ -218,7 +218,7 @@ leg was sabotaged. Returns `(out, xi_correct, xi_actual)`; `out` is the value th
 ASSERTS equals 1. -/
 def finAtChosenXi (xi' hi' : Nat) : Nat × Nat × Nat :=
   let s := shapeSmoke
-  let env := (finInputEnv s tS.sp tS.ft tS.df tS.segB tS.specB rFoldS).map
+  let env := (finInputEnv s tS.sp tS.ft tS.df tS.segB tS.specB rFoldS tS.bp.ver).map
     (fun p => if p.1 == vXiStmt s then (p.1, (xi' : Int)) else p)
   let p := finProgOf (finWireOf s tS.ft) (finCfgOf s hi')
   let vs := aEval (envLookupAt (envIndex env)) p.prog
@@ -741,7 +741,7 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
   let s := shapeSmoke
   let d := tS.sp
   let sqv := frSqueezeVal tS.segB tS.specB
-  let base := finInputEnv s d tS.ft tS.df tS.segB tS.specB rFoldS
+  let base := finInputEnv s d tS.ft tS.df tS.segB tS.specB rFoldS tS.bp.ver
   -- bend the `which`-th statement word (0 = cip, 1 = b, 2 = perm, 3 = xi)
   let tgt : PVar :=
     match which with
@@ -764,22 +764,21 @@ def finOutBent (which : Nat) (sv : Nat) : Nat :=
   (aEval (envLookupAt (envIndex env)) p.prog).getD p.slots.out 0
 
 -- ── the values §17 pins ────────────────────────────────────────
-/-- The `u` squeeze's challenge index: `let u = group_map (Sponge.squeeze_field sponge)` (`:263-266`)
-is the squeeze the schedule emits after absorb block `oCip` (§2b, `sqAfter`), and β/γ/α/ζ are the
-four before it. -/
-def uChalIx (s : StepShape) : Nat := ((List.range (oCip s)).map (sqAfter s)).foldl (· + ·) 0
+/-- `z₁` and `z₂`, the opening's response scalars. ⚑ Since §19 these are the assembly's OWN witness
+cells (`bpZ1`/`bpZ2`) and not exhibit-only fixtures — deterministic BECAUSE they are witnesses with
+no upstream binder, which is the point of the exhibit. -/
+def BP_Z1 : Nat := BP_Z1_VAL
 
-/-- `z₁` and `z₂`, the opening's response scalars. Deterministic fixtures BECAUSE they are witnesses
-with no upstream binder — that is the point of the exhibit, not a shortcut. -/
-def BP_Z1 : Nat := 987654321098765432109876543210
-
-def BP_Z2 : Nat := 555555555555555555555555555555
+def BP_Z2 : Nat := BP_Z2_VAL
 
 /-- `lhs = Scalar_challenge.endo q c + delta` — R4's `qLhsOut`, read off the assembly. -/
 def bpLhsOf (t : StepData) : Nat × Nat := (t.ipa.lhsAdd.getD 4 0, t.ipa.lhsAdd.getD 5 0)
 
-/-- `u = group_map (squeeze)` on the assembly's own transcript. -/
-def bpUOf (t : StepData) : Nat × Nat := gmapFp (chalOf t.sh t.sp (uChalIx t.sh))
+/-- `u = group_map (squeeze)` on the assembly's own transcript. ⚑ **CORRECTED 2026-08-03**: this read
+`chalOf` — the LOW 128 bits — where `step_verifier.ml:264` is `Sponge.squeeze_field`, the FULL
+element. §19 emits `group_map` over `uSqueezeVar`, and this is the same value the emitted rows carry
+(pinned as an equality against the emitted cell, not restated). -/
+def bpUOf (t : StepData) : Nat × Nat := gmapFp (uSqueezeVal t.sh t.sp)
 
 /-- `advice.b` — R8's statement word. -/
 def bpBOf (t : StepData) : Nat := t.fin.bShift
@@ -791,11 +790,9 @@ def bpGHonest : Nat × Nat × Nat :=
 def bpGResolved : Nat × Nat × Nat :=
   bpSolveG (bpUOf tSwapAbs) GENERATORS_H (bpLhsOf tSwapAbs) (bpBOf tSwapAbs) BP_Z1 BP_Z2
 
-/-- Jacobian → affine, so a solved `G` can be handed to the segment as a commitment. -/
-def jAff (P : Nat × Nat × Nat) : Nat × Nat :=
-  let zi := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv P.2.2
-  let z2 := fMul zi zi
-  (fMul P.1 z2, fMul P.2.1 (fMul z2 zi))
+/-- Jacobian → affine. ⚑ Since §19 this is Core's `jAffOf` — the assembly's OWN conversion, the one
+`solveG` runs, so the exhibit and the emitted witness cannot drift into two spellings. -/
+def jAff (P : Nat × Nat × Nat) : Nat × Nat := jAffOf P
 
 /-- The honest `G` and the re-solved one, as curve points segment D can absorb. -/
 def bpGHonestA : Nat × Nat := jAff bpGHonest

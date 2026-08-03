@@ -164,16 +164,16 @@ buys the same factor and costs each pin its own failure site. -/
 
 -- ⚑ THE WIRED/UNWIRED DIFFERENCE IS EXACTLY THE PROBES: every probe cell is in a σ cycle in the
 -- WIRED circuit and self-wired (in NO cycle) in the UNWIRED one.
-#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsS ⟨r, 0⟩ != (⟨r, 0⟩ : Cell))
-#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsS ⟨r, 1⟩ != (⟨r, 1⟩ : Cell))
-#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsUS ⟨r, 0⟩ == (⟨r, 0⟩ : Cell))
-#guard (rungProbeRows tS .finalize).all (fun r => permLookup pairsUS ⟨r, 1⟩ == (⟨r, 1⟩ : Cell))
-#guard (rungProbeRows tS .finalize).length ≥ 10
+#guard (rungProbeRows tS .opening).all (fun r => permLookup pairsS ⟨r, 0⟩ != (⟨r, 0⟩ : Cell))
+#guard (rungProbeRows tS .opening).all (fun r => permLookup pairsS ⟨r, 1⟩ != (⟨r, 1⟩ : Cell))
+#guard (rungProbeRows tS .opening).all (fun r => permLookup pairsUS ⟨r, 0⟩ == (⟨r, 0⟩ : Cell))
+#guard (rungProbeRows tS .opening).all (fun r => permLookup pairsUS ⟨r, 1⟩ == (⟨r, 1⟩ : Cell))
+#guard (rungProbeRows tS .opening).length ≥ 10
 
 -- ⚑ IT CAN GO RED. Desync ONE mid-chain probe cell and the σ check FAILS, so the `= true` above
 -- is a gate rather than a tautology. (`toGrid` is first-wins, so the prepended override lands.)
 #guard
-  (let probe := (rungProbeRows tS .finalize).getD ((rungProbeRows tS .finalize).length / 2) 0
+  (let probe := (rungProbeRows tS .opening).getD ((rungProbeRows tS .opening).length / 2) 0
    let ix := envIndex (stepEnv tS)
    let broken := Dregg2.Circuit.Emit.WitnessBuilder.toGrid 15 totalRowsS
      (((⟨probe, 0⟩ : Cell), (7 : Int))
