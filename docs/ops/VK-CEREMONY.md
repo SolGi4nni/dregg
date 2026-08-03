@@ -466,8 +466,14 @@ Ack-gate it: `DREGG_VK_REGEN_ACK="$(git rev-parse HEAD:metatheory/Dregg2)"`
 ```
 
 `source dirty` **must** read `no` — do the flip from a clean tree (`FRI-CUTOVER-PLAN.md:245`;
-`REPRODUCIBLE-BUILD-AND-FREEZE.md:242`). Then verify the stamp:
-`python3 scripts/emit_descriptors.py --verify-provenance --strict` (`VK-REGEN-CONTROLS.md:49-52`).
+`REPRODUCIBLE-BUILD-AND-FREEZE.md:242`). ⚑ "A clean tree" means a **detached worktree**
+(`git worktree add --detach /tmp/ceremony-wt <sha>`), not waiting for the shared tree to go
+quiet — it does not, and the ceremony that waits for it is the ceremony that never happens.
+Then verify the stamp, at the revision you are flipping to:
+`python3 scripts/emit_descriptors.py --verify-provenance --rev <sha> --strict`
+(`VK-REGEN-CONTROLS.md` §Control 1). The standing non-strict form runs in `local-gates.sh` and
+CI; `--strict` is this ceremony's clause, because only here is "the stamp attests THIS exact
+source" the question being asked.
 
 ### 9.3 Control-4 differential (if descriptor shapes moved)
 

@@ -46,10 +46,19 @@ Modes:
   (default)              emit from Lean, gate, install, stamp, log
   --stamp-existing       stamp PROVENANCE.json from the CURRENT on-disk bytes
                          (no Lean run; ack-gated + logged, for bootstrap/re-pin)
-  --verify-provenance    recompute hashes vs the stamp; --strict additionally
-                         requires a clean source (source_dirty=false) and that
-                         the stamp's tree hash matches THIS checkout's
-                         HEAD:metatheory/Dregg2. No Lean needed.
+  --verify-provenance    recompute hashes vs the stamp, and refuse a stamp that
+                         records source_dirty=true. `--rev <rev>` grades that
+                         REVISION in a detached, `git status`-clean worktree
+                         instead of whatever is lying around (the churn-safe form;
+                         this is the one a shared tree can always answer).
+                         --strict additionally requires the stamp's tree hash to
+                         match the checkout's HEAD:metatheory/Dregg2 — a CEREMONY
+                         question, red on any unrelated metatheory commit, so it
+                         belongs at an epoch flip and not in a standing gate.
+                         No Lean needed.
+  --self-test-provenance drive --verify-provenance RED and GREEN on scratch copies
+                         (mutated byte, dropped stamp row, source_dirty stamp,
+                         plus the clean control). Touches nothing shared.
   --verify-by-name-routing
                          reconcile `EmitByName.lean`'s routing table against the
                          checked-in by-name/ set and the stamp, BOTH directions.
@@ -80,16 +89,20 @@ Exit codes: 0 = ok/no-op · 1 = routing/verify failure · 2 = emitter failed ·
 """
 from __future__ import annotations
 
+import contextlib
 import datetime
 import getpass
 import hashlib
+import io
 import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -859,19 +872,148 @@ def stamp_existing() -> None:
     )
 
 
-def verify_provenance(strict: bool) -> None:
-    """--verify-provenance [--strict]: the PROVENANCE check a consumer (CI, a
+@contextlib.contextmanager
+def rooted_at(new_root: Path):
+    """Run a check body against a DIFFERENT checkout of this repo.
+
+    ⚑ ONE BODY OF CHECK LOGIC, pointed somewhere else — never a second copy of it. `--rev` and
+    the red-proof both need to grade a tree that is not the working tree, and the alternative
+    (a parallel "read it out of git instead" implementation) is two readers of one question,
+    which is the shape this whole file keeps finding bugs in. `ROOT`/`META`/`DESC`/
+    `RUST_FP_FILES` are the only path anchors any verify leg consults, so rebinding those four
+    moves every leg at once and a leg added later inherits it for free."""
+    global ROOT, META, DESC, RUST_FP_FILES
+    saved = (ROOT, META, DESC, RUST_FP_FILES)
+    ROOT = new_root
+    META = new_root / "metatheory"
+    DESC = new_root / "circuit" / "descriptors"
+    RUST_FP_FILES = [new_root / p.relative_to(saved[0]) for p in saved[3]]
+    try:
+        yield
+    finally:
+        ROOT, META, DESC, RUST_FP_FILES = saved
+
+
+@contextlib.contextmanager
+def detached_worktree(rev: str, label: str):
+    """A DETACHED, `git status`-clean worktree at `rev`. Yields its path.
+
+    ⚑ THIS IS THE ANSWER TO "THE ONLY CORRECT INVOCATION IS IMPOSSIBLE". Graded against the
+    working tree, a provenance verify is at the mercy of ~10 co-tenant lanes: any sibling's
+    in-flight descriptor emission reds it, and `metatheory/` is never clean in a live swarm, so
+    the honest move was always to decline to run it. A gate whose only correct invocation is
+    impossible under the conditions the repo actually operates in does not get fixed — it gets
+    routed around, which is how the ten table-AIR stamps stayed wrong through two separate
+    lanes noticing.
+
+    So the churn-safe question is asked instead: are the COMMITTED bytes what the COMMITTED
+    stamp pins? That is HEAD-vs-HEAD, always answerable, and it is the leg that catches drift.
+    `scripts/check-descriptor-drift.sh --rev` and `scripts/check-guard-modules.py --rev` are the
+    in-repo precedents; this mirrors the former (a worktree, not a `git archive` extract,
+    because every verify leg here runs `git ls-files`/`git show HEAD:` and an archive extract
+    has no `.git` — those legs would "degrade cleanly", i.e. silently stop being gates)."""
+    try:
+        sha = git_out("rev-parse", "--verify", f"{rev}^{{commit}}")
+    except subprocess.CalledProcessError:
+        sys.exit(f"{label}: FATAL — '{rev}' does not resolve to a commit.")
+    # ⚠ `.resolve()` IS LOAD-BEARING, not tidiness. macOS hands out `/var/folders/...` temp dirs
+    # and `/var` is a symlink to `/private/var`, so an unresolved ROOT compares unequal to every
+    # `Path.resolve()`d child of itself — and `verify_workflow_refs`'s containment test then
+    # reports that EVERY workflow-invoked path "resolves OUTSIDE this repository". Measured: 20
+    # false WORKFLOW-ESCAPES-REPO findings on a worktree of a tree that has none. A `--rev` run
+    # that manufactures its own reds is worse than one that does not run.
+    holder = Path(tempfile.mkdtemp(prefix="verify-provenance-rev-")).resolve()
+    wt = holder / "tree"
+    try:
+        add = subprocess.run(["git", "-C", str(ROOT), "worktree", "add", "--detach",
+                              str(wt), sha], capture_output=True, text=True)
+        if add.returncode != 0:
+            sys.exit(f"{label}: FATAL — could not create a detached worktree at {wt}\n"
+                     f"{add.stderr.strip()}")
+        # ⚠ VERIFY the clean guarantee rather than assuming it. A worktree that is somehow
+        # dirty is a `--rev` run grading churn again, which is the whole thing this stops.
+        dirt = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"],
+                              capture_output=True, text=True).stdout.strip()
+        if dirt:
+            sys.exit(f"{label}: FATAL — the fresh worktree is NOT clean; refusing to grade "
+                     f"it.\n" + "\n".join(dirt.splitlines()[:10]))
+        yield wt, sha
+    finally:
+        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+        shutil.rmtree(holder, ignore_errors=True)
+
+
+def verify_provenance(strict: bool, rev: str | None = None) -> None:
+    """--verify-provenance [--rev <rev>] [--strict]: the PROVENANCE check a consumer (CI, a
     federation operator pre-epoch-flip) runs before trusting the descriptor set.
-    Recomputes every hash against the stamp; --strict additionally requires the
-    stamp to name a clean source tree that matches THIS checkout."""
+
+    Recomputes every hash against the stamp and refuses a stamp minted from an uncommitted
+    source. `--rev` grades that revision in a clean detached worktree (see `detached_worktree`);
+    `--strict` adds the ceremony clause (does the stamp attest THIS checkout's Lean source)."""
+    if rev is None:
+        _verify_provenance_body(strict, where="the working tree")
+        return
+    with detached_worktree(rev, "verify-provenance") as (wt, sha):
+        print(f"verify-provenance: grading {rev} ({sha[:12]}) in a detached worktree "
+              f"(the shared working tree is NOT read)")
+        with rooted_at(wt):
+            _verify_provenance_body(strict, where=f"{rev} ({sha[:12]})")
+
+
+def _verify_provenance_body(strict: bool, where: str) -> None:
+    """Compute, report, and turn into an exit code."""
+    failures, checked = _verify_provenance_findings(strict)
+    if failures:
+        sys.stderr.write(f"verify-provenance: FAIL ({where})\n")
+        for f in failures:
+            sys.stderr.write(f"  - {f}\n")
+        sys.exit(1)
+    legs = " + ".join(f"{n} {kind}" for kind, n in sorted(checked.items()) if n)
+    print(
+        f"verify-provenance: PASS — {sum(checked.values())} artifacts match the stamp "
+        f"[{legs}] over {where} (mode={_LAST_MODE[0]}, "
+        f"tree {_LAST_TREE[0][:12]}…, source_dirty={_LAST_DIRTY[0]}"
+        + (", strict" if strict else "") + ")."
+    )
+
+
+# The stamp fields the PASS line reports. Held beside the findings rather than returned with
+# them so the self-test — which compares FINDING SETS — is not coupled to the report's shape.
+_LAST_MODE: list = [None]
+_LAST_TREE: list = [""]
+_LAST_DIRTY: list = ["?"]
+
+
+def _verify_provenance_findings(strict: bool) -> tuple[list[str], dict[str, int]]:
+    """The whole check as DATA: (findings, per-leg counts). Empty findings == clean.
+
+    Split out from the reporting so the red-proof can compare finding SETS rather than exit
+    codes. That is not a convenience — it is what keeps the red-proof runnable. ~10 lanes share
+    this tree, HEAD carries whatever they landed in the last hour, and a red-proof phrased as
+    "clean tree goes GREEN, mutated tree goes RED" is hostage to every one of them: at the time
+    of writing a sibling's `EmitByName.lean` routes an artifact nobody committed, which is a real
+    finding and would fail the CONTROL case of a green/red proof through no fault of the subject.
+    A red-proof that a co-tenant can disable is furniture within the hour.
+    So the proof measures the DELTA the injected fault causes against whatever the baseline is —
+    which is strictly sharper anyway: it pins the exact finding to the exact mutation, instead of
+    accepting any red at all as evidence."""
     stamp_path = DESC / PROVENANCE_FILE
     if not stamp_path.exists():
         sys.exit(f"verify-provenance: FAIL — no {stamp_path} (unstamped descriptor set)")
     prov = json.loads(stamp_path.read_text())
     failures: list[str] = []
+    # Per-leg tallies, so the PASS line reports what was actually CHECKED. It used to add
+    # `descriptor_sha256` + `by_name_sha256` and print that as the whole number — which is how
+    # `table-airs/` managed to be simultaneously covered by this function (the discovery walk
+    # below reaches it) and INVISIBLE in its own PASS line: eleven shared table AIRs, the
+    # Poseidon2 chip every descriptor's hash sites lower into among them, checked and unreported.
+    # A gate that under-reports its own coverage cannot be audited for the coverage it lacks.
+    checked: dict[str, int] = {}
 
     def check_set(kind: str, recorded: dict[str, str],
                   on_disk: dict[str, Path]) -> None:
+        checked[kind] = len(set(recorded) | set(on_disk))
         for name, want in recorded.items():
             p = on_disk.get(name)
             if p is None:
@@ -912,17 +1054,52 @@ def verify_provenance(strict: bool) -> None:
         str(p.relative_to(ROOT)): p for p in RUST_FP_FILES if p.exists()
     })
 
+    # NON-VACUITY FLOOR, and it runs HERE — before the routing leg, before any verdict. Every
+    # count above is derived from a directory walk and a JSON object, and both can come back
+    # empty (a moved descriptor dir, a stamp whose legs are `{}`), in which case the loops above
+    # iterate over nothing and this function reports PASS. That is the one way it goes green
+    # while checking air, so it is refused explicitly rather than left to be noticed.
+    if not any(checked.get(k) for k in ("descriptor", "by-name")):
+        sys.exit(
+            "verify-provenance: FATAL — the descriptor and by-name legs BOTH derived empty "
+            f"(checked={checked}). Nothing was compared; this would have been a vacuous PASS. "
+            f"The walk is broken (is {DESC} the descriptor directory?), not the stamp."
+        )
+
     # The ROUTING leg (static; no Lean run). The three checks above all start from a file
     # that EXISTS and ask whether the stamp covers it — so a name the Lean routing table
     # authors with no artifact behind it is invisible to every one of them.
     failures.extend(verify_by_name_routing())
 
+    # ⚑ `source_dirty` IS NOT A STRICT-ONLY CLAUSE. It was, and that made it unreachable: the
+    # only runnable form of this gate is the non-strict one (see below), so the single check
+    # that catches a stamp taken with `DREGG_VK_REGEN_ALLOW_DIRTY=1` lived exclusively behind a
+    # flag nothing invokes. The failure loop that produced is exact and was hit by three lanes
+    # in one day: `--stamp-existing` refuses while `metatheory/` is dirty, `metatheory/` is
+    # never clean in a live swarm, forcing it records `source_dirty=true`, and the only checker
+    # that would notice never runs — a stamp that LOOKS taken and attests nothing.
+    #
+    # It belongs here because it is a property of the COMMITTED STAMP, not of anybody's working
+    # tree: always answerable, at any revision, by reading one boolean. And it is satisfiable —
+    # `f0a34748f` took this exact stamp from a detached clean worktree and got source_dirty=false
+    # while ten lanes churned the shared tree. A red here names a real defect with a real fix.
+    if prov.get("source_dirty"):
+        failures.append(
+            "the stamp records source_dirty=true — these artifacts were minted from an "
+            "unreviewable (uncommitted) Dregg2 tree, so the stamp attests a source nobody "
+            "can reconstruct. Re-take it from a detached clean worktree (`git worktree add "
+            "--detach`), which is what makes ALLOW_DIRTY unnecessary rather than routine."
+        )
+
+    # ⚠ THE CEREMONY CLAUSE, and it stays behind `--strict` DELIBERATELY. `HEAD:metatheory/Dregg2`
+    # moves on every commit to any of ~2300 Lean modules — a docstring, an unrelated proof — so as
+    # a standing gate this is red within minutes of any stamp and permanently thereafter, which is
+    # how a gate becomes furniture. Its honest question ("are the descriptors stale w.r.t. the Lean
+    # source?") is not answerable by comparing a tree hash anyway; it is answered by RE-DERIVING
+    # from Lean, which `scripts/check-descriptor-drift.sh --rev HEAD` does and which is already a
+    # local-gates row. So: this clause is for an operator at an epoch flip, and the standing gate
+    # is the non-strict form.
     if strict:
-        if prov.get("source_dirty"):
-            failures.append(
-                "strict: the stamp records source_dirty=true — these artifacts were "
-                "minted from an unreviewable (uncommitted) Dregg2 tree"
-            )
         current = dregg2_tree_hash()
         if prov.get("dregg2_tree_hash") != current:
             failures.append(
@@ -930,18 +1107,10 @@ def verify_provenance(strict: bool) -> None:
                 f"HEAD:metatheory/Dregg2 {current} (the stamp attests a DIFFERENT source)"
             )
 
-    if failures:
-        sys.stderr.write("verify-provenance: FAIL\n")
-        for f in failures:
-            sys.stderr.write(f"  - {f}\n")
-        sys.exit(1)
-    n = len(prov.get("descriptor_sha256", {})) + len(prov.get("by_name_sha256", {}))
-    print(
-        f"verify-provenance: PASS — {n} descriptor files + "
-        f"{len(prov.get('fp_file_sha256', {}))} FP files match the stamp "
-        f"(mode={prov.get('mode')}, tree {str(prov.get('dregg2_tree_hash'))[:12]}…"
-        + (", strict" if strict else "") + ")."
-    )
+    _LAST_MODE[0] = prov.get("mode")
+    _LAST_TREE[0] = str(prov.get("dregg2_tree_hash"))
+    _LAST_DIRTY[0] = "true" if prov.get("source_dirty") else "false"
+    return failures, checked
 
 
 # ---- the by-name ROUTING round-trip (STATIC — no Lean run) -------------------
@@ -2833,7 +3002,9 @@ ACCEPTED_FLAGS = (
     "--verify-by-name-routing",
     "--verify-provenance",
     "--self-test-workflow-scope",
+    "--self-test-provenance",
     "--strict",
+    "--rev",  # takes a value: `--rev HEAD` or `--rev=HEAD`
 )
 
 
@@ -2958,8 +3129,187 @@ def self_test_workflow_scope() -> int:
     return 1 if bad else 0
 
 
+# ── the provenance red-proof ──────────────────────────────────────────────────────────────────
+#
+# ⚑ `--verify-provenance` IS A NEGATIVE ASSERTION ("nothing has drifted"), which passes just as
+# happily on a broken reader as on a clean tree — and it spent its whole life passing on nothing,
+# because it was invoked by NO `.sh`, NO `.yml` and NO `.py`: thirteen references, every one of
+# them prose. So before it is wired into `scripts/local-gates.sh` it has to be shown to go RED on
+# each defect it claims to catch and GREEN when that defect is removed. Both directions, on
+# SCRATCH COPIES; the shared working tree is never touched.
+#
+# The four mutations are the four shapes the ten table-AIR stamps were actually in:
+#   * a descriptor byte moved while the stamp did not      (STAMP MISMATCH — 8 of the 10)
+#   * a descriptor on disk with no row in the stamp        (MISSING ROW    — 2 of the 10)
+#   * a row in the stamp with no descriptor behind it      (the deleted/renamed direction)
+#   * a stamp minted with DREGG_VK_REGEN_ALLOW_DIRTY=1     (the "looks taken and isn't" stamp)
+# ...plus the CONTROL (unmutated HEAD must be green — otherwise every red below is free) and the
+# VACUITY FLOOR (a walk that finds nothing must refuse, not report PASS).
+def _findings_of(strict: bool = False) -> tuple[set[str], str]:
+    """The finding SET against the currently-bound roots, plus any FATAL text.
+
+    A FATAL (the vacuity floor, a missing stamp) raises SystemExit rather than returning a
+    finding, and that is the point: it is a refusal to report at all, not a report. Returned as
+    the second element so a case can assert on it."""
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            findings, _ = _verify_provenance_findings(strict)
+        return set(findings), ""
+    except SystemExit as exc:
+        return set(), str(exc.code) if exc.code and not isinstance(exc.code, int) else "FATAL"
+
+
+def self_test_provenance() -> int:
+    bad = 0
+    results: list[tuple[bool, str, str]] = []
+
+    def case(ok: bool, name: str, detail: str = "") -> None:
+        nonlocal bad
+        if not ok:
+            bad += 1
+        results.append((ok, name, detail))
+
+    print("emit_descriptors --self-test-provenance (scratch copies only; the working tree is "
+          "never touched)")
+
+    # (0) THE VACUITY FLOOR, first and on a synthetic root: a stamp whose legs are all `{}` beside
+    # an empty descriptor directory must REFUSE, not report PASS over zero artifacts. Every other
+    # case below is worthless if the checker can report green having compared nothing.
+    with tempfile.TemporaryDirectory() as td:
+        fake = Path(td)
+        (fake / "circuit" / "descriptors").mkdir(parents=True)
+        (fake / "circuit" / "descriptors" / PROVENANCE_FILE).write_text(json.dumps(
+            {"descriptor_sha256": {}, "by_name_sha256": {}, "fp_file_sha256": {}}))
+        with rooted_at(fake):
+            found, fatal = _findings_of()
+        case(fatal != "" and "vacuous PASS" in fatal,
+             "VACUITY FLOOR: an empty walk refuses instead of reporting PASS",
+             f"fatal={fatal[:120]!r} findings={len(found)}")
+
+    with detached_worktree("HEAD", "self-test-provenance") as (wt, sha):
+        desc = wt / "circuit" / "descriptors"
+        stamp_path = desc / PROVENANCE_FILE
+        pristine_stamp = stamp_path.read_bytes()
+
+        # Pick the victim from the stamp itself rather than naming a file: a hardcoded filename
+        # is a transcription that rots the day the artifact is renamed, and a red-proof that
+        # silently stops exercising its own subject is the failure mode this file keeps finding.
+        stamp = json.loads(pristine_stamp)
+        subdir_legs = sorted(k for k in stamp if k.endswith("_sha256")
+                             and k not in ("descriptor_sha256", "by_name_sha256",
+                                           "fp_file_sha256"))
+        case(bool(subdir_legs),
+             "the stamp carries a descriptor SUBDIRECTORY leg for this proof to bite on",
+             "none found — the table-airs leg (the ten shared table AIRs) is gone from the stamp")
+        for leg in subdir_legs[:1]:
+            sub = desc / leg[: -len("_sha256")]
+            victim_name = sorted(stamp[leg])[0]
+            victim = sub / victim_name
+            pristine_bytes = victim.read_bytes()
+            kind = leg[: -len("_sha256")]
+
+            with rooted_at(wt):
+                # THE BASELINE — whatever HEAD's findings are today. Not asserted to be empty;
+                # asserted to be what every mutation below is measured AGAINST.
+                base, fatal = _findings_of()
+                case(fatal == "", f"BASELINE at HEAD ({sha[:12]}) computes without refusing",
+                     f"fatal={fatal[:200]!r}")
+                if base:
+                    print(f"  [ i ] baseline at HEAD carries {len(base)} pre-existing finding(s) "
+                          f"(NOT this gate's subject; each mutation is measured as a DELTA):")
+                    for f in sorted(base):
+                        print(f"        · {f[:150]}")
+
+                def delta(label: str, want: str) -> None:
+                    """One injected fault must add a finding NAMING IT, and remove none."""
+                    got, ftl = _findings_of()
+                    new, lost = got - base, base - got
+                    case(ftl == "" and any(want in n and victim_name in n for n in new)
+                         and not lost, label,
+                         f"fatal={ftl[:80]!r} new={sorted(new)[:2]} lost={sorted(lost)[:2]}")
+
+                # (1) STAMP MISMATCH — a descriptor byte moves, the stamp does not. This is 8 of
+                # the 10 shapes measured at `ca0970378`.
+                victim.write_bytes(pristine_bytes.replace(b"{", b"{ ", 1))
+                delta(f"RED on a mutated byte in {kind}/{victim_name}",
+                      "does NOT match its stamped sha256")
+
+                # ...and back to EXACTLY the baseline the moment it is restored. The direction
+                # that proves the red was the MUTATION and not the machinery — and equality with
+                # the baseline (not merely "green") is what makes it a measurement.
+                victim.write_bytes(pristine_bytes)
+                got, ftl = _findings_of()
+                case(ftl == "" and got == base,
+                     "back to EXACTLY the baseline once the byte is restored",
+                     f"delta={sorted(got ^ base)[:2]}")
+
+                # (2) MISSING ROW — the artifact ships, the stamp does not cover it. This is the
+                # other 2 of the 10 (`chip-v1`, `chip-state16-v1`).
+                dropped = json.loads(pristine_stamp)
+                del dropped[leg][victim_name]
+                stamp_path.write_text(json.dumps(dropped, indent=2) + "\n")
+                delta(f"RED on a dropped stamp row for {victim_name}",
+                      "NOT covered by the stamp")
+
+                # (3) the other direction — a row with no artifact behind it (deleted/renamed).
+                stamp_path.write_bytes(pristine_stamp)
+                victim.unlink()
+                delta(f"RED on a stamp row whose artifact is gone ({victim_name})",
+                      "MISSING on disk")
+                victim.write_bytes(pristine_bytes)
+
+                # (4) the ALLOW_DIRTY stamp — the wound that kept the ten unstamped for two days.
+                # Must red WITHOUT `--strict`, because the strict form is not the one anything
+                # runs; that was the entire defect.
+                dirty = json.loads(pristine_stamp)
+                dirty["source_dirty"] = True
+                stamp_path.write_text(json.dumps(dirty, indent=2) + "\n")
+                got, ftl = _findings_of(strict=False)
+                new = got - base
+                case(ftl == "" and any("source_dirty=true" in n for n in new) and not (base - got),
+                     "RED on a source_dirty=true stamp WITHOUT --strict",
+                     f"new={sorted(new)[:1]}")
+                stamp_path.write_bytes(pristine_stamp)
+
+                # and back to the baseline, so (4) is a property of the stamp and not a latch.
+                got, ftl = _findings_of()
+                case(ftl == "" and got == base,
+                     "back to EXACTLY the baseline once the stamp is restored",
+                     f"delta={sorted(got ^ base)[:2]}")
+
+    for ok, name, detail in results:
+        print(f"  [{'ok ' if ok else 'BAD'}] {name}" + (f"  ({detail})" if not ok and detail else ""))
+    print(f"emit_descriptors --self-test-provenance: "
+          f"{'OK — ' + str(len(results)) + ' cases' if bad == 0 else str(bad) + ' CASE(S) WRONG'}")
+    return 1 if bad else 0
+
+
 def main():
     argv = sys.argv[1:]
+    # `--rev` is the one flag that TAKES A VALUE, so it is consumed before the membership check
+    # below — which is an exact-match filter and would otherwise reject the revision itself as an
+    # unknown argument. Both spellings, because the shell gates in this repo accept both.
+    rev: str | None = None
+    rest: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--rev":
+            if i + 1 >= len(argv):
+                sys.exit("emit_descriptors: --rev needs a revision (e.g. `--rev HEAD`)")
+            rev = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith("--rev="):
+            rev = a[len("--rev="):]
+            if not rev:
+                sys.exit("emit_descriptors: --rev= needs a revision (e.g. `--rev=HEAD`)")
+            i += 1
+            continue
+        rest.append(a)
+        i += 1
+    argv = rest
     # An unrecognized flag must REFUSE, not be ignored: every dispatch below is an `in argv`
     # membership test, so a bare-argv fall-through runs the REAL ack-gated emit. A typo'd or
     # imagined `--dry-run` would therefore have regenerated the descriptor set for real.
@@ -2969,10 +3319,17 @@ def main():
             f"emit_descriptors: unknown arguments {unknown!r} (expected none, or one of: "
             + ", ".join(ACCEPTED_FLAGS) + ")"
         )
+    # ...and the same refusal for a value-taking flag attached to a mode that ignores it. A
+    # `--rev` silently dropped by `--stamp-existing` would read as "I stamped that revision".
+    if rev is not None and not ({"--verify-provenance"} & set(argv)):
+        sys.exit(f"emit_descriptors: --rev {rev!r} is only meaningful with --verify-provenance "
+                 f"(got {argv!r}); refusing to ignore it.")
     if "--self-test-workflow-scope" in argv:
         sys.exit(self_test_workflow_scope())
+    if "--self-test-provenance" in argv:
+        sys.exit(self_test_provenance())
     if "--verify-provenance" in argv:
-        verify_provenance(strict="--strict" in argv)
+        verify_provenance(strict="--strict" in argv, rev=rev)
         return
     if "--verify-by-name-routing" in argv:
         # Static, seconds, no Lean and no cargo — usable while the emit is blocked.

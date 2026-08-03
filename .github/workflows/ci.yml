@@ -1760,6 +1760,20 @@ jobs:
           rustup toolchain install "$channel" --profile minimal --component rustfmt
           rustfmt --version
 
+      # ⚑ THE STAMP, before the ~1h re-derivation below. `--verify-provenance` checks every
+      # committed descriptor byte against `circuit/descriptors/PROVENANCE.json` — and until
+      # 2026-08-02 it was invoked by NO script, NO workflow and NO test: thirteen references in
+      # the tree, every one of them prose. Measured at `ca0970378` with the row now in
+      # `scripts/local-gates.sh`: EIGHT of the shared table AIRs did not match their stamped
+      # sha256 and TWO (the Poseidon2 chip AIRs every descriptor's hash sites lower into) had no
+      # stamp row at all. Ten of ten, in HEAD, nothing red.
+      # `--rev HEAD` grades the COMMIT in a detached clean worktree rather than the checkout,
+      # which is what makes it answerable at all in the shared dev tree (see the row's comment in
+      # local-gates.sh). ~5s: python + git, no Lean, no cargo. Deliberately BEFORE the drift gate
+      # — it is the cheap half of the same question.
+      - name: Descriptor provenance stamp (bytes match the stamp)
+        run: python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD
+
       # Regenerates from Lean and `git diff --exit-code`s the descriptors + the
       # *_FP constants. On drift: prints the offending diff + the fix command and
       # exits nonzero. See docs/DESCRIPTOR-EMIT.md.
