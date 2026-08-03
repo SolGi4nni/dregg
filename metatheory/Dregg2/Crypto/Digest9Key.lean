@@ -49,6 +49,8 @@ STALE** — `commit/src/typed.rs::canonical_32_to_lanes_9` says in its own doc c
 "The Rust mirror of `Dregg2.Circuit.KeyLanes9.keyToLanes9`", and there are three siblings. What
 `KeyLanes9` lacked was an APPLIED emit face, and `Emit/KeyCanonicity9Emit.keyCanonical9At` was
 written and wired to nothing. The stale line is corrected in that file by this change.
+✅ **The emit face landed 2026-08-02** (`keyCanonical9Wire`, applied by `EmitRotationV3.lean` and
+both wide registry probes), so that residual is closed too — do not re-price it from this note.
 
 ## Lane order: index 0 is the MOST significant
 

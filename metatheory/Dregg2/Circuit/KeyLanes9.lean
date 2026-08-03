@@ -642,11 +642,17 @@ yet — the encoder does not exist on the wire". **That is false and was false w
 `commit/src/typed.rs::canonical_32_to_lanes_9` says in its own doc comment that it is "The Rust
 mirror of `Dregg2.Circuit.KeyLanes9.keyToLanes9`", with the decoder `lanes_9_to_canonical_32`
 beside it and three siblings (`storage/src/commitment.rs`, `cell::commitment`, and the
-`commit/tests/key_octet_f2_twins_and_the_hole.rs` harness that diffs all four). What `KeyLanes9`
-lacks is not a twin but an APPLIED emit face: `Emit/KeyCanonicity9Emit.keyCanonical9At` is written,
-proved and geometrically placed, and is appended to NO live member's constraint list — that file
-says so itself. A stale "does not exist" line is worse than no line, because the next reader
-prices a build that is already done. -/
+`commit/tests/key_octet_f2_twins_and_the_hole.rs` harness that diffs all four). A stale "does not
+exist" line is worse than no line, because the next reader prices a build that is already done.
+
+✅ **AND THE SECOND HALF OF THAT PARAGRAPH IS NOW STALE TOO, 2026-08-02.** It read: "What
+`KeyLanes9` lacks is not a twin but an APPLIED emit face: `Emit/KeyCanonicity9Emit.keyCanonical9At`
+is written, proved and geometrically placed, and is appended to NO live member's constraint list."
+`keyCanonical9Wire` is applied by `EmitRotationV3.lean` and both wide registry probes; the committed
+registries carry **960 lookups at 29 bits and 120 more at 24** (narrow; 912 / 114 wide) where they
+carried **zero at 29**. So `CanonicalKey9` — which `canonicalKey9_iff_in_image` proves is exactly
+this encoder's image — is an emitted obligation on every rotated member's owner nonet, at both
+blocks. -/
 
 def lanes9Of (b : Bytes32) : List Nat := List.ofFn (keyToLanes9 b)
 def lanes8Of (b : Bytes32) : List Nat := List.ofFn (keyToLanes8 b)
