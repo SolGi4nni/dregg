@@ -9,89 +9,98 @@
 # THIS IS A BURNDOWN LEDGER, NOT AN ACCEPTANCE LIST. A guard-carrying orphan is a wound
 # to ROOT (add `import <module>` to metatheory/Dregg2.lean), not a permanent exemption.
 # The gate FAILS on any (kind, module) NOT listed here (the NEXT silent claim reds
-# immediately), and FAILS on a STALE row (the module got rooted / the sorry got
-# discharged / the file was deleted) — so a fix must retire its own row and the census
-# can only ratchet DOWN. Run `python3 scripts/check-guard-modules.py --census` for the
-# raw view that ignores this ledger entirely.
+# immediately), on a STALE row (the module got rooted / the sorry got discharged / the
+# file was deleted), and on a row whose WEIGHT DRIFTED in either direction — so a fix
+# must retire its own row and the census can only ratchet DOWN. Run
+# `python3 scripts/check-guard-modules.py --census` for the raw view that ignores this
+# ledger entirely.
 #
-# FORMAT  <unrooted|sorry> <dotted-module>   # reason / owner
+# ⚑ THE WEIGHT is how many guard commands the wound SILENCES. The TOTAL below is
+# therefore one honest number: how many differential guards in this tree are not
+# actually checking anything.
 #
-# ⚑ Population recorded 2026-08-01 from a clean `--rev HEAD` extract: 77 unrooted + 1 sorry.
-#   `also-orphan-allow` = the module is a tracked intentional orphan in lean-orphans-allow.txt.
-#   `UNTRACKED-ORPHAN`  = it is NOT even in that list — an untracked silent claim; MinaWrapFtEval0Weld
-#                         (the wound this gate was born from) is one of these. Root these first.
+# ⚑⚑ DO NOT HAND-EDIT THIS FILE. It is written by
+#      check-guard-modules.py --update-baseline --only <module> --reason '<why>'
+#    which REFUSES to raise any row's weight (d1) or the TOTAL (d2) — the total is what
+#    catches a module SPLIT, which grows the population while no row grows — and which
+#    REQUIRES a reason (d3), stamped below with the sha and whether the tree was dirty.
+#    Raising anything at all needs `--allow-increase --reason` and is stamped INCREASED.
+#    A hand-edit is DETECTED on the next ordinary gate run: the header totals and the
+#    last provenance line must both equal the rows actually present (arm (e)).
+#
+# TOTAL 1288 guards across 69 rows (68 unrooted, 1 sorry).
+# FORMAT  <unrooted|sorry><TAB><dotted module><TAB><guards it silences><TAB># reason / owner
+# BASELINE-PROVENANCE cd2c010c0-DIRTY W:0→1288 (+1288) R:0→69 INCREASED — FORMAT CUTOVER at cd2c010c0: this ledger had NO gated refresh and its rows carried no weight, so nothing bounded the row count. Re-emitted from HEAD's census: 69 wounds, 1288 silenced guards. It retires the stale OwnerFreezeWire row (-28, rooted) and it BAKES IN a measured +2 — Circuit.Emit.AttestedFactMembershipEmit went 13 -> 15 in 8827eba0f, two guards added to a module in no lake target, and the -28 retirement would have paid for it in any whole-census refresh. That is the last such rise this file can absorb silently.
 
+# ── UNROOTED (its guards run in no default lake target) ──
+unrooted	Dregg2.Apps.ColonistJob	36	# also-orphan-allow
+unrooted	Dregg2.Bridge.HoldingWeightedTally	26	# also-orphan-allow
+unrooted	Dregg2.Bridge.MinaWrapSgWeld	29	# also-orphan-allow
+unrooted	Dregg2.Circuit.DeltaProto	6	# also-orphan-allow
+unrooted	Dregg2.Circuit.EffectsAsDataProto	5	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.AdjacencyMembershipRefine	8	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.AdjacencyMembershipRung2	21	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.AttestedFactMembershipEmit	15	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.AutomataflNGenGolden	22	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.AvailWideMembersNarrow	15	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.BoundPresentationRefine	13	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.BoundPresentationRung2	16	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.BridgeActionEmit	12	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.BridgeActionRefine	11	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.CommittedThresholdEmit	15	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.CommittedThresholdRefine	17	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.DerivationEmit	12	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.DerivationRefine	8	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.DerivationRung2	16	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.DfaRoutingGeneralEmit	15	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.DfaRoutingRefine	7	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.DfaRoutingRung2	12	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectActionBindingEmit	21	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectActionBindingRefine	17	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectActionBindingRung2	7	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransition	12	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRefine	7	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRung2	10	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRung2Full	5	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.FoldEmit	30	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.FoldRefine	10	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.FoldRung2	9	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.LightClientMidnightAir	31	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.LightClientSolanaAir	29	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MembershipAuthRootEdge	2	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MerkleMembershipRung2	18	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MinaFixtureEmit	12	# UNTRACKED-ORPHAN — root first
+unrooted	Dregg2.Circuit.Emit.MinaWrapSgChunk0	8	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MinaWrapSgChunk1	8	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MinaWrapSgChunk2	8	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MinaWrapSgChunk3	8	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MinaWrapSgCore	14	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MultiStepChainEmit	9	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.MultiStepChainRefine	10	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.NoteSpendingLeafEmit	23	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.NoteSpendingLeafRefine	10	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.NoteSpendingLeafRung2	18	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.PredicatesNeqRefine	9	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2	10	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2Full	7	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.QuantifiedAbsenceEmit	12	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.QuantifiedAbsenceRefine	4	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.TemporalPredicateEmit	13	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.TemporalPredicateRefine	20	# also-orphan-allow
+unrooted	Dregg2.Circuit.Emit.TurnAuthCapOpenWeld	10	# UNTRACKED-ORPHAN — root first
+unrooted	Dregg2.Circuit.Emit.TurnAuthLamportEmit	36	# UNTRACKED-ORPHAN — root first
+unrooted	Dregg2.Circuit.FriVerifierOracle	3	# also-orphan-allow
+unrooted	Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow	24	# also-orphan-allow
+unrooted	Dregg2.Circuit.WrapSafetyStaticAnalyzer	14	# also-orphan-allow
+unrooted	Dregg2.Claims	300	# also-orphan-allow
+unrooted	Dregg2.Crypto.VerifyCoreArgAssembly	10	# also-orphan-allow
+unrooted	Dregg2.Crypto.VerifyCoreArgRows	11	# also-orphan-allow
+unrooted	Dregg2.Crypto.VerifyCoreEqSpecW	8	# also-orphan-allow
+unrooted	Dregg2.Crypto.VerifyCoreHashFrame	7	# also-orphan-allow
+unrooted	Dregg2.Crypto.VerifyCoreUseHint	5	# also-orphan-allow
+unrooted	Dregg2.Games.AutomataflAir	16	# also-orphan-allow
+unrooted	Dregg2.Games.MultiwayTugAir	19	# also-orphan-allow
+unrooted	Dregg2.Games.MultiwayTugProgram	57	# also-orphan-allow
 
-# ── UNROOTED (guard runs in no default lake target) ──────────────────────────
-unrooted Dregg2.Apps.ColonistJob   # also-orphan-allow
-unrooted Dregg2.Bridge.HoldingWeightedTally   # also-orphan-allow
-unrooted Dregg2.Bridge.MinaWrapSgWeld   # also-orphan-allow
-unrooted Dregg2.Circuit.DeltaProto   # also-orphan-allow
-unrooted Dregg2.Circuit.EffectsAsDataProto   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.AdjacencyMembershipRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.AdjacencyMembershipRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.AttestedFactMembershipEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.AutomataflNGenGolden   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.AvailWideMembersNarrow   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.BoundPresentationRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.BoundPresentationRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.BridgeActionEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.BridgeActionRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.CommittedThresholdEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.CommittedThresholdRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.DerivationEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.DerivationRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.DerivationRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.DfaRoutingGeneralEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.DfaRoutingRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.DfaRoutingRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectActionBindingEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectActionBindingRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectActionBindingRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransition   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.EffectVmEmitIvcStateTransitionRung2Full   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.FoldEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.FoldRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.FoldRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.LightClientMidnightAir   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.LightClientSolanaAir   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MembershipAuthRootEdge   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MerkleMembershipRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MinaFixtureEmit   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Circuit.Emit.MinaWrapSgChunk0   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MinaWrapSgChunk1   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MinaWrapSgChunk2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MinaWrapSgChunk3   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MinaWrapSgCore   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MultiStepChainEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.MultiStepChainRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.NoteSpendingLeafEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.NoteSpendingLeafRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.NoteSpendingLeafRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.OwnerFreezeWire   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Circuit.Emit.PredicatesNeqRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.PredicatesRelationalCompoundRung2Full   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.QuantifiedAbsenceEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.QuantifiedAbsenceRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.TemporalPredicateEmit   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.TemporalPredicateRefine   # also-orphan-allow
-unrooted Dregg2.Circuit.Emit.TurnAuthCapOpenWeld   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Circuit.Emit.TurnAuthLamportEmit   # UNTRACKED-ORPHAN — root first
-unrooted Dregg2.Circuit.FriVerifierOracle   # also-orphan-allow
-unrooted Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow   # also-orphan-allow
-unrooted Dregg2.Circuit.WrapSafetyStaticAnalyzer   # also-orphan-allow
-unrooted Dregg2.Claims   # also-orphan-allow
-unrooted Dregg2.Crypto.VerifyCoreArgAssembly   # also-orphan-allow
-unrooted Dregg2.Crypto.VerifyCoreArgRows   # also-orphan-allow
-unrooted Dregg2.Crypto.VerifyCoreEqSpecW   # also-orphan-allow
-unrooted Dregg2.Crypto.VerifyCoreHashFrame   # also-orphan-allow
-unrooted Dregg2.Crypto.VerifyCoreUseHint   # also-orphan-allow
-unrooted Dregg2.Games.AutomataflAir   # also-orphan-allow
-unrooted Dregg2.Games.MultiwayTugAir   # also-orphan-allow
-unrooted Dregg2.Games.MultiwayTugProgram   # also-orphan-allow
-
-# ── SORRY (rooted; #guard/#assert downstream of a real sorry is vacuous) ──────
-sorry Dregg2.Bignum.LedgerBalance   # carries `sorry` at line 456; named completeness pole, discharge written at the site
+# ── SORRY (rooted; a guard below a real hole is vacuous) ──
+sorry	Dregg2.Bignum.LedgerBalance	20	# 20 guard(s) below `sorry`@456

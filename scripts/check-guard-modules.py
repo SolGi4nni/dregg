@@ -94,17 +94,91 @@ not a permanent exemption. The gate:
     immediately and stands out against a green steady state.
   * FAILS on a STALE baseline row (module now rooted / sorry gone / file deleted) — so
     fixing a module forces retiring its row, and the census can only ratchet DOWN.
+  * FAILS on a row whose WEIGHT DRIFTED — see below; the weight is what makes the
+    ledger's TOTAL a number that means something.
   * PRINTS the full census every run — the backlog is visible and named, never buried.
 `--census` ignores the baseline and exits non-zero on the RAW census (every violation),
 which is the "report every silent claim" view.
 
+═══ ⚑ EVERY ROW CARRIES A WEIGHT, AND THE WEIGHT IS THE POINT ═════════════════════
+A row is `<kind> <module> <n>`, where **n is the number of guard commands that this
+wound silences** — every `#guard`/`#assert_axioms`/`#assert_namespace_axioms` in an
+UNROOTED module runs in no build, and every one in a SORRY module sits below a hole.
+So the ledger's TOTAL is a single honest quantity: *how many differential guards in
+this tree are not actually checking anything*.
+
+Rows alone cannot see the laundering shape. One unrooted module carrying 838 guards,
+split into thirteen unrooted modules carrying 861, adds twelve rows and raises the real
+population by 23 — and **no row rises**, because the original's row vanishes and the
+pieces are new rows that arm (c) would even DEMAND exist. That is exactly the operation
+`check-guard-discipline.py` measured on 2026-08-02 (`935d8ef09`, +23 guards, `rows_up=0`),
+and only a TOTAL can see it. Hence the weight, and hence (d2) below.
+
+⚠ The weight is graded in BOTH directions at gate time, and that is load-bearing rather
+than fussy. If a row were allowed to sit ABOVE its live weight, the ledger would hold
+slack — and a refresh could then spend that slack on new wounds while the recorded total
+never rose. `(d2)` is only sound because the ledger is exact.
+
+═══ ⚑⚑ THE REFRESH GATE — arms (d1)/(d2)/(d3), and why they exist ═════════════════
+Every arm above grades the CENSUS against the BASELINE. Until 2026-08-02 this tool had
+**no `--update-baseline` at all**: the documented way to move the ledger was to HAND-ADD
+rows, and nothing bounded the row count or the weight. An editor could add rows freely
+and the gate never objected — the escape hatch was the whole back wall.
+
+The neighbouring `check-guard-discipline.py` had the same hole in tool form, and it was
+not hypothetical there: a module SPLIT walked 23 guards into the ledger while no row
+rose, and the next honest burndown (−14) made the two-commit window read as noise. So
+the refresh here is gated from birth, on:
+
+  (d0) **the census must not be VACUOUS**. A refresh from a blinded scan would WIPE the
+       ledger and the ratchet would happily accept it — every row "fell". The floors run
+       before anything is written.
+  (d1) **no surviving row's WEIGHT may RISE** — a tracked orphan may not quietly
+       accumulate more silent guards.
+  (d2) **the TOTAL WEIGHT may not RISE** — the split/rename arm. A genuine split's
+       pieces sum to at most the original, so a level split still passes; only growth is
+       refused. (The ROW COUNT is reported but deliberately NOT ratcheted: a pure
+       refactor that splits one orphan in two changes no guard's fate, and the weight
+       already sees every real growth, so ratcheting rows would red on a non-defect.)
+  (d3) **every refresh RECORDS PROVENANCE** — sha, whether the tree was DIRTY, both
+       totals, the delta, a verdict, and a mandatory `--reason`, stamped into the header.
+       Dirtiness is recorded rather than refused because "which tree did this number come
+       from" is precisely the question a laundered refresh makes unanswerable.
+
+`--only <selector>` (repeatable) is the DEFAULT way to retire rows. The tree is shared:
+a whole-census refresh absorbs every other lane's in-flight guard-carrying orphan — the
+laundering shape again, with a sibling's work as the payload. `--only` refreshes exactly
+the rows you name and leaves every other row standing, and is still subject to (d1)/(d2).
+A selector is `Dregg2.Foo.Bar` (both arms of that module) or `unrooted:Dregg2.Foo.Bar`.
+
+⚠ THE OVERRIDE IS LOUD, NOT ABSENT. `--allow-increase` exists, still requires `--reason`,
+and stamps `INCREASED` with the delta. A ban with no escape hatch gets routed around by
+hand-editing the file, which is the silent outcome this gate exists to prevent.
+
+═══ ⚑ ARM (e): THE LEDGER CHECKS ITSELF, ON EVERY ORDINARY RUN ════════════════════
+(d0)–(d3) gate a TOOL, and a tool is only a gate for the people who run it. Nothing stops
+an editor from typing a row upward or pasting a new one in. So the baseline is
+self-checking, and the check runs on the ORDINARY invocation rather than only on refresh:
+
+  * the header carries `# TOTAL <w> guards across <r> rows`, and
+  * the last `# BASELINE-PROVENANCE` line carries the totals that refresh produced,
+  * and both must equal the rows actually present.
+
+A hand-edit that raises a weight, or adds a row, and does not also forge two more numbers
+REDS for anyone who runs the gate, with no access to history required. A baseline with no
+header, or carrying a row the gate cannot read, is refused as "not written by the gated
+refresh" — which is the shape a file assembled by some other means would have.
+
 ═══ USAGE ═════════════════════════════════════════════════════════════════════════
-  python3 scripts/check-guard-modules.py                # working tree, ratcheted
+  python3 scripts/check-guard-modules.py                 # working tree, ratcheted
   python3 scripts/check-guard-modules.py --rev HEAD      # clean extract of HEAD (churn-safe)
   python3 scripts/check-guard-modules.py --census        # raw census, ignore baseline
   python3 scripts/check-guard-modules.py --print-census  # list every violation, exit 0
+  python3 scripts/check-guard-modules.py --update-baseline --only Dregg2.Foo --reason "rooted it"
+  python3 scripts/check-guard-modules.py --update-baseline --allow-increase --reason "..."
   python3 scripts/check-guard-modules.py --self-test     # red-proof (synthetic tree)
-Exit: 0 clean/ratchet-green · 1 violation or stale row or vacuous scan · 2 environment error
+Exit: 0 clean/ratchet-green · 1 violation, stale row, weight drift, vacuous scan, or a
+      baseline that does not add up · 2 environment error · 3 REFUSED refresh (not written)
 """
 
 from __future__ import annotations
@@ -138,6 +212,8 @@ MIN_GUARD_MODULES = 1000    # guard-carrying population is ~1667
 MIN_REACHABLE = 500         # reachable closure is ~2000
 
 IGNORE_DIRS = {".lake", ".git", "build", "__pycache__"}
+
+KINDS = ("unrooted", "sorry")
 
 
 def repo_root() -> Path:
@@ -314,6 +390,13 @@ def module_text(mt: Path, m: str) -> str:
         return ""
 
 
+def guard_count(stripped: str) -> int:
+    """How many differential guards this module asserts. This is a row's WEIGHT: if the
+    module is unrooted every one of them runs in no build; if it carries a hole every one
+    of them may be vacuous."""
+    return len(GUARD_RE.findall(stripped))
+
+
 def carries_guard(stripped: str) -> bool:
     return GUARD_RE.search(stripped) is not None
 
@@ -336,17 +419,29 @@ class Census:
         self.dregg2_files = 0
         self.guard_modules = 0
         self.reachable = 0
-        self.unrooted: list[str] = []              # module
-        self.sorry: list[tuple[str, int, str]] = []  # (module, line, token)
+        self.unrooted: list[tuple[str, int]] = []              # (module, guards carried)
+        self.sorry: list[tuple[str, int, int, str]] = []       # (module, guards, line, token)
 
-    def violations(self) -> list[tuple[str, str, str]]:
-        """(kind, module, detail). kind in {"unrooted","sorry"}."""
-        rows: list[tuple[str, str, str]] = []
-        for m in self.unrooted:
-            rows.append(("unrooted", m, "reachable from no default lake target"))
-        for m, ln, tok in self.sorry:
-            rows.append(("sorry", m, f"carries `{tok}` at line {ln}"))
-        return rows
+    def rows(self) -> dict[tuple[str, str], tuple[int, str]]:
+        """(kind, module) -> (weight, detail). One row per wound; weight = the guards it
+        silences. A module with several holes is ONE `sorry` row (the detail names them)."""
+        out: dict[tuple[str, str], tuple[int, str]] = {}
+        for m, w in self.unrooted:
+            out[("unrooted", m)] = (w, f"{w} guard(s) reachable from no default lake target")
+        holes: dict[str, tuple[int, list[str]]] = {}
+        for m, w, ln, tok in self.sorry:
+            holes.setdefault(m, (w, []))[1].append(f"`{tok}`@{ln}")
+        for m, (w, toks) in holes.items():
+            shown = ", ".join(toks[:4]) + (f" +{len(toks) - 4} more" if len(toks) > 4 else "")
+            out[("sorry", m)] = (w, f"{w} guard(s) below {shown}")
+        return out
+
+    def total_weight(self) -> int:
+        return sum(w for w, _ in self.rows().values())
+
+    def violations(self) -> list[tuple[str, str, int, str]]:
+        """(kind, module, weight, detail), sorted — the printable census."""
+        return [(k, m, w, d) for (k, m), (w, d) in sorted(self.rows().items())]
 
 
 def scan(mt: Path, scope_prefix: str = "Dregg2") -> Census:
@@ -361,39 +456,349 @@ def scan(mt: Path, scope_prefix: str = "Dregg2") -> Census:
 
     for m in scoped:
         stripped = strip_lean_noise(module_text(mt, m))
-        if not carries_guard(stripped):
+        g = guard_count(stripped)
+        if not g:
             continue
         c.guard_modules += 1
-        rooted = m in reach
-        if not rooted:
-            c.unrooted.append(m)
+        if m not in reach:
+            c.unrooted.append((m, g))
             continue  # sorry arm is scoped to ROOTED modules (unrooted already reported)
         for ln, tok in hole_hits(stripped):
-            c.sorry.append((m, ln, tok))
+            c.sorry.append((m, g, ln, tok))
     c.unrooted.sort()
     c.sorry.sort()
     return c
 
 
 # ─────────────────────────────────────────────────────────────────────────────────
-# baseline (burndown ledger)
+# baseline (burndown ledger) — rows, header integrity, provenance
 # ─────────────────────────────────────────────────────────────────────────────────
-def read_baseline(path: Path) -> list[tuple[str, str, str]]:
-    """Rows `KIND MODULE [# reason]` -> (kind, module, reason). KIND in {unrooted,sorry}."""
-    rows: list[tuple[str, str, str]] = []
+Rows = dict[tuple[str, str], tuple[int, str]]   # (kind, module) -> (weight, reason)
+
+PROV_PREFIX = "# BASELINE-PROVENANCE"
+TOTAL_RE = re.compile(r'^#\s*TOTAL\s+(\d+)\s+guards?\s+across\s+(\d+)\s+rows', re.MULTILINE)
+PROV_TAIL_RE = re.compile(r'W:(\d+)\s*(?:→|->)\s*(\d+).*?R:(\d+)\s*(?:→|->)\s*(\d+)')
+
+
+def parse_baseline(path: Path) -> tuple[Rows, list[str]]:
+    """Rows `KIND MODULE WEIGHT [# reason]` -> ((kind, module) -> (weight, reason)), plus
+    every line the gate could NOT read. An unreadable row is not skipped quietly: a row
+    with no weight column is the OLD hand-maintained format, and arm (e) refuses it —
+    silently ignoring it is how a ledger stops meaning what its header says."""
+    rows: Rows = {}
+    malformed: list[str] = []
     if not path.is_file():
-        return rows
+        return rows, malformed
     for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
         body, _, reason = s.partition("#")
         parts = body.split()
-        if len(parts) < 2:
+        if len(parts) < 3 or parts[0] not in KINDS or not parts[2].isdigit():
+            malformed.append(s)
             continue
-        kind, module = parts[0].strip(), parts[1].strip()
-        rows.append((kind, module, reason.strip()))
-    return rows
+        rows[(parts[0], parts[1])] = (int(parts[2]), reason.strip())
+    return rows, malformed
+
+
+def read_baseline(path: Path) -> Rows:
+    return parse_baseline(path)[0]
+
+
+def read_provenance(path: Path) -> list[str]:
+    """The refresh log carried in the baseline header, oldest first."""
+    if not path.is_file():
+        return []
+    return [ln.rstrip() for ln in path.read_text(encoding="utf-8", errors="replace").splitlines()
+            if ln.startswith(PROV_PREFIX)]
+
+
+def audit_baseline_integrity(path: Path) -> list[str]:
+    """⚑ ARM (e) — THE LEDGER CHECKS ITSELF, so the refresh gate cannot be walked around
+    with an editor. (d0)–(d3) live in `refresh_baseline`, which is a TOOL, and a tool is
+    only a gate for the people who run it. What DOES stop a hand-edit being silent: the
+    header's `# TOTAL <w> guards across <r> rows` and the last provenance line's totals
+    must both equal the rows actually present. Runs on every ordinary invocation."""
+    if not path.is_file():
+        return []
+    rows, malformed = parse_baseline(path)
+    weight, nrows = sum(w for w, _ in rows.values()), len(rows)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    findings: list[str] = []
+
+    if malformed:
+        findings.append(
+            f"{len(malformed)} baseline line(s) the gate CANNOT READ (a row is "
+            "`<unrooted|sorry> <module> <weight>`): "
+            + "; ".join(repr(x) for x in malformed[:3])
+            + (f" … +{len(malformed) - 3} more" if len(malformed) > 3 else "")
+            + " — this file was not written by the gated refresh")
+
+    hits = TOTAL_RE.findall(text)
+    if not hits:
+        findings.append("the baseline header has no `# TOTAL <w> guards across <r> rows` line "
+                        "— it was not written by the gated refresh")
+    elif len(hits) > 1:
+        findings.append(f"the baseline header carries {len(hits)} `# TOTAL` lines — exactly one "
+                        "is written by a refresh; the extras were added by hand")
+    else:
+        hw, hr = int(hits[0][0]), int(hits[0][1])
+        if hw != weight:
+            findings.append(
+                f"the header says TOTAL {hw} guards but the rows carry {weight} "
+                f"({weight - hw:+d}) — the ledger was EDITED without going through "
+                "`--update-baseline`, which is the one path that records why")
+        if hr != nrows:
+            findings.append(
+                f"the header says {hr} rows but {nrows} are present ({nrows - hr:+d}) — a row "
+                "was added or deleted by hand")
+
+    prov = read_provenance(path)
+    if prov:
+        pm = PROV_TAIL_RE.search(prov[-1])
+        if pm:
+            if int(pm.group(2)) != weight:
+                findings.append(
+                    f"the last BASELINE-PROVENANCE line ends at W:{pm.group(2)} but the rows "
+                    f"carry {weight} — a weight moved after the last recorded refresh")
+            if int(pm.group(4)) != nrows:
+                findings.append(
+                    f"the last BASELINE-PROVENANCE line ends at R:{pm.group(4)} but {nrows} rows "
+                    "are present — a row moved after the last recorded refresh")
+    return findings
+
+
+BASELINE_PREAMBLE = [
+    "# guard-modules-baseline.txt — the BURNDOWN LEDGER for scripts/check-guard-modules.py.",
+    "#",
+    "# Each row is a metatheory/Dregg2 module that CARRIES a differential guard",
+    "# (#guard / #assert_axioms / #assert_namespace_axioms) but is either UNROOTED (built by",
+    "# no default lake target, so its guard never runs) or carries a real SORRY (its guard",
+    "# runs but is vacuous below the hole). This is the MinaWrapFtEval0Weld class: a headline",
+    "# nobody machine-checked.",
+    "#",
+    "# THIS IS A BURNDOWN LEDGER, NOT AN ACCEPTANCE LIST. A guard-carrying orphan is a wound",
+    "# to ROOT (add `import <module>` to metatheory/Dregg2.lean), not a permanent exemption.",
+    "# The gate FAILS on any (kind, module) NOT listed here (the NEXT silent claim reds",
+    "# immediately), on a STALE row (the module got rooted / the sorry got discharged / the",
+    "# file was deleted), and on a row whose WEIGHT DRIFTED in either direction — so a fix",
+    "# must retire its own row and the census can only ratchet DOWN. Run",
+    "# `python3 scripts/check-guard-modules.py --census` for the raw view that ignores this",
+    "# ledger entirely.",
+    "#",
+    "# ⚑ THE WEIGHT is how many guard commands the wound SILENCES. The TOTAL below is",
+    "# therefore one honest number: how many differential guards in this tree are not",
+    "# actually checking anything.",
+    "#",
+    "# ⚑⚑ DO NOT HAND-EDIT THIS FILE. It is written by",
+    "#      check-guard-modules.py --update-baseline --only <module> --reason '<why>'",
+    "#    which REFUSES to raise any row's weight (d1) or the TOTAL (d2) — the total is what",
+    "#    catches a module SPLIT, which grows the population while no row grows — and which",
+    "#    REQUIRES a reason (d3), stamped below with the sha and whether the tree was dirty.",
+    "#    Raising anything at all needs `--allow-increase --reason` and is stamped INCREASED.",
+    "#    A hand-edit is DETECTED on the next ordinary gate run: the header totals and the",
+    "#    last provenance line must both equal the rows actually present (arm (e)).",
+    "#",
+]
+
+
+def orphan_allow_modules(root: Path | None = None) -> set[str]:
+    """`lean-orphans-allow.txt` — the list `check-lean-orphans.sh` waves through. A
+    guard-carrying orphan is NOT waved through here, but whether it is at least a TRACKED
+    orphan is the single most useful thing a new row's reason can say."""
+    p = (root or repo_root()) / "scripts" / "lean-orphans-allow.txt"
+    out: set[str] = set()
+    if not p.is_file():
+        return out
+    for raw in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = raw.split("#", 1)[0].strip()
+        if s:
+            out.add(s)
+    return out
+
+
+def default_reason(kind: str, module: str, detail: str, allow: set[str]) -> str:
+    if kind == "unrooted":
+        return ("also-orphan-allow" if module in allow
+                else "UNTRACKED-ORPHAN — root first")
+    return detail
+
+
+def write_baseline(path: Path, rows: Rows, provenance: list[str]) -> None:
+    weight = sum(w for w, _ in rows.values())
+    n_unrooted = sum(1 for k, _ in rows if k == "unrooted")
+    n_sorry = sum(1 for k, _ in rows if k == "sorry")
+    lines = list(BASELINE_PREAMBLE)
+    lines.append(f"# TOTAL {weight} guards across {len(rows)} rows "
+                 f"({n_unrooted} unrooted, {n_sorry} sorry).")
+    lines.append("# FORMAT  <unrooted|sorry><TAB><dotted module><TAB><guards it silences>"
+                 "<TAB># reason / owner")
+    lines.extend(provenance)
+    for kind, banner in (("unrooted", "── UNROOTED (its guards run in no default lake target) ──"),
+                         ("sorry", "── SORRY (rooted; a guard below a real hole is vacuous) ──")):
+        sel = sorted(k for k in rows if k[0] == kind)
+        if not sel:
+            continue
+        lines.append("")
+        lines.append(f"# {banner}")
+        for k in sel:
+            w, reason = rows[k]
+            lines.append(f"{k[0]}\t{k[1]}\t{w}\t# {reason}" if reason
+                         else f"{k[0]}\t{k[1]}\t{w}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _head_sha_and_dirt() -> tuple[str, bool]:
+    """(sha, tree-is-dirty). ⚑ Dirtiness is RECORDED, not refused: 'which tree did this
+    number come from' is exactly the question a laundered refresh makes unanswerable."""
+    root = repo_root()
+    try:
+        sha = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        return ("unknown", True)
+    try:
+        st = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--", "metatheory"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+        return (sha, bool(st))
+    except Exception:
+        return (sha, True)
+
+
+def parse_selectors(only: list[str]) -> set[tuple[str, str]]:
+    """`Dregg2.Foo` -> both arms of that module; `unrooted:Dregg2.Foo` -> that arm only."""
+    sel: set[tuple[str, str]] = set()
+    for s in only:
+        s = s.strip()
+        if ":" in s:
+            kind, _, module = s.partition(":")
+            if kind not in KINDS:
+                raise ValueError(f"--only selector {s!r}: kind must be one of {KINDS}")
+            sel.add((kind, module))
+        else:
+            for kind in KINDS:
+                sel.add((kind, s))
+    return sel
+
+
+def refresh_baseline(path: Path, c: Census, reason: str | None, allow_increase: bool,
+                     quiet: bool = False, only: list[str] | None = None,
+                     enforce_floors: bool = True) -> int:
+    """⚑ THE REFRESH GATE. 0 on a written baseline, 3 on a REFUSED one.
+
+    Kept separate from `evaluate` on purpose: `evaluate` grades a CENSUS against a LEDGER,
+    this grades a proposed LEDGER against the standing one. Conflating them is exactly how
+    a refresh path ends up ungated — and this tool's refresh path did not merely end up
+    ungated, it did not EXIST, so the documented way to move the ledger was to hand-add
+    rows and nothing bounded the count."""
+    def say(*a):
+        if not quiet:
+            print(*a)
+
+    old = read_baseline(path)
+    allow = orphan_allow_modules()
+    live = c.rows()
+    proposed: Rows = {
+        k: (w, old[k][1] if k in old and old[k][1] else default_reason(k[0], k[1], d, allow))
+        for k, (w, d) in live.items()
+    }
+
+    unmatched: list[str] = []
+    if only is not None:
+        sel = parse_selectors(only)
+        known = set(old) | set(proposed)
+        for s in only:
+            if not any(k in known for k in parse_selectors([s])):
+                unmatched.append(s)
+        merged: Rows = dict(old)
+        for k in known:
+            if k not in sel:
+                continue
+            if k in proposed:
+                merged[k] = proposed[k]
+            else:
+                merged.pop(k, None)
+        untouched = sorted(k for k in proposed if k not in old and k not in sel)
+        proposed = merged
+        say(f"── targeted refresh: {len(sel)} selector key(s); "
+            f"{len(untouched)} unlisted wound(s) LEFT ALONE for their own lane ──")
+        for k in untouched[:10]:
+            say(f"     (untouched) {k[0]} {k[1]}")
+
+    old_w = sum(w for w, _ in old.values())
+    new_w = sum(w for w, _ in proposed.values())
+    rises = [(k, old[k][0], proposed[k][0]) for k in sorted(proposed)
+             if k in old and proposed[k][0] > old[k][0]]
+    added = {k: proposed[k][0] for k in proposed if k not in old}
+    removed = {k: old[k][0] for k in old if k not in proposed}
+
+    say(f"── proposed refresh: {old_w} → {new_w} silenced guards "
+        f"({len(old)} → {len(proposed)} rows) ──")
+    if rises:
+        say(f"   rows whose WEIGHT would RISE: {len(rises)}")
+        for k, a, b in rises:
+            say(f"     +{b - a}  {k[0]} {k[1]}: {a} → {b}")
+    if added:
+        say(f"   rows that would be ADDED: {len(added)} carrying {sum(added.values())} guards")
+        for k in sorted(added, key=lambda x: -added[x])[:10]:
+            say(f"     +{added[k]}  {k[0]} {k[1]}")
+    if removed:
+        say(f"   rows that would be RETIRED: {len(removed)} carrying {sum(removed.values())} guards")
+        for k in sorted(removed, key=lambda x: -removed[x])[:10]:
+            say(f"     -{removed[k]}  {k[0]} {k[1]}")
+
+    refusals: list[str] = []
+    floors = floor_findings(c) if enforce_floors else []
+    if floors:
+        refusals.append(
+            "(d0) the census is VACUOUS — a refresh from a blinded scan would WIPE the ledger "
+            "and every arm below would read it as a burndown: " + "; ".join(floors))
+    if rises and not allow_increase:
+        refusals.append(
+            f"(d1) {len(rises)} row(s) would gain WEIGHT — the ratchet only turns DOWN. Root or "
+            "discharge those modules, or re-run with `--allow-increase --reason '…'` and say why")
+    if new_w > old_w and not allow_increase:
+        refusals.append(
+            f"(d2) the TOTAL would RISE {old_w} → {new_w} (+{new_w - old_w}) with no row rising "
+            "by itself — this is the SPLIT/RENAME shape, where the original's row vanishes and "
+            "the pieces enter as new rows arm (c) would even demand. A genuine split's pieces "
+            "sum to at most the original")
+    if not reason:
+        refusals.append(
+            "(d3) `--reason` is REQUIRED — a refresh with no recorded reason is exactly the "
+            "silent one this gate exists to prevent")
+    if unmatched:
+        refusals.append(
+            "(d3) `--only` selector(s) matched NO baseline row and NO live wound: "
+            + ", ".join(repr(s) for s in unmatched)
+            + " — a typo'd selector would otherwise write an UNCHANGED ledger carrying a fresh "
+              "provenance line that says work was done")
+
+    if refusals:
+        say("")
+        for r in refusals:
+            say(f"REFUSED: {r}")
+        say("")
+        say("The baseline was NOT written.")
+        return 3
+
+    sha, dirty = _head_sha_and_dirt()
+    delta = new_w - old_w
+    verdict = "INCREASED" if delta > 0 else ("DECREASED" if delta < 0 else "LEVEL")
+    if delta == 0 and len(proposed) != len(old):
+        verdict = "DECREASED" if len(proposed) < len(old) else "INCREASED"
+    prov = read_provenance(path)
+    prov.append(f"{PROV_PREFIX} {sha}{'-DIRTY' if dirty else ''} "
+                f"W:{old_w}→{new_w} ({delta:+d}) R:{len(old)}→{len(proposed)} "
+                f"{verdict} — {reason}")
+    write_baseline(path, proposed, prov)
+    say(f"wrote {path} — {new_w} silenced guards across {len(proposed)} rows "
+        f"[{verdict} {delta:+d}]")
+    if verdict == "INCREASED":
+        say("⚑ this refresh RAISED the ledger. It is stamped INCREASED in the header and is "
+            "greppable; say so in the commit too.")
+    return 0
 
 
 def floor_findings(c: Census) -> list[str]:
@@ -416,13 +821,17 @@ def floor_findings(c: Census) -> list[str]:
 def print_census(c: Census, label: str) -> None:
     print(f"check-guard-modules [{label}]: {c.dregg2_files} Dregg2/**.lean, "
           f"{c.guard_modules} guard-carrying, {c.reachable} reachable")
-    print(f"  CENSUS: {len(c.unrooted)} unrooted, {len(c.sorry)} sorry-carrying (rooted)")
+    rows = c.rows()
+    n_unrooted = sum(1 for k, _ in rows if k == "unrooted")
+    n_sorry = sum(1 for k, _ in rows if k == "sorry")
+    print(f"  CENSUS: {n_unrooted} unrooted, {n_sorry} sorry-carrying (rooted) — "
+          f"{c.total_weight()} guard(s) silenced")
 
 
-def print_violation_rows(rows: list[tuple[str, str, str]], header: str) -> None:
+def print_violation_rows(rows: list[tuple[str, str, int, str]], header: str) -> None:
     print(header)
-    for kind, module, detail in rows:
-        print(f"  {kind.upper():9s} {module}   ({detail})")
+    for kind, module, weight, detail in rows:
+        print(f"  {kind.upper():9s} {module}  [{weight}]   ({detail})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────────
@@ -451,8 +860,7 @@ def extract_metatheory(git_root: Path, rev: str, dest: Path) -> Path:
 def evaluate(c: Census, baseline_path: Path, enforce_floors: bool,
              use_baseline: bool) -> int:
     floors = floor_findings(c) if enforce_floors else []
-    rows = c.violations()
-    row_keys = {(k, m) for k, m, _ in rows}
+    live = c.rows()
 
     fail = False
     if floors:
@@ -463,43 +871,79 @@ def evaluate(c: Census, baseline_path: Path, enforce_floors: bool,
 
     if not use_baseline:
         # raw census view: every violation fails.
-        if rows:
+        if live:
             fail = True
             print_violation_rows(
-                rows,
-                f"\ncheck-guard-modules: {len(rows)} guard-carrying module(s) UNROOTED or SORRY "
-                f"(each an unruns/vacuous claim):")
+                c.violations(),
+                f"\ncheck-guard-modules: {len(live)} guard-carrying module(s) UNROOTED or SORRY "
+                f"(each an unrun/vacuous claim):")
         return 1 if fail else 0
 
     baseline = read_baseline(baseline_path)
-    base_keys = {(k, m) for k, m, _ in baseline}
-    new = sorted(r for r in rows if (r[0], r[1]) not in base_keys)
-    stale = sorted(b for b in baseline if (b[0], b[1]) not in row_keys)
+    new = sorted(k for k in live if k not in baseline)
+    stale = sorted(k for k in baseline if k not in live)
+    grew = [(k, baseline[k][0], live[k][0]) for k in sorted(live)
+            if k in baseline and live[k][0] > baseline[k][0]]
+    shrank = [(k, baseline[k][0], live[k][0]) for k in sorted(live)
+              if k in baseline and live[k][0] < baseline[k][0]]
 
     if new:
         fail = True
         print_violation_rows(
-            new,
+            [(k[0], k[1], live[k][0], live[k][1]) for k in new],
             f"\ncheck-guard-modules: FAIL — {len(new)} NEW guard-carrying module(s) unrooted or "
             f"sorry-carrying, not in the baseline (a guard that never runs / runs below a hole):")
         print("\n  FIX one of:")
         print("    (a) ROOT it — add `import <module>` to metatheory/Dregg2.lean (or an aggregator")
         print("        already imported from there) so `lake build` runs its guards; OR")
         print("    (b) if it carries a sorry, discharge it (a #guard below a sorry is vacuous); OR")
-        print(f"    (c) if it is a tracked pre-existing wound, add a row to {baseline_path.name}:")
-        print("        <unrooted|sorry> <module>   # why it is not yet rooted/discharged, who owns it")
+        print(f"    (c) if it is a tracked pre-existing wound, record it — NEVER by hand:")
+        print("        check-guard-modules.py --update-baseline --allow-increase \\")
+        print("            --only <module> --reason 'why this wound is being tracked'")
+        print("        (which stamps INCREASED into the ledger, because it is one)")
 
     if stale:
         fail = True
         print(f"\ncheck-guard-modules: FAIL — {len(stale)} baseline row(s) are STALE (the wound they "
-              f"record is gone — rooted, discharged, or the file was deleted). Delete them; a stale "
-              f"baseline is how the next silent claim gets waved through:")
-        for kind, module, reason in stale:
-            print(f"  STALE  {kind.upper():9s} {module}   (was: {reason or 'no reason given'})")
+              f"record is gone — rooted, discharged, or the file was deleted). Retire them with "
+              f"`--update-baseline --only <module> --reason '…'`; a stale baseline is how the next "
+              f"silent claim gets waved through:")
+        for k in stale:
+            w, reason = baseline[k]
+            print(f"  STALE  {k[0].upper():9s} {k[1]}  [{w}]   (was: {reason or 'no reason given'})")
+
+    if grew:
+        fail = True
+        print(f"\ncheck-guard-modules: FAIL — {len(grew)} baseline row(s) GAINED weight: the module "
+              f"is still unrooted/sorry-carrying and someone added MORE guards to it. Every one of "
+              f"them runs in no build:")
+        for k, was, now in grew:
+            print(f"  GREW   {k[0].upper():9s} {k[1]}: {was} → {now}  (+{now - was})")
+
+    if shrank:
+        fail = True
+        print(f"\ncheck-guard-modules: FAIL — {len(shrank)} baseline row(s) carry a STALE WEIGHT (the "
+              f"wound is still live but smaller). Retire the number with `--update-baseline --only "
+              f"<module> --reason '…'` — a ledger that sits above its live weight holds SLACK, and "
+              f"slack is what a later refresh spends on new wounds without the total ever rising:")
+        for k, was, now in shrank:
+            print(f"  STALE-W {k[0].upper():8s} {k[1]}: baseline {was}, actual {now}  (−{was - now})")
+
+    # ⚑ arm (e) — the LEDGER's own integrity, on EVERY ordinary run. Reported after the
+    # census so a hand-edit cannot be mistaken for a census finding, and it reds on its own.
+    integrity = audit_baseline_integrity(baseline_path)
+    if integrity:
+        fail = True
+        print("\ncheck-guard-modules: FAIL — the BASELINE ITSELF does not add up (a gated refresh "
+              "was bypassed; see `--update-baseline`):")
+        for f in integrity:
+            print(f"  LEDGER  {f}")
 
     if not fail:
         print(f"\ncheck-guard-modules: PASS — every guard-carrying Dregg2 module is rooted and "
-              f"sorry-free, or a tracked baseline wound; {len(baseline)} baseline row(s), all live.")
+              f"sorry-free, or a tracked baseline wound at its recorded weight; {len(baseline)} "
+              f"baseline row(s) carrying {sum(w for w, _ in baseline.values())} silenced guard(s), "
+              f"all live, and the ledger adds up.")
     return 1 if fail else 0
 
 
@@ -522,9 +966,10 @@ def _build_synthetic(tree: Path) -> Path:
     # Good: rooted, guard-carrying, sorry-free -> CLEAN control (must NOT be flagged).
     _write(mt / "Root" / "Good.lean",
            "def Root.Good.x : Nat := 1\ntheorem Root.Good.t : x = 1 := rfl\n#assert_axioms Root.Good.t\n")
-    # Orphan: guard-carrying, imported by nothing -> UNROOTED violation.
+    # Orphan: guard-carrying (THREE guards -> weight 3), imported by nothing -> UNROOTED.
     _write(mt / "Root" / "Orphan.lean",
-           "-- a headline that never runs\n#guard (1 + 1) == 2\n")
+           "-- a headline that never runs\n#guard (1 + 1) == 2\n#guard (2 + 2) == 4\n"
+           "#assert_axioms Root.Orphan.t\n")
     # Sorried: rooted, guard-carrying, real sorry -> SORRY violation.
     _write(mt / "Root" / "Sorried.lean",
            "theorem Root.Sorried.t : True := by\n  sorry\n#guard true == true\n")
@@ -544,72 +989,279 @@ def run_self_test(git_root: Path) -> int:
     print("check-guard-modules: SELF-TEST (red-proof) — synthetic tree in a temp dir;")
     print("  the working tree is never touched by this mode.\n")
     failures = 0
+    arms = 0
 
     def quiet_eval(*a, **k) -> int:
         with contextlib.redirect_stdout(io.StringIO()):
             return evaluate(*a, **k)
 
+    def refresh(bl: Path, c: Census, reason, allow=False, only=None) -> int:
+        return refresh_baseline(bl, c, reason, allow, quiet=True, only=only,
+                                enforce_floors=False)
+
     tmp = Path(tempfile.mkdtemp(prefix="guard-modules-self-"))
     try:
         mt = _build_synthetic(tmp)
         c = scan(mt, scope_prefix="Root")
-        vk = {(k, m) for k, m, _ in c.violations()}
+        rows = c.rows()
 
         def check(name: str, held: bool, detail: str) -> None:
-            nonlocal failures
+            nonlocal failures, arms
+            arms += 1
             if held:
-                print(f"  {name:52s} \033[32mok\033[0m    {detail}")
+                print(f"  {name:58s} \033[32mok\033[0m    {detail}")
             else:
-                print(f"  {name:52s} \033[31mFAIL\033[0m  {detail}")
+                print(f"  {name:58s} \033[31mFAIL\033[0m  {detail}")
                 failures += 1
 
-        check("unrooted guard module flagged", ("unrooted", "Root.Orphan") in vk,
+        # ── the census arms (a)/(b) and their false-positive controls ──────────────
+        check("unrooted guard module flagged", ("unrooted", "Root.Orphan") in rows,
               "Root.Orphan reported UNROOTED")
-        check("rooted sorry-carrying guard flagged", ("sorry", "Root.Sorried") in vk,
+        check("rooted sorry-carrying guard flagged", ("sorry", "Root.Sorried") in rows,
               "Root.Sorried reported SORRY")
-        # control: the clean rooted guard module must NOT appear
         check("clean rooted guard NOT flagged (control)",
-              not any(m == "Root.Good" for _, m, _ in c.violations()),
+              not any(m == "Root.Good" for _, m in rows),
               "Root.Good absent from violations")
-        # decoy: rooted, and its admit-identifier + sorryAx-name-literal are NOT holes
         check("admit-identifier / sorryAx-name-literal NOT a hole",
-              not any(m == "Root.Decoy" for _, m, _ in c.violations()),
+              not any(m == "Root.Decoy" for _, m in rows),
               "Root.Decoy (rooted, no real hole) absent from violations")
-        # the raw-census verdict must be non-zero (violations exist)
+        check("a row's WEIGHT counts the guards the wound silences",
+              rows[("unrooted", "Root.Orphan")][0] == 3,
+              f"Root.Orphan weight={rows[('unrooted', 'Root.Orphan')][0]} (2 #guard + 1 #assert_axioms)")
+        check("several holes in one module are ONE row, not one per hit",
+              sum(1 for k in rows if k[0] == "sorry") == 1,
+              "Root.Sorried contributes exactly one `sorry` row")
         check("--census verdict is non-zero on violations",
               quiet_eval(c, git_root / "nonexistent", enforce_floors=False, use_baseline=False) == 1,
               "raw census exits 1")
 
-        # ratchet both directions: a baseline covering both -> green; then a new one -> red.
-        base_ok = tmp / "base_ok.txt"
-        _write(base_ok, "unrooted Root.Orphan\nsorry Root.Sorried\n")
-        check("baseline covering the census -> ratchet GREEN",
-              quiet_eval(c, base_ok, enforce_floors=False, use_baseline=True) == 0,
-              "green (exit 0) when both wounds are baselined")
+        # ── the ratchet arms against a ledger ─────────────────────────────────────
+        bl = tmp / "baseline.txt"
+        # ⚑ CREATING a ledger from nothing IS a rise (0 → n) and is refused like any other.
+        # That is not pedantry: DELETE-then-RECREATE is otherwise a silent way to relaunder a
+        # whole ledger, and this makes the recreate stamp INCREASED like everything else.
+        rc = refresh(bl, c, "create the synthetic ledger")
+        check("REFUSED (d2): CREATING a ledger from nothing needs --allow-increase",
+              rc == 3 and not bl.is_file(),
+              f"rc={rc} — delete-and-recreate cannot be a silent relaunder")
+        rc = refresh(bl, c, "self-test: record the synthetic census", allow=True)
+        check("CONTROL: a gate-written ledger greens its own census",
+              rc == 0 and quiet_eval(c, bl, enforce_floors=False, use_baseline=True) == 0,
+              f"rc={rc}, then evaluate == 0")
         base_partial = tmp / "base_partial.txt"
-        _write(base_partial, "sorry Root.Sorried\n")  # Orphan now un-baselined -> NEW
+        _write(base_partial, "# TOTAL 1 guards across 1 rows\nsorry\tRoot.Sorried\t1\n")
         check("un-baselined new violation -> ratchet RED",
               quiet_eval(c, base_partial, enforce_floors=False, use_baseline=True) == 1,
-              "red (exit 1) on a new unrooted guard module")
+              "red on a new unrooted guard module")
         base_stale = tmp / "base_stale.txt"
-        _write(base_stale, "unrooted Root.Orphan\nsorry Root.Sorried\nunrooted Root.GhostGone\n")
+        _write(base_stale, "# TOTAL 5 guards across 3 rows\nunrooted\tRoot.Orphan\t3\n"
+                           "sorry\tRoot.Sorried\t1\nunrooted\tRoot.GhostGone\t1\n")
         check("stale baseline row -> ratchet RED",
               quiet_eval(c, base_stale, enforce_floors=False, use_baseline=True) == 1,
-              "red (exit 1) on a baseline row whose wound is gone")
-
-        # a blinded reader (empty scan) must trip every non-vacuity floor, not read clean.
-        empty = Census()
+              "red on a baseline row whose wound is gone")
+        base_low = tmp / "base_low.txt"
+        _write(base_low, "# TOTAL 2 guards across 2 rows\nunrooted\tRoot.Orphan\t1\n"
+                         "sorry\tRoot.Sorried\t1\n")
+        check("a row that GAINED weight -> ratchet RED",
+              quiet_eval(c, base_low, enforce_floors=False, use_baseline=True) == 1,
+              "red when a tracked orphan accumulates more silent guards")
+        base_high = tmp / "base_high.txt"
+        _write(base_high, "# TOTAL 10 guards across 2 rows\nunrooted\tRoot.Orphan\t9\n"
+                          "sorry\tRoot.Sorried\t1\n")
+        check("a row carrying a STALE (too high) weight -> ratchet RED",
+              quiet_eval(c, base_high, enforce_floors=False, use_baseline=True) == 1,
+              "red on ledger slack — slack is what a later refresh spends")
         check("floors bite an empty (blinded) scan",
-              len(floor_findings(empty)) == 3,
+              len(floor_findings(Census())) == 3,
               "0 files / 0 guards / 0 reachable all trip their floor")
+
+        # ── ⚑ THE REFRESH GATE (d0/d1/d2/d3) ──────────────────────────────────────
+        # `bl` holds the synthetic census exactly. These arms grade a proposed LEDGER
+        # against the standing one — the path that did not exist in this tool at all.
+        before = bl.read_text(encoding="utf-8")
+        rc = refresh(bl, c, None)
+        check("REFUSED (d3): a refresh with NO --reason is refused", rc == 3, f"rc={rc}")
+        check("(d3) …and the ledger on disk is UNTOUCHED by the refusal",
+              bl.read_text(encoding="utf-8") == before, "byte-identical after the refusal")
+
+        _write(mt / "Root" / "Orphan.lean",
+               "#guard (1+1) == 2\n#guard (2+2) == 4\n#assert_axioms t\n#guard (3+3) == 6\n")
+        c_up = scan(mt, scope_prefix="Root")
+        before = bl.read_text(encoding="utf-8")
+        rc = refresh(bl, c_up, "trying to bake in a regrowth")
+        check("REFUSED (d1): a refresh that RAISES a row's weight is refused", rc == 3, f"rc={rc}")
+        check("(d1) …and the ledger on disk is UNTOUCHED by the refusal",
+              bl.read_text(encoding="utf-8") == before, "byte-identical after the refusal")
+
+        # (d2) ⚑ THE LAUNDERING SHAPE. Split the tracked orphan into pieces that SUM
+        # HIGHER. No row rises (the original's row vanishes, the pieces are new rows),
+        # and arm (c) would even DEMAND those new rows exist. Only the TOTAL sees it.
+        (mt / "Root" / "Orphan.lean").unlink()
+        _write(mt / "Root" / "Orphan1.lean", "#guard (1+1) == 2\n#guard (2+2) == 4\n")
+        _write(mt / "Root" / "Orphan2.lean", "#guard (3+3) == 6\n#assert_axioms t\n")
+        c_split = scan(mt, scope_prefix="Root")
+        base_rows = read_baseline(bl)
+        split_rises = [k for k in c_split.rows()
+                       if k in base_rows and c_split.rows()[k][0] > base_rows[k][0]]
+        check("(d2) the SPLIT raises the total while NO row rises (the shape itself)",
+              c_split.total_weight() > sum(w for w, _ in base_rows.values()) and not split_rises,
+              f"rises={split_rises}, total "
+              f"{sum(w for w, _ in base_rows.values())}→{c_split.total_weight()}")
+        rc = refresh(bl, c_split, "split Orphan into Orphan1/Orphan2")
+        check("REFUSED (d2): a SPLIT whose pieces sum HIGHER is refused", rc == 3, f"rc={rc}")
+
+        # …and a split whose pieces sum to AT MOST the original is ACCEPTED — the gate
+        # blocks laundering, not splitting. (Row COUNT deliberately does not ratchet.)
+        _write(mt / "Root" / "Orphan2.lean", "#guard (3+3) == 6\n")
+        c_lvl = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_lvl, "split Orphan into two pieces summing to the original")
+        check("CONTROL: a LEVEL split (pieces sum to the original) is ACCEPTED",
+              rc == 0 and len(read_baseline(bl)) == 3, f"rc={rc}, rows={len(read_baseline(bl))}")
+        check("…and the census is GREEN against the refreshed ledger",
+              quiet_eval(c_lvl, bl, enforce_floors=False, use_baseline=True) == 0,
+              "evaluate == 0 after an accepted refresh")
+
+        # a legitimate DOWNWARD refresh, and provenance
+        (mt / "Root" / "Orphan2.lean").unlink()
+        c_down = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_down, "rooted Orphan2 (it is gone from the census)")
+        check("a legitimate DOWNWARD refresh with a reason is ACCEPTED", rc == 0, f"rc={rc}")
+        prov = read_provenance(bl)
+        check("…and it STAMPED provenance into the header",
+              any("DECREASED" in ln and "rooted Orphan2" in ln for ln in prov),
+              f"{len(prov)} provenance line(s)")
+        check("…and provenance ACCUMULATES (earlier refreshes are still on the record)",
+              len(prov) >= 3, f"{len(prov)} provenance line(s)")
+        check("…and provenance records the SHA and the tree's dirtiness",
+              bool(re.search(r'BASELINE-PROVENANCE \S+ W:\d+', prov[-1])), prov[-1][:90])
+
+        # the override exists, is LOUD, and still needs a reason
+        _write(mt / "Root" / "Loud.lean", "#guard 5 == 5\n#guard 6 == 6\n")
+        c_loud = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_loud, None, allow=True)
+        check("--allow-increase STILL requires --reason", rc == 3, f"rc={rc}")
+        rc = refresh(bl, c_loud, "new orphan, paid for later", allow=True)
+        check("--allow-increase with a reason is ACCEPTED", rc == 0, f"rc={rc}")
+        check("…and the rise is stamped INCREASED (greppable, never silent)",
+              any("INCREASED" in ln for ln in read_provenance(bl)),
+              f"{len(read_provenance(bl))} provenance line(s)")
+
+        # (d0) a blinded census must not be able to WIPE the ledger
+        before = bl.read_text(encoding="utf-8")
+        rc = refresh_baseline(bl, Census(), "wipe it", False, quiet=True, enforce_floors=True)
+        check("REFUSED (d0): a refresh from a BLINDED census is refused", rc == 3, f"rc={rc}")
+        check("(d0) …and the ledger on disk is UNTOUCHED by that refusal",
+              bl.read_text(encoding="utf-8") == before, "byte-identical; the ledger survived")
+
+        # ── ⚑ `--only`: a lane retires ITS rows and cannot absorb a sibling's ──────
+        (mt / "Root" / "Loud.lean").unlink()
+        c_reset = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_reset, "reset for the --only arm", allow=True)
+        check("setup: ledger holds the lane's row", rc == 0 and ("unrooted", "Root.Orphan1") in read_baseline(bl),
+              f"rc={rc}")
+        _write(mt / "Root" / "SiblingWip.lean", "#guard 7 == 7\n#guard 8 == 8\n#guard 9 == 9\n")
+        (mt / "Root" / "Orphan1.lean").unlink()       # this lane rooted its own module
+        c_only = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_only, "retire Orphan1", only=["Root.Orphan1"])
+        after = read_baseline(bl)
+        check("--only retires the NAMED row",
+              rc == 0 and ("unrooted", "Root.Orphan1") not in after, f"rc={rc}")
+        check("⚑ --only does NOT absorb the sibling's unlisted wound",
+              ("unrooted", "Root.SiblingWip") not in after, "sibling row absent")
+        check("…and the sibling's module still REDS as unlisted (its lane must own it)",
+              quiet_eval(c_only, bl, enforce_floors=False, use_baseline=True) == 1,
+              "evaluate == 1")
+        rc = refresh(bl, c_only, "kind-qualified selector", only=["unrooted:Root.SiblingWip"])
+        check("--only accepts a `kind:module` selector",
+              rc == 3, f"rc={rc} — refused by (d2), the row would ADD weight")
+        rc = refresh(bl, c_only, "kind-qualified selector", allow=True,
+                     only=["unrooted:Root.SiblingWip"])
+        check("…and with --allow-increase it adopts exactly that one row",
+              rc == 0 and ("unrooted", "Root.SiblingWip") in read_baseline(bl), f"rc={rc}")
+        _write(mt / "Root" / "SiblingWip.lean", "#guard 7 == 7\n#guard 8 == 8\n"
+                                               "#guard 9 == 9\n#guard 10 == 10\n")
+        c_grow = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_grow, "sneak the row back up", only=["Root.SiblingWip"])
+        check("--only is STILL subject to (d1)/(d2): it cannot raise its own row",
+              rc == 3, f"rc={rc}")
+        before = bl.read_text(encoding="utf-8")
+        rc = refresh(bl, c_only, "retire a module I misspelled", only=["Root.Orphn1"])
+        check("REFUSED (d3): an `--only` selector that matches NOTHING is refused",
+              rc == 3 and bl.read_text(encoding="utf-8") == before,
+              "a typo must not stamp provenance on an unchanged ledger")
+        try:
+            parse_selectors(["nosuchkind:Root.Orphan1"])
+            bad_kind = False
+        except ValueError:
+            bad_kind = True
+        check("an `--only` selector with an unknown KIND is rejected outright",
+              bad_kind, "parse_selectors raises")
+
+        # ── ⚑ ARM (e): the LEDGER checks itself, so an EDITOR cannot route around it ──
+        _write(mt / "Root" / "SiblingWip.lean", "#guard 7 == 7\n")
+        c_e = scan(mt, scope_prefix="Root")
+        rc = refresh(bl, c_e, "clean state for the integrity arm")
+        check("setup: a gate-written baseline is self-consistent",
+              rc == 0 and not audit_baseline_integrity(bl),
+              f"rc={rc} findings={audit_baseline_integrity(bl)}")
+        check("…and a surviving row KEEPS its reason column across refreshes",
+              all(r for _, r in read_baseline(bl).values()),
+              "every row still carries a reason")
+
+        txt = bl.read_text(encoding="utf-8")
+        hand = txt.replace("Root.SiblingWip\t1", "Root.SiblingWip\t9")
+        check("the hand-edit actually changed a weight", hand != txt, "replacement applied")
+        bl.write_text(hand, encoding="utf-8")
+        f_e = audit_baseline_integrity(bl)
+        check("RED (e): a HAND-RAISED weight is DETECTED (header TOTAL no longer adds up)",
+              any("EDITED without going through" in x for x in f_e), f"findings={len(f_e)}")
+        check("(e) …and the provenance tail catches it INDEPENDENTLY",
+              any("after the last recorded refresh" in x for x in f_e), f"findings={len(f_e)}")
+        check("(e) …and an ORDINARY gate run reds on it (not only a refresh)",
+              quiet_eval(c_e, bl, enforce_floors=False, use_baseline=True) == 1,
+              "evaluate == 1 with a census that would otherwise be green")
+
+        bl.write_text(txt.rstrip("\n") + "\nunrooted\tRoot.PastedIn\t0\n", encoding="utf-8")
+        check("RED (e): a HAND-PASTED row is DETECTED (header row count no longer matches)",
+              any("added or deleted by hand" in x for x in audit_baseline_integrity(bl)),
+              f"findings={len(audit_baseline_integrity(bl))}")
+
+        bl.write_text("unrooted\tRoot.Orphan1\t3\n", encoding="utf-8")
+        check("RED (e): a baseline with NO header was not written by the gated refresh",
+              any("no `# TOTAL" in x for x in audit_baseline_integrity(bl)),
+              f"findings={len(audit_baseline_integrity(bl))}")
+
+        bl.write_text("# TOTAL 3 guards across 1 rows\nunrooted Root.Orphan1  # old format\n",
+                      encoding="utf-8")
+        check("RED (e): an OLD-FORMAT (weightless) row is refused as unreadable",
+              any("CANNOT READ" in x for x in audit_baseline_integrity(bl)),
+              f"findings={len(audit_baseline_integrity(bl))}")
+
+        bl.write_text(txt.replace("# TOTAL", "# TOTAL 99 guards across 99 rows\n# TOTAL", 1),
+                      encoding="utf-8")
+        check("RED (e): a SECOND `# TOTAL` line (forged header) is refused",
+              any("`# TOTAL` lines" in x for x in audit_baseline_integrity(bl)),
+              f"findings={len(audit_baseline_integrity(bl))}")
+
+        rc = refresh(bl, c_e, "regenerate after the hand-edits", allow=True)
+        check("CONTROL: a gate-written refresh RESTORES integrity (a detector, not a trap)",
+              rc == 0 and not audit_baseline_integrity(bl),
+              f"rc={rc} findings={audit_baseline_integrity(bl)}")
+        check("CONTROL: and the census is GREEN again afterwards",
+              quiet_eval(c_e, bl, enforce_floors=False, use_baseline=True) == 0,
+              "evaluate == 0")
+        check("a MISSING baseline file reports no integrity finding (absence is arm (c)'s job)",
+              audit_baseline_integrity(tmp / "nope.txt") == [], "no findings for a missing file")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print()
     if failures:
-        print(f"check-guard-modules --self-test: FAIL — {failures} red-proof assertion(s) did not hold")
+        print(f"check-guard-modules --self-test: FAIL — {failures}/{arms} red-proof assertion(s) "
+              f"did not hold")
         return 1
-    print("check-guard-modules --self-test: all red-proof assertions held (control green, faults red)")
+    print(f"check-guard-modules --self-test: {arms}/{arms} red-proof assertions held "
+          f"(controls green, faults red)")
     return 0
 
 
@@ -621,6 +1273,20 @@ def main() -> int:
     ap.add_argument("--print-census", action="store_true", help="list every violation and exit 0")
     ap.add_argument("--self-test", action="store_true", help="red-proof against a synthetic tree")
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="rewrite the ledger from the current census (retire fixed rows). REFUSES "
+                         "to raise any row's weight or the total; requires --reason")
+    ap.add_argument("--reason", help="why this refresh happens — stamped into the ledger header "
+                                     "with the sha and the tree's dirtiness. Required by "
+                                     "--update-baseline")
+    ap.add_argument("--allow-increase", action="store_true",
+                    help="⚑ permit a refresh that RAISES a row or the total. Still requires "
+                         "--reason, and stamps INCREASED into the header")
+    ap.add_argument("--only", action="append", metavar="SELECTOR",
+                    help="⚑ refresh ONLY these rows (repeatable). `Dregg2.Foo` or "
+                         "`unrooted:Dregg2.Foo`. Every other row keeps its standing value — so a "
+                         "lane in a shared tree cannot absorb a sibling's in-flight wounds. Use "
+                         "this by default")
     ap.add_argument("--metatheory-dir", type=Path, help="override the metatheory dir (testing)")
     args = ap.parse_args()
 
@@ -657,7 +1323,14 @@ def main() -> int:
             print_violation_rows(c.violations(), "\nfull census (every guard-carrying unrooted/sorry module):")
             return 0
 
+        if args.update_baseline:
+            return refresh_baseline(args.baseline, c, args.reason, args.allow_increase,
+                                    only=args.only)
+
         return evaluate(c, args.baseline, enforce_floors=True, use_baseline=not args.census)
+    except ValueError as e:
+        print(f"check-guard-modules: FATAL — {e}", file=sys.stderr)
+        return 2
     finally:
         if tmpdir is not None:
             shutil.rmtree(tmpdir, ignore_errors=True)
