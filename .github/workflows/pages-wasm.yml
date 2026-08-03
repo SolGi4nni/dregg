@@ -90,8 +90,8 @@ jobs:
           set -euo pipefail
           if [ ! -d ../plonky3-recursion/.git ]; then
             git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
-            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+            git -C ../plonky3-recursion fetch --depth 1 origin fc3c6dfac26e2082653d2a617a1740446ce33f05
+            git -C ../plonky3-recursion checkout fc3c6dfac26e2082653d2a617a1740446ce33f05
           fi
       - name: Build the WebImage cockpit wasm (starbridge-v2/web, default features)
         run: wasm-pack build starbridge-v2/web --target web --out-dir pkg --release
@@ -125,8 +125,8 @@ jobs:
           set -euo pipefail
           if [ ! -d ../plonky3-recursion/.git ]; then
             git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
-            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+            git -C ../plonky3-recursion fetch --depth 1 origin fc3c6dfac26e2082653d2a617a1740446ce33f05
+            git -C ../plonky3-recursion checkout fc3c6dfac26e2082653d2a617a1740446ce33f05
           fi
       - name: Build the full gpui-web cockpit wasm (starbridge-v2/web --features gpui-web)
         # Carries the documented matrix+zed `links="sqlite3"` resolution wall
@@ -160,8 +160,8 @@ jobs:
           set -euo pipefail
           if [ ! -d ../plonky3-recursion/.git ]; then
             git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-            git -C ../plonky3-recursion fetch --depth 1 origin 0a4a554e144f4e60107555ea7a11cd9969d6208b
-            git -C ../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
+            git -C ../plonky3-recursion fetch --depth 1 origin fc3c6dfac26e2082653d2a617a1740446ce33f05
+            git -C ../plonky3-recursion checkout fc3c6dfac26e2082653d2a617a1740446ce33f05
           fi
       - name: Build the card-world wasm (wasm/) with the light-client stack headroom
         # BOTH FLAGS TRAVEL TOGETHER OR NEITHER WORKS. `.cargo/config.toml` sets

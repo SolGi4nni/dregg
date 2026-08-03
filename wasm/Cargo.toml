@@ -283,17 +283,19 @@ p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
 # workspace via a sibling checkout. `dregg-circuit`'s `p3-*` deps are
 # `{ workspace = true }` and resolve against the ROOT workspace (circuit is a
 # root member), whose git pin is the pushed fork tip
-# `0a4a554e144f4e60107555ea7a11cd9969d6208b` (the `update-plonky3-rev` tip:
-# GPU recursion prove path, descends from 993efec's deterministic verifier
-# op-list; keep this comment, the root Cargo.toml pin, and pages.yml's
-# clone rev in lockstep — they are the SAME circuit or the VK forks). cargo
+# `fc3c6dfac26e2082653d2a617a1740446ce33f05` (the `update-plonky3-rev` tip: a
+# constant's VALUE is now a PREPROCESSED column of `ConstAir`, so every
+# preprocessed commitment — and every `RecursionVk` derived from one — moves.
+# It descends from 0a4a554's GPU recursion prove path by two commits; keep this
+# comment, the root Cargo.toml pin, and pages-wasm.yml's clone rev in lockstep —
+# they are the SAME circuit or the VK forks). cargo
 # forbids a `[patch]` that re-points a git source to a different rev of the
 # SAME URL, so the override is a path patch onto the sibling checkout:
 #   git clone https://github.com/emberian/plonky3-recursion ../../plonky3-recursion
-#   git -C ../../plonky3-recursion checkout 0a4a554e144f4e60107555ea7a11cd9969d6208b
-# CI does exactly this (`.github/workflows/pages.yml`,`extension.yml`,
-# `publish-sdk-ts.yml` clone the sibling at rev `0a4a554` — the pushed
-# `update-plonky3-rev` tip carrying the VK-determinism fix); a dev clone does the
+#   git -C ../../plonky3-recursion checkout fc3c6dfac26e2082653d2a617a1740446ce33f05
+# CI does exactly this (`.github/workflows/pages-wasm.yml`,`extension.yml`,
+# `publish-sdk-ts.yml` clone the sibling at rev `fc3c6df` — the pushed
+# `update-plonky3-rev` tip carrying the ConstAir preprocessed-value change); a dev clone does the
 # same (README "What you need"). The root pins above sit at this same tip
 # (root Cargo.toml [patch] block comment has the runbook). NOTE: if the local
 # sibling runs AHEAD of the push, a locally built

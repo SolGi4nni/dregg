@@ -119,7 +119,22 @@ pub const RECURSIVE_VK_PROGRAM_BYTES: &[u8] = b"dregg-effect-vm-recursive-v1";
 /// Reconciled to the rev independently established by `Cargo.lock` (every
 /// `plonky3-recursion` entry) and the `[workspace.dependencies]` pin, which has
 /// no `[patch]`-to-sibling override (`Cargo.toml:157-162`).
-pub const RECURSION_P3_REV: &str = "0a4a554e144f4e60107555ea7a11cd9969d6208b";
+///
+/// ⚑ **RECONCILED AGAIN 2026-08-02 — AND THE GATE DID NOT CATCH IT THIS TIME EITHER.**
+/// The identical failure recurred, three days live: `d7ba0c4d3` (2026-07-30) moved the
+/// authoritative pin to `fc3c6df` while this constant stayed at `0a4a554e`, two fork
+/// commits behind. `fc3c6df` is a FLAG DAY — a constant's VALUE became a PREPROCESSED
+/// column of `ConstAir`, so *every* preprocessed commitment and *every* `RecursionVk`
+/// derived from one moves — which is exactly the case where a stale proving-system id
+/// is most dangerous: recursive proofs built against `0a4a554e` stayed
+/// indistinguishable-by-VK-hash from `fc3c6df` ones.
+///
+/// The reason the "LOCKSTEP-ENFORCED" claim above did not hold: `d7ba0c4d3` wrote the
+/// pin ABBREVIATED (`rev = "fc3c6df"`, seven hex), and `check-p3-rev.sh` matched only
+/// `[0-9a-f]{40}`. It extracted no rev from the authoritative source and reported the
+/// pin as VANISHED rather than as DRIFTED — a red nobody could attribute. The gate now
+/// accepts a 7--40 hex pin and resolves it through `Cargo.lock`.
+pub const RECURSION_P3_REV: &str = "fc3c6dfac26e2082653d2a617a1740446ce33f05";
 
 /// Returns the verifier-source fingerprint used in the recursive VK
 /// hash. Deterministic: BLAKE3 of a stable string identifying this
