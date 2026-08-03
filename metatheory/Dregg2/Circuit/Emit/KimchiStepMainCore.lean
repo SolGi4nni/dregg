@@ -586,6 +586,28 @@ which is the wrong `t` and hence the wrong `u`; §19 emits `group_map` over this
 exhibit's `u` values move with it. -/
 def uSqueezeVar (s : StepShape) : PVar := vSt s (sqBlock s (uChalIx s) + 1) 0
 
+/-! ### ⚑⚑ §22 — **`sponge_digest_before_evaluations` IS A CELL THIS TRANSCRIPT ALREADY COMPUTES.**
+
+`step_verifier.ml:573-574`:
+
+    let sponge_before_evaluations = Sponge.copy sponge in
+    let sponge_digest_before_evaluations = Sponge.squeeze_field sponge in
+
+⚑ **AND IT COSTS NO PERMUTATION, read at source.** Mina's sponge is a LAZY rate-2 state machine
+(`snarky/sponge/sponge.ml:294`: `rate = m − capacity = 3 − 1 = 2`). ζ at `:568` is
+`sample_scalar → squeeze_scalar → Sponge.squeeze`, which on an `Absorbed _` state permutes, sets
+`Squeezed 1` and returns `state.(0)` (`:322-325`). The very next `squeeze_field` at `:574` finds
+`Squeezed 1` with `n ≠ rate`, so it takes the `else` branch (`:319-321`): **no permutation, return
+`state.(1)`.** ζ and the digest are lane 0 and lane 1 of ONE permutation output.
+
+That lane is already a wired cell here: `transcriptRows`' squeeze block emits
+`permBlockRows … (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2)` and already probes lanes 0/1. So
+the digest needs no new row, no new variable and no new block — it needs to be NAMED. -/
+
+/-- ⚑ **`sponge_digest_before_evaluations`** — lane 1 of the state ζ's squeeze permutation produced
+(`step_verifier.ml:574`; `chalOf` reads lane 0 of the same state as ζ). -/
+def digestBeforeEvalsVar (s : StepShape) : PVar := vSt s (sqBlock s s.zetaChal + 1) 1
+
 /-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
 
 `snarky_curve.ml:212-217`: `let x2 = square x in let x3 = x2 * x in let ax = Params.a * x in
@@ -717,9 +739,16 @@ def baseSegA (s : StepShape) : Nat := baseIdx s + N_IDX_VARS
 /-- Segment A (the opt-sponge): `2·bRounds` masked words, one squeeze. -/
 def nbA (s : StepShape) : Nat := (2 * s.bRounds + 1) / 2
 def baseSegB (s : StepShape) : Nat := baseSegA s + segVarCount (nbA s) 1
-/-- Segment B (the fr-sponge): the digest, `ft_eval1`, `p(ζ)`, `p(ζω)` and the 43 columns at both
-points, two squeezes (ξ′ and r′). -/
-def nbB (s : StepShape) : Nat := (4 + 2 * (s.cipEvals - 4) + 1) / 2
+/-- ⚑ Segment B (the fr-sponge): **the SEED**, the challenge digest, `ft_eval1`, `p(ζ)`, `p(ζω)` and
+the 43 columns at both points, two squeezes (ξ′ and r′).
+
+⚑ **THE FIVE-WORD PREFIX IS FIVE SINCE 2026-08-03 (§22).** It was four: `finalize_other_proof`'s own
+absorbs (`step_verifier.ml:962-965`) start at `challenge_digest`, and this segment started there too
+— but the sponge `finalize_other_proof` is HANDED is not a fresh one. `step_main.ml:41-46` creates it
+and absorbs `proof_state.sponge_digest_before_evaluations` FIRST, so the fr-sponge's first word is
+Wrap statement word 10 and every squeeze off this segment is a function of it. -/
+def SEG_B_PREFIX : Nat := 5
+def nbB (s : StepShape) : Nat := (SEG_B_PREFIX + 2 * (s.cipEvals - 4) + 1) / 2
 def baseSegC (s : StepShape) : Nat := baseSegB s + segVarCount (nbB s) 2
 /-- Segment C (the INNER `hash_messages_for_next_step_proof_opt`, `step_main.ml:66-81`), one
 squeeze. `N_HM_FIX` prefix words + two slots of `(commitment ×2, bRounds challenges)`. -/
@@ -820,38 +849,46 @@ constrained witness at 0 in the honest instance. What that does NOT weaken: the 
 `vCipShift`, and R8 binds it. -/
 def CIP_BIT : Nat := 0
 
-/-! ### ⚑ The THREE Wrap statement words with no in-circuit source (§21).
+/-! ### ⚑ The Wrap statement words with no in-circuit source — TWO since §22, and word 10 is gone.
 
-`multiscale_known`'s scalars are the packed Wrap statement, forty words. Twenty-eight of them are
-already variables this assembly DERIVES (§2c's `stmtVar`); nine are the one-bit words, which emit no
-ladder at all; **three are not here, and each one is a named absence rather than a wire to something
+`multiscale_known`'s scalars are the packed Wrap statement, forty words. Twenty-nine of them are
+variables this assembly DERIVES (§2c's `stmtVar`); nine are the one-bit words, which emit no ladder
+at all; **two are not here, and each one is a named absence rather than a wire to something
 convenient.** They get their own cells so that the MSM's σ class for word `i` is word `i`'s and not
 some unrelated challenge's.
 
-  * **word 10 — `sponge_digest_before_evaluations`.** Upstream this word IS the fr-sponge's FIRST
-    absorbed item: `step_main.ml:41-46` seeds `Sponge.create` with
-    `proof_state.sponge_digest_before_evaluations` and hands that sponge to `finalize_other_proof`,
-    whose own absorbs (`step_verifier.ml:962-965`) start at `challenge_digest`. **Segment B here
-    starts at `challenge_digest` — the seed absorb is MISSING**, which is why the word has no
-    derived cell. (`verify_one`'s `sponge_digest_before_evaluations_actual` is a different object: it
-    is compared against `unfinalized`'s copy at `:1269-1271`, not against this statement word.)
-  * **word 11 — `messages_for_next_wrap_proof`.** `step_main.ml:84` SUBSTITUTES it into the
-    statement from `verify_one`'s own argument; nothing inside `verify_one` derives it.
-  * **word 39 — the lookup `Opt`'s inner `Scalar Challenge`** (`spec.ml:123-140`,
-    `composition_types.ml:655-666`). This assembly models no lookup.
+  * ✅ **word 10 — `sponge_digest_before_evaluations` — CLOSED 2026-08-03 (§22).** It had a cell
+    (`vStmtDigest`) and no source. It has neither now: `stmtVar 10` is `digestBeforeEvalsVar`, the
+    transcript's OWN lane-1 cell at ζ's squeeze (`step_verifier.ml:573-574`), and segment B's first
+    absorbed word is that same cell (`step_main.ml:41-46`). Derived AND consumed; see §2b/§8e.
+  * **word 11 — `messages_for_next_wrap_proof`.** `step_main.ml:85` SUBSTITUTES it into the
+    statement from `verify_one`'s own argument (`:35`), and that argument is
+    `exists (Vector.typ Digest.typ Max_proofs_verified.n) ~request:Req.Messages_for_next_wrap_proof`
+    at **`step_main.ml:364-366`** — a REQUESTED WITNESS of the whole step circuit. ⚑ So this is not
+    an absence in this assembly: upstream derives it nowhere either, and its ONLY in-circuit consumer
+    upstream is the same x_hat ladder it has here. **Faithful as it stands; nothing to land.**
+  * **word 39 — the lookup `Opt`'s inner `Scalar Challenge`** (`spec.ml:94-99,123-141`,
+    `composition_types.ml:655-666`). This assembly models no lookup. ⚠ Read at source, `Spec.pack`'s
+    `Opt` `None` arm packs `dummy2` — `Sc.create lookup_parameters.zero.var.challenge`, which
+    `step_main.ml:91` sets to `Field.zero` — and a `` `Packed_bits (Constant 0, _) `` is dropped by
+    `multiscale_known`'s partition (`step_verifier.ml:138-140`), which would make word 39 a CONSTANT
+    with no ladder at all. **That inference is REFUTED by Mina's own compiled circuit**, whose x_hat
+    cluster is `2×1 26×22 51×8` = 31 ladders, 982 chunks: `51×8` is words 0–4 and 10–12, `2×1` is
+    word 29, and `26×22` is the five challenge words, the sixteen bulletproof words **and one more**
+    — word 39. So the `None` arm is not what `step-zkapp-proved` compiles, the word is a live
+    26-chunk ladder, and landing it needs the lookup sub-circuit this assembly does not have.
 
-⚠ So THREE of the forty x_hat scalars are prover-chosen here. That is the residue §21 leaves, and it
-is smaller and more precisely placed than the shared transcript challenge it replaces. -/
-def vStmtDigest (s : StepShape) : PVar := xv (baseStmt s + 11)
-/-- Wrap statement word 11 — see `vStmtDigest`. -/
-def vStmtWrapMsgs (s : StepShape) : PVar := xv (baseStmt s + 12)
+⚠ So TWO of the forty x_hat scalars are prover-chosen here, one of which (11) is prover-chosen
+upstream too. -/
+/-- Wrap statement word 11 — see the note above. -/
+def vStmtWrapMsgs (s : StepShape) : PVar := xv (baseStmt s + 11)
 /-- Wrap statement words 30..38 — the eight `Plonk_types.Features` flags and the lookup `Opt`'s own
 flag bit. `msmChunksAt = 0` on all nine, so NO row ever reads these cells; they exist so that
 `stmtVar` is total and injective on the statement rather than folding nine words onto one name. -/
-def vStmtFlag (s : StepShape) (k : Nat) : PVar := xv (baseStmt s + 13 + k)
-/-- Wrap statement word 39 — see `vStmtDigest`. -/
-def vStmtLookup (s : StepShape) : PVar := xv (baseStmt s + 22)
-def N_STMT : Nat := 23
+def vStmtFlag (s : StepShape) (k : Nat) : PVar := xv (baseStmt s + 12 + k)
+/-- Wrap statement word 39 — see the note above. -/
+def vStmtLookup (s : StepShape) : PVar := xv (baseStmt s + 21)
+def N_STMT : Nat := 22
 
 /-! ### ⚑ `prev_challenges` — the PREVIOUS proofs' carried bulletproof challenges.
 
@@ -1239,8 +1276,9 @@ already holds each word:
     5,6    beta, gamma                             `vN β/γ emsRows` R2's decoded prechallenge
     7,8    alpha, zeta                             `vN α/ζ emsRows` R2's decoded prechallenge
     9      xi                                      `vXiStmt`        R8's `xi_correct`, §8g's lift
-    10     sponge_digest_before_evaluations        `vStmtDigest`    ⚠ NO SOURCE (§8f)
-    11     messages_for_next_wrap_proof            `vStmtWrapMsgs`  ⚠ NO SOURCE (§8f)
+    10     sponge_digest_before_evaluations        `digestBeforeEvalsVar`  ⚑ §22 — R1's ζ-squeeze
+                                                                    lane 1, and segment B's SEED
+    11     messages_for_next_wrap_proof            `vStmtWrapMsgs`  ⚠ NO SOURCE — nor upstream
     12     messages_for_next_step_proof            segment C's squeeze — `hmDigestVar`
     13–28  bulletproof_challenges ×16              `vN (uChal k) emsRows`  R8's `b_correct` folds
                                                                     these SAME sixteen
@@ -1290,7 +1328,10 @@ def stmtVar (s : StepShape) (i : Nat) : PVar :=
   else if i == 7 then vN s s.alphaChal s.emsRows
   else if i == 8 then vN s s.zetaChal s.emsRows
   else if i == 9 then vXiStmt s
-  else if i == 10 then vStmtDigest s
+  -- ⚑ §22: `sponge_digest_before_evaluations`, spelled out of R1's own block schedule rather than
+  -- given a statement cell. `digestBeforeEvalsVar` is §2b's name for the same expression and §22
+  -- pins the two equal, which makes this a gate between two sources rather than an alias.
+  else if i == 10 then vSt s (sqBlock s s.zetaChal + 1) 1
   else if i == 11 then vStmtWrapMsgs s
   -- ⚑ segment C's SQUEEZE, spelled out rather than reached for: `hmDigestVar` is `sgSt (baseSegC s)
   -- … (nbC s + 1) 0` and `sgSt` is §8e, below this point. §21 pins the two expressions equal, which
@@ -1743,6 +1784,14 @@ def hiOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
 `group_map` is a function of this. -/
 def uSqueezeVal (s : StepShape) (d : SpongeData) : Nat :=
   (d.states.getD (sqBlock s (uChalIx s) + 1) []).getD 0 0
+
+/-- ⚑ **`sponge_digest_before_evaluations`'s VALUE** — lane 1 of the state ζ's squeeze produced; the
+variable is `digestBeforeEvalsVar` (§2b). ⚑ Identical across `mkStepWith`'s two transcript passes:
+the `cip` absorb is block `oCip`, which comes AFTER ζ's squeeze (`step_verifier.ml:256` vs `:568`,
+§12i), so nothing the second pass changes reaches this state. That is why seeding the fr-sponge with
+it closes no cycle. -/
+def digestBeforeEvalsVal (s : StepShape) (d : SpongeData) : Nat :=
+  (d.states.getD (sqBlock s s.zetaChal + 1) []).getD 1 0
 
 /-- ⚑ `Endo.Wrap_inner_curve.scalar` (`endo.ml:7`) — the SCALAR-challenge endomorphism of `Fp`, the
 constant `to_field_checked` scales `a₈` by. NOT `FT_ENDO`, which is the BASE endomorphism
@@ -3625,6 +3674,18 @@ def sgD (base nb sq b j : Nat) : PVar :=
   xv (base + 3 * (nb + sq + 1) + 5 * nb + 3 * b + j)
 def sgP (base nb sq b j : Nat) : PVar :=
   xv (base + 3 * (nb + sq + 1) + 8 * nb + 3 * b + j)
+/-- ⚑ **THE RATE-2 PAD LANE** — the second lane of a segment's LAST absorb block when its word list
+is odd. Mina's sponge is LAZY (`snarky/sponge/sponge.ml:296-308`): `absorb` fills lanes `0..rate−1`
+and only permutes when the rate is already full, so an odd final word sits alone in lane 0 and the
+first `squeeze` (`:322-325`) permutes it. Adding a PINNED ZERO to lane 1 is that permutation exactly,
+and `segRows` emits the `w = 0` row that pins it — a padded lane that were a free witness would be
+one more field element the prover feeds the sponge.
+
+The cell comes out of the segment's own RESERVED tail — `segVarCount`'s trailing `nb`, the ids the
+retired per-block `keep` region left behind — so no region moves and `segVarCount` is unchanged. -/
+def sgPad (base nb sq : Nat) : PVar := xv (base + 3 * (nb + sq + 1) + 11 * nb)
+/-- Does this segment's word list need the pad lane? -/
+def SegSpec.padded (g : SegSpec) : Bool := g.ws.length % 2 == 1
 /-- ⚑ `hash_messages_for_next_step_proof`'s OUTPUT — segment C's squeeze. Upstream this IS the step
 statement's `messages_for_next_step_proof` hash, which the step circuit carries as a public word
 (`step_main.ml:121,522`). Exposing it is what makes segment C's mask REACH the verifier: change
@@ -3647,20 +3708,28 @@ def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow 
   let nb := g.nb
   let sq := g.squeezes
   let stv := g.stV base nb sq
+  -- ⚑ absorbed word `k`, with the PAD LANE as the default rather than `xv 0`. An odd word list used
+  -- to fall through `getD`'s default and wire variable ZERO — the transcript's own pinned init lane
+  -- — into the last block's addend row, i.e. a σ class across two sponges for a lane that carries
+  -- nothing. `sgPad` is this segment's own cell and the row below pins it.
+  let wAt : Nat → PVar × Nat := fun k => g.ws.getD k (sgPad base nb sq, 0)
   -- ⚑ A FRESH sponge pins its own `[0,0,0]`; a COPY has no init rows at all, because its block-0
   -- lanes are the source sponge's variables and the source's own rows already computed them.
   (if g.copyFrom.isSome then []
    else [ genericRow (some (sgSt base nb sq 0 0)) none none (some (sgSt base nb sq 0 1)) none none
             (cConst 0 ++ cConst 0)
         , genericRow (some (sgSt base nb sq 0 2)) none none none none none (cConst 0 ++ cNil) ])
+  ++ (if g.padded then
+        [ genericRow (some (sgPad base nb sq)) none none none none none (cConst 0 ++ cNil) ]
+      else [])
   ++ (List.range g.blocks).flatMap (fun b =>
       if b < nb then
         let out : Nat → PVar :=
           if g.maskedAt b then (fun j => sgAfter base nb sq b j)
           else (fun j => stv (b + 1) j)
-        [ genericRow (some (stv b 0)) (some (g.ws.getD (2 * b) (xv 0, 0)).1)
+        [ genericRow (some (stv b 0)) (some (wAt (2 * b)).1)
                      (some (sgPost base nb sq b 0))
-                     (some (stv b 1)) (some (g.ws.getD (2 * b + 1) (xv 0, 0)).1)
+                     (some (stv b 1)) (some (wAt (2 * b + 1)).1)
                      (some (sgPost base nb sq b 1)) (cAdd ++ cAdd) ]
         ++ permBlockRows (sgPost base nb sq b 0) (sgPost base nb sq b 1) (stv b 2)
              (out 0) (out 1) (out 2) (d.perms.getD b [])
@@ -3693,6 +3762,8 @@ def segEnv (base : Nat) (g : SegSpec) (d : SegData) : VarEnv :=
   let sq := g.squeezes
   ((List.range (g.blocks + 1)).filter (fun b => b != 0 || g.copyFrom.isNone)).flatMap (fun b =>
     (List.range 3).map (fun j => (sgSt base nb sq b j, ((d.states.getD b []).getD j 0 : Int))))
+  -- ⚑ the pad lane's own cell, at the zero `segRows` pins it to.
+  ++ (if g.padded then [(sgPad base nb sq, (0 : Int))] else [])
   ++ (List.range nb).flatMap (fun b =>
       let pre := d.states.getD b []
       (List.range 2).map (fun j =>
@@ -3771,8 +3842,16 @@ def optSpec (s : StepShape) : SegSpec :=
   { ws := (List.range s.optWords).map (fun i => (vPrevChal s i, prevChalVal i))
   , squeezes := 1, masked := true, keep := optKeep s }
 
-def frSpec (s : StepShape) (dg : PVar × Nat) (ftVal : Nat) : SegSpec :=
-  { ws := [ dg, (vEw s 3, evVal 3 1), (vEz s 2, evZOf ftVal 2), (vEw s 2, evVal 2 1) ]
+/-- ⚑⚑ **THE fr-SPONGE, WITH ITS SEED** (§22). `sd` is `step_main.ml:41-46`'s
+`Sponge.absorb sponge (\`Field proof_state.sponge_digest_before_evaluations)` — the FIRST item the
+sponge `finalize_other_proof` runs ever eats, and the reason Wrap statement word 10 is not a free
+witness. `dg` is `challenge_digest` (`step_verifier.ml:962`), which is where this segment used to
+start; then `ft_eval1`, `p(ζ)`, `p(ζω)` (`:963-965`) and `to_absorption_sequence`'s 2×43 columns.
+
+⚑ 5 + 2·43 = 91 words is ODD, so this segment carries the rate-2 PAD LANE (`sgPad`), which is
+Mina's own lazy sponge leaving the last word alone in lane 0 until the first squeeze permutes. -/
+def frSpec (s : StepShape) (sd : PVar × Nat) (dg : PVar × Nat) (ftVal : Nat) : SegSpec :=
+  { ws := [ sd, dg, (vEw s 3, evVal 3 1), (vEz s 2, evZOf ftVal 2), (vEw s 2, evVal 2 1) ]
       ++ (List.range s.frCols).flatMap (fun k =>
           [ (vColZ s k, evZOf ftVal (EV_PREFIX + k))
           , (vColW s k, evVal (EV_PREFIX + k) 1) ])
@@ -4655,10 +4734,8 @@ structure StepData where
 
 /-! ### ⚑ §2c's VALUE side — the packed Wrap statement, word by word. -/
 
-/-- ⚠ Wrap statement word 10's VALUE. `vStmtDigest` has no in-circuit source (§8f), so this is a
-deterministic fixture and the ladder's scalar is the prover's here. -/
-def STMT_DIGEST_VAL : Nat := (31 + 7000019 * 10 + 13 * 101) % pN
-/-- ⚠ Wrap statement word 11's VALUE — see `STMT_DIGEST_VAL`. -/
+/-- ⚠ Wrap statement word 11's VALUE. `vStmtWrapMsgs` has no in-circuit source — and neither does
+upstream's (`step_main.ml:364-366` `exists`-es it) — so this is a deterministic fixture. -/
 def STMT_WRAPMSG_VAL : Nat := (41 + 7000019 * 11 + 13 * 121) % pN
 /-- ⚠ Wrap statement word 39's VALUE — the lookup `Opt`'s inner `Scalar Challenge`, so it is a
 `Challenge`-width word and must stay under `2¹²⁸` or its 26-chunk ladder cannot close. -/
@@ -4677,7 +4754,7 @@ is what makes §21's red control statable: bending `ch` at a challenge some word
 vector; bending it at one no word carries — at the committed shape, `u`, the fifteen `bullet_reduce`
 prechallenges past ζ are words 13–28, so what is left over is `c`, ξ and r — moves NOTHING. Under
 the retired round-robin every challenge moved forty terms. -/
-def msmScalars (s : StepShape) (ch : Nat → Nat) (ft : FtData) (fin : FinData)
+def msmScalars (s : StepShape) (ch : Nat → Nat) (sd : Nat) (ft : FtData) (fin : FinData)
     (segC : SegData) (i : Nat) : Nat :=
   if i == 0 then fin.cipShift
   else if i == 1 then fin.bShift
@@ -4688,7 +4765,9 @@ def msmScalars (s : StepShape) (ch : Nat → Nat) (ft : FtData) (fin : FinData)
   else if i == 7 then ch s.alphaChal
   else if i == 8 then ch s.zetaChal
   else if i == 9 then fin.xiStmt
-  else if i == 10 then STMT_DIGEST_VAL
+  -- ⚑ §22: `digestBeforeEvalsVal`, the transcript's own ζ-squeeze lane 1. `ch` cannot supply it —
+  -- `chalOf` is lane 0 masked to `chalBits`, and this word is a full 255-bit `Digest`.
+  else if i == 10 then sd
   else if i == 11 then STMT_WRAPMSG_VAL
   else if i == 12 then (segC.states.getLastD []).getD 0 0
   else if i < 29 then ch (s.uChal (i - 13))
@@ -4716,7 +4795,11 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let dg : PVar × Nat :=
     (sgSt (baseSegA s) (nbA s) 1 specA.blocks 0,
      (segA.states.getLastD []).getD 0 0)
-  let specB0 := frSpec s dg ft0.out
+  -- ⚑ §22 — THE SEED. `step_main.ml:41-46`: the sponge `finalize_other_proof` is handed already
+  -- carries `proof_state.sponge_digest_before_evaluations`. Read off THIS pass's transcript rather
+  -- than shared with pass 2 — the two agree (ζ's squeeze precedes the `cip` absorb) and §22 pins
+  -- that as an equality instead of assuming it here.
+  let specB0 := frSpec s (digestBeforeEvalsVar s, digestBeforeEvalsVal s sp0) dg ft0.out
   let defc0 := runDefc (runSeg specB0) specB0
   -- ⚑ the SHIFTED value, because that is what `:257-259` unwraps and absorbs
   -- (`Shifted_value.Type2.Shifted_value x -> x`) and it is exactly `vCipShift`, the statement word
@@ -4745,7 +4828,7 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   let uc := runUc tSq cipV
   let ipa := runIpa s bs sp ftc.out uc.res
   let ftv := ft.out
-  let specB := frSpec s dg ftv
+  let specB := frSpec s (digestBeforeEvalsVar s, digestBeforeEvalsVal s sp) dg ftv
   let segB := runSeg specB
   -- ⚑ §8g: ξ and r, squeezed from the fr-sponge and lifted, are the fold's multipliers.
   let defc := runDefc segB specB
@@ -4769,7 +4852,7 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   -- R8's own cells and one is segment C's squeeze. Nothing above depends on `msm`: segment C absorbs
   -- `sg_old` (§12k's correction), not the x_hat sum, and R8 does not read it. The chain is
   -- `sponge → ft → fold → fr-sponge → finalize → segment C → x_hat`, still no cycle.
-  let msm := runMsm s bs (msmScalars s (chalOf s sp) ft fin segC)
+  let msm := runMsm s bs (msmScalars s (chalOf s sp) (digestBeforeEvalsVal s sp) ft fin segC)
   { sh := s, sp := sp, msm := msm, ipa := ipa, ft := ft, ftw := ftw, ftc := ftc
   , defc := defc, df := df, bp := bp, gXY := gA
   , fin := fin
@@ -4996,10 +5079,10 @@ def circuitEnv (t : StepData) : VarEnv :=
      , (vBranch s, (branchPacked : Int)), (vDomLog2 s, (BRANCH_DOMAIN_LOG2 : Int))
      , (vMask s 0, (MASK_BITS.getD 0 0 : Int)), (vMask s 1, (MASK_BITS.getD 1 0 : Int))
      , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int))
-     -- ⚑ §2c's three sourceless statement words. Their ONLY consumer is the x_hat ladder, which is
-     -- exactly what "no in-circuit source" means; the nine one-bit words get no entry because no row
-     -- reads them.
-     , (vStmtDigest s, (STMT_DIGEST_VAL : Int)), (vStmtWrapMsgs s, (STMT_WRAPMSG_VAL : Int))
+     -- ⚑ §2c's sourceless statement words — TWO since §22, word 10 having become the transcript's
+     -- own `digestBeforeEvalsVar`. Their ONLY consumer is the x_hat ladder, which is exactly what
+     -- "no in-circuit source" means; the nine one-bit words get no entry because no row reads them.
+     , (vStmtWrapMsgs s, (STMT_WRAPMSG_VAL : Int))
      , (vStmtLookup s, (STMT_LOOKUP_VAL : Int)) ]
   ++ aEnvOf (baseFin s t.ft) t.fin.fp.prog t.fin.vals
 

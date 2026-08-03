@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15504 guards across 1166 modules (2311 .lean files scanned).
+# TOTAL 15502 guards across 1166 modules (2320 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -16,6 +16,7 @@
 # BASELINE-PROVENANCE 7a3150244-DIRTY 15523→15602 (+79) INCREASED — ⚑ DEBT MARKER, NOT APPROVAL. 79 guards in the LIVE wrap_main lane's cone (9fca6a76f, d0cf0426d) — the Pickles wrap-assembly. Rowed rather than converted ONLY because that lane is mid-flight and its Lean must not be edited from here; the guards are its owner's to burn down, and this row exists so the ratchet can go green without laundering the growth into silence. Disposition: CONVERT, not keep — the same treatment the two Wrap welds' 118 got in a7de6a0e2. The row must SHRINK, and no other module may hide behind it
 # BASELINE-PROVENANCE 8e28ce67a-DIRTY 15602→15582 (-20) DECREASED — W-KEY lane: 20 guards in KimchiWrapMain became 3 named kernel-clean theorems (12a reality gate, 11b endo, 11c branch_data packing); §14/§14b added 14 more theorems and zero guards
 # BASELINE-PROVENANCE ef39d6c5d-DIRTY 15582→15504 (-78) DECREASED — limbed-tally re-authoring: the three peer-chain light clients' non-golden #guards became named theorems (only the byte-pinned emitVmJson2 golden remains a guard in each)
+# BASELINE-PROVENANCE 384ae9c70-DIRTY 15504→15502 (-2) DECREASED — §22: two segment-B word-count guards became the named theorem segment_b_absorbs_ninety_one_words_and_is_the_only_padded_segment
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -406,7 +407,7 @@
 71	Dregg2/Circuit/Emit/KimchiStepMainPins04.lean
 62	Dregg2/Circuit/Emit/KimchiStepMainPins05.lean
 74	Dregg2/Circuit/Emit/KimchiStepMainPins06.lean
-57	Dregg2/Circuit/Emit/KimchiStepMainPins07.lean
+55	Dregg2/Circuit/Emit/KimchiStepMainPins07.lean
 72	Dregg2/Circuit/Emit/KimchiStepMainPins08.lean
 23	Dregg2/Circuit/Emit/KimchiStepMainPins09.lean
 71	Dregg2/Circuit/Emit/KimchiStepMainPins10.lean

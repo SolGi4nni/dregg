@@ -224,12 +224,15 @@ theorem every_scheduled_variable_has_a_witness_entry :
 
 /-- …and it is not vacuous: `rowsS` really does wire variables (a schedule of all-`none` perms would
 satisfy the `all` above trivially). ⚑ An EQUALITY, not a bound — a bound is what "a deleted chain
-would still satisfy" looks like. `4011` rows carry `13041` wired permutation cells; both numbers move
+would still satisfy" looks like. `4025` rows carry `13054` wired permutation cells; both numbers move
 deliberately or not at all. ⚑ It was `3861`/`12441` until §20 gave R3's ladders their per-word widths
 (`…Pins15`): the smoke shape's three MSM terms are Wrap statement words 0–2, all `Field`, so they run
-at 51 chunks instead of 26 and the rung gains `3·25·2 = 150` rows. -/
+at 51 chunks instead of 26 and the rung gained `3·25·2 = 150` rows. ⚑ And `4011`/`13041` until §22
+(`…Pins17`) gave the fr-sponge its SEED: segment B's 91st word is a 46th absorb block, so the rung
+gains its addend row (2 wired cells), its 12-row `permBlockRows` (11 wired cells) and the pad lane's
+own `w = 0` pin — **+14 rows, +13 cells**, the pin row wiring one cell. -/
 theorem the_schedule_wires_variables :
-    (rowsS.length = 4011 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 13041) := by
+    (rowsS.length = 4025 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 13054) := by
   native_decide
 #assert_compiled the_schedule_wires_variables
 

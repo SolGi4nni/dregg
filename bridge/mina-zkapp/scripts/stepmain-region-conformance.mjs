@@ -411,7 +411,13 @@ const LEDGER = {
     // constant statement words' `Inner_curve.constant` base pins, two halves each, which upstream
     // never emits because it folds those bases into `constant_part` outside the circuit
     // (`step_verifier.ml:133-152`). The circuit moved; the instrument did not.
-    expect: '678/3283 halves differ by EXACT coefficient vector [daacc3a37f552f8b]; 502 of those differ '
+    // ⚑ MOVED AGAIN 2026-08-03 by §22 (the fr-sponge's SEED ABSORB): 678/3283 [daacc3a37f552f8b] →
+    // this. Segment B's 91st absorbed word is a 46th block, which brings its `cAdd ++ cAdd` addend
+    // row (two halves, both matching Snarky) and the pad lane's `cConst 0 ++ cNil` pin (two halves,
+    // the `cNil` one all-zero). Total 3283 → 3287, exact-misses 678 → 679 and family-misses 502 →
+    // 503 — the SAME one half, the all-zero tail, which `generic/empty-second-half` also counts.
+    // Family-MATCHES are 176, unchanged: nothing new here is a Snarky shape carrying our constants.
+    expect: '679/3287 halves differ by EXACT coefficient vector [a8dcbafea71719d8]; 503 of those differ '
       + 'by SHAPE FAMILY (constants→K, sign-normalized), so 176 are the same family carrying our constants',
     note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
       + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
@@ -421,7 +427,9 @@ const LEDGER = {
     why: 'UNRECORDED — COMPILER WASTE, classified 2026-08-02',
     // ⚑ 165 → 166 on 2026-08-03: §20 left `msmNZeroRows` with 31 halves to pack instead of 40, and
     // an odd count leaves one more tail. The mechanism this entry describes, one instance larger.
-    expect: '166 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
+    // ⚑ 166 → 167 later the same day (§22): segment B's rate-2 PAD LANE gets a `w = 0` pin row, and
+    // a one-cell pin is `cConst 0 ++ cNil` — the `cNil` is the empty half. Same mechanism again.
+    expect: '167 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
     note: 'A half constraining nothing. NOT a dropped constraint and NOT padding of an operand — measured by '
       + 'construction: no permutation-classed cell, no live witness value, and every host row carries a real '
       + "equation in its first half. It is our per-site packing (`packHalves`, `aRows`) against Snarky's ONE "
@@ -463,7 +471,10 @@ const LEDGER = {
   },
   'scope/unassembled-subcircuits': {
     why: '#5 group_map · equal_g · check_bulletproof `scale_fast` of sg · rule.main',
-    expect: 'Poseidon 206/572 VBM51 16/20',
+    // ⚑ Poseidon 206 → 207 on 2026-08-03 (§22): the fr-sponge's seed absorb makes segment B's word
+    // list 91 long, i.e. one more rate-2 block, i.e. one more permutation. Our count RISING is the
+    // direction this entry wants — it is the subset closing, not a shrinkage.
+    expect: 'Poseidon 207/572 VBM51 16/20',
     note: 'Mina gadget instances with no counterpart here. SUBSET-NESS, not failure — counted so a shrinkage is visible.',
   },
 };

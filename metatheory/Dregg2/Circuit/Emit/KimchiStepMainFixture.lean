@@ -877,13 +877,17 @@ def chalS : Nat → Nat := chalOf shapeSmoke tS.sp
 /-- …with challenge `c` bent by one. -/
 def chalSBent (c : Nat) : Nat → Nat := fun k => if k == c then chalS k + 1 else chalS k
 
+/-- ⚑ §22 — `sponge_digest_before_evaluations`, the value word 10 now CARRIES: lane 1 of the state
+ζ's squeeze produced, read off the smoke assembly's own transcript. -/
+def sdS : Nat := digestBeforeEvalsVal shapeSmoke tS.sp
+
 /-- ⚑ The HONEST scalar vector — the packed Wrap statement, at the smoke assembly's own data. -/
-def scalHon : Nat → Nat := msmScalars shapeSmoke chalS tS.ft tS.fin tS.segC
+def scalHon : Nat → Nat := msmScalars shapeSmoke chalS sdS tS.ft tS.fin tS.segC
 /-- …with statement word `w` bent by one, and NOTHING else touched. -/
 def scalBentW (w : Nat) : Nat → Nat := fun i => if i == w then scalHon i + 1 else scalHon i
 /-- …and the honest vector recomputed under a bent transcript challenge. -/
 def scalHonBentChal (c : Nat) : Nat → Nat :=
-  msmScalars shapeSmoke (chalSBent c) tS.ft tS.fin tS.segC
+  msmScalars shapeSmoke (chalSBent c) sdS tS.ft tS.fin tS.segC
 
 /-- ⚠ **THE RETIRED WIRING** — `vSN i (msmChunksAt i) = vN (i % chals) emsRows`, i.e. term `i`'s
 scalar is transcript challenge `i % chals`. Kept HERE and nowhere else, because it is the thing §21's
@@ -897,13 +901,19 @@ def msmAt (f : Nat → Nat) : MsmData := runMsm shapeSmoke (stepBases shapeSmoke
 /-- …and its OUTPUT, `multiscale_known`'s sum — the point that becomes `x_hat`. -/
 def xhatAt (f : Nat → Nat) : Nat × Nat := (msmAt f).sums.getLastD (0, 0)
 
-/-- ⚑ The COMMITTED shape's scalar vector as a function of the challenge accessor ALONE. The three
-data arguments are `default` deliberately: the claim under test is which arguments the vector
-DEPENDS ON, and a real `FtData`/`FinData`/`SegData` at `shapeStep` would cost the whole 10k-row
-assembly to say the same thing. -/
-def stepScal (ch : Nat → Nat) : List Nat :=
+/-- ⚑ The COMMITTED shape's scalar vector as a function of the challenge accessor and, since §22, of
+`sponge_digest_before_evaluations` (word 10) — so the seed can be bent independently of every
+challenge. The three data arguments are `default` deliberately: the claim under test is which
+arguments the vector DEPENDS ON, and a real `FtData`/`FinData`/`SegData` at `shapeStep` would cost
+the whole 10k-row assembly to say the same thing.
+
+`SD_PROBE` is a distinctive constant: it must not collide with a `chalInj` value, or "word 10 moved"
+and "some challenge word moved" would be indistinguishable in the list comparison. -/
+def SD_PROBE : Nat := 424242
+def stepScalSd (ch : Nat → Nat) (sd : Nat) : List Nat :=
   (List.range shapeStep.msmTerms).map
-    (msmScalars shapeStep ch (default : FtData) (default : FinData) (default : SegData))
+    (msmScalars shapeStep ch sd (default : FtData) (default : FinData) (default : SegData))
+def stepScal (ch : Nat → Nat) : List Nat := stepScalSd ch SD_PROBE
 /-- A challenge accessor that is injective on `0..chals`, and the same bent at `c`. -/
 def chalInj : Nat → Nat := fun c => 1000 + c
 def chalInjBent (c : Nat) : Nat → Nat := fun k => if k == c then 1001 + k else 1000 + k
@@ -919,6 +929,70 @@ def tStep : StepData := mkStep shapeStep
 
 /-- …and the forty scalars it hands `multiscale_known`. -/
 def stepScalHon : Nat → Nat :=
-  msmScalars shapeStep (chalOf shapeStep tStep.sp) tStep.ft tStep.fin tStep.segC
+  msmScalars shapeStep (chalOf shapeStep tStep.sp)
+    (digestBeforeEvalsVal shapeStep tStep.sp) tStep.ft tStep.fin tStep.segC
+
+-- ── §22 — THE fr-SPONGE's SEED ABSORB ──────────────────────────────────────────────────────────
+
+/-! ⚑ Everything below is stated on the SMOKE assembly's own segment B, re-run under one bent word.
+`runSeg` is the emitter's own evaluator, so a "the squeeze moved" claim is about the emitted
+trajectory and not about a parallel model of it. -/
+
+/-- Segment B with the word at position `k` bent by one — `bendW` is §12k's own transform. -/
+def segBBent (k : Nat) : SegData := runSeg { tS.specB with ws := bendW tS.specB.ws k }
+
+/-- …and the two squeezes off it. `tS.specB` supplies `nb`/`squeezes`, which the bend does not
+move, so `frSqueezeVal` reads the same block of a different trajectory. -/
+def frSq1Bent (k : Nat) : Nat := frSqueezeVal (segBBent k) tS.specB
+def frSq2Bent (k : Nat) : Nat := frSqueeze2Val (segBBent k) tS.specB
+
+/-- ⚠ **THE RETIRED WIRING** — segment B WITHOUT the seed, i.e. `frSpec` as it stood before
+2026-08-03: the fr-sponge starting at `challenge_digest`. Kept HERE and nowhere else, because it is
+the thing §22's control refutes. Its `ws` is `tS.specB`'s with the first word dropped, so the two
+differ in exactly the seed and in nothing else. -/
+def specBNoSeed : SegSpec := { tS.specB with ws := tS.specB.ws.drop 1 }
+def segBNoSeed : SegData := runSeg specBNoSeed
+/-- …and the retired segment under a bent SEED. The seed is not in its word list at all, so this is
+the leg that says the instrument would have been blind: the same bend, and nothing to bend. -/
+def segBNoSeedBentSeed : SegData :=
+  runSeg { specBNoSeed with ws := bendW tS.specB.ws 0 |>.drop 1 }
+
+/-- ⚑ The honest `xi_correct` comparand — `lowest_128_bits` of the fr-sponge's first squeeze, which
+R8 compares against statement word 9. -/
+def xiActualOf (sq : Nat) : Nat := sq % 2 ^ 128
+
+/-- ⚑⚑ **R8 AT A BENT SEED.** The prover moves Wrap statement word 10 and NOTHING else: the fr-sponge
+is re-run with the bent seed, and every other input — `vXiStmt` above all — stays at the value the
+honest assembly holds. The `Field.equal` witnesses are set the way an honest prover would have to set
+them for the bent instance (`bit = 0`, `inv = d⁻¹` on the ξ leg), so what this measures is R8's own
+gadget refusing, not a witness nobody could produce. Returns the `out` slot — the value R8's last row
+asserts equals 1. -/
+def finOutAtBentSeed : Nat :=
+  let s := shapeSmoke
+  let sqBent := frSq1Bent 0
+  -- the honest env, with ONLY the fr-sponge's first squeeze moved: `vXiStmt` stays honest.
+  let env := (finInputEnv s tS.sp tS.ft tS.df tS.segB tS.specB rFoldS tS.bp.ver).map
+    (fun p => if p.1 == frSqueezeVar s then (p.1, (sqBent : Int)) else p)
+  let d := fSub (xiActualOf sqBent) tS.fin.xiStmt
+  let C : FinCfg :=
+    { finCfgOf s (sqBent / 2 ^ 128) with
+      eqInv := (List.replicate 4 0).set 0 (Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv d)
+      eqBit := (List.replicate 4 1).set 0 0 }
+  let p := finProgOf (finWireOf s tS.ft) C
+  (aEval (envLookupAt (envIndex env)) p.prog).getD p.slots.out 0
+
+/-- ⚑ The transcript with the word absorbed at ordinal `a`, lane `j`, bent by one — `runSpongeAt` is
+the assembly's OWN generator, so this is the emitted transcript at one changed input. -/
+def spWordBent (a j : Nat) (w : Nat) : SpongeData :=
+  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest (cipWordOf tS) a j w
+
+/-- ⚑ The LAST `t_comm` chunk — absorbed at `:567`, i.e. strictly BEFORE ζ's squeeze at `:568`, so
+the digest lane is downstream of it. §12e′ already grinds this same word. -/
+def sdPreZetaBent : Nat :=
+  digestBeforeEvalsVal shapeSmoke (spWordBent tcOrd 1 (fAdd tcHon 1))
+
+/-- ⚑ …and the `combined_inner_product` word, absorbed at `:256` — strictly AFTER ζ's squeeze, so
+the digest lane is UPSTREAM of it and must not move. This is the same object `spCip` bends. -/
+def sdPostZetaBent : Nat := digestBeforeEvalsVal shapeSmoke spCip
 
 end Dregg2.Circuit.Emit.KimchiStepMain

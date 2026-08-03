@@ -55,7 +55,9 @@ prover's here: word 10 `sponge_digest_before_evaluations`, word 11 `messages_for
 word 39 the lookup `Opt`'s inner `Scalar Challenge`. Each is named at its own cell rather than
 aliased to a convenient challenge, and word 10's absence is a MEASURABLE gap one rung out: upstream
 seeds the fr-sponge with it (`step_main.ml:41-46`) and segment B here starts at `challenge_digest`.
--/
+
+⚑ **§22 CLOSED WORD 10 (2026-08-03).** The residue is TWO, and the theorem below is renamed to say
+so. See `…Pins17`. -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
 
 namespace Dregg2.Circuit.Emit.KimchiStepMain
@@ -167,20 +169,21 @@ theorem the_sixteen_bulletproof_words_are_b_corrects_own_prechallenges :
   native_decide
 #assert_compiled the_sixteen_bulletproof_words_are_b_corrects_own_prechallenges
 
-/-- ⚠ ⚑ **THE RESIDUE, COUNTED: EXACTLY THREE WORDS HAVE NO IN-CIRCUIT SOURCE.** Words 10, 11 and 39
-get their own cells in the statement region, and those cells occur at exactly one statement index
-each — so the residue is three ladders whose scalar this circuit does not derive, and not a shared
-cell quietly doing duty for several. `msmChunksAt` on them is 51, 51 and 26, i.e. they are LADDERS
-and not the nine folded-out one-bit words. -/
-theorem exactly_three_statement_words_have_no_in_circuit_source :
-    (stmtVar shapeStep 10 = vStmtDigest shapeStep
-     ∧ stmtVar shapeStep 11 = vStmtWrapMsgs shapeStep
+/-- ⚠ ⚑ **THE RESIDUE, COUNTED — TWO WORDS SINCE §22, AND WORD 10 IS NO LONGER ONE OF THEM.** Words
+11 and 39 get their own cells in the statement region, and those cells occur at exactly one statement
+index each — so the residue is two ladders whose scalar this circuit does not derive, and not a
+shared cell quietly doing duty for several. `msmChunksAt` on them is 51 and 26, i.e. they are LADDERS
+and not the nine folded-out one-bit words. Word 10's cell is now `digestBeforeEvalsVar`, R1's own
+ζ-squeeze lane 1 (§22), and this pins that it is not a statement cell any more. -/
+theorem exactly_two_statement_words_have_no_in_circuit_source :
+    (stmtVar shapeStep 11 = vStmtWrapMsgs shapeStep
      ∧ stmtVar shapeStep 39 = vStmtLookup shapeStep
-     ∧ [10, 11, 39].all (fun w =>
+     ∧ stmtVar shapeStep 10 = digestBeforeEvalsVar shapeStep
+     ∧ [11, 39].all (fun w =>
           (List.range 40).countP (fun i => stmtVar shapeStep i == stmtVar shapeStep w) == 1)
      ∧ [msmChunksAt 10, msmChunksAt 11, msmChunksAt 39] = [51, 51, 26]) := by
   native_decide
-#assert_compiled exactly_three_statement_words_have_no_in_circuit_source
+#assert_compiled exactly_two_statement_words_have_no_in_circuit_source
 
 /-! ### ⚑⚑ (b) THE RED CONTROL — bend the word, x_hat moves; bend a challenge no word carries, it
 does not. Neither held before §21. -/

@@ -1,13 +1,13 @@
 {
   "schema": "pickles-emit-provenance/1",
   "fixture": "stepmain-step-r8-finalize-gates.json.gz",
-  "artifact_sha256": "7666f97a20e060a5dcbde87c80dd2f8348f12966709a921004c92e7973d94af8",
-  "refreshed_at": "2026-08-03T09:17:08.700Z",
+  "artifact_sha256": "672ca9f3ed9a63986b4ac43ec7727b6858a3c865f22c411f02d606db764c8916",
+  "refreshed_at": "2026-08-03T12:57:55.608Z",
   "refreshed_from": "/tmp/pickles-stepmain/stepmain_step_r8_finalize.json (⚠ FIXTURE STALE)",
   "cone": {
     "root": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
     "files": 112,
-    "digest": "ccc040f8c413c6fadcee505df593752c543b51ce05a1e311ddc6ca15d5effae0",
+    "digest": "92688362b299f9b366262b5dec387fc0e35c983117057368444e308f55e22f4b",
     "files_detail": [
       {
         "rel": "Dregg2/Authority/ClearanceGraph.lean",
@@ -127,7 +127,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainCore.lean",
-        "sha": "39f92df67c02b7f3eae7695d3e8c6943167cbb2c189d5aa9fa6bcb2cfd546aad"
+        "sha": "563670f6525b8278a67789a7798b19fee62438ad5b4ddae2daf1c446b32fa3b3"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainField.lean",
@@ -460,13 +460,13 @@
     ]
   },
   "git": {
-    "head": "a17de6260993030cbc9af2796c0e13880049402d",
+    "head": "d245921c7c8b58839c57560f119e4b1884c398a7",
     "cone_dirty_at_head": [
       "etatheory/Dregg2/Circuit/Emit/KimchiStepMainCore.lean"
     ]
   },
-  "gates": 10663,
+  "gates": 10677,
   "probe_rows": 470,
-  "num_rows": 10663,
+  "num_rows": 10677,
   "public_input_size": 67
 }

@@ -77,14 +77,15 @@ set_option maxRecDepth 100000
 -- ⚑⚑ **THE BITING RED CONTROL FOR #9.** Re-run segment A at the OTHER two legal prefix masks. `N2`
 -- ([tt;tt], both previous proofs real) and `N0` ([ff;ff], none) each give a DIFFERENT opt-sponge
 -- digest — so the mask is deciding the value, and `branch_data` is what decides the mask. And the
--- digest is segment B's FIRST absorbed word, so a different `branch_data` moves the fr-sponge, its
--- two squeezes, §8g's ξ and r, and `combined_inner_product` with them.
+-- digest is segment B's SECOND absorbed word (the FIRST is §22's seed), so a different `branch_data`
+-- moves the fr-sponge, its two squeezes, §8g's ξ and r, and `combined_inner_product` with them.
 #guard segADigest MASK_BITS == (tS.segA.states.getLastD []).getD 0 0
 #guard segADigest [1, 1] != segADigest MASK_BITS
 #guard segADigest [0, 0] != segADigest MASK_BITS
 #guard segADigest [1, 1] != segADigest [0, 0]
--- …and the digest IS what segment B absorbs first, so the cascade above is a wire and not a story.
-#guard (tS.specB.ws.getD 0 (xv 0, 0)).2 == segADigest MASK_BITS
+-- …and the digest IS what segment B absorbs at word 1, so the cascade above is a wire and not a
+-- story. ⚑ Word 0 is §22's seed; before it landed the digest was word 0.
+#guard (tS.specB.ws.getD 1 (xv 0, 0)).2 == segADigest MASK_BITS
 
 -- ⚑⚑ **THE BITING RED CONTROL FOR SEGMENT C's MASK.** `hash_messages_for_next_step_proof` was the
 -- SECOND consumer of `proofs_verified_mask` and this segment absorbed its carried challenges
@@ -154,17 +155,17 @@ set_option maxRecDepth 100000
 -- …and it is UNMASKED: `hash_messages_for_next_step_proof`, not `…_opt` (`step_main.ml:547`).
 #guard tS.specD.masked == false && tS.specC.masked == true
 
--- ⚑ SEGMENT B ABSORBS R5's AND R6's OWN VARIABLES: the digest of segment A, `ft_eval1`, the two
--- public-polynomial evaluations, then the 43 columns at ζ and ζω INTERLEAVED
--- (`to_absorption_sequence`, `step_verifier.ml:967-1005`) — the same `vEz`/`vEw` the C8 fold and the
--- `ft_eval0` rung read. Not a private stream.
-#guard (tS.specB.ws.getD 0 (xv 0, 0)).1
+-- ⚑ SEGMENT B ABSORBS R5's AND R6's OWN VARIABLES: since §22 the SEED (R1's own ζ-squeeze lane 1),
+-- then the digest of segment A, `ft_eval1`, the two public-polynomial evaluations, then the 43
+-- columns at ζ and ζω INTERLEAVED (`to_absorption_sequence`, `step_verifier.ml:967-1005`) — the same
+-- `vEz`/`vEw` the C8 fold and the `ft_eval0` rung read. Not a private stream.
+#guard (tS.specB.ws.getD 1 (xv 0, 0)).1
         == sgSt (baseSegA shapeSmoke) (nbA shapeSmoke) 1 tS.specA.blocks 0
-#guard (tS.specB.ws.getD 0 (xv 0, 0)).2 == (tS.segA.states.getLastD []).getD 0 0
-#guard (tS.specB.ws.getD 1 (xv 0, 0)).1 == vEw shapeSmoke 3
+#guard (tS.specB.ws.getD 1 (xv 0, 0)).2 == (tS.segA.states.getLastD []).getD 0 0
+#guard (tS.specB.ws.getD 2 (xv 0, 0)).1 == vEw shapeSmoke 3
 #guard (List.range shapeSmoke.frCols).all (fun k =>
-  (tS.specB.ws.getD (4 + 2 * k) (xv 0, 0)).1 == vColZ shapeSmoke k
-  && (tS.specB.ws.getD (5 + 2 * k) (xv 0, 0)).1 == vColW shapeSmoke k)
+  (tS.specB.ws.getD (5 + 2 * k) (xv 0, 0)).1 == vColZ shapeSmoke k
+  && (tS.specB.ws.getD (6 + 2 * k) (xv 0, 0)).1 == vColW shapeSmoke k)
 -- ⚑ …and segments A and C absorb `prev_challenges` — THE SAME VARIABLES, which is upstream's own
 -- shape (`step_verifier.ml:956` and `step_main.ml:80` read one vector) and NOT R2's challenges. That
 -- false wire is what made `combined_inner_product` a cycle; see `vPrevChal` for what it cost and what

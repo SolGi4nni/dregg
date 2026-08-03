@@ -225,8 +225,18 @@ ones the isolated program returns. -/
 The three segments' arithmetic, against `PastaPoseidon.Ref.perm` — the same reference whose
 `Ref.hash` reproduces the o1js `Poseidon.hash` gold KATs, and the same one R1's sponge answers to. -/
 
-#guard tS.specB.ws.length == 4 + 2 * (shapeSmoke.cipEvals - EV_PREFIX)
-#guard tS.specB.ws.length == 90
+/-- ⚑ **SEGMENT B's WORD COUNT IS FIVE + 2×43 SINCE §22**, the five being the seed
+(`step_main.ml:45`) and `finalize_other_proof`'s own four (`step_verifier.ml:962-965`). 91 is ODD, so
+this segment — alone of the four — carries the rate-2 pad lane, and `nb` is one block larger than the
+seedless shape's 45. -/
+theorem segment_b_absorbs_ninety_one_words_and_is_the_only_padded_segment :
+    (tS.specB.ws.length = SEG_B_PREFIX + 2 * (shapeSmoke.cipEvals - EV_PREFIX)
+     ∧ tS.specB.ws.length = 91
+     ∧ tS.specB.padded = true
+     ∧ (tS.specA.padded, tS.specC.padded, tS.specD.padded) = (false, false, false)) := by
+  native_decide
+#assert_compiled segment_b_absorbs_ninety_one_words_and_is_the_only_padded_segment
+
 #guard tS.specA.ws.length == 2 * shapeSmoke.bRounds
 #guard tS.specC.ws.length == shapeSmoke.hmWords
 #guard tS.specA.nb == nbA shapeSmoke

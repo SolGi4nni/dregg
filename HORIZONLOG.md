@@ -1,5 +1,107 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 3 (Pickles-in-Lean §22) — the fr-sponge got its SEED, and Wrap statement word 10 is a cell the circuit DERIVES
+
+§21 landed the provenance half of the x_hat MSM and named its residue: *"word 10's absence is a
+MEASURABLE gap one rung out: upstream seeds the fr-sponge with it (`step_main.ml:41-46`) and segment
+B here starts at `challenge_digest`."* That is this rung, and read at source in `~/dev/mina` it was
+**two** facts, not one.
+
+**THE ANSWER, PLAINLY. Word 10 is DERIVED, and TWO of the forty scalars remain prover-chosen.**
+`stmtVar 10` is no longer a statement cell at all — `vStmtDigest` is DELETED, `N_STMT` 23 → 22 — and
+is now `digestBeforeEvalsVar`, the transcript's OWN lane-1 cell at ζ's squeeze. Segment B absorbs
+that same cell first. The residue is word 11 (`messages_for_next_wrap_proof`) and word 39 (the
+lookup `Opt`'s `Scalar Challenge`).
+
+⚑ **THE SECOND FACT, AND §21 RECORDED ITS OPPOSITE.** §2b said `sponge_digest_before_evaluations` is
+"not modelled as a block (nothing here consumes it)". `step_verifier.ml:1271-1272` consumes it —
+`Field.Assert.equal unfinalized.sponge_digest_before_evaluations
+sponge_digest_before_evaluations_actual`. This assembly holds ONE cell per statement field where
+upstream holds a `proof_state` copy and an `unfinalized` copy (the identification it already makes
+for ξ, whose single `vXiStmt` serves both `finalize_other_proof`'s `deferred_values.xi` and
+`incrementally_verify_proof`'s `~xi`), and `Field.Assert.equal` on two plain variables is
+`Union_find.union` — **no row at all**. So the tie is a σ class, and it is free.
+
+⚑ **AND THE DIGEST COSTS NO PERMUTATION EITHER — MINA'S SPONGE IS LAZY.**
+`snarky/sponge/sponge.ml:294`: `rate = m − capacity = 3 − 1 = 2`. ζ at `step_verifier.ml:568` is a
+`Sponge.squeeze` on an `Absorbed` state: permute, `Squeezed 1`, return `state.(0)` (`:322-325`). The
+`squeeze_field` at `:574` then finds `Squeezed 1`, `n ≠ rate`, and takes the `else` branch
+(`:319-321`) — **no permutation, `state.(1)`**. ζ and the digest are lane 0 and lane 1 of ONE
+permutation output, and `transcriptRows`' squeeze block already emits and probes both.
+
+⚑ **BOTH DIRECTIONS, WITH THE RETIRED WIRING AS THE MIDDLE LEG** (`…Pins17`, **10 named theorems,
+zero `#guard`s**). Bending word 10 moves both fr-sponge squeezes, §8g's lifted ξ and r, the committed
+shape's scalar vector **at index 10 alone**, and R8's `out` slot **1 → 0** (a refusal, measured
+against the honest instance's own 1). Under the RETIRED seedless segment B — `frSpec` as it stood
+this morning — the same bend moves **nothing**, and the two wirings disagree in the first place.
+Bending the last `t_comm` chunk (absorbed at `:567`, before ζ) MOVES the word; bending
+`combined_inner_product` (absorbed at `:256`, after ζ) does NOT. And the order is load-bearing:
+swapping the seed with `challenge_digest` moves the squeeze.
+
+⚑ **TWO MORE SOURCE CORRECTIONS, one of them a refutation of my own inference.**
+
+* **Word 11 is not an absence of this assembly.** `step_main.ml:85` substitutes it from
+  `verify_one`'s argument, and that argument is `exists (Vector.typ Digest.typ
+  Max_proofs_verified.n) ~request:Req.Messages_for_next_wrap_proof` at **`step_main.ml:364-366`** —
+  a REQUESTED WITNESS of the whole step circuit. Upstream derives it nowhere; its only in-circuit
+  consumer upstream is the same x_hat ladder it has here. **Faithful as it stands. Nothing to land.**
+* **Word 39 was probed and the probe was REFUTED.** `Spec.pack`'s `Opt` `None` arm
+  (`spec.ml:123-128`) packs `dummy2` = `Sc.create lookup_parameters.zero.var.challenge`, and
+  `step_main.ml:91` sets that to `Field.zero`; a `` `Packed_bits (Constant 0, _) `` is dropped
+  outright by `multiscale_known`'s partition (`step_verifier.ml:138-140`) — which would make word 39
+  a CONSTANT with no ladder, 30 live terms and 29 fold adds. **Mina's own compiled `step-zkapp-proved`
+  says otherwise**: its x_hat cluster is `2×1 26×22 51×8` = **31 ladders / 982 chunks**, and `26×22` is
+  five challenge words + sixteen bulletproof words + ONE MORE — word 39. The `None` arm is not what
+  that circuit compiles. Closing word 39 needs the lookup sub-circuit this assembly does not model.
+  Recorded because the inference was made, not because it held.
+
+⚠ **AND §22 READ A SPONGE-MODEL DIVERGENCE IT DID NOT FIX — ITS OWN RUNG, NAMED.** The `:574` read
+above is the first place this file has taken Mina's `Squeezed n` branch seriously. Everywhere else,
+`runSeg` and `transcriptRows` permute once per absorb block AND once per squeeze, where Mina permutes
+`⌈words/2⌉` in total. Two measurable consequences: the transcript runs one extra permutation per
+squeeze (21 of them), and segment B's ξ′ and r′ are two permutations apart where upstream's are
+`state.(0)` and `state.(1)` of ONE (`step_verifier.ml:1007-1009`; `squeeze_challenge` =
+`lowest_128_bits (Sponge.squeeze …)`, `:186-187`). Fixing it moves every segment and the transcript.
+
+### WHAT WAS MEASURED, AND ON WHAT
+
+* **All 17 `KimchiStepMain*` modules GREEN** — built in an ISOLATED git worktree at `d245921c7` plus
+  exactly these seven files, because the shared tree's `Dregg2/Circuit/DescriptorIR2.lean` was RED at
+  `ebc1e1e61` from a sibling lane's in-flight saturating-pad sweep and it is in this cone.
+* **Conformance 31/31 byte-exact**, re-graded from an emission the gate produced itself (`--emit`,
+  cone digest `92688362b299f9b3…` over 112 modules, VERIFIED against the tree). **`EndoMul 32×77`
+  intact**; `x_hat` **31 ladders `2×1 26×22 51×8` = 982 chunks on BOTH sides**; `Poseidon 11×206 →
+  11×207`, the new block, the subset closing toward Mina's 572.
+* **Harness 9/9 rungs, all five polarities, in RELEASE** — `r9_opening` 11,145 → **11,159** rows
+  (+14: segment B's 46th block is +11 Poseidon, +1 Generic addend, +1 Zero, and the pad lane's
+  `w = 0` pin is +1 Generic). Smoke 4,023 → **4,037**; the eight committed smoke fixtures re-emitted
+  and re-proved.
+* **The substitution exhibit, literally**: `substituted_assembly_still_closes_equal_g :
+  tSwapAbs.bp.ver = 1` — **ACCEPTED**, exactly as at §19 (+482 rows), §20 (+150) and §21 (−45). Word
+  10 feeds the fr-sponge, hence ξ and r, hence what an HONEST prover must claim; it relates nothing
+  to `sg_old`'s opening, which is the accumulator check's second leg (`per_proof_witness.ml:12-32`)
+  and is not a rung.
+* **The chain harness is untouched by derivation, not by re-running**: nothing outside
+  `KimchiStepMain*` imports `KimchiStepMainCore` except the emit driver, and `KimchiStepWrapChain`
+  sits entirely in the `KimchiWrapMain` cone — which another lane is editing right now.
+
+### WHAT BROKE / WHAT RE-EMITS
+
+* **`vStmtDigest` and `STMT_DIGEST_VAL` are GONE.** Any consumer naming them fails to elaborate.
+  `N_STMT` is 22 and every variable id above `baseStmt + 11` moved by one.
+* **`frSpec` and `msmScalars` changed arity** (`frSpec s sd dg ftVal`, `msmScalars s ch sd ft fin
+  segC`). `nbB` is `(5 + 2·(cipEvals − 4) + 1) / 2` — 46 blocks at both shapes, not 45.
+* **Every `stepmain_*` artifact re-emits**, the conformance fixture was refreshed
+  (`--emit --refresh-fixture`), and three conformance LEDGER rows moved with their measured form:
+  `generic/exact-value-census` 678/3283 `[daacc3a3…]` → 679/3287 `[a8dcbafe…]`,
+  `generic/empty-second-half` 166 → 167 (the pad pin's `cNil` tail),
+  `scope/unassembled-subcircuits` Poseidon 206 → 207.
+* **The rate-2 PAD LANE is new machinery.** `segRows`' addend default used to be `xv 0` — the
+  TRANSCRIPT's own pinned init lane — so the first ODD segment this assembly ever emitted would have
+  wired a σ class from segment B's last block into R1's block-0 state. `sgPad` is the segment's own
+  reserved cell (out of `segVarCount`'s trailing `nb`, so no region moves) and `segRows` pins it to
+  zero. A pin catches the regression in both directions.
+
 ## ⚑⚑⚑⚑ AUGUST 3 (Pickles-in-Lean §21) — the x_hat MSM's scalars ARE the Wrap statement's words now, and bending word `i` MOVES x_hat
 
 §20 landed the per-word ladder WIDTHS and said, in its own closing paragraph, what it had not done:

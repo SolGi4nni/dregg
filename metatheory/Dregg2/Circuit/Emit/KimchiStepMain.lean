@@ -196,17 +196,22 @@ PI 67, 20,023 gates, 13,778 non-Generic. Measured against this file's `shapeStep
 a STAMPED emission the conformance gate produced itself** (`--emit`):
 
     gate         Mina step-zkapp-proved  r5_full  r6_ft_eval0  r7_absorb  r8_finalize  r9_opening
-    total gates         20023              8281      8750       10571       10663      11145
-    non-Generic         13778              7445      7447        8965        8988       9417
-    Poseidon             6292 (31.4%)       902       902        2266        2266       2266  11×572 / 11×206 ✓
-    Generic              6245 (31.2%)       836      1303        1606        1675       1728  —
+    total gates         20023              8281      8750       10585       10677      11159
+    non-Generic         13778              7445      7447        8977        9000       9429
+    Poseidon             6292 (31.4%)       902       902        2277        2277       2277  11×572 / 11×207 ✓
+    Generic              6245 (31.2%)       836      1303        1608        1677       1730  —
     EndoMul              2465 (12.3%)      2464      2464        2464        2464       2464  32×77+1×1 / 32×77 ✓
-    Zero                 2246 (11.2%)      1996      1998        2136        2143       2358  —
+    Zero                 2246 (11.2%)      1996      1998        2137        2144       2359  —
     VarBaseMul           1596  (8.0%)      1390      1390        1390        1390       1594  1×1596 / 1×1594 ✓
     EndoMulScalar         776  (3.9%)       376       376         392         408        408  8×28 / 8×51 ✓
                     upstream also runs 2×42 4×25 16×3 1×2 12×2 32×2 9×1 19×1 22×1 24×1 28×1 128×1
     CompleteAdd           403  (2.0%)       317       317         317         317        327  1×159 2×65 3×23
                     15×1 30×1 / 1×327
+
+⚑ Re-measured in full for §22 off a stamped emission the conformance gate produced itself. R7 and up
+gain **+14 rows** — segment B's 46th absorb block (`+11` Poseidon, `+1` Generic addend, `+1` Zero)
+and the pad lane's `w = 0` pin (`+1` Generic). Nothing below R7 moves, because nothing below R7 runs
+the fr-sponge.
 
 ⚠ **THE PREVIOUS TABLE WAS STALE AND SAID SO NOWHERE.** It read `r8_finalize 10826` with
 `VarBaseMul 1448` — and `1448 = 1040 + 408` is the count at the UNIFORM `msmChunks = 26` that §20
@@ -214,7 +219,47 @@ DELETED in the very commit this table sat in. The rows column therefore spanned 
 not one, and the `r9_opening` column §19 added had never been carried at all. Re-measured in full
 rather than patched. **Never grade a rung off a table you did not just produce, either.**
 
-⚑⚑ MOVEMENT IN THIS COMMIT (§21, `…Pins16`): **the x_hat MSM's scalars became the Wrap STATEMENT's
+⚑⚑ MOVEMENT IN THIS COMMIT (§22, `…Pins17`): **the fr-sponge got its SEED, and Wrap statement word
+10 stopped being prover-chosen — +14 rows in R7.** `step_main.ml:41-46` hands
+`finalize_other_proof` a sponge that has already absorbed
+`proof_state.sponge_digest_before_evaluations`; segment B started at `challenge_digest` and now
+starts at that word, 91 absorbed field elements over 46 rate-2 blocks with a pinned pad lane.
+
+And the word is a cell R1 already computes. Mina's sponge is LAZY at rate 2
+(`snarky/sponge/sponge.ml:294,314-325`): ζ's `Sponge.squeeze` at `step_verifier.ml:568` permutes and
+returns `state.(0)`, and the `squeeze_field` at `:574` finds `Squeezed 1`, does NOT permute, and
+returns `state.(1)`. So `sponge_digest_before_evaluations` is lane 1 of the state ζ is lane 0 of —
+already emitted, already probed. `stmtVar 10` is that cell (`digestBeforeEvalsVar`); `vStmtDigest` is
+DELETED and `N_STMT` is 22.
+
+  * ⚑ **BOTH DIRECTIONS, and the retired wiring is the middle leg** (`…Pins17`): bending word 10
+    moves both fr-sponge squeezes, §8g's lifted ξ and r, the committed shape's scalar vector **at
+    index 10 alone**, and R8's `out` slot from 1 to **0**; under the retired SEEDLESS segment B the
+    same bend moves NOTHING, and the two wirings disagree in the first place. Bending the last
+    `t_comm` chunk (absorbed before ζ) MOVES the word; bending `combined_inner_product` (absorbed
+    after ζ) does not — which is what "the state ζ's permutation left" means.
+  * ⚑ **NOT ONE RUN-LENGTH FAMILY MOVED**: `EndoMul 32×77` (exactly Mina's), `EndoMulScalar 8×51`,
+    `VarBaseMul 1×1594`, `CompleteAdd 1×327`; `Poseidon 11×206 → 11×207`, which is the new block and
+    is the subset closing toward Mina's 572. x_hat is still 31 ladders `2×1 26×22 51×8` = 982 chunks
+    on BOTH sides. Conformance re-graded **31/31 byte-exact**.
+  * ⚑ The smoke shape moves too — 4,023 → **4,037** rows — because the fr-sponge is in R7 and R7 is
+    in the smoke rungs. All nine rungs re-prove in RELEASE with all five polarities.
+  * ⚠ **AND IT CHANGES NO VERDICT.** `substituted_assembly_still_closes_equal_g : tSwapAbs.bp.ver
+    = 1` — **ACCEPTED**, before and after, as at §19/§20/§21. Word 10 feeds the fr-sponge, hence ξ
+    and r, hence what an HONEST prover must claim; it relates nothing to `sg_old`'s opening, which is
+    the accumulator check's second leg (`per_proof_witness.ml:12-32`).
+  * ⚠ **THE RESIDUE IS TWO WORDS, AND ONE OF THEM IS UPSTREAM'S TOO.** Word 11 is
+    `exists … ~request:Req.Messages_for_next_wrap_proof` at `step_main.ml:364-366` — a witness of the
+    whole step circuit, derived nowhere upstream either. Word 39 needs the lookup sub-circuit; a
+    source reading that would have made it a CONSTANT was refuted by Mina's own compiled ladder
+    census. See `…Pins17`.
+  * ⚠ **AND §22 READ A SPONGE-MODEL DIVERGENCE IT DID NOT FIX.** `runSeg`/`transcriptRows` permute
+    once per absorb block AND once per squeeze; Mina permutes `⌈words/2⌉` in total and a second
+    consecutive squeeze reads lane 1 for free. So the transcript runs one extra permutation per
+    squeeze (21 of them) and segment B's ξ′/r′ are two permutations apart where upstream's are
+    `state.(0)`/`state.(1)` of one (`step_verifier.ml:1007-1009`). Its own rung; named, not absorbed.
+
+⚑⚑ MOVEMENT IN THE PREVIOUS COMMIT (§21, `…Pins16`): **the x_hat MSM's scalars became the Wrap STATEMENT's
 words, and `multiscale_known`'s CONSTANT PARTITION left the circuit — −45 rows in R3.** Exactly
 9 `Generic` (the constant words' base pins), 18 `CompleteAdd` (9 seeds + 9 fold adds) and 18 `Zero`
 (their probes): `msmRows shapeStep` goes 2178 → 2133 with `VarBaseMul` UNCHANGED at 982, because the
@@ -662,8 +707,10 @@ in no class — the control that turns "rejected" into "rejected BY THE WIRE".
          2,3    ζ^srs_len, ζ^dom                        R6's `ζ^n` cell             DERIVED
          5–8    β, γ, α, ζ                              `vN c emsRows`              R2 decodes
          9      ξ                                       `vXiStmt`                   R8's `xi_correct`
-         10     sponge_digest_before_evaluations        `vStmtDigest`      ⚠ NO IN-CIRCUIT SOURCE
+         10     sponge_digest_before_evaluations        `digestBeforeEvalsVar`  ⚑ §22 DERIVED —
+                                                        R1's ζ-squeeze lane 1, and segment B's SEED
          11     messages_for_next_wrap_proof            `vStmtWrapMsgs`    ⚠ NO IN-CIRCUIT SOURCE
+                                                        (nor upstream: `step_main.ml:364-366`)
          12     messages_for_next_step_proof            segment C's squeeze         §8e′ computes it
          13–28  bulletproof_challenges ×16              `vN (uChal k) emsRows`      R8's `b_correct`
          29     branch_data                             `vBranch`                   §8h unpacks it
@@ -1065,3 +1112,4 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins13
 import Dregg2.Circuit.Emit.KimchiStepMainPins14
 import Dregg2.Circuit.Emit.KimchiStepMainPins15
 import Dregg2.Circuit.Emit.KimchiStepMainPins16
+import Dregg2.Circuit.Emit.KimchiStepMainPins17
