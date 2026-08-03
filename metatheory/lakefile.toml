@@ -1,5 +1,5 @@
 name = "Dregg2"
-defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards"]
+defaultTargets = ["Dregg2", "Metatheory", "Polis", "Market", "Bfv", "PicklesSynthesis", "MinaBridgeGuards", "CommitBindsGuards", "TurnAuthGuards"]
 
 # Pin mathlib to the exact revision matching v4.30.0
 # (rev 1c2b90b13009c65b090d95a83c98e248deafb6f1). This is a PORTABLE `git`+`rev`
@@ -125,3 +125,21 @@ globs = ["Dregg2.MinaBridgeGuards"]
 [[lean_lib]]
 name = "CommitBindsGuards"
 globs = ["Dregg2.CommitBindsGuards"]
+
+# TurnAuthGuards — the CI home for the in-AIR AUTHORIZATION gadget (`TurnAuthLamportEmit`, the
+# hash-based one-time signature verified over the deployed Poseidon2 chip) and its cap-open weld
+# (`TurnAuthCapOpenWeld`, which re-introduces `actor`/`dst` as PUBLISHED AND FORCED). Root module
+# `Dregg2.TurnAuthGuards` (./Dregg2/TurnAuthGuards.lean) is a pure re-export aggregate over the two.
+# Before this, BOTH were reachable from NO `defaultTargets` library — `EmitTurnAuthProbe.lean` and
+# `EmitRotationV3.lean` import them but neither is in this file — so their 46 `#guard`/`#assert_axioms`
+# ran in no plain `lake build`, and their oleans on disk were dated Jul 30, i.e. unchecked straight
+# through the ChipArity absorb-arity cutover that touched this very gadget. Same
+# gating-defaults-to-silence wound as PicklesSynthesis/MinaBridgeGuards/CommitBindsGuards above, and
+# rooted the same way: its own lean_lib + defaultTarget, WITHOUT touching the `Dregg2.lean` import
+# block (swept by sibling lanes). Verified GREEN before rooting (`lake build` of both, 3171 jobs).
+# ⚑ This one was additionally HIDDEN: `scripts/check-lean-orphans.sh` capped its listing at 40 names
+# against 59 unlisted orphans, so these two were counted and never named. Cap removed in the same
+# change; the gate's seed list now comes from THIS file rather than a stale copy of it.
+[[lean_lib]]
+name = "TurnAuthGuards"
+globs = ["Dregg2.TurnAuthGuards"]

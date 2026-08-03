@@ -28,11 +28,12 @@
 #    A hand-edit is DETECTED on the next ordinary gate run: the header totals and the
 #    last provenance line must both equal the rows actually present (arm (e)).
 #
-# TOTAL 1228 guards across 67 rows (66 unrooted, 1 sorry).
+# TOTAL 1182 guards across 65 rows (64 unrooted, 1 sorry).
 # FORMAT  <unrooted|sorry><TAB><dotted module><TAB><guards it silences><TAB># reason / owner
 # BASELINE-PROVENANCE cd2c010c0-DIRTY W:0→1288 (+1288) R:0→69 INCREASED — FORMAT CUTOVER at cd2c010c0: this ledger had NO gated refresh and its rows carried no weight, so nothing bounded the row count. Re-emitted from HEAD's census: 69 wounds, 1288 silenced guards. It retires the stale OwnerFreezeWire row (-28, rooted) and it BAKES IN a measured +2 — Circuit.Emit.AttestedFactMembershipEmit went 13 -> 15 in 8827eba0f, two guards added to a module in no lake target, and the -28 retirement would have paid for it in any whole-census refresh. That is the last such rise this file can absorb silently.
 # BASELINE-PROVENANCE b0f779fbe-DIRTY W:1288→1257 (-31) R:69→68 DECREASED — ROOTED in Dregg2.lean — its 40 guard commands now run on every root build; verified lake env lean exits 0 at HEAD content and it carries no refuted-floor content
 # BASELINE-PROVENANCE 513488d03-DIRTY W:1257→1228 (-29) R:68→67 DECREASED — ROOTED in Dregg2.lean — its 37 guard commands now run on every root build; verified lake env lean exits 0 at HEAD content and it carries no refuted-floor content
+# BASELINE-PROVENANCE d245921c7-DIRTY W:1228→1182 (-46) R:67→65 DECREASED — ROOTED via the new TurnAuthGuards lean_lib+defaultTarget; lake build now runs all 46 guards (were unrooted, oleans stale since Jul 30)
 
 # ── UNROOTED (its guards run in no default lake target) ──
 unrooted	Dregg2.Apps.ColonistJob	36	# also-orphan-allow
@@ -87,8 +88,6 @@ unrooted	Dregg2.Circuit.Emit.QuantifiedAbsenceEmit	12	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.QuantifiedAbsenceRefine	4	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.TemporalPredicateEmit	13	# also-orphan-allow
 unrooted	Dregg2.Circuit.Emit.TemporalPredicateRefine	20	# also-orphan-allow
-unrooted	Dregg2.Circuit.Emit.TurnAuthCapOpenWeld	10	# UNTRACKED-ORPHAN — root first
-unrooted	Dregg2.Circuit.Emit.TurnAuthLamportEmit	36	# UNTRACKED-ORPHAN — root first
 unrooted	Dregg2.Circuit.FriVerifierOracle	3	# also-orphan-allow
 unrooted	Dregg2.Circuit.RotatedKernelRefinementAvailWideNarrow	24	# also-orphan-allow
 unrooted	Dregg2.Circuit.WrapSafetyStaticAnalyzer	14	# also-orphan-allow

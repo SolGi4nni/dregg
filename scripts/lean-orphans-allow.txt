@@ -160,8 +160,10 @@ Dregg2.Circuit.Emit.AutomataflNGenGolden  # A 2.98 MB byte-pinned WIRE GOLDEN (1
 # `scripts/check-ratchet-darkness.sh` reports ZERO refuted-floor mentions in all four, so nothing
 # vacuous is hiding behind these lines. If any of them ever names a floor, RULE 1 of that gate reds
 # and the entry stops being enough. The landing lane should DELETE its entry here when it roots.
-Dregg2.Circuit.Emit.LightClientMidnightAir  # co-tenant lane; the AIR half of LightClientMidnight; zero floor mentions
-Dregg2.Circuit.Emit.LightClientSolanaAir  # co-tenant lane; the AIR half of LightClientSolana; zero floor mentions
+# ⚑ BOTH ROOTED 2026-08-03, entries DELETED exactly as the block above instructed ("the landing lane
+# should DELETE its entry here when it roots"). `import Dregg2.Circuit.Emit.LightClientMidnightAir`
+# and `…LightClientSolanaAir` are both in metatheory/Dregg2.lean, so `lake build` compiles them and
+# their checks run. The gate's STALE-entry arm was reporting exactly this and had been red on it.
 
 # ── KimchiPoseidonGate: ROOTED 2026-07-27, entry deleted as its own block instructed ─────────────
 # `import Dregg2.Circuit.Emit.KimchiPoseidonGate` now sits beside KimchiRealProofGate in Dregg2.lean,

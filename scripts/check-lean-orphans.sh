@@ -45,8 +45,11 @@
 #
 # REACHABILITY (pure source-text scan; no Lean toolchain, no build — like the sibling
 # independence-controls gate)
-#   Seeds = the default lake targets: the `Dregg2`/`Market`/`Bfv` root modules PLUS every
-#   file under the GLOBBED libs (Metatheory.+, Polis.+), since the glob builds them all.
+#   Seeds = the default lake targets, READ OUT OF metatheory/lakefile.toml (`defaultTargets`
+#   + the matching `lean_lib` stanzas), never a copy of them kept here. A globbed lib seeds
+#   every module the glob matches; a root lib seeds its `roots` and the BFS pulls the closure.
+#   ⚑ This was a hardcoded 5-target tuple until 2026-08-03 while the lakefile listed EIGHT —
+#   see the block at the seeds themselves for why that direction of staleness is the scary one.
 #   Reachable = the transitive closure of `import` lines over files that exist in-tree
 #   (external imports like Mathlib.* are simply not in-tree and terminate a branch).
 #
@@ -56,10 +59,23 @@
 #   * metatheory/Dregg2.lean missing              -> FAIL (the lib root is the anchor)
 #   A gate that scans an empty set is the exact disease it exists to treat.
 #
+# ⚑ THE LISTING NAMES EVERY ORPHAN (fixed 2026-08-03 — it did not)
+#   This gate USED to print `unlisted[:40]` and then "… and %d more (listing capped)". At 59 unlisted
+#   orphans that meant #41–59 were COUNTED AND NEVER NAMED, with no flag, env var or second mode that
+#   would name them: Dregg2.Circuit.Emit.TurnAuthLamportEmit and .TurnAuthCapOpenWeld — 1225 lines of
+#   in-AIR authorization whose oleans were stale since Jul 30 — sat in that tail. A gate that reports
+#   "59 orphans" and prints 40 hides 19 modules WHILE READING THOROUGH, which is this gate's own
+#   disease pointed at itself.
+#   Now: every unlisted orphan is printed. The LIST_CAP=200 that remains fires only on the
+#   root-truncation blowout (~1199), and even then the gate prints how many it did not name and the
+#   flag that names them (`--all`, or ORPHAN_LIST_ALL=1). A `⇒ NAMED n of N` line is printed ALWAYS,
+#   so the named/counted gap is a number on the same screen as the verdict — never a subtraction the
+#   reader has to think to perform.
+#
 # ROOT TRUNCATION (this gate DETECTS it; it cannot PREVENT it)
 #   A truncated metatheory/Dregg2.lean moves this gate from 133 orphans to 1199 (measured), so it
-#   goes hard red — but only AFTER the bad commit is history. On a mass orphaning the gate now says
-#   "SUSPECT ROOT TRUNCATION" and points at the root instead of printing a thousand ORPHAN lines.
+#   goes hard red — but only AFTER the bad commit is history. On a mass orphaning the gate adds a
+#   "SUSPECT ROOT TRUNCATION" hint pointing at the root, above the listing.
 #   The PREVENTION is scripts/git-hooks/pre-commit's curated-list shrink guard, which refuses to let
 #   metatheory/Dregg2.lean (and Market/Bfv/EmitByName) lose an entry without declared intent.
 #
@@ -69,6 +85,7 @@
 #
 # USAGE
 #   bash scripts/check-lean-orphans.sh                  # scan metatheory/ (default)
+#   bash scripts/check-lean-orphans.sh --all            # name every orphan, no cap at all
 #   METATHEORY_DIR=/path bash scripts/check-lean-orphans.sh   # override the tree (testing)
 #   ORPHAN_ALLOWLIST=/path bash scripts/check-lean-orphans.sh # override the allowlist (testing)
 #
@@ -101,6 +118,18 @@ import os, re, sys
 
 mt_dir = os.environ["MT_DIR"]
 allowlist_path = os.environ["ALLOWLIST"]
+
+# ── LISTING POLICY ────────────────────────────────────────────────────────────────
+# Every unlisted orphan is NAMED. The cap below exists only for the ROOT-TRUNCATION
+# blowout (a cut Dregg2.lean takes this gate to ~1199 orphans, where a full listing is
+# noise around the one line that matters) — and even then the gate prints the count it
+# did NOT name and the exact flag that names them. It never stops silently.
+LIST_CAP = 200
+list_all = ("--all" in sys.argv[1:]) or os.environ.get("ORPHAN_LIST_ALL") == "1"
+for _a in sys.argv[1:]:
+    if _a not in ("--all",):
+        sys.stderr.write("check-lean-orphans: unknown argument %r (only --all)\n" % _a)
+        sys.exit(2)
 
 imp_re = re.compile(r'^\s*import\s+([A-Za-z0-9_.]+)')
 
@@ -151,13 +180,71 @@ def reach(seeds):
     return seen
 
 # --- default lake targets = reachability seeds -----------------------------
-# Globbed libs (Metatheory.+, Polis.+): every file is a build target -> seed them all.
-# Root-module libs (Dregg2, Market, Bfv): seed the root module; BFS pulls its closure.
+# ⚑ READ FROM THE LAKEFILE, NOT A HARDCODED TUPLE (fixed 2026-08-03).
+# This block used to hardcode `("Metatheory", "Polis")` globbed + `("Dregg2", "Market", "Bfv")`
+# rooted. metatheory/lakefile.toml's defaultTargets are EIGHT:
+#   Dregg2, Metatheory, Polis, Market, Bfv, PicklesSynthesis, MinaBridgeGuards, CommitBindsGuards
+# — and the last three exist FOR EXACTLY THIS GATE'S REASON. Each is a lean_lib+defaultTarget added
+# by a lane to ROOT a cone of guard-carrying orphans "WITHOUT touching the Dregg2.lean import block
+# (swept by sibling lanes)". The gate that measures orphaning could not see any of the three fixes,
+# so it went on reporting rooted modules as orphans — and the reverse is the dangerous direction: a
+# target DELETED from the lakefile would have left this tuple asserting rootedness that no longer
+# existed, a false GREEN. A gate must not carry its own copy of the build's target list.
+#
+# Lake's lib semantics, mirrored (same as scripts/check-guard-modules.py's lakefile_seeds):
+#   globbed lib  "Foo.+" -> Foo and all descendants; "Foo.*" -> descendants only;
+#                plain "Foo" -> just Foo.
+#   root lib     no globs -> the lib's `roots` (default [name]); BFS pulls the import closure.
+#   a defaultTarget with no lean_lib (an exe) -> its own root module is a seed.
+try:
+    import tomllib
+except ModuleNotFoundError:  # python < 3.11
+    sys.stderr.write("check-lean-orphans: FATAL — python3.11+ (tomllib) is required to read\n"
+                     "  metatheory/lakefile.toml. Refusing to fall back to a hardcoded target\n"
+                     "  list: a stale copy of the build's targets is what this gate now exists\n"
+                     "  to not have.\n")
+    sys.exit(2)
+
+lakefile_path = os.path.join(mt_dir, "lakefile.toml")
+try:
+    with open(lakefile_path, "rb") as f:
+        lakedoc = tomllib.load(f)
+except (OSError, ValueError) as e:
+    sys.stderr.write("check-lean-orphans: FATAL — cannot read %s (%s).\n"
+                     "  The default-target list is the whole reachability anchor.\n"
+                     % (lakefile_path, e))
+    sys.exit(2)
+
+default_targets = list(lakedoc.get("defaultTargets", []))
+lean_libs = {l.get("name"): l for l in lakedoc.get("lean_lib", []) if l.get("name")}
+if not default_targets:
+    sys.stderr.write("check-lean-orphans: FATAL — lakefile.toml declares NO defaultTargets.\n"
+                     "  Every Dregg2 module would read 'orphan'; that is a broken scan, not a finding.\n")
+    sys.exit(2)
+
+all_mods = set(files_under(""))   # every in-tree .lean module (os.walk from mt_dir; .lake pruned)
 seeds = set()
-for globbed in ("Metatheory", "Polis"):
-    seeds |= set(files_under(globbed))
-for rootmod in ("Dregg2", "Market", "Bfv"):
-    seeds.add(rootmod)
+for t in default_targets:
+    lib = lean_libs.get(t)
+    if lib is None:              # a defaultTarget with no lean_lib (e.g. a lean_exe)
+        seeds.add(t)
+        continue
+    globs = lib.get("globs")
+    if globs:
+        for g in globs:
+            if g.endswith(".+"):
+                pre = g[:-2]
+                seeds |= {m for m in all_mods if m == pre or m.startswith(pre + ".")}
+            elif g.endswith(".*"):
+                pre = g[:-2]
+                seeds |= {m for m in all_mods if m.startswith(pre + ".")}
+            elif g in all_mods:
+                seeds.add(g)
+    else:
+        roots = lib.get("roots", [t])
+        if isinstance(roots, str):
+            roots = [roots]
+        seeds |= set(roots)
 
 reachable = reach(seeds)
 dregg2_files = sorted(files_under("Dregg2"))
@@ -237,10 +324,24 @@ if unlisted:
         "\ncheck-lean-orphans: FAIL — %d Dregg2 module(s) are reachable from NOTHING and are\n"
         "  not in the allowlist (they build under `lake env lean` but run in NO CI target):\n"
         % len(unlisted))
-    for m in unlisted[:40]:
+    shown = unlisted if list_all else unlisted[:LIST_CAP]
+    for m in shown:
         sys.stderr.write("    ORPHAN  %s\n" % m)
-    if len(unlisted) > 40:
-        sys.stderr.write("    … and %d more (listing capped)\n" % (len(unlisted) - 40))
+    if len(shown) < len(unlisted):
+        sys.stderr.write(
+            "    … and %d more NOT NAMED ABOVE — rerun with `--all` to name every one:\n"
+            "        bash scripts/check-lean-orphans.sh --all\n"
+            % (len(unlisted) - len(shown)))
+    # ⚑ NAMEABILITY LINE — printed ALWAYS, capped or not. A gate that reports a COUNT it
+    # does not print NAMES for hides modules while reading thorough; this line makes the
+    # gap a number on the same screen as the verdict rather than something a reader has to
+    # notice by subtracting. (2026-08-03: the cap was 40 against 59 unlisted, so
+    # TurnAuthLamportEmit / TurnAuthCapOpenWeld sat at #41–59 and were never named — a live
+    # blind spot in a gate whose entire job is naming what nothing compiles.)
+    sys.stderr.write(
+        "    ⇒ NAMED %d of %d unlisted orphan(s)%s\n"
+        % (len(shown), len(unlisted),
+           "" if len(shown) == len(unlisted) else "  ⚠ %d UNNAMED" % (len(unlisted) - len(shown))))
 
     # ROOT-TRUNCATION HYPOTHESIS — read this BEFORE registering or allowlisting anything.
     # A mass orphaning is almost never "many new unregistered modules"; it is ONE truncated root.

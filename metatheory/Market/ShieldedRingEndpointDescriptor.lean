@@ -376,18 +376,92 @@ private def rangeConstraintsFor (target col : Nat) : List VmConstraint2 :=
     (fun acc j => subE acc (.mul (.const (2 ^ j)) (.var (rangeBitCol target j))))
     (.var col))]
 
-/-- A fact site: `inputs` padded to five lanes, then the domain constant and the fact marker —
-seven felts, an ADMITTED chip arity. The side condition rides through so a caller handing more than
-five inputs (which would push the arity to `inputs.length + 2`) fails to elaborate rather than
-emitting a lookup the chip AIR refuses. -/
+/-- The fact block: `inputs` padded to five lanes, then the domain constant and the fact marker. -/
+private def factIns (inputs : List EmittedExpr) : List EmittedExpr :=
+  inputs ++ List.replicate (5 - inputs.length) (EmittedExpr.const 0)
+    ++ [EmittedExpr.const 64207, EmittedExpr.const 1]
+
+/-- **The block is SEVEN felts — when, and only when, the inputs fit.** `5 - inputs.length` is `Nat`
+subtraction, so at `inputs.length > 5` it SATURATES to zero, no lanes are appended, and the block is
+`inputs.length + 2` felts wide. This is the hypothesis that has to ride to the arity condition. -/
+private theorem factIns_length {inputs : List EmittedExpr} (h : inputs.length ≤ 5) :
+    (factIns inputs).length = 7 := by
+  simp only [factIns, List.length_append, List.length_replicate, List.length_cons,
+    List.length_nil]
+  omega
+
+/-- Seven is an admitted absorb arity, so a fitting fact block is one the deployed chip AIR accepts. -/
+private theorem factIns_admitted {inputs : List EmittedExpr} (h : inputs.length ≤ 5) :
+    ChipArityAdmitted (factIns inputs).length := by
+  rw [factIns_length h]; decide
+
+/-- A fact site: `factIns inputs` — seven felts, an ADMITTED chip arity.
+
+⚑ **THE SIDE CONDITION IS ON `inputs.length`, NOT ON THE PADDED BLOCK'S (fixed 2026-08-03).** It used
+to be `ChipArityAdmitted (inputs ++ replicate (5 - inputs.length) 0 ++ [MARK, 1]).length` — the arity
+of the *result*, computed through the saturating `5 - inputs.length`. That condition does NOT say what
+this docstring said it said ("a caller handing more than five inputs … fails to elaborate"), because
+the admitted set `[0, 2, 3, 4, 7, 11, 16]` HAS HOLES A SATURATED PAD LANDS IN:
+
+    |inputs| = 6, 7, 8   ->  block  8, 9, 10  -> refused  (the guard bites)
+    |inputs| = 9         ->  block  11        -> ADMITTED (the guard MISSES)
+    |inputs| = 14        ->  block  16        -> ADMITTED (the guard MISSES)
+
+Nine inputs emitted an eleven-felt "seven-lane" fact site that elaborated clean and that the chip AIR
+accepts at the wrong arity — the lane structure `[x, f0..f3, MARK, 1]` the whole `hash_fact` twin
+rests on silently gone, with `MARK` and `1` at slots 9 and 10 instead of 5 and 6. Both misses are
+named and kernel-checked below (`factLookup_old_condition_admitted_nine` /`_fourteen`), as is the
+refusal that now replaces them. The live call sites all pass 2 or 4-5 exprs, so nothing emitted was
+wrong — but the condition was never the one the name claimed. -/
 private def factLookup (output : Nat) (inputs : List EmittedExpr) (laneBase : Nat)
-    (hAdm : ChipArityAdmitted
-      (inputs ++ List.replicate (5 - inputs.length) (EmittedExpr.const 0)
-        ++ [EmittedExpr.const 64207, EmittedExpr.const 1]).length
-        := by chip_arity_admitted) : VmConstraint2 :=
-  .lookup (siteLookupN
-    (inputs ++ List.replicate (5 - inputs.length) (.const 0) ++ [.const 64207, .const 1])
-    (output :: (List.range 7).map (fun j => laneBase + j)) hAdm)
+    (hIn : inputs.length ≤ 5 := by decide) : VmConstraint2 :=
+  .lookup (siteLookupN (factIns inputs)
+    (output :: (List.range 7).map (fun j => laneBase + j)) (factIns_admitted hIn))
+
+/-! ### ⚑ THE EXHIBIT — the over-length inputs the OLD condition admitted, REFUSED by the new one.
+
+A fix with no exhibited over-length input is unverified, so the two holes are `decide`-checked as
+NAMED theorems rather than asserted in prose. `nine`/`fourteen` are the two `inputs.length > 5` values
+whose saturated block lands back inside `CHIP_ADMITTED_ARITIES`; each pair says the old condition HELD
+(so the site elaborated) and the new one FAILS (so it now cannot). -/
+
+private def overLong (n : Nat) : List EmittedExpr := List.replicate n (EmittedExpr.const 0)
+
+theorem overLong_length (n : Nat) : (overLong n).length = n := by
+  simp [overLong]
+
+/-- NINE inputs: the saturated block is ELEVEN felts, and eleven IS admitted — the old side condition
+was SATISFIED, so `factLookup` elaborated and emitted a mis-shaped site. -/
+theorem factLookup_old_condition_admitted_nine :
+    ChipArityAdmitted (factIns (overLong 9)).length := by decide
+
+/-- FOURTEEN inputs: the saturated block is SIXTEEN felts — the chip rate itself, and admitted. -/
+theorem factLookup_old_condition_admitted_fourteen :
+    ChipArityAdmitted (factIns (overLong 14)).length := by decide
+
+/-- ⚑ …and the block was NOT seven felts in either case, which is what the site's lane map assumes. -/
+theorem factIns_overLong_is_not_seven :
+    (factIns (overLong 9)).length = 11 ∧ (factIns (overLong 14)).length = 16 := by
+  constructor <;> decide
+
+/-- ⚑ THE REFUSAL. The new condition is `inputs.length ≤ 5`, which is FALSE at both — so neither
+site can elaborate any more. This is the direction the old condition could not express. -/
+theorem factLookup_new_condition_refuses_nine : ¬ ((overLong 9).length ≤ 5) := by decide
+
+theorem factLookup_new_condition_refuses_fourteen : ¬ ((overLong 14).length ≤ 5) := by decide
+
+/-- Non-vacuity: the new condition still ADMITS the shapes the live sites actually pass (2, 4, 5), so
+it is a real gate — satisfiable AND refutable — and not a blanket refusal. -/
+theorem factLookup_new_condition_admits_live_shapes :
+    (overLong 2).length ≤ 5 ∧ (overLong 4).length ≤ 5 ∧ (overLong 5).length ≤ 5 := by
+  refine ⟨by decide, by decide, by decide⟩
+
+#assert_axioms Market.ShieldedRingEndpointDescriptor.factLookup_old_condition_admitted_nine
+#assert_axioms Market.ShieldedRingEndpointDescriptor.factLookup_old_condition_admitted_fourteen
+#assert_axioms Market.ShieldedRingEndpointDescriptor.factIns_overLong_is_not_seven
+#assert_axioms Market.ShieldedRingEndpointDescriptor.factLookup_new_condition_refuses_nine
+#assert_axioms Market.ShieldedRingEndpointDescriptor.factLookup_new_condition_refuses_fourteen
+#assert_axioms Market.ShieldedRingEndpointDescriptor.factLookup_new_condition_admits_live_shapes
 
 private def commonPayloadSource : Nat → Option Nat
   | 0 => some (Col.action 0 Col.creator)
