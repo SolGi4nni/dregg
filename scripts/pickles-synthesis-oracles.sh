@@ -156,6 +156,17 @@ fi
 run_one "mina-vk-derivation-gate.sh --self-test (Lean gates -> Mina VK -> o1js PARSES it)" \
   bash "$ROOT/scripts/mina-vk-derivation-gate.sh" --self-test
 
+# ⚑ THE PROOF SEAM, the twin of the one above. The VK gate produces the object a node parses; this
+# one produces the object a node would VERIFY: a kimchi `ProverProof` proved HERE over the
+# Lean-authored `wrap_main` sub-circuit at the 2^15 Tock domain, marshalled to
+# `PicklesProofProofsVerified2ReprStableV2`, and handed to `Pickles.proofOfBase64` — Mina's own
+# reader — which re-prints it byte-identically. `--self-test` proves it can go red (one record
+# field renamed must be REFUSED). ⚠ It PROVES two kimchi circuits, so it costs ~60s.
+# ⚠ Parsing is shape, not membership: p-valued fields, off-curve points and a 14-round IPA all
+# parse. This step says the object is well-formed Pickles, not that it verifies.
+run_one "mina-proof-marshal-gate.sh --self-test (our kimchi proof -> wire -> Mina's reader)" \
+  bash "$ROOT/scripts/mina-proof-marshal-gate.sh" --self-test
+
 # The CROSS-IMPLEMENTATION differential — the only step here that is not a diff against a single
 # reference value. Green or bust, with its own red path.
 if [ "$RUN_XI" = 1 ]; then

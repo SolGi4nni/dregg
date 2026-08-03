@@ -2232,6 +2232,7 @@ dependencies = [
  "base64",
  "blake2",
  "bs58 0.5.1",
+ "groupmap",
  "kimchi",
  "mina-core",
  "mina-curves",

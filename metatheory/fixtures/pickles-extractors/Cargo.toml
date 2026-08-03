@@ -29,6 +29,9 @@ mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" 
 mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+# `pickles_kimchi_marshal` PROVES on Pallas and on Vesta, so it needs the group map the prover's
+# IPA uses. Same tag as everything else in the o1-labs graph.
+groupmap = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
