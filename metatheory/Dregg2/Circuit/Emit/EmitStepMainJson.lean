@@ -90,17 +90,26 @@ def parseRungs (spec : String) : Except String (List Rung) := do
 {String.intercalate ", " (allRungs.map Rung.tag)} (or its 'rN' prefix)") []
 
 /-- Emit one rung (wired + unwired), with the phase split. Returns `(rows, probes)`. -/
-def emitRung (dir tag : String) (t : StepData) (k : Rung) : IO (Nat × Nat) := do
+def emitRung (dir tag : String) (t : StepData) (k : Rung) (wiredOnly : Bool := false) :
+    IO (Nat × Nat) := do
   let s := t.sh
   let p := rungPub s k
   let t0 ← IO.monoMsNow
   let rows := rungRows t k true
-  let rowsU := rungRows t k false
+  -- ⚑ The UNWIRED control is a SECOND full `rungRows` traversal plus a second `placedOf`, i.e.
+  -- roughly half this rung's cost. It is the tamper control the `pickles-stepmain-harness` proves
+  -- against — and NONE of the three conformance gates reads it: `stepmain-shape-diff`,
+  -- `curve-gate-oracle` and `stepmain-region-conformance` all load `stepmain_step_r8_finalize.json`
+  -- and never open `_unwired.json`. So a grade pays for it and throws it away.
+  -- ⚠ Default stays FALSE. The control is what makes "the tamper is REJECTED here and ACCEPTED on
+  -- the unwired twin" a real claim, and a flag that quietly stopped emitting it would hollow out
+  -- the harness's whole falsification story. Opt in when you are grading, not when you are proving.
+  let rowsU := if wiredOnly then [] else rungRows t k false
   let n := rows.length
-  let _ ← force (n + rowsU.length) "rows"
+  let _ ← force (n + rowsU.length + (if wiredOnly then 1 else 0)) "rows"
   let t1 ← IO.monoMsNow
   let placed := placedOf p (stepGates rows)
-  let placedU := placedOf p (stepGates rowsU)
+  let placedU := if wiredOnly then [] else placedOf p (stepGates rowsU)
   let nw ← force ((placed.map (fun g => g.wires.length)).foldl (· + ·) 0
                   + (placedU.map (fun g => g.wires.length)).foldl (· + ·) 0) "place"
   let t2 ← IO.monoMsNow
@@ -115,9 +124,16 @@ def emitRung (dir tag : String) (t : StepData) (k : Rung) : IO (Nat × Nat) := d
                   (fun ri => p + ri.2)
   let pub := if p == 0 then [] else stepPublic t
   let js := renderStepCircuit s!"stepmain_{tag}_{k.tag}" p (p + n) placed w pub probes
-  let jsU := renderStepCircuit s!"stepmain_{tag}_{k.tag}_UNWIRED" p (p + n) placedU w pub probes
   writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}.json" js
-  writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}_unwired.json" jsU
+  unless wiredOnly do
+    let jsU := renderStepCircuit s!"stepmain_{tag}_{k.tag}_UNWIRED" p (p + n) placedU w pub probes
+    writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}_unwired.json" jsU
+  -- ⚠ And REMOVE a stale control rather than leave one from an older run beside a fresh wired
+  -- artifact. A `_unwired.json` that no longer corresponds to the `.json` next to it is exactly the
+  -- mixed-run directory this pass is closing.
+  if wiredOnly then
+    let up := s!"{dir}/stepmain_{tag}_{k.tag}_unwired.json"
+    if ← System.FilePath.pathExists up then IO.FS.removeFile up
   let t4 ← IO.monoMsNow
   -- A refusal must be LOUD: `placedOf` returns `[]` on refusal, and an empty gate list would
   -- otherwise be written out as a "circuit" the harness rejects for the wrong reason.
@@ -165,6 +181,8 @@ ten-field spec 'absorbs,chals,emsRows,msmTerms,ipaRounds,ipaBlocks,bRounds,cipEv
   -- land 68–69 min apart, and the gap does NOT grow with the rung — because `rungRows` evaluates
   -- all nine sub-lists before it matches on `k`, so EVERY rung pays the whole chain. The three
   -- conformance gates grade `r8_finalize` alone and were waiting on all nine.
+  -- ⚑ `DREGG_SM_WIRED_ONLY=1` drops the unwired control — see `emitRung`. Roughly halves a rung.
+  let wiredOnly := ((← IO.getEnv "DREGG_SM_WIRED_ONLY").getD "0") != "0"
   let rungs ← match ← IO.getEnv "DREGG_SM_RUNGS" with
     | none | some "all" => pure allRungs
     | some sel => match parseRungs sel with
@@ -199,5 +217,5 @@ b={sh.bRounds} pub={sh.pubWords} =="
   let tc1 ← IO.monoMsNow
   IO.println s!"    chain evaluation (sponge + vbm + endo + deferred): {tc1 - tc0} ms"
   for k in rungs do
-    let _ ← emitRung dir tag t k
+    let _ ← emitRung dir tag t k wiredOnly
     pure ()
