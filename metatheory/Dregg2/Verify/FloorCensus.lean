@@ -351,6 +351,75 @@ def injShapeAnd (t : Expr) : MetaM Bool := do
       return false
   catch _ => return false
 
+/-- `And`-tree of equations, EVERY one of which becomes REFLEXIVE under `a := b`. This is what
+"the right-hand side says the two objects agree componentwise, and says nothing else" means as a
+decidable test: `k'.bal = k.bal` maps to `k'.bal = k'.bal` under `k := k'`, and an unrelated
+conjunct (`a + b = 0`) does not. -/
+partial def eqsReflUnder (a b : FVarId) (e : Expr) : Bool :=
+  match e with
+  | .app (.app (.const ``And _) l) r => eqsReflUnder a b l && eqsReflUnder a b r
+  | _ => match eqPair? e with
+         | some (l, r) => (l.replaceFVarId a (.fvar b)) == (r.replaceFVarId a (.fvar b))
+         | none => false
+
+/-- ⚑ **THE `Iff`-HEADED INJECTIVITY SHAPE (2026-08-03), and the blindness it closes is exactly one
+predicate wide.**
+
+`injShape` requires the def's body to BE an fvar equation and `injShapeAnd` requires it to be a
+CONJUNCTION of them. A floor stated as the injectivity BICONDITIONAL
+
+    ∀ k k', D k = D k' ↔ (k'.a = k.a ∧ k'.b = k.b ∧ …)
+
+falls through both — the body's head is `Iff`. That is not an exotic spelling; it is how the two
+REST-FRAME floors are written, and between them they were the largest wholly ungated vacuity in the
+tree. `StateCommit.RestHashIffFrame` is refuted at EVERY width by Cantor
+(`RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality`: `bal : CellId → AssetId → ℤ` is
+a function space and `ℤ` is countable) and `RestFrameFin.RestHashIffFrameFin` is refuted at DEPLOYED
+BabyBear width by pigeonhole (`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`).
+The tree held all of those refutations and NEITHER predicate could enter the derived floor set,
+however many more anyone wrote — so `#floor_ratchet` defended nothing across their binder sites, and
+`CircuitSoundness.CommitSurface`, which carries the second as a FIELD, could leave
+`FloorRatchet.sentinelBundles` while still having no deployed inhabitant.
+
+**THE TEST.** The body is `lhs ↔ rhs` and, for some ORDERED pair of telescope fvars `a b`:
+
+  * `lhs` is an equation whose two sides are the same term at `a` and at `b` — literally
+    `lhs.lhs[a := b] == lhs.rhs`, the same substitution `injShape` already uses to recognise
+    `D a = D b`; and
+  * `rhs` is an `And`-tree of equations, EVERY one of which becomes reflexive under `a := b`
+    (`eqsReflUnder`).
+
+Both halves are load-bearing against OVER-derivation, which has no automatic catch and would flag
+the campaign's own ported theorems. The per-instance side conditions the campaign PORTS TO
+(`SpongeColl`, `LogColl`, `PathColl`, `CNColl`: `xs ≠ ys ∧ hash xs = hash ys`) are `And`-headed, not
+`Iff`-headed, so they cannot reach this test at all; an `Iff` whose right side is unrelated to the
+two objects (`D a = D b ↔ a + b = 0`) fails the reflexivity half. Both edges are pinned as
+`FloorRatchetSpecimens` SHAPE specimens, adjudicated on every root build.
+
+**MEASURED BEFORE LANDING** (elaborated scan of all 133,204 of our constants, not a text grep): 22
+`Prop`-valued defs tree-wide match this shape and NONE of them is already matched by
+`injShape`/`injShapeAnd`, so the widening is strictly additive. Exactly TWO are refuted today — the
+two above. The other 20 are the per-effect `RestIffNo*` siblings (`RestIffNoBal`,
+`RestIffNoCaps`, … one per touched field); none is refuted, so none is promoted, and each becomes
+gated automatically on the day someone writes its refutation. -/
+def injShapeIff (t : Expr) : MetaM Bool := do
+  try
+    forallTelescope t fun xs body => do
+      if xs.size < 2 then return false
+      unless body.isAppOfArity ``Iff 2 do return false
+      let args := body.getAppArgs
+      let some (hl, hr) := eqPair? args[0]! | return false
+      if hl == hr then return false
+      for x in xs do
+        let .fvar a := x | continue
+        for y in xs do
+          let .fvar b := y | continue
+          if a == b then continue
+          if (hl.replaceFVarId a (.fvar b)) == hr then
+            if eqsReflUnder a b args[1]! then return true
+      return false
+  catch _ => return false
+
 /-! ## Pass 0b/0c — witnesses in NESTED position
 
 A statement body is not one claim; it is a tree of them, and PROVING the tree proves the leaves
@@ -687,7 +756,8 @@ def run (outPath : Option String) : MetaM Unit := do
       unless body == .sort .zero do return false
       let b := di.value.beta xs
       if ← injShape b then return true
-      injShapeAnd b
+      if ← injShapeAnd b then return true
+      injShapeIff b
     if hit then cand := cand.push nm
   -- named sentinels join the candidate set whatever their shape (MSISHard is `¬∃`-shaped)
   let mut candSet : NameSet := cand.foldl (·.insert ·) {}

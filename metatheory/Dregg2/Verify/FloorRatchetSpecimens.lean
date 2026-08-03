@@ -262,4 +262,72 @@ theorem specClassTwoDistinct_inhabited :
     specClassTwoDistinct 0 0 ∧ specClassTwoDistinct 0 1 ∧ (0 : Nat) ≠ 1 :=
   ⟨Or.inl ⟨rfl, rfl⟩, Or.inr ⟨rfl, rfl⟩, by decide⟩
 
+/-! ## The injectivity SHAPE split (`FloorRatchet.shapeSpecimenVerdicts`)
+
+A fourth classifier — and until 2026-08-03 the only one of the four with NO fixtures at all, which
+is why it is the one that was wrong.
+
+`#floor_ratchet` derives its refuted-floor set as `refuted ∧ (injectivity-SHAPED ∨ named sentinel)`,
+so `FloorCensus.injShape` / `injShapeAnd` / `injShapeIff` decide what the gate can EVER defend. A
+floor the tree refutes but the shape test does not recognise is not gated, is not reported, and is
+indistinguishable from a floor that does not exist.
+
+⚑ WHAT WAS SITTING ON IT. `StateCommit.RestHashIffFrame` (refuted at EVERY width by Cantor) and
+`RestFrameFin.RestHashIffFrameFin` (refuted at deployed BabyBear width by pigeonhole) are both
+stated as the injectivity BICONDITIONAL `∀ k k', D k = D k' ↔ (18-fold ∧-tree of readout
+equations)`. `injShape` wants the body to BE an fvar equation, `injShapeAnd` wants a CONJUNCTION of
+them; an `Iff` head reaches neither. So three in-tree refutations promoted nothing, ~250 binder
+sites between the two predicates carried ZERO baseline rows, and `CircuitSoundness.CommitSurface` —
+which carries the second as a FIELD — was dropped from `FloorRatchet.sentinelBundles` on 2026-08-01
+because the fixpoint could no longer see it. That removal read as "the bundle got ported". It was
+the detector going blind.
+
+The other degeneration is just as quiet and worse to live with: widen the test far enough to admit
+the per-instance side conditions the campaign PORTS TO and every ported theorem in the tree flags at
+once, the day someone writes the refutation those ports are FOR.
+
+The six below pin both edges and the two boundary cases between them. Unlike the other three
+families these are not declaration TYPES — they are FLOOR BODIES, so each specimen IS the shape it
+pins, and `surface` runs the live disjunction on it. -/
+
+/-- SHAPED — `injShape`. Plain injectivity as a hypothesis-to-conclusion implication: this is
+`Poseidon2SpongeCR`/`cellLeafInjective`'s shape, the one the whole campaign is about. -/
+def specShapeInjEquation (f : List ℤ → ℤ) : Prop :=
+  ∀ xs ys : List ℤ, f xs = f ys → xs = ys
+
+/-- SHAPED — `injShapeAnd`. The MULTI-TARGET form: one digest equation forces a CONJUNCTION of
+component equations. This is `compressInjective`'s shape. -/
+def specShapeInjConjunction (g : ℤ → ℤ → ℤ) : Prop :=
+  ∀ a b c d : ℤ, g a b = g c d → a = c ∧ b = d
+
+/-- SHAPED — `injShapeIff`, and it is the one the gate could not see until 2026-08-03. The
+BICONDITIONAL form: the digest is equal exactly when the objects agree componentwise. Token for
+token the shape of `StateCommit.RestHashIffFrame` and `RestFrameFin.RestHashIffFrameFin`, at two
+components instead of eighteen. -/
+def specShapeInjBiconditional (D : (Nat × Nat) → ℤ) : Prop :=
+  ∀ k k' : Nat × Nat, D k = D k' ↔ (k'.1 = k.1 ∧ k'.2 = k.2)
+
+/-- NOT SHAPED, and this is the edge that matters most, because it is the shape of what the
+campaign PORTS TO. `SpongeColl`, `LogColl`, `PathColl`, `CNColl` are all `xs ≠ ys ∧ hash xs = hash
+ys` — an `And`-headed body whose left conjunct is a DISEQUALITY, not an fvar equality. Writing
+`¬ SpongeColl …` is the campaign's most common new theorem; if this ever classified SHAPED, every
+declaration that took the honest per-instance side condition would become a carrier and the gate
+would be measuring the repair as the disease. -/
+def specShapeCollisionSideCondition (f : List ℤ → ℤ) : Prop :=
+  ∀ xs ys : List ℤ, xs ≠ ys ∧ f xs = f ys
+
+/-- NOT SHAPED. An `Iff` whose left side IS the digest equation but whose right side says something
+unrelated to the two objects. `injShapeIff`'s second half — every right-hand conjunct must become
+REFLEXIVE under `k := k'` — is what rejects it, and without that half the test would promote any
+biconditional that happened to mention a function applied twice. -/
+def specShapeIffUnrelatedRhs (D : Nat → ℤ) : Prop :=
+  ∀ a b : Nat, D a = D b ↔ a + b = 0
+
+/-- NOT SHAPED. The other `Iff` boundary: the left side is an equation, but between two applications
+to the SAME object, so there is no pair of telescope fvars the substitution can relate and nothing
+is being separated. Without the `hl[a := b] == hr` half, a test that keyed only on "`Iff` over a
+conjunction of equations" would take it. -/
+def specShapeIffOneObject (D E : Nat → ℤ) : Prop :=
+  ∀ a b : Nat, D a = E a ↔ (b = b ∧ a = a)
+
 end Dregg2.Verify.FloorRatchetSpecimens

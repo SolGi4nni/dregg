@@ -42,9 +42,13 @@ FIELDS carries one — or a floor spelled INLINE rather than by name. Six surfac
     binder-keyed ruler. The census found ~250 carriers hiding behind three such defs
     (`descriptorRefines`, `descriptorComplete`, `ClosedLogExtract`).
   * **propdef-user** — a declaration whose type mentions such a def.
-  * **bundle** — a STRUCTURE with a floor-typed FIELD. `CommitSurface` carries four
-    (`cmbInj`/`compInj : compressInjective`, `compNInj`, `leafInj`), so no inhabitant of it
-    exists at deployed BabyBear parameters.
+  * **bundle** — a STRUCTURE with a floor-typed FIELD. `CommitSurface` is the example this taxonomy
+    was written on: it CARRIED four (`cmbInj`/`compInj : compressInjective`, `compNInj`, `leafInj`),
+    and those four fields were DELETED 2026-08-01. ⛑ It is still a bundle, and still has no deployed
+    inhabitant: its surviving field `restFrame : RestHashIffFrameFin RH` is refuted at deployed width
+    (`ClosureSurfaceApplicable.no_babyBear_commitSurface`). What changed on 2026-08-01 is that the
+    fixpoint stopped being able to SAY so, because that field is `Iff`-headed; `injShapeIff` restored
+    it on 2026-08-03. See the `sentinelBundles` note.
   * **bundle-user** — ⚑ THE B3 HOLE, closed 2026-07-25. A declaration that takes such a
     structure as a HYPOTHESIS is exactly as vacuous as one taking a floor binder, and until this
     landed it added ZERO carriers. The adversarial probe was one line:
@@ -202,7 +206,7 @@ namespace Dregg2.Verify.FloorRatchet
 
 open Lean Meta Elab Command
 open Dregg2.Verify.FloorCensus
-  (ourModule moduleOf isInternalName headConst? notArg? injShape injShapeAnd
+  (ourModule moduleOf isInternalName headConst? notArg? injShape injShapeAnd injShapeIff
    sentinelFloors sentinelPropBody negWitnesses posWitnesses)
 
 /-- The marker constant `Dregg2.Verify.FloorPole.HonestHypothesis`, named by raw `Name` rather
@@ -249,13 +253,17 @@ delete the line in the same commit as the port. `DeployedCapTree.CapHashScheme` 
 for exactly one afternoon before a co-tenant lane shed its `chipCR : Compress1CR` field
 (`Circuit/CapHashBundleCutoverCheck.lean`) and re-inhabited it with `deployedCapHashScheme`, whose
 own chip REFUTES the deleted field — so keep the list to bundles too big to fall by accident. -/
--- ⚰ `Dregg2.Circuit.CircuitSoundness.CommitSurface` was the first entry and is REMOVED 2026-08-01.
--- Its four injectivity fields (`cmbInj`/`compInj`/`compNInj`/`leafInj`) are DELETED, so the joint
--- fixpoint no longer finds the bundle floor-carrying and the sentinel would FAIL CLOSED and red the
--- root for every lane. ⚑ **THE REMOVAL WAS THEREFORE FORCED, NOT JUDGED** — given this gate as it
--- stands there was no other tree that builds — and it is NOT the "the bundle got PORTED" win the
+-- ⛑ `Dregg2.Circuit.CircuitSoundness.CommitSurface` was the first entry, was REMOVED 2026-08-01, and
+-- is RESTORED 2026-08-03 by the commit that widened the shape test. The removal and the restoration
+-- are one story and both halves are kept, because the removal is the cleanest specimen this file has
+-- of an instrument's blind spot being read as a property of the tree.
+--
+-- THE REMOVAL. Its four injectivity fields (`cmbInj`/`compInj`/`compNInj`/`leafInj`) were DELETED, so
+-- the joint fixpoint no longer found the bundle floor-carrying and the sentinel FAILED CLOSED and
+-- redded the root for every lane. ⚑ **IT WAS THEREFORE FORCED, NOT JUDGED** — given the gate as it
+-- then stood there was no other tree that builds — and it was NOT the "the bundle got PORTED" win the
 -- docstring above describes. ⛑ 2026-08-02: the BINDER surface followed — `ClosureSurface.S_live`'s
--- four parameters, which had become inert when the fields went, are deleted along with every binder
+-- four parameters, which had become inert when the fields went, were deleted along with every binder
 -- that only existed to feed them.
 --
 -- ⚠ **AND THE STATED REASON WAS HALF WRONG (re-examined 2026-08-03).** The removal was justified on
@@ -265,20 +273,19 @@ own chip REFUTES the deleted field — so keep the list to bundles too big to fa
 -- `Encodable.encode`), and it is REFUTED at deployed BabyBear width by the same pigeonhole that
 -- killed the four deleted fields (`restHashIffFrameFin_false_babyBear`, and
 -- `ClosureSurfaceApplicable.no_babyBear_commitSurface`: NO `CommitSurface` has a BabyBear-bounded
--- rest-hash). So the bundle still has no deployed inhabitant. The operative reason the fixpoint stays
--- quiet is the SHAPE, not the satisfiability: `RestHashIffFrameFin`'s body is an `∀`-`Iff` over an
--- 18-fold conjunction, which `FloorCensus.injShape`/`injShapeAnd` reject, so it can never enter
--- `refutedFloors` however many refutations the tree holds, and it is not a named sentinel.
--- MEASURED at HEAD: `RestHashIffFrameFin` ~115 binder sites, its every-width-refuted predecessor
--- `StateCommit.RestHashIffFrame` ~134, `(S : CommitSurface)` 411 — and ZERO baseline rows between
--- them.
+-- rest-hash). The bundle never stopped being floor-carrying; the FIXPOINT stopped being able to say
+-- so, because `RestHashIffFrameFin`'s body is an `∀`-`Iff` over an 18-fold conjunction and
+-- `FloorCensus.injShape`/`injShapeAnd` both required an fvar EQUATION.
 --
--- ⚑ **RESTORING THIS ENTRY IS PART OF ANY PROMOTION, NOT A SEPARATE STEP.** The moment
--- `RestHashIffFrameFin` enters the refuted set — by a widened shape test that recognises the
--- injectivity BICONDITIONAL `h a = h b ↔ (conjunction of readout equations)`, or by a
--- `FloorCensus.sentinelFloors` entry — `CommitSurface` becomes floor-carrying again and this line
--- must come back in the SAME commit, together with the grandfathering the ~660 affected declarations
--- then need. The two are one decision.
+-- THE RESTORATION. `FloorCensus.injShapeIff` recognises exactly that biconditional, so
+-- `RestHashIffFrameFin` and its every-width-refuted predecessor `StateCommit.RestHashIffFrame` are in
+-- `refutedFloors`, `CommitSurface` is floor-carrying again, and this entry is back — in the SAME
+-- commit, with the raise the affected declarations need, exactly as the note that stood here demanded.
+-- ⚑ Which is the point worth keeping: the missing entry was never evidence that the bundle was clean.
+-- It was evidence that the DETECTOR could not reach it, and for two days the two were indistinguishable
+-- from a green build. `Verify/FloorCensus`'s own `CollisionResistant` tombstone (§`sentinelFloors`)
+-- says a DERIVED detector is strictly better than a name-keyed sentinel; this is that, and the sentinel
+-- is kept BESIDE it as the fail-closed self-test that the derivation still reaches the bundle.
 -- ⚰ `Dregg2.Circuit.ClosureReadoutsRealizable.ClosureReadoutsLive` was the fourth entry and is
 -- REMOVED 2026-08-03 because the STRUCTURE IS DELETED, not because it stopped carrying floors. It
 -- was `ClosureReadouts` with the one member `closureReadouts_uninstantiable` refutes taken out, and
@@ -286,7 +293,8 @@ own chip REFUTES the deleted field — so keep the list to bundles too big to fa
 -- `transfer` is false too (closed, no crypto floor assumed) — so the successor had no inhabitant
 -- either and its whole cone was vacuous. Its 44 baseline rows went with it.
 def sentinelBundles : List Name :=
-  [ `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
+  [ `Dregg2.Circuit.CircuitSoundness.CommitSurface
+  , `Dregg2.Circuit.Poseidon2Binding.Poseidon2RealizedSponge
   , `Dregg2.Circuit.ClosureLog.StateDecodeLog
   , `Dregg2.Circuit.ClosureFanoutGenuine.ClosureReadouts ]
 
@@ -355,12 +363,42 @@ def classSpecimenVerdicts : List (Name × Bool) :=
   , (`Dregg2.Verify.FloorRatchetSpecimens.specClassSingleton, false)
   , (`Dregg2.Verify.FloorRatchetSpecimens.specClassTwoDistinct, true) ]
 
+/-- The SHAPE SELF-TEST specimens and their required verdicts (`true` = injectivity-SHAPED, i.e. a
+`¬`-refutation of this def WOULD promote it to a refuted floor).
+
+⚑ **A FOURTH CLASSIFIER, AND UNTIL 2026-08-03 IT WAS THE ONLY ONE WITH NO SPECIMENS AT ALL.** The
+derived floor set is `refuted ∧ (injectivity-SHAPED ∨ named sentinel)`, so the shape test decides
+what the whole gate can ever defend — and it had no fixture, in either direction, on any run. Both
+degenerations are silent on a green build and they are the two the module's own §"Auditing what the
+gate DERIVED" names:
+
+  * degenerate toward UNSHAPED and a refuted floor stops being a floor. That is not hypothetical:
+    it is precisely what `RestHashIffFrame` and `RestHashIffFrameFin` were doing for two days with
+    three refutations on disk, and the missing `CommitSurface` sentinel entry read as "the bundle is
+    clean" rather than "the detector cannot reach it".
+  * degenerate toward SHAPED and the per-instance side conditions the campaign PORTS TO
+    (`SpongeColl`, `LogColl`, `PathColl`: `xs ≠ ys ∧ hash xs = hash ys`) become floors the moment
+    anyone writes `¬ SpongeColl …` — which is the campaign's single most common new theorem. Every
+    ported declaration in the tree would flag at once, and the gate would be turned off.
+
+The subjects are `Prop`-valued defs whose OWN BODIES are the shapes, so the fixture is the thing it
+pins rather than a description of it, and `surface` runs the live `injShape`/`injShapeAnd`/
+`injShapeIff` disjunction on each one. -/
+def shapeSpecimenVerdicts : List (Name × Bool) :=
+  [ (`Dregg2.Verify.FloorRatchetSpecimens.specShapeInjEquation, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specShapeInjConjunction, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specShapeInjBiconditional, true)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specShapeCollisionSideCondition, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specShapeIffUnrelatedRhs, false)
+  , (`Dregg2.Verify.FloorRatchetSpecimens.specShapeIffOneObject, false) ]
+
 /-- The specimens are the instrument's own fixtures, not tree content: excluded from the carrier
 surface so they never occupy lines in a baseline whose only healthy direction is shorter. -/
 def specimens : NameSet :=
-  classSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
-    (injSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
-      (specimenVerdicts.foldl (fun a (n, _) => a.insert n) {}))
+  shapeSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
+    (classSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
+      (injSpecimenVerdicts.foldl (fun a (n, _) => a.insert n)
+        (specimenVerdicts.foldl (fun a (n, _) => a.insert n) {})))
 
 /-- A CLAIM position, scanned deeply. Floor content in a positive claim (`theorem sat : F good`)
 assumes nothing — the theorem does not become vacuous if `F` is false, it becomes UNPROVABLE. But
@@ -868,7 +906,9 @@ def surface : MetaM Surface := do
           try
             forallTelescope di.type fun xs _ => do
               let b := di.value.beta xs
-              if ← injShape b then return true else injShapeAnd b
+              if ← injShape b then return true
+              if ← injShapeAnd b then return true
+              injShapeIff b
           catch _ => pure false
         | _ => pure false
     if shaped then
@@ -881,6 +921,39 @@ def surface : MetaM Surface := do
         ¬-conclusion refutation. Partial import (the refutation module is missing) or a \
         genuine regression — either way the gate would defend a smaller floor set than the \
         tree actually refutes. Refusing to run."
+  -- (i) THE SHAPE SELF-TEST. The derivation above is `refuted ∧ (SHAPED ∨ sentinel)`, so the shape
+  -- disjunction decides what the gate can ever defend — and it ran with no fixture in either
+  -- direction until 2026-08-03. Both degenerations pass a green build with a different number.
+  for (spec, wantShaped) in shapeSpecimenVerdicts do
+    unless env.contains spec do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: shape specimen {spec} is not in the environment. \
+        `Dregg2/Verify/FloorRatchetSpecimens.lean` is unimported or renamed, so the injectivity \
+        SHAPE test — the thing that decides which refuted predicates are floors at all — is \
+        running unchecked. Refusing to run."
+    let some sci := env.find? spec | continue
+    let .defnInfo sdi := sci
+      | throwError "FLOOR-RATCHET FAIL-CLOSED: shape specimen {spec} is not a `def`. The shape \
+          test reads a definition's BODY; a specimen that is not one pins nothing."
+    let got ←
+      try
+        forallTelescope sdi.type fun xs _ => do
+          let b := sdi.value.beta xs
+          if ← injShape b then return true
+          if ← injShapeAnd b then return true
+          injShapeIff b
+      catch _ => pure false
+    unless got == wantShaped do
+      throwError "FLOOR-RATCHET FAIL-CLOSED: shape specimen {spec} classified \
+        {(if got then "SHAPED" else "NOT SHAPED")}, expected \
+        {(if wantShaped then "SHAPED" else "NOT SHAPED")}. \
+        Too NARROW and a refuted predicate stops being a floor — which is exactly what \
+        `StateCommit.RestHashIffFrame` and `RestFrameFin.RestHashIffFrameFin` did while three \
+        refutations of them sat on disk, and the `CommitSurface` sentinel's absence read as \
+        `the bundle is clean` instead of `the detector cannot reach it`. Too WIDE and the \
+        per-instance side conditions the campaign PORTS TO (`SpongeColl`, `LogColl`, `PathColl`: \
+        `xs ≠ ys ∧ hash xs = hash ys`) become floors the moment anyone writes `¬ SpongeColl …`, \
+        and every ported declaration in the tree flags at once. Fix the shape test, or change \
+        the specimen's expected verdict IN THE DIFF and say why."
 
   -- ===== HONEST floors: the refutability pole stops costing a red root (`Verify/FloorPole`) ====
   -- A `¬ F c` at a DEGENERATE instance and a `¬ F deployed` have the same type shape, so the
