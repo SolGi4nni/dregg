@@ -28,7 +28,8 @@
 //   `max` — a free-cell count. It may FALL freely (that is the work); a RISE is RED.
 //   `eq`  — a structural identity (`WRAP_PRIMARY_LEN = 40`, `nItems = 120`). Any move is RED.
 //   `min` — a count of things that are DERIVED rather than supplied. A FALL is RED.
-// ⚠ The ceilings below were set from the census as it stood at `9b3312500` and are a COMMITTED
+// ⚠ The ceilings below were RE-BASELINED against the restructured census on 2026-08-03 (the
+// per-pin moves are named in the block itself) and are a COMMITTED
 // DECISION, not "whatever was there". A guard ratchet in this tree was silently re-baselined at
 // inflated counts this session and certified them green; re-baselining here is a commit that says
 // which number moved, in which direction, and why the new one is the right one.
@@ -76,46 +77,74 @@ const WRAP_EMIT_CMD = '(cd metatheory && DREGG_WM=wrap lake env lean --run Dregg
 // the theorem name AND the expression, never by position.
 const PINS = [
   // ── STEP ────────────────────────────────────────────────────────────────────────────────────────
+  // ⚑ RE-BASELINED 2026-08-03, and every move is named. The census was RESTRUCTURED (its
+  // committed-shape numbers moved into ONE command, `the_step_prover_choice_census`, over a single
+  // `occIxs` pass) and this file was still watching the pre-restructure theorem names, so eight of
+  // its thirteen step pins had become UNREADABLE — which under this file's own rule is RED, not
+  // skipped, and is why they are repointed here rather than left to rot.
+  //   · free-witness total 11 → 10   `permClaimed` was an `eEq perm permClaimed` over a variable
+  //                                  occupying exactly ONE cell — an assert that could not fail. It
+  //                                  is DELETED. Pinned per PROGRAM now (1 + 9), never as a total,
+  //                                  because the 9 that has been quoted as the assembly's is R8's.
+  //   · unread env cells 19 → 20     −1 (`permClaimed`'s assert output) +2 (the lazy-sponge rung's
+  //                                  post-absorb lanes). A RISE, and a re-baseline of a `max` pin,
+  //                                  so it is stated here explicitly rather than absorbed.
+  //   · assert outputs 18 → 17       the same deletion, from the other side.
+  //   · `vDomLog2` 1 → 2             a STRENGTHENING: `Branch_data.typ`'s `~assert_16_bits` chain
+  //                                  landed, so the word is no longer solved-for freely.
+  //   · pad lane 1 → 2               ⚑ the ONE was the vacuous reading. `vTPad` owns the `w = 0`
+  //                                  pin row's cell AND the transcript lane it pads, in ONE σ class
+  //                                  — which is what makes the pin BIND the absorb. A count of one
+  //                                  would mean the pin and the absorb are in different classes.
+  //   · `vCipBit` count pin RETIRED  the bit is DERIVED since this rung (it is ladder 0's `s_odd`),
+  //                                  so "how many cells does it own" is no longer the question. Its
+  //                                  slot is taken by a `min` pin on `vMaskPack`'s gate rows, whose
+  //                                  FALL is the corresponding loss.
   { src: 'step', thm: 'the_step_prover_choice_census',
-    expr: '(witSlots tStep.ft.fp.prog).length + (witSlots tStep.fin.fp.prog).length',
-    ceiling: 11, dir: 'max',
-    what: 'DECLARED FREE-WITNESS SLOTS at the committed step shape — `AOp.wit`, a straight-line slot with no defining row. 2 in R6 (`denomInv`, `permClaimed`) + 9 in R8 (`xiHi` + four `Field.equal` (inverse, bit) pairs). A TWELFTH is a new cell the prover picks.' },
-  { src: 'step', thm: 'the_assembly_compiles_eleven_free_witness_slots',
+    expr: '(witSlots tStep.ft.fp.prog).length', ceiling: 1, dir: 'max',
+    what: "R6's DECLARED FREE-WITNESS SLOTS at the committed step shape — `denomInv`, `ftBuild`'s witnessed-inverse device. `AOp.wit` is a straight-line slot with no defining row. A SECOND is a new cell the prover picks." },
+  { src: 'step', thm: 'the_step_prover_choice_census',
     expr: '(witSlots tStep.fin.fp.prog).length', ceiling: 9, dir: 'max',
-    what: "R8's share of the eleven, pinned separately so a slot MOVING between rungs does not hide under the total." },
+    what: "R8's nine — `xiHi` plus four `Field.equal` (inverse, bit) pairs. Pinned separately from R6's because the nine that gets quoted as the ASSEMBLY's is this one alone." },
+  { src: 'step', thm: 'the_assembly_compiles_ten_free_witness_slots',
+    expr: '(witSlots tS.fin.fp.prog).length', ceiling: 9, dir: 'max',
+    what: "the same count at the smoke shape, so a slot that appears only at scale is still one pin away from visible." },
   { src: 'step', thm: 'the_step_prover_choice_census',
-    expr: '(envVarsNoRowReads (circuitEnv tStep) rowsStep).length', ceiling: 19, dir: 'max',
-    what: 'ENVIRONMENT CELLS THE GRID NEVER READS at the committed shape — 18 `.aeq` output slots + `vDHi 0`, the dead ξ split. Benign today because nothing reads them; a TWENTIETH is a cell whose consumer nobody checked.' },
-  { src: 'step', thm: 'the_grid_never_reads_nineteen_environment_cells',
-    expr: '(envVarsNoRowReads (circuitEnv tS) rowsS).length', ceiling: 21, dir: 'max',
-    what: 'the same count at the smoke shape (21 = 19 + words 11/39, which have no ladder there).' },
-  { src: 'step', thm: 'the_nineteen_are_eighteen_assert_outputs_and_one_dead_split',
+    expr: '(envVarsNoRowReads (circuitEnv tStep) rowsStep).length', ceiling: 20, dir: 'max',
+    what: 'ENVIRONMENT CELLS THE GRID NEVER READS at the committed shape — 17 `.aeq` output slots + `vDHi 0` (the dead ξ split) + two post-absorb lanes the lazy sponge no longer reads. Benign today because nothing reads them; a TWENTY-FIRST is a cell whose consumer nobody checked.' },
+  { src: 'step', thm: 'the_grid_never_reads_twentytwo_smoke_environment_cells',
+    expr: '(envVarsNoRowReads (circuitEnv tS) rowsS).length', ceiling: 22, dir: 'max',
+    what: 'the same count at the smoke shape (22 = 20 + words 11/39, which have no ladder there).' },
+  { src: 'step', thm: 'the_step_prover_choice_census',
     expr: '((tStep.ft.fp.prog.toList ++ tStep.fin.fp.prog.toList).countP\n          (fun o => match o with | .aeq _ _ => true | _ => false))',
-    ceiling: 18, dir: 'max',
-    what: 'the assert-output share of the nineteen. Keeps "nineteen" a CENSUS: if the total holds while this falls, an unaccounted-for family appeared.' },
+    ceiling: 17, dir: 'max',
+    what: 'the assert-output share of the twenty. Keeps "twenty" a CENSUS: if the total holds while this falls, an unaccounted-for family appeared.' },
   { src: 'step', thm: 'the_step_prover_choice_census',
-    expr: 'occCount rowsStep (vStmtWrapMsgs shapeStep)', ceiling: 1, dir: 'eq',
+    expr: 'occAt occStep (vStmtWrapMsgs shapeStep)', ceiling: 1, dir: 'eq',
     what: 'WORD 11 `messages_for_next_wrap_proof` — no in-circuit source, reaching exactly its own `var_base_mul` counter. Pinned `eq`: MORE cells means a new consumer nobody weighed, FEWER means the ladder stopped reading it and `x_hat` no longer moves with the word.' },
   { src: 'step', thm: 'the_step_prover_choice_census',
-    expr: 'occCount rowsStep (vStmtLookup shapeStep)', ceiling: 1, dir: 'eq',
+    expr: 'occAt occStep (vStmtLookup shapeStep)', ceiling: 1, dir: 'eq',
     what: "WORD 39, the lookup `Opt`'s inner scalar. Same shape as word 11 and the same `eq` reasoning." },
+  { src: 'step', thm: 'the_two_sourceless_statement_words_reach_only_their_own_ladder',
+    expr: 'STMT_LOOKUP_VAL', ceiling: 0, dir: 'eq',
+    what: "⚑ word 39's VALUE is upstream's own dummy — `~lookup_parameters:{ zero = { var = { challenge = Field.zero } } }` (`step_main.ml:90-95`). It was an invented `Challenge`-width fixture; `eq 0` is a FIDELITY pin, not a freedom one, and a non-zero here means the assembly re-invented a number Mina fixes." },
   { src: 'step', thm: 'the_step_prover_choice_census',
-    expr: 'occCount rowsStep (bpZ1 shapeStep)', ceiling: 1, dir: 'eq',
+    expr: 'occAt occStep (bpZ1 shapeStep)', ceiling: 1, dir: 'eq',
     what: '`z₁` of the opening response — one cell, its `Shifted_value.Type2` split row: one equation in three unknowns, all three the prover\'s. This is the forgery surface `substituted_assembly_still_closes_equal_g` exhibits.' },
   { src: 'step', thm: 'the_step_prover_choice_census',
-    expr: 'occCount rowsStep (bpZ2 shapeStep)', ceiling: 1, dir: 'eq', what: '`z₂`, the twin of `z₁`.' },
-  { src: 'step', thm: 'the_opening_response_scalars_own_one_cell_each',
-    expr: 'occCount rowsStep (vGx shapeStep)', ceiling: 5, dir: 'eq',
+    expr: 'occAt occStep (bpZ2 shapeStep)', ceiling: 1, dir: 'eq', what: '`z₂`, the twin of `z₁`.' },
+  { src: 'step', thm: 'the_step_prover_choice_census',
+    expr: 'occAt occStep (vGx shapeStep)', ceiling: 5, dir: 'eq',
     what: "`G.x` — `assert_on_curve`'s two halves read it twice, plus segment D's absorb and the ladder base. `eq` because a FALL here means a curve check stopped reading the point." },
-  { src: 'step', thm: 'the_cip_bit_is_boolean_constrained_and_absorbed_and_nothing_else',
-    expr: 'occCount (rowsS.filter (fun r => !r.probe)) (vCipBit shapeSmoke)', ceiling: 4, dir: 'eq',
-    what: "`combined_inner_product`'s BIT: three cells of `Boolean.typ`'s own `b² = b` plus the transcript absorb. Booleanity is ALL that constrains it, so the prover has two transcripts to choose between. A FALL below 4 would mean booleanity itself was dropped." },
-  { src: 'step', thm: 'the_branch_mask_bits_are_only_boolean_and_domain_log2_owns_one_cell',
-    expr: 'occCount rowsStep (vDomLog2 shapeStep)', ceiling: 1, dir: 'eq',
-    what: "`domain_log2` occupies ONE cell — `Branch_data.Checked.pack`'s single equation — so the prover picks `branch_data`'s two mask bits freely and solves for it. ⚠ carries no range check where upstream asserts 16 bits." },
-  { src: 'step', thm: 'the_transcript_residue_is_one_pinned_pad_lane',
-    expr: 'occCount rowsStep (vMsg shapeStep 0 1)', ceiling: 1, dir: 'eq',
-    what: 'THE ONE STRUCTURAL PAD LANE — block `oDigest`\'s second lane, carrying nothing upstream feeds. Pinned by a `w = 0` Generic half since §22, so its one cell is a constant pin and not a free absorb.' },
+  { src: 'step', thm: 'the_branch_triple_is_pinned_by_the_suffix_row_and_the_16_bit_chain',
+    expr: 'occCount rowsS (vMaskPack shapeSmoke)', ceiling: 3, dir: 'min',
+    what: "⚑ DIRECTION INVERTED, and this pin REPLACES the retired `vCipBit` freedom count. `proofs_verified_mask`'s pack variable carries THREE gate rows since the `Prefix_mask` suffix half `m₀·(1−m₁) = 0` landed — the row that refuses the illegal `[1,0]`. A FALL is a refusal that left." },
+  { src: 'step', thm: 'the_step_prover_choice_census',
+    expr: 'occAt occStep (vDomLog2 shapeStep)', ceiling: 2, dir: 'eq',
+    what: "`domain_log2` occupies TWO cells — `Branch_data.Checked.pack`'s equation AND the `~assert_16_bits` chain's `Field.Assert.equal n scalar` tie. It owned ONE (freely solved-for) until the 16-bit chain landed; `eq 2` is what keeps that chain from being dropped silently." },
+  { src: 'step', thm: 'the_step_prover_choice_census',
+    expr: 'occAt occStep (vTPad shapeStep)', ceiling: 2, dir: 'eq',
+    what: 'THE ONE STRUCTURAL PAD LANE — the single rate-2 lane an odd item count leaves without an arrival. TWO cells: `transcriptRows`\' `w = 0` `Generic` pin AND the transcript lane itself, in one σ class. `eq 2`, because ONE would mean the pin and the lane are in different classes and the pin binds nothing.' },
 
   // ── WRAP ────────────────────────────────────────────────────────────────────────────────────────
   { src: 'wrap', thm: 'the_wrap_prover_choice_census',

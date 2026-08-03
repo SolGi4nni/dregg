@@ -433,17 +433,69 @@ def oDelta (s : StepShape) : Nat := oGam s + (gamRounds s).length
 shapes, so a shape cannot swallow a block the source does not feed. -/
 def absorbBlocksOf (s : StepShape) : Nat := oDelta s + 1
 
+/-- ⚑⚑ **THE SOURCE ORDINALS, HOISTED — and this is the whole of the elaboration floor.**
+
+`oZ`/`oTc`/`oCip`/`oGam`/`oDelta`/`sqScheduled` are a CHAIN, and each link rebuilds one of
+`preRounds`/`zRounds`/`gamRounds` — a `filter` over `List.range s.ipaRounds`, 76 entries at the
+committed shape. `sqAfter` names five of them, so ONE call walked eleven such filters, and `tOps`
+calls `sqAfter` once per absorb source (60 of them at `shapeStep`): ~660 traversals per `tOps`.
+
+MEASURED at `shapeStep` under the same interpreter `native_decide` runs on (`wip/FloorProbe.lean`,
+`lean --run`, cold process): **`tOps` 33 ms, `spLay` 34 ms** — i.e. `tOps` IS `spLay`, 97% of it.
+And `spLay` is not a constant; it is a FUNCTION of the shape, so nothing caches it. `tBlocks s =
+(spLay s).cur` sits under `nSt`, `nSt` sits under `baseN = nSt s + 2 * tBlocks s + 1` — **two**
+`spLay`s — and every one of the ~thirty region bases above it inherits that. Measured: `baseFtc
+shapeStep` = **68 ms**, exactly 2 × `spLay`, for ONE variable-name lookup; `tPadCell shapeStep` =
+**7.9 s**, because it asked `blockAbsorbs`/`blockWords` per (block, lane) and each recomputed
+`spLay`. A schedule that names tens of thousands of variables therefore paid tens of thousands of
+33 ms transcript layouts, which is the twenty-minute `native_decide` floor.
+
+This record is that chain, evaluated ONCE. `srcOrd_eq` states it is exactly the six ordinals — a
+general theorem over every shape, by `rfl`, so the hoist cannot drift from what it hoists. -/
+structure SrcOrd where
+  z : Nat
+  tc : Nat
+  cip : Nat
+  gam : Nat
+  delta : Nat
+  sched : Nat
+  deriving Repr, Inhabited, DecidableEq
+
+/-- The six ordinals in one pass: `gamRounds` once (it is both `oDelta`'s addend and
+`sqScheduled`'s), `preRounds` once, `zRounds` once. -/
+def srcOrd (s : StepShape) : SrcOrd :=
+  let nGam := (gamRounds s).length
+  let z := oZ s
+  let tc := z + (zRounds s).length
+  let cip := tc + tCommN s
+  let gam := cip + 1
+  { z := z, tc := tc, cip := cip, gam := gam, delta := gam + nGam, sched := 6 + nGam / 2 }
+
+/-- ⚑ **THE HOIST IS THE THING IT HOISTS.** General, `rfl`, no shape instance and no oracle — so a
+change to either `srcOrd` or any of the six reds here instead of splitting the schedule in two. -/
+theorem srcOrd_eq (s : StepShape) :
+    srcOrd s = ⟨oZ s, oTc s, oCip s, oGam s, oDelta s, sqScheduled s⟩ := rfl
+
+/-- …and `absorbBlocksOf` is the last source plus one. -/
+theorem absorbBlocksOf_eq_srcOrd (s : StepShape) : absorbBlocksOf s = (srcOrd s).delta + 1 := rfl
+
 /-- ⚑ How many SQUEEZE blocks follow absorb block `a`. Additive rather than a chain of `else if`, so
-a shape whose `zRounds` or `t_comm` list is empty still gets both of the squeezes that bracket it. -/
-def sqAfter (s : StepShape) (a : Nat) : Nat :=
-  (if a + 1 == oZ s then 2 else 0)                              -- β (:563), γ (:564)
-  + (if a + 1 == oTc s then 1 else 0)                           -- α (:566)
-  + (if a + 1 == oCip s then 1 else 0)                          -- ζ (:568)
-  + (if a == oCip s then 1 else 0)                              -- u = group_map … (:264)
-  + (if oGam s ≤ a && a < oDelta s && (a - oGam s) % 2 == 1 then 1 else 0)   -- prechallenge (:200)
+a shape whose `zRounds` or `t_comm` list is empty still gets both of the squeezes that bracket it.
+
+⚑ The ordinals arrive in `o` rather than being recomputed per source — see `SrcOrd`. `sqAfter` below
+is this at `o = srcOrd s`, so the spec is unchanged and there is one body. -/
+def sqAfterAt (s : StepShape) (o : SrcOrd) (a : Nat) : Nat :=
+  (if a + 1 == o.z then 2 else 0)                               -- β (:563), γ (:564)
+  + (if a + 1 == o.tc then 1 else 0)                            -- α (:566)
+  + (if a + 1 == o.cip then 1 else 0)                           -- ζ (:568)
+  + (if a == o.cip then 1 else 0)                               -- u = group_map … (:264)
+  + (if o.gam ≤ a && a < o.delta && (a - o.gam) % 2 == 1 then 1 else 0)   -- prechallenge (:200)
   -- `c` (:322), then the `chals − 21` this file still takes off the transcript rather than off the
   -- fr-sponge (ξ and r, §8g).
-  + (if a == oDelta s then 1 + (s.chals - sqScheduled s) else 0)
+  + (if a == o.delta then 1 + (s.chals - o.sched) else 0)
+
+/-- …at the shape's own ordinals. -/
+def sqAfter (s : StepShape) (a : Nat) : Nat := sqAfterAt s (srcOrd s) a
 
 /-! ### ⚑⚑ §1c′ — **MINA'S SPONGE IS LAZY, AND THIS FILE'S WAS EAGER.**
 
@@ -493,9 +545,12 @@ def srcItems (a : Nat) : Nat := if a == oDigest then 1 else 2
 /-- **THE OP TAPE** — `verify_one`'s sponge calls in order. `some (a, j)` absorbs source `a`'s lane
 `j`; `none` is a squeeze. -/
 def tOps (s : StepShape) : List (Option (Nat × Nat)) :=
-  (List.range (absorbBlocksOf s)).flatMap (fun a =>
+  -- ⚑ ONE `srcOrd` for the whole tape rather than one per source — `SrcOrd`'s note carries the
+  -- measurement. `absorbBlocksOf s = o.delta + 1` is `absorbBlocksOf_eq_srcOrd`, by `rfl`.
+  let o := srcOrd s
+  (List.range (o.delta + 1)).flatMap (fun a =>
     (List.range (srcItems a)).map (fun j => some (a, j))
-    ++ List.replicate (sqAfter s a) none)
+    ++ List.replicate (sqAfterAt s o a) none)
 
 /-- The LAYOUT the lazy state machine produces. `put` is `(block, lane, source, lane-in-source)` —
 where each absorbed item lands; `sq` is `(block, lane)` per squeeze — the state a squeeze reads is
@@ -509,27 +564,37 @@ structure SpLay where
   sqz : Bool := false
   deriving Repr, Inhabited
 
-/-- One op, transcribed from `sponge.ml:296-325` clause for clause. -/
+/-- One op, transcribed from `sponge.ml:296-325` clause for clause.
+
+⚑ `put`/`sq` are built **REVERSED** and `spLay` reverses them once at the end, so the two tapes cost
+one cons per op instead of `L.put ++ [x]`'s copy of everything already there. At 117 items that
+append was ~6,800 cells per layout, and after `SrcOrd` took `tOps` out of the way it was what was
+left of `spLay`. The FINAL value is unchanged — `spLay`, not `spStep`, is what every consumer
+reads. -/
 def spStep (L : SpLay) : Option (Nat × Nat) → SpLay
   | some (a, j) =>
       -- `| Squeezed _ -> add_assign ~state 0 x ; Absorbed 1`  (no permutation)
-      if L.sqz then { L with put := L.put ++ [(L.cur, 0, a, j)], n := 1, sqz := false }
+      if L.sqz then { L with put := (L.cur, 0, a, j) :: L.put, n := 1, sqz := false }
       -- `| Absorbed n -> if n = rate then (block_cipher; add_assign 0 x; Absorbed 1)`
       else if L.n == RATE then
-        { L with put := L.put ++ [(L.cur + 1, 0, a, j)], cur := L.cur + 1, n := 1 }
+        { L with put := (L.cur + 1, 0, a, j) :: L.put, cur := L.cur + 1, n := 1 }
       -- `else (add_assign n x; Absorbed (n+1))`
-      else { L with put := L.put ++ [(L.cur, L.n, a, j)], n := L.n + 1 }
+      else { L with put := (L.cur, L.n, a, j) :: L.put, n := L.n + 1 }
   | none =>
       if L.sqz then
         -- `| Squeezed n -> if n = rate then (block_cipher; Squeezed 1; state.(0))`
-        (if L.n == RATE then { L with sq := L.sq ++ [(L.cur + 1, 0)], cur := L.cur + 1, n := 1 }
+        (if L.n == RATE then { L with sq := (L.cur + 1, 0) :: L.sq, cur := L.cur + 1, n := 1 }
          -- `else (Squeezed (n+1); state.(n))` — FREE, no permutation
-         else { L with sq := L.sq ++ [(L.cur, L.n)], n := L.n + 1 })
+         else { L with sq := (L.cur, L.n) :: L.sq, n := L.n + 1 })
       -- `| Absorbed _ -> block_cipher ; Squeezed 1 ; state.(0)`
-      else { L with sq := L.sq ++ [(L.cur + 1, 0)], cur := L.cur + 1, n := 1, sqz := true }
+      else { L with sq := (L.cur + 1, 0) :: L.sq, cur := L.cur + 1, n := 1, sqz := true }
 
-/-- **R1's LAYOUT.** -/
-def spLay (s : StepShape) : SpLay := (tOps s).foldl spStep {}
+/-- **R1's LAYOUT.** ⚑ The two tapes come out of the fold newest-first (`spStep`'s note); the
+reverse here is what puts them back in schedule order, which is the order every consumer —
+`itemAt`, `blockWordsL`, `sqPos` — reads them in. -/
+def spLay (s : StepShape) : SpLay :=
+  let L := (tOps s).foldl spStep {}
+  { L with put := L.put.reverse, sq := L.sq.reverse }
 
 /-- **The transcript's PERMUTATION COUNT** — the number of `Poseidon` blocks R1 emits, and the
 number `Sponge.absorb`/`Sponge.squeeze` between them perform. `states` runs `0 … tBlocks`. -/
@@ -565,22 +630,34 @@ transcript receives no item. Under the per-source model that was block 0's secon
 `index_digest`) and it carried a `msgVal` FIXTURE — a word upstream never feeds. Under the item
 stream it is the last lane of the pre-β run, it receives NOTHING, and `transcriptRows` pins a cell to
 ZERO there: `absorb` ADDS, and adding zero to a lane the previous permutation already filled is
-exactly "no arrival". `none` at a shape whose item count is even. -/
+exactly "no arrival". `none` at a shape whose item count is even.
+
+⚑ ONE `spLay` for the whole scan, not one per `(block, lane)` question. `blockWords s b` is
+`blockWordsL (spLay s) b` and `blockAbsorbs s b` is `(blockWords s b).any (·.isSome)`, both by
+definition, so this is the same value — but the version that asked them through the shape recomputed
+the transcript layout 2·RATE·`tBlocks` + 1 = 237 times and MEASURED **7.9 s for one call** at
+`shapeStep` (`SrcOrd`'s note has the instrument). -/
 def tPadCell (s : StepShape) : Option (Nat × Nat) :=
-  ((List.range (tBlocks s)).flatMap (fun b =>
+  let L := spLay s
+  ((List.range L.cur).flatMap (fun b =>
+    let ws := blockWordsL L b
     (List.range RATE).filterMap (fun l =>
-      if blockAbsorbs s b && ((blockWords s b).getD l none).isNone then some (b, l) else none))).head?
+      if ws.any (·.isSome) && (ws.getD l none).isNone then some (b, l) else none))).head?
 
 /-- Which blocks a squeeze reads the output of — where `transcriptRows` puts a σ-only probe, exactly
 as it did when every squeeze had its own block. -/
 def tProbeAfter (s : StepShape) (b : Nat) : Bool :=
-  ((spLay s).sq.any (fun p => p.1 == b + 1))
-  || (b + 1 == tBlocks s && !(spLay s).sq.any (fun p => p.1 == tBlocks s))
+  -- ⚑ one `spLay`, not five: the two `.sq` reads and the two `tBlocks` were four more layouts.
+  let L := spLay s
+  (L.sq.any (fun p => p.1 == b + 1)) || (b + 1 == L.cur && !L.sq.any (fun p => p.1 == L.cur))
 
 /-- ⚑ **`u`'s squeeze index.** `let u = group_map (Sponge.squeeze_field sponge)` (`:263-266`) is the
 squeeze that follows absorb source `oCip`, so its index is the number of squeezes scheduled before
 that source — `4` at both shapes (β, γ, α, ζ). -/
-def uChalIx (s : StepShape) : Nat := ((List.range (oCip s)).map (sqAfter s)).foldl (· + ·) 0
+def uChalIx (s : StepShape) : Nat :=
+  -- ⚑ one `srcOrd` for the whole prefix, as in `tOps`.
+  let o := srcOrd s
+  ((List.range o.cip).map (sqAfterAt s o)).foldl (· + ·) 0
 
 
 
@@ -601,7 +678,11 @@ def xv (k : Nat) : PVar := .external (AUX + k)
 
 /-- Sponge state lane `j` entering block `b` (`b = 0..tBlocks`). -/
 def vSt (_s : StepShape) (b j : Nat) : PVar := xv (3 * b + j)
-def nSt (s : StepShape) : Nat := 3 * (tBlocks s + 1)
+/-- The state region's size at a given permutation count. ⚑ Named separately from `nSt` so the two
+places that need `nSt` AND `tBlocks` in one expression (`vTPad`, `baseN` — and `baseN` is under every
+region above it) can ask `spLay` once instead of twice. -/
+def nStOf (tb : Nat) : Nat := 3 * (tb + 1)
+def nSt (s : StepShape) : Nat := nStOf (tBlocks s)
 
 /-- Post-absorb lane `j ∈ {0,1}` of block `b`. -/
 def vPost (s : StepShape) (b j : Nat) : PVar := xv (nSt s + 2 * b + j)
@@ -609,9 +690,11 @@ def vPost (s : StepShape) (b j : Nat) : PVar := xv (nSt s + 2 * b + j)
 an odd item count leaves without an arrival (`tPadCell`). ⚠ It REPLACES the whole `vMsg` region: with
 the item stream every one of `N_ABSORB_ITEMS` words is a variable some sub-circuit reads, so there is
 no free-witness transcript word left at all. `vMsg`/`msgVal` are GONE. -/
-def vTPad (s : StepShape) : PVar := xv (nSt s + 2 * tBlocks s)
+def vTPad (s : StepShape) : PVar := let tb := tBlocks s; xv (nStOf tb + 2 * tb)
 
-def baseN (s : StepShape) : Nat := nSt s + 2 * tBlocks s + 1
+/-- ⚑ The base every region above the transcript is measured from — and the one `spLay` call the
+whole chain bottoms out in. It asked for `tBlocks` twice (once inside `nSt`); now once. -/
+def baseN (s : StepShape) : Nat := let tb := tBlocks s; nStOf tb + 2 * tb + 1
 /-- Challenge `c`'s `n` accumulator after `k` `EndoMulScalar` rows. `vN c emsRows` is THE CHALLENGE
 VALUE — the variable three gate types share. -/
 def vN (s : StepShape) (c k : Nat) : PVar := xv (baseN s + c * (s.emsRows + 1) + k)

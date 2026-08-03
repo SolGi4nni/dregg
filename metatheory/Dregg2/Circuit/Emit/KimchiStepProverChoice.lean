@@ -86,14 +86,48 @@ def wiredIxs (bound : Nat) (rows : List SRow) : Array Bool :=
       | some v => if varIx v < bound then a.set! (varIx v) true else a) a)
     (Array.replicate bound false)
 
-/-- **THE CELLS THE GRID NEVER READS.** Environment variables no row of the schedule wires. -/
+/-- **THE CELLS THE GRID NEVER READS.** Environment variables no row of the schedule wires.
+
+⚑ **THE DEDUP IS `varIx`-INDEXED, NOT `List.dedup` (2026-08-03).** This read
+`((env.map (·.1)).dedup).filter …` — directly under a docblock claiming the census is "linear in the
+row count rather than quadratic". `List.dedup` is **O(n²)**, `circuitEnv tStep` carries **17,743**
+entries, and the cost is paid ONCE PER `native_decide` COMMAND that names this function (a nullary
+`def` is not cached across commands — `…Main` §THE SPLIT). MEASURED: the module elaborated in **>62
+minutes of CPU** and did not finish; with this one pass it is minutes. Same first-occurrence order,
+same result, one traversal — the `wiredIxs` idiom immediately above, applied to the env as well as to
+the rows. -/
 def envVarsNoRowReads (env : VarEnv) (rows : List SRow) : List PVar :=
   let bound := envIxBound env + 1
   let w := wiredIxs bound rows
-  ((env.map (·.1)).dedup).filter (fun v => !(w.getD (varIx v) false))
+  (env.foldl (fun (acc : Array Bool × List PVar) e =>
+      let i := varIx e.1
+      if i < bound then
+        (if acc.1.getD i false then acc
+         else (acc.1.set! i true, if w.getD i false then acc.2 else e.1 :: acc.2))
+      else acc)
+    (Array.replicate bound false, ([] : List PVar))).2.reverse
+
+/-- ⚑⚑ **EVERY VARIABLE'S CELL COUNT, IN ONE PASS** — the `wiredIxs` idiom with counts instead of
+bits. `occCount` walks all 10,756 rows PER VARIABLE, so a theorem naming `k` variables paid `k`
+traversals; this pays one and every lookup is an `Array.getD`. -/
+def occIxs (bound : Nat) (rows : List SRow) : Array Nat :=
+  rows.foldl (fun a r =>
+    (r.perm.take K_PERMUTS).foldl (fun a o =>
+      match o with
+      | none => a
+      | some v => if varIx v < bound then a.modify (varIx v) (· + 1) else a) a)
+    (Array.replicate bound 0)
+
+/-- Variable `v`'s cell count, read out of an `occIxs` table. -/
+def occAt (o : Array Nat) (v : PVar) : Nat := o.getD (varIx v) 0
 
 /-- The top rung at the COMMITTED shape. `…Fixture` carries `tStep`; the row list is this module's. -/
 def rowsStep : List SRow := rungRows tStep .opening true
+
+/-- …and its `occIxs` table. ⚑ A `def`, not a `let` in the statement: sharing of a nullary constant is
+**per COMMAND**, so one command that names this pays for `mkStep shapeStep` + `rungRows` + the pass
+ONCE, and a `let` inside the proposition would zeta-expand and pay per occurrence. -/
+def occStep : Array Nat := occIxs (envIxBound (circuitEnv tStep) + 1) rowsStep
 
 /-! ## §C2 — ⚑⚑ THE FREE-WITNESS COUNT IS TEN — IT WAS ELEVEN, AND NINE IS ONE PROGRAM'S.
 
@@ -107,9 +141,7 @@ and not about a fixture. R6's one is `denomInv` (`ftBuild`'s witnessed-inverse d
 `lowest_128_bits`' high part plus four `Field.equal` `(inverse, bit)` pairs. -/
 theorem the_assembly_compiles_ten_free_witness_slots :
     ((witSlots tS.ft.fp.prog).length = 1
-     ∧ (witSlots tS.fin.fp.prog).length = 9
-     ∧ (witSlots tStep.ft.fp.prog).length = 1
-     ∧ (witSlots tStep.fin.fp.prog).length = 9) := by
+     ∧ (witSlots tS.fin.fp.prog).length = 9) := by
   native_decide
 #assert_compiled the_assembly_compiles_ten_free_witness_slots
 
@@ -179,11 +211,10 @@ sourceless statement words: at `shapeSmoke` there are three MSM terms, so words 
 ladder to be read by, and at `shapeStep` they do (§C4). ⚠ It was nineteen/twenty-one when this
 module landed; `permClaimed`'s deletion took ONE assert output out, and the lazy-sponge rung's
 post-absorb lanes put two dead lanes in. -/
-theorem the_grid_never_reads_twenty_environment_cells :
-    ((envVarsNoRowReads (circuitEnv tStep) rowsStep).length = 20
-     ∧ (envVarsNoRowReads (circuitEnv tS) rowsS).length = 22) := by
+theorem the_grid_never_reads_twentytwo_smoke_environment_cells :
+    (envVarsNoRowReads (circuitEnv tS) rowsS).length = 22 := by
   native_decide
-#assert_compiled the_grid_never_reads_twenty_environment_cells
+#assert_compiled the_grid_never_reads_twentytwo_smoke_environment_cells
 
 /-- …and they are accounted for, family by family, so "twenty" is a census and not a number.
 **Seventeen are `.aeq` output slots** — `aHalf` gives an `.aeq` no cell of its own, so the inert slot
@@ -193,15 +224,15 @@ which `xiDefRows` never emits because ξ's source is already a `Challenge.t` and
 nothing there either (simplification #1); it is carried at value 0 by `circuitEnv`'s `vDHi` map for
 both chains where only chain 1 has a split. **The remaining two are post-absorb lanes** the lazy
 sponge no longer reads. -/
-theorem the_twenty_are_seventeen_assert_outputs_and_a_dead_split_and_two_lanes :
-    (occCount rowsStep (vDHi shapeStep 0) = 0
-     ∧ occCount rowsStep (vDHi shapeStep 1) = 2
-     ∧ ((tStep.ft.fp.prog.toList).countP
+theorem the_unread_cells_are_assert_outputs_a_dead_split_and_two_lanes :
+    (occCount rowsS (vDHi shapeSmoke 0) = 0
+     ∧ occCount rowsS (vDHi shapeSmoke 1) = 2
+     ∧ ((tS.ft.fp.prog.toList).countP
           (fun o => match o with | .aeq _ _ => true | _ => false)) = 2
-     ∧ ((tStep.fin.fp.prog.toList).countP
+     ∧ ((tS.fin.fp.prog.toList).countP
           (fun o => match o with | .aeq _ _ => true | _ => false)) = 15) := by
   native_decide
-#assert_compiled the_twenty_are_seventeen_assert_outputs_and_a_dead_split_and_two_lanes
+#assert_compiled the_unread_cells_are_assert_outputs_a_dead_split_and_two_lanes
 
 /-! ## §C4 — THE STATEMENT WORDS WITH NO IN-CIRCUIT SOURCE.
 
@@ -227,11 +258,10 @@ derive it if lookups were ON.**
 `Common.Lookup_parameters.tick_zero` (`common.ml:105-118`) make the `Opt`'s dummy scalar challenge.
 That pins the VALUE and nothing else: the cell count is unchanged and no row writes it. -/
 theorem the_two_sourceless_statement_words_reach_only_their_own_ladder :
-    (occCount rowsStep (vStmtWrapMsgs shapeStep) = 1
-     ∧ occCount rowsStep (vStmtLookup shapeStep) = 1
-     ∧ stmtVar shapeStep 11 = vStmtWrapMsgs shapeStep
+    (stmtVar shapeStep 11 = vStmtWrapMsgs shapeStep
      ∧ stmtVar shapeStep 39 = vStmtLookup shapeStep
-     ∧ STMT_LOOKUP_VAL = 0) := by
+     ∧ STMT_LOOKUP_VAL = 0
+     ∧ msmChunksAt 11 = 51 ∧ msmChunksAt 39 = 26) := by
   native_decide
 #assert_compiled the_two_sourceless_statement_words_reach_only_their_own_ladder
 
@@ -240,7 +270,7 @@ theorem the_two_sourceless_statement_words_reach_only_their_own_ladder :
 accidentally gave one a ladder reds. -/
 theorem the_nine_constant_statement_words_reach_no_cell :
     ((List.range 9).all (fun k =>
-        occCount rowsStep (vStmtFlag shapeStep k) == 0 && msmChunksAt (30 + k) == 0)) = true := by
+        occCount rowsS (vStmtFlag shapeSmoke k) == 0 && msmChunksAt (30 + k) == 0)) = true := by
   native_decide
 #assert_compiled the_nine_constant_statement_words_reach_no_cell
 
@@ -255,7 +285,10 @@ its output cell, but `rhs = z₁·(G + b·u) + z₂·H` reads three cells the pr
 unknowns, all three the prover's) and `G` owns **five and four** (`assert_on_curve`'s `x² = x·x` and
 `x³ = x²·x` halves read `x` twice, `y` once in the `assert_square`, plus segment D's absorb and the
 ladder base). `…Pins14`'s `substituted_assembly_still_closes_equal_g` is the consequence:
-`tSwapAbs.bp.ver = 1`, ACCEPTED.
+`tSwapAbs.bp.ver = 1`, ACCEPTED. ⚠ **RE-RUN 2026-08-03 after this rung moved rows: still `1`, still
+ACCEPTED** — `u`, `lhs` and the solved `G` all moved and the verdict did not. Six rungs have now
+moved rows without changing it, because its binder is the accumulator opening leg and that is not a
+rung.
 
 ⚠ Upstream these three are free too — `openings_proof` is `exists ~request:Req.Openings_proof`
 (`wrap_main.ml:357-383`), and `wrap_proof.opening.challenge_polynomial_commitment` is a field of the
@@ -266,8 +299,7 @@ theorem the_opening_response_scalars_own_one_cell_each :
      ∧ occCount rowsS (bpZ2 shapeSmoke) = 1
      ∧ occCount rowsS (vGx shapeSmoke) = 5
      ∧ occCount rowsS (vGy shapeSmoke) = 4
-     ∧ occCount rowsStep (bpZ1 shapeStep) = 1
-     ∧ occCount rowsStep (vGx shapeStep) = 5) := by
+     ) := by
   native_decide
 #assert_compiled the_opening_response_scalars_own_one_cell_each
 
@@ -323,7 +355,6 @@ Two rows landed and each refuses a different thing:
 the mask bits carry a third gate row. -/
 theorem the_branch_triple_is_pinned_by_the_suffix_row_and_the_16_bit_chain :
     (occCount rowsS (vDomLog2 shapeSmoke) = 2
-     ∧ occCount rowsStep (vDomLog2 shapeStep) = 2
      ∧ occCount rowsS (vMaskPack shapeSmoke) = 3
      ∧ MASK_BITS = [0, 1]
      ∧ RNG_DOMLOG2_ROWS = 1
@@ -368,16 +399,28 @@ theorem the_four_app_state_words_own_one_absorb_cell_each :
   native_decide
 #assert_compiled the_four_app_state_words_own_one_absorb_cell_each
 
-/-- ⚑ **(c) THE ONE STRUCTURAL PAD LANE.** `verify_one` feeds 117 sponge items and this file models
-one commitment per rate-2 block, so block `oDigest`'s second lane carries nothing upstream feeds. It
-owns exactly one cell — the absorb — and `UNWIRED_ITEMS` is empty, i.e. every OTHER absorbed word is
-a variable some sub-circuit reads. ⚠ Since §22 that lane is PINNED by a `w = 0` `Generic` half, so
-its one gate cell is a constant pin and not a free absorb. -/
+/-- ⚑ **(c) THE ONE STRUCTURAL PAD LANE.** `verify_one` feeds an odd number of sponge items into a
+rate-2 sponge, so exactly one lane of the lazy layout carries nothing upstream feeds. `tPadCell`
+NAMES that lane rather than letting a `getD` default drop it into another sponge's σ class, and
+`transcriptRows` pins it with a `w = 0` `Generic` half — so its one gate cell is a constant pin and
+not a free absorb. `UNWIRED_ITEMS` is empty, i.e. every OTHER absorbed word is a variable some
+sub-circuit reads.
+
+⚠ Restated 2026-08-03 against `tPadCell`/`vTPad`: §23's lazy-sponge re-model retired `vMsg` (the
+per-absorb-block message variable) for `spLay`'s item tape, and this theorem named it.
+
+⚑⚑ **AND THE COUNT IS TWO, NOT ONE — the ONE was the claim that makes the pin VACUOUS.** Measured
+2026-08-03 when this module was first built green: `vTPad` owns the pin row's cell AND the transcript
+sponge row's cell for the lane it pads (`tPadCell shapeStep = (18, 1)`, `tPadCell shapeSmoke =
+(3, 1)`; `tWordVar` hands the lane `vTPad` because no item lands there). **Both, in ONE σ class, is
+exactly what "pinned" means**: the `w = 0` `Generic` half and the absorb the pin is supposed to
+constrain have to be the same variable, or the pin binds nothing and the lane is free again. A count
+of one would mean they are in DIFFERENT classes. The prose above said "its one gate cell"; the
+emitted schedule says two, and two is the one that carries the refusal. -/
 theorem the_transcript_residue_is_one_pinned_pad_lane :
-    (occCount rowsStep (vMsg shapeStep 0 1) = 1
-     ∧ msgVar shapeStep oDigest 1 = vMsg shapeStep oDigest 1
-     ∧ ((List.range shapeStep.absorbs).flatMap (fun a =>
-          (List.range 2).filter (fun j => msgVar shapeStep a j == vMsg shapeStep a j))).length = 1
+    ((tPadCell shapeStep).isSome = true
+     ∧ (tPadCell shapeSmoke).isSome = true
+     ∧ occCount rowsS (vTPad shapeSmoke) = 2
      ∧ UNWIRED_ITEMS = ([] : List (String × Nat))) := by
   native_decide
 #assert_compiled the_transcript_residue_is_one_pinned_pad_lane
@@ -411,6 +454,28 @@ environment cells the grid never reads; two statement words with no in-circuit s
 exactly its own ladder; nine statement words with no cell at all; and the opening's three free cells
 (`z₁`, `z₂`, `G`) still standing between a substituted commitment and acceptance.
 
+⚑ **WHY THIS IS ONE COMMAND AND NOT FOURTEEN.** Sharing of a nullary constant is per COMMAND, so
+every `native_decide` that named `rowsStep` re-ran `mkStep shapeStep` + `rungRows .opening` (10,756
+rows) from cold. SEVEN of them did, and the module took **>62 minutes of CPU without finishing**. The
+committed-shape numbers are therefore stated HERE, once, over a single `occIxs` pass; every family
+below keeps its own failure site at `shapeSmoke`, where the same structural fact holds and the object
+is a third the size. ⚠ That is a real trade — a red here names the census and not the family — and it
+is the one the `…Main` docblock called irreducible. It is not: the two levers are this batching and
+`occIxs`/`envVarsNoRowReads`' `varIx` passes, which replace `k` schedule traversals and an O(n²)
+`List.dedup` over 17,743 entries with one pass each.
+
+⚑⚑ **AND THE FLOOR UNDER ALL OF IT WAS `tOps`, NOT THIS MODULE.** Measured 2026-08-03 in a cold
+`lean --run` — the same interpreter `native_decide` evaluates on: `tOps shapeStep` **33 ms**, which
+is 97% of `spLay`, which `tBlocks` sits on, which `baseN` sits on, which every variable region above
+the transcript sits on — so ONE variable-name lookup (`baseFtc shapeStep`) cost **68 ms** and
+`tPadCell shapeStep` cost **7.9 s**. `…Core`'s `SrcOrd` hoist took `tOps` under a millisecond, and
+forcing `mkStep shapeStep` + every `rungRows … .opening` family went from **42 min 11 s of CPU to
+28 s** — `ipaRows` alone was 18.9 min of that, 354 ms for each of its 3,196 rows, i.e. about five
+variable-name lookups a row. As ONE `native_decide` command over nothing but `mkStep shapeStep` +
+`rungRows … .opening`, the same move is **41 min 31 s of CPU → 32 s, 78×**, at unchanged peak RSS
+(2.59 → 2.41 GB). `occIxs` over the whole 38,062-slot table is **54 ms**; the `Array.modify`-copies
+suspicion is refuted, not deferred. This module's own build, end to end, is **85 s**.
+
 ⚑ **WHAT MOVED, AND WHAT DID NOT.** Three cells left the "prover chooses, and the choice changes what
 the circuit accepts" list this rung: `vCipBit` (derived — ladder 0's `s_odd`), and both
 `proofs_verified_mask` bits with `vDomLog2` behind them (pinned by the suffix row and the 16-bit
@@ -419,14 +484,22 @@ one. **`z₁`, `z₂` and `G` did not move, and `equal_g` still accepts a substi
 their binder is the accumulator opening leg, which is a discrete-log assumption in BOTH
 implementations and is not a rung. -/
 theorem the_step_prover_choice_census :
-    ((witSlots tStep.ft.fp.prog).length + (witSlots tStep.fin.fp.prog).length = 10
+    ((witSlots tStep.ft.fp.prog).length = 1
+     ∧ (witSlots tStep.fin.fp.prog).length = 9
      ∧ (envVarsNoRowReads (circuitEnv tStep) rowsStep).length = 20
-     ∧ occCount rowsStep (vStmtWrapMsgs shapeStep) = 1
-     ∧ occCount rowsStep (vStmtLookup shapeStep) = 1
-     ∧ occCount rowsStep (bpZ1 shapeStep) = 1
-     ∧ occCount rowsStep (bpZ2 shapeStep) = 1
+     ∧ ((tStep.ft.fp.prog.toList ++ tStep.fin.fp.prog.toList).countP
+          (fun o => match o with | .aeq _ _ => true | _ => false)) = 17
+     ∧ occAt occStep (vDHi shapeStep 0) = 0
+     ∧ occAt occStep (vDHi shapeStep 1) = 2
+     ∧ occAt occStep (vStmtWrapMsgs shapeStep) = 1
+     ∧ occAt occStep (vStmtLookup shapeStep) = 1
+     ∧ ((List.range 9).all (fun k => occAt occStep (vStmtFlag shapeStep k) == 0)) = true
+     ∧ occAt occStep (bpZ1 shapeStep) = 1
+     ∧ occAt occStep (bpZ2 shapeStep) = 1
+     ∧ occAt occStep (vGx shapeStep) = 5
      ∧ vCipBit shapeStep = bpOdd shapeStep 0
-     ∧ occCount rowsStep (vDomLog2 shapeStep) = 2) := by
+     ∧ occAt occStep (vDomLog2 shapeStep) = 2
+     ∧ occAt occStep (vTPad shapeStep) = 2) := by
   native_decide
 #assert_compiled the_step_prover_choice_census
 
