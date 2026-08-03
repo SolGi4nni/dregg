@@ -118,9 +118,17 @@ theorem no_field_element_refused_at_or_above_31 (b : Nat) (hb : 31 ≤ b) :
   rintro ⟨v, h0, hp, hmem⟩
   exact hmem (range_vacuous_at_or_above_31 b hb v h0 hp)
 
-/-- The three declared widths the census found above the ceiling, each named. `TM_BITS = 64`,
+/-- The three declared widths the census found above the ceiling, each named: `TM_BITS = 64`,
 `LightClientSolanaAir.RANGE_BITS = 128`, `LightClientMidnightAir.RANGE_BITS = 128` — as they stood
-before this repair. -/
+before this repair.
+
+⚠ HISTORICAL as of 2026-08-03. None of those three constants declares a live table any more. The
+narrowing to 29 exposed a capability limit it could not fix — one felt holds 30.9 bits and CometBFT
+allows `MaxTotalVotingPower = 2^60 − 1` — so all three tallies became LIMB VECTORS
+(`Dregg2.Circuit.LimbTally`). Solana and Midnight dropped their felt-wide range table entirely;
+Tendermint keeps a 29-bit one for its three TIME slacks only. The theorems in this file still govern
+those slacks, and they remain the reason a limb width above 29 is refused by
+`EffectAirIR.LimbsLeg.mainRailOk`. -/
 theorem the_three_censused_widths_were_vacuous (v : ℤ) (h0 : 0 ≤ v) (hp : v < P) :
     [v] ∈ rangeRows 64 ∧ [v] ∈ rangeRows 128 :=
   ⟨range_vacuous_at_or_above_31 64 (by norm_num) v h0 hp,

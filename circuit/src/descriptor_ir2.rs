@@ -3351,8 +3351,7 @@ where
                         continue;
                     };
                     if matches!(table.sem, TableSem::ExactPublicRows { .. }) {
-                        let mut tuple: Vec<AB::Expr> =
-                            vec![AB::Expr::from_u64(table.id as u64)];
+                        let mut tuple: Vec<AB::Expr> = vec![AB::Expr::from_u64(table.id as u64)];
                         tuple.extend(l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)));
                         let bus_name = exact_public_bus_name(table.arity);
                         LookupBus::new(&bus_name).lookup_key(builder, tuple, AB::Expr::ONE);
@@ -7989,6 +7988,151 @@ mod tests {
         assert_eq!(proof.degree_bits.len(), 3, "main + state16 + byte");
         verify_vm_descriptor2(&desc, &proof, &[])
             .expect("verifier must index the byte table after state16");
+    }
+
+    /// **THREE DECLARED RANGE WIDTHS IN ONE DESCRIPTOR.** The limb-vector shape a multi-limb
+    /// voting-power tally needs: three range tables at three different widths, all queried from
+    /// the same row.
+    ///
+    /// Two things are measured here, neither of them assumed:
+    ///
+    /// 1. The DECLARED table wins over the `CUSTOM_RANGE_WIDTHS` fallback whitelist. `8` is NOT
+    ///    in that array (`[15, 16, 24, 28, 29]`), and it is deliberately not added — the 8-bit
+    ///    table is admitted only because `range_bits_for` consults `desc.tables` FIRST. If that
+    ///    ordering ever regresses, this test goes red rather than the whitelist being widened.
+    /// 2. The three widths are three DIFFERENT relations. Each boundary is pushed one over its
+    ///    OWN ceiling, one column at a time, and each must refuse independently — that is what
+    ///    rules out "all three silently realized at the widest width". ⚠ Say where that refusal
+    ///    LANDS: it is `fill_main_layout_row`'s fail-closed `v >= 2^rb.bits` bound, which reads
+    ///    the per-block DECLARED width, so it is `Err` in every profile — it is NOT the in-circuit
+    ///    `eval_decomp` tooth. The in-circuit leg is not separately reachable through this entry
+    ///    point (an over-ceiling value cannot be decomposed into the block's limbs at all, so
+    ///    witness generation refuses before `prove_batch` regardless of `check`). What witnesses
+    ///    the AIR side is structural and asserted below: the three blocks are allocated at THREE
+    ///    DIFFERENT sizes (9/4/2 aux columns), and `Ir2Air::Main` calls `eval_decomp` with each
+    ///    block's own `rb.bits`.
+    ///
+    /// The instance count is pinned because it is a design input: range checks are realized as
+    /// byte-limb decompositions against the SHARED nibble histogram (`presence.byte` is a single
+    /// bool), so N widths cost N aux blocks in the main trace and ZERO extra AIR instances.
+    #[test]
+    fn ir2_three_range_widths_coexist_and_prove() {
+        let tid29 = TID_RANGE;
+        let tid16 = RANGE_W_TID_WIRE_BASE + 16;
+        let tid8 = RANGE_W_TID_WIRE_BASE + 8;
+        assert_eq!(tid16, 85);
+        assert_eq!(tid8, 77);
+        assert!(
+            !CUSTOM_RANGE_WIDTHS.contains(&8),
+            "8 must stay OUT of the fallback whitelist: this test measures the DECLARED path"
+        );
+
+        let desc = EffectVmDescriptor2 {
+            name: "ir2-three-range-widths".to_string(),
+            trace_width: 3,
+            public_input_count: 0,
+            tables: vec![
+                TableDef2 {
+                    id: tid29,
+                    name: "range".to_string(),
+                    arity: 1,
+                    sem: TableSem::Range { bits: 29 },
+                },
+                TableDef2 {
+                    id: tid16,
+                    name: "range_w16".to_string(),
+                    arity: 1,
+                    sem: TableSem::Range { bits: 16 },
+                },
+                TableDef2 {
+                    id: tid8,
+                    name: "range_w8".to_string(),
+                    arity: 1,
+                    sem: TableSem::Range { bits: 8 },
+                },
+            ],
+            constraints: vec![
+                VmConstraint2::Lookup(LookupSpec {
+                    table: tid29,
+                    tuple: vec![LeanExpr::Var(0)],
+                }),
+                VmConstraint2::Lookup(LookupSpec {
+                    table: tid16,
+                    tuple: vec![LeanExpr::Var(1)],
+                }),
+                VmConstraint2::Lookup(LookupSpec {
+                    table: tid8,
+                    tuple: vec![LeanExpr::Var(2)],
+                }),
+            ],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+
+        // The aux-column cost per range check at each width, and the resolved main width.
+        let (c29, c16, c8) = (decomp_cols_pub(29), decomp_cols_pub(16), decomp_cols_pub(8));
+        let layout = check_descriptor2(&desc).expect("three declared range widths must resolve");
+        println!(
+            "MEASURED decomp_cols: 29 -> {c29}, 16 -> {c16}, 8 -> {c8}; \
+             MainLayout width = {} (trace_width {} + {} aux); range blocks = {:?}",
+            layout.width,
+            desc.trace_width,
+            layout.width - desc.trace_width,
+            layout
+                .ranges
+                .iter()
+                .map(|r| (r.wire, r.bits, r.limb0))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            layout.ranges.len(),
+            3,
+            "all three lookups resolved to ranges"
+        );
+        assert_eq!(
+            layout.ranges.iter().map(|r| r.bits).collect::<Vec<_>>(),
+            vec![29, 16, 8],
+            "the DECLARED width of each table, in constraint order"
+        );
+        assert_eq!(layout.width, desc.trace_width + c29 + c16 + c8);
+
+        // (1) The exact maximum of each declared width, on every row.
+        let ceilings = [(1u32 << 29) - 1, u16::MAX as u32, u8::MAX as u32];
+        let honest = vec![
+            ceilings
+                .iter()
+                .map(|&v| BabyBear::new(v))
+                .collect::<Vec<_>>();
+            4
+        ];
+        let proof = prove_vm_descriptor2(&desc, &honest, &[], &MemBoundaryWitness::default(), &[])
+            .expect("the exact maximum of all three declared widths must prove");
+        println!("MEASURED degree_bits.len() = {}", proof.degree_bits.len());
+        assert_eq!(
+            proof.degree_bits.len(),
+            2,
+            "main + ONE shared byte table (three widths, one nibble histogram)"
+        );
+        verify_vm_descriptor2(&desc, &proof, &[])
+            .expect("the three-width proof must verify against the deployed verifier");
+
+        // (2) Each width's own ceiling refuses INDEPENDENTLY: one column over, one at a time.
+        for (col, over) in [(0usize, 1u32 << 29), (1, 1 << 16), (2, 1 << 8)] {
+            let mut bad = honest.clone();
+            for row in bad.iter_mut() {
+                row[col] = BabyBear::new(over);
+            }
+            let Err(e) =
+                prove_vm_descriptor2(&desc, &bad, &[], &MemBoundaryWitness::default(), &[])
+            else {
+                panic!("column {col} at {over} is over its OWN ceiling and must refuse");
+            };
+            println!("MEASURED refusal col {col} at {over}: {e}");
+            assert!(
+                e.contains(&format!("range wire {col}")),
+                "the refusal must name the offending wire, got: {e}"
+            );
+        }
     }
 
     /// A tampered memory READ (claims value 7 where the init image holds 9) must REFUSE:

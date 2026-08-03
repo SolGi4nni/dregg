@@ -108,11 +108,57 @@ structure WindowLeg where
 
 /-- **A RANGE leg** — the (b) capability: a wire pinned into `[0, 2^bits)`. The field-soundness
 tooth (`VmRange.holds`); transfer's deployed v1 descriptor carries two and `EffectSpec2` could name
-neither. -/
+neither.
+
+⚠ **ONE wire, ONE width — and that is exactly its limit.** A `RangeLeg` can pin a quantity only up
+to one field element's worth of magnitude, because the wire IS one field element. It cannot say
+"this quantity is `Σ limbᵢ · 2^(bits·i)`". See `LimbsLeg`. -/
 structure RangeLeg where
   wire : Nat
   bits : Nat
   deriving Repr, DecidableEq
+
+/-- ⚑ **A LIMBED-QUANTITY leg — the (e) capability, and the one the peer-chain light clients were
+BLOCKED on.**
+
+## The measured gap (2026-08-03, `1dcebacf8` and its own docblock)
+
+Three light-client verify AIRs declared range widths of 64 and 128 over BabyBear, where the interval
+already contains the whole field, so eight lookups refused nothing. All three were narrowed to 29 —
+the maximum wrap-free width (`RangeFieldContainment.wrap_free_iff_le_29`). That was correct AND it
+exposed the limit the vacuous widths had been hiding, in the repair's own words:
+
+> Real Tendermint allows `MaxTotalVotingPower ≈ 2^60` and real Solana total stake is ≈2^58. **Those
+> tallies never fit a BabyBear column at ANY declared width** — `TOTAL_POW` is one felt and one felt
+> holds 30.9 bits. The wide declarations did not make them fit, they made the shortfall invisible.
+> Full-width tallies need limb decomposition OF THE TALLY, which `EffectAirIR`'s range leg cannot
+> express (one `.lookup`, one `.var`, one width). **That is the IR-expressibility finding.**
+
+`RangeLeg` is `⟨wire, bits⟩`. A tally is a LIST. This leg is that list: `cols` are the limb columns
+LEAST-significant first, and the quantity they denote is `Σᵢ a colsᵢ · 2^(bits·i)`
+(`Dregg2.Circuit.LimbTally.limbValue`, where the arithmetic and its soundness live).
+
+Sourced maxima this exists to reach (measured live 2026-08-03): CometBFT `MaxTotalVotingPower =
+int64(math.MaxInt64)/8 = 2^60 − 1` (`types/validator_set.go:27`); Solana mainnet-beta active stake
+`432650183925625587` lamports (2^58.59) against a `u64` type ceiling; Midnight GRANDPA authority
+weight, which is **1 per seat** and totals 130 live (`pallet-grandpa` emits `(k, 1)`), against the
+same `u64` type ceiling. -/
+structure LimbsLeg where
+  /-- Trace columns holding the limbs, **LEAST-significant first**. -/
+  cols  : List Nat
+  /-- Per-limb width; the radix is `2^bits`. Each limb gets its own range lookup at this width. -/
+  bits  : Nat
+  /-- Which declared range table the per-limb checks query. Defaults to the shared `.range`; a
+  descriptor mixing widths routes the narrow one through a width-tagged `.custom` table (the
+  `rangeTidW` family the deployed avail-weld already carries). -/
+  table : TableId := .range
+  deriving Repr, DecidableEq
+
+/-- The number of range lookups this leg lowers to: one per limb. -/
+def LimbsLeg.lookupCount (l : LimbsLeg) : Nat := l.cols.length
+
+/-- The magnitude this leg can represent: `2^(bits · limbs)`. -/
+def LimbsLeg.capacityBits (l : LimbsLeg) : Nat := l.bits * l.cols.length
 
 /-- **A PI-PIN leg** — the (d) capability. `EffectSpec2`'s lowering could pin only FIRST-row PIs
 (the `PIBindsDigests` surface); a deployed boundary contract pins both ends. -/
@@ -139,6 +185,8 @@ inductive AirLeg where
   | lookup (l : LookupLeg)
   | window (w : WindowLeg)
   | pin    (p : PiPinLeg)
+  /-- ⚑ A LIMBED QUANTITY — a range-checked limb VECTOR, the vocabulary a tally needs. -/
+  | limbs  (l : LimbsLeg)
 
 /-- **`EffectAir` — the AIR block an `EffectSpec2` carries beyond its flat guard gates.**
 
@@ -184,13 +232,30 @@ def WindowLeg.mainRailOk (w : WindowLeg) : Bool :=
   | .first      => !readsNext w.body
   | .last       => !readsNext w.body
 
+/-- ⚑ **The main rail's verdict on ONE limbs leg — and it is the one place this IR REFUSES A WIDTH.**
+
+Two refusals, and each names a way the leg would be a decoration rather than a check:
+
+* **An EMPTY limb vector.** `limbValue` of `[]` is `0` and it range-checks nothing, so a leg with no
+  columns would silently assert `0 ≥ 0` — a quantity that is not there. This is the same shape as a
+  dropped lookup: it accepts strictly more, invisibly.
+* **A width at or above 30.** ⚑ This is the CENSUS, structural. `RangeFieldContainment` proved a
+  range table at `≥ 31` bits contains the whole BabyBear field (refuses nothing) and that 30 is not
+  wrap-free either (`not_wrap_free_at_30`; `wrap_free_iff_le_29`). Three shipped descriptors had to
+  be found by an audit and repaired by hand. A limbed quantity is exactly the construct that removes
+  any reason to want a wide limb — you add limbs, you do not widen them — so this IR refuses the
+  width class outright rather than leaving it to a future census. -/
+def LimbsLeg.mainRailOk (l : LimbsLeg) : Bool :=
+  !l.cols.isEmpty && 0 < l.bits && l.bits ≤ 29
+
 /-- ⚑ **The main rail's verdict on ONE leg.** A `gate` and a `pin` always have an image; a
-`lookup` and a `window` may not. -/
+`lookup`, a `window` and a `limbs` may not. -/
 def AirLeg.mainRailOk : AirLeg → Bool
   | .gate _   => true
   | .pin _    => true
   | .lookup l => l.mainRailOk
   | .window w => w.mainRailOk
+  | .limbs l  => l.mainRailOk
 
 /-- Every declared PI pin indexes a slot the descriptor actually declares. A pin past `piCount`
 is a wire-format defect the Rust decoder would read as an out-of-range public input. -/
@@ -209,10 +274,12 @@ a denotation that quantifies over gates only. Same discipline, same shape. -/
 /-- The leg's kind tag — the discriminator the per-kind counts filter on. -/
 def AirLeg.kind : AirLeg → String
   | .gate _ => "gate" | .lookup _ => "lookup" | .window _ => "window" | .pin _ => "pin"
+  | .limbs _ => "limbs"
 
 /-- Kind tags are collision-free: the tag determines the constructor's arm. -/
 theorem AirLeg.kind_of (l : AirLeg) :
-    (l.kind = "gate") ∨ (l.kind = "lookup") ∨ (l.kind = "window") ∨ (l.kind = "pin") := by
+    (l.kind = "gate") ∨ (l.kind = "lookup") ∨ (l.kind = "window") ∨ (l.kind = "pin")
+      ∨ (l.kind = "limbs") := by
   cases l <;> simp [AirLeg.kind]
 
 def EffectAir.kindCount   (air : EffectAir) (k : String) : Nat :=
@@ -221,8 +288,21 @@ def EffectAir.lookupCount (air : EffectAir) : Nat := air.kindCount "lookup"
 def EffectAir.windowCount (air : EffectAir) : Nat := air.kindCount "window"
 def EffectAir.gateCount   (air : EffectAir) : Nat := air.kindCount "gate"
 def EffectAir.pinCount    (air : EffectAir) : Nat := air.kindCount "pin"
+def EffectAir.limbsCount  (air : EffectAir) : Nat := air.kindCount "limbs"
 def EffectAir.rangeCount  (air : EffectAir) : Nat := air.ranges.length
 def EffectAir.tableCount  (air : EffectAir) : Nat := air.tables.length
+
+/-- ⚑ **The total number of range lookups the air block lowers to** — the one-wire `ranges` array
+PLUS one per limb of every limbed quantity. A limbed tally is not one lookup; a re-emission that
+dropped a limb would move this number while `rangeCount` sat still. -/
+def EffectAir.totalRangeLookups (air : EffectAir) : Nat :=
+  air.ranges.length
+    + (air.legs.map (fun l => match l with | .limbs q => q.lookupCount | _ => 0)).sum
+
+/-- The largest magnitude (in bits) any single limbed quantity in this block can represent. `0` when
+the block carries none — which is what every descriptor emitted before this widening carried. -/
+def EffectAir.maxLimbedCapacityBits (air : EffectAir) : Nat :=
+  (air.legs.map (fun l => match l with | .limbs q => q.capacityBits | _ => 0)).foldl max 0
 
 /-- The window legs under a given selector — so a pin names WHICH scope lost a gate
 (`TableAirIR.gateCountSel`'s counterpart). -/
@@ -317,9 +397,81 @@ def demoAir : EffectAir :=
 #guard ({} : EffectAir).legCount == 0
 #guard ({} : EffectAir).mainRailOk == true
 
+/-! ### §4b — the LIMBED leg's tripwires, as NAMED THEOREMS.
+
+⚠ `metatheory/docs/GUARD-DISCIPLINE.md`: a `#guard` produces no term, is invisible to
+`#assert_axioms`, and is the case-testing this repo forbids in Rust. The legs above predate the
+policy; nothing added here uses one. -/
+
+/-- A four-limb `u64` tally at the deployed limb width — the shape a real validator set takes. -/
+def demoTally : LimbsLeg := { cols := [9, 10, 11, 12], bits := 16 }
+
+/-- **It is main-rail expressible**, and it lowers to four range lookups rather than one. -/
+theorem demoTally_mainRailOk : demoTally.mainRailOk = true := by decide
+
+/-- ⚑ **AND IT REPRESENTS 64 BITS** — the capability that did not exist. The `RangeLeg` it replaces
+tops out at one field element, and BabyBear is 30.9 bits. -/
+theorem demoTally_capacity : demoTally.capacityBits = 64 := by decide
+
+/-- One lookup per limb, so a dropped limb moves a number. -/
+theorem demoTally_lookupCount : demoTally.lookupCount = 4 := by decide
+
+/-- ⚑ **THE FIRST REFUSAL POLE: an EMPTY limb vector.** It would denote `0` and check nothing —
+a quantity that is not there, asserted as if it were. -/
+theorem empty_limb_vector_is_refused : ({ demoTally with cols := [] } : LimbsLeg).mainRailOk = false := by
+  decide
+
+/-- ⚑ **THE SECOND REFUSAL POLE, AND IT IS THE CENSUS MADE STRUCTURAL.** A limb at 31 bits — the
+width class `RangeFieldContainment.range_vacuous_at_or_above_31` proved refuses nothing over
+BabyBear, and the class three shipped descriptors sat in until an audit found them — is refused by
+the IR's own verdict. It cannot be authored, so it cannot be emitted. -/
+theorem vacuous_limb_width_is_refused :
+    ({ demoTally with bits := 31 } : LimbsLeg).mainRailOk = false := by decide
+
+/-- …and the refusal starts one bit BELOW containment, at the wrap-free ceiling: 30 is refused too.
+30-bit range tables are not vacuous, but they admit negatives of magnitude `> p − 2^30`
+(`large_negative_admitted_at_30`), and a limbed quantity has no reason to want one — you add a limb.
+The last ADMITTED width is 29. -/
+theorem non_wrap_free_limb_width_is_refused :
+    ({ demoTally with bits := 30 } : LimbsLeg).mainRailOk = false := by decide
+
+/-- The boundary, both sides, so the constant is a real edge and not a taste. -/
+theorem limb_width_boundary_is_29 :
+    ({ demoTally with bits := 29 } : LimbsLeg).mainRailOk = true
+      ∧ ({ demoTally with bits := 30 } : LimbsLeg).mainRailOk = false := by decide
+
+/-- ⚑ **ONE BAD LIMBS LEG TURNS THE WHOLE BLOCK INEXPRESSIBLE** — the verdict propagates, exactly as
+it does for a `.provide` lookup. A verdict that cannot go red is decoration. -/
+theorem air_with_vacuous_limbs_is_refused :
+    ({ demoAir with legs := [.limbs { demoTally with bits := 64 }] } : EffectAir).mainRailOk
+      = false := by decide
+
+/-- An air block carrying a limbed tally counts it, and reports the range lookups it really lowers
+to — four, not one. `totalRangeLookups` is the number a dropped limb moves. -/
+theorem air_with_tally_counts :
+    (({ legs := [.limbs demoTally, .gate ⟨.var 0, .const 0⟩], ranges := [⟨7, 29⟩] } : EffectAir)
+      |> fun air => (air.limbsCount, air.totalRangeLookups, air.maxLimbedCapacityBits))
+      = (1, 5, 64) := by decide
+
+/-- **ADDITIVITY IS PRESERVED**: the default air block still carries no limbed quantity, so every
+descriptor emitted before this widening is unchanged. -/
+theorem default_carries_no_limbs :
+    ({} : EffectAir).limbsCount = 0 ∧ ({} : EffectAir).totalRangeLookups = 0
+      ∧ ({} : EffectAir).maxLimbedCapacityBits = 0 := by decide
+
 #assert_axioms AirLeg.kind_of
 #assert_axioms EffectAir.kindCount_le
 #assert_axioms EffectAir.default_legCount
 #assert_axioms EffectAir.default_mainRailOk
+-- The limbed-quantity widening: capability, both refusal poles, propagation, additivity.
+#assert_axioms demoTally_mainRailOk
+#assert_axioms demoTally_capacity
+#assert_axioms empty_limb_vector_is_refused
+#assert_axioms vacuous_limb_width_is_refused
+#assert_axioms non_wrap_free_limb_width_is_refused
+#assert_axioms limb_width_boundary_is_29
+#assert_axioms air_with_vacuous_limbs_is_refused
+#assert_axioms air_with_tally_counts
+#assert_axioms default_carries_no_limbs
 
 end Dregg2.Circuit.EffectAirIR

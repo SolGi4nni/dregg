@@ -40,7 +40,7 @@ open Dregg2.Circuit.Emit.AirBuilder
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv VmRange)
 open Dregg2.Exec.CircuitEmit (EmittedExpr emitExpr)
 open Dregg2.Circuit.EffectAirIR
-  (EffectAir AirLeg LookupLeg WindowLeg RangeLeg PiPinLeg exprIsOne)
+  (EffectAir AirLeg LookupLeg WindowLeg RangeLeg PiPinLeg LimbsLeg exprIsOne)
 open Dregg2.Circuit.TableAirIR (BusOp RowSel readsNext)
 
 set_option autoImplicit false
@@ -308,6 +308,16 @@ def lowerPiPinLeg (p : PiPinLeg) : VmConstraint2 := .base (.piBinding p.row p.co
 /-- **A RANGE leg → the v1 range carrier** the row denotation evaluates (`VmRange.holds`). -/
 def lowerRangeLeg (r : RangeLeg) : VmRange := ⟨r.wire, r.bits⟩
 
+/-- ⚑ **A LIMBED-QUANTITY leg → ONE range lookup PER LIMB**, against the leg's declared table.
+
+This is the whole lowering, and its shape is the point: a limbed quantity is not one wider check, it
+is `k` checks at a width the field can actually enforce. `LimbsLeg.mainRailOk` refuses an empty
+vector (which would check nothing while denoting `0`) and any limb width above the wrap-free ceiling
+29 — the class `RangeFieldContainment` found three shipped descriptors sitting in — and an ill-formed
+leg lowers to the UNSATISFIABLE pair, never to silence. -/
+def lowerLimbsLeg (l : LimbsLeg) : List VmConstraint2 :=
+  if l.mainRailOk then l.cols.map (fun c => .lookup ⟨l.table, [.var c]⟩) else refuseConstraints
+
 /-- **One leg → its main-rail constraints.** A gate goes through the SAME `Head` normalizer the
 spec's own `guardGates` do — the source has one gate language, not two. -/
 def lowerLeg : AirLeg → List VmConstraint2
@@ -315,6 +325,7 @@ def lowerLeg : AirLeg → List VmConstraint2
   | .lookup l => lowerLookupLeg l
   | .window w => lowerWindowLeg w
   | .pin p    => [lowerPiPinLeg p]
+  | .limbs l  => lowerLimbsLeg l
 
 /-- **The air block's constraints, IN THE ORDER THE SOURCE DECLARED THEM.**
 
@@ -333,6 +344,17 @@ theorem lowerLeg_ne_nil (l : AirLeg) : lowerLeg l ≠ [] := by
   | pin p => simp [lowerLeg]
   | lookup l =>
       by_cases h : l.mainRailOk <;> simp [lowerLeg, lowerLookupLeg, h, refuseConstraints]
+  | limbs l =>
+      -- ⚑ A limbed quantity contributes ONE LOOKUP PER LIMB, and `mainRailOk` already refuses the
+      -- empty vector — so the "at least one constraint" floor holds on both branches, and an
+      -- emptied limb list cannot slip through as a leg that checks nothing.
+      by_cases h : l.mainRailOk
+      · have hne : l.cols ≠ [] := by
+          intro hc
+          rw [LimbsLeg.mainRailOk, hc] at h
+          simp at h
+        simp [lowerLeg, lowerLimbsLeg, h, hne]
+      · simp [lowerLeg, lowerLimbsLeg, h, refuseConstraints]
   | window w =>
       cases hs : w.sel
       case all =>
