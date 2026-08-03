@@ -8,7 +8,18 @@ verifies. Carries the `main` (kept OUT of `KimchiStepMain` so that module roots 
 
     lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean              # the committed shape
     DREGG_SM=smoke  lake env lean --run …                                      # the CI fixture shape
-    DREGG_SM=A,C,E,M,I,B,D,V,P,W lake env lean --run …                         # an arbitrary rung
+    DREGG_SM=A,C,E,M,I,B,D,V,P,W lake env lean --run …                         # an arbitrary shape
+    DREGG_SM_RUNGS=r8_finalize lake env lean --run …                           # ONE rung
+    DREGG_SM_RUNGS=all lake env lean --run …                                   # the nine (default)
+
+⚑ **`DREGG_SM_RUNGS` is why a conformance re-grade is minutes and not a working day** (2026-08-03).
+`rungRows` binds all nine sub-lists BEFORE it matches on `k`, so every rung evaluates the whole
+chain; `emitRung` then walks it twice more (wired, unwired). Nine rungs therefore cost 9 × 2 full
+traversals, and the three gates that consume this driver
+(`stepmain-shape-diff`, `curve-gate-oracle`, `stepmain-region-conformance`) grade `r8_finalize`
+ALONE. Measured on the `step` shape from artifact mtimes: consecutive rungs land 68–69 min apart and
+the gap does not grow with the rung — the uniformity IS the evidence that the work is shared and
+re-done. The full set stays the default because §15's row-length pins want every rung.
 
 The ten-field spec is `absorbs,chals,emsRows,msmTerms,ipaRounds,ipaBlocks,bRounds,cipEvals,tComms,
 pubWords`. ⚑ `msmChunks` is GONE (2026-08-03): the MSM chunk count is per statement WORD
@@ -44,6 +55,40 @@ def force (n : Nat) (what : String) : IO Nat := do
   if n == 0 then throw (IO.userError s!"emit: phase '{what}' produced nothing — degenerate shape")
   pure n
 
+/-- Write ATOMICALLY: stage beside the target, then rename into place.
+
+⚑ A reader of `/tmp/pickles-stepmain` cannot tell a fully-written artifact from one whose writer
+died mid-`String` — both are a file with the right name. `rename(2)` within one directory is atomic,
+so the real name only ever appears carrying complete bytes. Measured 2026-08-03: the directory held
+a nine-rung `smoke` set beside a four-rung `step` set with no stamp and no way to tell which run
+either came from. -/
+def writeAtomic (path contents : String) : IO Unit := do
+  let staged := path ++ ".partial"
+  IO.FS.writeFile staged contents
+  IO.FS.rename staged path
+
+/-- The nine rungs in schedule order. ⚑ This is the FULL-SET path and it stays the DEFAULT: §15's
+row-length pins and the shape-diff sweeps legitimately want every rung. -/
+def allRungs : List Rung :=
+  [Rung.transcript, Rung.challenges, Rung.msm, Rung.ipa, Rung.full,
+   Rung.ftEval0, Rung.absorb, Rung.finalize, Rung.opening]
+
+/-- A selector name matches a rung by its full tag (`r8_finalize`) or its index alone (`r8`). -/
+def rungMatches (n : String) (k : Rung) : Bool :=
+  k.tag == n || (k.tag.splitOn "_").headD "" == n
+
+/-- Resolve a `DREGG_SM_RUNGS` selector. ⚑ FAILS CLOSED on a name that is not a rung: a selector
+silently falling back to all nine is the same lie the shape docblock above names — the run would
+cost ten hours while reporting that it honoured a one-rung request. -/
+def parseRungs (spec : String) : Except String (List Rung) := do
+  let names := ((spec.splitOn ",").map String.trim).filter (· != "")
+  if names.isEmpty then throw s!"DREGG_SM_RUNGS={spec} names no rung"
+  names.foldlM (fun acc n =>
+    match allRungs.find? (rungMatches n) with
+    | some k => pure (acc ++ [k])
+    | none => throw s!"DREGG_SM_RUNGS: '{n}' is not a rung — expected one of \
+{String.intercalate ", " (allRungs.map Rung.tag)} (or its 'rN' prefix)") []
+
 /-- Emit one rung (wired + unwired), with the phase split. Returns `(rows, probes)`. -/
 def emitRung (dir tag : String) (t : StepData) (k : Rung) : IO (Nat × Nat) := do
   let s := t.sh
@@ -62,12 +107,17 @@ def emitRung (dir tag : String) (t : StepData) (k : Rung) : IO (Nat × Nat) := d
   let w := stepWitness t p rows
   let ncell ← force ((w.map (·.length)).foldl (· + ·) 0) "compose"
   let t3 ← IO.monoMsNow
-  let probes := rungProbeRows t k
+  -- ⚑ NOT `rungProbeRows t k`. That recomputes `rungRows t k true` from scratch, and `rungRows`
+  -- evaluates ALL NINE sub-lists on every call before it matches on `k` — so the convenience
+  -- wrapper costs a THIRD full chain traversal per rung on top of the wired/unwired pair. This is
+  -- `rungProbeRows`' body verbatim over the `rows` already in hand (same `p`, same list).
+  let probes := ((rows.zip (List.range rows.length)).filter (fun ri => ri.1.probe)).map
+                  (fun ri => p + ri.2)
   let pub := if p == 0 then [] else stepPublic t
   let js := renderStepCircuit s!"stepmain_{tag}_{k.tag}" p (p + n) placed w pub probes
   let jsU := renderStepCircuit s!"stepmain_{tag}_{k.tag}_UNWIRED" p (p + n) placedU w pub probes
-  IO.FS.writeFile s!"{dir}/stepmain_{tag}_{k.tag}.json" js
-  IO.FS.writeFile s!"{dir}/stepmain_{tag}_{k.tag}_unwired.json" jsU
+  writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}.json" js
+  writeAtomic s!"{dir}/stepmain_{tag}_{k.tag}_unwired.json" jsU
   let t4 ← IO.monoMsNow
   -- A refusal must be LOUD: `placedOf` returns `[]` on refusal, and an empty gate list would
   -- otherwise be written out as a "circuit" the harness rejects for the wrong reason.
@@ -100,7 +150,20 @@ def main : IO Unit := do
     | some "step" => ("step", shapeStep)
     | some str => match parseShape str with
                   | some s => (str.replace "," "_", s)
-                  | none => ("step", shapeStep)
+                  -- ⚑ FAIL CLOSED. Falling back to `shapeStep` here would emit the DEFAULT shape
+                  -- under a filename nobody asked for, which is the measurement that lies.
+                  | none => panic! s!"emit: DREGG_SM={str} is neither 'step', 'smoke', nor a \
+ten-field spec 'absorbs,chals,emsRows,msmTerms,ipaRounds,ipaBlocks,bRounds,cipEvals,tComms,pubWords'"
+  -- ⚑ THE RUNG SELECTOR. Default = all nine, unchanged. `DREGG_SM_RUNGS=r8_finalize` emits ONLY
+  -- what the caller asked for. Measured 2026-08-03 on the `step` shape: consecutive rung artifacts
+  -- land 68–69 min apart, and the gap does NOT grow with the rung — because `rungRows` evaluates
+  -- all nine sub-lists before it matches on `k`, so EVERY rung pays the whole chain. The three
+  -- conformance gates grade `r8_finalize` alone and were waiting on all nine.
+  let rungs ← match ← IO.getEnv "DREGG_SM_RUNGS" with
+    | none | some "all" => pure allRungs
+    | some sel => match parseRungs sel with
+                  | .ok ks => pure ks
+                  | .error e => throw (IO.userError s!"emit: {e}")
   -- ⚑ FAIL CLOSED on a shape too small for `Common.ft_comm`. `tCommN` is `min 7 tComms`, and the
   -- Horner needs at least two chunks (`common.ml:247-253` seeds at `t_comm.(n-1)` and folds down);
   -- at `tCommN < 2` the add chain would index past its own list and emit a `(0,0)` "point".
@@ -129,7 +192,6 @@ b={sh.bRounds} pub={sh.pubWords} =="
                  + t.ft.fp.prog.size + t.segB.states.length + t.ftc.terms.length) "chains"
   let tc1 ← IO.monoMsNow
   IO.println s!"    chain evaluation (sponge + vbm + endo + deferred): {tc1 - tc0} ms"
-  for k in [Rung.transcript, Rung.challenges, Rung.msm, Rung.ipa, Rung.full,
-            Rung.ftEval0, Rung.absorb, Rung.finalize, Rung.opening] do
+  for k in rungs do
     let _ ← emitRung dir tag t k
     pure ()
