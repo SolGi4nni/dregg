@@ -9,14 +9,15 @@
 # (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that RUNS
 # it and authors no constraint. No OCaml, no Node, no o1js in this path.
 #
-# SIX RUNGS, each a superset of the one below, each proved with BOTH polarities — see src/main.rs
+# SEVEN RUNGS, each a superset of the one below, each proved with BOTH polarities — see src/main.rs
 # for the five-polarity gate and for what each rung is at source in `wrap_main.ml`/`wrap_verifier.ml`.
 #
 # SCOPE. INNER-KIMCHI FIDELITY of six assembled sub-circuits of `wrap_main`. NOT a soundness proof,
 # NOT "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER Pallas/Fq
 # proof of a `wrap_main`-SHAPED circuit. `KimchiWrapMain` §13 names by sub-circuit everything that
-# is NOT here (W-SPLIT, W-FTCOMM, W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK, W-PREV, and
-# W-CLOSE's curve-side asserts) — read it before quoting a fraction.
+# is NOT here (W-FTCOMM, W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK, W-PREV, and W-CLOSE's
+# curve-side asserts) — read it before quoting a fraction. ⚠ W-SPLIT is assembled at `w7_split`, and
+# §13 item 3 says plainly that its constraint pins nothing until W-PREV ties the unsplit word.
 #
 # REGENERATE the fixtures (only when the Lean assembly changes):
 #   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \

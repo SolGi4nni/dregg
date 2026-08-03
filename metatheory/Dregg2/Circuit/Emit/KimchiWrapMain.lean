@@ -155,6 +155,13 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w4_bind              492         1441      22    wrap_main.ml:419-439 + :189-199
     w5_key               972         1977      22    wrap_verifier.ml:189-204 + :521-530
     w6_xhat             1170         6472      22    wrap_verifier.ml:539-616
+    w7_split            1172        6492*      22    wrap_main.ml:69-81 + :409
+
+⚠ `*` — `w7_split`'s SMOKE figure is MEASURED (`1172 rows, pub 6, 51 probes`, from an emission this
+rung produced); its WRAP figure is DERIVED as `6472 + 20` — ten `split_field` words giving ten
+`Generic` rows and ten σ-probes — and the wrap-scale emission had not finished when this line was
+written. The same derivation gave `1170 + 2 = 1172` at the smoke shape and the emission agreed, but
+a derivation is not a measurement and the table says which is which.
 
 ⚑ `w6_xhat`'s wrap-scale row count is the one number in this table that is checked against something
 outside this tree. Its gate stream carries **VarBaseMul = 1805** and **CompleteAdd = 232**, read off
@@ -182,12 +189,20 @@ assembly against it. RE-GRADED at `w6_xhat` (exit 0), the verdicts that are not 
     The remainders are W-FTCOMM's eight ladders (408) and W-BULLET's four (204), and W-COMBINE /
     W-BULLET's `add_fast` rows. Before this rung both read `lean 0 — ⚠ ABSENT`.
 
-⚠ **THE STANDING GATE STILL READS `w5_key`.** `wrapmain-region-conformance.mjs`'s `LEAN_DEFAULT`
-(and its committed `wrapmain-wrap-w5-key-gates.json.gz` fallback) point at the rung BELOW this one,
-so an unattended run reports `VarBaseMul … lean 0 ⚠ ABSENT` and attributes it to W-XHAT — a gate
-that cannot see the sub-circuit that landed. Re-pointing it at `w6_xhat` means regenerating that
-committed fixture and its provenance sidecar. The numbers above are from an explicit
-`--lean …wrapmain_wrap_w6_xhat.json` run against a stamped emission, not from the default path.
+✅ **THE STANDING GATE WAS RE-POINTED, AND THE FAIL-OPEN IT HAD WAS STRUCTURAL.**
+`wrapmain-region-conformance.mjs`'s `LEAN_DEFAULT` read `…_w5_key.json` — the rung BELOW W-XHAT — so
+an unattended run reported `VarBaseMul mina 2417 / lean 0 ⚠ ABSENT`, matched that against a LEDGER
+entry which still said `lean 0`, and **exited 0**: a green that measured the wrong object. Three
+changes, none of them a warning: a single `TOP_RUNG` constant now derives the default path, the
+fixture name and the sidecar name together; the emission's own `name` field is CHECKED against it
+and a lower rung REFUSES (exit 3) instead of grading; and `EMITTED_FAMILIES` makes a zero count for
+any family the top rung emits a hard exit-1 BEFORE the vector diff, so an ABSENT verdict for a
+family we actually emit can no longer be laundered through the ledger.
+⚠ **And the committed fixture that comment promised did not exist.** `git log --all --
+'fixtures/wrapmain*'` was EMPTY: the `.gz` and its sidecar were described in the script's own header
+as "added 2026-08-03", and neither was ever committed — so `haveFix` was permanently false and the
+`fixture/in-sync-with-live-emission` leg could never fire. A documented fixture is not a committed
+one. It is committed now, under the top rung's name.
 
 ⚑ And the wrap side has a cross-check the step side never had: **`wrap-blockchain` is an
 independently compiled `wrap_main`** and its non-Generic gate stream is byte-identical to
@@ -195,7 +210,7 @@ independently compiled `wrap_main`** and its non-Generic gate stream is byte-ide
 fact is checked against both blobs.
 
 ⚠ **NOT ASSEMBLED, named by sub-circuit** (§13): W-PREV, W-FINALIZE, W-WRAPHACK,
-W-OPENINGS, W-SPLIT, W-FTCOMM, W-COMBINE, W-BULLET, and W-CLOSE's three curve-side asserts.
+W-OPENINGS, W-COMBINE, W-BULLET, and W-CLOSE's three curve-side asserts.
 Each is a row-emitter this file does not have; none is a value this file fakes and calls derived.
 
 ## ⚑ THE SIX DEFECT CLASSES, CHECKED AS EMITTED (§12)
@@ -1704,16 +1719,124 @@ def xhatEnv (t : WrapData) : VarEnv :=
   ++ [ ((xhHVar s sp).1, (XHAT_H.1 : Int)), ((xhHVar s sp).2, (XHAT_H.2 : Int))
      , (xNegY s sp, (qSub 0 (xhatFoldAt sel n).2 : Int)) ]
 
+/-! ## §16 — ⚑ **W-SPLIT**: `split_field`, and what its "deferred check" actually discharges.
+
+`wrap_main.ml:69-81`, called ONCE, at `wrap_main.ml:409`, on every `` `Field `` word of the packed
+previous STEP statement before `incrementally_verify_proof` sees it. The gadget is three lines:
+
+    let split_field (x : Field.t) : Field.t * Boolean.var =
+      let ((y, is_odd) as res) = exists Typ.(field * Boolean.typ) ~compute:… in
+      Field.(Assert.equal ((of_int 2 * y) + (is_odd :> t)) x) ; res
+
+so it costs, per word, `Boolean.typ`'s own check on `is_odd` and one `Field.Assert.equal` — **two
+`Generic` halves, one row**. §15's expansion (`wrap_verifier.ml:542-548`) then turns each result into
+the ADJACENT entry pair `(y, Field.size_in_bits)` and `((is_odd :> Field.t), 1)`, so W-SPLIT's whole
+content is that those two MSM entries are the two halves of ONE word.
+
+⚑ **THE OUTPUTS ARE NOT NEW VARIABLES — THEY ARE §15's ENTRY SCALARS.** `y` IS `xA k 4` at the
+255-bit position and `is_odd` IS `xA k' 4` at its 1-bit successor. Emitting a split whose outputs
+were fresh cells would be decoration; the σ classes are the point.
+
+⚠ ⚑ **AND `is_odd` IS BOOLEAN-CONSTRAINED TWICE UPSTREAM, NOT ONCE.** `exists Typ.(field *
+Boolean.typ)` runs `Boolean.typ`'s check here, and `wrap_verifier.ml:573-576` runs
+`assert_ (Constraint.boolean b)` again on the same variable when the 1-bit entry takes the
+`` `Cond_add `` path. §15 already emits the second; this section emits the first. Emitting one would
+be *less* strict than upstream, so both are here — and the duplication is upstream's, not ours.
+⚠ The twelve one-bit entries are NOT all split parities: the two `should_finalize` words
+(`j = 31`) arrive as `` `Packed_bits (x, 1) `` and get only the `Cond_add` boolean. `xhatIsSplitHi`
+is what separates them, and it is a predicate on the width table rather than a hand-copied list.
+
+## ⚑ THE CORRECTION THIS SECTION MAKES TO §13, READ AT SOURCE
+
+§13 item 3 recorded — from upstream's own comment at `wrap_main.ml:64-68` — that split_field "does
+not check that the high bits actually fit into n − 1 bits, this is deferred to a call to
+`scale_fast2`, which performs this check", and concluded that emitting the split before W-XHAT's
+ladder would ship defect class 2 in a new place. **The deferral is real; what it discharges is not
+a bound on `y`.** Followed to source:
+
+  * `scale_fast2 g (s_div_2, s_odd) ~num_bits:255` sets `s_div_2_bits = 254`,
+    `chunks_needed = 51`, `actual_bits_used = 255`, and asserts `bits_lsb.(i) = 0` for
+    `i = 254 .. 254` — **one** cell (`plonk_curve_ops.ml:251-267`). So `s_div_2 < 2^254`.
+  * `2^254 < q` (`q − 2^254 = 45560315531506369815346746415080538113 ≈ 2^125`), so that ONE bit is
+    exactly the canonicity guard on the ladder's OWN decomposition: `scale_fast_unpack` witnesses
+    `bits_msb` at `Typ.array … Field.typ` — **255 free cells, not booleans** — and ties them to the
+    scalar only through `Field.Assert.equal !n_acc scalar` over `Fq` (`:207`). Without the top-bit
+    zero a prover could present `B` and `B + q`; with it, `B < 2^254 < q` is the unique
+    representative and the ladder's multiplier IS `s_div_2`. **That is what the deferral buys.**
+  * It buys **no bound on `y`**. `y = 2·s_div_2 + s_odd` with `s_div_2 < 2^254` admits every
+    `y ∈ Fq`, and for a given `y` BOTH candidate splits — `(y/2, 0)` and `((y−1)/2, 1)` — land below
+    `2^254` for all but a `2^-128` fraction of `y`. `Other_field.With_top_bit0.typ` is
+    `typ_unchecked` (`wrap_verifier.ml:68-77`, `impls.ml:196-212`), so nothing checks there either.
+  * ⚑ **And it does not need to**, because `scale_fast2`'s mux makes the ambiguity immaterial ONE
+    level down: `h = (2^255 + 2·s_div_2 + 1)·g` and the `else` branch subtracts `g`, so the result is
+    `(2^255 + y)·g` under EITHER split, and `lagrange_with_correction`'s correction cancels the
+    `2^255·g`. The contribution is `y·g` whichever way the prover splits.
+
+⚠ **The split ONE level up — this section's own — is a different matter and it is NOT immaterial.**
+`y` and `is_odd` are consumed by DIFFERENT Lagrange bases (`lagrange i` and `lagrange (i+1)`), so
+`(y, 0)` and `(y − (q+1)/2, 1)` give DIFFERENT `x_hat`. Nothing in `wrap_main` bounds `y` to 254
+bits, so upstream the choice is the prover's. It is not a hole HERE only because `x` is a free
+witness on both sides: `wrap_main.ml:201-256` witnesses the previous proof state (§13's W-PREV) and
+this file does not emit it. **W-SPLIT's constraint therefore pins nothing today; its content lands
+when W-PREV ties `x`, and W-PREV is the next thing this section wants.** Said plainly rather than
+banked, per §13's own rule. -/
+
+/-- ⚑ Entry `i` is the VALUE half of a `split_field` pair — the five `B Field` words of each
+`per_proof` block, whose successor carries the parity (`§15a`'s width table, `xhatBits`). The three
+trailing `B Digest`s and the `j = 10` digest are `WQ_FIELD` too and are NOT splits: they arrive as
+`` `Packed_bits ``, never through `wrap_main.ml:409`. -/
+def xhatIsSplitHi (i : Nat) : Bool :=
+  i < XHAT_PER_PROOF * XHAT_PREVS && i % XHAT_PER_PROOF < 10 && i % XHAT_PER_PROOF % 2 == 0
+
+/-- The pairs of POSITIONS in `xhSel` that one `split_field` produced. A shape that selects the
+value half without its parity contributes NO pair — the tie needs both entries to exist. -/
+def splitPairs (s : WrapShape) : List (Nat × Nat) :=
+  let n := xhN s
+  (List.range n).filterMap (fun k =>
+    if xhatIsSplitHi (xhAt s k) then
+      match (List.range n).find? (fun k' => xhAt s k' == xhAt s k + 1) with
+      | some k' => some (k, k')
+      | none => none
+    else none)
+
+/-- The split region starts after W-XHAT's, so nothing below `w7_split` moves. -/
+def baseSplit (s : WrapShape) (sp : SpAcc) : Nat := xhBaseF s sp + 3
+/-- Pair `a`'s UNSPLIT word — `split_field`'s argument `x`. -/
+def xSplitW (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar := .external (baseSplit s sp + a)
+def nSplitVars (s : WrapShape) : Nat := (splitPairs s).length
+
+/-- **W-SPLIT's ROWS.** Per pair: `Boolean.typ`'s check on the parity, and
+`Field.Assert.equal ((of_int 2 * y) + is_odd) x`, whose `y` and `is_odd` ARE §15's entry scalars. -/
+def splitRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let ps := splitPairs s
+  packHalves ((ps.zip (List.range ps.length)).flatMap (fun pa =>
+      [ ([some (xA s sp pa.1.2 4), some (xA s sp pa.1.2 4), some (xA s sp pa.1.2 4)], cBool)
+      , ([some (xSplitW s sp pa.2), some (xA s sp pa.1.1 4), some (xA s sp pa.1.2 4)],
+         cSplit 1) ]))
+  ++ (ps.zip (List.range ps.length)).map (fun pa =>
+       probeRow wired (xSplitW s sp pa.2) (xA s sp pa.1.1 4))
+
+/-- W-SPLIT's variable environment — `x = 2y + b`, the ONE value the gadget derives. -/
+def splitEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let ps := splitPairs s
+  (ps.zip (List.range ps.length)).map (fun pa =>
+    (xSplitW s sp pa.2,
+     (qAdd (qMul 2 (xhatScalar (xhAt s pa.1.1))) (xhatScalar (xhAt s pa.1.2)) : Int)))
+
 /-! ## §7 — rows, environment, rungs. -/
 
 inductive Rung where
-  | transcript | challenges | branch | bind | key | xhat
+  | transcript | challenges | branch | bind | key | xhat | split
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "w1_transcript" | .challenges => "w2_challenges"
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
-  | .xhat => "w6_xhat"
+  | .xhat => "w6_xhat" | .split => "w7_split"
 
 /-- **THE ROW SCHEDULE**, in the order `wrap_main` runs it. Every sub-circuit's row-set function is
 REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a silence. -/
@@ -1725,6 +1848,7 @@ def rungRows (t : WrapData) (k : Rung) (wired : Bool) : List WRow :=
   let d := closingRows t
   let e := keyRows t wired
   let f := xhatRows t wired
+  let g := splitRows t wired
   match k with
   | .transcript => a
   | .challenges => a ++ b
@@ -1732,12 +1856,14 @@ def rungRows (t : WrapData) (k : Rung) (wired : Bool) : List WRow :=
   | .bind => a ++ b ++ c ++ d
   | .key => a ++ b ++ c ++ d ++ e
   | .xhat => a ++ b ++ c ++ d ++ e ++ f
+  | .split => a ++ b ++ c ++ d ++ e ++ f ++ g
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it. -/
 def rungPub (s : WrapShape) : Rung → Nat
   | .bind => s.pubWords
   | .key => s.pubWords
   | .xhat => s.pubWords
+  | .split => s.pubWords
   | _ => 0
 
 /-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
@@ -1748,10 +1874,14 @@ theorems — reduce the whole MSM: measured, that took the module from 150 s and
 its own rows define, which is also the more faithful statement. -/
 def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   spongeEnv (baseSp t.sh) t.sp ++ challengeEnv t ++ branchEnv t.sh (baseBr t.sh t.sp) t.br
-  ++ keyEnv t ++ (match k with | .xhat => xhatEnv t | _ => [])
+  ++ keyEnv t
+  ++ (match k with
+      | .xhat => xhatEnv t
+      | .split => xhatEnv t ++ splitEnv t
+      | _ => [])
 
-/-- The closing rung's environment — what `w6_xhat` sees, i.e. everything. -/
-def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .xhat
+/-- The closing rung's environment — what `w7_split` sees, i.e. everything. -/
+def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .split
 
 /-- The full environment: the circuit's variables, then the public words, whose values are READ OUT
 of the circuit env at the exposed variables — so a public word and the variable its closing row ties
@@ -1762,14 +1892,14 @@ def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   ce ++ (List.range t.sh.pubWords).map (fun i =>
     ((.external i : PVar), envLookupAt ix ((exposedVars t).getD i (.external 0))))
 
-def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .xhat
+def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .split
 
 def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
   let ix := envIndex (circuitEnvAt t k)
   (List.range t.sh.pubWords).map (fun i =>
     envLookupAt ix ((exposedVars t).getD i (.external 0)))
 
-def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .xhat
+def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .split
 
 def wrapGates (rows : List WRow) : List PGate :=
   rows.map (fun r => { kind := r.kind, permVars := r.perm, coeffs := r.coeffs })
@@ -1829,7 +1959,7 @@ def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedG
 
 /-- The closing rung's witness — kept for callers that do not carry a `Rung`. -/
 def wrapWitness (t : WrapData) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
-  wrapWitnessAt t .xhat pubSize rows
+  wrapWitnessAt t .split pubSize rows
 
 def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
   let rows := rungRows t k wired
@@ -2479,6 +2609,104 @@ theorem xhat_gate_census :
     ∧ (xhRows.filter (fun r => r.kind == KGateType.poseidon)).length = 0 := by
   refine ⟨?_, ?_, ?_⟩ <;> decide
 
+/-! ### §16b — ⚑ **W-SPLIT'S PINS, AS NAMED THEOREMS.**
+
+Every claim §16 makes about a ROW is read off the emitted row list, and the two claims it makes
+about upstream's ARITHMETIC are closed in the kernel rather than asserted in prose. No new `#guard`s. -/
+
+/-- The smoke instance's W-SPLIT rows, materialised once so the pins share one term. -/
+def spRows : List WRow := splitRows tKey true
+
+/-- ⚑ Does `rows` carry the `Generic` HALF `(vs, c)` — in EITHER slot of the double gate?
+`packHalves` fills cols 0,1,2 with the first half and 3,4,5 with the second, so a pin written
+against `perm.take 3` alone would silently miss every half that landed in the second slot. It is the
+HALF that is the constraint, and both slots are the same constraint. -/
+def hasHalf (rows : List WRow) (vs : List (Option PVar)) (c : List Int) : Bool :=
+  rows.any (fun w => w.kind == KGateType.generic
+    && ((w.perm.take 3 == vs && w.coeffs.take 5 == c)
+        || ((w.perm.drop 3).take 3 == vs && (w.coeffs.drop 5).take 5 == c)))
+
+/-- ⚑ **THE SELECTION FINDS EXACTLY THE `` `Field `` WORDS.** The wrap shape's ten `split_field`
+calls are `wrap_main.ml:409` applied to the five `B Field` words of each of the two `per_proof`
+blocks; the smoke shape's four-entry spread carries exactly one of those pairs, at positions
+`(0, 1)`. A shape that selected a value half without its parity would contribute NO pair, which is
+what makes this a pin on the WIDTH TABLE rather than on a hand-copied index list. -/
+theorem split_pairs_are_the_field_words :
+    splitPairs shapeSmoke = [(0, 1)]
+    ∧ (splitPairs shapeWrap).length = 10
+    ∧ (splitPairs shapeWrap).map (fun p => xhAt shapeWrap p.1)
+        = [0, 2, 4, 6, 8, 32, 34, 36, 38, 40] := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ **THE TIE IS TO §15's ENTRY SCALARS, NOT TO FRESH CELLS.** For every pair, the emitted row
+list carries the half whose three permutation variables are `(x, y, is_odd)` with `y` and `is_odd`
+the MSM entry scalars `xA k 4` and `xA k' 4` at `cSplit 1` — i.e.
+`Field.Assert.equal ((of_int 2 * y) + is_odd) x`. This is the whole of W-SPLIT's content and it is
+read off the ROWS. -/
+theorem split_ties_the_msm_entry_scalars :
+    ((splitPairs shapeSmoke).zip (List.range (splitPairs shapeSmoke).length)).all (fun pa =>
+      hasHalf spRows [some (xSplitW shapeSmoke tKey.sp pa.2),
+                      some (xA shapeSmoke tKey.sp pa.1.1 4),
+                      some (xA shapeSmoke tKey.sp pa.1.2 4)] (cSplit 1)) = true := by
+  rfl
+
+/-- ⚑ **THE PARITY IS BOOLEAN-CONSTRAINED TWICE, AND BOTH ARE UPSTREAM'S.** `exists Typ.(field *
+Boolean.typ)` in `split_field` is this section's; `assert_ (Constraint.boolean b)` at
+`wrap_verifier.ml:573-576` is §15's `` `Cond_add `` arm. Emitting one would be LESS strict than
+`wrap_main`, so the pin is that BOTH row lists carry the half — not that one does. -/
+theorem split_parity_is_boolean_in_both_sections :
+    hasHalf spRows [some (xA shapeSmoke tKey.sp 1 4), some (xA shapeSmoke tKey.sp 1 4),
+                    some (xA shapeSmoke tKey.sp 1 4)] cBool = true
+    ∧ hasHalf xhRows [some (xA shapeSmoke tKey.sp 1 4), some (xA shapeSmoke tKey.sp 1 4),
+                      some (xA shapeSmoke tKey.sp 1 4)] cBool = true := by
+  refine ⟨rfl, rfl⟩
+
+/-- W-SPLIT spends `Generic` halves and σ-probes and NOTHING else — `split_field` has no curve op,
+no sponge and no lookup. A row family appearing here would mean the gadget was read wrong. -/
+theorem split_rows_are_generic_and_probe_only :
+    ((splitRows tKey true).filter (fun r => r.kind == KGateType.generic)).length = 1
+    ∧ ((splitRows tKey true).filter (fun r => r.probe)).length = 1
+    ∧ ((splitRows tKey true).filter (fun r => r.kind == KGateType.varBaseMul)).length = 0
+    ∧ ((splitRows tKey true).filter (fun r => r.kind == KGateType.completeAdd)).length = 0
+    ∧ ((splitRows tKey true).filter (fun r => r.kind == KGateType.poseidon)).length = 0 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The `w7_split` rung is a strict superset of `w6_xhat`, its length is the sum of its parts, and
+the WIRED and UNWIRED emissions differ ONLY in the probe rows' permutation columns — the property
+that makes the harness's control byte-identical everywhere else. -/
+theorem split_rung_extends_xhat :
+    (rungRows tKey .split true).length
+      = (rungRows tKey .xhat true).length + (splitRows tKey true).length
+    ∧ (rungRows tKey .xhat true).length < (rungRows tKey .split true).length
+    ∧ (((rungRows tKey .split true).zip (rungRows tKey .split false)).filter
+        (fun p => p.1.perm != p.2.perm)).length
+        = ((rungRows tKey .split true).filter (fun r => r.probe)).length
+    ∧ rungPub shapeSmoke .split = rungPub shapeSmoke .xhat := by
+  refine ⟨rfl, by decide, rfl, rfl⟩
+
+/-- `placeChecked` ACCEPTS the `w7_split` rung and no public word is inert — the fail-closed
+placement, at the new top rung rather than at the one below it. -/
+theorem split_rung_places_and_exposes_every_public_word :
+    refusalOf shapeSmoke shapeSmoke.pubWords (wrapGates (rungRows tKey .split true)) = none
+    ∧ inertPublicWords shapeSmoke.pubWords (wrapGates (rungRows tKey .split true)) = [] := by
+  refine ⟨rfl, rfl⟩
+
+/-- ⚑ **WHAT `scale_fast2`'s TOP-BIT ZERO ACTUALLY BUYS — IN THE KERNEL, NOT IN PROSE.**
+`plonk_curve_ops.ml:262-265` asserts ONE bit zero at width 255, giving `s_div_2 < 2^254`.
+
+  * `2^254 < q`, so that bit CANONICALISES the ladder's own 255-cell decomposition: `B < 2^254 < q`
+    is the unique representative of `s_div_2` mod `q`, and the multiplier the `EC_scale` gate uses
+    IS the scalar `Field.Assert.equal !n_acc scalar` names.
+  * `2·2^254 > q`, so it bounds `y = 2·s_div_2 + s_odd` by NOTHING: every `y ∈ Fq` has a split with
+    `s_div_2 < 2^254`. Upstream's comment at `wrap_main.ml:64-68` calls this the deferred check on
+    the high bits; it is a canonicity guard one level down, and §16 says so.
+
+Both halves are needed: the first alone would read as "the deferral works", the second alone as "the
+deferral is empty". Neither is true on its own. -/
+theorem split_deferred_check_canonicalises_but_does_not_bound :
+    2 ^ 254 < qN ∧ qN < 2 * 2 ^ 254 ∧ xhatTopZeros 0 = 1 ∧ xhatTopZeros 11 = 3 := by
+  refine ⟨?_, ?_, rfl, rfl⟩ <;> decide
+
 /-! ## §13 — ⚑ WHAT IS LEFT, BY SUB-CIRCUIT.
 
 Named, not estimated; each entry is a row emitter this file does not have, and each carries the
@@ -2515,13 +2743,35 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      255 bits, 26 at 128** (`plonk_curve_ops.ml:66-70,251-267`). Plus the `lagrange` /
      `scaled_lagrange` constant partition, the correction sum, `Inner_curve.negate` and
      `x_hat blinding`.
-  3. **W-SPLIT** `wrap_main.ml:51-81` — `split_field`: one `Generic` half per statement `Field`
-     word plus a `Boolean.typ` check, with the hi range check DEFERRED INTO `scale_fast2`
-     (upstream's own comment, `:64-68`; the check is `scale_fast2`'s top-bit loop at
-     `plonk_curve_ops.ml:262-265`). Emitting the split without that deferred check would be defect
-     class 2 in a new place.
-  4. **W-FTCOMM** `wrap_verifier.ml:655-666` — `Common.ft_comm`, eight `scale_fast2`s at
-     `Other_field.Packed.Constant.size_in_bits = 255`, i.e. 51 chunks each.
+  3. ✅ **W-SPLIT — LANDED at `w7_split`** (§16). `wrap_main.ml:69-81`, called once at `:409`: one
+     `Boolean.typ` check and one `Field.Assert.equal ((of_int 2 * y) + is_odd) x` per statement
+     `Field` word — **two `Generic` halves, one row**, ten words at the wrap shape and one at the
+     smoke shape. The outputs ARE §15's entry scalars, so the tie is a σ class and not a new cell.
+     ⚠ **THE SIZING NOTE THIS LIST CARRIED WAS RIGHT ABOUT THE ROWS AND WRONG ABOUT THE DEFERRAL.**
+     It said the hi range check is "DEFERRED INTO `scale_fast2`" and that emitting the split without
+     it would be defect class 2 in a new place. Followed to source (§16b proves both halves in the
+     kernel): `scale_fast2` at width 255 asserts ONE bit zero, giving `s_div_2 < 2^254`, and
+     `2^254 < q` — so what the deferral buys is **canonicity of the ladder's own 255-cell
+     decomposition**, not a bound on `y`. `q < 2·2^254`, so every `y ∈ Fq` has an admissible split
+     and the "check" bounds `y` by nothing. It does not need to: `scale_fast2`'s mux makes the
+     contribution `y·g` under EITHER split. ⚠ **The split ONE level up is a different matter** —
+     `y` and `is_odd` are consumed by DIFFERENT Lagrange bases, so the two solutions give different
+     `x_hat`, and nothing bounds `y`. It is not a hole HERE only because `x` is a free witness on
+     both sides: **W-SPLIT's constraint pins nothing until W-PREV ties `x`**, which is item 9 and is
+     now the first thing this list wants.
+  4. **W-FTCOMM** `wrap_verifier.ml:655-666` — `Common.ft_comm` (`common.ml:238-256`), **eight
+     `scale_fast`** at `Other_field.Packed.Constant.size_in_bits = 255`, i.e. 51 chunks each.
+     ⚠ **NOT `scale_fast2`, which is what this entry used to say and is wrong at source**:
+     `wrap_verifier.ml:658-659` SHADOWS `scale_fast` with `Ops.scale_fast ~num_bits:255` and passes
+     THAT as `~scale`. The difference is the whole shape — no `(s_div_2, s_odd)` split, no
+     `Boolean.typ`, **no top-bit-zero loop**, no `G.if_` mux and no correction, because the scalar
+     is already a `Shifted_value.Type1`; and the chunk count is `num_bits / bits_per_chunk` under a
+     `[%test_eq]` for exact division (`plonk_curve_ops.ml:149-151`), not `chunks_needed ~num_bits:
+     (n−1)`. Both land on 51 at width 255, so the row census is unaffected and the derivation is
+     not. ⚑ The eight are `1` (`perm · sigma_comm_last`) `+ 6` (the `chunked_t_comm` fold at
+     `tComms = 7`) `+ 1` (`zeta_to_domain_size`); `List.reduce_exn` on a singleton applies `+` zero
+     times, so `f_comm` costs a ladder and no add. ⚑ The first ladder's base is **W-KEY's output** —
+     `sigma_comm.(6)` is index-sponge coordinates 12 and 13 — so this sub-circuit wires into §14.
   5. **W-COMBINE** `wrap_verifier.ml:320-379,676-713` — `Split_commitments.combine` over
      **47** commitments (`Nat.N45.n + Max_proofs_verified.n`; the 45 are 9 singletons + `w_comm` 15
      + `coefficients_comm` 15 + `sigma_comm_init` 6, `plonk_types.ml:14-19`), with the `Curve_opt`

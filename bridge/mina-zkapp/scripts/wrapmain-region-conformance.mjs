@@ -45,7 +45,8 @@
 // blob-only legs now grade before the Lean side is loaded at all, so a stale tree no longer means
 // this file measured nothing.
 //
-// The Lean side defaults to `/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json` — the TOP rung — produced by
+// The Lean side defaults to `/tmp/pickles-wrapmain/wrapmain_wrap_<TOP_RUNG>.json`, and the emission's
+// own `name` is CHECKED against `TOP_RUNG` — a lower rung REFUSES (exit 3) instead of grading. Produced by
 //   (cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)
 
 // ⚑ FRESHNESS (2026-08-02). This read `/tmp/pickles-wrapmain/…json` with `existsSync` +
@@ -77,17 +78,37 @@ const PERMUTS = 7;
 const FQ = 28948022309329048855892746252171976963363056481941647379679742748393362948097n;
 const FP = 28948022309329048855892746252171976963363056481941560715954676764349967630337n;
 
-const LEAN_DEFAULT = '/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json';
-// ⚑ THE COMMITTED FIXTURE — added 2026-08-03, and the reason is that until today this gate had NO
-// path to a Lean side except a live `/tmp` emission. That is not a stricter gate, it is an
-// UNREPRODUCIBLE one: a reader with this repository and no Lean toolchain could not reach the
-// verdict at all, so every "24 entries conform" was a claim about one box's `/tmp` and nothing a
-// second party could re-derive. The step half has carried a gz fixture + sidecar since 2026-08-02;
-// this is that, for wrap. The freshness floor applies to it exactly as it does to a live emission —
-// two content legs plus the git leg, which for a COMMITTED fixture is a hard refusal.
-const LEAN_FIXTURE = new URL('../fixtures/wrapmain-wrap-w5-key-gates.json.gz', import.meta.url);
-const LEAN_FIXTURE_PROV = new URL('../fixtures/wrapmain-wrap-w5-key-gates.provenance.json', import.meta.url);
+// ⚑⚑ THE TOP RUNG IS A CONSTANT, AND READING ANY OTHER ONE IS A REFUSAL.
+// ⚠ 2026-08-03, MEASURED AND FIXED HERE. This file's default was `…_w5_key.json` while the Lean
+// assembly's top rung had moved TWO rungs past it. Unattended, the gate then read a rung that has
+// no curve work in it at all, printed `VarBaseMul  mina 2417  lean 0  ⚠ ABSENT`, matched that
+// against a LEDGER entry which still said `lean 0`, and EXITED 0. A green that measured the wrong
+// object. Two structural changes stop it recurring, and neither is a warning:
+//   (1) `TOP_RUNG` derives the default path, the fixture name and the sidecar name from ONE string,
+//       so re-pointing is one edit and a half-re-pointed gate cannot exist;
+//   (2) the emission's own `name` field is CHECKED against `TOP_RUNG` and a mismatch REFUSES
+//       (exit 3, `isStale`), so pointing `--lean` at a lower rung is a refusal rather than a grade;
+//   (3) `EMITTED_FAMILIES` names the gate families the top rung is known to emit, and ANY of them
+//       measuring zero is a hard exit-1 BEFORE the vector diff — an ABSENT verdict for a family the
+//       assembly actually emits can no longer be laundered through the ledger.
+const TOP_RUNG = 'w7_split';
+const LEAN_DEFAULT = `/tmp/pickles-wrapmain/wrapmain_wrap_${TOP_RUNG}.json`;
+// ⚑ THE COMMITTED FIXTURE. ⚠ 2026-08-03: the comment that used to sit here announced this fixture
+// as "added 2026-08-03" and explained why an unreproducible gate is a bad gate — and the `.gz` was
+// NEVER COMMITTED, in this branch or any other (`git log --all -- 'fixtures/wrapmain*'` is empty).
+// So `haveFix` was permanently false, `requireFreshFixture` was unreachable, and the
+// `fixture/in-sync-with-live-emission` leg could never fire. A documented fixture is not a
+// committed one. It is committed now, under the top rung's name, and the freshness floor applies to
+// it exactly as to a live emission — two content legs plus the git leg.
+const FIXTURE_STEM = `wrapmain-wrap-${TOP_RUNG.replace(/_/g, '-')}-gates`;
+const LEAN_FIXTURE = new URL(`../fixtures/${FIXTURE_STEM}.json.gz`, import.meta.url);
+const LEAN_FIXTURE_PROV = new URL(`../fixtures/${FIXTURE_STEM}.provenance.json`, import.meta.url);
 const WRAP_REFRESH_CMD = 'node scripts/wrapmain-region-conformance.mjs --emit --refresh-fixture';
+// ⚑ Families the TOP RUNG emits. Zero for any of these means the gate is reading a lower rung (or
+// the assembly regressed); either way it is a RED, never an "absent region" the ledger may excuse.
+// EndoMul is deliberately NOT here — it is genuinely absent (W-COMBINE, W-BULLET) and the ledger is
+// the right home for a gap that is real.
+const EMITTED_FAMILIES = ['Zero', 'Generic', 'Poseidon', 'CompleteAdd', 'VarBaseMul', 'EndoMulScalar'];
 
 const fq = (c) => { let v = BigInt(c) % FQ; if (v < 0n) v += FQ; return v.toString(); };
 const leHex = (h) => BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex')).toString();
@@ -181,7 +202,18 @@ function loadLeanSide(explicit, cone) {
       : `STALE: live ${a.slice(0, 12)}… != fixture ${b.slice(0, 12)}… — the wrap assembly moved; refresh with --refresh-fixture`;
     src = a === b ? `${live} (== fixture)` : `${live} (⚠ FIXTURE STALE)`;
   }
-  return { src, fixture, prov, j: JSON.parse(text) };
+  // ⚑ THE RUNG CHECK. The emission NAMES itself (`renderWrapCircuit`'s `name`), so the gate can
+  // refuse an artifact for a rung it was not written to grade instead of scoring it. This is the
+  // leg that would have caught the `w5_key` default: a lower rung is `isStale`, exit 3, named.
+  const j = JSON.parse(text);
+  const want = `wrapmain_wrap_${TOP_RUNG}`;
+  if (j.name !== want) {
+    const e = new Error(`STALE Lean emission: this gate grades ${want}, and ${src} names itself `
+      + `"${j.name}". Re-emit the top rung and re-point, do not grade a lower one.\n   ${WRAP_EMIT_CMD}`);
+    e.stale = true;
+    throw e;
+  }
+  return { src, fixture, prov, j };
 }
 
 // ── gadget instances ──────────────────────────────────────────────────────────────────────────────
@@ -801,8 +833,8 @@ if (argv.includes('--refresh-fixture')) {
     extra: { gates: leanJson.gates.length, probe_rows: (leanJson.probe_rows ?? []).length,
              num_rows: leanJson.num_rows, public_input_size: leanJson.public_input_size },
   });
-  console.log(`refreshed fixtures/wrapmain-wrap-w5-key-gates.json.gz from ${src} (${leanJson.gates.length} gates)`);
-  console.log(`   + sidecar wrapmain-wrap-w5-key-gates.provenance.json — cone ${rec.cone.digest.slice(0, 16)}… over ${rec.cone.files} modules, HEAD ${String(rec.git.head).slice(0, 9)}`);
+  console.log(`refreshed fixtures/${FIXTURE_STEM}.json.gz from ${src} (${leanJson.gates.length} gates)`);
+  console.log(`   + sidecar ${FIXTURE_STEM}.provenance.json — cone ${rec.cone.digest.slice(0, 16)}… over ${rec.cone.files} modules, HEAD ${String(rec.git.head).slice(0, 9)}`);
   process.exit(0);
 }
 const L = normalizeLean(leanJson);
@@ -819,6 +851,17 @@ if (argv.includes('--report')) report(R, src, M, L);
 const ref = referenceVector(R), cand = candidateVector(R);
 const byName = new Map(ref.map((e) => [e.name, e.value]));
 let fails = 0;
+// ⚑ THE ABSENT-FAMILY FLOOR, AND IT IS NOT LEDGERABLE. A family the top rung is known to emit
+// measuring ZERO is the exact shape of the failure this file shipped: `VarBaseMul mina 2417 /
+// lean 0 ⚠ ABSENT`, matched against a ledger entry that still said `lean 0`, exit 0. The ledger
+// exists for gaps that are REAL (EndoMul is one); it may not excuse a family the assembly emits.
+for (const k of EMITTED_FAMILIES) {
+  if ((R.census.lean[k] ?? 0) === 0) {
+    console.log(`RED  absent-family/${k}\n     ${k} measured 0 on the Lean side while ${TOP_RUNG} emits it`
+      + ` (mina ${R.census.mina[k] ?? 0}).\n     This is a gate reading the wrong rung or an assembly regression — NOT a ledgerable absence.`);
+    fails++;
+  }
+}
 for (const e of cand) {
   const r = byName.get(e.name);
   if (r === undefined) { console.log(`RED  ${e.name}\n     UNEXPECTED: ${e.value}`); fails++; }
