@@ -134,9 +134,25 @@ identical to the Rust `NS_FACT_MARK` in the 2-leg/N-leg ring modules. -/
 def NS_FACT_MARK : ℤ := 64207
 
 /-- The 7-lane `hash_fact` absorb block `[x, f0, f1, f2, f3, MARK, 1]` (missing fact slots ride
-literal zeros) — slots 0..6 of the Rust `fact_site_always` tuple, term-for-term. -/
-def factIns (cols : List Nat) : List EmittedExpr :=
+literal zeros) — slots 0..6 of the Rust `fact_site_always` tuple, term-for-term.
+
+⚑ **`hCols` is why "7-lane" is a fact and not a hope (added 2026-08-03).** `padToE 5` pads by
+`5 - cols.length`, `Nat` subtraction, which SATURATES: above five columns nothing is appended and
+the block is `cols.length + 2` felts. The downstream `ChipArityAdmitted` check reads the block's
+length against `[0, 2, 3, 4, 7, 11, 16]`, whose HOLES a saturated pad lands in — 9 columns give 11
+and 14 give 16, both admitted — so it bites at 6/7/8 and misses at 9 and 14. The obligation rides on
+the PRE-pad length instead. Exhibited as named `decide` theorems in
+`Market.ShieldedRingEndpointDescriptor`; every call site here passes 4 columns. -/
+def factIns (cols : List Nat)
+    (_hCols : cols.length ≤ 5 := by first | assumption | simp) : List EmittedExpr :=
   padToE 5 (cols.map .var) ++ [.const NS_FACT_MARK, .const 1]
+
+/-- The block is SEVEN felts exactly when the columns fit — the width `factIns`'s name asserts. -/
+theorem factIns_length {cols : List Nat} (h : cols.length ≤ 5) :
+    (factIns cols h).length = 7 := by
+  simp only [factIns, padToE, List.length_append, List.length_replicate, List.length_map,
+    List.length_cons, List.length_nil]
+  omega
 
 /-- A 4-input fact absorb evaluates to `[x, f0, f1, f2, 0, MARK, 1]` (the padded 5th slot). -/
 theorem factIns_eval_4 (a : Assignment) (c0 c1 c2 c3 : Nat) :

@@ -166,9 +166,28 @@ adapter's `hash_fact` KAT. -/
 def NS_FACT_MARK : ℤ := 64207
 
 /-- The 7-lane `hash_fact` absorb block `[x, f0, f1, f2, f3, MARK, 1]` (missing fact slots ride
-literal zeros) — slots 0..6 of the Rust `fact_site_always` tuple, term-for-term. -/
-def factIns (cols : List Nat) : List EmittedExpr :=
+literal zeros) — slots 0..6 of the Rust `fact_site_always` tuple, term-for-term.
+
+⚑ **`hCols` is why "7-lane" is a fact and not a hope (added 2026-08-03).** `padToE 5` pads by
+`5 - cols.length`, which is `Nat` subtraction and SATURATES: at `cols.length > 5` nothing is
+appended and the block is `cols.length + 2` felts, not 7. The only check downstream is
+`chipLookupTupleNarrow`'s `ChipArityAdmitted` on the block's length — and the admitted set
+`[0, 2, 3, 4, 7, 11, 16]` has HOLES a saturated pad lands in: `cols.length = 9` gives 11 and
+`= 14` gives 16, both ADMITTED. So the post-pad check bites at 6/7/8 and MISSES at 9 and 14,
+emitting a "7-lane" site with `MARK` and `1` at the wrong slots. The obligation therefore rides on
+the PRE-pad length, where it says what the name says. Both misses are exhibited as named
+`decide` theorems in `Market.ShieldedRingEndpointDescriptor` (`factLookup_old_condition_admitted_nine`
+/`_fourteen` and the refusals that replace them); every call site here passes 4 or 5 columns. -/
+def factIns (cols : List Nat)
+    (_hCols : cols.length ≤ 5 := by first | assumption | simp) : List EmittedExpr :=
   padToE 5 (cols.map .var) ++ [.const NS_FACT_MARK, .const 1]
+
+/-- The block is SEVEN felts exactly when the columns fit — the width `factIns`'s name asserts. -/
+theorem factIns_length {cols : List Nat} (h : cols.length ≤ 5) :
+    (factIns cols h).length = 7 := by
+  simp only [factIns, padToE, List.length_append, List.length_replicate, List.length_map,
+    List.length_cons, List.length_nil]
+  omega
 
 /-- A 5-input fact absorb evaluates to `[x, f0, f1, f2, f3, MARK, 1]`. -/
 theorem factIns_eval_5 (a : Assignment) (c0 c1 c2 c3 c4 : Nat) :

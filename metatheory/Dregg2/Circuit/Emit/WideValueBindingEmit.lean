@@ -250,9 +250,25 @@ is why no lane columns appear: `chip_lookup_sound_narrow` forces the same hash e
 lookup does, carrying nothing extra. -/
 
 /-- The 7-slot `hash_fact` absorb block `[x, f0, f1, f2, f3, MARK, 1]` over general expressions
-(the Rust `fact_site_always` tuple, term for term). -/
-def factIns (es : List EmittedExpr) : List EmittedExpr :=
+(the Rust `fact_site_always` tuple, term for term).
+
+⚑ **`hEs` is why "7-slot" is a fact and not a hope (added 2026-08-03).** `padToE 5` pads by
+`5 - es.length`, `Nat` subtraction, which SATURATES: above five inputs nothing is appended and the
+block is `es.length + 2` slots. The downstream `ChipArityAdmitted` check reads the block's length
+against `[0, 2, 3, 4, 7, 11, 16]`, whose HOLES a saturated pad lands in — 9 inputs give 11 and 14
+give 16, both admitted — so it bites at 6/7/8 and misses at 9 and 14. The obligation rides on the
+PRE-pad length instead. Exhibited as named `decide` theorems in
+`Market.ShieldedRingEndpointDescriptor`; the one call site here passes 4 exprs. -/
+def factIns (es : List EmittedExpr)
+    (_hEs : es.length ≤ 5 := by first | assumption | simp) : List EmittedExpr :=
   padToE 5 es ++ [.const FACT_MARK, .const 1]
+
+/-- The block is SEVEN slots exactly when the inputs fit — the width `factIns`'s name asserts. -/
+theorem factIns_length {es : List EmittedExpr} (h : es.length ≤ 5) :
+    (factIns es h).length = 7 := by
+  simp only [factIns, padToE, List.length_append, List.length_replicate, List.length_cons,
+    List.length_nil]
+  omega
 
 /-- R7 — `legacy_binding = hash_fact(value_mod_p, [asset_mod_p, randomness, 0])`. The Rust passes
 its constant-pinned `zero` COLUMN as the fourth term; here it is the literal `0`. -/
