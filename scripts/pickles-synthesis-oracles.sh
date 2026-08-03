@@ -72,14 +72,34 @@ MIGRATED="custom-gate-diff.mjs pickles-placement-oracle.mjs mina-canonical-circu
 is_migrated() { case " $MIGRATED " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 fails=0
+blocked=0
+declare -a FAILED=()
+declare -a BLOCKED=()
+# ⚑ EXIT 3 IS A MISSING PREREQUISITE; EXIT 1 IS A DEFECT. THEY MUST NOT LOOK THE SAME.
+# ⚠ 2026-08-03: this printed `RED: <name> (exit $?)` for both, so "no `DREGG_WM=wrap` emission on
+# this box" and "the Lean assembly diverges from Mina's compiled wrap circuit" arrived as the same
+# line. A reader cannot act on that, and the predictable response to an unactionable red is to stop
+# reading the gate. The two conformance gates and the freedom ratchet all already SPEAK the
+# distinction — they exit 3 on a stale/absent Lean input and 1 on divergence — and it was being
+# thrown away one level up.
+# ⚠ AND BLOCKED IS STILL NON-ZERO OVERALL. A prerequisite that is absent means the diff DID NOT RUN,
+# which is not a pass. Separating the two is about making the failure actionable, never about
+# letting one through: `== N ORACLE(S) RED · M BLOCKED ==` exits 1 either way.
 run_one() { # name, cmd...
   local name="$1"; shift
+  local rc
   echo "── $name ─────────────────────────────────────────────"
   if "$@"; then
     echo "   GREEN: $name"
   else
-    echo "   RED:   $name (exit $?)"
-    fails=$((fails + 1))
+    rc=$?
+    if [ "$rc" -eq 3 ]; then
+      echo "   BLOCKED: $name (exit 3 — a PREREQUISITE is absent or stale, not a divergence)"
+      blocked=$((blocked + 1)); BLOCKED+=("$name")
+    else
+      echo "   RED:   $name (exit $rc)"
+      fails=$((fails + 1)); FAILED+=("$name")
+    fi
   fi
   echo
 }
@@ -242,10 +262,29 @@ else
   echo
 fi
 
-if [ "$fails" -eq 0 ]; then
+if [ "$fails" -eq 0 ] && [ "$blocked" -eq 0 ]; then
   echo "== ALL GREEN — every Pickles-synthesis byte-diff oracle byte-exact, and the Lean↔Rust cross-implementation differential agrees =="
   exit 0
-else
-  echo "== $fails ORACLE(S) RED =="
-  exit 1
 fi
+
+echo "== $fails ORACLE(S) RED · $blocked BLOCKED =="
+[ "${#FAILED[@]}"  -gt 0 ] && printf '   RED      %s\n' "${FAILED[@]}"
+[ "${#BLOCKED[@]}" -gt 0 ] && printf '   BLOCKED  %s\n' "${BLOCKED[@]}"
+if [ "$blocked" -gt 0 ]; then
+  cat <<'EOF'
+   ⚑ BLOCKED means the diff DID NOT RUN — a prerequisite this box does not have. It is NOT a pass
+     and it is NOT a divergence. The three, and how to tell which:
+       * o1-labs circuit blobs   $MINA_CIRCUIT_BLOBS_BASE_DIR, ~/.mina/circuit-blobs, or
+                                 /usr/local/lib/mina/circuit-blobs; otherwise fetched (network).
+       * a DREGG_WM=wrap TOP-RUNG emission at /tmp/pickles-wrapmain/wrapmain_wrap_<TOP_RUNG>.json:
+                                 (cd metatheory && DREGG_WM=wrap lake env lean --run \
+                                    Dregg2/Circuit/Emit/EmitWrapMainJson.lean)
+                                 ⚠ wrap-scale under the interpreter — hours. A LOWER rung on disk
+                                 does not satisfy it; the gate checks the emission's own `name`.
+       * ts-node                 (cd bridge/mina-zkapp && npm ci)
+     ⚠ THIS IS NOT A SKIP LIST. Nothing here is optional and nothing is suppressed — a blocked run
+     still exits 1. It exists so a missing prerequisite is fixed by producing it, and a RED is read
+     as a defect, instead of both being read as neither.
+EOF
+fi
+exit 1

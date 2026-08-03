@@ -259,10 +259,17 @@ function printRows(rows, { verbose }) {
 // this file's whole rule is that a pin it cannot READ is a red, and a rung it cannot read is worse,
 // because everything downstream would then bind to whatever was typed here.
 
-/** `KimchiWrapMain.Rung.tag`'s arms in ladder order — `[{ ctor: 'key', tag: 'w5_key' }, …]`. */
+/** `KimchiWrapMain.Rung.tag`'s arms in ladder order — `[{ ctor: 'key', tag: 'w5_key' }, …]`.
+ *
+ * ⚠ THE ANCHOR IS `\b`-TERMINATED, and that is not tidiness. It was `indexOf('def Rung.tag')`,
+ * which also matches `def Rung.tagANYTHING` — so a RENAME of the ladder would have been read as
+ * the ladder, and the `--self-test` leg written to catch exactly that was itself a no-op (it bent
+ * the name to `def Rung.tagRENAMED`, a string that still CONTAINS the needle). Caught by the leg
+ * failing, which is the one thing that went right. */
 function readRungLadder(text) {
-  const i = text.indexOf('def Rung.tag');
-  if (i < 0) return { err: '`def Rung.tag` is not in ' + WRAP_ASSEMBLY + ' — the rung ladder was renamed or moved' };
+  const anchor = /^def Rung\.tag\b/m.exec(text);
+  if (anchor === null) return { err: '`def Rung.tag` is not in ' + WRAP_ASSEMBLY + ' — the rung ladder was renamed or moved' };
+  const i = anchor.index;
   const end = text.indexOf('\n\n', i);
   const blk = text.slice(i, end < 0 ? text.length : end);
   const arms = [...blk.matchAll(/\.([A-Za-z][A-Za-z0-9_]*)\s*=>\s*"(w\d+_[A-Za-z0-9_]+)"/g)]
@@ -384,14 +391,24 @@ function bindArtifact(d) {
 // an IN-MEMORY copy of the census sources, so nothing on disk is touched.
 function selfTest(sources) {
   console.log('── prover-freedom-ratchet --self-test (a RISE must red; the honest census must not) ──\n');
+  // ⚑ EVERY LEG CARRIES ITS OWN EXPECTATION. The summary used to be `${bad} LEG(S) FAILED` and
+  // nothing else, so a red run named a COUNT and the reader had to scroll for a `RED ` prefix that
+  // no obvious grep (`FAIL`, `expected`, `got`) would find. A gate whose output cannot be acted on
+  // is the defect class this file exists inside. `expected`/`got` are now recorded per leg and
+  // REPRINTED under the summary, so the failing leg is the last thing on screen.
   const legs = [];
-  const leg = (name, ok, detail) => { legs.push(ok); console.log(`   ${ok ? 'ok  ' : 'RED '} ${name.padEnd(62)} ${detail}`); };
+  const leg = (name, ok, got, expected) => {
+    legs.push({ name, ok, got, expected });
+    console.log(`   ${ok ? 'ok  ' : 'RED '} ${name.padEnd(62)} ${got}`);
+  };
 
   // (1) THE ANCHOR. A ratchet that reds on everything proves nothing.
   const honest = grade(sources);
   const hBad = honest.filter((r) => !r.ok);
   leg('anchor: the census as committed', hBad.length === 0,
-    `${honest.length - hBad.length}/${honest.length} pins within their ceilings`);
+    `${honest.length - hBad.length}/${honest.length} pins within their ceilings`
+      + (hBad.length ? ` — RED: ${hBad.map((r) => r.pin.thm + '/' + r.pin.expr.replace(/\s+/g, ' ')).join(', ')}` : ''),
+    `all ${honest.length} committed pins within their ceilings (a ratchet that reds on everything proves nothing)`);
 
   // (2) EVERY `max` PIN, RAISED BY ONE. This is the exact motion the gate exists to catch: Lean's
   //     `native_decide` reds, somebody edits the theorem to the new number, and the build is green
@@ -410,7 +427,8 @@ function selfTest(sources) {
     const hit = rows.find((r) => r.pin === pin);
     if (!hit || hit.ok) { missed++; console.log(`   RED  raising ${pin.thm}/${pin.expr.slice(0, 40)}… by one did NOT red`); }
   }
-  leg('every `max`/`eq` pin, raised by one, reds', missed === 0, `${tested} pins bent, ${tested - missed} bit`);
+  leg('every `max`/`eq` pin, raised by one, reds', missed === 0, `${tested} pins bent, ${tested - missed} bit`,
+    `all ${tested} bent pins red (a count that RISES and is then written into the theorem must not pass)`);
 
   // (3) EVERY `min` PIN, LOWERED BY ONE — the inverted direction has to bite too, or "more is
   //     better" is an unchecked sentence.
@@ -425,7 +443,8 @@ function selfTest(sources) {
     const hit = rows.find((r) => r.pin === pin);
     if (!hit || hit.ok) { mMissed++; console.log(`   RED  lowering ${pin.thm}/${pin.expr.slice(0, 40)}… by one did NOT red`); }
   }
-  leg('every `min` pin, lowered by one, reds', mMissed === 0, `${mTested} pins bent, ${mTested - mMissed} bit`);
+  leg('every `min` pin, lowered by one, reds', mMissed === 0, `${mTested} pins bent, ${mTested - mMissed} bit`,
+    `all ${mTested} bent pins red (the inverted direction has to bite too)`);
 
   // (4) A DELETED CENSUS THEOREM IS RED, NOT SKIPPED. This is how an instrument gets retired without
   //     anyone deciding to, and it is the failure mode a text-scraping ratchet is most exposed to.
@@ -434,7 +453,8 @@ function selfTest(sources) {
   const gRows = grade(gone);
   const gHit = gRows.find((r) => r.pin === victim);
   leg('a RENAMED census theorem reds (not silently skipped)', !!gHit && !gHit.ok && !!gHit.err,
-    gHit?.err ? 'refused, naming the missing theorem' : 'NOT refused');
+    gHit?.err ? 'refused, naming the missing theorem' : 'NOT refused',
+    `an UNREADABLE pin for \`${victim.thm}\` — a deleted census pin is how an instrument gets retired without anyone deciding to`);
 
   // (5) A RESHAPED STATEMENT — the number is still there, the expression is not. A scraper that
   //     matched on the number alone would sail past this.
@@ -442,7 +462,8 @@ function selfTest(sources) {
   const reshaped = { ...sources, [v2.src]: sources[v2.src].replace(v2.expr, `(${v2.expr}).succ.pred`) };
   const rHit = grade(reshaped).find((r) => r.pin === v2);
   leg('a RESHAPED census statement reds', !!rHit && !rHit.ok && !!rHit.err,
-    rHit?.err ? 'refused, naming the expression it stopped watching' : 'NOT refused');
+    rHit?.err ? 'refused, naming the expression it stopped watching' : 'NOT refused',
+    'an UNREADABLE pin — the number is still there and the EXPRESSION is not, which a scraper matching on the number alone would sail past');
 
   // ── ⚑ THE LADDER'S OWN RED PATHS. The rung is DERIVED from four files now, and a derivation that
   //     cannot refuse is worse than a typed constant: it looks like a gate. Each leg bends ONE
@@ -450,17 +471,33 @@ function selfTest(sources) {
   const S = ladderSources();
   const honestD = deriveLadder(S);
   leg('ladder anchor: the four sources as committed', !honestD.err && gradeLadder(honestD)[0].ok,
-    honestD.err ? `⚑ ${honestD.err}` : `census ${honestD.censusTag} · top ${honestD.topTag} · gap ${honestD.gap} (ceiling ≤ ${RUNG_GAP_CEILING})`);
+    honestD.err ? `⚑ ${honestD.err}` : `census ${honestD.censusTag} · top ${honestD.topTag} · gap ${honestD.gap} (ceiling ≤ ${RUNG_GAP_CEILING})`,
+    `the derivation RESOLVES and the gap is ≤ ${RUNG_GAP_CEILING} (all four sources readable, TOP_RUNG last on the ladder)`);
 
   const bend = (over) => deriveLadder({ ...S, ...over });
-  leg('a RENAMED `Rung.tag` refuses (the ladder cannot be ordered)',
-    !!bend({ assembly: S.assembly.replace('def Rung.tag', 'def Rung.tagRENAMED') }).err, 'refused');
-  leg('a MOVED census rung refuses when it is not a `Rung` constructor',
-    !!bend({ wrap: S.wrap.replace(/(def\s+rowsWrapKey\b[^\n]*?rungRows\s+\w+\s+)\.[A-Za-z][A-Za-z0-9_]*/,
-      '$1.notARung') }).err, 'refused');
-  leg('a TOP_RUNG off the ladder refuses',
-    !!bend({ conformance: S.conformance.replace(/^const TOP_RUNG = '[A-Za-z0-9_]+';/m, "const TOP_RUNG = 'w99_nowhere';") }).err,
-    'refused');
+  {
+    // ⚠ THE BEND MUST NOT LEAVE THE NEEDLE BEHIND. This renamed to `def Rung.tagRENAMED`, which
+    // still CONTAINS `def Rung.tag`, so the old `indexOf` reader found it and the leg was a no-op
+    // that reported RED. `def Rung.label` shares no prefix, and the reader is `\b`-anchored now,
+    // so either fix alone would bite — which is why both are in.
+    const r = bend({ assembly: S.assembly.replace(/^def Rung\.tag\b/m, 'def Rung.label') });
+    leg('a RENAMED `Rung.tag` refuses (the ladder cannot be ordered)', !!r.err,
+      r.err ? 'refused, naming the ladder it cannot order' : 'NOT refused — the reader still resolved a ladder',
+      'a refusal: with no `Rung.tag` there is no rung ORDER, and without an order the gap is not a number');
+  }
+  {
+    const r = bend({ wrap: S.wrap.replace(/(def\s+rowsWrapKey\b[^\n]*?rungRows\s+\w+\s+)\.[A-Za-z][A-Za-z0-9_]*/,
+      '$1.notARung') });
+    leg('a MOVED census rung refuses when it is not a `Rung` constructor', !!r.err,
+      r.err ? 'refused, naming the constructor the assembly does not have' : 'NOT refused — a rung nobody declares was accepted',
+      'a refusal: the census and the assembly must agree about what a rung IS before a distance between two of them means anything');
+  }
+  {
+    const r = bend({ conformance: S.conformance.replace(/^const TOP_RUNG = '[A-Za-z0-9_]+';/m, "const TOP_RUNG = 'w99_nowhere';") });
+    leg('a TOP_RUNG off the ladder refuses', !!r.err,
+      r.err ? 'refused, naming the ladder the top rung is not on' : 'NOT refused — an unknown top rung was graded',
+      'a refusal: a TOP_RUNG the assembly never declares cannot be one end of the gap');
+  }
   {
     // A NINTH rung lands on the ladder while the conformance gate's TOP_RUNG stays where it is.
     // That is the EXACT motion that made this file stale, one level up: an instrument left pointing
@@ -470,7 +507,8 @@ function selfTest(sources) {
     const grown = S.assembly.slice(0, end) + '\n  | .w9probe => "w9_probe"' + S.assembly.slice(end);
     const g = bend({ assembly: grown });
     leg('a NINTH rung above the conformance gate\'s TOP_RUNG refuses', !!g.err,
-      g.err ? 'refused, naming the rung that is no longer the top' : 'NOT refused');
+      g.err ? 'refused, naming the rung that is no longer the top' : 'NOT refused — the conformance gate kept grading three below the new top',
+      'a refusal: this is the EXACT motion that made this file stale one level up, so it must not grade');
   }
   {
     // …and the gap itself must bite. Move the census DOWN to the first rung: the distance to the
@@ -481,17 +519,32 @@ function selfTest(sources) {
     const g = bend({ wrap: lowered });
     const row = gradeLadder(g)[0];
     leg('the census dropping to the FIRST rung reds (the gap is a ratchet)', !g.err && !row.ok,
-      g.err ? `⚑ derivation refused instead: ${g.err}` : `gap ${row.value} against ceiling ≤ ${RUNG_GAP_CEILING}`);
+      g.err ? `⚑ derivation refused instead: ${g.err}` : `gap ${row.value} against ceiling ≤ ${RUNG_GAP_CEILING}`,
+      `the derivation RESOLVES and the gap pin REDS (gap > ${RUNG_GAP_CEILING}) — a refusal here would mean the gap was never the thing being measured`);
   }
-  leg('a rung table that stopped parsing refuses',
-    !!bend({ assembly: S.assembly.replace(/^ {4}(w\d+_[a-z]+\s+\d+\s+\d+\*?\s+\d+\s)/gm, '$1') }).err,
-    'refused');
+  {
+    const r = bend({ assembly: S.assembly.replace(/^ {4}(w\d+_[a-z]+\s+\d+\s+\d+\*?\s+\d+\s)/gm, '$1') });
+    leg('a rung table that stopped parsing refuses', !!r.err,
+      r.err ? 'refused, naming the table it stopped reading' : 'NOT refused — the artifact `want`s came from nowhere',
+      'a refusal: `num_rows`/`public_input_size` are READ out of that table, so an unparsed table means the artifact pins have no source');
+  }
 
-  const bad = legs.filter((x) => !x).length;
-  console.log(bad
-    ? `\nprover-freedom-ratchet --self-test: ${bad} LEG(S) FAILED`
-    : `\nprover-freedom-ratchet --self-test: ${legs.length} legs green (2 honest anchors + 9 red paths)`);
-  return bad ? 1 : 0;
+  const bad = legs.filter((l) => !l.ok);
+  if (bad.length === 0) {
+    console.log(`\nprover-freedom-ratchet --self-test: ${legs.length} legs green (2 honest anchors + ${legs.length - 2} red paths)`);
+    return 0;
+  }
+  // ⚑ NAME THE LEG, THE EXPECTATION AND THE OBSERVATION. `${n} LEG(S) FAILED` on its own is a
+  // count, and a count is not actionable: the `RED ` line scrolls off and no obvious grep finds it.
+  console.log(`\nprover-freedom-ratchet --self-test: ${bad.length} of ${legs.length} LEG(S) FAILED`);
+  for (const l of bad) {
+    console.log(`   ⚑ FAILED LEG  ${l.name}`);
+    console.log(`        expected  ${l.expected}`);
+    console.log(`        got       ${l.got}`);
+  }
+  console.log('   ⚠ A FAILING LEG IS A BROKEN INSTRUMENT, NOT A BROKEN TREE — this file grades the census, and\n'
+    + '     these legs grade THIS FILE. Fix the leg or the reader it exercises; never delete the leg to go green.');
+  return 1;
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
