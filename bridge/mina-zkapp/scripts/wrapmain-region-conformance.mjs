@@ -124,8 +124,13 @@ function loadLeanSide(explicit, cone) {
   const live = explicit ?? LEAN_DEFAULT;
   if (!existsSync(live))
     throw new Error(`no Lean wrap emission at ${live}. Produce it with\n   ${WRAP_EMIT_CMD}`);
-  // ⚑ REFUSE, DO NOT WARN. An unstamped artifact, one stamped from a cone that has since moved, or
-  // one whose mtime predates its own source is REFUSED here — not read and scored.
+  // ⚑ REFUSE, DO NOT WARN. Two CONTENT legs, both from `emit-provenance.mjs`: an unstamped
+  // artifact, one stamped from a cone that has since moved (SOURCE), or one whose own sha256 is not
+  // the sha256 the stamp recorded (ARTIFACT) is REFUSED here — not read and scored.
+  // ⚠ There is deliberately NO mtime leg. One was written and RETIRED the same night (`7d9a20bef`,
+  // `31b12026f`): it refused an honest artifact from a clean `git worktree` extract, because git
+  // stamps checkout-time mtimes, so every CI clone would have read STALE. This comment used to
+  // claim that leg; it does not exist, and `emit-provenance.mjs`'s F3b reds if anyone re-adds it.
   const prov = requireFreshArtifact({ artifact: live, cone, emitCmd: WRAP_EMIT_CMD });
   return { src: live, prov, j: JSON.parse(readFileSync(live, 'utf8')) };
 }
