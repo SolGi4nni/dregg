@@ -455,13 +455,46 @@ def main() -> int:
     ap.add_argument("--as-of", default="HEAD",
                     help="bound the git history walk (a reconstruction reads its own past)")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--rev", default=None,
+                    help="grade a COMMIT instead of the working tree (e.g. --rev HEAD). "
+                         "See the note below on why this exists.")
     a = ap.parse_args()
 
     if a.self_test:
         return self_test()
 
-    log = Path(a.log) if a.log else ROOT / LOG_REL
-    persist = Path(a.persist) if a.persist else ROOT / PERSIST_REL
+    # ⚑ WHY --rev EXISTS: this gate answers "is the committed record self-consistent?", and that
+    # question is ONLY answerable about a commit. Read from the working tree it is hostage to every
+    # co-tenant mid-edit — measured 2026-08-03, when it reported EPOCH-GOES-BACKWARDS and
+    # EPOCH-UNLOGGED against a sibling lane's UNCOMMITTED 22→23 bump. HEAD read 22; the log row it
+    # accused of "going backwards" was CORRECT for HEAD. Both findings were artifacts of the subject,
+    # not defects in the record.
+    #
+    # ⚠ Same shape as `emit_descriptors.py --verify-provenance`, whose strict clause keyed on a tree
+    # hash that moves on any commit to any of ~2300 modules — furniture by construction — and whose
+    # non-strict form graded the working tree. That one was repaired by splitting the always-answerable
+    # question from the working-tree one; this is that repair, here.
+    #
+    # Working-tree grading stays the DEFAULT (a developer wants to know before they commit); --rev is
+    # what a gate wired into CI or a swarm should use.
+    tmp = None
+    if a.rev:
+        import subprocess, tempfile
+        tmp = tempfile.TemporaryDirectory(prefix="epochlog-")
+        for rel in (LOG_REL, PERSIST_REL):
+            dst = Path(tmp.name) / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            blob = subprocess.run(["git", "-C", str(ROOT), "show", f"{a.rev}:{rel}"],
+                                  capture_output=True, text=True)
+            if blob.returncode != 0:
+                print(f"check-schema-epoch-log: CANNOT RUN — {rel} absent at {a.rev}", file=sys.stderr)
+                return 2
+            dst.write_text(blob.stdout)
+        log = Path(tmp.name) / LOG_REL
+        persist = Path(tmp.name) / PERSIST_REL
+    else:
+        log = Path(a.log) if a.log else ROOT / LOG_REL
+        persist = Path(a.persist) if a.persist else ROOT / PERSIST_REL
     try:
         findings = check(log, persist, ROOT, a.as_of)
     except Fail as e:
