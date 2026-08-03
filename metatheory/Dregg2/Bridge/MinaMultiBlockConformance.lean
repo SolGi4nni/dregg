@@ -474,25 +474,34 @@ plus the C5 fold, at the block's OWN domain and its own derived coset shifts) fo
 `expandDeferred` (the `Fr` sponge over 91 absorbed elements, the b-polynomial fold, the permutation
 scalar, both ζ powers and the 47-leg `combined_inner_product` fold) reproduces all six of
 openmina's `expand_deferred` words, on each block, from that block's own bytes. -/
-#guard STEP_BLOCKS.all stepAgrees
+theorem every_step_block_agrees : STEP_BLOCKS.all stepAgrees = true := by native_decide
 
-#guard match STEP_BLOCKS.find? (·.height == 296372) with | some b => stepAgrees b | none => false
-#guard match STEP_BLOCKS.find? (·.height == 539508) with | some b => stepAgrees b | none => false
-#guard match STEP_BLOCKS.find? (·.height == 540890) with | some b => stepAgrees b | none => false
-#guard match STEP_BLOCKS.find? (·.height == 540906) with | some b => stepAgrees b | none => false
-#guard match STEP_BLOCKS.find? (·.height == 540922) with | some b => stepAgrees b | none => false
-#guard match STEP_BLOCKS.find? (·.height == 540929) with | some b => stepAgrees b | none => false
-#guard match STEP_BLOCKS.find? (·.height == 541858) with | some b => stepAgrees b | none => false
+/-- The Prop-level reading, so a consumer CITES the conformance instead of re-running it. -/
+theorem stepAgrees_of_mem : ∀ b ∈ STEP_BLOCKS, stepAgrees b = true :=
+  fun _ hb => List.all_eq_true.mp every_step_block_agrees _ hb
+
+/-- ⚑ **∀-GAIN.** This replaces SEVEN per-height `#guard`s, each of which re-asserted
+`stepAgrees` at one fixture the `.all` above already covered. What they were REALLY carrying was
+COVERAGE — that these seven heights are present at all, so `all` is not vacuously true over a list
+someone shortened. That is the part stated here; the agreement itself now follows from
+`stepAgrees_of_mem` for EVERY member, named or not. -/
+theorem step_fixture_heights_present :
+    [296372, 539508, 540890, 540906, 540922, 540929, 541858].all
+      (fun h => (STEP_BLOCKS.find? (fun b => b.height == h)).isSome) = true := by native_decide
 
 /- ⚑⚑ **THE WRAP SIDE CONFORMS ON EVERY FULLY-VERIFIED FIXTURE.** The Fq phase-1 sponge over the
 block's own absorbed coordinates, the fifteen IPA prechallenges continuing that same sponge state,
 `p(ζ)` over the forty public-input words, and `ft_eval0` + the linearization constant term. -/
-#guard WRAP_BLOCKS.all wrapAgrees
-#guard match WRAP_BLOCKS.find? (·.height == 539508) with | some b => wrapAgrees b | none => false
-#guard match WRAP_BLOCKS.find? (·.height == 540890) with | some b => wrapAgrees b | none => false
-#guard match WRAP_BLOCKS.find? (·.height == 540906) with | some b => wrapAgrees b | none => false
-#guard match WRAP_BLOCKS.find? (·.height == 540922) with | some b => wrapAgrees b | none => false
-#guard match WRAP_BLOCKS.find? (·.height == 540929) with | some b => wrapAgrees b | none => false
+theorem every_wrap_block_agrees : WRAP_BLOCKS.all wrapAgrees = true := by native_decide
+
+/-- The Prop-level reading. -/
+theorem wrapAgrees_of_mem : ∀ b ∈ WRAP_BLOCKS, wrapAgrees b = true :=
+  fun _ hb => List.all_eq_true.mp every_wrap_block_agrees _ hb
+
+/-- ⚑ **∀-GAIN.** Five per-height `#guard`s → the coverage pin they were actually carrying. -/
+theorem wrap_fixture_heights_present :
+    [539508, 540890, 540906, 540922, 540929].all
+      (fun h => (WRAP_BLOCKS.find? (fun b => b.height == h)).isSome) = true := by native_decide
 
 /-! ### §4b — ⚑ THE RED PATH. A conformance check that cannot go red is not a check.
 
@@ -631,5 +640,17 @@ pairwise distinct and all exceed `2^200`. Still probabilistic — but no longer 
   let xs := (List.range 40).map (fun k => b.lagrange.getD (2 * k) 0)
             ++ b.lr.flatMap (fun r => [r.getD 0 0, r.getD 2 0])
   xs.dedup.length == 70 && xs.all (fun x => 2 ^ 200 < x))
+
+/-! ## ⚑ The conformance pins, ACCOUNTED FOR.
+
+These names were `#guard`s. `#guard` runs `unsafe evalExpr` — the same compiled evaluator
+`native_decide` runs on — so the strength is unchanged and the trust is now VISIBLE
+(`Dregg2.Tactics`, `#assert_compiled` §; policy in `metatheory/docs/GUARD-DISCIPLINE.md`). -/
+#assert_compiled every_step_block_agrees
+#assert_compiled stepAgrees_of_mem
+#assert_compiled step_fixture_heights_present
+#assert_compiled every_wrap_block_agrees
+#assert_compiled wrapAgrees_of_mem
+#assert_compiled wrap_fixture_heights_present
 
 end Dregg2.Bridge.MinaMultiBlockConformance
