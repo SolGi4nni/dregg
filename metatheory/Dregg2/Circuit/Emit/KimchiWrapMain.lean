@@ -170,13 +170,24 @@ At the committed shape the transcript feeds **120 sponge items** and takes **23 
 **15,122 gates at PI 40**, histogram `Generic 3521 · Poseidon 2871 · Zero 2757 · EndoMul 2528 ·
 VarBaseMul 2417 · EndoMulScalar 536 · CompleteAdd 492`; the devnet wrap VK's domain is 2^14 = 16,384,
 so Mina's own emission has ~1,259 rows of headroom. `wrapmain-region-conformance.mjs` scores this
-assembly against it, and the two verdicts that are not "absent" are:
+assembly against it. RE-GRADED at `w6_xhat` (exit 0), the verdicts that are not "absent" are:
 
-  * **`Poseidon` — 61/61 instances, 100%**, the WHOLE 11-row permutation INCLUDING all fifteen round
+  * **`Poseidon` — 89/89 instances, 100%**, the WHOLE 11-row permutation INCLUDING all fifteen round
     constants per row, matching a `wrap-transaction` class byte for byte. The Fq Poseidon gadget
-    this file emits IS the one Snarky emits in Mina's own wrap circuit.
+    this file emits IS the one Snarky emits in Mina's own wrap circuit. (It was 61/61 before W-KEY's
+    index sponge added 28 permutations; the count moves with the assembly, the 100% does not.)
   * **`EndoMulScalar` — the BODY 42/42, the whole instance 0/42**, with the seam exactly three cells
     and both of them this file being STRICTER; §13 names them.
+  * **`VarBaseMul` — 1805 of Mina's 2417**, and **`CompleteAdd` — 232 of 492**, both from `w6_xhat`.
+    The remainders are W-FTCOMM's eight ladders (408) and W-BULLET's four (204), and W-COMBINE /
+    W-BULLET's `add_fast` rows. Before this rung both read `lean 0 — ⚠ ABSENT`.
+
+⚠ **THE STANDING GATE STILL READS `w5_key`.** `wrapmain-region-conformance.mjs`'s `LEAN_DEFAULT`
+(and its committed `wrapmain-wrap-w5-key-gates.json.gz` fallback) point at the rung BELOW this one,
+so an unattended run reports `VarBaseMul … lean 0 ⚠ ABSENT` and attributes it to W-XHAT — a gate
+that cannot see the sub-circuit that landed. Re-pointing it at `w6_xhat` means regenerating that
+committed fixture and its provenance sidecar. The numbers above are from an explicit
+`--lean …wrapmain_wrap_w6_xhat.json` run against a stamped emission, not from the default path.
 
 ⚑ And the wrap side has a cross-check the step side never had: **`wrap-blockchain` is an
 independently compiled `wrap_main`** and its non-Generic gate stream is byte-identical to
