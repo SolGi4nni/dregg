@@ -1,0 +1,55 @@
+# pickles-vk-derive — DERIVE a Mina `VerificationKey` from a LEAN-ASSEMBLED circuit.
+#
+# THE SEAM. Until this crate, every Mina VK in the repo came from o1js `.compile()` on a TypeScript
+# circuit, and `metatheory/` had no VK-derivation path of any kind. This crate takes the gate list
+# `Dregg2.Circuit.Emit.KimchiWrapMain` emits (Pallas/Fq — the wrap side, which is the side a zkApp
+# account's key lives on) through kimchi's constraint system and Mina's own SRS to the 28 column
+# commitments, and writes them in Mina's binprot/base64 encoding of
+# `Pickles.Side_loaded.Verification_key.Stable.V2.t`.
+#
+# HOUSE LAW #1: Lean AUTHORS the circuit; `proof-systems` 0.3.0 is the Rust that DERIVES and RUNS.
+# No constraint is written here. The only rows this crate adds are trailing `Zero` rows wired to
+# themselves — a domain choice, counted and reported separately from the Lean rows.
+#
+# THE GATE IS NOT IN THIS CRATE. `cargo test` proves the encoding reproduces three keys o1js itself
+# emitted, that our Poseidon reproduces o1js's VK hash on all three, and that the derived key moves
+# when the circuit moves. Whether MINA'S OWN READER accepts a key we derived is measured by
+#   node bridge/mina-zkapp/scripts/mina-vk-parse-gate.mjs --vk <derived>.json --self-test
+# and both halves are wired into scripts/pickles-synthesis-oracles.sh.
+#
+# RUN
+#   cargo test  --release --manifest-path metatheory/fixtures/pickles-vk-derive/Cargo.toml
+#   cargo run   --release --manifest-path metatheory/fixtures/pickles-vk-derive/Cargo.toml -- <out-dir>
+#
+# SCOPE. This derives a KEY. Not a proof, not a verifying proof, and not a claim that the Lean wrap
+# assembly is complete — `KimchiWrapMain` §13 names by sub-circuit what is absent.
+
+[package]
+name = "pickles-vk-derive"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "derive-vk"
+path = "src/main.rs"
+
+[dependencies]
+kimchi = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-curves = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+mina-poseidon = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+poly-commitment = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+o1-utils = { git = "https://github.com/o1-labs/proof-systems", tag = "0.3.0" }
+
+ark-ec = { version = "0.5.0" }
+ark-poly = { version = "0.5.0" }
+ark-ff = { version = "0.5.0", features = ["parallel", "asm", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]
+
+# Mirror mina-rust's workspace patches (openmina on-stack num forks).
+[patch.crates-io]
+num-bigint = { git = "https://github.com/openmina/num-bigint", branch = "rebase-onstack" }
+num-rational = { git = "https://github.com/openmina/num-rational", branch = "rebase-onstack" }

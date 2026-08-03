@@ -139,6 +139,14 @@ else
   echo
 fi
 
+# ⚑ THE VK-DERIVATION SEAM. Every oracle above diffs a gate list, a statement or a field value. This
+# one is the only step that produces the object a NODE parses: a `Side_loaded_verification_key`
+# DERIVED from the Lean-assembled `KimchiWrapMain` gate list, handed to o1js's own OCaml binprot
+# reader. `--self-test` proves it can go red (a bent commitment must be REFUSED, and a corrupted o1js
+# reference key must turn the crate's unit gates red). It is about the KEY, not about a proof.
+run_one "mina-vk-derivation-gate.sh --self-test (Lean gates -> Mina VK -> o1js PARSES it)" \
+  bash "$ROOT/scripts/mina-vk-derivation-gate.sh" --self-test
+
 # The CROSS-IMPLEMENTATION differential — the only step here that is not a diff against a single
 # reference value. Green or bust, with its own red path.
 if [ "$RUN_XI" = 1 ]; then
