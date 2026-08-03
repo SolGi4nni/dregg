@@ -202,8 +202,14 @@ flat-record twins (`commitment.rs::compute_rotated_pre_limbs`, `rotation_witness
 the same. Wire `effective_vk` THROUGH the bridge to the VmEffect (fix the
 `effect_vm_bridge.rs:137` misnomer: either carry the real vk or rename the vm-key field —
 WELD-STATE §5-item-9 second divergence). Add the `bytes32_to_8_limbs` map-op fill. The
-degraded-felt gate (`.ast-grep/rules/faithful-commitment-felt.yml`) must stay green (these
-are faithful 8-felt, not folds).
+degraded-felt gate (`.ast-grep/rules/faithful-commitment-felt.yml`) must not gain a new
+finding from this step (these are faithful 8-felt, not folds). ⚑ "Stay green" was the wrong
+bar and is not available: measured 2026-08-02, the gate is RED at HEAD on two real production
+folds it has never passed — `cell/src/commitment.rs:561` and `node/src/turn_proving.rs:1159`
+— left un-suppressed because each repair is a Lean-authored AIR change plus a VK epoch and a
+re-genesis. So the STEP-2 check is a DIFF of the gate's findings before and after (expected:
+exactly those two, unchanged), not an exit code. The gate has no ratchet baseline that would
+make the exit code mean that on its own.
 
 **STEP 3 — apex forcing + the three registry regens (template `39a026351`/`980b46cef`
 + `824c2963e`/`ce511ac8b` FP re-pins).** Regenerate ALL THREE registries + the transfer

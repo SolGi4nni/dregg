@@ -214,7 +214,7 @@ the `MerkleHash8` fold `:133`, descriptor `"dregg-cap-membership-dsl-v2-node8"`
 (`cap_membership.rs:206`); the SDK emits and re-verifies it
 (`verify_cap_membership_p3`, `sdk/src/full_turn_proof.rs:48`, posture at `:670`).
 
-## The CI gate (the law's enforcement)
+## The gate (the law's enforcement) — LOCAL, not GitHub
 
 `.ast-grep/rules/faithful-commitment-felt.yml` carries exactly two rules:
 `degraded-felt-commitment` (`:23` — the `fold_bytes32_to_bb($_)` patterns) and
@@ -222,6 +222,35 @@ the `MerkleHash8` fold `:133`, descriptor `"dregg-cap-membership-dsl-v2-node8"`
 `[0;8]`-style constants excluded). `scripts/check-no-degraded-felt.sh` runs them
 over the commitment producers with an inline `// ast-grep-ignore` allowlist;
 [`docs/FAITHFUL-COMMITMENT-LAW.md`](../FAITHFUL-COMMITMENT-LAW.md) is the law text.
+The script DERIVES its scan scope from the rules' `files:` blocks and refuses
+(exit 2) if the two rules disagree, so the scope has one authority. That scope is
+**eight** producers as of 2026-07-31, not the original three.
+
+It runs from `scripts/local-gates.sh:142` (the `no-degraded-felt` row, invoked
+`--rev HEAD`), **not** from GitHub Actions: the `no-degraded-felt` job was one of
+nine deleted from `.github/workflows/ci.yml` on 2026-07-29 because each duplicated
+a local-gates row character-for-character (manifest at `ci.yml:815`). Local is
+the stricter bar. With `main` unprotected, a red here reports and blocks nothing
+automatically.
+
+**⚑ The gate is RED at HEAD, and has never passed (measured 2026-08-02).**
+`scripts/check-no-degraded-felt.sh --rev HEAD` — a clean extract of the commit,
+not the shared working tree — exits 1 with two errors, both real production
+degradations left un-suppressed on purpose:
+
+- `cell/src/commitment.rs:561`, `cap_root::fold_bytes32(cap.target)` — the
+  cap-tree leaf's target field in the DEPLOYED canonical state commitment.
+- `node/src/turn_proving.rs:1159`, `nullifier_to_field` — its image IS
+  `PI[NOTESPEND_NULLIFIER]`, and the key the double-spend freshness search and
+  the `canonical_spent_nullifier_set` consensus anchor run on.
+
+Repairing either is a Lean-authored AIR change plus a VK epoch and a re-genesis
+(`CapLeaf` is a 7-field Poseidon2 leaf opened in-circuit; `PI[NOTESPEND_NULLIFIER]`
+is an AIR public input), not a Rust edit. Earlier green verdicts predate the two
+widenings that made these visible — scope 3→8 files on 2026-07-31, the alias
+names `fold_bytes32` / `fold_value32` on 2026-08-01 — so they were green under a
+narrower rule. The gate also cannot yet tell a net-new fold from these two: there
+is no ratchet baseline.
 
 The type-level capstone is BUILT: `dregg_circuit::Faithful8`
 (`circuit/src/faithful8.rs:83`) — a private-field newtype whose only public
@@ -237,7 +266,9 @@ error at the producer, not a lint finding
 1. **The setField[0..7] value8 weld — a completeness residual, STAGED.** The two
    flat producers emit the faithful `Faithful8::from_field_limbs8` 8-lane split
    (lane 0 at the welded limb `4 + i`, lanes 1..7 at the completion lanes
-   `113 + 7·i .. +6`); the no-degraded-felt gate passes with zero fields entries,
+   `113 + 7·i .. +6`); the no-degraded-felt gate reports **zero `fields[0..7]`
+   entries** — that residual is genuinely gone from the producers, though the gate
+   as a whole is red on the two unrelated sites named above —
    and the shared value wrap freezes all 56 completion lanes on a value turn
    (`rotateV3FrozenAuthority_rejects_fields_forge`,
    `Emit/EffectVmEmitRotationV3.lean:3213`, `#assert_axioms`-clean). The DEPLOYED

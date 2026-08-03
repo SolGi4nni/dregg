@@ -406,6 +406,18 @@ process constructing the trace sees plaintext orders. It is not the Tier-0 no-si
 Narrow gates: Lean file/module and byte-emission parity green; degraded-felt AST gate green; focused Rust
 proof tests 3/3 PASS, with the hiding/tamper test taking 0.347s after build.
 
+**Scope caveat on every "degraded-felt / faithful-commitment gate green" line in this file (added
+2026-08-02; applies here and at §15 and §19).** Those were measured 2026-07-19 under the then 3-file
+rule, which matched only the spelling `fold_bytes32_to_bb`. The rule was widened 2026-07-31 (scope 3
+files → 8) and 2026-08-01 (the aliases `fold_bytes32` / `fold_value32`), and the gate does **not**
+pass at HEAD: two real production wounds remain — `cell/src/commitment.rs:561`
+(`cap_root::fold_bytes32` on the cap-tree leaf target in the deployed state commitment) and
+`node/src/turn_proving.rs:1159` (`nullifier_to_field`, whose image is `PI[NOTESPEND_NULLIFIER]`) —
+and the 07-19 rule was structurally unable to see either. Repairing them is a Lean-authored AIR
+change plus a VK epoch and a re-genesis, so they are left un-suppressed on purpose. These verdicts
+are true records of a narrower rule, not current greens. See the header of
+`scripts/check-no-degraded-felt.sh`.
+
 ## 12. fhIR/optimizer admission moved onto exact teeth
 
 `metatheory/Market/FhIRClearingPlan.lean` is the first Lean-authoritative fhIR product family: a typed
@@ -504,7 +516,9 @@ threshold-FHE/MPC or distributed producer is required for a house-blind ballot s
 
 Gates: 19 Lean keystones kernel-clean; fresh emission byte-identical at SHA-256
 `e7e2c7dbf4d34b104f2478b4c745a399936b5b127afa4f8b793e9ef177cc902d`; faithful-commitment scan green;
-focused Rust 3/3 PASS (hiding test 0.204s after build).
+focused Rust 3/3 PASS (hiding test 0.204s after build). (That scan-green is a 2026-07-19 measurement
+under the then 3-file rule; the rule was widened 07-31 and 08-01 and the gate does not pass at HEAD —
+see the scope caveat in §11.)
 
 ## 16. Private N=8 shuffle/deal proves exact permutation and selective openings
 
@@ -625,7 +639,8 @@ lookups.  It enforces seed bits/recomposition, exact additive carry, accepted/re
 slacks, factorial/mixed-radix rank recurrence, the recursive `Perm.decomposeFin` selector, and final
 row/column permutation gates.  Thirteen keystones are kernel-clean.  The artifact SHA-256 is
 `43d010af24ffcd7cee9aa5af7e8d5e4919173411ba82c19c777606f7f66a3c52`; the faithful-commitment scan
-passes.
+passes. (That scan-pass is a 2026-07-19 measurement under the then 3-file rule; the rule was widened
+07-31 and 08-01 and the gate does not pass at HEAD — see the scope caveat in §11.)
 
 Rust proves and verifies both accepted and rejected attempts through HidingFri.  Four remote tests
 pass in 0.330s, including an exhaustive host enumeration of all 40,320 ranks, AIR rank/permutation

@@ -144,10 +144,17 @@ SUPERSEDED (its own precondition, "run when the swarms are quiet", is unsatisfia
 
 `ast-grep` 0.40.5 is installed (run it as `sg` or `ast-grep`). The repo carries a
 ruleset (`sgconfig.yml` → `.ast-grep/rules/`): today just the **faithful-commitment
-gate** — `fold_bytes32_to_bb` (a lossy 256→31-bit fold) is a CI error in the
-state-commitment producers (`scripts/check-no-degraded-felt.sh`,
-`docs/FAITHFUL-COMMITMENT-LAW.md`); committed 32-byte components must be 8-felt
-(`bytes32_to_8_limbs`). Beyond that, reach for `sg` whenever you're searching by
+gate** — `fold_bytes32_to_bb` (a lossy 256→31-bit fold) is an error in the
+state-commitment producers (`scripts/check-no-degraded-felt.sh`, run from the
+`no-degraded-felt` row of `scripts/local-gates.sh` since the GitHub job was
+deleted 2026-07-29; `docs/FAITHFUL-COMMITMENT-LAW.md` is the law);
+committed 32-byte components must be 8-felt
+(`bytes32_to_8_limbs`). ⚑ **That gate is RED at HEAD and has never passed**
+(measured 2026-08-02): two real production folds, `cell/src/commitment.rs:561`
+and `node/src/turn_proving.rs:1159`, are left un-suppressed on purpose because
+repairing either is a Lean-authored AIR change plus a VK epoch and a re-genesis.
+Do not read a red from this gate as your diff, and do not allowlist those two —
+see the law doc. Beyond that, reach for `sg` whenever you're searching by
 **code shape**, not a literal
 string — it matches the Rust AST, so it never false-positives on comments, doc
 examples, or strings, and it's `$metavariable`-aware. This is the right tool for the

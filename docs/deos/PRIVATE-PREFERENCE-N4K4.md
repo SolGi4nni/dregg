@@ -140,7 +140,15 @@ silently performing that ceremony.
 - `lake build Dregg2.Games.PrivatePreferenceDescriptor`: green.
 - fresh `EmitByName` payload equals the checked-in artifact byte-for-byte;
   SHA-256 `e7e2c7dbf4d34b104f2478b4c745a399936b5b127afa4f8b793e9ef177cc902d`.
-- `scripts/check-no-degraded-felt.sh`: green.
+- `scripts/check-no-degraded-felt.sh`: green. **Scope caveat (added 2026-08-02):**
+  this was measured 2026-07-19 under the then 3-file rule, which matched only the
+  spelling `fold_bytes32_to_bb`. The rule was widened twice since — 2026-07-31
+  (scope 3 files → 8) and 2026-08-01 (the aliases `fold_bytes32` / `fold_value32`)
+  — and the gate does **not** pass at HEAD: two real production wounds remain,
+  `cell/src/commitment.rs:561` and `node/src/turn_proving.rs:1159`, both of which
+  the 07-19 rule was structurally unable to see. The verdict above is a true
+  record of a narrower rule, not a current green. See the header of
+  `scripts/check-no-degraded-felt.sh`.
 - `cargo nextest run -p dregg-circuit-prove --lib private_preference` on the
   warm persvati lane: 3/3 green, 225 skipped; hiding/tamper test 0.204s after
   build.

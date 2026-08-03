@@ -88,23 +88,85 @@ elsewhere (defense-in-depth), and a fine per-effect param projector. It is a
 
 ## Where the law bites (the commitment-bearing producers)
 
+The scope has exactly one authority — the `files:` blocks of
+`.ast-grep/rules/faithful-commitment-felt.yml`, which the gate script derives
+rather than re-transcribing. It is **eight** producers, not the three this table
+listed until 2026-08-02:
+
 | File | Role |
 |------|------|
 | `cell/src/commitment.rs` (`compute_rotated_pre_limbs`) | the canonical `pre_limbs` the rotation commits |
 | `turn/src/rotation_witness.rs` | the producer twin of the above |
 | `circuit/src/effect_vm/trace_rotated.rs` | the rotated trace that re-absorbs `pre_limbs` |
+| `cell/src/commitment_set.rs` (added 2026-07-31) | `accumulator_leaf` — a folded address keys a tree that silently dedupes collisions |
+| `cell/src/nullifier_set.rs` (added 2026-07-31) | the sibling accumulator, same shape |
+| `cell/src/revoked_set.rs` (added 2026-07-31) | `accumulator_leaf`; the committed `revoked_root` group is opened in-circuit against a tree of these |
+| `cell/src/shielded_note_set.rs` (added 2026-07-31) | `accumulator_leaf` with a `ZERO` value column, so the folded address is the leaf's only distinguishing content |
+| `node/src/turn_proving.rs` (added 2026-07-31) | `nullifier_to_field`, whose image is a published PI and the double-spend search key |
 
 Non-commitment uses of the fold are **out of scope and sound**: the executor/SDK
 per-effect param projectors (`effect_vm_bridge.rs`, `cipherclerk.rs`), the D5 PI
-cross-binding reconstruction (`proof_verify.rs`, `node/src/turn_proving.rs` — the
-real binding is the `SCHEMA_NOTE_SPEND` proof + the committed set), and tests.
+cross-binding reconstruction in `proof_verify.rs`, and tests.
+
+⚠ `node/src/turn_proving.rs` stood in that out-of-scope sentence — "the real
+binding is the `SCHEMA_NOTE_SPEND` proof + the committed set" — until 2026-08-02.
+It does not belong there and the rule has scoped it since 2026-07-31: the fold's
+image IS `PI[NOTESPEND_NULLIFIER]`, so it is not a projector beside a binding, it
+is the binding. It is one of the two live reds below.
 
 ## The gate
 
 `scripts/check-no-degraded-felt.sh` runs `ast-grep` against the producers above
 (rule `.ast-grep/rules/faithful-commitment-felt.yml`, scoped by its `files:`
-field). Wired into CI as the **`no-degraded-felt`** job in `.github/workflows/ci.yml`.
-A net-new `fold_bytes32_to_bb` in a commitment producer **fails the PR**.
+field).
+
+**Where it runs (corrected 2026-08-02): `scripts/local-gates.sh`, NOT GitHub.**
+It was the `no-degraded-felt` job in `.github/workflows/ci.yml` until **2026-07-29**,
+when nine jobs were deleted because each ran a command character-for-character
+identical to a local-gates row (the deletion manifest is the comment block at
+`.github/workflows/ci.yml:815`). The gate is now the `no-degraded-felt` row of
+`scripts/local-gates.sh:142`, which invokes it as `--rev HEAD`.
+`grep -rn 'check-no-degraded-felt' .github/workflows/` returns nothing.
+
+⚠ Combine that with `main` not being branch-protected and a red here **blocks
+nothing automatically** — it reports. That is a large part of how a gate which
+has never passed came to be cited as green by a dozen documents: no one was
+stopped by it.
+
+### ⚑ THE GATE DOES NOT PASS AT HEAD (measured 2026-08-02)
+
+Run over a clean extract (`scripts/check-no-degraded-felt.sh --rev HEAD`, which
+grades a commit rather than a shared working tree) it exits 1 with **two**
+errors. Both are real, both are in production:
+
+| Site | What the fold reaches |
+|------|-----------------------|
+| `cell/src/commitment.rs:561` | `cap_root::fold_bytes32(cap.target)` — the cap-tree leaf's target field in the DEPLOYED canonical state commitment |
+| `node/src/turn_proving.rs:1159` | `nullifier_to_field` — its image IS `PI[NOTESPEND_NULLIFIER]`, and also the key the double-spend freshness search and the `canonical_spent_nullifier_set` consensus anchor run on |
+
+**They are left red on purpose.** Repairing either changes what the circuit
+commits to and opens — `CapLeaf` is a 7-field Poseidon2 leaf opened in-circuit,
+`PI[NOTESPEND_NULLIFIER]` is an AIR public input — so the repair is a
+**Lean-authored AIR change plus a VK epoch and a re-genesis**, on the
+exact_cap_root / exact-nullifier tracks. A Rust-side re-encoding would be the
+drift, not the fix.
+
+**Why every earlier verdict read green.** The rule was widened twice:
+**2026-07-31** (scope 3 files → 8) and **2026-08-01** (the alias names
+`fold_bytes32` / `fold_value32` added to a name-bound pattern). Both live wounds
+sit exactly in that widening — `commitment.rs:561` spells the fold
+`cap_root::fold_bytes32`, which the pre-08-01 pattern could not see, and
+`node/src/turn_proving.rs` was outside the scanned set before 07-31. A green
+recorded before those dates was green **under a narrower rule**, not evidence
+about these two sites.
+
+⚠ **What the gate cannot yet do:** distinguish a net-new fold from these two
+known wounds. There is no ratchet baseline (the shape of
+`scripts/guard-discipline-baseline.txt` — counts that may only fall), so a red
+is information about the whole scope, not about the diff. The old formulation
+"a net-new `fold_bytes32_to_bb` in a commitment producer **fails the PR**" was
+wrong on both halves: the run was already failing, and there is no PR gate to
+fail. Building the baseline is the missing piece.
 
 ### Allowlisting a deliberate residual
 
@@ -119,6 +181,15 @@ pre[4 + i] = fold_bytes32_to_bb(&cell.state.fields[i]); // ast-grep-ignore: degr
 list**, so the suppression must read exactly `// ast-grep-ignore:
 degraded-felt-commitment` (the rule id) — the human REASON goes on the line
 ABOVE, never after the colon.
+
+⚠ **Suppression is NOT the disposition chosen for the two live wounds.**
+`cell/src/commitment.rs:561` and `node/src/turn_proving.rs:1159` are not
+allowlisted and must not be. A directive there would turn a red gate green
+while the deployed commitment still binds a 32-byte component at ~31 bits — a
+containment below the bar, adopted in place of the AIR change that actually
+fixes it. The gate exists to keep those two visible until the VK epoch lands.
+An allowlist entry is legitimate only as the conclusion of an argument that the
+site is not a commitment position, as in the residual below.
 
 ### Current allowlisted residuals
 
@@ -282,6 +353,12 @@ math stays bare `BabyBear` by design.
 touch a typed sink); the wall catches the degraded *value* (any bare octet
 smuggled toward a typed sink, in any file, including ones the gate has never
 heard of). Neither subsumes the other; both stay.
+
+Complementary is not the same as clean. At HEAD the gate is **red** on the two
+production sites named above and the wall is green over them — the wall polices
+construction of a `Faithful8`, and neither `cap_root::fold_bytes32` nor
+`nullifier_to_field` produces one. Two mechanisms disagreeing that way is the
+expected reading: the fold reaches a commitment without passing a typed sink.
 
 ## ⚑ THE KEY_COMMIT OCTET IS BELOW THE FLOOR — reclassified 2026-08-01
 

@@ -116,3 +116,11 @@ The default/heavy workspace gauntlets are intentionally not part of this edit lo
 Current narrow results: Lean file + module build green with 18 kernel-clean keystones; emitted bytes
 compare exactly against a fresh `EmitByName` line; the faithful-commitment AST gate passes; focused
 `nextest --lib` is 3/3 green, with the two-proof hiding/tamper test taking 0.347 s after build.
+
+**Scope caveat on "the faithful-commitment AST gate passes" (added 2026-08-02).** That was measured
+2026-07-19 under the then 3-file rule, which matched only the spelling `fold_bytes32_to_bb`. The rule
+was widened 2026-07-31 (scope 3 files → 8) and 2026-08-01 (aliases `fold_bytes32` / `fold_value32`),
+and the gate does **not** pass at HEAD: two real production wounds remain,
+`cell/src/commitment.rs:561` and `node/src/turn_proving.rs:1159`, neither visible to the 07-19 rule.
+The line above records a narrower rule truthfully; it is not a current green. See the header of
+`scripts/check-no-degraded-felt.sh`.

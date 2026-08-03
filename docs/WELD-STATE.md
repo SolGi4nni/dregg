@@ -109,9 +109,25 @@ createCell pass `none` (byte-identical, no drift). All three insert families PRO
 ### 1d. Degraded-felt gate + the one remaining residual
 
 `.ast-grep/rules/faithful-commitment-felt.yml` is LIVE on main with **two** rules:
-`degraded-felt-commitment` (`fold_bytes32_to_bb`) and `replicated-felt-commitment`
-(`[$X; 8]` replicate); `scripts/check-no-degraded-felt.sh` + a `ci.yml` job enforce it over
-`commitment.rs` / `rotation_witness.rs` / `trace_rotated.rs`.
+`degraded-felt-commitment` (`fold_bytes32_to_bb`, plus the aliases `fold_bytes32` /
+`fold_value32` added 2026-08-01) and `replicated-felt-commitment` (`[$X; 8]` replicate);
+`scripts/check-no-degraded-felt.sh` runs it over **eight** producers, not the
+three this paragraph listed until 2026-08-02: `commitment.rs` / `rotation_witness.rs` /
+`trace_rotated.rs`, plus `commitment_set.rs` / `nullifier_set.rs` / `revoked_set.rs` /
+`shielded_note_set.rs` / `node/src/turn_proving.rs` (all five scoped 2026-07-31).
+
+**⚑ The gate is RED at HEAD and has never passed (measured 2026-08-02).**
+`scripts/check-no-degraded-felt.sh --rev HEAD` exits 1 on two real production folds, left
+un-suppressed deliberately: `cell/src/commitment.rs:561` (`cap_root::fold_bytes32(cap.target)`,
+the cap-tree leaf target in the deployed canonical state commitment) and
+`node/src/turn_proving.rs:1159` (`nullifier_to_field`, whose image is
+`PI[NOTESPEND_NULLIFIER]` and the double-spend freshness / consensus-anchor key). Both repairs
+are Lean-authored AIR changes plus a VK epoch and a re-genesis, not Rust edits. Every earlier
+green verdict predates the two widenings above and was green under the narrower rule. The gate
+has no ratchet baseline yet, so it cannot distinguish a net-new fold from these two. It also no
+longer runs on GitHub: the `no-degraded-felt` job was deleted from `.github/workflows/ci.yml` on
+2026-07-29 (manifest at `ci.yml:815`) and the gate is now only the `no-degraded-felt` row of
+`scripts/local-gates.sh:142`. With `main` unprotected, a red here reports and blocks nothing.
 
 **One genuine open, explicitly allowlisted (NOT a root):** the flat per-record field limbs
 `fields[0..7]` still fold 32B→1 felt (~31-bit) — `cell/src/commitment.rs:990`,
