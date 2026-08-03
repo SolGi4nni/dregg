@@ -284,9 +284,15 @@ abstract in `hash`, never evaluated.
 ⚑ REBOUND 2026-07-30 from `MapMerkleRoot.mapRoot` — the arity-2 DENSE fold `heap_root.rs` stopped
 computing on 2026-07-12 (`919b2b0b8d`). Under an injective sponge the two are provably DIFFERENT
 commitments, so the old `autoRoot` was not a weak description of the deployed root: it was refutable
-at it, and `CommitsAutomaton` was a predicate about a felt no prover computes. -/
+at it, and `CommitsAutomaton` was a predicate about a felt no prover computes.
+
+⚑ **THE CAPACITY OBLIGATION IS DISCHARGED HERE, ONCE, FROM `autoHeap_length`.** `padImtRoot` now
+demands it (`heap_root.rs:560`'s release-active `assert!`), and this heap is DENSE — it fills the
+`2 ^ 16` tree exactly — so the discharge is `le_of_eq` and no capacity claim is being taken on
+faith. -/
 def autoRoot (hash : List ℤ → ℤ) (d : TableDfa Nat Nat) : ℤ :=
   DeployedMapDenotation.padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (autoHeap d)
+    (le_of_eq (autoHeap_length d))
 
 /-- **`CommitsAutomaton hash R d`** — the root `R` COMMITS the automaton `d`: at every declared key
 `2s + y` it opens to `d.step s y`. This is the whole attestation content, and it is ONE felt wide:

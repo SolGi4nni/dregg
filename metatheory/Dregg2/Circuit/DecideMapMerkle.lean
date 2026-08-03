@@ -116,14 +116,14 @@ on the denotation move were exactly that. Application does not reduce, so the tr
 private theorem opensToS_intro (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
     {h : Heap.FeltHeap} {r k : ℤ} {o : Option ℤ}
     (hs : Heap.SortedKeys h) (hb : ∀ x ∈ Heap.keys h, x < sent)
-    (hlen : h.length ≤ 2 ^ d) (hr : padImtRoot sent hash d h = r) (hg : Heap.get h k = o) :
+    (hlen : h.length ≤ 2 ^ d) (hr : padImtRoot sent hash d h hlen = r) (hg : Heap.get h k = o) :
     opensToMerkleS (padImtSchema sent) hash d r k o :=
   ⟨h, ⟨hs, hb⟩, hlen, hr, hg⟩
 
 private theorem opensToS_elim (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o : Option ℤ}
     (ho : opensToMerkleS (padImtSchema sent) hash d r k o) :
     ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < sent)
-      ∧ h.length ≤ 2 ^ d ∧ padImtRoot sent hash d h = r ∧ Heap.get h k = o := by
+      ∧ ∃ hz : h.length ≤ 2 ^ d, padImtRoot sent hash d h hz = r ∧ Heap.get h k = o := by
   obtain ⟨h, ⟨hs, hb⟩, hz, hr, hg⟩ := ho
   exact ⟨h, hs, hb, hz, hr, hg⟩
 
@@ -131,16 +131,16 @@ private theorem writesToS_intro (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
     {h : Heap.FeltHeap} {r k v r' : ℤ}
     (hs : Heap.SortedKeys h) (hb : ∀ x ∈ Heap.keys h, x < sent)
     (hlen : h.length ≤ 2 ^ d) (hlen' : (Heap.set h k v).length ≤ 2 ^ d)
-    (hr : padImtRoot sent hash d h = r)
-    (hr' : r' = padImtRoot sent hash d (Heap.set h k v)) :
+    (hr : padImtRoot sent hash d h hlen = r)
+    (hr' : r' = padImtRoot sent hash d (Heap.set h k v) hlen') :
     writesToMerkleS (padImtSchema sent) hash d r k v r' :=
   ⟨h, ⟨hs, hb⟩, hlen, hlen', hr, hr'⟩
 
 private theorem writesToS_elim (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) {r k v r' : ℤ}
     (hw : writesToMerkleS (padImtSchema sent) hash d r k v r') :
     ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < sent)
-      ∧ h.length ≤ 2 ^ d ∧ (Heap.set h k v).length ≤ 2 ^ d
-      ∧ padImtRoot sent hash d h = r ∧ r' = padImtRoot sent hash d (Heap.set h k v) := by
+      ∧ ∃ hz : h.length ≤ 2 ^ d, ∃ hz' : (Heap.set h k v).length ≤ 2 ^ d,
+        padImtRoot sent hash d h hz = r ∧ r' = padImtRoot sent hash d (Heap.set h k v) hz' := by
   obtain ⟨h, ⟨hs, hb⟩, hz, hz', hr, hr'⟩ := hw
   exact ⟨h, hs, hb, hz, hz', hr, hr'⟩
 
@@ -149,7 +149,7 @@ arity-3 root are equal, or the schema's NAMED residual holds at that pair. **No 
 `hash`** — this is `padImtRoot_binds_or_ghost_or_collides`, not an injectivity floor. -/
 private theorem heapS_eq_or_resid (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
     {h₁ h₂ : Heap.FeltHeap} (hz₁ : h₁.length ≤ 2 ^ d) (hz₂ : h₂.length ≤ 2 ^ d)
-    (he : padImtRoot sent hash d h₁ = padImtRoot sent hash d h₂) :
+    (he : padImtRoot sent hash d h₁ hz₁ = padImtRoot sent hash d h₂ hz₂) :
     h₁ = h₂ ∨ (padImtTeeth sent).Resid hash d h₁ h₂ :=
   padImtRoot_binds_or_ghost_or_collides sent hash d hz₁ hz₂ he
 
@@ -171,38 +171,38 @@ private theorem residS_reachable (sent : ℤ) (d : Nat) {h : Heap.FeltHeap} (hne
 private theorem opensTo_intro (hash : List ℤ → ℤ) {h : Heap.FeltHeap} {r k : ℤ} {o : Option ℤ}
     (hs : Heap.SortedKeys h) (hb : ∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
     (hlen : h.length ≤ 2 ^ MAP_TREE_DEPTH)
-    (hr : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r) (hg : Heap.get h k = o) :
+    (hr : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hlen = r) (hg : Heap.get h k = o) :
     opensTo hash r k o :=
   opensToS_intro MAP_SENTINEL hash MAP_TREE_DEPTH hs hb hlen hr hg
 
 private theorem opensTo_elim (hash : List ℤ → ℤ) {r k : ℤ} {o : Option ℤ}
     (ho : opensTo hash r k o) :
     ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-      ∧ h.length ≤ 2 ^ MAP_TREE_DEPTH
-      ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r ∧ Heap.get h k = o :=
+      ∧ ∃ hz : h.length ≤ 2 ^ MAP_TREE_DEPTH,
+        padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = r ∧ Heap.get h k = o :=
   opensToS_elim MAP_SENTINEL hash MAP_TREE_DEPTH ho
 
 private theorem writesTo_intro (hash : List ℤ → ℤ) {h : Heap.FeltHeap} {r k v r' : ℤ}
     (hs : Heap.SortedKeys h) (hb : ∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
     (hlen : h.length ≤ 2 ^ MAP_TREE_DEPTH)
     (hlen' : (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH)
-    (hr : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r)
-    (hr' : r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v)) :
+    (hr : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hlen = r)
+    (hr' : r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v) hlen') :
     writesTo hash r k v r' :=
   writesToS_intro MAP_SENTINEL hash MAP_TREE_DEPTH hs hb hlen hlen' hr hr'
 
 private theorem writesTo_elim (hash : List ℤ → ℤ) {r k v r' : ℤ}
     (hw : writesTo hash r k v r') :
     ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-      ∧ h.length ≤ 2 ^ MAP_TREE_DEPTH ∧ (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH
-      ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r
-      ∧ r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v) :=
+      ∧ ∃ hz : h.length ≤ 2 ^ MAP_TREE_DEPTH, ∃ hz' : (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH,
+        padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = r
+        ∧ r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v) hz' :=
   writesToS_elim MAP_SENTINEL hash MAP_TREE_DEPTH hw
 
 private theorem heap_eq_or_resid (hash : List ℤ → ℤ) {h₁ h₂ : Heap.FeltHeap}
     (hz₁ : h₁.length ≤ 2 ^ MAP_TREE_DEPTH) (hz₂ : h₂.length ≤ 2 ^ MAP_TREE_DEPTH)
-    (he : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h₁
-        = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h₂) :
+    (he : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h₁ hz₁
+        = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h₂ hz₂) :
     h₁ = h₂ ∨ mapTeeth.Resid hash MAP_TREE_DEPTH h₁ h₂ :=
   heapS_eq_or_resid MAP_SENTINEL hash MAP_TREE_DEPTH hz₁ hz₂ he
 
@@ -219,22 +219,35 @@ theorem mapResid_reachable {h : Heap.FeltHeap} (hne : h ≠ []) :
 /-- **`decOpensTo hash h r k o`** — the supplied heap `h` is an ADMISSIBLE heap of the DEPLOYED
 schema (sorted, every key below the terminal sentinel, at most `2^16` live entries) whose deployed
 arity-3 padded indexed-Merkle root is `r`, reading `o` at `k`. The DECIDABLE body of
-`opensToMerkleS mapSchema` for the SUPPLIED heap (no existential). -/
+`opensToMerkleS mapSchema` for the SUPPLIED heap (no existential).
+
+⚑ **THE CAPACITY TEST GATES THE FOLD RATHER THAN SITTING BESIDE IT.** It used to be one `&&`
+conjunct among five, so the decider computed `padImtRoot` of an over-capacity heap and only then
+noticed — and above capacity that root is not binding at all (`over_capacity_roots_collide`). It is
+now a `dite`: an over-capacity supply is REFUSED WITHOUT BEING FOLDED, which is exactly what
+`CanonicalHeapTree::new` does (`heap_root.rs:560`, a release-active `assert!`). -/
 def decOpensTo (hash : List ℤ → ℤ) (h : Heap.FeltHeap) (r k : ℤ) (o : Option ℤ) : Bool :=
-  decide (Heap.SortedKeys h)
-    && decide (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-    && decide (h.length ≤ 2 ^ MAP_TREE_DEPTH)
-    && decide (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r)
-    && decide (Heap.get h k = o)
+  if hz : h.length ≤ 2 ^ MAP_TREE_DEPTH then
+    decide (Heap.SortedKeys h)
+      && decide (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
+      && decide (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = r)
+      && decide (Heap.get h k = o)
+  else false
 
 /-- `decOpensTo` decides exactly the `opensToMerkleS mapSchema` body for the SUPPLIED heap — the
 existential witnessed by `h`. -/
 theorem decOpensTo_iff (hash : List ℤ → ℤ) (h : Heap.FeltHeap) (r k : ℤ) (o : Option ℤ) :
     decOpensTo hash h r k o = true
       ↔ (Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-          ∧ h.length ≤ 2 ^ MAP_TREE_DEPTH
-          ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r ∧ Heap.get h k = o) := by
-  simp only [decOpensTo, Bool.and_eq_true, decide_eq_true_eq, and_assoc]
+          ∧ ∃ hz : h.length ≤ 2 ^ MAP_TREE_DEPTH,
+              padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = r ∧ Heap.get h k = o) := by
+  by_cases hz : h.length ≤ 2 ^ MAP_TREE_DEPTH
+  · rw [decOpensTo, dif_pos hz]
+    simp only [Bool.and_eq_true, decide_eq_true_eq, and_assoc]
+    exact ⟨fun ⟨a, b, c, d⟩ => ⟨a, b, hz, c, d⟩, fun ⟨a, b, _, c, d⟩ => ⟨a, b, c, d⟩⟩
+  · rw [decOpensTo, dif_neg hz]
+    simp only [Bool.false_eq_true, false_iff, not_and]
+    exact fun _ _ hc => hz hc.choose
 
 /-- **`decWritesTo hash h r k v r'`** — the supplied PRE-heap is admissible at the deployed schema
 and behind the deployed root `r`, and the sorted insert-or-update of `(k, v)` still fits the tree and
@@ -245,22 +258,34 @@ deployed denotation constrains the post-state only through its size and its root
 exactly is the point; strengthening the check here would make the decider refuse rows the denotation
 accepts. -/
 def decWritesTo (hash : List ℤ → ℤ) (h : Heap.FeltHeap) (r k v r' : ℤ) : Bool :=
-  decide (Heap.SortedKeys h)
-    && decide (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-    && decide (h.length ≤ 2 ^ MAP_TREE_DEPTH)
-    && decide ((Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH)
-    && decide (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r)
-    && decide (r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v))
+  if hz : h.length ≤ 2 ^ MAP_TREE_DEPTH then
+    if hz' : (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH then
+      decide (Heap.SortedKeys h)
+        && decide (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
+        && decide (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = r)
+        && decide (r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v) hz')
+    else false
+  else false
 
 /-- `decWritesTo` decides exactly the `writesToMerkleS mapSchema` body for the SUPPLIED pre-heap. -/
 theorem decWritesTo_iff (hash : List ℤ → ℤ) (h : Heap.FeltHeap) (r k v r' : ℤ) :
     decWritesTo hash h r k v r' = true
       ↔ (Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-          ∧ h.length ≤ 2 ^ MAP_TREE_DEPTH
-          ∧ (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH
-          ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r
-          ∧ r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v)) := by
-  simp only [decWritesTo, Bool.and_eq_true, decide_eq_true_eq, and_assoc]
+          ∧ ∃ hz : h.length ≤ 2 ^ MAP_TREE_DEPTH,
+              ∃ hz' : (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH,
+                padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = r
+                ∧ r' = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Heap.set h k v) hz') := by
+  by_cases hz : h.length ≤ 2 ^ MAP_TREE_DEPTH
+  · by_cases hz' : (Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH
+    · rw [decWritesTo, dif_pos hz, dif_pos hz']
+      simp only [Bool.and_eq_true, decide_eq_true_eq, and_assoc]
+      exact ⟨fun ⟨a, b, c, d⟩ => ⟨a, b, hz, hz', c, d⟩, fun ⟨a, b, _, _, c, d⟩ => ⟨a, b, c, d⟩⟩
+    · rw [decWritesTo, dif_pos hz, dif_neg hz']
+      simp only [Bool.false_eq_true, false_iff, not_and]
+      exact fun _ _ hc => hz' hc.choose_spec.choose
+  · rw [decWritesTo, dif_neg hz]
+    simp only [Bool.false_eq_true, false_iff, not_and]
+    exact fun _ _ hc => hz hc.choose
 
 /-! ## §4 — `mapDecMerkle`: the concrete map-op decider over the witness supply. -/
 
@@ -354,8 +379,8 @@ openings, not an oracle. -/
 def WitnessOpens (hash : List ℤ → ℤ) (wit : WitnessSupply) : Prop :=
   ∀ (env : VmRowEnv) (m : MapOp), m.guard.eval env.loc = 1 →
     Heap.SortedKeys (wit env m) ∧ (∀ x ∈ Heap.keys (wit env m), x < MAP_SENTINEL)
-      ∧ (wit env m).length ≤ 2 ^ MAP_TREE_DEPTH
-      ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (wit env m) = (m.root 0).eval env.loc
+      ∧ ∃ hz : (wit env m).length ≤ 2 ^ MAP_TREE_DEPTH,
+        padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (wit env m) hz = (m.root 0).eval env.loc
 
 /-- **`SupplyResid hash wit env m` — THE NAMED RESIDUAL OF COMPLETENESS, and it is not a floor.**
 Some heap ADMISSIBLE at the deployed schema commits to this op's very `root` column and carries the
@@ -370,9 +395,9 @@ hash's whole domain, so it is neither a global assumption nor refuted by pigeonh
 (`supplyResid_refuted_at_oddSponge`) and REACHABLE (`mapResid_reachable`). -/
 def SupplyResid (hash : List ℤ → ℤ) (wit : WitnessSupply) (env : VmRowEnv) (m : MapOp) : Prop :=
   ∃ h : Heap.FeltHeap, Heap.SortedKeys h ∧ (∀ x ∈ Heap.keys h, x < MAP_SENTINEL)
-    ∧ h.length ≤ 2 ^ MAP_TREE_DEPTH
-    ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = (m.root 0).eval env.loc
-    ∧ mapTeeth.Resid hash MAP_TREE_DEPTH (wit env m) h
+    ∧ ∃ hz : h.length ≤ 2 ^ MAP_TREE_DEPTH,
+      padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz = (m.root 0).eval env.loc
+      ∧ mapTeeth.Resid hash MAP_TREE_DEPTH (wit env m) h
 
 /-- **THE RESIDUAL IS REFUTED AT AN INHABITED INSTANCE, WITH NO FLOOR BINDER.** `oddSponge` is the
 in-tree encodable injection with no preimage of the padding constant
@@ -429,7 +454,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (wit : WitnessSupply)
         · exact he
         · exact absurd ⟨h', hs', hb', hl', hr', hc⟩ hno
       rw [decWritesTo_iff]
-      exact ⟨hws, hwb, hwl, by rw [heq]; exact hsl', hwr, by rw [heq]; exact hnr'⟩
+      subst heq
+      exact ⟨hws, hwb, hwl, hsl', hwr, hnr'⟩
     | insert =>
       rw [hop] at hh
       obtain ⟨h', hs', hb', hl', hsl', hr', hnr'⟩ := writesTo_elim hash hh
@@ -438,7 +464,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (wit : WitnessSupply)
         · exact he
         · exact absurd ⟨h', hs', hb', hl', hr', hc⟩ hno
       rw [decWritesTo_iff]
-      exact ⟨hws, hwb, hwl, by rw [heq]; exact hsl', hwr, by rw [heq]; exact hnr'⟩
+      subst heq
+      exact ⟨hws, hwb, hwl, hsl', hwr, hnr'⟩
     | aafiInsert =>
       rw [hop] at hh
       obtain ⟨h', hs', hb', hl', hsl', hr', hnr'⟩ := writesTo_elim hash hh
@@ -447,7 +474,8 @@ theorem mapDecMerkle_complete (hash : List ℤ → ℤ) (wit : WitnessSupply)
         · exact he
         · exact absurd ⟨h', hs', hb', hl', hr', hc⟩ hno
       rw [decWritesTo_iff]
-      exact ⟨hws, hwb, hwl, by rw [heq]; exact hsl', hwr, by rw [heq]; exact hnr'⟩
+      subst heq
+      exact ⟨hws, hwb, hwl, hsl', hwr, hnr'⟩
   · rw [if_neg hguard]
 
 /-- The same, with the residual in the CONCLUSION rather than as a hypothesis: the decider accepts,

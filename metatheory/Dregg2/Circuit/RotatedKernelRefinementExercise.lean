@@ -537,9 +537,9 @@ theorem writesToMerkleS_padImt_intro (sent : ℤ) (hash : List ℤ → ℤ) (d :
     (hbnd : ∀ x ∈ Dregg2.Substrate.Heap.keys h, x < sent)
     (hlen : h.length ≤ 2 ^ d)
     (hlenset : (Dregg2.Substrate.Heap.set h k v).length ≤ 2 ^ d)
-    (hpre : padImtRoot sent hash d h = r) :
+    (hpre : padImtRoot sent hash d h hlen = r) :
     writesToMerkleS (padImtSchema sent) hash d r k v
-      (padImtRoot sent hash d (Dregg2.Substrate.Heap.set h k v)) :=
+      (padImtRoot sent hash d (Dregg2.Substrate.Heap.set h k v) hlenset) :=
   ⟨h, ⟨hsort, hbnd⟩, hlen, hlenset, hpre, rfl⟩
 
 /-- **GENERIC-DEPTH ELIM for the deployed padded schema's write denotation** — the schema projections
@@ -556,10 +556,10 @@ theorem writesToMerkleS_padImt_elim (sent : ℤ) (hash : List ℤ → ℤ) (d : 
     ∃ h : Dregg2.Substrate.Heap.FeltHeap,
       Dregg2.Substrate.Heap.SortedKeys h
       ∧ (∀ x ∈ Dregg2.Substrate.Heap.keys h, x < sent)
-      ∧ h.length ≤ 2 ^ d
-      ∧ (Dregg2.Substrate.Heap.set h k v).length ≤ 2 ^ d
-      ∧ padImtRoot sent hash d h = r
-      ∧ r' = padImtRoot sent hash d (Dregg2.Substrate.Heap.set h k v) := by
+      ∧ ∃ hz : h.length ≤ 2 ^ d,
+        ∃ hz' : (Dregg2.Substrate.Heap.set h k v).length ≤ 2 ^ d,
+          padImtRoot sent hash d h hz = r
+          ∧ r' = padImtRoot sent hash d (Dregg2.Substrate.Heap.set h k v) hz' := by
   obtain ⟨h, ⟨hsort, hbnd⟩, hlen, hlenset, hpre, heq⟩ := hw
   exact ⟨h, hsort, hbnd, hlen, hlenset, hpre, heq⟩
 
@@ -571,9 +571,9 @@ theorem writesTo_of_padImtRoot (hash : List ℤ → ℤ)
     (hbnd : ∀ x ∈ Dregg2.Substrate.Heap.keys h, x < MAP_SENTINEL)
     (hlen : h.length ≤ 2 ^ MAP_TREE_DEPTH)
     (hlenset : (Dregg2.Substrate.Heap.set h k v).length ≤ 2 ^ MAP_TREE_DEPTH)
-    (hpre : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h = r) :
+    (hpre : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hlen = r) :
     writesTo hash r k v
-      (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Dregg2.Substrate.Heap.set h k v)) :=
+      (padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH (Dregg2.Substrate.Heap.set h k v) hlenset) :=
   writesToMerkleS_padImt_intro MAP_SENTINEL hash MAP_TREE_DEPTH hsort hbnd hlen hlenset hpre
 
 /-- **`heapWrite_realizes_heapSet` — SAT ⟹ SEM AT THE DEPLOYED SORTED-TREE RESOLUTION (the genuine
@@ -606,18 +606,18 @@ theorem heapWrite_realizes_heapSet (hash : List ℤ → ℤ)
     ∃ h : Dregg2.Substrate.Heap.FeltHeap,
       Dregg2.Substrate.Heap.SortedKeys h
       ∧ (∀ x ∈ Dregg2.Substrate.Heap.keys h, x < MAP_SENTINEL)
-      ∧ h.length ≤ 2 ^ MAP_TREE_DEPTH
-      ∧ (Dregg2.Substrate.Heap.set h
-          (addrOf hash ((envAt t rd.row).loc (prmCol COLL))
-            ((envAt t rd.row).loc (prmCol KEY)))
-          ((envAt t rd.row).loc (prmCol VALUE))).length ≤ 2 ^ MAP_TREE_DEPTH
-      ∧ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h
-          = (envAt t rd.row).loc HEAP_ROOT_BEFORE_ROT
-      ∧ newRoot = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH
-          (Dregg2.Substrate.Heap.set h
+      ∧ ∃ hz : h.length ≤ 2 ^ MAP_TREE_DEPTH,
+        ∃ hz' : (Dregg2.Substrate.Heap.set h
             (addrOf hash ((envAt t rd.row).loc (prmCol COLL))
               ((envAt t rd.row).loc (prmCol KEY)))
-            ((envAt t rd.row).loc (prmCol VALUE))) := by
+            ((envAt t rd.row).loc (prmCol VALUE))).length ≤ 2 ^ MAP_TREE_DEPTH,
+          padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hz
+              = (envAt t rd.row).loc HEAP_ROOT_BEFORE_ROT
+          ∧ newRoot = padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH
+              (Dregg2.Substrate.Heap.set h
+                (addrOf hash ((envAt t rd.row).loc (prmCol COLL))
+                  ((envAt t rd.row).loc (prmCol KEY)))
+                ((envAt t rd.row).loc (prmCol VALUE))) hz' := by
   have hw := heapWrite_newRoot_splice_forced hash hside hsat pre post actor target addr v newRoot rd
   exact writesToMerkleS_padImt_elim MAP_SENTINEL hash MAP_TREE_DEPTH hw
 
@@ -650,14 +650,14 @@ theorem heapWrite_sat_rejects_forged_root (hash : List ℤ → ℤ)
     (hlen : h.length ≤ 2 ^ MAP_TREE_DEPTH)
     (hlenset : (Dregg2.Substrate.Heap.set h ((envAt t row).loc HEAP_ADDR)
         ((envAt t row).loc (prmCol VALUE))).length ≤ 2 ^ MAP_TREE_DEPTH)
-    (hpre : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h
+    (hpre : padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH h hlen
         = (envAt t row).loc HEAP_ROOT_BEFORE_ROT)
     (hno : ¬ WriteColl hash (heapWrite_splice_forced hash hsat row hrow)
       (writesTo_of_padImtRoot hash hsort hbnd hlen hlenset hpre))
     (hforged : (envAt t row).loc HEAP_ROOT_AFTER_ROT
         ≠ padImtRoot MAP_SENTINEL hash MAP_TREE_DEPTH
             (Dregg2.Substrate.Heap.set h ((envAt t row).loc HEAP_ADDR)
-              ((envAt t row).loc (prmCol VALUE)))) :
+              ((envAt t row).loc (prmCol VALUE))) hlenset) :
     False :=
   hforged (writesTo_functional hash (heapWrite_splice_forced hash hsat row hrow)
     (writesTo_of_padImtRoot hash hsort hbnd hlen hlenset hpre) hno)

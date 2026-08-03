@@ -244,10 +244,10 @@ macro "heap_fits" : tactic =>
       | assumption
       | (rw [List.length_map, imtChainOf_length]; assumption)
       | (rw [List.length_map, imtChainOf_length]; omega)
-      | exact of_decide_eq_true (Eq.refl true)
-      | (simp; done)
-      | (simp; omega)
       | omega
+      | exact of_decide_eq_true (Eq.refl true)
+      | (simp only [List.length_cons, List.length_nil, List.length_map, List.length_append,
+          List.length_replicate]; omega)
       | fail "OVER-CAPACITY HEAP COMMITMENT — this leaf vector does not fit the tree it claims. \
               `padTo d L` pads by `2 ^ d - L.length`, which is `Nat` subtraction and SATURATES: \
               above `2 ^ d` leaves NOTHING is appended, the vector reaches `perfectRoot _ d` \
@@ -270,6 +270,11 @@ builder's own comment refuses ("fail loudly rather than silently truncate"), and
 the equivocation anyway, since `perfectRoot_eq_take` proves the fold already truncates. -/
 def padTo (d : Nat) (L : List ℤ) (hFits : L.length ≤ 2 ^ d := by heap_fits) : List ℤ :=
   L ++ List.replicate (2 ^ d - L.length) padDigest
+
+/-- Capacity from a CHEAPER exponent — the shape a short literal heap at the deployed
+`MAP_TREE_DEPTH` needs, without ever evaluating `2 ^ 16`. -/
+theorem fits_of_pow_le {n k d : Nat} (hkd : k ≤ d) (hn : n ≤ 2 ^ k) : n ≤ 2 ^ d :=
+  hn.trans (Nat.pow_le_pow_right (by omega) hkd)
 
 /-- **★ THE PADDED VECTOR HAS THE WIDTH ITS NAME CLAIMS — from the function's OWN obligation.** The
 bound is no longer something a consumer can fail to carry: there is nothing left to carry. -/
