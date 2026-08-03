@@ -31,6 +31,21 @@
 //!
 //! The Lean composition theorem is width- and slice-count-independent, so the statement at
 //! `w = 8` IS the statement at `w = 8192`. What does not transfer is the measurement.
+//!
+//! ## ⚑ What gate the row counts price
+//!
+//! A row is one RCB complete add over `PastaField`'s EMITTED multiply: one degree-2 gate of 81
+//! cross-products, `"ranges": []`, no carry pins, `pastaLimbRange` emitted nowhere. In the field
+//! the prover checks, that gate holds at every operand triple — its nine quotient limbs are free
+//! columns with weights nonzero mod `p_babybear` (`Dregg2.Circuit.Emit.PastaField` §6.4, computed
+//! on these very descriptors, which carry `PastaMsmWindowed`'s row template as their 45-constraint
+//! prefix). A multiply sound at BabyBear is a 13-bit/20-limb encoding at ≈10³ constraints against
+//! the ONE emitted here, taking a complete add from 33 constraints to ≈1.6·10⁴. So `4,227,200`
+//! adds at `2.016×` the ceiling, and the four-way cut that lands at `1,056,896`, are the geometry
+//! of the UNSOUND object; the sound one is ~10³ further past the ceiling. That reinforces the
+//! standing verdict rather than disturbing it — **defer the IPA leg, do not optimise it**
+//! (`PastaMsmLayouts` §7.2), and the reachable architecture is the Mina-side shrink terminal, not
+//! this ladder. The measurements below are not softened: they are correct for what is on disk.
 
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
@@ -630,6 +645,11 @@ fn bump(row: &mut [BabyBear], col: usize) {
 ///
 /// This walks the single-instance height up and reports prove time and proof size, so the wall is
 /// a measurement rather than an extrapolation. `#[ignore]`d: it is a measurement, not a gate.
+///
+/// ⚑ Both figures — 1,056,896 rows and the `2^21` committed domain — price a row at the EMITTED
+/// Pasta multiply (one gate, no ranges, no carry pins; see the header). At the encoding sound at
+/// BabyBear the same MSM is ~10³ further past the ceiling, so this wall is where the machine stops
+/// on the object we would NOT ship as sound.
 ///
 /// `cargo test -p dregg-circuit --release --test pasta_sliced_sg_prove -- --ignored --nocapture
 ///  wall_measurement`

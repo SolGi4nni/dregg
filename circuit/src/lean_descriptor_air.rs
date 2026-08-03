@@ -413,7 +413,32 @@ impl<'a> JsonCursor<'a> {
     ///
     /// A constant in an AIR only ever denotes the field element `c mod p_babybear` — that is
     /// exactly what [`i64_to_babybear`] / [`const_to_expr`] compute at eval time — so the
-    /// residue is the entire content of the literal and nothing is lost by taking it here.
+    /// residue is the entire content of the literal **as the deployed prover reads it**, and
+    /// nothing is lost relative to that reading.
+    ///
+    /// ⚑ **AND THAT QUALIFICATION IS THE WHOLE STORY FOR THE PASTA CONE, so it is said here rather
+    /// than three files away.** The Lean gates these constants come from are proved over `ℤ`, not
+    /// over `p_babybear`: `Dregg2.Circuit.Emit.PastaField`'s `fp{Add,Sub,Mul}Core_forces` conclude
+    /// `p_pasta ∣ (x·y − z)` from an INTEGER-zero body, and that file's §6.2 names the `ℤ ↔ p_felt`
+    /// gap as a residual. This function is the exact seam where the two readings part: a 495-bit
+    /// coefficient is precisely one that cannot round-trip through a felt, and folding it is what
+    /// lets a descriptor be proved as though its ℤ semantics fitted the field: the `fpMul` body
+    /// reaches `p_pasta^2 ≈ 2^508` on canonical operands, a factor of ~`2^477` past `p_babybear`,
+    /// so the mod-`p` reading admits every witness whose ℤ body is a nonzero multiple of
+    /// `p_babybear`. The fold is not wrong — the prover has no other reading available — but it is not
+    /// content-preserving for the object the Lean proofs are about, and calling it lossless without
+    /// the qualifier is how the ladder downstream came to be priced against a gate that does not
+    /// enforce its multiply (`PastaField` §6.4).
+    ///
+    /// ⚠ **REFUSING INSTEAD IS A REAL OPTION AND IT IS NOT TAKEN HERE.** A refusal would reject
+    /// **14 checked-in descriptors** — `circuit/descriptors/by-name/pasta-rcb-windowed.json`, the
+    /// eight `pasta-rcb-sg-slice-{0..3}-of-4[-w8].json`, and the five
+    /// `metatheory/emitted/mina-opening/pasta-rcb-sg-derive-*.json` — all at exactly 495 bits, plus
+    /// the uncommitted scaled bound artifacts `scripts/regen-pasta-bound-scaled.sh` re-derives. That
+    /// takes `pasta_windowed_prove`, `pasta_windowed_tamper`, `pasta_sliced_sg_prove`,
+    /// `pasta_bound_sg_prove`, `pasta_oncurve_gate` and `pasta_derive_prove` red at the parse, and
+    /// it would be refusing the SYMPTOM: the gates would still be unsound, they would merely be
+    /// unreadable. The fix is the encoding (`PastaField` §6.4), not the parser.
     ///
     /// Literals that FIT `i64` are returned **verbatim**, so every descriptor that parses today
     /// parses to a bit-identical AST (and canonical re-encoding is unaffected). Only literals

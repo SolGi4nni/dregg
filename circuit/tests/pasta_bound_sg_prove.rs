@@ -24,7 +24,14 @@
 //!   * ONE conditional-add row's source is replaced by a DIFFERENT REAL Mina SRS generator, and the
 //!     rest of the trace is REBUILT around it, so the witness is internally perfect — every RCB
 //!     add, every carry, every thread holds. It is a forgery of the MSM's *terms*, not of its
-//!     arithmetic.
+//!     arithmetic. ⚑ "Every RCB add holds" is a statement about the WITNESS this file builds, not
+//!     about what the AIR demands: `PastaField.pastaLimbRange` is emitted nowhere, the carry/borrow
+//!     columns are not boolean-pinned, and at `p_babybear` each add/sub/mul gate's reduction
+//!     witness is free, so the emitted arithmetic gates hold at every operand triple
+//!     (`Dregg2.Circuit.Emit.PastaField` §6.4). That is why this rung is stated as a CONTENTS
+//!     binding — the LogUp multiset equality over declared tuples is what refuses, and it owes
+//!     nothing to the Pasta multiply. The rung is unaffected by that gap; a reader taking the
+//!     acceptance as evidence about the field arithmetic would not be.
 //!   * the contents-UNBOUND descriptor (`pasta-rcb-sg-slice-<k>-of-4-w31`, the same Lean `def` at
 //!     the same width, without the generator table) **PROVES AND VERIFIES IT.**
 //!   * the contents-BOUND descriptor **REFUSES it**, with the deployed verifier's own LogUp verdict.

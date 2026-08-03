@@ -51,6 +51,21 @@
 //! binding to the block's IPA challenges is a different rung), P10, the ℤ↔felt gap, and the
 //! RCB-formula→group-law transport. This rung is about the GENERATORS.
 //!
+//! ## ⚑ What gate the seconds are seconds of
+//!
+//! The ladder above is denominated in rows, and a row is one RCB complete add over `PastaField`'s
+//! EMITTED multiply — one degree-2 gate of 81 cross-products, `"ranges": []`, no carry pins,
+//! `pastaLimbRange` emitted nowhere in the tree. In the field the prover checks, that gate holds at
+//! every operand triple: its nine quotient limbs are free columns whose weights are nonzero mod
+//! `p_babybear` (`Dregg2.Circuit.Emit.PastaField` §6.4). A multiply sound at BabyBear is a
+//! 13-bit/20-limb encoding at ≈10³ constraints against the ONE emitted here, taking a complete add
+//! from 33 constraints to ≈1.6·10⁴, so `146.35 s` for `32,768 × 529` is a time for a circuit ~10³
+//! short of enforcing its own field arithmetic. ⚑ **The rung is still real and the number stands.**
+//! What it measures is the CONTENTS BINDING — that a substituted Mina generator is refused by the
+//! exact-public manifest — and that binding is a LogUp multiset equality over declared tuples,
+//! which owes nothing to the Pasta multiply. The generator answer (32,764 of 32,768) is unaffected;
+//! only the cost column is denominated in the unsound gate.
+//!
 //! ## Running it
 //!
 //! The `w > 31` artifacts are 0.4–7 MB EACH and are deliberately NOT committed (the tree is under

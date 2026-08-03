@@ -20,6 +20,20 @@
 //! residual). It also inherits the undischarged FRI/STARK soundness floor. "It proves on a box"
 //! is not "verified", and having a proof object closes neither residual.
 //!
+//! ⚑ **AND HOW FAR "the converse does not hold" GOES, measured on this file's own descriptor.**
+//! `pasta-rcb-windowed.json` is 45 constraints, `"ranges": []`, `"tables": []`. Twelve gates carry
+//! exactly 81 var×var products each over 36 columns — those are the Pasta multiplies. Two
+//! booleanity gates exist, on `COL_BIT` (523) and `COL_DBL` (524); **none** of the 19 carry/borrow
+//! columns 423..441 is pinned, and `PastaField.pastaLimbRange` is emitted nowhere in the tree. So
+//! each of the 19 add/sub gates has one free carry column with coefficient `±p_pasta` (a unit mod
+//! `p_babybear`), and each of the 14 multiply-shaped gates has nine free quotient limbs with
+//! nonzero weights — all 145 of them local to a single constraint. In the field the prover checks,
+//! those gates hold at every operand triple (`Dregg2.Circuit.Emit.PastaField` §6.4). What this test
+//! demonstrates is that the DEPLOYED path carries a Lean-authored descriptor of this shape end to
+//! end; it is not evidence about the field arithmetic, because the emitted object does not contain
+//! any. A multiply sound at BabyBear is a 13-bit/20-limb encoding at ≈10³ constraints against the
+//! ONE emitted here, so every timing below is a timing for a circuit ~10³ short of that.
+//!
 //! ## What the acceptance probe found
 //!
 //! Before `lean_descriptor_air::JsonCursor::parse_int_field`, the deployed parser REFUSED this
@@ -210,6 +224,11 @@ fn lean_witness_64_proves_and_verifies() {
 /// ⚑ **The measurement.** 34 terms — the REAL Mina opening-check term count — at 25 of the 255
 /// bit-planes. 875 scheduled rows padded to 1024 with genuine `acc + O` adds. Planes are the
 /// linear dimension, so per-row cost extrapolates to the full 34 × 255 shape.
+///
+/// ⚑ The extrapolation is per row of the EMITTED gate: 33 constraints and 525 columns a complete
+/// add, with no limb ranges and no carry pins. At the 13-bit/20-limb encoding that is sound at
+/// BabyBear a complete add is ≈1.6·10⁴ constraints and does not fit one row, so the extrapolated
+/// seconds are ~10³ short of the sound object's. See the header.
 #[test]
 fn lean_witness_1024_proves_and_verifies() {
     let desc = descriptor();

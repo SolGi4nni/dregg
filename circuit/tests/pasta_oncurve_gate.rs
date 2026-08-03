@@ -351,6 +351,12 @@ fn lean_artifacts_are_pinned() {
         );
     }
     // The price, read off the artifacts rather than off the docstring.
+    // ⚑ A per-ROW price, and a row is one RCB complete add over `PastaField`'s EMITTED multiply —
+    // one degree-2 gate, `"ranges": []`, no carry pins, `pastaLimbRange` emitted nowhere. In the
+    // field the prover checks, that gate holds at every operand triple (`PastaField` §6.4), so
+    // "82 -> 98 constraints" is a delta on a row whose field arithmetic is unenforced. A multiply
+    // sound at BabyBear is ≈10³ constraints against the one emitted, which would put the BASE at
+    // ≈1.6·10⁴ and leave this gate's +16 unchanged.
     println!(
         "[price] gate costs +{} constraints, +{} columns per row (82/{BOUND_WIDTH} -> 98/{})",
         98 - 82,
