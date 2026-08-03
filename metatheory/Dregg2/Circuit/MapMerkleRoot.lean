@@ -124,6 +124,86 @@ theorem foldLevel_length_half (hash : List ℤ → ℤ) :
       have hrest : rest.length = 2 * m := by omega
       simp only [foldLevel, List.length_cons, ih rest hrest]
 
+/-! ### §3-take — ⚑ **THE FOLD IS BLIND ABOVE `2 ^ d`, and that is the ROOT CAUSE of the
+over-capacity equivocation.**
+
+Everything the padding lane found downstream — `padTo`'s saturating `Nat` subtraction, `padTo8`'s,
+`padVec`'s — is a *symptom*. The disease is here: `perfectRoot hash d` is `d` LOCAL pairings
+followed by `headD`, and position `0` after `d` levels descends from positions `0 .. 2^d - 1` and
+from NOTHING else. So the fold does not merely tolerate an over-long vector — it CANNOT SEE past
+`2 ^ d`, for every hash, with no assumption of any kind.
+
+Stated once, here, rather than re-discovered per padded wrapper. Two consequences, both used:
+
+  * it is the exact reason **truncation is not a repair** for an over-capacity commitment. A
+    `take (2 ^ d)` normalisation would change no root the fold ever produces (`perfectRoot_eq_take`
+    says it is already the identity on roots), so it buys width honesty and NOTHING else — the two
+    over-capacity vectors still meet. Only refusing the input closes it.
+  * it upgrades the padding lane's `d = 0` witness to a theorem at EVERY depth, the DEPLOYED
+    `MAP_TREE_DEPTH = 16` included (`perfectRoot_over_capacity_collides`). -/
+
+/-- One fold level commutes with truncation: the first `n` parents are exactly the parents of the
+first `2 * n` children. Pure combinatorics — the pairing is LOCAL. -/
+theorem foldLevel_take (hash : List ℤ → ℤ) :
+    ∀ (n : Nat) (xs : List ℤ), foldLevel hash (xs.take (2 * n)) = (foldLevel hash xs).take n := by
+  intro n
+  induction n with
+  | zero => intro xs; simp [foldLevel]
+  | succ m ih =>
+    intro xs
+    match xs with
+    | [] => simp [foldLevel]
+    | [x] =>
+      have h2 : 2 * (m + 1) = m + m + 2 := by ring
+      simp [foldLevel, h2]
+    | l :: r :: rest =>
+      have h2 : 2 * (m + 1) = 2 * m + 1 + 1 := by ring
+      rw [h2, List.take_succ_cons, List.take_succ_cons]
+      show mapNode hash l r :: foldLevel hash (rest.take (2 * m))
+        = (mapNode hash l r :: foldLevel hash rest).take (m + 1)
+      rw [List.take_succ_cons, ih rest]
+
+/-- **★ THE PERFECT FOLD READS ONLY THE FIRST `2 ^ d` LEAVES.** No length hypothesis, no hash
+hypothesis: whatever is at position `2 ^ d` or beyond contributes to the root NOTHING, at any
+depth. -/
+theorem perfectRoot_eq_take (hash : List ℤ → ℤ) :
+    ∀ (d : Nat) (xs : List ℤ), perfectRoot hash d xs = perfectRoot hash d (xs.take (2 ^ d)) := by
+  intro d
+  induction d with
+  | zero =>
+    intro xs
+    cases xs with
+    | nil => rfl
+    | cons x t => rfl
+  | succ d ih =>
+    intro xs
+    show perfectRoot hash d (foldLevel hash xs)
+      = perfectRoot hash d (foldLevel hash (xs.take (2 ^ (d + 1))))
+    have hp : 2 ^ (d + 1) = 2 * 2 ^ d := by ring
+    rw [hp, foldLevel_take hash (2 ^ d) xs, ← ih (foldLevel hash xs)]
+
+/-- **★★ ABOVE CAPACITY THE FOLD IS NOT BINDING — AT EVERY DEPTH, FOR EVERY HASH, FLOOR-FREE.** Any
+two vectors sharing their first `2 ^ d` entries publish ONE root. This is not a collision (nothing
+about `hash` is used), not a padding ghost, and no injectivity hypothesis excludes it; it is simply
+what `perfectRoot_eq_take` says. `perfectRoot_binds_or_collides` carries `xs.length = 2 ^ d`
+precisely to stay out of here, and the padded wrappers' occupancy obligations exist to keep every
+caller out of here too. -/
+theorem perfectRoot_over_capacity_collides (hash : List ℤ → ℤ) (d : Nat) (xs ys : List ℤ)
+    (h : xs.take (2 ^ d) = ys.take (2 ^ d)) : perfectRoot hash d xs = perfectRoot hash d ys := by
+  rw [perfectRoot_eq_take hash d xs, perfectRoot_eq_take hash d ys, h]
+
+/-- The equivocation is INHABITED at every depth, and the witnesses are as close as two lists can
+be: a full tree, and the same tree with ONE extra leaf that the fold cannot see. ⚠ This is the
+statement `over_capacity_roots_collide` was the `d = 0` shadow of. -/
+theorem perfectRoot_over_capacity_collides_witness (hash : List ℤ → ℤ) (d : Nat) (xs : List ℤ)
+    (hlen : xs.length = 2 ^ d) (x : ℤ) :
+    perfectRoot hash d (xs ++ [x]) = perfectRoot hash d xs ∧ xs ++ [x] ≠ xs := by
+  refine ⟨perfectRoot_over_capacity_collides hash d _ _ ?_, ?_⟩
+  · rw [← hlen, List.take_left, List.take_length]
+  · intro hc
+    have := congrArg List.length hc
+    simp at this
+
 /-! ⚑ **`foldLevel_injective` IS GONE (2026-07-28), and so is the CR-peeled `perfectRoot_injective`
 induction.** Both consumed `Poseidon2SpongeCR` — PROVED FALSE at deployed BabyBear — and the level
 induction is reproduced VERBATIM in §3b (`foldLevel_binds_or_collides` /

@@ -227,62 +227,172 @@ theorem imtLeafFind_spec (hash : List ℤ → ℤ) :
 `PadGhost3` residual reachable, and why removing it is a DEPLOYED change. -/
 def padDigest : ℤ := 0
 
-/-- **`padTo d L`** — the deployed occupancy discipline: the real leaf digests are a contiguous sorted
-PREFIX and every position `≥ L.length` holds `padDigest` (`CanonicalHeapTree::new`). -/
-def padTo (d : Nat) (L : List ℤ) : List ℤ := L ++ List.replicate (2 ^ d - L.length) padDigest
+/-- **The heap-fits discharger** — the side condition that makes `padTo` a pad and not a no-op, and
+the Lean twin of the RELEASE-ACTIVE `assert!(leaves.len() <= capacity)` in
+`circuit/src/heap_root.rs:560` ("**Fail loudly rather than silently truncate**"). Every way the
+bound is available at a deployed call site, and no fifth:
 
-theorem padTo_length {d : Nat} {L : List ℤ} (h : L.length ≤ 2 ^ d) : (padTo d L).length = 2 ^ d := by
+* `assumption` — the site carries `L.length ≤ 2 ^ d` outright;
+* the `imtChainOf`/`map` rewrite — the site carries the bound on the HEAP (`h.length ≤ 2 ^ d`) and
+  the vector is the relinked, digested image of it, which is the shape every deployed caller has;
+* `of_decide_eq_true (Eq.refl true)` — the vector is a LITERAL spine, so `List.length` reduces in
+  the KERNEL (⚠ bare `decide` is NOT used: it refuses an expected type containing free variables);
+* `simp`/`omega` for the arithmetic residue;
+* otherwise it FAILS, loudly. -/
+macro "heap_fits" : tactic =>
+  `(tactic| first
+      | assumption
+      | (rw [List.length_map, imtChainOf_length]; assumption)
+      | (rw [List.length_map, imtChainOf_length]; omega)
+      | exact of_decide_eq_true (Eq.refl true)
+      | (simp; done)
+      | (simp; omega)
+      | omega
+      | fail "OVER-CAPACITY HEAP COMMITMENT — this leaf vector does not fit the tree it claims. \
+              `padTo d L` pads by `2 ^ d - L.length`, which is `Nat` subtraction and SATURATES: \
+              above `2 ^ d` leaves NOTHING is appended, the vector reaches `perfectRoot _ d` \
+              over-long, and that fold READS ONLY THE FIRST `2 ^ d` ENTRIES \
+              (`perfectRoot_eq_take`). Two heaps agreeing on their first `2 ^ d` leaves then \
+              publish ONE root for EVERY hash — no collision, no padding ghost, no floor \
+              (`over_capacity_roots_collide`). The deployed builder REFUSES this input rather \
+              than truncating it (`circuit/src/heap_root.rs:560`, a release-active `assert!`), \
+              so the model must not be callable here either. Carry `L.length ≤ 2 ^ d` from the \
+              caller — do NOT truncate.")
+
+/-- **`padTo d L`** — the deployed occupancy discipline: the real leaf digests are a contiguous sorted
+PREFIX and every position `≥ L.length` holds `padDigest` (`CanonicalHeapTree::new`).
+
+⚑ **IT TAKES THE OBLIGATION.** `hFits` is an `autoParam`, so every honest site discharges it
+silently and an over-capacity one FAILS TO ELABORATE; it is a `Prop` and is not read by the body,
+so no committed felt moves and every existing `rfl` still closes. See `heap_fits` for why the
+alternative — truncating to `L.take (2 ^ d)` — is the WRONG instrument here: it is what the deployed
+builder's own comment refuses ("fail loudly rather than silently truncate"), and it would not close
+the equivocation anyway, since `perfectRoot_eq_take` proves the fold already truncates. -/
+def padTo (d : Nat) (L : List ℤ) (hFits : L.length ≤ 2 ^ d := by heap_fits) : List ℤ :=
+  L ++ List.replicate (2 ^ d - L.length) padDigest
+
+/-- **★ THE PADDED VECTOR HAS THE WIDTH ITS NAME CLAIMS — from the function's OWN obligation.** The
+bound is no longer something a consumer can fail to carry: there is nothing left to carry. -/
+theorem padTo_length_eq {d : Nat} {L : List ℤ} (h : L.length ≤ 2 ^ d) :
+    (padTo d L h).length = 2 ^ d := by
   simp only [padTo, List.length_append, List.length_replicate]
   omega
 
+/-- The old name, kept as the alias the existing proofs cite. ⚠ Its hypothesis is no longer a
+side condition — it is the same proof the function itself demanded. -/
+theorem padTo_length {d : Nat} {L : List ℤ} (h : L.length ≤ 2 ^ d) : (padTo d L h).length = 2 ^ d :=
+  padTo_length_eq h
+
 /-- **A FULL tree pads to itself** — the padded fold EXTENDS the dense one; it does not replace it. -/
-theorem padTo_dense {d : Nat} {L : List ℤ} (h : L.length = 2 ^ d) : padTo d L = L := by
+theorem padTo_dense {d : Nat} {L : List ℤ} (h : L.length = 2 ^ d) :
+    padTo d L (le_of_eq h) = L := by
   simp only [padTo, h, Nat.sub_self, List.replicate_zero, List.append_nil]
 
-/-! ### §3-cap — ⚑ WHAT AN OVER-CAPACITY HEAP DOES, as theorems rather than as a silence.
+/-! ### §3-cap — ⚑ THE OVER-CAPACITY EQUIVOCATION: the evidence it existed, and the refusal that
+closes it.
 
-⚠ **The width guarantee lives only in `padTo_length`'s HYPOTHESIS, and this is what is on the other
-side of it.** `2 ^ d - L.length` is `Nat` subtraction and SATURATES, so a vector with MORE than
-`2 ^ d` live leaves is padded by ZERO digests and handed to `perfectRoot _ d` over-long. Every
-binding theorem in this file (`padImtRoot_binds_or_ghost_or_collides`, `padVec_length`, and the
-twenty-six `padTo_length` uses across the map cone) carries `L.length ≤ 2 ^ d`, so all of them are
-TRUE — and all of them are SILENT exactly there. `padImtRoot` itself (§4) takes an arbitrary
-`h : Heap.FeltHeap` with no capacity condition, so the silence is reachable from the model's own
-entry point.
+**What the defect was.** `padTo` used to be `L ++ List.replicate (2 ^ d - L.length) padDigest` with
+no obligation. `2 ^ d - L.length` is `Nat` subtraction and SATURATES, so a vector with MORE than
+`2 ^ d` live leaves was padded by ZERO digests and handed to `perfectRoot _ d` over-long — and
+`perfectRoot_eq_take` proves that fold READS ONLY THE FIRST `2 ^ d` ENTRIES. Two over-capacity
+vectors agreeing on that prefix therefore published ONE root, for EVERY hash: no `SpongeColl`, no
+`PadHit`, no injectivity hypothesis excluding it. Every binding theorem in the cone carried
+`L.length ≤ 2 ^ d`, so all of them were TRUE and all of them were SILENT exactly there, while
+`padImtRoot` itself took an arbitrary heap. The bound lived in the LEMMAS and not in the FUNCTION.
 
-The two theorems below say what happens, and the second is the reason it matters: over capacity the
-commitment is NOT BINDING, and the collision needs NO hash break — it holds for EVERY `hash`.
+⚑ **WHY THE INSTRUMENT IS A REFUSAL AND NOT TRUNCATION**, which is the design call and the reason
+this half diverges from `DescriptorIR2.padTo`'s:
 
-⚠ **NOT CLOSED HERE.** The fix is `padTo`'s own obligation, propagated to `padImtRoot` / `padVec` /
-`padImtRootFind` and the map cone's 91 application sites across 16 files (measured 2026-08-03: 11
-sites in this file alone). That is a lane, not a hunk, and it is NOT done. What is done is that the
-gap is now a pair of named, refutable facts instead of an absence — a reader who takes
-`padImtRoot_binds_or_ghost_or_collides` for a binding result has `over_capacity_roots_collide`
-sitting next to it saying where it stops. -/
+  1. **The deployed builder refuses.** `circuit/src/heap_root.rs:556-565` — a RELEASE-ACTIVE
+     `assert!(leaves.len() <= capacity)` whose own comment reads "*Fail loudly rather than silently
+     truncate*". The same assert stands in `compute_canonical_heap_root_8` (:1015-1019) and
+     `CanonicalHeapTree8::new` (:1149-1153), and `cap_root.rs:461` for the cap tree. A `take`-shaped
+     `padTo` would model the exact behaviour the deployed code was written to refuse.
+  2. **There is no downstream tag to catch the residue.** `DescriptorIR2.padTo` may truncate because
+     `chipRow`'s first component is the UNTRUNCATED arity tag and `over_rate_arity_always_refused`
+     refuses every over-`CHIP_RATE` tag with no holes. Below `padTo` here there is `perfectRoot`,
+     which returns ONE FELT and carries no length, no tag and no refusal. A truncated over-capacity
+     heap lands on an ordinary, admitted, indistinguishable root.
+  3. **Truncation would not even close it.** `perfectRoot_eq_take` says the fold ALREADY truncates,
+     so normalising the vector moves no root at all; the two witnesses below would still meet. Only
+     refusing the input separates them.
 
-/-- **★ OVER CAPACITY THE PAD IS THE IDENTITY.** Above `2 ^ d` live leaves nothing is appended: the
-"padded" vector is the input, longer than the tree the fold is shaped for. -/
-theorem padTo_saturates_over_capacity {d : Nat} {L : List ℤ} (h : 2 ^ d ≤ L.length) :
-    padTo d L = L := by
+**So `padTo` takes the obligation** (`heap_fits`), and it is propagated to `padVec` / `padImtRoot` /
+`padImtRootFind`, to `MapLeafSchema.commit` — whose `SizeOk` field previously declared an occupancy
+discipline that its own `commit` was free to ignore — and to the `Digest8` and lane-encoded twins.
+
+**The evidence is KEPT, not deleted.** `padToSaturating` below IS the retired body, preserved as an
+object so the collision that motivated this stays a machine-checked fact rather than a paragraph;
+`#assert_not_depends_on` pins that nothing in the live cone reaches it. -/
+
+/-- **`padToSaturating d L` — THE RETIRED, OBLIGATION-FREE BODY.** ⚠ Kept for ONE purpose: to state
+the equivocation that used to be reachable. It is not the deployed pad and has no caller — see
+`padImtRoot_is_free_of_the_saturating_pad`. Do not build on it. -/
+def padToSaturating (d : Nat) (L : List ℤ) : List ℤ := L ++ List.replicate (2 ^ d - L.length) padDigest
+
+/-- **CONSERVATIVITY.** On the domain the obligation admits, the repair changed NOTHING: the deployed
+pad is the retired one wherever the retired one was ever correct. So the collision below is a
+statement about the region that left, not about the object that stayed. -/
+theorem padToSaturating_eq_padTo {d : Nat} {L : List ℤ} (h : L.length ≤ 2 ^ d) :
+    padToSaturating d L = padTo d L h := rfl
+
+/-- **★ OVER CAPACITY THE RETIRED PAD WAS THE IDENTITY.** Above `2 ^ d` live leaves nothing was
+appended: the "padded" vector was the input, longer than the tree the fold is shaped for. (Was
+`padTo_saturates_over_capacity`; the statement is unchanged, the subject is now the retired body,
+because the deployed `padTo` can no longer be APPLIED here.) -/
+theorem padToSaturating_saturates_over_capacity {d : Nat} {L : List ℤ} (h : 2 ^ d ≤ L.length) :
+    padToSaturating d L = L := by
   have hz : 2 ^ d - L.length = 0 := Nat.sub_eq_zero_of_le h
-  simp only [padTo, hz, List.replicate_zero, List.append_nil]
+  simp only [padToSaturating, hz, List.replicate_zero, List.append_nil]
 
-/-- **★ AND THE COMMITMENT STOPS BINDING THERE — FOR EVERY HASH, WITH NO CRYPTO ASSUMPTION.** Two
-DIFFERENT over-capacity leaf vectors fold to the SAME `padImtRoot`-shaped root, because
-`perfectRoot _ 0` reads the head and the saturated pad left the tail in place to be ignored. This is
-a floor-free equivocation: it is not a `SpongeColl`, it needs no `PadHit`, and no injectivity
-hypothesis excludes it. It is the exact statement `padImtRoot_binds_or_ghost_or_collides` cannot
-make once its `L.length ≤ 2 ^ d` hypothesis is dropped. -/
+/-- **★ AND THE COMMITMENT STOPPED BINDING THERE — FOR EVERY HASH, WITH NO CRYPTO ASSUMPTION.** Two
+DIFFERENT over-capacity leaf vectors folded to the SAME root, because `perfectRoot _ 0` reads the
+head and the saturated pad left the tail in place to be ignored. Floor-free: not a `SpongeColl`, no
+`PadHit`, no injectivity hypothesis excludes it.
+
+⚑ **THE EVIDENCE, PRESERVED VERBATIM.** Same witnesses, same shape, same conclusion as the theorem
+that opened this lane — only the subject moved to `padToSaturating`, because that IS the repair: the
+term `perfectRoot hash 0 (padTo 0 [1, 2] ?)` no longer elaborates, and
+`colliding_witness_is_refused_admissible_partner_is_not` is the machine-checked reason. -/
 theorem over_capacity_roots_collide (hash : List ℤ → ℤ) :
-    perfectRoot hash 0 (padTo 0 [1, 2]) = perfectRoot hash 0 (padTo 0 [1])
+    perfectRoot hash 0 (padToSaturating 0 [1, 2]) = perfectRoot hash 0 (padToSaturating 0 [1])
       ∧ ([1, 2] : List ℤ) ≠ [1] := by
   refine ⟨rfl, ?_⟩
   simp
 
-/-- The two witnesses really are over capacity at depth `0` — the hypothesis of every binding
-theorem in this file is FALSE on them, which is why they are outside its reach rather than a
-counterexample to it. -/
-theorem over_capacity_witness_exceeds : ¬ (([1, 2] : List ℤ).length ≤ 2 ^ 0) := by decide
+/-- **★ AND IT WAS NEVER A `d = 0` CURIOSITY.** At EVERY depth — the deployed `MAP_TREE_DEPTH = 16`
+included — a full tree and the same tree with ONE extra leaf published the same retired root. The
+`d = 0` pair above is the smallest member of this family, not the only one. -/
+theorem over_capacity_roots_collide_at_every_depth (hash : List ℤ → ℤ) (d : Nat) (L : List ℤ)
+    (hlen : L.length = 2 ^ d) (x : ℤ) :
+    perfectRoot hash d (padToSaturating d (L ++ [x])) = perfectRoot hash d (padToSaturating d L)
+      ∧ L ++ [x] ≠ L := by
+  have hge : 2 ^ d ≤ (L ++ [x]).length := by simp [hlen]
+  obtain ⟨hroot, hne⟩ :=
+    Dregg2.Circuit.MapMerkleRoot.perfectRoot_over_capacity_collides_witness hash d L hlen x
+  refine ⟨?_, hne⟩
+  rw [padToSaturating_saturates_over_capacity hge, padToSaturating_eq_padTo (le_of_eq hlen),
+    ← padToSaturating_eq_padTo (le_of_eq hlen), padToSaturating_saturates_over_capacity
+      (le_of_eq hlen.symm)]
+  exact hroot
+
+/-- ⚑ **THE EXHIBITED PRE-IMAGE IS NOW REFUSED — AND ITS PARTNER IS NOT.** The obligation is FALSE on
+`[1, 2]` at depth `0`, so `padTo 0 [1, 2]` has no proof to supply and does not elaborate; it is TRUE
+on `[1]`, so the pad still admits everything it ever legitimately admitted. A guard that refused both
+would close the collision by closing the function, which is not a repair. -/
+theorem colliding_witness_is_refused_admissible_partner_is_not :
+    ¬ (([1, 2] : List ℤ).length ≤ 2 ^ 0) ∧ (([1] : List ℤ).length ≤ 2 ^ 0) := by decide
+
+/-- ⚑⚑ **AND THE WHOLE MECHANISM IS EXCLUDED, not just the exhibited pair.**
+`perfectRoot_over_capacity_collides` says the ONLY way the fold can identify two vectors without
+touching `hash` is agreement of their first `2 ^ d` entries. Inside the obligation that agreement IS
+equality. So the fold's blindness — the root cause — separates NO two admissible vectors, at any
+depth, for any hash. This is what `padTo`'s obligation buys, stated as the general fact rather than
+as a refuted witness. -/
+theorem fits_take_agreement_is_equality {d : Nat} {L₁ L₂ : List ℤ}
+    (h₁ : L₁.length ≤ 2 ^ d) (h₂ : L₂.length ≤ 2 ^ d)
+    (htake : L₁.take (2 ^ d) = L₂.take (2 ^ d)) : L₁ = L₂ := by
+  rwa [List.take_of_length_le h₁, List.take_of_length_le h₂] at htake
 
 /-- **`PadHit L`** — the committed leaf-digest vector `L` CONTAINS the padding constant.
 
@@ -327,8 +437,11 @@ theorem append_replicate_eq_or_hit : ∀ (L₁ L₂ : List ℤ) (k₁ k₂ : Nat
       · exact Or.inr (Or.inl (List.mem_cons_of_mem _ hh₁))
       · exact Or.inr (Or.inr (List.mem_cons_of_mem _ hh₂))
 
-/-- The padded occupancy discipline binds the live prefix, up to the named ghost. -/
-theorem padTo_eq_or_hit (d : Nat) {L₁ L₂ : List ℤ} (h : padTo d L₁ = padTo d L₂) :
+/-- The padded occupancy discipline binds the live prefix, up to the named ghost. ⚠ Both vectors
+carry the pad's own obligation now — this is not a new side condition, it is the SAME proof the two
+`padTo` applications in the hypothesis already had to supply. -/
+theorem padTo_eq_or_hit (d : Nat) {L₁ L₂ : List ℤ} {f₁ : L₁.length ≤ 2 ^ d} {f₂ : L₂.length ≤ 2 ^ d}
+    (h : padTo d L₁ f₁ = padTo d L₂ f₂) :
     L₁ = L₂ ∨ PadHit L₁ ∨ PadHit L₂ :=
   append_replicate_eq_or_hit L₁ L₂ _ _ h
 
@@ -340,9 +453,18 @@ theorem padHit_singleton : PadHit [padDigest] := by simp [PadHit]
 
 /-- **`padImtRoot sent hash d h`** — ⚑ THE DEPLOYED MAP COMMITMENT: relink the pointers
 (`relink_next_addrs`, terminal `sent`), digest each linked leaf at arity 3 (`HeapLeaf::preimage`,
-`HEAP_LEAF_ARITY = 3`), fold the perfect tree over the ZERO-PADDED vector (`CanonicalHeapTree::new`). -/
-def padImtRoot (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap) : ℤ :=
-  perfectRoot hash d (padTo d ((imtChainOf sent h).map (imtLeafHash hash)))
+`HEAP_LEAF_ARITY = 3`), fold the perfect tree over the ZERO-PADDED vector (`CanonicalHeapTree::new`).
+
+⚑ **IT TAKES THE CAPACITY OBLIGATION, because `CanonicalHeapTree::new` DOES.** `heap_root.rs:560`
+is a release-active `assert!(leaves.len() <= capacity)` — the deployed builder does not commit an
+over-capacity heap, it PANICS. A total Lean `padImtRoot` was therefore a model of a function the
+deployed system does not have, and its extra domain was precisely where the commitment stopped
+binding (§3-cap). The obligation is an `autoParam`: honest sites discharge it silently, and it is a
+`Prop`, so the committed felt is unchanged and every `rfl` still closes. -/
+def padImtRoot (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ d := by heap_fits) : ℤ :=
+  perfectRoot hash d (padTo d ((imtChainOf sent h).map (imtLeafHash hash))
+    (by rw [List.length_map, imtChainOf_length]; exact hFits))
 
 /-- **`PadGhost3 sent hash h`** — a LIVE arity-3 IMT leaf digest equals the padding constant. -/
 def PadGhost3 (sent : ℤ) (hash : List ℤ → ℤ) (h : Heap.FeltHeap) : Prop :=
@@ -360,41 +482,61 @@ theorem padGhost3_refuted {hash : List ℤ → ℤ} (hpf : PadFree3 hash) (sent 
   obtain ⟨l, _, hl⟩ := hmem
   exact hpf l hl
 
-/-- The deployed root extractor: the node descent if it collides, else the arity-3 leaf scan. TOTAL. -/
+/-- The deployed root extractor: the node descent if it collides, else the arity-3 leaf scan.
+
+⚑ **IT STAYS TOTAL, AND IT BOTTOMS OUT WHERE THE COMMITMENT REFUSES TO EXIST.** This is
+DIAGNOSTIC instrumentation, not a model of anything deployed — `heap_root.rs` has no such function —
+so unlike `padImtRoot` it carries no fidelity obligation, and `MapLeafTeeth.Resid` needs it at
+arbitrary heaps. Over capacity it returns `([], [])`, which is the extractor's OWN "nothing found"
+value (`perfectRootFind _ 0`, `foldLevelFind` on a bottomed-out scan) and makes the `SpongeColl`
+disjunct FALSE there. That is the honest reading: where the commitment does not exist there is no
+equivocation of it to exhibit. Nothing claims `Resid` over capacity — `binds` carries both
+occupancy facts — so this weakens no statement. -/
 def padImtRootFind (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
     (h₁ h₂ : Heap.FeltHeap) : List ℤ × List ℤ :=
-  if SpongeColl hash (perfectRootFind hash d
-        (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash)))
-        (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))))
-  then perfectRootFind hash d
-        (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash)))
-        (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash)))
-  else imtLeafFind hash (imtChainOf sent h₁) (imtChainOf sent h₂)
+  if hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d then
+    (if SpongeColl hash (perfectRootFind hash d
+          (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash))
+            (by rw [List.length_map, imtChainOf_length]; exact hz.1))
+          (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))
+            (by rw [List.length_map, imtChainOf_length]; exact hz.2)))
+     then perfectRootFind hash d
+          (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash))
+            (by rw [List.length_map, imtChainOf_length]; exact hz.1))
+          (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))
+            (by rw [List.length_map, imtChainOf_length]; exact hz.2))
+     else imtLeafFind hash (imtChainOf sent h₁) (imtChainOf sent h₂))
+  else ([], [])
 
 /-- **★★ THE DEPLOYED PADDED ROOT BINDS THE HEAP — UNCONDITIONALLY, up to TWO named residuals.**
 Arity-3 IMT leaves, the deployed relink, relaxed (sparse) occupancy, zero padding. No floor at the
 node, none at the leaf. -/
 theorem padImtRoot_binds_or_ghost_or_collides (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat)
     {h₁ h₂ : Heap.FeltHeap} (hl₁ : h₁.length ≤ 2 ^ d) (hl₂ : h₂.length ≤ 2 ^ d)
-    (heq : padImtRoot sent hash d h₁ = padImtRoot sent hash d h₂) :
+    (heq : padImtRoot sent hash d h₁ hl₁ = padImtRoot sent hash d h₂ hl₂) :
     h₁ = h₂ ∨ PadGhost3 sent hash h₁ ∨ PadGhost3 sent hash h₂
       ∨ SpongeColl hash (padImtRootFind sent hash d h₁ h₂) := by
+  have hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d := ⟨hl₁, hl₂⟩
   by_cases hif : SpongeColl hash (perfectRootFind hash d
-      (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash)))
-      (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))))
+      (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash))
+        (by rw [List.length_map, imtChainOf_length]; exact hl₁))
+      (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))
+        (by rw [List.length_map, imtChainOf_length]; exact hl₂)))
   · refine Or.inr (Or.inr (Or.inr ?_))
-    rw [padImtRootFind, if_pos hif]
+    rw [padImtRootFind, dif_pos hz, if_pos hif]
     exact hif
-  · have hlen₁ : (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash))).length = 2 ^ d :=
+  · have hlen₁ : (padTo d ((imtChainOf sent h₁).map (imtLeafHash hash))
+        (by rw [List.length_map, imtChainOf_length]; exact hl₁)).length = 2 ^ d :=
       padTo_length (by rw [List.length_map, imtChainOf_length]; exact hl₁)
-    have hlen₂ : (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))).length = 2 ^ d :=
+    have hlen₂ : (padTo d ((imtChainOf sent h₂).map (imtLeafHash hash))
+        (by rw [List.length_map, imtChainOf_length]; exact hl₂)).length = 2 ^ d :=
       padTo_length (by rw [List.length_map, imtChainOf_length]; exact hl₂)
     rcases perfectRoot_binds_or_collides hash d hlen₁ hlen₂ heq with hpad | hc
     · rcases padTo_eq_or_hit d hpad with hL | hh₁ | hh₂
       · by_cases hne : h₁ = h₂
         · exact Or.inl hne
         · refine Or.inr (Or.inr (Or.inr ?_))
-          rw [padImtRootFind, if_neg hif]
+          rw [padImtRootFind, dif_pos hz, if_neg hif]
           exact imtLeafFind_spec hash _ _ (fun hcc => hne (imtChainOf_injective sent hcc)) hL
       · exact Or.inr (Or.inl hh₁)
       · exact Or.inr (Or.inr (Or.inl hh₂))
@@ -412,29 +554,52 @@ structure MapLeafSchema where
   /-- **THE OCCUPANCY DISCIPLINE.** How many entries a depth-`d` commitment admits. A field rather
   than the hard-wired `h.length = 2 ^ d` because the DEPLOYED tree is SPARSE. -/
   SizeOk : Nat → Heap.FeltHeap → Prop
-  /-- **THE COMMITMENT.** The depth-`d` root this schema folds an admissible heap to. -/
-  commit : (List ℤ → ℤ) → Nat → Heap.FeltHeap → ℤ
+  /-- **THE COMMITMENT.** The depth-`d` root this schema folds an admissible heap to.
+
+  ⚑ **IT IS DEFINED EXACTLY ON `SizeOk`, and that dependency is the repair.** Until 2026-08-03 this
+  was `(List ℤ → ℤ) → Nat → Heap.FeltHeap → ℤ`: a schema declared an occupancy discipline in
+  `SizeOk` and its own `commit` was then free to accept heaps that discipline rejected. The deployed
+  instance did exactly that — `padImtRoot` folded ANY heap, and above `2 ^ d` it folded two
+  different ones to one root (§3-cap). `SizeOk` was decorative on the field it was supposed to
+  govern; now the commitment cannot be evaluated off it. -/
+  commit : (List ℤ → ℤ) → (d : Nat) → (h : Heap.FeltHeap) → SizeOk d h → ℤ
+
+/-- **THE COMMITMENT DOES NOT DEPEND ON *WHICH* OCCUPANCY PROOF IT IS HANDED.** Proof irrelevance,
+but it has to be NAMED: with `commit` indexed by `SizeOk d h`, a `rw` along `h₁ = h₂` in a goal
+mentioning `commit … h₁ p₁` has a dependent motive and FAILS. Every such rewrite in the cone goes
+through this lemma instead. ⚠ That friction is not incidental — it is the type system reporting that
+the commitment is now genuinely a function of the occupancy fact, which is the whole repair. -/
+theorem MapLeafSchema.commit_congr (S : MapLeafSchema) (hash : List ℤ → ℤ) (d : Nat)
+    {h₁ h₂ : Heap.FeltHeap} (hz₁ : S.SizeOk d h₁) (hz₂ : S.SizeOk d h₂) (h : h₁ = h₂) :
+    S.commit hash d h₁ hz₁ = S.commit hash d h₂ hz₂ := by
+  subst h; rfl
 
 /-- **`opensToMerkleS S hash d r k o`** — some admissible heap committed by `r` under schema `S`
-reads `o` at `k`. -/
+reads `o` at `k`.
+
+⚠ The occupancy conjunct is now the BINDER of the commitment rather than a conjunct beside it. The
+anonymous-constructor shape is unchanged (`⟨h, hok, hz, hr, hg⟩`) because `∃`/`∧` flatten alike, so
+this is a strengthening of what the definition MEANS and not a change to how it is used. -/
 def opensToMerkleS (S : MapLeafSchema) (hash : List ℤ → ℤ) (d : Nat) (r k : ℤ)
     (o : Option ℤ) : Prop :=
-  ∃ h : Heap.FeltHeap, S.HeapOk h ∧ S.SizeOk d h ∧ S.commit hash d h = r ∧ Heap.get h k = o
+  ∃ h : Heap.FeltHeap, S.HeapOk h ∧ ∃ hz : S.SizeOk d h,
+    S.commit hash d h hz = r ∧ Heap.get h k = o
 
 /-- **`writesToMerkleS S hash d r k v r'`** — the sorted insert-or-update of `(k, v)` moves the
-committed root `r` to `r'` under schema `S`. -/
+committed root `r` to `r'` under schema `S`. ⚠ BOTH occupancy facts are now binders — the pre-heap's
+and the post-heap's — which is what a write that must stay inside the tree actually asserts. -/
 def writesToMerkleS (S : MapLeafSchema) (hash : List ℤ → ℤ) (d : Nat) (r k v r' : ℤ) : Prop :=
-  ∃ h : Heap.FeltHeap, S.HeapOk h ∧ S.SizeOk d h
-    ∧ S.SizeOk d (Heap.set h k v)
-    ∧ S.commit hash d h = r ∧ r' = S.commit hash d (Heap.set h k v)
+  ∃ h : Heap.FeltHeap, S.HeapOk h ∧ ∃ hz : S.SizeOk d h, ∃ hz' : S.SizeOk d (Heap.set h k v),
+    S.commit hash d h hz = r ∧ r' = S.commit hash d (Heap.set h k v) hz'
 
 /-- **⚑ `padImtSchema sent` — THE DEPLOYED INSTANCE.** Arity-3 IMT leaves over the deployed relink
-AND the deployed sparse occupancy. -/
+AND the deployed sparse occupancy — and the occupancy now GATES the fold, exactly as
+`CanonicalHeapTree::new`'s release-active capacity `assert!` gates the deployed one. -/
 def padImtSchema (sent : ℤ) : MapLeafSchema where
   HeapOk := fun h => Heap.SortedKeys h ∧ ∀ x ∈ Heap.keys h, x < sent
   heapOk_sorted := fun _ h => h.1
   SizeOk := fun d h => h.length ≤ 2 ^ d
-  commit := padImtRoot sent
+  commit := fun hash d h hz => padImtRoot sent hash d h hz
 
 /-- **`DEPLOYED_SENTINEL`** — `heap_root.rs::SENTINEL_MAX = BabyBear(2013265920)`, i.e. `p - 1`: the
 terminal `next_addr` `relink_next_addrs` pins the largest live leaf to. This is the ONE sentinel the
@@ -462,8 +627,8 @@ structure MapLeafTeeth (S : MapLeafSchema) where
   Resid : (List ℤ → ℤ) → Nat → Heap.FeltHeap → Heap.FeltHeap → Prop
   /-- ★ THE BINDING, with NO hypothesis on `hash`. -/
   binds : ∀ (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : Heap.FeltHeap),
-      S.HeapOk h₁ → S.HeapOk h₂ → S.SizeOk d h₁ → S.SizeOk d h₂ →
-      S.commit hash d h₁ = S.commit hash d h₂ → h₁ = h₂ ∨ Resid hash d h₁ h₂
+      S.HeapOk h₁ → S.HeapOk h₂ → ∀ (hz₁ : S.SizeOk d h₁) (hz₂ : S.SizeOk d h₂),
+      S.commit hash d h₁ hz₁ = S.commit hash d h₂ hz₂ → h₁ = h₂ ∨ Resid hash d h₁ h₂
   /-- The hash-level property at which the residual is empty (the injective idealisation, plus
   whatever else this schema's shape genuinely needs — for a padded schema, pad-freeness). -/
   Good : (List ℤ → ℤ) → Prop
@@ -515,7 +680,7 @@ theorem writesToMerkleS_binds_or_collides (T : MapLeafTeeth S) (hash : List ℤ 
   obtain ⟨hk₁, hz₁, _, hr₁, he₁⟩ := h₁.choose_spec
   obtain ⟨hk₂, hz₂, _, hr₂, he₂⟩ := h₂.choose_spec
   rcases T.binds hash d _ _ hk₁ hk₂ hz₁ hz₂ (hr₁.trans hr₂.symm) with hm | hc
-  · exact Or.inl (by rw [he₁, he₂, hm])
+  · exact Or.inl (by rw [he₁, he₂]; exact S.commit_congr hash d _ _ (by rw [hm]))
   · exact Or.inr hc
 
 /-- **DISCHARGEABLE.** One and the same opening never equivocates with itself — for EVERY hash, at
@@ -588,9 +753,9 @@ variable {S : MapLeafSchema}
 /-- **★ TOOTH 1/3 — OPENINGS ARE FUNCTIONAL (schema level, explicit heaps).** -/
 theorem opensToMerkleS_functional_or_resid (T : MapLeafTeeth S)
     (hash : List ℤ → ℤ) (d : Nat) {r k : ℤ} {o₁ o₂ : Option ℤ} {m₁ m₂ : Heap.FeltHeap}
-    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ = r)
+    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ hz₁ = r)
       (hg₁ : Heap.get m₁ k = o₁)
-    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ = r)
+    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ hz₂ = r)
       (hg₂ : Heap.get m₂ k = o₂) :
     o₁ = o₂ ∨ T.Resid hash d m₁ m₂ := by
   rcases T.binds hash d m₁ m₂ hk₁ hk₂ hz₁ hz₂ (hr₁.trans hr₂.symm) with hm | hc
@@ -600,9 +765,9 @@ theorem opensToMerkleS_functional_or_resid (T : MapLeafTeeth S)
 /-- **★ TOOTH 2/3 — MEMBERSHIP EXCLUDES NON-MEMBERSHIP (schema level, explicit heaps).** -/
 theorem opensToMerkleS_some_excludes_none_or_resid (T : MapLeafTeeth S)
     (hash : List ℤ → ℤ) (d : Nat) {r k v : ℤ} {m₁ m₂ : Heap.FeltHeap}
-    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ = r)
+    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ hz₁ = r)
       (hg₁ : Heap.get m₁ k = some v)
-    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ = r)
+    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ hz₂ = r)
       (hg₂ : Heap.get m₂ k = none) :
     T.Resid hash d m₁ m₂ := by
   rcases opensToMerkleS_functional_or_resid T hash d hk₁ hz₁ hr₁ hg₁ hk₂ hz₂ hr₂ hg₂ with he | hc
@@ -612,13 +777,13 @@ theorem opensToMerkleS_some_excludes_none_or_resid (T : MapLeafTeeth S)
 /-- **★ TOOTH 3/3 — WRITES ARE FUNCTIONAL (schema level, explicit heaps).** -/
 theorem writesToMerkleS_functional_or_resid (T : MapLeafTeeth S)
     (hash : List ℤ → ℤ) (d : Nat) {r k v r₁ r₂ : ℤ} {m₁ m₂ : Heap.FeltHeap}
-    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ = r)
-      (he₁ : r₁ = S.commit hash d (Heap.set m₁ k v))
-    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ = r)
-      (he₂ : r₂ = S.commit hash d (Heap.set m₂ k v)) :
+    (hk₁ : S.HeapOk m₁) (hz₁ : S.SizeOk d m₁) (hr₁ : S.commit hash d m₁ hz₁ = r)
+      {hs₁ : S.SizeOk d (Heap.set m₁ k v)} (he₁ : r₁ = S.commit hash d (Heap.set m₁ k v) hs₁)
+    (hk₂ : S.HeapOk m₂) (hz₂ : S.SizeOk d m₂) (hr₂ : S.commit hash d m₂ hz₂ = r)
+      {hs₂ : S.SizeOk d (Heap.set m₂ k v)} (he₂ : r₂ = S.commit hash d (Heap.set m₂ k v) hs₂) :
     r₁ = r₂ ∨ T.Resid hash d m₁ m₂ := by
   rcases T.binds hash d m₁ m₂ hk₁ hk₂ hz₁ hz₂ (hr₁.trans hr₂.symm) with hm | hc
-  · exact Or.inl (by rw [he₁, he₂, hm])
+  · exact Or.inl (by rw [he₁, he₂]; exact S.commit_congr hash d _ _ (by rw [hm]))
   · exact Or.inr hc
 
 /-! ### §7a — the `_of_good` bridge. ⚠ These are the IDEALISED forms: `Good` contains
@@ -711,9 +876,14 @@ def padImtTeeth (sent : ℤ) : MapLeafTeeth (padImtSchema sent) where
 #assert_axioms imtChainOf_injective
 #assert_axioms imtLeafFind_spec
 #assert_axioms padTo_length
-#assert_axioms padTo_saturates_over_capacity
+#assert_axioms padTo_length_eq
+#assert_axioms padToSaturating_eq_padTo
+#assert_axioms padToSaturating_saturates_over_capacity
 #assert_axioms over_capacity_roots_collide
-#assert_axioms over_capacity_witness_exceeds
+#assert_axioms over_capacity_roots_collide_at_every_depth
+#assert_axioms colliding_witness_is_refused_admissible_partner_is_not
+#assert_axioms fits_take_agreement_is_equality
+#assert_axioms MapLeafSchema.commit_congr
 #assert_axioms padTo_dense
 #assert_axioms append_replicate_eq_or_hit
 #assert_axioms padHit_singleton
@@ -728,6 +898,18 @@ def padImtTeeth (sent : ℤ) : MapLeafTeeth (padImtSchema sent) where
 #assert_axioms opensToMerkleS_functional_or_resid
 #assert_axioms opensToMerkleS_some_excludes_none_or_resid
 #assert_axioms writesToMerkleS_functional_or_resid
+/-! ### ⚑ THE EVIDENCE IS QUARANTINED. `padToSaturating` exists ONLY to state the equivocation that
+motivated the obligation. If a future edit routes the deployed commitment back through it — the one
+way the hole could reopen without anyone noticing, since the two agree wherever the obligation holds
+(`padToSaturating_eq_padTo`) — these go RED. Positive controls sit beside them, because a walk over
+a closure a constant was never in reports clean for free. -/
+#assert_not_depends_on padImtRoot [padToSaturating]
+#assert_not_depends_on padImtRootFind [padToSaturating]
+#assert_not_depends_on padImtSchema [padToSaturating]
+#assert_not_depends_on padImtRoot_binds_or_ghost_or_collides [padToSaturating]
+#assert_depends_on padImtRoot [padTo]
+#assert_depends_on over_capacity_roots_collide [padToSaturating]
+
 #assert_axioms oddSponge_injective
 #assert_axioms oddSponge_padFree3
 
