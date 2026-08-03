@@ -16,13 +16,48 @@
 # the line above (see docs/FAITHFUL-COMMITMENT-LAW.md). A NET-NEW degrading fold
 # without that justification FAILS this gate.
 #
+# ── ⚑ `--rev` (added 2026-08-02): grade a COMMIT, not whatever is lying around ──────────
+# Nine docs cite this gate as evidence that no lossy 256→31-bit fold sits in a commitment
+# position. Every one of those verdicts was taken over a SHARED working tree, where a sibling
+# mid-edit owns the answer: their half-written fold reds it for everybody, and their local
+# repair greens a fold that is still in HEAD. The mirror is `check-guard-modules.py --rev` /
+# `check-descriptor-drift.sh --rev`: materialise the revision with `git archive <rev> | tar -x`
+# and run the whole gate against the extract. An archive OF A COMMIT cannot contain churn —
+# the same guarantee `check-descriptor-drift.sh` buys with an explicit `git status --porcelain`
+# check on its worktree, obtained structurally instead. The `.ast-grep/` rules and
+# `sgconfig.yml` come along in the extract, so the RULE is judged at the revision too, which is
+# the half a rule-file edit would otherwise smuggle past a committed-code scan.
+#
 # Usage:  scripts/check-no-degraded-felt.sh
+#         scripts/check-no-degraded-felt.sh --rev HEAD   # clean extract (churn-safe)
 # Exit:   0 = clean (all folds in commitment producers are justified);
 #         1 = an un-justified degraded fold reached a commitment position;
-#         2 = environment problem (ast-grep not installed).
+#         2 = environment problem (ast-grep not installed / bad --rev).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+REV=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rev) REV="${2:-}"; [ -n "$REV" ] || { echo "check-no-degraded-felt: --rev needs a revision" >&2; exit 2; }; shift 2 ;;
+    --rev=*) REV="${1#--rev=}"; shift ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    *) echo "check-no-degraded-felt: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+  esac
+done
+REV_TMP=""
+rev_cleanup() { [ -n "${REV_TMP:-}" ] && rm -rf "$REV_TMP"; return 0; }
+trap rev_cleanup EXIT
+if [ -n "$REV" ]; then
+  SHA="$(git -C "$ROOT" rev-parse --verify "$REV^{commit}" 2>/dev/null)" || {
+    echo "check-no-degraded-felt: FATAL — '$REV' does not resolve to a commit." >&2; exit 2; }
+  REV_TMP="$(mktemp -d -t no-degraded-felt-rev.XXXXXX)"
+  git -C "$ROOT" archive "$SHA" | tar -x -C "$REV_TMP" || {
+    echo "check-no-degraded-felt: FATAL — git archive $REV failed." >&2; exit 2; }
+  ROOT="$REV_TMP"
+  echo "check-no-degraded-felt: grading $REV ($(echo "$SHA" | cut -c1-12)) from a clean extract; the working tree is NOT read."
+fi
 cd "$ROOT"
 
 # Locate ast-grep. The binary ships as both `sg` and `ast-grep`; `sg` can be

@@ -31,9 +31,44 @@
 # A gate that cannot fail is not a gate (cf. scripts/check-mirror-gates.sh: "a
 # gate that cannot bark is worse than none"), and this is the one consumer whose
 # drift is directly security-relevant. It FAILS here.
+# ── ⚑ `--rev` (added 2026-08-02): grade a COMMIT, not whatever is lying around ──────────
+# This gate's verdict is cited in six docs as evidence that the fork rev is in lockstep, and
+# without `--rev` every one of those verdicts was taken over a shared working tree: a sibling
+# mid-bump has one consumer edited and four not, and the gate reports THEIR intermediate state
+# under this gate's name. The mirror is `check-guard-modules.py --rev` / `check-descriptor-
+# drift.sh --rev`: materialise the revision with `git archive <rev> | tar -x` and run the whole
+# gate against the extract. An archive OF A COMMIT cannot contain churn — that is the same
+# guarantee `check-descriptor-drift.sh` buys with an explicit `git status --porcelain` check on
+# its worktree, obtained structurally instead.
+#
+# Usage:  scripts/check-p3-rev.sh
+#         scripts/check-p3-rev.sh --rev HEAD    # clean extract (churn-safe)
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+REV=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rev) REV="${2:-}"; [ -n "$REV" ] || { echo "check-p3-rev: --rev needs a revision" >&2; exit 2; }; shift 2 ;;
+    --rev=*) REV="${1#--rev=}"; shift ;;
+    -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
+    *) echo "check-p3-rev: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+  esac
+done
+REV_TMP=""
+rev_cleanup() { [ -n "${REV_TMP:-}" ] && rm -rf "$REV_TMP"; return 0; }
+trap rev_cleanup EXIT
+if [ -n "$REV" ]; then
+  SHA="$(git -C "$repo_root" rev-parse --verify "$REV^{commit}" 2>/dev/null)" || {
+    echo "check-p3-rev: FATAL — '$REV' does not resolve to a commit." >&2; exit 2; }
+  REV_TMP="$(mktemp -d -t p3-rev-rev.XXXXXX)"
+  git -C "$repo_root" archive "$SHA" | tar -x -C "$REV_TMP" || {
+    echo "check-p3-rev: FATAL — git archive $REV failed." >&2; exit 2; }
+  repo_root="$REV_TMP"
+  echo "check-p3-rev: grading $REV ($(echo "$SHA" | cut -c1-12)) from a clean extract; the working tree is NOT read."
+fi
+
 env_file="$repo_root/scripts/p3-rev.env"
 
 if [[ ! -f "$env_file" ]]; then

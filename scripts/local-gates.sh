@@ -139,13 +139,13 @@ GATES=(
   # its five cases were verified to FAIL against the pre-repair parser (the fifth is a forward
   # guard on the new stack-popping and says so). ~0s, no git, no Lean, no cargo.
   "workflow-wd-scope-red|60|python3 scripts/emit_descriptors.py --self-test-workflow-scope"
-  "no-degraded-felt|120|bash scripts/check-no-degraded-felt.sh"
+  "no-degraded-felt|180|bash scripts/check-no-degraded-felt.sh --rev HEAD"
   "emitter-routing|120|bash scripts/check-emitter-routing.sh"
   "anchored-lc-committee|60|bash scripts/check-anchored-lc-committee.sh"
   "anchored-lc-committee-red|60|bash scripts/check-anchored-lc-committee.sh --self-test"
   "byte-to-felt|120|bash scripts/check-byte-to-felt.sh"
-  "p3-rev|60|bash scripts/check-p3-rev.sh"
-  "drift-taxonomy|120|bash scripts/check-drift-taxonomy.sh"
+  "p3-rev|120|bash scripts/check-p3-rev.sh --rev HEAD"
+  "drift-taxonomy|120|bash scripts/check-drift-taxonomy.sh --rev HEAD"
   "no-unchecked-auth|300|bash scripts/no-unchecked-auth.sh"
   "mirror-gates|900|bash scripts/check-mirror-gates.sh"
   "mirror-gates-canary|900|bash scripts/mirror-gates/canary.sh"
@@ -162,7 +162,7 @@ GATES=(
   "feature-tiers|180|python3 scripts/check-feature-tiers.py"
   "feature-t3-ratchet|60|bash scripts/feature-t3-sweep.sh --self-test"
   "ci-invariants-structural|900|bash scripts/ci-invariants.sh structural"
-  "descriptor-drift|900|bash scripts/check-descriptor-drift.sh"
+  "descriptor-drift|1800|bash scripts/check-descriptor-drift.sh --rev HEAD"
   # A Lean emitter asking the poseidon2 chip for an arity the chip AIR does not admit. The
   # descriptor it produces CAN NEVER BE SATISFIED, and nothing said so: `57105f387` found the wide
   # blinded membership tooth had been asking for arity 9 SINCE THE DAY IT WAS WRITTEN, and it
@@ -254,7 +254,8 @@ GATES=(
   "embedded-js|180|python3 scripts/check-embedded-js.py"
   "embedded-js-red|120|python3 scripts/check-embedded-js.py --self-test"
   "test-stubs-firewall|300|bash scripts/check-test-stubs-firewall.sh"
-  "no-disarmed-guard|180|bash scripts/check-no-disarmed-guard.sh"
+  "no-disarmed-guard|240|bash scripts/check-no-disarmed-guard.sh --rev HEAD"
+  "no-disarmed-guard-red|120|bash scripts/check-no-disarmed-guard.sh --self-test"
   "lean-seed-freshness|120|bash scripts/check-lean-seed-freshness.sh"
   # `lean-seed-freshness` compares a TREE HASH recorded in the pin. It says nothing about
   # what is IN the archive, and a seed can match the pin and still be missing every verified
