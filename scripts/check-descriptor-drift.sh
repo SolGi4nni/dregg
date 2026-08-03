@@ -277,7 +277,16 @@ if [ "$drift" -eq 0 ]; then
   # upgrade need a wipe?" — a tail-append passes, a geometry-widen is caught.
   # (Skips cleanly when no base ref is resolvable, e.g. a detached fresh checkout.)
   echo ""
-  "$ROOT/scripts/check-drift-taxonomy.sh"
+  # Under `--rev` the tail is handed the SAME revision, not `$ROOT`'s checkout of it. Re-rooting
+  # already made the CONTENT right (the detached worktree is what `$ROOT` names), but the tail
+  # then printed `-> working tree` for a tree nobody was working in, which is the label lying
+  # about the one thing this mode exists to establish. Passing `--rev` makes both sides of the
+  # classification commits AND makes the line true.
+  if [ -n "$REV" ]; then
+    "$ROOT/scripts/check-drift-taxonomy.sh" --rev "$SHA"
+  else
+    "$ROOT/scripts/check-drift-taxonomy.sh"
+  fi
   exit $?
 else
   echo "" >&2
