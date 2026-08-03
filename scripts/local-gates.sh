@@ -203,7 +203,12 @@ GATES=(
   # row above. `source_dirty` was moved OUT of `--strict` into the always-checked set for the
   # mirror-image reason: it is a property of the committed stamp, always answerable, and it was
   # the one clause that would have caught the force-stamp.
-  "provenance|300|python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD"
+  # ⚠ BUDGET IS MEASURED, NOT GUESSED, and it is generous on purpose: a TIMEOUT is not a verdict,
+  # and this table has already lost a whole session's coverage to one (`gates-executed`, split
+  # 2026-07-27). The cost is a 454 MB detached-worktree checkout plus the four door scans (4344
+  # tracked .rs, 2300 .lean, 26 workflows). MEASURED 2026-08-02: ~18s idle, 109s while sibling
+  # cargo builds saturate the disk — 15% CPU, i.e. I/O-bound, so the tail is contention, not work.
+  "provenance|600|python3 scripts/emit_descriptors.py --verify-provenance --rev HEAD"
   # The `-red` row is not optional: "nothing has drifted" is a NEGATIVE assertion and passes just
   # as happily on a broken reader — which is what this gate was, for months, at zero invocations.
   # Drives all four defect shapes the ten table AIRs were actually in (a moved byte, a dropped
@@ -211,7 +216,12 @@ GATES=(
   # the byte and the stamp (restore -> green, so the red was the mutation and not the machinery),
   # the clean control, and the VACUITY FLOOR — an empty walk must refuse, not report PASS over
   # zero artifacts. Scratch copies in a temp worktree; the shared tree is never touched.
-  "provenance-red|300|python3 scripts/emit_descriptors.py --self-test-provenance"
+  # MEASURED 2026-08-02: 228s under load, which TIMED OUT at 300s on its first wired run — eight
+  # injected faults each re-running the four door scans over inputs the proof never mutates, i.e.
+  # eight identical scans measuring nothing. The delta cases now skip those (the argument for why
+  # that is sound is in `_verify_provenance_findings`, and ONE full-path run keeps it honest):
+  # 95s under the same load, and 9 cases became 11.
+  "provenance-red|600|python3 scripts/emit_descriptors.py --self-test-provenance"
   # A Lean emitter asking the poseidon2 chip for an arity the chip AIR does not admit. The
   # descriptor it produces CAN NEVER BE SATISFIED, and nothing said so: `57105f387` found the wide
   # blinded membership tooth had been asking for arity 9 SINCE THE DAY IT WAS WRITTEN, and it

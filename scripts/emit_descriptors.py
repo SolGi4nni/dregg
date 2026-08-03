@@ -985,7 +985,7 @@ _LAST_TREE: list = [""]
 _LAST_DIRTY: list = ["?"]
 
 
-def _verify_provenance_findings(strict: bool) -> tuple[list[str], dict[str, int]]:
+def _verify_provenance_findings(strict: bool, doors: bool = True) -> tuple[list[str], dict[str, int]]:
     """The whole check as DATA: (findings, per-leg counts). Empty findings == clean.
 
     Split out from the reporting so the red-proof can compare finding SETS rather than exit
@@ -1072,7 +1072,18 @@ def _verify_provenance_findings(strict: bool) -> tuple[list[str], dict[str, int]
     # The ROUTING leg (static; no Lean run). The three checks above all start from a file
     # that EXISTS and ask whether the stamp covers it — so a name the Lean routing table
     # authors with no artifact behind it is invisible to every one of them.
-    failures.extend(verify_by_name_routing())
+    #
+    # ⚠ `doors=False` IS FOR THE RED-PROOF ONLY, and it is safe there for a stated reason, not a
+    # hopeful one: these legs read `metatheory/*.lean` (2300 files), tracked `*.rs` (4344) and
+    # `.github/workflows/*.yml` — and the red-proof mutates NONE of those. It touches exactly
+    # three things: descriptor bytes under a subdirectory, a `<subdir>_sha256` row, and
+    # `source_dirty`. No door leg reads any of the three (`verify_by_name_routing`'s stamp read is
+    # `by_name_sha256`, which the proof never edits). Re-running them once per injected fault cost
+    # ~25s each and measured nothing — 8 identical scans — which is how a red-proof grows past its
+    # budget and starts reporting TIMEOUT, and a timeout is not a verdict. The proof still makes
+    # ONE full-path run (doors on) so this argument cannot silently become false.
+    if doors:
+        failures.extend(verify_by_name_routing())
 
     # ⚑ `source_dirty` IS NOT A STRICT-ONLY CLAUSE. It was, and that made it unreachable: the
     # only runnable form of this gate is the non-strict one (see below), so the single check
@@ -3180,7 +3191,7 @@ def self_test_workflow_scope() -> int:
 #   * a stamp minted with DREGG_VK_REGEN_ALLOW_DIRTY=1     (the "looks taken and isn't" stamp)
 # ...plus the CONTROL (unmutated HEAD must be green — otherwise every red below is free) and the
 # VACUITY FLOOR (a walk that finds nothing must refuse, not report PASS).
-def _findings_of(strict: bool = False) -> tuple[set[str], str]:
+def _findings_of(strict: bool = False, doors: bool = False) -> tuple[set[str], str]:
     """The finding SET against the currently-bound roots, plus any FATAL text.
 
     A FATAL (the vacuity floor, a missing stamp) raises SystemExit rather than returning a
@@ -3189,7 +3200,7 @@ def _findings_of(strict: bool = False) -> tuple[set[str], str]:
     out, err = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            findings, _ = _verify_provenance_findings(strict)
+            findings, _ = _verify_provenance_findings(strict, doors=doors)
         return set(findings), ""
     except SystemExit as exc:
         return set(), str(exc.code) if exc.code and not isinstance(exc.code, int) else "FATAL"
@@ -3245,11 +3256,24 @@ def self_test_provenance() -> int:
             kind = leg[: -len("_sha256")]
 
             with rooted_at(wt):
+                # THE FULL-PATH RUN, once: every leg including the four "committed reference to an
+                # uncommitted target" doors. The delta cases below run with `doors=False` for
+                # budget (see `_verify_provenance_findings`); this run is what keeps that
+                # justified — if the full path ever stops working, the skip stops being harmless
+                # and this case says so before any delta is trusted.
+                full, ffatal = _findings_of(doors=True)
+                case(ffatal == "", "FULL PATH (all legs, incl. the four doors) executes",
+                     f"fatal={ffatal[:200]!r}")
+
                 # THE BASELINE — whatever HEAD's findings are today. Not asserted to be empty;
                 # asserted to be what every mutation below is measured AGAINST.
                 base, fatal = _findings_of()
                 case(fatal == "", f"BASELINE at HEAD ({sha[:12]}) computes without refusing",
                      f"fatal={fatal[:200]!r}")
+                case(base <= full,
+                     "the baseline is a SUBSET of the full-path findings (the skipped doors "
+                     "only ever ADD findings, never mask one)",
+                     f"baseline-only={sorted(base - full)[:2]}")
                 if base:
                     print(f"  [ i ] baseline at HEAD carries {len(base)} pre-existing finding(s) "
                           f"(NOT this gate's subject; each mutation is measured as a DELTA):")
