@@ -109,6 +109,17 @@ import Dregg2.Circuit.Emit.KimchiComposeStepFragment
 import Dregg2.Circuit.Emit.KimchiRenderPublicInput
 import Dregg2.Circuit.Emit.KimchiStepMain
 import Dregg2.Circuit.Emit.KimchiWrapMain
+-- ⚑ W-XHAT's two-source SRS pin. `MinaStepSrsLagrange` (the data) is reached through
+-- `KimchiWrapMain`; the PIN that says the SRS construction reproduces Mina's devnet SRS imports the
+-- 5.4 MB `MinaWrapSrsG` and is deliberately NOT on the assembly's own import path, so it needs a
+-- root of its own or it would build only under `lake env lean` — gating-defaults-to-silence.
+import Dregg2.Circuit.Emit.MinaStepSrsLagrangePin
+-- ⚑ THE PROVER-CHOICE CENSUS, one module per assembly. Rooted here rather than left to
+-- `lake env lean`, because a census nothing builds is the gating-defaults-to-silence wound in the
+-- instrument that is supposed to detect it. Each states, as NAMED THEOREMS over the emitted rows,
+-- how many cells a prover can still choose and which of them change what the circuit accepts.
+import Dregg2.Circuit.Emit.KimchiStepProverChoice
+import Dregg2.Circuit.Emit.KimchiWrapProverChoice
 import Dregg2.Bridge.PicklesR3BranchDataDiff
 import Dregg2.Bridge.PicklesStatementDiff
 import Dregg2.Bridge.PicklesStepStatementDiff
