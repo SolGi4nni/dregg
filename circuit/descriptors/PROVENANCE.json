@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "mode": "stamp-existing",
-  "dregg2_tree_hash": "5cd4546658fca5fe25734cb8156647ce0ae70e72",
-  "repo_head": "0a24ea9940839994bae73949f5789e391cfb5102",
+  "mode": "emit",
+  "dregg2_tree_hash": "79a720f05654d00d16ea5a238043acb306e21449",
+  "repo_head": "36e80c2dbf4950cb9000a0102ee849b7d5b80696",
   "source_dirty": false,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
@@ -19,7 +19,7 @@
     "EmitCertF.lean",
     "EmitCertFMarket4.lean"
   ],
-  "generated_utc": "2026-08-03T00:38:23Z",
+  "generated_utc": "2026-08-03T02:32:30Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v3.json": "6b8b58dbdd46115442f050990296aca7ccd79b5735f326b90db7b0058b49b365",
@@ -173,16 +173,17 @@
     "turn-chain-binding.json": "c73e5f6105aa2fce262d9a755496033afda92dcecd1796d4b0bb08b0d893bb43"
   },
   "table-airs_sha256": {
-    "dregg-ir2-byte-v1.json": "b9b889764f8ee63fdb247470ca9d3f9dfc2a79f3fdf489a64bd4cf990cf00df5",
-    "dregg-ir2-chip-state16-v1.json": "e0ea4f65cc4f91286dc3db8485e245f89dc5717892eff2ac53e73ca2277f2a07",
-    "dregg-ir2-chip-v1.json": "e834d9e606455eeef97625623e82d4ebdd4e967206f2597ba4a50cff291176e1",
-    "dregg-ir2-map-absent-v1.json": "5ad7a017d5d9b67968041a3fcfd092381276435f1e0f14b35857fac51fd4eb12",
-    "dregg-ir2-map-ops-v1.json": "1d07ea5908362483b4de952171df5ec9b1d88e271f19124b81f7c31c98896b25",
-    "dregg-ir2-mem-boundary-v1.json": "a0a872a0cee35650ac49adaae2b3c731d86a51167d200569ef32792f0ef9c16b",
-    "dregg-ir2-memory-v1.json": "da2fb3ce460dded8cacb54f3cecb85a588fba7d55a28e0922db2fa16674c1515",
-    "dregg-ir2-umem-boundary-cohort-v1.json": "608b71cd16e47e5b82008224b0e479e590438ac30a4624de6d7c9305cc6f6de2",
-    "dregg-ir2-umem-boundary-v1.json": "2f3d22f060c6d233f90288bbcf576dec87351d82c3a854378ba434cf54378ea9",
-    "dregg-ir2-umemory-v1.json": "95e7fcea65dc0366018a835b309527c5f9f635c11f091ed03606a5ba25112560"
+    "dregg-ir2-byte-v1.json": "6ed86450c15ca54d25863076e4fe69470e8f8e5b4766b592a09e4453234ab622",
+    "dregg-ir2-chip-state16-v1.json": "f94c7b2eccbca7783fab953a854e1d20f362b982022f42646c88cb4b5add7574",
+    "dregg-ir2-chip-v1.json": "810bc625c0f20b204a5eb8321cd8f713138b2da644d0d3a5463e8e1e91f50551",
+    "dregg-ir2-exact-public-v1.json": "366ba677e3475daeba981b4b12ec73129a0efa854f25f85bb8dd60bd38714850",
+    "dregg-ir2-map-absent-v1.json": "c8b370eac56a3d62ffaf4e0a5ec6f430bd20169013f66ccf8d768608fd79b141",
+    "dregg-ir2-map-ops-v1.json": "a949fa5843ff4e0623e75284278912d6a7f699d27c17222d5a43eeea4803c28e",
+    "dregg-ir2-mem-boundary-v1.json": "b7002ad198b2dbbeeee51451b0ed6767ca7f84758acef4eab3fa985f49a5fbf6",
+    "dregg-ir2-memory-v1.json": "63fde0a6fb7ecbc50fa96c0040fab720179502998676521b9942df3a895f5945",
+    "dregg-ir2-umem-boundary-cohort-v1.json": "f1e261d6f3b26ceb0ef8e85ad4e1654ed90765cfaffed25cba6a10f904445780",
+    "dregg-ir2-umem-boundary-v1.json": "74abf4375e060d2f2b74098919f31f9bea0de5de1c3e44c7fbb8fc98772b660d",
+    "dregg-ir2-umemory-v1.json": "4ee9b7bf717ad5da25e6da6ffb321a039d0f85b6818359600c97e48e0bdf6b79"
   },
   "fp_file_sha256": {
     "circuit/src/bilateral_aggregation_air.rs": "752402369f555938fb30fa1a7e042ff8f2091e3badd077718a95a2f7e115ce21",
