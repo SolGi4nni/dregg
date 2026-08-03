@@ -78,6 +78,7 @@ import Dregg2.Circuit.Emit.UnforcedPiPins
 import Dregg2.Circuit.Emit.LastRowFrameHardening
 import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
 -- ⚑ THE OWNER FREEZE (E10) — see `emitCompact` below and `OwnerFreezeWire`'s header.
+import Dregg2.Circuit.Emit.KeyCanonicity9Emit
 import Dregg2.Circuit.Emit.OwnerFreezeWire
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
@@ -172,6 +173,13 @@ def emitCompact (key : String) (d0 : EffectVmDescriptor2) : IO Unit := do
   -- with `compactForEmit`'s refusal rather than minting bad bytes. CHECK THIS LINE FIRST if the
   -- wide regen refuses.
   let d := Dregg2.Circuit.Emit.OwnerFreezeWire.ownerFreezeWire d0
+  -- ⚑ THE KEY-CANONICITY WELD (2026-08-02), applied at the SAME point and for the same reason: the
+  -- nine `CanonicalKey9` range lookups must name UNCOMPACTED block columns so S2/E1 renumber them
+  -- with everything else. Additive lookups only — no gate, no column, no PI — so the S2 kill-set
+  -- can only shrink and `transitionCeilingOk` is untouched. Welding only the narrow registry would
+  -- leave the identical out-of-image nonet admissible through the wide cover, whose fingerprint is
+  -- half the VK's `registry_fp`.
+  let d := Dregg2.Circuit.Emit.KeyCanonicity9Emit.keyCanonical9Wire d
   let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d
   match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
   | .ok (cm, bb, lb) =>

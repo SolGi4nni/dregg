@@ -83,6 +83,7 @@ import Dregg2.Circuit.Emit.RotWideCompactE1
 import Dregg2.Circuit.Emit.UnforcedPiPins
 import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
 -- ⚑ THE OWNER FREEZE (E10) — see `main` below and `OwnerFreezeWire`'s header.
+import Dregg2.Circuit.Emit.KeyCanonicity9Emit
 import Dregg2.Circuit.Emit.OwnerFreezeWire
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2 EffectVmDescriptor2)
@@ -178,6 +179,10 @@ def main : IO Unit := do
     -- the VK's `registry_fp`, so this cover carries the weld too. ⚠ UNRUN as authored (2026-08-01):
     -- `EffectVmEmitRotationWide.lean` was RED mid-187-widening. See `EmitWideRegistryProbe`'s note.
     let d := Dregg2.Circuit.Emit.OwnerFreezeWire.ownerFreezeWire d
+    -- ⚑ THE KEY-CANONICITY WELD (2026-08-02) — the nine `CanonicalKey9` range lookups per block,
+    -- applied to the UNCOMPACTED member so S2/E1 renumber their columns. `UMEM_WELD_TABLE_FP` is
+    -- the other half of the VK's `registry_fp`, so this cover carries the envelope too.
+    let d := Dregg2.Circuit.Emit.KeyCanonicity9Emit.keyCanonical9Wire d
     let d := Dregg2.Circuit.Emit.FieldsCanonicity9Emit.fieldsCanonical9Wire d
     match Dregg2.Circuit.Emit.WideCompactTable.compactForEmit key d with
     | .ok (cm, _, _) =>

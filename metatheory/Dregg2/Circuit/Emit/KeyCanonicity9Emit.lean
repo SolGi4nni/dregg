@@ -112,6 +112,7 @@ without it every honest turn is UNSAT, and with an 8-lane packer behind it the w
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `native_decide`.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitRotationV3
+import Dregg2.Circuit.Emit.FieldsCanonicity9Emit
 import Dregg2.Circuit.KeyLanes9
 
 namespace Dregg2.Circuit.Emit.KeyCanonicity9Emit
@@ -124,6 +125,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (rangeTidW)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (B_SPAN B_PUBKEY_OCTET B_PUBKEY_NINTH_LANE
   preLimbsAt)
+open Dregg2.Circuit.Emit.FieldsCanonicity9Emit (faceWidthOfName)
 open Dregg2.Circuit.FieldLanes9 (Bytes32)
 open Dregg2.Circuit.KeyLanes9 (K KTOP Nonet CanonicalKey9 LanesRanged TopLaneRanged UniformRanged
   keyToLanes9 keyLanes9ToBytes keyToLanes9_injective canonicalKey9_iff_in_image forgedKeyNonet
@@ -742,6 +744,130 @@ theorem keyCanon9_rejects_the_forged_nonet_deployed {hash : List ℤ → ℤ} {w
 #assert_axioms keyCanon9_forces_canonical_deployed
 #assert_axioms keyCanon9_determines_the_owner_key_deployed
 #assert_axioms keyCanon9_rejects_the_forged_nonet_deployed
+
+/-! ## §6 — ⚑ THE WIRE WRAP. The face the emit drivers apply, and the reason this file stopped
+being decoration.
+
+Everything above was true on 2026-08-01 and reached NOTHING: `keyCanonical9At` was applied by no
+emitter, so not one committed descriptor carried a single range lookup on an owner-key lane, and
+`state_commit` bound a nonet that no constraint required to be in the encoder's image. Measured
+over the two committed registries at that HEAD: 10560 lookups on the 28-bit fields table, 960 on
+the 24-bit table, and **zero on the 29-bit table** — the key nonet's lane width, which nothing had
+ever emitted.
+
+`keyCanonical9Wire` is the transform `EmitRotationV3.lean` (and the two wide registry probes) now
+apply to EVERY rotated member, exactly as they already apply `ownerFreezeWire` and
+`fieldsCanonical9Wire`. `faceWidthOfName` is shared from `FieldsCanonicity9Emit` — the Lean twin of
+`trace_rotated::avail_pad_for_descriptor_name` — rather than re-spelled here, so the hardened
+`…-v1-avail` members get their shifted base from the same single source `OwnerFreezeWire` reads.
+
+**The wrap is geometry-invariant** (`traceWidth`, `piCount`, `tables`, `hashSites`, `ranges`, and
+the member's NAME all `rfl`-unchanged): the nine columns are already allocated pre-limbs, and both
+range widths ride width-tagged custom table ids the deployed IR-2 interpreter already realizes
+(`descriptor_ir2::CUSTOM_RANGE_WIDTHS` carries 24 and 29). What DOES move is the main instance's
+aux region — the interpreter appends `decomp_cols(29) = 9` limb columns per lane lookup and
+`decomp_cols(24) = 6` for the narrow one, so `16·9 + 2·6 = 156` aux columns per member. That is a
+descriptor re-emit and a VK rotation, not a schema move. -/
+
+/-- **THE WIRE WRAP** — `CanonicalKey9` over the deployed owner-key nonet, at the v1-face width the
+member's own NAME declares. This is the object the emit drivers print. -/
+def keyCanonical9Wire (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
+  keyCanonical9At (deployedKeyCanon9Cols (faceWidthOfName d.name)) d
+
+theorem keyCanonical9Wire_eq (d : EffectVmDescriptor2) :
+    keyCanonical9Wire d
+      = keyCanonical9At (deployedKeyCanon9Cols (faceWidthOfName d.name)) d := rfl
+
+/-! ### Geometry does not move. -/
+
+theorem keyCanonical9Wire_name (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).name = d.name := rfl
+theorem keyCanonical9Wire_traceWidth (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).traceWidth = d.traceWidth := rfl
+theorem keyCanonical9Wire_piCount (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).piCount = d.piCount := rfl
+theorem keyCanonical9Wire_tables (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).tables = d.tables := rfl
+theorem keyCanonical9Wire_hashSites (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).hashSites = d.hashSites := rfl
+theorem keyCanonical9Wire_ranges (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).ranges = d.ranges := rfl
+theorem keyCanonical9Wire_constraints (d : EffectVmDescriptor2) :
+    (keyCanonical9Wire d).constraints
+      = d.constraints ++ keyCanon9ConstraintsAt (deployedKeyCanon9Cols (faceWidthOfName d.name)) :=
+  rfl
+
+/-- **THE PEEL, AT THE WIRE.** Every per-effect keystone proved about the unwrapped member lifts
+through the wire wrap unchanged: it only APPENDS lookups and moves no log. -/
+theorem satisfied2_of_keyCanonical9Wire (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (keyCanonical9Wire d) minit mfin maddrs t) :
+    Satisfied2 hash d minit mfin maddrs t :=
+  satisfied2_of_keyCanonical9At hash _ d h
+
+/-- **⚑ THE CAPSTONE, ON THE EMITTED OBJECT.** For a member the drivers actually print: under the
+wire wrap, the NINE absorbed pre-limbs the owner key rides — the octet `B_PUBKEY_OCTET .. +7` and
+the flag-day ninth lane, every one an entry of the list `wireCommitR` folds into `state_commit` —
+are the nine-lane encoding of EXACTLY ONE 32-byte key.
+
+This is `keyCanon9_determines_the_owner_key_deployed` at `w := faceWidthOfName d.name`, which is
+the whole content of the wiring: the same sentence, now about an object with a committed VK. -/
+theorem keyCanon9Wire_determines_the_owner_key {hash : List ℤ → ℤ} {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash (keyCanonical9Wire d) minit mfin maddrs t)
+    (h29 : t.tf (rangeTidW KEY_LANE_BITS) = rangeRows KEY_LANE_BITS)
+    (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
+    {i : Nat} (hi : i < t.rows.length) (blk : Fin 2) :
+    ∃! b : Bytes32, ∀ l : Fin 9,
+      ((keyToLanes9 b l : Nat) : ℤ)
+        = (preLimbsAt (faceWidthOfName d.name + blk.1 * B_SPAN) (envAt t i).loc).getD
+            (keyLimbOff l) 0 :=
+  keyCanon9_determines_the_owner_key_deployed hsat h29 h24 hi blk
+
+/-- **⚑ THE REFUSAL, ON THE EMITTED OBJECT.** A witness whose owner key's ninth absorbed pre-limb
+carries `2^24` — the vector a uniform nine-lane `< 2^29` check admits, whose decode is byte-for-byte
+another key's — does not satisfy the printed member on any row. -/
+theorem keyCanon9Wire_rejects_the_forged_nonet {hash : List ℤ → ℤ} {d : EffectVmDescriptor2}
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h24 : t.tf (rangeTidW KEY_TOP_BITS) = rangeRows KEY_TOP_BITS)
+    {i : Nat} (hi : i < t.rows.length) (blk : Fin 2)
+    (hforged : (preLimbsAt (faceWidthOfName d.name + blk.1 * B_SPAN) (envAt t i).loc).getD
+      deployedLane8Off 0 = 16777216) :
+    ¬ Satisfied2 hash (keyCanonical9Wire d) minit mfin maddrs t :=
+  keyCanon9_rejects_the_forged_nonet_deployed h24 hi blk hforged
+
+-- The four deployed faces, and the columns each lands the nonet on. Re-typed against the wire
+-- names the registry TSV actually carries: bare members ride the 188-wide v1 face, the three
+-- hardened availability members ride their shifted bases, and the ninth lane travels with them.
+#guard faceWidthOfName "dregg-effectvm-cellseal-v2-rot24-v3-staged" == 188
+#guard faceWidthOfName "dregg-effectvm-transfer-v1-avail-rot24-v3-staged" == 198
+#guard faceWidthOfName "dregg-effectvm-burn-v1-avail-rot24-v3-staged" == 196
+#guard faceWidthOfName "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged" == 204
+-- 18 lookups per member at EVERY face, and not one gate: the wrap cannot acquire a last-row
+-- exemption no matter which member it rides.
+#guard [188, 196, 198, 204].all (fun w =>
+  (keyCanon9ConstraintsAt (deployedKeyCanon9Cols w)).length == 18)
+#guard [188, 196, 198, 204].all (fun w =>
+  ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols w)).filter (fun c => match c with
+    | .base (.gate _) => true | _ => false)).length == 0)
+-- ⚑ THE TWO WIDTHS ARE NOT THE SAME TABLE, and this guard is what keeps a later "uniformity"
+-- edit from re-opening the encoding: eight lookups ride `rangeTidW 29`, exactly ONE rides
+-- `rangeTidW 24`, per block.
+#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
+  | .lookup l => l.table == rangeTidW KEY_LANE_BITS | _ => false)).length == 16
+#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
+  | .lookup l => l.table == rangeTidW KEY_TOP_BITS | _ => false)).length == 2
+#guard rangeTidW KEY_LANE_BITS != rangeTidW KEY_TOP_BITS
+-- …and the wrap really lands on the NONET, not on nine columns of its own choosing: the looked-up
+-- columns are exactly the absorbed owner-key pre-limbs at both blocks, from `preLimbColsAt`.
+#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filterMap (fun c => match c with
+  | .lookup ⟨_, [.var col]⟩ => some col | _ => none))
+  == [293, 294, 295, 296, 297, 298, 299, 300, 374,
+      544, 545, 546, 547, 548, 549, 550, 551, 625]
+
+#assert_axioms satisfied2_of_keyCanonical9Wire
+#assert_axioms keyCanon9Wire_determines_the_owner_key
+#assert_axioms keyCanon9Wire_rejects_the_forged_nonet
 
 /-- The exhibit's lane 8 really is the top-lane ceiling, one above the largest admissible value. -/
 theorem forged_lane8_is_the_ceiling :
