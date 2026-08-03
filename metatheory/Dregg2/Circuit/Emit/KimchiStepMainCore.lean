@@ -636,12 +636,6 @@ def vGx (s : StepShape) : PVar := xv (baseOut s + N_HM_APP)
 def vGy (s : StepShape) : PVar := xv (baseOut s + N_HM_APP + 1)
 def N_OUT_VARS : Nat := N_HM_APP + 2
 
-/-- ⚑ `G`'s honest VALUE, and it is a FIXTURE — named as one. The wrap proof's `sg` is not in
-`MinaStepPrevCommitments` (that file carries the STEP proof's commitments), so this is another of
-block 539508's own on-curve points standing in for it. ⚠ What that costs is stated in §17: no row
-here relates `G` to the opening, so "the honest `G`" means "an on-curve point in the slot", not "the
-point that closes `equal_g`". §17 measures the digest at BOTH, which is what makes the exhibit
-independent of this choice. -/
 -- ⚠ ⚑ **`G_XY` was DELETED 2026-08-03 (§19).** `G` was a fixture point (`GAMMA_XY[27]`) because
 -- nothing in the assembly related it to anything. §19's `rhs`/`equal_g` do relate it: `G` is now
 -- `solveG`'s output, a FUNCTION of `lhs`, and it lives on `StepData.gXY`. A constant here would be a
@@ -1978,6 +1972,9 @@ def endoSeedRows (s : StepShape) (sl : EndoSlots) (T : Nat × Nat) (wired : Bool
 def ipaSeedRows (s : StepShape) (v : IpaData) (wired : Bool) (r : Nat) : List SRow :=
   endoSeedRows s (roundSlots s r) (v.bases.getD r (0, 0)) wired
 
+/-- ⚑ `q = p_prime + lr_prod`'s VALUE — §19's `uc` folded into the fold sum. -/
+def IpaData.qPrimePt (v : IpaData) : Nat × Nat := (v.qPrimeAdd.getD 4 0, v.qPrimeAdd.getD 5 0)
+
 /-- ⚑ **`check_bulletproof`'s TAIL** (`step_verifier.ml:321-327`), the consumer that makes `delta` an
 absorbed word something READS:
 
@@ -2005,9 +2002,6 @@ REFUSED, the same substitution with `G` re-solved ACCEPTED. ⚑ `G`'s binder —
 one rung ABOVE `verify_one` — is ASSEMBLED since 2026-08-02 (segment D, §8e′), and **the re-solved
 witness is STILL ACCEPTED**: what changed is that it now moves the step statement's public
 `messages_for_next_step_proof` (§17(d)–(e)). -/
-/-- ⚑ `q = p_prime + lr_prod`'s VALUE — §19's `uc` folded into the fold sum. -/
-def IpaData.qPrimePt (v : IpaData) : Nat × Nat := (v.qPrimeAdd.getD 4 0, v.qPrimeAdd.getD 5 0)
-
 def lhsRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
   let sl := lhsSlots s
   endoSeedRows s sl v.qPrimePt wired
@@ -4340,9 +4334,9 @@ def bpEnv (s : StepShape) (v : BpData) : VarEnv :=
   ++ (List.range 2).flatMap (fun i =>
       let l := if i == 0 then v.lhs.1 else v.lhs.2
       let r := if i == 0 then v.rhs.1 else v.rhs.2
-      let d := fSub l r
-      let bit := if d == 0 then 1 else 0
-      let iv := if d == 0 then 0 else Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv d
+      let d : Nat := fSub l r
+      let bit : Nat := if d == 0 then 1 else 0
+      let iv : Nat := if d == 0 then 0 else Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv d
       [ (bpEqD s i, (d : Int)), (bpEqInv s i, (iv : Int)), (bpEqBit s i, (bit : Int))
       , (bpEqSq s i, (bit : Int)), (bpEqP s i, (fMul d iv : Int))
       , (bpEqZ s i, (fMul d bit : Int)) ])

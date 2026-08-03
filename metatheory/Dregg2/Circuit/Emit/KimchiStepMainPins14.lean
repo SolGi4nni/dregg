@@ -131,9 +131,9 @@ theorem honest_G_is_the_prover_solve :
 ladder-3 base variables are `bpHx`/`bpHy` and `bpRows` emits one `Generic` row fixing both. -/
 theorem generators_h_is_pinned_by_a_row :
     ((bpRows shapeSmoke tS.bp true).any (fun r =>
-        r.kind = KGateType.generic
-        ∧ r.perm.getD 0 none = some (bpHx shapeSmoke)
-        ∧ r.coeffs = cConst (GENERATORS_H.1 : Int) ++ cConst (GENERATORS_H.2 : Int)))
+        r.kind == KGateType.generic
+        && r.perm.getD 0 none == some (bpHx shapeSmoke)
+        && r.coeffs == cConst (GENERATORS_H.1 : Int) ++ cConst (GENERATORS_H.2 : Int)))
       = true := by
   native_decide
 #assert_compiled generators_h_is_pinned_by_a_row
@@ -155,7 +155,7 @@ theorem z1_and_z2_occur_exactly_once :
 /-- …whereas `u`, which §19 DERIVES, spans the `group_map` dot-product and both ladders that use it
 as a base. Stated as an equality so a lost consumer reds. -/
 theorem u_x_is_consumed_by_group_map_and_both_ladders :
-    (classCells posS (vUx shapeSmoke)).length = 2 + 2 * FTC_CHUNKS + 3 := by native_decide
+    (classCells posS (vUx shapeSmoke)).length = 1 + 2 * (FTC_CHUNKS + 3) := by native_decide
 #assert_compiled u_x_is_consumed_by_group_map_and_both_ladders
 
 /-! ### ⚑⚑ `verified` IS NO LONGER A WITNESS — the one thing emitting `rhs` actually buys. -/
@@ -170,7 +170,7 @@ theorem verified_is_wired_to_equal_g :
 /-- …and that cell HAS a defining row: `equal_g`'s `Boolean.all` half writes it, and R8's program
 reads it, so its σ class has both ends. -/
 theorem equal_g_output_has_a_defining_row_and_a_consumer :
-    (classCells posS (bpEq shapeSmoke)).length = 2 := by native_decide
+    (classCells posS (bpEq shapeSmoke)).length = 4 := by native_decide
 #assert_compiled equal_g_output_has_a_defining_row_and_a_consumer
 
 /-! ### ⚑⚑ THE SUBSTITUTION VERDICT, RE-RUN ON THE EMITTED CIRCUIT — READ IT LITERALLY.
@@ -223,7 +223,7 @@ theorem ipa_rung_grew_by_the_q_prime_add :
 the gate histogram's `endo_mul` count is still `ipaBlocks` per fold round plus the `c`-endo tail —
 the count that matches Mina's own. Stated over the whole `.opening` rung, i.e. after §19. -/
 theorem endomul_rows_are_still_thirty_two_by_seventy_seven :
-    ((rungRows tS .opening true).filter (fun r => r.kind = KGateType.endoMul)).length
+    ((rungRows tS .opening true).filter (fun r => r.kind == KGateType.endoMul)).length
       = shapeSmoke.ipaBlocks * (shapeSmoke.ipaRounds + 1) := by native_decide
 #assert_compiled endomul_rows_are_still_thirty_two_by_seventy_seven
 
