@@ -656,7 +656,11 @@ function report(R, src, M, L, prov, cone) {
   if (prov && cone) {
     console.log(`║  emitted:     ${prov.emitted_at ?? prov.refreshed_at}  by  ${prov.command ?? `--refresh-fixture from ${prov.refreshed_from}`}`);
     console.log(`║  cone:        ${cone.files.length} Dregg2 modules under ${cone.root}, digest ${cone.digest.slice(0, 16)}… (VERIFIED against this tree)`);
-    if (prov.git?.head) console.log(`║  git HEAD:    ${prov.git.head.slice(0, 12)}${prov.git.cone_dirty_at_head?.length ? `  ⚠ ${prov.git.cone_dirty_at_head.length} cone file(s) dirty vs HEAD: ${prov.git.cone_dirty_at_head.slice(0, 3).join(', ')}` : '  (emit cone CLEAN at HEAD)'}`);
+    // ⚠ This is the HEAD AT EMIT TIME, recorded in the stamp — say so. "git HEAD: <sha>" beside a
+    // green reads as CURRENT head, and a provenance line that can be misread is how a stale claim
+    // gets born from an honest record.
+    if (prov.git?.head) console.log(`║  emitted at:  HEAD ${prov.git.head.slice(0, 12)} (the commit checked out WHEN IT WAS EMITTED)`
+      + `${prov.git.cone_dirty_at_head?.length ? `  ⚠ ${prov.git.cone_dirty_at_head.length} cone file(s) were dirty vs it: ${prov.git.cone_dirty_at_head.slice(0, 3).join(', ')}` : '  — emit cone CLEAN at that commit'}`);
   }
   console.log('╚═\n');
   console.log('── (A) GADGET SIGNATURE SETS — alignment-free: is the instance we emit one Mina emits?');
