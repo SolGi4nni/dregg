@@ -120,7 +120,7 @@ block.
 
 ⚑ The arity condition is `ChipArityAdmitted`, not `≤ CHIP_RATE`, and it belongs in the STRUCTURAL
 half exactly as much as the padded-block width does: the deployed admission is a degree-7 POLYNOMIAL
-IDENTITY on the arity column (`descriptor_ir2.rs:3073`), not a crypto fact. A row at arity 8 is as
+IDENTITY on the arity column (`descriptor_ir2.rs::chip_air_row_accepts`), not a crypto fact. A row at arity 8 is as
 unrepresentable on the deployed chip as a row of the wrong length, and the shape predicate has to
 say so or it describes a chip nobody built. -/
 def ChipRowShaped (r : List ℤ) : Prop :=

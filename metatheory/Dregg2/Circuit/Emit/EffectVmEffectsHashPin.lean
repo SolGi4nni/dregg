@@ -340,7 +340,7 @@ def ehCarrierIn (w s : Nat) : List Nat :=
 ⚠ **This used to read "arity 11 (10 on the last step)", and that parenthesis was a defect.** There
 are 17 fresh felts and `EH_STEPS = 6` steps of `EH_FRESH_PER_STEP = 3`, so the last chunk carries
 only `17 − 15 = 2` and the last absorb went out at arity `8 + 2 = 10`. The deployed `Ir2Air::Chip`
-admits only `{0, 2, 3, 4, 7, 11, 16}` (its degree-7 admission product, `descriptor_ir2.rs:3073`);
+admits only `{0, 2, 3, 4, 7, 11, 16}` (its degree-7 admission product, `descriptor_ir2.rs::chip_air_row_accepts`);
 **10 is not a root**, so the sixth absorb of every row was a constraint with no satisfying
 assignment — this pin could never have proved. Padding the block to the full `carrier ‖ 3` makes
 every step arity 11, which is the arity the surrounding prose already claimed and the shape the

@@ -81,7 +81,7 @@ set_option linter.unusedVariables false
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 8).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -90,7 +90,7 @@ example : List EmittedExpr := chipLookupTuple (ins 8) 50 (siteLaneCols 100)
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 9).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -99,7 +99,7 @@ example : List EmittedExpr := chipLookupTuple (ins 9) 50 (siteLaneCols 100)
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 14).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -109,7 +109,7 @@ example : List EmittedExpr := chipLookupTuple (ins 14) 50 (siteLaneCols 100)
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 8).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -119,7 +119,7 @@ example : List EmittedExpr := chipLookupTupleNarrow (ins 8) 50
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted [1, 2, 3, 4, 5, 6, 7, 8, 9].length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -132,7 +132,7 @@ example : List Dregg2.Circuit.TableAirIR.TExpr :=
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 8).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -141,7 +141,7 @@ example : List EmittedExpr := chipLookupTupleN (ins 8) [40, 41]
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 9).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -150,7 +150,7 @@ example : List EmittedExpr := chipLookupTupleN (ins 9) [40, 41]
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 14).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -160,7 +160,7 @@ example : List EmittedExpr := chipLookupTupleN (ins 14) [40, 41]
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 9).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -169,7 +169,7 @@ example : List EmittedExpr := chipLookupTupleNarrow (ins 9) 50
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (ins 14).length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -179,7 +179,7 @@ example : List EmittedExpr := chipLookupTupleNarrow (ins 14) 50
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted [1, 2, 3, 4, 5, 6, 7, 8].length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -189,7 +189,7 @@ example : List Dregg2.Circuit.TableAirIR.TExpr :=
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -203,7 +203,7 @@ example : List Dregg2.Circuit.TableAirIR.TExpr :=
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (site 8).inputs.length
 -/
 #guard_msgs (error, drop info, drop warning) in
@@ -212,7 +212,7 @@ example : Lookup := siteLookup [] (site 8) 100
 /--
 error: could not synthesize default value for parameter 'hAdm' using tactics
 ---
-error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
+error: CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it is the chip's degree budget, and widening it here does not widen the AIR.
 ⊢ ChipArityAdmitted (site 9).inputs.length
 -/
 #guard_msgs (error, drop info, drop warning) in

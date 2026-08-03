@@ -178,7 +178,7 @@ def CHIP_OUT_LANES : Nat := 8
 /-! ### THE ADMITTED ABSORB ARITIES — the chip's degree budget, and why `≤ CHIP_RATE` is a LIE.
 
 An emitter does not get to pick an arity. The deployed `Ir2Air::Chip` carries its admission as a
-single degree-7 product over the arity column (`circuit/src/descriptor_ir2.rs:3073`):
+single degree-7 product over the arity column (`circuit/src/descriptor_ir2.rs::chip_air_row_accepts`):
 
     a·(a−2)·(a−3)·(a−4)·(a−7)·(a−11)·(a−16) = 0
 
@@ -218,7 +218,7 @@ widen it to fit a descriptor: pad the absorb block up to the next admitted arity
 it here does not widen the AIR — it only re-opens the hole. -/
 
 /-- **The chip AIR's ADMITTED absorb arities** — the roots of the deployed degree-7 admission
-product (`circuit/src/descriptor_ir2.rs:3073`). Derived independently, by execution, in
+product (`circuit/src/descriptor_ir2.rs::chip_air_row_accepts`). Derived independently, by execution, in
 `circuit/tests/chip_absorb_arity_admission_gate.rs`, which probes the deployed constraint
 evaluator rather than reading this list. -/
 def CHIP_ADMITTED_ARITIES : List Nat := [0, 2, 3, 4, 7, 11, 16]
@@ -251,7 +251,7 @@ macro "chip_arity_admitted" : tactic =>
       | exact of_decide_eq_true (Eq.refl true)
       | fail "CHIP ABSORB ARITY NOT ADMITTED — the deployed chip AIR admits only \
               CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16] (the roots of the degree-7 \
-              admission product, circuit/src/descriptor_ir2.rs:3073). At any other arity the \
+              admission product, circuit/src/descriptor_ir2.rs::chip_air_row_accepts). At any other arity the \
               constraint has NO satisfying assignment and the descriptor is UNPROVABLE. PAD the \
               absorb block up to the next admitted arity. Do NOT widen CHIP_ADMITTED_ARITIES: it \
               is the chip's degree budget, and widening it here does not widen the AIR.")

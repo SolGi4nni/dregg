@@ -44,7 +44,7 @@ future lane-count squeeze fails the build.
 Until today this file absorbed the span lanes at **arity 8** and the wide-blind tooth at **arity
 14**, and justified it with "arity 14 ≤ `CHIP_RATE` = 16". **That is the wrong predicate.** The
 deployed `Ir2Air::Chip` carries its admission as a degree-7 product over the arity column
-(`circuit/src/descriptor_ir2.rs:3073`), whose roots are `{0, 2, 3, 4, 7, 11, 16}`. Neither 8 nor 14
+(`circuit/src/descriptor_ir2.rs::chip_air_row_accepts`), whose roots are `{0, 2, 3, 4, 7, 11, 16}`. Neither 8 nor 14
 is a root, so *no assignment satisfies those two constraints* — this descriptor, the SOLE emitted
 hidden-span descriptor, had never proved and could never have proved. A second mode rode along: off
 the `seed456` blend (high only at 7, 11 and 16) the deployed absorb routes the ARITY TAG into lane 4
