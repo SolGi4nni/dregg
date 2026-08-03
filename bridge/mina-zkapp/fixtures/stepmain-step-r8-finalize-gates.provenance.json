@@ -1,0 +1,470 @@
+{
+  "schema": "pickles-emit-provenance/1",
+  "fixture": "stepmain-step-r8-finalize-gates.json.gz",
+  "artifact_sha256": "b3466e0d5c76861221b38a73e8f27daf7b4b05cae5f3fb85d1f5e9f4d0cae3f1",
+  "refreshed_at": "2026-08-03T01:55:14.275Z",
+  "refreshed_from": "/tmp/pickles-stepmain/stepmain_step_r8_finalize.json (== fixture)",
+  "cone": {
+    "root": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
+    "files": 112,
+    "digest": "672c321aad7930e55f129a10dc8542f091fd45cad89933c5d8d879cec53b5057",
+    "files_detail": [
+      {
+        "rel": "Dregg2/Authority/ClearanceGraph.lean",
+        "sha": "daca078b4eb37a8d8f35540f329aaf317f28109f2379567b11e514d1301f2142"
+      },
+      {
+        "rel": "Dregg2/Authority/Positional.lean",
+        "sha": "b2895cf5d663f93cb212ebafc6728f205ceeff608d6c3a9c5588fe8e85cb6c15"
+      },
+      {
+        "rel": "Dregg2/Authority/Predicate.lean",
+        "sha": "997919eab42931a65885dac4b70195ed9a1fe63b010b5d29f2a79d2e0cb260da"
+      },
+      {
+        "rel": "Dregg2/Bridge/MinaStepPrevCommitments.lean",
+        "sha": "cf094dbe68a3e17cf577ae860139db5b993857dfb3e6829a993cbd23951666bb"
+      },
+      {
+        "rel": "Dregg2/Bridge/MinaWrapFtEval0.lean",
+        "sha": "1bbe43c98d6ffcdd9fd9fd1e30a53954e4a75e379547d3e76619d5798013092b"
+      },
+      {
+        "rel": "Dregg2/Bridge/TickShifts.lean",
+        "sha": "53bae444f9f79ab397bf8932d12038716c63edf229e51fcd47ce7deaa32d87c0"
+      },
+      {
+        "rel": "Dregg2/Circuit.lean",
+        "sha": "fd1275a3025f86b287afa5812a3e48f131ac8528fb969af1cbdf83267eeca734"
+      },
+      {
+        "rel": "Dregg2/Circuit/BabyBearFriField.lean",
+        "sha": "f24c82177606d8c8762ee9fbc56ded025cc532f231f80243bfcbacdabfd1199c"
+      },
+      {
+        "rel": "Dregg2/Circuit/CapMerkleGeneric.lean",
+        "sha": "4c98436de4f9dc6abe589c16737d68152bf6e52467e4f3a829f3ceef1682e15e"
+      },
+      {
+        "rel": "Dregg2/Circuit/DeployedCapTree.lean",
+        "sha": "15a5740f92f485611dd00aa9988f1d956efa610e0713363bbc582261155bab33"
+      },
+      {
+        "rel": "Dregg2/Circuit/DeployedHeapTree.lean",
+        "sha": "c93a28ec05d3a8838b67880ca4b9fc3822be67304aff642501180d33a39c7f8f"
+      },
+      {
+        "rel": "Dregg2/Circuit/DeployedMapDenotation.lean",
+        "sha": "8909a3ddb7ec71481693a67c02350af220199c566cc590b69a9839d1e2b87362"
+      },
+      {
+        "rel": "Dregg2/Circuit/DescriptorIR2.lean",
+        "sha": "67cb7642ac32ba7a630889e9eaa36b448e6bd67211f6ad8ddc3e5af999fe3c9c"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/AirBuilder.lean",
+        "sha": "6107c8127e5988210d4d94be260707e1b3ec2edfa7506b9b5a422fdab1ea52a7"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/Blake2bGadget.lean",
+        "sha": "405a1f76c5254e434639acb927841b69f8400e8419eed51bbc3a32cb4a5a95aa"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/Bls12381Tower.lean",
+        "sha": "3b89281887f333caff5f4c40554f45a4d3abc322fd65f16fc8481899281aedaa"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/EffectVmEmit.lean",
+        "sha": "7bc0bacd1b3daaea59d4f3a1f47556eae515b45c78063c7834a60c84dceebede"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/EffectVmEmitCapReshape.lean",
+        "sha": "d09bf89b4765a4db828a180956e51fb98ddf900554721733dbfd257135c007df"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/EffectVmEmitCapRoot.lean",
+        "sha": "863ccd61597bca53490a5c9c3bd31aab576e159274da604e85a64cc5c41be545"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
+        "sha": "44378f188ee6f62fece3cde9933f752faa10cb027914fa5fefe9ecf1ba06ae5a"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiComposeStepFragment.lean",
+        "sha": "525e0d7a14a29cbe5c46e1bcac03059cdfe3e8760f339b8db885d22c853edc26"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiCustomGates.lean",
+        "sha": "84c5bec13997c8d81ffe019b86c6c45566064ee17c26c2256a8b578881d77ea0"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiPlacement.lean",
+        "sha": "750599ebdc29847a002bacc37c411e481b8fc51bf7786a87c81ee971d9c8dcff"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiRenderCompleteAdd.lean",
+        "sha": "1962b08c5133f9585e183ac7e06b262730bb54e0c7c35dfba34df302d424312a"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiRenderEndoMul.lean",
+        "sha": "6da020a840da6570388ca79d34bc77a90bc41b3df6e4f5fb77bf1fad9ac22c75"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiRenderEndoMulScalar.lean",
+        "sha": "c5337628e03c5b7359b74ea1b20e2fbc2058258f538f3dff1535af7957b684ee"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiRenderPoseidon.lean",
+        "sha": "62957cd916f62d16e8ec0c075f89824987b26efa4c007ec56cbd41716cbd1f1a"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiRenderPublicInput.lean",
+        "sha": "dbb9fb82a927dd0414dc0a9ad0f3f58306c8094372c3543c18da744c96c6023a"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiRenderVarBaseMul.lean",
+        "sha": "5f5d19e9432959ae38e69f1a04d26dca0bbab592bd27a4c2b9816a6ed775cd85"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiStepMainCore.lean",
+        "sha": "387f3874551225059a86d988fcff0b6a847f8f380b8495ab0806f67721b1579c"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiStepMainField.lean",
+        "sha": "7e92b5438736acb9a6d3f773a3459b6a36c920af3f682090e0af124d4d5aab77"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiTarget.lean",
+        "sha": "9979e8061478e0ea24b97137a200f6801f00c257fe33c8185b1ce49e43271941"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/KimchiVerify.lean",
+        "sha": "bf2d78279192d291285da1453f4f2a8ad579c80110ba35bcd496d09e2db68804"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/MinaRealBlockGate.lean",
+        "sha": "f8c50a3a4c2ebf7d85f877b7b8f3f8dc877acbcb8f0fc071b86483d5bd596a66"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/MinaRealBlockTranscript.lean",
+        "sha": "5154c237e97174e41a43761bac2faa19581cea3b0262eaaaf729d01fd7aa821a"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/MinaWrapAggregationGate.lean",
+        "sha": "a73ea4a291497a78bdec0bb9f408a2172bc6034af68e0bfcf56d0edbe395f4aa"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/MinaWrapGroupGate.lean",
+        "sha": "12d7b1b436778aae6c638701908175953a69df71e307e025a2e4034e8040ab17"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/MinaWrapOpeningGate.lean",
+        "sha": "2c863d9f41903fa93ca96ac429dc357dc2b57b2f4d9065128e2156353a2bfc72"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/MinaWrapPublicCommGate.lean",
+        "sha": "ad02ea6fb325fdb76376e7a0dafbe52bcf179c27b1ff47b9887314a8ba967a0b"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaCurve.lean",
+        "sha": "a2814542c801a134dd635f45f3877392152877caddc59f52782b6da79b03f7fe"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaCurveComplete.lean",
+        "sha": "99b239d7fc16ea4de8ef5ec7a367501a821c687925b0d5db190781a8db81a64d"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaField.lean",
+        "sha": "3de647416025fd125e4f163503a50693140bea4061b966da62b18b14d9df46f0"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaIPA.lean",
+        "sha": "34bfad7f90e8800be0769ea53a5e82f4155bc5dcb427707f40bb385f0be3a9d2"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaPoseidon.lean",
+        "sha": "068a73b441f6c493651e3f121e88cac802050a18a8dc72cdc881ad78a1b8105e"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaPoseidonFq.lean",
+        "sha": "aa9752faa0dbf99d900a0481c2cc8a427d369b9919c96bbfbbe9241c290f4c99"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/PastaScalarMul.lean",
+        "sha": "a653091e80d320765f58642f464177db44863b0a2c6c29255ee4467083f87700"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/Sha256Gadget.lean",
+        "sha": "bf5356b1514494001909fc54967d95ade89ee038bf2794e257b554e9b9d31d9e"
+      },
+      {
+        "rel": "Dregg2/Circuit/Emit/WitnessBuilder.lean",
+        "sha": "c3984b7ffc037662bcf69d5de6ff1914f6a307e695f3c3acdebb2bd2cf72aad9"
+      },
+      {
+        "rel": "Dregg2/Circuit/FinKernelState.lean",
+        "sha": "0c55fd9a1b737d4a533e0ddd5d31ffbd9a8c1d147ac36cef1455e360024d0753"
+      },
+      {
+        "rel": "Dregg2/Circuit/FriSoundness.lean",
+        "sha": "60f9c5dad09da6b79b897bb4a22174a444a68920581f16efd35edfca0cb06e99"
+      },
+      {
+        "rel": "Dregg2/Circuit/HashFloorHonesty.lean",
+        "sha": "907921ed593e1a95f14b8b3db0c3f7b8463707c6f687806af3045838a323ca20"
+      },
+      {
+        "rel": "Dregg2/Circuit/Lookup.lean",
+        "sha": "20cc58dd0e0db421871bc243a1ce5f6f8604d1d4f124397b8db4a1799b480b7d"
+      },
+      {
+        "rel": "Dregg2/Circuit/MapMerkleRoot.lean",
+        "sha": "89df7e4f9d4fc2bd6bad45520b151fd3877263f72821ed25ae30ea153c8f3a26"
+      },
+      {
+        "rel": "Dregg2/Circuit/Poseidon2Binding.lean",
+        "sha": "d27ae8d6bfb03baec8dc243093eabbad1f587dbc44df94c46e7cfa80cd7b463c"
+      },
+      {
+        "rel": "Dregg2/Circuit/RestFrameFin.lean",
+        "sha": "8600d3a5a92d9041cd430fe8456ca5f9ada2f5a350d3dbe969242eda75178453"
+      },
+      {
+        "rel": "Dregg2/Circuit/StateCommit.lean",
+        "sha": "9e159783bb8c068804d54b7ddcd8f64d9e3e8bf8ec8a0648802c45c000dfb1dc"
+      },
+      {
+        "rel": "Dregg2/Circuit/Transfer.lean",
+        "sha": "b5dfd890c6ba4649891b571e87f1e7ce83fd87e296aa43b44dc0a95752a9e1c0"
+      },
+      {
+        "rel": "Dregg2/Core.lean",
+        "sha": "dc76275a7d3adb96ffa4b031c491027e31a27049d60c67161ac1e83fddaaa11b"
+      },
+      {
+        "rel": "Dregg2/Crypto/CommitmentBinding.lean",
+        "sha": "59964d8b6e6886acfac631b2a1493d3bfd327357a88704fcc3468851ac86e93d"
+      },
+      {
+        "rel": "Dregg2/Crypto/ConcreteSecurity.lean",
+        "sha": "101746bfa3f36d1c98f64179ba4d1249c8b31e26addffef6d64e3b9498869ef4"
+      },
+      {
+        "rel": "Dregg2/Crypto/CostAdversary.lean",
+        "sha": "1ed158f37033cdc8636082e6e1a2e9cf3e44577f570028de1d90be9b4bb3b844"
+      },
+      {
+        "rel": "Dregg2/Crypto/CostNormAttr.lean",
+        "sha": "85c38c5b1fe529cdea7d416680dd1015797bbdcf3dc4d13257059e7bd8f21fb7"
+      },
+      {
+        "rel": "Dregg2/Crypto/CostTactics.lean",
+        "sha": "6b1316812037cc84d32ccb5e892fab9e50b5fdc2cff8ccd6bbbca62d42c2d681"
+      },
+      {
+        "rel": "Dregg2/Crypto/FloorGames.lean",
+        "sha": "1b2914e933e06ed0d3afd63764da724633002a59ae424fd697aecadd42c14c3a"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineExtractor.lean",
+        "sha": "5db077dea8d76f95f25a0e9e7a89fac8e71071d546c782f219d4bbca720edb97"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineHashCRRegrounded.lean",
+        "sha": "b0c872bd282af16d3b416bc905fb2becccad35007e25ee4ab699be901af8d206"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineHiding.lean",
+        "sha": "74638b0e1c96f86a984097188b373ef438f7746c6bec87889daad52c15813182"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineHintMLWE.lean",
+        "sha": "46f04ac4049de56ee2ea8c7c5ebea199e0678451e0c43855c8b1fd70c31f8f00"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineMSIS.lean",
+        "sha": "77af57601ab9ea24560a8b81b7d498b15735ff260d35f0ce4d144999a83c97b0"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineSelfTargetMSIS.lean",
+        "sha": "b26487a12ee39b16dcd25232a3e674f55e9bf73c73ab3b20d686f667361c22d2"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineTSUF.lean",
+        "sha": "a569bbc7da2948352ca91bbeb5bd3ee884ecd30554a29a40ef4414733f3a55a7"
+      },
+      {
+        "rel": "Dregg2/Crypto/HermineThreshold.lean",
+        "sha": "743988de2993fd672fbff3b72db11e216749498a1cee99e9968c3f2434eef826"
+      },
+      {
+        "rel": "Dregg2/Crypto/KeyedRomFloor.lean",
+        "sha": "4626362e49d583a769a63a68171dac870c19d79e86d3a93436410e7f336501ed"
+      },
+      {
+        "rel": "Dregg2/Crypto/Lattice.lean",
+        "sha": "47dd09c1242f5be838553363cfad1984bcf8852ee56f9b856a3b56aa4f3317a7"
+      },
+      {
+        "rel": "Dregg2/Crypto/MemoryChecking.lean",
+        "sha": "a561a80c62a4a96ba5a075359d0578d5a481d603129e92a6f7212b9f72c6085f"
+      },
+      {
+        "rel": "Dregg2/Crypto/Merkle.lean",
+        "sha": "ec4be0596292b04c7e1ceb1f3bfe18a31febd040b4aa40386f4a9ba3ef2d55d0"
+      },
+      {
+        "rel": "Dregg2/Crypto/NonMembership.lean",
+        "sha": "29eba059903f71b9948962d894574b2a0a6d47de2e01ae3dfdb9a6d6117442b5"
+      },
+      {
+        "rel": "Dregg2/Crypto/PortalFloor.lean",
+        "sha": "191f3cd90e0320139dba8addad1eb09f1ca8e63727f6e8048cf2923e47a795d9"
+      },
+      {
+        "rel": "Dregg2/Crypto/Primitives.lean",
+        "sha": "cb0fe6e3bd71f173890583c82c8f4423c00ece967c64b816585d46954b4fb41d"
+      },
+      {
+        "rel": "Dregg2/Crypto/ProbCrypto.lean",
+        "sha": "819068a5f272fe5aa1a45a84d781f2b0905c7bf903a694c768a1190c4e5a98d4"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomBindingReduction.lean",
+        "sha": "89a066e6184960e9461d85fdf80512a2cc1ffab25177d810253c0e1dec209742"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomCarrierSites.lean",
+        "sha": "e7a6d90bbee261185647218f3b89ffabad12ca78a622afc08b39032eab575e95"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomChainedReduction.lean",
+        "sha": "1928928baae7005dfe112f49064f8b2256ad81682beb04873612dd6ae49f0869"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomCounting.lean",
+        "sha": "71eb950907dae559dcf0766f6a2beb559a97bf22757a42f4ef9bf6c40c2270e9"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomHashedLeafOpening.lean",
+        "sha": "3bb87168b43e4cb66f772c3f17ac71c4624ea256154888688b1cfbb3162f7e8a"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomMerkleOpening.lean",
+        "sha": "397081d1bcecfb7449c291ccc8310c326c3ec841c1573f36e57cd7dd131138f8"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomOracle.lean",
+        "sha": "bc25e9581ec532964bcee97c402a5c776ac1f98787fb83cc411737dd85112a16"
+      },
+      {
+        "rel": "Dregg2/Crypto/RomQueryFloor.lean",
+        "sha": "687693729831c24fee54d1b1f3c9ae80fb1d560f6368fbc85dc37f41e9cb22ad"
+      },
+      {
+        "rel": "Dregg2/Crypto/SchnorrCurveField.lean",
+        "sha": "6ca2607476f0929ce6328e1a2f418ed3c31077abead175fae9cf18b2d5a48689"
+      },
+      {
+        "rel": "Dregg2/Crypto/ShamirPrivacy.lean",
+        "sha": "520e14e31ef245a966975cc8a6b8d4e3fc13342e8d67c7e25d0b062ffed21118"
+      },
+      {
+        "rel": "Dregg2/Crypto/Smudging.lean",
+        "sha": "63328f43a40f13d53860c016f74285cfb5f9a35b3ad9409d3c1049a4d7e56d3b"
+      },
+      {
+        "rel": "Dregg2/Crypto/SpongeCarrierReduction.lean",
+        "sha": "1182eaef070fdacc0cf86628b8b33e05f63bd1bbf66fcf41a65c07c2a99f4d10"
+      },
+      {
+        "rel": "Dregg2/Crypto/SpongeReduction.lean",
+        "sha": "b286b0a5909370bbaf227c42e647cd7b41f3f984d4403cc28e3824357952747b"
+      },
+      {
+        "rel": "Dregg2/Crypto/UniversalMemory.lean",
+        "sha": "d0d728a014261f6df6ae92f95ee60f2d4fca0aaab8258c2d3b4c3e65ac1fc8f2"
+      },
+      {
+        "rel": "Dregg2/CryptoKernel.lean",
+        "sha": "9d59f91d0b3db60a4e1b02436b5890637332819eb70f7b5aa32e75e48179c356"
+      },
+      {
+        "rel": "Dregg2/Exec/Caps.lean",
+        "sha": "780844423472a01d90c934915708c46b7f0823be9eeab4fde2bb129930b19431"
+      },
+      {
+        "rel": "Dregg2/Exec/CircuitEmit.lean",
+        "sha": "4402a4a9bc86806a084358e8fcc97d8faa317dbf01d54d9f4b6c39a552877373"
+      },
+      {
+        "rel": "Dregg2/Exec/FacetAuthority.lean",
+        "sha": "6c47d0d50c5293e07e4b0805a42ff1b2de50bbfc39dd07e09931a717b69c47c2"
+      },
+      {
+        "rel": "Dregg2/Exec/Kernel.lean",
+        "sha": "9ad75144433d90fb2a8c569900b2831aa21a64f37a4f40cbd94a6e89a7c9f22e"
+      },
+      {
+        "rel": "Dregg2/Exec/Program.lean",
+        "sha": "ffdf282e48f0779b67ebfc458558d26d34e7e33186539fe0f1c3cfbf9140c112"
+      },
+      {
+        "rel": "Dregg2/Exec/RecordCircuit.lean",
+        "sha": "6ea1c7c62a27e321dcb426c32217b648d8998dd4652e0272755d30f41c806ed8"
+      },
+      {
+        "rel": "Dregg2/Exec/RecordKernel.lean",
+        "sha": "c2032cdf33c59684853b0fcd5e67d416ba53ae6b990610744b4694bd16d07c7c"
+      },
+      {
+        "rel": "Dregg2/Exec/StepComplete.lean",
+        "sha": "0ee42eb245a81fd4b6cfa0a5f531d45297d5ddc432fc1b59db834f7172e2861b"
+      },
+      {
+        "rel": "Dregg2/Exec/Value.lean",
+        "sha": "4aec26932af31c1f9fe2a9f68d5d67e6078974c8d1f4a1d4224ef17940dd31fb"
+      },
+      {
+        "rel": "Dregg2/Execution.lean",
+        "sha": "cdcfe677cf89a8b468fd0570a2a4e2bee9ccfd9b2105d0a4edb01837c2d181c7"
+      },
+      {
+        "rel": "Dregg2/Laws.lean",
+        "sha": "c7661e56846c56e5b34a097abb7ffc5cde9142e6f376182c3f20bd9a084a215f"
+      },
+      {
+        "rel": "Dregg2/Substrate/Heap.lean",
+        "sha": "655c86461457d1bcfc744ac1a48840d93a99932dbaf125a6c2593642c208ceb1"
+      },
+      {
+        "rel": "Dregg2/Tactics.lean",
+        "sha": "4dad902f9d5443095ae65a6cc7b9724d58a9b52dc0a0f4722935b4067c85a054"
+      },
+      {
+        "rel": "Dregg2/Tactics/ThreadAdvantageBound.lean",
+        "sha": "0f5a8586e4f921d696b0534e5d3eda09522ac1c3307d8082b7c0e8b420587fb1"
+      },
+      {
+        "rel": "lake-manifest.json",
+        "sha": "fbb75db7dac9ef00186fe79bc26957f7e38a6cd69dbea72877e2ba70aff30e9e"
+      },
+      {
+        "rel": "lakefile.toml",
+        "sha": "cfb97e6200e6d2b52598af273f9ad52d263f8004cb19438ba0041e6450bf5446"
+      },
+      {
+        "rel": "lean-toolchain",
+        "sha": "54727eec5cba149c18842e6deb5c41b369d66455c93ce135d7d5347c782b2325"
+      }
+    ]
+  },
+  "git": {
+    "head": "d0cf0426dd10bfa24337a9767856b2f0808370f8",
+    "cone_dirty_at_head": []
+  },
+  "gates": 10826,
+  "probe_rows": 487,
+  "num_rows": 10826,
+  "public_input_size": 67
+}

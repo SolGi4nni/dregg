@@ -141,11 +141,40 @@ async function loadBlob(stem) {
   return JSON.parse(text);
 }
 
-export async function loadCircuit(key) {
+/**
+ * ⚑ THE BLOB IS VERIFIED HERE, NOT ONLY IN THIS FILE'S OWN MAIN. Until 2026-08-02 the digest check
+ * lived only in the default-mode oracle below, so `loadCircuit` as a LIBRARY — which is how
+ * `stepmain-region-conformance.mjs` gets the entire reference side of a gate-by-gate conformance
+ * verdict — handed back whatever JSON sat in `~/.mina/circuit-blobs`, a user-writable cache, with
+ * nothing checked. A truncated download, a half-written cache write or a substituted blob would have
+ * been graded silently as "Mina's own circuit". It is content-addressed provenance and it costs one
+ * BCS pass, so it is unconditional: the md5 in o1-labs' asset FILENAME and openmina's transcribed
+ * row/primary counts are both INDEPENDENT of us, and a blob that fails either is REFUSED, not scored.
+ */
+/** The blob as it sits in the cache, UNVERIFIED. Private, and used by exactly one caller: this
+ *  file's own default mode, whose REPORTED VECTOR DIFF *is* the verification (recomputed digest vs
+ *  the md5 in o1-labs' filename). Verifying before that diff would make its rows vacuous — equal by
+ *  construction — which is the shape this repo keeps mistaking for a passing gate. Every OTHER
+ *  caller goes through `loadCircuit` and gets the refusal. */
+async function loadRaw(key) {
   const spec = CIRCUITS[key];
   if (!spec) throw new Error(`unknown circuit ${key}; known: ${Object.keys(CIRCUITS).join(', ')}`);
   const blob = await loadBlob(spec.stem);
   return { spec, publicInputSize: blob.public_input_size, gates: blob.gates };
+}
+
+export async function loadCircuit(key) {
+  const { spec, publicInputSize, gates } = await loadRaw(key);
+  if (!Array.isArray(gates)) throw new Error(`circuit-blob ${spec.stem}: no gate list — the cached file is not a kimchi Circuit`);
+  const md5 = circuitDigest(publicInputSize, gates).md5;
+  if (md5 !== spec.md5)
+    throw new Error(`⚑ CIRCUIT BLOB REFUSED — ${key}: kimchi digest md5 ${md5} != ${spec.md5}, the md5 o1-labs put in the `
+      + `asset FILENAME (${spec.stem}). The cached blob at ${blobPath(spec.stem) ?? '<freshly fetched>'} is not Mina's `
+      + `circuit; delete it and let it re-fetch.`);
+  if (gates.length !== spec.rows || publicInputSize !== spec.primary)
+    throw new Error(`⚑ CIRCUIT BLOB REFUSED — ${key}: ${gates.length} gates / PI ${publicInputSize} != openmina's `
+      + `transcribed ${spec.rows} / ${spec.primary} (mina-rust constants.rs)`);
+  return { spec, publicInputSize, gates };
 }
 
 // ── The WRAP VK. openmina ships Mina's real wrap verifier indices as JSON (mina-rust/crates/ledger/
@@ -240,7 +269,7 @@ if (isMain && candidatePath) {
 // Default mode: recompute each pinned circuit's shape + digest from the blob bytes and diff against
 // the o1-labs filename md5 + openmina's constants.rs rows/primary.
 const loaded = [];
-if (isMain) for (const k of keys) loaded.push([k, await loadCircuit(k)]);
+if (isMain) for (const k of keys) loaded.push([k, await loadRaw(k)]); // UNVERIFIED on purpose — see loadRaw
 
 const reference = () => {
   const v = [];

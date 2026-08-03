@@ -105,9 +105,18 @@ run_one "check-mina-multiblock-conformance.py --self-test (gate red-path)" \
 run_one "check-mina-multiblock-conformance.py (7 fixtures, 2 networks)" \
   python3 "$ROOT/scripts/check-mina-multiblock-conformance.py"
 
+# ⚑ AND THE FRESHNESS FLOOR (2026-08-02). `stepmain-region-conformance.mjs` read
+# `/tmp/pickles-stepmain/*.json` with NO freshness check: MEASURED, an artifact back-dated four days
+# scored GREEN, exit 0, and reported `fixture: in sync`. It is the instrument behind essentially every
+# "conformance GREEN byte-exact / EndoMul 32×77 intact / ten falsifiers biting" statement in this
+# tree, so a stale read there is a whole night of claims about a file nobody emitted. Its inputs now
+# carry a PROVENANCE STAMP naming the Lean source cone they came from, checked against the tree on
+# every run and REFUSED on mismatch — and `--stale-self-test` rides along HERE so that floor's own red
+# path is MEASURED in this suite (4 stale shapes refused + 1 honest-emission anchor), not merely
+# documented. A freshness gate nobody proves can go red is the defect it was built to close.
 for o in "${MJS_ORACLES[@]}"; do
   extra=""
-  [ "$o" = "stepmain-region-conformance.mjs" ] && extra="--falsify"
+  [ "$o" = "stepmain-region-conformance.mjs" ] && extra="--falsify --stale-self-test"
   if is_migrated "$o"; then
     run_one "$o" node "scripts/$o" --self-test ${extra:+$extra}
   else

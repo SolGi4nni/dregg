@@ -99,9 +99,28 @@
 //   * a ledger entry stops being observed                  → a stale allowance, retire it;
 //   * a conformance fact moves                             → a gadget stopped matching Mina's.
 //
+// ## ⚑ THE FRESHNESS FLOOR — WHAT THIS GATE READ, UNTIL 2026-08-02, WITHOUT LOOKING
+//
+// This script read `/tmp/pickles-stepmain/stepmain_step_r8_finalize.json` with `existsSync` +
+// `readFileSync` AND NOTHING ELSE. MEASURED: a copy of that artifact back-dated to `Jul 29 03:15`
+// — four days older than the Lean sources it claims to come from — scored **GREEN, exit 0**, printed
+// the whole verdict below and reported `fixture: in sync`. Every "conformance GREEN byte-exact, ten
+// falsifiers biting, EndoMul 32×77 intact" statement made through this instrument was, until that
+// floor existed, a statement about WHATEVER FILE HAPPENED TO BE IN `/tmp`.
+//
+// It is closed at the floor and not by a warning (a warning inside a green run is invisible):
+//
+//   * `--emit` makes the gate EMIT ITS OWN INPUT first, so there is no stale path to read;
+//   * every input — live artifact AND committed fixture — carries a PROVENANCE STAMP naming the
+//     source cone it came from, and this gate recomputes that cone's digest FROM THE CURRENT TREE
+//     and REFUSES on any difference (`emit-provenance.mjs`, two independent legs: content + clock);
+//   * there is NO unstamped path. An artifact with no stamp is refused, not scored.
+//
 // USAGE
 //   node scripts/stepmain-region-conformance.mjs                  # green-or-bust
+//   node scripts/stepmain-region-conformance.mjs --emit           # ⚑ emit the input first, then grade
 //   node scripts/stepmain-region-conformance.mjs --self-test      # + the harness red path
+//   node scripts/stepmain-region-conformance.mjs --stale-self-test # ⚑ prove the freshness floor bites
 //   node scripts/stepmain-region-conformance.mjs --report         # the per-region verdict, readable
 //   node scripts/stepmain-region-conformance.mjs --lean <path>    # a specific rung emission
 //   node scripts/stepmain-region-conformance.mjs --falsify        # prove the diff bites (10 bites)
@@ -113,8 +132,12 @@
 // (`conform:fixture/in-sync-with-live-emission`), so a moved assembly is reported, never scored stale.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { runOracle } from './diff-oracle.mjs';
+import {
+  isStale, leanConeDigest, requireFreshArtifact, requireFreshFixture, runLeanEmit, writeFixtureSidecar,
+} from './emit-provenance.mjs';
 import { loadCircuit } from './mina-canonical-circuit-oracle.mjs';
 
 // GateType declaration order == the BCS variant index (kimchi `circuits/gate.rs`); the Lean emitter
@@ -125,8 +148,19 @@ const PERMUTS = 7;
 // (`-1`), the blob writes 32-byte LE hex; both are normalized into [0,p) before any comparison.
 const FP = 28948022309329048855892746252171976963363056481941560715954676764349967630337n;
 
-const LEAN_DEFAULT = '/tmp/pickles-stepmain/stepmain_step_r8_finalize.json';
+const LEAN_DIR = '/tmp/pickles-stepmain';
+const LEAN_DEFAULT = `${LEAN_DIR}/stepmain_step_r8_finalize.json`;
 const LEAN_FIXTURE = new URL('../fixtures/stepmain-step-r8-finalize-gates.json.gz', import.meta.url);
+const LEAN_FIXTURE_PROV = new URL('../fixtures/stepmain-step-r8-finalize-gates.provenance.json', import.meta.url);
+// ⚑ The emit driver, and therefore the ROOT of the freshness cone. Its transitive `import Dregg2.*`
+// closure is what decides the emitted bytes; the thirteen `KimchiStepMainPins*` guard modules are
+// NOT in it (the driver imports `KimchiStepMainCore`, not the umbrella) and so cannot invalidate an
+// emission by being edited.
+const EMIT_DRIVER = 'Dregg2/Circuit/Emit/EmitStepMainJson.lean';
+const EMIT_ENV = { DREGG_SM: 'step' };
+const EMIT_CMD = '(cd metatheory && DREGG_SM=step lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)'
+  + '   — or let the gate do it:  node scripts/stepmain-region-conformance.mjs --emit';
+const REFRESH_CMD = 'node scripts/stepmain-region-conformance.mjs --emit --refresh-fixture';
 
 const fp = (c) => { let v = BigInt(c) % FP; if (v < 0n) v += FP; return v.toString(); };
 const leHex = (h) => BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex')).toString();
@@ -184,19 +218,34 @@ function normalizeLean(j) {
   return { pi: j.public_input_size, gates, raw, probe, remap, keep };
 }
 
-function loadLeanSide(explicit) {
+/**
+ * ⚑ THE FRESHNESS FLOOR. Every path out of this function has had its input's provenance CHECKED
+ * against the emit cone as the tree stands right now, or has thrown. There is no unstamped path:
+ * an artifact that cannot say which source produced it is refused, because an artifact left over
+ * from an earlier session is otherwise indistinguishable from one emitted a second ago — and that
+ * indistinguishability is the whole defect (a `Jul 29` artifact scored GREEN on `Aug 2` sources).
+ */
+function loadLeanSide(explicit, cone) {
   const live = explicit ?? LEAN_DEFAULT;
   const haveLive = existsSync(live);
   const haveFix = existsSync(LEAN_FIXTURE);
   if (!haveLive && !haveFix)
-    throw new Error(`no Lean emission: neither ${live} nor the committed fixture. Produce it with\n` +
-      '   (cd metatheory && lake env lean --run Dregg2/Circuit/Emit/EmitStepMainJson.lean)');
+    throw new Error(`no Lean emission: neither ${live} nor the committed fixture. Produce it with\n   ${EMIT_CMD}`);
   const slim = (j) => JSON.stringify({ name: j.name, public_input_size: j.public_input_size, num_rows: j.num_rows, probe_rows: j.probe_rows, gates: j.gates });
-  let src, text, witness = null;
+  let src, text, witness = null, prov;
   // ⚠ `slim` drops the `witness` field (the fixture carries gates only). It is kept ASIDE here for
   // the dead-variable check, which is live-only BY CONSTRUCTION and says so rather than falling back.
-  if (haveLive) { const f = JSON.parse(readFileSync(live, 'utf8')); witness = f.witness ?? null; src = live; text = slim(f); }
-  else { src = 'fixture'; text = gunzipSync(readFileSync(LEAN_FIXTURE)).toString('utf8'); }
+  if (haveLive) {
+    prov = requireFreshArtifact({ artifact: live, cone, emitCmd: EMIT_CMD });
+    const f = JSON.parse(readFileSync(live, 'utf8'));
+    witness = f.witness ?? null; src = live; text = slim(f);
+  } else {
+    // The fixture is a SNAPSHOT of an emission and goes stale exactly the same way — the committed
+    // `.gz` that made two ledger entries read 8/8 and 228/228 falsely predated the fix, and nothing
+    // looked. Its sidecar carries the cone it was emitted from, and it is checked here.
+    prov = requireFreshFixture({ fixture: LEAN_FIXTURE, sidecar: LEAN_FIXTURE_PROV, cone, emitCmd: EMIT_CMD, refreshCmd: REFRESH_CMD });
+    src = 'fixture'; text = gunzipSync(readFileSync(LEAN_FIXTURE)).toString('utf8');
+  }
   // ⚠ NOT a fallback. When both exist the LIVE emission is the truth and is what gets measured — but
   // the two must AGREE, and if they do not the fixture is stale, which is a RED the caller must see
   // (`fixture` in the conform vector) rather than a silently-older shape being scored.
@@ -208,7 +257,7 @@ function loadLeanSide(explicit) {
       `STALE: live ${a.slice(0, 12)}… != fixture ${b.slice(0, 12)}… — the Lean assembly moved; refresh with --refresh-fixture`;
     src = a === b ? `${live} (== fixture)` : `${live} (⚠ FIXTURE STALE)`;
   }
-  return { src, fixture, witness, j: JSON.parse(text) };
+  return { src, fixture, witness, prov, j: JSON.parse(text) };
 }
 
 // ── gadget instances ──────────────────────────────────────────────────────────────────────────────
@@ -333,7 +382,7 @@ const LEDGER = {
   // statement. ⚑ 2026-08-02: this replaced ONE opaque entry ("550 halves in 172 shapes").
   'generic/exact-value-census': {
     why: 'INSTRUMENT — the byte tripwire, not a divergence claim',
-    expect: '695/3303 halves differ by EXACT coefficient vector [0a02613d9570c5af]; 501 of those differ '
+    expect: '695/3309 halves differ by EXACT coefficient vector [0a02613d9570c5af]; 501 of those differ '
       + 'by SHAPE FAMILY (constants→K, sign-normalized), so 194 are the same family carrying our constants',
     note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
       + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
@@ -376,7 +425,7 @@ const LEDGER = {
   },
   'probe-rows': {
     why: 'header "THE σ-ONLY PROBES" (not on the #1–#11 list)',
-    expect: '486 standalone Zero rows (mina: 0)',
+    expect: '487 standalone Zero rows (mina: 0)',
     note: 'standalone `Zero` rows placed into σ classes so a flip isolates the wire. Mina has none. Spliced out here.',
   },
   'scope/unassembled-subcircuits': {
@@ -597,11 +646,18 @@ const candidateVector = (R) => {
 };
 
 // ── report ────────────────────────────────────────────────────────────────────────────────────────
-function report(R, src, M, L) {
+function report(R, src, M, L, prov, cone) {
   const pct = (a, b) => (b ? `${(100 * a / b).toFixed(2)}%` : '—');
   console.log(`\n╔═ STEP_MAIN REGION CONFORMANCE — gate-by-gate, Lean \`verify_one\` vs Mina step-zkapp-proved`);
   console.log(`║  mina: ${M.gates.length} gates, PI ${M.pi}     lean: ${L.gates.length} probe-free rows (+${L.probe.size} σ-probes), PI ${L.pi}`);
   console.log(`║  lean source: ${src}`);
+  // ⚑ The provenance is printed on the verdict itself, not only checked. A reader quoting "GREEN"
+  // needs the emission it graded to be quotable in the same breath.
+  if (prov && cone) {
+    console.log(`║  emitted:     ${prov.emitted_at ?? prov.refreshed_at}  by  ${prov.command ?? `--refresh-fixture from ${prov.refreshed_from}`}`);
+    console.log(`║  cone:        ${cone.files.length} Dregg2 modules under ${cone.root}, digest ${cone.digest.slice(0, 16)}… (VERIFIED against this tree)`);
+    if (prov.git?.head) console.log(`║  git HEAD:    ${prov.git.head.slice(0, 12)}${prov.git.cone_dirty_at_head?.length ? `  ⚠ ${prov.git.cone_dirty_at_head.length} cone file(s) dirty vs HEAD: ${prov.git.cone_dirty_at_head.slice(0, 3).join(', ')}` : '  (emit cone CLEAN at HEAD)'}`);
+  }
   console.log('╚═\n');
   console.log('── (A) GADGET SIGNATURE SETS — alignment-free: is the instance we emit one Mina emits?');
   console.log('   family    ours  mina | mina classes | WHOLE instance conforms | gadget BODY (seam excluded)');
@@ -695,24 +751,134 @@ function falsify(M, leanJson, witness) {
   });
 }
 
+// ── the freshness red path ────────────────────────────────────────────────────────────────────────
+/**
+ * ⚑ PROVE THE FLOOR BITES, and prove it bites for the RIGHT REASON. Three stale shapes, each of
+ * which scored GREEN before 2026-08-02, must now REFUSE — and the refusal must name STALENESS, not
+ * a content divergence, or the reader goes hunting for a circuit bug that is not there. Plus the
+ * ANCHOR: the honest artifact must still be ACCEPTED by the same floor, because a gate that reds on
+ * everything proves nothing.
+ */
+async function staleSelfTest(cone, honest) {
+  const { mkdtempSync, copyFileSync, writeFileSync, utimesSync, readFileSync: rd } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  let bad = 0;
+  const leg = (label, run) => {
+    try { run(); console.log(`  RED  ${label} — was ACCEPTED; the freshness floor does NOT bite here`); bad++; }
+    catch (e) {
+      if (!isStale(e)) { console.log(`  RED  ${label} — refused, but NOT as staleness: ${String(e.message).slice(0, 90)}`); bad++; return; }
+      console.log(`  ok   ${label} -> REFUSED as STALE`);
+      console.log(`         ${String(e.message).split('\n')[1]?.trim().slice(0, 150)}`);
+    }
+  };
+  console.log('── stepmain-region-conformance --stale-self-test (the freshness floor) ──');
+
+  // (F0) THE ANCHOR. The artifact this run is actually about must PASS the floor.
+  try {
+    requireFreshArtifact({ artifact: honest, cone, emitCmd: EMIT_CMD });
+    console.log(`  ok   F0 anchor: the honest emission at ${honest} is ACCEPTED (the floor is not red-on-everything)`);
+  } catch (e) { console.log(`  RED  F0 anchor: the honest emission was REFUSED — ${String(e.message).slice(0, 200)}`); bad++; }
+
+  const d = mkdtempSync(join(tmpdir(), 'stepmain-stale-'));
+  const art = join(d, 'stepmain_step_r8_finalize.json');
+  copyFileSync(honest, art);
+
+  // (F1) THE MEASURED DEFECT: an artifact with no provenance at all — a `/tmp` survivor from an
+  //      earlier session. This is the exact shape that scored GREEN with a `Jul 29` mtime.
+  leg('F1 unstamped artifact (a /tmp survivor from a previous session)',
+    () => requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD }));
+
+  // (F2) STAMPED, BUT FROM A SOURCE CONE THAT HAS SINCE MOVED — the assembly changed and nobody
+  //      re-emitted. Content leg, and it survives any amount of `touch`ing.
+  const stamp = JSON.parse(rd(join(LEAN_DIR, 'EMIT-PROVENANCE.json'), 'utf8'));
+  const moved = JSON.parse(JSON.stringify(stamp));
+  moved.cone.digest = `${'0'.repeat(63)}1`;
+  moved.cone.files_detail = (moved.cone.files_detail ?? []).map((f, i) => (i === 0 ? { ...f, sha: 'deadbeef' } : f));
+  moved.artifacts = { 'stepmain_step_r8_finalize.json': createHash('sha256').update(rd(art)).digest('hex') };
+  writeFileSync(join(d, 'EMIT-PROVENANCE.json'), JSON.stringify(moved));
+  leg('F2 stamped from a cone that has since moved (the assembly changed, nobody re-emitted)',
+    () => requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD }));
+
+  // (F3) A CORRECT STAMP, AND AN ARTIFACT OLDER THAN ITS OWN SOURCE — the clock leg, independent of
+  //      the content leg. This is the rsync/restore class (`reference-lane-redproof-leaves-a-stale-
+  //      binary`): the stamp travels with the file and only the mtime betrays it.
+  const good = JSON.parse(JSON.stringify(stamp));
+  good.cone = { ...good.cone, digest: cone.digest, files_detail: cone.files.map((f) => ({ rel: f.rel, sha: f.sha })) };
+  good.artifacts = { 'stepmain_step_r8_finalize.json': createHash('sha256').update(rd(art)).digest('hex') };
+  writeFileSync(join(d, 'EMIT-PROVENANCE.json'), JSON.stringify(good));
+  const old = new Date('2026-07-29T03:15:00Z');
+  utimesSync(art, old, old);
+  leg('F3 correct stamp, artifact mtime PREDATES its own newest source file (restore / rsync class)',
+    () => requireFreshArtifact({ artifact: art, cone, emitCmd: EMIT_CMD }));
+
+  // (F4) THE FIXTURE LEG: the committed `.gz` whose sidecar names a cone the tree no longer has.
+  //      This is the sibling defect — a fixture that predated a fix read 8/8 and 228/228 falsely.
+  const sidecar = join(d, 'fixture.provenance.json');
+  const fixProv = JSON.parse(rd(fileURLToPath(LEAN_FIXTURE_PROV), 'utf8'));
+  writeFileSync(sidecar, JSON.stringify({ ...fixProv, cone: { ...fixProv.cone, digest: `${'f'.repeat(63)}0` } }));
+  leg('F4 committed fixture whose sidecar names a cone the tree no longer has',
+    () => requireFreshFixture({ fixture: LEAN_FIXTURE, sidecar, cone, emitCmd: EMIT_CMD, refreshCmd: REFRESH_CMD }));
+
+  console.log();
+  if (bad) { console.log(`stepmain-region-conformance --stale-self-test: ${bad} LEG(S) FAILED`); process.exit(1); }
+  console.log('stepmain-region-conformance --stale-self-test: 5 legs green (1 anchor + 4 stale shapes REFUSED, each naming staleness)');
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const arg = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
+
+// ⚑ OPTION (a), FIRST: emit the input, so for this run there is no stale path to read at all. Done
+// BEFORE the cone is hashed for grading so the stamp and the check see the same tree.
+if (argv.includes('--emit')) {
+  const { readdirSync } = await import('node:fs');
+  runLeanEmit({
+    driver: EMIT_DRIVER, dir: LEAN_DIR, env: EMIT_ENV, label: 'stepmain step rungs',
+    glob: () => readdirSync(LEAN_DIR).filter((f) => f.endsWith('.json') && f.startsWith('stepmain_')).map((f) => `${LEAN_DIR}/${f}`),
+  });
+}
+
+const cone = leanConeDigest(EMIT_DRIVER);
 const { spec, publicInputSize, gates } = await loadCircuit('step-zkapp-proved');
 const M = normalizeMina(publicInputSize, gates);
-const { src, fixture, witness, j: leanJson } = loadLeanSide(arg("--lean"));
+let loaded;
+try {
+  loaded = loadLeanSide(arg('--lean'), cone);
+} catch (e) {
+  // ⚠ REFUSE, DO NOT WARN. A warning inside a green run is invisible, so a stale input exits
+  // NON-ZERO here and never reaches the conformance verdict at all.
+  console.error(`\n${e.message}\n`);
+  console.error(`   cone: ${cone.files.length} Dregg2 modules under ${cone.root}, digest ${cone.digest.slice(0, 16)}…`);
+  process.exit(3);
+}
+const { src, fixture, witness, prov, j: leanJson } = loaded;
 const L = normalizeLean(leanJson);
 const R = measure(M, L, fixture, witness);
+
+if (argv.includes('--stale-self-test')) {
+  if (!existsSync(LEAN_DEFAULT)) { console.error('--stale-self-test needs a live emission to use as the ANCHOR; run --emit first'); process.exit(2); }
+  await staleSelfTest(cone, arg('--lean') ?? LEAN_DEFAULT);
+  if (!argv.includes('--self-test') && !argv.includes('--falsify')) process.exit(0);
+}
 
 if (argv.includes('--refresh-fixture')) {
   const { gzipSync } = await import('node:zlib');
   const { writeFileSync } = await import('node:fs');
   const slim = JSON.stringify({ name: leanJson.name, public_input_size: leanJson.public_input_size, num_rows: leanJson.num_rows, probe_rows: leanJson.probe_rows, gates: leanJson.gates });
   writeFileSync(LEAN_FIXTURE, gzipSync(Buffer.from(slim), { level: 9 }));
+  // ⚑ The sidecar is written in the SAME action, never as a follow-up step somebody can forget: a
+  // fixture and a sidecar that disagree is the fail-open wearing the fix's clothes.
+  const rec = writeFixtureSidecar(LEAN_FIXTURE_PROV, {
+    fixture: LEAN_FIXTURE, cone, from: src,
+    extra: { gates: leanJson.gates.length, probe_rows: (leanJson.probe_rows ?? []).length,
+             num_rows: leanJson.num_rows, public_input_size: leanJson.public_input_size },
+  });
   console.log(`refreshed fixtures/stepmain-step-r8-finalize-gates.json.gz from ${src} (${leanJson.gates.length} gates)`);
+  console.log(`   + sidecar stepmain-step-r8-finalize-gates.provenance.json — cone ${rec.cone.digest.slice(0, 16)}… over ${rec.cone.files} modules, HEAD ${String(rec.git.head).slice(0, 9)}`);
   process.exit(0);
 }
-if (argv.includes('--report')) { report(R, src, M, L); process.exit(0); }
+if (argv.includes('--report')) { report(R, src, M, L, prov, cone); process.exit(0); }
 
 await runOracle({
   shape: 'gates',
@@ -720,7 +886,7 @@ await runOracle({
   reference: () => referenceVector(R),
   candidate: () => candidateVector(R),
   extra: () => {
-    report(R, src, M, L);
+    report(R, src, M, L, prov, cone);
     if (argv.includes('--falsify')) falsify(M, leanJson, witness);
   },
 });

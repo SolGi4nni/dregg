@@ -16,9 +16,18 @@
 # `metatheory/fixtures/pickles-*-harness/` FROM THE FILESYSTEM and requires every directory found to
 # be DECLARED in the table below with a `#[test]` floor it still meets. So the next harness somebody
 # writes cannot be added unwired: an undeclared directory is RED, a declared directory that vanished
-# is RED, a harness that quietly loses tests is RED, and a fixture that exists but is UNTRACKED is
-# RED (a green on a file HEAD does not carry proves nothing about the commit). That is the exact
-# silence this file exists to end, and it is the half that can afford to run every time.
+# is RED, a harness that quietly loses tests is RED, and a fixture that exists but HEAD DOES NOT
+# CARRY is RED (a green on a file HEAD does not carry proves nothing about the commit). That is the
+# exact silence this file exists to end, and it is the half that can afford to run every time.
+#
+# ⚑ FIXED 2026-08-02 — THE INDEX IS NOT HEAD. Every git leg here used to call `git ls-files`, which
+# reports THE INDEX. `git add` without committing made `--others` stop listing a file and
+# `--error-unmatch` start succeeding, so this ratchet printed `ok` for a harness HEAD did not carry
+# and a lane's first commit was green in the working tree and red at HEAD. The legs now ask
+# `git cat-file -e HEAD:<path>` / `git show HEAD:<path>`, the `#[test]` floor is counted at HEAD, and
+# `--self-test` carries S3b/S5a — a staged-only change must not red, a staged-not-committed fixture
+# must — so the two can never again be confused silently. This is the same defect class as
+# `stepmain-region-conformance.mjs` grading a stale `/tmp` artifact: GRADING THE WRONG BYTES.
 #
 # The default (no flag) run is the REAL one: `cargo test --release` per crate, every accept, every
 # tamper-reject and every non-vacuity control actually proved by `proof-systems` 0.3.0. It is not a
@@ -77,6 +86,16 @@ want() { [ ${#WANT[@]} -eq 0 ] && return 0; printf '%s\n' "${WANT[@]}" | grep -q
 
 count_tests() { grep -cE '^[[:space:]]*#\[test\]' "$1" 2>/dev/null || echo 0; }
 
+# ⚑ HEAD, NOT THE INDEX. Measured 2026-08-02: every git leg below used to read `git ls-files`, which
+# lists THE INDEX. `git add` a fixture without committing it and `ls-files --others` stops reporting
+# it and `ls-files --error-unmatch` starts succeeding — so this ratchet printed `ok` for a harness
+# HEAD DID NOT CARRY, and a lane's first commit was green in the working tree and red at HEAD. The
+# file's own header says "a green on a file HEAD does not carry proves nothing about the commit";
+# these three helpers are what make that sentence true instead of aspirational.
+head_has()   { git -C "$SCAN_ROOT" cat-file -e "HEAD:$1" 2>/dev/null; }
+head_bytes() { git -C "$SCAN_ROOT" show "HEAD:$1" 2>/dev/null; }
+head_count_tests() { head_bytes "$1" | grep -cE '^[[:space:]]*#\[test\]' || echo 0; }
+
 # ── the coverage ratchet ───────────────────────────────────────────────────────
 # Two directions, both required:
 #   forward  — every DECLARED harness exists, is a cargo package, has committed fixtures, and still
@@ -85,9 +104,11 @@ count_tests() { grep -cE '^[[:space:]]*#\[test\]' "$1" 2>/dev/null || echo 0; }
 #              added unwired, and it is why the enumeration is a glob and not a second list.
 static_check() {
   local fix="$SCAN_ROOT/$FIXREL"
-  local fails=0 seen=0
+  local fails=0 seen=0 drift=0
+  # ⚠ A worktree is not enough: the HEAD legs need a COMMIT. A freshly `git init`ed tree is inside a
+  # work tree and has no HEAD, and treating that as "git legs ran" is the blinded-reader shape.
   local is_git=0
-  git -C "$SCAN_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 && is_git=1
+  git -C "$SCAN_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 && is_git=1
   echo "── pickles harness coverage ratchet ($SCAN_ROOT) ──"
   local declared=()
   local row key dir floor _desc d
@@ -102,35 +123,58 @@ static_check() {
       echo "  RED  $dir — no Cargo.toml; cargo cannot reach it by --manifest-path"
       fails=$((fails+1)); continue
     fi
-    local nfix ntests
+    local nfix ntests src_of
     nfix=$(find "$d/fixtures" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
-    ntests=$(count_tests "$d/src/main.rs")
     if [ "$nfix" -eq 0 ]; then
       echo "  RED  $dir — ZERO committed fixtures; it would prove nothing about the Lean emit"
       fails=$((fails+1)); continue
     fi
+    # ⚑ THE FLOOR IS COUNTED AT HEAD. Counting the WORKING TREE is how a harness reads green before
+    # the commit that carries it exists — the ratchet's whole claim is about the commit.
+    if [ "$is_git" -eq 1 ]; then
+      if ! head_has "$FIXREL/$dir/src/main.rs"; then
+        echo "  RED  $dir — src/main.rs is on disk and HEAD DOES NOT CARRY IT; a green here would be about your working tree, not the commit"
+        fails=$((fails+1)); continue
+      fi
+      ntests=$(head_count_tests "$FIXREL/$dir/src/main.rs"); src_of="HEAD"
+    else
+      ntests=$(count_tests "$d/src/main.rs"); src_of="disk"
+    fi
     if [ "$ntests" -lt "$floor" ]; then
-      echo "  RED  $dir — $ntests #[test] fns, floor is $floor (a property was LOST)"
+      echo "  RED  $dir — $ntests #[test] fns at $src_of, floor is $floor (a property was LOST)"
       fails=$((fails+1)); continue
     fi
-    # A committed fixture must be TRACKED, or a green here says nothing about HEAD. Same for the
-    # LOCK: three of these six shipped without a tracked `Cargo.lock` until 2026-08-01, so each CI
-    # run re-resolved `o1-labs/proof-systems` and its arkworks tail from scratch. A gate whose
-    # dependency set is decided at run time is a gate that can change what it proves without a
-    # commit saying so.
+    # A committed fixture must be carried BY HEAD, or a green here says nothing about the commit.
+    # Same for the LOCK: three of these six shipped without a committed `Cargo.lock` until
+    # 2026-08-01, so each CI run re-resolved `o1-labs/proof-systems` and its arkworks tail from
+    # scratch. A gate whose dependency set is decided at run time is a gate that can change what it
+    # proves without a commit saying so.
+    #
+    # ⚠ `git ls-files` — what these legs used to ask — reports THE INDEX. A `git add` with no commit
+    # satisfied it while HEAD carried nothing. `git cat-file -e HEAD:<path>` asks the commit.
     if [ "$is_git" -eq 1 ]; then
-      local untracked
-      untracked=$(git -C "$SCAN_ROOT" ls-files --others --exclude-standard -- "$FIXREL/$dir/fixtures" 2>/dev/null | grep -c '\.json$')
-      if [ "${untracked:-0}" -gt 0 ]; then
-        echo "  RED  $dir — $untracked fixture(s) present but UNTRACKED; HEAD does not carry them"
-        fails=$((fails+1)); continue
-      fi
-      if ! git -C "$SCAN_ROOT" ls-files --error-unmatch -- "$FIXREL/$dir/Cargo.lock" >/dev/null 2>&1; then
-        echo "  RED  $dir — no TRACKED Cargo.lock; the gate would re-resolve its dependency set per run"
-        fails=$((fails+1)); continue
-      fi
+      local absent=0 f rel
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        rel="$FIXREL/$dir/fixtures/$(basename "$f")"
+        head_has "$rel" || { echo "  RED  $dir — fixture $(basename "$f") is on disk and HEAD DOES NOT CARRY IT"; absent=$((absent+1)); }
+      done < <(find "$d/fixtures" -name '*.json' 2>/dev/null)
+      if [ "$absent" -gt 0 ]; then fails=$((fails+1)); continue; fi
+      for rel in "$FIXREL/$dir/Cargo.toml" "$FIXREL/$dir/Cargo.lock"; do
+        if ! head_has "$rel"; then
+          echo "  RED  $dir — $(basename "$rel") is not in HEAD; the gate would re-resolve its dependency set per run"
+          fails=$((fails+1)); continue 2
+        fi
+      done
+      # DRIFT is a different claim from ABSENCE and is reported as its own number, in the summary
+      # line rather than as a footnote: the ratchet asserts HEAD CARRIES these files; `run_all`
+      # separately grades the WORKING TREE copies, so when the two differ the reader must be told
+      # which object the cargo verdict below is about.
+      local nd
+      nd=$(git -C "$SCAN_ROOT" status --porcelain -- "$FIXREL/$dir/fixtures" "$FIXREL/$dir/src/main.rs" 2>/dev/null | grep -c . || true)
+      drift=$((drift + ${nd:-0}))
     fi
-    printf '  ok   %-30s %2d fixtures  %2d #[test] (floor %s)\n' "$dir" "$nfix" "$ntests" "$floor"
+    printf '  ok   %-30s %2d fixtures  %2d #[test] @%s (floor %s)\n' "$dir" "$nfix" "$ntests" "$src_of" "$floor"
     seen=$((seen+1))
   done
   # backward: anything on disk that nobody declared
@@ -149,16 +193,18 @@ static_check() {
   if [ "$fails" -gt 0 ]; then
     echo "pickles-harnesses --static: $fails FAILURE(S)"; return 1
   fi
-  # ⚠ SAY WHICH LEGS RAN. A `pbuild`/`hbuild` LANE HAS NO `.git` (pbuild excludes it), so the two
-  # git-keyed legs — untracked fixtures and the tracked `Cargo.lock` — cannot run there. Printing a
+  # ⚠ SAY WHICH LEGS RAN. A `pbuild`/`hbuild` LANE HAS NO `.git` (pbuild excludes it), so the
+  # HEAD-keyed legs — fixtures, Cargo.lock/toml, and the #[test] floor — cannot run there. Printing a
   # note beside an unqualified PASS is the documented-not-detected shape: the summary line is what a
   # reader quotes, so the summary line has to carry the reduced coverage, not a footnote above it.
   # The legs still bite everywhere a commit is actually made (a dev box, CI, and the self-test's own
-  # scratch trees, which `git init`).
+  # scratch trees, which `git init` AND COMMIT).
   if [ "$is_git" -eq 1 ]; then
-    echo "pickles-harnesses --static: $seen harnesses declared, on disk, fixture-carrying, TRACKED (fixtures + Cargo.lock) and at floor"
+    local dr=""
+    [ "$drift" -gt 0 ] && dr=" — ⚠ $drift harness file(s) DIFFER from HEAD in this working tree, so the cargo half below grades the WORKING TREE, not this commit"
+    echo "pickles-harnesses --static: $seen harnesses declared, on disk, fixture-carrying, CARRIED BY HEAD (fixtures + Cargo.toml/lock + src/main.rs) and at floor (counted at HEAD)$dr"
   else
-    echo "pickles-harnesses --static: $seen harnesses declared, on disk, fixture-carrying and at floor — ⚠ PARTIAL: no .git here, so the UNTRACKED-fixture and Cargo.lock legs did NOT run (a build lane; run it on a worktree for full coverage)"
+    echo "pickles-harnesses --static: $seen harnesses declared, on disk, fixture-carrying and at floor (counted on DISK) — ⚠ PARTIAL: no git HEAD here, so the HEAD-carriage legs did NOT run (a build lane; run it on a worktree with a commit for full coverage)"
   fi
   return 0
 }
@@ -226,6 +272,26 @@ scratch_tree() {  # $1 = dest; builds a minimal git worktree carrying the six ha
   done
   git -C "$dest" init -q .
   git -C "$dest" add -A >/dev/null 2>&1
+  # ⚑ AND COMMIT. The ratchet now asks HEAD, not the index — a scratch tree that only `git add`s has
+  # no HEAD at all, and the control would silently fall through to the reduced-coverage branch,
+  # making every HEAD leg below free. `-c` so a box with no git identity still commits; no signing,
+  # because a 1password prompt inside a self-test is a hang, not a failure.
+  git -C "$dest" -c user.email=selftest@local -c user.name=selftest \
+      -c commit.gpgsign=false commit -q -m "scratch base" --no-gpg-sign >/dev/null 2>&1
+}
+
+# Commit whatever the caller just mutated, so a leg can inject INTO HEAD rather than into the index.
+scratch_commit() {
+  git -C "$1" add -A >/dev/null 2>&1
+  scratch_commit_index "$1" "$2"
+}
+# ⚠ Commit the INDEX AS IT STANDS — no `add -A`. A leg that stages a REMOVAL (`git rm --cached`) and
+# then calls `scratch_commit` has its removal undone by that `add -A`, which is how S5b and S5c first
+# reported "did NOT red" against a gate that was in fact working. A red-path leg whose injection
+# silently un-applies itself is a leg that proves nothing.
+scratch_commit_index() {
+  git -C "$1" -c user.email=selftest@local -c user.name=selftest \
+      -c commit.gpgsign=false commit -q -m "$2" --no-gpg-sign >/dev/null 2>&1
 }
 
 # Run the ratchet against a scratch tree. Echoes nothing; returns the ratchet's exit code.
@@ -256,38 +322,74 @@ selftest() {
     echo "  ok   S2 forward: a declared harness that vanished -> RED"
   else echo "  RED  S2: a vanished harness did NOT red (exit $rc)"; fails=$((fails+1)); fi
 
-  # (S3) FLOOR leg: a harness that LOSES a property.
+  # (S3) FLOOR leg: a harness that LOSES a property. ⚑ The loss is COMMITTED, because the floor is
+  # now counted at HEAD — a working-tree-only deletion is (correctly) not a lost property yet.
   scratch_tree "$tmp/s3"
   local f="$tmp/s3/$FIXREL/pickles-r4-harness/src/main.rs"
   perl -0pi -e 's/^\s*#\[test\]\n//m' "$f"
-  git -C "$tmp/s3" add -A >/dev/null 2>&1
+  scratch_commit "$tmp/s3" "drop one #[test]"
   ratchet_at "$tmp/s3" "$tmp/s3.log"; rc=$?
   if [ "$rc" -ne 0 ] && grep -q 'pickles-r4-harness — .* floor is 6' "$tmp/s3.log"; then
-    echo "  ok   S3 floor: deleting one #[test] attribute -> RED"
+    echo "  ok   S3 floor: committing the deletion of one #[test] attribute -> RED"
   else echo "  RED  S3: a lost test did NOT red (exit $rc)"; sed 's/^/       /' "$tmp/s3.log"; fails=$((fails+1)); fi
+
+  # (S3b) ⚑ THE INDEX-vs-HEAD LEG, and the reason this whole section changed. A #[test] deleted and
+  # `git add`ed but NOT COMMITTED must NOT red — HEAD still carries the property. The old ratchet
+  # read the index and could not tell these two apart in either direction.
+  scratch_tree "$tmp/s3b"
+  perl -0pi -e 's/^\s*#\[test\]\n//m' "$tmp/s3b/$FIXREL/pickles-r4-harness/src/main.rs"
+  git -C "$tmp/s3b" add -A >/dev/null 2>&1
+  ratchet_at "$tmp/s3b" "$tmp/s3b.log"; rc=$?
+  if [ "$rc" -eq 0 ] && grep -q 'counted at HEAD' "$tmp/s3b.log"; then
+    echo "  ok   S3b index-vs-HEAD: a STAGED-only deletion is GREEN and the summary says the floor was counted at HEAD"
+  else echo "  RED  S3b: the ratchet graded the INDEX, not HEAD (exit $rc)"; sed 's/^/       /' "$tmp/s3b.log"; fails=$((fails+1)); fi
 
   # (S4) FIXTURE leg: a harness whose fixtures went away.
   scratch_tree "$tmp/s4"; rm -f "$tmp/s4/$FIXREL/pickles-poseidon-harness"/fixtures/*.json
-  git -C "$tmp/s4" add -A >/dev/null 2>&1
+  scratch_commit "$tmp/s4" "drop fixtures"
   ratchet_at "$tmp/s4" "$tmp/s4.log"; rc=$?
   if [ "$rc" -ne 0 ] && grep -q 'ZERO committed fixtures' "$tmp/s4.log"; then
     echo "  ok   S4 fixtures: a harness with no fixtures -> RED"
   else echo "  RED  S4: a fixture-less harness did NOT red (exit $rc)"; fails=$((fails+1)); fi
 
-  # (S5) TRACKING leg: a fixture that exists but HEAD does not carry.
+  # (S5) CARRIAGE leg: a fixture that exists on disk but HEAD does not carry. ⚑ Injected BOTH as a
+  # plain untracked file AND as a `git add`ed one, because the second is the shape that used to pass:
+  # `git ls-files --others` stops reporting a staged file and the gate printed `ok` for a harness
+  # HEAD did not carry.
   scratch_tree "$tmp/s5"
   echo '{}' > "$tmp/s5/$FIXREL/pickles-compose-harness/fixtures/untracked_probe.json"
   ratchet_at "$tmp/s5" "$tmp/s5.log"; rc=$?
-  if [ "$rc" -ne 0 ] && grep -q 'UNTRACKED' "$tmp/s5.log"; then
-    echo "  ok   S5 tracking: an untracked fixture -> RED"
-  else echo "  RED  S5: an untracked fixture did NOT red (exit $rc)"; fails=$((fails+1)); fi
+  if [ "$rc" -ne 0 ] && grep -q 'HEAD DOES NOT CARRY IT' "$tmp/s5.log"; then
+    echo "  ok   S5 carriage: a fixture HEAD does not carry -> RED"
+  else echo "  RED  S5: a fixture HEAD does not carry did NOT red (exit $rc)"; fails=$((fails+1)); fi
 
-  # (S5b) LOCK leg: a harness whose Cargo.lock is not tracked.
-  scratch_tree "$tmp/s5b"; git -C "$tmp/s5b" rm -q --cached "$FIXREL/pickles-r4-harness/Cargo.lock" >/dev/null 2>&1
+  # (S5a) THE MEASURED REGRESSION: the same fixture, STAGED. This one was GREEN before 2026-08-02.
+  scratch_tree "$tmp/s5a"
+  echo '{}' > "$tmp/s5a/$FIXREL/pickles-compose-harness/fixtures/staged_probe.json"
+  git -C "$tmp/s5a" add -A >/dev/null 2>&1
+  ratchet_at "$tmp/s5a" "$tmp/s5a.log"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q 'HEAD DOES NOT CARRY IT' "$tmp/s5a.log"; then
+    echo "  ok   S5a staged-not-committed: a fixture in the INDEX but not in HEAD -> RED (this is the fixed defect)"
+  else echo "  RED  S5a: a STAGED fixture still passes — the gate is reading the index (exit $rc)"; fails=$((fails+1)); fi
+
+  # (S5b) LOCK leg: a harness whose Cargo.lock HEAD does not carry.
+  scratch_tree "$tmp/s5b"
+  git -C "$tmp/s5b" rm -q --cached "$FIXREL/pickles-r4-harness/Cargo.lock" >/dev/null 2>&1
+  scratch_commit_index "$tmp/s5b" "uncommit Cargo.lock"
   ratchet_at "$tmp/s5b" "$tmp/s5b.log"; rc=$?
-  if [ "$rc" -ne 0 ] && grep -q 'no TRACKED Cargo.lock' "$tmp/s5b.log"; then
-    echo "  ok   S5b lock: an untracked Cargo.lock -> RED (the gate would re-resolve per run)"
-  else echo "  RED  S5b: an untracked Cargo.lock did NOT red (exit $rc)"; fails=$((fails+1)); fi
+  if [ "$rc" -ne 0 ] && grep -q 'Cargo.lock is not in HEAD' "$tmp/s5b.log"; then
+    echo "  ok   S5b lock: a Cargo.lock HEAD does not carry -> RED (the gate would re-resolve per run)"
+  else echo "  RED  S5b: a lock HEAD does not carry did NOT red (exit $rc)"; sed 's/^/       /' "$tmp/s5b.log"; fails=$((fails+1)); fi
+
+  # (S5c) SOURCE leg: `src/main.rs` on disk that HEAD does not carry — literally "a lane's first
+  # commit was green in the working tree and red at HEAD".
+  scratch_tree "$tmp/s5c"
+  git -C "$tmp/s5c" rm -q --cached "$FIXREL/pickles-stepfragment-harness/src/main.rs" >/dev/null 2>&1
+  scratch_commit_index "$tmp/s5c" "uncommit src/main.rs"
+  ratchet_at "$tmp/s5c" "$tmp/s5c.log"; rc=$?
+  if [ "$rc" -ne 0 ] && grep -q 'src/main.rs is on disk and HEAD DOES NOT CARRY IT' "$tmp/s5c.log"; then
+    echo "  ok   S5c source: a src/main.rs HEAD does not carry -> RED"
+  else echo "  RED  S5c: an uncommitted src/main.rs did NOT red (exit $rc)"; sed 's/^/       /' "$tmp/s5c.log"; fails=$((fails+1)); fi
 
   # (S6) THE REAL RED PATH. Corrupt a committed fixture in a SCRATCH COPY of a harness and require
   # `cargo test --release` to exit NON-ZERO. This is the leg that proves the gate has teeth: not that
@@ -329,7 +431,7 @@ PY
 
   echo
   if [ "$fails" -gt 0 ]; then echo "pickles-harnesses --self-test: $fails FAILURE(S)"; return 1; fi
-  echo "pickles-harnesses --self-test: 8 legs green (the gate can go RED, for the right reason, in both halves)"
+  echo "pickles-harnesses --self-test: 11 legs green (the gate can go RED, for the right reason, in both halves — and the HEAD legs read HEAD, not the index)"
   return 0
 }
 
