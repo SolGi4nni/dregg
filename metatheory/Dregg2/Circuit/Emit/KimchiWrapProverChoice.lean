@@ -20,6 +20,28 @@ the number is **117 of 120**.
 ⚠ The other nine are not", and then names eight. Eight is the class count and it is one stale (`x_hat`
 IS derived since `w6_xhat`, which the §2c entry says at length and this bullet does not). **The
 number a prover cares about is 117**, and this module is where it is stated.
+
+## ⚑⚑ THIS MODULE'S ELABORATION FLOOR IS `rungRows`' OWN `let`s, AND IT IS NOT FIXED HERE
+
+MEASURED 2026-08-03, cold `lean --run` at `shapeWrap` (the interpreter `native_decide` evaluates on):
+
+    mkWrap shapeWrap                 75 ms
+    circuitEnvAt tWrap .key          65 ms
+    rungRows tWrap .key true  1 014 740 ms   ← 16 min 55 s, for 1 977 rows
+
+…and the five families the `.key` branch actually returns cost **115 ms** between them
+(`transcriptRowsQ` 19 + `challengeRowsQ` 9 + `branchRows` 0 + `closingRows` 8 + `keyRows` 79, and
+818 + 589 + 23 + 11 + 536 = the same 1 977 rows). **Everything else is `xhatRows` and `splitRows`** —
+§15's MSM ladders and the split rows — which `rungRows` binds with a `let` ABOVE the `match` and the
+`.key` branch never mentions. Lean is strict and the compiler does not sink them, so every rung pays
+for every family, `.transcript` included. Three commands here name `rowsWrapKey`, so this module pays
+it three times: ~51 minutes for numbers that are reachable in seconds.
+
+⚠ **THE FIX IS FIVE LINES IN `KimchiWrapMain.rungRows` AND IS DELIBERATELY NOT MADE HERE.** That
+function is a live sibling lane's (W-SPLIT/W-FTCOMM adds `ftcRows` and a `.ftcomm` branch to the same
+`match`), and it is red in the shared tree as this is written. The change is to move each family into
+the branch that uses it — or to enumerate them as thunks and take a prefix — which changes no emitted
+row. Step side's twin of this class was `tOps`; see `KimchiStepProverChoice`'s §C7 note.
 -/
 import Dregg2.Circuit.Emit.KimchiWrapMain
 
@@ -48,11 +70,21 @@ def wiredIxs (bound : Nat) (rows : List WRow) : Array Bool :=
       | some v => if varIx v < bound then a.set! (varIx v) true else a) a)
     (Array.replicate bound false)
 
-/-- Environment variables no row of the schedule wires. -/
+/-- Environment variables no row of the schedule wires.
+
+⚑ `varIx`-indexed dedup, NOT `List.dedup` (2026-08-03) — see `KimchiStepProverChoice`'s copy for the
+measurement. `List.dedup` is O(n²) over an environment with tens of thousands of entries, and the
+cost is paid once per `native_decide` command that names the function. -/
 def envVarsNoRowReads (env : VarEnv) (rows : List WRow) : List PVar :=
   let bound := envIxBound env + 1
   let w := wiredIxs bound rows
-  ((env.map (·.1)).dedup).filter (fun v => !(w.getD (varIx v) false))
+  (env.foldl (fun (acc : Array Bool × List PVar) e =>
+      let i := varIx e.1
+      if i < bound then
+        (if acc.1.getD i false then acc
+         else (acc.1.set! i true, if w.getD i false then acc.2 else e.1 :: acc.2))
+      else acc)
+    (Array.replicate bound false, ([] : List PVar))).2.reverse
 
 /-- Every absorbed item's own variable, in schedule order. -/
 def absorbedWordVars (t : WrapData) : List PVar :=
