@@ -23,8 +23,9 @@
 // which gadget bodies Snarky emits, in what run lengths, in what proportion — the ~95% of the
 // circuit that is invariant across the two blobs.
 //
-// ⚠ AND THE HONEST HEADLINE: four sub-circuits of `wrap_main` are assembled today (the Fq
-// transcript, `to_field_checked`, the branch selection, the public tie). The four gate FAMILIES
+// ⚠ AND THE HONEST HEADLINE: five sub-circuits of `wrap_main` are assembled today (the Fq
+// transcript, `to_field_checked`, the branch selection, the public tie, and W-KEY — `choose_key`
+// plus the index sponge, which is what makes `index_digest` DERIVED). The four gate FAMILIES
 // that carry `wrap-transaction`'s curve work — VarBaseMul 2417, EndoMul 2528, CompleteAdd 492 and
 // most of Generic 3521 — are W-XHAT / W-FTCOMM / W-COMBINE / W-BULLET and are NOT emitted. This
 // diff reports that as ABSENT REGIONS with their measured Mina sizes, so the gap is a number in the
@@ -36,7 +37,7 @@
 //   node scripts/wrapmain-region-conformance.mjs --lean <path>   # a specific rung emission
 //   node scripts/wrapmain-region-conformance.mjs --falsify       # prove the diff BITES
 //
-// The Lean side defaults to `/tmp/pickles-wrapmain/wrapmain_wrap_w4_bind.json`, produced by
+// The Lean side defaults to `/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json` — the TOP rung — produced by
 //   (cd metatheory && DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean)
 
 // ⚑ FRESHNESS (2026-08-02). This read `/tmp/pickles-wrapmain/…json` with `existsSync` +
@@ -64,7 +65,7 @@ const PERMUTS = 7;
 const FQ = 28948022309329048855892746252171976963363056481941647379679742748393362948097n;
 const FP = 28948022309329048855892746252171976963363056481941560715954676764349967630337n;
 
-const LEAN_DEFAULT = '/tmp/pickles-wrapmain/wrapmain_wrap_w4_bind.json';
+const LEAN_DEFAULT = '/tmp/pickles-wrapmain/wrapmain_wrap_w5_key.json';
 
 const fq = (c) => { let v = BigInt(c) % FQ; if (v < 0n) v += FQ; return v.toString(); };
 const leHex = (h) => BigInt('0x' + Buffer.from(h, 'hex').reverse().toString('hex')).toString();
@@ -219,11 +220,12 @@ const LEDGER = {
     note: 'every `Ops.add_fast` is one CompleteAdd row; all of them belong to the three absent MSM/fold regions.',
   },
   'poseidon/count': {
-    why: '§13 W-KEY + W-FINALIZE + W-WRAPHACK',
-    expect: 'mina 261 permutations / lean 61',
-    note: "the transcript sponge of `wrap_verifier.ml:516-646` is assembled; `sponge_after_index` "
-      + '(W-KEY, ~29), the two `finalize_other_proof` sponges (W-FINALIZE) and the two '
-      + '`hash_messages_for_next_wrap_proof` sponges (W-WRAPHACK) are not.',
+    why: '§13 W-FINALIZE + W-WRAPHACK',
+    expect: 'mina 261 permutations / lean 89',
+    note: 'the transcript sponge of `wrap_verifier.ml:516-646` is assembled (61 permutations), and '
+      + 'so is W-KEY\'s INDEX SPONGE (`:521-530`) — 56 coordinates at rate 2 plus the squeeze, '
+      + 'exactly 28 more. What is not: the two `finalize_other_proof` sponges (W-FINALIZE) and the '
+      + 'two `hash_messages_for_next_wrap_proof` sponges (W-WRAPHACK).',
   },
   'ems/count': {
     why: '§13 W-FINALIZE + W-PREV + the 16-bit width',
@@ -252,9 +254,9 @@ const LEDGER = {
   },
   'generic/shape-families': {
     why: "§13 \"two places this file is stricter than upstream\" + row economy",
-    expect: '381/528 match | x89 [0 0 0 0 0] | x46 [1 -1 0 0 0] | x4 [1 16 -1 0 0] '
-      + '| x2 [0 0 1 1 -1] | x2 [1 4 -1 0 0] | x1 [1 0 -1 -1 0] | x1 [1 0 -1 0 -1] '
-      + '| x1 [1 3 -1 0 0] | x1 [16 0 -1 0 0]',
+    expect: '664/926 match | x103 [1 -1 0 0 0] | x91 [0 0 0 0 0] | x56 [K 0 -1 0 0] '
+      + '| x4 [1 16 -1 0 0] | x2 [0 0 1 1 -1] | x2 [1 4 -1 0 0] | x1 [1 0 -1 -1 0] '
+      + '| x1 [1 0 -1 0 -1] | x1 [1 3 -1 0 0] | x1 [16 0 -1 0 0]',
     note: 'Generic selector halves this assembly emits whose SHAPE FAMILY (constants collapsed to K, '
       + 'sign-normalized) Snarky never emits in `wrap-transaction`, ATTRIBUTED ONE BY ONE: '
       + '[0 0 0 0 0] = the empty second half of an odd `packHalves` run (a row-economy cost, not a '
@@ -262,7 +264,12 @@ const LEDGER = {
       + 'variables in one sigma class instead of spending a row; [1 16 -1 0 0] [1 3 -1 0 0] '
       + '[16 0 -1 0 0] [1 4 -1 0 0] = the two `Pseudo.choose` folds and `Branch_data.Checked.pack`, '
       + 'which upstream emits as ZERO rows because their coefficients are constants and '
-      + '`Checked.mul` takes its `Constant` branch (`utils.ml:81-88`); [1 0 -1 0 -1] [1 0 -1 -1 0] = '
+      + '`Checked.mul` takes its `Constant` branch (`utils.ml:81-88`); [K 0 -1 0 0] = W-KEY\'s '
+      + '`choose_key` fold — SAME cause, and it is the biggest single instance of it: '
+      + '`wrap_main.ml:218-219` passes the step keys through `Inner_curve.constant`, so every '
+      + '`b * coordinate` is `Cvar.scale` and every reduce is Cvar addition, and upstream pays only '
+      + '`Util.seal`\'s ONE row per coordinate (`util.ml:65-76`) — 56 rows against our 56 x branches '
+      + 'fold halves; [1 0 -1 0 -1] [1 0 -1 -1 0] = '
       + "`ones_vector`'s `value <- value && not (...)` recurrence (`util.ml:57-60`), likewise a Cvar "
       + 'linear combination upstream; [0 0 1 1 -1] = `Field.equal`\'s `z_inv*z = 1 - r` '
       + '(`utils.ml:44-48`), which Snarky DOES constrain but renders through `assert_r1cs` into a '

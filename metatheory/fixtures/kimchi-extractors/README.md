@@ -1,6 +1,6 @@
 # Kimchi reality-gate extractors — preserved because they were one `git clean` from gone
 
-These three files produce the **ground truth** for the Mina/Kimchi reality gates
+These four files produce the **ground truth** for the Mina/Kimchi reality gates
 (`metatheory/kimchi_real_proof.json` → `KimchiRealProofGate.lean`, and the Poseidon-firing
 fixture → `KimchiPoseidonGate.lean`). Without them the fixtures cannot be regenerated and the
 gates' differentials become unreproducible numbers.
@@ -35,12 +35,43 @@ survives a `git clean`, a re-clone, or a rev bump in that checkout.
      is that assertion, and it is an `assert!`, not a print. Consumers:
      `PastaPoseidonFq.lean`, `KimchiRecursionGate.lean`.
 
+- `wrap_key_index_export.rs` (added 2026-08-03) — the **W-KEY** ground truth, feeding
+  `metatheory/kimchi_wrap_key_index.json` and `KimchiWrapMain` §14's `STEP_VK_XY`. It rebuilds the
+  SAME `VerifierIndex` `pickles_p6_fq_export.rs:158-174` builds and dumps its 28 index commitments as
+  56 Fq coordinates in **`index_to_field_elements` order**
+  (`pickles_base/side_loaded_verification_key.ml:159-183`: `sigma_comm` 7, `coefficients_comm` 15,
+  then `generic`/`psm`/`complete_add`/`mul`/`emul`/`endomul_scalar`), which is the order
+  `wrap_verifier.ml:521-530` absorbs to produce `index_digest`.
+
+  ⚠ **Two `assert!`s, not prints, and both are load-bearing.**
+  1. Rust kimchi's `VerifierIndex::digest` (`kimchi/src/verifier_index.rs:451-530`) absorbs those
+     eight fields AND THEN `range_check0/1`, `foreign_field_add/mul`, `xor`, `rot` and the whole
+     `lookup_index` **when present**. Pickles' `Plonk_verification_key_evals.t` has no such fields,
+     so the two agree ONLY for an index carrying none of them — the extractor asserts every one is
+     `None` before it dumps. Without that, the 56 numbers would be a PREFIX of the digest's preimage
+     wearing the name of the whole of it.
+  2. It asserts `verifier_index.digest::<BaseSponge>()` equals the `VKDIGEST` already recorded in
+     `PastaPoseidonFq.lean`, AND that an independent `absorb_fq` replay over exactly those 56
+     coordinates reproduces it. So the dump is that digest's preimage, not a second copy of some
+     other index's coordinates.
+
+  ⚠ **Seven of the 28 commitments are the identity** (unused coefficient columns of a small
+  generic-only test circuit) and `DefaultFqSponge::absorb_g` (`poseidon/src/sponge.rs:332-345`)
+  absorbs the FAKE POINT `(0,0)` for infinity, so they contribute 14 zero coordinates rather than
+  being skipped. A model that skipped them would produce a different digest, silently.
+
 ⚠ The `36a8b510` rev cited in the Lean headers is a hardcoded `println!` in the extractor, not a
 recorded fact — true for the original fixture (reflog-confirmed) but nothing enforces it. The rev
 above is what the checkout reads TODAY. If you regenerate, re-record both.
 
 ## To regenerate
 
-Copy the file back into `<proof-systems>/kimchi/examples/`, then `cargo run --example
-reality_gate_export` (resp. `..._poseidon_export`) from that checkout, and replace the JSON /
-the Lean literals. The Lean side byte-matches the JSON (audited: all 30 literals).
+Copy the file back into `<proof-systems>/kimchi/examples/`, then `cargo run --release --example
+reality_gate_export` (resp. `..._poseidon_export`, `wrap_key_index_export`) from that checkout, and
+replace the JSON / the Lean literals. The Lean side byte-matches the JSON (audited: all 30 literals).
+
+`wrap_key_index_export` writes its whole output to stdout as JSON:
+
+    cargo run --release --example wrap_key_index_export -p kimchi > metatheory/kimchi_wrap_key_index.json
+
+and refuses (panics) rather than dumping if either assertion above fails.

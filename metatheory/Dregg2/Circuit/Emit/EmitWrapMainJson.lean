@@ -95,7 +95,7 @@ def main : IO Unit := do
     PRIMARY_LEN(mina)={WRAP_PRIMARY_LEN} pubWords(here)={s.pubWords}"
   let t := mkWrap s
   let _ ← force t.sp.evs.length "sponge events"
-  for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind] do
+  for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key] do
     let _ ← emitRung dir tag t k
     pure ()
   IO.println s!"wrote {dir}/wrapmain_{tag}_*.json"

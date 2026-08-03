@@ -11,7 +11,7 @@
 // (`WitnessBuilder.compose`). House Law #1: `proof-systems` (tag 0.3.0) is the Rust PROVER that
 // RUNS it and authors no constraint. No OCaml, no Node, no o1js in this path.
 //
-// FOUR RUNGS, each a superset of the one below, each proved with BOTH polarities:
+// FIVE RUNGS, each a superset of the one below, each proved with BOTH polarities:
 //   w1_transcript  the Fq Poseidon sponge of `wrap_verifier.ml:516-646` + `check_bulletproof`'s
 //                  continuation, driven by the REAL rate-2 state machine (`poseidon.rs:107-146`):
 //                  beta and gamma share ONE permutation, and the digest squeeze is the FORK at
@@ -25,6 +25,11 @@
 //                  selection sub-circuit, which has no step-side analogue at all
 //   w4_bind        the closing ties: the wrap statement words this assembly DERIVES become public
 //                  words through `placeChecked`, so a word no gate reads REFUSES
+//   w5_key         W-KEY: `choose_key` (`wrap_verifier.ml:189-204`) as a one-hot fold over the
+//                  per-branch step keys - which are `Inner_curve.constant`, so it is Generic
+//                  arithmetic and not a curve MSM - plus the INDEX SPONGE (`:521-530`), whose
+//                  squeeze IS the transcript's first absorbed word. This is the rung at which
+//                  `index_digest` stops being a fixture and starts being DERIVED
 //
 // THE GATE, per rung:
 //   (1) HONEST      — the assembled circuit's good witness verify()==true;
@@ -55,7 +60,7 @@
 //
 // RUN the committed gate (RELEASE — a debug prove is minutes):
 //   cargo test --release --manifest-path metatheory/fixtures/pickles-wrapmain-harness/Cargo.toml
-// RUN the wrap-scale rung set (all four rungs, timed):
+// RUN the wrap-scale rung set (all five rungs, timed):
 //   DREGG_WM=wrap lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean
 //   cargo run --release --manifest-path .../Cargo.toml -- /tmp/pickles-wrapmain wrap
 
@@ -90,8 +95,14 @@ type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, 
 type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
 type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 
-/// The four rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 4] = ["w1_transcript", "w2_challenges", "w3_branch", "w4_bind"];
+/// The five rungs, in assembly order. Each is a superset of the one before it.
+const RUNGS: [&str; 5] = [
+    "w1_transcript",
+    "w2_challenges",
+    "w3_branch",
+    "w4_bind",
+    "w5_key",
+];
 
 // ---- the Lean-emitted JSON shape (identical schema to the step side's) ----
 
@@ -420,7 +431,7 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec!["w1_transcript", "w4_bind"],
+            vec!["w1_transcript", "w5_key"],
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -451,7 +462,7 @@ fn main() {
             o.rows, o.domain, o.honest_ms, o.probes_tested
         );
     }
-    println!("== VERDICT: four sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on");
+    println!("== VERDICT: five sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on");
     println!("   PALLAS with verify()==true, and BIND at every sub-circuit boundary. The rest of");
     println!("   `wrap_main` is named by sub-circuit in KimchiWrapMain §13. ==");
 }
@@ -463,10 +474,10 @@ fn main() {
 mod wrapmain_tests {
     use super::*;
 
-    /// The fixture subset actually PROVED in CI: the bottom rung and the top one. w2/w3 are read
-    /// for their census without proving, because each prove is seconds and the ladder pins
-    /// (`KimchiWrapMain` §12b) already establish that they are supersets.
-    const COMMITTED: [&str; 2] = ["w1_transcript", "w4_bind"];
+    /// The fixture subset actually PROVED in CI: the bottom rung, the closing rung, and the top
+    /// one. w2/w3 are read for their census without proving, because each prove is seconds and the
+    /// ladder pins (`KimchiWrapMain` §12b, §14b) already establish that they are supersets.
+    const COMMITTED: [&str; 3] = ["w1_transcript", "w4_bind", "w5_key"];
 
     struct Fixture {
         wired: CircuitJson,
@@ -589,25 +600,66 @@ mod wrapmain_tests {
 
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        let f = fixture("w4_bind");
-        assert!(
-            f.wired.public_input_size > 0,
-            "w4_bind must carry public words"
-        );
-        let mut bad = f.public.clone();
-        bad[0] += Fq::from(1u64);
-        assert!(
-            prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &bad).is_err(),
-            "the honest proof was ACCEPTED against a tampered public vector"
-        );
-        for i in [0usize, f.wired.public_input_size - 1] {
-            let mut b = f.public.clone();
-            b[i] += Fq::from(1u64);
+        for rung in ["w4_bind", "w5_key"] {
+            let f = fixture(rung);
             assert!(
-                prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, i), &b).is_err(),
-                "public cell ({i},0) flip WITH a matching public vector ACCEPTED - the word is not wired in"
+                f.wired.public_input_size > 0,
+                "{rung} must carry public words"
+            );
+            let mut bad = f.public.clone();
+            bad[0] += Fq::from(1u64);
+            assert!(
+                prove_and_verify(&f.iw, &f.gm, build_witness(&f.wired), &bad).is_err(),
+                "{rung}: the honest proof was ACCEPTED against a tampered public vector"
+            );
+            for i in [0usize, f.wired.public_input_size - 1] {
+                let mut b = f.public.clone();
+                b[i] += Fq::from(1u64);
+                assert!(
+                    prove_and_verify(&f.iw, &f.gm, tamper(&f.wired, 0, i), &b).is_err(),
+                    "{rung}: public cell ({i},0) flip WITH a matching public vector ACCEPTED - the word is not wired in"
+                );
+            }
+        }
+    }
+
+    /// ⚑ w5 is W-KEY: `choose_key` (`wrap_verifier.ml:189-204`) over `Inner_curve.constant` step
+    /// keys — which is `Generic` arithmetic, NOT a curve MSM — plus the INDEX SPONGE
+    /// (`wrap_verifier.ml:521-530`), a fresh Fq Poseidon absorbing the 28 chosen commitments as 56
+    /// coordinates and squeezing once. At rate 2 that is exactly 28 permutations, and the squeeze
+    /// adds exactly one more sigma-only probe. The DERIVATION's own reality gate — that the squeeze
+    /// reproduces the digest Rust kimchi computed for the same index — is
+    /// `KimchiWrapMain.key_digest_is_the_index_digest`, proved in the KERNEL, not here.
+    #[test]
+    fn key_rung_adds_the_index_sponge_and_no_curve_gate() {
+        let w4 = load("w4_bind");
+        let w5 = load("w5_key");
+        let c4 = gate_census(&w4);
+        let c5 = gate_census(&w5);
+        assert!(w5.num_rows > w4.num_rows, "the ladder is monotone");
+        assert_eq!(
+            c5[2],
+            c4[2] + 28 * 11,
+            "w5 must add exactly 28 whole Fq permutations - the 56-coordinate index sponge"
+        );
+        for (i, n) in run_lengths(&w5, 2).iter().enumerate() {
+            assert_eq!(*n, 11, "Poseidon run {i} is {n} rows, not one permutation");
+        }
+        for k in [3usize, 4, 5, 6] {
+            assert_eq!(
+                c5[k], c4[k],
+                "choose_key is Generic arithmetic over CONSTANT keys - family {k} must not move"
             );
         }
+        assert_eq!(
+            w5.public_input_size, w4.public_input_size,
+            "index_digest is not a wrap statement word; the public vector must not grow"
+        );
+        assert_eq!(
+            w5.probe_rows.len(),
+            w4.probe_rows.len() + 1,
+            "the index sponge's single squeeze must add exactly one sigma-only probe"
+        );
     }
 
     /// ⚑ w1 IS the Fq Poseidon sponge, and the run-length family says so: every `Poseidon` run is
