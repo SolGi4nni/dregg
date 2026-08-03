@@ -68,6 +68,21 @@ P=±Q, O), avoiding the exceptional-case handling naive Jacobian doubling needs.
   ≈ 129 bits × (cAdd(acc,acc) + 2-way select + cAdd(acc,S)) ≈ **2.46M gates** — 3.4× better than naive
   constant-time (~8.3M). (Projective dbl-2015-rcb is ~expensive as the add, so unified-add-for-both is both simpler
   AND best.)
+- ⚑ **AND WHAT "one gate per mul" MEANS AT BABYBEAR — the correction K1 as built does not carry into its own
+  prices (recorded 2026-08-03).** The counts above charge ONE core gate per Pasta multiplication, which is exactly
+  what `Dregg2.Circuit.Emit.PastaField.fpMulCore` emits: a single degree-2 gate over a 9×30 limb encoding, with
+  `pastaLimbRange` emitted NOWHERE in the tree (its six caller wrappers have zero call sites) and no boolean pins
+  on the carry/borrow columns. That gate does not enforce the multiply in the field the prover works in: its
+  reduction witnesses are free columns whose coefficients are units mod `p_babybear`, so its mod-felt reading holds
+  at **every** operand triple (`PastaField` §6.4, computed on the emitted descriptor bytes; the emitted RCB-add
+  measured as 33 core gates, 14 multiply-shaped and 19 add/sub). ⚑ **A multiply that is SOUND at BabyBear is a
+  different encoding.** `2b + log₂ k < log₂ p_babybear` fails at `b = 30, k = 9` (`63.17` against `30.91`) and holds
+  at `b ≈ 13, k ≈ 20`, where one multiplication is `k² = 400` limb products plus a reduction and ~40 range-checked
+  carry rungs — **≈10³ BabyBear constraints, not 1** (`LightClientMinaAir` §1b). So **every gate figure in this
+  section is ~10³ low against a sound gadget**: an RCB-add is ≈1.6·10⁴ constraints, the full-generator ladder ~10⁷,
+  and the GLV scalar-mult ~10⁹. That does not change K5's conclusion below — it strengthens it, because the leg to
+  DEFER is now three orders further out of reach, and the reachable architecture is the Mina-side shrink terminal
+  rather than an in-dregg Pasta ladder.
 - The dbl-specific gadget is NOT worth building in this gate model (named micro-opt, saves nothing).
 
 ## K5 design crux (from KIMCHI-VERIFY-SPEC.md 63726f561): DEFER the MSM

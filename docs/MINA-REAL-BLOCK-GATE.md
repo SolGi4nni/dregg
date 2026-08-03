@@ -286,6 +286,35 @@ frames it does not slow down, it **aborts** — `Stack overflow detected.`, exit
 `ulimit -s unlimited` does not help because Lean checks its own `--tstack`. That is why a 1024-term
 chunk below is evaluated as two 512-term folds ADDED, not as one 1024-term fold.
 
+### ⚑ What gate the `*-AIR-*` rows below are priced against — read before their numbers
+
+Rungs `5a`–`5h` are **kernel** results: `decide`d equalities over `ZMod`, where the Pasta arithmetic
+is exact by construction. The seconds and gigabytes in those rows measure Lean.
+
+The `5h-AIR`, `5h-AIR-BOUND` and `5h-AIR-CURVE` rows measure something else — **emitted AIRs put
+through the deployed STARK prover** — and every constraint count, column count, row count,
+millisecond and proof-byte figure in them is denominated in `Dregg2.Circuit.Emit.PastaField`'s
+EMITTED multiply: `fpMulCore`, ONE degree-2 gate of 81 cross-products, with `"ranges": []`, no
+carry pins, and `pastaLimbRange` emitted nowhere in the tree. Measured on the checked-in bytes
+(`circuit/descriptors/by-name/pasta-rcb-windowed.json` and the eight `pasta-rcb-sg-slice-*`):
+the only booleanity gates are on `BIT` and `DBL`; the 19 carry/borrow columns and the 126 quotient
+columns are free, each local to one constraint, with coefficients that are nonzero mod
+`p_babybear`. **So in the field the prover checks, those gates hold at every operand triple**
+(`PastaField` §6.4) — the emitted objects do not enforce their own field arithmetic, and the
+descriptor parser folds their 495-bit ℤ coefficients into felts to read them at all
+(`circuit/src/lean_descriptor_air.rs::parse_int_field`).
+
+A multiply that IS sound at BabyBear is a different encoding — 13-bit limbs, 20 of them, ≈10³
+constraints (§1b of `LightClientMinaAir`, and `LightClientMinaLinkAir` §"Why (iii) is a wall") —
+so a complete RCB add goes from 33 constraints to ≈1.6·10⁴ and **every millisecond and row figure
+in those three rows is ~10³ short of the sound object's.** Nothing is retracted: they are correct
+measurements of what is on disk, and the forgeries they refuse (a substituted generator, a
+`(0,0,0)` accumulator, a flipped digit) are refused by the exact-public LogUp balance and the
+curve gates, which owe nothing to the multiply. What does NOT survive the correction is reading
+"1,056,896 rows pads to `2^21` exactly" as *nearly affordable*: for a sound gate it is ~10³ past
+the ceiling, which is why the standing verdict is **defer the IPA leg, do not optimise it**
+(`PastaMsmLayouts` §7.2) and the reachable architecture is the Mina-side shrink terminal.
+
 | rung | what | scalar-muls | status |
 |---|---|---|---|
 | **5a** | `f_comm` = the linearization MSM (`perm_scalars · sigma_comm[6]`) | 1 | **DONE** — `MinaWrapGroupGate.fComm_reproduces_kimchi` |
