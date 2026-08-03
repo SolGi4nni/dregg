@@ -2385,12 +2385,24 @@ theorem branch_data_packing_matches_a_real_wrap_proof :
 /-! ### §11d — the field itself.
 
 A wrap emission whose values were reduced mod `pN` would be accepted by nothing; this is the
-tripwire that says which field the file is in. -/
+tripwire that says which field the file is in.
 
-#guard qN != pN
-#guard qAdd (qN - 1) 1 == 0
-#guard qMul (qN - 1) (qN - 1) == 1
-#guard qSub 0 1 == qN - 1
+⚑ **CONVERTED FROM FOUR `#guard`s.** They were four closed instances evaluated by
+`unsafe evalExpr Bool`, leaving no term and invisible to the `#assert_namespace_axioms` sweep at the
+foot of this file — a `native_decide` with the name, the term and the axiom record deleted. The
+facts are pure `Fq` arithmetic on 254-bit literals and `decide` closes every one in the kernel, so
+being guards bought nothing and cost the axiom accounting. -/
+
+/-- **THE FIELD IS `Fq`, AND `Fq` IS A FIELD.** `qN ≠ pN` is the tripwire that says which of the two
+Pasta primes this file reduces by — a wrap emission reduced mod `pN` is the one mistake that would
+be accepted by nothing and visible in nothing. The other three are the ring identities the emitter
+relies on every time it writes a negative coefficient as `qSub 0 k`. -/
+theorem the_field_is_fq_and_wraps :
+    qN ≠ pN
+    ∧ qAdd (qN - 1) 1 = 0
+    ∧ qMul (qN - 1) (qN - 1) = 1
+    ∧ qSub 0 1 = qN - 1 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §12 — the in-CI PINS on the smoke instance (`#guard`, interpreter-reduced).
 
