@@ -153,16 +153,61 @@ fn trace_and_pis(
     (vec![r; TRACE_ROWS], pis)
 }
 
-/// `Ok(())` iff the descriptor ACCEPTS this witness — prove AND verify. A prover failure is a
-/// refusal too (an unsatisfiable constraint has no proof), and both are reported.
+/// `Ok(())` iff the descriptor ACCEPTS this witness — prove AND verify.
+///
+/// ⚑ **A REFUSAL HAS THREE SHAPES HERE, AND ALL THREE ARE REFUSALS.** Measured 2026-08-03 on this
+/// descriptor:
+///
+/// * an `Err` from the prover — how the RANGE teeth refuse (`row 0: range wire 7 value 2013265916
+///   >= 2^24`, which is `p − 5`: the wrapped negative slack, verbatim);
+/// * a PANIC out of plonky3's `check_constraints.rs:133` (`constraints not satisfied on row 0:
+///   failed constraints = [#0]`) — how the ALGEBRAIC gates refuse in a debug build, where the
+///   prover's own constraint check is a debug assertion;
+/// * an `Err` from the verifier — the deployed leg.
+///
+/// So this helper does exactly what the production consumer does: `mina_head_verifier.rs`'s refusal
+/// 4 runs prove/verify under `catch_unwind` precisely so a malformed or forged witness is a
+/// fail-closed REJECTION and never a panic unwinding through the executor. A test that let a panic
+/// escape would report the descriptor's refusal as a test failure — which is what the first run of
+/// this file did, and the descriptor was right both times.
 fn descriptor_accepts(h: Head, anchor: &[u8; 32], tip: &[u8; 32]) -> Result<(), String> {
     let d = desc();
     let (trace, pis) = trace_and_pis(h, anchor, tip);
-    let mem = MemBoundaryWitness::default();
-    let heaps: Vec<Vec<HeapLeaf>> = vec![];
-    let proof = prove_vm_descriptor2(&d, &trace, &pis, &mem, &heaps)
-        .map_err(|e| format!("prover refused: {e}"))?;
-    verify_vm_descriptor2(&d, &proof, &pis).map_err(|e| format!("verifier refused: {e:?}"))
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mem = MemBoundaryWitness::default();
+        let heaps: Vec<Vec<HeapLeaf>> = vec![];
+        let proof = prove_vm_descriptor2(&d, &trace, &pis, &mem, &heaps)
+            .map_err(|e| format!("prover refused: {e}"))?;
+        verify_vm_descriptor2(&d, &proof, &pis).map_err(|e| format!("verifier refused: {e:?}"))
+    }));
+    match outcome {
+        Ok(r) => r,
+        Err(_) => Err(
+            "prover/verifier PANICKED — plonky3's debug constraint check fired, i.e. an emitted \
+             gate is unsatisfied on this row. The deployed consumer catches this the same way."
+                .to_string(),
+        ),
+    }
+}
+
+/// Quieten the default panic printer for the refusal cases: a refusal that arrives as a panic is
+/// expected here, and its backtrace is noise. Restored by the guard's `Drop`.
+struct QuietPanics(Option<Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>>);
+
+impl QuietPanics {
+    fn new() -> Self {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        Self(Some(prev))
+    }
+}
+
+impl Drop for QuietPanics {
+    fn drop(&mut self) {
+        if let Some(h) = self.0.take() {
+            std::panic::set_hook(h);
+        }
+    }
 }
 
 const ANCHOR: [u8; 32] = [0x5au8; 32];
@@ -203,6 +248,7 @@ fn an_honest_anchored_head_proves_and_verifies() {
 /// DERIVED from the pinned anchor plus the exhibited segment, so it is not settable.
 #[test]
 fn a_forged_blockchain_length_is_refused_by_the_descriptor() {
+    let _quiet = QuietPanics::new();
     let mut h = honest(5, 400_000, 400_010, 290);
     h.block_len = 400_300; // the lie
     h.wit_depth = 290; // …and the depth columns dressed to match it
@@ -216,6 +262,7 @@ fn a_forged_blockchain_length_is_refused_by_the_descriptor() {
 /// lookup has no satisfying row.
 #[test]
 fn a_losing_fork_is_refused_by_the_descriptor() {
+    let _quiet = QuietPanics::new();
     let h = honest(295, 400_000, 400_010, 290);
     assert_eq!(h.wit_depth, 285, "the shallower fork witnesses only 285");
     let err = descriptor_accepts(h, &ANCHOR, &TIP)
@@ -226,6 +273,7 @@ fn a_losing_fork_is_refused_by_the_descriptor() {
 /// ⚑ A BENT PROOF WORD: the Pickles carrier at `0`, every other column honest.
 #[test]
 fn a_bent_proof_word_is_refused_by_the_descriptor() {
+    let _quiet = QuietPanics::new();
     let mut h = honest(300, 400_000, 400_010, 290);
     h.pickles_ok = 0;
     let err = descriptor_accepts(h, &ANCHOR, &TIP)
@@ -239,6 +287,7 @@ fn a_bent_proof_word_is_refused_by_the_descriptor() {
 /// element `p − 1000`, outside `[0, 2^24)`.
 #[test]
 fn the_observer_arithmetic_is_refused_by_the_descriptor() {
+    let _quiet = QuietPanics::new();
     let h = honest(1, 1000, 0, 290);
     assert_eq!(
         h.wit_depth, 1001,
