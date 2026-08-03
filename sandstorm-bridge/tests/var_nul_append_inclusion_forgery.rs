@@ -2,9 +2,10 @@
 //!
 //! ## The wound, at the site the brief named
 //!
-//! A grain's `/var` is committed as a `CanonicalHeapTree` whose leaves are
-//! `HeapLeaf::entry(var_addr(key), var_value_felt(value))` (`sandstorm-bridge/src/cell.rs:84`),
-//! and both of those felts were `dregg_circuit::poseidon2::hash_bytes` over a domain tag
+//! A grain's `/var` was committed as a `CanonicalHeapTree` whose leaves were
+//! `HeapLeaf::entry(var_addr(key), var_value_felt(value))` — that construction is RETIRED as of
+//! 2026-08-03 (see the note below); both of those felts were
+//! `dregg_circuit::poseidon2::hash_bytes` over a domain tag
 //! concatenated with an arbitrary-length string. Until 2026-08-01 `hash_bytes` was
 //! `hash_many(from_bytes_packed(data))`, whose packer ZERO-FILLED the final partial 4-byte chunk
 //! while the sponge tag counted FELTS. So appending NUL bytes to a `/var` value — up to the next
@@ -70,7 +71,9 @@ fn retired_packed_limbs(bytes: &[u8]) -> Vec<u32> {
     out
 }
 
-/// The two domain tags the deployed code prepends (`sandstorm-bridge/src/cell.rs:52,56`).
+/// The two domain tags the code prepended when this defect was live. They are RETIRED — the
+/// deployed pair is `{VAR_COLL_DOMAIN, VAR_LEAF_DOMAIN}` at `:v2` (`src/cell.rs`), and the
+/// exhibit below is about the RETIRED packing over the RETIRED buffers, so these must stay `:v1`.
 const VAR_ADDR_DOMAIN: &[u8] = b"grain/var/addr:v1\0";
 const VAR_VALUE_DOMAIN: &[u8] = b"grain/var/value:v1\0";
 
@@ -228,7 +231,7 @@ fn completeness_the_honest_card_still_verifies() {
 /// PANICS, refusing to commit an ambiguous root, which is fail-closed.
 ///
 /// The eight-fold leaf count moves that bound: an accidental collision becomes likely near
-/// `2^15.4534 / 8 ≈ 5,793` entries rather than `≈ 46,341`, and the depth-16 tree now holds `8191`
+/// `2^15.4534 / 8 ≈ 5,609` entries rather than `≈ 44,869`, and the depth-16 tree now holds `8191`
 /// entries rather than `65535`. Closing it needs an address space wider than one felt, which is
 /// `HeapLeaf`'s shape and therefore the deployed IMT gate's — the same Lean/emit item named at
 /// `exec_lean::nullifier::addr_of`. Delete this when `HeapLeaf::addr` widens.

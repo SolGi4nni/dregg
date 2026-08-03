@@ -61,7 +61,7 @@
 //! not a forgery (see above) — [`dregg_circuit::heap_root::assert_addr_unique`] PANICS on
 //! it, refusing to commit an ambiguous root, which is fail-closed. It is an AVAILABILITY
 //! bound, and the eight-fold leaf count moves it: an accidental collision becomes likely
-//! near `2^15.4534 / 8 ≈ 5,793` entries rather than `≈ 46,341`, and the depth-16 tree's
+//! near `2^15.4534 / 8 ≈ 5,609` entries rather than `≈ 44,869`, and the depth-16 tree's
 //! capacity is now `8191` entries rather than `65535`. Closing it needs an address space
 //! wider than one felt, which is `HeapLeaf`'s shape and therefore the deployed IMT gate's
 //! — the same Lean/emit item named at `exec_lean::nullifier::addr_of`.
