@@ -3,9 +3,13 @@
 // The circuit (Lean-authored by `Dregg2.Circuit.Emit.KimchiStepMain`) is the recursive verifier in
 // the five named sub-circuits `verify_one` runs:
 //
-//   r1_transcript  the Fp Poseidon SPONGE — an init pin, `absorbs` absorb blocks (a Generic absorb
-//                  row + an 11-row Poseidon permutation + its output Zero row), then `chals`
-//                  squeeze permutations. The sponge STATE crosses every block boundary as a sigma
+//   r1_transcript  the Fp Poseidon SPONGE — an init pin, one pinned pad cell, and `tBlocks`
+//                  PERMUTATIONS (a Generic absorb row where the block swallows anything + an 11-row
+//                  Poseidon permutation + its output Zero row). A SQUEEZE EMITS NO BLOCK: Mina's
+//                  sponge is lazy (`snarky/sponge/sponge.ml:296-325`), so a squeeze from
+//                  `Absorbed _` performs the pending block's permutation and a second consecutive
+//                  squeeze reads `state.(1)` for free. `tBlocks` is `ceil(items/2)` at upstream's
+//                  own squeeze schedule. The sponge STATE crosses every block boundary as a sigma
 //                  class: no prior rung had ever copy-wired a Poseidon gate to anything.
 //   r2_challenges  `to_field_checked` — 8 chained EndoMulScalar rows per challenge, the (n,a,b)
 //                  accumulators hopping row->row through sigma (row k's n8/a8/b8 at cols 1/4/5 IS

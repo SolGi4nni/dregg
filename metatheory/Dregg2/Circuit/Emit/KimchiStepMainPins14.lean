@@ -67,7 +67,9 @@ theorem u_squeeze_is_the_full_element_not_the_low_128 :
 
 /-- …and the cell the rows read really is that squeeze's own lane, not a copy of it. -/
 theorem u_squeeze_var_is_the_scheduled_lane :
-    uSqueezeVar shapeSmoke = vSt shapeSmoke (sqBlock shapeSmoke (uChalIx shapeSmoke) + 1) 0 := by
+    uSqueezeVar shapeSmoke
+      = vSt shapeSmoke (sqStBlock shapeSmoke (uChalIx shapeSmoke))
+            (sqStLane shapeSmoke (uChalIx shapeSmoke)) := by
   native_decide
 #assert_compiled u_squeeze_var_is_the_scheduled_lane
 
@@ -224,15 +226,14 @@ theorem every_scheduled_variable_has_a_witness_entry :
 
 /-- …and it is not vacuous: `rowsS` really does wire variables (a schedule of all-`none` perms would
 satisfy the `all` above trivially). ⚑ An EQUALITY, not a bound — a bound is what "a deleted chain
-would still satisfy" looks like. `4025` rows carry `13054` wired permutation cells; both numbers move
-deliberately or not at all. ⚑ It was `3861`/`12441` until §20 gave R3's ladders their per-word widths
-(`…Pins15`): the smoke shape's three MSM terms are Wrap statement words 0–2, all `Field`, so they run
-at 51 chunks instead of 26 and the rung gained `3·25·2 = 150` rows. ⚑ And `4011`/`13041` until §22
-(`…Pins17`) gave the fr-sponge its SEED: segment B's 91st word is a 46th absorb block, so the rung
-gains its addend row (2 wired cells), its 12-row `permBlockRows` (11 wired cells) and the pad lane's
-own `w = 0` pin — **+14 rows, +13 cells**, the pin row wiring one cell. -/
+would still satisfy" looks like. `3861` rows carry `12959` wired permutation cells; both numbers move
+deliberately or not at all. ⚑ It was `4025`/`13054` until §23 (`…Pins18`) made the sponge LAZY:
+five permutations left the assembly (one per segment squeeze that a preceding absorb block already
+supplies, two of them segment B's) plus §3c's whole `index_digest` block, and the transcript went
+from `absorbs + chals = 18` permutations to `tBlocks = 11`. **−164 rows, −95 cells**, and the pad
+lane moved from block 0's second lane to the last lane of the pre-β run. -/
 theorem the_schedule_wires_variables :
-    (rowsS.length = 4025 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 13054) := by
+    (rowsS.length = 3861 ∧ (rowsS.flatMap (fun r => r.perm.filterMap id)).length = 12959) := by
   native_decide
 #assert_compiled the_schedule_wires_variables
 

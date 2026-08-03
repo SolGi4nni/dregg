@@ -68,7 +68,8 @@ set_option maxRecDepth 100000
 -- reproduces the assembly's OWN challenge on the honest word — so what follows measures the grind
 -- and not a second sponge.
 #guard tcOrd == oCip shapeSmoke - 1
-#guard sqBlock shapeSmoke shapeSmoke.zetaChal == tcBlk + 1
+#guard sqStBlock shapeSmoke shapeSmoke.zetaChal == tcBlk + 1
+        && sqStLane shapeSmoke shapeSmoke.zetaChal == 0
 #guard tCommBlock shapeSmoke tcOrd == some (tCommN shapeSmoke - 1)
 #guard msgVar shapeSmoke tcOrd 1 == vTcY shapeSmoke (tCommN shapeSmoke - 1)
 #guard tcChalAt tcHon == chalOf shapeSmoke tS.sp shapeSmoke.zetaChal
@@ -98,11 +99,10 @@ set_option maxRecDepth 100000
 -- every sponge block is still exactly `Ref.perm` of its own absorbed state. A `Poseidon` gate
 -- constrains the permutation and NOT what was fed to it, so before §6b nothing in the assembly
 -- could refuse this.
-#guard (List.range shapeSmoke.blocks).all (fun b =>
+#guard (List.range (tBlocks shapeSmoke)).all (fun b =>
   let pre := spTc.states.getD b []
   let ms := spTc.msgs.getD b []
-  let post := if ms.isEmpty then pre
-    else [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
+  let post := [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
   spTc.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
 
 -- ⚑⚑ **AND THE ASSEMBLED VERSION REFUSES IT.** `t_comm` arrives through `Inner_curve.typ` now, so

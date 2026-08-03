@@ -77,8 +77,9 @@ structure StepShape where
   pubWords : Nat
   deriving Repr, Inhabited, DecidableEq
 
-/-- Sponge blocks = absorb blocks then squeeze blocks. -/
-def StepShape.blocks (s : StepShape) : Nat := s.absorbs + s.chals
+-- ⚑ **`StepShape.blocks` IS GONE (2026-08-03).** It was `absorbs + chals` — one permutation per
+-- absorb block PLUS one per squeeze — which is not what Mina's lazy sponge performs. The
+-- permutation count is `tBlocks` (§1c′), DERIVED from the op tape, and it is smaller.
 /-- Bits a challenge carries (`emsRows` rows × 8 crumbs × 2 bits). -/
 def StepShape.chalBits (s : StepShape) : Nat := 16 * s.emsRows
 /-! ⚑ **RETIRED 2026-08-03 (§21).** There was a `StepShape.msmChal i = i % chals` here — "which
@@ -154,12 +155,22 @@ The `x_hat` ladder cluster there is **31 `var_base_mul` ladders**, chunk widths 
     51,51,51,51,51, 26,26,26,26,26, 51,51,51, 26×16, 2, 26      (982 chunks, `51×8 26×22 2×1`)
 
 which is this census word for word — five `Field`, five `Challenge`+`Scalar Challenge`, three
-`Digest`, **sixteen** bulletproof challenges, one `Branch_data`, then the lookup challenge. And the
-nine one-bit words emit **NO LADDER AT ALL**: `multiscale_known` PARTITIONS on `` `Packed_bits
-(Constant c, _) `` (`step_verifier.ml:133-140`) and folds the constant scalars' bases outside the
-circuit, and the feature flags at `Flag.Yes`/`Flag.No` are `Spec.T.Constant` (`:794-802`) while the
-`Opt`'s flag word is `Field.zero` (`spec.ml:397`). 40 statement words, 31 in-circuit ladders — and
-`chunks_needed ~num_bits:0 = 0` lands on exactly that count without a special case. -/
+`Digest`, **sixteen** bulletproof challenges, one `Branch_data`, then the lookup challenge. ⚠ Read it
+as **chunks × count**: ONE ladder of 2 chunks (`branch_data`, 10 bits), 22 of 26, 8 of 51 = 31
+ladders / 982 chunks. §21/§22 read `2×1` as "two 1-chunk ladders", which would make 32.
+
+⚠ ⚑ **AND THE NINE ONE-BIT WORDS ARE NOT DROPPED CONSTANTS — CORRECTED 2026-08-03 (§23).** This block
+said `multiscale_known`'s constant partition (`step_verifier.ml:134-151`) folds them outside the
+circuit. It does not, because they are not `Cvar.Constant`: the `proved` rule's only predecessor is
+the SIDE-LOADED tag, whose eight feature flags are all `Opt.Flag.Maybe`
+(`transaction_snark.ml:609-620,2111-2112`), so `maybe_constant` yields `Spec.T.B Bool` and NOT
+`Spec.T.Constant` (`composition_types.ml:794-802`) and the `Opt` header at `Maybe` packs
+`p.pack Bool b` — a witness (`spec.ml:123-141`). **`constant_part` is EMPTY in this circuit.** The
+nine are live **ZERO-CHUNK** ladders: `chunks_needed ~num_bits:(1−1) = 0`, so they emit no scale
+chunks — which is why the chunk census still lands on 982 without a special case — but upstream
+still emits two `add_fast`es, an `EC_scale` with an empty round array and the `2·s_div_2 + s_odd = s`
+tie for each (`plonk_curve_ops.ml:202-208,291`). **Mina emits 40 ladders; this assembly emits 31.**
+A named residue with a corrected mechanism, not a closure. -/
 
 /-- `Ops.chunks_needed ~num_bits` — `(num_bits + bits_per_chunk − 1) / bits_per_chunk` at
 `bits_per_chunk = 5` (`plonk_curve_ops.ml:64-68`). -/
@@ -197,76 +208,11 @@ def msmChunksAt (i : Nat) : Nat := chunksNeeded (msmBits i - 1)
 by, now that the per-term stride is not constant. -/
 def msmChunkPrefix (n : Nat) : Nat := ((List.range n).map msmChunksAt).foldl (· + ·) 0
 
-/-! ## §2 — the variable space.
+/-! ## §1c — ⚑ THE TRANSCRIPT SCHEDULE AND ITS LAZY LAYOUT.
 
-Public words are `external 0 .. pubWords-1` (Snarky's own numbering, which `place` reproduces). The
-circuit's OWN variables start at `AUX`, so `placeChecked`'s H1 (silent public/aux absorption) cannot
-fire and its H2 (an inert public word) is the real gate on the closing rung. Ids are laid out in
-disjoint REGIONS whose bases are functions of the shape; §9 pins the distinct-variable count, so a
-collision (which MERGES two σ classes and shrinks the count) goes red. -/
-
-/-- The lowest `external` id the circuit allocates for itself; equals `PRIMARY_LEN` for the committed
-shape, so `placeChecked`'s dead gap `pubWords ≤ i < AUX` is empty. -/
-def AUX : Nat := 67
-
-/-- Circuit variable `k`. -/
-def xv (k : Nat) : PVar := .external (AUX + k)
-
-/-- Sponge state lane `j` entering block `b` (`b = 0..blocks`). -/
-def vSt (_s : StepShape) (b j : Nat) : PVar := xv (3 * b + j)
-def nSt (s : StepShape) : Nat := 3 * (s.blocks + 1)
-
-/-- Post-absorb lane `j ∈ {0,1}` of absorb block `b`. -/
-def vPost (s : StepShape) (b j : Nat) : PVar := xv (nSt s + 2 * b + j)
-/-- The transcript word absorbed at lane `j` of block `b`. -/
-def vMsg (s : StepShape) (b j : Nat) : PVar := xv (nSt s + 2 * s.absorbs + 2 * b + j)
-
-def baseN (s : StepShape) : Nat := nSt s + 4 * s.absorbs
-/-- Challenge `c`'s `n` accumulator after `k` `EndoMulScalar` rows. `vN c emsRows` is THE CHALLENGE
-VALUE — the variable three gate types share. -/
-def vN (s : StepShape) (c k : Nat) : PVar := xv (baseN s + c * (s.emsRows + 1) + k)
-def nN (s : StepShape) : Nat := s.chals * (s.emsRows + 1)
-def baseA (s : StepShape) : Nat := baseN s + nN s
-def vA (s : StepShape) (c k : Nat) : PVar := xv (baseA s + c * (s.emsRows + 1) + k)
-def baseB (s : StepShape) : Nat := baseA s + nN s
-def vB (s : StepShape) (c k : Nat) : PVar := xv (baseB s + c * (s.emsRows + 1) + k)
-def baseHi (s : StepShape) : Nat := baseB s + nN s
-/-- The high part of challenge `c`'s squeeze decomposition. -/
-def vHi (s : StepShape) (c : Nat) : PVar := xv (baseHi s + c)
-
-/-! ### The `to_field_checked` OUTPUT (`scalar_challenge.ml:125-129`).
-
-`to_field_checked` is the `EndoMulScalar` chain, then `Field.Assert.equal n scalar`, then
-**`Field.(scale a endo + b)`** — the endomorphism LIFT of the prechallenge. R2 emitted the first two
-and stopped; these are the variables of the third, so `vLift c` IS `ScalarChallenge::to_field`
-(`KimchiVerify.endoMap ENDO_R`) of the squeeze and the chain's `a₈`/`b₈` cells become load-bearing
-rather than merely constrained. -/
-def baseLift (s : StepShape) : Nat := baseHi s + s.chals
-/-- `a₈ · endo_r` — the lift's product half. -/
-def vLiftT (s : StepShape) (c : Nat) : PVar := xv (baseLift s + c)
-/-- ⚑ **The LIFTED challenge** `a₈·endo_r + b₈`. This is what `plonk.zeta`/`plonk.alpha`, the
-deferred `ξ`/`r` and every bulletproof challenge ARE upstream; the raw `vN c emsRows` is the
-prechallenge the curve gadgets consume. -/
-def vLift (s : StepShape) (c : Nat) : PVar := xv (baseLift s + s.chals + c)
-/-- `Endo.Wrap_inner_curve.scalar`, pinned by one `Generic` row and shared by every lift. -/
-def vEndoR (s : StepShape) : PVar := xv (baseLift s + 2 * s.chals)
-
-def baseMsm (s : StepShape) : Nat := baseLift s + 2 * s.chals + 1
-def mpx (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p)
-def mpy (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p + 1)
-/-- MSM term `i`'s base point. ⚑ CUMULATIVE since §1b: term `i` owns `msmChunksAt i + 2` points
-(its base and its `msmChunksAt i + 1` accumulator boundaries), and the widths differ per word. -/
-def pT (_s : StepShape) (i : Nat) : Nat := msmChunkPrefix i + 2 * i
-/-- MSM term `i`'s accumulator at chunk boundary `j` (`j = 0..msmChunksAt i`). -/
-def pAcc (s : StepShape) (i j : Nat) : Nat := pT s i + 1 + j
-/-- The running MSM sum after add `a`. -/
-def pSum (s : StepShape) (a : Nat) : Nat := pT s s.msmTerms + a
-def nMsmPts (s : StepShape) : Nat := pT s s.msmTerms + s.msmTerms
-
-def baseSN (s : StepShape) : Nat := baseMsm s + 2 * nMsmPts s
--- ⚑ `vSN` — MSM term `i`'s scalar counter chain — is **§2c**, below `baseFtS`: since 2026-08-03 its
--- terminal cell is the STATEMENT WORD `stmtVar i`, and two of the forty words live in R6's compiled
--- program (`baseFtS`) and one in segment C's sponge state. It cannot be stated here.
+⚑ MOVED ABOVE §2 on 2026-08-03: the variable space is now SIZED BY the schedule (`tBlocks` is the
+permutation count Mina actually performs, not `absorbs + chals`), so the schedule has to be
+elaborated before the first `xv`. Nothing in this block mentions a variable. -/
 
 /-- `Nat.N45` + `Wrap_hack`'s two `sg_old` slots — `combine_split_commitments`' commitment count. -/
 def N_WDB : Nat := 47
@@ -295,66 +241,6 @@ takes them off the transcript (the round-robin sharing #4 names), and takes them
 AFTER ζ — which at the committed shape ARE `u` and `bullet_reduce`'s fifteen. It was `k + 1` when ζ
 was challenge 0; at ζ = 3 that would have made ζ one of its own `uₖ`. -/
 def StepShape.uChal (s : StepShape) (k : Nat) : Nat := s.zetaChal + 1 + k
-
-def baseIpa (s : StepShape) : Nat := baseSN s + msmChunkPrefix s.msmTerms
-def ipx (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p)
-def ipy (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p + 1)
-/-- IPA round `r`'s `endo_mul` base point. ⚑ The per-round stride is `ipaBlocks + 3` and not `+ 2`
-since 2026-08-02: the third slot is `Scalar_challenge.endo`'s own seed intermediate. -/
-def qT (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3)
-/-- IPA round `r`'s accumulator after `e` blocks (`e = 0..ipaBlocks`). -/
-def qAcc (s : StepShape) (r e : Nat) : Nat := r * (s.ipaBlocks + 3) + 1 + e
-/-- ⚑ `Scalar_challenge.endo`'s SEED intermediate `p = t + φ(t)` (`scalar_challenge.ml:230-233`:
-`let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in ref G.(p + p)`). `qAcc r 0` is `p + p`,
-so BOTH are rows and neither is a witness. -/
-def qP (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3) + s.ipaBlocks + 2
-/-- The running IPA fold sum after add `a`. ⚑ `a = 0 .. ipaRounds−1` since the `~init` wiring: the
-chain STARTS at commitment 0 (`sg_old[0]`, `qInit`) and folds in every round's output, so there is
-one add per round and `qSum (ipaRounds−1)` is `combined_polynomial`. It was `ipaRounds − 1` adds
-starting at round 0's output, i.e. `combine_split_commitments` with its `~init` dropped. -/
-def qSum (s : StepShape) (a : Nat) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + a
-/-- ⚑ **`sg_old[0]`** — `combine_split_commitments`' `~init` accumulator (`step_verifier.ml:606`,
-`~init:(function `Finite x -> `Finite x | …)`), whose two coordinates ARE transcript block
-`oSgOld0`'s absorbed words. It gets no fold ROUND; it is the point the chain starts at. -/
-def qInit (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds
-/-- ⚑ `check_bulletproof`'s TAIL (`:325-327`): `lhs = Scalar_challenge.endo q c + delta`, one more
-`Scalar_challenge.endo` over the fold output `q` and one `Ops.add_fast` with `delta`. `qLhsP` is the
-seed intermediate `p = t + φ(t)`. -/
-def qLhsP (s : StepShape) : Nat := qInit s + 1
-def qLhsAcc (s : StepShape) (e : Nat) : Nat := qInit s + 2 + e
-/-- ⚑ **`delta`** — `absorb sponge PC delta` (`:321`); its two coordinates are transcript block
-`oDelta`'s absorbed words and the second operand of the closing `add_fast`. -/
-def qDel (s : StepShape) : Nat := qInit s + s.ipaBlocks + 3
-/-- `lhs` itself. -/
-def qLhsOut (s : StepShape) : Nat := qInit s + s.ipaBlocks + 4
-/-- ⚑ **`q = p_prime + lr_prod`** (`step_verifier.ml:316-320`), i.e. the fold sum PLUS
-`uc = scale_fast2 u advice.combined_inner_product`. §19 emits that `scale_fast2`; this is the
-`Ops.add_fast` output it feeds, and `Scalar_challenge.endo q c` reads THIS point, not `qSum`.
-⚠ The BRACKETING differs from upstream and the value does not: upstream is
-`(combined_polynomial + uc) + lr_prod`, this chain is `(Σ combine + Σ lr) + uc`. Addition on the
-curve is associative and commutative, so the point is the same one; what the difference costs is one
-`Ops.add_fast` placed later in the schedule, and it is said here rather than elided. -/
-def qPrime (s : StepShape) : Nat := qInit s + s.ipaBlocks + 5
-def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 6
-
-def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
-/-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
-challenge variable. -/
-def vQN (s : StepShape) (r e : Nat) : PVar :=
-  if e == s.ipaBlocks then vN s (s.ipaChal r) s.emsRows
-  else xv (baseQN s + r * s.ipaBlocks + e)
-/-- ⚑ `Field.scale xt Endo.base` — the endomorphism image's x, the SECOND operand of
-`scalar_challenge.ml:232`'s `add_fast`. One `Generic` half per round pins it to `endo·xt`, so the
-seed's provenance is the base and a constant rather than a witness. -/
-def vQEndo (s : StepShape) (r : Nat) : PVar := xv (baseQN s + s.ipaRounds * s.ipaBlocks + r)
-/-- The `c`-endo tail's own counter chain; at `e = ipaBlocks` it IS `c`'s challenge variable, so the
-value the ladder multiplies by is the one `to_field_checked` decoded from the LAST squeeze. -/
-def vLhsN (s : StepShape) (e : Nat) : PVar :=
-  if e == s.ipaBlocks then vN s (sqScheduled s - 1) s.emsRows
-  else xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + e)
-/-- …and its seed's `endo·x_q`. -/
-def vLhsEndo (s : StepShape) : PVar :=
-  xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks)
 
 /-- ⚑ Upstream's provenance census for `combine_split_commitments`' 47 `without_degree_bound`
 commitments, in ITS OWN ORDER (`step_verifier.ml:601-616`); `true` = absorbed into the transcript.
@@ -526,7 +412,11 @@ modelled as a block (nothing here consumes it — it is `verify_one`'s return va
 **fr-sponge** (`:1008-1009`, §8g) and which this file still also allocates as transcript squeezes for
 the round-robin `msmChal`/`ipaChal` sharing. They are scheduled at the END, after `c`, and named. -/
 
-/-- Absorb-block ORDINALS, in upstream's order. Block indices are `absBlock` of these. -/
+/-- Absorb SOURCE ordinals, in upstream's order. ⚑ A *source* is one `absorb` CALL of `verify_one`
+(`step_verifier.ml:75-84`): `absorb sponge Field x` feeds ONE item, `absorb sponge PC p` feeds
+`g1_to_field_elements p` = two, `absorb sponge Scalar (x, b)` feeds `Field x` then `Bits [b]` = two.
+⚠ A source is NOT a block: since the lazy re-model a rate-2 block is filled by the ITEM STREAM and
+straddles sources — `index_digest` shares block 0 with `sg_old[0]`'s x. -/
 def oDigest : Nat := 0
 /-- ⚑ `sg_old[0]` — `combine_split_commitments`' `~init` accumulator (`:606`), absorbed at `:538`
 and consumed by R4's `complete_add` chain rather than by a fold round. -/
@@ -555,36 +445,287 @@ def sqAfter (s : StepShape) (a : Nat) : Nat :=
   -- fr-sponge (ξ and r, §8g).
   + (if a == oDelta s then 1 + (s.chals - sqScheduled s) else 0)
 
-/-- **R1's BLOCK SCHEDULE.** `some a` = absorb block `a`; `none` = a squeeze block. -/
-def tSched (s : StepShape) : List (Option Nat) :=
+/-! ### ⚑⚑ §1c′ — **MINA'S SPONGE IS LAZY, AND THIS FILE'S WAS EAGER.**
+
+`snarky/sponge/sponge.ml:280-326`, `rate = m − capacity = 3 − 1 = 2` (`:294`), verbatim:
+
+    let absorb t x = match t.sponge_state with
+      | Absorbed n -> if n = rate then (t.state <- block_cipher …; add_assign … 0 x;
+                                        t.sponge_state <- Absorbed 1)
+                      else (add_assign … n x; t.sponge_state <- Absorbed (n + 1))
+      | Squeezed _ -> add_assign … 0 x ; t.sponge_state <- Absorbed 1
+    let squeeze t = match t.sponge_state with
+      | Squeezed n -> if n = rate then (t.state <- block_cipher …; t.sponge_state <- Squeezed 1;
+                                        copy t.state.(0))
+                      else (t.sponge_state <- Squeezed (n + 1) ; copy t.state.(n))
+      | Absorbed _ -> t.state <- block_cipher … ; t.sponge_state <- Squeezed 1 ; copy t.state.(0)
+
+**The permutation is triggered by an ARRIVING element, never on the way out.** Three consequences,
+and until 2026-08-03 this file had all three wrong:
+
+1. **A squeeze from `Absorbed _` supplies the block's ONE permutation.** The old `tSched` gave every
+   squeeze a block of its own on top of the absorb blocks, so the transcript ran **one extra
+   permutation per squeeze** — 21 of them at `shapeStep`.
+2. **A second consecutive squeeze is FREE**: `Squeezed 1`, `n ≠ rate`, `else` branch, `state.(1)`.
+   So β and γ (`:563-564`) are lanes 0 and 1 of ONE permutation, and segment B's ξ′ and r′
+   (`:1007-1009`) likewise — where the old model put them two permutations apart. The THIRD
+   consecutive squeeze permutes again (`Squeezed 2 = rate`).
+3. **An absorb from `Squeezed _` lands in lane 0 and does NOT permute**, so the rate counter RESTARTS
+   at every squeeze and the item stream re-pairs. The old model paired per SOURCE (one commitment per
+   block) and padded `index_digest` to two; upstream pairs per ITEM, so `index_digest` shares block 0
+   with `sg_old[0]`'s x and the ONE pad lane lands at the END of the pre-β run instead.
+
+⚑ THE REALITY GATE FOR THIS SHAPE IS ALREADY IN THE TREE AND ALREADY RED-PROOFED.
+`PastaPoseidon.Ref.absorbFrom` is this same state machine, and its header records that an EAGER
+variant "permuted twice on every input of nonzero EVEN length" and failed **exactly the two
+even-length o1js gold KATs** — `[123456789, 987654321]` and `[p−1, p−1]`. The lazy shape is what
+reproduces all nine golds. This section is that fix carried from `Poseidon.hash` up to `verify_one`'s
+transcript. -/
+
+/-- The sponge rate — `m − capacity = 3 − 1` (`sponge.ml:294`). -/
+def RATE : Nat := 2
+
+/-- ⚑ How many sponge ITEMS absorb source `a` feeds. `absorb sponge Field index_digest` is a bare
+`Field` — ONE. Every other source is a curve point or an `absorb_scalar` `(field, bit)` pair — TWO.
+This is why `N_ABSORB_ITEMS` is ODD. -/
+def srcItems (a : Nat) : Nat := if a == oDigest then 1 else 2
+
+/-- **THE OP TAPE** — `verify_one`'s sponge calls in order. `some (a, j)` absorbs source `a`'s lane
+`j`; `none` is a squeeze. -/
+def tOps (s : StepShape) : List (Option (Nat × Nat)) :=
   (List.range (absorbBlocksOf s)).flatMap (fun a =>
-    some a :: List.replicate (sqAfter s a) none)
+    (List.range (srcItems a)).map (fun j => some (a, j))
+    ++ List.replicate (sqAfter s a) none)
 
-/-- Block `i`'s absorb ordinal, if it is an absorb block. -/
-def blockAbs (s : StepShape) (i : Nat) : Option Nat := (tSched s).getD i none
+/-- The LAYOUT the lazy state machine produces. `put` is `(block, lane, source, lane-in-source)` —
+where each absorbed item lands; `sq` is `(block, lane)` per squeeze — the state a squeeze reads is
+the one ENTERING block `.1`, at lane `.2`, so a squeeze that permutes advances `cur` first and a
+free one does not. `cur` ends as the PERMUTATION COUNT. -/
+structure SpLay where
+  put : List (Nat × Nat × Nat × Nat) := []
+  sq : List (Nat × Nat) := []
+  cur : Nat := 0
+  n : Nat := 0
+  sqz : Bool := false
+  deriving Repr, Inhabited
 
-/-- Absorb block `a`'s BLOCK index. -/
-def absBlock (s : StepShape) (a : Nat) : Nat :=
-  a + ((List.range a).map (sqAfter s)).foldl (· + ·) 0
+/-- One op, transcribed from `sponge.ml:296-325` clause for clause. -/
+def spStep (L : SpLay) : Option (Nat × Nat) → SpLay
+  | some (a, j) =>
+      -- `| Squeezed _ -> add_assign ~state 0 x ; Absorbed 1`  (no permutation)
+      if L.sqz then { L with put := L.put ++ [(L.cur, 0, a, j)], n := 1, sqz := false }
+      -- `| Absorbed n -> if n = rate then (block_cipher; add_assign 0 x; Absorbed 1)`
+      else if L.n == RATE then
+        { L with put := L.put ++ [(L.cur + 1, 0, a, j)], cur := L.cur + 1, n := 1 }
+      -- `else (add_assign n x; Absorbed (n+1))`
+      else { L with put := L.put ++ [(L.cur, L.n, a, j)], n := L.n + 1 }
+  | none =>
+      if L.sqz then
+        -- `| Squeezed n -> if n = rate then (block_cipher; Squeezed 1; state.(0))`
+        (if L.n == RATE then { L with sq := L.sq ++ [(L.cur + 1, 0)], cur := L.cur + 1, n := 1 }
+         -- `else (Squeezed (n+1); state.(n))` — FREE, no permutation
+         else { L with sq := L.sq ++ [(L.cur, L.n)], n := L.n + 1 })
+      -- `| Absorbed _ -> block_cipher ; Squeezed 1 ; state.(0)`
+      else { L with sq := L.sq ++ [(L.cur + 1, 0)], cur := L.cur + 1, n := 1, sqz := true }
 
-/-- The block index of each squeeze, in order. -/
-def sqBlocks (s : StepShape) : List Nat :=
-  let l := tSched s
-  (((l.zip (List.range l.length)).filter (fun p => p.1 == none)).map (·.2))
-/-- ⚑ Squeeze `c`'s block — the state R2 reads challenge `c` out of is `vSt s (sqBlock s c + 1) 0`. -/
-def sqBlock (s : StepShape) (c : Nat) : Nat := (sqBlocks s).getD c 0
+/-- **R1's LAYOUT.** -/
+def spLay (s : StepShape) : SpLay := (tOps s).foldl spStep {}
+
+/-- **The transcript's PERMUTATION COUNT** — the number of `Poseidon` blocks R1 emits, and the
+number `Sponge.absorb`/`Sponge.squeeze` between them perform. `states` runs `0 … tBlocks`. -/
+def tBlocks (s : StepShape) : Nat := (spLay s).cur
+
+/-- ⚑ Where source `a`'s lane `j` LANDS: `(block, lane)`. The inverse of `blockWords`, and the
+replacement for the retired `absBlock` — a source no longer owns a block. -/
+def itemAt (s : StepShape) (a j : Nat) : Nat × Nat :=
+  match ((spLay s).put.find? (fun x => x.2.2.1 == a && x.2.2.2 == j)) with
+  | some x => (x.1, x.2.1)
+  | none => (0, 0)
+
+/-- Block `b`'s two absorbed items as `(source, lane-in-source)`; `none` in a lane no item lands in
+(there is at most one such lane in the whole transcript — see `tPadBlock`). -/
+def blockWordsL (L : SpLay) (b : Nat) : List (Option (Nat × Nat)) :=
+  (List.range RATE).map (fun l =>
+    (L.put.find? (fun x => x.1 == b && x.2.1 == l)).map (fun x => (x.2.2.1, x.2.2.2)))
+def blockWords (s : StepShape) (b : Nat) : List (Option (Nat × Nat)) := blockWordsL (spLay s) b
+
+/-- Does block `b` swallow anything at all? A block that does not is a pure permutation — the third
+consecutive squeeze's. -/
+def blockAbsorbs (s : StepShape) (b : Nat) : Bool := (blockWords s b).any (·.isSome)
+
+/-- ⚑ Squeeze `c`'s `(block, lane)`: R2 reads challenge `c` out of `vSt s (sqStBlock s c)
+(sqStLane s c)`. ⚠ NOT `vSt (sqBlock c + 1) 0` — `sqBlock` is GONE, because a squeeze no longer owns
+a block and no longer always reads lane 0. -/
+def sqPos (s : StepShape) (c : Nat) : Nat × Nat := (spLay s).sq.getD c (0, 0)
+def sqStBlock (s : StepShape) (c : Nat) : Nat := (sqPos s c).1
+def sqStLane (s : StepShape) (c : Nat) : Nat := (sqPos s c).2
+
+/-- ⚑ **THE ONE PAD LANE**, and it MOVED. `N_ABSORB_ITEMS` is odd, so exactly one rate-2 lane of the
+transcript receives no item. Under the per-source model that was block 0's second lane (paired with
+`index_digest`) and it carried a `msgVal` FIXTURE — a word upstream never feeds. Under the item
+stream it is the last lane of the pre-β run, it receives NOTHING, and `transcriptRows` pins a cell to
+ZERO there: `absorb` ADDS, and adding zero to a lane the previous permutation already filled is
+exactly "no arrival". `none` at a shape whose item count is even. -/
+def tPadCell (s : StepShape) : Option (Nat × Nat) :=
+  ((List.range (tBlocks s)).flatMap (fun b =>
+    (List.range RATE).filterMap (fun l =>
+      if blockAbsorbs s b && ((blockWords s b).getD l none).isNone then some (b, l) else none))).head?
+
+/-- Which blocks a squeeze reads the output of — where `transcriptRows` puts a σ-only probe, exactly
+as it did when every squeeze had its own block. -/
+def tProbeAfter (s : StepShape) (b : Nat) : Bool :=
+  ((spLay s).sq.any (fun p => p.1 == b + 1))
+  || (b + 1 == tBlocks s && !(spLay s).sq.any (fun p => p.1 == tBlocks s))
 
 /-- ⚑ **`u`'s squeeze index.** `let u = group_map (Sponge.squeeze_field sponge)` (`:263-266`) is the
-squeeze that follows absorb block `oCip`, so its index is the number of squeezes scheduled before
-that block — `4` at both shapes (β, γ, α, ζ). -/
+squeeze that follows absorb source `oCip`, so its index is the number of squeezes scheduled before
+that source — `4` at both shapes (β, γ, α, ζ). -/
 def uChalIx (s : StepShape) : Nat := ((List.range (oCip s)).map (sqAfter s)).foldl (· + ·) 0
+
+
+
+/-! ## §2 — the variable space.
+
+Public words are `external 0 .. pubWords-1` (Snarky's own numbering, which `place` reproduces). The
+circuit's OWN variables start at `AUX`, so `placeChecked`'s H1 (silent public/aux absorption) cannot
+fire and its H2 (an inert public word) is the real gate on the closing rung. Ids are laid out in
+disjoint REGIONS whose bases are functions of the shape; §9 pins the distinct-variable count, so a
+collision (which MERGES two σ classes and shrinks the count) goes red. -/
+
+/-- The lowest `external` id the circuit allocates for itself; equals `PRIMARY_LEN` for the committed
+shape, so `placeChecked`'s dead gap `pubWords ≤ i < AUX` is empty. -/
+def AUX : Nat := 67
+
+/-- Circuit variable `k`. -/
+def xv (k : Nat) : PVar := .external (AUX + k)
+
+/-- Sponge state lane `j` entering block `b` (`b = 0..tBlocks`). -/
+def vSt (_s : StepShape) (b j : Nat) : PVar := xv (3 * b + j)
+def nSt (s : StepShape) : Nat := 3 * (tBlocks s + 1)
+
+/-- Post-absorb lane `j ∈ {0,1}` of block `b`. -/
+def vPost (s : StepShape) (b j : Nat) : PVar := xv (nSt s + 2 * b + j)
+/-- ⚑ **THE TRANSCRIPT'S ONE PAD CELL**, pinned to zero by `transcriptRows` — the single rate-2 lane
+an odd item count leaves without an arrival (`tPadCell`). ⚠ It REPLACES the whole `vMsg` region: with
+the item stream every one of `N_ABSORB_ITEMS` words is a variable some sub-circuit reads, so there is
+no free-witness transcript word left at all. `vMsg`/`msgVal` are GONE. -/
+def vTPad (s : StepShape) : PVar := xv (nSt s + 2 * tBlocks s)
+
+def baseN (s : StepShape) : Nat := nSt s + 2 * tBlocks s + 1
+/-- Challenge `c`'s `n` accumulator after `k` `EndoMulScalar` rows. `vN c emsRows` is THE CHALLENGE
+VALUE — the variable three gate types share. -/
+def vN (s : StepShape) (c k : Nat) : PVar := xv (baseN s + c * (s.emsRows + 1) + k)
+def nN (s : StepShape) : Nat := s.chals * (s.emsRows + 1)
+def baseA (s : StepShape) : Nat := baseN s + nN s
+def vA (s : StepShape) (c k : Nat) : PVar := xv (baseA s + c * (s.emsRows + 1) + k)
+def baseB (s : StepShape) : Nat := baseA s + nN s
+def vB (s : StepShape) (c k : Nat) : PVar := xv (baseB s + c * (s.emsRows + 1) + k)
+def baseHi (s : StepShape) : Nat := baseB s + nN s
+/-- The high part of challenge `c`'s squeeze decomposition. -/
+def vHi (s : StepShape) (c : Nat) : PVar := xv (baseHi s + c)
+
+/-! ### The `to_field_checked` OUTPUT (`scalar_challenge.ml:125-129`).
+
+`to_field_checked` is the `EndoMulScalar` chain, then `Field.Assert.equal n scalar`, then
+**`Field.(scale a endo + b)`** — the endomorphism LIFT of the prechallenge. R2 emitted the first two
+and stopped; these are the variables of the third, so `vLift c` IS `ScalarChallenge::to_field`
+(`KimchiVerify.endoMap ENDO_R`) of the squeeze and the chain's `a₈`/`b₈` cells become load-bearing
+rather than merely constrained. -/
+def baseLift (s : StepShape) : Nat := baseHi s + s.chals
+/-- `a₈ · endo_r` — the lift's product half. -/
+def vLiftT (s : StepShape) (c : Nat) : PVar := xv (baseLift s + c)
+/-- ⚑ **The LIFTED challenge** `a₈·endo_r + b₈`. This is what `plonk.zeta`/`plonk.alpha`, the
+deferred `ξ`/`r` and every bulletproof challenge ARE upstream; the raw `vN c emsRows` is the
+prechallenge the curve gadgets consume. -/
+def vLift (s : StepShape) (c : Nat) : PVar := xv (baseLift s + s.chals + c)
+/-- `Endo.Wrap_inner_curve.scalar`, pinned by one `Generic` row and shared by every lift. -/
+def vEndoR (s : StepShape) : PVar := xv (baseLift s + 2 * s.chals)
+
+def baseMsm (s : StepShape) : Nat := baseLift s + 2 * s.chals + 1
+def mpx (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p)
+def mpy (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p + 1)
+/-- MSM term `i`'s base point. ⚑ CUMULATIVE since §1b: term `i` owns `msmChunksAt i + 2` points
+(its base and its `msmChunksAt i + 1` accumulator boundaries), and the widths differ per word. -/
+def pT (_s : StepShape) (i : Nat) : Nat := msmChunkPrefix i + 2 * i
+/-- MSM term `i`'s accumulator at chunk boundary `j` (`j = 0..msmChunksAt i`). -/
+def pAcc (s : StepShape) (i j : Nat) : Nat := pT s i + 1 + j
+/-- The running MSM sum after add `a`. -/
+def pSum (s : StepShape) (a : Nat) : Nat := pT s s.msmTerms + a
+def nMsmPts (s : StepShape) : Nat := pT s s.msmTerms + s.msmTerms
+
+def baseSN (s : StepShape) : Nat := baseMsm s + 2 * nMsmPts s
+-- ⚑ `vSN` — MSM term `i`'s scalar counter chain — is **§2c**, below `baseFtS`: since 2026-08-03 its
+-- terminal cell is the STATEMENT WORD `stmtVar i`, and two of the forty words live in R6's compiled
+-- program (`baseFtS`) and one in segment C's sponge state. It cannot be stated here.
+
+
+def baseIpa (s : StepShape) : Nat := baseSN s + msmChunkPrefix s.msmTerms
+def ipx (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p)
+def ipy (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p + 1)
+/-- IPA round `r`'s `endo_mul` base point. ⚑ The per-round stride is `ipaBlocks + 3` and not `+ 2`
+since 2026-08-02: the third slot is `Scalar_challenge.endo`'s own seed intermediate. -/
+def qT (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3)
+/-- IPA round `r`'s accumulator after `e` blocks (`e = 0..ipaBlocks`). -/
+def qAcc (s : StepShape) (r e : Nat) : Nat := r * (s.ipaBlocks + 3) + 1 + e
+/-- ⚑ `Scalar_challenge.endo`'s SEED intermediate `p = t + φ(t)` (`scalar_challenge.ml:230-233`:
+`let p = G.( + ) t (seal (Field.scale xt Endo.base), yt) in ref G.(p + p)`). `qAcc r 0` is `p + p`,
+so BOTH are rows and neither is a witness. -/
+def qP (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3) + s.ipaBlocks + 2
+/-- The running IPA fold sum after add `a`. ⚑ `a = 0 .. ipaRounds−1` since the `~init` wiring: the
+chain STARTS at commitment 0 (`sg_old[0]`, `qInit`) and folds in every round's output, so there is
+one add per round and `qSum (ipaRounds−1)` is `combined_polynomial`. It was `ipaRounds − 1` adds
+starting at round 0's output, i.e. `combine_split_commitments` with its `~init` dropped. -/
+def qSum (s : StepShape) (a : Nat) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + a
+/-- ⚑ **`sg_old[0]`** — `combine_split_commitments`' `~init` accumulator (`step_verifier.ml:606`,
+`~init:(function `Finite x -> `Finite x | …)`), whose two coordinates ARE transcript block
+`oSgOld0`'s absorbed words. It gets no fold ROUND; it is the point the chain starts at. -/
+def qInit (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds
+/-- ⚑ `check_bulletproof`'s TAIL (`:325-327`): `lhs = Scalar_challenge.endo q c + delta`, one more
+`Scalar_challenge.endo` over the fold output `q` and one `Ops.add_fast` with `delta`. `qLhsP` is the
+seed intermediate `p = t + φ(t)`. -/
+def qLhsP (s : StepShape) : Nat := qInit s + 1
+def qLhsAcc (s : StepShape) (e : Nat) : Nat := qInit s + 2 + e
+/-- ⚑ **`delta`** — `absorb sponge PC delta` (`:321`); its two coordinates are transcript block
+`oDelta`'s absorbed words and the second operand of the closing `add_fast`. -/
+def qDel (s : StepShape) : Nat := qInit s + s.ipaBlocks + 3
+/-- `lhs` itself. -/
+def qLhsOut (s : StepShape) : Nat := qInit s + s.ipaBlocks + 4
+/-- ⚑ **`q = p_prime + lr_prod`** (`step_verifier.ml:316-320`), i.e. the fold sum PLUS
+`uc = scale_fast2 u advice.combined_inner_product`. §19 emits that `scale_fast2`; this is the
+`Ops.add_fast` output it feeds, and `Scalar_challenge.endo q c` reads THIS point, not `qSum`.
+⚠ The BRACKETING differs from upstream and the value does not: upstream is
+`(combined_polynomial + uc) + lr_prod`, this chain is `(Σ combine + Σ lr) + uc`. Addition on the
+curve is associative and commutative, so the point is the same one; what the difference costs is one
+`Ops.add_fast` placed later in the schedule, and it is said here rather than elided. -/
+def qPrime (s : StepShape) : Nat := qInit s + s.ipaBlocks + 5
+def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRounds + s.ipaBlocks + 6
+
+def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
+/-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
+challenge variable. -/
+def vQN (s : StepShape) (r e : Nat) : PVar :=
+  if e == s.ipaBlocks then vN s (s.ipaChal r) s.emsRows
+  else xv (baseQN s + r * s.ipaBlocks + e)
+/-- ⚑ `Field.scale xt Endo.base` — the endomorphism image's x, the SECOND operand of
+`scalar_challenge.ml:232`'s `add_fast`. One `Generic` half per round pins it to `endo·xt`, so the
+seed's provenance is the base and a constant rather than a witness. -/
+def vQEndo (s : StepShape) (r : Nat) : PVar := xv (baseQN s + s.ipaRounds * s.ipaBlocks + r)
+/-- The `c`-endo tail's own counter chain; at `e = ipaBlocks` it IS `c`'s challenge variable, so the
+value the ladder multiplies by is the one `to_field_checked` decoded from the LAST squeeze. -/
+def vLhsN (s : StepShape) (e : Nat) : PVar :=
+  if e == s.ipaBlocks then vN s (sqScheduled s - 1) s.emsRows
+  else xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + e)
+/-- …and its seed's `endo·x_q`. -/
+def vLhsEndo (s : StepShape) : PVar :=
+  xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks)
 
 /-- ⚑⚑ **`t`, the argument `group_map` actually gets — the FULL field element.** `:264` is
 `Sponge.squeeze_field`, NOT `squeeze_scalar`: there is no `lowest_128_bits`, no `to_field_checked`
 chain and no endomorphism lift on this path. ⚠ §17's exhibit read `chalOf` here — the LOW 128 bits —
 which is the wrong `t` and hence the wrong `u`; §19 emits `group_map` over this variable and the
 exhibit's `u` values move with it. -/
-def uSqueezeVar (s : StepShape) : PVar := vSt s (sqBlock s (uChalIx s) + 1) 0
+def uSqueezeVar (s : StepShape) : PVar :=
+  vSt s (sqStBlock s (uChalIx s)) (sqStLane s (uChalIx s))
 
 /-! ### ⚑⚑ §22 — **`sponge_digest_before_evaluations` IS A CELL THIS TRANSCRIPT ALREADY COMPUTES.**
 
@@ -606,7 +747,7 @@ the digest needs no new row, no new variable and no new block — it needs to be
 
 /-- ⚑ **`sponge_digest_before_evaluations`** — lane 1 of the state ζ's squeeze permutation produced
 (`step_verifier.ml:574`; `chalOf` reads lane 0 of the same state as ζ). -/
-def digestBeforeEvalsVar (s : StepShape) : PVar := vSt s (sqBlock s s.zetaChal + 1) 1
+def digestBeforeEvalsVar (s : StepShape) : PVar := vSt s (sqStBlock s s.zetaChal) 1
 
 /-! ### `Inner_curve.typ`'s own CHECK (§7b) — `assert_on_curve`.
 
@@ -726,9 +867,9 @@ region is allocated in full at every shape so no id moves when a round becomes a
 def baseIdx (s : StepShape) : Nat := baseHm s + N_HM_APP
 def vIdxX (s : StepShape) (k : Nat) : PVar := xv (baseIdx s + 2 * k)
 def vIdxY (s : StepShape) (k : Nat) : PVar := xv (baseIdx s + 2 * k + 1)
-/-- ⚑ **`index_digest`** — lane `j` of `Sponge.squeeze_field (Sponge.copy sponge_after_index)`
-(`step_verifier.ml:529-534`). Lane 0 is the word R1's transcript absorbs FIRST. -/
-def vIdxD (s : StepShape) (j : Nat) : PVar := xv (baseIdx s + N_IDX_WORDS + j)
+-- ⚑ `vIdxD` MOVED below `baseSegC` (2026-08-03): under Mina's lazy sponge `index_digest` is not a
+-- permutation of its own but a LANE of the state segment C's index prefix already leaves behind, so
+-- its three ids ARE segment C's state cells. The three slots here stay RESERVED so nothing moves.
 def N_IDX_VARS : Nat := N_IDX_WORDS + 3
 
 /-- Variables one sponge segment consumes: `3(nb+sq+1)` state lanes, `2·nb` post lanes, and for a
@@ -753,6 +894,23 @@ def baseSegC (s : StepShape) : Nat := baseSegB s + segVarCount (nbB s) 2
 /-- Segment C (the INNER `hash_messages_for_next_step_proof_opt`, `step_main.ml:66-81`), one
 squeeze. `N_HM_FIX` prefix words + two slots of `(commitment ×2, bRounds challenges)`. -/
 def nbC (s : StepShape) : Nat := (N_HM_FIX + 2 * (2 + s.bRounds) + 1) / 2
+
+/-- ⚑⚑ **`index_digest` COSTS NO PERMUTATION OF ITS OWN** (2026-08-03). `index_digest =
+Sponge.squeeze_field (Sponge.copy sponge_after_index)` (`step_verifier.ml:529-534`), and
+`sponge_after_index` has absorbed `N_IDX_WORDS = 56` field elements — an EVEN count, so it sits at
+`Absorbed 2` with the last pair pending and the 28th permutation NOT yet performed. The copy's
+`squeeze` is the `Absorbed _` arm (`sponge.ml:322-325`): it performs exactly that pending
+permutation and returns `state.(0)`.
+
+Segment C's block `N_IDX_WORDS / 2 = 28` is entered on precisely that state, so `vIdxD j` IS
+`sgSt (baseSegC s) … 28 j` — the same three variables, one σ class, **no rows**. The old model
+emitted an EXTRA `permBlockRows` here (`idxDigestRows`) and read `perm idxAfterState`, i.e. a
+29th permutation `verify_one` never performs.
+
+⚑ The named equality `indexDigest = PastaPoseidon.Ref.hash …` (§12s) is the reality gate for this:
+`Ref.hash` is the o1js-KAT'd lazy machine, and the pre-fix value fails it. -/
+def vIdxD (s : StepShape) (j : Nat) : PVar :=
+  xv (baseSegC s + 3 * (N_IDX_WORDS / 2) + j)
 
 /-- ⚑ Segment D — the **OUTER** `hash_messages_for_next_step_proof` (`step_main.ml:525-566`). It is
 a `Sponge.copy` of `sponge_after_index` (`step_verifier.ml:1162-1164`), so it re-absorbs NONE of the
@@ -835,19 +993,31 @@ false. §16g exhibits that. It is now a statement word, tied by a closing row li
 four, so the mux branch is a PUBLIC CLAIM a consumer reads rather than a prover's private
 choice — which is exactly upstream's semantics for a dummy previous proof. -/
 def vShouldVerify (s : StepShape) : PVar := xv (baseStmt s + 9)
-/-- ⚑ **`advice.combined_inner_product`'s BIT.** `Other_field.Packed` is `(Field.t, Boolean.var)` and
-`absorb_scalar (x, b)` feeds `Field x` then `Bits [b]` (`step_verifier.ml:79-81`), so
-`absorb sponge Scalar advice.combined_inner_product` (`:256`) is TWO sponge items and the second is
-this. It carries `Boolean.typ`'s own `b² = b` check; the FIELD half is `vCipShift`, the statement
-word R8's `combined_inner_product_correct` already ties to R5's Horner output — which is what makes
-this a CONSUMED absorption rather than one more word the sponge eats. -/
-def vCipBit (s : StepShape) : PVar := xv (baseStmt s + 10)
-/-- …and its VALUE. ⚠ THE SIMPLIFICATION, named where it is made: `Other_field.Packed` splits an
-`Fq` scalar into a 254-bit `Field.t` and a top BIT because `Fq > Fp`; this file absorbs the statement
-word itself and a Boolean-constrained companion bit rather than emitting the split, so the bit is a
-constrained witness at 0 in the honest instance. What that does NOT weaken: the FIELD half is
-`vCipShift`, and R8 binds it. -/
-def CIP_BIT : Nat := 0
+/-! ⚑⚑ **`advice.combined_inner_product`'s BIT — DERIVED SINCE 2026-08-03, and the id here is now
+UNUSED.** `xv (baseStmt s + 10)` used to be `vCipBit`, an `Fq`-side companion bit with a value
+constant `CIP_BIT = 0` whose ONLY constraints were `Boolean.typ`'s `b² = b` and the transcript
+absorb. Booleanity is not a derivation: the prover had TWO transcripts, and every squeeze after
+`combined_inner_product` (`u`, the fifteen prechallenges, `c`) moved with the bit.
+
+⚑ **THE CLOSURE COSTS NO ROW AT ALL, because upstream's two uses are ONE OBJECT.**
+`absorb sponge Scalar advice.combined_inner_product` (`step_verifier.ml:256-259`) destructures the
+SAME `Other_field.t = (Field.t * Boolean.var)` pair that `scale_fast2 u advice.combined_inner_product`
+(`:317`) consumes — `absorb_scalar (x, b)` at `:79-81` feeds `Field x` then `Bits [b]`, and
+`plonk_curve_ops.ml:251-253` names that pair `(s_div_2, s_odd)`. §19's ladder 0 ALREADY emits that
+pair, its `Field.Assert.equal (2·s_div_2 + s_odd) s` split row (`plonk_curve_ops.ml:290-291`, the
+`split_field` shape of `wrap_main.ml:69-81`) against `vCipShift`, and the ladder's own
+`bits_lsb.(254) = 0` assert. So `vCipBit` is now DEFINED as `bpOdd s 0` (§19's region) and the
+transcript absorbs the parity the split row forces, not a free cell.
+
+⚠ **AND SAY THE RESIDUAL, because the split row alone does not make the bit unique.** `2·h + b ≡ x
+(mod p)` with `b` boolean and `h < 2^254` (which is all the ladder's top-bit assert gives) admits
+BOTH parities for all but a ~2^−128 fraction of `x`: the wrong-parity solution is
+`h = (x − b + p)/2 < 2^254` whenever `x < p − 2δ`, and `δ = p − 2^254 ≈ 2^125.1`. What CHANGED is
+that the bit is no longer free of the assembly: flipping it now moves `bpDiv2 0`, hence `uc`, hence
+`q`, hence `lhs` — so the second transcript costs the prover a re-solved `G` rather than nothing.
+**Upstream's gadget has exactly this residual** (`wrap_main.ml:64-67` defers the fit-check to
+`scale_fast2`, which checks 254 bits and not `< p/2`), so this is a fidelity match and NOT a proof
+that one transcript remains. -/
 
 /-! ### ⚑ The Wrap statement words with no in-circuit source — TWO since §22, and word 10 is gone.
 
@@ -984,16 +1154,30 @@ def vRLiftT (s : StepShape) (c : Nat) : PVar :=
 def vRLift (s : StepShape) (c : Nat) : PVar :=
   xv (baseRng s + c * rngStride s + 3 * (s.emsRows + 1) + 2)
 /-- **R8's `lowest_128_bits`, high part.** `xi_actual = lowest_128_bits (squeeze fr_sponge)`
-(`step_verifier.ml:820-822,1102`) is decomposed INSIDE the compiled finalize program (§8f), where
+(`step_verifier.ml:821-822`; `lowest_128_bits` is `:99-101`, `Util.lowest_128_bits` `util.ml:78-101`)
+is decomposed INSIDE the compiled finalize program (§8f), where
 its high part is an `AOp.wit` — a cell with no defining row. `Util.lowest_128_bits` asserts
 `assert_128_bits hi` UNCONDITIONALLY (`util.ml:98`), and this is that chain. -/
 def RNG_FIN_HI (s : StepShape) : Nat := s.chals + N_DEFC
 /-- **…and its LOW part.** `Opt_sponge.squeeze_challenge` passes `~constrain_low_bits:true`
 (`step_verifier.ml:821-822`), so `util.ml:99` asserts the low part too. -/
 def RNG_FIN_LO (s : StepShape) : Nat := s.chals + N_DEFC + 1
+/-- ⚑ **`Branch_data`'s `~assert_16_bits`** (`per_proof_witness.ml:166-168`,
+`composition_types/branch_data.ml:110-127`): `Branch_data.typ`'s `check` is
+`Step_verifier.assert_n_bits ~n:16` on the PACKED word's `domain_log2`, i.e. one more
+`to_field_checked` — at **16 bits, hence ONE `EndoMulScalar` row**, not `emsRows`. Until 2026-08-03
+this assembly emitted none, and `branchRows`' single equation `4·domLog2 + maskPack = branch_data`
+was one equation in three unknowns: the prover picked both mask bits and solved for `domLog2`. With
+the suffix constraint below the mask has three legal values, and this chain refuses two of the three
+`domLog2` they imply — because `(branch_data − maskPack)/4` is a small integer for exactly one of
+them and a full-width field element for the others. Together they PIN the triple. -/
+def RNG_DOMLOG2 (s : StepShape) : Nat := s.chals + N_DEFC + 2
+/-- Rows of the `domain_log2` chain — `~n:16` over 8 crumbs. -/
+def RNG_DOMLOG2_ROWS : Nat := 1
 /-- One block per split source; the ξ chain's block is allocated and unused, so no id moves when a
-future rung splits it. The last two are R8's, over the fr-sponge's FIRST squeeze. -/
-def nRng (s : StepShape) : Nat := s.chals + N_DEFC + 2
+future rung splits it. Two are R8's, over the fr-sponge's FIRST squeeze; the last is
+`Branch_data`'s 16-bit check, which uses only the first of its `emsRows` row slots. -/
+def nRng (s : StepShape) : Nat := s.chals + N_DEFC + 3
 
 /-! ### `Common.ft_comm`'s MSM region (§6b) — the `scale_fast2` variables.
 
@@ -1232,6 +1416,12 @@ def bpZ2 (s : StepShape) : PVar := xv (baseBpT s + 7)
 each ladder has its own scalar here, where §6b's eight ladders share two. -/
 def bpDiv2 (s : StepShape) (k : Nat) : PVar := xv (baseBpT s + 8 + 2 * k)
 def bpOdd (s : StepShape) (k : Nat) : PVar := xv (baseBpT s + 9 + 2 * k)
+/-- ⚑⚑ **`advice.combined_inner_product`'s `Boolean.var` — LADDER 0's `s_odd`, and not a cell of its
+own.** This is the whole of the 2026-08-03 closure: upstream absorbs and scales ONE
+`Other_field.Packed` pair (`step_verifier.ml:256-259` and `:317`), so the transcript's second `cip`
+item IS the `s_odd` the `Shifted_value.Type2` split row derives. The long note at §8f's statement
+block says what that does and does not buy. -/
+def vCipBit (s : StepShape) : PVar := bpOdd s 0
 /-- Ladder `k`'s counter at chunk boundary `j`; at `j = FTC_CHUNKS` it IS the scalar's `s_div_2` —
 `Field.Assert.equal !n_acc scalar` (`plonk_curve_ops.ml:208`), the wire that makes the ladder
 multiply by the value the statement carries and not by one the prover picked. -/
@@ -1331,12 +1521,12 @@ def stmtVar (s : StepShape) (i : Nat) : PVar :=
   -- ⚑ §22: `sponge_digest_before_evaluations`, spelled out of R1's own block schedule rather than
   -- given a statement cell. `digestBeforeEvalsVar` is §2b's name for the same expression and §22
   -- pins the two equal, which makes this a gate between two sources rather than an alias.
-  else if i == 10 then vSt s (sqBlock s s.zetaChal + 1) 1
+  else if i == 10 then vSt s (sqStBlock s s.zetaChal) 1
   else if i == 11 then vStmtWrapMsgs s
   -- ⚑ segment C's SQUEEZE, spelled out rather than reached for: `hmDigestVar` is `sgSt (baseSegC s)
   -- … (nbC s + 1) 0` and `sgSt` is §8e, below this point. §21 pins the two expressions equal, which
   -- makes this a gate between two sources rather than an alias.
-  else if i == 12 then xv (baseSegC s + 3 * (nbC s + 1))
+  else if i == 12 then xv (baseSegC s + 3 * nbC s)
   else if i < 29 then vN s (s.uChal (i - 13)) s.emsRows
   else if i == 29 then vBranch s
   else if i < 39 then vStmtFlag s (i - 30)
@@ -1594,31 +1784,29 @@ def idxWordAt (i : Nat) : Nat := idxVal (i / 2) (i % 2)
 shape-independent by construction (the prefix is the same 56 words at every shape). -/
 def idxAfterState : List Nat := (idxStatesWith idxWordAt).getLastD [0, 0, 0]
 
-/-- …one more permutation, and lane 0 of it IS `index_digest`. -/
-def idxDigestState : List Nat :=
-  Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm idxAfterState
+/-- ⚑ …and **lane 0 of THAT state IS `index_digest`** — no further permutation. `idxStatesWith`'s
+last fold step already performed the one the copy's `squeeze` triggers (see `vIdxD`). Until
+2026-08-03 this was `perm idxAfterState`, a 29th permutation over 56 absorbed words where Mina
+performs 28; `Ref.hash` (nine o1js golds) says 28. -/
+def idxDigestState : List Nat := idxAfterState
 def indexDigest : Nat := idxDigestState.getD 0 0
 
-/-- A transcript word no row pins and no sub-circuit derives.
+/-! ### ⚑⚑ **THERE IS NO FREE TRANSCRIPT WORD LEFT.** This is where `msgVal` stood — "a transcript word
+no row pins and no sub-circuit derives" — and it is DELETED (2026-08-03).
 
-⚠ ⚑ **AND THIS IS THE LAST PLACE FIAT-SHAMIR IS STILL THE PROVER'S, so say it plainly.** At
-`shapeStep` it is now **ONE of the 118 absorbed words**: block `oDigest`'s SECOND LANE. `verify_one`
-feeds `1 + 4 + 2 + 30 + 2 + 14 + 2 + 60 + 2 = 117` sponge items, 117 is ODD, and this file models one
-commitment per rate-2 block, so exactly one lane of the `⌈117/2⌉` blocks carries nothing upstream
-absorbs. **That is STRUCTURAL, not a hole**: there is no absorption missing behind it, and "closing"
-it would mean inventing a word `verify_one` does not feed. It is a consequence of the per-block (not
-per-element) rate model — the same simplification the opt-sponge prefix carries, named once.
+It survived because the old model paired the item stream PER SOURCE and padded `index_digest` to two
+lanes, so block 0's second lane carried a deterministic FIXTURE: a word `verify_one` never feeds the
+sponge, absorbed anyway. Under Mina's lazy sponge the pairing is per ITEM (`spLay`), `index_digest`
+shares block 0 with `sg_old[0]`'s x, and the single unpaired lane an odd item count forces lands at
+the end of the pre-β run with NOTHING in it — `tPadCell`, pinned to zero by one `Generic` row, which
+is `absorb`'s own "no arrival" (it ADDS). So all `N_ABSORB_ITEMS` items are wired variables and the
+last place Fiat–Shamir was the prover's is closed by the re-model rather than by a new wire.
 
-⚑ The count was **7 until 2026-08-02** (and 31 before that, of which 25 were phantom blocks). The six
-that left are the three real unwired absorptions, closed with their consumers by the R1 interleaving:
-`sg_old[0]` (the fold's `~init` accumulator, `:606`), `combined_inner_product` as field+bit (`:256`,
-tied by R8's `combined_inner_product_correct` to R5's Horner output) and `delta` (`:321`, consumed by
-`lhs = Scalar_challenge.endo q c + delta`, `:326-327`). -/
-def msgVal (b j : Nat) : Nat := (7 + 1000003 * (2 * b + j)) % pN
+⚑ The count was 7 until 2026-08-02 (31 at `absorbs = 71`, 45 before §6b), then ONE, now ZERO. -/
 
-/-- ⚑ The VARIABLE absorbed at lane `j` of ABSORB BLOCK `a` (an absorb ORDINAL since the R1
-interleaving, not a block index — `absBlock s a` is where it sits in the schedule). Every one of them
-is a variable some sub-circuit reads except block `oDigest`'s second lane, the pad. -/
+/-- ⚑ The VARIABLE `verify_one` absorbs at lane `j` of SOURCE `a` (an absorb-call ordinal, not a
+block index — `spLay` decides which block/lane the item lands in). Every one of them is a variable
+some sub-circuit reads; there is no residue arm any more. -/
 def msgVar (s : StepShape) (a j : Nat) : PVar :=
   match blockRound s a with
   | some r => if j == 0 then ipx s (qT s r) else ipy s (qT s r)
@@ -1626,14 +1814,13 @@ def msgVar (s : StepShape) (a j : Nat) : PVar :=
     match tCommBlock s a with
     | some i => if j == 0 then vTcX s i else vTcY s i
     | none =>
-      if a == oDigest then (if j == 0 then vIdxD s 0 else vMsg s a j)
+      if a == oDigest then vIdxD s 0
       -- ⚑ `sg_old[0]`: the fold's `~init` accumulator point, R4's own `complete_add` chain head.
       else if a == oSgOld0 then (if j == 0 then ipx s (qInit s) else ipy s (qInit s))
       -- ⚑ `advice.combined_inner_product`: the STATEMENT word R8 binds, then its `Boolean.var`.
       else if a == oCip s then (if j == 0 then vCipShift s else vCipBit s)
       -- ⚑ `delta`: the second operand of `check_bulletproof`'s closing `add_fast`.
-      else if a == oDelta s then (if j == 0 then ipx s (qDel s) else ipy s (qDel s))
-      else vMsg s a j
+      else if j == 0 then ipx s (qDel s) else ipy s (qDel s)
 
 /-- …and its VALUE. `cipW` is `(field, bit)` of `advice.combined_inner_product`, threaded in because
 it is computed from ξ, r and `ft_eval0` — all of which the transcript fixes BEFORE this block
@@ -1647,15 +1834,14 @@ def msgValOf (s : StepShape) (bs : List (Nat × Nat)) (cipW : Nat × Nat) (a j :
       let p := Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.getD i (0, 0)
       if j == 0 then p.1 else p.2
     | none =>
-      if a == oDigest then (if j == 0 then indexDigest else msgVal a j)
+      if a == oDigest then indexDigest
       else if a == oSgOld0 then
         (let p := Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
          if j == 0 then p.1 else p.2)
       else if a == oCip s then (if j == 0 then cipW.1 else cipW.2)
-      else if a == oDelta s then
+      else
         (let p := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
          if j == 0 then p.1 else p.2)
-      else msgVal a j
 
 /-! ## §4 — R1, the TRANSCRIPT SPONGE.
 
@@ -1714,25 +1900,29 @@ structure SpongeData where
   deriving Repr, Inhabited
 
 /-- R1's trajectory, PARAMETRISED on the value of `index_digest` (§3c), on the absorbed
-`combined_inner_product` pair, AND on ONE absorbed word, absorb block `bt` lane `jt` — the grinds
+`combined_inner_product` pair, AND on ONE absorbed word, absorb SOURCE `bt` lane `jt` — the grinds
 §12d, §12b″ and §12i run. One implementation, so every control re-runs the assembly's own sponge
 rather than a second copy of it; `bt ≥ absorbs` overrides nothing.
 
-⚑ `msgs` is indexed by BLOCK (empty at a squeeze block), `vPost`/`vMsg`/`msgVar` by absorb ORDINAL. -/
+⚑ `states`, `perms` and `msgs` are all indexed by BLOCK — a `spLay` permutation — while `msgVar`/
+`msgValOf` are indexed by absorb SOURCE, and `spLay.put` is what relates them. A lane no item lands
+in gets a ZERO addend, which is `absorb`'s own behaviour: it ADDS into `state.(n)` and never writes
+a lane nothing arrives at. -/
 def runSpongeAt (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) (cipW : Nat × Nat)
     (bt jt w : Nat) : SpongeData :=
-  (List.range s.blocks).foldl
+  let L := spLay s
+  (List.range L.cur).foldl
     (fun d b =>
       let pre := d.states.getLastD [0, 0, 0]
-      let ms := match blockAbs s b with
-        | none => []
-        | some a =>
-          [ (if a == bt && jt == 0 then w
-             else if a == oDigest then dig else msgValOf s bs cipW a 0)
-          , (if a == bt && jt == 1 then w else msgValOf s bs cipW a 1) ]
+      let ms := (blockWordsL L b).map (fun o =>
+        match o with
+        | none => 0
+        | some (a, j) =>
+            if a == bt && j == jt then w
+            else if a == oDigest then dig
+            else msgValOf s bs cipW a j)
       let post :=
-        if ms.isEmpty then pre
-        else [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
+        [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
       let ss := permStates post
       { states := d.states ++ [ss.getLastD post], perms := d.perms ++ [ss]
       , msgs := d.msgs ++ [ms] })
@@ -1746,44 +1936,58 @@ def runSpongeWith (s : StepShape) (bs : List (Nat × Nat)) (dig : Nat) (cipW : N
 def runSponge (s : StepShape) (bs : List (Nat × Nat)) (cipW : Nat × Nat) : SpongeData :=
   runSpongeWith s bs indexDigest cipW
 
-/-- **R1's rows.** -/
+/-- The variable at lane `l` of block `b` — the item `spLay` put there, or the ONE pad cell. -/
+def tWordVar (s : StepShape) (ws : List (Option (Nat × Nat))) (l : Nat) : PVar :=
+  match ws.getD l none with
+  | some (a, j) => msgVar s a j
+  | none => vTPad s
+
+/-- **R1's rows.** ⚑ ONE `Poseidon` block per PERMUTATION and no more: a squeeze reads a lane of a
+state some block already produced (`sqPos`), so it emits no rows of its own. A block that swallows
+nothing at all — the third consecutive squeeze's — is a bare permutation with no `Generic` addend. -/
 def transcriptRows (s : StepShape) (d : SpongeData) (wired : Bool) : List SRow :=
+  let L := spLay s
   [ genericRow (some (vSt s 0 0)) none none (some (vSt s 0 1)) none none (cConst 0 ++ cConst 0)
   , genericRow (some (vSt s 0 2)) none none none none none (cConst 0 ++ cNil) ]
-  ++ (List.range s.blocks).flatMap (fun b =>
-      match blockAbs s b with
-      | some a =>
-        -- ⚑ `msgVar` — for the blocks that carry a commitment this is the FOLD'S OWN BASE-POINT
-        -- variable, so the sponge row and the `EndoMul` chain share one σ class.
-        [ genericRow (some (vSt s b 0)) (some (msgVar s a 0)) (some (vPost s a 0))
-                     (some (vSt s b 1)) (some (msgVar s a 1)) (some (vPost s a 1))
+  -- ⚑ the ONE pad cell, pinned to zero. `getD`'s default used to be `xv 0` here and in `segRows`;
+  -- naming the cell is what keeps a lane with no arrival out of another sponge's σ class.
+  ++ (if (tPadCell s).isSome then
+        [ genericRow (some (vTPad s)) none none none none none (cConst 0 ++ cNil) ] else [])
+  ++ (List.range L.cur).flatMap (fun b =>
+      let ws := blockWordsL L b
+      (if ws.any (·.isSome) then
+        -- ⚑ `msgVar` — for the lanes that carry a commitment coordinate this is the FOLD'S OWN
+        -- BASE-POINT variable, so the sponge row and the `EndoMul` chain share one σ class.
+        [ genericRow (some (vSt s b 0)) (some (tWordVar s ws 0)) (some (vPost s b 0))
+                     (some (vSt s b 1)) (some (tWordVar s ws 1)) (some (vPost s b 1))
                      (cAdd ++ cAdd) ]
-        ++ permBlockRows (vPost s a 0) (vPost s a 1) (vSt s b 2)
+        ++ permBlockRows (vPost s b 0) (vPost s b 1) (vSt s b 2)
                          (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b [])
-        ++ (if a + 1 == s.absorbs then
-              [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)] else [])
-      | none =>
+       else
         permBlockRows (vSt s b 0) (vSt s b 1) (vSt s b 2)
-                      (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b [])
-        ++ [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)])
+                      (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b []))
+      ++ (if tProbeAfter s b then [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)] else []))
 
 /-! ## §5 — R2, CHALLENGE DERIVATION (`to_field_checked`).
 
-Squeeze `c` is state lane 0 after block `absorbs + c`. Its low `chalBits` bits are the scalar
+Squeeze `c` is lane `sqStLane c` of the state ENTERING block `sqStBlock c`. Its low `chalBits` bits are the scalar
 challenge. One `EndoMulScalar` row eats 8 crumbs and folds `n ↦ 4n + xⱼ`, `a ↦ 2a + c(xⱼ)`,
 `b ↦ 2b + d(xⱼ)` from `n₀=0, a₀=2, b₀=2` (`endomul_scalar.rs:227-288`, read-only via
 `KimchiRenderEndoMulScalar`). Column order `[n0, n8, a0, b0, a8, b8, x₀..x₇, 0]`, so cols 0..5 are
 all permutation columns and the chain hops row→row through σ; col 6 holds crumb `x₀`, unwired. -/
 
+/-- ⚑ **The raw squeeze `c`** — `copy t.state.(n)` off the state the last permutation left, with `n`
+either 0 (the squeeze that permuted) or 1 (a FREE second consecutive squeeze). -/
+def sqValOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
+  (d.states.getD (sqStBlock s c) []).getD (sqStLane s c) 0
 def chalOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
-  ((d.states.getD (sqBlock s c + 1) []).getD 0 0) % 2 ^ s.chalBits
+  (sqValOf s d c) % 2 ^ s.chalBits
 def hiOf (s : StepShape) (d : SpongeData) (c : Nat) : Nat :=
-  ((d.states.getD (sqBlock s c + 1) []).getD 0 0) / 2 ^ s.chalBits
+  (sqValOf s d c) / 2 ^ s.chalBits
 
 /-- ⚑ **The value `uSqueezeVar` holds** — the WHOLE squeeze, not `chalOf`'s low `chalBits`. §19's
 `group_map` is a function of this. -/
-def uSqueezeVal (s : StepShape) (d : SpongeData) : Nat :=
-  (d.states.getD (sqBlock s (uChalIx s) + 1) []).getD 0 0
+def uSqueezeVal (s : StepShape) (d : SpongeData) : Nat := sqValOf s d (uChalIx s)
 
 /-- ⚑ **`sponge_digest_before_evaluations`'s VALUE** — lane 1 of the state ζ's squeeze produced; the
 variable is `digestBeforeEvalsVar` (§2b). ⚑ Identical across `mkStepWith`'s two transcript passes:
@@ -1791,7 +1995,7 @@ the `cip` absorb is block `oCip`, which comes AFTER ζ's squeeze (`step_verifier
 §12i), so nothing the second pass changes reaches this state. That is why seeding the fr-sponge with
 it closes no cycle. -/
 def digestBeforeEvalsVal (s : StepShape) (d : SpongeData) : Nat :=
-  (d.states.getD (sqBlock s s.zetaChal + 1) []).getD 1 0
+  (d.states.getD (sqStBlock s s.zetaChal) []).getD 1 0
 
 /-- ⚑ `Endo.Wrap_inner_curve.scalar` (`endo.ml:7`) — the SCALAR-challenge endomorphism of `Fp`, the
 constant `to_field_checked` scales `a₈` by. NOT `FT_ENDO`, which is the BASE endomorphism
@@ -1800,19 +2004,28 @@ constant `to_field_checked` scales `a₈` by. NOT `FT_ENDO`, which is the BASE e
 def ENDO_R : Nat :=
   8503465768106391777493614032514048814691664078728891710322960303815233784505
 
-/-- The `8·emsRows` base-4 crumbs of a challenge, MSB-first. -/
-def crumbsOf (s : StepShape) (v : Nat) : List Nat :=
-  (List.range (8 * s.emsRows)).map (fun j => v / 4 ^ (8 * s.emsRows - 1 - j) % 4)
+/-- The `8·rows` base-4 crumbs of an `EndomulScalar` source, MSB-first. ⚑ `rows` is explicit because
+`to_field_checked ~num_bits:n` runs `n/16` rows and the assembly has TWO widths — 128 (`emsRows`, the
+transcript squeezes and the two deferred chains) and **16**, `Branch_data.typ`'s `~assert_16_bits`
+(`per_proof_witness.ml:166-168`). -/
+def crumbsOfN (rows v : Nat) : List Nat :=
+  (List.range (8 * rows)).map (fun j => v / 4 ^ (8 * rows - 1 - j) % 4)
 
-/-- The `(n,a,b)` accumulator triples at every ROW boundary (every 8 crumbs), `k = 0..emsRows`. -/
-def emsAccs (s : StepShape) (v : Nat) : List (Nat × Nat × Nat) :=
-  let all := (crumbsOf s v).foldl
+/-- The `(n,a,b)` accumulator triples at every ROW boundary (every 8 crumbs), `k = 0..rows`. -/
+def emsAccsN (rows v : Nat) : List (Nat × Nat × Nat) :=
+  let all := (crumbsOfN rows v).foldl
     (fun acc x =>
       let cur := acc.getLastD (0, 2, 2)
       acc ++ [((4 * cur.1 + x) % pN, (2 * cur.2.1 + cFuncFp x) % pN,
                (2 * cur.2.2 + dFuncFp x) % pN)])
     [(0, 2, 2)]
-  (List.range (s.emsRows + 1)).map (fun k => all.getD (8 * k) (0, 2, 2))
+  (List.range (rows + 1)).map (fun k => all.getD (8 * k) (0, 2, 2))
+
+/-- The `8·emsRows` base-4 crumbs of a challenge, MSB-first. -/
+def crumbsOf (s : StepShape) (v : Nat) : List Nat := crumbsOfN s.emsRows v
+
+/-- The `(n,a,b)` accumulator triples at every ROW boundary (every 8 crumbs), `k = 0..emsRows`. -/
+def emsAccs (s : StepShape) (v : Nat) : List (Nat × Nat × Nat) := emsAccsN s.emsRows v
 
 /-- The `(a₈, b₈)` accumulators and the LIFT `a₈·endo_r + b₈` of a 128-bit prechallenge. -/
 def liftVal (s : StepShape) (v : Nat) : Nat :=
@@ -1854,41 +2067,51 @@ chain's reconstructed `n₈` back to its SOURCE, and the closing lift `Field.(sc
 `lowest_128_bits` decomposition `src = n₈ + 2^chalBits·hi`. `split = false` — the source is already
 a `Challenge.t` (§8g's statement ξ word), so the tie is `Field.Assert.equal n scalar` (`:124`) and
 the chain's `hi` cell is not allocated by any row. -/
-def tfcRows (s : StepShape) (cv : ChalVars) (src : PVar) (split : Bool) (v : Nat)
+def tfcRowsN (s : StepShape) (rows : Nat) (cv : ChalVars) (src : PVar) (split : Bool) (v : Nat)
     (wired : Bool) : List SRow :=
-  let cr := crumbsOf s v
+  let cr := crumbsOfN rows v
   [ genericRow (some (cv.n 0)) none none (some (cv.a 0)) none none (cConst 0 ++ cConst 2)
   , genericRow (some (cv.b 0)) none none none none none (cConst 2 ++ cNil) ]
-  ++ (List.range s.emsRows).map (fun k =>
+  ++ (List.range rows).map (fun k =>
       ({ kind := .endoMulScalar
        , perm := [ some (cv.n k), some (cv.n (k+1)), some (cv.a k), some (cv.b k)
                  , some (cv.a (k+1)), some (cv.b (k+1)), none ]
        , advice := (List.range 8).map (fun j => (6 + j, (cr.getD (8 * k + j) 0 : Int)))
                    ++ [(14, 0)] } : SRow))
   ++ [ (if split then
-          genericRow (some src) (some cv.hi) (some (cv.n s.emsRows)) none none none
-                     (cSplit s.chalBits ++ cNil)
+          genericRow (some src) (some cv.hi) (some (cv.n rows)) none none none
+                     (cSplit (16 * rows) ++ cNil)
         else
-          genericRow (some (cv.n s.emsRows)) (some src) none none none none (cEq ++ cNil))
+          genericRow (some (cv.n rows)) (some src) none none none none (cEq ++ cNil))
      -- ⚑ `to_field_checked`'s CLOSING LINE: `Field.(scale a endo + b)`. Two halves of one row, and
      -- the `a₈`/`b₈` cells the `EndoMulScalar` chain produced now carry a value the rest of the
      -- assembly reads.
-     , genericRow (some (cv.a s.emsRows)) (some (vEndoR s)) (some cv.liftT)
-                  (some cv.liftT) (some (cv.b s.emsRows)) (some cv.lift) (cMul ++ cAdd)
-     , probeRow wired (cv.n s.emsRows) (cv.a s.emsRows)
-     , probeRow wired cv.lift (cv.b s.emsRows) ]
+     , genericRow (some (cv.a rows)) (some (vEndoR s)) (some cv.liftT)
+                  (some cv.liftT) (some (cv.b rows)) (some cv.lift) (cMul ++ cAdd)
+     , probeRow wired (cv.n rows) (cv.a rows)
+     , probeRow wired cv.lift (cv.b rows) ]
+
+/-- …at the assembly's 128-bit width. -/
+def tfcRows (s : StepShape) (cv : ChalVars) (src : PVar) (split : Bool) (v : Nat)
+    (wired : Bool) : List SRow :=
+  tfcRowsN s s.emsRows cv src split v wired
 
 def rngVars (s : StepShape) (c : Nat) : ChalVars :=
   { n := vRN s c, a := vRA s c, b := vRB s c, hi := vRHi s c
   , liftT := vRLiftT s c, lift := vRLift s c }
 
 /-- Range chain `c`'s accumulator trace at value `v`. -/
-def rngEnv (s : StepShape) (c v : Nat) : VarEnv :=
-  let accs := emsAccs s v
-  (List.range (s.emsRows + 1)).flatMap (fun k =>
+def rngEnvN (s : StepShape) (rows c v : Nat) : VarEnv :=
+  let accs := emsAccsN rows v
+  (List.range (rows + 1)).flatMap (fun k =>
     let a := accs.getD k (0, 2, 2)
     [ (vRN s c k, (a.1 : Int)), (vRA s c k, (a.2.1 : Int)), (vRB s c k, (a.2.2 : Int)) ])
-  ++ [ (vRLiftT s c, (liftTVal s v : Int)), (vRLift s c, (liftVal s v : Int)) ]
+  ++ (let a := accs.getD rows (0, 2, 2)
+      [ (vRLiftT s c, (fMul a.2.1 ENDO_R : Int))
+      , (vRLift s c, (fAdd (fMul a.2.1 ENDO_R) a.2.2 : Int)) ])
+
+/-- …at the assembly's 128-bit width. -/
+def rngEnv (s : StepShape) (c v : Nat) : VarEnv := rngEnvN s s.emsRows c v
 
 /-- **`assert_128_bits x`** — `ignore (to_field_checked … ~num_bits:128)`, so the SAME chain over
 the same source, tied by `Field.Assert.equal n scalar` and with the lift emitted (Snarky emits it;
@@ -1900,7 +2123,7 @@ def rangeRows (s : StepShape) (c : Nat) (src : PVar) (v : Nat) (wired : Bool) : 
 `lowest_128_bits`' OTHER range check, over the high part (`~constrain_low_bits:true` asserts both;
 `step_verifier.ml:186-187`). -/
 def challengeRows (s : StepShape) (d : SpongeData) (wired : Bool) (c : Nat) : List SRow :=
-  tfcRows s (r2Vars s c) (vSt s (sqBlock s c + 1) 0) true (chalOf s d c) wired
+  tfcRows s (r2Vars s c) (vSt s (sqStBlock s c) (sqStLane s c)) true (chalOf s d c) wired
   ++ rangeRows s c (vHi s c) (hiOf s d c) wired
 
 /-! ## §6 — R3, the COMMITMENT MSM (`multiscale_known` / `ft_comm`).
@@ -2869,9 +3092,11 @@ def cipRows (s : StepShape) (wired : Bool) : List SRow :=
      -- ⚑ …and the mux's own σ probe, so a tamper isolates `keepⱼ·dⱼ` rather than only the
      -- accumulator it feeds. Without it `vCp 0`'s whole class is its two defining halves.
      , probeRow wired (vCp s 0) (vCp s 1) ]
-  -- ⚑ `absorb sponge Scalar advice.combined_inner_product` (`:79-81,256`) absorbs the FIELD half and
-  -- then a `Bits [b]` — `Other_field.Packed`'s `Boolean.var`. `Boolean.typ`'s own check is `b² = b`,
-  -- and without it the "bit" is an arbitrary field element the prover feeds the sponge.
+  -- ⚑ `absorb sponge Scalar advice.combined_inner_product` (`:79-81,256-259`) absorbs the FIELD half
+  -- and then a `Bits [b]` — `Other_field.Packed`'s `Boolean.var`, which since 2026-08-03 IS §19
+  -- ladder 0's `s_odd` (`vCipBit = bpOdd 0`). `Boolean.typ`'s own `b² = b` is emitted HERE rather
+  -- than in `bpRows`, so every rung that absorbs the bit carries its booleanity — including the ones
+  -- below `r9_opening`, where the split row that DERIVES it is not yet emitted.
   ++ [ genericRow (some (vCipBit s)) (some (vCipBit s)) (some (vCipBit s)) none none none
                   (cMul ++ cNil)
      , probeRow wired (vCipBit s) (vCipShift s) ]
@@ -3317,8 +3542,13 @@ structure FtCfg where
   cA : Nat
   cB : Nat
   cC : Nat
+  /-- ⚑ The ONE witnessed value. There were two until 2026-08-03: a `permClaimed` sat here and
+  `ftBuild` closed with `eEq perm permClaimed` — an assert that **cannot fail**, because
+  `permClaimed` occupied exactly ONE permutation cell in the whole emitted schedule (that assert's
+  own). A row whose only novel operand is a variable no other row reads constrains the prover not at
+  all. It is DELETED: the check upstream wants is R8's, which reads the COMPUTED `perm` slot and
+  compares it against the statement's `vPermShift`. -/
   denomInv : Nat
-  permClaimed : Nat
   deriving Repr, Inhabited
 
 /-- The slots the rung's rows and pins refer to. -/
@@ -3454,9 +3684,10 @@ def ftBuild (W : FtWire) (C : FtCfg) : AM FtSlots := do
       let gb ← eAdd gamma bs
       let gbw ← eAdd gb (wv.getD i 0)
       eMul x gbw) pInit
+  -- ⚑ The `perm` slot is the rung's OUTPUT and nothing more: `Plonk_checks.checked`'s comparison
+  -- against the deferred word is R8's (`finWireOf`'s `permActual` reads THIS slot and `pc` compares
+  -- it to `vPermShift`), not a second witnessed twin here. See `FtCfg.denomInv`.
   let perm ← eMul negOne pFold
-  let permClaimed ← eWit C.permClaimed
-  let _ ← eEq perm permClaimed
   pure { ftEval0 := ftEval0, linConst := lct, zkp := zkp, perm := perm
        , zetaN := zetaN, omInv3 := omInv3 }
 
@@ -3525,14 +3756,17 @@ def ftWireOf (s : StepShape) : FtWire :=
   , gamma := .inp (vN s s.gammaChal s.emsRows)
   , pZeta := .inp (vEz s 2) }
 
-/-- The two witnessed values, computed from the wire: `denomInv` and the deferred `perm` scalar.
-Both are CHECKED by a row (`denom·denomInv = 1`, `perm_actual = perm_claimed`), so a wrong witness
-is a refusal rather than an accept. Computed by running the program once with placeholders. -/
-def ftCfgRaw (dInv pC : Nat) : FtCfg :=
+/-- ⚑ **The ONE witnessed value, and the sentence that used to be false about the other.** `denomInv`
+is CHECKED by a row — `denom·denomInv = 1`, with `1` the program's own literal — so a wrong witness is
+a refusal (or, at `denom = 0`, an unsatisfiable assert) rather than an accept. Until 2026-08-03 this
+docblock said that of **both** witnesses, and of the second, `permClaimed`, it was FALSE:
+`eEq perm permClaimed` forced a variable no other row read, so the prover set `permClaimed := perm`
+and the row closed. That witness is gone. Computed by running the program once with a placeholder. -/
+def ftCfgRaw (dInv : Nat) : FtCfg :=
   { log2n := FT_LOG2N, omega := FT_OMEGA, omegaInv := FT_OMEGA_INV
   , shifts := FT_SHIFTS, mds9 := FT_MDS9, endo := FT_ENDO
   , cA := FT_QUOT.1, cB := FT_QUOT.2.1, cC := FT_QUOT.2.2
-  , denomInv := dInv, permClaimed := pC }
+  , denomInv := dInv }
 
 /-- Everything R6 needs, evaluated ONCE. -/
 structure FtData where
@@ -3540,25 +3774,23 @@ structure FtData where
   vals : Array Nat
   /-- The witnessed inverse of `(ζ − ω^{n−3})(ζ − 1)`, checked by a row. -/
   denomInv : Nat
-  /-- The deferred `perm` scalar `Plonk_checks.checked` compares against, checked by a row. -/
-  permClaimed : Nat
   deriving Repr, Inhabited
 
-/-- Run the program twice: once to read off `denom` and the actual `perm` scalar, then once with the
-witnesses those force. The second run is the emitted one. -/
+/-- Run the program twice: once to read off `denom`, then once with the witness it forces. The second
+run is the emitted one. ⚠ The FIRST run's `perm` slot used to be read off here as `permClaimed`; it is
+not, since the assert that consumed it could not fail. -/
 def runFt (s : StepShape) (d : SpongeData) : FtData :=
   let W := ftWireOf s
   let lk := envLookupAt (envIndex (ftInputEnv s d))
-  let p0 := ftProgOf W (ftCfgRaw 1 0)
+  let p0 := ftProgOf W (ftCfgRaw 1)
   let v0 := aEval lk p0.prog
   -- `denom` is the slot the `dchk` multiplication reads; recompute it directly from ζ and ω^{n−3}.
   let zeta := (lk (vLift s s.zetaChal)).toNat % pN
   let omInv3 := v0.getD p0.slots.omInv3 0
   let denom := fMul (fSub zeta omInv3) (fSub zeta 1)
   let dInv := Dregg2.Circuit.Emit.KimchiRenderVarBaseMul.fInv denom
-  let pC := v0.getD p0.slots.perm 0
-  let p1 := ftProgOf W (ftCfgRaw dInv pC)
-  { fp := p1, vals := aEval lk p1.prog, denomInv := dInv, permClaimed := pC }
+  let p1 := ftProgOf W (ftCfgRaw dInv)
+  { fp := p1, vals := aEval lk p1.prog, denomInv := dInv }
 
 /-- ⚑ §6b's two scalars, READ OFF R6's compiled program: `Plonk_checks.checked`'s `perm`
 (`plonk_checks.ml:482-488`) and `ζ^n` (`:496`, `= zeta_to_srs_length` at `log2n = 16`, `:497`). This
@@ -3630,7 +3862,17 @@ structure SegSpec where
 /-- Is absorb block `b` muxed by a `keep` bit? -/
 def SegSpec.maskedAt (g : SegSpec) (b : Nat) : Bool := g.masked && g.maskFrom ≤ b
 def SegSpec.nb (g : SegSpec) : Nat := (g.ws.length + 1) / 2
-def SegSpec.blocks (g : SegSpec) : Nat := g.nb + g.squeezes
+/-- ⚑⚑ **A SEGMENT'S PERMUTATION COUNT, UNDER MINA'S LAZY SPONGE** (§1c′). The `nb` absorb blocks
+supply `nb − 1` permutations while absorbing; the FIRST squeeze supplies the `nb`-th
+(`sponge.ml:322-325`, `Absorbed _ → block_cipher`); the SECOND is free (`Squeezed 1`, `n ≠ rate`,
+`state.(1)`); only every second squeeze after that costs one more. So `blocks = nb + ⌈sq/2⌉ − 1`.
+⚠ It was `nb + squeezes` — one permutation per squeeze on top of the absorb blocks — which put
+segment B's ξ′ and r′ TWO permutations apart where `step_verifier.ml:1007-1009` reads
+`state.(0)`/`state.(1)` of ONE. -/
+def SegSpec.blocks (g : SegSpec) : Nat := g.nb + (g.squeezes + 1) / 2 - 1
+/-- Squeeze `k`'s `(block, lane)` — the state ENTERING block `.1`, at lane `.2`. -/
+def SegSpec.sqStBlock (g : SegSpec) (k : Nat) : Nat := g.nb + k / 2
+def SegSpec.sqStLane (_g : SegSpec) (k : Nat) : Nat := k % 2
 
 /-- A segment's evaluated trajectory. -/
 structure SegData where
@@ -3690,7 +3932,7 @@ def SegSpec.padded (g : SegSpec) : Bool := g.ws.length % 2 == 1
 statement's `messages_for_next_step_proof` hash, which the step circuit carries as a public word
 (`step_main.ml:121,522`). Exposing it is what makes segment C's mask REACH the verifier: change
 `branch_data` and this public word moves. -/
-def hmDigestVar (s : StepShape) : PVar := sgSt (baseSegC s) (nbC s) 1 (nbC s + 1) 0
+def hmDigestVar (s : StepShape) : PVar := sgSt (baseSegC s) (nbC s) 1 (nbC s) 0
 -- ⚑ There is no per-block `keep` VARIABLE region any more: since §8h a masked segment's mux reads
 -- `g.keepVar b`, which is one of the two `branch_data` mask bits. The id slots the old region
 -- occupied stay reserved in `segVarCount` so no other region moves.
@@ -3747,8 +3989,11 @@ def segRows (base : Nat) (g : SegSpec) (d : SegData) (wired : Bool) : List SRow 
                  , genericRow (some (stv b 2)) (some (sgP base nb sq b 2))
                               (some (stv (b + 1) 2)) none none none (cAdd ++ cNil) ]
             else [])
+        -- ⚑ the probe sits on the state the FIRST squeeze reads — which is the last absorb block's
+        -- own output now, not a squeeze block's.
         ++ (if b + 1 == nb then [probeRow wired (stv (b + 1) 0) (stv (b + 1) 1)] else [])
       else
+        -- a bare permutation: the THIRD consecutive squeeze's (`Squeezed 2 = rate`).
         permBlockRows (stv b 0) (stv b 1) (stv b 2)
           (stv (b + 1) 0) (stv (b + 1) 1) (stv (b + 1) 2)
           (d.perms.getD b [])
@@ -3823,16 +4068,36 @@ def optProofOf (s : StepShape) (b : Nat) : Nat := if 2 * b < s.bRounds then 0 el
 def optKeep (s : StepShape) (b : Nat) : PVar × Nat :=
   (vMask s (optProofOf s b), MASK_BITS.getD (optProofOf s b) 0)
 
-/-- **§8h's rows.** Booleanity of both mask bits (`Boolean.typ`'s own check) and `Checked.pack`,
-which ties them to the `branch_data` statement word. -/
+/-- **§8h's rows.** Booleanity of both mask bits (`Boolean.typ`'s own check), `Checked.pack` — which
+ties them to the `branch_data` statement word — the `Prefix_mask` SUFFIX shape, and `Branch_data.typ`'s
+own `~assert_16_bits` on `domain_log2`.
+
+⚑⚑ **THE TWO THAT LANDED 2026-08-03, and what each one refuses.**
+
+  * **The suffix half `m₀·(1 − m₁) = 0`.** `Prefix_mask.there` is `N0 ↦ [ff;ff] · N1 ↦ [ff;tt] ·
+    N2 ↦ [tt;tt]` (`pickles_base/proofs_verified.ml:75-81`) — a set bit is a SUFFIX, so `m₀ ≤ m₁`.
+    Booleanity alone admits FOUR masks and `[1,0]` is not one upstream can name; it closed here until
+    this row, and it is a different `combined_inner_product` (§12l) and a different opt-sponge digest
+    (§14a) — i.e. an ILLEGAL branch the circuit accepted.
+  * **The 16-bit chain on `vDomLog2`** (`per_proof_witness.ml:166-168`). `Checked.pack` is ONE
+    equation, so with the mask free the prover solved for `domain_log2`; with the mask pinned to
+    three values he still had three. `(branch_data − maskPack)·4⁻¹` is a 16-bit integer for exactly
+    one of the three and a full-width field element for the other two, so this chain is what makes
+    the triple `(m₀, m₁, domain_log2)` a FUNCTION of the statement word rather than a choice. -/
 def branchRows (s : StepShape) (wired : Bool) : List SRow :=
   [ genericRow (some (vMask s 0)) (some (vMask s 0)) (some (vMask s 0))
                (some (vMask s 1)) (some (vMask s 1)) (some (vMask s 1)) (cMul ++ cMul)
   , genericRow (some (vMask s 0)) (some (vMask s 1)) (some (vMaskPack s))
                (some (vDomLog2 s)) (some (vMaskPack s)) (some (vBranch s))
                ([1, 2, -1, 0, 0] ++ [4, 1, -1, 0, 0])
+  -- ⚑ `Prefix_mask.there`'s SUFFIX shape: `m₀ − m₀·m₁ = 0`, i.e. `m₀ ≤ m₁`. The second half is the
+  -- probe's partner rather than a second constraint.
+  , genericRow (some (vMask s 0)) (some (vMask s 1)) none none none none
+               ([1, 0, 0, -1, 0] ++ cNil)
   , probeRow wired (vMask s 0) (vMask s 1)
   , probeRow wired (vBranch s) (vMaskPack s) ]
+  ++ tfcRowsN s RNG_DOMLOG2_ROWS (rngVars s (RNG_DOMLOG2 s)) (vDomLog2 s) false
+       BRANCH_DOMAIN_LOG2 wired
 
 /-- ⚑ Segment A absorbs **`prev_challenges`** (`step_verifier.ml:953-959`), the previous proofs'
 CARRIED bulletproof challenges — a `Per_proof_witness` field, not this transcript's squeezes. It took
@@ -3879,16 +4144,12 @@ def hmKeepAt (s : StepShape) (ms : List Nat) (b : Nat) : PVar × Nat :=
   let i := min 1 (if w < N_HM_FIX then 0 else (w - N_HM_FIX) / (2 + s.bRounds))
   (vMask s i, ms.getD i 0)
 
-/-- **`index_digest`'s rows** (§3c) — ONE permutation over segment C's own state after the 28 index
-absorptions, which is `Sponge.squeeze_field (Sponge.copy sponge_after_index)`
-(`step_verifier.ml:529-534`). The input lanes are segment C's state variables, so the copy is a σ
-class and not a recomputation. -/
-def idxDigestRows (s : StepShape) (wired : Bool) : List SRow :=
-  permBlockRows (sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) 0)
-                (sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) 1)
-                (sgSt (baseSegC s) (nbC s) 1 (N_IDX_WORDS / 2) 2)
-                (vIdxD s 0) (vIdxD s 1) (vIdxD s 2) (permStates idxAfterState)
-  ++ [probeRow wired (vIdxD s 0) (vIdxD s 1)]
+/-- **`index_digest` EMITS NO ROWS** (§3c, 2026-08-03). `Sponge.copy` is a σ class and the squeeze it
+runs is the permutation segment C's own block 27 already performs; `vIdxD` names segment C's block-28
+state lanes, so the digest is a READ and not a computation. This function is kept as the NAME of that
+fact — deleting it would leave "where did `index_digest`'s permutation go?" unanswered — and it is
+the only place in the assembly that answers `[]` on purpose. -/
+def idxDigestRows (_s : StepShape) (_wired : Bool) : List SRow := []
 
 /-- ⚑ **`sg_old[i]`, the variable and its value** — `prev_challenge_polynomial_commitments`, the
 `Per_proof_witness` field `verify_one` passes as `~sg_old` (`step_main.ml:107`) and absorbs at
@@ -4002,7 +4263,7 @@ def hmOutSpec (s : StepShape) (d : SpongeData) (G : Nat × Nat) : SegSpec :=
 
 /-- ⚑ **The step statement's `messages_for_next_step_proof`** (`step_main.ml:572-575`) — segment D's
 squeeze, and the word `G` moves. -/
-def hmOutDigestVar (s : StepShape) : PVar := sgSt (baseSegD s) (nbD s) 1 (nbD s + 1) 0
+def hmOutDigestVar (s : StepShape) : PVar := sgSt (baseSegD s) (nbD s) 1 (nbD s) 0
 /-- …and its VALUE, as a function of `G` alone with the rest of the assembly held fixed. This is what
 §17's exhibit evaluates at the honest and at the re-solved commitment. -/
 def hmOutDigestOf (s : StepShape) (d : SpongeData) (G : Nat × Nat) : Nat :=
@@ -4026,7 +4287,7 @@ what the proof CLAIMS. This rung is that comparison, and it is the semantically 
     `scale = 1/2` (`shift1`, `step_verifier.ml:825`; `PicklesStatementDiff` §1). The step statement's
     own `fq` block is Type2/`Fq` — subtract-only, no halving (`impls.ml:135`,
     `PicklesStepStatementDiff` §1) — and §16 shows both wrong readings diverge here.
-  * **`xi_correct`** (`:1102-1104`) — the fr-sponge's own squeeze, `lowest_128_bits`-decomposed,
+  * **`xi_correct`** (`:1010-1013`) — the fr-sponge's own squeeze, `lowest_128_bits`-decomposed,
     against the statement's `xi`.
   * **`Boolean.all [xi_correct; b_correct; combined_inner_product_correct; plonk_checks_passed]`**
     (`:1141-1147`), each leg a REAL `Field.equal` gadget (`d·inv = 1 − bit`, `d·bit = 0`, `bit² =
@@ -4201,7 +4462,7 @@ def exposedVars (s : StepShape) : List PVar :=
    -- different digests of two different hashes, and both are public.
    , hmOutDigestVar s
    , vAcc s s.bRounds, vCa s s.cipEvals, vZ s s.bRounds
-   , vSt s s.blocks 0, vSt s s.blocks 1, vSt s s.blocks 2
+   , vSt s (tBlocks s) 0, vSt s (tBlocks s) 1, vSt s (tBlocks s) 2
    , mpx s (pSum s (s.msmTerms - 2)), mpy s (pSum s (s.msmTerms - 2))
    -- ⚑ §19: `q = p_prime + lr_prod`, NOT `qSum (ipaRounds−1)`. The exposed word is the point
    -- `Scalar_challenge.endo q c` actually reads, so `combined_inner_product` reaches the public
@@ -4214,7 +4475,7 @@ def exposedVars (s : StepShape) : List PVar :=
    -- before the collision, so the distinctness pin never saw it — §12 now pins BOTH shapes).
    ++ (List.range s.bRounds).map (fun k => vAcc s k)
    ++ (List.range s.bRounds).map (fun k => vZ s k)
-   ++ (List.range (s.blocks + 1)).map (fun b => vSt s b 0)).take s.pubWords
+   ++ (List.range (tBlocks s + 1)).map (fun b => vSt s b 0)).take s.pubWords
 
 /-- **R5b's rows**: every public word tied to a computed circuit variable, two per `Generic` row
 (`w₀ = w₁` in each half). Every one of `pubWords` public words is READ here — exactly what
@@ -4237,17 +4498,20 @@ def FtData.out (f : FtData) : Nat := f.vals.getD f.fp.slots.ftEval0 0
 /-- The finalize program's slots start after the ft program's. -/
 def baseFin (s : StepShape) (f : FtData) : Nat := baseFtS s + f.fp.prog.size
 
-/-- The fr-sponge's FIRST squeeze — R7 segment B's state after its first squeeze permutation, the
-same convention R1 uses (`chalOf` reads lane 0 of the state after squeeze `c`'s permutation). -/
-def frSqueezeVar (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s + 1) 0
+/-- The fr-sponge's FIRST squeeze — `xi_actual` (`step_verifier.ml:1007`) — lane 0 of the state the
+segment's last permutation produced, the same convention R1 uses. -/
+def frSqueezeVar (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s) 0
 def frSqueezeVal (segB : SegData) (specB : SegSpec) : Nat :=
-  (segB.states.getD (specB.nb + 1) []).getD 0 0
+  (segB.states.getD specB.nb []).getD 0 0
 
-/-- The fr-sponge's **SECOND** squeeze — `r_actual` (`step_verifier.ml:1008`). §8g's chain `1`
-decomposes it and lifts it into the `r` the C8 fold and `b_correct` multiply by. -/
-def frSqueeze2Var (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s + 2) 0
+/-- ⚑⚑ The fr-sponge's **SECOND** squeeze — `r_actual` (`step_verifier.ml:1008`) — and since the lazy
+re-model it is **`state.(1)` OF THE SAME PERMUTATION**, not a second one. `squeeze_challenge` is
+`lowest_128_bits (Sponge.squeeze …)` (`:186-187`) and the second `Sponge.squeeze` finds `Squeezed 1`
+with `n ≠ rate`, so it takes the `else` branch and returns `state.(1)` free (`sponge.ml:319-321`).
+ξ′ and r′ were TWO permutations apart here until 2026-08-03. -/
+def frSqueeze2Var (s : StepShape) : PVar := sgSt (baseSegB s) (nbB s) 2 (nbB s) 1
 def frSqueeze2Val (segB : SegData) (specB : SegSpec) : Nat :=
-  (segB.states.getD (specB.nb + 2) []).getD 0 0
+  (segB.states.getD specB.nb []).getD 1 0
 
 /-- `b(ζω)` — the SECOND challenge polynomial, over the lifted bulletproof challenges. -/
 def bwOf (s : StepShape) (d : SpongeData) : Nat :=
@@ -4644,10 +4908,13 @@ def bpRows (s : StepShape) (v : BpData) (wired : Bool) : List SRow :=
   gmRows s wired
   ++ [ baseConstRow (bpHx s) (bpHy s) GENERATORS_H ]
   -- `Shifted_value.Type2`'s split, once per ladder, plus `let n_acc = ref Field.zero` (`:158`).
+  -- ⚑ Ladder 0's `s_odd` IS `vCipBit`, whose `b² = b` `cipRows` already emits (it is absorbed at
+  -- every rung, and this one is emitted only at `r9_opening`). Emitting it twice would be one
+  -- redundant `Generic` half, so the booleanity here is the three ladders that do not have one.
   ++ packHalves ((List.range N_SF).flatMap (fun k =>
-       [ ([some (bpScalV s k), some (bpDiv2 s k), some (bpOdd s k)], cSplit 1)
-       , ([some (bpOdd s k), some (bpOdd s k), some (bpOdd s k)], cMul)
-       , ([some (bpN s k 0), none, none], cConst 0) ]))
+       [ ([some (bpScalV s k), some (bpDiv2 s k), some (bpOdd s k)], cSplit 1) ]
+       ++ (if k == 0 then [] else [([some (bpOdd s k), some (bpOdd s k), some (bpOdd s k)], cMul)])
+       ++ [ ([some (bpN s k 0), none, none], cConst 0) ]))
   -- ladder 1 (`b_u`) must precede the `G + b_u` add that ladder 2's base is.
   ++ sfTermRows (bpSlots s 0) (v.term 0) wired
   ++ sfTermRows (bpSlots s 1) (v.term 1) wired
@@ -4737,9 +5004,20 @@ structure StepData where
 /-- ⚠ Wrap statement word 11's VALUE. `vStmtWrapMsgs` has no in-circuit source — and neither does
 upstream's (`step_main.ml:364-366` `exists`-es it) — so this is a deterministic fixture. -/
 def STMT_WRAPMSG_VAL : Nat := (41 + 7000019 * 11 + 13 * 121) % pN
-/-- ⚠ Wrap statement word 39's VALUE — the lookup `Opt`'s inner `Scalar Challenge`, so it is a
-`Challenge`-width word and must stay under `2¹²⁸` or its 26-chunk ladder cannot close. -/
-def STMT_LOOKUP_VAL : Nat := (53 + 7000019 * 39 + 13 * 1521) % 2 ^ 128
+/-- ⚑ **Wrap statement word 39's VALUE — UPSTREAM'S OWN DUMMY, not a fixture (2026-08-03).** It was
+`(53 + 7000019·39 + 13·1521) % 2¹²⁸`, an arbitrary `Challenge`-width number. Read at source: the
+lookup `Opt`'s inner scalar-challenge dummy is `Sc.create lookup_parameters.zero.var.challenge`
+(`spec.ml:123-128`'s `None` arm packs `dummy2`), `verify_one` is called with
+`~lookup_parameters:{ zero = { var = { challenge = Field.zero; … } } }`
+(`step_main.ml:90-95`) and `Common.Lookup_parameters.tick_zero` sets the same
+(`common.ml:105-118`). **So the value is `0`**, and it stays a `Challenge`-width word trivially.
+
+⚠ This pins the VALUE and nothing else. Word 39 still owns exactly one cell — its own 26-chunk
+`var_base_mul` counter — and no row WRITES it, because this assembly models no lookup sub-circuit
+that would derive it. Upstream derives it nowhere either (`lookup_verification_enabled = false`,
+`step_verifier.ml:12`; `use = Opt.Flag.No`, `wrap_main.ml:83-86`), so the residue is a shared one;
+what changed is that the number is now upstream's rather than invented. -/
+def STMT_LOOKUP_VAL : Nat := 0
 
 /-- ⚑ **`Spec.pack … (Wrap.Statement.In_circuit.to_data statement)`**, evaluated — the forty scalars
 `multiscale_known` multiplies the SRS Lagrange commitments by, in `to_data`'s own order (§2c).
@@ -4811,8 +5089,10 @@ def mkStepWith (s : StepShape) (bs : List (Nat × Nat)) : StepData :=
   -- opt-sponge and segment C take, so the transcript's `cip` word is the masked fold from pass 1 on.
   let cipV := shiftT1 ((runDef s sp0 ft0.out (defc0.lift s 0) (defc0.lift s 1)
                           FT_OMEGA prevChalVal MASK_BITS).ca.getLastD 0)
-  -- **PASS 2 — the real transcript**, carrying `(combined_inner_product, its `Boolean.var`)`.
-  let sp := runSponge s bs (cipV, CIP_BIT)
+  -- **PASS 2 — the real transcript**, carrying `(combined_inner_product, its `Boolean.var`)` — and
+  -- ⚑ since 2026-08-03 the second item is the PARITY of the first, because it is §19 ladder 0's
+  -- `s_odd` and the split row `2·s_div_2 + s_odd = cip` forces it. Not a constant, not a witness.
+  let sp := runSponge s bs (cipV, cipV % 2)
   -- ⚑ R6 next: `ft_eval0` is the `ft` column R5's `combined_inner_product` folds — and since §6b
   -- its `perm` / `ζ^n` slots are also `Common.ft_comm`'s scalars, so R6 runs BEFORE the fold. That
   -- is a chain and not a cycle: `runFt` reads only β/γ/α/ζ, and fold round
@@ -4899,22 +5179,19 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
 /-- The CIRCUIT's variable → value assignment (public words are added by `stepEnv`). -/
 def circuitEnv (t : StepData) : VarEnv :=
   let s := t.sh
-  (List.range (s.blocks + 1)).flatMap (fun b =>
+  (List.range (tBlocks s + 1)).flatMap (fun b =>
     let st := t.sp.states.getD b []
     (List.range 3).map (fun j => (vSt s b j, (st.getD j 0 : Int))))
-  -- ⚑ `vPost` is indexed by absorb ORDINAL and the sponge trajectory by BLOCK, so the schedule
-  -- (`absBlock`) is what relates them since the R1 interleaving.
-  ++ (List.range s.absorbs).flatMap (fun a =>
-      let b := absBlock s a
+  -- ⚑ `vPost` is indexed by BLOCK since the lazy re-model — the same index the trajectory carries,
+  -- because a block no longer corresponds to an absorb SOURCE.
+  ++ (List.range (tBlocks s)).flatMap (fun b =>
       let pre := t.sp.states.getD b []
       let ms := t.sp.msgs.getD b []
       (List.range 2).map (fun j =>
-        (vPost s a j, (((pre.getD j 0 + ms.getD j 0) % pN : Nat) : Int))))
-  -- ⚑ ONE `vMsg` cell is left at `shapeStep`: block `oDigest`'s second lane, the rate-2 pad an odd
-  -- item count forces. Every other absorbed word is a variable some sub-circuit reads.
-  ++ (List.range s.absorbs).flatMap (fun a =>
-      (List.range 2).filterMap (fun j =>
-        if msgVar s a j == vMsg s a j then some (vMsg s a j, (msgVal a j : Int)) else none))
+        (vPost s b j, (((pre.getD j 0 + ms.getD j 0) % pN : Nat) : Int))))
+  -- ⚑ the ONE pad cell, at the zero `transcriptRows` pins it to. There is no `vMsg` region any more:
+  -- every absorbed word is a variable some sub-circuit reads.
+  ++ (if (tPadCell s).isSome then [(vTPad s, (0 : Int))] else [])
   ++ (List.range s.chals).flatMap (fun c =>
       let accs := emsAccs s (chalOf s t.sp c)
       (List.range (s.emsRows + 1)).flatMap (fun k =>
@@ -4930,6 +5207,8 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- finalize program's OWN cells rather than over a parallel computation of them.
   ++ rngEnv s (RNG_FIN_HI s) (t.fin.vals.getD t.fin.fp.slots.xiHi 0)
   ++ rngEnv s (RNG_FIN_LO s) (t.fin.vals.getD t.fin.fp.slots.xiActual 0)
+  -- …and §8h's `Branch_data.typ` `~assert_16_bits` chain, ONE `EndoMulScalar` row wide.
+  ++ rngEnvN s RNG_DOMLOG2_ROWS (RNG_DOMLOG2 s) BRANCH_DOMAIN_LOG2
   -- §8g: the two DEFERRED challenge chains (ξ from the statement word, r from the fr-sponge's
   -- second squeeze), each a full `to_field_checked` accumulator trace.
   ++ (List.range N_DEFC).flatMap (fun c =>
@@ -5066,7 +5345,8 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (List.range (2 * s.bRounds)).map (fun i => (vPrevChal s i, (prevChalVal i : Int)))
   ++ (idxOwn s).flatMap (fun k =>
       [ (vIdxX s k, (idxVal k 0 : Int)), (vIdxY s k, (idxVal k 1 : Int)) ])
-  ++ (List.range 3).map (fun j => (vIdxD s j, (idxDigestState.getD j 0 : Int)))
+  -- ⚑ `vIdxD` is NOT bound here: since 2026-08-03 its three ids ARE segment C's block-28 state
+  -- lanes, which `segEnv` already binds. Binding them again would be a second binding of one id.
   ++ segEnv (baseSegA s) t.specA t.segA
   ++ segEnv (baseSegB s) t.specB t.segB
   ++ segEnv (baseSegC s) t.specC t.segC
@@ -5075,7 +5355,9 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ [ (vCipShift s, (t.fin.cipShift : Int)), (vBShift s, (t.fin.bShift : Int))
      , (vPermShift s, (t.fin.permShift : Int)), (vXiStmt s, (t.fin.xiStmt : Int))
      -- §8h: `branch_data` and the two `proofs_verified_mask` bits it packs.
-     , (vShouldVerify s, 1), (vCipBit s, (CIP_BIT : Int))
+     -- ⚑ NO `vCipBit` entry: it IS `bpOdd s 0`, which `bpEnv` binds to `cip % 2`. A second binding
+     -- here would be a second value for one id.
+     , (vShouldVerify s, 1)
      , (vBranch s, (branchPacked : Int)), (vDomLog2 s, (BRANCH_DOMAIN_LOG2 : Int))
      , (vMask s 0, (MASK_BITS.getD 0 0 : Int)), (vMask s 1, (MASK_BITS.getD 1 0 : Int))
      , (vMaskPack s, ((MASK_BITS.getD 0 0 + 2 * MASK_BITS.getD 1 0 : Nat) : Int))

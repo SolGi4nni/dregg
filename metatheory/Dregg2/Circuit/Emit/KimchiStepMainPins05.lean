@@ -75,10 +75,12 @@ set_option maxRecDepth 100000
 #guard (classCells posS (vTcY shapeSmoke 0)).length == 4
 #guard ((classCells posS (vTcX shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
 #guard ((classCells posS (vTcY shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
--- ⚑ …AND THE CONTRAST THAT SAYS WHAT "FREE" MEANT. A surviving `vMsg` word's class is ONE cell —
--- the absorb row. That is the class every `t_comm` word was in before §6b: no row pins it, no
--- gadget reads it, and a `Poseidon` gate constrains the permutation and not what was fed to it.
-#guard (classCells posS (vMsg shapeSmoke 0 1)).length == 1
+-- ⚑ …AND THE CONTRAST THAT SAYS WHAT "FREE" MEANT. The transcript's ONE pad cell has a class of TWO
+-- — the absorb row that reads it and the `Generic` row that PINS IT TO ZERO. Until 2026-08-03 that
+-- lane carried a `msgVal` FIXTURE whose class was ONE cell: no row pinned it, no gadget read it, and
+-- a `Poseidon` gate constrains the permutation and not what was fed to it. That was the class every
+-- `t_comm` word was in before §6b, and it is now empty.
+#guard (classCells posS (vTPad shapeSmoke)).length == 2
 -- …and `t_comm` is the FOURTH provenance in the assembly, in none of the other three lists.
 #guard Dregg2.Bridge.MinaStepPrevCommitments.T_COMM_XY.all (fun p =>
   !(Dregg2.Bridge.MinaStepPrevCommitments.ALL_XY.contains p)

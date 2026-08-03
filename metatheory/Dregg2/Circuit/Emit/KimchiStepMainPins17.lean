@@ -74,16 +74,17 @@ So word 10 needed no new variable, no new row and no new block. It needed to be 
 ## ⚠ WHAT §22 DOES NOT CLOSE
 
 * **Word 11** — see above: prover-chosen here AND upstream.
-* **Word 39** — see above: a live 26-chunk ladder with no in-circuit source here.
-* ⚠ **THE SPONGE MODEL IS EAGER WHERE MINA'S IS LAZY, AND §22 ONLY READ IT — IT DID NOT FIX IT.**
-  The `:574` read above is the first place this file has taken Mina's `Squeezed n` branch seriously.
-  Everywhere else, `runSeg` and `transcriptRows` permute once per absorb block AND once per squeeze,
-  where Mina permutes `⌈words/2⌉` times total and a second consecutive squeeze reads lane 1 for free.
-  Two consequences, both measurable and neither fixed here: the transcript runs one extra permutation
-  per squeeze (21 of them), and segment B's ξ′ and r′ are two permutations apart where upstream's are
-  `state.(0)` and `state.(1)` of one (`step_verifier.ml:1007-1009`, `squeeze_challenge` =
-  `lowest_128_bits (Sponge.squeeze …)` at `:186-187`). That is its own rung: it moves every segment
-  and the transcript, and it is named here rather than absorbed into this one.
+* ✅ **Word 39** — SETTLED at source by §23: it is `lookup.joint_combiner.inner`, the `Opt`'s
+  `Scalar Challenge` under the `Maybe` arm, and it is a REQUESTED WITNESS of the whole step circuit
+  (`step_main.ml:353-355`) that `lookup_verification_enabled = false` (`step_verifier.ml:12`) leaves
+  derived NOWHERE upstream either. **Faithful as it stands — word 11's verdict.** See `…Pins18`.
+* ✅ **THE SPONGE MODEL WAS EAGER WHERE MINA'S IS LAZY — CLOSED BY §23 (`…Pins18`), 2026-08-03.**
+  §22 read the `Squeezed n` branch for one cell and named the rest as its own rung. It was THREE
+  divergences, not two: one extra permutation per squeeze; ξ′/r′ two permutations apart; and the item
+  stream paired per SOURCE rather than per ITEM, which is what the transcript's `msgVal` pad lane was.
+  The transcript now permutes `⌈117/2⌉ = 59` at upstream's 21 squeezes (60 at this file's 23), the
+  pre-fix count was `absorbs + chals` = 80 / 82, and `index_digest` lost a 29th permutation it had
+  over 56 EVEN absorbed words. See `…Pins18`.
 -/
 import Dregg2.Circuit.Emit.KimchiStepMainFixture
 
@@ -95,7 +96,7 @@ set_option maxRecDepth 100000
 /-! ### ⚑ (a) THE WIRING — word 10 is a cell the circuit DERIVES, and the fr-sponge EATS it. -/
 
 /-- ⚑⚑ **WORD 10 IS R1's OWN ζ-SQUEEZE LANE 1.** `stmtVar` spells the cell out of the block schedule
-(`vSt s (sqBlock s zetaChal + 1) 1`) because `digestBeforeEvalsVar` is §2b and `stmtVar` is §2c;
+(`vSt s (sqStBlock s zetaChal) 1`) because `digestBeforeEvalsVar` is §1c and `stmtVar` is §2c;
 the equality is the gate between the two spellings, at BOTH committed shapes. And the lane is not
 some free cell: lane 0 of the SAME state is ζ itself, which is the whole content of
 `step_verifier.ml:573-574` reading `state.(1)` where `:568` read `state.(0)`. -/
@@ -103,7 +104,7 @@ theorem statement_word_ten_is_r1s_own_zeta_squeeze_lane_one :
     (stmtVar shapeStep 10 = digestBeforeEvalsVar shapeStep
      ∧ stmtVar shapeSmoke 10 = digestBeforeEvalsVar shapeSmoke
      ∧ digestBeforeEvalsVar shapeStep
-         = vSt shapeStep (sqBlock shapeStep shapeStep.zetaChal + 1) 1
+         = vSt shapeStep (sqStBlock shapeStep shapeStep.zetaChal) 1
      ∧ uSqueezeVar shapeSmoke ≠ digestBeforeEvalsVar shapeSmoke) := by
   native_decide
 #assert_compiled statement_word_ten_is_r1s_own_zeta_squeeze_lane_one

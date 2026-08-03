@@ -1,5 +1,112 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 3 (Pickles-in-Lean §23) — our sponge was EAGER where Mina's is LAZY, and word 39 is a REQUESTED WITNESS
+
+§22 read `snarky/sponge/sponge.ml`'s `Squeezed n` branch for the first time, used it for one cell
+(word 10) and named the rest as its own rung: *"`runSeg`/`transcriptRows` permute once per absorb
+block AND once per squeeze, where Mina permutes `⌈words/2⌉` total."* This is that rung, and reading
+the state machine properly made it THREE divergences, not one.
+
+**THE MECHANISM, VERBATIM** (`sponge.ml:280-326`, `rate = m − capacity = 3 − 1 = 2` at `:294`):
+`absorb` on `Absorbed n` permutes only when `n = rate` — i.e. **the permutation is triggered by an
+ARRIVING element, never on the way out**; `squeeze` on `Absorbed _` performs that pending permutation
+itself; `squeeze` on `Squeezed 1` takes the `else` branch and returns `state.(1)` **free**; and
+`absorb` on `Squeezed _` lands in lane 0 **without permuting**, restarting the rate counter.
+
+1. **One extra permutation per squeeze.** Every squeeze had a `Poseidon` block of its own on top of
+   the absorb blocks.
+2. **A second consecutive squeeze is free.** β and γ (`step_verifier.ml:563-564`) are lanes 0 and 1
+   of ONE permutation; so are the fr-sponge's ξ′ and r′ (`:1007-1009`). Both were two apart.
+3. **The item stream re-pairs at every squeeze.** The old model paired per SOURCE — one commitment
+   per rate-2 block — and padded `index_digest` to two lanes. Upstream pairs per ITEM, so
+   `index_digest` shares block 0 with `sg_old[0]`'s x.
+
+⚑ **THE REALITY GATE WAS ALREADY IN THE TREE, WITH THIS EXACT SCAR ON IT.**
+`PastaPoseidon.Ref.absorbFrom`'s header records that an eager variant *"permuted twice on every input
+of nonzero EVEN length"* and failed **precisely the two even-length o1js gold vectors**. The fix
+landed in the reference on 2026-07-27 and was never carried up to `verify_one`. `sponge_after_index`
+absorbs 56 — EVEN — field elements, so `index_digest` was a 29th permutation where Mina performs 28.
+It is now a named theorem `indexDigest = PastaPoseidon.Ref.hash …`, with the pre-fix value exhibited
+as a REFUTATION.
+
+⚑⚑ **AND THE LAST FREE TRANSCRIPT WORD CLOSED WITHOUT A NEW WIRE.** The per-source pairing put a
+`msgVal` FIXTURE in block 0's second lane — a word `verify_one` never feeds the sponge, absorbed
+anyway. Under the item stream the single lane an odd item count leaves without an arrival lands at
+the END of the pre-β run and is PINNED TO ZERO (`absorb` ADDS, so adding zero IS "no arrival").
+`vMsg` and `msgVal` are DELETED. **Of 117 items, ZERO are free witnesses.**
+
+### ⚑ WORD 39 — READ AT SOURCE, AND IT IS WORD 11's ANSWER
+
+§22 inferred word 39 was `Spec.pack`'s `Opt` `None` arm (a dropped constant), refuted its own
+inference against Mina's compiled blob, and stopped. The arm is **`Maybe`**:
+
+* Word 39 is **`lookup.joint_combiner.inner`** (`composition_types.ml:655-665,82,85`), 128 bits.
+* `use = Plonk_checks.lookup_tables_used d.feature_flags` (`step_main.ml:88-92`); the `proved` rule's
+  only predecessor is the SIDE-LOADED tag (`transaction_snark.ml:2111-2112`), whose eight feature
+  flags are all `Opt.Flag.Maybe` (`:609-620`). So the value is a witness, not `Cvar.Constant`, and
+  `multiscale_known`'s partition (`step_verifier.ml:134-151`) does not drop it. ⚑ Independently
+  CONFIRMED by measurement: the `None` arm would compile to 30 ladders / 956 chunks; the blob has
+  31 / 982.
+* ⚑ **It is a REQUESTED WITNESS of the whole step circuit** — `prevs = exists … ~request:
+  Req.Proof_with_datas` (`step_main.ml:353-355`), carried in `Per_proof_witness.typ`
+  (`per_proof_witness.ml:60-77,145-168`) and re-wrapped as the statement at `:83-86`. The only place
+  a `joint_combiner` could be DERIVED is dead: `lookup_verification_enabled = false`
+  (`step_verifier.ml:12`) makes it `if … then failwith "TODO" else None` (`:631-633`), after which
+  `assert_eq_deferred_values` gets `None` on both sides and asserts β/γ/α/ζ only (`:342-363`).
+  **Prover-chosen here AND upstream. Faithful as it stands; nothing to land.**
+
+⚠ **TWO CORRECTIONS TO §21/§22's READING OF THE SAME CENSUS.** `2×1 26×22 51×8` is **chunks ×
+count** — ONE 2-chunk ladder (`branch_data`), not two 1-chunk ones. And ⚑ **the nine one-bit words
+are NOT dropped constants**: at the all-`Maybe` tag `maybe_constant` yields `Spec.T.B Bool`
+(`composition_types.ml:794-802`) and the `Opt` header packs `p.pack Bool b`, so `constant_part` is
+EMPTY. They are live **ZERO-CHUNK** ladders — no scale chunks, but two `add_fast`es, an `EC_scale`
+with an empty round array and the `2·s_div_2 + s_odd = s` tie (`plonk_curve_ops.ml:202-208,291`).
+**Mina emits 40 ladders where this assembly emits 31.** The chunk census is unchanged; the residue is
+real and §1b's stated mechanism for it was wrong.
+
+### WHAT WAS MEASURED, AND ON WHAT
+
+* **Three independent implementations of the lazy state machine agree** — the Lean `spLay`, a
+  scratch Python model, and hand-tracing `sponge.ml:296-325` over `verify_one`'s tape. All three
+  give `shapeStep` **60** permutations against the eager model's `absorbs + chals = 82`, `shapeStep`
+  at upstream's own 21 squeezes **59 = ⌈117/2⌉ = absorbBlocksNeeded** against **80**, and
+  `shapeSmoke` **11** against **18**. The extra one over `⌈items/2⌉` is `r`'s: it is the THIRD
+  consecutive squeeze and `Squeezed 2 = rate` permutes.
+* **`…Pins18`, FOURTEEN NAMED THEOREMS, ZERO `#guard`s**, `#assert_compiled` on every one. Including
+  `index_digest_is_the_o1js_katted_hash` — `indexDigest = PastaPoseidon.Ref.hash …` **and**
+  `indexDigest ≠ (Ref.perm idxAfterState).getD 0 0`, the pre-fix value, as a refutation.
+* **Harness: NINE RUNGS, ALL FIVE POLARITIES, IN RELEASE, on a smoke emission just produced.**
+  `r1_transcript` **151** rows (was 237) — 13 `Generic` (2 init + 1 pad pin + 10 addends),
+  121 `Poseidon` (11×11), 17 `Zero` (11 closers + 6 probes); `r5_full` 1581; `r7_absorption` 3323;
+  `r8_finalize` 3391; **`r9_opening` 4037 → 3873 rows, −164**. `Poseidon` at r8 `11×113 → 11×100`.
+  Every rung: honest `verify()==true`, σ-probe desync REJECTED, the same flips ACCEPTED on the
+  UNWIRED control, an unread advice cell ACCEPTED, and (r5 up) the public-vector tamper REJECTED.
+* **The eight committed smoke fixtures re-emitted** and the committed-fixture gate re-run.
+* ⚠ **The `step`-shape emission and the conformance re-grade were still running when this was
+  written** — the `shapeStep` column of `KimchiStepMain`'s gate-census table is therefore marked
+  STALE in the file rather than carrying §22's numbers, and `scope/unassembled-subcircuits`'
+  `Poseidon 207/572` is **predicted 179/572** and not yet re-graded. ⚑ **179 is a DROP and the drop
+  IS the fix**: the 28 permutations that left are ones Mina does not perform. A ledger entry whose
+  prose rewards "our count rising" is the wrong instrument for a fidelity fix, and it says so now.
+* **The substitution exhibit, literally**: `substituted_assembly_still_closes_equal_g :
+  tSwapAbs.bp.ver = 1` — **ACCEPTED**, exactly as at §19 (+482 rows), §20 (+150), §21 (−45) and
+  §22 (+14). This rung is −164 and it changes no verdict either: the sponge model moves what an
+  HONEST prover must claim; it relates nothing to `sg_old`'s opening (`per_proof_witness.ml:12-32`),
+  which is not a rung.
+
+### WHAT BROKE / WHAT RE-EMITS
+
+* **`StepShape.blocks`, `tSched`, `blockAbs`, `absBlock`, `sqBlock`, `sqBlocks`, `vMsg` and `msgVal`
+  are GONE.** Any consumer naming them fails to elaborate. Replacements: `tBlocks`, `tOps`/`spLay`,
+  `blockWords`, `itemAt`, `sqStBlock`/`sqStLane`, `vTPad`.
+* **`vIdxD` MOVED below `baseSegC`** and now names segment C's block-28 state lanes;
+  `idxDigestRows` returns `[]`; `idxDigestState = idxAfterState`.
+* **Every `stepmain_*` artifact re-emits.** Every variable id above `nSt` moved (the `vMsg` region is
+  gone and `tBlocks` is smaller). Row counts move at EVERY rung, not only R7 and up — R1 itself
+  shrank.
+* **`…Pins01/02/03/04/05/06/10/14` re-pinned** (row counts, σ-class sizes, schedule positions), and
+  the guard-discipline baseline rows for `…Pins01`/`…Pins03` retire downward.
+
 ## ⚑⚑⚑⚑ AUGUST 3 (Pickles-in-Lean §22) — the fr-sponge got its SEED, and Wrap statement word 10 is a cell the circuit DERIVES
 
 §21 landed the provenance half of the x_hat MSM and named its residue: *"word 10's absence is a

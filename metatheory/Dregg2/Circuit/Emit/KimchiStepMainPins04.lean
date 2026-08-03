@@ -70,7 +70,8 @@ set_option maxRecDepth 100000
 -- ── §12c′ — ⚑ THE THIRD `lowest_128_bits`: R8's, AND IT WAS THE WORST OF THE THREE ─────────────
 -- The two above are R2's transcript squeezes and §8g's `r`. The THIRD lives INSIDE the compiled
 -- finalize program (§8f): `xi_actual = lowest_128_bits (squeeze fr_sponge)`
--- (`step_verifier.ml:820-822,1102`), where the high part is an `AOp.wit` — a cell NO row defines.
+-- (`step_verifier.ml:821-822`; `lowest_128_bits` at `:99-101`, `Util.lowest_128_bits` at
+-- `util.ml:78-101`), where the high part is an `AOp.wit` — a cell NO row defines.
 -- It is the worst of the three because §8g's chain 0 lifts the very word `xi_correct` compares
 -- against INTO THE FOLD, so a prover who chooses ξ chooses `combined_inner_product`'s multiplier.
 
@@ -169,10 +170,13 @@ set_option maxRecDepth 100000
 #guard idxSrc shapeStep 6 == none && idxRoundOf 6 == none
 
 -- ⚑ SEGMENT C's `Not_opt` PREFIX **IS** `sponge_after_index`. Its state after the 28 index blocks
--- is exactly the sponge upstream copies (`Sponge.copy after_index`, `:1163`), and `index_digest` is
--- one more permutation of that state.
+-- is exactly the state the copy's `Sponge.squeeze_field` produces (`:531-532`) — the 28th
+-- permutation is the one that squeeze TRIGGERS (`sponge.ml:322-325`), and segment C's own block 27
+-- already performs it. ⚑ CORRECTED 2026-08-03: this said `index_digest` is "one more permutation of
+-- that state", i.e. a 29th, which is not what a lazy sponge does. `…Pins18` states the fix against
+-- `Ref.hash`, the o1js-KAT'd machine, and refutes the old value.
 #guard tS.segC.states.getD (N_IDX_WORDS / 2) [] == idxAfterState
-#guard idxDigestState == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm idxAfterState
+#guard idxDigestState == idxAfterState
 #guard indexDigest == idxDigestState.getD 0 0
 -- …and it is not degenerate: the state moved off zero, the digest is nonzero, and it is a DIFFERENT
 -- value from segment C's own final squeeze (which absorbs 30 more words after it).
@@ -196,12 +200,14 @@ set_option maxRecDepth 100000
 #guard idxVar shapeSmoke 22 0 == ipx shapeSmoke (qT shapeSmoke constR0)
 #guard (classCells posS (idxVar shapeSmoke 22 0)).length == shapeSmoke.ipaBlocks + 4
 
--- …and `index_digest`'s three output lanes: lane 0 is read by the digest permutation's closing
--- `Zero` row, by its σ-only probe, AND by R1's block-0 absorb row — that last cell is the whole
--- point, and it is what a `.length ≥ 2` floor would not have caught.
-#guard (classCells posS (vIdxD shapeSmoke 0)).length == 3
-#guard (classCells posS (vIdxD shapeSmoke 1)).length == 2
-#guard (classCells posS (vIdxD shapeSmoke 2)).length == 1
+-- …and `index_digest`'s three lanes. ⚑ SINCE 2026-08-03 THESE ARE SEGMENT C's OWN block-28 state
+-- cells (`vIdxD` is `sgSt … 28 j`): the copy's `squeeze` performs segment C's block-27 permutation
+-- and nothing more, so there is no digest block of its own. Lane 0's FOUR cells are that block's
+-- closing `Zero` row, block 28's absorb row, the σ-only probe on the state — AND R1's block-0
+-- absorb row, which is the whole point and what a `.length ≥ 2` floor would not have caught.
+#guard (classCells posS (vIdxD shapeSmoke 0)).length == 4
+#guard (classCells posS (vIdxD shapeSmoke 1)).length == 3
+#guard (classCells posS (vIdxD shapeSmoke 2)).length == 3
 #guard ((classCells posS (vIdxD shapeSmoke 0)).filter (fun c => c.row < nTrans)).length == 1
 
 -- the helper reproduces the assembly's own digest on the honest word, so what follows measures the

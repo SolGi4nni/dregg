@@ -40,7 +40,8 @@ pins are split across thirteen PARALLEL modules rather than batched into fewer c
 buys the same factor and costs each pin its own failure site. -/
 
 -- ── Structure ────────────────────────────────────────────────────────────────────────────────
-#guard shapeSmoke.blocks == shapeSmoke.absorbs + shapeSmoke.chals
+-- ⚑ RETIRED 2026-08-03: `blocks` was `absorbs + chals`. The permutation count is `tBlocks`, derived
+-- from the lazy op tape, and it is SMALLER — see `…Pins18` for the equality that replaces this.
 #guard placedS.length == totalRowsS
 #guard placedUS.length == totalRowsS
 #guard (placedS.map (fun g => g.wires.length)).all (· == 7)
@@ -60,12 +61,12 @@ buys the same factor and costs each pin its own failure site. -/
 -- ⚑ SEVEN GATE TYPES in one circuit — the census. Eleven `Poseidon` rows per sponge block, which
 -- is upstream's own run length (`sponge_inputs.ml:47-64` / `plonk_constraint_system.ml:1450-1530`,
 -- and MEASURED in Mina's `step-zkapp-proved` blob: every `Poseidon` run there is exactly 11).
--- FIVE sponges now: R1's transcript sponge and R7's FOUR absorption segments — **plus the ONE
--- extra permutation §3c's `index_digest` is**, `Sponge.squeeze_field (Sponge.copy
--- sponge_after_index)`, which is why the `+ 1` is here and not hidden in a segment's block count.
+-- FIVE sponges: R1's transcript sponge and R7's FOUR absorption segments. ⚑ The `+ 1` that used to
+-- be here — §3c's `index_digest` as a permutation of its own — is GONE (2026-08-03): the copy's
+-- squeeze IS segment C's block-27 permutation, so `idxDigestRows` emits nothing.
 #guard (placedS.filter (fun g => g.kind == KGateType.poseidon)).length
-        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks
-                 + tS.specD.blocks + 1)
+        == 11 * (tBlocks shapeSmoke + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks
+                 + tS.specD.blocks)
 -- ⚑ `2·chals + 5` `to_field_checked` chains, 8 `EndoMulScalar` rows each — and the composition of
 -- that number IS the ledger of two retirements. Per transcript challenge TWO chains: the challenge
 -- itself and `lowest_128_bits`' `assert_128_bits hi` (#1). Plus §8g's ξ (one, no split) and its r
@@ -217,12 +218,10 @@ buys the same factor and costs each pin its own failure site. -/
 -- ── The SEMANTICS ─────────────────────────────────────────────────────────────────────────────
 -- ⚑ THE SPONGE IS THE REAL SPONGE. Each block's output equals `PastaPoseidon.Ref.perm` of its
 -- input — the same reference whose `Ref.hash` reproduces the o1js `Poseidon.hash` gold KATs.
-#guard (List.range shapeSmoke.blocks).all (fun b =>
+#guard (List.range (tBlocks shapeSmoke)).all (fun b =>
   let pre := tS.sp.states.getD b []
   let ms := tS.sp.msgs.getD b []
-  let post := if (blockAbs shapeSmoke b).isSome then
-      [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
-    else pre
+  let post := [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
   tS.sp.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
 
 -- ⚑ THE CHALLENGE CHAIN RECONSTRUCTS ITS CHALLENGE: the `EndoMulScalar` folds' final `n₈` IS the
@@ -231,7 +230,7 @@ buys the same factor and costs each pin its own failure site. -/
   ((emsAccs shapeSmoke (chalOf shapeSmoke tS.sp c)).getLastD (0,2,2)).1
     == chalOf shapeSmoke tS.sp c)
 #guard (List.range shapeSmoke.chals).all (fun c =>
-  (tS.sp.states.getD (sqBlock shapeSmoke c + 1) []).getD 0 0
+  sqValOf shapeSmoke tS.sp c
     == chalOf shapeSmoke tS.sp c + 2 ^ shapeSmoke.chalBits * hiOf shapeSmoke tS.sp c)
 -- ⚑ …and every emitted `EndoMulScalar` ROW satisfies the gate's own eleven constraints on the
 -- ASSEMBLED grid (`endomulScalarConstraints`, read-only), with the three polynomial constants.

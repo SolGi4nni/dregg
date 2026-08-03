@@ -51,11 +51,10 @@ set_option maxRecDepth 100000
 -- ── (b) `combined_inner_product` — `absorb sponge Scalar advice.cip` (`:256`) ───────────────────
 -- ⚑⚑ ACCEPTED BEFORE: with the word a fixture, R1's blocks were all still exactly `Ref.perm` of
 -- their own absorbed state — a `Poseidon` gate constrains the permutation, never its input.
-#guard (List.range shapeSmoke.blocks).all (fun b =>
+#guard (List.range (tBlocks shapeSmoke)).all (fun b =>
   let pre := spCip.states.getD b []
   let ms := spCip.msgs.getD b []
-  let post := if ms.isEmpty then pre
-    else [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
+  let post := [ (pre.getD 0 0 + ms.getD 0 0) % pN, (pre.getD 1 0 + ms.getD 1 0) % pN, pre.getD 2 0 ]
   spCip.states.getD (b + 1) [] == Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm post)
 -- ⚑⚑ REFUSED AFTER, twice over. (i) the absorbed word IS `vCipShift`, so a claimed `cip` that is not
 -- the Horner chain's output fails R8's `Shifted_value.Type1` unshift comparison…
@@ -68,8 +67,14 @@ set_option maxRecDepth 100000
 #guard ((List.range shapeSmoke.chals).drop 4).all (fun c =>
   chalOf shapeSmoke spCip c != chalOf shapeSmoke tS.sp c)
 -- …and the BIT is Boolean-constrained, so the second lane is not a second free field element.
-#guard fMul CIP_BIT CIP_BIT == CIP_BIT
+#guard fMul (cipWordOf tS).2 (cipWordOf tS).2 == (cipWordOf tS).2
 #guard (fMul 2 2 == 2) == false
+-- ⚑ …and since 2026-08-03 it is DERIVED and not merely Boolean: the absorbed bit IS §19 ladder 0's
+-- `s_odd`, the parity the `Shifted_value.Type2` split row forces off `vCipShift`.
+#guard msgVar shapeSmoke (oCip shapeSmoke) 1 == bpOdd shapeSmoke 0
+#guard (cipWordOf tS).2 == tS.fin.cipShift % 2
+#guard fAdd (fAdd (tS.bp.scals.getD 0 0 / 2) (tS.bp.scals.getD 0 0 / 2)) ((cipWordOf tS).2)
+         == tS.fin.cipShift
 
 -- ── (c) `delta` — `absorb sponge PC delta` (`:321`), `lhs = endo q c + delta` (`:326-327`) ──────
 #guard onCurveA delAlt && delAlt != Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
@@ -99,12 +104,11 @@ set_option maxRecDepth 100000
 #guard (List.range N_IDX_WORDS).all (fun i =>
   (tS.specC.ws.getD i (xv 0, 0)) == (idxVar shapeSmoke (i / 2) (i % 2), idxVal (i / 2) (i % 2)))
 #guard N_HM_APP == 2 && N_IDX_WORDS == 56 && N_HM_FIX == 58
--- …and at the SMOKE shape too the ONLY free word is block `oDigest`'s second lane, the pad.
+-- …and at the SMOKE shape too there is NO free word left: every item is a wired variable, and the
+-- single unpaired rate-2 lane is `tPadCell`, pinned to zero. (`…Pins18` states this as an equality
+-- at both shapes.)
 #guard (List.range shapeSmoke.absorbs).countP (fun b => blockRound shapeSmoke b == none)
         == 4 + tCommN shapeSmoke
-#guard (List.range shapeSmoke.absorbs).foldl
-        (fun n b => n + (List.range 2).countP (fun j =>
-           msgVar shapeSmoke b j == vMsg shapeSmoke b j)) 0 == 1
 -- …so the pin rows are exactly the constants, one `Generic` row per point.
 #guard (msmBaseRows shapeSmoke tS.msm).length == shapeSmoke.msmTerms
 #guard (ipaBaseRows shapeSmoke tS.ipa).length

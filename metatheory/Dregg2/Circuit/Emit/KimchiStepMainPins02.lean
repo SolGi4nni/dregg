@@ -155,15 +155,11 @@ set_option maxRecDepth 100000
 #guard (absRoundList shapeSmoke).length == 3
 -- …and R3 carries NO absorbed base, which is `multiscale_known`'s own shape.
 #guard (List.range shapeStep.msmTerms).all (fun i => msmSrc i == BaseSrc.const)
--- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS, pinned so it cannot drift silently. A free word
--- is a `msgVal` fixture no row pins. Of `2·absorbs = 118` absorbed words **ONE** is free — the pad
--- lane an odd item count forces — where 7 were before the R1 interleaving, 31 at `absorbs = 71` and
--- 45 before §6b. EQUALITY, so un-assembling any consumer moves this number.
+-- ⚠ ⚑ …and the COUNT OF STILL-FREE TRANSCRIPT WORDS is now **ZERO** — `…Pins18` states it as an
+-- equality at both shapes. It was 1 (the `msgVal` fixture the per-source pairing put in block 0's
+-- second lane), 7 before the R1 interleaving, 31 at `absorbs = 71` and 45 before §6b.
 #guard shapeStep.absorbs - (absRoundList shapeStep).length == 11
 #guard (List.range shapeStep.absorbs).countP (fun b => blockRound shapeStep b == none) == 11
-#guard (List.range shapeStep.absorbs).foldl
-        (fun n b => n + (List.range 2).countP (fun j =>
-           msgVar shapeStep b j == vMsg shapeStep b j)) 0 == 1
 -- ⚑ …and the SIX that left the free list are exactly the three closures, block for block and lane
 -- for lane, each against the variable its CONSUMER reads.
 #guard msgVar shapeStep oSgOld0 0 == ipx shapeStep (qInit shapeStep)
@@ -186,9 +182,9 @@ set_option maxRecDepth 100000
 -- position (`absorb sponge Field index_digest` precedes `Vector.iter ~f:(absorb sponge PC) sg_old`,
 -- `step_verifier.ml:534,538`).
 #guard (List.range shapeStep.absorbs).foldl
-        (fun n b => n + (List.range 2).countP (fun j =>
-           msgVar shapeStep b j == vIdxD shapeStep 0)) 0 == 1
-#guard msgVar shapeStep 0 0 == vIdxD shapeStep 0
+        (fun n a => n + (List.range (srcItems a)).countP (fun j =>
+           msgVar shapeStep a j == vIdxD shapeStep 0)) 0 == 1
+#guard msgVar shapeStep 0 0 == vIdxD shapeStep 0 && srcItems oDigest == 1
 #guard msgValOf shapeStep (stepBases shapeStep) (0, 0) 0 0 == indexDigest
 -- ── ⚑ THE ABSORB SHAPE IS `verify_one`'s OWN ITEM COUNT, AND SO IS ITS ORDER ───────────────────
 -- `absorbs` is `⌈117/2⌉` AND is now DERIVED from the schedule, so the shape, the item census and the
@@ -221,22 +217,34 @@ set_option maxRecDepth 100000
 -- ()` at `:568`. So β, γ, α and ζ are fixed before it. The previous rung's diagnosis stopped at "R1
 -- runs all absorb blocks before all squeezes"; that was true and not the whole blocker (segment A
 -- absorbing R1's own challenges was the other half, see `vPrevChal`). These pin BOTH halves.
-#guard sqBlock shapeStep shapeStep.betaChal == absBlock shapeStep (oZ shapeStep - 1) + 1
-#guard sqBlock shapeStep shapeStep.gammaChal == sqBlock shapeStep shapeStep.betaChal + 1
-#guard sqBlock shapeStep shapeStep.alphaChal == absBlock shapeStep (oTc shapeStep - 1) + 1
-#guard sqBlock shapeStep shapeStep.zetaChal == absBlock shapeStep (oCip shapeStep - 1) + 1
--- ⚑ the four are squeezed STRICTLY BEFORE `cip`'s block, and every later squeeze strictly after.
-#guard (List.range 4).all (fun c => sqBlock shapeStep c < absBlock shapeStep (oCip shapeStep))
+#guard sqStBlock shapeStep shapeStep.betaChal == (itemAt shapeStep (oZ shapeStep - 1) 1).1 + 1
+        && sqStLane shapeStep shapeStep.betaChal == 0
+-- ⚑⚑ **γ IS FREE.** `let gamma = sample ()` immediately follows `let beta = sample ()` (`:563-564`),
+-- so the sponge is at `Squeezed 1`, `n ≠ rate`, and takes the `else` branch: **the SAME state, lane
+-- 1**, no permutation (`sponge.ml:319-321`). Until 2026-08-03 γ was a whole extra block.
+#guard sqStBlock shapeStep shapeStep.gammaChal == sqStBlock shapeStep shapeStep.betaChal
+        && sqStLane shapeStep shapeStep.gammaChal == 1
+#guard sqStBlock shapeStep shapeStep.alphaChal == (itemAt shapeStep (oTc shapeStep - 1) 1).1 + 1
+        && sqStLane shapeStep shapeStep.alphaChal == 0
+#guard sqStBlock shapeStep shapeStep.zetaChal == (itemAt shapeStep (oCip shapeStep - 1) 1).1 + 1
+        && sqStLane shapeStep shapeStep.zetaChal == 0
+-- ⚑ the four are squeezed AT OR BEFORE the state `cip` is absorbed into — `:256` absorbs from
+-- `Squeezed 1` straight into the state ζ left, which is why ζ's block and `cip`'s block are ONE —
+-- and every later squeeze reads a strictly later state.
+#guard (List.range 4).all (fun c => sqStBlock shapeStep c ≤ (itemAt shapeStep (oCip shapeStep) 0).1)
 #guard ((List.range shapeStep.chals).drop 4).all
-        (fun c => absBlock shapeStep (oCip shapeStep) < sqBlock shapeStep c)
+        (fun c => (itemAt shapeStep (oCip shapeStep) 0).1 < sqStBlock shapeStep c)
 -- ⚑ `c` is the squeeze that FOLLOWS `delta` (`:321-322`), and it is the last scheduled one.
-#guard sqBlock shapeStep shapeStep.cChal == absBlock shapeStep (oDelta shapeStep) + 1
+#guard sqStBlock shapeStep shapeStep.cChal == (itemAt shapeStep (oDelta shapeStep) 1).1 + 1
 #guard shapeStep.cChal == sqScheduled shapeStep - 1 && sqScheduled shapeStep == 21
--- ⚑ …and the schedule really is `absorbs + chals` blocks with the absorb ordinals in order.
-#guard (tSched shapeStep).length == shapeStep.blocks
-#guard (tSched shapeStep).filterMap id == List.range shapeStep.absorbs
-#guard (tSched shapeSmoke).filterMap id == List.range shapeSmoke.absorbs
-#guard (sqBlocks shapeStep).length == shapeStep.chals
+-- ⚑ …and the op TAPE really is every source's items in order with the squeezes interleaved.
+#guard ((tOps shapeStep).filterMap id)
+        == (List.range shapeStep.absorbs).flatMap
+             (fun a => (List.range (srcItems a)).map (fun j => (a, j)))
+#guard ((tOps shapeStep).filterMap id).length == N_ABSORB_ITEMS
+#guard ((tOps shapeSmoke).filterMap id).length == 2 * shapeSmoke.absorbs - 1
+#guard ((tOps shapeStep).filter (·.isNone)).length == shapeStep.chals
+#guard (spLay shapeStep).sq.length == shapeStep.chals
 -- ⚑⚑ **AND THE NON-CIRCULARITY, MEASURED.** Re-run R1 with the `cip` word set to ZERO: β, γ, α, ζ
 -- are IDENTICAL (so `ft_eval0`, the fr-sponge, ξ, r and the Horner chain that produces `cip` are
 -- all unchanged, which is what makes the two-pass assembly exact) — and every squeeze after it
@@ -250,8 +258,12 @@ set_option maxRecDepth 100000
   chalOf shapeSmoke spNoCip c != chalOf shapeSmoke tS.sp c)
 -- ⚑ …and the word the transcript actually swallowed IS the statement word R8 binds — which is what
 -- makes it a CONSUMED absorption and not one more thing the sponge eats.
-#guard (tS.sp.msgs.getD (absBlock shapeSmoke (oCip shapeSmoke)) []).getD 0 0 == tS.fin.cipShift
-#guard (tS.sp.msgs.getD (absBlock shapeSmoke (oCip shapeSmoke)) []).getD 1 0 == CIP_BIT
+#guard (let p := itemAt shapeSmoke (oCip shapeSmoke) 0
+        (tS.sp.msgs.getD p.1 []).getD p.2 0 == tS.fin.cipShift)
+-- ⚑ …and the SECOND item is that word's PARITY, not a free companion bit: since 2026-08-03 it is
+-- §19 ladder 0's `s_odd`, which the `Shifted_value.Type2` split row derives from `vCipShift`.
+#guard (let p := itemAt shapeSmoke (oCip shapeSmoke) 1
+        (tS.sp.msgs.getD p.1 []).getD p.2 0 == tS.fin.cipShift % 2)
 #guard tS.fin.cipShift == shiftT1 (tS.df.ca.getLastD 0)
 
 end Dregg2.Circuit.Emit.KimchiStepMain

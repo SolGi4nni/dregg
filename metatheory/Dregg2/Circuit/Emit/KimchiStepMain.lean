@@ -208,10 +208,13 @@ a STAMPED emission the conformance gate produced itself** (`--emit`):
     CompleteAdd           403  (2.0%)       317       317         317         317        327  1×159 2×65 3×23
                     15×1 30×1 / 1×327
 
-⚑ Re-measured in full for §22 off a stamped emission the conformance gate produced itself. R7 and up
-gain **+14 rows** — segment B's 46th absorb block (`+11` Poseidon, `+1` Generic addend, `+1` Zero)
-and the pad lane's `w = 0` pin (`+1` Generic). Nothing below R7 moves, because nothing below R7 runs
-the fr-sponge.
+⚠ ⚑ **THIS TABLE IS §22's AND §23 MOVED EVERY COLUMN — DO NOT CITE IT FOR `shapeStep` UNTIL IT IS
+RE-MEASURED OFF A STAMPED §23 EMISSION.** The lazy sponge removes 22 transcript permutations, five
+segment squeeze-blocks and §3c's whole digest block, so `Poseidon` goes `11×207 → 11×179` and every
+rung's total drops. The SMOKE shape is measured and green: r1 **151** (was 237), r5 **1581**,
+r6 **2050**, r7 **3323**, r8 **3391**, r9 **3873** (was 4037) — `−164` rows, all five polarities in
+RELEASE. The `step` column is being re-emitted; the number this file must not carry is a stale one,
+so it says so rather than showing one.
 
 ⚠ **THE PREVIOUS TABLE WAS STALE AND SAID SO NOWHERE.** It read `r8_finalize 10826` with
 `VarBaseMul 1448` — and `1448 = 1040 + 408` is the count at the UNIFORM `msmChunks = 26` that §20
@@ -219,7 +222,66 @@ DELETED in the very commit this table sat in. The rows column therefore spanned 
 not one, and the `r9_opening` column §19 added had never been carried at all. Re-measured in full
 rather than patched. **Never grade a rung off a table you did not just produce, either.**
 
-⚑⚑ MOVEMENT IN THIS COMMIT (§22, `…Pins17`): **the fr-sponge got its SEED, and Wrap statement word
+⚑⚑ MOVEMENT IN THIS COMMIT (§23, `…Pins18`): **OUR SPONGE WAS EAGER WHERE MINA'S IS LAZY, AND
+FIXING IT MOVED EVERY SEGMENT AND THE TRANSCRIPT.** §22 read the divergence and named it as its own
+rung; this is that rung.
+
+`snarky/sponge/sponge.ml:280-326` at `rate = m − capacity = 2`: **the permutation is triggered by an
+ARRIVING element, never on the way out.** A `squeeze` from `Absorbed _` SUPPLIES the pending block's
+permutation; a SECOND consecutive squeeze is free (`Squeezed 1`, `n ≠ rate`, `state.(1)`) and only a
+THIRD permutes again; an `absorb` from `Squeezed _` lands in lane 0 without permuting, so the rate
+counter restarts at every squeeze and the item stream RE-PAIRS. This file did all three the other
+way: one permutation per absorb block PLUS one per squeeze, and a per-SOURCE pairing that padded
+`index_digest` to two lanes.
+
+  * ⚑ **THE COUNT, EXHIBITED ON THE EMITTED OBJECT.** At upstream's own 21 squeezes the transcript
+    now performs `⌈117/2⌉ = 59` permutations — exactly `absorbBlocksNeeded`, which has named that
+    number since 2026-08-02 without the emission agreeing with it. At this file's 23 (ξ and r are
+    still allocated off the transcript, §2b) it is **60**, the extra one being `r`'s: it is the third
+    consecutive squeeze and `Squeezed 2 = rate` permutes. **The pre-fix model was `absorbs + chals`
+    = 82 / 80** — a difference of **22 / 21** permutations, and that IS the red control.
+  * ⚑ **β AND γ ARE NOW TWO LANES OF ONE PERMUTATION** (`step_verifier.ml:563-564`), and so are the
+    fr-sponge's ξ′ and r′ (`:1007-1009`, `squeeze_challenge = lowest_128_bits (Sponge.squeeze …)` at
+    `:186-187`). They were two permutations apart. **Every segment permutes `⌈|ws|/2⌉` times**, one
+    squeeze or two.
+  * ⚑ **`index_digest` COSTS NO PERMUTATION OF ITS OWN.** `sponge_after_index` absorbs 56 — EVEN —
+    field elements, so `Sponge.squeeze_field (Sponge.copy …)` (`:531-532`) performs the 28th and
+    reads `state.(0)`. This file performed a 29th. **The reality gate is `PastaPoseidon.Ref.hash`,
+    whose nine o1js golds include both EVEN-length vectors** — precisely the case an eager sponge
+    gets wrong, and precisely the bug `Ref.absorbFrom`'s own header records being fixed in the
+    reference on 2026-07-27 and never carried up to `verify_one`. `index_digest = Ref.hash …` is now
+    a named theorem and the pre-fix value is exhibited as a REFUTATION.
+  * ⚑⚑ **AND THE LAST FREE TRANSCRIPT WORD IS GONE — not by a new wire but by the re-model.** The
+    per-source pairing made block 0's second lane carry a `msgVal` FIXTURE, a word `verify_one` never
+    feeds. Under the item stream `index_digest` shares block 0 with `sg_old[0]`'s x, the single lane
+    an odd item count leaves without an arrival lands at the END of the pre-β run, and it is PINNED
+    TO ZERO (`tPadCell`, one `Generic` row) — which is `absorb`'s own "no arrival", since it ADDS.
+    `vMsg` and `msgVal` are DELETED. **Of `N_ABSORB_ITEMS = 117` items, ZERO are free witnesses.**
+
+⚑ §23 ALSO CLOSES THE WORD-39 QUESTION, AT SOURCE, AND THE ANSWER IS "FAITHFUL AS IT STANDS".
+Word 39 is `lookup.joint_combiner.inner`, the `Opt`'s `Struct [Scalar Challenge]`
+(`composition_types.ml:655-665`), and the arm the `proved` rule compiles is **`Maybe`** — its only
+predecessor is the side-loaded tag, whose eight feature flags are all `Opt.Flag.Maybe`
+(`transaction_snark.ml:609-620,2111-2112`), so `use = lookup_tables_used` is `Maybe`
+(`step_main.ml:88-92`) and the value is a witness rather than `Cvar.Constant`. It is a **REQUESTED
+WITNESS of the whole step circuit** (`prevs = exists … ~request:Req.Proof_with_datas`,
+`step_main.ml:353-355`), and the only place a `joint_combiner` could be derived is dead:
+`lookup_verification_enabled = false` (`step_verifier.ml:12`) makes it
+`if … then failwith "TODO" else None` (`:631-633`), after which `assert_eq_deferred_values` gets
+`None` on both sides and asserts β, γ, α, ζ only (`:634-648`, `:342-363`). **Prover-chosen here and
+prover-chosen upstream — exactly word 11's verdict. Nothing to land.**
+
+⚠ **AND TWO CORRECTIONS TO §21/§22's READING OF THE SAME CENSUS.** `2×1 26×22 51×8` is
+**chunks × count** — ONE 2-chunk ladder (`branch_data`), not two 1-chunk ones; and ⚑ **the nine
+one-bit words are NOT dropped constants.** §1b gives `multiscale_known`'s constant partition as the
+reason they emit no ladder; at the all-`Maybe` tag `maybe_constant` yields `Spec.T.B Bool`
+(`composition_types.ml:794-802`) and the `Opt` header packs `p.pack Bool b`, so `constant_part` is
+**EMPTY**. The nine are live **ZERO-CHUNK** ladders — `chunks_needed ~num_bits:0 = 0`, no scale
+chunks but two `add_fast`es, an `EC_scale` with an empty round array and the `2·s_div_2 + s_odd = s`
+tie (`plonk_curve_ops.ml:202-208,291`). **Mina emits 40 ladders where this assembly emits 31.** The
+chunk census is unchanged; the residue is real and its stated mechanism was wrong.
+
+⚑⚑ MOVEMENT IN THE PREVIOUS COMMIT (§22, `…Pins17`): **the fr-sponge got its SEED, and Wrap statement word
 10 stopped being prover-chosen — +14 rows in R7.** `step_main.ml:41-46` hands
 `finalize_other_proof` a sponge that has already absorbed
 `proof_state.sponge_digest_before_evaluations`; segment B started at `challenge_digest` and now
@@ -253,11 +315,8 @@ DELETED and `N_STMT` is 22.
     whole step circuit, derived nowhere upstream either. Word 39 needs the lookup sub-circuit; a
     source reading that would have made it a CONSTANT was refuted by Mina's own compiled ladder
     census. See `…Pins17`.
-  * ⚠ **AND §22 READ A SPONGE-MODEL DIVERGENCE IT DID NOT FIX.** `runSeg`/`transcriptRows` permute
-    once per absorb block AND once per squeeze; Mina permutes `⌈words/2⌉` in total and a second
-    consecutive squeeze reads lane 1 for free. So the transcript runs one extra permutation per
-    squeeze (21 of them) and segment B's ξ′/r′ are two permutations apart where upstream's are
-    `state.(0)`/`state.(1)` of one (`step_verifier.ml:1007-1009`). Its own rung; named, not absorbed.
+  * ⚠ **AND §22 READ A SPONGE-MODEL DIVERGENCE IT DID NOT FIX** — one extra permutation per squeeze
+    and ξ′/r′ two permutations apart. **CLOSED by §23, above.**
 
 ⚑⚑ MOVEMENT IN THE PREVIOUS COMMIT (§21, `…Pins16`): **the x_hat MSM's scalars became the Wrap STATEMENT's
 words, and `multiscale_known`'s CONSTANT PARTITION left the circuit — −45 rows in R3.** Exactly
@@ -1113,3 +1172,4 @@ import Dregg2.Circuit.Emit.KimchiStepMainPins14
 import Dregg2.Circuit.Emit.KimchiStepMainPins15
 import Dregg2.Circuit.Emit.KimchiStepMainPins16
 import Dregg2.Circuit.Emit.KimchiStepMainPins17
+import Dregg2.Circuit.Emit.KimchiStepMainPins18

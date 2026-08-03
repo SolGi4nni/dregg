@@ -114,7 +114,7 @@ statement word R8 compared, `oCip`'s lane was a `msgVal` fixture, and NO cell jo
 def cipForged : Nat := fAdd tS.fin.cipShift 1
 
 def spCip : SpongeData :=
-  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest (cipForged, CIP_BIT)
+  runSpongeAt shapeSmoke (stepBases shapeSmoke) indexDigest (cipForged, cipForged % 2)
     (oCip shapeSmoke) 0 cipForged
 
 /-- ⚑ THE WITNESS: another real on-curve point in `delta`'s slot. Membership cannot refuse it; only
@@ -189,11 +189,11 @@ def genBodyAt (rows : List SRow) (w : List (List Int)) (pub r : Nat) : ZMod pN :
 
 -- ── the values §12c pins ────────────────────────────────────────
 /-- The transcript squeeze challenge `c` is split out of. -/
-def sqOf (c : Nat) : Nat := (tS.sp.states.getD (sqBlock shapeSmoke c + 1) []).getD 0 0
+def sqOf (c : Nat) : Nat := sqValOf shapeSmoke tS.sp c
 
 /-- The honest `(combined_inner_product, bit)` pair transcript block `oCip` absorbs — the statement
 word R8 binds, so a control that re-runs the sponge feeds it what the assembly feeds it. -/
-def cipWordOf (t : StepData) : Nat × Nat := (t.fin.cipShift, CIP_BIT)
+def cipWordOf (t : StepData) : Nat × Nat := (t.fin.cipShift, t.fin.cipShift % 2)
 
 def TWO128 : Nat := 2 ^ 128 % pN
 
@@ -232,15 +232,16 @@ def forgedXiHi : Nat := fMul (fSub sq1S forgedXi) INV_TWO128
 
 -- ── the values §12d pins ────────────────────────────────────────
 /-- The state entering the LAST index absorb block: everything before it is untouched by the word
-the prover grinds, so a candidate costs TWO permutations rather than fifty-eight. -/
+the prover grinds, so a candidate costs ONE permutation rather than fifty-eight. ⚑ ONE since the
+lazy re-model: `Sponge.squeeze_field (Sponge.copy sponge_after_index)` performs the 28th permutation
+itself (`sponge.ml:322-325`), where the eager model spent a 29th on top of it. -/
 def idxPreLast : List Nat := (idxStatesWith idxWordAt).getD (N_IDX_COMMS - 1) []
 
 /-- `index_digest` when the LAST index word is `w` and every earlier one is honest. -/
 def idxDigestAtLast (w : Nat) : Nat :=
   (Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
-    (Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
       [ (idxPreLast.getD 0 0 + idxWordAt (N_IDX_WORDS - 2)) % pN
-      , (idxPreLast.getD 1 0 + w) % pN, idxPreLast.getD 2 0 ])).getD 0 0
+      , (idxPreLast.getD 1 0 + w) % pN, idxPreLast.getD 2 0 ]).getD 0 0
 
 /-- ⚑ THE TARGET THE PROVER CHOOSES. Any predicate on the squeeze will do; this one asks for a
 digest divisible by 16, which the honest key does not give. -/
@@ -316,24 +317,33 @@ def ftcRealAt (zDom : Nat) : Dregg2.Circuit.Emit.MinaWrapGroupGate.Pt :=
 def ZETA_DOM : Nat := Dregg2.Circuit.Emit.MinaWrapGroupGate.ZETA_DOM_M1 + 1
 
 -- ── the values §12e′ pins ────────────────────────────────────────
-/-- The transcript block `t_comm`'s LAST chunk occupies — the last absorb block, so a candidate
-costs TWO permutations rather than twelve. -/
+/-- The absorb SOURCE `t_comm`'s LAST chunk is — the last one before ζ, so a candidate costs ONE
+permutation rather than twelve. -/
 def tcOrd : Nat := oCip shapeSmoke - 1
 
-/-- …as a BLOCK index. ⚑ Since the R1 interleaving the very next block is ζ's squeeze (`:568`
-immediately follows `receive without t_comm` at `:567`), so a candidate still costs TWO permutations
-and the challenge it steers is ζ rather than the old numbering's challenge 0. -/
-def tcBlk : Nat := absBlock shapeSmoke tcOrd
+/-- …as a BLOCK index, and the LANE its second word lands in. ⚑ Since the lazy re-model a candidate
+costs **ONE** permutation, not two: ζ's squeeze (`:568`, immediately after `receive without t_comm`
+at `:567`) IS this block's own permutation (`sponge.ml:322-325`, the `Absorbed _` arm), where the
+eager model spent a second one on top. -/
+def tcBlk : Nat := (itemAt shapeSmoke tcOrd 1).1
+def tcLane : Nat := (itemAt shapeSmoke tcOrd 1).2
 
 def tcHon : Nat := (ftcTc (tCommN shapeSmoke - 1)).2
 
-/-- ζ when that word is `w` and every earlier one is honest. -/
+/-- ζ when that word is `w` and every earlier one is honest — ONE permutation of the state entering
+`tcBlk`, with the block's own two items in their `spLay` lanes and `w` in the bent one. -/
 def tcChalAt (w : Nat) : Nat :=
+  let L := spLay shapeSmoke
   let pre := tS.sp.states.getD tcBlk []
+  let ws := (blockWordsL L tcBlk).map (fun o =>
+    match o with
+    | none => 0
+    | some (a, j) =>
+        if a == tcOrd && j == 1 then w
+        else msgValOf shapeSmoke (stepBases shapeSmoke) (cipWordOf tS) a j)
   ((Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
-     (Dregg2.Circuit.Emit.PastaPoseidon.Ref.perm
-       [ (pre.getD 0 0 + (ftcTc (tCommN shapeSmoke - 1)).1) % pN
-       , (pre.getD 1 0 + w) % pN, pre.getD 2 0 ])).getD 0 0) % 2 ^ shapeSmoke.chalBits
+      [ (pre.getD 0 0 + ws.getD 0 0) % pN, (pre.getD 1 0 + ws.getD 1 0) % pN
+      , pre.getD 2 0 ]).getD 0 0) % 2 ^ shapeSmoke.chalBits
 
 /-- …and the SEARCH: the first additive offset whose challenge hits the prover's target. -/
 def tcGrindT : Nat :=
@@ -920,7 +930,7 @@ def chalInjBent (c : Nat) : Nat → Nat := fun k => if k == c then 1001 + k else
 
 /-- R6's compiled ft program at the COMMITTED shape, built here so §21 can pin `FT_SLOT_ZETAN`
 against the program's own slot without running `mkStep shapeStep`. -/
-def ftProgStep : FtProg := ftProgOf (ftWireOf shapeStep) (ftCfgRaw 1 0)
+def ftProgStep : FtProg := ftProgOf (ftWireOf shapeStep) (ftCfgRaw 1)
 
 /-- ⚑ **THE COMMITTED SHAPE'S OWN ASSEMBLY.** Every other fixture here is the smoke one, because the
 pins are about SHAPE and smoke is cheap. This exists for exactly one claim §21 cannot make at smoke:

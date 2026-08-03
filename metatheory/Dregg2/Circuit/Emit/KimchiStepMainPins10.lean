@@ -94,8 +94,10 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 #guard (finRows shapeSmoke tS.ft tS.fin true).length > 0 && (endoConstRow shapeSmoke).length > 0
 #guard (xiDefRows shapeSmoke tS.defc true).length > 0
         && (rDefRows shapeSmoke tS.defc true).length > 0
--- ⚑ …and R7's own sub-list really is the FOUR segments, §3c's index pins and digest permutation,
--- and §8g's `r` chain. Stated as an equality over every summand, so a dropped sub-list reds here.
+-- ⚑ …and R7's own sub-list really is the FOUR segments, §3c's index pins and §8g's `r` chain.
+-- ⚑ `idxDigestRows` is now EMPTY (2026-08-03) and is kept as a summand precisely so that stays
+-- visible: the digest permutation was a 29th over 56 words where Mina performs 28.
+-- Stated as an equality over every summand, so a dropped sub-list reds here.
 #guard (absRows tS true).length
         == (segRows (baseSegA shapeSmoke) tS.specA tS.segA true).length
            + (segRows (baseSegB shapeSmoke) tS.specB tS.segB true).length
@@ -105,14 +107,15 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
            + (idxDigestRows shapeSmoke true).length
            + (rDefRows shapeSmoke tS.defc true).length
 -- ⚑ …and segment D is NON-EMPTY and is exactly `blocks` permutations' worth of rows with NO init
--- pin row, which is what `Sponge.copy` means here: `nbD` absorb blocks (13 rows each, the last one
--- +1 for its probe) and one squeeze block (12 + probe).
+-- pin row, which is what `Sponge.copy` means here: `nbD` absorb blocks (13 rows each) and NO squeeze
+-- block at all — its single squeeze is the last absorb block's own permutation — plus the one probe
+-- on the state that squeeze reads. It was `13·nbD + 1 + 13` until 2026-08-03.
 #guard (segRows (baseSegD shapeSmoke) tS.specD tS.segD true).length
-        == 13 * nbD shapeSmoke + 1 + 13
+        == 13 * nbD shapeSmoke + 1
 #guard tS.specD.copyFrom.isSome && tS.specA.copyFrom.isNone && tS.specC.copyFrom.isNone
--- …and neither §3c sub-list is empty: 12 rows of permutation + a probe, and one `Generic` pin per
--- index commitment this shape must hold itself.
-#guard (idxDigestRows shapeSmoke true).length == 13
+-- …and §3c's digest sub-list is EMPTY while its pin sub-list is one `Generic` row per index
+-- commitment this shape must hold itself.
+#guard (idxDigestRows shapeSmoke true).length == 0
 #guard (idxConstRows shapeSmoke).length == (idxOwn shapeSmoke).length
 
 -- ⚑ **WHICH RUNG BINDS WHICH MULTIPLIER** (#10's honest residue, machine-checked). ξ's chain rides
@@ -150,13 +153,16 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- read as unconditional.** §3c's derivation lives in R7 — the permutation is squeezed off segment
 -- C's own state, and segment C is an R7 sub-circuit — while R1 ABSORBS the result at block 0. So
 -- from `r1_transcript` to `r6_ft_eval0` `vIdxD 0` is a free witness the transcript eats (class = the
--- absorb row alone), and it is DERIVED at `r7_absorption` and `r8_finalize` (the permutation's
--- closing `Zero`, its σ probe, the absorb row). The reportable object is the full assembly; the
--- lower rungs are sub-circuits and this is where that costs something.
+-- absorb row alone), and it is DERIVED at `r7_absorption` and `r8_finalize`. ⚑ FOUR since
+-- 2026-08-03, not three: `vIdxD` no longer names a digest permutation of its own — it names segment
+-- C's block-28 state lane, whose class is that block's own absorb row, block 27's closing `Zero`,
+-- the σ probe on the state, AND R1's block-0 absorb row.
+-- The reportable object is the full assembly; the lower rungs are sub-circuits and this is where
+-- that costs something.
 #guard (classCells (posAt .transcript) (vIdxD shapeSmoke 0)).length == 1
 #guard (classCells (posAt .ftEval0) (vIdxD shapeSmoke 0)).length == 1
-#guard (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 3
-#guard (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 3
+#guard (classCells (posAt .absorb) (vIdxD shapeSmoke 0)).length == 4
+#guard (classCells (posAt .opening) (vIdxD shapeSmoke 0)).length == 4
 -- …and the plonk-index pin rows are R7's too, so the same reading applies to the 56 absorbed words.
 #guard (classCells (posAt .ftEval0) (vIdxX shapeSmoke 27)).length == 0
 #guard (classCells (posAt .absorb) (vIdxX shapeSmoke 27)).length == 2
@@ -233,10 +239,10 @@ theorem cipRows_length_is_the_unmuxed_shape_plus_four :
 -- R7 adds `Poseidon` (11 rows per permutation, upstream's own run length) and — since §8g — exactly
 -- ONE further `to_field_checked` chain, `r_actual`'s. No curve gate, no second chain.
 #guard ((rungRows tS .absorb true).filter (fun r => r.kind == KGateType.poseidon)).length
-        == 11 * (shapeSmoke.blocks + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks
-                 + tS.specD.blocks + 1)
+        == 11 * (tBlocks shapeSmoke + tS.specA.blocks + tS.specB.blocks + tS.specC.blocks
+                 + tS.specD.blocks)
 #guard ((rungRows tS .full true).filter (fun r => r.kind == KGateType.poseidon)).length
-        == 11 * shapeSmoke.blocks
+        == 11 * tBlocks shapeSmoke
 #guard (List.range 4).all (fun i =>
   let k : KGateType := [KGateType.completeAdd, .varBaseMul, .endoMul, .zero].getD i .zero
   ((rungRows tS .absorb true).filter (fun r => r.kind == k)).length

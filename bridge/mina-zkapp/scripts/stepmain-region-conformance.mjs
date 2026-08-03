@@ -480,10 +480,14 @@ const LEDGER = {
   },
   'scope/unassembled-subcircuits': {
     why: '#5 group_map · equal_g · check_bulletproof `scale_fast` of sg · rule.main',
-    // ⚑ Poseidon 206 → 207 on 2026-08-03 (§22): the fr-sponge's seed absorb makes segment B's word
-    // list 91 long, i.e. one more rate-2 block, i.e. one more permutation. Our count RISING is the
-    // direction this entry wants — it is the subset closing, not a shrinkage.
-    expect: 'Poseidon 207/572 VBM51 16/20',
+    // ⚑⚑ Poseidon 207 → 179 on 2026-08-03 (§23), and THE DROP IS THE FIX. This entry's prose used to
+    // say "our count RISING is the direction this entry wants — it is the subset closing, not a
+    // shrinkage." That is the wrong instrument for a FIDELITY fix: the 28 permutations that left are
+    // ones Mina's sponge does not perform (a squeeze from `Absorbed _` supplies the pending block's
+    // permutation instead of adding one, `sponge.ml:322-325`), so counting them was counting rows
+    // upstream has no counterpart for. A subset closes by emitting Mina's gadgets, not by emitting
+    // MORE of ours. Read the number as "179 of Mina's 572 permutations are ones we also perform".
+    expect: 'Poseidon 179/572 VBM51 16/20',
     note: 'Mina gadget instances with no counterpart here. SUBSET-NESS, not failure — counted so a shrinkage is visible.',
   },
 };
