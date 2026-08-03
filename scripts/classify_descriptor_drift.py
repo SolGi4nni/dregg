@@ -156,6 +156,19 @@ def load_descriptor_set(root: Path, pi_prefix: int) -> DescriptorSet:
                 obj = json.loads(p.read_text())
             except json.JSONDecodeError as e:
                 raise ValueError(f"{rel}: invalid JSON ({e})")
+            # ⚑ A FAMILY artifact is a JSON ARRAY of descriptor objects, not one object.
+            # `circuit/descriptors/table-airs/dregg-ir2-exact-public-v1.json` (landed 17b138e1f,
+            # rendered by `emitTableAirFamilyJson`, Dregg2/Circuit/TableAirIR.lean:782) is 64
+            # arity-indexed members in one file. The `isinstance(obj, dict)` test below SKIPPED it
+            # in silence — 64 members' geometry invisible to this gate, which is the shape of "a
+            # gate that cannot go red". Members are keyed `<rel>#<index>`, the same `<file>#<row>`
+            # convention the .tsv registry branch already uses, so the key stays the artifact SLOT.
+            if isinstance(obj, list):
+                for i, member in enumerate(obj):
+                    if not isinstance(member, dict) or "name" not in member:
+                        continue
+                    add(_mk_descriptor(member, f"{rel}#{i}", pi_prefix))
+                continue
             if not isinstance(obj, dict) or "name" not in obj:
                 continue  # not a descriptor object
             add(_mk_descriptor(obj, rel, pi_prefix))

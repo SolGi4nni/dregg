@@ -2568,8 +2568,33 @@ def split_table_airs(stdout: str, written):
         a ROUTING GAP and refuses the whole install — so these seven blocked EVERY re-emit of every
         other descriptor, which is how a geometry flag day sat un-re-emitted.
 
-    Unlike `by-name/`, all seven carry a trailing newline, so there is no per-file convention set to
-    keep in sync: the newline `IO.println` produces is the newline on disk."""
+    Unlike `by-name/`, every artifact carries a trailing newline, so there is no per-file convention
+    set to keep in sync: the newline `IO.println` produces is the newline on disk.
+
+    ⚑ **TWO PAYLOAD SHAPES, and the second is a FAMILY.** `EmitTableAirs.lean` has two routing
+    tables and two renderers (`EmitTableAirs.lean:28`, `:49`): `tableAirs` renders a singleton with
+    `emitTableAirJson`, and `tableAirFamilies` renders a JSON ARRAY with `emitTableAirFamilyJson`
+    (`Dregg2/Circuit/TableAirIR.lean:782-793`) — the wire form of a table AIR that is a SCHEMA
+    rather than one object, element `i` being arity `i + 1`. The Rust side has decoded the array
+    since the same commit (`circuit/src/table_air.rs:1029` include_str!s it,
+    `parse_table_air_family` walks it, `exact_public_table_air_for` selects a member).
+
+    This guard used to be `blob.startswith('{"name":"')` — a prefix test that hard-coded the
+    SINGLETON grammar. `17b138e1f` landed the family end to end (Lean renderer, artifact, Rust
+    parser) and did not reach here, so the emit step exited 1 on
+    `dregg-ir2-exact-public-v1.json` and took the whole drift gate down with it for every lane.
+    The array is not a regression; the prefix test was the stale side.
+
+    The replacement PARSES rather than sniffs, so it is strictly stronger than what it replaces (a
+    truncated or half-flushed blob now fails too), and it still writes `blob` VERBATIM — nothing
+    here reserializes, because these bytes are FP/VK-pinned."""
+    def table_air_object(v) -> bool:
+        return (
+            isinstance(v, dict)
+            and isinstance(v.get("name"), str)
+            and v.get("kind") == "table_air"
+        )
+
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
     if not lines:
         sys.exit("emit_descriptors: table-airs emitter produced no lines")
@@ -2581,10 +2606,30 @@ def split_table_airs(stdout: str, written):
         filename, blob = ln.split("\t", 1)
         if not filename.endswith(".json"):
             sys.exit(f"emit_descriptors: table-airs key is not a .json file: {filename!r}")
-        if not blob.startswith('{"name":"'):
+        try:
+            payload = json.loads(blob)
+        except json.JSONDecodeError as e:
             sys.exit(
-                f"emit_descriptors: table-airs {filename} payload is not a table-AIR JSON: "
-                f"{blob[:60]!r}"
+                f"emit_descriptors: table-airs {filename} payload is not JSON ({e}): {blob[:60]!r}"
+            )
+        if isinstance(payload, list):
+            if not payload:
+                sys.exit(
+                    f"emit_descriptors: table-airs {filename} is an EMPTY family array — a family "
+                    "with no members would install a file `exact_public_table_air_for` can only "
+                    "refuse"
+                )
+            bad = [i for i, m in enumerate(payload) if not table_air_object(m)]
+            if bad:
+                sys.exit(
+                    f"emit_descriptors: table-airs {filename} family member(s) {bad[:5]} are not "
+                    'table-AIR objects (want `{"name": str, "kind": "table_air", ...}`)'
+                )
+        elif not table_air_object(payload):
+            sys.exit(
+                f"emit_descriptors: table-airs {filename} payload is neither a table-AIR object "
+                "nor a family array of them (want `{\"name\": str, \"kind\": \"table_air\", ...}` "
+                f"or a non-empty list of those): {blob[:60]!r}"
             )
         write_file(f"table-airs/{filename}", blob + "\n", written)
 
