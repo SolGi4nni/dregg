@@ -303,7 +303,7 @@ theorem hash_eq (hsat : Satisfied2 hash automataflRevealDesc11 minit mfin maddrs
     simpa only [VmConstraint2.holdsAt, revealLookup, Lookup.holdsAt] using hlk
   have h := chip_lookup_sound hash (t.tf .poseidon2) hSound (envAt t 0).loc
     [.var (FRM s), .var (TO s), .var (SEAT s), .var (NONCE s)]
-    (COMMIT s) (LANES s) (by simp [CHIP_RATE]) hmem
+    (COMMIT s) (LANES s) (by chip_arity_admitted) hmem
   simpa [EmittedExpr.eval] using h
 
 /-! ## Public semantic relation and the capstone. -/

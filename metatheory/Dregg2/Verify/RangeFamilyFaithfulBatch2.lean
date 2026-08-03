@@ -550,18 +550,22 @@ open Dregg2.Circuit.Emit.EffectVmEmitV2 in
 /-- `graduateV1Narrow d`'s soundness hypotheses with the honest 30-bit range table carried as the
 family conjunct. -/
 def NarrowGradSatisfiedFamily (hash : List ℤ → ℤ)
-    (d : Dregg2.Circuit.Emit.EffectVmEmit.EffectVmDescriptor) (minit : ℤ → ℤ)
+    (d : Dregg2.Circuit.Emit.EffectVmEmit.EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites,
+      Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted s.inputs.length) (minit : ℤ → ℤ)
     (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace) : Prop :=
   RangeFamilyFaithfulOn [(TableId.range, BAL_LIMB_BITS)] t ∧
     ChipTableSoundNarrow hash (t.tf poseidon2narrow) ∧ graduable d = true ∧
-    Satisfied2 hash (graduateV1Narrow d) minit mfin maddrs t
+    Satisfied2 hash (graduateV1Narrow d hAdm) minit mfin maddrs t
 
 /-- **Soundness, routed through the family conjunct**: the full v1 denotation `satisfiedVm` on every
 row window, from a family-honest witness of the narrow graduation. -/
 theorem narrowGrad_sound_family {hash : List ℤ → ℤ}
     {d : Dregg2.Circuit.Emit.EffectVmEmit.EffectVmDescriptor} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (h : NarrowGradSatisfiedFamily hash d minit mfin maddrs t) :
+    {hAdm : ∀ s ∈ d.hashSites,
+      Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted s.inputs.length}
+    (h : NarrowGradSatisfiedFamily hash d hAdm minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash d (envAt t i) (i == 0)
         (i + 1 == t.rows.length) :=
@@ -572,8 +576,10 @@ theorem narrowGrad_sound_family {hash : List ℤ → ℤ}
 theorem narrowGrad_forgedRange_inadmissible {hash : List ℤ → ℤ}
     {d : Dregg2.Circuit.Emit.EffectVmEmit.EffectVmDescriptor} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    {hAdm : ∀ s ∈ d.hashSites,
+      Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted s.inputs.length}
     (hforge : t.tf TableId.range ≠ rangeRows BAL_LIMB_BITS) :
-    ¬ NarrowGradSatisfiedFamily hash d minit mfin maddrs t :=
+    ¬ NarrowGradSatisfiedFamily hash d hAdm minit mfin maddrs t :=
   fun h => hforge (h.1.pin (List.mem_singleton.mpr rfl))
 
 /-- **The COMMITTED carrier drives the narrow graduation directly.** `RangeFamilyFaithful` (the
@@ -604,7 +610,7 @@ theorem wideNarrowGrad_sound_from_committed (hash : List ℤ → ℤ)
     (hfam : RangeFamilyFaithful t)
     (hchip : ChipTableSoundNarrow hash (t.tf poseidon2narrow))
     (hgrad : Dregg2.Circuit.Emit.EffectVmEmitV2.graduableWide d = true)
-    (hsat : Satisfied2 hash (Dregg2.Circuit.Emit.EffectVmEmitV2.graduateV1WideNarrow d)
+    (hsat : Satisfied2 hash (Dregg2.Circuit.Emit.EffectVmEmitV2.graduateV1WideNarrow d (Dregg2.Circuit.Emit.EffectVmEmitV2.sitesFit_admitted (Dregg2.Circuit.Emit.EffectVmEmitV2.graduableWide_spec hgrad).2.1))
       minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash d (envAt t i) (i == 0)

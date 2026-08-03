@@ -75,7 +75,8 @@ set_option autoImplicit false
 
 /-- `transferV3` IS the graduated frozen-authority transfer descriptor (definitional). -/
 theorem transferV3_eq_grad :
-    transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) := rfl
+    transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)
+      (by graduate_arity) := rfl
 
 /-! ## §1 — the STRUCTURAL emptiness facts of the deployed descriptor (hold for EVERY trace). -/
 
@@ -87,11 +88,11 @@ theorem transferV3_ranges : transferV3.ranges = [] := rfl
 
 /-- The deployed descriptor's memory log is EMPTY for every trace (`graduateV1` emits no mem ops). -/
 theorem memLog_transferV3 (t : VmTrace) : memLog transferV3 t = [] := by
-  rw [transferV3_eq_grad]; exact memLog_graduateV1 _ t
+  rw [transferV3_eq_grad]; exact memLog_graduateV1 _ _ t
 
 /-- The deployed descriptor's map-ops log is EMPTY for every trace (`graduateV1` emits no map ops). -/
 theorem mapLog_transferV3 (t : VmTrace) : mapLog transferV3 t = [] := by
-  rw [transferV3_eq_grad]; exact mapLog_graduateV1 _ t
+  rw [transferV3_eq_grad]; exact mapLog_graduateV1 _ _ t
 
 /-! ## §2 — the six DISCHARGED premises (each for an ARBITRARY trace). -/
 
@@ -141,7 +142,7 @@ chip/range lookup — the LogUp membership the AIR quotient check does NOT force
 theorem hbus_is_lookup (c : VmConstraint2) (hc : c ∈ transferV3.constraints) (hA : ¬ isArith c) :
     ∃ l : Lookup, c = .lookup l := by
   rw [transferV3_eq_grad] at hc
-  rcases constraints_graduateV1_shapes _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+  rcases constraints_graduateV1_shapes _ _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
   · exact absurd (show isArith (VmConstraint2.base c₀) from trivial) hA
   · exact ⟨l, rfl⟩
 

@@ -265,8 +265,10 @@ theorem recompute_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
     (envAt t i).loc GENTIAN_WIT_DIGEST_COL
       = hash [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] := by
   have hmem := recompute_lookup_holds hash legA legB hsat i hi
-  have hlen : (floorCols.map (EmittedExpr.var)).length ≤ CHIP_RATE := by
-    simp only [floorCols, List.length_map, List.length_cons, List.length_nil, CHIP_RATE]; omega
+  have hlen : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted
+      (floorCols.map (EmittedExpr.var)).length := by
+    simp only [floorCols, List.length_map, List.length_cons, List.length_nil]
+    chip_arity_admitted
   have h := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t i).loc
     (floorCols.map .var) GENTIAN_WIT_DIGEST_COL laneCols hlen hmem
   simpa [floorCols, EmittedExpr.eval] using h

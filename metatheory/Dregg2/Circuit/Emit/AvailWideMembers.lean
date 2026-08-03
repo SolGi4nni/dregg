@@ -71,7 +71,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
   (EffectVmDescriptor VmConstraint satisfiedVm siteHoldsAll holdsVm_piFirst_true)
 open Dregg2.Circuit.Emit.EffectVmEmitV2
   (graduableWide graduableWide_spec graduateV1Wide Satisfied2FaithfulWide WIDE_RANGE_WIDTHS
-   rangeTidW rangeLookupW lookup_replaces_rangeW siteLookups_sound)
+   rangeTidW rangeLookupW lookup_replaces_rangeW siteLookups_sound sitesFit_admitted mem_graduateSites)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (rotateV3 rotateV3FrozenAuthority rotateV3FrozenAuthority_constraints v3OfFrozenWide
    graduableWide_rotateV3FrozenAuthority rotV3Appendix go_append_left B_STATE_COMMIT B_SPAN)
@@ -109,7 +109,8 @@ theorem wideEmbedded_sound_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ
     (hgrad : graduableWide d = true)
     (hclean : ∀ c ∈ d.constraints,
       isLegacyCommitPin1 bb ab (VmConstraint2.base c) = false)
-    (hemb : ∀ c ∈ (v3OfFrozenWide d).constraints,
+    (hemb : ∀ c ∈ (v3OfFrozenWide d (sitesFit_admitted
+        (graduableWide_spec (graduableWide_rotateV3FrozenAuthority hgrad)).2.1)).constraints,
       isLegacyCommitPin1 bb ab c = false → c ∈ D.constraints)
     (hf : Satisfied2FaithfulWide permOut hash D minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
@@ -125,35 +126,41 @@ theorem wideEmbedded_sound_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ
     have hcr : c ∈ (rotateV3FrozenAuthority d).constraints := by
       rw [rotateV3FrozenAuthority_constraints]
       exact List.mem_append_left _ (List.mem_append_left _ hc)
-    have hmem : VmConstraint2.base c ∈ (v3OfFrozenWide d).constraints := by
-      show VmConstraint2.base c ∈ (graduateV1Wide (rotateV3FrozenAuthority d)).constraints
+    have hmem : VmConstraint2.base c ∈ (v3OfFrozenWide d (sitesFit_admitted
+        (graduableWide_spec hgradr).2.1)).constraints := by
+      show VmConstraint2.base c ∈ (graduateV1Wide (rotateV3FrozenAuthority d)
+        (sitesFit_admitted (graduableWide_spec hgradr).2.1)).constraints
       unfold graduateV1Wide
       simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
       exact Or.inl (Or.inl ⟨c, hcr, rfl⟩)
     exact hrow _ (hemb _ hmem (hclean c hc))
   · -- the ORIGINAL face's hash sites: the FULL rotated chained walk, then the prefix
     have hall : siteHoldsAll hash (envAt t i) (rotateV3FrozenAuthority d).hashSites := by
-      apply siteLookups_sound hash (t.tf .poseidon2) hf.chipSound (envAt t i)
+      refine siteLookups_sound hash (t.tf .poseidon2) hf.chipSound (envAt t i)
         (rotateV3FrozenAuthority d).hashSites (rotateV3FrozenAuthority d).traceWidth hwf
-      · intro s hs
-        exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+        (sitesFit_admitted hfit) ?_
       · intro j hj
         have hmem : VmConstraint2.lookup
             (siteLookup (rotateV3FrozenAuthority d).hashSites
               (rotateV3FrozenAuthority d).hashSites[j]
-              ((rotateV3FrozenAuthority d).traceWidth + (CHIP_OUT_LANES - 1) * j))
-            ∈ (v3OfFrozenWide d).constraints := by
-          show _ ∈ (graduateV1Wide (rotateV3FrozenAuthority d)).constraints
+              ((rotateV3FrozenAuthority d).traceWidth + (CHIP_OUT_LANES - 1) * j)
+              (sitesFit_admitted hfit _ (List.getElem_mem hj)))
+            ∈ (v3OfFrozenWide d (sitesFit_admitted
+              (graduableWide_spec hgradr).2.1)).constraints := by
+          show _ ∈ (graduateV1Wide (rotateV3FrozenAuthority d)
+            (sitesFit_admitted (graduableWide_spec hgradr).2.1)).constraints
           unfold graduateV1Wide
-          simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+          simp only [List.mem_append, List.mem_map, mem_graduateSites]
           exact Or.inl (Or.inr ⟨j, hj, rfl⟩)
         exact hrow _ (hemb _ hmem rfl)
     exact go_append_left hash (envAt t i) [] d.hashSites (rotV3Appendix d.traceWidth) hall
   · -- the ORIGINAL face's range teeth, each via ITS OWN width's table (15-bit EXACT)
     intro r hr
     have hb : r.bits ∈ WIDE_RANGE_WIDTHS := hbits r hr
-    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (v3OfFrozenWide d).constraints := by
-      show _ ∈ (graduateV1Wide (rotateV3FrozenAuthority d)).constraints
+    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (v3OfFrozenWide d (sitesFit_admitted
+        (graduableWide_spec hgradr).2.1)).constraints := by
+      show _ ∈ (graduateV1Wide (rotateV3FrozenAuthority d)
+        (sitesFit_admitted (graduableWide_spec hgradr).2.1)).constraints
       unfold graduateV1Wide
       simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
       exact Or.inr ⟨r, hr, rfl⟩

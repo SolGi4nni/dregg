@@ -195,7 +195,7 @@ theorem fold_compress_is_hashed
   simp only [compressLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at hc
   have hkey := chip_lookup_sound hash (tf .poseidon2) hSound env.loc
     [.var Fold.ACC_IN_COL, .var Fold.DIGEST_COL] Fold.ACC_OUT_COL (siteLaneCols Fold.LANE1_COL)
-    (by unfold CHIP_RATE; decide) hc
+    (by chip_arity_admitted) hc
   simpa [EmittedExpr.eval] using hkey
 
 #assert_axioms fold_rejects_tampered_final

@@ -1001,9 +1001,18 @@ Rust `chip_absorb_tuple`. ⚑ The arity tag is DATA (`ins.length`), not a hardco
 leaf extends the declared column list and changes NOTHING else here, which is the property the Rust
 closure's own doc claims and which a per-table copy would quietly lose.
 
-⚠ `ins.length` must be one of `CHIP_ADMITTED_ARITIES` — the deployed chip's degree-7 admission
-product has exactly seven roots and `≤ RATE` is strictly weaker (`DescriptorIR2`, the arity note). -/
-def chipAbsorbTuple (ins : List Nat) (digest : Nat) : List TExpr :=
+⚑ **`hAdm` CHECKS the arity; this docstring used to only WARN about it.** `ins.length` must be one
+of `CHIP_ADMITTED_ARITIES` — the deployed chip's degree-7 admission product has exactly seven roots
+and `≤ RATE` is strictly weaker (`DescriptorIR2`, the arity note). Until 2026-08-02 that sentence
+was the entire enforcement, on a function taking `ins : List Nat` unchecked, so a table AIR could
+emit a chip query at an arity the chip refuses and nothing in Lean would notice — the same shape the
+main descriptor's `chipLookupTuple` carried. It is now an `autoParam`: every honest table
+discharges it silently and an inadmissible one **fails to elaborate**. `Prop`-erased, so the emitted
+`TExpr` list and every artifact byte are untouched. -/
+def chipAbsorbTuple (ins : List Nat) (digest : Nat)
+    (hAdm : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted ins.length := by chip_arity_admitted) :
+    List TExpr :=
+  let _ := hAdm
   k (ins.length : ℤ) ::
     (ins.map v ++ (List.range (RATE - ins.length)).map (fun _ => k 0) ++ group8 digest)
 

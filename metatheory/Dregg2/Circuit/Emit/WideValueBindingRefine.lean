@@ -563,8 +563,9 @@ theorem legacy_is_hash_fact (hsat : Satisfied2 hash wideValueBindingDesc minit m
     (i : Nat) (hi : i < t.rows.length) :
     rowOf t i cLEGACY = hash (legacyIns (rowOf t i)) := by
   have hh := wvbLookup hsat i hi mem_legacy
-  have hlen : (factIns [EmittedExpr.var cVMOD, .var cAMOD, .var cRAND, .const 0]).length
-      ≤ CHIP_RATE := by decide
+  have hlen : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted
+      (factIns [EmittedExpr.var cVMOD, .var cAMOD, .var cRAND, .const 0]).length := by
+    chip_arity_admitted
   have := narrow_lookup_holdsAt_sound hash t.tf hwire hSound (envAt t i)
     (factIns [EmittedExpr.var cVMOD, .var cAMOD, .var cRAND, .const 0]) cLEGACY hlen hh
   rwa [legacyIns_eval] at this

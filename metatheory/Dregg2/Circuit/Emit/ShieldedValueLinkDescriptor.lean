@@ -380,8 +380,8 @@ theorem value_link_bound (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin :
       Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
       Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] at hkV hkL
     rw [hwire] at hkV hkL
-    have hlenV : (factIns [cVAL, cASSET, cRAND, cVBP0]).length ≤ CHIP_RATE := by decide
-    have hlenL : (factIns [cVAL, cASSET, cOWNER, cRAND]).length ≤ CHIP_RATE := by decide
+    have hlenV : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (factIns [cVAL, cASSET, cRAND, cVBP0]).length := by chip_arity_admitted
+    have hlenL : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (factIns [cVAL, cASSET, cOWNER, cRAND]).length := by chip_arity_admitted
     have eV := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip
       ((envAt t i).loc) _ cVB hlenV hkV
     have eL := chip_lookup_narrow_sound_of_wide_table hash (t.tf TableId.poseidon2) hChip

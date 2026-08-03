@@ -55,7 +55,7 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitV2 (Satisfied2FaithfulWide)
-open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotV3SitesAt colOnly colOnlyInput)
+open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotV3SitesAt rotV3SitesAt_admitted colOnly colOnlyInput)
 
 set_option linter.unusedVariables false
 set_option autoImplicit false
@@ -313,11 +313,26 @@ def s2LookupsOf (M : EffectVmDescriptor2) (bb : Nat) : List Lookup :=
 def s2Plan (bb laneBase : Nat) : List (VmHashSite × Nat) :=
   (rotV3SitesAt bb ++ rotV3SitesAt (bb + 251)).mapIdx (fun j s => (s, laneBase + 7 * j))
 
+/-- **Every S2 walk site asks the chip for an ADMITTED arity, at every base.** The plan's sites come
+from `rotV3SitesAt`, whose input lists are literal spines — the ARITY does not depend on `bb` or
+`laneBase`, so this holds for a symbolic base. Proving it HERE keeps `s2Lookups` TOTAL, rather than
+conditioning the emit gate on its own later `planOk` leg (which is declared below it). -/
+theorem s2Plan_admitted (bb laneBase : Nat) :
+    ∀ p ∈ s2Plan bb laneBase, ChipArityAdmitted p.1.inputs.length := by
+  intro p hp
+  simp only [s2Plan, List.mem_mapIdx] at hp
+  obtain ⟨j, hj, rfl⟩ := hp
+  have hsite : (rotV3SitesAt bb ++ rotV3SitesAt (bb + 251))[j] ∈
+      (rotV3SitesAt bb ++ rotV3SitesAt (bb + 251)) := List.getElem_mem hj
+  rcases List.mem_append.mp hsite with h | h <;>
+    exact rotV3SitesAt_admitted _ _ h
+
 /-- The EXPECTED graduated S2 lookups (the S2 sites are col-only, so the `sites` resolution
 argument of `siteLookup` is irrelevant — `[]` emits the same tuple the full-list graduation
 emitted). -/
 def s2Lookups (bb laneBase : Nat) : List Lookup :=
-  (s2Plan bb laneBase).map (fun p => siteLookup [] p.1 p.2)
+  (s2Plan bb laneBase).attach.map
+    (fun p => siteLookup [] p.1.1 p.1.2 (s2Plan_admitted bb laneBase p.1 p.2))
 
 /-- The 8 columns one walk step overrides: the site's digest column and its 7 lane columns. -/
 def overrideColsOf (s : VmHashSite) (lb : Nat) : List Nat := s.digestCol :: siteLaneCols lb
@@ -904,11 +919,12 @@ theorem inputsEval_colOnly (aX : Assignment) (s : VmHashSite)
 (recomputed) inputs. -/
 theorem s2Lookup_tuple_eval (permOut : List ℤ → List ℤ) (p : VmHashSite × Nat)
     {aX : Assignment}
+    (hAdm : ChipArityAdmitted p.1.inputs.length)
     (hcol : p.1.inputs.all colOnlyInput = true)
     (hov : (overrideColsOf p.1 p.2).map aX = permOut (insVals aX p.1)) :
-    (siteLookup [] p.1 p.2).tuple.map (·.eval aX) = chipRowN permOut (insVals aX p.1) := by
+    (siteLookup [] p.1 p.2 hAdm).tuple.map (·.eval aX) = chipRowN permOut (insVals aX p.1) := by
   show (chipLookupTuple (p.1.inputs.map (HashInput.toExpr [])) p.1.digestCol
-      (siteLaneCols p.2)).map (·.eval aX) = _
+      (siteLaneCols p.2) (by simpa [List.length_map] using hAdm)).map (·.eval aX) = _
   unfold chipLookupTuple chipRowN
   simp only [List.map_append, List.map_cons, map_eval_padToE, EmittedExpr.eval]
   rw [inputsEval_colOnly aX p.1 hcol]
@@ -1111,8 +1127,10 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
           unfold s2LookupsOf
           exact List.mem_filterMap.mpr ⟨.lookup l, hc, by simp [hl]⟩
         rw [hshape] at hmemS2
-        obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hmemS2
-        show Lookup.holdsAt tX.tf (envAt tX i) (siteLookup [] p.1 p.2)
+        obtain ⟨p, -, rfl⟩ := List.mem_map.mp hmemS2
+        have hp : p.1 ∈ plan := by rw [hplanDef]; exact p.2
+        show Lookup.holdsAt tX.tf (envAt tX i)
+          (siteLookup [] p.1.1 p.1.2 (s2Plan_admitted bb laneBase p.1 p.2))
         unfold Lookup.holdsAt
         have haXeq : (envAt tX i).loc
             = expandRow permOut g plan (t.rows.getD i zeroAsg) := by
@@ -1122,12 +1140,13 @@ theorem compactS2_expand (permOut : List ℤ → List ℤ) (hash : List ℤ → 
               List.getElem?_eq_getElem hi]
           simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]
         have hov := expandGo_site permOut hperm
-          (fun c => t.rows.getD i zeroAsg (g c)) plan hplan p hp
-        have hcol := planOk_colOnly plan hplan p hp
-        have htuple : (siteLookup [] p.1 p.2).tuple.map (·.eval ((envAt tX i).loc))
-            = chipRowN permOut (insVals ((envAt tX i).loc) p.1) := by
+          (fun c => t.rows.getD i zeroAsg (g c)) plan hplan p.1 hp
+        have hcol := planOk_colOnly plan hplan p.1 hp
+        have htuple : (siteLookup [] p.1.1 p.1.2
+              (s2Plan_admitted bb laneBase p.1 p.2)).tuple.map (·.eval ((envAt tX i).loc))
+            = chipRowN permOut (insVals ((envAt tX i).loc) p.1.1) := by
           rw [haXeq]
-          exact s2Lookup_tuple_eval permOut p hcol hov
+          exact s2Lookup_tuple_eval permOut p.1 (s2Plan_admitted bb laneBase p.1 p.2) hcol hov
         rw [htuple]
         show _ ∈ tX.tf TableId.poseidon2
         have htbl : tX.tf TableId.poseidon2 = t.tf TableId.poseidon2

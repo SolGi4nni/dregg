@@ -151,10 +151,12 @@ theorem ivc_row_hashed (hash : List ℤ → ℤ) (t : VmTrace)
               (envAt t i).loc Ivc.NEW_ROOT_COL, (envAt t i).loc Ivc.STEP_COL] := by
   have hc := hsat.rowConstraints i hi perRowHash perRowHash_mem
   simp only [perRowHash, VmConstraint2.holdsAt, Lookup.holdsAt] at hc
+  have hadm : ChipArityAdmitted
+      ([.const IVC_DOMAIN_TAG, .var Ivc.OLD_HASH_COL, .var Ivc.NEW_ROOT_COL,
+        .var Ivc.STEP_COL] : List EmittedExpr).length := by chip_arity_admitted
   have hkey := chip_lookup_sound hash (t.tf .poseidon2) hSound (envAt t i).loc
     [.const IVC_DOMAIN_TAG, .var Ivc.OLD_HASH_COL, .var Ivc.NEW_ROOT_COL, .var Ivc.STEP_COL]
-    Ivc.NEW_HASH_COL (siteLaneCols Ivc.LANE1_COL)
-    (by unfold CHIP_RATE; decide) hc
+    Ivc.NEW_HASH_COL (siteLaneCols Ivc.LANE1_COL) hadm hc
   simpa [EmittedExpr.eval] using hkey
 
 /-- **First-row `step = 1`** — from `Satisfied2` (the row-0 boundary `step - 1 ≡ 0 [ZMOD p]`),

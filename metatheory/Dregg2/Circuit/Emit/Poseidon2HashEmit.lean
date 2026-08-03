@@ -110,7 +110,7 @@ theorem digest_forced (hash : List ℤ → ℤ) (tbl : Table) (hSound : ChipTabl
     (hmem : (chipLookupTupleNarrow [.var IN0, .var IN1] DIGEST).map (·.eval a) ∈ narrowTable tbl) :
     a DIGEST = hash [a IN0, a IN1] := by
   have h := chip_lookup_narrow_sound_of_wide_table hash tbl hSound a [.var IN0, .var IN1] DIGEST
-    (by simp [CHIP_RATE]) hmem
+    (by chip_arity_admitted) hmem
   simpa [EmittedExpr.eval] using h
 
 -- Non-vacuity of the emitted tuple — the digest + preimage columns are LOAD-BEARING (a forged

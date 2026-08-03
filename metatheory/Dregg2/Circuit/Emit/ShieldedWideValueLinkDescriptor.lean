@@ -333,7 +333,7 @@ theorem chipTableSound_of_soundN (permOut : List ℤ → List ℤ) (hW : Poseido
   cases hp : permOut ins with
   | nil => rw [hp] at h8; simp at h8
   | cons hd tl =>
-    refine ⟨ins, tl, DescriptorIR2.chipArity_le_rate hlen, ?_, ?_⟩
+    refine ⟨ins, tl, hlen, ?_, ?_⟩
     · have hl := congrArg List.length hp
       rw [h8] at hl
       simp only [List.length_cons] at hl

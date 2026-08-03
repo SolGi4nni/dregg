@@ -388,7 +388,8 @@ theorem emitted_fold_step_all_rows (hash : List ℤ → ℤ) (minit : ℤ → �
     (by simp [shieldedSpendDesc, spendConstraints])
   simp only [lkParent, Dregg2.Circuit.DescriptorIR2.VmConstraint2.holdsAt,
     Dregg2.Circuit.DescriptorIR2.Lookup.holdsAt] at hkP
-  have hlen5 : (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]).length ≤ CHIP_RATE := by decide
+  have hlen5 : Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted
+      (factIns [cCUR, cSIB0, cSIB1, cSIB2, cPOS]).length := by chip_arity_admitted
   rw [hwire] at hkP
   have eP := Dregg2.Circuit.ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table hash
     (t.tf TableId.poseidon2) hChip ((envAt t i).loc) _ cPAR hlen5 hkP

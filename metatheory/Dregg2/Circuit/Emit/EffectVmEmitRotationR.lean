@@ -93,8 +93,14 @@ def chainBase (R : Nat) : Nat := R + 9
 /-! ## §2 — the arity-{2,4} chunking (the chip pins arity ∈ {2,4}; arity 3 REFUSES). -/
 
 /-- Group the post-head fresh inputs into chip absorptions: 3-wide groups while ≥ 3 remain
-(digest + 3 = arity 4), then singletons (digest + 1 = arity 2). NEVER a pair (digest + 2 =
-arity 3 — the deployed chip AIR refuses it). -/
+(digest + 3 = arity 4), then singletons (digest + 1 = arity 2). Never a pair.
+
+⚠ **The parenthetical this docstring used to carry was FALSE**: it said a pair would give
+"arity 3 — the deployed chip AIR refuses it", and **arity 3 is ADMITTED**
+(`CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, 16]`; five arity-3 chip tuples are emitted in the
+live corpus). Splitting a remaining pair into two singletons is therefore a free choice, not a
+forced one — it costs one extra permutation per remainder-2 tail and buys nothing. The chunking is
+left as it is because changing it moves emitted descriptor bytes; the CLAIM is what was wrong. -/
 def chunk31 {α : Type _} : List α → List (List α)
   | a :: b :: c :: rest => [a, b, c] :: chunk31 rest
   | [a, b] => [[a], [b]]
@@ -542,6 +548,91 @@ def sitesGo (R : Nat) : Nat → List (List Nat) → List VmHashSite
 /-- The rotated absorption as ordered hash sites, at register count `R`. -/
 def rotationSitesR (R : Nat) : List VmHashSite := sitesGo R 0 (siteChunks R)
 
+/-! ### The arity discipline, as a THEOREM over every `R` (it was three `#guard`s).
+
+`graduateV1` now takes the admitted-arity family condition as a construction obligation, and
+`rotationProbeVmDescriptorR2` graduates at a SYMBOLIC `R` — so the obligation cannot be decided,
+and the three measured points (`R ∈ {16, 24, 32}`) were never evidence about the family anyway.
+These four lemmas discharge it for ALL `R`. -/
+
+/-- Every `chunk31` group is a triple or a singleton — the shape the emitter's own docstring
+claims, proved on the same recursion the function is defined by. -/
+theorem chunk31_group_len {α : Type _} :
+    ∀ (xs : List α), ∀ c ∈ chunk31 xs, c.length = 3 ∨ c.length = 1
+  | [] => by intro c hc; cases hc
+  | [_] => by intro c hc; simp only [chunk31, List.mem_singleton] at hc; subst hc; simp
+  | [_, _] => by
+      intro c hc
+      simp only [chunk31, List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl <;> simp
+  | a :: b :: c :: rest => by
+      intro x hx
+      simp only [chunk31, List.mem_cons] at hx
+      rcases hx with rfl | hx
+      · simp
+      · exact chunk31_group_len rest x hx
+
+/-- A site's absorb arity at walk index `k`: the previous digest (absent only at `k = 0`) plus
+the chunk. -/
+theorem siteInputs_length (k : Nat) (c : List Nat) :
+    (siteInputs k c).length = (if k = 0 then 0 else 1) + c.length := by
+  unfold siteInputs
+  cases k <;> simp <;> omega
+
+/-- Every site of a walk that has ALREADY consumed its head chunk (`k ≥ 1`) absorbs
+`1 + |chunk|`, so a triple/singleton chunking gives arity 4 or 2 — both admitted. -/
+theorem sitesGo_admitted_succ (R : Nat) :
+    ∀ (cs : List (List Nat)) (k : Nat),
+      (∀ c ∈ cs, c.length = 3 ∨ c.length = 1) →
+      ∀ s ∈ sitesGo R (k + 1) cs, ChipArityAdmitted s.inputs.length := by
+  intro cs
+  induction cs with
+  | nil => intro k _ s hs; cases hs
+  | cons c cs ih =>
+    intro k hlen s hs
+    have hc : c.length = 3 ∨ c.length = 1 := hlen c List.mem_cons_self
+    cases cs with
+    | nil =>
+      simp only [sitesGo, List.mem_singleton] at hs
+      subst hs
+      simp only [siteInputs_length, Nat.succ_ne_zero, if_false]
+      rcases hc with h | h <;> rw [h] <;> decide
+    | cons c' cs' =>
+      simp only [sitesGo, List.mem_cons] at hs
+      rcases hs with rfl | hs
+      · simp only [siteInputs_length, Nat.succ_ne_zero, if_false]
+        rcases hc with h | h <;> rw [h] <;> decide
+      · exact ih (k + 1) (fun x hx => hlen x (List.mem_cons_of_mem c hx)) s hs
+
+/-- **EVERY site of the parametric rotation probe asks the chip for an ADMITTED arity, at every
+register count `R`.** The head absorbs the 4-wide `[cells_root, r0, r1, r2]` group with no
+incoming digest (arity 4); every later site absorbs the previous digest plus a triple or a
+singleton (arity 4 or 2); the terminal iroot site is the singleton case. -/
+theorem rotationSitesR_admitted (R : Nat) :
+    ∀ s ∈ rotationSitesR R, ChipArityAdmitted s.inputs.length := by
+  have htail : ∀ c ∈ chunk31 ((List.range (R + 7)).drop 4) ++ [[irootCol R]],
+      c.length = 3 ∨ c.length = 1 := by
+    intro c hc
+    rcases List.mem_append.mp hc with hc | hc
+    · exact chunk31_group_len _ c hc
+    · simp only [List.mem_singleton] at hc; subst hc; simp
+  show ∀ s ∈ sitesGo R 0 ([0, 1, 2, 3] :: (chunk31 ((List.range (R + 7)).drop 4)
+    ++ [[irootCol R]])), ChipArityAdmitted s.inputs.length
+  cases hsplit : chunk31 ((List.range (R + 7)).drop 4) ++ [[irootCol R]] with
+  | nil =>
+    exact absurd hsplit (by simp)
+  | cons c cs =>
+    intro s hs
+    simp only [sitesGo, List.mem_cons] at hs
+    rcases hs with rfl | hs
+    · simp only [siteInputs_length, if_pos rfl]
+      decide
+    · exact sitesGo_admitted_succ R (c :: cs) 0 (hsplit ▸ htail) s hs
+
+#assert_axioms chunk31_group_len
+#assert_axioms sitesGo_admitted_succ
+#assert_axioms rotationSitesR_admitted
+
 deriving instance DecidableEq for VmHashSite
 
 /-- **The R=16 sites ARE the pinned `rotationSites`** — the parametric chunking reproduces
@@ -576,7 +667,7 @@ def rotationProbeVmDescriptorR (R : Nat) : EffectVmDescriptor :=
 
 /-- The graduated IR-v2 probe at register count `R` (chip lookups, the five EPOCH tables). -/
 def rotationProbeVmDescriptorR2 (R : Nat) : EffectVmDescriptor2 :=
-  graduateV1 (rotationProbeVmDescriptorR R)
+  graduateV1 (rotationProbeVmDescriptorR R) (rotationSitesR_admitted R)
 
 #guard graduable (rotationProbeVmDescriptorR 16)
 #guard graduable (rotationProbeVmDescriptorR 24)

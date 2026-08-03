@@ -468,6 +468,17 @@ into `.base c` (re-anchored v1+rotation constraints) and `.lookup l` (the chip /
 base ones hold by `base_constraints_hold`; the lookups hold by `lookup_holdsAt_tfOf` against the
 constructed table. -/
 
+/-- **The rotated transfer face asks the chip only for ADMITTED arities.** This is the
+construction obligation `graduateV1` now carries (`CHIP_ADMITTED_ARITIES = [0,2,3,4,7,11,16]`, the
+roots of the deployed degree-7 admission product). It is proved ONCE and named, because the
+`autoParam` that discharges it evaluates `sitesFit` over the whole rotated face — re-synthesising
+that at each of the thirteen `graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)` spellings
+below blows the `whnf` heartbeat budget. `Prop`-erased: naming it changes no emitted byte. -/
+theorem transferRot_admitted :
+    ∀ s ∈ (rotateV3FrozenAuthority transferVmDescriptor).hashSites,
+      ChipArityAdmitted s.inputs.length :=
+  sitesFit_admitted (of_decide_eq_true (Eq.refl true))
+
 theorem row0_constraints_hold (hash : List ℤ → ℤ) :
     ∀ c ∈ transferV3.constraints,
       c.holdsAt hash realTransferTrace.tf (envAt realTransferTrace 0) (0 == 0) (0 + 1 == 2) := by
@@ -475,20 +486,20 @@ theorem row0_constraints_hold (hash : List ℤ → ℤ) :
   rw [envAt_realTransferTrace_zero]
   show c.holdsAt hash (tfOf2 transferV3 realRow lastRow) envReal true false
   -- transferV3.constraints = (d'.constraints.map .base) ++ chipLookups ++ rangeLookups.
-  rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl] at hc ⊢
+  rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl] at hc ⊢
   -- keep the original membership for the lookup cases; destructure a COPY for the shape.
   have hc' := hc
   rw [graduateV1] at hc'
-  simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc'
-  rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨i, s, hs, rfl⟩) | ⟨r, hr, rfl⟩
+  simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc'
+  rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨j, hj, rfl⟩) | ⟨r, hr, rfl⟩
   · -- a re-anchored base constraint — discharged on the ACTIVE row (`true false`).
     show c₀.holdsVm envReal true false
     exact base_constraints_hold c₀ hc₀
   · -- a chip lookup: `.lookup l` `holdsAt` is defeq `l.holdsAt`; hits the `realRow` summand of the union.
-    exact lookup_holdsAt_tfOf2_left (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
+    exact lookup_holdsAt_tfOf2_left (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted)
       realRow lastRow envReal rfl _ hc
   · -- a range lookup: same.
-    exact lookup_holdsAt_tfOf2_left (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
+    exact lookup_holdsAt_tfOf2_left (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted)
       realRow lastRow envReal rfl _ hc
 
 set_option maxRecDepth 8192 in
@@ -504,11 +515,11 @@ theorem row1_constraints_hold (hash : List ℤ → ℤ) :
   rw [envAt_realTransferTrace_one]
   show c.holdsAt hash (tfOf2 transferV3 realRow lastRow)
     { loc := lastRow, nxt := zeroAsg, pub := realPub } false true
-  rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl] at hc ⊢
+  rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl] at hc ⊢
   have hc' := hc
   rw [graduateV1] at hc'
-  simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc'
-  rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨i, s, hs, rfl⟩) | ⟨r, hr, rfl⟩
+  simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc'
+  rcases hc' with (⟨c₀, hc₀, rfl⟩ | ⟨j, hj, rfl⟩) | ⟨r, hr, rfl⟩
   · -- a re-anchored base constraint, on the LAST row (`false true`).
     show c₀.holdsVm { loc := lastRow, nxt := zeroAsg, pub := realPub } false true
     -- on the last row every `.gate`/`.transition` is vacuous (`True`); the boundary-LAST pins read
@@ -576,10 +587,10 @@ theorem row1_constraints_hold (hash : List ℤ → ℤ) :
         obtain ⟨off, _, rfl⟩ := hfields
         exact trivial
   · -- a chip lookup: hits the `lastRow` (zero-row) summand of the union table.
-    exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
+    exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted)
       realRow lastRow { loc := lastRow, nxt := zeroAsg, pub := realPub } rfl _ hc
   · -- a range lookup: same.
-    exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor))
+    exact lookup_holdsAt_tfOf2_right (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted)
       realRow lastRow { loc := lastRow, nxt := zeroAsg, pub := realPub } rfl _ hc
 
 /-! ## §8 — the full `Satisfied2` for the NON-EMPTY real transfer trace. -/
@@ -618,29 +629,29 @@ theorem satisfied2_transferV3_real (hash : List ℤ → ℤ) (minit : ℤ → �
   memClosed := by
     intro op hop
     -- memLog (graduateV1 …) = [] ⇒ no ops.
-    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
+    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl,
       memLog_graduateV1] at hop
     simp at hop
   memDisciplined := by
-    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
+    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl,
       memLog_graduateV1]
     trivial
   memBalanced := by
-    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
+    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl,
       memLog_graduateV1]
     simp [MemoryChecking.MemCheck, MemoryChecking.initSet, MemoryChecking.finalSet,
       MemoryChecking.readSet, MemoryChecking.writeSetFrom, MemoryChecking.boundarySet]
   memTableFaithful := by
-    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
+    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl,
       memLog_graduateV1]
     -- t.tf .memory = [] (the tfOf filterMap skips: no `.memory`-tabled lookup exists).
-    show tfOf (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)) realRow .memory
+    show tfOf (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted) realRow .memory
         = ([] : List MemTraceOp).map opRow
     rw [List.map_nil]
     rw [tfOf, List.filterMap_eq_nil_iff]
     intro c hc
     -- every graduated constraint is a `.base` or a `.lookup` of a CHIP / RANGE table (never .memory).
-    rcases constraints_graduateV1_shapes _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+    rcases constraints_graduateV1_shapes _ _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
     · rfl
     · -- a `.lookup l`; its table is `.poseidon2` or `.range`, never `.memory`.
       show (if l.table = TableId.memory then _ else none) = none
@@ -648,26 +659,26 @@ theorem satisfied2_transferV3_real (hash : List ℤ → ℤ) (minit : ℤ → �
       -- l is a chip (`.poseidon2`) or range (`.range`) lookup; neither is `.memory`.
       have : l.table = TableId.poseidon2 ∨ l.table = TableId.range := by
         rw [graduateV1] at hc
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc
-        rcases hc with (⟨c₀, _, hc1⟩ | ⟨i, _, hc1⟩) | ⟨r, _, hc1⟩
+        simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc
+        rcases hc with (⟨c₀, _, hc1⟩ | ⟨j, _, hc1⟩) | ⟨r, _, hc1⟩
         · exact absurd hc1 (by simp)
         · left; injection hc1 with hc1; rw [← hc1]; rfl
         · right; injection hc1 with hc1; rw [← hc1]; rfl
       rcases this with h | h <;> rw [h] <;> decide
   mapTableFaithful := by
-    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) from rfl,
+    rw [show transferV3 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted from rfl,
       mapLog_graduateV1]
-    show tfOf (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)) realRow .mapOps = []
+    show tfOf (graduateV1 (rotateV3FrozenAuthority transferVmDescriptor) transferRot_admitted) realRow .mapOps = []
     rw [tfOf, List.filterMap_eq_nil_iff]
     intro c hc
-    rcases constraints_graduateV1_shapes _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+    rcases constraints_graduateV1_shapes _ _ c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
     · rfl
     · show (if l.table = TableId.mapOps then _ else none) = none
       rw [if_neg]
       have : l.table = TableId.poseidon2 ∨ l.table = TableId.range := by
         rw [graduateV1] at hc
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc
-        rcases hc with (⟨c₀, _, hc1⟩ | ⟨i, _, hc1⟩) | ⟨r, _, hc1⟩
+        simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc
+        rcases hc with (⟨c₀, _, hc1⟩ | ⟨j, _, hc1⟩) | ⟨r, _, hc1⟩
         · exact absurd hc1 (by simp)
         · left; injection hc1 with hc1; rw [← hc1]; rfl
         · right; injection hc1 with hc1; rw [← hc1]; rfl

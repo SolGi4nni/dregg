@@ -306,7 +306,7 @@ pins). -/
 theorem side_transfer : KernelSideConditions (Rfix 0) :=
   ⟨⟨rfl, rfl⟩,
     mapShape_append_lookupShaped
-      (mapShape_append_lookupShaped (mapShape_of_lookupShaped (lookupShaped_graduateV1 _))
+      (mapShape_append_lookupShaped (mapShape_of_lookupShaped (lookupShaped_graduateV1 _ (by graduate_arity)))
         (lookupShaped_base_map _ _))
       (lookupShaped_base_map _ _)⟩
 
@@ -445,7 +445,7 @@ theorem side_bridgeMint : KernelSideConditions (Rfix 20) :=
 theorem side_revokeCapability : KernelSideConditions (Rfix 24) :=
   ⟨⟨rfl, rfl⟩,
     mapShape_append_lookupShaped
-      (mapShape_append_lookupShaped (mapShape_of_lookupShaped (lookupShaped_graduateV1 _))
+      (mapShape_append_lookupShaped (mapShape_of_lookupShaped (lookupShaped_graduateV1 _ (by graduate_arity)))
         (lookupShaped_capOpenConstraintsEff _ _))
       (lookupShaped_base_single _)⟩
 

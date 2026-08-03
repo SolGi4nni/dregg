@@ -296,7 +296,7 @@ theorem cse_fingerprint_is_hashed
   have hkey := chip_lookup_sound hash (tf .poseidon2) hSound env.loc
     [.var (Cse.EDGE_ID_BASE + 0), .var (Cse.EDGE_ID_BASE + 1),
      .var (Cse.EDGE_ID_BASE + 2), .var (Cse.EDGE_ID_BASE + 3)]
-    Cse.EDGE_FP_COL (siteLaneCols Cse.FP_LANE1_COL) (by unfold CHIP_RATE; decide) hc
+    Cse.EDGE_FP_COL (siteLaneCols Cse.FP_LANE1_COL) (by chip_arity_admitted) hc
   simpa [EmittedExpr.eval] using hkey
 
 #assert_axioms cse_rejects_unbalanced

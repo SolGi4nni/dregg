@@ -559,15 +559,16 @@ def MemTableAssembly
 `.base` (arith) or `.lookup`; the appends are `.memOp`s. (The `.memOp` twin of
 `AlgoStarkSoundFanoutMemory.shape_of_graduated_append`.) -/
 theorem shape_of_graduated_append_mem (d2 : EffectVmDescriptor2)
-    (d0 : EffectVmDescriptor) (ms : List MemOp)
+    (d0 : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d0.hashSites, ChipArityAdmitted s.inputs.length) (ms : List MemOp)
     (heq : d2.constraints
-      = (graduateV1 d0).constraints ++ ms.map VmConstraint2.memOp) :
+      = (graduateV1 d0 hAdm).constraints ++ ms.map VmConstraint2.memOp) :
     ∀ c ∈ d2.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MemOp, c = VmConstraint2.memOp m) := by
   intro c hc hA
   rw [heq] at hc
   rcases List.mem_append.mp hc with hbase | happ
-  · rcases constraints_graduateV1_shapes _ c hbase with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+  · rcases constraints_graduateV1_shapes _ _ c hbase with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
     · exact absurd (show isArith (VmConstraint2.base c₀) from trivial) hA
     · exact Or.inl ⟨l, rfl⟩
   · obtain ⟨m, -, rfl⟩ := List.mem_map.mp happ
@@ -676,7 +677,7 @@ theorem setFieldDynV3_shape :
     ∀ c ∈ setFieldDynV3.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MemOp, c = VmConstraint2.memOp m) :=
   shape_of_graduated_append_mem setFieldDynV3
-    (rotateV3 setFieldDynV1Face) [fieldWriteOp, fieldReadbackOp] rfl
+    (rotateV3 setFieldDynV1Face) _ [fieldWriteOp, fieldReadbackOp] rfl
 
 /-- setFieldDynForced (the LIVE wave-3 variant with the fields-root weld — the weld is a `.base`
 gate inside the graduated base, so the non-arith shape is identical). -/
@@ -686,7 +687,7 @@ theorem setFieldDynForcedV3_shape :
   shape_of_graduated_append_mem setFieldDynForcedV3
     (rotateV3WithFieldsRootGate EffectVmEmitSetField.SEL_SET_FIELD
       (afterFieldsRootCol setFieldDynV1Face.traceWidth) setFieldDynV1Face)
-    [fieldWriteOp, fieldReadbackOp] rfl
+    _ [fieldWriteOp, fieldReadbackOp] rfl
 
 section Instances
 

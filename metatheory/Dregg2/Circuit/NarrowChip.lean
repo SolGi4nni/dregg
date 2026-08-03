@@ -29,25 +29,34 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 def chipRowNarrow (hash : List ℤ → ℤ) (ins : List ℤ) : List ℤ :=
   (ins.length : ℤ) :: padTo CHIP_RATE ins ++ [hash ins]
 
-/-- The NARROW chip LOOKUP tuple (18-wide): `arity :: padded input exprs ++ [out0 column]`. -/
-def chipLookupTupleNarrow (ins : List EmittedExpr) (digestCol : Nat) : List EmittedExpr :=
+/-- The NARROW chip LOOKUP tuple (18-wide): `arity :: padded input exprs ++ [out0 column]`.
+
+⚑ **`hAdm` is the admitted-arity side condition** — the SAME degree-7 admission product, because
+this is the SAME physical chip: `ChipNarrowLookup.narrowTable_sound` derives the narrow table as the
+18-PREFIX of the wide one, so an arity the wide chip refuses is an arity the narrow bus can never be
+served at either. The narrow rail is deployed (`TID_P2_NARROW`, wire 8) and carried
+`ins.length ≤ CHIP_RATE` — the condition `DescriptorIR2` itself calls strictly weaker — until
+2026-08-02. -/
+def chipLookupTupleNarrow (ins : List EmittedExpr) (digestCol : Nat)
+    (hAdm : ChipArityAdmitted ins.length := by chip_arity_admitted) : List EmittedExpr :=
+  let _ := hAdm
   (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins ++ [.var digestCol]
 
 /-- A narrow chip table is SOUND when every row is a genuine `(arity, padded inputs, hash inputs)`
     tuple of the permutation — with NO existential lanes (the simplification over `ChipTableSound`). -/
 def ChipTableSoundNarrow (hash : List ℤ → ℤ) (tbl : Table) : Prop :=
-  ∀ r ∈ tbl, ∃ ins : List ℤ, ins.length ≤ CHIP_RATE ∧ r = chipRowNarrow hash ins
+  ∀ r ∈ tbl, ∃ ins : List ℤ, ChipArityAdmitted ins.length ∧ r = chipRowNarrow hash ins
 
 /-- **THE NARROW LEVER.** Against a sound narrow chip table, a narrow lookup ENFORCES the SAME hash
     equation `a digestCol = hash inputs` that the 25-wide `chip_lookup_sound` does — carrying NO lane
     columns. This is why the 7 lanes/site are droppable for single-output sites at zero soundness cost. -/
 theorem chip_lookup_sound_narrow (hash : List ℤ → ℤ) (tbl : Table)
     (hSound : ChipTableSoundNarrow hash tbl) (a : Assignment)
-    (ins : List EmittedExpr) (digestCol : Nat) (hlen : ins.length ≤ CHIP_RATE)
-    (hmem : (chipLookupTupleNarrow ins digestCol).map (·.eval a) ∈ tbl) :
+    (ins : List EmittedExpr) (digestCol : Nat) (hAdm : ChipArityAdmitted ins.length)
+    (hmem : (chipLookupTupleNarrow ins digestCol hAdm).map (·.eval a) ∈ tbl) :
     a digestCol = hash (ins.map (·.eval a)) := by
   obtain ⟨ws, hwlen, hrow⟩ := hSound _ hmem
-  have hev : (chipLookupTupleNarrow ins digestCol).map (·.eval a)
+  have hev : (chipLookupTupleNarrow ins digestCol hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a)) ++ [a digestCol] := by
     simp [chipLookupTupleNarrow, List.map_cons, List.map_append, map_eval_padToE, EmittedExpr.eval,
       List.map_map, Function.comp_def]
@@ -59,8 +68,9 @@ theorem chip_lookup_sound_narrow (hash : List ℤ → ℤ) (tbl : Table)
     have := Int.natCast_inj.mp hcast
     simpa [List.length_map] using this
   have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
-    simpa [List.length_map] using hlen
-  have hpads := List.append_inj htail (by rw [padTo_length hlenm, padTo_length hwlen])
+    simpa [List.length_map] using chipArity_le_rate hAdm
+  have hpads := List.append_inj htail
+    (by rw [padTo_length hlenm, padTo_length (chipArity_le_rate hwlen)])
   have hins : ins.map (·.eval a) = ws := padTo_inj hlens hpads.1
   have hd : a digestCol = hash ws := by
     have hblock : [a digestCol] = [hash ws] := hpads.2
@@ -75,13 +85,13 @@ theorem siteLookupNarrow_replaces_site (hash : List ℤ → ℤ) (tbl : Table)
     (hSound : ChipTableSoundNarrow hash tbl) (env : VmRowEnv)
     (sites : List VmHashSite) (s : VmHashSite) (digs : List ℤ)
     (hdig : ∀ k, env.loc ((sites.getD k default).digestCol) = digs.getD k 0)
-    (hlen : s.inputs.length ≤ CHIP_RATE)
-    (hmem : (chipLookupTupleNarrow (s.inputs.map (HashInput.toExpr sites)) s.digestCol).map
-              (·.eval env.loc) ∈ tbl) :
+    (hAdm : ChipArityAdmitted s.inputs.length)
+    (hmem : (chipLookupTupleNarrow (s.inputs.map (HashInput.toExpr sites)) s.digestCol
+              (by simpa [List.length_map] using hAdm)).map (·.eval env.loc) ∈ tbl) :
     env.loc s.digestCol = hash (s.resolvedInputs env digs) := by
   have h := chip_lookup_sound_narrow hash tbl hSound env.loc
     (s.inputs.map (HashInput.toExpr sites)) s.digestCol
-    (by simpa [List.length_map] using hlen) hmem
+    (by simpa [List.length_map] using hAdm) hmem
   rw [h]
   congr 1
   rw [List.map_map]
@@ -127,9 +137,11 @@ def poseidon2NarrowChipTableDef : TableDef :=
 /-- The NARROW chip lookup replacing single-output site `s` of the ordered family `sites`: the
 18-wide tuple `[arity, padded inputs, digestCol]`. NO per-site lane base — narrow lookups carry no
 lane columns, so there is nothing to offset (contrast `siteLookup`'s `base`). -/
-def siteLookupNarrow (sites : List VmHashSite) (s : VmHashSite) : Lookup :=
+def siteLookupNarrow (sites : List VmHashSite) (s : VmHashSite)
+    (hAdm : ChipArityAdmitted s.inputs.length := by chip_arity_admitted) : Lookup :=
   { table := poseidon2narrow
-  , tuple := chipLookupTupleNarrow (s.inputs.map (HashInput.toExpr sites)) s.digestCol }
+  , tuple := chipLookupTupleNarrow (s.inputs.map (HashInput.toExpr sites)) s.digestCol
+      (by simpa [List.length_map] using hAdm) }
 
 -- The narrow bus rides the reserved wire slot 8 (= Rust `TID_P2_NARROW`); the table is 18-wide.
 #guard poseidon2narrow.wireId == 8

@@ -143,7 +143,7 @@ theorem tagSound {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {
   rw [hwire] at h
   have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t 0).loc
     [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE, .const PRESENTATION_TAG_DSK]
-    PRESENTATION_TAG (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    PRESENTATION_TAG (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-! ## §3 — the whole-descriptor refinement (SAT_IMPLIES_SEM). -/

@@ -320,7 +320,7 @@ theorem tagSound {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {
   simp only [tagLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
   have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t 0).loc
     [.var FINAL_ROOT, .var RANDOMNESS, .var VERIFIER_NONCE, .const PRESENTATION_TAG_DSK]
-    PRESENTATION_TAG TAG_LANES (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    PRESENTATION_TAG TAG_LANES (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- **`boundPresentationWide_sat_refines` — THE WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM).**

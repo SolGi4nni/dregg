@@ -126,7 +126,7 @@ theorem lookupChip4 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
   rw [hwire] at h
   have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var i0, .var i1, .var i2, .var i3] digestCol (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    [.var i0, .var i1, .var i2, .var i3] digestCol (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared arity-2 chip lookup forces the digest column to be the genuine Poseidon2 `hash_2_to_1`
@@ -145,7 +145,7 @@ theorem lookupChip2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
   rw [hwire] at h
   have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var i0, .var i1] digestCol (by show (2 : Nat) ≤ CHIP_RATE; decide) h
+    [.var i0, .var i1] digestCol (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared `.gate` body vanishes mod `p` on any ACTIVE (non-last) row — the `when_transition`
@@ -683,7 +683,7 @@ theorem gParentAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) mini
   simp only [gParentLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
   have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
     [.var gC0, .var gC1, .var gC2, .var gC3] gPAR gPATH_LANES
-    (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- The arity-2 blinding tooth binds `gBLINDED_LEAF` to `hash [cur, blinding]`, on any row. -/
@@ -696,7 +696,7 @@ theorem gBlindAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit
   simp only [gBlindLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
   have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
     [.var gCUR, .var gBLINDING] gBLINDED_LEAF gBLIND_LANES
-    (by show (2 : Nat) ≤ CHIP_RATE; decide) h
+    (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- The continuity window gate ties `next.cur = this.par` on every non-last row — the mod-`p`

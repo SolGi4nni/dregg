@@ -121,9 +121,22 @@ def sitesWFAux : Nat → List VmHashSite → Bool
 /-- The whole ordered site list is reference-well-formed. -/
 def sitesWF (sites : List VmHashSite) : Bool := sitesWFAux 0 sites
 
-/-- Every site's input tuple fits the chip rate. -/
+/-- Every site's input tuple is an arity the deployed chip AIR ADMITS.
+
+⚑ **This used to read `s.inputs.length ≤ CHIP_RATE`, and that is the emitter-side face of the
+wound `DescriptorIR2`'s arity note describes**: the deployed chip's admission is a degree-7 product
+with seven roots, so `≤ CHIP_RATE` passed ten arities at which the graduated lookup has NO
+satisfying assignment. The gate a descriptor must clear to graduate is now the chip's actual
+budget. -/
 def sitesFit (sites : List VmHashSite) : Bool :=
-  sites.all fun s => decide (s.inputs.length ≤ CHIP_RATE)
+  sites.all fun s => decide (ChipArityAdmitted s.inputs.length)
+
+/-- `sitesFit` unpacked: the per-site admission every graduated chip lookup is CONSTRUCTED with. -/
+theorem sitesFit_admitted {sites : List VmHashSite} (h : sitesFit sites = true) :
+    ∀ s ∈ sites, ChipArityAdmitted s.inputs.length :=
+  fun s hs => of_decide_eq_true (List.all_eq_true.mp h s hs)
+
+
 
 /-- A v1 descriptor is GRADUABLE: well-formed site references, chip-rate fit, and every range
 tooth at the shared limb width (`BAL_LIMB_BITS = 30` — the whole registry, surveyed). -/
@@ -142,6 +155,23 @@ theorem graduable_spec {d : EffectVmDescriptor} (h : graduable d = true) :
   have := List.all_eq_true.mp h3 r hr
   simpa using this
 
+/-- **The graduation-site admission discharger.** `assumption` for the generic keystones that
+already carry the family condition; then the emitter's OWN fail-closed gate — `graduable` /
+`graduableWide` in the context, or decided outright for a concrete descriptor; then a loud failure.
+A v1 descriptor whose hash sites ask the chip for an arity it refuses cannot be graduated: the
+graduated descriptor cannot be written down, rather than being written down and proved about
+vacuously. -/
+macro "graduate_arity" : tactic =>
+  `(tactic| first
+      | assumption
+      | exact sitesFit_admitted (graduable_spec (by assumption)).2.1
+      | exact sitesFit_admitted (graduableWide_spec (by assumption)).2.1
+      | exact sitesFit_admitted (of_decide_eq_true (Eq.refl true))
+      | fail "GRADUATION REFUSED — a v1 hash site of this descriptor absorbs a number of inputs \
+              the deployed chip AIR does not admit (CHIP_ADMITTED_ARITIES = [0, 2, 3, 4, 7, 11, \
+              16]). Graduating it emits a chip lookup with NO satisfying assignment. PAD the \
+              site's input block up to the next admitted arity; do NOT widen the admitted set.")
+
 /-! ## §2 — `graduateV1`: the re-anchored emission.
 
 Hash sites → chip lookups (`siteLookup`, digest chaining via result columns); range teeth →
@@ -152,61 +182,122 @@ legacy `hashSites`/`ranges`: its v2 wire (`emitVmJson2`) is lookup-shaped throug
 def rangeLookup (r : VmRange) : Dregg2.Circuit.DescriptorIR2.Lookup :=
   { table := .range, tuple := [.var r.wire] }
 
+/-- One graduated hash site's chip lookup, carrying its own admission. `attach` is what transports
+the family condition `hAdm` into the `mapIdx` lambda, where the bound site would otherwise have no
+membership fact and therefore no way to name its arity. `Prop`-erased: the emitted lookup is
+byte-identical to the unchecked one. -/
+def graduateSiteLookup (sites : List VmHashSite) (width i : Nat)
+    (hAdm : ∀ x ∈ sites, ChipArityAdmitted x.inputs.length)
+    (s : {x : VmHashSite // x ∈ sites}) : Dregg2.Circuit.DescriptorIR2.Lookup :=
+  siteLookup sites s.1 (width + (CHIP_OUT_LANES - 1) * i) (hAdm s.1 s.2)
+
+/-- The graduated chip-lookup family: site `i` at lane base `width + 7·i`. -/
+def graduateSiteLookups (sites : List VmHashSite) (width : Nat)
+    (hAdm : ∀ x ∈ sites, ChipArityAdmitted x.inputs.length) :
+    List Dregg2.Circuit.DescriptorIR2.Lookup :=
+  sites.attach.mapIdx (graduateSiteLookup sites width · hAdm)
+
+/-- Membership in the graduated lookup family, in EXACTLY `List.mem_mapIdx`'s shape — so the
+admission threading costs no proof restructuring downstream. -/
+theorem mem_graduateSiteLookups {sites : List VmHashSite} {width : Nat}
+    {hAdm : ∀ x ∈ sites, ChipArityAdmitted x.inputs.length}
+    {l : Dregg2.Circuit.DescriptorIR2.Lookup} :
+    l ∈ graduateSiteLookups sites width hAdm ↔
+      ∃ (j : Nat) (hj : j < sites.length),
+        siteLookup sites sites[j] (width + (CHIP_OUT_LANES - 1) * j)
+          (hAdm _ (List.getElem_mem hj)) = l := by
+  rw [graduateSiteLookups, List.mem_mapIdx]
+  constructor
+  · rintro ⟨j, hj, rfl⟩
+    exact ⟨j, by simpa using hj, by simp [graduateSiteLookup]⟩
+  · rintro ⟨j, hj, rfl⟩
+    exact ⟨j, by simpa using hj, by simp [graduateSiteLookup]⟩
+
+/-- The graduated site block as v2 constraints. -/
+def graduateSites (sites : List VmHashSite) (width : Nat)
+    (hAdm : ∀ x ∈ sites, ChipArityAdmitted x.inputs.length) : List VmConstraint2 :=
+  (graduateSiteLookups sites width hAdm).map .lookup
+
+/-- Membership in the graduated site block, in EXACTLY `List.mem_mapIdx`'s shape — so every
+`simp only [List.mem_append, List.mem_map, mem_graduateSites]` reproduces the `⟨j, hj, rfl⟩`
+pattern the un-admitted `mapIdx` gave. -/
+theorem mem_graduateSites {sites : List VmHashSite} {width : Nat}
+    {hAdm : ∀ x ∈ sites, ChipArityAdmitted x.inputs.length} {c : VmConstraint2} :
+    c ∈ graduateSites sites width hAdm ↔
+      ∃ (j : Nat) (hj : j < sites.length),
+        VmConstraint2.lookup (siteLookup sites sites[j] (width + (CHIP_OUT_LANES - 1) * j)
+          (hAdm _ (List.getElem_mem hj))) = c := by
+  rw [graduateSites, List.mem_map]
+  constructor
+  · rintro ⟨l, hl, rfl⟩
+    obtain ⟨j, hj, rfl⟩ := mem_graduateSiteLookups.mp hl
+    exact ⟨j, hj, rfl⟩
+  · rintro ⟨j, hj, rfl⟩
+    exact ⟨_, mem_graduateSiteLookups.mpr ⟨j, hj, rfl⟩, rfl⟩
+
 /-- **`graduateV1`** — re-anchor a v1 descriptor onto IR v2: constraints embed, every hash site
 becomes a chip lookup, every range tooth becomes a range lookup; the five EPOCH tables are
-declared; the legacy carriers empty. -/
-def graduateV1 (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
+declared; the legacy carriers empty.
+
+⚑ `hAdm` is the CONSTRUCTION obligation the graduation always owed and never took: every hash site
+must ask the chip for an admitted arity. It is an `autoParam` discharged by `graduate_arity`, so a
+concrete graduable descriptor threads it silently and a descriptor with an inadmissible site FAILS
+TO ELABORATE. `Prop`-erased — every emitted byte is unchanged. -/
+def graduateV1 (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length := by graduate_arity) :
+    EffectVmDescriptor2 :=
   { name        := d.name
   , traceWidth  := d.traceWidth + (CHIP_OUT_LANES - 1) * d.hashSites.length
   , piCount     := d.piCount
   , tables      := v2Tables (d.traceWidth + (CHIP_OUT_LANES - 1) * d.hashSites.length)
   , constraints :=
       d.constraints.map .base
-        ++ d.hashSites.mapIdx (fun i s =>
-             .lookup (siteLookup d.hashSites s (d.traceWidth + (CHIP_OUT_LANES - 1) * i)))
+        ++ graduateSites d.hashSites d.traceWidth hAdm
         ++ d.ranges.map (fun r => .lookup (rangeLookup r))
   , hashSites   := []
   , ranges      := [] }
 
 /-- Every graduated constraint is a `.base` or a `.lookup` (no mem/map ops — those are the
 NEWLY-EXPRESSIBLE sections' additions, not the v1 re-anchor's). -/
-theorem constraints_graduateV1_shapes (d : EffectVmDescriptor) :
-    ∀ c ∈ (graduateV1 d).constraints,
+theorem constraints_graduateV1_shapes (d : EffectVmDescriptor) (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    ∀ c ∈ (graduateV1 d hAdm).constraints,
       (∃ c₀, c = .base c₀) ∨ (∃ l, c = .lookup l) := by
   intro c hc
   unfold graduateV1 at hc
-  simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc
-  rcases hc with (⟨c₀, _, rfl⟩ | ⟨i, s, _, rfl⟩) | ⟨r, _, rfl⟩
+  simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc
+  rcases hc with (⟨c₀, _, rfl⟩ | ⟨j, _, rfl⟩) | ⟨r, _, rfl⟩
   · exact Or.inl ⟨c₀, rfl⟩
   · exact Or.inr ⟨_, rfl⟩
   · exact Or.inr ⟨_, rfl⟩
 
 /-- A graduated v1 descriptor declares no mem ops. -/
-theorem memOpsOf_graduateV1 (d : EffectVmDescriptor) : memOpsOf (graduateV1 d) = [] := by
+theorem memOpsOf_graduateV1 (d : EffectVmDescriptor) (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    memOpsOf (graduateV1 d hAdm) = [] := by
   unfold memOpsOf
   rw [List.filterMap_eq_nil_iff]
   intro c hc
-  rcases constraints_graduateV1_shapes d c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
+  rcases constraints_graduateV1_shapes d hAdm c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
 
 /-- A graduated v1 descriptor declares no map ops. -/
-theorem mapOpsOf_graduateV1 (d : EffectVmDescriptor) : mapOpsOf (graduateV1 d) = [] := by
+theorem mapOpsOf_graduateV1 (d : EffectVmDescriptor) (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    mapOpsOf (graduateV1 d hAdm) = [] := by
   unfold mapOpsOf
   rw [List.filterMap_eq_nil_iff]
   intro c hc
-  rcases constraints_graduateV1_shapes d c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
+  rcases constraints_graduateV1_shapes d hAdm c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
 
 /-- A graduated v1 descriptor's memory log is empty. -/
-theorem memLog_graduateV1 (d : EffectVmDescriptor) (t : VmTrace) :
-    memLog (graduateV1 d) t = [] := by
+theorem memLog_graduateV1 (d : EffectVmDescriptor) (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) (t : VmTrace) :
+    memLog (graduateV1 d hAdm) t = [] := by
   unfold memLog
-  rw [memOpsOf_graduateV1]
+  rw [memOpsOf_graduateV1 d hAdm]
   simp
 
 /-- A graduated v1 descriptor's map-ops log is empty. -/
-theorem mapLog_graduateV1 (d : EffectVmDescriptor) (t : VmTrace) :
-    mapLog (graduateV1 d) t = [] := by
+theorem mapLog_graduateV1 (d : EffectVmDescriptor) (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) (t : VmTrace) :
+    mapLog (graduateV1 d hAdm) t = [] := by
   unfold mapLog
-  rw [mapOpsOf_graduateV1]
+  rw [mapOpsOf_graduateV1 d hAdm]
   simp
 
 /-! ## §3 — The ordered-site induction: chip lookups ⟹ the v1 hash-site walk.
@@ -280,10 +371,10 @@ theorem go_of_siteLookups (hash : List ℤ → ℤ) (tbl : Table)
       acc.length = pre.length →
       (∀ k, k < acc.length → env.loc ((all.getD k default).digestCol) = acc.getD k 0) →
       sitesWFAux acc.length rest = true →
-      (∀ s ∈ rest, s.inputs.length ≤ CHIP_RATE) →
+      (hfit : ∀ s ∈ rest, ChipArityAdmitted s.inputs.length) →
       (∀ i, (h : i < rest.length) →
-        (siteLookup all rest[i] (width + (CHIP_OUT_LANES - 1) * (pre.length + i))).tuple.map
-          (·.eval env.loc) ∈ tbl) →
+        (siteLookup all rest[i] (width + (CHIP_OUT_LANES - 1) * (pre.length + i))
+          (hfit _ (List.getElem_mem h))).tuple.map (·.eval env.loc) ∈ tbl) →
       siteHoldsAll.go hash env acc rest := by
   induction rest with
   | nil => intro pre acc _ _ _ _ _ _; trivial
@@ -303,22 +394,23 @@ theorem go_of_siteLookups (hash : List ℤ → ℤ) (tbl : Table)
       hlk0
     rw [siteTuple_eval_resolved env all acc s hwfs hacc] at hchip
     refine ⟨hchip, ?_⟩
-    apply ih (pre ++ [s]) (acc ++ [hash (s.resolvedInputs env acc)])
-    · rw [hall, List.append_assoc]
-      rfl
-    · simp [hlen]
-    · exact hacc_extend env pre ss s acc _ all hall hlen hacc hchip
-    · simpa using hwfss
-    · exact fun s' hs' => hfit s' (List.mem_cons_of_mem s hs')
-    · -- the tail's site `ss[i]` is at global index `(pre.length+1) + i = pre.length + (i+1)`,
-      -- matching `rest[i+1]` of the original list.
-      intro i hi
-      have := hlk (i + 1) (by simpa using Nat.succ_lt_succ hi)
-      simp only [List.getElem_cons_succ] at this
-      rw [List.length_append, List.length_singleton]
-      have heq : pre.length + 1 + i = pre.length + (i + 1) := by omega
-      rw [heq]
-      exact this
+    -- ⚠ the arguments are supplied POSITIONALLY: `hfit` is now a NAMED binder that the lookup
+    -- hypothesis DEPENDS on, so `apply` no longer presents the goals in source order.
+    refine ih (pre ++ [s]) (acc ++ [hash (s.resolvedInputs env acc)])
+      (by rw [hall, List.append_assoc]; rfl)
+      (by simp [hlen])
+      (hacc_extend env pre ss s acc _ all hall hlen hacc hchip)
+      (by simpa using hwfss)
+      (fun s' hs' => hfit s' (List.mem_cons_of_mem s hs')) ?_
+    -- the tail's site `ss[i]` is at global index `(pre.length+1) + i = pre.length + (i+1)`,
+    -- matching `rest[i+1]` of the original list.
+    intro i hi
+    have := hlk (i + 1) (by simpa using Nat.succ_lt_succ hi)
+    simp only [List.getElem_cons_succ] at this
+    rw [List.length_append, List.length_singleton]
+    have heq : pre.length + 1 + i = pre.length + (i + 1) := by omega
+    rw [heq]
+    exact this
 
 /-- **`siteLookups_sound`** — the whole ordered family: per-site chip lookups against a sound
 chip table ⟹ the full v1 hash-site denotation `siteHoldsAll`. The `i`-th site's lane block sits
@@ -326,10 +418,10 @@ at `width + 7·i` (the contiguous append `graduateV1` threads past the v1 trace 
 theorem siteLookups_sound (hash : List ℤ → ℤ) (tbl : Table)
     (hSound : ChipTableSound hash tbl) (env : VmRowEnv) (sites : List VmHashSite) (width : Nat)
     (hwf : sitesWF sites = true)
-    (hfit : ∀ s ∈ sites, s.inputs.length ≤ CHIP_RATE)
+    (hfit : ∀ s ∈ sites, ChipArityAdmitted s.inputs.length)
     (hlk : ∀ i, (h : i < sites.length) →
-      (siteLookup sites sites[i] (width + (CHIP_OUT_LANES - 1) * i)).tuple.map
-        (·.eval env.loc) ∈ tbl) :
+      (siteLookup sites sites[i] (width + (CHIP_OUT_LANES - 1) * i)
+        (hfit _ (List.getElem_mem h))).tuple.map (·.eval env.loc) ∈ tbl) :
     siteHoldsAll hash env sites :=
   go_of_siteLookups hash tbl hSound env sites width sites [] [] rfl rfl
     (fun k hk => absurd hk (by simp)) hwf hfit
@@ -355,23 +447,23 @@ theorem graduateV1_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
   refine ⟨?_, ?_, ?_⟩
   · -- the v1 constraints, embedded
     intro c hc
-    have hmem : VmConstraint2.base c ∈ (graduateV1 d).constraints := by
+    have hmem : VmConstraint2.base c ∈ (graduateV1 d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1
-      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      simp only [List.mem_append, List.mem_map, mem_graduateSites]
       exact Or.inl (Or.inl ⟨c, hc, rfl⟩)
     exact hrow _ hmem
   · -- the hash sites, via the chip-lookup induction (the `i`-th site's lane base is
     -- `d.traceWidth + 7·i`, the contiguous append `graduateV1` threads)
-    apply siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
-    · intro s hs
-      exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+    refine siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
+      (sitesFit_admitted hfit) ?_
     · intro j hj
       have hmem : VmConstraint2.lookup
           (siteLookup d.hashSites d.hashSites[j]
-            (d.traceWidth + (CHIP_OUT_LANES - 1) * j))
-          ∈ (graduateV1 d).constraints := by
+            (d.traceWidth + (CHIP_OUT_LANES - 1) * j)
+            (sitesFit_admitted hfit _ (List.getElem_mem hj)))
+          ∈ (graduateV1 d (sitesFit_admitted hfit)).constraints := by
         unfold graduateV1
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+        simp only [List.mem_append, List.mem_map, mem_graduateSites]
         exact Or.inl (Or.inr ⟨j, hj, rfl⟩)
       exact hrow _ hmem
   · -- the range teeth, via the range-table lookup
@@ -380,9 +472,9 @@ theorem graduateV1_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     have hb : bits = BAL_LIMB_BITS := hbits ⟨w, bits⟩ hr
     subst hb
     have hmem : VmConstraint2.lookup (rangeLookup ⟨w, BAL_LIMB_BITS⟩)
-        ∈ (graduateV1 d).constraints := by
+        ∈ (graduateV1 d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1
-      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      simp only [List.mem_append, List.mem_map, mem_graduateSites]
       exact Or.inr ⟨⟨w, BAL_LIMB_BITS⟩, hr, rfl⟩
     exact lookup_replaces_range BAL_LIMB_BITS t.tf hrange (envAt t i) w (hrow _ hmem)
 
@@ -405,21 +497,21 @@ theorem graduateV1_satisfiedVm_of_rowConstraints (hash : List ℤ → ℤ) (d : 
   have hrowi := hrow i hi
   refine ⟨?_, ?_, ?_⟩
   · intro c hc
-    have hmem : VmConstraint2.base c ∈ (graduateV1 d).constraints := by
+    have hmem : VmConstraint2.base c ∈ (graduateV1 d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1
-      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      simp only [List.mem_append, List.mem_map, mem_graduateSites]
       exact Or.inl (Or.inl ⟨c, hc, rfl⟩)
     exact hrowi _ hmem
-  · apply siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
-    · intro s hs
-      exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+  · refine siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
+      (sitesFit_admitted hfit) ?_
     · intro j hj
       have hmem : VmConstraint2.lookup
           (siteLookup d.hashSites d.hashSites[j]
-            (d.traceWidth + (CHIP_OUT_LANES - 1) * j))
-          ∈ (graduateV1 d).constraints := by
+            (d.traceWidth + (CHIP_OUT_LANES - 1) * j)
+            (sitesFit_admitted hfit _ (List.getElem_mem hj)))
+          ∈ (graduateV1 d (sitesFit_admitted hfit)).constraints := by
         unfold graduateV1
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+        simp only [List.mem_append, List.mem_map, mem_graduateSites]
         exact Or.inl (Or.inr ⟨j, hj, rfl⟩)
       exact hrowi _ hmem
   · intro r hr
@@ -427,9 +519,9 @@ theorem graduateV1_satisfiedVm_of_rowConstraints (hash : List ℤ → ℤ) (d : 
     have hb : bits = BAL_LIMB_BITS := hbits ⟨w, bits⟩ hr
     subst hb
     have hmem : VmConstraint2.lookup (rangeLookup ⟨w, BAL_LIMB_BITS⟩)
-        ∈ (graduateV1 d).constraints := by
+        ∈ (graduateV1 d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1
-      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      simp only [List.mem_append, List.mem_map, mem_graduateSites]
       exact Or.inr ⟨⟨w, BAL_LIMB_BITS⟩, hr, rfl⟩
     exact lookup_replaces_range BAL_LIMB_BITS t.tf hrange (envAt t i) w (hrowi _ hmem)
 
@@ -462,7 +554,7 @@ theorem chipSoundN_implies_chipSound (permOut : List ℤ → List ℤ)
   | nil =>
       rw [hpo] at hl; simp [CHIP_OUT_LANES] at hl
   | cons d lanes =>
-      refine ⟨ins, lanes, chipArity_le_rate hins, ?_, ?_⟩
+      refine ⟨ins, lanes, hins, ?_, ?_⟩
       · have : (d :: lanes).length = CHIP_OUT_LANES := by rw [← hpo]; exact hl
         simp only [List.length_cons] at this
         omega
@@ -508,7 +600,8 @@ theorem satisfied2Faithful_satisfiedVm (permOut : List ℤ → List ℤ) (hash :
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduable d = true)
-    (h : Satisfied2Faithful permOut hash (graduateV1 d) minit mfin maddrs t) :
+    (h : Satisfied2Faithful permOut hash
+      (graduateV1 d (sitesFit_admitted (graduable_spec hgrad).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
   graduateV1_sound hash d minit mfin maddrs t h.chipSound h.rangeTableFaithful hgrad h.toSatisfied2
@@ -530,10 +623,10 @@ def envOf (rows : List Assignment) (pub : Assignment) (i : Nat) : VmRowEnv :=
 
 /-- The gathered chip rows: every row's every site lookup tuple, evaluated (Phase B-GATE: the
 `i`-th site rides the lane base `width + 7·i`, mirroring `graduateV1`'s `mapIdx`). -/
-def chipLogOf (sites : List VmHashSite) (width : Nat) (rows : List Assignment) : Table :=
+def chipLogOf (sites : List VmHashSite) (width : Nat)
+    (hAdm : ∀ s ∈ sites, ChipArityAdmitted s.inputs.length) (rows : List Assignment) : Table :=
   rows.flatMap fun a =>
-    sites.mapIdx fun i s =>
-      (siteLookup sites s (width + (CHIP_OUT_LANES - 1) * i)).tuple.map (·.eval a)
+    (graduateSiteLookups sites width hAdm).map (fun l => l.tuple.map (·.eval a))
 
 /-- **The completeness induction.** Under the same prefix invariant, a v1 site walk makes every
 suffix site's lookup tuple evaluate to a GENUINE 17-wide chip row (output block `hash ins ::
@@ -546,13 +639,15 @@ theorem go_siteLookups_complete (hash : List ℤ → ℤ) (env : VmRowEnv) (all 
       (∀ k, k < acc.length → env.loc ((all.getD k default).digestCol) = acc.getD k 0) →
       sitesWFAux acc.length rest = true →
       siteHoldsAll.go hash env acc rest →
-      ∀ s ∈ rest, ∃ (ins lanes : List ℤ), ins.length = s.inputs.length
+      ∀ (hfit : ∀ s ∈ rest, ChipArityAdmitted s.inputs.length),
+      ∀ s, ∀ hs : s ∈ rest, ∃ (ins lanes : List ℤ), ins.length = s.inputs.length
         ∧ lanes.length = CHIP_OUT_LANES - 1
-        ∧ (siteLookup all s base).tuple.map (·.eval env.loc) = chipRow hash ins lanes := by
+        ∧ (siteLookup all s base (hfit s hs)).tuple.map (·.eval env.loc)
+            = chipRow hash ins lanes := by
   induction rest with
-  | nil => intro pre acc base _ _ _ _ _ s hs; cases hs
+  | nil => intro pre acc base _ _ _ _ _ _ s hs; cases hs
   | cons s ss ih =>
-    intro pre acc base hall hlen hacc hwf hgo s' hs'
+    intro pre acc base hall hlen hacc hwf hgo hfit s' hs'
     simp only [sitesWFAux, Bool.and_eq_true] at hwf
     obtain ⟨hwfs, hwfss⟩ := hwf
     obtain ⟨hd, hgo'⟩ := hgo
@@ -562,14 +657,14 @@ theorem go_siteLookups_complete (hash : List ℤ → ℤ) (env : VmRowEnv) (all 
       refine ⟨s'.resolvedInputs env acc, (siteLaneCols base).map env.loc,
         by simp [VmHashSite.resolvedInputs], by simp [siteLaneCols], ?_⟩
       have hev : (chipLookupTuple (s'.inputs.map (HashInput.toExpr all)) s'.digestCol
-            (siteLaneCols base)).map (·.eval env.loc)
+            (siteLaneCols base) (by simpa [List.length_map] using hfit s' hs')).map (·.eval env.loc)
           = ((s'.inputs.map (HashInput.toExpr all)).length : ℤ)
             :: padTo CHIP_RATE ((s'.inputs.map (HashInput.toExpr all)).map (·.eval env.loc))
             ++ (env.loc s'.digestCol :: (siteLaneCols base).map env.loc) := by
         simp [chipLookupTuple, List.map_cons, List.map_append, map_eval_padToE,
           EmittedExpr.eval, List.map_map, Function.comp_def]
       show (chipLookupTuple (s'.inputs.map (HashInput.toExpr all)) s'.digestCol
-          (siteLaneCols base)).map (·.eval env.loc)
+          (siteLaneCols base) (by simpa [List.length_map] using hfit s' hs')).map (·.eval env.loc)
           = chipRow hash (s'.resolvedInputs env acc) ((siteLaneCols base).map env.loc)
       rw [hev, siteTuple_eval_resolved env all acc s' hwfs hacc, hd]
       unfold chipRow
@@ -580,7 +675,7 @@ theorem go_siteLookups_complete (hash : List ℤ → ℤ) (env : VmRowEnv) (all 
         (by simp [hlen])
         (hacc_extend env pre ss s acc _ all hall hlen hacc hd)
         (by simpa using hwfss)
-        hgo' s' hs''
+        hgo' (fun x hx => hfit x (List.mem_cons_of_mem s hx)) s' hs''
 
 /-- The gathered chip table is SOUND by construction. -/
 theorem chipLogOf_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
@@ -588,14 +683,17 @@ theorem chipLogOf_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (hgrad : graduable d = true)
     (hsat : ∀ i, i < rows.length →
       satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length)) :
-    ChipTableSound hash (chipLogOf d.hashSites d.traceWidth rows) := by
+    ChipTableSound hash
+      (chipLogOf d.hashSites d.traceWidth
+        (sitesFit_admitted (graduable_spec hgrad).2.1) rows) := by
   obtain ⟨hwf, hfit, _⟩ := graduable_spec hgrad
   intro r hr
   unfold chipLogOf at hr
   rw [List.mem_flatMap] at hr
   obtain ⟨a, ha, hr⟩ := hr
-  rw [List.mem_mapIdx] at hr
-  obtain ⟨j, hj, rfl⟩ := hr
+  rw [List.mem_map] at hr
+  obtain ⟨l, hl, rfl⟩ := hr
+  obtain ⟨j, hj, rfl⟩ := mem_graduateSiteLookups.mp hl
   obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp ha
   have hloc : (envOf rows pub i).loc = rows[i] := by
     simp [envOf, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]
@@ -603,33 +701,41 @@ theorem chipLogOf_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
   have hsmem : d.hashSites[j] ∈ d.hashSites := List.getElem_mem hj
   obtain ⟨ins, lanes, hlen, hlanes, heq⟩ := go_siteLookups_complete hash (envOf rows pub i)
     d.hashSites d.hashSites [] [] (d.traceWidth + (CHIP_OUT_LANES - 1) * j)
-    rfl rfl (fun k hk => absurd hk (by simp)) hwf hgo d.hashSites[j] hsmem
+    rfl rfl (fun k hk => absurd hk (by simp)) hwf hgo
+    (sitesFit_admitted hfit) d.hashSites[j] hsmem
   rw [hloc] at heq
   refine ⟨ins, lanes, ?_, hlanes, heq.symm ▸ rfl⟩
   rw [hlen]
-  exact of_decide_eq_true (List.all_eq_true.mp hfit d.hashSites[j] hsmem)
+  exact sitesFit_admitted hfit d.hashSites[j] hsmem
 
 /-- The constructed trace family: gathered chip rows, the faithful range table, empty
 memory/map/custom tables, main unconstrained. -/
-def v2TF (d : EffectVmDescriptor) (rows : List Assignment) : TraceFamily := fun tid =>
+def v2TF (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length)
+    (rows : List Assignment) : TraceFamily := fun tid =>
   match tid with
-  | .poseidon2 => chipLogOf d.hashSites d.traceWidth rows
+  | .poseidon2 => chipLogOf d.hashSites d.traceWidth hAdm rows
   | .range => rangeRows BAL_LIMB_BITS
   | _ => []
 
 /-- The constructed multi-table witness over a v1-satisfying row family. -/
-def v2TraceOf (d : EffectVmDescriptor) (rows : List Assignment) (pub : Assignment) : VmTrace :=
-  { rows := rows, pub := pub, tf := v2TF d rows }
+def v2TraceOf (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length)
+    (rows : List Assignment) (pub : Assignment) : VmTrace :=
+  { rows := rows, pub := pub, tf := v2TF d hAdm rows }
 
 /-- The constructed trace's family, projected (kept as a `rw` target: a bare `rfl` at the
 `.range` USE SITE sends the unifier whnf-ing `rangeRows 30` = `List.range 2^30` — the
 documented evaluation trap; the projection equation itself is cheap). -/
-theorem v2TraceOf_tf (d : EffectVmDescriptor) (rows : List Assignment) (pub : Assignment) :
-    (v2TraceOf d rows pub).tf = v2TF d rows := rfl
+theorem v2TraceOf_tf (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length)
+    (rows : List Assignment) (pub : Assignment) :
+    (v2TraceOf d hAdm rows pub).tf = v2TF d hAdm rows := rfl
 
 /-- The constructed family's range table is the faithful limb table. -/
-theorem v2TF_range (d : EffectVmDescriptor) (rows : List Assignment) :
-    v2TF d rows .range = rangeRows BAL_LIMB_BITS := rfl
+theorem v2TF_range (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) (rows : List Assignment) :
+    v2TF d hAdm rows .range = rangeRows BAL_LIMB_BITS := rfl
 
 /-- **`graduateV1_complete`** — a v1-satisfying row family yields a `Satisfied2` witness of the
 graduated descriptor, over the constructed tables, with the EMPTY memory boundary. -/
@@ -638,35 +744,36 @@ theorem graduateV1_complete (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (hgrad : graduable d = true)
     (hsat : ∀ i, i < rows.length →
       satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length)) :
-    Satisfied2 hash (graduateV1 d) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) []
-      (v2TraceOf d rows pub) := by
+    Satisfied2 hash (graduateV1 d (sitesFit_admitted (graduable_spec hgrad).2.1)) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) []
+      (v2TraceOf d (sitesFit_admitted (graduable_spec hgrad).2.1) rows pub) := by
   obtain ⟨hwf, hfit, hbits⟩ := graduable_spec hgrad
   refine ⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩
   · -- rowConstraints
     intro i hi c hc
     unfold graduateV1 at hc
-    simp only [List.mem_append, List.mem_map, List.mem_mapIdx] at hc
+    simp only [List.mem_append, List.mem_map, mem_graduateSites] at hc
     rcases hc with (⟨c₀, hc₀, rfl⟩ | ⟨j, hj, rfl⟩) | ⟨r, hr, rfl⟩
     · exact (hsat i hi).1 c₀ hc₀
     · -- chip lookup: membership in the gathered table, by construction
       have hi' : i < rows.length := hi
       show (siteLookup d.hashSites d.hashSites[j]
-            (d.traceWidth + (CHIP_OUT_LANES - 1) * j)).tuple.map
-          (·.eval (envAt (v2TraceOf d rows pub) i).loc)
-        ∈ chipLogOf d.hashSites d.traceWidth rows
-      have hloc : (envAt (v2TraceOf d rows pub) i).loc = rows[i] := by
+            (d.traceWidth + (CHIP_OUT_LANES - 1) * j)
+            (sitesFit_admitted hfit _ (List.getElem_mem hj))).tuple.map
+          (·.eval (envAt (v2TraceOf d (sitesFit_admitted hfit) rows pub) i).loc)
+        ∈ chipLogOf d.hashSites d.traceWidth (sitesFit_admitted hfit) rows
+      have hloc : (envAt (v2TraceOf d (sitesFit_admitted hfit) rows pub) i).loc = rows[i] := by
         simp [v2TraceOf, envAt, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi']
       rw [hloc]
       unfold chipLogOf
       rw [List.mem_flatMap]
       exact ⟨rows[i], List.getElem_mem hi',
-        List.mem_mapIdx.mpr ⟨j, hj, rfl⟩⟩
+        List.mem_map.mpr ⟨_, mem_graduateSiteLookups.mpr ⟨j, hj, rfl⟩, rfl⟩⟩
     · -- range lookup: completeness of the limb table
       obtain ⟨w, bits⟩ := r
       have hb : bits = BAL_LIMB_BITS := hbits ⟨w, bits⟩ hr
       subst hb
-      exact lookup_range_complete BAL_LIMB_BITS (v2TF d rows) rfl
-        (envAt (v2TraceOf d rows pub) i) w ((hsat i hi).2.2 ⟨w, BAL_LIMB_BITS⟩ hr)
+      exact lookup_range_complete BAL_LIMB_BITS (v2TF d (sitesFit_admitted hfit) rows) rfl
+        (envAt (v2TraceOf d (sitesFit_admitted (graduable_spec hgrad).2.1) rows pub) i) w ((hsat i hi).2.2 ⟨w, BAL_LIMB_BITS⟩ hr)
   · intro i hi; trivial
   · intro i hi r hr
     have hnil : (graduateV1 d).ranges = [] := rfl
@@ -696,13 +803,14 @@ theorem graduateV1_faithful (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
       ↔ ∃ t : VmTrace, t.rows = rows ∧ t.pub = pub
           ∧ ChipTableSound hash (t.tf .poseidon2)
           ∧ t.tf .range = rangeRows BAL_LIMB_BITS
-          ∧ Satisfied2 hash (graduateV1 d) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] t := by
+          ∧ Satisfied2 hash (graduateV1 d (sitesFit_admitted (graduable_spec hgrad).2.1)) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] t := by
   constructor
   · intro h
-    refine ⟨v2TraceOf d rows pub, rfl, rfl, chipLogOf_sound hash d rows pub hgrad h, ?_,
+    refine ⟨v2TraceOf d (sitesFit_admitted (graduable_spec hgrad).2.1) rows pub, rfl, rfl,
+      chipLogOf_sound hash d rows pub hgrad h, ?_,
       graduateV1_complete hash d rows pub hgrad h⟩
     rw [v2TraceOf_tf]
-    exact v2TF_range d rows
+    exact v2TF_range d _ rows
   · rintro ⟨t, rfl, rfl, hchip, hrange, hsat⟩
     exact graduateV1_sound hash d _ _ _ t hchip hrange hgrad hsat
 
@@ -1267,17 +1375,18 @@ theorem custom_graduable : graduable customV1Face = true := by decide
 
 /-- The graduated Custom base declares no proof-binding ops (every graduated constraint is a
 `.base` or a `.lookup`). -/
-theorem proofBindsOf_graduateV1 (d : EffectVmDescriptor) :
-    proofBindsOf (graduateV1 d) = [] := by
+theorem proofBindsOf_graduateV1 (d : EffectVmDescriptor) (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    proofBindsOf (graduateV1 d hAdm) = [] := by
   unfold proofBindsOf
   rw [List.filterMap_eq_nil_iff]
   intro c hc
-  rcases constraints_graduateV1_shapes d c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
+  rcases constraints_graduateV1_shapes d hAdm c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
 
 /-- The graduated Custom descriptor declares EXACTLY the one proof-binding op. -/
 theorem proofBindsOf_customVmDescriptor2 :
     proofBindsOf customVmDescriptor2 = [customProofBind] := by
-  have hbase : proofBindsOf (graduateV1 customV1Face) = [] := proofBindsOf_graduateV1 customV1Face
+  have hbase : proofBindsOf (graduateV1 customV1Face) = [] :=
+    proofBindsOf_graduateV1 customV1Face _
   unfold proofBindsOf at hbase ⊢
   show ((graduateV1 customV1Face).constraints ++ [VmConstraint2.proofBind customProofBind]).filterMap
       _ = _
@@ -1657,7 +1766,9 @@ theorem graduableWide_of_graduable {d : EffectVmDescriptor} (h : graduable d = t
 /-- **`graduateV1Wide`** — the multi-width re-anchor: `graduateV1` verbatim except each range tooth
 lowers via `rangeLookupW` into its OWN width's table. The width-tagged range tables join the
 declared table family. -/
-def graduateV1Wide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
+def graduateV1Wide (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length := by graduate_arity) :
+    EffectVmDescriptor2 :=
   { name        := d.name
   , traceWidth  := d.traceWidth + (CHIP_OUT_LANES - 1) * d.hashSites.length
   , piCount     := d.piCount
@@ -1667,8 +1778,7 @@ def graduateV1Wide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
              (fun b => ⟨rangeTidW b, "range_w" ++ toString b, 1, .rangeLimb b⟩)
   , constraints :=
       d.constraints.map .base
-        ++ d.hashSites.mapIdx (fun i s =>
-             .lookup (siteLookup d.hashSites s (d.traceWidth + (CHIP_OUT_LANES - 1) * i)))
+        ++ graduateSites d.hashSites d.traceWidth hAdm
         ++ d.ranges.map (fun r => .lookup (rangeLookupW r))
   , hashSites   := []
   , ranges      := [] }
@@ -1694,7 +1804,8 @@ theorem graduateV1Wide_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (hchip : ChipTableSound hash (t.tf .poseidon2))
     (hrangeW : ∀ b ∈ WIDE_RANGE_WIDTHS, t.tf (rangeTidW b) = rangeRows b)
     (hgrad : graduableWide d = true)
-    (hsat : Satisfied2 hash (graduateV1Wide d) minit mfin maddrs t) :
+    (hsat : Satisfied2 hash
+      (graduateV1Wide d (sitesFit_admitted (graduableWide_spec hgrad).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   obtain ⟨hwf, hfit, hbits⟩ := graduableWide_spec hgrad
@@ -1703,30 +1814,31 @@ theorem graduateV1Wide_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
   refine ⟨?_, ?_, ?_⟩
   · -- the v1 constraints, embedded
     intro c hc
-    have hmem : VmConstraint2.base c ∈ (graduateV1Wide d).constraints := by
+    have hmem : VmConstraint2.base c ∈ (graduateV1Wide d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1Wide
-      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      simp only [List.mem_append, List.mem_map, mem_graduateSites]
       exact Or.inl (Or.inl ⟨c, hc, rfl⟩)
     exact hrow _ hmem
   · -- the hash sites, via the chip-lookup induction (verbatim `graduateV1_sound`)
-    apply siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
-    · intro s hs
-      exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+    refine siteLookups_sound hash (t.tf .poseidon2) hchip (envAt t i) d.hashSites d.traceWidth hwf
+      (sitesFit_admitted hfit) ?_
     · intro j hj
       have hmem : VmConstraint2.lookup
           (siteLookup d.hashSites d.hashSites[j]
-            (d.traceWidth + (CHIP_OUT_LANES - 1) * j))
-          ∈ (graduateV1Wide d).constraints := by
+            (d.traceWidth + (CHIP_OUT_LANES - 1) * j)
+            (sitesFit_admitted hfit _ (List.getElem_mem hj)))
+          ∈ (graduateV1Wide d (sitesFit_admitted hfit)).constraints := by
         unfold graduateV1Wide
-        simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+        simp only [List.mem_append, List.mem_map, mem_graduateSites]
         exact Or.inl (Or.inr ⟨j, hj, rfl⟩)
       exact hrow _ hmem
   · -- the range teeth, each via ITS OWN width's table
     intro r hr
     have hb : r.bits ∈ WIDE_RANGE_WIDTHS := hbits r hr
-    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (graduateV1Wide d).constraints := by
+    have hmem : VmConstraint2.lookup (rangeLookupW r)
+        ∈ (graduateV1Wide d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1Wide
-      simp only [List.mem_append, List.mem_map, List.mem_mapIdx]
+      simp only [List.mem_append, List.mem_map, mem_graduateSites]
       exact Or.inr ⟨r, hr, rfl⟩
     exact lookup_replaces_rangeW r.bits t.tf (hrangeW r.bits hb) (envAt t i) r.wire (hrow _ hmem)
 
@@ -1773,7 +1885,8 @@ theorem satisfied2FaithfulWide_satisfiedVm (permOut : List ℤ → List ℤ) (ha
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduableWide d = true)
-    (h : Satisfied2FaithfulWide permOut hash (graduateV1Wide d) minit mfin maddrs t) :
+    (h : Satisfied2FaithfulWide permOut hash
+      (graduateV1Wide d (sitesFit_admitted (graduableWide_spec hgrad).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
   graduateV1Wide_sound hash d minit mfin maddrs t h.chipSound h.rangeTablesWideFaithful hgrad

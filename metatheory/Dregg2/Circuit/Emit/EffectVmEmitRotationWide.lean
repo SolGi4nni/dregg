@@ -615,8 +615,10 @@ def commitPins (row : VmRow) (cols : List Nat) (piBase : Nat) : List VmConstrain
 /-- **`rotateV3Wide`** — the parallel wide emission. The graduated 1-felt host PLUS the wide
 BEFORE/AFTER lookup blocks and their 16 PI pins (8 BEFORE commit cols on the first row, 8 AFTER
 commit cols on the last). -/
-def rotateV3Wide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
-  let host := graduateV1 (rotateV3 d)
+def rotateV3Wide (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  let host := graduateV1 (rotateV3 d) hAdm
   let w := host.traceWidth
   let bb := d.traceWidth            -- live BEFORE limb base
   let ab := d.traceWidth + B_SPAN       -- live AFTER limb base
@@ -634,7 +636,9 @@ def rotateV3Wide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
 
 /-- **`v3OfWide`** — the alias mirroring `v3Of` (the rotated graduation of a cohort member, the
 WIDE commitment lane). The live-flip handoff repoints the registry from `v3Of` to THIS. -/
-def v3OfWide (d : EffectVmDescriptor) : EffectVmDescriptor2 := rotateV3Wide d
+def v3OfWide (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 := rotateV3Wide d hAdm
 
 /-! ## §5 — the re-proved WIDE keystone tower.
 
@@ -643,120 +647,132 @@ def v3OfWide (d : EffectVmDescriptor) : EffectVmDescriptor2 := rotateV3Wide d
 `Poseidon2WideCR` + `Poseidon2Width8`; the binding invokes `wireCommitR8_binds` (the keystone is
 LOAD-BEARING — the published 8-felt commit = the chained `wireCommitR8` digest of the 184 limbs). -/
 
-/-- The wide BEFORE/AFTER lookups are members of `rotateV3Wide d`'s constraints (for `rowConstraints`
+/-- The wide BEFORE/AFTER lookups are members of `rotateV3Wide d hAdm`'s constraints (for `rowConstraints`
 extraction). -/
-theorem rotateV3Wide_before_mem (d : EffectVmDescriptor) :
-    ∀ c ∈ rotV3WideLookups d.traceWidth (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth),
-      c ∈ (rotateV3Wide d).constraints := by
+theorem rotateV3Wide_before_mem (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length) :
+    ∀ c ∈ rotV3WideLookups d.traceWidth (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth),
+      c ∈ (rotateV3Wide d hAdm).constraints := by
   intro c hc
   unfold rotateV3Wide
   simp only [List.append_assoc, List.mem_append]
   exact Or.inr (Or.inl hc)
 
-theorem rotateV3Wide_after_mem (d : EffectVmDescriptor) :
-    ∀ c ∈ rotV3WideLookups (d.traceWidth + B_SPAN) (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth),
-      c ∈ (rotateV3Wide d).constraints := by
+theorem rotateV3Wide_after_mem (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length) :
+    ∀ c ∈ rotV3WideLookups (d.traceWidth + B_SPAN) (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth),
+      c ∈ (rotateV3Wide d hAdm).constraints := by
   intro c hc
   unfold rotateV3Wide
   simp only [List.append_assoc, List.mem_append]
   exact Or.inr (Or.inr (Or.inl hc))
 
-/-- A `Satisfied2` witness of `rotateV3Wide d` forces the BEFORE/AFTER wide lookups on every row:
+/-- A `Satisfied2` witness of `rotateV3Wide d hAdm` forces the BEFORE/AFTER wide lookups on every row:
 each block's 8 state-commit carrier columns ARE `wireCommitR8` of the row's own limbs and iroot.
 The host `Satisfied2` carries the 1-felt `hash` (for the graduated host's own 1-felt sites); the
 WIDE chip table soundness `ChipTableSoundN permW` is a SEPARATE faithfulness floor of the SAME
 `.poseidon2` table (`chipRowN_head_eq_hash`: a wide-sound table is also 1-felt-sound at its head). -/
 theorem rotV3Wide_pins (hash : List ℤ → ℤ) (permW : List ℤ → List ℤ) (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hchipN : ChipTableSoundN permW (t.tf .poseidon2))
-    (hsat : Satisfied2 hash (rotateV3Wide d) minit mfin maddrs t)
+    (hsat : Satisfied2 hash (rotateV3Wide d hAdm) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
-    carrierVals (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62 (envAt t i).loc
+    carrierVals (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62 (envAt t i).loc
       = wireCommitR8 permW (preLimbsWide d.traceWidth (envAt t i).loc)
           ((envAt t i).loc (d.traceWidth + B_IROOT))
-    ∧ carrierVals (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62 (envAt t i).loc
+    ∧ carrierVals (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62 (envAt t i).loc
       = wireCommitR8 permW (preLimbsWide (d.traceWidth + B_SPAN) (envAt t i).loc)
           ((envAt t i).loc (d.traceWidth + B_SPAN + B_IROOT)) := by
   have hrow := hsat.rowConstraints i hi
   refine ⟨?_, ?_⟩
   · apply rotV3WidePin permW (t.tf .poseidon2) hchipN (envAt t i) d.traceWidth
-      (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth)
+      (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth)
     intro p hp
-    have hmem := rotateV3Wide_before_mem d
+    have hmem := rotateV3Wide_before_mem d hAdm
       (.lookup (siteLookupN p.1 p.2 (rotV3WideSpecs_admitted _ _ p hp)))
       (List.mem_map.mpr ⟨⟨p, hp⟩, List.mem_attach _ _, rfl⟩)
     have := hrow _ hmem
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, siteLookupN] using this
   · apply rotV3WidePin permW (t.tf .poseidon2) hchipN (envAt t i) (d.traceWidth + B_SPAN)
-      (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth)
+      (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth)
     intro p hp
-    have hmem := rotateV3Wide_after_mem d
+    have hmem := rotateV3Wide_after_mem d hAdm
       (.lookup (siteLookupN p.1 p.2 (rotV3WideSpecs_admitted _ _ p hp)))
       (List.mem_map.mpr ⟨⟨p, hp⟩, List.mem_attach _ _, rfl⟩)
     have := hrow _ hmem
     simpa [VmConstraint2.holdsAt, Lookup.holdsAt, siteLookupN] using this
 
-/-- The PI pins membership: the BEFORE/AFTER commit pins are constraints of `rotateV3Wide d`. -/
-theorem rotateV3Wide_beforePin_mem (d : EffectVmDescriptor) (k : Nat) (hk : k < 8) :
+/-- The PI pins membership: the BEFORE/AFTER commit pins are constraints of `rotateV3Wide d hAdm`. -/
+theorem rotateV3Wide_beforePin_mem (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length) (k : Nat) (hk : k < 8) :
     (VmConstraint2.base (.piBinding .first
-      ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD k 0)
-      ((graduateV1 (rotateV3 d)).piCount + k))) ∈ (rotateV3Wide d).constraints := by
+      ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD k 0)
+      ((graduateV1 (rotateV3 d) hAdm).piCount + k))) ∈ (rotateV3Wide d hAdm).constraints := by
   unfold rotateV3Wide
   simp only [List.append_assoc, List.mem_append]
   refine Or.inr (Or.inr (Or.inr (Or.inl ?_)))
   unfold commitPins
   rw [List.mem_map]
-  refine ⟨((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD k 0, k),
+  refine ⟨((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD k 0, k),
     ?_, rfl⟩
   rw [List.mem_iff_getElem]
   refine ⟨k, ?_, ?_⟩
   · rw [List.length_zipIdx, carrierCols_length]; exact hk
   · rw [List.getElem_zipIdx]
-    have hk' : k < (carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).length := by
+    have hk' : k < (carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).length := by
       rw [carrierCols_length]; exact hk
     simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk']
 
-theorem rotateV3Wide_afterPin_mem (d : EffectVmDescriptor) (k : Nat) (hk : k < 8) :
+theorem rotateV3Wide_afterPin_mem (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length) (k : Nat) (hk : k < 8) :
     (VmConstraint2.base (.piBinding .last
-      ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD k 0)
-      ((graduateV1 (rotateV3 d)).piCount + 8 + k))) ∈ (rotateV3Wide d).constraints := by
+      ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD k 0)
+      ((graduateV1 (rotateV3 d) hAdm).piCount + 8 + k))) ∈ (rotateV3Wide d hAdm).constraints := by
   unfold rotateV3Wide
   simp only [List.append_assoc, List.mem_append]
   refine Or.inr (Or.inr (Or.inr (Or.inr ?_)))
   unfold commitPins
   rw [List.mem_map]
-  refine ⟨((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD k 0, k),
+  refine ⟨((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD k 0, k),
     ?_, rfl⟩
   rw [List.mem_iff_getElem]
   refine ⟨k, ?_, ?_⟩
   · rw [List.length_zipIdx, carrierCols_length]; exact hk
   · rw [List.getElem_zipIdx]
-    have hk' : k < (carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).length := by
+    have hk' : k < (carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).length := by
       rw [carrierCols_length]; exact hk
     simp [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk']
 
 /-- **`rotV3Wide_publishes`** — the wide commits PUBLISH: first row binds the BEFORE commit's 8
 columns to PI slots `piCount'..+7`; last row binds the AFTER commit's 8 columns to `piCount'+8..+15`. -/
 theorem rotV3Wide_publishes (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (hsat : Satisfied2 hash (rotateV3Wide d) minit mfin maddrs t)
+    (hsat : Satisfied2 hash (rotateV3Wide d hAdm) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
     ((i == 0) = true → ∀ k, (hk : k < 8) →
       (envAt t i).loc
-          ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD k 0)
-        ≡ (envAt t i).pub ((graduateV1 (rotateV3 d)).piCount + k) [ZMOD 2013265921])
+          ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD k 0)
+        ≡ (envAt t i).pub ((graduateV1 (rotateV3 d) hAdm).piCount + k) [ZMOD 2013265921])
     ∧ ((i + 1 == t.rows.length) = true → ∀ k, (hk : k < 8) →
       (envAt t i).loc
-          ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD k 0)
-        ≡ (envAt t i).pub ((graduateV1 (rotateV3 d)).piCount + 8 + k) [ZMOD 2013265921]) := by
+          ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD k 0)
+        ≡ (envAt t i).pub ((graduateV1 (rotateV3 d) hAdm).piCount + 8 + k) [ZMOD 2013265921]) := by
   have hrow := hsat.rowConstraints i hi
   refine ⟨?_, ?_⟩
   · intro hf k hk
-    have := hrow _ (rotateV3Wide_beforePin_mem d k hk)
+    have := hrow _ (rotateV3Wide_beforePin_mem d hAdm k hk)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at this
     exact this hf
   · intro hl k hk
-    have := hrow _ (rotateV3Wide_afterPin_mem d k hk)
+    have := hrow _ (rotateV3Wide_afterPin_mem d hAdm k hk)
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at this
     exact this hl
 
@@ -801,7 +817,7 @@ private theorem carrierVals_eq_of_colEq (cb cb' : Nat) (a a' : Assignment)
     (fun _ _ => rfl) h (fun _ _ => rfl)
 
 set_option maxHeartbeats 1600000 in
-/-- **THE WIDE END-TO-END KEYSTONE.** Two `Satisfied2` witnesses of `rotateV3Wide d` publishing the
+/-- **THE WIDE END-TO-END KEYSTONE.** Two `Satisfied2` witnesses of `rotateV3Wide d hAdm` publishing the
 SAME 8-felt BEFORE commit and the SAME 8-felt AFTER commit EITHER agree on the WHOLE before-block
 37-limb list + iroot AND the WHOLE after-block 37-limb list + iroot — the GENUINE ~124-bit binding —
 OR EXHIBIT a genuine collision of the deployed wide permutation, per leg, at the two lists
@@ -815,37 +831,39 @@ weaker, but TRUE of the real permutation, which the old one was not. `Poseidon2W
 is NOT a false floor — it is the deployed output-width contract, satisfied by the real permutation. -/
 theorem rotV3Wide_binds_published (hash : List ℤ → ℤ) (permW : List ℤ → List ℤ)
     (hW : Poseidon2Width8 permW) (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+      ChipArityAdmitted s.inputs.length)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
     (hchipN : ChipTableSoundN permW (t.tf .poseidon2))
     (hchipN' : ChipTableSoundN permW (t'.tf .poseidon2))
-    (hsat : Satisfied2 hash (rotateV3Wide d) minit mfin maddrs t)
-    (hsat' : Satisfied2 hash (rotateV3Wide d) minit' mfin' maddrs' t')
+    (hsat : Satisfied2 hash (rotateV3Wide d hAdm) minit mfin maddrs t)
+    (hsat' : Satisfied2 hash (rotateV3Wide d hAdm) minit' mfin' maddrs' t')
     (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
     (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
     (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
     (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
     (hpubBefore : ∀ m, m < 8 →
-      (envAt t i).pub ((graduateV1 (rotateV3 d)).piCount + m)
-        = (envAt t' j).pub ((graduateV1 (rotateV3 d)).piCount + m))
+      (envAt t i).pub ((graduateV1 (rotateV3 d) hAdm).piCount + m)
+        = (envAt t' j).pub ((graduateV1 (rotateV3 d) hAdm).piCount + m))
     (hpubAfter : ∀ m, m < 8 →
-      (envAt t k).pub ((graduateV1 (rotateV3 d)).piCount + 8 + m)
-        = (envAt t' l).pub ((graduateV1 (rotateV3 d)).piCount + 8 + m))
+      (envAt t k).pub ((graduateV1 (rotateV3 d) hAdm).piCount + 8 + m)
+        = (envAt t' l).pub ((graduateV1 (rotateV3 d) hAdm).piCount + 8 + m))
     -- The 8 state-commit carrier columns are field-canonical (`0 ≤ · < p`, the deployed range-check
     -- invariant): lifts each mod-`p` publish congruence to the genuine ℤ carrier equality the wide CR
     -- floor needs (chaining loc(i) ≡ pub(i) = pub(j) ≡ loc(j) through the equal published PIs).
     (hcCanonB : ∀ m, m < 8 →
-      0 ≤ (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-        ∧ (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0) < 2013265921)
+      0 ≤ (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+        ∧ (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0) < 2013265921)
     (hcCanonB' : ∀ m, m < 8 →
-      0 ≤ (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-        ∧ (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0) < 2013265921)
+      0 ≤ (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+        ∧ (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0) < 2013265921)
     (hcCanonA : ∀ m, m < 8 →
-      0 ≤ (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-        ∧ (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0) < 2013265921)
+      0 ≤ (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+        ∧ (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0) < 2013265921)
     (hcCanonA' : ∀ m, m < 8 →
-      0 ≤ (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-        ∧ (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0) < 2013265921) :
+      0 ≤ (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+        ∧ (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0) < 2013265921) :
     ((preLimbsWide d.traceWidth (envAt t i).loc = preLimbsWide d.traceWidth (envAt t' j).loc
         ∧ (envAt t i).loc (d.traceWidth + B_IROOT) = (envAt t' j).loc (d.traceWidth + B_IROOT))
       ∨ WireColl permW (preLimbsWide d.traceWidth (envAt t i).loc)
@@ -858,24 +876,24 @@ theorem rotV3Wide_binds_published (hash : List ℤ → ℤ) (permW : List ℤ �
           ((envAt t k).loc (d.traceWidth + B_SPAN + B_IROOT))
           (preLimbsWide (d.traceWidth + B_SPAN) (envAt t' l).loc)
           ((envAt t' l).loc (d.traceWidth + B_SPAN + B_IROOT))) := by
-  have hp := rotV3Wide_pins hash permW d minit mfin maddrs t hchipN hsat
-  have hp' := rotV3Wide_pins hash permW d minit' mfin' maddrs' t' hchipN' hsat'
-  have hq := rotV3Wide_publishes hash d minit mfin maddrs t hsat
-  have hq' := rotV3Wide_publishes hash d minit' mfin' maddrs' t' hsat'
+  have hp := rotV3Wide_pins hash permW d hAdm minit mfin maddrs t hchipN hsat
+  have hp' := rotV3Wide_pins hash permW d hAdm minit' mfin' maddrs' t' hchipN' hsat'
+  have hq := rotV3Wide_publishes hash d hAdm minit mfin maddrs t hsat
+  have hq' := rotV3Wide_publishes hash d hAdm minit' mfin' maddrs' t' hsat'
   refine ⟨?_, ?_⟩
   · -- BEFORE: equal published 8-felt commits ⇒ equal limbs + iroot. Lift the 8 mod-p publish
     -- congruences to a genuine ℤ carrier equality via the deployed range-check canonicality.
     have hcolEq : ∀ m, m < 8 →
-        (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-          = (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0) :=
+        (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+          = (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0) :=
       fun m hm => canon_eq_of_modEq (hcCanonB m hm) (hcCanonB' m hm)
-        (calc (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-              ≡ (envAt t i).pub ((graduateV1 (rotateV3 d)).piCount + m) [ZMOD 2013265921] := (hq i hi).1 hfirst m hm
-          _ = (envAt t' j).pub ((graduateV1 (rotateV3 d)).piCount + m) := hpubBefore m hm
-          _ ≡ (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
+        (calc (envAt t i).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+              ≡ (envAt t i).pub ((graduateV1 (rotateV3 d) hAdm).piCount + m) [ZMOD 2013265921] := (hq i hi).1 hfirst m hm
+          _ = (envAt t' j).pub ((graduateV1 (rotateV3 d) hAdm).piCount + m) := hpubBefore m hm
+          _ ≡ (envAt t' j).loc ((carrierCols (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
               [ZMOD 2013265921] := ((hq' j hj).1 hfirst' m hm).symm)
-    have hcv : carrierVals (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62 (envAt t i).loc
-        = carrierVals (wideBeforeCBase (graduateV1 (rotateV3 d)).traceWidth) 62 (envAt t' j).loc :=
+    have hcv : carrierVals (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62 (envAt t i).loc
+        = carrierVals (wideBeforeCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62 (envAt t' j).loc :=
       carrierVals_eq_of_colEq _ _ _ _ hcolEq
     have hwire : wireCommitR8 permW (preLimbsWide d.traceWidth (envAt t i).loc)
         ((envAt t i).loc (d.traceWidth + B_IROOT))
@@ -886,16 +904,16 @@ theorem rotV3Wide_binds_published (hash : List ℤ → ℤ) (permW : List ℤ �
       (by rw [preLimbsWide_length, preLimbsWide_length]) hwire
   · -- AFTER: equal published 8-felt commits ⇒ equal limbs + iroot. Same mod-p lift on the last row.
     have hcolEq : ∀ m, m < 8 →
-        (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-          = (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0) :=
+        (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+          = (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0) :=
       fun m hm => canon_eq_of_modEq (hcCanonA m hm) (hcCanonA' m hm)
-        (calc (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
-              ≡ (envAt t k).pub ((graduateV1 (rotateV3 d)).piCount + 8 + m) [ZMOD 2013265921] := (hq k hk).2 hlast m hm
-          _ = (envAt t' l).pub ((graduateV1 (rotateV3 d)).piCount + 8 + m) := hpubAfter m hm
-          _ ≡ (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62).getD m 0)
+        (calc (envAt t k).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
+              ≡ (envAt t k).pub ((graduateV1 (rotateV3 d) hAdm).piCount + 8 + m) [ZMOD 2013265921] := (hq k hk).2 hlast m hm
+          _ = (envAt t' l).pub ((graduateV1 (rotateV3 d) hAdm).piCount + 8 + m) := hpubAfter m hm
+          _ ≡ (envAt t' l).loc ((carrierCols (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62).getD m 0)
               [ZMOD 2013265921] := ((hq' l hl).2 hlast' m hm).symm)
-    have hcv : carrierVals (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62 (envAt t k).loc
-        = carrierVals (wideAfterCBase (graduateV1 (rotateV3 d)).traceWidth) 62 (envAt t' l).loc :=
+    have hcv : carrierVals (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62 (envAt t k).loc
+        = carrierVals (wideAfterCBase (graduateV1 (rotateV3 d) hAdm).traceWidth) 62 (envAt t' l).loc :=
       carrierVals_eq_of_colEq _ _ _ _ hcolEq
     have hwire : wireCommitR8 permW (preLimbsWide (d.traceWidth + B_SPAN) (envAt t k).loc)
         ((envAt t k).loc (d.traceWidth + B_SPAN + B_IROOT))
@@ -1424,22 +1442,28 @@ states differing ONLY beyond lane0 — the gate constrains a DIFFERENT column (t
 
 /-- A representative gated host: a bare graduated rotation WRAPPED in `withSelectorGate` (the live
 WAVE-shape — an already-gated `EffectVmDescriptor2`), with `wideAppend` layered on top. -/
-def wideAppendOverGated (d : EffectVmDescriptor) (s : Nat) : EffectVmDescriptor2 :=
-  wideAppend (withSelectorGate s (v3Of d)) d.traceWidth (d.traceWidth + B_SPAN)
+def wideAppendOverGated (d : EffectVmDescriptor) (s : Nat)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  wideAppend (withSelectorGate s (v3Of d hAdm)) d.traceWidth (d.traceWidth + B_SPAN)
 
 /-- The wide carriers/PIs of `wideAppendOverGated` land STRICTLY PAST the gated host's width/piCount:
 the gate's selector column and the host's columns are below `wideBeforeCBase host.traceWidth`, so the
 wide block cannot collide with the gate. (`withSelectorGate` does not change width/piCount, so the
 host width is the graduated rotation's — `wideAppend` bases past it.) -/
-theorem wideAppendOverGated_width (d : EffectVmDescriptor) (s : Nat) :
-    (wideAppendOverGated d s).traceWidth = (withSelectorGate s (v3Of d)).traceWidth + wideAppendixSpan
-    ∧ (wideAppendOverGated d s).piCount = (withSelectorGate s (v3Of d)).piCount + 16 := by
+theorem wideAppendOverGated_width (d : EffectVmDescriptor) (s : Nat)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites, ChipArityAdmitted s.inputs.length) :
+    (wideAppendOverGated d s hAdm).traceWidth
+      = (withSelectorGate s (v3Of d hAdm)).traceWidth + wideAppendixSpan
+    ∧ (wideAppendOverGated d s hAdm).piCount
+      = (withSelectorGate s (v3Of d hAdm)).piCount + 16 := by
   unfold wideAppendOverGated wideAppend; exact ⟨rfl, rfl⟩
 
 -- The gated host's selector gate survives in `wideAppendOverGated` (it is among the appended-onto
 -- host's constraints, never disturbed): the appended wide block is a CONJUNCTION on top.
-theorem wideAppendOverGated_gate_survives (d : EffectVmDescriptor) (s : Nat) :
-    (VmConstraint2.base (selectorGate s)) ∈ (wideAppendOverGated d s).constraints := by
+theorem wideAppendOverGated_gate_survives (d : EffectVmDescriptor) (s : Nat)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites, ChipArityAdmitted s.inputs.length) :
+    (VmConstraint2.base (selectorGate s)) ∈ (wideAppendOverGated d s hAdm).constraints := by
   unfold wideAppendOverGated
   rw [wideAppend_constraints]
   refine List.mem_append_left _ (List.mem_append_left _

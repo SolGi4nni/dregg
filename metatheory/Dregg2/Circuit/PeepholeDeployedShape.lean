@@ -293,22 +293,25 @@ open Dregg2.Circuit.Emit.EffectVmEmitV2 (graduateV1 constraints_graduateV1_shape
 already proves every graduated constraint is a `.base` or a `.lookup`. This is the LIVE deployed
 shape — `RotatedKernelRefinement.transferV3 = v3OfFrozen transferVmDescriptor =
 graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)` and the whole graduated cohort. -/
-theorem graduateV1_noPlainWindowGate (d : EffectVmDescriptor) :
-    NoPlainWindowGate (graduateV1 d).constraints := by
+theorem graduateV1_noPlainWindowGate (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    NoPlainWindowGate (graduateV1 d hAdm).constraints := by
   intro w hw
-  rcases constraints_graduateV1_shapes d _ hw with ⟨c₀, hc⟩ | ⟨l, hl⟩
+  rcases constraints_graduateV1_shapes d hAdm _ hw with ⟨c₀, hc⟩ | ⟨l, hl⟩
   · exact absurd hc (by simp)
   · exact absurd hl (by simp)
 
 /-- ⚑ THE FRONTIER COLLAPSE IS THE IDENTITY ON EVERY GRADUATED DEPLOYED DESCRIPTOR. -/
-theorem graduateV1_frontier_noop (d : EffectVmDescriptor) :
-    frontierCollapse (graduateV1 d) = graduateV1 d :=
-  frontierCollapse_id_of_noPlain _ (graduateV1_noPlainWindowGate d)
+theorem graduateV1_frontier_noop (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    frontierCollapse (graduateV1 d hAdm) = graduateV1 d hAdm :=
+  frontierCollapse_id_of_noPlain _ (graduateV1_noPlainWindowGate d hAdm)
 
 /-- …and so is the general batch. -/
-theorem graduateV1_batch_noop (d : EffectVmDescriptor) :
-    generalBatchPeephole (graduateV1 d) = graduateV1 d :=
-  generalBatchPeephole_id_of_noPlain _ (graduateV1_noPlainWindowGate d)
+theorem graduateV1_batch_noop (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    generalBatchPeephole (graduateV1 d hAdm) = graduateV1 d hAdm :=
+  generalBatchPeephole_id_of_noPlain _ (graduateV1_noPlainWindowGate d hAdm)
 
 /-- ⚑ NAMED AT A SHIPPED CIRCUIT: the graduated TRANSFER descriptor. `RotatedKernelRefinement.transferV3
 = graduateV1 (rotateV3FrozenAuthority transferVmDescriptor)` is the same theorem at a rotated

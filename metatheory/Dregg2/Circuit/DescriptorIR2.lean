@@ -189,12 +189,29 @@ mode rides along: off the `seed456` blend (high only at 7, 11, 16) the deployed 
 ARITY TAG into lane 4 and zero into lanes 5/6, so three of the lanes the emitter handed the chip
 never enter the preimage at all.
 
-⚠ **`ins.length ≤ CHIP_RATE` — the condition this file carried until now — is strictly weaker
-than that.** It admits 1, 5, 6, 8, 9, 10, 12, 13, 14, 15: ten arities the AIR refuses. Every
+⚠ **`ins.length ≤ CHIP_RATE` — the condition this file used to carry — is strictly weaker than
+that.** It admits 1, 5, 6, 8, 9, 10, 12, 13, 14, 15: ten arities the AIR refuses. Every
 lemma about a descriptor at one of those went through on a premise the deployed circuit cannot
 meet, so the descriptor read as verified while being unprovable. That is how
 `dregg-guarded-hiding-span-m0::wide-blinded-commit-blind5-v1` shipped with lookups at 8 and 14,
 and how the pre-`57105f387` blinded tooth shipped at 9. Both files reasoned "arity ≤ 16, fine".
+
+⚑ **THE CONDITION LANDED ON ONE RAIL FIRST, AND IT WAS NOT THE DEPLOYED ONE (repaired 2026-08-02).**
+`eaf64969a` put `ChipArityAdmitted` on the WIDE constructor `chipLookupTupleN` / `ChipTableSoundN`
+and left three others carrying `≤ CHIP_RATE` — or, worse, carrying nothing at all, because a tuple
+CONSTRUCTOR that takes no side condition is not weakly checked, it is unchecked:
+
+| rail | wire | constructor | was |
+|---|---|---|---|
+| wide (`chipLookupTupleN`) | `TID_P2` | checked `eaf64969a` | — |
+| **deployed (`chipLookupTuple`)** | `TID_P2` | **no condition at all** | `ChipTableSound`/`chip_lookup_sound` at `≤ CHIP_RATE` |
+| **narrow (`chipLookupTupleNarrow`)** | `TID_P2_NARROW` | **no condition at all** | `ChipTableSoundNarrow`/`chip_lookup_sound_narrow` at `≤ CHIP_RATE` |
+| **table AIR (`TableAirIR.chipAbsorbTuple`)** | `ir2_p2` | **a DOCSTRING warning** | — |
+
+All four now take the same `ChipArityAdmitted` `autoParam`, and the narrow rail's is forced by the
+same product: `ChipNarrowLookup.narrowTable_sound` derives the narrow table as the 18-PREFIX of the
+wide one — ONE physical chip, two buses — so an arity the wide chip refuses is one the narrow bus
+can never be served at either.
 
 ⚑ **This list is the chip's budget, and it is not negotiable from the emitter side.** Do NOT
 widen it to fit a descriptor: pad the absorb block up to the next admitted arity instead. Widening
@@ -1398,19 +1415,42 @@ def chipRow (hash : List ℤ → ℤ) (ins : List ℤ) (lanes : List ℤ) : List
 digest column :: lane columns)`. `digestCol` is out0 (the bound digest, UNCHANGED meaning);
 `laneCols` are the `CHIP_OUT_LANES - 1` columns carrying the exposed lanes 1..7 (witnessed = the
 genuine permutation lanes, so the lookup matches the 17-wide chip row, then NOT constrained by
-the single-output site denotation). -/
-def chipLookupTuple (ins : List EmittedExpr) (digestCol : Nat) (laneCols : List Nat) :
+the single-output site denotation).
+
+⚑ **`hAdm` is the admitted-arity side condition, and it is why this is a checked constructor.**
+The arity tag IS `ins.length`, so an emitter that hands over an absorb block of a length the chip
+AIR refuses is building a tuple no assignment can satisfy. The condition is an `autoParam`: every
+honest site discharges it silently (see `chip_arity_admitted`), and a site at arity 8, 9 or 14
+**fails to elaborate**. `hAdm` is a `Prop` and does not appear in the result, so the emitted wire
+bytes are untouched — and by proof irrelevance a caller that supplies its own proof unifies with
+one that let the `autoParam` fire.
+
+⚠ **This is the DEPLOYED rail** (`chipRowN_head_eq_hash`'s note: Phase B-GATE keeps the commitment
+1-felt, so deployed soundness rides `chip_lookup_sound`). It carried `ins.length ≤ CHIP_RATE` — i.e.
+NOTHING, since the tuple constructor took no condition at all — until 2026-08-02, while
+`chipLookupTupleN` had been checked since `eaf64969a`. Two rails, one condition, and the unchecked
+one was the one in production. -/
+def chipLookupTuple (ins : List EmittedExpr) (digestCol : Nat) (laneCols : List Nat)
+    (hAdm : ChipArityAdmitted ins.length := by chip_arity_admitted) :
     List EmittedExpr :=
+  let _ := hAdm
   (.const (ins.length : ℤ)) :: padToE CHIP_RATE ins ++ (.var digestCol :: laneCols.map .var)
 
 /-- A chip table is SOUND when every row is a genuine `(arity, padded inputs, hash inputs ::
 lanes)` tuple of the permutation (the chip AIR's own faithfulness — the per-permutation
 constraint family). The `lanes` ride existentially: their VALUES are the genuine permutation
 lanes 1..7 (bound by the Rust chip AIR's `out[i] == lane[i]` equalities), but they are not a
-function of `hash`, so the `hash`-parameterized soundness predicate quantifies over them. -/
+function of `hash`, so the `hash`-parameterized soundness predicate quantifies over them.
+
+⚑ The arity condition is `ChipArityAdmitted`, NOT `≤ CHIP_RATE` — the same correction
+`ChipTableSoundN` took, and for the same reason: the admission product refuses every other arity,
+so a table containing a row at arity 8 is not a table the deployed chip can ever serve. Modelling
+it as `≤ CHIP_RATE` let the model carry rows the circuit cannot hold, and every
+completeness/inhabitation claim built on such a table was a claim about a machine that does not
+exist. -/
 def ChipTableSound (hash : List ℤ → ℤ) (tbl : Table) : Prop :=
   ∀ r ∈ tbl, ∃ (ins lanes : List ℤ),
-    ins.length ≤ CHIP_RATE ∧ lanes.length = CHIP_OUT_LANES - 1 ∧ r = chipRow hash ins lanes
+    ChipArityAdmitted ins.length ∧ lanes.length = CHIP_OUT_LANES - 1 ∧ r = chipRow hash ins lanes
 
 /-- **THE LEVER (`chip_lookup_sound`).** Against a sound chip table, a chip lookup ENFORCES the
 hash equation: the digest column (out0, the HEAD of the output block) carries the genuine hash of
@@ -1419,11 +1459,11 @@ unique, so no padding confusion survives; the lanes 1..7 ride along (matched exi
 do NOT enter the single-output denotation — the commitment STAYS 1-felt (out0). -/
 theorem chip_lookup_sound (hash : List ℤ → ℤ) (tbl : Table) (hSound : ChipTableSound hash tbl)
     (a : Assignment) (ins : List EmittedExpr) (digestCol : Nat) (laneCols : List Nat)
-    (hlen : ins.length ≤ CHIP_RATE)
-    (hmem : (chipLookupTuple ins digestCol laneCols).map (·.eval a) ∈ tbl) :
+    (hAdm : ChipArityAdmitted ins.length)
+    (hmem : (chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a) ∈ tbl) :
     a digestCol = hash (ins.map (·.eval a)) := by
   obtain ⟨ws, lanes, hwlen, _hlanes, hrow⟩ := hSound _ hmem
-  have hev : (chipLookupTuple ins digestCol laneCols).map (·.eval a)
+  have hev : (chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a))
           ++ (a digestCol :: laneCols.map a) := by
     simp [chipLookupTuple, List.map_cons, List.map_append, map_eval_padToE, EmittedExpr.eval,
@@ -1436,9 +1476,9 @@ theorem chip_lookup_sound (hash : List ℤ → ℤ) (tbl : Table) (hSound : Chip
     have := Int.natCast_inj.mp hcast
     simpa [List.length_map] using this
   have hlenm : (ins.map (·.eval a)).length ≤ CHIP_RATE := by
-    simpa [List.length_map] using hlen
+    simpa [List.length_map] using chipArity_le_rate hAdm
   have hpads := List.append_inj htail
-    (by rw [padTo_length hlenm, padTo_length hwlen])
+    (by rw [padTo_length hlenm, padTo_length (chipArity_le_rate hwlen)])
   have hins : ins.map (·.eval a) = ws := padTo_inj hlens hpads.1
   -- the output blocks are equal lists; their HEADS give the digest equation
   have hblock : a digestCol :: laneCols.map a = hash ws :: lanes := hpads.2
@@ -1570,10 +1610,17 @@ def siteLaneCols (base : Nat) : List Nat :=
 /-- The chip lookup replacing site `s` of the ordered family `sites`. Phase B-GATE: the 17-wide
 tuple `[arity, padded inputs, digestCol :: laneCols base]`. `digestCol` is out0 (the bound
 digest, UNCHANGED meaning); the 7 lane columns at `base..base+6` carry the exposed lanes 1..7
-(matched to the chip row, NOT constrained by the single-output denotation). -/
-def siteLookup (sites : List VmHashSite) (s : VmHashSite) (base : Nat) : Lookup :=
+(matched to the chip row, NOT constrained by the single-output denotation).
+
+⚑ `hAdm` is the site's own admitted-arity obligation: a v1 hash site absorbing a number of inputs
+the chip AIR refuses graduates into a lookup no assignment satisfies. It is stated on
+`s.inputs.length` (the site's own arity, the thing an author reads) and transported across the
+`HashInput.toExpr` map, which does not change a length. -/
+def siteLookup (sites : List VmHashSite) (s : VmHashSite) (base : Nat)
+    (hAdm : ChipArityAdmitted s.inputs.length := by chip_arity_admitted) : Lookup :=
   { table := .poseidon2
-  , tuple := chipLookupTuple (s.inputs.map (HashInput.toExpr sites)) s.digestCol (siteLaneCols base) }
+  , tuple := chipLookupTuple (s.inputs.map (HashInput.toExpr sites)) s.digestCol (siteLaneCols base)
+      (by simpa [List.length_map] using hAdm) }
 
 /-- **The site-to-lookup replacement is SOUND.** If the earlier sites' digest columns carry the
 resolved digests (the `siteHoldsAll` invariant, hypothesis `hdig`) and the chip table is sound,
@@ -1583,12 +1630,12 @@ theorem siteLookup_replaces_site (hash : List ℤ → ℤ) (tbl : Table)
     (hSound : ChipTableSound hash tbl) (env : VmRowEnv)
     (sites : List VmHashSite) (s : VmHashSite) (base : Nat) (digs : List ℤ)
     (hdig : ∀ k, env.loc ((sites.getD k default).digestCol) = digs.getD k 0)
-    (hlen : s.inputs.length ≤ CHIP_RATE)
-    (hmem : (siteLookup sites s base).tuple.map (·.eval env.loc) ∈ tbl) :
+    (hAdm : ChipArityAdmitted s.inputs.length)
+    (hmem : (siteLookup sites s base hAdm).tuple.map (·.eval env.loc) ∈ tbl) :
     env.loc s.digestCol = hash (s.resolvedInputs env digs) := by
   have h := chip_lookup_sound hash tbl hSound env.loc
     (s.inputs.map (HashInput.toExpr sites)) s.digestCol (siteLaneCols base)
-    (by simpa [List.length_map] using hlen) hmem
+    (by simpa [List.length_map] using hAdm) hmem
   rw [h]
   congr 1
   rw [List.map_map]

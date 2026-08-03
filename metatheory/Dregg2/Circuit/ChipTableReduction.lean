@@ -250,7 +250,7 @@ theorem genRow_roundGates : roundGatesZ genRow := by
   -- decode genRow canonically (ins = [], out = permZ []) and against the given (ins, outBlock)
   have hcanon : genRow = (([] : List ℤ).length : ℤ) :: (padTo CHIP_RATE [] ++ permZ []) := rfl
   obtain ⟨_, hout⟩ := chipRowShaped_decode_unique genRow [] (permZ []) ins outBlock
-    (by simp [CHIP_RATE]) hlen hcanon hdecode
+    (by chip_arity_admitted) hlen hcanon hdecode
   -- `permZ` is constant, so `permZ [] = permZ ins`.
   exact hout.symm.trans rfl
 
@@ -271,7 +271,7 @@ theorem roundGatesZ_separates :
     ¬ roundGatesZ ((([] : List ℤ).length : ℤ) ::
         (padTo CHIP_RATE [] ++ List.replicate CHIP_OUT_LANES (1 : ℤ))) := by
   rintro ⟨_, hout⟩
-  have h := hout [] (List.replicate CHIP_OUT_LANES (1 : ℤ)) (by simp [CHIP_RATE]) rfl
+  have h := hout [] (List.replicate CHIP_OUT_LANES (1 : ℤ)) (by chip_arity_admitted) rfl
   -- `replicate n 1 = permZ [] = replicate n 0` forces `1 = 0` at head (n = 8 > 0).
   rw [permZ] at h
   have hc := congrArg (fun l => l.headD (2 : ℤ)) h

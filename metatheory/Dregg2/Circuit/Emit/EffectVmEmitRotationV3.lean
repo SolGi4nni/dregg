@@ -499,6 +499,17 @@ def rotV3SitesAt (base : Nat) : List VmHashSite :=
   , ⟨base + 250, [.col (base + 249), .col (base + 184), .col (base + 185), .col (base + 186)], 4⟩
   , ⟨base + 188, [.col (base + 250), .col (base + 187)], 2⟩ ]
 
+/-- **Every rotated absorption site asks the chip for an ADMITTED arity, at EVERY base.** The list
+above is a literal spine of 4-input sites with a terminal 2-input site, so the arity is independent
+of `base` — which is what makes this a fact about the FAMILY rather than about one instantiation.
+`graduateV1` now takes the admission as a construction obligation, and this is the discharge every
+rotated graduation and the S2 compaction rides. -/
+theorem rotV3SitesAt_admitted (base : Nat) :
+    ∀ s ∈ rotV3SitesAt base, ChipArityAdmitted s.inputs.length :=
+  of_decide_eq_true (Eq.refl true)
+
+#assert_axioms rotV3SitesAt_admitted
+
 /-- The 12 chained caveat sites at region base `base` (the `caveatSites` shape, positional):
 4-wide head over `[count, e0.tag, e0.dom, e0.key]`, eight (carrier+3) body groups, the
 (carrier+1) tail onto the MANIFEST-commit carrier — then the rc EXTENSION, two further sites
@@ -1345,7 +1356,11 @@ theorem graduable_rotateV3 {d : EffectVmDescriptor} (h : graduable d = true) :
 /-! ### The Satisfied2-level keystones (one composition each, parametric in `d`). -/
 
 /-- The graduated rotated descriptor of a cohort member. -/
-def v3Of (d : EffectVmDescriptor) : EffectVmDescriptor2 := graduateV1 (rotateV3 d)
+def v3Of (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) :
+    EffectVmDescriptor2 :=
+  graduateV1 (rotateV3 d) hAdm
 
 /-- **THE GRADUATION MODEL, AS ONE NAMED SOURCE.**  The width a v1 face `d` reaches once it is
 rotated and graduated: its own face, plus the rotated appendix, plus `CHIP_OUT_LANES - 1` lane
@@ -1373,7 +1388,7 @@ composition. -/
 theorem rotV3_sound_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t) :
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi
@@ -1385,7 +1400,7 @@ theorem rotV3_sound_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ → �
 theorem rotV3_pins (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
     (envAt t i).loc (d.traceWidth + B_STATE_COMMIT)
       = wireCommitR hash (preLimbsAt d.traceWidth (envAt t i).loc)
@@ -1405,7 +1420,7 @@ last row → rotated NEW commit, rotated height, caveat commit on `d.piCount + 1
 theorem rotV3_publishes (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) :
     ((i == 0) = true →
       (envAt t i).loc (d.traceWidth + B_STATE_COMMIT) ≡ (envAt t i).pub d.piCount [ZMOD 2013265921])
@@ -1445,8 +1460,8 @@ theorem rotV3_caveat_binds_manifest_and_rc (permOut : List ℤ → List ℤ) (ha
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
-    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit' mfin' maddrs' t')
     (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
     (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
     (hpubCav : (envAt t k).pub (d.piCount + 3) = (envAt t' l).pub (d.piCount + 3))
@@ -1493,8 +1508,8 @@ theorem rotV3_moved_rc_moves_the_published_caveat_commit (permOut : List ℤ →
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
-    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit' mfin' maddrs' t')
     (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
     (hlast : (k + 1 == t.rows.length) = true) (hlast' : (l + 1 == t'.rows.length) = true)
     (hcCanonCav : 0 ≤ (envAt t k).loc (d.traceWidth + CAVEAT_REGION_OFF + C_COMMIT)
@@ -1526,8 +1541,8 @@ theorem rotV3_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
-    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit' mfin' maddrs' t')
     (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
     (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
     (k l : Nat) (hk : k < t.rows.length) (hl : l < t'.rows.length)
@@ -1663,8 +1678,8 @@ theorem rotV3_before_binds_or_collides (permOut : List ℤ → List ℤ) (hash :
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
-    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit' mfin' maddrs' t')
     (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
     (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
     (hpubOld : (envAt t i).pub d.piCount = (envAt t' j).pub d.piCount)
@@ -1712,8 +1727,8 @@ theorem rotV3_before_forgery_exhibits_collision (permOut : List ℤ → List ℤ
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (minit' : ℤ → ℤ) (mfin' : ℤ → ℤ × Nat) (maddrs' : List ℤ) (t' : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3Of d) minit mfin maddrs t)
-    (hf' : Satisfied2Faithful permOut hash (v3Of d) minit' mfin' maddrs' t')
+    (hf : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit mfin maddrs t)
+    (hf' : Satisfied2Faithful permOut hash (v3Of d (sitesFit_admitted (graduable_spec (graduable_rotateV3 hgrad)).2.1)) minit' mfin' maddrs' t')
     (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
     (hfirst : (i == 0) = true) (hfirst' : (j == 0) = true)
     (hpubOld : (envAt t i).pub d.piCount = (envAt t' j).pub d.piCount)
@@ -1739,18 +1754,26 @@ theorem rotV3_before_forgery_exhibits_collision (permOut : List ℤ → List ℤ
 
 /-- Append v2-native extras (map ops / mem ops / lookups) to a rotated graduation —
 the attenuate phase-B leg and the dynamic setField ride through unchanged. -/
-def v3OfWith (d : EffectVmDescriptor) (extras : List VmConstraint2) : EffectVmDescriptor2 :=
-  { v3Of d with constraints := (v3Of d).constraints ++ extras }
+def v3OfWith (d : EffectVmDescriptor) (extras : List VmConstraint2)
+    (hAdm : ∀ s ∈ (rotateV3 d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  { v3Of d hAdm with constraints := (v3Of d hAdm).constraints ++ extras }
 
 /-- The graduated cap-WRITE rotated descriptor (cap-root weld DROPPED — the rotated cap-root limb is
 witness-carried, note-spend-shaped). -/
-def v3OfCapWrite (d : EffectVmDescriptor) : EffectVmDescriptor2 := graduateV1 (rotateV3CapWrite d)
+def v3OfCapWrite (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3CapWrite d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) :
+    EffectVmDescriptor2 :=
+  graduateV1 (rotateV3CapWrite d) hAdm
 
 /-- Append v2-native extras (the cap-crown ROTATED-limb write leg) to a cap-WRITE rotated graduation. As
 `v3OfWith` but over `rotateV3CapWrite` — the cap-root advance lives on the rotated limb (`insertWriteOpRot`/
 `removeWriteOpRot`), escaping the v1-state continuity collision. -/
-def v3OfWithCapWrite (d : EffectVmDescriptor) (extras : List VmConstraint2) : EffectVmDescriptor2 :=
-  { v3OfCapWrite d with constraints := (v3OfCapWrite d).constraints ++ extras }
+def v3OfWithCapWrite (d : EffectVmDescriptor) (extras : List VmConstraint2)
+    (hAdm : ∀ s ∈ (rotateV3CapWrite d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  { v3OfCapWrite d hAdm with constraints := (v3OfCapWrite d hAdm).constraints ++ extras }
 
 /-- **`withSelectorGate s d`** — append the per-row SELECTOR-BINDING tooth (`selectorGate s`,
 `EffectVmEmit.§6½`) to an ALREADY-graduated v2 registry member, lifted into a v2 `.base`
@@ -3899,7 +3922,11 @@ theorem rotateV3FrozenAuthority_satisfiedVm_v1 (hash : List ℤ → ℤ) (d : Ef
 continuity weld. Identical SHAPE to `v3Of d` (same width/piCount — the weld is two appended `colEq`
 constraints, no new column), so every width/graduability `#guard` and the per-effect value theorems
 lift verbatim (via `rotV3Frozen_sound_v1` below); it ADDS the authority-frame forcing. -/
-def v3OfFrozen (d : EffectVmDescriptor) : EffectVmDescriptor2 := graduateV1 (rotateV3FrozenAuthority d)
+def v3OfFrozen (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3FrozenAuthority d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) :
+    EffectVmDescriptor2 :=
+  graduateV1 (rotateV3FrozenAuthority d) hAdm
 
 -- The fee pin lands at PI slot 46 (one past the four rotated commit pins 34..37) and the rotated
 -- fee'd transfer publishes 39 PIs over the SAME rotated width as the unfee'd transfer.
@@ -3933,7 +3960,7 @@ theorem rotV3Frozen_sound_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ 
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3OfFrozen d) minit mfin maddrs t) :
+    (hf : Satisfied2Faithful permOut hash (v3OfFrozen d (sitesFit_admitted (graduable_spec (graduable_rotateV3FrozenAuthority hgrad)).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi
@@ -3984,8 +4011,10 @@ theorem rotateV3FrozenAuthoritySetField_satisfiedVm_v1 (slot : Fin 8) (hash : Li
 /-- **`v3OfFrozenSetField slot d`** — the graduated setField[0..7] descriptor (the fields-freeze-except
 variant of `v3OfFrozen`). Same width/piCount/graduability (the freezes are appended `colEq`s, no new
 column), so every setField `#guard` and per-effect value theorem lifts verbatim. -/
-def v3OfFrozenSetField (slot : Fin 8) (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
-  graduateV1 (rotateV3FrozenAuthoritySetField slot d)
+def v3OfFrozenSetField (slot : Fin 8) (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3FrozenAuthoritySetField slot d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  graduateV1 (rotateV3FrozenAuthoritySetField slot d) hAdm
 
 /-- A `Satisfied2` witness of the setField frozen graduation yields the full v1 denotation on every
 row (the setField analog of `rotV3Frozen_sound_v1`). -/
@@ -3993,7 +4022,7 @@ theorem rotV3FrozenSetField_sound_v1 (slot : Fin 8) (permOut : List ℤ → List
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduable d = true)
-    (hf : Satisfied2Faithful permOut hash (v3OfFrozenSetField slot d) minit mfin maddrs t) :
+    (hf : Satisfied2Faithful permOut hash (v3OfFrozenSetField slot d (sitesFit_admitted (graduable_spec (graduable_rotateV3FrozenAuthoritySetField hgrad)).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi
@@ -6969,7 +6998,7 @@ theorem revokeDelegationWriteV3_rejects_wrong_epoch (hash : List ℤ → ℤ)
 /-- The rotated Custom declares EXACTLY the one proof-binding op (the rotated graduation
 contributes none; the extras add exactly `customProofBind`). -/
 theorem proofBindsOf_customV3 : proofBindsOf customV3 = [customProofBind] := by
-  have hbase : proofBindsOf (v3Of customV1Face) = [] := proofBindsOf_graduateV1 (rotateV3 customV1Face)
+  have hbase : proofBindsOf (v3Of customV1Face) = [] := proofBindsOf_graduateV1 (rotateV3 customV1Face) _
   unfold proofBindsOf at hbase ⊢
   -- `customV3.constraints = ((v3Of …).constraints ++ [proofBind customProofBind]) ++ customPiExposure`;
   -- the sixteen `customPiExposure` pins are all `.base (.piBinding …)`, contributing no proof-binds.
@@ -7058,8 +7087,10 @@ theorem graduableWide_rotateV3FrozenAuthority {d : EffectVmDescriptor}
 /-- **`v3OfFrozenWide d`** — the WIDE graduated rotated descriptor of a hardened member (the
 `graduateV1Wide` analog of `v3OfFrozen`): same rotation + authority-continuity weld, range teeth
 lowered per-width (the 15-bit borrow limbs into the 15-bit table). -/
-def v3OfFrozenWide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
-  graduateV1Wide (rotateV3FrozenAuthority d)
+def v3OfFrozenWide (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3FrozenAuthority d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  graduateV1Wide (rotateV3FrozenAuthority d) hAdm
 
 /-- **`rotV3FrozenWide_sound_v1`** — a `Satisfied2FaithfulWide` witness of the WIDE frozen
 graduation yields the full v1 denotation of the original descriptor on every row (the
@@ -7069,7 +7100,7 @@ theorem rotV3FrozenWide_sound_v1 (permOut : List ℤ → List ℤ) (hash : List 
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduableWide d = true)
-    (hf : Satisfied2FaithfulWide permOut hash (v3OfFrozenWide d) minit mfin maddrs t) :
+    (hf : Satisfied2FaithfulWide permOut hash (v3OfFrozenWide d (sitesFit_admitted (graduableWide_spec (graduableWide_rotateV3FrozenAuthority hgrad)).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi
@@ -7116,8 +7147,10 @@ theorem rotateV3WithFeePin_satisfiedVm (hash : List ℤ → ℤ) (base : EffectV
 member: `transferFeeV3`'s composition (freeze → fee pin → graduation) at the multi-width
 graduation, so the 15-bit borrow/carry teeth of the §11.8 fee availability weld lower into the
 15-bit table. -/
-def v3OfFrozenFeeWide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
-  graduateV1Wide (rotateV3WithFeePin (rotateV3FrozenAuthority d))
+def v3OfFrozenFeeWide (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3WithFeePin (rotateV3FrozenAuthority d)).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  graduateV1Wide (rotateV3WithFeePin (rotateV3FrozenAuthority d)) hAdm
 
 /-- **`rotV3FrozenFeeWide_sound_v1`** — a `Satisfied2FaithfulWide` witness of the wide fee-pinned
 frozen graduation yields the full v1 denotation of the original descriptor on every row (the
@@ -7128,7 +7161,8 @@ theorem rotV3FrozenFeeWide_sound_v1 (permOut : List ℤ → List ℤ) (hash : Li
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduableWide d = true)
-    (hf : Satisfied2FaithfulWide permOut hash (v3OfFrozenFeeWide d) minit mfin maddrs t) :
+    (hf : Satisfied2FaithfulWide permOut hash (v3OfFrozenFeeWide d (sitesFit_admitted (graduableWide_spec (graduableWide_rotateV3WithFeePin
+      (graduableWide_rotateV3FrozenAuthority hgrad))).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi

@@ -77,7 +77,9 @@ every hash site becomes an 18-wide NARROW chip lookup (`siteLookupNarrow`, no pe
 /-- **`graduateV1WideNarrow`** — `graduateV1Wide` with the narrow site leg + shrunk width. Constraints
 embed, every hash site becomes an 18-wide narrow chip lookup, every range tooth lowers via
 `rangeLookupW` into ITS OWN width's table; NO lane columns are appended to the trace width. -/
-def graduateV1WideNarrow (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
+def graduateV1WideNarrow (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length := by graduate_arity) :
+    EffectVmDescriptor2 :=
   { name        := d.name
   , traceWidth  := d.traceWidth
   , piCount     := d.piCount
@@ -87,7 +89,7 @@ def graduateV1WideNarrow (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
              (fun b => ⟨rangeTidW b, "range_w" ++ toString b, 1, .rangeLimb b⟩)
   , constraints :=
       d.constraints.map .base
-        ++ d.hashSites.map (fun s => .lookup (siteLookupNarrow d.hashSites s))
+        ++ narrowSites d.hashSites hAdm
         ++ d.ranges.map (fun r => .lookup (rangeLookupW r))
   , hashSites   := []
   , ranges      := [] }
@@ -106,7 +108,7 @@ theorem graduateV1WideNarrow_sound (hash : List ℤ → ℤ) (d : EffectVmDescri
     (hchip : ChipTableSoundNarrow hash (t.tf poseidon2narrow))
     (hrangeW : ∀ b ∈ WIDE_RANGE_WIDTHS, t.tf (rangeTidW b) = rangeRows b)
     (hgrad : graduableWide d = true)
-    (hsat : Satisfied2 hash (graduateV1WideNarrow d) minit mfin maddrs t) :
+    (hsat : Satisfied2 hash (graduateV1WideNarrow d (sitesFit_admitted (graduableWide_spec hgrad).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   obtain ⟨hwf, hfit, hbits⟩ := graduableWide_spec hgrad
@@ -115,28 +117,28 @@ theorem graduateV1WideNarrow_sound (hash : List ℤ → ℤ) (d : EffectVmDescri
   refine ⟨?_, ?_, ?_⟩
   · -- the v1 constraints, embedded (IDENTICAL to `graduateV1Wide_sound`)
     intro c hc
-    have hmem : VmConstraint2.base c ∈ (graduateV1WideNarrow d).constraints := by
+    have hmem : VmConstraint2.base c ∈ (graduateV1WideNarrow d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1WideNarrow
-      simp only [List.mem_append, List.mem_map]
+      simp only [List.mem_append, List.mem_map, mem_narrowSites]
       exact Or.inl (Or.inl ⟨c, hc, rfl⟩)
     exact hrow _ hmem
   · -- the hash sites, via the NARROW chip-lookup induction (no lane base)
-    apply siteLookupsNarrow_sound hash (t.tf poseidon2narrow) hchip (envAt t i) d.hashSites hwf
-    · intro s hs
-      exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+    refine siteLookupsNarrow_sound hash (t.tf poseidon2narrow) hchip (envAt t i) d.hashSites hwf
+      (sitesFit_admitted hfit) ?_
     · intro j hj
-      have hmem : VmConstraint2.lookup (siteLookupNarrow d.hashSites d.hashSites[j])
-          ∈ (graduateV1WideNarrow d).constraints := by
+      have hmem : VmConstraint2.lookup (siteLookupNarrow d.hashSites d.hashSites[j]
+            (sitesFit_admitted hfit _ (List.getElem_mem hj)))
+          ∈ (graduateV1WideNarrow d (sitesFit_admitted hfit)).constraints := by
         unfold graduateV1WideNarrow
-        simp only [List.mem_append, List.mem_map]
+        simp only [List.mem_append, List.mem_map, mem_narrowSites]
         exact Or.inl (Or.inr ⟨d.hashSites[j], List.getElem_mem hj, rfl⟩)
       exact hrow _ hmem
   · -- the range teeth, each via ITS OWN width's table (IDENTICAL to `graduateV1Wide_sound`)
     intro r hr
     have hb : r.bits ∈ WIDE_RANGE_WIDTHS := hbits r hr
-    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (graduateV1WideNarrow d).constraints := by
+    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (graduateV1WideNarrow d (sitesFit_admitted hfit)).constraints := by
       unfold graduateV1WideNarrow
-      simp only [List.mem_append, List.mem_map]
+      simp only [List.mem_append, List.mem_map, mem_narrowSites]
       exact Or.inr ⟨r, hr, rfl⟩
     exact lookup_replaces_rangeW r.bits t.tf (hrangeW r.bits hb) (envAt t i) r.wire (hrow _ hmem)
 
@@ -171,7 +173,7 @@ theorem Satisfied2FaithfulWideNarrow.chipSoundNarrow {hash : List ℤ → ℤ}
 theorem satisfied2FaithfulWideNarrow_satisfiedVm (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduableWide d = true)
-    (hf : Satisfied2FaithfulWideNarrow hash (graduateV1WideNarrow d) minit mfin maddrs t) :
+    (hf : Satisfied2FaithfulWideNarrow hash (graduateV1WideNarrow d (sitesFit_admitted (graduableWide_spec hgrad).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
   graduateV1WideNarrow_sound hash d minit mfin maddrs t
@@ -186,8 +188,10 @@ descriptor on every row. CONCLUSION byte-identical to `rotV3FrozenWide_sound_v1`
 /-- **`v3OfFrozenWideNarrow d`** — the narrow-base WIDE graduated rotated descriptor of a hardened
 member (the narrow twin of `v3OfFrozenWide`): same rotation + authority-continuity weld, range teeth
 lowered per-width, hash sites on the 18-wide narrow bus with NO lane columns. -/
-def v3OfFrozenWideNarrow (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
-  graduateV1WideNarrow (rotateV3FrozenAuthority d)
+def v3OfFrozenWideNarrow (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ (rotateV3FrozenAuthority d).hashSites,
+        ChipArityAdmitted s.inputs.length := by graduate_arity) : EffectVmDescriptor2 :=
+  graduateV1WideNarrow (rotateV3FrozenAuthority d) hAdm
 
 /-- **`rotV3FrozenWideNarrow_sound_v1`** — a `Satisfied2FaithfulWideNarrow` witness of the narrow-base
 WIDE frozen graduation yields the full v1 denotation of the original descriptor on every row (the
@@ -196,7 +200,7 @@ theorem rotV3FrozenWideNarrow_sound_v1 (hash : List ℤ → ℤ)
     (d : EffectVmDescriptor)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hgrad : graduableWide d = true)
-    (hf : Satisfied2FaithfulWideNarrow hash (v3OfFrozenWideNarrow d) minit mfin maddrs t) :
+    (hf : Satisfied2FaithfulWideNarrow hash (v3OfFrozenWideNarrow d (sitesFit_admitted (graduableWide_spec (graduableWide_rotateV3FrozenAuthority hgrad)).2.1)) minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
       satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
   intro i hi
@@ -219,7 +223,7 @@ theorem wideEmbeddedNarrow_sound_v1 (hash : List ℤ → ℤ)
     (hgrad : graduableWide d = true)
     (hclean : ∀ c ∈ d.constraints,
       isLegacyCommitPin1 bb ab (VmConstraint2.base c) = false)
-    (hemb : ∀ c ∈ (v3OfFrozenWideNarrow d).constraints,
+    (hemb : ∀ c ∈ (v3OfFrozenWideNarrow d (sitesFit_admitted (graduableWide_spec (graduableWide_rotateV3FrozenAuthority hgrad)).2.1)).constraints,
       isLegacyCommitPin1 bb ab c = false → c ∈ D.constraints)
     (hf : Satisfied2FaithfulWideNarrow hash D minit mfin maddrs t) :
     ∀ i, i < t.rows.length →
@@ -235,36 +239,35 @@ theorem wideEmbeddedNarrow_sound_v1 (hash : List ℤ → ℤ)
     have hcr : c ∈ (rotateV3FrozenAuthority d).constraints := by
       rw [rotateV3FrozenAuthority_constraints]
       exact List.mem_append_left _ (List.mem_append_left _ hc)
-    have hmem : VmConstraint2.base c ∈ (v3OfFrozenWideNarrow d).constraints := by
-      show VmConstraint2.base c ∈ (graduateV1WideNarrow (rotateV3FrozenAuthority d)).constraints
+    have hmem : VmConstraint2.base c ∈ (v3OfFrozenWideNarrow d (sitesFit_admitted (graduableWide_spec hgradr).2.1)).constraints := by
+      show VmConstraint2.base c ∈ (graduateV1WideNarrow (rotateV3FrozenAuthority d) (sitesFit_admitted hfit)).constraints
       unfold graduateV1WideNarrow
-      simp only [List.mem_append, List.mem_map]
+      simp only [List.mem_append, List.mem_map, mem_narrowSites]
       exact Or.inl (Or.inl ⟨c, hcr, rfl⟩)
     exact hrow _ (hemb _ hmem (hclean c hc))
   · -- the ORIGINAL face's hash sites: the FULL rotated chained NARROW walk, then the prefix
     have hall : siteHoldsAll hash (envAt t i) (rotateV3FrozenAuthority d).hashSites := by
-      apply siteLookupsNarrow_sound hash (t.tf poseidon2narrow) hf.chipTableFaithfulNarrow
-        (envAt t i) (rotateV3FrozenAuthority d).hashSites hwf
-      · intro s hs
-        exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+      refine siteLookupsNarrow_sound hash (t.tf poseidon2narrow) hf.chipTableFaithfulNarrow
+        (envAt t i) (rotateV3FrozenAuthority d).hashSites hwf (sitesFit_admitted hfit) ?_
       · intro j hj
         have hmem : VmConstraint2.lookup
             (siteLookupNarrow (rotateV3FrozenAuthority d).hashSites
-              (rotateV3FrozenAuthority d).hashSites[j])
-            ∈ (v3OfFrozenWideNarrow d).constraints := by
-          show _ ∈ (graduateV1WideNarrow (rotateV3FrozenAuthority d)).constraints
+              (rotateV3FrozenAuthority d).hashSites[j]
+              (sitesFit_admitted hfit _ (List.getElem_mem hj)))
+            ∈ (v3OfFrozenWideNarrow d (sitesFit_admitted (graduableWide_spec hgradr).2.1)).constraints := by
+          show _ ∈ (graduateV1WideNarrow (rotateV3FrozenAuthority d) (sitesFit_admitted hfit)).constraints
           unfold graduateV1WideNarrow
-          simp only [List.mem_append, List.mem_map]
+          simp only [List.mem_append, List.mem_map, mem_narrowSites]
           exact Or.inl (Or.inr ⟨(rotateV3FrozenAuthority d).hashSites[j], List.getElem_mem hj, rfl⟩)
         exact hrow _ (hemb _ hmem rfl)
     exact go_append_left hash (envAt t i) [] d.hashSites (rotV3Appendix d.traceWidth) hall
   · -- the ORIGINAL face's range teeth, each via ITS OWN width's table (15-bit EXACT)
     intro r hr
     have hb : r.bits ∈ WIDE_RANGE_WIDTHS := hbits r hr
-    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (v3OfFrozenWideNarrow d).constraints := by
-      show _ ∈ (graduateV1WideNarrow (rotateV3FrozenAuthority d)).constraints
+    have hmem : VmConstraint2.lookup (rangeLookupW r) ∈ (v3OfFrozenWideNarrow d (sitesFit_admitted (graduableWide_spec hgradr).2.1)).constraints := by
+      show _ ∈ (graduateV1WideNarrow (rotateV3FrozenAuthority d) (sitesFit_admitted hfit)).constraints
       unfold graduateV1WideNarrow
-      simp only [List.mem_append, List.mem_map]
+      simp only [List.mem_append, List.mem_map, mem_narrowSites]
       exact Or.inr ⟨r, hr, rfl⟩
     exact lookup_replaces_rangeW r.bits t.tf (hf.rangeTablesWideFaithful r.bits hb)
       (envAt t i) r.wire (hrow _ (hemb _ hmem rfl))
@@ -276,8 +279,9 @@ site: `graduateV1WideNarrow d` is `7·(#hash sites)` columns narrower than `grad
 
 /-- **The wide-minus-narrow trace-width gap is exactly `7·(#hash sites)`.** `graduateV1Wide` appends
 `(CHIP_OUT_LANES-1)·n` lane columns; `graduateV1WideNarrow` appends none. -/
-theorem graduateV1WideNarrow_width_shrink (d : EffectVmDescriptor) :
-    (graduateV1Wide d).traceWidth - (graduateV1WideNarrow d).traceWidth
+theorem graduateV1WideNarrow_width_shrink (d : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d.hashSites, ChipArityAdmitted s.inputs.length) :
+    (graduateV1Wide d hAdm).traceWidth - (graduateV1WideNarrow d hAdm).traceWidth
       = (CHIP_OUT_LANES - 1) * d.hashSites.length := by
   show d.traceWidth + (CHIP_OUT_LANES - 1) * d.hashSites.length - d.traceWidth
       = (CHIP_OUT_LANES - 1) * d.hashSites.length

@@ -231,10 +231,12 @@ abbrev LookupShaped (cs : List VmConstraint2) : Prop :=
 
 /-- **The graduated core is lookup-shaped, ∀ face** — the ∀-d generalization of
 `AirLegsDischarged.hbus_is_lookup` (same proof, parametric). -/
-theorem lookupShaped_graduateV1 (d0 : EffectVmDescriptor) :
-    LookupShaped (graduateV1 d0).constraints := by
+theorem lookupShaped_graduateV1 (d0 : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d0.hashSites,
+      Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted s.inputs.length) :
+    LookupShaped (graduateV1 d0 hAdm).constraints := by
   intro c hc hA
-  rcases constraints_graduateV1_shapes d0 c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+  rcases constraints_graduateV1_shapes d0 hAdm c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
   · exact absurd (show isArith (VmConstraint2.base c₀) from trivial) hA
   · exact ⟨l, rfl⟩
 
@@ -283,53 +285,53 @@ abbrev MemFreeSideConditions (d : EffectVmDescriptor2) : Prop :=
 
 -- Pure `graduateV1` members (v3Of / v3OfFrozen and the graduateV1-headed gate/pin rotations):
 theorem mint_sideConditions : MemFreeSideConditions mintV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem burn_sideConditions : MemFreeSideConditions burnV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem incrementNonce_sideConditions : MemFreeSideConditions incrementNonceV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem emitEvent_sideConditions : MemFreeSideConditions emitEventV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem exercise_sideConditions : MemFreeSideConditions exerciseV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem pipelinedSend_sideConditions : MemFreeSideConditions pipelinedSendV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem setProgram_sideConditions : MemFreeSideConditions setProgramV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem cellSeal_sideConditions : MemFreeSideConditions cellSealV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem cellUnseal_sideConditions : MemFreeSideConditions cellUnsealV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem cellDestroy_sideConditions : MemFreeSideConditions cellDestroyV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem receiptArchive_sideConditions : MemFreeSideConditions receiptArchiveV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 theorem transferFee_sideConditions : MemFreeSideConditions transferFeeV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_graduateV1 _ (by graduate_arity)⟩
 
 -- `graduateV1 … ++ []` (the cap-family write faces with extras dropped):
 theorem delegate_sideConditions : MemFreeSideConditions delegateV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) lookupShaped_nil⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) lookupShaped_nil⟩
 theorem grantCap_sideConditions : MemFreeSideConditions grantCapWriteV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) lookupShaped_nil⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) lookupShaped_nil⟩
 theorem introduce_sideConditions : MemFreeSideConditions introduceWriteV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) lookupShaped_nil⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) lookupShaped_nil⟩
 theorem revokeCapability_sideConditions : MemFreeSideConditions revokeCapabilityV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) lookupShaped_nil⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) lookupShaped_nil⟩
 theorem refreshDelegation_sideConditions : MemFreeSideConditions refreshDelegationWriteV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) lookupShaped_nil⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) lookupShaped_nil⟩
 
 -- `graduateV1 … ++ [.lookup submaskLookup]` (the non-amplification tooth):
 theorem attenuate_sideConditions : MemFreeSideConditions attenuateV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_lookup_single _)⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_lookup_single _)⟩
 theorem delegateAtten_sideConditions : MemFreeSideConditions delegateAttenV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_lookup_single _)⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_lookup_single _)⟩
 
 -- `graduateV1 … ++ [.base …]` (single gate/pin wraps):
 theorem revokeDelegation_sideConditions : MemFreeSideConditions revokeDelegationWriteV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _)⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_single _)⟩
 theorem supplyMint_sideConditions : MemFreeSideConditions supplyMintV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _)⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_single _)⟩
 -- ⚑ The shape brick gains ONE outer append for the VALUE8 completion pins. No proof is
 -- weakened: `withSetFieldCompletionPins` is a single `++` of `.base (.piBinding …)`, which
 -- `lookupShaped_base_map` already covers, so this is the same brick with one more layer.
@@ -337,30 +339,30 @@ theorem setFieldStatic_sideConditions (slot : Fin 8) :
     MemFreeSideConditions (setFieldStaticV3 slot) :=
   ⟨⟨rfl, rfl⟩,
     lookupShaped_append
-      (lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _))
+      (lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_single _))
       (lookupShaped_base_map _ _)⟩
 
 -- `graduateV1 … ++ (map .base pins)` (the H1 headroom-pin wrap):
 theorem makeSovereign_sideConditions : MemFreeSideConditions makeSovereignV3 :=
-  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_map _ _)⟩
+  ⟨⟨rfl, rfl⟩, lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_map _ _)⟩
 
 -- `(graduateV1 … ++ pins) ++ welds` (the perms/VK 8-felt completion wraps):
 theorem setPermissions_sideConditions : MemFreeSideConditions setPermsV3 :=
   ⟨⟨rfl, rfl⟩,
     lookupShaped_append
-      (lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_map _ _))
+      (lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_map _ _))
       (lookupShaped_base_map _ _)⟩
 theorem setVK_sideConditions : MemFreeSideConditions setVKV3 :=
   ⟨⟨rfl, rfl⟩,
     lookupShaped_append
-      (lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_map _ _))
+      (lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_map _ _))
       (lookupShaped_base_map _ _)⟩
 
 -- `(graduateV1 … ++ [.base sel]) ++ [.base pin]` (the bridge-mint felt mint-hash member):
 theorem bridgeMint_sideConditions : MemFreeSideConditions mintV3BridgeHash :=
   ⟨⟨rfl, rfl⟩,
     lookupShaped_append
-      (lookupShaped_append (lookupShaped_graduateV1 _) (lookupShaped_base_single _))
+      (lookupShaped_append (lookupShaped_graduateV1 _ (by graduate_arity)) (lookupShaped_base_single _))
       (lookupShaped_base_single _)⟩
 
 /-! ## §3 — the DRY assembler: ONE application shape shared by every instance. -/

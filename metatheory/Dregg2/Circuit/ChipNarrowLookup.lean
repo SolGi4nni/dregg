@@ -92,8 +92,8 @@ theorem narrowTable_sound (hash : List ℤ → ℤ) (tbl : Table)
     ChipTableSoundNarrow hash (narrowTable tbl) := by
   intro r hr
   obtain ⟨r₀, hr₀, rfl⟩ := List.mem_map.mp hr
-  obtain ⟨ins, lanes, hlen, _hlanes, rfl⟩ := h r₀ hr₀
-  exact ⟨ins, hlen, narrowRow_chipRow hash ins lanes hlen⟩
+  obtain ⟨ins, lanes, hAdm, _hlanes, rfl⟩ := h r₀ hr₀
+  exact ⟨ins, hAdm, narrowRow_chipRow hash ins lanes (chipArity_le_rate hAdm)⟩
 
 /-- **SOUNDNESS PRESERVED END-TO-END.** Against the prefix-served narrow bus of a sound wide
 chip table, an out0-only lookup forces the IDENTICAL digest equation the legacy 25-wide
@@ -102,32 +102,32 @@ conclusion, so the narrowed site forces exactly what the wide site forced. -/
 theorem chip_lookup_narrow_sound_of_wide_table (hash : List ℤ → ℤ) (tbl : Table)
     (hSound : ChipTableSound hash tbl) (a : Assignment)
     (ins : List EmittedExpr) (digestCol : Nat)
-    (hlen : ins.length ≤ CHIP_RATE)
-    (hmem : (chipLookupTupleNarrow ins digestCol).map (·.eval a) ∈ narrowTable tbl) :
+    (hAdm : ChipArityAdmitted ins.length)
+    (hmem : (chipLookupTupleNarrow ins digestCol hAdm).map (·.eval a) ∈ narrowTable tbl) :
     a digestCol = hash (ins.map (·.eval a)) :=
   chip_lookup_sound_narrow hash (narrowTable tbl) (narrowTable_sound hash tbl hSound)
-    a ins digestCol hlen hmem
+    a ins digestCol hAdm hmem
 
 /-- **COMPLETENESS PRESERVED.** Any assignment whose 25-wide lookup tuple is served by the chip
 table has its 18-wide narrow tuple served by the prefix table — the SAME rows serve both buses,
 so no honest witness is lost by the swap. -/
 theorem narrow_served_by_same_rows (tbl : Table) (a : Assignment)
     (ins : List EmittedExpr) (digestCol : Nat) (laneCols : List Nat)
-    (hlen : ins.length ≤ CHIP_RATE)
-    (hwide : (chipLookupTuple ins digestCol laneCols).map (·.eval a) ∈ tbl) :
-    (chipLookupTupleNarrow ins digestCol).map (·.eval a) ∈ narrowTable tbl := by
-  refine List.mem_map.mpr ⟨(chipLookupTuple ins digestCol laneCols).map (·.eval a), hwide, ?_⟩
-  have hev : (chipLookupTuple ins digestCol laneCols).map (·.eval a)
+    (hAdm : ChipArityAdmitted ins.length)
+    (hwide : (chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a) ∈ tbl) :
+    (chipLookupTupleNarrow ins digestCol hAdm).map (·.eval a) ∈ narrowTable tbl := by
+  refine List.mem_map.mpr ⟨(chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a), hwide, ?_⟩
+  have hev : (chipLookupTuple ins digestCol laneCols hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a))
           ++ (a digestCol :: laneCols.map a) := by
     simp [chipLookupTuple, List.map_cons, List.map_append, map_eval_padToE, EmittedExpr.eval,
       List.map_map, Function.comp_def]
-  have hevN : (chipLookupTupleNarrow ins digestCol).map (·.eval a)
+  have hevN : (chipLookupTupleNarrow ins digestCol hAdm).map (·.eval a)
       = (ins.length : ℤ) :: padTo CHIP_RATE (ins.map (·.eval a)) ++ [a digestCol] := by
     simp [chipLookupTupleNarrow, List.map_cons, List.map_append, map_eval_padToE,
       EmittedExpr.eval]
   have hp : (padTo CHIP_RATE (ins.map (·.eval a))).length = CHIP_RATE :=
-    padTo_length (by simpa [List.length_map] using hlen)
+    padTo_length (by simpa [List.length_map] using chipArity_le_rate hAdm)
   have hkey := take_cons_block ((ins.length : ℤ)) (a digestCol)
     (padTo CHIP_RATE (ins.map (·.eval a))) (laneCols.map a)
   rw [hp] at hkey
@@ -145,17 +145,17 @@ theorem narrow_lookup_holdsAt_sound (hash : List ℤ → ℤ) (tf : TraceFamily)
     (hwire : tf poseidon2narrow = narrowTable (tf .poseidon2))
     (hSound : ChipTableSound hash (tf .poseidon2))
     (env : Emit.EffectVmEmit.VmRowEnv) (ins : List EmittedExpr) (digestCol : Nat)
-    (hlen : ins.length ≤ CHIP_RATE)
+    (hAdm : ChipArityAdmitted ins.length)
     (hholds : (Lookup.holdsAt tf env
-      { table := poseidon2narrow, tuple := chipLookupTupleNarrow ins digestCol })) :
+      { table := poseidon2narrow, tuple := chipLookupTupleNarrow ins digestCol hAdm })) :
     env.loc digestCol = hash (ins.map (·.eval env.loc)) := by
-  have hmem : (chipLookupTupleNarrow ins digestCol).map (·.eval env.loc)
+  have hmem : (chipLookupTupleNarrow ins digestCol hAdm).map (·.eval env.loc)
       ∈ narrowTable (tf .poseidon2) := by
     have h := hholds
     simp only [Lookup.holdsAt] at h
     rwa [hwire] at h
   exact chip_lookup_narrow_sound_of_wide_table hash (tf .poseidon2) hSound env.loc
-    ins digestCol hlen hmem
+    ins digestCol hAdm hmem
 
 /-- Deployment-shaped completeness: a row serving the legacy wide lookup serves the narrow one
 under the same family wiring — the honest prover's traces survive the swap unchanged (minus the
@@ -164,14 +164,14 @@ theorem narrow_lookup_holdsAt_of_wide (tf : TraceFamily)
     (hwire : tf poseidon2narrow = narrowTable (tf .poseidon2))
     (env : Emit.EffectVmEmit.VmRowEnv) (ins : List EmittedExpr) (digestCol : Nat)
     (laneCols : List Nat)
-    (hlen : ins.length ≤ CHIP_RATE)
+    (hAdm : ChipArityAdmitted ins.length)
     (hwide : (Lookup.holdsAt tf env
-      { table := .poseidon2, tuple := chipLookupTuple ins digestCol laneCols })) :
+      { table := .poseidon2, tuple := chipLookupTuple ins digestCol laneCols hAdm })) :
     (Lookup.holdsAt tf env
-      { table := poseidon2narrow, tuple := chipLookupTupleNarrow ins digestCol }) := by
+      { table := poseidon2narrow, tuple := chipLookupTupleNarrow ins digestCol hAdm }) := by
   simp only [Lookup.holdsAt] at hwide ⊢
   rw [hwire]
-  exact narrow_served_by_same_rows (tf .poseidon2) env.loc ins digestCol laneCols hlen hwide
+  exact narrow_served_by_same_rows (tf .poseidon2) env.loc ins digestCol laneCols hAdm hwide
 
 #assert_axioms narrowRow_chipRow
 #assert_axioms narrowTable_sound

@@ -191,15 +191,16 @@ obligation reduces to ONE `rfl` application of these. -/
 /-- Shape of `{graduateV1 d0 with constraints ++ ms.map .mapOp}`: graduated constraints are
 `.base` (arith) or `.lookup`; the appends are `.mapOp`s. -/
 theorem shape_of_graduated_append (d2 : EffectVmDescriptor2)
-    (d0 : EffectVmDescriptor) (ms : List MapOp)
+    (d0 : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d0.hashSites, ChipArityAdmitted s.inputs.length) (ms : List MapOp)
     (heq : d2.constraints
-      = (graduateV1 d0).constraints ++ ms.map VmConstraint2.mapOp) :
+      = (graduateV1 d0 hAdm).constraints ++ ms.map VmConstraint2.mapOp) :
     ∀ c ∈ d2.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) := by
   intro c hc hA
   rw [heq] at hc
   rcases List.mem_append.mp hc with hbase | happ
-  · rcases constraints_graduateV1_shapes _ c hbase with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+  · rcases constraints_graduateV1_shapes _ _ c hbase with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
     · exact absurd (show isArith (VmConstraint2.base c₀) from trivial) hA
     · exact Or.inl ⟨l, rfl⟩
   · obtain ⟨m, -, rfl⟩ := List.mem_map.mp happ
@@ -208,9 +209,11 @@ theorem shape_of_graduated_append (d2 : EffectVmDescriptor2)
 /-- Shape of the H1-headroom-pinned form (`refusalFieldsWriteV3`'s base): the wrap appends only
 `.base .piBinding` pins (arith), so the non-arith shape is unchanged. -/
 theorem shape_of_pinned_graduated_append (d2 : EffectVmDescriptor2)
-    (d0 : EffectVmDescriptor) (ms : List MapOp)
+    (d0 : EffectVmDescriptor)
+    (hAdm : ∀ s ∈ d0.hashSites, ChipArityAdmitted s.inputs.length) (ms : List MapOp)
     (heq : d2.constraints
-      = (withRecordPin8Headroom2 (graduateV1 d0)).constraints ++ ms.map VmConstraint2.mapOp) :
+      = (withRecordPin8Headroom2 (graduateV1 d0 hAdm)).constraints
+          ++ ms.map VmConstraint2.mapOp) :
     ∀ c ∈ d2.constraints, ¬ isArith c →
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) := by
   intro c hc hA
@@ -218,7 +221,7 @@ theorem shape_of_pinned_graduated_append (d2 : EffectVmDescriptor2)
   rcases List.mem_append.mp hc with hbase | happ
   · rw [withRecordPin8Headroom2_constraints] at hbase
     rcases List.mem_append.mp hbase with hgrad | hpin
-    · rcases constraints_graduateV1_shapes _ c hgrad with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
+    · rcases constraints_graduateV1_shapes _ _ c hgrad with ⟨c₀, rfl⟩ | ⟨l, rfl⟩
       · exact absurd (show isArith (VmConstraint2.base c₀) from trivial) hA
       · exact Or.inl ⟨l, rfl⟩
     · obtain ⟨i, -, rfl⟩ := List.mem_map.mp hpin
@@ -351,7 +354,7 @@ theorem noteSpendV3_shape :
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) :=
   shape_of_graduated_append noteSpendV3
     (rotateV3WithNullifierPin EffectVmEmitNoteSpend.noteSpendVmDescriptor)
-    [nullifierFreshOp, nullifierInsertOp, spendAncestorFreshOp] rfl
+    _ [nullifierFreshOp, nullifierInsertOp, spendAncestorFreshOp] rfl
 
 /-- noteCreate: graduated commitment-key-pin base ++ the single commitments `.insert`. -/
 theorem noteCreateV3_shape :
@@ -359,7 +362,7 @@ theorem noteCreateV3_shape :
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) :=
   shape_of_graduated_append noteCreateV3
     (rotateV3WithCommitmentKeyPin EffectVmEmitNoteCreate.noteCreateVmDescriptor)
-    [commitmentsInsertOp] rfl
+    _ [commitmentsInsertOp] rfl
 
 /-- createCell: graduated new-cell-key-pin base ++ the accounts freshness + insert pair. -/
 theorem createCellV3_shape :
@@ -368,7 +371,7 @@ theorem createCellV3_shape :
   shape_of_graduated_append createCellV3
     (rotateV3WithNewCellKeyPin NEW_CELL_KEY_PARAM_COL
       EffectVmEmitCreateCell.createCellActorVmDescriptor)
-    [cellsFreshOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT NEW_CELL_KEY_PARAM_COL,
+    _ [cellsFreshOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT NEW_CELL_KEY_PARAM_COL,
      cellsInsertOp EffectVmEmitCreateCell.SEL_CREATE_CELL_RT NEW_CELL_KEY_PARAM_COL] rfl
 
 /-- createCellFromFactory: same pair keyed on the derived child VK (`param1`). -/
@@ -378,7 +381,7 @@ theorem factoryV3_shape :
   shape_of_graduated_append factoryV3
     (rotateV3WithNewCellKeyPin FACTORY_CHILD_KEY_PARAM_COL
       EffectVmEmitCreateCellFromFactory.factoryActorVmDescriptor)
-    [cellsFreshOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT FACTORY_CHILD_KEY_PARAM_COL,
+    _ [cellsFreshOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT FACTORY_CHILD_KEY_PARAM_COL,
      cellsInsertOp EffectVmEmitCreateCellFromFactory.SEL_FACTORY_RT
        FACTORY_CHILD_KEY_PARAM_COL] rfl
 
@@ -389,7 +392,7 @@ theorem spawnV3_shape :
   shape_of_graduated_append spawnV3
     (rotateV3WithNewCellKeyPin NEW_CELL_KEY_PARAM_COL
       EffectVmEmitSpawn.spawnActorVmDescriptor)
-    [cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL,
+    _ [cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL,
      cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL] rfl
 
 /-- spawnWrite (the cap-write rebase of spawn): same map-op pair over the cap-write rotation. -/
@@ -399,7 +402,7 @@ theorem spawnWriteV3_shape :
   shape_of_graduated_append spawnWriteV3
     (rotateV3WithNewCellKeyPinCapWrite NEW_CELL_KEY_PARAM_COL
       EffectVmEmitSpawn.spawnActorVmDescriptor)
-    [cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL,
+    _ [cellsFreshOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL,
      cellsInsertOp EffectVmEmitSpawn.SEL_SPAWN_RT NEW_CELL_KEY_PARAM_COL] rfl
 
 /-- refusal: H1-headroom-pinned graduated record-pin base ++ the single audit-slot `.write`. -/
@@ -408,7 +411,7 @@ theorem refusalFieldsWriteV3_shape :
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) :=
   shape_of_pinned_graduated_append refusalFieldsWriteV3
     (rotateV3WithRecordPin B_RECORD_DIGEST EffectVmEmitRefusal.refusalVmDescriptor)
-    [refusalFieldsWriteOp] rfl
+    _ [refusalFieldsWriteOp] rfl
 
 /-- heapWrite: graduated splice base ++ the single always-firing heap-splice `.write`. -/
 theorem heapWriteV3_shape :
@@ -416,7 +419,7 @@ theorem heapWriteV3_shape :
       (∃ l : Lookup, c = VmConstraint2.lookup l) ∨ (∃ m : MapOp, c = VmConstraint2.mapOp m) :=
   shape_of_graduated_append heapWriteV3
     (rotateV3 heapWriteSpliceVmDescriptor)
-    [heapSpliceWriteOp] rfl
+    _ [heapSpliceWriteOp] rfl
 
 /-! ## §5 — ★ THE FAN-OUT: `algoStarkSound_<effect>` for the 7 memory-touching effects
 (+ the spawnWrite deployment variant). Each is ONE application of `algoStarkSound_of_mapShape`;

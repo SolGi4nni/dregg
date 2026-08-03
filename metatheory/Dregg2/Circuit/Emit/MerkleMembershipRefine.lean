@@ -169,7 +169,7 @@ theorem lookupChip4 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
   simp only [VmConstraint2.holdsAt, Lookup.holdsAt] at h
   rw [hwire] at h
   have hs := chip_lookup_narrow_sound_of_wide_table hash (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var i0, .var i1, .var i2, .var i3] digestCol (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    [.var i0, .var i1, .var i2, .var i3] digestCol (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared `.gate` body vanishes on any ACTIVE (non-last) row — the `when_transition` arm. -/

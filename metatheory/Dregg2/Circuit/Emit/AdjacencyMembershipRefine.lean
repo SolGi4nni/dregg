@@ -219,7 +219,7 @@ theorem lookupChip {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
   rw [hwire] at h
   have hs := Dregg2.Circuit.ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table hash
     (t.tf .poseidon2) hChip (envAt t j).loc
-    [.var left, .var right] par (by show (2 : Nat) ≤ CHIP_RATE; decide) h
+    [.var left, .var right] par (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- A declared first-row PI binding pins `loc[col] = pub[k]` on row 0. -/

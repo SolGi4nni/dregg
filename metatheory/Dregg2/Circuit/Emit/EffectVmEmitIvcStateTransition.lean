@@ -255,7 +255,7 @@ theorem ivc_step_is_hashed
   have hkey := chip_lookup_sound hash (tf .poseidon2) hSound env.loc
     [.const IVC_DOMAIN_TAG, .var Ivc.OLD_HASH_COL, .var Ivc.NEW_ROOT_COL, .var Ivc.STEP_COL]
     Ivc.NEW_HASH_COL (siteLaneCols Ivc.LANE1_COL)
-    (by unfold CHIP_RATE; decide) hc
+    (by chip_arity_admitted) hc
   simpa [EmittedExpr.eval] using hkey
 
 #assert_axioms ivc_rejects_tampered_published_hash

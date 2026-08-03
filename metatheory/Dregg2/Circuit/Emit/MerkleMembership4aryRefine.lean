@@ -103,7 +103,7 @@ theorem parentAt (hsat : Satisfied2 hash membership4aryDesc minit mfin maddrs t)
   have hs := Dregg2.Circuit.ChipNarrowLookup.chip_lookup_narrow_sound_of_wide_table hash
     (t.tf .poseidon2) hChip (envAt t j).loc
     [.var gC0, .var gC1, .var gC2, .var gC3] gPAR
-    (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+    (by chip_arity_admitted) h
   simpa [EmittedExpr.eval] using hs
 
 /-- The window gate chains each parent into the next row's running value. -/

@@ -313,7 +313,9 @@ theorem canonicalRowTf_chipSound (hash : List ℤ → ℤ) (env : VmRowEnv) :
   simp only [canonicalRowTf, canonicalRowWide, List.mem_singleton] at hr
   subst r
   refine ⟨hashInputs env, hashLanes, ?_, ?_, rfl⟩
-  · simp [hashInputs, CHIP_RATE]
+  · show Dregg2.Circuit.DescriptorIR2.ChipArityAdmitted (hashInputs env).length
+    simp only [hashInputs]
+    chip_arity_admitted
   · simp [hashLanes, CHIP_OUT_LANES]
 
 /-- Completeness of the per-row chip lookup against the canonical genuine row. -/
@@ -340,7 +342,7 @@ theorem perRowHash_canonical_iff (hash : List ℤ → ℤ) (env : VmRowEnv)
     rw [canonicalRowTf_narrow_wire hash env] at h
     have hh := chip_lookup_narrow_sound_of_wide_table hash (canonicalRowTf hash env .poseidon2) hs
       env.loc [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
-      Chain.ACC_OUT (by unfold CHIP_RATE; decide) h
+      Chain.ACC_OUT (by chip_arity_admitted) h
     simpa [hashInputs, EmittedExpr.eval] using hh
   · intro h
     exact perRowHash_complete hash env h
@@ -359,7 +361,7 @@ theorem turnChain_descriptor_refines_rust_air
     rw [hwire] at hc
     have hs := chip_lookup_narrow_sound_of_wide_table hash (tf .poseidon2) hchip env.loc
       [.var Chain.ACC_IN, .var Chain.OLD_ROOT, .var Chain.NEW_ROOT, .var Chain.IDX]
-      Chain.ACC_OUT (by unfold CHIP_RATE; decide) hc
+      Chain.ACC_OUT (by chip_arity_admitted) hc
     simpa [hashInputs, EmittedExpr.eval] using hs
   have hroot := h rootContinuity (by simp [turnChainBindingDescriptor, turnChainConstraints])
   have hold := h firstOldRootBind (by simp [turnChainBindingDescriptor, turnChainConstraints])
