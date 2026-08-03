@@ -265,6 +265,12 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-mina-lightclient-verify::v1",
         MINA_LIGHTCLIENT_VERIFY_JSON,
     ),
+    // ⚑ Its MULTI-ROW companion: one row per EXHIBITED Mina block. First compiler-authored
+    // multi-row descriptor in the tree.
+    (
+        "dregg-mina-lightclient-link::v1",
+        MINA_LIGHTCLIENT_LINK_JSON,
+    ),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -469,6 +475,26 @@ const MIDNIGHT_LIGHTCLIENT_VERIFY_JSON: &str =
 /// remain NAMED carriers on the undischarged IPA/FRI floor.
 const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-verify-v1.json");
+
+/// The **MULTI-ROW** Mina exhibited-segment AIR (`dregg-mina-lightclient-link::v1`), authored in
+/// Lean as COMPILER OUTPUT (`Dregg2.Circuit.Emit.LightClientMinaLinkAir.minaLinkDesc` =
+/// `EffectLower.lowerAir` of the `EffectAir` source `minaLinkAir`; no hand-written `VmConstraint2`
+/// exists for it). One row per exhibited block: nine `PARENT` lanes, nine `OWNHASH` lanes, the
+/// height, and the `IS_REAL`/`REAL_COUNT` pair.
+///
+/// ⚑ What it DERIVES is the SHAPE half of `LINK_OK` — twelve `.transition` window gates force
+/// `OWNHASH[i] = PARENT[i+1]` on all nine lanes, `HEIGHT[i+1] = HEIGHT[i] + 1`, and
+/// `REAL_COUNT` accumulation, with the last row's `REAL_COUNT` PI-pinned as the segment length. So
+/// a published depth is PAID FOR IN COMMITTED ROWS, unlike `dregg-mina-lightclient-verify::v1`
+/// where `SEG_LEN` is a free witness column in a single row.
+///
+/// ⚠ What it does NOT derive: that each `OWNHASH` IS the Poseidon-over-Pasta hash of its block's
+/// state row. That is `LightClientMinaLinkAir.LinkHashResidual`, it stays WITNESSED, and it is the
+/// non-native Pasta multiply — ~5e5 BabyBear constraints per block hash at the schoolbook limb
+/// construction. A prover free to choose `OWNHASH` can still fabricate a chain; what makes a row a
+/// real block is `PICKLES_OK`, also still a witness.
+const MINA_LIGHTCLIENT_LINK_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

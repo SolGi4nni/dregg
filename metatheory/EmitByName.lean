@@ -58,6 +58,7 @@ import Dregg2.Circuit.Emit.MerkleMembership4aryWideEmit
 import Dregg2.Circuit.Emit.MerkleMembershipEmit
 import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.LightClientMinaAir
+import Dregg2.Circuit.Emit.LightClientMinaLinkAir
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
 import Dregg2.Circuit.Emit.PastaMsmWindowed
@@ -322,6 +323,16 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- weak-subjectivity anchor and the head the turn actually records.
   , ("dregg-mina-lightclient-verify-v1.json",
       Dregg2.Circuit.Emit.LightClientMinaAir.minaLcVerifyDesc)
+    -- ⚑ The MULTI-ROW companion (2026-08-03): `dregg-mina-lightclient-link::v1`, one row per
+    -- EXHIBITED Mina block. `minaLinkDesc` is COMPILER OUTPUT — `EffectLower.lowerAir` of the
+    -- `EffectAir` source `minaLinkAir`, no hand-written `VmConstraint2` in its module. It is the
+    -- first COMPILER-AUTHORED MULTI-ROW descriptor in the tree (twelve `.transition` window legs;
+    -- `minaLinkAir_mainRailOk = true` by `rfl` records that the vocabulary was adequate). It
+    -- derives the SHAPE half of `LINK_OK` — nine-lane parent linkage, height contiguity, and the
+    -- segment length as a counted row total — and NOT the Poseidon-over-Pasta half, which stays
+    -- witnessed (`LinkHashResidual`).
+  , ("dregg-mina-lightclient-link-v1.json",
+      Dregg2.Circuit.Emit.LightClientMinaLinkAir.minaLinkDesc)
     -- ⚑ THE LEAN-AUTHORED PASTA AIRs. `pasta-rcb-windowed.json` was checked in UNROUTED — its
     -- bytes were not re-derivable from Lean, which is precisely the ungated hand-transcription hop
     -- this file exists to delete, on the descriptor the whole Mina opening-check arc rests on.
@@ -362,7 +373,7 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-#guard byNameDescriptors.length == 77
+#guard byNameDescriptors.length == 78
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do

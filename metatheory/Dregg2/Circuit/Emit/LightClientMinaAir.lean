@@ -47,9 +47,20 @@ reproduces that defect in circuit form. So it is not a witness here:
     G1   BLOCK_LEN  =  ANCHOR_H + SEG_LEN            -- the published height IS anchor + evidence
     G2   WIT_DEPTH + SUBMIT_H  =  BLOCK_LEN          -- the depth IS measured to the derived tip
 
-A prover that exhibits `n` blocks above the pinned anchor can publish exactly `anchorH + n` and
-nothing else. Claiming a taller chain requires exhibiting the blocks, and every exhibited block is
-under the `LINK_OK` / `PICKLES_OK` / `CANON_OK` carriers.
+⚠ **CORRECTED 2026-08-03 — read G1 for what it says.** This section used to conclude *"a prover that
+exhibits `n` blocks above the pinned anchor can publish exactly `anchorH + n` and nothing else."*
+**That does not hold of THIS descriptor, and the reason is structural: `SEG_LEN` is column 0, a FREE
+WITNESS, and this descriptor is SINGLE-ROW — it has no exhibited blocks at all.** The only thing
+constraining `SEG_LEN` here is G3 (`SEG_SLACK + 1 = SEG_LEN`, `SEG_SLACK` ranged into `[0, 2^24)`),
+so `SEG_LEN` is free in `[1, 2^24]` and `BLOCK_LEN` is free with it. G1 makes `BLOCK_LEN` a
+*function of two witnesses* rather than a third independent one — which is real, and is strictly
+less than "not settable at all". `minaLcAir_no_forgery` is honest about it in the only place it can
+be: `hsl : a SEG_LEN = u.blocks.length` is a HYPOTHESIS the witness generator discharges, not a gate.
+
+The tooth the sentence described now EXISTS, one module over:
+`Circuit/Emit/LightClientMinaLinkAir.lean` is multi-row, one row per exhibited block, and its
+`PI_SEG_LEN` is the LAST row's `REAL_COUNT` — so `link_seg_len_counts_the_real_rows` proves
+`PI_SEG_LEN ≤ rows.length` from the committed trace. A claimed depth is paid for in rows there.
 
 Symmetrically, `LightClientMina.witnessedDepth_unbounded_without_anchor_bound` exhibits the deployed
 observer's arithmetic (`tip_height.saturating_sub(submitted_height)`) witnessing depth **1001 from a
@@ -80,9 +91,17 @@ statement, so BENDING one is refused, but with **nothing in the circuit computin
 change that for the third:
 
   * `LINK_OK`    — the Poseidon parent-linkage fold over the exhibited segment. STILL A WITNESS
-    HERE. Derived one module over (`Circuit/Emit/LightClientMinaHashFold.lean`) at a Poseidon over
-    **Pasta `Fp`**, which at BabyBear is non-native arithmetic; and the fold is a per-BLOCK object
-    while this descriptor is one row, so it is not a lane away.
+    HERE, and it must be: the fold is a per-BLOCK object and this descriptor is ONE ROW.
+    ⚑ **SPLIT 2026-08-03.** `LightClientMina.chainLinked` is three conjuncts per block — (i)
+    `h.parent = prev`, (ii) `h.height = ph + 1`, (iii) `prev′ := blockHash h`. (i) and (ii) are
+    EQUALITY and ADDITION; only (iii) is Poseidon over Pasta `Fp`.
+    `Circuit/Emit/LightClientMinaLinkAir.lean` emits (i)+(ii) as a MULTI-ROW compiled descriptor —
+    nine `.transition` lane-continuity gates per link, the height tick, and the segment length as a
+    counted row total — and names (iii) as `LinkHashResidual`, still witnessed. So the honest
+    statement is not "`LINK_OK` derived" but "the segment's SHAPE derived, its HASH still witnessed".
+    ⚠ Note what the split does NOT buy: a prover free to choose each row's `OWNHASH` can fabricate a
+    consistent chain of any length. What it removes is the freedom to be INCONSISTENT and the
+    freedom to claim a depth without committing rows for it.
   * `PICKLES_OK` — the per-block Pickles/Kimchi Wrap-proof result. STILL A WITNESS, and it is the
     expensive one by three orders of magnitude — see §1b. `Circuit/Emit/MinaRealBlockGate.lean`
     renders it on a real devnet block, natively.
