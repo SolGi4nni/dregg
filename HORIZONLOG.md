@@ -1,5 +1,61 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 2 (mina→dregg) — the light client read the TIP and threw away the CHAIN: 1,544 of 61,193 bytes, and the discarded half was the anchor
+
+`e7f51e252`. The scope note this tree has recited since 07-30 — *"the opening check accepts an
+anchored SEGMENT ... not 'and it is the chain the network selected'; `mina_head` is the object that
+distinguishes them, and it does not read `bestChain`"* — named a consequence. **The cause was one
+discarded field.**
+
+`get_best_tip` v2 returns `ProofCarryingDataStableV1<Block, (List<StateBodyHash>, Block)>` — a tip
+**and** the merkle-list proof anchoring it to the serving peer's transition-frontier root.
+`mina-tip/src/main.rs:284` read `tip.data.header.protocol_state` and dropped `tip.proof`. MEASURED
+live: the reply is **61,193 bytes** and the protocol state is **1,544** of them. What survived is
+`blockchain_length` — the field Samasika's short-range branch prefers and the one a liar sets for
+free. The anchor is what costs something to forge and it was not being read.
+
+**LANDED.** `bestchain` asks EACH seed separately (one `Client` latches onto the first peer to
+connect, so one call was one peer's opinion); `chain.rs::verify_anchor` folds root→tip on openmina's
+own Poseidon and refuses a tip that does not descend; `verify-bestchain` re-judges a bundle offline
+with the manifest as a CLAIM THE BYTES REFUTE. `MinaVerifiedHead::follow_candidate_set` walks the set
+PAIRWISE — never a fold, because `beats_not_transitive` makes "best of a set" a function of the ORDER
+— and an unanchored candidate **is never offered to the gate**, proved by a COUNTING gate.
+
+**MEASURED first live run:** two devnet seeds, tip 541051 ← root 540761, depth **exactly 290 = k**.
+
+**THE RED PATH** (`scripts/check-mina-bestchain.sh`, tier 0, ~2s, offline): 7 forgeries refused with
+a control, and a **CATCHER DISCIPLINE** — ≥2 must die on the POSEIDON FOLD with every cheap shape
+check passing. ⚠ The first version had 3 of 5 legs dying on integer comparisons; it would have stayed
+green with the fold deleted. R4 is **openmina's OWN fail-open**: its reducer guards the comparison
+with `if let Some(..) = hashes.last()` over a list it first shortens by one, so a 0/1-element merkle
+list is accepted **with the anchor never checked** (`p2p_callbacks_reducer.rs:568`). We refuse it.
+
+**COVERAGE MAP, derived not asserted:** a flipped bit is refused in **12,371 of 61,193 bytes (20.2%)**
+— the two protocol states and the 290 body hashes. Bodies and Pickles proofs are UNBOUND and that is
+CORRECT (Mina's state hash is over the protocol state alone). ⚠ The first map was HARDCODED offsets
+and broke silently the moment a smaller block arrived (87,870 → 61,193), aiming its "merkle list"
+probe at a Pickles proof.
+
+**⚑ AND A VACUOUS TEST, FOUND BY RUNNING IT.**
+`the_live_openmina_pair_decodes_and_selects_through_the_real_lean_gate` passed `"1"`/`"2"` as the two
+sides' state hashes. Since 07-30 `MinaForkChoiceGate.decodeSide?` RE-DERIVES each side's hash and
+returns `none` unless the wire field equals it, so every call decoded to `"ERR"` —
+and `verified_mina_better_tip` maps every non-`"1"` to `KeepExisting`. **Two of its three assertions
+(`select_irrefl`, `select_asymm`) were satisfied BY A REFUSAL** and would have stayed green with the
+decoder deleted. Only the third could fail, and with the gate live it returned `Ok(KeepExisting)`
+against `Ok(TakeCandidate)`. Fixed with the REAL decimal hashes plus a non-vacuity control requiring
+a WRONG hash to be refused; the bundle manifest now carries `tip_hash_decimal`/`root_hash_decimal`
+because the Lean wire takes decimals and a Base58-only bundle hands the next stage a refusal.
+
+**RESIDUALS, named:** the anchor reaches the SERVING PEER's frontier root (k=290), not genesis and
+not the operator's pin — a property of what the network serves. Both seeds served the **identical**
+tip byte-for-byte, so the set machinery has not been driven by a real fork. 16/17 `mina_head` tests
+green (all 5 new); the 17th now fails on PROVENANCE DOWNGRADE — a sibling's `lake build` is red in
+this shared tree, so build.rs withheld the verified-export cfgs. That is fail-closed working.
+
+**BREAKING:** `candidates.tsv` 8 → 10 fields; older bundles REFUSE to load. Regenerate with
+`mina-tip bestchain --dir DIR`.
+
 ## ⚑⚑⚑ AUGUST 2 (key canonicity) — the nonet was BOUND by the anchor and REFUSED by nothing; the envelope is now on the wire, and TWO split cutovers fell out of building HEAD clean
 
 `5c3cef4fa` closed the ninth lane and named its own residual as the first item: **`Emit.KeyCanonicity9Emit.keyCanonical9At` is applied by NOTHING.** Verified before touching anything,
