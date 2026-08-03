@@ -628,14 +628,6 @@ pub fn derive(c: &CircuitJson, log2_domain: Option<u32>) -> Derived {
 // fixtures + CLI
 // =================================================================================================
 
-fn wrapmain_fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("pickles-wrapmain-harness")
-        .join("fixtures")
-}
-
 fn own_fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
 }
@@ -646,8 +638,20 @@ fn load(path: &Path) -> CircuitJson {
     serde_json::from_str(&s).unwrap_or_else(|e| panic!("bad JSON in {}: {e}", path.display()))
 }
 
+/// ⚑ THIS CRATE CARRIES ITS OWN COPY of the Lean emission, exactly as every other harness in the
+/// pickles ratchet does. It does NOT reach into `pickles-wrapmain-harness/fixtures`: a gate whose
+/// inputs live in a sibling crate is a gate that cannot run from a clean checkout of HEAD unless the
+/// sibling landed first, and that is how a committed gate silently stops being runnable.
+/// `scripts/mina-vk-derivation-gate.sh` diffs this copy against the wrapmain harness's byte-for-byte
+/// and goes RED on any drift, so the copy cannot quietly diverge from the emission it claims to be.
+///
+/// REGENERATE (only when the Lean assembly changes):
+///   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
+///     && DREGG_WM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean \
+///     && cp /tmp/pickles-wrapmain/wrapmain_smoke_w{3_branch,4_bind}.json \
+///           fixtures/pickles-vk-derive/fixtures/
 fn load_wrapmain(rung: &str) -> CircuitJson {
-    load(&wrapmain_fixtures_dir().join(format!("wrapmain_smoke_{rung}.json")))
+    load(&own_fixtures_dir().join(format!("wrapmain_smoke_{rung}.json")))
 }
 
 fn write_vk(dir: &Path, stem: &str, d: &Derived) -> PathBuf {

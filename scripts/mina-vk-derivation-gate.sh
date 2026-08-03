@@ -73,6 +73,22 @@ if [ "$RUN_UNIT" = 1 ]; then
   fi
 fi
 
+step "1b. DRIFT — the Lean emission this crate carries is the wrapmain harness's, byte for byte"
+# `pickles-vk-derive` carries its own copy of the Lean-emitted wrap circuits so that it runs from a
+# clean checkout of HEAD without the sibling harness. Two copies that agree today are two copies that
+# will disagree later, so the agreement is a GATE, not a convention. Both harnesses are declared
+# members of the pickles ratchet, so a missing file here is RED, never a skip.
+WM="$ROOT/metatheory/fixtures/pickles-wrapmain-harness/fixtures"
+for f in wrapmain_smoke_w3_branch.json wrapmain_smoke_w4_bind.json; do
+  if [ ! -f "$WM/$f" ]; then
+    red "$WM/$f missing — cannot check the copy against its source"
+  elif cmp -s "$WM/$f" "$CRATE/fixtures/$f"; then
+    note "GREEN: $f identical to the wrapmain harness's copy"
+  else
+    red "$f DRIFTED from metatheory/fixtures/pickles-wrapmain-harness/fixtures/$f"
+  fi
+done
+
 step "2. derive — Lean-emitted KimchiWrapMain gates -> Mina Side_loaded_verification_key"
 if cargo run --release --quiet --manifest-path "$CRATE/Cargo.toml" -- "$OUT" --log2-domain 14 2>&1 | tee "$OUT/derive.log" | grep -E 'Lean rows|hash |MOVED|held'; then
   note "GREEN: derivation ran"
