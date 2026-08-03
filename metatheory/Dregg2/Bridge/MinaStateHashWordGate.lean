@@ -905,11 +905,20 @@ served under a foreign `stateHash` reproduces the word-12 an accepted verificati
 theorem foreign_stateHash_refuses (a b : Header) (ha : a ∈ HEADERS) (hb : b ∈ HEADERS)
     (hne : a.stateHash ≠ b.stateHash) :
     word12 a.stateHash b.accComm b.accChals ≠ b.word12Gold := by
+  -- ⚑ The `simp only` here unfolds the DECISION ONLY; both `List.all` peels are TERM-LEVEL and
+  -- COUNTED, one per quantifier. Written this way on purpose, and the history is the reason.
+  -- `e70f2f656` proved this with `simp only [foreignStateHashRefuses, List.all_eq_true] at h`,
+  -- which rewrites under BOTH binders at once — so a SECOND `simp only [List.all_eq_true]` had
+  -- nothing left to rewrite and the `unusedSimpArgs` linter flagged it, CORRECTLY. What broke the
+  -- theorem (`50c4ed9a5` repaired it) was not obeying that linter: it was the accompanying fold to
+  -- `(List.all_eq_true.mp (h a ha)) b hb`, an application type mismatch — `h a ha` was ALREADY
+  -- peeled — which Lean absorbs as `sorryAx` rather than a build error, and which was committed
+  -- without a rebuild. Drop either `.mp` below and the `have` fails the same way; nothing goes red
+  -- except `#assert_compiled foreign_stateHash_refuses` at the foot of this file, which is the
+  -- only instrument that says `sorryAx` out loud. Both halves measured, not asserted.
   have h := no_foreign_stateHash_reproduces_word12
-  simp only [foreignStateHashRefuses, List.all_eq_true] at h
-  have hb' := h a ha
-  simp only [List.all_eq_true] at hb'
-  have hab := hb' b hb
+  simp only [foreignStateHashRefuses] at h
+  have hab := List.all_eq_true.mp (List.all_eq_true.mp h a ha) b hb
   simp only [Bool.or_eq_true, beq_iff_eq, bne_iff_ne, ne_eq] at hab
   exact hab.resolve_left hne
 
