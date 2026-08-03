@@ -890,16 +890,28 @@ each should be confirmed before it is built on.
   * `Rounds.Wrap = Nat.N15`, so the bulletproof-challenge run is **15, not 16**, and `Features`
     carries **8 bools, not 9** — two compensating errors that both had to be wrong for the census to
     sum to 40.
-  * Item 1 is **four ladders, ~490 rows, not three ~375**: our `q` has no `uc` term, so
-    `combined_inner_product` never reaches the IPA side.
-  * `group_map` is **~30 rows, not ~13** (33 constraints; an indicator dot-product, not a
-    `Field.if_` chain).
+  * Item 1 is **four ladders, not three** — ⚑ **LANDED 2026-08-03 as §19, and it MEASURES 482 rows**
+    (`r8_finalize` 3391 → `r9_opening` 3873 at the smoke shape, plus 2 rows in R4 for the
+    `q = p_prime + lr_prod` add). Our `q` HAD no `uc` term; it has one now, so
+    `combined_inner_product` reaches the IPA side and hence `lhs`.
+    ⚑ **WHAT IT BOUGHT, AND IT IS ONE THING**: R8's `verified` (#11) was `AOp.wit 1` — a cell no row
+    defined, which `Boolean.all` then forced to 1. It is now `equal_g`'s output cell, and R8's
+    `.wit` census drops **10 → 9** (§16 pins it).
+    ⚠ **WHAT IT DID NOT BUY**: `equal_g` refuses no on-curve substitution. The honest witness this
+    file emits SOLVES `G` off `lhs`; §19's `substituted_assembly_still_closes_equal_g` re-runs
+    §17(e)/§18(b) on the EMITTED circuit and the verdict is **ACCEPTED**, unchanged.
+  * `group_map` is **~30 rows, not ~13** (an indicator dot-product, not a `Field.if_` chain). ⚑ As
+    EMITTED it is **23 rows** — 44 `Generic` halves packed two to a row, plus a probe. §19 states
+    where that is an UPPER bound on Snarky's count: this emission materialises every linear
+    combination that feeds a multiplication, where `assert_r1cs` takes lincoms as operands.
   * ⚠ **`step-zkapp-proved` is the WRONG conformance branch**: its prev is `side_loaded 0`, hence
     `public_input_commitment_dynamic`. This assembly is the `Known` shape (`merge`/`base`).
-  * ⚠ **§17's exhibit is wrong at source, and this one was RE-CHECKED here**: `bpUOf` is
+  * ⚠ **§17's exhibit was wrong at source — CORRECTED 2026-08-03**: `bpUOf` was
     `gmapFp (chalOf …)`, and `chalOf` is `state % 2 ^ chalBits` — the LOW 128 bits (`hiOf` holds the
-    rest). `step_verifier.ml:264-265` squeezes the FULL field element into `group_map`. The `u`
-    values, and every `bp*` number derived from them, MOVE when that is corrected.
+    rest). `step_verifier.ml:264` squeezes the FULL field element into `group_map`. `bpUOf` now
+    reads `uSqueezeVal`, §19 emits `group_map` over `uSqueezeVar`, and
+    `u_squeeze_is_the_full_element_not_the_low_128` pins that the two arguments and the two `u`
+    points differ.
 
 -/
 
@@ -921,6 +933,7 @@ each should be confirmed before it is built on.
 --   …Pins11   — §16   (50 guards)
 --   …Pins12   — §17   (46 guards)
 --   …Pins13   — §18   (63 guards)
+--   …Pins14   — §19   (NAMED THEOREMS, zero guards — GUARD-DISCIPLINE.md)
 -- Add a def to …Fixture (or …Core), add a `#guard` to the …PinsNN of its section.
 
 import Dregg2.Circuit.Emit.KimchiStepMainField
