@@ -1029,12 +1029,16 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
 
     slot   word                                    here
     5–8    plonk.{alpha, beta, gamma, zeta}        ✅ the transcript's own four challenge squeezes,
-                                                      which `assert_eq_plonk` (`wrap_verifier.ml:
-                                                      717-731`) is exactly the tie for
+                                                      as RAW 128-bit prechallenges (`spec.ml:384-386`,
+                                                      `Packed_bits (x, Challenge.length)`), which is
+                                                      exactly what `assert_eq_plonk`
+                                                      (`wrap_verifier.ml:492-499,717-731`) compares
     10     sponge_digest_before_evaluations        ✅ the FORK squeeze (`:646`), which
                                                       `wrap_main.ml:430-432` asserts equal
-    13–28  bulletproof_challenges ×16              ✅ `bullet_reduce`'s own prechallenges, which
-                                                      `wrap_main.ml:433-439` asserts equal one by one
+    13–28  bulletproof_challenges ×16              ✅ `bullet_reduce`'s own prechallenges, RAW
+                                                      (`spec.ml:391-392` packs `Sc.inner = pre`),
+                                                      which `wrap_main.ml:433-439` asserts equal
+                                                      one by one
     29     branch_data                             ✅ §9's `Branch_data.Checked.pack`
                                                       (`wrap_main.ml:189-199`)
     0–4    cip, b, ζ^srs_len, ζ^dom, perm          ✗ W-FINALIZE
@@ -1048,17 +1052,28 @@ fixtures, which is defect class 5 wearing a public vector. So `pubWords` is 22 a
 the census; §13 names what each missing word costs. -/
 
 /-- The variables this assembly exposes as public words, in order. ⚑ Slot order here is THIS
-circuit's; the census above maps each to Mina's slot. -/
+circuit's; the census above maps each to Mina's slot.
+
+⚠ ⚑ **THE WIDTH DECIDES WHICH VARIABLE, AND THIS WAS WRONG IN THE FIRST DRAFT.** `spec.ml:374-392`
+packs `Challenge` / `Scalar Challenge` / `Bulletproof_challenge` at `Challenge.length = 128` — the
+RAW prechallenge — where `Digest` packs at `Field.size_in_bits`. Exposing the 255-bit endo lift for
+the challenge words would have put a different object in the public vector under the right name. -/
 def exposedVars (t : WrapData) : List PVar :=
   let s := t.sh
   let cb := baseCh s t.sp
-  -- the four plonk challenges are the FIRST four `chal` squeezes (β, γ, α, ζ) — LIFTED, because
-  -- `assert_eq_plonk` compares `Scalar_challenge.t` inners for α/ζ and raw challenges for β/γ, and
-  -- the lift is what `map_challenges ~scalar` produces.
-  (List.range 4).map (fun c => (chainVars s (cb + 1) c).lift)
+  -- ⚑ THE RAW PRECHALLENGE, NOT THE LIFT — read at source and corrected before shipping.
+  -- `spec.ml:374-392` packs `Challenge` and `Scalar Challenge` at `Challenge.length = 128` and
+  -- `Bulletproof_challenge` as `let { Sc.inner = pre } = pack x in `Packed_bits (pre, 128)`, i.e.
+  -- the 128-bit value the sponge squeezed — NOT the 255-bit `Field.(scale a endo + b)`. And
+  -- `assert_eq_plonk` (`wrap_verifier.ml:492-499`) compares exactly those: `Field.Assert.equal` on
+  -- the raw challenge for β/γ and on the `Scalar_challenge.inner` for α/ζ. So the exposed variable
+  -- is the chain's reconstructed `n₈`, which the `cSplit` row ties to the sponge squeeze.
+  (List.range 4).map (fun c => (chainVars s (cb + 1) c).n s.emsRows)
+  -- `sponge_digest_before_evaluations` IS a `Digest` (`Field.size_in_bits`), so THIS one is the
+  -- full field squeeze — the fork at `wrap_verifier.ml:646`.
   ++ [ (match forkSqueeze t.sp with | some e => e.1 | none => .external 0) ]
   ++ (List.range (min s.ipaRounds (nChals s - 5))).map (fun r =>
-       (chainVars s (cb + 1) (4 + r)).lift)
+       (chainVars s (cb + 1) (4 + r)).n s.emsRows)
   ++ [ (branchVars s (baseBr s t.sp)).packed ]
   |>.take s.pubWords
 
