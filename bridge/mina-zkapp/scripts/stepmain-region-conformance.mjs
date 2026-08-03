@@ -417,8 +417,14 @@ const LEDGER = {
   },
   'tfc/widths': {
     why: '#6 one challenge width',
-    expect: 'mina 1×2 2×42 4×25 8×28 9×1 12×2 16×3 19×1 22×1 24×1 28×1 32×2 128×1 vs lean 8×51',
-    note: 'Mina emits `to_field_checked` at 1/2/4/8/9/12/16/19/22/24/28/32/128 rows; we emit only 8.',
+    // ⚑ `lean 8×51` → `lean 1×1 8×51` on 2026-08-03, and the new width is a NARROWING, not a
+    // regression. The width-1 chain is the `domain_log2` row (`RNG_DOMLOG2_ROWS = 1`): a 16-bit
+    // `to_field_checked` where a restored 128-bit one used to sit. Mina emits width 1 twice
+    // (`1×2`), so a width we previously did not emit at all is now one we emit once — the entry
+    // moved TOWARD upstream's multiset. The recorded string simply predated it, which is the same
+    // stale-census class this pass has been closing; it was found by re-grading, not by reading.
+    expect: 'mina 1×2 2×42 4×25 8×28 9×1 12×2 16×3 19×1 22×1 24×1 28×1 32×2 128×1 vs lean 1×1 8×51',
+    note: 'Mina emits `to_field_checked` at 1/2/4/8/9/12/16/19/22/24/28/32/128 rows; we emit 1 and 8.',
   },
   // ── the Generic selector halves, CLASSIFIED. One entry per mechanism, each naming the upstream
   // code that makes the difference, so a NEW shape family cannot hide inside a count that was going
