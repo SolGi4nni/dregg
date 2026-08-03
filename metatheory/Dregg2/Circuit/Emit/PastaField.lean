@@ -48,10 +48,29 @@ A Pasta field element is encoded as **`numLimbs = 9` limbs of `limbBits = 30` bi
 felt columns `base .. base+8`, LSB-first: its value is the degree-1 head
 `fpValue base = Σ_{i<9} 2^{30 i}·col(base+i)`. Capacity 270 bits ≥ 255 (top limb uses 15 bits; the
 encoding-reproduces KATs below check `limbOf (pN−1) 8 = 16384 = 2^14`). A 30-bit limb
-(`< 2^30 < p_felt`) fits one BabyBear felt with room. The `fpMul` schoolbook cross-sum reaches
-`~2^510` — this OVERFLOWS BabyBear, so the gate is read over ℤ (the strong reading, exactly as
+(`< 2^30 < p_felt`) fits one BabyBear felt with room.
+
+⚑ **THAT IS A STORAGE WIDTH AND IT IS NOT A MULTIPLICATION WIDTH.** `9×30` was picked so a limb
+FITS a felt. The condition for a schoolbook limb product not to WRAP one is
+`2b + log₂ k < log₂ p_felt`, and at `b = 30`, `k = 9` that reads `63.17 < 30.907` — false by
+**32.26 bits**. The shape that satisfies it is the one `LightClientMinaAir` §1b derives from the
+same inequality, `b ≈ 13` and `k ≈ 20`: `k² = 400` limb products, `2k − 1` accumulator columns, a
+reduction of the same order and ~40 range-checked carry rungs, **≈10³ BabyBear constraints per Pasta
+multiplication** — against the ONE degree-2 gate `fpMulCore` emits.
+
+Three magnitudes are in play and they are different numbers; conflating them is how this gap gets
+mis-stated. Measured on the checked-in `circuit/descriptors/by-name/pasta-rcb-windowed.json`:
+  * the `fpMul` gate BODY `x·y − p·q − z` on CANONICAL operands (`x, y < p`) reaches `p² ≈ 2^508`;
+  * with the limb ranges not emitted (§6.4) a limb is any felt `< p_felt`, so `fpVal` reaches
+    `2^270.91` and the body reaches `2^541.8`;
+  * the largest CONSTANT the emitter writes is the top quotient weight `p·2^240 ≈ 2^494.0` —
+    **495 bits**, the figure `circuit/src/lean_descriptor_air.rs::parse_int_field` names — and the
+    largest pure power of two is the top cross-product weight `2^(30·16) = 2^480`.
+
+All three exceed `p_felt`, so the gate is read over ℤ (the strong reading, exactly as
 `Sha256Gadget.addMod32` and `Bls12381Tower` are), and the `ℤ ↔ p_felt` soundness is the SAME
-field-width residual `LightClientEthAir` §6 and the SHA gadget already carry. The encoding is
+field-width residual `LightClientEthAir` §6 and the SHA gadget already carry — but §6.4 computes
+what that reading costs HERE, and it costs more than it costs there. The encoding is
 FIELD-INDEPENDENT (both fields are 255-bit over the same 9×30 shape); only the modulus in the
 reduction gate differs.
 
@@ -69,12 +88,22 @@ Canonicity (`0 ≤ z < p`, the UNIQUE representative) needs the limb range check
 are generated here and the final `z < p` compare is the one NAMED reduction residual (same as
 `Bls12381Tower`). The congruence — the arithmetic content — is a proved forcing lemma.
 
-## Constraint budget (per op, in gates)
+## Constraint budget (per op, in gates) — ⚑ and how much of it is EMITTED
 
   * `fpAddCore`/`fpSubCore` (and fq): 1 value gate. `+ 1` carry pin `+ 279` limb-range
     (`9·(30+1)`) = **281**.
   * `fpMulCore` (and fq): 1 degree-2 value gate (`9² = 81` cross-products + 9 q-terms + 9 z-terms).
     `+ 279·2` (z and q ranges) = **559**.
+
+⚑ **281 and 559 price the FULL generators, and no emitted descriptor pays either.** The six
+wrappers `fp{Add,Sub,Mul}`/`fq{Add,Sub,Mul}` are the only callers `pastaLimbRange` has, and they
+have ZERO call sites outside this file — so `pastaLimbRange` is emitted NOWHERE (§6.4). Consumers
+open the `*Core` names and the `*Head`s instead. On the checked-in windowed descriptor: 45
+constraints, `"ranges": []`, `"tables": []`, twelve gates of exactly 81 var×var products each over
+36 columns, and exactly two booleanity gates — on `BIT` (col 523) and `DBL` (col 524), none on the
+19 carry/borrow columns 423..441. **The emitted price of one Pasta multiply is 1 constraint, not
+559**, and that is the unit every row count and every second downstream of this file is denominated
+in.
 
 ## What is AUTHORED + built vs NAMED mechanical continuation
 
@@ -485,15 +514,32 @@ def fpMulDesc : EffectVmDescriptor2 :=
 /-! ## §6 — The PRECISE named residuals + the continuation (K2 and up).
 
 RESIDUALS (named, same shape as `Bls12381Tower`):
-  1. **The `z < p` (and `z < q`) canonical compare is NOT generated.** The limb ranges are
-     (`pastaLimbRange`), so `0 ≤ z < 2^270`; uniqueness of the representative needs the final
-     255-bit compare against the modulus (`AirBuilder`'s `forcedGe0` is the shape). Without it the
-     gates force the CONGRUENCE (proved) but not the canonical representative.
+  1. **The `z < p` (and `z < q`) canonical compare is NOT generated.** With the limb ranges
+     (`pastaLimbRange`) a witness has `0 ≤ z < 2^270`; uniqueness of the representative needs the
+     final 255-bit compare against the modulus (`AirBuilder`'s `forcedGe0` is the shape). Without it
+     the gates force the CONGRUENCE (proved) but not the canonical representative. ⚠ **And the
+     ranges are a hypothesis of that sentence, not a fact about any emitted object** — see §6.4.
   2. **The `ℤ ↔ p_felt` field-width gap.** The gates are read over ℤ (the cross-sums overflow
      BabyBear); soundness in the native `p_felt` field is the SAME residual `LightClientEthAir` §6
      and `Sha256Gadget` carry, not closed here.
   3. **Primality of the moduli is inherited** from `mina-curves` (the gates only use the modulus as
      a ℤ constant; the FIELD structure — inverses exist — matters only from K2's `fpInv` on).
+  4. ⚑ **AT `p_felt` THE REDUCTION WITNESS IS FREE, so the emitted gates force nothing about
+     `(x, y, z)`.** This is residual 2 priced rather than feared, and it is arithmetic, not a
+     measurement. `fp{Add,Sub}Core`'s carry column enters with coefficient `∓p`, and
+     `p mod p_felt = 458843762 ≠ 0`; `fpMulCore`'s nine quotient limbs enter with weights
+     `p·2^(30 i) mod p_felt`, all nine nonzero. Nothing pins those columns — `pastaLimbRange` is
+     emitted nowhere and no booleanity gate reaches them — so for ANY assignment of the operand and
+     output limbs there is a value of the reduction witness that makes the body vanish mod `p_felt`.
+     On the emitted windowed descriptor the reduction witnesses are gate-LOCAL, so the choices do not
+     collide: 19 add/sub gates with one free carry column each and 14 multiply-shaped gates with nine
+     free quotient limbs each, and every one of those 145 columns appears in exactly one constraint.
+     §2's forcing lemmas are true, and they are about ℤ; the deployed prover checks the `p_felt`
+     reading, and the `p_felt` reading of THESE gates is satisfiable at every operand triple. The
+     surviving content of the emitted descriptors is what the OTHER gates say — booleanity, the
+     selector, the threading window gates — not the field arithmetic. Closing it is the ≈10³-
+     constraint shape above (a 13-bit/20-limb re-encoding plus the ranges and carry pins), which is a
+     re-emit and a VK epoch, not a caption.
 
 CONTINUATION (the plan's arc; none built here):
   * **K2 — Pallas/Vesta point ops + the endomorphism.** Short-Weierstrass complete add/double over
@@ -508,7 +554,17 @@ CONTINUATION (the plan's arc; none built here):
   * **K5 — the Kimchi verify equation**, cribbed check-by-check from the o1-labs Rust verifier.
   * **K6 — the state-query gadgets.**
 
-**Gate-count reality (order of magnitude).** One `fpMul` is `559` gates here; a Pallas point double
+⚠ **AND WIRING `pastaLimbRange` IN IS NOT THE FIX** — say it here so the next reader does not spend
+the re-emit on the wrong change. Ranges bound each limb to `[0, 2^30)`, which bounds the SEARCH; the
+`fpMul` body still reaches `p² ≈ 2^508`, so `body ≡ 0 (mod p_felt)` still admits every witness whose
+ℤ body is a nonzero multiple of `p_felt`, of which there are ~`2^477`. Ranges are NECESSARY and not
+SUFFICIENT. The two readings coincide only when the body FITS a felt, which is what the 13-bit/20-limb
+re-encoding buys and what the 9×30 shape cannot.
+
+**Gate-count reality (order of magnitude).** ⚑ Read against the SOUND gate, not the emitted one: the
+counts below are the full generators' (`559` per `fpMul`), while the emitted descriptors pay `1` and
+carry no ranges and no carry pins (§6.4), and a gate sound at BabyBear is a DIFFERENT gate — the
+13-bit/20-limb shape at ≈10³ constraints. One `fpMul` is `559` gates here; a Pallas point double
 is ~a dozen field muls ≈ `7·10³` gates; a 255-bit scalar mul ≈ `2·10⁶` gates; the IPA's ~log(n)
 rounds of two-scalar MSMs is the accepted Kimchi-verifier cost — the reason "as fast as possible"
 is an MSM/endo game (K4), and the reason the point of THIS slice is EXPRESSIBILITY: the field floor
