@@ -228,6 +228,34 @@ if [ -x "$repo_root/scripts/check-floor-baseline-preflight.sh" ]; then
   fi
 fi
 
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# DANGLING-IMPORT GUARD — a commit may not name a Lean module it does not contain.
+#
+# FOUR times on 2026-08-03 HEAD carried an `import Dregg2.Foo` with no committed
+# `metatheory/Dregg2/Foo.lean` (`a0a7da66f`, `ad0e55b57` twice, and the 26-file revert that
+# `1feb6210f` half-repaired). Each one killed every clean build of HEAD in ~2 seconds, at
+# `[0/0] Running job computation`, before elaborating anything — and it killed it for the OTHER
+# lanes, never for the one that broke it.
+#
+# The mechanism is `git commit --only`'s PATH granularity meeting the hottest file in the tree:
+# committing `metatheory/Dregg2.lean` carries every sibling lane's staged import line, without
+# their module files. It is structural, so the fix is structural. The check is a set difference
+# over the INDEX — the exact object `--only` hands this hook, and the exact object that was wrong
+# all four times — and it runs in well under a second. Red controls: it exits 1 on `a0a7da66f`,
+# `ad0e55b57` and `f2fc52c39`, and 0 on `9dfcd61a7`, so it is refutable, satisfiable, and not
+# passing for free.
+#
+# Loud declared-intent escape, same shape as the two guards above:
+#   DREGG_ALLOW_DANGLING_IMPORT=1 git commit ...
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+if [ "${DREGG_ALLOW_DANGLING_IMPORT:-0}" != "1" ] \
+   && [ -x "$repo_root/scripts/check-dangling-imports.sh" ]; then
+  if git diff --cached --name-only --diff-filter=ACMRD -- 'metatheory/*.lean' 'metatheory/**/*.lean' \
+     | grep -q .; then
+    "$repo_root/scripts/check-dangling-imports.sh" || exit 1
+  fi
+fi
+
 command -v rustfmt >/dev/null 2>&1 || exit 0   # no rustfmt on PATH → don't block the commit
 
 # Workspace default edition (root [workspace.package] edition), used for crates that inherit it
