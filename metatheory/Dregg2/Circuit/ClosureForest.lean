@@ -49,23 +49,20 @@ genuine `ClosedLogExtract`/`<e>_closedLog` rung, so a turn `[transfer, cellSeal,
 covered with each step landing its own proven soundness rung. The single-step floors, per-STEP, over
 heterogeneous effects.
 
-## NON-VACUITY (a mixed-effect turn is genuinely covered)
+## ⚑ NON-VACUITY: THERE IS NONE, AND THE TWO TEETH THAT SAID OTHERWISE ARE DELETED (2026-08-03)
 
-  * `closedLogExtract_family_covers_mixed` — the per-step family `closedLogExtract_all_genuine rds`
-    INHABITS the rung at the NON-transfer effects cellSeal (52), revoke (2), mint (3) simultaneously
-    (a mixed cohort). The family is not transfer-restricted: it produces a genuine `ClosedLogExtract` at
-    each, routing through `cellSeal_closedLog`/`revoke_closedLog`/`mint_closedLog`.
-
-  * `lightclient_unfoolable_circuit_sound_turn_empty` — instantiates the whole-turn closed apex on the
-    DEGENERATE empty chain (the trivially-constructible `TurnDecodeChain` with no steps), demonstrating the
-    apex's hypotheses are jointly satisfiable (the family + floors compose, no `False`-laundering).
+`closedLogExtract_family_covers_mixed` and `lightclient_unfoolable_circuit_sound_turn_empty` both
+opened `(rds : ClosureReadouts …)` — a bundle with NO INHABITANT
+(`ClosureReadoutsRealizable.closureReadouts_uninstantiable_concrete` through `other 15`, and
+`…not_nonempty_closureReadouts_refLH` through `transfer`, the second closed and floor-free). See §3.
+Everything below them carries the same uninhabited premise and is vacuous with it.
 
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on `lightclient_unfoolable_circuit_sound_turn`
 + the realizable floors entering as Prop/Type hypotheses (`StarkSound` instance, `Poseidon2SpongeCR`, the
-`S_live` CR fields, `logHashInjective` inside `mkLog`, the `ClosureReadouts` per-step prover-witness
-bundle). NEW file; imports read-only.
+`S_live` rest-frame obligation, `logHashInjective` inside `mkLog`, the `ClosureReadouts` per-step
+prover-witness bundle). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.ClosureFinal
 
@@ -101,27 +98,25 @@ this term names `closedLogExtract_all_genuine`, which names every `<e>_closedLog
 theorem hrefines_forest_closed
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post) :
     ∀ e, descriptorRefines
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) hash
+      (S_live CH RH cmb compress compressN hRest) hash
       (Rfix e) (dispatchArm e) :=
   -- `kstepAll = dispatchArm` definitionally, so `hrefinesAllClosed`'s `kstepAll e` family IS the
   -- `dispatchArm e` family the whole-turn fold consumes.
   hrefinesAllClosed
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash
+    (S_live CH RH cmb compress compressN hRest) LH hash
     (closedLogExtract_all_genuine rds) mkLog
 
 /-! ## §2 — `lightclient_unfoolable_circuit_sound_turn`: THE WHOLE-TURN CLOSED APEX.
@@ -144,142 +139,74 @@ single-step floors of `lightclient_unfoolable_circuit_sound`, now per-STEP: NO t
 theorem lightclient_unfoolable_circuit_sound_turn
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
     (hCR : Poseidon2SpongeCR hash)
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     {start fin : RecChainedState}
     (c : TurnDecodeChain hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) start fin)
+      (S_live CH RH cmb compress compressN hRest) start fin)
     (hidx : ∀ d ∈ c.steps, ∃ e : EffectIdx, d.descr = Rfix e)
     (te : TurnEndpoints hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) c) :
+      (S_live CH RH cmb compress compressN hRest) c) :
     ∃ (acts : List FullActionA) (s s' : RecChainedState),
       execFullTurnA s acts = some s' ∧
-      te.tp.pubPre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      te.tp.pubPre = (S_live CH RH cmb compress compressN hRest).commit
         s.kernel te.tp.turn ∧
-      te.tp.pubPost = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      te.tp.pubPost = (S_live CH RH cmb compress compressN hRest).commit
         s'.kernel te.tp.turn :=
   -- the whole-turn fold, with its carried per-effect family CLOSED from the genuine per-step readouts.
   lightclient_turn_unfoolable_forest hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix hCR
+    (S_live CH RH cmb compress compressN hRest) Rfix hCR
     (hrefines_forest_closed hash LH rds mkLog) c hidx te
 
-/-! ## §3 — NON-VACUITY: a MIXED-effect turn is genuinely covered.
+/-! ## §3 — ⚰ THE TWO NON-VACUITY TEETH ARE DELETED (2026-08-03). THEY WERE THEMSELVES VACUOUS.
 
-The per-step family `closedLogExtract_all_genuine rds` is NOT transfer-restricted. We exhibit it INHABITED
-at three NON-transfer effects simultaneously (cellSeal 52, revoke 2, mint 3) — a mixed cohort — each slot
-routing through its proven `<e>_closedLog` rung. This is the "mixed-effect turn is genuinely covered" tooth:
-a turn `[…, cellSeal, …, revoke, …, mint, …]` has its per-step rung at EACH, not only at transfer. -/
+`closedLogExtract_family_covers_mixed` (the "MIXED-effect NON-VACUITY tooth") and
+`lightclient_unfoolable_circuit_sound_turn_empty` (the "joint-satisfiability tooth") both opened
+`(rds : ClosureReadouts …)`, and `ClosureReadouts` HAS NO INHABITANT. A tooth that certifies
+non-vacuity from an uninhabited premise certifies nothing: it is true for the same reason the thing
+it was defending is true.
 
-/-- **`closedLogExtract_family_covers_mixed` (the MIXED-effect tooth).** The genuine per-step family
-inhabits the `ClosedLogExtract` rung at the NON-transfer effects cellSeal (52), revoke (2), AND mint (3)
-simultaneously — each from the same `ClosureReadouts` bundle, each routing through its proven `<e>_closedLog`
-rung. The whole-turn family genuinely covers heterogeneous effects, not transfer alone. -/
-theorem closedLogExtract_family_covers_mixed
-    {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
-    {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
-    {LH : List Turn → ℤ} {hash : List ℤ → ℤ} {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
-    {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
-      LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc) :
-    Dregg2.Circuit.ClosureAll.ClosedLogExtract
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 52 ∧
-    Dregg2.Circuit.ClosureAll.ClosedLogExtract
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 2 ∧
-    Dregg2.Circuit.ClosureAll.ClosedLogExtract
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 3 :=
-  ⟨closedLogExtract_all_genuine rds 52,
-   closedLogExtract_all_genuine rds 2,
-   closedLogExtract_all_genuine rds 3⟩
+Two independent proofs of that, both closed and both in `ClosureReadoutsRealizable`:
 
-/-! ## §4 — NON-VACUITY: the whole-turn apex on the degenerate (empty) chain.
+  * `closureReadouts_uninstantiable_concrete` — through the `other 15` member (the dead-tag route);
+  * `not_nonempty_closureReadouts_refLH` — through the `transfer` member, i.e. through a field the
+    bundle carries at a LIVE tag, with no crypto floor assumed anywhere.
 
-The empty `TurnDecodeChain` is trivially constructible (no steps to satisfy). Instantiating the whole-turn
-closed apex on it shows the apex's hypotheses are jointly satisfiable (the closed family + the floors
-compose), so the headline is not a vacuous implication. -/
+⚠ **STATED AT THE RESOLUTION IT IS PROVED AT.** What is settled is the PREMISE: there is no
+`ClosureReadouts`, so both teeth were true for the reason they existed to rule out, whatever their
+conclusions say. Separately, ONE instance of the conclusion shape is REFUTED —
+`ClosedLogExtract … Rfix 0` is false at every surface at which anything decodes
+(`not_closedLogExtract_transfer_refLH`), because the extract's circuit witness and its state decode
+are quantified independently. That route reaches any tag whose every action ADVANCES the log, which
+the mixed cohort's own readouts assert it does (each carries `pubLogPost = LH (receipt :: pre.log)`)
+— but it is NOT discharged here at 52/2/3, and nothing below claims it is.
 
-/-- **The empty `TurnDecodeChain`** — no steps, `start = fin`. Trivially well-formed (every per-step
-obligation is vacuous over the empty step list). -/
-def emptyChain
-    {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
-    {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
-    (hash : List ℤ → ℤ) (start : RecChainedState) :
-    TurnDecodeChain hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) start start where
-  steps := []
-  sat := by intro d hd; simp at hd
-  headPre := by simp
-  lastPost := by simp
-  seam := by simp
-  pubSeam := by simp
+Either way, neither tooth could be repaired by moving it to a different bundle or a different cohort:
+there is no bundle to move it to, and the cohort is not the part that was wrong. They are gone rather
+than restated, and `emptyChain` (used only by the second) with them.
 
-/-- **`lightclient_unfoolable_circuit_sound_turn_empty` (the joint-satisfiability tooth).** The whole-turn
-closed apex instantiated on the empty chain: a genuine (empty) executor run exists, with the published
-endpoints binding `start.kernel`. Demonstrates the apex's hypotheses COMPOSE (the closed family + the
-floors), so the headline is non-vacuous. -/
-theorem lightclient_unfoolable_circuit_sound_turn_empty
-    {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
-    {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
-    {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
-    (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
-    {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
-    {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (hCR : Poseidon2SpongeCR hash)
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
-      LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
-    (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-        pc pre post →
-      ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-        LH pc pubLogPre pubLogPost pre post)
-    (start : RecChainedState) (tp : PublishedCommit)
-    (hpre : tp.pubPre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
-      start.kernel tp.turn)
-    (hpost : tp.pubPost = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
-      start.kernel tp.turn) :
-    ∃ (acts : List FullActionA) (s s' : RecChainedState),
-      execFullTurnA s acts = some s' ∧
-      tp.pubPre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
-        s.kernel tp.turn ∧
-      tp.pubPost = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
-        s'.kernel tp.turn := by
-  let te : TurnEndpoints hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-      (emptyChain hash start) :=
-    { tp := tp
-      headOpen := by simp [emptyChain, hpre]
-      lastOpen := by simp [emptyChain, hpost] }
-  -- `te.tp` is `tp` by construction, so the apex's conclusion (over `te.tp`) IS the goal (over `tp`).
-  exact lightclient_unfoolable_circuit_sound_turn hash LH hCR rds mkLog
-    (emptyChain hash start) (by intro d hd; simp [emptyChain] at hd) te
+⚠ **WHAT REMAINS ABOVE IS STILL VACUOUS AND IS NOW UNDEFENDED.** `hrefines_forest_closed` and
+`lightclient_unfoolable_circuit_sound_turn` take the same uninhabited `rds`. Deleting the teeth does
+not weaken them — they were never load-bearing for those proofs — it stops the module CLAIMING a
+non-vacuity it does not have. ⚠ And the repair is NOT just adding `descriptorRefinesFree`'s
+publication link: `Market.ProtocolAssurance.shieldedRingDescriptorRefinesFree_forces_no_decode`
+refutes the LINKED rung too at a log-reading conclusion. See `ClosureReadoutsRealizable` §4's closing
+note for the two routes that would actually close it; neither is this commit. -/
 
-/-! ## §5 — axiom hygiene. -/
+/-! ## §4 — axiom hygiene. -/
 
 #assert_axioms hrefines_forest_closed
 #assert_axioms lightclient_unfoolable_circuit_sound_turn
-#assert_axioms closedLogExtract_family_covers_mixed
-#assert_axioms lightclient_unfoolable_circuit_sound_turn_empty
 
 end Dregg2.Circuit.ClosureForest

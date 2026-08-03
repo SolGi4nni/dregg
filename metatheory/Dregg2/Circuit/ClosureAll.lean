@@ -59,7 +59,7 @@ the LEDGER-root commitment cannot certify, now carrying the log binding as the N
 
 ## The closed apex's EXACT carried floor set
 
-`{StarkSound hash Rfix, the S_live Poseidon/Merkle CR carrier set,
+`{StarkSound hash Rfix, the S_live rest-frame obligation `RestHashIffFrameFin`,
 logHashInjective LH (the log-CR floor), WitnessDecodes-class extraction (the per-effect
 ClosedLogExtract — the circuit witness + the named log floor, NOT a per-effect EffectDecodeBridge
 decode residual)}`. No per-effect `EffectDecodeBridge`/`LedgerSurfaceReadout`/decode residual remains
@@ -70,10 +70,12 @@ beyond the circuit witness + those floors.
 drops. The apex now routes through `ApexFloorFree.lightclient_unfoolable_free`, which introduces no
 floor at all.
 
-⚠ AND THE SET IS STILL NOT REALIZABLE, which is the honest reading of that shed: the `S_live` CR
-carriers ARE the `CommitSurface` fields, and `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`
-refutes that bundle at EVERY parameter (Cantor on `restFrame`). One refuted hypothesis fewer is not
-"applicable". `ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`, is the applicable
+⚰ `S_live`'s FOUR injectivity carriers left the set on 2026-08-02, with the `CommitSurface` fields they
+filled. ⚠ AND THE SET IS STILL NOT REALIZABLE, which is the honest reading of both sheds: the survivor
+`RestHashIffFrameFin RH` is refuted at deployed BabyBear width by pigeonhole
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), and NO gate defends it —
+it is `Iff`-headed, so `#floor_ratchet`'s shape-derived floor set can never contain it. Refuted
+hypotheses fewer is not "applicable". `ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`, is the applicable
 statement; migrating this chain onto it needs `StateDecodeLog`/`ClosedLogExtract` restated at a
 `CommitMap` and the rest-hash refinement of `Verify.RestFrameFiniteSupportSuccessor`.
 
@@ -150,13 +152,11 @@ advance). transfer / cellSeal / revoke are RE-EXPORTED from `ClosureLog`. -/
 section PerEffect
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 variable {LH : List Turn → ℤ}
 
 /-- The live commitment surface, with the section's CR carriers. -/
-local notation "Slive" => S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+local notation "Slive" => S_live CH RH cmb compress compressN hRest
 
 /-! ### transfer / cellSeal / revoke — RE-EXPORTED from `ClosureLog`. -/
 
@@ -1259,9 +1259,17 @@ theorem setVK_closedLog_sat
         hash hside hsat pre post actor cell vk (logNeeds hadv))
 
 /-- setProgram (tag 13), CLASS A — forced from `setProgramV3` (the program record-pin, the program-digest
-analog of setVK; carries `compressN`/`hN`/`RotTableSide` for the record-slot-root audit). -/
+analog of setVK; carries `compressN`/`RotTableSide` for the record-slot-root audit).
+
+⛑ **`hN : compressNInjective compressN` DELETED 2026-08-03 — IT WAS DEAD.** The proof term below calls
+`setProgram_descriptorRefines_sat compressN hash hside hsat …`, which SHED its own
+`compressNInjective` binder on 2026-07-30 (`RotatedKernelRefinementProgram`, and its docstring says
+so) because the refinement reads only the decode's own components. Nothing here has applied the floor
+since; the binder was inert for four days and every declaration above it inherited the vacuity. The
+rungs that DO apply it — `setProgram_forced` (through the ported per-instance `noCNColl`) and
+`setProgram_sat_rejects_unwritten` — keep it and are untouched. -/
 theorem setProgram_closedLog_sat
-    (compressN : List ℤ → ℤ) (hN : compressNInjective compressN)
+    (compressN : List ℤ → ℤ)
     (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : Dregg2.Circuit.DescriptorIR2.VmTrace}
     {permOut : List ℤ → List ℤ}
@@ -1556,8 +1564,15 @@ ruler could see it, so every theorem that merely MENTIONED `ClosedLogExtract` wa
 The antecedent was DEAD: all 35 rungs in the tree that discharge a `ClosedLogExtract` slot bound it as
 `_hCR` and never used it (the log binding they actually consume is `logHashInjective`, carried inside
 `StateDecodeLog`). Deleting it makes the bundle strictly STRONGER — one fewer hypothesis to assume, so
-every producer proves more and every consumer supplies less; `closedLogExtract_no_strength_lost` pins
-that the OLD statement still follows. The gate against its return is `FloorCensus.portedPropBody`. -/
+every producer proves more and every consumer supplies less. (The "no strength lost" tooth that used
+to pin that here was DECORATION and is deleted — ⚰ §C.2; the falsifiable replacement is
+`ClosureReadoutsRealizable.closedLogExtract_port_detectably_stronger`.) The gate against its return is
+`FloorCensus.portedPropBody`.
+
+⚑ **AND READ `ClosureReadoutsRealizable` §4 BEFORE BUILDING ON THIS DEF.** `ClosedLogExtract` is
+FALSE at `e = 0` at every surface where anything decodes: it quantifies the circuit witness and the
+state decode INDEPENDENTLY, so one satisfying trace (the empty one satisfies every descriptor) forces
+`kstepAll 0` between endpoints that trace never mentioned. Every theorem carrying it is vacuous. -/
 def ClosedLogExtract (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (R : Registry)
     (e : EffectIdx) : Prop :=
   ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
@@ -1638,8 +1653,9 @@ whose endpoints commit to the published `(pi.pre, pi.post)`. The light client RA
 `descriptorRefines`'s def-body antecedent, which `effectDecodeBridge_of_closedLogExtract`
 `intro`s and DROPS. This now routes through `ApexFloorFree.lightclient_unfoolable_free` over
 `descriptorRefinesFree_of_closedLogExtract`, in which no floor is introduced at all.
-`ClosureReadoutsRealizable.lightclient_unfoolable_live` had already inlined the identical derivation
-without the binder — that it went through was standing evidence the antecedent was dead.
+`ClosureReadoutsRealizable.lightclient_unfoolable_live` (⚰ deleted 2026-08-03 with the
+`ClosureReadoutsLive` cone) had already inlined the identical derivation without the binder — that it
+went through was standing evidence the antecedent was dead.
 
 ⚠ **WHAT IS NOT FIXED.** `S : CommitSurface` remains, and that bundle carries the FIVE commitment
 floors as FIELDS; `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes it at EVERY
@@ -1700,8 +1716,6 @@ published receipt-prepend, and the encode-minus-log) — the `WitnessDecodes`-cl
 theorem closedLogExtract_transfer
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} (hash : List ℤ → ℤ)
     (extract : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
@@ -1718,7 +1732,7 @@ theorem closedLogExtract_transfer
           Dregg2.Circuit.RotatedKernelRefinement.rotatedEncodes hash minit mfin maddrs t
             pre post tr _a)) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
+      (S_live CH RH cmb compress compressN hRest) LH hash Rfix 0 := by
   intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- v12 big-bang: `Rfix 0` is `transferV3Membership` definitionally (the teeth-exposing transfer —
   -- rc + the two membership teeth PI pins at 50..51, `v3RegistryHeap` tail pos 60; both wraps
@@ -1737,22 +1751,20 @@ theorem closedLogExtract_transfer
 The `Poseidon2SpongeCR hash →` antecedent is gone from `ClosedLogExtract` (see the def's doc). Two
 independent checks pin that the deletion is a STRENGTHENING and not a silent restatement. -/
 
-/-- **TOOTH 1 — NO STRENGTH LOST.** The OLD statement (`Poseidon2SpongeCR hash → …`, verbatim, with
-the antecedent typed out rather than referenced) still follows from the ported bundle, by discarding
-the hypothesis. So every consumer that used to apply `ClosedLogExtract` under the CR floor still can:
-the port removed an assumption, it did not weaken a conclusion. Stated as a `theorem` (not an
-`example`) so `#assert_axioms` can pin it and the census/ratchet can SEE it. -/
-theorem closedLogExtract_no_strength_lost
-    (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (R : Registry) (e : EffectIdx)
-    (hext : ClosedLogExtract S LH hash R e) :
-    Poseidon2SpongeCR hash →
-    ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
-      (t : Dregg2.Circuit.DescriptorIR2.VmTrace)
-      (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ) (pre post : RecChainedState),
-      Dregg2.Circuit.DescriptorIR2.Satisfied2 hash (R e) minit mfin maddrs t →
-      StateDecodeLog S LH pc pubLogPre pubLogPost pre post →
-      kstepAll e pre post :=
-  fun _hCR => hext
+/-! ⚰ **TOMBSTONE — `closedLogExtract_no_strength_lost` (DELETED 2026-08-03).** It read
+
+    (hext : ClosedLogExtract S LH hash R e) : Poseidon2SpongeCR hash → ⟨the old body⟩ := fun _hCR => hext
+
+and it was DECORATION, for a reason its own docstring's phrase "so the census/ratchet can SEE it"
+should have flagged: `Poseidon2SpongeCR` is FALSE at deployed parameters
+(`Poseidon2Surface.poseidon2SpongeCR_false_babyBear`), so the conclusion holds there whatever `hext`
+says — the term is `Function.const`, and the theorem is provable with the hypothesis deleted. **A
+tooth whose antecedent is false where the system stands cannot detect a strength loss.**
+
+Its replacement is `ClosureReadoutsRealizable.closedLogExtract_port_detectably_stronger`, which
+exhibits ONE sponge where the two shapes DISAGREE: at the constant sponge the CR fails (so the
+pre-port shape holds vacuously) and `ClosedLogExtract … 0` is PROVABLY FALSE. Same claim, now
+falsifiable. TOOTH 2 below is untouched — it is correctly self-labelled and is the model. -/
 
 /-- **TOOTH 2 — the port is STRICTLY stronger, i.e. the converse does NOT hold definitionally.** The
 old shape re-stated as a hypothesis does not give the new bundle back for free: `hold` must be applied
@@ -1776,7 +1788,6 @@ theorem closedLogExtract_converse_costs_the_floor
 
 #assert_axioms closedLog_of_encode
 #assert_axioms ClosedLogExtract
-#assert_axioms closedLogExtract_no_strength_lost
 #assert_axioms closedLogExtract_converse_costs_the_floor
 #assert_axioms effectDecodeBridge_of_closedLogExtract
 #assert_axioms closedLogExtract_transfer

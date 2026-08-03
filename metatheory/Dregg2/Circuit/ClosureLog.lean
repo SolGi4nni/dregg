@@ -143,8 +143,6 @@ Floor: {Poseidon/Merkle CR (`S_live`), `logHashInjective LH`} + the circuit's `r
 theorem transfer_descriptorRefines_closedLog
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (hash : List ℤ → ℤ)
@@ -156,7 +154,7 @@ theorem transfer_descriptorRefines_closedLog
     (pre post : RecChainedState) (tr : Dregg2.Exec.Turn) (a : AssetId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
+      (S_live CH RH cmb compress compressN hRest) LH
       pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost = LH (tr :: pre.log))
     (logNeeds : post.log = tr :: pre.log →
@@ -182,8 +180,6 @@ the PUBLISHED endpoints with the FULL `CellSealSpec` — its `.log` advance DERI
 theorem cellSeal_descriptorRefines_closedLog
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN0 : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN0} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (compressN : List Dregg2.Circuit.RotatedKernelRefinementCellSeal.FieldElem
@@ -192,7 +188,7 @@ theorem cellSeal_descriptorRefines_closedLog
     (pre post : RecChainedState) (actor cell : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog
-      (S_live CH RH cmb compress compressN0 hCmb hCompress hCompressN hLeaf hRest) LH
+      (S_live CH RH cmb compress compressN0 hRest) LH
       pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost
       = LH (Dregg2.Circuit.Spec.CellLifecycle.cellLifecycleReceipt actor cell :: pre.log))
@@ -221,8 +217,6 @@ Editing `cellSealV3`'s disc gate turns this RED — the seal rides the LIVE cons
 theorem cellSeal_descriptorRefines_closedLog_sat
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN0 : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN0} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (hash : List ℤ → ℤ)
@@ -234,7 +228,7 @@ theorem cellSeal_descriptorRefines_closedLog_sat
     (pre post : RecChainedState) (actor cell : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog
-      (S_live CH RH cmb compress compressN0 hCmb hCompress hCompressN hLeaf hRest) LH
+      (S_live CH RH cmb compress compressN0 hRest) LH
       pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost
       = LH (Dregg2.Circuit.Spec.CellLifecycle.cellLifecycleReceipt actor cell :: pre.log))
@@ -268,14 +262,12 @@ theorem revoke_descriptorRefines_closedLog
     (Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme)
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ}
     (pre post : RecChainedState) (holder tt : CellId)
     (pc : PublishedCommit) (pubLogPre pubLogPost : ℤ)
     (hdec : StateDecodeLog
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH
+      (S_live CH RH cmb compress compressN hRest) LH
       pc pubLogPre pubLogPost pre post)
     (hpub : pubLogPost = LH (Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log))
     (logNeeds : post.log = Dregg2.Exec.TurnExecutorFull.authReceipt holder :: pre.log →

@@ -138,13 +138,22 @@ and `FinInjectivityCollapse.injectivity_collapses_to_poseidon2CR` (retired — i
 `Poseidon2SpongeCR` is refuted at the same width). Every other mention was a CONSTRUCTOR filling
 them.
 
-⚠ WHAT THIS DOES NOT FIX: `ClosureSurface.S_live` and its ~250 downstream sites still bind
-`compressInjective`/`compressNInjective`/`cellLeafInjective` DIRECTLY, as ordinary hypotheses — the
-same refuted predicates, one layer out. Those theorems are still vacuous; shedding the BUNDLE does
-not shed the BINDERS. That drain is the carrier-census cluster-2 sweep and is NOT done here.
+⛑ THE BINDER SURFACE FOLLOWED, 2026-08-02. Deleting these fields left `ClosureSurface.S_live` with
+four `_`-prefixed parameters ITS BODY IGNORED, so ~150 declarations were inapplicable at deployed
+parameters and every binder that only existed to feed them are DELETED. The "one place a proof
+genuinely READ one" (the setProgram rung) was recorded that day and is FALSE — the rung passed the
+hypothesis to a lemma whose body never used it, `RotatedKernelRefinementProgram` having shed it on
+2026-07-30 — so the `ClosureReadouts.hNProgram` field it was parked in is deleted too (2026-08-03).
+All four were inert at every site. See `Verify.ClosureSurfaceApplicable` for the closed surface that
+buys, and `Dregg2/Circuit/ClosureSurface.lean`'s `S_live` for the measurement.
 
-The surviving `restFrame` field is the finite-support successor `RestHashIffFrameFin`, which IS
-satisfiable — see its own doc below. -/
+⚠ The surviving `restFrame` field is the finite-support successor `RestHashIffFrameFin`, which IS
+satisfiable — at the UNBOUNDED reference sponge, and NOT at deployed BabyBear width, where the same
+pigeonhole that killed the four kills it too
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`, 2026-08-02). So this
+structure still has no deployed inhabitant, and — because its body is `Iff`-headed and
+`#floor_ratchet`'s floor derivation requires an injectivity SHAPE — NO GATE SAYS SO. See its own doc
+below. -/
 structure CommitSurface where
   /-- the per-cell leaf hash. -/
   CH        : CellId → Value → ℤ

@@ -102,22 +102,20 @@ section Weld
 /-! ## §1 — the proof carrier + the commitment-surface / crypto-floor context.
 
 `Proof`/`verify` are the OPAQUE aggregation-engine carriers (the same the `Aggregate`/`EngineSound`
-use). The apex is stated over the live surface `S_live …` + the four crypto floors + the audited
+use). The apex is stated over the live surface `S_live …` + its rest-frame obligation + the audited
 `StarkSound`; we carry them EXACTLY as the apex does so an `ApexLeafBundle` can invoke the apex
 verbatim. -/
 
 variable (Proof : Type) (verify : Proof → Bool)
 variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
-variable (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-variable (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
 variable (hRest : RestHashIffFrameFin RH)
 variable (hash : List ℤ → ℤ) (LH : List Dregg2.Exec.Turn → ℤ)
 variable [inst : StarkSound hash Rfix]
 
 /-- The live commitment surface the apex is stated over. -/
 abbrev Surf : CommitSurface :=
-  S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+  S_live CH RH cmb compress compressN hRest
 
 /-! ## §2 — `ApexLeafBundle` — the per-leaf datum that FIRES the apex and LOWERS it to `recCexec`.
 
@@ -146,16 +144,16 @@ structure ApexLeafBundle (p : Proof) (s : ChainStep) where
   accepts : verify p = true → verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept
   /-- the single parametric prover-witness floor for this leaf (realizable via
       `closedWitness_of_readouts`). -/
-  cw : ClosedWitness hash (Surf CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi
+  cw : ClosedWitness hash (Surf CH RH cmb compress compressN hRest) LH pi
   /-- THE NAMED LOWERING: the apex's fired conclusion lowers to this step's `recCexec` transition. -/
   apexLowers :
     (∃ pre post : RecChainedState,
-      StateDecode (Surf CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (Surf CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (Surf CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (Surf CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (Surf CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (Surf CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn) →
     recCexec s.pre s.turn = some s.post
 
@@ -171,14 +169,13 @@ include inst in
 verified-executor transition `recCexec s.pre s.turn = some s.post` — DISCHARGED by the apex. -/
 theorem leafStep_of_bundle (p : Proof) (s : ChainStep)
     (b : ApexLeafBundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH p s)
+      hRest hash LH p s)
     (hv : verify p = true) :
     recCexec s.pre s.turn = some s.post :=
   -- run the apex on the leaf's (accepting) batch + its single witness floor, then lower.
   b.apexLowers
     (lightclient_unfoolable_circuit_sound (CH := CH) (RH := RH) (cmb := cmb) (compress := compress)
-      (compressN := compressN) (hCmb := hCmb) (hCompress := hCompress) (hCompressN := hCompressN)
-      (hLeaf := hLeaf) (hRest := hRest) hash LH b.pi b.π b.cw (b.accepts hv))
+      (compressN := compressN) (hRest := hRest) hash LH b.pi b.π b.cw (b.accepts hv))
 
 /-! ## §4 — `engineSound_of_apex` — BUILD `EngineSound` (discharge `leaf_sound`) FROM the apex.
 
@@ -194,7 +191,7 @@ include inst in
 over a `Forall₂` of per-leaf bundles. -/
 theorem leafSound_of_bundles {leafProofs : List Proof} {steps : List ChainStep}
     (hb : List.Forall₂ (fun p s => Nonempty (ApexLeafBundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH p s)) leafProofs steps) :
+      hRest hash LH p s)) leafProofs steps) :
     List.Forall₂
       (fun (p : Proof) (s : ChainStep) => verify p = true → recCexec s.pre s.turn = some s.post)
       leafProofs steps := by
@@ -203,7 +200,7 @@ theorem leafSound_of_bundles {leafProofs : List Proof} {steps : List ChainStep}
   | @cons p s ps ss hhead _htail ih =>
     refine List.Forall₂.cons (fun hv => ?_) ih
     exact leafStep_of_bundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH p s hhead.some hv
+      hRest hash LH p s hhead.some hv
 
 include inst in
 /-- **`engineSound_of_apex` — THE WELD.** Builds `RecursiveAggregation.EngineSound` from:
@@ -220,7 +217,7 @@ theorem engineSound_of_apex
     {cmb' compress' : ℤ → ℤ → ℤ} {compressN' : List ℤ → ℤ}
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (hb : List.Forall₂ (fun p s => Nonempty (ApexLeafBundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH p s)) agg.leafProofs steps)
+      hRest hash LH p s)) agg.leafProofs steps)
     (hrec : verify agg.root = true →
       (∀ q ∈ agg.leafProofs, verify q = true) ∧ verify agg.bindingProof = true)
     (hbind : verify agg.bindingProof = true →
@@ -235,7 +232,7 @@ theorem engineSound_of_apex
     EngineSound Proof verify CH' RH' cmb' compress' compressN' agg g steps where
   recursive_sound := hrec
   leaf_sound := leafSound_of_bundles Proof verify CH RH cmb compress compressN
-    hCmb hCompress hCompressN hLeaf hRest hash LH hb
+    hRest hash LH hb
   binding_sound := hbind
 
 end Weld
@@ -253,8 +250,6 @@ section Payoff
 variable (Proof : Type) (verify : Proof → Bool)
 variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
-variable (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
-variable (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
 variable (hRest : RestHashIffFrameFin RH)
 variable (hash : List ℤ → ℤ) (LH : List Dregg2.Exec.Turn → ℤ)
 variable [inst : StarkSound hash Rfix]
@@ -268,7 +263,7 @@ supplies every step. -/
 theorem multiTurn_rests_on_apex
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (hb : List.Forall₂ (fun p s => Nonempty (ApexLeafBundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH p s)) agg.leafProofs steps)
+      hRest hash LH p s)) agg.leafProofs steps)
     (hrec : verify agg.root = true →
       (∀ q ∈ agg.leafProofs, verify q = true) ∧ verify agg.bindingProof = true)
     (hbind : verify agg.bindingProof = true →
@@ -285,7 +280,7 @@ theorem multiTurn_rests_on_apex
   Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history
     Proof verify CH RH cmb compress compressN agg g steps
     (engineSound_of_apex Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH agg g steps hb hrec hbind)
+      hRest hash LH agg g steps hb hrec hbind)
     hroot
 
 include inst in
@@ -297,7 +292,7 @@ theorem finalized_rests_on_apex
     (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep)
     (cert : Dregg2.Distributed.FinalizedLightClient.FinalityCert) (finalizedRoot : ℤ)
     (hb : List.Forall₂ (fun p s => Nonempty (ApexLeafBundle Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH p s)) agg.leafProofs steps)
+      hRest hash LH p s)) agg.leafProofs steps)
     (hrec : verify agg.root = true →
       (∀ q ∈ agg.leafProofs, verify q = true) ∧ verify agg.bindingProof = true)
     (hbind : verify agg.bindingProof = true →
@@ -317,7 +312,7 @@ theorem finalized_rests_on_apex
   Dregg2.Distributed.FinalizedLightClient.light_client_accepts_finalized_history
     Proof verify CH RH cmb compress compressN agg g steps cert finalizedRoot
     (engineSound_of_apex Proof verify CH RH cmb compress compressN
-      hCmb hCompress hCompressN hLeaf hRest hash LH agg g steps hb hrec hbind)
+      hRest hash LH agg g steps hb hrec hbind)
     hroot hbound hcert
 
 end Payoff

@@ -35,7 +35,9 @@ Three consequences the campaign should read as the actual win, all pinned below:
   used to carry `Poseidon2SpongeCR hash` for the sole purpose of feeding the deleted antecedent.
   A REFUTATION resting on a hypothesis that is FALSE at deployed parameters proves nothing. Both
   now refute with no sponge-CR assumed.
-* `lightclient_unfoolable_live` / `lightclient_unfoolable_closed_final_live` shed the binder too.
+* `lightclient_unfoolable_live` / `lightclient_unfoolable_closed_final_live` shed the binder too —
+  ⚰ both DELETED 2026-08-03 along with the `ClosureReadoutsLive` bundle they stood on, which
+  `ClosureReadoutsRealizable` §4 proves could never have had an inhabitant.
 * Every consumer that merely MENTIONS `ClosedLogExtract` stops being a silent prop-body carrier.
 
 ## The teeth, and why they cannot go stale
@@ -134,23 +136,29 @@ silently weakened by the port would go red here. -/
 hypothesis) still follows; the port only DROPPED an assumption. -/
 example {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
     (_hCR : Poseidon2SpongeCR hash)
     {pc : PublishedCommit} {pubLogPre pubLogPost : ℤ} {pre post : RecChainedState}
     (hdec : StateDecodeLog
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      (S_live CH RH cmb compress compressN hRest)
       LH pc pubLogPre pubLogPost pre post)
     (hext : ClosedLogExtract
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      (S_live CH RH cmb compress compressN hRest)
       LH hash Rfix 15) : False :=
   Dregg2.Circuit.ClosureReadoutsRealizable.closedLogExtract_emptyTag_false hdec hext
 
 /-- ⚙ NO STRENGTH LOST — the OLD `ClosedLogExtract` statement is still derivable from the ported
-bundle (the campaign's standing both-directions bar; the forward half lives in `ClosureAll` as
-`closedLogExtract_no_strength_lost`, this is its independent restatement here). -/
+bundle (the campaign's standing both-directions bar).
+
+⚑ Kept as an `example` and NOT as a named theorem, 2026-08-03. The named version in `ClosureAll`
+(`closedLogExtract_no_strength_lost`) is DELETED: its conclusion is `Poseidon2SpongeCR hash → …`,
+which holds for free wherever the antecedent is false — i.e. at deployed BabyBear parameters — so it
+could not detect a strength loss and was pinned by `#assert_axioms` as if it could. The FALSIFIABLE
+statement of the same claim is
+`ClosureReadoutsRealizable.closedLogExtract_port_detectably_stronger`. This shape survives here, as an
+`example`, purely as the type-level regression check its section is for: if the antecedent ever comes
+back to `ClosedLogExtract`, `fun _hCR => hext` stops typechecking. -/
 example (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (R : Registry) (e : EffectIdx)
     (hext : ClosedLogExtract S LH hash R e) :
     Poseidon2SpongeCR hash →
@@ -160,7 +168,7 @@ example (S : CommitSurface) (LH : List Turn → ℤ) (hash : List ℤ → ℤ) (
       Dregg2.Circuit.DescriptorIR2.Satisfied2 hash (R e) minit mfin maddrs t →
       StateDecodeLog S LH pc pubLogPre pubLogPost pre post →
       kstepAll e pre post :=
-  Dregg2.Circuit.ClosureAll.closedLogExtract_no_strength_lost S LH hash R e hext
+  fun _hCR => hext
 
 /-! ## §4 — the STRENGTHENED refutations, typed out.
 
@@ -171,14 +179,12 @@ these go RED. -/
 /-- ⚙ PORT CHECK — the dead-slot refutation carries NO sponge-CR hypothesis. -/
 example : ∀ {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} {hash : List ℤ → ℤ}
     {pc : PublishedCommit} {pubLogPre pubLogPost : ℤ} {pre post : RecChainedState},
-    StateDecodeLog (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+    StateDecodeLog (S_live CH RH cmb compress compressN hRest)
       LH pc pubLogPre pubLogPost pre post →
-    ClosedLogExtract (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+    ClosedLogExtract (S_live CH RH cmb compress compressN hRest)
       LH hash Rfix 15 →
     False :=
   @Dregg2.Circuit.ClosureReadoutsRealizable.closedLogExtract_emptyTag_false
@@ -268,9 +274,9 @@ TRUE of the tree at large; FALSE of the APEX, and the counter-evidence was alrea
 `ClosureAll` in plain sight. `effectDecodeBridge_of_closedLogExtract` — the only `descriptorRefines`
 producer the closed apex chain uses — opens `intro _hCR minit mfin maddrs t pc pre post hsat hdec` and
 never mentions `_hCR` again, precisely because `ClosedLogExtract` had ALREADY been ported off the floor
-(§1 above, 2026-07-25). `ClosureReadoutsRealizable.lightclient_unfoolable_live` then inlined the same
-derivation with NO CR binder at all and went through. So on the apex path the antecedent was dead, by
-`intro`, and it WAS a grep.
+(§1 above, 2026-07-25). `ClosureReadoutsRealizable.lightclient_unfoolable_live` (⚰ deleted 2026-08-03)
+then inlined the same derivation with NO CR binder at all and went through. So on the apex path the
+antecedent was dead, by `intro`, and it WAS a grep.
 
 What the old paragraph got right stands: `descriptorRefinesR` is not a port target
 (`DescriptorRefinesShirkRefuted` proves the twin exactly as vacuous), and porting the DEF in place is
@@ -289,8 +295,8 @@ control of `OpeningResidualCutoverCheck` §2.
 /-! ## §6 — axiom hygiene. -/
 
 #assert_axioms closedLogExtract_shape
-#assert_axioms Dregg2.Circuit.ClosureAll.closedLogExtract_no_strength_lost
 #assert_axioms Dregg2.Circuit.ClosureAll.closedLogExtract_converse_costs_the_floor
+#assert_axioms Dregg2.Circuit.ClosureReadoutsRealizable.closedLogExtract_port_detectably_stronger
 #assert_axioms Dregg2.Circuit.ClosureReadoutsRealizable.closedLogExtract_emptyTag_false
 #assert_axioms Dregg2.Circuit.ClosureReadoutsRealizable.closureReadouts_uninstantiable
 #assert_axioms descriptorComplete_shape

@@ -335,8 +335,6 @@ fixed across all witnesses — exactly the realizable per-call shape `StarkSound
 theorem closedLogExtract_transfer_closed
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     {LH : List Turn → ℤ} (hash : List ℤ → ℤ)
     -- the column+frame readout floor (the `WitnessDecodes`-class circuit-witness extraction).
@@ -352,7 +350,7 @@ theorem closedLogExtract_transfer_closed
     -- the ledger surface seam (from the `S_live` `StateDecode`, under the CR floor).
     (ledger : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pre post : RecChainedState) (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
-      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      LedgerSurfaceReadout (S_live CH RH cmb compress compressN hRest)
         pre post (readout minit mfin maddrs t pre post hsat).1
         (readout minit mfin maddrs t pre post hsat).2.1
         (readout minit mfin maddrs t pre post hsat).2.2.srcPre.balLo
@@ -385,7 +383,7 @@ theorem closedLogExtract_transfer_closed
         ≤ pre.kernel.bal (readout minit mfin maddrs t pre post hsat).1.src
             (readout minit mfin maddrs t pre post hsat).2.1) :
     ClosedLogExtract
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
+      (S_live CH RH cmb compress compressN hRest) LH hash Rfix 0 := by
   intro minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
   -- v12 big-bang: `Rfix 0 = transferV3Membership` definitionally (the teeth-exposing transfer —
   -- the rc wrap PLUS the two `(sender_leaf, authorized_root)` membership teeth PI pins at 50..51;

@@ -121,12 +121,10 @@ set_option autoImplicit false
 section
 variable {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
 variable {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-variable {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-variable {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
 variable {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
 
 local notation "Slive" =>
-  S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+  S_live CH RH cmb compress compressN hRest
 
 /-- **`kernelConfigSound` — verifyBatch-accept over `Rfix` ⟹ a REAL kernel-config transition.**
 
@@ -176,7 +174,7 @@ theorem kernelConfigSound
     (href : DeployedRefines Rfix perm RATE toNat params vk
         (fullChecks core A toNat params.powBits) initState logN view)
     -- ★ the config-side per-effect decode readouts (WitnessDecodes-class) + log projection.
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
       StateDecode Slive pc pre post →

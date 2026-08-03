@@ -195,7 +195,7 @@ tip — NOT at the branch time the transition was authored. -/
 /-- **`settlement_soundness` — THE SETTLEMENT SOUNDNESS THEOREM (compose of legs 1 + 3).**
 
 From a verifying finalized batch against `vkOfRegistry Rfix` (the SAME named crypto floors the apex
-carries: `StarkSound`, `Poseidon2SpongeCR` + the `S_live` CR set, `logHashInjective` inside
+carries: `StarkSound`, `Poseidon2SpongeCR` + the `S_live` rest-frame obligation, `logHashInjective` inside
 `ClosedWitness.mkLog`, `ClosedWitness` itself) AND a settlement coordinate `st`:
 
   * (leg 1, apex) there EXIST decoded endpoints `pre post` and a genuine kernel transition
@@ -213,23 +213,21 @@ theorem settlement_soundness
     {Digest Proof : Type} [AddCommGroup Digest] [CryptoKernel Digest Proof]
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitness hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
+      (S_live CH RH cmb compress compressN hRest) LH pi)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept)
     (st : RevSettlement) :
     (∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn)
     ∧ (∀ (cred : VC Digest Proof) (m : Node) (τ : Time),
         RevokedAt st.log cred m τ →
@@ -237,8 +235,7 @@ theorem settlement_soundness
         honorsAtSettlement st cred = false) := by
   refine ⟨?_, ?_⟩
   · -- leg 1: the genuine kernel transition from the finalized apex.
-    exact lightclient_unfoolable_circuit_sound (hCmb := hCmb) (hCompress := hCompress)
-      (hCompressN := hCompressN) (hLeaf := hLeaf) (hRest := hRest) hash LH pi π hcw hacc
+    exact lightclient_unfoolable_circuit_sound (hRest := hRest) hash LH pi π hcw hacc
   · -- leg 3: revocation evaluated AT THE SETTLEMENT TIP.
     intro cred m τ hrev hbound
     exact settled_revocation_bounded st cred m τ hrev hbound
@@ -254,30 +251,27 @@ theorem settlement_soundness_single_machine
     {Digest Proof : Type} [AddCommGroup Digest] [CryptoKernel Digest Proof]
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (hcw : ClosedWitness hash
-      (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH pi)
+      (S_live CH RH cmb compress compressN hRest) LH pi)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept)
     (st : RevSettlement) (hinst : Instantaneous st.T) :
     (∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn)
     ∧ (∀ (cred : VC Digest Proof) (m : Node) (τ : Time),
         RevokedAt st.log cred m τ → τ ≤ st.tSettle →
         honorsAtSettlement st cred = false) := by
   refine ⟨?_, ?_⟩
-  · exact lightclient_unfoolable_circuit_sound (hCmb := hCmb) (hCompress := hCompress)
-      (hCompressN := hCompressN) (hLeaf := hLeaf) (hRest := hRest) hash LH pi π hcw hacc
+  · exact lightclient_unfoolable_circuit_sound (hRest := hRest) hash LH pi π hcw hacc
   · intro cred m τ hrev hle
     exact settled_revocation_immediate st hinst cred m τ hrev hle
 

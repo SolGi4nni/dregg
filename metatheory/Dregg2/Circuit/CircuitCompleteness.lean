@@ -411,8 +411,6 @@ asset). -/
 theorem transfer_descriptorComplete
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ)
     -- the realizable prover floor: from the move it builds the satisfying trace publishing the kernel's
@@ -424,7 +422,7 @@ theorem transfer_descriptorComplete
         (srcPre srcPost dstPre dstPost : CellState) (srcParams dstParams : TransferParams),
         Satisfied2 hash transferV3 minit mfin maddrs t ×'
         (tracePublishedCommit t = commitOf
-          (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pre post turn) ×'
+          (S_live CH RH cmb compress compressN hRest) pre post turn) ×'
         (srcPre.balLo  = pre.kernel.bal tr.src a) ×'
         (dstPre.balLo  = pre.kernel.bal tr.dst a) ×'
         (srcPost.balLo = post.kernel.bal tr.src a) ×'
@@ -438,9 +436,9 @@ theorem transfer_descriptorComplete
     ∃ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace),
       Satisfied2 hash Dregg2.Circuit.RotatedKernelRefinement.transferV3 minit mfin maddrs t ∧
       tracePublishedCommit t = commitOf
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) pre post turn ∧
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
-        (commitOf (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest) pre post turn ∧
+      StateDecode (S_live CH RH cmb compress compressN hRest)
+        (commitOf (S_live CH RH cmb compress compressN hRest)
           pre post turn) pre post := by
   obtain ⟨minit, mfin, maddrs, t, srcPre, srcPost, dstPre, dstPost, srcParams, dstParams,
     hsat, hpub, hsrcPre, hdstPre, hsrcPost, hdstPost, hdiDir, hciDir, hdiAmt, hciAmt, prover⟩ :=

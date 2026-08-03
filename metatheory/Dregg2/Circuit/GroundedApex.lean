@@ -264,39 +264,37 @@ soundness column is now PROVEN, not carried. -/
 theorem lightclient_unfoolable_grounded_live
     {CH : CellId → Value → ℤ} {RH : RecordKernelState → ℤ}
     {cmb compress : ℤ → ℤ → ℤ} {compressN : List ℤ → ℤ}
-    {hCmb : compressInjective cmb} {hCompress : compressInjective compress}
-    {hCompressN : compressNInjective compressN} {hLeaf : cellLeafInjective CH}
     {hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH}
     (hash : List ℤ → ℤ) (LH : List Turn → ℤ) {State : Type}
     {Scap : Dregg2.Circuit.DeployedCapTree.Cap8Scheme}
     {cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc}
-    (rds : @ClosureReadouts CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest
+    (rds : @ClosureReadouts CH RH cmb compress compressN hRest
       LH hash State Scap cnCellSeal cnLife cnPermsVK cnBirth cnNotes cnMisc)
     (mkLog : ∀ (e : EffectIdx) (pc : PublishedCommit) (pre post : RecChainedState),
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pc pre post →
       ∃ pubLogPre pubLogPost, StateDecodeLog
-        (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+        (S_live CH RH cmb compress compressN hRest)
         LH pc pubLogPre pubLogPost pre post)
     (hCR : Poseidon2SpongeCR hash) [StarkSound hash Rfix]
     (pi : BatchPublicInputs) (π : BatchProof)
     (pre₀ post₀ : RecChainedState)
     (hpreWF : AccountsWF pre₀.kernel) (hpostWF : AccountsWF post₀.kernel)
-    (hpre : pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+    (hpre : pi.pre = (S_live CH RH cmb compress compressN hRest).commit
       pre₀.kernel pi.turn)
-    (hpost : pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+    (hpost : pi.post = (S_live CH RH cmb compress compressN hRest).commit
       post₀.kernel pi.turn)
     (hacc : verifyBatch (vkOfRegistry Rfix) pi π = Verdict.accept) :
     ∃ pre post : RecChainedState,
-      StateDecode (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest)
+      StateDecode (S_live CH RH cmb compress compressN hRest)
         pi.toPublished pre post ∧
       kstepAll pi.effect pre post ∧
-      pi.pre = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.pre = (S_live CH RH cmb compress compressN hRest).commit
         pre.kernel pi.turn ∧
-      pi.post = (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest).commit
+      pi.post = (S_live CH RH cmb compress compressN hRest).commit
         post.kernel pi.turn :=
   lightclient_unfoolable_grounded hash
-    (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) Rfix hCR kstepAll
+    (S_live CH RH cmb compress compressN hRest) Rfix hCR kstepAll
     (descriptorRefines_complete hash LH rds mkLog) pi π
     pre₀ post₀ hpreWF hpostWF hpre hpost hacc
 
@@ -308,24 +306,59 @@ floor (a `Satisfied2` witness under an accepting verifier / an accepting `verify
 
 section Vacuity
 
-/-- **`engineSound_grounded_constructs` (the engine constructor FIRES).** On the honest 1-step chain
-(`teethGenesis ⟶ honestStep.post`), `engineSound_grounded` PRODUCES a genuine `EngineSound` over a
-rejecting verifier — the leaf realizer is the concrete `WitnessRealizing.rejectLeaf`, the binding/recursion
-legs are vacuous under rejection. So the grounded constructor is inhabited on a real executor run; it is
-not an empty over-ask. (The accepting-verifier firing — which DOES exercise the binding keystone — is
-`grounded_light_client_fires` below.) -/
+/-- **`engineSound_grounded_constructs` (the engine constructor FIRES — ⚑ REPAIRED 2026-08-03).**
+On the honest 1-step chain (`teethGenesis ⟶ honestStep.post`), `engineSound_grounded` PRODUCES a
+genuine `EngineSound` **over the ACCEPTING verifier**, with EVERY input constructed: the per-leaf
+`LeafRefinement` (its `bridge` premise `acceptAll () = true` HOLDS, so the `Satisfied2` witness, the
+faithful `StateDecode` and the lift are all exhibited), the binding-AIR extraction
+(`satisfies_one`/`represents_one` — so the binding keystone is genuinely load-bearing), and the
+recursion leg.
+
+⚰ **WHAT THIS REPLACES.** Until today it built the bundle over `WitnessRealizing.rejectAll`, a
+verifier that accepts NOTHING: all three `EngineSound` legs are implications whose antecedents are
+`False` there, and the leaf realizer was `rejectLeaf`, whose bridge was discharged by
+`simp [rejectAll] at h`. "The grounded constructor is inhabited on a real executor run" was true of a
+bundle in which nothing had to be proved. Both of those declarations are deleted.
+
+⚠ **AND THE `leaf_sound` LEG IS STILL FREE**, for the reason `WitnessRealizing.leafSound_free` proves:
+`ChainStep` carries its own `commits` field, so the per-step conclusion holds for every step with no
+leaf at all. This theorem is now an honest witness that the CONSTRUCTOR's inputs are all inhabitable;
+it is not evidence that the leaf leg constrains anything. -/
 theorem engineSound_grounded_constructs
     (hash : List ℤ → ℤ) (S : CommitSurface) (hCR : Poseidon2SpongeCR hash)
-    (d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2) :
-    EngineSound Unit WitnessRealizing.rejectAll zCH zRH zcmb zcompress zcompressN
-      { root := (), leafProofs := [()], bindingProof := ()
-      , genesisRoot := 0, finalRoot := 0, chainDigest := 0, numTurns := 1 }
-      teethGenesis [honestStep] :=
-  engineSound_grounded Unit WitnessRealizing.rejectAll hash S hCR
-    zCH zRH zcmb zcompress zcompressN _ teethGenesis [honestStep]
-    (List.Forall₂.cons ⟨WitnessRealizing.rejectLeaf hash S d honestStep⟩ List.Forall₂.nil)
-    (fun h => by simp [WitnessRealizing.rejectAll] at h)
-    (fun h => by simp [WitnessRealizing.rejectAll] at h)
+    (d : Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2) (τ : Turn) :
+    EngineSound RealProof acceptAll zCH zRH zcmb zcompress zcompressN
+      realAggregate teethGenesis realSteps := by
+  have hleaves : List.Forall₂
+      (fun p s => Nonempty (LeafRefinement RealProof acceptAll hash S p s))
+      realAggregate.leafProofs realSteps := by
+    show List.Forall₂ _ [()] [honestStep]
+    refine List.Forall₂.cons ⟨?_⟩ List.Forall₂.nil
+    exact
+      { d       := d
+      , kstep   := WitnessRealizing.wfStep
+      , refines := fun _ _ _ _ _ _ _ _ _ hdec => ⟨hdec.preWF, hdec.postWF⟩
+      , bridge  := fun _ =>
+          ⟨fun _ => 0, fun _ => (0, 0), [], ApexFloorFree.emptyTrace,
+           ⟨S.commit WitnessRealizing.emptyKernel τ, S.commit WitnessRealizing.emptyKernel τ, τ⟩,
+           emptyState, emptyState,
+           ApexFloorFree.satisfied2_emptyTrace hash d _ _,
+           ⟨rfl, rfl, emptyKernel_wf, emptyKernel_wf⟩,
+           fun _ => honestStep.commits⟩ }
+  have hbe : BindingExtract RealProof acceptAll hash zCH zRH zcmb zcompress zcompressN
+      realAggregate realSteps := by
+    intro _
+    refine ⟨[rowOf zCH zRH zcmb zcompress zcompressN honestStep],
+            pubOf zCH zRH zcmb zcompress zcompressN hash honestStep,
+            satisfies_one zCH zRH zcmb zcompress zcompressN hash honestStep,
+            represents_one zCH zRH zcmb zcompress zcompressN honestStep, rfl, ?_, rfl⟩
+    show realAggregate.finalRoot = (pubOf zCH zRH zcmb zcompress zcompressN hash honestStep).final
+    simp only [realAggregate, pubOf, realSteps]
+    exact foldedFinalRoot_eq_lastNew zCH zRH zcmb zcompress zcompressN teethGenesis [honestStep]
+      honestStep (by simp)
+  exact engineSound_grounded RealProof acceptAll hash S hCR
+    zCH zRH zcmb zcompress zcompressN realAggregate teethGenesis realSteps
+    hleaves hbe (fun _ => ⟨fun _ _ => rfl, rfl⟩)
 
 /-- **`grounded_light_client_fires` (THE GROUNDED WHOLE-HISTORY APEX FIRES).** On the honest chain, with
 an ACCEPTING verifier, `light_client_verifies_whole_history_grounded` fires and concludes a TRUE executor
