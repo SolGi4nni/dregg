@@ -402,6 +402,61 @@ impl MinaVerifiedHead {
         }
     }
 
+    /// **Offer a whole candidate set, one pairwise offer at a time.**
+    ///
+    /// # ⚑ THIS IS NOT A FOLD, AND THE DIFFERENCE IS THE WHOLE POINT
+    ///
+    /// A `max_by` over a candidate set would be exploitable: `MinaChainSelection.beats_not_transitive`
+    /// proves `select` has genuine 3-cycles at real Mina constants, so "the best of this set" is
+    /// not a function of the set — it is a function of the ORDER. This method does not compute a
+    /// maximum. It replays exactly what a light client does when candidates arrive over time: each
+    /// one is offered to the CURRENT head, one at a time, by [`Self::offer`].
+    ///
+    /// What that means for the caller, stated rather than implied: **the resulting head depends on
+    /// `candidates`' order.** That is not a defect here, it is the protocol. The object that does
+    /// not depend on order is `finalized_height`, and `rollHead_finalized_monotone` is why.
+    ///
+    /// # The anchor is a precondition, not a hint
+    ///
+    /// A candidate whose `anchored` flag is false is **never offered to the gate at all** — it is
+    /// counted in [`CandidateSetOutcome::unanchored`] and skipped. That flag is not this crate's to
+    /// invent: it comes from `mina-tip verify-bestchain`, which folds the peer's transition-chain
+    /// proof from that peer's frontier root to the tip, on openmina's own Poseidon
+    /// (`bridge/tools/mina-tip/src/chain.rs::verify_anchor`).
+    ///
+    /// ⚑ Without it, `select`'s short-range branch reads `blockchain_length` off bytes a peer
+    /// composed and nothing else — the one field a liar controls for free. The anchor is what costs
+    /// something to forge.
+    pub fn follow_candidate_set(
+        &mut self,
+        candidates: &[MinaCandidateTip],
+        gate: &dyn MinaForkChoiceGate,
+    ) -> Result<CandidateSetOutcome, HeadError> {
+        let mut out = CandidateSetOutcome {
+            offered: 0,
+            advanced: 0,
+            kept: 0,
+            unanchored: 0,
+            finalized_height: self.finalized_height,
+        };
+        for c in candidates {
+            if !c.anchored {
+                out.unanchored += 1;
+                continue;
+            }
+            out.offered += 1;
+            match self.offer(&c.protocol_state, &c.state_hash, c.segment_ok, gate)? {
+                HeadOutcome::Advanced { finalized_height } => {
+                    out.advanced += 1;
+                    out.finalized_height = finalized_height;
+                }
+                HeadOutcome::Kept => out.kept += 1,
+            }
+        }
+        out.finalized_height = self.finalized_height;
+        Ok(out)
+    }
+
     /// Pull the peer's current best tip and offer it. The one-call "follow the chain" step.
     pub fn follow_once(
         &mut self,
@@ -415,6 +470,69 @@ impl MinaVerifiedHead {
             .map_err(HeadError::Source)?;
         self.offer(&bytes, candidate_hash, segment_ok, gate)
     }
+}
+
+/// **One member of a candidate set** — a tip a peer served, with the two facts that decide whether
+/// it may be judged at all.
+///
+/// ⚑ `anchored` and `segment_ok` are inputs BECAUSE THEY ARE OTHER GATES' VERDICTS, and neither is
+/// computed here. Conflating "no one checked" with "it checked out" is exactly how a fail-open gate
+/// is built, so both default to the refusing value in every constructor this module offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinaCandidateTip {
+    /// The tip's `Protocol_state.Value` binprot bytes — `cand-NN.ps` in a `mina-tip` bundle.
+    pub protocol_state: Vec<u8>,
+    /// The tip's state hash. ⚑ CHECKED by the gate against `protocol_state`, never trusted — see
+    /// [`tip_wire`].
+    pub state_hash: String,
+    /// Whether this tip's transition-chain proof folded from the serving peer's frontier root to
+    /// the tip, on openmina's own Poseidon. `mina-tip verify-bestchain` is what decides it.
+    ///
+    /// **False means the candidate is never offered to the fork-choice gate.**
+    pub anchored: bool,
+    /// The anchored-SEGMENT verdict (`dregg_mina_lc_verify`). A different question from `anchored`:
+    /// that one asks "does this tip descend from the root its peer served", this one asks "is the
+    /// segment reaching it valid". Fork choice presupposes both.
+    pub segment_ok: bool,
+    /// The peer that served it. Attribution only.
+    pub peer: String,
+}
+
+impl MinaCandidateTip {
+    /// A candidate that has passed NOTHING. Both verdicts start at the refusing value; a caller
+    /// that wants them true must have a gate that said so.
+    pub fn unjudged(
+        protocol_state: Vec<u8>,
+        state_hash: impl Into<String>,
+        peer: impl Into<String>,
+    ) -> Self {
+        Self {
+            protocol_state,
+            state_hash: state_hash.into(),
+            anchored: false,
+            segment_ok: false,
+            peer: peer.into(),
+        }
+    }
+}
+
+/// What happened across a whole candidate set.
+///
+/// ⚑ `offered + unanchored` is the set size, and the split is reported rather than summed away: a
+/// run in which every candidate was unanchored looks identical to a run with no candidates if you
+/// only read `advanced`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CandidateSetOutcome {
+    /// How many reached the fork-choice gate.
+    pub offered: usize,
+    /// How many moved the head.
+    pub advanced: usize,
+    /// How many the rule refused.
+    pub kept: usize,
+    /// ⚑ How many were NEVER OFFERED because their transition-chain proof did not fold.
+    pub unanchored: usize,
+    /// The finalized height after the walk. Never below where it started.
+    pub finalized_height: u64,
 }
 
 /// The verified gate, as a seam so this module is testable without the archive.
@@ -626,6 +744,126 @@ mod tests {
         assert!(w.starts_with("sg=0;"), "{w}");
     }
 
+    /// A gate that COUNTS how many times it was asked, so "never offered" is provable rather than
+    /// asserted. A skip that still reaches the gate is not a skip.
+    struct CountingGate {
+        answer: String,
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl MinaForkChoiceGate for CountingGate {
+        fn head_advance(&self, _wire: &str) -> Result<String, String> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(self.answer.clone())
+        }
+        fn better_tip(&self, _wire: &str) -> Result<String, String> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(self.answer.clone())
+        }
+    }
+
+    fn cand(peer: &str, hash: &str, anchored: bool) -> MinaCandidateTip {
+        MinaCandidateTip {
+            protocol_state: vec![0xbb; 1544],
+            state_hash: hash.into(),
+            anchored,
+            segment_ok: true,
+            peer: peer.into(),
+        }
+    }
+
+    /// ⚑ **THE UNANCHORED CANDIDATE NEVER REACHES THE RULE.** This is the whole point of reading
+    /// the transition-chain proof: a tip whose merkle list does not fold from its peer's frontier
+    /// root is not a weaker candidate, it is not a candidate. Proved by COUNTING gate calls, so a
+    /// future refactor that "skips" it by offering it and ignoring the answer goes red here.
+    #[test]
+    fn an_unanchored_candidate_is_never_offered_to_the_fork_choice_gate() {
+        let mut h = head();
+        let before = h.clone();
+        let g = CountingGate {
+            answer: "adv=1;fin=999999".into(),
+            calls: std::cell::Cell::new(0),
+        };
+        let set = [cand("peerA", "777", false), cand("peerB", "888", false)];
+        let out = h.follow_candidate_set(&set, &g).unwrap();
+        assert_eq!(g.calls.get(), 0, "an unanchored candidate reached the gate");
+        assert_eq!(out.unanchored, 2);
+        assert_eq!(out.offered, 0);
+        assert_eq!(out.advanced, 0);
+        assert_eq!(
+            h, before,
+            "the head moved on a set with no anchored candidate"
+        );
+    }
+
+    /// ⚑ **A LOSING FORK IS REFUSED, AND THE RATCHET DOES NOT DROP.** The gate keeps the head; the
+    /// walk must report `kept`, leave the head where it was, and never lower `finalized_height`.
+    #[test]
+    fn a_losing_fork_is_offered_refused_and_moves_nothing() {
+        let mut h = head();
+        let before = h.clone();
+        let g = CountingGate {
+            answer: "adv=0;fin=100".into(),
+            calls: std::cell::Cell::new(0),
+        };
+        let set = [cand("peerA", "777", true), cand("peerB", "888", true)];
+        let out = h.follow_candidate_set(&set, &g).unwrap();
+        assert_eq!(g.calls.get(), 2, "both anchored candidates must be judged");
+        assert_eq!(out.offered, 2);
+        assert_eq!(out.kept, 2);
+        assert_eq!(out.advanced, 0);
+        assert_eq!(out.unanchored, 0);
+        assert_eq!(h.protocol_state, before.protocol_state);
+        assert_eq!(h.state_hash, before.state_hash);
+        assert!(h.finalized_height >= before.finalized_height);
+    }
+
+    /// A mixed set: only the anchored members are judged, and the counts add up to the set size.
+    #[test]
+    fn only_the_anchored_members_of_a_set_are_judged() {
+        let mut h = head();
+        let g = CountingGate {
+            answer: "adv=1;fin=539897".into(),
+            calls: std::cell::Cell::new(0),
+        };
+        let set = [
+            cand("peerA", "777", true),
+            cand("peerB", "888", false),
+            cand("peerC", "999", true),
+        ];
+        let out = h.follow_candidate_set(&set, &g).unwrap();
+        assert_eq!(g.calls.get(), 2);
+        assert_eq!(out.offered + out.unanchored, set.len());
+        assert_eq!(out.unanchored, 1);
+        assert_eq!(out.advanced, 2);
+        assert_eq!(out.finalized_height, 539_897);
+        assert_eq!(h.finalized_height, 539_897);
+    }
+
+    /// ⚑ An ABSENT archive refuses the whole set, and it refuses it on the FIRST anchored
+    /// candidate rather than walking the rest and reporting a tidy zero.
+    #[test]
+    fn an_absent_gate_refuses_the_whole_candidate_set() {
+        let mut h = head();
+        let before = h.clone();
+        let set = [cand("peerA", "777", true), cand("peerB", "888", true)];
+        let e = h.follow_candidate_set(&set, &AbsentGate).unwrap_err();
+        assert!(matches!(e, HeadError::VerifiedGateUnavailable(_)));
+        assert_eq!(h, before);
+    }
+
+    /// ⚑ **`unjudged` DEFAULTS TO REFUSING.** A constructor whose defaults were `true` would make
+    /// every caller that forgot a field into a fail-open.
+    #[test]
+    fn a_freshly_built_candidate_has_passed_nothing() {
+        let c = MinaCandidateTip::unjudged(vec![0u8; 1544], "1", "peerA");
+        assert!(!c.anchored, "anchored must default to the refusing value");
+        assert!(
+            !c.segment_ok,
+            "segment_ok must default to the refusing value"
+        );
+    }
+
     /// ⚑ THE LIVE openmina PAIR, THROUGH THE LEAN BINPROT DECODER + SAMASIKA, OVER THE C ABI.
     ///
     /// This is the measured half of the byte-source transmutation. `bridge/tools/mina-tip` — which
@@ -641,6 +879,21 @@ mod tests {
     /// UNGATED like its sibling `mina_fork_choice_decides_on_real_devnet_bytes_through_the_real_ffi`:
     /// archive-absence routes through `demand_lean` (which PANICS under `DREGG_TEST_REQUIRE_LEAN=1`)
     /// rather than the test silently ceasing to check anything.
+    ///
+    /// ⚑ **THIS TEST WAS STRUCTURALLY UNPASSABLE UNTIL 2026-08-02, AND TWO OF ITS THREE
+    /// ASSERTIONS WERE PASSING FOR THE WRONG REASON.** It passed `"1"` and `"2"` as the two
+    /// sides' state hashes. Since 2026-07-30 `MinaForkChoiceGate.decodeSide?` RE-DERIVES each
+    /// side's hash from its own bytes and returns `none` unless the wire's `eh=`/`ch=` field
+    /// equals it, so every call here decoded to `"ERR"`. `verified_mina_better_tip` maps every
+    /// non-`"1"` output to `KeepExisting` — correctly, fail-closed — which means the two
+    /// assertions expecting `KeepExisting` (`select_irrefl`, `select_asymm`) were satisfied by a
+    /// REFUSAL and would have stayed green with the decoder deleted. Only the third could fail,
+    /// and the first time this test was actually run against an archive exporting the gate, it
+    /// did.
+    ///
+    /// The hashes below are the REAL ones, as decimal field elements, printed by
+    /// `mina-tip verify-pair` from these exact fixtures. `select_irrefl`/`select_asymm` now mean
+    /// what their names say, because the sides now decode.
     #[test]
     fn the_live_openmina_pair_decodes_and_selects_through_the_real_lean_gate() {
         use dregg_lean_ffi::MinaForkChoiceVerdict;
@@ -664,21 +917,44 @@ mod tests {
             "openmina child fixture is not the 1544-byte protocol state"
         );
 
-        // A tip does not displace itself (select_irrefl) — decode succeeds, select says no.
+        // ⚑ THE REAL STATE HASHES, as decimal field elements. `mina-tip verify-pair --parent
+        // … --child …` prints exactly these two lines from exactly these two files. Anything
+        // else and `decodeSide?` refuses the side and the gate answers `"ERR"`.
+        const PARENT_HASH: &str =
+            "11651804881993560809984162371324456189064676022942805929239967859377150046164";
+        const CHILD_HASH: &str =
+            "28710974526978334901564261647210572137992533146705698353351415462787901990308";
+
+        // ⚑ NON-VACUITY CONTROL, FIRST. A WRONG hash must be REFUSED — otherwise every
+        // `KeepExisting` below could be a refusal wearing a verdict's clothes, which is precisely
+        // the defect this test had. `"1"` is the value the old test passed for both sides.
         assert_eq!(
             dregg_lean_ffi::verified_mina_better_tip("1", "1", &parent, &parent),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "a bogus served hash must not yield TakeCandidate"
+        );
+        assert_eq!(
+            dregg_lean_ffi::verified_mina_better_tip("1", "2", &parent, &child),
+            Ok(MinaForkChoiceVerdict::KeepExisting),
+            "⚑ the served-hash check must REFUSE a pair labelled with hashes its bytes do not \
+             have — if this ever returns TakeCandidate, decodeSide? has stopped re-deriving"
+        );
+
+        // A tip does not displace itself (select_irrefl) — the side DECODES and select says no.
+        assert_eq!(
+            dregg_lean_ffi::verified_mina_better_tip(PARENT_HASH, PARENT_HASH, &parent, &parent),
             Ok(MinaForkChoiceVerdict::KeepExisting),
             "a tip must not displace itself"
         );
         // The one-block-longer child (540479) decodes under Lean and wins select over 540478.
         assert_eq!(
-            dregg_lean_ffi::verified_mina_better_tip("1", "2", &parent, &child),
+            dregg_lean_ffi::verified_mina_better_tip(PARENT_HASH, CHILD_HASH, &parent, &child),
             Ok(MinaForkChoiceVerdict::TakeCandidate),
             "the live openmina child must decode under the Lean binprot decoder and win select"
         );
         // Reverse presentation must not also win (select_asymm).
         assert_eq!(
-            dregg_lean_ffi::verified_mina_better_tip("2", "1", &child, &parent),
+            dregg_lean_ffi::verified_mina_better_tip(CHILD_HASH, PARENT_HASH, &child, &parent),
             Ok(MinaForkChoiceVerdict::KeepExisting),
             "presentation order must not make both sides win"
         );

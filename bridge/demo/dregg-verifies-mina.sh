@@ -233,12 +233,34 @@ cat <<'EOF'
       thing no light client can be defended against, by ANY stack. This is a
       fact of the model, not undone work, and openmina does not change it.
 
-  ⚑ A SCOPE NOTE (unchanged):
-      the opening check accepts an anchored SEGMENT — "this exhibited segment is
-      anchored, linked, canonical and k deep" — not "and it is the chain the
-      network selected". Two k-deep segments under different anchors are
-      indistinguishable to it; `mina_head` is the object that distinguishes them,
-      and it does not read `bestChain`.
+  ⚑ THE SCOPE NOTE, NARROWED (2026-08-02) — and what narrowed it:
+      the old note read "the opening check accepts an anchored SEGMENT, not 'and
+      it is the chain the network selected' ... `mina_head` is the object that
+      distinguishes them, and it does not read `bestChain`."
+
+      The cause was one discarded field. `get_best_tip` v2 returns a tip AND a
+      transition-chain proof anchoring it to the serving peer's frontier root;
+      `mina-tip` read the tip's 1,544-byte protocol state out of a 61,193-byte
+      reply and dropped the rest. What survived is `blockchain_length` — the one
+      field Samasika's short-range branch prefers and a peer can set freely.
+
+      NOW: `mina-tip bestchain` asks EACH seed separately, folds each chain proof
+      on openmina's own Poseidon, and REFUSES a tip that does not descend from the
+      root its peer served (`scripts/check-mina-bestchain.sh`, 7 forgeries refused,
+      2 of them by the fold with every shape check passing).
+
+      ⚠ WHAT REMAINS, precisely, and it is not the same claim:
+        · the anchor reaches the SERVING PEER's frontier root — MEASURED at exactly
+          k=290 blocks — not genesis, and not the operator's pin. A public node
+          holds only its transition frontier, so this bound is a property of what
+          the network serves.
+        · the network is normally CONVERGED. Both responding seeds served the
+          identical tip, byte for byte, so the set machinery has not yet been
+          driven by a real disagreement. Selection over a genuinely forked set is
+          exercised structurally (`MinaVerifiedHead::follow_candidate_set`), not
+          yet by the network.
+        · selection itself is Samasika's and it is Lean's, PAIRWISE — never a fold
+          over the set, because `select` has genuine 3-cycles.
 
   ⚑ RETIRED: the "small dependency-light Python client, not audited crypto"
       caveat. The p2p BYTE SOURCE is now openmina's Rust stack (mina-tip). The

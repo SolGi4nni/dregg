@@ -48,6 +48,15 @@ impl Client {
         }
     }
 
+    /// The peer this client actually talked to, once a connection has been established.
+    ///
+    /// Used only for ATTRIBUTION in a candidate-set bundle — "this tip came off that peer" — so a
+    /// bundle records which peers were asked and which answered. Nothing is trusted because of it;
+    /// the anchor fold is what decides whether a candidate is a chain.
+    pub fn peer_id(&self) -> Option<PeerId> {
+        self.peer
+    }
+
     pub async fn rpc<M>(&mut self, query: M::Query) -> Result<M::Response, ClientError>
     where
         M: RpcMethod,

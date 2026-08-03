@@ -68,6 +68,33 @@ GATES=(
   # an empty (blinded) scan trips every non-vacuity floor. The working tree is never touched.
   "check-guard-modules|180|python3 scripts/check-guard-modules.py --rev HEAD"
   "check-guard-modules-red|60|python3 scripts/check-guard-modules.py --self-test"
+  # THE `#guard` POPULATION MAY ONLY RATCHET DOWN, per module. `check-guard-modules` above asks
+  # whether a guard RUNS; this one asks whether the fact should have been a `#guard` at all.
+  # ⚑ THE MEASUREMENT: `#guard e` is implemented (Lean 4.30, Lean/Elab/Tactic/Guard.lean:154-167) as
+  # `unsafe evalExpr Bool` — the SAME compiled evaluator `native_decide` runs on. So a `#guard` is
+  # not a cheaper check than a `native_decide` theorem; it is the same check with the NAME, the TERM
+  # and the AXIOM RECORD deleted. It does not avoid trusting the compiler — it trusts the compiler
+  # SILENTLY, which is why `#assert_axioms` is structurally blind to all 15,850 of them (measured
+  # 2026-08-02 across 1,159 files; KimchiStepMain.lean alone holds 838). This is the sin CLAUDE.md
+  # already forbids in Rust — "case-tests prove NOTHING about all inputs" — and moving the case-tests
+  # into Lean did not make them verification.
+  # Policy: metatheory/docs/GUARD-DISCIPLINE.md. A fact worth asserting is worth naming.
+  # 15,850 cannot go to zero in one pass and a flat ban would be a gate nobody keeps green, so:
+  # a PER-MODULE baseline (scripts/guard-discipline-baseline.txt) that may only SHRINK. Three reds —
+  # a module ABOVE its row (the habit regrew), BELOW it (a STALE row: you converted, retire the
+  # number — this is what makes the census monotone, not merely non-increasing), or carrying guards
+  # with NO row (the population grew sideways). Pure text, no Lean toolchain, ~2s, git-archive HEAD
+  # extract for churn-safety on a shared tree.
+  # ⚠ It bounds the COUNT; it does not read what any guard CLAIMS. A module at its baseline may hold
+  # its most load-bearing pin as a `#guard` forever, and a guard DELETED rather than converted moves
+  # the number the same way a converted one does. Only the diff says which.
+  # The `-red` row is not optional: the headline is a NEGATIVE assertion, which passes just as
+  # happily on a broken reader. The synthetic-tree red-proof exercises all three arms, the control
+  # (a tree at its own baseline is green), the one-way ratchet (regrowth past a RETIRED row still
+  # fails), the comment/string/#assert_axioms/#guard_msgs false-positive guards, and that a blinded
+  # scan trips the non-vacuity floors. The working tree is never touched.
+  "check-guard-discipline|180|python3 scripts/check-guard-discipline.py --rev HEAD"
+  "check-guard-discipline-red|60|python3 scripts/check-guard-discipline.py --self-test"
   "forcing-gadget-tie|120|python3 scripts/check-forcing-gadget-tie.py"
   "forcing-gadget-tie-red|60|python3 scripts/check-forcing-gadget-tie.py --self-test"
   # A SCHEMA EPOCH THAT MOVED AND SAID SO NOWHERE. `docs/VK-REGEN-LOG.md` is how a reader
@@ -464,6 +491,29 @@ GATES=(
   # assertion, which passes just as happily when the reader is broken.
   "mina-npm-coverage|120|bash scripts/check-mina-npm-coverage.sh"
   "mina-npm-coverage-red|120|bash scripts/check-mina-npm-coverage.sh --self-test"
+  # ⚑ THE CHAIN, NOT THE TIP. Until 2026-08-02 this repo's Mina light client read
+  # `tip.data.header.protocol_state` off `get_best_tip` v2 and DROPPED `tip.proof` —
+  # the merkle-list proof anchoring that tip to the serving peer's frontier root.
+  # MEASURED: the reply is 61,193 bytes and the protocol state is 1,544 of them. What
+  # was left is `blockchain_length`, which Samasika's short-range branch prefers and
+  # which a peer can set to anything. The scope note this tree had been reciting since
+  # 07-30 ("not 'and it is the chain the network selected'") named the consequence; the
+  # cause was one discarded field.
+  # This row asks EACH seed separately (a single `Client` latches onto the first peer to
+  # connect, so one call is one peer's opinion), folds each transition-chain proof on
+  # openmina's own Poseidon, and refuses any tip that does not descend from the root its
+  # peer served. ~2s, offline, no cargo, no Lean, no network.
+  # The red path is NOT optional and it is not a separate row, because the headline is a
+  # NEGATIVE assertion ("no candidate is unanchored") that passes just as happily when
+  # the checker is broken: SEVEN forgeries must be refused, with a control, and with a
+  # CATCHER DISCIPLINE — at least two must die on the POSEIDON FOLD with every cheap
+  # shape check passing. A suite whose every leg dies on an integer comparison would stay
+  # green with the fold deleted, and the first version of this one nearly did (3 of 5).
+  # It also prints the COVERAGE MAP: which byte ranges of the reply a flipped bit is
+  # refused in (measured 20.2% — the two protocol states and the 290 body hashes), with
+  # offsets DERIVED from the binprot layout rather than hardcoded. The hardcoded version
+  # broke silently the first time a smaller block arrived.
+  "mina-bestchain|300|bash scripts/check-mina-bestchain.sh"
   # THE SIX PICKLES PROVE+BIND HARNESSES, which ran in NO CI SCRIPT AT ALL until 2026-08-01.
   # `grep -rn pickles scripts/ .github/` returned the oracle runner, two workspace-closure
   # allowlist rows and one unrelated path — and not one of `metatheory/fixtures/pickles-*-harness/`.
