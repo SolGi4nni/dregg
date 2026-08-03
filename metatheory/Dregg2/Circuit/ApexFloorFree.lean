@@ -40,18 +40,35 @@ UNSATISFIABLE at EVERY parameter — not at deployed BabyBear, at every width �
 countable). **`CommitSurface` HAD NO INHABITANT**, so an apex quantified over one was vacuous whether
 or not it also carried `Poseidon2SpongeCR`.
 
-⛑ **PARTLY REPAIRED 2026-07-31, and this file's split survives it.** `restFrame` is now
-`RestFrameFin.RestHashIffFrameFin RH` and the bundle HAS a closed inhabitant at the reference sponge
-(`Verify.RestFrameFiniteSupportSuccessor` §6). The remaining four fields are still refuted at DEPLOYED
-BabyBear width, so a `CommitSurface`-quantified theorem is still vacuous where the system stands, and
-everything below still stands as written — but the reason is now a pigeonhole with a named repair
-campaign, not a cardinality impossibility.
+⛑ **REPAIRED IN TWO STEPS, and this file's split survives both.** (1) 2026-07-31: `restFrame` became
+`RestFrameFin.RestHashIffFrameFin RH` and the bundle gained a closed inhabitant at the reference
+sponge (`Verify.RestFrameFiniteSupportSuccessor` §6), so `apexCommitFloor_unsatisfiable` was
+explicitly retracted for `CommitSurface` (`Verify.ApexPremiseVacuity`'s header, the 2026-07-31 retraction). (2) 2026-08-01: the
+four injectivity fields were DELETED outright, and `ClosureSurface.S_live`'s four now-inert parameters
+followed on 2026-08-02.
 
-⚑ That is why the repair here is not "delete a binder". A theorem stated at `(S : CommitSurface)` cannot
-be given a refutability pole AT ALL: `(S : CommitSurface) → ¬ P S` is true for free. The `False`-`kstep`
-acceptance test that `DescriptorRefinesShirkRefuted` set for any candidate re-grounding of
-`descriptorRefines` is therefore UNSTATEABLE at `CommitSurface`, and the only way to pass it is to stop
-quantifying over the bundle.
+⚠ So the paragraph above describes the bundle as it WAS, and is kept only as the record of why this
+file was written. `CommitSurface` at HEAD has ONE Prop field. What is true of it is BOTH POLES at once
+(`Verify.ClosureSurfaceApplicable.surface_exists_but_not_at_babyBear`): a `CommitSurface` EXISTS
+(`ClosureSurfaceApplicable.S_liveRef`, closed, at the unbounded reference sponge) and NONE exists over
+a BabyBear-bounded rest-hash (`…no_babyBear_commitSurface`, from
+`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`). A `CommitSurface`-quantified
+theorem is therefore still unusable WHERE THE SYSTEM RUNS — by pigeonhole on one field, with a named
+repair campaign — but it is no longer vacuous at every parameter, and everything below still stands.
+
+⚑ That is why the repair here was not "delete a binder". WHEN THIS FILE WAS WRITTEN a theorem stated
+at `(S : CommitSurface)` could not be given a refutability pole at all — `(S : CommitSurface) → ¬ P S`
+was true for free over an empty type — so the `False`-`kstep` acceptance test that
+`DescriptorRefinesShirkRefuted` set for any candidate re-grounding of `descriptorRefines` was
+UNSTATEABLE there, and the only way to pass it was to stop quantifying over the bundle.
+
+⛑ **That premise expired 2026-08-01** (`CircuitSoundness.lean` §1's tombstone says so at HEAD): the
+bundle has a closed inhabitant, so `(S : CommitSurface) → ¬ P S` is no longer free and a refutability
+pole AT THE BUNDLE is stateable for the first time. The repair below is not thereby unnecessary —
+§5's teeth fire at a `CommitMap` and the deployed refutation
+(`ClosureSurfaceApplicable.no_babyBear_commitSurface`) still puts every `CommitSurface` statement out
+of reach of a deployed light client — but the ARGUMENT for it is now "the bundle is uninhabited at
+deployed width", not "the bundle is uninhabited full stop".
 
 The apex never needed it. `lightclient_unfoolable`'s derivation touches `S` at exactly one place —
 `S.commit`, inside `StateDecode`'s two equations. `CommitSurface.commit_binds`, the field the five
@@ -90,8 +107,12 @@ lands is:
     `stateDecode_pre_faithful` FIRES and REFUSES a forgery
     (`Verify.RestFrameFiniteSupportSuccessor` §6). It holds for kernels with FINITE per-cell support,
     at the UNBOUNDED reference pole. Two residuals, both named: `FiniteRepresentable` at an
-    executor-reached kernel needs `FinKernelState`'s undischarged per-effect `hpres`; and the four
-    hash-injectivity fields are still refuted at deployed BabyBear width.
+    executor-reached kernel needs `FinKernelState`'s undischarged per-effect `hpres`; and the
+    surviving `restFrame` field is refuted at deployed BabyBear width
+    (`ClosureSurfaceApplicable.no_babyBear_commitSurface`). ⛑ CORRECTED 2026-08-03: the second
+    residual read "the four hash-injectivity fields are still refuted at deployed BabyBear width" —
+    those four fields were DELETED on 2026-08-01, so the residual is now ONE field, not four. The
+    width refutation did not go away with them; it moved to the field that remains.
 
 Nothing that stood on the old apex falls, and the demonstration is IN SITU rather than a fresh
 theorem here (see §4 for why a fresh one is impossible): `ClosureAll.lightclient_unfoolable_closed`,
@@ -170,8 +191,12 @@ Three differences from `CircuitSoundness.descriptorRefines`:
      (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`), so its presence made the obligation free
      for the parameters to discharge; and on the closed apex path it was never read
      (`effectDecodeBridge_of_closedLogExtract` introduces and drops it).
-  2. `S : CommitSurface` is replaced by `C : CommitMap`. The bundle has NO inhabitant at any parameter
-     (`ApexPremiseVacuity.apexCommitFloor_unsatisfiable`); the map has many.
+  2. `S : CommitSurface` is replaced by `C : CommitMap`. ⛑ CORRECTED 2026-08-03: this read "the bundle
+     has NO inhabitant at any parameter (`ApexPremiseVacuity.apexCommitFloor_unsatisfiable`)", which
+     was retracted for `CommitSurface` on 2026-07-31. The bundle HAS an inhabitant
+     (`ClosureSurfaceApplicable.S_liveRef`) and has NONE over a BabyBear-bounded rest-hash
+     (`…no_babyBear_commitSurface`); the map is inhabited at DEPLOYED parameters too, which is the
+     difference this substitution actually buys.
   3. the PUBLICATION LINK `tracePublishedCommit t = pc` is CARRIED. The apex holds this fact from
      `StarkSound.extract` and used to throw it away; restoring it weakens the obligation to exactly
      what the apex supplies. -/
@@ -207,9 +232,14 @@ From an accepting batch against `vkOfRegistry R` and EXACTLY
 there EXIST kernel endpoints whose `C`-commitments ARE `pi.pre`/`pi.post` and between which
 `kstep pi.effect` genuinely holds. The light client RAN NOTHING.
 
-⚑ **No `Poseidon2SpongeCR`. No `CommitSurface`.** Both are refuted — the first at deployed BabyBear, the
-second at every parameter — and neither was doing work here: `hCR` was consumed only to discharge
-`descriptorRefines`'s dead antecedent, and the surface bundle only for its `commit` projection.
+⚑ **No `Poseidon2SpongeCR`. No `CommitSurface`.** ⛑ CORRECTED 2026-08-03 — this said "both are refuted,
+the first at deployed BabyBear, the second at every parameter". BOTH are refuted at DEPLOYED BABYBEAR
+WIDTH, and only there: `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` for the first, and
+`ClosureSurfaceApplicable.no_babyBear_commitSurface` for the second (no `CommitSurface` has a
+BabyBear-bounded rest-hash). The bundle is inhabited at the unbounded reference pole
+(`ClosureSurfaceApplicable.S_liveRef`), so "every parameter" is wrong and has been since 2026-07-31.
+Neither was doing work here regardless: `hCR` was consumed only to discharge `descriptorRefines`'s dead
+antecedent, and the surface bundle only for its `commit` projection.
 
 ⚠ **WHAT THIS THEOREM DOES NOT CLAIM.** Nothing HERE says the endpoints are UNIQUE. A light client
 applying THIS theorem learns "an accepted proof stands over a real kernel transition whose endpoints

@@ -30,15 +30,25 @@ module pins BOTH directions on every build, from the ELABORATED environment:
     `KernelConfigSoundnessAvail.kernelConfigSoundAvail` LEFT §2 for §1, and this is the negative
     control firing as designed — it fired, and the reason is the one it named. The state-decode
     apex chain (`ClosureAll.lightclient_unfoolable_closed` →
-    `ClosureFinal{,Avail}`/`ClosureFanout{,Genuine}` → these two) now routes through
+    `ClosureFinal{,Avail}`/`ClosureFanoutGenuine` → these two; ⚰ `ClosureFanout` deleted
+    2026-08-03 as superseded) now routes through
     `ClosureAll.descriptorRefinesFree_of_closedLogExtract` → `ApexFloorFree.lightclient_unfoolable_free`,
     in which NO `Poseidon2SpongeCR` is introduced anywhere. The §2 prose above was WRONG about which
     binding was load-bearing: the apex's `hCR` was handed to `descriptorRefines`'s def-body antecedent
     and DISCARDED by `ClosureAll.effectDecodeBridge_of_closedLogExtract`'s `intro _hCR`; it never
-    reached `rotV3_binds_published`. ⚠ AND SHEDDING IT DID NOT DE-VACUUM THOSE APEXES — they still
-    quantify over `CommitSurface`, refuted at EVERY parameter by
-    `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`. Read the clearance as "one refuted
-    hypothesis fewer", not as "the state-decode apex is now applicable".
+    reached `rotV3_binds_published`. ⚠ AND SHEDDING IT DID NOT MAKE THOSE APEXES APPLICABLE — they
+    still quantify over `CommitSurface`, which has NO inhabitant over a BabyBear-bounded rest-hash
+    (`Verify.ClosureSurfaceApplicable.no_babyBear_commitSurface`, from
+    `RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`). Read the clearance as "one
+    refuted hypothesis fewer", not as "the state-decode apex is now applicable".
+
+    ⛑ CORRECTED 2026-08-03: this cited `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable`
+    "refuted at EVERY parameter". That citation was retracted for `CommitSurface` on 2026-07-31
+    (`Verify.ApexPremiseVacuity`'s header, the 2026-07-31 retraction) and the bundle's four injectivity fields were deleted on
+    2026-08-01; `apexCommitFloor_unsatisfiable` refutes the `ApexCommitFloor` BUNDLE (whose fifth conjunct is the old `RestHashIffFrame`, still bound at ~147 binder positions), not this bundle — and ⚠ since `5f67481b0` not the two assurance apexes either, which now take `RestHashIffFrameFin`.
+    (`Verify/ApexPremiseVacuity.lean` header, corrected 2026-08-03.) The surviving obstruction is DEPLOYED-WIDTH pigeonhole on the one remaining field, and
+    the bundle IS inhabited at the unbounded reference pole (`ClosureSurfaceApplicable.S_liveRef`);
+    both poles are one theorem, `…surface_exists_but_not_at_babyBear`.
 
   ⛑ 2026-07-31: fourteen names LEFT §2 for §1. The `2f72e093f` prose above once said the map-op arm
     APPLIES the floor via `mapOpsArm_of_modeler hash hCRh`. That became FALSE four hours later
@@ -69,7 +79,6 @@ import Dregg2.Circuit.KernelConfigSoundnessAvail
 import Dregg2.Circuit.FriFsDecodedOodRepair
 import Dregg2.Circuit.OodSingletonRepair
 import Dregg2.Circuit.ClosureForest
-import Dregg2.Circuit.ClosureFanout
 import Dregg2.Circuit.ApexFloorFree
 
 namespace Dregg2.Circuit.OpeningResidualCutoverCheck
@@ -160,7 +169,13 @@ def portedOffTheFloor : List Name :=
   , `Dregg2.Circuit.KernelConfigSoundness.kernelConfigSound
   , `Dregg2.Circuit.KernelConfigSoundnessAvail.kernelConfigSoundAvail
   , `Dregg2.Circuit.ClosureAll.lightclient_unfoolable_closed
-  , `Dregg2.Circuit.ClosureFanout.lightclient_unfoolable_closed_final
+  -- ⚰ `ClosureFanout.lightclient_unfoolable_closed_final` REMOVED 2026-08-03: its MODULE is deleted,
+  -- not renamed. §1's `none` branch says "re-point it at the renamed declaration, never delete the
+  -- line", and that rule is right for a rename — but this subject has no successor to re-point AT,
+  -- because its successor row is the NEXT LINE and always was. `ClosureFanout` was superseded by
+  -- `ClosureFanoutGenuine` (whose header says so) and carried 29 dischargers whose names COLLIDE
+  -- with the genuine ones; deleting the row here is the module deletion being banked, not a subject
+  -- being dropped. If `ClosureFanout` ever returns, its row must return with it.
   , `Dregg2.Circuit.ClosureFanoutGenuine.lightclient_unfoolable_closed_final_genuine
   , `Dregg2.Circuit.ClosureFinal.lightclient_unfoolable_one
   , `Dregg2.Circuit.ClosureFinal.lightclient_unfoolable_circuit_sound

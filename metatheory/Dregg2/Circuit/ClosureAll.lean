@@ -73,8 +73,10 @@ floor at all.
 ⚰ `S_live`'s FOUR injectivity carriers left the set on 2026-08-02, with the `CommitSurface` fields they
 filled. ⚠ AND THE SET IS STILL NOT REALIZABLE, which is the honest reading of both sheds: the survivor
 `RestHashIffFrameFin RH` is refuted at deployed BabyBear width by pigeonhole
-(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), and NO gate defends it —
-it is `Iff`-headed, so `#floor_ratchet`'s shape-derived floor set can never contain it. Refuted
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`). ⛑ 2026-08-03: this read
+"and NO gate defends it — it is `Iff`-headed, so `#floor_ratchet`'s shape-derived floor set can never
+contain it." `ec31ebda6`'s `FloorCensus.injShapeIff` recognises the biconditional, so it IS in the
+derived floor set now and `CommitSurface` is a sentinel again. Refuted
 hypotheses fewer is not "applicable". `ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`, is the applicable
 statement; migrating this chain onto it needs `StateDecodeLog`/`ClosedLogExtract` restated at a
 `CommitMap` and the rest-hash refinement of `Verify.RestFrameFiniteSupportSuccessor`.
@@ -1609,11 +1611,28 @@ apex therefore does not need the floor at all, and discharges
 `ApexFloorFree.descriptorRefinesFree S.commit hash (Rfix pi.effect) (kstepAll pi.effect)` INLINE with
 nothing to introduce.
 
-⚠ It is inline and not a named lemma ON PURPOSE. Such a lemma must quantify over `S : CommitSurface`,
-and `#floor_ratchet` counts every declaration that does as a fresh carrier of a bundle
-`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes at EVERY parameter. Adding a
-knowingly-vacuous helper in order to prove a de-vacuuming is exactly the move the gate exists to stop,
-so the plumbing stays inside the already-grandfathered apexes until `CommitSurface` itself is repaired. -/
+⚠ It is inline and not a named lemma, and the REASON has changed — ⛑ CORRECTED 2026-08-03. The
+paragraph here used to say such a lemma must quantify over `S : CommitSurface`, that
+`#floor_ratchet` counts every declaration that does as a fresh carrier, and that
+`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes the bundle at EVERY parameter.
+ALL THREE ARE FALSE AT HEAD:
+
+  * `CommitSurface`'s four injectivity fields were DELETED 2026-08-01 and its fifth is now
+    `RestFrameFin.RestHashIffFrameFin RH`, so `apexCommitFloor_unsatisfiable` — which still refutes
+    the `ApexCommitFloor` BUNDLE (fifth conjunct = the old `RestHashIffFrame`, still bound at ~147
+    binder positions) — no longer applies to `CommitSurface` (`Verify/ApexPremiseVacuity.lean`, the 2026-07-31
+    retraction), nor, since `5f67481b0`, to the two assurance apexes, which now take
+    `RestHashIffFrameFin` and are vacuous at DEPLOYED width instead.
+  * `CommitSurface` left `FloorRatchet.sentinelBundles` the same day, so quantifying over it costs
+    NO baseline row (`Verify.ClosureSurfaceApplicable` names its theorems for exactly this reason).
+  * The bundle IS inhabited: `ClosureSurfaceApplicable.S_liveRef`, closed, at the unbounded
+    reference sponge.
+
+⚠ What is true instead, and it is still enough to keep this inline: NO `CommitSurface` has a
+BabyBear-bounded rest-hash (`ClosureSurfaceApplicable.no_babyBear_commitSurface`, from
+`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`) — refuted at DEPLOYED width by
+pigeonhole on the one surviving field, not at every width by Cantor. A named helper would therefore
+still be inapplicable where the system runs; it would simply no longer be caught saying so. -/
 
 /-! ### `hrefinesAllClosed`: the apex's `∀ e` per-effect family, from the closed-extract bundle.
 
@@ -1657,14 +1676,40 @@ whose endpoints commit to the published `(pi.pre, pi.post)`. The light client RA
 `ClosureReadoutsLive` cone) had already inlined the identical derivation without the binder — that it
 went through was standing evidence the antecedent was dead.
 
-⚠ **WHAT IS NOT FIXED.** `S : CommitSurface` remains, and that bundle carries the FIVE commitment
-floors as FIELDS; `Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes it at EVERY
-parameter (Cantor, on `restFrame`). So THIS statement is still unusable at any assignment, and shedding
-the sponge floor did not change that. The statement that IS applicable is
-`ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`; migrating the closed chain onto it
-needs `StateDecodeLog`/`ClosedLogExtract` restated at a `CommitMap` (a ~36-rung cascade through
-`ClosureLog`) and the rest-hash refinement of `Verify.RestFrameFiniteSupportSuccessor`. Do not read this
-apex as applicable. -/
+⚠ **WHAT IS NOT FIXED — ⛑ RESTATED 2026-08-03, because the old wording was refuted in this tree.**
+This paragraph read "`S : CommitSurface` … carries the FIVE commitment floors as FIELDS;
+`apexCommitFloor_unsatisfiable` refutes it at EVERY parameter (Cantor, on `restFrame`)". At HEAD the
+bundle carries ONE Prop field, `restFrame : RestFrameFin.RestHashIffFrameFin RH` — the four
+injectivity fields were deleted 2026-08-01 — and `apexCommitFloor_unsatisfiable` was explicitly
+retracted for `CommitSurface` on 2026-07-31 (`Verify.ApexPremiseVacuity`'s header, the 2026-07-31 retraction). It still
+refutes the `ApexCommitFloor` BUNDLE, whose fifth conjunct is the old `RestHashIffFrame` (still bound
+at ~147 binder positions in this tree). It says nothing about this bundle — and ⚠ since `5f67481b0` nothing
+about `AssuranceCase.deployed_system_secure`/`unfoolability_guarantee` either: those took
+`RestHashIffFrameFin` and are vacuous at DEPLOYED BabyBear width, not at every parameter.
+
+The honest statement is BOTH POLES, and the tree proves them together
+(`Verify.ClosureSurfaceApplicable.surface_exists_but_not_at_babyBear`):
+
+  * a `CommitSurface` EXISTS — `ClosureSurfaceApplicable.S_liveRef`, a CLOSED term at the unbounded
+    reference sponge, so `S` is no longer an empty type and this statement is no longer vacuous
+    outright;
+  * and NONE exists over a BabyBear-bounded rest-hash
+    (`ClosureSurfaceApplicable.no_babyBear_commitSurface`, from
+    `RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`).
+
+So THIS statement is inapplicable AT DEPLOYED PARAMETERS — by pigeonhole on one field, repairable by
+the finite-support campaign — rather than unusable at every assignment by cardinality. Shedding the
+sponge floor did not change that. ⛑ AND IT IS NOW GATED — corrected 2026-08-03, hours after the
+paragraph above was written: this said "⚑ NOTHING GATES IT: `RestHashIffFrameFin` is `Iff`-headed, so
+`#floor_ratchet`'s shape-derived floor set can never contain it, and `CommitSurface` left
+`sentinelBundles` on 2026-08-01." `ec31ebda6` added `FloorCensus.injShapeIff`, the injectivity
+BICONDITIONAL shape, so BOTH rest-predicates are now in the derived floor set and `CommitSurface` is
+back in `sentinelBundles`. The wound is DETECTED now, not merely documented, and the two floors cost
+the raise that commit banked. The statement that IS applicable at deployed parameters remains
+`ApexFloorFree.lightclient_unfoolable_free`, over a bare `CommitMap`; migrating the closed chain onto
+it needs `StateDecodeLog`/`ClosedLogExtract` restated at a `CommitMap` (a ~36-rung cascade through
+`ClosureLog`) and the rest-hash refinement of `Verify.RestFrameFiniteSupportSuccessor`. Do not read
+this apex as applicable where the system runs. -/
 theorem lightclient_unfoolable_closed
     (hash : List ℤ → ℤ) (S : CommitSurface) (LH : List Turn → ℤ)
     [StarkSound hash Rfix]

@@ -89,7 +89,7 @@ Three declarations lived here and are gone:
   * `surface_no_stateBreak (S : CommitSurface) : ¬ StateBreak S` — proved the surface's own bundled
     injectivity refutes its own break, by consuming `S.compNInj`/`S.cmbInj`/`S.compInj`/`S.leafInj`.
     It was the ONLY place in the tree those four fields were used AS INJECTIVITY, and all four are
-    FALSE at deployed parameters (`Verify/ApexPremiseVacuity.lean:177` — injectivity of a
+    FALSE at deployed parameters (`Verify.ApexPremiseVacuity.apexCommitFloorSansRest_false_at_babyBear` — injectivity of a
     compressing map into one BabyBear felt is refuted by pigeonhole). So the theorem was not a
     non-vacuity argument, it was the vacuity: it "refuted" the break using premises no deployed
     surface satisfies. The four fields are DELETED from `CommitSurface` as of the same commit.

@@ -283,10 +283,22 @@ What the old paragraph got right stands: `descriptorRefinesR` is not a port targ
 still a real cascade — ~15 consumers thread `∀ e, descriptorRefines …` as a hypothesis.
 
 `ApexFloorFree` ports the apex instead of the def, and in doing so had to answer the harder question
-the def-level framing hid: `descriptorRefines` is stated at `S : CommitSurface`, which
-`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes at EVERY parameter, so no statement
-about it can even HAVE a refutability pole. `ApexFloorFree.descriptorRefinesFree` is stated at a bare
-`CommitMap` and is REFUTED at `fun _ _ => False` for every hash and every descriptor
+the def-level framing hid: `descriptorRefines` is stated at `S : CommitSurface`, and WHEN THAT PORT
+LANDED the bundle carried five refuted floors as fields, so no statement about it could even HAVE a
+refutability pole.
+
+⛑ **CORRECTED 2026-08-03.** The sentence above used to end "…which
+`Verify.ApexPremiseVacuity.apexCommitFloor_unsatisfiable` refutes at EVERY parameter", and that
+citation was retracted for `CommitSurface` on 2026-07-31 (`Verify.ApexPremiseVacuity`'s header, the 2026-07-31 retraction) —
+`apexCommitFloor_unsatisfiable` refutes the `ApexCommitFloor` BUNDLE (whose fifth conjunct is the old `RestHashIffFrame`, still bound at ~147 binder positions), not this bundle — and ⚠ since `5f67481b0` not the two assurance apexes either, which now take `RestHashIffFrameFin`. The BUNDLE here is a different object now: four injectivity fields deleted
+2026-08-01, fifth is `RestFrameFin.RestHashIffFrameFin RH`. At HEAD both poles hold together
+(`Verify.ClosureSurfaceApplicable.surface_exists_but_not_at_babyBear`) — a `CommitSurface` EXISTS at
+the unbounded reference sponge (`S_liveRef`) and NONE exists over a BabyBear-bounded rest-hash
+(`no_babyBear_commitSurface`). So the motivation for the port is now "unstateable AT DEPLOYED WIDTH",
+by pigeonhole on one field, rather than "unstateable at every parameter" by Cantor.
+
+`ApexFloorFree.descriptorRefinesFree` is stated at a bare `CommitMap` and is REFUTED at
+`fun _ _ => False` for every hash and every descriptor
 (`descriptorRefinesFree_false_at_False_kstep`) — the acceptance test `DescriptorRefinesShirkRefuted`
 set and which both existing forms fail. The remaining unported endpoints are pinned as the negative
 control of `OpeningResidualCutoverCheck` §2.

@@ -16,7 +16,7 @@ FIELDS were all discharged internally from one `hCR`. That was a real reduction 
 pointless in BOTH directions:
 
   * the SOURCE is gone — `CircuitSoundness.CommitSurface`'s four injectivity fields are DELETED, each
-    refuted at deployed BabyBear width by pigeonhole (`Verify/ApexPremiseVacuity.lean:177`), so there
+    refuted at deployed BabyBear width by pigeonhole (`Verify.ApexPremiseVacuity.apexCommitFloorSansRest_false_at_babyBear`), so there
     is nothing left to collapse;
   * the TARGET is refuted too — `Poseidon2SpongeCR sponge` is bounded-hash injectivity, and
     `HashFloorHonesty.poseidon2SpongeCR_false_babyBear` refutes it at the deployed width. Reducing

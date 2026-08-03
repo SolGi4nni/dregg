@@ -39,16 +39,35 @@ This module is the consolidated CENSUS + completeness face over the already-prov
 `descriptorRefines_complete` consumes, as explicit hypotheses (NOT axioms):
 
   1. `Poseidon2SpongeCR hash` — INSIDE each `descriptorRefines` (the standard-crypto carrier tying the
-     published PI to the decoded limbs). TERMINAL crypto floor.
+     published PI to the decoded limbs). ⚠⚠ **NOT A TERMINAL FLOOR — REFUTED IN THIS TREE.** ⛑
+     CORRECTED 2026-08-03; it read "TERMINAL crypto floor".
+     `Circuit.HashFloorHonesty.poseidon2SpongeCR_false_babyBear` PROVES it FALSE at deployed BabyBear
+     parameters, for every range-bounded sponge: a `List ℤ → ℤ` injection into one felt cannot exist.
+     "Terminal" names a floor a proof may legitimately stop at; this one makes every statement that
+     assumes it VACUOUS where the system runs. It sits in `descriptorRefines`'s DEF BODY, so it is
+     invisible in the signature — the whole reason `ClosedLogExtractPortCheck` exists.
   2. The `ClosureReadouts` bundle `rds` — the per-effect circuit-decode EXTRACTION carriers (the
      `<e>TraceReadout` family: a `Satisfied2 (Rfix e)` witness yields its named per-effect `…Encodes`
      predicate). This is the `WitnessDecodes`-class limb-level decode — the genuinely-hard residual, but
      REALIZABLE + named (one carrier per effect family), NOT an open soundness gap. See the per-arm notes
-     at the bottom of this file.
-  3. `mkLog` — the `logHashInjective` log-floor enrichment (`StateDecode ⟹ ∃ StateDecodeLog`). REALIZABLE
-     log-commitment CR floor.
+     at the bottom of this file. ⚠ `ClosureReadouts` is a `#floor_ratchet` FAIL-CLOSED sentinel bundle
+     (`Verify/FloorRatchet.lean` `sentinelBundles`), i.e. it is registered as floor-CARRYING; and
+     `ClosureReadoutsRealizable.not_nonempty_closureReadouts_refLH` refutes its sibling
+     `ClosureReadoutsLive` outright. Read "realizable" here as "named and per-effect", not as
+     "inhabited at deployed parameters".
+  3. `mkLog` — the `logHashInjective` log-floor enrichment (`StateDecode ⟹ ∃ StateDecodeLog`). ⚠⚠ **NOT
+     REALIZABLE — REFUTED IN THIS TREE.** ⛑ CORRECTED 2026-08-03; it read "REALIZABLE log-commitment CR
+     floor". `StateCommitFloorRegrounded.logHashInjective_false_babyBear` PROVES it FALSE for any
+     bounded-range accumulator: the receipt chain GROWS without bound and the digest is one field
+     element. `StateCommit.logHashInjective`'s own docblock carries the same ⚠. Honest replacement:
+     `FloorGames.HashCRHardQuant (StateCommitFloorRegrounded.scLogFamily F) Eff` at an explicit
+     adversary class (`StateCommitFloorRegrounded.log_equivocation_advantage_bound`).
 
-There is NO dregg-specific per-effect `descriptorRefines` arm left assumed/unproven: the family is whole.
+There is NO dregg-specific per-effect `descriptorRefines` arm left assumed/unproven: the family is
+whole. ⚠ But "whole" is a statement about COVERAGE, not about applicability — residuals 1 and 3 are
+both refuted at deployed BabyBear width, so `descriptorRefines_complete` is VACUOUS where the system
+runs. The floor-free statement in this area is `ApexFloorFree.descriptorRefinesFree`, which carries
+neither.
 -/
 import Dregg2.Circuit.ClosureForest
 

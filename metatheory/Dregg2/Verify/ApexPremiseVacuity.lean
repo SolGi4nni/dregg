@@ -1,16 +1,51 @@
 /-
-# `Dregg2.Verify.ApexPremiseVacuity` — the two APEX theorems of the assurance case have
-UNSATISFIABLE premises, and this file proves it in the kernel.
+# `Dregg2.Verify.ApexPremiseVacuity` — the commitment-floor bundle `ApexCommitFloor` is UNSATISFIABLE
+at every width, proved in the kernel; and the two assurance apexes are vacuous at DEPLOYED width.
 
+⚠⚠ **READ THIS FIRST — THE TITLE'S ORIGINAL CLAIM HAS EXPIRED, ⛑ CORRECTED 2026-08-03.** This file
+was written as "the two APEX theorems of the assurance case have UNSATISFIABLE premises", and that
+rested on both apexes carrying `hRest : RestHashIffFrame RH` as their fifth binder.
+**THEY NO LONGER DO.** Commit `5f67481b0` retyped `AssuranceCase.deployed_system_secure:953` and
+`AssuranceCase.unfoolability_guarantee:719` to
+
+    hRest : Dregg2.Circuit.RestFrameFin.RestHashIffFrameFin RH
+
+the finite-support successor, which IS satisfiable
+(`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, a closed proof at the
+unbounded reference sponge). So §1's `apexCommitFloor_unsatisfiable` — which is TRUE, and about a
+bundle whose fifth conjunct is the OLD `RestHashIffFrame` — **no longer applies to those two apexes'
+binder lists either.** It was retracted for `CommitSurface` on 2026-07-31 (below); this is the second
+half of the same expiry, and it went unnoticed for two days because NOTHING GATED an `Iff`-headed
+predicate — `#floor_ratchet`'s shape test required an fvar equation. ⛑ That hole is closed as of
+2026-08-03 (`ec31ebda6`, `FloorCensus.injShapeIff`): both `RestHashIffFrame` and `RestHashIffFrameFin`
+are in the derived floor set now, so a future divergence of this kind reds the root instead of sitting
+unread.
+
+⚑ **WHAT IS TRUE OF THE TWO APEXES AT HEAD:** they are vacuous **at deployed BabyBear width**, five
+ways, not at every parameter. §2's `apexCommitFloorSansRest_false_at_babyBear` refutes `hCmb`/
+`hCompress`/`hCompressN`/`hLeaf` — those four binders are UNCHANGED and still verbatim in both
+signatures — and `restHashIffFrameFin_false_babyBear` refutes the new fifth. That is a pigeonhole
+finding with a named repair campaign, not a cardinality impossibility. ⛑ And BOTH are now gated: until
+2026-08-03 the `FloorRatchetBaseline` rows for these two listed only THREE floors, because neither
+rest-predicate was shape-visible to `#floor_ratchet`. `ec31ebda6`'s `FloorCensus.injShapeIff` made the
+biconditional visible, and each apex now carries a FOUR-floor row naming `RestHashIffFrameFin`
+alongside the three injectivity floors. The fifth binder is gated for the first time.
+
+⚑ **WHAT THIS FILE STILL PROVES, UNDIMINISHED.** `ApexCommitFloor` and its refutation are about the
+predicate `StateCommit.RestHashIffFrame`, which is still BOUND AT ~147 BINDER POSITIONS in this tree. Those sites
+are refuted at every width by Cantor, and §1 is the crisp statement of it. The file's subject is the
+BUNDLE, and always was; only the sentence tying it to two named apexes has expired.
+
+The original framing, kept because §1-§5 are written against it:
 `AssuranceCase.deployed_system_secure` (the composed A∧B∧C∧D∧E capstone) and
-`AssuranceCase.unfoolability_guarantee` (guarantee E) both carry the FIVE commitment-floor
+`AssuranceCase.unfoolability_guarantee` (guarantee E) both carried the FIVE commitment-floor
 hypotheses
 
     hCmb       : compressInjective cmb
     hCompress  : compressInjective compress
     hCompressN : compressNInjective compressN
     hLeaf      : cellLeafInjective CH
-    hRest      : RestHashIffFrame RH
+    hRest      : RestHashIffFrame RH      -- ⚰ now `RestHashIffFrameFin RH`, see above
 
 Every one of the first four is FALSE at deployed BabyBear width (the tree already proves this:
 `HashFloorHonesty.compressInjective_false_of_finite_range`,
@@ -20,11 +55,15 @@ file is centred on: `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardina
 `RestHashIffFrame RH` for **EVERY** `RH : RecordKernelState → ℤ`, at **EVERY** width, by Cantor —
 `bal : CellId → AssetId → ℤ` is a function space, so no countable-codomain hash separates it.
 
-⚑ CONSEQUENCE, stated exactly. The two apexes are not "vacuous at deployed parameters"; they are
-vacuous at ALL parameters. There is no assignment of `CH RH cmb compress compressN` — deployed,
-toy, or hypothetical — under which their hypothesis list is inhabited. `apexCommitFloor_unsatisfiable`
-below is the crisp form: the apex's own binder list, taken as a bundle, is refuted outright, so any
-application of either theorem has `False` in scope and its conclusion carries no information.
+⚑ CONSEQUENCE, stated exactly — ⚠ AS OF THE ORIGINAL BINDER LIST, superseded by the header's
+correction. Under those five, the apexes were not "vacuous at deployed parameters"; they were vacuous
+at ALL parameters, with no assignment of `CH RH cmb compress compressN` — deployed, toy, or
+hypothetical — under which the hypothesis list is inhabited. `apexCommitFloor_unsatisfiable` below is
+the crisp form: that bundle is refuted outright, so anything taking it has `False` in scope and its
+conclusion carries no information. ⚰ Since `5f67481b0` the two apexes take
+`RestHashIffFrameFin` instead, so this paragraph describes the bundle and the ~147 binder positions that still
+bind `RestHashIffFrame`, NOT `deployed_system_secure`/`unfoolability_guarantee` — those are vacuous at
+DEPLOYED width via §2's four legs plus `restHashIffFrameFin_false_babyBear`.
 
 ⚑ IT USED TO PROPAGATE TO `CommitSurface`. ⛑ **CORRECTED 2026-07-31.**
 `CircuitSoundness.CommitSurface` carried the SAME five as FIELDS
@@ -33,16 +72,24 @@ Its fifth field is now `RestFrameFin.RestHashIffFrameFin RH` — the identical 1
 restricted to FINITELY-REPRESENTABLE states — which IS satisfiable
 (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, a closed proof), and that
 file constructs a CLOSED inhabitant of the whole bundle at the unbounded reference sponge. So
-`apexCommitFloor_unsatisfiable` below is still TRUE and still applies to
-`AssuranceCase.deployed_system_secure` / `unfoolability_guarantee`'s binder LIST (§1 is about the
-five hypotheses, and `hRest : RestHashIffFrame RH` is still one of them) — but it NO LONGER APPLIES
-TO `CommitSurface`, which is a different object than it was.
+`apexCommitFloor_unsatisfiable` below is still TRUE — but it NO LONGER APPLIES TO `CommitSurface`,
+which is a different object than it was.
+
+⚠⚠ **AND THE REST OF THIS PARAGRAPH HAS EXPIRED TOO — ⛑ 2026-08-03.** It read: "…is still TRUE and
+still applies to `AssuranceCase.deployed_system_secure` / `unfoolability_guarantee`'s binder LIST (§1
+is about the five hypotheses, and `hRest : RestHashIffFrame RH` is still one of them)". Since
+`5f67481b0` it is NOT one of them — both apexes take `RestHashIffFrameFin RH`. See this header's
+opening correction. `apexCommitFloor_unsatisfiable` now speaks only about the bundle below and the
+~147 binder positions that still bind the old predicate.
 
 ⚠ Say what that did and did not buy. `CommitSurface` moved from *uninhabited at EVERY parameter, by
 cardinality, unrepairable by any widening* to *uninhabited at DEPLOYED BabyBear width, by pigeonhole,
-repairable by the keyed-CR advantage-bound campaign*. §2's LEGS 1-4 are untouched and still refute
-the other four fields at deployed width, so `AssuranceCaseGrounded.deployed_system_secure_grounded{,_v2}`
-remains vacuous at deployed parameters — once over now, not twice.
+repairable by the keyed-CR advantage-bound campaign* — and then, on 2026-08-01, its four injectivity
+fields were DELETED outright, leaving `restFrame` alone (`CircuitSoundness.lean` §1's tombstone;
+`Verify.ClosureSurfaceApplicable.surface_exists_but_not_at_babyBear` states both poles).
+`AssuranceCaseGrounded.deployed_system_secure_grounded{,_v2}` remains vacuous at deployed parameters
+via §2's LEGS 1-4, which refute four binders those theorems still carry verbatim — once over, not
+twice.
 
 ## What this file is NOT
 
@@ -93,10 +140,17 @@ theorem babyBearP_pos : (0 : ℤ) < babyBearP := by norm_num [babyBearP]
 
 /-! ## §1 — the apex's premise bundle, named, and refuted UNCONDITIONALLY. -/
 
-/-- **`ApexCommitFloor`** — EXACTLY the five commitment-floor hypotheses that
-`AssuranceCase.unfoolability_guarantee` and `AssuranceCase.deployed_system_secure` carry (in the same
-order they appear in those binder lists). Named so the refutation below is visibly about the apex's
-own premises and not about a lookalike. -/
+/-- **`ApexCommitFloor`** — the five commitment-floor hypotheses
+`AssuranceCase.unfoolability_guarantee` and `AssuranceCase.deployed_system_secure` CARRIED when this
+file was written, in the order they appeared in those binder lists.
+
+⚠ ⛑ 2026-08-03: **the fifth conjunct has DIVERGED from those apexes.** Since `5f67481b0` both take
+`RestFrameFin.RestHashIffFrameFin RH`, not `RestHashIffFrame RH`, so this is now a LOOKALIKE of the
+apex premise rather than a copy of it — the exact hazard the original docblock's last sentence was
+guarding against, arriving from the other direction. The first four conjuncts are still verbatim.
+The refutation below is therefore a statement about THIS bundle and about the ~147 binder positions that still
+bind `RestHashIffFrame`; for the two apexes see §2 and
+`RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`. -/
 def ApexCommitFloor (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) : Prop :=
   compressInjective cmb ∧ compressInjective compress ∧ compressNInjective compressN
@@ -114,11 +168,17 @@ theorem apexCommitFloor_unsatisfiable
     ¬ ApexCommitFloor CH RH cmb compress compressN := fun h =>
   restHashIffFrame_false_by_cardinality RH h.2.2.2.2
 
-/-! ### ⚑ WHAT THAT MEANS — the apex proves anything. `ApexCommitFloor` is EXACTLY the binder list
-`deployed_system_secure` / `unfoolability_guarantee` take, so `apexCommitFloor_unsatisfiable` says
-those binders are jointly contradictory: any application of either theorem would have `False` in
-scope, hence an arbitrary `Q`. The conclusions they reach therefore carry no more information than
-`False → Q`.
+/-! ### ⚑ WHAT THAT MEANS — anything taking this bundle proves anything. `apexCommitFloor_unsatisfiable`
+says the five are jointly contradictory: whoever takes them has `False` in scope, hence an arbitrary
+`Q`, and the conclusion carries no more information than `False → Q`. That verdict lands on every
+declaration binding `RestHashIffFrame` (~147 binder positions at HEAD), at every width, by Cantor.
+
+⚠ ⛑ 2026-08-03: this paragraph read "`ApexCommitFloor` is EXACTLY the binder list
+`deployed_system_secure` / `unfoolability_guarantee` take". It is not, since `5f67481b0` — their
+fifth binder is `RestHashIffFrameFin RH`. Those two apexes are still vacuous, but at DEPLOYED BabyBear
+width and through all five binders (§2's LEGS 1-4, unchanged and still verbatim in their signatures,
+plus `RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`), NOT at every parameter by
+cardinality. Do not quote this file as refuting them universally.
 
 (Stated in prose, not as a theorem, ON PURPOSE: a declaration `(hRest : RestHashIffFrame RH) → Q`
 would itself be a refuted-floor CARRIER under `#floor_ratchet`'s position rule — writing the

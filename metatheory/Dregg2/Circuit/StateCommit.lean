@@ -42,15 +42,39 @@ non-cell fields from `cSRestFrame`+`RestHashIffFrame`.
 
 ## The assumption ledger (enumerated — verify NOTHING else is assumed)
 
-ASSUMED (carried Prop hypotheses — the STANDARD Poseidon collision-resistance set, all REALIZABLE
-injectivity of a genuine hash, never `axiom`, never sum-injectivity):
+⚠⚠ **THE WORD "REALIZABLE" IN THIS LEDGER IS FALSE, AND THIS TREE PROVES IT FALSE.** ⛑ CORRECTED
+2026-08-03. Every crypto hypothesis below is REFUTED here — three by BabyBear pigeonhole, one by
+Cantor at every width. They are kept because the theorems are still the right statements about a
+commitment scheme and the repair is a live campaign, NOT because a real Poseidon satisfies them.
+
+ASSUMED (carried Prop hypotheses — the STANDARD Poseidon collision-resistance set, never `axiom`,
+never sum-injectivity):
   * `compressInjective cmb`      — the 2-to-1 root combiner is injective (a collision-resistant compress).
-  * `compressInjective compress` — the 2-to-1 node hash is injective (Merkle node CR).
+                     ⚠ REFUTED at deployed BabyBear width: two field elements do not fit in one
+                     (`HashFloorHonesty.compressInjective_false_of_finite_range`).
+  * `compressInjective compress` — the 2-to-1 node hash is injective (Merkle node CR). ⚠ SAME refutation.
   * `compressNInjective compressN` — the sponge over a list of leaves is injective (list CR).
+                     ⚠ REFUTED at deployed BabyBear width
+                     (`HashFloorHonesty.compressNInjective_false_of_finite_range`).
   * `cellLeafInjective CH`       — the per-cell leaf encoding is injective in the `Value` (leaf encoding).
-  * `RestHashIffFrame RH`        — equal rest hashes ⟺ the 16 non-cell components agree (BIDIRECTIONAL).
+                     ⚠ REFUTED at deployed BabyBear width: `Value` is infinite, a leaf is one felt
+                     (`StateCommitFloorRegrounded.cellLeafInjective_false_babyBear`).
+  * `RestFrameFin.RestHashIffFrameFin RH` — equal rest hashes ⟺ the 16 non-cell components agree
+                     (BIDIRECTIONAL), gated on both states being `FiniteRepresentable`. ⚠ REFUTED at
+                     deployed BabyBear width by pigeonhole
+                     (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`),
+                     SATISFIABLE at the unbounded reference sponge (`…_satisfiable`, closed).
+                     ⛑ This ledger named the every-width-refuted `RestHashIffFrame RH` until
+                     2026-08-03; the theorems below have taken the finite-support successor since
+                     2026-07-31, so the ledger was naming a predicate they no longer bind.
   * `AccountsWF k` — NOT crypto: the structural invariant "cells outside `accounts` hold the default".
                      PROVED PRESERVED by `recKExec_preserves_AccountsWF` (a real theorem, not a portal).
+
+⚑ What that costs, said plainly: `transfer_circuit_full_sound` and its siblings are VACUOUS AT
+DEPLOYED PARAMETERS. Their content is real at an unbounded reference sponge and nowhere the system
+runs. The honest replacement for the three width-refuted floors is
+`FloorGames.HashCRHardQuant F Eff` at a NAMED adversary class — see
+`StateCommitFloorRegrounded.stateCommit_equivocation_advantage_bound`.
 The OLD `FrameDigestBindsCells`/`MovedDigestBindsCells`/`CombineInjective` portals are now PROVED
 LEMMAS (derived from the CR set + `List.map_inj_left` on the sorted carrier), not carried.
 
@@ -274,9 +298,39 @@ import the log CR portal from `StateCommit` directly, not from a specific instan
 explicit binder — the `Surface` section variables `CH`/`RH`/… are irrelevant to it.) -/
 def logHashInjective (LH : List Turn → ℤ) : Prop := ∀ xs ys : List Turn, LH xs = LH ys → xs = ys
 
-/-- **PORTAL `RestHashIffFrame`** — the rest hash is injective on the non-`cell` components (incl. the spliced `heaps`)
-(BIDIRECTIONAL: `→` binds them in soundness/anti-ghost, `←` rebuilds the hash in completeness). Pure
-injectivity, stated as the iff. -/
+/-- **CR carrier `RestHashIffFrame`** — ⚠⚠ **BROKEN / VACUOUS AT *EVERY* WIDTH, not merely at deployed
+parameters.** `RestFrameCardinalityFloor.restHashIffFrame_false_by_cardinality` refutes it for EVERY
+`RH : RecordKernelState → ℤ`, by CANTOR: the forward direction demands `RH` separate kernels differing
+in `bal : CellId → AssetId → ℤ`, a FUNCTION SPACE of size ≥ 2^ℵ₀, and `ℤ` is countable. No widening
+repairs it — unlike its four siblings here, which are refuted by the BabyBear WIDTH and would survive
+a wider field, this one is refuted by the DOMAIN and would not. `Verify.ApexPremiseVacuity` §1 is
+centred on exactly this: it is the conjunct that kills the `ApexCommitFloor` bundle outright. (⚠ NOT
+the two assurance apexes any more — since `5f67481b0` they bind the `Fin` successor below; see that
+file's header, corrected 2026-08-03.)
+
+⛑ **IT IS GATED AS OF 2026-08-03 (`ec31ebda6`), AND WAS NOT BEFORE.** For two days this predicate carried
+ZERO baseline rows across ~147 binder positions: `#floor_ratchet` derived its floor set from
+`FloorCensus.injShape`/`injShapeAnd`, both of which require an fvar EQUATION, and this body is
+`Iff`-headed over an 18-fold conjunction — so it could not be a candidate however many refutations the
+tree held, and it was not a named sentinel. `FloorCensus.injShapeIff` closed exactly that hole: the
+injectivity BICONDITIONAL is now a third derived shape, this floor and its finite-support successor are
+both visible, `CommitSurface` is back in `sentinelBundles`, and the newly-visible carriers were
+grandfathered in the raise that commit banked. It was a documented-not-detected wound; it is detected
+now.
+⚠ This docblock carried NO refutation marker at all until 2026-08-03, while all four of its siblings
+did — which is how it stayed the least-visible floor in the file.
+
+⛑ Honest successor: **`RestFrameFin.RestHashIffFrameFin RH`** — this identical 18-conjunct body gated
+on both states being `FiniteRepresentable` (the `denote`-image of a `FinKernelState`). That one IS
+satisfiable (`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_satisfiable`, closed, at the
+unbounded reference sponge), REFUTABLE, and hence NOT PROVABLE — and it is what
+`CircuitSoundness.CommitSurface.restFrame` and `transfer_circuit_full_sound` take at HEAD. It is
+itself refuted at deployed BabyBear width by pigeonhole (`…restHashIffFrameFin_false_babyBear`), so
+the successor moves the wound from EVERY width to DEPLOYED width; it does not close it.
+
+As originally intended: the rest hash is injective on the non-`cell` components (incl. the spliced
+`heaps`) (BIDIRECTIONAL: `→` binds them in soundness/anti-ghost, `←` rebuilds the hash in
+completeness). Pure injectivity, stated as the iff. -/
 def RestHashIffFrame : Prop :=
   ∀ k k' : RecordKernelState, RH k = RH k' ↔
     (k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
@@ -484,10 +538,27 @@ reconstructed by `funext` — NOT asserted. Result: `TransferSpec k t k'`. -/
 satisfying full-state witness on the encoded pre/turn/post proves the complete declarative
 `TransferSpec`: every one of the 17 components is pinned. Carries ONLY the standard Poseidon
 collision-resistance set (`compressInjective compress`, `compressNInjective compressN`,
-`cellLeafInjective CH`, `RestHashIffFrame RH`) + the `AccountsWF` invariant on both states. The frame
-binding is PROVED (`MovedDigestBindsCells`/`FrameDigestBindsCells` are now lemmas off the CR set), so
-the soundness theorem is NON-VACUOUS: every carried Prop is realizable by a real Poseidon (a `+`-fold
-could satisfy NONE of them). -/
+`cellLeafInjective CH`, `RestFrameFin.RestHashIffFrameFin RH`) + `AccountsWF` and
+`RestFrameFin.FiniteRepresentable` on both states. The frame binding is PROVED
+(`MovedDigestBindsCells`/`FrameDigestBindsCells` are lemmas off the CR set), so nothing here is
+portaled.
+
+⚠⚠ **BUT IT IS VACUOUS AT DEPLOYED PARAMETERS.** ⛑ CORRECTED 2026-08-03 — this docblock claimed
+"the soundness theorem is NON-VACUOUS: every carried Prop is realizable by a real Poseidon", and it
+named `RestHashIffFrame RH`, which this theorem has not bound since 2026-07-31. ALL FOUR crypto
+hypotheses are REFUTED at deployed BabyBear width in this very tree:
+`HashFloorHonesty.compressInjective_false_of_finite_range`,
+`…compressNInjective_false_of_finite_range`,
+`StateCommitFloorRegrounded.cellLeafInjective_false_babyBear`, and
+`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`. A real deployed Poseidon
+satisfies NONE of them — it compresses into ONE BabyBear felt, and pigeonhole does the rest.
+
+What survives, and it is not nothing: the theorem is genuinely non-vacuous at an UNBOUNDED sponge
+(`Reference.refSponge` = `Encodable.encode`, where all four hold, and where
+`Verify.ClosureSurfaceApplicable.S_liveRef` is a closed surface), and the frame really is
+RECONSTRUCTED rather than assumed — a `+`-fold satisfies none of the carriers, which is what the
+"non-vacuous" claim was originally reaching for. The distinction it collapsed is between "not
+satisfied by a DEGENERATE commitment" (true) and "satisfied by the DEPLOYED one" (false). -/
 theorem transfer_circuit_full_sound
     (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN)
@@ -1012,11 +1083,23 @@ def stateDescriptorRangedJson : String := emitRangedDescriptorJson emittedStateR
 
 /-! ## §10 — Axiom-hygiene tripwires + the assumption ledger.
 
-ASSUMED (carried Prop hypotheses, the STANDARD Poseidon collision-resistance set, ALL realizable
-injectivity of a genuine hash, NEVER `axiom`, NEVER sum-injectivity): `compressInjective compress`,
-`compressNInjective compressN`, `cellLeafInjective CH`, `RestHashIffFrame RH` (the leaf/node/sponge/
-rest CR set; `compressInjective cmb` only for the root-binding corollary); `AccountsWF` (a STRUCTURAL
-invariant, PROVED preserved by `recKExec_preserves_AccountsWF`). The old per-digest binding portals
+ASSUMED (carried Prop hypotheses, the STANDARD Poseidon collision-resistance set, NEVER `axiom`,
+NEVER sum-injectivity): `compressInjective compress`, `compressNInjective compressN`,
+`cellLeafInjective CH`, `RestFrameFin.RestHashIffFrameFin RH` (the leaf/node/sponge/rest CR set;
+`compressInjective cmb` only for the root-binding corollary); `AccountsWF` (a STRUCTURAL invariant,
+PROVED preserved by `recKExec_preserves_AccountsWF`).
+
+⚠⚠ ⛑ CORRECTED 2026-08-03. This ledger said the set was "ALL realizable injectivity of a genuine
+hash" and named `RestHashIffFrame RH`. BOTH were wrong: the theorems take the finite-support successor
+`RestHashIffFrameFin RH`, and all four crypto hypotheses are REFUTED at deployed BabyBear width in
+this tree (`HashFloorHonesty.compressInjective_false_of_finite_range`,
+`…compressNInjective_false_of_finite_range`,
+`StateCommitFloorRegrounded.cellLeafInjective_false_babyBear`,
+`Verify.RestFrameFiniteSupportSuccessor.restHashIffFrameFin_false_babyBear`). They are realizable at an
+UNBOUNDED sponge only. See the header's ledger for the per-carrier detail and the named replacement
+(`FloorGames.HashCRHardQuant F Eff` at an explicit adversary class).
+
+The old per-digest binding portals
 `FrameDigestBindsCells`/`MovedDigestBindsCells`/`CombineInjective` are now PROVED LEMMAS off the CR
 set. PROVED (everything else, crucially THE FRAME): the keystones below. NO `postRoot = recStateCommit
 (applyTransfer …)` ghost hypothesis appears anywhere. -/

@@ -310,13 +310,22 @@ example (t : Turn) (f f' : FinKernelState)
 k'` already sit today, as sibling per-call hypotheses on every consumer theorem
 (`recStateCommit_binds_kernel`, `transfer_circuit_full_sound`, `root_tooth_pins_kernel`,
 `finalized_commit_binds_revoked`, …). `CommitSurface` becomes constructible for the FIRST TIME in
-its fifth field alone — `apexCommitFloor_unsatisfiable` dies — but remains uninhabited overall: its
-other four fields (`cmbInj`/`compInj`/`compNInj`/`leafInj`) are refuted at deployed BabyBear width by
-an INDEPENDENT pigeonhole argument (`ApexPremiseVacuity` LEGS 1-4,
-`apexCommitFloorSansRest_false_at_babyBear`), and that repair (a keyed collision-resistance advantage
-bound, `HashFloorHonesty`/`StateCommitFloorRegrounded`/`Poseidon2KeyedBridge`/
-`thread_advantage_bound` — already live machinery) is a SEPARATE campaign this port does not touch.
-Landing F1 alone retires ONE of the apex's five vacuity causes, not all five.
+its fifth field alone — `apexCommitFloor_unsatisfiable` dies for the bundle — but at the time this
+was written it remained uninhabited overall: its other four fields
+(`cmbInj`/`compInj`/`compNInj`/`leafInj`) were refuted at deployed BabyBear width by an INDEPENDENT
+pigeonhole argument (`ApexPremiseVacuity` LEGS 1-4, `apexCommitFloorSansRest_false_at_babyBear`).
+
+⛑ **BOTH HALVES HAVE SINCE HAPPENED, 2026-08-01/02.** The fifth field IS `RestHashIffFrameFin RH` at
+HEAD, and the four injectivity fields were not repaired but DELETED, together with
+`ClosureSurface.S_live`'s four now-inert parameters. So `CommitSurface` is inhabited outright —
+`Verify.ClosureSurfaceApplicable.S_liveRef`, a CLOSED term — and the ONE surviving obstruction is
+this file's own `restHashIffFrameFin_false_babyBear`: no `CommitSurface` has a BabyBear-bounded
+rest-hash (`ClosureSurfaceApplicable.no_babyBear_commitSurface`). ⚠ Read "retires ONE of the apex's
+five vacuity causes, not all five" as a statement about `AssuranceCase`'s five-BINDER list, which
+still carries `RestHashIffFrame`; for the BUNDLE the count is now one, and it is this one. The keyed
+collision-resistance advantage-bound campaign
+(`HashFloorHonesty`/`StateCommitFloorRegrounded`/`Poseidon2KeyedBridge`/`thread_advantage_bound`)
+remains the separate repair for the apex binders and for `StateCommit`'s own carried set.
 
 **Binder-position count, measured today (not the header's 07-27 snapshot):** a plain grep for
 `RestHashIffFrame` finds 447 mentions across 108 files, of which ~232 are binder-shaped

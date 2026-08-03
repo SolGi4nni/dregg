@@ -129,7 +129,7 @@ plus the finite-support rest-frame obligation.
 `compInj : compressInjective compress`, `compNInj : compressNInjective compressN`,
 `leafInj : cellLeafInjective CH`. Each asserts that a COMPRESSING map into ONE BabyBear felt is
 injective, which pigeonhole REFUTES at deployed parameters
-(`Verify/ApexPremiseVacuity.lean:177`) — so no deployed surface ever inhabited the bundle and
+(`Verify.ApexPremiseVacuity.apexCommitFloorSansRest_false_at_babyBear`) — so no deployed surface ever inhabited the bundle and
 EVERYTHING quantified over `S : CommitSurface` and conditioned on them was VACUOUSLY TRUE.
 
 The only consumers that read them AS INJECTIVITY were `CommitSurface.commit_binds` (deleted; use
@@ -191,7 +191,7 @@ finitely-representable kernels whose surface commitments agree at the same turn 
 that by feeding `recStateCommit_binds_kernel` the four injectivity FIELDS
 `S.cmbInj`/`S.compInj`/`S.compNInj`/`S.leafInj` — every one of which is FALSE at deployed
 parameters, because injectivity of a compressing map into ONE BabyBear felt is refuted by pigeonhole
-(`Verify/ApexPremiseVacuity.lean:177`). So the theorem, and everything conditioned on it, was
+(`Verify.ApexPremiseVacuity.apexCommitFloorSansRest_false_at_babyBear`). So the theorem, and everything conditioned on it, was
 VACUOUSLY TRUE; the four fields are deleted from the structure in the same commit.
 
 ⚰ **`CommitSurface.commit_binds_orBreak` IS ALSO DELETED (2026-08-01, same day, second pass).** It
