@@ -46,9 +46,11 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   -- rows, the gate types, the coefficients and every witness cell are byte-identical, and the ONLY
   -- difference is the copy-permutation. Computing a second witness from the unwired rows would
   -- leave the probe cells empty there and the "control" would be a different circuit.
-  let wit := wrapWitness t p rowsW
+  -- ⚑ RUNG-LOCAL: `wrapWitnessAt t k` gives rung `k` the environment its OWN rows define. Asking
+  -- for the closing rung's here would compute §15's ladders for every rung below `w6_xhat`.
+  let wit := wrapWitnessAt t k p rowsW
   let probes := rungProbeRows t k
-  let pub := if p == 0 then [] else wrapPublic t
+  let pub := if p == 0 then [] else wrapPublicAt t k
   let jw := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}" p (p + rowsW.length) placed wit pub probes
   let ju := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}_UNWIRED" p (p + rowsU.length) placedU wit
               pub probes
@@ -63,12 +65,22 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
     (place {t1 - t0} ms, witness+render {t2 - t1} ms)"
   pure (rowsW.length, probes.length)
 
-/-- A seven-field comma spec: `prevs,ipaRounds,wComms,tComms,emsRows,branches,pubWords`. -/
+/-- An eight-field comma spec:
+`prevs,ipaRounds,wComms,tComms,emsRows,branches,pubWords,xhatTerms`.
+
+⚑ **`xhatXY` IS DERIVED HERE, NOT PARSED**, and that is the only honest option: the pair is two
+Fq coordinates and a comma spec of naturals has no independent source for them. So a
+`DREGG_WM`-supplied shape gets `xhatOut xhatTerms` by construction and `main`'s memo refusal
+cannot fire on this path — it is live for the two COMMITTED shapes, which are the shapes anything
+actually emits, and where the pair is written down and could disagree.
+
+⚠ Before this, `parseShape` still built the seven-field record and did not compile at all once §15
+added `xhatXY`, so the whole emit path was red — the two committed shapes included. -/
 def parseShape (spec : String) : Option WrapShape :=
   match (spec.splitOn ",").map String.toNat? with
-  | [some a, some b, some c, some d, some e, some f, some g] =>
+  | [some a, some b, some c, some d, some e, some f, some g, some h] =>
       some { prevs := a, ipaRounds := b, wComms := c, tComms := d, emsRows := e
-           , branches := f, pubWords := g }
+           , branches := f, pubWords := g, xhatTerms := h, xhatXY := xhatOut h }
   | _ => none
 
 def main : IO Unit := do
@@ -90,12 +102,32 @@ def main : IO Unit := do
     throw (IO.userError s!"pubWords {s.pubWords} exceeds Mina's own PRIMARY_LEN {WRAP_PRIMARY_LEN}")
   if s.emsRows == 0 || s.branches == 0 then
     throw (IO.userError "degenerate shape: emsRows/branches must be positive")
+  -- ⚑ A shape whose x_hat MSM has no `Add_with_correction` entry has no correction reduce and no
+  -- `~init`, so the fold would start from a variable nothing defines. Refuse rather than emit it.
+  if (xhLadders s).isEmpty then
+    throw (IO.userError s!"degenerate shape: xhatTerms {s.xhatTerms} selects no ladder entry")
+  if s.xhatTerms > XHAT_TERMS_FULL then
+    throw (IO.userError s!"xhatTerms {s.xhatTerms} exceeds wrap_verifier's own entry count \
+      {XHAT_TERMS_FULL}")
+  -- ⚑ **THE MEMO'S OBLIGATION, DISCHARGED AT EVERY EMISSION.** `WrapShape.xhatXY` carries the pair
+  -- `wrap_verifier.ml:617` absorbs so that a dozen kernel theorems do not each re-reduce the MSM.
+  -- That is only sound if the pair IS the MSM's output, and this is where any shape — committed or
+  -- `DREGG_WM`-supplied — is refused when it is not. The smoke shape's copy is additionally closed
+  -- by `rfl` in the kernel (`xhat_smoke_shape_absorbs_the_msm_output`); this covers the wrap shape,
+  -- which is 1805 five-bit chunks and out of the kernel's reach without `native_decide`.
+  if s.xhatXY != xhatOut s.xhatTerms then
+    throw (IO.userError s!"⚑ xhatXY IS NOT THE MSM'S OUTPUT: shape carries {s.xhatXY} but \
+      `xhatOut {s.xhatTerms}` is {xhatOut s.xhatTerms}. The transcript would absorb a value no row \
+      computes — refusing rather than emitting it.")
   IO.println s!"emitting wrap_main tag={tag} shape={repr s}"
   IO.println s!"  items={nItems s} squeezes={nSqueezes s} chals={nChals s} \
     PRIMARY_LEN(mina)={WRAP_PRIMARY_LEN} pubWords(here)={s.pubWords}"
+  IO.println s!"  x_hat MSM: {xhN s} entries, {xhTotalChunks s} five-bit chunks, \
+    {(xhLadders s).length} ladders, widths={(xhSel s).map xhatBits}"
+  IO.println s!"  x_hat (DERIVED, absorbed at wrap_verifier.ml:617) = {xhatOut s.xhatTerms}"
   let t := mkWrap s
   let _ ← force t.sp.evs.length "sponge events"
-  for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key] do
+  for k in [Rung.transcript, Rung.challenges, Rung.branch, Rung.bind, Rung.key, Rung.xhat] do
     let _ ← emitRung dir tag t k
     pure ()
   IO.println s!"wrote {dir}/wrapmain_{tag}_*.json"
