@@ -132,13 +132,22 @@ begins with the arity tag and carries the full padded-input + 8-lane output bloc
 `1 + CHIP_RATE + CHIP_OUT_LANES = 20 ≠ 1`). -/
 def forgedChipTbl : Table := [[0]]
 
-/-- The length of a genuine wide chip row whose absorbed inputs fit the rate is
-`1 + CHIP_RATE + CHIP_OUT_LANES` (here `1 + 11 + 8 = 20`). -/
-theorem chipRowN_length (ins : List ℤ) (hlen : ChipArityAdmitted ins.length) :
+/-- The length of a wide chip row is `1 + CHIP_RATE + CHIP_OUT_LANES` (here `1 + 11 + 8 = 20`) —
+for EVERY `ins`, with no arity side condition.
+
+⚑ The arity hypothesis is GONE, and its deletion is the point. This proof used to unfold `padTo`
+and re-derive the width from `ins.length + (CHIP_RATE - ins.length)`, which needs
+`ins.length ≤ CHIP_RATE` and is why it carried `ChipArityAdmitted ins.length`. `padTo` is
+`take`-shaped since `7f8ab5d29` (`xs.take n ++ replicate (n - xs.length) 0`, exactly `n` for every
+input), so the width is `padTo_length_eq` — UNCONDITIONAL — and the hypothesis was left standing
+with nothing to do. Keeping it would be a no-op binder on a lemma that is now strictly stronger.
+This is the FOURTH proof that walked through `padTo`'s body; `f278f5756` took two and `384ae9c70`
+took the third, and this one was missed because it is the only one that reached the body through
+`rw` rather than an `unfold`/`simp only` list. -/
+theorem chipRowN_length (ins : List ℤ) :
     (chipRowN permOutZ ins).length = 1 + CHIP_RATE + CHIP_OUT_LANES := by
-  have hle := chipArity_le_rate hlen
-  simp only [chipRowN, List.length_cons, List.length_append, permOutZ, List.length_replicate]
-  rw [padTo, List.length_append, List.length_replicate]
+  simp only [chipRowN, List.length_cons, List.length_append, permOutZ, List.length_replicate,
+    padTo_length_eq]
   omega
 
 /-- **`forgedChipTbl` VIOLATES `ChipTableSoundN permOutZ`** — its row `[0]` (length `1`) cannot be any
@@ -146,10 +155,10 @@ genuine `chipRowN permOutZ ins` (length `20`). So the predicate genuinely SEPARA
 NOT accepted — `Satisfied2Faithful`'s chip conjunct is not vacuously-always-true. -/
 theorem forgedChipTbl_unsound : ¬ ChipTableSoundN permOutZ forgedChipTbl := by
   intro h
-  obtain ⟨ins, hins, hrow⟩ := h [0] (by simp [forgedChipTbl])
+  obtain ⟨ins, _hins, hrow⟩ := h [0] (by simp [forgedChipTbl])
   -- `[0] = chipRowN permOutZ ins` forces `1 = 20` via lengths.
   have hl : ([0] : List ℤ).length = (chipRowN permOutZ ins).length := by rw [hrow]
-  rw [chipRowN_length ins hins] at hl
+  rw [chipRowN_length ins] at hl
   simp [CHIP_RATE, CHIP_OUT_LANES] at hl
 
 /-- **`ChipTableSoundN` is non-vacuous (inhabited AND separating).** -/
