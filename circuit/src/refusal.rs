@@ -287,6 +287,59 @@ pub const P3_UNSAT_PANIC_MARKERS: [&str; 2] =
 /// [`assert_violated_constraint_not_bus`].
 pub const DEPLOYED_VERIFIER_REFUSAL_MARKERS: [&str; 2] = ["OodEvaluationMismatch", "LookupError"];
 
+/// The two BUS/LOOKUP verdicts — one per profile. `Lookup mismatch` is p3's
+/// `#[cfg(debug_assertions)]` `MultiSet::assert_empty`; `LookupError` is the deployed verifier's.
+/// Kept as one list so the constraint-vs-bus discrimination below and its dual cannot drift apart.
+pub const BUS_REFUSAL_MARKERS: [&str; 2] = ["Lookup mismatch", "LookupError"];
+
+/// The two CONSTRAINT verdicts — one per profile. `constraints not satisfied on row N` is p3's
+/// debug check; `OodEvaluationMismatch` is the deployed verifier's.
+pub const CONSTRAINT_REFUSAL_MARKERS: [&str; 2] =
+    ["constraints not satisfied on row", "OodEvaluationMismatch"];
+
+/// The [`P3_UNSAT_PANIC_MARKERS`] ∪ [`DEPLOYED_VERIFIER_REFUSAL_MARKERS`] entry `reason` trips, if
+/// any — i.e. "did the constraint system return a REFUSAL VERDICT, in whichever profile this ran
+/// in?".
+///
+/// Derived from the two lists rather than restating their four strings, so a marker added to
+/// either is picked up here by construction.
+pub fn refusal_verdict_marker(reason: &str) -> Option<&'static str> {
+    P3_UNSAT_PANIC_MARKERS
+        .iter()
+        .chain(DEPLOYED_VERIFIER_REFUSAL_MARKERS.iter())
+        .copied()
+        .find(|m| reason.contains(m))
+}
+
+/// **`assert_refusal_verdict`** — the refusal was one of the four verdicts that mean *the
+/// constraint system rejected this witness*, in whichever profile the tooth ran in.
+///
+/// ⚑ THIS IS THE PROFILE-INDEPENDENT FORM OF `assert!(DEPLOYED_VERIFIER_REFUSAL_MARKERS.iter()
+/// .any(|m| reason.contains(m)))`, and the reason it exists is that the naked form is a
+/// RELEASE-ONLY assertion. A lookup-carrying descriptor in a debug build never reaches the
+/// deployed verifier at all: `batch-stark/src/prover.rs:232-260` runs `check_constraints` (and
+/// `check_lookups`) inside `if !all_lookups[i].is_empty()` under `#[cfg(debug_assertions)]`, and
+/// those PANIC. So under `cargo test` the only observable verdict is one of
+/// [`P3_UNSAT_PANIC_MARKERS`], and a tooth demanding a deployed-verifier string is red by
+/// construction — which is exactly how sixteen `pasta_*` teeth sat red while REFUSING every
+/// forgery they were pointed at.
+///
+/// Use this where the tooth's honest statement is "a real refusal verdict, constraint OR bus" —
+/// which is what the `DEPLOYED_VERIFIER_REFUSAL_MARKERS` idiom already said. Where the tooth
+/// names a specific mechanism, keep the discrimination with
+/// [`assert_violated_constraint_not_bus`] or [`assert_bus_imbalance_not_constraint`] instead;
+/// those are strictly stronger and equally profile-independent.
+#[track_caller]
+pub fn assert_refusal_verdict(what: &str, reason: &str) {
+    assert!(
+        refusal_verdict_marker(reason).is_some(),
+        "{what}: the refusal names none of the constraint system's verdicts — neither p3's \
+         debug-gated pair {P3_UNSAT_PANIC_MARKERS:?} nor the deployed verifier's \
+         {DEPLOYED_VERIFIER_REFUSAL_MARKERS:?}. It is therefore not a refusal this tooth may \
+         count: {reason}"
+    );
+}
+
 /// The refusal named a VIOLATED CONSTRAINT, in whichever profile the tooth ran, and did **not**
 /// name a bus/lookup imbalance.
 ///
@@ -295,19 +348,47 @@ pub const DEPLOYED_VERIFIER_REFUSAL_MARKERS: [&str; 2] = ["OodEvaluationMismatch
 /// verdicts. The load-bearing half is the NEGATIVE clause: a tooth whose subject is a specific
 /// gate (a PI pin, a carry decomposition) must not be satisfied by the bus failing instead, and
 /// that clause holds identically in both profiles.
+#[track_caller]
 pub fn assert_violated_constraint_not_bus(what: &str, reason: &str) {
-    let bus = ["Lookup mismatch", "LookupError"];
     assert!(
-        !bus.iter().any(|m| reason.contains(m)),
+        !BUS_REFUSAL_MARKERS.iter().any(|m| reason.contains(m)),
         "{what}: refused by a BUS IMBALANCE, not by the violated constraint this tooth names: \
          {reason}"
     );
     assert!(
-        reason.contains("constraints not satisfied on row")
-            || reason.contains("OodEvaluationMismatch"),
+        CONSTRAINT_REFUSAL_MARKERS
+            .iter()
+            .any(|m| reason.contains(m)),
         "{what}: the refusal names neither a violated constraint (`constraints not satisfied on \
          row`, p3's debug check) nor the deployed verifier's constraint verdict \
          (`OodEvaluationMismatch`): {reason}"
+    );
+}
+
+/// **The DUAL of [`assert_violated_constraint_not_bus`]** — the refusal named a BUS/LOOKUP
+/// imbalance and **not** a violated constraint, in whichever profile the tooth ran.
+///
+/// Several teeth here have the bus as their genuine subject: a substituted SRS generator leaves
+/// every RCB add, carry and thread constraint holding EXACTLY, so the only thing that can catch it
+/// is the exact-public manifest's LogUp multiset. `pasta_derive_prove`'s tamper 1 says so in
+/// words — "the generator substitution must be caught by the MANIFEST — anything else would mean
+/// an emitted gate binds coordinates to indices, and none does" — and expressed it as
+/// `reason.contains("LookupError")`, which is again release-only. Under `cargo test` the same
+/// statement reads `Lookup mismatch`.
+#[track_caller]
+pub fn assert_bus_imbalance_not_constraint(what: &str, reason: &str) {
+    assert!(
+        !CONSTRAINT_REFUSAL_MARKERS
+            .iter()
+            .any(|m| reason.contains(m)),
+        "{what}: refused by a VIOLATED CONSTRAINT, not by the bus imbalance this tooth names — \
+         which would mean some emitted gate, not the manifest, is what catches this forgery: \
+         {reason}"
+    );
+    assert!(
+        BUS_REFUSAL_MARKERS.iter().any(|m| reason.contains(m)),
+        "{what}: the refusal names neither a lookup imbalance (`Lookup mismatch`, p3's debug \
+         check) nor the deployed verifier's bus verdict (`LookupError`): {reason}"
     );
 }
 
@@ -790,6 +871,69 @@ mod tests {
         };
         let trace = vec![vec![BabyBear::new(0); 8]];
         assert_committed_shape("probe", &desc, &trace, &[BabyBear::new(0); 2]);
+    }
+
+    // ------------------------------------------------------------------
+    // THE CROSS-PROFILE VERDICT ASSERTIONS — the debug half is the one that was missing.
+    // ------------------------------------------------------------------
+
+    /// The exact four strings a `pasta_*` tooth sees, two per profile. All four must count as a
+    /// refusal verdict; anything else must not.
+    #[test]
+    fn assert_refusal_verdict_accepts_both_profiles_and_nothing_else() {
+        for reason in [
+            "constraints not satisfied on row 0: failed constraints = [#88, #96]",
+            "Lookup mismatch (global lookup 'ir2_exact_public_47'): tuple [..] net multiplicity 1",
+            "IR v2 multi-descriptor self-verify failed: OodEvaluationMismatch { index: Some(0) }",
+            "IR v2 multi-descriptor self-verify failed: LookupError(GlobalSumMismatch)",
+        ] {
+            assert!(refusal_verdict_marker(reason).is_some(), "{reason:?}");
+            assert_refusal_verdict("probe", reason);
+        }
+        assert!(refusal_verdict_marker("old path must authenticate against root8").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "names none of the constraint system's verdicts")]
+    fn assert_refusal_verdict_reds_on_a_non_verdict() {
+        assert_refusal_verdict(
+            "probe",
+            "debug constraint check requires permutation trace height",
+        );
+    }
+
+    /// ⚑ THE DEBUG HALF OF THE DISCRIMINATION, both directions. The two existing markers lists
+    /// already covered release; the p3 pair is what these teeth actually meet under `cargo test`.
+    #[test]
+    fn the_two_discriminators_agree_across_profiles() {
+        // constraint verdicts — accepted by one, refused by its dual, in BOTH profiles.
+        for reason in [
+            "constraints not satisfied on row 1: failed constraints = [#1307]",
+            "self-verify failed: OodEvaluationMismatch { index: Some(0) }",
+        ] {
+            assert_violated_constraint_not_bus("probe", reason);
+            assert!(
+                catch_quietly(|| assert_bus_imbalance_not_constraint("probe", reason)).is_err(),
+                "a constraint verdict must not satisfy the BUS discriminator: {reason:?}"
+            );
+        }
+        // bus verdicts — the mirror image.
+        for reason in [
+            "Lookup mismatch (global lookup 'ir2_exact_public_7326'): tuple [..]",
+            "self-verify failed: LookupError(GlobalSumMismatch)",
+        ] {
+            assert_bus_imbalance_not_constraint("probe", reason);
+            assert!(
+                catch_quietly(|| assert_violated_constraint_not_bus("probe", reason)).is_err(),
+                "a bus verdict must not satisfy the CONSTRAINT discriminator: {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "refused by a VIOLATED CONSTRAINT, not by the bus imbalance")]
+    fn bus_discriminator_reds_when_a_gate_fired_instead() {
+        assert_bus_imbalance_not_constraint("probe", "constraints not satisfied on row 5");
     }
 
     #[test]

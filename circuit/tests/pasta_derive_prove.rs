@@ -110,7 +110,20 @@ use dregg_circuit::pasta_windowed_witness::{
     CBITS, COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, NUM_LIMBS, Pt, Q_PASTA, RowSpec,
     SLICED_PI_COUNT, U256, build_trace, canonicity_certificate, derive_scalar, read_point,
 };
-use dregg_circuit::refusal::{DEPLOYED_VERIFIER_REFUSAL_MARKERS, must_refuse};
+// ⚠ REFUSAL ASSERTIONS CHANGED 2026-08-02. Every negative tooth below used to call `must_refuse`
+// (which demands a fail-closed `Err`) and require a `DEPLOYED_VERIFIER_REFUSAL_MARKERS` string.
+// That pair is a RELEASE-ONLY statement: these descriptors carry an exact-public manifest, i.e.
+// LOOKUPS, so under `cargo test` `p3-batch-stark`'s `prover.rs:232-260` runs its
+// `#[cfg(debug_assertions)]` `check_constraints` / `check_lookups` inside `prove_batch` and those
+// PANIC before the producer's self-verify can return. Six teeth here sat RED while refusing every
+// forgery they were pointed at, with panics that are verbatim `P3_UNSAT_PANIC_MARKERS`. The
+// cross-profile discriminators below say the SAME thing under both profiles, and nothing was
+// weakened — acceptance, a shape/arity `Err`, and any panic that is not one of p3's two documented
+// unsat verdicts all still RED.
+use dregg_circuit::refusal::{
+    Refusal, assert_bus_imbalance_not_constraint, assert_refusal_verdict,
+    assert_violated_constraint_not_bus, must_refuse_or_unsat_panic,
+};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
@@ -750,21 +763,12 @@ fn tamper_1_substituted_generator_is_refused() {
         traces.push(t);
         pis.push(p);
     }
-    let refusal = must_refuse(
-        "slice 2 term 1 replaced by the slice's OTHER generator",
-        || prove_cut(&descs, &traces, &pis),
-    );
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "the substituted generator must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
-    assert!(
-        refusal.contains("LookupError"),
-        "the generator substitution must be caught by the MANIFEST — anything else would mean an \
-         emitted gate binds coordinates to indices, and none does: {refusal}"
-    );
+    let what = "slice 2 term 1 replaced by the slice's OTHER generator";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // ⚑ CAUGHT BY THE MANIFEST — anything else would mean an emitted gate binds coordinates to
+    // indices, and none does. This was `refusal.contains("LookupError")`, which is the RELEASE
+    // spelling of the same sentence; under `cargo test` it reads `Lookup mismatch`.
+    assert_bus_imbalance_not_constraint(what, &refusal);
     println!("[tamper 1] REFUSED by the MANIFEST, which is what it is still for: {refusal}");
 }
 
@@ -798,16 +802,11 @@ fn tamper_2_wrong_block_scalar_is_refused() {
     assert_eq!(traces[0][row_index][COL_BIT].as_u32(), da);
     traces[0][row_index][COL_BIT] = BabyBear::new(db);
 
-    let refusal = must_refuse(
-        "slice 0 digit replaced by the OTHER block's s-vector bit",
-        || prove_cut(&descs, &traces, &pis),
-    );
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "the wrong-block digit must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "slice 0 digit replaced by the OTHER block's s-vector bit";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // The bent `BIT` breaks BOTH the manifest tuple and the derivation's own digit gates, so
+    // either verdict is a correct answer and this tooth asserts a verdict, not a mechanism.
+    assert_refusal_verdict(what, &refusal);
     println!("[tamper 2] REFUSED (wrong-block scalar, row {row_index}: {da} -> {db}): {refusal}");
 }
 
@@ -841,15 +840,12 @@ fn tamper_3_absorbing_state_is_refused() {
             );
         }
     }
-    let refusal = must_refuse("an all-(0,0,0) accumulator", || {
-        prove_cut(&descs, &traces, &pis)
-    });
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "the absorbing state must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "an all-(0,0,0) accumulator";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // ⚑ THE CURVE GATE, NOT THE BUS. The docstring's whole claim is that the manifest lookup AND
+    // the derivation still hold exactly under this forgery — so a bus verdict here would falsify
+    // the docstring, not satisfy the tooth.
+    assert_violated_constraint_not_bus(what, &refusal);
     println!("[tamper 3] REFUSED (absorbing state): {refusal}");
 }
 
@@ -894,16 +890,13 @@ fn tamper_4_challenge_inconsistent_derivation_is_refused() {
         traces.push(t);
         pis.push(p);
     }
-    let refusal = must_refuse(
-        "slice 0's derivation rebuilt from a DIFFERENT block's challenges",
-        || prove_cut(&descs, &traces, &pis),
-    );
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "a challenge-inconsistent derivation must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "slice 0's derivation rebuilt from a DIFFERENT block's challenges";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // ⚑ A GATE, NOT THE BUS — and that is the whole rung. `BIT` is still the manifest's own digit
+    // (the digit cross-check is off for the forged slice on purpose), so the manifest is SATISFIED
+    // and only the challenge-to-derivation relation can refuse this. A bus verdict here would mean
+    // the tamper had accidentally been made visible to the manifest and the new gate untested.
+    assert_violated_constraint_not_bus(what, &refusal);
     println!("[tamper 4] REFUSED (challenge-inconsistent derivation): {refusal}");
 }
 
@@ -943,16 +936,12 @@ fn tamper_4_polarity_the_other_block_proves_against_its_own_challenges() {
     }
     assert_ne!(pis_a, pis_b, "the two wires must differ");
     let pis = [pis_a];
-    let refusal = must_refuse(
-        "the other block's instance under OUR challenge vector",
-        || prove_cut(&descs, &traces, &pis),
-    );
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "the wire must refuse it, got: {refusal}"
-    );
+    let what = "the other block's instance under OUR challenge vector";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // Only the WIRE moved — the trace is byte-identical to the one that just proved, so the
+    // manifest lookup is untouched and the challenge-to-derivation gate is the only thing that can
+    // have changed its verdict.
+    assert_violated_constraint_not_bus(what, &refusal);
     println!("[polarity] …and REFUSED under ours, with the trace unchanged: {refusal}");
 }
 
@@ -1093,15 +1082,15 @@ fn the_canonicity_gate_refuses_the_non_canonical_representative() {
 
     // ── (ii) with §2.7's certificate: REFUSED, by a GATE ────────────────────────────────────────
     {
-        let refusal = must_refuse(
-            "an INTERNALLY CONSISTENT non-canonical representative, manifest patched to match",
-            || prove_cut(&fdescs, &traces, &pis),
-        );
-        assert!(
-            refusal.contains("OodEvaluationMismatch"),
-            "the CANONICITY GATE should be what fires — a LookupError here would mean the manifest \
-             is still what catches it, got: {refusal}"
-        );
+        let what =
+            "an INTERNALLY CONSISTENT non-canonical representative, manifest patched to match";
+        let refusal =
+            must_refuse_or_unsat_panic(what, || prove_cut(&fdescs, &traces, &pis)).reason();
+        // ⚑ THE CANONICITY GATE MUST BE WHAT FIRES — a bus verdict would mean the manifest is
+        // still what catches it and §2.7's certificate is untested. This was
+        // `refusal.contains("OodEvaluationMismatch")`, the RELEASE spelling of exactly that; under
+        // `cargo test` the same sentence reads `constraints not satisfied on row N`.
+        assert_violated_constraint_not_bus(what, &refusal);
         println!(
             "[canon] REFUSED by the DERIVATION'S OWN CONSTRAINTS ({DERIVE_CONSTRAINTS} / \
              {DERIVE_WIDTH}), with the manifest satisfied: {refusal}"
@@ -1117,16 +1106,9 @@ fn the_canonicity_gate_refuses_the_non_canonical_representative() {
         let lay = layout();
         let row = 1usize;
         put_field_at(&mut t2[slice][row], lay.pr(NUM_LIMBS * NB), &s);
-        let refusal = must_refuse(
-            "a canonical value under the non-canonical certificate",
-            || prove_cut(&fdescs, &t2, &pis),
-        );
-        assert!(
-            DEPLOYED_VERIFIER_REFUSAL_MARKERS
-                .iter()
-                .any(|m| refusal.contains(m)),
-            "got: {refusal}"
-        );
+        let what = "a canonical value under the non-canonical certificate";
+        let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&fdescs, &t2, &pis)).reason();
+        assert_refusal_verdict(what, &refusal);
         println!("[canon] …and a mismatched certificate is refused too: {refusal}");
     }
 }
@@ -1147,17 +1129,26 @@ fn honest_derived_cut_still_proves() {
 /// An all-zeros cut must be refused — this path's own falsifier for the release-mode fail-open
 /// class. Note it is NOT any of the four tampers: an all-zeros trace fails the lookup, the index
 /// threads and the derivation at once.
+///
+/// ⚠ THE MECHANISM GENUINELY DIFFERS BY PROFILE, so the assertion names both. Under `--release`
+/// the producer's unconditional self-verify is what refuses and its `Err` is this tooth's literal
+/// subject; under `cargo test` p3's `#[cfg(debug_assertions)]` constraint check panics inside
+/// `prove_batch` first and the self-verify is never reached. The falsifier survives either way:
+/// `must_refuse_or_unsat_panic` reds on `Ok`, so a re-armed fail-open still reads as "the forgery
+/// was ACCEPTED".
 #[test]
 fn all_zeros_derived_cut_is_refused() {
     let descs = parse_cut();
     let zeros: Vec<Vec<Vec<BabyBear>>> =
         vec![vec![vec![BabyBear::ZERO; DERIVE_WIDTH]; HEIGHT]; KS.len()];
     let pis = vec![vec![BabyBear::ZERO; DERIVE_PI_COUNT]; KS.len()];
-    let refusal = must_refuse("an all-zeros derived cut", || {
-        prove_cut(&descs, &zeros, &pis)
-    });
-    assert!(
-        refusal.contains("self-verify failed"),
-        "the producer must refuse an all-zeros cut in EVERY profile, got: {refusal}"
-    );
+    let what = "an all-zeros derived cut";
+    match must_refuse_or_unsat_panic(what, || prove_cut(&descs, &zeros, &pis)) {
+        Refusal::Err(e) => assert!(
+            e.contains("self-verify failed"),
+            "{what}: the producer's own self-verify must be what refuses when the prove path \
+             returns, got: {e}"
+        ),
+        Refusal::UnsatPanic(m) => assert_refusal_verdict(what, &m),
+    }
 }

@@ -6338,8 +6338,10 @@ name = "dregg-commit"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-cell",
  "dregg-circuit",
  "dregg-dsl-runtime",
+ "dregg-storage",
  "serde",
 ]
 
@@ -8444,6 +8446,7 @@ dependencies = [
  "collective-choice",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-dice",
  "dregg-schema",
@@ -15798,7 +15801,6 @@ dependencies = [
 [[package]]
 name = "p3-challenger"
 version = "0.5.1"
-source = "git+https://github.com/Plonky3/Plonky3?rev=82cfad73cd734d37a0d51953094f970c531817ec#82cfad73cd734d37a0d51953094f970c531817ec"
 dependencies = [
  "p3-field",
  "p3-maybe-rayon",

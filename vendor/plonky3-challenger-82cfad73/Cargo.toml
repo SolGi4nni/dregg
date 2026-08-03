@@ -1,0 +1,28 @@
+[package]
+name = "p3-challenger"
+description = "A Fiat–Shamir transcript and challenger framework used to derive random challenges in proof systems."
+version = "0.5.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Plonky3/Plonky3"
+homepage = "https://github.com/Plonky3/Plonky3"
+
+[package.metadata.dregg]
+upstream-revision = "82cfad73cd734d37a0d51953094f970c531817ec"
+local-delta = "PoW grinding picks the LOWEST-index witness (find_first / find_map_first) instead of whichever thread wins the race (find_any / find_map_any) — the prover's only source of run-to-run non-determinism. See src/grinding_challenger.rs's DREGG DELTA block."
+
+[dependencies]
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-monty-31 = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-util = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+
+# ⚑ `parallel` IS DECLARED HERE, NOT INHERITED. `find_first` / `find_map_first` exist only on
+# rayon's `ParallelIterator`; `p3-maybe-rayon`'s SERIAL shim (`maybe-rayon/src/serial.rs:142-176`)
+# implements `find_any` / `find_map_any` and nothing else. The root workspace already forces
+# `features = ["parallel"]` on this crate, so today unification would supply it either way — but a
+# dependency that a *different* manifest happens to enable is a dependency that compiles by luck.
+# Declaring it here makes "this source needs rayon's ordered finders" a fact of this crate.
+p3-maybe-rayon = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec", features = ["parallel"] }
+
+tracing = { version = "0.1.44", default-features = false, features = ["attributes"] }

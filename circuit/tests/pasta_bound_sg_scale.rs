@@ -73,7 +73,12 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::pasta_windowed_witness::{
     COL_ACCX, COL_DBL, NUM_LIMBS, Pt, RowSpec, TRACE_WIDTH, U256, build_trace,
 };
-use dregg_circuit::refusal::{DEPLOYED_VERIFIER_REFUSAL_MARKERS, must_refuse};
+// ⚠ CHANGED 2026-08-02 alongside its five sibling files: `must_refuse` + a
+// `DEPLOYED_VERIFIER_REFUSAL_MARKERS` string is a RELEASE-ONLY statement on a LOOKUP-carrying
+// descriptor, because p3's `#[cfg(debug_assertions)]` checks panic inside `prove_batch` first.
+// This tooth is env-gated (`DREGG_PASTA_SCALE_DIR`) so it has never actually run and never went
+// red — which is precisely why it had to be repaired with the ones that did.
+use dregg_circuit::refusal::{assert_bus_imbalance_not_constraint, must_refuse_or_unsat_panic};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
@@ -384,16 +389,15 @@ fn contents_bound_scale_ladder() {
             b_pis.push(p);
         }
         let b_refs: Vec<&[Vec<BabyBear>]> = b_traces.iter().map(|t| t.as_slice()).collect();
-        let refusal = must_refuse(&format!("w={w}: a substituted Mina generator"), || {
+        let what = format!("w={w}: a substituted Mina generator");
+        let refusal = must_refuse_or_unsat_panic(&what, || {
             prove_vm_descriptors2_batch(&descs, &b_refs, &b_pis).map(|_| ())
-        });
-        assert!(
-            DEPLOYED_VERIFIER_REFUSAL_MARKERS
-                .iter()
-                .any(|m| refusal.contains(m)),
-            "w={w}: the substituted generator must be refused by the DEPLOYED verifier, got: \
-             {refusal}"
-        );
+        })
+        .reason();
+        // The MANIFEST is what refuses, at every rung — same statement as
+        // `pasta_bound_sg_prove::substituted_generator_before_and_after`, whose whole point is that
+        // the contents binding, not any gate, is what catches a real-but-wrong generator.
+        assert_bus_imbalance_not_constraint(&what, &refusal);
         println!("[rung] w={w:5} | substituted-generator tamper REFUSED: {refusal}");
         reached = w;
     }

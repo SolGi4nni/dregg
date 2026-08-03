@@ -31,6 +31,19 @@
 //!
 //! That pair is the rung. Everything else here is control and coverage.
 //!
+//! ## ⚠ WHAT THE REFUSAL ASSERTIONS IN THIS FILE ASSERT — CHANGED 2026-08-02
+//!
+//! The four negative teeth used to call `refusal::must_refuse` (which demands a fail-closed `Err`)
+//! and require a `DEPLOYED_VERIFIER_REFUSAL_MARKERS` string. **That pair is a RELEASE-ONLY
+//! statement.** These descriptors carry an exact-public manifest, i.e. LOOKUPS, so under
+//! `cargo test` `p3-batch-stark`'s `prover.rs:232-260` runs its `#[cfg(debug_assertions)]`
+//! `check_constraints` / `check_lookups` inside `prove_batch` and those **panic** before the
+//! producer's self-verify returns. All four sat RED while refusing every forgery, with panics that
+//! are verbatim `P3_UNSAT_PANIC_MARKERS`. They now use `must_refuse_or_unsat_panic` +
+//! `assert_refusal_verdict` / `assert_bus_imbalance_not_constraint`, which say the same thing in
+//! both profiles. Nothing was weakened: acceptance, a shape/arity `Err`, and any panic that is not
+//! one of p3's two documented unsat verdicts all still RED.
+//!
 //! ## Parameters, and why they are these
 //!
 //! 4 slices × 31 generators = **124 real `srs.g` entries**, 4 bit planes, `4 · 32 = 128` trace rows
@@ -66,7 +79,10 @@ use dregg_circuit::pasta_windowed_witness::{
     COL_ACCX, COL_BIT, COL_DBL, COL_SRCX, NUM_LIMBS, Pt, RowSpec, TRACE_WIDTH, U256, build_trace,
     proj_eq, rcb_add,
 };
-use dregg_circuit::refusal::{DEPLOYED_VERIFIER_REFUSAL_MARKERS, must_refuse};
+use dregg_circuit::refusal::{
+    Refusal, assert_bus_imbalance_not_constraint, assert_refusal_verdict,
+    must_refuse_or_unsat_panic,
+};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
@@ -306,9 +322,13 @@ fn lean_artifacts_are_pinned() {
         );
         assert!(m.iter().all(|r| r.len() == TUP));
     }
-    // ⚑ the four slices declare DISTINCT wire ids, so their LogUp buses are distinct. Sharing one
-    // id would pool their manifests and let slice j's generator satisfy slice k's query
-    // (`PastaMsmBound.GEN_TID`'s doc; `descriptor_ir2::exact_public_bus_name` keys on the id alone).
+    // ⚑ the four slices declare DISTINCT wire ids, so their manifests do not pool. Sharing one id
+    // would let slice j's generator satisfy slice k's query (`PastaMsmBound.GEN_TID`'s doc).
+    // ⚠ RE-STATED 2026-08-02, and the mechanism moved without the property moving: since the
+    // `ExactPublicTable` Lean cutover `exact_public_bus_name` keys on the ARITY, so all four slices
+    // now sit on ONE bus — and the table ID is the first field of every served tuple and every
+    // query instead, so distinct ids still mean disjoint tuples and no pooling. The assertion below
+    // is unchanged because what it asserts is unchanged; only what carries it did.
     let ids: Vec<usize> = parse_set(&BOUND).iter().map(|d| d.tables[0].id).collect();
     for i in 0..SLICES {
         for j in (i + 1)..SLICES {
@@ -526,15 +546,15 @@ fn substituted_generator_before_and_after() {
         b_traces.push(t);
         b_pis.push(p);
     }
-    let refusal = must_refuse("slice 2 term 5 replaced by SRS generator 68", || {
-        prove_cut(&bound, &b_traces, &b_pis)
-    });
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "the substituted generator must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "slice 2 term 5 replaced by SRS generator 68";
+    let refusal =
+        must_refuse_or_unsat_panic(what, || prove_cut(&bound, &b_traces, &b_pis)).reason();
+    // ⚑ THE MANIFEST IS WHAT REFUSES, and that is the rung. The substitute is a REAL SRS generator
+    // and the whole trace was rebuilt around it, so every emitted gate still holds exactly — a
+    // CONSTRAINT verdict here would mean something other than the contents binding caught it, and
+    // the before/after would be measuring the wrong thing. Reads `Lookup mismatch` under
+    // `cargo test`, `LookupError` under `--release`.
+    assert_bus_imbalance_not_constraint(what, &refusal);
     println!("[after]  the contents-BOUND cut REFUSED it: {refusal}");
 }
 
@@ -570,14 +590,13 @@ fn bound_cell_tampers_are_refused() {
     for (what, bend) in cases {
         let (mut traces, pis) = honest_cut(BOUND_WIDTH);
         bend(&mut traces);
-        let refusal = must_refuse(what, || prove_cut(&descs, &traces, &pis));
-        assert!(
-            DEPLOYED_VERIFIER_REFUSAL_MARKERS
-                .iter()
-                .any(|m| refusal.contains(m)),
-            "{what}: refusal must be the DEPLOYED verifier's own verdict, got: {refusal}"
-        );
-        println!("[tamper] REFUSED: {what}");
+        let refusal =
+            must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+        // Five different cells, five different mechanisms — a bent `TIDX`/`GIDX`/`LO` trips a
+        // thread or literal GATE, a bent `BIT`/`SRCX` trips the manifest BUS. The tooth's subject
+        // is that each cell is bound at all, so it asserts a verdict and not which one.
+        assert_refusal_verdict(what, &refusal);
+        println!("[tamper] REFUSED: {what} — {refusal}");
     }
 }
 
@@ -602,33 +621,39 @@ fn dropping_a_term_is_refused() {
         pis.push(public_inputs_of(&trace, lo, lo + W));
         traces.push(trace);
     }
-    let refusal = must_refuse("slice 2 row 9 turned into a doubling row", || {
-        prove_cut(&descs, &traces, &pis)
-    });
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "a dropped term must be refused by the deployed verifier, got: {refusal}"
-    );
+    let what = "slice 2 row 9 turned into a doubling row";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // ⚑ THE MULTISET IS WHAT REFUSES — "one zero row too many and one real row too few" is a BUS
+    // statement, and it is what makes the `DBL` pattern FORCED rather than hypothesised. A
+    // constraint verdict would not carry that.
+    assert_bus_imbalance_not_constraint(what, &refusal);
     println!("[tamper] REFUSED: a dropped term — {refusal}");
 }
 
 /// An all-zeros cut must be refused — the permanent falsifier for this path's own unconditional
 /// self-verify (`135e3382d`: this descriptor shape was fail-OPEN in release for 35 days).
+///
+/// ⚠ THE MECHANISM GENUINELY DIFFERS BY PROFILE, so the assertion names both. Under `--release`
+/// the producer's unconditional self-verify is what refuses and its `Err` is this tooth's literal
+/// subject; under `cargo test` p3's `#[cfg(debug_assertions)]` constraint check panics inside
+/// `prove_batch` first and the self-verify is never reached. The falsifier survives either way:
+/// `must_refuse_or_unsat_panic` reds on `Ok`, so a re-armed fail-open still reads as "the forgery
+/// was ACCEPTED".
 #[test]
 fn all_zeros_bound_cut_is_refused() {
     let descs = parse_set(&BOUND);
     let zeros: Vec<Vec<Vec<BabyBear>>> =
         vec![vec![vec![BabyBear::ZERO; BOUND_WIDTH]; HEIGHT]; SLICES];
     let pis = vec![vec![BabyBear::ZERO; PI_COUNT]; SLICES];
-    let refusal = must_refuse("an all-zeros contents-bound cut", || {
-        prove_cut(&descs, &zeros, &pis)
-    });
-    assert!(
-        refusal.contains("self-verify failed"),
-        "the producer must refuse an all-zeros cut in EVERY profile, got: {refusal}"
-    );
+    let what = "an all-zeros contents-bound cut";
+    match must_refuse_or_unsat_panic(what, || prove_cut(&descs, &zeros, &pis)) {
+        Refusal::Err(e) => assert!(
+            e.contains("self-verify failed"),
+            "{what}: the producer's own self-verify must be what refuses when the prove path \
+             returns, got: {e}"
+        ),
+        Refusal::UnsatPanic(m) => assert_refusal_verdict(what, &m),
+    }
 }
 
 /// The four slice partials re-sum to the whole 124-term MSM, computed by a different route — the

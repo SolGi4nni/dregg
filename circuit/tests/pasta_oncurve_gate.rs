@@ -23,6 +23,30 @@
 //! the real declared digits**, because `SRC` and `BIT` are untouched. The published partial is
 //! `(0,0,0)`, which satisfies `PastaMsmAir`'s terminal `X ≡ 0 ∧ Z ≡ 0` predicate.
 //!
+//! ## ⚠ WHAT THE REFUSAL ASSERTIONS IN THIS FILE ASSERT — CHANGED 2026-08-02
+//!
+//! Every tooth below used to call `refusal::must_refuse` (which demands a fail-closed `Err`) and
+//! then require the message to name a `DEPLOYED_VERIFIER_REFUSAL_MARKERS` verdict. **That pair is
+//! a RELEASE-ONLY statement**, and under `cargo test` it cannot pass: these descriptors carry an
+//! exact-public manifest, i.e. LOOKUPS, so `p3-batch-stark`'s `prover.rs:232-260` runs its
+//! `#[cfg(debug_assertions)]` `check_constraints` / `check_lookups` inside `prove_batch` and those
+//! **panic** before the producer's self-verify can return anything. Five teeth here were therefore
+//! RED while refusing every forgery they were pointed at — the panics are verbatim
+//! `P3_UNSAT_PANIC_MARKERS`.
+//!
+//! They now call `must_refuse_or_unsat_panic` and assert on `Refusal::reason()` with the
+//! cross-profile discriminators, which say the SAME thing in both builds:
+//!
+//! * `assert_violated_constraint_not_bus` — `constraints not satisfied on row N` (debug) /
+//!   `OodEvaluationMismatch` (release), and NOT a bus imbalance. Used where the forgery leaves the
+//!   manifest lookup satisfied, so a gate is the only thing that can catch it.
+//! * `assert_refusal_verdict` — any of the four verdicts. Used where the forgery breaks the
+//!   manifest tuple as well, so either mechanism is a legitimate answer; this is exactly the
+//!   strength the `DEPLOYED_VERIFIER_REFUSAL_MARKERS` idiom had.
+//!
+//! **No tooth was weakened**: `must_refuse_or_unsat_panic` still REDS on acceptance, on a shape/
+//! arity `Err`, and on any panic that is not one of p3's two documented unsat verdicts.
+//!
 //! `absorbing_state_before_and_after` runs both halves:
 //!
 //!   * the contents-bound descriptor (`pasta-rcb-sg-bound-<k>-of-4`, 82 constraints, 529 columns)
@@ -51,7 +75,9 @@ use dregg_circuit::pasta_windowed_witness::{
     COL_SRCZ, NUM_LIMBS, ONCURVE_WIDTH, Pt, RowSpec, TRACE_WIDTH, U256, build_trace, inv_mod_p,
     put_on_curve_block, put_on_curve_block_forged, read_point,
 };
-use dregg_circuit::refusal::{DEPLOYED_VERIFIER_REFUSAL_MARKERS, must_refuse};
+use dregg_circuit::refusal::{
+    Refusal, assert_refusal_verdict, assert_violated_constraint_not_bus, must_refuse_or_unsat_panic,
+};
 use sha2::{Digest, Sha256};
 use std::time::Instant;
 
@@ -497,15 +523,13 @@ fn absorbing_state_before_and_after() {
 
     // --- AFTER: the CURVE-GATED descriptor REFUSES it -------------------------------------------
     let (g_traces, g_pis) = absorbing_cut(ONCURVE_WIDTH);
-    let refusal = must_refuse("an all-(0,0,0) accumulator", || {
-        prove_cut(&descs, &g_traces, &g_pis)
-    });
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "the absorbing state must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "an all-(0,0,0) accumulator";
+    let refusal =
+        must_refuse_or_unsat_panic(what, || prove_cut(&descs, &g_traces, &g_pis)).reason();
+    // ⚑ A GATE, NOT THE BUS — and that discrimination is the whole rung. The forgery leaves `SRC`,
+    // `BIT` and therefore the entire exact-public manifest lookup satisfied (asserted above), so a
+    // bus verdict here would mean the manifest is what caught it and the curve gate is untested.
+    assert_violated_constraint_not_bus(what, &refusal);
     println!("[after]  the curve-gated cut REFUSED it: {refusal}");
 }
 
@@ -535,15 +559,11 @@ fn forged_zero_y_accumulator_is_refused() {
         traces.push(t);
         pis.push(p);
     }
-    let refusal = must_refuse("slice 1 accumulator forged to Y = 0", || {
-        prove_cut(&descs, &traces, &pis)
-    });
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "a Y = 0 accumulator must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "slice 1 accumulator forged to Y = 0";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // The ACCUMULATOR moved; `SRC`/`BIT` and the manifest lookup are untouched, so — as above —
+    // only a gate can refuse this, and a bus verdict would mean the gate is not what fired.
+    assert_violated_constraint_not_bus(what, &refusal);
     println!("[tamper] REFUSED: a forged Y = 0 accumulator — {refusal}");
 }
 
@@ -574,15 +594,13 @@ fn off_curve_source_is_refused() {
         traces.push(t);
         pis.push(p);
     }
-    let refusal = must_refuse("slice 3 row 5 source bent off the curve", || {
-        prove_cut(&descs, &traces, &pis)
-    });
-    assert!(
-        DEPLOYED_VERIFIER_REFUSAL_MARKERS
-            .iter()
-            .any(|m| refusal.contains(m)),
-        "an off-curve source must be refused by the DEPLOYED verifier, got: {refusal}"
-    );
+    let what = "slice 3 row 5 source bent off the curve";
+    let refusal = must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+    // ⚠ EITHER MECHANISM IS CORRECT HERE and the docstring above says so: the planted point is
+    // BOTH off the curve AND not the generator the manifest declares, so it is refused twice over.
+    // Demanding the gate specifically would be asserting which of two live checks happens to run
+    // first, which is a p3 ordering fact, not a statement about this AIR.
+    assert_refusal_verdict(what, &refusal);
     println!("[tamper] REFUSED: an off-curve source point — {refusal}");
 }
 
@@ -624,15 +642,13 @@ fn generator_and_digit_tampers_still_fire_under_the_gate() {
             traces.push(t);
             pis.push(p);
         }
-        let refusal = must_refuse("slice 2 term 5 replaced by SRS generator 68", || {
-            prove_cut(&descs, &traces, &pis)
-        });
-        assert!(
-            DEPLOYED_VERIFIER_REFUSAL_MARKERS
-                .iter()
-                .any(|m| refusal.contains(m)),
-            "the substituted generator must still be refused under the gate, got: {refusal}"
-        );
+        let what = "slice 2 term 5 replaced by SRS generator 68";
+        let refusal =
+            must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+        // The substitute is a REAL generator and the trace is regenerated around it, so every gate
+        // still holds and the MANIFEST is what refuses — but this tooth's subject is only "the
+        // sibling's tamper is still live under the gate", so it asserts a verdict, not a mechanism.
+        assert_refusal_verdict(what, &refusal);
         println!("[tamper] REFUSED (generator): {refusal}");
     }
 
@@ -641,15 +657,10 @@ fn generator_and_digit_tampers_still_fire_under_the_gate() {
         let (mut traces, pis) = honest_cut(ONCURVE_WIDTH);
         let v = traces[2][5][COL_BIT].as_u32();
         traces[2][5][COL_BIT] = BabyBear::new(1 - v);
-        let refusal = must_refuse("slice 2 row 5 digit flipped", || {
-            prove_cut(&descs, &traces, &pis)
-        });
-        assert!(
-            DEPLOYED_VERIFIER_REFUSAL_MARKERS
-                .iter()
-                .any(|m| refusal.contains(m)),
-            "the flipped digit must still be refused under the gate, got: {refusal}"
-        );
+        let what = "slice 2 row 5 digit flipped";
+        let refusal =
+            must_refuse_or_unsat_panic(what, || prove_cut(&descs, &traces, &pis)).reason();
+        assert_refusal_verdict(what, &refusal);
         println!("[tamper] REFUSED (digit): {refusal}");
     }
 }
@@ -665,17 +676,27 @@ fn honest_gated_cut_still_proves() {
 /// An all-zeros cut must be refused — this path's own falsifier for the release-mode fail-open
 /// class (`135e3382d`). Note it is NOT the absorbing-state forgery: an all-zeros TRACE fails the
 /// lookup and the index threads too; the forgery above fails ONLY the curve gate.
+///
+/// ⚠ THE MECHANISM GENUINELY DIFFERS BY PROFILE, so the assertion names both rather than pretending
+/// one covers the other. Under `--release` the producer's unconditional self-verify is what
+/// refuses, and its `Err` is the tooth's literal subject. Under `cargo test` p3's
+/// `#[cfg(debug_assertions)]` constraint check panics inside `prove_batch` first and the
+/// self-verify is never reached, so the observable verdict is the unsat panic. The FALSIFIER is
+/// intact in both: `must_refuse_or_unsat_panic` reds on `Ok`, so a fail-open reads as "the forgery
+/// was ACCEPTED" exactly as before.
 #[test]
 fn all_zeros_gated_cut_is_refused() {
     let descs = parse_set(&ONCURVE);
     let zeros: Vec<Vec<Vec<BabyBear>>> =
         vec![vec![vec![BabyBear::ZERO; ONCURVE_WIDTH]; HEIGHT]; SLICES];
     let pis = vec![vec![BabyBear::ZERO; PI_COUNT]; SLICES];
-    let refusal = must_refuse("an all-zeros curve-gated cut", || {
-        prove_cut(&descs, &zeros, &pis)
-    });
-    assert!(
-        refusal.contains("self-verify failed"),
-        "the producer must refuse an all-zeros cut in EVERY profile, got: {refusal}"
-    );
+    let what = "an all-zeros curve-gated cut";
+    match must_refuse_or_unsat_panic(what, || prove_cut(&descs, &zeros, &pis)) {
+        Refusal::Err(e) => assert!(
+            e.contains("self-verify failed"),
+            "{what}: the producer's own self-verify must be what refuses when the prove path \
+             returns, got: {e}"
+        ),
+        Refusal::UnsatPanic(m) => assert_refusal_verdict(what, &m),
+    }
 }
