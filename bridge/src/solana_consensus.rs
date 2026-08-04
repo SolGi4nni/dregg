@@ -326,11 +326,39 @@ pub struct VoteTally {
 }
 
 impl VoteTally {
-    /// Whether the counted stake clears the ≥ 2/3 super-majority threshold.
+    /// Whether the counted stake clears the **strict** `> 2/3` super-majority threshold.
     ///
-    /// `voted/total ≥ 2/3 ⟺ 3*voted ≥ 2*total` (computed in `u128`).
+    /// `voted/total > 2/3 ⟺ 3*voted > 2*total` (computed in `u128`).
+    ///
+    /// ⚑ **STRICT, and it was not.** This shipped `>=`, which is not agave's rule. Read at source
+    /// 2026-08-03 (agave `c7670b260b8cd34674e05c03c0babdaf54e15987`):
+    /// `get_highest_super_majority_root` — the rooted-finality rule this module mirrors — is
+    /// `core/src/commitment_service.rs:54-64` and compares
+    /// `(stake_sum as f64 / total_stake as f64) > VOTE_THRESHOLD_SIZE` with
+    /// `VOTE_THRESHOLD_SIZE = 2f64 / 3f64` (`runtime/src/commitment.rs:9`). **Strict `>`.**
+    ///
+    /// The old comment's defence — that `2f64/3f64` is the double `0.666666666666666629659…`,
+    /// strictly below 2/3, so agave's `>` is "effectively" non-strict — is true about the constant
+    /// and wrong about the comparison: the dividend rounds to the same double, so at an exactly-2/3
+    /// ratio agave computes `d > d` and refuses. Measured on the transcribed comparison: over
+    /// 6,684,470 pairs with both operands below 2^53 (including every `(voted, total)` with
+    /// `total <= 3000`), agave and `3*voted > 2*total` disagree on **zero**; agave and `>=`
+    /// disagree on 1000 — every one the exact-2/3 point, every one this function accepting where
+    /// agave refuses.
+    ///
+    /// ⚑ And at `total_stake == 0`: agave computes `0f64 / 0f64 = NaN`, and `NaN > x` is `false`,
+    /// so agave refuses an empty stake table at the threshold itself. `>=` accepted it (`0 >= 0`).
+    /// [`verify_vote_set`] rejects that case earlier via [`VoteSetError::EmptyStakeTable`], but the
+    /// threshold is no longer relying on that check to cover for it.
+    ///
+    /// ⚠ Above 2^53 no integer rule is bit-exact against agave's floats (`total as f64` is itself
+    /// rounded; the boundary carries ±1 lamport of jitter at mainnet magnitude). Strict is both the
+    /// closer of the two forms and the conservative one — it refuses inside the jitter band.
+    ///
+    /// ⚠ This mirrors `Dregg2.Bridge.LightClientSolana.solVerifyDecision` and the emitted AIR's
+    /// quorum chain at `γ = 1`; all three moved together.
     pub fn is_supermajority(&self) -> bool {
-        self.voted_stake.saturating_mul(3) >= self.total_stake.saturating_mul(2)
+        self.voted_stake.saturating_mul(3) > self.total_stake.saturating_mul(2)
     }
 }
 

@@ -244,14 +244,70 @@ def rootedOk (L : SolLeaf) (u : SolUpdate L) : Bool :=
     | some v => match v.rootSlot with | some r => decide (u.slot ≤ r) | none => false
     | none => true)
 
+/-! ### ⚑ THE STRICTNESS REPAIR (2026-08-03): agave's THRESHOLD IS STRICT, AND THIS GATE WAS NOT.
+
+This decision shipped the NON-STRICT `2·total ≤ 3·rooted`. It is wrong, measured against the
+reference client at source on 2026-08-03 (agave `c7670b260b8cd34674e05c03c0babdaf54e15987`):
+
+    runtime/src/commitment.rs:9        pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
+    core/src/commitment_service.rs:59  if (stake_sum as f64 / total_stake as f64) > VOTE_THRESHOLD_SIZE
+
+`get_highest_super_majority_root` (`core/src/commitment_service.rs:54`) is THE rooted-finality rule
+this file models — it walks the per-validator rooted stake and returns the highest root clearing the
+threshold — and its comparison is **STRICT `>`**.
+
+The old docstring defended non-strict by observing that `2f64/3f64` is the double
+`0.66666666666666662966…`, which is strictly below `2/3` — so agave's `>` "already admits ratios a
+strict `> 2/3` would reject." That reasoning is TRUE about the constant and WRONG about the
+comparison, because the DIVIDEND is rounded to the same double: when `rooted/total` is exactly `2/3`
+and both operands are exactly representable, the correctly-rounded quotient IS `2f64/3f64`, and
+`d > d` is false. **agave refuses the exact-2/3 point.**
+
+MEASURED, not reasoned (`agave_strictness_equiv.rs`, the comparison transcribed verbatim):
+
+  * FULL exhaustive `r ∈ [0, t]` for every `t ≤ 3000` (4 504 500 pairs), plus a windowed sweep to
+    `t = 20 000` and 2 000 000 random pairs at `t < 2^52`: agave's float rule and the STRICT integer
+    rule `3·rooted > 2·total` disagree on **ZERO** of 6 684 470 pairs. agave and the NON-STRICT rule
+    disagree on 1000 of the full-exhaustive pairs — every one of them the exact-2/3 point, and every
+    one of them THIS GATE accepting where agave refuses.
+  * ⚑ At `total = 0`: `0f64 / 0f64` is `NaN`, and `NaN > x` is FALSE, so **agave refuses the empty
+    stake table at the threshold comparison itself**. The non-strict form accepts it (`0 ≤ 0`). That
+    is not a rounding subtlety; it is the empty-stake hole, and it was a fidelity defect the whole
+    time.
+  * Above `2^53` neither integer form matches: `total as f64` is itself rounded, and the boundary
+    acquires ±1 lamport of jitter (at live mainnet magnitude agave disagrees with strict on 32.8% of
+    exact-2/3-adjacent pairs and with non-strict on 43.8%). STRICT is the closer of the two AND the
+    conservative one — it refuses inside the jitter band rather than accepting inside it.
+
+⚠ Say the residual out loud: no integer rule is a bit-for-bit model of agave's float arithmetic above
+`2^53`, and nothing in a prime field will be. What IS established is that strict reproduces agave
+EXACTLY wherever agave's own arithmetic is exact, and errs toward refusal where it is not.
+
+⚠ And say what agave is BECOMING. Alpenglow (`votor/`) is in agave master today and does not use this
+rule at all: `votor/src/aggregate_accumulator.rs:94-95` builds a certificate iff
+`Fraction::new(stake, total) >= cert_type.threshold()` — a NON-STRICT comparison by EXACT `u128`
+cross-multiplication (`votor-messages/src/fraction.rs:47-60`, no floats) against thresholds of
+**60%** (Notarize / Finalize / Skip / NotarizeFallback) and **80%** (FinalizeFast)
+(`votor-messages/src/certificate.rs:101-109`), with an 82% migration threshold
+(`votor-messages/src/migration.rs:87`). So the successor rule is non-strict — but at 3/5 and 4/5, not
+at 2/3, and over a certificate rather than a rooted-stake walk. It is NOT a defence of this file's
+non-strict 2/3. mainnet-beta was still on the Tower rule when this was written (measured 2026-08-03:
+`getVersion` → `solana-core 4.1.0`, and `getBlockCommitment` still serves the Tower
+`BlockCommitmentCache`, reporting `totalStake = 432650183925625587` — the exact denominator this
+module pins). When Alpenglow activates, THIS FILE IS WRONG AGAIN, in the constant and in the shape,
+and that is a re-authoring, not a parameter tweak. -/
+
 /-- **`solVerifyDecision`** — THE scalar verify-logic decision, over the six projections a deployed
 node computes (two crypto carriers `edOk`/`stakeTableOk`, two logic gates `rootedOk`/`authOk`, the
 counted stake, the total). The active-stake denominator must be nonzero (`EmptyStakeTable`), the
-rooted authorized stake must meet the multiply-form 2/3 threshold, and every carrier/gate holds. This
-is the object the AIR (`LightClientSolanaAir`) emits and `sol_no_forgery` is proven over. -/
+rooted authorized stake must STRICTLY clear the multiply-form 2/3 threshold, and every carrier/gate
+holds. This is the object the AIR (`LightClientSolanaAir`) emits and `sol_no_forgery` is proven over.
+
+⚑ `2 * totalStk < 3 * rootedStk` — STRICT, matching `get_highest_super_majority_root`'s `>`. It was
+`≤`; see the strictness note above for the 6.68-million-pair measurement that settled it. -/
 def solVerifyDecision (rootedStk totalStk : Nat) (edB stakeB rootedB authB : Bool) : Bool :=
   decide (0 < totalStk)
-  && decide (2 * totalStk ≤ 3 * rootedStk)
+  && decide (2 * totalStk < 3 * rootedStk)
   && edB && stakeB && rootedB && authB
 
 /-- **THE VERIFY RULES**, as the scalar decision over the update's true projections. -/
@@ -268,8 +324,9 @@ def emptyUpdate (L : SolLeaf) : SolUpdate L := ⟨[], [], 0, L.zeroDigest⟩
 /-- **`SolValidAt L ts u`** — Solana's OWN rooted-finality validity, relative to the pinned WS anchor
 `ts`:
 
-  * `rootedSupermajority` — a set of DISTINCT active vote accounts, meeting the multiply-form 2/3
-    threshold against the ACTIVE-stake total, each of whose ON-CHAIN AUTHORIZED voter GENUINELY signed
+  * `rootedSupermajority` — a set of DISTINCT active vote accounts, STRICTLY clearing the
+    multiply-form 2/3 threshold against the ACTIVE-stake total (`2·total < 3·rooted`, agave's `>`;
+    see the strictness note at `solVerifyDecision`), each of whose ON-CHAIN AUTHORIZED voter GENUINELY signed
     (the `Signed` denotation, via the ed25519 leaf) the bank hash `B` at slot `S`, and each of whose
     vote is ROOTED (its tower root reaches `S`) — not merely optimistically confirmed;
   * `anchorBinds` — the active table binds to the pinned WS anchor root, and that binding is BINDING
@@ -279,7 +336,7 @@ structure SolValidAt (L : SolLeaf) (ts : SolTrustedState L) (u : SolUpdate L) : 
   rootedSupermajority :
     ∃ atts : List (StakeEntry L),
       (∀ e ∈ atts, e ∈ u.table)
-      ∧ 2 * totalStake L u ≤ 3 * (atts.map (fun e => e.stake)).sum
+      ∧ 2 * totalStake L u < 3 * (atts.map (fun e => e.stake)).sum
       ∧ (∀ e ∈ atts, L.Signed e.authorizedVoter (u.slot, u.bankHash))
       ∧ (∀ e ∈ atts, ∃ v ∈ u.votes, isAttestedBy L u.slot u.bankHash e v = true
             ∧ ∃ r, v.rootSlot = some r ∧ u.slot ≤ r)
@@ -396,12 +453,44 @@ theorem solVerifyDecision_no_forgery (L : SolLeaf) (hcr : L.stakeTableCR)
     (h : solProjectedDecision L ts u = true) : SolValidAt L ts u :=
   sol_no_forgery L hcr ts u ((solVerifyDecision_refines L ts u) ▸ h)
 
-/-! ## §8 — The 2/3 boundary tooth (the Solana analog of the ETH 342/341 Nomad boundary). -/
+/-! ## §8 — The 2/3 boundary tooth (the Solana analog of the ETH 342/341 Nomad boundary), and the
+STRICTNESS pair that separates the shipped rule from the reference one. -/
 
-/-- **The no-rounding-trap boundary** (`is_supermajority`, multiply form): at total `3`, `rooted = 2`
-meets the multiply-form 2/3 threshold, `rooted = 1` does not. `2 = ⌈2·3/3⌉` exactly. -/
+/-- **The no-rounding-trap boundary** (`get_highest_super_majority_root`, multiply form): at total `3`
+the threshold is cleared by `rooted = 3` and NOT by `rooted = 2`. ⚑ `rooted = 2` is the EXACT-2/3
+point; the shipped non-strict rule accepted it and agave does not. -/
 theorem supermajority_boundary :
-    (2 * 3 ≤ 3 * 2) ∧ ¬ (2 * 3 ≤ 3 * 1) := by decide
+    (2 * 3 < 3 * 3) ∧ ¬ (2 * 3 < 3 * 2) ∧ ¬ (2 * 3 < 3 * 1) := by decide
+
+/-- ⚑ **THE STRICTNESS SEPARATION, AS THE GENERAL FACT.** For every total and rooted tally, the
+shipped non-strict rule and the reference strict rule differ on EXACTLY the exact-2/3 point, and
+whenever they differ it is the non-strict rule ACCEPTING. So the repair can only tighten the gate; it
+can never admit something the old one refused.
+
+This is the general statement the case-instances below are corollaries of — the exact-2/3 point is
+one instance of it, and so is the empty stake table. -/
+theorem strict_differs_from_nonstrict_exactly_at_the_boundary (rooted total : Nat) :
+    ((2 * total < 3 * rooted) → (2 * total ≤ 3 * rooted))
+    ∧ (((2 * total ≤ 3 * rooted) ∧ ¬ (2 * total < 3 * rooted)) ↔ 3 * rooted = 2 * total) := by
+  omega
+
+/-- ⚑ **THE EMPTY STAKE TABLE IS AN INSTANCE OF THE SEPARATION — the threshold ALONE refuses it.**
+At `rooted = total = 0` the strict threshold is `0 < 0`, which is false, so the quorum comparison
+refuses a block signed by nobody WITHOUT any help from the `0 < totalStk` floor. The non-strict form
+is `0 ≤ 0` and accepts.
+
+This is the fact that gives the AIR its second tooth: agave gets this refusal from `NaN > x = false`,
+we get it from strictness, and the emptiness floor is no longer the only thing standing there. -/
+theorem strict_threshold_alone_refuses_the_empty_table :
+    ¬ (2 * 0 < 3 * 0) ∧ (2 * 0 ≤ 3 * 0) := by decide
+
+/-- ⚑ …and the DECISION-level pair: with every carrier and gate bit set to `true` and the emptiness
+floor's contribution REMOVED (i.e. asking only what the threshold decides), the strict rule refuses
+the empty tally and the non-strict rule accepts it. The `decide (0 < totalStk)` conjunct is not
+consulted — that is the point. -/
+theorem sol_empty_refused_by_threshold_not_only_by_floor :
+    (decide (2 * 0 < 3 * 0) && true && true && true && true) = false
+    ∧ (decide (2 * 0 ≤ 3 * 0) && true && true && true && true) = true := by decide
 
 /-! ## §9 — The PROVED model leaf — a perfectly-binding realization (axiom-clean, non-laundering). A
 PRODUCTION instance replaces `modelLeaf` with the verified ed25519 + SHA-256 stake-table realization,
@@ -542,17 +631,40 @@ def forgedSigUpdate : SolUpdate modelLeaf :=
   ⟨modelTable, [forgedSigVote 1, forgedSigVote 2], 100, modelBankHash⟩
 theorem sol_forged_sig_rejected : solVerify modelLeaf modelAnchor forgedSigUpdate = false := by decide
 
-/-- **THE EXACT-2/3 BOUNDARY.** A table of total `3` with a rooted attester of stake `2` is accepted
-(`3·2 = 6 ≥ 6 = 2·3`); dropping to `1` is rejected — the Solana `is_supermajority` 2/3 tooth in the
-gate itself. -/
+/-- ⚑⚑ **THE EXACT-2/3 BOUNDARY — and it is REFUSED.** A table of total `3`: a rooted attester of
+stake `2` is EXACTLY 2/3 (`3·2 = 6 = 2·3`) and is **rejected** by the strict threshold, matching
+agave (`t = 3, r = 2` → `0.6666666666666666 > 0.6666666666666666` is false — one of the 1000
+full-exhaustive pairs where agave and the old non-strict rule disagreed). Only `3` of `3` clears it,
+and `1` of `3` does not.
+
+⚑ `boundaryExactUpdate` is the fixture that FLIPPED: it was the module's "accept" exhibit under the
+non-strict rule, and it is a refusal now. Kept under its own name rather than deleted, because a
+boundary tooth whose accepting side moved is only legible against the value that moved. -/
 def boundaryTable : List (StakeEntry modelLeaf) := [⟨1, 7, 2⟩, ⟨2, 7, 1⟩]
 def boundaryAnchor : SolTrustedState modelLeaf := ⟨ModelDigest.commit (boundaryTable.map entryRow)⟩
+/-- Both accounts attest: rooted `3` of total `3`, `3·3 = 9 > 6 = 2·3`. The STRICT accept. -/
 def boundaryAcceptUpdate : SolUpdate modelLeaf :=
+  ⟨boundaryTable, [rootedVote 1, rootedVote 2], 100, modelBankHash⟩
+/-- ⚑ Only the stake-`2` account attests: rooted `2` of total `3` — EXACTLY 2/3. Refused. -/
+def boundaryExactUpdate : SolUpdate modelLeaf :=
   ⟨boundaryTable, [rootedVote 1], 100, modelBankHash⟩
+/-- Only the stake-`1` account attests: rooted `1` of total `3`. Refused, and was before. -/
 def boundaryRejectUpdate : SolUpdate modelLeaf :=
   ⟨boundaryTable, [rootedVote 2], 100, modelBankHash⟩
 theorem sol_boundary_accept : solVerify modelLeaf boundaryAnchor boundaryAcceptUpdate = true := by decide
+/-- ⚑⚑ **THE STRICTNESS REPAIR, ON CONCRETE DATA.** -/
+theorem sol_boundary_exact_two_thirds_rejected :
+    solVerify modelLeaf boundaryAnchor boundaryExactUpdate = false := by decide
 theorem sol_boundary_reject : solVerify modelLeaf boundaryAnchor boundaryRejectUpdate = false := by decide
+
+/-- ⚑ …and the pair that shows the flip is REAL rather than a renumbering: at the exact-2/3 tallies
+the OLD non-strict threshold accepts and the NEW strict one refuses. One update, two rules, opposite
+verdicts. -/
+theorem sol_boundary_exact_is_where_the_rules_differ :
+    (2 * totalStake modelLeaf boundaryExactUpdate
+      ≤ 3 * rootedStake modelLeaf boundaryExactUpdate)
+    ∧ ¬ (2 * totalStake modelLeaf boundaryExactUpdate
+      < 3 * rootedStake modelLeaf boundaryExactUpdate) := by decide
 
 /-- **THE DISCRIMINATOR, ASSEMBLED.** Under the SAME pinned anchor and active table, the gate accepts
 the genuine rooted supermajority and REJECTS every one of the closed-hole attacks: optimistic-only,
@@ -582,6 +694,8 @@ theorem sol_good_valid : SolValidAt modelLeaf modelAnchor goodUpdate :=
 #guard solVerify modelLeaf modelAnchor minorityUpdate == false
 #guard solVerify modelLeaf modelAnchor forgedSigUpdate == false
 #guard solVerify modelLeaf boundaryAnchor boundaryAcceptUpdate == true
+-- ⚑ The exact-2/3 refusal is NOT a `#guard`: it is `sol_boundary_exact_two_thirds_rejected`, a named
+-- `decide` theorem above, with `#assert_axioms` on it. A fact worth asserting is worth naming.
 #guard solVerify modelLeaf boundaryAnchor boundaryRejectUpdate == false
 
 /-! ## §11 — Axiom hygiene (CI hard-gate). The ed25519 + stake-table CR leaves are the visible
@@ -596,6 +710,12 @@ audit surface; the model PROVES both carriers, so the file is kernel-clean end t
 #assert_axioms collapseLeaf_not_stakeTableCR
 #assert_axioms sol_good_valid
 #assert_axioms sol_gate_discriminates
+-- ⚑ THE STRICTNESS REPAIR: the general separation, the empty-table instance, and the boundary flip.
+#assert_axioms strict_differs_from_nonstrict_exactly_at_the_boundary
+#assert_axioms strict_threshold_alone_refuses_the_empty_table
+#assert_axioms sol_empty_refused_by_threshold_not_only_by_floor
+#assert_axioms sol_boundary_exact_two_thirds_rejected
+#assert_axioms sol_boundary_exact_is_where_the_rules_differ
 
 #print axioms sol_no_forgery
 #print axioms solVerifyDecision_no_forgery

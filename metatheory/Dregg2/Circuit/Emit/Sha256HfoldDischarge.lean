@@ -632,7 +632,7 @@ REFUTED table-CR carrier; the binding content is `sol_stake_binding_from_gates`,
 theorem sol_stake_from_gates (a : Assignment)
     (ts : SolTrustedState solShaLeaf) (u : SolUpdate solShaLeaf)
     (hpos : 0 < totalStake solShaLeaf u)
-    (hthr : 2 * totalStake solShaLeaf u ≤ 3 * rootedStake solShaLeaf u)
+    (hthr : 2 * totalStake solShaLeaf u < 3 * rootedStake solShaLeaf u)
     (hed : edOk solShaLeaf u = true)
     (hrooted : rootedOk solShaLeaf u = true)
     (hauth : authOk solShaLeaf u = true)

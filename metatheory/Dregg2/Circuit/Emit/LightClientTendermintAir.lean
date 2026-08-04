@@ -1075,8 +1075,7 @@ theorem tmLcAir_refuses_exactly_two_thirds_at_max_voting_power (a : Assignment)
   rw [hTotal, hSigned]; norm_num
 
 /-- ⚑ **THE EMPTY VALIDATOR SET IS REFUSED TOO**, and by the same tooth: at `totalPow = signedPow = 0`
-the difference is `−1`. (Tendermint's strict threshold subsumes the empty-set floor its Solana and
-Midnight siblings carry as a separate `TPOS` slack.) -/
+the difference is `−1`. -/
 theorem tmLcAir_refuses_the_empty_validator_set (a : Assignment)
     (hTotal : LimbTally.limbValue TM_LIMB_BITS a (LimbTally.bCols tdiffRungs) = 0)
     (hSigned : LimbTally.limbValue TM_LIMB_BITS a (LimbTally.aCols tdiffRungs) = 0) :
@@ -1084,6 +1083,44 @@ theorem tmLcAir_refuses_the_empty_validator_set (a : Assignment)
         ∧ LimbTally.LimbsInRange TM_LIMB_BITS a (LimbTally.diffCols tdiffRungs TDIFF_TOP)) := by
   refine LimbTally.emitted_chain_refuses ?_
   rw [hTotal, hSigned]; norm_num
+
+/-- ⚑⚑ **AND THE CLAIM THAT USED TO SIT ON THAT THEOREM IS FALSE — REFUTED, not softened.**
+
+The docstring above read *"Tendermint's strict threshold subsumes the empty-set floor its Solana and
+Midnight siblings carry as a separate `TPOS` slack."* That is true at `signedPow = 0` and **FALSE
+everywhere else on the empty set.** This descriptor has NO positivity floor (one `chainBodies` call,
+`tm_chain_gate_count`), `tmVerifyDecision` has no `0 < totalPow` conjunct
+(`LightClientTendermintGate.lean:104-113`), and nothing anywhere forces `signedPow ≤ totalPow` —
+both are independent witnessed limb vectors carrying only their own 16-bit lookups.
+
+So at `totalPow = 0, signedPow = 1` the strict difference is `3·1 − 2·0 − 1 = 2 ≥ 0`: an honest,
+in-range, **ACCEPTING** fill. A validator set with NO voting power and a claimed one unit of signed
+power satisfies this AIR's threshold. `cmp_sound`'s conclusion is `γ ≤ α·A − β·B`, which bounds the
+DIFFERENCE and says nothing about the denominator being real.
+
+⚑ This is the same shape as the Solana empty-stake finding it was written to contrast with, and it is
+why Solana keeps its `TPOS` floor even now that its quorum is strict: a strict quorum refuses `(0,0)`
+and NOTHING ELSE at `total = 0`. Solana's floor refuses `total = 0` at EVERY `rooted`
+(`LightClientSolanaAir.sol_two_teeth_are_independent`); Tendermint has no such gate.
+
+⚠ NOT FIXED HERE — a floor chain is a new five-gate chain, five difference limbs, four carries, a
+width bump and a VK rotation, i.e. the same size as the Solana strictness repair. What is landed is
+the REFUTATION, so the claim cannot be cited again while it is false. -/
+theorem tm_strict_threshold_does_not_subsume_an_emptiness_floor :
+    -- the exhibited empty-set-with-signed-power point SATISFIES the strict threshold…
+    (1 : ℤ) ≤ 3 * 1 - 2 * 0
+    -- …while the SAME point fails the positivity floor Solana and Midnight carry separately.
+    ∧ ¬ ((1 : ℤ) ≤ 1 * 0 - 0 * 0)
+    -- And the only case the strict threshold does catch on the empty set is `signed = 0`.
+    ∧ ¬ ((1 : ℤ) ≤ 3 * 0 - 2 * 0) := by
+  refine ⟨by norm_num, by norm_num, by norm_num⟩
+
+/-- …and the DECISION-level statement of the same refutation: `tmVerifyDecision` accepts an update
+whose total voting power is ZERO, given the scalar/carrier conjuncts. The threshold conjunct is the
+only one that reads the tally, and `2·0 < 3·1` holds. -/
+theorem tm_decision_accepts_a_zero_power_validator_set :
+    Dregg2.Bridge.LightClientTendermintGate.tmVerifyDecision
+      7 7 11 10 5 6 6 1 100 true true 0 1 = true := by decide
 
 /-- Chain-id: a matching pair accepts, a mismatch is refused (cross-chain replay fail-closure). -/
 theorem tm_chain_id_discriminates :
@@ -1149,6 +1186,10 @@ theorem tm_carrier_bits_discriminate :
 #assert_axioms tmLcAir_accepts_at_max_total_voting_power
 #assert_axioms tmLcAir_refuses_exactly_two_thirds_at_max_voting_power
 #assert_axioms tmLcAir_refuses_the_empty_validator_set
+-- ⚑⚑ THE REFUTATION of the "strict subsumes the floor" claim: `total = 0, signed = 1` is an
+-- ACCEPTING fill for the only tally gate this descriptor has.
+#assert_axioms tm_strict_threshold_does_not_subsume_an_emptiness_floor
+#assert_axioms tm_decision_accepts_a_zero_power_validator_set
 
 #print axioms tmLcAir_complete
 #print axioms tmLcAir_no_forgery
