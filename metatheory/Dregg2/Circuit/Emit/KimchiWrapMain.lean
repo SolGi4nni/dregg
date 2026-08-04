@@ -2695,10 +2695,12 @@ inductive FOp where
 
 abbrev FM := StateM (Array FOp)
 
-def fnEm (o : FOp) : FM Nat := do
-  let st ← get
-  set (st.push o)
-  pure st.size
+/-- ⚑ **`modifyGet`, NOT `get`-then-`set`, AND THE DIFFERENCE IS QUADRATIC.** `let st ← get` retains
+a second reference to the array, so `st.push o` cannot reuse it and copies — one 900-op program build
+becomes ~810 000 array copies. `modifyGet` threads the state LINEARLY, so `push` is destructive and
+the build is O(n). Measured: the smoke shape's `w10_finalize` emission did not finish in 50 minutes
+before this line and takes seconds after it. -/
+def fnEm (o : FOp) : FM Nat := modifyGet (fun st => (st.size, st.push o))
 
 def fnLit (k : Nat) : FM Nat := fnEm (.lit k)
 def fnWit (k : Nat) : FM Nat := fnEm (.wit k)
@@ -3388,13 +3390,32 @@ def runFin (s : WrapShape) (sp : SpAcc) (p : Nat) : FinData :=
   let lk := envLookupAt (envIndex (finInputEnv s sp p))
   { fp := fp, vals := fnEval lk fp.prog }
 
-/-- Instance `p`'s program base. The programs are the same builder at different wires, so the stride
-is instance 0's size; a shape whose instances disagreed in size would overlap and `placeChecked`
+/-- ⚑ **EVERY INSTANCE'S PROGRAM, BUILT ONCE.** This is the module's own perf lesson applied a third
+time — the one that took `rungRows tWrap .key` from 1 014 740 ms to 62 ms, and the one the `xhatBitsOf`
+docblock names. `finRows` and `finEnv` each USED to call `runFin` **and** a separate `finProgSize`
+(a second full `finProgOf`) per instance, and `emitRung` calls those four times over — ~20 builds and
+evaluations of a ~900-op program per emission. Bind the list once at the top of each and index it. -/
+def finAll (t : WrapData) : List FinData :=
+  (List.range t.sh.prevs).map (fun p => runFin t.sh t.sp p)
+
+/-- The per-instance program stride: instance 0's size. The programs are the same builder at
+different wires, so they agree; a shape whose instances disagreed would overlap and `placeChecked`
 would refuse rather than emit. -/
-def finProgSize (s : WrapShape) (sp : SpAcc) : Nat :=
-  (finProgOf (finWireOf s sp 0) (finCfgOf s 0)).prog.size
-def finProgAt (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat :=
-  finProgBase s sp + p * finProgSize s sp
+def finStride (fa : List FinData) : Nat := (fa.getD 0 default).fp.prog.size
+def finProgAt (s : WrapShape) (sp : SpAcc) (fa : List FinData) (p : Nat) : Nat :=
+  finProgBase s sp + p * finStride fa
+
+/-- ⚑ **THE HOIST IS THE THING IT HOISTS**, general over every `WrapData`, by `rfl` — the same
+statement shape `rungRows_is_a_ladder` uses, and the reason the change is auditable rather than
+trusted: the bound list IS the per-instance recomputation, so no emitted cell can have moved. -/
+theorem finAll_is_the_recomputation (t : WrapData) :
+    finAll t = (List.range t.sh.prevs).map (fun p => runFin t.sh t.sp p) := rfl
+
+/-- …and at both committed shapes (`prevs = 2`) the stride really is instance 0's program size,
+which is exactly the value the separate second `finProgOf` used to compute. -/
+theorem finStride_is_instance_zeros_program_size (t : WrapData) (h : t.sh.prevs = 2) :
+    finStride (finAll t) = (runFin t.sh t.sp 0).fp.prog.size := by
+  simp [finStride, finAll, h]
 
 /-- **W-FINALIZE's ROWS.** Per instance: the two `to_field_checked` lifts of α and ζ (through the
 SHARED endo cell §5 pins, `split = false` because both sources are already `Challenge.t`), the
@@ -3403,9 +3424,10 @@ def finRows (t : WrapData) (wired : Bool) : List WRow :=
   let s := t.sh
   let sp := t.sp
   let cb := baseCh s sp
+  let fa := finAll t
   (List.range s.prevs).flatMap (fun p =>
-    let d := runFin s sp p
-    let base := finProgAt s sp p
+    let d := fa.getD p default
+    let base := finProgAt s sp fa p
     let V := fnVarAt base d.fp.prog
     tfcRowsQ s cb (finChainVars s sp p 0) (prevW s sp (finBlockWord p 8)) false
       (finBlockVal p 8) wired
@@ -3423,12 +3445,13 @@ def finRows (t : WrapData) (wired : Bool) : List WRow :=
 def finEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let sp := t.sp
+  let fa := finAll t
   (List.range s.prevs).flatMap (fun p =>
-    let d := runFin s sp p
+    let d := fa.getD p default
     chainEnv s (finChainVars s sp p 0) (finBlockVal p 8) 0
     ++ chainEnv s (finChainVars s sp p 1) (finBlockVal p 9) 0
     ++ finInputEnv s sp p
-    ++ fnEnvOf (finProgAt s sp p) d.fp.prog d.vals)
+    ++ fnEnvOf (finProgAt s sp fa p) d.fp.prog d.vals)
 
 /-! ## §23 — ⚑ **W-COMBINE**: `Split_commitments.combine`, and the ξ-aggregate's 46 endo ladders.
 
@@ -4660,9 +4683,18 @@ def shapeWrap : WrapShape :=
   -- ⚑ `xhatOut XHAT_TERMS_FULL`, and `EmitWrapMainJson` re-derives it and REFUSES on disagreement
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
   -- more reduced, and this file has no `native_decide`.
+  -- ⚠ ⚑ **THIS PAIR MOVED AT `w11_wraphack`, AND THE REFUSAL IS WHAT FOUND IT.** §21 makes packed
+  -- statement words 55 and 56 the two prev-proof `hash_messages_for_next_wrap_proof` squeezes
+  -- instead of fixtures, so MSM entries 65 and 66 carry different scalars and `xhatOut 67` is a
+  -- different point. The first wrap-scale emission after §21 landed threw
+  -- `⚑ xhatXY IS NOT THE MSM'S OUTPUT` and printed the new pair; this is that pair.
+  -- **WHAT RE-EMITS:** every `wrapmain_wrap_*.json` — the absorbed `x_hat` at
+  -- `wrap_verifier.ml:617` moves, so every wrap-scale challenge, the fork digest and all 22 derived
+  -- public words below it move with it. The SMOKE shape is unmoved: `xhatSel 5` does not select
+  -- entries 65/66, which is also why the smoke fixtures below `w11_wraphack` are byte-identical.
   , xhatXY :=
-      (24946197319037634231440770924058307246402971142903096884297069648301688224485,
-       16382596241194855030609766549760651138786638147061512510866706509908262255965) }
+      (27534166148223008355278056763413711424779277410543948788032764825660730916734,
+       13845564567107428770336275512814846537757742990744982818601823862046640819426) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=
