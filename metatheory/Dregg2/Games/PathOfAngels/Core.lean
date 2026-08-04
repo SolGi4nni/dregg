@@ -447,13 +447,41 @@ structure ReceiptKey where
   playerCounter : Nat
 deriving DecidableEq
 
+/-- Player counters have one canonical unsigned 64-bit wire range.  Game receipts
+retain `Nat` internally, but admission must pass through this bounded type before
+the counter enters persistent state. -/
+abbrev PLAYER_COUNTER_MODULUS : Nat := 2 ^ 64
+
+abbrev PlayerCounter := Fin PLAYER_COUNTER_MODULUS
+
+def checkedPlayerCounter (value : Nat) : Option PlayerCounter :=
+  if h : value < PLAYER_COUNTER_MODULUS then some ⟨value, h⟩ else none
+
+def PlayerCounter.next (counter : PlayerCounter) : Option PlayerCounter :=
+  checkedPlayerCounter (counter.val + 1)
+
+theorem checkedPlayerCounter_value {value : Nat} {counter : PlayerCounter}
+    (h : checkedPlayerCounter value = some counter) : counter.val = value := by
+  simp only [checkedPlayerCounter] at h
+  split at h <;> try contradiction
+  injection h with heq
+  rw [← heq]
+
+theorem PlayerCounter.next_value {counter next : PlayerCounter}
+    (h : counter.next = some next) : next.val = counter.val + 1 :=
+  checkedPlayerCounter_value h
+
+theorem PlayerCounter.max_refuses_next
+    (counter : PlayerCounter) (h : counter.val + 1 = PLAYER_COUNTER_MODULUS) :
+    counter.next = none := by
+  simp [PlayerCounter.next, checkedPlayerCounter, h]
+
 /-- The per-player namespace whose last accepted counter canon remembers. -/
 structure PlayerCounterKey where
   federationId : Digest32
   contentSession : Digest32
   contentEpoch : EpochId
   playerKey : Digest32
-deriving DecidableEq
 
 def RunReceipt.key (receipt : RunReceipt) : ReceiptKey where
   federationId := receipt.federationId
@@ -486,5 +514,8 @@ def RunReceipt.counterKey (receipt : RunReceipt) : PlayerCounterKey where
 #assert_axioms RunReceipt.sequence_advances
 #assert_axioms RunReceipt.records_exact_artifact
 #assert_axioms RunReceipt.player_counter_positive
+#assert_axioms checkedPlayerCounter_value
+#assert_axioms PlayerCounter.next_value
+#assert_axioms PlayerCounter.max_refuses_next
 
 end Dregg2.Games.PathOfAngels
