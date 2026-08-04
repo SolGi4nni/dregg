@@ -4,14 +4,15 @@ import { test } from "node:test";
 import { loadPOAG1 } from "../src/poag1.js";
 import { loadMissionCatalog, missionByGameId } from "../src/mission-catalog.js";
 import { canonicalReplay, createSignalRun, loadSignalDescriptor, replaySignal, submitSignalGuess } from "../src/signal-runtime.js";
+import { POA_EXPECTED_CONTENT_EPOCH, POA_EXPECTED_CURATOR_COUNTER } from "../src/trust-config.js";
 import { actualFetch } from "./actual-bundle.mjs";
 
 async function authenticatedBundle() {
   return loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
-    expectedContentEpoch: 1,
-    expectedCounter: 1,
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch(),
   });
 }

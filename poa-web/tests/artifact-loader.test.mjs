@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ArtifactRefusal, fnv1a64, loadPOAG1, sha256Hex, validateManifest } from "../src/poag1.js";
+import { POA_EXPECTED_CONTENT_EPOCH, POA_EXPECTED_CURATOR_COUNTER } from "../src/trust-config.js";
 import { actualBundleFiles, actualFetch, fetchMap } from "./actual-bundle.mjs";
 
 const encoder = new TextEncoder();
@@ -13,8 +14,8 @@ test("loads the actual curator-authenticated Lean-emitted POAG1 bundle", async (
   const bundle = await loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
-    expectedContentEpoch: 1,
-    expectedCounter: 1,
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch(),
   });
   assert.equal(bundle.manifest.format, "POAG1");
@@ -34,8 +35,8 @@ test("refuses a missing artifact instead of falling back", async () => {
   await expectRefusal(loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
-    expectedContentEpoch: 1,
-    expectedCounter: 1,
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: fetchMap({
       "manifest.json": files.manifest,
       "manifest.sig.json": files.signature,
@@ -54,8 +55,8 @@ test("refuses a payload that differs from both signed SHA-256 and FNV pins", asy
   await expectRefusal(loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
-    expectedContentEpoch: 1,
-    expectedCounter: 1,
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch({ "games/signal-triangulation.json": modified }),
   }), "byte-length");
 });
@@ -74,8 +75,8 @@ test("a self-consistent attacker manifest and payload cannot replace signed cont
   await expectRefusal(loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
-    expectedContentEpoch: 1,
-    expectedCounter: 1,
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch({ "manifest.json": repinnedManifest, "games/signal-triangulation.json": modifiedPayload }),
   }), "manifest-digest");
 });
@@ -84,8 +85,8 @@ test("a previously valid content epoch is rejected by the deployment rollback pi
   await expectRefusal(loadPOAG1({
     baseUrl: "https://poa.test/artifacts/poag1/",
     curatorKeyUrl: "https://poa.test/poa-curator-key.json",
-    expectedContentEpoch: 2,
-    expectedCounter: 1,
+    expectedContentEpoch: POA_EXPECTED_CONTENT_EPOCH + 1,
+    expectedCounter: POA_EXPECTED_CURATOR_COUNTER,
     fetcher: await actualFetch(),
   }), "epoch-rollback");
 });
