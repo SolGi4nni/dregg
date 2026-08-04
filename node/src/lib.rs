@@ -413,6 +413,21 @@ pub enum Command {
         /// Output directory for the generated configuration.
         #[arg(long, default_value = "./devnet-config")]
         output: PathBuf,
+
+        /// Optional deployment domain used to derive deployment-local issuer /
+        /// fee-well identities.  This does not replace the committee-derived
+        /// federation_id; it prevents auxiliary genesis identities from being
+        /// byte-reused by two otherwise distinct federations.
+        #[arg(long)]
+        deployment_domain: Option<String>,
+
+        /// Do not seed the generic faucet, demo agents, default Starbridge
+        /// cells, or any positive/negative value.  The genesis contains only
+        /// zero-balance, deployment-local issuer and fee wells.  Intended for
+        /// application federations (such as Path of Angels) that define their
+        /// own assets and must not inherit the generic devnet economy.
+        #[arg(long)]
+        no_demo_economy: bool,
     },
 
     /// Run as a hosted inbox relay operator.
@@ -794,7 +809,18 @@ pub async fn run(cli: Cli) {
             epoch_length,
             checkpoint_interval,
             output,
-        } => genesis::run_genesis(validators, epoch_length, checkpoint_interval, &output),
+            deployment_domain,
+            no_demo_economy,
+        } => genesis::run_genesis_with_options(
+            validators,
+            epoch_length,
+            checkpoint_interval,
+            &output,
+            genesis::GenesisOptions {
+                deployment_domain,
+                seed_demo_economy: !no_demo_economy,
+            },
+        ),
         Command::RegisterFederation {
             data_dir,
             descriptor,

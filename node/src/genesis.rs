@@ -117,6 +117,11 @@ struct GenesisConfig {
     /// so the id commits to the ML-DSA roster, not Ed25519 alone. Closes audit
     /// finding F1: not random bytes anymore.
     federation_id: String,
+    /// Application-level deployment domain.  The federation id remains the
+    /// canonical commitment to the hybrid committee; this domain scopes the
+    /// auxiliary issuer/fee/faucet identities generated below.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deployment_domain: Option<String>,
     /// The committee epoch this id was minted for. Always 0 at genesis;
     /// rotated by epoch transitions which mint a fresh id.
     committee_epoch: u64,
@@ -150,8 +155,45 @@ struct GenesisConfig {
     starbridge_cells: Vec<StarbridgeGenesisCell>,
 }
 
+/// Optional application-federation policy for [`run_genesis_with_options`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenesisOptions {
+    /// Domain mixed into auxiliary genesis-key derivation.  Validator keys stay
+    /// random and the federation id remains committee-derived.
+    pub deployment_domain: Option<String>,
+    /// Seed the generic faucet/demo-agent/Starbridge economy.
+    pub seed_demo_economy: bool,
+}
+
+impl Default for GenesisOptions {
+    fn default() -> Self {
+        Self {
+            deployment_domain: None,
+            seed_demo_economy: true,
+        }
+    }
+}
+
 /// Run the genesis configuration generation.
 pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u64, output: &Path) {
+    run_genesis_with_options(
+        validators,
+        epoch_length,
+        checkpoint_interval,
+        output,
+        GenesisOptions::default(),
+    );
+}
+
+/// Generate genesis through the same committee authority as [`run_genesis`],
+/// with an optional application deployment domain and empty-economy profile.
+pub fn run_genesis_with_options(
+    validators: usize,
+    epoch_length: u64,
+    checkpoint_interval: u64,
+    output: &Path,
+    options: GenesisOptions,
+) {
     // Genesis MINTS the committee's ML-DSA-65 keys, so it reaches a post-quantum primitive before
     // anything else in this process does. Without this call `dregg_pq`'s fail-closed gate refused
     // the keygen and the command died with `Abort trap: 6` — the documented cold start
@@ -161,6 +203,25 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
 
     if validators == 0 {
         eprintln!("error: must have at least 1 validator");
+        std::process::exit(1);
+    }
+
+    let deployment_domain = options.deployment_domain.as_deref().map(|domain| {
+        if domain.is_empty()
+            || domain.len() > 128
+            || !domain.bytes().all(|byte| byte.is_ascii_graphic())
+        {
+            eprintln!(
+                "error: --deployment-domain must be 1..128 printable ASCII bytes with no whitespace"
+            );
+            std::process::exit(1);
+        }
+        domain
+    });
+    if deployment_domain.is_some() && options.seed_demo_economy {
+        eprintln!(
+            "error: --deployment-domain requires --no-demo-economy; the generic faucet endpoint uses the legacy devnet identity"
+        );
         std::process::exit(1);
     }
 
@@ -318,28 +379,29 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // as `agent-signer-mismatch`, so no recipient was ever credited.
     let default_token_id = *blake3::hash(b"default").as_bytes();
 
-    // The ISSUER WELL cell. Deterministic key so the runtime can locate it
-    // (`register_issuer_well` for the default asset).
-    let issuer_well_secret = blake3::derive_key("dregg-devnet-issuer-well-key-v1", b"genesis");
+    // The ISSUER WELL cell.  Legacy genesis preserves its deterministic key;
+    // an application deployment derives a federation-local key.  Boot reads
+    // the explicit `issuer_well` field and registers that exact cell.
+    let issuer_well_secret = auxiliary_genesis_key(
+        "dregg-devnet-issuer-well-key-v1",
+        deployment_domain,
+        &federation_id_bytes,
+    );
     let issuer_well_signing = ed25519_dalek::SigningKey::from_bytes(&issuer_well_secret);
     let issuer_well_pubkey = issuer_well_signing.verifying_key().to_bytes();
     write_key_file(output, "issuer-well.key", &issuer_well_secret);
     let issuer_well_id = derive_cell_id(&issuer_well_pubkey, &default_token_id);
 
     // The FEE WELL cell. Deterministic key; starts empty, accumulates fees.
-    let fee_well_secret = blake3::derive_key("dregg-devnet-fee-well-key-v1", b"genesis");
+    let fee_well_secret = auxiliary_genesis_key(
+        "dregg-devnet-fee-well-key-v1",
+        deployment_domain,
+        &federation_id_bytes,
+    );
     let fee_well_signing = ed25519_dalek::SigningKey::from_bytes(&fee_well_secret);
     let fee_well_pubkey = fee_well_signing.verifying_key().to_bytes();
     write_key_file(output, "fee-well.key", &fee_well_secret);
     let fee_well_id = derive_cell_id(&fee_well_pubkey, &default_token_id);
-
-    // The faucet cell. Its key is deterministic so the running node / faucet
-    // endpoint can locate it, but it is still a real derived CellId.
-    let faucet_secret = blake3::derive_key("dregg-devnet-faucet-key-v1", b"genesis");
-    let faucet_signing = ed25519_dalek::SigningKey::from_bytes(&faucet_secret);
-    let faucet_pubkey = faucet_signing.verifying_key().to_bytes();
-    write_key_file(output, "faucet.key", &faucet_secret);
-    let faucet_id = derive_cell_id(&faucet_pubkey, &default_token_id);
 
     // Recipients: faucet supply + demo agents. Every entry becomes one
     // issuer-move well → recipient. Each carries the ML-DSA-65 public key
@@ -347,28 +409,43 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // sign — so the materialized cell COMMITS the PQ identity its owner will
     // authorize turns with. Without that commitment the hybrid admission
     // predicate refuses every turn the cell is the agent of.
-    let mut recipients: Vec<(String, [u8; 32], Vec<u8>, u64)> = vec![(
-        faucet_id.clone(),
-        faucet_pubkey,
-        ml_dsa_public_key_for_seed(&faucet_secret),
-        1_000_000u64,
-    )];
-    for (name, amount) in [
-        ("alice", 50_000u64),
-        ("bob", 25_000u64),
-        ("carol", 10_000u64),
-    ] {
-        let mut key_bytes = [0u8; 32];
-        getrandom::fill(&mut key_bytes).expect("getrandom failed");
-        let signing = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
-        let pubkey = signing.verifying_key().to_bytes();
-        write_key_file(output, &format!("agent-{name}.key"), &key_bytes);
+    let mut recipients: Vec<(String, [u8; 32], Vec<u8>, u64)> = Vec::new();
+    if options.seed_demo_economy {
+        // Legacy/no-domain genesis keeps the exact historical faucet key so
+        // POST /api/faucet remains compatible.  A deployment-domain genesis
+        // scopes it like every other auxiliary identity.  Application
+        // federations use `seed_demo_economy = false` and mint no faucet at all.
+        let faucet_secret = auxiliary_genesis_key(
+            "dregg-devnet-faucet-key-v1",
+            deployment_domain,
+            &federation_id_bytes,
+        );
+        let faucet_signing = ed25519_dalek::SigningKey::from_bytes(&faucet_secret);
+        let faucet_pubkey = faucet_signing.verifying_key().to_bytes();
+        write_key_file(output, "faucet.key", &faucet_secret);
         recipients.push((
-            derive_cell_id(&pubkey, &default_token_id),
-            pubkey,
-            ml_dsa_public_key_for_seed(&key_bytes),
-            amount,
+            derive_cell_id(&faucet_pubkey, &default_token_id),
+            faucet_pubkey,
+            ml_dsa_public_key_for_seed(&faucet_secret),
+            1_000_000u64,
         ));
+        for (name, amount) in [
+            ("alice", 50_000u64),
+            ("bob", 25_000u64),
+            ("carol", 10_000u64),
+        ] {
+            let mut key_bytes = [0u8; 32];
+            getrandom::fill(&mut key_bytes).expect("getrandom failed");
+            let signing = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+            let pubkey = signing.verifying_key().to_bytes();
+            write_key_file(output, &format!("agent-{name}.key"), &key_bytes);
+            recipients.push((
+                derive_cell_id(&pubkey, &default_token_id),
+                pubkey,
+                ml_dsa_public_key_for_seed(&key_bytes),
+                amount,
+            ));
+        }
     }
 
     let total_issued: u64 = recipients.iter().map(|(_, _, _, amt)| amt).sum();
@@ -417,10 +494,15 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         "genesis value column must sum to zero"
     );
 
-    let starbridge_cells = default_starbridge_genesis_cells();
+    let starbridge_cells = if options.seed_demo_economy {
+        default_starbridge_genesis_cells()
+    } else {
+        Vec::new()
+    };
 
     let genesis = GenesisConfig {
         federation_id,
+        deployment_domain: deployment_domain.map(str::to_owned),
         committee_epoch,
         consensus_genesis_unix_seconds,
         consensus_time_mode: CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE,
@@ -463,6 +545,10 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     println!("  Threshold: {threshold}");
     println!("  Epoch length: {epoch_length}");
     println!("  Checkpoint interval: {checkpoint_interval}");
+    if let Some(domain) = &genesis.deployment_domain {
+        println!("  Deployment domain: {domain}");
+    }
+    println!("  Demo economy: {}", options.seed_demo_economy);
     println!();
     println!("Files:");
     println!("  {}", genesis_path.display());
@@ -607,6 +693,25 @@ fn ml_dsa_public_key_for_seed(seed: &[u8; 32]) -> Vec<u8> {
     dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(seed).public_bytes()
 }
 
+/// Derive an auxiliary genesis identity.  No deployment domain preserves the
+/// legacy devnet bytes exactly.  A named application federation includes both
+/// its public domain and its committee-derived federation id, so neither a
+/// same-domain fresh genesis nor a different domain can reuse the identity.
+fn auxiliary_genesis_key(
+    context: &str,
+    deployment_domain: Option<&str>,
+    federation_id: &[u8; 32],
+) -> [u8; 32] {
+    let Some(domain) = deployment_domain else {
+        return blake3::derive_key(context, b"genesis");
+    };
+    let mut material = Vec::with_capacity(domain.len() + 1 + federation_id.len());
+    material.extend_from_slice(domain.as_bytes());
+    material.push(0);
+    material.extend_from_slice(federation_id);
+    blake3::derive_key(context, &material)
+}
+
 /// Derive the canonical content-addressed `CellId` for a hosted cell, using the
 /// exact same path the runtime (`materialize_genesis_cells`) recomputes:
 /// `dregg_cell::Cell::with_balance(pk, token, _).id()`. This guarantees the
@@ -642,6 +747,40 @@ fn write_key_file(output: &Path, name: &str, key_bytes: &[u8; 32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deployment_domain_scopes_every_auxiliary_genesis_identity() {
+        let federation_a = [0xA1; 32];
+        let federation_b = [0xB2; 32];
+        let domain = "pathofangels.network/federation/v1";
+        for context in [
+            "dregg-devnet-issuer-well-key-v1",
+            "dregg-devnet-fee-well-key-v1",
+            "dregg-devnet-faucet-key-v1",
+        ] {
+            let poa_a = auxiliary_genesis_key(context, Some(domain), &federation_a);
+            let poa_b = auxiliary_genesis_key(context, Some(domain), &federation_b);
+            let main = auxiliary_genesis_key(context, None, &federation_a);
+            assert_ne!(poa_a, poa_b, "fresh federation ids must change {context}");
+            assert_ne!(
+                poa_a, main,
+                "deployment-scoped {context} must not reuse legacy devnet"
+            );
+            assert_eq!(
+                main,
+                blake3::derive_key(context, b"genesis"),
+                "the no-domain API preserves the existing devnet identity"
+            );
+        }
+    }
+
+    #[test]
+    fn deployment_domains_are_length_delimited_from_federation_ids() {
+        let federation = [0x11; 32];
+        let a = auxiliary_genesis_key("dregg-devnet-fee-well-key-v1", Some("ab"), &federation);
+        let b = auxiliary_genesis_key("dregg-devnet-fee-well-key-v1", Some("a"), &federation);
+        assert_ne!(a, b, "domain bytes precede an explicit NUL delimiter");
+    }
 
     #[test]
     fn default_starbridge_genesis_cells_has_six_apps_with_alice_owner() {
@@ -689,6 +828,7 @@ mod tests {
     fn genesis_config_serializes_starbridge_cells() {
         let config = GenesisConfig {
             federation_id: "aa".repeat(32),
+            deployment_domain: None,
             committee_epoch: 0,
             consensus_genesis_unix_seconds: 1_700_000_000,
             consensus_time_mode: CONSENSUS_TIME_V1_DEVNET_CAUSAL_MODE,
