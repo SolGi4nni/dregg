@@ -1,5 +1,114 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑⚑ AUGUST 3 (floor probe) — the perf pass shipped RED, and its own table measured a STALE OLEAN
+
+`95ed4f2ec` and `cfc5783eb` rewrote both `rungRows` as `rungOwn`/`rungsUpto` + `foldl` and hoisted
+every region base to an `…At` form. Two things were wrong with the record of that work, and both were
+invisible to the instrument that was supposed to catch them.
+
+**1. `KimchiStepMainCore` DID NOT BUILD AT `95ed4f2ec`.** `permStates_is_the_forward_fold` was `:= rfl`
+and `rfl` does not complete it — whnf must reduce 55 nested `acc ++ [·]`, each re-walking the
+accumulator through `getLastD` and indexing 55-deep into `rcsN`. `(deterministic) timeout at whnf,
+maximum number of heartbeats (200000)`. Its docstring said *"general over every input state, by
+`rfl`"*; it was general over nothing, because it never elaborated. **A `rfl` that times out is not a
+slow proof, it is an absent one** — and the docstring was the only place the fact existed.
+Repaired at `572e56f04` by proving the GENERAL fact (`foldl_cons_reverse_is_the_append_fold`:
+newest-first + `reverse` IS the forward append fold, for every step function, default and index list)
+and taking the `range 55` statement as its instance. `maxHeartbeats` NOT raised. `CB_RESULT=GREEN`,
+`Dregg2.PicklesSynthesis`, hbox, 901 s.
+
+**2. THE CORRECTED FLOOR TABLE MEASURED THE PREVIOUS COMMIT.** The predecessor's probe had every row
+read `0 ms` (arguments forced at the call site, clock started after); that was fixed by thunking. The
+FIXED probe then reported `rungRows .transcript` = **6 480 ms** against `transcriptRows` = 92 ms — a
+70×, and 94% of the cost of all fifteen families. ⚑ **It was none of the three causes anyone guessed.**
+`lean --run` loads the **olean**, and `.lake`'s `KimchiStepMainCore.olean` was stamped 19:24 while the
+rewrite landed at 20:06. `#print rungRows` off that olean returns the nine `have`s above the `match`.
+The 70× WAS the old defect, faithfully measured on an artifact that predated the fix.
+**BUILD BEFORE YOU MEASURE, and print the definition you think you are timing.**
+
+After rebuilding: `rungRows .transcript` = 65 ms = `rungOwn` 65 ms = `transcriptRows` 66 ms. The
+ladder works.
+
+### THE EMITTED OBJECT DID NOT MOVE — the gate that had never been run
+
+Detached worktree at `fc0977ed1` vs `95ed4f2ec`+fix, both shapes, every rung, wired AND unwired:
+
+    step  shape   18/18 artifacts byte-identical   manifest 5983a722f39a92e7…
+    smoke shape   18/18 artifacts byte-identical   manifest 56ae57a1320ee254…
+    wrap  smoke   16/16 artifacts byte-identical   manifest 76898c1d99095d7e…
+
+⚠ The full `wrap` shape's HEAD~2 side was NOT run and is not runnable for this purpose — see the
+2.7 h floor below. The three sets above are nine step rungs twice and eight wrap rungs once, each
+wired AND unwired.
+
+⚑ and the coverage extends past the shapes actually emitted, because the rewrite is **term-identical**,
+not merely value-identical — verified at source rather than taken from the docblock that claims it:
+
+    a ++ b ++ c = (a ++ b) ++ c                        rfl   -- `++` is infixL in Lean 4
+    a ++ b ++ c = a ++ (b ++ c)                        FAILS -- so the nesting is not a free choice
+    [a,b,c].foldl (fun acc j => acc ++ j) [] = a ++ b ++ c   rfl   -- for SYMBOLIC a, b, c
+
+So `foldl (· ++ ·) []` over the rung list is the same term the old `match` branch wrote out, and
+`rungRows_is_a_ladder` is `rfl` general over every `StepData`/`WrapData` and every `wired`. **The perf
+work is keepable.**
+
+### WHAT THE FLOOR ACTUALLY IS, AND WHAT IT IS MADE OF
+
+Nine-rung `step` emit: **3 m 58 s → 1 m 54 s**. The rung-rows line is the whole story and its SHAPE is
+the evidence: at `fc0977ed1` `rows` is 13 812 / 13 797 / 13 803 / 13 870 / 13 836 / 13 840 / 13 827 /
+13 842 / 14 659 ms — **flat**, every rung paying all fifteen families; at HEAD it is 132 / 1 467 /
+3 924 / 4 250 / 4 872 / 4 916 / 5 146 / 5 226 / 6 064 — **monotonic**, each rung paying its own prefix.
+`compose` halved (4 923 → 2 467 ms): that is `completeAddWitness` sharing one `fInv` where it computed
+two.
+
+⚑ **`mkStep` is NOT part of that win and never was**: 7 191 ms at `fc0977ed1`, 7 143 ms at HEAD. The
+`12 130 ms` in the previous record is not `mkStep` at either commit and should not be cited.
+
+**The residue IS arithmetic, and the count that was doubted was right to 2.5%.** Priced at the
+measured 0.229 ms per Fermat inversion:
+
+    runIpa  2 775 ms → 12 117 inversions   (predicted 5/block × 2 464 endo blocks = 12 320)
+    runMsm  2 181 ms →  9 524              (predicted 2/bit × 4 910 MSM bits      =  9 820)
+    runFtc    896 ms →  3 912              (predicted 2/bit × 2 040 ftc bits      =  4 080)
+    TOTAL   5 852 ms → 25 554              (predicted                              26 220)  97.5%
+
+Curve arithmetic is **82%** of `mkStep`. All five Poseidon sponges together are 189 ms. A permutation
+costs 0.71 ms and an inversion 0.229 ms, so "how many inversions" was the right unit after all.
+
+### TWO GATES THAT COULD NOT HAVE GONE RED
+
+* `EmitWrapMainJson` hardcoded `/tmp/pickles-wrapmain` — no `DREGG_WM_OUT` twin of the step driver's
+  `DREGG_SM_OUT`. The written-down byte-diff command was `DREGG_SM=wrap DREGG_SM_OUT=…`, which is
+  wrong twice: this driver reads `DREGG_WM`, so the shape selector was ignored, and with no output
+  override **both revisions write to the one path and `diff -r` compares a directory against itself**.
+  Fixed at `899e04da2`, plus `writeAtomic` (the step driver's own fix; the gate reads these files
+  while an emitter is running).
+* A probe row is only a measurement if nothing earlier in the process already forced the same term.
+  `FloorProbe4`'s `mkStep` row reads `0 ms` because a `let` above it built the same closed
+  application; `FloorProbe3`'s canary reads 229 ms once and `0 ms` on repeat. ⚑ **Keep a row whose
+  true cost you already know** — it is the only thing that makes a broken harness announce itself.
+
+### THE ~51-MINUTE CONTRADICTION IS SETTLED
+
+`KimchiWrapProverChoice` retracted "three commands name `rowsWrapKey`, so ~51 minutes" as UNRESOLVED
+and named the probe. The probe has been run (`wip/NullaryShareProbe.lean`): the same nullary `def`
+costs **582 / 583 / 580 ms** across three commands, against **580 ms** for an unrelated control.
+**Sharing is per COMMAND; there is no cross-command sharing at all.** §C7 is right and the retracted
+sentence's MECHANISM was right; what cannot stand is `1 729 s` beside `1 014 740 ms` — they describe
+different trees, and neither should be cited as this module's cost.
+
+…and it is moot, measured (`wip/WrapFloorProbe.lean`):
+
+    rungRows tWrap .key true  (rowsWrapKey)        62 ms   ← was 1 014 740 ms, 16 367×
+      its five own families    1 977 rows in 65 ms         ← reproduces the header's own split
+    rungOwn t true .xhat  [xhatRows]          607 140 ms   ← what every rung used to pay and discard
+    rungRows tWrap .ftcomm true (top rung)    663 123 ms   ← still 11 min, and legitimately so
+
+Three commands × 62 ms is **0.19 s**, not 51 minutes. ⚠ The rewrite removed the WASTE, not the work:
+`w8_ftcomm` genuinely returns `xhatRows` and still pays 11 minutes for it. That is also why the full
+`wrap` shape's HEAD~2 side is not runnable for a byte-diff — 16 rung-evaluations × 607 s is **2.7 h**
+before anything else, which is the same defect stated as a wall-clock.
+
 ## ⚑⚑⚑⚑ AUGUST 3 (Pickles-in-Lean §23) — our sponge was EAGER where Mina's is LAZY, and word 39 is a REQUESTED WITNESS
 
 §22 read `snarky/sponge/sponge.ml`'s `Squeezed n` branch for the first time, used it for one cell

@@ -65,10 +65,21 @@ sentence was right too: `rowsWrapKey` is named by three commands below and is ev
 ⚠ **What was wrong was the 1 729 s, not the multiplier.** With the mechanism measured, the two
 numbers cannot describe the same module state: 3 × 16 min 55 s does not fit inside 28 min 49 s.
 `1 729 s` and `1 014 740 ms` were recorded against different trees, and neither is re-derivable now.
-**Do not cite either as this module's cost.** ⚑ And the question is largely moot since the
-`rungOwn`/`rungsUpto` rewrite: `rowsWrapKey = rungRows tWrap .key true` now evaluates only the five
-families the `.key` branch returns, which the paragraph above prices at 115 ms between them, instead
-of all eight.
+**Do not cite either as this module's cost.**
+
+⚑ **AND THE QUESTION IS NOW MOOT, MEASURED** (`wip/WrapFloorProbe.lean`, same instrument, after the
+`rungOwn`/`rungsUpto` rewrite):
+
+    rungRows tWrap .key true   (rowsWrapKey)        62 ms   ← was 1 014 740 ms; 16 367×
+      its five own families  818 + 589 + 23 + 11 + 536 = 1 977 rows, 10+6+0+5+44 = 65 ms
+    rungOwn t true .xhat   [xhatRows]          607 140 ms   ← 10 min 7 s, 4 495 rows
+    rungOwn t true .split  [splitRows]             969 ms
+    rungRows tWrap .ftcomm true (the top rung)  663 123 ms
+
+So `rowsWrapKey` across its three commands is **0.19 s**, not ~51 minutes. `xhatRows` is what every
+rung used to pay and discard, and the row count and family split reproduce the header's own figures
+exactly. ⚠ The TOP rung is still 11 minutes and legitimately so — `w8_ftcomm` genuinely returns
+`xhatRows`. The rewrite removed the waste, not the work.
 -/
 import Dregg2.Circuit.Emit.KimchiWrapMain
 
