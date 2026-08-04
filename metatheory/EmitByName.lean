@@ -59,12 +59,15 @@ import Dregg2.Circuit.Emit.MerkleMembershipEmit
 import Dregg2.Circuit.Emit.MinaFixtureEmit
 import Dregg2.Circuit.Emit.LightClientMinaAir
 import Dregg2.Circuit.Emit.LightClientMinaLinkAir
+import Dregg2.Circuit.Emit.LightClientSolStakeFoldAir
 import Dregg2.Circuit.Emit.NoteSpendingLeafEmit
 import Dregg2.Circuit.Emit.Poseidon2HashEmit
 import Dregg2.Circuit.Emit.PastaMsmWindowed
 import Dregg2.Circuit.Emit.PastaMsmSliced
 import Dregg2.Circuit.Emit.PastaFieldSound
 import Dregg2.Circuit.Emit.PastaAddSubSound
+import Dregg2.Circuit.Emit.MinaWrapVerifierAir
+import Dregg2.Circuit.Emit.MinaWrapVerifierProgram
 import Dregg2.Circuit.Emit.PredicatesArithmeticEmit
 import Dregg2.Circuit.Emit.PredicatesGtEmit
 import Dregg2.Circuit.Emit.PredicatesInRangeEmit
@@ -99,6 +102,7 @@ import Dregg2.Games.PrivateShuffleDescriptor
 import Dregg2.Games.PrivateShuffleFairDescriptor
 import Market.DarkBazaarPrivateDescriptor
 import Market.DarkBazaarPrivatePoaDescriptor
+import Market.DarkBazaarPrivatePoaSettlementDescriptor
 -- The fixed q0/N8 exact-public BFV NTT butterfly stage descriptors (`stage{0,1,2}Descriptor`, the
 -- three four-row per-stage LogUp relations). Emitted here so `by-name/*bfv*butterfly*stage*-exact-
 -- public.json` are drift-checked from their Lean author, not left as un-reproduced checked-in bytes.
@@ -223,6 +227,18 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Dregg2.Circuit.Emit.NoteSpendingLeafEmit.noteSpendLeafDesc)
   , ("poseidon2-hash-arity2.json",
       Dregg2.Circuit.Emit.Poseidon2HashEmit.poseidon2HashDesc)
+  -- The two Pasta ALU descriptors are the shared fp/fq modular-arithmetic
+  -- rows used by the Mina wrap verifier. They were checked in and served but
+  -- omitted from this source-of-truth routing table, which made the canonical
+  -- emitter refuse the whole by-name surface as a routing gap.
+  , ("pasta-alu-sound.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierAir.fpAluDesc)
+  , ("pasta-sbox-prog.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierProgram.sboxDesc)
+  , ("pasta-sbox-prog-1k.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierProgram.longDesc)
+  , ("pasta-alu-fq-sound.json",
+      Dregg2.Circuit.Emit.MinaWrapVerifierAir.fqAluDesc)
   , ("predicate-arith-gt.json",
       Dregg2.Circuit.Emit.PredicatesGtEmit.predicateGtDesc)
   , ("predicate-arith-inrange.json",
@@ -247,6 +263,8 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
       Market.DarkBazaarPrivateDescriptor.darkBazaarPrivateN4K4Descriptor)
   , ("dark-bazaar-private-poa-n4k4-v2.json",
       Market.DarkBazaarPrivatePoaDescriptor.darkBazaarPrivatePoaN4K4Descriptor)
+  , ("dark-bazaar-private-poa-settlement-n4k4-v3.json",
+      Market.DarkBazaarPrivatePoaSettlementDescriptor.darkBazaarPrivatePoaSettlementN4K4Descriptor)
   , ("private-book-bfv-slice-o0-c0-q0-k0.json",
       Market.PrivateBookBfvSliceDescriptor.privateBookBfvSliceDescriptor)
   , ("private-book-bfv-odd-ntt-butterfly-q0-n8.json",
@@ -347,6 +365,27 @@ def byNameDescriptors : List (String × EffectVmDescriptor2) :=
     -- witnessed (`LinkHashResidual`).
   , ("dregg-mina-lightclient-link-v1.json",
       Dregg2.Circuit.Emit.LightClientMinaLinkAir.minaLinkDesc)
+    -- ⚑ THE SOLANA STAKE-TABLE FOLD (2026-08-04): `dregg-solana-stake-table-fold::v1`, ONE ROW PER
+    -- STAKE-TABLE ENTRY. `solStakeFoldDesc` is COMPILER OUTPUT — `EffectLower.lowerAir` of the
+    -- `EffectAir` source `solStakeFoldAir`, no hand-written `VmConstraint2` in its module
+    -- (`solStakeFoldAir_mainRailOk = true` by `rfl`). It DERIVES both of the numbers the Solana
+    -- light client's trust story hangs from, from the SAME exhibited rows: the eight-lane Poseidon2
+    -- commitment to the stake table (LAST-row PI pins) and the u64 active-stake DENOMINATOR (the
+    -- LAST-row value of a limb accumulator with boolean carries). That pair is the point — a swapped
+    -- validator set with an IDENTICAL tally clears every denominator pin `solLcVerifyDesc` has and
+    -- moves the root (`FoldScheme.same_tally_moves_the_root`, and the deployed-prover half in
+    -- `circuit-prove/tests/solana_stake_table_fold.rs`). ⚑ THE HASH WAS CHOSEN BY MEASUREMENT: the
+    -- SHA-256 shape of the same fact is 18,049,248 constraints / 12,831,336 columns at 703 live vote
+    -- accounts (`LightClientSolanaAir` §6c) against a proved ceiling of 2,131 columns; this is 44
+    -- columns and 58 constraints at ANY validator count, because the validators are ROWS and a
+    -- Poseidon2 absorb here is ONE chip lookup. ⚠ FLAG DAY: emit
+    -- `circuit/descriptors/by-name/dregg-solana-stake-table-fold-v1.json` and MINT a VK. The
+    -- commitment is NOT `EpochStakeTable::root`'s SHA-256 — a consumer that wants them to agree must
+    -- re-anchor that dregg-authored root onto this Poseidon2 frame and re-derive every
+    -- `WeakSubjectivityAnchor.stake_table_root`. Nothing existing changes shape in this commit;
+    -- `solLcVerifyDesc` is untouched, no VK rotates, nothing re-genesises.
+  , ("dregg-solana-stake-table-fold-v1.json",
+      Dregg2.Circuit.Emit.LightClientSolStakeFoldAir.solStakeFoldDesc)
     -- ⚑ THE LEAN-AUTHORED PASTA AIRs. `pasta-rcb-windowed.json` was checked in UNROUTED — its
     -- bytes were not re-derivable from Lean, which is precisely the ungated hand-transcription hop
     -- this file exists to delete, on the descriptor the whole Mina opening-check arc rests on.
@@ -411,7 +450,15 @@ Both directions are gated outside Lean:
   table against the tracked `by-name/` set AND the PROVENANCE stamp. It parses the name literals
   STATICALLY, so it keeps reporting while the emit is blocked. Adding an entry here without
   committing its artifact reds that gate by name. -/
-theorem byNameDescriptors_length : byNameDescriptors.length = 85 := rfl
+-- ⚠ 89, not 87. This pin was STALE at 86 against 88 entries when this lane arrived: two sibling
+-- lanes (`pasta-alu-sound` / `pasta-alu-fq-sound` / `dark-bazaar-private-poa-settlement-n4k4-v3`)
+-- added routing rows in the shared tree and left the pin behind, so the file was already red for
+-- everyone. 89 = those + `dregg-solana-stake-table-fold-v1.json`. A single shared line cannot be
+-- bumped by only one lane's worth; whoever reads the blame should read it as three lanes' rows.
+-- ⚠ 91, not 89: this lane added `pasta-sbox-prog` + `pasta-sbox-prog-1k` (the register-file /
+-- instruction-ROM machine and its 2^10 instance). Same shared-line hazard as the note above — if
+-- the blame on this line is one lane's, the count is probably still short.
+theorem byNameDescriptors_length : byNameDescriptors.length = 91 := rfl
 
 def main : IO Unit := do
   for (file, d) in byNameDescriptors do
