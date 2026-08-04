@@ -856,6 +856,11 @@ pub async fn run(cli: Cli) {
             .await
         }
         Command::GenValidatorKey { data_dir, json } => {
+            // This command derives the committee's ML-DSA public key from node.key.
+            // It is a separate process from `genesis`, so the verified PQ cores
+            // installed there do not carry over.  Install before derivation and
+            // let dregg-pq fail closed if the linked Lean archive is incomplete.
+            install_verified_pq_cores();
             if let Err(e) = operator_join::gen_validator_key(&data_dir, json) {
                 eprintln!("error: {e}");
                 std::process::exit(1);
@@ -1159,9 +1164,10 @@ pub fn install_verified_pq_cores() {
 
 /// Call [`install_verified_pq_cores`] at process start in the LIB-TEST binary.
 ///
-/// The four callers of `install_verified_pq_cores` — `run_node`, `run_genesis`, `run_mcp`,
-/// `run_relay` — are all BINARY entry points. `cargo test -p dregg-node --lib` runs none of
-/// them, so the lib-test process had no verified core installed and `dregg_pq::audit` did the
+/// The five callers of `install_verified_pq_cores` — `run_node`, `run_genesis`,
+/// `gen-validator-key`, `run_mcp`, and `run_relay` — are all BINARY entry points.
+/// `cargo test -p dregg-node --lib` runs none of them, so the lib-test process had no verified
+/// core installed and `dregg_pq::audit` did the
 /// only correct thing on the first ML-DSA keygen: `process::abort()`. An abort kills the
 /// process, so that took down all 506 tests in the binary, not just the one that minted a key.
 /// The only way anyone had got results out of it was `DREGG_ALLOW_UNAUDITED_PQ=1`, which routes
