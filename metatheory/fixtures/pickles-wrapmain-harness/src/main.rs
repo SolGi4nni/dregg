@@ -503,6 +503,8 @@ fn main() {
                 "w7_split",
                 "w8_ftcomm",
                 "w9_prev",
+                "w11_wraphack",
+                "w12_close",
                 "w10_combine",
                 "w11_bullet",
             ],

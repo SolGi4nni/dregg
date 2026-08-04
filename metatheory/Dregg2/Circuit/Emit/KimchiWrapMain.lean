@@ -113,7 +113,7 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     `Field.Assert.equal x1 x2` over `bulletproof_challenges_actual`; and `assert_eq_plonk` tying
     β/γ/α/ζ to the statement's `plonk` words.
 
-## ⚑ WHAT THIS FILE ASSEMBLES TODAY — nine rungs, and the rest named
+## ⚑ WHAT THIS FILE ASSEMBLES TODAY — eleven rungs on this branch, and the rest named
 
   * **W1 `transcript`** — §4. The **Fq** Poseidon sponge of `wrap_verifier.ml:516-646` and
     `check_bulletproof`'s continuation, driven by the REAL upstream state machine
@@ -177,6 +177,8 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w7_split            1288        6492*      22    wrap_main.ml:69-81 + :409
     w8_ftcomm           1607        7338*      22    common.ml:238-256 + wrap_verifier.ml:655-666
     w9_prev             1613        7344*      23    wrap_main.ml:201-256 + :350-351
+    w11_wraphack        2250        7981*      24    wrap_hack.ml:110-137 at :341-348 and :421-431
+    w12_close           2252        7983*      24    wrap_main.ml:419-420
 
 ⚠ ⚑ **THE SMOKE COLUMN MOVED AT `w9_prev` FOR THE THREE RUNGS BELOW IT, AND NOT BECAUSE THEY
 CHANGED.** `shapeSmoke.xhatTerms` went 4 → 5 so that the smoke MSM reaches entry 64 — the packed
@@ -196,11 +198,16 @@ committed shape `xhatSel` was already the identity over all 67 entries.
     w7_split        1294    2048          1127 ms        REJECTED   ACCEPTED   REJECTED
     w8_ftcomm       1613    2048          1085 ms        REJECTED   ACCEPTED   REJECTED
     w9_prev         1620    2048          7877 ms        REJECTED   ACCEPTED   REJECTED
+    w11_wraphack    2258    4096           995 ms        REJECTED   ACCEPTED   REJECTED
+    w12_close       2260    4096           941 ms        REJECTED   ACCEPTED   REJECTED
 
 (the `rows` column here is `pubWords + rows`, which is what the harness prints; the table above is
 the emitter's row count.) ⚑ At `w9_prev` the public-input leg runs at **i = 0 and i = 6** — the new
 word is the last one, so the σ leg "flip cell (i,0) AND tell the verifier the new value" is tested
-on it specifically, and it is REJECTED by the copy-permutation alone.
+on it specifically, and it is REJECTED by the copy-permutation alone. ⚑ **At `w11_wraphack` and
+`w12_close` it runs at i = 0 and i = 7**, and 7 is wrap statement word 11 — the closing
+`hash_messages_for_next_wrap_proof` squeeze. The rung's whole point is that word, and the leg that
+tests it is the one that would go green on a public fixture.
 ⚠ These are INNER Pallas/Fq kimchi proofs of a `wrap_main`-SHAPED circuit. Not Mina-valid, not
 machine-checked Pickles; the opening (`equal_g`, `verified`, the accumulator check) is not in this
 circuit at all.
@@ -213,6 +220,12 @@ and had not finished when this line was written:
   * `w7_split` = `6472 + 20` — ten `split_field` words, ten `Generic` rows and ten σ-probes;
   * `w8_ftcomm` = `6492 + 846` — `4` rows of `n₀ = 0` halves, `8 × (1 seed + 51×2 chunk rows + 1
     probe) = 832`, the fold's `tComms − 1 = 6` `add_fast` rows, and `4` closing rows;
+  * `w11_wraphack` = `7344 + 637` and `w12_close` = `7981 + 2`, and these two are the SAFEST
+    derivations in the table: `whRows` and `closeRows` depend on the shape only through `s.prevs`,
+    which is **2 at both shapes**, so the wrap delta IS the smoke delta — `2250 − 1613 = 637` and
+    `2252 − 2250 = 2`, both measured. 637 = three sponges × 211 rows + 4 tie rows, where a sponge is
+    2 init rows + 15 × (1 absorb-pair row + 12 permutation rows) + (1 + 12 + 1) for the closing
+    absorb pair, the squeeze's permutation and its σ-probe;
   * `w9_prev` = `7338 + 6` — nine `Generic` halves (2 `Boolean.typ`, 1 public tie, 3 × `prevs = 2`
     `assert_on_curve`) packed two to a row, plus one σ-probe. `prevs` is 2 at BOTH shapes, so this
     is the same six rows at either — which is why the smoke measurement `1613 − 1607 = 6` is a real
@@ -238,10 +251,17 @@ VarBaseMul 2417 · EndoMulScalar 536 · CompleteAdd 492`; the devnet wrap VK's d
 so Mina's own emission has ~1,259 rows of headroom. `wrapmain-region-conformance.mjs` scores this
 assembly against it. RE-GRADED at `w6_xhat` (exit 0), the verdicts that are not "absent" are:
 
-  * **`Poseidon` — 89/89 instances, 100%**, the WHOLE 11-row permutation INCLUDING all fifteen round
-    constants per row, matching a `wrap-transaction` class byte for byte. The Fq Poseidon gadget
-    this file emits IS the one Snarky emits in Mina's own wrap circuit. (It was 61/61 before W-KEY's
-    index sponge added 28 permutations; the count moves with the assembly, the 100% does not.)
+  * **`Poseidon` — every instance this assembly emits matches a `wrap-transaction` class byte for
+    byte**, the WHOLE 11-row permutation INCLUDING all fifteen round constants per row. The Fq
+    Poseidon gadget this file emits IS the one Snarky emits in Mina's own wrap circuit. It was 61
+    blocks before W-KEY's index sponge, 89 after, and **137 after W-WRAPHACK's three
+    `hash_messages_for_next_wrap_proof` sponges added 48** (16 permutations each: 15 for the 32
+    absorbs at rate 2, plus the squeeze's). The per-instance 100% does not move with the count.
+    ⚠ ⚑ **AND THE COUNT IS NOT THE CIRCUIT.** Mina's `wrap-transaction` carries **261**
+    `Poseidon × 11` blocks. Quoting "89/89, 100%" as though it were a coverage figure — this
+    header did — reads a per-instance fidelity result as a whole-circuit one; it was 89 of 261,
+    i.e. 34%, and it is 137 of 261 now. The remainder is W-FINALIZE's two `finalize_other_proof`
+    sponges at `prevs = 2` (≈122 blocks) and is named in §13 item 7, not implied by a percentage.
   * **`EndoMulScalar` — the BODY 42/42, the whole instance 0/42**, with the seam exactly three cells
     and both of them this file being STRICTER; §13 names them.
   * **`VarBaseMul` — 1805 of Mina's 2417**, and **`CompleteAdd` — 232 of 492**, both from `w6_xhat`.
