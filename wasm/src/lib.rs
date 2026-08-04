@@ -2314,6 +2314,125 @@ pub fn sign_turn_v3(
 }
 
 // ============================================================================
+// Path of Angels Signal claim carrier
+// ============================================================================
+
+/// Build the canonical *unsigned* PoA Signal claim carrier from public state.
+///
+/// This deliberately accepts no secret, federation, target cell, method,
+/// effects, memo, reward, or Canon fields. The extension background supplies
+/// the active public identity and node-observed nonce/receipt head; the SDK
+/// derives the agent and fixes the complete one-action/one-event shape. The
+/// resulting JSON `Turn` is consumed by [`sign_turn_v3`] under the separately
+/// pinned PoA federation domain.
+///
+/// Input JSON:
+/// `{ schema, signer_public_key_hex, nonce, previous_receipt_hash_hex?,
+///    mission_id, code: [low, mid, high] }`.
+#[wasm_bindgen]
+pub fn build_poa_signal_claim_turn(spec_json: &str) -> Result<JsValue, JsError> {
+    const SCHEMA: &str = "poa-signal-claim/v1";
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Spec {
+        schema: String,
+        signer_public_key_hex: String,
+        nonce: u64,
+        #[serde(default)]
+        previous_receipt_hash_hex: Option<String>,
+        mission_id: u64,
+        code: [u64; 3],
+    }
+
+    #[derive(Serialize)]
+    struct Out {
+        schema: &'static str,
+        turn_bytes_json: Vec<u8>,
+        agent_cell_id: String,
+        nonce: u64,
+        previous_receipt_hash_hex: Option<String>,
+        mission_id: u32,
+        code: [u8; 3],
+        fee: u64,
+    }
+
+    let spec: Spec = serde_json::from_str(spec_json)
+        .map_err(|e| JsError::new(&format!("PoA Signal spec: {e}")))?;
+    if spec.schema != SCHEMA {
+        return Err(JsError::new(
+            "PoA Signal schema must be poa-signal-claim/v1",
+        ));
+    }
+    let signer_public_key = hex_decode_32(&spec.signer_public_key_hex)
+        .map_err(|e| JsError::new(&format!("signer_public_key_hex: {e}")))?;
+    let previous_receipt_hash = spec
+        .previous_receipt_hash_hex
+        .as_deref()
+        .map(hex_decode_32)
+        .transpose()
+        .map_err(|e| JsError::new(&format!("previous_receipt_hash_hex: {e}")))?;
+    let code = dregg_sdk::poa_signal::SignalCode::new(spec.code[0], spec.code[1], spec.code[2])
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let claim = dregg_sdk::poa_signal::SignalClaimV1::new(spec.mission_id, code)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let turn = dregg_sdk::poa_signal::signal_claim_turn(
+        &signer_public_key,
+        spec.nonce,
+        previous_receipt_hash,
+        claim,
+    );
+    dregg_sdk::poa_signal::claim_from_exact_signal_turn(&turn)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let turn_bytes_json = serde_json::to_vec(&turn)
+        .map_err(|e| JsError::new(&format!("PoA Signal turn JSON encode failed: {e}")))?;
+    let out = Out {
+        schema: SCHEMA,
+        turn_bytes_json,
+        agent_cell_id: hex_encode(&turn.agent.0),
+        nonce: turn.nonce,
+        previous_receipt_hash_hex: turn.previous_receipt_hash.map(|h| hex_encode(&h)),
+        mission_id: claim.mission_id(),
+        code: [claim.code().low(), claim.code().mid(), claim.code().high()],
+        fee: turn.fee,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Re-read a signed PoA carrier through the SDK's exact shape gate. This is the
+/// extension's post-signing substitution check before it paints consent chrome.
+#[wasm_bindgen]
+pub fn inspect_poa_signal_claim_turn(turn_bytes_json: &[u8]) -> Result<JsValue, JsError> {
+    #[derive(Serialize)]
+    struct Out {
+        schema: &'static str,
+        agent_cell_id: String,
+        nonce: u64,
+        previous_receipt_hash_hex: Option<String>,
+        mission_id: u32,
+        code: [u8; 3],
+        fee: u64,
+        turn_hash: String,
+    }
+
+    let turn: dregg_turn::Turn = serde_json::from_slice(turn_bytes_json)
+        .map_err(|e| JsError::new(&format!("PoA Signal turn JSON decode failed: {e}")))?;
+    let claim = dregg_sdk::poa_signal::claim_from_exact_signal_turn(&turn)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let out = Out {
+        schema: "poa-signal-claim/v1",
+        agent_cell_id: hex_encode(&turn.agent.0),
+        nonce: turn.nonce,
+        previous_receipt_hash_hex: turn.previous_receipt_hash.map(|h| hex_encode(&h)),
+        mission_id: claim.mission_id(),
+        code: [claim.code().low(), claim.code().mid(), claim.code().high()],
+        fee: turn.fee,
+        turn_hash: hex_encode(&turn.hash()),
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// ============================================================================
 // Canonical HYBRID SignedTurn envelope assembler (submit path)
 // ============================================================================
 

@@ -10,7 +10,7 @@ import { explainTurn } from "./explain";
 import { createSseParser } from "./sse";
 import { mnemonicConfirmed, walletPassphraseOk } from "./onboarding";
 import { defaultNodeUrl, defaultNodeWssUrl } from "./endpoints";
-import { CustodyWasm } from "./custody";
+import { CustodyWasm, bytesEqual } from "./custody";
 import { ChromeCustodyStore } from "./passkey";
 import { resolveCustody } from "./custody-resolve";
 import { validateFederationDomain, ZERO_FEDERATION_DOMAIN_HEX } from "./federation-domain";
@@ -95,6 +95,15 @@ import {
   type PoACompanionRequest,
   type PoAEngine,
 } from "./poa";
+import {
+  POA_SIGNAL_BETA_ORIGIN,
+  POA_SIGNAL_FEDERATION_HEX,
+  POA_SIGNAL_MISSION_ID,
+  POA_SIGNAL_NODE_URL,
+  explainPoASignalClaim,
+  parsePoASignalClaim,
+  type PoASignalSubmitResult,
+} from "./poa-signal";
 import {
   AUTH_CHALLENGE_PATH,
   AUTH_LOGIN_PATH,
@@ -211,6 +220,17 @@ let nodeConfig: NodeConfig = {
   wsUrl: DEFAULT_NODE_WS_URL,
   devnetKey: "",
 };
+
+// PoA is a distinct deployment. This target and federation are extension-owned
+// policy: neither the beta page nor the user's generic node settings can swap
+// where a consented Signal claim is signed or retried. There is intentionally
+// no Basic-Auth credential or shared beta password here.
+const POA_SIGNAL_NODE_CONFIG: NodeConfig = Object.freeze({
+  nodeUrl: POA_SIGNAL_NODE_URL,
+  wssUrl: "wss://node.pathofangels.network",
+  wsUrl: "wss://node.pathofangels.network",
+  devnetKey: "",
+});
 
 async function loadNodeConfig(): Promise<NodeConfig> {
   const stored = await chrome.storage.local.get(NODE_CONFIG_KEY);
@@ -702,6 +722,7 @@ async function enqueueOutboxEntry(input: {
   headers?: Record<string, string>;
   turnId?: string;
   metadata?: Record<string, unknown>;
+  nodeUrl?: string;
   error: string;
 }): Promise<OutboxEntry> {
   const now = Date.now();
@@ -726,7 +747,7 @@ async function enqueueOutboxEntry(input: {
     body: input.body,
     bodyEncoding: input.bodyEncoding,
     headers: input.headers,
-    nodeUrl: nodeConfig.nodeUrl,
+    nodeUrl: input.nodeUrl ?? nodeConfig.nodeUrl,
     turnId: input.turnId,
     createdAt: now,
     updatedAt: now,
@@ -781,9 +802,11 @@ async function submitNodeBytesWithOutbox<T = unknown>(input: {
   headers?: Record<string, string>;
   turnId?: string;
   metadata?: Record<string, unknown>;
+  targetConfig?: NodeConfig;
 }): Promise<OutboxSubmitResult<T>> {
+  const targetConfig = input.targetConfig ?? nodeConfig;
   const headers = { "Content-Type": "application/octet-stream", ...(input.headers || {}) };
-  const resp = await nodeRequest<T>(nodeConfig, input.endpoint, {
+  const resp = await nodeRequest<T>(targetConfig, input.endpoint, {
     method: "POST",
     body: input.body as unknown as BodyInit,
     headers,
@@ -801,6 +824,7 @@ async function submitNodeBytesWithOutbox<T = unknown>(input: {
     headers,
     turnId: input.turnId,
     metadata: input.metadata,
+    nodeUrl: targetConfig.nodeUrl,
     error: resp.error || "node unavailable",
   });
   return { submitted: false, queued: true, outboxId: entry.id, error: entry.lastError || "queued" };
@@ -863,6 +887,8 @@ async function submitSignedTurnBytes(input: {
   publicKey?: number[];
   label: string;
   metadata?: Record<string, unknown>;
+  expectedSigner?: Uint8Array;
+  targetConfig?: NodeConfig;
 }): Promise<OutboxSubmitResult<SubmitSignedTurnResponse>> {
   requireWasm("submitSignedTurn");
   // The SIGNATURE now comes from the active CustodyProvider (§4.5 chain), not a
@@ -889,9 +915,34 @@ async function submitSignedTurnBytes(input: {
       error: `no custody available (tier=${tier}): refusing to sign a write`,
     };
   }
+  let providerPublicKey: Uint8Array;
+  try {
+    providerPublicKey = await provider.publicKey();
+  } catch (e: unknown) {
+    return {
+      submitted: false,
+      queued: false,
+      error: `custody identity unavailable (tier=${tier}): ${(e as Error).message || String(e)}`,
+    };
+  }
+  if (input.expectedSigner && !bytesEqual(providerPublicKey, input.expectedSigner)) {
+    return {
+      submitted: false,
+      queued: false,
+      error: "custody signer does not match the player identity shown for consent",
+    };
+  }
   let envelope: Uint8Array;
   try {
     const signed = await provider.signTurn(input.turnBytesJson);
+    if (!bytesEqual(signed.signer, providerPublicKey)
+        || (input.expectedSigner && !bytesEqual(signed.signer, input.expectedSigner))) {
+      return {
+        submitted: false,
+        queued: false,
+        error: "custody returned an envelope for a different signer",
+      };
+    }
     envelope = signed.bytes;
   } catch (e: unknown) {
     return {
@@ -902,7 +953,8 @@ async function submitSignedTurnBytes(input: {
   }
 
   const headers: Record<string, string> = {};
-  if (nodeConfig.devnetKey) headers["Authorization"] = `Bearer ${nodeConfig.devnetKey}`;
+  const targetConfig = input.targetConfig ?? nodeConfig;
+  if (targetConfig.devnetKey) headers["Authorization"] = `Bearer ${targetConfig.devnetKey}`;
   return submitNodeBytesWithOutbox<SubmitSignedTurnResponse>({
     kind: "turn",
     label: input.label,
@@ -911,6 +963,7 @@ async function submitSignedTurnBytes(input: {
     headers,
     turnId: input.turnIdHex,
     metadata: input.metadata,
+    targetConfig,
   });
 }
 
@@ -3236,6 +3289,261 @@ async function signTurnV3(
   return { error: `Turn submission failed: ${submit.error}`, submitted: false };
 }
 
+interface PoASignalStatusView {
+  authority_id?: string;
+  federation_id?: string;
+  installed?: boolean;
+  head?: { transition_count?: number } | null;
+}
+
+interface PoASignalTransitionView {
+  sequence?: number;
+  turn_hash?: string;
+}
+
+interface PoASignalCellView {
+  found?: boolean;
+  nonce?: number;
+  public_key?: string;
+  last_receipt_hash?: string | null;
+}
+
+function poaSignalRefused(error: string): PoASignalSubmitResult {
+  return { admission: "refused", transition: "not_observed", error };
+}
+
+function exactHex32(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+}
+
+async function observePoaSignalTransition(
+  turnHash: string,
+  observedBefore: number,
+): Promise<number | null> {
+  let nextSequence = observedBefore + 1;
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const status = await nodeRequest<PoASignalStatusView>(
+      POA_SIGNAL_NODE_CONFIG,
+      `/api/poa/signal/${POA_SIGNAL_FEDERATION_HEX}/status`,
+    );
+    const count = status.ok ? status.data?.head?.transition_count : undefined;
+    if (Number.isSafeInteger(count) && (count as number) >= nextSequence) {
+      // A concurrent claim may occupy the immediately next sequence, so scan
+      // every bounded successor rather than assuming this turn is `before + 1`.
+      const ceiling = Math.min(count as number, observedBefore + 64);
+      for (; nextSequence <= ceiling; nextSequence++) {
+        const transition = await nodeRequest<PoASignalTransitionView>(
+          POA_SIGNAL_NODE_CONFIG,
+          `/api/poa/signal/${POA_SIGNAL_FEDERATION_HEX}/transitions/${nextSequence}`,
+        );
+        if (transition.ok
+            && transition.data?.turn_hash?.toLowerCase() === turnHash.toLowerCase()) {
+          return nextSequence;
+        }
+      }
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 750));
+  }
+  return null;
+}
+
+/**
+ * Deployment-owned PoA Signal publication. The page contributes only the
+ * public mission/code tuple; authority and replay state are derived from the
+ * pinned deployment, extension custody, and the live node, then re-read from
+ * the signed bytes before consent.
+ */
+async function submitPoaSignalClaim(
+  claimInput: unknown,
+  origin: string,
+): Promise<PoASignalSubmitResult> {
+  if (origin !== POA_SIGNAL_BETA_ORIGIN) {
+    return poaSignalRefused("PoA Signal claims are accepted only from beta.pathofangels.network");
+  }
+  const parsed = parsePoASignalClaim(claimInput);
+  if (!parsed.ok) return poaSignalRefused(parsed.error);
+
+  requireWasm("submitPoaSignalClaim");
+  const w = wasm!;
+  if (typeof w.build_poa_signal_claim_turn !== "function"
+      || typeof w.inspect_poa_signal_claim_turn !== "function") {
+    return poaSignalRefused("installed dregg WASM does not include the PoA Signal carrier");
+  }
+  const cc = await loadState();
+  if (cc.locked) return poaSignalRefused("Cipherclerk is locked");
+  if (cc.needsPassphraseSetup) {
+    return poaSignalRefused("Set a cipherclerk passphrase before publishing a Signal claim");
+  }
+  if (!cc.secretKey || cc.secretKey.length !== 32 || cc.publicKey.length !== 32) {
+    // Passkey-only action authorization is not implemented; do not imply that
+    // outer-envelope passkey custody can originate this action today.
+    return poaSignalRefused("An unlocked extension identity is required for PoA Signal claims");
+  }
+  const publicKey = new Uint8Array(cc.publicKey);
+  const publicKeyHex = offeringBytesToHex(publicKey);
+  const agentCellId = await clientCellIdHex(cc);
+  if (!agentCellId || !exactHex32(agentCellId)) {
+    return poaSignalRefused("Could not derive the active player's canonical cell");
+  }
+
+  const status = await nodeRequest<PoASignalStatusView>(
+    POA_SIGNAL_NODE_CONFIG,
+    `/api/poa/signal/${POA_SIGNAL_FEDERATION_HEX}/status`,
+  );
+  if (!status.ok) {
+    return poaSignalRefused(`PoA Signal authority is unreachable: ${status.error || "node request failed"}`);
+  }
+  const statusBody = status.data;
+  if (!statusBody?.installed
+      || statusBody.authority_id?.toLowerCase() !== POA_SIGNAL_FEDERATION_HEX
+      || statusBody.federation_id?.toLowerCase() !== POA_SIGNAL_FEDERATION_HEX) {
+    return poaSignalRefused("PoA Signal authority is not installed under the pinned federation");
+  }
+  const transitionCount = statusBody.head?.transition_count;
+  if (!Number.isSafeInteger(transitionCount) || (transitionCount as number) < 0) {
+    return poaSignalRefused("PoA Signal status returned an invalid transition count");
+  }
+
+  const cell = await nodeRequest<PoASignalCellView>(
+    POA_SIGNAL_NODE_CONFIG,
+    `/api/cell/${agentCellId}`,
+  );
+  if (!cell.ok) {
+    return poaSignalRefused(`Could not read the player's live nonce and receipt head: ${cell.error || "node request failed"}`);
+  }
+  const nonce = cell.data?.nonce;
+  if (!Number.isSafeInteger(nonce) || (nonce as number) < 0) {
+    return poaSignalRefused("Player cell returned an invalid nonce");
+  }
+  if (cell.data?.found && cell.data.public_key?.toLowerCase() !== publicKeyHex) {
+    return poaSignalRefused("Player cell is bound to a different public key");
+  }
+  const previousReceiptHash = cell.data?.last_receipt_hash ?? null;
+  if (previousReceiptHash !== null && !exactHex32(previousReceiptHash)) {
+    return poaSignalRefused("Player cell returned an invalid previous receipt hash");
+  }
+
+  let built: ReturnType<DreggWasm["build_poa_signal_claim_turn"]>;
+  let signed: ReturnType<DreggWasm["sign_turn_v3"]>;
+  let inspected: ReturnType<DreggWasm["inspect_poa_signal_claim_turn"]>;
+  try {
+    built = w.build_poa_signal_claim_turn(JSON.stringify({
+      schema: parsed.claim.schema,
+      signer_public_key_hex: publicKeyHex,
+      nonce,
+      previous_receipt_hash_hex: previousReceiptHash,
+      mission_id: parsed.claim.missionId,
+      code: parsed.claim.code,
+    }));
+    if (built.agent_cell_id !== agentCellId
+        || built.nonce !== nonce
+        || (built.previous_receipt_hash_hex ?? null) !== previousReceiptHash
+        || built.mission_id !== POA_SIGNAL_MISSION_ID
+        || built.code.some((band, i) => band !== parsed.claim.code[i])) {
+      return poaSignalRefused("PoA Signal builder output does not match the live player claim");
+    }
+    signed = w.sign_turn_v3(
+      new Uint8Array(built.turn_bytes_json),
+      new Uint8Array(cc.secretKey),
+      hexToBytes(POA_SIGNAL_FEDERATION_HEX),
+    );
+    if (signed.signer_pubkey.toLowerCase() !== publicKeyHex) {
+      return poaSignalRefused("PoA Signal action was signed by a different identity");
+    }
+    inspected = w.inspect_poa_signal_claim_turn(new Uint8Array(signed.turn_bytes_json));
+  } catch (e: unknown) {
+    return poaSignalRefused(`PoA Signal carrier refused: ${(e as Error).message || String(e)}`);
+  }
+
+  const inspectedPrevious = inspected.previous_receipt_hash_hex ?? null;
+  if (inspected.schema !== parsed.claim.schema
+      || inspected.agent_cell_id !== agentCellId
+      || inspected.nonce !== nonce
+      || inspectedPrevious !== previousReceiptHash
+      || inspected.mission_id !== parsed.claim.missionId
+      || inspected.code.some((band, i) => band !== parsed.claim.code[i])
+      || inspected.turn_hash !== signed.turn_id
+      || inspected.fee !== built.fee) {
+    return poaSignalRefused("signed PoA Signal bytes failed the exact post-signing substitution check");
+  }
+
+  const explanation = explainPoASignalClaim({
+    missionId: inspected.mission_id,
+    code: inspected.code,
+    signerPublicKeyHex: publicKeyHex,
+    agentCellId,
+    nonce,
+    previousReceiptHashHex: inspectedPrevious,
+    federationHex: POA_SIGNAL_FEDERATION_HEX,
+    fee: inspected.fee,
+    turnHash: inspected.turn_hash,
+  });
+  const confirmed = await showTurnConfirmation({
+    explanation,
+    turnId: inspected.turn_hash,
+    origin,
+    hasUnknown: false,
+    federationDomainHex: POA_SIGNAL_FEDERATION_HEX,
+  });
+  if (!confirmed) return poaSignalRefused("User declined to publish this PoA Signal claim");
+
+  const submit = await submitSignedTurnBytes({
+    turnBytesJson: new Uint8Array(signed.turn_bytes_json),
+    turnIdHex: signed.turn_id,
+    secretKey: cc.secretKey,
+    publicKey: cc.publicKey,
+    expectedSigner: publicKey,
+    targetConfig: POA_SIGNAL_NODE_CONFIG,
+    label: "Path of Angels Signal claim",
+    metadata: {
+      action: "submitPoaSignalClaim",
+      application: "poa-signal-v1",
+      federationDomainHex: POA_SIGNAL_FEDERATION_HEX,
+      missionId: POA_SIGNAL_MISSION_ID,
+      code: [...parsed.claim.code],
+      agentCellId,
+      nonce,
+      previousReceiptHash,
+    },
+  });
+  if (!submit.submitted) {
+    if (submit.queued) {
+      return {
+        turnId: signed.turn_id,
+        admission: "queued",
+        transition: "not_observed",
+        queued: true,
+        outboxId: submit.outboxId,
+        error: `Signed claim queued for the pinned PoA node: ${submit.error}`,
+      };
+    }
+    return poaSignalRefused(submit.error);
+  }
+  if (submit.data?.accepted === false) {
+    return poaSignalRefused(submit.data.error || "PoA node refused the signed claim");
+  }
+  const admittedHash = submit.data?.turn_hash || signed.turn_id;
+  if (admittedHash.toLowerCase() !== signed.turn_id.toLowerCase()) {
+    return {
+      turnId: signed.turn_id,
+      admission: "admitted",
+      transition: "not_observed",
+      error: "PoA node admitted the request but echoed a different turn hash",
+    };
+  }
+  const observedSequence = await observePoaSignalTransition(
+    signed.turn_id,
+    transitionCount as number,
+  );
+  return {
+    turnId: signed.turn_id,
+    admission: "admitted",
+    transition: observedSequence === null ? "not_observed" : "observed",
+    ...(observedSequence === null ? {} : { transitionSequence: observedSequence }),
+  };
+}
+
 /**
  * The offering-turn consent surface (G1 rung 2): a nonce-bound popup rendering
  * the human-readable intent — offering, session, move, arg, optional text, the
@@ -3629,7 +3937,7 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:sealedBidCommit", "dregg:sealedBidReveal", "dregg:drexPlaceOrder",
   "dregg:launchpadCommit", "dregg:launchpadReveal", "dregg:launchpadStatus",
   "dregg:launchpadReclaimTx",
-  "dregg:signTurn", "dregg:signTurnV3", "dregg:queryBalance",
+  "dregg:signTurn", "dregg:signTurnV3", "dregg:submitPoaSignalClaim", "dregg:queryBalance",
   "dregg:shareCapability", "dregg:acceptCapability", "dregg:createHandoff",
   "dregg:mountService", "dregg:discoverServices", "dregg:resolvePath",
   "dregg:storageWrite", "dregg:storageRead", "dregg:storageQuota",
@@ -4932,6 +5240,28 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       // revalidates with exact checks (absence = legacy zero domain).
       const result = await signTurnV3(turnBytes, origin, message.federationId);
       resetLockTimer();
+      return { id: message.id, result };
+    }
+
+    case "dregg:submitPoaSignalClaim": {
+      let tabOrigin: string | undefined;
+      try {
+        tabOrigin = sender?.tab?.url ? new URL(sender.tab.url).origin : undefined;
+      } catch {
+        tabOrigin = undefined;
+      }
+      const bridgedOrigin = typeof message._origin === "string" ? message._origin : undefined;
+      // Require both browser-owned tab authority and the content-script bridge
+      // to agree. A direct runtime message, forged `_origin`, or non-beta tab
+      // never reaches state reads, signing, or a permission/consent surface.
+      if (tabOrigin !== POA_SIGNAL_BETA_ORIGIN || bridgedOrigin !== POA_SIGNAL_BETA_ORIGIN) {
+        return {
+          id: message.id,
+          result: poaSignalRefused("PoA Signal claims require the exact authenticated beta tab"),
+        };
+      }
+      const result = await submitPoaSignalClaim(message.claim, tabOrigin);
+      if (result.admission !== "refused") resetLockTimer();
       return { id: message.id, result };
     }
 

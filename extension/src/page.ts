@@ -22,6 +22,11 @@ import {
   type OfferingSignFailure,
   type OfferingSignResult,
 } from "./offering-sign";
+import {
+  parsePoASignalClaim,
+  type PoASignalClaimParams,
+  type PoASignalSubmitResult,
+} from "./poa-signal";
 
 // Retrieve the session nonce from the script tag's data attribute.
 const currentScript = document.currentScript || document.querySelector("script[data-dregg-nonce]");
@@ -39,7 +44,11 @@ if (!SESSION_NONCE) {
 const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 let idCounter = 0;
 
-function sendMessage(type: MessageType, payload: Record<string, unknown> = {}): Promise<unknown> {
+function sendMessage(
+  type: MessageType,
+  payload: Record<string, unknown> = {},
+  timeoutMs = 30_000,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const id = `dregg_${Date.now()}_${idCounter++}`;
     pending.set(id, { resolve, reject });
@@ -51,7 +60,7 @@ function sendMessage(type: MessageType, payload: Record<string, unknown> = {}): 
         pending.delete(id);
         reject(new Error("Dregg: request timed out"));
       }
-    }, 30000);
+    }, timeoutMs);
   });
 }
 
@@ -333,6 +342,12 @@ export interface DreggAPI {
    */
   signTurnV3(turnBytes: Uint8Array, federationId?: Uint8Array): Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
   /**
+   * Publish the final code from PoA Signal Triangulation. The page supplies
+   * only the bounded public claim; the extension derives identity, nonce,
+   * receipt head, federation, destination, action and event shape itself.
+   */
+  submitPoaSignalClaim(claim: PoASignalClaimParams): Promise<PoASignalSubmitResult>;
+  /**
    * Sign one dreggnet-offerings move (G1 rung 2 of the signed-identity
    * ladder) with the extension-held identity key. The signature is over the
    * canonical `dregg-offering-turn-v1:` message
@@ -601,6 +616,23 @@ const dregg: DreggAPI = {
       payload.federationId = Array.from(validated.bytes);
     }
     return sendMessage("dregg:signTurnV3", payload) as Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
+  },
+
+  submitPoaSignalClaim(claim) {
+    const parsed = parsePoASignalClaim(claim);
+    if (!parsed.ok) {
+      return Promise.reject(new TypeError(`dregg.submitPoaSignalClaim: ${parsed.error}`));
+    }
+    // Send the validated COPY. Mutating the caller's object after this point
+    // cannot change the claim the background builds or presents for consent.
+    // This path includes a human-readable custody confirmation and a bounded
+    // transition-observation poll. Do not race a careful reader with the
+    // generic 30-second RPC timeout.
+    return sendMessage(
+      "dregg:submitPoaSignalClaim",
+      { claim: parsed.claim },
+      120_000,
+    ) as Promise<PoASignalSubmitResult>;
   },
 
   signOfferingTurn(params) {

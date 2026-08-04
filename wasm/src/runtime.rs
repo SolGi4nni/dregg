@@ -2887,31 +2887,41 @@ pub struct ConsensusRoundResult {
 }
 
 /// Walk the turn's call forest and replace every `Authorization::Unchecked`
-/// with a real Ed25519 signature via `AgentCipherclerk::sign_action`. Existing
-/// non-Unchecked authorizations are left intact so callers can pre-sign or
-/// pre-prove specific actions. Uses the SDK's canonical signing path — no
-/// hand-rolled cryptography.
+/// with a real hybrid Ed25519 signature via
+/// `AgentCipherclerk::sign_action_hybrid`. Existing signatures are preserved.
+/// The live turn nonce is carried through the whole forest rather than read
+/// from the clerk's local receipt count, and the signature is deliberately
+/// federation-domain-separated: a turn signed for one federation is invalid
+/// in another.
 pub(crate) fn sign_call_forest(
     turn: &mut Turn,
     cclerk: &AgentCipherclerk,
     federation_id: &[u8; 32],
 ) {
+    let turn_nonce = turn.nonce;
     for tree in &mut turn.call_forest.roots {
-        sign_call_tree(tree, cclerk, federation_id);
+        sign_call_tree(tree, cclerk, federation_id, turn_nonce);
     }
     // Mutating actions invalidates any cached forest hash; clear so the
     // executor recomputes from the now-signed actions.
     turn.call_forest.forest_hash = [0u8; 32];
 }
 
-fn sign_call_tree(tree: &mut CallTree, cclerk: &AgentCipherclerk, federation_id: &[u8; 32]) {
+fn sign_call_tree(
+    tree: &mut CallTree,
+    cclerk: &AgentCipherclerk,
+    federation_id: &[u8; 32],
+    turn_nonce: u64,
+) {
     if matches!(tree.action.authorization, Authorization::Unchecked) {
-        // Clone the action because sign_action returns a fresh one; replace in place.
-        tree.action = cclerk.sign_action(tree.action.clone(), federation_id);
+        // Bind the action to the nonce of THIS caller-built turn. The ordinary
+        // clerk convenience path uses its local receipt count, which is not
+        // authoritative for a remote browser reading a persistent node head.
+        tree.action = cclerk.sign_action_hybrid(tree.action.clone(), federation_id, turn_nonce);
     }
     tree.hash = [0u8; 32]; // invalidate cached action hash
     for child in &mut tree.children {
-        sign_call_tree(child, cclerk, federation_id);
+        sign_call_tree(child, cclerk, federation_id, turn_nonce);
     }
 }
 
@@ -2926,4 +2936,51 @@ fn hex_encode_bytes(bytes: &[u8]) -> String {
         out.push(char::from_digit((b & 0x0f) as u32, 16).unwrap());
     }
     out
+}
+
+#[cfg(test)]
+mod poa_signal_signing_tests {
+    use super::*;
+    use ed25519_dalek::Verifier;
+    use zeroize::Zeroizing;
+
+    #[test]
+    fn browser_forest_signing_binds_the_live_turn_nonce() {
+        let clerk = AgentCipherclerk::from_key_bytes(Zeroizing::new([0x61; 32]));
+        let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
+            1,
+            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+        )
+        .unwrap();
+        let mut turn = dregg_sdk::poa_signal::signal_claim_turn(
+            &clerk.public_key().0,
+            7,
+            Some([0xA4; 32]),
+            claim,
+        );
+        let federation = [0x4E; 32];
+        sign_call_forest(&mut turn, &clerk, &federation);
+        assert_eq!(
+            dregg_sdk::poa_signal::claim_from_exact_signal_turn(&turn),
+            Ok(claim)
+        );
+
+        let signed_action = &turn.call_forest.roots[0].action;
+        let Authorization::HybridSignature { ed25519, .. } = &signed_action.authorization else {
+            panic!("browser signing must attach the hybrid authorization")
+        };
+        let mut unsigned = signed_action.clone();
+        unsigned.authorization = Authorization::Unchecked;
+        let live_message =
+            dregg_turn::TurnExecutor::compute_signing_message(&unsigned, &federation, turn.nonce);
+        let stale_message =
+            dregg_turn::TurnExecutor::compute_signing_message(&unsigned, &federation, 0);
+        let verifying = ed25519_dalek::VerifyingKey::from_bytes(&clerk.public_key().0).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(ed25519);
+        verifying.verify(&live_message, &signature).unwrap();
+        assert!(
+            verifying.verify(&stale_message, &signature).is_err(),
+            "a live-nonce signature must not verify under the clerk's stale local count"
+        );
+    }
 }

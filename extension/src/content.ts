@@ -83,6 +83,7 @@ const RESTRICTED_METHODS = new Set<MessageType>([
   "dregg:postIntent",
   "dregg:signTurn",
   "dregg:signTurnV3",
+  "dregg:submitPoaSignalClaim",
   // Offering turn (G1 rung 2): a key-touching signature over a
   // dreggnet-offerings move — per-origin grant + the un-overlayable
   // confirm-intent consent, exactly like signTurnV3.
@@ -174,6 +175,14 @@ window.addEventListener(`dregg:request:${SESSION_NONCE}`, (async (event: Event):
 
   // Check if this method is allowed for this origin (per-method allowlist).
   if (RESTRICTED_METHODS.has(messageType)) {
+    // This capability is deployment-specific, not a generic turn-signing
+    // oracle. Refuse it before any permission prompt outside the exact beta.
+    if (messageType === "dregg:submitPoaSignalClaim" && origin !== "https://beta.pathofangels.network") {
+      window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
+        detail: { id: detail.id, error: "PoA Signal claims are available only on beta.pathofangels.network." },
+      }));
+      return;
+    }
     const allowed = await isOriginAllowed(origin, messageType);
     if (!allowed) {
       const granted = await requestOriginPermission(origin, messageType);

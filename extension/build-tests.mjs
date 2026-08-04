@@ -14,6 +14,7 @@ await esbuild.build({
     'src/launchpad.ts',
     'src/evm.ts',
     'src/poa.ts',
+    'src/poa-signal.ts',
   ],
   outdir: 'test/.build',
   format: 'esm',

@@ -168,6 +168,7 @@ export type MessageType =
   | "dregg:drexPlaceOrder"
   // Turn submission
   | "dregg:signTurn"
+  | "dregg:submitPoaSignalClaim"
   | "dregg:queryBalance"
   // Devnet account view (node-API path)
   | "dregg:nodeIdentity"
@@ -695,6 +696,28 @@ export interface DreggWasm {
     /** Encoding the INPUT was decoded as: "postcard" | "json". */
     encoding: string;
     signer_pubkey: string;
+  };
+  /** Build the exact public PoA Signal carrier; no private or authority fields. */
+  build_poa_signal_claim_turn(specJson: string): {
+    schema: "poa-signal-claim/v1";
+    turn_bytes_json: Uint8Array;
+    agent_cell_id: string;
+    nonce: number;
+    previous_receipt_hash_hex?: string;
+    mission_id: number;
+    code: [number, number, number];
+    fee: number;
+  };
+  /** Revalidate the signed carrier before displaying consent or submitting. */
+  inspect_poa_signal_claim_turn(turnBytesJson: Uint8Array): {
+    schema: "poa-signal-claim/v1";
+    agent_cell_id: string;
+    nonce: number;
+    previous_receipt_hash_hex?: string;
+    mission_id: number;
+    code: [number, number, number];
+    fee: number;
+    turn_hash: string;
   };
   /**
    * Assemble the canonical HYBRID `SignedTurn` submission envelope (the exact
