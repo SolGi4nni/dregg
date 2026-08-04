@@ -123,8 +123,8 @@ use std::path::Path;
 
 use crate::solana_consensus::{BankHashComponents, PohAnchorPolicy, ValidatorVote};
 use crate::solana_holdings::{
-    HoldingAccount, HoldingProof, HoldingProofError, ProvenHolding,
-    prove_holding_consensus_anchored,
+    AcceptedTokenProgram, HoldingAccount, HoldingAssetPolicy, HoldingProof, HoldingProofError,
+    ProvenHolding, prove_holding_consensus_anchored_with_policy,
 };
 use crate::solana_provenance::{
     ProvenAccount, ProvenanceError, STAKE_HISTORY_SYSVAR_ID, WeakSubjectivityAnchor,
@@ -138,20 +138,20 @@ use crate::solana_wire::{
 };
 use ed25519_dalek::SigningKey;
 
-/// The Solana **SPL Token program** id
+/// The Solana legacy **SPL Token program** id
 /// (`TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA`) — the program that must own a
-/// token account for its 165-byte data to be an authoritative balance
+/// legacy token account for its 165-byte data to be an authoritative balance
 /// (the load-bearing owner-program gate in
 /// [`prove_holding_consensus_anchored`]). A constant of the protocol; decoded at
 /// runtime from the canonical base58 (same pattern as
 /// [`crate::solana_provenance::vote_program_id`]).
 pub fn spl_token_program_id() -> [u8; 32] {
-    let v = bs58::decode("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
-        .into_vec()
-        .expect("canonical SPL Token program id decodes");
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&v);
-    out
+    AcceptedTokenProgram::Legacy.program_id()
+}
+
+/// The canonical Token-2022 program id (`TokenzQd…`).
+pub fn token_2022_program_id() -> [u8; 32] {
+    AcceptedTokenProgram::Token2022.program_id()
 }
 
 /// One ingested holder snapshot: everything the anchored verifier needs, plus
@@ -264,7 +264,7 @@ pub trait HoldingFeedSource {
 /// Verify an ingested feed through the PRODUCTION anchored entry —
 /// [`prove_holding_consensus_anchored`] — with the trust roots taken from the
 /// **caller** (governance-pinned `pinned_anchor`, the expected `dregg_mint`,
-/// and the SPL Token program id), never from the feed. The only path from a
+/// and the exact canonical token-program id), never from the feed. The only path from a
 /// [`HoldingFeed`] to a [`LockProofTrust::ConsensusVerified`](crate::solana_trustless::LockProofTrust::ConsensusVerified)
 /// [`ProvenHolding`].
 pub fn prove_feed_holding(
@@ -274,10 +274,20 @@ pub fn prove_feed_holding(
     pinned_anchor: &WeakSubjectivityAnchor,
     require_poh: bool,
 ) -> Result<ProvenHolding, HoldingProofError> {
-    prove_holding_consensus_anchored(
+    let policy = HoldingAssetPolicy::from_program_id(*dregg_mint, *spl_token_program)?;
+    prove_feed_holding_with_policy(feed, &policy, pinned_anchor, require_poh)
+}
+
+/// Verify an ingested feed under one exact mint/program allowlist entry.
+pub fn prove_feed_holding_with_policy(
+    feed: &HoldingFeed,
+    policy: &HoldingAssetPolicy,
+    pinned_anchor: &WeakSubjectivityAnchor,
+    require_poh: bool,
+) -> Result<ProvenHolding, HoldingProofError> {
+    prove_holding_consensus_anchored_with_policy(
         &feed.proof,
-        dregg_mint,
-        spl_token_program,
+        policy,
         pinned_anchor,
         require_poh,
         feed.poh_policy.as_ref(),
@@ -2665,6 +2675,15 @@ mod tests {
         assert_eq!(
             bs58::encode(spl_token_program_id()).into_string(),
             "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        );
+    }
+
+    /// The Token-2022 program id round-trips to its canonical base58.
+    #[test]
+    fn token_2022_program_id_is_canonical() {
+        assert_eq!(
+            bs58::encode(token_2022_program_id()).into_string(),
+            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         );
     }
 }

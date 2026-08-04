@@ -78,6 +78,11 @@ bincode = "1"
 # NO new crates to the lockfile beyond what `solana-vote-interface` already pins
 # (no curve25519 conflict). See docs/deos/TRUSTLESS-SOLANA-BRIDGE.md.
 solana-stake-interface = { version = "4.3.0", default-features = false }
+# Canonical Token-2022 account parser.  Proof-of-holding must validate the
+# 165-byte base state *and* the Token-2022 account-type/TLV extension region;
+# slicing the first 72 bytes would silently accept malformed extension-bearing
+# accounts.  The interface crate is the SPL project's no-runtime parser surface.
+spl-token-2022-interface = { version = "3.1.1", default-features = false }
 # The live off-chain relayer (`solana_relayer`) speaks the REAL Solana JSON-RPC
 # wire: pubkeys are base58 and account `data` is base64 over JSON-RPC. Both are
 # tiny, pure, and already in the workspace lock (pulled by reqwest et al.) — they

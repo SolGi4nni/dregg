@@ -29,11 +29,20 @@
 //! same fail-closed rule the mint gate uses.
 
 use crate::solana_trustless::LockProofTrust;
+use spl_token_2022_interface::{
+    extension::{
+        AccountType, BaseStateWithExtensions, ExtensionType, StateWithExtensions,
+        confidential_transfer::ConfidentialTransferAccount,
+        confidential_transfer_fee::ConfidentialTransferFeeAmount, cpi_guard::CpiGuard,
+        immutable_owner::ImmutableOwner, memo_transfer::MemoTransfer,
+        non_transferable::NonTransferableAccount, pausable::PausableAccount,
+        transfer_fee::TransferFeeAmount, transfer_hook::TransferHookAccount,
+    },
+    state::{Account as SplTokenAccount, AccountState},
+};
 
-/// The SPL Token `Account` on-chain layout offsets (spl-token `state::Account`,
-/// 165 bytes): `mint(32) ‖ owner(32) ‖ amount_le(8) ‖ …`. We read only the three
-/// fields proof-of-holdings needs; the account's inclusion under a consensus-verified
-/// bank hash is what makes those three bytes trustworthy.
+/// The shared SPL Token / Token-2022 `Account` base-layout size. Token-2022 may
+/// append an account-type byte and TLV extensions after this base.
 pub const SPL_ACCOUNT_LEN: usize = 165;
 /// `mint` pubkey occupies bytes `[0, 32)`.
 pub const SPL_MINT_OFFSET: usize = 0;
@@ -41,23 +50,229 @@ pub const SPL_MINT_OFFSET: usize = 0;
 pub const SPL_OWNER_OFFSET: usize = 32;
 /// `amount` (u64 little-endian) occupies bytes `[64, 72)`.
 pub const SPL_AMOUNT_OFFSET: usize = 64;
+/// SPL `Account.state` byte in the 165-byte base layout.
+pub const SPL_STATE_OFFSET: usize = 108;
 
-/// Decode the three proof-of-holdings fields from a finalized SPL token account's
-/// `data`: `(mint, owner, amount)`. Returns `None` unless the data is at least a full
-/// SPL `Account` (165 bytes) — a shorter blob is not a token account and is refused
-/// (fail closed). The account's authenticity comes from the caller having verified its
-/// inclusion under a consensus-verified bank hash; this function only reads the layout.
-pub fn decode_spl_token_account(data: &[u8]) -> Option<([u8; 32], [u8; 32], u64)> {
-    if data.len() < SPL_ACCOUNT_LEN {
-        return None;
+/// The live `$DREGG` Token-2022 mint
+/// (`XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump`).
+pub const DREGG_MAINNET_MINT: [u8; 32] = [
+    0x07, 0xe0, 0xc6, 0x56, 0x63, 0xf8, 0xa2, 0x65, 0x1c, 0xd2, 0x49, 0xdf, 0x49, 0x34, 0x2c, 0x8d,
+    0xd5, 0xff, 0x9d, 0x94, 0x6f, 0x1b, 0x21, 0x2f, 0x3d, 0xc4, 0x84, 0x98, 0x0a, 0xf7, 0x98, 0x0f,
+];
+/// On-chain decimal precision configured by the live `$DREGG` mint.
+/// Holding proofs remain denominated in atomic units.
+pub const DREGG_MAINNET_DECIMALS: u8 = 6;
+
+/// Closed set of Solana token programs proof-of-holding knows how to parse.
+/// A raw program id is never accepted as policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AcceptedTokenProgram {
+    /// Original SPL Token (`Tokenkeg…`). Accounts are exactly 165 bytes.
+    Legacy,
+    /// SPL Token-2022 (`TokenzQd…`). Accounts may carry validated extensions.
+    Token2022,
+}
+
+impl AcceptedTokenProgram {
+    /// Canonical on-chain owner program id for this parser.
+    pub fn program_id(self) -> [u8; 32] {
+        match self {
+            Self::Legacy => spl_token_2022_interface::inline_spl_token::id().to_bytes(),
+            Self::Token2022 => spl_token_2022_interface::id().to_bytes(),
+        }
     }
-    let mut mint = [0u8; 32];
-    mint.copy_from_slice(&data[SPL_MINT_OFFSET..SPL_MINT_OFFSET + 32]);
-    let mut owner = [0u8; 32];
-    owner.copy_from_slice(&data[SPL_OWNER_OFFSET..SPL_OWNER_OFFSET + 32]);
-    let mut amt = [0u8; 8];
-    amt.copy_from_slice(&data[SPL_AMOUNT_OFFSET..SPL_AMOUNT_OFFSET + 8]);
-    Some((mint, owner, u64::from_le_bytes(amt)))
+}
+
+/// Exact mint/program allowlist entry used by one holding-verification call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HoldingAssetPolicy {
+    mint: [u8; 32],
+    token_program: AcceptedTokenProgram,
+}
+
+impl HoldingAssetPolicy {
+    /// Construct a policy for a mint under one of the two explicitly supported
+    /// token programs. The live DREGG mint is pinned to Token-2022 and cannot be
+    /// reinterpreted using the legacy layout/program.
+    pub fn new(
+        mint: [u8; 32],
+        token_program: AcceptedTokenProgram,
+    ) -> Result<Self, HoldingProofError> {
+        if mint == DREGG_MAINNET_MINT && token_program != AcceptedTokenProgram::Token2022 {
+            return Err(HoldingProofError::DreggProgramMismatch);
+        }
+        Ok(Self {
+            mint,
+            token_program,
+        })
+    }
+
+    /// The real deployed `$DREGG` asset policy: exact mint + Token-2022 owner.
+    pub const fn dregg_mainnet() -> Self {
+        Self {
+            mint: DREGG_MAINNET_MINT,
+            token_program: AcceptedTokenProgram::Token2022,
+        }
+    }
+
+    /// Convert an external raw configuration into a checked, closed policy.
+    pub fn from_program_id(
+        mint: [u8; 32],
+        program_id: [u8; 32],
+    ) -> Result<Self, HoldingProofError> {
+        let token_program = if program_id == AcceptedTokenProgram::Legacy.program_id() {
+            AcceptedTokenProgram::Legacy
+        } else if program_id == AcceptedTokenProgram::Token2022.program_id() {
+            AcceptedTokenProgram::Token2022
+        } else {
+            return Err(HoldingProofError::UnsupportedTokenProgram { program_id });
+        };
+        Self::new(mint, token_program)
+    }
+
+    /// Mint this verifier is allowed to interpret.
+    pub const fn mint(&self) -> &[u8; 32] {
+        &self.mint
+    }
+
+    /// Token program/layout this verifier is allowed to interpret.
+    pub const fn token_program(&self) -> AcceptedTokenProgram {
+        self.token_program
+    }
+
+    /// Exact account owner program required by this policy.
+    pub fn program_id(&self) -> [u8; 32] {
+        self.token_program.program_id()
+    }
+}
+
+/// Fully validated proof-of-holding fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecodedTokenAccount {
+    /// Mint encoded by the token program.
+    pub mint: [u8; 32],
+    /// Wallet authority encoded by the token program.
+    pub owner: [u8; 32],
+    /// Atomic token balance encoded by the token program.
+    pub amount: u64,
+}
+
+/// Strictly validate Token-2022's TLV region after the official parser has
+/// located it. All current account extensions are fixed-size: enforce their
+/// account/mint kind, size, uniqueness, and zero-only trailing allocation.
+fn validate_token_2022_extensions(parsed: &StateWithExtensions<'_, SplTokenAccount>) -> bool {
+    let Ok(extension_types) = parsed.get_extension_types() else {
+        return false;
+    };
+    let mut cursor = 0usize;
+    let mut seen = Vec::new();
+    let tlv = parsed.get_tlv_data();
+    while cursor < tlv.len() {
+        if tlv[cursor..].iter().all(|b| *b == 0) {
+            break;
+        }
+        let Some(header_end) = cursor.checked_add(4) else {
+            return false;
+        };
+        if header_end > tlv.len() {
+            return false;
+        }
+        let raw_type = u16::from_le_bytes([tlv[cursor], tlv[cursor + 1]]);
+        let Ok(extension_type) = ExtensionType::try_from(raw_type) else {
+            return false;
+        };
+        if extension_type.get_account_type() != AccountType::Account
+            || seen.contains(&extension_type)
+        {
+            return false;
+        }
+        let length = u16::from_le_bytes([tlv[cursor + 2], tlv[cursor + 3]]) as usize;
+        let Some(value_end) = header_end.checked_add(length) else {
+            return false;
+        };
+        if value_end > tlv.len() {
+            return false;
+        }
+        seen.push(extension_type);
+        cursor = value_end;
+    }
+    if seen != extension_types {
+        return false;
+    }
+
+    // The official generic accessors enforce the exact byte size and POD
+    // validity of each extension value. Keep this exhaustive over every
+    // account-kind ExtensionType supported by the pinned interface version.
+    extension_types
+        .into_iter()
+        .all(|extension_type| match extension_type {
+            ExtensionType::TransferFeeAmount => parsed.get_extension::<TransferFeeAmount>().is_ok(),
+            ExtensionType::ConfidentialTransferAccount => parsed
+                .get_extension::<ConfidentialTransferAccount>()
+                .is_ok(),
+            ExtensionType::ImmutableOwner => parsed.get_extension::<ImmutableOwner>().is_ok(),
+            ExtensionType::MemoTransfer => parsed.get_extension::<MemoTransfer>().is_ok(),
+            ExtensionType::CpiGuard => parsed.get_extension::<CpiGuard>().is_ok(),
+            ExtensionType::NonTransferableAccount => {
+                parsed.get_extension::<NonTransferableAccount>().is_ok()
+            }
+            ExtensionType::TransferHookAccount => {
+                parsed.get_extension::<TransferHookAccount>().is_ok()
+            }
+            ExtensionType::ConfidentialTransferFeeAmount => parsed
+                .get_extension::<ConfidentialTransferFeeAmount>()
+                .is_ok(),
+            ExtensionType::PausableAccount => parsed.get_extension::<PausableAccount>().is_ok(),
+            _ => false,
+        })
+}
+
+/// Parse a token holding account under an explicit canonical program policy.
+/// Frozen, native-wrapped, uninitialized, malformed base-state, and malformed
+/// extension-bearing accounts are refused rather than reinterpreted.
+pub fn decode_token_account(
+    data: &[u8],
+    token_program: AcceptedTokenProgram,
+) -> Result<DecodedTokenAccount, HoldingProofError> {
+    if token_program == AcceptedTokenProgram::Legacy && data.len() != SPL_ACCOUNT_LEN {
+        return Err(HoldingProofError::NotTokenAccount);
+    }
+    let parsed = StateWithExtensions::<SplTokenAccount>::unpack(data)
+        .map_err(|_| HoldingProofError::NotTokenAccount)?;
+    match parsed.base.state {
+        AccountState::Initialized => {}
+        AccountState::Frozen => return Err(HoldingProofError::FrozenTokenAccount),
+        AccountState::Uninitialized => return Err(HoldingProofError::NotTokenAccount),
+    }
+    if parsed.base.is_native() {
+        return Err(HoldingProofError::NativeTokenAccount);
+    }
+    match token_program {
+        AcceptedTokenProgram::Legacy if !parsed.get_tlv_data().is_empty() => {
+            return Err(HoldingProofError::NotTokenAccount);
+        }
+        AcceptedTokenProgram::Token2022 => {
+            if !validate_token_2022_extensions(&parsed) {
+                return Err(HoldingProofError::NotTokenAccount);
+            }
+        }
+        AcceptedTokenProgram::Legacy => {}
+    }
+    Ok(DecodedTokenAccount {
+        mint: parsed.base.mint.to_bytes(),
+        owner: parsed.base.owner.to_bytes(),
+        amount: parsed.base.amount,
+    })
+}
+
+/// Legacy compatibility decoder. This accepts exactly one initialized, non-frozen,
+/// non-native 165-byte SPL Token account and validates every base field through the
+/// official parser. Token-2022 callers use [`decode_token_account`] with an explicit
+/// [`AcceptedTokenProgram::Token2022`] policy.
+pub fn decode_spl_token_account(data: &[u8]) -> Option<([u8; 32], [u8; 32], u64)> {
+    decode_token_account(data, AcceptedTokenProgram::Legacy)
+        .ok()
+        .map(|a| (a.mint, a.owner, a.amount))
 }
 
 /// A proven, NON-CUSTODIAL holding: at finalized `slot`, the SPL token account
@@ -110,8 +325,9 @@ use crate::solana_wire::{
 
 /// The holder's OWN finalized Solana account — the thing proof-of-holdings observes,
 /// with **no vault, no lock, no transfer**. It is a plain SPL token account the holder
-/// controls; its `data` is the real 165-byte SPL `Account` layout (`mint ‖ owner ‖
-/// amount ‖ …`). The `inclusion` proof opens this account's per-account hash into a
+/// controls; its `data` is the token program's validated account layout (165-byte
+/// base plus Token-2022 extensions when applicable). The `inclusion` proof opens this
+/// account's per-account hash into a
 /// finalized accounts hash (the SAME 16-ary fan-out the mint path proves the vault with
 /// — [`crate::solana_wire::verify_account_inclusion_16ary`]).
 ///
@@ -139,8 +355,8 @@ pub struct HoldingAccount {
     pub executable: bool,
     /// The account's rent epoch (part of the per-account hash preimage).
     pub rent_epoch: u64,
-    /// The account's `data` — the real SPL `Account` layout decoded by
-    /// [`decode_spl_token_account`].
+    /// The account's `data`, validated by [`decode_token_account`] under the
+    /// call's exact [`HoldingAssetPolicy`].
     pub data: Vec<u8>,
     /// The 16-ary fan-out inclusion of this account's blake3 per-account hash into the
     /// slot's accounts hash (the SAME primitive the mint path uses for the vault).
@@ -177,6 +393,12 @@ pub enum HoldingProofError {
     /// [`SPL_ACCOUNT_LEN`], or otherwise undecodable) — [`decode_spl_token_account`]
     /// returned `None`.
     NotTokenAccount,
+    /// The token account is frozen. Its balance exists, but its owner cannot
+    /// exercise custody, so it is not accepted as active proof-of-holding.
+    FrozenTokenAccount,
+    /// Wrapped-native SOL accounts are outside this fungible-asset holding
+    /// policy; accepting one would conflate the native mint with `$DREGG`.
+    NativeTokenAccount,
     /// The account holds a different SPL mint than the configured `$DREGG` mint.
     WrongMint,
     /// The account is NOT owned by the SPL Token program, so its 165-byte `data` is
@@ -188,6 +410,15 @@ pub enum HoldingProofError {
         /// The program that actually owns the account (not the SPL Token program).
         owner_program: [u8; 32],
     },
+    /// Raw configuration named neither canonical legacy SPL Token nor the
+    /// canonical Token-2022 program.
+    UnsupportedTokenProgram {
+        /// Rejected program id.
+        program_id: [u8; 32],
+    },
+    /// The live `$DREGG` mint is Token-2022 and may not be paired with legacy
+    /// SPL Token parsing.
+    DreggProgramMismatch,
     /// The evidence epoch does not match the supplied stake table's epoch.
     WrongEpoch {
         /// The epoch the evidence claims.
@@ -248,11 +479,27 @@ impl std::fmt::Display for HoldingProofError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotTokenAccount => write!(f, "account data is not a decodable SPL token account"),
+            Self::FrozenTokenAccount => {
+                write!(f, "frozen token account does not prove active custody")
+            }
+            Self::NativeTokenAccount => write!(
+                f,
+                "wrapped-native token account is outside the holding policy"
+            ),
             Self::WrongMint => write!(f, "account holds a different SPL mint than $DREGG"),
             Self::NotSplTokenProgram { owner_program } => write!(
                 f,
                 "account owned by program {:02x?} not the SPL Token program — data is not an authoritative balance",
                 &owner_program[..4]
+            ),
+            Self::UnsupportedTokenProgram { program_id } => write!(
+                f,
+                "program {:02x?} is neither canonical SPL Token nor Token-2022",
+                &program_id[..4]
+            ),
+            Self::DreggProgramMismatch => write!(
+                f,
+                "the live $DREGG mint is accepted only under canonical Token-2022"
             ),
             Self::WrongEpoch { evidence, table } => write!(
                 f,
@@ -297,6 +544,23 @@ impl std::fmt::Display for HoldingProofError {
 
 impl std::error::Error for HoldingProofError {}
 
+fn decode_holding_account(
+    account: &HoldingAccount,
+    policy: &HoldingAssetPolicy,
+) -> Result<DecodedTokenAccount, HoldingProofError> {
+    let expected_program = policy.program_id();
+    if account.owner_program != expected_program {
+        return Err(HoldingProofError::NotSplTokenProgram {
+            owner_program: account.owner_program,
+        });
+    }
+    let decoded = decode_token_account(&account.data, policy.token_program())?;
+    if &decoded.mint != policy.mint() {
+        return Err(HoldingProofError::WrongMint);
+    }
+    Ok(decoded)
+}
+
 /// **TRUSTED-TABLE holding verify — TEST/INTERNAL ONLY, un-shippable.**
 ///
 /// This is the LEGACY supplied-table path: `stake_table` is a **caller-supplied,
@@ -330,26 +594,32 @@ pub fn prove_holding_consensus(
     stake_table: &EpochStakeTable,
     require_poh: bool,
 ) -> Result<ProvenHolding, HoldingProofError> {
+    let policy = HoldingAssetPolicy::from_program_id(*dregg_mint, *spl_token_program)?;
+    prove_holding_consensus_with_policy(proof, &policy, stake_table, require_poh)
+}
+
+/// Policy-typed variant of [`prove_holding_consensus`].
+#[cfg(any(test, feature = "test-utils"))]
+pub fn prove_holding_consensus_with_policy(
+    proof: &HoldingProof,
+    policy: &HoldingAssetPolicy,
+    stake_table: &EpochStakeTable,
+    require_poh: bool,
+) -> Result<ProvenHolding, HoldingProofError> {
     let consensus = &proof.consensus;
     let acct = &proof.account;
 
-    // (1a) LOAD-BEARING: the account must be owned by the SPL Token program, or its
-    //      165-byte `data` is not an authoritative balance — an attacker's own
+    // (1a) LOAD-BEARING: the account must be owned by the policy's canonical token
+    //      program, or its data is not an authoritative balance — an attacker's own
     //      program can put `mint ‖ their_wallet ‖ u64::MAX` in an account it owns and
     //      get it into a genuine finalized accounts hash, forging arbitrary weight.
     //      Bind the owner program BEFORE trusting the decoded balance.
-    if &acct.owner_program != spl_token_program {
-        return Err(HoldingProofError::NotSplTokenProgram {
-            owner_program: acct.owner_program,
-        });
-    }
-
-    // (1b) decode the holder's own SPL token account and bind the mint.
-    let (mint, owner, amount) =
-        decode_spl_token_account(&acct.data).ok_or(HoldingProofError::NotTokenAccount)?;
-    if &mint != dregg_mint {
-        return Err(HoldingProofError::WrongMint);
-    }
+    let decoded = decode_holding_account(acct, policy)?;
+    let DecodedTokenAccount {
+        mint,
+        owner,
+        amount,
+    } = decoded;
 
     // (2) the stake table must be for the evidence epoch.
     if stake_table.epoch != consensus.epoch {
@@ -445,8 +715,8 @@ pub fn prove_holding_consensus(
 ///
 /// Verification (fail closed — any failure returns `Err`, never a
 /// `ConsensusVerified` holding):
-/// 1. the account is owned by the SPL Token program, its `data` decodes as an SPL
-///    token account, and its mint is `dregg_mint`;
+/// 1. the account is owned by the exact policy-selected canonical token program,
+///    its complete base/extension data validates, and its mint matches the policy;
 /// 2. the snapshot epoch's stake table is derived from bank state and trusted
 ///    back to `anchor` (root match at the anchor epoch + attested rotation to the
 ///    evidence epoch);
@@ -470,23 +740,29 @@ pub fn prove_holding_consensus_anchored(
     require_poh: bool,
     poh_policy: Option<&PohAnchorPolicy>,
 ) -> Result<ProvenHolding, HoldingProofError> {
+    let policy = HoldingAssetPolicy::from_program_id(*dregg_mint, *spl_token_program)?;
+    prove_holding_consensus_anchored_with_policy(proof, &policy, anchor, require_poh, poh_policy)
+}
+
+/// Production holding verifier with an exact mint/program policy object.
+pub fn prove_holding_consensus_anchored_with_policy(
+    proof: &HoldingProof,
+    policy: &HoldingAssetPolicy,
+    anchor: &WeakSubjectivityAnchor,
+    require_poh: bool,
+    poh_policy: Option<&PohAnchorPolicy>,
+) -> Result<ProvenHolding, HoldingProofError> {
     let consensus = &proof.consensus;
     let acct = &proof.account;
 
-    // (1a) LOAD-BEARING: the account must be owned by the SPL Token program, or
-    //      its 165-byte `data` is not an authoritative balance.
-    if &acct.owner_program != spl_token_program {
-        return Err(HoldingProofError::NotSplTokenProgram {
-            owner_program: acct.owner_program,
-        });
-    }
-
-    // (1b) decode the holder's own SPL token account and bind the mint.
-    let (mint, owner, amount) =
-        decode_spl_token_account(&acct.data).ok_or(HoldingProofError::NotTokenAccount)?;
-    if &mint != dregg_mint {
-        return Err(HoldingProofError::WrongMint);
-    }
+    // (1a) LOAD-BEARING: exact program ownership, full layout validation, and mint
+    //      binding are one policy-checked operation.
+    let decoded = decode_holding_account(acct, policy)?;
+    let DecodedTokenAccount {
+        mint,
+        owner,
+        amount,
+    } = decoded;
 
     // (2) derive the stake table FROM BANK STATE, trusted back to the pinned
     //     anchor — never a caller-supplied table.
@@ -584,16 +860,21 @@ pub fn observe_holding_structure(
     spl_token_program: &[u8; 32],
     observed_slot: u64,
 ) -> Result<ProvenHolding, HoldingProofError> {
-    if &account.owner_program != spl_token_program {
-        return Err(HoldingProofError::NotSplTokenProgram {
-            owner_program: account.owner_program,
-        });
-    }
-    let (mint, owner, amount) =
-        decode_spl_token_account(&account.data).ok_or(HoldingProofError::NotTokenAccount)?;
-    if &mint != dregg_mint {
-        return Err(HoldingProofError::WrongMint);
-    }
+    let policy = HoldingAssetPolicy::from_program_id(*dregg_mint, *spl_token_program)?;
+    observe_holding_structure_with_policy(account, &policy, observed_slot)
+}
+
+/// Structure-only observation with an exact mint/program policy object.
+pub fn observe_holding_structure_with_policy(
+    account: &HoldingAccount,
+    policy: &HoldingAssetPolicy,
+    observed_slot: u64,
+) -> Result<ProvenHolding, HoldingProofError> {
+    let DecodedTokenAccount {
+        mint,
+        owner,
+        amount,
+    } = decode_holding_account(account, policy)?;
     Ok(ProvenHolding {
         token_account: account.token_account,
         owner,
@@ -627,6 +908,7 @@ pub mod fixtures {
         d[SPL_MINT_OFFSET..SPL_MINT_OFFSET + 32].copy_from_slice(mint);
         d[SPL_OWNER_OFFSET..SPL_OWNER_OFFSET + 32].copy_from_slice(wallet);
         d[SPL_AMOUNT_OFFSET..SPL_AMOUNT_OFFSET + 8].copy_from_slice(&amount.to_le_bytes());
+        d[SPL_STATE_OFFSET] = AccountState::Initialized as u8;
         d
     }
 

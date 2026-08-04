@@ -24,9 +24,10 @@ use dregg_bridge::solana_consensus::{
     BankHashComponents, EpochStakeTable, PohSegment, ValidatorVote,
 };
 use dregg_bridge::solana_holdings::{
-    HoldingAccount, HoldingProof, HoldingProofError, SPL_ACCOUNT_LEN, SPL_AMOUNT_OFFSET,
-    SPL_MINT_OFFSET, SPL_OWNER_OFFSET, fixtures, observe_holding_structure,
-    prove_holding_consensus, prove_holding_consensus_anchored,
+    AcceptedTokenProgram, DREGG_MAINNET_DECIMALS, DREGG_MAINNET_MINT, HoldingAccount,
+    HoldingAssetPolicy, HoldingProof, HoldingProofError, SPL_ACCOUNT_LEN, SPL_AMOUNT_OFFSET,
+    SPL_MINT_OFFSET, SPL_OWNER_OFFSET, decode_token_account, fixtures, observe_holding_structure,
+    prove_holding_consensus, prove_holding_consensus_anchored, prove_holding_consensus_with_policy,
 };
 use dregg_bridge::solana_provenance::ProvenanceError;
 use dregg_bridge::solana_trustless::{ConsensusEvidence, LockProofTrust};
@@ -39,7 +40,10 @@ use ed25519_dalek::SigningKey;
 const DREGG_MINT: [u8; 32] = [0xABu8; 32];
 /// The SPL Token program that owns every token account (the account's owner *program*,
 /// not the holder wallet).
-const SPL_TOKEN_PROGRAM: [u8; 32] = [0x06u8; 32];
+const SPL_TOKEN_PROGRAM: [u8; 32] = [
+    0x06, 0xdd, 0xf6, 0xe1, 0xd7, 0x65, 0xa1, 0x93, 0xd9, 0xcb, 0xe1, 0x46, 0xce, 0xeb, 0x79, 0xac,
+    0x1c, 0xb4, 0x85, 0xed, 0x5f, 0x5b, 0x37, 0x91, 0x3a, 0x8c, 0xf5, 0x85, 0x7e, 0xff, 0x00, 0xa9,
+];
 /// The holder's own token account pubkey.
 const HOLDER_ACCOUNT: [u8; 32] = [0x42u8; 32];
 /// The holder wallet (SPL `Account.owner`) that controls `HOLDER_ACCOUNT`.
@@ -72,7 +76,120 @@ fn spl_account_data(mint: [u8; 32], owner: [u8; 32], amount: u64) -> Vec<u8> {
     d[SPL_MINT_OFFSET..SPL_MINT_OFFSET + 32].copy_from_slice(&mint);
     d[SPL_OWNER_OFFSET..SPL_OWNER_OFFSET + 32].copy_from_slice(&owner);
     d[SPL_AMOUNT_OFFSET..SPL_AMOUNT_OFFSET + 8].copy_from_slice(&amount.to_le_bytes());
+    d[108] = 1; // AccountState::Initialized
     d
+}
+
+/// Token-2022 account with a real extension header: AccountType::Account followed
+/// by the zero-sized ImmutableOwner TLV (ExtensionType discriminant 7).
+fn token_2022_account_data(mint: [u8; 32], owner: [u8; 32], amount: u64) -> Vec<u8> {
+    let mut d = spl_account_data(mint, owner, amount);
+    d.resize(170, 0);
+    d[165] = 2; // AccountType::Account
+    d[166..168].copy_from_slice(&7u16.to_le_bytes()); // ImmutableOwner
+    d[168..170].copy_from_slice(&0u16.to_le_bytes());
+    d
+}
+
+#[test]
+fn token_2022_extension_account_decodes_exact_fields() {
+    let data = token_2022_account_data(DREGG_MINT, HOLDER_WALLET, 98_765);
+    let decoded = decode_token_account(&data, AcceptedTokenProgram::Token2022)
+        .expect("valid extension-bearing Token-2022 account");
+    assert_eq!(decoded.mint, DREGG_MINT);
+    assert_eq!(decoded.owner, HOLDER_WALLET);
+    assert_eq!(decoded.amount, 98_765);
+    assert!(
+        decode_token_account(&data, AcceptedTokenProgram::Legacy).is_err(),
+        "legacy policy never reinterprets extension-bearing bytes"
+    );
+}
+
+#[test]
+fn token_2022_truncated_wrong_kind_and_duplicate_extensions_are_refused() {
+    let valid = token_2022_account_data(DREGG_MINT, HOLDER_WALLET, 1);
+
+    let mut truncated = valid.clone();
+    truncated[168..170].copy_from_slice(&4u16.to_le_bytes());
+    assert_eq!(
+        decode_token_account(&truncated, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NotTokenAccount
+    );
+
+    let mut mint_kind = valid.clone();
+    mint_kind[166..168].copy_from_slice(&1u16.to_le_bytes()); // TransferFeeConfig is mint-only
+    assert_eq!(
+        decode_token_account(&mint_kind, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NotTokenAccount
+    );
+
+    let mut wrong_account_type = valid.clone();
+    wrong_account_type[165] = 1; // AccountType::Mint
+    wrong_account_type.resize(382, 0); // the live mint's size is not a holder-account layout
+    assert_eq!(
+        decode_token_account(&wrong_account_type, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NotTokenAccount
+    );
+
+    let mut duplicate = valid;
+    duplicate.extend_from_slice(&7u16.to_le_bytes());
+    duplicate.extend_from_slice(&0u16.to_le_bytes());
+    assert_eq!(
+        decode_token_account(&duplicate, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NotTokenAccount
+    );
+}
+
+#[test]
+fn uninitialized_frozen_native_and_invalid_base_states_are_refused() {
+    let mut uninitialized = spl_account_data(DREGG_MINT, HOLDER_WALLET, 1);
+    uninitialized[108] = 0;
+    assert_eq!(
+        decode_token_account(&uninitialized, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NotTokenAccount
+    );
+
+    let mut frozen = spl_account_data(DREGG_MINT, HOLDER_WALLET, 1);
+    frozen[108] = 2;
+    assert_eq!(
+        decode_token_account(&frozen, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::FrozenTokenAccount
+    );
+
+    let mut native = spl_account_data(DREGG_MINT, HOLDER_WALLET, 1);
+    native[109..113].copy_from_slice(&1u32.to_le_bytes());
+    native[113..121].copy_from_slice(&2_039_280u64.to_le_bytes());
+    assert_eq!(
+        decode_token_account(&native, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NativeTokenAccount
+    );
+
+    let mut invalid_option = spl_account_data(DREGG_MINT, HOLDER_WALLET, 1);
+    invalid_option[72..76].copy_from_slice(&2u32.to_le_bytes());
+    assert_eq!(
+        decode_token_account(&invalid_option, AcceptedTokenProgram::Token2022).unwrap_err(),
+        HoldingProofError::NotTokenAccount
+    );
+}
+
+#[test]
+fn live_dregg_policy_is_exactly_token_2022() {
+    let policy = HoldingAssetPolicy::dregg_mainnet();
+    assert_eq!(policy.mint(), &DREGG_MAINNET_MINT);
+    assert_eq!(policy.token_program(), AcceptedTokenProgram::Token2022);
+    assert_eq!(DREGG_MAINNET_DECIMALS, 6);
+    assert_eq!(
+        bs58::encode(DREGG_MAINNET_MINT).into_string(),
+        "XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump"
+    );
+    assert_eq!(
+        HoldingAssetPolicy::new(DREGG_MAINNET_MINT, AcceptedTokenProgram::Legacy).unwrap_err(),
+        HoldingProofError::DreggProgramMismatch
+    );
+    assert!(matches!(
+        HoldingAssetPolicy::from_program_id(DREGG_MINT, [0xAA; 32]),
+        Err(HoldingProofError::UnsupportedTokenProgram { .. })
+    ));
 }
 
 /// Build the holder's own SPL token account with a real 16-ary accounts-hash inclusion:
@@ -317,6 +434,26 @@ fn wrong_mint_is_refused() {
     );
 }
 
+#[test]
+fn owner_and_amount_bytes_are_bound_by_finalized_inclusion() {
+    for (label, offset) in [("owner", SPL_OWNER_OFFSET), ("amount", SPL_AMOUNT_OFFSET)] {
+        let mut proof = supermajority_holding(500);
+        proof.account.data[offset] ^= 1;
+        assert_eq!(
+            prove_holding_consensus(
+                &proof,
+                &DREGG_MINT,
+                &SPL_TOKEN_PROGRAM,
+                &stake_table(),
+                false,
+            )
+            .unwrap_err(),
+            HoldingProofError::AccountsInclusionInvalid,
+            "tampered {label} must not survive the finalized account-hash proof"
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // (d2) THE FORGERY: an account owned by the ATTACKER'S program, carrying a valid
 //      SPL layout with a huge fake balance, GENUINELY included in a 2/3-signed
@@ -401,6 +538,26 @@ fn account_not_owned_by_spl_token_program_is_refused() {
             owner_program: attacker_program
         },
     );
+}
+
+#[test]
+fn token_2022_extension_account_reaches_consensus_verified_pipeline() {
+    let amount = 77_123u64;
+    let data = token_2022_account_data(DREGG_MINT, HOLDER_WALLET, amount);
+    let token_2022_program = AcceptedTokenProgram::Token2022.program_id();
+    let (account, accounts_hash) = account_owned_by(data, token_2022_program);
+    let proof = HoldingProof {
+        account,
+        consensus: consensus_signed_by(accounts_hash, &[vk(11), vk(12)], false),
+        stake_provenance: None,
+    };
+    let policy = HoldingAssetPolicy::new(DREGG_MINT, AcceptedTokenProgram::Token2022).unwrap();
+    let holding = prove_holding_consensus_with_policy(&proof, &policy, &stake_table(), false)
+        .expect("Token-2022 account verifies through the consensus-proven path");
+    assert!(holding.is_consensus_proven());
+    assert_eq!(holding.owner, HOLDER_WALLET);
+    assert_eq!(holding.mint, DREGG_MINT);
+    assert_eq!(holding.amount, amount);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
