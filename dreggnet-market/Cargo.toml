@@ -24,14 +24,20 @@ certified-clearing = ["dep:dregg-circuit-prove", "dep:fhegg-solver"]
 # existing executor-backed SETTLE path.  Kept separate from `certified-clearing`
 # because it consumes neither the public Cert-F program nor fhegg-solver.
 private-clearing = ["dep:dregg-circuit-prove", "dep:dungeon-on-dregg"]
+# Lightweight, fail-closed Path of Angels receipt ingress. This feature only
+# authenticates the exact signed envelope and applies deployment-selected wire
+# bounds; it deliberately cannot mint until the Lean transition verifier is
+# wired. Kept separate from the proof-heavy clearing tower so its hostile gate
+# remains cheap and explicitly discoverable.
+poa-expedition = ["dep:dungeon-on-dregg", "dep:ed25519-dalek"]
 # One canonical receipt must pass both the fixed private-book HidingFRI proof
 # and the exact authenticated roster quorum. This composes the two existing
 # opt-in towers without pulling the public Cert-F book.
 private-attested-clearing = [
     "private-clearing",
+    "poa-expedition",
     "dep:fhegg-fhe",
     "fhegg-fhe/amm-input-binding",
-    "dep:ed25519-dalek",
 ]
 # Authenticated Dark Bazaar receipt: co-endorse the complete certified settlement
 # and ciphertext digests in fhegg-fhe's canonical claim, under a selected quorum.
@@ -94,6 +100,11 @@ required-features = ["dark-pool-offering"]
 name = "private_bfv_attested_clearing"
 path = "tests/private_bfv_attested_clearing.rs"
 required-features = ["private-attested-clearing"]
+
+[[test]]
+name = "poa_expedition_ingress"
+path = "tests/poa_expedition_ingress.rs"
+required-features = ["poa-expedition"]
 
 [[test]]
 name = "private_clearing_apex_e2e"

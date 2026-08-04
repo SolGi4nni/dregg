@@ -1,13 +1,15 @@
-//! Dark Bazaar private-clearing apex: encrypted custody to a real game consequence.
+//! Path of Angels ingress refusal plus the existing private-clearing crown.
 //!
 //! This integration deliberately uses one settlement authorization. Four canonical
 //! side-hiding BFV rows are proved to open the same private book/root as the
 //! Lean-authored HidingFRI clearing proof; a relying-party-selected native-PQ
 //! quorum signs that complete claim with paired Ed25519 + ML-DSA-65 identities;
 //! and the frontend-neutral fhEgg wire hands the receipt to the existing atomic
-//! executor-backed Dark Bazaar settlement. The selected player buys the original
-//! provenance-carrying Descent asset at the proved price in the same process-local
-//! commit.
+//! executor-backed Dark Bazaar settlement. The PoA envelope is exercised first,
+//! but issuer authentication alone is deliberately refused until the actual
+//! Lean-owned transition verifier is wired. The remainder preserves the generic
+//! private DrEX crown over an existing provenance-carrying Descent asset; it must
+//! not be cited as a completed PoA salvage mint.
 //!
 //! The pre-settlement game survives a real `FileResumeStore` process boundary and
 //! exposes the same binary-operation descriptor used by web/bot adapters. After
@@ -74,12 +76,16 @@ use dreggnet_market::fhegg_transport::{
     FheggSettlementOperation,
 };
 use dreggnet_market::fhegg_verifier_registry::PrivateBfvHostedVerifierConfig;
+use dreggnet_market::poa_expedition::{
+    PoaContributionBounds, PoaContributionClaim, PoaExpeditionClaim, PoaExpeditionError,
+    PoaExpeditionPolicy, PoaExpeditionReceipt, PoaSalvageMinter,
+};
 use dreggnet_market::private_attested_clearing::{
     PrivateAttestedClearingPolicy, private_order_root_commitment,
 };
 use dreggnet_market::private_bfv_attested_clearing::{
     PrivateBfvAttestedClearingVerifier, PrivateBfvAttestedVerifierConfigError,
-    PrivateBfvQuorumSecurity,
+    PrivateBfvAuthorityError, PrivateBfvQuorumSecurity,
 };
 use dreggnet_market::{DarkBazaarOffering, DarkBazaarSession, TURN_LIST};
 use dreggnet_offerings::dungeon::{DungeonOffering, PRIVATE_RAID_OPERATION};
@@ -91,13 +97,16 @@ use dreggnet_trade::{LegSpec, TradeWorld};
 use dungeon_on_dregg::loot::{LootVault, roll_drop};
 use dungeon_on_dregg::private_raid::{RaidRole, prove_private_assignment};
 use dungeon_on_dregg::{KP_DESCEND, KP_PRESS_ON, KP_PRIVATE_RAID_MENDER_CHOICES, KP_TRADE_BLOWS};
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer as _, SigningKey};
 use fhegg_fhe::attestation::{
     AttestationError, AttestedClearingReceipt, BfvPublicIdentity, ComputationIntegrityEvidence,
     ComputationIntegrityResidual, ComputationIntegrityVerifier, ExpectedClearingContext,
     InMemoryReplayGuard, InputDigest, NativePqAuthenticatedQuorumVerifier, NativePqPartyPublicKey,
+    QuorumVerifierError,
 };
-use fhegg_fhe::boundary::{MaskedBoundaryParty, MaskedDecryptCoordinator, MaskedDecryptSession};
+use fhegg_fhe::boundary::{
+    BoundaryError, MaskedBoundaryParty, MaskedDecryptCoordinator, MaskedDecryptSession,
+};
 use fhegg_fhe::mpc_party::preprocessing_use::{
     PreprocessingUseError, PreprocessingUseLedger, PreprocessingUseState, ReservedTripleMaterial,
 };
@@ -380,6 +389,23 @@ fn derive_packed_private_book_shares(
                 .to_wire_bytes()
         })
         .collect::<Vec<_>>();
+    assert_eq!(
+        masked.open_framed(&decrypt_wires[..1], params),
+        Err(BoundaryError::QuorumTooSmall { have: 1, need: 2 }),
+        "one of two BFV shares cannot open the masked private book",
+    );
+    let mut wrong_target = folded.ciphertext().clone();
+    wrong_target.polys[0].rows[0][0] =
+        (wrong_target.polys[0].rows[0][0] + 1) % wrong_target.moduli[0];
+    let wrong_share = threshold_parties[0]
+        .partial_decrypt(&wrong_target, MIN_SMUDGE_BITS)
+        .expect("well-formed share for the wrong ciphertext")
+        .to_wire_bytes();
+    assert_eq!(
+        masked.open_framed(&[wrong_share, decrypt_wires[1].clone()], params),
+        Err(BoundaryError::SessionMismatch),
+        "a share for another ciphertext cannot join this opening session",
+    );
     let opening = masked
         .open_framed(&decrypt_wires, params)
         .expect("full threshold roster opens only the padded fold");
@@ -729,18 +755,127 @@ impl Drop for ScratchDir {
 /// This is a minutes-class release-only test because it produces the fixed
 /// n=4096 Bulletproof. Route the whole binary through nextest's `heavy` profile.
 #[test]
-fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequence() {
+fn poa_receipt_refuses_unjudged_then_generic_private_drex_crown_still_lands() {
     support::install_verified_settlement_gate();
     let mut timing = ApexPhaseTimings::new("verified-pq-runtime-install");
     install_verified_turn_pq_runtime();
     let scratch = ScratchDir::new();
     timing.next("fixture-world-and-collective-keygen");
 
-    // The listed good is a genuine fair-drawn Descent note, not a market remint.
+    // Exercise the PoA signing/admission envelope first. It may not mint until
+    // the actual Lean-owned transition verifier judges the receipt.
     let run_seed = CommittedSeed::from_bytes([0xD4; 32]);
-    let draw = roll_drop(&run_seed, "boss:the Lantern Eater", 0);
     let mut vault = LootVault::new();
-    let loot = vault.claim(SELLER, &draw).expect("fair Descent drop");
+    let poa_federation = [0xA1; 32];
+    let poa_session = [0xA2; 32];
+    let poa_mission = [0xA3; 32];
+    let poa_artifact = [0xA4; 32];
+    let poa_run_receipt = [0xA5; 32];
+    let poa_pre_state = [0xA7; 32];
+    let poa_post_state = [0xA8; 32];
+    let poa_issuer = SigningKey::from_bytes(&[0xA6; 32]);
+    let poa_player_key = vault.pubkey_of(SELLER);
+    let contribution = PoaContributionClaim {
+        intel: 3,
+        supplies: 1,
+        cohesion: 2,
+        influence: 0,
+        score: 17,
+        relics: vec![447_001],
+    };
+    let contribution_bounds = PoaContributionBounds {
+        intel: 8,
+        supplies: 8,
+        cohesion: 8,
+        influence: 8,
+        score: 100,
+    };
+    let poa_claim = PoaExpeditionClaim::new(
+        poa_federation,
+        poa_session,
+        poa_mission,
+        poa_artifact,
+        poa_run_receipt,
+        poa_pre_state,
+        poa_post_state,
+        SELLER,
+        poa_player_key,
+        1,
+        447,
+        0,
+        contribution,
+        *run_seed.as_bytes(),
+    );
+    let poa_receipt = PoaExpeditionReceipt::issue(poa_claim.clone(), &poa_issuer);
+    let poa_policy = PoaExpeditionPolicy::new(
+        poa_federation,
+        poa_session,
+        poa_mission,
+        poa_artifact,
+        contribution_bounds,
+        poa_issuer.verifying_key(),
+    );
+    let mut salvage_minter = PoaSalvageMinter::new(poa_policy);
+
+    let mut forged = poa_receipt.clone();
+    forged.signature[0] ^= 1;
+    assert_eq!(
+        salvage_minter.mint(&mut vault, &forged).unwrap_err(),
+        PoaExpeditionError::InvalidSignature
+    );
+    let mut wrong_domain_message = b"pathofangels.network/wrong-domain/v1\0".to_vec();
+    wrong_domain_message.extend_from_slice(&poa_claim.canonical_fields());
+    let wrong_domain = PoaExpeditionReceipt {
+        claim: poa_claim.clone(),
+        signature: poa_issuer.sign(&wrong_domain_message).to_bytes(),
+    };
+    assert_eq!(
+        salvage_minter.mint(&mut vault, &wrong_domain).unwrap_err(),
+        PoaExpeditionError::InvalidSignature,
+        "a signature under another domain cannot authenticate a PoA run receipt",
+    );
+    for (mutation, expected_error) in [
+        (0, PoaExpeditionError::WrongFederation),
+        (1, PoaExpeditionError::WrongSession),
+        (2, PoaExpeditionError::WrongMission),
+        (3, PoaExpeditionError::WrongArtifact),
+        (4, PoaExpeditionError::ContributionOutOfBounds),
+        (5, PoaExpeditionError::ContributionOutOfBounds),
+    ] {
+        let mut claim = poa_claim.clone();
+        match mutation {
+            0 => claim.federation[0] ^= 1,
+            1 => claim.session[0] ^= 1,
+            2 => claim.mission[0] ^= 1,
+            3 => claim.artifact_digest[0] ^= 1,
+            4 => claim.contribution.score = contribution_bounds.score + 1,
+            5 => claim.contribution.relics = vec![447_001, 447_001],
+            _ => unreachable!(),
+        }
+        let hostile = PoaExpeditionReceipt::issue(claim, &poa_issuer);
+        assert_eq!(
+            salvage_minter.mint(&mut vault, &hostile).unwrap_err(),
+            expected_error
+        );
+    }
+    assert_eq!(vault.item_count(), 0, "hostile PoA receipts mint nothing");
+    assert_eq!(
+        salvage_minter.mint(&mut vault, &poa_receipt).unwrap_err(),
+        PoaExpeditionError::MissingTransitionVerifier,
+        "issuer authentication cannot stand in for the absent Lean transition judge",
+    );
+    assert_eq!(
+        vault.item_count(),
+        0,
+        "an unjudged PoA receipt mints nothing"
+    );
+
+    // Preserve the already-real generic DrEX crown below without pretending
+    // this note came from the refused PoA ingress.
+    let generic_draw = roll_drop(&run_seed, "boss:the Lantern Eater", 0);
+    let loot = vault
+        .claim(SELLER, &generic_draw)
+        .expect("existing generic Descent provenance note");
     let mut world = TradeWorld::with_assets(vault.into_assets());
     world.fund_dregg(SELLER, 0);
     world.fund_dregg(WINNER, 3);
@@ -1208,6 +1343,10 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
                 .expect("committee signs the exact complete claim")
         })
         .collect::<Vec<_>>();
+    assert!(matches!(
+        quorum.assemble_evidence(&receipt.claim, &signatures[..1]),
+        Err(QuorumVerifierError::InsufficientSignatures { have: 1, need: 2 })
+    ));
     timing.next("receipt-assembly-hidingfri-and-bfv-verify");
     receipt.computation_integrity = assembly_verifier
         .assemble_native_post_quantum_evidence(
@@ -1218,6 +1357,45 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
         )
         .expect("native-PQ quorum + HidingFRI + BFV evidence compose");
 
+    let wrong_mpc_session = PartyMpcSession::new(
+        [0xB1; 32],
+        2,
+        dark_bazaar_private::PRICE_COUNT,
+        VALUE_BITS,
+        params.plaintext_modulus(),
+        Duration::from_secs(60),
+    )
+    .expect("shape-valid wrong settlement session");
+    let wrong_session_expected = ExpectedClearingContext {
+        session: &wrong_mpc_session,
+        ..expected
+    };
+    assert!(matches!(
+        assembly_verifier.verify_authority(&receipt, &wrong_session_expected),
+        Err(PrivateBfvAuthorityError::Binding(_))
+    ));
+    let mut wrong_roster = expected.ordered_roster.to_vec();
+    wrong_roster.swap(0, 1);
+    let wrong_roster_expected = ExpectedClearingContext {
+        ordered_roster: &wrong_roster,
+        ..expected
+    };
+    assert!(matches!(
+        assembly_verifier.verify_authority(&receipt, &wrong_roster_expected),
+        Err(PrivateBfvAuthorityError::Binding(_))
+    ));
+    let mut tampered_receipt = receipt.clone();
+    let ComputationIntegrityEvidence::External { evidence, .. } =
+        &mut tampered_receipt.computation_integrity
+    else {
+        unreachable!("crown receipt carries the composite proof")
+    };
+    *evidence.last_mut().expect("nonempty composite proof") ^= 1;
+    assert_eq!(
+        assembly_verifier.verify_authority(&tampered_receipt, &expected),
+        Err(PrivateBfvAuthorityError::InvalidCompositeEvidence)
+    );
+
     timing.next("public-wire-and-host-journal");
     let bundle = FheggSettlementBundle::new(&expected, &receipt).expect("public operation bundle");
     let wire = bundle.to_wire_bytes();
@@ -1226,6 +1404,18 @@ fn private_bfv_receipt_survives_restart_and_authorizes_the_real_bazaar_consequen
             .expect("strict transport round trip")
             .to_wire_bytes(),
         wire
+    );
+    let mut tampered_wire = wire.clone();
+    *tampered_wire.last_mut().expect("nonempty crown artifact") ^= 1;
+    let tampered_bundle = FheggSettlementBundle::from_wire_bytes(&tampered_wire)
+        .expect("an evidence-bit substitution can remain structurally well formed");
+    assert_eq!(
+        assembly_verifier.verify_authority(
+            tampered_bundle.receipt(),
+            &tampered_bundle.expected_context(),
+        ),
+        Err(PrivateBfvAuthorityError::InvalidCompositeEvidence),
+        "the relying-party verifier refuses a tampered public crown artifact before settlement",
     );
     for secret_seed in [[0x71; 32], [0x72; 32], [0x73; 32], [0x74; 32]] {
         assert!(

@@ -84,6 +84,13 @@ pub mod private_bazaar_journey;
 #[cfg(feature = "private-clearing")]
 pub mod private_bazaar_live_host;
 
+/// Path of Angels expedition ingress: authenticate one PoA-federation run
+/// envelope and enforce its deployment-selected session and wire bounds. It
+/// deliberately refuses salvage minting until the Lean-owned transition
+/// verifier is wired; an issuer signature is not game-semantic authority.
+#[cfg(feature = "poa-expedition")]
+pub mod poa_expedition;
+
 /// Composite integrity verifier: the same canonical fhEgg receipt must carry
 /// both an authenticated roster quorum and the fixed private-book HidingFRI
 /// proof. The BFV-ciphertext/private-root same-opening relation remains named.
