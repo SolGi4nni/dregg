@@ -240,6 +240,38 @@ theorem the_unread_cells_are_assert_outputs_a_dead_split_and_two_lanes :
 scalar challenge. Nine more — the eight feature flags and the `Opt`'s own flag — are the CONSTANT
 partition `multiscale_known` folds outside the circuit, so they own no variable at all. -/
 
+/-! ### ⚑⚑ §C4′ — **THE WIRING IDENTITIES ARE GENERAL, AND FOUR OF THEM WERE STATED AS INSTANCES.**
+
+Every claim below held at `shapeStep` because it holds at EVERY shape, definitionally: `vCipBit` IS
+`bpOdd s 0` by its own `def`, `bpScalV`'s `k = 0` arm IS `vCipShift s`, and `stmtVar`'s index chain
+routes 11 and 39 to `vStmtWrapMsgs`/`vStmtLookup` with no shape field in sight. Stating them at a
+committed shape inside a `native_decide` made four definitional unfoldings read as measurements and
+put them behind `#assert_compiled` (the compiler) rather than `#assert_axioms` (the kernel).
+
+⚠ **AND SAY WHAT THAT MEANS: `vCipBit s = bpOdd s 0` IS DECORATION, not a gate** — a constant
+against its own definition, which cannot fail. It is stated here so the reader can see that, rather
+than deleted, because §C5's `cip`-bit closure genuinely turns on it; the claim that CAN fail is
+`msgVar shapeStep (oCip shapeStep) 1 = bpOdd shapeStep 0` (the transcript's second `cip` item is the
+ladder's `s_odd`), which depends on `blockRound`/`tCommBlock` missing at that source and is therefore
+a real fact about this shape's schedule. That one stays a `native_decide` below. -/
+
+/-- ⚑ The four routing identities, at EVERY shape, in the kernel. -/
+theorem the_cip_and_statement_wirings_are_definitional (s : StepShape) :
+    vCipBit s = bpOdd s 0
+    ∧ bpScalV s 0 = vCipShift s
+    ∧ stmtVar s 11 = vStmtWrapMsgs s
+    ∧ stmtVar s 39 = vStmtLookup s :=
+  ⟨rfl, rfl, rfl, rfl⟩
+#assert_axioms the_cip_and_statement_wirings_are_definitional
+
+/-- …and the two sourceless words' ladder WIDTHS, which carry no shape either: `msmChunksAt` is a
+function of the statement word's own bit width (§1b), so 51 and 26 are facts about `Spec.pack` and
+not about `shapeStep`. Closed by `decide` in the kernel. -/
+theorem the_two_sourceless_words_ladder_widths :
+    msmChunksAt 11 = 51 ∧ msmChunksAt 39 = 26 ∧ STMT_LOOKUP_VAL = 0 := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+#assert_axioms the_two_sourceless_words_ladder_widths
+
 /-- ⚑ **WORDS 11 AND 39 REACH EXACTLY ONE CELL EACH** — their own `var_base_mul` counter, and
 nothing else. That is what "no in-circuit source" means as a measurement: the ladder READS the word,
 so `x_hat` moves with it, and no row WRITES it.
@@ -256,7 +288,18 @@ derive it if lookups were ON.**
 `Challenge`-width fixture; it is now `0`, which is what
 `~lookup_parameters:{ zero = { var = { challenge = Field.zero } } }` (`step_main.ml:90-95`) and
 `Common.Lookup_parameters.tick_zero` (`common.ml:105-118`) make the `Opt`'s dummy scalar challenge.
-That pins the VALUE and nothing else: the cell count is unchanged and no row writes it. -/
+That pins the VALUE and nothing else: the cell count is unchanged and no row writes it.
+
+⚑ **CLASSIFIED 2026-08-03: EVERY CONJUNCT OF THIS THEOREM IS SHAPE-FREE, AND §C4′ NOW SAYS SO IN THE
+KERNEL AND OVER EVERY SHAPE.** `stmtVar _ 11`/`stmtVar _ 39` route by an index chain with no shape
+field in it, `STMT_LOOKUP_VAL` is a constant, and `msmChunksAt` takes no shape at all — so
+`shapeStep` here is decoration, not a measurement. The statement is kept VERBATIM because
+`prover-freedom-ratchet.mjs` reads `STMT_LOOKUP_VAL`'s pin out of this theorem by name; §C4′ is the
+strictly stronger form and this is its `shapeStep` instance. The claim about these two words that is
+NOT free — each owns exactly one permutation cell in the emitted schedule — is §C7's census
+(`occAt occStep (vStmtWrapMsgs shapeStep) = 1`), which is where it has to live: naming `occStep` in a
+second command would re-run `mkStep shapeStep` and the whole `r9_opening` row set, because sharing of
+a nullary constant is per COMMAND. -/
 theorem the_two_sourceless_statement_words_reach_only_their_own_ladder :
     (stmtVar shapeStep 11 = vStmtWrapMsgs shapeStep
      ∧ stmtVar shapeStep 39 = vStmtLookup shapeStep
@@ -323,7 +366,15 @@ absorbed bit IS the parity that row forces off `vCipShift`.
 longer free OF THE ASSEMBLY — flipping it moves `bpDiv2 0`, hence `uc`, `q` and `lhs`, so the second
 transcript costs a re-solved `G`. **Upstream's gadget carries the same residual**
 (`wrap_main.ml:64-67` defers the fit-check to `scale_fast2`, which checks 254 bits, not `< p/2`), so
-this is a fidelity match and not a proof that one transcript remains. -/
+this is a fidelity match and not a proof that one transcript remains.
+
+⚑ **CLASSIFIED 2026-08-03.** Conjuncts 1, 2 and 4 (`vCipBit _ = bpOdd _ 0` at both shapes and
+`bpScalV _ 0 = vCipShift _`) are DEFINITIONAL — `vCipBit` is `bpOdd s 0` by its own `def` and
+`bpScalV`'s `k = 0` arm is `vCipShift s` — and §C4′ proves them in the kernel for every shape. They
+cannot fail; they are decoration and are labelled as such rather than read as measurements. The
+conjuncts that CAN fail are the third — `msgVar shapeStep (oCip shapeStep) 1 = bpOdd shapeStep 0`,
+which holds only because `blockRound`/`tCommBlock` miss at that source, i.e. a fact about THIS
+shape's schedule — and the last two, which are values. -/
 theorem the_cip_bit_is_ladder_zeros_derived_parity :
     (vCipBit shapeSmoke = bpOdd shapeSmoke 0
      ∧ vCipBit shapeStep = bpOdd shapeStep 0

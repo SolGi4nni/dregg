@@ -646,10 +646,12 @@ def tPadCell (s : StepShape) : Option (Nat × Nat) :=
 
 /-- Which blocks a squeeze reads the output of — where `transcriptRows` puts a σ-only probe, exactly
 as it did when every squeeze had its own block. -/
-def tProbeAfter (s : StepShape) (b : Nat) : Bool :=
-  -- ⚑ one `spLay`, not five: the two `.sq` reads and the two `tBlocks` were four more layouts.
-  let L := spLay s
+def tProbeAfterL (L : SpLay) (b : Nat) : Bool :=
   (L.sq.any (fun p => p.1 == b + 1)) || (b + 1 == L.cur && !L.sq.any (fun p => p.1 == L.cur))
+/-- ⚑ one `spLay`, not five: the two `.sq` reads and the two `tBlocks` were four more layouts. And
+`transcriptRows` calls `tProbeAfterL` against the layout it already holds, so the whole per-block
+scan costs ONE layout rather than one per block. -/
+def tProbeAfter (s : StepShape) (b : Nat) : Bool := tProbeAfterL (spLay s) b
 
 /-- ⚑ **`u`'s squeeze index.** `let u = group_map (Sponge.squeeze_field sponge)` (`:263-266`) is the
 squeeze that follows absorb source `oCip`, so its index is the number of squeezes scheduled before
@@ -684,8 +686,10 @@ region above it) can ask `spLay` once instead of twice. -/
 def nStOf (tb : Nat) : Nat := 3 * (tb + 1)
 def nSt (s : StepShape) : Nat := nStOf (tBlocks s)
 
-/-- Post-absorb lane `j ∈ {0,1}` of block `b`. -/
-def vPost (s : StepShape) (b j : Nat) : PVar := xv (nSt s + 2 * b + j)
+/-- Post-absorb lane `j ∈ {0,1}` of block `b`. ⚑ The `…At` form takes `nSt s` — see `mpxAt`'s note;
+`circuitEnv` and `transcriptRows` both name this once per (block, lane). -/
+def vPostAt (nst : Nat) (b j : Nat) : PVar := xv (nst + 2 * b + j)
+def vPost (s : StepShape) (b j : Nat) : PVar := vPostAt (nSt s) b j
 /-- ⚑ **THE TRANSCRIPT'S ONE PAD CELL**, pinned to zero by `transcriptRows` — the single rate-2 lane
 an odd item count leaves without an arrival (`tPadCell`). ⚠ It REPLACES the whole `vMsg` region: with
 the item stream every one of `N_ABSORB_ITEMS` words is a variable some sub-circuit reads, so there is
@@ -725,8 +729,21 @@ def vLift (s : StepShape) (c : Nat) : PVar := xv (baseLift s + s.chals + c)
 def vEndoR (s : StepShape) : PVar := xv (baseLift s + 2 * s.chals)
 
 def baseMsm (s : StepShape) : Nat := baseLift s + 2 * s.chals + 1
-def mpx (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p)
-def mpy (s : StepShape) (p : Nat) : PVar := xv (baseMsm s + 2 * p + 1)
+/-! ### ⚑⚑ **A VARIABLE NAME COSTS A TRANSCRIPT LAYOUT, AND THE `…At` FORMS ARE WHY IT NEED NOT.**
+
+Every region base above the transcript is `baseN s + <shape arithmetic>` and `baseN s` bottoms out in
+`tBlocks s = (spLay s).cur`, which is a FUNCTION of the shape and therefore caches nothing. MEASURED
+2026-08-03 after the `SrcOrd` hoist: `spLay shapeStep` is under a millisecond and `baseFtc shapeStep`
+is **1 ms** — for ONE variable-name lookup. The fifteen `rungRows … .opening` families cost
+**15 879 ms** for 10 756 rows, i.e. about five such lookups a row, and that is essentially all of it.
+
+So each hot region gets an `…At` form taking the base as an argument, with the shape-form defined
+THROUGH it — exactly `sqAfter`/`sqAfterAt`'s shape, so the two cannot drift and every existing `rfl`
+still holds by delta. A row emitter binds `let b := baseX s` once and names `xAt b` per row. -/
+def mpxAt (b : Nat) (p : Nat) : PVar := xv (b + 2 * p)
+def mpyAt (b : Nat) (p : Nat) : PVar := xv (b + 2 * p + 1)
+def mpx (s : StepShape) (p : Nat) : PVar := mpxAt (baseMsm s) p
+def mpy (s : StepShape) (p : Nat) : PVar := mpyAt (baseMsm s) p
 /-- MSM term `i`'s base point. ⚑ CUMULATIVE since §1b: term `i` owns `msmChunksAt i + 2` points
 (its base and its `msmChunksAt i + 1` accumulator boundaries), and the widths differ per word. -/
 def pT (_s : StepShape) (i : Nat) : Nat := msmChunkPrefix i + 2 * i
@@ -743,8 +760,12 @@ def baseSN (s : StepShape) : Nat := baseMsm s + 2 * nMsmPts s
 
 
 def baseIpa (s : StepShape) : Nat := baseSN s + msmChunkPrefix s.msmTerms
-def ipx (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p)
-def ipy (s : StepShape) (p : Nat) : PVar := xv (baseIpa s + 2 * p + 1)
+/-- ⚑ The `…At` forms — see `mpxAt`'s note. `ipx`/`ipy` are the hottest names in the assembly:
+`endoRoundRows` alone asks for five of them per `endo_mul` block, 32 blocks a ladder, 77 ladders. -/
+def ipxAt (b : Nat) (p : Nat) : PVar := xv (b + 2 * p)
+def ipyAt (b : Nat) (p : Nat) : PVar := xv (b + 2 * p + 1)
+def ipx (s : StepShape) (p : Nat) : PVar := ipxAt (baseIpa s) p
+def ipy (s : StepShape) (p : Nat) : PVar := ipyAt (baseIpa s) p
 /-- IPA round `r`'s `endo_mul` base point. ⚑ The per-round stride is `ipaBlocks + 3` and not `+ 2`
 since 2026-08-02: the third slot is `Scalar_challenge.endo`'s own seed intermediate. -/
 def qT (s : StepShape) (r : Nat) : Nat := r * (s.ipaBlocks + 3)
@@ -785,22 +806,31 @@ def nIpaPts (s : StepShape) : Nat := s.ipaRounds * (s.ipaBlocks + 3) + s.ipaRoun
 
 def baseQN (s : StepShape) : Nat := baseIpa s + 2 * nIpaPts s
 /-- IPA round `r`'s endo scalar counter after `e` blocks; at `e = ipaBlocks` it IS the round's
-challenge variable. -/
-def vQN (s : StepShape) (r e : Nat) : PVar :=
+challenge variable.
+
+⚑ The `…At` form takes `baseQN s` — see `mpxAt`'s note. `EndoSlots.n` is a PARTIAL APPLICATION of
+this, so the base is evaluated once per ladder rather than once per `endo_mul` block; the terminal
+`vN` branch fires once a ladder and keeps its own chain. -/
+def vQNAt (s : StepShape) (bq : Nat) (r e : Nat) : PVar :=
   if e == s.ipaBlocks then vN s (s.ipaChal r) s.emsRows
-  else xv (baseQN s + r * s.ipaBlocks + e)
+  else xv (bq + r * s.ipaBlocks + e)
+def vQN (s : StepShape) (r e : Nat) : PVar := vQNAt s (baseQN s) r e
 /-- ⚑ `Field.scale xt Endo.base` — the endomorphism image's x, the SECOND operand of
 `scalar_challenge.ml:232`'s `add_fast`. One `Generic` half per round pins it to `endo·xt`, so the
 seed's provenance is the base and a constant rather than a witness. -/
-def vQEndo (s : StepShape) (r : Nat) : PVar := xv (baseQN s + s.ipaRounds * s.ipaBlocks + r)
+def vQEndoAt (s : StepShape) (bq : Nat) (r : Nat) : PVar :=
+  xv (bq + s.ipaRounds * s.ipaBlocks + r)
+def vQEndo (s : StepShape) (r : Nat) : PVar := vQEndoAt s (baseQN s) r
 /-- The `c`-endo tail's own counter chain; at `e = ipaBlocks` it IS `c`'s challenge variable, so the
 value the ladder multiplies by is the one `to_field_checked` decoded from the LAST squeeze. -/
-def vLhsN (s : StepShape) (e : Nat) : PVar :=
+def vLhsNAt (s : StepShape) (bq : Nat) (e : Nat) : PVar :=
   if e == s.ipaBlocks then vN s (sqScheduled s - 1) s.emsRows
-  else xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + e)
+  else xv (bq + s.ipaRounds * s.ipaBlocks + s.ipaRounds + e)
+def vLhsN (s : StepShape) (e : Nat) : PVar := vLhsNAt s (baseQN s) e
 /-- …and its seed's `endo·x_q`. -/
-def vLhsEndo (s : StepShape) : PVar :=
-  xv (baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks)
+def vLhsEndoAt (s : StepShape) (bq : Nat) : PVar :=
+  xv (bq + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks)
+def vLhsEndo (s : StepShape) : PVar := vLhsEndoAt s (baseQN s)
 
 /-- ⚑⚑ **`t`, the argument `group_map` actually gets — the FULL field element.** `:264` is
 `Sponge.squeeze_field`, NOT `squeeze_scalar`: there is no `lowest_128_bits`, no `to_field_checked`
@@ -850,8 +880,10 @@ produced it is. ⚑ …and since 2026-08-02 the THIRD non-round point is `G`, th
 def nOnC (s : StepShape) : Nat := (absRoundList s).length + tCommN s + 3
 def baseOnC (s : StepShape) : Nat :=
   baseQN s + s.ipaRounds * s.ipaBlocks + s.ipaRounds + s.ipaBlocks + 1
-def vOcX2 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k)
-def vOcX3 (s : StepShape) (k : Nat) : PVar := xv (baseOnC s + 2 * k + 1)
+def vOcX2At (b : Nat) (k : Nat) : PVar := xv (b + 2 * k)
+def vOcX3At (b : Nat) (k : Nat) : PVar := xv (b + 2 * k + 1)
+def vOcX2 (s : StepShape) (k : Nat) : PVar := vOcX2At (baseOnC s) k
+def vOcX3 (s : StepShape) (k : Nat) : PVar := vOcX3At (baseOnC s) k
 
 def baseDef (s : StepShape) : Nat := baseOnC s + 2 * nOnC s
 /-- `ζ^{2^k}` in the deferred product (`k = 0..bRounds`). -/
@@ -1621,9 +1653,10 @@ statement word `i`** — the cross-sub-circuit wire, and since 2026-08-03 a wire
 actually carries rather than to a round-robin transcript challenge. ⚠ On a ZERO-chunk term
 (`msmBits i = 1`) the two coincide at `j = 0`, so the term has no counter cell of its own at all —
 which is what a ladder with no chunk rows means. -/
-def vSN (s : StepShape) (i j : Nat) : PVar :=
+def vSNAt (s : StepShape) (bs : Nat) (i j : Nat) : PVar :=
   if j == msmChunksAt i then stmtVar s i
-  else xv (baseSN s + msmChunkPrefix i + j)
+  else xv (bs + msmChunkPrefix i + j)
+def vSN (s : StepShape) (i j : Nat) : PVar := vSNAt s (baseSN s) i j
 
 /-! ## §3 — the row-schedule primitives. -/
 
@@ -1945,12 +1978,27 @@ row COUNT is unchanged by that — `absorbs` absorb rows, `blocks` permutations,
 plus one at the last absorb — but every squeeze's POSITION moves, so every challenge value moves and
 with it every ladder the challenges drive. -/
 
-/-- The 56 states of one permutation, `s(0) = st` through `s(55)`, ONE round per step. -/
+/-- The 56 states of one permutation, `s(0) = st` through `s(55)`, ONE round per step.
+
+⚑ The trajectory is built NEWEST-FIRST and reversed once, so a round costs one cons and an O(1)
+`headD` instead of `acc ++ [x]`'s copy of everything already there plus `acc.getLastD`'s walk to the
+end. That was 2·Σ₅₅ ≈ 3 000 list cells per permutation, and the assembly runs a few hundred
+permutations per `mkStep` — the same defect `spStep` carried in §1c′, in the inner loop. The FINAL
+value is unchanged, and `permStates_is_the_forward_fold` states that generally, by `rfl`. -/
 def permStates (st : List Nat) : List (List Nat) :=
-  (List.range 55).foldl
+  ((List.range 55).foldl
     (fun acc i =>
-      acc ++ [Dregg2.Circuit.Emit.PastaPoseidon.Ref.round (rcsN.getD i []) (acc.getLastD st)])
-    [st]
+      Dregg2.Circuit.Emit.PastaPoseidon.Ref.round (rcsN.getD i []) (acc.headD st) :: acc)
+    [st]).reverse
+
+/-- ⚑ **THE HOIST IS THE THING IT HOISTS** — general over every input state, by `rfl`, so the
+reversed accumulator cannot drift from the forward fold it replaces. -/
+theorem permStates_is_the_forward_fold (st : List Nat) :
+    permStates st
+      = (List.range 55).foldl
+          (fun acc i =>
+            acc ++ [Dregg2.Circuit.Emit.PastaPoseidon.Ref.round (rcsN.getD i []) (acc.getLastD st)])
+          [st] := rfl
 
 /-- Lane `j` of round state `k`. -/
 def stLane (ss : List (List Nat)) (k j : Nat) : Int := ((ss.getD k []).getD j 0 : Int)
@@ -2029,7 +2077,10 @@ def tWordVar (s : StepShape) (ws : List (Option (Nat × Nat))) (l : Nat) : PVar 
 state some block already produced (`sqPos`), so it emits no rows of its own. A block that swallows
 nothing at all — the third consecutive squeeze's — is a bare permutation with no `Generic` addend. -/
 def transcriptRows (s : StepShape) (d : SpongeData) (wired : Bool) : List SRow :=
+  -- ⚑ ONE layout for the whole schedule: `L.cur` IS `tBlocks s`, so `nStOf L.cur` is `nSt s` and
+  -- `vPostAt`/`tProbeAfterL` read the layout already in hand instead of rebuilding it per block.
   let L := spLay s
+  let nst := nStOf L.cur
   [ genericRow (some (vSt s 0 0)) none none (some (vSt s 0 1)) none none (cConst 0 ++ cConst 0)
   , genericRow (some (vSt s 0 2)) none none none none none (cConst 0 ++ cNil) ]
   -- ⚑ the ONE pad cell, pinned to zero. `getD`'s default used to be `xv 0` here and in `segRows`;
@@ -2041,15 +2092,15 @@ def transcriptRows (s : StepShape) (d : SpongeData) (wired : Bool) : List SRow :
       (if ws.any (·.isSome) then
         -- ⚑ `msgVar` — for the lanes that carry a commitment coordinate this is the FOLD'S OWN
         -- BASE-POINT variable, so the sponge row and the `EndoMul` chain share one σ class.
-        [ genericRow (some (vSt s b 0)) (some (tWordVar s ws 0)) (some (vPost s b 0))
-                     (some (vSt s b 1)) (some (tWordVar s ws 1)) (some (vPost s b 1))
+        [ genericRow (some (vSt s b 0)) (some (tWordVar s ws 0)) (some (vPostAt nst b 0))
+                     (some (vSt s b 1)) (some (tWordVar s ws 1)) (some (vPostAt nst b 1))
                      (cAdd ++ cAdd) ]
-        ++ permBlockRows (vPost s b 0) (vPost s b 1) (vSt s b 2)
+        ++ permBlockRows (vPostAt nst b 0) (vPostAt nst b 1) (vSt s b 2)
                          (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b [])
        else
         permBlockRows (vSt s b 0) (vSt s b 1) (vSt s b 2)
                       (vSt s (b+1) 0) (vSt s (b+1) 1) (vSt s (b+1) 2) (d.perms.getD b []))
-      ++ (if tProbeAfter s b then [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)] else []))
+      ++ (if tProbeAfterL L b then [probeRow wired (vSt s (b+1) 0) (vSt s (b+1) 1)] else []))
 
 /-! ## §5 — R2, CHALLENGE DERIVATION (`to_field_checked`).
 
@@ -2261,6 +2312,10 @@ def runMsm (s : StepShape) (bases : List (Nat × Nat)) (scal : Nat → Nat) : Ms
 CURR `w₀=xT w₁=yT w₂=x₀ w₃=y₀ w₄=n w₅=n' w₆=Ø w₇..w₁₄ = x₁y₁..x₄y₄`;
 NEXT `w₀=x₅ w₁=y₅ w₂..w₆=b₀..b₄ w₇..w₁₁=s₀..s₄`. -/
 def msmChunkRows (s : StepShape) (m : MsmData) (i j : Nat) : List SRow :=
+  -- ⚑ ONE `baseMsm` and ONE `baseSN` for the pair of rows rather than six region walks: this
+  -- function runs once per (term, chunk) and the committed shape has 982 chunks. See `mpxAt`'s note.
+  let bm := baseMsm s
+  let bsn := baseSN s
   let td := m.terms.getD i default
   let bits := m.bits.getD i []
   let ax : Nat → Int := fun k => ((td.accs.getD k (0, 0)).1 : Int)
@@ -2268,13 +2323,13 @@ def msmChunkRows (s : StepShape) (m : MsmData) (i j : Nat) : List SRow :=
   let bt : Nat → Int := fun k => (td.slopes.getD k 0 : Int)
   let bi : Nat → Int := fun k => (bits.getD k 0 : Int)
   [ { kind := .varBaseMul
-    , perm := [ some (mpx s (pT s i)), some (mpy s (pT s i))
-              , some (mpx s (pAcc s i j)), some (mpy s (pAcc s i j))
-              , some (vSN s i j), some (vSN s i (j+1)), none ]
+    , perm := [ some (mpxAt bm (pT s i)), some (mpyAt bm (pT s i))
+              , some (mpxAt bm (pAcc s i j)), some (mpyAt bm (pAcc s i j))
+              , some (vSNAt s bsn i j), some (vSNAt s bsn i (j+1)), none ]
     , advice := [ (7, ax (5*j+1)), (8, ay (5*j+1)), (9, ax (5*j+2)), (10, ay (5*j+2))
                 , (11, ax (5*j+3)), (12, ay (5*j+3)), (13, ax (5*j+4)), (14, ay (5*j+4)) ] }
   , { kind := .zero
-    , perm := [ some (mpx s (pAcc s i (j+1))), some (mpy s (pAcc s i (j+1)))
+    , perm := [ some (mpxAt bm (pAcc s i (j+1))), some (mpyAt bm (pAcc s i (j+1)))
               , none, none, none, none, none ]
     , advice := [ (2, bi (5*j)), (3, bi (5*j+1)), (4, bi (5*j+2)), (5, bi (5*j+3)), (6, bi (5*j+4))
                 , (7, bt (5*j)), (8, bt (5*j+1)), (9, bt (5*j+2)), (10, bt (5*j+3))
@@ -2285,6 +2340,7 @@ def msmChunkRows (s : StepShape) (m : MsmData) (i j : Nat) : List SRow :=
 is Mina's own `List.reduce_exn` over `non_constant_part` (`step_verifier.ml:180-182`) and is what
 its compiled step circuit's single run of **30 consecutive `CompleteAdd` rows** is. -/
 def msmAddRow (s : StepShape) (m : MsmData) (a : Nat) : SRow :=
+  let bm := baseMsm s
   let live := msmLive s
   let i0 := live.getD 0 0
   let i1 := live.getD (a + 1) 0
@@ -2292,8 +2348,8 @@ def msmAddRow (s : StepShape) (m : MsmData) (a : Nat) : SRow :=
   let rp := pAcc s i1 (msmChunksAt i1)
   let c := m.addCells.getD a []
   { kind := .completeAdd
-  , perm := [ some (mpx s lp), some (mpy s lp), some (mpx s rp), some (mpy s rp)
-            , some (mpx s (pSum s a)), some (mpy s (pSum s a)), none ]
+  , perm := [ some (mpxAt bm lp), some (mpyAt bm lp), some (mpxAt bm rp), some (mpyAt bm rp)
+            , some (mpxAt bm (pSum s a)), some (mpyAt bm (pSum s a)), none ]
   , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
               , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
@@ -2303,8 +2359,9 @@ pinned. Before 2026-08-02 every one was a free witness the prover chose.
 ⚑ Over `msmLive` since 2026-08-03: a CONSTANT-scalar term's base is folded into `constant_part`
 outside the circuit (`:133-152`), so upstream pins no in-circuit base for it either. -/
 def msmBaseRows (s : StepShape) (m : MsmData) : List SRow :=
+  let bm := baseMsm s
   (msmLive s).map (fun i =>
-    baseConstRow (mpx s (pT s i)) (mpy s (pT s i)) (m.terms.getD i default).T)
+    baseConstRow (mpxAt bm (pT s i)) (mpyAt bm (pT s i)) (m.terms.getD i default).T)
 
 /-- **`scale_fast_unpack`'s OWN SEED**, `Ops.add_fast base base` (`plonk_curve_ops.ml:157`) — one
 `CompleteAdd` row per LADDER (`msmLive`, since 2026-08-03), DEFINING `pAcc i 0` instead of leaving
@@ -2319,12 +2376,13 @@ on the challenge variable, none of which say a word about the seed. `multiscale_
 witness. §6b's `ft_comm` ladders carried this row from the start (`ftcTermRows`'s `caRow g g`); R3's
 did not. -/
 def msmDblRow (s : StepShape) (m : MsmData) (i : Nat) : SRow :=
+  let bm := baseMsm s
   let T := (m.terms.getD i default).T
   let c := completeAddWitness T.1 T.2 T.1 T.2
   { kind := .completeAdd
-  , perm := [ some (mpx s (pT s i)), some (mpy s (pT s i))
-            , some (mpx s (pT s i)), some (mpy s (pT s i))
-            , some (mpx s (pAcc s i 0)), some (mpy s (pAcc s i 0)), none ]
+  , perm := [ some (mpxAt bm (pT s i)), some (mpyAt bm (pT s i))
+            , some (mpxAt bm (pT s i)), some (mpyAt bm (pT s i))
+            , some (mpxAt bm (pAcc s i 0)), some (mpyAt bm (pAcc s i 0)), none ]
   , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
               , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
@@ -2345,8 +2403,9 @@ and the deferred values with it. Upstream has no `n_acc` there either: `scale_fa
 runs zero chunk iterations and its `Field.Assert.equal !n_acc scalar` (`plonk_curve_ops.ml:207`) is
 about a scalar this file does not model. -/
 def msmNZeroRows (s : StepShape) : List SRow :=
+  let bsn := baseSN s
   packHalves (((List.range s.msmTerms).filter (fun i => msmChunksAt i != 0)).map (fun i =>
-    ([some (vSN s i 0), none, none], cConst 0)))
+    ([some (vSNAt s bsn i 0), none, none], cConst 0)))
 
 /-- **R3's rows.** ⚑ Per-term chunk counts since §1b: a term whose statement word is one bit emits
 NO `VarBaseMul` row, which is what makes the emitted `x_hat` region **31 ladders** at Mina's own
@@ -2357,20 +2416,23 @@ one-bit words get no base pin, no `add_fast base base` seed, no probe and no fol
 (`step_verifier.ml:133-152`). The fold chain is `live − 1 = 30` `CompleteAdd`s, which is the single
 run of thirty consecutive `CompleteAdd` rows in Mina's own compiled `step-zkapp-proved`. -/
 def msmRows (s : StepShape) (m : MsmData) (wired : Bool) : List SRow :=
+  let bm := baseMsm s
   let live := msmLive s
   let i0 := live.getD 0 0
   msmBaseRows s m
   ++ msmNZeroRows s
   ++ [msmDblRow s m i0]
   ++ ((List.range (msmChunksAt i0)).flatMap (msmChunkRows s m i0))
-  ++ [probeRow wired (mpx s (pAcc s i0 (msmChunksAt i0))) (mpy s (pAcc s i0 (msmChunksAt i0)))]
+  ++ [probeRow wired (mpxAt bm (pAcc s i0 (msmChunksAt i0)))
+                     (mpyAt bm (pAcc s i0 (msmChunksAt i0)))]
   ++ (List.range (live.length - 1)).flatMap (fun a =>
        let i := live.getD (a + 1) 0
        [msmDblRow s m i]
        ++ ((List.range (msmChunksAt i)).flatMap (msmChunkRows s m i))
-       ++ [probeRow wired (mpx s (pAcc s i (msmChunksAt i))) (mpy s (pAcc s i (msmChunksAt i)))]
+       ++ [probeRow wired (mpxAt bm (pAcc s i (msmChunksAt i)))
+                          (mpyAt bm (pAcc s i (msmChunksAt i)))]
        ++ [msmAddRow s m a]
-       ++ [probeRow wired (mpx s (pSum s a)) (mpy s (pSum s a))])
+       ++ [probeRow wired (mpxAt bm (pSum s a)) (mpyAt bm (pSum s a))])
 
 /-! ## §7 — R4, the IPA / commitment FOLD (`Scalar_challenge.endo`).
 
@@ -2485,27 +2547,38 @@ structure EndoSlots where
   /-- `endo · x_t`. -/
   endoX : PVar
 
+/-- ⚑ ONE `baseQN` for the whole ladder, not one per block: `n` is `vQNAt`'s partial application and
+`endoX` is a strict field, so the region chain (and the `spLay` under it) is walked once here rather
+than `ipaBlocks + 1` times inside `endoRoundRows`. -/
 def roundSlots (s : StepShape) (r : Nat) : EndoSlots :=
-  { base := qT s r, p := qP s r, acc := qAcc s r, n := vQN s r, endoX := vQEndo s r }
+  let bq := baseQN s
+  { base := qT s r, p := qP s r, acc := qAcc s r, n := vQNAt s bq r, endoX := vQEndoAt s bq r }
 /-- ⚑ The tail's base is the FOLD OUTPUT `q = p_prime + lr_prod` — a computed point, not a supplied
 one, so it needs no pin and no `assert_on_curve`. ⚑ Since §19 it is `qPrime` and not
 `qSum (ipaRounds−1)`: `p_prime` carries the `uc` term, so `combined_inner_product` reaches `lhs`. -/
 def lhsSlots (s : StepShape) : EndoSlots :=
+  let bq := baseQN s
   { base := qPrime s, p := qLhsP s, acc := qLhsAcc s
-  , n := vLhsN s, endoX := vLhsEndo s }
+  , n := vLhsNAt s bq, endoX := vLhsEndoAt s bq }
 
+/-- ⚑⚑ **THE HOTTEST FUNCTION IN THE ASSEMBLY.** Every `endo_mul` row names four IPA point variables
+and one counter, at 32 blocks a ladder and 77 ladders (`ipaRounds = 76` fold rounds plus
+`check_bulletproof`'s tail) — **12 551 variable names**, and each one used to walk the region chain
+down to `spLay`. ⚑ ONE `baseIpa` here and ONE `baseQN` in `roundSlots`/`lhsSlots`; the emitted names
+are the same by `ipx`/`ipy`'s own definitions (`ipx s p = ipxAt (baseIpa s) p`, by delta). -/
 def endoRoundRows (s : StepShape) (sl : EndoSlots) (bl : List EndoBlock) : List SRow :=
+  let bi := baseIpa s
   (List.range s.ipaBlocks).map (fun e =>
     let b := bl.getD e default
     ({ kind := .endoMul
-     , perm := [ some (ipx s sl.base), some (ipy s sl.base), none, none
-               , some (ipx s (sl.acc e)), some (ipy s (sl.acc e)), some (sl.n e) ]
+     , perm := [ some (ipxAt bi sl.base), some (ipyAt bi sl.base), none, none
+               , some (ipxAt bi (sl.acc e)), some (ipyAt bi (sl.acc e)), some (sl.n e) ]
      , advice := [ (2, (b.inv : Int)), (3, 0), (7, (b.xr : Int)), (8, (b.yr : Int))
                  , (9, (b.s1 : Int)), (10, (b.s3 : Int)), (11, (b.b1 : Int)), (12, (b.b2 : Int))
                  , (13, (b.b3 : Int)), (14, (b.b4 : Int)) ] } : SRow))
   ++ [ { kind := .zero
-       , perm := [ none, none, none, none, some (ipx s (sl.acc s.ipaBlocks))
-                 , some (ipy s (sl.acc s.ipaBlocks)), some (sl.n s.ipaBlocks) ] } ]
+       , perm := [ none, none, none, none, some (ipxAt bi (sl.acc s.ipaBlocks))
+                 , some (ipyAt bi (sl.acc s.ipaBlocks)), some (sl.n s.ipaBlocks) ] } ]
 
 def ipaRoundRows (s : StepShape) (v : IpaData) (r : Nat) : List SRow :=
   endoRoundRows s (roundSlots s r) (v.blks.getD r [])
@@ -2513,12 +2586,13 @@ def ipaRoundRows (s : StepShape) (v : IpaData) (r : Nat) : List SRow :=
 /-- ⚑ The `a`-th fold add. `a = 0`'s LEFT operand is `qInit` — `sg_old[0]`, the `~init` accumulator
 (`step_verifier.ml:606`) whose two coordinates ARE transcript block `oSgOld0`'s absorbed words. -/
 def ipaAddRow (s : StepShape) (v : IpaData) (a : Nat) : SRow :=
+  let bi := baseIpa s
   let lp := if a == 0 then qInit s else qSum s (a - 1)
   let rp := qAcc s a s.ipaBlocks
   let c := v.addCells.getD a []
   { kind := .completeAdd
-  , perm := [ some (ipx s lp), some (ipy s lp), some (ipx s rp), some (ipy s rp)
-            , some (ipx s (qSum s a)), some (ipy s (qSum s a)), none ]
+  , perm := [ some (ipxAt bi lp), some (ipyAt bi lp), some (ipxAt bi rp), some (ipyAt bi rp)
+            , some (ipxAt bi (qSum s a)), some (ipyAt bi (qSum s a)), none ]
   , advice := [ (7, (c.getD 7 0 : Int)), (8, (c.getD 8 0 : Int))
               , (9, (c.getD 9 0 : Int)), (10, (c.getD 10 0 : Int)) ] }
 
@@ -2527,8 +2601,9 @@ pinned by nothing here on purpose: they are the previous proof's, and what binds
 two variables ARE transcript block `b`'s absorbed words. ⚑ Round `FTC_ROUND` is in neither set since
 §6b: its base is `.computed`, so a pin row there would be pinning a derived value to a literal. -/
 def ipaBaseRows (s : StepShape) (v : IpaData) : List SRow :=
+  let bi := baseIpa s
   ((List.range s.ipaRounds).filter (fun r => ipaSrc s r == BaseSrc.const)).map (fun r =>
-    baseConstRow (ipx s (qT s r)) (ipy s (qT s r)) (v.bases.getD r (0, 0)))
+    baseConstRow (ipxAt bi (qT s r)) (ipyAt bi (qT s r)) (v.bases.getD r (0, 0)))
 
 /-! ### §7b — `Inner_curve.typ`'s CHECK on every SUPPLIED point.
 
@@ -2550,58 +2625,67 @@ def PALLAS_B : Nat := 5
 /-- `assert_on_curve (x, y)` as three `Generic` halves: `x2 = x·x`, `x3 = x2·x`, and
 `y·y − x3 − b = 0` — the `assert_square` with the linear combination folded into the coefficients,
 which is what Snarky's `Basic.Square` emits. -/
-def onCurveHalves (s : StepShape) (k : Nat) (vx vy : PVar) :
+def onCurveHalvesAt (bo : Nat) (k : Nat) (vx vy : PVar) :
     List (List (Option PVar) × List Int) :=
-  [ ([some vx, some vx, some (vOcX2 s k)], cMul)
-  , ([some (vOcX2 s k), some vx, some (vOcX3 s k)], cMul)
-  , ([some vy, some vy, some (vOcX3 s k)], [0, 0, -1, 1, -(PALLAS_B : Int)]) ]
+  [ ([some vx, some vx, some (vOcX2At bo k)], cMul)
+  , ([some (vOcX2At bo k), some vx, some (vOcX3At bo k)], cMul)
+  , ([some vy, some vy, some (vOcX3At bo k)], [0, 0, -1, 1, -(PALLAS_B : Int)]) ]
+def onCurveHalves (s : StepShape) (k : Nat) (vx vy : PVar) :
+    List (List (Option PVar) × List Int) := onCurveHalvesAt (baseOnC s) k vx vy
 
 /-- The `k`-th CHECKED point's coordinate VARIABLES: the `absRoundList` fold bases, `t_comm`'s
 `tCommN` chunks, and — since the R1 interleaving — `sg_old[0]` and `delta`. Every SUPPLIED commitment
 the transcript swallows, and no other. -/
-def onCVar (s : StepShape) (k : Nat) : PVar × PVar :=
+def onCVarAt (s : StepShape) (bi : Nat) (k : Nat) : PVar × PVar :=
   let l := (absRoundList s).length
   let t := l + tCommN s
-  if k < l then let r := (absRoundList s).getD k 0; (ipx s (qT s r), ipy s (qT s r))
+  if k < l then let r := (absRoundList s).getD k 0; (ipxAt bi (qT s r), ipyAt bi (qT s r))
   else if k < t then (vTcX s (k - l), vTcY s (k - l))
-  else if k == t then (ipx s (qInit s), ipy s (qInit s))
-  else if k == t + 1 then (ipx s (qDel s), ipy s (qDel s))
+  else if k == t then (ipxAt bi (qInit s), ipyAt bi (qInit s))
+  else if k == t + 1 then (ipxAt bi (qDel s), ipyAt bi (qDel s))
   else (vGx s, vGy s)
+def onCVar (s : StepShape) (k : Nat) : PVar × PVar := onCVarAt s (baseIpa s) k
 
 /-- **R4's on-curve rows** — one `assert_on_curve` per ABSORBED commitment, over the very coordinate
 variables the transcript absorbed and the `EndoMul` (or, for `t_comm`, the `VarBaseMul`) chain
 multiplies. -/
 def onCurveRows (s : StepShape) : List SRow :=
+  let bi := baseIpa s
+  let bo := baseOnC s
   packHalves ((List.range (nOnC s)).flatMap (fun k =>
-    let v := onCVar s k
-    onCurveHalves s k v.1 v.2))
+    let v := onCVarAt s bi k
+    onCurveHalvesAt bo k v.1 v.2))
 
 /-- **`Scalar_challenge.endo`'s SEED PINS**, two `Generic` halves per round
 (`scalar_challenge.ml:232,235`): `endo·xt − xq = 0` and `n_acc = Field.zero`. ⚑ Both cells were free
 witnesses until 2026-08-02 — `vQN r 0` in exactly R3's way (the counter closes on the challenge from
 `16^{ipaBlocks}·n₀ + bits`, so a free `n₀` buys any bit vector), and `vQEndo r` is new because the
 seed's second operand did not exist as a variable at all. -/
-def seedPinHalves (s : StepShape) (sl : EndoSlots) : List (List (Option PVar) × List Int) :=
-  [ ([some (ipx s sl.base), none, some sl.endoX],
+def seedPinHalvesAt (bi : Nat) (sl : EndoSlots) : List (List (Option PVar) × List Int) :=
+  [ ([some (ipxAt bi sl.base), none, some sl.endoX],
      [ (Dregg2.Circuit.Emit.KimchiRenderEndoMul.endo : Int), 0, -1, 0, 0 ])
   , ([some (sl.n 0), none, none], cConst 0) ]
+def seedPinHalves (s : StepShape) (sl : EndoSlots) : List (List (Option PVar) × List Int) :=
+  seedPinHalvesAt (baseIpa s) sl
 
 def ipaSeedPinRows (s : StepShape) : List SRow :=
-  packHalves ((List.range s.ipaRounds).flatMap (fun r => seedPinHalves s (roundSlots s r))
-              ++ seedPinHalves s (lhsSlots s))
+  let bi := baseIpa s
+  packHalves ((List.range s.ipaRounds).flatMap (fun r => seedPinHalvesAt bi (roundSlots s r))
+              ++ seedPinHalvesAt bi (lhsSlots s))
 
 /-- **Round `r`'s two `Ops.add_fast`s**: `p = t + φ(t)` and `acc₀ = p + p`. The probe between them
 keeps every `CompleteAdd` run at length 1 and materialises `p` as a σ-only boundary value. ⚑ `φ(t)`'s
 `y` IS `t`'s — `(seal (Field.scale xt Endo.base), yt)` — so the row reads `ipy (qT r)` at cols 1
 AND 3, which is upstream's own shape and not a wiring accident. -/
 def endoSeedRows (s : StepShape) (sl : EndoSlots) (T : Nat × Nat) (wired : Bool) : List SRow :=
+  let bi := baseIpa s
   let q := endoQ T
   let p := endoP T
-  [ caRow (ipx s sl.base, ipy s sl.base) (sl.endoX, ipy s sl.base)
-          (ipx s sl.p, ipy s sl.p) (completeAddWitness T.1 T.2 q.1 q.2)
-  , probeRow wired (ipx s sl.p) (ipy s sl.p)
-  , caRow (ipx s sl.p, ipy s sl.p) (ipx s sl.p, ipy s sl.p)
-          (ipx s (sl.acc 0), ipy s (sl.acc 0)) (completeAddWitness p.1 p.2 p.1 p.2) ]
+  [ caRow (ipxAt bi sl.base, ipyAt bi sl.base) (sl.endoX, ipyAt bi sl.base)
+          (ipxAt bi sl.p, ipyAt bi sl.p) (completeAddWitness T.1 T.2 q.1 q.2)
+  , probeRow wired (ipxAt bi sl.p) (ipyAt bi sl.p)
+  , caRow (ipxAt bi sl.p, ipyAt bi sl.p) (ipxAt bi sl.p, ipyAt bi sl.p)
+          (ipxAt bi (sl.acc 0), ipyAt bi (sl.acc 0)) (completeAddWitness p.1 p.2 p.1 p.2) ]
 
 def ipaSeedRows (s : StepShape) (v : IpaData) (wired : Bool) (r : Nat) : List SRow :=
   endoSeedRows s (roundSlots s r) (v.bases.getD r (0, 0)) wired
@@ -2637,32 +2721,34 @@ one rung ABOVE `verify_one` — is ASSEMBLED since 2026-08-02 (segment D, §8e�
 witness is STILL ACCEPTED**: what changed is that it now moves the step statement's public
 `messages_for_next_step_proof` (§17(d)–(e)). -/
 def lhsRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
+  let bi := baseIpa s
   let sl := lhsSlots s
   endoSeedRows s sl v.qPrimePt wired
   ++ endoRoundRows s sl v.lhsBlks
-  ++ [ probeRow wired (ipx s (sl.acc s.ipaBlocks)) (ipy s (sl.acc s.ipaBlocks))
-     , caRow (ipx s (sl.acc s.ipaBlocks), ipy s (sl.acc s.ipaBlocks))
-             (ipx s (qDel s), ipy s (qDel s))
-             (ipx s (qLhsOut s), ipy s (qLhsOut s)) v.lhsAdd
-     , probeRow wired (ipx s (qLhsOut s)) (ipy s (qLhsOut s)) ]
+  ++ [ probeRow wired (ipxAt bi (sl.acc s.ipaBlocks)) (ipyAt bi (sl.acc s.ipaBlocks))
+     , caRow (ipxAt bi (sl.acc s.ipaBlocks), ipyAt bi (sl.acc s.ipaBlocks))
+             (ipxAt bi (qDel s), ipyAt bi (qDel s))
+             (ipxAt bi (qLhsOut s), ipyAt bi (qLhsOut s)) v.lhsAdd
+     , probeRow wired (ipxAt bi (qLhsOut s)) (ipyAt bi (qLhsOut s)) ]
 
 /-- **R4's rows.** -/
 def ipaRows (s : StepShape) (v : IpaData) (wired : Bool) : List SRow :=
+  let bi := baseIpa s
   ipaBaseRows s v
   ++ ipaSeedPinRows s
   ++ onCurveRows s
   ++ (List.range s.ipaRounds).flatMap (fun r =>
        ipaSeedRows s v wired r
        ++ ipaRoundRows s v r
-       ++ [probeRow wired (ipx s (qAcc s r s.ipaBlocks)) (ipy s (qAcc s r s.ipaBlocks))]
+       ++ [probeRow wired (ipxAt bi (qAcc s r s.ipaBlocks)) (ipyAt bi (qAcc s r s.ipaBlocks))]
        ++ [ipaAddRow s v r]
-       ++ [probeRow wired (ipx s (qSum s r)) (ipy s (qSum s r))])
+       ++ [probeRow wired (ipxAt bi (qSum s r)) (ipyAt bi (qSum s r))])
   -- ⚑ §19: `q = p_prime + lr_prod` (`:316-320`) — the `Ops.add_fast` that puts `uc` into the point
   -- `Scalar_challenge.endo q c` reads. It rides here and not in §19's own block because `lhsRows` is
   -- its only consumer; `bpResX/Y 0` is `uc`, defined by §19's ladder 0.
-  ++ [ caRow (ipx s (qSum s (s.ipaRounds - 1)), ipy s (qSum s (s.ipaRounds - 1)))
-             (bpResX s 0, bpResY s 0) (ipx s (qPrime s), ipy s (qPrime s)) v.qPrimeAdd
-     , probeRow wired (ipx s (qPrime s)) (ipy s (qPrime s)) ]
+  ++ [ caRow (ipxAt bi (qSum s (s.ipaRounds - 1)), ipyAt bi (qSum s (s.ipaRounds - 1)))
+             (bpResX s 0, bpResY s 0) (ipxAt bi (qPrime s), ipyAt bi (qPrime s)) v.qPrimeAdd
+     , probeRow wired (ipxAt bi (qPrime s)) (ipyAt bi (qPrime s)) ]
   ++ lhsRows s v wired
 
 /-! ## §6b — `Common.ft_comm`'s MSM: the sub-circuit that makes `t_comm` MEAN something.
@@ -5262,16 +5348,29 @@ def stepRows (t : StepData) (wired : Bool) : List SRow :=
 /-- The CIRCUIT's variable → value assignment (public words are added by `stepEnv`). -/
 def circuitEnv (t : StepData) : VarEnv :=
   let s := t.sh
-  (List.range (tBlocks s + 1)).flatMap (fun b =>
+  -- ⚑⚑ **ONE WALK PER REGION, NOT ONE PER ENTRY.** This environment is 17 743 entries at the
+  -- committed shape and every entry used to name a variable through the shape, i.e. through the
+  -- region-base chain and the `spLay` under it — MEASURED after the `SrcOrd` hoist at **1 ms** for
+  -- one such name at the top of the chain (`baseFtc shapeStep`). The `…At` forms (see `mpxAt`'s
+  -- note) take the base as an argument; these seven bindings are the whole of the fix, and the
+  -- emitted pairs are the same by delta.
+  let tb := tBlocks s
+  let nst := nStOf tb
+  let bm := baseMsm s
+  let bsn := baseSN s
+  let bi := baseIpa s
+  let bq := baseQN s
+  let bo := baseOnC s
+  (List.range (tb + 1)).flatMap (fun b =>
     let st := t.sp.states.getD b []
     (List.range 3).map (fun j => (vSt s b j, (st.getD j 0 : Int))))
   -- ⚑ `vPost` is indexed by BLOCK since the lazy re-model — the same index the trajectory carries,
   -- because a block no longer corresponds to an absorb SOURCE.
-  ++ (List.range (tBlocks s)).flatMap (fun b =>
+  ++ (List.range tb).flatMap (fun b =>
       let pre := t.sp.states.getD b []
       let ms := t.sp.msgs.getD b []
       (List.range 2).map (fun j =>
-        (vPost s b j, (((pre.getD j 0 + ms.getD j 0) % pN : Nat) : Int))))
+        (vPostAt nst b j, (((pre.getD j 0 + ms.getD j 0) % pN : Nat) : Int))))
   -- ⚑ the ONE pad cell, at the zero `transcriptRows` pins it to. There is no `vMsg` region any more:
   -- every absorbed word is a variable some sub-circuit reads.
   ++ (if (tPadCell s).isSome then [(vTPad s, (0 : Int))] else [])
@@ -5306,28 +5405,29 @@ def circuitEnv (t : StepData) : VarEnv :=
   -- here because it owns no ROW there.
   ++ (msmLive s).flatMap (fun i =>
       let td := t.msm.terms.getD i default
-      [ (mpx s (pT s i), (td.T.1 : Int)), (mpy s (pT s i), (td.T.2 : Int)) ]
+      [ (mpxAt bm (pT s i), (td.T.1 : Int)), (mpyAt bm (pT s i), (td.T.2 : Int)) ]
       ++ (List.range (msmChunksAt i + 1)).flatMap (fun j =>
           let a := td.accs.getD (5 * j) (0, 0)
-          [ (mpx s (pAcc s i j), (a.1 : Int)), (mpy s (pAcc s i j), (a.2 : Int)) ])
-      ++ (List.range (msmChunksAt i)).map (fun j => (vSN s i j, (td.ns.getD (5 * j) 0 : Int))))
+          [ (mpxAt bm (pAcc s i j), (a.1 : Int)), (mpyAt bm (pAcc s i j), (a.2 : Int)) ])
+      ++ (List.range (msmChunksAt i)).map (fun j =>
+          (vSNAt s bsn i j, (td.ns.getD (5 * j) 0 : Int))))
   ++ (List.range ((msmLive s).length - 1)).flatMap (fun a =>
       let p := t.msm.sums.getD a (0, 0)
-      [ (mpx s (pSum s a), (p.1 : Int)), (mpy s (pSum s a), (p.2 : Int)) ])
+      [ (mpxAt bm (pSum s a), (p.1 : Int)), (mpyAt bm (pSum s a), (p.2 : Int)) ])
   ++ (List.range s.ipaRounds).flatMap (fun r =>
       let T := t.ipa.bases.getD r (0, 0)
-      [ (ipx s (qT s r), (T.1 : Int)), (ipy s (qT s r), (T.2 : Int)) ]
+      [ (ipxAt bi (qT s r), (T.1 : Int)), (ipyAt bi (qT s r), (T.2 : Int)) ]
       ++ (List.range (s.ipaBlocks + 1)).flatMap (fun e =>
           let a := (t.ipa.accs.getD r []).getD e (0, 0)
-          [ (ipx s (qAcc s r e), (a.1 : Int)), (ipy s (qAcc s r e), (a.2 : Int)) ])
+          [ (ipxAt bi (qAcc s r e), (a.1 : Int)), (ipyAt bi (qAcc s r e), (a.2 : Int)) ])
       ++ (List.range s.ipaBlocks).map (fun e =>
-          (vQN s r e, ((t.ipa.ns.getD r []).getD e 0 : Int)))
+          (vQNAt s bq r e, ((t.ipa.ns.getD r []).getD e 0 : Int)))
       -- §7's seed: `φ(t)`'s x and the `p = t + φ(t)` intermediate `acc₀ = p + p` doubles.
-      ++ [ (vQEndo s r, ((endoQ T).1 : Int))
-         , (ipx s (qP s r), ((endoP T).1 : Int)), (ipy s (qP s r), ((endoP T).2 : Int)) ])
+      ++ [ (vQEndoAt s bq r, ((endoQ T).1 : Int))
+         , (ipxAt bi (qP s r), ((endoP T).1 : Int)), (ipyAt bi (qP s r), ((endoP T).2 : Int)) ])
   ++ (List.range s.ipaRounds).flatMap (fun a =>
       let p := t.ipa.sums.getD a (0, 0)
-      [ (ipx s (qSum s a), (p.1 : Int)), (ipy s (qSum s a), (p.2 : Int)) ])
+      [ (ipxAt bi (qSum s a), (p.1 : Int)), (ipyAt bi (qSum s a), (p.2 : Int)) ])
   -- ⚑ `sg_old[0]` (the fold's `~init`), `delta`, and `check_bulletproof`'s `endo q c + delta` tail.
   -- ⚑⚑ `q` IS `qPrimePt` SINCE §19 — `p_prime + lr_prod`, with the `uc` term in it. ⚠ This block
   -- read `sums.getLast` for one build after §19 landed and the `qPrime` cells had no entry at all,
@@ -5338,17 +5438,18 @@ def circuitEnv (t : StepData) : VarEnv :=
   ++ (let g := Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY
       let dl := Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY
       let q := t.ipa.qPrimePt
-      [ (ipx s (qInit s), (g.1 : Int)), (ipy s (qInit s), (g.2 : Int))
-      , (ipx s (qDel s), (dl.1 : Int)), (ipy s (qDel s), (dl.2 : Int))
-      , (ipx s (qPrime s), (q.1 : Int)), (ipy s (qPrime s), (q.2 : Int))
-      , (vLhsEndo s, ((endoQ q).1 : Int))
-      , (ipx s (qLhsP s), ((endoP q).1 : Int)), (ipy s (qLhsP s), ((endoP q).2 : Int))
-      , (ipx s (qLhsOut s), (t.ipa.lhsAdd.getD 4 0 : Int))
-      , (ipy s (qLhsOut s), (t.ipa.lhsAdd.getD 5 0 : Int)) ]
+      [ (ipxAt bi (qInit s), (g.1 : Int)), (ipyAt bi (qInit s), (g.2 : Int))
+      , (ipxAt bi (qDel s), (dl.1 : Int)), (ipyAt bi (qDel s), (dl.2 : Int))
+      , (ipxAt bi (qPrime s), (q.1 : Int)), (ipyAt bi (qPrime s), (q.2 : Int))
+      , (vLhsEndoAt s bq, ((endoQ q).1 : Int))
+      , (ipxAt bi (qLhsP s), ((endoP q).1 : Int)), (ipyAt bi (qLhsP s), ((endoP q).2 : Int))
+      , (ipxAt bi (qLhsOut s), (t.ipa.lhsAdd.getD 4 0 : Int))
+      , (ipyAt bi (qLhsOut s), (t.ipa.lhsAdd.getD 5 0 : Int)) ]
       ++ (List.range (s.ipaBlocks + 1)).flatMap (fun e =>
           let a := t.ipa.lhsAccs.getD e (0, 0)
-          [ (ipx s (qLhsAcc s e), (a.1 : Int)), (ipy s (qLhsAcc s e), (a.2 : Int)) ])
-      ++ (List.range s.ipaBlocks).map (fun e => (vLhsN s e, (t.ipa.lhsNs.getD e 0 : Int))))
+          [ (ipxAt bi (qLhsAcc s e), (a.1 : Int)), (ipyAt bi (qLhsAcc s e), (a.2 : Int)) ])
+      ++ (List.range s.ipaBlocks).map (fun e =>
+          (vLhsNAt s bq e, (t.ipa.lhsNs.getD e 0 : Int))))
   -- §7b: `assert_on_curve`'s two intermediates per ABSORBED commitment — the fold's bases, `t_comm`'s
   -- chunks, and since the R1 interleaving `sg_old[0]` and `delta`.
   ++ (List.range (nOnC s)).flatMap (fun k =>
@@ -5358,7 +5459,7 @@ def circuitEnv (t : StepData) : VarEnv :=
                else if k == l + tCommN s then Dregg2.Bridge.MinaStepPrevCommitments.SG_OLD0_XY.1
                else if k == l + tCommN s + 1 then Dregg2.Bridge.MinaStepPrevCommitments.DELTA_XY.1
                else t.gXY.1
-      [ (vOcX2 s k, (fMul x x : Int)), (vOcX3 s k, (fMul (fMul x x) x : Int)) ])
+      [ (vOcX2At bo k, (fMul x x : Int)), (vOcX3At bo k, (fMul (fMul x x) x : Int)) ])
   -- ⚑ §6b: `Common.ft_comm`'s MSM — the eight `scale_fast2` ladders, `t_comm`'s absorbed
   -- coordinates, the `Ops.add_fast` chain and `Shifted_value.Type2`'s two split pairs.
   ++ (List.range (ftcTerms s)).flatMap (fun k =>
@@ -5529,29 +5630,95 @@ measured on 2026-08-01, `cipRows` was absent from this `match` while every probe
 still passed, so the `combined_inner_product` Horner chain the commit subject named was in NO proved
 circuit and `vCa cipEvals` reached the public tie as a FREE variable. §15 now pins each rung's length
 as the sum of its own sub-lists AND pins `stepRows = rungRows .finalize`, so a row-set that drops out
-of this function is a red, not a silence. -/
+of this function is a red, not a silence.
+
+⚑⚑ **THE NINE SUB-LISTS USED TO BE BOUND WITH A `let` ABOVE THE `match`, AND LEAN IS STRICT.**
+Every rung evaluated all fifteen row families and returned a prefix, so `r1_transcript` computed
+`finRows`/`bpRows` and threw them away. MEASURED two independent ways: the emit driver's artifacts
+land **68–69 min apart** at `shapeStep` and the gap does NOT grow with the rung, though the rungs go
+803 → 10 823 rows (`EmitStepMainJson`'s header); and the wrap side's twin of this defect cost
+`rungRows tWrap .key true` **16 min 55 s for 1 977 rows whose families cost 115 ms**
+(`KimchiWrapProverChoice`'s header). The rungs below `.opening` now pay only their own prefix; the
+closing rung genuinely wants all fifteen and is unchanged. -/
+def rungOwn (t : StepData) (wired : Bool) : Rung → List SRow
+  | .transcript => transcriptRows t.sh t.sp wired
+  | .challenges => endoConstRow t.sh ++ (List.range t.sh.chals).flatMap (challengeRows t.sh t.sp wired)
+  | .msm => msmRows t.sh t.msm wired ++ ftcRows t.sh t.ftw t.ftc wired
+  | .ipa => ipaRows t.sh t.ipa wired
+  | .full => deferredRows t.sh wired ++ sgEvalRows t.sh FT_OMEGA wired ++ branchRows t.sh wired
+             ++ xiDefRows t.sh t.defc wired ++ cipRows t.sh wired ++ closingRows t.sh
+  | .ftEval0 => ftRows t.sh t.ft wired
+  | .absorb => absRows t wired
+  | .finalize => finRows t.sh t.ft t.fin wired
+  | .opening => bpRows t.sh t.bp wired
+
+/-- The rungs at or below `k`, in schedule order. ⚑ "Each rung is a superset of the one below" is the
+SHAPE of the definition now, rather than a fact about nine hand-written branches. -/
+def rungsUpto : Rung → List Rung
+  | .transcript => [.transcript]
+  | .challenges => [.transcript, .challenges]
+  | .msm        => [.transcript, .challenges, .msm]
+  | .ipa        => [.transcript, .challenges, .msm, .ipa]
+  | .full       => [.transcript, .challenges, .msm, .ipa, .full]
+  | .ftEval0    => [.transcript, .challenges, .msm, .ipa, .full, .ftEval0]
+  | .absorb     => [.transcript, .challenges, .msm, .ipa, .full, .ftEval0, .absorb]
+  | .finalize   => [.transcript, .challenges, .msm, .ipa, .full, .ftEval0, .absorb, .finalize]
+  | .opening    => [.transcript, .challenges, .msm, .ipa, .full, .ftEval0, .absorb, .finalize,
+                    .opening]
+
+/-- Rung `k`'s rows: the own-rows of every rung at or below it, concatenated in schedule order.
+
+⚑ **THE EMITTED LIST IS THE SAME TERM IT ALWAYS WAS.** `foldl (· ++ ·) []` over a literal list is
+left-nested exactly as `a ++ b ++ c` is, and `[] ++ a` reduces to `a` definitionally, so
+`rungRows t .ipa wired` is `((a ++ b) ++ c) ++ d` on the nose — `rungRows_is_a_ladder` below is
+`rfl`. What changed is that the `foldl` walks only the rungs `k` names. -/
 def rungRows (t : StepData) (k : Rung) (wired : Bool) : List SRow :=
-  let s := t.sh
-  let a := transcriptRows s t.sp wired
-  let b := endoConstRow s ++ (List.range s.chals).flatMap (challengeRows s t.sp wired)
-  let c := msmRows s t.msm wired ++ ftcRows s t.ftw t.ftc wired
-  let d := ipaRows s t.ipa wired
-  let e := deferredRows s wired ++ sgEvalRows s FT_OMEGA wired ++ branchRows s wired
-           ++ xiDefRows s t.defc wired ++ cipRows s wired ++ closingRows s
-  let f := ftRows s t.ft wired
-  let g := absRows t wired
-  let h := finRows s t.ft t.fin wired
-  let i := bpRows s t.bp wired
-  match k with
-  | .transcript => a
-  | .challenges => a ++ b
-  | .msm => a ++ b ++ c
-  | .ipa => a ++ b ++ c ++ d
-  | .full => a ++ b ++ c ++ d ++ e
-  | .ftEval0 => a ++ b ++ c ++ d ++ e ++ f
-  | .absorb => a ++ b ++ c ++ d ++ e ++ f ++ g
-  | .finalize => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h
-  | .opening => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h ++ i
+  (rungsUpto k).foldl (fun acc j => acc ++ rungOwn t wired j) []
+
+/-- ⚑ **THE HOIST IS THE THING IT HOISTS.** Each rung is the rung below it plus its own row-set —
+general over every `StepData` and every `wired`, by `rfl`, no shape instance and no evaluated guard.
+§15's row-length pins are instances of this plus `List.length_append`. -/
+theorem rungRows_is_a_ladder (t : StepData) (wired : Bool) :
+    rungRows t .challenges wired = rungRows t .transcript wired ++ rungOwn t wired .challenges
+    ∧ rungRows t .msm wired = rungRows t .challenges wired ++ rungOwn t wired .msm
+    ∧ rungRows t .ipa wired = rungRows t .msm wired ++ rungOwn t wired .ipa
+    ∧ rungRows t .full wired = rungRows t .ipa wired ++ rungOwn t wired .full
+    ∧ rungRows t .ftEval0 wired = rungRows t .full wired ++ rungOwn t wired .ftEval0
+    ∧ rungRows t .absorb wired = rungRows t .ftEval0 wired ++ rungOwn t wired .absorb
+    ∧ rungRows t .finalize wired = rungRows t .absorb wired ++ rungOwn t wired .finalize
+    ∧ rungRows t .opening wired = rungRows t .finalize wired ++ rungOwn t wired .opening :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- …and the length of each rung is the length of the one below plus its own — general over every
+`StepData`, so §15's eight row-length `#guard`s at the smoke shape are instances of this rather than
+the statement of it. -/
+theorem rungRows_lengths_are_the_sum_of_their_parts (t : StepData) (wired : Bool) :
+    (rungRows t .challenges wired).length
+      = (rungRows t .transcript wired).length + (rungOwn t wired .challenges).length
+    ∧ (rungRows t .msm wired).length
+      = (rungRows t .challenges wired).length + (rungOwn t wired .msm).length
+    ∧ (rungRows t .ipa wired).length
+      = (rungRows t .msm wired).length + (rungOwn t wired .ipa).length
+    ∧ (rungRows t .full wired).length
+      = (rungRows t .ipa wired).length + (rungOwn t wired .full).length
+    ∧ (rungRows t .ftEval0 wired).length
+      = (rungRows t .full wired).length + (rungOwn t wired .ftEval0).length
+    ∧ (rungRows t .absorb wired).length
+      = (rungRows t .ftEval0 wired).length + (rungOwn t wired .absorb).length
+    ∧ (rungRows t .finalize wired).length
+      = (rungRows t .absorb wired).length + (rungOwn t wired .finalize).length
+    ∧ (rungRows t .opening wired).length
+      = (rungRows t .finalize wired).length + (rungOwn t wired .opening).length := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := rungRows_is_a_ladder t wired
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp [h1]
+  · simp [h2]
+  · simp [h3]
+  · simp [h4]
+  · simp [h5]
+  · simp [h6]
+  · simp [h7]
+  · simp [h8]
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at and above it. -/
 def rungPub (s : StepShape) : Rung → Nat

@@ -13,13 +13,19 @@ verifies. Carries the `main` (kept OUT of `KimchiStepMain` so that module roots 
     DREGG_SM_RUNGS=all lake env lean --run …                                   # the nine (default)
 
 ⚑ **`DREGG_SM_RUNGS` is why a conformance re-grade is minutes and not a working day** (2026-08-03).
-`rungRows` binds all nine sub-lists BEFORE it matches on `k`, so every rung evaluates the whole
-chain; `emitRung` then walks it twice more (wired, unwired). Nine rungs therefore cost 9 × 2 full
-traversals, and the three gates that consume this driver
+It used to matter twice over: `rungRows` bound all nine sub-lists BEFORE it matched on `k`, so every
+rung evaluated the whole chain, and `emitRung` walks it twice more (wired, unwired). Nine rungs
+therefore cost 9 × 2 FULL traversals, and the three gates that consume this driver
 (`stepmain-shape-diff`, `curve-gate-oracle`, `stepmain-region-conformance`) grade `r8_finalize`
-ALONE. Measured on the `step` shape from artifact mtimes: consecutive rungs land 68–69 min apart and
-the gap does not grow with the rung — the uniformity IS the evidence that the work is shared and
-re-done. The full set stays the default because §15's row-length pins want every rung.
+ALONE. Measured on the `step` shape from artifact mtimes: consecutive rungs landed 68–69 min apart
+and the gap did NOT grow with the rung, though the rungs go 803 → 10 823 rows — the uniformity IS
+the evidence that the work was shared and re-done.
+
+⚑ **THAT HALF IS FIXED** (`KimchiStepMainCore.rungRows` is `rungOwn`/`rungsUpto` + a `foldl` over the
+rungs at or below `k`, pinned by `rungRows_is_a_ladder`, by `rfl`), so a rung now pays only for its
+own prefix and the nine-rung sweep costs about what `r9_opening` costs alone. The wired/unwired pair
+is unchanged and is still the other factor of two (`DREGG_SM_WIRED_ONLY`). The full set stays the
+default because §15's row-length pins want every rung.
 
 The ten-field spec is `absorbs,chals,emsRows,msmTerms,ipaRounds,ipaBlocks,bRounds,cipEvals,tComms,
 pubWords`. ⚑ `msmChunks` is GONE (2026-08-03): the MSM chunk count is per statement WORD
@@ -116,9 +122,9 @@ def emitRung (dir tag : String) (t : StepData) (k : Rung) (wiredOnly : Bool := f
   let w := stepWitness t p rows
   let ncell ← force ((w.map (·.length)).foldl (· + ·) 0) "compose"
   let t3 ← IO.monoMsNow
-  -- ⚑ NOT `rungProbeRows t k`. That recomputes `rungRows t k true` from scratch, and `rungRows`
-  -- evaluates ALL NINE sub-lists on every call before it matches on `k` — so the convenience
-  -- wrapper costs a THIRD full chain traversal per rung on top of the wired/unwired pair. This is
+  -- ⚑ NOT `rungProbeRows t k`. That recomputes `rungRows t k true` from scratch — a THIRD full
+  -- traversal of the rung's own families per rung, on top of the wired/unwired pair. (It used to be
+  -- worse: `rungRows` evaluated all fifteen families on every call before matching on `k`.) This is
   -- `rungProbeRows`' body verbatim over the `rows` already in hand (same `p`, same list).
   let probes := ((rows.zip (List.range rows.length)).filter (fun ri => ri.1.probe)).map
                   (fun ri => p + ri.2)
@@ -177,10 +183,11 @@ def main : IO Unit := do
                   | none => panic! s!"emit: DREGG_SM={str} is neither 'step', 'smoke', nor a \
 ten-field spec 'absorbs,chals,emsRows,msmTerms,ipaRounds,ipaBlocks,bRounds,cipEvals,tComms,pubWords'"
   -- ⚑ THE RUNG SELECTOR. Default = all nine, unchanged. `DREGG_SM_RUNGS=r8_finalize` emits ONLY
-  -- what the caller asked for. Measured 2026-08-03 on the `step` shape: consecutive rung artifacts
-  -- land 68–69 min apart, and the gap does NOT grow with the rung — because `rungRows` evaluates
-  -- all nine sub-lists before it matches on `k`, so EVERY rung pays the whole chain. The three
-  -- conformance gates grade `r8_finalize` alone and were waiting on all nine.
+  -- what the caller asked for. Measured 2026-08-03 on the `step` shape BEFORE the fix: consecutive
+  -- rung artifacts landed 68–69 min apart and the gap did NOT grow with the rung, because
+  -- `rungRows` evaluated all fifteen row families before it matched on `k`. It now walks only the
+  -- rungs at or below `k`, so the gap should track the rung's own size; the three conformance gates
+  -- grade `r8_finalize` alone either way, so the selector stays.
   -- ⚑ `DREGG_SM_WIRED_ONLY=1` drops the unwired control — see `emitRung`. Roughly halves a rung.
   let wiredOnly := ((← IO.getEnv "DREGG_SM_WIRED_ONLY").getD "0") != "0"
   let rungs ← match ← IO.getEnv "DREGG_SM_RUNGS" with

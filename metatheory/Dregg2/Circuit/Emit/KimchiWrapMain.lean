@@ -2140,27 +2140,88 @@ def Rung.tag : Rung → String
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
   | .xhat => "w6_xhat" | .split => "w7_split" | .ftcomm => "w8_ftcomm"
 
-/-- **THE ROW SCHEDULE**, in the order `wrap_main` runs it. Every sub-circuit's row-set function is
-REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a silence. -/
+/-- **THE ROW SCHEDULE**, rung by rung, in the order `wrap_main` runs it. Every sub-circuit's row-set
+function is REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a
+silence.
+
+⚑⚑ **THIS `match` USED TO BIND ALL EIGHT FAMILIES WITH A `let` ABOVE IT, AND LEAN IS STRICT.**
+MEASURED 2026-08-03, cold `lean --run` at `shapeWrap` (`KimchiWrapProverChoice`'s header carries the
+instrument): `rungRows tWrap .key true` cost **1 014 740 ms** — 16 min 55 s — for **1 977 rows** whose
+five families cost **115 ms** between them (`transcriptRowsQ` 19 + `challengeRowsQ` 9 + `branchRows` 0
++ `closingRows` 8 + `keyRows` 79). The other 99.99% was `xhatRows` and `splitRows` — §15's x_hat MSM
+ladders and the split rows — **computed and discarded**, because the compiler does not sink a `let`
+into the branch that uses it. `.transcript` paid it too. -/
+def rungOwn (t : WrapData) (wired : Bool) : Rung → List WRow
+  | .transcript => transcriptRowsQ (baseSp t.sh) t.sp wired
+  | .challenges => challengeRowsQ t wired
+  | .branch => branchRows t.sh (baseBr t.sh t.sp) t.br wired
+  | .bind => closingRows t
+  | .key => keyRows t wired
+  | .xhat => xhatRows t wired
+  | .split => splitRows t wired
+  | .ftcomm => ftcRows t wired
+
+/-- The rungs at or below `k`, in schedule order. ⚑ "Every rung is a superset of the one below" is
+now the SHAPE of the definition rather than a fact about eight hand-written branches. -/
+def rungsUpto : Rung → List Rung
+  | .transcript => [.transcript]
+  | .challenges => [.transcript, .challenges]
+  | .branch     => [.transcript, .challenges, .branch]
+  | .bind       => [.transcript, .challenges, .branch, .bind]
+  | .key        => [.transcript, .challenges, .branch, .bind, .key]
+  | .xhat       => [.transcript, .challenges, .branch, .bind, .key, .xhat]
+  | .split      => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split]
+  | .ftcomm     => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm]
+
+/-- Rung `k`'s rows: the own-rows of every rung at or below it, concatenated in schedule order.
+
+⚑ **THE EMITTED LIST IS THE SAME TERM IT ALWAYS WAS.** `foldl (· ++ ·) []` over a literal list is
+left-nested exactly as `a ++ b ++ c` is, and `[] ++ a` reduces to `a` definitionally — so
+`rungRows t .key wired` is `(((a ++ b) ++ c) ++ d) ++ e` on the nose, and `rungRows_is_a_ladder`
+below is `rfl`. What changed is that the `foldl` walks only the rungs `k` names, so a rung evaluates
+only the families it returns. -/
 def rungRows (t : WrapData) (k : Rung) (wired : Bool) : List WRow :=
-  let s := t.sh
-  let a := transcriptRowsQ (baseSp s) t.sp wired
-  let b := challengeRowsQ t wired
-  let c := branchRows s (baseBr s t.sp) t.br wired
-  let d := closingRows t
-  let e := keyRows t wired
-  let f := xhatRows t wired
-  let g := splitRows t wired
-  let h := ftcRows t wired
-  match k with
-  | .transcript => a
-  | .challenges => a ++ b
-  | .branch => a ++ b ++ c
-  | .bind => a ++ b ++ c ++ d
-  | .key => a ++ b ++ c ++ d ++ e
-  | .xhat => a ++ b ++ c ++ d ++ e ++ f
-  | .split => a ++ b ++ c ++ d ++ e ++ f ++ g
-  | .ftcomm => a ++ b ++ c ++ d ++ e ++ f ++ g ++ h
+  (rungsUpto k).foldl (fun acc j => acc ++ rungOwn t wired j) []
+
+/-- ⚑ **THE HOIST IS THE THING IT HOISTS.** Each rung is the rung below it plus its own row-set —
+general over every `WrapData` and every `wired`, by `rfl`, no shape instance and no evaluated guard.
+§12b's four length pins are instances of this plus `List.length_append`. -/
+theorem rungRows_is_a_ladder (t : WrapData) (wired : Bool) :
+    rungRows t .challenges wired = rungRows t .transcript wired ++ rungOwn t wired .challenges
+    ∧ rungRows t .branch wired = rungRows t .challenges wired ++ rungOwn t wired .branch
+    ∧ rungRows t .bind wired = rungRows t .branch wired ++ rungOwn t wired .bind
+    ∧ rungRows t .key wired = rungRows t .bind wired ++ rungOwn t wired .key
+    ∧ rungRows t .xhat wired = rungRows t .key wired ++ rungOwn t wired .xhat
+    ∧ rungRows t .split wired = rungRows t .xhat wired ++ rungOwn t wired .split
+    ∧ rungRows t .ftcomm wired = rungRows t .split wired ++ rungOwn t wired .ftcomm :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- …and the length of each rung is the length of the one below plus its own — general, so §12b's
+guards are instances rather than the statement. -/
+theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool) :
+    (rungRows t .challenges wired).length
+      = (rungRows t .transcript wired).length + (rungOwn t wired .challenges).length
+    ∧ (rungRows t .branch wired).length
+      = (rungRows t .challenges wired).length + (rungOwn t wired .branch).length
+    ∧ (rungRows t .bind wired).length
+      = (rungRows t .branch wired).length + (rungOwn t wired .bind).length
+    ∧ (rungRows t .key wired).length
+      = (rungRows t .bind wired).length + (rungOwn t wired .key).length
+    ∧ (rungRows t .xhat wired).length
+      = (rungRows t .key wired).length + (rungOwn t wired .xhat).length
+    ∧ (rungRows t .split wired).length
+      = (rungRows t .xhat wired).length + (rungOwn t wired .split).length
+    ∧ (rungRows t .ftcomm wired).length
+      = (rungRows t .split wired).length + (rungOwn t wired .ftcomm).length := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := rungRows_is_a_ladder t wired
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp [h1]
+  · simp [h2]
+  · simp [h3]
+  · simp [h4]
+  · simp [h5]
+  · simp [h6]
+  · simp [h7]
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it. -/
 def rungPub (s : WrapShape) : Rung → Nat

@@ -21,7 +21,7 @@ the number is **117 of 120**.
 IS derived since `w6_xhat`, which the §2c entry says at length and this bullet does not). **The
 number a prover cares about is 117**, and this module is where it is stated.
 
-## ⚑⚑ THIS MODULE'S ELABORATION FLOOR IS `rungRows`' OWN `let`s, AND IT IS NOT FIXED HERE
+## ⚑⚑ THIS MODULE'S ELABORATION FLOOR WAS `rungRows`' OWN `let`s — FIXED 2026-08-03
 
 MEASURED 2026-08-03, cold `lean --run` at `shapeWrap` (the interpreter `native_decide` evaluates on):
 
@@ -31,17 +31,30 @@ MEASURED 2026-08-03, cold `lean --run` at `shapeWrap` (the interpreter `native_d
 
 …and the five families the `.key` branch actually returns cost **115 ms** between them
 (`transcriptRowsQ` 19 + `challengeRowsQ` 9 + `branchRows` 0 + `closingRows` 8 + `keyRows` 79, and
-818 + 589 + 23 + 11 + 536 = the same 1 977 rows). **Everything else is `xhatRows` and `splitRows`** —
-§15's MSM ladders and the split rows — which `rungRows` binds with a `let` ABOVE the `match` and the
-`.key` branch never mentions. Lean is strict and the compiler does not sink them, so every rung pays
-for every family, `.transcript` included. Three commands here name `rowsWrapKey`, so this module pays
-it three times: ~51 minutes for numbers that are reachable in seconds.
+818 + 589 + 23 + 11 + 536 = the same 1 977 rows). **Everything else was `xhatRows` and `splitRows`** —
+§15's MSM ladders and the split rows — which `rungRows` bound with a `let` ABOVE the `match` and the
+`.key` branch never mentions. Lean is strict and the compiler does not sink them, so every rung paid
+for every family, `.transcript` included.
 
-⚠ **THE FIX IS FIVE LINES IN `KimchiWrapMain.rungRows` AND IS DELIBERATELY NOT MADE HERE.** That
-function is a live sibling lane's (W-SPLIT/W-FTCOMM adds `ftcRows` and a `.ftcomm` branch to the same
-`match`), and it is red in the shared tree as this is written. The change is to move each family into
-the branch that uses it — or to enumerate them as thunks and take a prefix — which changes no emitted
-row. Step side's twin of this class was `tOps`; see `KimchiStepProverChoice`'s §C7 note.
+⚑ `KimchiWrapMain.rungRows` is now `rungOwn`/`rungsUpto` + a `foldl` over the rungs at or below `k`,
+so a rung evaluates only the families it returns. The emitted list is the same TERM — `foldl (· ++ ·)`
+over a literal list is left-nested exactly as `a ++ b ++ c` is and `[] ++ a` reduces to `a` — and
+`rungRows_is_a_ladder` states that generally, by `rfl`.
+
+⚠ **A CLAIM IN THIS HEADER IS RETRACTED AS UNRESOLVED, NOT AS TRUE.** It read "three commands here
+name `rowsWrapKey`, so this module pays it three times: ~51 minutes". That is **inconsistent with the
+commit that wrote it**, whose subject records this module GREEN at **1 729 s = 28 min 49 s** — less
+than the ~51 min the sentence predicts, with two more `native_decide`s and a whole `rowsSmXhat` still
+to pay for. And it is inconsistent in the OTHER direction with `KimchiStepProverChoice`'s §C7, which
+states from its own measurement that "sharing of a nullary constant is per COMMAND" and batches
+fourteen claims into one command for exactly that reason. **Both cannot hold**: either a nullary
+`def` is forced once per module elaboration (and §C7's batching bought something else), or it is
+forced per command (and 1 729 s is too small). Neither number is re-measured here and nothing in this
+file depends on the answer.
+
+⚑ The probe that settles it, and it is one command: put `#time`-style `IO.monoMsNow` deltas around
+two commands that name the same nullary `def` in a scratch module and read the second one's cost.
+Step side's twin of this class was `tOps`; see `KimchiStepProverChoice`'s §C7 note.
 -/
 import Dregg2.Circuit.Emit.KimchiWrapMain
 

@@ -94,12 +94,15 @@ inf_z,x21_inv]` for P=(x₁,y₁), Q=(x₂,y₂), computed exactly per `complete
 (so proof-systems' prover accepts the row). Handles all three cases (add / double / result-∞). -/
 def completeAddWitness (x1 y1 x2 y2 : Nat) : List Nat :=
   let sameX := if x1 == x2 then 1 else 0
-  let s := if x1 == x2 then dblSlope x1 y1 else addSlope x1 y1 x2 y2
+  -- ⚑ **ONE `fInv` ON `x₂ − x₁`, NOT TWO.** `addSlope`'s divisor and the stored `x21_inv` cell are
+  -- the SAME inverse, and each one is a 255-squaring Fermat exponentiation — the single most
+  -- expensive primitive in the whole assembly. The `x₁ = x₂` branch still computes none of it.
+  let x21Inv := if x1 == x2 then 0 else fInv (fSub x2 x1)
+  let s := if x1 == x2 then dblSlope x1 y1 else fMul (fSub y2 y1) x21Inv
   let x3 := fSub (fSub (fMul s s) x1) x2
   let y3 := fSub (fMul s (fSub x1 x3)) y1
   let inf := if x1 == x2 && y1 != y2 then 1 else 0
   let infZ := if y1 == y2 then 0 else if x1 == x2 then fInv (fSub y2 y1) else 0
-  let x21Inv := if x1 == x2 then 0 else fInv (fSub x2 x1)
   [x1, y1, x2, y2, x3, y3, inf, sameX, s, infZ, x21Inv]
 
 /-- Affine point doubling (used only to build the second input point [2]G). -/
