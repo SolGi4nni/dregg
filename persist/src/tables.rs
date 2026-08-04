@@ -122,6 +122,28 @@ pub const PROMISE_RESOLUTION_RECORDS_V1: TableDefinition<u64, &[u8]> =
 pub const PROMISE_RESOLUTION_BATCHES_V1: TableDefinition<u64, &[u8]> =
     TableDefinition::new("promise_resolution_batches_v1");
 
+/// Current authenticated Path of Angels Signal head for each authority id.
+///
+/// The value is the strict, sealed `PoaSignalHeadV1` wire.  The authority id is
+/// repeated inside the wire and checked on every load so a row cannot be moved
+/// between keys without detection.
+pub const POA_SIGNAL_HEADS_V1: TableDefinition<&[u8; 32], &[u8]> =
+    TableDefinition::new("poa_signal_heads_v1");
+
+/// Immutable Path of Angels Signal transition history.
+///
+/// Key: `authority_id || successor_transition_count_be`.  Values carry both
+/// exact predecessor/successor heads and exact Lean judge input/output bytes.
+pub const POA_SIGNAL_TRANSITIONS_V1: TableDefinition<&[u8; 40], &[u8]> =
+    TableDefinition::new("poa_signal_transitions_v1");
+
+/// Generic finalized commit ordinal -> exact PoA Signal transition key.
+///
+/// A generic commit can carry at most one Signal transition.  This reverse
+/// index makes omission/invention on replay and divergent-tail rewind exact.
+pub const POA_SIGNAL_BY_COMMIT_ORDINAL_V1: TableDefinition<u64, &[u8; 40]> =
+    TableDefinition::new("poa_signal_by_commit_ordinal_v1");
+
 /// Private AEAD-sealed dependent turns keyed by their promise/turn hash.
 /// No value from this table is served by the public promise-resolution API.
 pub const PRIVATE_DEPENDENT_TURNS_V1: TableDefinition<&[u8; 32], &[u8]> =

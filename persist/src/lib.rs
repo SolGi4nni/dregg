@@ -44,6 +44,7 @@ pub mod image_builder;
 pub mod ledger_store;
 pub mod note_tree;
 pub mod per_cell_receipt_heads;
+pub mod poa_signal_state;
 pub mod poseidon2_note_tree;
 pub mod private_dependent_turns;
 pub mod promise_resolutions;
@@ -95,6 +96,10 @@ pub use note_tree::{NoteTree, PersistentNullifierSet};
 pub use per_cell_receipt_heads::{
     DurablePerCellReceiptHead, MAX_PER_CELL_RECEIPT_HEADS_V1, MAX_PER_CELL_RECEIPT_LIVE_RECORDS_V1,
     PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
+};
+pub use poa_signal_state::{
+    MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalHeadV1, PoaSignalTransitionV1,
+    PreparedPoaSignalTransitionV1,
 };
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use private_dependent_turns::{
@@ -740,6 +745,7 @@ impl PersistentStore {
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         store.audit_finalized_receipt_cores_v1_on_open()?;
+        store.audit_poa_signal_state()?;
         Ok(store)
     }
 
@@ -762,6 +768,7 @@ impl PersistentStore {
         store.audit_exact_fnsp_v3_faithful_bridge_on_open()?;
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         store.audit_finalized_receipt_cores_v1_on_open()?;
+        store.audit_poa_signal_state()?;
         Ok(store)
     }
 
@@ -900,6 +907,9 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::PER_CELL_RECEIPT_HEAD_CURRENT_V1)?;
             let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_RECORDS_V1)?;
             let _ = write_txn.open_table(tables::PROMISE_RESOLUTION_BATCHES_V1)?;
+            let _ = write_txn.open_table(tables::POA_SIGNAL_HEADS_V1)?;
+            let _ = write_txn.open_table(tables::POA_SIGNAL_TRANSITIONS_V1)?;
+            let _ = write_txn.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for

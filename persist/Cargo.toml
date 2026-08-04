@@ -12,6 +12,7 @@ redb = "2"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 blake3 = "1"
+sha2 = { workspace = true }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 tracing = { workspace = true }
 dregg-types = { path = "../types" }

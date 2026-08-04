@@ -995,6 +995,30 @@ impl PersistentStore {
         self.commit_finalized_turn_with_burns(expected_ordinal, record, &[])
     }
 
+    /// Bare finalized-turn apex with one authoritative PoA Signal transition
+    /// welded into the commit-log transaction.  Production federation callers
+    /// use the stronger faithful-root/executor-state variants below.
+    pub fn commit_finalized_turn_with_poa_signal(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        poa_signal: &crate::PreparedPoaSignalTransitionV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &[],
+            Some(poa_signal),
+        )
+        .map(|outcome| outcome.outcome)
+    }
+
     /// [`Self::commit_finalized_turn`] PLUS arbitrary config blobs written to
     /// `METADATA_BYTES` in the SAME redb transaction — the same-transaction
     /// CONFIG weld, the general form of the note/burn/receipt welds above.
@@ -1035,6 +1059,7 @@ impl PersistentStore {
             None,
             None,
             config_blobs,
+            None,
         )
         .map(|outcome| outcome.outcome.ordinal)
     }
@@ -1081,6 +1106,7 @@ impl PersistentStore {
             None,
             None,
             &[],
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1106,6 +1132,7 @@ impl PersistentStore {
             None,
             Some(executor_state),
             &[],
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1140,6 +1167,7 @@ impl PersistentStore {
             None,
             None,
             &[],
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1173,6 +1201,7 @@ impl PersistentStore {
             faithful,
             None,
             None,
+            None,
         )
     }
 
@@ -1202,6 +1231,36 @@ impl PersistentStore {
             faithful,
             None,
             Some(executor_state),
+            None,
+        )
+    }
+
+    /// Faithful/executor-state finalized apex with one authoritative PoA Signal
+    /// transition welded into the same redb transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_signal(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_signal: &crate::PreparedPoaSignalTransitionV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::AppendOrVerify {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
+            Some(poa_signal),
         )
     }
 
@@ -1238,6 +1297,7 @@ impl PersistentStore {
             },
             faithful,
             Some(ExactFnspV3Weld::AccumulatorOnly(exact)),
+            None,
             None,
         )
     }
@@ -1302,6 +1362,7 @@ impl PersistentStore {
             faithful,
             None,
             None,
+            None,
         )
     }
 
@@ -1329,6 +1390,37 @@ impl PersistentStore {
             faithful,
             None,
             Some(executor_state),
+            None,
+        )
+    }
+
+    /// Existing-receipt counterpart of the faithful/executor-state PoA Signal
+    /// apex.  The receipt and Signal transition must both already be exact on
+    /// idempotent replay; neither may be repaired or omitted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt_and_poa_signal(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        note_commitments: &[[u8; 32]],
+        receipt_index: u64,
+        encoded_receipt: &[u8],
+        faithful: FinalizedFaithfulRootWeld<'_>,
+        executor_state: &crate::FinalizedExecutorConsensusState,
+        poa_signal: &crate::PreparedPoaSignalTransitionV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_with_faithful_root_receipt_mode(
+            expected_ordinal,
+            record,
+            note_commitments,
+            ReceiptWeldMode::ExistingExact {
+                index: receipt_index,
+                encoded: encoded_receipt,
+            },
+            faithful,
+            None,
+            Some(executor_state),
+            Some(poa_signal),
         )
     }
 
@@ -1357,6 +1449,7 @@ impl PersistentStore {
             },
             faithful,
             Some(ExactFnspV3Weld::AccumulatorOnly(exact)),
+            None,
             None,
         )
     }
@@ -1436,6 +1529,7 @@ impl PersistentStore {
             }),
             Some(executor_state),
             &[],
+            None,
         )?;
         let committed_head = welded.committed_head.ok_or_else(|| {
             StoreError::Integrity(
@@ -1464,6 +1558,7 @@ impl PersistentStore {
         faithful: FinalizedFaithfulRootWeld<'_>,
         exact_fnsp_v3: Option<ExactFnspV3Weld>,
         executor_state: Option<&crate::FinalizedExecutorConsensusState>,
+        poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
     ) -> Result<CommitOutcome> {
         if !faithful.envelope.verify_hybrid(
             faithful.author_committee,
@@ -1496,6 +1591,7 @@ impl PersistentStore {
             exact_fnsp_v3,
             executor_state,
             &[],
+            poa_signal,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1527,6 +1623,7 @@ impl PersistentStore {
             None,
             None,
             &[],
+            None,
         )
         .map(|outcome| outcome.outcome.ordinal)
     }
@@ -1548,6 +1645,7 @@ impl PersistentStore {
         exact_fnsp_v3: Option<ExactFnspV3Weld>,
         executor_state: Option<&crate::FinalizedExecutorConsensusState>,
         config_blobs: &[(&str, &[u8])],
+        poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
     ) -> Result<WeldedCommitOutcome> {
         let write_txn = self.db.begin_write()?;
         // Store-open/bootstrap established full faithful/exact history equality. The rolling
@@ -1610,6 +1708,12 @@ impl PersistentStore {
                                         ));
                                     }
                                 }
+                                crate::poa_signal_state::verify_replayed_poa_signal_transition_in(
+                                    &write_txn,
+                                    expected_ordinal,
+                                    &existing,
+                                    poa_signal,
+                                )?;
                                 crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
                                     &write_txn,
                                     &existing,
@@ -2008,6 +2112,15 @@ impl PersistentStore {
                         faithful,
                     )?,
                 );
+            }
+
+            if let Some(poa_signal) = poa_signal {
+                crate::poa_signal_state::stage_fresh_poa_signal_transition_in(
+                    &write_txn,
+                    assigned,
+                    &stored_record,
+                    poa_signal,
+                )?;
             }
 
             // 4. Advance the durable cursor LAST within the txn (still atomic).
@@ -3077,6 +3190,8 @@ impl PersistentStore {
             crate::executor_consensus_state::truncate_executor_consensus_state_in(
                 &write_txn, new_cursor,
             )?;
+
+            crate::poa_signal_state::truncate_poa_signal_state_in(&write_txn, new_cursor)?;
 
             // Reset the durable cursor to the last-good high-water mark. Unlike
             // compaction (which leaves the cursor as the applied high-water mark),
