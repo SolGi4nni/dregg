@@ -124,6 +124,20 @@ admits no insert — the gate's own `h.length ≤ p₂ < 2^dep` is what makes ro
 `sorry`, no `#guard`, no `commit_congr`; the `whnf` hazard was avoided by naming the occupancy proofs
 and by routing every dependent `rw` through `padTo_congr` or through the body.
 
+⚠⚑ **CORRECTED 2026-08-04 — READ `124ba5077` BEFORE ITEM 3.** The GREEN below was real, and so was
+the RED another lane found hours later; `--sha HEAD` is not a fixed sha and W-PREV (`5269fa248`,
+08-04 00:45) landed **65 minutes after** this entry was written (`dcede9023`, 08-03 23:40). W-PREV
+repointed `KimchiWrapMain.wrapPublic` from `wrapPublicAt _ .ftcomm` (width 22) to `.prev` (width
+**23**, `w9_prev`'s extra word), which turned one conjunct of
+`the_emitted_public_vector_moves_with_the_step_proof` — `(wrapPublic tChain).length =
+shapeChain.pubWords` — into `23 = 22`. `native_decide` reported *the conjunction* false, and the
+module read as "the tamper-detection claim is FALSE". **It is not.** Measured on a clean HEAD
+worktree in 5.8 s: bent ≠ honest at `w4_bind` TRUE, unread = honest TRUE, rows 1441/1441 TRUE, and
+**the figure below is unchanged at 21 of 22**. Only the width was false. It is now four named
+theorems + a general kernel-clean width lemma, the rung-blind aliases are deleted, and both modules
+are ROOTED. ⚠ Also corrected there: "registering it would pull the whole `KimchiWrapMain` cone" is
+FALSE — `PicklesSynthesis` (a default target) has imported that cone all along.
+
 **3. `KimchiStepWrapChain` — GREEN AT HEAD, and the controls re-ran.** `scripts/dregg-clean-build … --host
 hbox` on the committed tree: `CB_RESULT=GREEN`, 3055 jobs, 1794 s. That compiles all fifteen of the
 module's `native_decide` theorems, which ARE the controls — the positive (`chain_moves_with_the_step_proof`),
@@ -137,12 +151,16 @@ NOT move is index 21 — `exposedVars`' last entry, `(branchVars …).packed` = 
 `4·16 + 2·1`. It has NO transcript dependence at all, so the sharp statement is *every one of the 21
 transcript-derived public words moves and the one non-transcript word does not*, which is DERIVABLE from
 `exposedVars` (4 challenge + 1 fork digest + 16 bulletproof prechallenges + 1 branch_data) rather than
-merely counted. ⚠ Measured on the COMMITTED harness artifacts, last re-emitted at `dca30f544` (§20) — a
-live HEAD re-emission of the count is NOT yet in. And the module is an ORPHAN: not reachable from
+merely counted. ⚑ **THAT SHARP FORM IS NOW A THEOREM** (`the_bend_moves_every_transcript_derived_public_word`,
+`124ba5077`): every one of the 21 transcript-derived words moves, word 21 does not, and word 21 is
+pinned to `(branchVars …).packed` rather than to an index. ⚠ The COUNT was measured on the committed
+harness artifacts, last re-emitted at `dca30f544` (§20); the emitters were themselves rung-blind
+until `124ba5077`, so a re-emission is owed. And the module is an ORPHAN: not reachable from
 `Dregg2.lean`, so `lake build` still never compiles it — but `scripts/check-lean-orphans.sh` (which IS in
 `local-gates.sh`) DOES name it, and that gate is RED right now with 17 unlisted orphans, three of them
-this trio. The coverage gap is DETECTED and un-actioned, not invisible. Registering it would pull the
-whole `KimchiWrapMain` cone into every build while a sibling owns that file, so it belongs with W-PREV.
+this trio. The coverage gap is DETECTED and un-actioned, not invisible. ~~Registering it would pull the
+whole `KimchiWrapMain` cone into every build~~ — **measured FALSE at `124ba5077`**: `PicklesSynthesis`,
+a default target, already imports that cone, so rooting cost exactly one module. Both are now rooted.
 
 **Ratchet:** guard-discipline is GREEN at HEAD — **15 449 / 1 165**, not the 15 478 / 1 166 the brief
 carried; siblings converted 29 more since. Zero `#guard`s added by any of the above.
