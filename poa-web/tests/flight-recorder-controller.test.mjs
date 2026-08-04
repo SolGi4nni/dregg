@@ -68,11 +68,11 @@ test("digest shortening and keyboard traversal are deterministic", () => {
   assert.equal(nextFlightRecorderIndex(1, "Enter", 3), 1);
 });
 
-test("demo fallback is impossible to mistake for a live recorder", async () => withFakeDocument(async () => {
+test("demo rehearsal is impossible to mistake for a live recorder", async () => withFakeDocument(async () => {
   const root = new FakeElement("main");
   mountFlightRecorder(root, await recorder());
   const surface = all(root).map((node) => node.textContent).join("\n");
-  assert.match(surface, /DEMO FALLBACK \/\/ REHEARSAL ONLY/);
+  assert.match(surface, /DEMO REHEARSAL \/\/ NOT LIVE/);
   assert.match(surface, /DEMO · NOT LIVE/);
   assert.match(surface, /Crown Relay rehearsal/);
   assert.match(surface, /not connected to a node/i);
@@ -114,17 +114,37 @@ test("timeline is keyboard navigable and selection opens only redacted coordinat
   assert.match(detailText, /judge input\/output bytes never enter this surface/);
 }));
 
-test("replay marks every public link and narrates exactly the bounded check", async () => withFakeDocument(async () => {
+test("guided replay checks one public link at a time and ends at the bounded head claim", async () => withFakeDocument(async () => {
   const root = new FakeElement("main");
   const mounted = mountFlightRecorder(root, await recorder("live-api"));
+  const buttons = all(root).filter((node) => node.className === "flight-event__button");
+  const replayButton = all(root).find((node) => node.textContent === "Begin guided replay");
+  const live = all(root).find((node) => node.attributes.get("role") === "status");
+
   mounted.replay();
-  const nodes = all(root);
-  const timeline = nodes.find((node) => node.className === "flight-timeline");
-  const live = nodes.find((node) => node.attributes.get("role") === "status");
+  const timeline = all(root).find((node) => node.className === "flight-timeline");
   assert.equal(timeline.attributes.get("data-replay"), "active");
-  assert.ok(nodes.filter((node) => node.className === "flight-event__button").every((button) => button.attributes.get("data-link") === "checked"));
-  assert.match(live.textContent, /Replayed 3 contiguous public digest links/);
-  assert.match(live.textContent, /final successor resolves to the displayed head/);
+  assert.deepEqual(buttons.map((button) => button.attributes.get("data-link")), ["current", undefined, undefined]);
+  assert.equal(mounted.selectedTransition().sequence, 1);
+  assert.match(live.textContent, /visible record begins here/i);
+  assert.match(live.textContent, /transmission 2 must name that same digest as its predecessor/i);
+  assert.equal(replayButton.textContent, "Check next link");
+
+  replayButton.dispatch("click");
+  assert.deepEqual(buttons.map((button) => button.attributes.get("data-link")), ["checked", "current", undefined]);
+  assert.equal(mounted.selectedTransition().sequence, 2);
+  assert.match(live.textContent, /predecessor matches transmission 1’s successor/i);
+
+  replayButton.dispatch("click");
+  assert.deepEqual(buttons.map((button) => button.attributes.get("data-link")), ["checked", "checked", "current"]);
+  assert.equal(mounted.selectedTransition().sequence, 3);
+  assert.match(live.textContent, /successor matches the displayed ship head/i);
+  assert.match(live.textContent, /quorum finality is not asserted/i);
+  assert.equal(replayButton.textContent, "Replay from the beginning");
+
+  replayButton.dispatch("click");
+  assert.deepEqual(buttons.map((button) => button.attributes.get("data-link")), ["current", undefined, undefined]);
+  assert.equal(mounted.selectedTransition().sequence, 1);
 }));
 
 test("share text is redacted, source-labeled, and preserves the finality caveat", async () => {
@@ -146,5 +166,5 @@ test("buttons are native, touch-sized by class, labeled, and refusal-free presen
   assert.ok(buttons.every((button) => !button.attributes.has("aria-disabled")));
   assert.ok(nodes.filter((node) => node.className === "flight-event__button").every((button) => button.attributes.has("aria-label")));
   assert.equal(live.attributes.get("aria-live"), "polite");
-  assert.match(live.textContent, /Demo fallback loaded/);
+  assert.match(live.textContent, /Demo rehearsal loaded/);
 }));

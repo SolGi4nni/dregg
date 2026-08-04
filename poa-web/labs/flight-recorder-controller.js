@@ -47,7 +47,28 @@ function labelledValue(label, value, modifier = "") {
 function sourceWords(recorder) {
   return recorder.source.kind === "live-api"
     ? { eyebrow: "LIVE PUBLIC NODE VIEW", badge: "LIVE REDACTED API", projection: "node-reported" }
-    : { eyebrow: "DEMO FALLBACK // REHEARSAL ONLY", badge: "DEMO · NOT LIVE", projection: "fixture-provided" };
+    : { eyebrow: "DEMO REHEARSAL // NOT LIVE", badge: "DEMO · NOT LIVE", projection: "fixture-provided" };
+}
+
+function replayNarration(recorder, index) {
+  const transition = recorder.transitions[index];
+  const next = recorder.transitions[index + 1];
+  const prior = recorder.transitions[index - 1];
+  const successor = shortFlightDigest(transition.successorHeadDigest, 6);
+
+  if (next) {
+    const windowBoundary = index === 0
+      ? recorder.hasFullHistory
+        ? `The visible record begins here at transmission ${transition.sequence}.`
+        : `The visible window begins here at transmission ${transition.sequence}; earlier history is outside this browser view.`
+      : `Transmission ${transition.sequence} passes: its predecessor matches transmission ${prior.sequence}’s successor.`;
+    return `${windowBoundary} Hold ${successor}: transmission ${next.sequence} must name that same digest as its predecessor.`;
+  }
+
+  const predecessorCheck = prior
+    ? `Transmission ${transition.sequence} passes: its predecessor matches transmission ${prior.sequence}’s successor. `
+    : "The visible record contains one transmission, beginning from its reported predecessor. ";
+  return `${predecessorCheck}Its successor matches the displayed ship head, and its transition digest matches the head’s last-transition pointer. Visible continuity checked; quorum finality is not asserted.`;
 }
 
 /** Render the redacted public chain without ever requesting authority-bearing bytes. */
@@ -57,6 +78,7 @@ export function mountFlightRecorder(root, recorder, options = {}) {
   const words = sourceWords(recorder);
   const isDemo = recorder.source.kind === "demo-fixture";
   let selectedIndex = recorder.transitions.length > 0 ? recorder.transitions.length - 1 : -1;
+  let replayIndex = -1;
 
   const shell = element("section", "flight-shell");
   shell.setAttribute("aria-labelledby", "flight-title");
@@ -68,7 +90,7 @@ export function mountFlightRecorder(root, recorder, options = {}) {
   );
   headingCopy.children[1].id = "flight-title";
   const boundary = element("aside", `flight-boundary${isDemo ? " flight-boundary--demo" : ""}`);
-  boundary.setAttribute("aria-label", isDemo ? "demo fallback boundary" : "public view boundary");
+  boundary.setAttribute("aria-label", isDemo ? "demo rehearsal boundary" : "public view boundary");
   boundary.append(
     pill(words.badge, isDemo ? "flight-pill--demo" : "flight-pill--live"),
     element("p", "", isDemo
@@ -86,7 +108,8 @@ export function mountFlightRecorder(root, recorder, options = {}) {
 
   const toolbar = element("div", "flight-toolbar");
   toolbar.setAttribute("aria-label", "flight recorder controls");
-  const replayButton = element("button", "flight-button flight-button--signal", "Replay digest wake");
+  const replayButton = element("button", "flight-button flight-button--signal", "Begin guided replay");
+  replayButton.setAttribute("aria-describedby", "flight-live-status");
   const copyButton = element("button", "flight-button", "Copy share summary");
   const refreshButton = element("button", "flight-button", "Refresh recorder");
   for (const button of [replayButton, copyButton, refreshButton]) button.type = "button";
@@ -236,9 +259,16 @@ export function mountFlightRecorder(root, recorder, options = {}) {
   });
 
   function replay() {
+    replayIndex = replayIndex >= recorder.transitions.length - 1 ? 0 : replayIndex + 1;
     timeline.setAttribute("data-replay", "active");
-    eventButtons.forEach((button) => button.setAttribute("data-link", "checked"));
-    liveStatus.textContent = `Replayed ${recorder.transitions.length} contiguous public digest link${recorder.transitions.length === 1 ? "" : "s"}; the final successor resolves to the displayed head.`;
+    eventButtons.forEach((button, index) => {
+      if (index < replayIndex) button.setAttribute("data-link", "checked");
+      else if (index === replayIndex) button.setAttribute("data-link", "current");
+      else button.removeAttribute("data-link");
+    });
+    select(replayIndex);
+    liveStatus.textContent = replayNarration(recorder, replayIndex);
+    replayButton.textContent = replayIndex === recorder.transitions.length - 1 ? "Replay from the beginning" : "Check next link";
   }
   listen(replayButton, "click", replay);
   listen(copyButton, "click", async () => {
@@ -253,7 +283,7 @@ export function mountFlightRecorder(root, recorder, options = {}) {
 
   if (selectedIndex >= 0) select(selectedIndex);
   liveStatus.textContent = isDemo
-    ? "Demo fallback loaded. This rehearsal is visibly separate from the live ship."
+    ? "Demo rehearsal loaded. These pinned fixture bytes are visibly separate from the live ship."
     : `Loaded and linked the latest ${recorder.transitions.length} public transition${recorder.transitions.length === 1 ? "" : "s"}.`;
 
   return Object.freeze({

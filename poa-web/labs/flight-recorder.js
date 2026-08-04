@@ -39,7 +39,7 @@ export async function loadFlightRecorder() {
     root.setAttribute("aria-busy", "false");
     if (recorder.source.kind === "demo-fixture") {
       sourceStatus.dataset.state = "demo";
-      sourceStatus.textContent = `DEMO FALLBACK — ${recorder.source.label}. Bundled rehearsal bytes; no live node queried.`;
+      sourceStatus.textContent = `DEMO REHEARSAL — ${recorder.source.label}. Bundled fixture bytes; no live node queried.`;
     } else {
       sourceStatus.dataset.state = "live";
       sourceStatus.textContent = `LIVE PUBLIC NODE VIEW — ${recorder.transitions.length} linked transition${recorder.transitions.length === 1 ? "" : "s"} ending at the current redacted head.`;
