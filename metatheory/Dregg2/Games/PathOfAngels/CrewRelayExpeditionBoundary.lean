@@ -57,20 +57,20 @@ theorem fixture_completion_producer_is_private : True := by
 wire producers require an opaque canonical run admission as their first
 explicit argument. -/
 theorem never_admitted_wire_record_has_no_record_authority_producer
-    (config : Config) : True := by
+    (config : Config) : config = config := by
   fail_if_success
     (have _ : RawCombinedExtractionRecord →
         Option (CombinedExtractionRecord config) :=
       @admitCombinedExtractionRecord? config)
-  trivial
+  rfl
 
 theorem never_admitted_wire_record_has_no_completion_authority_producer
-    (config : Config) : True := by
+    (config : Config) : config = config := by
   fail_if_success
     (have _ : RawCombinedExtractionRecord →
         Option (CompletedRelayCapability config) :=
       @admitCompletedRelay? config)
-  trivial
+  rfl
 
 theorem seat_capability_constructor_is_private : True := by
   fail_if_success (have _ := SeatCapability.mk)
