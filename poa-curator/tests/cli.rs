@@ -72,6 +72,27 @@ fn keygen_refuses_a_preexisting_symlink_output() {
 }
 
 #[test]
+fn unsigned_epoch_preview_matches_the_exact_checked_in_snapshot() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let output = Command::new(binary())
+        .args(["preview-epoch", "--manifest"])
+        .arg(repo.join("poa/artifacts/poag1/manifest.json"))
+        .arg("--deployment")
+        .arg(repo.join("poa/deployments/epoch-1/poa-devnet.json"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        include_str!("snapshots/epoch-1-unsigned.json")
+    );
+}
+
+#[test]
 fn content_sign_and_verify_cli_roundtrip() {
     let temp = tempfile::tempdir().unwrap();
     let (manifest, deployment) = write_bundle(temp.path());
@@ -122,6 +143,32 @@ fn content_sign_and_verify_cli_roundtrip() {
     );
     assert!(String::from_utf8_lossy(&verified.stdout).contains("activation sha256:"));
 
+    let preview = Command::new(binary())
+        .args(["preview-epoch", "--manifest"])
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .arg("--pin")
+        .arg(&pin)
+        .arg("--signature")
+        .arg(&signature)
+        .args(["--epoch", "2", "--counter", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview["signature_status"], "valid");
+    assert_eq!(preview["signature_epoch"], 2);
+    assert_eq!(preview["signature_counter"], 1);
+    assert_eq!(
+        preview["notice"],
+        "SIGNATURE VERIFIED: this review preview is not a Lean mission activation"
+    );
+
     let rollback = Command::new(binary())
         .args(["verify-content", "--pin"])
         .arg(&pin)
@@ -134,6 +181,84 @@ fn content_sign_and_verify_cli_roundtrip() {
         .output()
         .unwrap();
     assert!(!rollback.status.success());
+}
+
+#[test]
+fn preview_refuses_partial_verification_tampered_bytes_and_wrong_counter() {
+    let temp = tempfile::tempdir().unwrap();
+    let (manifest, deployment) = write_bundle(temp.path());
+    let partial = Command::new(binary())
+        .args(["preview-epoch", "--manifest"])
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .args(["--pin", "not-read.json"])
+        .output()
+        .unwrap();
+    assert!(!partial.status.success());
+    assert!(partial.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&partial.stderr).contains(
+        "signature verification requires --pin, --signature, --epoch, and --counter together"
+    ));
+
+    let game_path = temp.path().join("games/signal-triangulation.json");
+    let mut tampered_game = fs::read(&game_path).unwrap();
+    tampered_game.push(b'\n');
+    fs::write(&game_path, tampered_game).unwrap();
+    let tampered = Command::new(binary())
+        .args(["preview-epoch", "--manifest"])
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .output()
+        .unwrap();
+    assert!(!tampered.status.success());
+    assert!(tampered.stdout.is_empty());
+
+    let (manifest, deployment) = write_bundle(temp.path());
+    let secret = temp.path().join("preview-curator.key");
+    let pin = temp.path().join("preview-curator-pin.json");
+    let signature = temp.path().join("preview-manifest.sig.json");
+    assert!(
+        Command::new(binary())
+            .args(["keygen", "--secret"])
+            .arg(&secret)
+            .arg("--pin")
+            .arg(&pin)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        Command::new(binary())
+            .args(["sign-content", "--secret"])
+            .arg(&secret)
+            .arg("--pin")
+            .arg(&pin)
+            .arg("--manifest")
+            .arg(&manifest)
+            .arg("--deployment")
+            .arg(&deployment)
+            .args(["--epoch", "2", "--counter", "1", "--output"])
+            .arg(&signature)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let wrong_counter = Command::new(binary())
+        .args(["preview-epoch", "--manifest"])
+        .arg(&manifest)
+        .arg("--deployment")
+        .arg(&deployment)
+        .arg("--pin")
+        .arg(&pin)
+        .arg("--signature")
+        .arg(&signature)
+        .args(["--epoch", "2", "--counter", "2"])
+        .output()
+        .unwrap();
+    assert!(!wrong_counter.status.success());
+    assert!(wrong_counter.stdout.is_empty());
 }
 
 fn write_bundle(root: &Path) -> (PathBuf, PathBuf) {

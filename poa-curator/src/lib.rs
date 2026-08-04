@@ -30,6 +30,7 @@ pub const CANON_DECISION_SCHEMA: &str = "POA-CANON-DECISION-V1";
 pub const DETACHED_SIGNATURE_FILENAME: &str = "manifest.sig.json";
 pub const POA_DEPLOYMENT_MANIFEST_SCHEMA: &str = "dregg-poa-devnet-manifest-v1";
 pub const POA_DEPLOYMENT_DOMAIN: &str = "pathofangels.network/federation/v1";
+pub const POA_EPOCH_PREVIEW_SCHEMA: &str = "POA-EPOCH-PREVIEW-V1";
 
 const CONTENT_EPOCH_DOMAIN: &[u8] = b"pathofangels.network/content-epoch/v1\0";
 const CANON_DECISION_DOMAIN: &[u8] = b"pathofangels.network/canon-promotion/v1\0";
@@ -163,6 +164,57 @@ pub struct CuratorDraft {
     pub preview: Option<EmittedPreview>,
 }
 
+/// Deterministic, review-only projection of one authenticated content epoch.
+/// It contains no secret material and is not a mission-activation token.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct EpochPreview {
+    pub schema: String,
+    pub manifest_sha256: String,
+    pub source_digest: String,
+    pub content_root: String,
+    pub content_epoch: u64,
+    pub deployment_id: String,
+    pub federation_id: String,
+    pub signature_status: EpochPreviewSignatureStatus,
+    pub signature_epoch: Option<u64>,
+    pub signature_counter: Option<u64>,
+    pub notice: String,
+    pub missions: Vec<MissionPreview>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EpochPreviewSignatureStatus {
+    Absent,
+    Valid,
+}
+
+/// Sentyr-facing review fields selected from one exact authenticated mission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MissionPreview {
+    pub mission_id: u64,
+    pub title: String,
+    pub ruleset: String,
+    pub action_cap: u64,
+    pub privacy_grade: String,
+    pub reward_class: String,
+    pub budget: MissionBudgetPreview,
+    pub allowed_relics: Vec<u64>,
+    pub beta_artifacts: Vec<ArtifactRef>,
+    pub descriptor_path: String,
+    pub content_visibility: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MissionBudgetPreview {
+    pub intel: u64,
+    pub supplies: u64,
+    pub cohesion: u64,
+    pub influence: u64,
+    pub score: u64,
+    pub relics: u64,
+}
+
 /// Loaded and byte-verified POAG1 bundle.
 #[derive(Clone, Debug)]
 pub struct Poag1Bundle {
@@ -268,6 +320,149 @@ impl DeploymentBoundBundle<'_> {
     pub fn deployment(&self) -> &PoaDeploymentScope {
         &self.deployment
     }
+
+    /// Project an authenticated but unsigned work-in-progress epoch for human
+    /// review. This never searches for an adjacent signature and cannot imply
+    /// activation.
+    pub fn unsigned_epoch_preview(&self) -> Result<EpochPreview, CuratorError> {
+        self.build_epoch_preview(None)
+    }
+
+    fn build_epoch_preview(
+        &self,
+        verified: Option<&ContentEpochEnvelope>,
+    ) -> Result<EpochPreview, CuratorError> {
+        let mut missions = Vec::with_capacity(self.bundle.missions.len());
+        for (&mission_id, mission) in &self.bundle.missions {
+            let exact = mission.exact_json.as_object().ok_or_else(|| {
+                CuratorError::Catalog(format!("mission {mission_id} is not an object"))
+            })?;
+            let descriptor_path = preview_string(exact, mission_id, "descriptor_path")?;
+            let descriptor = self
+                .bundle
+                .game_descriptors
+                .get(descriptor_path)
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    CuratorError::Catalog(format!(
+                        "mission {mission_id} has no authenticated descriptor object"
+                    ))
+                })?;
+            let content_visibility = match descriptor.get("security") {
+                None => None,
+                Some(security) => {
+                    let security = security.as_object().ok_or_else(|| {
+                        CuratorError::Catalog(format!(
+                            "mission {mission_id} descriptor security is not an object"
+                        ))
+                    })?;
+                    let visibility = security
+                        .get("target_visibility")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .ok_or_else(|| {
+                            CuratorError::Catalog(format!(
+                                "mission {mission_id} descriptor security lacks target_visibility"
+                            ))
+                        })?;
+                    Some(visibility.to_owned())
+                }
+            };
+            let budget = exact
+                .get("budget")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    CuratorError::Catalog(format!("mission {mission_id} budget is not an object"))
+                })?;
+            let allowed_relics = exact
+                .get("allowed_relics")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    CuratorError::Catalog(format!(
+                        "mission {mission_id} allowed_relics is not an array"
+                    ))
+                })?
+                .iter()
+                .map(|value| {
+                    value.as_u64().ok_or_else(|| {
+                        CuratorError::Catalog(format!(
+                            "mission {mission_id} has a non-u64 allowed relic"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            missions.push(MissionPreview {
+                mission_id,
+                title: preview_string(exact, mission_id, "title")?.to_owned(),
+                ruleset: preview_string(exact, mission_id, "ruleset")?.to_owned(),
+                action_cap: preview_u64(exact, mission_id, "action_limit")?,
+                privacy_grade: preview_string(exact, mission_id, "privacy_grade")?.to_owned(),
+                reward_class: preview_string(exact, mission_id, "reward_class")?.to_owned(),
+                budget: MissionBudgetPreview {
+                    intel: preview_u64(budget, mission_id, "intel")?,
+                    supplies: preview_u64(budget, mission_id, "supplies")?,
+                    cohesion: preview_u64(budget, mission_id, "cohesion")?,
+                    influence: preview_u64(budget, mission_id, "influence")?,
+                    score: preview_u64(budget, mission_id, "score")?,
+                    relics: preview_u64(budget, mission_id, "relics")?,
+                },
+                allowed_relics,
+                beta_artifacts: mission.allowed_beta_discoveries.clone(),
+                descriptor_path: descriptor_path.to_owned(),
+                content_visibility,
+            });
+        }
+
+        let (signature_status, signature_epoch, signature_counter, notice) = match verified {
+            None => (
+                EpochPreviewSignatureStatus::Absent,
+                None,
+                None,
+                "UNSIGNED WIP: no detached signature was supplied or verified; this preview is not an activation",
+            ),
+            Some(envelope) => (
+                EpochPreviewSignatureStatus::Valid,
+                Some(envelope.content_epoch),
+                Some(envelope.counter),
+                "SIGNATURE VERIFIED: this review preview is not a Lean mission activation",
+            ),
+        };
+        Ok(EpochPreview {
+            schema: POA_EPOCH_PREVIEW_SCHEMA.into(),
+            manifest_sha256: self.bundle.manifest_sha256.clone(),
+            source_digest: self.bundle.manifest.source_digest.clone(),
+            content_root: self.bundle.content_root.clone(),
+            content_epoch: self.bundle.content_epoch,
+            deployment_id: self.deployment.deployment_id.clone(),
+            federation_id: self.deployment.federation_id.clone(),
+            signature_status,
+            signature_epoch,
+            signature_counter,
+            notice: notice.into(),
+            missions,
+        })
+    }
+}
+
+fn preview_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    mission_id: u64,
+    field: &str,
+) -> Result<&'a str, CuratorError> {
+    object.get(field).and_then(Value::as_str).ok_or_else(|| {
+        CuratorError::Catalog(format!("mission {mission_id} {field} is not a string"))
+    })
+}
+
+fn preview_u64(
+    object: &serde_json::Map<String, Value>,
+    mission_id: u64,
+    field: &str,
+) -> Result<u64, CuratorError> {
+    object
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| CuratorError::Catalog(format!("mission {mission_id} {field} is not a u64")))
 }
 
 #[derive(Clone, Debug)]
@@ -731,6 +926,25 @@ impl VerifiedContentEpoch<'_> {
     /// and `CanonAdmission`, encoded using the shared lowercase SHA-256 codec.
     pub fn activation_digest(&self) -> String {
         format!("sha256:{}", hex_encode(&self.signed_digest))
+    }
+
+    /// Project the same exact bundle as a signature-verified review document.
+    /// The returned JSON remains descriptive and is not a Lean activation.
+    pub fn epoch_preview(
+        &self,
+        bound: &DeploymentBoundBundle<'_>,
+    ) -> Result<EpochPreview, CuratorError> {
+        if self.envelope.manifest_sha256 != bound.bundle.manifest_sha256 {
+            return Err(CuratorError::ContentEpoch(
+                "verified signature does not name the previewed exact manifest bytes".into(),
+            ));
+        }
+        if self.envelope.content_epoch != bound.bundle.content_epoch {
+            return Err(CuratorError::ContentEpoch(
+                "verified signature epoch does not name the previewed catalog epoch".into(),
+            ));
+        }
+        bound.build_epoch_preview(Some(self.envelope))
     }
 
     /// Ask the live Lean adapter to admit the exact authenticated mission

@@ -1,0 +1,102 @@
+{
+  "schema": "POA-EPOCH-PREVIEW-V1",
+  "manifest_sha256": "sha256:e6893f6de8a9e4c8ed13be0b135a92cef3ddeba6b669181a0792b222e3628ea8",
+  "source_digest": "sha256:b2af50349f2fc4c14db2e3bdb7f9f03aa1dd59862c079d494e69c853f73b8895",
+  "content_root": "sha256:679706a06ae8546a96b369a70dd7c5ee1c93fe47c789368087ab167c7b7dcebc",
+  "content_epoch": 1,
+  "deployment_id": "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e",
+  "federation_id": "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
+  "signature_status": "absent",
+  "signature_epoch": null,
+  "signature_counter": null,
+  "notice": "UNSIGNED WIP: no detached signature was supplied or verified; this preview is not an activation",
+  "missions": [
+    {
+      "mission_id": 1,
+      "title": "Signal Triangulation",
+      "ruleset": "signal-v1",
+      "action_cap": 5,
+      "privacy_grade": "public",
+      "reward_class": "non-economic-demo",
+      "budget": {
+        "intel": 25,
+        "supplies": 15,
+        "cohesion": 10,
+        "influence": 5,
+        "score": 500,
+        "relics": 1
+      },
+      "allowed_relics": [
+        1
+      ],
+      "beta_artifacts": [
+        {
+          "mission_id": 1,
+          "artifact_id": 1,
+          "source_digest": "sha256:b2af50349f2fc4c14db2e3bdb7f9f03aa1dd59862c079d494e69c853f73b8895",
+          "content_digest": "sha256:c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf"
+        }
+      ],
+      "descriptor_path": "games/signal-triangulation.json",
+      "content_visibility": "public"
+    },
+    {
+      "mission_id": 2,
+      "title": "Relay Repair",
+      "ruleset": "relay-v1",
+      "action_cap": 4,
+      "privacy_grade": "public",
+      "reward_class": "non-economic-demo",
+      "budget": {
+        "intel": 10,
+        "supplies": 40,
+        "cohesion": 20,
+        "influence": 5,
+        "score": 650,
+        "relics": 1
+      },
+      "allowed_relics": [
+        2
+      ],
+      "beta_artifacts": [
+        {
+          "mission_id": 2,
+          "artifact_id": 2,
+          "source_digest": "sha256:b2af50349f2fc4c14db2e3bdb7f9f03aa1dd59862c079d494e69c853f73b8895",
+          "content_digest": "sha256:7862d311fbb9840dd4d2e5a9785f673ff71be3d97b27fbcf5256e1d99823c464"
+        }
+      ],
+      "descriptor_path": "games/relay-repair.json",
+      "content_visibility": "public"
+    },
+    {
+      "mission_id": 3,
+      "title": "Salvage Lock",
+      "ruleset": "salvage-v1",
+      "action_cap": 12,
+      "privacy_grade": "public",
+      "reward_class": "non-economic-demo",
+      "budget": {
+        "intel": 30,
+        "supplies": 25,
+        "cohesion": 10,
+        "influence": 15,
+        "score": 750,
+        "relics": 1
+      },
+      "allowed_relics": [
+        3
+      ],
+      "beta_artifacts": [
+        {
+          "mission_id": 3,
+          "artifact_id": 3,
+          "source_digest": "sha256:b2af50349f2fc4c14db2e3bdb7f9f03aa1dd59862c079d494e69c853f73b8895",
+          "content_digest": "sha256:ad40233a01f1d728a469b22f1fa890207865ea6d87369b787d622e9744c5697e"
+        }
+      ],
+      "descriptor_path": "games/salvage-lock.json",
+      "content_visibility": "public"
+    }
+  ]
+}

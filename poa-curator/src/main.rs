@@ -18,9 +18,14 @@ usage:
   poa-curator keygen --secret PATH --pin PATH
   poa-curator sign-content --secret PATH --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--output PATH]
   poa-curator verify-content --pin PATH --manifest PATH --deployment PATH --epoch N --counter N [--signature PATH]
+  poa-curator preview-epoch --manifest PATH --deployment PATH [--pin PATH --signature PATH --epoch N --counter N]
 
 `keygen` creates a DEVELOPMENT beta curator key, never a Sentyr identity. It
 refuses to overwrite either output and writes the raw 32-byte secret mode 0600.
+
+`preview-epoch` is read-only JSON. With no signature tuple it loudly reports an
+unsigned WIP; signature status becomes valid only when all four verification
+flags are supplied and verify against the exact bundle and deployment.
 "#;
 
 fn main() {
@@ -43,6 +48,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         "keygen" => command_keygen(&flags),
         "sign-content" => command_sign_content(&flags),
         "verify-content" => command_verify_content(&flags),
+        "preview-epoch" => command_preview_epoch(&flags),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
 }
@@ -207,6 +213,50 @@ fn command_verify_content(flags: &BTreeMap<String, String>) -> Result<(), String
     println!(
         "verified content epoch {epoch} counter {counter} activation {}",
         verified.activation_digest()
+    );
+    Ok(())
+}
+
+fn command_preview_epoch(flags: &BTreeMap<String, String>) -> Result<(), String> {
+    const VERIFICATION_FLAGS: [&str; 4] = ["pin", "signature", "epoch", "counter"];
+    exact_flags(flags, &["manifest", "deployment"], &VERIFICATION_FLAGS)?;
+    let supplied_verification_flags = VERIFICATION_FLAGS
+        .iter()
+        .filter(|name| flags.contains_key(**name))
+        .count();
+    if supplied_verification_flags != 0 && supplied_verification_flags != VERIFICATION_FLAGS.len() {
+        return Err(
+            "signature verification requires --pin, --signature, --epoch, and --counter together"
+                .into(),
+        );
+    }
+
+    let bundle =
+        Poag1Bundle::load(flag_path(flags, "manifest")?).map_err(|error| error.to_string())?;
+    let bound = bundle
+        .bind_deployment(flag_path(flags, "deployment")?)
+        .map_err(|error| error.to_string())?;
+    let preview = if supplied_verification_flags == 0 {
+        bound
+            .unsigned_epoch_preview()
+            .map_err(|error| error.to_string())?
+    } else {
+        let pin =
+            CuratorKeyPin::load(flag_path(flags, "pin")?).map_err(|error| error.to_string())?;
+        let envelope = ContentEpochEnvelope::load(flag_path(flags, "signature")?)
+            .map_err(|error| error.to_string())?;
+        let epoch = flag_u64(flags, "epoch")?;
+        let counter = flag_u64(flags, "counter")?;
+        let verified = envelope
+            .verify(&bound, &pin, epoch, counter)
+            .map_err(|error| error.to_string())?;
+        verified
+            .epoch_preview(&bound)
+            .map_err(|error| error.to_string())?
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&preview).map_err(|error| error.to_string())?
     );
     Ok(())
 }

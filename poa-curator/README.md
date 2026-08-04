@@ -4,7 +4,7 @@ This crate is the narrow Sentyr-facing authority edge for POAG1 content. It does
 not implement game rules, contribution bounds, or world-state transitions. Those
 remain in Lean and are emitted into the POAG1 bundle.
 
-The component does five things:
+The component does six things:
 
 1. loads `poa/artifacts/poag1/manifest.json` and rejects any non-v1, unknown,
    missing, duplicate, noncanonical-order, traversing, byte-length, SHA-256,
@@ -14,7 +14,9 @@ The component does five things:
 3. binds that catalog to the separately verified `poa-devnet.json` federation;
 4. signs the **exact manifest bytes** under a content-epoch/counter domain; and
 5. signs exact promote/supersede decisions over all four fields of the Lean
-   `ArtifactRef` projection.
+   `ArtifactRef` projection; and
+6. emits a deterministic, keyless review projection for Sentyr without
+   activating or inventing content.
 
 Runtime hydration requires a live `MissionActivationOracle` to admit the exact
 authenticated mission template plus detached activation digest. Promotion and
@@ -46,6 +48,38 @@ Game-specific transition payloads remain opaque Rust-side: the curator checks
 their common identity header and byte commitment, then the
 `MissionActivationOracle` asks Lean to admit the exact complete descriptor. Rust
 does not acquire a second copy of Relay or Salvage semantics.
+
+## Review an epoch without signing it
+
+`preview-epoch` strictly loads and deployment-binds the exact bundle before it
+prints deterministic JSON. The review includes the manifest and content roots,
+deployment/federation identity, catalog epoch, and each mission's title,
+ruleset, action cap, privacy/reward labels, budget, allowed relics, exact beta
+artifact refs, descriptor path, and declared target visibility. It never looks
+for an adjacent signature unless the complete verification tuple is supplied.
+
+```sh
+cargo run --manifest-path poa-curator/Cargo.toml -- preview-epoch \
+  --manifest poa/artifacts/poag1/manifest.json \
+  --deployment poa/deployments/epoch-1/poa-devnet.json
+```
+
+Unsigned output says `"signature_status": "absent"` and carries an explicit
+`UNSIGNED WIP` notice. To report `"signature_status": "valid"`, all four
+verification inputs are mandatory and must verify against the exact bytes:
+
+```sh
+cargo run --manifest-path poa-curator/Cargo.toml -- preview-epoch \
+  --manifest poa/artifacts/poag1/manifest.json \
+  --deployment poa/deployments/epoch-1/poa-devnet.json \
+  --pin poa/config/curator-key.json \
+  --signature poa/artifacts/poag1/manifest.sig.json \
+  --epoch 1 --counter 2
+```
+
+Partial verification flags, stale counters, wrong pins, mismatched deployments,
+and malformed or byte-drifted bundles refuse without producing preview JSON.
+Even a signature-verified preview is not a Lean mission activation.
 
 `manifest.sig.json` is deliberately detached and is not listed by the manifest
 it signs. Its strict wire shape is:
