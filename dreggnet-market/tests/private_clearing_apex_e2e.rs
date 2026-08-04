@@ -770,7 +770,8 @@ fn poa_receipt_refuses_unjudged_then_generic_private_drex_crown_still_lands() {
     let poa_session = [0xA2; 32];
     let poa_mission = [0xA3; 32];
     let poa_artifact = [0xA4; 32];
-    let poa_run_receipt = [0xA5; 32];
+    let poa_judge_input_digest = [0xA5; 32];
+    let poa_judge_output_digest = [0xA9; 32];
     let poa_pre_state = [0xA7; 32];
     let poa_post_state = [0xA8; 32];
     let poa_issuer = SigningKey::from_bytes(&[0xA6; 32]);
@@ -795,7 +796,8 @@ fn poa_receipt_refuses_unjudged_then_generic_private_drex_crown_still_lands() {
         poa_session,
         poa_mission,
         poa_artifact,
-        poa_run_receipt,
+        poa_judge_input_digest,
+        poa_judge_output_digest,
         poa_pre_state,
         poa_post_state,
         SELLER,

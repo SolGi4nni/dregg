@@ -18,12 +18,14 @@ use std::fmt;
 use dungeon_on_dregg::loot::LootVault;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 
-const RECEIPT_VERSION: u16 = 1;
-const RECEIPT_DOMAIN: &[u8] = b"pathofangels.network/run-receipt/v1";
-const DIGEST_DOMAIN: &str = "dreggnet-market/poa-expedition-digest/v1";
+const RECEIPT_VERSION: u16 = 2;
+const RECEIPT_DOMAIN: &[u8] = b"pathofangels.network/expedition-judgement-receipt/v2";
+const JUDGE_INPUT_DIGEST_DOMAIN: &[u8] = b"pathofangels.network/lean-judge-input-digest/v2";
+const JUDGE_OUTPUT_DIGEST_DOMAIN: &[u8] = b"pathofangels.network/lean-judge-output-digest/v2";
+const DIGEST_DOMAIN: &str = "dreggnet-market/poa-expedition-digest/v2";
 const MAX_PLAYER_BYTES: usize = 128;
 
-/// The ship has roughly one thousand decks.  `0..=999` is the v1 receipt
+/// The ship has roughly one thousand decks.  `0..=999` is the v2 receipt
 /// envelope; future content epochs can select another signed format/version.
 pub const POA_DECK_COUNT: u16 = 1_000;
 
@@ -83,9 +85,15 @@ pub struct PoaExpeditionClaim {
     /// Digest of the exact Lean-emitted program/schema bundle relied on by the
     /// receipt producer.  This adapter pins bytes; it does not reinterpret it.
     pub artifact_digest: [u8; 32],
-    /// Digest the issuer authenticates as the executor/proof receipt. This
-    /// field is not accepted as a judgement until the Lean verifier consumes it.
-    pub run_receipt: [u8; 32],
+    /// Exact 32-byte digest named by the pinned artifact for the bytes supplied
+    /// to the Lean judge. The v2 signature labels and binds this value without
+    /// rehashing, folding, decoding, or treating it as verification.
+    pub judge_input_digest: [u8; 32],
+    /// Exact 32-byte digest named by the pinned artifact for the bytes emitted
+    /// by the Lean judge. It occupies a separately labelled v2 signature slot,
+    /// so an input digest and output digest cannot be exchanged or cross-paired
+    /// under a valid envelope signature.
+    pub judge_output_digest: [u8; 32],
     pub pre_state: [u8; 32],
     pub post_state: [u8; 32],
     pub player: String,
@@ -106,7 +114,8 @@ impl PoaExpeditionClaim {
         session: [u8; 32],
         mission: [u8; 32],
         artifact_digest: [u8; 32],
-        run_receipt: [u8; 32],
+        judge_input_digest: [u8; 32],
+        judge_output_digest: [u8; 32],
         pre_state: [u8; 32],
         post_state: [u8; 32],
         player: impl Into<String>,
@@ -123,7 +132,8 @@ impl PoaExpeditionClaim {
             session,
             mission,
             artifact_digest,
-            run_receipt,
+            judge_input_digest,
+            judge_output_digest,
             pre_state,
             post_state,
             player: player.into(),
@@ -136,15 +146,33 @@ impl PoaExpeditionClaim {
         }
     }
 
-    /// Canonical v1 fields, excluding the domain separator and signature.
+    /// Canonical v2 fields, excluding the receipt domain and signature.
+    ///
+    /// The judge digests are copied byte-for-byte after distinct, fixed labels.
+    /// The pinned artifact owns their hashing/schema. A future transition
+    /// verifier must recompute both from the exact input/output artifacts and
+    /// establish that the judged input commits every transition-relevant claim
+    /// field; this transport adapter deliberately does neither.
     pub fn canonical_fields(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(2 + 32 * 8 + 40 + self.player.len());
+        let mut bytes = Vec::with_capacity(
+            2 + 32 * 10
+                + JUDGE_INPUT_DIGEST_DOMAIN.len()
+                + JUDGE_OUTPUT_DIGEST_DOMAIN.len()
+                + 49
+                + self.player.len()
+                + 4 * self.contribution.relics.len(),
+        );
         bytes.extend_from_slice(&self.version.to_be_bytes());
         bytes.extend_from_slice(&self.federation);
         bytes.extend_from_slice(&self.session);
         bytes.extend_from_slice(&self.mission);
         bytes.extend_from_slice(&self.artifact_digest);
-        bytes.extend_from_slice(&self.run_receipt);
+        bytes.extend_from_slice(JUDGE_INPUT_DIGEST_DOMAIN);
+        bytes.push(0);
+        bytes.extend_from_slice(&self.judge_input_digest);
+        bytes.extend_from_slice(JUDGE_OUTPUT_DIGEST_DOMAIN);
+        bytes.push(0);
+        bytes.extend_from_slice(&self.judge_output_digest);
         bytes.extend_from_slice(&self.pre_state);
         bytes.extend_from_slice(&self.post_state);
         bytes.extend_from_slice(&(self.player.len() as u64).to_be_bytes());
@@ -262,8 +290,14 @@ impl PoaExpeditionPolicy {
         if claim.artifact_digest != self.artifact_digest {
             return Err(PoaExpeditionError::WrongArtifact);
         }
-        if claim.run_receipt == [0; 32] {
-            return Err(PoaExpeditionError::MissingRunReceipt);
+        if claim.judge_input_digest == [0; 32] {
+            return Err(PoaExpeditionError::MissingJudgeInputDigest);
+        }
+        if claim.judge_output_digest == [0; 32] {
+            return Err(PoaExpeditionError::MissingJudgeOutputDigest);
+        }
+        if claim.judge_input_digest == claim.judge_output_digest {
+            return Err(PoaExpeditionError::InvalidJudgeDigestPair);
         }
         if claim.pre_state == [0; 32]
             || claim.post_state == [0; 32]
@@ -329,7 +363,9 @@ pub enum PoaExpeditionError {
     WrongSession,
     WrongMission,
     WrongArtifact,
-    MissingRunReceipt,
+    MissingJudgeInputDigest,
+    MissingJudgeOutputDigest,
+    InvalidJudgeDigestPair,
     InvalidStateTransition,
     InvalidPlayer,
     DeckOutOfBounds,
@@ -347,8 +383,13 @@ impl fmt::Display for PoaExpeditionError {
             Self::WrongSession => write!(f, "receipt belongs to another PoA content session"),
             Self::WrongMission => write!(f, "receipt names an unknown PoA mission"),
             Self::WrongArtifact => write!(f, "receipt names another PoA program artifact"),
-            Self::MissingRunReceipt => {
-                write!(f, "receipt does not name an asserted executor receipt")
+            Self::MissingJudgeInputDigest => write!(f, "receipt has no Lean judge input digest"),
+            Self::MissingJudgeOutputDigest => write!(f, "receipt has no Lean judge output digest"),
+            Self::InvalidJudgeDigestPair => {
+                write!(
+                    f,
+                    "receipt reuses one digest for Lean judge input and output"
+                )
             }
             Self::InvalidStateTransition => {
                 write!(f, "receipt does not bind distinct nonzero pre/post states")

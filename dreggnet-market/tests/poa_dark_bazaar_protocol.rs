@@ -93,8 +93,10 @@ fn collective_key(params: &BfvParams) -> (KeygenSession, Vec<ThresholdParty>, Co
 }
 
 fn poa_receipt(trader: usize, player_key: [u8; 32], issuer: &SigningKey) -> PoaExpeditionReceipt {
-    let mut run_receipt = [0x50; 32];
-    run_receipt[0] = 0x50 + trader as u8;
+    let mut judge_input_digest = [0x50; 32];
+    judge_input_digest[0] = 0x50 + trader as u8;
+    let mut judge_output_digest = [0x58; 32];
+    judge_output_digest[0] = 0x58 + trader as u8;
     let mut post_state = [0x60; 32];
     post_state[0] = 0x60 + trader as u8;
     PoaExpeditionReceipt::issue(
@@ -103,7 +105,8 @@ fn poa_receipt(trader: usize, player_key: [u8; 32], issuer: &SigningKey) -> PoaE
             [0x12; 32],
             [0x13; 32],
             [0x14; 32],
-            run_receipt,
+            judge_input_digest,
+            judge_output_digest,
             [0x15; 32],
             post_state,
             format!("poa-expedition:trader-{trader}"),
@@ -387,7 +390,7 @@ fn poa_receipt_keys_seal_one_private_book_then_stop_before_salvage_settlement() 
     let mut substituted_receipts = receipts.clone();
     let mut substituted_claim = substituted_receipts[0].claim.clone();
     substituted_claim.counter += 4;
-    substituted_claim.run_receipt[0] ^= 1;
+    substituted_claim.judge_output_digest[0] ^= 1;
     substituted_receipts[0] = PoaExpeditionReceipt::issue(substituted_claim, &issuer);
     policy
         .verify(&substituted_receipts[0])
