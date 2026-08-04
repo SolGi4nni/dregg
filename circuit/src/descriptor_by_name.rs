@@ -271,6 +271,13 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-mina-lightclient-link::v1",
         MINA_LIGHTCLIENT_LINK_JSON,
     ),
+    // ⚑ The Solana STAKE-TABLE FOLD: one row per stake-table entry. The eight-lane Poseidon2
+    // commitment to the table and the u64 active-stake DENOMINATOR both come out of the SAME rows,
+    // so a swapped validator set with an identical tally moves the root.
+    (
+        "dregg-solana-stake-table-fold::v1",
+        SOLANA_STAKE_TABLE_FOLD_JSON,
+    ),
 ];
 
 pub use crate::blinded_membership_witness::{
@@ -507,6 +514,32 @@ const MINA_LIGHTCLIENT_VERIFY_JSON: &str =
 /// real block is `PICKLES_OK`, also still a witness.
 const MINA_LIGHTCLIENT_LINK_JSON: &str =
     include_str!("../descriptors/by-name/dregg-mina-lightclient-link-v1.json");
+
+/// ⚑ `dregg-solana-stake-table-fold::v1` — the Solana stake table, FOLDED, one row per entry.
+///
+/// Lean-COMPILED (`Dregg2.Circuit.Emit.LightClientSolStakeFoldAir.solStakeFoldDesc` =
+/// `EffectLower.lowerAir` of the `EffectAir` source `solStakeFoldAir`; no hand-written
+/// `VmConstraint2` in that module). Width 44, 12 PIs, 58 constraints, three declared range tables
+/// (ids 98 / 93 / 85, the first and third shared with descriptors that already declare them).
+///
+/// Each row absorbs TWO arity-16 Poseidon2 message blocks of the SAME `state8 ‖ block8` shape —
+/// `ROOT_IN8 ‖ voter[0..8]` then `MID8 ‖ [voter8, stake0..3, 0, 0, 0]` — chains `ROOT_OUT` into the
+/// next row's `ROOT_IN` through eight `.transition` window gates, and publishes the LAST row's
+/// `ROOT_OUT` as the eight-lane table root. The SAME rows drive a four-limb u64 accumulator with
+/// boolean carries whose LAST-row value is the published active-stake DENOMINATOR.
+///
+/// ⚑ THE TOOTH: `dregg-solana-lightclient-verify::v1` PINS the denominator and says so in its own
+/// docblock — *"a swap to a different validator set with the SAME total active stake is NOT refused
+/// by this"* — and `solana_lightclient_proves.rs::a_swapped_stake_table_is_arithmetically_perfect`
+/// exhibits exactly such a row satisfying every gate. This descriptor refuses it: the tally pins
+/// still accept, and the root moves.
+///
+/// ⚠ The commitment is NOT `EpochStakeTable::root`'s SHA-256. That root is dregg-authored
+/// (`STAKE_TABLE_ROOT_TAG`) and its SHA-256 shape is 18,049,248 constraints / 12,831,336 columns at
+/// 703 live vote accounts against a proved ceiling of 2,131 columns; re-anchoring it onto this
+/// Poseidon2 frame is the flag day `LightClientSolStakeFoldAir`'s header names.
+const SOLANA_STAKE_TABLE_FOLD_JSON: &str =
+    include_str!("../descriptors/by-name/dregg-solana-stake-table-fold-v1.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

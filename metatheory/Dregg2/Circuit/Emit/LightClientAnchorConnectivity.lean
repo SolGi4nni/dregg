@@ -1,8 +1,8 @@
 /-
 # `Dregg2.Circuit.Emit.LightClientAnchorConnectivity` — WHICH light clients relate their claimed block
-to the evidence they check. Measured on all six served descriptors, as named theorems.
+to the evidence they check. Measured on all seven served descriptors, as named theorems.
 
-⚑ SUBSTRATE, SAID OUT LOUD (House Law #1): this file authors NO AIR. It reads six already-emitted
+⚑ SUBSTRATE, SAID OUT LOUD (House Law #1): this file authors NO AIR. It reads seven already-emitted
 `EffectVmDescriptor2` values and states decidable facts about them. Nothing here changes a shipped
 object, so nothing here rotates a VK or re-genesises anything.
 
@@ -29,7 +29,19 @@ limbs DO carry lane lookups, and they are decorative all the same.
 
 ## ⚑ THE ANSWER, IN THE REGISTER THE MEASUREMENT SUPPORTS
 
-Six served descriptors. **One of them relates its published values to anything: the Mina LINK rung.**
+Seven served descriptors. **Two of them relate their published values to anything, and only one of
+those two relates them to something the prover did not choose.**
+
+* the Mina LINK rung joins twenty published columns to a chain of WITNESSED lane values;
+* ⚑ the Solana STAKE-TABLE FOLD (2026-08-04) joins twelve to the output columns of two deployed
+  Poseidon2 chip absorbs. Its published root is the IMAGE of the exhibited rows, not a value equal
+  to another witness — which is the distinction this file's `minaLink_decorative_anchors` caveat was
+  written to keep visible, now on the other side of it.
+
+**The five VERIFY descriptors are unchanged: seventy-one decorative anchors, none of their literals
+moved.** No tripwire in this file fired, and that is the honest reading of this pass — the fold is a
+NEW rung beside them, not a repair of them. What repairing them costs is in
+`LightClientSolStakeFoldAir`'s §3.
 
 * **`dregg-eth-lightclient-verify::v1`** — `{0} / {1..3}{9} / {4} / {5} / {6} / {7} / {8} / {10}…{20}`.
   ELEVEN of eleven anchors inert, and UNREAD: no constraint of any kind names them, not even a width
@@ -81,6 +93,18 @@ Six served descriptors. **One of them relates its published values to anything: 
   The lane bounds are real and strictly stronger than canonicality (`8·29 + 22 = 254`,
   `2^254 < p_Pasta`) — but they bound each lane of a value tied to nothing.
 
+* ⚑ **`dregg-solana-stake-table-fold::v1`** — `{0..43}`, ONE component, **zero of twelve anchors
+  decorative**. *The prover exhibits a sequence of rows, each absorbing the running eight-lane state
+  and its own pubkey lanes into an arity-16 Poseidon2 chip row, then that result and its own stake
+  limbs into a second — and publishes the LAST row's state as the table's commitment and the LAST
+  row's four-limb accumulator as the active-stake denominator.* ⚑ The two publications come from the
+  SAME rows, which is what makes a swapped validator set with an IDENTICAL tally move the root
+  (`FoldScheme.same_tally_moves_the_root`; on the deployed prover,
+  `circuit/tests/solana_stake_table_fold.rs`, 11/11 release).
+  ⚠ It binds the DENOMINATOR's provenance and nothing else: `ED_OK` is still a witnessed carrier in
+  the sibling rung, the numerator is still a witnessed projection, and the join between the two rungs
+  is at the PUBLIC STATEMENT (the verifier compares four felts), not inside one proof.
+
 * **`dregg-mina-lightclient-link::v1`** — `{0}{9} / {1}{10} / … / {8}{17} / {18}{21} / {19..20}`.
   **ZERO decorative anchors: all twenty PI-bound columns are related.** *The prover exhibited a
   sequence of rows in which each row's nine-lane `OWNHASH` equals the next row's nine-lane `PARENT`,
@@ -114,6 +138,7 @@ import Dregg2.Circuit.Emit.LightClientTendermintAir
 import Dregg2.Circuit.Emit.LightClientMidnightAir
 import Dregg2.Circuit.Emit.LightClientSolanaAir
 import Dregg2.Circuit.Emit.LightClientMinaLinkAir
+import Dregg2.Circuit.Emit.LightClientSolStakeFoldAir
 
 set_option autoImplicit false
 set_option maxHeartbeats 1600000
@@ -353,6 +378,59 @@ theorem minaLink_has_twenty_pi_bound_columns :
     LightClientMinaLinkAir.minaLinkDesc.piCount = 20 := by
   decide
 
+/-- ⚑⚑⚑ **THE SOLANA STAKE-TABLE FOLD: NO DECORATIVE ANCHORS — AND, FOR THE FIRST TIME IN THIS
+CENSUS, THE PUBLISHED VALUES ARE DERIVED RATHER THAN CHAINED.**
+
+`dregg-solana-stake-table-fold::v1` publishes twelve values on its LAST row: the eight lanes of the
+table's Poseidon2 commitment and the four limbs of the `u64` active-stake denominator. All twelve are
+joined, and the component they sit in is the WHOLE TRACE.
+
+⚠ Read the difference from `minaLink_decorative_anchors` carefully, because it is the whole point of
+this rung. That descriptor earns its `[]` by chaining WITNESSED lane values with equality gates —
+this file's own caveat says so: *"its evidence is numbers the prover chose."* Here the joining
+constraints are two arity-16 chip lookups on the deployed Poseidon2 bus, whose eight output columns
+are FORCED by `DescriptorIR2.chip_lookup_sound_N` against the chip table the genuine permutation
+serves. The published root is not equal to a witness; it is the image of one. -/
+theorem solStakeFold_decorative_anchors :
+    decorativeAnchors LightClientSolStakeFoldAir.solStakeFoldDesc = [] := by
+  decide
+
+/-- …and the `[]` is a statement about TWELVE joined columns, not about an empty PI set. -/
+theorem solStakeFold_has_twelve_pi_bound_columns :
+    ((List.range LightClientSolStakeFoldAir.solStakeFoldDesc.traceWidth).filter
+      fun col => isPiBound LightClientSolStakeFoldAir.solStakeFoldDesc col).length = 12 ∧
+    LightClientSolStakeFoldAir.solStakeFoldDesc.piCount = 12 := by decide
+
+/-- ⚑⚑ **THE STATEMENT NO OTHER DESCRIPTOR IN THIS CENSUS CAN MAKE: the published anchor and the
+evidence are in ONE constraint together.**
+
+Every published root lane co-occurs, in a SINGLE constraint, with a pubkey lane and with a stake
+limb — the second chip absorb's tuple is `[16, MID₀…MID₇, VOTER₈, STAKE₀…STAKE₃, 0, 0, 0,
+ROOT_OUT₀…ROOT_OUT₇]`, so the root columns and the row's own evidence columns are adjacent, not
+merely in the same component by a long walk. And every published denominator limb co-occurs with the
+row's stake limbs through the accumulator window gates.
+
+⚠ Connectivity is still co-occurrence, not derivation — this file's standing caveat, and it binds
+here too. What upgrades this from co-occurrence to derivation is not measured here: it is
+`chip_lookup_sound_N` at the emitted tuple, and `LightClientSolStakeFoldAir.FoldScheme`'s
+`tableRoot_binds_or_collides` / `same_tally_moves_the_root` over the fold the tuples compute. -/
+theorem solStakeFold_root_shares_a_constraint_with_the_stake_rows :
+    ∀ j ∈ [0, 1, 2, 3, 4, 5, 6, 7],
+      LightClientSolStakeFoldAir.solStakeFoldDesc.constraints.any (fun c =>
+        LightClientSolStakeFoldAir.ROOT_OUT j ∈ relatedCols c
+          && LightClientSolStakeFoldAir.VOTER 8 ∈ relatedCols c
+          && LightClientSolStakeFoldAir.STAKE 0 ∈ relatedCols c) = true := by
+  decide
+
+/-- …and the DENOMINATOR limbs are joined to the per-row stake limbs, so the number the sibling
+verify rung's quorum divides by is the number these rows add up. -/
+theorem solStakeFold_denominator_shares_a_constraint_with_the_row_stakes :
+    ∀ i ∈ [0, 1, 2, 3],
+      LightClientSolStakeFoldAir.solStakeFoldDesc.constraints.any (fun c =>
+        LightClientSolStakeFoldAir.ACC i ∈ relatedCols c
+          && LightClientSolStakeFoldAir.STAKE i ∈ relatedCols c) = true := by
+  decide
+
 /-! ## §3 — the census, as one number. -/
 
 /-- ⚑ **THE ANSWER TO "HOW MANY OF OUR LIGHT CLIENTS RELATE THEIR CLAIMED BLOCK TO THE EVIDENCE THEY
@@ -398,6 +476,10 @@ theorem the_five_verify_descriptors_carry_seventy_one_decorative_anchors :
 #assert_axioms minaVerify_anchor_height_is_pinned_to_nothing
 #assert_axioms minaLink_decorative_anchors
 #assert_axioms minaLink_has_twenty_pi_bound_columns
+#assert_axioms solStakeFold_decorative_anchors
+#assert_axioms solStakeFold_has_twelve_pi_bound_columns
+#assert_axioms solStakeFold_root_shares_a_constraint_with_the_stake_rows
+#assert_axioms solStakeFold_denominator_shares_a_constraint_with_the_row_stakes
 #assert_axioms the_five_verify_descriptors_carry_seventy_one_decorative_anchors
 
 end Dregg2.Circuit.Emit.LightClientAnchorConnectivity
