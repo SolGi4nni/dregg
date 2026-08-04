@@ -6273,14 +6273,20 @@ fn faithful_history_session_id(federation_id: [u8; 32], committee_epoch: u64) ->
 enum FinalizedSignalRouteError {
     Malformed(crate::poa_signal_adapter::SignalAdapterError),
     Multiple,
+    NonCanonicalCarrier(&'static str),
 }
 
-/// Find the one reserved Signal claim in exact execution order, including
-/// capability-wrapped inner effects. Unknown events remain ordinary; once the
-/// reserved marker appears it is fail-closed and a second claim is never
-/// silently ignored or batched under semantics that only judge one action.
+/// Find the one reserved Signal claim and require its entire action carrier to
+/// have the one shape the Lean network judge actually interprets.
+///
+/// Unknown events remain ordinary. Once the reserved marker appears, however,
+/// the turn is no longer a generic call forest: it must be one root action,
+/// without children or capability wrapping, targeting the outer actor through
+/// method `poa-signal`, with one exact `EmitEvent` and no balance-change or
+/// witness side channel. This prevents a judged Signal code from hitchhiking
+/// beside an unrelated generic mutation that the game judge never saw.
 fn finalized_signal_claim(
-    forest: &dregg_turn::CallForest,
+    turn: &dregg_turn::Turn,
 ) -> Result<Option<dregg_sdk::poa_signal::SignalClaimV1>, FinalizedSignalRouteError> {
     fn collect(
         effect: &dregg_turn::Effect,
@@ -6305,10 +6311,34 @@ fn finalized_signal_claim(
     }
 
     let mut found = None;
-    for effect in forest.total_effects() {
+    for effect in turn.call_forest.total_effects() {
         collect(effect, &mut found)?;
     }
-    Ok(found)
+    let Some(claim) = found else {
+        return Ok(None);
+    };
+
+    let exact = dregg_sdk::poa_signal::claim_from_exact_signal_turn(turn).map_err(|_| {
+        FinalizedSignalRouteError::NonCanonicalCarrier(
+            "Signal turn differs from the canonical one-action hybrid-fee carrier",
+        )
+    })?;
+    let action = &turn.call_forest.roots[0].action;
+    if !matches!(
+        &action.authorization,
+        dregg_turn::Authorization::Signature(..)
+            | dregg_turn::Authorization::HybridSignature { .. }
+    ) {
+        return Err(FinalizedSignalRouteError::NonCanonicalCarrier(
+            "Signal action is not directly signature-authorized",
+        ));
+    }
+    if exact != claim {
+        return Err(FinalizedSignalRouteError::NonCanonicalCarrier(
+            "Signal scan and exact carrier decoder disagree",
+        ));
+    }
+    Ok(Some(claim))
 }
 
 /// Positional NoteCreate leaves for the finalized call forest.  The call-tree
@@ -7600,7 +7630,7 @@ async fn execute_finalized_turn(
     // coordinate is loaded/derived below. Malformed or multiple reserved
     // effects are terminal payload refusals and can never fall through as
     // ordinary EmitEvent traffic.
-    let signal_claim = match finalized_signal_claim(&signed_turn.turn.call_forest) {
+    let signal_claim = match finalized_signal_claim(&signed_turn.turn) {
         Ok(claim) => claim,
         Err(FinalizedSignalRouteError::Malformed(error)) => {
             let outcome = persist_finalized_payload_rejection(
@@ -7630,6 +7660,22 @@ async fn execute_finalized_turn(
                 block_id = %block_id,
                 turn_hash = %turn_hash_hex,
                 "multiple PoA Signal effects refused before mutation"
+            );
+            return outcome;
+        }
+        Err(FinalizedSignalRouteError::NonCanonicalCarrier(reason)) => {
+            let outcome = persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "poa-signal-noncanonical-carrier",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                reason,
+                "PoA Signal carrier contains semantics outside the one-action Lean judgment"
             );
             return outcome;
         }
@@ -10309,7 +10355,7 @@ mod tests {
     }
 
     #[test]
-    fn finalized_signal_routing_is_recursive_exact_and_single_claim_only() {
+    fn finalized_signal_routing_finds_nested_markers_but_refuses_noncanonical_carriers() {
         fn action(effects: Vec<dregg_turn::Effect>) -> dregg_turn::Action {
             dregg_turn::Action {
                 target: dregg_cell::CellId([0x71; 32]),
@@ -10335,12 +10381,28 @@ mod tests {
                 event: dregg_sdk::poa_signal::signal_claim_event(claim),
             }
         }
+        fn turn(call_forest: dregg_turn::CallForest) -> dregg_turn::Turn {
+            dregg_turn::Turn {
+                agent: dregg_cell::CellId([0x71; 32]),
+                nonce: 0,
+                call_forest,
+                fee: 0,
+                memo: None,
+                valid_until: None,
+                previous_receipt_hash: None,
+                depends_on: Vec::new(),
+                conservation_proof: None,
+                sovereign_witnesses: Default::default(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
+            }
+        }
 
-        let expected = dregg_sdk::poa_signal::SignalClaimV1::new(
-            1,
-            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
-        )
-        .unwrap();
         let mut nested = dregg_turn::CallForest::new();
         nested.add_root(action(vec![dregg_turn::Effect::ExerciseViaCapability {
             cap_slot: 3,
@@ -10349,7 +10411,10 @@ mod tests {
                 inner_effects: vec![signal(0x73)],
             }],
         }]));
-        assert_eq!(finalized_signal_claim(&nested).unwrap(), Some(expected));
+        assert!(matches!(
+            finalized_signal_claim(&turn(nested)),
+            Err(FinalizedSignalRouteError::NonCanonicalCarrier(_))
+        ));
 
         let mut duplicate = dregg_turn::CallForest::new();
         duplicate.add_root(action(vec![
@@ -10360,7 +10425,7 @@ mod tests {
             },
         ]));
         assert!(matches!(
-            finalized_signal_claim(&duplicate),
+            finalized_signal_claim(&turn(duplicate)),
             Err(FinalizedSignalRouteError::Multiple)
         ));
 
@@ -10374,7 +10439,7 @@ mod tests {
             event: malformed_event,
         }]));
         assert!(matches!(
-            finalized_signal_claim(&malformed),
+            finalized_signal_claim(&turn(malformed)),
             Err(FinalizedSignalRouteError::Malformed(
                 crate::poa_signal_adapter::SignalAdapterError::Claim(
                     dregg_sdk::poa_signal::SignalClaimError::MalformedReserved(_)
@@ -12050,7 +12115,17 @@ mod tests {
         federation_id: &[u8; 32],
     ) -> dregg_sdk::SignedTurn {
         let effect = dregg_turn::Effect::EmitEvent { cell: actor, event };
-        let action = cclerk.make_action(actor, "poa-signal", vec![effect], federation_id);
+        signed_signal_effects_turn(cclerk, actor, vec![effect], nonce, federation_id)
+    }
+
+    fn signed_signal_effects_turn(
+        cclerk: &dregg_sdk::AgentCipherclerk,
+        actor: dregg_cell::CellId,
+        effects: Vec<dregg_turn::Effect>,
+        nonce: u64,
+        federation_id: &[u8; 32],
+    ) -> dregg_sdk::SignedTurn {
+        let action = cclerk.make_action(actor, "poa-signal", effects, federation_id);
         let mut call_forest = dregg_turn::CallForest::new();
         call_forest.add_root(action);
         let mut turn = dregg_turn::Turn {
@@ -12089,13 +12164,137 @@ mod tests {
             dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
         )
         .unwrap();
-        signed_signal_event_turn(
-            cclerk,
+        let mut turn =
+            dregg_sdk::poa_signal::signal_claim_turn(&cclerk.public_key().0, nonce, None, claim);
+        assert_eq!(turn.agent, actor, "fixture actor is the signing identity");
+        let unsigned = turn.call_forest.roots[0].action.clone();
+        turn.call_forest.roots[0].action = cclerk.sign_action(unsigned, federation_id);
+        turn.call_forest.roots[0].hash = [0; 32];
+        turn.call_forest.forest_hash = [0; 32];
+        cclerk.sign_turn(&turn)
+    }
+
+    /// Signal is a dedicated judged transition, not an annotation that may be
+    /// attached to an otherwise arbitrary Dregg turn. These cases exercise the
+    /// classifier before executor/finality state exists, so every extra
+    /// semantic surface is refused by construction rather than by a later
+    /// rollback.
+    #[test]
+    fn poa_signal_carrier_is_one_exact_root_action_and_nothing_else() {
+        let seed = *blake3::hash(b"poa-signal-carrier-shape:actor").as_bytes();
+        let cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(seed));
+        let actor = dregg_cell::CellId::derive_raw(
+            &cclerk.public_key().0,
+            blake3::hash(b"default").as_bytes(),
+        );
+        let federation_id = [0x41; 32];
+        let exact = signed_signal_turn(&cclerk, actor, 1, 0, &federation_id);
+        assert!(matches!(
+            finalized_signal_claim(&exact.turn),
+            Ok(Some(claim)) if claim.mission_id() == 1
+        ));
+
+        let ordinary = signed_transfer_turn(&cclerk, actor, actor, 0, 0, &federation_id);
+        assert!(matches!(finalized_signal_claim(&ordinary.turn), Ok(None)));
+
+        let assert_noncanonical = |turn: &dregg_turn::Turn, case: &str| {
+            assert!(
+                matches!(
+                    finalized_signal_claim(turn),
+                    Err(FinalizedSignalRouteError::NonCanonicalCarrier(_))
+                ),
+                "{case} must not share the Signal judge"
+            );
+        };
+
+        let mut extra_effect = exact.turn.clone();
+        extra_effect.call_forest.roots[0]
+            .action
+            .effects
+            .push(dregg_turn::Effect::IncrementNonce { cell: actor });
+        assert_noncanonical(&extra_effect, "ordinary co-effect");
+
+        let mut extra_root = exact.turn.clone();
+        let second = cclerk.make_action(
             actor,
-            dregg_sdk::poa_signal::signal_claim_event(claim),
-            nonce,
-            federation_id,
-        )
+            "ordinary",
+            vec![dregg_turn::Effect::IncrementNonce { cell: actor }],
+            &federation_id,
+        );
+        extra_root.call_forest.add_root(second.clone());
+        assert_noncanonical(&extra_root, "second root action");
+
+        let mut child = exact.turn.clone();
+        child.call_forest.roots[0].add_child(second);
+        assert_noncanonical(&child, "child action");
+
+        let mut wrong_method = exact.turn.clone();
+        wrong_method.call_forest.roots[0].action.method = dregg_turn::action::symbol("ordinary");
+        assert_noncanonical(&wrong_method, "wrong method");
+
+        let other = dregg_cell::CellId::derive_raw(&[0x52; 32], &[0x53; 32]);
+        let mut wrong_target = exact.turn.clone();
+        wrong_target.call_forest.roots[0].action.target = other;
+        assert_noncanonical(&wrong_target, "wrong action target");
+
+        let mut wrong_event_cell = exact.turn.clone();
+        let dregg_turn::Effect::EmitEvent { cell, .. } =
+            &mut wrong_event_cell.call_forest.roots[0].action.effects[0]
+        else {
+            panic!("fixture Signal carrier must be EmitEvent")
+        };
+        *cell = other;
+        assert_noncanonical(&wrong_event_cell, "wrong event cell");
+
+        let mut balance_side_channel = exact.turn.clone();
+        balance_side_channel.call_forest.roots[0]
+            .action
+            .balance_change = Some(0);
+        assert_noncanonical(&balance_side_channel, "balance-change side channel");
+
+        let mut unchecked_auth = exact.turn.clone();
+        unchecked_auth.call_forest.roots[0].action.authorization =
+            dregg_turn::Authorization::Unchecked;
+        assert_noncanonical(&unchecked_auth, "unsigned action authorization");
+
+        let mut witness_sidecar = exact.turn.clone();
+        witness_sidecar.call_forest.roots[0]
+            .action
+            .witness_blobs
+            .push(dregg_turn::action::WitnessBlob::preimage([0x60; 32]));
+        assert_noncanonical(&witness_sidecar, "action witness sidecar");
+
+        let mut execution_sidecar = exact.turn.clone();
+        execution_sidecar.execution_proof = Some(vec![1, 2, 3]);
+        execution_sidecar.execution_proof_cell = Some(actor);
+        execution_sidecar.execution_proof_new_commitment = Some([0x61; 32]);
+        assert_noncanonical(&execution_sidecar, "sovereign execution-proof sidecar");
+
+        let mut custom_sidecar = exact.turn.clone();
+        custom_sidecar.custom_program_proofs = Some(Vec::new());
+        assert_noncanonical(&custom_sidecar, "custom-proof presence sidecar");
+
+        let mut dependency_sidecar = exact.turn.clone();
+        dependency_sidecar.depends_on.push([0x62; 32]);
+        assert_noncanonical(&dependency_sidecar, "turn dependency sidecar");
+
+        let mut overfee = exact.turn.clone();
+        overfee.fee = overfee
+            .fee
+            .checked_add(1)
+            .expect("fixture fee below u64 max");
+        assert_noncanonical(&overfee, "caller-selected fee mutation");
+
+        let mut multiple = exact.turn.clone();
+        let duplicate_claim = multiple.call_forest.roots[0].action.effects[0].clone();
+        multiple.call_forest.roots[0]
+            .action
+            .effects
+            .push(duplicate_claim);
+        assert!(matches!(
+            finalized_signal_claim(&multiple),
+            Err(FinalizedSignalRouteError::Multiple)
+        ));
     }
 
     /// Stand up the exact hybrid perimeter used by the finalized executor and,
@@ -12970,6 +13169,35 @@ mod tests {
                 if reason_code == "poa-signal-reserved-marker-malformed"
         ));
 
+        let mixed_claim = dregg_sdk::poa_signal::SignalClaimV1::new(
+            1,
+            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).expect("bounded Signal code"),
+        )
+        .expect("bounded mission");
+        let mixed = signed_signal_effects_turn(
+            &actor_cclerk,
+            actor,
+            vec![
+                dregg_turn::Effect::EmitEvent {
+                    cell: actor,
+                    event: dregg_sdk::poa_signal::signal_claim_event(mixed_claim),
+                },
+                dregg_turn::Effect::IncrementNonce { cell: actor },
+            ],
+            0,
+            &federation_id,
+        );
+        let mixed_payload = postcard::to_stdvec(&mixed).expect("encode mixed carrier");
+        let mixed_block = BlockId([0x88; 32]);
+        let mixed_outcome =
+            execute_finalized_turn(&state, &handle, mixed_block, &mixed_payload, None, None, 0)
+                .await;
+        assert!(matches!(
+            mixed_outcome,
+            FinalizedExecutionOutcome::DeterministicallyRejected { ref reason_code, .. }
+                if reason_code == "poa-signal-noncanonical-carrier"
+        ));
+
         let exact = signed_signal_turn(&actor_cclerk, actor, 1, 0, &federation_id);
         let exact_payload = postcard::to_stdvec(&exact).expect("encode exact Signal turn");
         let retry_block = BlockId([0x83; 32]);
@@ -13019,6 +13247,16 @@ mod tests {
                 .expect("malformed rejection read")
                 .is_some(),
             "the diagnostic rejection index may advance without mutating execution state"
+        );
+        let mixed_key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &mixed_block.0,
+        );
+        assert!(
+            s.store
+                .get_config(&mixed_key)
+                .expect("mixed-carrier rejection read")
+                .is_some(),
+            "mixed carrier must terminate before either executor state can commit"
         );
         let retry_key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
             &retry_block.0,
