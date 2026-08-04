@@ -490,6 +490,26 @@ def RunReceipt.key (receipt : RunReceipt) : ReceiptKey where
   playerKey := receipt.playerKey
   playerCounter := receipt.playerCounter
 
+/-- Replay identity deliberately excludes transcript material: substituting any
+transcript digest leaves the exact `ReceiptKey` unchanged. -/
+theorem RunReceipt.key_invariant_under_transcriptDigest_substitution
+    (receipt : RunReceipt) (substitute : Digest32) :
+    ({ receipt with transcriptDigest := substitute } : RunReceipt).key = receipt.key := by
+  rfl
+
+/-- Hostile replay witness: even when a substituted transcript digest is known to
+differ from the accepted one, the attempted replay still occupies the same key.
+Canon's consumed-key check therefore cannot be evaded by changing transcript
+bytes and recomputing their digest. -/
+theorem RunReceipt.hostile_transcript_replay_has_same_key
+    (receipt : RunReceipt) (hostileDigest : Digest32)
+    (different : hostileDigest ≠ receipt.transcriptDigest) :
+    let replay := ({ receipt with transcriptDigest := hostileDigest } : RunReceipt)
+    replay.transcriptDigest ≠ receipt.transcriptDigest ∧ replay.key = receipt.key := by
+  dsimp
+  exact ⟨different,
+    RunReceipt.key_invariant_under_transcriptDigest_substitution receipt hostileDigest⟩
+
 def RunReceipt.counterKey (receipt : RunReceipt) : PlayerCounterKey where
   federationId := receipt.federationId
   contentSession := receipt.contentSession
@@ -514,6 +534,8 @@ def RunReceipt.counterKey (receipt : RunReceipt) : PlayerCounterKey where
 #assert_axioms RunReceipt.sequence_advances
 #assert_axioms RunReceipt.records_exact_artifact
 #assert_axioms RunReceipt.player_counter_positive
+#assert_axioms RunReceipt.key_invariant_under_transcriptDigest_substitution
+#assert_axioms RunReceipt.hostile_transcript_replay_has_same_key
 #assert_axioms checkedPlayerCounter_value
 #assert_axioms PlayerCounter.next_value
 #assert_axioms PlayerCounter.max_refuses_next
