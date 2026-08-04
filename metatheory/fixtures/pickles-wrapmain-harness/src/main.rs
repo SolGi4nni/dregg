@@ -88,11 +88,22 @@
 // disable_gates_checks=true: a sigma desync is rejected by the PROOF (the permutation argument's
 // z-polynomial), not by a debug assert.
 //
-// SCOPE. INNER-KIMCHI FIDELITY of nine assembled sub-circuits of `wrap_main`. NOT a soundness
+// SCOPE. INNER-KIMCHI FIDELITY of ELEVEN assembled sub-circuits of `wrap_main`. NOT a soundness
 // proof, NOT "machine-checked Pickles", NOT a Mina-valid proof; the kimchi proof is an INNER
 // Pallas/Fq proof of a `wrap_main`-SHAPED circuit, and `KimchiWrapMain` §13 names by sub-circuit
-// everything that is not here (W-COMBINE, W-BULLET, W-FINALIZE, W-WRAPHACK, and
-// W-CLOSE's curve-side asserts).
+// everything that is not here (W-OPENINGS, W-COMBINE, W-BULLET and W-FINALIZE).
+//
+//   w11_wraphack   W-WRAPHACK: the THREE `hash_messages_for_next_wrap_proof` Fq sponges
+//                  (`wrap_hack.ml:110-137` at `wrap_main.ml:341-348` and `:421-431`). ⚑ It is the
+//                  rung that closes the public vector: wrap statement word 11 is the closing
+//                  sponge's `squeeze_field`, and with it all TWENTY-FOUR statement words
+//                  `wrap_main` pins are derived. ⚠ 24, not 40 - words 0-4 and 9 are deferred
+//                  values it passes through unchecked, 30-37 are `Spec.T.Constant` and 38-39 the
+//                  dead lookup `Opt`. Its two prev-proof sponges also give `old_bp_chals` its only
+//                  consumer and turn packed statement words 55/56 from fixtures into squeezes.
+//   w12_close      W-CLOSE: `Boolean.Assert.is_true bulletproof_success` (`wrap_main.ml:419-420`).
+//                  ONE constraint, and its input is W-BULLET's - so what it buys is that a witness
+//                  whose opening FAILED is refused, not that the opening is checked here.
 //
 // REGENERATE the fixtures (only when the Lean assembly changes):
 //   cd metatheory && lake build Dregg2.Circuit.Emit.KimchiWrapMain \
@@ -137,8 +148,10 @@ type BaseSponge = DefaultFqSponge<PallasParameters, PlonkSpongeConstantsKimchi, 
 type ScalarSponge = DefaultFrSponge<Fq, PlonkSpongeConstantsKimchi, FULL_ROUNDS>;
 type Idx = ProverIndex<FULL_ROUNDS, Pallas, poly_commitment::ipa::SRS<Pallas>>;
 
-/// The nine rungs, in assembly order. Each is a superset of the one before it.
-const RUNGS: [&str; 9] = [
+/// The twelve rungs. Each is a superset of the one below it; `w10_finalize` and `w10_wraphack`
+/// both hang off `w9_prev`, because `wrap_main.ml` runs `finalize_other_proof` (`:329`) before
+/// `hash_messages_for_next_wrap_proof` (`:340`) and neither reads the other's rows.
+const RUNGS: [&str; 14] = [
     "w1_transcript",
     "w2_challenges",
     "w3_branch",
@@ -148,6 +161,14 @@ const RUNGS: [&str; 9] = [
     "w7_split",
     "w8_ftcomm",
     "w9_prev",
+    "w10_finalize",
+    "w11_wraphack",
+    "w12_close",
+    // ⚑ W-COMBINE and W-BULLET hang off `w9_prev` too, and they are the pair that closes
+    // `wrap-transaction`'s `EndoMul 2528 = 32 × (46 + 33)` — the family this assembly emitted
+    // ZERO of before them.
+    "w10_combine",
+    "w11_bullet",
 ];
 
 // ---- the Lean-emitted JSON shape (identical schema to the step side's) ----
@@ -477,7 +498,14 @@ fn main() {
             fixtures_dir(),
             "smoke".to_string(),
             usize::MAX,
-            vec!["w1_transcript", "w7_split", "w8_ftcomm", "w9_prev"],
+            vec![
+                "w1_transcript",
+                "w7_split",
+                "w8_ftcomm",
+                "w9_prev",
+                "w10_combine",
+                "w11_bullet",
+            ],
         ),
         1 => (
             PathBuf::from(&args[0]),
@@ -508,7 +536,9 @@ fn main() {
             o.rows, o.domain, o.honest_ms, o.probes_tested
         );
     }
-    println!("== VERDICT: nine sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on");
+    println!(
+        "== VERDICT: eleven sub-circuits of `wrap_main` ASSEMBLE from Lean, PROVE pure-Rust on"
+    );
     println!("   PALLAS with verify()==true, and BIND at every sub-circuit boundary. The rest of");
     println!("   `wrap_main` is named by sub-circuit in KimchiWrapMain §13. ==");
 }
@@ -523,7 +553,7 @@ mod wrapmain_tests {
     /// The fixture subset actually PROVED in CI: the bottom rung, the closing rung, and the top
     /// one. w2/w3 are read for their census without proving, because each prove is seconds and the
     /// ladder pins (`KimchiWrapMain` §12b, §14b) already establish that they are supersets.
-    const COMMITTED: [&str; 7] = [
+    const COMMITTED: [&str; 12] = [
         "w1_transcript",
         "w4_bind",
         "w5_key",
@@ -531,6 +561,11 @@ mod wrapmain_tests {
         "w7_split",
         "w8_ftcomm",
         "w9_prev",
+        "w10_finalize",
+        "w11_wraphack",
+        "w12_close",
+        "w10_combine",
+        "w11_bullet",
     ];
 
     struct Fixture {
@@ -654,7 +689,7 @@ mod wrapmain_tests {
 
     #[test]
     fn public_input_binds_and_is_wired_in() {
-        for rung in ["w4_bind", "w5_key", "w9_prev"] {
+        for rung in ["w4_bind", "w5_key", "w9_prev", "w11_wraphack", "w12_close"] {
             let f = fixture(rung);
             assert!(
                 f.wired.public_input_size > 0,

@@ -284,8 +284,7 @@ independently compiled `wrap_main`** and its non-Generic gate stream is byte-ide
 `wrap-transaction`'s (11,601 gates, same types, same coefficients), so every non-Generic conformance
 fact is checked against both blobs.
 
-⚠ **NOT ASSEMBLED, named by sub-circuit** (§13): W-FINALIZE, W-WRAPHACK,
-W-OPENINGS, W-COMBINE, W-BULLET, and W-CLOSE's three curve-side asserts.
+⚠ **NOT ASSEMBLED, named by sub-circuit** (§13): W-FINALIZE, W-OPENINGS, W-COMBINE and W-BULLET.
 Each is a row-emitter this file does not have; none is a value this file fakes and calls derived.
 
 ## ⚑ THE SIX DEFECT CLASSES, CHECKED AS EMITTED (§12)
@@ -550,6 +549,17 @@ def itemVal (t i : Nat) : Nat :=
   | 3 => RC_WCOMM.getD i (wrapFixture 3 i)
   | 4 => RC_ZCOMM.getD i (wrapFixture 4 i)
   | 5 => RC_TCOMM.getD i (wrapFixture 5 i)
+  -- ⚑ **`lr` AND `delta` ARE CURVE POINTS SINCE `w11_bullet`, AND THAT IS A FLAG DAY.** They arrive
+  -- upstream through `Openings.Bulletproof.typ`'s `Inner_curve.typ` (`wrap_main.ml:357-383`), so
+  -- they are on-curve by construction; the `wrapFixture` filler that stood here was not, and
+  -- `Scalar_challenge.endo_inv` (`scalar_challenge.ml:343-354`) has NO WITNESS over an off-curve
+  -- `l` — its `res = [x⁻¹]·l` needs the group. These are real SRS Lagrange bases, which
+  -- `MinaStepSrsLagrangePin` grounds against the devnet SRS and which cost no inversion to reduce. They are still FIXTURES and §2d still says so;
+  -- what changed is that they are now fixtures of the right TYPE. What re-emits: every rung's
+  -- witness, because the 16 prechallenges and `c` are squeezed AFTER these words. β/γ/α/ζ are
+  -- squeezed before them, so §12a's reality gate does not move.
+  | 7 => if i % 2 == 0 then (lrPointQ (i / 2)).1 else (lrPointQ (i / 2)).2
+  | 8 => if i == 0 then deltaPointQ.1 else deltaPointQ.2
   | _ => wrapFixture t i
 
 /-- **THE EVENT LIST**, in `wrap_verifier.ml`'s own order.
@@ -610,15 +620,35 @@ word in ONE σ class; `key_digest_is_the_index_digest` pins the value against a 
 computed for the same index. ⚠ Below `w5_key` the digest is still a free witness at §2d's value —
 the rung, not the file, is what closed it. -/
 def WRAP_UNCONSUMED : List String :=
-  [ "sg_old — ON-CURVE at w9_prev (§18); its consumer is W-COMBINE's ~init"
+  [ "sg_old — ON-CURVE at w9_prev (§18), HASHED at w11_wraphack (§21) into packed statement \
+     words 55/56; still a FREE witness, and its consumer is W-COMBINE's ~init"
   , "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's packed statement words, \
            and 64 of them are still free"
-  , "w_comm — needs W-COMBINE"
-  , "z_comm — needs W-COMBINE"
+  , "w_comm — CONSUMED at w10_combine (§23), one fold step each"
+  , "z_comm — CONSUMED at w10_combine (§23)"
   , "t_comm — ft_comm EMITTED at w8_ftcomm (§17); its OUTPUT is W-COMBINE/W-BULLET's"
-  , "combined_inner_product — needs W-FINALIZE (the xi/r fold)"
-  , "lr — needs W-BULLET (bullet_reduce's endo/endo_inv pairs)"
-  , "delta — needs W-BULLET (lhs = Scalar_challenge.endo q c + delta)" ]
+  , "combined_inner_product — CONSUMED at w11_bullet (§24) as `uc = scale_fast u cip`'s scalar. \
+           ⚠ Its VALUE is still W-FINALIZE's, so what closed is the READ, not the derivation"
+  , "lr — CONSUMED at w11_bullet (§24): 32 endo ladders, plus `Inner_curve.typ`'s on-curve check"
+  , "delta — CONSUMED at w11_bullet (§24): `lhs = Scalar_challenge.endo q c + delta`" ]
+
+/-- ⚑ **THE CENSUS'S KEYS, SEPARATED FROM ITS PROSE — and the separation is a repair, not tidying.**
+
+Three lanes edit `WRAP_UNCONSUMED`'s entry TEXT concurrently, and five theorems pinned whole strings
+out of it. Every one of them went red the moment a lane reworded WHY a word is unconsumed, which is
+the one part of an entry that is *supposed* to change as sub-circuits land. Worse, the two pins that
+tried to be robust by using `String.startsWith` did not go red — they got **STUCK**: `String.startsWith`
+is well-founded recursion over a `String.Iterator` and does not kernel-reduce, so `decide` could
+neither prove nor refute them and the tactic failed for a reason that looks nothing like the fact
+being false.
+
+So the identity of the census lives here, as a list of KEYS that no lane has a reason to reword, and
+the pins are `rfl` over `getD` on THIS list. The prose above stays the lanes' to maintain; a pin on
+it is a pin against a moving target. ⚠ The two lists are kept in step by `unconsumed_keys_match_the_census`
+below — the count only, because relating a key to its own entry needs exactly the string operation
+that does not reduce. That is the residual and it is stated rather than papered over. -/
+def WRAP_UNCONSUMED_KEYS : List String :=
+  [ "sg_old", "x_hat", "w_comm", "z_comm", "t_comm", "combined_inner_product", "lr", "delta" ]
 
 /-! ## §3 — the row-schedule primitives.
 
@@ -1175,8 +1205,13 @@ W-PREV is the rung that emits it — so `rungPub` is `pubWords` up to `w8_ftcomm
 `w9_prev`, and slot `pubWords` sits in `placeChecked`'s DEAD GAP below it. That is deliberate and it
 is the fail-closed choice: exposing the word earlier would put a public word on a variable no row of
 that rung derives — defect class 5 wearing a public vector — and `placeChecked` refuses any gate
-that touches the gap, so the reservation cannot be used by accident. -/
-def AUXW (s : WrapShape) : Nat := s.pubWords + 1
+that touches the gap, so the reservation cannot be used by accident.
+
+⚑ **AND THE `+ 2` IS `w11_wraphack`'s**, reserved the same way and for the same reason: wrap
+statement word 11 is the closing `hash_messages_for_next_wrap_proof` squeeze (`wrap_main.ml:421-431`,
+§19), and below that rung no row reads the cell it would be tied to. `wraphack_rung_places_and_the_
+rung_below_it_does_not` exhibits the refusal at slot `pubWords + 1`. -/
+def AUXW (s : WrapShape) : Nat := s.pubWords + 2
 
 def baseSp (s : WrapShape) : Nat := AUXW s
 /-- the challenge region starts after the sponge; sized by the trace. -/
@@ -1439,23 +1474,53 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
                                                       `Field.Assert.equal` of `wrap_main.ml:350-351`
                                                       against packed statement word 54, which the
                                                       x_hat MSM consumes as entry 64
-    11     messages_for_next_wrap_proof            ✗ W-WRAPHACK (it hashes
-                                                      `openings_proof.sg` with
-                                                      `new_bulletproof_challenges`, and the latter is
-                                                      W-FINALIZE's output — so word 11 needs BOTH)
-    30–39  padding + the lookup Opt's challenge    ✗ (constant / feature-flag words)
+    11     messages_for_next_wrap_proof            ✅ at `w11_wraphack` ONLY (§21) — the closing
+                                                      `hash_messages_for_next_wrap_proof` sponge's
+                                                      `squeeze_field` (`wrap_main.ml:421-431`)
+    30–37  Spec.T.Constant padding                 ✗ (never constrained upstream either)
+    38–39  the lookup Opt                          ✗ (`lookup_verification_enabled` is off)
 
-**22 of 40 through `w8_ftcomm`, 23 at `w9_prev`.** Exposing all 40 would mean tying 17 words to
-variables no row derives — public fixtures, which is defect class 5 wearing a public vector. So
-`pubWords` is 22, `rungPub .prev` is 23, and this table is the census; §13 names what each missing
-word costs.
+**22 of 40 through `w8_ftcomm`, 23 at `w9_prev`, 24 at `w11_wraphack`.**
 
-⚑ **AND `w9_prev`'s WORD IS EXPOSED AT ONE RUNG, NOT AT ALL OF THEM.** `closingRows` emits
-`pubWords` halves at `w4_bind` and `prevRows` emits the 23rd; `AUXW` reserves the slot at every rung
-so that below `w9_prev` it sits in `placeChecked`'s DEAD GAP. That is the difference between a
-public word a rung derives and a public word a rung inherits: exposing word 12 at `w4_bind` would
-tie it to a cell nothing in `w4_bind` reads. `prev_rung_places_and_the_rung_below_it_does_not`
-exhibits the refusal. -/
+⚠ ⚑ **AND 40 IS NOT THE DENOMINATOR — 24 IS, AND THE OTHER SIXTEEN ARE NOT THIS FILE'S WORK.**
+`wrap_main` is HANDED forty words and CONSTRAINS twenty-four of them. Slots 0–4 and 9 are deferred
+values it passes straight through as `~advice` / `~plonk` / `~xi` (`wrap_main.ml:405-414`) and never
+checks — what consumes them is **W-FINALIZE**, §13 item 7, and until it lands they are not "missing
+from our public vector", they are unconstrained in `wrap_main` as written. Slots 30–37 are
+`Spec.T.Constant` padding and 38–39 the lookup `Opt` that `G.lookup_verification_enabled` leaves off
+(`wrap_verifier.ml:487,715`); a real devnet wrap proof carries **ZERO** in all ten
+(`MinaWrapPublicInput.the_tail_is_padding_and_branch_data`, over
+`MinaWrapPublicCommGate.PUBLIC_INPUT`). Tying those to variables would be public fixtures — defect
+class 5 wearing a public vector. So the honest reading of a `PI 24 vs 40` delta is
+**6 W-FINALIZE + 10 constant-or-dead**, and this rung is the last of the 24.
+
+⚑ **AND EACH NEW WORD IS EXPOSED AT ONE RUNG, NOT AT ALL OF THEM.** `closingRows` emits `pubWords`
+halves at `w4_bind`, `prevRows` emits the 23rd and `whRows` the 24th; `AUXW` reserves BOTH extra
+slots at every rung so that below their rungs they sit in `placeChecked`'s DEAD GAP. That is the
+difference between a public word a rung derives and one it inherits: exposing word 12 at `w4_bind`,
+or word 11 at `w9_prev`, would tie it to a cell nothing in that rung reads.
+`prev_rung_places_and_the_rung_below_it_does_not` and
+`wraphack_rung_places_and_the_rung_below_it_does_not` exhibit both refusals. -/
+
+/-- ⚑ **WHICH OF `WRAP_PRIMARY_LEN`'s FORTY SLOTS `wrap_main` ACTUALLY PINS**, read at source and
+listed so a `PI ours-vs-mina` delta cannot be read as a to-do list. -/
+def WRAP_PINNED_SLOTS : List Nat :=
+  [5, 6, 7, 8]                                    -- assert_eq_plonk β γ α ζ (wrap_verifier.ml:717-731)
+  ++ [10]                                         -- sponge_digest_before_evaluations (:430-432)
+  ++ [11]                                         -- messages_for_next_wrap_proof (:421-431)
+  ++ [12]                                         -- messages_for_next_step_proof (:350-351)
+  ++ (List.range 16).map (fun r => 13 + r)        -- bulletproof_challenges (:433-439)
+  ++ [29]                                         -- branch_data (:189-199)
+
+def WRAP_PINNED_WORDS : Nat := WRAP_PINNED_SLOTS.length
+
+/-- …and the sixteen it does not pin, by REASON and by OWNER. -/
+def WRAP_UNPINNED : List String :=
+  [ "0–4 cip · b · zeta_to_srs_length · zeta_to_domain_size · perm — PASSED THROUGH as ~advice/~plonk \
+     (wrap_main.ml:405-414); W-FINALIZE is what consumes them"
+  , "9 xi — PASSED THROUGH as ~xi (wrap_main.ml:409); W-FINALIZE"
+  , "30–37 Spec.T.Constant padding — ZERO in a real devnet wrap proof, constrained by nothing upstream"
+  , "38–39 the lookup Opt — G.lookup_verification_enabled is off (wrap_verifier.ml:487,715)" ]
 
 /-- The variables this assembly exposes as public words, in order. ⚑ Slot order here is THIS
 circuit's; the census above maps each to Mina's slot.
@@ -2355,17 +2420,1934 @@ def prevEnv (t : WrapData) : VarEnv :=
       [ (prevSq s sp p 0, (qMul x x : Int))
       , (prevSq s sp p 1, (qMul (qMul x x) x : Int)) ])
 
+/-! ## §21 — ⚑ **W-WRAPHACK**: `wrap_hack.ml:110-137` run THREE times
+(`wrap_main.ml:341-348` and `:421-431`), and the end of the public-vector gap.
+
+⚑ **THE DENOMINATOR IS 24, NOT 40.** `wrap_main` is handed forty statement words and PINS
+twenty-four of them. Words **0–4** (`combined_inner_product`, `b`, `zeta_to_srs_length`,
+`zeta_to_domain_size`, `perm`) and **9** (`xi`) are deferred values it passes straight through as
+`~advice` and `~plonk` (`wrap_main.ml:411-414`) and never checks — `wrap_verifier.ml:717-731`'s
+`assert_eq_plonk` ties α/β/γ/ζ and nothing else. Words **30–37** are `Spec.T.Constant` padding and
+**38–39** the lookup `Opt` that `G.lookup_verification_enabled` leaves off. So the census that
+matters is the 24, and before this rung 22 of them were derived: 5–8, 10, 13–28, 29 at `w4_bind`,
+and 12 at `w9_prev`. ⚠ 12 and 11 are the two `wrap_main.ml:340-355,419-439` owns, and 12 landed
+with W-PREV. **This rung is word 11 and nothing else is left.**
+
+## WHAT UPSTREAM ACTUALLY DOES, READ AT SOURCE
+
+`Wrap_hack.Checked.hash_messages_for_next_wrap_proof` (`wrap_hack.ml:110-137`) is ONE Fq sponge:
+
+  * it OPENS at `dummy_messages_for_next_wrap_proof_sponge_states.(2 − max_proofs_verified)` —
+    the state a fresh sponge reaches after absorbing `whPadVectors mlmb` DUMMY challenge vectors,
+    injected as `Impls.Wrap.Field.constant`. ⚑ That is `wrap_hack.ml:26-28`'s FRONT pad: `pad_vector`
+    is `Vector.extend_front_exn`, and padding at the front is exactly what makes the state
+    precomputable. §15c″ fixes `WH_MLMB = WH_PADDED`, so all three openings are the FRESH state and
+    `transcriptRowsQ`'s init rows PIN it to zero — defect class 1, in the pad specifically.
+  * it absorbs `Messages_for_next_wrap_proof.to_field_elements` (`composition_types.ml:411-418`):
+    ⚑ **every old bulletproof challenge FIRST, flattened, and the commitment's `[x; y]` LAST.**
+    The step side interleaves; this one does not, and getting it backwards would be a sponge over
+    the right 32 values in the wrong order — a digest wearing the right name.
+  * and it closes with `Sponge.squeeze_field`.
+
+`wrap_main` runs it three times at the committed shape:
+
+  * **`:341-348`, once per previous proof.** `{ challenge_polynomial_commitment = prev_step_accs.(p)
+    ; old_bulletproof_challenges = old_bp_chals.(p) }`. Its output is NOT witnessed — `:351-355`
+    puts it into `prev_statement.messages_for_next_wrap_proof`, which `pack_statement` lands at
+    packed words `PREV_MSG_NEXT_STEP + 1` and `+ 2` (**55 and 56**) and `wrap_verifier.ml:542-548`
+    turns into MSM entries 65 and 66. ⚑ **So this is the sub-circuit that consumes `old_bp_chals`**,
+    which §18 deliberately did not emit for exactly that reason, **and it runs on the TRANSCRIPT's
+    own `sg_old` cells** — `~sg_old:prev_step_accs` at `:412` is the same vector
+    `wrap_verifier.ml:538` absorbs and `w9_prev` already checks on-curve.
+  * **`:421-431`, once.** `{ challenge_polynomial_commitment =
+    openings_proof.challenge_polynomial_commitment; old_bulletproof_challenges =
+    new_bulletproof_challenges }` at `Max_proofs_verified.n`, `Field.Assert.equal`'d against
+    `messages_for_next_wrap_proof_digest` — **wrap statement word 11**, this assembly's 24th
+    public word.
+
+## ⚑ WHAT THIS RUNG CHANGES, AND WHAT IT DOES NOT
+
+**Does:** word 11 becomes a public word this circuit DERIVES, so every one of `wrap_main`'s
+twenty-four pinned statement words is derived; packed words 55 and 56 stop being fixtures and become
+squeezes (§15c″ is the value side of that, and `wraphack_digest_is_the_statement_word` is the pin
+that the two agree); `old_bp_chals` acquires its only consumer; and `prev_step_accs` acquires a
+second one.
+
+**Does not:** `sg_old` does NOT leave `WRAP_UNCONSUMED`. Hashing a free witness into a statement word
+that an MSM over free scalars consumes, whose output is itself absorbed and unconsumed, does not
+force `sg_old` to any value — a prover still chooses it subject only to `assert_on_curve`. The entry
+is REWRITTEN, not struck. ⚠ And word 11's two inputs are free HERE and named as such: the 30
+`new_bulletproof_challenges` are **W-FINALIZE's** output (§13 item 7) and
+`openings_proof.challenge_polynomial_commitment` is **W-OPENINGS's** `exists` — its own
+`assert_on_curve` belongs to that sub-circuit, not this one. What this rung establishes is that word
+11 is the sponge's squeeze over those cells rather than a fixture the prover hands the verifier.
+
+⚠ ⚑ **AND THE LADDER FORKS HERE, WHICH IS SAID RATHER THAN HIDDEN.** `w11_wraphack`'s `rungsUpto`
+contains `w9_prev` and NOT `w10_finalize` or `w10_combine`: the three sub-circuits were assembled
+concurrently as siblings off `w9_prev`, and neither reads the other's rows (`wrap_main.ml` runs
+`finalize_other_proof` at `:329`, `hash_messages_for_next_wrap_proof` at `:341`, and
+`Split_commitments.combine` inside `incrementally_verify_proof` at `:412`). So
+`rungRows_is_a_ladder`'s two new conjuncts are the ones that HOLD — `w11_wraphack` is `w9_prev` plus
+§21's rows, `w12_close` is `w11_wraphack` plus §22's — and the rung numbering already reserves
+`w10_*` for the sibling branches so that whichever lands last re-bases into one chain rather than
+renumbering everything. A rung table that implied `w11` contained `w10` would be the more
+comfortable lie. -/
+
+/-- Item tag for a `hash_messages_for_next_wrap_proof` absorb. -/
+def T_WHACK : Nat := 10
+
+/-- ONE sponge's absorbs: `WH_PADDED · WH_ROUNDS` challenges then the commitment's `[x; y]`. -/
+def WH_ABSORBS : Nat := WH_MLMB * WH_ROUNDS + 2
+/-- …its permutations at rate 2: one per odd absorb after the opening pair, plus the squeeze's
+(the last absorb leaves the state at `Absorbed 2`, so the squeeze permutes). -/
+def WH_PERMS : Nat := (WH_ABSORBS - 1) / 2 + 1
+/-- …and the variables `runSpongeQ` allocates for it: three state cells, three per permutation and
+two per absorb. `wraphack_sponge_allocation` closes this against the emitter. -/
+def WH_VARS : Nat := 3 + 3 * WH_PERMS + 2 * WH_ABSORBS
+
+/-- One wrap-hack sponge's SCHEDULE — the tape, then `Sponge.squeeze_field` (`wrap_hack.ml:137`). -/
+def whSchedule (tape : List Nat) : List Ev :=
+  tape.map (fun w => Ev.abs T_WHACK w) ++ [ Ev.sq .full ]
+
+/-- …and its trajectory. `bt` is out of range, so no word is bent. -/
+def whSpongeOf (base : Nat) (tape : List Nat) : SpAcc :=
+  runSpongeQ base (whSchedule tape) (tape.length + 1) 0
+
+/-- The wrap-hack region starts after **W-FTCOMM's**, so nothing below `w9_prev` moves.
+
+⚠ ⚑ **THIS READ `basePrev s sp + nPrevVars s` AND THAT WAS AN ALIASING BUG, CAUGHT BY A SIBLING
+LANE AND FIXED HERE.** That expression IS `baseFtc` (§17a), and `rungsUpto .wraphack` contains
+`.ftcomm` — so W-WRAPHACK's 345 cells and W-FTCOMM's occupied **the same addresses in a circuit that
+holds both**. It would not have failed loudly: `placeChecked` sees one variable where two were meant,
+merges two σ classes that were never meant to meet, and the emitted witness makes cells agree that
+nothing asserted. It is the class this file spends its whole §12 refusing, in a base address.
+
+⚠ **AND THE COMPOSITION HAZARD IS NOT CLOSED, IT IS NAMED.** `baseFin` (§19) and `baseComb` (§23)
+are BOTH `baseFtc s sp + nFtcVars s sp` — the same address this now uses. That is sound TODAY only
+because no rung's `rungsUpto` contains two of `.finalize`, `.combine`, `.wraphack`: the three
+sub-circuits were assembled concurrently as siblings off `w9_prev`. **When the ladder closes into one
+chain, the three regions must be STACKED, and whichever lane does that owns all three base
+definitions at once.** `wraphack_region_is_above_ftcomms` refutes the bug that was here; it does not
+and cannot cover a rung that does not exist yet. -/
+def baseWh (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
+def whBaseP (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat := baseWh s sp + WH_VARS * p
+def whBaseC (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + WH_VARS * s.prevs
+def nWhVars (s : WrapShape) : Nat := WH_VARS * (s.prevs + 1)
+
+/-- Previous proof `p`'s sponge (`wrap_main.ml:341-348`). -/
+def whSpongeP (t : WrapData) (p : Nat) : SpAcc :=
+  whSpongeOf (whBaseP t.sh t.sp p) (whTape (whOldChals p) (whSgOld p))
+/-- …and the CLOSING one (`wrap_main.ml:421-431`), whose squeeze is wrap statement word 11. -/
+def whSpongeC (t : WrapData) : SpAcc :=
+  whSpongeOf (whBaseC t.sh t.sp) (whTape whNewChals whSg)
+
+/-- A wrap-hack sponge's squeeze — the cell it is read out of… -/
+def whDigestVar (a : SpAcc) : PVar := ((a.evs.filter (fun e => !e.isAbs)).getD 0 default).srcV
+/-- …and its value. -/
+def whDigestVal (a : SpAcc) : Nat := ((a.evs.filter (fun e => !e.isAbs)).getD 0 default).val
+
+/-- ⚑ The public slot word 11 lands in: this assembly's 24th, one above `w9_prev`'s. -/
+def WH_PUB_SLOT (s : WrapShape) : Nat := s.pubWords + 1
+
+/-- **W-WRAPHACK's ROWS.** Three sponges — whose `init` rows pin each fresh opening state to zero,
+i.e. the front pad at `WH_MLMB = 2` — and then the ties that make each sponge's INPUT and OUTPUT
+cells the ones the rest of the assembly already has. -/
+def whRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let ties : List (List (Option PVar) × List Int) :=
+    (List.range s.prevs).flatMap (fun p =>
+      let a := whSpongeP t p
+      -- ⚑ THE LAST TWO ABSORBS ARE `prev_step_accs.(p)` — the TRANSCRIPT's own `sg_old` cells, not
+      -- a second copy of them. This is what makes `x; y` last rather than first observable.
+      ((List.range 2).map (fun j =>
+        ([some (a.evs.getD (WH_MLMB * WH_ROUNDS + j) default).wordV, some (sgOldVar t p j), none],
+         cEq)))
+      -- …and the squeeze IS packed statement word 55 / 56, which the MSM consumes as entry 65 / 66.
+      ++ [ ([some (whDigestVar a), some (prevW s sp (PREV_MSG_NEXT_STEP + 1 + p)), none], cEq) ])
+    -- ⚑ …and the closing squeeze IS wrap statement word 11 (`wrap_main.ml:421-431`).
+    ++ [ ([some (.external (WH_PUB_SLOT s) : PVar), some (whDigestVar (whSpongeC t)), none], cEq) ]
+  (List.range s.prevs).flatMap (fun p =>
+    transcriptRowsQ (whBaseP s sp p) (whSpongeP t p) wired)
+  ++ transcriptRowsQ (whBaseC s sp) (whSpongeC t) wired
+  ++ packHalves ties
+
+/-- W-WRAPHACK's variable environment — the three sponges'. ⚠ The `sg_old` absorb cells duplicate
+values `spongeEnv (baseSp …)` already carries for the transcript's own cells; they are DIFFERENT
+variables holding ONE value, which is what the tie rows say and what a σ class means. -/
+def whEnv (t : WrapData) : VarEnv :=
+  (List.range t.sh.prevs).flatMap (fun p => spongeEnv (whBaseP t.sh t.sp p) (whSpongeP t p))
+  ++ spongeEnv (whBaseC t.sh t.sp) (whSpongeC t)
+
+/-! ## §22 — ⚑ **W-CLOSE**: `wrap_main.ml:419-420`, and it is one constraint.
+
+§13's last entry. `with_label __LOC__ (fun () -> Boolean.Assert.is_true bulletproof_success)` —
+`bulletproof_success` is `check_bulletproof`'s `` `Success `` (`wrap_verifier.ml:383-437`), and
+`Boolean.Assert.is_true b` is `assert_equal (b :> Field.t) Field.one`: **ONE R1CS constraint**, one
+`Generic` half here.
+
+⚠ **AND ITS INPUT IS W-BULLET'S, WHICH THIS FILE DOES NOT ASSEMBLE.** So the cell this rung pins to
+1 is a free witness until §13 item 6 lands, and the honest statement of what the rung buys is
+narrow: the wrap circuit REFUSES a witness in which `bulletproof_success` is anything but 1, which
+is the difference between an opening check whose verdict is ignored and one whose verdict is
+required. It is not a claim that the opening is checked — `equal_g` is not in this circuit at all.
+Emitting it anyway is right for the same reason `wrap_main` writes it: the assert is the closing
+tie, and a `check_bulletproof` whose result nothing asserts is a check that does not refuse. -/
+
+/-- The closing region: one cell. -/
+def baseClose (s : WrapShape) (sp : SpAcc) : Nat := baseWh s sp + nWhVars s
+/-- `bulletproof_success` — `check_bulletproof`'s `` `Success `` (`wrap_verifier.ml:436`). -/
+def bpSuccessVar (s : WrapShape) (sp : SpAcc) : PVar := .external (baseClose s sp)
+
+/-- **W-CLOSE's ROWS.** `Boolean.Assert.is_true bulletproof_success`, and a σ-only probe so the
+rung's own cell is testable by the harness rather than merely present. -/
+def closeRows (t : WrapData) (wired : Bool) : List WRow :=
+  let v := bpSuccessVar t.sh t.sp
+  packHalves [ ([some v, none, none], cConst 1) ]
+  ++ [ probeRow wired v (whDigestVar (whSpongeC t)) ]
+
+/-- W-CLOSE's variable environment: the honest witness satisfies the assert. -/
+def closeEnv (t : WrapData) : VarEnv := [ (bpSuccessVar t.sh t.sp, (1 : Int)) ]
+
+/-! ## §19 — ⚑ **W-FINALIZE**: `finalize_other_proof`, and the fact that decides it.
+
+`wrap_verifier.ml:820-1049`, run `Max_proofs_verified.n` times from `wrap_main.ml:329-336`
+(`Vector.mapn` over `prev_proof_state.unfinalized_proofs`), so this rung emits **`prevs` instances**
+and not one.
+
+⚑⚑ **`Scalars.Tock` IS NOT `Scalars.Tick` WITH DIFFERENT LITERALS, AND THE DIFFERENCE IS MEASURED,
+NOT ASSERTED.** `plonk_checks/scalars.ml` carries both; `Tick` is `:105-3403`, `Tock` is
+`:3405-4250`. Diffed at source (2026-08-04, hex literals normalised so only STRUCTURE compares):
+
+  * the `let x_0 … let x_48` prefix — 225 lines — is **byte-identical** between the two modules;
+  * the tails diverge at exactly one hunk, `@@ -576,1813 +576,4 @@`: the first 575 tail lines agree
+    line for line, then `Tick` continues for **1813** lines and `Tock` for **4**.
+  * Those 1813 lines are the `if_feature` arms — `RangeCheck0`, `RangeCheck1`, `ForeignFieldAdd`,
+    `ForeignFieldMul`, `Xor16`, `Rot64` and the lookup argument — and they are the ONLY consumers of
+    `beta`, `gamma`, `joint_combiner`, `unnormalized_lagrange_basis`, `vanishes_on_last_4_rows` and
+    `if_feature`. `Tock` binds all six to `_` (`:3423-3430`) because with the arms deleted nothing
+    reads them. `Tock`'s four are a trailing `+ field "0x00…0"`.
+  * So `Tock.constant_term` is **exactly the six always-on gate bodies**, α-combined behind their
+    selectors: `Poseidon` (15, α¹⁻¹⁴), `VarBaseMul` (21, α¹⁻²⁰), `CompleteAdd` (7, α¹⁻⁶), `EndoMul`
+    (11, α¹⁻¹⁰), `EndoMulScalar` (11, α¹⁻¹⁰), `Generic` (2, α¹) — measured by scanning the tail's
+    six `cell (var (Index …, Curr))` regions. Both `index_terms` are `of_alist_exn []`.
+
+⚠ **AND THE ALPHA POWERS REALLY ARE SHARED ACROSS THE GATES.** `scalars_env`'s `alpha_pow` is one
+`Array.create ~len:71` (`plonk_checks.ml:330-338`), so `alpha_pow 1` inside the `Poseidon` block and
+`alpha_pow 1` inside the `VarBaseMul` block are the SAME field element. That is what the generated
+module does; §19 emits it unaltered, exactly as `scale_fast`'s two admissible decompositions are
+emitted unaltered at §15. Bounding either here would be a divergence from `wrap_main`, not a fix.
+
+⚑ **WHAT THIS RUNG IS FOR, AND WHERE IT SITS IN THE FOUR LEGS.** `finalize_other_proof` returns
+`Boolean.all [xi_correct; b_correct; combined_inner_product_correct; plonk_checks_passed]`. This
+rung emits **`plonk_checks_passed`** — `Plonk_checks.checked` (`plonk_checks.ml:476-500`), whose
+`perm` scalar is compared against the previous statement's own deferred `perm` through
+`Shifted_value.Type2.to_field` — together with everything `plonk_checks_passed` needs and nothing
+else: `scalars_env`, `Scalars.Tock.constant_term` and `ft_eval0`. The other three legs need the
+finalize SPONGE (ξ and r are its two squeezes, `:892-894`) and are named in §13 as the remainder.
+
+⚑ **ITS INPUTS ARE `w9_prev`'s CELLS.** `deferred_values` comes from
+`prev_proof_state.unfinalized_proofs`, i.e. the packed previous STEP statement §18 already witnesses.
+`Per_proof.In_circuit.spec` (`composition_types.ml:1268-1276,1290-1320`) fixes the block order:
+word 0 `combined_inner_product`, 1 `b`, 2 `zeta_to_srs_length`, 3 `zeta_to_domain_size`, 4 `perm`
+(five `B Field`, `Shifted_value.Type2`), 5 `sponge_digest_before_evaluations`, 6 `beta`, 7 `gamma`
+(raw `Challenge`), 8 `alpha`, 9 `zeta`, 10 `xi` (`Scalar Challenge`), 11–25 the fifteen
+bulletproof challenges, 26 `should_finalize`. This rung CONSUMES words 4, 6, 7, 8, 9 and 26 of each
+block — six statement words that were absorbed-but-not-consumed at `w9_prev`.
+
+⚠ **α AND ζ GO THROUGH `to_field_checked`, β AND γ DO NOT.** `map_plonk_to_field`
+(`wrap_verifier.ml:800-802`) maps `Scalar_challenge` fields with `scalar_to_field` and `Challenge`
+fields with `Util.seal`. So this rung emits two lift chains per instance and reads the raw words for
+β and γ — the same split §5 already pays for on the transcript side, at the same `ENDO_Q` and
+through the same shared endo cell.
+
+⚑ **THE EVALUATION COLUMNS ARE FREE WITNESSES HERE BECAUSE THEY ARE FREE WITNESSES UPSTREAM.**
+`wrap_main.ml:262-268` obtains `evals` as `exists ty ~request:Req.Evals`. What ties them upstream is
+the finalize sponge's absorption (`:844-891`) and `combined_inner_product`; both are the remainder,
+so the 86 columns and `p(ζ)` stay in `WRAP_UNCONSUMED` and are named there rather than dressed up. -/
+
+/-- `w₂ = w₀ − w₁`, the one `Generic` half §3 had no use for until the finalize program. -/
+def cSubQ : List Int := [1, -1, -1, 0, 0]
+
+/-! ### §19a — the straight-line **Fq** program.
+
+A `Generic`-only intermediate representation: the finalize computation is 800-odd field operations
+with no curve and no sponge in it, and writing them as rows by hand is how a transcription slip
+becomes a proof. Every slot below `.inp`/`.wit` owns one variable and one `Generic` half, and
+`finRowsQ` packs the halves two to a row exactly as `packHalves` does. -/
+
+/-- One straight-line operation. Slot `i` is the `i`-th entry of the program. -/
+inductive FOp where
+  /-- ALIAS a circuit variable another rung's rows define — no row, no new variable. -/
+  | inp (v : PVar)
+  /-- A FREE witness cell: no defining row, so only what the program ASSERTS about it constrains it.
+  Used for the two witnessed inverses (`ω⁻¹` and the C5 denominator's), each of which is checked by a
+  row of the program itself. -/
+  | wit (val : Nat)
+  /-- A field constant, pinned by the row `w₀ = k`. -/
+  | lit (val : Nat)
+  | add (i j : Nat)
+  | sub (i j : Nat)
+  | mul (i j : Nat)
+  /-- ASSERT slot `i` = slot `j`; the produced slot is inert. -/
+  | aeq (i j : Nat)
+  deriving Repr, Inhabited, DecidableEq
+
+abbrev FM := StateM (Array FOp)
+
+def fnEm (o : FOp) : FM Nat := do
+  let st ← get
+  set (st.push o)
+  pure st.size
+
+def fnLit (k : Nat) : FM Nat := fnEm (.lit k)
+def fnWit (k : Nat) : FM Nat := fnEm (.wit k)
+def fnInp (v : PVar) : FM Nat := fnEm (.inp v)
+def fnAdd (a b : Nat) : FM Nat := fnEm (.add a b)
+def fnSub (a b : Nat) : FM Nat := fnEm (.sub a b)
+def fnMul (a b : Nat) : FM Nat := fnEm (.mul a b)
+def fnAeq (a b : Nat) : FM Nat := fnEm (.aeq a b)
+
+/-- Evaluate the program over **Fq**. `lk` resolves `.inp` out of the surrounding circuit. -/
+def fnEval (lk : PVar → Int) (prog : Array FOp) : Array Nat :=
+  prog.foldl (fun (vs : Array Nat) op =>
+    vs.push (match op with
+      | .inp v => (lk v).toNat % qN
+      | .wit x => x % qN
+      | .lit x => x % qN
+      | .add i j => qAdd (vs.getD i 0) (vs.getD j 0)
+      | .sub i j => qSub (vs.getD i 0) (vs.getD j 0)
+      | .mul i j => qMul (vs.getD i 0) (vs.getD j 0)
+      | .aeq i _ => vs.getD i 0)) #[]
+
+/-- Slot `i`'s circuit variable. `.inp` aliases; everything else owns `external (base + i)`. -/
+def fnVarAt (base : Nat) (prog : Array FOp) (i : Nat) : PVar :=
+  match prog.getD i default with
+  | .inp v => v
+  | _ => .external (base + i)
+
+/-- The slots that need a `Generic` half. -/
+def fnHalfSlots (prog : Array FOp) : List Nat :=
+  (List.range prog.size).filter (fun i =>
+    match prog.getD i default with | .inp _ => false | .wit _ => false | _ => true)
+
+/-- Slot `i`'s half: three permutation columns and five coefficients. -/
+def fnHalf (base : Nat) (prog : Array FOp) (i : Nat) : List (Option PVar) × List Int :=
+  let V := fnVarAt base prog
+  match prog.getD i default with
+  | .lit k => ([some (V i), none, none], cConst (k : Int))
+  | .add a b => ([some (V a), some (V b), some (V i)], cAdd)
+  | .sub a b => ([some (V a), some (V b), some (V i)], cSubQ)
+  | .mul a b => ([some (V a), some (V b), some (V i)], cMul)
+  | .aeq a b => ([some (V a), some (V b), none], cEq)
+  | _ => ([none, none, none], cNil)
+
+/-- The program's rows. -/
+def fnRows (base : Nat) (prog : Array FOp) : List WRow :=
+  packHalves ((fnHalfSlots prog).map (fun i => fnHalf base prog i))
+
+/-- The program's contribution to the variable environment. -/
+def fnEnvOf (base : Nat) (prog : Array FOp) (vals : Array Nat) : VarEnv :=
+  (List.range prog.size).filterMap (fun i =>
+    match prog.getD i default with
+    | .inp _ => none
+    | _ => some ((.external (base + i) : PVar), (vals.getD i 0 : Int)))
+
+/-! ### §19b — the SIX gate constraint bodies of `Scalars.Tock`, compiled.
+
+Each is `KimchiVerify`'s own body, which `MinaWrapFtEval0Weld` reproduces byte-exact against a real
+devnet block's `PolishToken::evaluate(linearization.constant_term)` on BOTH sides of the cycle. §19f
+re-checks the compiled program's `linConst` slot against `gateLinConst` at `ZMod qN` — two
+independent evaluations of the same six bodies, not a constant pinned against its own definition. -/
+
+/-- `x⁷` — kimchi's Poseidon S-box. -/
+def fnSbox (x : Nat) : FM Nat := do
+  let x2 ← fnMul x x
+  let x4 ← fnMul x2 x2
+  let x6 ← fnMul x4 x2
+  fnMul x6 x
+
+/-- `target − (rc + Σ_c mds[j][c]·sbox(source_c))`. -/
+def fnLane (mdsRow : List Nat) (rc : Nat) (sb : List Nat) (target : Nat) : FM Nat := do
+  let t0 ← fnMul (mdsRow.getD 0 0) (sb.getD 0 0)
+  let t1 ← fnMul (mdsRow.getD 1 0) (sb.getD 1 0)
+  let t2 ← fnMul (mdsRow.getD 2 0) (sb.getD 2 0)
+  let s01 ← fnAdd t0 t1
+  let s ← fnAdd s01 t2
+  let r ← fnAdd rc s
+  fnSub target r
+
+/-- The 15 `Poseidon` constraints, in emission order. -/
+def fnPoseidon (mdsS : List (List Nat)) (c w wn : List Nat) : FM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let cc := fun i => c.getD i 0
+  let wnn := fun i => wn.getD i 0
+  let sb ← (List.range 15).foldlM (fun acc i => do let s ← fnSbox (ww i); pure (acc ++ [s])) []
+  let g := fun (ix : List Nat) => ix.map (fun i => sb.getD i 0)
+  let s0 := g [0, 1, 2]; let s1 := g [6, 7, 8]; let s2 := g [9, 10, 11]
+  let s3 := g [12, 13, 14]; let s4 := g [3, 4, 5]
+  let m := fun j => mdsS.getD j []
+  let spec : List (Nat × Nat × List Nat × Nat) :=
+    [ (0, 0, s0, ww 6), (1, 1, s0, ww 7), (2, 2, s0, ww 8)
+    , (0, 3, s1, ww 9), (1, 4, s1, ww 10), (2, 5, s1, ww 11)
+    , (0, 6, s2, ww 12), (1, 7, s2, ww 13), (2, 8, s2, ww 14)
+    , (0, 9, s3, ww 3), (1, 10, s3, ww 4), (2, 11, s3, ww 5)
+    , (0, 12, s4, wnn 0), (1, 13, s4, wnn 1), (2, 14, s4, wnn 2) ]
+  spec.foldlM (fun acc q => do let k ← fnLane (m q.1) (cc q.2.1) q.2.2.1 q.2.2.2; pure (acc ++ [k]))
+    []
+
+/-- The 7 `CompleteAdd` constraints. -/
+def fnCompleteAdd (one : Nat) (w : List Nat) : FM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let x1 := ww 0; let y1 := ww 1; let x2 := ww 2; let y2 := ww 3
+  let x3 := ww 4; let y3 := ww 5; let inf := ww 6; let sameX := ww 7
+  let s := ww 8; let infZ := ww 9; let x21Inv := ww 10
+  let x21 ← fnSub x2 x1
+  let y21 ← fnSub y2 y1
+  let x1sq ← fnMul x1 x1
+  let nsx ← fnSub one sameX
+  let a ← fnMul x21Inv x21
+  let k0 ← fnSub a nsx
+  let k1 ← fnMul sameX x21
+  let ss ← fnAdd s s
+  let ssy ← fnMul ss y1
+  let q2 ← fnAdd x1sq x1sq
+  let t1a ← fnSub ssy q2
+  let t1 ← fnSub t1a x1sq
+  let p1 ← fnMul sameX t1
+  let x21s ← fnMul x21 s
+  let t2 ← fnSub x21s y21
+  let p2 ← fnMul nsx t2
+  let k2 ← fnAdd p1 p2
+  let sx ← fnAdd x1 x2
+  let sx3 ← fnAdd sx x3
+  let s2v ← fnMul s s
+  let k3 ← fnSub sx3 s2v
+  let d ← fnSub x1 x3
+  let sd ← fnMul s d
+  let e1 ← fnSub sd y1
+  let k4 ← fnSub e1 y3
+  let f ← fnSub sameX inf
+  let k5 ← fnMul y21 f
+  let g ← fnMul y21 infZ
+  let k6 ← fnSub g inf
+  pure [k0, k1, k2, k3, k4, k5, k6]
+
+/-- The 21 `VarbaseMul` constraints. -/
+def fnVarBaseMul (one : Nat) (w wn : List Nat) : FM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let wnn := fun i => wn.getD i 0
+  let xT := ww 0; let yT := ww 1
+  let accX := fun i => ([ww 2, ww 7, ww 9, ww 11, ww 13, wnn 0] : List Nat).getD i 0
+  let accY := fun i => ([ww 3, ww 8, ww 10, ww 12, ww 14, wnn 1] : List Nat).getD i 0
+  let bit := fun i => ([wnn 2, wnn 3, wnn 4, wnn 5, wnn 6] : List Nat).getD i 0
+  let sl := fun i => ([wnn 7, wnn 8, wnn 9, wnn 10, wnn 11] : List Nat).getD i 0
+  let nPrev := ww 4; let nNext := ww 5
+  let acc ← (List.range 5).foldlM (fun a i => do let aa ← fnAdd a a; fnAdd (bit i) aa) nPrev
+  let dec ← fnSub nNext acc
+  let rest ← (List.range 5).foldlM (fun out i => do
+      let b := bit i; let s := sl i
+      let ix := accX i; let iy := accY i
+      let ox := accX (i + 1); let oy := accY (i + 1)
+      let b2 ← fnAdd b b
+      let bSign ← fnSub b2 one
+      let ssq ← fnMul s s
+      let rxa ← fnSub ssq ix
+      let rx ← fnSub rxa xT
+      let t ← fnSub ix rx
+      let iy2 ← fnAdd iy iy
+      let ts ← fnMul t s
+      let u ← fnSub iy2 ts
+      let bb ← fnMul b b
+      let k0 ← fnSub bb b
+      let ixT ← fnSub ix xT
+      let l1 ← fnMul ixT s
+      let by' ← fnMul bSign yT
+      let r1 ← fnSub iy by'
+      let k1 ← fnSub l1 r1
+      let uu ← fnMul u u
+      let tt ← fnMul t t
+      let oxT ← fnSub ox xT
+      let q ← fnAdd oxT ssq
+      let ttq ← fnMul tt q
+      let k2 ← fnSub uu ttq
+      let oyiy ← fnAdd oy iy
+      let l3 ← fnMul oyiy t
+      let ixox ← fnSub ix ox
+      let r3 ← fnMul ixox u
+      let k3 ← fnSub l3 r3
+      pure (out ++ [k0, k1, k2, k3])) []
+  pure (dec :: rest)
+
+/-- The 11 DEPLOYED `EndosclMul` constraints (`proof-systems` 0.3.0's `CONSTRAINTS = 11`; the 12th
+distinct-point witness is not in the deployed linearization constant term). -/
+def fnEndoMul (one endo : Nat) (w wn : List Nat) : FM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let wnn := fun i => wn.getD i 0
+  let xt := ww 0; let yt := ww 1
+  let xp := ww 4; let yp := ww 5; let n := ww 6
+  let xr := ww 7; let yr := ww 8; let s1 := ww 9; let s3 := ww 10
+  let b1 := ww 11; let b2 := ww 12; let b3 := ww 13; let b4 := ww 14
+  let xs := wnn 4; let ys := wnn 5; let nNext := wnn 6
+  let em1 ← fnSub endo one
+  let t1 ← fnMul b1 em1
+  let u1 ← fnAdd one t1
+  let xq1 ← fnMul u1 xt
+  let t3 ← fnMul b3 em1
+  let u3 ← fnAdd one t3
+  let xq2 ← fnMul u3 xt
+  let b22 ← fnAdd b2 b2
+  let v2 ← fnSub b22 one
+  let yq1 ← fnMul v2 yt
+  let b42 ← fnAdd b4 b4
+  let v4 ← fnSub b42 one
+  let yq2 ← fnMul v4 yt
+  let s1sq ← fnMul s1 s1
+  let s3sq ← fnMul s3 s3
+  let n2 ← fnAdd n n
+  let d1 ← fnAdd n2 b1
+  let d1a ← fnAdd d1 d1
+  let d2 ← fnAdd d1a b2
+  let d2a ← fnAdd d2 d2
+  let d3 ← fnAdd d2a b3
+  let d3a ← fnAdd d3 d3
+  let d4 ← fnAdd d3a b4
+  let nC ← fnSub d4 nNext
+  let xpxr ← fnSub xp xr
+  let xrxs ← fnSub xr xs
+  let ysyr ← fnAdd ys yr
+  let yryp ← fnAdd yr yp
+  let k0 ← do let t ← fnMul b1 b1; fnSub t b1
+  let k1 ← do let t ← fnMul b2 b2; fnSub t b2
+  let k2 ← do let t ← fnMul b3 b3; fnSub t b3
+  let k3 ← do let t ← fnMul b4 b4; fnSub t b4
+  let k4 ← do let a ← fnSub xq1 xp; let l ← fnMul a s1; let r ← fnSub yq1 yp; fnSub l r
+  let k5 ← do
+    let xp2 ← fnAdd xp xp
+    let a ← fnSub xp2 s1sq
+    let a2 ← fnAdd a xq1
+    let m1 ← fnMul xpxr s1
+    let m2 ← fnAdd m1 yryp
+    let l ← fnMul a2 m2
+    let yp2 ← fnAdd yp yp
+    let r ← fnMul yp2 xpxr
+    fnSub l r
+  let k6 ← do
+    let l ← fnMul yryp yryp
+    let p ← fnMul xpxr xpxr
+    let a ← fnSub s1sq xq1
+    let a2 ← fnAdd a xr
+    let r ← fnMul p a2
+    fnSub l r
+  let k7 ← do let a ← fnSub xq2 xr; let l ← fnMul a s3; let r ← fnSub yq2 yr; fnSub l r
+  let k8 ← do
+    let xr2 ← fnAdd xr xr
+    let a ← fnSub xr2 s3sq
+    let a2 ← fnAdd a xq2
+    let m1 ← fnMul xrxs s3
+    let m2 ← fnAdd m1 ysyr
+    let l ← fnMul a2 m2
+    let yr2 ← fnAdd yr yr
+    let r ← fnMul yr2 xrxs
+    fnSub l r
+  let k9 ← do
+    let l ← fnMul ysyr ysyr
+    let p ← fnMul xrxs xrxs
+    let a ← fnSub s3sq xq2
+    let a2 ← fnAdd a xs
+    let r ← fnMul p a2
+    fnSub l r
+  pure [k0, k1, k2, k3, k4, k5, k6, k7, k8, k9, nC]
+
+/-- The 11 `EndomulScalar` constraints. `cA/cB/cC` are the quotients `11/6, −5/2, 2/3`. -/
+def fnEmScalar (cA cB cC negOne three six eleven : Nat) (w : List Nat) : FM (List Nat) := do
+  let ww := fun i => w.getD i 0
+  let n0 := ww 0; let n8 := ww 1; let a0 := ww 2; let b0 := ww 3
+  let a8 := ww 4; let b8 := ww 5
+  let x := fun i => ww (6 + i)
+  let cf : Nat → FM Nat := fun t => do
+    let m1 ← fnMul cC t
+    let s1 ← fnAdd m1 cB
+    let m2 ← fnMul s1 t
+    let s2 ← fnAdd m2 cA
+    fnMul s2 t
+  let cfs ← (List.range 8).foldlM (fun acc i => do let v ← cf (x i); pure (acc ++ [v])) []
+  let dfs ← (List.range 8).foldlM (fun acc i => do
+      let t := x i
+      let m1 ← fnMul negOne t
+      let s1 ← fnAdd m1 three
+      let m2 ← fnMul s1 t
+      let s2 ← fnAdd m2 negOne
+      let v ← fnAdd (cfs.getD i 0) s2
+      pure (acc ++ [v])) []
+  let n8e ← (List.range 8).foldlM (fun acc i => do
+      let a2 ← fnAdd acc acc
+      let a4 ← fnAdd a2 a2
+      fnAdd a4 (x i)) n0
+  let a8e ← (List.range 8).foldlM (fun acc i => do
+      let a2 ← fnAdd acc acc
+      fnAdd a2 (cfs.getD i 0)) a0
+  let b8e ← (List.range 8).foldlM (fun acc i => do
+      let a2 ← fnAdd acc acc
+      fnAdd a2 (dfs.getD i 0)) b0
+  let c0 ← fnSub n8e n8
+  let c1 ← fnSub a8e a8
+  let c2 ← fnSub b8e b8
+  let cr ← (List.range 8).foldlM (fun acc i => do
+      let t := x i
+      let a ← fnSub t six
+      let b ← fnMul a t
+      let c ← fnAdd b eleven
+      let d ← fnMul c t
+      let e ← fnSub d six
+      let v ← fnMul e t
+      pure (acc ++ [v])) []
+  pure ([c0, c1, c2] ++ cr)
+
+/-- `genericGateConstraint` — the double generic gate's own linearization factor, `α`-combined
+inside the body exactly as the generated module writes it. -/
+def fnGenericGate (genSel alpha : Nat) (c w : List Nat) : FM Nat := do
+  let cc := fun i => c.getD i 0
+  let ww := fun i => w.getD i 0
+  let t0 ← fnMul (cc 0) (ww 0)
+  let t1 ← fnMul (cc 1) (ww 1)
+  let t2 ← fnMul (cc 2) (ww 2)
+  let w01 ← fnMul (ww 0) (ww 1)
+  let t3 ← fnMul (cc 3) w01
+  let s0 ← fnAdd t0 t1
+  let s1 ← fnAdd s0 t2
+  let s2 ← fnAdd s1 t3
+  let k1 ← fnAdd s2 (cc 4)
+  let u0 ← fnMul (cc 5) (ww 3)
+  let u1 ← fnMul (cc 6) (ww 4)
+  let u2 ← fnMul (cc 7) (ww 5)
+  let w34 ← fnMul (ww 3) (ww 4)
+  let u3 ← fnMul (cc 8) w34
+  let r0 ← fnAdd u0 u1
+  let r1 ← fnAdd r0 u2
+  let r2 ← fnAdd r1 u3
+  let k2 ← fnAdd r2 (cc 9)
+  let ak2 ← fnMul alpha k2
+  let sum ← fnAdd k1 ak2
+  fnMul genSel sum
+
+/-- `Σᵢ αⁱ·csᵢ` over a gate's constraint list, sharing the ONE power chain the whole rung pays for. -/
+def fnAlphaCombine (apow : List Nat) (cs : List Nat) : FM Nat := do
+  match cs with
+  | [] => fnLit 0
+  | c0 :: rest =>
+      (List.range rest.length).foldlM (fun acc i => do
+        let t ← fnMul (apow.getD (i + 1) 0) (rest.getD i 0)
+        fnAdd acc t) c0
+
+/-! ### §19c — the wire, the config and the slots. -/
+
+/-- ⚑ `Common.wrap_domains ~proofs_verified:1 |>.h` — the wrap evaluation domain is `2^14`, NOT the
+`2^15` `Max_degree.wrap_log2` names. `common.ml:27-31` maps `0 ↦ 13, 1 ↦ 14, 2 ↦ 15`, and the devnet
+wrap index that `MinaRealBlockGate.OMEGA` came off is the `14`. -/
+def FIN_LOG2N : Nat := 14
+/-- The `2^14`-th root of unity of `Fq`, from the real block's verifier index. -/
+def FIN_OMEGA : Nat := 13720502009405270468270247285101677286753189198487843249698478072631298866919
+/-- ⚑ `env.endo_coefficient` is `Endo.Wrap_inner_curve.base = Vesta.endo_base ()` (`endo.ml:5`), the
+BASE endomorphism eigenvalue `5^((q−1)/3)` — **NOT** `ENDO_Q`, which is `Pallas.endo_scalar ()` and
+is what `to_field_checked` lifts by. Two different cube roots in two different roles; §19f pins that
+they differ. -/
+def FIN_ENDO : Nat :=
+  2942865608506852014473558576493638302197734138389222805617480874486368177743
+/-- The seven **Fq** coset shifts of the wrap domain, from the same real verifier index. -/
+def FIN_SHIFTS : List Nat :=
+  [ 1
+  , 328286983623303317637963920346571898945724874896624808297627776768640590563
+  , 220790353665890403705559231885806581221301230221265349993193424985261418438
+  , 211720422259245489258933986578227917398506328781182391541883955346082631533
+  , 211634429328372259348572816867521795029192573698954618296359582461568682420
+  , 317476258975906211462498873025720239242336777696786967497139785505242641540
+  , 99141114743446054294525453467100398765600279346526770105380817318185104545 ]
+/-- `Shifted_value.Type2.Shift = 2^{field size in bits}` (`shifted_value.ml:180-182`), and
+`Field.size_in_bits` for Fq is 255. -/
+def FIN_SHIFT2 : Nat := 2 ^ 255 % qN
+/-- The three `EndomulScalar` quotients `11/6, −5/2, 2/3` over `Fq`, as the CHECKED witnessed
+quotients `6·cA = 11`, `2·cB = −5`, `3·cC = 2` (§19f). -/
+def FIN_CA : Nat :=
+  4824670384888174809315457708695329493893842746990274563279957124732227158018
+def FIN_CB : Nat :=
+  14474011154664524427946373126085988481681528240970823689839871374196681474046
+def FIN_CC : Nat :=
+  9649340769776349618630915417390658987787685493980549126559914249464454316033
+
+/-- The 43 evaluation columns, in `to_absorption_sequence` order: `z`, the six gate selectors, the
+15 witness columns, the 15 coefficient columns, the six σ columns. -/
+def FIN_NCOLS : Nat := 43
+def FIN_IDX_Z : Nat := 0
+def FIN_IDX_SEL : Nat := 1
+def FIN_IDX_W : Nat := 7
+def FIN_IDX_COEFF : Nat := 22
+def FIN_IDX_S : Nat := 37
+/-- `Plonk_types.Permuts_minus_1.n` — the σ evals `ft_eval0` folds over, and the index of the `w_n`
+`ft_eval0` seeds with. -/
+def FIN_PERMUTS1 : Nat := 6
+
+/-- Column `k`'s value at ζ (`j = 0`) / at ζω (`j = 1`) for instance `p` — a NAMED FIXTURE, because
+`exists ~request:Req.Evals` is a free witness upstream and a fixture is the faithful stand-in. -/
+def finColVal (p k j : Nat) : Nat := wrapFixtureQ (40 + 2 * p + j) k
+/-- `evals.public_input.0` — `p(ζ)`, likewise witnessed. -/
+def finPZetaVal (p : Nat) : Nat := wrapFixtureQ (44 + p) 0
+
+/-- Instance `p`'s packed statement word `w` of its own 27-word block. -/
+def finBlockWord (p w : Nat) : Nat := PREV_PER_PROOF_WORDS * p + w
+/-- …and its VALUE. -/
+def finBlockVal (p w : Nat) : Nat := prevWordVal (finBlockWord p w)
+
+/-- The cells §19's program reads. Every one is a variable ANOTHER rung's rows define, or a witness
+cell this rung's own region owns. -/
+structure FinWire where
+  /-- Column `k` at ζ. -/
+  ez : Nat → PVar
+  /-- Column `k` at ζω. -/
+  ew : Nat → PVar
+  /-- `p(ζ)`. -/
+  pZeta : PVar
+  /-- ζ, LIFTED by `scalar_to_field`. -/
+  zeta : PVar
+  /-- α, LIFTED. -/
+  alpha : PVar
+  /-- β, RAW (`Challenge`, `Util.seal`). -/
+  beta : PVar
+  /-- γ, RAW. -/
+  gamma : PVar
+  /-- Packed statement word 4 — the deferred `perm`, a `Shifted_value.Type2`. -/
+  permStmt : PVar
+  /-- Packed statement word 26 — `should_finalize`. -/
+  shouldFin : PVar
+  deriving Inhabited
+
+/-- The constants the program bakes in, and the TWO witnessed inverses it CHECKS. -/
+structure FinCfg where
+  log2n : Nat
+  omega : Nat
+  /-- `ω⁻¹`, a `.wit` whose defining constraint is the program's own `ω·ω⁻¹ = 1`. -/
+  omegaInv : Nat
+  shifts : List Nat
+  mds9 : List Nat
+  endo : Nat
+  cA : Nat
+  cB : Nat
+  cC : Nat
+  shift2 : Nat
+  /-- The C5 denominator's inverse, likewise `.wit` and likewise checked. -/
+  denomInv : Nat
+  /-- `Field.equal`'s witnessed `(inv, bit)` for the ONE equality this rung emits. -/
+  eqInv : Nat
+  eqBit : Nat
+  deriving Repr, Inhabited
+
+/-- The slots §19's rows, environment and pins refer to by NAME. -/
+structure FinSlots where
+  zetaN : Nat
+  zkp : Nat
+  linConst : Nat
+  ftEval0 : Nat
+  perm : Nat
+  permUsed : Nat
+  permOk : Nat
+  out : Nat
+  deriving Repr, Inhabited
+
+/-! ### §19d — **the finalize program**, `plonk_checks.ml` line by line. -/
+
+def finBuild (W : FinWire) (C : FinCfg) : FM FinSlots := do
+  let zero ← fnLit 0
+  let one ← fnLit 1
+  -- ── the wires ─────────────────────────────────────────────────────────────────────────────
+  let ez ← (List.range FIN_NCOLS).foldlM (fun acc k => do
+      let v ← fnInp (W.ez k); pure (acc ++ [v])) []
+  let ew ← (List.range FIN_NCOLS).foldlM (fun acc k => do
+      let v ← fnInp (W.ew k); pure (acc ++ [v])) []
+  let zeta ← fnInp W.zeta
+  let alpha ← fnInp W.alpha
+  let beta ← fnInp W.beta
+  let gamma ← fnInp W.gamma
+  let pZeta ← fnInp W.pZeta
+  let col := fun (l : List Nat) (i : Nat) => l.getD i 0
+  let w0 := (List.range 15).map (fun i => col ez (FIN_IDX_W + i))
+  let wN := (List.range 15).map (fun i => col ew (FIN_IDX_W + i))
+  let coeff := (List.range 15).map (fun i => col ez (FIN_IDX_COEFF + i))
+  let sEv := (List.range FIN_PERMUTS1).map (fun i => col ez (FIN_IDX_S + i))
+  let e0z := col ez FIN_IDX_Z
+  let e1z := col ew FIN_IDX_Z
+  -- ── `scalars_env`: ω⁻¹, ω⁻², ω⁻³, `zk_polynomial`, `ζⁿ − 1` (`plonk_checks.ml:339-355`) ────
+  -- ⚑ `ω⁻¹` is a WITNESS the program CHECKS (`ω·ω⁻¹ = 1`), never an asserted constant: a wrong
+  -- witness is a refusal, and `1` is the program's own literal.
+  let omega ← fnLit C.omega
+  let w1 ← fnWit C.omegaInv
+  let ow ← fnMul omega w1
+  let _ ← fnAeq ow one
+  let w2 ← fnMul w1 w1
+  let w3 ← fnMul w2 w1
+  let d1 ← fnSub zeta w1
+  let d2 ← fnSub zeta w2
+  let d3 ← fnSub zeta w3
+  let zk01 ← fnMul d1 d2
+  let zkp ← fnMul zk01 d3
+  let zetaN ← (List.range C.log2n).foldlM (fun acc _ => fnMul acc acc) zeta
+  let zeta1m1 ← fnSub zetaN one
+  -- ── the α power chain, α⁰ … α²³ — ONE chain, shared by every gate and by `perm_alpha0`. ────
+  let apow ← (List.range 23).foldlM (fun acc _ => do
+      let t ← fnMul (acc.getLastD one) alpha; pure (acc ++ [t])) [one]
+  -- ── `Scalars.Tock.constant_term` — the six always-on bodies, and nothing else. ─────────────
+  let mdsS ← (List.range 3).foldlM (fun acc r => do
+      let row ← (List.range 3).foldlM (fun rw c => do
+          let v ← fnLit (C.mds9.getD (3 * r + c) 0); pure (rw ++ [v])) []
+      pure (acc ++ [row])) []
+  let endoL ← fnLit C.endo
+  let cAL ← fnLit C.cA
+  let cBL ← fnLit C.cB
+  let cCL ← fnLit C.cC
+  let negOne ← fnLit (qN - 1)
+  let three ← fnLit 3
+  let six ← fnLit 6
+  let eleven ← fnLit 11
+  let genT ← fnGenericGate (col ez (FIN_IDX_SEL + 0)) (apow.getD 1 0) coeff w0
+  let posC ← fnPoseidon mdsS coeff w0 wN
+  let posT0 ← fnAlphaCombine apow posC
+  let posT ← fnMul (col ez (FIN_IDX_SEL + 1)) posT0
+  let caC ← fnCompleteAdd one w0
+  let caT0 ← fnAlphaCombine apow caC
+  let caT ← fnMul (col ez (FIN_IDX_SEL + 2)) caT0
+  let vbC ← fnVarBaseMul one w0 wN
+  let vbT0 ← fnAlphaCombine apow vbC
+  let vbT ← fnMul (col ez (FIN_IDX_SEL + 3)) vbT0
+  let emC ← fnEndoMul one endoL w0 wN
+  let emT0 ← fnAlphaCombine apow emC
+  let emT ← fnMul (col ez (FIN_IDX_SEL + 4)) emT0
+  let esC ← fnEmScalar cAL cBL cCL negOne three six eleven w0
+  let esT0 ← fnAlphaCombine apow esC
+  let esT ← fnMul (col ez (FIN_IDX_SEL + 5)) esT0
+  let l1 ← fnAdd genT posT
+  let l2 ← fnAdd l1 caT
+  let l3 ← fnAdd l2 vbT
+  let l4 ← fnAdd l3 emT
+  let linConst ← fnAdd l4 esT
+  -- ── `ft_eval0` (`plonk_checks.ml:420-460`) ────────────────────────────────────────────────
+  let a0 := apow.getD 21 0
+  let a1 := apow.getD 22 0
+  let a2 := apow.getD 23 0
+  let wn6 := w0.getD FIN_PERMUTS1 0
+  let i0 ← fnAdd wn6 gamma
+  let i1 ← fnMul i0 e1z
+  let i2 ← fnMul i1 a0
+  let init ← fnMul i2 zkp
+  let num ← (List.range FIN_PERMUTS1).foldlM (fun acc i => do
+      let bs ← fnMul beta (sEv.getD i 0)
+      let bw ← fnAdd bs (w0.getD i 0)
+      let bg ← fnAdd bw gamma
+      fnMul bg acc) init
+  let ft1 ← fnSub num pZeta
+  let dInit0 ← fnMul a0 zkp
+  let dInit ← fnMul dInit0 e0z
+  let den ← (List.range 7).foldlM (fun acc i => do
+      let sh ← fnLit (C.shifts.getD i 0)
+      let bz ← fnMul beta zeta
+      let bzs ← fnMul bz sh
+      let g1 ← fnAdd gamma bzs
+      let g2 ← fnAdd g1 (w0.getD i 0)
+      fnMul acc g2) dInit
+  let ft2 ← fnSub ft1 den
+  let n1a ← fnMul zeta1m1 a1
+  let n1 ← fnMul n1a d3
+  let zm1 ← fnSub zeta one
+  let n2a ← fnMul zeta1m1 a2
+  let n2 ← fnMul n2a zm1
+  let nsum ← fnAdd n1 n2
+  let omz ← fnSub one e0z
+  let nom ← fnMul nsum omz
+  -- ⚑ the C5 denominator's inverse is the SECOND witnessed value, and it is CHECKED the same way.
+  let dq ← fnMul d3 zm1
+  let dInv ← fnWit C.denomInv
+  let dchk ← fnMul dq dInv
+  let _ ← fnAeq dchk one
+  let quo ← fnMul nom dInv
+  let ft3 ← fnAdd ft2 quo
+  let ftEval0 ← fnSub ft3 linConst
+  -- ── `Plonk_checks.checked`'s `perm` scalar (`plonk_checks.ml:476-500`) ─────────────────────
+  let p0 ← fnMul e1z beta
+  let p1 ← fnMul p0 a0
+  let pInit ← fnMul p1 zkp
+  let pf ← (List.range FIN_PERMUTS1).foldlM (fun acc i => do
+      let bs ← fnMul beta (sEv.getD i 0)
+      let g1 ← fnAdd gamma bs
+      let g2 ← fnAdd g1 (w0.getD i 0)
+      fnMul acc g2) pInit
+  let perm ← fnSub zero pf
+  -- ── …against the statement's own deferred value, through `Shifted_value.Type2.to_field`. ──
+  let sh2 ← fnLit C.shift2
+  let permStmt ← fnInp W.permStmt
+  let permUsed ← fnAdd permStmt sh2
+  -- `Field.equal`, the real gadget: `d·inv = 1 − bit`, `d·bit = 0`, `bit² = bit`.
+  let dd ← fnSub perm permUsed
+  let iv ← fnWit C.eqInv
+  let bb ← fnWit C.eqBit
+  let bb2 ← fnMul bb bb
+  let _ ← fnAeq bb2 bb
+  let pp ← fnMul dd iv
+  let qq ← fnSub one bb
+  let _ ← fnAeq pp qq
+  let sZ ← fnMul dd bb
+  let _ ← fnAeq sZ zero
+  let permOk := bb
+  -- ── `Boolean.Assert.any [finalized; not should_finalize]` (`wrap_main.ml:335`) ─────────────
+  -- ⚑ `finalized` upstream is `Boolean.all` of FOUR legs; this rung emits the one it derives and
+  -- §13 names the other three. The assert is `(1 − fin)·sf = 0`, upstream's `any` verbatim.
+  let sf ← fnInp W.shouldFin
+  let sf2 ← fnMul sf sf
+  let _ ← fnAeq sf2 sf
+  let nfin ← fnSub one permOk
+  let out ← fnMul nfin sf
+  let _ ← fnAeq out zero
+  pure { zetaN := zetaN, zkp := zkp, linConst := linConst, ftEval0 := ftEval0
+       , perm := perm, permUsed := permUsed, permOk := permOk, out := out }
+
+structure FinProg where
+  prog : Array FOp
+  slots : FinSlots
+  deriving Repr, Inhabited
+
+def finProgOf (W : FinWire) (C : FinCfg) : FinProg :=
+  let r := (finBuild W C).run #[]
+  { prog := r.2, slots := r.1 }
+
+/-! ### §19e — the variable space, the wires, and the rows. -/
+
+/-- The finalize region starts after W-FTCOMM's, so nothing below `w10_finalize` moves. -/
+def baseFin (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
+/-- Two `to_field_checked` chains per instance — α and ζ, the two `Scalar_challenge` fields
+`map_plonk_to_field` lifts. -/
+def finChainVars (s : WrapShape) (sp : SpAcc) (p j : Nat) : ChainVars :=
+  chainVars s (baseFin s sp) (2 * p + j)
+def finEvBase (s : WrapShape) (sp : SpAcc) : Nat :=
+  baseFin s sp + 2 * s.prevs * chainStride s
+/-- Instance `p`'s evaluation column `k` at ζ (`j = 0`) / ζω (`j = 1`); slot `2·NCOLS` is `p(ζ)`. -/
+def finEvVar (s : WrapShape) (sp : SpAcc) (p k j : Nat) : PVar :=
+  .external (finEvBase s sp + p * (2 * FIN_NCOLS + 1) + j * FIN_NCOLS + k)
+def finPZetaVar (s : WrapShape) (sp : SpAcc) (p : Nat) : PVar :=
+  .external (finEvBase s sp + p * (2 * FIN_NCOLS + 1) + 2 * FIN_NCOLS)
+def finProgBase (s : WrapShape) (sp : SpAcc) : Nat :=
+  finEvBase s sp + s.prevs * (2 * FIN_NCOLS + 1)
+
+/-- Instance `p`'s wire. ⚑ β and γ are the RAW packed words; α and ζ are their lift chains' `lift`
+cells; `perm` and `should_finalize` are packed words 4 and 26 of the same block. -/
+def finWireOf (s : WrapShape) (sp : SpAcc) (p : Nat) : FinWire :=
+  { ez := fun k => finEvVar s sp p k 0
+  , ew := fun k => finEvVar s sp p k 1
+  , pZeta := finPZetaVar s sp p
+  , zeta := (finChainVars s sp p 1).lift
+  , alpha := (finChainVars s sp p 0).lift
+  , beta := prevW s sp (finBlockWord p 6)
+  , gamma := prevW s sp (finBlockWord p 7)
+  , permStmt := prevW s sp (finBlockWord p 4)
+  , shouldFin := prevW s sp (finBlockWord p 26) }
+
+/-- Instance `p`'s config. The two witnessed inverses are computed HERE and CHECKED by the program's
+own rows, so a wrong one is a refusal rather than an accept. -/
+def finCfgOf (s : WrapShape) (p : Nat) : FinCfg :=
+  let zeta := liftValQ s (finBlockVal p 9)
+  let wi := qInv FIN_OMEGA
+  let w3 := qMul (qMul wi wi) wi
+  let dq := qMul (qSub zeta w3) (qSub zeta 1)
+  { log2n := FIN_LOG2N, omega := FIN_OMEGA, omegaInv := wi
+  , shifts := FIN_SHIFTS, mds9 := mdsQ.flatten, endo := FIN_ENDO
+  , cA := FIN_CA, cB := FIN_CB, cC := FIN_CC, shift2 := FIN_SHIFT2
+  , denomInv := qInv dq
+  -- ⚑ the HONEST witness: `perm` and the statement's unshifted word agree, so `bit = 1, inv = 0`.
+  -- §12/§16's red controls run the same program at a bent statement word, where the honest witness
+  -- is `bit = 0` and `d·inv = 1 − bit` has no solution — an `Err`, not an accept.
+  , eqInv := 0, eqBit := 1 }
+
+/-- Instance `p`'s `.inp` lookup: the 87 witnessed evaluation cells, the two lifts, and the four
+statement words. Every entry is a cell some row of the assembly defines. -/
+def finInputEnv (s : WrapShape) (sp : SpAcc) (p : Nat) : VarEnv :=
+  (List.range FIN_NCOLS).flatMap (fun k =>
+    [ (finEvVar s sp p k 0, (finColVal p k 0 : Int))
+    , (finEvVar s sp p k 1, (finColVal p k 1 : Int)) ])
+  ++ [ (finPZetaVar s sp p, (finPZetaVal p : Int))
+     , ((finChainVars s sp p 0).lift, (liftValQ s (finBlockVal p 8) : Int))
+     , ((finChainVars s sp p 1).lift, (liftValQ s (finBlockVal p 9) : Int))
+     , (prevW s sp (finBlockWord p 6), (finBlockVal p 6 : Int))
+     , (prevW s sp (finBlockWord p 7), (finBlockVal p 7 : Int))
+     , (prevW s sp (finBlockWord p 4), (finBlockVal p 4 : Int))
+     , (prevW s sp (finBlockWord p 26), (finBlockVal p 26 : Int)) ]
+
+/-- Instance `p`'s program, compiled and evaluated ONCE. -/
+structure FinData where
+  fp : FinProg
+  vals : Array Nat
+  deriving Repr, Inhabited
+
+def runFin (s : WrapShape) (sp : SpAcc) (p : Nat) : FinData :=
+  let fp := finProgOf (finWireOf s sp p) (finCfgOf s p)
+  let lk := envLookupAt (envIndex (finInputEnv s sp p))
+  { fp := fp, vals := fnEval lk fp.prog }
+
+/-- Instance `p`'s program base. The programs are the same builder at different wires, so the stride
+is instance 0's size; a shape whose instances disagreed in size would overlap and `placeChecked`
+would refuse rather than emit. -/
+def finProgSize (s : WrapShape) (sp : SpAcc) : Nat :=
+  (finProgOf (finWireOf s sp 0) (finCfgOf s 0)).prog.size
+def finProgAt (s : WrapShape) (sp : SpAcc) (p : Nat) : Nat :=
+  finProgBase s sp + p * finProgSize s sp
+
+/-- **W-FINALIZE's ROWS.** Per instance: the two `to_field_checked` lifts of α and ζ (through the
+SHARED endo cell §5 pins, `split = false` because both sources are already `Challenge.t`), the
+compiled program, and the σ-only probes. -/
+def finRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let cb := baseCh s sp
+  (List.range s.prevs).flatMap (fun p =>
+    let d := runFin s sp p
+    let base := finProgAt s sp p
+    let V := fnVarAt base d.fp.prog
+    tfcRowsQ s cb (finChainVars s sp p 0) (prevW s sp (finBlockWord p 8)) false
+      (finBlockVal p 8) wired
+    ++ tfcRowsQ s cb (finChainVars s sp p 1) (prevW s sp (finBlockWord p 9)) false
+      (finBlockVal p 9) wired
+    ++ fnRows base d.fp.prog
+    -- ⚑ **ONE probe, not three, and the reason is a measured conformance fact.** Mina's
+    -- `wrap-transaction` blob has **NO two consecutive `Zero` rows anywhere** — every `Zero` there is
+    -- a gadget tail. Three probes in a row would be a divergence this rung introduced, so the rung
+    -- emits one, preceded by the program's `Generic` run. (The two `tfcRowsQ` already closes each
+    -- lift chain with are §5's, unchanged here.)
+    ++ [ probeRow wired (V d.fp.slots.ftEval0) (V d.fp.slots.linConst) ])
+
+/-- W-FINALIZE's variable environment. -/
+def finEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  (List.range s.prevs).flatMap (fun p =>
+    let d := runFin s sp p
+    chainEnv s (finChainVars s sp p 0) (finBlockVal p 8) 0
+    ++ chainEnv s (finChainVars s sp p 1) (finBlockVal p 9) 0
+    ++ finInputEnv s sp p
+    ++ fnEnvOf (finProgAt s sp p) d.fp.prog d.vals)
+
+/-! ## §23 — ⚑ **W-COMBINE**: `Split_commitments.combine`, and the ξ-aggregate's 46 endo ladders.
+
+`wrap_verifier.ml:320-379` (the gadget) called at `:687-713` (the 47 commitments). Read end to end,
+`Pcs_batch.combine_split_commitments` (`pickles_types/pcs_batch.ml:69-83`) is:
+
+    let flat = List.concat_map (Vector.to_list without_degree_bound) ~f:Array.to_list @ …
+    match List.rev flat with
+    | init :: comms -> List.fold_left comms ~init:(i init) ~f:(fun acc p -> scale_and_add ~acc ~xi p)
+
+⚑ **`List.rev flat` — THE FOLD RUNS BACKWARDS.** `~init` is the LAST commitment and the fold walks
+down to the first, so the two `sg_old` entries are the fold's LAST two steps and not its first two.
+Getting that round the wrong way gives the same gate COUNT and a different circuit.
+
+## THE 47, IN `wrap_verifier.ml:687-706`'s OWN ORDER
+
+    0 .. prevs-1     sg_old            the previous proofs' `challenge_polynomial_commitment`s
+    prevs            x_hat             ⚑ §15's MSM OUTPUT — the cells `:617` absorbs
+    prevs+1          ft_comm           ⚑ §17's OUTPUT
+    prevs+2          z_comm            transcript
+    prevs+3 .. +8    the six index singletons   ⚑ W-KEY's `choose_key` cells (coords 44..55)
+    … + wComms       w_comm            transcript
+    … + KEY_COLS     coefficients_comm ⚑ W-KEY (coords 14..43)
+    … + 6            sigma_comm_init   ⚑ W-KEY (coords 0..11), i.e. `sigma_comm` minus its last
+
+`Nat.N45.n + Max_proofs_verified.n` = 45 + 2 = **47** at the wrap shape, and `47 − 1 = 46` fold
+steps is exactly what closes Mina's own `EndoMul 2528 = 32 × (46 + 33)` against W-BULLET's 33.
+
+## ⚑ WHAT THIS RUNG WIRES, AND IT IS THE WHOLE POINT OF THE SUB-CIRCUIT
+
+Every one of the 47 is a cell some OTHER rung already defines: a transcript absorbed word, W-KEY's
+sealed coordinate, W-XHAT's MSM output or W-FTCOMM's `ft_comm`. Nothing here is witnessed except
+`xi`. That is what takes `sg_old`, `w_comm`, `z_comm`, `x_hat` and `t_comm` off §2c — not because a
+gadget re-reads them, but because bending any one of them moves 46 ladders' worth of gate
+polynomials and the fold's output.
+
+⚠ **`xi` IS FREE, HERE AND UPSTREAM.** It is `Deferred_values.xi`, wrap statement slot 9, and
+§10's census already says W-FINALIZE is what binds it. All 46 ladders' counters land on ONE cell —
+`Field.Assert.equal !n_acc scalar` (`scalar_challenge.ml:305`) as a σ class — which is upstream's
+shape and is what `comb_all_ladders_share_one_xi` pins.
+
+## ⚑ THE `keep` MUX, WHICH THE STEP SIDE'S FOLD DOES NOT HAVE
+
+`scale_and_add` is
+
+    point = if_ keep ~then_:(if_ acc.non_zero ~then_:(Point.add p (endo acc.point xi))
+                                              ~else_:(Point.underlying p))
+                     ~else_:acc.point
+    non_zero = keep &&& Point.finite p ||| acc.non_zero
+
+and three of those four booleans are CONSTANT here, which is upstream's own reduction and not a
+simplification this file made:
+
+  * `p` is `` `Finite `` for all 47 (`:709` maps every one through `~f:(fun (keep,x) -> (keep, `Finite x))`),
+    so `Point.finite p = Boolean.true_` and `Point.add p q = Ops.add_fast p q`;
+  * `keep` is `Boolean.true_` for 45 of them (`:706`) and the `actual_proofs_verified_mask` VARIABLE
+    for the two `sg_old` (`:511-514`) — §9's `vv`, reversed;
+  * so `non_zero` starts constant `true` at `~init` and stays constant, `if_ acc.non_zero` folds to
+    its `then_` branch at ZERO rows, and `Boolean.Assert.is_true non_zero` (`:377`) is a check on a
+    CONSTANT and emits no row. ⚠ Recorded rather than emitted: writing a row for it would be this
+    file inventing a constraint `wrap_main` does not have.
+
+⚑ So the mux is emitted exactly TWICE, at the fold's last two steps, and — because
+`mkWrapWith` witnesses branch 1 with widths `[0,1,2,…]`, so `first_zero = 1` — the two carry
+`keep = 0` and `keep = 1`. **Both arms of `Inner_curve.if_` are live in the honest witness**, which
+`comb_mux_takes_both_branches` pins.
+
+## ⚑ THE DEFECT CLASSES, INSIDE THIS SUB-CIRCUIT
+
+  1. **Free ladder seeds.** `Scalar_challenge.endo` opens `let p = t + (scale xt Endo.base, yt)` and
+     `acc = ref (p + p)`, `n_acc = ref Field.zero` (`scalar_challenge.ml:230-233`). ⚑ **The seed is
+     `2(t + φ(t))`, NOT `2t`** — a different gadget from `scale_fast_unpack`'s, and the step side
+     shipped the wrong one of the two for a while. All three cells are emitted and pinned: `φ(t)`'s
+     abscissa by a `Generic` half at `ENDO_BASE_Q`, `p` and `acc₀` by `CompleteAdd` rows that DEFINE
+     them, `n₀` by a `Generic` half at 0. `comb_every_ladder_seed_is_pinned` reads them off the row
+     list.
+  2. **Prover-chosen decomposition.** The 128 bits are `EndoMul`'s own advice cells and are tied to
+     `xi` only through the counter chain `nₑ₊₁ = 16nₑ + 8b₁+4b₂+2b₃+b₄` closing on `xi`. The gate
+     polynomial constrains each `bᵢ` to `{0,1}` (`endosclmul.rs`), so at `n₀ = 0` the chain is the
+     base-2 expansion of a 128-bit value and is unique — which is why the `n₀` pin above is
+     load-bearing and not decoration.
+  3. **Absorbed-but-not-consumed.** ⚑ This rung is what takes `sg_old`, `w_comm`, `z_comm` and
+     `x_hat` OFF §2c, and `t_comm` with them (its consumer `ft_comm` is now consumed). ⚠ What does
+     NOT change: `equal_g` refuses no on-curve substitution, because `G`/`z₁`/`z₂` are free — that
+     is §24's own note and it is measured on the step side, not asserted here.
+  4. **Constants pinned against their own definitions.** This sub-circuit owns exactly one constant,
+     `ENDO_BASE_Q`, and `KimchiWrapMainField.endo_base_q_is_the_curve_endomorphism` pins it three
+     ways: as a nontrivial cube root of unity, as the group map's own
+     `sqrt_neg_three_u_squared_minus_u_over_2`, and as NOT `ENDO_Q`.
+
+## ⚑ WHERE THE EMITTED SHAPE IS THIS FILE'S AND NOT MINA'S
+
+The σ-only probe rows are ours; `wrap_main` has none. They are placed at the TOP of each fold step
+rather than after the ladder tail, so no `Zero` row ever follows another — Mina's wrap blob has no
+two consecutive `Zero`s anywhere, and a probe after a ladder's closing `Zero` would have
+manufactured 46 of them. -/
+
+/-- ⚑ `Nat.N45.n + Max_proofs_verified.n` — the commitments `Split_commitments.combine` folds.
+`KEY_COLS` and `KEY_SIGMA` are `Plonk_types.Columns.n` / `Permuts.n` and are NOT shape knobs: the
+coefficient and sigma commitments come out of W-KEY's 56 REAL coordinates at every shape. -/
+def combTerms (s : WrapShape) : Nat :=
+  s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS + (KEY_SIGMA - 1)
+/-- Fold steps — one fewer than the commitments, because `~init` consumes the last. -/
+def combSteps (s : WrapShape) : Nat := combTerms s - 1
+
+/-- ⚑ **`xi`**, `Deferred_values.xi`'s `Scalar_challenge.inner` — a RAW 128-bit challenge, free here
+and bound by W-FINALIZE. It is `< 2^ENDO_BITS` because the ladder's counter reconstructs exactly
+that many bits; a wider value would make `Field.Assert.equal !n_acc scalar` unsatisfiable. -/
+def combXiVal : Nat := wrapFixtureQ 30 0 % 2 ^ ENDO_BITS
+
+/-- Commitment `k`'s VALUE, in `wrap_verifier.ml:687-706`'s flat order. -/
+def combPtVal (t : WrapData) (k : Nat) : Nat × Nat :=
+  let s := t.sh
+  let kc : Nat → Nat × Nat := fun c => (keyConst t.br.idx c, keyConst t.br.idx (c + 1))
+  if k < s.prevs then (itemVal T_SGOLD (2 * k), itemVal T_SGOLD (2 * k + 1))
+  else if k == s.prevs then s.xhatXY
+  else if k == s.prevs + 1 then ftcOut t
+  else if k == s.prevs + 2 then (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+  else if k < s.prevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.prevs - 3))
+  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms then
+    let j := k - s.prevs - 3 - KEY_SINGLES
+    (itemVal T_WCOMM (2 * j), itemVal T_WCOMM (2 * j + 1))
+  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
+    kc (14 + 2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms))
+  else kc (2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
+
+/-- …and its VARIABLE. ⚑ Every one is another rung's cell; this sub-circuit allocates none of them. -/
+def combPtVar (t : WrapData) (k : Nat) : PVar × PVar :=
+  let s := t.sh
+  let sp := t.sp
+  let kv := keyVars s (baseKey s sp)
+  let kc : Nat → PVar × PVar := fun c => (kv.acc c (s.branches - 1), kv.acc (c + 1) (s.branches - 1))
+  let absW : Nat → Nat → PVar := fun tag i =>
+    ((sp.evs.filter (fun e => e.isAbs && e.tag == tag)).getD i default).wordV
+  if k < s.prevs then (absW T_SGOLD (2 * k), absW T_SGOLD (2 * k + 1))
+  else if k == s.prevs then (absW T_XHAT 0, absW T_XHAT 1)
+  else if k == s.prevs + 1 then ftcOutV s sp
+  else if k == s.prevs + 2 then (absW T_ZCOMM 0, absW T_ZCOMM 1)
+  else if k < s.prevs + 3 + KEY_SINGLES then kc (44 + 2 * (k - s.prevs - 3))
+  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms then
+    let j := k - s.prevs - 3 - KEY_SINGLES
+    (absW T_WCOMM (2 * j), absW T_WCOMM (2 * j + 1))
+  else if k < s.prevs + 3 + KEY_SINGLES + s.wComms + KEY_COLS then
+    kc (14 + 2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms))
+  else kc (2 * (k - s.prevs - 3 - KEY_SINGLES - s.wComms - KEY_COLS))
+
+/-- ⚑ `actual_proofs_verified_mask ! k` (`wrap_verifier.ml:511-514`). §9 emits `ones_vector` and
+`Vector.rev` makes element `k` the running value `vv (MASK_N − 1 − k)` — the SAME cells §11c's
+packing reads, so a `keep` and the `branch_data` public word cannot disagree. -/
+def combKeepVal (t : WrapData) (k : Nat) : Nat := onesVal t.br.fz (MASK_N - 1 - k)
+def combKeepVar (t : WrapData) (k : Nat) : PVar :=
+  (branchVars t.sh (baseBr t.sh t.sp)).vv (MASK_N - 1 - k)
+
+/-- ⚑ **THE WHOLE FOLD, EVALUATED ONCE.** `accs` is the accumulator ENTERING step `a` (so `accs !
+combSteps` is `combine`'s output), `eds` the per-step `Scalar_challenge.endo` traces, `sums` the
+`Ops.add_fast` outputs. Bound as one structure for §15's reason: a per-row recomputation would
+replay a 32-block ladder for every one of its rows. -/
+structure CombData where
+  accs : List (Nat × Nat)
+  eds : List EndoDataQ
+  sums : List (Nat × Nat)
+  deriving Inhabited
+
+def combData (t : WrapData) : CombData :=
+  let n := combTerms t.sh
+  let st := (List.range (n - 1)).foldl
+    (fun (st : CombData) a =>
+      let cur := st.accs.getLastD (0, 0)
+      let idx := n - 2 - a
+      let ed := runEndoQ cur combXiVal
+      let sum := addAQ (combPtVal t idx) (ed.accs.getLastD (0, 0))
+      let out := if idx < t.sh.prevs && combKeepVal t idx == 0 then cur else sum
+      { accs := st.accs ++ [out], eds := st.eds ++ [ed], sums := st.sums ++ [sum] })
+    { accs := [combPtVal t (n - 1)], eds := [], sums := [] }
+  st
+
+/-- The commitment fold step `a` consumes — the fold runs DOWN the flat list. -/
+def combIdx (s : WrapShape) (a : Nat) : Nat := combTerms s - 2 - a
+/-- …and whether that step carries a live `keep` mux. -/
+def combIsMux (s : WrapShape) (a : Nat) : Bool := combIdx s a < s.prevs
+
+/-! ### §23a — the variable layout.
+
+⚠ **THE REGION SHARES ITS BASE WITH W-FINALIZE's, AND THAT IS SAFE BECAUSE OF `rungsUpto`.**
+`.combine` and `.finalize` are sibling branches off `.prev`; no rung's `rungsUpto` contains both, so
+no emitted circuit ever holds cells from both regions. A rung that merged them would have to re-base
+one, and that is the one thing to check before merging. -/
+
+/-- Per-step slots: `p` (2), `endo·xt` (1), the 33 accumulator points (66), the 32 interior
+counters, the `Ops.add_fast` output (2), and the mux's `(d, m, r)` for x then y (6). -/
+def COMB_STRIDE : Nat := 3 + 2 * (ENDO_BLOCKS + 1) + ENDO_BLOCKS + 2 + 6
+
+def baseComb (s : WrapShape) (sp : SpAcc) : Nat := baseFtc s sp + nFtcVars s sp
+/-- ⚑ ξ's own cell — ONE for all 46 ladders. -/
+def combXiV (s : WrapShape) (sp : SpAcc) : PVar := .external (baseComb s sp)
+def combSlot (s : WrapShape) (sp : SpAcc) (a o : Nat) : PVar :=
+  .external (baseComb s sp + 1 + COMB_STRIDE * a + o)
+def combPV (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar × PVar :=
+  (combSlot s sp a 0, combSlot s sp a 1)
+def combEndoX (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar := combSlot s sp a 2
+def combAccPt (s : WrapShape) (sp : SpAcc) (a e : Nat) : PVar × PVar :=
+  (combSlot s sp a (3 + 2 * e), combSlot s sp a (4 + 2 * e))
+/-- ⚑ The counter at block boundary `e`. At `e = ENDO_BLOCKS` it IS `xi`'s cell —
+`Field.Assert.equal !n_acc scalar` as a σ class rather than as a row. -/
+def combN (s : WrapShape) (sp : SpAcc) (a e : Nat) : PVar :=
+  if e == ENDO_BLOCKS then combXiV s sp
+  else combSlot s sp a (3 + 2 * (ENDO_BLOCKS + 1) + e)
+def combSumV (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar × PVar :=
+  (combSlot s sp a (3 + 3 * ENDO_BLOCKS + 2), combSlot s sp a (3 + 3 * ENDO_BLOCKS + 3))
+/-- The mux's `d`/`m`/`r` for coordinate `c` (0 = x, 1 = y). -/
+def combMux (s : WrapShape) (sp : SpAcc) (a c o : Nat) : PVar :=
+  combSlot s sp a (3 + 3 * ENDO_BLOCKS + 4 + 3 * c + o)
+def nCombVars (s : WrapShape) : Nat := 1 + COMB_STRIDE * combSteps s
+
+/-- Step `a`'s OUTPUT variable: the mux result where there is a mux, the `add_fast` output
+otherwise. -/
+def combOutVar (t : WrapData) (a : Nat) : PVar × PVar :=
+  let s := t.sh
+  let sp := t.sp
+  if combIsMux s a then (combMux s sp a 0 2, combMux s sp a 1 2) else combSumV s sp a
+/-- …and the accumulator step `a` READS, which is the ladder's base. -/
+def combAccVar (t : WrapData) (a : Nat) : PVar × PVar :=
+  if a == 0 then combPtVar t (combTerms t.sh - 1) else combOutVar t (a - 1)
+
+/-- One `Scalar_challenge.endo` block row. Cols 0/1 are the ladder's BASE (`xt`, `yt` — sealed once
+per ladder), 4/5 the accumulator entering the block, 6 the counter; the four bits, the two stored
+slopes, the intermediate point and the distinct-point inverse are advice
+(`endosclmul.rs:48-56`). -/
+def combBlockRows (s : WrapShape) (sp : SpAcc) (bv : PVar × PVar) (a : Nat)
+    (bl : List EndoBlockQ) : List WRow :=
+  (List.range ENDO_BLOCKS).map (fun e =>
+    let b := bl.getD e default
+    ({ kind := .endoMul
+     , perm := [ some bv.1, some bv.2, none, none
+               , some (combAccPt s sp a e).1, some (combAccPt s sp a e).2, some (combN s sp a e) ]
+     , advice := [ (2, (b.inv : Int)), (3, 0), (7, (b.xr : Int)), (8, (b.yr : Int))
+                 , (9, (b.s1 : Int)), (10, (b.s3 : Int)), (11, (b.b1 : Int)), (12, (b.b2 : Int))
+                 , (13, (b.b3 : Int)), (14, (b.b4 : Int)) ] } : WRow))
+  ++ [ { kind := .zero
+       , perm := [ none, none, none, none
+                 , some (combAccPt s sp a ENDO_BLOCKS).1, some (combAccPt s sp a ENDO_BLOCKS).2
+                 , some (combN s sp a ENDO_BLOCKS) ] } ]
+
+/-- **W-COMBINE's ROWS.** -/
+def combRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let v := combData t
+  let ns := combSteps s
+  -- (1) every ladder's `n₀ = 0` and its `φ(t)` abscissa pin, batched two halves to a row.
+  let seedPins : List WRow :=
+    packHalves ((List.range ns).flatMap (fun a =>
+      [ ([some (combN s sp a 0), none, none], cConst 0)
+      , ([some (combAccVar t a).1, none, some (combEndoX s sp a)],
+         [(ENDO_BASE_Q : Int), 0, -1, 0, 0]) ]))
+  -- (2) the fold, `wrap_verifier.ml:344-372`, step by step and BACKWARDS down the flat list.
+  let stepRows : List WRow :=
+    (List.range ns).flatMap (fun a =>
+      let bv := combAccVar t a
+      let bval := v.accs.getD a (0, 0)
+      let ed := v.eds.getD a default
+      let q := (qMul ENDO_BASE_Q bval.1, bval.2)
+      let p := endoPQ bval
+      let out := ed.accs.getLastD (0, 0)
+      let pt := combPtVal t (combIdx s a)
+      -- the probe leads the step, so no `Zero` row ever follows the ladder's closing `Zero`.
+      [ probeRow wired bv.1 bv.2
+      , caRowQ bv (combEndoX s sp a, bv.2) (combPV s sp a) (caWitnessQ bval.1 bval.2 q.1 q.2)
+      , caRowQ (combPV s sp a) (combPV s sp a) (combAccPt s sp a 0)
+          (caWitnessQ p.1 p.2 p.1 p.2) ]
+      ++ combBlockRows s sp bv a ed.blks
+      ++ [ caRowQ (combPtVar t (combIdx s a)) (combAccPt s sp a ENDO_BLOCKS) (combSumV s sp a)
+             (caWitnessQ pt.1 pt.2 out.1 out.2) ]
+      ++ (if combIsMux s a then
+            packHalves ((List.range 2).flatMap (fun c =>
+              let sm := if c == 0 then (combSumV s sp a).1 else (combSumV s sp a).2
+              let cu := if c == 0 then bv.1 else bv.2
+              [ ([some sm, some cu, some (combMux s sp a c 0)], [1, -1, -1, 0, 0])
+              , ([some (combKeepVar t (combIdx s a)), some (combMux s sp a c 0),
+                  some (combMux s sp a c 1)], cMul)
+              , ([some (combMux s sp a c 1), some cu, some (combMux s sp a c 2)], cAdd) ]))
+          else []))
+  seedPins ++ stepRows
+  ++ [ probeRow wired (combOutVar t (ns - 1)).1 (combOutVar t (ns - 1)).2 ]
+
+/-- W-COMBINE's variable environment. -/
+def combEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let v := combData t
+  let ns := combSteps s
+  [ (combXiV s sp, (combXiVal : Int)) ]
+  ++ (List.range ns).flatMap (fun a =>
+      let bval := v.accs.getD a (0, 0)
+      let ed := v.eds.getD a default
+      let p := endoPQ bval
+      let sum := v.sums.getD a (0, 0)
+      [ ((combPV s sp a).1, (p.1 : Int)), ((combPV s sp a).2, (p.2 : Int))
+      , (combEndoX s sp a, (qMul ENDO_BASE_Q bval.1 : Int))
+      , ((combSumV s sp a).1, (sum.1 : Int)), ((combSumV s sp a).2, (sum.2 : Int)) ]
+      ++ (List.range (ENDO_BLOCKS + 1)).flatMap (fun e =>
+           let pt := ed.accs.getD e (0, 0)
+           [ ((combAccPt s sp a e).1, (pt.1 : Int)), ((combAccPt s sp a e).2, (pt.2 : Int)) ])
+      ++ (List.range ENDO_BLOCKS).map (fun e => (combN s sp a e, (ed.ns.getD e 0 : Int)))
+      ++ (if combIsMux s a then
+            let keep := combKeepVal t (combIdx s a)
+            (List.range 2).flatMap (fun c =>
+              let sm := if c == 0 then sum.1 else sum.2
+              let cu := if c == 0 then bval.1 else bval.2
+              let d := qSub sm cu
+              [ (combMux s sp a c 0, (d : Int))
+              , (combMux s sp a c 1, (qMul keep d : Int))
+              , (combMux s sp a c 2, (qAdd (qMul keep d) cu : Int)) ])
+          else []))
+
+/-! ## §24 — ⚑ **W-BULLET**: `check_bulletproof`, and the 33 endo ladders that close `EndoMul`.
+
+`wrap_verifier.ml:383-437`, read end to end, in upstream's own order:
+
+    Other_field.Packed.absorb_shifted sponge advice.combined_inner_product   (§2b, ONE item)
+    let u = group_map (Sponge.squeeze_field sponge)                          (:402-405)
+    let combined_polynomial = Split_commitments.combine pcs_batch ~xi …      (§23)
+    let scale_fast = scale_fast ~num_bits:Other_field.Packed.Constant.size_in_bits
+    let lr_prod, challenges = bullet_reduce sponge lr                        (:158-174)
+    let p_prime = let uc = scale_fast u advice.combined_inner_product in combined_polynomial + uc
+    let q = p_prime + lr_prod
+    absorb sponge PC delta ; let c = squeeze_scalar sponge
+    let lhs = let cq = Scalar_challenge.endo q c in cq + delta
+    let rhs = let b_u = scale_fast u advice.b in
+              let z_1_g_plus_b_u = scale_fast (challenge_polynomial_commitment + b_u) z_1 in
+              let z2_h = scale_fast (Inner_curve.constant Generators.h) z_2 in
+              z_1_g_plus_b_u + z2_h
+    (`Success (equal_g lhs rhs), challenges)
+
+## ⚑ THE CENSUS THIS SECTION CLOSES, AND IT CLOSES TWO FAMILIES
+
+  * **`EndoMul`.** `bullet_reduce` runs `2 × ipaRounds` ladders — an `endo_inv` AND an `endo` per
+    round (`:167-168`) — and `lhs` runs one more, so **33** at `ipaRounds = 16`. With W-COMBINE's 46
+    that is `79 × 32 = 2528`, which is `wrap-transaction`'s whole `EndoMul` count. Before these two
+    rungs this assembly emitted **zero** gates of that type.
+  * **`VarBaseMul`.** Four `scale_fast` at `num_bits = 255`, i.e. `4 × 51 = 204` — exactly
+    `wrap-transaction`'s `2417` minus W-XHAT's `1805` and W-FTCOMM's `408`.
+
+## ⚑ `bullet_reduce`, AND WHY `endo_inv` IS THE ONLY NEW ARITHMETIC IN THE FILE
+
+`:158-174`. Per round: `absorb (PC :: PC) gammas_i` (four transcript items), `squeeze_scalar`, then
+
+    let term_and_challenge (l, r) pre =
+      let left_term = Scalar_challenge.endo_inv l pre in
+      let right_term = Scalar_challenge.endo r pre in
+      (Ops.add_fast left_term right_term, Bulletproof_challenge.unpack pre)
+
+⚑ `endo_inv` (`scalar_challenge.ml:343-354`) is an `exists G.typ` — so an `assert_on_curve` — plus an
+`endo` ladder over that witness plus **two `Field.Assert.equal` tying the ladder's OUTPUT to `l`**.
+So the ladder runs FORWARD from a witnessed point and the transcript's `l` is what it must land on;
+`KimchiWrapMainField` §19d computes that witness by inverting in Vesta's scalar field, and
+`endo_inv_is_the_ladders_inverse` runs the actual ladder on it and gets `l` back. That theorem is the
+only thing tying `ENDO_BASE_Q` (Fq, the gate's) to `ENDO_SCALAR_FP` (Fp, the witness generator's),
+and it is the pin, not a comment.
+
+⚠ ⚑ **AND IT FORCED A FIXTURE CHANGE, WHICH IS A FLAG DAY: `lr` AND `delta` ARE NOW CURVE POINTS.**
+§2d's filler for tags 7 and 8 was `wrapFixture`, i.e. arbitrary field elements. Upstream's arrive
+through `Openings.Bulletproof.typ`'s `Inner_curve.typ` and are on-curve by construction, and
+`endo_inv` has **no witness at all** over an off-curve `l`. `lrPointQ`/`deltaPointQ` replace them
+with doublings of real SRS Lagrange bases — the construction `ftcTVal` already uses for `t_comm`.
+**What re-emits:** every rung's witness below `w11_bullet`, because the transcript's absorbed words
+moved; the 16 prechallenges and `c` change value, hence public words 13–28. Nothing pinned against
+an external source moves — β, γ, α and ζ are squeezed BEFORE `lr` (§2b), so §12a's reality gate and
+§14b's `index_digest` are untouched.
+
+## ⚑ `equal_g` IS COMPUTED, AND AT THIS TREE'S FIXTURES IT COMPUTES **ZERO**
+
+`equal_g lhs rhs` (`:177-181`) is `Field.equal` per coordinate then `Boolean.all`, and this section
+emits the real gadget: `d = lhs − rhs`, `d·inv = 1 − bit`, `d·bit = 0`, `bit² = bit`. Its value is
+NOT assumed.
+
+⚠ ⚑ **AND IT IS 0, FOR A REASON THAT IS A FINDING AND NOT A SHRUG.** The step side closed the same
+gadget by SOLVING `G := z₁⁻¹·(lhs − z₂·H) − b·u` — one scalar-field inverse and three scalar
+multiplications — and that solve needs `lhs` to be **on the curve**. Here it is not, and the cause is
+upstream's own arithmetic on this tree's step verification key: **seven of that key's 28 commitments
+are the identity**, `index_to_field_elements` flattens the identity as the fake point `(0, 0)`
+(§14's own note), and `Ops.add_fast` is the INCOMPLETE add — a chord through `(0,0)`, which is not on
+`y² = x³ + 5`. So W-COMBINE's `combined_polynomial` is an off-curve pair, `p_prime`, `q`, `cq` and
+`lhs` inherit it, and no `G` closes the opening.
+
+⚑ **THE CONSEQUENCE FOR W-CLOSE, SAID OUT LOUD:** `wrap_main.ml:419-420`'s
+`Boolean.Assert.is_true bulletproof_success` is **UNSATISFIABLE at this key**. That is not W-BULLET
+being incomplete — the gadget is emitted in full and its witness is honest — it is the FIXTURE. A
+step key with no identity commitment would put `lhs` back on the curve and the solve back in reach.
+Recorded here rather than worked around, because a witness that made `bit = 1` would have to fake a
+cell this section computes.
+
+⚠ For the same reason `challenge_polynomial_commitment` gets **no `assert_on_curve`** while `lr`,
+`delta` and every `endo_inv` witness DO: an on-curve `G` is exactly what this fixture cannot supply,
+and emitting the check on a value the honest witness fails is a rung that cannot be proved. Named,
+not banked.
+
+## ⚑ THE DEFECT CLASSES, INSIDE THIS SUB-CIRCUIT
+
+  1. **Free ladder seeds.** Every one of the 33 endo ladders pins `φ(t)`'s abscissa, `p`, `acc₀` and
+     `n₀`, exactly as §23 does; every one of the four `scale_fast` ladders pins `acc₀ = add_fast base
+     base` and `n₀ = 0`, exactly as §17 does. `bullet_every_ladder_seed_is_pinned` reads them off the
+     row list.
+  2. **Prover-chosen decompositions.** ⚠ The four `scale_fast` carry §17's residual VERBATIM and
+     this section does not repair it: `scale_fast` has no top-bit-zero loop, so `B` and `B + q` are
+     both admissible 255-bit decompositions of the same scalar. Bounding it here would be a
+     divergence from `wrap_main`, not a fix to it.
+  3. **Absorbed-but-not-consumed.** ⚑ This rung takes `lr`, `delta` and `combined_inner_product` off
+     §2c — the last three entries. `lr` feeds `bullet_reduce`'s 32 ladders and the reduce, `delta`
+     feeds `lhs`, and `combined_inner_product` is `uc`'s scalar, tied by
+     `Field.Assert.equal !n_acc scalar` as a σ class to the very cell the sponge absorbed.
+  4. **Constants pinned against their own definitions.** `Generators.h` is `XHAT_H`, which
+     `MinaStepSrsLagrangePin` grounds against the devnet SRS; the Bw19 group-map parameters are
+     checked by their DEFINING equations (`bwq_params_are_the_field_construction`) rather than
+     transcribed from the step side, and the one that would catch a copy-paste — `Fp`'s
+     `sqrt_neg_three_u_squared` is not a square root of `−3` mod `q` — is a conjunct of it.
+
+## ⚠ WHERE THIS EMISSION IS AN UPPER BOUND AND SAYS SO
+
+`group_map` materialises every linear combination that feeds a multiplication as its own `Generic`
+half, where Snarky's `assert_r1cs` takes linear combinations as operands directly. So the emitted
+half-count is **≥** Snarky's constraint count, never fewer, and the difference is in the cheapest
+rows in the file. The ladders — which are 95% of this section — are block-for-block exact. -/
+
+/-- `Ops.scale_fast`'s chunk count here is `ft_comm`'s: same gadget, same width. -/
+def SF_CHUNKS : Nat := FTC_CHUNKS
+/-- `uc`, `b_u`, `z₁·(G + b_u)`, `z₂·H`. -/
+def BULL_SF : Nat := 4
+/-- `2 × ipaRounds` from `bullet_reduce` plus `Scalar_challenge.endo q c`. -/
+def bullNE (s : WrapShape) : Nat := 2 * s.ipaRounds + 1
+/-- The points `Inner_curve.typ` checks here: the `2·ipaRounds` `lr` points, `delta`, and the
+`ipaRounds` `endo_inv` witnesses. ⚠ NOT `challenge_polynomial_commitment` — see the header. -/
+def bullOCPts (s : WrapShape) : Nat := 3 * s.ipaRounds + 1
+
+/-! ### §24a — the variable layout. -/
+
+def SF_STRIDE : Nat := 2 * (SF_CHUNKS + 1) + SF_CHUNKS
+def EN_STRIDE : Nat := 3 + 2 * (ENDO_BLOCKS + 1) + ENDO_BLOCKS
+
+def BU_GM : Nat := 0
+def BU_H : Nat := 43
+def BU_G : Nat := 45
+def BU_SCAL : Nat := 47
+def BU_GB : Nat := 50
+def BU_PP : Nat := 52
+def BU_Q : Nat := 54
+def BU_LHS : Nat := 56
+def BU_RHS : Nat := 58
+def BU_EQ : Nat := 60
+def BU_SF : Nat := 73
+def BU_RES : Nat := BU_SF + BULL_SF * SF_STRIDE
+def BU_LRT (s : WrapShape) : Nat := BU_RES + 2 * s.ipaRounds
+def BU_RED (s : WrapShape) : Nat := BU_LRT s + 2 * s.ipaRounds
+def BU_OC (s : WrapShape) : Nat := BU_RED s + 2 * (s.ipaRounds - 1)
+def BU_EN (s : WrapShape) : Nat := BU_OC s + 2 * bullOCPts s
+def nBullVars (s : WrapShape) : Nat := BU_EN s + bullNE s * EN_STRIDE
+
+def baseBull (s : WrapShape) (sp : SpAcc) : Nat := baseComb s sp + nCombVars s
+def bV (s : WrapShape) (sp : SpAcc) (o : Nat) : PVar := .external (baseBull s sp + o)
+
+def bullGm (s : WrapShape) (sp : SpAcc) (i : Nat) : PVar := bV s sp (BU_GM + i)
+/-- `u = group_map t` — the dot-products' last cells, and NOT two fresh variables. -/
+def bullU (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bullGm s sp 37, bullGm s sp 42)
+def bullHV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_H, bV s sp (BU_H + 1))
+def bullGV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_G, bV s sp (BU_G + 1))
+/-- `0 = advice.b`, `1 = z₁`, `2 = z₂` — all three free, here and upstream. -/
+def bullScalV (s : WrapShape) (sp : SpAcc) (j : Nat) : PVar := bV s sp (BU_SCAL + j)
+def bullGbV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_GB, bV s sp (BU_GB + 1))
+def bullPpV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_PP, bV s sp (BU_PP + 1))
+def bullQV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_Q, bV s sp (BU_Q + 1))
+def bullLhsV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_LHS, bV s sp (BU_LHS + 1))
+def bullRhsV (s : WrapShape) (sp : SpAcc) : PVar × PVar := (bV s sp BU_RHS, bV s sp (BU_RHS + 1))
+/-- `equal_g`'s cells: per coordinate `d`, `inv`, `bit`, `bit²`, `d·inv`, `d·bit`; then the `all`. -/
+def bullEqV (s : WrapShape) (sp : SpAcc) (i : Nat) : PVar := bV s sp (BU_EQ + i)
+
+def sfAccV (s : WrapShape) (sp : SpAcc) (k j : Nat) : PVar × PVar :=
+  (bV s sp (BU_SF + SF_STRIDE * k + 2 * j), bV s sp (BU_SF + SF_STRIDE * k + 2 * j + 1))
+def bullResV (s : WrapShape) (sp : SpAcc) (r : Nat) : PVar × PVar :=
+  (bV s sp (BU_RES + 2 * r), bV s sp (BU_RES + 2 * r + 1))
+def bullLrtV (s : WrapShape) (sp : SpAcc) (r : Nat) : PVar × PVar :=
+  (bV s sp (BU_LRT s + 2 * r), bV s sp (BU_LRT s + 2 * r + 1))
+def bullRedV (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar × PVar :=
+  (bV s sp (BU_RED s + 2 * a), bV s sp (BU_RED s + 2 * a + 1))
+def bullOcV (s : WrapShape) (sp : SpAcc) (i c : Nat) : PVar :=
+  bV s sp (BU_OC s + 2 * i + c)
+def enSlot (s : WrapShape) (sp : SpAcc) (m o : Nat) : PVar :=
+  bV s sp (BU_EN s + EN_STRIDE * m + o)
+def enPV (s : WrapShape) (sp : SpAcc) (m : Nat) : PVar × PVar :=
+  (enSlot s sp m 0, enSlot s sp m 1)
+def enEndoX (s : WrapShape) (sp : SpAcc) (m : Nat) : PVar := enSlot s sp m 2
+def enAccV (s : WrapShape) (sp : SpAcc) (m e : Nat) : PVar × PVar :=
+  (enSlot s sp m (3 + 2 * e), enSlot s sp m (4 + 2 * e))
+/-- ⚑ Ladder `m`'s CHALLENGE variable — the cell `Field.Assert.equal !n_acc scalar` lands on.
+`m = 2r` and `m = 2r+1` are round `r`'s `endo_inv`/`endo` and share ONE prechallenge (`:161-168`);
+`m = 2·ipaRounds` is `c`. Both are the `to_field_checked` chain's reconstructed `n₈`, i.e. the same
+cells §10 exposes as public words 13–28 — so a bent prechallenge moves a ladder AND a public word. -/
+def bullChalV (t : WrapData) (m : Nat) : PVar :=
+  let s := t.sh
+  let cb := baseCh s t.sp
+  let c := if m == 2 * s.ipaRounds then 4 + s.ipaRounds else 4 + m / 2
+  (chainVars s (cb + 1) c).n s.emsRows
+def bullChalVal (t : WrapData) (m : Nat) : Nat :=
+  let s := t.sh
+  let c := if m == 2 * s.ipaRounds then 4 + s.ipaRounds else 4 + m / 2
+  ((chalSqueezes t.sp).getD c (.external 0, 0)).2 % 2 ^ CHAL_BITS s
+
+def enN (t : WrapData) (m e : Nat) : PVar :=
+  if e == ENDO_BLOCKS then bullChalV t m
+  else enSlot t.sh t.sp m (3 + 2 * (ENDO_BLOCKS + 1) + e)
+
+/-- The transcript's `combined_inner_product` cell — `absorb_shifted` at `:395`, ONE item. -/
+def bullCipV (t : WrapData) : PVar :=
+  ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_CIP)).getD 0 default).wordV
+def bullCipVal (t : WrapData) : Nat := itemVal T_CIP 0
+/-- `t`, the FULL field squeeze `group_map` consumes (`:402-403`) — its SOURCE cell, so the sponge
+state and the group map's input are one σ class. -/
+def bullTV (t : WrapData) : PVar :=
+  ((t.sp.evs.filter (fun e => !e.isAbs && e.kind == SqKind.full)).getD 0 default).srcV
+def bullTVal (t : WrapData) : Nat :=
+  ((t.sp.evs.filter (fun e => !e.isAbs && e.kind == SqKind.full)).getD 0 default).val
+
+/-- `openings_proof.lr.(r)`'s two points, and `delta`, as the TRANSCRIPT's own absorbed cells. -/
+def bullLrV (t : WrapData) (r j : Nat) : PVar × PVar :=
+  let w : Nat → PVar := fun i =>
+    ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_LR)).getD i default).wordV
+  (w (4 * r + 2 * j), w (4 * r + 2 * j + 1))
+def bullDeltaV (t : WrapData) : PVar × PVar :=
+  let w : Nat → PVar := fun i =>
+    ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_DELTA)).getD i default).wordV
+  (w 0, w 1)
+def bullLrVal (r j : Nat) : Nat × Nat := (itemVal T_LR (4 * r + 2 * j), itemVal T_LR (4 * r + 2 * j + 1))
+def bullDeltaVal : Nat × Nat := (itemVal T_DELTA 0, itemVal T_DELTA 1)
+
+/-- The three free scalars and the free commitment. ⚠ FIXTURES, and named as such: `advice.b` is
+wrap statement slot 1 (W-FINALIZE's), `z₁`/`z₂` and `challenge_polynomial_commitment` are
+`openings_proof`'s and have no binder in `wrap_main` at all — which is §13's own note and the reason
+`equal_g` refuses no on-curve substitution. -/
+def bullScalVal (j : Nat) : Nat := wrapFixtureQ (40 + j) 0
+def bullGVal : Nat × Nat := dblAQ (dblAQ (dblAQ (xhatBase 62)))
+
+/-- One `Ops.scale_fast ~num_bits:255` ladder, seeded exactly as `plonk_curve_ops.ml:157-158`. -/
+def sfLadderQ (T : Nat × Nat) (v : Nat) : TermDataQ := runVbmQ T (addAQ T T) (ftcBitsOf v)
+def sfOutQ (T : Nat × Nat) (v : Nat) : Nat × Nat := (sfLadderQ T v).accs.getLastD (0, 0)
+
+/-- ⚑ **EVERYTHING W-BULLET EVALUATES, ONCE.** The chain is
+`group_map → uc → p_prime → q → cq → lhs` and `b_u → G+b_u → z₁·(…) → rhs`; it is a chain and not a
+cycle, which is why one fold suffices. -/
+structure BullData where
+  gm : List Nat
+  /-- the four `scale_fast` traces, in emission order `uc`, `b_u`, `z₁·(G+b_u)`, `z₂·H`. -/
+  sfs : List TermDataQ
+  /-- `endo_inv`'s witnesses, one per round. -/
+  res : List (Nat × Nat)
+  /-- the `2·ipaRounds + 1` endo traces. -/
+  eds : List EndoDataQ
+  /-- `Ops.add_fast left_term right_term`, one per round. -/
+  terms : List (Nat × Nat)
+  /-- `Array.reduce_exn terms ~f:Ops.add_fast`'s partial sums. -/
+  reds : List (Nat × Nat)
+  /-- ⚑ **THE DERIVED POINTS, MEMOISED** — `combined_polynomial` (W-COMBINE's output), `lr_prod`,
+  `p_prime`, `q`, `cq`, `lhs`, `G + b_u` and `rhs`. They are FIELDS and not `def`s reading `bullData`
+  because `bulletRows` names `q` inside a 33-iteration loop, and a `def` that recomputed it would
+  replay W-COMBINE's 34 ladders once per iteration — §15's measured lesson, in a new place. -/
+  combOut : Nat × Nat
+  lrProd : Nat × Nat
+  pp : Nat × Nat
+  q : Nat × Nat
+  lhs : Nat × Nat
+  gb : Nat × Nat
+  rhs : Nat × Nat
+  deriving Inhabited
+
+def bullData (t : WrapData) : BullData :=
+  let s := t.sh
+  let gm := gmValsQ (bullTVal t)
+  let u : Nat × Nat := (gm.getD 37 0, gm.getD 42 0)
+  let uc := sfLadderQ u (bullCipVal t)
+  let bu := sfLadderQ u (bullScalVal 0)
+  -- the rounds: `endo_inv l pre` then `endo r pre`, then their `add_fast`.
+  let rd := (List.range s.ipaRounds).foldl
+    (fun (st : List (Nat × Nat) × List EndoDataQ × List (Nat × Nat)) r =>
+      let pre := bullChalVal t (2 * r)
+      let l := bullLrVal r 0
+      let rr := bullLrVal r 1
+      let res := endoInvPtQ l pre
+      let e0 := runEndoQ res pre
+      let e1 := runEndoQ rr pre
+      (st.1 ++ [res], st.2.1 ++ [e0, e1], st.2.2 ++ [addAQ res (e1.accs.getLastD (0, 0))]))
+    ([], [], [])
+  let terms := rd.2.2
+  let reds := (List.range (s.ipaRounds - 1)).foldl
+    (fun (acc : List (Nat × Nat)) a =>
+      acc ++ [addAQ (if a == 0 then terms.getD 0 (0, 0) else acc.getLastD (0, 0))
+                    (terms.getD (a + 1) (0, 0))])
+    []
+  let lrProd := if s.ipaRounds == 1 then terms.getD 0 (0, 0) else reds.getLastD (0, 0)
+  let combined := (combData t).accs.getLastD (0, 0)
+  let pp := addAQ combined (uc.accs.getLastD (0, 0))
+  let q := addAQ pp lrProd
+  let ec := runEndoQ q (bullChalVal t (2 * s.ipaRounds))
+  let gb := addAQ bullGVal (bu.accs.getLastD (0, 0))
+  let z1g := sfLadderQ gb (bullScalVal 1)
+  let z2h := sfLadderQ XHAT_H (bullScalVal 2)
+  { gm := gm, sfs := [uc, bu, z1g, z2h], res := rd.1, eds := rd.2.1 ++ [ec]
+  , terms := terms, reds := reds
+  , combOut := combined, lrProd := lrProd, pp := pp, q := q
+  , lhs := addAQ (ec.accs.getLastD (0, 0)) bullDeltaVal
+  , gb := gb
+  , rhs := addAQ (z1g.accs.getLastD (0, 0)) (z2h.accs.getLastD (0, 0)) }
+
+/-- The derived points, READ OFF `bullData` rather than recomputed. -/
+def bullLrProd (_t : WrapData) (v : BullData) : Nat × Nat := v.lrProd
+def bullUc (_t : WrapData) (v : BullData) : Nat × Nat := (v.sfs.getD 0 default).accs.getLastD (0, 0)
+def bullBu (_t : WrapData) (v : BullData) : Nat × Nat := (v.sfs.getD 1 default).accs.getLastD (0, 0)
+def bullPp (_t : WrapData) (v : BullData) : Nat × Nat := v.pp
+def bullQ (_t : WrapData) (v : BullData) : Nat × Nat := v.q
+def bullCq (t : WrapData) (v : BullData) : Nat × Nat :=
+  (v.eds.getD (2 * t.sh.ipaRounds) default).accs.getLastD (0, 0)
+def bullLhs (_t : WrapData) (v : BullData) : Nat × Nat := v.lhs
+def bullGb (_t : WrapData) (v : BullData) : Nat × Nat := v.gb
+def bullZ1g (_t : WrapData) (v : BullData) : Nat × Nat := (v.sfs.getD 2 default).accs.getLastD (0, 0)
+def bullZ2h (_t : WrapData) (v : BullData) : Nat × Nat := (v.sfs.getD 3 default).accs.getLastD (0, 0)
+def bullRhs (_t : WrapData) (v : BullData) : Nat × Nat := v.rhs
+
+/-- Ladder `k`'s base variable / value, and its scalar's. -/
+def sfBaseVar (t : WrapData) (k : Nat) : PVar × PVar :=
+  if k ≤ 1 then bullU t.sh t.sp else if k == 2 then bullGbV t.sh t.sp else bullHV t.sh t.sp
+def sfBaseVal (t : WrapData) (v : BullData) (k : Nat) : Nat × Nat :=
+  if k ≤ 1 then (v.gm.getD 37 0, v.gm.getD 42 0) else if k == 2 then bullGb t v else XHAT_H
+def sfScalVar (t : WrapData) (k : Nat) : PVar :=
+  if k == 0 then bullCipV t else bullScalV t.sh t.sp (k - 1)
+def sfScalVal (t : WrapData) (k : Nat) : Nat :=
+  if k == 0 then bullCipVal t else bullScalVal (k - 1)
+/-- The counter at chunk boundary `j`; at `j = SF_CHUNKS` it IS the scalar's own cell. -/
+def sfN (t : WrapData) (k j : Nat) : PVar :=
+  if j == SF_CHUNKS then sfScalVar t k
+  else bV t.sh t.sp (BU_SF + SF_STRIDE * k + 2 * (SF_CHUNKS + 1) + j)
+
+/-- The `i`-th point `Inner_curve.typ` checks, as a variable and a value: the `2·ipaRounds` `lr`
+points, `delta`, then the `ipaRounds` `endo_inv` witnesses. -/
+def bullOcVar (t : WrapData) (v : BullData) (i : Nat) : PVar × PVar :=
+  let s := t.sh
+  if i < 2 * s.ipaRounds then bullLrV t (i / 2) (i % 2)
+  else if i == 2 * s.ipaRounds then bullDeltaV t
+  else bullResV s t.sp (i - 2 * s.ipaRounds - 1)
+def bullOcVal (t : WrapData) (v : BullData) (i : Nat) : Nat × Nat :=
+  let s := t.sh
+  if i < 2 * s.ipaRounds then bullLrVal (i / 2) (i % 2)
+  else if i == 2 * s.ipaRounds then bullDeltaVal
+  else v.res.getD (i - 2 * s.ipaRounds - 1) (0, 0)
+
+/-! ### §24b — the rows. -/
+
+/-- **`group_map`'s rows** — `Snarky_group_map.Checked.wrap` (`checked_map.ml:20-55`) at Fq, one
+`Generic` half per Snarky operation. ⚑ `y_squared`'s `a·x` term folds away because Vesta's
+`Params.a = 0`, so `Field.mul` on a constant-zero operand emits nothing (`wrap_verifier.ml:310-316`). -/
+def bullGmRows (s : WrapShape) (sp : SpAcc) (tv : PVar) : List WRow :=
+  let V := bullGm s sp
+  packHalves
+    ( [ ([some tv, some tv, some (V 0)], cMul)
+      , ([some (V 0), some (V 1), none], [1, -1, 0, 0, (BWQ_FU : Int)])
+      , ([some (V 1), some (V 0), some (V 2)], cMul)
+      , ([some (V 3), some (V 2), none], [0, 0, 0, 1, -1])
+      , ([some (V 0), some (V 0), some (V 4)], cMul)
+      , ([some (V 4), some (V 3), some (V 5)], cMul)
+      , ([some (V 5), some (V 6), none], [-(BWQ_SQ3 : Int), -1, 0, 0, (BWQ_SQ3_MU2 : Int)])
+      , ([some (V 6), some (V 7), none], [-1, -1, 0, 0, -(BWQ_U : Int)])
+      , ([some (V 3), some (V 1), some (V 8)], cMul)
+      , ([some (V 1), some (V 1), some (V 9)], cMul)
+      , ([some (V 9), some (V 8), some (V 10)], cMul)
+      , ([some (V 10), some (V 11), none], [-(BWQ_INV3U2 : Int), -1, 0, 0, (BWQ_U : Int)]) ]
+      ++ (List.range 3).flatMap (fun i =>
+          let x := V (if i == 0 then 6 else if i == 1 then 7 else 11)
+          let o := 12 + 6 * i
+          [ ([some x, some x, some (V o)], cMul)
+          , ([some (V o), some x, some (V (o+1))], [0, 0, -1, 1, (VESTA_B : Int)])
+          , ([some (V (o+2)), some (V (o+2)), none], [-1, 0, 0, 1, 0])
+          , ([some (V (o+2)), some (V (o+1)), some (V (o+3))],
+             [0, 0, -1, ((qN + 1 - FQ_NONRES : Nat) : Int), 0])
+          , ([some (V (o+1)), some (V (o+3)), some (V (o+4))], [(FQ_NONRES : Int), 1, -1, 0, 0])
+          , ([some (V (o+5)), some (V (o+5)), some (V (o+4))], cMul) ])
+      ++ [ ([some (V 14), some (V 20), some (V 30)], [-1, -1, -1, 1, 1])
+         , ([some (V 30), some (V 26), none], [1, 0, 0, -1, 0])
+         , ([some (V 20), some (V 14), some (V 31)], [1, 0, -1, -1, 0])
+         , ([some (V 30), some (V 26), some (V 32)], cMul) ]
+      ++ (List.range 2).flatMap (fun c =>
+          let o := 33 + 5 * c
+          let xs : Nat → Nat := fun i =>
+            if c == 0 then (if i == 0 then 6 else if i == 1 then 7 else 11) else 17 + 6 * i
+          [ ([some (V 14), some (V (xs 0)), some (V o)], cMul)
+          , ([some (V 31), some (V (xs 1)), some (V (o+1))], cMul)
+          , ([some (V 32), some (V (xs 2)), some (V (o+2))], cMul)
+          , ([some (V o), some (V (o+1)), some (V (o+3))], cAdd)
+          , ([some (V (o+3)), some (V (o+2)), some (V (o+4))], cAdd) ]) )
+
+/-- The two rows of `scale_fast` ladder `k`'s chunk `j` — the same `(VarBaseMul, Zero)` pair
+`ftcChunkRows` emits, at this region's slots. ⚑ No top-bit-zero cells: `scale_fast` has no such loop
+(§17), so all five bit cells stay in ADVICE. -/
+def sfChunkRows (t : WrapData) (k : Nat) (td : TermDataQ) (bits : List Nat) (j : Nat) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let bv := sfBaseVar t k
+  let ax : Nat → Int := fun n => ((td.accs.getD n (0, 0)).1 : Int)
+  let ay : Nat → Int := fun n => ((td.accs.getD n (0, 0)).2 : Int)
+  let sl : Nat → Int := fun n => (td.slopes.getD n 0 : Int)
+  let bt : Nat → Int := fun n => (bits.getD n 0 : Int)
+  [ { kind := .varBaseMul
+    , perm := [ some bv.1, some bv.2
+              , some (sfAccV s sp k j).1, some (sfAccV s sp k j).2
+              , some (sfN t k j), some (sfN t k (j + 1)), none ]
+    , advice := [ (7, ax (5*j+1)), (8, ay (5*j+1)), (9, ax (5*j+2)), (10, ay (5*j+2))
+                , (11, ax (5*j+3)), (12, ay (5*j+3)), (13, ax (5*j+4)), (14, ay (5*j+4)) ] }
+  , { kind := .zero
+    , perm := [ some (sfAccV s sp k (j+1)).1, some (sfAccV s sp k (j+1)).2
+              , none, none, none, none, none ]
+    , advice := (List.range 5).map (fun tt => (2 + tt, bt (5*j+tt)))
+                ++ (List.range 5).map (fun tt => (7 + tt, sl (5*j+tt))) } ]
+
+/-- One `Scalar_challenge.endo` ladder's rows: the `φ(t)` add, the doubling seed, 32 `EndoMul`
+blocks and the closing `Zero`. ⚑ The `CompleteAdd` that seeds `acc₀` sits IMMEDIATELY before the 32
+blocks, which is `wrap-transaction`'s own run-length signature. -/
+def enLadderRows (t : WrapData) (v : BullData) (m : Nat) (bv : PVar × PVar) (bval : Nat × Nat)
+    : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let ed := v.eds.getD m default
+  let q : Nat × Nat := (qMul ENDO_BASE_Q bval.1, bval.2)
+  let p := endoPQ bval
+  [ caRowQ bv (enEndoX s sp m, bv.2) (enPV s sp m) (caWitnessQ bval.1 bval.2 q.1 q.2)
+  , caRowQ (enPV s sp m) (enPV s sp m) (enAccV s sp m 0) (caWitnessQ p.1 p.2 p.1 p.2) ]
+  ++ (List.range ENDO_BLOCKS).map (fun e =>
+      let b := ed.blks.getD e default
+      ({ kind := .endoMul
+       , perm := [ some bv.1, some bv.2, none, none
+                 , some (enAccV s sp m e).1, some (enAccV s sp m e).2, some (enN t m e) ]
+       , advice := [ (2, (b.inv : Int)), (3, 0), (7, (b.xr : Int)), (8, (b.yr : Int))
+                   , (9, (b.s1 : Int)), (10, (b.s3 : Int)), (11, (b.b1 : Int)), (12, (b.b2 : Int))
+                   , (13, (b.b3 : Int)), (14, (b.b4 : Int)) ] } : WRow))
+  ++ [ { kind := .zero
+       , perm := [ none, none, none, none
+                 , some (enAccV s sp m ENDO_BLOCKS).1, some (enAccV s sp m ENDO_BLOCKS).2
+                 , some (enN t m ENDO_BLOCKS) ] } ]
+
+/-- **W-BULLET's ROWS.** -/
+def bulletRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  let v := bullData t
+  let R := s.ipaRounds
+  let enBase : Nat → PVar × PVar := fun m =>
+    if m == 2 * R then bullQV s sp
+    else if m % 2 == 0 then bullResV s sp (m / 2)
+    else bullLrV t (m / 2) 1
+  let enBaseVal : Nat → Nat × Nat := fun m =>
+    if m == 2 * R then bullQ t v
+    else if m % 2 == 0 then v.res.getD (m / 2) (0, 0)
+    else bullLrVal (m / 2) 1
+  -- (1) the pins: `Generators.h`, every ladder's `n₀ = 0` and `φ(t)`'s abscissa, and the four
+  --     `scale_fast` counters' zero seeds.
+  let pins : List WRow :=
+    [ ptConstRow (bullHV s sp).1 (bullHV s sp).2 XHAT_H ]
+    ++ packHalves
+        ((List.range (bullNE s)).flatMap (fun m =>
+          [ ([some (enN t m 0), none, none], cConst 0)
+          , ([some (enBase m).1, none, some (enEndoX s sp m)],
+             [(ENDO_BASE_Q : Int), 0, -1, 0, 0]) ])
+         ++ (List.range BULL_SF).map (fun k => ([some (sfN t k 0), none, none], cConst 0)))
+  -- (2) `Inner_curve.typ`'s `assert_on_curve` on every point this rung witnesses or reads as one.
+  let ocRows : List WRow :=
+    packHalves ((List.range (bullOCPts s)).flatMap (fun i =>
+      let pv := bullOcVar t v i
+      [ ([some pv.1, some pv.1, some (bullOcV s sp i 0)], cMul)
+      , ([some (bullOcV s sp i 0), some pv.1, some (bullOcV s sp i 1)], cMul)
+      , ([some pv.2, some pv.2, some (bullOcV s sp i 1)], cOnCurveQ) ]))
+  -- (3) `u = group_map (Sponge.squeeze_field sponge)` (`:402-405`).
+  let gmRows : List WRow := bullGmRows s sp (bullTV t) ++ [ probeRow wired (bullU s sp).1 (bullU s sp).2 ]
+  -- (4) one `Ops.scale_fast` ladder's rows, at slot `k`.
+  let sfRows : Nat → List WRow := fun k =>
+    let bvl := sfBaseVal t v k
+    let td := v.sfs.getD k default
+    [ caRowQ (sfBaseVar t k) (sfBaseVar t k) (sfAccV s sp k 0) (caWitnessQ bvl.1 bvl.2 bvl.1 bvl.2) ]
+    ++ (List.range SF_CHUNKS).flatMap (sfChunkRows t k td (ftcBitsOf (sfScalVal t k)))
+  -- (5) `bullet_reduce` (`:158-174`): per round the two ladders and their `add_fast`, then the
+  --     left-associated `Array.reduce_exn`.
+  let roundRows : List WRow :=
+    (List.range R).flatMap (fun r =>
+      [ probeRow wired (bullResV s sp r).1 (bullResV s sp r).2 ]
+      ++ enLadderRows t v (2 * r) (enBase (2 * r)) (enBaseVal (2 * r))
+      -- ⚑ `endo_inv`'s two `Field.Assert.equal`: the ladder's OUTPUT is the transcript's `l`.
+      ++ packHalves
+          [ ([some (enAccV s sp (2 * r) ENDO_BLOCKS).1, some (bullLrV t r 0).1, none], cEq)
+          , ([some (enAccV s sp (2 * r) ENDO_BLOCKS).2, some (bullLrV t r 0).2, none], cEq) ]
+      ++ enLadderRows t v (2 * r + 1) (enBase (2 * r + 1)) (enBaseVal (2 * r + 1))
+      ++ [ caRowQ (bullResV s sp r) (enAccV s sp (2 * r + 1) ENDO_BLOCKS) (bullLrtV s sp r)
+             (caWitnessQ (v.res.getD r (0, 0)).1 (v.res.getD r (0, 0)).2
+               ((v.eds.getD (2 * r + 1) default).accs.getLastD (0, 0)).1
+               ((v.eds.getD (2 * r + 1) default).accs.getLastD (0, 0)).2) ])
+  let redRows : List WRow :=
+    (List.range (R - 1)).map (fun a =>
+      let lv := if a == 0 then v.terms.getD 0 (0, 0) else v.reds.getD (a - 1) (0, 0)
+      let rv := v.terms.getD (a + 1) (0, 0)
+      caRowQ (if a == 0 then bullLrtV s sp 0 else bullRedV s sp (a - 1)) (bullLrtV s sp (a + 1))
+        (bullRedV s sp a) (caWitnessQ lv.1 lv.2 rv.1 rv.2))
+  -- (6) `p_prime`, `q`, `cq`, `lhs`.
+  let combOut := combOutVar t (combSteps s - 1)
+  let combVal := v.combOut
+  let lrpV : PVar × PVar := if R == 1 then bullLrtV s sp 0 else bullRedV s sp (R - 2)
+  let tailRows : List WRow :=
+    [ caRowQ combOut (sfAccV s sp 0 SF_CHUNKS) (bullPpV s sp)
+        (caWitnessQ combVal.1 combVal.2 (bullUc t v).1 (bullUc t v).2)
+    , caRowQ (bullPpV s sp) lrpV (bullQV s sp)
+        (caWitnessQ (bullPp t v).1 (bullPp t v).2 (bullLrProd t v).1 (bullLrProd t v).2)
+    , probeRow wired (bullQV s sp).1 (bullQV s sp).2 ]
+    ++ enLadderRows t v (2 * R) (enBase (2 * R)) (enBaseVal (2 * R))
+    ++ [ caRowQ (enAccV s sp (2 * R) ENDO_BLOCKS) (bullDeltaV t) (bullLhsV s sp)
+           (caWitnessQ (bullCq t v).1 (bullCq t v).2 bullDeltaVal.1 bullDeltaVal.2)
+       , probeRow wired (bullLhsV s sp).1 (bullLhsV s sp).2 ]
+  -- (7) `rhs = z₁·(G + b_u) + z₂·H`, then `equal_g`.
+  let rhsRows : List WRow :=
+    [ caRowQ (bullGV s sp) (sfAccV s sp 1 SF_CHUNKS) (bullGbV s sp)
+        (caWitnessQ bullGVal.1 bullGVal.2 (bullBu t v).1 (bullBu t v).2) ]
+    ++ sfRows 2 ++ sfRows 3
+    ++ [ caRowQ (sfAccV s sp 2 SF_CHUNKS) (sfAccV s sp 3 SF_CHUNKS) (bullRhsV s sp)
+           (caWitnessQ (bullZ1g t v).1 (bullZ1g t v).2 (bullZ2h t v).1 (bullZ2h t v).2)
+       , probeRow wired (bullRhsV s sp).1 (bullRhsV s sp).2 ]
+  -- ⚑ `equal_g` (`:177-181`): `Field.equal` per coordinate, then `Boolean.all` of the two.
+  let eqRows : List WRow :=
+    packHalves ((List.range 2).flatMap (fun i =>
+      let l := if i == 0 then (bullLhsV s sp).1 else (bullLhsV s sp).2
+      let r := if i == 0 then (bullRhsV s sp).1 else (bullRhsV s sp).2
+      let o := 6 * i
+      [ ([some l, some r, some (bullEqV s sp o)], cSubQ)
+      , ([some (bullEqV s sp (o+2)), some (bullEqV s sp (o+2)), some (bullEqV s sp (o+3))], cMul)
+      , ([some (bullEqV s sp (o+3)), some (bullEqV s sp (o+2)), none], cEq)
+      , ([some (bullEqV s sp o), some (bullEqV s sp (o+1)), some (bullEqV s sp (o+4))], cMul)
+      , ([some (bullEqV s sp (o+4)), some (bullEqV s sp (o+2)), none], [1, 1, 0, 0, -1])
+      , ([some (bullEqV s sp o), some (bullEqV s sp (o+2)), some (bullEqV s sp (o+5))], cMul)
+      , ([some (bullEqV s sp (o+5)), none, none], cConst 0) ])
+      ++ [ ([some (bullEqV s sp 2), some (bullEqV s sp 8), some (bullEqV s sp 12)], cMul) ])
+  pins ++ ocRows ++ gmRows ++ sfRows 0 ++ sfRows 1
+  ++ roundRows ++ redRows ++ tailRows ++ rhsRows ++ eqRows
+  ++ [ probeRow wired (bullEqV s sp 12) (bullEqV s sp 2) ]
+
+/-- W-BULLET's variable environment. -/
+def bulletEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  let v := bullData t
+  let R := s.ipaRounds
+  let enBaseVal : Nat → Nat × Nat := fun m =>
+    if m == 2 * R then bullQ t v
+    else if m % 2 == 0 then v.res.getD (m / 2) (0, 0)
+    else bullLrVal (m / 2) 1
+  (List.range 43).map (fun i => (bullGm s sp i, (v.gm.getD i 0 : Int)))
+  ++ [ ((bullHV s sp).1, (XHAT_H.1 : Int)), ((bullHV s sp).2, (XHAT_H.2 : Int))
+     , ((bullGV s sp).1, (bullGVal.1 : Int)), ((bullGV s sp).2, (bullGVal.2 : Int))
+     , ((bullGbV s sp).1, ((bullGb t v).1 : Int)), ((bullGbV s sp).2, ((bullGb t v).2 : Int))
+     , ((bullPpV s sp).1, ((bullPp t v).1 : Int)), ((bullPpV s sp).2, ((bullPp t v).2 : Int))
+     , ((bullQV s sp).1, ((bullQ t v).1 : Int)), ((bullQV s sp).2, ((bullQ t v).2 : Int))
+     , ((bullLhsV s sp).1, ((bullLhs t v).1 : Int)), ((bullLhsV s sp).2, ((bullLhs t v).2 : Int))
+     , ((bullRhsV s sp).1, ((bullRhs t v).1 : Int)), ((bullRhsV s sp).2, ((bullRhs t v).2 : Int)) ]
+  ++ (List.range 3).map (fun j => (bullScalV s sp j, (bullScalVal j : Int)))
+  ++ (List.range BULL_SF).flatMap (fun k =>
+      let td := v.sfs.getD k default
+      (List.range (SF_CHUNKS + 1)).flatMap (fun j =>
+        let a := td.accs.getD (5 * j) (0, 0)
+        [ ((sfAccV s sp k j).1, (a.1 : Int)), ((sfAccV s sp k j).2, (a.2 : Int)) ])
+      ++ (List.range SF_CHUNKS).map (fun j => (sfN t k j, (td.ns.getD (5 * j) 0 : Int))))
+  ++ (List.range R).flatMap (fun r =>
+      [ ((bullResV s sp r).1, ((v.res.getD r (0, 0)).1 : Int))
+      , ((bullResV s sp r).2, ((v.res.getD r (0, 0)).2 : Int))
+      , ((bullLrtV s sp r).1, ((v.terms.getD r (0, 0)).1 : Int))
+      , ((bullLrtV s sp r).2, ((v.terms.getD r (0, 0)).2 : Int)) ])
+  ++ (List.range (R - 1)).flatMap (fun a =>
+      [ ((bullRedV s sp a).1, ((v.reds.getD a (0, 0)).1 : Int))
+      , ((bullRedV s sp a).2, ((v.reds.getD a (0, 0)).2 : Int)) ])
+  ++ (List.range (bullOCPts s)).flatMap (fun i =>
+      let p := bullOcVal t v i
+      [ (bullOcV s sp i 0, (qMul p.1 p.1 : Int))
+      , (bullOcV s sp i 1, (qMul (qMul p.1 p.1) p.1 : Int)) ])
+  ++ (List.range (bullNE s)).flatMap (fun m =>
+      let ed := v.eds.getD m default
+      let bval := enBaseVal m
+      let p := endoPQ bval
+      [ ((enPV s sp m).1, (p.1 : Int)), ((enPV s sp m).2, (p.2 : Int))
+      , (enEndoX s sp m, (qMul ENDO_BASE_Q bval.1 : Int)) ]
+      ++ (List.range (ENDO_BLOCKS + 1)).flatMap (fun e =>
+           let a := ed.accs.getD e (0, 0)
+           [ ((enAccV s sp m e).1, (a.1 : Int)), ((enAccV s sp m e).2, (a.2 : Int)) ])
+      ++ (List.range ENDO_BLOCKS).map (fun e => (enN t m e, (ed.ns.getD e 0 : Int))))
+  -- ⚑ `equal_g`'s witness, COMPUTED off the assembly: `d = lhs − rhs` per coordinate. It is nonzero
+  -- at this tree's step key (the header says why), so `bit = 0` and `bulletproof_success = 0`.
+  ++ (List.range 2).flatMap (fun i =>
+      let l := if i == 0 then (bullLhs t v).1 else (bullLhs t v).2
+      let r := if i == 0 then (bullRhs t v).1 else (bullRhs t v).2
+      let d : Nat := qSub l r
+      let bit : Nat := if d == 0 then 1 else 0
+      let iv : Nat := if d == 0 then 0 else qInv d
+      let o := 6 * i
+      [ (bullEqV s sp o, (d : Int)), (bullEqV s sp (o+1), (iv : Int))
+      , (bullEqV s sp (o+2), (bit : Int)), (bullEqV s sp (o+3), (bit : Int))
+      , (bullEqV s sp (o+4), (qMul d iv : Int)), (bullEqV s sp (o+5), (qMul d bit : Int)) ])
+  ++ [ (bullEqV s sp 12,
+        ((if bullLhs t v == bullRhs t v then 1 else 0 : Nat) : Int)) ]
+
 /-! ## §7 — rows, environment, rungs. -/
 
 inductive Rung where
-  | transcript | challenges | branch | bind | key | xhat | split | ftcomm | prev
+  | transcript | challenges | branch | bind | key | xhat | split | ftcomm | prev | finalize
+  | wraphack | close | combine | bullet
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "w1_transcript" | .challenges => "w2_challenges"
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
   | .xhat => "w6_xhat" | .split => "w7_split" | .ftcomm => "w8_ftcomm"
-  | .prev => "w9_prev"
+  | .prev => "w9_prev" | .finalize => "w10_finalize"
+  | .wraphack => "w11_wraphack" | .close => "w12_close"
+  | .combine => "w10_combine" | .bullet => "w11_bullet"
 
 /-- **THE ROW SCHEDULE**, rung by rung, in the order `wrap_main` runs it. Every sub-circuit's row-set
 function is REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a
@@ -2388,6 +4370,11 @@ def rungOwn (t : WrapData) (wired : Bool) : Rung → List WRow
   | .split => splitRows t wired
   | .ftcomm => ftcRows t wired
   | .prev => prevRows t wired
+  | .wraphack => whRows t wired
+  | .close => closeRows t wired
+  | .finalize => finRows t wired
+  | .combine => combRows t wired
+  | .bullet => bulletRows t wired
 
 /-- The rungs at or below `k`, in schedule order. ⚑ "Every rung is a superset of the one below" is
 now the SHAPE of the definition rather than a fact about eight hand-written branches. -/
@@ -2401,6 +4388,17 @@ def rungsUpto : Rung → List Rung
   | .split      => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split]
   | .ftcomm     => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm]
   | .prev       => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev]
+  | .wraphack   => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
+                    .wraphack]
+  | .close      => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
+                    .wraphack, .close]
+  | .finalize   => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
+                    .finalize]
+  | .combine    => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
+                    .combine]
+  | .bullet     => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev,
+                    .combine, .bullet]
+
 
 /-- Rung `k`'s rows: the own-rows of every rung at or below it, concatenated in schedule order.
 
@@ -2423,8 +4421,23 @@ theorem rungRows_is_a_ladder (t : WrapData) (wired : Bool) :
     ∧ rungRows t .xhat wired = rungRows t .key wired ++ rungOwn t wired .xhat
     ∧ rungRows t .split wired = rungRows t .xhat wired ++ rungOwn t wired .split
     ∧ rungRows t .ftcomm wired = rungRows t .split wired ++ rungOwn t wired .ftcomm
-    ∧ rungRows t .prev wired = rungRows t .ftcomm wired ++ rungOwn t wired .prev :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    ∧ rungRows t .prev wired = rungRows t .ftcomm wired ++ rungOwn t wired .prev
+    ∧ rungRows t .wraphack wired = rungRows t .prev wired ++ rungOwn t wired .wraphack
+    ∧ rungRows t .close wired = rungRows t .wraphack wired ++ rungOwn t wired .close :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- …and `w10_finalize` is `w9_prev` plus W-FINALIZE's own row-set, by the same `rfl`. ⚑ Stated
+separately rather than as an eleventh conjunct above because `.finalize` and `.wraphack` both hang
+off `.prev` — `wrap_main.ml` runs `finalize_other_proof` (`:329`) before
+`hash_messages_for_next_wrap_proof` (`:340`), and neither reads the other's rows. -/
+theorem rungRows_finalize_is_a_ladder (t : WrapData) (wired : Bool) :
+    rungRows t .finalize wired = rungRows t .prev wired ++ rungOwn t wired .finalize := rfl
+
+/-- …and its length, likewise. -/
+theorem rungRows_finalize_length (t : WrapData) (wired : Bool) :
+    (rungRows t .finalize wired).length
+      = (rungRows t .prev wired).length + (rungOwn t wired .finalize).length := by
+  simp [rungRows_finalize_is_a_ladder t wired]
 
 /-- …and the length of each rung is the length of the one below plus its own — general, so §12b's
 guards are instances rather than the statement. -/
@@ -2444,9 +4457,13 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
     ∧ (rungRows t .ftcomm wired).length
       = (rungRows t .split wired).length + (rungOwn t wired .ftcomm).length
     ∧ (rungRows t .prev wired).length
-      = (rungRows t .ftcomm wired).length + (rungOwn t wired .prev).length := by
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := rungRows_is_a_ladder t wired
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      = (rungRows t .ftcomm wired).length + (rungOwn t wired .prev).length
+    ∧ (rungRows t .wraphack wired).length
+      = (rungRows t .prev wired).length + (rungOwn t wired .wraphack).length
+    ∧ (rungRows t .close wired).length
+      = (rungRows t .wraphack wired).length + (rungOwn t wired .close).length := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10⟩ := rungRows_is_a_ladder t wired
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp [h1]
   · simp [h2]
   · simp [h3]
@@ -2455,18 +4472,28 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
   · simp [h6]
   · simp [h7]
   · simp [h8]
+  · simp [h9]
+  · simp [h10]
 
 /-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it — and `pubWords + 1` at
 `w9_prev`, whose own row ties `messages_for_next_step_proof` (`wrap_main.ml:350-351`). ⚑ The extra
 slot is RESERVED in `AUXW` at every rung, so below `w9_prev` it sits in `placeChecked`'s dead gap and
 any gate that touched it would be refused rather than silently absorbed. -/
 def rungPub (s : WrapShape) : Rung → Nat
+  | .finalize => s.pubWords + 1
   | .bind => s.pubWords
   | .key => s.pubWords
   | .xhat => s.pubWords
   | .split => s.pubWords
   | .ftcomm => s.pubWords
   | .prev => s.pubWords + 1
+  -- ⚑ `w11_wraphack` adds the LAST pinned statement word — slot 11 — and `w12_close` inherits it.
+  | .wraphack => s.pubWords + 2
+  | .close => s.pubWords + 2
+  -- ⚑ W-COMBINE derives no NEW statement word — `xi` (slot 9) is W-FINALIZE's, per §10's census —
+  -- so it inherits `w9_prev`'s 23 and adds none. A public word on `xi` here would be a fixture.
+  | .combine => s.pubWords + 1
+  | .bullet => s.pubWords + 1
   | _ => 0
 
 /-- The variables rung `k` exposes as public words. ⚑ `w9_prev` appends ONE — packed statement word
@@ -2475,6 +4502,12 @@ reads that cell and a public word on an unread cell is a public fixture. -/
 def exposedVarsAt (t : WrapData) (k : Rung) : List PVar :=
   exposedVars t ++ (match k with
     | .prev => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
+    | .finalize => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
+    | .combine | .bullet => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
+    -- ⚑ …and `w11_wraphack` appends slot 11, the closing `hash_messages_for_next_wrap_proof`
+    -- squeeze (`wrap_main.ml:421-431`). `w12_close` inherits it and adds none.
+    | .wraphack | .close =>
+        [prevW t.sh t.sp PREV_MSG_NEXT_STEP, whDigestVar (whSpongeC t)]
     | _ => [])
 
 /-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
@@ -2491,6 +4524,11 @@ def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
       | .split => xhatEnv t ++ splitEnv t
       | .ftcomm => xhatEnv t ++ splitEnv t ++ ftcEnv t
       | .prev => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t
+      | .finalize => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ finEnv t
+      | .wraphack => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ whEnv t
+      | .close => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ whEnv t ++ closeEnv t
+      | .combine => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ combEnv t
+      | .bullet => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t ++ combEnv t ++ bulletEnv t
       | _ => [])
 
 /-- The closing rung's environment — what `w8_ftcomm` sees, i.e. everything. -/
@@ -3635,8 +5673,357 @@ theorem prev_does_not_move_the_unconsumed_census :
         = "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's packed statement words, \
            and 64 of them are still free"
     ∧ WRAP_UNCONSUMED.getD 0 ""
-        = "sg_old — ON-CURVE at w9_prev (§18); its consumer is W-COMBINE's ~init" := by
+        = "sg_old — ON-CURVE at w9_prev (§18), HASHED at w11_wraphack (§21) into packed statement \
+           words 55/56; still a FREE witness, and its consumer is W-COMBINE's ~init" := by
   refine ⟨rfl, ?_, ?_⟩ <;> decide
+
+/-! ### §21a — ⚑ THE PINS ON W-WRAPHACK, and the one that is the point. -/
+
+def tWh : WrapData := tPrev
+
+/-- ⚑ **THE SAME 32 VALUES WITH THE COMMITMENT ABSORBED FIRST** — the order the STEP side uses and
+this one does not. It exists only as the red control below; nothing emits it. -/
+def whDigestCommitmentFirst (chals : List Nat) (g : Nat × Nat) : Nat :=
+  (Dregg2.Circuit.Emit.PastaPoseidonFq.squeeze1 Dregg2.Circuit.Emit.PastaPoseidonFq.fqParams
+      (Dregg2.Circuit.Emit.PastaPoseidonFq.absorbMany Dregg2.Circuit.Emit.PastaPoseidonFq.fqParams
+        Dregg2.Circuit.Emit.PastaPoseidonFq.newSponge ([g.1, g.2] ++ chals))).2
+
+/-- ⚑ **THE TAPE IS `to_field_elements`'s, AND THE ORDER IS THE FACT.**
+`composition_types.ml:411-418` flattens the old bulletproof challenges FIRST and appends the
+commitment's `[x; y]` LAST. The last conjunct is the red control: the same 32 values in the step
+side's order give a DIFFERENT digest, so "absorbed the right values" and "absorbed them in the right
+order" are two facts and this file checks both. -/
+theorem wraphack_tape_is_the_challenges_then_the_commitment :
+    WH_ROUNDS = 15 ∧ WH_PADDED = 2 ∧ WH_ABSORBS = 32
+    ∧ (whTape (whOldChals 0) (whSgOld 0)).length = WH_ABSORBS
+    ∧ (whTape (whOldChals 0) (whSgOld 0)).getD (WH_ABSORBS - 2) 0 = (whSgOld 0).1
+    ∧ (whTape (whOldChals 0) (whSgOld 0)).getD (WH_ABSORBS - 1) 0 = (whSgOld 0).2
+    ∧ ((List.range (WH_MLMB * WH_ROUNDS)).all (fun k =>
+        (whTape (whOldChals 0) (whSgOld 0)).getD k 0 == whOldChal 0 k)) = true
+    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
+        == whDigestCommitmentFirst (whOldChals 0) (whSgOld 0)) = false := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE FRONT PAD IS THE FRESH STATE, AND TWO EMITTED ROWS PIN IT.** `whPadVectors` is
+`2 − max_proofs_verified` in general and `0` at the committed shape, so the opening state is
+`Sponge.create`'s zeros — defect class 1 in the place `wrap_hack.ml:26-28` put it. The two `cConst 0`
+rows are read off the EMITTED row list, exactly as `key_sponge_seed_is_pinned` does. -/
+theorem wraphack_front_pad_is_the_fresh_state_and_the_rows_pin_it :
+    whPadVectors WH_MLMB = 0 ∧ whPadVectors 1 = 1 ∧ whPadVectors 0 = 2
+    ∧ ((whRows tWh true).getD 0 default).coeffs = cConst 0 ++ cConst 0
+    ∧ ((whRows tWh true).getD 1 default).coeffs = cConst 0 ++ cNil
+    ∧ ((whRows tWh true).getD 0 default).kind = KGateType.generic
+    ∧ ((whRows tWh true).getD 1 default).kind = KGateType.generic := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The emitter's allocation FORMULA is what `runSpongeQ` actually allocates, for all three sponges
+— so the three regions cannot silently overlap. -/
+theorem wraphack_sponge_allocation :
+    WH_PERMS = 16 ∧ WH_VARS = 115
+    ∧ (whSpongeP tWh 0).next = WH_VARS
+    ∧ (whSpongeP tWh 1).next = WH_VARS
+    ∧ (whSpongeC tWh).next = WH_VARS := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE GATE: THE EMITTED SQUEEZE IS THE STATEMENT WORD.** §15c″ computes the three digests as
+VALUES and `runSpongeQ` computes them again as a TRAJECTORY of emitted rows; this says the two agree.
+A disagreement would make `whRows`' tie rows unsatisfiable and every rung at or above
+`w11_wraphack` fail to prove — a red the harness finds, but a red here is cheaper and says which of
+the two moved. -/
+theorem wraphack_digest_is_the_statement_word :
+    whDigestVal (whSpongeP tWh 0) = prevWordVal (PREV_MSG_NEXT_STEP + 1)
+    ∧ whDigestVal (whSpongeP tWh 1) = prevWordVal (PREV_MSG_NEXT_STEP + 2)
+    ∧ whDigestVal (whSpongeC tWh) = whCloseDigest := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ …and the sponge runs on the TRANSCRIPT's own `sg_old` values, not a second copy of them
+(`~sg_old:prev_step_accs`, `wrap_main.ml:412` against `wrap_verifier.ml:538`). -/
+theorem wraphack_absorbs_the_transcripts_own_sg_old :
+    ((List.range shapeSmoke.prevs).all (fun p =>
+      (whSgOld p).1 == itemVal T_SGOLD (2 * p) && (whSgOld p).2 == itemVal T_SGOLD (2 * p + 1)))
+      = true
+    ∧ ((whSpongeP tWh 0).evs.getD (WH_MLMB * WH_ROUNDS) default).word = itemVal T_SGOLD 0
+    ∧ ((whSpongeP tWh 0).evs.getD (WH_MLMB * WH_ROUNDS + 1) default).word = itemVal T_SGOLD 1 := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ **RED CONTROL — the digest is a function of every input it absorbs.** Bending the first old
+bulletproof challenge, the last one, or either coordinate of `sg_old` moves it. Without this the
+theorem above is a number agreeing with a number. -/
+theorem wraphack_digest_bends_at_every_probed_input :
+    (whDigestOf (whOldChals 0) (whSgOld 0)
+      == whDigestOf ((whOldChals 0).set 0 0) (whSgOld 0)) = false
+    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
+      == whDigestOf ((whOldChals 0).set (WH_MLMB * WH_ROUNDS - 1) 0) (whSgOld 0)) = false
+    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
+      == whDigestOf (whOldChals 0) (qAdd (whSgOld 0).1 1, (whSgOld 0).2)) = false
+    ∧ (whDigestOf (whOldChals 0) (whSgOld 0)
+      == whDigestOf (whOldChals 0) ((whSgOld 0).1, qAdd (whSgOld 0).2 1)) = false
+    ∧ (whPrevDigest 0 == whPrevDigest 1) = false := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **WORD 11's OBJECT, CHECKED AGAINST A REAL DEVNET WRAP PROOF — not its slot.**
+
+This module has already shipped the other mistake once: twenty exposed words carried the 255-bit
+endo lift where `spec.ml:374-392` packs the raw 128-bit prechallenge, and **the only word with a
+different width was the only correct one, which is why nothing caught it.** So the object is checked
+here and the instrument is INDEPENDENT: `MinaWrapPublicCommGate.PUBLIC_INPUT` is a Mina devnet
+block's own forty Fq wrap words, decoded off the wire. In it, slots 5–8 (`β γ α ζ`, `Challenge` and
+`Scalar Challenge`) all fit in `Challenge.length = 128` bits, and slots 10 and 11 — the two
+`B Digest`s, `sponge_digest_before_evaluations` and `messages_for_next_wrap_proof` — do NOT. That is
+the width tell, measured on a real proof rather than derived from our own layout; and the value this
+rung exposes at slot 11 is likewise a full `squeeze_field`, not a truncation of one. -/
+theorem wraphack_word_11_is_a_digest_not_a_challenge :
+    ((List.range 4).all (fun j =>
+      decide (Dregg2.Circuit.Emit.MinaWrapPublicCommGate.PUBLIC_INPUT.getD (5 + j) 0
+                < 2 ^ WQ_CHAL))) = true
+    ∧ decide (Dregg2.Circuit.Emit.MinaWrapPublicCommGate.PUBLIC_INPUT.getD 10 0 < 2 ^ WQ_CHAL)
+        = false
+    ∧ decide (Dregg2.Circuit.Emit.MinaWrapPublicCommGate.PUBLIC_INPUT.getD 11 0 < 2 ^ WQ_CHAL)
+        = false
+    ∧ decide (whCloseDigest < 2 ^ WQ_CHAL) = false
+    ∧ decide (whCloseDigest < qN) = true := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- The rung's own public word: slot 11, tied to the closing sponge's squeeze. -/
+theorem wraphack_public_word_11_is_the_closing_squeeze :
+    rungPub shapeSmoke .wraphack = shapeSmoke.pubWords + 2
+    ∧ (exposedVarsAt tWh .wraphack).getD (WH_PUB_SLOT shapeSmoke) default
+        = whDigestVar (whSpongeC tWh)
+    ∧ (wrapPublicAt tWh .wraphack).getD (WH_PUB_SLOT shapeSmoke) 0 = (whCloseDigest : Int) := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- The `w11_wraphack` rung is a strict superset of `w9_prev`, its length is the sum of its parts,
+and the WIRED and UNWIRED emissions differ ONLY in the probe rows' permutation columns. -/
+theorem wraphack_rung_extends_prev :
+    (rungRows tWh .wraphack true).length
+      = (rungRows tWh .prev true).length + (whRows tWh true).length
+    ∧ (rungRows tWh .prev true).length < (rungRows tWh .wraphack true).length
+    ∧ (((rungRows tWh .wraphack true).zip (rungRows tWh .wraphack false)).filter
+        (fun p => p.1.perm != p.2.perm)).length
+        = ((rungRows tWh .wraphack true).filter (fun r => r.probe)).length := by
+  refine ⟨rfl, by decide, rfl⟩
+
+/-- `placeChecked` ACCEPTS the `w11_wraphack` rung at its larger public size and no public word is
+inert — and `w9_prev` is REFUSED at that size, because no `w9_prev` gate reads slot `pubWords + 1`.
+That is what makes `AUXW`'s second reserved slot a gate rather than a comment. -/
+theorem wraphack_rung_places_and_the_rung_below_it_does_not :
+    refusalOf shapeSmoke (rungPub shapeSmoke .wraphack)
+        (wrapGates (rungRows tWh .wraphack true)) = none
+    ∧ inertPublicWords (rungPub shapeSmoke .wraphack)
+        (wrapGates (rungRows tWh .wraphack true)) = []
+    ∧ inertPublicWords (rungPub shapeSmoke .wraphack)
+        (wrapGates (rungRows tWh .prev true)) = [WH_PUB_SLOT shapeSmoke] := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ **THE TWENTY-FOUR ARE DERIVED, AND TWENTY-FOUR IS NOT FORTY.** `WRAP_PINNED_SLOTS` is what
+`wrap_main` actually constrains; `WRAP_UNPINNED` is the rest, by REASON and by owner. A run that
+reads "public inputs: ours 24, mina 40" and calls the remaining sixteen a gap in this assembly would
+be reading a deferred value and a zero pad as work. -/
+theorem wraphack_closes_every_pinned_statement_word :
+    WRAP_PINNED_WORDS = 24
+    ∧ WRAP_PINNED_SLOTS.length = 24
+    ∧ WRAP_PRIMARY_LEN - WRAP_PINNED_WORDS = 16
+    ∧ WRAP_UNPINNED.length = 4
+    ∧ rungPub shapeSmoke .wraphack = shapeSmoke.pubWords + 2 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚠ ⚑ **THE CENSUS DID NOT MOVE, AND `sg_old`'s ENTRY IS REWRITTEN RATHER THAN STRUCK.**
+W-WRAPHACK gives `sg_old` a real consumer — it is hashed into packed statement words 55/56, which the
+x_hat MSM consumes as entries 65/66. It is still a FREE witness: the digest is a function of it, but
+nothing forces the digest to any particular value, because what the MSM's output feeds is `x_hat`,
+which is itself absorbed and unconsumed. A prover still chooses `sg_old` subject only to
+`assert_on_curve`. Striking the entry here would be the metric-gaming this census exists to refuse.
+The count stays **8**. -/
+theorem wraphack_does_not_move_the_unconsumed_census :
+    WRAP_UNCONSUMED.length = 8
+    ∧ WRAP_UNCONSUMED.getD 0 ""
+        = "sg_old — ON-CURVE at w9_prev (§18), HASHED at w11_wraphack (§21) into packed statement \
+           words 55/56; still a FREE witness, and its consumer is W-COMBINE's ~init" := by
+  refine ⟨rfl, ?_⟩
+  decide
+
+/-! ### §22a — ⚑ THE PINS ON W-CLOSE. -/
+
+/-- One `Generic` half's residue at a witness: `c₀w₀ + c₁w₁ + c₂w₂ + c₃w₀w₁ + c₄`
+(`generic.rs:283-314`). Two lines, here, so §22's refusal is an ARITHMETIC statement about the
+emitted coefficients rather than a restatement of `cConst`'s definition. -/
+def genericHalfAt (c : List Int) (w0 w1 w2 : Int) : Int :=
+  c.getD 0 0 * w0 + c.getD 1 0 * w1 + c.getD 2 0 * w2 + c.getD 3 0 * w0 * w1 + c.getD 4 0
+
+/-- **W-CLOSE emits `Boolean.Assert.is_true bulletproof_success` and one σ-only probe.** -/
+theorem close_asserts_bulletproof_success :
+    (closeRows tWh true).length = 2
+    ∧ ((closeRows tWh true).getD 0 default).kind = KGateType.generic
+    ∧ ((closeRows tWh true).getD 0 default).coeffs = cConst 1 ++ cNil
+    ∧ ((closeRows tWh true).getD 0 default).perm.getD 0 none
+        = some (bpSuccessVar shapeSmoke tWh.sp)
+    ∧ ((closeRows tWh true).getD 1 default).probe = true
+    ∧ ((closeRows tWh true).getD 1 default).kind = KGateType.zero := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ …and the emitted coefficients REFUSE a failed opening: the half is satisfied at
+`bulletproof_success = 1` and violated at `0`, which is the whole content of
+`Boolean.Assert.is_true`. The honest witness this file emits is the `1`. -/
+theorem close_refuses_a_failed_opening :
+    genericHalfAt (cConst 1) 1 0 0 = 0
+    ∧ genericHalfAt (cConst 1) 0 0 0 ≠ 0
+    ∧ (closeEnv tWh).getD 0 ((.external 0 : PVar), (0 : Int))
+        = (bpSuccessVar shapeSmoke tWh.sp, (1 : Int)) := by
+  refine ⟨rfl, by decide, rfl⟩
+
+/-- The `w12_close` rung is the ladder's top: two more rows, no new public word, and it places. -/
+theorem close_rung_extends_wraphack :
+    (rungRows tWh .close true).length = (rungRows tWh .wraphack true).length + 2
+    ∧ rungPub shapeSmoke .close = rungPub shapeSmoke .wraphack
+    ∧ refusalOf shapeSmoke (rungPub shapeSmoke .close)
+        (wrapGates (rungRows tWh .close true)) = none
+    ∧ inertPublicWords (rungPub shapeSmoke .close)
+        (wrapGates (rungRows tWh .close true)) = [] := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+
+
+/-! ### §23b/§24c — ⚑ **W-COMBINE'S AND W-BULLET'S PINS, AS NAMED THEOREMS.**
+
+⚠ **AND WHAT IS *NOT* HERE, SAID FIRST.** The other sub-circuits' pin blocks read facts off the
+EMITTED ROW LIST (`xhat_every_ladder_seed_is_pinned`, `ftc_every_ladder_seed_is_pinned`). These two
+rungs cannot: `combRows`/`bulletRows` evaluate 34 and 7 thirty-two-block `EndoMul` ladders at the
+smoke shape — five `qInv` a block, each a 254-bit modular exponentiation — and reducing that in the
+KERNEL is the shape that took this module from 150 s to a 9.6 GB ceiling once before (§7's note on
+`circuitEnvAt`). What IS closed in the kernel is the CENSUS and the LAYOUT, which is where the
+mistakes that survive a green prove actually live; the row-level facts are established by the
+harness's five polarities per rung, and that is a weaker instrument, stated rather than blurred. -/
+
+/-- ⚑ **THE CENSUS THAT CLOSES `wrap-transaction`'s `EndoMul`.** Mina's own compiled `wrap_main`
+carries **2528** `EndoMul` gates and this assembly carried **zero** before these two rungs. They are
+`32 × (46 + 33)`: W-COMBINE's one ladder per fold step over `Nat.N45.n + Max_proofs_verified.n`
+commitments, and W-BULLET's `endo_inv`+`endo` per IPA round plus `Scalar_challenge.endo q c`.
+⚑ The last two conjuncts are what makes this a GATE rather than an arithmetic identity: a fold that
+started at the FIRST commitment instead of `~init`, or `Tock`'s 15 rounds instead of `Tick`'s 16,
+both miss — by one ladder and by two ladders respectively. -/
+theorem comb_and_bullet_close_minas_endomul_census :
+    combTerms shapeWrap = 47
+    ∧ combSteps shapeWrap = 46
+    ∧ bullNE shapeWrap = 33
+    ∧ ENDO_BLOCKS * (combSteps shapeWrap + bullNE shapeWrap) = 2528
+    ∧ ENDO_BLOCKS * (combTerms shapeWrap + bullNE shapeWrap) ≠ 2528
+    ∧ ENDO_BLOCKS * (combSteps shapeWrap + (2 * 15 + 1)) ≠ 2528 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ …and the `VarBaseMul` census, which is now a THREE-WAY closure over three sub-circuits.
+`wrap-transaction` carries 2417: W-XHAT's 1805, W-FTCOMM's `(tComms + 1) × 51 = 408`, and
+W-BULLET's four `scale_fast` at 255 bits. If this rung lands 204 and the total is not 2417, something
+else moved — which is exactly what the identity is for. -/
+theorem bullet_closes_minas_var_base_mul_census :
+    BULL_SF * SF_CHUNKS = 204
+    ∧ 1805 + (shapeWrap.tComms + 1) * FTC_CHUNKS + BULL_SF * SF_CHUNKS = 2417
+    ∧ SF_CHUNKS = FTC_BITS / BITS_PER_CHUNK
+    ∧ 1805 + (shapeWrap.tComms + 1) * FTC_CHUNKS ≠ 2417 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE 47 ARE `wrap_verifier.ml:687-706`'s OWN LIST**, position by position — and the fold
+runs BACKWARDS down it, so `combIdx` is a decreasing enumeration whose last two entries are the
+`sg_old` pair. A fold that ran forwards would have identical gate counts and would put the mux at
+the wrong end. -/
+theorem comb_fold_runs_backwards_and_ends_on_sg_old :
+    combIdx shapeWrap 0 = 45
+    ∧ combIdx shapeWrap (combSteps shapeWrap - 1) = 0
+    ∧ (List.range (combSteps shapeWrap)).filter (combIsMux shapeWrap)
+        = [combSteps shapeWrap - 2, combSteps shapeWrap - 1]
+    ∧ ((List.range (combSteps shapeWrap)).map (combIdx shapeWrap)).length = 46 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **BOTH ARMS OF `Inner_curve.if_` ARE LIVE IN THE HONEST WITNESS.** `mkWrapWith` witnesses
+branch 1 at widths `[0,1,2,…]`, so `first_zero = 1` and `Vector.rev (ones_vector ~first_zero:1 2)`
+is `[0, 1]` — one `sg_old` kept and one dropped. A `keep` that were constant would make the mux
+dead weight and the rung's own distinguishing feature untested. -/
+theorem comb_mux_takes_both_branches :
+    (List.range MASK_N).map (combKeepVal (mkWrap shapeSmoke)) = [0, 1]
+    ∧ (List.range MASK_N).map (combKeepVal (mkWrap shapeWrap)) = [0, 1] := by
+  refine ⟨?_, ?_⟩ <;> decide
+
+/-- ⚑ **ALL 46 LADDERS' COUNTERS LAND ON ONE CELL.** `Field.Assert.equal !n_acc scalar`
+(`scalar_challenge.ml:305`) is emitted as a σ class rather than as a row, which is upstream's shape
+and is what makes `xi` a single deferred value rather than 46 independent draws. The second
+conjunct is the non-vacuity: the INTERIOR counters are all distinct from it and from each other. -/
+theorem comb_all_ladders_share_one_xi :
+    ((List.range (combSteps shapeSmoke)).map (fun a =>
+        combN shapeSmoke (mkWrap shapeSmoke).sp a ENDO_BLOCKS)).all
+      (· == combXiV shapeSmoke (mkWrap shapeSmoke).sp) = true
+    ∧ ((List.range (combSteps shapeSmoke)).map (fun a =>
+        combN shapeSmoke (mkWrap shapeSmoke).sp a 0)).all
+      (· != combXiV shapeSmoke (mkWrap shapeSmoke).sp) = true
+    ∧ combXiVal < 2 ^ ENDO_BITS := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE REGIONS DO NOT OVERLAP.** W-COMBINE's cells start above W-FTCOMM's last and W-BULLET's
+above W-COMBINE's last, at both shapes. ⚠ W-COMBINE's base is `baseFin`'s — see §23a: `.combine` and
+`.finalize` are sibling branches off `.prev` and no `rungsUpto` contains both, so no emitted circuit
+holds cells from both regions. This is the pin that would go red if that stopped being true and one
+rung started emitting both. -/
+theorem comb_and_bullet_regions_are_disjoint :
+    baseComb shapeSmoke (mkWrap shapeSmoke).sp
+      = baseFtc shapeSmoke (mkWrap shapeSmoke).sp + nFtcVars shapeSmoke (mkWrap shapeSmoke).sp
+    ∧ baseBull shapeSmoke (mkWrap shapeSmoke).sp
+      = baseComb shapeSmoke (mkWrap shapeSmoke).sp + nCombVars shapeSmoke
+    ∧ (rungsUpto .combine).contains .finalize = false
+    ∧ (rungsUpto .bullet).contains .finalize = false
+    ∧ (rungsUpto .bullet).contains .combine = true := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE COMMITMENTS THE FOLD READS ARE THE TRANSCRIPT'S OWN CELLS**, position by position —
+`sg_old`, `x_hat`, `ft_comm`, `z_comm` and `w_comm` at `wrap_verifier.ml:687-706`'s offsets. This is
+what "W-COMBINE consumes them" MEANS, and it is why §2c's entries can be rewritten: bend any one of
+those words and 46 ladders' gate polynomials move.
+
+⚠ ⚑ **AND IT IS PINNED ON THE VARIABLES, NOT ON THE PROSE.** The first draft of this theorem was a
+`decide` over `String.startsWith` on `WRAP_UNCONSUMED`'s sentences. It did not go FALSE when another
+lane reworded an entry — it went STUCK, because `String.startsWith` does not kernel-reduce, and
+"stuck" reads like a build error rather than a broken claim. A census entry is prose three lanes
+edit; a variable identity is not. ⚠ Three of those entries still read "needs W-COMBINE" for exactly
+that reason — five pins in the W-WRAPHACK and W-FINALIZE blocks quote them verbatim, so rewording
+them is a coordinated edit and not this rung's to make alone. -/
+theorem comb_reads_the_transcripts_own_commitment_cells :
+    (combPtVar (mkWrap shapeSmoke) 0).1
+      = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).getD 0
+          default).wordV
+    ∧ (combPtVar (mkWrap shapeSmoke) shapeSmoke.prevs).1
+      = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 0
+          default).wordV
+    ∧ combPtVar (mkWrap shapeSmoke) (shapeSmoke.prevs + 1)
+      = ftcOutV shapeSmoke (mkWrap shapeSmoke).sp
+    ∧ (combPtVar (mkWrap shapeSmoke) (shapeSmoke.prevs + 2)).1
+      = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_ZCOMM)).getD 0
+          default).wordV
+    ∧ (combPtVar (mkWrap shapeSmoke) (shapeSmoke.prevs + 3 + KEY_SINGLES)).1
+      = (((mkWrap shapeSmoke).sp.evs.filter (fun e => e.isAbs && e.tag == T_WCOMM)).getD 0
+          default).wordV := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **`lr` AND `delta` ARE ON THE CURVE NOW, AND THE OLD FILLER WAS NOT.** This is the flag day
+§2d's `itemVal` carries, exhibited rather than described: the `wrapFixture` values that stood there
+are not points, so `Scalar_challenge.endo_inv` had no witness over them at all. -/
+theorem wrap_lr_and_delta_are_curve_points :
+    onCurveQ (itemVal T_LR 0, itemVal T_LR 1) = true
+    ∧ onCurveQ (itemVal T_LR 2, itemVal T_LR 3) = true
+    ∧ onCurveQ (itemVal T_DELTA 0, itemVal T_DELTA 1) = true
+    ∧ onCurveQ (wrapFixture T_LR 0, wrapFixture T_LR 1) = false
+    ∧ onCurveQ (wrapFixture T_DELTA 0, wrapFixture T_DELTA 1) = false := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **W-BULLET's LAYOUT IS ITS SOURCE'S SHAPE.** Four `scale_fast` (`uc`, `b_u`, `z₁·(G+b_u)`,
+`z₂·H`), `2·ipaRounds + 1` endo ladders, and `3·ipaRounds + 1` points through `Inner_curve.typ`
+(the `2·ipaRounds` `lr`, `delta`, and the `ipaRounds` `endo_inv` witnesses). ⚠ NOT
+`challenge_polynomial_commitment` — §24's header says why, and the count is what makes the omission
+visible instead of silent. -/
+theorem bullet_layout_is_check_bulletproofs_shape :
+    BULL_SF = 4
+    ∧ bullNE shapeWrap = 2 * shapeWrap.ipaRounds + 1
+    ∧ bullOCPts shapeWrap = 3 * shapeWrap.ipaRounds + 1
+    ∧ shapeWrap.ipaRounds = 16
+    ∧ EN_STRIDE = 3 + 2 * (ENDO_BLOCKS + 1) + ENDO_BLOCKS
+    ∧ SF_STRIDE = 2 * (SF_CHUNKS + 1) + SF_CHUNKS := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-! ## §13 — ⚑ WHAT IS LEFT, BY SUB-CIRCUIT.
 
@@ -3720,26 +6107,77 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      ⚠ Exactly as on the step side, `G`, `z₁` and `z₂` are FREE WITNESSES in `openings_proof`
      (`wrap_main.ml:357-383`), so assembling `equal_g` would refuse no on-curve substitution of a
      consumed commitment. The refusal is the accumulator check, which is W-FINALIZE's.
-  7. **W-FINALIZE** `wrap_verifier.ml:820-1049`, run `prevs` times — the deferred-value finalizer.
-     ⚑ **AND `Scalars.Tock` IS NOT `Scalars.Tick` WITH DIFFERENT LITERALS**, whatever
-     `plonk_checks/scalars.ml:104` says: `Tock`'s `constant_term` (`:3405-4250`) DISCARDS `beta`,
-     `gamma`, `joint_combiner`, `if_feature`, `unnormalized_lagrange_basis` and
-     `vanishes_on_last_4_rows` outright (`:3406-3430`, every one bound to `_`) and uses only
-     `alpha^1..alpha^20`, where `Tick` (`:105-3403`) uses `alpha^1..20, 24..31` and 68 `if_feature`
-     guards. Both `index_terms` are the EMPTY table. Porting the step side's `gateLinConst` across
-     unchanged would be wrong in both directions. This is the biggest remaining piece and it is
-     what wrap public words 0–4 and 9 need.
-  8. **W-WRAPHACK** `wrap_hack.ml:118-141`, `wrap_main.ml:340-355,421-429` — the two
-     `hash_messages_for_next_wrap_proof` sponges. ⚠ **Public word 12 is NO LONGER ITS**: `w9_prev`
-     closed it (§10, §18), and what is left here is word 11 plus packed statement words 55 and 56 —
-     the PREVIOUS statement's own `messages_for_next_wrap_proof` digests, which is what consumes
-     `old_bp_chals`. ⚑ Word 11 needs W-FINALIZE too: `wrap_main.ml:421-429` hashes
-     `openings_proof.challenge_polynomial_commitment` with `new_bulletproof_challenges`, and the
-     latter is `finalize_other_proof`'s output. ⚑ Absorption order
-     is **all old bulletproof challenges first, flattened, THEN the commitment as `[x; y]`**
-     (`composition_types.ml:411-418`) — the opposite of the step side's interleaving — and the
-     padding is at the FRONT via a PRECOMPUTED sponge-state table indexed by
-     `2 − max_proofs_verified` (`wrap_hack.ml:99-109,124-137`), not by absorbing dummies in circuit.
+  7. ⚡ **W-FINALIZE — ITS SCALAR HALF LANDS at `w10_finalize`** (§19), and the half that does not
+     is named here rather than left to a reader to notice.
+     ⛑ **`Scalars.Tock` IS NOT `Scalars.Tick` WITH DIFFERENT LITERALS**, whatever
+     `plonk_checks/scalars.ml:104` says — and the shape of the difference is now MEASURED, not
+     inferred from the `_`-bindings. Diffed at source with hex literals normalised: the
+     `let x_0 … let x_48` prefix (225 lines) is **identical**, and the tails diverge at exactly ONE
+     hunk (`@@ -576,1813 +576,4 @@`) — `Tick` continues for 1813 lines of `if_feature` arms
+     (`RangeCheck0/1`, `ForeignFieldAdd/Mul`, `Xor16`, `Rot64`, lookup), `Tock` for 4 (a trailing
+     `+ field 0x0`). Those arms are the ONLY consumers of `beta`, `gamma`, `joint_combiner`,
+     `unnormalized_lagrange_basis`, `vanishes_on_last_4_rows` and `if_feature`, which is WHY `Tock`
+     binds all six to `_`. So `Tock.constant_term` is exactly the six always-on gate bodies —
+     Poseidon 15 (α¹⁻¹⁴), VarBaseMul 21 (α¹⁻²⁰), CompleteAdd 7, EndoMul 11, EndoMulScalar 11,
+     Generic 2 — and §19b emits those and nothing else. ⚠ The alpha powers really ARE shared across
+     the gates (`alpha_pows` is ONE `Array.create ~len:71`, `plonk_checks.ml:330-338`); §19 emits
+     that unaltered, as §15 emits `scale_fast`'s two admissible decompositions unaltered.
+     ✅ **WHAT `w10_finalize` EMITS**, per instance and `prevs` instances: `scalars_env`'s
+     ω⁻¹/ω⁻²/ω⁻³ (the first a WITNESS the program checks by `ω·ω⁻¹ = 1`), `zk_polynomial`,
+     `ζⁿ − 1` by 14 squarings at the wrap domain `2^14`, the α⁰..α²³ chain, `Scalars.Tock`'s constant
+     term, `ft_eval0` (`plonk_checks.ml:420-460`, C5 denominator by a second CHECKED witnessed
+     inverse), `Plonk_checks.checked`'s `perm` scalar compared through `Shifted_value.Type2.to_field`
+     against packed statement word 4, and `Boolean.Assert.any [finalized; not should_finalize]`.
+     Its α and ζ arrive through two `to_field_checked` chains at `ENDO_Q`, through §5's SHARED endo
+     cell; β and γ are the RAW packed words, which is `map_plonk_to_field`'s own split.
+     ❌ **WHAT IT DOES NOT EMIT, AND WHAT THAT COSTS.** Three of `Boolean.all`'s four legs —
+     `xi_correct`, `b_correct`, `combined_inner_product_correct` — all need the finalize SPONGE
+     (`:844-894`: absorb `sponge_digest_before_evaluations`, a nested challenge-digest sponge over
+     the padded old bulletproof challenges, `ft_eval1`, both `public_input` evals and the 86-cell
+     absorption sequence, then squeeze ξ and r). Emitting ξ or r as free witnesses to get the legs
+     would be a witness nothing constrains, so they are NOT emitted. ⛑ That sponge is also where
+     wrap's largest remaining GATE gap lives: a calibrated census against Mina's real
+     `wrap-transaction` blob puts us **979 Poseidon against 2871**, and ≈122 of the 172 missing
+     `(Poseidon × 11, Zero)` blocks are these two sponges at `prevs = 2`.
+     ⚠ **AND THE `EndoMulScalar` DIVERGENCE IS THIS RUNG'S SHAPE, NOT ITS COUNT.** Mina's blob has
+     `EndoMulScalar × 120` twice — `compute_challenges` (`:1012-1013`) lifting all fifteen
+     bulletproof challenges in ONE unbroken run, once per instance — plus `×24` twice and `×16` six
+     times. We cannot reach a ×120 run: §5's `tfcRowsQ` brackets every chain with its own seed pins
+     and lift row, because upstream's `a₀`/`b₀` are one constant `Cvar` and its `a₈`/`b₈` closing is a
+     `Cvar` linear combination that emits NO row (the three cells the region-conformance report
+     already names). Fifteen chains therefore come out as fifteen `×8` blocks, not one `×120`. That
+     is this file being STRICTER, so it is a shape divergence to state and not a row count to claim
+     — and it is why `w10_finalize` emits the two lifts `map_plonk_to_field` needs and leaves
+     `compute_challenges` with the sponge, where its consumer (`b_correct`) is.
+     ⚠ Wrap public words 0–4 and 9 are still NOT derived: they are the WRAP statement's own deferred
+     values, CONSUMED by W-FTCOMM/W-COMBINE/W-BULLET, and this rung consumes the PREVIOUS
+     statement's — packed words 4, 6, 7, 8, 9 and 26 of each block, six per instance that were
+     absorbed-but-not-consumed at `w9_prev`.
+  8. ✅ **W-WRAPHACK — LANDED at `w11_wraphack`** (§24). All THREE
+     `hash_messages_for_next_wrap_proof` sponges (`wrap_hack.ml:110-137` at `wrap_main.ml:341-348`
+     and `:421-431`): 32 absorbs and one `squeeze_field` each, **16 Fq permutations per sponge, 48
+     for the rung**. ⚑ **It closes the public vector.** Wrap statement word 11 is the closing
+     sponge's squeeze, and with it **every one of the twenty-four statement words `wrap_main` pins
+     is derived** (`WRAP_PINNED_SLOTS`; the other sixteen of forty are W-FINALIZE's six deferred
+     values and ten constant-or-dead slots, `WRAP_UNPINNED`). Packed statement words 55 and 56 stop
+     being fixtures and become the two prev-proof squeezes, which is what gives `old_bp_chals` its
+     only consumer and `prev_step_accs` a second one.
+     The sizing notes this entry carried were RIGHT and are kept: absorption order is **all old
+     bulletproof challenges first, flattened, THEN the commitment as `[x; y]`**
+     (`composition_types.ml:411-418`) — the opposite of the step side's interleaving, and
+     `wraphack_tape_is_the_challenges_then_the_commitment` exhibits the other order giving a
+     different digest — and the padding is at the FRONT via a PRECOMPUTED sponge-state table indexed
+     by `2 − max_proofs_verified` (`wrap_hack.ml:99-109,124-137`), not by absorbing dummies in
+     circuit. ⚠ **What the note got wrong is that word 11 "needs W-FINALIZE too".** It does not need
+     it to be DERIVED — the sponge is over `new_bulletproof_challenges` and
+     `openings_proof.challenge_polynomial_commitment` whatever they are, and word 11 is its squeeze
+     either way. What W-FINALIZE and W-OPENINGS would add is that those 32 cells stop being free
+     witnesses, and §21 says that in its own header rather than banking it here.
+     ⚠ **AND THE `mlmb < 2` PAD IS NOT EMITTED**: `WH_MLMB = WH_PADDED = 2` fixes every opening
+     state at `Sponge.create`'s zeros. The other case needs `Dummy.Ipa.Wrap.challenges_computed`
+     (`dummy.ml:30-35`), an OCaml random-oracle draw with no independent source in this tree, and
+     emitting a fixture constant for it would be defect class 5 inside the pad. `whPadVectors` is in
+     the file so the general statement is, and the instance is a SHAPE choice that is said.
   9. ✅ **W-PREV — LANDED at `w9_prev`** (§18). ⚠ **AND THE SIZING NOTE THIS ENTRY CARRIED WAS
      WRONG AT SOURCE, IN THE DIRECTION THAT MADE THE WORK LOOK BIGGER THAN IT IS.** It said the typ
      carried "`~assert_16_bits:(assert_n_bits ~n:16)`, a `to_field_checked` at a width this file
@@ -3759,8 +6197,16 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      ⚠ **`old_bp_chals` is DELIBERATELY NOT EMITTED**: its only consumer is
      `hash_messages_for_next_wrap_proof` (`wrap_main.ml:341-348`), which is item 8, and 30 cells with
      no consumer are decoration. It stays with W-WRAPHACK.
- 10. **W-CLOSE**'s curve-side assert `wrap_main.ml:419-420` — `Boolean.Assert.is_true
-     bulletproof_success`, which is W-BULLET's output.
+ 10. ✅ **W-CLOSE — LANDED at `w12_close`** (§22). `wrap_main.ml:419-420`,
+     `Boolean.Assert.is_true bulletproof_success`: **ONE `Generic` half and one σ-probe**, and the
+     sizing note that said so was right. ⚠ Its input is W-BULLET's `` `Success ``, free here, so what
+     the rung buys is narrow and stated as such in §22: a witness whose opening FAILED is refused.
+     It is not a claim that the opening is checked — `equal_g` is not in this circuit at all.
+ 11. **W-OPENINGS** `wrap_main.ml:357-383` — `exists (Openings.Bulletproof.typ … Inner_curve.typ
+     ~length:Tick.Rounds.n)`. It was named in the header's map and never carried an entry here; it
+     is the `assert_on_curve` on `openings_proof.challenge_polynomial_commitment` (and the `lr`
+     pairs), i.e. three `Generic` rows per point, plus the `Shifted_value.Type1` transports which
+     emit nothing. §21 absorbs that commitment and does NOT check it; that check is this entry's.
 
 ⚠ ⚑ **THREE PLACES THIS FILE IS STRICTER THAN UPSTREAM, said rather than banked.**
 

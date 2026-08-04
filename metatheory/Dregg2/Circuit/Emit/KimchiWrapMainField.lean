@@ -51,6 +51,8 @@ the kernel; `#assert_namespace_axioms` at the foot accounts for every one.
 import Dregg2.Tactics
 import Dregg2.Circuit.Emit.PastaField
 import Dregg2.Circuit.Emit.MinaStepSrsLagrange
+import Dregg2.Circuit.Emit.PastaPoseidonFq
+import Dregg2.Circuit.Emit.PastaCurve
 
 namespace Dregg2.Circuit.Emit.KimchiWrapMain
 
@@ -427,8 +429,108 @@ def prevWordWidth (w : Nat) : Nat :=
     let j := w % PREV_PER_PROOF_WORDS
     if j < 6 then WQ_FIELD else if j < PREV_SHOULD_FINALIZE then WQ_CHAL else WQ_BOOL
 
+/-! ### §15c″ — ⚑ **W-WRAPHACK's VALUE LAYER** (`wrap_hack.ml:99-141`, `wrap_main.ml:340-355,421-431`).
+
+It is declared HERE, above `prevWordVal`, because two of the 57 packed statement words are NOT
+witnessed: `wrap_main.ml:340-348` COMPUTES them.
+
+    let prev_messages_for_next_wrap_proof =
+      Vector.map2 prev_step_accs old_bp_chals ~f:(fun sacc (T (mlmb, chals)) →
+        Wrap_hack.Checked.hash_messages_for_next_wrap_proof mlmb
+          { challenge_polynomial_commitment = sacc; old_bulletproof_challenges = chals })
+
+and `prev_statement.messages_for_next_wrap_proof` is that vector, which `pack_statement` puts at
+words `PREV_MSG_NEXT_STEP + 1` and `+ 2` — 55 and 56. So `prevWordVal` may not answer with a
+fixture there, and the override below is what makes the SAME two words derived on the value side
+that §21 derives on the row side.
+
+⚑ **THE ABSORPTION ORDER IS THE OPPOSITE OF THE STEP SIDE'S.**
+`Messages_for_next_wrap_proof.to_field_elements` (`composition_types.ml:411-418`) is
+
+    Array.concat [ Vector.to_array old_bulletproof_challenges |> Array.concat_map ~f:Vector.to_array
+                 ; Array.of_list (g1_to_field_elements challenge_polynomial_commitment) ]
+
+— every old bulletproof challenge FIRST, flattened, and the commitment's `[x; y]` LAST. The step
+side interleaves; this one does not.
+
+⚑ **AND THE FRONT PAD IS A PRECOMPUTED SPONGE STATE, NOT AN IN-CIRCUIT ABSORB.** `pad_vector`
+(`wrap_hack.ml:26-28`) is `Vector.extend_front_exn v Padded_length.n dummy` — the padding goes at
+the FRONT, which is exactly why upstream can precompute it: `Checked
+.hash_messages_for_next_wrap_proof` (`wrap_hack.ml:110-137`) does NOT pad `t` at all. It opens the
+sponge at `dummy_messages_for_next_wrap_proof_sponge_states.(2 − max_proofs_verified)`, the state a
+fresh sponge reaches after absorbing that many DUMMY challenge vectors, injected as
+`Impls.Wrap.Field.constant`. -/
+
+/-- `Backend.Tock.Rounds.n` — one `old_bulletproof_challenges` vector's length (`wrap_main.ml:230`,
+`composition_types.ml:1358`). ⚠ **Tock's 15, not Tick's 16**; `ipaRounds` is the other one. -/
+def WH_ROUNDS : Nat := 15
+
+/-- `Wrap_hack.Padded_length = Nat.N2` (`wrap_hack.ml:24`) — the length every accumulator is padded
+UP TO, at the front. -/
+def WH_PADDED : Nat := 2
+
+/-- ⚑ How many DUMMY challenge vectors the precomputed opening state stands for
+(`wrap_hack.ml:124-130`): `2 − max_proofs_verified`. -/
+def whPadVectors (mlmb : Nat) : Nat := WH_PADDED - mlmb
+
+/-- ⚑ **`max_local_max_proofs_verified` AT THE COMMITTED SHAPE, AND IT IS A SHAPE CHOICE THAT IS
+SAID RATHER THAN BANKED.** `Max_widths_by_slot.maxes` (`wrap_main.ml:130-133`) is a per-slot
+constant of the compiled instance; this assembly fixes it at `WH_PADDED` for every slot, which is
+also what `Max_proofs_verified.n = 2` gives the closing hash at `wrap_main.ml:423`. So
+`whPadVectors WH_MLMB = 0` in all three sponges and the front pad is the FRESH state — the one this
+file can pin to zero out of its own `Sponge.create` rows.
+
+⚠ **THE OTHER CASE IS NOT EMITTED AND THE REASON IS NOT "LATER".** At `mlmb < 2` the opening state
+is the sponge state after absorbing `Dummy.Ipa.Wrap.challenges_computed`, and those values are
+`Ipa.Wrap.compute_challenge` of `Ro.scalar_chal ()` (`dummy.ml:30-35`) — an OCaml random-oracle draw
+this tree has no independent source for. Emitting it would mean a FIXTURE constant standing in for a
+derived sponge state, which is defect class 5 in a new place and inside the pad specifically. A
+shape choice that avoids inventing a constant is the honest one; `whPadVectors` is here so the
+general statement is in the file rather than the instance. -/
+def WH_MLMB : Nat := 2
+
+/-- The absorbed elements of ONE `hash_messages_for_next_wrap_proof`, in
+`to_field_elements` order. -/
+def whTape (chals : List Nat) (g : Nat × Nat) : List Nat := chals ++ [g.1, g.2]
+
+/-- `Tock_field_sponge.digest` in circuit — `Sponge.squeeze_field` of an Fq sponge over the tape
+(`wrap_hack.ml:131-137`). ⚑ `newSponge` IS the `whPadVectors WH_MLMB = 0` opening state. -/
+def whDigestOf (chals : List Nat) (g : Nat × Nat) : Nat :=
+  (Dregg2.Circuit.Emit.PastaPoseidonFq.squeeze1 Dregg2.Circuit.Emit.PastaPoseidonFq.fqParams
+      (Dregg2.Circuit.Emit.PastaPoseidonFq.absorbMany Dregg2.Circuit.Emit.PastaPoseidonFq.fqParams
+        Dregg2.Circuit.Emit.PastaPoseidonFq.newSponge (whTape chals g))).2
+
+/-- `old_bp_chals.(p)` flattened — `Vector.typ (Vector.typ Field.typ Tock.Rounds.n)` with NO check
+of any kind (`wrap_main.ml:226-256`), so a free witness upstream and a NAMED FIXTURE here. -/
+def whOldChal (p k : Nat) : Nat := wrapFixtureQ 41 (WH_PADDED * WH_ROUNDS * p + k)
+def whOldChals (p : Nat) : List Nat := (List.range (WH_MLMB * WH_ROUNDS)).map (whOldChal p)
+
+/-- `prev_step_accs.(p)` — ⚑ the TRANSCRIPT's own `sg_old` coordinates, not a second copy of them.
+This mirrors `KimchiWrapMain.itemVal T_SGOLD` exactly, including its fallback, so §21's tie row
+joins two cells that already hold one value. -/
+def whSgOld (p : Nat) : Nat × Nat :=
+  ((Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY).getD (2 * p) (wrapFixtureQ 1 (2 * p)),
+   (Dregg2.Circuit.Emit.PastaPoseidonFq.PREVCOMM_XY).getD (2 * p + 1) (wrapFixtureQ 1 (2 * p + 1)))
+
+/-- ⚑ **PACKED STATEMENT WORD `55 + p`** — `prev_statement.messages_for_next_wrap_proof.(p)`. -/
+def whPrevDigest (p : Nat) : Nat := whDigestOf (whOldChals p) (whSgOld p)
+
+/-- `new_bulletproof_challenges` — `finalize_other_proof`'s output (`wrap_main.ml:258-338`), i.e.
+**W-FINALIZE's**, which this file does not assemble (§13 item 7). Free here, and named as free. -/
+def whNewChal (k : Nat) : Nat := wrapFixtureQ 42 k
+def whNewChals : List Nat := (List.range (WH_MLMB * WH_ROUNDS)).map whNewChal
+
+/-- `openings_proof.challenge_polynomial_commitment` — `exists (Openings.Bulletproof.typ …)` at
+`wrap_main.ml:357-383`, i.e. **W-OPENINGS's**, which this file does not assemble either; its
+`Inner_curve.typ` `assert_on_curve` is that sub-circuit's row, not §21's. -/
+def whSg : Nat × Nat := (wrapFixtureQ 43 0, wrapFixtureQ 43 1)
+
+/-- ⚑ **WRAP STATEMENT WORD 11** — `messages_for_next_wrap_proof_digest`, the value
+`wrap_main.ml:421-431` `Field.Assert.equal`s. -/
+def whCloseDigest : Nat := whDigestOf whNewChals whSg
+
 /-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
-free witness upstream.
+free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes; see §15c″.
 
 ⚑ **THE NINTH POWER IS NOT DECORATION, AND THE OLD `/ 7` WAS THE SAME LESSON, MEASURED AGAIN.**
 `wrapFixtureQ 34 w = 11 + 1000003·(578 + w)` never wraps `qN`, so it is a ~29-bit integer whose
@@ -442,10 +544,12 @@ blew `maxRecDepth` outright — and a 254-bit `B Digest` is what a digest actual
 `B Bool`s are bits. `xhat_cond_add_takes_both_branches` and `xhat_smoke_selection_covers_every_path`
 are the pins that keep it fixed; both go red under the raw mixer. -/
 def prevWordVal (w : Nat) : Nat :=
-  let a := wrapFixtureQ 34 w
-  let a2 := qMul a a
-  let a4 := qMul a2 a2
-  qMul (qMul a4 a4) a % 2 ^ prevWordWidth w
+  if PREV_MSG_NEXT_STEP < w && w < PREV_WORDS then whPrevDigest (w - PREV_MSG_NEXT_STEP - 1)
+  else
+    let a := wrapFixtureQ 34 w
+    let a2 := qMul a a
+    let a4 := qMul a2 a2
+    qMul (qMul a4 a4) a % 2 ^ prevWordWidth w
 
 /-- ⚑ **ENTRY `i`'s SCALAR — the packed image of a statement word, not a draw of its own.**
 `split_field` (`wrap_main.ml:69-81`) is `y = (x − is_odd)/2`, `is_odd = x mod 2`; every other entry
@@ -540,6 +644,341 @@ def xhatNegated (sel : List Nat) : Nat × Nat := negAQ ((xhatFolds sel).getLastD
 (`wrap_verifier.ml:612-616`). This is the pair `wrap_verifier.ml:617` absorbs. -/
 def xhatOut (n : Nat) : Nat × Nat := addAQ (xhatNegated (xhatSel n)) XHAT_H
 
+/-! ## §19a — ⚑ **`Scalar_challenge.endo` AT Fq**, the `EndoMul` ladder W-COMBINE and W-BULLET run.
+
+`scalar_challenge.ml:217-307`, read end to end. `num_bits = 128`, `bits_per_row = 4`, so
+`rows = 32` — thirty-two `EndoMul` gates and one closing `Zero`, per ladder, and that count is what
+closes Mina's own `EndoMul 2528` (§19's census in `KimchiWrapMain`).
+
+⚑ **THE ENDO CONSTANT IS `Endo.Wrap_inner_curve.base`, NOT `Endo.Step_inner_curve.scalar`.**
+`wrap_verifier.ml:121` instantiates the `Scalar_challenge` functor with `Endo.Wrap_inner_curve` —
+Vesta's pair — and `endo.ml:6` says `base : Backend.Tock.Field.t = Pasta_bindings.Vesta.endo_base ()`.
+That is an Fq element and it is the CURVE endomorphism eigenvalue, a different object from `ENDO_Q`
+(`Pallas.endo_scalar ()`), which is the SCALAR `to_field_checked` lifts by. Both live in Fq and the
+file uses both; `endo_base_q_is_the_curve_endomorphism` pins them apart against two independent
+sources.
+
+⚑ And it is the same constant the Rust prover's `EndoMul` gate polynomial uses: for a
+**Pallas-committed** proof `KimchiCurve::other_curve_endo()` is `vesta_endos().0`
+(`kimchi/src/curve.rs:102-104`), i.e. Vesta's BASE-field endo — the mirror of the step harness,
+which proves on Vesta and gets Pallas's. A wrong choice here is refused by the prover, not
+absorbed. -/
+
+/-- `Endo.Wrap_inner_curve.base = Pasta_bindings.Vesta.endo_base ()` (`endo.ml:5-9`), an element of
+`Backend.Tock.Field = Fq`. -/
+def ENDO_BASE_Q : Nat :=
+  2942865608506852014473558576493638302197734138389222805617480874486368177743
+
+/-- `Scalar_challenge`'s own `num_bits` (`scalar_challenge.ml:214`) — the raw prechallenge width. -/
+def ENDO_BITS : Nat := 128
+/-- `bits_per_row` (`scalar_challenge.ml:225`). -/
+def ENDO_BITS_PER_ROW : Nat := 4
+/-- `rows = num_bits / bits_per_row` — the `EndoMul` gate count of ONE ladder. -/
+def ENDO_BLOCKS : Nat := ENDO_BITS / ENDO_BITS_PER_ROW
+
+/-- The `4·ENDO_BLOCKS` bits of `v`, MSB-first — `unpack scalar |> take 128 |> of_list_rev_map`. -/
+def endoBitsOfQ (v : Nat) : List Nat :=
+  (List.range (4 * ENDO_BLOCKS)).map (fun k => v / 2 ^ (4 * ENDO_BLOCKS - 1 - k) % 2)
+
+/-- `xq(b) = (1 + (endo − 1)·b)·xt` (`scalar_challenge.ml:249`). -/
+def xqOfQ (b xt : Nat) : Nat := qMul (qAdd 1 (qMul b (qSub ENDO_BASE_Q 1))) xt
+/-- `yq(b) = (2b − 1)·yt` (`scalar_challenge.ml:250`). -/
+def yqOfQ (b yt : Nat) : Nat := qMul (if b == 1 then (1 : Nat) else qN - 1) yt
+
+/-- One `endo_mul` 4-bit block's STORED cells (`endosclmul.rs:48-56`): the intermediate point
+`(xr,yr)`, the two stored slopes `s1`/`s3`, the distinct-point inverse `inv = w₂`, the output
+`(xs,ys)`, and the four bits. `s2`/`s4` are constraint intermediates and are NOT stored. -/
+structure EndoBlockQ where
+  xr : Nat
+  yr : Nat
+  s1 : Nat
+  s3 : Nat
+  inv : Nat
+  xs : Nat
+  ys : Nat
+  b1 : Nat
+  b2 : Nat
+  b3 : Nat
+  b4 : Nat
+  deriving Repr, Inhabited
+
+/-- One block: `acc ← [2]([2]acc + Q₁) + Q₂` with `Qₖ = (2b_even − 1)·φ^{b_odd}(T)`, transcribed
+line for line from `scalar_challenge.ml:249-271` at Fq. -/
+def endoStepQ (xt yt xp yp b1 b2 b3 b4 : Nat) : EndoBlockQ :=
+  let xq1 := xqOfQ b1 xt
+  let yq1 := yqOfQ b2 yt
+  let s1 := qMul (qSub yq1 yp) (qInv (qSub xq1 xp))
+  let s2 := qSub (qMul (qMul 2 yp) (qInv (qSub (qAdd (qMul 2 xp) xq1) (qMul s1 s1)))) s1
+  let xr := qSub (qAdd xq1 (qMul s2 s2)) (qMul s1 s1)
+  let yr := qSub (qMul (qSub xp xr) s2) yp
+  let xq2 := xqOfQ b3 xt
+  let yq2 := yqOfQ b4 yt
+  let s3 := qMul (qSub yq2 yr) (qInv (qSub xq2 xr))
+  let s4 := qSub (qMul (qMul 2 yr) (qInv (qSub (qAdd (qMul 2 xr) xq2) (qMul s3 s3)))) s3
+  let xs := qSub (qAdd xq2 (qMul s4 s4)) (qMul s3 s3)
+  let ys := qSub (qMul (qSub xr xs) s4) yr
+  let inv := qInv (qMul (qSub xp xr) (qSub xr xs))
+  { xr := xr, yr := yr, s1 := s1, s3 := s3, inv := inv, xs := xs, ys := ys
+  , b1 := b1, b2 := b2, b3 := b3, b4 := b4 }
+
+/-- `φ(t) = (endo·xt, yt)` — the endomorphism image (`scalar_challenge.ml:230`, `Field.scale xt
+Endo.base` with `yt` UNCHANGED). -/
+def endoImgQ (T : Nat × Nat) : Nat × Nat := (qMul ENDO_BASE_Q T.1, T.2)
+/-- `p = G.( + ) t (seal (Field.scale xt Endo.base), yt)` (`scalar_challenge.ml:230-231`). -/
+def endoPQ (T : Nat × Nat) : Nat × Nat := addAQ T (endoImgQ T)
+/-- ⚑ `acc₀ = ref G.(p + p)` (`scalar_challenge.ml:232`) — `2(t + φ(t))`, **not** `2t`. The two are
+different gadgets: `scale_fast_unpack` seeds at `add_fast base base` and this seeds at the DOUBLED
+sum, and getting them the same way round is the step side's recorded defect. -/
+def endoSeedQ (T : Nat × Nat) : Nat × Nat := dblAQ (endoPQ T)
+
+/-- One ladder's whole trace: the accumulator after each block, the blocks, and the counter chain
+`nₑ₊₁ = 16nₑ + 8b₁ + 4b₂ + 2b₃ + b₄` from `n₀ = 0` (`scalar_challenge.ml:272-276`). -/
+structure EndoDataQ where
+  accs : List (Nat × Nat)
+  blks : List EndoBlockQ
+  ns : List Nat
+  deriving Repr, Inhabited
+
+/-- Run `Scalar_challenge.endo T v`. -/
+def runEndoQ (T : Nat × Nat) (v : Nat) : EndoDataQ :=
+  let bits := endoBitsOfQ v
+  let st := (List.range ENDO_BLOCKS).foldl
+    (fun (st : List (Nat × Nat) × List EndoBlockQ × List Nat) e =>
+      let cur := st.1.getLastD (0, 0)
+      let b := endoStepQ T.1 T.2 cur.1 cur.2
+        (bits.getD (4*e) 0) (bits.getD (4*e+1) 0) (bits.getD (4*e+2) 0) (bits.getD (4*e+3) 0)
+      (st.1 ++ [(b.xs, b.ys)], st.2.1 ++ [b],
+       st.2.2 ++ [16 * st.2.2.getLastD 0 + 8*b.b1 + 4*b.b2 + 2*b.b3 + b.b4]))
+    ([endoSeedQ T], [], [0])
+  { accs := st.1, blks := st.2.1, ns := st.2.2 }
+
+/-- …and the point it leaves. -/
+def endoOutQ (T : Nat × Nat) (v : Nat) : Nat × Nat := (runEndoQ T v).accs.getLastD (0, 0)
+
+/-! ## §19b — ⚑ **`group_map` AT Fq**: `Snarky_group_map.Checked.wrap` over the VESTA curve.
+
+`wrap_verifier.ml:280-317` builds `Group_map.Bw19.Params.create (module Field.Constant) { b =
+Inner_curve.Params.b }` — the SAME deterministic construction the step side runs, over a DIFFERENT
+field. `bw19.ml:39-63` is a function of the field and `b` alone: `u` is the first non-zero abscissa
+with non-zero `u³ + b` (so `u = 1`, `fu = 6` at `b = 5`, in either field), and the other three
+params are `sqrt(−3u²)`, `(sqrt(−3u²) − u)/2` and `1/(3u²)`.
+
+⚑ **AND `(sqrt(−3) − 1)/2` IS A PRIMITIVE CUBE ROOT OF UNITY** — so `BWQ_SQ3_MU2` is literally
+`PastaCurve.zetaQ`, which is `ENDO_BASE_Q`. That is not a coincidence to lean on silently: it is
+`bwq_params_are_the_field_construction`'s content, and it makes the group-map constants and the
+curve endomorphism constant ONE measured value reached two independent ways. -/
+
+private def qPowAuxQ : Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, acc => acc
+  | f + 1, base, e, acc =>
+      if e == 0 then acc
+      else qPowAuxQ f (qMul base base) (e / 2) (if e % 2 == 1 then qMul acc base else acc)
+
+/-- `a^e` in `Fq`. -/
+def qPowW (a e : Nat) : Nat := qPowAuxQ 300 (a % qN) e 1
+
+/-- Euler's criterion over `Fq`. -/
+def qIsSquare (a : Nat) : Bool := a % qN == 0 || qPowW a ((qN - 1) / 2) == 1
+
+/-- `Aux.non_residue` (`snarky_group_map/checked_map.ml:5-9`): the first non-square from 2 up. It is
+the multiplier `sqrt_flagged`'s `Field.if_` selects when `is_square` is false, so it is a CIRCUIT
+constant and not only a witness-generation one. ⚠ It is 5 in `Fq` as it is in `Fp` — the same
+number for two different reasons, and `fq_nonresidue_is_the_first_non_square` checks it here. -/
+def FQ_NONRES : Nat := 5
+
+/-- `Fq`'s two-adicity: `q − 1 = 2^32 · m`. -/
+def FQ_S : Nat := 32
+def FQ_M : Nat := (qN - 1) / 2 ^ FQ_S
+
+private def qOrd2 : Nat → Nat → Nat
+  | 0, _ => 0
+  | f + 1, t => if t == 1 then 0 else 1 + qOrd2 f (qMul t t)
+
+private def qTsGo : Nat → Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, _, R => R
+  | f + 1, M, c, t, R =>
+      if t == 1 then R
+      else
+        let i := qOrd2 (FQ_S + 2) t
+        let b := qPowW c (2 ^ (M - i - 1))
+        qTsGo f i (qMul b b) (qMul t (qMul b b)) (qMul R b)
+
+/-- A square root in `Fq` (Tonelli–Shanks at `FQ_NONRES`). ⚠ WHICH root: the same one arkworks'
+`Field::sqrt` returns, which is the one `Group_map.Bw19.Params.create` calls. Either root satisfies
+`assert_square`, so in the CIRCUIT it is a witness convention; in the PARAMS it is not, and
+`bwq_params_are_the_field_construction` is what makes the choice measured rather than assumed. -/
+def qSqrt (a : Nat) : Nat :=
+  if a % qN == 0 then 0
+  else qTsGo (FQ_S + 2) FQ_S (qPowW FQ_NONRES FQ_M) (qPowW a FQ_M) (qPowW a ((FQ_M + 1) / 2))
+
+/-- `u` — the first abscissa with `u ≠ 0` and `u³ + b ≠ 0` (`bw19.ml:45-51`). -/
+def BWQ_U : Nat := 1
+/-- `fu = u³ + b` at `b = 5`. -/
+def BWQ_FU : Nat := 6
+/-- `sqrt(−3u²)` in `Fq`. -/
+def BWQ_SQ3 : Nat :=
+  5885731217013704028947117152987276604395468276778445611234961748972736355487
+/-- `(sqrt(−3u²) − u)/2` in `Fq` — ⚑ and this IS `ENDO_BASE_Q`. -/
+def BWQ_SQ3_MU2 : Nat :=
+  2942865608506852014473558576493638302197734138389222805617480874486368177743
+/-- `1/(3u²)` in `Fq`. -/
+def BWQ_INV3U2 : Nat :=
+  19298681539552699237261830834781317975575370987961098253119828498928908632065
+
+/-- `Vesta.Params.b`. `Params.a = 0`, so `y_squared`'s `a·x` term folds away
+(`wrap_verifier.ml:310-316` passes it, and `Field.mul` on a constant zero emits nothing). -/
+def VESTA_B : Nat := 5
+
+/-- `potential_xs t` (`bw19.ml:78-99`), the three candidate abscissae, at Fq. -/
+def bwqPotentialXs (t : Nat) : Nat × Nat × Nat :=
+  let t2 := qMul t t
+  let alpha := qInv (qMul (qAdd t2 BWQ_FU) t2)
+  let x1 := qSub BWQ_SQ3_MU2 (qMul (qMul (qMul t2 t2) alpha) BWQ_SQ3)
+  let x2 := qSub (qSub 0 BWQ_U) x1
+  let tp := qAdd t2 BWQ_FU
+  let x3 := qSub BWQ_U (qMul (qMul (qMul tp tp) (qMul alpha tp)) BWQ_INV3U2)
+  (x1, x2, x3)
+
+/-- `group_map t` (`wrap_verifier.ml:280-317`) as a VALUE: the first candidate whose `y² = x³ + 5`
+is a square, with its root. In-circuit all three roots are witnessed and `sqrt_flagged`'s
+`is_square` bits select the first (`checked_map.ml:37-53`). -/
+def gmapFq (t : Nat) : Nat × Nat :=
+  let xs := bwqPotentialXs t
+  let y2 : Nat → Nat := fun x => qAdd (qMul x (qMul x x)) VESTA_B
+  if qIsSquare (y2 xs.1) then (xs.1, qSqrt (y2 xs.1))
+  else if qIsSquare (y2 xs.2.1) then (xs.2.1, qSqrt (y2 xs.2.1))
+  else (xs.2.2, qSqrt (y2 xs.2.2))
+
+/-- ⚑ **`group_map`'s 43 CELLS, in emission order** — `Snarky_group_map.Checked.wrap`
+(`snarky_group_map/checked_map.ml:20-55`) at Fq, one slot per Snarky operation:
+
+    0 t2 · 1 tf · 2 ai · 3 alpha · 4 t4 · 5 ta · 6 x1 · 7 x2 · 8 ti · 9 tf2 · 10 tb · 11 x3
+    12+6i  sq · qv · b · db · sel · y      (i = 0,1,2, the three candidates)
+    30 p12 · 31 f2 · 32 f3
+    33..37  the x dot-product (m0,m1,m2,s12,x)      ⚑ 37 IS `u.x`
+    38..42  the y dot-product                        ⚑ 42 IS `u.y`
+
+⚠ `db_i` is `(1 − m)·b_i·q_i` and `sel_i = m·q_i + db_i`, i.e. `Field.if_ b ~then_:q ~else_:(m·q)`
+with the `(1 − m)` folded into the multiplication's coefficient — one half rather than two, and the
+same value. -/
+def gmValsQ (t : Nat) : List Nat :=
+  let t2 := qMul t t
+  let tf := qAdd t2 BWQ_FU
+  let ai := qMul tf t2
+  let alpha := qInv ai
+  let t4 := qMul t2 t2
+  let ta := qMul t4 alpha
+  let x1 := qSub BWQ_SQ3_MU2 (qMul BWQ_SQ3 ta)
+  let x2 := qSub (qSub 0 BWQ_U) x1
+  let ti := qMul alpha tf
+  let tf2 := qMul tf tf
+  let tb := qMul tf2 ti
+  let x3 := qSub BWQ_U (qMul BWQ_INV3U2 tb)
+  let xs := [x1, x2, x3]
+  let per := xs.flatMap (fun x =>
+    let sq := qMul x x
+    let qv := qAdd (qMul sq x) VESTA_B
+    let b := if qIsSquare qv then 1 else 0
+    let db := qMul (qSub 1 FQ_NONRES) (qMul b qv)
+    let sel := qAdd (qMul FQ_NONRES qv) db
+    [sq, qv, b, db, sel, qSqrt sel])
+  let bv : Nat → Nat := fun i => per.getD (6 * i + 2) 0
+  let yv : Nat → Nat := fun i => per.getD (6 * i + 5) 0
+  let p12 := qSub (qAdd 1 (qMul (bv 0) (bv 1))) (qAdd (bv 0) (bv 1))
+  let f2 := qSub (bv 1) (qMul (bv 0) (bv 1))
+  let f3 := qMul p12 (bv 2)
+  let fs := [bv 0, f2, f3]
+  let dot : (Nat → Nat) → List Nat := fun g =>
+    let m := (List.range 3).map (fun i => qMul (fs.getD i 0) (g i))
+    let s12 := qAdd (m.getD 0 0) (m.getD 1 0)
+    m ++ [s12, qAdd s12 (m.getD 2 0)]
+  [t2, tf, ai, alpha, t4, ta, x1, x2, ti, tf2, tb, x3] ++ per ++ [p12, f2, f3]
+    ++ dot (fun i => xs.getD i 0) ++ dot yv
+
+/-- `group_map`'s OUTPUT, read off the emitted cells rather than restated. -/
+def gmOutQ (t : Nat) : Nat × Nat := ((gmValsQ t).getD 37 0, (gmValsQ t).getD 42 0)
+
+/-! ## §19d — ⚑ **`Scalar_challenge.endo_inv`'s WITNESS**, which is a scalar-field inversion.
+
+`scalar_challenge.ml:343-354`:
+
+    let endo_inv ((gx, gy) as g) chal =
+      let res = exists G.typ ~compute:(fun () -> G.Constant.scale g Scalar.(one / x)) in
+      let x, y = endo res chal in
+      Field.Assert.(equal gx x ; equal gy y) ;
+      res
+
+so `endo_inv` is **an `endo` ladder plus two equality asserts plus an `Inner_curve.typ`**, and the
+only new arithmetic is the WITNESS: `res = [x⁻¹]·g` where `x = Constant.to_field chal` lives in
+Vesta's SCALAR field, which is **Fp**. Two consequences this file has to carry:
+
+  * ⚑ **`g` MUST BE ON THE CURVE**, or no `res` exists at all. Upstream's `lr` arrives through
+    `Openings.Bulletproof.typ`'s `Inner_curve.typ` and is on-curve by construction; §2d's filler was
+    a bare `wrapFixture` and was not. `lrPointQ`/`deltaPointQ` below replace it with doublings of
+    real SRS Lagrange bases — the same construction `ftcTVal` already uses for `t_comm` — so the
+    absorbed words are points and `assert_on_curve` is satisfiable.
+  * **`to_field_constant`** (`scalar_challenge.ml:138-152`) is the SAME crumb recurrence `emsAccsQ`
+    runs, over Fp and at `Endo.Wrap_inner_curve.scalar` rather than over Fq at
+    `Pallas.endo_scalar ()`. ⚠ Three constants named `endo` are in play in this file now and only
+    this one is a SCALAR of the inner curve; `endo_inv_is_the_ladders_inverse` is what makes the
+    choice measured — it runs the actual ladder on the actual witness and gets `g` back. -/
+
+/-- `Endo.Wrap_inner_curve.scalar = Pasta_bindings.Vesta.endo_scalar ()` (`endo.ml:5-9`), an element
+of `Backend.Tick.Field = Fp` — Vesta's scalar field, i.e. the field its group order lives in. -/
+def ENDO_SCALAR_FP : Nat :=
+  8503465768106391777493614032514048814691664078728891710322960303815233784505
+
+private def pMod : Nat := Dregg2.Circuit.Emit.PastaField.pN
+def pAddW (x y : Nat) : Nat := (x + y) % pMod
+def pSubW (x y : Nat) : Nat := (x + pMod - y % pMod) % pMod
+def pMulW (x y : Nat) : Nat := (x * y) % pMod
+
+private def pPowAuxW : Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, acc => acc
+  | f + 1, base, e, acc =>
+      if e == 0 then acc
+      else pPowAuxW f (pMulW base base) (e / 2) (if e % 2 == 1 then pMulW acc base else acc)
+/-- Inverse in **Fp** — Vesta's scalar field, which is where `one / x` is taken. -/
+def pInvW (a : Nat) : Nat := pPowAuxW 300 (a % pMod) (pMod - 2) 1
+
+/-- `to_field_constant ~endo:Endo.Wrap_inner_curve.scalar` (`scalar_challenge.ml:138-152`): the
+`(a, b)` recurrence from `a₀ = b₀ = 2` over the 64 MSB-first crumbs of a 128-bit challenge, closed by
+`a·endo + b`. ⚑ Identical in SHAPE to `emsAccsQ`'s, which is why `cFuncQ`/`dFuncQ` are the same two
+tables — and different in FIELD and in CONSTANT, which is the whole point. -/
+def toFieldConstantFp (v : Nat) : Nat :=
+  let cr := (List.range (ENDO_BITS / 2)).map (fun j => v / 4 ^ (ENDO_BITS / 2 - 1 - j) % 4)
+  let ab := cr.foldl
+    (fun (ab : Nat × Nat) x =>
+      ( pAddW (pAddW ab.1 ab.1) (if x == 2 then pMod - 1 else if x == 3 then 1 else 0)
+      , pAddW (pAddW ab.2 ab.2) (if x == 0 then pMod - 1 else if x == 1 then 1 else 0) ))
+    (2, 2)
+  pAddW (pMulW ab.1 ENDO_SCALAR_FP) ab.2
+
+/-- Vesta scalar multiplication, affine in / affine out (Jacobian inside, so one inversion total). -/
+def vestaScMul (k : Nat) (P : Nat × Nat) : Nat × Nat :=
+  match Dregg2.Circuit.Emit.PastaCurve.scMulM qN (k % pMod) (P.1, P.2, 1) with
+  | none => (0, 0)
+  | some J =>
+    let zi := qInv J.2.2
+    let z2 := qMul zi zi
+    (qMul J.1 z2, qMul J.2.1 (qMul z2 zi))
+
+/-- ⚑ **`endo_inv`'s WITNESS**: `[to_field(pre)⁻¹]·g`, so that `Scalar_challenge.endo` of it at the
+SAME prechallenge returns `g`. -/
+def endoInvPtQ (g : Nat × Nat) (pre : Nat) : Nat × Nat :=
+  vestaScMul (pInvW (toFieldConstantFp pre)) g
+
+/-- ⚑ `Ops.scale_fast ~num_bits:255`'s MULTIPLIER. `scale_fast_unpack` runs
+`accₖ₊₁ = [2]accₖ + (2bₖ−1)·T` from `acc₀ = 2T` over 255 bits, which is `(2^255 + 2s + 1)·T` and NOT
+`[s]·T` — the `Shifted_value.Type1` shift, in Vesta's scalar field. -/
+def sfKQ (s : Nat) : Nat := (2 ^ 255 + 2 * s + 1) % pMod
+
+/-- `openings_proof.lr.(r)`'s two points (`wrap_main.ml:381`), and `delta` (`:382`). ⚠ FIXTURES —
+they have no real source in this tree — but ON-CURVE fixtures, which is what `Inner_curve.typ`
+guarantees upstream and what `endo_inv` needs to have a witness at all. -/
+def lrPointQ (i : Nat) : Nat × Nat := xhatBase (5 + i % 50)
+def deltaPointQ : Nat × Nat := xhatBase 60
+
 end Dregg2.Circuit.Emit.KimchiWrapMain
 
 /-! ⚑ **THE FACTS LIVE IN THEIR OWN NAMESPACE, AND THAT IS NOT COSMETIC.**
@@ -552,6 +991,11 @@ the foot of `KimchiWrapMain.lean` swept this file's as well — measured, that t
 namespace Dregg2.Circuit.Emit.KimchiWrapMainField
 
 open Dregg2.Circuit.Emit.KimchiWrapMain
+
+-- ⚑ `set_option` is SCOPED TO THE NAMESPACE, so line 61's `maxRecDepth` died at the `end` above and
+-- this section ran at the default 512. It stopped being enough once §19a/§19b landed: `qPowW` at a
+-- 254-bit exponent and Tonelli–Shanks are 300-deep fuel recursions, and the kernel walks them.
+set_option maxRecDepth 100000
 
 /-! ## §15e — the pins, as NAMED THEOREMS.
 
@@ -634,8 +1078,15 @@ shape of the formula. -/
 theorem xhat_correction_shift_would_differ_at_a_chunk_boundary :
     BITS_PER_CHUNK * chunksNeededQ 126 ≠ BITS_PER_CHUNK * chunksNeededQ (126 - 1) := by decide
 
+set_option maxRecDepth 1000000 in
 /-- The scalars respect their own widths — `scale_fast2`'s top-bit asserts have to be satisfiable by
-the honest witness or every rung would refuse. -/
+the honest witness or every rung would refuse.
+
+⚠ ⚑ **THE DEPTH BUDGET IS §15c″'s, AND IT IS NOT A WEAKENING.** Entries 65 and 66 are packed words
+55 and 56, which stopped being fixtures when W-WRAPHACK landed: reducing them now runs two Fq
+Poseidon sponges (16 permutations each) inside this scan. `decide` evaluates in the ELABORATOR,
+where `maxRecDepth` bites — the kernel's own `rfl` path does the same work at 28 permutations in
+`key_digest_is_the_index_digest` without it. The statement is unchanged; only the budget moved. -/
 theorem xhat_scalars_fit_their_widths :
     (List.range XHAT_TERMS_FULL).all (fun i => decide (xhatScalar i < 2 ^ xhatBits i)) = true := by
   decide
@@ -717,6 +1168,7 @@ theorem split_field_halves_are_the_gadgets_own :
       decide (xhatScalar i = prevWordVal (xhatWordOf i) / 2)) = true := by
   decide
 
+set_option maxRecDepth 1000000 in
 /-- ⚑ **THE SCALARS MOVED.** The red control for `w9_prev`, kept for the same reason
 `xhat_derived_is_not_the_old_fixture` keeps `RC_XHAT`: the value the MSM used to consume, exhibited
 rather than merely asserted to be gone. `wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i` was §15c's filler.
@@ -724,7 +1176,9 @@ rather than merely asserted to be gone. `wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i`
 ⚠ **THE HONEST COUNT IS 63 OF 67, NOT 67 OF 67**, and the residue is not a hole: a one-bit entry has
 two possible values, so four of the twelve `Cond_add` scalars coincide with the old filler by
 arithmetic and not by inheritance. Every entry the MSM runs a LADDER over — all **55** — moved.
-Quoting 67 here would be the flattering number of a pair. -/
+Quoting 67 here would be the flattering number of a pair.
+
+⚠ The depth budget is §15c″'s, exactly as in `xhat_scalars_fit_their_widths`. -/
 theorem xhat_scalars_are_not_the_old_per_entry_fixture :
     ((List.range XHAT_TERMS_FULL).filter (fun i =>
       xhatScalar i != wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 63
@@ -742,6 +1196,98 @@ theorem prev_should_finalize_words_are_bits :
   ∧ prevWordVal PREV_SHOULD_FINALIZE ≠ prevWordVal (PREV_PER_PROOF_WORDS + PREV_SHOULD_FINALIZE)
   ∧ ((List.range PREV_WORDS).filter (fun w => prevWordWidth w == WQ_BOOL)).length = XHAT_PREVS := by
   decide
+
+/-! ### §19c — the pins on this value layer, as NAMED THEOREMS. -/
+
+/-- ⚑ **`ENDO_BASE_Q` IS THE CURVE ENDOMORPHISM, AND IT IS NOT `ENDO_Q`.**
+
+  * it is a NONTRIVIAL cube root of unity in `Fq` — the property `endo_base` HAS
+    (`poly-commitment/src/ipa.rs:64-80`, `mina_poseidon::sponge::endo_coefficient`), checked;
+  * it is `(sqrt(−3) − 1)/2`, i.e. the group map's own `sqrt_neg_three_u_squared_minus_u_over_2`,
+    arrived at by a construction that never mentions an endomorphism;
+  * and it is NOT `Pallas.endo_scalar ()`, the Fq element `to_field_checked` lifts by
+    (`KimchiWrapMain.ENDO_Q`). Two Fq constants, two different jobs, one file. -/
+theorem endo_base_q_is_the_curve_endomorphism :
+    qMul (qMul ENDO_BASE_Q ENDO_BASE_Q) ENDO_BASE_Q = 1
+    ∧ ENDO_BASE_Q ≠ 1
+    ∧ ENDO_BASE_Q = BWQ_SQ3_MU2
+    ∧ ENDO_BASE_Q
+        ≠ 26005156700822196841419187675678338661165322343552424574062261873906994770353 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **THE Bw19 PARAMS ARE THE FIELD CONSTRUCTION, NOT A COPY OF THE STEP SIDE'S.**
+`bw19.ml:52-62` is `sqrt(−3u²)`, `(that − u)/2` and `1/(3u²)`; each is checked here by its DEFINING
+equation rather than against a transcription. ⚑ The last conjunct is the one that would catch the
+copy-paste: `Fp`'s `sqrt_neg_three_u_squared` is a different number, and reduced mod `q` it is not a
+square root of `−3`. -/
+theorem bwq_params_are_the_field_construction :
+    qMul BWQ_SQ3 BWQ_SQ3 = qSub 0 3
+    ∧ qAdd (qMul 2 BWQ_SQ3_MU2) BWQ_U = BWQ_SQ3
+    ∧ qMul 3 BWQ_INV3U2 = 1
+    ∧ BWQ_FU = qAdd (qMul BWQ_U (qMul BWQ_U BWQ_U)) VESTA_B
+    ∧ qMul 17006931536212783554987228065028097629383328157457783420645920607630467569011
+           17006931536212783554987228065028097629383328157457783420645920607630467569011
+        ≠ qSub 0 3 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- `FQ_NONRES` is the first non-square from 2 up (`checked_map.ml:5-9`), and `FQ_S`/`FQ_M` are
+`Fq`'s real two-adic decomposition — the two facts Tonelli–Shanks is wrong without. -/
+theorem fq_nonresidue_is_the_first_non_square :
+    qIsSquare 2 = true ∧ qIsSquare 3 = true ∧ qIsSquare 4 = true
+    ∧ qIsSquare FQ_NONRES = false
+    ∧ 2 ^ FQ_S * FQ_M = Dregg2.Circuit.Emit.PastaField.qN - 1 ∧ FQ_M % 2 = 1 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ `group_map`'s output is ON VESTA, and the ladder seed is the DOUBLED endo sum rather than the
+plain doubling. Both on a real value: `RC_DIGEST`-scale input is out of the kernel's reach, so this
+runs on a small one and the emitter's own values are checked by the harness. -/
+theorem gmap_fq_lands_on_vesta :
+    onCurveQ (gmapFq 7) = true
+    ∧ onCurveQ (gmapFq 12345) = true
+    ∧ qMul (gmapFq 7).2 (gmapFq 7).2
+        = qAdd (qMul (gmapFq 7).1 (qMul (gmapFq 7).1 (gmapFq 7).1)) VESTA_B := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-- ⚑ **`2(t + φ(t))` IS NOT `2t`** — the seed defect the step side paid for, refuted here on the
+Vesta generator rather than described. `φ(t)` keeps `t`'s ordinate and scales only the abscissa. -/
+theorem endo_seed_is_the_doubled_endo_sum :
+    endoImgQ (xhatBase 0) = (qMul ENDO_BASE_Q (xhatBase 0).1, (xhatBase 0).2)
+    ∧ endoSeedQ (xhatBase 0) ≠ dblAQ (xhatBase 0)
+    ∧ endoSeedQ (xhatBase 0) = dblAQ (addAQ (xhatBase 0) (endoImgQ (xhatBase 0)))
+    ∧ onCurveQ (endoImgQ (xhatBase 0)) = true
+    ∧ onCurveQ (endoSeedQ (xhatBase 0)) = true := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- The ladder's shape: 32 blocks, 33 accumulator points, and a counter chain that ENDS at the
+scalar — which is what `Field.Assert.equal !n_acc scalar` (`scalar_challenge.ml:305`) makes the
+emitter wire as a σ class rather than as a row. -/
+theorem endo_ladder_counter_reconstructs_the_scalar :
+    ENDO_BLOCKS = 32
+    ∧ (runEndoQ (xhatBase 0) 12345).ns.getLastD 0 = 12345
+    ∧ (runEndoQ (xhatBase 0) 12345).accs.length = ENDO_BLOCKS + 1
+    ∧ (runEndoQ (xhatBase 0) 12345).blks.length = ENDO_BLOCKS
+    ∧ (endoBitsOfQ 12345).length = 4 * ENDO_BLOCKS := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+
+/-- ⚑ **THE LADDER AND ITS INVERSE, ON THE SAME POINT** — the one check that ties `ENDO_BASE_Q`
+(an Fq BASE-field constant, used by the `EndoMul` gate) to `ENDO_SCALAR_FP` (an Fp SCALAR-field
+constant, used by the witness generator). Get either wrong, or confuse `Step_inner_curve` with
+`Wrap_inner_curve`, and `endo_inv`'s two `Field.Assert.equal` cannot be satisfied — which is the
+failure §13 records as the `MinaWrapFtEval0Weld` defect, in the direction nothing had tested. -/
+theorem endo_inv_is_the_ladders_inverse :
+    endoOutQ (endoInvPtQ (lrPointQ 0) 12345) 12345 = lrPointQ 0
+    ∧ onCurveQ (lrPointQ 0) = true
+    ∧ onCurveQ (endoInvPtQ (lrPointQ 0) 12345) = true
+    ∧ onCurveQ deltaPointQ = true := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- …and `Scalar_challenge.endo` IS scalar multiplication by `to_field_constant`, which is what
+makes the inverse above the right object rather than a coincidence at one point. -/
+theorem endo_ladder_is_scalar_multiplication :
+    endoOutQ (lrPointQ 1) 12345 = vestaScMul (toFieldConstantFp 12345) (lrPointQ 1)
+    ∧ ENDO_SCALAR_FP ≠ ENDO_BASE_Q := by
+  refine ⟨?_, ?_⟩ <;> decide
 
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMainField
 
