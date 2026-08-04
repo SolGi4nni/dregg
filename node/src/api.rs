@@ -129,6 +129,60 @@ pub struct StatusResponse {
     pub producer_covered_effects: usize,
 }
 
+/// Public, redacted projection of one validated durable PoA Signal head.
+///
+/// The exact config and Canon images are deliberately not returned: the Canon
+/// carries player/activity state, and a status route does not need the complete
+/// authority-bearing payload.  The durable head digest remains enough to name
+/// the exact stored object.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PoaSignalHeadViewV1 {
+    pub head_digest: String,
+    pub deployment_digest: String,
+    pub transition_count: u64,
+    pub world_sequence: u64,
+    pub canon_revision: u64,
+    pub last_transition_digest: String,
+}
+
+/// Honest status for the PoA Signal authority attached to this node's exact
+/// federation.  `installed` means only that a structurally validated durable
+/// genesis/head exists; this endpoint supplies no quorum or finality proof.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PoaSignalStatusResponseV1 {
+    pub format: &'static str,
+    pub authority_id: String,
+    pub federation_id: String,
+    pub installed: bool,
+    pub head: Option<PoaSignalHeadViewV1>,
+    pub consensus_finality: &'static str,
+}
+
+/// Redacted public cross-reference for one validated durable PoA Signal
+/// transition and its carrying turn/receipt.
+///
+/// Judge wires and predecessor/successor Canon images are intentionally
+/// omitted.  The receipt hash is a durable cross-reference, not a claim that
+/// this response contains a quorum-finality certificate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PoaSignalTransitionViewV1 {
+    pub format: &'static str,
+    pub authority_id: String,
+    pub federation_id: String,
+    pub sequence: u64,
+    pub observed_head_transition_count: u64,
+    pub is_observed_head_transition: bool,
+    pub commit_ordinal: u64,
+    pub turn_hash: String,
+    pub receipt_hash: String,
+    pub predecessor_head_digest: String,
+    pub successor_head_digest: String,
+    pub transition_digest: String,
+    pub judge_input_digest: String,
+    pub judge_output_digest: String,
+    pub consensus_finality: &'static str,
+}
+
 /// Response from `GET /api/node/producer` — the honest verified-execution
 /// surface (THE SWAP boundary). Tells a client EXACTLY which state producer
 /// runs the commit path and, when the verified Lean producer is enabled, which
@@ -1951,6 +2005,17 @@ pub fn router_with_cors(
         .route("/health", get(get_status))
         .route("/api/node/producer", get(get_producer_status))
         .route("/api/node/identity", get(get_node_identity))
+        // Public, read-only PoA Signal observability.  The authority path
+        // component must name this node's exact configured federation; these
+        // routes never enumerate authorities or return Canon/judge bytes.
+        .route(
+            "/api/poa/signal/{authority}/status",
+            get(get_poa_signal_status),
+        )
+        .route(
+            "/api/poa/signal/{authority}/transitions/{sequence}",
+            get(get_poa_signal_transition),
+        )
         .route("/federation/roots", get(get_federation_roots))
         // The ATTESTED-ROOTS surface under its own honest name. `/api/blocks`
         // used to point here too, so a client asking a node for its blocks got
@@ -2523,6 +2588,148 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         producer_root_agreeing_effects,
         producer_covered_effects: producer_root_agreeing_effects,
     })
+}
+
+const POA_SIGNAL_STATUS_FORMAT_V1: &str = "POA-SIGNAL-STATUS-1";
+const POA_SIGNAL_TRANSITION_VIEW_FORMAT_V1: &str = "POA-SIGNAL-TRANSITION-VIEW-1";
+const POA_SIGNAL_VIEW_FINALITY_CLAIM: &str = "not_asserted_by_this_view";
+
+/// Decode a canonical, positive decimal PoA transition coordinate.
+///
+/// The 20-byte ceiling is the decimal width of `u64`; rejecting leading zeroes
+/// gives each stored transition one URL and keeps attacker-controlled path work
+/// constant.  This is only a lookup coordinate, never a game-state value.
+fn parse_poa_signal_sequence(sequence: &str) -> Result<u64, StatusCode> {
+    if sequence.is_empty()
+        || sequence.len() > 20
+        || !sequence.bytes().all(|byte| byte.is_ascii_digit())
+        || (sequence.len() > 1 && sequence.starts_with('0'))
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let sequence = sequence
+        .parse::<u64>()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if sequence == 0 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok(sequence)
+}
+
+/// Select the only PoA Signal authority this node is entitled to serve.
+///
+/// A path cannot be used to probe arbitrary authority rows in the shared store:
+/// the exact 32-byte selector must equal the node's canonical configured
+/// federation id.  Discovery-mode nodes have no such authority and return 503.
+fn select_local_poa_signal_authority(
+    authority: [u8; 32],
+    federation_configured: bool,
+    federation_id: [u8; 32],
+) -> Result<[u8; 32], StatusCode> {
+    if !federation_configured {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    if authority != federation_id {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok(authority)
+}
+
+fn poa_signal_head_view(head: &dregg_persist::PoaSignalHeadV1) -> PoaSignalHeadViewV1 {
+    PoaSignalHeadViewV1 {
+        head_digest: hex_encode(&head.digest()),
+        deployment_digest: hex_encode(&head.deployment_digest()),
+        transition_count: head.transition_count(),
+        world_sequence: head.world_sequence(),
+        canon_revision: head.canon_revision(),
+        last_transition_digest: hex_encode(&head.last_transition_digest()),
+    }
+}
+
+/// `GET /api/poa/signal/{authority}/status`.
+///
+/// Returns `200` with `installed:false` when the configured federation has not
+/// run the PoA genesis ceremony.  A present head has already passed the store's
+/// strict decode/seal/key validation.  The endpoint is observational: it calls
+/// no audit, repair, index-sync, or initialization method.
+async fn get_poa_signal_status(
+    AxumPath(authority): AxumPath<String>,
+    State(state): State<NodeState>,
+) -> Result<Json<PoaSignalStatusResponseV1>, StatusCode> {
+    // Parse the fixed-width input before acquiring the shared state lock.
+    let requested = hex_decode(&authority).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let s = state.read().await;
+    let authority_id =
+        select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
+    let head = s
+        .store
+        .load_poa_signal_head(authority_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let normalized_authority = hex_encode(&authority_id);
+    Ok(Json(PoaSignalStatusResponseV1 {
+        format: POA_SIGNAL_STATUS_FORMAT_V1,
+        authority_id: normalized_authority.clone(),
+        federation_id: normalized_authority,
+        installed: head.is_some(),
+        head: head.as_ref().map(poa_signal_head_view),
+        consensus_finality: POA_SIGNAL_VIEW_FINALITY_CLAIM,
+    }))
+}
+
+/// `GET /api/poa/signal/{authority}/transitions/{sequence}`.
+///
+/// The returned record is the store-validated immutable transition envelope.
+/// It exposes only stable digests and the carrying commit/turn/receipt
+/// coordinates.  In particular it returns neither Canon/config bytes nor judge
+/// input/output, and it makes no quorum-finality claim.
+async fn get_poa_signal_transition(
+    AxumPath((authority, sequence)): AxumPath<(String, String)>,
+    State(state): State<NodeState>,
+) -> Result<Json<PoaSignalTransitionViewV1>, StatusCode> {
+    let sequence = parse_poa_signal_sequence(&sequence)?;
+    let requested = hex_decode(&authority).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let s = state.read().await;
+    let authority_id =
+        select_local_poa_signal_authority(requested, s.federation_configured, s.federation_id)?;
+    let head = s
+        .store
+        .load_poa_signal_head(authority_id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if sequence > head.transition_count() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let transition = s
+        .store
+        .load_poa_signal_transition(authority_id, sequence)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    // The latest transition must land on the current head.  Boot audit already
+    // checks the complete chain, but retaining this O(1) cross-row check means
+    // a live corruption/race cannot be presented as a coherent current view.
+    if sequence == head.transition_count() && transition.successor_head_digest() != head.digest() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    let normalized_authority = hex_encode(&authority_id);
+    Ok(Json(PoaSignalTransitionViewV1 {
+        format: POA_SIGNAL_TRANSITION_VIEW_FORMAT_V1,
+        authority_id: normalized_authority.clone(),
+        federation_id: normalized_authority,
+        sequence: transition.sequence(),
+        observed_head_transition_count: head.transition_count(),
+        is_observed_head_transition: sequence == head.transition_count(),
+        commit_ordinal: transition.commit_ordinal(),
+        turn_hash: hex_encode(&transition.turn_hash()),
+        receipt_hash: hex_encode(&transition.receipt_hash()),
+        predecessor_head_digest: hex_encode(&transition.predecessor_head_digest()),
+        successor_head_digest: hex_encode(&transition.successor_head_digest()),
+        transition_digest: hex_encode(&transition.transition_digest()),
+        judge_input_digest: hex_encode(&transition.judge_input_digest()),
+        judge_output_digest: hex_encode(&transition.judge_output_digest()),
+        consensus_finality: POA_SIGNAL_VIEW_FINALITY_CLAIM,
+    }))
 }
 
 /// GET /api/node/producer — the honest THE-SWAP verified-execution boundary.
@@ -9439,6 +9646,236 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    const TEST_POA_AUTHORITY: [u8; 32] = [0x41; 32];
+
+    async fn configure_test_poa_authority(state: &NodeState) {
+        let mut s = state.write().await;
+        s.federation_id = TEST_POA_AUTHORITY;
+        s.federation_configured = true;
+    }
+
+    async fn get_json(app: &Router, uri: &str) -> (StatusCode, serde_json::Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let json = if body.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&body).expect("JSON response")
+        };
+        (status, json)
+    }
+
+    fn test_poa_genesis() -> dregg_persist::PoaSignalHeadV1 {
+        dregg_persist::PoaSignalHeadV1::genesis(
+            TEST_POA_AUTHORITY,
+            [0xd1; 32],
+            7,
+            11,
+            br#"{"config":"private-test-config"}"#.to_vec(),
+            br#"{"canon":"private-test-canon"}"#.to_vec(),
+        )
+        .expect("test PoA genesis")
+    }
+
+    async fn install_test_poa_transition(state: &NodeState) -> ([u8; 32], [u8; 32]) {
+        let s = state.write().await;
+        let genesis = test_poa_genesis();
+        s.store
+            .initialize_poa_signal_head(&genesis)
+            .expect("initialize test PoA authority");
+        let candidate = dregg_persist::PreparedPoaSignalTransitionV1::new(
+            TEST_POA_AUTHORITY,
+            genesis.digest(),
+            genesis.world_sequence() + 1,
+            genesis.canon_revision() + 1,
+            br#"{"canon":"private-test-successor"}"#.to_vec(),
+            br#"{"judgeInput":"private-test-input"}"#.to_vec(),
+            br#"{"judgeOutput":"private-test-output"}"#.to_vec(),
+        )
+        .expect("test PoA transition candidate");
+        let ledger_root = crate::blocklace_sync::canonical_ledger_root(&s.ledger);
+        let turn_hash = [0x51; 32];
+        let receipt_hash = [0x71; 32];
+        let record = dregg_persist::CommitRecord {
+            ordinal: 0,
+            height: 1,
+            block_id: [0x31; 32],
+            block_executed_up_to: 1,
+            turn_hash,
+            creator: [0x61; 32],
+            receipt_hash,
+            ledger_root,
+            touched_cells: Vec::new(),
+            removed: Vec::new(),
+        };
+        s.store
+            .commit_finalized_turn_with_poa_signal(0, &record, &candidate)
+            .expect("atomically commit test PoA transition");
+        (turn_hash, receipt_hash)
+    }
+
+    #[test]
+    fn poa_signal_sequence_selector_is_positive_canonical_and_bounded() {
+        assert_eq!(parse_poa_signal_sequence("1"), Ok(1));
+        assert_eq!(
+            parse_poa_signal_sequence("18446744073709551615"),
+            Ok(u64::MAX)
+        );
+        for invalid in [
+            "",
+            "0",
+            "01",
+            "+1",
+            "-1",
+            "one",
+            "18446744073709551616",
+            "100000000000000000000",
+        ] {
+            assert_eq!(
+                parse_poa_signal_sequence(invalid),
+                Err(StatusCode::BAD_REQUEST),
+                "selector {invalid:?} must refuse"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn poa_signal_public_status_is_exact_and_honest_before_genesis() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        configure_test_poa_authority(&state).await;
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+        let authority = hex_encode(&TEST_POA_AUTHORITY);
+
+        let (status, body) = get_json(&app, &format!("/api/poa/signal/{authority}/status")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["format"], POA_SIGNAL_STATUS_FORMAT_V1);
+        assert_eq!(body["authority_id"], authority);
+        assert_eq!(body["federation_id"], authority);
+        assert_eq!(body["installed"], false);
+        assert!(body["head"].is_null());
+        assert_eq!(body["consensus_finality"], POA_SIGNAL_VIEW_FINALITY_CLAIM);
+
+        let wrong = hex_encode(&[0x42; 32]);
+        for path in [
+            "/api/poa/signal/not-hex/status".to_string(),
+            format!("/api/poa/signal/{wrong}/status"),
+            format!("/api/poa/signal/{authority}/transitions/0"),
+            format!("/api/poa/signal/{authority}/transitions/01"),
+            format!("/api/poa/signal/{authority}/transitions/not-a-sequence"),
+        ] {
+            let (status, _) = get_json(&app, &path).await;
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "invalid selector must refuse: {path}"
+            );
+        }
+
+        let (status, _) =
+            get_json(&app, &format!("/api/poa/signal/{authority}/transitions/1")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn poa_signal_public_head_and_receipt_view_survive_reopen_without_private_bytes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        configure_test_poa_authority(&state).await;
+        let (turn_hash, receipt_hash) = install_test_poa_transition(&state).await;
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state.clone(), false, recorder.handle());
+        let authority = hex_encode(&TEST_POA_AUTHORITY);
+
+        let assert_current_view =
+            |status_body: &serde_json::Value, transition_body: &serde_json::Value| {
+                assert_eq!(status_body["installed"], true);
+                assert_eq!(status_body["head"]["transition_count"], 1);
+                assert_eq!(status_body["head"]["world_sequence"], 8);
+                assert_eq!(status_body["head"]["canon_revision"], 12);
+                assert_eq!(
+                    status_body["consensus_finality"],
+                    POA_SIGNAL_VIEW_FINALITY_CLAIM
+                );
+
+                assert_eq!(
+                    transition_body["format"],
+                    POA_SIGNAL_TRANSITION_VIEW_FORMAT_V1
+                );
+                assert_eq!(transition_body["authority_id"], authority);
+                assert_eq!(transition_body["federation_id"], authority);
+                assert_eq!(transition_body["sequence"], 1);
+                assert_eq!(transition_body["observed_head_transition_count"], 1);
+                assert_eq!(transition_body["is_observed_head_transition"], true);
+                assert_eq!(transition_body["commit_ordinal"], 0);
+                assert_eq!(transition_body["turn_hash"], hex_encode(&turn_hash));
+                assert_eq!(transition_body["receipt_hash"], hex_encode(&receipt_hash));
+                assert_eq!(
+                    transition_body["consensus_finality"],
+                    POA_SIGNAL_VIEW_FINALITY_CLAIM
+                );
+
+                let status_object = status_body.as_object().expect("status object");
+                let head_object = status_body["head"].as_object().expect("head object");
+                let transition_object = transition_body.as_object().expect("transition object");
+                for private_field in ["config", "canon", "judge_input", "judge_output"] {
+                    assert!(!status_object.contains_key(private_field));
+                    assert!(!head_object.contains_key(private_field));
+                    assert!(!transition_object.contains_key(private_field));
+                }
+            };
+
+        let (status_code, status_body) =
+            get_json(&app, &format!("/api/poa/signal/{authority}/status")).await;
+        let (transition_status, transition_body) =
+            get_json(&app, &format!("/api/poa/signal/{authority}/transitions/1")).await;
+        assert_eq!(status_code, StatusCode::OK);
+        assert_eq!(transition_status, StatusCode::OK);
+        assert_current_view(&status_body, &transition_body);
+
+        let (missing_status, _) =
+            get_json(&app, &format!("/api/poa/signal/{authority}/transitions/2")).await;
+        assert_eq!(missing_status, StatusCode::NOT_FOUND);
+
+        // Drop every handle to the first NodeState, reopen the same redb, then
+        // reapply the federation identity as normal startup does from genesis.
+        drop(app);
+        drop(state);
+        let reopened = NodeState::new(tmp.path(), vec![]).expect("reopened node state");
+        configure_test_poa_authority(&reopened).await;
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let reopened_app = router(reopened, false, recorder.handle());
+        let (status_code, reopened_status) = get_json(
+            &reopened_app,
+            &format!("/api/poa/signal/{authority}/status"),
+        )
+        .await;
+        let (transition_code, reopened_transition) = get_json(
+            &reopened_app,
+            &format!("/api/poa/signal/{authority}/transitions/1"),
+        )
+        .await;
+        assert_eq!(status_code, StatusCode::OK);
+        assert_eq!(transition_code, StatusCode::OK);
+        assert_current_view(&reopened_status, &reopened_transition);
+    }
+
     // THE TOOTH — the async-attestation gate's variant coverage, WILDCARD-FREE.
     //
     // The gate ([`super::http_attestation_coverage`]) used to be a hand-rolled
