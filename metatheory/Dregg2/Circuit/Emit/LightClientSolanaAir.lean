@@ -205,9 +205,11 @@ table fold into `ANCHOR_ROOT`).
 `airAccepts` reads the emitted gate bodies as ℤ equalities and the limb lookups as ℤ intervals. For the
 CHAIN gates that bridge is DISCHARGED rather than named — but ⚠ **at THIS AIR's constants, not by
 citing a sibling's**. `LimbTally.rung_no_alias_at_deployed_constants` is stated at `α = 3, β = 2,
-γ = 1` (Tendermint's STRICT threshold); neither of Solana's chains has those constants. So the two
-instances are proved here, from the parametric `LimbTally.rung_value_bounds`:
-`sol_qdiff_rung_no_alias` (`α = 3, β = 2, γ = 0`) and `sol_tpos_rung_no_alias` (`α = 1, β = 0,
+γ = 1`; ⚑ since the strictness repair the QUORUM chain has exactly those constants (the FLOOR, at
+`α = 1, β = 0`, still does not). Both instances are nevertheless proved here from the parametric
+`LimbTally.rung_value_bounds` rather than by citing the sibling — a local claim proved locally cannot
+silently follow a sibling's constants if either drifts:
+`sol_qdiff_rung_no_alias` (`α = 3, β = 2, γ = 1`) and `sol_tpos_rung_no_alias` (`α = 1, β = 0,
 γ = 1`). Each bounds every rung gate's ℤ value, on any assignment respecting the DECLARED ranges,
 strictly inside `(−p, p)` — so `body ≡ 0 (mod p)` IS `body = 0` over ℤ there, and §3's recomposition
 transfers to the deployed denotation. `LimbTally.rung_alias_reachable_at_24_bits` exhibits a reachable
@@ -660,8 +662,8 @@ theorem sol_live_active_stake_does_not_fit_a_felt :
   refine ⟨?_, ?_⟩ <;>
     norm_num [Dregg2.Circuit.RangeFieldContainment.babybear_modulus]
 
-/-- ⚑ **THE QUORUM REFUSAL NO LONGER MENTIONS THE FIELD.** If the true tallies fail the non-strict
-`≥ 2/3` threshold, NO assignment satisfies the emitted quorum chain together with the
+/-- ⚑ **THE QUORUM REFUSAL NO LONGER MENTIONS THE FIELD.** If the true tallies fail the STRICT
+`> 2/3` threshold, NO assignment satisfies the emitted quorum chain together with the
 difference-limb containment — for EVERY limb width, including the widths at which the old single-felt
 tooth was vacuous (`≥ 31`) and the width at which it was merely leaky (30). -/
 theorem sol_quorum_refusal_is_field_independent (a : Assignment) (bits : Nat)
@@ -735,13 +737,15 @@ theorem sol_tpos_reads_the_quorum_denominator :
 /-! ### ⚑ §3d — the mod-`p` ↔ `ℤ` bridge, DISCHARGED AT **THESE** CONSTANTS.
 
 ⚠ `LimbTally.rung_no_alias_at_deployed_constants` is stated at `α = 3, β = 2, γ = 1` — CometBFT's
-STRICT supermajority. **Neither of Solana's two chains has those constants** (the quorum is non-strict,
-`γ = 0`; the floor is `α = 1, β = 0`). Citing it here would be a claim about a sibling AIR's gates, so
-the two instances this descriptor actually emits are proved below from the PARAMETRIC
-`LimbTally.rung_value_bounds`.
+STRICT supermajority, which ⚑ since the strictness repair is ALSO Solana's quorum. The floor chain
+(`α = 1, β = 0`) still has its own constants, and both instances are proved below from the PARAMETRIC
+`LimbTally.rung_value_bounds` rather than by citation: a local claim proved locally cannot silently
+follow a sibling's constants if either drifts.
 
 Both intervals are far inside the field, and the numbers are worth reading rather than taking on the
-word "inside": the quorum rung's ℤ image sits in `(−16973952, 8585472)` and the floor rung's in
+word "inside": the quorum rung's ℤ image sits in `(−16973953, 8585472)` — one wider at the bottom than
+at `γ = 0`, since `γ` enters the lower bound as `−(β·2^bits + γ + coff + 2^bits + 2^carryBits·2^bits)`
+— and the floor rung's in
 `(−16842881, 8454400)`, against `p = 2013265921`. So a body that is `0 mod p` on a range-respecting
 assignment IS `0` over `ℤ`, and `LimbTally.chain_recomposes` transfers to the deployed denotation. -/
 
