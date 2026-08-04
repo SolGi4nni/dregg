@@ -41,20 +41,34 @@ so a rung evaluates only the families it returns. The emitted list is the same T
 over a literal list is left-nested exactly as `a ++ b ++ c` is and `[] ++ a` reduces to `a` — and
 `rungRows_is_a_ladder` states that generally, by `rfl`.
 
-⚠ **A CLAIM IN THIS HEADER IS RETRACTED AS UNRESOLVED, NOT AS TRUE.** It read "three commands here
-name `rowsWrapKey`, so this module pays it three times: ~51 minutes". That is **inconsistent with the
-commit that wrote it**, whose subject records this module GREEN at **1 729 s = 28 min 49 s** — less
-than the ~51 min the sentence predicts, with two more `native_decide`s and a whole `rowsSmXhat` still
-to pay for. And it is inconsistent in the OTHER direction with `KimchiStepProverChoice`'s §C7, which
-states from its own measurement that "sharing of a nullary constant is per COMMAND" and batches
-fourteen claims into one command for exactly that reason. **Both cannot hold**: either a nullary
-`def` is forced once per module elaboration (and §C7's batching bought something else), or it is
-forced per command (and 1 729 s is too small). Neither number is re-measured here and nothing in this
-file depends on the answer.
+## ⚑ THE RETRACTED "~51 MINUTES" CLAIM — SETTLED BY MEASUREMENT 2026-08-03
 
-⚑ The probe that settles it, and it is one command: put `#time`-style `IO.monoMsNow` deltas around
-two commands that name the same nullary `def` in a scratch module and read the second one's cost.
-Step side's twin of this class was `tOps`; see `KimchiStepProverChoice`'s §C7 note.
+The header used to say "three commands here name `rowsWrapKey`, so this module pays it three times:
+~51 minutes", then retracted it AS UNRESOLVED because it contradicted the commit that wrote it (which
+records this module GREEN at **1 729 s = 28 min 49 s**, LESS than ~51 min, with two more
+`native_decide`s and a whole `rowsSmXhat` still unpaid) while `KimchiStepProverChoice`'s §C7 asserted
+the opposite mechanism from its own measurement. It named the settling probe and never ran it.
+
+**IT HAS NOW BEEN RUN** (`wip/NullaryShareProbe.lean`, the probe this header specified). A nullary
+`def` costing ~580 ms, named by four separate commands in one module:
+
+    command 1 — first mention of `bigThing`              582 ms
+    command 2 — SAME nullary, second command             583 ms
+    command 3 — same nullary, different expression       580 ms
+    command 4 — a DIFFERENT nullary, same cost (control) 580 ms
+
+⚑ **SHARING OF A NULLARY IS PER COMMAND. There is no cross-command sharing at all** — command 2 pays
+in full, and it pays what an unrelated nullary of the same size pays. So §C7 is RIGHT, its batching of
+fourteen claims into one command bought exactly what it says, and the MECHANISM half of the retracted
+sentence was right too: `rowsWrapKey` is named by three commands below and is evaluated three times.
+
+⚠ **What was wrong was the 1 729 s, not the multiplier.** With the mechanism measured, the two
+numbers cannot describe the same module state: 3 × 16 min 55 s does not fit inside 28 min 49 s.
+`1 729 s` and `1 014 740 ms` were recorded against different trees, and neither is re-derivable now.
+**Do not cite either as this module's cost.** ⚑ And the question is largely moot since the
+`rungOwn`/`rungsUpto` rewrite: `rowsWrapKey = rungRows tWrap .key true` now evaluates only the five
+families the `.key` branch returns, which the paragraph above prices at 115 ms between them, instead
+of all eight.
 -/
 import Dregg2.Circuit.Emit.KimchiWrapMain
 
