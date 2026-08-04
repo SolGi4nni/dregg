@@ -529,130 +529,8 @@ def whSg : Nat × Nat := (wrapFixtureQ 43 0, wrapFixtureQ 43 1)
 `wrap_main.ml:421-431` `Field.Assert.equal`s. -/
 def whCloseDigest : Nat := whDigestOf whNewChals whSg
 
-/-! ### §15c‴ — ⚑ **W-FINALIZE's DEFERRED `perm`, ON THE VALUE SIDE** (`wrap_main.ml:258-338`,
-`plonk_checks.ml:476-500`).
-
-A THIRD packed statement word is not free, and finding that out cost a rung. `finalize_other_proof`
-DERIVES the permutation scalar and `Field.equal`s it against the block's own deferred word 4; the
-result is `finalized`, and `wrap_main.ml:335` then asserts
-`Boolean.(Assert.any [finalized; not should_finalize])`, emitted verbatim as
-`(1 − finalized)·should_finalize = 0`.
-
-⚑ **SO A BLOCK THAT CLAIMS `should_finalize` MUST CARRY THE DERIVED `perm`, AND THAT IS UPSTREAM'S
-SEMANTICS RATHER THAN A CONCESSION TO THE FIXTURE.** §15c′ makes the 57 words a named fixture
-because `exists ~request:Req.Proof_state` is a free witness upstream — true of 54 of them. It is not
-true of 55 and 56 (§15c″ computes them) and it is not true of word `27·p + 4` for any block whose
-word `27·p + 26` is 1. `prevWordVal` answered with the `a^9` mixer there, the difference was nonzero,
-and `w10_finalize` was UNSATISFIABLE at block 1 — refused by the prover, exactly as a previous proof
-with a bent deferred value is refused at source.
-
-⚠ **WHICH BLOCKS ARE DERIVED IS A CHOICE, AND BOTH BRANCHES ARE EXERCISED ON PURPOSE.**
-`prev_should_finalize_is_boolean_constrained` pins that the two blocks' `should_finalize` words
-DIFFER — block 0 is 0, block 1 is 1 — so overriding block 1 alone leaves `Field.equal`'s two
-witnesses both live: block 1 runs `(inv, bit) = (0, 1)` and block 0 runs `(d⁻¹, 0)`. Deriving both
-would delete the second branch and with it the only place the gadget's `d·inv = 1 − bit` row is
-exercised at a nonzero `d`.
-
-The lift, the domain constants and the evaluation fixtures are declared HERE rather than in §19c for
-the same reason §15c″ is: a word's VALUE has to exist before §2's schedule, and §19 is far below it.
-§19 reads them back. -/
-
-/-- ⚑ **`Endo.Step_inner_curve.scalar`** (`endo.ml:16`) — `Pasta_bindings.Pallas.endo_scalar ()`,
-an element of `Backend.Tock.Field = Fq`, and the constant `to_field_checked` scales `a₈` by INSIDE
-THE WRAP CIRCUIT (`wrap_verifier.ml:134,143`). ⚠ It is NOT the step side's
-`Endo.Wrap_inner_curve.scalar`, which is an Fp element; `KimchiWrapMain` §11b pins this against an
-independent module rather than against its own definition. -/
-def ENDO_Q : Nat :=
-  26005156700822196841419187675678338661165322343552424574062261873906994770353
-
-/-- `c(x)` as an `Fq` element (`endomul_scalar.rs:303-309`): `0↦0 1↦0 2↦−1 3↦1`. -/
-def cFuncQ (x : Nat) : Nat := if x == 2 then qN - 1 else if x == 3 then 1 else 0
-/-- `d(x)` as an `Fq` element (`endomul_scalar.rs:311-317`): `0↦−1 1↦1 2↦0 3↦0`. -/
-def dFuncQ (x : Nat) : Nat := if x == 0 then qN - 1 else if x == 1 then 1 else 0
-
-/-- `EndomulScalar` rows per `to_field_checked` chain at the 128-bit width `bits_per_row = 16` gives.
-⚑ It is `WrapShape.emsRows`, hoisted out of the shape because a packed statement WORD may not depend
-on a shape; `both_committed_shapes_carry_the_lift_width` is what makes that a gate rather than an
-assumption, and a shape that moved `emsRows` reds it. -/
-def EMS_ROWS_Q : Nat := 8
-
-/-- The `8·rows` base-4 crumbs of `v`, MSB-first. -/
-def crumbsOfQAt (rows v : Nat) : List Nat :=
-  (List.range (8 * rows)).map (fun j => v / 4 ^ (8 * rows - 1 - j) % 4)
-
-/-- The `(n,a,b)` accumulator triples at every ROW boundary. -/
-def emsAccsQAt (rows v : Nat) : List (Nat × Nat × Nat) :=
-  let all := (crumbsOfQAt rows v).foldl
-    (fun acc x =>
-      let cur := acc.getLastD (0, 2, 2)
-      acc ++ [((4 * cur.1 + x) % qN, (2 * cur.2.1 + cFuncQ x) % qN,
-               (2 * cur.2.2 + dFuncQ x) % qN)])
-    [(0, 2, 2)]
-  (List.range (rows + 1)).map (fun k => all.getD (8 * k) (0, 2, 2))
-
-/-- `a₈·endo + b₈` — `to_field_checked`'s closing line at `ENDO_Q` (`scalar_challenge.ml:124-126`). -/
-def liftValQAt (rows v : Nat) : Nat :=
-  let a := (emsAccsQAt rows v).getD rows (0, 2, 2)
-  qAdd (qMul a.2.1 ENDO_Q) a.2.2
-/-- …and `a₈·endo` alone, the chain's penultimate cell. -/
-def liftTValQAt (rows v : Nat) : Nat :=
-  qMul ((emsAccsQAt rows v).getD rows (0, 2, 2)).2.1 ENDO_Q
-
-/-- ⚑ `Common.wrap_domains ~proofs_verified:1 |>.h` — the wrap evaluation domain is `2^14`, NOT the
-`2^15` `Max_degree.wrap_log2` names. `common.ml:27-31` maps `0 ↦ 13, 1 ↦ 14, 2 ↦ 15`, and the devnet
-wrap index that `MinaRealBlockGate.OMEGA` came off is the `14`. -/
-def FIN_LOG2N : Nat := 14
-/-- The `2^14`-th root of unity of `Fq`, from the real block's verifier index. -/
-def FIN_OMEGA : Nat := 13720502009405270468270247285101677286753189198487843249698478072631298866919
-/-- ⚑ `env.endo_coefficient` is `Endo.Wrap_inner_curve.base = Vesta.endo_base ()` (`endo.ml:5`), the
-BASE endomorphism eigenvalue `5^((q−1)/3)` — **NOT** `ENDO_Q`, which is `Pallas.endo_scalar ()` and
-is what `to_field_checked` lifts by. Two different cube roots in two different roles; §19f pins that
-they differ. -/
-def FIN_ENDO : Nat :=
-  2942865608506852014473558576493638302197734138389222805617480874486368177743
-/-- The seven **Fq** coset shifts of the wrap domain, from the same real verifier index. -/
-def FIN_SHIFTS : List Nat :=
-  [ 1
-  , 328286983623303317637963920346571898945724874896624808297627776768640590563
-  , 220790353665890403705559231885806581221301230221265349993193424985261418438
-  , 211720422259245489258933986578227917398506328781182391541883955346082631533
-  , 211634429328372259348572816867521795029192573698954618296359582461568682420
-  , 317476258975906211462498873025720239242336777696786967497139785505242641540
-  , 99141114743446054294525453467100398765600279346526770105380817318185104545 ]
-/-- `Shifted_value.Type2.Shift = 2^{field size in bits}` (`shifted_value.ml:180-182`), and
-`Field.size_in_bits` for Fq is 255. -/
-def FIN_SHIFT2 : Nat := 2 ^ 255 % qN
-/-- The three `EndomulScalar` quotients `11/6, −5/2, 2/3` over `Fq`, as the CHECKED witnessed
-quotients `6·cA = 11`, `2·cB = −5`, `3·cC = 2` (§19f). -/
-def FIN_CA : Nat :=
-  4824670384888174809315457708695329493893842746990274563279957124732227158018
-def FIN_CB : Nat :=
-  14474011154664524427946373126085988481681528240970823689839871374196681474046
-def FIN_CC : Nat :=
-  9649340769776349618630915417390658987787685493980549126559914249464454316033
-
-/-- The 43 evaluation columns, in `to_absorption_sequence` order: `z`, the six gate selectors, the
-15 witness columns, the 15 coefficient columns, the six σ columns. -/
-def FIN_NCOLS : Nat := 43
-def FIN_IDX_Z : Nat := 0
-def FIN_IDX_SEL : Nat := 1
-def FIN_IDX_W : Nat := 7
-def FIN_IDX_COEFF : Nat := 22
-def FIN_IDX_S : Nat := 37
-/-- `Plonk_types.Permuts_minus_1.n` — the σ evals `ft_eval0` folds over, and the index of the `w_n`
-`ft_eval0` seeds with. -/
-def FIN_PERMUTS1 : Nat := 6
-
-/-- Column `k`'s value at ζ (`j = 0`) / at ζω (`j = 1`) for instance `p` — a NAMED FIXTURE, because
-`exists ~request:Req.Evals` is a free witness upstream and a fixture is the faithful stand-in. -/
-def finColVal (p k j : Nat) : Nat := wrapFixtureQ (40 + 2 * p + j) k
-/-- `evals.public_input.0` — `p(ζ)`, likewise witnessed. -/
-def finPZetaVal (p : Nat) : Nat := wrapFixtureQ (44 + p) 0
-
-/-- Instance `p`'s packed statement word `w` of its own 27-word block. -/
-def finBlockWord (p w : Nat) : Nat := PREV_PER_PROOF_WORDS * p + w
-
-/-- ⚑ **THE MIXER**, i.e. what a word is worth when nothing in the circuit derives it.
+/-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
+free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes; see §15c″.
 
 ⚑ **THE NINTH POWER IS NOT DECORATION, AND THE OLD `/ 7` WAS THE SAME LESSON, MEASURED AGAIN.**
 `wrapFixtureQ 34 w = 11 + 1000003·(578 + w)` never wraps `qN`, so it is a ~29-bit integer whose
@@ -665,62 +543,13 @@ blew `maxRecDepth` outright — and a 254-bit `B Digest` is what a digest actual
 ⚠ Reduction to `prevWordWidth` happens AFTER, so the twenty challenge words are 128-bit and the two
 `B Bool`s are bits. `xhat_cond_add_takes_both_branches` and `xhat_smoke_selection_covers_every_path`
 are the pins that keep it fixed; both go red under the raw mixer. -/
-def prevWordFixture (w : Nat) : Nat :=
-  let a := wrapFixtureQ 34 w
-  let a2 := qMul a a
-  let a4 := qMul a2 a2
-  qMul (qMul a4 a4) a % 2 ^ prevWordWidth w
-
-/-- ⚑ **`Plonk_checks.checked`'s `perm` SCALAR** (`plonk_checks.ml:476-500`), as a value —
-`−(zkp · α²¹ · z(ζω) · β) · Πᵢ₌₀⁵ (γ + β·σᵢ(ζ) + wᵢ(ζ))`, in `finBuild`'s own association.
-
-The four in-circuit inputs it reads are words 6, 7, 8 and 9 of the same block — β and γ RAW, α and ζ
-through `to_field_checked` — and NONE of them is an overridden word, so this is not a recursion:
-it reads `prevWordFixture` and `prevWordVal` reads it. -/
-def finDerivedPerm (p : Nat) : Nat :=
-  let bw := fun w => prevWordFixture (finBlockWord p w)
-  let beta := bw 6
-  let gamma := bw 7
-  let alpha := liftValQAt EMS_ROWS_Q (bw 8)
-  let zeta := liftValQAt EMS_ROWS_Q (bw 9)
-  -- `scalars_env`'s `zk_polynomial` (`plonk_checks.ml:339-355`) — `ω⁻¹` is the program's own
-  -- CHECKED witness (`ω·ω⁻¹ = 1`), so the value layer takes the same inverse.
-  let wi := qInv FIN_OMEGA
-  let w2 := qMul wi wi
-  let w3 := qMul w2 wi
-  let zkp := qMul (qMul (qSub zeta wi) (qSub zeta w2)) (qSub zeta w3)
-  -- α²¹ off the ONE power chain the rung pays for; `perm_alpha0` is `Alpha_pow 21`.
-  let a0 := (List.range 21).foldl (fun acc _ => qMul acc alpha) 1
-  let e1z := finColVal p FIN_IDX_Z 1
-  let pInit := qMul (qMul (qMul e1z beta) a0) zkp
-  let pf := (List.range FIN_PERMUTS1).foldl
-    (fun acc i =>
-      qMul acc
-        (qAdd (qAdd gamma (qMul beta (finColVal p (FIN_IDX_S + i) 0)))
-              (finColVal p (FIN_IDX_W + i) 0)))
-    pInit
-  qSub 0 pf
-
-/-- ⚑ **AND THE STATEMENT WORD THAT MAKES `finalized` TRUE** — the `Shifted_value.Type2` PREIMAGE of
-`finDerivedPerm`, since `to_field` is `x + 2^255` (`shifted_value.ml:180-190`) and W-FINALIZE compares
-`perm` against `word + FIN_SHIFT2`. -/
-def finPermStmt (p : Nat) : Nat := qSub (finDerivedPerm p) FIN_SHIFT2
-
-/-- ⚑ Which block's deferred `perm` is DERIVED rather than witnessed: the one whose
-`should_finalize` word is 1. See §15c‴ — block 0 stays a fixture on purpose, so `Field.equal`'s
-`bit = 0` branch keeps an honest witness at a nonzero difference. -/
-def PREV_FINALIZED_BLOCK : Nat := 1
-
-/-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
-free witness upstream. ⚠ **EXCEPT AT 55 AND 56**, which `wrap_main.ml:340-348` computes (§15c″), AND
-AT WORD `27·PREV_FINALIZED_BLOCK + 4`, which `finalize_other_proof` derives (§15c‴). -/
 def prevWordVal (w : Nat) : Nat :=
   if PREV_MSG_NEXT_STEP < w && w < PREV_WORDS then whPrevDigest (w - PREV_MSG_NEXT_STEP - 1)
-  else if w == finBlockWord PREV_FINALIZED_BLOCK 4 then finPermStmt PREV_FINALIZED_BLOCK
-  else prevWordFixture w
-
-/-- Instance `p`'s packed statement word `w`, as a VALUE. -/
-def finBlockVal (p w : Nat) : Nat := prevWordVal (finBlockWord p w)
+  else
+    let a := wrapFixtureQ 34 w
+    let a2 := qMul a a
+    let a4 := qMul a2 a2
+    qMul (qMul a4 a4) a % 2 ^ prevWordWidth w
 
 /-- ⚑ **ENTRY `i`'s SCALAR — the packed image of a statement word, not a draw of its own.**
 `split_field` (`wrap_main.ml:69-81`) is `y = (x − is_odd)/2`, `is_odd = x mod 2`; every other entry
@@ -1344,12 +1173,17 @@ set_option maxRecDepth 1000000 in
 `xhat_derived_is_not_the_old_fixture` keeps `RC_XHAT`: the value the MSM used to consume, exhibited
 rather than merely asserted to be gone. `wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i` was §15c's filler.
 
-⚠ **THE RESIDUE IS A COINCIDENCE AND THE STATEMENT NOW SAYS SO RATHER THAN COUNTING IT.** A one-bit
-entry has two possible values, so some of the twelve `Cond_add` scalars agree with the old filler by
-arithmetic and not by inheritance. The first two conjuncts are the general facts — **no LADDER entry
-agrees**, and **every entry that agrees is a one-bit one** — and the count is the instance they
-imply, kept because it is the number a reader wants. It moved 63 → 62 when §15c‴ derived word 31 and
-its parity landed on the filler's bit; under the old form that was a red with no content in it.
+⚠ **THE HONEST COUNT IS 63 OF 67, NOT 67 OF 67**, and the residue is not a hole: a one-bit entry has
+two possible values, so four of the twelve `Cond_add` scalars coincide with the old filler by
+arithmetic and not by inheritance. Every entry the MSM runs a LADDER over — all **55** — moved.
+Quoting 67 here would be the flattering number of a pair.
+
+⚑ **THE GENERAL FACTS COME FIRST AND THE COUNT IS THE INSTANCE THEY IMPLY.** The first two conjuncts
+are what this control is actually for — *no ladder entry agrees with the old filler*, and *every
+entry that does agree is a one-bit one* — and neither moves when a packed word's value changes. The
+count does: it was measured at 62 while a candidate repair derived packed word 31, because that
+word's parity landed on the filler's bit. A statement whose only content is a count reds on a
+coincidence and says nothing about what changed.
 
 ⚠ The depth budget is §15c″'s, exactly as in `xhat_scalars_fit_their_widths`. -/
 theorem xhat_scalars_are_not_the_old_per_entry_fixture :
@@ -1359,7 +1193,7 @@ theorem xhat_scalars_are_not_the_old_per_entry_fixture :
       xhatScalar i == wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).all
         (fun i => xhatBits i == WQ_BOOL) = true
   ∧ ((List.range XHAT_TERMS_FULL).filter (fun i =>
-      xhatScalar i != wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 62 := by
+      xhatScalar i != wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 63 := by
   decide
 
 /-- ⚑ …and each `should_finalize` is a REAL bit of the statement, which is what makes `Boolean.typ`'s
@@ -1371,31 +1205,6 @@ theorem prev_should_finalize_words_are_bits :
   ∧ prevWordVal (PREV_PER_PROOF_WORDS + PREV_SHOULD_FINALIZE) < 2
   ∧ prevWordVal PREV_SHOULD_FINALIZE ≠ prevWordVal (PREV_PER_PROOF_WORDS + PREV_SHOULD_FINALIZE)
   ∧ ((List.range PREV_WORDS).filter (fun w => prevWordWidth w == WQ_BOOL)).length = XHAT_PREVS := by
-  decide
-
-/-- ⚑ **`Shifted_value.Type2.to_field` IS WHAT W-FINALIZE COMPARES AGAINST**, so the statement word
-is the derived scalar's PREIMAGE under `x ↦ x + 2^255` (`shifted_value.ml:180-190`) and not the
-scalar itself. Writing the scalar into the word — the obvious near-miss — leaves the equality off by
-`FIN_SHIFT2` and refuses exactly as the old fixture did. -/
-theorem perm_statement_word_is_the_shifted_preimage :
-    qAdd (finPermStmt PREV_FINALIZED_BLOCK) FIN_SHIFT2 = finDerivedPerm PREV_FINALIZED_BLOCK
-  ∧ finPermStmt PREV_FINALIZED_BLOCK ≠ finDerivedPerm PREV_FINALIZED_BLOCK := by
-  decide
-
-/-- ⚑ **THE GATE ON §15c‴, AND IT IS AN IFF RATHER THAN AN OVERRIDE RESTATED.** A block's deferred
-`perm` is the derived preimage **exactly when** that block claims `should_finalize` — which is what
-`Boolean.Assert.any [finalized; not should_finalize]` (`wrap_main.ml:335`) demands and all it
-demands. Block 1 claims it and carries the derived value, so `w10_finalize` has an honest witness;
-block 0 does not claim it and keeps the `a^9` fixture, so `Field.equal`'s `(d⁻¹, 0)` branch stays
-live at a nonzero difference.
-
-It reds three ways, which is the point: if `prev_should_finalize_words_are_bits`' two bits move, if
-`PREV_FINALIZED_BLOCK` stops naming the block that claims it, or if block 0's fixture ever
-coincides with its own derived value. -/
-theorem the_derived_perm_is_exactly_the_block_that_claims_should_finalize :
-    (List.range XHAT_PREVS).all (fun p =>
-      (prevWordVal (finBlockWord p PREV_SHOULD_FINALIZE) == 1)
-        == (prevWordVal (finBlockWord p 4) == finPermStmt p)) = true := by
   decide
 
 /-! ### §19c — the pins on this value layer, as NAMED THEOREMS. -/
