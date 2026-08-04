@@ -93,10 +93,16 @@
 //! deployed ones. The number of GENERATORS PER SLICE is 3, against 8,192 in the full cut. Binding
 //! more of them is `PastaMsmBound`'s axis, not this one.
 
+// ⚑ These descriptors carry 495-bit gate coefficients, so they parse only through the NAMED
+// unsound entry `parse_vm_descriptor2_unsound_oversized` (2026-08-03). A coefficient that does not
+// round-trip a felt means the gate's ℤ-level forcing lemma constrains no proof over it;
+// `pasta_field_felt_soundness.rs::the_deployed_prover_accepts_a_nonzero_integer_body` exhibits an
+// accepted witness with a 2^285 integer body. The felt-sized replacement is
+// `Dregg2.Circuit.Emit.PastaFieldSound` / `dregg-pasta-fpmul-sound::v1`, which parses strict.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, TableSem, parse_vm_descriptor2, prove_vm_descriptors2_batch,
-    verify_vm_descriptors2_batch,
+    EffectVmDescriptor2, TableSem, parse_vm_descriptor2_unsound_oversized,
+    prove_vm_descriptors2_batch, verify_vm_descriptors2_batch,
 };
 // ⚑ THE BUILDER IS THE LIBRARY'S, not this file's. Every trace-assembly helper below used to live
 // here, which is exactly why the Mina opening AIR was reachable from no runtime path at all. It
@@ -220,13 +226,15 @@ fn parse_cut() -> Vec<EffectVmDescriptor2> {
     DERIVE
         .iter()
         .map(|(json, _)| {
-            parse_vm_descriptor2(json).expect("the deployed checker must parse the Lean descriptor")
+            parse_vm_descriptor2_unsound_oversized(json)
+                .expect("the deployed checker must parse the Lean descriptor")
         })
         .collect()
 }
 
 fn parse_block_b() -> EffectVmDescriptor2 {
-    parse_vm_descriptor2(DERIVE_BLOCK_B.0).expect("the deployed checker must parse block B")
+    parse_vm_descriptor2_unsound_oversized(DERIVE_BLOCK_B.0)
+        .expect("the deployed checker must parse block B")
 }
 
 /// Pull the decimal challenge strings out of `{"block":N,"challenges":["…",…]}`.

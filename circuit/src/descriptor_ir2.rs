@@ -1311,7 +1311,28 @@ pub fn parse_vm_descriptor2(json: &str) -> Result<EffectVmDescriptor2, String> {
 /// version 1 (the untouched `emitVmJson` grammar, re-encoded as `AnyVmDescriptor::V1`);
 /// `"ir":2` is the multi-table grammar. Both registries live until the flag-day.
 pub fn parse_vm_descriptor_any(json: &str) -> Result<AnyVmDescriptor, String> {
-    let mut c = JsonCursor::new(json);
+    parse_vm_descriptor_any_with(JsonCursor::new(json))
+}
+
+/// ⚑ **THE UNSOUND-ENCODING ENTRY.** Same parser, but gate coefficients wider than a BabyBear
+/// felt are FOLDED mod the field instead of refused (`JsonCursor::new_unsound_oversized_constants`).
+///
+/// A descriptor that needs this has gate bodies that cannot round-trip a felt, so its ℤ-level
+/// forcing lemmas constrain no proof object over it. `pasta_field_felt_soundness.rs` exhibits the
+/// consequence as an accepted witness with a 2^285 integer body. The sound Pasta multiply
+/// (`dregg-pasta-fpmul-sound::v1`, largest constant 2^23) parses through the STRICT default; this
+/// entry exists only for the 9×30 descriptors that have not been re-emitted, and
+/// `ir2_oversized_constant_escape_is_a_shrinking_list` counts them.
+pub fn parse_vm_descriptor2_unsound_oversized(json: &str) -> Result<EffectVmDescriptor2, String> {
+    match parse_vm_descriptor_any_with(JsonCursor::new_unsound_oversized_constants(json))? {
+        AnyVmDescriptor::V2(d) => Ok(d),
+        AnyVmDescriptor::V1(_) => {
+            Err("descriptor has no \"ir\" key (v1 wire); use parse_vm_descriptor".to_string())
+        }
+    }
+}
+
+fn parse_vm_descriptor_any_with(mut c: JsonCursor<'_>) -> Result<AnyVmDescriptor, String> {
     c.expect(b'{')?;
 
     let mut name: Option<String> = None;

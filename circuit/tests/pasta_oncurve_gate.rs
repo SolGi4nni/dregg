@@ -65,10 +65,13 @@
 //! for `(0,0,0)`, so "`Y` is a unit" IS "this triple is a point". See `PastaMsmOnCurve` §5.2 for
 //! the one hypothesis (cofactor 1) that is a fact about the curve rather than a gate.
 
+// ⚑ This descriptor carries 495-bit gate coefficients, so it parses only through the NAMED
+// unsound entry (2026-08-03). See `ir2_oversized_constant_refusal.rs` for the counted list and
+// `Dregg2.Circuit.Emit.PastaFieldSound` for the felt-sized replacement.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, TableSem, parse_vm_descriptor2, prove_vm_descriptors2_batch,
-    verify_vm_descriptors2_batch,
+    EffectVmDescriptor2, TableSem, parse_vm_descriptor2_unsound_oversized,
+    prove_vm_descriptors2_batch, verify_vm_descriptors2_batch,
 };
 use dregg_circuit::pasta_windowed_witness::{
     COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, COL_OC_ACC, COL_OC_SRC, COL_SRCX, COL_SRCY,
@@ -160,7 +163,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn parse_set(set: &[(&str, &str); 4]) -> Vec<EffectVmDescriptor2> {
     set.iter()
         .map(|(json, _)| {
-            parse_vm_descriptor2(json).expect("the deployed checker must parse the Lean descriptor")
+            parse_vm_descriptor2_unsound_oversized(json)
+                .expect("the deployed checker must parse the Lean descriptor")
         })
         .collect()
 }

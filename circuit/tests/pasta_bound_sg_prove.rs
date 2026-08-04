@@ -77,10 +77,16 @@
 //! gate's hot path on every run. `scripts/regen-pasta-bound.sh` re-derives them from the Lean; the
 //! sha256 pins in `lean_artifacts_are_pinned` are what stops a silent re-emit.
 
+// ⚑ These descriptors carry 495-bit gate coefficients, so they parse only through the NAMED
+// unsound entry `parse_vm_descriptor2_unsound_oversized` (2026-08-03). A coefficient that does not
+// round-trip a felt means the gate's ℤ-level forcing lemma constrains no proof over it;
+// `pasta_field_felt_soundness.rs::the_deployed_prover_accepts_a_nonzero_integer_body` exhibits an
+// accepted witness with a 2^285 integer body. The felt-sized replacement is
+// `Dregg2.Circuit.Emit.PastaFieldSound` / `dregg-pasta-fpmul-sound::v1`, which parses strict.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, TableSem, parse_vm_descriptor2, prove_vm_descriptors2_batch,
-    verify_vm_descriptors2_batch,
+    EffectVmDescriptor2, TableSem, parse_vm_descriptor2_unsound_oversized,
+    prove_vm_descriptors2_batch, verify_vm_descriptors2_batch,
 };
 use dregg_circuit::pasta_windowed_witness::{
     COL_ACCX, COL_BIT, COL_DBL, COL_SRCX, NUM_LIMBS, Pt, RowSpec, TRACE_WIDTH, U256, build_trace,
@@ -170,7 +176,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn parse_set(set: &[(&str, &str); 4]) -> Vec<EffectVmDescriptor2> {
     set.iter()
         .map(|(json, _)| {
-            parse_vm_descriptor2(json).expect("the deployed checker must parse the Lean descriptor")
+            parse_vm_descriptor2_unsound_oversized(json)
+                .expect("the deployed checker must parse the Lean descriptor")
         })
         .collect()
 }

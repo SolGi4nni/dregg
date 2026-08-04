@@ -36,10 +36,16 @@
 //! (`Dregg2.Circuit.Emit.PastaMsmWindowed`); these tests move trace CELLS and ask the deployed
 //! prover and the deployed verifier.
 
+// ⚑ These descriptors carry 495-bit gate coefficients, so they parse only through the NAMED
+// unsound entry `parse_vm_descriptor2_unsound_oversized` (2026-08-03). A coefficient that does not
+// round-trip a felt means the gate's ℤ-level forcing lemma constrains no proof over it;
+// `pasta_field_felt_soundness.rs::the_deployed_prover_accepts_a_nonzero_integer_body` exhibits an
+// accepted witness with a 2^285 integer body. The felt-sized replacement is
+// `Dregg2.Circuit.Emit.PastaFieldSound` / `dregg-pasta-fpmul-sound::v1`, which parses strict.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
-    verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, parse_vm_descriptor2_unsound_oversized,
+    prove_vm_descriptor2, verify_vm_descriptor2,
 };
 
 /// The algebraic-only descriptor: 45 constraints, ZERO lookups. This is the shape p3's debug
@@ -53,7 +59,8 @@ const WIDTH: usize = 525;
 const COL_OUTX: usize = 234;
 
 fn descriptor() -> EffectVmDescriptor2 {
-    parse_vm_descriptor2(DESC_JSON).expect("the deployed checker must parse the Lean descriptor")
+    parse_vm_descriptor2_unsound_oversized(DESC_JSON)
+        .expect("the deployed checker must parse the Lean descriptor")
 }
 
 fn fixture() -> Vec<Vec<BabyBear>> {

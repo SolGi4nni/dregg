@@ -43,10 +43,16 @@
 //! (`windowedRowDesc_columns_in_bounds`) was true, and the deployed checker still could not read
 //! the file: the refusal was one layer BELOW the predicate that had been discharged.
 
+// ⚑ These descriptors carry 495-bit gate coefficients, so they parse only through the NAMED
+// unsound entry `parse_vm_descriptor2_unsound_oversized` (2026-08-03). A coefficient that does not
+// round-trip a felt means the gate's ℤ-level forcing lemma constrains no proof over it;
+// `pasta_field_felt_soundness.rs::the_deployed_prover_accepts_a_nonzero_integer_body` exhibits an
+// accepted witness with a 2^285 integer body. The felt-sized replacement is
+// `Dregg2.Circuit.Emit.PastaFieldSound` / `dregg-pasta-fpmul-sound::v1`, which parses strict.
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
-    verify_vm_descriptor2,
+    EffectVmDescriptor2, MemBoundaryWitness, parse_vm_descriptor2_unsound_oversized,
+    prove_vm_descriptor2, verify_vm_descriptor2,
 };
 use dregg_circuit::pasta_windowed_witness::{
     COL_ACCX, COL_ACCY, COL_ACCZ, COL_BIT, COL_DBL, COL_OUTX, COL_OUTY, COL_OUTZ, Pt, RowSpec,
@@ -83,7 +89,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn descriptor() -> EffectVmDescriptor2 {
-    parse_vm_descriptor2(DESC_JSON).expect("the deployed checker must parse the Lean descriptor")
+    parse_vm_descriptor2_unsound_oversized(DESC_JSON)
+        .expect("the deployed checker must parse the Lean descriptor")
 }
 
 /// Parse a Lean-emitted witness fixture into a base trace.

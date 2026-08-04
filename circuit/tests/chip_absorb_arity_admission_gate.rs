@@ -89,7 +89,7 @@ use std::path::{Path, PathBuf};
 use dregg_circuit::descriptor_ir2::{
     CHIP_RATE, CHIP_TUPLE_LEN, EffectVmDescriptor2, LookupSpec, TID_P2, TID_P2_NARROW,
     TID_P2_STATE16, VmConstraint2, chip_absorb_all_lanes, chip_air_row_accepts,
-    parse_vm_descriptor2,
+    parse_vm_descriptor2, parse_vm_descriptor2_unsound_oversized,
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::LeanExpr;
@@ -280,7 +280,7 @@ fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>, Vec<FoundTable>
                     }
                     continue;
                 }
-                match parse_vm_descriptor2(&text) {
+                match parse_ir2_widest(&text) {
                     Ok(desc) => found.push(Found {
                         origin: rel(root, &p),
                         desc,
@@ -299,7 +299,7 @@ fn collect_descriptors(root: &Path) -> (Vec<Found>, Vec<String>, Vec<FoundTable>
                         if !f.starts_with('{') || !looks_like_ir2(f) {
                             continue;
                         }
-                        match parse_vm_descriptor2(f) {
+                        match parse_ir2_widest(f) {
                             Ok(desc) => found.push(Found {
                                 origin: format!("{}:{}", rel(root, &p), ln + 1),
                                 desc,
@@ -327,6 +327,20 @@ fn looks_like_table_air(head: &str) -> bool {
 struct FoundTable {
     origin: String,
     table: LeanTableAir,
+}
+
+/// ⚑ This gate is about CHIP ARITY, not coefficient width, so it must keep the widest corpus:
+/// strict first, and on the oversized-constant refusal (2026-08-03) retry through the NAMED
+/// unsound entry rather than narrowing itself. The descriptors that need the retry are enumerated
+/// and counted in `ir2_oversized_constant_refusal.rs`; a re-emit on the felt-sized encoding
+/// (`Dregg2.Circuit.Emit.PastaFieldSound`) removes them.
+fn parse_ir2_widest(text: &str) -> Result<EffectVmDescriptor2, String> {
+    match parse_vm_descriptor2(text) {
+        Err(e) if e.contains("does not fit a BabyBear felt") => {
+            parse_vm_descriptor2_unsound_oversized(text)
+        }
+        other => other,
+    }
 }
 
 fn rel(root: &Path, p: &Path) -> String {

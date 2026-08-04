@@ -316,16 +316,53 @@ impl LeanDescriptor {
 // needs. This keeps the swap a pure additive change with no new crate dependency.
 
 /// A tiny cursor over the JSON bytes (whitespace-skipping, fixed-schema).
-pub(crate) struct JsonCursor<'a> {
+/// ⚑ The refusal message for a gate coefficient that does not fit a BabyBear felt. It names the
+/// magnitude, because "constant too large" without one is how a 495-bit coefficient read as an
+/// ordinary parse nit for as long as it did.
+fn oversized_constant_error(at: usize, text: &str) -> String {
+    let digits = text.trim_start_matches('-').len();
+    format!(
+        "constant at byte {at} does not fit a BabyBear felt ({digits} decimal digits, \
+         p_babybear = {BABYBEAR_P}). A gate body carrying it cannot round-trip the field, so its \
+         integer semantics say nothing about any proof over it. Re-emit on a felt-sized encoding \
+         (Dregg2.Circuit.Emit.PastaFieldSound), or parse through the named unsound escape."
+    )
+}
+
+pub struct JsonCursor<'a> {
     s: &'a [u8],
     i: usize,
+    /// ⚑ Whether a coefficient that does not fit a BabyBear felt may be silently FOLDED mod
+    /// `p_babybear` instead of REFUSED. Default `false` — see [`Self::parse_int_field`]. The only
+    /// way to set it is [`Self::new_unsound_oversized_constants`], whose name is the confession.
+    allow_oversized_constants: bool,
 }
 
 impl<'a> JsonCursor<'a> {
-    pub(crate) fn new(s: &'a str) -> Self {
+    pub fn new(s: &'a str) -> Self {
         JsonCursor {
             s: s.as_bytes(),
             i: 0,
+            allow_oversized_constants: false,
+        }
+    }
+
+    /// ⚑ **THE UNSOUND-ENCODING ESCAPE.** Parses a descriptor whose gate coefficients exceed
+    /// `p_babybear`, folding them mod the field. A descriptor that needs this has gate bodies
+    /// that cannot round-trip a felt, which means its ℤ-level forcing lemmas say nothing about
+    /// any proof object over it — the defect
+    /// `circuit/tests/pasta_field_felt_soundness.rs::the_deployed_prover_accepts_a_nonzero_integer_body`
+    /// exhibits as a concrete accepted witness with a 2^285 integer body.
+    ///
+    /// The sound shape carries no such constant: `dregg-pasta-fpmul-sound::v1`
+    /// (`Dregg2.Circuit.Emit.PastaFieldSound`) writes at most `2^23`, and parses through the
+    /// strict default. This entry exists only for the 9×30 descriptors that have not been
+    /// re-emitted yet, and `ir2_oversized_constant_escape_is_a_shrinking_list` counts them.
+    pub(crate) fn new_unsound_oversized_constants(s: &'a str) -> Self {
+        JsonCursor {
+            s: s.as_bytes(),
+            i: 0,
+            allow_oversized_constants: true,
         }
     }
 
@@ -430,19 +467,23 @@ impl<'a> JsonCursor<'a> {
     /// the qualifier is how the ladder downstream came to be priced against a gate that does not
     /// enforce its multiply (`PastaField` §6.4).
     ///
-    /// ⚠ **REFUSING INSTEAD IS A REAL OPTION AND IT IS NOT TAKEN HERE.** A refusal would reject
-    /// **14 checked-in descriptors** — `circuit/descriptors/by-name/pasta-rcb-windowed.json`, the
-    /// eight `pasta-rcb-sg-slice-{0..3}-of-4[-w8].json`, and the five
-    /// `metatheory/emitted/mina-opening/pasta-rcb-sg-derive-*.json` — all at exactly 495 bits, plus
-    /// the uncommitted scaled bound artifacts `scripts/regen-pasta-bound-scaled.sh` re-derives. That
-    /// takes `pasta_windowed_prove`, `pasta_windowed_tamper`, `pasta_sliced_sg_prove`,
-    /// `pasta_bound_sg_prove`, `pasta_oncurve_gate` and `pasta_derive_prove` red at the parse, and
-    /// it would be refusing the SYMPTOM: the gates would still be unsound, they would merely be
-    /// unreadable. The fix is the encoding (`PastaField` §6.4), not the parser.
+    /// ⚑ **AND SINCE 2026-08-03 IT REFUSES BY DEFAULT.** The qualification above is not a
+    /// caption any more: an oversized literal is an error unless the caller opened the cursor with
+    /// [`Self::new_unsound_oversized_constants`], whose name says what accepting one means. The
+    /// repair that made this possible is `Dregg2.Circuit.Emit.PastaFieldSound` — an 8-bit/32-limb
+    /// Pasta multiply whose 63 coefficient gates each fit a felt (largest constant `2^23`), so
+    /// `p_babybear ∣ body` FORCES `body = 0` over ℤ (`felt_gates_force_congruence`). A sound
+    /// encoding never reaches this branch.
+    ///
+    /// ⚠ **What still rides the escape, named rather than implied:** the nine
+    /// `circuit/descriptors/by-name/pasta-rcb-*.json` and the five
+    /// `metatheory/emitted/mina-opening/pasta-rcb-sg-derive-*.json`, all at 495 bits. Those
+    /// descriptors are UNSOUND at BabyBear and the escape does not make them less so — it makes
+    /// the fact that they need it a named, counted, shrinking thing instead of a silent Horner
+    /// loop. Re-emitting the RCB/MSM cone on the sound encoding is what empties the list.
     ///
     /// Literals that FIT `i64` are returned **verbatim**, so every descriptor that parses today
-    /// parses to a bit-identical AST (and canonical re-encoding is unaffected). Only literals
-    /// that were previously refused change behaviour: from an error to their residue.
+    /// parses to a bit-identical AST (and canonical re-encoding is unaffected).
     pub(crate) fn parse_int_field(&mut self) -> Result<i64, String> {
         self.skip_ws();
         let start = self.i;
@@ -460,7 +501,13 @@ impl<'a> JsonCursor<'a> {
         let text = std::str::from_utf8(&self.s[start..self.i])
             .map_err(|_| format!("malformed integer at byte {}", start))?;
         if let Ok(small) = text.parse::<i64>() {
+            if !self.allow_oversized_constants && small.unsigned_abs() >= u64::from(BABYBEAR_P) {
+                return Err(oversized_constant_error(start, text));
+            }
             return Ok(small);
+        }
+        if !self.allow_oversized_constants {
+            return Err(oversized_constant_error(start, text));
         }
         // Wider than i64: fold the decimal digits mod p with Horner. Every intermediate stays
         // below `10 * p + 9 < 2^35`, so u64 cannot overflow.
