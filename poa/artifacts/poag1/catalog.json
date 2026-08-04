@@ -1,0 +1,32 @@
+{
+  "format":"POAG1-CATALOG",
+  "schema_version":1,
+  "missions":[{
+    "mission_id":1,
+    "title":"Signal Triangulation",
+    "engine_module":"Dregg2.Games.PathOfAngels.SignalTriangulation",
+    "ruleset":"signal-v1",
+    "reward_class":"non-economic-demo",
+    "action_limit":5,
+    "privacy_grade":"public",
+    "ballot_regime":"none",
+    "epoch":1,
+    "federation_id":"4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
+    "content_root":"sha256:72f758bdca35a3f5fff532bfc4ae25ac82bfc4f3994043f09afc69cbcaf2ca39",
+    "activation":{"state":"detached-signature-required","digest_source":"POA-CONTENT-EPOCH-SIGNATURE-V1"},
+    "content_session":"504f412d5349472d310000000000000000000000000000000000000000000000",
+    "run_seed":"0204010000000000000000000000000000000000000000000000000000000000",
+    "budget":{"intel":25,"supplies":15,"cohesion":10,"influence":5,"score":500,"relics":1},
+    "allowed_relics":[1],
+    "descriptor_path":"games/signal-triangulation.json",
+    "allowed_beta_discoveries":[{"mission_id":1,"artifact_id":1,"source_digest":"sha256:edc442c534ef85e5f40724a742f3c93f744f4084250b07d4aefa258c2e4d249d","content_digest":"sha256:c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf"}]
+  }],
+  "fixtures":[{
+    "id":"signal-solved-preview-v1",
+    "mission_id":1,
+    "run_seed":"0204010000000000000000000000000000000000000000000000000000000000",
+    "base_world":{"intel":0,"supplies":0,"cohesion":0,"influence":0,"score":0,"discovered_relics":[],"beta_artifacts":[],"sequence":0},
+    "contribution":{"intel":25,"supplies":15,"cohesion":10,"influence":5,"score":500,"relics":[1]},
+    "preview_world":{"intel":25,"supplies":15,"cohesion":10,"influence":5,"score":500,"discovered_relics":[1],"beta_artifacts":[{"mission_id":1,"artifact_id":1,"source_digest":"sha256:edc442c534ef85e5f40724a742f3c93f744f4084250b07d4aefa258c2e4d249d","content_digest":"sha256:c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf"}],"sequence":1}
+  }]
+}

@@ -1,0 +1,11 @@
+{
+  "format":"POAG1",
+  "schema_version":1,
+  "source_digest":"sha256:edc442c534ef85e5f40724a742f3c93f744f4084250b07d4aefa258c2e4d249d",
+  "authority":"Dregg2.Games.PathOfAngels",
+  "artifacts":[
+    {"path":"schema.json","media_type":"application/schema+json","bytes":1090,"sha256":"sha256:5e1f653143826e9b7a7964b0b2c6eb0a85efda361fc646969ebed41c8930618f","fnv1a64":"257462da3e0ee92b"},
+    {"path":"catalog.json","media_type":"application/json","bytes":2001,"sha256":"sha256:42c21e2b11137abf531a85f9e1af6a5e232b63247a136701c947bcc0d8e86a5e","fnv1a64":"5ada48d97bf75b60"},
+    {"path":"games/signal-triangulation.json","media_type":"application/json","bytes":14021,"sha256":"sha256:c3a9603f84f1e5918c6a46f30c507a39b6c9d5fd57c9f3edec3b03597eec49bf","fnv1a64":"cbfac4aa9836a09d"}
+  ]
+}

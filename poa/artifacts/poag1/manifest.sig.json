@@ -1,0 +1,8 @@
+{
+  "schema": "POA-CONTENT-EPOCH-SIGNATURE-V1",
+  "manifest_sha256": "sha256:5e6ce6531c8f8f0e140262e9c4577220427a983fde26273795210e2031fc3e95",
+  "curator_pubkey": "0a4d85c84b889408a5cfc98523ca821d3eb1aae2ed6e6331f27b1cb076e02a52",
+  "content_epoch": 1,
+  "counter": 1,
+  "signature": "9acf05d038961e4c4400d6b3a9a2e9ab7e210ae4dff944b9ad3197f4520a892f333ca54c93f709a10e5f972a50e685639776920bf1e770354390cfe811b2c506"
+}
