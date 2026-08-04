@@ -26,21 +26,50 @@ run() {
 cd "$repo_root"
 export LEAN_NUM_THREADS="${LEAN_NUM_THREADS:-2}"
 
-(
-  cd metatheory
-  run lake build Dregg2.Games.PathOfAngels.Canon
-  run lake build Dregg2.Games.PathOfAngels.Emit
+poa_lean_targets=(
+  Dregg2.Games.PathOfAngels.Core
+  Dregg2.Games.PathOfAngels.PlayerCounters
+  Dregg2.Games.PathOfAngels.SignalTriangulation
+  Dregg2.Games.PathOfAngels.RelayRepair
+  Dregg2.Games.PathOfAngels.SalvageLock
+  Dregg2.Games.PathOfAngels.FiniteTables
+  Dregg2.Games.PathOfAngels.Judged
+  Dregg2.Games.PathOfAngels.Canon
+  Dregg2.Games.PathOfAngels.Emit
+  Dregg2.Games.PathOfAngels.DailyMission
+  Dregg2.Games.PathOfAngels.BlackBoxReconstruction
+  Dregg2.Games.PathOfAngels.ContainmentInspection
+  Dregg2.Games.PathOfAngels.DeckGraph
+  Dregg2.Games.PathOfAngels.AssistProfile
+  Dregg2.Games.PathOfAngels.DarkBazaar
+  Dregg2.Games.PathOfAngels.FieldArchive
+  Dregg2.Games.PathOfAngels.NetworkJudgeWire
+  Dregg2.Games.PathOfAngels.NetworkJudge
 )
+run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
+  scripts/axiom-hygiene-guard.sh "$repo_root"
 run bash -n scripts/check-poag1-artifacts.sh
 
 run cargo nextest run --manifest-path poa-curator/Cargo.toml
 run node --test scripts/tests/poa-devnet-manifest.test.mjs
-run cargo nextest run -p dregg-node -E 'test(/deployment_domain/)'
+run node --test scripts/tests/poa-follower-package.test.mjs
+run cargo nextest run -p dregg-node \
+  -E 'test(/deployment_domain/) or test(/poa_strand_admission/)'
 
 # The explicit feature and target are deliberate: without them Cargo discovers
 # zero PoA ingress tests while returning success.
 run cargo nextest run -p dreggnet-market --features poa-expedition \
   --test poa_expedition_ingress
+run cargo nextest list -p dreggnet-market --features private-attested-clearing \
+  --test poa_dark_bazaar_protocol
+
+# Both poles of the native boundary are required. The first executes the real
+# linked Lean export; the second proves archive absence is a named refusal and
+# never silently selects a Rust judge.
+run cargo nextest run -p dregg-lean-ffi --features lean-lib \
+  --test poa_signal_judge_probe
+run cargo nextest run -p dregg-lean-ffi --features no-lean-link --lib \
+  -E 'test(/poa_ffi::tests::/)'
 
 (
   cd extension
@@ -51,13 +80,12 @@ run cargo nextest run -p dreggnet-market --features poa-expedition \
   run npm run validate:extension-package
 )
 
-run node --check poa-web/src/app.js
-run node --check poa-web/src/poag1.js
-run node --check poa-web/src/content-epoch.js
-run node --check poa-web/src/signal-runtime.js
+for source in poa-web/src/*.js; do
+  run node --check "$source"
+done
 run node --check poa-web/scripts/sync-artifacts.mjs
 run node --check poa-web/serve.mjs
-run node --test poa-web/tests/content-epoch.test.mjs poa-web/tests/csp.test.mjs
+run node --test poa-web/tests/*.test.mjs
 
 if [ "$mode" = release ]; then
   : "${POA_ROOT:?POA_ROOT must name the staged PoA genesis root}"
