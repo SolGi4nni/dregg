@@ -1,5 +1,42 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 (PoA replay + holder admission follow-up) — the source braid is wider; counter 3 is cryptographically blocked
+
+The post-milestone review found that PoA had many strong Lean kernels but only one operational durable
+aggregate, and that the live beta still exposed almost none of the platform depth. This follow-up lands
+the shared `EventSourcing`/`FinalizedRunEventAggregate` Lean spine, native-Lean Signal history replay,
+a generic append-only Rust durability store for opaque Lean-authored events/projections, and a second
+replayable Galley maintenance aggregate. The generic store keeps semantic predecessor digests separate
+from Rust framing/CAS hashes, preserves arbitrary Lean genesis heads, binds exact commit/turn/receipt
+coordinates, audits every intermediate link and compacted carrier, and restores exact heads on tail
+recovery. It is a real bare commit apex, but it is **not yet threaded into the production faithful/exact
+receipt apex and has no native-Lean adapter caller**, so do not call generic game settlement live.
+
+Solana `$DREGG` holding now uses the exact mainnet mint
+`XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump`, which is Token-2022 rather than legacy Tokenkeg.
+The extension-aware account parser refuses malformed/frozen/native/wrong-program/wrong-owner evidence.
+The node now has strict challenge/verify/status routes backed by server-fetched finalized Solana RPC,
+durable bounded replay state, one exact Wallet Standard message signature, and a mounted browser panel.
+The returned `beta-rpc-attested` receipt is short-lived, omits balance, and explicitly carries no
+governance weight; consensus governance still requires the separately anchored `ProvenHolding` path.
+This HTTP path compiles/tests but is **not in the deployed node binary**.
+
+Flight Recorder replay now advances one public link at a time instead of merely flashing the table and
+asserting continuity. The source beta links Expedition, Archive, and Flight labs and packages the full
+lab subtree. Verification for this follow-up: Galley Lean 2/2 direct builds; generic event persistence
+6/6 PASS on hbox; standalone holding gate 9/9 and node HTTP 5/5 PASS on persvati; focused browser
+admission/recorder 43/43 and full web 123/123. Commits: `f909e796d`, `b53241af9`, `a158101eb`,
+`a25ef37a6`, `ed5e6a1ec`, `c50b59a0f`; infra lab export is `4613219` in `~/dev/dregg-infra`.
+
+**Deployment blocker:** active content is still v3 epoch 1/counter 2, receipt
+`92d8afd26dc2665b9d8219bb254a27e648025dfbabdd9ae37fafea1c514f46f9`. Counter 3 must be signed by
+public key `a3e630900af50a8701387c9ab528e3db23a5650c3e1ff3b4b3ee09aa42c65e23`, but its 32-byte seed is
+absent from local, hbox, persvati, workhorse, anchor, and documented `/secure` operator state. The one
+discovered 0600 key derives the retired `0a4d85…e02a52` identity and MUST NOT be used. Restore the
+replacement seed to `/secure/poa-development-curator.key`, or obtain explicit authorization for a
+second password-beta trust-root reset. No counter-3 signature, content cutover, or runtime mutation has
+occurred.
+
 ## ⚑⚑⚑ AUGUST 4 (PoA source milestone) — the Rust node now carries native-Lean Signal finality; the new build is NOT promoted
 
 This pass turned the beta arcade from a signed static bundle into a tested source-side authority
