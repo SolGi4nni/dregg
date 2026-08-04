@@ -231,6 +231,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          MEASURED 78.5% played draw rate against 5.1%) and it is DELETED",
     ),
     (
+        "dregg_poa_signal_judge",
+        "the Path of Angels Signal EVALUATOR compiles out: strict canonical decoding, the exact \
+         Lean game replay, contribution application and Canon successor construction have no \
+         answer source. Internal callers must refuse; there is no Rust semantic fallback, and \
+         caller-authored carrier/state must never be promoted to finality",
+    ),
+    (
         "dregg_deleg_admit",
         "the DELEGATED TOOL/MCP-ACCESS admission verdict has no answer source: the SDK tool \
          gateway, the starbridge tool-access-delegation app and the dreggnet offerings session \
@@ -2258,6 +2265,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
 
@@ -3135,6 +3143,18 @@ fn main() {
         absent_export_warn("dregg_multiway_tug_rules");
     }
 
+    // PATH OF ANGELS SIGNAL EVALUATOR
+    // (`Dregg2.Games.PathOfAngels.NetworkJudge.signalJudgeFFI`): a strict canonical JSON boundary
+    // over the complete internal evaluator. It needs its module initializer because the accepted
+    // configuration reads `Emit.signalRunSeed` / `Emit.signalTarget` module globals. This is only
+    // an evaluator: no public endpoint or node authority is conferred by symbol availability.
+    let poa_signal_judge_present = archive_exports(&build_archive, "dregg_poa_signal_judge");
+    if poa_signal_judge_present {
+        println!("cargo:rustc-cfg=dregg_poa_signal_judge_present");
+    } else {
+        absent_export_warn("dregg_poa_signal_judge");
+    }
+
     // LIGHT-CLIENT verify-logic gate extraction: probe the spliced archive for the three
     // `@[export] dregg_{eth,tm,mpt}_lc_verify` symbols (the extracted, Lean-verified foreign-chain
     // admission decisions from `Dregg2.Bridge.LightClient{Eth,Tendermint,Mpt}Gate`). Present ⇒ gate
@@ -3498,6 +3518,11 @@ fn main() {
     // (this export DOES need its module initializer — see the extern-decl note there).
     if multiway_tug_rules_present {
         shim.define("DREGG_MULTIWAY_TUG_RULES", None);
+    }
+    // POA SIGNAL EVALUATOR: gates the exported Lean symbol, bounded C bridge, and the matching
+    // module initializer in BOTH default and single-threaded runtime init paths.
+    if poa_signal_judge_present {
+        shim.define("DREGG_POA_SIGNAL_JUDGE", None);
     }
     // DELEGATED TOOL-ACCESS ADMISSION: `DREGG_DELEG_ADMIT` gates BOTH the extern decl and the `_str`
     // bridge in `lean_init.c` (no module initializer — `Dregg2.Apps.DelegAdmit` is Init-only and its

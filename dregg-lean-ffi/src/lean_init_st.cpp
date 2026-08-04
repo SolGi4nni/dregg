@@ -90,6 +90,11 @@ lean_object *initialize_Dregg2_Dregg2_Distributed_StrandAdmission(uint8_t builti
 #ifdef DREGG_DISTRIBUTED_EXPORTS
 lean_object *initialize_Dregg2_Dregg2_Exec_DistributedExports(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_SIGNAL_JUDGE
+/* The PoA evaluator reads initialized Emit globals. Keep the single-threaded path at exact parity
+ * with `dregg_ffi_init`; availability still confers no authority on caller-authored state. */
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(uint8_t builtin);
+#endif
 }
 
 /* dregg_ffi_init_st — the single-threaded init for the executor-in-a-constrained-host
@@ -143,6 +148,18 @@ extern "C" int dregg_ffi_init_st(void) {
         lean_object *dres = initialize_Dregg2_Dregg2_Exec_DistributedExports(1);
         if (!lean_io_result_is_ok(dres)) { lean_io_result_show_error(dres); lean_dec_ref(dres); return 1; }
         lean_dec_ref(dres);
+    }
+#endif
+#ifdef DREGG_POA_SIGNAL_JUDGE
+    {
+        lean_object *poares =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(1);
+        if (!lean_io_result_is_ok(poares)) {
+            lean_io_result_show_error(poares);
+            lean_dec_ref(poares);
+            return 1;
+        }
+        lean_dec_ref(poares);
     }
 #endif
     lean_io_mark_end_initialization();

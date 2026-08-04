@@ -45,6 +45,12 @@ pub use distributed_ffi::{
 #[path = "bridge_lc_ffi.rs"]
 pub mod bridge_lc_ffi;
 
+/// Internal Path of Angels evaluator boundary. This module transports a complete canonical Signal
+/// state through the Lean judge; it does not authenticate caller-authored carrier/state and is not
+/// a public node-authority adapter.
+#[path = "poa_ffi.rs"]
+pub mod poa_ffi;
+
 pub use bridge_lc_ffi::{
     eth_committee_rotation_available, eth_committee_rotation_wire, eth_lc_verify_available,
     eth_lc_verify_wire, mina_account_opening_wire, mina_account_state_ok_available,

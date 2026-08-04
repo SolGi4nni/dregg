@@ -17,6 +17,7 @@ import Dregg2.Bridge.ProofOfHoldings
 import Dregg2.Bridge.InterchainAdapterDecision
 import Dregg2.Games.AutomataflFFI
 import Dregg2.Games.MultiwayTugFFI
+import Dregg2.Games.PathOfAngels.NetworkJudge
 import Dregg2.Apps.DelegAdmit
 
 -- §1.4 Post-quantum cores.
@@ -164,7 +165,7 @@ that justifies it; this file only fixes which of them are the runtime's boundary
 
 ## §1 — The surface, by what it decides
 
-172 exported symbols. Grouped by what a caller gets from them, with the module that owns each.
+173 exported symbols. Grouped by what a caller gets from them, with the module that owns each.
 
 ### §1.1 Turn execution — the kernel Rust hosts (8 symbols)
 * `Dregg2.Exec.FFI` — `dregg_exec_full_forest_auth`, `dregg_exec_handler_turn`
@@ -179,9 +180,11 @@ that justifies it; this file only fixes which of them are the runtime's boundary
   These are *not* decisions; they are the wire. They are 74 % of the symbol count and a rounding
   error of the archive.
 
-### §1.3 Verified decisions the node routes through (18 symbols)
+### §1.3 Verified decision and evaluator exports available to the runtime (19 symbols)
 Each of these gates a `#[cfg(dregg_*_present)]` bridge whose absent arm reverts a proven verdict to
-a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
+a Rust twin, a fail-closed refusal, or a test module that simply stops existing. Some are already
+routed by the node; others are callable, red-capable integration boundaries whose remaining route
+is stated on their entry rather than implied by membership in this archive.
 * `Dregg2.Exec.DeployedConstraint` — `dregg_constraint_admits`
 * `Dregg2.Circuit.CrossCellConserveDecision` — `dregg_cross_cell_conserves` (House Law #1, Σδ=0)
 * `Dregg2.Distributed.FinalityGate` — `dregg_blocklace_finalize`, `dregg_finalization_quorum`,
@@ -225,6 +228,10 @@ a Rust twin, a fail-closed refusal, or a test module that simply stops existing.
   legality, the escrow split, row control, the tallies and the adjudicated round winner — the
   decisions `dregg-multiway-tug/src/reference.rs` re-expressed in Rust, with `winner_of` already
   DRIFTED to `roundWinner` minus its adjudication tail; see §2)
+* `Dregg2.Games.PathOfAngels.NetworkJudge` — `dregg_poa_signal_judge` (the internal Signal
+  evaluator: strict canonical input decode, exact Lean game replay, closed contribution, Canon
+  transition, and canonical successor/receipt encoding. It supplies no authority of its own;
+  absent or malformed input is a hard refusal, with no Rust semantic fallback.)
 
 ### §1.4 Post-quantum cores — the crates these take OUT of the TCB (10 symbols)
 Absent ⇒ `dregg-pq` answers with an unaudited third-party crate. `DREGG_REQUIRE_PQ_CORES` turns

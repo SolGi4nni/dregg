@@ -409,6 +409,20 @@ extern lean_object *initialize_Dregg2_Dregg2_Games_MultiwayTugFFI(uint8_t builti
 extern lean_object *dregg_multiway_tug_rules(lean_object *input);
 #endif
 
+/* The internal Path of Angels Signal evaluator (`NetworkJudge.signalJudgeFFI`). It consumes one
+ * complete canonical `POA-SIGNAL-IN-1` value and returns canonical `POA-SIGNAL-OUT-1`, or the empty
+ * string on any refusal. Availability does NOT authenticate the carrier/state: only an authority
+ * adapter may derive those fields from finalized state before calling this evaluator.
+ *
+ * The initializer is mandatory. The accepted configuration reaches `Emit.signalRunSeed` and
+ * `Emit.signalTarget`, both generated as module globals filled by the PathOfAngels initializer
+ * chain. The same initializer is mirrored in `lean_init_st.cpp`. */
+#ifdef DREGG_POA_SIGNAL_JUDGE
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(uint8_t builtin);
+extern lean_object *dregg_poa_signal_judge(lean_object *input);
+#define DREGG_POA_SIGNAL_WIRE_MAX_BYTES ((size_t)67108864u)
+#endif
+
 /* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
  * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
  * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (eight decimal
@@ -999,6 +1013,18 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(mtres);
 #endif
+#ifdef DREGG_POA_SIGNAL_JUDGE
+    /* Initialize the complete PoA evaluator closure, including the Emit globals its exact active
+     * configuration reads. This remains an evaluator only; initialization confers no authority. */
+    lean_object *poares =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(1);
+    if (!lean_io_result_is_ok(poares)) {
+        lean_io_result_show_error(poares);
+        lean_dec_ref(poares);
+        return 1;
+    }
+    lean_dec_ref(poares);
+#endif
     /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
      * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
      * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
@@ -1267,6 +1293,38 @@ size_t dregg_multiway_tug_rules_str(const char *in_utf8, char *out, size_t out_c
     lean_object *res = dregg_multiway_tug_rules(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_SIGNAL_JUDGE
+/* Bounded C string bridge over the internal PoA Signal evaluator. Both accepted input and emitted
+ * output are capped at a 64 MiB HOST ceiling. This is deliberately distinct from Lean's 16 MiB
+ * semantic pre-parser limit: exceeding 64 MiB is a host transport refusal, while 16..64 MiB still
+ * reaches Lean and is its fail-closed judgement. Returns the full output length on success/refusal
+ * (zero means the Lean evaluator refused) and `(size_t)-1` for an unusable/over-limit transport. */
+size_t dregg_poa_signal_judge_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_SIGNAL_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_signal_judge(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_SIGNAL_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
     memcpy(out, cstr, copy);
     out[copy] = '\0';

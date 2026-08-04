@@ -216,6 +216,33 @@ authority-origin precondition is described in the module header. -/
 def processSignalWire (bytes : String) : Option String :=
   (processSignal bytes).map SignalOutputWire.toJson
 
+/-- **`@[export dregg_poa_signal_judge]`** — the internal evaluator boundary.
+`""` is the fail-closed refusal sentinel; every accepted result is the nonempty,
+canonical `POA-SIGNAL-OUT-1` JSON emitted by `processSignalWire` itself.
+
+This export authenticates nothing outside the supplied semantic carrier.  A host
+must derive that carrier from finalized authority before calling it; in
+particular this is not a public oracle for caller-authored state. -/
+@[export dregg_poa_signal_judge]
+def signalJudgeFFI (bytes : String) : String :=
+  (processSignalWire bytes).getD ""
+
+theorem signalJudgeFFI_success_iff {inputBytes outputBytes : String}
+    (output_nonempty : outputBytes ≠ "") :
+    signalJudgeFFI inputBytes = outputBytes ↔
+      processSignalWire inputBytes = some outputBytes := by
+  cases processed : processSignalWire inputBytes with
+  | none =>
+      constructor
+      · intro accepted
+        have empty : "" = outputBytes := by
+          simpa [signalJudgeFFI, processed] using accepted
+        exact (output_nonempty empty.symm).elim
+      · intro accepted
+        contradiction
+  | some output =>
+      simp [signalJudgeFFI, processed]
+
 theorem processSignal_output_decodes {inputBytes : String} {output : SignalOutputWire}
     (h : processSignal inputBytes = some output) :
     decodeSignalOutput output.toJson = some output := by
@@ -269,6 +296,14 @@ the abstract `JudgedRun` constructor boundary, Canon's world chain, and strict
 successor encoding. -/
 theorem fixture_processSignalWire_success :
     processSignalWire fixtureInputBytes = some fixtureOutputBytes := by
+  native_decide
+
+theorem fixture_signalJudgeFFI_success :
+    signalJudgeFFI fixtureInputBytes = fixtureOutputBytes := by
+  native_decide
+
+theorem fixture_signalJudgeFFI_malformed_refused :
+    signalJudgeFFI (fixtureInputBytes ++ "\n") = "" := by
   native_decide
 
 theorem fixture_verifySignalTransition_success :
@@ -383,7 +418,10 @@ theorem fixture_replay_against_successor_refused :
 #assert_axioms processSignal_output_decodes
 #assert_axioms processSignalWire_output_is_lean_encoded
 #assert_axioms processSignalWire_output_decodes
+#assert_axioms signalJudgeFFI_success_iff
 #assert_compiled fixture_processSignalWire_success
+#assert_compiled fixture_signalJudgeFFI_success
+#assert_compiled fixture_signalJudgeFFI_malformed_refused
 #assert_compiled fixture_verifySignalTransition_success
 #assert_compiled fixture_incomplete_canon_output_refused
 #assert_compiled fixture_wrong_player_refused
