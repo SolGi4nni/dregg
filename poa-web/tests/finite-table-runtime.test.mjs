@@ -39,6 +39,26 @@ test("Relay and Salvage dispatch literal authenticated transition rows determini
   assert.deepEqual(transcript.security, salvage.security);
 });
 
+test("the runtime follows an authenticated table row even when it contradicts Relay semantics", () => {
+  const game = relayFixture();
+  const alphaBeta = game.state_machine.transitions.find(
+    (row) => row.state === "r0" && row.action === "alpha-beta",
+  );
+  const alphaGamma = game.state_machine.transitions.find(
+    (row) => row.state === "r0" && row.action === "alpha-gamma",
+  );
+  [alphaBeta.next, alphaGamma.next] = [alphaGamma.next, alphaBeta.next];
+
+  const descriptor = loadRelay(game);
+  const run = submitFiniteTableAction(
+    descriptor,
+    createFiniteTableRun(descriptor),
+    "alpha-beta",
+  );
+  assert.equal(run.stateId, "r2");
+  assert.deepEqual(tableRunView(descriptor, run).installed, []);
+});
+
 test("emitted refusal rows are authoritative", () => {
   const relay = loadRelay();
   const relayRun = submitFiniteTableAction(relay, createFiniteTableRun(relay), "alpha-beta");
