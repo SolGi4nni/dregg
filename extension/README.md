@@ -127,8 +127,9 @@ curator-signed routing manifest. Exact X/Twitter status pages use the same
 verifier and lifecycle at
 `https://node.pathofangels.network/api/poa/companion/x/<post-id>`. X support is
 deliberately limited to browser-authenticated `/user/status/<snowflake>` tab
-URLs; feed-card ids scraped from page-owned DOM are not authority. The currently protected beta endpoint returns
-HTTP 401 to the extension. This is deliberately treated as **no signed route**:
+URLs; feed-card ids scraped from page-owned DOM are not authority. The currently
+protected beta endpoint returns HTTP 401 to the extension. This is deliberately
+treated as **no signed route**:
 the extension does not embed the beta Basic Auth password, synthesize an
 `Authorization` header, or turn a 401 into verification. Until a proper
 authenticated/public manifest transport is deployed, an exact extension-local
@@ -142,12 +143,12 @@ as either `{platform: "youtube", videoId, channelId}` or
 `{platform: "x", postId}`; the original YouTube canonical bytes are unchanged.
 After signature verification, the extension persists the highest
 `(contentEpoch, counter, canonical digest)` per exact
-`(platform, stable context id, curator key)`. A lower version is refused; an equal version is
-idempotent only with the same digest; an equal version with different content
-is refused. Ratchets for simultaneously trusted curator keys are intentionally
-independent; adding or rotating a curator is therefore a governed trust-set
-transition, not automatic version continuity between keys. A curator revokes
-an attached mission by signing a higher counter
+`(platform, stable context id, curator key)`. A lower version is refused; an
+equal version is idempotent only with the same digest; an equal version with
+different content is refused. Ratchets for simultaneously trusted curator keys
+are intentionally independent; adding or rotating a curator is therefore a
+governed trust-set transition, not automatic version continuity between keys.
+A curator revokes an attached mission by signing a higher counter
 with the `game` route omitted (or the user removes that curator from the trust
 set); the persisted high-water mark then rejects the superseded route.
 Manifests are additionally limited to a seven-day signed lifetime,

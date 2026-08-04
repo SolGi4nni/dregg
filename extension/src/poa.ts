@@ -600,8 +600,8 @@ export function createStoredPoAEngine(storage: PoAStorageLike, fetcher: PoAFetch
         headers: { Accept: "application/json" },
       });
       if (response.status === 404 || response.status === 401 || response.status === 403) {
-        // The protected beta currently answers 401. Do not embed `eden` (or any
-        // credential) in the extension: unauthenticated transport means no signed
+        // The protected beta currently answers 401. Do not embed any beta
+        // credential in the extension: unauthenticated transport means no signed
         // route. The engine may still show an exact local, unverified safe shell.
         return null;
       }
