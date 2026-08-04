@@ -1,5 +1,52 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 (Path of Angels epoch 1) — the arcade has a Lean spine, and the beta is LIVE on its own federation
+
+`https://beta.pathofangels.network` now serves the signed epoch-1 PoA field terminal behind Basic
+Auth, and `https://node.pathofangels.network` plus beta's `/node/` route select the isolated PoA
+committee rather than the provisional Dregg node. The public cutover is finalized — there is no
+pending edge or policy-migration journal — under active release receipt
+`1bd2d5d231aebebc42366a0b1375845fa6cbf6865ca7996edb5d72a424437fc1`.
+
+**What exists, rather than the earlier menu:** three pure Lean games (`SignalTriangulation`,
+`RelayRepair`, `SalvageLock`) with deterministic partial transitions, bounded sessions, hostile
+refusals, replay laws, mission-owned seeds and checked contributions; opaque activation, player-run
+and canon-promotion capabilities; strict POAG1 emission; a curator that signs the exact content epoch
+and canon admission; a browser terminal whose first playable field window is Signal Triangulation;
+the Cipherclerk extension rollback ratchet; fail-closed PoA receipt ingress at the DrEX boundary; and
+an operator/follower kit. The design/sequence record is `docs/poa/ROADMAP.md`; the protocol boundary
+is `docs/reference/PATH-OF-ANGELS-PROTOCOL.md`.
+
+**The deployed identity:** federation
+`4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a`, deployment
+`d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e`, genesis
+`5766736201a9ede62c79fe9beac04df8f8b5367feec5400c073fd631132bdb7f`. Three validators run on
+workhorse/hbox/persvati, threshold 3, `DREGG_REQUIRE_LEAN=1`, full-turn proving, no demo economy.
+Post-deploy they report two peers each and a common finalized frontier at round 14: 41/41/43 local
+blocks, 41 common, only node 2's two round-14/15 asynchronous-tip blocks local, all three genesis
+authors present. Public membership independently returns the same federation, threshold and three
+participants.
+
+**The release proof:** Linux gate receipt
+`b1d9808ed7dcc320640866f78bb819e44053ca53ff8ec467eecc580bba5d6f6a`; 772 Lean build jobs,
+curator signature/reproduction, 15/15 web tests, exact 14-file public manifest, candidate image/runtime
+and source snapshot pins. Promotion atomically changed one imported pointer for web + node, kept a
+durable rollback journal until the real domains returned exact file hashes/CSP/membership, then
+finalized. Browser QA exercised desktop and 390px mobile (no horizontal overflow) and played a live
+three-band transmission (`1 locked / 2 drift`). The only console error is an absent `favicon.ico`.
+
+**Honest residuals:** Signal is deliberately a transparent, non-economic beta drill; hidden or
+threshold adjudication is needed before competitive rewards. PoA receipt minting into DrEX still
+refuses until the real transition verifier lands. The proved F4 transitive admission closure is not
+wired to persisted authenticated vouch rows in the node. Those are named boundaries, not claims
+papered over by the deployment. Good mechanics do not depend on source secrecy; PoA remains in this
+repository for now, while capability/signature boundaries carry the authority and spoiler separation
+remains an optional packaging layer.
+
+Relevant code commits in this tree: `e011179aa`, `16e89f6fd`, `a4d94c145`, `1f0f2efb5`. Infra was
+audited and shipped through `9212be4` in `~/dev/dregg-infra` (including crash-journaled legacy-policy
+migration and byte-exact gated web staging).
+
 ## ⚑⚑⚑ AUGUST 4 — the tripwire is re-baselined BY its audit, `padVecE` TAKES the obligation, and the chain still binds
 
 Three named reds closed, and each one was a slightly different shape than the brief that named it.
