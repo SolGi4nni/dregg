@@ -1466,10 +1466,14 @@ impl WitnessedPredicateVerifier for BridgePredicateStarkVerifier {
             }
         })?;
 
-        // The committed fact is a BabyBear felt published in the 32-byte
-        // commitment as its canonical 4-byte LE form (the `narrow_felt_from_slot_low4`
-        // convention shared with MerkleMembership). Reconstruct it; the circuit
-        // verifier binds it as a public input.
+        // The committed fact is a BabyBear felt published in the 32-byte commitment as its
+        // canonical 4-byte LE form ([`narrow_felt_from_slot_low4`]). ⚑ This said the
+        // convention was "shared with MerkleMembership" until 2026-08-04, which contradicted
+        // that reader's OWN doc four hundred lines up ("no tree root shares this byte
+        // convention any more"): MerkleMembership and adjacency both moved to the 8-limb
+        // `root_digest_from_slot` at the `node8` cutover, and this is the one surviving
+        // narrow domain — a committed SCALAR, not a tree root, so output width is not the
+        // question here. Reconstruct it; the circuit verifier binds it as a public input.
         let fact_commitment = narrow_felt_from_slot_low4(commitment);
 
         match (requirement, wire) {
@@ -2075,8 +2079,13 @@ mod tests {
         let neighbors = neighbors4();
         let levels = tree_levels(&neighbors);
         let root8 = *levels.last().unwrap().first().unwrap();
-        // The cell's predicate commitment is the set root felt's LE bytes
-        // (the adjacency verifier reads it via `narrow_felt_from_slot_low4`).
+        // The cell's predicate commitment is the set root's EIGHT canonical limbs, LE,
+        // filling the slot exactly (`adjacency_commitment_bytes`); the adjacency verifier
+        // reads them back with `root_digest_from_slot`. ⚑ This comment said
+        // `narrow_felt_from_slot_low4` — the retired one-felt convention — until 2026-08-04.
+        // That citation survived the `node8` cutover it was invalidated by, and it is the
+        // exact "unify them back" the narrow reader's own doc forbids: re-narrowing this
+        // root would take the adjacency collision bound from 2^123.63 to 2^15.45.
         let commitment = adjacency_commitment_bytes(root8);
 
         // Consecutive neighbors at indices 1,2; a candidate strictly between
