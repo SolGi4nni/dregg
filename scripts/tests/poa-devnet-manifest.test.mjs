@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -144,6 +145,31 @@ process.exit(99);
     gossipBase: 9421,
     hosts: ["127.0.0.1", "127.0.0.1", "127.0.0.1"],
   }).federation_id, "a1".repeat(32));
+});
+
+test("genesis wrapper refuses overlapping storage before invoking dregg-node", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-preflight-test-"));
+  const root = join(scratch, "poa");
+  const mainDataDir = join(root, "main");
+  const marker = join(scratch, "binary-was-invoked");
+  const fakeBin = join(scratch, "dregg-node");
+  writeFileSync(fakeBin, '#!/bin/sh\n: > "$POA_FAKE_INVOKED"\nexit 99\n');
+  chmodSync(fakeBin, 0o755);
+
+  const script = join(process.cwd(), "scripts", "poa-devnet.sh");
+  const result = spawnSync("bash", [script, "genesis"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      POA_ROOT: root,
+      POA_MAIN_DATA_DIR: mainDataDir,
+      POA_BIN: fakeBin,
+      POA_FAKE_INVOKED: marker,
+    },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /PoA root and main data dir must be disjoint/);
+  assert.equal(existsSync(marker), false, "preflight must run before the node binary");
 });
 
 test("manifest pins an isolated federation and runnable, non-faucet configs", () => {
