@@ -113,10 +113,6 @@ theorem forged_not_staged :
   have hcontra : (123 : ℤ) = 999 := hpc
   exact absurd hcontra (by decide)
 
-/-- **§A keystone — `deployed_admits_unbacked`.** ∃ a concrete custom descriptor and trace satisfying
-the DEPLOYED `Satisfied2` (True-gate) yet failing the STAGED `Satisfied2Staged` (`boundAt` false): the
-deployed AIR admits a Custom trace whose proof-binding commitment is backed by NO verifying sub-proof.
-This is the explicit forged custom proof the deployed circuit cannot detect. -/
 /-! ### ⚑ THE SEAM MOVED THE WITNESS, NOT THE THEOREM — read this before quoting either.
 
 `deployed_admits_unbacked` survives the seam, and the WAY it survives is the honest report. Its old
