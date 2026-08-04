@@ -944,41 +944,41 @@ jobs:
       # So: the known-dark set is enumerated, with a reason per row, in
       # `.github/dark-targets.txt`. A target that goes dark and is NOT on that
       # list FAILS THIS JOB. Fix it, or add the row and say why.
+      #
+      # ⚑ `if: !cancelled()` IS THE WHOLE POINT OF THIS STEP EXISTING (2026-08-03).
+      # This was step 7 of 9, behind the correctness sweep, and GitHub Actions stops
+      # a job at the first FAILED step. So one standing `clippy::correctness` hit
+      # anywhere in the workspace silently disarmed ALL THREE darkness sweeps, and
+      # the job's red said "correctness" while saying nothing about darkness.
+      # MEASURED over every run of this file 2026-08-01..08-03 (34 runs): this step
+      # EXECUTED 3 TIMES AND WAS SKIPPED 31. Two `this operation will always return
+      # zero` hits (dreggnet-game-board/tests/multi_round_fold.rs:533,
+      # dregg-automatafl/src/legc_witness.rs:768) held it shut.
+      # WHAT THAT COST: 522b9c763 widened `content_commit` to `[CommitLane; 8]` and
+      # missed `commons-arbiter` + `confined-swarm`; both libs went dark, neither is
+      # allowlisted, five runs covered the window, and all five read `skipped`. A
+      # human found it ~11h later from a build error. The wasm job above already
+      # carries this exact lesson — "A GATE BEHIND A RED GATE IS NOT A GATE" — for
+      # the same reason, one job over. These three steps depend on nothing the
+      # correctness sweep establishes except the LOG, which it always writes.
+      #
+      # ⚑ AND THE LOGIC MOVED OUT OF YAML, because two more holes were only visible
+      # once it was code you could run (`scripts/check-dark-targets.py`):
+      #   * the inline reader stripped `file ` rows but NOT `never-run ` rows, so
+      #     `dark-known.txt` held 66 rows from the THIRD sweep and every one of them
+      #     read as "NO LONGER DARK". MEASURED by executing the old snippet against
+      #     a clean log: 0 new, 66 stale, exit 1. Its green branch was UNREACHABLE.
+      #   * cargo emits NO diagnostic for a target it never attempts, so a red lib
+      #     prunes its whole cone invisibly and the allowlist comparison is a lower
+      #     bound. The header has warned a human about that since 07-25; the gate
+      #     now derives the pruned cone from `cargo metadata` and refuses to render
+      #     a verdict over an incomplete measurement.
+      # The script red-proves all of it: `python3 scripts/check-dark-targets.py
+      # --self-test` (11 legs, ~3s, real cargo over a temp workspace), and it has a
+      # row in `scripts/local-gates.sh` so it no longer needs a GitHub runner.
       - name: dark-target ratchet
-        run: |
-          set -uo pipefail
-          LIST=.github/dark-targets.txt
-          # Normalize `error: could not compile `pkg` (kind "name") due to N previous errors`
-          # to `pkg (kind "name")` — the trailing count is noise that moves on its own.
-          grep '^error: could not compile' clippy-correctness.log \
-            | sed -E 's/^error: could not compile `([^`]+)` \((.*)\) due to.*/\1 (\2)/' \
-            | sort -u > dark-now.txt || true
-          # `file …` rows belong to the mod-declaration sweep below; they share this
-          # list (one doctrine, one file) but partition its rows.
-          grep -vE '^\s*(#|$)' "$LIST" | grep -v '^file ' | sort -u > dark-known.txt
-          NEW=$(comm -23 dark-now.txt dark-known.txt)
-          FIXED=$(comm -13 dark-now.txt dark-known.txt)
-          if [ -n "$NEW" ]; then
-            echo "::error::a target went DARK and is not on the known list. A test target that does"
-            echo "::error::not compile is a falsifier that cannot fire — it is not a warning."
-            echo "$NEW" | sed 's/^/  NEW DARK: /'
-            echo
-            echo "Repair it, or add the row to $LIST with a one-line reason and an owner."
-            echo "Reproduce locally with:"
-            echo "  cargo clippy --workspace --all-targets --keep-going --message-format=short"
-            echo "(--keep-going is REQUIRED: a plain --all-targets run ABORTS at the first"
-            echo " broken target and shows you nothing past it.)"
-            exit 1
-          fi
-          # No new darkness ⇒ no cascade is in flight (a red LIB is itself a NEW row and
-          # would have failed above), so an absent row means that target COMPILES again.
-          if [ -n "$FIXED" ]; then
-            echo "::error::these rows in $LIST now COMPILE. Delete them — a stale allowlist is how"
-            echo "::error::the next dark target gets waved through."
-            echo "$FIXED" | sed 's/^/  NO LONGER DARK: /'
-            exit 1
-          fi
-          echo "dark-target ratchet: $(wc -l < dark-known.txt) known, 0 new, 0 stale."
+        if: ${{ !cancelled() }}
+        run: python3 scripts/check-dark-targets.py --log clippy-correctness.log
       # ── THE MOD-DECLARATION SWEEP (the ratchet's blind spot) ───────────────
       # The step above catches a target that FAILS TO COMPILE. It cannot catch a
       # file rustc NEVER OPENS — an unreferenced `.rs` is not a target, emits no
@@ -994,7 +994,11 @@ jobs:
       # the dependency for a module that did not exist.
       #
       # Same two-sided ratchet, same allowlist file, `file `-prefixed rows.
+      # `if: !cancelled()` for the reason spelled out on the ratchet step above —
+      # this sweep was skipped on 31 of 34 runs 08-01..08-03 because an unrelated
+      # correctness lint failed step 6 first.
       - name: mod-declaration sweep
+        if: ${{ !cancelled() }}
         run: python3 scripts/check-dark-modules.py
       # ── THE EXECUTION SWEEP (the third darkness) ───────────────────────────
       # The two steps above catch a target that FAILS TO COMPILE and a file rustc
@@ -1017,7 +1021,11 @@ jobs:
       # asks CARGO'S OWN RESOLVE (`cargo metadata`), never the manifest.
       #
       # Same two-sided ratchet, same allowlist file, `never-run `-prefixed rows.
+      # `if: !cancelled()` for the reason spelled out on the ratchet step above —
+      # this sweep was skipped on 31 of 34 runs 08-01..08-03 because an unrelated
+      # correctness lint failed step 6 first.
       - name: execution sweep (targets nothing can run)
+        if: ${{ !cancelled() }}
         run: python3 scripts/check-never-run-targets.py --summary
 
   fmt:

@@ -2,13 +2,43 @@
 #
 # A target listed here does not compile at HEAD. That means every #[test] in it is a
 # falsifier that CANNOT FIRE, which is indistinguishable from a falsifier that always
-# passes. `.github/workflows/ci.yml`'s `clippy-correctness` job FAILS if a target goes
-# dark and is not on this list, and FAILS if a row here compiles again (delete it).
+# passes. THE READER IS `scripts/check-dark-targets.py`: it FAILS if a target goes dark
+# and is not on this list, FAILS if a row here compiles again (delete it), and FAILS if
+# the sweep was PRUNED so that neither question could honestly be answered.
 #
 # Format: one row per target, exactly as `cargo clippy --workspace --all-targets
 # --keep-going --message-format=short` names it, minus the trailing error count:
 #
 #     <package> (<kind>[ "<name>"])
+#
+# ── ⚑ 2026-08-03: THIS RATCHET WAS THE ONE THAT COULD NOT FIRE ──────────────────────
+# `commons-arbiter` and `confined-swarm` both stopped compiling at 522b9c763 (11:55,
+# `content_commit` widened to `[CommitLane; 8]` in two of its four twins), stayed dark
+# ~11h until f71f7f35e (23:04), are not on this list — and nothing said the word "dark".
+# THREE independent silencers, each sufficient on its own, all measured:
+#
+#   1. A GATE BEHIND A RED GATE. The ratchet was step 7 of `clippy-correctness`, and
+#      Actions stops a job at the first FAILED step. Step 6 (the correctness sweep) had
+#      two standing `always return zero` hits, so steps 7/8/9 — ALL THREE sweeps over
+#      this file — were skipped. Across every ci.yml run 08-01..08-03: EXECUTED 3,
+#      SKIPPED 31. All five runs inside the dark window read `skipped`.
+#      FIXED: `if: ${{ !cancelled() }}` on all three sweep steps.
+#
+#   2. ITS GREEN BRANCH WAS UNREACHABLE. The inline reader stripped `file ` rows but not
+#      `never-run ` rows, so `dark-known.txt` held 66 rows belonging to the THIRD sweep
+#      and `comm` reported every one of them as "NO LONGER DARK". Measured by running
+#      the old snippet against a clean log: 0 new, 66 stale, exit 1. On the 3 runs it
+#      did execute it happened to die on a NEW row first, which hid this completely.
+#      FIXED: the reader partitions on both prefixes, and has a self-test that says so.
+#
+#   3. THE LOWER BOUND BELOW WAS ADVICE TO A HUMAN, NOT A CHECK. See the ⚠⚠ note.
+#      FIXED: the pruned cone is now DERIVED and the gate refuses to render a verdict
+#      over an incomplete measurement.
+#
+# The lesson that generalises past this file: sweeps 2 and 3 were `scripts/check-*.py`
+# from birth and so had rows in `scripts/local-gates.sh` and ran on any box. This one was
+# inline YAML, so it could only ever run in the one place that had stopped reaching it,
+# and holes 2 and 3 were invisible until it became code you could execute.
 #
 # ⚠ REPRODUCING LOCALLY REQUIRES `--keep-going`. A plain `cargo clippy --all-targets`
 # ABORTS at the first non-compiling target and shows you nothing past it — which is the
@@ -22,6 +52,21 @@
 # found four more dark targets, two of them (`ugc-dregg`, `dregg-perf`) months old.
 # A dark-target count taken while ANY lib is red is a LOWER BOUND. Fix libs first, sweep
 # again, and do not believe the first number.
+#
+# ⚑ THAT PARAGRAPH IS NOW A CHECK, NOT ADVICE (2026-08-03). It sat here as an instruction
+# to a person for nine days while the gate compared cargo's DIAGNOSTICS against this list
+# — and cargo emits NO diagnostic at all for a unit it never attempts, so a pruned target
+# cannot appear on either side of that comparison. Measured on a 3-crate probe
+# (`--self-test` R3): breaking `probe-base`'s lib names `probe-base (lib)` and
+# `probe-base (lib test)` and NOT ONE WORD about `probe-dep` — neither its lib nor its
+# integration test. So allowlisting one red lib would have bought silence over its whole
+# cone: `0 new, 0 stale`, green, with an arbitrary number of tests unable to fire (R4).
+# `scripts/check-dark-targets.py` now derives the reverse-dependency cone from CARGO'S OWN
+# RESOLVE (`cargo metadata`), names every unmeasured package, and WITHHOLDS the staleness
+# verdict rather than guessing it. There is deliberately no allowlist row for that state —
+# an escape hatch for it is the hole. Repair the lib.
+# ⚠ A red lib also prunes ITS OWN bins/tests/examples (they link its rlib), so a dark LIB
+# can never be fully written down here: the rows for what it pruned do not exist.
 #
 # ⚠ Local sweeps see the WORKING TREE; CI sees HEAD. A live lane's uncommitted or
 # untracked test file can show up as "dark" locally and is not a row for this list —
