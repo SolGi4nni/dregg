@@ -133,7 +133,7 @@ default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit
 # that works there is an empty `[workspace]` table in the nested manifest itself,
 # which is what `servo-render/vendor/servo-{net,paint}` and
 # `starbridge-v2/vendor/pathfinder_simd` now carry.
-exclude =["solana-lock", "solana-settlement", "wasm", "sdk-py", "pg-dregg", "deos-zed-full", "discord-bot", "dregg-tui", "deos-homeserver", "durable-workflow", "forge-ci-runner", "orb", "vendor/bulletproofs-r1cs-wgpu", "vendor/curve25519-dalek-dregg", "vendor/plonky3-fri-82cfad73", "vendor/plonky3-challenger-82cfad73"]
+exclude =["solana-lock", "solana-settlement", "wasm", "sdk-py", "pg-dregg", "poa-curator", "deos-zed-full", "discord-bot", "dregg-tui", "deos-homeserver", "durable-workflow", "forge-ci-runner", "orb", "vendor/bulletproofs-r1cs-wgpu", "vendor/curve25519-dalek-dregg", "vendor/plonky3-fri-82cfad73", "vendor/plonky3-challenger-82cfad73"]
 
 [workspace.package]
 version = "0.1.0"

@@ -32,6 +32,14 @@ pub const POA_DEPLOYMENT_MANIFEST_SCHEMA: &str = "dregg-poa-devnet-manifest-v1";
 pub const POA_DEPLOYMENT_DOMAIN: &str = "pathofangels.network/federation/v1";
 pub const POA_EPOCH_PREVIEW_SCHEMA: &str = "POA-EPOCH-PREVIEW-V1";
 
+/// Canonical semantic image of the only operator policy accepted by the v1
+/// Path of Angels production federation. The manifest itself may use any JSON
+/// whitespace/key order, but this policy value may not be weakened or grown.
+pub const POA_PRODUCTION_POLICY_CANONICAL: &str = "{\"admission\":\"committee-ratified-manual-v1\",\"allow_unverified_consensus\":false,\"auto_approve_joins\":false,\"descriptor_pinned\":true,\"f4_transitive_vouch_rows_live\":false,\"faucet_http\":false,\"follower_first\":true,\"generic_genesis_value_issued\":false,\"objective_vouch_admission_ready\":false,\"prove_turns\":true,\"public_private_activity_counts\":false,\"require_lean\":true,\"shares_main_identity\":false,\"shares_main_storage\":false,\"strand_admission_gate\":true}";
+pub const POA_SIGNAL_DEPLOYMENT_IDENTITY_DOMAIN: &str = "POA-SIGNAL-DEPLOYMENT-IDENTITY-V2";
+const ML_DSA_65_PUBLIC_KEY_BYTES: usize = 1952;
+const FEDERATION_ID_DOMAIN: &str = "dregg-fed-id-v1";
+
 const CONTENT_EPOCH_DOMAIN: &[u8] = b"pathofangels.network/content-epoch/v1\0";
 const CANON_DECISION_DOMAIN: &[u8] = b"pathofangels.network/canon-promotion/v1\0";
 const CONTENT_ROOT_DOMAIN: &[u8] = b"path-of-angels/content-root/v1\0";
@@ -239,6 +247,31 @@ pub struct Poag1Bundle {
 pub struct PoaDeploymentScope {
     deployment_id: String,
     federation_id: String,
+    genesis_sha256: String,
+    manifest_sha256: String,
+    policy_sha256: String,
+    deployment_digest: String,
+    verified: Option<VerifiedDeploymentArtifacts>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VerifiedDeploymentArtifacts {
+    root: PathBuf,
+    manifest_bytes: Vec<u8>,
+    genesis_bytes: Vec<u8>,
+    nodes: Vec<PoaNodeScope>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PoaNodeScope {
+    index: usize,
+    public_key: String,
+    data_dir: String,
+    http_bind: String,
+    http_port: u16,
+    gossip_host: String,
+    gossip_port: u16,
+    gossip_peers: Vec<String>,
 }
 
 impl PoaDeploymentScope {
@@ -289,9 +322,188 @@ impl PoaDeploymentScope {
             .and_then(Value::as_str)
             .ok_or_else(|| CuratorError::Deployment("federation_id is absent".into()))?;
         parse_hex_array::<32>(federation_id, "federation_id")?;
+        let genesis_sha256 = object
+            .get("genesis_sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CuratorError::Deployment("genesis_sha256 is absent".into()))?;
+        parse_hex_array::<32>(genesis_sha256, "genesis_sha256")?;
+        let manifest_sha256 = hex_encode(&sha256_raw(&bytes));
+        let policy_bytes = canonical_production_policy_bytes()?;
+        let policy_sha256 = hex_encode(&sha256_raw(&policy_bytes));
+        let deployment_digest =
+            derive_signal_deployment_digest(deployment_id, &manifest_sha256, &policy_sha256);
         Ok(Self {
             deployment_id: deployment_id.to_owned(),
             federation_id: federation_id.to_owned(),
+            genesis_sha256: genesis_sha256.to_owned(),
+            manifest_sha256,
+            policy_sha256,
+            deployment_digest,
+            verified: None,
+        })
+    }
+
+    /// Load the public deployment manifest and verify that it names these exact
+    /// genesis bytes and the committee identity contained in them.
+    ///
+    /// This is the in-process counterpart of the identity-bearing portion of
+    /// `scripts/poa-devnet-manifest.mjs verify-public`. It deliberately does not
+    /// inspect operator seed files or a main-network data directory: those are
+    /// deployment-topology checks, while this token binds the exact immutable
+    /// manifest/genesis pair consumed by content activation.
+    pub fn load_verified(
+        manifest_path: impl AsRef<Path>,
+        genesis_path: impl AsRef<Path>,
+        main_data_dir: impl AsRef<Path>,
+    ) -> Result<Self, CuratorError> {
+        let manifest_path = manifest_path.as_ref();
+        let genesis_path = genesis_path.as_ref();
+        let manifest_bytes = read_regular_bounded(manifest_path, 1024 * 1024)?;
+        let manifest = parse_strict_json(&manifest_bytes).map_err(|reason| CuratorError::Json {
+            path: manifest_path.to_path_buf(),
+            reason,
+        })?;
+        let manifest = manifest
+            .as_object()
+            .ok_or_else(|| CuratorError::Deployment("poa-devnet.json is not an object".into()))?;
+        require_exact_object_keys(
+            manifest,
+            &[
+                "schema",
+                "deployment_domain",
+                "deployment_id",
+                "federation_id",
+                "committee_epoch",
+                "threshold",
+                "genesis_sha256",
+                "descriptor",
+                "policy",
+                "nodes",
+            ],
+            "poa-devnet.json",
+        )
+        .map_err(CuratorError::Deployment)?;
+        if manifest.get("schema").and_then(Value::as_str) != Some(POA_DEPLOYMENT_MANIFEST_SCHEMA)
+            || manifest.get("deployment_domain").and_then(Value::as_str)
+                != Some(POA_DEPLOYMENT_DOMAIN)
+        {
+            return Err(CuratorError::Deployment(
+                "poa-devnet.json has the wrong production schema/domain".into(),
+            ));
+        }
+        let deployment_id = manifest_hex32(manifest, "deployment_id")?;
+        let federation_id = manifest_hex32(manifest, "federation_id")?;
+        let pinned_genesis_sha256 = manifest_hex32(manifest, "genesis_sha256")?;
+        verify_production_policy(manifest.get("policy"))?;
+        if manifest.get("descriptor").and_then(Value::as_str) != Some("bundle/genesis.json") {
+            return Err(CuratorError::Deployment(
+                "poa-devnet.json descriptor is not bundle/genesis.json".into(),
+            ));
+        }
+        let manifest_root = manifest_path.parent().ok_or_else(|| {
+            CuratorError::Deployment("poa-devnet.json has no containing directory".into())
+        })?;
+        let root =
+            fs::canonicalize(manifest_root).map_err(|error| io_error(manifest_root, error))?;
+        let main_root = fs::canonicalize(main_data_dir.as_ref())
+            .map_err(|error| io_error(main_data_dir.as_ref(), error))?;
+        if paths_overlap(&root, &main_root) {
+            return Err(CuratorError::Deployment(
+                "PoA deployment root and main data directory are not disjoint".into(),
+            ));
+        }
+        let expected_genesis = fs::canonicalize(root.join("bundle/genesis.json"))
+            .map_err(|error| io_error(&manifest_root.join("bundle/genesis.json"), error))?;
+        let supplied_genesis =
+            fs::canonicalize(genesis_path).map_err(|error| io_error(genesis_path, error))?;
+        if supplied_genesis != expected_genesis {
+            return Err(CuratorError::Deployment(
+                "supplied genesis is not the manifest's exact descriptor path".into(),
+            ));
+        }
+
+        let genesis_bytes = read_regular_bounded(&supplied_genesis, MAX_ARTIFACT_BYTES)?;
+        let actual_genesis_sha256 = hex_encode(&sha256_raw(&genesis_bytes));
+        if actual_genesis_sha256 != pinned_genesis_sha256 {
+            return Err(CuratorError::Deployment(
+                "poa-devnet.json does not pin the supplied genesis bytes".into(),
+            ));
+        }
+        let genesis = parse_strict_json(&genesis_bytes).map_err(|reason| CuratorError::Json {
+            path: supplied_genesis.clone(),
+            reason,
+        })?;
+        let genesis = genesis
+            .as_object()
+            .ok_or_else(|| CuratorError::Deployment("genesis.json is not an object".into()))?;
+        if genesis.get("deployment_domain").and_then(Value::as_str) != Some(POA_DEPLOYMENT_DOMAIN) {
+            return Err(CuratorError::Deployment(
+                "genesis.json has the wrong deployment domain".into(),
+            ));
+        }
+        if genesis.get("federation_id").and_then(Value::as_str) != Some(&federation_id) {
+            return Err(CuratorError::Deployment(
+                "genesis.json federation differs from poa-devnet.json".into(),
+            ));
+        }
+        let genesis_epoch = genesis
+            .get("committee_epoch")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let manifest_epoch = manifest
+            .get("committee_epoch")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| CuratorError::Deployment("manifest committee_epoch is absent".into()))?;
+        if genesis_epoch != manifest_epoch {
+            return Err(CuratorError::Deployment(
+                "manifest committee epoch differs from genesis.json".into(),
+            ));
+        }
+        let genesis_threshold = genesis
+            .get("threshold")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or_else(|| CuratorError::Deployment("genesis threshold is not positive".into()))?;
+        if manifest.get("threshold").and_then(Value::as_u64) != Some(genesis_threshold) {
+            return Err(CuratorError::Deployment(
+                "manifest threshold differs from genesis.json".into(),
+            ));
+        }
+        let validators = verify_genesis_economy_and_committee(
+            genesis,
+            &federation_id,
+            genesis_epoch,
+            genesis_threshold,
+        )?;
+        let nodes = verify_public_topology(manifest, &validators)?;
+        let deployment_preimage = format!(
+            "{POA_DEPLOYMENT_DOMAIN}\0{}\0{}",
+            federation_id, pinned_genesis_sha256
+        );
+        if hex_encode(&sha256_raw(deployment_preimage.as_bytes())) != deployment_id {
+            return Err(CuratorError::Deployment(
+                "deployment_id does not rederive from domain, federation, and genesis bytes".into(),
+            ));
+        }
+        verify_main_identity_isolation(&root, &main_root, genesis)?;
+
+        let manifest_sha256 = hex_encode(&sha256_raw(&manifest_bytes));
+        let policy_sha256 = hex_encode(&sha256_raw(&canonical_production_policy_bytes()?));
+        let deployment_digest =
+            derive_signal_deployment_digest(&deployment_id, &manifest_sha256, &policy_sha256);
+        Ok(Self {
+            deployment_id,
+            federation_id,
+            genesis_sha256: pinned_genesis_sha256,
+            manifest_sha256,
+            policy_sha256,
+            deployment_digest,
+            verified: Some(VerifiedDeploymentArtifacts {
+                root,
+                manifest_bytes,
+                genesis_bytes,
+                nodes,
+            }),
         })
     }
 
@@ -302,6 +514,629 @@ impl PoaDeploymentScope {
     pub fn federation_id(&self) -> &str {
         &self.federation_id
     }
+
+    pub fn genesis_sha256(&self) -> &str {
+        &self.genesis_sha256
+    }
+
+    pub fn manifest_sha256(&self) -> &str {
+        &self.manifest_sha256
+    }
+
+    pub fn policy_sha256(&self) -> &str {
+        &self.policy_sha256
+    }
+
+    /// Identity persisted in `PoaSignalHeadV1`. Unlike the public deployment
+    /// id, this binds the exact manifest bytes and the immutable production
+    /// policy digest as well as the manifest-pinned genesis identity.
+    pub fn deployment_digest(&self) -> &str {
+        &self.deployment_digest
+    }
+
+    pub fn verified_manifest_bytes(&self) -> Result<&[u8], CuratorError> {
+        self.verified
+            .as_ref()
+            .map(|verified| verified.manifest_bytes.as_slice())
+            .ok_or_else(|| CuratorError::Deployment("deployment scope is not verified".into()))
+    }
+
+    pub fn verified_genesis_bytes(&self) -> Result<&[u8], CuratorError> {
+        self.verified
+            .as_ref()
+            .map(|verified| verified.genesis_bytes.as_slice())
+            .ok_or_else(|| CuratorError::Deployment("deployment scope is not verified".into()))
+    }
+
+    /// Bind one serving directory to the retained authenticated descriptor and
+    /// exact manifest-derived operator configuration. The authoritative
+    /// genesis path is never re-read, closing an A-then-B tuple race.
+    pub fn verify_serving_data_dir(
+        &self,
+        data_dir: impl AsRef<Path>,
+        runtime_genesis_bytes: Option<&[u8]>,
+    ) -> Result<usize, CuratorError> {
+        let verified = self
+            .verified
+            .as_ref()
+            .ok_or_else(|| CuratorError::Deployment("deployment scope is not verified".into()))?;
+        let data_dir = fs::canonicalize(data_dir.as_ref())
+            .map_err(|error| io_error(data_dir.as_ref(), error))?;
+        let (node, expected_dir) = verified
+            .nodes
+            .iter()
+            .find_map(|node| {
+                let expected = verified.root.join(&node.data_dir);
+                fs::canonicalize(&expected)
+                    .ok()
+                    .filter(|candidate| *candidate == data_dir)
+                    .map(|candidate| (node, candidate))
+            })
+            .ok_or_else(|| {
+                CuratorError::Deployment(
+                    "serving data directory is not an exact manifest node path".into(),
+                )
+            })?;
+        if !expected_dir.starts_with(&verified.root) || expected_dir.join(".devnet").exists() {
+            return Err(CuratorError::Deployment(
+                "serving data directory escapes PoA root or carries .devnet".into(),
+            ));
+        }
+        let owned;
+        let runtime = match runtime_genesis_bytes {
+            Some(bytes) => bytes,
+            None => {
+                owned =
+                    read_regular_bounded(&expected_dir.join("genesis.json"), MAX_ARTIFACT_BYTES)?;
+                &owned
+            }
+        };
+        if runtime != verified.genesis_bytes {
+            return Err(CuratorError::Deployment(
+                "serving genesis bytes differ from the retained authenticated descriptor".into(),
+            ));
+        }
+        let expected_operator = operator_config(self, verified, node);
+        let operator_path = expected_dir.join("operator.env");
+        let actual_operator = read_regular_bounded(&operator_path, 64 * 1024)?;
+        if actual_operator != expected_operator.as_bytes() {
+            return Err(CuratorError::Deployment(format!(
+                "{} differs from exact manifest-derived production policy",
+                operator_path.display()
+            )));
+        }
+        Ok(node.index)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ValidatorIdentity {
+    public_key: String,
+    hybrid_id: [u8; 32],
+}
+
+fn canonical_production_policy_bytes() -> Result<Vec<u8>, CuratorError> {
+    let policy: Value = serde_json::from_str(POA_PRODUCTION_POLICY_CANONICAL).map_err(|error| {
+        CuratorError::Deployment(format!("invalid compiled PoA policy: {error}"))
+    })?;
+    serde_json::to_vec(&policy).map_err(|error| {
+        CuratorError::Deployment(format!("cannot encode compiled PoA policy: {error}"))
+    })
+}
+
+fn verify_production_policy(policy: Option<&Value>) -> Result<(), CuratorError> {
+    let expected: Value =
+        serde_json::from_str(POA_PRODUCTION_POLICY_CANONICAL).map_err(|error| {
+            CuratorError::Deployment(format!("invalid compiled PoA policy: {error}"))
+        })?;
+    if policy != Some(&expected) {
+        return Err(CuratorError::Deployment(
+            "public manifest carries an unknown or weakened PoA operator policy".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn derive_signal_deployment_digest(
+    deployment_id: &str,
+    manifest_sha256: &str,
+    policy_sha256: &str,
+) -> String {
+    let preimage = format!(
+        "{POA_SIGNAL_DEPLOYMENT_IDENTITY_DOMAIN}\0{deployment_id}\0{manifest_sha256}\0{policy_sha256}"
+    );
+    hex_encode(&sha256_raw(preimage.as_bytes()))
+}
+
+fn manifest_hex32(
+    object: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<String, CuratorError> {
+    let value = object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| CuratorError::Deployment(format!("{field} is absent")))?;
+    parse_hex_array::<32>(value, field)?;
+    Ok(value.to_owned())
+}
+
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}
+
+fn verify_genesis_economy_and_committee(
+    genesis: &serde_json::Map<String, Value>,
+    federation_id: &str,
+    committee_epoch: u64,
+    threshold: u64,
+) -> Result<Vec<ValidatorIdentity>, CuratorError> {
+    require_exact_object_keys(
+        genesis,
+        &[
+            "checkpoint_interval",
+            "committee_epoch",
+            "consensus_genesis_unix_seconds",
+            "consensus_time_mode",
+            "deployment_domain",
+            "epoch_length",
+            "federation_id",
+            "fee_well",
+            "genesis_moves",
+            "initial_cells",
+            "issuer_well",
+            "threshold",
+            "validators",
+        ],
+        "PoA genesis.json",
+    )
+    .map_err(CuratorError::Deployment)?;
+    let values = genesis
+        .get("validators")
+        .and_then(Value::as_array)
+        .filter(|values| !values.is_empty())
+        .ok_or_else(|| CuratorError::Deployment("genesis validators are absent".into()))?;
+    let expected_threshold = values.len() - values.len().saturating_sub(1) / 3;
+    if threshold as usize != expected_threshold {
+        return Err(CuratorError::Deployment(format!(
+            "genesis threshold {threshold} is not the full BFT threshold {expected_threshold}"
+        )));
+    }
+
+    let mut ed_seen = BTreeSet::new();
+    let mut ml_seen = BTreeSet::new();
+    let mut hybrid_seen = BTreeSet::new();
+    let mut validators = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let validator = value.as_object().ok_or_else(|| {
+            CuratorError::Deployment(format!("genesis validator {index} is not an object"))
+        })?;
+        require_exact_object_keys(
+            validator,
+            &[
+                "name",
+                "public_key",
+                "xmss_root",
+                "ml_dsa_public_key",
+                "hybrid_id",
+            ],
+            "genesis validator",
+        )
+        .map_err(CuratorError::Deployment)?;
+        if validator.get("name").and_then(Value::as_str) != Some(&format!("node-{index}")) {
+            return Err(CuratorError::Deployment(format!(
+                "genesis validator {index} has a non-canonical name"
+            )));
+        }
+        let public_key = validator
+            .get("public_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CuratorError::Deployment("validator public_key is absent".into()))?;
+        let public_key_bytes = parse_hex_array::<32>(public_key, "validator.public_key")?;
+        let xmss = validator
+            .get("xmss_root")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CuratorError::Deployment("validator xmss_root is absent".into()))?;
+        parse_hex_array::<32>(xmss, "validator.xmss_root")?;
+        let ml_hex = validator
+            .get("ml_dsa_public_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CuratorError::Deployment("validator ML-DSA key is absent".into()))?;
+        let ml_dsa_public_key =
+            parse_lower_hex(ml_hex, ML_DSA_65_PUBLIC_KEY_BYTES, "validator ML-DSA key")?;
+        let declared_hybrid = validator
+            .get("hybrid_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CuratorError::Deployment("validator hybrid_id is absent".into()))?;
+        let declared_hybrid = parse_hex_array::<32>(declared_hybrid, "validator.hybrid_id")?;
+        let derived_hybrid =
+            dregg_types::hybrid_id_commitment(&public_key_bytes, &ml_dsa_public_key);
+        if declared_hybrid != derived_hybrid {
+            return Err(CuratorError::Deployment(format!(
+                "genesis validator {index} hybrid_id does not bind its Ed25519+ML-DSA keys"
+            )));
+        }
+        if !ed_seen.insert(public_key_bytes)
+            || !ml_seen.insert(ml_dsa_public_key.clone())
+            || !hybrid_seen.insert(derived_hybrid)
+        {
+            return Err(CuratorError::Deployment(
+                "genesis committee contains duplicate Ed25519, ML-DSA, or hybrid identities".into(),
+            ));
+        }
+        validators.push(ValidatorIdentity {
+            public_key: public_key.to_owned(),
+            hybrid_id: derived_hybrid,
+        });
+    }
+    let derived_federation = derive_hybrid_federation_id(&validators, committee_epoch);
+    if hex_encode(&derived_federation) != federation_id {
+        return Err(CuratorError::Deployment(
+            "declared federation_id does not match the exact hybrid committee and epoch".into(),
+        ));
+    }
+
+    let initial = genesis
+        .get("initial_cells")
+        .and_then(Value::as_array)
+        .filter(|cells| cells.len() == 2)
+        .ok_or_else(|| {
+            CuratorError::Deployment(
+                "PoA genesis must contain exactly its issuer and fee wells".into(),
+            )
+        })?;
+    let mut initial_ids = BTreeSet::new();
+    let mut initial_public = BTreeSet::new();
+    for (index, value) in initial.iter().enumerate() {
+        let cell = value.as_object().ok_or_else(|| {
+            CuratorError::Deployment(format!("initial cell {index} is not an object"))
+        })?;
+        require_exact_object_keys(
+            cell,
+            &[
+                "id",
+                "public_key",
+                "token_id",
+                "balance",
+                "ml_dsa_public_key",
+            ],
+            "PoA initial cell",
+        )
+        .map_err(CuratorError::Deployment)?;
+        let id = manifest_value_hex32(cell, "id", "initial_cell.id")?;
+        let public = manifest_value_hex32(cell, "public_key", "initial_cell.public_key")?;
+        manifest_value_hex32(cell, "token_id", "initial_cell.token_id")?;
+        let ml = cell
+            .get("ml_dsa_public_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| CuratorError::Deployment("initial cell ML-DSA key is absent".into()))?;
+        parse_lower_hex(ml, ML_DSA_65_PUBLIC_KEY_BYTES, "initial cell ML-DSA key")?;
+        if cell.get("balance").and_then(Value::as_u64) != Some(0)
+            || !initial_ids.insert(id)
+            || !initial_public.insert(public)
+        {
+            return Err(CuratorError::Deployment(
+                "PoA initial wells must be distinct and carry zero generic value".into(),
+            ));
+        }
+    }
+    let issuer = manifest_value_hex32(genesis, "issuer_well", "issuer_well")?;
+    let fee = manifest_value_hex32(genesis, "fee_well", "fee_well")?;
+    if issuer == fee || !initial_ids.contains(&issuer) || !initial_ids.contains(&fee) {
+        return Err(CuratorError::Deployment(
+            "issuer_well/fee_well do not name the two exact initial cells".into(),
+        ));
+    }
+    if genesis
+        .get("genesis_moves")
+        .and_then(Value::as_array)
+        .is_none_or(|moves| !moves.is_empty())
+        || genesis
+            .get("starbridge_cells")
+            .is_some_and(|value| value.as_array().is_none_or(|cells| !cells.is_empty()))
+    {
+        return Err(CuratorError::Deployment(
+            "PoA genesis must have no generic moves or Starbridge demo catalog".into(),
+        ));
+    }
+    Ok(validators)
+}
+
+fn derive_hybrid_federation_id(validators: &[ValidatorIdentity], committee_epoch: u64) -> [u8; 32] {
+    let mut ids: Vec<[u8; 32]> = validators
+        .iter()
+        .map(|validator| validator.hybrid_id)
+        .collect();
+    ids.sort();
+    let mut hasher = blake3::Hasher::new_derive_key(FEDERATION_ID_DOMAIN);
+    hasher.update(&(ids.len() as u64).to_le_bytes());
+    for id in ids {
+        hasher.update(&id);
+    }
+    hasher.update(&committee_epoch.to_le_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+fn verify_public_topology(
+    manifest: &serde_json::Map<String, Value>,
+    validators: &[ValidatorIdentity],
+) -> Result<Vec<PoaNodeScope>, CuratorError> {
+    let values = manifest
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CuratorError::Deployment("manifest nodes are absent".into()))?;
+    if values.len() != validators.len() {
+        return Err(CuratorError::Deployment(
+            "manifest/genesis committee cardinality is inconsistent".into(),
+        ));
+    }
+    let mut nodes = Vec::with_capacity(values.len());
+    let mut ports = BTreeSet::new();
+    let mut hosts = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let node = value.as_object().ok_or_else(|| {
+            CuratorError::Deployment(format!("manifest node {index} is not an object"))
+        })?;
+        require_exact_object_keys(
+            node,
+            &["index", "name", "public_key", "data_dir", "http", "gossip"],
+            "manifest node",
+        )
+        .map_err(CuratorError::Deployment)?;
+        if node.get("index").and_then(Value::as_u64) != Some(index as u64)
+            || node.get("name").and_then(Value::as_str) != Some(&format!("node-{index}"))
+            || node.get("public_key").and_then(Value::as_str)
+                != Some(validators[index].public_key.as_str())
+        {
+            return Err(CuratorError::Deployment(format!(
+                "manifest node {index} differs from the ordered genesis committee"
+            )));
+        }
+        let data_dir = format!("nodes/node-{index}");
+        if node.get("data_dir").and_then(Value::as_str) != Some(data_dir.as_str()) {
+            return Err(CuratorError::Deployment(format!(
+                "manifest node {index} data_dir is not canonical"
+            )));
+        }
+        let http = exact_child_object(node, "http", &["bind", "port"])?;
+        let http_bind = http.get("bind").and_then(Value::as_str).unwrap_or_default();
+        let http_port = valid_port(http.get("port"), "manifest HTTP port")?;
+        if http_bind != "127.0.0.1" {
+            return Err(CuratorError::Deployment(
+                "PoA public HTTP endpoint must bind 127.0.0.1".into(),
+            ));
+        }
+        let gossip = exact_child_object(node, "gossip", &["advertised_host", "port", "peers"])?;
+        let gossip_host = gossip
+            .get("advertised_host")
+            .and_then(Value::as_str)
+            .filter(|host| valid_advertised_host(host))
+            .ok_or_else(|| CuratorError::Deployment("invalid advertised gossip host".into()))?;
+        let gossip_port = valid_port(gossip.get("port"), "manifest gossip port")?;
+        if !ports.insert(http_port) || !ports.insert(gossip_port) {
+            return Err(CuratorError::Deployment(
+                "public HTTP and gossip ports overlap".into(),
+            ));
+        }
+        let peers = gossip
+            .get("peers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| CuratorError::Deployment("manifest gossip peers are absent".into()))?
+            .iter()
+            .map(|peer| {
+                peer.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| CuratorError::Deployment("gossip peer is not a string".into()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        hosts.push(gossip_host.to_owned());
+        nodes.push(PoaNodeScope {
+            index,
+            public_key: validators[index].public_key.clone(),
+            data_dir,
+            http_bind: http_bind.to_owned(),
+            http_port,
+            gossip_host: gossip_host.to_owned(),
+            gossip_port,
+            gossip_peers: peers,
+        });
+    }
+    let http_base = nodes.first().map(|node| node.http_port).unwrap_or(0);
+    let gossip_base = nodes.first().map(|node| node.gossip_port).unwrap_or(0);
+    let distinct_hosts: BTreeSet<_> = hosts.iter().collect();
+    if distinct_hosts.len() > 1 && hosts.iter().any(|host| is_loopback_host(host)) {
+        return Err(CuratorError::Deployment(
+            "multi-host topology advertises a loopback address".into(),
+        ));
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        if u32::from(node.http_port) != u32::from(http_base) + index as u32
+            || u32::from(node.gossip_port) != u32::from(gossip_base) + index as u32
+        {
+            return Err(CuratorError::Deployment(
+                "manifest endpoint ranges are not consecutive".into(),
+            ));
+        }
+        let expected: Vec<String> = hosts
+            .iter()
+            .enumerate()
+            .filter(|(peer, _)| *peer != index)
+            .map(|(peer, host)| format!("{host}:{}", u32::from(gossip_base) + peer as u32))
+            .collect();
+        if node.gossip_peers != expected {
+            return Err(CuratorError::Deployment(format!(
+                "manifest node {index} gossip peers are not the exact advertised mesh"
+            )));
+        }
+    }
+    Ok(nodes)
+}
+
+fn exact_child_object<'a>(
+    parent: &'a serde_json::Map<String, Value>,
+    field: &str,
+    keys: &[&str],
+) -> Result<&'a serde_json::Map<String, Value>, CuratorError> {
+    let child = parent
+        .get(field)
+        .and_then(Value::as_object)
+        .ok_or_else(|| CuratorError::Deployment(format!("{field} is not an object")))?;
+    require_exact_object_keys(child, keys, field).map_err(CuratorError::Deployment)?;
+    Ok(child)
+}
+
+fn valid_port(value: Option<&Value>, label: &str) -> Result<u16, CuratorError> {
+    let port = value
+        .and_then(Value::as_u64)
+        .filter(|port| (1024..=65535).contains(port));
+    port.map(|port| port as u16)
+        .ok_or_else(|| CuratorError::Deployment(format!("{label} is outside 1024..65535")))
+}
+
+fn valid_advertised_host(host: &str) -> bool {
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost" || host == "127.0.0.1" || host.starts_with("127.")
+}
+
+fn manifest_value_hex32(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    label: &'static str,
+) -> Result<[u8; 32], CuratorError> {
+    let value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| CuratorError::Deployment(format!("{key} is absent")))?;
+    parse_hex_array::<32>(value, label)
+}
+
+fn parse_lower_hex(value: &str, bytes: usize, label: &str) -> Result<Vec<u8>, CuratorError> {
+    if value.len() != bytes * 2
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CuratorError::Deployment(format!(
+            "{label} is not exactly {bytes} lowercase bytes"
+        )));
+    }
+    Ok(value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]))
+        .collect())
+}
+
+fn verify_main_identity_isolation(
+    poa_root: &Path,
+    main_root: &Path,
+    poa_genesis: &serde_json::Map<String, Value>,
+) -> Result<(), CuratorError> {
+    if poa_root.join("bundle/faucet.key").exists() {
+        return Err(CuratorError::Deployment(
+            "PoA empty-economy genesis must not emit a faucet key".into(),
+        ));
+    }
+    let main_genesis_path = main_root.join("genesis.json");
+    if main_genesis_path.exists() {
+        let bytes = read_regular_bounded(&main_genesis_path, MAX_ARTIFACT_BYTES)?;
+        let main = parse_strict_json(&bytes).map_err(|reason| CuratorError::Json {
+            path: main_genesis_path,
+            reason,
+        })?;
+        let main = main
+            .as_object()
+            .ok_or_else(|| CuratorError::Deployment("main genesis is not an object".into()))?;
+        if main.get("federation_id").and_then(Value::as_str)
+            == poa_genesis.get("federation_id").and_then(Value::as_str)
+        {
+            return Err(CuratorError::Deployment(
+                "PoA federation identity is copied from the main federation".into(),
+            ));
+        }
+        let poa_public = genesis_public_identities(poa_genesis);
+        let main_public = genesis_public_identities(main);
+        if !poa_public.is_disjoint(&main_public) {
+            return Err(CuratorError::Deployment(
+                "PoA validator or well identity is reused by the main genesis".into(),
+            ));
+        }
+    }
+    let poa_keys = collect_key_digests(&poa_root.join("bundle"))?;
+    let main_keys = collect_key_digests(main_root)?;
+    if !poa_keys.is_disjoint(&main_keys) {
+        return Err(CuratorError::Deployment(
+            "PoA key bytes are reused from the main data directory".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn genesis_public_identities(genesis: &serde_json::Map<String, Value>) -> BTreeSet<String> {
+    ["validators", "initial_cells"]
+        .into_iter()
+        .filter_map(|field| genesis.get(field).and_then(Value::as_array))
+        .flatten()
+        .filter_map(|row| row.get("public_key").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn collect_key_digests(root: &Path) -> Result<BTreeSet<[u8; 32]>, CuratorError> {
+    fn visit(path: &Path, output: &mut BTreeSet<[u8; 32]>) -> Result<(), CuratorError> {
+        if !path.exists() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(path).map_err(|error| io_error(path, error))? {
+            let entry = entry.map_err(|error| io_error(path, error))?;
+            let ty = entry
+                .file_type()
+                .map_err(|error| io_error(&entry.path(), error))?;
+            if ty.is_symlink() {
+                continue;
+            }
+            if ty.is_dir() {
+                visit(&entry.path(), output)?;
+            } else if ty.is_file()
+                && entry.path().extension().and_then(|value| value.to_str()) == Some("key")
+            {
+                let bytes = read_regular_bounded(&entry.path(), 4096)?;
+                if bytes.len() == 32 {
+                    output.insert(sha256_raw(&bytes));
+                }
+            }
+        }
+        Ok(())
+    }
+    let mut output = BTreeSet::new();
+    visit(root, &mut output)?;
+    Ok(output)
+}
+
+fn operator_config(
+    scope: &PoaDeploymentScope,
+    verified: &VerifiedDeploymentArtifacts,
+    node: &PoaNodeScope,
+) -> String {
+    let data_dir = verified.root.join(&node.data_dir);
+    format!(
+        "POA_DEPLOYMENT_DOMAIN={}\nPOA_DEPLOYMENT_ID={}\nPOA_FEDERATION_ID={}\nPOA_NODE_INDEX={}\nPOA_DATA_DIR={}\nPOA_HTTP_BIND={}\nPOA_HTTP_PORT={}\nPOA_GOSSIP_PORT={}\nPOA_GOSSIP_HOST={}\nPOA_FEDERATION_PEERS={}\nPOA_PROVE_TURNS=1\nPOA_ENABLE_FAUCET=0\nPOA_AUTO_APPROVE_JOINS=0\nDREGG_REQUIRE_LEAN=1\nDREGG_STRAND_ADMISSION_GATE=1\nDREGG_ALLOW_UNVERIFIED_CONSENSUS=0\nDREGG_STATUS_EXPOSE_COUNTS=0\nDREGG_SEED_DEMO_LEASE=0\n",
+        POA_DEPLOYMENT_DOMAIN,
+        scope.deployment_id,
+        scope.federation_id,
+        node.index,
+        data_dir.display(),
+        node.http_bind,
+        node.http_port,
+        node.gossip_port,
+        node.gossip_host,
+        node.gossip_peers.join(","),
+    )
 }
 
 /// A content bundle whose mission federation has been compared with the
@@ -659,6 +1494,15 @@ impl Poag1Bundle {
         deployment_manifest: impl AsRef<Path>,
     ) -> Result<DeploymentBoundBundle<'_>, CuratorError> {
         let deployment = PoaDeploymentScope::load(deployment_manifest)?;
+        self.bind_deployment_scope(deployment)
+    }
+
+    /// Bind to a deployment scope already verified by the caller's required
+    /// ceremony (normally [`PoaDeploymentScope::load_verified`]).
+    pub fn bind_deployment_scope(
+        &self,
+        deployment: PoaDeploymentScope,
+    ) -> Result<DeploymentBoundBundle<'_>, CuratorError> {
         if self.missions.is_empty() {
             return Err(CuratorError::Deployment(
                 "authenticated catalog contains no missions".into(),
@@ -3221,5 +4065,69 @@ mod tests {
             vector["signature"].as_str().unwrap()
         );
         assert!(dregg_types::verify(&key.public_key(), &message, &signature));
+    }
+
+    #[test]
+    fn production_deployment_verifier_matches_js_identity_vectors() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let main = tempfile::tempdir().unwrap();
+        let scope = PoaDeploymentScope::load_verified(
+            repo.join("poa/deployments/epoch-1/poa-devnet.json"),
+            repo.join("poa/deployments/epoch-1/bundle/genesis.json"),
+            main.path(),
+        )
+        .unwrap();
+        assert_eq!(
+            scope.manifest_sha256(),
+            "427a7a33ae19e450e2b9eb86453ac247b94d47725e29f8d470f0e9cad8073510"
+        );
+        assert_eq!(
+            scope.policy_sha256(),
+            "8346263cf2fd50210353dca763dfb8f1271e1154e766ca93553ef3abc12a65ca"
+        );
+        assert_eq!(
+            scope.deployment_digest(),
+            "5891c919acca76af3c553d157768d9f274b71610ed3b09bb09c954da2c7aa67e"
+        );
+    }
+
+    #[test]
+    fn production_deployment_refuses_weakened_policy_and_main_identity_reuse() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = tempfile::tempdir().unwrap();
+        let main = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("bundle")).unwrap();
+        let manifest_path = root.path().join("poa-devnet.json");
+        let genesis_path = root.path().join("bundle/genesis.json");
+        fs::copy(
+            repo.join("poa/deployments/epoch-1/poa-devnet.json"),
+            &manifest_path,
+        )
+        .unwrap();
+        fs::copy(
+            repo.join("poa/deployments/epoch-1/bundle/genesis.json"),
+            &genesis_path,
+        )
+        .unwrap();
+
+        let mut weakened: Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        weakened["policy"]["prove_turns"] = Value::Bool(false);
+        fs::write(&manifest_path, serde_json::to_vec(&weakened).unwrap()).unwrap();
+        let error = PoaDeploymentScope::load_verified(&manifest_path, &genesis_path, main.path())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("weakened"), "{error}");
+
+        fs::copy(
+            repo.join("poa/deployments/epoch-1/poa-devnet.json"),
+            &manifest_path,
+        )
+        .unwrap();
+        fs::copy(&genesis_path, main.path().join("genesis.json")).unwrap();
+        let error = PoaDeploymentScope::load_verified(&manifest_path, &genesis_path, main.path())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("copied from the main federation"), "{error}");
     }
 }

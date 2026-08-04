@@ -122,6 +122,44 @@ that tolerates one fault; change `POA_VALIDATORS` and provide the same number of
 advertised hosts if operational slack matters more than the three-host beta
 shape.
 
+## Install the Lean-emitted Signal head
+
+Signal authority is initialized by a separate, one-shot operator ceremony; it
+is not hidden inside generic node startup. Run it against each PoA node data
+directory before that store has finalized an ordinary turn:
+
+```sh
+"$POA_BIN" init-poa-signal \
+  --data-dir "$POA_ROOT/nodes/node-0" \
+  --deployment-manifest "$POA_ROOT/poa-devnet.json" \
+  --genesis "$POA_ROOT/bundle/genesis.json" \
+  --main-data-dir "$POA_MAIN_DATA_DIR" \
+  --poag1-manifest "$PWD/poa/artifacts/poag1/manifest.json" \
+  --content-envelope "$PWD/poa/artifacts/poag1/manifest.sig.json" \
+  --curator-key-pin "$PWD/poa/config/curator-key.json" \
+  --expected-content-epoch 1 \
+  --expected-activation-counter 2
+```
+
+The command retains and hashes the exact manifest/genesis bytes it authenticated,
+rederives the hybrid Ed25519+ML-DSA federation id, and verifies the immutable
+production policy, zero demo economy, canonical topology/operator env, and
+main-network identity/storage isolation before calling Lean. Lean v2 binds the
+exact deployment-manifest and policy digests into the deployment digest persisted
+in the head. Consequently a byte-different manifest over the same genesis is a
+different authority image, not an idempotent retry. The command authenticates
+every POAG1 artifact and detached signature, calls the named Lean NetworkGenesis
+export, and atomically installs its exact config/Canon bytes. A different head,
+any prior PoA authority/history, a nonempty generic commit log, tuple drift, or a
+missing Lean export refuses; the command never resets a database.
+
+Every later node boot that finds a persisted PoA head requires explicit
+`POA_DEPLOYMENT_MANIFEST` and `POA_MAIN_DATA_DIR` environment paths. Startup
+re-verifies the exact manifest, policy, hybrid committee, main-network isolation,
+operator env, and the precise genesis bytes already consumed by the runtime,
+then compares the resulting deployment digest with the persisted head before any
+Signal finality can run. Generic nodes with no PoA head require neither variable.
+
 ## Follower-first participation
 
 Anyone can make a fresh identity, pin the public descriptor, and verify the

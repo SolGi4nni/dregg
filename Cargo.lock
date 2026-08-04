@@ -7021,6 +7021,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "ml-kem",
  "pg-dregg",
+ "poa-curator",
  "postcard",
  "quinn",
  "rand 0.8.6",
@@ -7030,6 +7031,7 @@ dependencies = [
  "rustls 0.23.41",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "starbridge-bounty-board",
  "starbridge-compartment-workflow-mandate",
  "starbridge-execution-lease",
@@ -16867,6 +16869,19 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "poa-curator"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-types",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

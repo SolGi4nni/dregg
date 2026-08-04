@@ -71,7 +71,11 @@ fn last_logged_epoch(log: &str) -> Result<(u64, String), String> {
             continue;
         }
         rows += 1;
-        let cell = line[..line.len() - 1].rsplit('|').next().unwrap_or("").trim();
+        let cell = line[..line.len() - 1]
+            .rsplit('|')
+            .next()
+            .unwrap_or("")
+            .trim();
         let Some(value) = cell.strip_prefix("epoch:") else {
             return Err(format!(
                 "VK-REGEN-LOG row `{when}` ends in `{cell}`, which is not an `epoch:` cell. \
@@ -188,12 +192,18 @@ fn schema_epoch_log_row_can_go_red() {
     // 3 · FAIL-CLOSED: truncated epoch cell.
     let trunc = real.replacen(&tag, "| epoch: |", 1);
     assert_ne!(trunc, real, "truncation injection matched nothing");
-    assert!(last_logged_epoch(&trunc).is_err(), "a truncated epoch cell must be RED");
+    assert!(
+        last_logged_epoch(&trunc).is_err(),
+        "a truncated epoch cell must be RED"
+    );
 
     // 4 · FAIL-CLOSED: an epoch cell that is text but not an epoch.
     let garbled = real.replacen(&tag, "| epoch:twenty-two |", 1);
     assert_ne!(garbled, real, "garble injection matched nothing");
-    assert!(last_logged_epoch(&garbled).is_err(), "a garbled epoch cell must be RED");
+    assert!(
+        last_logged_epoch(&garbled).is_err(),
+        "a garbled epoch cell must be RED"
+    );
 
     // 5 · FAIL-CLOSED, the whole column — the shape this gate exists to refuse. Every event row
     //     loses its trailing cell, so nothing is epoch-bearing and NOTHING may read as clean.
@@ -222,7 +232,10 @@ fn schema_epoch_log_row_can_go_red() {
     // 7 · the column made non-monotone.
     let back = real.replacen("| epoch:21 |", "| epoch:5 |", 1);
     assert_ne!(back, real, "monotonicity injection matched nothing");
-    assert!(last_logged_epoch(&back).is_err(), "a decreasing epoch must be RED");
+    assert!(
+        last_logged_epoch(&back).is_err(),
+        "a decreasing epoch must be RED"
+    );
 }
 
 /// F5: the durable receipt-index HEAD anchor `{ len, root }` round-trips and

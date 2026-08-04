@@ -303,6 +303,7 @@ dependencies = [
 name = "poa-curator"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "dregg-types",
  "libc",
  "serde",

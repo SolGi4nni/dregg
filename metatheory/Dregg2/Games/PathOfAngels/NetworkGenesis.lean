@@ -28,6 +28,10 @@ private def zeroDigest : Digest32 where
   bytes := List.replicate 32 0
   length_eq := by simp
 
+abbrev DEPLOYMENT_IDENTITY_DOMAIN : String := "POA-SIGNAL-DEPLOYMENT-IDENTITY-V2"
+abbrev PRODUCTION_POLICY_SHA256 : String :=
+  "8346263cf2fd50210353dca763dfb8f1271e1154e766ca93553ef3abc12a65ca"
+
 private def expectedConfig (input : GenesisInputWire) : SignalTriangulation.Config :=
   Emit.signalConfig input.deployment.federationId input.content.sourceDigest
     input.content.signalContentDigest input.content.contentRoot input.content.activationDigest
@@ -68,10 +72,22 @@ def deploymentIdPreimage (input : GenesisInputWire) : String :=
   DEPLOYMENT_DOMAIN ++ nul ++ Emit.bytes32Hex input.deployment.federationId ++
     nul ++ Emit.bytes32Hex input.deployment.genesisSha256
 
+/-- The persisted Signal deployment coordinate commits to the exact public
+manifest bytes and immutable production policy as well as the public
+genesis-derived deployment id. -/
+def deploymentDigestPreimage (input : GenesisInputWire) : String :=
+  let nul := String.singleton (Char.ofNat 0)
+  DEPLOYMENT_IDENTITY_DOMAIN ++ nul ++ Emit.bytes32Hex input.deployment.deploymentId ++
+    nul ++ Emit.bytes32Hex input.deployment.manifestSha256 ++
+    nul ++ Emit.bytes32Hex input.deployment.policySha256
+
 /-- Recompute the public deployment identity inside Lean. External verification
 must still hash and validate the actual genesis bytes named by `genesisSha256`. -/
 def deploymentBindingChecks (input : GenesisInputWire) : Bool :=
-  decide (sha256Wire? (deploymentIdPreimage input) = some input.deployment.deploymentId)
+  decide (sha256Wire? (deploymentIdPreimage input) = some input.deployment.deploymentId) &&
+  decide (Emit.bytes32Hex input.deployment.policySha256 = PRODUCTION_POLICY_SHA256) &&
+  decide (sha256Wire? (deploymentDigestPreimage input) =
+    some input.deployment.deploymentDigest)
 
 /-- Zero is excluded for every externally verified 32-byte identity consumed by
 this ceremony. This predicate is only a precondition on an externally and
@@ -79,8 +95,11 @@ atomically verified tuple; it is not signature, manifest, or genesis-byte
 verification. The activation counter also retains room for a successor. -/
 def nonzeroExternalIdentityChecks (input : GenesisInputWire) : Bool :=
   decide (input.deployment.deploymentId ≠ zeroDigest) &&
+  decide (input.deployment.deploymentDigest ≠ zeroDigest) &&
   decide (input.deployment.federationId ≠ zeroDigest) &&
   decide (input.deployment.genesisSha256 ≠ zeroDigest) &&
+  decide (input.deployment.manifestSha256 ≠ zeroDigest) &&
+  decide (input.deployment.policySha256 ≠ zeroDigest) &&
   decide (input.content.manifestSha256 ≠ zeroDigest) &&
   decide (input.content.contentRoot ≠ zeroDigest) &&
   decide (input.content.activationDigest ≠ zeroDigest) &&
@@ -145,9 +164,15 @@ structure AuthorizedGenesis where
   config_from_lean : config = expectedConfig input
   canon_from_lean : canon = expectedCanon input
   output_authority_exact : output.authorityId = input.deployment.federationId
-  output_deployment_exact : output.deploymentDigest = input.deployment.deploymentId
+  output_deployment_exact : output.deploymentDigest = input.deployment.deploymentDigest
+  output_declared_deployment_exact :
+    output.declaredDeploymentId = input.deployment.deploymentId
   output_deployment_genesis_exact :
     output.deploymentGenesisSha256 = input.deployment.genesisSha256
+  output_deployment_manifest_exact :
+    output.deploymentManifestSha256 = input.deployment.manifestSha256
+  output_deployment_policy_exact :
+    output.deploymentPolicySha256 = input.deployment.policySha256
   output_manifest_exact : output.manifestSha256 = input.content.manifestSha256
   output_content_root_exact : output.contentRoot = input.content.contentRoot
   output_activation_exact : output.activationDigest = input.content.activationDigest
@@ -192,8 +217,11 @@ def authorizeGenesis (input : GenesisInputWire) : Option AuthorizedGenesis := do
       | some canonSha256 =>
         let output : GenesisOutputWire := {
           authorityId := input.deployment.federationId
-          deploymentDigest := input.deployment.deploymentId
+          deploymentDigest := input.deployment.deploymentDigest
+          declaredDeploymentId := input.deployment.deploymentId
           deploymentGenesisSha256 := input.deployment.genesisSha256
+          deploymentManifestSha256 := input.deployment.manifestSha256
+          deploymentPolicySha256 := input.deployment.policySha256
           manifestSha256 := input.content.manifestSha256
           contentRoot := input.content.contentRoot
           activationDigest := input.content.activationDigest
@@ -209,7 +237,7 @@ def authorizeGenesis (input : GenesisInputWire) : Option AuthorizedGenesis := do
           configSha256
           canonSha256
           authorityLanes9 := faithfulLanes9 input.deployment.federationId
-          deploymentLanes9 := faithfulLanes9 input.deployment.deploymentId
+          deploymentLanes9 := faithfulLanes9 input.deployment.deploymentDigest
           deploymentGenesisLanes9 := faithfulLanes9 input.deployment.genesisSha256
           manifestLanes9 := faithfulLanes9 input.content.manifestSha256
           contentRootLanes9 := faithfulLanes9 input.content.contentRoot
@@ -226,7 +254,10 @@ def authorizeGenesis (input : GenesisInputWire) : Option AuthorizedGenesis := do
             canon_from_lean := rfl
             output_authority_exact := rfl
             output_deployment_exact := rfl
+            output_declared_deployment_exact := rfl
             output_deployment_genesis_exact := rfl
+            output_deployment_manifest_exact := rfl
+            output_deployment_policy_exact := rfl
             output_manifest_exact := rfl
             output_content_root_exact := rfl
             output_activation_exact := rfl
@@ -265,7 +296,7 @@ theorem AuthorizedGenesis.canon_is_empty (genesis : AuthorizedGenesis) :
 
 theorem AuthorizedGenesis.persisted_coordinates_are_lean_bytes (genesis : AuthorizedGenesis) :
     genesis.output.authorityId = genesis.input.deployment.federationId ∧
-    genesis.output.deploymentDigest = genesis.input.deployment.deploymentId ∧
+    genesis.output.deploymentDigest = genesis.input.deployment.deploymentDigest ∧
     genesis.output.configJson = (SignalConfigWire.ofSemantic genesis.config).toJson ∧
     genesis.output.canonJson = (CanonStateWire.ofSemantic genesis.canon).toJson := by
   exact ⟨genesis.output_authority_exact, genesis.output_deployment_exact,
@@ -309,10 +340,15 @@ private def digestOrZero (hex : String) : Digest32 :=
 
 abbrev FIXTURE_DEPLOYMENT_ID : String :=
   "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e"
+abbrev FIXTURE_DEPLOYMENT_DIGEST : String :=
+  "5891c919acca76af3c553d157768d9f274b71610ed3b09bb09c954da2c7aa67e"
 abbrev FIXTURE_FEDERATION_ID : String :=
   "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a"
 abbrev FIXTURE_GENESIS_SHA256 : String :=
   "5766736201a9ede62c79fe9beac04df8f8b5367feec5400c073fd631132bdb7f"
+abbrev FIXTURE_DEPLOYMENT_MANIFEST_SHA256 : String :=
+  "427a7a33ae19e450e2b9eb86453ac247b94d47725e29f8d470f0e9cad8073510"
+abbrev FIXTURE_DEPLOYMENT_POLICY_SHA256 : String := PRODUCTION_POLICY_SHA256
 abbrev FIXTURE_MANIFEST_SHA256 : String :=
   "c4f34a6ef639c532965ee5c05ec9bbbd7ac722ad7350f1825915bf67f0b69d2b"
 abbrev FIXTURE_CONTENT_ROOT : String :=
@@ -331,8 +367,11 @@ abbrev FIXTURE_CANON_SHA256 : String :=
   "aad848fbf40d82d3efb1f6f5fe6ea1fb7704bccc839710f0202951ec4ebd667a"
 
 def fixtureDeploymentId := digestOrZero FIXTURE_DEPLOYMENT_ID
+def fixtureDeploymentDigest := digestOrZero FIXTURE_DEPLOYMENT_DIGEST
 def fixtureFederationId := digestOrZero FIXTURE_FEDERATION_ID
 def fixtureGenesisSha256 := digestOrZero FIXTURE_GENESIS_SHA256
+def fixtureDeploymentManifestSha256 := digestOrZero FIXTURE_DEPLOYMENT_MANIFEST_SHA256
+def fixtureDeploymentPolicySha256 := digestOrZero FIXTURE_DEPLOYMENT_POLICY_SHA256
 def fixtureManifestSha256 := digestOrZero FIXTURE_MANIFEST_SHA256
 def fixtureContentRoot := digestOrZero FIXTURE_CONTENT_ROOT
 def fixtureActivationDigest := digestOrZero FIXTURE_ACTIVATION_DIGEST
@@ -347,8 +386,11 @@ def fixtureInput : GenesisInputWire := {
     schema := DEPLOYMENT_SCHEMA
     deploymentDomain := DEPLOYMENT_DOMAIN
     deploymentId := fixtureDeploymentId
+    deploymentDigest := fixtureDeploymentDigest
     federationId := fixtureFederationId
     genesisSha256 := fixtureGenesisSha256
+    manifestSha256 := fixtureDeploymentManifestSha256
+    policySha256 := fixtureDeploymentPolicySha256
   }
   content := {
     signatureSchema := CONTENT_SIGNATURE_SCHEMA
@@ -448,6 +490,21 @@ def wrongDeploymentIdInput : GenesisInputWire := {
     fixtureInput.deployment with deploymentId := fixtureContentRoot }
 }
 
+def wrongDeploymentDigestInput : GenesisInputWire := {
+  fixtureInput with deployment := {
+    fixtureInput.deployment with deploymentDigest := fixtureContentRoot }
+}
+
+def wrongDeploymentManifestInput : GenesisInputWire := {
+  fixtureInput with deployment := {
+    fixtureInput.deployment with manifestSha256 := fixtureContentRoot }
+}
+
+def wrongDeploymentPolicyInput : GenesisInputWire := {
+  fixtureInput with deployment := {
+    fixtureInput.deployment with policySha256 := fixtureContentRoot }
+}
+
 def wrongGenesisShaInput : GenesisInputWire := {
   fixtureInput with deployment := {
     fixtureInput.deployment with genesisSha256 := fixtureManifestSha256 }
@@ -533,6 +590,15 @@ theorem inconsistent_federation_refused :
 theorem substituted_deployment_id_refused :
     processNetworkGenesisWire wrongDeploymentIdInput.toJson = none := by native_decide
 
+theorem substituted_deployment_digest_refused :
+    processNetworkGenesisWire wrongDeploymentDigestInput.toJson = none := by native_decide
+
+theorem substituted_deployment_manifest_refused :
+    processNetworkGenesisWire wrongDeploymentManifestInput.toJson = none := by native_decide
+
+theorem substituted_deployment_policy_refused :
+    processNetworkGenesisWire wrongDeploymentPolicyInput.toJson = none := by native_decide
+
 theorem substituted_genesis_sha_refused :
     processNetworkGenesisWire wrongGenesisShaInput.toJson = none := by native_decide
 
@@ -612,6 +678,9 @@ theorem unknown_top_level_field_refused :
 #assert_compiled inconsistent_content_session_refused
 #assert_compiled inconsistent_federation_refused
 #assert_compiled substituted_deployment_id_refused
+#assert_compiled substituted_deployment_digest_refused
+#assert_compiled substituted_deployment_manifest_refused
+#assert_compiled substituted_deployment_policy_refused
 #assert_compiled substituted_genesis_sha_refused
 #assert_compiled inconsistent_epoch_refused
 #assert_compiled inconsistent_content_root_refused

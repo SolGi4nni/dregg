@@ -13,7 +13,8 @@ detached content envelope.  It is outside the POAG1 content-root preimage, which
 avoids a content-root/activation circularity.  The external verifier must still
 establish all of the following before invoking this boundary:
 
-* `deploymentId`, `federationId`, and `genesisSha256` came from one verified
+* `deploymentId`, `deploymentDigest`, `federationId`, `genesisSha256`,
+  `manifestSha256`, and `policySha256` came from one verified production
   `poa-devnet.json` plus its exact genesis bytes;
 * `manifestSha256`, `contentEpoch`, `activationCounter`, and `curatorKey` came
   from one signature-valid detached content envelope under an external key pin;
@@ -41,8 +42,8 @@ open Dregg2.Games.PathOfAngels.NetworkJudgeWire
 
 set_option autoImplicit false
 
-abbrev INPUT_FORMAT : String := "POA-SIGNAL-GENESIS-IN-1"
-abbrev OUTPUT_FORMAT : String := "POA-SIGNAL-GENESIS-OUT-1"
+abbrev INPUT_FORMAT : String := "POA-SIGNAL-GENESIS-IN-2"
+abbrev OUTPUT_FORMAT : String := "POA-SIGNAL-GENESIS-OUT-2"
 abbrev DEPLOYMENT_SCHEMA : String := "dregg-poa-devnet-manifest-v1"
 abbrev DEPLOYMENT_DOMAIN : String := "pathofangels.network/federation/v1"
 abbrev CONTENT_SIGNATURE_SCHEMA : String := "POA-CONTENT-EPOCH-SIGNATURE-V1"
@@ -85,8 +86,11 @@ structure DeploymentIdentityWire where
   schema : String
   deploymentDomain : String
   deploymentId : Digest32
+  deploymentDigest : Digest32
   federationId : Digest32
   genesisSha256 : Digest32
+  manifestSha256 : Digest32
+  policySha256 : Digest32
 deriving DecidableEq
 
 structure ContentIdentityWire where
@@ -131,8 +135,11 @@ def DeploymentIdentityWire.toJson (d : DeploymentIdentityWire) : String :=
   "{\"schema\":" ++ jsonString d.schema ++
     ",\"deployment_domain\":" ++ jsonString d.deploymentDomain ++
     ",\"deployment_id\":" ++ jsonString (Emit.bytes32Hex d.deploymentId) ++
+    ",\"deployment_digest\":" ++ jsonString (Emit.bytes32Hex d.deploymentDigest) ++
     ",\"federation_id\":" ++ jsonString (Emit.bytes32Hex d.federationId) ++
-    ",\"genesis_sha256\":" ++ jsonString (Emit.bytes32Hex d.genesisSha256) ++ "}"
+    ",\"genesis_sha256\":" ++ jsonString (Emit.bytes32Hex d.genesisSha256) ++
+    ",\"manifest_sha256\":" ++ jsonString (Emit.bytes32Hex d.manifestSha256) ++
+    ",\"policy_sha256\":" ++ jsonString (Emit.bytes32Hex d.policySha256) ++ "}"
 
 def ContentIdentityWire.toJson (c : ContentIdentityWire) : String :=
   "{\"signature_schema\":" ++ jsonString c.signatureSchema ++
@@ -312,14 +319,17 @@ private def parseCounterRow (j : Json) : Except String PlayerCounterRowWire := d
   }
 
 private def parseDeployment (j : Json) : Except String DeploymentIdentityWire := do
-  exactKeys j ["schema", "deployment_domain", "deployment_id", "federation_id",
-    "genesis_sha256"]
+  exactKeys j ["schema", "deployment_domain", "deployment_id", "deployment_digest",
+    "federation_id", "genesis_sha256", "manifest_sha256", "policy_sha256"]
   pure {
     schema := ← j.getObjValAs? String "schema"
     deploymentDomain := ← j.getObjValAs? String "deployment_domain"
     deploymentId := ← objectDigest j "deployment_id"
+    deploymentDigest := ← objectDigest j "deployment_digest"
     federationId := ← objectDigest j "federation_id"
     genesisSha256 := ← objectDigest j "genesis_sha256"
+    manifestSha256 := ← objectDigest j "manifest_sha256"
+    policySha256 := ← objectDigest j "policy_sha256"
   }
 
 private def parseContent (j : Json) : Except String ContentIdentityWire := do
@@ -467,7 +477,10 @@ theorem faithfulLanes9_injective : Function.Injective faithfulLanes9 := by
 structure GenesisOutputWire where
   authorityId : Digest32
   deploymentDigest : Digest32
+  declaredDeploymentId : Digest32
   deploymentGenesisSha256 : Digest32
+  deploymentManifestSha256 : Digest32
+  deploymentPolicySha256 : Digest32
   manifestSha256 : Digest32
   contentRoot : Digest32
   activationDigest : Digest32
@@ -497,8 +510,14 @@ def GenesisOutputWire.toJson (output : GenesisOutputWire) : String :=
   "{\"format\":" ++ jsonString OUTPUT_FORMAT ++
     ",\"authority_id\":" ++ jsonString (Emit.bytes32Hex output.authorityId) ++
     ",\"deployment_digest\":" ++ jsonString (Emit.bytes32Hex output.deploymentDigest) ++
+    ",\"declared_deployment_id\":" ++
+      jsonString (Emit.bytes32Hex output.declaredDeploymentId) ++
     ",\"deployment_genesis_sha256\":" ++
       jsonString (Emit.bytes32Hex output.deploymentGenesisSha256) ++
+    ",\"deployment_manifest_sha256\":" ++
+      jsonString (Emit.bytes32Hex output.deploymentManifestSha256) ++
+    ",\"deployment_policy_sha256\":" ++
+      jsonString (Emit.bytes32Hex output.deploymentPolicySha256) ++
     ",\"manifest_sha256\":" ++ jsonString (Emit.bytes32Hex output.manifestSha256) ++
     ",\"content_root\":" ++ jsonString (Emit.bytes32Hex output.contentRoot) ++
     ",\"activation_digest\":" ++ jsonString (Emit.bytes32Hex output.activationDigest) ++
@@ -536,7 +555,8 @@ private def parseLanes9 (j : Json) (key : String) : Except String (List Nat) := 
   pure lanes
 
 private def parseOutputJson (j : Json) : Except String GenesisOutputWire := do
-  exactKeys j ["format", "authority_id", "deployment_digest", "deployment_genesis_sha256",
+  exactKeys j ["format", "authority_id", "deployment_digest", "declared_deployment_id",
+    "deployment_genesis_sha256", "deployment_manifest_sha256", "deployment_policy_sha256",
     "manifest_sha256", "content_root", "activation_digest", "curator_key", "content_epoch",
     "activation_counter", "transition_count", "world_sequence", "canon_revision",
     "last_transition_digest", "config_json", "canon_json", "config_sha256", "canon_sha256",
@@ -548,7 +568,10 @@ private def parseOutputJson (j : Json) : Except String GenesisOutputWire := do
   pure {
     authorityId := ← objectDigest j "authority_id"
     deploymentDigest := ← objectDigest j "deployment_digest"
+    declaredDeploymentId := ← objectDigest j "declared_deployment_id"
     deploymentGenesisSha256 := ← objectDigest j "deployment_genesis_sha256"
+    deploymentManifestSha256 := ← objectDigest j "deployment_manifest_sha256"
+    deploymentPolicySha256 := ← objectDigest j "deployment_policy_sha256"
     manifestSha256 := ← objectDigest j "manifest_sha256"
     contentRoot := ← objectDigest j "content_root"
     activationDigest := ← objectDigest j "activation_digest"

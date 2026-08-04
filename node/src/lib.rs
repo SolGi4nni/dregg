@@ -94,6 +94,7 @@ mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
 pub mod poa_signal_adapter;
+pub mod poa_signal_genesis;
 pub mod poa_strand_admission;
 pub mod private_dependent_turns;
 mod program_registry_persistence;
@@ -341,6 +342,41 @@ pub enum Command {
         /// Data directory to initialize.
         #[arg(long, default_value = "~/.dregg")]
         data_dir: String,
+    },
+
+    /// Install the one authenticated Lean-emitted Path of Angels Signal head.
+    ///
+    /// This is a separate operator ceremony. It never starts a node, rewrites
+    /// genesis.json, resets a database, or runs during generic `dregg-node run`.
+    InitPoaSignal {
+        /// Existing PoA node data directory containing the exact genesis.json.
+        #[arg(long)]
+        data_dir: String,
+        /// Public PoA deployment manifest (`poa-devnet.json`).
+        #[arg(long)]
+        deployment_manifest: PathBuf,
+        /// Exact descriptor named by the deployment manifest.
+        #[arg(long)]
+        genesis: PathBuf,
+        /// Existing main-network data directory used to prove identity/storage
+        /// isolation from the PoA deployment.
+        #[arg(long)]
+        main_data_dir: PathBuf,
+        /// Lean-emitted POAG1 manifest naming the content artifacts.
+        #[arg(long)]
+        poag1_manifest: PathBuf,
+        /// Detached signed content-epoch envelope.
+        #[arg(long)]
+        content_envelope: PathBuf,
+        /// Independently distributed curator public-key pin.
+        #[arg(long)]
+        curator_key_pin: PathBuf,
+        /// Caller-owned expected content epoch (rollback refusal).
+        #[arg(long)]
+        expected_content_epoch: u64,
+        /// Caller-owned expected activation counter (rollback refusal).
+        #[arg(long)]
+        expected_activation_counter: u64,
     },
 
     /// Check if the node is running and show sync state.
@@ -795,6 +831,42 @@ pub async fn run(cli: Cli) {
             .await
         }
         Command::Init { data_dir } => init::init_node(&data_dir),
+        Command::InitPoaSignal {
+            data_dir,
+            deployment_manifest,
+            genesis,
+            main_data_dir,
+            poag1_manifest,
+            content_envelope,
+            curator_key_pin,
+            expected_content_epoch,
+            expected_activation_counter,
+        } => {
+            let args = poa_signal_genesis::PoaSignalGenesisArgs {
+                data_dir: expand_path(&data_dir),
+                deployment_manifest,
+                genesis,
+                main_data_dir,
+                poag1_manifest,
+                content_envelope,
+                curator_key_pin,
+                expected_content_epoch,
+                expected_activation_counter,
+            };
+            match poa_signal_genesis::initialize_poa_signal_genesis(&args) {
+                Ok(report) => println!(
+                    "PoA Signal genesis {:?}: authority={} deployment={} head={}",
+                    report.outcome,
+                    dregg_types::hex_encode(&report.authority_id),
+                    dregg_types::hex_encode(&report.deployment_digest),
+                    dregg_types::hex_encode(&report.head_digest),
+                ),
+                Err(error) => {
+                    eprintln!("PoA Signal genesis refused: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Command::Status { port } => check_status(port).await,
         Command::MudClient { player_seed } => {
             #[cfg(feature = "deos-host")]
@@ -1348,10 +1420,12 @@ async fn run_node(
     // Load genesis.json if present in the data directory.
     let mut starbridge_seeded_from_genesis = false;
     let mut consensus_time_policy_v1 = None;
+    let mut loaded_genesis_bytes = None;
     let genesis_path = data_path.join("genesis.json");
     if genesis_path.exists() {
         match std::fs::read_to_string(&genesis_path) {
             Ok(json_str) => {
+                loaded_genesis_bytes = Some(json_str.as_bytes().to_vec());
                 match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(genesis) => {
                         match blocklace_sync::consensus_time_policy_v1_from_genesis(&genesis) {
@@ -1531,6 +1605,43 @@ async fn run_node(
             }
             Err(e) => {
                 error!(error = %e, "failed to read genesis.json");
+            }
+        }
+    }
+
+    // A persisted PoA authority is usable only under the exact manifest,
+    // production policy, and runtime genesis bytes Lean authorized. Generic
+    // nodes have no head and pass without requiring any PoA environment.
+    if let Some(runtime_genesis_bytes) = loaded_genesis_bytes.as_deref() {
+        let verdict = {
+            let state = node_state.read().await;
+            poa_signal_genesis::verify_poa_signal_boot_from_env(
+                &state.store,
+                &data_path,
+                state.federation_id,
+                runtime_genesis_bytes,
+            )
+        };
+        if let Err(error) = verdict {
+            error!(error = %error, "REFUSING TO START: persisted PoA Signal identity drift");
+            std::process::exit(1);
+        }
+    } else {
+        let has_poa_head = {
+            let state = node_state.read().await;
+            state.store.load_singular_poa_signal_head()
+        };
+        match has_poa_head {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                error!(
+                    "REFUSING TO START: persisted PoA Signal head exists without runtime genesis bytes"
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                error!(error = %error, "REFUSING TO START: PoA Signal persistence audit failed");
+                std::process::exit(1);
             }
         }
     }

@@ -7,7 +7,7 @@
 //! immutable deployment/config bytes, commit-coordinate binding, and exact
 //! replay presence/bytes.
 
-use redb::{ReadableTable, WriteTransaction};
+use redb::{ReadableTable, ReadableTableMetadata, WriteTransaction};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,6 +28,15 @@ const SEAL_LEN: usize = 32;
 /// contains two heads and two judge wires, but no individual authority-bearing
 /// image may exceed this bound.
 pub const MAX_POA_SIGNAL_WIRE_BYTES_V1: usize = 16 * 1024 * 1024;
+
+/// Result of the operator-only, globally singular PoA Signal genesis ceremony.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoaSignalGenesisInitOutcome {
+    /// The exact genesis head was inserted and committed by this call.
+    Installed,
+    /// The store already held the one exact encoded head and was not mutated.
+    AlreadyIdentical,
+}
 
 /// Current durable head for one independently named PoA Signal authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -541,6 +550,68 @@ impl PoaSignalTransitionV1 {
 }
 
 impl PersistentStore {
+    /// Atomically install the one PoA deployment head, or accept an exact retry.
+    ///
+    /// Unlike [`Self::initialize_poa_signal_head`], this operator ceremony is
+    /// globally singular: the first install requires no generic commits and no
+    /// prior PoA head or transition under *any* authority. A retry succeeds only
+    /// when the table contains exactly the same encoded zero-transition head.
+    /// That no-op remains safe after ordinary commits have begun because it does
+    /// not reinterpret or mutate them. Any different head, additional authority,
+    /// or transition history refuses inside the same redb transaction.
+    pub fn initialize_poa_signal_head_if_empty_or_identical(
+        &self,
+        head: &PoaSignalHeadV1,
+    ) -> Result<PoaSignalGenesisInitOutcome> {
+        if head.transition_count != 0 {
+            return Err(integrity(
+                "PoA Signal initialization requires a genesis head",
+            ));
+        }
+        let encoded = head.encode()?;
+        let write = self.db.begin_write()?;
+        let cursor = {
+            let metadata = write.open_table(tables::METADATA)?;
+            metadata
+                .get(tables::META_COMMIT_CURSOR)?
+                .map(|value| value.value())
+                .unwrap_or(0)
+        };
+        {
+            let heads = write.open_table(tables::POA_SIGNAL_HEADS_V1)?;
+            let transitions = write.open_table(tables::POA_SIGNAL_TRANSITIONS_V1)?;
+            let by_ordinal = write.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
+            validate_tables(&heads, &transitions, &by_ordinal)?;
+
+            if heads.len()? != 0 {
+                let exact = heads.len()? == 1
+                    && transitions.len()? == 0
+                    && by_ordinal.len()? == 0
+                    && heads
+                        .get(&head.authority_id)?
+                        .is_some_and(|stored| stored.value() == encoded.as_slice());
+                return if exact {
+                    Ok(PoaSignalGenesisInitOutcome::AlreadyIdentical)
+                } else {
+                    Err(integrity(
+                        "PoA Signal store already has a different authority head or history",
+                    ))
+                };
+            }
+        }
+        if cursor != 0 {
+            return Err(integrity(
+                "PoA Signal authority may only initialize before the first finalized commit",
+            ));
+        }
+        {
+            let mut heads = write.open_table(tables::POA_SIGNAL_HEADS_V1)?;
+            heads.insert(&head.authority_id, encoded.as_slice())?;
+        }
+        write.commit()?;
+        Ok(PoaSignalGenesisInitOutcome::Installed)
+    }
+
     /// Install one authenticated zero-transition authority head.  Installation
     /// is absence-only and is refused once any finalized commit exists, avoiding
     /// retrospective reinterpretation of old ordinary event turns.
@@ -595,6 +666,27 @@ impl PersistentStore {
         Ok(Some(head))
     }
 
+    /// Load the globally singular PoA authority, regardless of the currently
+    /// configured runtime federation. Boot uses this to ensure an authority
+    /// cannot become invisible merely because genesis now derives another id.
+    pub fn load_singular_poa_signal_head(&self) -> Result<Option<PoaSignalHeadV1>> {
+        self.audit_poa_signal_state()?;
+        let read = self.db.begin_read()?;
+        let heads = read.open_table(tables::POA_SIGNAL_HEADS_V1)?;
+        if heads.len()? > 1 {
+            return Err(integrity("PoA Signal store has multiple authority heads"));
+        }
+        let Some(entry) = heads.iter()?.next() else {
+            return Ok(None);
+        };
+        let (key, value) = entry?;
+        let head = PoaSignalHeadV1::decode(value.value())?;
+        if head.authority_id != *key.value() {
+            return Err(integrity("PoA Signal head key/authority mismatch"));
+        }
+        Ok(Some(head))
+    }
+
     /// Load one immutable transition by authority and one-based sequence.
     pub fn load_poa_signal_transition(
         &self,
@@ -615,13 +707,16 @@ impl PersistentStore {
     }
 
     /// Full structural audit of all PoA Signal heads, transition chains, and
-    /// commit-ordinal reverse-index rows.
+    /// commit-ordinal reverse-index rows, including the exact generic commit
+    /// carrier named by every transition.
     pub fn audit_poa_signal_state(&self) -> Result<()> {
         let read = self.db.begin_read()?;
         let heads = read.open_table(tables::POA_SIGNAL_HEADS_V1)?;
         let transitions = read.open_table(tables::POA_SIGNAL_TRANSITIONS_V1)?;
         let by_ordinal = read.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
-        validate_tables(&heads, &transitions, &by_ordinal)
+        validate_tables(&heads, &transitions, &by_ordinal)?;
+        let commits = read.open_table(tables::COMMIT_LOG)?;
+        validate_generic_commit_carriers(&transitions, &commits)
     }
 }
 
@@ -977,6 +1072,29 @@ fn validate_tables(
     Ok(())
 }
 
+fn validate_generic_commit_carriers(
+    transitions: &impl ReadableTable<&'static [u8; 40], &'static [u8]>,
+    commits: &impl ReadableTable<u64, &'static [u8]>,
+) -> Result<()> {
+    for entry in transitions.iter()? {
+        let (_, value) = entry?;
+        let transition = PoaSignalTransitionV1::decode(value.value())?;
+        let commit_bytes = commits
+            .get(transition.commit_ordinal)?
+            .ok_or_else(|| integrity("PoA Signal transition has no generic commit carrier"))?;
+        let commit = crate::commit_log::decode_commit_record(commit_bytes.value())?;
+        if commit.ordinal != transition.commit_ordinal
+            || commit.turn_hash != transition.turn_hash
+            || commit.receipt_hash != transition.receipt_hash
+        {
+            return Err(integrity(
+                "PoA Signal transition disagrees with its generic commit carrier",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn transition_core_digest(
     authority_id: [u8; 32],
     sequence: u64,
@@ -1132,6 +1250,86 @@ mod tests {
     }
 
     #[test]
+    fn poa_signal_operator_genesis_is_globally_empty_or_exactly_idempotent() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        let head = genesis();
+        assert_eq!(
+            store
+                .initialize_poa_signal_head_if_empty_or_identical(&head)
+                .unwrap(),
+            PoaSignalGenesisInitOutcome::Installed
+        );
+        assert_eq!(
+            store
+                .initialize_poa_signal_head_if_empty_or_identical(&head)
+                .unwrap(),
+            PoaSignalGenesisInitOutcome::AlreadyIdentical
+        );
+
+        // An exact retry is still a no-op after generic history begins.
+        store
+            .commit_finalized_turn(0, &record(0, [0x81; 32]))
+            .unwrap();
+        assert_eq!(
+            store
+                .initialize_poa_signal_head_if_empty_or_identical(&head)
+                .unwrap(),
+            PoaSignalGenesisInitOutcome::AlreadyIdentical
+        );
+
+        let disagreement = PoaSignalHeadV1::genesis(
+            AUTHORITY,
+            [0xe2; 32],
+            head.world_sequence(),
+            head.canon_revision(),
+            head.config().to_vec(),
+            head.canon().to_vec(),
+        )
+        .unwrap();
+        assert!(
+            store
+                .initialize_poa_signal_head_if_empty_or_identical(&disagreement)
+                .is_err()
+        );
+        assert_eq!(store.load_poa_signal_head(AUTHORITY).unwrap(), Some(head));
+    }
+
+    #[test]
+    fn poa_signal_operator_genesis_refuses_a_nonempty_generic_store() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        store
+            .commit_finalized_turn(0, &record(0, [0x82; 32]))
+            .unwrap();
+        assert!(
+            store
+                .initialize_poa_signal_head_if_empty_or_identical(&genesis())
+                .is_err()
+        );
+        assert_eq!(store.load_poa_signal_head(AUTHORITY).unwrap(), None);
+    }
+
+    #[test]
+    fn poa_signal_operator_genesis_refuses_a_second_authority() {
+        let store = PersistentStore::open_in_memory().unwrap();
+        store.initialize_poa_signal_head(&genesis()).unwrap();
+        let other = PoaSignalHeadV1::genesis(
+            [0x42; 32],
+            [0xd2; 32],
+            0,
+            0,
+            br#"{"config":"other"}"#.to_vec(),
+            br#"{"canon":"other"}"#.to_vec(),
+        )
+        .unwrap();
+        assert!(
+            store
+                .initialize_poa_signal_head_if_empty_or_identical(&other)
+                .is_err()
+        );
+        assert_eq!(store.load_poa_signal_head([0x42; 32]).unwrap(), None);
+    }
+
+    #[test]
     fn poa_signal_fresh_weld_advances_head_and_commit_atomically() {
         let store = initialized_store();
         let before = store.load_poa_signal_head(AUTHORITY).unwrap().unwrap();
@@ -1171,6 +1369,45 @@ mod tests {
             candidate.judge_output_digest()
         );
         store.audit_poa_signal_state().unwrap();
+    }
+
+    #[test]
+    fn poa_signal_restart_audit_requires_exact_generic_commit_carrier() {
+        let missing = initialized_store();
+        let missing_candidate = candidate(&missing, 1);
+        missing
+            .commit_finalized_turn_with_poa_signal(0, &record(0, [0xa1; 32]), &missing_candidate)
+            .unwrap();
+        let write = missing.db.begin_write().unwrap();
+        {
+            let mut commits = write.open_table(tables::COMMIT_LOG).unwrap();
+            commits.remove(0).unwrap();
+        }
+        write.commit().unwrap();
+        let error = missing.audit_poa_signal_state().unwrap_err().to_string();
+        assert!(error.contains("no generic commit carrier"), "{error}");
+
+        let different = initialized_store();
+        let different_candidate = candidate(&different, 2);
+        let original = record(0, [0xa2; 32]);
+        different
+            .commit_finalized_turn_with_poa_signal(0, &original, &different_candidate)
+            .unwrap();
+        let mut substituted = original;
+        substituted.turn_hash = [0xfe; 32];
+        substituted.receipt_hash = [0xfd; 32];
+        let encoded = postcard::to_stdvec(&substituted).unwrap();
+        let write = different.db.begin_write().unwrap();
+        {
+            let mut commits = write.open_table(tables::COMMIT_LOG).unwrap();
+            commits.insert(0, encoded.as_slice()).unwrap();
+        }
+        write.commit().unwrap();
+        let error = different.audit_poa_signal_state().unwrap_err().to_string();
+        assert!(
+            error.contains("disagrees with its generic commit carrier"),
+            "{error}"
+        );
     }
 
     #[test]

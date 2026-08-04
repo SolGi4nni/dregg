@@ -98,8 +98,8 @@ pub use per_cell_receipt_heads::{
     PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
 };
 pub use poa_signal_state::{
-    MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalHeadV1, PoaSignalTransitionV1,
-    PreparedPoaSignalTransitionV1,
+    MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalGenesisInitOutcome, PoaSignalHeadV1,
+    PoaSignalTransitionV1, PreparedPoaSignalTransitionV1,
 };
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use private_dependent_turns::{

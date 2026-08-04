@@ -38,6 +38,7 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 dregg-pq = { path = "../dregg-pq" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "biscuit", "rand-deps"] }
 dregg-persist = { path = "../persist" }
+poa-curator = { path = "../poa-curator" }
 dregg-federation = { path = "../federation" }
 dregg-sdk = { path = "../sdk" }
 dregg-sdk-net = { path = "../dregg-sdk-net" }
@@ -149,6 +150,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 quinn = { version = "0.11", features = ["runtime-tokio", "rustls-ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 blake3 = "1"
+sha2 = { workspace = true }
 argon2 = "0.5"
 subtle = { workspace = true }
 base64 = { workspace = true }
