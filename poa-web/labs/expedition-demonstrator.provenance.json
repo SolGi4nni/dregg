@@ -1,0 +1,57 @@
+{
+  "format": "POA-EXPEDITION-FIXTURE-PROVENANCE",
+  "schema_version": 1,
+  "generated_at": "2026-08-04T12:05:18Z",
+  "source_repository_commit": "9d4f597c7112f8374379b481f26a7d48af2c35be",
+  "generator": {
+    "command": "cd metatheory && LEAN_NUM_THREADS=4 lake env lean --run Dregg2/Games/PathOfAngels/ExpeditionDemonstratorEmit.lean",
+    "stdout_is_artifact": true,
+    "sources": [
+      {
+        "path": "metatheory/Dregg2/Games/PathOfAngels/ExpeditionDemonstrator.lean",
+        "git_blob": "f7f32bbbcfeb8e0e88693fc64ee21803dc4a8c0c",
+        "sha256": "9ab7bb98aec9d844a648e8ad077db210c57ede0c0fed2a970492a97966876654",
+        "bytes": 19399
+      },
+      {
+        "path": "metatheory/Dregg2/Games/PathOfAngels/ExpeditionDemonstratorEmit.lean",
+        "git_blob": "cb120acdc30bd68884e674a7cecf19325f6539a4",
+        "sha256": "fc1287c7de55ec5f48def5d6f4b679eb8b4c51be7c97e20893a4f86730bfbb51",
+        "bytes": 26606
+      }
+    ]
+  },
+  "artifact": {
+    "path": "poa-web/labs/expedition-demonstrator.fixture.json",
+    "sha256": "549c60d1c02be6c6c399020b1872dd4246b95d86a5bcadf21f6982e2ec2155ed",
+    "bytes": 294538,
+    "format": "POA-EXPEDITION-TABLE",
+    "schema_version": 1
+  },
+  "lean_gates": {
+    "states": 53,
+    "actions": 16,
+    "transitions": 848,
+    "accepting_rows": 92,
+    "refusing_rows": 756,
+    "claims": [
+      "emitted_horizon_is_one_step_closed",
+      "emitted_rows_have_explicit_refusals",
+      "emitted_rows_need_no_invariant_fallback",
+      "emitted_table_closed",
+      "emitted_lookup_is_exact_step",
+      "emitted_safe_route_replays_exactly",
+      "emitted_salvage_route_replays_exactly",
+      "emitted_safe_route_returns_beta",
+      "emitted_salvage_route_returns_relic",
+      "emitted_descriptor_is_json"
+    ]
+  },
+  "boundary": {
+    "fiction_status": "non-canon-demonstrator",
+    "beta_candidates": "provisional-only",
+    "canon_promotion": false,
+    "asset_minting": false,
+    "settlement": false
+  }
+}
