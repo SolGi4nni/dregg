@@ -8,9 +8,9 @@ set -euo pipefail
 # actual-bundle hostile tests. `drex-release` additionally executes the
 # deliberately segregated, minute-scale PoA Dark Bazaar proof/circuit/MPC path
 # in release mode; merely listing that target is not coverage.
-# It does not claim that N=2 admission is live, authenticate NetworkJudge's
-# caller, or smoke a promoted public deployment; each remains a separate
-# fail-closed runtime/infra gate.
+# It does not claim that N=2 admission is live, supply browser-side verified
+# ML-DSA custody, or smoke a promoted public deployment; each remains a
+# separate fail-closed runtime/infra gate.
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-source}"
@@ -46,14 +46,30 @@ poa_lean_targets=(
   Dregg2.Games.PathOfAngels.ContainmentInspection
   Dregg2.Games.PathOfAngels.DeckGraph
   Dregg2.Games.PathOfAngels.DeckExpedition
+  Dregg2.Games.PathOfAngels.DeckGenerator
+  Dregg2.Games.PathOfAngels.CrewExpeditionAuthority
+  Dregg2.Games.PathOfAngels.Shipworks
+  Dregg2.Games.PathOfAngels.Cartography
   Dregg2.Games.PathOfAngels.ExpeditionDemonstrator
+  Dregg2.Games.PathOfAngels.ExpeditionDemonstratorEmit
   Dregg2.Games.PathOfAngels.AssistProfile
   Dregg2.Games.PathOfAngels.DarkBazaar
   Dregg2.Games.PathOfAngels.DarkBazaarJudgeWire
   Dregg2.Games.PathOfAngels.DarkBazaarJudge
   Dregg2.Games.PathOfAngels.FieldArchive
+  Dregg2.Games.PathOfAngels.ArchiveLab
+  Dregg2.Games.PathOfAngels.ArchiveLabDemonstrator
+  Dregg2.Games.PathOfAngels.ArchiveLabDemonstratorEmit
+  Dregg2.Games.PathOfAngels.CrewRelayExpedition
+  Dregg2.Games.PathOfAngels.CrewRelayExpeditionBoundary
+  Dregg2.Games.PathOfAngels.AttendantKernel
+  Dregg2.Games.PathOfAngels.EditorialRegistry
+  Dregg2.Games.PathOfAngels.EditorialRegistryBoundary
   Dregg2.Games.PathOfAngels.NetworkJudgeWire
   Dregg2.Games.PathOfAngels.NetworkJudge
+  Dregg2.Games.PathOfAngels.NetworkGenesisWire
+  Dregg2.Games.PathOfAngels.NetworkGenesis
+  Market.DarkBazaarPrivatePoaDescriptor
 )
 run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
   scripts/axiom-hygiene-guard.sh "$repo_root"
@@ -64,6 +80,8 @@ run node --test scripts/tests/poa-devnet-manifest.test.mjs
 run node --test scripts/tests/poa-follower-package.test.mjs
 run cargo nextest run -p dregg-node \
   -E 'test(/deployment_domain/) or test(/poa_strand_admission/)'
+run cargo nextest run -p dregg-node -E 'test(/poa_signal/)'
+run cargo nextest run -p dregg-persist -E 'test(/poa_signal/)'
 
 # The explicit feature and target are deliberate: without them Cargo discovers
 # zero PoA ingress tests while returning success.
@@ -83,6 +101,10 @@ run cargo nextest run -p dregg-lean-ffi --features lean-lib \
   --test poa_signal_judge_probe
 run cargo nextest run -p dregg-lean-ffi --features no-lean-link --lib \
   -E 'test(/poa_ffi::tests::/)'
+run cargo nextest run -p dregg-lean-ffi --features lean-lib \
+  --test poa_network_genesis_probe
+run cargo nextest run -p dregg-lean-ffi --features no-lean-link --lib \
+  -E 'test(/poa_network_genesis_ffi::tests::/)'
 
 (
   cd extension
@@ -94,6 +116,9 @@ run cargo nextest run -p dregg-lean-ffi --features no-lean-link --lib \
 )
 
 for source in poa-web/src/*.js; do
+  run node --check "$source"
+done
+for source in poa-web/labs/*.js; do
   run node --check "$source"
 done
 run node --check poa-web/scripts/sync-artifacts.mjs
