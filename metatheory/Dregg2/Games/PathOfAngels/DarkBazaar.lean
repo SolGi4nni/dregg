@@ -28,6 +28,8 @@ same threaded/shared `BazaarState`; global protection requires a global registry
 import Dregg2.Games.PathOfAngels.Core
 import Market.FhEggClearing
 import Market.MpcClearingSecurity
+import Market.DarkBazaarPrivateDescriptor
+import Dregg2.Circuit.Poseidon2BabyBearW16
 import Dregg2.Tactics
 
 namespace Dregg2.Games.PathOfAngels.DarkBazaar
@@ -625,11 +627,226 @@ def ExactClearingOutput {spec : BatchSpec} (batch : PrivateBatch spec)
   output.bucket = Market.crossing batch.book spec.pricing.buckets ∧
     (output.volume : Int) = Market.clearedVolume batch.book spec.pricing.buckets
 
-/-- External whole-claim opening relation.  The exact `SettlementClaim` index
-includes identity, policy, batch/source coordinates, commitment, declared
-output, escrow inputs, and public nullifiers. -/
-opaque WholeClaimOpensTo (claim : SettlementClaim)
-  (batch : PrivateBatch claim.spec) : Prop
+/-! ## Executable v1 combined authorization
+
+The first executable authorization is intentionally one fixed protocol family:
+four slots, four price buckets, quantities below sixteen, and the deployed
+BabyBear Poseidon2-w16 commitment used by
+`Market.DarkBazaarPrivateDescriptor`.  It is not a generic "proof succeeded"
+bit.  Unsupported shapes require a future version and refuse here.
+
+V1 is the exact semantic judge, not yet a house-blind transport: its direct
+caller supplies the private opening to Lean.  A proof-carrying DrEX ingress can
+reuse this statement and successor relation, but must replace that plaintext
+opening at the network boundary rather than relabel this evaluator as private.
+
+The descriptor did not originally carry PoA order identities.  V1 therefore
+derives each stable order id from the committed eight-lane book root and its
+slot through a second domain-separated wide Poseidon permutation.  Rebatching
+or changing a source root cannot rename an order; a pathological within-root
+slot collision is detected by the executable `Nodup` check and refuses.
+-/
+
+namespace V1
+
+open Market.DarkBazaarPrivateDescriptor
+open Dregg2.Circuit.Poseidon2BabyBearW16
+
+/-- Stable semantic version, separately pinned by the canonical network wire. -/
+def VERSION : Nat := 1
+
+/-- The descriptor session is fixed for this protocol family, so the private
+book commitment is stable across PoA batch/source coordinates. -/
+def DESCRIPTOR_SESSION : Int := 1347371569
+
+/-- Domain for deriving four stable order nullifiers from the full wide root. -/
+def ORDER_NULLIFIER_DOMAIN : Int := 1347371570
+
+def toBabyBearNat (z : Int) : Nat := (z % (P : Int)).toNat
+
+/-- Exact Lean implementation of the deployed 16-wide permutation, exposing
+all eight commitment lanes expected by the descriptor checker. -/
+def hash8 (xs : List Int) (lane : Fin 8) : Int :=
+  (perm (xs.map toBabyBearNat)).getD lane.val 0
+
+private def byte (n : Nat) : Fin 256 :=
+  ⟨n % 256, Nat.mod_lt _ (by decide)⟩
+
+private def u32le (n : Nat) : List (Fin 256) :=
+  [byte n, byte (n / 256), byte (n / 65536), byte (n / 16777216)]
+
+/-- Faithful eight-`u32` little-endian carrier.  No lane is folded away. -/
+def digestOfRoot (root : Fin 8 → Int) : Digest32 where
+  bytes := (List.ofFn (fun lane => u32le (root lane).toNat)).flatten
+  length_eq := by simp [u32le]
+
+private def u32At (digest : Digest32) (lane : Fin 8) : Nat :=
+  let offset := 4 * lane.val
+  (digest.bytes.getD offset 0).val +
+    256 * (digest.bytes.getD (offset + 1) 0).val +
+    65536 * (digest.bytes.getD (offset + 2) 0).val +
+    16777216 * (digest.bytes.getD (offset + 3) 0).val
+
+/-- Decode the faithful eight-lane commitment carrier.  Every lane must be a
+canonical BabyBear representative; `x + p` aliases therefore refuse before
+the descriptor checker runs. -/
+def rootOfDigest? (digest : Digest32) : Option (Fin 8 → Int) :=
+  let root : Fin 8 → Int := fun lane => u32At digest lane
+  if (List.ofFn root).all (fun lane => decide (0 ≤ lane ∧ lane < (P : Int))) then
+    some root
+  else none
+
+private def rootNullifierPreimage (root : Fin 8 → Int) (slot : Fin 4) : List Int :=
+  [ORDER_NULLIFIER_DOMAIN, slot.val] ++ List.ofFn root ++ List.replicate 6 0
+
+def orderId (root : Fin 8 → Int) (slot : Fin 4) : PrivateOrderId :=
+  ⟨digestOfRoot (hash8 (rootNullifierPreimage root slot))⟩
+
+def privateOrders (root : Fin 8 → Int)
+    (witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness) : List PrivateOrder :=
+  List.ofFn fun slot : Fin 4 => {
+    id := orderId root slot
+    order := (witness.orders slot).toLimitOrder
+  }
+
+def derivedOrderNullifiers (root : Fin 8 → Int)
+    (witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness) :
+    Finset OrderNullifier :=
+  ((privateOrders root witness).map PrivateOrder.id).toFinset.image
+    PrivateOrderId.nullifier
+
+/-- Exact public statement read by the existing Lean-authored checker. -/
+def publicStatement (root : Fin 8 → Int) (claim : SettlementClaim) :
+    Market.DarkBazaarPrivateDescriptor.PublicStatement where
+  session := DESCRIPTOR_SESSION
+  rule := Market.DarkBazaarPrivateDescriptor.RULE_ID
+  orderRoot := root
+  pStar := claim.output.bucket
+  vStar := claim.output.volume
+
+/-- All non-descriptor parts of the fixed v1 protocol shape.  In particular,
+the exact public nullifier set is derived rather than caller-labelled. -/
+def Shape (claim : SettlementClaim) (root : Fin 8 → Int)
+    (witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness) : Prop :=
+  claim.spec.pricing.buckets = Market.DarkBazaarPrivateDescriptor.PRICE_COUNT ∧
+    claim.spec.maxOrders = Market.DarkBazaarPrivateDescriptor.ORDER_COUNT ∧
+    claim.spec.maxOrderQuantity = 15 ∧
+    claim.privateBookCommitment = digestOfRoot root ∧
+    ((privateOrders root witness).map PrivateOrder.id).Nodup ∧
+    claim.orderNullifiers = derivedOrderNullifiers root witness
+
+instance (claim : SettlementClaim) (root : Fin 8 → Int)
+    (witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness) :
+    Decidable (Shape claim root witness) := by
+  unfold Shape
+  infer_instance
+
+/-- Proof-carrying result of the complete v1 check.  This structure has no
+wire decoder: the sole FFI producer below constructs it only under Boolean
+checks performed in Lean. -/
+structure Authorization (claim : SettlementClaim) where
+  root : Fin 8 → Int
+  witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness
+  shape : Shape claim root witness
+  descriptorAccepted :
+    Market.DarkBazaarPrivateDescriptor.check hash8
+      (publicStatement root claim) witness = true
+
+def Authorization.batch {claim : SettlementClaim}
+    (authorization : Authorization claim) : PrivateBatch claim.spec where
+  orders := privateOrders authorization.root authorization.witness
+  orderIdsNodup := authorization.shape.2.2.2.2.1
+  ordersValid := by
+    intro order member
+    simp only [privateOrders, List.map_ofFn, List.mem_ofFn] at member
+    obtain ⟨slot, equal⟩ := member
+    subst order
+    simp [Market.DarkBazaarPrivateDescriptor.PrivateOrder.toLimitOrder]
+  orderCountBound := by
+    rw [authorization.shape.2.1]
+    simp [privateOrders, Market.DarkBazaarPrivateDescriptor.ORDER_COUNT]
+  quantityBound := by
+    intro order member
+    simp only [privateOrders, List.map_ofFn, List.mem_ofFn] at member
+    obtain ⟨slot, equal⟩ := member
+    subst order
+    rw [authorization.shape.2.2.1]
+    change ((authorization.witness.orders slot).qty.val : Int) ≤ 15
+    exact_mod_cast Nat.le_pred_of_lt (authorization.witness.orders slot).qty.isLt
+  priceBound := by
+    intro order member
+    simp only [privateOrders, List.map_ofFn, List.mem_ofFn] at member
+    obtain ⟨slot, equal⟩ := member
+    subst order
+    rw [authorization.shape.1]
+    simp only [Market.DarkBazaarPrivateDescriptor.PrivateOrder.toLimitOrder,
+      Market.DarkBazaarPrivateDescriptor.PRICE_COUNT]
+    exact Nat.mod_lt _ (by decide)
+
+theorem Authorization.book_eq {claim : SettlementClaim}
+    (authorization : Authorization claim) :
+    authorization.batch.book =
+      Market.DarkBazaarPrivateDescriptor.privateBook authorization.witness := by
+  simp [Authorization.batch, PrivateBatch.book, privateOrders,
+    Market.DarkBazaarPrivateDescriptor.privateBook]
+
+theorem Authorization.output_exact {claim : SettlementClaim}
+    (authorization : Authorization claim) :
+    ExactClearingOutput authorization.batch claim.output := by
+  have accepted :=
+    (Market.DarkBazaarPrivateDescriptor.check_iff hash8
+      (publicStatement authorization.root claim) authorization.witness).mp
+        authorization.descriptorAccepted
+  constructor
+  · rw [Authorization.book_eq, authorization.shape.1]
+    simpa [publicStatement] using accepted.2.2.2.1
+  · rw [Authorization.book_eq, authorization.shape.1]
+    simpa [publicStatement] using accepted.2.2.2.2
+
+theorem Authorization.nullifiers_exact {claim : SettlementClaim}
+    (authorization : Authorization claim) :
+    ExactPublicOrderNullifiers authorization.batch claim.orderNullifiers := by
+  constructor
+  · exact authorization.shape.2.2.2.2.2
+  · rw [authorization.shape.2.2.2.2.2]
+    simp only [Authorization.batch, derivedOrderNullifiers]
+    rw [Finset.card_image_of_injective _ PrivateOrderId.nullifier_injective]
+    exact List.toFinset_card_of_nodup authorization.shape.2.2.2.2.1
+
+/-- No generic caller-authored authorization bit exists.  This constructor
+returns evidence only when both the exact fixed shape and the existing concrete
+descriptor checker succeed. -/
+def authorize? (claim : SettlementClaim) (root : Fin 8 → Int)
+    (witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness) :
+    Option (Authorization claim) :=
+  if hshape : Shape claim root witness then
+    if haccepted : Market.DarkBazaarPrivateDescriptor.check hash8
+        (publicStatement root claim) witness = true then
+      some { root, witness, shape := hshape, descriptorAccepted := haccepted }
+    else none
+  else none
+
+theorem authorize?_success {claim : SettlementClaim} {root : Fin 8 → Int}
+    {witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness}
+    {authorization : Authorization claim}
+    (h : authorize? claim root witness = some authorization) :
+    Shape claim root witness ∧
+      Market.DarkBazaarPrivateDescriptor.check hash8
+        (publicStatement root claim) witness = true := by
+  unfold authorize? at h
+  split at h <;> try contradiction
+  split at h <;> try contradiction
+  exact ⟨‹Shape claim root witness›, ‹_›⟩
+
+end V1
+
+/-- Whole-claim opening is now an executable-family relation.  V1 is the only
+inhabited branch; a future generalized verifier must add a new, differently
+versioned branch rather than reinterpret v1 bytes. -/
+inductive WholeClaimOpensTo (claim : SettlementClaim) :
+    PrivateBatch claim.spec → Prop where
+  | private v1 (authorization : V1.Authorization claim) :
+      WholeClaimOpensTo claim authorization.batch
 
 /-- What the external verifier must establish existentially.  The witness lives
 in `Prop` and is erased; `SettlementClaim` remains plaintext-book free. -/
@@ -644,17 +861,45 @@ claim.  Its producer must verify authenticated ingress, commitment opening,
 stable order-nullifier image, and threshold-clearing output as one statement.
 This avoids asserting that two unrelated proof-indexed capabilities share an
 existential witness through proof irrelevance. -/
-opaque CombinedPrivateSettlementAuthorization (claim : SettlementClaim) : Type
+inductive CombinedPrivateSettlementAuthorization (claim : SettlementClaim) : Type where
+  | private v1 (authorization : V1.Authorization claim) :
+      CombinedPrivateSettlementAuthorization claim
 
 /-- Kernel-visible package accepted from the combined verifier boundary.  Its
 constructor is private: downstream code can consume an authorization and its
 whole-claim validity certificate but cannot assemble unrelated pieces.  The
-single opaque authorization is indexed by the exact claim, not by a proof in
-`Prop`; `valid` is an ordinary field and therefore introduces no soundness axiom. -/
+authorization family is indexed by the exact claim, not by a proof in `Prop`;
+`valid` is an ordinary field and therefore introduces no soundness axiom. -/
 structure VerifiedSettlementEvidence (claim : SettlementClaim) : Type where
   private mk ::
   authorization : CombinedPrivateSettlementAuthorization claim
   valid : ClaimHasValidPrivateOpening claim
+
+/-- Sole public evidence producer for v1.  The returned capability and validity
+certificate come from one `V1.Authorization`; they cannot name distinct private
+openings. -/
+def verifyV1? (claim : SettlementClaim) (root : Fin 8 → Int)
+    (witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness) :
+    Option (VerifiedSettlementEvidence claim) := do
+  let authorization ← V1.authorize? claim root witness
+  some {
+    authorization := .v1 authorization
+    valid := ⟨authorization.batch, .v1 authorization,
+      authorization.output_exact, authorization.nullifiers_exact⟩
+  }
+
+theorem verifyV1?_success {claim : SettlementClaim} {root : Fin 8 → Int}
+    {witness : Market.DarkBazaarPrivateDescriptor.PrivateWitness}
+    {evidence : VerifiedSettlementEvidence claim}
+    (h : verifyV1? claim root witness = some evidence) :
+    V1.Shape claim root witness ∧
+      Market.DarkBazaarPrivateDescriptor.check V1.hash8
+        (V1.publicStatement root claim) witness = true := by
+  simp only [verifyV1?] at h
+  cases hauthorization : V1.authorize? claim root witness with
+  | none => simp [hauthorization] at h
+  | some authorization =>
+      exact V1.authorize?_success hauthorization
 
 theorem VerifiedSettlementEvidence.has_valid_private_opening
     {claim : SettlementClaim} (evidence : VerifiedSettlementEvidence claim) :
@@ -1558,6 +1803,11 @@ theorem same_claim_evidence_observationally_equivalent
 #assert_axioms RawSettlementClaim.decode_success_implies_guards
 #assert_axioms RawSettlementClaim.decode_ofClaim
 #assert_axioms PrivateOrderId.nullifier_injective
+#assert_axioms V1.Authorization.book_eq
+#assert_axioms V1.Authorization.output_exact
+#assert_axioms V1.Authorization.nullifiers_exact
+#assert_axioms V1.authorize?_success
+#assert_axioms verifyV1?_success
 #assert_axioms VerifiedSettlementEvidence.has_valid_private_opening
 #assert_axioms VerifiedSettlementEvidence.orderNullifiers_exact
 #assert_axioms VerifiedSettlementEvidence.privateOrderNullifier_injective
