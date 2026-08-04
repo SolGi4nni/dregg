@@ -9,6 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST_TOOL="$SCRIPT_DIR/poa-devnet-manifest.mjs"
+FOLLOWER_PACKAGE_TOOL="$SCRIPT_DIR/poa-follower-package.mjs"
 
 POA_ROOT="${POA_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/path-of-angels/devnet}"
 POA_MAIN_DATA_DIR="${POA_MAIN_DATA_DIR:-$HOME/.dregg}"
@@ -30,11 +31,15 @@ Commands:
   readiness                       health plus the objective F-4 admission release gate
   down                            stop only PIDs whose command names their PoA data dir
   operator-command INDEX [HOST]   print one validator's authoritative run command
+  package-verify                   verify public release/genesis/source/image/binary pins
+  image-verify IMAGE               verify a local OCI image against the portable release pin
   follower-init NAME              make a new verifying non-voter and print its pubkey
   follower-command NAME BOOTSTRAP [BIND]
-                                  print the follower-first `dregg-node join` command
+                                  print proposal-neutral `dregg-node join --follow-only`
   follower-run NAME BOOTSTRAP [BIND]
-                                  verify isolation, then exec `join` (auto-proposes)
+                                  verify isolation, then exec proposal-neutral history sync
+  follower-status NAME [HOST]      verify local follower identity and print sync/admission status
+  follower-readiness NAME [HOST]   require synced proposal-neutral verification
   propose NAME [VALIDATOR_INDEX]  explicitly propose a follower through a live validator
   approve PROPOSAL [VALIDATOR_INDEX]
                                   cast one current validator's approval vote
@@ -52,8 +57,8 @@ Environment:
 
 The kit never passes --enable-faucet or --auto-approve-joins, never copies the
 genesis bundle's .devnet marker into a serving data dir, and never enables the
-unverified consensus escape hatch.  A follower pins genesis.json, verifies the
-chain first, and only then auto-proposes membership through the node's live API.
+unverified consensus escape hatch. A follower pins genesis.json and verifies
+history without proposing membership. Admission is a separate explicit act.
 EOF
 }
 
@@ -171,6 +176,50 @@ process.stdout.write(value);
 actual_pubkey() {
   local data_dir="$1"
   "$BIN" gen-validator-key --data-dir "$data_dir" --json | json_field public_key
+}
+
+verify_follower_release_package() {
+  if [ -f "$POA_ROOT/release-lock.json" ]; then
+    "$FOLLOWER_PACKAGE_TOOL" verify \
+      --root "$POA_ROOT" \
+      --main-data-dir "$POA_MAIN_DATA_DIR" \
+      --binary "$BIN" >/dev/null
+    return
+  fi
+  # A ceremony/operator root may create a local follower before its public
+  # release lock exists.  A key-free public package never gets that exemption.
+  if find "$POA_ROOT/bundle" -maxdepth 1 -type f -name 'node-*.key' -print -quit 2>/dev/null | grep -q .; then
+    run_manifest_tool verify-public >/dev/null
+    return
+  fi
+  die "key-free follower package lacks release-lock.json; binary/source/image provenance is unpinned"
+}
+
+cmd_package_verify() {
+  "$FOLLOWER_PACKAGE_TOOL" verify \
+    --root "$POA_ROOT" \
+    --main-data-dir "$POA_MAIN_DATA_DIR" \
+    --binary "$BIN"
+}
+
+cmd_image_verify() {
+  local image="${1:?image-verify requires IMAGE}"
+  local inspect_tmp
+  command -v docker >/dev/null 2>&1 || die "docker is required for image-verify"
+  inspect_tmp="$(mktemp "${TMPDIR:-/tmp}/poa-image-inspect.XXXXXX")"
+  if ! docker image inspect "$image" > "$inspect_tmp"; then
+    rm -f "$inspect_tmp"
+    die "cannot inspect image $image"
+  fi
+  if ! "$FOLLOWER_PACKAGE_TOOL" verify \
+    --root "$POA_ROOT" \
+    --main-data-dir "$POA_MAIN_DATA_DIR" \
+    --binary "$BIN" \
+    --image-inspect "$inspect_tmp"; then
+    rm -f "$inspect_tmp"
+    die "image $image differs from the portable release identity"
+  fi
+  rm -f "$inspect_tmp"
 }
 
 assert_validator_pubkeys() {
@@ -474,6 +523,7 @@ follower_dir() {
 }
 
 verify_follower() {
+  verify_follower_release_package
   run_manifest_tool verify-follower --name "$1" >/dev/null
   local pubkey validator_keys
   pubkey="$(actual_pubkey "$(follower_dir "$1")")"
@@ -489,7 +539,7 @@ process.stdout.write(m.nodes.map((node) => node.public_key).join("\n"));
 cmd_follower_init() {
   local name="${1:?follower-init requires NAME}"
   local data_dir pubkey ordinal
-  run_manifest_tool verify-public
+  verify_follower_release_package
   data_dir="$(follower_dir "$name")"
   [ ! -e "$data_dir" ] || die "follower data dir already exists: $data_dir"
   mkdir -p "$data_dir"
@@ -574,8 +624,19 @@ follower_join_args() {
   [ "$DREGG_STATUS_EXPOSE_COUNTS" = "0" ] || die \
     "follower must keep private activity counts private"
   [ "$DREGG_SEED_DEMO_LEASE" = "0" ] || die "follower must not seed the generic demo lease"
+  if [ -f "$POA_ROOT/release-lock.json" ]; then
+    node -e '
+const fs = require("fs");
+const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+if (!Array.isArray(lock.bootstrap_peers) || !lock.bootstrap_peers.includes(process.argv[2])) {
+  console.error(`bootstrap ${process.argv[2]} is not pinned by the follower release lock`);
+  process.exit(1);
+}
+' "$POA_ROOT/release-lock.json" "$bootstrap" || die "unrecognized follower bootstrap"
+  fi
   FOLLOWER_ARGS=(
     join
+    --follow-only
     --bootstrap "$bootstrap"
     --data-dir "$data_dir"
     --port "$POA_FOLLOWER_HTTP_PORT"
@@ -585,10 +646,35 @@ follower_join_args() {
   )
 }
 
+require_proposal_neutral_release() {
+  if [ -f "$POA_ROOT/release-lock.json" ]; then
+    node -e '
+const lock = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+if (lock.release?.proposal_neutral_follow !== true) {
+  console.error(
+    "the pinned PoA release lacks proposal-neutral follow support; build, gate, receipt, and reseal the next release before syncing"
+  );
+  process.exit(1);
+}
+' "$POA_ROOT/release-lock.json" || die "proposal-neutral follower unavailable in this pinned release"
+    return
+  fi
+  # A private ceremony root is not a distributable package and therefore has no
+  # release receipt yet. Permit candidate preparation only when the selected
+  # binary proves the CLI surface exists; public/key-free roots still require a
+  # receipt-bound release lock.
+  if find "$POA_ROOT/bundle" -maxdepth 1 -type f -name 'node-*.key' -print -quit 2>/dev/null |
+      grep -q . && "$BIN" join --help 2>&1 | grep -q -- '--follow-only'; then
+    return
+  fi
+  die "proposal-neutral following requires a receipted capable release (or a capable private ceremony candidate)"
+}
+
 cmd_follower_command() {
   local name="${1:?follower-command requires NAME}"
   local bootstrap="${2:?follower-command requires BOOTSTRAP host:port}"
   local bind="${3:-127.0.0.1}"
+  require_proposal_neutral_release
   follower_join_args "$name" "$bootstrap" "$bind"
   printf 'DREGG_REQUIRE_LEAN=1 DREGG_STRAND_ADMISSION_GATE=1 '
   printf 'DREGG_ALLOW_UNVERIFIED_CONSENSUS=0 DREGG_STATUS_EXPOSE_COUNTS=0 DREGG_SEED_DEMO_LEASE=0 '
@@ -600,10 +686,54 @@ cmd_follower_run() {
   local name="${1:?follower-run requires NAME}"
   local bootstrap="${2:?follower-run requires BOOTSTRAP host:port}"
   local bind="${3:-127.0.0.1}"
+  require_proposal_neutral_release
   follower_join_args "$name" "$bootstrap" "$bind"
   DREGG_REQUIRE_LEAN=1 DREGG_STRAND_ADMISSION_GATE=1 \
     DREGG_ALLOW_UNVERIFIED_CONSENSUS=0 DREGG_STATUS_EXPOSE_COUNTS=0 DREGG_SEED_DEMO_LEASE=0 \
     exec "$BIN" "${FOLLOWER_ARGS[@]}"
+}
+
+cmd_follower_status_common() {
+  local require_ready="$1"
+  local name="${2:?follower status requires NAME}"
+  local host="${3:-127.0.0.1}"
+  local status_tmp membership_tmp pubkey
+  [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]] || die "follower status HOST must be a DNS name or IPv4 address"
+  [ -f "$POA_ROOT/release-lock.json" ] || die "follower status requires a release-locked public package"
+  # Reuse the exact restart-stable config/parser and isolation checks.  The
+  # bootstrap is only a constructor argument here and is never dialed.
+  follower_join_args "$name" "$(node -e 'const fs=require("fs"),l=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(l.bootstrap_peers[0])' "$POA_ROOT/release-lock.json")" "$host"
+  pubkey="$(actual_pubkey "$(follower_dir "$name")")"
+  status_tmp="$(mktemp "${TMPDIR:-/tmp}/poa-follower-status.XXXXXX")"
+  membership_tmp="$(mktemp "${TMPDIR:-/tmp}/poa-follower-membership.XXXXXX")"
+  if ! curl -fsS --connect-timeout 2 --max-time 10 \
+    "http://$host:$POA_FOLLOWER_HTTP_PORT/status" > "$status_tmp" ||
+    ! curl -fsS --connect-timeout 2 --max-time 10 \
+    "http://$host:$POA_FOLLOWER_HTTP_PORT/api/membership" > "$membership_tmp"; then
+    rm -f "$status_tmp" "$membership_tmp"
+    die "follower API is unreachable at $host:$POA_FOLLOWER_HTTP_PORT"
+  fi
+  if ! "$FOLLOWER_PACKAGE_TOOL" status \
+    --root "$POA_ROOT" \
+    --main-data-dir "$POA_MAIN_DATA_DIR" \
+    --binary "$BIN" \
+    --status-json "$status_tmp" \
+    --membership-json "$membership_tmp" \
+    --follower-public-key "$pubkey" \
+    --require-ready "$require_ready"; then
+    rm -f "$status_tmp" "$membership_tmp"
+    die "follower live-state verification failed"
+  fi
+  rm -f "$status_tmp" "$membership_tmp"
+}
+
+cmd_follower_status() {
+  cmd_follower_status_common false "$@"
+}
+
+cmd_follower_readiness() {
+  require_proposal_neutral_release
+  cmd_follower_status_common true "$@"
 }
 
 cmd_propose() {
@@ -630,9 +760,13 @@ case "${1:-}" in
   readiness) shift; cmd_readiness "$@" ;;
   down) shift; cmd_down "$@" ;;
   operator-command) shift; cmd_operator_command "$@" ;;
+  package-verify) shift; cmd_package_verify "$@" ;;
+  image-verify) shift; cmd_image_verify "$@" ;;
   follower-init) shift; cmd_follower_init "$@" ;;
   follower-command) shift; cmd_follower_command "$@" ;;
   follower-run) shift; cmd_follower_run "$@" ;;
+  follower-status) shift; cmd_follower_status "$@" ;;
+  follower-readiness) shift; cmd_follower_readiness "$@" ;;
   propose) shift; cmd_propose "$@" ;;
   approve) shift; cmd_approve "$@" ;;
   -h|--help|help) usage ;;

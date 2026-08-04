@@ -444,6 +444,10 @@ if [ "$1" = gen-validator-key ]; then
   printf '{"public_key":"${"5a".repeat(32)}"}'
   exit 0
 fi
+if [ "$1" = join ] && [ "$2" = --help ]; then
+  printf '%s\n' 'Usage: dregg-node join --follow-only'
+  exit 0
+fi
 exit 99
 `,
   );
@@ -477,6 +481,6 @@ exit 99
   assert.equal(command.status, 0, command.stderr);
   assert.match(command.stdout, /^DREGG_REQUIRE_LEAN=1 DREGG_STRAND_ADMISSION_GATE=1 /);
   assert.match(command.stdout, /DREGG_ALLOW_UNVERIFIED_CONSENSUS=0/);
-  assert.match(command.stdout, /join --bootstrap hbox\.poa:9421/);
+  assert.match(command.stdout, /join --follow-only --bootstrap hbox\.poa:9421/);
   assert.match(command.stdout, /--prove-turns/);
 });

@@ -1,0 +1,83 @@
+{
+  "schema": "dregg-poa-devnet-manifest-v1",
+  "deployment_domain": "pathofangels.network/federation/v1",
+  "deployment_id": "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e",
+  "federation_id": "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
+  "committee_epoch": 0,
+  "threshold": 3,
+  "genesis_sha256": "5766736201a9ede62c79fe9beac04df8f8b5367feec5400c073fd631132bdb7f",
+  "descriptor": "bundle/genesis.json",
+  "policy": {
+    "follower_first": true,
+    "descriptor_pinned": true,
+    "admission": "committee-ratified-manual-v1",
+    "f4_transitive_vouch_rows_live": false,
+    "objective_vouch_admission_ready": false,
+    "prove_turns": true,
+    "require_lean": true,
+    "strand_admission_gate": true,
+    "allow_unverified_consensus": false,
+    "faucet_http": false,
+    "auto_approve_joins": false,
+    "public_private_activity_counts": false,
+    "shares_main_identity": false,
+    "shares_main_storage": false,
+    "generic_genesis_value_issued": false
+  },
+  "nodes": [
+    {
+      "index": 0,
+      "name": "node-0",
+      "public_key": "36a21b182cb6fdf917874ab9eef52a81883c1204721526a7f4c32946ca059b97",
+      "data_dir": "nodes/node-0",
+      "http": {
+        "bind": "127.0.0.1",
+        "port": 8423
+      },
+      "gossip": {
+        "advertised_host": "100.64.0.3",
+        "port": 9423,
+        "peers": [
+          "100.64.0.2:9424",
+          "100.64.0.1:9425"
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "name": "node-1",
+      "public_key": "5b2cea945c5f5f29cd4b2499a1c6e52e3da814c4d74bb09dc6ef07185168b5cb",
+      "data_dir": "nodes/node-1",
+      "http": {
+        "bind": "127.0.0.1",
+        "port": 8424
+      },
+      "gossip": {
+        "advertised_host": "100.64.0.2",
+        "port": 9424,
+        "peers": [
+          "100.64.0.3:9423",
+          "100.64.0.1:9425"
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "name": "node-2",
+      "public_key": "f5dc8959b7605343aab6ee13320991a01236914a354e02f02298955e52f904fa",
+      "data_dir": "nodes/node-2",
+      "http": {
+        "bind": "127.0.0.1",
+        "port": 8425
+      },
+      "gossip": {
+        "advertised_host": "100.64.0.1",
+        "port": 9425,
+        "peers": [
+          "100.64.0.3:9423",
+          "100.64.0.2:9424"
+        ]
+      }
+    }
+  ]
+}

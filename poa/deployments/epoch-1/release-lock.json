@@ -1,0 +1,51 @@
+{
+  "schema": "pathofangels-follower-package-v1",
+  "epoch": 1,
+  "deployment": {
+    "domain": "pathofangels.network/federation/v1",
+    "federation_id": "4ea83e8ebf4f590eace11c9ffd6d6607a4afb15e5a00cd7b9e04890dab6bfc5a",
+    "deployment_id": "d933b11beb5adb502cc0511b8124c98192dbbed143ffbb1b5242ff6e0cf97c9e",
+    "genesis_sha256": "5766736201a9ede62c79fe9beac04df8f8b5367feec5400c073fd631132bdb7f"
+  },
+  "release": {
+    "receipt_sha256": "1bd2d5d231aebebc42366a0b1375845fa6cbf6865ca7996edb5d72a424437fc1",
+    "linux_gate_receipt_sha256": "b1d9808ed7dcc320640866f78bb819e44053ca53ff8ec467eecc580bba5d6f6a",
+    "node_sha256": "a9858c0298fa5517ef9d845566f59258c3e39404571a6b1bca77990b9b9bfb9f",
+    "source_commit": "1f0f2efb5cefa17aa4b695c30ae2969f449009a0",
+    "source_tree_sha256": "7961b05444934754bf5d7f7347069470691c651b7215ef4ab8bc2eb1e96a21af",
+    "image_reference": "dregg-node:poa-candidate-a9858c0298fa5517",
+    "image_portable_sha256": "2a68d175de50c74f6c5035719a4970f68cbb6e66d53128ea53f6ca8c590996cd",
+    "image_identity_tool_sha256": "635d51c973a7167bf7f32b9ca8a7c16d8f58d1ee71f7945ea65c0a4f7998ee21",
+    "runtime_base_id": "sha256:141fa5ec52a8e2d0ee0ce46ced14c731a20489f91035860ed532560a467351a6",
+    "proposal_neutral_follow": false
+  },
+  "files": [
+    {
+      "path": "poa-devnet.json",
+      "sha256": "427a7a33ae19e450e2b9eb86453ac247b94d47725e29f8d470f0e9cad8073510"
+    },
+    {
+      "path": "bundle/genesis.json",
+      "sha256": "5766736201a9ede62c79fe9beac04df8f8b5367feec5400c073fd631132bdb7f"
+    },
+    {
+      "path": "release-receipt.json",
+      "sha256": "1bd2d5d231aebebc42366a0b1375845fa6cbf6865ca7996edb5d72a424437fc1"
+    },
+    {
+      "path": "image-identity.mjs",
+      "sha256": "635d51c973a7167bf7f32b9ca8a7c16d8f58d1ee71f7945ea65c0a4f7998ee21"
+    }
+  ],
+  "bootstrap_peers": [
+    "100.64.0.3:9423",
+    "100.64.0.2:9424",
+    "100.64.0.1:9425"
+  ],
+  "trust_boundary": {
+    "history_verification_from_pinned_genesis": "cryptographic",
+    "release_provenance": "receipt-and-repository-pin",
+    "admission": "committee-ratified-manual-v1",
+    "objective_f4_admission_live": false
+  }
+}

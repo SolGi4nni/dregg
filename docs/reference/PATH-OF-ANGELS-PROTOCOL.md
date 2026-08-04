@@ -124,8 +124,9 @@ directories, ports, metrics labels, and volume names. It may reuse Dregg
 binaries and hosts; it must not reuse main-federation identity or mutable state.
 
 The initial mesh is three validators, with the public edge acting only as a
-reverse proxy. Anyone may run a follower, verify the lace, submit a signed turn,
-or propose admission. Outsider blocks remain excluded from the participant
+reverse proxy. A receipted `join --follow-only` node may verify the lace without
+making an admission request; applying for admission is a separate operator act.
+Outsider blocks remain excluded from the participant
 predecessor graph, wave clock, and final order.
 
 The target PoA admission policy is vouch-first: two distinct admitted vouchers
@@ -138,6 +139,17 @@ feeds the constitutional participant set as both seeds and candidates and has no
 live vouch rows. Therefore a Join remains a follower/proposal followed by manual
 committee ratification; the two-vouch path is not advertised as live until the
 chain-derived vouch registry reaches the F-4 gate.
+
+The public epoch-1 follower trust root is
+`poa/deployments/epoch-1/poa-devnet.json` plus its byte-pinned sibling
+`bundle/genesis.json`. `release-lock.json` binds those bytes to the active
+release receipt's node, semantic source-tree, portable image, runtime-base, and
+Linux-gate pins without publishing any validator key. Epoch 1 honestly records
+`proposal_neutral_follow=false`: its pinned binary predates the source policy,
+so live follower sync remains closed until a newly built and gated receipt binds
+that capability to the replacement binary. Federation-bound POAG1
+artifacts are emitted only after such a genesis exists; there is no synthetic
+pre-genesis federation label.
 
 ## Crown journey
 

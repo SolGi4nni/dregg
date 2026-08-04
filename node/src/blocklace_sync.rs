@@ -3297,6 +3297,19 @@ pub async fn run_blocklace_sync(
     .await
 }
 
+/// Whether consensus startup may author this node's own constitutional Join
+/// proposal when its key is outside the current committee.
+///
+/// `FollowOnly` is deliberately an enum rather than a second approval boolean:
+/// receiving and verifying history is not a request for admission.  It leaves
+/// the node connected and catching up but forbids the one local write that
+/// would otherwise turn an observer into an applicant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MembershipProposalPolicy {
+    ProposeIfNonMember,
+    FollowOnly,
+}
+
 /// Dependency-injected consensus startup used by the node after it loads the shared public
 /// `genesis.json`, by integrator tests, and by explicit embedders. [`run_blocklace_sync`] is the
 /// environment-backed adapter for standalone callers; both routes converge here before any gossip
@@ -3306,6 +3319,41 @@ pub(crate) async fn run_blocklace_sync_with_policy(
     state: NodeState,
     gossip_port: u16,
     auto_approve_joins: bool,
+    blocklace_checkpoint_interval: u64,
+    constitution_timeout_ms: u64,
+    block_cadence_ms: u64,
+    idle_heartbeat_ms: u64,
+    min_block_interval_ms: u64,
+    advertise_addr: Option<SocketAddr>,
+    consensus_time_policy: ConsensusTimePolicyV1,
+) -> Option<BlocklaceHandle> {
+    run_blocklace_sync_with_membership_policy(
+        state,
+        gossip_port,
+        auto_approve_joins,
+        MembershipProposalPolicy::ProposeIfNonMember,
+        blocklace_checkpoint_interval,
+        constitution_timeout_ms,
+        block_cadence_ms,
+        idle_heartbeat_ms,
+        min_block_interval_ms,
+        advertise_addr,
+        consensus_time_policy,
+    )
+    .await
+}
+
+/// Consensus startup with an explicit local membership-proposal policy.
+///
+/// The legacy adapter above retains its historical auto-propose behavior for
+/// existing callers. Operator entry points that promise proposal-neutral
+/// observation must call this function with [`MembershipProposalPolicy::FollowOnly`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_blocklace_sync_with_membership_policy(
+    state: NodeState,
+    gossip_port: u16,
+    auto_approve_joins: bool,
+    membership_proposal_policy: MembershipProposalPolicy,
     blocklace_checkpoint_interval: u64,
     constitution_timeout_ms: u64,
     block_cadence_ms: u64,
@@ -3860,16 +3908,25 @@ pub(crate) async fn run_blocklace_sync_with_policy(
         frontier_handle.send_frontier().await;
     });
 
-    // If we're not already a federation participant, propose joining.
-    // This enables new nodes to join at runtime via the constitutional amendment
-    // protocol. Existing participants will vote (auto-approve in devnet mode).
-    let join_handle = handle.clone();
-    let join_state = state.clone();
-    tokio::spawn(async move {
-        // Brief delay to allow gossip connections to establish.
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        join_handle.propose_join_if_needed(&join_state).await;
-    });
+    match membership_proposal_policy {
+        MembershipProposalPolicy::ProposeIfNonMember => {
+            // If we're not already a federation participant, propose joining.
+            // This enables new nodes to join at runtime via the constitutional amendment
+            // protocol. Existing participants will vote (auto-approve in devnet mode).
+            let join_handle = handle.clone();
+            let join_state = state.clone();
+            tokio::spawn(async move {
+                // Brief delay to allow gossip connections to establish.
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                join_handle.propose_join_if_needed(&join_state).await;
+            });
+        }
+        MembershipProposalPolicy::FollowOnly => {
+            info!(
+                "follow-only membership policy active — history sync will not author a Join proposal"
+            );
+        }
+    }
 
     Some(handle)
 }
@@ -15006,6 +15063,79 @@ mod tests {
         let sock = std::net::UdpSocket::bind("0.0.0.0:0").expect("bind an ephemeral UDP port");
         let port = sock.local_addr().expect("local_addr").port();
         (sock, port)
+    }
+
+    /// Proposal-neutral observation and ordinary joining share every startup
+    /// path except this explicit policy.  Exercise both poles against real
+    /// blocklaces: the observer must author no Join block after the normal
+    /// proposal delay, while the legacy/default policy must still author one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn follow_only_never_emits_join_while_normal_policy_still_does() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let committee = [ed25519_dalek::SigningKey::from_bytes(&[0x91; 32])];
+        let (follow_tmp, follow_state) = committed_state_for(&committee).await;
+        let (normal_tmp, normal_state) = committed_state_for(&committee).await;
+
+        let (follow, normal) = tokio::join!(
+            run_blocklace_sync_with_membership_policy(
+                follow_state,
+                0,
+                false,
+                MembershipProposalPolicy::FollowOnly,
+                100,
+                10_000,
+                0,
+                0,
+                0,
+                None,
+                dregg_blocklace::finality::ConsensusTimePolicyV1::new(1_700_000_000),
+            ),
+            run_blocklace_sync_with_membership_policy(
+                normal_state,
+                0,
+                false,
+                MembershipProposalPolicy::ProposeIfNonMember,
+                100,
+                10_000,
+                0,
+                0,
+                0,
+                None,
+                dregg_blocklace::finality::ConsensusTimePolicyV1::new(1_700_000_000),
+            )
+        );
+        let follow = follow.expect("follow-only blocklace starts");
+        let normal = normal.expect("normal blocklace starts");
+
+        // The production proposal task waits two seconds for gossip. Wait past
+        // that same boundary so a scheduler delay cannot make the positive pole
+        // vacuous.
+        tokio::time::sleep(Duration::from_millis(2_500)).await;
+        let join_count = |blocks: Vec<Block>| {
+            blocks
+                .iter()
+                .filter(|block| {
+                    matches!(
+                        block.payload,
+                        Payload::MembershipVote {
+                            action: MembershipAction::Join { .. }
+                        }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(
+            join_count(follow.lace.read().await.all_blocks()),
+            0,
+            "follow-only history sync authored a Join proposal"
+        );
+        assert_eq!(
+            join_count(normal.lace.read().await.all_blocks()),
+            1,
+            "the ordinary join policy no longer auto-proposes membership"
+        );
+
+        drop((follow_tmp, normal_tmp));
     }
 
     // The expected message names the BIND specifically, not just "refusing to

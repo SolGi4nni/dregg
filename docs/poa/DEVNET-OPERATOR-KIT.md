@@ -9,8 +9,9 @@ joining, or membership:
   pathofangels.network/federation/v1 --no-demo-economy` makes the hybrid
   committee and descriptor;
 - `dregg-node gen-validator-key` derives/checks every public identity;
-- `dregg-node join` pins that descriptor, catches up as a non-voting follower,
-  and auto-proposes the follower on-chain;
+- `dregg-node join --follow-only` pins that descriptor and catches up as a
+  proposal-neutral, non-voting observer; ordinary `join` retains its historical
+  auto-propose behavior for an operator who deliberately applies to join;
 - `propose-epoch-transition` and `approve-membership` are the live membership
   verbs;
 - `status`, `/status`, and `/api/membership` are the liveness and chain-identity
@@ -23,6 +24,21 @@ files are consumed by the launcher and translated into explicit `dregg-node
 run` flags.  Verification requires each file to be byte-for-byte derivable from
 the manifest before a safe, non-evaluating parser reads it, so an edited env file
 cannot redirect a node to main storage, different ports, or different peers.
+
+The public, key-free epoch-1 follower package is checked in at
+`poa/deployments/epoch-1/`. It contains only:
+
+- the exact live `poa-devnet.json` and byte-identical `bundle/genesis.json`;
+- the active release receipt;
+- `release-lock.json`, which cross-pins the federation, deployment, genesis,
+  Lean-linked node binary, semantic source tree, source commit, portable OCI
+  image identity, runtime base, Linux gate receipt, bootstrap peers, and
+  receipted runtime capabilities;
+- the exact portable-image identity verifier named by the receipt.
+
+It contains no `.key`, operator env, ledger, invitation password, or curator
+material. `scripts/poa-follower-package.mjs` refuses an unexpected path, a
+changed locked byte, or any release/deployment disagreement.
 
 ## Isolation guarantees
 
@@ -109,14 +125,48 @@ shape.
 ## Follower-first participation
 
 Anyone can make a fresh identity, pin the public descriptor, and verify the
-lace before receiving voting authority.  The public follower package is only
-`poa-devnet.json` plus `bundle/genesis.json`; it contains no validator seed:
+lace before receiving voting authority. Copy the checked package to a writable,
+private runtime directory; never generate a follower key inside the repository:
 
 ```sh
+cp -R poa/deployments/epoch-1 "$HOME/path-of-angels/operator-package"
+export POA_ROOT="$HOME/path-of-angels/operator-package"
+export POA_MAIN_DATA_DIR="$HOME/.dregg"
+export POA_BIN="$HOME/bin/dregg-node-poa"
+
+scripts/poa-devnet.sh package-verify
+# If the content-named release image has been imported locally:
+scripts/poa-devnet.sh image-verify dregg-node:poa-candidate-a9858c0298fa5517
 scripts/poa-devnet.sh follower-init deck-447
-scripts/poa-devnet.sh follower-command deck-447 hbox.poa:9421 100.70.0.44
-# Run the printed command. `join` catches up, follows, and auto-proposes.
+scripts/poa-devnet.sh follower-command deck-447 100.64.0.3:9423 100.70.0.44
+# Once a follow-capable release is resealed, run the printed `join --follow-only`.
+scripts/poa-devnet.sh follower-status deck-447 100.70.0.44
+scripts/poa-devnet.sh follower-readiness deck-447 100.70.0.44
 ```
+
+The checked epoch-1 receipt pins binary `a9858c…`, built before
+`join --follow-only` existed. Its lock therefore records
+`proposal_neutral_follow=false`. `package-verify`, image verification, and
+offline identity initialization remain useful, but `follower-command`,
+`follower-run`, and `follower-readiness` refuse before network traffic. Do not
+edit that boolean: the verifier binds it to the release receipt. The next
+candidate must build the source policy, pass the node and package gates, emit a
+receipt with `proposal_neutral_follow=true`, and reseal the lock before these
+commands become a live sync path.
+
+`package-verify` hashes `POA_BIN` before it can create or read a follower key.
+`image-verify` derives the engine-independent ordered-RootFS/config identity
+from `docker image inspect`; a matching host-local Docker image ID is neither
+required nor sufficient. A release-locked follower may dial only a bootstrap
+peer named by the package.
+
+`follower-status` is diagnostic but still refuses a wrong federation, wrong
+local identity, Rust producer, disabled full-turn proving, malformed committee,
+or leaked private-activity counters. `follower-readiness` additionally requires
+a receipted proposal-neutral binary, a healthy synced lace, a peer, history,
+and no unratified Join proposal authored by the follower. A key already admitted
+to the finalized committee is allowed; `--follow-only` suppresses only the
+non-member proposal and does not turn a validator into a non-voter.
 
 The candidate can inspect `/api/membership`.  A current operator can open the
 same proposal explicitly and later approve its exact proposal block:
@@ -128,6 +178,21 @@ scripts/poa-devnet.sh approve <proposal-block-hex> 0
 
 Proposing is not admission.  Only finalized current-committee votes change the
 live committee.
+
+### What is trustless, and what is not
+
+The package is an authenticated starting-point obligation: obtain its Git
+revision or lock digest through a channel you trust. From the exact pinned
+genesis, the follower cryptographically verifies the history it receives and
+does not trust the bootstrap peer's account of that history. The release
+receipt and repository lock attest which source/image/binary was deployed; they
+do not make source provenance independent of the release operator.
+
+Admission is still semitrusted and separate from observation. A current
+operator explicitly opens a proposal for a willing follower, and the current
+committee manually decides membership. A readiness report therefore always
+prints `admission=committee-ratified-manual-v1` and
+`objective_f4_admission_live=false`, even after the follower becomes a voter.
 
 ## Admission readiness is intentionally red
 
@@ -148,14 +213,21 @@ candidate/vouch rows from chain state.  Do not describe this initial committee
 approval path as F-4, objective, or trustless admission merely because the
 Lean theorem exists.
 
+This global `readiness` command is deliberately different from
+`follower-readiness`: the latter proves that a non-voting node is correctly
+verifying without applying for admission; it does not turn a later manual
+admission act into objective F-4 admission.
+
 ## Verification
 
 The deployment-policy tests are fast and do not synthesize PQ keys:
 
 ```sh
 node --test scripts/tests/poa-devnet-manifest.test.mjs
+node --test scripts/tests/poa-follower-package.test.mjs
 bash -n scripts/poa-devnet.sh
 node --check scripts/poa-devnet-manifest.mjs
+node --check scripts/poa-follower-package.mjs
 ```
 
 The node-side domain-key tests are narrow:

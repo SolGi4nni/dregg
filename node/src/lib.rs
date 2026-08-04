@@ -93,6 +93,7 @@ mod operator_turn_receipt_head_e2e;
 mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
+pub mod poa_strand_admission;
 pub mod private_dependent_turns;
 mod program_registry_persistence;
 pub mod promise_resolutions;
@@ -508,9 +509,9 @@ pub enum Command {
     /// pubkey) and requires a committee `genesis.json` to be present — a node
     /// cannot verify a federation's blocks without its committee descriptor, so
     /// `join` refuses rather than trusting nobody. The node then catches up the
-    /// DAG from the bootstrap and, if it is NOT yet a committee member,
-    /// auto-proposes membership (`propose_join_if_needed`) and follows until an
-    /// operator admits it via `add-validator`.
+    /// DAG from the bootstrap and follows it. By default a non-member also
+    /// auto-proposes membership (`propose_join_if_needed`); `--follow-only`
+    /// suppresses that proposal so observation is not an admission request.
     Join {
         /// Bootstrap peer to dial: `host:gossip_port` (e.g. 100.64.0.1:9420).
         /// One live peer is enough; gossip-of-peers fills in the rest.
@@ -539,6 +540,14 @@ pub enum Command {
         /// (Devnet) auto-approve incoming join proposals.
         #[arg(long)]
         auto_approve_joins: bool,
+
+        /// Catch up and verify the federation as a non-voting observer without
+        /// authoring a constitutional Join proposal. Receiving history is not
+        /// treated as an admission request. If this key is already a committee
+        /// member it still votes normally; this flag only suppresses the local
+        /// non-member proposal.
+        #[arg(long)]
+        follow_only: bool,
     },
 
     /// Add one or more validators to this node's committee (the authority op).
@@ -777,6 +786,7 @@ pub async fn run(cli: Cli) {
                 &consensus,
                 groups,
                 auto_approve_joins,
+                blocklace_sync::MembershipProposalPolicy::ProposeIfNonMember,
                 cors_origins,
                 deos_program,
                 dev_unlock,
@@ -921,6 +931,7 @@ pub async fn run(cli: Cli) {
             prove_turns,
             enable_faucet,
             auto_approve_joins,
+            follow_only,
         } => {
             // Pre-flight: ensure key + committee descriptor, report membership.
             let plan = match operator_join::prepare_join(&data_dir, &bootstrap, false) {
@@ -930,10 +941,10 @@ pub async fn run(cli: Cli) {
                     std::process::exit(1);
                 }
             };
-            operator_join::announce_join(&plan, &data_dir, &bind);
+            operator_join::announce_join(&plan, &data_dir, &bind, follow_only);
             // Start the daemon in full (BFT-quorum) mode, peered to the bootstrap.
-            // The blocklace catches up from the peer; a non-member auto-proposes
-            // membership (see `blocklace_sync::propose_join_if_needed`).
+            // The blocklace catches up from the peer. A non-member auto-proposes
+            // unless the operator selected the proposal-neutral follow policy.
             run_node(
                 port,
                 &bind,
@@ -956,6 +967,11 @@ pub async fn run(cli: Cli) {
                 "blocklace",
                 Vec::new(),
                 auto_approve_joins,
+                if follow_only {
+                    blocklace_sync::MembershipProposalPolicy::FollowOnly
+                } else {
+                    blocklace_sync::MembershipProposalPolicy::ProposeIfNonMember
+                },
                 Vec::new(),
                 None,
                 false,
@@ -1221,6 +1237,7 @@ async fn run_node(
     consensus_engine: &str,
     groups: Vec<String>,
     auto_approve_joins_flag: bool,
+    membership_proposal_policy: blocklace_sync::MembershipProposalPolicy,
     cors_origins_flag: Vec<String>,
     deos_program: Option<String>,
     dev_unlock: bool,
@@ -2002,10 +2019,11 @@ async fn run_node(
                 .ok()
                 .filter(|ip| !ip.is_unspecified())
                 .map(|ip| SocketAddr::new(ip, gossip_port_copy));
-            let blocklace_handle = blocklace_sync::run_blocklace_sync_with_policy(
+            let blocklace_handle = blocklace_sync::run_blocklace_sync_with_membership_policy(
                 sync_state,
                 gossip_port_copy,
                 auto_approve_joins,
+                membership_proposal_policy,
                 blocklace_checkpoint_interval,
                 blocklace_wave_timeout_ms,
                 block_cadence_ms,
