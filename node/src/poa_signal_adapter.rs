@@ -10,7 +10,8 @@
 use std::fmt;
 
 use dregg_sdk::poa_signal::{
-    SignalClaimError, SignalClaimV1, SignalCode, SignalEventRoute, classify_signal_event,
+    SIGNAL_BAND_MAX, SignalClaimError, SignalClaimV1, SignalCode, SignalEventRoute,
+    classify_signal_event,
 };
 use dregg_turn::Effect;
 use serde::de::DeserializeOwned;
@@ -203,6 +204,38 @@ pub fn evaluate_signal_claim(
     Ok(EvaluatedSignalCandidate { input, output })
 }
 
+/// Evaluate one public claim against an exact persisted authority head and
+/// produce the storage envelope consumed by the finalized-turn atomic weld.
+///
+/// The caller must supply `player_key` from `SignedTurn.signer` and
+/// `actor_root` from the executor-produced receipt's `pre_state_hash`. Neither
+/// value is accepted from the public event. This function authenticates no
+/// finality by itself; that authority comes from invoking it inside the
+/// finalized-turn path and committing its result with the carrying receipt.
+pub fn evaluate_persisted_signal_claim(
+    head: &dregg_persist::PoaSignalHeadV1,
+    active_federation_id: [u8; 32],
+    player_key: [u8; 32],
+    actor_root: [u8; 32],
+    claim: SignalClaimV1,
+) -> Result<dregg_persist::PreparedPoaSignalTransitionV1, SignalAdapterError> {
+    let context =
+        authority_context_from_persisted_head(head, active_federation_id, player_key, actor_root)?;
+    let evaluated = evaluate_signal_claim(&context, claim)?;
+    let successor_canon = serde_json::to_vec(&evaluated.output.dto.successor_canon)
+        .map_err(|error| SignalAdapterError::Json(error.to_string()))?;
+    dregg_persist::PreparedPoaSignalTransitionV1::new(
+        head.authority_id(),
+        head.digest(),
+        evaluated.output.dto.successor_world.sequence,
+        evaluated.output.dto.successor_canon.revision,
+        successor_canon,
+        evaluated.input.bytes.into_bytes(),
+        evaluated.output.bytes.into_bytes(),
+    )
+    .map_err(|error| SignalAdapterError::PreparedTransition(error.to_string()))
+}
+
 /// Transport-layer failures.  None authorizes ordinary-event fallback.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SignalAdapterError {
@@ -215,6 +248,7 @@ pub enum SignalAdapterError {
     LeanTransport(String),
     LeanRejected,
     OutputBinding(&'static str),
+    PreparedTransition(String),
 }
 
 impl fmt::Display for SignalAdapterError {
@@ -236,6 +270,9 @@ impl fmt::Display for SignalAdapterError {
             Self::LeanTransport(error) => write!(f, "Lean Signal transport unavailable: {error}"),
             Self::LeanRejected => write!(f, "Lean rejected the Signal transition"),
             Self::OutputBinding(reason) => write!(f, "Lean Signal output binding failed: {reason}"),
+            Self::PreparedTransition(error) => {
+                write!(f, "PoA Signal persistence envelope refused: {error}")
+            }
         }
     }
 }
@@ -522,7 +559,15 @@ fn validate_evaluation_binding(
         && receipt.run_seed == request.run_seed
         && receipt.pre_world == input.world
         && output.successor_world == receipt.post_world
-        && output.successor_canon.world == receipt.post_world;
+        && output.successor_canon.world == receipt.post_world
+        && output.successor_canon.federation_id == input.canon.federation_id
+        && output.successor_canon.content_root == input.canon.content_root
+        && output.successor_canon.activation_digest == input.canon.activation_digest
+        && output.successor_canon.content_session == input.canon.content_session
+        && output.successor_canon.content_epoch == input.canon.content_epoch
+        && output.successor_canon.curator_key == input.canon.curator_key
+        && input.world.sequence.checked_add(1) == Some(output.successor_world.sequence)
+        && input.canon.revision.checked_add(1) == Some(output.successor_canon.revision);
     if !bindings_hold {
         return Err(SignalAdapterError::OutputBinding(
             "receipt/successor does not preserve the exact judged input bindings",
@@ -703,10 +748,76 @@ fn validate_request(request: &SignalRequestDto) -> Result<(), SignalAdapterError
 }
 
 fn validate_code(code: &SignalCodeDto) -> Result<(), SignalAdapterError> {
-    if code.low > 5 || code.mid > 5 || code.high > 5 {
+    if code.low > SIGNAL_BAND_MAX || code.mid > SIGNAL_BAND_MAX || code.high > SIGNAL_BAND_MAX {
         return Err(SignalAdapterError::InvalidField("Signal code band"));
     }
     Ok(())
+}
+
+fn authority_context_from_persisted_head(
+    head: &dregg_persist::PoaSignalHeadV1,
+    active_federation_id: [u8; 32],
+    player_key: [u8; 32],
+    actor_root: [u8; 32],
+) -> Result<SignalAuthorityContext, SignalAdapterError> {
+    if head.authority_id() != active_federation_id {
+        return Err(SignalAdapterError::InvalidField(
+            "persisted head authority/federation",
+        ));
+    }
+    let config_bytes = std::str::from_utf8(head.config())
+        .map_err(|_| SignalAdapterError::InvalidField("persisted config UTF-8"))?;
+    let canon_bytes = std::str::from_utf8(head.canon())
+        .map_err(|_| SignalAdapterError::InvalidField("persisted Canon UTF-8"))?;
+    let config: SignalConfigDto = parse_exact(config_bytes, "persisted Signal config")?;
+    let canon: CanonStateDto = parse_exact(canon_bytes, "persisted Signal Canon")?;
+    validate_config(&config)?;
+    validate_canon(&canon)?;
+
+    let federation_id = dregg_types::hex_encode(&active_federation_id);
+    if config.mission.federation_id != federation_id
+        || canon.federation_id != federation_id
+        || config.mission.content_root != canon.content_root
+        || config.mission.activation_digest != canon.activation_digest
+        || config.mission.content_session != canon.content_session
+        || config.mission.epoch != canon.content_epoch
+        || head.world_sequence() != canon.world.sequence
+        || head.canon_revision() != canon.revision
+    {
+        return Err(SignalAdapterError::InvalidField(
+            "persisted Signal namespace/head binding",
+        ));
+    }
+
+    let player_key = dregg_types::hex_encode(&player_key);
+    let current_player_counter = canon
+        .player_counters
+        .iter()
+        .find(|row| {
+            row.federation_id == canon.federation_id
+                && row.content_session == canon.content_session
+                && row.content_epoch == canon.content_epoch
+                && row.player_key == player_key
+        })
+        .map(|row| row.value)
+        .unwrap_or(0);
+    let carrier = FinalizedCarrierDto {
+        federation_id: canon.federation_id.clone(),
+        content_root: canon.content_root.clone(),
+        activation_digest: canon.activation_digest.clone(),
+        content_session: canon.content_session.clone(),
+        content_epoch: canon.content_epoch,
+        actor_root: dregg_types::hex_encode(&actor_root),
+        player_key,
+        current_player_counter,
+    };
+    validate_carrier(&carrier)?;
+    Ok(SignalAuthorityContext {
+        config,
+        world: canon.world.clone(),
+        canon,
+        carrier,
+    })
 }
 
 fn validate_metrics(
@@ -795,6 +906,31 @@ fn receipt_key(receipt: &ReceiptKeyDto) -> (&str, &str, u64, &str, u64) {
     )
 }
 
+/// Exact genesis material shared by the node finality integration tests.
+/// Keeping this here makes the test exercise the same private DTO validation
+/// and canonical serialization as the production persisted-head adapter.
+#[cfg(test)]
+pub(crate) fn fixture_signal_head_for_finality_test(
+    authority_id: [u8; 32],
+) -> dregg_persist::PoaSignalHeadV1 {
+    let bytes = include_str!("../../dregg-lean-ffi/tests/fixtures/poa-signal-input-v1.json")
+        .strip_suffix('\n')
+        .expect("PoA Signal fixture has one trailing newline");
+    let mut input = CanonicalSignalInput::parse(bytes).expect("canonical PoA Signal input fixture");
+    let authority_hex = dregg_types::hex_encode(&authority_id);
+    input.dto.config.mission.federation_id = authority_hex.clone();
+    input.dto.canon.federation_id = authority_hex;
+    dregg_persist::PoaSignalHeadV1::genesis(
+        authority_id,
+        [0xD3; 32],
+        input.dto.canon.world.sequence,
+        input.dto.canon.revision,
+        serde_json::to_vec(&input.dto.config).expect("canonical fixture config"),
+        serde_json::to_vec(&input.dto.canon).expect("canonical fixture Canon"),
+    )
+    .expect("valid fixture PoA Signal head")
+}
+
 fn counter_key(row: &PlayerCounterRowDto) -> (&str, &str, u64, &str) {
     (
         &row.federation_id,
@@ -822,6 +958,20 @@ mod tests {
 
     fn claim() -> SignalClaimV1 {
         SignalClaimV1::new(1, SignalCode::new(2, 4, 1).unwrap()).unwrap()
+    }
+
+    fn hex32(value: &str) -> [u8; 32] {
+        assert_eq!(value.len(), 64);
+        let mut out = [0; 32];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).unwrap();
+        }
+        out
+    }
+
+    fn fixture_head() -> dregg_persist::PoaSignalHeadV1 {
+        let input = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
+        fixture_signal_head_for_finality_test(hex32(&input.dto.canon.federation_id))
     }
 
     #[test]
@@ -894,6 +1044,41 @@ mod tests {
     }
 
     #[test]
+    fn persisted_head_reconstructs_world_counter_and_finalized_identity_exactly() {
+        let head = fixture_head();
+        let context = authority_context_from_persisted_head(
+            &head,
+            head.authority_id(),
+            [0x55; 32],
+            [0x44; 32],
+        )
+        .unwrap();
+        let prepared = prepare_signal_input(&context, claim()).unwrap();
+        assert_eq!(prepared.as_str(), fixture(INPUT_FILE));
+
+        let mismatched_projection = dregg_persist::PoaSignalHeadV1::genesis(
+            head.authority_id(),
+            head.deployment_digest(),
+            head.world_sequence() + 1,
+            head.canon_revision(),
+            head.config().to_vec(),
+            head.canon().to_vec(),
+        )
+        .unwrap();
+        assert!(matches!(
+            authority_context_from_persisted_head(
+                &mismatched_projection,
+                head.authority_id(),
+                [0x55; 32],
+                [0x44; 32],
+            ),
+            Err(SignalAdapterError::InvalidField(
+                "persisted Signal namespace/head binding"
+            ))
+        ));
+    }
+
+    #[test]
     fn exact_output_parser_does_not_make_a_substituted_reply_acceptable() {
         let input = CanonicalSignalInput::parse(fixture(INPUT_FILE)).unwrap();
         let honest = CanonicalSignalOutput::parse(fixture(OUTPUT_FILE)).unwrap();
@@ -936,5 +1121,17 @@ mod tests {
         let candidate = evaluate_signal_claim(&parsed.authority_context(), claim()).unwrap();
         assert_eq!(candidate.input().as_str(), fixture(INPUT_FILE));
         assert_eq!(candidate.output().as_str(), fixture(OUTPUT_FILE));
+
+        let head = fixture_head();
+        let prepared = evaluate_persisted_signal_claim(
+            &head,
+            head.authority_id(),
+            [0x55; 32],
+            [0x44; 32],
+            claim(),
+        )
+        .unwrap();
+        assert_ne!(prepared.judge_input_digest(), [0; 32]);
+        assert_ne!(prepared.judge_output_digest(), [0; 32]);
     }
 }

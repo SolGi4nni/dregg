@@ -6269,6 +6269,48 @@ fn faithful_history_session_id(federation_id: [u8; 32], committee_epoch: u64) ->
         .as_bytes()
 }
 
+#[derive(Debug)]
+enum FinalizedSignalRouteError {
+    Malformed(crate::poa_signal_adapter::SignalAdapterError),
+    Multiple,
+}
+
+/// Find the one reserved Signal claim in exact execution order, including
+/// capability-wrapped inner effects. Unknown events remain ordinary; once the
+/// reserved marker appears it is fail-closed and a second claim is never
+/// silently ignored or batched under semantics that only judge one action.
+fn finalized_signal_claim(
+    forest: &dregg_turn::CallForest,
+) -> Result<Option<dregg_sdk::poa_signal::SignalClaimV1>, FinalizedSignalRouteError> {
+    fn collect(
+        effect: &dregg_turn::Effect,
+        found: &mut Option<dregg_sdk::poa_signal::SignalClaimV1>,
+    ) -> Result<(), FinalizedSignalRouteError> {
+        match crate::poa_signal_adapter::classify_signal_effect(effect)
+            .map_err(FinalizedSignalRouteError::Malformed)?
+        {
+            crate::poa_signal_adapter::SignalEffectRoute::Ordinary => {}
+            crate::poa_signal_adapter::SignalEffectRoute::Signal(claim) => {
+                if found.replace(claim).is_some() {
+                    return Err(FinalizedSignalRouteError::Multiple);
+                }
+            }
+        }
+        if let dregg_turn::Effect::ExerciseViaCapability { inner_effects, .. } = effect {
+            for inner in inner_effects {
+                collect(inner, found)?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut found = None;
+    for effect in forest.total_effects() {
+        collect(effect, &mut found)?;
+    }
+    Ok(found)
+}
+
 /// Positional NoteCreate leaves for the finalized call forest.  The call-tree
 /// depth is semantically significant: nested actions execute too, so collecting
 /// only root actions would produce a live tree that omits committed notes.
@@ -7418,6 +7460,15 @@ async fn execute_live_exact_fnsp_v3(
     Ok(outcome.ordinal)
 }
 
+/// Apply one identity selected by [`ExecutionCursor::pending`]. The sole live
+/// caller is the single finality-executor task, which acknowledges a successful
+/// commit before its next poll. On restart, `run_blocklace_sync` reconstructs
+/// the cursor from `PersistentStore::commit_log_block_ids` (including compacted
+/// ids) before polling. Therefore an already-committed Signal turn is filtered
+/// by block identity before this function can snapshot the advanced PoA head
+/// and accidentally judge it as a new game action. The persistence apex's exact
+/// replay checks remain defence in depth for lower-level crash/recovery callers;
+/// they are not an invitation to re-enter semantic evaluation here.
 async fn execute_finalized_turn(
     state: &NodeState,
     handle: &BlocklaceHandle,
@@ -7543,12 +7594,125 @@ async fn execute_finalized_turn(
         }
     };
 
+    // Reserved PoA Signal ingress is classified only after the complete
+    // SignedTurn perimeter, but before any executor or ledger mutation. The
+    // event contributes one mission id and one bounded code; every authority
+    // coordinate is loaded/derived below. Malformed or multiple reserved
+    // effects are terminal payload refusals and can never fall through as
+    // ordinary EmitEvent traffic.
+    let signal_claim = match finalized_signal_claim(&signed_turn.turn.call_forest) {
+        Ok(claim) => claim,
+        Err(FinalizedSignalRouteError::Malformed(error)) => {
+            let outcome = persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "poa-signal-reserved-marker-malformed",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %error,
+                "malformed reserved PoA Signal effect refused before mutation"
+            );
+            return outcome;
+        }
+        Err(FinalizedSignalRouteError::Multiple) => {
+            let outcome = persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "poa-signal-multiple-effects",
+            );
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                "multiple PoA Signal effects refused before mutation"
+            );
+            return outcome;
+        }
+    };
+    // Classify the disjoint exact-FNSP route before consulting any Signal
+    // deployment state. A mixed carrier is intrinsically unsupported: its
+    // deterministic disposition must not change merely because one replica has
+    // not installed the PoA authority head yet.
+    let exact_fnsp_v3_route =
+        match crate::exact_fnsp_v3_execution_authority::exact_fnsp_v3_route_coordinates(
+            &signed_turn,
+        ) {
+            Ok(route) => route,
+            Err(error) => {
+                let outcome = persist_finalized_payload_rejection(
+                    &s,
+                    block_id,
+                    turn_data,
+                    Some(computed_hash),
+                    "exact-fnsp-v3-carrier-refused",
+                );
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    error = %error,
+                    "malformed exact FNSP-v3 finalized carrier refused before legacy dispatch"
+                );
+                return outcome;
+            }
+        };
+    if signal_claim.is_some() && exact_fnsp_v3_route.is_some() {
+        let outcome = persist_finalized_payload_rejection(
+            &s,
+            block_id,
+            turn_data,
+            Some(computed_hash),
+            "poa-signal-exact-fnsp-v3-combination-unsupported",
+        );
+        warn!(
+            block_id = %block_id,
+            turn_hash = %turn_hash_hex,
+            "PoA Signal plus exact FNSP-v3 is a disjoint unsupported route; refusing rather than omitting the Signal weld"
+        );
+        return outcome;
+    }
+    let signal_head_snapshot = if signal_claim.is_some() {
+        match s.store.load_poa_signal_head(s.federation_id) {
+            Ok(Some(head)) => Some(head),
+            Ok(None) => {
+                warn!(
+                    block_id = %block_id,
+                    turn_hash = %turn_hash_hex,
+                    federation_id = %dregg_types::hex_encode(&s.federation_id),
+                    "PoA Signal authority head is not initialized; finalized identity remains pending"
+                );
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: "PoA Signal authority head is not initialized".into(),
+                };
+            }
+            Err(dregg_persist::StoreError::Database(error)) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: format!("could not load PoA Signal authority head: {error}"),
+                };
+            }
+            Err(error) => {
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: format!("PoA Signal authority head malformed: {error}"),
+                };
+            }
+        }
+    } else {
+        None
+    };
+
     // EXACT FNSP-v3 is a disjoint finalized-turn route.  Classification happens after the full
     // SignedTurn perimeter but before the legacy FNSP decoder and every generic charge/mutation.
     // Once an `FNSP || version=3` carrier selects this branch, every refusal returns from here: it
     // can never fall through into v2 execution or be charged as an ordinary rejected turn.
-    match crate::exact_fnsp_v3_execution_authority::exact_fnsp_v3_route_coordinates(&signed_turn) {
-        Ok(Some(route)) => {
+    match exact_fnsp_v3_route {
+        Some(route) => {
             let preparation = match prepare_live_exact_fnsp_v3(
                 &mut s,
                 executor,
@@ -7588,7 +7752,7 @@ async fn execute_finalized_turn(
                 }
             };
         }
-        Ok(None) => {
+        None => {
             // Exact activation is a one-way flag day for NoteSpend state.  A v2 spend after it
             // would advance the faithful accumulator without the exact prefix and make the next
             // exact frame detect the divergence only after it was durable.
@@ -7624,22 +7788,6 @@ async fn execute_finalized_turn(
                     }
                 }
             }
-        }
-        Err(error) => {
-            let outcome = persist_finalized_payload_rejection(
-                &s,
-                block_id,
-                turn_data,
-                Some(computed_hash),
-                "exact-fnsp-v3-carrier-refused",
-            );
-            warn!(
-                block_id = %block_id,
-                turn_hash = %turn_hash_hex,
-                error = %error,
-                "malformed exact FNSP-v3 finalized carrier refused before legacy dispatch"
-            );
-            return outcome;
         }
     }
 
@@ -8156,6 +8304,12 @@ async fn execute_finalized_turn(
                 return FinalizedExecutionOutcome::FatalIntegrity { block_id, error };
             }
         };
+    let signal_head_revalidation = signal_head_snapshot
+        .as_ref()
+        .map(|head| (head.authority_id(), head.digest()));
+    let signal_evaluation_plan = signal_head_snapshot
+        .zip(signal_claim)
+        .map(|(head, claim)| (head, s.federation_id, signed_turn.signer.0, claim));
 
     // ─── A1 FIX — the confirmed n=5 finalization-stall root cause ─────────────
     // The EXECUTION FFI (`dregg_exec_full_forest_auth`, reached through
@@ -8226,6 +8380,24 @@ async fn execute_finalized_turn(
             }
             _ => Vec::new(),
         };
+        // Signal authority is evaluated only for a body-committed executor
+        // candidate, because `actor_root` is the receipt's AIR-bound
+        // `pre_state_hash`. The signer identity is the outer SignedTurn key
+        // captured above, never `turn.agent`. This remains candidate-local and
+        // joins the carrying turn only at the redb apex.
+        let poa_signal_evaluation = match (&result, signal_evaluation_plan) {
+            (
+                dregg_turn::TurnResult::Committed { receipt, .. },
+                Some((head, federation_id, player_key, claim)),
+            ) => Some(crate::poa_signal_adapter::evaluate_persisted_signal_claim(
+                &head,
+                federation_id,
+                player_key,
+                receipt.pre_state_hash,
+                claim,
+            )),
+            _ => None,
+        };
         // NULLIFIER-ROOT (VK-epoch ghost mirror): capture the executor's LIVE nullifier-accumulator
         // frontier AFTER execution — the native `CanonicalHeapTree8` root over its (nf, value)
         // `note_nullifiers` map. Captured HERE (the executor is consumed by this blocking task) and
@@ -8252,6 +8424,7 @@ async fn execute_finalized_turn(
             live_commitments_root,
             executor_state,
             resolution_events,
+            poa_signal_evaluation,
         ))
     });
     let (
@@ -8261,6 +8434,7 @@ async fn execute_finalized_turn(
         live_commitments_root,
         mut executor_state,
         resolution_events,
+        poa_signal_evaluation,
     ) = match exec_join.await {
         Ok(Ok(v)) => v,
         Ok(Err(error)) => {
@@ -8363,6 +8537,90 @@ async fn execute_finalized_turn(
             error: "global finalized frontier moved during off-lock execution".into(),
         };
     }
+
+    // The judge ran against an owned persisted-head snapshot while the state
+    // lock was released. Re-read that exact CAS token before interpreting its
+    // verdict. A concurrent Signal finalization is retryable; accepting or
+    // terminally rejecting against its stale predecessor would fork the game
+    // history even though the generic ledger snapshot remained conflict-free.
+    if let Some((authority_id, expected_head_digest)) = signal_head_revalidation {
+        match s.store.load_poa_signal_head(authority_id) {
+            Ok(Some(current)) if current.digest() == expected_head_digest => {}
+            Ok(Some(_)) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: "PoA Signal authority head moved during off-lock evaluation".into(),
+                };
+            }
+            Ok(None) => {
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: "PoA Signal authority head vanished during evaluation".into(),
+                };
+            }
+            Err(dregg_persist::StoreError::Database(error)) => {
+                return FinalizedExecutionOutcome::RetryableOperational {
+                    block_id,
+                    error: format!("could not revalidate PoA Signal head: {error}"),
+                };
+            }
+            Err(error) => {
+                return FinalizedExecutionOutcome::FatalIntegrity {
+                    block_id,
+                    error: format!("PoA Signal head revalidation failed: {error}"),
+                };
+            }
+        }
+    }
+    let poa_signal_transition = match poa_signal_evaluation {
+        None => None,
+        Some(Ok(candidate)) => Some(candidate),
+        Some(Err(crate::poa_signal_adapter::SignalAdapterError::LeanTransport(error))) => {
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %error,
+                "PoA Signal Lean judge unavailable; finalized identity remains pending without ACK"
+            );
+            return FinalizedExecutionOutcome::RetryableOperational {
+                block_id,
+                error: format!("PoA Signal Lean judge unavailable: {error}"),
+            };
+        }
+        Some(Err(error))
+            if matches!(
+                &error,
+                crate::poa_signal_adapter::SignalAdapterError::LeanRejected
+                    | crate::poa_signal_adapter::SignalAdapterError::MissionMismatch { .. }
+            ) =>
+        {
+            warn!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %error,
+                "PoA Signal semantics refused the finalized claim; isolated executor candidate discarded"
+            );
+            return persist_finalized_payload_rejection(
+                &s,
+                block_id,
+                turn_data,
+                Some(computed_hash),
+                "poa-signal-semantic-rejected",
+            );
+        }
+        Some(Err(error)) => {
+            error!(
+                block_id = %block_id,
+                turn_hash = %turn_hash_hex,
+                error = %error,
+                "PoA Signal persisted authority or Lean output failed strict binding"
+            );
+            return FinalizedExecutionOutcome::FatalIntegrity {
+                block_id,
+                error: format!("PoA Signal authority/output integrity failure: {error}"),
+            };
+        }
+    };
 
     // CONCURRENCY GUARD (validate-or-reject, never overwrite). The FFI executed
     // against a snapshot taken while the lock was released. In multi-party mode
@@ -9341,8 +9599,32 @@ async fn execute_finalized_turn(
                     finalized_spends: &finalized_faithful_spends,
                 };
                 let commit_durable = || {
-                    if receipt_already_in_log {
-                        s.store
+                    match (receipt_already_in_log, poa_signal_transition.as_ref()) {
+                        (true, Some(poa_signal)) => s
+                            .store
+                            .commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt_and_poa_signal(
+                                expected_ordinal,
+                                &commit_record,
+                                &note_commitments,
+                                receipt_log_index,
+                                &encoded_receipt,
+                                faithful_weld,
+                                &executor_state,
+                                poa_signal,
+                            ),
+                        (false, Some(poa_signal)) => s.store
+                            .commit_finalized_turn_with_faithful_root_and_executor_state_and_poa_signal(
+                                expected_ordinal,
+                                &commit_record,
+                                &note_commitments,
+                                receipt_log_index,
+                                &encoded_receipt,
+                                faithful_weld,
+                                &executor_state,
+                                poa_signal,
+                            ),
+                        (true, None) => s
+                            .store
                             .commit_finalized_turn_with_faithful_root_and_executor_state_existing_receipt(
                                 expected_ordinal,
                                 &commit_record,
@@ -9351,9 +9633,8 @@ async fn execute_finalized_turn(
                                 &encoded_receipt,
                                 faithful_weld,
                                 &executor_state,
-                            )
-                    } else {
-                        s.store
+                            ),
+                        (false, None) => s.store
                             .commit_finalized_turn_with_faithful_root_and_executor_state(
                                 expected_ordinal,
                                 &commit_record,
@@ -9362,7 +9643,7 @@ async fn execute_finalized_turn(
                                 &encoded_receipt,
                                 faithful_weld,
                                 &executor_state,
-                            )
+                            ),
                     }
                 };
                 #[cfg(test)]
@@ -10025,6 +10306,81 @@ mod tests {
             vec![[0x11; 32], [0x12; 32], [0x13; 32], [0x21; 32], [0x31; 32]],
             "every executed NoteCreate, including capability-wrapped effects, becomes one positional faithful leaf in execution order"
         );
+    }
+
+    #[test]
+    fn finalized_signal_routing_is_recursive_exact_and_single_claim_only() {
+        fn action(effects: Vec<dregg_turn::Effect>) -> dregg_turn::Action {
+            dregg_turn::Action {
+                target: dregg_cell::CellId([0x71; 32]),
+                method: [0x72; 32],
+                args: Vec::new(),
+                authorization: dregg_turn::Authorization::Unchecked,
+                preconditions: Default::default(),
+                effects,
+                may_delegate: dregg_turn::DelegationMode::None,
+                commitment_mode: dregg_turn::CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: Vec::new(),
+            }
+        }
+        fn signal(cell: u8) -> dregg_turn::Effect {
+            let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
+                1,
+                dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+            )
+            .unwrap();
+            dregg_turn::Effect::EmitEvent {
+                cell: dregg_cell::CellId([cell; 32]),
+                event: dregg_sdk::poa_signal::signal_claim_event(claim),
+            }
+        }
+
+        let expected = dregg_sdk::poa_signal::SignalClaimV1::new(
+            1,
+            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+        )
+        .unwrap();
+        let mut nested = dregg_turn::CallForest::new();
+        nested.add_root(action(vec![dregg_turn::Effect::ExerciseViaCapability {
+            cap_slot: 3,
+            inner_effects: vec![dregg_turn::Effect::ExerciseViaCapability {
+                cap_slot: 7,
+                inner_effects: vec![signal(0x73)],
+            }],
+        }]));
+        assert_eq!(finalized_signal_claim(&nested).unwrap(), Some(expected));
+
+        let mut duplicate = dregg_turn::CallForest::new();
+        duplicate.add_root(action(vec![
+            signal(0x74),
+            dregg_turn::Effect::ExerciseViaCapability {
+                cap_slot: 0,
+                inner_effects: vec![signal(0x75)],
+            },
+        ]));
+        assert!(matches!(
+            finalized_signal_claim(&duplicate),
+            Err(FinalizedSignalRouteError::Multiple)
+        ));
+
+        let malformed_event = dregg_turn::action::Event::new(
+            dregg_turn::action::symbol(dregg_sdk::poa_signal::SIGNAL_CLAIM_TOPIC_V1),
+            vec![dregg_cell::field_from_u64(1)],
+        );
+        let mut malformed = dregg_turn::CallForest::new();
+        malformed.add_root(action(vec![dregg_turn::Effect::EmitEvent {
+            cell: dregg_cell::CellId([0x76; 32]),
+            event: malformed_event,
+        }]));
+        assert!(matches!(
+            finalized_signal_claim(&malformed),
+            Err(FinalizedSignalRouteError::Malformed(
+                crate::poa_signal_adapter::SignalAdapterError::Claim(
+                    dregg_sdk::poa_signal::SignalClaimError::MalformedReserved(_)
+                )
+            ))
+        ));
     }
 
     #[test]
@@ -11683,6 +12039,125 @@ mod tests {
         cclerk.sign_turn(&turn)
     }
 
+    /// Build an ordinary finalized event turn carrying one public PoA Signal
+    /// claim (or a deliberately malformed reserved event). Authority still
+    /// comes from the outer hybrid SignedTurn, never from event fields.
+    fn signed_signal_event_turn(
+        cclerk: &dregg_sdk::AgentCipherclerk,
+        actor: dregg_cell::CellId,
+        event: dregg_turn::action::Event,
+        nonce: u64,
+        federation_id: &[u8; 32],
+    ) -> dregg_sdk::SignedTurn {
+        let effect = dregg_turn::Effect::EmitEvent { cell: actor, event };
+        let action = cclerk.make_action(actor, "poa-signal", vec![effect], federation_id);
+        let mut call_forest = dregg_turn::CallForest::new();
+        call_forest.add_root(action);
+        let mut turn = dregg_turn::Turn {
+            agent: actor,
+            nonce,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            call_forest,
+            depends_on: vec![],
+            previous_receipt_hash: None,
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: vec![],
+            cross_effect_dependencies: vec![],
+            effect_witness_index_map: vec![],
+        };
+        let estimator = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
+        turn.fee = estimator.estimate_cost(&turn);
+        cclerk.sign_turn(&turn)
+    }
+
+    fn signed_signal_turn(
+        cclerk: &dregg_sdk::AgentCipherclerk,
+        actor: dregg_cell::CellId,
+        mission_id: u64,
+        nonce: u64,
+        federation_id: &[u8; 32],
+    ) -> dregg_sdk::SignedTurn {
+        let claim = dregg_sdk::poa_signal::SignalClaimV1::new(
+            mission_id,
+            dregg_sdk::poa_signal::SignalCode::new(2, 4, 1).unwrap(),
+        )
+        .unwrap();
+        signed_signal_event_turn(
+            cclerk,
+            actor,
+            dregg_sdk::poa_signal::signal_claim_event(claim),
+            nonce,
+            federation_id,
+        )
+    }
+
+    /// Stand up the exact hybrid perimeter used by the finalized executor and,
+    /// when requested, install the authenticated test deployment head before
+    /// any commit. Production deliberately has no browser-driven auto-genesis.
+    async fn poa_finality_test_state(
+        path: &std::path::Path,
+        initialize_head: bool,
+    ) -> (
+        crate::state::NodeState,
+        dregg_sdk::AgentCipherclerk,
+        dregg_cell::CellId,
+        [u8; 32],
+    ) {
+        let state = crate::state::NodeState::new(path, Vec::new()).expect("node state");
+        let actor_seed = *blake3::hash(b"poa-signal-finality:actor").as_bytes();
+        let actor_cclerk =
+            dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(actor_seed));
+        let default_token = *blake3::hash(b"default").as_bytes();
+        let actor = dregg_cell::CellId::derive_raw(&actor_cclerk.public_key().0, &default_token);
+        let federation_id;
+        {
+            let mut s = state.write().await;
+            s.lean_producer_enabled = false;
+            let local_pk = s.cclerk.public_key();
+            let local_seed = s.cclerk.gossip_signing_key().to_bytes();
+            let local_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&local_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("local ML-DSA key");
+            let actor_pq: [u8; dregg_pq::ML_DSA_PK_LEN] =
+                dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed(&actor_seed)
+                    .public_bytes()
+                    .try_into()
+                    .expect("actor ML-DSA key");
+            s.ledger
+                .insert_cell(dregg_cell::Cell::with_balance(
+                    actor_cclerk.public_key().0,
+                    default_token,
+                    1_000_000,
+                ))
+                .expect("fund Signal actor");
+            s.set_federation_keys_hybrid(
+                vec![local_pk, actor_cclerk.public_key()],
+                vec![
+                    dregg_federation::frost::MlDsaPublicKey(local_pq),
+                    dregg_federation::frost::MlDsaPublicKey(actor_pq),
+                ],
+            );
+            federation_id = crate::executor_setup::federation_id_for_executor(&s);
+            if initialize_head {
+                let head =
+                    crate::poa_signal_adapter::fixture_signal_head_for_finality_test(federation_id);
+                s.store
+                    .initialize_poa_signal_head(&head)
+                    .expect("install authenticated PoA Signal test deployment");
+            }
+        }
+        (state, actor_cclerk, actor, federation_id)
+    }
+
     /// Seed an independent per-node ledger exactly as genesis would: the sender
     /// (faucet) cell funded; the destination ABSENT (no node has seen it).
     fn node_genesis_ledger(sender_pk: [u8; 32], balance: i64) -> dregg_cell::Ledger {
@@ -12441,6 +12916,359 @@ mod tests {
         }
         assert_eq!(roots, 1, "fresh durable commit emits one root event");
         assert_eq!(receipts, 1, "fresh durable commit emits one receipt event");
+    }
+
+    /// The deployment ceremony is an explicit prerequisite. A malformed
+    /// reserved marker is terminal even without a head, while an exact Signal
+    /// with no authenticated head stays retryable and receives no finalization
+    /// ACK. Neither path is allowed to leak the executor candidate into live or
+    /// durable state. The malformed payload-rejection record is the sole
+    /// durable diagnostic change and is not a finalized commit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn poa_signal_missing_ceremony_and_malformed_marker_never_mutate_game_or_executor() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (state, actor_cclerk, actor, federation_id) =
+            poa_finality_test_state(tmp.path(), false).await;
+        let handle = test_handle_with_committee([0x81; 32], vec![[0x81; 32]]).await;
+
+        let before = {
+            let s = state.read().await;
+            (
+                canonical_ledger_root(&s.ledger),
+                s.store
+                    .load_executor_accumulator_snapshot()
+                    .expect("executor snapshot"),
+                s.store.commit_cursor().expect("commit cursor"),
+                s.store.receipt_chain_len().expect("receipt chain len"),
+                s.cclerk.receipt_chain_length(),
+                s.event_log.len(),
+            )
+        };
+
+        let malformed_event = dregg_turn::action::Event::new(
+            dregg_turn::action::symbol(dregg_sdk::poa_signal::SIGNAL_CLAIM_TOPIC_V1),
+            vec![dregg_cell::field_from_u64(1)],
+        );
+        let malformed =
+            signed_signal_event_turn(&actor_cclerk, actor, malformed_event, 0, &federation_id);
+        let malformed_payload = postcard::to_stdvec(&malformed).expect("encode malformed turn");
+        let malformed_block = BlockId([0x82; 32]);
+        let malformed_outcome = execute_finalized_turn(
+            &state,
+            &handle,
+            malformed_block,
+            &malformed_payload,
+            None,
+            None,
+            0,
+        )
+        .await;
+        assert!(matches!(
+            malformed_outcome,
+            FinalizedExecutionOutcome::DeterministicallyRejected { ref reason_code, .. }
+                if reason_code == "poa-signal-reserved-marker-malformed"
+        ));
+
+        let exact = signed_signal_turn(&actor_cclerk, actor, 1, 0, &federation_id);
+        let exact_payload = postcard::to_stdvec(&exact).expect("encode exact Signal turn");
+        let retry_block = BlockId([0x83; 32]);
+        let retry_outcome =
+            execute_finalized_turn(&state, &handle, retry_block, &exact_payload, None, None, 0)
+                .await;
+        assert!(matches!(
+            retry_outcome,
+            FinalizedExecutionOutcome::RetryableOperational { ref error, .. }
+                if error.contains("head is not initialized")
+        ));
+
+        let s = state.read().await;
+        assert_eq!(canonical_ledger_root(&s.ledger), before.0);
+        assert_eq!(
+            s.store
+                .load_executor_accumulator_snapshot()
+                .expect("executor snapshot after refusals"),
+            before.1
+        );
+        assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.2);
+        assert_eq!(
+            s.store.receipt_chain_len().expect("receipt chain len"),
+            before.3
+        );
+        assert_eq!(s.cclerk.receipt_chain_length(), before.4);
+        assert_eq!(s.event_log.len(), before.5);
+        assert!(
+            s.store
+                .load_poa_signal_head(federation_id)
+                .expect("PoA head lookup")
+                .is_none()
+        );
+        assert!(
+            s.store
+                .load_poa_signal_transition(federation_id, 1)
+                .expect("PoA transition lookup")
+                .is_none()
+        );
+        let malformed_key =
+            crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+                &malformed_block.0,
+            );
+        assert!(
+            s.store
+                .get_config(&malformed_key)
+                .expect("malformed rejection read")
+                .is_some(),
+            "the diagnostic rejection index may advance without mutating execution state"
+        );
+        let retry_key = crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+            &retry_block.0,
+        );
+        assert!(
+            s.store
+                .get_config(&retry_key)
+                .expect("retryable rejection read")
+                .is_none(),
+            "retryable missing-deployment state must not manufacture a terminal ACK record"
+        );
+    }
+
+    /// A semantic refusal happens only after ordinary execution has produced a
+    /// candidate receipt/root for Lean. The candidate remains isolated: fee,
+    /// nonce, receipt, executor accumulators, and PoA head are unchanged. Only
+    /// the finalized-payload rejection index records the terminal disposition.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn poa_signal_semantic_rejection_discards_the_entire_executor_candidate() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (state, actor_cclerk, actor, federation_id) =
+            poa_finality_test_state(tmp.path(), true).await;
+        let handle = test_handle_with_committee([0x84; 32], vec![[0x84; 32]]).await;
+        let before = {
+            let s = state.read().await;
+            (
+                canonical_ledger_root(&s.ledger),
+                s.store
+                    .load_executor_accumulator_snapshot()
+                    .expect("executor snapshot"),
+                s.store
+                    .load_poa_signal_head(federation_id)
+                    .expect("PoA head")
+                    .expect("initialized PoA head"),
+                s.store.commit_cursor().expect("commit cursor"),
+                s.store.receipt_chain_len().expect("receipt chain len"),
+                s.cclerk.receipt_chain_length(),
+                s.event_log.len(),
+            )
+        };
+
+        // Mission 2 is a well-formed public claim, but the persisted deployment
+        // activates mission 1. This is an adapter-level semantic refusal before
+        // FFI; the armed accepted-path test below separately proves real Lean
+        // execution and exact output binding.
+        let signed = signed_signal_turn(&actor_cclerk, actor, 2, 0, &federation_id);
+        let payload = postcard::to_stdvec(&signed).expect("encode rejected Signal turn");
+        let block_id = BlockId([0x85; 32]);
+        let outcome =
+            execute_finalized_turn(&state, &handle, block_id, &payload, None, None, 0).await;
+        assert!(matches!(
+            outcome,
+            FinalizedExecutionOutcome::DeterministicallyRejected { ref reason_code, .. }
+                if reason_code == "poa-signal-semantic-rejected"
+        ));
+
+        let s = state.read().await;
+        assert_eq!(canonical_ledger_root(&s.ledger), before.0);
+        assert_eq!(
+            s.store
+                .load_executor_accumulator_snapshot()
+                .expect("executor snapshot after refusal"),
+            before.1
+        );
+        assert_eq!(
+            s.store
+                .load_poa_signal_head(federation_id)
+                .expect("PoA head after refusal")
+                .expect("PoA head remains initialized"),
+            before.2
+        );
+        assert!(
+            s.store
+                .load_poa_signal_transition(federation_id, 1)
+                .expect("PoA transition lookup")
+                .is_none()
+        );
+        assert_eq!(s.store.commit_cursor().expect("commit cursor"), before.3);
+        assert_eq!(
+            s.store.receipt_chain_len().expect("receipt chain len"),
+            before.4
+        );
+        assert_eq!(s.cclerk.receipt_chain_length(), before.5);
+        assert_eq!(s.event_log.len(), before.6);
+        assert_eq!(
+            s.ledger
+                .get(&actor)
+                .expect("actor remains present")
+                .state
+                .nonce(),
+            0
+        );
+        assert_eq!(
+            s.ledger
+                .get(&actor)
+                .expect("actor remains present")
+                .state
+                .balance(),
+            1_000_000
+        );
+        let rejection_key =
+            crate::signed_turn_validation::FinalizedPayloadRejectionRecord::storage_key(
+                &block_id.0,
+            );
+        assert!(
+            s.store
+                .get_config(&rejection_key)
+                .expect("semantic rejection read")
+                .is_some(),
+            "terminal semantic refusal is indexed without becoming a commit"
+        );
+    }
+
+    /// The complete authoritative weld: ordinary execution produces the exact
+    /// receipt pre-root, the outer signer becomes the player identity, Lean
+    /// judges the persisted Canon/config, and the successor lands atomically
+    /// with the carrying finalized turn. A cold reopen must reproduce every
+    /// byte and chain coordinate.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn poa_signal_finality_weld_survives_restart_with_exact_signer_and_actor_root() {
+        if !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::poa_ffi::poa_signal_judge_available(),
+            "the authoritative PoA Signal finalized-turn integration",
+        ) {
+            return;
+        }
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (state, actor_cclerk, actor, federation_id) =
+            poa_finality_test_state(tmp.path(), true).await;
+        let signed = signed_signal_turn(&actor_cclerk, actor, 1, 0, &federation_id);
+        let payload = postcard::to_stdvec(&signed).expect("encode accepted Signal turn");
+        let block_id = BlockId([0x86; 32]);
+        let handle = test_handle_with_committee([0x87; 32], vec![[0x87; 32]]).await;
+        let outcome =
+            execute_finalized_turn(&state, &handle, block_id, &payload, None, None, 0).await;
+        assert!(matches!(
+            outcome,
+            FinalizedExecutionOutcome::Committed {
+                durable_ordinal: 0,
+                ..
+            }
+        ));
+
+        let (committed_head, committed_transition, committed_root, committed_executor) = {
+            let s = state.read().await;
+            let head = s
+                .store
+                .load_poa_signal_head(federation_id)
+                .expect("PoA head")
+                .expect("advanced PoA head");
+            assert_eq!(head.transition_count(), 1);
+            assert_eq!(head.world_sequence(), 1);
+            assert_eq!(head.canon_revision(), 1);
+            let transition = s
+                .store
+                .load_poa_signal_transition(federation_id, 1)
+                .expect("PoA transition")
+                .expect("first PoA transition");
+            assert_eq!(transition.sequence(), 1);
+            assert_eq!(transition.commit_ordinal(), 0);
+            assert_eq!(transition.turn_hash(), signed.turn.hash());
+            let receipt = s.cclerk.receipt_log().last().expect("committed receipt");
+            assert_eq!(transition.receipt_hash(), receipt.receipt_hash());
+
+            let judge_input: serde_json::Value =
+                serde_json::from_slice(transition.judge_input()).expect("exact judge input JSON");
+            let request = judge_input
+                .get("request")
+                .and_then(serde_json::Value::as_object)
+                .expect("judge request object");
+            let signer_hex = dregg_types::hex_encode(&signed.signer.0);
+            let agent_hex = dregg_types::hex_encode(signed.turn.agent.as_bytes());
+            let actor_root_hex = dregg_types::hex_encode(&receipt.pre_state_hash);
+            assert_eq!(
+                request
+                    .get("player_key")
+                    .and_then(serde_json::Value::as_str),
+                Some(signer_hex.as_str()),
+                "player identity comes from SignedTurn.signer"
+            );
+            assert_ne!(
+                request
+                    .get("player_key")
+                    .and_then(serde_json::Value::as_str),
+                Some(agent_hex.as_str()),
+                "a CellId may never be substituted for the outer signer key"
+            );
+            assert_eq!(
+                request
+                    .get("actor_root")
+                    .and_then(serde_json::Value::as_str),
+                Some(actor_root_hex.as_str()),
+                "actor root comes from the executor-produced committed receipt"
+            );
+            s.store.audit_poa_signal_state().expect("PoA state audit");
+            assert_eq!(s.store.commit_cursor().expect("commit cursor"), 1);
+            (
+                head,
+                transition,
+                canonical_ledger_root(&s.ledger),
+                s.store
+                    .load_executor_accumulator_snapshot()
+                    .expect("executor snapshot"),
+            )
+        };
+
+        drop(state);
+        let reopened = crate::state::NodeState::new(tmp.path(), Vec::new())
+            .expect("cold reopen after PoA Signal commit");
+        let s = reopened.read().await;
+        assert_eq!(
+            s.store
+                .load_poa_signal_head(federation_id)
+                .expect("reopened PoA head")
+                .expect("reopened authority"),
+            committed_head
+        );
+        assert_eq!(
+            s.store
+                .load_poa_signal_transition(federation_id, 1)
+                .expect("reopened PoA transition")
+                .expect("reopened first transition"),
+            committed_transition
+        );
+        assert_eq!(canonical_ledger_root(&s.ledger), committed_root);
+        assert_eq!(
+            s.store
+                .load_executor_accumulator_snapshot()
+                .expect("reopened executor snapshot"),
+            committed_executor
+        );
+        assert_eq!(s.store.commit_cursor().expect("reopened commit cursor"), 1);
+        assert_eq!(s.store.receipt_chain_len().expect("receipt chain len"), 1);
+        let durable_ids = s
+            .store
+            .commit_log_block_ids()
+            .expect("reopened durable turn identities");
+        assert_eq!(durable_ids, vec![block_id.0]);
+        let restored_cursor = crate::execution_cursor::ExecutionCursor::restore(
+            durable_ids.into_iter().map(BlockId).collect(),
+        );
+        assert!(
+            restored_cursor.is_executed(&block_id),
+            "restart filters the carrying block by durable identity before the advanced PoA head can be judged again"
+        );
+        s.store
+            .audit_poa_signal_state()
+            .expect("reopened PoA state audit");
     }
 
     /// F2 (self-equivocation window): a locally-authored block must land DURABLY
