@@ -1,0 +1,69 @@
+{
+  "format": "POA-ARCHIVE-LAB-FIXTURE-PROVENANCE",
+  "schema_version": 1,
+  "generated_at": "2026-08-04T12:46:08Z",
+  "source_repository_commit": "60d7e52215e0cd2ca360e8edf7aa69fbb2499817",
+  "generator": {
+    "command": "cd metatheory && LEAN_NUM_THREADS=4 lake env lean --run Dregg2/Games/PathOfAngels/ArchiveLabDemonstratorEmit.lean",
+    "stdout_is_artifact": true,
+    "sources": [
+      {
+        "path": "metatheory/Dregg2/Games/PathOfAngels/ArchiveLab.lean",
+        "binding": "git-tree",
+        "git_blob": "e9f8b94ecb6c461c69f19836c59e1a1f1db867e4",
+        "sha256": "7f361c3e555805cd806b68de9585a203dd4e7f006d6fe49d5418be16c1c90399",
+        "bytes": 30446
+      },
+      {
+        "path": "metatheory/Dregg2/Games/PathOfAngels/ArchiveLabDemonstrator.lean",
+        "binding": "git-tree",
+        "git_blob": "3f37d1e5ae0cf27eaef4f55a359b59ec2e3f4234",
+        "sha256": "357a6d0375986890887e22abbc066877a6c178ff0c86831df9bfc6f9c630530a",
+        "bytes": 20613
+      },
+      {
+        "path": "metatheory/Dregg2/Games/PathOfAngels/ArchiveLabDemonstratorEmit.lean",
+        "binding": "workspace-sha256",
+        "git_blob": null,
+        "sha256": "a39853a91c47bf575b6e93a5aaf348f58dceb55e8cba90438db97494fa10153d",
+        "bytes": 22194
+      }
+    ]
+  },
+  "artifact": {
+    "path": "poa-web/labs/archive-lab-demonstrator.fixture.json",
+    "sha256": "c3721fe6c03d6d6a5f1184a9c29c4e594c8941def7b3aa1a600ebed623489a27",
+    "bytes": 3618452,
+    "format": "POA-ARCHIVE-LAB-TABLE",
+    "schema_version": 1
+  },
+  "lean_gates": {
+    "states": 822,
+    "actions": 8,
+    "transitions": 6576,
+    "accepting_rows": 821,
+    "refusing_rows": 5755,
+    "terminal_states": 1,
+    "winning_plans": 1,
+    "claims": [
+      "winning_lab_route_is_exact_archive_lab_play",
+      "emitted_winning_route_accepts",
+      "emitted_has_exactly_822_reachable_states",
+      "emitted_has_exactly_8_actions",
+      "emitted_has_exactly_6576_transition_rows",
+      "emitted_state_ids_unique",
+      "emitted_move_ids_unique",
+      "emitted_transition_keys_unique",
+      "emitted_table_closed",
+      "emitted_refusals_are_explicit",
+      "emitted_has_exactly_one_terminal_research_plan",
+      "emitted_descriptor_is_json"
+    ]
+  },
+  "boundary": {
+    "fiction_status": "beta-only-demonstrator",
+    "canon_promotion": false,
+    "asset_minting": false,
+    "reward_settlement": false
+  }
+}
