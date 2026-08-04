@@ -100,6 +100,7 @@ def refs2 : VmConstraint2 → List Nat
   | .umemOp m => refsE m.guard ++ refsE m.key ++ refsE m.present ++ refsE m.value
       ++ refsE m.prevPresent ++ refsE m.prevValue ++ refsE m.prevSerial
   | .proofBind m => refsE m.guard ++ refsE m.commit ++ refsE m.vk
+      ++ (m.bound.map refsE).getD []
   | .windowGate w => refsW w.body
 
 /-- The columns a hash site reads or writes. -/
@@ -173,7 +174,12 @@ def mapC2 (g : Nat → Nat) : VmConstraint2 → VmConstraint2
   | .proofBind m => .proofBind
       { guard := mapVarE g m.guard
       , commit := mapVarE g m.commit
-      , vk := mapVarE g m.vk }
+      , vk := mapVarE g m.vk
+        -- ⚑ the seam's two declared halves ride the remap: `vkPin` is a LITERAL carried unchanged;
+        -- `bound` is an expression over the row and its columns must be renamed with everything
+        -- else, or a compacted descriptor would bind a different column than it says.
+      , vkPin := m.vkPin
+      , bound := m.bound.map (mapVarE g) }
   | .windowGate w => .windowGate { body := mapVarW g w.body, onTransition := w.onTransition }
 
 /-! ## §2 — the S2 dead-column geometry and the index map. -/
@@ -724,7 +730,37 @@ theorem holdsAt_transport (hash : List ℤ → ℤ) (g : Nat → Nat)
     exact htbl l.table _ h'
   | memOp m => trivial
   | umemOp m => trivial
-  | proofBind m => trivial
+  | proofBind m =>
+    -- ⚑ NO LONGER `trivial`. Each of the seam's evaluated expressions transports through
+    -- `evalE_map_agree`, exactly like a gate body; `vkPin` is a LITERAL and needs no transport.
+    have hg : (mapVarE g m.guard).eval E.loc = m.guard.eval EX.loc :=
+      evalE_map_agree g m.guard E.loc EX.loc
+        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    have hv : (mapVarE g m.vk).eval E.loc = m.vk.eval EX.loc :=
+      evalE_map_agree g m.vk E.loc EX.loc
+        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    have hc : (mapVarE g m.commit).eval E.loc = m.commit.eval EX.loc :=
+      evalE_map_agree g m.commit E.loc EX.loc
+        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    obtain ⟨h1, h2, h3⟩ := h
+    refine ⟨by rwa [hg] at h1, ?_, ?_⟩
+    · cases hvp : m.vkPin with
+      | none => show True; trivial
+      | some x =>
+        simp only [mapC2, hvp] at h2
+        show m.guard.eval EX.loc * (m.vk.eval EX.loc - x) ≡ 0 [ZMOD 2013265921]
+        rw [← hg, ← hv]; exact h2
+    · cases hbd : m.bound with
+      | none => show True; trivial
+      | some b =>
+        have hb : (mapVarE g b).eval E.loc = b.eval EX.loc :=
+          evalE_map_agree g b E.loc EX.loc
+            (fun r hr => hloc r (by
+              simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
+              tauto))
+        simp only [mapC2, hbd, Option.map_some] at h3
+        show m.guard.eval EX.loc * (m.commit.eval EX.loc - b.eval EX.loc) ≡ 0 [ZMOD 2013265921]
+        rw [← hg, ← hc, ← hb]; exact h3
   | mapOp m =>
     intro hg
     have hmem0 : ∀ e ∈ [m.guard, m.key, m.value, m.root 0, m.newRoot 0],

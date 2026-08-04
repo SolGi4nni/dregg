@@ -72,30 +72,28 @@ def forgedRow : Assignment := fun i => if i = 0 then 999 else if i = 1 then 45 e
 not a committed table) — byte-for-byte the shape of `demoCTrace`, only the commitment column moved. -/
 def forgedTrace : VmTrace := { rows := [forgedRow], pub := zeroAsg, tf := fun _ => [] }
 
-/-- **The deployed `proofBind` gate is literally `True` — it enforces NOTHING.** This is the root of
-the forgery: the deployed AIR's per-row meaning of a `proofBind` op carries no content, so any column
-values pass. (`DescriptorIR2.VmConstraint2.holdsAt … (.proofBind _) = True`, `:570`.) -/
-theorem deployed_proofBind_gate_vacuous (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
-    (isFirst isLast : Bool) (m : ProofBind) :
-    VmConstraint2.holdsAt hash tf env isFirst isLast (.proofBind m) := trivial
+/-- ⛑ **THE ROOT OF THE FORGERY IS GONE (2026-08-04): the deployed `proofBind` gate BINDS.** This
+theorem is the exact negation of `deployed_proofBind_gate_vacuous`, which stood here from the
+module's first revision and asserted `VmConstraint2.holdsAt … (.proofBind m)` for EVERY `m` and
+EVERY `env`, proved by `trivial`. That statement is now FALSE. What replaces it is the polarity
+that matters: on the FORGED row the deployed denotation is REFUSED. The commitment column is `999`;
+the descriptor DECLARES `bound = .const 123`; the guard is on. -/
+theorem deployed_proofBind_gate_refuses_forged (hash : List ℤ → ℤ) (tf : TraceFamily)
+    (isFirst isLast : Bool) :
+    ¬ VmConstraint2.holdsAt hash tf (envAt forgedTrace 0) isFirst isLast (.proofBind demoCBind) := by
+  show ¬ ProofBind.holdsAt (envAt forgedTrace 0)
+    (⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ : ProofBind)
+  unfold ProofBind.holdsAt
+  decide
 
-/-- **The forged trace SATISFIES the deployed `Satisfied2`.** Identical to `demoC_satisfied` minus the
-proof-binding leg: the proofBind row passes via the vacuous True-gate, and every memory/hash/range leg
-is empty. So the deployed verifier's extraction relation accepts a trace whose Custom row binds to no
-verifying sub-proof. -/
-theorem forged_satisfied2 :
-    Satisfied2 (fun _ => 0) demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] forgedTrace := by
-  refine ⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩
-  · intro i hi c hc
-    simp only [demoC, List.mem_cons, List.not_mem_nil, or_false] at hc
-    subst hc; trivial
-  · intro i hi; trivial
-  · intro i hi r hr; simp [demoC] at hr
-  · intro op hop; rw [show memLog demoC forgedTrace = [] from rfl] at hop; cases hop
-  · rw [show memLog demoC forgedTrace = [] from rfl]; exact by decide
-  · rw [show memLog demoC forgedTrace = [] from rfl]; exact memCheck_nil _ _
-  · rfl
-  · rfl
+/-- ⛑ **THE FORGED TRACE NO LONGER SATISFIES THE DEPLOYED `Satisfied2`.** This theorem used to be
+`forged_satisfied2` — "the proofBind row passes via the vacuous True-gate" — and it was the whole
+content of the wound. The row-local seam refuses it at the DEPLOYED denotation. -/
+theorem forged_not_satisfied2 :
+    ¬ Satisfied2 (fun _ => 0) demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] forgedTrace := by
+  intro h
+  have hrow := h.rowConstraints 0 (by decide) (.proofBind demoCBind) (by simp [demoC, demoCBind])
+  exact deployed_proofBind_gate_refuses_forged (fun _ => 0) forgedTrace.tf true true hrow
 
 /-- **The forged trace is REJECTED by the staged `Satisfied2Staged`.** The staged `proofBind` gate is
 `ProofBind.boundAt demoEngine env`, which on the active row demands `demoEngine.boundTo 999 45` — a
@@ -106,10 +104,10 @@ theorem forged_not_staged :
         forgedTrace := by
   intro h
   -- the staged proofBind row constraint at row 0:
-  have hrow := h.rowConstraints 0 (by decide) (.proofBind ⟨.var 2, .var 0, .var 1⟩) (by simp [demoC])
+  have hrow := h.rowConstraints 0 (by decide) (.proofBind demoCBind) (by simp [demoC, demoCBind])
   -- holdsAtStaged (.proofBind m) ≡ ProofBind.boundAt demoEngine (envAt forgedTrace 0) m
   -- the guard (col 2 = 1) is active, so we obtain demoEngine.boundTo 999 45:
-  have hbound := hrow (by decide)
+  have hbound := hrow.1 (by decide)
   obtain ⟨p, hp, hpc, hpv⟩ := hbound
   -- demoEngine.piCommit p ≡ 123, the commit column ≡ 999 (defeq); 123 = 999 is false.
   have hcontra : (123 : ℤ) = 999 := hpc
@@ -119,13 +117,41 @@ theorem forged_not_staged :
 the DEPLOYED `Satisfied2` (True-gate) yet failing the STAGED `Satisfied2Staged` (`boundAt` false): the
 deployed AIR admits a Custom trace whose proof-binding commitment is backed by NO verifying sub-proof.
 This is the explicit forged custom proof the deployed circuit cannot detect. -/
+/-! ### ⚑ THE SEAM MOVED THE WITNESS, NOT THE THEOREM — read this before quoting either.
+
+`deployed_admits_unbacked` survives the seam, and the WAY it survives is the honest report. Its old
+witness was `forgedTrace`: a commitment column no verifying sub-proof exposes. That witness is dead
+(`forged_not_satisfied2`) because the row now declares what its commitment must equal.
+
+What is NOT dead is the gap the seam never claimed to close: **a row cannot run a verifier.** The
+new witness is the HONEST trace against an engine with no verifying proofs at all. Every row-local
+congruence holds and there is still no sub-proof anywhere. No row-local gate of any shape could see
+that. So the seam converts "the commitment is unrelated to anything" into "the commitment is the one
+this row declares, and whether a proof of it EXISTS is the fold's job". A real reduction, and not the
+whole wound. -/
+
+/-- An engine with NO verifying proofs. `boundTo c v` is FALSE for every `(c, v)`. -/
+def deadEngine : ProofEngine :=
+  { Proof := Bool, verify := fun _ => false, piCommit := fun _ => 123, vkOf := fun _ => 45 }
+
+/-- The HONEST demo trace fails the STAGED denotation over `deadEngine`: the active row demands a
+VERIFYING sub-proof and none exists. -/
+theorem honest_not_staged_dead :
+    ¬ Satisfied2Staged (fun _ => 0) deadEngine demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) []
+        demoCTrace := by
+  intro h
+  have hrow := h.rowConstraints 0 (by decide) (.proofBind demoCBind) (by simp [demoC, demoCBind])
+  obtain ⟨_p, hv, _, _⟩ := hrow.1 (by decide)
+  exact Bool.noConfusion hv
+
+/-- **§A keystone — `deployed_admits_unbacked`, RE-WITNESSED.** -/
 theorem deployed_admits_unbacked :
     ∃ (E : ProofEngine) (d : EffectVmDescriptor2) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
       (maddrs : List ℤ) (t : VmTrace),
       Satisfied2 (fun _ => 0) d minit mfin maddrs t ∧
       ¬ Satisfied2Staged (fun _ => 0) E d minit mfin maddrs t :=
-  ⟨demoEngine, demoC, (fun _ => 0), (fun _ => ((0 : ℤ), 0)), [], forgedTrace,
-    forged_satisfied2, forged_not_staged⟩
+  ⟨deadEngine, demoC, (fun _ => 0), (fun _ => ((0 : ℤ), 0)), [], demoCTrace,
+    demoC_satisfied.toSatisfied2, honest_not_staged_dead⟩
 
 /-! ## §B — `StarkSoundCustom` is unsound over the deployed True-gate AIR. -/
 
@@ -152,9 +178,9 @@ theorem starkSoundCustom_unsound_over_deployed :
         Satisfied2 hash d minit mfin maddrs t →
         Satisfied2Staged hash E d minit mfin maddrs t := by
   intro hbridge
-  exact forged_not_staged
-    (hbridge (fun _ => 0) demoEngine demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] forgedTrace
-      forged_satisfied2)
+  exact honest_not_staged_dead
+    (hbridge (fun _ => 0) deadEngine demoC (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] demoCTrace
+      demoC_satisfied.toSatisfied2)
 
 /-! ## §C — the ENGINE BINDING: determined, or a NAMED collision at THIS pair. FLOOR-FREE.
 
@@ -297,8 +323,9 @@ theorem constFloorEngine_collides :
 
 /-! ## Axiom audit — every load-bearing arm. -/
 
-#assert_axioms deployed_proofBind_gate_vacuous
-#assert_axioms forged_satisfied2
+#assert_axioms deployed_proofBind_gate_refuses_forged
+#assert_axioms forged_not_satisfied2
+#assert_axioms honest_not_staged_dead
 #assert_axioms forged_not_staged
 #assert_axioms deployed_admits_unbacked
 #assert_axioms starkSoundCustom_unsound_over_deployed

@@ -89,7 +89,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRow VmRowEnv)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff pPrimeInt)
 open Dregg2.Circuit.DecideSatisfied2
-  (decideConstraint2 decideRowConstraints2 decideLookup_iff decideWindow_iff)
+  (decideConstraint2 decideRowConstraints2 decideLookup_iff decideWindow_iff
+   decideProofBind_iff)
 open Dregg2.Circuit.Argus.InterpCore (decideConstraint decideConstraint_iff)
 
 set_option autoImplicit false
@@ -936,7 +937,7 @@ theorem holdsAt_of_dc2 {hash : List ℤ → ℤ} {tf : TraceFamily} {env : VmRow
   | memOp _      => exact True.intro
   | mapOp _      => exact absurd h Bool.false_ne_true
   | umemOp _     => exact True.intro
-  | proofBind _  => exact True.intro
+  | proofBind m  => exact (decideProofBind_iff env m).mp h
   | windowGate w => exact (decideWindow_iff env l w).mp h
 
 /-- The whole `rowConstraints` leg from a single Boolean decision. -/

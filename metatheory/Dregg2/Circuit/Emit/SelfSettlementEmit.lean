@@ -21,7 +21,7 @@ be the second kind:
 
 | leg | what it is | where it lives here |
 |---|---|---|
-| `engine` + `root_ok` | the child aggregate's whole-history recursion proof VERIFIES | `settleProofBind` — a `.proofBind` op, the IR's recursion primitive, guarded by the settlement selector. Its row-local `holdsAt` is `True`; the CONTENT is `Satisfied2Custom.proofBound` / `proofBind_bound`, i.e. the SAME named native-BabyBear boundary `EngineSound` names. **Not discharged here, and not claimed to be.** |
+| `engine` + `root_ok` | the child aggregate's whole-history recursion proof VERIFIES | `settleProofBind` — a `.proofBind` op, the IR's recursion primitive, guarded by the settlement selector. Its row-local `holdsAt` is `True`; the CONTENT is `Satisfied2Custom.proofBound` / `proofBind_bound`, i.e. the SAME named native-BabyBear boundary `EngineSound` names. **Not discharged here, and not claimed to be.** ⚑ Its row-local `holdsAt` is now the recursion seam with BOTH pins DECLARED ABSENT (`vkPin`/`bound` = `none`) — a child chain's program and PI-commitment are the child's, not functions of this row, and both are PI-bound so a verifier can compare them against the recursion proof it verified. |
 | `cert_ok` | a genuine super-ratification quorum over the child's finalized head | **NOT in this descriptor.** The finality rule is `BlocklaceFinality.finalLeaderAt`/`isSuperRatified` over a lace — a separate AIR. Named residual; this descriptor carries the cert's finalized root as a column and binds the SEAM only. |
 | `genesis_ok` | the child's public genesis IS the account's registered genesis | `genesisPin` |
 | `bound` | agg final root = cert finalized root = shown root | `aggBinds`, `certBinds` |
@@ -195,7 +195,13 @@ def settleProofBind : VmConstraint2 :=
   .proofBind
     { guard  := .var Settle.SEL
     , commit := .var Settle.AGG_PI_COMMIT
-    , vk     := .var Settle.AGG_VK }
+    , vk     := .var Settle.AGG_VK
+      -- ⚑ DECLARED UNPINNED. A settlement row binds a CHILD CHAIN's aggregate: neither the child's
+      -- program VK nor its PI commitment is a literal or a function of this row — both are the
+      -- child's, and both are PI-bound (`aggVkBind` / `aggCommitBind`) so a verifier can compare
+      -- them against the recursion proof it actually verified. `none` says that in the bytes.
+    , vkPin  := none
+    , bound  := none }
 
 /-- The settled root is public. -/
 def settledRootBind : VmConstraint2 :=
@@ -272,7 +278,7 @@ def selfSettlementDescriptor : EffectVmDescriptor2 :=
 re-authoring any of the constraints above. If a gate changes, this string changes and the `#guard`
 below goes red — that is the whole point of pinning it. -/
 def SELF_SETTLEMENT_GOLDEN : String :=
-  "{\"name\":\"dregg-self-settlement-v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":6,\"tables\":[],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":7},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":8}}}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":11},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":11},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":11},\"commit\":{\"t\":\"var\",\"v\":9},\"vk\":{\"t\":\"var\",\"v\":10}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":5}],\"hash_sites\":[],\"ranges\":[{\"wire\":8,\"bits\":32}]}"
+  "{\"name\":\"dregg-self-settlement-v1\",\"ir\":2,\"trace_width\":12,\"public_input_count\":6,\"tables\":[],\"constraints\":[{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":0}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":7},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":2}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":6}}}},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":3},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":1}},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"loc\",\"c\":8}}}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":0},{\"t\":\"window_gate\",\"on_transition\":false,\"body\":{\"t\":\"mul\",\"l\":{\"t\":\"loc\",\"c\":11},\"r\":{\"t\":\"add\",\"l\":{\"t\":\"loc\",\"c\":11},\"r\":{\"t\":\"const\",\"v\":-1}}}},{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":11},\"commit\":{\"t\":\"var\",\"v\":9},\"vk\":{\"t\":\"var\",\"v\":10},\"vk_pin\":null,\"bound\":null},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":3,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":10,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":1,\"pi_index\":5}],\"hash_sites\":[],\"ranges\":[{\"wire\":8,\"bits\":32}]}"
 
 #guard emitVmJson2 selfSettlementDescriptor == SELF_SETTLEMENT_GOLDEN
 
@@ -280,7 +286,9 @@ def SELF_SETTLEMENT_GOLDEN : String :=
 
 /-- A direct field-level transcription of the settlement row's twelve arithmetic/PI sites, stated
 modulo the BabyBear prime exactly as the AIR evaluates them. The `.proofBind` leg is deliberately
-ABSENT: it is row-locally `True` and its content is the separate `Satisfied2Custom` obligation. -/
+ABSENT: with both seam pins declared absent its only row-local content is the selector booleanity,
+which `selBoolean` already states; the recursion content is the separate `Satisfied2Custom`
+obligation. -/
 def SettleAirRow (env : VmRowEnv) (isFirst : Bool) : Prop :=
   (env.loc Settle.AGG_GENESIS - env.loc Settle.ACC_GENESIS ≡ 0 [ZMOD 2013265921]) ∧
   (env.loc Settle.AGG_FINAL - env.loc Settle.ACC_ROOT_AFTER ≡ 0 [ZMOD 2013265921]) ∧
@@ -344,8 +352,12 @@ theorem settle_descriptor_refines_air
 
 /-- **Rung 2 (semantic equivalence).** The emitted descriptor's FULL constraint set is equivalent to
 the exact field-level settlement semantics. No constraint is added, omitted, or carried only as
-unconstrained metadata — the `.proofBind` leg is `True` row-locally in BOTH directions, which is
-exactly why it is stated as a separate obligation rather than folded into `SettleAirRow`. -/
+unconstrained metadata. ⚑ 2026-08-04: the `.proofBind` leg is no longer `True` row-locally — it
+carries the recursion seam. `settleProofBind` declares BOTH pins absent (`vkPin`/`bound` = `none`,
+because a settlement row binds a CHILD chain's aggregate and neither half is a function of this
+row), so what survives row-locally is the selector booleanity, which `selBoolean` already forces.
+That is why the equivalence still holds with `SettleAirRow` unchanged: the seam adds no NEW fact
+here, and the recursion content is still the separate `Satisfied2Custom` obligation. -/
 theorem settle_descriptor_iff_air
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv) (isFirst isLast : Bool) :
     settleWindowHolds hash tf env isFirst isLast ↔ SettleAirRow env isFirst := by
@@ -370,7 +382,13 @@ theorem settle_descriptor_iff_air
     · exact hr1
     · simpa [selBoolean, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
         sub_eq_add_neg] using hb
-    · trivial
+    · -- ⚑ the `.proofBind` leg is no longer `trivial`. `settleProofBind` DECLARES both pins absent
+      -- (a settlement row binds a CHILD chain: neither its program nor its commitment is a function
+      -- of this row), so the seam reduces to the selector booleanity — the SAME fact `selBoolean`
+      -- already carries, discharged from it rather than assumed.
+      refine ⟨?_, trivial, trivial⟩
+      simpa [selBoolean, settleProofBind, WindowConstraint.holdsAt, WindowExpr.eval,
+        EmittedExpr.eval, sub_eq_add_neg] using hb
     · exact hr2
     · exact hr3
     · exact hr4

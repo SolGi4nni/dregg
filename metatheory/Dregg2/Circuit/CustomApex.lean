@@ -50,15 +50,21 @@ set_option linter.unusedVariables false
 /-! ## §1 — the STAGED in-AIR proof-binding verifier (beside the deployed vacuous `proofBind`). -/
 
 /-- **The staged per-row constraint semantics.** Identical to `DescriptorIR2.VmConstraint2.holdsAt`
-EXCEPT the `proofBind` op: where the DEPLOYED gate is the vacuous `True`, the STAGED gate is the
-in-AIR recursion-verifier check `ProofBind.boundAt E env` — the row's `(commit, vk)` columns commit to
+EXCEPT the `proofBind` op: the STAGED gate ADDS the in-AIR recursion-verifier check
+`ProofBind.boundAt E env` — the row's `(commit, vk)` columns commit to
 a VERIFYING sub-proof of engine `E`. This is the Lean twin of laying `verify_p3_batch_proof_circuit`
 through the Custom row's `custom_proof_commitment` / `custom_program_vk_hash` columns. Every other arm
 delegates VERBATIM to the deployed `holdsAt` (defeq per constructor — the staged semantics changes the
-`proofBind` gate ALONE). -/
+`proofBind` gate ALONE).
+
+⚑ 2026-08-04: the deployed `proofBind` gate is no longer `True` — it is the row-local seam
+`ProofBind.holdsAt`. So the staged gate is the CONJUNCTION, not a replacement: staging still only
+ADDS, and `holdsAtStaged_imp_holdsAt` stays true because the deployed conjunct is literally one of
+the two. Written as `boundAt` alone it would have made the staged gate INCOMPARABLE with the
+deployed one — a "stronger" model that admits rows the shipped AIR refuses. -/
 def VmConstraint2.holdsAtStaged (E : ProofEngine) (hash : List ℤ → ℤ) (tf : TraceFamily)
     (env : VmRowEnv) (isFirst isLast : Bool) : VmConstraint2 → Prop
-  | .proofBind m  => ProofBind.boundAt E env m
+  | .proofBind m  => ProofBind.boundAt E env m ∧ ProofBind.holdsAt env m
   | .base c       => VmConstraint2.holdsAt hash tf env isFirst isLast (.base c)
   | .lookup l     => VmConstraint2.holdsAt hash tf env isFirst isLast (.lookup l)
   | .memOp x      => VmConstraint2.holdsAt hash tf env isFirst isLast (.memOp x)
@@ -74,7 +80,7 @@ theorem holdsAtStaged_imp_holdsAt (E : ProofEngine) (hash : List ℤ → ℤ) (t
     (h : VmConstraint2.holdsAtStaged E hash tf env isFirst isLast c) :
     c.holdsAt hash tf env isFirst isLast := by
   cases c with
-  | proofBind m => trivial
+  | proofBind m => exact h.2
   | base c => exact h
   | lookup l => exact h
   | memOp x => exact h
@@ -132,7 +138,7 @@ theorem satisfied2Staged_toCustom (hash : List ℤ → ℤ) (E : ProofEngine) (d
       memTableFaithful := h.memTableFaithful
       mapTableFaithful := h.mapTableFaithful }
   proofBound := fun i hi m hm =>
-    h.rowConstraints i hi (.proofBind m) (proofBind_mem_constraints hm)
+    (h.rowConstraints i hi (.proofBind m) (proofBind_mem_constraints hm)).1
 
 #assert_axioms holdsAtStaged_imp_holdsAt
 #assert_axioms satisfied2Staged_toCustom

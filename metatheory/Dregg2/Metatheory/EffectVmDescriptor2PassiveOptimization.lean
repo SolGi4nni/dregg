@@ -285,7 +285,40 @@ theorem holdsAt_project (hash : List Int -> Int) (g : Nat -> Nat)
     rwa [heq]
   | memOp m => trivial
   | umemOp m => trivial
-  | proofBind m => trivial
+  | proofBind m =>
+    -- ⚑ NO LONGER `trivial`: the seam's read expressions transport through the remap exactly like a
+    -- gate body; `vkPin` is a LITERAL and carries across unchanged.
+    have hg : (mapVarE g m.guard).eval E.loc = m.guard.eval EX.loc :=
+      evalE_map_agree g m.guard E.loc EX.loc
+        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    have hv : (mapVarE g m.vk).eval E.loc = m.vk.eval EX.loc :=
+      evalE_map_agree g m.vk E.loc EX.loc
+        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    have hc : (mapVarE g m.commit).eval E.loc = m.commit.eval EX.loc :=
+      evalE_map_agree g m.commit E.loc EX.loc
+        (fun r hr => hloc r (by simp only [refs2, List.mem_append]; tauto))
+    obtain ⟨h1, h2, h3⟩ := h
+    refine ⟨by rw [hg]; exact h1, ?_, ?_⟩
+    · cases hvp : m.vkPin with
+      | none => show True; trivial
+      | some x =>
+        rw [hvp] at h2
+        show (mapVarE g m.guard).eval E.loc * ((mapVarE g m.vk).eval E.loc - x)
+          ≡ 0 [ZMOD 2013265921]
+        rw [hg, hv]; exact h2
+    · cases hbd : m.bound with
+      | none => show True; trivial
+      | some b =>
+        have hb : (mapVarE g b).eval E.loc = b.eval EX.loc :=
+          evalE_map_agree g b E.loc EX.loc
+            (fun r hr => hloc r (by
+              simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]
+              tauto))
+        rw [hbd] at h3
+        show (mapVarE g m.guard).eval E.loc
+            * ((mapVarE g m.commit).eval E.loc - (mapVarE g b).eval E.loc)
+          ≡ 0 [ZMOD 2013265921]
+        rw [hg, hc, hb]; exact h3
   | mapOp m =>
     intro hguardC
     have hmem0 : ∀ e ∈ [m.guard, m.key, m.value, m.root 0, m.newRoot 0],

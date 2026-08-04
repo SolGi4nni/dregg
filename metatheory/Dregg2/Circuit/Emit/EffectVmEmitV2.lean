@@ -1359,7 +1359,15 @@ def customV1Face : EffectVmDescriptor :=
 def customProofBind : Dregg2.Circuit.DescriptorIR2.ProofBind :=
   { guard  := .var SEL_CUSTOM
   , commit := .var (prmCol CUSTOM_COMMIT)
-  , vk     := .var (prmCol CUSTOM_VK) }
+  , vk     := .var (prmCol CUSTOM_VK)
+    -- ⚑ DECLARED UNPINNED, and this is the honest answer for Custom specifically. The row-local
+    -- seam can pin a program and a commitment; Custom can supply NEITHER — it exists to dispatch an
+    -- ARBITRARY registered cell program, and its commitment is `custom_proof_pi_commitment` of the
+    -- sub-proof's public inputs, computed OFF-ROW. No expression over this row recomputes it; the
+    -- binding is the fold's lane-by-lane `connect`. So `proofBindDeclarative customVmDescriptor2 = 1`
+    -- and the residual is a COUNTED VALUE in the emitted bytes rather than a `True` nobody could see.
+  , vkPin  := none
+  , bound  := none }
 
 /-- **`customVmDescriptor2`** — the graduated Custom descriptor PLUS the recursive-proof-binding
 leg: the runtime passthrough face graduated onto IR-v2, with the `proofBind` op that ties the

@@ -528,7 +528,37 @@ theorem unforced_pin_row_admits_any_value
     show m.holdsAt hash env'
     rw [hall]; exact hbase
   | umemOp _ => trivial
-  | proofBind _ => trivial
+  | proofBind m =>
+    -- ⚑ NO LONGER `trivial`: the seam READS four expressions, and a column outside all four
+    -- leaves every one of them — and therefore the whole row-local gate — unchanged.
+    have href := hnotref _ hc rfl
+    have hg : col ∉ refsE m.guard := fun hx => href (by simp only [refs2, List.mem_append]; tauto)
+    have hv : col ∉ refsE m.vk := fun hx => href (by simp only [refs2, List.mem_append]; tauto)
+    have hcm : col ∉ refsE m.commit := fun hx => href (by simp only [refs2, List.mem_append]; tauto)
+    have eg : m.guard.eval env'.loc = m.guard.eval env.loc :=
+      evalE_setCol m.guard env.loc col v hg
+    have ev : m.vk.eval env'.loc = m.vk.eval env.loc := evalE_setCol m.vk env.loc col v hv
+    have ecm : m.commit.eval env'.loc = m.commit.eval env.loc :=
+      evalE_setCol m.commit env.loc col v hcm
+    obtain ⟨h1, h2, h3⟩ := hbase
+    show ProofBind.holdsAt env' m
+    refine ⟨by rw [eg]; exact h1, ?_, ?_⟩
+    · cases hvp : m.vkPin with
+      | none => show True; trivial
+      | some x =>
+        rw [hvp] at h2
+        show m.guard.eval env'.loc * (m.vk.eval env'.loc - x) ≡ 0 [ZMOD 2013265921]
+        rw [eg, ev]; exact h2
+    · cases hbd : m.bound with
+      | none => show True; trivial
+      | some b =>
+        have hb : col ∉ refsE b := fun hx =>
+          href (by simp only [refs2, hbd, Option.map_some, Option.getD_some, List.mem_append]; tauto)
+        have eb : b.eval env'.loc = b.eval env.loc := evalE_setCol b env.loc col v hb
+        rw [hbd] at h3
+        show m.guard.eval env'.loc * (m.commit.eval env'.loc - b.eval env'.loc)
+          ≡ 0 [ZMOD 2013265921]
+        rw [eg, ecm, eb]; exact h3
   | windowGate w =>
     have href := hnotref _ hc rfl
     have hb : col ∉ refsW w.body := fun hx => href (by simpa [refs2] using hx)

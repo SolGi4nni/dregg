@@ -200,13 +200,20 @@ theorem avoids_eval_congr {cols : List Nat} {env₁ env₂ : VmRowEnv}
       simp only [avoidsCols, Bool.and_eq_true] at he
       simp only [WindowExpr.eval, iha he.1, ihb he.2]
 
-/-- A constraint is FRESH for a site when it cannot observe the four rebuilt columns.  The three
-op kinds whose `holdsAt` is `True` are fresh ROW-LOCALLY — ⚠ and that is the right altitude to state
-it at: `r2Fresh` returns `true` for `.umemOp`/`.proofBind` WITHOUT inspecting their expressions, so
-`R2Certified` admits descriptors carrying such ops that DO read the rebuilt private columns through a
-global (non-row-local) leg. Every instantiation here is in the boolean-graph `descriptor` emit, which
-has no such ops, so nothing in this file is affected — but the certificate must not be applied to a
-descriptor carrying umemOp/proofBind without first strengthening `r2Fresh` to inspect them.
+/-- A constraint is FRESH for a site when it cannot observe the four rebuilt columns.  The two op
+kinds whose `holdsAt` is `True` are fresh ROW-LOCALLY.
+
+⛑ **`.proofBind` MOVED TO `false` (2026-08-04), and the standing warning that stood here is
+retired.** It read: *"`r2Fresh` returns `true` for `.umemOp`/`.proofBind` WITHOUT inspecting their
+expressions … the certificate must not be applied to a descriptor carrying umemOp/proofBind without
+first strengthening `r2Fresh` to inspect them."* Correct as a caveat, and a LIVE UNSOUNDNESS the
+moment `ProofBind.holdsAt` stopped being `True`: the seam READS `guard`, `vk`, `commit` and `bound`,
+so a `proofBind` over a rebuilt private column is not fresh at all. Rather than teach `r2Fresh` an
+`EmittedExpr` freshness analysis nothing yet needs, the kind is REJECTED. The `descriptor` family
+emits no `proofBind`, so no instantiation loses anything, and a certificate applied to one now
+REFUSES instead of quietly admitting it. `.umemOp` keeps `true` — its `holdsAt` is still `True`, the
+same caveat as before, unchanged and still written down.
+
 `base` / `lookup` / `mapOp` read the
 row through denotations this module does not analyse and are rejected (the `descriptor` family
 emits none of them). -/
@@ -214,7 +221,7 @@ def r2Fresh (s : R2SiteData) : VmConstraint2 → Bool
   | .windowGate w => avoidsCols (siteCols s) w.body
   | .memOp _ => true
   | .umemOp _ => true
-  | .proofBind _ => true
+  | .proofBind _ => false
   | .base _ => false
   | .lookup _ => false
   | .mapOp _ => false
@@ -242,7 +249,7 @@ theorem holdsAt_of_fresh {s : R2SiteData} {c : VmConstraint2} {hash : List ℤ �
           intro hl; rw [← heq]; exact h hl
   | memOp _ => trivial
   | umemOp _ => trivial
-  | proofBind _ => trivial
+  | proofBind _ => simp [r2Fresh] at hf
   | base _ => simp [r2Fresh] at hf
   | lookup _ => simp [r2Fresh] at hf
   | mapOp _ => simp [r2Fresh] at hf

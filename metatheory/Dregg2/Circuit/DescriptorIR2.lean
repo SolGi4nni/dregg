@@ -431,21 +431,97 @@ This is the recursion/IVC boundary the rest of the stack already names (`Dregg2.
 Aggregation.EngineSound.recursive_sound`, `circuit/src/joint_turn_recursive.rs`'s leaf verifier,
 `ivc_turn_chain.rs`'s aggregate prover): an opaque `Proof` carrier + a `verify : Proof → Bool`,
 with the in-circuit-verifier soundness supplied as a NAMED, REALIZABLE hypothesis (the one FRI
-obligation outside Lean). `ProofBind.holdsAt` is `True` row-locally — exactly like `memOp`/`umemOp`
-— and the binding content is the SEPARATE `Satisfied2Custom` leg (§6c), whose keystone
+obligation outside Lean). That existential is the `Satisfied2Custom` leg (§6c), whose keystone
 `proofBind_determined` is the anti-ghost: under the named engine binding, a row's commitment is
 the GENUINE commitment of a verifying sub-proof — a forged one no sub-proof attests is
-UNSATISFIABLE. -/
+UNSATISFIABLE.
+
+## ⚑ 2026-08-04 — THE SEAM WAS A NO-OP IN BOTH LANGUAGES, AND THE HOLE WAS NOT (ONLY) THE `True`
+
+`ProofBind.holdsAt` used to be `True` row-locally, and `Ir2Air::eval` grouped `.proofBind` with the
+bus kinds and `continue`d **without emitting a bus interaction** — so unlike `memOp`/`mapOp`, whose
+`True` is compensated by a LogUp send the caller emits, this kind denoted nothing in either
+language (`UnforcedPiPins.lean` §6 measured exactly that, and no served descriptor emitted one).
+
+⚠ But the deeper defect was in the EXISTENTIAL, not the `True`. `ProofBind.boundAt` reads
+
+    `guard = 1 → ∃ p, E.verify p ∧ E.piCommit p = commit ∧ E.vkOf p = vk`
+
+and **`commit` and `vk` are free prover-chosen columns**. Nothing tied `commit` to any other column
+of the row, and nothing pinned `vk` to a program. `EngineBinding.commit_determines_vk` says only
+that commit ⇒ vk is FUNCTIONAL across verifying proofs; it does not say WHICH program. So even a
+fully deployed recursion layer would have discharged `boundAt` with a verifying sub-proof of ANY
+program about ANY statement — the decorative-anchor shape, one level up.
+
+The two things a ROW can say are exactly the two that were missing, and they are ordinary row-local
+algebra:
+
+  * **`vkPin`** — the program is the DECLARED one. `guard·(vk − vkPin) = 0`.
+  * **`bound`** — the commitment is a FUNCTION OF THIS ROW, not a free column.
+    `guard·(commit − bound) = 0`.
+
+plus `guard·(guard − 1) = 0` so the selector cannot be a fraction that switches the other two off.
+`ProofBind.holdsAt` is now those three congruences, it CAN be false, and `Ir2Air::eval` asserts the
+same three polynomials. The recursion existential (§6c) is UNCHANGED and still the off-row half:
+this seam does not verify a sub-proof, it makes the row's claim about the sub-proof CHECKABLE. -/
 
 /-- An accumulator / recursive-proof-binding op: the row's `custom_proof_commitment` column
-(`commit`) and `custom_program_vk_hash` column (`vk`), gated by `guard`. The denotation
-(§6c) binds them to a VERIFYING external sub-proof — the row commits to the verification of the
-external proof, rather than trusting it. -/
+(`commit`) and `custom_program_vk_hash` column (`vk`), gated by `guard`, together with the two
+DECLARED objects the row-local gate checks them against. The §6c denotation binds `(commit, vk)` to
+a VERIFYING external sub-proof; the row-local `holdsAt` binds them to THIS ROW and THIS PROGRAM,
+which is what makes the existential say anything about the descriptor that carries it. -/
 structure ProofBind where
   guard  : EmittedExpr
   commit : EmittedExpr
   vk     : EmittedExpr
+  /-- ⚑ The DECLARED program VK limb this row recursion-binds to, as a LITERAL. Without it `vk` is
+  a free column and "bound to a verifying sub-proof" quantifies over every program.
+
+  `none` means the descriptor DECLARES that it does not pin the program — legitimate for the Custom
+  effect, whose whole job is to dispatch an arbitrary registered cell program. It is a VALUE in the
+  emitted wire bytes, not a silence: `proofBindDeclarative` counts it, so an unpinned seam is
+  countable by a gate rather than described in a docblock. -/
+  vkPin  : Option ℤ
+  /-- ⚑ The DECLARED row-local expression the bound commitment must EQUAL — the row's own statement,
+  in its own columns. For a light-client fold this is the in-AIR digest of the published anchors.
+
+  `none` means the descriptor DECLARES the commitment is a free witnessed column bound only by the
+  off-row fold (`joint_turn_recursive.prove_custom_binding_node`'s lane-by-lane `connect`). Same
+  rule: a value, countable, not a silence. -/
+  bound  : Option EmittedExpr
   deriving Repr
+
+/-- **`ProofBind.holdsAt` — THE ROW-LOCAL SEAM.** Up to three congruences, all falsifiable:
+the guard is a bit; the attested program is the declared one; the bound commitment is the declared
+row-local expression. `Ir2Air::eval`'s `VmConstraint2::ProofBind` arm asserts exactly these
+polynomials (`circuit/src/descriptor_ir2.rs`), so the denotation and the deployed evaluator agree.
+
+⚠ What this does NOT say: that a sub-proof exists, or verifies. That is `Satisfied2Custom.proofBound`
+(§6c) and it is off-row by construction — a row cannot run a verifier. What this says is that the
+`(commit, vk)` pair the off-row argument matches is not free.
+
+⚠ And what it says about WIDTH: `commit`, `vk` and `bound` are ONE felt each. The real objects are
+eight (`circuit-prove/src/custom_proof_bind.rs`: `PROOF_BIND_COMMIT_WIDTH = 8`, ~124-bit), and the
+deployed `customProofBind` has bound limb 0 alone (`commit := .var 72`) since the kind was
+introduced. This seam does not widen that and does not claim to: a descriptor that needs the full
+digest in its public statement PI-binds the eight squeeze lanes (which is what the fold connects,
+lane by lane) and uses this tie for the program pin. **The single-felt tie is worth 2^31 and no
+more; say that number, not the 2^124 of the object it is a limb of.** -/
+def ProofBind.holdsAt (env : VmRowEnv) (m : ProofBind) : Prop :=
+  (m.guard.eval env.loc * (m.guard.eval env.loc - 1) ≡ 0 [ZMOD 2013265921]) ∧
+  (match m.vkPin with
+   | none   => True
+   | some v => m.guard.eval env.loc * (m.vk.eval env.loc - v) ≡ 0 [ZMOD 2013265921]) ∧
+  (match m.bound with
+   | none   => True
+   | some b => m.guard.eval env.loc * (m.commit.eval env.loc - b.eval env.loc)
+                 ≡ 0 [ZMOD 2013265921])
+
+/-- ⚑ **THE DECLARATIVE CENSUS.** A `proofBind` that pins neither its program nor its commitment
+still gates its guard — but its `(commit, vk)` pair is otherwise free, which is the shape the seam
+exists to retire. `proofBindDeclarative d` counts them, on the descriptor object, in the authoring
+language, so the number goes red BEFORE an emit rather than being read off the bytes afterwards. -/
+def ProofBind.isDeclarative (m : ProofBind) : Bool := m.vkPin.isNone && m.bound.isNone
 
 /-! ### §2.5 — `WindowExpr`: a two-row arithmetic expression (the cumulative-sum primitive).
 
@@ -814,20 +890,23 @@ def mapLog (d : EffectVmDescriptor2) (t : VmTrace) : Table :=
     (mapOpsOf d).filterMap fun m =>
       if m.guard.eval a = 1 then some (m.rowAt a) else none
 
-/-- Per-row meaning of one v2 constraint. `memOp`/`umemOp`/`proofBind` are `True` here because they
-are not row-local equations — but their DEPLOYED status differs and the difference is load-bearing:
+/-- Per-row meaning of one v2 constraint. `memOp`/`umemOp` are `True` here because they are not
+row-local equations — but their DEPLOYED status differs and the difference is load-bearing:
 * `memOp` — REAL: the content is the GLOBAL leg of `Satisfied2` (`memBalanced`), and that leg IS
   deployed-enforced (the LogUp bus + Blum multiset balance + the verifier's zero-sum check). (One
   open seam: the flat-memory `minit` boundary is not yet anchored to the committed pre-state root —
   umem already closes this pattern via `whole_image_fold`.)
 * `umemOp` — its global leg lives in `Satisfied2U` (staged), with the boundary anchored to the
   committed root.
-* `proofBind` — its content lives in `Satisfied2Custom`, which is NOT the deployed `Satisfied2`, and
-  the deployed prover does not yet fold the custom sub-proof leaf. So this arm is VACUOUS for a pure
-  light client as-shipped (`CustomCarrierAttack.deployed_admits_unbacked`); the real binding is the
-  FOLD (`CustomBindingFromFold` + `joint_turn_recursive.prove_custom_binding_node`), whose premise
-  (a verifying aggregate that folds the custom leaf) is met only once that node is on the deployed
-  prove path. Do NOT read this `True` as "compensated like memOp". -/
+* `proofBind` — ⚑ **NO LONGER `True`** (2026-08-04). Its row-local half is `ProofBind.holdsAt`: the
+  guard is a bit, the attested program is the DECLARED `vkPin`, and the bound commitment is the
+  DECLARED row-local `bound`. `Ir2Air::eval` asserts the same three polynomials, so the denotation
+  and the deployed evaluator agree — which is what the four other bus kinds get from a LogUp send
+  and this one got from nothing. Its RECURSION half still lives in `Satisfied2Custom`, which is not
+  the deployed `Satisfied2` and whose premise (a verifying aggregate folding the custom leaf) is met
+  only once `joint_turn_recursive.prove_custom_binding_node` is on the deployed prove path. So: the
+  row's CLAIM is now checked; the sub-proof's EXISTENCE still is not, and that is the seam's stated
+  residual, not a silence. -/
 def VmConstraint2.holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) : VmConstraint2 → Prop
   | .base c       => c.holdsVm env isFirst isLast
@@ -835,7 +914,7 @@ def VmConstraint2.holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : Vm
   | .memOp _      => True
   | .mapOp m      => m.holdsAt hash env
   | .umemOp _     => True
-  | .proofBind _  => True
+  | .proofBind m  => m.holdsAt env
   | .windowGate w => w.holdsAt env isLast
 
 /-- **The v2 denotation.** A multi-table witness satisfies a v2 descriptor (relative to the
@@ -1264,6 +1343,13 @@ def ProofBind.boundAt (E : ProofEngine) (env : VmRowEnv) (m : ProofBind) : Prop 
 /-- The proof-binding ops a descriptor declares. -/
 def proofBindsOf (d : EffectVmDescriptor2) : List ProofBind :=
   d.constraints.filterMap fun c => match c with | .proofBind m => some m | _ => none
+
+/-- ⚑ **The declarative-seam count of one descriptor** — how many of its `proofBind` ops pin
+NEITHER the program nor the commitment. This is the number that must ratchet DOWN; it is the
+authoring-language twin of `scripts/check-descriptor-anchor-inertness.py`'s decorative-anchor
+census, one stage upstream of the emitted bytes. -/
+def proofBindDeclarative (d : EffectVmDescriptor2) : Nat :=
+  ((proofBindsOf d).filter ProofBind.isDeclarative).length
 
 /-- **The custom-binding denotation** — `Satisfied2` PLUS the accumulator leg: every declared
 `proofBind` op binds its row's commitment/vk columns to a VERIFYING sub-proof of the named engine
@@ -1979,10 +2065,13 @@ def UMemOp.toJson (m : UMemOp) : String :=
   ",\"prev_serial\":" ++ m.prevSerial.toJson ++ "}"
 
 /-- Render one proof-binding op (the accumulator / recursive-proof binding: the row's
-`custom_proof_commitment` + `custom_program_vk_hash` columns, gated). -/
+`custom_proof_commitment` + `custom_program_vk_hash` columns, gated, plus the two DECLARED objects
+the row-local seam checks them against — `vk_pin` and `bound`). -/
 def ProofBind.toJson (m : ProofBind) : String :=
   "{\"t\":\"proof_bind\",\"guard\":" ++ m.guard.toJson ++
-  ",\"commit\":" ++ m.commit.toJson ++ ",\"vk\":" ++ m.vk.toJson ++ "}"
+  ",\"commit\":" ++ m.commit.toJson ++ ",\"vk\":" ++ m.vk.toJson ++
+  ",\"vk_pin\":" ++ (match m.vkPin with | none => "null" | some v => toString v) ++
+  ",\"bound\":" ++ (match m.bound with | none => "null" | some b => b.toJson) ++ "}"
 
 /-- Render one v2 constraint (the v1 forms reuse the v1 renderer byte-for-byte). -/
 def VmConstraint2.toJson : VmConstraint2 → String
@@ -2329,18 +2418,20 @@ keystone fired BOTH ways.
 (forged-commitment rejection witnessed). -/
 
 /-- The proof-binding demo descriptor: one Custom row binding (commit = col 0, vk = col 1), gated
-by the (toy) custom selector at col 2. -/
+by the (toy) custom selector at col 2 — and, since the seam landed, DECLARING what it binds them
+to: the toy engine's program vk `45` and its PI commitment `123`. Those two literals are what make
+`demoC_seam_refutes_forged_commit` below possible at all. -/
 def demoC : EffectVmDescriptor2 :=
   { name := "demo-custom", traceWidth := 3, piCount := 0
   , tables := [mainTableDef 3]
-  , constraints := [ .proofBind ⟨.var 2, .var 0, .var 1⟩ ]
+  , constraints := [ .proofBind ⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ ]
   , hashSites := [], ranges := [] }
 
 -- THE PROOF-BIND WIRE GOLDEN: the canonical JSON of the `proof_bind` grammar, byte-pinned (the
 -- Rust `descriptor_ir2.rs` decoder's `proof_bind` arm parses THIS string's grammar; mirrored as
 -- `DEMO_CUSTOM` in its tests).
 #guard emitVmJson2 demoC ==
-  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1}}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"demo-custom\",\"ir\":2,\"trace_width\":3,\"public_input_count\":0,\"tables\":[{\"id\":0,\"name\":\"main\",\"arity\":3,\"sem\":\"main\"}],\"constraints\":[{\"t\":\"proof_bind\",\"guard\":{\"t\":\"var\",\"v\":2},\"commit\":{\"t\":\"var\",\"v\":0},\"vk\":{\"t\":\"var\",\"v\":1},\"vk_pin\":45,\"bound\":{\"t\":\"const\",\"v\":123}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-- A TOY recursion engine: the proof carrier is `Bool` (`true` = the one honest sub-proof), the
 verifier accepts exactly `true`, and a verifying proof exposes commitment `123` / vk `45`. (The
@@ -2369,7 +2460,14 @@ theorem demoC_satisfied :
   refine ⟨⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩, ?_⟩
   · intro i hi c hc
     simp only [demoC, List.mem_cons, List.not_mem_nil, or_false] at hc
-    subst hc; trivial
+    subst hc
+    -- ⚑ NO LONGER `trivial`: the row-local seam has content, and the honest row DISCHARGES it —
+    -- guard 1 is a bit, vk col = 45 = the declared `vkPin`, commit col = 123 = the declared `bound`.
+    have hi0 : i = 0 := by
+      have : demoCTrace.rows.length = 1 := rfl
+      omega
+    subst hi0
+    exact ⟨by decide, by decide, by decide⟩
   · intro i hi; trivial
   · intro i hi r hr; simp [demoC] at hr
   · intro op hop; rw [show memLog demoC demoCTrace = [] from rfl] at hop; cases hop
@@ -2379,7 +2477,7 @@ theorem demoC_satisfied :
   · rfl
   · -- proofBound: the one declared proofBind op binds to the honest `true` sub-proof.
     intro i hi m hm hactive
-    have hm' : m = ⟨.var 2, .var 0, .var 1⟩ := by
+    have hm' : m = ⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ := by
       simpa [proofBindsOf, demoC] using hm
     subst hm'
     -- row 0 is the only row; commit col evaluates to 123, vk col to 45.
@@ -2395,7 +2493,7 @@ example (q : Bool) (hq : demoEngine.verify q = true)
     (hqc : demoEngine.piCommit q = (EmittedExpr.var 0).eval (envAt demoCTrace 0).loc) :
     demoEngine.vkOf q = (EmittedExpr.var 1).eval (envAt demoCTrace 0).loc :=
   proofBind_determined (fun _ => 0) demoEngine demoEngine_binding demoC demoC_satisfied
-    (m := ⟨.var 2, .var 0, .var 1⟩) (by simp [proofBindsOf, demoC])
+    (m := ⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩) (by simp [proofBindsOf, demoC])
     0 (by decide) (by decide) q hq hqc
 
 -- NON-VACUITY of `EngineBinding`, BOTH polarities: the toy engine satisfies it (above), and a
@@ -2405,6 +2503,64 @@ def brokenEngine : ProofEngine :=
   { Proof := Bool, verify := fun _ => true, piCommit := fun _ => 7
   , vkOf := fun b => if b then 45 else 99 }
 #guard ¬ decide (brokenEngine.vkOf true = brokenEngine.vkOf false)
+
+/-! ### §10c′ — ⚑ THE SEAM IS SATISFIABLE, REFUTABLE, AND NOT PROVABLE.
+
+`feedback-prove-the-floor-false`: a gate that cannot go red is not a gate. `demoC_satisfied`'s row
+leg is the SATISFIABLE pole. The three below are the REFUTABLE one — one per conjunct, each a row
+that differs from the honest row in exactly one cell and is REFUSED.
+`CustomCarrierAttack.deployed_proofBind_gate_vacuous` used to prove the negation of all three at
+once; it is gone. -/
+
+/-- The demo proof-bind op, named once so the refutations read as facts about the SHIPPED op. -/
+def demoCBind : ProofBind := ⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩
+
+/-- The honest row DISCHARGES the seam (the satisfiable pole, row-locally and by itself). -/
+theorem demoC_seam_holds : demoCBind.holdsAt (envAt demoCTrace 0) := by
+  show ProofBind.holdsAt (envAt demoCTrace 0) (⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ : ProofBind)
+  exact ⟨by decide, by decide, by decide⟩
+
+/-- ⚑ **A FORGED COMMITMENT IS REFUSED ROW-LOCALLY.** Same guard, same vk, commitment `124` instead
+of the declared `123` — the row that `deployed_admits_unbacked` used to admit. -/
+theorem demoC_seam_refutes_forged_commit :
+    ¬ demoCBind.holdsAt
+        { loc := fun i => if i = 0 then 124 else if i = 1 then 45 else if i = 2 then 1 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 } := by
+  show ¬ ProofBind.holdsAt
+        { loc := fun i => if i = 0 then 124 else if i = 1 then 45 else if i = 2 then 1 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 } (⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ : ProofBind)
+  unfold ProofBind.holdsAt
+  decide
+
+/-- ⚑ **A SWAPPED PROGRAM IS REFUSED ROW-LOCALLY.** The commitment is the declared one; the attested
+program VK is `99`, not the declared `45`. This is the conjunct `EngineBinding` cannot supply: it
+makes commit ⇒ vk functional, it does not say WHICH program. -/
+theorem demoC_seam_refutes_swapped_vk :
+    ¬ demoCBind.holdsAt
+        { loc := fun i => if i = 0 then 123 else if i = 1 then 99 else if i = 2 then 1 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 } := by
+  show ¬ ProofBind.holdsAt
+        { loc := fun i => if i = 0 then 123 else if i = 1 then 99 else if i = 2 then 1 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 } (⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ : ProofBind)
+  unfold ProofBind.holdsAt
+  decide
+
+/-- ⚑ **A NON-BOOLEAN GUARD IS REFUSED.** A seam whose selector is unconstrained is a seam a
+descriptor can switch off, and `guard` multiplies into every other gate that shares it. -/
+theorem demoC_seam_refutes_fractional_guard :
+    ¬ demoCBind.holdsAt
+        { loc := fun i => if i = 0 then 123 else if i = 1 then 45 else if i = 2 then 2 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 } := by
+  show ¬ ProofBind.holdsAt
+        { loc := fun i => if i = 0 then 123 else if i = 1 then 45 else if i = 2 then 2 else 0
+        , nxt := fun _ => 0, pub := fun _ => 0 } (⟨.var 2, .var 0, .var 1, some 45, some (.const 123)⟩ : ProofBind)
+  unfold ProofBind.holdsAt
+  decide
+
+#assert_axioms demoC_seam_holds
+#assert_axioms demoC_seam_refutes_forged_commit
+#assert_axioms demoC_seam_refutes_swapped_vk
+#assert_axioms demoC_seam_refutes_fractional_guard
 
 #assert_axioms TableId.wireId_injective
 #assert_axioms Satisfied2Public.exact_lookup_perm

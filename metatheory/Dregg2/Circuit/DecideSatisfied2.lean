@@ -22,7 +22,9 @@ env`. Everything ELSE is genuinely `Decidable`:
   * per-row `.base` / range — reuse `InterpCore.decideConstraint` / `VmRange.holds` (`DecidableEq ℤ`);
   * per-row `.lookup` — list membership in the concrete table (`DecidableEq` on `List ℤ`);
   * per-row `.window` — the two-row polynomial vanishes (`DecidableEq ℤ`);
-  * per-row `.memOp` / `.umemOp` / `.proofBind` — row-locally `True` (their content is the GLOBAL leg);
+  * per-row `.memOp` / `.umemOp` — row-locally `True` (their content is the GLOBAL leg);
+  * per-row `.proofBind` — ⚑ the row-local recursion seam, three decidable congruences (its RECURSION
+    content is still the global `Satisfied2Custom` leg);
   * the memory legs `memAddrsNodup` / `memClosed` / `memDisciplined` / `memBalanced` — the proved
     `MemoryChecking` predicates carry `Decidable` instances (Blum's discipline + the `Multiset`
     balance over a concrete log);
@@ -78,11 +80,32 @@ theorem decideWindow_iff (env : VmRowEnv) (isLast : Bool) (w : WindowConstraint)
   · simp only [ht, if_false]
     simp
 
+/-- **`decideProofBind env m`** — the `.proofBind` arm: the ROW-LOCAL recursion seam. Decidable
+congruences mirroring `ProofBind.holdsAt`: the guard is a bit, the attested program VK is the
+DECLARED `vkPin`, the bound commitment is the DECLARED `bound`. ⚑ This arm used to be the constant
+`true`, which is what made every enumeration over a `proofBind`-carrying descriptor blind to the one
+kind that denoted nothing. -/
+def decideProofBind (env : VmRowEnv) (m : ProofBind) : Bool :=
+  decide (m.guard.eval env.loc * (m.guard.eval env.loc - 1) ≡ 0 [ZMOD 2013265921]) &&
+  (match m.vkPin with
+   | none   => true
+   | some v => decide (m.guard.eval env.loc * (m.vk.eval env.loc - v) ≡ 0 [ZMOD 2013265921])) &&
+  (match m.bound with
+   | none   => true
+   | some b => decide (m.guard.eval env.loc * (m.commit.eval env.loc - b.eval env.loc)
+                 ≡ 0 [ZMOD 2013265921]))
+
+theorem decideProofBind_iff (env : VmRowEnv) (m : ProofBind) :
+    decideProofBind env m = true ↔ ProofBind.holdsAt env m := by
+  unfold decideProofBind ProofBind.holdsAt
+  cases hv : m.vkPin <;> cases hb : m.bound <;>
+    simp [Bool.and_eq_true, decide_eq_true_eq, and_assoc]
+
 /-- **`decideConstraint2 mapDec hash tf env isFirst isLast c`** — the Boolean decision of one v2
 constraint's per-row denotation `c.holdsAt hash tf env isFirst isLast`. CASE-COMPLETE over the seven
 `VmConstraint2` arms: `.base` rides the verified `decideConstraint`; `.lookup` rides `decideLookup`;
-`.windowGate` rides `decideWindow`; `.memOp`/`.umemOp`/`.proofBind` are row-locally `True` (decided
-`true`); `.mapOp` rides the SUPPLIED oracle `mapDec`. -/
+`.windowGate` rides `decideWindow`; `.proofBind` rides `decideProofBind` (⚑ NO LONGER `true`);
+`.memOp`/`.umemOp` are row-locally `True`; `.mapOp` rides the SUPPLIED oracle `mapDec`. -/
 def decideConstraint2 (mapDec : VmRowEnv → MapOp → Bool) (hash : List ℤ → ℤ)
     (tf : TraceFamily) (env : VmRowEnv) (isFirst isLast : Bool) : VmConstraint2 → Bool
   | .base c       => decideConstraint env isFirst isLast c
@@ -90,7 +113,7 @@ def decideConstraint2 (mapDec : VmRowEnv → MapOp → Bool) (hash : List ℤ �
   | .memOp _      => true
   | .mapOp m      => mapDec env m
   | .umemOp _     => true
-  | .proofBind _  => true
+  | .proofBind m  => decideProofBind env m
   | .windowGate w => decideWindow env isLast w
 
 /-- **`decideConstraint2_iff`** — one v2 constraint is decided, under the oracle's faithfulness.
@@ -107,7 +130,7 @@ theorem decideConstraint2_iff (mapDec : VmRowEnv → MapOp → Bool) (hash : Lis
   | memOp _      => simp [decideConstraint2, VmConstraint2.holdsAt]
   | mapOp m      => exact hmapDec env m
   | umemOp _     => simp [decideConstraint2, VmConstraint2.holdsAt]
-  | proofBind _  => simp [decideConstraint2, VmConstraint2.holdsAt]
+  | proofBind m  => exact decideProofBind_iff env m
   | windowGate w => exact decideWindow_iff env isLast w
 
 /-! ## §2 — the per-row constraint conjunct (over the whole main trace). -/
