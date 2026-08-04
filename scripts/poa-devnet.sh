@@ -192,7 +192,7 @@ cmd_genesis() {
 
   # Check path separation before spending the real hybrid-key generation work.
   node --input-type=module -e '
-import { assertDisjointRoots } from process.argv[1];
+const { assertDisjointRoots } = await import(process.argv[1]);
 assertDisjointRoots(process.argv[2], process.argv[3]);
 ' "file://$MANIFEST_TOOL" "$POA_ROOT" "$POA_MAIN_DATA_DIR"
 

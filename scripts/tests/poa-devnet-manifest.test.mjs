@@ -71,6 +71,81 @@ function fixture() {
   };
 }
 
+test("genesis wrapper executes its isolation preflight and emits a pinned federation", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "poa-devnet-genesis-test-"));
+  const root = join(scratch, "poa");
+  const mainDataDir = join(scratch, "main");
+  const fakeBin = join(scratch, "dregg-node");
+  mkdirSync(mainDataDir, { recursive: true });
+  writeFileSync(
+    fakeBin,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const value = (name) => args[args.indexOf(name) + 1];
+if (args[0] === "genesis") {
+  const output = value("--output");
+  const validators = Number(value("--validators"));
+  fs.mkdirSync(output, { recursive: true });
+  const genesis = {
+    federation_id: "${"a1".repeat(32)}",
+    deployment_domain: "pathofangels.network/federation/v1",
+    committee_epoch: 0,
+    threshold: validators,
+    validators: Array.from({ length: validators }, (_, index) => ({
+      name: \`node-\${index}\`,
+      public_key: (index + 1).toString(16).padStart(2, "0").repeat(32),
+    })),
+    initial_cells: [
+      { public_key: "${"a4".repeat(32)}", balance: 0 },
+      { public_key: "${"a5".repeat(32)}", balance: 0 },
+    ],
+    genesis_moves: [],
+    starbridge_cells: [],
+  };
+  fs.writeFileSync(path.join(output, "genesis.json"), JSON.stringify(genesis) + "\\n");
+  for (let index = 0; index < validators; index += 1) {
+    fs.writeFileSync(path.join(output, \`node-\${index}.key\`), Buffer.alloc(32, index + 1));
+  }
+  process.exit(0);
+}
+if (args[0] === "gen-validator-key") {
+  const index = Number(path.basename(value("--data-dir")).replace("node-", ""));
+  process.stdout.write(JSON.stringify({
+    public_key: (index + 1).toString(16).padStart(2, "0").repeat(32),
+  }));
+  process.exit(0);
+}
+process.exit(99);
+`,
+  );
+  chmodSync(fakeBin, 0o755);
+
+  const script = join(process.cwd(), "scripts", "poa-devnet.sh");
+  const result = spawnSync("bash", [script, "genesis"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      POA_ROOT: root,
+      POA_MAIN_DATA_DIR: mainDataDir,
+      POA_BIN: fakeBin,
+      POA_VALIDATORS: "3",
+      POA_HTTP_BASE: "8421",
+      POA_GOSSIP_BASE: "9421",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /PoA federation ready/);
+  assert.equal(verifyManifest({
+    root,
+    mainDataDir,
+    httpBase: 8421,
+    gossipBase: 9421,
+    hosts: ["127.0.0.1", "127.0.0.1", "127.0.0.1"],
+  }).federation_id, "a1".repeat(32));
+});
+
 test("manifest pins an isolated federation and runnable, non-faucet configs", () => {
   const f = fixture();
   const manifest = writeManifestAndConfigs(f.options);
