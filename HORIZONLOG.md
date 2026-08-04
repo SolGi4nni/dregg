@@ -1,5 +1,89 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑⚑⚑ AUGUST 4 (step→wrap chain, RE-MEASURED at HEAD) — the figure is UNCHANGED at 21 of 22, the owed re-emission is DONE and BYTE-IDENTICAL, and `t_comm` is the only absorbed family nothing reads
+
+The 08-04 entry below owed a re-emission: *"the COUNT was measured on the committed harness artifacts,
+last re-emitted at `dca30f544` (§20); the emitters were themselves rung-blind until `124ba5077`."*
+Since that artifact was written the wrap ladder went 9 rungs → **14**, all 24 pinned statement words
+became derived, and `wrapPublic` was repointed FOUR times in 23 hours. So the count was owed a re-run
+against an emission of HEAD.
+
+**RE-EMITTED FROM A DETACHED WORKTREE AT `f04c7c7b5`** (`git worktree add --detach`, `git status`
+clean, `.lake` clonefile-copied from the warm tree, `lake build Dregg2.Circuit.Emit.KimchiStepWrapChain`
+green at 3055 jobs, then `lake env lean --run …/EmitStepWrapChainJson.lean`). All six files `cmp`
+**BYTE-IDENTICAL** to the committed ones. The owed re-emission is closed and the committed fixtures were
+already right — and not by luck: `envIndex` folds the REVERSED environment so a widened rung cannot move
+a word already bound, and `wrapPublicAt _ .bind` is 22 words. `w9_prev`'s 23rd belongs to `.prev`, a
+rung this file does not emit.
+
+**THE CONTROL PAIR, RE-RUN IN RELEASE ON THAT EMISSION, FULL PROBE COVERAGE — NOT A SAMPLE:**
+
+```
+w1_transcript    818 rows  domain 1024  honest 2084 ms  probes  23/23
+w4_bind         1463 rows  domain 2048  honest 1411 ms  probes 109/109  public 22
+[5 PUBLIC ] tampered public vector REJECTED; sigma leg REJECTED at i=0 and i=21
+[6 CHAIN +] bending ONE Fq coordinate of the step proof's w_comm MOVES 21/22 wrap public words
+[6 CHAIN +] ...and the moved circuit still proves with verify()==true
+[7 CHAIN -] bending z_1/z_2/ft_eval1/delta/sg leaves the wrap circuit BYTE-IDENTICAL
+```
+
+No `[FATAL]`, no `[FALSIFICATION]`. Committed gate `cargo test --release`: **6 passed / 0 failed**
+(247.8 s). ⚑ **The figure did NOT move: 21 of 22.**
+
+**THE `STEP_PUBCOMM_XY` OVERRIDE STAYS, RE-CHECKED AGAINST W-COMBINE / W-BULLET / W-FINALIZE.** §15's
+MSM output is `xhatOut XHAT_TERMS_FULL` over `xhatScalar i = prevWordVal (xhatWordOf i)`, and at HEAD
+`prevWordVal` is still `wrapFixtureQ 34 w` through an `x⁹` mixer everywhere except words 55/56, which
+W-WRAPHACK computes — from `whSgOld`, i.e. **the BORROWED proof's `PREVCOMM_XY`**. W-FINALIZE reads four
+of the 57 words per block (β, γ, `perm`, `should_finalize`) and derives none of their values. So
+`shapeChain.xhatXY` is in no sense dregg's step proof's public-input commitment, `chain_reality_gate` is
+a claim about what `proof.oracles(...)` computed for THAT proof, and the tape must stay kimchi's.
+
+**⚑ ABSORPTION vs CONSUMPTION, NOW MEASURED RATHER THAN CONCEDED.** New `§11` in
+`KimchiStepWrapChain.lean`: seven named theorems, 19 pins → **26**, zero `#guard`s. The chain absorbs
+**120 words in 9 families**. In the wrap ladder as emitted on the borrowed tape, **8 of those 9 families
+reach a gate** — `index_digest` at `w5_key`'s `digestTie`; `sg_old` at `w9_prev`'s `assert_on_curve` AND
+`w10_combine`'s fold; `x_hat`, `z_comm` and all 15 `w_comm` at `w10_combine`; `combined_inner_product`,
+all 32 `lr` points and `delta` at `w11_bullet`. Not by name: `combPtVar`, `bullCipV`, `bullLrV`,
+`bullDeltaV` and `sgOldVar` **allocate nothing** — every one reads `(t.sp.evs.filter …).wordV`, the very
+σ class the absorb wrote. **The one family with no reader anywhere is `t_comm`** (14 words): §17's
+`ft_comm` ladders run over `ftcTVal`, SRS Lagrange doublings in cells of their own. So
+`WRAP_UNCONSUMED`'s `t_comm` entry is the one place where "absorbed" is still the whole story.
+
+**⚠ AND THE CHAIN STILL CANNOT ASSERT IT. TWO BLOCKERS, BOTH PINNED AS REFUTABLE THEOREMS:**
+
+1. **W-KEY, and it is a SIBLING'S** (`the_chain_cannot_climb_past_bind_until_the_step_key_is_real`).
+   `rungsUpto .combine` and `.bullet` both contain `.key`, whose `digestTie` is a `Field.Assert.equal`
+   joining the index sponge's squeeze to the transcript's FIRST absorbed word. Here those are the digest
+   of `STEP_VK_XY` — a *wrap* VK — and `STEP_VKDIGEST`, dregg's own *step* verifier index. They differ,
+   so ONE row is why the chain stops at `w4_bind`; it is not W-COMBINE and not W-BULLET. Goes RED when
+   the real step key lands.
+2. **The VALUE layer of the consuming rungs is still the borrowed proof's**
+   (`the_consuming_rungs_values_are_still_the_borrowed_proofs`). `combPtVal`, `bullCipVal`, `bullLrVal`,
+   `bullDeltaVal` and §18's `prevEnv` answer with `KimchiWrapMain.itemVal` — `PastaPoseidonFq`'s
+   `create_circuit(0,5)` proof — *whatever tape drives the `WrapData`*. For `tWrap` that is invisible
+   because `schedule` absorbs `itemVal`; for `tChain` value and variable DISAGREE, so an emitted
+   `.combine` would carry a fold computed from one proof's commitments over cells holding another's and
+   its honest witness would fail `CompleteAdd`. **The repair is to read the absorbed word from `t.sp`,
+   the same place the `V` twins read the variable — byte-neutral for `tWrap` by construction.** Not done
+   here: §18/§23/§24 are other lanes' sections and three lanes are live in that file. The theorem goes
+   RED the moment it is done, which is its job.
+
+**THE HONEST SENTENCE, RESTATED.** The two halves still bind, and they bind at the TRANSCRIPT: dregg's
+own step proof's phase-1 Fq tape drives a wrap-side assembly that proves on Pallas, every one of the 21
+transcript-derived public words moves under a one-coordinate bend of `w_comm` (the 22nd, `branch_data`,
+has no transcript dependence and does not move), and a second extraction from a proof whose
+`z_1`/`z_2`/`ft_eval1`/`delta`/`sg` were bent leaves the emission byte-identical. **Nothing yet READS
+what THIS transcript absorbs.** The readers exist and prove — on the borrowed tape — and the chain is two
+named rows away from inheriting them.
+
+⚠ **COLLATERAL, SAID OUT LOUD:** a `lake env lean --run` in the detached worktree decided mathlib's URL
+had changed and re-cloned `/Users/ember/src/mathlib4` (the shared checkout every lane's
+`.lake/packages/mathlib` symlinks to). It ends at the pinned rev `1c2b90b13009` and everything resolves,
+but the olean hashes moved, so **the next `lake build` in any tree pays a full ~3055-job re-elaboration
+once** (measured here: ~50 min on the laptop, `KimchiWrapMain` alone 301 s). A stray untracked
+`/Users/ember/src/mathlib4/mathlib/` (6.8 G, same rev, 8105 oleans) was left in place rather than
+deleted under live lanes.
+
 ## ⚑⚑⚑ AUGUST 4 (wrap census) — **83.0% of Mina's wrap circuit, MEASURED**, and the scoreboard is now a gate
 
 The wrap-scale emission of all fourteen rungs finished (`bf97c2eb0`, cone `16d6bdf23dd2c86c…` over 101

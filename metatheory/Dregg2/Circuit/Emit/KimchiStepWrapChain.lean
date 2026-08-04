@@ -658,6 +658,187 @@ theorem the_chained_control_differs_only_in_the_placement :
 
 #assert_compiled the_chained_control_differs_only_in_the_placement
 
+/-! ## §11 — ⚑ ABSORPTION vs CONSUMPTION, MEASURED — and the two things that still block the
+stronger claim.
+
+§0b's honest sentence has been *"the step proof's commitments enter as **sponge inputs**, not as
+curve points a sub-circuit consumes."* W-COMBINE (`w10_combine`, §23) and W-BULLET (`w11_bullet`,
+§24) have since landed, and they change that sentence — but not in the direction a reader would
+guess, and not for the same reason on both sides of it. So it is measured here rather than restated.
+
+⚑ **THE VARIABLE LAYER ALREADY CONSUMES, AND IT CONSUMES THE CHAIN'S OWN CELLS.** `combPtVar` and
+`bullCipV`/`bullLrV`/`bullDeltaV` allocate NOTHING: every one of them reads
+`(t.sp.evs.filter (·.isAbs && ·.tag == …)).wordV`, i.e. the very σ class the transcript's absorb
+wrote. Driven by `tChain`, that class holds a coordinate of **dregg's own step proof**. So a
+`CompleteAdd` in `Split_commitments.combine`'s fold, and an `EndoMul` ladder in `bullet_reduce`,
+would read the same cell the sponge absorbed — a GATE READING IT, not a tape seeing it. The
+theorems below exhibit that, slot by slot, at the committed shape.
+
+⚠ **AND THE VALUE LAYER DOES NOT — IT IS STILL THE BORROWED FIXTURE.** `combPtVal`, `bullCipVal`,
+`bullLrVal` and `bullDeltaVal` answer with `KimchiWrapMain.itemVal`, `PastaPoseidonFq`'s
+`create_circuit(0,5)` proof, *regardless of which tape drives the `WrapData`*. For `tWrap` that is
+invisible, because `schedule` absorbs `itemVal` — value and variable agree by coincidence of
+source. For `tChain` they DISAGREE, so an emitted `.combine` would carry a fold whose accumulator
+was computed from one proof's commitments over cells holding another's, and its honest witness
+would fail `CompleteAdd`. **This is the first blocker and it is a two-line one:** those four `Val`
+functions must read the absorbed word from `t.sp` — the same place their `V` twins read the
+variable — which is byte-neutral for `tWrap` by construction. It is not done here because §23/§24
+are W-COMBINE/W-BULLET's file and three lanes are live in it; it is pinned below so it goes RED the
+moment it is done.
+
+⚠ **AND `rungsUpto .combine` CONTAINS `.key`, WHICH THIS TAPE FALSIFIES.** `keyRows`' `digestTie`
+is a `Field.Assert.equal` joining the index sponge's squeeze to the transcript's FIRST absorbed
+word. The squeeze is the digest of `KimchiWrapMain`'s `STEP_VK_XY` literal — a *wrap* VK; the
+chain's first absorbed word is `STEP_VKDIGEST`, dregg's own STEP verifier index. They differ, so
+the honest witness fails that row and no rung above `w4_bind` can be emitted on this tape at all.
+**That is a sibling's lane** (the real step key), not a thing to work around, and the theorem below
+states it as the refutable fact it is: it goes red exactly when the key becomes real.
+
+⚑ **AND ONE FAMILY IS ABSORBED AND READ BY NOTHING, EVEN AT `w11_bullet`.** `t_comm`. §17's
+`ft_comm` ladders run over `ftcTVal` — doublings of SRS Lagrange bases — in cells of their own; no
+fold slot and no bullet input is a `T_TCOMM` absorbed cell, and the values are not equal either. So
+`WRAP_UNCONSUMED`'s `t_comm` entry is not a bookkeeping leftover: it is the one commitment family
+for which "absorbed" is still the whole story. -/
+
+/-- The chain's absorbed word `i` of tag `tag` — its σ class, read off the EMITTED trace.
+⚠ `KimchiPlacement.PVar` explicitly: this file's `open`s put a second `PVar` in scope and an
+unqualified ascription is a type mismatch, not an ambiguity error. -/
+def chainAbsV (tag i : Nat) : KimchiPlacement.PVar :=
+  ((chainRun.evs.filter (fun e => e.isAbs && e.tag == tag)).getD i default).wordV
+
+/-- …and the value that class holds. -/
+def chainAbsVal (tag i : Nat) : Nat :=
+  ((chainRun.evs.filter (fun e => e.isAbs && e.tag == tag)).getD i default).word
+
+/-- **`chain_absorbed_cells_are_the_step_proofs_own_words`** — the premise everything below needs,
+and it is not free: the trace's absorbed σ classes hold THIS step proof's tape, not a fixture's.
+Without this the two theorems after it would be about cells that happen to be wired together. -/
+theorem chain_absorbed_cells_are_the_step_proofs_own_words :
+    chainAbsVal T_DIGEST 0 = STEP_VKDIGEST
+    ∧ ((List.range (2 * shapeChain.prevs)).all
+        (fun i => chainAbsVal T_SGOLD i == STEP_PREVCOMM_XY.getD i 0)) = true
+    ∧ ((List.range 2).all (fun i => chainAbsVal T_XHAT i == STEP_PUBCOMM_XY.getD i 0)) = true
+    ∧ ((List.range (2 * shapeChain.wComms)).all
+        (fun i => chainAbsVal T_WCOMM i == STEP_WCOMM_XY.getD i 0)) = true
+    ∧ ((List.range 2).all (fun i => chainAbsVal T_ZCOMM i == STEP_ZCOMM_XY.getD i 0)) = true
+    ∧ ((List.range (2 * shapeChain.tComms)).all
+        (fun i => chainAbsVal T_TCOMM i == STEP_TCOMM_XY.getD i 0)) = true
+    ∧ chainAbsVal T_CIP 0 = STEP_CIP_WORD_FQ := by
+  native_decide
+
+#assert_compiled chain_absorbed_cells_are_the_step_proofs_own_words
+
+/-- **`chain_combine_would_fold_over_the_absorbed_cells`** — ⚑ W-COMBINE's 47-term fold, slot by
+slot, at the committed shape: nineteen of its inputs ARE the transcript's own σ classes, driven by
+this step proof. `combPtVar` allocates none of them (§23's own note), so this is a fact about the
+emitted assembly and not about a name.
+
+The three non-transcript families are named too, so the count is exhibited rather than asserted:
+`ft_comm` is §17's output, and the twenty-seven index/coefficient/sigma slots are W-KEY's sealed
+coordinates. -/
+theorem chain_combine_would_fold_over_the_absorbed_cells :
+    combTerms shapeChain = 47
+    ∧ ((List.range shapeChain.prevs).all (fun p =>
+        combPtVar tChain p == (chainAbsV T_SGOLD (2 * p), chainAbsV T_SGOLD (2 * p + 1)))) = true
+    ∧ combPtVar tChain shapeChain.prevs == (chainAbsV T_XHAT 0, chainAbsV T_XHAT 1)
+    ∧ combPtVar tChain (shapeChain.prevs + 2) == (chainAbsV T_ZCOMM 0, chainAbsV T_ZCOMM 1)
+    ∧ ((List.range shapeChain.wComms).all (fun j =>
+        combPtVar tChain (shapeChain.prevs + 3 + KEY_SINGLES + j)
+          == (chainAbsV T_WCOMM (2 * j), chainAbsV T_WCOMM (2 * j + 1)))) = true
+    ∧ combPtVar tChain (shapeChain.prevs + 1) == ftcOutV shapeChain chainRun := by
+  native_decide
+
+#assert_compiled chain_combine_would_fold_over_the_absorbed_cells
+
+/-- **`chain_prev_on_curve_checks_the_absorbed_sg_old_cells`** — the consumer NEAREST to this file's
+own rung, and the only one that is not a curve ladder. `w9_prev`'s `assert_on_curve` (three R1CS rows
+per point, `wrap_main.ml:201-256`) squares and cubes `sgOldVar`, which is the transcript's own
+`sg_old` σ class and not a second copy of it. So `sg_old` has TWO readers in the ladder — this and
+W-COMBINE's fold — and both read the cell the sponge wrote. -/
+theorem chain_prev_on_curve_checks_the_absorbed_sg_old_cells :
+    ((List.range shapeChain.prevs).all (fun p =>
+        sgOldVar tChain p 0 == chainAbsV T_SGOLD (2 * p)
+        && sgOldVar tChain p 1 == chainAbsV T_SGOLD (2 * p + 1))) = true := by
+  native_decide
+
+#assert_compiled chain_prev_on_curve_checks_the_absorbed_sg_old_cells
+
+/-- **`chain_bullet_would_read_the_absorbed_cells`** — the same for W-BULLET: `combined_inner_product`
+is `uc`'s scalar, the `2 · ipaRounds` `lr` points feed `bullet_reduce`'s 32 endo ladders, and `delta`
+feeds `lhs`. Thirty-five σ classes, every one of them the transcript's own. -/
+theorem chain_bullet_would_read_the_absorbed_cells :
+    bullCipV tChain == chainAbsV T_CIP 0
+    ∧ bullDeltaV tChain == (chainAbsV T_DELTA 0, chainAbsV T_DELTA 1)
+    ∧ ((List.range shapeChain.ipaRounds).all (fun r => (List.range 2).all (fun j =>
+        bullLrV tChain r j
+          == (chainAbsV T_LR (4 * r + 2 * j), chainAbsV T_LR (4 * r + 2 * j + 1))))) = true := by
+  native_decide
+
+#assert_compiled chain_bullet_would_read_the_absorbed_cells
+
+/-- **`the_consuming_rungs_values_are_still_the_borrowed_proofs`** — ⚑ BLOCKER ONE, stated so it is
+falsifiable rather than described. Every `Val` above answers with `KimchiWrapMain.itemVal` — the
+borrowed `create_circuit(0,5)` proof — while its `V` twin reads `tChain`'s own class. The second
+half of each conjunct is what makes this a diagnosis and not a complaint: the value IS `itemVal`'s,
+exactly, so the repair is to source it from `t.sp` and nothing else changes.
+
+⚠ This theorem GOES RED when that repair lands, and that is its job. -/
+theorem the_consuming_rungs_values_are_still_the_borrowed_proofs :
+    combPtVal tChain 0 ≠ (chainAbsVal T_SGOLD 0, chainAbsVal T_SGOLD 1)
+    ∧ combPtVal tChain 0 = (itemVal T_SGOLD 0, itemVal T_SGOLD 1)
+    ∧ combPtVal tChain (shapeChain.prevs + 2) ≠ (chainAbsVal T_ZCOMM 0, chainAbsVal T_ZCOMM 1)
+    ∧ combPtVal tChain (shapeChain.prevs + 2) = (itemVal T_ZCOMM 0, itemVal T_ZCOMM 1)
+    ∧ combPtVal tChain (shapeChain.prevs + 3 + KEY_SINGLES)
+        ≠ (chainAbsVal T_WCOMM 0, chainAbsVal T_WCOMM 1)
+    ∧ combPtVal tChain shapeChain.prevs ≠ (chainAbsVal T_XHAT 0, chainAbsVal T_XHAT 1)
+    ∧ bullCipVal tChain ≠ chainAbsVal T_CIP 0
+    ∧ bullDeltaVal ≠ (chainAbsVal T_DELTA 0, chainAbsVal T_DELTA 1)
+    ∧ bullLrVal 0 0 ≠ (chainAbsVal T_LR 0, chainAbsVal T_LR 1) := by
+  native_decide
+
+#assert_compiled the_consuming_rungs_values_are_still_the_borrowed_proofs
+
+/-- **`the_chain_cannot_climb_past_bind_until_the_step_key_is_real`** — ⚑ BLOCKER TWO, and it is a
+SIBLING'S and not this lane's. `keyRows`' closing `digestTie` puts the index sponge's squeeze and the
+transcript's first absorbed word in one σ class; here those are the digest of a *wrap* verifier index
+and the digest of dregg's own *step* one. `.key` is in `rungsUpto` of every rung above `w4_bind`, so
+this single row is why the chain stops where it stops — not W-COMBINE, not W-BULLET.
+
+⚠ It goes RED when `STEP_VK_XY` becomes dregg's own step key, which is exactly when the chain should
+climb. -/
+theorem the_chain_cannot_climb_past_bind_until_the_step_key_is_real :
+    (chainRun.evs.getD 0 default).word = STEP_VKDIGEST
+    ∧ keyDigestVal shapeChain chainRun ≠ STEP_VKDIGEST
+    ∧ keyDigestVal shapeChain chainRun
+        = Dregg2.Circuit.Emit.PastaPoseidonFq.VKDIGEST
+    ∧ (rungsUpto .combine).contains .key = true
+    ∧ (rungsUpto .bullet).contains .key = true
+    ∧ (rungsUpto .bind).contains .key = false := by
+  native_decide
+
+#assert_compiled the_chain_cannot_climb_past_bind_until_the_step_key_is_real
+
+/-- **`t_comm_is_absorbed_and_read_by_nothing`** — ⚑ the one commitment family for which
+"absorbed, not consumed" is still the WHOLE story, and the census's `t_comm` entry is therefore not
+a leftover. §17's `ft_comm` ladders run over `ftcTVal` — doublings of SRS Lagrange bases, in cells
+`ftcTV` allocates — so no `T_TCOMM` σ class reaches a gate: not one of W-COMBINE's 47 fold slots,
+and not W-BULLET's `lr`/`delta`/`cip` inputs. The value half is stated too, so this is not a claim
+about names: the points the ladders multiply are not the points the sponge absorbed. -/
+theorem t_comm_is_absorbed_and_read_by_nothing :
+    ((List.range (combTerms shapeChain)).all (fun k =>
+        (List.range (2 * shapeChain.tComms)).all (fun i =>
+          (combPtVar tChain k).1 != chainAbsV T_TCOMM i
+          && (combPtVar tChain k).2 != chainAbsV T_TCOMM i))) = true
+    ∧ ((List.range shapeChain.tComms).all (fun j =>
+        ftcTV shapeChain chainRun j != (chainAbsV T_TCOMM (2 * j), chainAbsV T_TCOMM (2 * j + 1))))
+       = true
+    ∧ ((List.range shapeChain.tComms).all (fun j =>
+        ftcTVal j != (chainAbsVal T_TCOMM (2 * j), chainAbsVal T_TCOMM (2 * j + 1)))) = true
+    ∧ WRAP_UNCONSUMED_KEYS.getD 4 "" = "t_comm" := by
+  native_decide
+
+#assert_compiled t_comm_is_absorbed_and_read_by_nothing
+
 /-! ## §10 — the renderer. Same JSON the pickles harnesses parse. -/
 
 /-- ⚠ ⚑ **RUNG-EXPLICIT IN EVERY ARGUMENT.** This read `wrapWitness t p rows` and `wrapPublic t`
