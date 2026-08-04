@@ -49,34 +49,74 @@ Both tallies are now **four 16-bit limbs each, LEAST-significant first — exact
 arithmetic, its soundness and its refusal live in `Dregg2.Circuit.LimbTally`; this file instantiates
 that theory twice and GENERATES the gates from it.
 
-## ⚑ THE FIDELITY NOTE: THE REFERENCE IMPLEMENTATION COMPARES A FLOAT RATIO
+## ⚑ THE STRICTNESS REPAIR (2026-08-03): THE THRESHOLD WAS THE WRONG POLARITY
 
-agave's threshold constant is `pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;`
-(`runtime/src/commitment.rs:9`, read at source 2026-08-03), and the comparison it drives is
-`(*stake as f64 / total_stake as f64) > self.threshold_size` (`core/src/consensus.rs`,
-`Tower::is_slot_confirmed`, line 1041 on master at that date). **That is a float ratio, and a circuit
-cannot evaluate it** — so the integer form is a choice this AIR makes, and saying which choice is part
-of the fidelity claim rather than a decoration:
+This descriptor shipped `γ = 0` — the NON-STRICT `3·rooted ≥ 2·total`. **That is not Solana's rule.**
+Read at source 2026-08-03 (agave `c7670b260b8cd34674e05c03c0babdaf54e15987`):
 
-  * `2f64 / 3f64` is the double `0.666666666666666629659…`, which is strictly BELOW 2/3. So agave's
-    STRICT `>` against it already admits ratios that a strict `> 2/3` would reject.
-  * At live scale the operands are not even representable: `432650183925625587` as `f64` is
-    `432650183925625600` — 13 lamports off, with a 64-lamport ULP at 2^58. agave's threshold is
-    accurate to about a ULP there.
+    runtime/src/commitment.rs:9        pub const VOTE_THRESHOLD_SIZE: f64 = 2f64 / 3f64;
+    core/src/commitment_service.rs:59  if (stake_sum as f64 / total_stake as f64) > VOTE_THRESHOLD_SIZE
 
-This AIR carries the **NON-STRICT** integer form `3·rooted ≥ 2·total` (`solVerifyDecision`'s
-`2 * totalStk ≤ 3 * rootedStk`), i.e. chain parameters `α = 3, β = 2, γ = 0`. It is UNCHANGED by this
-work — the strictness is the existing semantics, and the two bullets above are why non-strict is the
-defensible reading of a float comparison against a double that sits below the true ratio, not a
-loosening. ⚠ It is still NOT a bit-for-bit model of agave's float arithmetic; nothing in a prime field
-is.
+`get_highest_super_majority_root` (`core/src/commitment_service.rs:54-64`) IS the rooted-finality rule
+this AIR models — it walks per-validator rooted stake against the epoch total and returns the highest
+root clearing the threshold — and its comparison is **STRICT `>`**.
+
+⚠ **The previous version of this note cited `core/src/consensus.rs`'s `Tower::is_slot_confirmed` at
+"line 1041". That function is `#[cfg(test)]`** (`core/src/consensus.rs:584-596` at the sha above) —
+a test helper, not the reference comparison. The production rule is the one quoted above.
+
+The old defence of non-strict was: `2f64 / 3f64` is the double `0.666666666666666629659…`, strictly
+BELOW 2/3, so agave's `>` against it already admits ratios a strict `> 2/3` would reject. That is TRUE
+about the CONSTANT and WRONG about the COMPARISON — **the dividend is rounded to the same double.**
+When `rooted/total` is exactly 2/3 and both operands are exactly representable, the correctly-rounded
+quotient IS `2f64/3f64`, and `d > d` is false. agave refuses the exact-2/3 point; the shipped γ = 0
+accepted it.
+
+MEASURED (`agave_strictness_equiv.rs`, agave's comparison transcribed verbatim, 2026-08-03):
+
+  * FULL exhaustive `r ∈ [0, t]` for every `t ≤ 3000` (4 504 500 pairs), a windowed sweep to
+    `t = 20 000`, and 2 000 000 random pairs at `t < 2^52`: agave's float rule and the STRICT integer
+    rule `3·rooted > 2·total` disagree on **ZERO of 6 684 470 pairs**. agave and the NON-STRICT rule
+    disagree on 1000 of the full-exhaustive pairs — every one the exact-2/3 point, every one this AIR
+    ACCEPTING where agave REFUSES.
+  * ⚑ At `total = 0`: `0f64 / 0f64` is `NaN` and `NaN > x` is FALSE, so **agave refuses the empty
+    stake table at the threshold comparison itself.** The shipped γ = 0 accepted it (`3·0 ≥ 2·0`).
+    That is the empty-stake hole, and it was an INFIDELITY, not a design choice.
+  * Above `2^53` neither integer form matches: `total as f64` is itself rounded and the boundary
+    acquires ±1 lamport of jitter (`432650183925625587` as `f64` is `432650183925625600`, 13 lamports
+    off, ULP 64 at 2^58). At live magnitude agave disagrees with strict on 32.8% of boundary-adjacent
+    pairs and with non-strict on 43.8%. Strict is the closer AND the conservative one — it refuses
+    inside the jitter band rather than accepting inside it.
+
+So this AIR now carries `α = 3, β = 2, **γ = 1**` — `3·rooted ≥ 2·total + 1`, the same constants
+Midnight and Tendermint already carried. ⚠ Still NOT a bit-for-bit model of agave's float arithmetic
+above 2^53; nothing in a prime field is. What IS established: strict reproduces agave EXACTLY wherever
+agave's own arithmetic is exact, and errs toward refusal where it is not.
+
+## ⚠ AND THE RULE IS BEING REPLACED — say it before someone reads `γ = 1` as permanent
+
+Alpenglow (`votor/`) is in agave master TODAY and does not use this rule at all.
+`votor/src/aggregate_accumulator.rs:94-95` builds a certificate iff
+`Fraction::new(stake, total) >= cert_type.threshold()` — **NON-STRICT**, by EXACT `u128`
+cross-multiplication (`votor-messages/src/fraction.rs:47-60` — no floats, and structurally the same
+`α·A ≥ β·B` shape a circuit wants), against **60%** (Notarize / Finalize / Skip / NotarizeFallback)
+and **80%** (FinalizeFast) (`votor-messages/src/certificate.rs:101-109`), with an 82% migration
+threshold (`votor-messages/src/migration.rs:87`). So the successor rule is non-strict — at 3/5 and
+4/5, not 2/3, and over a CERTIFICATE rather than a rooted-stake walk. It is not a retroactive defence
+of γ = 0.
+
+mainnet-beta was still on the Tower rule when this was written: measured 2026-08-03, `getVersion` →
+`solana-core 4.1.0` and `getBlockCommitment` still serves the Tower `BlockCommitmentCache`, reporting
+`totalStake = 432650183925625587` — the exact denominator §7 pins. **When Alpenglow activates, this
+descriptor is wrong again**, in the constant AND in the shape, and that is a re-authoring, not a
+parameter tweak.
 
 ## The crypto boundary: IN-AIR logic vs NAMED verified carriers
 
   * IN-AIR (arithmetic gates over the trace — the stake TALLY logic, the Nomad-class bug locus):
-      - the ≥2/3 supermajority `3·rooted ≥ 2·total` as a LIMBED comparison: four rungs of an offset
-        carry chain over the two `u64` limb vectors, five range-checked difference limbs, `α = 3,
-        β = 2, γ = 0`;
+      - the STRICT >2/3 supermajority `3·rooted ≥ 2·total + 1` as a LIMBED comparison: four rungs of
+        an offset carry chain over the two `u64` limb vectors, five range-checked difference limbs,
+        `α = 3, β = 2, γ = 1`;
       - the `EmptyStakeTable` floor `total ≥ 1` as a SECOND limbed chain over the SAME total-stake
         limb vector, `α = 1, β = 0, γ = 1`;
       - the ROOTED flag (`ROOTED_OK = 1` — HOLE-1) and the AUTHORIZED-voter binding (`AUTH_OK = 1` —
@@ -109,6 +149,20 @@ of non-negative limbs denotes a non-negative value and `1 ≤ 0` is false — a 
 true at EVERY width in EVERY field (`solLcAir_refuses_the_empty_stake_table`,
 `sol_empty_stake_refusal_is_field_independent`). Widening the representable tally by 2^33× does not
 re-admit it; it removes the field size from the refusal's premises.
+
+⚑ **AND THE FLOOR IS NO LONGER ALONE.** That the quorum ADMITTED the empty set was not an artefact of
+the limbing — it was `γ = 0`, and `γ = 0` was a fidelity defect (agave gets this refusal for free from
+`NaN > x = false`; see the strictness note above). With `γ = 1` the quorum difference at
+`rooted = total = 0` is `3·0 − 2·0 − 1 = −1` and the QUORUM chain refuses the empty stake table from
+its own five difference limbs (cols 12..16) and its own four carries (cols 17..20)
+(`solLcAir_quorum_also_refuses_the_empty_stake_table`). Two gates on disjoint columns, neither
+subsuming the other (`sol_two_teeth_are_independent`) — the shape Midnight already had.
+
+⚠ **Bound the independence claim honestly.** The two refusals read disjoint columns and are carried by
+distinct gate sets, so disarming either leaves the other standing — that is demonstrated on the
+DEPLOYED prover, one at a time, in `circuit/tests/solana_lightclient_proves.rs`. They are NOT
+independent all the way down: both bottom out in `LimbTally.limbValue_nonneg`. Two gates, one lemma —
+exactly as Midnight's pair is, and a break in that lemma takes both.
 
 ## The two declared range tables, and the one that is GONE
 
@@ -168,6 +222,27 @@ ROTATES and `circuit/descriptors/by-name/dregg-solana-lightclient-verify-v1.json
 Rust witness filler for this descriptor must now fill limb vectors and two carry chains instead of two
 felt slacks; the old 19-column row REFUSES to satisfy the new descriptor (its columns are not even the
 same quantities). Nothing else in the tree consumes this AIR yet.
+
+⚑ **AND A SECOND FLAG DAY, SAME DAY: THE STRICTNESS REPAIR (`γ = 0 → 1`).** The emitted object moves
+by ONE constant — the quorum chain's LSB rung goes `8388608 → 8388607` — so the shape (41 / 11 / 51 /
+two tables) is UNCHANGED and only the bytes move. What that costs, said out loud:
+
+  * `dregg-solana-lightclient-verify::v1`'s VK **ROTATES AGAIN**, and
+    `circuit/descriptors/by-name/dregg-solana-lightclient-verify-v1.json` is RE-EMITTED a second time.
+  * ⚑ **Rows that proved before now REFUSE.** Every witness at exactly `3·rooted = 2·total` — which is
+    where a minimal-quorum filler naturally lands, and IS the row §7 shipped — has no satisfying
+    assignment. `MIN_QUORUM` in the Rust harness moves up by ONE LAMPORT
+    (`288433455950417058 → 288433455950417059`) and the old value becomes a REFUSAL fixture.
+  * `solVerifyDecision` and `SolValidAt` in `Dregg2.Bridge.LightClientSolana` change with it
+    (`2·total ≤ 3·rooted` → `<`), so `sol_no_forgery`'s conclusion is STRICTLY STRONGER than before;
+    the two downstream hash-fold modules that take the threshold as a hypothesis
+    (`Sha256HfoldDischarge`, `LightClientSolHashFold`) take the strict form now.
+  * `bridge/src/solana_consensus.rs`'s `is_supermajority` (`:333`) carried the SAME non-strict `>=`
+    and moves with them — it is the deployed node-side tally, and leaving it non-strict would put the
+    hole back one layer down.
+
+  Nothing refuses to LOAD (the descriptor's shape is identical), which is the one uncomfortable part
+  of this flag day: a stale VK against the new bytes fails at VERIFY, not at parse.
 
 ## Axiom hygiene
 Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load-bearing
@@ -350,11 +425,17 @@ def tposRungs : List LimbTally.Rung :=
 /-- The floor difference vector's TOP limb — the chain's closure column. -/
 def TPOS_TOP : Nat := TPOS_LIMB 4
 
-/-- The emitted QUORUM gate bodies: `α = 3` on rooted stake, `β = 2` on total stake, `γ = 0` for
-Solana's NON-STRICT `≥ 2/3` (contrast Tendermint's `γ = 1`). Five bodies from four rungs (one per rung
-plus the closure gate). -/
+/-- The emitted QUORUM gate bodies: `α = 3` on rooted stake, `β = 2` on total stake, and ⚑ `γ = 1`
+for agave's **STRICT** `> 2/3` (`get_highest_super_majority_root`'s `>`; the module header carries the
+6.68-million-pair measurement that settled it) — the same constants Midnight and Tendermint already
+carried. Five bodies from four rungs (one per rung plus the closure gate).
+
+⚑ It was `γ = 0`. γ enters `LimbTally.chainBodies` as the initial `g` and NOWHERE else (every
+recursive call re-seeds `g := 0`), so the whole difference in the EMITTED OBJECT is one constant on
+the LSB rung: `coff·2^bits − γ` goes `8388608 → 8388607`. One literal — and it is the difference
+between refusing a block signed by nobody and accepting one. -/
 def qdiffChainBodies : List EmittedExpr :=
-  LimbTally.chainBodies SOL_LIMB_BITS 3 2 0 LimbTally.TALLY_CARRY_OFF QDIFF_TOP qdiffRungs
+  LimbTally.chainBodies SOL_LIMB_BITS 3 2 1 LimbTally.TALLY_CARRY_OFF QDIFF_TOP qdiffRungs
 
 /-- The emitted FLOOR gate bodies: `α = 1`, `β = 0`, `γ = 1` — i.e. `total − 1 ≥ 0`, the
 `EmptyStakeTable` refusal. Five bodies from four rungs. -/
@@ -585,11 +666,51 @@ difference-limb containment — for EVERY limb width, including the widths at wh
 tooth was vacuous (`≥ 31`) and the width at which it was merely leaky (30). -/
 theorem sol_quorum_refusal_is_field_independent (a : Assignment) (bits : Nat)
     (hfail : 3 * LimbTally.limbValue bits a (LimbTally.aCols qdiffRungs)
-      - 2 * LimbTally.limbValue bits a (LimbTally.bCols qdiffRungs) < 0) :
+      - 2 * LimbTally.limbValue bits a (LimbTally.bCols qdiffRungs) < 1) :
     ¬ (LimbTally.BodiesVanish a
-        (LimbTally.chainBodies bits 3 2 0 LimbTally.TALLY_CARRY_OFF QDIFF_TOP qdiffRungs)
+        (LimbTally.chainBodies bits 3 2 1 LimbTally.TALLY_CARRY_OFF QDIFF_TOP qdiffRungs)
       ∧ LimbTally.LimbsInRange bits a (LimbTally.diffCols qdiffRungs QDIFF_TOP)) :=
   LimbTally.emitted_chain_refuses hfail
+
+/-- ⚑⚑ **THE SECOND TOOTH ON THE EMPTY STAKE TABLE — the quorum chain, not the floor.**
+
+At `rooted = total = 0` the STRICT quorum difference is `3·0 − 2·0 − 1 = −1`, and no limb vector of
+non-negative limbs denotes `−1`. So the QUORUM chain refuses a block signed by nobody **on its own**,
+reading its own five difference limbs (cols 12..16) and its own four carries (cols 17..20) — columns
+the emptiness floor never touches.
+
+⚑ This is what `γ = 0` cost, stated as the thing that changed: at `γ = 0` the same row filled to
+`3·0 − 2·0 = 0`, an honest, in-range, ACCEPTING fill, and `tposChainBodies` was the ONLY gate between
+this descriptor and a block signed by nobody. It is now one of two.
+
+⚠ Independence, honestly bounded: the two refusals read DISJOINT difference columns, are carried by
+DISTINCT gate sets, and neither implies the other (the floor also refuses `total = 0` at any
+`rooted > 0`, which the quorum admits; the quorum also refuses every sub-quorum at `total > 0`, which
+the floor admits — `sol_two_teeth_are_independent`). They are NOT independent all the way down: both
+bottom out in `LimbTally.limbValue_nonneg`, exactly as Midnight's pair does. Two gates, one lemma. -/
+theorem solLcAir_quorum_also_refuses_the_empty_stake_table (a : Assignment) (bits : Nat)
+    (hRooted : LimbTally.limbValue bits a (LimbTally.aCols qdiffRungs) = 0)
+    (hTotal : LimbTally.limbValue bits a (LimbTally.bCols qdiffRungs) = 0) :
+    ¬ (LimbTally.BodiesVanish a
+        (LimbTally.chainBodies bits 3 2 1 LimbTally.TALLY_CARRY_OFF QDIFF_TOP qdiffRungs)
+      ∧ LimbTally.LimbsInRange bits a (LimbTally.diffCols qdiffRungs QDIFF_TOP)) := by
+  refine LimbTally.emitted_chain_refuses ?_
+  rw [hRooted, hTotal]; norm_num
+
+/-- ⚑ **NEITHER TOOTH SUBSUMES THE OTHER — the arithmetic, so "depth" is not a mood.**
+
+`(rooted, total) = (5, 0)`: the strict quorum is SATISFIED (`15 ≥ 1`) and the emptiness floor FAILS
+(`0 < 1`) — a prover claiming rooted stake against a table with no stake in it is caught by the floor
+alone. `(rooted, total) = (1, 3)`: the floor is SATISFIED (`3 ≥ 1`) and the quorum FAILS (`3 < 7`) —
+a sub-quorum is caught by the quorum alone. And `(0, 0)` fails BOTH.
+
+So the pair covers strictly more than either member, which is the whole claim `depth` is making. -/
+theorem sol_two_teeth_are_independent :
+    (1 ≤ 3 * 5 - 2 * 0 ∧ ¬ (1 ≤ (0 : ℤ)))
+    ∧ (1 ≤ (3 : ℤ) ∧ ¬ (1 ≤ 3 * 1 - 2 * 3))
+    ∧ (¬ (1 ≤ 3 * 0 - 2 * 0) ∧ ¬ (1 ≤ (0 : ℤ))) := by
+  refine ⟨⟨by norm_num, by norm_num⟩, ⟨by norm_num, by norm_num⟩,
+    ⟨by norm_num, by norm_num⟩⟩
 
 /-- ⚑ **AND SO DOES THE EMPTY-STAKE-TABLE REFUSAL — the check that actually FAILED.** At `total = 0`
 the floor difference is `−1`; no limb vector of non-negative limbs denotes `−1`. Quantified over
@@ -624,19 +745,24 @@ word "inside": the quorum rung's ℤ image sits in `(−16973952, 8585472)` and 
 `(−16842881, 8454400)`, against `p = 2013265921`. So a body that is `0 mod p` on a range-respecting
 assignment IS `0` over `ℤ`, and `LimbTally.chain_recomposes` transfers to the deployed denotation. -/
 
-/-- **NO ALIAS ON THE QUORUM CHAIN** (`α = 3, β = 2, γ = 0`, `coff = 128`, limbs 16, carries 8). -/
+/-- **NO ALIAS ON THE QUORUM CHAIN** (`α = 3, β = 2, γ = 1`, `coff = 128`, limbs 16, carries 8).
+
+⚑ At `γ = 1` these are exactly `LimbTally.TALLY_*`'s deployed constants, so this instance now
+COINCIDES with `LimbTally.rung_no_alias_at_deployed_constants` rather than needing its own reading of
+the parametric bound. It is still proved here from `rung_value_bounds` — a local proof of a local
+claim cannot silently inherit a sibling's constants if either drifts. -/
 theorem sol_qdiff_rung_no_alias (x y d cin cout : ℤ)
     (hx : 0 ≤ x ∧ x < (2 : ℤ) ^ SOL_LIMB_BITS) (hy : 0 ≤ y ∧ y < (2 : ℤ) ^ SOL_LIMB_BITS)
     (hd : 0 ≤ d ∧ d < (2 : ℤ) ^ SOL_LIMB_BITS)
     (hcin : 0 ≤ cin ∧ cin < (2 : ℤ) ^ SOL_CARRY_BITS)
     (hcout : 0 ≤ cout ∧ cout < (2 : ℤ) ^ SOL_CARRY_BITS) :
     -Dregg2.Circuit.Emit.EffectLower.P
-        < 3 * x - 2 * y + (cin - LimbTally.TALLY_CARRY_OFF) - d
+        < 3 * x - 2 * y - 1 + (cin - LimbTally.TALLY_CARRY_OFF) - d
           - (cout - LimbTally.TALLY_CARRY_OFF) * (2 : ℤ) ^ SOL_LIMB_BITS
-    ∧ 3 * x - 2 * y + (cin - LimbTally.TALLY_CARRY_OFF) - d
+    ∧ 3 * x - 2 * y - 1 + (cin - LimbTally.TALLY_CARRY_OFF) - d
           - (cout - LimbTally.TALLY_CARRY_OFF) * (2 : ℤ) ^ SOL_LIMB_BITS
         < Dregg2.Circuit.Emit.EffectLower.P := by
-  obtain ⟨hlo, hhi⟩ := LimbTally.rung_value_bounds SOL_LIMB_BITS SOL_CARRY_BITS 3 2 0
+  obtain ⟨hlo, hhi⟩ := LimbTally.rung_value_bounds SOL_LIMB_BITS SOL_CARRY_BITS 3 2 1
     LimbTally.TALLY_CARRY_OFF x y d cin cout (by norm_num) (by norm_num) (by norm_num)
     (by norm_num [LimbTally.TALLY_CARRY_OFF]) hx hy hd hcin hcout
   have hp : (Dregg2.Circuit.Emit.EffectLower.P : ℤ) = 2013265921 := rfl
@@ -675,8 +801,8 @@ private predicate resembling them. (The replacement for the old `qDiff_body_zero
 same thing about the ONE hand-written felt gate.) -/
 theorem sol_qdiff_chain_zero_iff (a : Assignment) :
     LimbTally.BodiesVanish a qdiffChainBodies
-      ↔ LimbTally.ChainOk SOL_LIMB_BITS 3 2 LimbTally.TALLY_CARRY_OFF a QDIFF_TOP qdiffRungs 0 0 :=
-  LimbTally.chainBodies_zero_iff SOL_LIMB_BITS 3 2 0 LimbTally.TALLY_CARRY_OFF a QDIFF_TOP qdiffRungs
+      ↔ LimbTally.ChainOk SOL_LIMB_BITS 3 2 LimbTally.TALLY_CARRY_OFF a QDIFF_TOP qdiffRungs 1 0 :=
+  LimbTally.chainBodies_zero_iff SOL_LIMB_BITS 3 2 1 LimbTally.TALLY_CARRY_OFF a QDIFF_TOP qdiffRungs
 
 /-- **THE FLOOR CHAIN'S GENERATED BODIES ARE EXACTLY `ChainOk`** — the replacement for the old
 `tPos_body_zero_iff`. -/
@@ -738,11 +864,11 @@ theorem solLcAir_sound (a : Assignment)
     (hacc : airAccepts a) :
     solVerifyDecision rootedStk totalStk edB stakeB rootedB authB = true := by
   obtain ⟨hqBodies, hqLimbs, htBodies, htLimbs, hedB, hstkB, hrootedB, hauthB⟩ := hacc
-  -- ⚑ Threshold: `0 ≤ 3·rooted − 2·total`, AT ANY TALLY MAGNITUDE.
-  have hthr : 2 * totalStk ≤ 3 * rootedStk := by
+  -- ⚑ Threshold: `1 ≤ 3·rooted − 2·total` — STRICT, AT ANY TALLY MAGNITUDE.
+  have hthr : 2 * totalStk < 3 * rootedStk := by
     have hcmp := LimbTally.emitted_chain_sound hqBodies hqLimbs
     rw [hr, ht] at hcmp
-    have : 2 * (totalStk : ℤ) ≤ 3 * (rootedStk : ℤ) := by linarith
+    have : 2 * (totalStk : ℤ) < 3 * (rootedStk : ℤ) := by linarith
     exact_mod_cast this
   -- ⚑ Total positivity (the `EmptyStakeTable` floor): `1 ≤ 1·total − 0·total`.
   have hpos : 0 < totalStk := by
@@ -839,7 +965,7 @@ theorem solLcAir_complete (a : Assignment)
 -- the two hand-written felt slacks + their two lookups replaced by TEN GENERATED chain gates and
 -- twenty-six per-limb lookups. Captured from this module's own `emitVmJson2`.
 #guard emitVmJson2 solLcVerifyDesc ==
-  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":41,\"public_input_count\":11,\"tables\":[{\"id\":85,\"name\":\"range_w16\",\"arity\":1,\"sem\":\"range\",\"bits\":16},{\"id\":77,\"name\":\"range_w8\",\"arity\":1,\"sem\":\"range\",\"bits\":8}],\"constraints\":[{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":10}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":23}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":24}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":25}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":18}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":20}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":27}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":28}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":29}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":8}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":12}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":17}}},\"r\":{\"t\":\"const\",\"v\":8388608}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":9}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":18}}},\"r\":{\"t\":\"var\",\"v\":17}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":10}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":14}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":19}}},\"r\":{\"t\":\"var\",\"v\":18}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":11}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":21}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":26}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":27}}},\"r\":{\"t\":\"var\",\"v\":26}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":23}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":28}}},\"r\":{\"t\":\"var\",\"v\":27}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":7}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":24}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":29}}},\"r\":{\"t\":\"var\",\"v\":28}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":29},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":25}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":30,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":31,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":32,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":33,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":34,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":35,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":36,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":41,\"public_input_count\":11,\"tables\":[{\"id\":85,\"name\":\"range_w16\",\"arity\":1,\"sem\":\"range\",\"bits\":16},{\"id\":77,\"name\":\"range_w8\",\"arity\":1,\"sem\":\"range\",\"bits\":8}],\"constraints\":[{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":10}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":23}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":24}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":25}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":18}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":20}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":27}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":28}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":29}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":8}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":12}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":17}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":9}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":18}}},\"r\":{\"t\":\"var\",\"v\":17}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":10}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":14}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":19}}},\"r\":{\"t\":\"var\",\"v\":18}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":11}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":21}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":26}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":27}}},\"r\":{\"t\":\"var\",\"v\":26}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":23}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":28}}},\"r\":{\"t\":\"var\",\"v\":27}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":7}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":24}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":29}}},\"r\":{\"t\":\"var\",\"v\":28}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":29},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":25}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":30,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":31,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":32,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":33,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":34,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":35,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":36,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-- Shape pins (robust; a layout drift moves these). Converted from `#guard` per
 `metatheory/docs/GUARD-DISCIPLINE.md` — a `#guard` is the same unsafe evaluation with the name, the
@@ -891,6 +1017,82 @@ theorem sol_bank_root_anchor_layout :
       ∧ BANK_ROOT 8 < SLOT_COL
       ∧ 31 * BANK_ROOT_LIMBS ≥ 256 := by decide
 
+/-! ## §6b — ⚑⚑ WHAT THIS AIR DOES **NOT** BIND: the published anchors, measured rather than
+described.
+
+The header calls the anchor binding a "NOT-YET-CLOSED named residual". That was prose, and prose is
+not a gate (`feedback-a-documented-wound-is-not-a-detected-one`). This section makes it a decidable
+fact about the EMITTED object, so it reds the day the in-AIR-crypto iteration lands.
+
+⚑ **The fact is stronger than the prose was.** The residual was written as "the anchors are published
+but not yet arithmetically bound to the CARRIER BITS". Measured on the emitted constraint list, the
+eleven PI-bound columns occur in **no gate body and no lookup tuple at all** — not tied to the
+carriers, not tied to the tally, not tied to EACH OTHER. `solLcVerifyDesc` decomposes into
+arithmetically DISCONNECTED islands:
+
+    {0} {1} {2} {3}            — four carrier/gate bits, each forced `= 1`, each alone
+    {4 … 29}                   — the tally block: two u64 limb vectors + two comparison chains
+    {30} {31} … {40}           — eleven published anchors, each a singleton pinned to one PI
+
+So a verifying proof of this descriptor says: *the prover exhibited a `(total, rooted)` pair
+satisfying `total ≥ 1` and `3·rooted > 2·total`, set four bits to 1, and separately exhibited eleven
+public field elements.* **Nothing in the emitted object relates those eleven values — the claimed
+bank hash and slot — to the tally, or to anything.** The quorum arithmetic is real; what it is
+arithmetic ABOUT is chosen by the prover.
+
+⚠ This is not a defect in `solLcAir_no_forgery` — read that theorem's HYPOTHESES. `hr`, `ht`, `hed`,
+`hstk`, `hrooted`, `hauth` say "row `a` reads update `u`'s TRUE projections", and they are supplied
+from OUTSIDE the circuit. The theorem is exactly "if the trace honestly encodes the real update, then
+acceptance entails validity", and the emitted object cannot check the antecedent. That is the whole
+content of "witnessed carrier", and it is the same posture as `LightClientMinaAir`'s `LINK_OK` /
+`PICKLES_OK`. Measured 2026-08-03, the identical decomposition holds for the Midnight and Tendermint
+descriptors. -/
+
+/-- The trace columns an `EmittedExpr` reads. -/
+def exprCols : EmittedExpr → List Nat
+  | .var c    => [c]
+  | .const _  => []
+  | .add l r  => exprCols l ++ exprCols r
+  | .mul l r  => exprCols l ++ exprCols r
+
+/-- The trace columns a constraint ARITHMETICALLY relates. A `piBinding` contributes NOTHING here on
+purpose: it ties a column to a public input, not to another column, so it cannot connect the anchor
+block to the tally. That asymmetry is exactly what this section is measuring. -/
+def constraintCols : VmConstraint2 → List Nat
+  | .base (.gate b)          => exprCols b
+  | .base (.boundary _ b)    => exprCols b
+  | .lookup l                => l.tuple.flatMap exprCols
+  | _                        => []
+
+/-- The eleven PI-bound columns: the pinned WS anchor root, the nine bank-root limbs, the slot. -/
+def publicAnchorCols : List Nat :=
+  [ANCHOR_ROOT, BANK_ROOT 0, BANK_ROOT 1, BANK_ROOT 2, BANK_ROOT 3, BANK_ROOT 4,
+   BANK_ROOT 5, BANK_ROOT 6, BANK_ROOT 7, BANK_ROOT 8, SLOT_COL]
+
+/-- ⚑⚑ **THE PUBLISHED ANCHORS ARE ARITHMETICALLY INERT.** No gate body and no lookup tuple in
+`solLcVerifyDesc` reads any of the eleven PI-bound columns. The claimed bank hash and rooted slot are
+carried THROUGH the proof, not constrained BY it.
+
+⚠ **TRIPWIRE, and it is meant to go red.** The in-AIR-crypto iteration (`ED_OK` derived from the vote
+message built on `BANK_ROOT` + `SLOT`; `STAKE_TABLE_OK` derived from the table fold into
+`ANCHOR_ROOT`) makes these columns appear in gate bodies, and this theorem FAILS the moment it does.
+Deleting it then is the correct move; weakening it is not. -/
+theorem sol_public_anchors_are_arithmetically_inert :
+    ∀ c ∈ solLcVerifyDesc.constraints, ∀ col ∈ constraintCols c, col ∉ publicAnchorCols := by
+  decide
+
+/-- ⚑ …and the other half of the same measurement: the four carrier/gate bits are read by NOTHING but
+their own forcing gates, so no arithmetic anywhere else in the descriptor depends on them. Each is a
+one-column island (`ED_OK` is read only by `edBody`, and so on).
+
+Together with the theorem above this is the disconnection in full: the tally block relates to no
+carrier and to no anchor, and the anchors relate to nothing at all. -/
+theorem sol_tally_block_reads_no_carrier_and_no_anchor :
+    ∀ c ∈ (qdiffChainGates ++ tposChainGates ++ tallyRangeLookups),
+      ∀ col ∈ constraintCols c,
+        col ∉ ([ED_OK, STAKE_TABLE_OK, ROOTED_OK, AUTH_OK] ++ publicAnchorCols) := by
+  decide
+
 /-! ## §7 — ⚑ THE MEASUREMENT: MAINNET-BETA'S LIVE ACTIVE STAKE, AT THE QUORUM BOUNDARY.
 
 This is the section the whole change exists for. Everything below is a NAMED THEOREM over an explicit
@@ -902,23 +1104,30 @@ prover.
 1011, slot 436,909,708): 432.650M SOL, `2^58.586`, 214.9 million times the BabyBear modulus. It never
 fit a column.
 
-⚑ And the two cases below differ by **ONE LAMPORT OUT OF 4.3e17**: `rootedStk = 288433455950417058` is
-the SMALLEST value satisfying Solana's non-strict `3·rooted ≥ 2·total`; `288433455950417057` is one
-below it and must be REJECTED. The first ACCEPTS, the second has no satisfying assignment. -/
+⚑ And the two cases below differ by **ONE LAMPORT OUT OF 4.3e17**: `rootedStk = 288433455950417059`
+is the SMALLEST value satisfying agave's STRICT `3·rooted > 2·total`; `288433455950417058` is one
+below it — the EXACT-2/3 point — and must be REJECTED. The first ACCEPTS, the second has no
+satisfying assignment.
+
+⚑⚑ **That one lamport is the whole strictness repair, exhibited.** `288433455950417058` is precisely
+the value the shipped `γ = 0` accepted and agave refuses (`3·R = 865300367851251174 = 2·T` exactly),
+so the refusal below is not a new boundary — it is the OLD boundary moved to where the reference
+client's is. -/
 
 /-- The honest row at live mainnet-beta scale, as the cell vector a Rust harness fills. Written as a
 LIST so the Lean row and the Rust trace row are literally the same 41 numbers in the same order — a
 divergence between the two is a diff on one object, not a comparison of two readings.
 
-⚑ Note the QUORUM CARRIES: `[127, 127, 130, 128]` is `[−1, −1, +2, 0]` offset by 128. The quorum
-difference limbs are all zero (live active stake happens to be divisible by 3, so the minimal quorum
-hits `3·S − 2·T = 0` exactly) but the CHAIN IS NOT trivially satisfied — two rungs BORROW and one
-carries `+2`. The all-zero difference is the boundary, not a degenerate row. -/
+⚑ Note the QUORUM CARRIES: `[127, 127, 130, 128]` is `[−1, −1, +2, 0]` offset by 128 — two rungs
+BORROW and one carries `+2`, so the chain is not trivially satisfied. ⚑ The quorum difference now
+denotes `3·R − 2·T − 1 = 2` rather than the `0` the non-strict fill produced; live active stake is
+divisible by 3, so the STRICT minimum overshoots the ratio by exactly one lamport of rooted stake
+(three of difference, minus the `γ = 1`). -/
 def solMaxScaleCells : List ℤ :=
   [ 1, 1, 1, 1                       -- ED_OK, STAKE_TABLE_OK, ROOTED_OK, AUTH_OK
   , 62195, 52452, 5388, 1537         -- TOTAL_STK  limbs = 432650183925625587 (live active stake)
-  , 19618, 13123, 47283, 1024        -- ROOTED_STK limbs = 288433455950417058 (minimal quorum)
-  , 0, 0, 0, 0, 0                    -- QDIFF      limbs = 3·R − 2·T = 0
+  , 19619, 13123, 47283, 1024        -- ROOTED_STK limbs = 288433455950417059 (minimal STRICT quorum)
+  , 2, 0, 0, 0, 0                    -- QDIFF      limbs = 3·R − 2·T − 1 = 2
   , 127, 127, 130, 128               -- QDIFF carries, offset (honest carries −1, −1, +2, 0)
   , 62194, 52452, 5388, 1537, 0      -- TPOS       limbs = T − 1 = 432650183925625586
   , 128, 128, 128, 128               -- TPOS carries, offset (honest carry 0 rides as 128)
@@ -938,15 +1147,21 @@ theorem solMaxScaleRow_total_is_live_active_stake :
     LimbTally.limbValue SOL_LIMB_BITS solMaxScaleRow (LimbTally.bCols qdiffRungs)
       = 432650183925625587 := by decide
 
-/-- …and the rooted stake is the SMALLEST non-strict `≥ 2/3` quorum of it. -/
+/-- …and the rooted stake is the SMALLEST STRICT `> 2/3` quorum of it. -/
 theorem solMaxScaleRow_rooted_is_minimal_quorum :
     LimbTally.limbValue SOL_LIMB_BITS solMaxScaleRow (LimbTally.aCols qdiffRungs)
-      = 288433455950417058 := by decide
+      = 288433455950417059 := by decide
 
-/-- …which really is minimal: `3·R ≥ 2·T` holds at `R`, and FAILS one lamport below. -/
+/-- …which really is minimal: the STRICT `2·T < 3·R` holds at `R`, and FAILS one lamport below.
+
+⚑ **And the value one lamport below is the EXACT-2/3 point** — `3 · 288433455950417058` is
+`865300367851251174`, which is `2 · 432650183925625587` on the nose. So the third conjunct records
+what the shipped non-strict rule did with it: ACCEPT. The repair is exactly this one row flipping. -/
 theorem minimal_quorum_is_minimal :
-    2 * 432650183925625587 ≤ 3 * 288433455950417058
-      ∧ ¬ (2 * 432650183925625587 ≤ 3 * 288433455950417057) := by decide
+    2 * 432650183925625587 < 3 * 288433455950417059
+      ∧ ¬ (2 * 432650183925625587 < 3 * 288433455950417058)
+      ∧ 3 * 288433455950417058 = 2 * 432650183925625587
+      ∧ 2 * 432650183925625587 ≤ 3 * 288433455950417058 := by decide
 
 /-- …and the floor chain's difference vector denotes `total − 1`, so the `EmptyStakeTable` floor is
 carrying the same denominator the quorum does. -/
@@ -967,15 +1182,35 @@ theorem solLcAir_accepts_at_live_active_stake : airAccepts solMaxScaleRow := by
   · decide
   · decide
 
-/-- ⚑ **AND THE QUORUM TOOTH SURVIVED THE WIDENING, AT THE SAME SCALE.** One lamport below the minimal
-quorum (`rootedStk = 288433455950417057`) the true difference is `−3`, and
-`LimbTally.emitted_chain_refuses` gives: NO assignment of difference limbs and carries satisfies the
-chain together with the containments. Not "the wrapped value lands outside an interval" — there is no
-limb vector of non-negative limbs denoting `−3`.
+/-- ⚑⚑ **THE EXACT-2/3 POINT IS REFUSED AT LIVE MAINNET SCALE — the strictness repair, as a theorem
+about the emitted object.**
+
+At `rootedStk = 288433455950417058` the ratio is EXACTLY 2/3 (`3·R = 2·T = 865300367851251174`), so
+the strict difference `3·R − 2·T − 1` is `−1`, and `LimbTally.emitted_chain_refuses` gives: NO
+assignment of difference limbs and carries satisfies the chain together with the containments. There
+is no limb vector of non-negative limbs denoting `−1`.
+
+⚑ **This row PROVED before the repair.** It is the value the shipped `γ = 0` accepted, and the value
+agave's `>` refuses. Below-the-boundary sub-quorums (`solLcAir_refuses_strict_sub_quorum`) were
+already refused; this one was not. -/
+theorem solLcAir_refuses_the_exact_two_thirds_point_at_live_active_stake (a : Assignment)
+    (hTotal : LimbTally.limbValue SOL_LIMB_BITS a (LimbTally.bCols qdiffRungs)
+      = 432650183925625587)
+    (hRooted : LimbTally.limbValue SOL_LIMB_BITS a (LimbTally.aCols qdiffRungs)
+      = 288433455950417058) :
+    ¬ (LimbTally.BodiesVanish a qdiffChainBodies
+        ∧ LimbTally.LimbsInRange SOL_LIMB_BITS a (LimbTally.diffCols qdiffRungs QDIFF_TOP)) := by
+  refine LimbTally.emitted_chain_refuses ?_
+  rw [hTotal, hRooted]; norm_num
+
+/-- ⚑ **AND THE QUORUM TOOTH SURVIVED THE WIDENING, AT THE SAME SCALE.** Two lamports below the
+minimal strict quorum (`rootedStk = 288433455950417057`) the strict difference is `−4`, refused for
+the same structural reason. Not "the wrapped value lands outside an interval" — there is no limb
+vector of non-negative limbs denoting `−4`.
 
 ⚠ This is the exact failure mode to watch for — a wider representation re-admitting the sub-quorum. It
 does not, and the reason is structural rather than arithmetic-on-`p`. -/
-theorem solLcAir_refuses_sub_quorum_at_live_active_stake (a : Assignment)
+theorem solLcAir_refuses_strict_sub_quorum (a : Assignment)
     (hTotal : LimbTally.limbValue SOL_LIMB_BITS a (LimbTally.bCols qdiffRungs)
       = 432650183925625587)
     (hRooted : LimbTally.limbValue SOL_LIMB_BITS a (LimbTally.aCols qdiffRungs)
@@ -991,9 +1226,13 @@ mention the field.**
 At `totalStk = 0` the floor difference is `1·0 − 0·0 − 1 = −1`, and no limb vector of non-negative
 limbs denotes `−1`. The 128-bit table ADMITTED this (`sol_empty_stake_table_was_admitted_at_128`: the
 slack rode as `p − 1 = 2013265920`, inside `[0, 2^128)`), so a stake table with no stake in it passed
-its own emptiness floor and — with `rootedStk = 0` too, giving quorum slack `0` — a block signed by
-nobody satisfied both teeth. The 29-bit narrowing refused it because `p − 1 ≥ 2^29`, a fact about the
-FIELD. This refuses it because `1 ≤ 0` is false. -/
+its own emptiness floor and — with `rootedStk = 0` too, giving quorum slack `0` at the then-`γ = 0` —
+a block signed by nobody satisfied both teeth. The 29-bit narrowing refused it because `p − 1 ≥ 2^29`,
+a fact about the FIELD. This refuses it because `1 ≤ 0` is false.
+
+⚑ **This is no longer the only gate standing there.** `solLcAir_quorum_also_refuses_the_empty_stake_table`
+refuses the same row from the QUORUM chain's own columns, once `γ = 1` made the quorum strict — and
+`sol_two_teeth_are_independent` records that neither tooth subsumes the other. -/
 theorem solLcAir_refuses_the_empty_stake_table (a : Assignment)
     (hTotal : LimbTally.limbValue SOL_LIMB_BITS a (LimbTally.aCols tposRungs) = 0) :
     ¬ (LimbTally.BodiesVanish a tposChainBodies
@@ -1057,6 +1296,10 @@ theorem sol_carrier_bits_discriminate :
 #assert_axioms sol_live_active_stake_does_not_fit_a_felt
 #assert_axioms sol_quorum_refusal_is_field_independent
 #assert_axioms sol_empty_stake_refusal_is_field_independent
+-- ⚑ THE SECOND TOOTH: the strict quorum refuses the empty stake table on its own, and neither
+-- tooth subsumes the other.
+#assert_axioms solLcAir_quorum_also_refuses_the_empty_stake_table
+#assert_axioms sol_two_teeth_are_independent
 #assert_axioms sol_tpos_reads_the_quorum_denominator
 #assert_axioms sol_qdiff_rung_no_alias
 #assert_axioms sol_tpos_rung_no_alias
@@ -1075,11 +1318,16 @@ theorem sol_carrier_bits_discriminate :
 #assert_axioms minimal_quorum_is_minimal
 #assert_axioms solMaxScaleRow_floor_difference_is_total_minus_one
 #assert_axioms solLcAir_accepts_at_live_active_stake
-#assert_axioms solLcAir_refuses_sub_quorum_at_live_active_stake
+#assert_axioms solLcAir_refuses_the_exact_two_thirds_point_at_live_active_stake
+#assert_axioms solLcAir_refuses_strict_sub_quorum
 #assert_axioms solLcAir_refuses_the_empty_stake_table
 #assert_axioms solLcAir_admits_the_nonempty_stake_table
 #assert_axioms sol_live_stake_capacity_pair
 #assert_axioms sol_carrier_bits_discriminate
+-- ⚑⚑ WHAT IS NOT BOUND — the residual, as a decidable fact about the emitted object rather than a
+-- sentence in the header. Both are TRIPWIRES: they red when the in-AIR-crypto iteration lands.
+#assert_axioms sol_public_anchors_are_arithmetically_inert
+#assert_axioms sol_tally_block_reads_no_carrier_and_no_anchor
 
 #print axioms solLcAir_sound
 #print axioms solLcAir_no_forgery
