@@ -1,10 +1,11 @@
 //! # THE GLOBAL FRI `log_blowup` KNOB, PRICED ACROSS THE DESCRIPTOR REGISTRY — MEASURED.
 //!
-//! `IR2_FRI_LOG_BLOWUP = 6` (`descriptor_ir2.rs`) is **one knob for all 88 by-name descriptors**:
+//! `IR2_FRI_LOG_BLOWUP = 6` (`descriptor_ir2.rs`) is **one knob for every by-name descriptor** (91
+//! goldens as of 2026-08-04; §1b counts them at run time rather than trusting this line):
 //! `ir2_config()` is a thread-local built from six `const`s, and both `prove_vm_descriptor2` and
 //! `verify_vm_descriptor2` reach it with no per-descriptor input at all. So the justification —
 //! `.docs-history-noclaude/PROOF-ECONOMICS.md` §2c, a grid measured on ONE descriptor (transfer) —
-//! is a claim about eighty-eight objects supported by a measurement of one.
+//! is a claim about ninety-one objects supported by a measurement of one.
 //!
 //! This file measures the OTHER descriptors. It changes no deployed constant.
 //!
@@ -138,7 +139,10 @@ fn cases() -> Vec<Case> {
         });
     }
 
-    // ── turn-chain binding: 7 columns, NO chip, NO range — a main-table-only descriptor.
+    // ── turn-chain binding: 7 declared columns and ZERO range lookups — the narrowest
+    // production-dispatched descriptor here. ⚑ It DOES pull in the chip table (one `TID_P2`
+    // lookup binds the chain digest), which is why it refuses at (2,57) despite carrying no
+    // hashing in its own row: the chip is pulled in by the constraint LIST, not by width.
     {
         let roots: Vec<BabyBear> = (0..5).map(|i| BabyBear::new(100 + i)).collect();
         let turns: Vec<(BabyBear, BabyBear)> = (0..4).map(|i| (roots[i], roots[i + 1])).collect();
