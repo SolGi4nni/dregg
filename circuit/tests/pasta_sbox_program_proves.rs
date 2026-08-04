@@ -545,8 +545,56 @@ fn the_machine_is_priced_per_instruction() {
     // ⚑ AND THE ROW CEILING, which is a FIELD fact and a consequence of the blowup: BabyBear's
     // two-adicity is 27, so `log_rows <= 27 - log_blowup` — 2^21 at the deployed lb=6, 2^25 at
     // lb=2. The verifier needs 2^21 rows, which is EXACTLY the lb=6 ceiling.
+    //
+    // ⚑ THE PER-STAGE FEASIBILITY TABLE, in THIS machine's committed width. Every stage fits one
+    // ROM (`every_stage_fits_one_rom_but_their_sum_does_not`), so this is the real deployment
+    // shape, and it is what the FRI blowup decision is actually about: at lb=6 the smallest stage
+    // that matters already wants 70 GB of LDE and the largest wants 139 GB, against a 123 GB box.
+    // At lb=2 the same stages want 4.3 and 8.7.
+    const STAGES: &[(&str, usize)] = &[
+        ("transcript   (148 Fq perms)", 170_940),
+        ("public_comm  (MSM 40)", 430_336),
+        ("f_comm       (MSM 1)", 20_992),
+        ("ft_comm      (MSM 9)", 104_960),
+        ("xi-aggregate (MSM 47)", 503_808),
+        ("opening      (MSM 34) VACUOUS", 367_360),
+    ];
     println!(
-        "row ceiling 2^21 at lb=6, 2^25 at lb=2. The verifier pads to 2^21 -- ON the lb=6 ceiling."
+        "\n{:>30} {:>10} {:>9} {:>10} {:>10} {:>10}",
+        "stage", "instrs", "pads to", "trace GB", "LDE@lb6", "LDE@lb2"
+    );
+    let mut total = 0usize;
+    for (name, rows) in STAGES {
+        total += rows;
+        let pad = rows.next_power_of_two();
+        let gb = pad as f64 * committed as f64 * 4.0 / 1e9;
+        println!(
+            "{name:>30} {rows:>10} {:>9} {gb:>10.2} {:>10.1} {:>10.1}",
+            format!("2^{}", pad.trailing_zeros()),
+            gb * 64.0,
+            gb * 4.0
+        );
+    }
+    let pad = total.next_power_of_two();
+    let gb = pad as f64 * committed as f64 * 4.0 / 1e9;
+    println!(
+        "{:>30} {total:>10} {:>9} {gb:>10.2} {:>10.1} {:>10.1}",
+        "ONE INSTANCE (all stages)",
+        format!("2^{}", pad.trailing_zeros()),
+        gb * 64.0,
+        gb * 4.0
+    );
+    println!(
+        "\nrow ceiling is 2^(27 - log_blowup): 2^21 at the deployed lb=6, 2^25 at lb=2. The \
+         one-instance verifier pads to 2^{} -- EXACTLY the lb=6 ceiling, so lb=6 does not merely \
+         cost memory here, it is the thing that makes the ceiling binding.",
+        pad.trailing_zeros()
+    );
+    assert_eq!(
+        pad,
+        1 << 21,
+        "the one-instance verifier sits ON the lb=6 row ceiling; if this moves, the blowup \
+         argument moves with it"
     );
     assert!(slope_us.is_finite() && slope_us > 0.0);
 }
