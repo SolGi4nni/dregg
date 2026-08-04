@@ -38,9 +38,11 @@
 
 use dregg_circuit::BabyBear;
 use dregg_circuit::descriptor_ir2::{
-    EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2, decomp_cols_pub,
-    parse_vm_descriptor2, prove_vm_descriptor2, verify_vm_descriptor2,
+    DreggStarkConfig, EffectVmDescriptor2, MemBoundaryWitness, TableSem, VmConstraint2,
+    decomp_cols_pub, parse_vm_descriptor2, prove_vm_descriptor2, prove_vm_descriptor2_with_config,
+    verify_vm_descriptor2, verify_vm_descriptor2_with_config,
 };
+use dregg_circuit::plonky3_prover::create_config_with_fri_full;
 
 const SBOX_DESC_JSON: &str = include_str!("../descriptors/by-name/pasta-sbox-prog.json");
 const SBOX_TRACE: &str = include_str!("fixtures/pasta-sbox-prog-trace.txt");
@@ -597,4 +599,143 @@ fn the_machine_is_priced_per_instruction() {
          argument moves with it"
     );
     assert!(slope_us.is_finite() && slope_us > 0.0);
+}
+
+/// The security-PARITY line `ir2_config`'s own docblock names: conjectured capacity
+/// `q·lb + query_pow ≥ 130`, proven/Johnson `q·lb/2 + query_pow ≥ 73`. Every point below lands on
+/// both, so what moves is prove time, memory and wire — never the claimed security.
+const FRI_PARITY: &[(usize, usize)] = &[(6, 19), (3, 39), (2, 57), (1, 114)];
+
+fn config_at(log_blowup: usize, num_queries: usize) -> DreggStarkConfig {
+    create_config_with_fri_full(
+        log_blowup,
+        /* log_final_poly_len */ 0,
+        /* max_log_arity */ 3,
+        num_queries,
+        /* commit_pow */ 0,
+        /* query_pow */ 16,
+    )
+}
+
+/// ⚑ **§8 — THE FRI BLOWUP, ON THE WORKLOAD THAT RAISED THE QUESTION.**
+///
+/// `PROOF-ECONOMICS.md` §2c justifies the deployed `log_blowup = 6` with a premise this machine
+/// breaks in one line: *"IR-v2's committed tables are TINY (2³–2⁸ rows), so the prover-side LDE
+/// cost of high blowup is milliseconds, while every FRI query opens a row of every committed
+/// matrix — queries dominate the wire."* At 2^10 rows and 1 037 committed columns the LDE is not
+/// milliseconds, and at the 2^19 a real stage needs it is 139 GB against a 123 GB box.
+///
+/// ⚑ **AND THE THING THAT DECIDES IT IS NOT PROOF SIZE — IT IS CONSTRAINT DEGREE, WHICH THIS
+/// DESCRIPTOR DOES NOT SHARE.** The frozen degree ledger
+/// (`descriptor_ir2.rs::tests::ir2_degree_budget`) records `chip = 7` (the inline x⁷ S-box) and
+/// `setFieldDynVmDescriptor2`'s `main = 8`, so a quotient of degree 7 and `log_quotient_degree = 3`
+/// — a global drop below `lb = 3` is not a size regression for those, it is below their floor.
+/// This machine declares NO Poseidon2 chip: main + three range tables + the ROM, max degree 3 (the
+/// ALU multiply gate). Whether that means it survives `lb = 1` is a question for the prover, not
+/// for me, so the sweep below RUNS it rather than arguing it.
+#[test]
+fn the_blowup_is_swept_at_parity_on_this_machine() {
+    let dl = parse_vm_descriptor2(LONG_DESC_JSON).expect("the 2^10 machine parses");
+    let long: Vec<Vec<BabyBear>> = LONG_TRACE
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            l.split_whitespace()
+                .map(|c| BabyBear::new(c.parse::<u32>().expect("cell")))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let pis = parse_pis(SBOX_PIS);
+    let committed = committed_width(&dl);
+
+    // ⚑ THE PROBE, AND THE COLD START DISCARDED. The deployed point must reproduce before any
+    // other row means anything, and the first prove in the process pays one-time setup.
+    prove_and_verify(&dl, &long, &pis).expect("cold: the deployed point must prove");
+
+    println!(
+        "\n═══ §8  THE FRI BLOWUP AT PARITY, on 1024 instructions x {committed} committed columns ═══"
+    );
+    println!(
+        "{:>4} {:>4} {:>7} {:>7} {:>11} {:>11} {:>11}",
+        "lb", "q", "conj", "proven", "prove ms", "verify ms", "proof KiB"
+    );
+    let mut deployed_kib = f64::NAN;
+    for (lb, q) in FRI_PARITY {
+        let cfg = config_at(*lb, *q);
+        let t0 = std::time::Instant::now();
+        let proof = match prove_vm_descriptor2_with_config(
+            &dl,
+            &long,
+            &pis,
+            &MemBoundaryWitness::default(),
+            &[],
+            &cfg,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                println!(
+                    "{lb:>4} {q:>4} {:>7} {:>7}   REFUSED AT PROVE: {e}",
+                    q * lb + 16,
+                    q * lb / 2 + 16
+                );
+                continue;
+            }
+        };
+        let prove_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let t1 = std::time::Instant::now();
+        let verdict = verify_vm_descriptor2_with_config(&dl, &proof, &pis, &cfg);
+        let verify_ms = t1.elapsed().as_secs_f64() * 1000.0;
+        let kib = postcard::to_allocvec(&proof).expect("serialize").len() as f64 / 1024.0;
+        if *lb == 6 {
+            deployed_kib = kib;
+        }
+        match verdict {
+            Ok(()) => println!(
+                "{lb:>4} {q:>4} {:>7} {:>7} {prove_ms:>11.1} {verify_ms:>11.1} {kib:>11.1}",
+                q * lb + 16,
+                q * lb / 2 + 16
+            ),
+            Err(e) => println!(
+                "{lb:>4} {q:>4} {:>7} {:>7}   REFUSED AT VERIFY: {e:?}",
+                q * lb + 16,
+                q * lb / 2 + 16
+            ),
+        }
+    }
+    println!(
+        "\ndeployed (6,19) wire = {deployed_kib:.1} KiB. Every row above holds the SAME 130 \
+         conjectured / 73 proven bits; the blowup buys memory and costs wire, nothing else."
+    );
+    // ⚠ WHICH COLUMN TO BELIEVE. The proof-KiB column is DETERMINISTIC — three runs of this sweep
+    // on the same tree gave 513.2 / 870.4 / 1191.7 / 2208.4 KiB every time. The ms columns are
+    // not: the same three runs put the lb=6 row at 3813.8, 1144.8 and 1274.0 ms, because a sibling
+    // lane was building and this box was at load 45. Read the TIMES as ratios inside one run
+    // (lb=6 -> lb=2 was 4.65x and 3.94x in the two uncontended runs) and the BYTES as absolute.
+    // A single-run absolute prove time from this harness is not a measurement of the prover.
+    assert!(
+        deployed_kib.is_finite(),
+        "the deployed point must have produced a proof, or this table is not a comparison"
+    );
+
+    // ⚑ AND THE MEMORY THE TABLE CANNOT SHOW AT 2^10: the LDE is `rows × blowup × committed × 4`
+    // bytes, and it is the whole argument. Printed for the real stage heights.
+    println!(
+        "\n{:>8} {:>12} {:>12} {:>12} {:>12}",
+        "log rows", "lb=6 GB", "lb=3 GB", "lb=2 GB", "lb=1 GB"
+    );
+    for log_rows in [10u32, 18, 19, 21] {
+        let cells = (1u64 << log_rows) as f64 * committed as f64 * 4.0;
+        println!(
+            "{:>8} {:>12.2} {:>12.2} {:>12.2} {:>12.2}",
+            format!("2^{log_rows}"),
+            cells * 64.0 / 1e9,
+            cells * 8.0 / 1e9,
+            cells * 4.0 / 1e9,
+            cells * 2.0 / 1e9
+        );
+    }
+    println!(
+        "the row ceiling is 2^(27 - lb): 2^21 / 2^24 / 2^25 / 2^26. ⚠ This lane RECOMMENDS; it \
+         lands nothing. `IR2_FRI_LOG_BLOWUP` is unchanged at 6."
+    );
 }
