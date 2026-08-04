@@ -221,4 +221,10 @@ globs = [
   "Dregg2.Games.PathOfAngels.DeckGraph",
   "Dregg2.Games.PathOfAngels.EmitMain",
   "Dregg2.Games.PathOfAngels.FieldArchive",
+  # Landed in HEAD from the Path-of-Angels lane DURING this sweep (untracked at 06:54, committed
+  # by 07:15) and orphaned on arrival — the same shape as `PastaFieldSound`/`PastaAddSubSound`,
+  # where a repair's own pins went into no CI target because the module was new. 38
+  # `#assert_axioms` + 11 `#assert_compiled` between them; both GREEN and cheap (2 s / 3 s).
+  "Dregg2.Games.PathOfAngels.ActivityOutcome",
+  "Dregg2.Games.PathOfAngels.DeckExpedition",
 ]
