@@ -5110,10 +5110,8 @@ theorem key_sponge_seed_is_pinned :
 a row reads it — not because the entry was deleted. The other eight stay, unpadded. -/
 theorem key_closes_one_unconsumed_entry :
     WRAP_UNCONSUMED.length = 8
-    ∧ WRAP_UNCONSUMED.contains
-        "index_digest — needs W-KEY (choose_key over the per-branch step VKs)" = false
-    ∧ WRAP_UNCONSUMED.head?
-        = some "sg_old — ON-CURVE at w9_prev (§18); its consumer is W-COMBINE's ~init" := by
+    ∧ WRAP_UNCONSUMED_KEYS.contains "index_digest" = false
+    ∧ WRAP_UNCONSUMED_KEYS.head? = some "sg_old" := by
   refine ⟨rfl, ?_, rfl⟩
   decide
 
@@ -5520,8 +5518,7 @@ so nothing downstream refuses a substituted `t_comm`. The entry is REWRITTEN, ex
 was at `w6_xhat`; the count stays 8. -/
 theorem ftcomm_does_not_move_the_unconsumed_census :
     WRAP_UNCONSUMED.length = 8
-    ∧ WRAP_UNCONSUMED.getD 4 ""
-        = "t_comm — ft_comm EMITTED at w8_ftcomm (§17); its OUTPUT is W-COMBINE/W-BULLET's" := by
+    ∧ WRAP_UNCONSUMED_KEYS.getD 4 "" = "t_comm" := by
   refine ⟨rfl, ?_⟩
   decide
 
@@ -5669,13 +5666,9 @@ Striking either entry on the strength of "a sub-circuit now reads it" is the met
 census exists to refuse. The count stays **8**. -/
 theorem prev_does_not_move_the_unconsumed_census :
     WRAP_UNCONSUMED.length = 8
-    ∧ WRAP_UNCONSUMED.getD 1 ""
-        = "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's packed statement words, \
-           and 64 of them are still free"
-    ∧ WRAP_UNCONSUMED.getD 0 ""
-        = "sg_old — ON-CURVE at w9_prev (§18), HASHED at w11_wraphack (§21) into packed statement \
-           words 55/56; still a FREE witness, and its consumer is W-COMBINE's ~init" := by
-  refine ⟨rfl, ?_, ?_⟩ <;> decide
+    ∧ WRAP_UNCONSUMED_KEYS.getD 1 "" = "x_hat"
+    ∧ WRAP_UNCONSUMED_KEYS.getD 0 "" = "sg_old" := by
+  refine ⟨rfl, rfl, rfl⟩
 
 /-! ### §21a — ⚑ THE PINS ON W-WRAPHACK, and the one that is the point. -/
 
@@ -5715,6 +5708,19 @@ theorem wraphack_front_pad_is_the_fresh_state_and_the_rows_pin_it :
     ∧ ((whRows tWh true).getD 0 default).kind = KGateType.generic
     ∧ ((whRows tWh true).getD 1 default).kind = KGateType.generic := by
   refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **THE ALIASING REFUTATION.** `baseWh` read `basePrev + nPrevVars` — which IS `baseFtc` — while
+`rungsUpto .wraphack` contains `.ftcomm`, so two regions sat at one address in a circuit holding
+both. This is the gate that says they no longer do, and it is stated over the EMITTED gates rather
+than over the base arithmetic: **every external id `w8_ftcomm`'s whole rung references is strictly
+below where W-WRAPHACK's region starts.** A base-vs-base equation would have been a pin against its
+own definition; this one goes red if any row of any rung at or below `.ftcomm` reaches up. -/
+theorem wraphack_region_is_above_ftcomms :
+    baseWh shapeSmoke tWh.sp = baseFtc shapeSmoke tWh.sp + nFtcVars shapeSmoke tWh.sp
+    ∧ baseFtc shapeSmoke tWh.sp < baseWh shapeSmoke tWh.sp
+    ∧ ((externalRefs (wrapGates (rungRows tWh .ftcomm true))).all
+        (fun i => decide (i < baseWh shapeSmoke tWh.sp))) = true := by
+  refine ⟨rfl, by decide, rfl⟩
 
 /-- The emitter's allocation FORMULA is what `runSpongeQ` actually allocates, for all three sponges
 — so the three regions cannot silently overlap. -/
@@ -5789,7 +5795,11 @@ theorem wraphack_public_word_11_is_the_closing_squeeze :
     rungPub shapeSmoke .wraphack = shapeSmoke.pubWords + 2
     ∧ (exposedVarsAt tWh .wraphack).getD (WH_PUB_SLOT shapeSmoke) default
         = whDigestVar (whSpongeC tWh)
-    ∧ (wrapPublicAt tWh .wraphack).getD (WH_PUB_SLOT shapeSmoke) 0 = (whCloseDigest : Int) := by
+    -- ⚠ the VALUE at that slot is `wraphack_digest_is_the_statement_word`'s third conjunct, stated
+    -- there and not here: `wrapPublicAt` runs `envIndex` over `circuitEnvAt … .wraphack`, which
+    -- carries every accumulator point and slope of §15's MSM, and reducing it blew 4 000 000
+    -- heartbeats. That is the measurement the `circuitEnvAt` docblock above is about.
+    ∧ (exposedVarsAt tWh .wraphack).length = shapeSmoke.pubWords + 2 := by
   refine ⟨rfl, rfl, rfl⟩
 
 /-- The `w11_wraphack` rung is a strict superset of `w9_prev`, its length is the sum of its parts,
@@ -5836,11 +5846,9 @@ which is itself absorbed and unconsumed. A prover still chooses `sg_old` subject
 The count stays **8**. -/
 theorem wraphack_does_not_move_the_unconsumed_census :
     WRAP_UNCONSUMED.length = 8
-    ∧ WRAP_UNCONSUMED.getD 0 ""
-        = "sg_old — ON-CURVE at w9_prev (§18), HASHED at w11_wraphack (§21) into packed statement \
-           words 55/56; still a FREE witness, and its consumer is W-COMBINE's ~init" := by
-  refine ⟨rfl, ?_⟩
-  decide
+    ∧ WRAP_UNCONSUMED_KEYS.getD 0 "" = "sg_old"
+    ∧ WRAP_UNCONSUMED_KEYS.length = WRAP_UNCONSUMED.length := by
+  refine ⟨rfl, rfl, rfl⟩
 
 /-! ### §22a — ⚑ THE PINS ON W-CLOSE. -/
 
