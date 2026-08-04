@@ -443,13 +443,56 @@ const LEDGER = {
     // never emits because it folds those bases into `constant_part` outside the circuit
     // (`step_verifier.ml:133-152`). The circuit moved; the instrument did not.
     // ⚑ MOVED AGAIN 2026-08-03 by §22 (the fr-sponge's SEED ABSORB): 678/3283 [daacc3a37f552f8b] →
-    // this. Segment B's 91st absorbed word is a 46th block, which brings its `cAdd ++ cAdd` addend
-    // row (two halves, both matching Snarky) and the pad lane's `cConst 0 ++ cNil` pin (two halves,
-    // the `cNil` one all-zero). Total 3283 → 3287, exact-misses 678 → 679 and family-misses 502 →
-    // 503 — the SAME one half, the all-zero tail, which `generic/empty-second-half` also counts.
-    // Family-MATCHES are 176, unchanged: nothing new here is a Snarky shape carrying our constants.
-    expect: '679/3287 halves differ by EXACT coefficient vector [a8dcbafea71719d8]; 503 of those differ '
-      + 'by SHAPE FAMILY (constants→K, sign-normalized), so 176 are the same family carrying our constants',
+    // 679/3287 [a8dcbafea71719d8]. Segment B's 91st absorbed word is a 46th block, which brings its
+    // `cAdd ++ cAdd` addend row (two halves, both matching Snarky) and the pad lane's
+    // `cConst 0 ++ cNil` pin (two halves, the `cNil` one all-zero).
+    //
+    // ⚑⚑ RE-BASELINED 2026-08-04 by §23 (the LAZY SPONGE, `c14a9cf01`): 679/3287 [a8dcbafea71719d8]
+    // → this. ⚠ THE RE-STAMP IS THE AUDIT, NOT A RESET. The tripwire's whole value is that nobody
+    // re-stamps it without reading the miss list, so here is the miss list, DIFFED — the §22-state
+    // fixture (`git show 9525085e6:…-gates.json.gz`, which reproduces the recorded digest
+    // a8dcbafea71719d8 exactly, so it IS the recorded baseline) against a fresh HEAD emission (which
+    // reproduces the committed fixture byte for byte). The FULL exact-key multiset delta is SIX
+    // keys, no key decreased, and every one is attributable:
+    //
+    //     [0 0 -1 1 0]     1000 -> 1001   MATCH (cMul)              §8h row +3, +0 net elsewhere
+    //     [0 0 0 0 0]       167 ->  172   MISS  (empty tail)        +5 — SEE BELOW
+    //     [1 0 0 -1 0]        0 ->    1   MISS  (NEW KEY)           §8h suffix-mask gate
+    //     [1 0 0 0 -2]      102 ->  104   MATCH (cConst 2)          §8h `Checked.pack` rows
+    //     [1 0 0 0 0]       257 ->  259   MATCH (cConst 0)          §8h + a 2nd rate-2 pad lane
+    //     [1 1 -1 0 0]      968 ->  969   MATCH (cAdd)              §8h row
+    //   totals 3287 -> 3299 (+12) = +6 misses and +6 matches; matched halves 2608 -> 2614.
+    //
+    // THE ONE NEW DISTINCT KEY IS A NEW GATE, not a bent coefficient. `[1 0 0 -1 0]` is
+    // `m₀ − m₀·m₁ = 0` at raw row 7863 — `Prefix_mask.there`'s SUFFIX shape `m₀ ≤ m₁`
+    // (`pickles_base/proofs_verified.ml:75-81`), emitted by `branchRows` as
+    // `([1, 0, 0, -1, 0] ++ cNil)` (`KimchiStepMainCore.lean:4293-4294`, landed in `c14a9cf01`).
+    // Booleanity alone admitted FOUR masks and `[1,0]` is not one upstream can name, so this row
+    // refuses a branch the circuit previously accepted. ⚠ It is an exact-MISS and a family-MATCH:
+    // Mina emits the same equation with the opposite global sign, which is why family-misses moved
+    // 503 → 508 (+5, the all-zero tails only) while family-MATCHES moved 176 → 177 (+1, this one).
+    //
+    // THE FIVE NEW ALL-ZERO TAILS, INDIVIDUALLY, by the partner half they share a row with:
+    //   1. partner [1 0 0 -1 0]  — the suffix-mask row's own second half; `branchRows` writes
+    //      `cNil` there deliberately ("the probe's partner rather than a second constraint").
+    //   2. partner [1 0 0 0 -2]  — raw row 7867, §8h's `Checked.pack`/`domain_log2` pin block.
+    //   3. partner [1 -1 0 0 0]  — raw row 7869, the `cEq` closing §8h's 16-bit `tfcRowsN` chain.
+    //   4. partner [1 0 0 0 0]   — raw row 69, a SECOND rate-2 PAD LANE `w = 0` pin. §22 added the
+    //      first; §23's lazy sponge changed which segments carry an odd absorb count, so a second
+    //      segment now has one. Same mechanism, one instance larger.
+    //   5. partner [0 0 -1 1 0]  — raw row 8488. ⚠ This one is a MOVE, not an addition: old row 8746
+    //      packed `cMul ++ cEq` and new row 8488 packs `cMul ++ cNil`, while a `cEq` appears at the
+    //      new row 7869. The `[1 -1 0 0 0]` total is 114 in BOTH emissions, so no equality was lost;
+    //      the eliminated one was routing (the cMul output was σ-tied to col 3 and col 3 `cEq`-tied
+    //      to a col-4 cell that was SELF, i.e. a dead copy) and the new emission wires the cMul
+    //      output straight through the probe. `generic/zero-half/no-sigma-classed-cell` — the
+    //      dropped-constraint detector — is GREEN on all 172, so this is checked and not asserted.
+    //
+    // ⚑ NOTHING ELSE MOVED. Every pre-existing exact key holds its exact count, so no coefficient
+    // anywhere in the 1683 Generic rows was bent. That is precisely what this instrument exists to
+    // say, and it is why the re-stamp is legitimate.
+    expect: '685/3299 halves differ by EXACT coefficient vector [c31a5dfe5b0bb828]; 508 of those differ '
+      + 'by SHAPE FAMILY (constants→K, sign-normalized), so 177 are the same family carrying our constants',
     note: 'The digest covers the WHOLE exact-value miss list, so ONE bent selector coefficient anywhere in '
       + 'the Generic rows moves it. The gap between the two numbers is the instrument, not the circuit: '
       + "`[1,0,0,0,-k]` is Snarky's own `Equal (var, constant)` row (`plonk_constraint_system.ml:1668-1678`).",
@@ -460,7 +503,12 @@ const LEDGER = {
     // an odd count leaves one more tail. The mechanism this entry describes, one instance larger.
     // ⚑ 166 → 167 later the same day (§22): segment B's rate-2 PAD LANE gets a `w = 0` pin row, and
     // a one-cell pin is `cConst 0 ++ cNil` — the `cNil` is the empty half. Same mechanism again.
-    expect: '167 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
+    // ⚑ 167 → 172 on 2026-08-04 (§23). The five are audited ONE BY ONE in the
+    // `generic/exact-value-census` entry above — three are §8h's own rows, one is a SECOND rate-2
+    // pad lane, and one is an odd-half tail that MOVED (a routing `cEq` was eliminated; the
+    // `[1 -1 0 0 0]` total is 114 before and after). The σ-classed-cell gate below is what makes
+    // that a measurement rather than a story: 0 of the 172 has a permutation-classed cell.
+    expect: '172 halves, all SECOND halves, 0 σ-classed cells, 0 all-zero rows (mina: 0 of 12423)',
     note: 'A half constraining nothing. NOT a dropped constraint and NOT padding of an operand — measured by '
       + 'construction: no permutation-classed cell, no live witness value, and every host row carries a real '
       + "equation in its first half. It is our per-site packing (`packHalves`, `aRows`) against Snarky's ONE "
@@ -469,7 +517,11 @@ const LEDGER = {
   },
   'generic/row-equality-not-sigma-tie': {
     why: 'UNRECORDED — a ROW where upstream unions, classified 2026-08-02',
-    expect: '114 halves [1 -1 0 0 0] (mina: 0); a global pending_generic_gate would save 83 rows, and '
+    // ⚑ 83 → 86 saved rows on 2026-08-04 (§23). The EQUALITY COUNT DID NOT MOVE — 114 before and
+    // after — and neither did the σ-tie saving (57). What moved is the empty-half count (167 → 172),
+    // and `packed = ceil(live / 2)` is computed from it, so three more rows are recoverable. A
+    // number derived from a number that moved; the sites below are unchanged.
+    expect: '114 halves [1 -1 0 0 0] (mina: 0); a global pending_generic_gate would save 86 rows, and '
       + 'converting these to σ-ties a further 57',
     note: '`Field.Assert.equal x y` on two plain variables is `Union_find.union` and emits NO ROW at all '
       + '(`plonk_constraint_system.ml:1650-1653`); only unequal SCALES fall through to a generic row (`:1655`). '
@@ -497,7 +549,11 @@ const LEDGER = {
     why: 'header "THE σ-ONLY PROBES" (not on the #1–#11 list)',
     // ⚑ 488 → 470 on 2026-08-03 (§21): the nine constant statement words lost their per-term probe
     // and their fold-add probe along with the rows those probes were about.
-    expect: '470 standalone Zero rows (mina: 0)',
+    // ⚑ 470 → 463 on 2026-08-04 (§23). §8h ADDS two (`branchRows`' `probeRow wired (vMask s 0)
+    // (vMask s 1)` and `probeRow wired (vBranch s) (vMaskPack s)`, `KimchiStepMainCore.lean:4296-
+    // 4297`, measured at raw rows 7864/7865), so the lazy sponge net-removed nine along with the 28
+    // permutations it deleted — probes track the rows they isolate, and rows left.
+    expect: '463 standalone Zero rows (mina: 0)',
     note: 'standalone `Zero` rows placed into σ classes so a flip isolates the wire. Mina has none. Spliced out here.',
   },
   'scope/unassembled-subcircuits': {

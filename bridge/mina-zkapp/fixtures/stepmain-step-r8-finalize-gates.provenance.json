@@ -2,12 +2,12 @@
   "schema": "pickles-emit-provenance/1",
   "fixture": "stepmain-step-r8-finalize-gates.json.gz",
   "artifact_sha256": "3cabeb0685dda632071c2099f493a2d04da1a520bcdaad72f8b4806125fd6de7",
-  "refreshed_at": "2026-08-03T22:42:30.315Z",
-  "refreshed_from": "/tmp/claude-501/pickles-final/stepmain_step_r8_finalize.json (⚠ FIXTURE STALE)",
+  "refreshed_at": "2026-08-04T02:30:55.843Z",
+  "refreshed_from": "/private/tmp/claude-501/-Users-ember-dev-breadstuffs/6b8a3d60-a097-4d51-a45e-a698366e2b0a/scratchpad/census/emit/stepmain_step_r8_finalize.json (== fixture)",
   "cone": {
     "root": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
     "files": 112,
-    "digest": "d2eaf8ead8fadccc271c20565f534ffbbc42e754f785b95738202c95ca9077f3",
+    "digest": "58a52343c9d3073057217b9544e8b71cf961df1c65e116212beab9c905b198c7",
     "files_detail": [
       {
         "rel": "Dregg2/Authority/ClearanceGraph.lean",
@@ -87,7 +87,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/EmitStepMainJson.lean",
-        "sha": "1335db178059f184352d6bd9ff36b2610317b86a99e1fa03aa85c7ff8bb67b57"
+        "sha": "70ea125933bb16abfd665a61360d0eefc3c250e7f54d1b57e186b31ea757d6bf"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiComposeStepFragment.lean",
@@ -103,7 +103,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiRenderCompleteAdd.lean",
-        "sha": "1962b08c5133f9585e183ac7e06b262730bb54e0c7c35dfba34df302d424312a"
+        "sha": "5d27216a970b7136cf93f8882783734645b47ebac80a5f7965400b5986724b72"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiRenderEndoMul.lean",
@@ -127,7 +127,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainCore.lean",
-        "sha": "4039995bc146cf7f3eb51bde9255b4259f319cb7f6bbcf1d87e747dc81427814"
+        "sha": "4d673535c1d9a8a69e58c0b489a117abe9a588a336bed0f9d63a3a2c9d7dd1e1"
       },
       {
         "rel": "Dregg2/Circuit/Emit/KimchiStepMainField.lean",
@@ -175,7 +175,7 @@
       },
       {
         "rel": "Dregg2/Circuit/Emit/PastaField.lean",
-        "sha": "3de647416025fd125e4f163503a50693140bea4061b966da62b18b14d9df46f0"
+        "sha": "b81f554a7d3368a79c71893d8d7b9ad0a5543fb34ad65253143704b3de531d56"
       },
       {
         "rel": "Dregg2/Circuit/Emit/PastaIPA.lean",
@@ -460,7 +460,7 @@
     ]
   },
   "git": {
-    "head": "dfb3b481d7b63a5e05d13d6bd82f6fb8ee371b05",
+    "head": "2eb410b38aece6f29d51a3d5f4080ec2866f1567",
     "cone_dirty_at_head": []
   },
   "gates": 10341,
