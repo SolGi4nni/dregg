@@ -12,8 +12,11 @@ a scale-rung filename is exactly the measurement that lies.
     lake build Dregg2.Circuit.Emit.KimchiWrapMain
     DREGG_WM=wrap  lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean
     DREGG_WM=smoke lake env lean --run Dregg2/Circuit/Emit/EmitWrapMainJson.lean
+    DREGG_WM=wrap DREGG_WM_OUT=/tmp/mine lake env lean --run …    # a lane's OWN directory
 
-Files land in `/tmp/pickles-wrapmain/wrapmain_<tag>_<rung>{,_unwired}.json`.
+Files land in `$DREGG_WM_OUT/wrapmain_<tag>_<rung>{,_unwired}.json`, default
+`/tmp/pickles-wrapmain/`. ⚑ `DREGG_WM_OUT` is the step side's `DREGG_SM_OUT` and exists for the same
+reason: two revisions emitted for a byte-diff must not write to one path.
 
 Then:
 
@@ -30,6 +33,17 @@ the phase that actually ran. -/
 def force (n : Nat) (what : String) : IO Nat := do
   IO.println s!"    [{what}] {n}"
   pure n
+
+/-- Write ATOMICALLY: stage beside the target, then rename into place. The step driver's own
+`writeAtomic` and its note apply verbatim here — a reader of the emit directory cannot tell a
+complete artifact from one whose writer died mid-`String`, because both are a file with the right
+name, and `rename(2)` within one directory is the only thing that makes the real name appear
+carrying complete bytes. ⚑ This matters most to the byte-diff gate, whose whole job is to compare
+these files against another revision's while an emitter may still be running. -/
+def writeAtomic (path contents : String) : IO Unit := do
+  let staged := path ++ ".partial"
+  IO.FS.writeFile staged contents
+  IO.FS.rename staged path
 
 def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := do
   let t0 ← IO.monoMsNow
@@ -54,8 +68,8 @@ def emitRung (dir tag : String) (t : WrapData) (k : Rung) : IO (Nat × Nat) := d
   let jw := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}" p (p + rowsW.length) placed wit pub probes
   let ju := renderWrapCircuit s!"wrapmain_{tag}_{k.tag}_UNWIRED" p (p + rowsU.length) placedU wit
               pub probes
-  IO.FS.writeFile s!"{dir}/wrapmain_{tag}_{k.tag}.json" jw
-  IO.FS.writeFile s!"{dir}/wrapmain_{tag}_{k.tag}_unwired.json" ju
+  writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}.json" jw
+  writeAtomic s!"{dir}/wrapmain_{tag}_{k.tag}_unwired.json" ju
   let t2 ← IO.monoMsNow
   -- ⚠ A REFUSAL IS LOUD. `placeChecked` returning `.error` yields the empty placement, which would
   -- otherwise ship as a zero-gate circuit the harness "proves".
@@ -84,7 +98,14 @@ def parseShape (spec : String) : Option WrapShape :=
   | _ => none
 
 def main : IO Unit := do
-  let dir := "/tmp/pickles-wrapmain"
+  -- ⚑ **`DREGG_WM_OUT` LETS A LANE OWN ITS OWN DIRECTORY**, exactly as `DREGG_SM_OUT` does on the
+  -- step side. This was a HARDCODED path until 2026-08-03, and the omission was not cosmetic: a
+  -- before/after byte-diff of the emitted circuit was written as
+  --     DREGG_SM=wrap DREGG_SM_OUT=/tmp/emit-before-wrap  lean --run …EmitWrapMainJson.lean
+  -- which is wrong TWICE over — this driver reads `DREGG_WM`, not `DREGG_SM`, so the shape selector
+  -- was ignored; and it had no output override at all, so BOTH revisions wrote to this one path and
+  -- the `diff` compared a directory against itself. ⚠ That is a gate that cannot go red.
+  let dir := (← IO.getEnv "DREGG_WM_OUT").getD "/tmp/pickles-wrapmain"
   IO.FS.createDirAll dir
   let sm ← IO.getEnv "DREGG_WM"
   let (tag, s) : String × WrapShape :=
