@@ -69,6 +69,10 @@ poa_lean_targets=(
   Dregg2.Games.PathOfAngels.NetworkJudge
   Dregg2.Games.PathOfAngels.NetworkGenesisWire
   Dregg2.Games.PathOfAngels.NetworkGenesis
+  Dregg2.Games.PathOfAngels.EventSourcing
+  Dregg2.Games.PathOfAngels.FinalizedRunEventAggregate
+  Dregg2.Games.PathOfAngels.HolderMechanics
+  Dregg2.Games.PathOfAngels.HolderMechanicsBoundary
   Market.DarkBazaarPrivatePoaDescriptor
 )
 run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
@@ -124,6 +128,7 @@ done
 run node --check poa-web/scripts/sync-artifacts.mjs
 run node --check poa-web/serve.mjs
 run node --test poa-web/tests/*.test.mjs
+run cargo nextest run --manifest-path poa-solana-gate/Cargo.toml
 
 if [ "$mode" = release ]; then
   : "${POA_ROOT:?POA_ROOT must name the staged PoA genesis root}"

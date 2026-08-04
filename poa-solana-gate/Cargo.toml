@@ -1,0 +1,36 @@
+[package]
+name = "poa-solana-gate"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+description = "Isolated Path of Angels server proof-of-DREGG-holding admission boundary"
+
+# Intentionally isolated until the PoA server selects an integration point.
+[workspace]
+
+[dependencies]
+bs58 = "0.5"
+dregg-bridge = { path = "../bridge" }
+dregg-governance = { path = "../dregg-governance" }
+dregg-pay = { path = "../dregg-pay" }
+ed25519-dalek = { version = "2", features = ["std"] }
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+# Match the parent workspace's resolution law even though this spike is isolated.
+[patch."https://github.com/o1-labs/proof-systems"]
+poly-commitment = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+mina-poseidon = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+mina-curves = { git = "https://github.com/emberian/proof-systems", rev = "c5305e63df5474c8cca81f7951264ea6aafe81db" }
+
+[patch."https://github.com/Plonky3/Plonky3"]
+p3-fri = { path = "../vendor/plonky3-fri-82cfad73" }
+p3-challenger = { path = "../vendor/plonky3-challenger-82cfad73" }
+
+[patch.crates-io]
+curve25519-dalek = { path = "../vendor/curve25519-dalek-dregg" }
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }

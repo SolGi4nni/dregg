@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#05070d" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Path of Angels Flight Recorder: a redacted, linked replay of the Khovokhi's public Signal history."
+    />
+    <title>Flight Recorder // Path of Angels</title>
+    <link rel="stylesheet" href="./flight-recorder.css" />
+  </head>
+  <body>
+    <a class="flight-skip" href="#flight-recorder">Skip to the flight recorder</a>
+    <header class="flight-masthead">
+      <div class="flight-mark">
+        <span class="flight-mark__glyph" aria-hidden="true">✦</span>
+        <span><b>KHOVOKHI // FLIGHT RECORDER</b><small>PATH OF ANGELS · PUBLIC SIGNAL WAKE</small></span>
+      </div>
+      <span class="flight-pill flight-pill--warning">REDACTED PUBLIC VIEW</span>
+    </header>
+
+    <section class="flight-source-console" aria-labelledby="flight-source-title">
+      <div>
+        <p class="flight-panel__eyebrow">CONFIGURED SOURCE ONLY</p>
+        <h2 id="flight-source-title">No endpoint from the URL bar</h2>
+      </div>
+      <p>The checked deployment config selects either one exact public Signal API or the bundled rehearsal fixture. Query parameters cannot redirect the recorder.</p>
+      <p id="flight-source-status" class="flight-source-console__status" role="status" aria-live="polite">
+        Reading recorder configuration…
+      </p>
+    </section>
+
+    <main id="flight-recorder" tabindex="-1" aria-busy="true">
+      <p class="flight-loading">Listening for the ship’s durable wake…</p>
+    </main>
+
+    <script type="module" src="./flight-recorder.js"></script>
+  </body>
+</html>

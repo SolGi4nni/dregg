@@ -1,0 +1,7 @@
+{
+  "format": "POA-FLIGHT-RECORDER-CONFIG-1",
+  "mode": "demo",
+  "api_base_url": null,
+  "authority_id": null,
+  "max_transitions": 64
+}

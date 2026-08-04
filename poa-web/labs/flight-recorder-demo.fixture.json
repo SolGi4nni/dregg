@@ -1,0 +1,72 @@
+{
+  "format": "POA-FLIGHT-RECORDER-DEMO-1",
+  "label": "Crown Relay rehearsal",
+  "status": {
+    "format": "POA-SIGNAL-STATUS-1",
+    "authority_id": "abababababababababababababababababababababababababababababababab",
+    "federation_id": "abababababababababababababababababababababababababababababababab",
+    "installed": true,
+    "head": {
+      "head_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+      "deployment_digest": "dededededededededededededededededededededededededededededededede",
+      "transition_count": 3,
+      "world_sequence": 21,
+      "canon_revision": 9,
+      "last_transition_digest": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "consensus_finality": "not_asserted_by_this_view"
+  },
+  "transitions": [
+    {
+      "format": "POA-SIGNAL-TRANSITION-VIEW-1",
+      "authority_id": "abababababababababababababababababababababababababababababababab",
+      "federation_id": "abababababababababababababababababababababababababababababababab",
+      "sequence": 1,
+      "observed_head_transition_count": 3,
+      "is_observed_head_transition": false,
+      "commit_ordinal": 101,
+      "turn_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "receipt_hash": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+      "predecessor_head_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "successor_head_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "transition_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "judge_input_digest": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+      "judge_output_digest": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+      "consensus_finality": "not_asserted_by_this_view"
+    },
+    {
+      "format": "POA-SIGNAL-TRANSITION-VIEW-1",
+      "authority_id": "abababababababababababababababababababababababababababababababab",
+      "federation_id": "abababababababababababababababababababababababababababababababab",
+      "sequence": 2,
+      "observed_head_transition_count": 3,
+      "is_observed_head_transition": false,
+      "commit_ordinal": 104,
+      "turn_hash": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "receipt_hash": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "predecessor_head_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "successor_head_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+      "transition_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+      "judge_input_digest": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+      "judge_output_digest": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+      "consensus_finality": "not_asserted_by_this_view"
+    },
+    {
+      "format": "POA-SIGNAL-TRANSITION-VIEW-1",
+      "authority_id": "abababababababababababababababababababababababababababababababab",
+      "federation_id": "abababababababababababababababababababababababababababababababab",
+      "sequence": 3,
+      "observed_head_transition_count": 3,
+      "is_observed_head_transition": true,
+      "commit_ordinal": 108,
+      "turn_hash": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "receipt_hash": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+      "predecessor_head_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+      "successor_head_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+      "transition_digest": "7777777777777777777777777777777777777777777777777777777777777777",
+      "judge_input_digest": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+      "judge_output_digest": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+      "consensus_finality": "not_asserted_by_this_view"
+    }
+  ]
+}
