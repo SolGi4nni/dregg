@@ -50,6 +50,14 @@ GATES=(
   # This row is the SELF-TEST (~3s, real cargo over a 3-crate temp workspace, 11 legs).
   # The full sweep is under --all below — it is a whole-workspace clippy.
   "dark-targets-red|300|python3 scripts/check-dark-targets.py --self-test"
+  # ⚑ A VERIFIED LEAN DECISION THAT SHIPS AND THAT NO RUST FILE NAMES (2026-08-04). The sibling of
+  # `dark-modules`: that one catches a `.rs` rustc never OPENS, this one catches a Lean gate rustc
+  # never ASKS. There is no diagnostic for it — the symbol is in the archive, the module's theorems
+  # are green, nothing fails. `dregg_mina_deferral_ok` shipped for five days deciding nothing while
+  # its own file proved that an undischarged accumulator makes the terminal opening VACUOUS.
+  # Ratchet: `.github/uncalled-exports.txt` (9 rows at landing, and it only shrinks).
+  "export-callers|180|python3 scripts/check-export-callers.py"
+  "export-callers-red|60|python3 scripts/check-export-callers.py --self-test"
   "emit-gate-weld|120|python3 scripts/check-emit-gate-weld.py"
   "independence-controls|300|bash scripts/check-independence-controls.sh"
   "ratchet-darkness|120|bash scripts/check-ratchet-darkness.sh"

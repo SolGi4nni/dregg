@@ -33,8 +33,14 @@ by two DIFFERENT mechanisms:
   * **the Wrap/Tock leg** — `opening.sg == ⟨sVec(15 chals), srs_pallas.g⟩`, `2^15 = 32768` points.
     This is dregg's rung 5h and `PastaMsmLayouts` §6b statement (A). Pickles does **NOT** defer it:
     kimchi's native batch verifier folds it in with its own randomiser `sg_rand_base`
-    (`poly-commitment/src/commitment.rs:660-760`, "we also add `-sg_rand_base_i * G` to check
-    correctness of sg"). Outside a circuit, `O(ℓ)` is simply affordable, so nobody bothered.
+    (`poly-commitment/src/ipa.rs:173-178` samples it, `:219-240` is the leg — *"we also add
+    `-sg_rand_base_i * G` to check correctness of sg"*). Outside a circuit, `O(ℓ)` is simply
+    affordable, so nobody bothered.
+    ⚠ CITATION CORRECTED 2026-08-04. This line read `commitment.rs:660-760`, which is wrong in
+    every checkout on this machine: at the pinned tag 0.3.0 `commitment.rs` is **733 lines long**
+    and `660-733` is `pub mod caml` (the OCaml `CamlPolyComm` conversions); `sg_rand_base` does not
+    occur in that file at any revision. The comment quoted here lives in `ipa.rs` — `:224` at 0.3.0,
+    `:409` on `~/dev/proof-systems` master.
   * **the Step/Tick leg** — `messages_for_next_wrap_proof.challenge_polynomial_commitment ==
     ⟨sVec(16 chals), srs_vesta.g⟩`, `2^16 = 65536` points. **This** is the deferred one, and
     `batch_dlog_accumulator_check` (`kimchi_bindings/stubs/src/urs_utils.rs:10-69`) is its
@@ -788,7 +794,29 @@ def minaDeferralGate (s : String) : String :=
 
 /-- **THE EXPORT.** The C-ABI entry `dregg-lean-ffi` calls once per deferral batch. It ships only
 because `Dregg2/FFI.lean` imports this module: rooting it in `Dregg2.lean` would make it ELABORATE
-and emit no `:c` facet, and the symbol would never enter `libdregg_lean.a`. -/
+and emit no `:c` facet, and the symbol would never enter `libdregg_lean.a`.
+
+⚑⚑ **AND FOR ITS FIRST FIVE DAYS NOTHING CALLED IT, WHICH MADE THIS FILE'S OWN §3b APPLY TO THE
+LIVE RUNTIME.** Measured 2026-08-03: `dregg_mina_deferral_ok` was `@[export]`ed, imported by
+`Dregg2/FFI.lean:78`, present in the archive, and referenced by **zero** `.rs` files — against
+`lc_verify` 4, `better_tip` 4, `proof_chain_ok` 3, `state_hash_word_ok` 3. So the one field of the
+§5b wire that is not a shape read — `d`, "the batched MSM was evaluated and found to vanish" — had
+no writer. Nothing computed an MSM, so `opening_is_vacuous_when_sg_is_free` was a statement about
+what dregg actually shipped, not about a hypothetical.
+
+CLOSED 2026-08-04. `dregg_bridge::mina_accumulator_discharge` is the caller. It evaluates the
+`|G| + N`-point MSM natively over the **real** Vesta SRS (65,536 generators, extracted from
+openmina's own `get_srs::<Fp>()` and sha256-pinned) and the **real** deferred claims of seven Mina
+block proofs, and `Verdict::wire_for` is the ONLY constructor of `d=1` in that tree. Measured on
+those seven claims: honest batch → DISCHARGED, and each of the seven with its commitment displaced
+by `+G` → REFUSED. The class this was an instance of now has a gate:
+`scripts/check-export-callers.py` reds on any shipped export no `.rs` file names.
+
+⚠ Two more of the same class were found by that gate and are on `.github/uncalled-exports.txt`
+with reasons; a third the survey named, `dregg_mina_vrf_threshold_satisfied`, turns out to be a
+DIFFERENT defect — `Dregg2.Bridge.MinaVrfThreshold` is not in the `Dregg2.FFI` import closure, so
+its symbol never enters the archive at all (confirmed by `nm`). It is not uncalled; it is
+uncallable. -/
 @[export dregg_mina_deferral_ok]
 def dregg_mina_deferral_ok (s : String) : String := minaDeferralGate s
 
@@ -904,6 +932,48 @@ gate exists so that "not yet discharged" cannot be reported as an accept.
      proved. No descriptor is added here.
   6. **The `2.016×` ceiling is unchanged.** Nothing in this file makes the `2^15`-point MSM smaller.
      It makes it happen `1/N` as often, and §4b's four-way cut is what puts each piece under `2^21`.
+  7. ⚑ **THE ROW FIGURES ABOVE ARE A NAIVE SCAN, AND SAYING SO IS THE POINT** (added 2026-08-04).
+     Every layout this file prices — `rows`, `chunkRows`, `PastaMsmLayouts.hornerRcbAdds`,
+     `glvHornerRcbAdds` — is `nbits · (n + 1)`: one shared doubling per bit-plane, one conditional
+     complete add per `(plane, term)`. There is no `n/c · 2^c` term anywhere in the `PastaMsm*`
+     cone, which is the fingerprint of bucketing, and `grep -i bucket|pippenger|wnaf` over
+     `PastaMsmAir`/`Windowed`/`Sliced`/`Bound`/`OnCurve`/`ScalarDerive` returns **zero**.
+     "Windowed" in `PastaMsmWindowed` is the AIR two-row transition window (`WindowExpr.loc`/`.nxt`),
+     not scalar windowing and not buckets — `windowed_forces_hornerRef` proves the re-layout changes
+     the trace shape and NOTHING about the relation, and `windowedRows = nbits · (n+1)` unchanged.
+     `horner_layout_is_witness_independent` is what makes it *naive rather than sparse*: the gate
+     count is a function of `(n, nbits)` alone, so no prover shortens it by having fewer set bits.
+
+     **MEASURED, natively, 2026-08-04** (`dregg_circuit::pasta_msm`, `bridge/examples/
+     mina_accumulator_discharge`): a bucketed Pippenger over the same `2^16 + 7` points at 255-bit
+     scalars performs **1,605,709** complete adds at `c = 12` where the emitted scan's formula gives
+     **16,713,720** — **10.4×**, and it is a measured count of executed additions, not a closed form.
+     `PastaMsmLayouts` §7.3 already priced Pippenger at ~`10^6` rows and REFUSED it for a stated
+     reason — `VmConstraint2` has no permutation/sort constraint kind and `TableSem` offers only
+     `Range`/`ExactPublicRows`, so data-dependent bucket ROUTING is unexpressible. That refusal
+     stands. What does not stand is quoting a naive-scan figure as if it were the algorithmic floor:
+     the `2^15`-point leg's floor is ~`8.8 · 10^5` adds, not `8,356,095`, and a bucketed layout would
+     fit under `2^21` in ONE instance with no cut at all. The recommendation is unchanged — the leg
+     stays out of circuit — but the number that gets quoted should be the right one.
+
+     ⚠ And `276.8 M` is not a figure this tree produces. It reconstructs only as a ROW count times
+     `RCB_GATES = 33` (`8,388,736 × 33 = 276,828,288`, or `32768 × 256 × 33`), and 33 is *gates per
+     complete add*, not rows per add — this family's row unit is one complete add per row
+     (`PastaMsmAir` §, `PastaMsmWindowed` §: "One row is ONE RCB complete add"). Quoting it as rows
+     conflates the two units on top of quoting a naive scan.
+  8. **Two upstream oddities in `urs_utils.rs`, carried rather than fixed** (read 2026-08-04):
+     `chal_invs` is computed by `batch_inversion` at `:41-45`, zipped in at `:49`, and DISCARDED by
+     the `.map(|(c, _)| **c)` at `:53` — dead work, present identically in Mina's own stub; and the
+     shape check at `:22-23` is `chals.len() % rounds` where `rounds = chals.len() / k`, so a short
+     `chals` divides by zero and panics rather than failing the check it looks like. Neither changes
+     what is proved here; both are recorded because this file is where someone will come looking.
+  9. **`accumulator_check_two_sound`'s `N = 2` is the RECURSION ARITY, not the batch width.**
+     `PicklesRecursion.lean:722` scopes on `max_proofs_verified = 2`; the deployed
+     `batch_dlog_accumulator_check` takes `k = comms.len()` unbounded, and
+     `verification.rs:804-815` feeds it a `Vec::with_capacity(128)` built from every proof in a
+     transaction batch (`verify.ml:137-142` maps the whole `ts` list). §2's N-INDEPENDENT
+     `fold_discharges_each` is the theorem that actually covers the deployed code; the `N = 2` one
+     does not.
 -/
 
 #assert_namespace_axioms Dregg2.Circuit.Emit.PastaIpaDeferral

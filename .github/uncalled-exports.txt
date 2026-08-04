@@ -1,0 +1,72 @@
+# .github/uncalled-exports.txt — the RATCHET for `scripts/check-export-callers.py`.
+#
+# Each row is a Lean `@[export]` that IS in the `Dregg2.FFI` import closure — so it ships in
+# `libdregg_lean.a` and is linked into every binary that links `dregg-lean-ffi` — and that NO
+# tracked `.rs` file names. It decides nothing, and nothing can ask it to.
+#
+# THE LIST ONLY SHRINKS. A new uncalled export fails. A row here that becomes called ALSO fails,
+# because a stale allowlist is how the next one gets waved through.
+#
+# ⚑ WHAT IT MUST NOT BECOME. "Honestly labelled" is a stopping condition and a sin. A row here is a
+# piece of UNDONE WORK with its cost written down, not a permanent category. The reason column says
+# what would wire it — if you cannot say that, the export should be DELETED, because greenfield
+# prefers deleting the old thing to keeping both and "never keep a no-op for compatibility."
+#
+# Population at the commit that added this gate: 9 (of 191 shipped exports).
+# ⚑ `dregg_mina_deferral_ok` is deliberately NOT on this list. It was the sharpest instance of the
+# class — the gate that decides whether a batch of deferred IPA accumulator claims may be ACCEPTED,
+# shipping with its `d=` ("the batched MSM vanished") read off a wire string and nobody to write it.
+# It was WIRED on 2026-08-04 by `dregg_bridge::mina_accumulator_discharge`, which computes the
+# |G|+N-point MSM natively over the real Vesta SRS and the real block claims. That is what closing a
+# row looks like.
+
+# ── Marshalling constructors, not decisions ──────────────────────────────────────────────────────
+# `Dregg2.Exec.FFIDirect` exports ~200 `dregg_d_*` term CONSTRUCTORS for the direct (unmarshalled)
+# Lean-object path; `dregg-lean-ffi/src/lean_direct.rs` binds the ones that path builds. This one is
+# the `Auth`-from-tag constructor, which `lean_direct` builds by ctor rather than by tag. WIRED BY:
+# a `lean_direct` arm that takes an Auth tag from the wire instead of a discriminated ctor call —
+# or deletion, if no wire shape ever carries a bare tag.
+dregg_d_auth_of_tag   # FFIDirect Auth-by-tag ctor; lean_direct builds Auth by ctor, never by tag
+
+# ── Verified crypto cores whose deployed path is a Rust/asm primitive ────────────────────────────
+# Both are REAL arithmetic over the deployed field, proven, and both are shadowed at runtime by the
+# audited Rust primitive (`x25519-dalek`, `hkdf`). They are the Lean side of a differential that was
+# never written. WIRED BY: a differential test in `dregg-lean-ffi` that runs RFC-7748 / RFC-5869
+# vectors through BOTH and demands equality — which is the shape `marshal_conformance.rs` already
+# has for other cores.
+dregg_x25519_ladder_step   # RFC-7748 ladder step over GF(2^255-19); deployed path is x25519-dalek
+dregg_hkdf_combine         # HKDF extract-then-expand over the toy `hmac`; deployed path is `hkdf`
+
+# ── Gates whose CONSUMER does not exist yet ──────────────────────────────────────────────────────
+# `dregg_mina_window_transition_ok` is `Dregg2.Bridge.MinaSlidingWindow.step` at the `@[export]`
+# seam — the per-block sub-window density transition Mina's consensus uses for the long-range fork
+# rule. `bridge/src/mina_observer.rs` re-derives nothing of the kind today, and the field it needs
+# (`subWindowDensities`) is NOT served by public Mina GraphQL (measured, `pickles-extractors`
+# README) — so the consumer is blocked on a binprot protocol-state fetch, not on wiring. WIRED BY:
+# the binprot header path that `samasika_vectors` already proved is required for the long-range rule.
+dregg_mina_window_transition_ok   # needs subWindowDensities, which public GraphQL does not serve
+
+# `dregg_interchain_conditional_admit` is the CONDITIONAL sibling of `dregg_interchain_reached_
+# consensus` (which has 8 consumers). `bridge/src/conditional_interchain_adapter.rs` exists and
+# decides in Rust. WIRED BY: routing that adapter's admission through this export, exactly as
+# `interchain_adapter.rs` routes `TrustRung::reached_consensus`. This is the closest of the nine to
+# a same-day fix and is the next one to take.
+dregg_interchain_conditional_admit   # conditional_interchain_adapter.rs still decides in Rust
+
+# `dregg_note_tree_root` is the deployed 4-ary Poseidon2 note-tree root over the KAT-locked real
+# hash. The shielded pool's Rust side computes its own. WIRED BY: the shielded append path calling
+# this instead of its Rust twin — a `project-twin-deletion-campaign` item, not a new feature.
+dregg_note_tree_root   # shielded pool computes its own note-tree root in Rust
+
+# `dregg_record_kernel_transfer_total` is the record-cell migration ratchet's `@[export]` seam; the
+# 10k/10k differential oracle it was built for drives the scalar entry point instead. WIRED BY:
+# pointing that differential at the record-cell entry, which is the migration this export exists to
+# ratchet.
+dregg_record_kernel_transfer_total   # the 10k differential still drives the scalar entry point
+
+# `Dregg2.Crypto.HandlebarsFFI` — the verified template renderer's two seams. `render_with_proof`
+# emits output plus the rules witness; `replay_check` re-checks a recorded render. Nothing in this
+# tree renders a template through Lean today. WIRED BY: `dregg-doc` / `dregg-storage-templates`
+# calling them, or DELETION if templating is not going to route through the verified renderer.
+dregg_render_with_proof   # no Rust caller renders through the verified template engine
+dregg_replay_check        # ditto — the replay half of the same unrouted pair

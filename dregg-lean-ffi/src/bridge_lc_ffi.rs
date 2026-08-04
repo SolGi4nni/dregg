@@ -2337,6 +2337,142 @@ mod ffi_mina_head_advance {
     }
 }
 
+// ============================================================================
+// MINA — the DEFERRED IPA ACCUMULATOR discharge gate (`dregg_mina_deferral_ok`)
+// ============================================================================
+//
+// `Dregg2.Circuit.Emit.PastaIpaDeferral` §5. The batch of carried `⟨s, srs.g⟩` accumulator claims
+// is ACCEPTED only when four conjuncts hold, and the fourth is that the batched MSM was actually
+// EVALUATED and found to vanish (`deferral_gate_refuses_undischarged` is the permanent falsifier).
+//
+// ⚑ WHY THIS BINDING EXISTS, and it is a closed gap rather than a new feature. The export shipped
+// in `libdregg_lean.a` from the day `Dregg2/FFI.lean:78` imported it and had **zero references in
+// any `.rs` file** until 2026-08-04. Its `d=` field — the one that is not a shape read — was
+// therefore whatever a caller wrote, and there was no caller. The gate checked well-formedness and
+// TRUSTED an assertion of discharge; it computed no MSM, so
+// `PastaIpaDeferral.opening_is_vacuous_when_sg_is_free` applied to the live runtime.
+//
+// `dregg_bridge::mina_accumulator_discharge` is the caller that earns the bit: it evaluates the
+// `|G| + N`-point MSM natively over the real Vesta SRS and the real block claims, and `d=1` has
+// exactly one constructor (`Verdict::wire_for`) which is gated on that MSM's result.
+
+/// The verified verdict on a batch of deferred accumulator claims. `Accept` iff the Lean gate
+/// returned `"1"`; every other outcome (`"0"`, `"ERR"`, malformed, archive-absent) is fail-closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MinaDeferralVerdict {
+    /// The batch is well-formed AND discharged.
+    Accept,
+    /// It is not — including "deferred, looks fine so far", which the gate has no way to say.
+    Reject,
+}
+
+/// Whether the linked archive exports the verified deferral gate (`dregg_mina_deferral_ok`,
+/// spliced from `Dregg2.Circuit.Emit.PastaIpaDeferral`). When false the caller must FAIL CLOSED:
+/// there is no Rust twin of this decision, and an undischarged accumulator leaves the verifier
+/// with NO constraint from the terminal opening rather than a weakened one.
+pub fn mina_deferral_ok_available() -> bool {
+    ffi_mina_deferral::mina_deferral_ok_present() && lean_init_once().is_ok()
+}
+
+/// Build the `PastaIpaDeferral` §5b wire.
+///
+/// ```text
+/// INPUT := "n=" Nat ";k=" Nat ";c=" Nat("," Nat)* ";d=" ("0"|"1")
+/// ```
+///
+/// ⚠ `d` is the only field that is not a shape read. Do NOT call this with a `discharged` you did
+/// not compute — `dregg_bridge::mina_accumulator_discharge::Verdict::wire_for` is the intended
+/// constructor and it is gated on the MSM.
+pub fn mina_deferral_wire(
+    srs_len: usize,
+    rounds: usize,
+    chal_lens: &[usize],
+    discharged: bool,
+) -> String {
+    let c = chal_lens
+        .iter()
+        .map(|n| n.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "n={srs_len};k={rounds};c={c};d={}",
+        if discharged { "1" } else { "0" }
+    )
+}
+
+/// Run the VERIFIED gate `@[export] dregg_mina_deferral_ok` over a pre-built wire and return the
+/// raw output (`"1"` / `"0"` / `"ERR"`). Returns `Err` when the archive did not export it.
+pub fn run_mina_deferral_ok(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_mina_deferral::lean_mina_deferral_ok(wire)
+}
+
+/// The end-to-end verified deferral query. `Ok(Accept)` ONLY on the gate's `"1"`; every other gate
+/// output is `Ok(Reject)` (fail-closed). `Err` ONLY when the archive lacks the export.
+pub fn verified_mina_deferral_ok(
+    srs_len: usize,
+    rounds: usize,
+    chal_lens: &[usize],
+    discharged: bool,
+) -> Result<MinaDeferralVerdict, String> {
+    let wire = mina_deferral_wire(srs_len, rounds, chal_lens, discharged);
+    let out = run_mina_deferral_ok(&wire)?;
+    Ok(if out == "1" {
+        MinaDeferralVerdict::Accept
+    } else {
+        MinaDeferralVerdict::Reject
+    })
+}
+
+#[cfg(all(lean_lib_present, dregg_mina_deferral_ok_present))]
+mod ffi_mina_deferral {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_mina_deferral_ok_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn mina_deferral_ok_present() -> bool {
+        true
+    }
+
+    pub fn lean_mina_deferral_ok(wire: &str) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe {
+                dregg_mina_deferral_ok_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
+            };
+            if full == usize::MAX {
+                return Err("dregg_mina_deferral_ok_str: unusable output buffer".into());
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_mina_deferral_ok_present)))]
+mod ffi_mina_deferral {
+    pub fn mina_deferral_ok_present() -> bool {
+        false
+    }
+
+    pub fn lean_mina_deferral_ok(_wire: &str) -> Result<String, String> {
+        Err("dregg_mina_deferral_ok not exported by the linked archive (rebuild to enable)".into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

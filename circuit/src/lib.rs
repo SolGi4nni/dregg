@@ -597,6 +597,16 @@ pub mod pasta_windowed_witness;
 /// `dregg_bridge::mina_opening_check` is the caller that closed that.
 pub mod mina_opening_witness;
 
+/// The **bucketed (Pippenger) MSM on either Pasta curve**, natively and OUT OF CIRCUIT — the leg
+/// Halo/Pickles deliberately never evaluates in-AIR (`urs_utils.rs:11-68`, `verify.ml:135-146`).
+///
+/// Not an AIR and not a witness builder: it authors no constraint and fills no trace cell. It is
+/// the arithmetic that runs *instead of* a circuit, and it is what
+/// `dregg_bridge::mina_accumulator_discharge` uses to actually discharge Mina's deferred
+/// accumulator claims. It introduces no second field multiplier — [`pasta_msm::mul_mod`] dispatches
+/// to [`pasta_windowed_witness`]'s reducers and `complete_add_agrees_with_rcb_add` is the guard.
+pub mod pasta_msm;
+
 // `shielded` moved to `dregg-circuit-prove`.
 
 #[cfg(test)]

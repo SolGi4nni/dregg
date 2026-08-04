@@ -650,6 +650,24 @@ extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaWrapFtEval0(uint8_t buil
  * Calling the export before `initialize_Dregg2_Dregg2_Bridge_MinaAccountOpening` dereferences
  * uninitialized globals and the process takes SIGSEGV with no Rust panic, which looks exactly like
  * the missing-archive SIGABRT. */
+/* ⚑ THE DEFERRED-ACCUMULATOR DISCHARGE gate (`Dregg2.Circuit.Emit.PastaIpaDeferral` §5). Decides a
+ * BATCH of carried `<s, srs.g>` accumulator claims: `2^k = |srs.g|`, non-empty, every claim at
+ * exactly `k` challenges, AND `d=1` — the batched MSM was evaluated and found to vanish.
+ * `deferral_gate_refuses_undischarged` is the theorem that the fourth conjunct cannot be skipped:
+ * the gate has no way to say "deferred, looks fine so far".
+ *
+ * ⚠ `d` is the ONE field of that wire that is not a shape read. Its earner is
+ * `dregg_bridge::mina_accumulator_discharge`, which runs the |G|+N-point MSM natively over the real
+ * Vesta SRS. Before 2026-08-04 there was no earner and no caller at all — the export shipped and
+ * `d` was whatever a hypothetical wire said. */
+#ifdef DREGG_MINA_DEFERRAL_OK
+extern lean_object *dregg_mina_deferral_ok(lean_object *input);
+/* Needs its module initializer: `parseField?`/`parseNats?`/`decodeBatchWire` reference compiled
+ * string literals, which live in initialized module data — the same reason
+ * `DREGG_MINA_STATE_HASH_WORD_OK` takes one, and the same SIGSEGV-with-no-panic if it is skipped. */
+extern lean_object *initialize_Dregg2_Dregg2_Circuit_Emit_PastaIpaDeferral(uint8_t builtin);
+#endif
+
 #ifdef DREGG_MINA_ACCOUNT_STATE_OK
 extern lean_object *dregg_mina_account_state_ok(lean_object *input);
 extern lean_object *initialize_Dregg2_Dregg2_Bridge_MinaAccountOpening(uint8_t builtin);
@@ -854,6 +872,15 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(maores);
+#endif
+#ifdef DREGG_MINA_DEFERRAL_OK
+    lean_object *mdores = initialize_Dregg2_Dregg2_Circuit_Emit_PastaIpaDeferral(1);
+    if (!lean_io_result_is_ok(mdores)) {
+        lean_io_result_show_error(mdores);
+        lean_dec_ref(mdores);
+        return 1;
+    }
+    lean_dec_ref(mdores);
 #endif
 #if defined(DREGG_MINA_BETTER_TIP) || defined(DREGG_MINA_HEAD_ADVANCE)
     /* ONE initializer for BOTH fork-choice exports — they share a module, and it is what brings the
@@ -1645,6 +1672,30 @@ size_t dregg_mina_state_hash_word_ok_str(const char *in_utf8, char *out, size_t 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mina_state_hash_word_ok(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MINA_DEFERRAL_OK
+/* dregg_mina_deferral_ok_str — the C string bridge over the VERIFIED Lean `String -> String`
+ * DEFERRED-ACCUMULATOR discharge gate (`Dregg2.Circuit.Emit.PastaIpaDeferral.dregg_mina_deferral_ok`).
+ * Input: `"n=<Nat>;k=<Nat>;c=<Nat>(,<Nat>)*;d=(0|1)"` — `|srs.g|`, the IPA round count, the
+ * per-claim challenge counts (one entry per deferred claim), and whether the batched MSM was
+ * evaluated and found to VANISH. Output: `"1"` / `"0"` / `"ERR"` (fail-closed). The wire grows with
+ * the batch (one small decimal per claim); the caller's growable output buffer handles it. Same
+ * return contract as the bridges above. */
+size_t dregg_mina_deferral_ok_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mina_deferral_ok(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

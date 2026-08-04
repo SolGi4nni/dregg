@@ -2256,6 +2256,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_wrap_shape_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_proof_chain_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_state_hash_word_ok_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mina_deferral_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_account_state_ok_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_better_tip_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mina_head_advance_present)");
@@ -3256,6 +3257,17 @@ fn main() {
     } else {
         absent_export_warn("dregg_mina_state_hash_word_ok");
     }
+    // ⚑ THE DEFERRED-ACCUMULATOR DISCHARGE gate (`Dregg2.Circuit.Emit.PastaIpaDeferral` §5). The
+    // export shipped from the day `Dregg2/FFI.lean:78` imported it and was called by NOTHING until
+    // 2026-08-04 — the class `scripts/check-export-callers.py` now reds on. `dregg-bridge`'s
+    // `mina_accumulator_discharge` is the caller, and it supplies a `d=` bit it EARNED by running
+    // the |G|+N-point MSM natively.
+    let mina_deferral_ok_present = archive_exports(&build_archive, "dregg_mina_deferral_ok");
+    if mina_deferral_ok_present {
+        println!("cargo:rustc-cfg=dregg_mina_deferral_ok_present");
+    } else {
+        absent_export_warn("dregg_mina_deferral_ok");
+    }
     // ⚑ THE MINA ACCOUNT-OPENING gate (`Dregg2.Bridge.MinaAccountOpening`) — the first export in
     // this tree that reads Mina STATE rather than Mina's chain: an account's ledger leaf,
     // recomputed from its own fields and folded up a 35-level opening to the
@@ -3574,6 +3586,12 @@ fn main() {
     // uncallable). Both halves land together or neither does.
     if mina_account_state_ok_present {
         shim.define("DREGG_MINA_ACCOUNT_STATE_OK", None);
+    }
+    // ⚑ THE DEFERRED-ACCUMULATOR DISCHARGE gate's `_str` bridge. Same both-halves-or-neither rule
+    // as the two above: the cfg probe and this define land together, because a `#[cfg(…_present)]`
+    // arm whose `extern "C"` symbol is never compiled does not link.
+    if mina_deferral_ok_present {
+        shim.define("DREGG_MINA_DEFERRAL_OK", None);
     }
     // ⚑ THE TWO PER-BLOCK DERIVATION GATES. `DREGG_MINA_WRAP_CHALLENGES` was MISSING here while its
     // cfg probe above was already live — the export entered the archive and no `_str` bridge was

@@ -48,6 +48,17 @@ pub mod midnight_inclusion;
 pub mod midnight_observer;
 pub mod midnight_verified;
 pub mod mina;
+/// ⚑⚑ **dregg's own discharge of the claim Pickles DEFERS** — natively, batched, once, out of
+/// circuit, the way the design intends.
+///
+/// The Step/Tick accumulator claim `C == ⟨b_poly_coefficients(u⃗), srs.g⟩` over 65,536 Vesta
+/// generators is what `batch_dlog_accumulator_check` (`urs_utils.rs:11-68`) discharges and what
+/// Pickles never evaluates in-circuit. This module folds `N` such claims into ONE MSM over
+/// `|G| + N` points using [`dregg_circuit::pasta_msm`] and routes the earned bit through the
+/// LEAN-AUTHORED decision `dregg_mina_deferral_ok`. Until 2026-08-04 that export shipped with zero
+/// Rust callers and its `d=` field — "the batched MSM vanished" — was read straight off a wire
+/// string, so `PastaIpaDeferral.opening_is_vacuous_when_sg_is_free` applied to the live runtime.
+pub mod mina_accumulator_discharge;
 /// ⚑ **The per-CHECKPOINT Mina verification loop.** Pickles recursion means verifying ONE block's
 /// Wrap proof attests the chain behind it, so a client verifies at a CHECKPOINT cadence it chooses
 /// and the cost of a longer cadence is latency, not safety — provided the cheap between-checkpoint
