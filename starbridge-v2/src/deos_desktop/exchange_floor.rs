@@ -79,6 +79,7 @@ use dregg_types::CellId;
 use starbridge_compute_exchange as job;
 use starbridge_execution_lease as lease;
 
+use crate::app_registry::{HELD_BY_A_PARTICIPANT, HELD_BY_A_ROOT_OPERATOR};
 use crate::app_worldspine::{default_domain_token, AppWorldSpine};
 use crate::world::World;
 
@@ -365,7 +366,12 @@ impl ExchangeFloorState {
         let receipt = spine
             .commit(
                 job::service::METHOD_POST,
-                &AuthRequired::None,
+                // LEGITIMATELY THE TOP: `REQUESTER_RIGHTS` is `Requirement::Root`, and
+                // the floor's requester IS the operator who owns this offer. Spelled
+                // with the named hold-side constant so the reading is on the face of
+                // the value — a bare `AuthRequired::None` at a `Root` site reads like
+                // "ungated" and is the exact confusion `Requirement` exists to kill.
+                &HELD_BY_A_ROOT_OPERATOR,
                 &job::REQUESTER_RIGHTS,
                 |_live| post_effects(cell, requester, budget),
             )
@@ -381,12 +387,33 @@ impl ExchangeFloorState {
 
     /// **TAKE the offer at `cell`** — commit the REAL `bid` turn binding
     /// `PROVIDER_HASH` + `BID := price` and advancing `STATE -> BID` (the lease
-    /// binding). `World`'s executor re-enforces the installed BUDGET gate
-    /// (`FieldLteField(BID <= BUDGET)`): an over-budget `price` is a REAL refusal
-    /// that commits NOTHING — the surfaced string carries the executor's own
-    /// reason. (The desktop verb pairs this with one metered checkpoint on the
-    /// execution-lease rail.)
-    pub fn take(&self, cell: &CellId, provider: &str, price: u64) -> Result<TurnReceipt, String> {
+    /// binding). TWO teeth run, in this order:
+    ///
+    /// 1. **the CAP tooth**, in-band: `held` must satisfy [`job::PROVIDER_RIGHTS`]
+    ///    (`AtLeast(Either)`). A taker who holds less is refused BEFORE any turn is
+    ///    built — nothing commits, and the offer stays takeable.
+    /// 2. **the BUDGET tooth**: `World`'s executor re-enforces the installed
+    ///    `FieldLteField(BID <= BUDGET)`, so an over-budget `price` is a REAL refusal
+    ///    that commits NOTHING — the surfaced string carries the executor's own reason.
+    ///
+    /// (The desktop verb pairs this with one metered checkpoint on the execution-lease
+    /// rail.)
+    ///
+    /// ⚑ `held` IS A PARAMETER BECAUSE THE FLOOR'S TAKER IS NOT THE FLOOR'S OWNER.
+    /// This site used to pass [`AuthRequired::None`] — the lattice TOP, which clears
+    /// every requirement including `Root` — so tooth 1 was CONSTANT-TRUE and
+    /// `PROVIDER_RIGHTS` gated nothing. The floor's provider acts inside an offer the
+    /// REQUESTER owns, which is [`HELD_BY_A_PARTICIPANT`], not root; the desktop verbs
+    /// supply exactly that. See `app_registry`'s hold-side vocabulary — the same split
+    /// d94018efe made for the twenty registry world-drives, of which the
+    /// compute-exchange PROVIDER is one.
+    pub fn take(
+        &self,
+        cell: &CellId,
+        held: &AuthRequired,
+        provider: &str,
+        price: u64,
+    ) -> Result<TurnReceipt, String> {
         let offer = self
             .find(cell)
             .ok_or_else(|| format!("no offer at {} on this floor", id_short(cell)))?;
@@ -395,7 +422,10 @@ impl ExchangeFloorState {
             .spine
             .commit(
                 job::service::METHOD_BID,
-                &AuthRequired::None,
+                // THE TAKER'S OWN AUTHORITY, not the top: this is the whole point of
+                // the parameter. A constant here re-opens the hole no matter what
+                // `PROVIDER_RIGHTS` says.
+                held,
                 &job::PROVIDER_RIGHTS,
                 |_live| job::bid_effects(target, provider, price),
             )
@@ -432,7 +462,10 @@ impl ExchangeFloorState {
             .spine
             .commit(
                 job::service::METHOD_SETTLE,
-                &AuthRequired::None,
+                // LEGITIMATELY THE TOP, same as `post`: settle is the REQUESTER's verb
+                // (`REQUESTER_RIGHTS` is `Requirement::Root`) and the floor's requester
+                // owns the offer.
+                &HELD_BY_A_ROOT_OPERATOR,
                 &job::REQUESTER_RIGHTS,
                 |live| {
                     let budget = field_tail_u64(&live.fields[job::BUDGET_SLOT]);
@@ -570,7 +603,10 @@ impl DeosDesktop {
             return false;
         };
         let price = fair_price(budget);
-        match self.exchange_floor.take(&cell, FLOOR_PROVIDER, price) {
+        match self
+            .exchange_floor
+            .take(&cell, &HELD_BY_A_PARTICIPANT, FLOOR_PROVIDER, price)
+        {
             Ok(receipt) => {
                 // The metering rail: one durable checkpoint on the execution-lease
                 // cell — the leased compute visibly RUNS (Monotonic(STEP) advances).
@@ -611,7 +647,10 @@ impl DeosDesktop {
             return false;
         };
         let price = overbudget_price(budget);
-        match self.exchange_floor.take(&cell, FLOOR_PROVIDER, price) {
+        match self
+            .exchange_floor
+            .take(&cell, &HELD_BY_A_PARTICIPANT, FLOOR_PROVIDER, price)
+        {
             Err(reason) => {
                 self.say(format!(
                     "OVER-BUDGET take ({price} > {budget}) REFUSED by the executor — \
@@ -1045,7 +1084,12 @@ mod tests {
         // TAKE — the bid turn (fair price, within the BUDGET gate) + the metered
         // checkpoint on the lease rail (the desktop verb's composition, mirrored).
         floor
-            .take(&cell, FLOOR_PROVIDER, fair_price(1_000))
+            .take(
+                &cell,
+                &HELD_BY_A_PARTICIPANT,
+                FLOOR_PROVIDER,
+                fair_price(1_000),
+            )
             .expect("a fair-price take commits");
         shelf
             .fire(LEASE_APP, lease::service::METHOD_ADVANCE, 1)
@@ -1087,7 +1131,12 @@ mod tests {
             .expect("posts");
         let receipts = world.borrow().receipts().len();
 
-        let refused = floor.take(&cell, FLOOR_PROVIDER, overbudget_price(1_000));
+        let refused = floor.take(
+            &cell,
+            &HELD_BY_A_PARTICIPANT,
+            FLOOR_PROVIDER,
+            overbudget_price(1_000),
+        );
         assert!(refused.is_err(), "1250 > 1000 must be refused");
         assert_eq!(
             world.borrow().receipts().len(),
@@ -1099,11 +1148,22 @@ mod tests {
 
         // The honest path still stands after the refused cheat.
         floor
-            .take(&cell, FLOOR_PROVIDER, fair_price(1_000))
+            .take(
+                &cell,
+                &HELD_BY_A_PARTICIPANT,
+                FLOOR_PROVIDER,
+                fair_price(1_000),
+            )
             .expect("the fair take still commits");
         let rows = floor.rows();
         assert_eq!(rows[0].phase, OfferPhase::Leased);
     }
+
+    // ⚑ THE CAP-TOOTH GATES FOR `take` LIVE IN
+    //   `tests/deos_desktop_exchange_floor_cap_tooth.rs`
+    // and NOT here, because this module is gpui-gated and no workflow runs
+    // `--lib` with `gpui-ui` on — a gate written in this file cannot fire in CI.
+    // That target is armed by name in `.github/workflows/armed-teeth.yml`.
 
     /// A second settle is refused by the LIFECYCLE tooth (`StrictMonotonic(STATE)`
     /// — no double-settle) and commits nothing.
@@ -1114,7 +1174,9 @@ mod tests {
         let (cell, _) = floor
             .post_offer(Rc::clone(&world), FLOOR_REQUESTER, 400)
             .expect("posts");
-        floor.take(&cell, FLOOR_PROVIDER, 300).expect("takes");
+        floor
+            .take(&cell, &HELD_BY_A_PARTICIPANT, FLOOR_PROVIDER, 300)
+            .expect("takes");
         floor.settle(&cell).expect("settles once");
         let receipts = world.borrow().receipts().len();
 
@@ -1144,7 +1206,9 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!((rows[0].cell, rows[1].cell), (a, b), "post order");
         assert_eq!(floor.newest_in(OfferPhase::Posted), Some(b));
-        floor.take(&b, FLOOR_PROVIDER, 600).expect("takes b");
+        floor
+            .take(&b, &HELD_BY_A_PARTICIPANT, FLOOR_PROVIDER, 600)
+            .expect("takes b");
         assert_eq!(floor.newest_in(OfferPhase::Posted), Some(a));
         assert_eq!(floor.newest_in(OfferPhase::Leased), Some(b));
         assert_eq!(floor.icon_face(&a), Some(("compute offer", "$")));

@@ -307,35 +307,74 @@ impl DocumentComposer {
     /// stable across the change.) Returns the [`Receipt`].
     ///
     /// Returns `None` if `cell` is not currently a live child of the document (nothing
-    /// to re-role).
+    /// to re-role), and is a NO-OP (returning the standing receipt) if it already plays
+    /// `role`.
+    ///
+    /// ⚑ **RE-THREADS THE WHOLE ORDER NEIGHBOURHOOD, AND WHY THAT IS THE DESIGN.**
+    /// A re-role is a CONTENT change; it must retract no order. But the fresh atom
+    /// starts with no edges, so every edge the old atom stood in has to be re-asserted,
+    /// and an atom stands in a SET of them: `Op::Embed`'s single `after` plus one edge
+    /// per [`Self::reorder`] constraint, in both directions.
+    ///
+    /// This used to re-thread from ONE predecessor — `predecessor_of`'s crawl returned
+    /// whichever it reached first — so a child that had been both PLACED at an anchor
+    /// and REORDERED after a sibling silently lost one of the two, and its successors
+    /// lost it entirely. Both gestures ship on the desktop verb surface, so the loss was
+    /// user-reachable.
+    ///
+    /// The alternative — have the layout carry each embed's anchor EXPLICITLY, so
+    /// `set_role` can read it back — was rejected: a single stored anchor reproduces
+    /// exactly the lossy assumption (an atom's order is a set, not a scalar), and
+    /// storing the whole set duplicates the edge relation the graph already IS, giving
+    /// two shapes that can disagree. The edge relation stays the single source of truth
+    /// and the re-embed mirrors it.
+    ///
+    /// The mirroring is ADDITIVE, which is what makes it sound here: the old atom keeps
+    /// its edges (tombstoned, not erased — the record stays time-travellable) and the
+    /// new atom GAINS the same neighbourhood. Nothing is retracted, so this composes
+    /// with concurrent patches exactly as any other `Order` does.
     pub fn set_role(&mut self, cell: ChildCellId, role: Role) -> Option<Receipt> {
-        let id = self.embed_id(cell);
-        // Find the live embed-atom's current anchor (its predecessor in the order), so
-        // the re-embed lands in the SAME position.
-        let atom = self.layout.atom(id)?;
-        if !atom.is_alive() {
-            return None;
-        }
-        let after = predecessor_of(&self.layout, id);
-        // Tombstone the old role-atom, then re-embed the SAME cell+id with the new role
-        // at the same anchor. `Op::Embed`'s apply is `entry().or_insert`, so the id must
-        // be FREE for the new content to take — but the id is shared. We therefore mint
-        // a role-distinct atom id for the new placement, keyed on cell+role, while the
-        // OLD (cell-only) atom is tombstoned. The child's CITATION (cell) is preserved;
-        // its order is re-threaded from the same predecessor.
+        // The CURRENT live embed-atom, NOT `embed_id(cell)` — that names only the FIRST
+        // placement, and one re-role tombstones it, so keying on it made the SECOND
+        // re-role of a cell a silent `None` even though the child was plainly live.
+        let id = self.live_atom(cell)?;
+        // A role-distinct id for the new placement (`Op::Embed`'s apply is
+        // `entry().or_insert`, so the id must be FREE for the new content to take).
         let new_id = AtomId::derive(
             COMPOSER_EMBED_SEED,
             &format!("embed:{}:role:{:?}", cell, role.to_embed()),
         );
-        self.apply(&[
+        // ALREADY IN THAT ROLE. The ids coincide, and `Remove`-then-`Embed` on one id
+        // would tombstone the child and then decline to revive it — the gesture would
+        // DELETE the very child it was asked to leave alone.
+        if new_id == id {
+            return Some(self.receipt_of(id));
+        }
+        // The old atom's order neighbourhood, BOTH directions, read off the edge
+        // relation before the swap.
+        let preds = predecessors_of(&self.layout, id);
+        let succs: Vec<AtomId> = self.layout.successors(id).collect();
+        // `Op::Embed` carries exactly one `after`; the remaining predecessors are
+        // re-asserted as the same `Op::Order` constraints a `reorder` would emit.
+        let anchor = preds.first().copied().unwrap_or(AtomId::ROOT);
+        let mut ops = vec![
             Op::Remove { id },
             Op::Embed {
                 id: new_id,
                 child: ChildRef::live(cell),
-                after,
+                after: anchor,
                 role: role.to_embed(),
             },
-        ]);
+        ];
+        ops.extend(preds.iter().skip(1).map(|p| Op::Order {
+            from: *p,
+            to: new_id,
+        }));
+        ops.extend(succs.iter().map(|s| Op::Order {
+            from: new_id,
+            to: *s,
+        }));
+        self.apply(&ops);
         // The new atom becomes the canonical embed for this cell going forward; keep the
         // tail pointing at the document's true tail.
         if self.tail == id {
@@ -886,24 +925,24 @@ fn last_live_atom(layout: &LayoutGraph) -> AtomId {
     }
 }
 
-/// The predecessor of `id` in the order graph (the atom whose order-edge points at it),
-/// or [`AtomId::ROOT`] if it is anchored at the head / has no recorded predecessor.
-fn predecessor_of(layout: &LayoutGraph, id: AtomId) -> AtomId {
-    // Crawl the graph for the first atom that has `id` as an order-successor.
-    let mut seen = std::collections::BTreeSet::new();
-    let mut stack = vec![AtomId::ROOT];
-    while let Some(cur) = stack.pop() {
-        if !seen.insert(cur) {
-            continue;
-        }
-        for s in layout.successors(cur) {
-            if s == id {
-                return cur;
-            }
-            stack.push(s);
-        }
-    }
-    AtomId::ROOT
+/// **EVERY** atom whose order-edge points at `id`, in id order — the complete in-edge
+/// set, which is what an atom's position in this partial order actually is. Empty if
+/// `id` is anchored at the head with no recorded predecessor.
+///
+/// ⚑ Replaces a `predecessor_of` that returned the FIRST hit of a crawl **from ROOT**,
+/// and so was wrong twice over: it dropped every predecessor after the first (a child
+/// that was placed AND reordered has two), and it could not see one at all in a
+/// component not yet reachable from ROOT. A full scan of the atom table has neither
+/// blind spot and is what [`DocumentComposer::set_role`] needs to re-thread without
+/// retracting anything.
+fn predecessors_of(layout: &LayoutGraph, id: AtomId) -> Vec<AtomId> {
+    let mut preds: Vec<AtomId> = std::iter::once(AtomId::ROOT)
+        .chain(layout.atoms().map(|a| a.id))
+        .filter(|p| layout.successors(*p).any(|s| s == id))
+        .collect();
+    preds.sort_by_key(|a| a.0);
+    preds.dedup();
+    preds
 }
 
 #[cfg(test)]
@@ -916,6 +955,24 @@ mod tests {
 
     fn doc() -> DocumentComposer {
         DocumentComposer::new(cell(0xD0C), Author(7))
+    }
+
+    /// Every atom carrying an order-edge INTO `id`, in id order — recomputed HERE from
+    /// the public [`LayoutGraph`] surface rather than calling [`predecessors_of`], so
+    /// the neighbourhood assertions do not check the production helper against itself.
+    fn in_edges(layout: &LayoutGraph, id: AtomId) -> Vec<AtomId> {
+        let mut out: Vec<AtomId> = std::iter::once(AtomId::ROOT)
+            .chain(layout.atoms().map(|a| a.id))
+            .filter(|p| layout.successors(*p).any(|s| s == id))
+            .collect();
+        out.sort_by_key(|a| a.0);
+        out.dedup();
+        out
+    }
+
+    fn sorted(mut ids: Vec<AtomId>) -> Vec<AtomId> {
+        ids.sort_by_key(|a| a.0);
+        ids
     }
 
     // (1) ADD — two cell embeds list in order, each provenanced with the author.
@@ -1119,6 +1176,131 @@ mod tests {
         assert!(
             c.roster().iter().any(|k| k.cell == f && !k.live),
             "the removed figure is retained, tombstoned"
+        );
+    }
+
+    // (7) SET_ROLE IS A CONTENT CHANGE, NOT AN ORDER RETRACTION.
+    //
+    //     A re-role tombstones the old role-atom and embeds a fresh one, so the new atom
+    //     has to be re-threaded into the order relation. `set_role` used to re-thread it
+    //     from ONE predecessor — whichever [`predecessor_of`]'s crawl reached first —
+    //     which silently DISCHARGED every other order-edge the atom stood in. Both
+    //     shapes below are one gesture away in the shipped desktop verbs:
+    //
+    //       * TWO PREDECESSORS: an author places two siblings at the same anchor (a
+    //         fork) and then `reorder`s them into a chain. The later child now stands in
+    //         its placement anchor's edge AND the reorder constraint's edge.
+    //       * A SUCCESSOR: any child that is not the document tail.
+    //
+    //     Losing either one is a RETRACTION, and the composition order is a partial order
+    //     built ADDITIVELY out of independently-receipted constraints — it has no
+    //     retraction. So the property is the whole order NEIGHBOURHOOD, both directions.
+    #[test]
+    fn set_role_rethreads_the_whole_order_neighbourhood() {
+        let mut c = doc();
+        let (head, f1, f2, tail) = (cell(0xA1), cell(0xB2), cell(0xC3), cell(0xD4));
+
+        c.add_embed(head, Role::Section); // ROOT -> head
+        c.add_embed_at(f1, Some(head), Role::Figure); // head -> f1
+        c.add_embed_at(f2, Some(head), Role::Figure); // head -> f2  (a FORK: f1 ∥ f2)
+        let head_atom = c.live_atom(head).expect("head is live");
+        let f1_atom = c.live_atom(f1).expect("f1 is live");
+        let f2_atom = c.live_atom(f2).expect("f2 is live");
+        // The author RESOLVES the fork deliberately: f1 comes before f2.
+        c.reorder(f2_atom, f1_atom); // f1 -> f2
+                                     // ...and hangs a tail off f2, so the neighbourhood has both directions.
+        c.add_embed_at(tail, Some(f2), Role::Block); // f2 -> tail
+        let tail_atom = c.live_atom(tail).expect("tail is live");
+
+        // MEASURED BEFORE THE GESTURE: two in-edges, one out-edge.
+        assert_eq!(
+            in_edges(c.layout(), f2_atom),
+            sorted(vec![head_atom, f1_atom]),
+            "f2 stands in TWO order-edges: its placement anchor and the reorder constraint"
+        );
+        assert!(
+            c.layout().successors(f2_atom).any(|s| s == tail_atom),
+            "f2 precedes the tail"
+        );
+
+        // THE GESTURE — change f2's ROLE. Content changes; order must not.
+        c.set_role(f2, Role::Citation)
+            .expect("re-roling a live child succeeds");
+        let f2_new = c
+            .live_atom(f2)
+            .expect("f2 is still a live child after the re-role");
+        assert_ne!(
+            f2_new, f2_atom,
+            "a re-role mints a fresh role-keyed atom (the premise of the whole hazard)"
+        );
+
+        // BOTH in-edges land on the new atom — the reorder constraint SURVIVES.
+        assert_eq!(
+            in_edges(c.layout(), f2_new),
+            sorted(vec![head_atom, f1_atom]),
+            "set_role discharged an order constraint: the re-roled child kept only part \
+             of its predecessor set, so an author's `reorder` was silently undone by a \
+             later re-role"
+        );
+        // ...and so does the out-edge: the re-roled child still precedes its successor.
+        assert!(
+            c.layout().successors(f2_new).any(|s| s == tail_atom),
+            "set_role dropped the `f2 -> tail` edge: the re-roled child no longer \
+             precedes the child that was ordered after it"
+        );
+
+        // THE READING, not just the graph: every child is still there, and the author's
+        // chosen order (head, f1, f2, tail) is the one that reads back.
+        assert_eq!(
+            c.children().iter().map(|k| k.cell).collect::<Vec<_>>(),
+            vec![head, f1, f2, tail],
+            "the composed reading keeps the author's order across the re-role"
+        );
+        assert_eq!(
+            c.children()[2].role,
+            Role::Citation,
+            "and the role did change — the gesture is not a no-op"
+        );
+    }
+
+    // (8) A RE-ROLE IS REPEATABLE, AND RE-ROLING TO THE STANDING ROLE IS A NO-OP.
+    //
+    //     Same root cause as (7), other face: `set_role` keyed on `embed_id(cell)` — the
+    //     FIRST placement's id — which its own first call tombstones. So the second
+    //     re-role of any child returned `None` ("not a live child") about a child
+    //     sitting in plain view in `children()`. Keying on [`DocumentComposer::live_atom`]
+    //     fixes it and makes the same-role case an id COLLISION, which must not
+    //     tombstone-then-decline-to-revive the child.
+    #[test]
+    fn a_child_can_be_re_roled_more_than_once_and_re_roling_to_its_own_role_is_inert() {
+        let mut c = doc();
+        let (a, b) = (cell(0xA1), cell(0xB2));
+        c.add_embed(a, Role::Section);
+        c.add_embed(b, Role::Figure);
+
+        c.set_role(b, Role::Citation)
+            .expect("the FIRST re-role succeeds");
+        c.set_role(b, Role::Block)
+            .expect("the SECOND re-role succeeds — the child is plainly still live");
+        assert_eq!(
+            c.children()
+                .iter()
+                .map(|k| (k.cell, k.role))
+                .collect::<Vec<_>>(),
+            vec![(a, Role::Section), (b, Role::Block)],
+            "two re-roles land, and neither disturbs the order or the sibling"
+        );
+
+        // Re-roling to the role it ALREADY plays: inert, and above all NOT a deletion.
+        c.set_role(b, Role::Block)
+            .expect("re-roling to the standing role is a no-op, not a failure");
+        assert_eq!(
+            c.children()
+                .iter()
+                .map(|k| (k.cell, k.role))
+                .collect::<Vec<_>>(),
+            vec![(a, Role::Section), (b, Role::Block)],
+            "re-roling to the standing role deleted the child (Remove-then-Embed on one id)"
         );
     }
 }

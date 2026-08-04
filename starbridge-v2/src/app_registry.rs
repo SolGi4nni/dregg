@@ -3146,21 +3146,66 @@ mod cap_tooth_tests {
     /// the top. So it is under-authorized for all twenty entries at once.
     static HELD_BY_AN_OUTSIDER: AuthRequired = AuthRequired::Proof;
 
-    /// Launch `entry` on a FRESH world as a holder of `held`, and report
-    /// `(refused_by_the_cap_tooth, receipts_left_behind)`.
-    fn launch_as(entry: &AppEntry, held: &AuthRequired) -> (bool, usize) {
+    /// ⚑ **WHAT ACTUALLY HAPPENED TO A LAUNCH — the distinction a `bool` cannot make.**
+    ///
+    /// [`launch_as`] used to report one flag, `refused_by_the_cap_tooth`. Asserting it
+    /// is exact in the REFUSING direction (the `matches!` demands specifically
+    /// `FireError::Unauthorized`), and it is the wrong question in the other one:
+    /// `!refused` means "the cap tooth did not refuse", which is NOT "the app
+    /// launched". Everything downstream of the cap tooth — `World`'s executor
+    /// re-enforcing the installed `CellProgram`, a missing witness, an unseeded cell —
+    /// lands in the same `!refused` bucket as a clean launch.
+    ///
+    /// That is not hypothetical here. `privacy-voting`'s World fire clears the cap
+    /// tooth and then fails the program re-enforcement, and the anti-over-narrowing leg
+    /// of [`each_entry_declares_the_narrowest_authority_that_launches`] passed it
+    /// anyway — a leg that would have gone on passing if EVERY entry had stopped
+    /// launching, because none of them would have been refused by the CAP.
+    #[derive(Debug)]
+    enum LaunchOutcome {
+        /// The world-drive committed its representative turn. The app really launched.
+        Launched,
+        /// The CAP tooth refused IN-BAND (`FireError::Unauthorized`) — no turn built.
+        CapRefused,
+        /// It CLEARED the cap tooth and then failed downstream (the executor's program
+        /// re-enforcement, a seed gap, …). Neither a refusal nor a launch.
+        FailedDownstream(String),
+    }
+
+    /// Launch `entry` on a FRESH world as a holder of `held`, and report what happened
+    /// plus how many receipts it left behind.
+    fn launch_as(entry: &AppEntry, held: &AuthRequired) -> (LaunchOutcome, usize) {
         let world = Rc::new(RefCell::new(World::new()));
         let before = world.borrow().receipts().len();
-        let outcome = entry.launch_on_world_as([0x5Eu8; 32], Rc::clone(&world), held);
-        let refused = matches!(
-            outcome,
-            Err(WorldFireError::Gate(FireExecuteError::Gate(
-                FireError::Unauthorized { .. }
-            )))
-        );
+        let outcome = match entry.launch_on_world_as([0x5Eu8; 32], Rc::clone(&world), held) {
+            Ok(_) => LaunchOutcome::Launched,
+            Err(WorldFireError::Gate(FireExecuteError::Gate(FireError::Unauthorized {
+                ..
+            }))) => LaunchOutcome::CapRefused,
+            Err(other) => LaunchOutcome::FailedDownstream(format!("{other:?}")),
+        };
         let after = world.borrow().receipts().len();
-        (refused, after - before)
+        (outcome, after - before)
     }
+
+    /// The ONE entry whose World fire clears the cap tooth and then fails DOWNSTREAM,
+    /// and the executor reason it fails with — pinned so the hole is DETECTED, not
+    /// merely documented.
+    ///
+    /// `aac5dd6f4` (2026-07-17) bound privacy-voting's tally to an exhibited ballot set
+    /// and updated the FRAMEWORK fire; the World fire still calls plain `spine.commit`
+    /// with no witness, and `launch_on_world` never runs the seed closure that births
+    /// the ballot cell. Closing it needs a REAL factory-born ballot on World —
+    /// exhibiting an invented id would re-launder exactly the tally forgery aac5dd6f4
+    /// closed — so it is pinned here rather than papered over.
+    ///
+    /// ⚑ THE PIN IS TWO-SIDED. If a SECOND entry stops launching, the count assertion
+    /// names it. If privacy-voting is REPAIRED, the count assertion also fails and
+    /// tells you to delete this exception. A silent pass is the one outcome it forbids.
+    const DOWNSTREAM_FAILURE: (&str, &str) = (
+        "privacy-voting",
+        "missing EvalContext field for slot caveat: count-ge set-exhibit witness",
+    );
 
     /// ⚑ **THE TOOTH REFUSES, AND NOTHING COMMITS.** Every entry in the standard
     /// registry, launched by a holder whose credential clears none of the ladder, is
@@ -3173,10 +3218,10 @@ mod cap_tooth_tests {
         let reg = AppRegistry::standard();
         let mut refused = 0usize;
         for entry in reg.entries() {
-            let (was_refused, receipts) = launch_as(entry, &HELD_BY_AN_OUTSIDER);
+            let (outcome, receipts) = launch_as(entry, &HELD_BY_AN_OUTSIDER);
             assert!(
-                was_refused,
-                "{}: a Proof holder cleared the cap tooth — the gate is not reading `held`",
+                matches!(outcome, LaunchOutcome::CapRefused),
+                "{}: a Proof holder was not refused by the CAP tooth — got {outcome:?}",
                 entry.id
             );
             assert_eq!(
@@ -3204,32 +3249,55 @@ mod cap_tooth_tests {
     fn each_entry_declares_the_narrowest_authority_that_launches() {
         let reg = AppRegistry::standard();
         let (mut roots, mut participants, mut observers) = (0usize, 0usize, 0usize);
+        let mut downstream: Vec<&str> = Vec::new();
         for entry in reg.entries() {
-            // The declared role launches.
-            let (refused_at_own, _) = launch_as(entry, entry.driver_rights());
-            assert!(
-                !refused_at_own,
-                "{}: its own declared driver rights do not clear its requirement",
-                entry.id
-            );
+            // ⚑ THE DECLARED ROLE LAUNCHES — and "launches" means LAUNCHED, not merely
+            // "was not refused by the cap tooth". Those are different outcomes and this
+            // leg used to conflate them (see [`LaunchOutcome`]).
+            match launch_as(entry, entry.driver_rights()).0 {
+                LaunchOutcome::Launched => {}
+                LaunchOutcome::CapRefused => panic!(
+                    "{}: its own declared driver rights do not clear its requirement",
+                    entry.id
+                ),
+                LaunchOutcome::FailedDownstream(why) => {
+                    // NOT a silent pass: the exception is named, its reason is pinned,
+                    // and the count below is what makes it a gate rather than a note.
+                    assert_eq!(
+                        entry.id, DOWNSTREAM_FAILURE.0,
+                        "{}: cleared the cap tooth and then failed DOWNSTREAM, which is \
+                         a new hole — only {} is a known one. Reason: {why}",
+                        entry.id, DOWNSTREAM_FAILURE.0
+                    );
+                    assert!(
+                        why.contains(DOWNSTREAM_FAILURE.1),
+                        "{}: fails downstream for a DIFFERENT reason than the pinned one \
+                         ({}) — got {why}",
+                        entry.id,
+                        DOWNSTREAM_FAILURE.1
+                    );
+                    downstream.push(entry.id);
+                }
+            }
             match entry.driver_rights() {
                 AuthRequired::None => {
                     roots += 1;
-                    let (refused, receipts) = launch_as(entry, &HELD_BY_A_PARTICIPANT);
+                    let (outcome, receipts) = launch_as(entry, &HELD_BY_A_PARTICIPANT);
                     assert!(
-                        refused,
-                        "{}: declares ROOT but a participant launches it — root is not \
-                         required here, it was the easy value",
+                        matches!(outcome, LaunchOutcome::CapRefused),
+                        "{}: declares ROOT but a participant is not CAP-refused — root is \
+                         not required here, it was the easy value (got {outcome:?})",
                         entry.id
                     );
                     assert_eq!(receipts, 0, "{}: refusal committed something", entry.id);
                 }
                 AuthRequired::Either => {
                     participants += 1;
-                    let (refused, receipts) = launch_as(entry, &HELD_BY_AN_OBSERVER);
+                    let (outcome, receipts) = launch_as(entry, &HELD_BY_AN_OBSERVER);
                     assert!(
-                        refused,
-                        "{}: declares PARTICIPANT but an observer launches it",
+                        matches!(outcome, LaunchOutcome::CapRefused),
+                        "{}: declares PARTICIPANT but an observer is not CAP-refused \
+                         (got {outcome:?})",
                         entry.id
                     );
                     assert_eq!(receipts, 0, "{}: refusal committed something", entry.id);
@@ -3246,6 +3314,16 @@ mod cap_tooth_tests {
         assert_eq!(roots, 6, "six entries legitimately hold root");
         assert_eq!(participants, 13, "thirteen act at the participant tier");
         assert_eq!(observers, 1, "execution-lease acts at the observer tier");
+        // ⚑ NINETEEN OF TWENTY GENUINELY LAUNCH AT THEIR DECLARED RUNG. The twentieth is
+        // named above. Repairing it makes THIS line fail — which is the point: the
+        // exception has to be deleted deliberately, not decay into a permanent carve-out.
+        assert_eq!(
+            downstream,
+            vec![DOWNSTREAM_FAILURE.0],
+            "exactly one entry clears the cap tooth at its declared rung and still does \
+             not launch; if this list changed, either a new hole opened or the pinned \
+             one closed and this exception must go"
+        );
     }
 
     /// The refusal NAMES BOTH SIDES — required and held — so a refused launch is

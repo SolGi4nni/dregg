@@ -765,7 +765,56 @@ jobs:
           toolchain: nightly
       - uses: Swatinem/rust-cache@v2
 
+      # ⚑ THE REGISTRY CAP TEETH ARE A `--lib` TARGET, AND `--test` NEVER SELECTS ONE.
+      # `app_registry` is `#[cfg(feature = "app-registry")]`, which the DEFAULT feature set
+      # does NOT pull (`embedded-executor` deliberately omits it so the wasm bundle stays
+      # small — Cargo.toml §`app-registry`). So `cargo test -p starbridge-v2 --lib`, the
+      # invocation everyone runs, compiles the whole module out and reports `ok` having
+      # never seen it, and the step below only names integration targets. These four teeth
+      # decide whether TWENTY registry world-drives can refuse an under-authorized actor;
+      # they were unrunnable in CI on both counts until this step. gpui-free and ~20s.
+      - name: Arm the registry cap teeth (--lib, app-registry)
+        env:
+          RUST_MIN_STACK: "33554432"
+        run: |
+          set +e
+          set -uo pipefail
+          log=/tmp/cap-teeth.log
+          cargo test -p starbridge-v2 --features app-registry --lib cap_tooth_tests \
+            --no-fail-fast 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+
+          # Measured 2026-08-04: 4 tests, all ok. Same ratchet rule as the floor below —
+          # a feature that stops being pulled makes this print `ok. 0 passed` and exit 0.
+          ran=$(grep -hoE '^test result: (ok|FAILED)\. [0-9]+ passed' "$log" \
+                | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | paste -sd+ - | bc)
+          ran=${ran:-0}
+          echo "armed-teeth(cap): $ran registry cap tooth(s) actually executed (floor 4)."
+          if [ "$ran" -lt 4 ]; then
+            echo "::error::only $ran registry cap tooth(s) executed, below the measured floor of 4."
+            echo "::error::\`app_registry\` is feature-gated; a dropped --features flag compiles the"
+            echo "::error::module out and this reports success having tested nothing. Fix the arming;"
+            echo "::error::do NOT lower the floor."
+            status=1
+          fi
+          # By name: this is the one that asserts the declared rung is MINIMAL, and the one
+          # a rename would silence quietest.
+          if ! grep -q 'each_entry_declares_the_narrowest_authority_that_launches' "$log"; then
+            echo "::error::the registry MINIMALITY tooth did not run. Without it, every entry"
+            echo "::error::re-widening to the lattice top is green again. Update this grep in the"
+            echo "::error::same commit as any rename."
+            status=1
+          fi
+          exit $status
+
+      # ⚑ `if: !cancelled()` BECAUSE THE STEP ABOVE CAN GO RED, AND ACTIONS STOPS A JOB AT
+      # THE FIRST FAILED STEP. That is precisely how the dark-target ratchet was silenced
+      # for ~11h on 2026-08-03 (see `.github/dark-targets.txt`): a red step 6 skipped
+      # steps 7/8/9, and every skipped sweep read as "not a failure". Adding a step in
+      # front of these teeth without this would put the whole desktop suite behind a gate
+      # that can go red — so the arming commit fixes it in the same hunk.
       - name: Arm the gpui-gated desktop teeth
+        if: ${{ !cancelled() }}
         env:
           RUST_MIN_STACK: "33554432"
         run: |
@@ -791,7 +840,14 @@ jobs:
           # sweep is the `execution sweep` step of ci.yml's `clippy-correctness` HARD GATE.
           # Nobody owned the SEAM between the two lanes. A new gpui-gated test target is not
           # done when it passes; it is done when it is armed here or listed in dark-targets.txt.
-          FLOOR_DESKTOP_TESTS=13
+          #
+          # RAISED to 15 on 2026-08-04 for exchange-floor-cap-tooth (2), armed in the SAME
+          # commit that authored it — the seam above, owned. That gate could not have lived
+          # in `exchange_floor.rs`'s own `mod tests`: `deos_desktop` is gpui-gated and NO
+          # invocation anywhere runs `-p starbridge-v2 --lib` with `gpui-ui` on, so a unit
+          # test there is dark in a way no sweep reports (the lib target DOES run — on the
+          # default feature set, where the module is `cfg`'d out entirely).
+          FLOOR_DESKTOP_TESTS=15
 
           log=/tmp/gpui-teeth.log
           cargo test -p starbridge-v2 --features native-full \
@@ -806,6 +862,7 @@ jobs:
             --test deos_desktop_composes_a_doc_from_cells \
             --test deos_desktop_every_composer_gesture_is_reachable \
             --test deos_desktop_typed_resolution_and_blame \
+            --test deos_desktop_exchange_floor_cap_tooth \
             --no-fail-fast 2>&1 | tee "$log"
           status=${PIPESTATUS[0]}
 
