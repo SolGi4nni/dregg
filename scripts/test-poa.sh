@@ -5,18 +5,20 @@ set -euo pipefail
 # component that does not require a completed deployment ceremony.  `release`
 # additionally reproduces the post-genesis Lean bundle, authenticates its
 # curator epoch, stages those exact bytes into the web surface, and runs the
-# actual-bundle hostile tests.
+# actual-bundle hostile tests. `drex-release` additionally executes the
+# deliberately segregated, minute-scale PoA Dark Bazaar proof/circuit/MPC path
+# in release mode; merely listing that target is not coverage.
 # It does not claim that N=2 admission is live, authenticate NetworkJudge's
-# caller, construct Dark Bazaar's private authorization, or smoke a promoted
-# public deployment; each remains a separate fail-closed runtime/infra gate.
+# caller, or smoke a promoted public deployment; each remains a separate
+# fail-closed runtime/infra gate.
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-source}"
 
 case "$mode" in
-  source|release) ;;
+  source|release|drex-release) ;;
   *)
-    echo "usage: scripts/test-poa.sh [source|release]" >&2
+    echo "usage: scripts/test-poa.sh [source|release|drex-release]" >&2
     exit 2
     ;;
 esac
@@ -43,8 +45,12 @@ poa_lean_targets=(
   Dregg2.Games.PathOfAngels.BlackBoxReconstruction
   Dregg2.Games.PathOfAngels.ContainmentInspection
   Dregg2.Games.PathOfAngels.DeckGraph
+  Dregg2.Games.PathOfAngels.DeckExpedition
+  Dregg2.Games.PathOfAngels.ExpeditionDemonstrator
   Dregg2.Games.PathOfAngels.AssistProfile
   Dregg2.Games.PathOfAngels.DarkBazaar
+  Dregg2.Games.PathOfAngels.DarkBazaarJudgeWire
+  Dregg2.Games.PathOfAngels.DarkBazaarJudge
   Dregg2.Games.PathOfAngels.FieldArchive
   Dregg2.Games.PathOfAngels.NetworkJudgeWire
   Dregg2.Games.PathOfAngels.NetworkJudge
@@ -65,6 +71,10 @@ run cargo nextest run -p dreggnet-market --features poa-expedition \
   --test poa_expedition_ingress
 run cargo nextest list -p dreggnet-market --features private-attested-clearing \
   --test poa_dark_bazaar_protocol
+if [ "$mode" = drex-release ]; then
+  run cargo nextest run --profile heavy --release -p dreggnet-market \
+    --features private-attested-clearing --test poa_dark_bazaar_protocol
+fi
 
 # Both poles of the native boundary are required. The first executes the real
 # linked Lean export; the second proves archive absence is a named refusal and
