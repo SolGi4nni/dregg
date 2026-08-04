@@ -141,11 +141,21 @@ pub fn read_program_blob(cell: &Cell) -> Option<Vec<u8>> {
     len_bytes.copy_from_slice(&header[..8]);
     let total = u64::from_le_bytes(len_bytes) as usize;
 
-    let mut out = Vec::with_capacity(total);
+    // The `total` header and every `leaf[0]` fill byte are UNTRUSTED COMMITTED CONTENT, and
+    // the committed heap does not bind them: `cell/src/state.rs:583,1014,1054` fold each heap
+    // value through `fold_bytes32`, whose `u32 % BABYBEAR_P` per-chunk reduction identifies
+    // `x` with `x + p` — so `leaf[0] = 31` and `leaf[0] = 32` (chunk 0 plus p, low byte +1)
+    // are the SAME committed leaf under the SAME `heap_root` and the SAME cell commitment.
+    // A `fill` of 32 then slices `&leaf[1..33]` out of a 32-byte element: an OOB PANIC on a
+    // cell that passes every commitment check. Clamp it, and do not pre-reserve on a u64 the
+    // same aliasing lets an author pick (a huge `total` is an OOM abort). `deos-view`'s
+    // `read_view_blob` already reads this way; this copy and `deos-js-runtime`'s did not.
+    // Exhibit: `cell/tests/heap_value_mod_p_alias_at_the_commitment.rs`.
+    let mut out: Vec<u8> = Vec::new();
     let mut key: u32 = 1;
     while out.len() < total {
         let leaf = cell.state.get_heap(PROGRAM_COLL, key)?;
-        let fill = leaf[0] as usize;
+        let fill = (leaf[0] as usize).min(CHUNK_BYTES);
         out.extend_from_slice(&leaf[1..1 + fill]);
         key += 1;
     }

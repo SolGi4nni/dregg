@@ -786,11 +786,19 @@ pub fn read_view_blob(cell: &Cell) -> Option<Vec<u8>> {
     let mut len_bytes = [0u8; 8];
     len_bytes.copy_from_slice(&header[..8]);
     let total = u64::from_le_bytes(len_bytes) as usize;
-    let mut out = Vec::with_capacity(total);
+    // UNTRUSTED COMMITTED CONTENT, and the commitment does not bind it: the heap leaf folds
+    // its value through `fold_bytes32` (`cell/src/state.rs:583,1014,1054`), whose `u32 %
+    // BABYBEAR_P` per-chunk reduction makes `leaf[0] = 31` and `leaf[0] = 32` (chunk 0 plus
+    // p) the SAME committed leaf under one `heap_root`. An unclamped `fill = 32` slices
+    // `&leaf[1..33]` from a 32-byte element — an OOB PANIC reachable on a cell that passes
+    // every commitment check — and a forged u64 `total` makes `with_capacity` an OOM abort.
+    // `deos-view`'s `read_view_blob` already clamps; this third copy did not.
+    // Exhibit: `cell/tests/heap_value_mod_p_alias_at_the_commitment.rs`.
+    let mut out: Vec<u8> = Vec::new();
     let mut key: u32 = 1;
     while out.len() < total {
         let leaf = cell.state.get_heap(VIEWTREE_COLL, key)?;
-        let fill = leaf[0] as usize;
+        let fill = (leaf[0] as usize).min(CHUNK_BYTES);
         out.extend_from_slice(&leaf[1..1 + fill]);
         key += 1;
     }
