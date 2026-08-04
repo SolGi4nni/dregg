@@ -18,7 +18,7 @@ pub const MAX_POA_NETWORK_GENESIS_WIRE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoaNetworkGenesisVerdict {
-    /// Exact opaque `POA-SIGNAL-GENESIS-OUT-1` bytes emitted by Lean.
+    /// Exact opaque `POA-SIGNAL-GENESIS-OUT-2` bytes emitted by Lean.
     Emitted(String),
     /// Lean's empty semantic-refusal sentinel.
     Rejected,
