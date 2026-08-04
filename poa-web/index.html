@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#091517" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="The Khovokhi expedition terminal — Path of Angels beta field network." />
+    <title>KHOVOKHI // Path of Angels</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to ship terminal</a>
+    <div class="ship-noise" aria-hidden="true"></div>
+    <div id="app" class="shell" aria-busy="true">
+      <header class="topbar">
+        <a class="ship-mark" href="#overview" aria-label="Khovokhi ship overview">
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M24 3 42 24 24 45 6 24 24 3Z" />
+            <path d="M24 11v26M12 24h24" />
+            <circle cx="24" cy="24" r="5" />
+          </svg>
+          <span><b>KHOVOKHI</b><small>EXPEDITION NETWORK // PATH OF ANGELS</small></span>
+        </a>
+        <div class="top-status" aria-label="terminal status">
+          <span class="status-lamp" id="artifact-lamp"></span>
+          <span id="artifact-status">AUTHORITY CHECK</span>
+          <time id="ship-clock">--:--:--</time>
+        </div>
+      </header>
+
+      <aside class="rail" aria-label="ship sections">
+        <nav>
+          <a href="#overview" class="active" data-route="overview"><i>01</i><span>Deck watch</span></a>
+          <a href="#missions" data-route="missions"><i>02</i><span>Daily board</span></a>
+          <a href="#records" data-route="records"><i>03</i><span>Field records</span></a>
+          <a href="#bazaar" data-route="bazaar"><i>04</i><span>Dark Bazaar</span></a>
+          <a href="#choir" data-route="choir"><i>05</i><span>The Choir</span></a>
+        </nav>
+        <button class="curator-key" id="curator-open" type="button">
+          <span>CURATOR ACCESS</span><small>content console</small>
+        </button>
+      </aside>
+
+      <main id="main" tabindex="-1">
+        <div id="fatal-artifact" class="seal-notice" role="alert" hidden>
+          <div class="seal-glyph">×</div>
+          <div><b>MISSION AUTHORITY SEALED</b><p id="fatal-detail">The Lean-emitted rule bundle could not be authenticated.</p></div>
+        </div>
+
+        <section class="view active" id="view-overview" data-view="overview">
+          <div class="view-heading">
+            <div><p class="eyebrow">INHABITED BAND // DECKS 118–126</p><h1>Night watch, Khovokhi</h1></div>
+            <p class="watch-copy">The ship moves by command. We go below to learn what is moving with us.</p>
+          </div>
+
+          <div class="overview-grid">
+            <article class="panel officer-card">
+              <div class="panel-label">EXPEDITION OFFICER SLOT</div>
+              <div class="officer-portrait" aria-hidden="true">
+                <svg viewBox="0 0 180 190">
+                  <path class="portrait-bg" d="M20 172c4-45 20-68 42-76-13-16-14-52 2-67 17-17 49-17 65 1 15 17 12 50 0 66 25 9 39 35 42 76Z" />
+                  <path class="portrait-line" d="M55 97c13 13 58 14 75-1M67 72c5 3 11 3 16 0m15 0c5 3 11 3 16 0M65 116l25 18 26-18M42 161h96" />
+                  <circle cx="90" cy="56" r="40" class="portrait-ring" />
+                </svg>
+              </div>
+              <div class="officer-name"><b>UNASSIGNED</b><span>profile receipt required</span></div>
+              <dl class="officer-stats">
+                <div><dt>Clearance</dt><dd>not bound</dd></div>
+                <div><dt>Runs</dt><dd>0 verified</dd></div>
+                <div><dt>Field mark</dt><dd>unassigned</dd></div>
+              </dl>
+              <button class="text-button" type="button" data-goto="missions">Open daily board →</button>
+            </article>
+
+            <article class="panel deck-panel">
+              <div class="panel-head">
+                <div><div class="panel-label">LOCAL DECK CARTOGRAPHY</div><h2>Forward habitation spine</h2></div>
+                <span class="quiet-chip">0.8% MAPPED</span>
+              </div>
+              <div class="deck-map" role="img" aria-label="Vertical map of inhabited and unexplored ship decks">
+                <div class="deck-depth"><span>118</span><span>119</span><span>120</span><span>121</span><span>122</span><span>123</span><span>124</span><span>125</span><span>126</span></div>
+                <div class="ship-spine">
+                  <button class="deck-node known deck-118" data-deck="118"><span>FLIGHT CONTROL</span></button>
+                  <button class="deck-node known deck-119" data-deck="119"><span>CREW GALLEY</span></button>
+                  <button class="deck-node active deck-121" data-deck="121"><span>RELAY WOUND</span></button>
+                  <button class="deck-node known deck-123" data-deck="123"><span>EXPEDITION LOCK</span></button>
+                  <button class="deck-node unknown deck-125" data-deck="125"><span>UNSURVEYED</span></button>
+                  <button class="deck-node unknown deck-126" data-deck="126"><span>NO RETURN</span></button>
+                  <svg viewBox="0 0 600 350" preserveAspectRatio="none" aria-hidden="true">
+                    <path d="M300 0C318 60 247 92 275 145s80 52 53 110-50 60-38 95" />
+                    <path class="branch" d="M277 142 155 202m171 51 110 58M299 65l106 4" />
+                  </svg>
+                </div>
+              </div>
+              <div class="deck-readout" id="deck-readout"><b>DECK 121</b><span>Maintenance relay answers from an address absent from every pre-launch diagram.</span></div>
+            </article>
+
+            <article class="panel mission-teaser">
+              <div class="panel-label">TODAY’S FIELD WINDOW</div>
+              <div class="mission-icon">⌁</div>
+              <div><p class="mission-code">SIGNAL // MISSION 1</p><h2>Signal Triangulation</h2><p>The authenticated field window is ready when its content epoch verifies.</p></div>
+              <button class="primary" type="button" data-goto="missions">Open mission</button>
+            </article>
+
+            <article class="panel condition-panel">
+              <div class="panel-head"><div><div class="panel-label">BOUND MISSION EFFECT</div><h2>What one settled run may move</h2></div><span class="quiet-chip">LEAN PREVIEW</span></div>
+              <div class="meter-list" id="world-meters"></div>
+              <p class="microcopy" id="world-preview-note">Authenticating the emitted contribution preview. Current ship state is never inferred from this display.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-missions" data-view="missions">
+          <div class="view-heading">
+            <div><p class="eyebrow">DAILY FIELD BOARD // ONE WINDOW OPEN</p><h1>Signal Triangulation</h1></div>
+            <p class="watch-copy">Reconstruct the authenticated band sequence using only the transition rows emitted by Lean.</p>
+          </div>
+          <div class="mission-layout">
+            <article class="panel signal-game" id="signal-game">
+              <div class="panel-head">
+                <div><div class="panel-label">SIGNAL TRIANGULATION</div><h2>Intercept sequence</h2></div>
+                <div class="turn-counter"><span id="turn-current">0</span><small id="turn-limit">/ -- TRANSMISSIONS</small></div>
+              </div>
+              <div class="signal-brief">
+                <span class="signal-wave" aria-hidden="true">╱╲╱╲╲╱╲╱</span>
+                <p id="signal-instruction">Authenticating mission rules…</p>
+              </div>
+              <div id="signal-history" class="signal-history" aria-live="polite"></div>
+              <div id="signal-draft" class="signal-draft" aria-label="current signal sequence"></div>
+              <div id="signal-symbols" class="signal-symbols" aria-label="signal phase controls"></div>
+              <div class="mission-actions">
+                <button id="signal-clear" class="secondary" type="button" disabled>Clear</button>
+                <button id="signal-submit" class="primary" type="button" disabled>Transmit sequence</button>
+              </div>
+              <div class="receipt-slip" id="signal-receipt" hidden></div>
+            </article>
+
+            <aside class="mission-sidebar">
+              <article class="panel assignment-card">
+                <div class="panel-label">ASSIGNMENT CONDITIONS</div>
+                <dl>
+                  <div><dt>Location</dt><dd>not declared by POAG1</dd></div>
+                  <div><dt>Authority</dt><dd id="rules-authority">checking…</dd></div>
+                  <div><dt>World effect</dt><dd id="mission-contribution">checking…</dd></div>
+                  <div><dt>Discovery</dt><dd>predeclared, sealed</dd></div>
+                </dl>
+              </article>
+              <article class="panel crew-note">
+                <div class="panel-label">FIELD PROTOCOL</div>
+                <blockquote>Mission controls remain sealed unless the curator signature, content epoch, and every Lean-emitted byte pin agree.</blockquote>
+                <cite>terminal authority boundary</cite>
+              </article>
+              <article class="panel authority-card">
+                <div class="authority-row"><span class="status-lamp"></span><b>LEAN MISSION AUTHORITY</b></div>
+                <p id="artifact-detail">No unverified game controls are available while the artifact is loading.</p>
+                <code id="artifact-pin">POAG1 / pending</code>
+                <p class="microcopy">The installed Cipherclerk can verify outside the page’s origin. Standalone verification authenticates content epochs against the pinned curator key, but an origin serving altered application code is a stronger threat.</p>
+              </article>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-records" data-view="records">
+          <div class="view-heading"><div><p class="eyebrow">BETA FIELD CANON // PROMOTION PENDING</p><h1>Things the ship may contain</h1></div><p class="watch-copy">Expeditions leave exact records. The series decides which discoveries survive into history.</p></div>
+          <div class="records-layout">
+            <article class="panel record-feature">
+              <div class="record-stamp">FIELD RECORD<br><b>NO β RECORD</b></div>
+              <div class="record-art" aria-hidden="true"><span></span><span></span><span></span></div>
+              <div><p class="mission-code">ARCHIVE INTAKE // WAITING</p><h2>No expedition artifact has been settled</h2><p>This position is reserved for an exact beta artifact carried by a validated run. Interface copy cannot create a discovery, and only the curator can promote one into the series archive.</p></div>
+            </article>
+            <div class="record-list">
+              <article class="record-row"><time>LOCAL</time><div><b>Signal transcript</b><span>unsettled practice // no world effect</span></div><em>·</em></article>
+              <article class="record-row"><time>POA NODE</time><div><b>First expedition record</b><span>awaiting a validated run receipt</span></div><em>·</em></article>
+              <article class="record-row alpha"><time>EPISODE 02</time><div><b>Crown station wreckage survey</b><span>series archive // on-screen canon</span></div><em>α</em></article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-bazaar" data-view="bazaar">
+          <div class="view-heading"><div><p class="eyebrow">LOWER CONCOURSE // SETTLEMENT LOCKED</p><h1>The Dark Bazaar</h1></div><p class="watch-copy">Recovered objects can change hands without publishing every order to the world.</p></div>
+          <div class="locked-organ">
+            <div class="organ-sigil">◇</div><div><p class="mission-code">DREX / THRESHOLD HALL</p><h2>The market is present. Settlement is not yet linked to this federation.</h2><p>Expedition salvage will enter as exact owned assets. Sealed orders, threshold clearing, and same-opening proofs will become available only when the PoA committee reports ready.</p></div>
+            <dl><div><dt>Your salvage</dt><dd>none recorded</dd></div><div><dt>Privacy grade</dt><dd>not active</dd></div><div><dt>Committee</dt><dd>awaiting PoA devnet</dd></div></dl>
+          </div>
+        </section>
+
+        <section class="view" id="view-choir" data-view="choir">
+          <div class="view-heading"><div><p class="eyebrow">LONG-RANGE COMMAND // NO BALLOT OPEN</p><h1>The Choir</h1></div><p class="watch-copy">When the ship asks a question, voices become a receipt. Until then, listen.</p></div>
+          <div class="choir-grid">
+            <article class="panel choir-question"><div class="panel-label">LAST COMMAND SIGNAL</div><p class="mission-code">EPISODE 02 // CLOSED</p><h2>Recover propellant or munitions?</h2><div class="choir-bars"><div><span>PROPELLANT</span><i class="choir-propellant"></i></div><div><span>MUNITIONS</span><i class="choir-munitions"></i></div></div><p class="microcopy">Historical display only. This terminal does not synthesize or replay the YouTube poll.</p></article>
+            <article class="panel choir-wait"><div class="empty-orbit" aria-hidden="true"><span></span></div><h2>No command decision is waiting</h2><p>Field work remains open on deck 121.</p><button class="text-button" type="button" data-goto="missions">Return to today’s assignment →</button></article>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <span>PATH OF ANGELS // BETA FIELD NETWORK</span>
+        <span id="footer-authority">No mission authority loaded</span>
+      </footer>
+    </div>
+
+    <dialog id="curator-dialog" class="curator-dialog">
+      <form method="dialog" class="curator-shell">
+        <header><div><p class="eyebrow">SENTYR // CONTENT AUTHORITY</p><h2>Curator console</h2></div><button value="close" aria-label="Close curator console">×</button></header>
+        <p class="console-intro">Inspect the exact beta artifact and its bounded world effect. Signing, promotion, and supersession happen through the curator capability; this preview cannot mint canon.</p>
+        <div class="console-grid">
+          <label>Mission artifact<input id="curator-artifact" readonly value="POAG1 pending" /></label>
+          <label>Discovery allowlist<input id="curator-discovery" readonly value="POAG1 pending" /></label>
+          <label>Contribution preview<textarea id="curator-contribution" readonly>POAG1 pending</textarea></label>
+          <label>Canon action<select disabled><option>Keep as field record</option><option>Promote exact artifact</option><option>Supersede exact artifact</option></select></label>
+        </div>
+        <div class="console-chain"><span>MISSION</span><i>→</i><span>RUN RECEIPT</span><i>→</i><span>β ARTIFACT</span><i>→</i><span>CURATOR SIGNATURE</span><i>→</i><span>α ARCHIVE</span></div>
+        <div class="console-actions"><span>Read-only surface // curator tool not connected</span><button value="close" class="secondary">Close console</button></div>
+      </form>
+    </dialog>
+
+    <template id="history-row-template">
+      <div class="history-row"><span class="history-num"></span><div class="history-sequence"></div><div class="history-result"><b></b><small></small></div></div>
+    </template>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
