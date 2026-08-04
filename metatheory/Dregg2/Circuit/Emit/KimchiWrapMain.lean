@@ -3331,6 +3331,11 @@ def finBuild (W : FinWire) (C : FinCfg) : FM FinSlots := do
   let sf2 ← fnMul sf sf
   let _ ← fnAeq sf2 sf
   let nfin ← fnSub one permOk
+  -- ⚑ `Boolean.Assert.any [finalized; not should_finalize]` is `(1 − finalized)·should_finalize = 0`,
+  -- and it is emitted VERBATIM. ⚠ With a FIXTURE previous statement `finalized` is 0, so the row is
+  -- satisfiable exactly when that block's `should_finalize` word is 0 — which is upstream's
+  -- semantics, not a concession: a previous proof whose deferred `perm` is not the derived one and
+  -- which nonetheless claims `should_finalize` IS refused, here and at source.
   let out ← fnMul nfin sf
   let _ ← fnAeq out zero
   pure { zetaN := zetaN, zkp := zkp, linConst := linConst, ftEval0 := ftEval0
@@ -3412,9 +3417,26 @@ structure FinData where
   vals : Array Nat
   deriving Repr, Inhabited
 
+/-- ⚑ **THE `Field.equal` WITNESS IS COMPUTED, NOT ASSUMED — AND ASSUMING IT IS WHY THE FIRST
+EMISSION WAS REJECTED.** `finCfgOf` used to hardcode `(inv, bit) = (0, 1)`, the witness for
+`perm = permStmt`. The previous statement's deferred `perm` is a NAMED FIXTURE (`prevWordVal` stands
+in for `exists ~request:Req.Proof_state`), so it is NOT the derived value, the difference is nonzero,
+and `d·bit = 0` had no solution: the prover answered `Prover("rest of division by vanishing
+polynomial")` while every σ-class pin and every row-count theorem stayed green. A row schedule and a
+witness environment are two places and only the prover reads both.
+
+So the program is run ONCE with a placeholder pair, its own `perm`/`permUsed` slots are read, and the
+gadget's honest witness is derived from the actual difference — `(0, 1)` when they agree and
+`(d⁻¹, 0)` when they do not, which is `Field.equal`'s own answer either way. -/
 def runFin (s : WrapShape) (sp : SpAcc) (p : Nat) : FinData :=
-  let fp := finProgOf (finWireOf s sp p) (finCfgOf s p)
   let lk := envLookupAt (envIndex (finInputEnv s sp p))
+  let probe := finProgOf (finWireOf s sp p) (finCfgOf s p)
+  let pv := fnEval lk probe.prog
+  let d := qSub (pv.getD probe.slots.perm 0) (pv.getD probe.slots.permUsed 0)
+  let cfg := { finCfgOf s p with
+               eqInv := if d == 0 then 0 else qInv d
+               eqBit := if d == 0 then 1 else 0 }
+  let fp := finProgOf (finWireOf s sp p) cfg
   { fp := fp, vals := fnEval lk fp.prog }
 
 /-- ⚑ **EVERY INSTANCE'S PROGRAM, BUILT ONCE.** This is the module's own perf lesson applied a third
