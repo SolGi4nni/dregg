@@ -22,9 +22,11 @@
 //!
 //! This is the faithful Rust mirror of the verified Lean model
 //! `Dregg2.Distributed.StrandAdmission` (`metatheory/Dregg2/Distributed/StrandAdmission.lean`):
-//! `admitted = is_seed ∨ vouched_to_threshold ∨ has_valid_bond`, with the vouch graph ROOTED (only
-//! seeds + bonded strands' vouches count, so a ring of fresh Sybils cannot bootstrap itself in),
-//! and a slash-on-equivocation path that burns the whole bond.
+//! `admitted = is_seed ∨ vouched_to_threshold ∨ has_valid_bond`, with `vouched_to_threshold`
+//! computed over the finite least fixed point rooted at seeds + valid bonds. Thus a member admitted
+//! in closure round `k` may vouch for a member in round `k+1`, while a closed ring of fresh Sybils
+//! has no first member and cannot bootstrap itself in. The slash-on-equivocation path burns the
+//! whole bond.
 //!
 //! # This is NOT the constitution
 //!
@@ -249,9 +251,8 @@ impl AdmissionRegistry {
             .any(|b| &b.owner == strand && b.amount >= self.min_bond)
     }
 
-    /// `is_root strand` — admitted WITHOUT needing a vouch (seed or bonded). The vouch graph roots
-    /// from this set; only rooted members' vouches count, so a ring of fresh Sybils cannot
-    /// bootstrap itself into admission.
+    /// `is_root strand` — admitted WITHOUT needing a vouch (seed or bonded). The transitive vouch
+    /// closure starts from this set.
     pub fn is_root(&self, strand: &StrandId) -> bool {
         self.is_seed(strand) || self.has_valid_bond(strand)
     }
@@ -267,15 +268,75 @@ impl AdmissionRegistry {
             .unwrap_or(0)
     }
 
-    /// The DISTINCT set of vouchers attesting for `candidate` whose own admission is ROOTED (seed or
-    /// bonded) AND whose signature verifies. The root gate is the anti-Sybil tooth; the dedup means
-    /// one voucher cannot be double-counted (mirrors Lean `distinctVouchersFor`).
+    /// The finite identity universe carried by this registry. Its cardinality is the closure fuel:
+    /// every productive round admits at least one previously absent identity, so at most this many
+    /// rounds can change the set.
+    fn admission_universe(&self) -> BTreeSet<[u8; 32]> {
+        let mut universe = self.seeds.clone();
+        for vouch in &self.vouches {
+            universe.insert(*vouch.voucher.as_bytes());
+            universe.insert(*vouch.candidate.as_bytes());
+        }
+        for bond in &self.bonds {
+            universe.insert(*bond.owner.as_bytes());
+        }
+        universe
+    }
+
+    /// The finite least fixed point rooted at seeds and valid bonds. Each round admits every
+    /// universe member with `vouch_threshold` distinct, authentic vouchers in the preceding round.
+    /// A positive threshold is mandatory: zero disables the vouch path rather than universally
+    /// admitting arbitrary keys.
+    pub fn admission_closure(&self) -> BTreeSet<[u8; 32]> {
+        let universe = self.admission_universe();
+        let mut admitted: BTreeSet<[u8; 32]> = universe
+            .iter()
+            .copied()
+            .filter(|id| self.is_root(&PublicKey(*id)))
+            .collect();
+
+        if self.vouch_threshold == 0 {
+            return admitted;
+        }
+
+        for _ in 0..universe.len() {
+            let mut additions = Vec::new();
+            for candidate in &universe {
+                if admitted.contains(candidate) {
+                    continue;
+                }
+                let vouchers: BTreeSet<[u8; 32]> = self
+                    .vouches
+                    .iter()
+                    .filter(|v| {
+                        v.verify_sig()
+                            && v.candidate.as_bytes() == candidate
+                            && admitted.contains(v.voucher.as_bytes())
+                    })
+                    .map(|v| *v.voucher.as_bytes())
+                    .collect();
+                if vouchers.len() >= self.vouch_threshold {
+                    additions.push(*candidate);
+                }
+            }
+            if additions.is_empty() {
+                break;
+            }
+            admitted.extend(additions);
+        }
+        admitted
+    }
+
+    /// The DISTINCT set of vouchers attesting for `candidate` whose voucher belongs to the
+    /// transitive admission closure AND whose signature verifies. Dedup means one voucher cannot be
+    /// double-counted (mirrors Lean `distinctVouchersFor`).
     pub fn distinct_vouchers_for(&self, candidate: &StrandId) -> Vec<StrandId> {
+        let admitted = self.admission_closure();
         let mut seen: BTreeSet<[u8; 32]> = BTreeSet::new();
         let mut out = Vec::new();
         for v in &self.vouches {
             if &v.candidate == candidate
-                && self.is_root(&v.voucher)
+                && admitted.contains(v.voucher.as_bytes())
                 && v.verify_sig()
                 && seen.insert(*v.voucher.as_bytes())
             {
@@ -290,10 +351,10 @@ impl AdmissionRegistry {
         self.distinct_vouchers_for(strand).len()
     }
 
-    /// `vouched_to_threshold strand` — the VOUCH path fires: ≥ `vouch_threshold` distinct rooted
-    /// vouches.
+    /// `vouched_to_threshold strand` — the VOUCH path fires: a positive threshold and at least that
+    /// many distinct transitive-closure vouches.
     pub fn vouched_to_threshold(&self, strand: &StrandId) -> bool {
-        self.vouched_by(strand) >= self.vouch_threshold
+        self.vouch_threshold > 0 && self.vouched_by(strand) >= self.vouch_threshold
     }
 
     /// The PURE-RUST hybrid admission gate — the DIFFERENTIAL SIBLING of the verified Lean rule,
@@ -301,7 +362,8 @@ impl AdmissionRegistry {
     /// (the in-crate F-4 differential tests) and can NEVER decide on a live path.
     ///
     /// `admitted = is_seed ∨ vouched_to_threshold ∨ has_valid_bond` — the exact Lean
-    /// `StrandAdmission.admitted`. This was `dreggrs`'s Rust heritage gate and the old live fallback;
+    /// `StrandAdmission.admitted`, where the vouch branch reads the finite transitive closure. This
+    /// was `dreggrs`'s Rust heritage gate and the old live fallback;
     /// the twin-deletion removed it from the live path ([`Self::admitted`] now FAILS CLOSED to
     /// seeds-only when the verified export is absent, never running this sibling).
     #[cfg(test)]
@@ -436,11 +498,17 @@ impl AdmissionRegistry {
         Some(burned)
     }
 
-    /// Draw the admitted participant set from a candidate strand list — the gate IN FRONT of the
-    /// constitution / finality: only admitted strands are eligible to participate. The node passes
-    /// THIS set (not the raw keypair list) to `ordering::tau`, so an unadmitted Sybil's blocks
-    /// cannot anchor finality (mirrors the Lean `finalLeaderAtAdmitted` gate on
-    /// `BlocklaceFinality.finalLeaderAt`).
+    /// Draw the admitted participant set from a candidate strand list using this FULL registry —
+    /// the API the gate in front of constitution/finality must call once vouch/bond rows are carried
+    /// by live consensus state. An unadmitted Sybil is excluded; a transitively-vouched member can
+    /// be included (mirrors Lean `finalLeaderAtAdmitted`).
+    ///
+    /// **Live-wiring boundary:** today's node-side `strand_admission_gate::gated_admitted` constructs
+    /// a fresh registry from constitution participants as seeds and supplies no vouches or bonds.
+    /// Therefore the node currently exercises only the seed branch; this full-registry projection
+    /// and its transitive semantics remain dormant until the node persists/authenticates those rows
+    /// and calls this method on that registry. The API is explicit so that cutover does not require
+    /// another semantic rewrite.
     pub fn admitted_participants(&self, candidates: &[StrandId]) -> Vec<StrandId> {
         candidates
             .iter()
@@ -507,6 +575,39 @@ mod tests {
     }
 
     #[test]
+    fn transitive_vouch_path_reaches_a_second_generation() {
+        let (mut reg, sk_a, _a, sk_b, _b) = fixture();
+        let (sk_first, first) = generate_keypair();
+        let (_, second) = generate_keypair();
+
+        // Round 1: both genesis roots admit `first` at PoA's threshold two.
+        assert!(reg.add_vouch(Vouch::create(&sk_a, first)));
+        assert!(reg.add_vouch(Vouch::create(&sk_b, first)));
+        assert!(reg.admitted(&first));
+
+        // Round 2: one seed plus the now-admitted `first` admit `second`. The retired one-hop
+        // root-only rule rejected this because `first` was neither a seed nor bonded.
+        assert!(reg.add_vouch(Vouch::create(&sk_a, second)));
+        assert!(reg.add_vouch(Vouch::create(&sk_first, second)));
+        assert_eq!(reg.vouched_by(&second), 2);
+        assert!(reg.admitted(&second));
+        assert!(reg.admission_closure().contains(second.as_bytes()));
+    }
+
+    #[test]
+    fn zero_threshold_disables_vouch_admission() {
+        let (sk_seed, seed) = generate_keypair();
+        let (_, stranger) = generate_keypair();
+        let mut reg = AdmissionRegistry::new([seed], 0, 100);
+        assert!(reg.add_vouch(Vouch::create(&sk_seed, stranger)));
+        assert!(reg.admitted(&seed));
+        assert!(
+            !reg.admitted(&stranger),
+            "zero is fail-closed, not a universal threshold"
+        );
+    }
+
+    #[test]
     fn duplicate_voucher_counts_once() {
         let (mut reg, sk_a, _a, _, _) = fixture();
         let (_, cand) = generate_keypair();
@@ -539,6 +640,22 @@ mod tests {
         assert!(!reg.admitted(&victim));
         assert!(!reg.admitted(&s1));
         assert!(!reg.admitted(&s2));
+    }
+
+    #[test]
+    fn full_registry_participant_projection_uses_transitive_standing() {
+        let (mut reg, sk_a, a, sk_b, b) = fixture();
+        let (sk_first, first) = generate_keypair();
+        let (_, second) = generate_keypair();
+        let (_, sybil) = generate_keypair();
+        reg.add_vouch(Vouch::create(&sk_a, first));
+        reg.add_vouch(Vouch::create(&sk_b, first));
+        reg.add_vouch(Vouch::create(&sk_a, second));
+        reg.add_vouch(Vouch::create(&sk_first, second));
+
+        let admitted = reg.admitted_participants(&[a, b, first, second, sybil]);
+        assert_eq!(admitted, vec![a, b, first, second]);
+        assert!(!admitted.contains(&sybil));
     }
 
     #[test]

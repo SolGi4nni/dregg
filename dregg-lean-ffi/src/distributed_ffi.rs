@@ -706,6 +706,36 @@ mod tests {
         assert!(!verified_admits("not a wire").expect("gate ran on garbage (returns ERR)"));
     }
 
+    /// The live export exercises the transitive rule, not merely the legacy one-hop vectors.
+    /// At threshold two, seeds 0/1 admit 2; then seed 0 plus newly-admitted 2 admit 3. A closed
+    /// three-key ring is refused, and threshold zero is fail-closed rather than universal.
+    #[test]
+    fn verified_gate_executes_transitive_closure_and_refusals() {
+        if !crate::demand_lean(strand_admit_available(), "dregg_strand_admit export") {
+            return;
+        }
+
+        let transitive = "N=2;m=100;S=0,1;V=0:2,1:2,0:3,2:3;Bo=";
+        assert!(verified_admits(&format!("{transitive};q=2")).expect("gate ran"));
+        assert!(
+            verified_admits(&format!("{transitive};q=3")).expect("gate ran"),
+            "a first-generation admitted voucher must count in the second generation"
+        );
+
+        let ring = "N=2;m=100;S=0,1;V=4:5,6:5,5:4,6:4,4:6,5:6;Bo=";
+        for q in [4, 5, 6] {
+            assert!(
+                !verified_admits(&format!("{ring};q={q}")).expect("gate ran"),
+                "a closed unrooted Sybil ring must not bootstrap member {q}"
+            );
+        }
+
+        assert!(
+            !verified_admits("N=0;m=100;S=0,1;V=0:2;Bo=;q=2").expect("gate ran"),
+            "zero threshold disables the vouch path"
+        );
+    }
+
     /// THE LIVE CapTP+coord DECISION DIFFERENTIAL — the six verified `dregg_captp_*`/`dregg_coord_*`
     /// gates reproduce the verdicts the Lean `#guard`s pin. This is the runtime face of the STRONG-FORM
     /// swap: the SAME verified rules the captp/coord runtime invokes produce exactly these verdicts.

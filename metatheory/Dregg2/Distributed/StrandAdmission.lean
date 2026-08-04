@@ -11,7 +11,9 @@ admission; dregg needs a real admission gate or a Sybil swarm can saturate the f
 federation — its blocks may anchor finality and it may participate — iff EITHER
 
   (a) **VOUCH path**: it is vouched-for by ≥ `N` DISTINCT already-admitted members (a web-of-trust
-      / follow-graph attestation; `N` a federation parameter), OR
+      / follow-graph attestation; `N` a federation parameter). "Already" is computed as the finite
+      least fixed point rooted at genesis seeds and valid bonds, so a member admitted in round `k`
+      may vouch for a member admitted in round `k+1`; OR
   (b) **STAKE path**: it is backed by a slashable BOND of value ≥ `minBond` (value bonded in the
       in-kernel asset model — `Nat` value units, the same unit `Distributed.Economics` accounts in
       — slashable on equivocation / misbehavior).
@@ -37,12 +39,12 @@ constitution's `participants` (and `BlocklaceFinality`'s) are then drawn from th
   the misbehavior (the attacker forfeits ≥ `minBond`, the admission price).
 * **Vouch path / threshold** (`vouch_admits_iff_threshold` / `below_threshold_not_admitted_vouch`):
   ≥ `N` distinct admitted-member vouches admit via the vouch path; < `N` does not. Distinctness
-  (`Nodup`) and admitted-voucher gating mean a Sybil cannot vouch for itself or be vouched by a
-  ring of other Sybils (only ADMITTED members' vouches count, just as `MembershipSafety` only
-  counts `is_participant` votes).
+  (`Nodup`) and least-fixed-point admission mean a Sybil cannot vouch for itself or be vouched by a
+  closed ring of other Sybils: a vouch chain must descend through an earlier closure round and
+  eventually reach a genesis/bond root.
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}).
-Pure, computable, `#guard`-checked non-vacuity (a Sybil rejected, a vouched strand
+Pure, computable, named executable non-vacuity facts (a Sybil rejected, a vouched strand
 and a bonded strand admitted, a bonded equivocator slashed). Verified with
 `lake build Dregg2.Distributed.StrandAdmission`.
 -/
@@ -97,15 +99,18 @@ structure AdmissionState where
   bonds   : List Bond
   deriving Inhabited, DecidableEq
 
-/-! ## 2. The admission predicate — admitted = seed ∨ vouchedToThreshold ∨ bonded.
+/-! ## 2. The admission predicate — the finite least fixed point of roots + threshold vouches.
 
-We resolve admission in a single bootstrapped pass: a strand is admitted iff it is a seed, OR it is
-bonded ≥ `minBond` (the stake path is self-standing — it needs no other member), OR it is vouched by
-≥ `N` strands that are THEMSELVES admitted-by-seed-or-bond. This is the minimal honest closure that
-keeps the vouch graph rooted: a Sybil cannot bootstrap admission out of a ring of mutually-vouching
-Sybils, because each voucher must independently be a seed or be bonded. (A full transitive
-least-fixed-point closure is the n>1 generalization; the seed-or-bond-rooted one-hop closure here is
-the load-bearing anti-Sybil core and the one we prove + exhibit.) -/
+The trust graph is finite because the registry wire is finite. `admissionUniverse` contains every
+identity which can affect a verdict. `admissionRoots` selects the genesis/bond roots. Each
+`extendAdmission` round adds every candidate with at least `N` distinct vouchers already in the
+previous round; `admissionClosure` runs that monotone step once per universe member. This is enough
+fuel for the finite least fixed point: every productive round adds a previously absent universe
+member, and there are only `universe.length` such members.
+
+The threshold is deliberately *positive*: `N = 0` disables the vouch branch instead of admitting
+every arbitrary key. PoA's policy is `N = 2`; keeping the positive-threshold tooth in the semantics
+prevents a missing/misparsed configuration from turning the graph into universal admission. -/
 
 /-- **`hasValidBond fed strand`** — the strand has posted a bond of value ≥ `minBond` (the STAKE
 path, self-standing). -/
@@ -120,23 +125,148 @@ strands. The vouch path extends admission from this root set. -/
 def isRoot (fed : AdmissionState) (strand : AuthorId) : Bool :=
   isSeed fed strand || hasValidBond fed strand
 
+/-- Every identity that can affect the closure: roots, vouchers, candidates, and bond owners.
+`dedup` makes the fuel a bound on productive additions, not on duplicate registry rows. -/
+def admissionUniverse (fed : AdmissionState) : List AuthorId :=
+  (fed.seeds ++ fed.vouches.map (·.voucher) ++ fed.vouches.map (·.candidate) ++
+    fed.bonds.map (·.owner)).dedup
+
+/-- The initial closure round: exactly the roots present in the finite registry universe. -/
+def admissionRoots (fed : AdmissionState) : List AuthorId :=
+  (admissionUniverse fed).filter (isRoot fed)
+
+/-- DISTINCT vouchers for `candidate` whose voucher occurs in the supplied earlier closure round.
+This is the threshold primitive; unlike the retired one-hop rule, `earlier` may contain members
+which were themselves admitted by vouch in a preceding round. -/
+def distinctVouchersForFrom (fed : AdmissionState) (earlier : List AuthorId)
+    (candidate : AuthorId) : List AuthorId :=
+  ((fed.vouches.filter (fun v => v.candidate == candidate && earlier.contains v.voucher)).map
+    (·.voucher)).dedup
+
+/-- Count the distinct already-admitted vouchers in one closure round. -/
+def vouchedByFrom (fed : AdmissionState) (earlier : List AuthorId) (candidate : AuthorId) : Nat :=
+  (distinctVouchersForFrom fed earlier candidate).length
+
+/-- The per-round vouch gate. A zero threshold is disabled (fail-closed), never universal. -/
+def vouchedToThresholdFrom (fed : AdmissionState) (earlier : List AuthorId)
+    (candidate : AuthorId) : Bool :=
+  decide (0 < fed.N) && decide (fed.N ≤ vouchedByFrom fed earlier candidate)
+
+/-- One monotone closure round. Existing members survive; newly threshold-vouched universe members
+are added; `dedup` preserves set semantics. -/
+def extendAdmission (fed : AdmissionState) (earlier : List AuthorId) : List AuthorId :=
+  (earlier ++ (admissionUniverse fed).filter (vouchedToThresholdFrom fed earlier)).dedup
+
+/-- Execute `fuel` closure rounds, starting at the genesis/bond roots. -/
+def admissionClosureN (fed : AdmissionState) : Nat → List AuthorId
+  | 0 => admissionRoots fed
+  | fuel + 1 => extendAdmission fed (admissionClosureN fed fuel)
+
+/-- The finite least-fixed-point admission closure. One round per universe member is sufficient:
+each non-stationary round adds at least one of those finitely many identities. -/
+def admissionClosure (fed : AdmissionState) : List AuthorId :=
+  admissionClosureN fed (admissionUniverse fed).length
+
+/-- **Stabilization is permanent.** Once two consecutive closure rounds agree, every later round
+is the same set. This is the fixed-point half of the finite least-fixed-point construction: the
+algorithm can stop at its first stationary round without changing any later admission verdict. -/
+theorem admissionClosureN_stable_forever (fed : AdmissionState) (n : Nat)
+    (hstable : admissionClosureN fed (n + 1) = admissionClosureN fed n) :
+    ∀ k, admissionClosureN fed (n + k) = admissionClosureN fed n := by
+  have hstep : extendAdmission fed (admissionClosureN fed n) = admissionClosureN fed n := by
+    simpa [admissionClosureN] using hstable
+  intro k
+  induction k with
+  | zero => simp
+  | succ k ih =>
+      rw [Nat.add_succ, admissionClosureN, ih, hstep]
+
+/-- A proposed Sybil component is **rootless and closed** when none of its members is a seed/bond
+root and every registry vouch targeting the component comes from inside the same component. This is
+the graph-theoretic ring attack: there is no trust edge entering from an already rooted component. -/
+def RootlessClosedSet (fed : AdmissionState) (ring : List AuthorId) : Prop :=
+  (∀ s ∈ ring, isRoot fed s = false) ∧
+  (∀ v ∈ fed.vouches, v.candidate ∈ ring → v.voucher ∈ ring)
+
+/-- A closed ring has zero counted vouchers whenever the preceding closure round is disjoint from
+it: every possible voucher would have to be both inside the ring and inside the disjoint round. -/
+theorem distinctVouchersForFrom_closed_ring_eq_nil (fed : AdmissionState)
+    (earlier ring : List AuthorId) (candidate : AuthorId)
+    (hclosed : RootlessClosedSet fed ring)
+    (hdisjoint : ∀ s ∈ earlier, s ∉ ring)
+    (hcandidate : candidate ∈ ring) :
+    distinctVouchersForFrom fed earlier candidate = [] := by
+  apply List.eq_nil_iff_forall_not_mem.mpr
+  intro voucher hvoucher
+  unfold distinctVouchersForFrom at hvoucher
+  have hvoucher' := List.mem_dedup.mp hvoucher
+  rw [List.mem_map] at hvoucher'
+  obtain ⟨v, hv, rfl⟩ := hvoucher'
+  have hvf := List.mem_filter.mp hv
+  rw [Bool.and_eq_true] at hvf
+  have hcandidate' : v.candidate = candidate := by simpa using hvf.2.1
+  have hvEarlier : v.voucher ∈ earlier := by simpa using hvf.2.2
+  have hvRing : v.voucher ∈ ring :=
+    hclosed.2 v hvf.1 (hcandidate' ▸ hcandidate)
+  exact hdisjoint v.voucher hvEarlier hvRing
+
+/-- One closure extension cannot enter a rootless closed ring when the preceding round was
+disjoint from it. This is the induction step behind the no-Sybil-ring theorem. -/
+theorem extendAdmission_excludes_closed_ring (fed : AdmissionState)
+    (earlier ring : List AuthorId) (hpositive : 0 < fed.N)
+    (hclosed : RootlessClosedSet fed ring)
+    (hdisjoint : ∀ s ∈ earlier, s ∉ ring) :
+    ∀ s ∈ extendAdmission fed earlier, s ∉ ring := by
+  intro s hs hsr
+  unfold extendAdmission at hs
+  have hs' := List.mem_dedup.mp hs
+  rw [List.mem_append] at hs'
+  cases hs' with
+  | inl hold => exact hdisjoint s hold hsr
+  | inr hnew =>
+      have hgate := (List.mem_filter.mp hnew).2
+      have hnil := distinctVouchersForFrom_closed_ring_eq_nil fed earlier ring s
+        hclosed hdisjoint hsr
+      have hN : fed.N ≠ 0 := Nat.ne_of_gt hpositive
+      have hfalse : vouchedToThresholdFrom fed earlier s = false := by
+        simp [vouchedToThresholdFrom, vouchedByFrom, hnil, hpositive, hN]
+      rw [hfalse] at hgate
+      contradiction
+
+/-- Every finite closure round excludes a rootless closed ring. The base roots are disjoint by the
+rootless premise; the induction step is `extendAdmission_excludes_closed_ring`. -/
+theorem admissionClosureN_excludes_closed_ring (fed : AdmissionState)
+    (ring : List AuthorId) (hpositive : 0 < fed.N)
+    (hclosed : RootlessClosedSet fed ring) :
+    ∀ n s, s ∈ admissionClosureN fed n → s ∉ ring := by
+  intro n
+  induction n with
+  | zero =>
+      intro s hs hsr
+      have hroot := (List.mem_filter.mp hs).2
+      rw [hclosed.1 s hsr] at hroot
+      contradiction
+  | succ n ih =>
+      exact extendAdmission_excludes_closed_ring fed (admissionClosureN fed n) ring
+        hpositive hclosed (ih)
+
 /-- **`distinctVouchersFor fed candidate`** — the DISTINCT (`dedup`) set of vouchers attesting for
-`candidate` whose own admission is rooted (seed or bonded). The `isRoot` gate is the analogue of
-`MembershipSafety.distinctApprovers`' `is_participant` gate: only ADMITTED members' vouches count,
-so a non-admitted Sybil's vouch is dropped, and dedup means one voucher cannot be double-counted. -/
+`candidate` whose voucher belongs to the finite transitive admission closure. -/
 def distinctVouchersFor (fed : AdmissionState) (candidate : AuthorId) : List AuthorId :=
-  ((fed.vouches.filter (fun v => v.candidate == candidate && isRoot fed v.voucher)).map (·.voucher)).dedup
+  distinctVouchersForFrom fed (admissionClosure fed) candidate
 
 /-- **`vouchedBy fed strand`** — how many distinct rooted-admitted members vouch for `strand`. -/
 def vouchedBy (fed : AdmissionState) (strand : AuthorId) : Nat :=
   (distinctVouchersFor fed strand).length
 
-/-- **`vouchedToThreshold fed strand`** — the VOUCH path fires: ≥ `N` distinct rooted vouches. -/
+/-- **`vouchedToThreshold fed strand`** — the VOUCH path fires: positive `N` and at least `N`
+distinct vouchers from the transitive admission closure. -/
 def vouchedToThreshold (fed : AdmissionState) (strand : AuthorId) : Bool :=
-  vouchedBy fed strand ≥ fed.N
+  decide (0 < fed.N) && decide (fed.N ≤ vouchedBy fed strand)
 
 /-- **`admitted fed strand`** — THE HYBRID ADMISSION GATE: a strand is admitted iff it is a seed,
-OR it is bonded (stake path), OR it is vouched to threshold by rooted members (vouch path).
+OR it is bonded (stake path), OR it is vouched to threshold by members of the finite transitive
+closure (vouch path).
 
 `admitted strand fed := isSeed strand fed ∨ vouchedBy strand fed ≥ N ∨ hasValidBond strand fed`
 (seeds folded in as the bootstrap trust root). -/
@@ -145,6 +275,32 @@ def admitted (fed : AdmissionState) (strand : AuthorId) : Bool :=
 
 /-- An UNADMITTED strand (a fresh Sybil keypair): the negation of the gate. -/
 def unadmitted (fed : AdmissionState) (strand : AuthorId) : Prop := admitted fed strand = false
+
+/-- **No unrooted Sybil ring can bootstrap.** At every positive vouch threshold, each member of a
+rootless closed vouch component is rejected by the full hybrid gate. This is parametric in the ring
+size and registry; it is not a finite-case test. -/
+theorem closed_unrooted_sybil_ring_not_admitted (fed : AdmissionState)
+    (ring : List AuthorId) (hpositive : 0 < fed.N)
+    (hclosed : RootlessClosedSet fed ring) :
+    ∀ s ∈ ring, admitted fed s = false := by
+  intro s hsr
+  have hclosure : ∀ v ∈ admissionClosure fed, v ∉ ring := by
+    intro v hv
+    exact admissionClosureN_excludes_closed_ring fed ring hpositive hclosed
+      (admissionUniverse fed).length v hv
+  have hnil := distinctVouchersForFrom_closed_ring_eq_nil fed
+    (admissionClosure fed) ring s hclosed hclosure hsr
+  have hroot := hclosed.1 s hsr
+  have hseed : isSeed fed s = false := by
+    unfold isRoot at hroot
+    exact (Bool.or_eq_false_iff.mp hroot).1
+  have hbond : hasValidBond fed s = false := by
+    unfold isRoot at hroot
+    exact (Bool.or_eq_false_iff.mp hroot).2
+  have hN : fed.N ≠ 0 := Nat.ne_of_gt hpositive
+  have hvouch : vouchedToThreshold fed s = false := by
+    simp [vouchedToThreshold, vouchedBy, distinctVouchersFor, hnil, hpositive, hN]
+  simp [admitted, hseed, hvouch, hbond]
 
 /-! ## 3. THE FINALITY GATE — an UNADMITTED strand's blocks are NOT finalizable.
 
@@ -308,38 +464,45 @@ theorem slashed_equivocator_loses_stake_admission (fed : AdmissionState) (B : La
   unfold admitted
   rw [hnotseed, hnovouch, hnobond]; rfl
 
-/-! ## 5. THE VOUCH PATH — ≥ N distinct rooted-member vouches admit; < N does not.
+/-! ## 5. THE VOUCH PATH — ≥ N distinct already-admitted vouches admit; < N does not.
 
-The web-of-trust path. A candidate is admitted-by-vouch iff ≥ `N` DISTINCT admitted (rooted)
-members vouch for it. Distinctness (`Nodup`) + the `isRoot` gate are the anti-Sybil teeth: a Sybil
-cannot vouch for itself (it is not rooted), nor can a ring of fresh Sybils vouch each other into
-admission (none is rooted), nor can one member be counted twice (`dedup`). -/
+The web-of-trust path. A candidate is admitted-by-vouch iff `N` is positive and at least `N`
+DISTINCT members in the transitive admission closure vouch for it. Distinctness (`Nodup`) plus
+round-indexed closure are the anti-Sybil teeth: every vouch-derived member depends on members from
+an earlier round, while a closed ring of fresh Sybils has no first member to enter the closure. -/
 
 /-- **`vouch_admits_iff_threshold` (the vouch path is EXACTLY the threshold).** A strand
 is admitted via the vouch path iff its distinct rooted-voucher count reaches `N`. The biconditional
 pins the path to the threshold, neither stricter nor looser. -/
 theorem vouch_admits_iff_threshold (fed : AdmissionState) (strand : AuthorId) :
-    vouchedToThreshold fed strand = true ↔ vouchedBy fed strand ≥ fed.N := by
-  unfold vouchedToThreshold; exact decide_eq_true_iff
+    vouchedToThreshold fed strand = true ↔
+      0 < fed.N ∧ fed.N ≤ vouchedBy fed strand := by
+  simp [vouchedToThreshold]
+
+/-- A zero vouch threshold is fail-closed: it disables the social branch instead of admitting every
+key for free. Operators must configure a positive policy (PoA uses two). -/
+theorem zero_threshold_disables_vouch (fed : AdmissionState) (strand : AuthorId)
+    (hzero : fed.N = 0) : vouchedToThreshold fed strand = false := by
+  simp [vouchedToThreshold, hzero]
 
 /-- **`vouchers_nodup`.** The distinct-voucher set has no duplicates — built by `dedup`,
 so one member cannot be double-counted toward `N` (the analogue of `MembershipSafety.approvers_nodup`). -/
 theorem vouchers_nodup (fed : AdmissionState) (strand : AuthorId) :
     (distinctVouchersFor fed strand).Nodup := List.nodup_dedup _
 
-/-- **`vouchers_are_rooted` (only ADMITTED members vouch).** Every counted voucher is
-itself rooted-admitted (a seed or bonded): the `isRoot` gate drops a non-admitted Sybil's vouch
-before it can count. So a ring of fresh, unrooted Sybils cannot vouch each other into admission. -/
-theorem vouchers_are_rooted (fed : AdmissionState) (strand : AuthorId) :
-    ∀ v ∈ distinctVouchersFor fed strand, isRoot fed v = true := by
+/-- **`vouchers_are_admitted` (only closure members vouch).** Every counted voucher belongs to the
+finite transitive admission closure; arbitrary registry edges from unadmitted keys are ignored. -/
+theorem vouchers_are_admitted (fed : AdmissionState) (strand : AuthorId) :
+    ∀ v ∈ distinctVouchersFor fed strand, v ∈ admissionClosure fed := by
   intro v hv
   unfold distinctVouchersFor at hv
+  unfold distinctVouchersForFrom at hv
   have hv' := List.mem_dedup.mp hv
   rw [List.mem_map] at hv'
   obtain ⟨w, hwf, rfl⟩ := hv'
   have hf := List.mem_filter.mp hwf
   rw [Bool.and_eq_true] at hf
-  exact hf.2.2
+  simpa using hf.2.2
 
 /-- **`vouched_admits` (the vouch path admits).** If a strand reaches the vouch threshold,
 it IS admitted (the hybrid gate's vouch disjunct fires). -/
@@ -356,11 +519,10 @@ theorem below_threshold_not_admitted_vouch (fed : AdmissionState) (strand : Auth
     (hnotseed : isSeed fed strand = false)
     (hnobond : hasValidBond fed strand = false) :
     admitted fed strand = false := by
-  unfold admitted vouchedToThreshold
-  have hvf : (vouchedBy fed strand ≥ fed.N) = False := by
-    simp only [ge_iff_le, eq_iff_iff, iff_false, not_le]; exact hbelow
-  rw [hnotseed, hnobond, decide_eq_false (by rw [hvf]; exact not_false)]
-  rfl
+  have hnle : ¬ fed.N ≤ vouchedBy fed strand := by omega
+  have hvouch : vouchedToThreshold fed strand = false := by
+    simp [vouchedToThreshold, hnle]
+  simp [admitted, hnotseed, hnobond, hvouch]
 
 /-- **`bonded_admits` (the stake path admits).** A strand with a valid bond is admitted
 (the hybrid gate's stake disjunct fires) — the economic path, needing NO social standing. -/
@@ -404,6 +566,45 @@ def fedDemo : AdmissionState :=
     vouches := [⟨1, 3⟩, ⟨2, 3⟩,       -- both seeds vouch for 3 ⇒ 2 distinct rooted vouches
                 ⟨6, 7⟩]                -- only Sybil 6 vouches for 7 ⇒ 0 rooted vouches
     bonds := [⟨4, 100⟩, ⟨5, 50⟩] }    -- 4 bonded at the floor; 5 below it
+
+/-- Two closure generations at threshold two. Seeds 1 and 2 admit strand 3 in round one; seed 1
+plus newly admitted strand 3 admit strand 4 in round two. The retired root-only rule rejected 4. -/
+def fedTransitiveDemo : AdmissionState :=
+  { seeds := [1, 2]
+    N := 2
+    minBond := 100
+    vouches := [⟨1, 3⟩, ⟨2, 3⟩, ⟨1, 4⟩, ⟨3, 4⟩]
+    bonds := [] }
+
+/-- Executable transitive-closure witness: a vouch-admitted member's attestation counts in the next
+round, and both generations reach the hybrid gate. -/
+theorem transitive_demo_reaches_second_generation :
+    admitted fedTransitiveDemo 3 = true ∧
+    vouchedBy fedTransitiveDemo 4 = 2 ∧
+    admitted fedTransitiveDemo 4 = true := by
+  decide
+
+/-- A three-member closed Sybil ring at PoA's threshold two: every member has two ring vouches, but
+there is no seed/bond root and no ingress edge. -/
+def fedRingDemo : AdmissionState :=
+  { seeds := [1, 2]
+    N := 2
+    minBond := 100
+    vouches := [⟨6, 7⟩, ⟨8, 7⟩, ⟨7, 6⟩, ⟨8, 6⟩, ⟨6, 8⟩, ⟨7, 8⟩]
+    bonds := [] }
+
+theorem fedRingDemo_is_rootless_closed : RootlessClosedSet fedRingDemo [6, 7, 8] := by
+  simp [RootlessClosedSet, fedRingDemo, isRoot, isSeed, hasValidBond]
+
+/-- Executable refusal derived from the general no-bootstrap theorem, rather than a standalone case
+test: all three mutually-vouching Sybils remain rejected. -/
+theorem fedRingDemo_all_rejected :
+    admitted fedRingDemo 6 = false ∧
+    admitted fedRingDemo 7 = false ∧
+    admitted fedRingDemo 8 = false := by
+  have hall := closed_unrooted_sybil_ring_not_admitted fedRingDemo [6, 7, 8]
+    (by decide) fedRingDemo_is_rootless_closed
+  exact ⟨hall 6 (by decide), hall 7 (by decide), hall 8 (by decide)⟩
 
 -- SEEDS admitted by construction.
 #guard admitted fedDemo 1 == true
@@ -648,18 +849,27 @@ closure, the `(registry, strand) → verdict` differential the Rust `admission.r
 #assert_axioms gated_leader_is_admitted
 #assert_axioms sybil_block_not_finalizable
 #assert_axioms sybil_contributes_no_leader
+#assert_axioms admissionClosureN_stable_forever
+#assert_axioms distinctVouchersForFrom_closed_ring_eq_nil
+#assert_axioms extendAdmission_excludes_closed_ring
+#assert_axioms admissionClosureN_excludes_closed_ring
+#assert_axioms closed_unrooted_sybil_ring_not_admitted
 #assert_axioms hasValidBond_amount_ge
 #assert_axioms bonded_equivocator_slashable
 #assert_axioms slash_covers_misbehavior
 #assert_axioms slashed_equivocator_loses_stake_admission
 #assert_axioms vouch_admits_iff_threshold
+#assert_axioms zero_threshold_disables_vouch
 #assert_axioms vouchers_nodup
-#assert_axioms vouchers_are_rooted
+#assert_axioms vouchers_are_admitted
 #assert_axioms vouched_admits
 #assert_axioms below_threshold_not_admitted_vouch
 #assert_axioms bonded_admits
 #assert_axioms seed_admits
 #assert_axioms admitted_iff
+#assert_axioms transitive_demo_reaches_second_generation
+#assert_axioms fedRingDemo_is_rootless_closed
+#assert_axioms fedRingDemo_all_rejected
 #assert_axioms strand_admit_eq_admitted
 #assert_axioms strand_admit_admits_iff
 #assert_axioms admit_gate_deterministic
