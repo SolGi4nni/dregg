@@ -37,7 +37,8 @@ JSON with no timestamp or host-dependent fields:
       "path": "schema.json",
       "media_type": "application/json",
       "bytes": 0,
-      "fnv1a64": "<16 lowercase hexadecimal characters>"
+      "fnv1a64": "<16 lowercase hexadecimal characters>",
+      "sha256": "<64 lowercase hexadecimal characters>"
     }
   ]
 }
@@ -49,8 +50,10 @@ The canonical v1 artifact set is:
 - `catalog.json`
 - `games/signal-triangulation.json`
 
-The manifest pins every member but does not pin itself. Curator signatures and
-content epochs bind the exact manifest bytes. Consumers reject unknown,
+The manifest cryptographically pins every member but does not pin itself.
+Curator signatures and content epochs bind the exact manifest bytes. FNV-1a is
+only a cheap reproducibility canary; SHA-256 is the content-integrity pin.
+Consumers reject unknown,
 missing, duplicate, path-traversing, length-mismatched, or digest-mismatched
 members.
 
@@ -91,8 +94,8 @@ unambiguous in tests.
 
 Games may return only the fields declared by the Lean `Contribution` type:
 bounded world metrics, score, and predeclared relic identifiers. Applying a
-contribution is deterministic and saturates or refuses exactly as the Lean
-model specifies. A game cannot:
+contribution is deterministic and refuses on overflow exactly as the Lean model
+specifies; clipping or saturation is not permitted. A game cannot:
 
 - create a new metric or relic id;
 - exceed its mission budget;
@@ -122,14 +125,19 @@ binaries and hosts; it must not reuse main-federation identity or mutable state.
 
 The initial mesh is three validators, with the public edge acting only as a
 reverse proxy. Anyone may run a follower, verify the lace, submit a signed turn,
-or propose admission. Validator admission uses the Lean F-4 gate. Outsider
-blocks remain excluded from the participant predecessor graph, wave clock, and
-final order.
+or propose admission. Outsider blocks remain excluded from the participant
+predecessor graph, wave clock, and final order.
 
-PoA v1 policy is vouch-first: two distinct admitted vouchers are required.
-Transitive admission is the finite least fixed point rooted in genesis seeds.
-An unrooted ring cannot admit itself. The bond branch remains disabled for PoA
-until a live quote-asset-backed slashable lock is wired.
+The target PoA admission policy is vouch-first: two distinct admitted vouchers
+are required. Transitive admission is the finite least fixed point rooted in
+genesis seeds. An unrooted ring cannot admit itself. The bond branch remains
+disabled for PoA until a live quote-asset-backed slashable lock is wired.
+
+Current deployment limitation: the node's production admission caller still
+feeds the constitutional participant set as both seeds and candidates and has no
+live vouch rows. Therefore a Join remains a follower/proposal followed by manual
+committee ratification; the two-vouch path is not advertised as live until the
+chain-derived vouch registry reaches the F-4 gate.
 
 ## Crown journey
 
