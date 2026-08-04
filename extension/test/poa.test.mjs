@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   POA_BETA_URL,
   PoAEngine,
+  acceptStoredPoAManifestVersion,
+  createStoredPoAEngine,
   parsePoAYouTubeUrl,
   poaManifestSigningBytes,
   validatePoAManifest,
@@ -13,11 +15,28 @@ const NOW = 1_800_000_000;
 const VIDEO = 'AbCdEfGhI01';
 const OTHER = 'ZyXwVuTsR02';
 const SIGNER = '11'.repeat(32);
+const OTHER_SIGNER = '33'.repeat(32);
 const SIGNATURE = '22'.repeat(64);
+
+function memoryStorage(initial = {}) {
+  const data = structuredClone(initial);
+  return {
+    data,
+    async get(keys) {
+      const names = Array.isArray(keys) ? keys : [keys];
+      return Object.fromEntries(names.filter((key) => key in data).map((key) => [key, structuredClone(data[key])]));
+    },
+    async set(values) {
+      Object.assign(data, structuredClone(values));
+    },
+  };
+}
 
 function manifest(overrides = {}) {
   const base = {
     schema: 'poa-companion/v1',
+    contentEpoch: 1,
+    counter: 1,
     context: { platform: 'youtube', videoId: VIDEO, channelId: 'UC_PathOfAngels' },
     experience: {
       id: 'episode-1',
@@ -43,6 +62,7 @@ function engineFor(envelope, allowlisted = new Set()) {
     resolveSignedManifest: async () => envelope,
     isVideoAllowlisted: async (videoId) => allowlisted.has(videoId),
     trustedCuratorKeys: async () => new Set([SIGNER]),
+    acceptManifestVersion: async () => true,
     verifyEd25519: async () => true,
     nowSeconds: () => NOW,
   });
@@ -61,6 +81,7 @@ test('YouTube recognition accepts exact watch/shorts/live routes only', () => {
 test('canonical signing bytes are stable and omit no interpreted optional field', () => {
   const bytes = new TextDecoder().decode(poaManifestSigningBytes(manifest()));
   assert.match(bytes, /^poa-companion\/v1\n\{/);
+  assert.match(bytes, /"contentEpoch":1,"counter":1/);
   assert.match(bytes, /"videoId":"AbCdEfGhI01"/);
   assert.match(bytes, /"game":\{"kind":"descent","src":"dregg:\/\/descent\/b3_de5ce0"\}/);
   assert.match(bytes, /"expiresAt":1800003600\}$/);
@@ -69,7 +90,12 @@ test('canonical signing bytes are stable and omit no interpreted optional field'
 test('manifest validator rejects stale, overlong, foreign-beta, and unknown game routes', () => {
   assert.ok(validatePoAManifest(manifest(), NOW));
   assert.equal(validatePoAManifest(manifest({ expiresAt: NOW }), NOW), null);
-  assert.equal(validatePoAManifest(manifest({ issuedAt: NOW - 1, expiresAt: NOW + 367 * 86400 }), NOW), null);
+  assert.ok(validatePoAManifest(manifest({ issuedAt: NOW, expiresAt: NOW + 7 * 86400 }), NOW), 'seven-day TTL accepted');
+  assert.equal(validatePoAManifest(manifest({ issuedAt: NOW, expiresAt: NOW + 7 * 86400 + 1 }), NOW), null);
+  assert.equal(validatePoAManifest(manifest({ contentEpoch: -1 }), NOW), null);
+  assert.equal(validatePoAManifest(manifest({ counter: 1.5 }), NOW), null);
+  const missingEpoch = manifest(); delete missingEpoch.contentEpoch;
+  assert.equal(validatePoAManifest(missingEpoch, NOW), null);
   assert.equal(validatePoAManifest(manifest({ experience: { betaUrl: 'https://evil.example/' } }), NOW), null);
   assert.equal(validatePoAManifest(manifest({ experience: { game: { kind: 'poll', src: 'dregg://poll/b3_a1a1a1' } } }), NOW), null);
   assert.equal(validatePoAManifest(manifest({ experience: { game: { kind: 'descent', src: 'dregg://descent/notahash' } } }), NOW), null);
@@ -124,6 +150,7 @@ test('node failure can only fall back to an exact local, game-free recognition',
     resolveSignedManifest: async () => { throw new Error('offline'); },
     isVideoAllowlisted: async (videoId) => allowlisted && videoId === VIDEO,
     trustedCuratorKeys: async () => new Set([SIGNER]),
+    acceptManifestVersion: async () => true,
     nowSeconds: () => NOW,
   });
   const context = { op: 'openContext', context: { href: `https://www.youtube.com/watch?v=${VIDEO}` } };
@@ -137,4 +164,88 @@ test('node failure can only fall back to an exact local, game-free recognition',
 
   const unknown = await offline(false).handle(context);
   assert.equal(unknown.ok, false, 'offline + no exact allowlist refuses instead of inventing a shell');
+});
+
+test('persisted epoch+counter rejects stale and equal-conflicting signed routes', async () => {
+  const storage = memoryStorage();
+  let envelope = null;
+  const makeEngine = () => new PoAEngine({
+    resolveSignedManifest: async () => envelope,
+    isVideoAllowlisted: async () => false,
+    trustedCuratorKeys: async () => new Set([SIGNER, OTHER_SIGNER]),
+    verifyEd25519: async () => true,
+    acceptManifestVersion: (version) => acceptStoredPoAManifestVersion(storage, version),
+    nowSeconds: () => NOW,
+  });
+  const open = (engine) => engine.handle({
+    op: 'openContext',
+    context: { href: `https://www.youtube.com/watch?v=${VIDEO}` },
+  });
+  const serve = (m, signer = SIGNER) => {
+    envelope = { manifest: m, signer, signature: SIGNATURE };
+  };
+
+  const engine = makeEngine();
+  const revision10 = manifest({ contentEpoch: 4, counter: 10 });
+  serve(revision10);
+  assert.equal((await open(engine)).ok, true, 'first signed revision accepted');
+  assert.equal((await open(engine)).ok, true, 'byte-identical replay is idempotent');
+
+  serve(manifest({ contentEpoch: 4, counter: 9, experience: { game: { kind: 'descent', src: 'dregg://descent/b3_bad009' } } }));
+  assert.equal((await open(engine)).ok, false, 'lower counter rejected');
+
+  serve(manifest({ contentEpoch: 4, counter: 10, experience: { game: { kind: 'descent', src: 'dregg://descent/b3_c0ffee' } } }));
+  assert.equal((await open(engine)).ok, false, 'equal counter with a different canonical digest rejected');
+
+  const revision11 = manifest({ contentEpoch: 4, counter: 11, experience: { game: { kind: 'descent', src: 'dregg://descent/b3_c0ffee' } } });
+  serve(revision11);
+  assert.equal((await open(engine)).ok, true, 'higher counter accepted');
+
+  // The persisted high-water mark survives a new background engine instance.
+  serve(revision10);
+  assert.equal((await open(makeEngine())).ok, false, 'old route rejected after worker/engine restart');
+
+  serve(manifest({ contentEpoch: 5, counter: 0, experience: { game: { kind: 'descent', src: 'dregg://descent/b3_e50000' } } }));
+  assert.equal((await open(makeEngine())).ok, true, 'higher content epoch may restart the counter');
+  serve(manifest({ contentEpoch: 5, counter: 1, experience: { game: undefined } }));
+  const revoked = await open(makeEngine());
+  assert.equal(revoked.ok, true, 'higher signed revision can revoke the game route');
+  assert.equal(revoked.model.game, undefined);
+  serve(manifest({ contentEpoch: 5, counter: 0, experience: { game: { kind: 'descent', src: 'dregg://descent/b3_e50000' } } }));
+  assert.equal((await open(makeEngine())).ok, false, 'revoked route cannot replay after the route-free revision');
+  serve(manifest({ contentEpoch: 4, counter: 999, experience: { game: { kind: 'descent', src: 'dregg://descent/b3_bad999' } } }));
+  assert.equal((await open(makeEngine())).ok, false, 'older content epoch cannot win with a larger counter');
+
+  // High-water marks are scoped to exact video+curator, so curator rotation is
+  // explicit rather than silently inheriting another key's counter.
+  serve(manifest({ contentEpoch: 1, counter: 0 }), OTHER_SIGNER);
+  assert.equal((await open(makeEngine())).ok, true, 'separately trusted curator has an independent high-water mark');
+});
+
+test('401 protected endpoint embeds no credential and yields local-only recognition', async () => {
+  const storage = memoryStorage({
+    dregg_poa_youtube_videos: { [VIDEO]: true },
+  });
+  let request = null;
+  const engine = createStoredPoAEngine(storage, async (url, init) => {
+    request = { url, init };
+    return new Response('', { status: 401 });
+  });
+  const response = await engine.handle({
+    op: 'openContext',
+    context: { href: `https://www.youtube.com/watch?v=${VIDEO}` },
+  });
+  assert.equal(response.ok, true);
+  assert.equal(response.recognized, true);
+  assert.equal(response.verified, false);
+  assert.equal(response.model.trust, 'local_allowlist');
+  assert.equal(response.model.game, undefined);
+  assert.match(request.url, /\/api\/poa\/companion\/youtube\/AbCdEfGhI01$/);
+  assert.deepEqual(request.init.headers, { Accept: 'application/json' }, 'no Authorization header or embedded beta password');
+
+  const denied = await createStoredPoAEngine(memoryStorage(), async () => new Response('', { status: 401 })).handle({
+    op: 'openContext',
+    context: { href: `https://www.youtube.com/watch?v=${VIDEO}` },
+  });
+  assert.equal(denied.ok, false, '401 with no exact local allowlist stays default-deny');
 });

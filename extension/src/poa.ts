@@ -25,6 +25,7 @@ export const POA_NODE_URL = "https://node.pathofangels.network";
 export const POA_NODE_URL_KEY = "dregg_poa_node_url";
 export const POA_VIDEO_ALLOWLIST_KEY = "dregg_poa_youtube_videos";
 export const POA_CURATOR_KEYS_KEY = "dregg_poa_trusted_curators";
+export const POA_MANIFEST_VERSIONS_KEY = "dregg_poa_manifest_versions";
 
 const YOUTUBE_VIDEO_RE = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_CHANNEL_RE = /^[A-Za-z0-9_-]{3,128}$/;
@@ -32,6 +33,8 @@ const EXPERIENCE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const DESCENT_URI_RE = /^dregg:\/\/descent\/b3_[0-9a-f]{6,}$/i;
 const HEX_KEY_RE = /^[0-9a-f]{64}$/i;
 const HEX_SIG_RE = /^[0-9a-f]{128}$/i;
+const DIGEST_RE = /^[0-9a-f]{64}$/i;
+const MAX_MANIFEST_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 
 export interface PoAContextHint {
   href: string;
@@ -51,6 +54,10 @@ export interface PoAGameRoute {
 
 export interface PoAManifestV1 {
   schema: "poa-companion/v1";
+  /** Monotone season/content epoch. A larger epoch may restart `counter`. */
+  contentEpoch: number;
+  /** Monotone revision within `contentEpoch`. */
+  counter: number;
   context: {
     platform: "youtube";
     videoId: string;
@@ -116,8 +123,18 @@ export interface PoAEngineDeps {
   resolveSignedManifest(context: PoAYouTubeContext): Promise<unknown | null>;
   isVideoAllowlisted(videoId: string): Promise<boolean>;
   trustedCuratorKeys(): Promise<ReadonlySet<string>>;
+  /** Persist/check the highest signed version for this exact video+curator. */
+  acceptManifestVersion(version: PoAManifestVersion): Promise<boolean>;
   verifyEd25519?(publicKeyHex: string, message: Uint8Array<ArrayBuffer>, signatureHex: string): Promise<boolean>;
   nowSeconds?: () => number;
+}
+
+export interface PoAManifestVersion {
+  signer: string;
+  videoId: string;
+  contentEpoch: number;
+  counter: number;
+  digest: string;
 }
 
 /** Parse only actual YouTube watch routes. Titles, OpenGraph tags and channel
@@ -150,6 +167,8 @@ export function parsePoAYouTubeUrl(href: string, channelHint?: string): PoAYouTu
 export function poaManifestSigningBytes(manifest: PoAManifestV1): Uint8Array<ArrayBuffer> {
   const canonical = {
     schema: manifest.schema,
+    contentEpoch: manifest.contentEpoch,
+    counter: manifest.counter,
     context: {
       platform: manifest.context.platform,
       videoId: manifest.context.videoId,
@@ -196,6 +215,8 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
   const context = m.context as Record<string, unknown> | undefined;
   const experience = m.experience as Record<string, unknown> | undefined;
   if (m.schema !== "poa-companion/v1" || !context || !experience) return null;
+  if (!Number.isSafeInteger(m.contentEpoch) || (m.contentEpoch as number) < 0) return null;
+  if (!Number.isSafeInteger(m.counter) || (m.counter as number) < 0) return null;
   if (context.platform !== "youtube" || !boundedString(context.videoId, 11) || !YOUTUBE_VIDEO_RE.test(context.videoId)) return null;
   if (!boundedString(context.channelId, 128) || !YOUTUBE_CHANNEL_RE.test(context.channelId)) return null;
   if (!boundedString(experience.id, 64) || !EXPERIENCE_ID_RE.test(experience.id)) return null;
@@ -207,9 +228,10 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
   const issuedAt = m.issuedAt as number;
   const expiresAt = m.expiresAt as number;
   if (issuedAt > nowSeconds + 300 || expiresAt <= nowSeconds || expiresAt <= issuedAt) return null;
-  // Bound replayable lifetime. A season-long manifest is fine; an effectively
-  // immortal routing signature is not.
-  if (expiresAt - issuedAt > 366 * 24 * 60 * 60) return null;
+  // Anti-rollback state prevents a seen revision moving backward. This short
+  // lifetime also bounds first-seen replay of an obsolete but never-before-seen
+  // route; revocation never depends on a year-old signature expiring.
+  if (expiresAt - issuedAt > MAX_MANIFEST_LIFETIME_SECONDS) return null;
 
   let game: PoAGameRoute | undefined;
   if (experience.game !== undefined) {
@@ -221,6 +243,8 @@ export function validatePoAManifest(value: unknown, nowSeconds: number): PoAMani
 
   return {
     schema: "poa-companion/v1",
+    contentEpoch: m.contentEpoch as number,
+    counter: m.counter as number,
     context: { platform: "youtube", videoId: context.videoId, channelId: context.channelId },
     experience: {
       id: experience.id,
@@ -251,6 +275,13 @@ export async function verifyPoAEd25519(publicKeyHex: string, message: Uint8Array
   }
 }
 
+/** Digest of the exact canonical bytes the curator signed. Persisting this pin
+ * makes an equal `(epoch,counter)` idempotent only for byte-identical content. */
+export async function poaManifestDigest(manifest: PoAManifestV1): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", poaManifestSigningBytes(manifest));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function refuse(error: string): PoACompanionResponse {
   return { ok: false, recognized: false, verified: false, tier: "none", error };
 }
@@ -258,7 +289,24 @@ function refuse(error: string): PoACompanionResponse {
 /** Recognition engine. It routes to existing game engines but owns no game
  * transition, contribution, canon-promotion or settlement semantics. */
 export class PoAEngine {
+  // chrome.storage has no compare-and-swap. The background owns one engine, so
+  // serialize read/compare/write acceptance to prevent two simultaneous fetches
+  // from letting a lower revision overwrite a higher one.
+  private versionLock: Promise<void> = Promise.resolve();
+
   constructor(private readonly deps: PoAEngineDeps) {}
+
+  private acceptVersion(version: PoAManifestVersion): Promise<boolean> {
+    const run = this.versionLock.then(async () => {
+      try {
+        return await this.deps.acceptManifestVersion(version);
+      } catch {
+        return false;
+      }
+    });
+    this.versionLock = run.then(() => undefined, () => undefined);
+    return run;
+  }
 
   async handle(req: PoACompanionRequest): Promise<PoACompanionResponse> {
     if (!req || req.op !== "openContext" || !req.context) return refuse("unsupported companion request");
@@ -331,12 +379,26 @@ export class PoAEngine {
     if (!manifest || manifest.context.videoId !== context.videoId) return null;
     const verify = this.deps.verifyEd25519 ?? verifyPoAEd25519;
     if (!(await verify(signer, poaManifestSigningBytes(manifest), envelope.signature))) return null;
+    let digest: string;
+    try {
+      digest = await poaManifestDigest(manifest);
+    } catch {
+      return null;
+    }
+    if (!(await this.acceptVersion({
+      signer,
+      videoId: manifest.context.videoId,
+      contentEpoch: manifest.contentEpoch,
+      counter: manifest.counter,
+      digest,
+    }))) return null;
     return { manifest, signer };
   }
 }
 
 export interface PoAStorageLike {
   get(keys: string | string[]): Promise<Record<string, unknown>>;
+  set(values: Record<string, unknown>): Promise<void>;
 }
 
 export type PoAFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -362,6 +424,59 @@ function safePoANodeBase(value: unknown): string {
   }
 }
 
+interface StoredPoAManifestVersion {
+  contentEpoch: number;
+  counter: number;
+  digest: string;
+}
+
+function parseStoredVersion(value: unknown): StoredPoAManifestVersion | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(v.contentEpoch) || (v.contentEpoch as number) < 0) return null;
+  if (!Number.isSafeInteger(v.counter) || (v.counter as number) < 0) return null;
+  if (typeof v.digest !== "string" || !DIGEST_RE.test(v.digest)) return null;
+  return { contentEpoch: v.contentEpoch as number, counter: v.counter as number, digest: v.digest.toLowerCase() };
+}
+
+function versionStorageKey(version: Pick<PoAManifestVersion, "signer" | "videoId">): string {
+  return `v1:${version.signer.toLowerCase()}:${version.videoId}`;
+}
+
+/** Extension-persisted rollback gate. Comparison is lexicographic by
+ * `(contentEpoch,counter)`. An equal version is accepted only when its canonical
+ * manifest digest is identical; an equal counter with different content is a
+ * conflict, never a replacement. */
+export async function acceptStoredPoAManifestVersion(
+  storage: PoAStorageLike,
+  version: PoAManifestVersion,
+): Promise<boolean> {
+  if (!HEX_KEY_RE.test(version.signer) || !YOUTUBE_VIDEO_RE.test(version.videoId)) return false;
+  const candidate = parseStoredVersion(version);
+  if (!candidate) return false;
+  const stored = await storage.get(POA_MANIFEST_VERSIONS_KEY);
+  const rawMap = stored[POA_MANIFEST_VERSIONS_KEY];
+  const map: Record<string, unknown> = rawMap && typeof rawMap === "object" && !Array.isArray(rawMap)
+    ? { ...(rawMap as Record<string, unknown>) }
+    : {};
+  const key = versionStorageKey(version);
+  const rawCurrent = map[key];
+  if (rawCurrent !== undefined) {
+    const current = parseStoredVersion(rawCurrent);
+    // Corrupt persisted anti-rollback state fails closed. Treating it as absent
+    // would silently reopen every old signed route.
+    if (!current) return false;
+    if (candidate.contentEpoch < current.contentEpoch) return false;
+    if (candidate.contentEpoch === current.contentEpoch) {
+      if (candidate.counter < current.counter) return false;
+      if (candidate.counter === current.counter) return candidate.digest === current.digest;
+    }
+  }
+  map[key] = candidate;
+  await storage.set({ [POA_MANIFEST_VERSIONS_KEY]: map });
+  return true;
+}
+
 /** Construct the shipping background engine over extension-private storage and
  * the dedicated PoA node endpoint. */
 export function createStoredPoAEngine(storage: PoAStorageLike, fetcher: PoAFetch = fetch): PoAEngine {
@@ -375,7 +490,12 @@ export function createStoredPoAEngine(storage: PoAStorageLike, fetcher: PoAFetch
         signal: AbortSignal.timeout(10_000),
         headers: { Accept: "application/json" },
       });
-      if (response.status === 404) return null;
+      if (response.status === 404 || response.status === 401 || response.status === 403) {
+        // The protected beta currently answers 401. Do not embed `eden` (or any
+        // credential) in the extension: unauthenticated transport means no signed
+        // route. The engine may still show an exact local, unverified safe shell.
+        return null;
+      }
       if (!response.ok) throw new Error(`PoA companion HTTP ${response.status}`);
       return response.json();
     },
@@ -390,5 +510,6 @@ export function createStoredPoAEngine(storage: PoAStorageLike, fetcher: PoAFetch
         .map((key) => key.toLowerCase());
       return new Set(values);
     },
+    acceptManifestVersion: (version) => acceptStoredPoAManifestVersion(storage, version),
   });
 }

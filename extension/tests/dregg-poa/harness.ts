@@ -28,6 +28,8 @@ function bytesToHex(bytes: ArrayBuffer | Uint8Array): string {
 function manifest(videoId: string, suffix: string, withGame: boolean): PoAManifestV1 {
   return {
     schema: "poa-companion/v1",
+    contentEpoch: 1,
+    counter: Number(suffix),
     context: { platform: "youtube", videoId, channelId: "UC_PathOfAngels_Test_Channel" },
     experience: {
       id: `episode-${suffix}`,
@@ -86,6 +88,7 @@ const state = {
     async trustedCuratorKeys() {
       return new Set([signer]);
     },
+    acceptManifestVersion: async () => true,
     nowSeconds: () => NOW,
   });
   const port: PoACompanionPort = { request: (req) => engine.handle(req) };
