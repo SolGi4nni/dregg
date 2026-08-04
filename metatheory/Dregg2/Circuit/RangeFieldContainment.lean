@@ -41,9 +41,14 @@ interval's own reach, finds `p − k` OUTSIDE the interval. That is `Wrapfree b`
 
 so the maximum wrap-free width at BabyBear is **29** (`2^30 = 1073741824 ≤ p`), and **30 fails**
 (`2^31 = 2147483648 > p`): at `b = 30` a slack of `−939524098` rides as `p − 939524098 =
-1073741823 < 2^30` and is ADMITTED (`wrap_admitted_at_30`). The 83 descriptors declaring 30 bits are
-NOT vacuous — they refuse every negative of magnitude `≤ p − 2^30 = 939524097` — but they are not
-wrap-free, and this file says so rather than leaving it implied by a constant.
+1073741823 < 2^30` and is ADMITTED (`wrap_admitted_at_30`). The 30-bit declarations are NOT vacuous
+— they refuse every negative of magnitude `≤ p − 2^30 = 939524097` — but they are not wrap-free, and
+this file says so rather than leaving it implied by a constant.
+
+⚑ "83 DESCRIPTORS" WAS WRONG AND IS CORRECTED (re-measured 2026-08-04; see §5's docstring for the
+split). 83 is a count of JSON OBJECTS carrying `"bits": 30`, living in 58 files: 33 `.tables[]`
+range-table defs plus 50 `.ranges[]` entries, the latter all on wires 76/77. §5a says what those
+wires are and why their 30 is exposed; §5b says why `presentation-freshness`'s 30 is not.
 
 ⚠ Said plainly and not laundered: `Wrapfree` bounds the magnitudes the interval can itself reach. No
 width is wrap-free against a completely unconstrained `k`, because `p − k` is small when `k` is near
@@ -326,6 +331,45 @@ theorem no_underflow_admitted_at_29 (k : ℤ) (hk : 0 < k) (hk' : k < 536870912)
   have hp : (P : ℤ) = 2013265921 := babybear_modulus
   rw [hp] at hlt; norm_num at hlt; omega
 
+/-! ## §5b — WHEN 30 IS SAFE: the complement-pair construction, and why it is not decoration.
+
+Not every 30-bit tooth in the tree is exposed. `by-name/presentation-freshness.json` declares the
+same 30-bit table, and its two lookups (`PresentationEmit.lean:179,183`, on `DIFF = 21` and
+`HI = 22`) are SOUND at that width — because the width is not carrying the bound alone. The gadget
+range-proves BOTH `diff` and its complement `hi`, and gates `diff + hi = p/2`
+(`PresentationEmit.lean:175`, `HALF_P = 1006632960`).
+
+That is the whole difference from the balance limbs. `wire 76`/`wire 77` are range-proved and
+nothing pins their sum, so §5a's admitted band is live. Here the paired complement collapses it:
+the theorem below shows the FIELD equation forces the INTEGER equation, so `diff` is pinned to
+`[0, p/2]` — strictly inside `[0, 2^30)` — and no wrapped `diff` survives. The construction that
+repairs the balance teeth is already in this tree, one emit module over. -/
+
+/-- ⚑ **A COMPLEMENT PAIR AT 30 BITS CANNOT WRAP.** Two values range-proved into `[0, 2^30)` whose
+sum is gated to `p/2` *in the field* have that sum *over `ℤ`* — the alias `p/2 + p = 3019898881`
+exceeds `2^31`, which is the most two 30-bit values can reach. So each is pinned to `[0, p/2]`.
+
+This is why `presentation-freshness`'s 30 is SAFE and the balance limbs' 30 is not: the bound is
+carried by the gate, and the range table only has to be non-vacuous. -/
+theorem complement_pair_at_30_pins_the_sum (a b : ℤ)
+    (ha : 0 ≤ a) (ha' : a < 2 ^ 30) (hb : 0 ≤ b) (hb' : b < 2 ^ 30)
+    (h : (P : ℤ) ∣ (a + b - 1006632960)) :
+    a + b = 1006632960 ∧ a ≤ 1006632960 ∧ b ≤ 1006632960 := by
+  obtain ⟨k, hk⟩ := h
+  have hp : (P : ℤ) = 2013265921 := babybear_modulus
+  rw [hp] at hk
+  norm_num at ha' hb'
+  refine ⟨by omega, by omega, by omega⟩
+
+/-- The same statement read as the repair recipe: under a gated complement, the 30-bit tooth admits
+no value above `p/2`, so §5a's band `[939524098, 2^30)` is unreachable rather than merely unused. -/
+theorem complement_pair_at_30_excludes_the_admitted_band (a b : ℤ)
+    (ha : 0 ≤ a) (ha' : a < 2 ^ 30) (hb : 0 ≤ b) (hb' : b < 2 ^ 30)
+    (h : (P : ℤ) ∣ (a + b - 1006632960)) :
+    a < 1073741824 ∧ ¬ (1006632960 < a) := by
+  obtain ⟨_, ha2, _⟩ := complement_pair_at_30_pins_the_sum a b ha ha' hb hb' h
+  exact ⟨by omega, by omega⟩
+
 /-! ## §6 — axiom hygiene. -/
 
 #assert_axioms range_vacuous_at_or_above_31
@@ -338,5 +382,7 @@ theorem no_underflow_admitted_at_29 (k : ℤ) (hk : 0 < k) (hk' : k < 536870912)
 #assert_axioms deployed_underflow_admitted_iff
 #assert_axioms deployed_underflow_admitted
 #assert_axioms no_underflow_admitted_at_29
+#assert_axioms complement_pair_at_30_pins_the_sum
+#assert_axioms complement_pair_at_30_excludes_the_admitted_band
 
 end Dregg2.Circuit.RangeFieldContainment
