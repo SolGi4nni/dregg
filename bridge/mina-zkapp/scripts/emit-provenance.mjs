@@ -382,6 +382,29 @@ export function writeFixtureSidecar(sidecar, { fixture, cone, from, extra }) {
 export function runLeanEmit({ driver, dir, env = {}, label, glob }) {
   const cone = leanConeDigest(driver);
   const cmd = `${Object.entries(env).map(([k, v]) => `${k}=${v}`).join(' ')} lake env lean --run ${driver}`.trim();
+  // ⚑ BUILD BEFORE EMITTING, BECAUSE THE STAMP MEASURES THE SOURCE AND THE EMISSION READS THE
+  // BINARIES. `lake env lean --run` elaborates the DRIVER fresh and loads every import from
+  // whatever `.olean` happens to be on disk. So a cone that is clean at HEAD — which is exactly
+  // what `leanConeDigest` and `gitContext` certify — can still be emitted by oleans built from an
+  // older cone, and the stamp would record that run as fresh and reproducible. The floor's three
+  // legs are all about the SOURCE; none of them can see a stale binary.
+  //
+  // MEASURED 2026-08-04. `wrapmain-region-conformance.mjs --emit` refused with
+  // `xhatXY IS NOT THE MSM'S OUTPUT`, quoting a `shapeWrap` value from one commit against an
+  // `xhatOut` derived from another: `KimchiWrapMain.olean` was 11:47:06 and its own source
+  // 11:48:47, while `KimchiWrapMainField.olean` had already been rebuilt past it. The emission was
+  // running HALF of one commit and half of another. It only failed loudly because that one shape
+  // field carries a fail-closed memo check; every other divergence between two oleans would have
+  // emitted silently and been stamped fresh.
+  //
+  // ⚠ NOT an mtime leg — `emit-provenance.mjs` retired one of those for good reason (`7d9a20bef`,
+  // `31b12026f`) and this does not reintroduce it. It does not COMPARE timestamps or refuse
+  // anything; it makes the binaries be the cone's, which is what the stamp was already claiming.
+  // It is ~4 s when the tree is already built, and it THROWS rather than warning if it cannot.
+  const mod = driver.replace(/\.lean$/, '').replace(/\//g, '.');
+  process.stderr.write(`   building:  (cd metatheory && lake build ${mod})\n`);
+  execFileSync('lake', ['build', mod],
+    { cwd: META_ROOT, env: { ...process.env }, stdio: ['ignore', 'inherit', 'inherit'] });
   process.stderr.write(`   emitting: (cd metatheory && ${cmd})\n`);
   // ⚑ INVALIDATE THE STAMP BEFORE THE RUN, NOT AFTER IT. The stamp is written at the END, so until
   // now a run that died partway left the PREVIOUS run's stamp standing over a directory that was
