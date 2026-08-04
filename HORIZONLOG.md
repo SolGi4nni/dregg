@@ -47,6 +47,52 @@ Relevant code commits in this tree: `e011179aa`, `16e89f6fd`, `a4d94c145`, `1f0f
 audited and shipped through `9212be4` in `~/dev/dregg-infra` (including crash-journaled legacy-policy
 migration and byte-exact gated web staging).
 
+## ⚑⚑⚑ AUGUST 4 — four light-client chains were authored in Lean and NONE of them reached the prover (`94fe7de5e`)
+
+The Lean was green, `lake build` said 3073 jobs / 0 errors, and the deployed prover was running the
+OLD JSON. `LightClientTendermintAir`, `LightClientMidnightAir` and `LightClientMinaAir` had been
+authored with the missing comparisons and COMMITTED; the descriptors they emit were never
+re-emitted. Every claim about the new teeth was a claim about a file nothing served. **Lean green is
+not the gate; the descriptor is the seam, and it is silent.**
+
+**What was already closed in Lean and is now SERVED.** Tendermint had no emptiness floor and no
+`signed ≤ total` — `sleRungs` (α=1,β=1,γ=0) and `tposRungs` (α=1,β=0,γ=1), each with its OWN five
+difference limbs and four carries so `tm_three_teeth_are_independent` can disarm them one at a time.
+Mina's `SUBMIT_H ≤ BLOCK_LEN` was unforced because `REQ_DEPTH` carried NO range lookup: a negative
+required depth satisfied G5 and drove `WIT_DEPTH` — and `BLOCK_LEN − SUBMIT_H` — negative. And
+`tmLcAir_refuses_the_empty_validator_set` was MISNAMED: it took `hTotal = 0` **and** `hSigned = 0`
+while `T = 0, S = 1` gives `3·1 − 2·0 − 1 = 2`, an honest ACCEPTING fill. All four were fixed at HEAD
+before this lane started; the finding is that none of them was reachable.
+
+**Two harness reds, and both were the tests being STALE rather than the AIR being wrong.**
+`the_empty_validator_set_is_refused` forced the quorum chain's out-of-range top limb into range and
+demanded a violated GATE — but with the floor chain present the all-zero row has TWO out-of-range top
+limbs, so it hit `range wire 45` instead. It now disarms one tooth at a time on the deployed prover:
+quorum refuses (wire 27) → quorum DISARMED, floor refuses ALONE (wire 45) → both disarmed, the
+closure gates refuse (`OodEvaluationMismatch`). ⚑ And `the_shipped_64_bit_width_refuses_even_an_honest_header`
+was **exhibiting a bug a sibling lane had already fixed**: `value_fits_bits` is total now and
+over-wide widths refuse at LOAD, so the honest header legitimately PROVES at an in-memory bits=64 and
+the test red'd with "the forgery was ACCEPTED". Rewritten to assert the load refusal on the real
+served bytes, and RENAMED — as was midnight's identical twin, which carried the same stale name.
+
+**Flag day.** `dregg-tm-lightclient-verify::v1` width 43→61, constraints 44→72;
+`dregg-midnight-lightclient-verify::v1` 42→51, 52→66; `dregg-mina-lightclient-verify::v1` 49→50. All
+three VKs rotate. The re-emit was verified by sha256 against `EmitByName.lean`'s own stdout, because
+`scripts/emit_descriptors.py` refuses to WRITE without `DREGG_VK_REGEN_ACK` (exit 3, tree untouched).
+⚠ **NOT stamped:** `PROVENANCE.json`'s drift gate was already red — six `pasta-*-sound.json` rows
+missing entirely and FOUR light-client pins stale (`eth` and `solana` are drift from earlier flag
+days, untouched here).
+
+**Two process teeth paid for here.** (1) `scripts/emit_descriptors.py` failed with
+`(interpreter) unknown declaration '…chipLookupTuple.spec_0'` — **not a stale olean, an UNBUILT
+import closure**: `lake build` of the three AIR modules is 3073 jobs, `EmitByName.lean`'s closure is
+3356. (2) The Mina pin `49` "from 35 source legs" in `turn/tests/mina_anchored_head_lands.rs` had been
+wrong since the `REQ_DEPTH` leg landed, and **only the descriptor re-emit made it say so out loud** —
+a count pinned in two places where only one of them moves is a gate that reports late.
+
+Measured on the deployed prover in RELEASE: 49/49 across the tm, midnight and Mina harnesses; the
+three rewritten tm tests also pass in debug, where algebraic refusals are panics rather than `Err`.
+
 ## ⚑⚑⚑ AUGUST 4 — the tripwire is re-baselined BY its audit, `padVecE` TAKES the obligation, and the chain still binds
 
 Three named reds closed, and each one was a slightly different shape than the brief that named it.
