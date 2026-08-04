@@ -238,6 +238,13 @@ const REQUIRED_DECISION_EXPORTS: &[(&str, &str)] = &[
          caller-authored carrier/state must never be promoted to finality",
     ),
     (
+        "dregg_poa_network_genesis",
+        "the Path of Angels Signal NETWORK GENESIS ceremony compiles out: Lean cannot bind the \
+         externally verified deployment/content tuple to the exact zero-head config and Canon \
+         bytes, hashes, and faithful coordinates. Callers must refuse; there is no Rust \
+         reconstruction fallback",
+    ),
+    (
         "dregg_poa_dark_bazaar_judge",
         "the Path of Angels Dark Bazaar v1 SETTLEMENT EVALUATOR compiles out: canonical decoding, \
          the concrete four-order private descriptor authorization, escrow/nullifier accounting, \
@@ -2274,6 +2281,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_automatafl_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_multiway_tug_rules_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_signal_judge_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_poa_network_genesis_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_poa_dark_bazaar_judge_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_deleg_admit_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_trustline_step_present)");
@@ -3164,6 +3172,16 @@ fn main() {
         absent_export_warn("dregg_poa_signal_judge");
     }
 
+    // PATH OF ANGELS NETWORK GENESIS CEREMONY: validates the externally verified tuple and exact
+    // zero state, then emits the complete Lean-owned PoaSignalHeadV1 byte image. It is separately
+    // versioned from transition evaluation so availability cannot confer authority on an input.
+    let poa_network_genesis_present = archive_exports(&build_archive, "dregg_poa_network_genesis");
+    if poa_network_genesis_present {
+        println!("cargo:rustc-cfg=dregg_poa_network_genesis_present");
+    } else {
+        absent_export_warn("dregg_poa_network_genesis");
+    }
+
     // PATH OF ANGELS DARK BAZAAR V1 SETTLEMENT EVALUATOR: exact, bounded private opening
     // authorization and public transition. This is a separately versioned symbol so archive
     // presence cannot reinterpret Signal or a future generalized market verifier.
@@ -3554,6 +3572,9 @@ fn main() {
     // module initializer in BOTH default and single-threaded runtime init paths.
     if poa_signal_judge_present {
         shim.define("DREGG_POA_SIGNAL_JUDGE", None);
+    }
+    if poa_network_genesis_present {
+        shim.define("DREGG_POA_NETWORK_GENESIS", None);
     }
     if poa_dark_bazaar_judge_present {
         shim.define("DREGG_POA_DARK_BAZAAR_JUDGE", None);

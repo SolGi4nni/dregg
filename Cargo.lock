@@ -6844,6 +6844,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-pq",
  "proptest 1.11.0",
+ "serde_json",
 ]
 
 [[package]]

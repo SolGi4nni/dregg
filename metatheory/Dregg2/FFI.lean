@@ -18,6 +18,7 @@ import Dregg2.Bridge.InterchainAdapterDecision
 import Dregg2.Games.AutomataflFFI
 import Dregg2.Games.MultiwayTugFFI
 import Dregg2.Games.PathOfAngels.NetworkJudge
+import Dregg2.Games.PathOfAngels.NetworkGenesis
 import Dregg2.Games.PathOfAngels.DarkBazaarJudge
 import Dregg2.Apps.DelegAdmit
 
@@ -233,6 +234,10 @@ is stated on their entry rather than implied by membership in this archive.
   evaluator: strict canonical input decode, exact Lean game replay, closed contribution, Canon
   transition, and canonical successor/receipt encoding. It supplies no authority of its own;
   absent or malformed input is a hard refusal, with no Rust semantic fallback.)
+* `Dregg2.Games.PathOfAngels.NetworkGenesis` — `dregg_poa_network_genesis` (the strict
+  deployment/content tuple and zero-head ceremony: Lean emits the exact config/Canon bytes,
+  hashes, and faithful coordinates a host may transport. External manifest/signature verification
+  remains outside this export; absence or rejection has no Rust reconstruction fallback.)
 
 ### §1.4 Post-quantum cores — the crates these take OUT of the TCB (10 symbols)
 Absent ⇒ `dregg-pq` answers with an unaudited third-party crate. `DREGG_REQUIRE_PQ_CORES` turns

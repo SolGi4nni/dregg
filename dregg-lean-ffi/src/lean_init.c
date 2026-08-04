@@ -423,6 +423,16 @@ extern lean_object *dregg_poa_signal_judge(lean_object *input);
 #define DREGG_POA_SIGNAL_WIRE_MAX_BYTES ((size_t)67108864u)
 #endif
 
+/* The Lean-owned first-head ceremony (`NetworkGenesis.networkGenesisFFI`). The input tuple has
+ * already undergone external manifest/genesis/signature verification; Lean rederives its
+ * deployment binding and emits the exact config/Canon bytes and faithful digest coordinates.
+ * This bridge transports that emission only and never constructs a head itself. */
+#ifdef DREGG_POA_NETWORK_GENESIS
+extern lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkGenesis(uint8_t builtin);
+extern lean_object *dregg_poa_network_genesis(lean_object *input);
+#define DREGG_POA_NETWORK_GENESIS_WIRE_MAX_BYTES ((size_t)16777216u)
+#endif
+
 /* Bounded four-order Dark Bazaar settlement evaluator. The only authorization
  * constructor lives behind its Lean descriptor check; this shim transports strings. */
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
@@ -1060,6 +1070,18 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(poares);
 #endif
+#ifdef DREGG_POA_NETWORK_GENESIS
+    /* This module imports NetworkGenesisWire/Emit and therefore has initialized constants; keep
+     * both runtime init paths in exact parity. Initialization does not verify the external tuple. */
+    lean_object *poagenres =
+        initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkGenesis(1);
+    if (!lean_io_result_is_ok(poagenres)) {
+        lean_io_result_show_error(poagenres);
+        lean_dec_ref(poagenres);
+        return 1;
+    }
+    lean_dec_ref(poagenres);
+#endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
     lean_object *bazaarres =
         initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(1);
@@ -1395,6 +1417,35 @@ size_t dregg_poa_signal_judge_str(const char *in_utf8, char *out, size_t out_cap
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     if (full > DREGG_POA_SIGNAL_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        lean_dec_ref(res);
+        return (size_t)-1;
+    }
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_POA_NETWORK_GENESIS
+/* Bounded opaque transport for the Lean authority-head emission. Zero output is semantic refusal;
+ * `(size_t)-1` is an unusable or over-limit host transport. */
+size_t dregg_poa_network_genesis_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (in_utf8 == 0 || out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    size_t input_len = strlen(in_utf8);
+    if (input_len > DREGG_POA_NETWORK_GENESIS_WIRE_MAX_BYTES) {
+        out[0] = '\0';
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_poa_network_genesis(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    if (full > DREGG_POA_NETWORK_GENESIS_WIRE_MAX_BYTES) {
         out[0] = '\0';
         lean_dec_ref(res);
         return (size_t)-1;

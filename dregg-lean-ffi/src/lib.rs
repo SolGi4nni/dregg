@@ -51,6 +51,11 @@ pub mod bridge_lc_ffi;
 #[path = "poa_ffi.rs"]
 pub mod poa_ffi;
 
+/// Lean-owned bounded first-head ceremony. The host transports the exact emitted config/Canon
+/// bytes and does not reconstruct or persist them in this crate.
+#[path = "poa_network_genesis_ffi.rs"]
+pub mod poa_network_genesis_ffi;
+
 /// Lean-owned bounded private batch-settlement evaluator. Rust transports the
 /// canonical wire and has no settlement/authorization fallback.
 #[path = "poa_dark_bazaar_ffi.rs"]

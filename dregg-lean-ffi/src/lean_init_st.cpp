@@ -95,6 +95,10 @@ lean_object *initialize_Dregg2_Dregg2_Exec_DistributedExports(uint8_t builtin);
  * with `dregg_ffi_init`; availability still confers no authority on caller-authored state. */
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkJudge(uint8_t builtin);
 #endif
+#ifdef DREGG_POA_NETWORK_GENESIS
+/* Exact parity with the default initializer for the Lean-owned zero-head ceremony. */
+lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkGenesis(uint8_t builtin);
+#endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
 lean_object *initialize_Dregg2_Dregg2_Games_PathOfAngels_DarkBazaarJudge(uint8_t builtin);
 #endif
@@ -163,6 +167,18 @@ extern "C" int dregg_ffi_init_st(void) {
             return 1;
         }
         lean_dec_ref(poares);
+    }
+#endif
+#ifdef DREGG_POA_NETWORK_GENESIS
+    {
+        lean_object *poagenres =
+            initialize_Dregg2_Dregg2_Games_PathOfAngels_NetworkGenesis(1);
+        if (!lean_io_result_is_ok(poagenres)) {
+            lean_io_result_show_error(poagenres);
+            lean_dec_ref(poagenres);
+            return 1;
+        }
+        lean_dec_ref(poagenres);
     }
 #endif
 #ifdef DREGG_POA_DARK_BAZAAR_JUDGE
