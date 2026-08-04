@@ -44,6 +44,7 @@ pub mod image_builder;
 pub mod ledger_store;
 pub mod note_tree;
 pub mod per_cell_receipt_heads;
+pub mod poa_event_store;
 pub mod poa_signal_state;
 pub mod poseidon2_note_tree;
 pub mod private_dependent_turns;
@@ -96,6 +97,11 @@ pub use note_tree::{NoteTree, PersistentNullifierSet};
 pub use per_cell_receipt_heads::{
     DurablePerCellReceiptHead, MAX_PER_CELL_RECEIPT_HEADS_V1, MAX_PER_CELL_RECEIPT_LIVE_RECORDS_V1,
     PER_CELL_RECEIPT_HEAD_INDEX_VERSION_V1, PerCellReceiptHeadRecovery,
+};
+pub use poa_event_store::{
+    MAX_POA_EVENT_COMPONENT_BYTES_V1, MAX_POA_EVENT_TAG_BYTES_V1, PoaAggregateIdV1,
+    PoaEventEnvelopeV1, PoaEventHeadV1, PoaEventHistoryV1, PoaProjectionCursorV1,
+    PreparedPoaEventEnvelopeV1,
 };
 pub use poa_signal_state::{
     MAX_POA_SIGNAL_WIRE_BYTES_V1, PoaSignalGenesisInitOutcome, PoaSignalHeadV1,
@@ -746,6 +752,7 @@ impl PersistentStore {
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         store.audit_finalized_receipt_cores_v1_on_open()?;
         store.audit_poa_signal_state()?;
+        store.audit_poa_event_store()?;
         Ok(store)
     }
 
@@ -769,6 +776,7 @@ impl PersistentStore {
         store.validate_exact_fnsp_v3_receipt_authority_on_open()?;
         store.audit_finalized_receipt_cores_v1_on_open()?;
         store.audit_poa_signal_state()?;
+        store.audit_poa_event_store()?;
         Ok(store)
     }
 
@@ -910,6 +918,7 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::POA_SIGNAL_HEADS_V1)?;
             let _ = write_txn.open_table(tables::POA_SIGNAL_TRANSITIONS_V1)?;
             let _ = write_txn.open_table(tables::POA_SIGNAL_BY_COMMIT_ORDINAL_V1)?;
+            poa_event_store::initialize_poa_event_tables_in(&write_txn)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_TURNS_V1)?;
             let _ = write_txn.open_table(tables::PRIVATE_DEPENDENT_INGRESS_RESERVATIONS_V1)?;
             // Compacted turn block-ids (the no-double-apply carrier for

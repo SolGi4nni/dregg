@@ -1015,6 +1015,32 @@ impl PersistentStore {
             None,
             &[],
             Some(poa_signal),
+            None,
+        )
+        .map(|outcome| outcome.outcome)
+    }
+
+    /// Bare finalized-turn apex with one native-Lean-authored generic PoA event
+    /// welded into the commit-log transaction. Rust validates only storage
+    /// framing and commit coordinates; game acceptance remains Lean-owned.
+    pub fn commit_finalized_turn_with_poa_event(
+        &self,
+        expected_ordinal: u64,
+        record: &CommitRecord,
+        poa_event: &crate::PreparedPoaEventEnvelopeV1,
+    ) -> Result<CommitOutcome> {
+        self.commit_finalized_turn_welded(
+            expected_ordinal,
+            record,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            &[],
+            None,
+            Some(poa_event),
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1059,6 +1085,7 @@ impl PersistentStore {
             None,
             None,
             config_blobs,
+            None,
             None,
         )
         .map(|outcome| outcome.outcome.ordinal)
@@ -1107,6 +1134,7 @@ impl PersistentStore {
             None,
             &[],
             None,
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1132,6 +1160,7 @@ impl PersistentStore {
             None,
             Some(executor_state),
             &[],
+            None,
             None,
         )
         .map(|outcome| outcome.outcome)
@@ -1167,6 +1196,7 @@ impl PersistentStore {
             None,
             None,
             &[],
+            None,
             None,
         )
         .map(|outcome| outcome.outcome)
@@ -1530,6 +1560,7 @@ impl PersistentStore {
             Some(executor_state),
             &[],
             None,
+            None,
         )?;
         let committed_head = welded.committed_head.ok_or_else(|| {
             StoreError::Integrity(
@@ -1592,6 +1623,7 @@ impl PersistentStore {
             executor_state,
             &[],
             poa_signal,
+            None,
         )
         .map(|outcome| outcome.outcome)
     }
@@ -1624,6 +1656,7 @@ impl PersistentStore {
             None,
             &[],
             None,
+            None,
         )
         .map(|outcome| outcome.outcome.ordinal)
     }
@@ -1646,6 +1679,7 @@ impl PersistentStore {
         executor_state: Option<&crate::FinalizedExecutorConsensusState>,
         config_blobs: &[(&str, &[u8])],
         poa_signal: Option<&crate::PreparedPoaSignalTransitionV1>,
+        poa_event: Option<&crate::PreparedPoaEventEnvelopeV1>,
     ) -> Result<WeldedCommitOutcome> {
         let write_txn = self.db.begin_write()?;
         // Store-open/bootstrap established full faithful/exact history equality. The rolling
@@ -1713,6 +1747,12 @@ impl PersistentStore {
                                     expected_ordinal,
                                     &existing,
                                     poa_signal,
+                                )?;
+                                crate::poa_event_store::verify_replayed_poa_event_in(
+                                    &write_txn,
+                                    expected_ordinal,
+                                    &existing,
+                                    poa_event,
                                 )?;
                                 crate::per_cell_receipt_heads::verify_replayed_per_cell_receipt_heads_in(
                                     &write_txn,
@@ -2120,6 +2160,14 @@ impl PersistentStore {
                     assigned,
                     &stored_record,
                     poa_signal,
+                )?;
+            }
+            if let Some(poa_event) = poa_event {
+                crate::poa_event_store::stage_fresh_poa_event_in(
+                    &write_txn,
+                    assigned,
+                    &stored_record,
+                    poa_event,
                 )?;
             }
 
@@ -3192,6 +3240,7 @@ impl PersistentStore {
             )?;
 
             crate::poa_signal_state::truncate_poa_signal_state_in(&write_txn, new_cursor)?;
+            crate::poa_event_store::truncate_poa_event_store_in(&write_txn, new_cursor)?;
 
             // Reset the durable cursor to the last-good high-water mark. Unlike
             // compaction (which leaves the cursor as the applied high-water mark),
