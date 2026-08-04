@@ -121,16 +121,23 @@ const QDIFF_CARRY_0: usize = 17;
 const TPOS_0: usize = 21;
 /// The offset carry out of floor rung 0. Four carries, columns 26..29.
 const TPOS_CARRY_0: usize = 26;
-/// PUBLIC ANCHOR — the pinned WS stake-table root.
-const ANCHOR_ROOT: usize = 30;
-/// PUBLIC ANCHOR limb 0 — the rooted bank hash as nine radix-`2^31` MSB-first limbs, cols 31..39.
-const BANK_ROOT_0: usize = 31;
+/// PUBLIC ANCHOR limb 0 — ⚑ the pinned WS stake-table root as NINE radix-`2^31` MSB-first limbs,
+/// cols 30..38. It was ONE column until 2026-08-04, i.e. a 256-bit SHA-256 root
+/// (`WeakSubjectivityAnchor::stake_table_root`, `[u8; 32]`) compared at 31 bits — the same felt-width
+/// defect this file already closed for the bank root, left standing on the trust anchor itself.
+const ANCHOR_ROOT_0: usize = 30;
+const ROOT_LIMBS: usize = 9;
+/// PUBLIC ANCHOR limb 0 — the rooted bank hash as nine radix-`2^31` MSB-first limbs, cols 39..47.
+const BANK_ROOT_0: usize = 39;
 const BANK_ROOT_LIMBS: usize = 9;
 /// PUBLIC ANCHOR — the rooted slot S.
-const SLOT_COL: usize = 40;
+const SLOT_COL: usize = 48;
 
-const SOL_LC_WIDTH: usize = 41;
-const SOL_PI_COUNT: usize = 11;
+const SOL_LC_WIDTH: usize = 49;
+const SOL_PI_COUNT: usize = 23;
+/// ⚑ PI slot of total-stake limb 0. Slots 19..22 publish the active-stake DENOMINATOR, so the prover
+/// no longer chooses the number its own quorum is a fraction of (`totalStakePins`).
+const PI_TOTAL_STK_0: usize = 19;
 
 /// The tally limb width. `4 · 16 = 64` — four limbs are exactly a `u64`, Solana's lamport type.
 const SOL_LIMB_BITS: usize = 16;
@@ -300,7 +307,7 @@ struct Update {
     stake_table_ok: u32,
     rooted_ok: u32,
     auth_ok: u32,
-    anchor_root: u32,
+    anchor_root: [u32; ROOT_LIMBS],
     bank_root: [u32; BANK_ROOT_LIMBS],
     slot: u32,
 }
@@ -315,7 +322,7 @@ fn honest(total_stk: u64, rooted_stk: u64) -> Update {
         stake_table_ok: 1,
         rooted_ok: 1,
         auth_ok: 1,
-        anchor_root: 11111,
+        anchor_root: [11, 22, 33, 44, 55, 66, 77, 88, 99],
         bank_root: [1, 2, 3, 4, 5, 6, 7, 8, 9],
         slot: LIVE_SLOT,
     }
@@ -345,7 +352,9 @@ fn row_cells(u: Update) -> Vec<i64> {
     r[QDIFF_CARRY_0..QDIFF_CARRY_0 + RUNGS].copy_from_slice(&q.carry);
     r[TPOS_0..TPOS_0 + RUNGS + 1].copy_from_slice(&t.diff);
     r[TPOS_CARRY_0..TPOS_CARRY_0 + RUNGS].copy_from_slice(&t.carry);
-    r[ANCHOR_ROOT] = u.anchor_root as i64;
+    for (i, l) in u.anchor_root.iter().enumerate() {
+        r[ANCHOR_ROOT_0 + i] = *l as i64;
+    }
     for (i, l) in u.bank_root.iter().enumerate() {
         r[BANK_ROOT_0 + i] = *l as i64;
     }
@@ -353,14 +362,23 @@ fn row_cells(u: Update) -> Vec<i64> {
     r
 }
 
-/// The eleven published anchors, in PI order.
+/// The twenty-three published anchors, in PI order: nine WS anchor-root limbs, nine bank-root limbs,
+/// the slot, and ⚑ the four TOTAL-STAKE limbs — the governance-pinned active-stake denominator.
 fn pis_of(u: Update) -> Vec<BabyBear> {
     let mut pis = vec![BabyBear::new(0); SOL_PI_COUNT];
-    pis[0] = BabyBear::new(u.anchor_root);
-    for (i, l) in u.bank_root.iter().enumerate() {
-        pis[1 + i] = BabyBear::new(*l);
+    for (i, l) in u.anchor_root.iter().enumerate() {
+        pis[i] = BabyBear::new(*l);
     }
-    pis[10] = BabyBear::new(u.slot);
+    for (i, l) in u.bank_root.iter().enumerate() {
+        pis[ROOT_LIMBS + i] = BabyBear::new(*l);
+    }
+    pis[ROOT_LIMBS + BANK_ROOT_LIMBS] = BabyBear::new(u.slot);
+    // ⚑ The denominator is PUBLISHED. A light client supplies these four limbs from its
+    // weak-subjectivity anchor; a prover that fills a different total in cols 4..7 no longer matches
+    // its own public statement and the `.piBinding` refuses it.
+    for (i, l) in limbs4(u.total_stk).iter().enumerate() {
+        pis[PI_TOTAL_STK_0 + i] = BabyBear::new(*l as u32);
+    }
     pis
 }
 
@@ -497,7 +515,18 @@ const LEAN_MAX_SCALE_CELLS: [i64; SOL_LC_WIDTH] = [
     128,
     128,
     128,
-    11111,
+    // ⚑ ANCHOR_ROOT limbs 0..8 — the WS stake-table root, MSB-first. It was the single cell `11111`
+    // until 2026-08-04: a 256-bit SHA-256 root carried in one 31-bit BabyBear element.
+    11,
+    22,
+    33,
+    44,
+    55,
+    66,
+    77,
+    88,
+    99,
+    // BANK_ROOT limbs 0..8
     1,
     2,
     3,
@@ -522,12 +551,17 @@ fn the_served_descriptor_is_the_lean_emitted_one() {
     assert_eq!(d.name, SOL_LC_VERIFY_DESCRIPTOR);
     assert_eq!(
         d.trace_width, SOL_LC_WIDTH,
-        "⚑ the two tallies became limb vectors: 19 → 41 columns"
+        "⚑ the two tallies became limb vectors (19 → 41) and the WS anchor root became nine \
+         radix-2^31 limbs instead of one 31-bit felt (41 → 49)"
     );
-    assert_eq!(d.public_input_count, SOL_PI_COUNT);
-    // 26 per-limb lookups + 10 generated chain gates + 4 carrier/logic gates + 11 PI pins = 51
+    assert_eq!(
+        d.public_input_count, SOL_PI_COUNT,
+        "⚑ 11 → 23: eight more anchor-root limbs, plus the four PUBLISHED total-stake limbs"
+    );
+    // 26 per-limb lookups + 10 generated chain gates + 4 carrier/logic gates
+    //   + 9 anchor-root pins + 9 bank-root pins + 1 slot pin + 4 denominator pins = 63
     // (`LightClientSolanaAir.sol_shape_pins`).
-    assert_eq!(d.constraints.len(), 51);
+    assert_eq!(d.constraints.len(), 63);
     assert_eq!(
         d.tables.len(),
         2,
@@ -1175,6 +1209,129 @@ fn a_re_spelt_denominator_is_refused() {
             &pis,
         );
         eprintln!("⚑ shrunk denominator limb {i}: {reason}");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ⚑⚑ THE SWAPPED STAKE TABLE — the forgery this pass exists to refuse (2026-08-04)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/// A stake universe the FORGER prefers: 1% of mainnet-beta's real active stake. A cartel holding
+/// 4.3M SOL cannot clear 2/3 of 432.6M — but it clears 2/3 of a table it gets to pick.
+const FORGED_TOTAL: u64 = LIVE_ACTIVE_STAKE / 100;
+
+/// The minimal STRICT quorum of the forged universe (`3·R > 2·T`).
+const FORGED_QUORUM: u64 = (2 * FORGED_TOTAL) / 3 + 1;
+
+/// ⚑⚑ **THE SWAPPED STAKE TABLE PROVES ON ITS OWN TERMS — and that is the whole attack.**
+///
+/// The forger claims the SAME block (same WS anchor root, same 256-bit bank hash, same rooted slot)
+/// but tallies it against a stake table 100× smaller. Every gate in the descriptor is satisfied:
+/// the quorum chain, the emptiness floor, both borrow chains, all twenty-six range lookups. The
+/// arithmetic is not being cheated — it is being applied to a universe the prover chose.
+///
+/// This test asserts the forgery is ARITHMETICALLY PERFECT, which is precisely what made it
+/// dangerous: until 2026-08-04 the descriptor checked nothing else about the denominator, so this
+/// row and the honest one were indistinguishable to it.
+#[test]
+fn a_swapped_stake_table_is_arithmetically_perfect() {
+    let forged = honest(FORGED_TOTAL, FORGED_QUORUM);
+    assert!(
+        2 * FORGED_TOTAL < 3 * FORGED_QUORUM,
+        "the forged tally must clear agave's STRICT 2/3 in its own universe"
+    );
+    assert!(
+        3 * FORGED_QUORUM < 2 * LIVE_ACTIVE_STAKE,
+        "…and must NOT clear 2/3 of the REAL active stake — otherwise it is not a forgery"
+    );
+    // Given the forger's OWN public statement, this proves. Before the denominator pin, the
+    // light client's statement and the forger's were the same statement.
+    prove_and_verify(&desc(), &row_cells(forged), &pis_of(forged))
+        .expect("the swapped stake table satisfies every arithmetic gate in the descriptor");
+    eprintln!(
+        "⚑ swapped stake table PROVES on its own terms: total {FORGED_TOTAL}          (1% of {LIVE_ACTIVE_STAKE}), rooted {FORGED_QUORUM}"
+    );
+}
+
+/// ⚑⚑ **AND IT IS REFUSED AGAINST THE LIGHT CLIENT'S ANCHOR.** Same forged cells, but the public
+/// statement is the one a light client actually supplies: the bank hash and slot it is asking
+/// about, and — since `totalStakePins` — the active-stake denominator from its weak-subjectivity
+/// anchor. Columns 4..7 now disagree with PI 19..22 and the proof does not verify.
+///
+/// ⚠ **This is the exact pair the campaign asked for: PROVED BEFORE, REFUSED AFTER.** The "before"
+/// is the test above — the forgery still satisfies every gate; nothing about the tally arithmetic
+/// changed. What changed is that the denominator left the prover's control.
+///
+/// ⚠ **Bound the claim.** This refuses every swap that MOVES THE TOTAL. A swap to a different
+/// validator set with the SAME total active stake is NOT refused here — `ROOTED_STK` is a witnessed
+/// projection and `ED_OK` a witnessed carrier. Deriving the table itself needs the SHA-256 fold,
+/// priced at 18,049,248 constraints / 12,831,336 columns at 703 live vote accounts
+/// (`LightClientSolanaAir` §6c).
+#[test]
+fn a_swapped_stake_table_is_refused_against_the_pinned_denominator() {
+    let forged = honest(FORGED_TOTAL, FORGED_QUORUM);
+    let honest_client = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
+    let mut pis = pis_of(honest_client);
+    // The forger claims the SAME block: only the stake universe differs. Everything the light
+    // client publishes about WHICH block this is already agrees.
+    assert_eq!(
+        pis[..ROOT_LIMBS + BANK_ROOT_LIMBS + 1],
+        pis_of(forged)[..ROOT_LIMBS + BANK_ROOT_LIMBS + 1],
+        "anchor root, bank root and slot must be identical — the swap is of the TABLE, not the block"
+    );
+    // …and the light client supplies the REAL denominator from its anchor.
+    for (i, l) in limbs4(LIVE_ACTIVE_STAKE).iter().enumerate() {
+        pis[PI_TOTAL_STK_0 + i] = BabyBear::new(*l as u32);
+    }
+    let reason = must_refuse_violated_gate(
+        "⚑ a swapped stake table tallied against a prover-chosen denominator",
+        &desc(),
+        &row_cells(forged),
+        &pis,
+    );
+    eprintln!("⚑ SWAPPED STAKE TABLE REFUSED: {reason}");
+}
+
+/// A forged WS ANCHOR-ROOT limb on the wire disagreeing with the published PI is refused.
+///
+/// ⚑ **This is the felt-width close finished.** Until 2026-08-04 `ANCHOR_ROOT` was ONE column, so
+/// the 256-bit `WeakSubjectivityAnchor::stake_table_root` reached the circuit as a single BabyBear
+/// element — 31 bits. Two stake tables whose SHA-256 roots agree in those 31 bits were the same
+/// anchor as far as this descriptor could tell, and such a pair is findable in `2^31` hashes. Nine
+/// radix-`2^31` limbs bind the whole root; perturbing any ONE is refused.
+#[test]
+fn an_anchor_root_limb_that_disagrees_with_its_public_input_is_refused() {
+    let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
+    let d = desc();
+    for i in 0..ROOT_LIMBS {
+        let mut cells = row_cells(u);
+        cells[ANCHOR_ROOT_0 + i] += 1;
+        let reason = must_refuse_violated_gate(
+            &format!("a WS anchor-root limb {i} disagreeing with its PI pin"),
+            &d,
+            &cells,
+            &pis_of(u),
+        );
+        eprintln!("forged anchor-root limb {i}: {reason}");
+    }
+}
+
+/// ⚑ **A DENOMINATOR LIMB THAT DISAGREES WITH ITS PUBLIC INPUT IS REFUSED** — the pin itself, one
+/// limb at a time, so a partial binding (three of four pinned) cannot pass unnoticed.
+#[test]
+fn a_total_stake_limb_that_disagrees_with_its_public_input_is_refused() {
+    let u = honest(LIVE_ACTIVE_STAKE, MIN_QUORUM);
+    let d = desc();
+    for i in 0..RUNGS {
+        let mut pis = pis_of(u);
+        pis[PI_TOTAL_STK_0 + i] += BabyBear::new(1);
+        let reason = must_refuse_violated_gate(
+            &format!("a published total-stake limb {i} disagreeing with the trace"),
+            &d,
+            &row_cells(u),
+            &pis,
+        );
+        eprintln!("⚑ forged denominator PI {i}: {reason}");
     }
 }
 

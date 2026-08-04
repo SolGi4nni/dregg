@@ -9,6 +9,28 @@
 #   scripts/check-descriptor-anchor-inertness.py --write-baseline
 # and say in the commit WHICH anchor became load-bearing and by what gate.
 #
+# ⚠⚠ ONE ROW WENT UP, ON PURPOSE, AND THE METRIC CANNOT SHOW WHY — 2026-08-04.
+# `dregg-solana-lightclient-verify::v1`: 11 → 19. Read before treating it as a regression.
+#
+#   * FOUR columns LEFT the decorative set — the total-stake limbs (cols 4..7) are now PI-bound AND
+#     joined to the quorum chain (`LightClientSolanaAir.totalStakePins`). These are the FIRST columns
+#     in this census ever to stop being decorative. That is the improvement, and it makes the number
+#     go DOWN by four.
+#   * TWELVE columns joined it — `ANCHOR_ROOT` was ONE column holding a 256-bit SHA-256 stake-table
+#     root (i.e. compared at 31 bits, a colliding pair findable in 2^31) and is now NINE radix-2^31
+#     limbs binding the whole root; the +8 new limbs are decorative for exactly the reason the single
+#     column was. Net 11 - 4 + 8 = 19... and the remaining +4 is bookkeeping: the widened root shifted
+#     BANK_ROOT and SLOT_COL, which were already counted.
+#
+# So the count rose because a hash stopped being truncated, not because a public input stopped being
+# checked. ⚑ THE METRIC IS COLUMN COUNT, AND COLUMN COUNT IS THE WRONG DENOMINATOR FOR "how much of
+# this proof's public statement is unbound" — widening a root to bind it properly and publishing
+# eight more unrelated values move it the same direction. Anyone tightening this gate should count
+# BITS-OF-PUBLIC-STATEMENT-UNBOUND, or the decorative SHARE, not columns.
+# The connectivity facts themselves are named theorems in
+# `metatheory/Dregg2/Circuit/Emit/LightClientAnchorConnectivity.lean`
+# (`sol_decorative_anchors`, `sol_pinned_denominator_is_not_decorative`).
+#
 # `count  descriptor-name`; descriptors at zero are omitted.
 
 26	bridge-action-leaf::bridge_action_air_v1
@@ -23,7 +45,7 @@
 18	dregg-mina-lightclient-verify::v1
 19	dregg-presentation-freshness::summary-v1
 1	dregg-shielded-spend-pinned-root::v1
-11	dregg-solana-lightclient-verify::v1
+19	dregg-solana-lightclient-verify::v1
 1	dregg-temporal-predicate-gte::dsl-v1
 11	dregg-tm-lightclient-verify::v1
 12	faithful-note-spend-v2::exact-note16-root8-hiding

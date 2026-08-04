@@ -43,17 +43,37 @@ satisfying witness must EXHIBIT the stake rows whose SHA-256 chain hits the pinn
 ## What remains (the honest, PRICED residuals)
 
   * RESIDUAL #1 (proof-composition wall): `chainCommit (rows) = anchorRoot` is, in the deployed circuit,
-    the CONCLUSION of the chained `sha256PairHash` gates forcing their SHA outputs up ~30k gates/block ×
-    2 blocks × #rows. The atomic gates are forced + both-polarity KAT'd; the composition is the next
-    slice. Here the fold is an explicit hypothesis, so DERIVED vs ASSUMED is visible.
+    the CONCLUSION of the chained `sha256PairHash` gates forcing their SHA outputs. The atomic gates are
+    forced + both-polarity KAT'd; the composition is the next slice. Here the fold is an explicit
+    hypothesis, so DERIVED vs ASSUMED is visible.
+    ⚠ **THE FIGURE THAT USED TO BE HERE — "~30k gates/block" — IS WRONG.** MEASURED 2026-08-04 by
+    evaluating the emitters rather than reading them: `sha256Block` is **40,928 constraints / 29,096
+    trace columns** and `sha256PairHash` is **82,648 / 59,216**. The old number understated the gadget
+    by 36%, and the two ETH fold files still carry it. See `LightClientSolanaAir` §6c for the full
+    pricing at live validator count.
   * RESIDUAL #2 (flat→chain modeling + full-table): `tableCommit` is realized as a Merkle–Damgård chain
     over per-row LEAF digests; the per-row leaf hashing and the exact domain-separated sort order are the
     named residual, and the chain is a BOUNDED (fixed-#rows) fold — the arbitrary-N table is the full
     residual. The KAT fixes the demo's 2-entry table.
-  * RESIDUAL #3 (deploy/emit wall): the chained SHA fold cannot be flat-merged into `solLcVerifyDesc`'s
-    byte-golden `emitVmJson2`; the deployed removal of `STAKE_TABLE_OK` routes through the IR-v2
-    `proofBind` recursion seam (identical to the ETH lane). `solLcVerifyDesc` and its golden are
-    UNTOUCHED — NO VK regen.
+  * RESIDUAL #3 (deploy/emit wall) — ⚑ **RE-DERIVED 2026-08-04, AND THE REASON THAT STOOD HERE WAS THE
+    WRONG ONE.** It read: *"the chained SHA fold cannot be flat-merged into `solLcVerifyDesc`'s
+    byte-golden `emitVmJson2`; … `solLcVerifyDesc` and its golden are UNTOUCHED — NO VK regen."*
+
+    That is a COMPATIBILITY cost, and `CLAUDE.md` is explicit that a re-emit and a VK rotation are
+    ordinary work here — *"the answer to what does it cost is a rebuild"*. "byte-golden" and "NO VK
+    regen" are on its list of words that mean you are doing it. The golden was in fact re-emitted on
+    2026-08-03 and again on 2026-08-04 (full-width anchor root + pinned denominator), so nothing was
+    holding it.
+
+    **The real reason is SIZE, and it was never written as a number.** One `sha256Block` is 29,096
+    trace columns; the widest descriptor this tree has ever emitted is 15,611 and the widest that
+    parses, checks and PROVES is 2,131. A single SHA-256 block does not fit, let alone the 441 blocks
+    the deployed `EpochStakeTable::root` preimage needs at 703 live vote accounts (**18,049,248
+    constraints / 12,831,336 columns**). ⚑ And the cheap path is not SHA at all: a Poseidon2 hash is
+    ONE chip lookup in this stack. The full pricing, both hashes, and the two named things that stand
+    in the way (the chip's 1-felt committed digest; the admitted absorb arities) are in
+    `LightClientSolanaAir` §6c. That section, not this bullet, is the live account of why
+    `STAKE_TABLE_OK` is still a carrier.
   * RESIDUAL #4 (Ed25519/EC arc): `ED_OK` stays a hypothesis — the aggregate vote-signature soundness is
     the Ed25519 leaf, the EC arc, not folded here.
 

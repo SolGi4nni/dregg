@@ -181,10 +181,16 @@ tripwire that reds if a felt-width slack is ever re-introduced.
 
 ## Public inputs (the addressing layer — what the proof is ABOUT)
 
-`PI[0]    = ANCHOR_ROOT`     — the pinned WS stake-table root (the governance trust anchor the
+`PI[0..8]  = ANCHOR_ROOT[0..8]` — the pinned WS stake-table root (the governance trust anchor the
                             STAKE_TABLE_OK carrier is a compare against). The trust root the proof is
-                            relative to.
-`PI[1..9] = BANK_ROOT[0..8]` — the claimed ROOTED bank/state hash B at slot S (what a proof-of-holdings
+                            relative to, as its NINE radix-`2^31` MSB-first limbs.
+                            ⚑ 2026-08-04 — THIS WAS ONE COLUMN. `WeakSubjectivityAnchor.stake_table_root`
+                            is `[u8; 32]` and `PI[0]` carried it as a single BabyBear element, so the
+                            comparison a light client makes against its own pinned anchor was over 31
+                            BITS OF A 256-BIT HASH — colliding pair findable in `2^31`. That is the
+                            SAME defect the bank root below documents as closed, on the OTHER root in
+                            the SAME descriptor, and it stood for as long as the fix next to it.
+`PI[9..17] = BANK_ROOT[0..8]` — the claimed ROOTED bank/state hash B at slot S (what a proof-of-holdings
                             later opens against): the FULL 256-bit bank hash exposed as its NINE
                             radix-`2^31`, MOST-SIGNIFICANT-limb-first limbs (`⌈256/31⌉ = 9`; the top
                             limb carries the residual 8 bits). FELT-WIDTH CLOSE: the earlier single
@@ -192,13 +198,22 @@ tripwire that reds if a felt-width slack is ever re-introduced.
                             roots agreeing in 31 bits both verified — a soundness gap at the peer-wrap
                             boundary); nine PI-bound limbs bind the WHOLE root, recomposed by the
                             peer-wrap's radix-`2^31` MSB-first pack before its 128-bit split.
-`PI[10]   = SLOT`           — the rooted slot S (the epoch/slot the finality is claimed at).
+`PI[18]    = SLOT`           — the rooted slot S (the epoch/slot the finality is claimed at).
+`PI[19..22] = TOTAL_STK[0..3]` — ⚑⚑ **THE ACTIVE-STAKE DENOMINATOR, PUBLISHED.** The four 16-bit limbs
+                            the quorum chain divides by, PI-bound to the light client's
+                            weak-subjectivity anchor. **The prover does not choose the number its own
+                            quorum is a fraction of.** Before 2026-08-04 it did: a cartel holding 1% of
+                            mainnet-beta could exhibit a `(total, rooted)` pair over a stake universe
+                            100× too small, satisfy every gate in this descriptor, and the emitted
+                            object had nothing to say about it
+                            (`circuit/tests/solana_lightclient_proves.rs::a_swapped_stake_table_*`).
 
-These ride as published witness columns pinned to the public inputs (`.piBinding`). NOT-YET-CLOSED
-(named residual, identical to the ETH slice, UNCHANGED by the tally work): the anchors are published
-but not yet arithmetically bound to the carrier bits (that binding IS the in-AIR-crypto iteration —
-`ED_OK` derived from the vote message built on `BANK_ROOT`+`SLOT`, `STAKE_TABLE_OK` derived from the
-table fold into `ANCHOR_ROOT`).
+These ride as published witness columns pinned to the public inputs (`.piBinding`). PARTLY CLOSED
+2026-08-04: the DENOMINATOR is now published, so the tally block and the anchor block share columns
+(§6b — and the two disconnection tripwires FIRED saying so). STILL OPEN, and kept as tripwires in the
+same shape: the bank root and slot are read by no gate (`ED_OK` derived from the vote message built on
+`BANK_ROOT`+`SLOT` is the Ed25519/EC arc), and the anchor root is read by no gate (`STAKE_TABLE_OK`
+derived from the table fold into `ANCHOR_ROOT` — §6c prices why that one is not this commit).
 
 ## The mod-p ↔ ℤ reading
 
@@ -245,6 +260,36 @@ two tables) is UNCHANGED and only the bytes move. What that costs, said out loud
 
   Nothing refuses to LOAD (the descriptor's shape is identical), which is the one uncomfortable part
   of this flag day: a stale VK against the new bytes fails at VERIFY, not at parse.
+
+⚑ **A THIRD FLAG DAY — 2026-08-04: THE FULL-WIDTH WS ANCHOR ROOT AND THE PINNED DENOMINATOR.**
+Trace width `41 → 49`, PI count `11 → 23`, constraints `51 → 63`. Two changes, one re-emit:
+
+  * **`ANCHOR_ROOT` was ONE column and is now NINE** (cols 30..38 → PI 0..8, radix-`2^31` MSB-first).
+    It carried a 256-bit SHA-256 stake-table root as a single BabyBear element — 31 bits — which is
+    the exact felt-width defect this file diagnosed and repaired for `BANK_ROOT`, on the other root in
+    the same descriptor, and did not apply here. `BANK_ROOT` shifts `31..39 → 39..47` and `SLOT_COL`
+    `40 → 48`; their PI slots shift `1..9 → 9..17` and `10 → 18`.
+  * **The four `TOTAL_STK` limbs gain `.piBinding`s** to PI 19..22 (`totalStakePins`): the
+    active-stake denominator is published rather than prover-chosen.
+
+  What this costs, said out loud:
+
+  * `dregg-solana-lightclient-verify::v1`'s VK **ROTATES** (a third time) and
+    `circuit/descriptors/by-name/dregg-solana-lightclient-verify-v1.json` is RE-EMITTED.
+    ⚠ Unlike the strictness repair, this one DOES refuse to LOAD: the trace width and PI count both
+    move, so a stale 41-column row or an 11-element PI vector fails at parse, not at verify.
+  * **Every caller must now supply 23 public inputs**, including the anchor's total active stake.
+    `WeakSubjectivityAnchor` (`bridge/src/solana_provenance.rs`) pins `(epoch, stake_table_root)`
+    today; the denominator PI is the value a light client must ALSO hold, and a caller that does not
+    have it cannot state what it is asking. That is the intended shape — it is what stops the swap.
+  * **A row that proved before now REFUSES** if its denominator is not the published one — which is
+    the entire point, exhibited both ways in `circuit/tests/solana_lightclient_proves.rs`
+    (`a_swapped_stake_table_is_arithmetically_perfect` /
+    `a_swapped_stake_table_is_refused_against_the_pinned_denominator`).
+  * **Two §6b tripwires FIRED and are GONE**, replaced by positive statements
+    (`sol_quorum_reads_a_published_anchor`, `sol_denominator_is_fully_pinned`) plus two narrower
+    tripwires for what is still open. `LightClientAnchorConnectivity`'s Solana literal and its
+    six-chain census moved with them (`11 → 19` decorative, census `63 → 71`).
 
 ## Axiom hygiene
 Definitional descriptor + non-vacuous per-gate `iff` lemmas (`omega`) + the load-bearing
@@ -331,42 +376,61 @@ def TPOS_LIMB (i : Nat) : Nat := 21 + i
 /-- **Offset carry `i` of the floor chain** (columns 26..29). -/
 def TPOS_CARRY (i : Nat) : Nat := 26 + i
 
-/-- **PUBLIC ANCHOR** — the pinned WS stake-table root (the governance trust anchor). PI-bound. -/
-def ANCHOR_ROOT : Nat := 30
+/-- The number of ~31-bit limbs a FULL 256-bit root is exposed as: `⌈256 / 31⌉ = 9`. Eight 31-bit
+limbs cover 248 bits; the ninth (most-significant) limb carries the remaining 8 bits. -/
+def ROOT_LIMBS : Nat := 9
 
-/-- The number of ~31-bit limbs the FULL 256-bit rooted bank hash is exposed as: `⌈256 / 31⌉ = 9`.
-Eight 31-bit limbs cover 248 bits; the ninth (most-significant) limb carries the remaining 8 bits.
-This is the felt-width close — a SINGLE anchor felt bound only a 31-bit PROJECTION of the 256-bit bank
-hash (two roots agreeing in 31 bits both verified); nine limbs bind the WHOLE root. -/
-def BANK_ROOT_LIMBS : Nat := 9
+/-- ⚑ **PUBLIC ANCHOR (limb `i`) — the pinned WS stake-table root, AT FULL WIDTH.** The governance
+trust anchor the whole light client is relative to, as its radix-`2^31` MOST-SIGNIFICANT-limb-first
+decomposition: limb `i` is trace column `30 + i` (cols 30..38), PI-bound to slot `i`.
+
+⚑ 2026-08-04 — **THIS WAS ONE COLUMN, AND THAT WAS THE SAME DEFECT THE BANK ROOT HAD.** The
+felt-width close below (`BANK_ROOT`, nine limbs) was diagnosed and repaired in this very file for the
+bank hash — *"a SINGLE anchor felt bound only a 31-bit PROJECTION, so two 256-bit roots agreeing in
+31 bits both verified"* — and the OTHER 256-bit root in the SAME descriptor, the one the tally's whole
+trust story hangs from, was left at one felt. `WeakSubjectivityAnchor.stake_table_root` is `[u8; 32]`
+(`bridge/src/solana_provenance.rs:579`); `PI[0]` carried it reduced to a single BabyBear element, so a
+light client comparing its pinned anchor against the proof's public statement compared **31 bits of
+it**. Two stake tables whose SHA-256 roots agree in those 31 bits — findable in `2^31` hashes, minutes
+of GPU — were the same anchor as far as this descriptor could tell. Nine limbs bind the whole root. -/
+def ANCHOR_ROOT (i : Nat) : Nat := 30 + i
+
+/-- The number of limbs the rooted bank hash is exposed as (`= ROOT_LIMBS`; kept as its own name
+because the two roots are independent shapes that merely happen to share a width). -/
+def BANK_ROOT_LIMBS : Nat := ROOT_LIMBS
 
 /-- **PUBLIC ANCHOR (limb `i`)** — the claimed rooted bank/state root B as its radix-`2^31`,
-MOST-SIGNIFICANT-limb-first decomposition. Limb `i` is trace column `31 + i` (cols 31..39); limb `0` is
-the MSB (its top carries only 8 bits). PI-bound to slot `1 + i`, so the peer-wrap's radix-`2^31`
-MSB-first pack over `PI[1..9]` recomposes the 256-bit bank hash exactly before its 128-bit split. -/
-def BANK_ROOT (i : Nat) : Nat := 31 + i
+MOST-SIGNIFICANT-limb-first decomposition. Limb `i` is trace column `39 + i` (cols 39..47); limb `0` is
+the MSB (its top carries only 8 bits). PI-bound to slot `9 + i`, so the peer-wrap's radix-`2^31`
+MSB-first pack over `PI[9..17]` recomposes the 256-bit bank hash exactly before its 128-bit split. -/
+def BANK_ROOT (i : Nat) : Nat := 30 + ROOT_LIMBS + i
 
 /-- **PUBLIC ANCHOR** — the rooted slot S (epoch/slot). PI-bound. -/
-def SLOT_COL : Nat := 31 + BANK_ROOT_LIMBS
+def SLOT_COL : Nat := 30 + ROOT_LIMBS + BANK_ROOT_LIMBS
 
 /-- Total main-trace width: 4 carrier/gate columns + 4 total-stake limbs + 4 rooted-stake limbs +
 5 quorum-difference limbs + 4 quorum carries + 5 floor-difference limbs + 4 floor carries +
-1 anchor-root + 9 bank-root limbs + 1 slot anchor = 41.
+9 anchor-root limbs + 9 bank-root limbs + 1 slot anchor = 49.
 
-⚑ It was 19. The +22 is the tally becoming REPRESENTABLE: two `u64` operands and TWO comparison
-chains (the quorum and the emptiness floor), each with its own difference vector and borrow chain.
-That is what mainnet-beta's stake costs in columns, and it is the honest price of the capability —
-the previous 19 bought a client that could not hold it. -/
-def SOL_LC_WIDTH : Nat := 41
+⚑ It was 19, then 41. The +22 was the tally becoming REPRESENTABLE: two `u64` operands and TWO
+comparison chains (the quorum and the emptiness floor), each with its own difference vector and borrow
+chain. The +8 is the WS anchor root ceasing to be a 31-bit projection of a 256-bit hash. -/
+def SOL_LC_WIDTH : Nat := 49
 
-/-- PI slot 0: the pinned WS anchor root. -/
-def PI_ANCHOR_ROOT : Nat := 0
-/-- PI slot of bank-root limb `i` (slots 1..9), MSB-first. -/
-def PI_BANK_ROOT (i : Nat) : Nat := 1 + i
-/-- PI slot of the rooted slot (slot 10). -/
-def PI_SLOT : Nat := 1 + BANK_ROOT_LIMBS
-/-- Number of public inputs: anchor root + 9 bank-root limbs + slot. -/
-def PI_COUNT : Nat := 11
+/-- PI slot of anchor-root limb `i` (slots 0..8), MSB-first. -/
+def PI_ANCHOR_ROOT (i : Nat) : Nat := i
+/-- PI slot of bank-root limb `i` (slots 9..17), MSB-first. -/
+def PI_BANK_ROOT (i : Nat) : Nat := ROOT_LIMBS + i
+/-- PI slot of the rooted slot (slot 18). -/
+def PI_SLOT : Nat := ROOT_LIMBS + BANK_ROOT_LIMBS
+
+/-- ⚑ **PI slot of TOTAL-STAKE limb `i` (slots 19..22)** — the governance-pinned active-stake
+DENOMINATOR. See `totalStakePins`: these slots are what stop the prover choosing the number its own
+quorum is a fraction of. -/
+def PI_TOTAL_STK (i : Nat) : Nat := ROOT_LIMBS + BANK_ROOT_LIMBS + 1 + i
+
+/-- Number of public inputs: 9 anchor-root limbs + 9 bank-root limbs + slot + 4 total-stake limbs. -/
+def PI_COUNT : Nat := 23
 
 /-- ⚑ **THE HISTORICAL FELT-SLACK WIDTH — NO LONGER DECLARED BY THIS DESCRIPTOR.**
 
@@ -522,9 +586,21 @@ def edGate : VmConstraint2 := .base (.gate edBody)
 def stakeGate : VmConstraint2 := .base (.gate stakeBody)
 def rootedGate : VmConstraint2 := .base (.gate rootedBody)
 def authGate : VmConstraint2 := .base (.gate authBody)
-/-- Published-anchor pin: the pinned WS anchor root is `PI[0]`. -/
-def anchorRootPin : VmConstraint2 :=
-  .base (.piBinding VmRow.first ANCHOR_ROOT PI_ANCHOR_ROOT)
+/-- ⚑ **Published-anchor pins: the NINE WS stake-table-root limbs are `PI[0..8]` (MSB-first).** Each
+limb rides its own PI slot, so a light client comparing its governance-pinned anchor against the
+proof's public statement compares the FULL 256 bits — not the 31-bit projection a single felt carried.
+Written as an explicit literal (limb `i` → col `30+i` → PI `i`) so the byte-golden `#guard` reduces to
+the exact wire string with no fold. -/
+def anchorRootPins : List VmConstraint2 :=
+  [ .base (.piBinding VmRow.first (ANCHOR_ROOT 0) (PI_ANCHOR_ROOT 0))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 1) (PI_ANCHOR_ROOT 1))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 2) (PI_ANCHOR_ROOT 2))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 3) (PI_ANCHOR_ROOT 3))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 4) (PI_ANCHOR_ROOT 4))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 5) (PI_ANCHOR_ROOT 5))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 6) (PI_ANCHOR_ROOT 6))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 7) (PI_ANCHOR_ROOT 7))
+  , .base (.piBinding VmRow.first (ANCHOR_ROOT 8) (PI_ANCHOR_ROOT 8)) ]
 /-- Published-anchor pins: the NINE rooted-bank-root limbs are `PI[1..9]` (MSB-first). Each limb rides
 its own PI slot, so the peer-wrap's radix-`2^31` pack over `PI[1..9]` recovers the FULL 256-bit bank
 hash — not a 31-bit projection. Written as an explicit literal (limb `i` → col `31+i` → PI `1+i`) so
@@ -539,13 +615,39 @@ def bankRootPins : List VmConstraint2 :=
   , .base (.piBinding VmRow.first (BANK_ROOT 6) (PI_BANK_ROOT 6))
   , .base (.piBinding VmRow.first (BANK_ROOT 7) (PI_BANK_ROOT 7))
   , .base (.piBinding VmRow.first (BANK_ROOT 8) (PI_BANK_ROOT 8)) ]
-/-- Published-anchor pin: the rooted slot is `PI[10]`. -/
+/-- Published-anchor pin: the rooted slot is `PI[18]`. -/
 def slotPin : VmConstraint2 :=
   .base (.piBinding VmRow.first SLOT_COL PI_SLOT)
 
+/-- ⚑⚑ **THE DENOMINATOR PINS — the anchor→tally binding, and the whole point of this pass.**
+
+The four TOTAL-STAKE limb columns the quorum chain divides by are PI-bound to slots `19..22`. The
+prover no longer chooses them: they are part of the proof's PUBLIC STATEMENT, supplied by the light
+client from its governance-pinned weak-subjectivity anchor
+(`WeakSubjectivityAnchor.total_stake`, `bridge/src/solana_provenance.rs`) and compared there.
+
+⚑ **Why the tally's OWN columns rather than a mirrored anchor block.** Pinning cols 4..7 directly —
+instead of introducing separate `ANCHOR_TOTAL` columns forced equal to them by four gates — is not a
+saving of four columns, it is the difference between a binding and a decoration. The quorum chain's
+`β` operand IS the published value; there is no second copy that some later edit could leave
+unforced. It is also what makes §6b's disconnection measurement flip honestly: the tally block now
+genuinely reads a published anchor column, because its denominator IS one.
+
+⚠ **Bound the claim.** This pins the DENOMINATOR, not the TABLE. The prover still chooses which
+validators the numerator counts (`ROOTED_STK` is a witnessed projection, `ED_OK` a witnessed carrier),
+so a swap to a different validator set with the SAME total active stake is NOT refused by this. What
+IS refused is every swap that moves the total — which is what `STAKE_TABLE_OK` was named for (the
+HOLE-2 denominator pin) and what the SHA-256 table fold is priced out of doing (§6c). -/
+def totalStakePins : List VmConstraint2 :=
+  [ .base (.piBinding VmRow.first (TOTAL_STK_LIMB 0) (PI_TOTAL_STK 0))
+  , .base (.piBinding VmRow.first (TOTAL_STK_LIMB 1) (PI_TOTAL_STK 1))
+  , .base (.piBinding VmRow.first (TOTAL_STK_LIMB 2) (PI_TOTAL_STK 2))
+  , .base (.piBinding VmRow.first (TOTAL_STK_LIMB 3) (PI_TOTAL_STK 3)) ]
+
 /-- **`solLcVerifyDesc`** — the Solana rooted-finality verify-decision as an emitted IR-v2 AIR. PIs
-`[anchor_root, bank_root[0..8], slot]` (11 total — the rooted bank hash is the FULL 256-bit value as
-nine radix-`2^31` MSB-first limbs, not a 31-bit projection); the two `u64` stake tallies as 16-bit limb
+`[anchor_root[0..8], bank_root[0..8], slot, total_stk[0..3]]` (23 total — BOTH 256-bit roots are the
+FULL value as nine radix-`2^31` MSB-first limbs, not a 31-bit projection, and the active-stake
+DENOMINATOR is published rather than prover-chosen); the two `u64` stake tallies as 16-bit limb
 vectors with their two GENERATED comparison chains, the four crypto/logic results as carrier bits. Two
 declared range tables (16-bit limbs, 8-bit carries); the shared 29-bit `range` table is gone with the
 felt slacks that queried it. -/
@@ -556,8 +658,8 @@ def solLcVerifyDesc : EffectVmDescriptor2 :=
   , tables      := [⟨TID_TALLY_LIMB,  "range_w16", 1, .rangeLimb SOL_LIMB_BITS⟩
                    , ⟨TID_TALLY_CARRY, "range_w8",  1, .rangeLimb SOL_CARRY_BITS⟩]
   , constraints := tallyRangeLookups ++ qdiffChainGates ++ tposChainGates
-                   ++ [edGate, stakeGate, rootedGate, authGate, anchorRootPin]
-                   ++ bankRootPins ++ [slotPin]
+                   ++ [edGate, stakeGate, rootedGate, authGate]
+                   ++ anchorRootPins ++ bankRootPins ++ [slotPin] ++ totalStakePins
   , hashSites   := []
   , ranges      := [] }
 
@@ -968,8 +1070,14 @@ theorem solLcAir_complete (a : Assignment)
 -- constraints 19 → 51, the ONE 29-bit range table replaced by TWO width-tagged tables (16 / 8), and
 -- the two hand-written felt slacks + their two lookups replaced by TEN GENERATED chain gates and
 -- twenty-six per-limb lookups. Captured from this module's own `emitVmJson2`.
+-- The Rust decoder ingests THIS string (`parse_vm_descriptor2`); byte-pinned golden (a drift on either
+-- side breaks this `#guard`). ⚑ RE-EMITTED 2026-08-04 for the FULL-WIDTH WS anchor root and the PINNED
+-- DENOMINATOR: trace width 41 → 49, PIs 11 → 23, constraints 51 → 63. The one 31-bit ANCHOR_ROOT column
+-- became nine radix-`2^31` limbs (cols 30..38 → PI 0..8), the bank root and slot shifted up by 8, and the
+-- four TOTAL_STK limbs gained `.piBinding`s to PI 19..22. Captured from this module's own `emitVmJson2`.
 #guard emitVmJson2 solLcVerifyDesc ==
-  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":41,\"public_input_count\":11,\"tables\":[{\"id\":85,\"name\":\"range_w16\",\"arity\":1,\"sem\":\"range\",\"bits\":16},{\"id\":77,\"name\":\"range_w8\",\"arity\":1,\"sem\":\"range\",\"bits\":8}],\"constraints\":[{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":10}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":23}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":24}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":25}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":18}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":20}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":27}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":28}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":29}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":8}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":12}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":17}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":9}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":18}}},\"r\":{\"t\":\"var\",\"v\":17}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":10}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":14}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":19}}},\"r\":{\"t\":\"var\",\"v\":18}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":11}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":21}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":26}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":27}}},\"r\":{\"t\":\"var\",\"v\":26}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":23}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":28}}},\"r\":{\"t\":\"var\",\"v\":27}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":7}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":24}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":29}}},\"r\":{\"t\":\"var\",\"v\":28}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":29},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":25}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":30,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":31,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":32,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":33,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":34,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":35,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":36,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":10}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-solana-lightclient-verify::v1\",\"ir\":2,\"trace_width\":49,\"public_input_count\":23,\"tables\":[{\"id\":85,\"name\":\"range_w16\",\"arity\":1,\"sem\":\"range\",\"bits\":16},{\"id\":77,\"name\":\"range_w8\",\"arity\":1,\"sem\":\"range\",\"bits\":8}],\"constraints\":[{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":4}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":9}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":10}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":11}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":12}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":13}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":14}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":15}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":21}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":22}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":23}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":24}]},{\"t\":\"lookup\",\"table\":85,\"tuple\":[{\"t\":\"var\",\"v\":25}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":17}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":18}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":20}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":26}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":27}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":28}]},{\"t\":\"lookup\",\"table\":77,\"tuple\":[{\"t\":\"var\",\"v\":29}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":8}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":12}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":17}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":9}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":13}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":18}}},\"r\":{\"t\":\"var\",\"v\":17}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":10}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":14}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":19}}},\"r\":{\"t\":\"var\",\"v\":18}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":3},\"r\":{\"t\":\"var\",\"v\":11}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-2},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":15}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":20}}},\"r\":{\"t\":\"var\",\"v\":19}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":20},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":16}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":4}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":4}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":21}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":26}}},\"r\":{\"t\":\"const\",\"v\":8388607}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":5}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":22}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":27}}},\"r\":{\"t\":\"var\",\"v\":26}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":6}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":23}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":28}}},\"r\":{\"t\":\"var\",\"v\":27}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":1},\"r\":{\"t\":\"var\",\"v\":7}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":0},\"r\":{\"t\":\"var\",\"v\":7}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":24}}},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-65536},\"r\":{\"t\":\"var\",\"v\":29}}},\"r\":{\"t\":\"var\",\"v\":28}},\"r\":{\"t\":\"const\",\"v\":8388480}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":29},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":25}}},\"r\":{\"t\":\"const\",\"v\":-128}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":0},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":2},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":30,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":31,\"pi_index\":1},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":32,\"pi_index\":2},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":33,\"pi_index\":3},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":34,\"pi_index\":4},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":35,\"pi_index\":5},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":36,\"pi_index\":6},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":37,\"pi_index\":7},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":38,\"pi_index\":8},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":39,\"pi_index\":9},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":40,\"pi_index\":10},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":41,\"pi_index\":11},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":42,\"pi_index\":12},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":43,\"pi_index\":13},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":44,\"pi_index\":14},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":45,\"pi_index\":15},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":46,\"pi_index\":16},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":47,\"pi_index\":17},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":48,\"pi_index\":18},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":19},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":5,\"pi_index\":20},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":6,\"pi_index\":21},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":7,\"pi_index\":22}],\"hash_sites\":[],\"ranges\":[]}"
+
 
 /-- Shape pins (robust; a layout drift moves these). Converted from `#guard` per
 `metatheory/docs/GUARD-DISCIPLINE.md` — a `#guard` is the same unsafe evaluation with the name, the
@@ -977,7 +1085,7 @@ term and the axiom record deleted, and `decide` here is strictly stronger than t
 theorem sol_shape_pins :
     solLcVerifyDesc.traceWidth = SOL_LC_WIDTH
       ∧ solLcVerifyDesc.piCount = PI_COUNT
-      ∧ solLcVerifyDesc.constraints.length = 51
+      ∧ solLcVerifyDesc.constraints.length = 63
       ∧ solLcVerifyDesc.tables.length = 2 := by
   refine ⟨rfl, rfl, ?_, rfl⟩
   decide
@@ -1009,17 +1117,37 @@ theorem sol_tally_block_layout :
       ∧ QDIFF_CARRY 0 = 17 ∧ QDIFF_CARRY 3 = 20
       ∧ TPOS_LIMB 0 = 21 ∧ TPOS_TOP = 25
       ∧ TPOS_CARRY 0 = 26 ∧ TPOS_CARRY 3 = 29
-      ∧ TPOS_CARRY 3 < ANCHOR_ROOT := by decide
+      ∧ TPOS_CARRY 3 < ANCHOR_ROOT 0 := by decide
 
 /-- The widened rooted-bank-root anchor is unchanged by the tally work, only shifted: nine limbs,
-contiguous cols 31..39 → PI 1..9, MSB-first, `⌈256/31⌉ = 9` covering the full 256 bits. -/
+contiguous cols 39..47 → PI 9..17, MSB-first, `⌈256/31⌉ = 9` covering the full 256 bits. -/
 theorem sol_bank_root_anchor_layout :
     BANK_ROOT_LIMBS = 9 ∧ bankRootPins.length = BANK_ROOT_LIMBS
-      ∧ BANK_ROOT 0 = 31 ∧ BANK_ROOT 8 = 39
-      ∧ SLOT_COL = 40 ∧ PI_SLOT = 10
-      ∧ PI_BANK_ROOT 0 = 1 ∧ PI_BANK_ROOT 8 = 9 ∧ PI_BANK_ROOT 8 < PI_SLOT
+      ∧ BANK_ROOT 0 = 39 ∧ BANK_ROOT 8 = 47
+      ∧ SLOT_COL = 48 ∧ PI_SLOT = 18
+      ∧ PI_BANK_ROOT 0 = 9 ∧ PI_BANK_ROOT 8 = 17 ∧ PI_BANK_ROOT 8 < PI_SLOT
       ∧ BANK_ROOT 8 < SLOT_COL
       ∧ 31 * BANK_ROOT_LIMBS ≥ 256 := by decide
+
+/-- ⚑⚑ **THE WS STAKE-TABLE ROOT IS NOW BOUND AT FULL WIDTH TOO — the felt-width close, finished.**
+
+Nine limbs, contiguous cols 30..38 → PI 0..8, MSB-first, `31 · 9 = 279 ≥ 256`. The statement that
+matters is the last conjunct: the anchor root and the bank root are bound by the SAME number of
+limbs, because they are the same kind of object — a 256-bit hash — and until 2026-08-04 only one of
+them was treated as one.
+
+⚠ **This is the half of §6b's disconnection that PI width alone can close.** A full-width PI binding
+stops a light client from accepting a proof whose anchor merely *collides in 31 bits* with the one
+governance pinned. It does NOT make the anchor arithmetically live — see
+`sol_bank_root_and_slot_remain_arithmetically_inert` for what is still open, and §6c for what closing
+it would cost. -/
+theorem sol_anchor_root_is_bound_at_full_width :
+    ROOT_LIMBS = 9 ∧ anchorRootPins.length = ROOT_LIMBS
+      ∧ ANCHOR_ROOT 0 = 30 ∧ ANCHOR_ROOT 8 = 38
+      ∧ PI_ANCHOR_ROOT 0 = 0 ∧ PI_ANCHOR_ROOT 8 = 8
+      ∧ ANCHOR_ROOT 8 < BANK_ROOT 0
+      ∧ 31 * ROOT_LIMBS ≥ 256
+      ∧ ROOT_LIMBS = BANK_ROOT_LIMBS := by decide
 
 /-! ## §6b — ⚑⚑ WHAT THIS AIR DOES **NOT** BIND: the published anchors, measured rather than
 described.
@@ -1028,21 +1156,34 @@ The header calls the anchor binding a "NOT-YET-CLOSED named residual". That was 
 not a gate (`feedback-a-documented-wound-is-not-a-detected-one`). This section makes it a decidable
 fact about the EMITTED object, so it reds the day the in-AIR-crypto iteration lands.
 
-⚑ **The fact is stronger than the prose was.** The residual was written as "the anchors are published
+⚑ **The fact was stronger than the prose was.** The residual was written as "the anchors are published
 but not yet arithmetically bound to the CARRIER BITS". Measured on the emitted constraint list, the
-eleven PI-bound columns occur in **no gate body and no lookup tuple at all** — not tied to the
-carriers, not tied to the tally, not tied to EACH OTHER. `solLcVerifyDesc` decomposes into
+eleven PI-bound columns occurred in **no gate body and no lookup tuple at all** — not tied to the
+carriers, not tied to the tally, not tied to EACH OTHER. `solLcVerifyDesc` decomposed into
 arithmetically DISCONNECTED islands:
 
     {0} {1} {2} {3}            — four carrier/gate bits, each forced `= 1`, each alone
     {4 … 29}                   — the tally block: two u64 limb vectors + two comparison chains
     {30} {31} … {40}           — eleven published anchors, each a singleton pinned to one PI
 
-So a verifying proof of this descriptor says: *the prover exhibited a `(total, rooted)` pair
+So a verifying proof of this descriptor said: *the prover exhibited a `(total, rooted)` pair
 satisfying `total ≥ 1` and `3·rooted > 2·total`, set four bits to 1, and separately exhibited eleven
-public field elements.* **Nothing in the emitted object relates those eleven values — the claimed
-bank hash and slot — to the tally, or to anything.** The quorum arithmetic is real; what it is
-arithmetic ABOUT is chosen by the prover.
+public field elements.* **Nothing in the emitted object related those eleven values — the claimed
+bank hash and slot — to the tally, or to anything.** The quorum arithmetic was real; what it was
+arithmetic ABOUT was chosen by the prover.
+
+⚑⚑ **2026-08-04 — ONE OF THE THREE ISLANDS IS NOW JOINED, AND BOTH TRIPWIRES FIRED SAYING SO.** The
+denominator is PI-bound (`totalStakePins`), so the tally block and the anchor block share columns
+4..7 and the decomposition is now:
+
+    {0} {1} {2} {3}            — four carrier bits, each forced `= 1`, each alone (UNCHANGED)
+    {4 … 29} ∪ {PI 19..22}     — the tally, whose DENOMINATOR is published
+    {30 … 38}                  — nine WS anchor-root limbs (was ONE 31-bit column)
+    {39 … 47} {48}             — bank-root limbs and slot, still singletons (UNCHANGED)
+
+What a verifying proof now says that it did not before: *the total active stake this quorum is a
+fraction of is the one in the public statement.* What it STILL does not say: which validators, or that
+the bank hash is anything in particular.
 
 ⚠ This is not a defect in `solLcAir_no_forgery` — read that theorem's HYPOTHESES. `hr`, `ht`, `hed`,
 `hstk`, `hrooted`, `hauth` say "row `a` reads update `u`'s TRUE projections", and they are supplied
@@ -1068,34 +1209,154 @@ def constraintCols : VmConstraint2 → List Nat
   | .lookup l                => l.tuple.flatMap exprCols
   | _                        => []
 
-/-- The eleven PI-bound columns: the pinned WS anchor root, the nine bank-root limbs, the slot. -/
+/-- The twenty-three PI-bound columns: the NINE WS anchor-root limbs, the nine bank-root limbs, the
+slot, and — since 2026-08-04 — the FOUR total-stake limbs the quorum divides by. -/
 def publicAnchorCols : List Nat :=
-  [ANCHOR_ROOT, BANK_ROOT 0, BANK_ROOT 1, BANK_ROOT 2, BANK_ROOT 3, BANK_ROOT 4,
-   BANK_ROOT 5, BANK_ROOT 6, BANK_ROOT 7, BANK_ROOT 8, SLOT_COL]
+  [ANCHOR_ROOT 0, ANCHOR_ROOT 1, ANCHOR_ROOT 2, ANCHOR_ROOT 3, ANCHOR_ROOT 4,
+   ANCHOR_ROOT 5, ANCHOR_ROOT 6, ANCHOR_ROOT 7, ANCHOR_ROOT 8,
+   BANK_ROOT 0, BANK_ROOT 1, BANK_ROOT 2, BANK_ROOT 3, BANK_ROOT 4,
+   BANK_ROOT 5, BANK_ROOT 6, BANK_ROOT 7, BANK_ROOT 8, SLOT_COL,
+   TOTAL_STK_LIMB 0, TOTAL_STK_LIMB 1, TOTAL_STK_LIMB 2, TOTAL_STK_LIMB 3]
 
-/-- ⚑⚑ **THE PUBLISHED ANCHORS ARE ARITHMETICALLY INERT.** No gate body and no lookup tuple in
-`solLcVerifyDesc` reads any of the eleven PI-bound columns. The claimed bank hash and rooted slot are
-carried THROUGH the proof, not constrained BY it.
+/-! ### ⚑⚑ 2026-08-04 — THE TWO DISCONNECTION TRIPWIRES FIRED. This is what replaced them.
 
-⚠ **TRIPWIRE, and it is meant to go red.** The in-AIR-crypto iteration (`ED_OK` derived from the vote
-message built on `BANK_ROOT` + `SLOT`; `STAKE_TABLE_OK` derived from the table fold into
-`ANCHOR_ROOT`) makes these columns appear in gate bodies, and this theorem FAILS the moment it does.
-Deleting it then is the correct move; weakening it is not. -/
-theorem sol_public_anchors_are_arithmetically_inert :
-    ∀ c ∈ solLcVerifyDesc.constraints, ∀ col ∈ constraintCols c, col ∉ publicAnchorCols := by
+`sol_public_anchors_are_arithmetically_inert` and `sol_tally_block_reads_no_carrier_and_no_anchor`
+were `by decide` and are GONE, because `decide` proved both FALSE the moment `totalStakePins` landed:
+
+    error: Tactic `decide` proved that the proposition
+      ∀ c ∈ solLcVerifyDesc.constraints, ∀ col ∈ constraintCols c, col ∉ publicAnchorCols
+    is false
+
+That is the mechanism working exactly as the lane that wrote them intended — they were built to red
+on the day a published anchor became arithmetically live, and they did, without anyone remembering to
+go looking. The replacements below are the POSITIVE form: not "nothing is connected" but "THIS is
+connected, and THAT still is not." -/
+
+/-- ⚑⚑ **THE QUORUM ARITHMETIC READS A PUBLISHED ANCHOR — the disconnection, broken.** There EXISTS a
+quorum-chain gate whose body reads a column that is PI-bound. This is the exact negation of the
+retired `sol_public_anchors_are_arithmetically_inert`, and it is the statement that lane asked for:
+the tally block and the published-anchor block are no longer separate islands.
+
+The column is `TOTAL_STK_LIMB 0` — the denominator. The prover exhibits a `(total, rooted)` pair, and
+`total` is now part of what the proof PUBLICLY CLAIMS rather than something it privately picked. -/
+theorem sol_quorum_reads_a_published_anchor :
+    ∃ c ∈ solLcVerifyDesc.constraints, ∃ col ∈ constraintCols c, col ∈ publicAnchorCols := by
   decide
 
-/-- ⚑ …and the other half of the same measurement: the four carrier/gate bits are read by NOTHING but
-their own forcing gates, so no arithmetic anywhere else in the descriptor depends on them. Each is a
-one-column island (`ED_OK` is read only by `edBody`, and so on).
+/-- ⚑ **EVERY TOTAL-STAKE LIMB IS PI-BOUND** — the denominator is published in full, not in part. Four
+limbs, four distinct PI slots; a proof that pins three of four would let the prover move the fourth. -/
+theorem sol_denominator_is_fully_pinned :
+    totalStakePins.length = 4
+      ∧ (∀ i ∈ [0, 1, 2, 3], TOTAL_STK_LIMB i ∈ publicAnchorCols)
+      ∧ PI_TOTAL_STK 0 = 19 ∧ PI_TOTAL_STK 3 = 22
+      ∧ PI_TOTAL_STK 3 < PI_COUNT := by decide
 
-Together with the theorem above this is the disconnection in full: the tally block relates to no
-carrier and to no anchor, and the anchors relate to nothing at all. -/
-theorem sol_tally_block_reads_no_carrier_and_no_anchor :
+/-- ⚑ **AND THE HALF THAT IS STILL OPEN, KEPT AS A TRIPWIRE IN THE SAME SHAPE.** The nine bank-root
+limbs and the slot are STILL read by no gate body and no lookup tuple: the claimed bank hash and
+rooted slot are carried THROUGH the proof, not constrained BY it. `ED_OK` derived from the vote
+message built on `BANK_ROOT` + `SLOT` is what would close this, and it is the Ed25519/EC arc — not
+priced here.
+
+⚠ **TRIPWIRE, and it is meant to go red**, on exactly the terms its predecessor did. Deleting it when
+the Ed25519 arc lands is the correct move; weakening it is not. -/
+theorem sol_bank_root_and_slot_remain_arithmetically_inert :
+    ∀ c ∈ solLcVerifyDesc.constraints, ∀ col ∈ constraintCols c,
+      col ∉ [BANK_ROOT 0, BANK_ROOT 1, BANK_ROOT 2, BANK_ROOT 3, BANK_ROOT 4,
+             BANK_ROOT 5, BANK_ROOT 6, BANK_ROOT 7, BANK_ROOT 8, SLOT_COL] := by
+  decide
+
+/-- ⚑ **THE WS ANCHOR ROOT IS ALSO STILL ARITHMETICALLY INERT** — stated SEPARATELY from the bank
+root because the two are closed by different work and must be able to red on different days. Widening
+it to nine limbs (`sol_anchor_root_is_bound_at_full_width`) fixed what the light client COMPARES; it
+did not make any gate read it. `STAKE_TABLE_OK` derived from the stake-table fold into `ANCHOR_ROOT`
+is what would close this, and §6c is why that is not this commit. -/
+theorem sol_anchor_root_remains_arithmetically_inert :
+    ∀ c ∈ solLcVerifyDesc.constraints, ∀ col ∈ constraintCols c,
+      col ∉ [ANCHOR_ROOT 0, ANCHOR_ROOT 1, ANCHOR_ROOT 2, ANCHOR_ROOT 3, ANCHOR_ROOT 4,
+             ANCHOR_ROOT 5, ANCHOR_ROOT 6, ANCHOR_ROOT 7, ANCHOR_ROOT 8] := by
+  decide
+
+/-- ⚑ …and the four carrier/gate bits are still read by NOTHING but their own forcing gates, so no
+arithmetic anywhere else in the descriptor depends on them. Each is a one-column island (`ED_OK` is
+read only by `edBody`, and so on). This half of the old measurement is UNCHANGED by this pass. -/
+theorem sol_carriers_are_one_column_islands :
     ∀ c ∈ (qdiffChainGates ++ tposChainGates ++ tallyRangeLookups),
       ∀ col ∈ constraintCols c,
-        col ∉ ([ED_OK, STAKE_TABLE_OK, ROOTED_OK, AUTH_OK] ++ publicAnchorCols) := by
+        col ∉ [ED_OK, STAKE_TABLE_OK, ROOTED_OK, AUTH_OK] := by
   decide
+
+/-! ## §6c — ⚑⚑ WHY `STAKE_TABLE_OK` IS STILL A CARRIER: the SHA-256 fold, PRICED.
+
+`LightClientSolHashFold` computes the stake-table fold that would DERIVE `STAKE_TABLE_OK` from
+`ANCHOR_ROOT`, and gives its exclusion as RESIDUAL #3 (`LightClientSolHashFold.lean:53-56`): *"the
+chained SHA fold cannot be flat-merged into `solLcVerifyDesc`'s byte-golden `emitVmJson2` …
+`solLcVerifyDesc` and its golden are UNTOUCHED — NO VK regen."*
+
+⚠ **THAT REASON IS NOT THE REAL ONE, AND IT IS THE KIND THIS REPO FORBIDS.** "byte-golden", "UNTOUCHED",
+"NO VK regen" are compatibility costs, and `CLAUDE.md` is explicit that a re-emit and a VK rotation are
+ordinary work here, not objections. This descriptor's golden was re-emitted twice in the eight days
+before this note. If a byte-golden were the only thing between us and the binding, the binding would
+be in.
+
+⚑ **The real reason is COST, and it was never stated as a number. Measured 2026-08-04**, by evaluating
+the emitters in `Sha256MerkleFold` rather than reading their docblocks:
+
+| object | constraints | trace columns |
+|---|---|---|
+| `feedForward` | 288 | — |
+| `sha256Block` (schedule ‖ compress ‖ feed-forward) | **40,928** | **29,096** |
+| `sha256PairHash` (2 blocks + IV/pad pins) | **82,648** | **59,216** |
+| **this whole descriptor** | **63** | **49** |
+
+⚠ The docblocks in `LightClientSolHashFold` and both ETH folds say *"~30k gates/block"*. The measured
+figure is **40,928** — understated by 36%, and it is the number three files reason from.
+
+At live validator count — **703 vote accounts** (691 current + 12 delinquent), measured 2026-08-04 via
+`getVoteAccounts` on `api.mainnet-beta.solana.com`, the same query §7's stake figure comes from — the
+deployed `EpochStakeTable::root` preimage (`bridge/src/solana_consensus.rs:196-206`: a 32-byte tag,
+`epoch`, the row count, then 40 bytes per row) is 28,168 bytes = **441 SHA-256 blocks**:
+
+  * **18,049,248 constraints / 12,831,336 columns.**
+
+The Lean model's shape (`chainCommit ∘ map solRowLeaf`, one `pairHash` per row) is worse still —
+**58,101,544 / 41,628,848** — because it spends two blocks on each 64-byte row-pair. (⚠ These are two
+DIFFERENT functions: `root()` is a FLAT hash over one preimage, `chainCommit` a Merkle–Damgård chain
+over per-row leaf digests. `LightClientSolHashFold` RESIDUAL #2 names the gap; the pricing above gives
+both so neither reading flatters the result.)
+
+Against the ceiling this stack has actually reached: **2,131 columns** parse, check and prove
+(`circuit/tests/pasta_derive_prove.rs::the_v1_width_cap_does_not_bind_the_ir2_path`), and the widest
+descriptor ever emitted in this tree is 15,611 (`shielded-whole-note-swap-substrate-v1`). **ONE
+SHA-256 block is 29,096 columns — 13.6× the proved ceiling and 1.9× the widest object that exists.**
+The fold is out of reach at 703 rows, at 2 rows, and at ONE block. `MAX_TRACE_WIDTH = 1024` is NOT
+what excludes it (that cap is v1-DSL and advisory on the IR-v2 path, `PastaMsmAir` §5b item 5); the
+gadget's own size is.
+
+⚑ **AND THE CHEAP PATH EXISTS, IS NOT SHA, AND IS NOT MENTIONED ANYWHERE IN THE FOLD FILES.** A
+Poseidon2 hash in this stack is **ONE `VmConstraint2.lookup`** on the `TID_P2_NARROW` chip bus — the
+permutation lives in a separate chip AIR, so the main descriptor pays a lookup and an output column,
+not 40,928 gates (`Poseidon2HashEmit.poseidon2HashDesc` is trace width **3**, four constraints, for a
+whole hash). Poseidon2-over-BabyBear is the prover's OWN hash. A 703-row stake-table fold on that bus
+is ~703 lookups — the scale of the descriptors this tree already emits and proves (1,604–1,817
+constraints), not 18 million.
+
+**So the honest status of `STAKE_TABLE_OK` is not "too expensive to derive" — it is "expensive in the
+hash we happened to pick, and the commitment is ours to pick."** `EpochStakeTable::root` is
+dregg-authored (`STAKE_TABLE_ROOT_TAG = b"dregg-solana-stake-table-root:v1"`), pinned by a
+dregg-authored `WeakSubjectivityAnchor`, and greenfield says the format is not a constraint. Two named
+things stand between here and that binding, and neither is a compatibility cost:
+
+  1. **The chip's committed digest is ONE felt** — 31 bits, a `2^15.5` birthday bound, not a binding
+     commitment. `CHIP_OUT_LANES = 8` lanes are carried and bound to the genuine permutation but
+     *"NOT yet folded into any commitment"* (`DescriptorIR2.lean:169-176`, Phase B-ROTATION). An
+     8-lane (248-bit) commitment is the prerequisite, and it is someone's named next phase.
+  2. **The absorb arity is not free** — `Ir2Air::Chip` admits only `{0,2,3,4,7,11,16}` as a degree-7
+     product, and a descriptor at any other arity is UNPROVABLE rather than merely inefficient
+     (`DescriptorIR2.lean` §"THE ADMITTED ABSORB ARITIES"). A row of 9 pubkey limbs + 3 stake limbs is
+     12 felts and must be laid out at 11 or 16.
+
+That is the work. It is a re-commitment and a chip phase, not a research problem — and it is emphatically
+not "the golden bytes are frozen." -/
 
 /-! ## §7 — ⚑ THE MEASUREMENT: MAINNET-BETA'S LIVE ACTIVE STAKE, AT THE QUORUM BOUNDARY.
 
@@ -1135,7 +1396,7 @@ def solMaxScaleCells : List ℤ :=
   , 127, 127, 130, 128               -- QDIFF carries, offset (honest carries −1, −1, +2, 0)
   , 62194, 52452, 5388, 1537, 0      -- TPOS       limbs = T − 1 = 432650183925625586
   , 128, 128, 128, 128               -- TPOS carries, offset (honest carry 0 rides as 128)
-  , 11111                            -- ANCHOR_ROOT
+  , 11, 22, 33, 44, 55, 66, 77, 88, 99  -- ANCHOR_ROOT limbs 0..8 (the WS stake-table root, MSB-first)
   , 1, 2, 3, 4, 5, 6, 7, 8, 9        -- BANK_ROOT limbs 0..8
   , 436909708 ]                      -- SLOT_COL (the measured live slot)
 
@@ -1330,8 +1591,12 @@ theorem sol_carrier_bits_discriminate :
 #assert_axioms sol_carrier_bits_discriminate
 -- ⚑⚑ WHAT IS NOT BOUND — the residual, as a decidable fact about the emitted object rather than a
 -- sentence in the header. Both are TRIPWIRES: they red when the in-AIR-crypto iteration lands.
-#assert_axioms sol_public_anchors_are_arithmetically_inert
-#assert_axioms sol_tally_block_reads_no_carrier_and_no_anchor
+#assert_axioms sol_anchor_root_is_bound_at_full_width
+#assert_axioms sol_quorum_reads_a_published_anchor
+#assert_axioms sol_denominator_is_fully_pinned
+#assert_axioms sol_bank_root_and_slot_remain_arithmetically_inert
+#assert_axioms sol_anchor_root_remains_arithmetically_inert
+#assert_axioms sol_carriers_are_one_column_islands
 
 #print axioms solLcAir_sound
 #print axioms solLcAir_no_forgery
