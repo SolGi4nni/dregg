@@ -66,17 +66,29 @@ the prover-chooses-both-sides shape `dropUnforcedPins` deleted 157 of. The weld 
 
 `KeyLanes9`/`KeyCanonicity9Emit` prove the owner nonet injective, and `lane8_is_absorbed_iff` says
 the ninth lane is a real column exactly when `lane8Off < rotatedNumPreLimbs`. This module welds a
-lane exactly when that predicate holds (`ownerFreezeColPairs`), and the deployed instance passes
-`OWNER_LANE8_OFF := rotatedNumPreLimbs` — one past the last absorbed pre-limb, hence NOT absorbed,
-hence 8 welds — **and it stays correct across the 184 → 187 move without being touched.** When the
-layout allocates the owner nonet's ninth lane, point `OWNER_LANE8_OFF` at that offset: the ninth
-weld appears, `ownerFreeze_welds_lane8_iff_absorbed` is the `iff` that says so, and the `#guard`
-below cross-checks the emitted pair count against the absorption predicate so the two cannot drift.
+lane exactly when that predicate holds (`ownerFreezeColPairs`), and `OWNER_LANE8_OFF` reads the
+layout's own allocation (`B_PUBKEY_NINTH_LANE = 186`), so at today's 187-limb geometry the predicate
+HOLDS and **nine** lanes are welded — `ownerFreeze_welds_the_ninth_lane`.
+`ownerFreeze_welds_lane8_iff_absorbed` is the `iff` that ties the ninth weld to absorption.
+
+⚑ **CORRECTED 2026-08-03.** Two sentences here were stale and one was false, and converting the
+`#guard`s is what surfaced both.
+
+  * The paragraph used to say the deployed instance passes `OWNER_LANE8_OFF := rotatedNumPreLimbs`,
+    "hence 8 welds". That stopped being true when the knob was repointed at the layout; it is 9.
+  * It also said the `#guard` below "cross-checks the emitted pair count against the absorption
+    predicate so the two cannot drift". **It cannot.** `ownerFreezeColPairs_length` proves that
+    equality for EVERY face width and EVERY offset — both sides read `laneIsColumn`, i.e. the same
+    predicate — so the pin is a tautology and no layout move can make it red. The check with teeth
+    is `ownerFreeze_welds_the_ninth_lane` (`= 9`), which reads the layout against the pre-limb
+    extent. See §1.1.
 
 ## WHAT THIS BREAKS
 
-Every member the rotation emit drivers render gains 8 whole-domain gates (measured: `cellSealV3`
-211 → 219 constraints). **That is a descriptor re-emit and a VK rotation** — both halves of
+Every member the rotation emit drivers render gains NINE whole-domain gates — the eight octet lanes
+plus the ninth lane (`cellSealOwnerFrozen_constraints_length`: `+9`; the header's earlier "8 gates,
+211 → 219 constraints" was measured before the ninth lane existed). **That is a descriptor re-emit
+and a VK rotation** — both halves of
 `dregg-epoch`'s `registry_fp` move, so a pre-flip binary is refused by `epoch::compare`, which is
 the correct behaviour and the reason both the narrow and the wide drivers carry the wrap.
 Geometry does NOT move: no column, no PI, no hash site, no range, no
@@ -148,8 +160,11 @@ bit in the AFTER block, mint a self-consistent NEW_COMMIT, and `-A` seals as `A`
 
 Read the LAYOUT's own allocation instead. `B_PUBKEY_NINTH_LANE` is
 `(rotated187.octetLaneCol 2 8).getD 0`, i.e. where the octet table actually puts lane 8 — a
-different source from the pre-limb COUNT, which is what makes the guard below a gate rather than
-a tautology. -/
+different source from the pre-limb COUNT.
+
+⚠ That difference is what gives `ownerFreeze_welds_the_ninth_lane` (`= 9`) its teeth. It does NOT
+rescue the pair-count pin this comment used to point at: that one compares the emitted list against
+the same predicate the list is filtered by, and §1.1 proves it holds at every offset. -/
 def OWNER_LANE8_OFF : Nat := B_PUBKEY_NINTH_LANE
 
 /-- Is lane `l` of the owner nonet a real absorbed column at `lane8Off`? Lanes 0..7 always are (the
@@ -217,40 +232,195 @@ theorem ownerFreeze_welds_lane8_iff_absorbed (w lane8Off : Nat) :
     refine ⟨8, List.mem_finRange 8, ?_⟩
     rw [if_pos (by simp only [laneIsColumn, Bool.or_eq_true, decide_eq_true_eq]; exact Or.inr habs)]
 
--- The deployed instance: the pair count AGREES with the absorption predicate.
---
--- ⚑ THIS COMMENT WAS TRUE OF WHAT IT INTENDED AND FALSE OF WHAT IT WROTE. With
--- `OWNER_LANE8_OFF := rotatedNumPreLimbs` the condition below was `n < n` — FALSE FOR EVERY n,
--- forever — so the guard asserted `8 == 8` at any extent and could not go red for the thing it
--- names. It did not merely have the potential to rot: it ROTTED INSIDE ITS OWN WAVE, six minutes
--- after being written, and the build stayed green. "A pin against its own definition is
--- decoration", in the guard whose stated job was catching exactly this drift.
---
--- It is a gate now because the two sides come from genuinely different places: the left from the
--- EMITTED pair list, the right from the layout's octet table (`B_PUBKEY_NINTH_LANE`) compared
--- against the pre-limb COUNT. Move the lane without moving the weld, or vice versa, and this
--- goes red.
-#guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).length
-  == (if OWNER_LANE8_OFF < rotatedNumPreLimbs then 9 else 8)
-#guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).Nodup
--- …and the welded columns really are the deployed NONET: the contiguous octet 105..112 PLUS the
--- ninth lane, which is NOT contiguous with it (it lives at limb 186, past the octet band). That
--- discontinuity is the whole reason these read the layout rather than a range: a `List.range 9`
--- here would silently demand column 113, which belongs to something else entirely.
-#guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.fst
-  == (List.range 8).map (fun k => EFFECT_VM_WIDTH + B_PUBKEY_OCTET + k)
-     ++ [EFFECT_VM_WIDTH + B_PUBKEY_NINTH_LANE]
-#guard (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.snd
-  == (List.range 8).map (fun k => EFFECT_VM_WIDTH + B_SPAN + B_PUBKEY_OCTET + k)
-     ++ [EFFECT_VM_WIDTH + B_SPAN + B_PUBKEY_NINTH_LANE]
-#guard (ownerFreezeColPairs 198 OWNER_LANE8_OFF).map Prod.fst
-  == (List.range 8).map (fun k => 198 + B_PUBKEY_OCTET + k) ++ [198 + B_PUBKEY_NINTH_LANE]
--- Every welded BEFORE column is an ABSORBED pre-limb — the weld rides the `wireCommitR` chain,
--- it does not freeze a free felt beside it.
-#guard ((ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.fst).all
-  (fun c => (preLimbColsAt EFFECT_VM_WIDTH).contains c)
-#guard ((ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.snd).all
-  (fun c => (preLimbColsAt (EFFECT_VM_WIDTH + B_SPAN)).contains c)
+/-! ### §1.1 — the pair census. ⚑ AND THE PIN THAT COULD NOT GO RED.
+
+The first assertion here was a `#guard` reading
+
+```text
+  (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).length
+    == (if OWNER_LANE8_OFF < rotatedNumPreLimbs then 9 else 8)
+```
+
+and its comment said it was a gate "because the two sides come from genuinely different places:
+the left from the EMITTED pair list, the right from the layout's octet table compared against the
+pre-limb COUNT". **That is false, and writing it as a theorem is what makes it readable.**
+`ownerFreezeColPairs_length` below proves the equality for EVERY `w` and EVERY `lane8Off` — it is a
+tautology of the definition, because the left side filters by `laneIsColumn`, which IS
+`lane8Off < rotatedNumPreLimbs`. Both sides read the same predicate. No layout move can make it
+disagree, so the pin could never go red, before or after the repair its own comment describes.
+
+That comment records a real defect and the real repair: the earlier `OWNER_LANE8_OFF :=
+rotatedNumPreLimbs` made the condition `n < n`, the weld emitted eight pairs, and the ninth lane —
+the one carrying the Ed25519 sign bit — was left free on the AFTER side, six minutes after the
+layout allocated it. What is wrong is only the claim that the guard is what would catch a
+recurrence. **The tooth is `ownerFreeze_welds_the_ninth_lane`: nine welds, `= 9`, against the
+layout's own `B_PUBKEY_NINTH_LANE` — that one is red the moment the ninth lane leaves the absorbed
+region.** The tautology is kept, since it was asserted and is true; it is just not a gate. -/
+
+/-- ⚑ **THE GENERAL FACT — AND THE DEMONSTRATION THAT THE PIN IS A TAUTOLOGY.** The emitted pair
+count agrees with the absorption predicate at every face width and every ninth-lane offset, because
+it is computed FROM that predicate. -/
+theorem ownerFreezeColPairs_length (w lane8Off : Nat) :
+    (ownerFreezeColPairs w lane8Off).length
+      = if lane8Off < rotatedNumPreLimbs then 9 else 8 := by
+  by_cases h : lane8Off < rotatedNumPreLimbs
+  · rw [if_pos h]
+    simp only [ownerFreezeColPairs, laneIsColumn, decide_eq_true h, Bool.or_true]
+    rfl
+  · rw [if_neg h]
+    simp only [ownerFreezeColPairs, laneIsColumn, decide_eq_false h, Bool.or_false]
+    rfl
+
+/-- The deployed instance the `#guard` asserted. True, and — by the theorem above — true of every
+layout, which is exactly why it is not the gate. -/
+theorem ownerFreezeColPairs_length_deployed :
+    (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).length
+      = if OWNER_LANE8_OFF < rotatedNumPreLimbs then 9 else 8 :=
+  ownerFreezeColPairs_length _ _
+
+/-- ⚑ **THE TOOTH.** NINE welds at the deployed offset — the ninth lane IS welded. This is the
+assertion with content: it reads `OWNER_LANE8_OFF = B_PUBKEY_NINTH_LANE` against
+`rotatedNumPreLimbs`, and it goes red exactly when the layout stops putting the owner key's ninth
+lane inside the absorbed pre-limb region, which is the failure the `#guard` above was written for
+and could not see. -/
+theorem ownerFreeze_welds_the_ninth_lane :
+    (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).length = 9 := by decide
+
+/-- No welded pair is repeated. ⚑ Stated with the side condition it actually needs: if the ninth
+lane were allocated INSIDE the octet band it would alias an octet lane and the list would repeat,
+so `Nodup` is not a fact about the emit alone — it is a fact about the emit AND a non-aliasing
+layout. The `#guard` at the deployed offset could not say which. -/
+theorem ownerFreezeColPairs_nodup (w lane8Off : Nat)
+    (h : ∀ k, k < 8 → lane8Off ≠ B_PUBKEY_OCTET + k) :
+    (ownerFreezeColPairs w lane8Off).Nodup := by
+  refine List.Nodup.filterMap ?_ (by decide)
+  intro l l' p hl hl'
+  by_cases hc : laneIsColumn lane8Off l
+  · by_cases hc' : laneIsColumn lane8Off l'
+    · rw [if_pos hc] at hl
+      rw [if_pos hc'] at hl'
+      have hfst := congrArg Prod.fst (Option.some.inj (hl.trans hl'.symm))
+      have hll := l.isLt
+      have hll' := l'.isLt
+      simp only [deployedKeyCols, Fin.isValue, Fin.val_zero, Nat.zero_mul, Nat.add_zero] at hfst
+      apply Fin.ext
+      split_ifs at hfst with h1 h2 h2
+      · omega
+      · have := h l.1 h1; omega
+      · have := h l'.1 h2; omega
+      · omega
+    · rw [if_neg hc'] at hl'; exact absurd hl' (by simp)
+  · rw [if_neg hc] at hl; exact absurd hl (by simp)
+
+/-- The deployed instance: limb 186 is outside the octet band `105..112`, so the welds are distinct.
+-/
+theorem ownerFreezeColPairs_nodup_deployed :
+    (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).Nodup :=
+  ownerFreezeColPairs_nodup _ _ (by decide)
+
+/-- ⚑ **THE WELDED COLUMNS, IN CLOSED FORM, AT EVERY FACE.** The deployed NONET: the contiguous
+octet `105..112` PLUS the ninth lane, which is NOT contiguous with it (it lives at limb 186, past
+the octet band). That discontinuity is the whole reason these read the layout rather than a range: a
+`List.range 9` here would silently demand column 113, which belongs to something else entirely.
+
+Three `#guard`s pinned `map Prod.fst` and `map Prod.snd` at two hand-picked face widths; this is the
+statement they were instances of, and it holds at every `w` — so the `198` instance below is a
+corollary rather than a second hand-typed list. -/
+theorem ownerFreezeColPairs_eq (w lane8Off : Nat) (h : lane8Off < rotatedNumPreLimbs) :
+    ownerFreezeColPairs w lane8Off
+      = (List.range 8).map (fun k => (w + B_PUBKEY_OCTET + k, w + B_SPAN + B_PUBKEY_OCTET + k))
+        ++ [(w + lane8Off, w + B_SPAN + lane8Off)] := by
+  simp only [ownerFreezeColPairs, laneIsColumn, decide_eq_true h, Bool.or_true]
+  rfl
+
+theorem ownerFreezeColPairs_fst_deployed :
+    (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.fst
+      = (List.range 8).map (fun k => EFFECT_VM_WIDTH + B_PUBKEY_OCTET + k)
+        ++ [EFFECT_VM_WIDTH + B_PUBKEY_NINTH_LANE] := by
+  rw [ownerFreezeColPairs_eq _ _ (by decide)]
+  simp [OWNER_LANE8_OFF]
+
+theorem ownerFreezeColPairs_snd_deployed :
+    (ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.snd
+      = (List.range 8).map (fun k => EFFECT_VM_WIDTH + B_SPAN + B_PUBKEY_OCTET + k)
+        ++ [EFFECT_VM_WIDTH + B_SPAN + B_PUBKEY_NINTH_LANE] := by
+  rw [ownerFreezeColPairs_eq _ _ (by decide)]
+  simp [OWNER_LANE8_OFF]
+
+/-- The hardened `…-v1-avail` face, where the same nonet rides a shifted base. -/
+theorem ownerFreezeColPairs_fst_avail :
+    (ownerFreezeColPairs 198 OWNER_LANE8_OFF).map Prod.fst
+      = (List.range 8).map (fun k => 198 + B_PUBKEY_OCTET + k) ++ [198 + B_PUBKEY_NINTH_LANE] := by
+  rw [ownerFreezeColPairs_eq _ _ (by decide)]
+  simp [OWNER_LANE8_OFF]
+
+/-- ⚑ **EVERY WELDED COLUMN IS AN ABSORBED PRE-LIMB — UNCONDITIONALLY.** The weld rides the
+`wireCommitR` chain; it does not freeze a free felt beside it. This needs NO hypothesis on
+`lane8Off`: a lane is in the pair list only if `laneIsColumn` admitted it, and that predicate is
+`lane8_is_absorbed_iff`'s condition. The two `#guard`s checked the deployed face; the fact is about
+the emit. -/
+theorem ownerFreeze_before_cols_absorbed (w lane8Off : Nat) :
+    ∀ p ∈ ownerFreezeColPairs w lane8Off, p.1 ∈ preLimbColsAt w := by
+  intro p hp
+  simp only [ownerFreezeColPairs, List.mem_filterMap] at hp
+  obtain ⟨l, -, hl⟩ := hp
+  by_cases hc : laneIsColumn lane8Off l
+  · rw [if_pos hc] at hl
+    rcases Nat.lt_or_ge l.1 8 with h8 | h8
+    · have := Dregg2.Circuit.Emit.KeyCanonicity9Emit.octet_cols_are_absorbed w lane8Off 0 h8
+      simpa [← Option.some.inj hl] using this
+    · have hl8 : l = 8 := by apply Fin.ext; have := l.isLt; omega
+      subst hl8
+      have habs : lane8Off < rotatedNumPreLimbs := by simpa [laneIsColumn] using hc
+      have := (lane8_is_absorbed_iff w lane8Off 0).mpr habs
+      simpa [← Option.some.inj hl] using this
+  · rw [if_neg hc] at hl; exact absurd hl (by simp)
+
+/-- …and every welded AFTER column is an absorbed pre-limb of the AFTER block. -/
+theorem ownerFreeze_after_cols_absorbed (w lane8Off : Nat) :
+    ∀ p ∈ ownerFreezeColPairs w lane8Off, p.2 ∈ preLimbColsAt (w + B_SPAN) := by
+  intro p hp
+  simp only [ownerFreezeColPairs, List.mem_filterMap] at hp
+  obtain ⟨l, -, hl⟩ := hp
+  by_cases hc : laneIsColumn lane8Off l
+  · rw [if_pos hc] at hl
+    rcases Nat.lt_or_ge l.1 8 with h8 | h8
+    · have := Dregg2.Circuit.Emit.KeyCanonicity9Emit.octet_cols_are_absorbed w lane8Off 1 h8
+      simpa [← Option.some.inj hl] using this
+    · have hl8 : l = 8 := by apply Fin.ext; have := l.isLt; omega
+      subst hl8
+      have habs : lane8Off < rotatedNumPreLimbs := by simpa [laneIsColumn] using hc
+      have := (lane8_is_absorbed_iff w lane8Off 1).mpr habs
+      simpa [← Option.some.inj hl] using this
+  · rw [if_neg hc] at hl; exact absurd hl (by simp)
+
+theorem ownerFreeze_before_cols_absorbed_deployed :
+    ((ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.fst).all
+      (fun c => (preLimbColsAt EFFECT_VM_WIDTH).contains c) = true := by
+  simp only [List.all_eq_true, List.mem_map, List.contains_iff_mem]
+  rintro c ⟨p, hp, rfl⟩
+  exact ownerFreeze_before_cols_absorbed _ _ p hp
+
+theorem ownerFreeze_after_cols_absorbed_deployed :
+    ((ownerFreezeColPairs EFFECT_VM_WIDTH OWNER_LANE8_OFF).map Prod.snd).all
+      (fun c => (preLimbColsAt (EFFECT_VM_WIDTH + B_SPAN)).contains c) = true := by
+  simp only [List.all_eq_true, List.mem_map, List.contains_iff_mem]
+  rintro c ⟨p, hp, rfl⟩
+  exact ownerFreeze_after_cols_absorbed _ _ p hp
+
+#assert_axioms ownerFreezeColPairs_length
+#assert_axioms ownerFreezeColPairs_length_deployed
+#assert_axioms ownerFreeze_welds_the_ninth_lane
+#assert_axioms ownerFreezeColPairs_nodup
+#assert_axioms ownerFreezeColPairs_nodup_deployed
+#assert_axioms ownerFreezeColPairs_eq
+#assert_axioms ownerFreezeColPairs_fst_deployed
+#assert_axioms ownerFreezeColPairs_snd_deployed
+#assert_axioms ownerFreezeColPairs_fst_avail
+#assert_axioms ownerFreeze_before_cols_absorbed
+#assert_axioms ownerFreeze_after_cols_absorbed
+#assert_axioms ownerFreeze_before_cols_absorbed_deployed
+#assert_axioms ownerFreeze_after_cols_absorbed_deployed
 
 /-! ## §2 — the emitted constraints and the wrap. -/
 
@@ -500,11 +670,36 @@ def ownerWeldProbe : EffectVmDescriptor2 :=
 /-- ⚑ **THE MUTATION** — the probe with the owner welds DROPPED, and nothing else changed. -/
 def ownerWeldProbeMutated : EffectVmDescriptor2 := { ownerWeldProbe with constraints := [] }
 
--- NINE, not eight: the ninth is the owner key's lane-8 column at limb 186, which the weld only
--- gained once OWNER_LANE8_OFF stopped reading the pre-limb COUNT and started reading the layout.
-#guard ownerWeldProbe.constraints.length == 9
-#guard ownerWeldProbeMutated.constraints.length == 0
-#guard ownerWeldProbe.traceWidth == ownerWeldProbeMutated.traceWidth
+/-- The wrap appends one constraint per welded pair — at every face width, every offset, every
+descriptor. The three `#guard`s below are instances of this and of
+`ownerFreeze_welds_the_ninth_lane`. -/
+theorem ownerFreezeConstraintsAt_length (w lane8Off : Nat) :
+    (ownerFreezeConstraintsAt w lane8Off).length = (ownerFreezeColPairs w lane8Off).length := by
+  simp [ownerFreezeConstraintsAt]
+
+theorem ownerFreezeAt_constraints_length (w lane8Off : Nat) (d : EffectVmDescriptor2) :
+    (ownerFreezeAt w lane8Off d).constraints.length
+      = d.constraints.length + (ownerFreezeColPairs w lane8Off).length := by
+  simp [ownerFreezeAt, ownerFreezeConstraintsAt]
+
+/-- NINE, not eight: the ninth is the owner key's lane-8 column at limb 186, which the weld only
+gained once `OWNER_LANE8_OFF` stopped reading the pre-limb COUNT and started reading the layout. -/
+theorem ownerWeldProbe_constraints_length : ownerWeldProbe.constraints.length = 9 := by
+  show (ownerFreezeConstraintsAt EFFECT_VM_WIDTH OWNER_LANE8_OFF).length = 9
+  rw [ownerFreezeConstraintsAt_length]
+  exact ownerFreeze_welds_the_ninth_lane
+
+theorem ownerWeldProbeMutated_constraints_length : ownerWeldProbeMutated.constraints.length = 0 :=
+  rfl
+
+theorem ownerWeldProbe_traceWidth : ownerWeldProbe.traceWidth = ownerWeldProbeMutated.traceWidth :=
+  rfl
+
+#assert_axioms ownerFreezeConstraintsAt_length
+#assert_axioms ownerFreezeAt_constraints_length
+#assert_axioms ownerWeldProbe_constraints_length
+#assert_axioms ownerWeldProbeMutated_constraints_length
+#assert_axioms ownerWeldProbe_traceWidth
 
 /-- **UNSAT with the weld.** -/
 theorem forged_owner_unsat_on_the_probe (hash : List ℤ → ℤ)
@@ -564,28 +759,114 @@ theorem forged_owner_sat_when_the_weld_is_dropped (hash : List ℤ → ℤ)
 `zzz_e10_freeze_owner_falsifier.rs` measured accepting the forgery. -/
 def cellSealOwnerFrozen : EffectVmDescriptor2 := ownerFreezeWire cellSealV3
 
--- BYTE-SHAPE guards: the freeze adds exactly the welds and NO PI, NO column.
-#guard cellSealOwnerFrozen.piCount == cellSealV3.piCount
-#guard cellSealOwnerFrozen.traceWidth == cellSealV3.traceWidth
-#guard cellSealOwnerFrozen.constraints.length == cellSealV3.constraints.length + 9
-#guard cellSealOwnerFrozen.name == cellSealV3.name
--- …and the name-derived face IS the bare cohort face, so the exhibit above is about the emitted
--- object and not a lookalike at some other base.
-#guard faceWidthOfName cellSealV3.name == EFFECT_VM_WIDTH
+/-! ### BYTE-SHAPE: the freeze adds exactly the welds and NO PI, NO column.
+
+Five `#guard`s until 2026-08-03. Four were instances of the `ownerFreezeAt_*` `rfl`-theorems three
+screens up — the guard re-evaluated the whole descriptor to learn what a term already said. The
+fifth ("the name-derived face IS the bare cohort face") is the one that mattered, and as a THEOREM
+it does work a guard could not: `cellSealOwnerFrozen_eq` turns it into a rewrite, so §4's exhibit
+applies to the NAMED deployed member by composition rather than by a reader's say-so
+(`forged_owner_is_unsat_on_cellSeal`). -/
+
+theorem cellSealOwnerFrozen_piCount : cellSealOwnerFrozen.piCount = cellSealV3.piCount :=
+  ownerFreezeAt_piCount _ _ _
+
+theorem cellSealOwnerFrozen_traceWidth : cellSealOwnerFrozen.traceWidth = cellSealV3.traceWidth :=
+  ownerFreezeAt_traceWidth _ _ _
+
+theorem cellSealOwnerFrozen_name : cellSealOwnerFrozen.name = cellSealV3.name :=
+  ownerFreezeAt_name _ _ _
+
+/-- The wire name of the live member, read off the emitted descriptor. -/
+theorem cellSealV3_name : cellSealV3.name = "dregg-effectvm-cellseal-v2-rot24-v3-staged" := rfl
+
+/-- …and the name-derived face IS the bare cohort face, so the exhibit above is about the emitted
+object and not a lookalike at some other base. Cross-file: the face width comes from
+`KeyCanonicity9Emit.faceWidth_cellseal`, which is the same fact its own registry census pins. -/
+theorem cellSealV3_faceWidth : faceWidthOfName cellSealV3.name = EFFECT_VM_WIDTH := by
+  rw [cellSealV3_name]
+  exact Dregg2.Circuit.Emit.KeyCanonicity9Emit.faceWidth_cellseal
+
+/-- ⚑ **THE DEPLOYED MEMBER IS THE FREEZE AT THE BARE COHORT FACE** — the term the face-width
+`#guard` could not produce. -/
+theorem cellSealOwnerFrozen_eq :
+    cellSealOwnerFrozen = ownerFreezeAt EFFECT_VM_WIDTH OWNER_LANE8_OFF cellSealV3 := by
+  unfold cellSealOwnerFrozen ownerFreezeWire
+  rw [cellSealV3_faceWidth]
+
+/-- The freeze adds exactly nine constraints to the live member: eight octet lanes plus the ninth
+lane. `211 → 219` in the header was measured before the ninth lane existed; the ninth weld took it
+to `220`. -/
+theorem cellSealOwnerFrozen_constraints_length :
+    cellSealOwnerFrozen.constraints.length = cellSealV3.constraints.length + 9 := by
+  rw [cellSealOwnerFrozen_eq, ownerFreezeAt_constraints_length, ownerFreeze_welds_the_ninth_lane]
+
+/-- ⚑ **AND THEREFORE THE EXHIBIT LANDS ON THE NAMED MEMBER.** §4 refuted the forged-owner trace
+against `ownerFreezeAt EFFECT_VM_WIDTH OWNER_LANE8_OFF d` for an arbitrary `d`; this is that
+refutation at `cellSealOwnerFrozen` itself — the member `zzz_e10_freeze_owner_falsifier.rs` measured
+accepting the forgery. It is one `rw` because the face-width fact is now a theorem. -/
+theorem forged_owner_is_unsat_on_cellSeal (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) :
+    ¬ Satisfied2 hash cellSealOwnerFrozen minit mfin maddrs forgedOwnerTrace := by
+  rw [cellSealOwnerFrozen_eq]
+  exact forged_owner_is_unsat_under_the_weld hash cellSealV3 minit mfin maddrs
+
+#assert_axioms cellSealOwnerFrozen_piCount
+#assert_axioms cellSealOwnerFrozen_traceWidth
+#assert_axioms cellSealOwnerFrozen_name
+#assert_axioms cellSealOwnerFrozen_constraints_length
+#assert_axioms cellSealV3_name
+#assert_axioms cellSealV3_faceWidth
+#assert_axioms cellSealOwnerFrozen_eq
+#assert_axioms forged_owner_is_unsat_on_cellSeal
 
 /-- The owner weld of lane `k` as the emit driver RENDERS it — the wire bytes, not a Lean term. -/
 def ownerWeldJson (k : Nat) : String :=
   VmConstraint2.toJson (.base (colEq (EFFECT_VM_WIDTH + B_PUBKEY_OCTET + k)
     (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + B_PUBKEY_OCTET + k)))
 
--- ⚑ THE CENSUS, over the RENDERED WIRE. The DEPLOYED member carries no owner weld (the hole the
--- Rust falsifier measured); the frozen member carries all eight. Compared as emitted JSON, so this
--- is a statement about the bytes a verifier parses — and the pair flips the moment the weld
--- reaches the wire.
-#guard (List.range 8).all (fun k =>
-  !(cellSealV3.constraints.map VmConstraint2.toJson).contains (ownerWeldJson k))
-#guard (List.range 8).all (fun k =>
-  (cellSealOwnerFrozen.constraints.map VmConstraint2.toJson).contains (ownerWeldJson k))
+/-! ### ⚑ THE CENSUS, over the RENDERED WIRE.
+
+The DEPLOYED member carries no owner weld (the hole the Rust falsifier measured); the frozen member
+carries all eight. Compared as emitted JSON, so this is a statement about the bytes a verifier
+parses — and the pair flips the moment the weld reaches the wire.
+
+Both halves were `#guard`s. The ABSENCE half stays an evaluation — it is a claim about 219 specific
+committed constraints and there is nothing general to say about it — but `by decide` puts it in the
+KERNEL, which the guard's `unsafe evalExpr` was not. The PRESENCE half became a `∀ k < 8` proved
+from the wrap (`ownerWeld_is_on_the_wire`), so it does not depend on re-rendering the member. -/
+
+set_option maxRecDepth 20000 in
+/-- ⚑ **NO OWNER WELD ON THE DEPLOYED MEMBER.** The hole, as bytes. -/
+theorem cellSealV3_carries_no_owner_weld :
+    (List.range 8).all (fun k =>
+      !(cellSealV3.constraints.map VmConstraint2.toJson).contains (ownerWeldJson k)) = true := by
+  decide
+
+/-- ⚑ **THE WELD IS ON THE WIRE, FOR EVERY OCTET LANE.** Proved from `ownerFreezeColPairs_octet`
+through `cellSealOwnerFrozen_eq`, so it is a statement about what the wrap EMITS and not about what
+one rendering happened to contain. -/
+theorem ownerWeld_is_on_the_wire (k : Nat) (hk : k < 8) :
+    VmConstraint2.base (colEq (EFFECT_VM_WIDTH + B_PUBKEY_OCTET + k)
+        (EFFECT_VM_WIDTH + AFTER_BLOCK_OFF + B_PUBKEY_OCTET + k))
+      ∈ cellSealOwnerFrozen.constraints := by
+  have hp := ownerFreezeColPairs_octet EFFECT_VM_WIDTH OWNER_LANE8_OFF
+    (l := (⟨k, by omega⟩ : Fin 9)) hk
+  rw [cellSealOwnerFrozen_eq, ownerFreezeAt_constraints]
+  refine List.mem_append_right _ (List.mem_map.mpr ⟨_, hp, ?_⟩)
+  simp only [Nat.add_assoc]
+
+theorem cellSealOwnerFrozen_carries_every_owner_weld :
+    (List.range 8).all (fun k =>
+      (cellSealOwnerFrozen.constraints.map VmConstraint2.toJson).contains (ownerWeldJson k))
+      = true := by
+  simp only [List.all_eq_true, List.mem_range, List.contains_iff_mem, List.mem_map]
+  intro k hk
+  exact ⟨_, ownerWeld_is_on_the_wire k hk, rfl⟩
+
+#assert_axioms cellSealV3_carries_no_owner_weld
+#assert_axioms ownerWeld_is_on_the_wire
+#assert_axioms cellSealOwnerFrozen_carries_every_owner_weld
 
 #assert_axioms ownerFreezeColPairs_octet
 #assert_axioms ownerFreeze_welds_lane8_iff_absorbed

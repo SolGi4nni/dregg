@@ -201,24 +201,84 @@ abbrev deployedLane8Off : Nat := B_PUBKEY_NINTH_LANE
 thing that genuinely differs member to member. -/
 def deployedKeyCanon9Cols (w : Nat) : KeyColMap := deployedKeyCols w deployedLane8Off
 
--- The nine offsets, against the committed layout constants (Rust twins
--- `trace_rotated::B_PUBKEY_OCTET = 105` and `::B_PUBKEY_NINTH_LANE = 186`, both generated from
--- `EmitLayoutManifest`). Re-typed by hand against a committed artifact: the literals ARE the review.
--- At today's `188`-wide bare v1 face and `B_SPAN = 251` the BEFORE nonet is `293..300` + `374` and
--- the AFTER nonet is `544..551` + `625`.
-#guard B_PUBKEY_OCTET == 105
-#guard deployedLane8Off == 186
-#guard (List.finRange 8).map (fun l => deployedKeyCanon9Cols 188 0 ⟨l.1, by omega⟩)
-  == [293, 294, 295, 296, 297, 298, 299, 300]
-#guard deployedKeyCanon9Cols 188 0 8 == 374
-#guard (List.finRange 8).map (fun l => deployedKeyCanon9Cols 188 1 ⟨l.1, by omega⟩)
-  == [544, 545, 546, 547, 548, 549, 550, 551]
-#guard deployedKeyCanon9Cols 188 1 8 == 625
--- ⚑ THE OCTET DID NOT MOVE. `293..300` is byte-for-byte the BEFORE window the 184-limb geometry
--- had; what moved is the AFTER block (`540..547` → `544..551`, because `B_SPAN` 247 → 251) and the
--- whole absorption tail. Every `state_commit` therefore changes: this is a RE-GENESIS.
-#guard ((List.finRange 9).map (deployedKeyCanon9Cols 188 0)
-   ++ (List.finRange 9).map (deployedKeyCanon9Cols 188 1)).Nodup
+/-! ### The nine offsets, against the committed layout constants.
+
+Rust twins `trace_rotated::B_PUBKEY_OCTET = 105` and `::B_PUBKEY_NINTH_LANE = 186`, both generated
+from `EmitLayoutManifest`. Re-typed by hand against a committed artifact: the literals ARE the
+review. At today's `188`-wide bare v1 face and `B_SPAN = 251` the BEFORE nonet is `293..300` + `374`
+and the AFTER nonet is `544..551` + `625`.
+
+⚑ These seven were `#guard`s until 2026-08-03 (`docs/GUARD-DISCIPLINE.md`). Every assertion below is
+the one the guard made, over the same object, now named, citable and visible to `#assert_axioms` —
+and the `Nodup` pin GAINED A `∀`: `deployed_nonet_cols_nodup` holds at EVERY face width, which the
+`188` instance could not distinguish from "they happen not to collide at 188". -/
+
+theorem B_PUBKEY_OCTET_is_105 : B_PUBKEY_OCTET = 105 := rfl
+
+theorem deployedLane8Off_is_186 : deployedLane8Off = 186 := rfl
+
+/-- `B_SPAN` as a numeral. Not a pin — it is a def against its own definition, which is decoration —
+but the rewrite `omega` needs to see the block stride in `deployed_nonet_cols_distinct`. -/
+private theorem b_span_is_251 : B_SPAN = 251 := rfl
+
+theorem deployedKeyCanon9Cols_before_octet :
+    (List.finRange 8).map (fun l => deployedKeyCanon9Cols 188 0 ⟨l.1, by omega⟩)
+      = [293, 294, 295, 296, 297, 298, 299, 300] := by decide
+
+theorem deployedKeyCanon9Cols_before_lane8 : deployedKeyCanon9Cols 188 0 8 = 374 := by decide
+
+theorem deployedKeyCanon9Cols_after_octet :
+    (List.finRange 8).map (fun l => deployedKeyCanon9Cols 188 1 ⟨l.1, by omega⟩)
+      = [544, 545, 546, 547, 548, 549, 550, 551] := by decide
+
+theorem deployedKeyCanon9Cols_after_lane8 : deployedKeyCanon9Cols 188 1 8 = 625 := by decide
+
+/-- ⚑ **THE NONET OCCUPIES EIGHTEEN DISTINCT COLUMNS — AT EVERY FACE.** The general fact the `188`
+`Nodup` pin was one instance of: a column of the deployed nonet determines both its BLOCK and its
+LANE. Two lanes of one block cannot alias (the octet is contiguous and the ninth lane is `74` past
+its end), and no lane of the BEFORE block can alias one of the AFTER block (the whole nonet spans
+`81 < B_SPAN` columns). Stated at an arbitrary `w`, so a face-width move cannot collapse it. -/
+theorem deployed_nonet_cols_distinct (w : Nat) {blk blk' : Fin 2} {l l' : Fin 9}
+    (h : deployedKeyCanon9Cols w blk l = deployedKeyCanon9Cols w blk' l') :
+    blk = blk' ∧ l = l' := by
+  have hb := blk.isLt; have hb' := blk'.isLt
+  have hl := l.isLt; have hl' := l'.isLt
+  simp only [deployedKeyCanon9Cols, deployedKeyCols, b_span_is_251, B_PUBKEY_OCTET_is_105,
+    deployedLane8Off_is_186] at h
+  refine ⟨Fin.ext ?_, Fin.ext ?_⟩ <;> (split_ifs at h with h1 h2 <;> omega)
+
+/-- The eighteen committed nonet columns of the two rotated blocks are pairwise distinct, at every
+face width. -/
+theorem deployed_nonet_cols_nodup (w : Nat) :
+    ((List.finRange 9).map (deployedKeyCanon9Cols w 0)
+      ++ (List.finRange 9).map (deployedKeyCanon9Cols w 1)).Nodup := by
+  refine List.Nodup.append ?_ ?_ ?_
+  · exact List.Nodup.map (fun _ _ h => (deployed_nonet_cols_distinct w h).2) (by decide)
+  · exact List.Nodup.map (fun _ _ h => (deployed_nonet_cols_distinct w h).2) (by decide)
+  · intro a ha hb
+    simp only [List.mem_map] at ha hb
+    obtain ⟨l, -, rfl⟩ := ha
+    obtain ⟨l', -, hEq⟩ := hb
+    exact absurd (deployed_nonet_cols_distinct w hEq).1 (by decide)
+
+/-- ⚑ THE OCTET DID NOT MOVE. `293..300` is byte-for-byte the BEFORE window the 184-limb geometry
+had; what moved is the AFTER block (`540..547` → `544..551`, because `B_SPAN` 247 → 251) and the
+whole absorption tail. Every `state_commit` therefore changes: this is a RE-GENESIS. (The instance
+the `#guard` asserted, kept as a corollary so no assertion is lost.) -/
+theorem deployed_nonet_cols_nodup_188 :
+    ((List.finRange 9).map (deployedKeyCanon9Cols 188 0)
+      ++ (List.finRange 9).map (deployedKeyCanon9Cols 188 1)).Nodup :=
+  deployed_nonet_cols_nodup 188
+
+#assert_axioms B_PUBKEY_OCTET_is_105
+#assert_axioms deployedLane8Off_is_186
+#assert_axioms deployedKeyCanon9Cols_before_octet
+#assert_axioms deployedKeyCanon9Cols_before_lane8
+#assert_axioms deployedKeyCanon9Cols_after_octet
+#assert_axioms deployedKeyCanon9Cols_after_lane8
+#assert_axioms deployed_nonet_cols_distinct
+#assert_axioms deployed_nonet_cols_nodup
+#assert_axioms deployed_nonet_cols_nodup_188
 
 /-! ### ⚑ §1.1 — THE COLUMNS ARE THE ABSORBED OWNER-KEY LIMBS, from two sources that are not each
 other.
@@ -325,17 +385,54 @@ theorem lane8_offset_plus_one_is_not_absorbed (w : Nat) (blk : Fin 2) :
   intro h
   exact absurd ((lane8_is_absorbed_iff w (deployedLane8Off + 1) blk).mp h) (by decide)
 
-#guard rotatedNumPreLimbs == 187
-#guard Dregg2.Circuit.Emit.rotated187.pads == []
-#guard (preLimbColsAt 188).length == 187
--- The whole NONET really is inside the absorbed region, at both blocks — nine columns, not eight.
-#guard ((List.finRange 9).map (deployedKeyCanon9Cols 188 0)).all
-  (fun c => (preLimbColsAt 188).contains c)
-#guard ((List.finRange 9).map (deployedKeyCanon9Cols 188 1)).all
-  (fun c => (preLimbColsAt (188 + B_SPAN)).contains c)
--- ...and the perturbed offset is NOT: the mutation, computably.
-#guard !(preLimbColsAt 188).contains (deployedKeyCols 188 (deployedLane8Off + 1) 0 8)
+/-! ### The absorbed-region pins — ex-`#guard`s, and two of them were instances of theorems this
+file had already proved three lines above. -/
 
+theorem rotatedNumPreLimbs_is_187 : rotatedNumPreLimbs = 187 := rfl
+
+theorem rotated187_has_no_pads : Dregg2.Circuit.Emit.rotated187.pads = [] := rfl
+
+/-- ⚑ **THE EXTENT, AS A `∀`.** The absorbed-column list has exactly `rotatedNumPreLimbs` entries at
+EVERY base — the guard fixed `188` and so could not tell a general fact about `preLimbColsAt` from a
+coincidence at one face. -/
+theorem preLimbColsAt_length (base : Nat) : (preLimbColsAt base).length = rotatedNumPreLimbs := by
+  simp [preLimbColsAt]
+
+theorem preLimbColsAt_length_188 : (preLimbColsAt 188).length = 187 := by
+  rw [preLimbColsAt_length, rotatedNumPreLimbs_is_187]
+
+/-- The whole NONET really is inside the absorbed region, at the BEFORE block — nine columns, not
+eight. The `#guard`'s exact `Bool`, now discharged FROM `deployed_nonet_is_absorbed` rather than by
+re-evaluating the list, which is what makes it visibly an instance. -/
+theorem deployed_nonet_absorbed_before_188 :
+    ((List.finRange 9).map (deployedKeyCanon9Cols 188 0)).all
+      (fun c => (preLimbColsAt 188).contains c) = true := by
+  simp only [List.all_eq_true, List.mem_map, List.contains_iff_mem]
+  rintro c ⟨l, -, rfl⟩
+  simpa using deployed_nonet_is_absorbed 188 0 l
+
+/-- …and at the AFTER block. -/
+theorem deployed_nonet_absorbed_after_188 :
+    ((List.finRange 9).map (deployedKeyCanon9Cols 188 1)).all
+      (fun c => (preLimbColsAt (188 + B_SPAN)).contains c) = true := by
+  simp only [List.all_eq_true, List.mem_map, List.contains_iff_mem]
+  rintro c ⟨l, -, rfl⟩
+  simpa using deployed_nonet_is_absorbed 188 1 l
+
+/-- …and the perturbed offset is NOT: the mutation, computably — the instance of
+`lane8_offset_plus_one_is_not_absorbed`. -/
+theorem lane8_plus_one_not_absorbed_188 :
+    (!(preLimbColsAt 188).contains (deployedKeyCols 188 (deployedLane8Off + 1) 0 8)) = true := by
+  simp only [Bool.not_eq_true', Bool.eq_false_iff, ne_eq, List.contains_iff_mem]
+  simpa using lane8_offset_plus_one_is_not_absorbed 188 0
+
+#assert_axioms rotatedNumPreLimbs_is_187
+#assert_axioms rotated187_has_no_pads
+#assert_axioms preLimbColsAt_length
+#assert_axioms preLimbColsAt_length_188
+#assert_axioms deployed_nonet_absorbed_before_188
+#assert_axioms deployed_nonet_absorbed_after_188
+#assert_axioms lane8_plus_one_not_absorbed_188
 #assert_axioms deployedKeyCols_octet_is_absorbed
 #assert_axioms octet_cols_are_absorbed
 #assert_axioms lane8_is_absorbed_iff
@@ -358,12 +455,26 @@ def keyLookupsAt (col : KeyColMap) (blk : Fin 2) : List VmConstraint2 :=
 def keyCanon9ConstraintsAt (col : KeyColMap) : List VmConstraint2 :=
   (List.finRange 2).flatMap fun blk => keyLookupsAt col blk
 
--- 2 × 9 = 18 lookups, ZERO gates.
-#guard (keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).length == 18
-#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
-  | .lookup _ => true | _ => false)).length == 18
-#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
-  | .base (.gate _) => true | _ => false)).length == 0
+/-! ### 2 × 9 = 18 lookups, ZERO gates.
+
+⚑ Three `#guard`s at `deployedKeyCanon9Cols 188` until 2026-08-03, and all three were instances of a
+fact that does not mention the columns at all: the SHAPE of `keyCanon9ConstraintsAt` — two blocks,
+eight-plus-one lookups each, no gate — is the same for EVERY column map. That is the general fact,
+proved once; the `188` instances are the corollaries the guards asserted. -/
+
+theorem keyCanon9ConstraintsAt_length (col : KeyColMap) :
+    (keyCanon9ConstraintsAt col).length = 18 := rfl
+
+theorem keyCanon9ConstraintsAt_length_188 :
+    (keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).length = 18 :=
+  keyCanon9ConstraintsAt_length _
+
+#assert_axioms keyCanon9ConstraintsAt_length
+#assert_axioms keyCanon9ConstraintsAt_length_188
+
+-- (the two `filter` counts are `keyCanon9ConstraintsAt_lookup_count` /
+-- `…_gate_count` below, stated where `keyCanon9_all_lookups` — the theorem they are
+-- corollaries of — is in scope.)
 
 /-- **THE WRAP.** `traceWidth`-, `piCount`-, table-, site- and range-INVARIANT. -/
 def keyCanonical9At (col : KeyColMap) (d : EffectVmDescriptor2) : EffectVmDescriptor2 :=
@@ -402,6 +513,41 @@ theorem keyCanon9_all_lookups (col : KeyColMap) :
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at h
     subst h
     exact ⟨_, rfl⟩
+
+/-- All 18 emitted constraints survive a `lookup` filter — the ex-`#guard`'s census, discharged FROM
+`keyCanon9_all_lookups` and therefore true at every column map, not just at `188`. -/
+theorem keyCanon9ConstraintsAt_lookup_count (col : KeyColMap) :
+    ((keyCanon9ConstraintsAt col).filter (fun c => match c with
+      | .lookup _ => true | _ => false)).length = 18 := by
+  rw [List.filter_eq_self.mpr, keyCanon9ConstraintsAt_length]
+  intro c hc
+  obtain ⟨l, rfl⟩ := keyCanon9_all_lookups col c hc
+  simp
+
+/-- …and NONE survives a `gate` filter, at every column map. This is the fact the last-row argument
+rests on (`§3`: a `lookup` has no last-row exemption), so it is worth a term. -/
+theorem keyCanon9ConstraintsAt_gate_count (col : KeyColMap) :
+    ((keyCanon9ConstraintsAt col).filter (fun c => match c with
+      | .base (.gate _) => true | _ => false)).length = 0 := by
+  rw [List.length_eq_zero_iff, List.filter_eq_nil_iff]
+  intro c hc hgate
+  obtain ⟨l, rfl⟩ := keyCanon9_all_lookups col c hc
+  simp at hgate
+
+theorem keyCanon9ConstraintsAt_lookup_count_188 :
+    ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
+      | .lookup _ => true | _ => false)).length = 18 :=
+  keyCanon9ConstraintsAt_lookup_count _
+
+theorem keyCanon9ConstraintsAt_gate_count_188 :
+    ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
+      | .base (.gate _) => true | _ => false)).length = 0 :=
+  keyCanon9ConstraintsAt_gate_count _
+
+#assert_axioms keyCanon9ConstraintsAt_lookup_count
+#assert_axioms keyCanon9ConstraintsAt_gate_count
+#assert_axioms keyCanon9ConstraintsAt_lookup_count_188
+#assert_axioms keyCanon9ConstraintsAt_gate_count_188
 
 private theorem memFilter_nil (l : List VmConstraint2) (hl : ∀ c ∈ l, ∃ x, c = .lookup x) :
     l.filterMap (fun c => match c with | .memOp m => some m | _ => none) = [] := by
@@ -660,7 +806,12 @@ theorem keyLimbOff_lt (l : Fin 9) : keyLimbOff l < rotatedNumPreLimbs := by
     subst this
     decide
 
-#guard (List.finRange 9).map keyLimbOff == [105, 106, 107, 108, 109, 110, 111, 112, 186]
+/-- The nine in-block pre-limb offsets, as numerals — the ex-`#guard`. `keyLimbOff_lt` above is the
+∀ this is an instance of; the numerals are the cross-check against the Rust twins. -/
+theorem keyLimbOff_values :
+    (List.finRange 9).map keyLimbOff = [105, 106, 107, 108, 109, 110, 111, 112, 186] := by decide
+
+#assert_axioms keyLimbOff_values
 
 /-- **EVERY LANE READS AN ABSORBED LIMB.** Column `deployedKeyCanon9Cols w blk l` IS entry
 `keyLimbOff l` of `preLimbsAt` — the tie `§1.1` proved for lanes 0..7, now closed for all nine. -/
@@ -836,34 +987,106 @@ theorem keyCanon9Wire_rejects_the_forged_nonet {hash : List ℤ → ℤ} {d : Ef
     ¬ Satisfied2 hash (keyCanonical9Wire d) minit mfin maddrs t :=
   keyCanon9_rejects_the_forged_nonet_deployed h24 hi blk hforged
 
--- The four deployed faces, and the columns each lands the nonet on. Re-typed against the wire
--- names the registry TSV actually carries: bare members ride the 188-wide v1 face, the three
--- hardened availability members ride their shifted bases, and the ninth lane travels with them.
-#guard faceWidthOfName "dregg-effectvm-cellseal-v2-rot24-v3-staged" == 188
-#guard faceWidthOfName "dregg-effectvm-transfer-v1-avail-rot24-v3-staged" == 198
-#guard faceWidthOfName "dregg-effectvm-burn-v1-avail-rot24-v3-staged" == 196
-#guard faceWidthOfName "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged" == 204
--- 18 lookups per member at EVERY face, and not one gate: the wrap cannot acquire a last-row
--- exemption no matter which member it rides.
-#guard [188, 196, 198, 204].all (fun w =>
-  (keyCanon9ConstraintsAt (deployedKeyCanon9Cols w)).length == 18)
-#guard [188, 196, 198, 204].all (fun w =>
-  ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols w)).filter (fun c => match c with
-    | .base (.gate _) => true | _ => false)).length == 0)
--- ⚑ THE TWO WIDTHS ARE NOT THE SAME TABLE, and this guard is what keeps a later "uniformity"
--- edit from re-opening the encoding: eight lookups ride `rangeTidW 29`, exactly ONE rides
--- `rangeTidW 24`, per block.
-#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
-  | .lookup l => l.table == rangeTidW KEY_LANE_BITS | _ => false)).length == 16
-#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
-  | .lookup l => l.table == rangeTidW KEY_TOP_BITS | _ => false)).length == 2
-#guard rangeTidW KEY_LANE_BITS != rangeTidW KEY_TOP_BITS
--- …and the wrap really lands on the NONET, not on nine columns of its own choosing: the looked-up
--- columns are exactly the absorbed owner-key pre-limbs at both blocks, from `preLimbColsAt`.
-#guard ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filterMap (fun c => match c with
-  | .lookup ⟨_, [.var col]⟩ => some col | _ => none))
-  == [293, 294, 295, 296, 297, 298, 299, 300, 374,
-      544, 545, 546, 547, 548, 549, 550, 551, 625]
+/-! ### The four deployed faces, and the columns each lands the nonet on.
+
+Re-typed against the wire names the registry TSV actually carries: bare members ride the 188-wide v1
+face, the three hardened availability members ride their shifted bases, and the ninth lane travels
+with them.
+
+⚑ Eleven `#guard`s until 2026-08-03. Four gained only a name (the face-width pins are genuinely
+about four specific strings). The other seven gained a `∀`: the census of the emitted constraint
+list — 18 lookups, 16 on the lane table, 2 on the narrow one, 0 gates, landing exactly on the nine
+columns of each block — holds for EVERY column map and therefore at every face, which is what the
+four-face `.all` pin was reaching for one element at a time. -/
+
+theorem faceWidth_cellseal :
+    faceWidthOfName "dregg-effectvm-cellseal-v2-rot24-v3-staged" = 188 := by
+  simp [faceWidthOfName, EFFECT_VM_WIDTH]
+
+theorem faceWidth_transfer_avail :
+    faceWidthOfName "dregg-effectvm-transfer-v1-avail-rot24-v3-staged" = 198 := by
+  simp [faceWidthOfName, Dregg2.Circuit.Emit.EffectVmEmitTransfer.AVAIL_WIDTH,
+    Dregg2.Circuit.Emit.EffectVmEmitTransfer.AVAIL_BASE, EFFECT_VM_WIDTH]
+
+theorem faceWidth_burn_avail :
+    faceWidthOfName "dregg-effectvm-burn-v1-avail-rot24-v3-staged" = 196 := by
+  simp [faceWidthOfName, Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH,
+    Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_BASE, EFFECT_VM_WIDTH]
+
+theorem faceWidth_transfer_fee_avail :
+    faceWidthOfName "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged" = 204 := by
+  simp [faceWidthOfName, Dregg2.Circuit.Emit.EffectVmEmitTransfer.FEE_AVAIL_WIDTH,
+    Dregg2.Circuit.Emit.EffectVmEmitTransfer.AVAIL_BASE, EFFECT_VM_WIDTH]
+
+/-- 18 lookups per member at EVERY face, and not one gate: the wrap cannot acquire a last-row
+exemption no matter which member it rides. The four deployed faces, as the `#guard` listed them —
+each an instance of `keyCanon9ConstraintsAt_length`, which needs no face at all. -/
+theorem deployed_faces_carry_18_lookups :
+    [188, 196, 198, 204].all (fun w =>
+      (keyCanon9ConstraintsAt (deployedKeyCanon9Cols w)).length == 18) = true := by
+  simp [keyCanon9ConstraintsAt_length]
+
+theorem deployed_faces_carry_no_gate :
+    [188, 196, 198, 204].all (fun w =>
+      ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols w)).filter (fun c => match c with
+        | .base (.gate _) => true | _ => false)).length == 0) = true := by
+  simp [keyCanon9ConstraintsAt_gate_count]
+
+/-- ⚑ **THE TWO WIDTHS ARE NOT THE SAME TABLE**, and this is what keeps a later "uniformity" edit
+from re-opening the encoding: eight lookups ride `rangeTidW 29`, exactly ONE rides `rangeTidW 24`,
+per block. ⚑ Stated at an ARBITRARY column map — the split is a property of the emit, not of the
+`188` face the `#guard` happened to evaluate. -/
+theorem keyCanon9_lane_table_count (col : KeyColMap) :
+    ((keyCanon9ConstraintsAt col).filter (fun c => match c with
+      | .lookup l => l.table == rangeTidW KEY_LANE_BITS | _ => false)).length = 16 := rfl
+
+theorem keyCanon9_top_table_count (col : KeyColMap) :
+    ((keyCanon9ConstraintsAt col).filter (fun c => match c with
+      | .lookup l => l.table == rangeTidW KEY_TOP_BITS | _ => false)).length = 2 := rfl
+
+theorem keyCanon9_lane_table_count_188 :
+    ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
+      | .lookup l => l.table == rangeTidW KEY_LANE_BITS | _ => false)).length = 16 :=
+  keyCanon9_lane_table_count _
+
+theorem keyCanon9_top_table_count_188 :
+    ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filter (fun c => match c with
+      | .lookup l => l.table == rangeTidW KEY_TOP_BITS | _ => false)).length = 2 :=
+  keyCanon9_top_table_count _
+
+/-- The two widths really are two tables. Without this the counts above would be a partition of the
+same table and the narrow leg would be decoration. -/
+theorem lane_and_top_tables_differ : rangeTidW KEY_LANE_BITS ≠ rangeTidW KEY_TOP_BITS := by decide
+
+/-- ⚑ **THE WRAP LANDS ON THE NONET AND NOTHING ELSE — at every column map.** The looked-up columns,
+read back out of the EMITTED constraint list, are exactly the nine columns of block 0 followed by
+the nine of block 1. The `#guard` checked the numerals at one face; this says the emit cannot look
+anywhere but where `col` points, and the numerals are then the instance below. -/
+theorem keyCanon9_lookup_cols (col : KeyColMap) :
+    ((keyCanon9ConstraintsAt col).filterMap (fun c => match c with
+      | .lookup ⟨_, [.var c']⟩ => some c' | _ => none))
+      = (List.finRange 9).map (col 0) ++ (List.finRange 9).map (col 1) := rfl
+
+/-- …and at the deployed face they are the absorbed owner-key pre-limbs of both blocks. -/
+theorem keyCanon9_lookup_cols_188 :
+    ((keyCanon9ConstraintsAt (deployedKeyCanon9Cols 188)).filterMap (fun c => match c with
+      | .lookup ⟨_, [.var c']⟩ => some c' | _ => none))
+      = [293, 294, 295, 296, 297, 298, 299, 300, 374,
+         544, 545, 546, 547, 548, 549, 550, 551, 625] := by decide
+
+#assert_axioms faceWidth_cellseal
+#assert_axioms faceWidth_transfer_avail
+#assert_axioms faceWidth_burn_avail
+#assert_axioms faceWidth_transfer_fee_avail
+#assert_axioms deployed_faces_carry_18_lookups
+#assert_axioms deployed_faces_carry_no_gate
+#assert_axioms keyCanon9_lane_table_count
+#assert_axioms keyCanon9_top_table_count
+#assert_axioms keyCanon9_lane_table_count_188
+#assert_axioms keyCanon9_top_table_count_188
+#assert_axioms lane_and_top_tables_differ
+#assert_axioms keyCanon9_lookup_cols
+#assert_axioms keyCanon9_lookup_cols_188
 
 #assert_axioms satisfied2_of_keyCanonical9Wire
 #assert_axioms keyCanon9Wire_determines_the_owner_key

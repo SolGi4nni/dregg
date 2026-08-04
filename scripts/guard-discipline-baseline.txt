@@ -8,7 +8,7 @@
 # that is how 23 guards entered this file on 2026-08-02). Raising it at all requires
 # `--allow-increase --reason`, and stamps an INCREASED line below. Never hand-edit a row up:
 # the whole point is that every rise is attributable.
-# TOTAL 15448 guards across 1164 modules (2340 .lean files scanned).
+# TOTAL 15404 guards across 1162 modules (2341 .lean files scanned).
 # format: <count><TAB><path relative to metatheory/>
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15665→15547 (-118) DECREASED — the two Wrap welds' 118 guards are named theorems now (69 + 49), seven gaining a bounded forall
 # BASELINE-PROVENANCE c9cf31c80-DIRTY 15547→15524 (-23) DECREASED — combine Opt.Maybe mux rung: 23 guards converted to 12 named theorems, 12 of them under two bounded quantifiers (cip_mask_law over LEGAL_MASKS, cip_reads_each_mask_bit_once over the masked slots)
@@ -27,6 +27,7 @@
 # BASELINE-PROVENANCE fc0977ed1 15482→15478 (-4) DECREASED — W-SPLIT/W-FTCOMM lane converted 4 guards to named theorems while landing rungs w7/w8 (59 -> 55, guards 59->55 with zero added). Retiring the stale row; module green at HEAD.
 # BASELINE-PROVENANCE 6ba1ee415-DIRTY 15478→15449 (-29) DECREASED — LightClientEthAir REWRITTEN as COMPILER OUTPUT (EffectLower.lowerAir of the EffectAir source ethHeadAir) while closing the unbounded-PC residual with a PC_SLACK leg. All 29 guards retired: the byte-golden is replaced by rfl pins on the compiler's own emission (ethLcVerifyDesc_slack_lookups / _pins / _constraint_count), the shape and non-vacuity guards by named theorems (eth_layout_wellformed, eth_accepts_the_honest_update, eth_refuses_the_sub_quorum, eth_refuses_a_participation_count_above_the_committee and five siblings), and the participation bound by the hypothesis-free ethLcAir_forces_participation_bounded. The row is RETIRED, not raised; the module carries zero guards.
 # BASELINE-PROVENANCE d451c791d-DIRTY 15449→15448 (-1) DECREASED — EmitByName's by-name routing-table length pin becomes the named theorem byNameDescriptors_length (= 84, by rfl) as the six felt-sound Pasta descriptors are routed. The static reader in emit_descriptors.py that leaned on the guard literal now accepts either spelling, so the parser is no longer the reason the conversion cannot happen. Row RETIRED, not raised; module carries zero guards.
+# BASELINE-PROVENANCE d72975376-DIRTY 15448→15404 (-44) DECREASED — G1: converted all 44 guards in the owner-key nonet weld (OwnerFreezeWire 17, KeyCanonicity9Emit 27) to named theorems; 14 gained a forall
 
 5	Dregg2/Agent/Mandate.lean
 23	Dregg2/Apps/AgentOrchestrationBudget.lean
@@ -392,7 +393,6 @@
 3	Dregg2/Circuit/Emit/HomomorphicDigestChainRefine.lean
 9	Dregg2/Circuit/Emit/HomomorphicDigestEmit.lean
 14	Dregg2/Circuit/Emit/HomomorphicDigestEmitProd.lean
-27	Dregg2/Circuit/Emit/KeyCanonicity9Emit.lean
 8	Dregg2/Circuit/Emit/KimchiCellCommit.lean
 28	Dregg2/Circuit/Emit/KimchiComposeMSM.lean
 55	Dregg2/Circuit/Emit/KimchiComposeStepFragment.lean
@@ -455,7 +455,6 @@
 20	Dregg2/Circuit/Emit/NoteSpendingLeafEmit.lean
 3	Dregg2/Circuit/Emit/NoteSpendingLeafRefine.lean
 4	Dregg2/Circuit/Emit/NoteSpendingLeafRung2.lean
-17	Dregg2/Circuit/Emit/OwnerFreezeWire.lean
 12	Dregg2/Circuit/Emit/ParamComposeEmit.lean
 6	Dregg2/Circuit/Emit/ParamComposeGolden.lean
 22	Dregg2/Circuit/Emit/ParamComposeGoldenCensus.lean
