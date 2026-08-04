@@ -402,6 +402,7 @@ def rawOutcome (cfg : Config) (state : State) (run : RunState) : ActivityOutcome
       decide (discovery.artifact ∈ run.discoveries)).map DiscoverySpec.artifact
 
 structure ExtractionReceipt (cfg : Config) where
+  private mk ::
   key : ExpeditionKey
   finalPosition : Position
   turnsUsed : Nat
