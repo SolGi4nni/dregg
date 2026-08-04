@@ -112,6 +112,11 @@ path = "tests/private_clearing_apex_e2e.rs"
 required-features = ["private-attested-clearing", "fhegg-settlement"]
 
 [[test]]
+name = "poa_dark_bazaar_protocol"
+path = "tests/poa_dark_bazaar_protocol.rs"
+required-features = ["private-attested-clearing"]
+
+[[test]]
 name = "private_clearing_crown_consequence"
 path = "tests/private_clearing_crown_consequence.rs"
 required-features = ["private-clearing"]
