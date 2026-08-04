@@ -35,6 +35,7 @@ run bash -n scripts/check-poag1-artifacts.sh
 
 run cargo nextest run --manifest-path poa-curator/Cargo.toml
 run node --test scripts/tests/poa-devnet-manifest.test.mjs
+run cargo nextest run -p dregg-node -E 'test(/deployment_domain/)'
 
 # The explicit feature and target are deliberate: without them Cargo discovers
 # zero PoA ingress tests while returning success.
