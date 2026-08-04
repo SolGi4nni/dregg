@@ -38,6 +38,8 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 dregg-pq = { path = "../dregg-pq" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "biscuit", "rand-deps"] }
 dregg-persist = { path = "../persist" }
+dregg-governance = { path = "../dregg-governance" }
+poa-solana-gate = { path = "../poa-solana-gate" }
 poa-curator = { path = "../poa-curator" }
 dregg-federation = { path = "../federation" }
 dregg-sdk = { path = "../sdk" }
@@ -136,7 +138,7 @@ clap = { version = "4", features = ["derive"] }
 # Pulled only by the `deos-host` feature (the playable `mud-client` reads world cells off
 # the node over HTTP via `GET /api/cell/{id}`). Already in the graph via `dregg-sdk-net`, so
 # this adds no new crate — just names it directly for the deos-host module.
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.12", features = ["json"] }
 # Pulled only by the `deos-host` feature: the `mud_client` / `shared_world` boot harnesses
 # stand up an in-process node on a temp dir. These are non-`cfg(test)` modules (the playable
 # REPL + the shared-world engine), so the temp-dir crate must be a normal dep under the
@@ -204,7 +206,7 @@ tokio-postgres = { version = "0.7", optional = true, features = ["with-serde_jso
 # (`--deos-program <path.js>`), running fully without gpui. Pulls in `mozjs` via deos-js,
 # so it is opt-in (NOT in `default`). With it OFF, the deos-host module is absent and the
 # node graph carries no SpiderMonkey.
-deos-host = ["dep:deos-js", "dep:reqwest", "dep:tempfile"]
+deos-host = ["dep:deos-js", "dep:tempfile"]
 
 # Off by default: the node ships verified-turn MirrorBatches to a live pg18 ONLY when
 # this is on AND DREGG_PG_MIRROR_URL is set. With it off, the pg-mirror module still

@@ -10,6 +10,7 @@ import {
   discoverDreggWallets,
   formatDreggChallenge,
   buildDreggOwnerBindingMessage,
+  normalizeSolanaPublicKey,
 } from "../src/dregg-wallet.js";
 import { buildDreggServerVerificationPlan } from "../src/dregg-wallet-verification.js";
 
@@ -75,11 +76,12 @@ test("Wallet Standard standard:connect + solana:signMessage is supported", async
 });
 
 test("challenge binds nonce, wallet, origin, federation, mint, cluster, slot, and expiry", () => {
-  const first = formatDreggChallenge(challenge, "WalletA");
-  assert.notEqual(first, formatDreggChallenge({ ...challenge, nonce: "different" }, "WalletA"));
-  assert.notEqual(first, formatDreggChallenge({ ...challenge, slot: challenge.slot + 1 }, "WalletA"));
-  assert.throws(() => formatDreggChallenge({ ...challenge, mint: "fake" }, "WalletA"), /mint/u);
-  assert.throws(() => formatDreggChallenge({ ...challenge, origin: "https://evil\n.test" }, "WalletA"), /control/u);
+  const first = formatDreggChallenge(challenge, challenge.voterId);
+  assert.notEqual(first, formatDreggChallenge(challenge, DREGG_MINT));
+  assert.notEqual(first, formatDreggChallenge({ ...challenge, nonce: "different" }, challenge.voterId));
+  assert.notEqual(first, formatDreggChallenge({ ...challenge, slot: challenge.slot + 1 }, challenge.voterId));
+  assert.throws(() => formatDreggChallenge({ ...challenge, mint: "fake" }, challenge.voterId), /mint/u);
+  assert.throws(() => formatDreggChallenge({ ...challenge, origin: "https://evil\n.test" }, challenge.voterId), /control/u);
 });
 
 test("durable owner binding bytes exactly match Rust domain || owner(32) || voter(32)", () => {
@@ -112,10 +114,15 @@ test("server plan requires exact mint/owner and finalized fresh RPC context", as
   assert.equal(plan.rpcRead.owner, request.walletAddress);
   assert.equal(plan.rpcRead.commitment, "finalized");
   assert.equal(plan.rpcRead.minContextSlot, challenge.slot);
-  assert.equal(plan.acceptance.exactTokenProgram, DREGG_TOKEN_PROGRAM);
-  assert.equal(plan.acceptance.trustTier, "beta-rpc-attested");
+  assert.equal(plan.acceptance.exactTokenProgramId, DREGG_TOKEN_PROGRAM);
+  assert.equal(plan.acceptance.trustGrade, "rpcAttested");
+  assert.equal(plan.acceptance.admissionScope, "poa:beta:game-admission");
+  assert.equal(plan.acceptance.credentialKind, "short-lived");
   assert.equal(plan.acceptance.governanceWeightBearing, false);
-  assert.equal(plan.acceptance.evidenceBoundary, "configured-server-finalized-solana-rpc");
+  assert.equal(plan.acceptance.balanceClaimBearing, false);
+  assert.equal(plan.acceptance.accountsProofAnchored, false);
+  assert.equal(plan.acceptance.evidenceBoundary, "configured-server-finalized-solana-rpc-only");
+  assert.equal(plan.rpcRead.purpose, "rpc-attested-beta-game-admission-only");
   assert.equal(plan.nonceCheck.operation, "consume-once");
   assert.equal(plan.durableOwnerBindingCheck.rustFunction,
     "dregg_governance::holding_weight::binding_message");
@@ -150,4 +157,44 @@ test("Wallet Standard discovery is feature-based, not Phantom-specific", () => {
   };
   const incompatible = { features: {} };
   assert.deepEqual(discoverDreggWallets({ get: () => [incompatible, compatible] }), [compatible]);
+});
+
+test("wallet and voter bindings refuse malformed or non-32-byte base58 keys before signing", async () => {
+  assert.throws(() => normalizeSolanaPublicKey("walletAddress", "not a key"), /base58/u);
+  assert.throws(() => normalizeSolanaPublicKey("walletAddress", "111"), /32-byte/u);
+  assert.throws(() => formatDreggChallenge(challenge, "111"), /32-byte/u);
+  assert.throws(() => formatDreggChallenge({ ...challenge, voterId: "111" }, challenge.voterId), /32-byte/u);
+
+  let signs = 0;
+  const wallet = {
+    publicKey: "111",
+    async connect() {},
+    async signMessage() { signs += 1; return Uint8Array.of(1); },
+  };
+  await assert.rejects(() => connectDreggWallet(wallet), /32-byte/u);
+  assert.equal(signs, 0);
+});
+
+test("server policy numeric fields and clock are fail-closed", async () => {
+  const wallet = {
+    publicKey: "11111111111111111111111111111111",
+    async connect() {},
+    async signMessage() { return Uint8Array.of(9); },
+  };
+  const request = await createDreggVerificationRequest(await connectDreggWallet(wallet), challenge);
+  const basePolicy = {
+    origin: challenge.origin,
+    federationId: challenge.federationId,
+    cluster: challenge.cluster,
+    maxClockSkewMs: 0,
+    maxSlotLag: 150,
+    minimumRawAmount: "1",
+  };
+  assert.throws(() => buildDreggServerVerificationPlan(request,
+    { ...basePolicy, maxClockSkewMs: 0.5 }, Date.parse("2026-08-04T13:02:00.000Z")), /maxClockSkewMs/u);
+  assert.throws(() => buildDreggServerVerificationPlan(request,
+    { ...basePolicy, maxSlotLag: -1 }, Date.parse("2026-08-04T13:02:00.000Z")), /maxSlotLag/u);
+  assert.throws(() => buildDreggServerVerificationPlan(request,
+    { ...basePolicy, minimumRawAmount: "1.5" }, Date.parse("2026-08-04T13:02:00.000Z")), /minimumRawAmount/u);
+  assert.throws(() => buildDreggServerVerificationPlan(request, basePolicy, Number.NaN), /nowMs/u);
 });

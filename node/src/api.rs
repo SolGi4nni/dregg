@@ -1666,7 +1666,7 @@ pub fn effective_client_is_loopback(socket_ip: IpAddr, headers: &axum::http::Hea
 
 /// Simple in-memory rate limiter: max attempts per window.
 #[derive(Clone)]
-struct RateLimiter {
+pub(crate) struct RateLimiter {
     /// Map of IP -> (attempt_count, window_start)
     state: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
     max_attempts: u32,
@@ -1679,7 +1679,7 @@ struct RateLimiter {
 pub const DEFAULT_TURN_RATE_LIMIT: u32 = 60;
 
 impl RateLimiter {
-    fn new(max_attempts: u32, window_secs: u64) -> Self {
+    pub(crate) fn new(max_attempts: u32, window_secs: u64) -> Self {
         Self::with_proxies(max_attempts, window_secs, TrustedProxies::from_env())
     }
 
@@ -1736,7 +1736,11 @@ impl RateLimiter {
     }
 
     /// Convenience: resolve the client IP and apply the limiter in one call.
-    async fn check_request(&self, socket_ip: IpAddr, headers: &axum::http::HeaderMap) -> bool {
+    pub(crate) async fn check_request(
+        &self,
+        socket_ip: IpAddr,
+        headers: &axum::http::HeaderMap,
+    ) -> bool {
         let key = self.client_ip(socket_ip, headers);
         self.check(key).await
     }
@@ -2213,6 +2217,11 @@ pub fn router_with_cors(
         .route("/api/block/{height}", get(get_block_by_height))
         .route("/pir/info", get(get_pir_info))
         .route("/pir/query", post(post_pir_query))
+        // Short-lived, RPC-attested `$DREGG` arcade admission. The transport
+        // accepts no balance or slot assertion from the browser; the isolated
+        // gate reloads the server-issued challenge and validates server-fetched
+        // finalized Token-2022 bytes. This tier never enters governance weight.
+        .merge(crate::poa_holding_api::routes())
         .route(
             "/cipherclerk/unlock",
             post({

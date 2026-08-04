@@ -14,6 +14,8 @@ import {
  * Solana RPC reads are integration seams, deliberately not faked here.
  */
 export function buildDreggServerVerificationPlan(request, policy, nowMs = Date.now()) {
+  if (!policy || typeof policy !== "object") throw new TypeError("verification policy is required");
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("nowMs must be a non-negative safe integer");
   if (!request || request.protocol !== DREGG_PROOF_PROTOCOL) throw new Error("wrong request protocol");
   const challenge = normalizeDreggChallenge(request.challenge);
   if (challenge.domain !== DREGG_CHALLENGE_DOMAIN) throw new Error("wrong challenge domain");
@@ -73,18 +75,24 @@ export function buildDreggServerVerificationPlan(request, policy, nowMs = Date.n
       minContextSlot: challenge.slot,
       owner: request.walletAddress,
       filter: Object.freeze({ mint: DREGG_MINT }),
+      purpose: "rpc-attested-beta-game-admission-only",
     }),
     acceptance: Object.freeze({
       exactMint: DREGG_MINT,
       exactTokenAccountOwner: request.walletAddress,
-      exactTokenProgram: DREGG_TOKEN_PROGRAM,
+      exactTokenProgramId: DREGG_TOKEN_PROGRAM,
       requireInitializedAccount: true,
       sumRawBalancesAtLeast: minimumRawAmount,
       responseContextSlotAtLeast: challenge.slot,
       maxSlotLag: policy.maxSlotLag,
-      trustTier: "beta-rpc-attested",
+      trustGrade: "rpcAttested",
+      admissionScope: "poa:beta:game-admission",
+      credentialKind: "short-lived",
       governanceWeightBearing: false,
-      evidenceBoundary: "configured-server-finalized-solana-rpc",
+      balanceClaimBearing: false,
+      accountsProofAnchored: false,
+      evidenceBoundary: "configured-server-finalized-solana-rpc-only",
+      upgradeRequirement: "dregg-consensus-accepted-anchored-accounts-proof",
     }),
   });
 }

@@ -18,6 +18,7 @@ use dregg_bridge::solana_holdings::{
 use dregg_bridge::solana_provenance::WeakSubjectivityAnchor;
 use dregg_governance::holding_weight::{OwnerBinding, binding_message, verify_binding};
 use dregg_pay::watcher::FetchedAccount;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 pub const DREGG_MINT_BASE58: &str = "XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump";
@@ -81,7 +82,7 @@ impl GateConfig {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Challenge {
     id: Bytes32,
     voter: Bytes32,
@@ -112,8 +113,17 @@ impl Challenge {
     pub fn wallet(&self) -> Bytes32 {
         self.wallet
     }
+    pub fn nonce(&self) -> Bytes32 {
+        self.nonce
+    }
+    pub fn issued_at(&self) -> u64 {
+        self.issued_at
+    }
     pub fn expires_at(&self) -> u64 {
         self.expires_at
+    }
+    pub fn min_context_slot(&self) -> u64 {
+        self.min_context_slot
     }
     /// Exact wallet `signMessage` bytes, reusing Dregg's owner→voter binding.
     pub fn signing_message(&self) -> Vec<u8> {
@@ -282,13 +292,13 @@ pub fn verify_consensus_source<S: HoldingFeedSource>(
     Ok(holding)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TrustTier {
     BetaRpcAttested,
     ConsensusVerified,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HoldingCapability {
     receipt_id: Bytes32,
     challenge_id: Bytes32,
@@ -357,6 +367,14 @@ pub enum CapabilityUse {
     Replay,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CapabilityStatus {
+    Unknown,
+    Active(HoldingCapability),
+    Expired(HoldingCapability),
+    Consumed(HoldingCapability),
+}
+
 /// Durable replay boundary. Production implementations must make each `*_once`
 /// operation atomic and survive process restart; otherwise nonce replay reopens
 /// after every deploy.
@@ -370,7 +388,12 @@ pub trait AdmissionStore {
     fn challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, Self::Error>;
     fn consume_challenge_once(&mut self, id: Bytes32) -> Result<bool, Self::Error>;
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error>;
-    fn insert_capability_once(&mut self, id: Bytes32) -> Result<bool, Self::Error>;
+    fn insert_capability_once(
+        &mut self,
+        capability: HoldingCapability,
+    ) -> Result<bool, Self::Error>;
+    fn capability(&self, id: &Bytes32) -> Result<Option<HoldingCapability>, Self::Error>;
+    fn capability_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error>;
     fn consume_capability_once(&mut self, id: Bytes32) -> Result<CapabilityUse, Self::Error>;
 }
 
@@ -379,7 +402,7 @@ pub struct InMemoryAdmissionStore {
     issued: HashMap<Bytes32, Challenge>,
     used_nonces: HashSet<Bytes32>,
     spent_challenges: HashSet<Bytes32>,
-    issued_capabilities: HashSet<Bytes32>,
+    issued_capabilities: HashMap<Bytes32, HoldingCapability>,
     spent_capabilities: HashSet<Bytes32>,
 }
 
@@ -405,14 +428,28 @@ impl AdmissionStore for InMemoryAdmissionStore {
     fn challenge_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
         Ok(self.spent_challenges.contains(id))
     }
-    fn insert_capability_once(&mut self, id: Bytes32) -> Result<bool, Self::Error> {
-        Ok(self.issued_capabilities.insert(id))
+    fn insert_capability_once(
+        &mut self,
+        capability: HoldingCapability,
+    ) -> Result<bool, Self::Error> {
+        let id = capability.receipt_id;
+        if self.issued_capabilities.contains_key(&id) {
+            return Ok(false);
+        }
+        self.issued_capabilities.insert(id, capability);
+        Ok(true)
+    }
+    fn capability(&self, id: &Bytes32) -> Result<Option<HoldingCapability>, Self::Error> {
+        Ok(self.issued_capabilities.get(id).cloned())
+    }
+    fn capability_consumed(&self, id: &Bytes32) -> Result<bool, Self::Error> {
+        Ok(self.spent_capabilities.contains(id))
     }
     fn consume_capability_once(&mut self, id: Bytes32) -> Result<CapabilityUse, Self::Error> {
         if self.spent_capabilities.contains(&id) {
             return Ok(CapabilityUse::Replay);
         }
-        if !self.issued_capabilities.remove(&id) {
+        if !self.issued_capabilities.contains_key(&id) {
             return Ok(CapabilityUse::Unknown);
         }
         self.spent_capabilities.insert(id);
@@ -443,6 +480,36 @@ impl Default for Gate<InMemoryAdmissionStore> {
 impl<S: AdmissionStore> Gate<S> {
     pub fn with_store(store: S) -> Self {
         Self { store }
+    }
+
+    /// Reload the server-issued canonical challenge. HTTP adapters should accept
+    /// only an id from the client and use this value, never deserialize a
+    /// client-supplied challenge transcript.
+    pub fn issued_challenge(&self, id: &Bytes32) -> Result<Option<Challenge>, GateError> {
+        self.store
+            .challenge(id)
+            .map_err(|e| GateError::Store(e.to_string()))
+    }
+
+    pub fn capability_status(&self, id: &Bytes32, now: u64) -> Result<CapabilityStatus, GateError> {
+        let Some(capability) = self
+            .store
+            .capability(id)
+            .map_err(|e| GateError::Store(e.to_string()))?
+        else {
+            return Ok(CapabilityStatus::Unknown);
+        };
+        if self
+            .store
+            .capability_consumed(id)
+            .map_err(|e| GateError::Store(e.to_string()))?
+        {
+            return Ok(CapabilityStatus::Consumed(capability));
+        }
+        if now < capability.issued_at || now > capability.expires_at {
+            return Ok(CapabilityStatus::Expired(capability));
+        }
+        Ok(CapabilityStatus::Active(capability))
     }
 
     pub fn issue(
@@ -558,14 +625,7 @@ impl<S: AdmissionStore> Gate<S> {
             .checked_add(presented.capability_ttl_secs)
             .ok_or(GateError::TimeOverflow)?;
         let receipt_id = receipt_id(presented, &observation, now, expires_at);
-        if !self
-            .store
-            .insert_capability_once(receipt_id)
-            .map_err(|e| GateError::Store(e.to_string()))?
-        {
-            return Err(GateError::CapabilityIdCollision);
-        }
-        Ok(HoldingCapability {
+        let capability = HoldingCapability {
             receipt_id,
             challenge_id: presented.id,
             trust: TrustTier::BetaRpcAttested,
@@ -579,7 +639,15 @@ impl<S: AdmissionStore> Gate<S> {
             snapshot_slot: observation.slot,
             issued_at: now,
             expires_at,
-        })
+        };
+        if !self
+            .store
+            .insert_capability_once(capability.clone())
+            .map_err(|e| GateError::Store(e.to_string()))?
+        {
+            return Err(GateError::CapabilityIdCollision);
+        }
+        Ok(capability)
     }
 
     pub fn consume(&mut self, capability: &HoldingCapability, now: u64) -> Result<(), GateError> {
@@ -661,6 +729,10 @@ pub fn decode_pubkey(text: &str) -> Result<Bytes32, GateError> {
         .into_vec()
         .map_err(|_| GateError::BadBase58)?;
     bytes.try_into().map_err(|_| GateError::BadPubkeyLength)
+}
+
+pub fn encode_pubkey(key: &Bytes32) -> String {
+    bs58::encode(key).into_string()
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

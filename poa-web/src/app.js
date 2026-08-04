@@ -10,6 +10,8 @@ import { finiteTableAuthority, loadMissionCatalog, missionByGameId } from "./mis
 import { loadRelayRepairDescriptor } from "./relay-runtime.js";
 import { loadSalvageLockDescriptor } from "./salvage-runtime.js";
 import { launchCatalogMission } from "./mission-launcher.js";
+import { mountDreggAdmissionPanel } from "./dregg-admission-panel.js";
+import { getWalletStandardRegistry } from "./wallet-standard-registry.js";
 
 const byId = (id) => document.getElementById(id);
 const state = {
@@ -69,6 +71,23 @@ function initializeChrome() {
 
   byId("signal-clear").addEventListener("click", clearDraft);
   byId("signal-submit").addEventListener("click", submitDraft);
+}
+
+function initializeDreggAdmission() {
+  const root = byId("dregg-admission-root");
+  if (!root) return;
+  try {
+    mountDreggAdmissionPanel(root, {
+      walletsRegistry: getWalletStandardRegistry(window),
+      origin: location.origin,
+    });
+  } catch (error) {
+    console.error("PoA wallet admission unavailable", error);
+    root.dataset.state = "unavailable";
+    const fallback = root.querySelector("[role='status']");
+    if (fallback) fallback.lastElementChild.textContent =
+      "Wallet Standard discovery or the same-origin PoA node is unavailable. No access was granted.";
+  }
 }
 
 function renderMeters(meters) {
@@ -283,6 +302,7 @@ function escapeHtml(value) {
 
 async function boot() {
   initializeChrome();
+  initializeDreggAdmission();
   try {
     const bundle = await loadPOAG1({
       baseUrl: new URL("./artifacts/poag1/", location.href),

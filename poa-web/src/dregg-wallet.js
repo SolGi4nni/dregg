@@ -6,6 +6,7 @@
  */
 
 export const DREGG_MINT = "XkeTXo1125vz5H9svJpGiw4JvLbN8VmMu9cmMvspump";
+/** Exact SPL Token-2022 program id owning this mint and its token accounts. */
 export const DREGG_TOKEN_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 export const DREGG_PROOF_PROTOCOL = "poa-dregg-proof-v1";
 export const DREGG_CHALLENGE_DOMAIN = "pathofangels.network/dregg-proof";
@@ -31,9 +32,13 @@ function requiredInteger(name, value) {
 }
 
 function publicKeyText(publicKey) {
-  if (typeof publicKey === "string") return requiredText("walletAddress", publicKey);
-  if (publicKey && typeof publicKey.toBase58 === "function") return publicKey.toBase58();
-  if (publicKey && typeof publicKey.toString === "function") return publicKey.toString();
+  if (typeof publicKey === "string") return normalizeSolanaPublicKey("walletAddress", publicKey);
+  if (publicKey && typeof publicKey.toBase58 === "function") {
+    return normalizeSolanaPublicKey("walletAddress", publicKey.toBase58());
+  }
+  if (publicKey && typeof publicKey.toString === "function") {
+    return normalizeSolanaPublicKey("walletAddress", publicKey.toString());
+  }
   throw new TypeError("wallet did not expose a Solana public key");
 }
 
@@ -64,6 +69,29 @@ export function bytesToBase64(bytesLike) {
   return output;
 }
 
+/** Strict, canonical standard-base64 decoder for backend-provided signing bytes. */
+export function base64ToBytes(text) {
+  requiredText("base64", text);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(text)) {
+    throw new TypeError("invalid standard base64");
+  }
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const output = [];
+  for (let index = 0; index < text.length; index += 4) {
+    const a = alphabet.indexOf(text[index]);
+    const b = alphabet.indexOf(text[index + 1]);
+    const c = text[index + 2] === "=" ? 0 : alphabet.indexOf(text[index + 2]);
+    const d = text[index + 3] === "=" ? 0 : alphabet.indexOf(text[index + 3]);
+    const word = (a << 18) | (b << 12) | (c << 6) | d;
+    output.push((word >>> 16) & 255);
+    if (text[index + 2] !== "=") output.push((word >>> 8) & 255);
+    if (text[index + 3] !== "=") output.push(word & 255);
+  }
+  const bytes = Uint8Array.from(output);
+  if (bytesToBase64(bytes) !== text) throw new TypeError("non-canonical standard base64");
+  return bytes;
+}
+
 export function base58ToBytes(text) {
   requiredText("base58", text);
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -86,12 +114,19 @@ export function base58ToBytes(text) {
   return Uint8Array.from(bytes.reverse());
 }
 
+/** Refuse malformed or non-32-byte Solana/Ed25519 public keys at the boundary. */
+export function normalizeSolanaPublicKey(name, value) {
+  const text = requiredText(name, value);
+  if (base58ToBytes(text).length !== 32) {
+    throw new TypeError(`${name} must be a base58-encoded 32-byte public key`);
+  }
+  return text;
+}
+
 /** Exact Rust `binding_message`: BIND_DOMAIN || owner(32) || voter(32). */
 export function buildDreggOwnerBindingMessage(ownerAddress, voterId) {
-  const owner = base58ToBytes(ownerAddress);
-  const voter = base58ToBytes(voterId);
-  if (owner.length !== 32) throw new Error("Solana owner must decode to 32 bytes");
-  if (voter.length !== 32) throw new Error("dregg voterId must decode to 32 bytes");
+  const owner = base58ToBytes(normalizeSolanaPublicKey("ownerAddress", ownerAddress));
+  const voter = base58ToBytes(normalizeSolanaPublicKey("voterId", voterId));
   const domain = encoder.encode(DREGG_OWNER_BIND_DOMAIN);
   const message = new Uint8Array(domain.length + 64);
   message.set(domain, 0);
@@ -115,7 +150,7 @@ export function normalizeDreggChallenge(challenge) {
     expiresAt: requiredText("expiresAt", challenge.expiresAt),
     slot: requiredInteger("slot", challenge.slot),
     mint: requiredText("mint", challenge.mint),
-    voterId: requiredText("voterId", challenge.voterId),
+    voterId: normalizeSolanaPublicKey("voterId", challenge.voterId),
   };
   if (normalized.protocol !== DREGG_PROOF_PROTOCOL) throw new Error("wrong proof protocol");
   if (normalized.domain !== DREGG_CHALLENGE_DOMAIN) throw new Error("wrong proof domain");
@@ -131,7 +166,7 @@ export function normalizeDreggChallenge(challenge) {
 
 export function formatDreggChallenge(challenge, walletAddress) {
   const c = normalizeDreggChallenge(challenge);
-  const wallet = requiredText("walletAddress", walletAddress);
+  const wallet = normalizeSolanaPublicKey("walletAddress", walletAddress);
   return [
     "Path of Angels $DREGG Proof of Holding",
     `Protocol: ${c.protocol}`,

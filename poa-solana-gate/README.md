@@ -11,8 +11,9 @@ Solana verifier. It composes:
 - `dregg_governance::holding_weight` for the existing owner-binding message;
 - `dregg_pay::watcher::FetchedAccount` for the live account seam.
 
-This crate does not implement HTTP or choose an RPC client. An embedding server
-adapter must perform two RPC calls and convert their responses into the narrow
+This crate does not implement HTTP or choose an RPC client. The production-shaped
+beta adapter now lives in `node/src/poa_holding_api.rs`; other embedding servers
+must perform the same two RPC calls and convert their responses into the narrow
 `RpcHoldingSource` seam:
 
 1. `getGenesisHash` and compare it with the configured cluster genesis hash.
@@ -32,6 +33,23 @@ Production must provide a durable `AdmissionStore` whose issue/consume operation
 are atomic. The included in-memory store is only for tests and local development.
 It records both issued and spent receipt IDs, so a never-issued ID is rejected as
 forged and a previously issued-and-spent ID is rejected as replayed.
+
+## Node HTTP integration
+
+The node exposes three strict routes when its federation is configured and
+`DREGG_POA_SOLANA_RPC_URL` names an HTTPS endpoint:
+
+- `POST /api/poa/holding/challenge` with only `{ "wallet": "<base58>" }`;
+- `POST /api/poa/holding/verify` with only the issued challenge id and wallet
+  signature;
+- `GET /api/poa/holding/status/{receipt_id}`.
+
+On `beta.pathofangels.network` the browser reaches those routes through the
+same-origin `/node/api/poa/holding/*` proxy. Challenge and capability state is
+stored durably, pruned after expiry, and bounded. Capability/status responses
+omit the observed balance and explicitly carry `governance_weight_bearing:
+false`. A crash between consuming a challenge and saving its capability burns
+that challenge fail-closed; the player requests a fresh one.
 
 ## Trust boundary
 

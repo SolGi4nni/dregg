@@ -73,6 +73,8 @@ poa_lean_targets=(
   Dregg2.Games.PathOfAngels.FinalizedRunEventAggregate
   Dregg2.Games.PathOfAngels.HolderMechanics
   Dregg2.Games.PathOfAngels.HolderMechanicsBoundary
+  Dregg2.Games.PathOfAngels.GalleyMaintenanceDaily
+  Dregg2.Games.PathOfAngels.GalleyMaintenanceDailyBoundary
   Market.DarkBazaarPrivatePoaDescriptor
 )
 run env AXIOM_GUARD_TARGETS="${poa_lean_targets[*]}" \
@@ -86,6 +88,8 @@ run cargo nextest run -p dregg-node \
   -E 'test(/deployment_domain/) or test(/poa_strand_admission/)'
 run cargo nextest run -p dregg-node -E 'test(/poa_signal/)'
 run cargo nextest run -p dregg-persist -E 'test(/poa_signal/)'
+run cargo nextest run -p dregg-node -E 'test(/poa_holding_api/)'
+run cargo nextest run -p dregg-persist -E 'test(/poa_event_store/)'
 
 # The explicit feature and target are deliberate: without them Cargo discovers
 # zero PoA ingress tests while returning success.
