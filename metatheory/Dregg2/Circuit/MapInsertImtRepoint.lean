@@ -141,6 +141,9 @@ open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute ReconcileGatesAt M
 open Dregg2.Circuit.Poseidon2Binding (spongeColl_refutable_of_injective)
 open Dregg2.Circuit.MapReconcileImtRepoint (depSpine depKey depSpine_addr_lt depHeap_length)
 open Dregg2.Circuit.MapKindImtGates
+-- `fits_of_pow_le` — capacity from a CHEAPER exponent; the only way §7's symbolic-depth exhibit can
+-- carry `padVec`/`padImtRoot`'s occupancy obligation without ever evaluating `2 ^ dep`.
+open Dregg2.Circuit.DeployedMapDenotation (fits_of_pow_le)
 
 set_option autoImplicit false
 set_option linter.unusedVariables false
@@ -156,8 +159,8 @@ new hash property, and `oddSponge` inhabits both. -/
 
 /-- Reading a LIVE cell of a padded vector is reading the prefix — the one-liner the position-0
 comparison below and §7's shift argument both run on. -/
-theorem padTo_getElem?_lt (d : Nat) (L : List ℤ) (i : Nat) (hi : i < L.length) :
-    (padTo d L)[i]? = L[i]? := by
+theorem padTo_getElem?_lt (d : Nat) (L : List ℤ) (hFits : L.length ≤ 2 ^ d) (i : Nat)
+    (hi : i < L.length) : (padTo d L hFits)[i]? = L[i]? := by
   rw [padTo, List.getElem?_append_left hi]
 
 /-- **★ THE DEPLOYED PADDED ARITY-3 COMMITMENT IS NEVER AN ARITY-2 `mapRoot`** — at any depth, for
@@ -227,8 +230,8 @@ knowledge-extraction slot `ReconcileGatesAt`'s `∃ h` occupies. -/
 def AbsentImtRowAt (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
     (oldRoot newRoot key lowAddr lowValue lowNext : ℤ) : Prop :=
   ∃ (h : Heap.FeltHeap) (steps : List (Bool × ℤ)),
-    (padImtSchema sent).HeapOk h ∧ (padImtSchema sent).SizeOk dep h ∧
-    padImtRoot sent hash dep h = oldRoot ∧
+    (padImtSchema sent).HeapOk h ∧ ∃ hsz : (padImtSchema sent).SizeOk dep h,
+    padImtRoot sent hash dep h hsz = oldRoot ∧
     AbsentImtGatesOn hash dep steps oldRoot newRoot key lowAddr lowValue lowNext
 
 /-- **★ THE `.absent` LAW AT THE DEPLOYED PADDED COMMITMENT, floor-free.** An accepting deployed
@@ -240,15 +243,14 @@ theorem absentImtGates_force_absence_or_resid (sent : ℤ) (hash : List ℤ → 
     {oldRoot newRoot key lowAddr lowValue lowNext : ℤ}
     {h : Heap.FeltHeap} {steps : List (Bool × ℤ)}
     (hok : (padImtSchema sent).HeapOk h) (hsz : (padImtSchema sent).SizeOk dep h)
-    (hcommit : padImtRoot sent hash dep h = oldRoot)
+    (hcommit : padImtRoot sent hash dep h hsz = oldRoot)
     (hg : AbsentImtGatesOn hash dep steps oldRoot newRoot key lowAddr lowValue lowNext) :
     (Heap.get h key = none
       ∧ opensToMerkleS (padImtSchema sent) hash dep oldRoot key none
       ∧ newRoot = oldRoot)
-    ∨ OpenResid sent hash dep h steps ⟨lowAddr, lowValue, lowNext⟩ := by
+    ∨ OpenResid sent hash dep h hsz steps ⟨lowAddr, lowValue, lowNext⟩ := by
   obtain ⟨hsl, hpa, hlk, hkn, hnr⟩ := hg
-  have hsz' : h.length ≤ 2 ^ dep := hsz
-  rcases padOpen_binds_or_resid sent hash dep hsz' hsl (by rw [hpa, ← hcommit]) with
+  rcases padOpen_binds_or_resid sent hash dep hsz hsl (by rw [hpa, ← hcommit]) with
     ⟨_, hchain, _, _, _⟩ | hres
   · have hmem : (⟨lowAddr, lowValue, lowNext⟩ : ImtLeaf) ∈ imtChainOf sent h :=
       List.mem_of_getElem? hchain
@@ -270,7 +272,7 @@ theorem absentImtRow_forces_absence_of_good {hash : List ℤ → ℤ} (hgood : M
   obtain ⟨h, steps, hok, hsz, hcommit, hg⟩ := hr
   rcases absentImtGates_force_absence_or_resid sent hash dep hok hsz hcommit hg with hres | hbad
   · exact ⟨hres.2.1, hres.2.2⟩
-  · exact absurd hbad (openResid_refuted hgood sent dep h steps _)
+  · exact absurd hbad (openResid_refuted hgood sent dep h hsz steps _)
 
 /-! ## §3 — THE REPOINTED `.insert` DISPATCH.
 
@@ -694,14 +696,35 @@ noncomputable def shiftPost : List ℤ :=
   [imtLeafHash oddSponge ⟨1, 7, 5⟩, imtLeafHash oddSponge ⟨5, 2, 9⟩,
    imtLeafHash oddSponge ⟨9, 3, 100⟩]
 
-theorem shift_pre_vec (dep : Nat) : padVec 100 oddSponge dep shiftHeap = padTo dep shiftPre := rfl
-
-theorem shift_post_vec (dep : Nat) :
-    padVec 100 oddSponge dep (Heap.set shiftHeap 5 2) = padTo dep shiftPost := by
-  rw [shiftHeap_set]; rfl
-
 theorem shiftPre_length : shiftPre.length = 2 := rfl
 theorem shiftPost_length : shiftPost.length = 3 := rfl
+
+/-- ⚠ **THE OCCUPANCIES OF §7, NAMED, AND OFF `hdep` RATHER THAN OFF `heap_fits`.** At a SYMBOLIC
+`dep` the discharger cannot reach `2 ≤ 2 ^ dep` — there is nothing for `omega` to do with `2 ^ dep`
+and nothing for the kernel to evaluate — and the bound is a CONSEQUENCE of this section's own
+`2 ≤ dep` rather than a fact that is absent. `fits_of_pow_le` is the bridge: capacity from a CHEAPER
+exponent, so the exhibit never evaluates a power. -/
+theorem shiftHeap_fits {dep : Nat} (hdep : 2 ≤ dep) : shiftHeap.length ≤ 2 ^ dep :=
+  fits_of_pow_le hdep (by decide)
+theorem shiftSet_fits {dep : Nat} (hdep : 2 ≤ dep) :
+    (Heap.set shiftHeap 5 2).length ≤ 2 ^ dep := by
+  rw [shiftHeap_set]; exact fits_of_pow_le hdep (by decide)
+theorem shiftPre_fits {dep : Nat} (hdep : 2 ≤ dep) : shiftPre.length ≤ 2 ^ dep :=
+  fits_of_pow_le hdep (by rw [shiftPre_length]; decide)
+theorem shiftPost_fits {dep : Nat} (hdep : 2 ≤ dep) : shiftPost.length ≤ 2 ^ dep :=
+  fits_of_pow_le hdep (by rw [shiftPost_length]; decide)
+
+theorem shift_pre_vec {dep : Nat} (hdep : 2 ≤ dep) :
+    padVec 100 oddSponge dep shiftHeap (shiftHeap_fits hdep)
+      = padTo dep shiftPre (shiftPre_fits hdep) := rfl
+
+theorem shift_post_vec {dep : Nat} (hdep : 2 ≤ dep) :
+    padVec 100 oddSponge dep (Heap.set shiftHeap 5 2) (shiftSet_fits hdep)
+      = padTo dep shiftPost (shiftPost_fits hdep) := by
+  have hmap : (imtChainOf 100 (Heap.set shiftHeap 5 2)).map (imtLeafHash oddSponge) = shiftPost := by
+    rw [shiftHeap_set]; rfl
+  show padTo dep ((imtChainOf 100 (Heap.set shiftHeap 5 2)).map (imtLeafHash oddSponge)) _ = _
+  exact padTo_congr hmap _ _
 
 /-- Position `0` moved: the PREDECESSOR'S POINTER went `9 → 5`. Distinct arity-3 preimages, so
 distinct digests at an injective hash. -/
@@ -725,18 +748,22 @@ position `0` (the predecessor's pointer `9 → 5`) AND position `1` (the entry i
 post-vector is NOT any one-cell update of the pre-vector, at any depth ≥ 2. -/
 theorem interior_sorted_insert_moves_more_than_one_cell (dep : Nat) (hdep : 2 ≤ dep) :
     ∀ (p : Nat) (x : ℤ),
-      padVec 100 oddSponge dep (Heap.set shiftHeap 5 2)
-        ≠ (padVec 100 oddSponge dep shiftHeap).set p x := by
+      padVec 100 oddSponge dep (Heap.set shiftHeap 5 2) (shiftSet_fits hdep)
+        ≠ (padVec 100 oddSponge dep shiftHeap (shiftHeap_fits hdep)).set p x := by
   intro p x he
-  rw [shift_pre_vec, shift_post_vec] at he
-  have hpre0 : (padTo dep shiftPre)[0]? = some (imtLeafHash oddSponge ⟨1, 7, 9⟩) := by
-    rw [padTo_getElem?_lt dep shiftPre 0 (by rw [shiftPre_length]; omega)]; rfl
-  have hpre1 : (padTo dep shiftPre)[1]? = some (imtLeafHash oddSponge ⟨9, 3, 100⟩) := by
-    rw [padTo_getElem?_lt dep shiftPre 1 (by rw [shiftPre_length]; omega)]; rfl
-  have hpost0 : (padTo dep shiftPost)[0]? = some (imtLeafHash oddSponge ⟨1, 7, 5⟩) := by
-    rw [padTo_getElem?_lt dep shiftPost 0 (by rw [shiftPost_length]; omega)]; rfl
-  have hpost1 : (padTo dep shiftPost)[1]? = some (imtLeafHash oddSponge ⟨5, 2, 9⟩) := by
-    rw [padTo_getElem?_lt dep shiftPost 1 (by rw [shiftPost_length]; omega)]; rfl
+  rw [shift_pre_vec hdep, shift_post_vec hdep] at he
+  have hpre0 : (padTo dep shiftPre (shiftPre_fits hdep))[0]?
+      = some (imtLeafHash oddSponge ⟨1, 7, 9⟩) := by
+    rw [padTo_getElem?_lt dep shiftPre _ 0 (by rw [shiftPre_length]; omega)]; rfl
+  have hpre1 : (padTo dep shiftPre (shiftPre_fits hdep))[1]?
+      = some (imtLeafHash oddSponge ⟨9, 3, 100⟩) := by
+    rw [padTo_getElem?_lt dep shiftPre _ 1 (by rw [shiftPre_length]; omega)]; rfl
+  have hpost0 : (padTo dep shiftPost (shiftPost_fits hdep))[0]?
+      = some (imtLeafHash oddSponge ⟨1, 7, 5⟩) := by
+    rw [padTo_getElem?_lt dep shiftPost _ 0 (by rw [shiftPost_length]; omega)]; rfl
+  have hpost1 : (padTo dep shiftPost (shiftPost_fits hdep))[1]?
+      = some (imtLeafHash oddSponge ⟨5, 2, 9⟩) := by
+    rw [padTo_getElem?_lt dep shiftPost _ 1 (by rw [shiftPost_length]; omega)]; rfl
   have hp0 : p = 0 := by
     by_contra hne
     have h := congrArg (fun L => L[0]?) he
@@ -760,23 +787,20 @@ sorted-insert commitment at an interior key. No amount of extra gates on the sin
 fixes op = 3; the shape has to change (which is what the two-path AAFI op is). -/
 theorem singlePath_postRoot_is_not_the_sorted_insert (dep : Nat) (hdep : 2 ≤ dep)
     (p : Nat) (x : ℤ) :
-    perfectRoot oddSponge dep ((padVec 100 oddSponge dep shiftHeap).set p x)
-      ≠ padImtRoot 100 oddSponge dep (Heap.set shiftHeap 5 2) := by
+    perfectRoot oddSponge dep ((padVec 100 oddSponge dep shiftHeap (shiftHeap_fits hdep)).set p x)
+      ≠ padImtRoot 100 oddSponge dep (Heap.set shiftHeap 5 2) (shiftSet_fits hdep) := by
   intro he
-  have h4 : (4 : Nat) ≤ 2 ^ dep := by
-    calc (4 : Nat) = 2 ^ 2 := rfl
-      _ ≤ 2 ^ dep := Nat.pow_le_pow_right (by norm_num) hdep
-  have hlPre : (padVec 100 oddSponge dep shiftHeap).length = 2 ^ dep :=
-    padVec_length (by show (2 : Nat) ≤ 2 ^ dep; exact le_trans (by norm_num) h4)
-  have hlSet : ((padVec 100 oddSponge dep shiftHeap).set p x).length = 2 ^ dep := by
+  have hlPre : (padVec 100 oddSponge dep shiftHeap (shiftHeap_fits hdep)).length = 2 ^ dep :=
+    padVec_length (shiftHeap_fits hdep)
+  have hlSet : ((padVec 100 oddSponge dep shiftHeap (shiftHeap_fits hdep)).set p x).length
+      = 2 ^ dep := by
     rw [List.length_set]; exact hlPre
-  have hlPost : (padVec 100 oddSponge dep (Heap.set shiftHeap 5 2)).length = 2 ^ dep := by
-    refine padVec_length ?_
-    rw [shiftHeap_set]
-    show (3 : Nat) ≤ 2 ^ dep
-    exact le_trans (by norm_num) h4
-  have he' : perfectRoot oddSponge dep ((padVec 100 oddSponge dep shiftHeap).set p x)
-      = perfectRoot oddSponge dep (padVec 100 oddSponge dep (Heap.set shiftHeap 5 2)) := he
+  have hlPost : (padVec 100 oddSponge dep (Heap.set shiftHeap 5 2) (shiftSet_fits hdep)).length
+      = 2 ^ dep := padVec_length (shiftSet_fits hdep)
+  have he' : perfectRoot oddSponge dep
+        ((padVec 100 oddSponge dep shiftHeap (shiftHeap_fits hdep)).set p x)
+      = perfectRoot oddSponge dep
+        (padVec 100 oddSponge dep (Heap.set shiftHeap 5 2) (shiftSet_fits hdep)) := he
   rcases perfectRoot_binds_or_collides oddSponge dep hlSet hlPost he' with hveq | hcol
   · exact interior_sorted_insert_moves_more_than_one_cell dep hdep p x hveq.symm
   · exact spongeColl_refutable_of_injective oddSponge oddSponge_injective _ hcol

@@ -187,8 +187,14 @@ example : Dregg2.Circuit.MapPaddedDenotation.padImtSchema
         = Dregg2.Circuit.DeployedMapDenotation.padImtSchema := rfl
 example : Dregg2.Circuit.MapPaddedDenotation.padImtTeeth
         = Dregg2.Circuit.DeployedMapDenotation.padImtTeeth := rfl
-example : Dregg2.Circuit.MapPaddedDenotation.padImtRoot
-        = Dregg2.Circuit.DeployedMapDenotation.padImtRoot := rfl
+-- ⚠ At EXPLICIT arguments, not as bare names: since 2026-08-03 `padImtRoot` carries an `autoParam`
+-- occupancy obligation (`DeployedMapDenotation` §3-cap), so an eta-free `f = f` asks the elaborator
+-- to synthesize `hFits` for a heap that does not exist yet. The equation is the same one; applying
+-- it is what makes it elaborable, and a resurrected local definition still turns it RED.
+example (sent : ℤ) (hash : List ℤ → ℤ) (d : Nat) (h : Dregg2.Substrate.Heap.FeltHeap)
+    (hz : h.length ≤ 2 ^ d) :
+    Dregg2.Circuit.MapPaddedDenotation.padImtRoot sent hash d h hz
+      = Dregg2.Circuit.DeployedMapDenotation.padImtRoot sent hash d h hz := rfl
 example : Dregg2.Circuit.MapDenotationSchema.imtChainOf
         = Dregg2.Circuit.DeployedMapDenotation.imtChainOf := rfl
 example : Dregg2.Circuit.IndexedMerkleTree.imtLeafHash

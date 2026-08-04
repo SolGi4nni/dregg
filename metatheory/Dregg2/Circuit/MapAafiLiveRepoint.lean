@@ -133,6 +133,9 @@ open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathCollFind
 open Dregg2.Crypto.SpongeCarrierReduction (IsSpongeColl)
 open Dregg2.Circuit.Poseidon2Binding (spongeColl_refutable_of_injective)
 open Dregg2.Circuit.MapKindImtGates
+-- `fits_of_pow_le` — capacity from a CHEAPER exponent; the only way §7's symbolic-depth exhibit can
+-- carry `appendOrderRoot`'s occupancy obligation without ever evaluating `2 ^ dep`.
+open Dregg2.Circuit.DeployedMapDenotation (fits_of_pow_le)
 open Dregg2.Circuit.MapInsertImtRepoint (padTo_getElem?_lt insertsFreshS)
 
 set_option autoImplicit false
@@ -187,25 +190,27 @@ theorem padTo_set_at_length (d : Nat) (M : List ℤ) (y : ℤ) (hlt : M.length <
 /-- **And a PERMUTATION at any other free slot** — which is all gate (d1) forces, since the AIR pins
 the slot's DIGEST to `ZERO8` and never pins its INDEX to `next_free_index`. -/
 theorem padTo_set_pad_perm (d : Nat) (M : List ℤ) (p : Nat) (y : ℤ)
-    (hM : M.length ≤ p) (hp : p < 2 ^ d) :
-    (((padTo d M).set p y)).Perm (padTo d (M ++ [y])) := by
+    (hM : M.length ≤ p) (hp : p < 2 ^ d)
+    (fM : M.length ≤ 2 ^ d) (fA : (M ++ [y]).length ≤ 2 ^ d) :
+    (((padTo d M fM).set p y)).Perm (padTo d (M ++ [y]) fA) := by
   obtain ⟨j, hpj⟩ : ∃ j, p = M.length + j := ⟨p - M.length, by omega⟩
   subst hpj
   have hj : j < 2 ^ d - M.length := by omega
-  have htgt : padTo d (M ++ [y])
+  have htgt : padTo d (M ++ [y]) fA
       = M ++ (y :: List.replicate (2 ^ d - M.length - 1) padDigest) := by
     rw [padTo, show (M ++ [y]).length = M.length + 1 from by simp,
       show 2 ^ d - (M.length + 1) = 2 ^ d - M.length - 1 from by omega]
     simp
-  have hsrc : (padTo d M).set (M.length + j) y
+  have hsrc : (padTo d M fM).set (M.length + j) y
       = M ++ (List.replicate (2 ^ d - M.length) padDigest).set j y := by
     rw [padTo, set_append_right']
   rw [hsrc, htgt]
   exact List.Perm.append_left M (set_replicate_perm _ _ padDigest y hj)
 
 /-- Padding a permutation is a permutation of the paddings (equal lengths ⇒ equal padding runs). -/
-theorem padTo_perm_of_perm (d : Nat) {P Q : List ℤ} (hpq : P.Perm Q) :
-    ((padTo d P)).Perm (padTo d Q) := by
+theorem padTo_perm_of_perm (d : Nat) {P Q : List ℤ} (hpq : P.Perm Q)
+    (fP : P.length ≤ 2 ^ d) (fQ : Q.length ≤ 2 ^ d) :
+    ((padTo d P fP)).Perm (padTo d Q fQ) := by
   have hl : P.length = Q.length := hpq.length_eq
   simp only [padTo, hl]
   exact hpq.append_right _
@@ -294,21 +299,23 @@ The AIR writes five gates and the landed pre-side law reads two. This section re
 /-- The post digest vector a deployed AAFI row produces: the committed pre-vector with the low leaf's
 cell relinked and the free slot filled. Everything the gates leave free is a PARAMETER. -/
 noncomputable def aafiPostVec (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
-    (p1 p2 : Nat) (key value lowAddr lowValue lowNext : ℤ) : List ℤ :=
-  (((padVec sent hash dep h).set p1 (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)).set p2
+    (hFits : h.length ≤ 2 ^ dep) (p1 p2 : Nat) (key value lowAddr lowValue lowNext : ℤ) :
+    List ℤ :=
+  (((padVec sent hash dep h hFits).set p1 (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)).set p2
     (imtLeafHash hash ⟨key, value, lowNext⟩))
 
 /-- **`AafiLayoutAt`** — what the five deployed op = 4 gates FORCE about the row's post-root, stated
 positionally. ⚑ `h.length ≤ p2` — the free slot being a PADDING cell — is DERIVED from gate (d1)'s
 pinned `ZERO8`, never assumed. -/
 def AafiLayoutAt (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ dep)
     (p1 p2 : Nat) (key value lowAddr lowValue lowNext newRoot : ℤ) : Prop :=
   p1 < h.length ∧ h.length ≤ p2 ∧ p2 < 2 ^ dep ∧ p1 ≠ p2 ∧
   h[p1]? = some (lowAddr, lowValue) ∧
   lowNext = (h[p1 + 1]?).elim sent Prod.fst ∧
   Heap.get h key = none ∧
   newRoot = perfectRoot hash dep
-    (aafiPostVec sent hash dep h p1 p2 key value lowAddr lowValue lowNext)
+    (aafiPostVec sent hash dep h hFits p1 p2 key value lowAddr lowValue lowNext)
 
 /-- **`AafiLayoutResid`** — the THREE named, per-row, refutable residuals of the two-path extraction.
 The first is `MapKindImtGates`'s `OpenResid` at gate (a)'s leaf verbatim. The second is the
@@ -316,20 +323,23 @@ The first is `MapKindImtGates`'s `OpenResid` at gate (a)'s leaf verbatim. The se
 `imtLeafHash hash l = padDigest` at the leaf the TOTAL extractor `chainAt` names for `p2` — the event
 that would let a LIVE cell masquerade as the free slot. No hypothesis on `hash` anywhere. -/
 def AafiLayoutResid (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ dep)
     (steps1 steps2 : List (Bool × ℤ)) (key lowAddr lowValue lowNext : ℤ) : Prop :=
-  OpenResid sent hash dep h steps1 ⟨lowAddr, lowValue, lowNext⟩
+  OpenResid sent hash dep h hFits steps1 ⟨lowAddr, lowValue, lowNext⟩
   ∨ IsSpongeColl hash (pathCollFind hash steps2
-      ((padVec sent hash dep h).set (pathPos steps1) (imtLeafHash hash ⟨lowAddr, lowValue, key⟩))
+      ((padVec sent hash dep h hFits).set (pathPos steps1)
+        (imtLeafHash hash ⟨lowAddr, lowValue, key⟩))
       padDigest)
   ∨ imtLeafHash hash (chainAt sent h (pathPos steps2)) = padDigest
 
 /-- ANTI-LAUNDERING: at a good hash all three residuals are REFUTED, so `Resid := True` is
 unbuildable and the disjunction below is informative. -/
 theorem aafiLayoutResid_refuted {hash : List ℤ → ℤ} (hgood : MapGood hash) (sent : ℤ) (dep : Nat)
-    (h : Heap.FeltHeap) (steps1 steps2 : List (Bool × ℤ)) (key lowAddr lowValue lowNext : ℤ) :
-    ¬ AafiLayoutResid sent hash dep h steps1 steps2 key lowAddr lowValue lowNext := by
+    (h : Heap.FeltHeap) (hFits : h.length ≤ 2 ^ dep)
+    (steps1 steps2 : List (Bool × ℤ)) (key lowAddr lowValue lowNext : ℤ) :
+    ¬ AafiLayoutResid sent hash dep h hFits steps1 steps2 key lowAddr lowValue lowNext := by
   rintro (hres | ⟨hne, he⟩ | hpad)
-  · exact openResid_refuted hgood sent dep h steps1 _ hres
+  · exact openResid_refuted hgood sent dep h hFits steps1 _ hres
   · exact hne (hgood.1 he)
   · exact hgood.2 _ hpad
 
@@ -340,36 +350,36 @@ theorem aafiImtGates_force_layout_or_resid (sent : ℤ) (hash : List ℤ → ℤ
     {oldRoot newRoot R1 key value lowAddr lowValue lowNext : ℤ}
     {h : Heap.FeltHeap} {steps1 steps2 : List (Bool × ℤ)}
     (hok : (padImtSchema sent).HeapOk h) (hsz : (padImtSchema sent).SizeOk dep h)
-    (hcommit : padImtRoot sent hash dep h = oldRoot)
+    (hcommit : padImtRoot sent hash dep h hsz = oldRoot)
     (hg : AafiImtGatesOn hash dep steps1 steps2 oldRoot newRoot R1 key value lowAddr lowValue
       lowNext) :
-    AafiLayoutAt sent hash dep h (pathPos steps1) (pathPos steps2) key value lowAddr lowValue
+    AafiLayoutAt sent hash dep h hsz (pathPos steps1) (pathPos steps2) key value lowAddr lowValue
         lowNext newRoot
-    ∨ AafiLayoutResid sent hash dep h steps1 steps2 key lowAddr lowValue lowNext := by
+    ∨ AafiLayoutResid sent hash dep h hsz steps1 steps2 key lowAddr lowValue lowNext := by
   obtain ⟨hsl1, hsl2, hpne, hpa, hlk, hkn, hpc, hpd1, hpd2⟩ := hg
   have hsz' : h.length ≤ 2 ^ dep := hsz
-  rcases padOpen_binds_or_resid sent hash dep hsz' hsl1 (by rw [hpa, ← hcommit]) with
+  rcases padOpen_binds_or_resid sent hash dep hsz hsl1 (by rw [hpa, ← hcommit]) with
     ⟨hlt1, hchain, hentry, hptr, hupd⟩ | hres
   · -- (c): the low-update fold NAMES `R1` as the one-cell update of the committed pre-vector.
     have hR1 : R1 = perfectRoot hash dep
-        ((padVec sent hash dep h).set (pathPos steps1)
+        ((padVec sent hash dep h hsz).set (pathPos steps1)
           (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)) := by
       rw [← hpc]; exact hupd ⟨lowAddr, lowValue, key⟩
-    have hV1len : ((padVec sent hash dep h).set (pathPos steps1)
+    have hV1len : ((padVec sent hash dep h hsz).set (pathPos steps1)
         (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)).length = 2 ^ dep := by
-      rw [List.length_set]; exact padVec_length hsz'
+      rw [List.length_set]; exact padVec_length hsz
     by_cases hc2 : IsSpongeColl hash (pathCollFind hash steps2
-        ((padVec sent hash dep h).set (pathPos steps1)
+        ((padVec sent hash dep h hsz).set (pathPos steps1)
           (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)) padDigest)
     · exact Or.inr (Or.inr (Or.inl hc2))
     · -- (d1): PATH2 binds `p2` in that vector; (d2) then NAMES the post-root.
       obtain ⟨hbind2, hupd2⟩ := pathRecompute_binds_updates hash steps2
-        ((padVec sent hash dep h).set (pathPos steps1)
+        ((padVec sent hash dep h hsz).set (pathPos steps1)
           (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)) padDigest
         (by rw [hV1len, hsl2]) (by rw [hsl2, hpd1, hR1]) hc2
       have hpost : newRoot = perfectRoot hash dep
-          (aafiPostVec sent hash dep h (pathPos steps1) (pathPos steps2) key value lowAddr lowValue
-            lowNext) := by
+          (aafiPostVec sent hash dep h hsz (pathPos steps1) (pathPos steps2) key value lowAddr
+            lowValue lowNext) := by
         rw [← hpd2, aafiPostVec]
         have := hupd2 (imtLeafHash hash ⟨key, value, lowNext⟩)
         rwa [hsl2] at this
@@ -381,13 +391,13 @@ theorem aafiImtGates_force_layout_or_resid (sent : ℤ) (hash : List ℤ → ℤ
       by_cases hlt2 : pathPos steps2 < h.length
       · -- A LIVE cell reading the padding constant is residual 3, not a free slot.
         refine Or.inr (Or.inr (Or.inr ?_))
-        have hVeq : (padVec sent hash dep h)[pathPos steps2]? = some padDigest := by
+        have hVeq : (padVec sent hash dep h hsz)[pathPos steps2]? = some padDigest := by
           rw [← hbind2, List.getElem?_set_ne hpne]
         have hL : ((imtChainOf sent h).map (imtLeafHash hash)).length = h.length := by
           rw [List.length_map, imtChainOf_length]
         have hlive : ((imtChainOf sent h).map (imtLeafHash hash))[pathPos steps2]?
             = some padDigest := by
-          rw [← padTo_getElem?_lt dep ((imtChainOf sent h).map (imtLeafHash hash))
+          rw [← padTo_getElem?_lt dep ((imtChainOf sent h).map (imtLeafHash hash)) _
             (pathPos steps2) (by rw [hL]; exact hlt2)]
           exact hVeq
         rw [List.getElem?_map] at hlive
@@ -415,15 +425,16 @@ theorem aafiImtRow_forces_layout_of_good {hash : List ℤ → ℤ} (hgood : MapG
     (sent : ℤ) (dep : Nat) {oldRoot newRoot R1 key value lowAddr lowValue lowNext : ℤ}
     (hr : AafiImtRowAt sent hash dep oldRoot newRoot R1 key value lowAddr lowValue lowNext) :
     ∃ (h : Heap.FeltHeap) (p1 p2 : Nat),
-      (padImtSchema sent).HeapOk h ∧ (padImtSchema sent).SizeOk dep h ∧
-      padImtRoot sent hash dep h = oldRoot ∧ lowAddr < key ∧ key < lowNext ∧
-      AafiLayoutAt sent hash dep h p1 p2 key value lowAddr lowValue lowNext newRoot := by
+      (padImtSchema sent).HeapOk h ∧ ∃ hsz : (padImtSchema sent).SizeOk dep h,
+      padImtRoot sent hash dep h hsz = oldRoot ∧ lowAddr < key ∧ key < lowNext ∧
+      AafiLayoutAt sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext newRoot := by
   obtain ⟨h, steps1, steps2, hok, hsz, hcommit, hg⟩ := hr
   have hbr := hg
   obtain ⟨-, -, -, -, hlk, hkn, -, -, -⟩ := hbr
   rcases aafiImtGates_force_layout_or_resid sent hash dep hok hsz hcommit hg with hlay | hbad
   · exact ⟨h, pathPos steps1, pathPos steps2, hok, hsz, hcommit, hlk, hkn, hlay⟩
-  · exact absurd hbad (aafiLayoutResid_refuted hgood sent dep h steps1 steps2 _ _ _ _)
+  · exact absurd hbad (aafiLayoutResid_refuted hgood sent dep h hsz steps1 steps2 _ _ _ _)
+
 
 /-! ## §4 — ⚑ THE PAYOFF: THE LIVE ARM ADMITS **NO ERASURE**, and its post-root MOVES. -/
 
@@ -432,10 +443,11 @@ commitment's digest vector is *literally* the pre commitment's. Nothing a prover
 accepting op = 4 row touches another entry — which is exactly what
 `MapInsertImtRepoint.insertPair_erases_the_rest_of_the_map` shows the op = 3 pairing CAN do. -/
 theorem aafiLayout_admits_no_erasure (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : Heap.FeltHeap) (p1 p2 : Nat) (key value lowAddr lowValue lowNext : ℤ) :
+    (h : Heap.FeltHeap) (hFits : h.length ≤ 2 ^ dep) (p1 p2 : Nat)
+    (key value lowAddr lowValue lowNext : ℤ) :
     ∀ i : Nat, i ≠ p1 → i ≠ p2 →
-      (aafiPostVec sent hash dep h p1 p2 key value lowAddr lowValue lowNext)[i]?
-        = (padVec sent hash dep h)[i]? := by
+      (aafiPostVec sent hash dep h hFits p1 p2 key value lowAddr lowValue lowNext)[i]?
+        = (padVec sent hash dep h hFits)[i]? := by
   intro i hi1 hi2
   rw [aafiPostVec, List.getElem?_set_ne (fun hc => hi2 hc.symm),
     List.getElem?_set_ne (fun hc => hi1 hc.symm)]
@@ -454,7 +466,7 @@ append overwrites held `heap_root.rs`'s padding constant under the pre-root — 
 GREW and nothing was displaced. -/
 theorem aafiLayout_free_slot_was_padding (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
     {h : Heap.FeltHeap} {p2 : Nat} (hsz : h.length ≤ 2 ^ dep) (hge : h.length ≤ p2)
-    (hlt : p2 < 2 ^ dep) : (padVec sent hash dep h)[p2]? = some padDigest := by
+    (hlt : p2 < 2 ^ dep) : (padVec sent hash dep h hsz)[p2]? = some padDigest := by
   have hL : ((imtChainOf sent h).map (imtLeafHash hash)).length = h.length := by
     rw [List.length_map, imtChainOf_length]
   rw [padVec, padTo, List.getElem?_append_right (by rw [hL]; exact hge), hL]
@@ -469,27 +481,27 @@ holds the padding constant and the post-vector holds a live arity-3 leaf digest,
 separates. An accumulator insert that leaves the accumulator alone has no accepting row. -/
 theorem aafiLayout_post_root_moves {hash : List ℤ → ℤ} (hgood : MapGood hash) (sent : ℤ) (dep : Nat)
     {h : Heap.FeltHeap} {p1 p2 : Nat} {key value lowAddr lowValue lowNext oldRoot newRoot : ℤ}
-    (hsz : h.length ≤ 2 ^ dep) (hcommit : padImtRoot sent hash dep h = oldRoot)
-    (hlay : AafiLayoutAt sent hash dep h p1 p2 key value lowAddr lowValue lowNext newRoot) :
+    (hsz : h.length ≤ 2 ^ dep) (hcommit : padImtRoot sent hash dep h hsz = oldRoot)
+    (hlay : AafiLayoutAt sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext newRoot) :
     newRoot ≠ oldRoot := by
   obtain ⟨hlt1, hge2, hlt2, hpne, hentry, hptr, habs, hroot⟩ := hlay
   intro he
-  have hvpre : (padVec sent hash dep h).length = 2 ^ dep := padVec_length hsz
-  have hvpost : (aafiPostVec sent hash dep h p1 p2 key value lowAddr lowValue lowNext).length
+  have hvpre : (padVec sent hash dep h hsz).length = 2 ^ dep := padVec_length hsz
+  have hvpost : (aafiPostVec sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext).length
       = 2 ^ dep := by
     rw [aafiPostVec, List.length_set, List.length_set]; exact hvpre
   have heq : perfectRoot hash dep
-      (aafiPostVec sent hash dep h p1 p2 key value lowAddr lowValue lowNext)
-      = perfectRoot hash dep (padVec sent hash dep h) := by
+      (aafiPostVec sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext)
+      = perfectRoot hash dep (padVec sent hash dep h hsz) := by
     rw [← hroot, he, ← hcommit, padImtRoot_eq_padVec]
   rcases perfectRoot_binds_or_collides hash dep hvpost hvpre heq with hveq | hcol
-  · have hp2b : p2 < ((padVec sent hash dep h).set p1
+  · have hp2b : p2 < ((padVec sent hash dep h hsz).set p1
         (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)).length := by
       rw [List.length_set, hvpre]; exact hlt2
-    have h1 : (aafiPostVec sent hash dep h p1 p2 key value lowAddr lowValue lowNext)[p2]?
+    have h1 : (aafiPostVec sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext)[p2]?
         = some (imtLeafHash hash ⟨key, value, lowNext⟩) := by
       rw [aafiPostVec, List.getElem?_set_self hp2b]
-    have h2 : (padVec sent hash dep h)[p2]? = some padDigest :=
+    have h2 : (padVec sent hash dep h hsz)[p2]? = some padDigest :=
       aafiLayout_free_slot_was_padding sent hash dep hsz hge2 hlt2
     rw [hveq, h2] at h1
     exact hgood.2 _ (Option.some.inj h1).symm
@@ -507,10 +519,11 @@ So this is the STRONGEST shape the deployed post-condition has, not a weakened o
 def AafiInsertsUpToLayout (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat)
     (oldRoot newRoot key value : ℤ) : Prop :=
   ∃ h : Heap.FeltHeap,
-    (padImtSchema sent).HeapOk h ∧ (padImtSchema sent).SizeOk dep h ∧
-    padImtRoot sent hash dep h = oldRoot ∧
+    (padImtSchema sent).HeapOk h ∧ ∃ hsz : (padImtSchema sent).SizeOk dep h,
+    padImtRoot sent hash dep h hsz = oldRoot ∧
     Heap.get h key = none ∧
-    ∃ V : List ℤ, V.Perm (padVec sent hash dep (Heap.set h key value))
+    ∃ (hsz' : (Heap.set h key value).length ≤ 2 ^ dep) (V : List ℤ),
+      V.Perm (padVec sent hash dep (Heap.set h key value) hsz')
       ∧ perfectRoot hash dep V = newRoot
 
 /-- The layout vector IS a permutation of the correct post-map's commitment vector: §2's chain
@@ -519,26 +532,44 @@ theorem aafiPostVec_perm_of_layout (sent : ℤ) (hash : List ℤ → ℤ) (dep :
     {h : Heap.FeltHeap} {p1 p2 : Nat} {key value lowAddr lowValue lowNext newRoot : ℤ}
     (hok : (padImtSchema sent).HeapOk h) (hsz : (padImtSchema sent).SizeOk dep h)
     (hlk : lowAddr < key) (hkn : key < lowNext)
-    (hlay : AafiLayoutAt sent hash dep h p1 p2 key value lowAddr lowValue lowNext newRoot) :
-    ((aafiPostVec sent hash dep h p1 p2 key value lowAddr lowValue lowNext)).Perm
-      (padVec sent hash dep (Heap.set h key value)) := by
+    (hlay : AafiLayoutAt sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext newRoot)
+    (hsz2 : (Heap.set h key value).length ≤ 2 ^ dep) :
+    ((aafiPostVec sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext)).Perm
+      (padVec sent hash dep (Heap.set h key value) hsz2) := by
   obtain ⟨hlt1, hge2, hlt2, hpne, hentry, hptr, habs, hroot⟩ := hlay
   have hsz' : h.length ≤ 2 ^ dep := hsz
   have hclen : (imtChainOf sent h).length = h.length := imtChainOf_length sent h
   have hLlen : ((imtChainOf sent h).map (imtLeafHash hash)).length = h.length := by
     rw [List.length_map, hclen]
   -- Step 1: the `p1` set moves inside the padding, and inside the `map`.
-  have h1 : (padVec sent hash dep h).set p1 (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)
+  have hMlen0 : (((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map
+      (imtLeafHash hash)).length ≤ 2 ^ dep := by
+    rw [List.length_map, List.length_set, hclen]; exact hsz'
+  have hSetMap : ((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map
+      (imtLeafHash hash)
+      = ((imtChainOf sent h).map (imtLeafHash hash)).set p1
+          (imtLeafHash hash ⟨lowAddr, lowValue, key⟩) :=
+    map_set' (imtLeafHash hash) (imtChainOf sent h) p1 _
+  have hSetFits : (((imtChainOf sent h).map (imtLeafHash hash)).set p1
+      (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)).length ≤ 2 ^ dep := by
+    rw [List.length_set, hLlen]; exact hsz'
+  have h1 : (padVec sent hash dep h hsz).set p1 (imtLeafHash hash ⟨lowAddr, lowValue, key⟩)
       = padTo dep (((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map
-          (imtLeafHash hash)) := by
-    rw [map_set', padVec, padTo_set dep _ p1 _ (by rw [hLlen]; exact hlt1)]
+          (imtLeafHash hash)) hMlen0 := by
+    rw [padTo_congr hSetMap hMlen0 hSetFits]
+    exact (padTo_set dep _ p1 _ (by rw [hLlen]; exact hlt1)).symm
   -- Step 2: the `p2` set past the live prefix is an APPEND, up to `List.Perm`.
   have hMlen : (((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map
       (imtLeafHash hash)).length = h.length := by
     rw [List.length_map, List.length_set, hclen]
+  have hApp : ((((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map
+      (imtLeafHash hash)) ++ [imtLeafHash hash ⟨key, value, lowNext⟩]).length ≤ 2 ^ dep := by
+    simp only [List.length_append, List.length_cons, List.length_nil, List.length_map,
+      List.length_set]
+    rw [hclen]; omega
   have h2 := padTo_set_pad_perm dep
     (((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map (imtLeafHash hash))
-    p2 (imtLeafHash hash ⟨key, value, lowNext⟩) (by rw [hMlen]; exact hge2) hlt2
+    p2 (imtLeafHash hash ⟨key, value, lowNext⟩) (by rw [hMlen]; exact hge2) hlt2 hMlen0 hApp
   -- Step 3: the appended layout is the inserted map's chain, permuted (§2).
   have hkn' : key < (h[p1 + 1]?).elim sent Prod.fst := by rw [← hptr]; exact hkn
   have hchainperm : ((((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf))
@@ -550,8 +581,15 @@ theorem aafiPostVec_perm_of_layout (sent : ℤ) (hash : List ℤ → ℤ) (dep :
       (imtLeafHash hash)) ++ [imtLeafHash hash ⟨key, value, lowNext⟩]).Perm
         ((imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash)) := by
     simpa using hchainperm.map (imtLeafHash hash)
-  rw [aafiPostVec, h1]
-  exact h2.trans (padTo_perm_of_perm dep h3)
+  have hgoal : aafiPostVec sent hash dep h hsz p1 p2 key value lowAddr lowValue lowNext
+      = (padTo dep (((imtChainOf sent h).set p1 (⟨lowAddr, lowValue, key⟩ : ImtLeaf)).map
+          (imtLeafHash hash)) hMlen0).set p2 (imtLeafHash hash ⟨key, value, lowNext⟩) := by
+    rw [aafiPostVec, h1]
+  have hPostFits : ((imtChainOf sent (Heap.set h key value)).map (imtLeafHash hash)).length
+      ≤ 2 ^ dep := by
+    rw [List.length_map, imtChainOf_length]; exact hsz2
+  rw [hgoal]
+  exact h2.trans (padTo_perm_of_perm dep h3 hApp hPostFits)
 
 /-- **★★ THE LIVE-ARM LAW.** An accepting deployed AAFI row forces the layout denotation: absence
 before, and a post-root that commits the correctly-inserted map up to leaf PLACEMENT. Floor-free —
@@ -562,8 +600,19 @@ theorem aafiImtRow_forces_insertsUpToLayout_of_good {hash : List ℤ → ℤ} (h
     AafiInsertsUpToLayout sent hash dep oldRoot newRoot key value := by
   obtain ⟨h, p1, p2, hok, hsz, hcommit, hlk, hkn, hlay⟩ :=
     aafiImtRow_forces_layout_of_good hgood sent dep hr
-  refine ⟨h, hok, hsz, hcommit, hlay.2.2.2.2.2.2.1, _,
-    aafiPostVec_perm_of_layout sent hash dep hok hsz hlk hkn hlay, ?_⟩
+  -- ⚑ THE POST HEAP FITS, and the OBLIGATION IS WHERE THE FACT COMES FROM. `Heap.set` at an
+  -- ABSENT key GROWS by one, so `h.length ≤ 2 ^ dep` alone would NOT do — a full tree admits no
+  -- insert. The gate's own `h.length ≤ p2 < 2 ^ dep` is what makes room, and before `padVec` took
+  -- the obligation nothing in this file had to notice that.
+  have hsz2 : (Heap.set h key value).length ≤ 2 ^ dep := by
+    have habs : Heap.get h key = none := hlay.2.2.2.2.2.2.1
+    have hnk : key ∉ Heap.keys h := (Heap.get_eq_none_iff h key).mp habs
+    rw [Heap.length_set_fresh h key value hnk]
+    have hge2 : h.length ≤ p2 := hlay.2.1
+    have hlt2 : p2 < 2 ^ dep := hlay.2.2.1
+    omega
+  refine ⟨h, hok, hsz, hcommit, hlay.2.2.2.2.2.2.1, hsz2, _,
+    aafiPostVec_perm_of_layout sent hash dep hok hsz hlk hkn hlay hsz2, ?_⟩
   exact hlay.2.2.2.2.2.2.2.symm
 
 /-- **★ AND THE PRE SIDE COMES ALONG UNCHANGED** — the double-spend tooth `MapKindImtGates` landed,
@@ -698,24 +747,28 @@ theorem intPhys_is_no_relinked_chain (h' : Heap.FeltHeap)
   have h95 := (List.pairwise_cons.mp ((List.pairwise_cons.mp hs).2)).1 5 (by simp)
   omega
 
+/-- The physical layout fits, from the section's own `2 ≤ dep` — `heap_fits` cannot reach
+`3 ≤ 2 ^ dep` at a SYMBOLIC exponent, and `fits_of_pow_le` is the bridge. -/
+theorem intPhys_fits {dep : Nat} (hdep : 2 ≤ dep) : intPhys.length ≤ 2 ^ dep :=
+  fits_of_pow_le hdep (by decide)
+
 /-- The post-root an accepting op = 4 row over `intHeap` at fresh key `5` produces. -/
-noncomputable def intPostRoot (dep : Nat) : ℤ := appendOrderRoot oddSponge dep intPhys
+noncomputable def intPostRoot (dep : Nat) (hdep : 2 ≤ dep) : ℤ :=
+  appendOrderRoot oddSponge dep intPhys (intPhys_fits hdep)
 
 /-- **⚑⚑ THE ELEVENTH IMPOSSIBILITY.** The deployed AAFI post-root of an INTERIOR insert opens
 NOTHING: it is the `padImtSchema` commitment of no admissible heap, so `opensToMerkleS` is false at
 it for every key and every option. (Anti-floor content: the conclusion is `False`.) -/
 theorem aafi_interior_post_admits_no_opening (dep : Nat) (hdep : 2 ≤ dep) (k : ℤ) (o : Option ℤ) :
-    ¬ opensToMerkleS (padImtSchema intSent) oddSponge dep (intPostRoot dep) k o := by
+    ¬ opensToMerkleS (padImtSchema intSent) oddSponge dep (intPostRoot dep hdep) k o := by
   rintro ⟨h', hok, hsz, hcommit, -⟩
-  have h4 : (4 : Nat) ≤ 2 ^ dep := by
-    calc (4 : Nat) = 2 ^ 2 := rfl
-      _ ≤ 2 ^ dep := Nat.pow_le_pow_right (by norm_num) hdep
+  have h4 : (4 : Nat) ≤ 2 ^ dep := fits_of_pow_le hdep (by decide)
   have hsz' : h'.length ≤ 2 ^ dep := hsz
   have hcl : (imtChainOf intSent h').length ≤ 2 ^ dep := by rw [imtChainOf_length]; exact hsz'
-  have hpl : (intPhys).length ≤ 2 ^ dep := by show (3 : Nat) ≤ 2 ^ dep; omega
-  have he : appendOrderRoot oddSponge dep intPhys
-      = appendOrderRoot oddSponge dep (imtChainOf intSent h') := by
-    rw [← padImtRoot_eq_appendOrderRoot]
+  have hpl : (intPhys).length ≤ 2 ^ dep := intPhys_fits hdep
+  have he : appendOrderRoot oddSponge dep intPhys hpl
+      = appendOrderRoot oddSponge dep (imtChainOf intSent h') hcl := by
+    rw [← padImtRoot_eq_appendOrderRoot intSent oddSponge dep h' hsz']
     exact (hcommit.trans rfl).symm
   exact intPhys_is_no_relinked_chain h' hok
     (appendOrderRoot_binds mapGood_inhabited dep hpl hcl he)
@@ -745,20 +798,20 @@ noncomputable def iR1 : ℤ :=
   mapNode oddSponge (mapNode oddSponge iy0' iy1) (mapNode oddSponge padDigest padDigest)
 
 theorem iNewRoot_eq : mapNode oddSponge (mapNode oddSponge iy0' iy1) (mapNode oddSponge iy2 padDigest)
-    = intPostRoot 2 := rfl
+    = intPostRoot 2 (le_refl 2) := rfl
 
 /-- **★★ A REAL ACCEPTING DEPLOYED AAFI ROW AT AN INTERIOR KEY.** All five gates, every path
 obligation `rfl`, over the sparse `2^2`-leaf commitment of `[(1,7),(9,3)]` at fresh key `5`. -/
 theorem aafi_interior_row_at_depth2 :
-    AafiImtRowAt intSent oddSponge 2 (padImtRoot intSent oddSponge 2 intHeap) (intPostRoot 2)
-      iR1 5 2 1 7 9 :=
+    AafiImtRowAt intSent oddSponge 2 (padImtRoot intSent oddSponge 2 intHeap)
+      (intPostRoot 2 (le_refl 2)) iR1 5 2 1 7 9 :=
   ⟨intHeap, iPath1, iPath2, intHeap_ok, intHeap_sz 2 (le_refl 2), rfl,
     rfl, rfl, by decide, rfl, by norm_num, by norm_num, rfl, rfl, rfl⟩
 
 /-- **⚑⚑ AND ITS POST-ROOT ADMITS NO OPENING.** So the AAFI post side is not `insertsFreshS`, not
 `writesToMerkleS`, and not any `opensToMerkleS`-shaped statement — on an accepting row. -/
 theorem aafi_interior_row_post_admits_no_opening (k : ℤ) (o : Option ℤ) :
-    ¬ opensToMerkleS (padImtSchema intSent) oddSponge 2 (intPostRoot 2) k o :=
+    ¬ opensToMerkleS (padImtSchema intSent) oddSponge 2 (intPostRoot 2 (le_refl 2)) k o :=
   aafi_interior_post_admits_no_opening 2 (le_refl 2) k o
 
 /-- **⚑⚑ `insertsFreshS` IS REFUTED AT THE AAFI POST SIDE.** `MapInsertImtRepoint` found
@@ -772,7 +825,7 @@ theorem aafi_post_cannot_be_insertsFreshS :
         insertsFreshS (padImtSchema sent) hash dep oldRoot key value newRoot) := by
   intro hbad
   exact aafi_interior_row_post_admits_no_opening 5 (some 2)
-    (hbad intSent oddSponge 2 _ (intPostRoot 2) iR1 5 2 1 7 9 mapGood_inhabited
+    (hbad intSent oddSponge 2 _ (intPostRoot 2 (le_refl 2)) iR1 5 2 1 7 9 mapGood_inhabited
       aafi_interior_row_at_depth2).2
 
 /-- **★ AND THE LAYOUT DENOTATION DOES HOLD ON THAT SAME ROW** — the discrimination that makes §5 a
@@ -780,7 +833,7 @@ statement rather than a retreat: the interior row satisfies `AafiInsertsUpToLayo
 no `opensToMerkleS` at its post-root. -/
 theorem aafi_interior_row_satisfies_the_layout_denotation :
     AafiInsertsUpToLayout intSent oddSponge 2 (padImtRoot intSent oddSponge 2 intHeap)
-      (intPostRoot 2) 5 2 :=
+      (intPostRoot 2 (le_refl 2)) 5 2 :=
   aafiImtRow_forces_insertsUpToLayout_of_good mapGood_inhabited intSent 2
     aafi_interior_row_at_depth2
 

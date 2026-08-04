@@ -114,6 +114,7 @@ open Dregg2.Circuit.MapPaddedDenotation (padDigest padTo padTo_length padTo_dens
   padTo_eq_or_hit emptySubtreeRoot
   perfectRoot_all_padding oddSponge oddSponge_injective oddSponge_ne_pad)
 open Dregg2.Circuit.MapKindImtGates (padTo_set padTo_getElem? padTo_succ_split padTo_snoc_pad
+  padTo_congr
   leftPadPath leftPadPath_length leftPadPath_pos leftPadPath_recompute
   slot1Path slot1Path_length slot1Path_pos slot1Path_recompute)
 open Dregg2.Circuit.MapOpsColumnLayout (pathPos pathRecompute pathCollFind
@@ -317,35 +318,69 @@ theorem chainE_imtSorted (sent : K) :
 /-! ## §3 — THE PADDED LANE-ENCODED COMMITMENT, and its floor-free binding. -/
 
 /-- **`padVecE E sent hash dep h`** — the digest vector the deployed prover folds at key width `E`:
-relink, digest at arity `2 · E.width + 1`, zero-pad to `2 ^ dep`. -/
+relink, digest at arity `2 · E.width + 1`, zero-pad to `2 ^ dep`.
+
+⚑ **IT TAKES THE OBLIGATION, and the decision is the SAME one `DeployedMapDenotation.padTo` §3-cap
+took — REFUSAL, not truncation — for reasons that are if anything sharper at 8-felt lanes:**
+
+1. **The deployed WIDE builder refuses.** `circuit/src/heap_root.rs:1015-1019`
+   (`compute_canonical_heap_root_8`) and `:1149-1153` (`CanonicalHeapTree8::new`) carry the same
+   release-active `assert!(leaves.len() <= capacity)` as the 1-felt `CanonicalHeapTree::new` at
+   `:560`, whose own comment is "*Fail loudly rather than silently truncate*". A truncating
+   `padVecE` would model the exact input the deployed wide builder was written to reject.
+2. **Nothing below this refuses the residue.** Below `padVecE` sits `perfectRoot`, which returns ONE
+   FELT and carries no length, no arity tag and no refusal — so there is no downstream `Prop` that a
+   dropped leaf could ever contradict. This is the discriminator `DescriptorIR2.padTo` fails and
+   this one meets: there `chipRow`'s UNTRUNCATED arity tag is checked by
+   `over_rate_arity_always_refused`, so truncation is total-correctness with a downstream refusal;
+   here truncation is data loss into an admitted, indistinguishable root.
+3. **Widening the key does not weaken any of that.** The node layer never widens
+   (`perfectRoot_binds_or_collides` is shared verbatim), so `over_capacity_roots_collide` — a
+   collision with NO length and NO hash hypothesis — transports to every `LaneEnc` unchanged. It is
+   the same defect at `wideEnc` that it is at `narrowEnc`, and §6's twelfth impossibility already
+   showed that hardening the KEY buys nothing against a defect in the padding.
+
+`hFits` is a `Prop` the body does not read, so no committed felt moves and every `rfl` below still
+closes; an over-capacity site FAILS TO ELABORATE. -/
 def padVecE (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : List (K × ℤ)) : List ℤ :=
+    (h : List (K × ℤ)) (hFits : h.length ≤ 2 ^ dep := by heap_fits) : List ℤ :=
   padTo dep ((imtChainOfE sent h).map (imtLeafHashE hash E))
+    (by rw [List.length_map, imtChainOfE_length]; exact hFits)
 
 /-- **`padImtRootE E sent hash dep h`** — ⚑ THE DEPLOYED MAP COMMITMENT AT KEY WIDTH `E`. -/
 def padImtRootE (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : List (K × ℤ)) : ℤ :=
-  perfectRoot hash dep (padVecE E sent hash dep h)
+    (h : List (K × ℤ)) (hFits : h.length ≤ 2 ^ dep := by heap_fits) : ℤ :=
+  perfectRoot hash dep (padVecE E sent hash dep h hFits)
 
 theorem padImtRootE_unfold (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : List (K × ℤ)) :
-    padImtRootE E sent hash dep h
-      = perfectRoot hash dep (padTo dep ((imtChainOfE sent h).map (imtLeafHashE hash E))) := rfl
+    (h : List (K × ℤ)) (hFits : h.length ≤ 2 ^ dep) :
+    padImtRootE E sent hash dep h hFits
+      = perfectRoot hash dep (padTo dep ((imtChainOfE sent h).map (imtLeafHashE hash E))
+          (by rw [List.length_map, imtChainOfE_length]; exact hFits)) := rfl
 
 theorem padVecE_length {E : LaneEnc K} {sent : K} {hash : List ℤ → ℤ} {dep : Nat}
-    {h : List (K × ℤ)} (hl : h.length ≤ 2 ^ dep) : (padVecE E sent hash dep h).length = 2 ^ dep :=
+    {h : List (K × ℤ)} (hl : h.length ≤ 2 ^ dep) :
+    (padVecE E sent hash dep h hl).length = 2 ^ dep :=
   padTo_length (by rw [List.length_map, imtChainOfE_length]; exact hl)
 
 /-- **★ CONSERVATIVE EXTENSION (the commitment).** At `narrowEnc` this IS the deployed
-`MapPaddedDenotation.padImtRoot` — the object stage 2b's teeth are built from. -/
-theorem padImtRootE_narrow (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap) :
-    padImtRootE narrowEnc sent hash dep h
-      = Dregg2.Circuit.MapPaddedDenotation.padImtRoot sent hash dep h := by
-  show perfectRoot hash dep (padTo dep ((imtChainOfE sent h).map (imtLeafHashE hash narrowEnc)))
-    = perfectRoot hash dep (padTo dep
-        ((Dregg2.Circuit.MapDenotationSchema.imtChainOf sent h).map
-          (Dregg2.Circuit.IndexedMerkleTree.imtLeafHash hash)))
-  rw [imtChainOfE_narrow sent h, imtLeafHashE_narrow hash]
+`MapPaddedDenotation.padImtRoot` — the object stage 2b's teeth are built from.
+
+⚠ The two `padTo` obligations differ as TERMS (each is the rewrite its own caller supplied) and are
+equal only by proof irrelevance, so this is proved through the BODY — `padTo`'s occupancy argument is
+a `Prop` the body never reads, hence unfolding it discharges the dependency instead of asking the
+unifier to see through it. A `rw` at the root would hit `motive is not type correct`, which is a
+FORMULATION and never a heartbeat budget. -/
+theorem padImtRootE_narrow (sent : ℤ) (hash : List ℤ → ℤ) (dep : Nat) (h : Heap.FeltHeap)
+    (hFits : h.length ≤ 2 ^ dep) :
+    padImtRootE narrowEnc sent hash dep h hFits
+      = Dregg2.Circuit.MapPaddedDenotation.padImtRoot sent hash dep h hFits := by
+  have hL : (imtChainOfE sent h).map (imtLeafHashE hash narrowEnc)
+      = (Dregg2.Circuit.MapDenotationSchema.imtChainOf sent h).map
+          (Dregg2.Circuit.IndexedMerkleTree.imtLeafHash hash) := by
+    rw [imtChainOfE_narrow sent h, imtLeafHashE_narrow hash]
+  show perfectRoot hash dep (padTo dep _ _) = perfectRoot hash dep (padTo dep _ _)
+  simp only [padTo, hL]
 
 /-- **`PadGhostE E sent hash h`** — a LIVE lane-encoded IMT leaf digest of `h` equals the padding
 constant. ⚠ A decidable property of the vector the prover COMMITTED, deliberately not an
@@ -407,26 +442,32 @@ theorem imtLeafFindE_spec (E : LaneEnc K) (hash : List ℤ → ℤ) :
         exact ⟨hll, hleaf⟩
 
 /-- The padded lane-encoded root extractor: the node descent if it collides, else the leaf scan.
-TOTAL. -/
+TOTAL — and it stays total across the capacity obligation the way `DeployedMapDenotation`'s narrow
+`padImtRootFind` does: the extractor takes NO obligation and branches on the occupancy `dif`,
+returning `([], [])` off the domain the commitment is defined on. The residual it names is only ever
+read under a hypothesis that both heaps fit, so nothing downstream ever sees the off-domain arm. -/
 def padImtRootFindE (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ) (d : Nat)
     (h₁ h₂ : List (K × ℤ)) : List ℤ × List ℤ :=
-  if SpongeColl hash (perfectRootFind hash d (padVecE E sent hash d h₁)
-                                             (padVecE E sent hash d h₂))
-  then perfectRootFind hash d (padVecE E sent hash d h₁) (padVecE E sent hash d h₂)
-  else imtLeafFindE E (imtChainOfE sent h₁) (imtChainOfE sent h₂)
+  if hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d then
+    (if SpongeColl hash (perfectRootFind hash d (padVecE E sent hash d h₁ hz.1)
+                                                (padVecE E sent hash d h₂ hz.2))
+     then perfectRootFind hash d (padVecE E sent hash d h₁ hz.1) (padVecE E sent hash d h₂ hz.2)
+     else imtLeafFindE E (imtChainOfE sent h₁) (imtChainOfE sent h₂))
+  else ([], [])
 
 /-- **★★ THE PADDED LANE-ENCODED ROOT BINDS THE HEAP — UNCONDITIONALLY, up to TWO named
 residuals.** The wide twin of `MapPaddedDenotation.padImtRoot_binds_or_ghost_or_collides`: relaxed
 (sparse) occupancy, zero padding, no floor at the node and none at the leaf, at EVERY key width. -/
 theorem padImtRootE_binds_or_ghost_or_collides (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ)
     (d : Nat) {h₁ h₂ : List (K × ℤ)} (hl₁ : h₁.length ≤ 2 ^ d) (hl₂ : h₂.length ≤ 2 ^ d)
-    (heq : padImtRootE E sent hash d h₁ = padImtRootE E sent hash d h₂) :
+    (heq : padImtRootE E sent hash d h₁ hl₁ = padImtRootE E sent hash d h₂ hl₂) :
     h₁ = h₂ ∨ PadGhostE E sent hash h₁ ∨ PadGhostE E sent hash h₂
       ∨ SpongeColl hash (padImtRootFindE E sent hash d h₁ h₂) := by
-  by_cases hif : SpongeColl hash (perfectRootFind hash d (padVecE E sent hash d h₁)
-                                                         (padVecE E sent hash d h₂))
+  have hz : h₁.length ≤ 2 ^ d ∧ h₂.length ≤ 2 ^ d := ⟨hl₁, hl₂⟩
+  by_cases hif : SpongeColl hash (perfectRootFind hash d (padVecE E sent hash d h₁ hl₁)
+                                                         (padVecE E sent hash d h₂ hl₂))
   · refine Or.inr (Or.inr (Or.inr ?_))
-    rw [padImtRootFindE, if_pos hif]
+    rw [padImtRootFindE, dif_pos hz, if_pos hif]
     exact hif
   · rcases perfectRoot_binds_or_collides hash d (padVecE_length hl₁) (padVecE_length hl₂) heq with
       hpad | hc
@@ -434,7 +475,7 @@ theorem padImtRootE_binds_or_ghost_or_collides (E : LaneEnc K) (sent : K) (hash 
       · by_cases hne : h₁ = h₂
         · exact Or.inl hne
         · refine Or.inr (Or.inr (Or.inr ?_))
-          rw [padImtRootFindE, if_neg hif]
+          rw [padImtRootFindE, dif_pos hz, if_neg hif]
           exact imtLeafFindE_spec E hash _ _
             (fun hcc => hne (imtChainOfE_injective sent hcc)) hL
       · exact Or.inr (Or.inl hh₁)
@@ -457,8 +498,9 @@ def chainAtE (sent : K) (h : List (K × ℤ)) (p : Nat) : ImtLeaf K ℤ :=
 are properties of data the row and the commitment actually hold; none quantifies over the hash's
 domain, and none is the free-pass shape `∃ a b, a ≠ b ∧ hash a = hash b`. -/
 def OpenResidE (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ) (dep : Nat) (h : List (K × ℤ))
-    (steps : List (Bool × ℤ)) (l : ImtLeaf K ℤ) : Prop :=
-  IsSpongeColl hash (pathCollFind hash steps (padVecE E sent hash dep h) (imtLeafHashE hash E l))
+    (hFits : h.length ≤ 2 ^ dep) (steps : List (Bool × ℤ)) (l : ImtLeaf K ℤ) : Prop :=
+  IsSpongeColl hash
+    (pathCollFind hash steps (padVecE E sent hash dep h hFits) (imtLeafHashE hash E l))
   ∨ IsSpongeColl hash (imtLeafPreE E (chainAtE sent h (pathPos steps)), imtLeafPreE E l)
   ∨ imtLeafHashE hash E l = padDigest
 
@@ -475,8 +517,9 @@ theorem mapGoodE_inhabited (E : LaneEnc K) : MapGoodE E oddSponge :=
 /-- ANTI-LAUNDERING: at a good hash the residual is REFUTED, so `Resid := True` is unbuildable and
 the disjunctions below are informative. -/
 theorem openResidE_refuted {E : LaneEnc K} {hash : List ℤ → ℤ} (hgood : MapGoodE E hash)
-    (sent : K) (dep : Nat) (h : List (K × ℤ)) (steps : List (Bool × ℤ)) (l : ImtLeaf K ℤ) :
-    ¬ OpenResidE E sent hash dep h steps l := by
+    (sent : K) (dep : Nat) (h : List (K × ℤ)) (hFits : h.length ≤ 2 ^ dep)
+    (steps : List (Bool × ℤ)) (l : ImtLeaf K ℤ) :
+    ¬ OpenResidE E sent hash dep h hFits steps l := by
   rintro (⟨hne, he⟩ | ⟨hne, he⟩ | hpad)
   · exact hne (hgood.1 he)
   · exact hne (hgood.1 he)
@@ -501,7 +544,7 @@ theorem padOpenE_binds_or_resid (E : LaneEnc K) (sent : K) (hash : List ℤ → 
       ∧ ∀ l' : ImtLeaf K ℤ, pathRecompute hash (imtLeafHashE hash E l') steps
           = perfectRoot hash dep ((padVecE E sent hash dep h).set (pathPos steps)
               (imtLeafHashE hash E l')))
-    ∨ OpenResidE E sent hash dep h steps l := by
+    ∨ OpenResidE E sent hash dep h hlen steps l := by
   by_cases hc1 : IsSpongeColl hash
       (pathCollFind hash steps (padVecE E sent hash dep h) (imtLeafHashE hash E l))
   · exact Or.inr (Or.inl hc1)
@@ -560,10 +603,17 @@ bundle an instance must EARN. -/
 structure ImtLaneTeeth (K : Type) [LinearOrder K] (E : LaneEnc K) (sent : K) where
   /-- The NAMED, per-commitment residual of this encoding's binding. -/
   Resid : (List ℤ → ℤ) → Nat → List (K × ℤ) → List (K × ℤ) → Prop
-  /-- ★ THE BINDING, with NO hypothesis on `hash`. -/
-  binds : ∀ (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : List (K × ℤ)),
-      h₁.length ≤ 2 ^ d → h₂.length ≤ 2 ^ d →
-      padImtRootE E sent hash d h₁ = padImtRootE E sent hash d h₂ → h₁ = h₂ ∨ Resid hash d h₁ h₂
+  /-- ★ THE BINDING, with NO hypothesis on `hash`.
+
+  ⚠ **The two occupancy facts are NAMED BINDERS, not bare arrows, and that is load-bearing.** Since
+  `padImtRootE` took its capacity obligation (§3) the commitment is a function OF the occupancy
+  proof, so it has to be applied to one — and an `autoParam` elaborating inside this field cannot see
+  a hypothesis introduced by `→`: `h₁.length ≤ 2 ^ d → …` puts the fact in the TYPE and out of the
+  tactic's reach, which reads as "the bound is missing" when it is merely anonymous. -/
+  binds : ∀ (hash : List ℤ → ℤ) (d : Nat) (h₁ h₂ : List (K × ℤ))
+      (hz₁ : h₁.length ≤ 2 ^ d) (hz₂ : h₂.length ≤ 2 ^ d),
+      padImtRootE E sent hash d h₁ hz₁ = padImtRootE E sent hash d h₂ hz₂ →
+        h₁ = h₂ ∨ Resid hash d h₁ h₂
   /-- The hash-level property at which the residual is empty. -/
   Good : (List ℤ → ℤ) → Prop
   /-- ★ ANTI-LAUNDERING #1 — at a GOOD hash the residual is REFUTED. -/
@@ -581,17 +631,17 @@ by the padded depth-`dep` root, reads `o` at `k`. `E.HeapOk` is the landed admis
 needs. -/
 def opensToMerkleE (E : LaneEnc K) (sent : K) (hash : List ℤ → ℤ) (dep : Nat) (r : ℤ) (k : K)
     (o : Option ℤ) : Prop :=
-  ∃ m : List (K × ℤ), E.HeapOk m ∧ (∀ x ∈ Heap.keys m, x < sent) ∧ m.length ≤ 2 ^ dep
-    ∧ padImtRootE E sent hash dep m = r ∧ Heap.get m k = o
+  ∃ m : List (K × ℤ), E.HeapOk m ∧ (∀ x ∈ Heap.keys m, x < sent) ∧ ∃ hz : m.length ≤ 2 ^ dep,
+    padImtRootE E sent hash dep m hz = r ∧ Heap.get m k = o
 
 /-- **★ TOOTH 1/3 — OPENINGS ARE FUNCTIONAL, up to the named residual.** Stated over EXPLICIT
 witness heaps: the residual is a function of the WITNESSES, so hiding them behind the existential
 and writing `… ∨ ∃ residual` would be the free pass this idiom exists to avoid. -/
 theorem opensToMerkleE_functional_or_resid (T : ImtLaneTeeth K E sent)
     (hash : List ℤ → ℤ) (d : Nat) {r : ℤ} {k : K} {o₁ o₂ : Option ℤ} {m₁ m₂ : List (K × ℤ)}
-    (hz₁ : m₁.length ≤ 2 ^ d) (hr₁ : padImtRootE E sent hash d m₁ = r)
+    (hz₁ : m₁.length ≤ 2 ^ d) (hr₁ : padImtRootE E sent hash d m₁ hz₁ = r)
       (hg₁ : Heap.get m₁ k = o₁)
-    (hz₂ : m₂.length ≤ 2 ^ d) (hr₂ : padImtRootE E sent hash d m₂ = r)
+    (hz₂ : m₂.length ≤ 2 ^ d) (hr₂ : padImtRootE E sent hash d m₂ hz₂ = r)
       (hg₂ : Heap.get m₂ k = o₂) :
     o₁ = o₂ ∨ T.Resid hash d m₁ m₂ := by
   rcases T.binds hash d m₁ m₂ hz₁ hz₂ (hr₁.trans hr₂.symm) with hm | hc
@@ -602,9 +652,9 @@ theorem opensToMerkleE_functional_or_resid (T : ImtLaneTeeth K E sent)
 ABSENCE of a key the committed wide tree PRESENTS: the double-spend tooth at 8 felts. -/
 theorem opensToMerkleE_some_excludes_none_or_resid (T : ImtLaneTeeth K E sent)
     (hash : List ℤ → ℤ) (d : Nat) {r : ℤ} {k : K} {v : ℤ} {m₁ m₂ : List (K × ℤ)}
-    (hz₁ : m₁.length ≤ 2 ^ d) (hr₁ : padImtRootE E sent hash d m₁ = r)
+    (hz₁ : m₁.length ≤ 2 ^ d) (hr₁ : padImtRootE E sent hash d m₁ hz₁ = r)
       (hg₁ : Heap.get m₁ k = some v)
-    (hz₂ : m₂.length ≤ 2 ^ d) (hr₂ : padImtRootE E sent hash d m₂ = r)
+    (hz₂ : m₂.length ≤ 2 ^ d) (hr₂ : padImtRootE E sent hash d m₂ hz₂ = r)
       (hg₂ : Heap.get m₂ k = none) :
     T.Resid hash d m₁ m₂ := by
   rcases opensToMerkleE_functional_or_resid T hash d hz₁ hr₁ hg₁ hz₂ hr₂ hg₂ with he | hc
@@ -668,12 +718,14 @@ section WideArms
 
 /-- The DEPLOYED wide commitment: `padImtRootE` at `wideEnc`. -/
 noncomputable def padImtRoot8 (sent : Digest8Key) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : List (Digest8Key × ℤ)) : ℤ := padImtRootE wideEnc sent hash dep h
+    (h : List (Digest8Key × ℤ)) (hFits : h.length ≤ 2 ^ dep := by heap_fits) : ℤ :=
+  padImtRootE wideEnc sent hash dep h hFits
 
 /-- The DEPLOYED wide residual, at the arity-17 leaf. -/
 noncomputable def OpenResid8 (sent : Digest8Key) (hash : List ℤ → ℤ) (dep : Nat)
-    (h : List (Digest8Key × ℤ)) (steps : List (Bool × ℤ)) (l : ImtLeaf Digest8Key ℤ) : Prop :=
-  OpenResidE wideEnc sent hash dep h steps l
+    (h : List (Digest8Key × ℤ)) (hFits : h.length ≤ 2 ^ dep) (steps : List (Bool × ℤ))
+    (l : ImtLeaf Digest8Key ℤ) : Prop :=
+  OpenResidE wideEnc sent hash dep h hFits steps l
 
 /-- **`HeapOk8 sent h`** — the admissible committed WIDE heap: `wideEnc.HeapOk` (sorted AND
 canonically keyed — the L3 closure, carried as a definition exactly where `Heap.SortedKeys` already
@@ -695,7 +747,7 @@ theorem padOpen8_binds_or_resid (sent : Digest8Key) (hash : List ℤ → ℤ) (d
       ∧ ∀ l' : ImtLeaf Digest8Key ℤ, pathRecompute hash (imtLeafHash8Of hash l') steps
           = perfectRoot hash dep ((padVecE wideEnc sent hash dep h).set (pathPos steps)
               (imtLeafHash8Of hash l')))
-    ∨ OpenResid8 sent hash dep h steps l :=
+    ∨ OpenResid8 sent hash dep h hlen steps l :=
   padOpenE_binds_or_resid wideEnc sent hash dep hlen hsl hpath
 
 /-- The bracket at the arity-17 low leaf excludes the queried key from the whole committed WIDE
@@ -720,8 +772,8 @@ def AbsentImtPadGatesAtW (sent : Digest8Key) (hash : List ℤ → ℤ) (dep : Na
     (oldRoot newRoot : ℤ) (key lowAddr : Digest8Key) (lowValue : ℤ)
     (lowNext : Digest8Key) : Prop :=
   ∃ (h : List (Digest8Key × ℤ)) (steps : List (Bool × ℤ)),
-    HeapOk8 sent h ∧ h.length ≤ 2 ^ dep ∧
-    padImtRoot8 sent hash dep h = oldRoot ∧
+    HeapOk8 sent h ∧ ∃ hz : h.length ≤ 2 ^ dep,
+    padImtRoot8 sent hash dep h hz = oldRoot ∧
     steps.length = dep ∧
     pathRecompute hash (imtLeafHash8Of hash ⟨lowAddr, lowValue, lowNext⟩) steps = oldRoot ∧
     lowAddr < key ∧ key < lowNext ∧
@@ -741,7 +793,7 @@ theorem absentImtPadGatesW_force_absence_or_resid (sent : Digest8Key) (hash : Li
     (Heap.get h key = none
       ∧ opensToMerkleE wideEnc sent hash dep oldRoot key none
       ∧ newRoot = oldRoot)
-    ∨ OpenResid8 sent hash dep h steps ⟨lowAddr, lowValue, lowNext⟩ := by
+    ∨ OpenResid8 sent hash dep h hsz steps ⟨lowAddr, lowValue, lowNext⟩ := by
   rcases padOpen8_binds_or_resid sent hash dep hsz hsl (by rw [hlow, ← hcommit]) with
     ⟨_, hchain, _, _, _⟩ | hres
   · have hnotin : key ∉ Heap.keys h := bracket8_excludes sent hok hchain hlk hkn
@@ -761,7 +813,7 @@ theorem absentImtPadRowW_forces_absence_of_good {hash : List ℤ → ℤ}
   rcases absentImtPadGatesW_force_absence_or_resid sent hash dep hok hsz hcommit hsl hlow
     hlk hkn hnr with hres | hbad
   · exact ⟨hres.2.1, hres.2.2⟩
-  · exact absurd hbad (openResidE_refuted hgood sent dep h steps _)
+  · exact absurd hbad (openResidE_refuted hgood sent dep h hsz steps _)
 
 /-! ### §6b — the deployed wide AAFI row (op = 4; **24 emitted rows — the arm that SHIPS**),
 PADDED, with the free slot PINNED to the padding constant.
@@ -791,8 +843,8 @@ def AafiImtPadRowAtW (sent : Digest8Key) (hash : List ℤ → ℤ) (dep : Nat)
     (oldRoot newRoot R1 : ℤ) (key : Digest8Key) (value : ℤ) (lowAddr : Digest8Key)
     (lowValue : ℤ) (lowNext : Digest8Key) : Prop :=
   ∃ (h : List (Digest8Key × ℤ)) (steps1 steps2 : List (Bool × ℤ)),
-    HeapOk8 sent h ∧ h.length ≤ 2 ^ dep ∧
-    padImtRoot8 sent hash dep h = oldRoot ∧
+    HeapOk8 sent h ∧ ∃ hz : h.length ≤ 2 ^ dep,
+    padImtRoot8 sent hash dep h hz = oldRoot ∧
     AafiImtPadGatesOnW hash dep steps1 steps2 oldRoot newRoot R1 key value lowAddr lowValue lowNext
 
 /-- **★ THE WIDE AAFI OPENER — the double-spend tooth at the DEPLOYED PADDED WIDE commitment,
@@ -809,7 +861,7 @@ theorem aafiImtPadGatesW_force_absence_or_resid (sent : Digest8Key) (hash : List
       lowNext) :
     (Heap.get h key = none
       ∧ opensToMerkleE wideEnc sent hash dep oldRoot key none)
-    ∨ OpenResid8 sent hash dep h steps1 ⟨lowAddr, lowValue, lowNext⟩ := by
+    ∨ OpenResid8 sent hash dep h hsz steps1 ⟨lowAddr, lowValue, lowNext⟩ := by
   obtain ⟨hsl1, _, _, hpa, hlk, hkn, _, _, _⟩ := hg
   rcases absentImtPadGatesW_force_absence_or_resid sent hash dep hok hsz hcommit hsl1 hpa
     hlk hkn (rfl : oldRoot = oldRoot) with hres | hbad
@@ -826,7 +878,7 @@ theorem aafiImtPadRowW_forces_absence_of_good {hash : List ℤ → ℤ}
   obtain ⟨h, steps1, steps2, hok, hsz, hcommit, hg⟩ := hr
   rcases aafiImtPadGatesW_force_absence_or_resid sent hash dep hok hsz hcommit hg with hres | hbad
   · exact hres.2
-  · exact absurd hbad (openResidE_refuted hgood sent dep h steps1 _)
+  · exact absurd hbad (openResidE_refuted hgood sent dep h hsz steps1 _)
 
 end WideArms
 
@@ -843,6 +895,13 @@ section Bite8
 theorem two_le_two_pow_depth : (2 : Nat) ≤ 2 ^ MAP_TREE_DEPTH := by
   calc (2 : Nat) = 2 ^ 1 := rfl
     _ ≤ 2 ^ MAP_TREE_DEPTH := Nat.pow_le_pow_right (by norm_num) (by decide)
+
+/-- One live leaf fits the deployed depth — the occupancy every one-entry §7 exhibit is indexed by. -/
+theorem one_le_two_pow_depth {α : Type} (x : α) : ([x] : List α).length ≤ 2 ^ MAP_TREE_DEPTH :=
+  Nat.one_le_pow _ 2 (by norm_num)
+/-- …and at a SYMBOLIC depth, for §8's ghost pair. -/
+theorem one_le_two_pow_depth' {α : Type} (d : Nat) (x : α) : ([x] : List α).length ≤ 2 ^ d :=
+  Nat.one_le_pow _ 2 (by norm_num)
 
 /-- The terminal sentinel of these exhibits, at the 8-felt key. -/
 def bite8Sent : Digest8Key := keyHi
@@ -867,9 +926,15 @@ theorem bite8Heap_sz : bite8Heap.length ≤ 2 ^ MAP_TREE_DEPTH := by
   show 1 ≤ 2 ^ MAP_TREE_DEPTH
   exact Nat.one_le_pow _ 2 (by norm_num)
 
-/-- The committed root, NAMED as the padded wide commitment — never evaluated. -/
+/-- The committed root, NAMED as the padded wide commitment at a NAMED OCCUPANCY PROOF — never
+evaluated. ⚠ The occupancy argument is `bite8Heap_sz` and not the `heap_fits` `autoParam`, for the
+reason `MapKindImtGates` §8 measured: a root carrying an `autoParam`'s occupancy term has to be
+identified with one carrying the term `refine`/`exact` introduced, and with `padImtRoot8` at depth 16
+the unifier falls through proof irrelevance to δ — `perfectRoot` over `List.replicate (2^16 - 1)
+padDigest`, a `whnf` timeout. Naming the proof hands the denotation the SAME term and every `rfl`
+below stays syntactic. -/
 noncomputable def bite8Root : ℤ :=
-  padImtRoot8 bite8Sent oddSponge MAP_TREE_DEPTH bite8Heap
+  padImtRoot8 bite8Sent oddSponge MAP_TREE_DEPTH bite8Heap bite8Heap_sz
 /-- The deployed membership path of position `0` at depth 16, built symbolically. -/
 noncomputable def bite8Steps : List (Bool × ℤ) := leftPadPath oddSponge MAP_TREE_DEPTH
 
@@ -883,15 +948,22 @@ theorem bite8_chain_map (a n : Digest8Key) (v : ℤ) :
 
 /-- The depth-16 leftmost WIDE opening, for ANY arity-17 leaf: the path recomputes to the padded
 root of the one-entry wide heap whose terminal pointer is the leaf's. -/
-theorem bite8_path_leaf (a n : Digest8Key) (v : ℤ) :
+theorem bite8_path_leaf (a n : Digest8Key) (v : ℤ)
+    (hz : ([(a, v)] : List (Digest8Key × ℤ)).length ≤ 2 ^ MAP_TREE_DEPTH) :
     pathRecompute oddSponge (imtLeafHash8Of oddSponge ⟨a, v, n⟩) bite8Steps
-      = padImtRoot8 n oddSponge MAP_TREE_DEPTH [(a, v)] := by
+      = padImtRoot8 n oddSponge MAP_TREE_DEPTH [(a, v)] hz := by
+  have hf₀ : ((imtChainOfE n [(a, v)]).map (imtLeafHashE oddSponge wideEnc)).length
+      ≤ 2 ^ MAP_TREE_DEPTH := by
+    rw [List.length_map, imtChainOfE_length]; exact hz
+  have hf₁ : ([imtLeafHash8Of oddSponge ⟨a, v, n⟩] : List ℤ).length ≤ 2 ^ MAP_TREE_DEPTH := by
+    show 1 ≤ 2 ^ MAP_TREE_DEPTH
+    exact Nat.one_le_pow _ 2 (by norm_num)
   show pathRecompute oddSponge (imtLeafHash8Of oddSponge ⟨a, v, n⟩) bite8Steps
     = perfectRoot oddSponge MAP_TREE_DEPTH
-        (padTo MAP_TREE_DEPTH ((imtChainOfE n [(a, v)]).map (imtLeafHashE oddSponge wideEnc)))
-  rw [bite8_chain_map]
+        (padTo MAP_TREE_DEPTH ((imtChainOfE n [(a, v)]).map (imtLeafHashE oddSponge wideEnc)) hf₀)
+  rw [padTo_congr (bite8_chain_map a n v) hf₀ hf₁]
   show pathRecompute oddSponge _ (leftPadPath oddSponge MAP_TREE_DEPTH) = _
-  exact leftPadPath_recompute _ _ _
+  exact leftPadPath_recompute _ _ _ hf₁
 
 /-! ### §7a — the wide `.absent` arm FIRES, and its tooth BITES. -/
 
@@ -902,7 +974,7 @@ theorem bite8_absent_row :
     AbsentImtPadGatesAtW bite8Sent oddSponge MAP_TREE_DEPTH bite8Root bite8Root keyE keyLo 7
       bite8Sent :=
   ⟨bite8Heap, bite8Steps, bite8Heap_ok, bite8Heap_sz, rfl, bite8_steps_length,
-    bite8_path_leaf keyLo bite8Sent 7, keyLo_lt_keyE, keyE_lt_keyHi, rfl⟩
+    bite8_path_leaf keyLo bite8Sent 7 bite8Heap_sz, keyLo_lt_keyE, keyE_lt_keyHi, rfl⟩
 
 /-- **★ THE WIDE `.absent` LAW FIRES** — the row forces a genuine wide non-membership at the padded
 sparse commitment, at the deployed depth. -/
@@ -934,9 +1006,15 @@ theorem bite8_absent_present_key_refused (newRoot : ℤ) (lowAddr : Digest8Key) 
 
 /-- The intermediate root after the low-pointer update: the padded commitment of the SAME one-entry
 wide heap with terminal pointer `keyE`. -/
-noncomputable def aafi8R1 : ℤ := padImtRoot8 keyE oddSponge MAP_TREE_DEPTH [(keyLo, 7)]
+noncomputable def aafi8R1 : ℤ :=
+  padImtRoot8 keyE oddSponge MAP_TREE_DEPTH [(keyLo, 7)] bite8Heap_sz
+/-- The post-heap's occupancy, NAMED — `aafi8NewRoot` is indexed by it. -/
+theorem aafi8Heap_sz : ([(keyLo, 7), (keyE, 2)] : List (Digest8Key × ℤ)).length
+    ≤ 2 ^ MAP_TREE_DEPTH := by
+  show 1 + 1 ≤ 2 ^ MAP_TREE_DEPTH
+  exact two_le_two_pow_depth
 noncomputable def aafi8NewRoot : ℤ :=
-  padImtRoot8 bite8Sent oddSponge MAP_TREE_DEPTH [(keyLo, 7), (keyE, 2)]
+  padImtRoot8 bite8Sent oddSponge MAP_TREE_DEPTH [(keyLo, 7), (keyE, 2)] aafi8Heap_sz
 /-- PATH2 — the free-slot path, at the FIRST PADDING POSITION (`free_index = next_free_index = 1`,
 `heap_root.rs:1124`). -/
 noncomputable def aafi8Steps2 : List (Bool × ℤ) :=
@@ -948,17 +1026,30 @@ theorem aafi8_steps2_pos : pathPos aafi8Steps2 = 1 := slot1Path_pos _ _ _ (by de
 theorem aafi8_steps2_recompute (x : ℤ) :
     pathRecompute oddSponge x aafi8Steps2
       = perfectRoot oddSponge MAP_TREE_DEPTH
-          (padTo MAP_TREE_DEPTH [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩, x]) :=
-  slot1Path_recompute _ _ MAP_TREE_DEPTH (by decide) x
+          (padTo MAP_TREE_DEPTH [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩, x]
+            two_le_two_pow_depth) :=
+  slot1Path_recompute _ _ MAP_TREE_DEPTH (by decide) x two_le_two_pow_depth
 
 theorem aafi8R1_eq : aafi8R1
     = perfectRoot oddSponge MAP_TREE_DEPTH
-        (padTo MAP_TREE_DEPTH [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩]) := rfl
+        (padTo MAP_TREE_DEPTH [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩]
+          (one_le_two_pow_depth _)) := by
+  show padImtRoot8 keyE oddSponge MAP_TREE_DEPTH [(keyLo, 7)] bite8Heap_sz = _
+  rw [padImtRoot8, padImtRootE_unfold,
+    padTo_congr (bite8_chain_map keyLo keyE 7) _ (one_le_two_pow_depth _)]
+
+/-- The two-entry relinked WIDE chain, at the LIST level (cheap `rfl`; nothing folds). -/
+theorem bite8_chain2 : (imtChainOfE bite8Sent [(keyLo, 7), (keyE, 2)]).map
+    (imtLeafHashE oddSponge wideEnc)
+      = [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩,
+         imtLeafHash8Of oddSponge ⟨keyE, 2, bite8Sent⟩] := rfl
 
 theorem aafi8NewRoot_eq : aafi8NewRoot
     = perfectRoot oddSponge MAP_TREE_DEPTH (padTo MAP_TREE_DEPTH
         [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩,
-         imtLeafHash8Of oddSponge ⟨keyE, 2, bite8Sent⟩]) := rfl
+         imtLeafHash8Of oddSponge ⟨keyE, 2, bite8Sent⟩] two_le_two_pow_depth) := by
+  show padImtRoot8 bite8Sent oddSponge MAP_TREE_DEPTH [(keyLo, 7), (keyE, 2)] aafi8Heap_sz = _
+  rw [padImtRoot8, padImtRootE_unfold, padTo_congr bite8_chain2 _ two_le_two_pow_depth]
 
 theorem cons8_pad_append :
     ([imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩, padDigest] : List ℤ)
@@ -967,9 +1058,12 @@ theorem cons8_pad_append :
 /-- **⚑ THE DEPLOYED WIDE AAFI FREE SLOT IS A PADDING CELL.** Gate (d1) pins `MAP_FREE_EMPTY` to
 `ZERO8` and opens it at position `1`, which in a one-live-leaf `2^16` commitment holds the padding
 constant — so the deployed AAFI append GROWS INTO THE PADDING, at 8-felt keys too. -/
-theorem aafi8_free_slot_is_padding :
-    padTo MAP_TREE_DEPTH ([imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩] ++ [padDigest])
-      = padTo MAP_TREE_DEPTH [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩] :=
+theorem aafi8_free_slot_is_padding
+    {f₀ : (([imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩] ++ [padDigest] : List ℤ)).length
+      ≤ 2 ^ MAP_TREE_DEPTH}
+    {f₁ : ([imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩] : List ℤ).length ≤ 2 ^ MAP_TREE_DEPTH} :
+    padTo MAP_TREE_DEPTH ([imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩] ++ [padDigest]) f₀
+      = padTo MAP_TREE_DEPTH [imtLeafHash8Of oddSponge ⟨keyLo, 7, keyE⟩] f₁ :=
   padTo_snoc_pad MAP_TREE_DEPTH _
     (by show 1 + 1 ≤ 2 ^ MAP_TREE_DEPTH; exact two_le_two_pow_depth)
 
@@ -979,10 +1073,12 @@ theorem bite8_aafi_row :
     AafiImtPadRowAtW bite8Sent oddSponge MAP_TREE_DEPTH bite8Root aafi8NewRoot aafi8R1 keyE 2
       keyLo 7 bite8Sent := by
   refine ⟨bite8Heap, bite8Steps, aafi8Steps2, bite8Heap_ok, bite8Heap_sz, rfl,
-    bite8_steps_length, aafi8_steps2_length, ?_, bite8_path_leaf keyLo bite8Sent 7,
-    keyLo_lt_keyE, keyE_lt_keyHi, bite8_path_leaf keyLo keyE 7, ?_, ?_⟩
+    bite8_steps_length, aafi8_steps2_length, ?_, bite8_path_leaf keyLo bite8Sent 7 bite8Heap_sz,
+    keyLo_lt_keyE, keyE_lt_keyHi, bite8_path_leaf keyLo keyE 7 bite8Heap_sz, ?_, ?_⟩
   · rw [bite8_steps_pos, aafi8_steps2_pos]; decide
-  · rw [aafi8_steps2_recompute, cons8_pad_append, aafi8_free_slot_is_padding, aafi8R1_eq]
+  · rw [aafi8_steps2_recompute,
+      padTo_congr cons8_pad_append two_le_two_pow_depth two_le_two_pow_depth,
+      aafi8_free_slot_is_padding, aafi8R1_eq]
   · rw [aafi8_steps2_recompute, aafi8NewRoot_eq]
 
 /-- **★ THE WIDE AAFI LAW FIRES — the double-spend tooth at the deployed padded WIDE commitment.**
@@ -1047,6 +1143,12 @@ theorem ghost8_heapOk_empty : HeapOk8 keyHi ([] : List (Digest8Key × ℤ)) := b
   · intro k hk; simp [Heap.keys] at hk
   · intro x hx; simp [Heap.keys] at hx
 
+/-- The ghost pair's occupancies, NAMED at a symbolic depth — both roots below are indexed by
+these, so nothing in §8 hands `padImtRoot8` an anonymous obligation. -/
+theorem ghost8_one_sz (d : Nat) : ([(keyLo, (0 : ℤ))] : List (Digest8Key × ℤ)).length ≤ 2 ^ d :=
+  Nat.one_le_pow d 2 (by norm_num)
+theorem ghost8_empty_sz (d : Nat) : (([] : List (Digest8Key × ℤ))).length ≤ 2 ^ d := Nat.zero_le _
+
 /-- **⚑⚑ THE GHOST AT THE DEPLOYED WIDE TREE.** At the INJECTIVE hash whose image of the arity-17
 low leaf IS the padding constant, the one-entry ADMISSIBLE wide heap `[(keyLo, 0)]` and the EMPTY
 one publish the SAME padded arity-17 root at EVERY depth including `MAP_TREE_DEPTH = 16`, while
@@ -1056,28 +1158,35 @@ theorem padded_imt8_ghost (d : Nat) :
         (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩))
     ∧ HeapOk8 keyHi [(keyLo, (0 : ℤ))]
     ∧ HeapOk8 keyHi ([] : List (Digest8Key × ℤ))
-    ∧ ([(keyLo, (0 : ℤ))] : List (Digest8Key × ℤ)).length ≤ 2 ^ d
-    ∧ (([] : List (Digest8Key × ℤ))).length ≤ 2 ^ d
     ∧ padImtRoot8 keyHi (Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt
-          (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) d [(keyLo, (0 : ℤ))]
+          (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) d [(keyLo, (0 : ℤ))] (ghost8_one_sz d)
         = padImtRoot8 keyHi (Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt
-            (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) d []
+            (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) d [] (ghost8_empty_sz d)
     ∧ Heap.get [(keyLo, (0 : ℤ))] keyLo = some 0
     ∧ Heap.get ([] : List (Digest8Key × ℤ)) keyLo = none := by
-  refine ⟨ghost8_hash_injective _, ghost8_heapOk_one, ghost8_heapOk_empty,
-    Nat.one_le_pow d 2 (by norm_num), Nat.zero_le _, ?_,
+  refine ⟨ghost8_hash_injective _, ghost8_heapOk_one, ghost8_heapOk_empty, ?_,
     Heap.get_cons_self keyLo 0 [], rfl⟩
-  show perfectRoot _ d (padTo d ((imtChainOfE keyHi [(keyLo, (0 : ℤ))]).map
-        (imtLeafHashE _ wideEnc)))
-    = perfectRoot _ d (padTo d ((imtChainOfE keyHi ([] : List (Digest8Key × ℤ))).map
-        (imtLeafHashE _ wideEnc)))
   have hleaf : imtLeafHashE (Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt
       (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) wideEnc
         (⟨keyLo, 0, keyHi⟩ : ImtLeaf Digest8Key ℤ) = padDigest :=
     Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt_hit _
-  show perfectRoot _ d (padTo d [imtLeafHashE _ wideEnc (⟨keyLo, 0, keyHi⟩ : ImtLeaf Digest8Key ℤ)])
-    = perfectRoot _ d (padTo d ([] : List ℤ))
-  rw [hleaf, Dregg2.Circuit.MapPaddedDenotation.padTo_singleton_pad]
+  have hmap : (imtChainOfE keyHi [(keyLo, (0 : ℤ))]).map
+      (imtLeafHashE (Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt
+        (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) wideEnc) = [padDigest] := by
+    show [imtLeafHashE (Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt
+        (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) wideEnc
+          (⟨keyLo, 0, keyHi⟩ : ImtLeaf Digest8Key ℤ)] = [padDigest]
+    rw [hleaf]
+  have hnilmap : (imtChainOfE keyHi ([] : List (Digest8Key × ℤ))).map
+      (imtLeafHashE (Dregg2.Circuit.MapPaddedDenotation.ghostSpongeAt
+        (imtLeafPreE wideEnc ⟨keyLo, 0, keyHi⟩)) wideEnc) = ([] : List ℤ) := rfl
+  show perfectRoot _ d (padTo d ((imtChainOfE keyHi [(keyLo, (0 : ℤ))]).map
+        (imtLeafHashE _ wideEnc)) _)
+    = perfectRoot _ d (padTo d ((imtChainOfE keyHi ([] : List (Digest8Key × ℤ))).map
+        (imtLeafHashE _ wideEnc)) _)
+  rw [padTo_congr hmap _ (one_le_two_pow_depth' d padDigest),
+    padTo_congr hnilmap _ (Nat.zero_le _),
+    Dregg2.Circuit.MapPaddedDenotation.padTo_singleton_pad]
 
 /-- **⚑⚑ PADDED INJECTIVITY IS REFUTED AT 8-FELT LANES, AT THE DEPLOYED DEPTH.** There is NO
 theorem "the padded arity-17 root is injective on admissible sparse WIDE heaps", not even under the
@@ -1087,12 +1196,13 @@ either. (Anti-floor content: the conclusion is `False`.) -/
 theorem padded_imt8_injectivity_is_refuted :
     ¬ (∀ (hash : List ℤ → ℤ), Function.Injective hash →
         ∀ h₁ h₂ : List (Digest8Key × ℤ), HeapOk8 keyHi h₁ → HeapOk8 keyHi h₂ →
-        h₁.length ≤ 2 ^ MAP_TREE_DEPTH → h₂.length ≤ 2 ^ MAP_TREE_DEPTH →
-        padImtRoot8 keyHi hash MAP_TREE_DEPTH h₁ = padImtRoot8 keyHi hash MAP_TREE_DEPTH h₂ →
+        ∀ (hz₁ : h₁.length ≤ 2 ^ MAP_TREE_DEPTH) (hz₂ : h₂.length ≤ 2 ^ MAP_TREE_DEPTH),
+        padImtRoot8 keyHi hash MAP_TREE_DEPTH h₁ hz₁
+          = padImtRoot8 keyHi hash MAP_TREE_DEPTH h₂ hz₂ →
         h₁ = h₂) := by
   intro hbad
-  obtain ⟨hinj, ho₁, ho₂, hz₁, hz₂, hroot, _, _⟩ := padded_imt8_ghost MAP_TREE_DEPTH
-  exact absurd (hbad _ hinj _ _ ho₁ ho₂ hz₁ hz₂ hroot) (by simp)
+  obtain ⟨hinj, ho₁, ho₂, hroot, _, _⟩ := padded_imt8_ghost MAP_TREE_DEPTH
+  exact absurd (hbad _ hinj _ _ ho₁ ho₂ _ _ hroot) (by simp)
 
 /-- **⚑⚑ THE TWELFTH IMPOSSIBILITY, PACKAGED.** All three of the wide epoch's hardenings hold
 SIMULTANEOUSLY on the ghost pair — an 8-felt key space, `wideEnc`-admissible (sorted AND
@@ -1103,17 +1213,19 @@ theorem wide_hardenings_do_not_kill_the_ghost :
     (∃ hash : List ℤ → ℤ, Function.Injective hash
       ∧ ∃ h₁ h₂ : List (Digest8Key × ℤ),
           HeapOk8 keyHi h₁ ∧ HeapOk8 keyHi h₂
-          ∧ h₁.length ≤ 2 ^ MAP_TREE_DEPTH ∧ h₂.length ≤ 2 ^ MAP_TREE_DEPTH
-          ∧ padImtRoot8 keyHi hash MAP_TREE_DEPTH h₁ = padImtRoot8 keyHi hash MAP_TREE_DEPTH h₂
+          ∧ ∃ (hz₁ : h₁.length ≤ 2 ^ MAP_TREE_DEPTH) (hz₂ : h₂.length ≤ 2 ^ MAP_TREE_DEPTH),
+            padImtRoot8 keyHi hash MAP_TREE_DEPTH h₁ hz₁
+              = padImtRoot8 keyHi hash MAP_TREE_DEPTH h₂ hz₂
           ∧ h₁ ≠ h₂
           ∧ Heap.get h₁ keyLo ≠ Heap.get h₂ keyLo)
     ∧ ¬ (∀ (hash : List ℤ → ℤ), Function.Injective hash →
         ∀ h₁ h₂ : List (Digest8Key × ℤ), HeapOk8 keyHi h₁ → HeapOk8 keyHi h₂ →
-        h₁.length ≤ 2 ^ MAP_TREE_DEPTH → h₂.length ≤ 2 ^ MAP_TREE_DEPTH →
-        padImtRoot8 keyHi hash MAP_TREE_DEPTH h₁ = padImtRoot8 keyHi hash MAP_TREE_DEPTH h₂ →
+        ∀ (hz₁ : h₁.length ≤ 2 ^ MAP_TREE_DEPTH) (hz₂ : h₂.length ≤ 2 ^ MAP_TREE_DEPTH),
+        padImtRoot8 keyHi hash MAP_TREE_DEPTH h₁ hz₁
+          = padImtRoot8 keyHi hash MAP_TREE_DEPTH h₂ hz₂ →
         h₁ = h₂) := by
-  obtain ⟨hinj, ho₁, ho₂, hz₁, hz₂, hroot, hg₁, hg₂⟩ := padded_imt8_ghost MAP_TREE_DEPTH
-  refine ⟨⟨_, hinj, _, _, ho₁, ho₂, hz₁, hz₂, hroot, by simp, ?_⟩,
+  obtain ⟨hinj, ho₁, ho₂, hroot, hg₁, hg₂⟩ := padded_imt8_ghost MAP_TREE_DEPTH
+  refine ⟨⟨_, hinj, _, _, ho₁, ho₂, _, _, hroot, by simp, ?_⟩,
     padded_imt8_injectivity_is_refuted⟩
   rw [hg₁, hg₂]
   simp
