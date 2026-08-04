@@ -42,7 +42,7 @@
     "dregg-effectvm-cellunseal-v2.json": "7a77f53e702e1711baed73c76c0c14231fe3d9fcb58c27079e030473a05ef165",
     "dregg-effectvm-createcell-v2.json": "1b3effd8e83a1b829bb59e508769bf5deb70bc8dd86b0e8e357fbd7c559261e7",
     "dregg-effectvm-createcellfromfactory-v2.json": "704c0693d68323d9a969cb97a28de9d7388d5ff438b1b4fba8ec2dd2b4748d57",
-    "dregg-effectvm-custom-ir2.json": "e2d296687d88761ccc2977ac95a9a3ea693313d94cef66bd0810af13cb347033",
+    "dregg-effectvm-custom-ir2.json": "a62201abd2e70814329a65bb4017be138a1e76830855e1bb8dc38f12687f8fe7",
     "dregg-effectvm-emitEvent-v1.json": "35bc0e51263d232edcb971b4694771c05c37fb0af080e6ee215abffcb0d0c917",
     "dregg-effectvm-exercise-ir2.json": "c47e9add936777bfb6bd39df85a24ae960be520235afff6440e24e421240eb32",
     "dregg-effectvm-exerciseA-holdlayer-v2.json": "394ff8e9351e62d09daea76dfcd614f02a9901ad517f1d3c808eae47ca1433f2",
@@ -91,8 +91,8 @@
     "dregg-effectvm-transfer-v1.json": "b56667151f2c531aadc17cc7d9f46c7813716df25302c78f9274069dd2a63166",
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
-    "rotation-v3-staged-registry.tsv": "c2bfb64b69ba5e099f1cc5c21cbfda157e464b9a15673bbee80849bf897f2f50",
-    "rotation-wide-registry-staged.tsv": "21a468846290eb2ff6475aa030ba978157795c820fd09a1fd0967a325ca6e48b"
+    "rotation-v3-staged-registry.tsv": "07fb09c941cf5cf7f741cd24e5af41c8c8f8829aed382eb82b2ebd2d1e47a965",
+    "rotation-wide-registry-staged.tsv": "f912f467e60585a0e7647928731d8cc4776947a563f92f235a433b116152cfc8"
   },
   "by_name_sha256": {
     "accumulator-nonrev.json": "ad8f91b437b6d35aa07f609434eb97c9d43ecdb1ab778496fe5128baa32a6ff4",

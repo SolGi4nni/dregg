@@ -357,7 +357,7 @@ pub const DREGG_EFFECTVM_REVOKE_CAP_IR2_FP: &str =
 pub const DREGG_EFFECTVM_CUSTOM_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-custom-ir2.json");
 pub const DREGG_EFFECTVM_CUSTOM_IR2_FP: &str =
-    "e2d296687d88761ccc2977ac95a9a3ea693313d94cef66bd0810af13cb347033";
+    "a62201abd2e70814329a65bb4017be138a1e76830855e1bb8dc38f12687f8fe7";
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_JSON: &str =
     include_str!("../descriptors/dregg-effectvm-set-field-dyn-ir2.json");
 pub const DREGG_EFFECTVM_SET_FIELD_DYN_IR2_FP: &str =
@@ -4720,6 +4720,9 @@ mod tests {
                 guard: LeanExpr::Const(1),
                 commit: LeanExpr::Var(PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE),
                 vk: LeanExpr::Var(PARAM_BASE + param::CUSTOM_VK_HASH_BASE),
+                // Custom declares both halves of the seam absent — see `ProofBindSpec`.
+                vk_pin: None,
+                bound: None,
             }));
             let short = mk("custom-subtracted-short-window", with_decl.clone(), 58);
             assert!(
