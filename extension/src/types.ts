@@ -195,6 +195,8 @@ export type MessageType =
   | "dregg:story"
   // The Descent, played in-tab — <dregg-descent> (openDescent/renderDescent/advanceMove/verifyDescent/settleDescent)
   | "dregg:descent"
+  // Path of Angels signed/allowlisted YouTube companion — <dregg-poa>
+  | "dregg:poa"
   // Node configuration
   | "dregg:getNodeConfig"
   | "dregg:setNodeConfig"

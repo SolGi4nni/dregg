@@ -91,6 +91,11 @@ import {
   type NetlayerWasmLike,
 } from "./netlayer";
 import {
+  createStoredPoAEngine,
+  type PoACompanionRequest,
+  type PoAEngine,
+} from "./poa";
+import {
   AUTH_CHALLENGE_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
@@ -3638,6 +3643,7 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:doctext", // free-text authoring port: <dregg-doc editable>
   "dregg:story", // verifiable choose-your-own-adventure port: <dregg-story>
   "dregg:descent", // The Descent played in-tab: <dregg-descent>
+  "dregg:poa", // signed/allowlisted Path of Angels YouTube companion: <dregg-poa>
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
@@ -3938,6 +3944,22 @@ function getDescentEngine(): DescentEngine {
   return descentEngine;
 }
 
+// ---------------------------------------------------------------------------
+// Path of Angels YouTube companion — <dregg-poa>.
+//
+// This engine recognizes context and verifies a routing manifest; it does not
+// implement game rules. The browser-provided sender.tab.url is authoritative.
+// A signed route to `dregg://descent/...` is subsequently played by the normal
+// DescentEngine above.
+// ---------------------------------------------------------------------------
+
+let poaEngine: PoAEngine | null = null;
+
+function getPoAEngine(): PoAEngine {
+  if (!poaEngine) poaEngine = createStoredPoAEngine(chrome.storage.local);
+  return poaEngine;
+}
+
 async function handleMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
   // Security: strip _skipDisclosure from page-originated requests.
   if (sender?.tab && message?.request) {
@@ -4065,6 +4087,24 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       } as DescentPortRequest;
       const result = await getDescentEngine().handle(req, origin);
       return { id: message.id, result };
+    }
+
+    case "dregg:poa": {
+      // Never trust a page-provided href. `sender.tab.url` is supplied by the
+      // browser and binds recognition to the tab that actually sent the request.
+      const pageUrl = sender?.tab?.url;
+      if (!pageUrl) return { id: message.id, error: "Path of Angels context requires a browser tab." };
+      const supplied = message.context && typeof message.context === "object"
+        ? message.context as Record<string, unknown>
+        : {};
+      const req: PoACompanionRequest = {
+        op: "openContext",
+        context: {
+          href: pageUrl,
+          ...(typeof supplied.channelHint === "string" ? { channelHint: supplied.channelHint } : {}),
+        },
+      };
+      return { id: message.id, result: await getPoAEngine().handle(req) };
     }
 
     case "dregg:canAuthorize":

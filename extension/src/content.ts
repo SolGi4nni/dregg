@@ -10,6 +10,7 @@ import { registerDocElement } from "./elements/dregg-doc";
 import { registerStoryElement } from "./elements/dregg-story";
 import { registerDescentElement } from "./elements/dregg-descent";
 import { registerSpriteElement } from "./elements/dregg-sprite";
+import { startPoACompanionDetector } from "./poa-detect";
 
 // Generate a random nonce for this injection session to prevent event spoofing.
 const SESSION_NONCE = crypto.randomUUID();
@@ -55,6 +56,12 @@ registerDescentElement();
 // public data — same asset ⇒ the byte-identical sprite a stranger re-renders; no keys, no
 // custody, no trust decision. A bad kind / non-hex / wrong-length id fails closed (no render).
 registerSpriteElement();
+
+// Path of Angels companion: on an explicitly upgrade-enabled YouTube origin,
+// recognize the exact video through the background's signed/local trust set and
+// mount one SPA-safe `<dregg-poa>` beside the player. The element is a closed-
+// shadow thin view; any routed Descent remains owned by its background engine.
+void startPoACompanionDetector();
 
 // Methods that any page origin can call without prior approval.
 const UNRESTRICTED_METHODS = new Set<MessageType>([

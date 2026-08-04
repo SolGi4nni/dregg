@@ -13,6 +13,7 @@ await esbuild.build({
     'src/sealedbid.ts',
     'src/launchpad.ts',
     'src/evm.ts',
+    'src/poa.ts',
   ],
   outdir: 'test/.build',
   format: 'esm',
