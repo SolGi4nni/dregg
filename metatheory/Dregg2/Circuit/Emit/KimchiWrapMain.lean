@@ -113,7 +113,7 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     `Field.Assert.equal x1 x2` over `bulletproof_challenges_actual`; and `assert_eq_plonk` tying
     β/γ/α/ζ to the statement's `plonk` words.
 
-## ⚑ WHAT THIS FILE ASSEMBLES TODAY — five rungs, and the rest named
+## ⚑ WHAT THIS FILE ASSEMBLES TODAY — nine rungs, and the rest named
 
   * **W1 `transcript`** — §4. The **Fq** Poseidon sponge of `wrap_verifier.ml:516-646` and
     `check_bulletproof`'s continuation, driven by the REAL upstream state machine
@@ -145,6 +145,25 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     the pair `:617` absorbs, so the transcript's `x_hat` stops being a fixture VALUE. ⚠ Its scalars
     are W-PREV's free witnesses and `x_hat` therefore STAYS on `WRAP_UNCONSUMED` — §2c says why at
     length, and §15's own header says it again where the rows are.
+  * **W7 `split`** — §16. `split_field` (`wrap_main.ml:69-81`, called once at `:409`), one
+    `Boolean.typ` check and one `Field.Assert.equal ((of_int 2 * y) + is_odd) x` per `` `Field ``
+    statement word, whose outputs ARE W6's 255-bit and 1-bit entry scalars.
+  * **W8 `ftcomm`** — §17. `Common.ft_comm` (`common.ml:238-256`), `tComms + 1` ladders at
+    `Ops.scale_fast ~num_bits:255` — **NOT** `scale_fast2`; `wrap_verifier.ml:658-659` shadows it.
+  * **W9 `prev`** — §18. ⚑ **THE WITNESSED PREVIOUS STEP STATEMENT** (`wrap_main.ml:201-256`,
+    `:340-356`), and the rung that gives W6 and W7 their content. Its own rows are few ON PURPOSE:
+    read at source, `exists ~request:Req.Proof_state`'s `typ` emits **two `Boolean.typ` checks over
+    57 words and nothing else** — `Limb_vector.Challenge.typ` is `Typ.field` with a transport and no
+    range check at all, and the `~assert_16_bits` `wrap_main.ml:208` passes is consumed only by
+    `Branch_data`, which the STEP per-proof spec does not contain. Plus `Inner_curve.typ`'s
+    `assert_on_curve` on the two `prev_step_accs` — three rows each, over the very cells
+    `wrap_verifier.ml:538` absorbs as `sg_old` — and one `Field.Assert.equal` that makes
+    `messages_for_next_step_proof` this assembly's **23rd public word** (§10 slot 12).
+    ⚑ **What it really buys is the WIRING**: `xScal` makes every `` `Packed_bits `` entry's MSM
+    scalar cell BE its packed statement word, and `xSplitW` makes `split_field`'s `x` the word too,
+    so the 67 scalars are the image of 57 words instead of 67 independent draws.
+    ⚠ **`x_hat` STILL does not leave `WRAP_UNCONSUMED`**: 64 of the 67 scalars are free witnesses
+    here and free upstream, and what ties them is W-FINALIZE / W-WRAPHACK / `assert_eq_plonk`.
 
 ## ⚑ MEASURED — the emitted ladder, and the shape oracle it is scored against
 
@@ -154,9 +173,37 @@ Read end to end at `~/dev/mina/src/lib/pickles/wrap_main.ml` (443 lines) and
     w3_branch            489         1430       0    wrap_main.ml:164-199
     w4_bind              492         1441      22    wrap_main.ml:419-439 + :189-199
     w5_key               972         1977      22    wrap_verifier.ml:189-204 + :521-530
-    w6_xhat             1170         6472      22    wrap_verifier.ml:539-616
-    w7_split            1172        6492*      22    wrap_main.ml:69-81 + :409
-    w8_ftcomm           1491        7338*      22    common.ml:238-256 + wrap_verifier.ml:655-666
+    w6_xhat             1286         6472      22    wrap_verifier.ml:539-616
+    w7_split            1288        6492*      22    wrap_main.ml:69-81 + :409
+    w8_ftcomm           1607        7338*      22    common.ml:238-256 + wrap_verifier.ml:655-666
+    w9_prev             1613        7344*      23    wrap_main.ml:201-256 + :350-351
+
+⚠ ⚑ **THE SMOKE COLUMN MOVED AT `w9_prev` FOR THE THREE RUNGS BELOW IT, AND NOT BECAUSE THEY
+CHANGED.** `shapeSmoke.xhatTerms` went 4 → 5 so that the smoke MSM reaches entry 64 — the packed
+word `w9_prev` exposes publicly — which adds one 51-chunk ladder: `w6_xhat` 1170 → 1286, and
+`w7_split`/`w8_ftcomm` carry it. The WRAP column is unmoved below `w9_prev`, because at the
+committed shape `xhatSel` was already the identity over all 67 entries.
+
+⚑ **PROVED, MEASURED 2026-08-03** on the smoke emission, release, all five polarities per rung:
+
+    rung            rows  domain   honest prove+verify   σ-desync   control   pub tamper
+    w1_transcript    246     256          1035 ms        REJECTED   ACCEPTED     n/a
+    w2_challenges    471     512          1898 ms        REJECTED   ACCEPTED     n/a
+    w3_branch        489     512          1248 ms        REJECTED   ACCEPTED     n/a
+    w4_bind          498     512          1641 ms        REJECTED   ACCEPTED   REJECTED
+    w5_key           978    1024          1042 ms        REJECTED   ACCEPTED   REJECTED
+    w6_xhat         1292    2048          1251 ms        REJECTED   ACCEPTED   REJECTED
+    w7_split        1294    2048          1127 ms        REJECTED   ACCEPTED   REJECTED
+    w8_ftcomm       1613    2048          1085 ms        REJECTED   ACCEPTED   REJECTED
+    w9_prev         1620    2048          7877 ms        REJECTED   ACCEPTED   REJECTED
+
+(the `rows` column here is `pubWords + rows`, which is what the harness prints; the table above is
+the emitter's row count.) ⚑ At `w9_prev` the public-input leg runs at **i = 0 and i = 6** — the new
+word is the last one, so the σ leg "flip cell (i,0) AND tell the verifier the new value" is tested
+on it specifically, and it is REJECTED by the copy-permutation alone.
+⚠ These are INNER Pallas/Fq kimchi proofs of a `wrap_main`-SHAPED circuit. Not Mina-valid, not
+machine-checked Pickles; the opening (`equal_g`, `verified`, the accumulator check) is not in this
+circuit at all.
 
 ⚠ `*` — the SMOKE column is MEASURED for every rung, from emissions those rungs produced
 (`w7_split: 1172 rows, pub 6, 51 probes`; `w8_ftcomm: 1491 rows, pub 6, 55 probes`). The two starred
@@ -165,10 +212,14 @@ and had not finished when this line was written:
 
   * `w7_split` = `6472 + 20` — ten `split_field` words, ten `Generic` rows and ten σ-probes;
   * `w8_ftcomm` = `6492 + 846` — `4` rows of `n₀ = 0` halves, `8 × (1 seed + 51×2 chunk rows + 1
-    probe) = 832`, the fold's `tComms − 1 = 6` `add_fast` rows, and `4` closing rows.
+    probe) = 832`, the fold's `tComms − 1 = 6` `add_fast` rows, and `4` closing rows;
+  * `w9_prev` = `7338 + 6` — nine `Generic` halves (2 `Boolean.typ`, 1 public tie, 3 × `prevs = 2`
+    `assert_on_curve`) packed two to a row, plus one σ-probe. `prevs` is 2 at BOTH shapes, so this
+    is the same six rows at either — which is why the smoke measurement `1613 − 1607 = 6` is a real
+    check on the wrap figure and not merely a consistency one.
 
-Both derivations are CHECKED at the smoke shape against the emission: `1170 + 2 = 1172` and
-`1172 + 319 = 1491`, and the emission agreed on both to the row. A derivation that reproduces the
+The `w7`/`w8` derivations are CHECKED at the smoke shape against the emission: `1286 + 2 = 1288` and
+`1288 + 319 = 1607`, and the emission agreed on both to the row. A derivation that reproduces the
 measured shape is still not a measurement, and the star says which is which.
 
 ⚑ `w6_xhat`'s wrap-scale row count is the one number in this table that is checked against something
@@ -233,7 +284,7 @@ independently compiled `wrap_main`** and its non-Generic gate stream is byte-ide
 `wrap-transaction`'s (11,601 gates, same types, same coefficients), so every non-Generic conformance
 fact is checked against both blobs.
 
-⚠ **NOT ASSEMBLED, named by sub-circuit** (§13): W-PREV, W-FINALIZE, W-WRAPHACK,
+⚠ **NOT ASSEMBLED, named by sub-circuit** (§13): W-FINALIZE, W-WRAPHACK,
 W-OPENINGS, W-COMBINE, W-BULLET, and W-CLOSE's three curve-side asserts.
 Each is a row-emitter this file does not have; none is a value this file fakes and calls derived.
 
@@ -559,8 +610,9 @@ word in ONE σ class; `key_digest_is_the_index_digest` pins the value against a 
 computed for the same index. ⚠ Below `w5_key` the digest is still a free witness at §2d's value —
 the rung, not the file, is what closed it. -/
 def WRAP_UNCONSUMED : List String :=
-  [ "sg_old — needs W-COMBINE (~init of combine_split_commitments)"
-  , "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's free witnesses"
+  [ "sg_old — ON-CURVE at w9_prev (§18); its consumer is W-COMBINE's ~init"
+  , "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's packed statement words, \
+           and 64 of them are still free"
   , "w_comm — needs W-COMBINE"
   , "z_comm — needs W-COMBINE"
   , "t_comm — ft_comm EMITTED at w8_ftcomm (§17); its OUTPUT is W-COMBINE/W-BULLET's"
@@ -1115,8 +1167,16 @@ object. Checked at every legal `first_zero`. -/
 
 /-- ⚑ The lowest `external` id the circuit allocates for itself. Public words are
 `external 0 .. pubWords-1` (Snarky's own numbering), so `placeChecked`'s H1 cannot fire and its H2
-— an inert public word — is the real gate on the closing rung. -/
-def AUXW (s : WrapShape) : Nat := s.pubWords
+— an inert public word — is the real gate on the closing rung.
+
+⚑ **THE `+ 1` IS `w9_prev`'s PUBLIC WORD, RESERVED AT EVERY RUNG AND EXPOSED AT ONE.**
+`wrap_main.ml:350-351` ties `messages_for_next_step_proof` to the witnessed previous statement, and
+W-PREV is the rung that emits it — so `rungPub` is `pubWords` up to `w8_ftcomm` and `pubWords + 1` at
+`w9_prev`, and slot `pubWords` sits in `placeChecked`'s DEAD GAP below it. That is deliberate and it
+is the fail-closed choice: exposing the word earlier would put a public word on a variable no row of
+that rung derives — defect class 5 wearing a public vector — and `placeChecked` refuses any gate
+that touches the gap, so the reservation cannot be used by accident. -/
+def AUXW (s : WrapShape) : Nat := s.pubWords + 1
 
 def baseSp (s : WrapShape) : Nat := AUXW s
 /-- the challenge region starts after the sponge; sized by the trace. -/
@@ -1375,13 +1435,27 @@ layout, measured against a devnet block. Of those 40, this rung DERIVES:
                                                       (`wrap_main.ml:189-199`)
     0–4    cip, b, ζ^srs_len, ζ^dom, perm          ✗ W-FINALIZE
     9      xi                                      ✗ W-FINALIZE
-    11     messages_for_next_wrap_proof            ✗ W-WRAPHACK
-    12     messages_for_next_step_proof            ✗ W-WRAPHACK / W-PREV
+    12     messages_for_next_step_proof            ✅ at `w9_prev` ONLY (§18) — the
+                                                      `Field.Assert.equal` of `wrap_main.ml:350-351`
+                                                      against packed statement word 54, which the
+                                                      x_hat MSM consumes as entry 64
+    11     messages_for_next_wrap_proof            ✗ W-WRAPHACK (it hashes
+                                                      `openings_proof.sg` with
+                                                      `new_bulletproof_challenges`, and the latter is
+                                                      W-FINALIZE's output — so word 11 needs BOTH)
     30–39  padding + the lookup Opt's challenge    ✗ (constant / feature-flag words)
 
-**22 of 40.** Exposing all 40 would mean tying 18 words to variables no row derives — public
-fixtures, which is defect class 5 wearing a public vector. So `pubWords` is 22 and this table is
-the census; §13 names what each missing word costs. -/
+**22 of 40 through `w8_ftcomm`, 23 at `w9_prev`.** Exposing all 40 would mean tying 17 words to
+variables no row derives — public fixtures, which is defect class 5 wearing a public vector. So
+`pubWords` is 22, `rungPub .prev` is 23, and this table is the census; §13 names what each missing
+word costs.
+
+⚑ **AND `w9_prev`'s WORD IS EXPOSED AT ONE RUNG, NOT AT ALL OF THEM.** `closingRows` emits
+`pubWords` halves at `w4_bind` and `prevRows` emits the 23rd; `AUXW` reserves the slot at every rung
+so that below `w9_prev` it sits in `placeChecked`'s DEAD GAP. That is the difference between a
+public word a rung derives and a public word a rung inherits: exposing word 12 at `w4_bind` would
+tie it to a cell nothing in `w4_bind` reads. `prev_rung_places_and_the_rung_below_it_does_not`
+exhibits the refusal. -/
 
 /-- The variables this assembly exposes as public words, in order. ⚑ Slot order here is THIS
 circuit's; the census above maps each to Mina's slot.
@@ -1538,6 +1612,36 @@ def xNegY (s : WrapShape) (sp : SpAcc) : PVar := .external (xhBaseF s sp + 2)
 
 def nXhVars (s : WrapShape) (sp : SpAcc) : Nat := xhBaseF s sp + 3 - baseXh s sp
 
+/-! ## §18a — ⚑ **W-PREV's VARIABLE SPACE** (`wrap_main.ml:201-256`), declared HERE because §15 and
+§16 both point INTO it.
+
+The 57 packed statement words are the MSM's scalars and the split's `x`. Upstream they are not
+copies of those things, they ARE them — `wrap_main.ml:404-411` hands `incrementally_verify_proof`
+the array `pack_statement … prev_statement` directly, so entry `i`'s scalar and packed word `i` are
+one `Cvar` and the tie costs no row. This layout is what lets that be true here too: `xScal` and
+`xSplitW` resolve to `prevW`, so the σ class is the identity of the variable and not a `Field.Assert
+.equal` this file invented. Emitting a tie row instead would have been STRICTER than `wrap_main` and
+would have had to be declared as such; it is cheaper and more faithful not to. -/
+
+/-- The prev-statement region starts after W-XHAT's — nothing below `w6_xhat` moves. -/
+def basePrev (s : WrapShape) (sp : SpAcc) : Nat := xhBaseF s sp + 3
+/-- ⚑ Packed statement word `w`'s cell, `w < PREV_WORDS`. -/
+def prevW (s : WrapShape) (sp : SpAcc) (w : Nat) : PVar := .external (basePrev s sp + w)
+/-- `assert_on_curve`'s two intermediates for `prev_step_accs.(p)`: `x²` at `t = 0`, `x³` at `t = 1`
+(`snarky_curve.ml:211-217`). -/
+def prevSq (s : WrapShape) (sp : SpAcc) (p t : Nat) : PVar :=
+  .external (basePrev s sp + PREV_WORDS + 2 * p + t)
+def nPrevVars (s : WrapShape) : Nat := PREV_WORDS + 2 * s.prevs
+
+/-- ⚑ **ENTRY `k`'s SCALAR CELL.** For a `` `Packed_bits `` entry that IS the packed statement word;
+for the two halves of a `split_field` pair it is the gadget's own output cell, whose `x` is the word.
+Below `w9_prev` nothing else constrains `prevW`, exactly as today — the cell moves, the rung does
+not. -/
+def xScal (s : WrapShape) (sp : SpAcc) (k : Nat) : PVar :=
+  let i := xhAt s k
+  if xhatIsSplitHi i || xhatIsSplitLo i then .external (baseXh s sp + XH_STRIDE * k + 4)
+  else prevW s sp (xhatWordOf i)
+
 /-- The fold's `~init` — the last correction partial sum, or the single correction when there is
 only one `Add_with_correction` entry. -/
 def xInitVar (s : WrapShape) (sp : SpAcc) : PVar × PVar :=
@@ -1569,14 +1673,20 @@ def ptConstRow (vx vy : PVar) (p : Nat × Nat) : WRow :=
 /-- The two rows of entry `k`'s chunk `j`.
 CURR `w₀=xT w₁=yT w₂=x₀ w₃=y₀ w₄=n w₅=n' w₆=Ø w₇..w₁₄ = x₁y₁..x₄y₄`;
 NEXT `w₀=x₅ w₁=y₅ w₂..w₆=b₀..b₄ w₇..w₁₁=s₀..s₄`.
-⚑ On chunk 0 the first `xhatTopZeros` bit cells move from ADVICE into PERMUTATION columns, because
+⚑ On chunk 0 the first `topZeros` bit cells move from ADVICE into PERMUTATION columns, because
 `scale_fast2`'s `Field.Assert.equal Field.zero bits_lsb.(i)` has to reach them and an advice cell is
-in no σ class. -/
-def xhChunkRows (s : WrapShape) (sp : SpAcc) (k j : Nat) : List WRow :=
-  let i := xhAt s k
-  let td := xhatLadder i
-  let bits := xhatBitsOf i
-  let tz := if j == 0 then xhatTopZeros i else 0
+in no σ class.
+
+⚠ ⚑ **`td` AND `bits` ARE PARAMETERS, AND THAT IS §17's LESSON APPLIED BACKWARDS TO §15.**
+`ftcChunkRows` already carried this note and this signature; `xhChunkRows` did not, and computed
+`xhatLadder i` and `xhatBitsOf i` INSIDE — i.e. once per CHUNK. A 255-bit entry has 51 chunks, so
+its 255-step chain (three `qInv` a step) ran 51 times, and the wrap shape's 1805 chunks replayed
+**1805** ladders where 55 were needed. MEASURED at the smoke shape, which is three ladders: the
+`w6_xhat` rung's emission went from 176 s to 4.4 s. The emitted bytes are unchanged — same term,
+same order — which is the check that this is a hoist and not an edit. -/
+def xhChunkRows (s : WrapShape) (sp : SpAcc) (k : Nat) (td : TermDataQ) (bits : List Nat)
+    (topZeros : Nat) (j : Nat) : List WRow :=
+  let tz := if j == 0 then topZeros else 0
   let ax : Nat → Int := fun n => ((td.accs.getD n (0, 0)).1 : Int)
   let ay : Nat → Int := fun n => ((td.accs.getD n (0, 0)).2 : Int)
   let sl : Nat → Int := fun n => (td.slopes.getD n 0 : Int)
@@ -1618,25 +1728,27 @@ def xhatRows (t : WrapData) (wired : Bool) : List WRow :=
       let rv := xhatCorr (xhAt s (lad.getD (a + 1) 0))
       caRowQ l (xA s sp (lad.getD (a + 1) 0) 2, xA s sp (lad.getD (a + 1) 0) 3)
         (xCorrSum s sp a) (caWitnessQ lv.1 lv.2 rv.1 rv.2))
-  -- (3) the fold, entry by entry, in `List.foldi` order.
+  -- (3) the fold, entry by entry, in `List.foldi` order. ⚑ `folds` is bound ONCE: `xhatFoldAt`
+  -- rebuilds the whole fold per call and every step of it runs a `scale_fast2` ladder.
+  let folds := xhatFolds sel
   let entryRows : List WRow :=
     (List.range n).flatMap (fun k =>
       let i := xhAt s k
       let accIn := xFoldIn s sp k
-      let accInV := xhatFoldAt sel k
+      let accInV := folds.getD k (0, 0)
       if xhChunks s k == 0 then
         -- `` `Cond_add `` (`wrap_verifier.ml:573-577,602-605`).
         let g := xhatBase i
         let sum := addAQ g accInV
-        packHalves [ ([some (xA s sp k 4), some (xA s sp k 4), some (xA s sp k 4)], cBool) ]
+        packHalves [ ([some (xScal s sp k), some (xScal s sp k), some (xScal s sp k)], cBool) ]
         ++ [ caRowQ (xA s sp k 0, xA s sp k 1) accIn (xA s sp k 17, xA s sp k 18)
                (caWitnessQ g.1 g.2 accInV.1 accInV.2) ]
         ++ packHalves
              [ ([some (xA s sp k 17), some accIn.1, some (xA s sp k 9)], [1, -1, -1, 0, 0])
-             , ([some (xA s sp k 4), some (xA s sp k 9), some (xA s sp k 10)], cMul)
+             , ([some (xScal s sp k), some (xA s sp k 9), some (xA s sp k 10)], cMul)
              , ([some (xA s sp k 10), some accIn.1, some (xA s sp k 11)], cAdd)
              , ([some (xA s sp k 18), some accIn.2, some (xA s sp k 12)], [1, -1, -1, 0, 0])
-             , ([some (xA s sp k 4), some (xA s sp k 12), some (xA s sp k 13)], cMul)
+             , ([some (xScal s sp k), some (xA s sp k 12), some (xA s sp k 13)], cMul)
              , ([some (xA s sp k 13), some accIn.2, some (xA s sp k 14)], cAdd) ]
       else
         -- `` `Add_with_correction `` — `Ops.scale_fast2'` then `Ops.add_fast acc _`.
@@ -1650,7 +1762,7 @@ def xhatRows (t : WrapData) (wired : Bool) : List WRow :=
         -- `−yT`, and `scale_fast2`'s top-bit zeros.
         packHalves
           ([ ([some (xA s sp k 6), some (xA s sp k 6), some (xA s sp k 6)], cBool)
-           , ([some (xA s sp k 4), some (xA s sp k 5), some (xA s sp k 6)], cSplit 1)
+           , ([some (xScal s sp k), some (xA s sp k 5), some (xA s sp k 6)], cSplit 1)
            , ([some (xCnt s sp k 0), none, none], cConst 0)
            , ([some (xA s sp k 1), some (xA s sp k 19), none], [1, 1, 0, 0, 0]) ]
            ++ (List.range (xhatTopZeros i)).map (fun tt =>
@@ -1658,7 +1770,7 @@ def xhatRows (t : WrapData) (wired : Bool) : List WRow :=
         -- `let acc = ref (add_fast base base)` (`plonk_curve_ops.ml:157`).
         ++ [ caRowQ (xA s sp k 0, xA s sp k 1) (xA s sp k 0, xA s sp k 1) (xAccX s sp k 0, xAccY s sp k 0)
                (caWitnessQ g.1 g.2 g.1 g.2) ]
-        ++ (List.range ch).flatMap (xhChunkRows s sp k)
+        ++ (List.range ch).flatMap (xhChunkRows s sp k td (xhatBitsOf i) (xhatTopZeros i))
         ++ [ probeRow wired (xAccX s sp k ch) (xAccY s sp k ch) ]
         -- `add_fast h (G.negate g)`, then the `s_odd` mux, then the fold add.
         ++ [ caRowQ (xAccX s sp k ch, xAccY s sp k ch) (xA s sp k 0, xA s sp k 19)
@@ -1675,7 +1787,7 @@ def xhatRows (t : WrapData) (wired : Bool) : List WRow :=
         ++ [ probeRow wired (xA s sp k 15) (xA s sp k 16) ])
   -- (4) `Inner_curve.negate`, `Generators.h`, `x_hat blinding`, and the ABSORB tie.
   let last := xFoldOut s sp (n - 1)
-  let lastV := xhatFoldAt sel n
+  let lastV := folds.getD n (0, 0)
   let neg := negAQ lastV
   let xw : PVar × PVar :=
     (((sp.evs.filter (fun e => e.isAbs && e.tag == T_XHAT)).getD 0 default).wordV,
@@ -1698,13 +1810,14 @@ def xhatEnv (t : WrapData) : VarEnv :=
   let corrVal : Nat → Nat × Nat := fun a =>
     ((lad.take (a + 2)).drop 1).foldl (fun acc k => addAQ acc (xhatCorr (xhAt s k)))
       (xhatCorr (xhAt s (lad.headD 0)))
+  let folds := xhatFolds sel
   (List.range n).flatMap (fun k =>
     let i := xhAt s k
     let g := xhatBase i
-    let accInV := xhatFoldAt sel k
-    let outV := xhatFoldAt sel (k + 1)
+    let accInV := folds.getD k (0, 0)
+    let outV := folds.getD (k + 1) (0, 0)
     [ (xA s sp k 0, (g.1 : Int)), (xA s sp k 1, (g.2 : Int))
-    , (xA s sp k 4, (xhatScalar i : Int)) ]
+    , (xScal s sp k, (xhatScalar i : Int)) ]
     ++ (if xhChunks s k == 0 then
           let sum := addAQ g accInV
           [ (xA s sp k 17, (sum.1 : Int)), (xA s sp k 18, (sum.2 : Int))
@@ -1741,7 +1854,7 @@ def xhatEnv (t : WrapData) : VarEnv :=
        [ ((xCorrSum s sp a).1, ((corrVal a).1 : Int))
        , ((xCorrSum s sp a).2, ((corrVal a).2 : Int)) ])
   ++ [ ((xhHVar s sp).1, (XHAT_H.1 : Int)), ((xhHVar s sp).2, (XHAT_H.2 : Int))
-     , (xNegY s sp, (qSub 0 (xhatFoldAt sel n).2 : Int)) ]
+     , (xNegY s sp, (qSub 0 (folds.getD n (0, 0)).2 : Int)) ]
 
 /-! ## §16 — ⚑ **W-SPLIT**: `split_field`, and what its "deferred check" actually discharges.
 
@@ -1799,18 +1912,27 @@ a bound on `y`.** Followed to source:
 ⚠ **The split ONE level up — this section's own — is a different matter and it is NOT immaterial.**
 `y` and `is_odd` are consumed by DIFFERENT Lagrange bases (`lagrange i` and `lagrange (i+1)`), so
 `(y, 0)` and `(y − (q+1)/2, 1)` give DIFFERENT `x_hat`. Nothing in `wrap_main` bounds `y` to 254
-bits, so upstream the choice is the prover's. It is not a hole HERE only because `x` is a free
-witness on both sides: `wrap_main.ml:201-256` witnesses the previous proof state (§13's W-PREV) and
-this file does not emit it. **W-SPLIT's constraint therefore pins nothing today; its content lands
-when W-PREV ties `x`, and W-PREV is the next thing this section wants.** Said plainly rather than
-banked, per §13's own rule. -/
+bits, so upstream the choice is the prover's.
 
-/-- ⚑ Entry `i` is the VALUE half of a `split_field` pair — the five `B Field` words of each
-`per_proof` block, whose successor carries the parity (`§15a`'s width table, `xhatBits`). The three
-trailing `B Digest`s and the `j = 10` digest are `WQ_FIELD` too and are NOT splits: they arrive as
-`` `Packed_bits ``, never through `wrap_main.ml:409`. -/
-def xhatIsSplitHi (i : Nat) : Bool :=
-  i < XHAT_PER_PROOF * XHAT_PREVS && i % XHAT_PER_PROOF < 10 && i % XHAT_PER_PROOF % 2 == 0
+⚑ ⚑ **AND THE PARAGRAPH THAT USED TO END HERE IS NOW HALF WRONG, WHICH IS WHY `w9_prev` EXISTS.**
+It said: *"It is not a hole HERE only because `x` is a free witness on both sides; W-SPLIT's
+constraint therefore pins nothing today; its content lands when W-PREV ties `x`."* Two of those
+three clauses survive and one does not.
+
+  * **`x` IS TIED NOW.** §18a makes `xSplitW` the packed statement word `prevW (xhatWordOf i)`
+    itself — the same variable the MSM's other 47 entries read, and the same one word 54's public
+    tie lands on. So `Field.Assert.equal ((of_int 2 * y) + is_odd) x` is an equation between three
+    cells the circuit uses elsewhere rather than a definition of a cell nothing else reads, and
+    `split_field_recomposes_the_statement_word` is the value-side fact that the honest witness
+    satisfies it over ℕ.
+  * **`x` IS STILL A FREE WITNESS**, here and upstream, because `exists ~request:Req.Proof_state`
+    is a free witness upstream. `w9_prev` did not change that and no rung short of W-FINALIZE can.
+  * **SO THE AMBIGUITY IS UNCHANGED AND IT IS UPSTREAM'S.** A prover who picks `x` picks the pair
+    `(x/2, x mod 2)` or `((x − q − 1)/2, 1 − x mod 2)`, both satisfy this row, and they give
+    different `x_hat`. Bounding `y` here would be a divergence from `wrap_main`, not a fix to it —
+    the same line §17 holds on `scale_fast`'s two admissible multipliers. What changed is that the
+    residual is now a statement about a variable the circuit CONSUMES, which is a smaller and more
+    honest thing than "pins nothing". -/
 
 /-- The pairs of POSITIONS in `xhSel` that one `split_field` produced. A shape that selects the
 value half without its parity contributes NO pair — the tie needs both entries to exist. -/
@@ -1823,33 +1945,36 @@ def splitPairs (s : WrapShape) : List (Nat × Nat) :=
       | none => none
     else none)
 
-/-- The split region starts after W-XHAT's, so nothing below `w7_split` moves. -/
-def baseSplit (s : WrapShape) (sp : SpAcc) : Nat := xhBaseF s sp + 3
-/-- Pair `a`'s UNSPLIT word — `split_field`'s argument `x`. -/
-def xSplitW (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar := .external (baseSplit s sp + a)
-def nSplitVars (s : WrapShape) : Nat := (splitPairs s).length
+/-- ⚑ Pair `a`'s UNSPLIT word — `split_field`'s argument `x`, which IS packed statement word
+`xhatWordOf i` (§18a). This used to be a cell of its own in a region between W-XHAT's and
+W-FTCOMM's; that region is gone, because a fresh cell here was precisely the decoration §16's header
+now names. -/
+def xSplitW (s : WrapShape) (sp : SpAcc) (a : Nat) : PVar :=
+  prevW s sp (xhatWordOf (xhAt s ((splitPairs s).getD a (0, 0)).1))
 
 /-- **W-SPLIT's ROWS.** Per pair: `Boolean.typ`'s check on the parity, and
-`Field.Assert.equal ((of_int 2 * y) + is_odd) x`, whose `y` and `is_odd` ARE §15's entry scalars. -/
+`Field.Assert.equal ((of_int 2 * y) + is_odd) x`, whose `y` and `is_odd` ARE §15's entry scalars and
+whose `x` IS §18a's statement word. -/
 def splitRows (t : WrapData) (wired : Bool) : List WRow :=
   let s := t.sh
   let sp := t.sp
   let ps := splitPairs s
   packHalves ((ps.zip (List.range ps.length)).flatMap (fun pa =>
-      [ ([some (xA s sp pa.1.2 4), some (xA s sp pa.1.2 4), some (xA s sp pa.1.2 4)], cBool)
-      , ([some (xSplitW s sp pa.2), some (xA s sp pa.1.1 4), some (xA s sp pa.1.2 4)],
+      [ ([some (xScal s sp pa.1.2), some (xScal s sp pa.1.2), some (xScal s sp pa.1.2)], cBool)
+      , ([some (xSplitW s sp pa.2), some (xScal s sp pa.1.1), some (xScal s sp pa.1.2)],
          cSplit 1) ]))
   ++ (ps.zip (List.range ps.length)).map (fun pa =>
-       probeRow wired (xSplitW s sp pa.2) (xA s sp pa.1.1 4))
+       probeRow wired (xSplitW s sp pa.2) (xScal s sp pa.1.1))
 
-/-- W-SPLIT's variable environment — `x = 2y + b`, the ONE value the gadget derives. -/
+/-- W-SPLIT's variable environment — the statement word each pair recomposes. ⚠ It is `prevWordVal`
+and no longer `2y + b`: the arrow reversed at `w9_prev`, and writing the derived form here would put
+one value under two definitions the moment they could disagree. -/
 def splitEnv (t : WrapData) : VarEnv :=
   let s := t.sh
   let sp := t.sp
   let ps := splitPairs s
   (ps.zip (List.range ps.length)).map (fun pa =>
-    (xSplitW s sp pa.2,
-     (qAdd (qMul 2 (xhatScalar (xhAt s pa.1.1))) (xhatScalar (xhAt s pa.1.2)) : Int)))
+    (xSplitW s sp pa.2, (prevWordVal (xhatWordOf (xhAt s pa.1.1)) : Int)))
 
 /-! ## §17 — ⚑ **W-FTCOMM**: `Common.ft_comm`, and the ONE word §13 had wrong at source.
 
@@ -2003,8 +2128,10 @@ def ftcBaseVal (t : WrapData) (l : Nat) : Nat × Nat :=
 
 /-! ### §17a — the variable layout. -/
 
-/-- The ft_comm region starts after W-SPLIT's, so nothing below `w8_ftcomm` moves. -/
-def baseFtc (s : WrapShape) (sp : SpAcc) : Nat := baseSplit s sp + nSplitVars s
+/-- The ft_comm region starts after W-PREV's, so nothing below `w8_ftcomm` moves. ⚠ It used to start
+after a W-SPLIT region of `(splitPairs s).length` cells; that region is gone (§16), and W-PREV's is
+where the split's `x` now lives. -/
+def baseFtc (s : WrapShape) (sp : SpAcc) : Nat := basePrev s sp + nPrevVars s
 /-- `messages.t_comm.(j)`'s two cells. -/
 def ftcTV (s : WrapShape) (sp : SpAcc) (j : Nat) : PVar × PVar :=
   (.external (baseFtc s sp + 2 * j), .external (baseFtc s sp + 2 * j + 1))
@@ -2129,16 +2256,116 @@ def ftcEnv (t : WrapData) : VarEnv :=
      , (ftcNegY s sp, (qSub 0 (ftcLastScaled t).2 : Int))
      , ((ftcOutV s sp).1, ((ftcOut t).1 : Int)), ((ftcOutV s sp).2, ((ftcOut t).2 : Int)) ]
 
+/-! ## §18 — ⚑ **W-PREV**: `wrap_main.ml:201-256` + `:340-356`, the WITNESSED PREVIOUS STATEMENT.
+
+Read end to end at source, and it is smaller than §13 item 9 said and lands in a different place.
+
+  * **`prev_proof_state = exists typ ~request:Req.Proof_state`** (`:201-213`). The `typ` is
+    `Types.Step.Proof_state.typ (module Impl) tock_zero ~assert_16_bits:(assert_n_bits ~n:16)
+    (Vector.init 2 ~f:Features.none) (Shifted_value.Type2.typ Field.typ)`
+    (`composition_types.ml:1389-1409`). ⚑ **ITS CHECKS ARE TWO `Boolean.typ`s AND NOTHING ELSE**,
+    which `spec.ml:414-429` decides basic by basic:
+
+        Field                 → `Shifted_value.Type2.typ Field.typ`   no check
+        Digest                → `Typ.transport Field.typ`  (`digest.ml:79-83`)         no check
+        Challenge             → `Typ.field |> Typ.transport` (`limb_vector/make.ml:14-19`)  NO CHECK
+        Scalar Challenge      → `Sc.typ Challenge.typ`                                  no check
+        Bulletproof_challenge → `Typ.transport (Sc.typ Challenge.typ)`                   no check
+        Bool                  → `Boolean.typ`                                    ONE constraint
+        Branch_data           → the ONLY arm that reads `~assert_16_bits` — and the STEP per-proof
+                                spec has no `Branch_data` node (`composition_types.ml:1268-1276`)
+
+    ⚠ ⚑ **SO `~assert_16_bits` IS PASSED AND NEVER FIRES**, and §13 item 9's "a `to_field_checked` at
+    a width this file does not emit (only 128)" was wrong at source: there is no width check on a
+    `Challenge` anywhere in this typ. A 128-bit `B Challenge` word is an unconstrained Fq var
+    upstream, and the only thing that bounds it is `scale_fast2`'s three top-bit zeros inside the
+    MSM — which §15 already emits. That is the correction this section makes, and it is the reason
+    W-PREV costs two rows of checks rather than twenty chains.
+  * **`prev_step_accs = exists (Vector.typ Inner_curve.typ 2)`** (`:221-225`). `Inner_curve.typ`
+    is `Snarky_curve.For_native_base_field(_).typ`, whose `check` IS `assert_on_curve`
+    (`snarky_curve.ml:211-228`): `x² = x·x`, `x³ = x²·x`, `assert_square y (x³ + a·x + b)`. Vesta has
+    `a = 0`, so `constant Params.a * x` is a `Cvar.scale` by zero and costs nothing, and `b = 5`.
+    **Three R1CS constraints per point.** ⚑ And `~sg_old:prev_step_accs` (`:412`) is the SAME vector
+    `wrap_verifier.ml:538` absorbs, so this section's rows run on the TRANSCRIPT's own `sg_old`
+    cells — `RC_SGOLD`, which `prev_step_accs_are_on_vesta` shows really are Vesta points, so the
+    check has an honest witness and the transcript does not move.
+  * **`Field.Assert.equal messages_for_next_step_proof prev_proof_state.messages_for_next_step_proof`**
+    (`:350-351`). One `Generic` half, and it is what closes §10's slot 12 — the wrap statement's
+    word against packed word `PREV_MSG_NEXT_STEP`, which the MSM consumes as entry 64.
+  * **`old_bp_chals`** (`:226-256`) is a `Vector.typ (Vector.typ Field.typ Tock.Rounds.n)` — plain
+    field vars, no check — and its ONLY consumer is `hash_messages_for_next_wrap_proof` at `:341-348`.
+    ⚠ **THIS SECTION DOES NOT EMIT IT**, because cells with no consumer are decoration and saying
+    otherwise is the sin this campaign is named after. It is W-WRAPHACK's, together with packed
+    words 55 and 56, and §13 item 8 carries it.
+
+## ⚑ WHAT THIS RUNG CHANGES, AND WHAT IT DOES NOT
+
+**Does:** the 67 MSM scalars become the packed image of 57 statement words instead of 67 independent
+draws (`prev_word_map_is_the_packed_expansion`); `split_field`'s `x` becomes the word rather than a
+cell derived downward from its own outputs; one statement word becomes a PUBLIC word; two become
+`Boolean.typ`-checked; two curve points become on-curve-checked in the cells the transcript absorbs.
+
+**Does not:** `x_hat` does not leave `WRAP_UNCONSUMED`. Sixty-six of the 67 scalars are still free
+witnesses — free HERE and free UPSTREAM — so the MSM still spans the group and a prover's reach into
+the transcript is the same size it was. What ties them upstream is W-FINALIZE, W-WRAPHACK and
+`assert_eq_plonk`. Striking the entry because a sub-circuit now names its inputs is metric-gaming. -/
+
+/-- Vesta's `b` (`y² = x³ + 5`) as a `Generic` half: `w₀·w₁ − w₂ − 5 = 0`, i.e.
+`assert_square y (x³ + b)` at `w₀ = w₁ = y`, `w₂ = x³`. `a = 0` so no `a·x` term appears — it is a
+`Cvar.scale` by zero upstream and costs no cell here either. -/
+def cOnCurveQ : List Int := [0, 0, -1, 1, -(5 : Int)]
+
+/-- `prev_step_accs.(p)`'s coordinate `j` — the TRANSCRIPT's own absorbed cell, because
+`wrap_main.ml:412` hands `incrementally_verify_proof` the same vector `wrap_verifier.ml:538`
+absorbs. -/
+def sgOldVar (t : WrapData) (p j : Nat) : PVar :=
+  ((t.sp.evs.filter (fun e => e.isAbs && e.tag == T_SGOLD)).getD (2 * p + j) default).wordV
+
+/-- **W-PREV's ROWS.** Everything `wrap_main.ml:201-256` and `:350-351` cost, and nothing else. -/
+def prevRows (t : WrapData) (wired : Bool) : List WRow :=
+  let s := t.sh
+  let sp := t.sp
+  -- (1) `Boolean.typ` on each `B Bool` word — the ONLY check the 57-word `typ` emits.
+  let boolHalves : List (List (Option PVar) × List Int) :=
+    (List.range XHAT_PREVS).map (fun p =>
+      let v := prevW s sp (PREV_PER_PROOF_WORDS * p + PREV_SHOULD_FINALIZE)
+      ([some v, some v, some v], cBool))
+  -- (2) the public tie (`:350-351`) — `w9_prev`'s own public word, at slot `pubWords`.
+  let pubTie : List (List (Option PVar) × List Int) :=
+    [ ([some (.external s.pubWords : PVar), some (prevW s sp PREV_MSG_NEXT_STEP), none], cEq) ]
+  -- (3) `assert_on_curve` on each `prev_step_accs` point, over the transcript's `sg_old` cells.
+  let curveHalves : List (List (Option PVar) × List Int) :=
+    (List.range s.prevs).flatMap (fun p =>
+      [ ([some (sgOldVar t p 0), some (sgOldVar t p 0), some (prevSq s sp p 0)], cMul)
+      , ([some (prevSq s sp p 0), some (sgOldVar t p 0), some (prevSq s sp p 1)], cMul)
+      , ([some (sgOldVar t p 1), some (sgOldVar t p 1), some (prevSq s sp p 1)], cOnCurveQ) ])
+  packHalves (boolHalves ++ pubTie ++ curveHalves)
+  ++ [ probeRow wired (prevW s sp PREV_MSG_NEXT_STEP) (prevW s sp 0) ]
+
+/-- W-PREV's variable environment: the 57 witnessed words, then `assert_on_curve`'s intermediates.
+⚠ The word values DUPLICATE what `xhatEnv`/`splitEnv` already carry for the words their rungs read —
+`envIndex` is first-wins on an equal value, and the point of listing all 57 here is that the rung
+carries the WHOLE statement rather than the part a reduced shape's MSM happens to select. -/
+def prevEnv (t : WrapData) : VarEnv :=
+  let s := t.sh
+  let sp := t.sp
+  (List.range PREV_WORDS).map (fun w => (prevW s sp w, (prevWordVal w : Int)))
+  ++ (List.range s.prevs).flatMap (fun p =>
+      let x := itemVal T_SGOLD (2 * p)
+      [ (prevSq s sp p 0, (qMul x x : Int))
+      , (prevSq s sp p 1, (qMul (qMul x x) x : Int)) ])
+
 /-! ## §7 — rows, environment, rungs. -/
 
 inductive Rung where
-  | transcript | challenges | branch | bind | key | xhat | split | ftcomm
+  | transcript | challenges | branch | bind | key | xhat | split | ftcomm | prev
   deriving Repr, DecidableEq, Inhabited
 
 def Rung.tag : Rung → String
   | .transcript => "w1_transcript" | .challenges => "w2_challenges"
   | .branch => "w3_branch" | .bind => "w4_bind" | .key => "w5_key"
   | .xhat => "w6_xhat" | .split => "w7_split" | .ftcomm => "w8_ftcomm"
+  | .prev => "w9_prev"
 
 /-- **THE ROW SCHEDULE**, rung by rung, in the order `wrap_main` runs it. Every sub-circuit's row-set
 function is REACHED FROM HERE — a row-set that drops out of this `match` is a red in §12b, not a
@@ -2160,6 +2387,7 @@ def rungOwn (t : WrapData) (wired : Bool) : Rung → List WRow
   | .xhat => xhatRows t wired
   | .split => splitRows t wired
   | .ftcomm => ftcRows t wired
+  | .prev => prevRows t wired
 
 /-- The rungs at or below `k`, in schedule order. ⚑ "Every rung is a superset of the one below" is
 now the SHAPE of the definition rather than a fact about eight hand-written branches. -/
@@ -2172,6 +2400,7 @@ def rungsUpto : Rung → List Rung
   | .xhat       => [.transcript, .challenges, .branch, .bind, .key, .xhat]
   | .split      => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split]
   | .ftcomm     => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm]
+  | .prev       => [.transcript, .challenges, .branch, .bind, .key, .xhat, .split, .ftcomm, .prev]
 
 /-- Rung `k`'s rows: the own-rows of every rung at or below it, concatenated in schedule order.
 
@@ -2193,8 +2422,9 @@ theorem rungRows_is_a_ladder (t : WrapData) (wired : Bool) :
     ∧ rungRows t .key wired = rungRows t .bind wired ++ rungOwn t wired .key
     ∧ rungRows t .xhat wired = rungRows t .key wired ++ rungOwn t wired .xhat
     ∧ rungRows t .split wired = rungRows t .xhat wired ++ rungOwn t wired .split
-    ∧ rungRows t .ftcomm wired = rungRows t .split wired ++ rungOwn t wired .ftcomm :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    ∧ rungRows t .ftcomm wired = rungRows t .split wired ++ rungOwn t wired .ftcomm
+    ∧ rungRows t .prev wired = rungRows t .ftcomm wired ++ rungOwn t wired .prev :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- …and the length of each rung is the length of the one below plus its own — general, so §12b's
 guards are instances rather than the statement. -/
@@ -2212,9 +2442,11 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
     ∧ (rungRows t .split wired).length
       = (rungRows t .xhat wired).length + (rungOwn t wired .split).length
     ∧ (rungRows t .ftcomm wired).length
-      = (rungRows t .split wired).length + (rungOwn t wired .ftcomm).length := by
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := rungRows_is_a_ladder t wired
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      = (rungRows t .split wired).length + (rungOwn t wired .ftcomm).length
+    ∧ (rungRows t .prev wired).length
+      = (rungRows t .ftcomm wired).length + (rungOwn t wired .prev).length := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := rungRows_is_a_ladder t wired
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · simp [h1]
   · simp [h2]
   · simp [h3]
@@ -2222,15 +2454,28 @@ theorem rungRows_lengths_are_the_sum_of_their_parts (t : WrapData) (wired : Bool
   · simp [h5]
   · simp [h6]
   · simp [h7]
+  · simp [h8]
 
-/-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it. -/
+/-- Rung `k`'s public-input size: 0 below the closing rung, `pubWords` at it — and `pubWords + 1` at
+`w9_prev`, whose own row ties `messages_for_next_step_proof` (`wrap_main.ml:350-351`). ⚑ The extra
+slot is RESERVED in `AUXW` at every rung, so below `w9_prev` it sits in `placeChecked`'s dead gap and
+any gate that touched it would be refused rather than silently absorbed. -/
 def rungPub (s : WrapShape) : Rung → Nat
   | .bind => s.pubWords
   | .key => s.pubWords
   | .xhat => s.pubWords
   | .split => s.pubWords
   | .ftcomm => s.pubWords
+  | .prev => s.pubWords + 1
   | _ => 0
+
+/-- The variables rung `k` exposes as public words. ⚑ `w9_prev` appends ONE — packed statement word
+`PREV_MSG_NEXT_STEP`, the MSM's entry 64 — and no rung below it may, because below `w6_xhat` no row
+reads that cell and a public word on an unread cell is a public fixture. -/
+def exposedVarsAt (t : WrapData) (k : Rung) : List PVar :=
+  exposedVars t ++ (match k with
+    | .prev => [prevW t.sh t.sp PREV_MSG_NEXT_STEP]
+    | _ => [])
 
 /-- ⚑ **THE ENVIRONMENT IS THE RUNG'S, NOT THE FILE'S.** `xhatEnv` carries every accumulator point
 and every slope of §15's ladders, and each of those is three `qInv`s deep. Folding it into one
@@ -2245,10 +2490,11 @@ def circuitEnvAt (t : WrapData) (k : Rung) : VarEnv :=
       | .xhat => xhatEnv t
       | .split => xhatEnv t ++ splitEnv t
       | .ftcomm => xhatEnv t ++ splitEnv t ++ ftcEnv t
+      | .prev => xhatEnv t ++ splitEnv t ++ ftcEnv t ++ prevEnv t
       | _ => [])
 
 /-- The closing rung's environment — what `w8_ftcomm` sees, i.e. everything. -/
-def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .ftcomm
+def circuitEnv (t : WrapData) : VarEnv := circuitEnvAt t .prev
 
 /-- The full environment: the circuit's variables, then the public words, whose values are READ OUT
 of the circuit env at the exposed variables — so a public word and the variable its closing row ties
@@ -2256,17 +2502,17 @@ it to hold ONE value by construction, exactly as a copy class does. -/
 def wrapEnvAt (t : WrapData) (k : Rung) : VarEnv :=
   let ce := circuitEnvAt t k
   let ix := envIndex ce
-  ce ++ (List.range t.sh.pubWords).map (fun i =>
-    ((.external i : PVar), envLookupAt ix ((exposedVars t).getD i (.external 0))))
+  ce ++ (List.range (rungPub t.sh k)).map (fun i =>
+    ((.external i : PVar), envLookupAt ix ((exposedVarsAt t k).getD i (.external 0))))
 
-def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .ftcomm
+def wrapEnv (t : WrapData) : VarEnv := wrapEnvAt t .prev
 
 def wrapPublicAt (t : WrapData) (k : Rung) : List Int :=
   let ix := envIndex (circuitEnvAt t k)
-  (List.range t.sh.pubWords).map (fun i =>
-    envLookupAt ix ((exposedVars t).getD i (.external 0)))
+  (List.range (rungPub t.sh k)).map (fun i =>
+    envLookupAt ix ((exposedVarsAt t k).getD i (.external 0)))
 
-def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .ftcomm
+def wrapPublic (t : WrapData) : List Int := wrapPublicAt t .prev
 
 def wrapGates (rows : List WRow) : List PGate :=
   rows.map (fun r => { kind := r.kind, permVars := r.perm, coeffs := r.coeffs })
@@ -2326,7 +2572,7 @@ def renderWrapCircuit (name : String) (pubSize numRows : Nat) (gs : List PlacedG
 
 /-- The closing rung's witness — kept for callers that do not carry a `Rung`. -/
 def wrapWitness (t : WrapData) (pubSize : Nat) (rows : List WRow) : List (List Int) :=
-  wrapWitnessAt t .ftcomm pubSize rows
+  wrapWitnessAt t .prev pubSize rows
 
 def rungJson (t : WrapData) (k : Rung) (wired : Bool) (name : String) : String :=
   let rows := rungRows t k wired
@@ -2357,22 +2603,25 @@ def shapeWrap : WrapShape :=
   -- at every emission. Not closed in the kernel: 1805 five-bit chunks is 3.6 s compiled and far
   -- more reduced, and this file has no `native_decide`.
   , xhatXY :=
-      (6973349748470811774665624614295557563348933104923108212588295688322547163703,
-       1199758266189089410290822284576834678458612987293835616056766066485823483380) }
+      (24946197319037634231440770924058307246402971142903096884297069648301688224485,
+       16382596241194855030609766549760651138786638147061512510866706509908262255965) }
 
 /-- A small shape for the in-CI `#guard`s (the committed one is emitted by the driver). -/
 def shapeSmoke : WrapShape :=
   { prevs := 2, ipaRounds := 3, wComms := 3, tComms := 2, emsRows := 8
   , branches := 3, pubWords := 6
-  -- ⚑ FOUR ENTRIES, and `xhatSel` makes them `[0, 1, 11, 31]` — a 255-bit value, its 1-bit parity,
-  -- a 128-bit challenge and `should_finalize`. That reaches BOTH partitions, all three widths, both
-  -- top-zero counts (1 and 3) and both `Cond_add` branches (§15's `xhat_smoke_selection…`). A
-  -- PREFIX of four would have been four 255-bit-or-parity entries and no 128-bit ladder at all.
-  , xhatTerms := 4
-  -- ⚑ `xhatOut 4`, closed by `rfl` IN THE KERNEL by `xhat_smoke_shape_absorbs_the_msm_output`.
+  -- ⚑ FIVE ENTRIES, and `xhatSel` makes them `[0, 1, 11, 64, 31]` — a 255-bit `B Field` value, its
+  -- 1-bit parity, a 128-bit challenge, the `messages_for_next_step_proof` DIGEST and
+  -- `should_finalize`. That reaches BOTH partitions, all three widths, both top-zero counts (1 and
+  -- 3) and both `Cond_add` branches (§15's `xhat_smoke_selection…`). A PREFIX of five would have
+  -- been five 255-bit-or-parity entries and no 128-bit ladder at all. ⚑ Entry 64 is here because
+  -- `w9_prev` exposes its packed word as a PUBLIC one, and a public word whose cell the MSM never
+  -- reads is a public fixture.
+  , xhatTerms := 5
+  -- ⚑ `xhatOut 5`, closed by `rfl` IN THE KERNEL by `xhat_smoke_shape_absorbs_the_msm_output`.
   , xhatXY :=
-      (4540311387296887296605982795215119295335555531712524220453453455546153730279,
-       11283496326094021030386317030760887506195633516319791115868214161613562698434) }
+      (16939429680523055563406117440808118430703004205774435970856079172456077167531,
+       12956915833716130635753754766705188581923939059745973521002626957608324504831) }
 
 
 /-! ## §11 — the CONSTANT PINS, each against an INDEPENDENT source.
@@ -2692,19 +2941,31 @@ W-FTCOMM / W-COMBINE / W-BULLET's curve gadgets, named in §13. Saying so here i
 def censusW : List (KGateType × Nat) :=
   [KGateType.zero, .generic, .poseidon, .completeAdd, .varBaseMul, .endoMul, .endoMulScalar].map
     (fun k => (k, (rowsW.filter (fun r => r.kind == k)).length))
-#guard (rowsW.filter (fun r => r.kind == KGateType.varBaseMul)).length == 0
-#guard (rowsW.filter (fun r => r.kind == KGateType.endoMul)).length == 0
-#guard (rowsW.filter (fun r => r.kind == KGateType.completeAdd)).length == 0
-/-! Poseidon rows come in 11-row permutations — the run-length family the conformance diff
-compares — and `EndoMulScalar` in 8-row chains. -/
-#guard (rowsW.filter (fun r => r.kind == KGateType.poseidon)).length % 11 == 0
-#guard (rowsW.filter (fun r => r.kind == KGateType.endoMulScalar)).length % 8 == 0
+/-- ⚑ **THE `w4_bind` RUNG EMITS NO CURVE GATE, AND ITS TWO STRUCTURED FAMILIES RUN IN WHOLE
+BLOCKS.** Poseidon rows come in 11-row permutations — the run-length family the conformance diff
+compares — and `EndoMulScalar` in 8-row chains; a partial block would mean a permutation or a
+`to_field_checked` chain was emitted half-open. ⚠ The curve families are zero HERE and non-zero from
+`w6_xhat` up (`xhat_gate_census`, `ftc_gate_census`); this is the closing rung's census, not the
+file's. -/
+theorem bind_rung_gate_census :
+    (rowsW.filter (fun r => r.kind == KGateType.varBaseMul)).length = 0
+    ∧ (rowsW.filter (fun r => r.kind == KGateType.endoMul)).length = 0
+    ∧ (rowsW.filter (fun r => r.kind == KGateType.completeAdd)).length = 0
+    ∧ (rowsW.filter (fun r => r.kind == KGateType.poseidon)).length % 11 = 0
+    ∧ (rowsW.filter (fun r => r.kind == KGateType.endoMulScalar)).length % 8 = 0 := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-! ### §12h — the emitted circuit is well-formed for the harness. -/
-#guard placedW.all (fun g => g.wires.length == K_PERMUTS)
-#guard gridW.all (fun col => col.length == shapeSmoke.pubWords + nRowsW)
-/-! Every gate's `typ` ordinal is one of the seven Mina uses. -/
-#guard placedW.all (fun g => g.kind.ordinal < 7)
+
+/-- ⚑ Every placed gate carries exactly `K_PERMUTS` wires, every witness column is as long as the
+public words plus the rows, and every gate's `typ` ordinal is one of the seven kimchi kinds the
+harness can deserialise. A violation of any of these is a JSON the Rust prover would reject at parse
+time rather than a circuit it would refuse — which is why it is checked here and not there. -/
+theorem bind_rung_is_well_formed_for_the_harness :
+    placedW.all (fun g => g.wires.length == K_PERMUTS) = true
+    ∧ gridW.all (fun col => col.length == shapeSmoke.pubWords + nRowsW) = true
+    ∧ placedW.all (fun g => g.kind.ordinal < 7) = true := by
+  refine ⟨rfl, rfl, rfl⟩
 
 /-! ### §14b — ⚑ **W-KEY'S PINS, AS NAMED THEOREMS.**
 
@@ -2794,7 +3055,7 @@ theorem key_closes_one_unconsumed_entry :
     ∧ WRAP_UNCONSUMED.contains
         "index_digest — needs W-KEY (choose_key over the per-branch step VKs)" = false
     ∧ WRAP_UNCONSUMED.head?
-        = some "sg_old — needs W-COMBINE (~init of combine_split_commitments)" := by
+        = some "sg_old — ON-CURVE at w9_prev (§18); its consumer is W-COMBINE's ~init" := by
   refine ⟨rfl, ?_, rfl⟩
   decide
 
@@ -2911,7 +3172,7 @@ theorem xhat_top_bits_are_range_checked :
           && w.perm.contains (some (xZb shapeSmoke tKey.sp k tt)))
         && xhRows.any (fun w => w.kind == KGateType.generic
              && w.perm.contains (some (xZb shapeSmoke tKey.sp k tt))))) = true
-  ∧ ((xhLadders shapeSmoke).map (fun k => xhatTopZeros (xhAt shapeSmoke k))) = [1, 3] := by
+  ∧ ((xhLadders shapeSmoke).map (fun k => xhatTopZeros (xhAt shapeSmoke k))) = [1, 3, 1] := by
   refine ⟨?_, ?_⟩ <;> decide
 
 /-- ⚑ **DEFECT CLASS 4: NO BASE IS A FREE WITNESS.** Every entry's base — and every correction, and
@@ -2954,7 +3215,8 @@ theorem xhat_output_is_the_absorbed_word :
 theorem xhat_does_not_move_the_unconsumed_census :
     WRAP_UNCONSUMED.length = 8
     ∧ WRAP_UNCONSUMED.getD 1 ""
-        = "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's free witnesses" := by
+        = "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's packed statement \
+           words, and 64 of them are still free" := by
   refine ⟨rfl, ?_⟩
   decide
 
@@ -2995,6 +3257,11 @@ about upstream's ARITHMETIC are closed in the kernel rather than asserted in pro
 
 /-- The smoke instance's W-SPLIT rows, materialised once so the pins share one term. -/
 def spRows : List WRow := splitRows tKey true
+
+/-- W-PREV's own row-set at the smoke shape. ⚑ Same `WrapData` as §14b/§15f/§16b's — the rungs share
+one shape and one sponge trajectory; a second `mkWrap` here would re-run the whole transcript. -/
+def tPrev : WrapData := tKey
+def prRows : List WRow := prevRows tPrev true
 
 /-- ⚑ Does `rows` carry the `Generic` HALF `(vs, c)` — in EITHER slot of the double gate?
 `packHalves` fills cols 0,1,2 with the first half and 3,4,5 with the second, so a pin written
@@ -3200,6 +3467,157 @@ theorem ftcomm_does_not_move_the_unconsumed_census :
   refine ⟨rfl, ?_⟩
   decide
 
+/-! ### §18b — ⚑ **W-PREV'S PINS, AS NAMED THEOREMS.**
+
+⚠ Same discipline as §17b: nothing here reduces a ladder. The rows are `Generic` halves and one
+probe, and every value pin is over `Nat`s.
+
+⚑ **AND THE HARDEST ONE TO WRITE HONESTLY IS THE LAST.** A rung whose own row count is nine is easy
+to oversell; what these say is exactly what §18's header says — the checks upstream emits, the σ
+identities that make the MSM read the statement, and the census entry that did NOT move. -/
+
+/-- ⚑ **`prev_step_accs` ARE REAL VESTA POINTS.** `Inner_curve.typ`'s check is `assert_on_curve`, so
+the rung is only satisfiable if the values the transcript already absorbs as `sg_old` lie on
+`y² = x³ + 5` over Fq. They do — `PastaPoseidonFq.PREVCOMM_XY` are the two `RecursionChallenge`
+commitments of a proof `kimchi::verifier::verify` ACCEPTED — so `w9_prev` adds a real check WITHOUT
+moving the transcript. Had they not been on the curve, this rung would have had to re-fixture
+`sg_old` and every challenge below the absorb would have moved. -/
+theorem prev_step_accs_are_on_vesta :
+    (List.range shapeSmoke.prevs).all (fun p =>
+      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true
+    ∧ (List.range shapeWrap.prevs).all (fun p =>
+      onCurveQ (itemVal T_SGOLD (2 * p), itemVal T_SGOLD (2 * p + 1))) = true := by
+  refine ⟨rfl, rfl⟩
+
+/-- ⚑ **AND THE ON-CURVE CHECK RUNS ON THE ABSORBED CELLS, NOT ON COPIES.** `wrap_main.ml:412` hands
+`incrementally_verify_proof` the same `prev_step_accs` that `wrap_verifier.ml:538` absorbs, so both
+`assert_on_curve` chains here name the transcript's own `wordV` for `sg_old`. A version that
+allocated fresh coordinate cells would have checked a curve point the sponge never saw. -/
+theorem prev_on_curve_runs_on_the_absorbed_cells :
+    (List.range shapeSmoke.prevs).all (fun p =>
+      hasHalf prRows [some (sgOldVar tPrev p 0), some (sgOldVar tPrev p 0),
+                      some (prevSq shapeSmoke tPrev.sp p 0)] cMul
+      && hasHalf prRows [some (prevSq shapeSmoke tPrev.sp p 0), some (sgOldVar tPrev p 0),
+                         some (prevSq shapeSmoke tPrev.sp p 1)] cMul
+      && hasHalf prRows [some (sgOldVar tPrev p 1), some (sgOldVar tPrev p 1),
+                         some (prevSq shapeSmoke tPrev.sp p 1)] cOnCurveQ) = true
+    ∧ (List.range shapeSmoke.prevs).all (fun p =>
+        (sgOldVar tPrev p 0) == ((tPrev.sp.evs.getD (1 + 2 * p) default).wordV)) = true := by
+  refine ⟨rfl, rfl⟩
+
+/-- ⚑ **THE ONE CHECK THE 57-WORD `typ` EMITS, AND IT IS EMITTED TWICE BECAUSE THERE ARE TWO
+`B Bool`s.** Everything else in `Types.Step.Proof_state.typ` is check-free at source (§18), so a
+third `Boolean` half here would mean this file invented a constraint `wrap_main` does not have. -/
+theorem prev_should_finalize_is_boolean_constrained :
+    (List.range XHAT_PREVS).all (fun p =>
+      let v := prevW shapeSmoke tPrev.sp (PREV_PER_PROOF_WORDS * p + PREV_SHOULD_FINALIZE)
+      hasHalf prRows [some v, some v, some v] cBool) = true
+    ∧ ((prevRows tPrev true).filter (fun r => r.kind == KGateType.generic)).length = 5
+    ∧ ((prevRows tPrev true).filter (fun r => r.probe)).length = 1
+    ∧ ((prevRows tPrev true).filter (fun r =>
+         r.kind == KGateType.poseidon || r.kind == KGateType.varBaseMul
+         || r.kind == KGateType.completeAdd)).length = 0 := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **§10 SLOT 12 CLOSES HERE.** `Field.Assert.equal messages_for_next_step_proof
+prev_proof_state.messages_for_next_step_proof` (`wrap_main.ml:350-351`) as the tie between the rung's
+own public word and packed statement word `PREV_MSG_NEXT_STEP` — and the rung's public size is one
+more than every rung below it. -/
+theorem prev_ties_messages_for_next_step_proof_to_a_public_word :
+    hasHalf prRows [some (.external shapeSmoke.pubWords : PVar),
+                    some (prevW shapeSmoke tPrev.sp PREV_MSG_NEXT_STEP), none] cEq = true
+    ∧ rungPub shapeSmoke .prev = shapeSmoke.pubWords + 1
+    ∧ rungPub shapeSmoke .ftcomm = shapeSmoke.pubWords
+    ∧ (exposedVarsAt tPrev .prev).getD shapeSmoke.pubWords (.external 0)
+        = prevW shapeSmoke tPrev.sp PREV_MSG_NEXT_STEP := by
+  refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-- ⚑ **…AND THAT PUBLIC WORD IS NOT A PUBLIC FIXTURE.** The cell it ties is packed word 54, which
+the MSM reads as entry 64 — at the committed wrap shape by construction, and at the SMOKE shape
+because `xhatSel` selects it. A shape that exposed the word without selecting the entry would tie a
+public word to a cell no other row constrains, which is the defect class this rung would otherwise
+have introduced. -/
+theorem prev_public_word_is_read_by_the_msm :
+    (xhSel shapeSmoke).contains (XHAT_PER_PROOF * XHAT_PREVS) = true
+    ∧ (xhSel shapeWrap).contains (XHAT_PER_PROOF * XHAT_PREVS) = true
+    ∧ (List.range (xhN shapeSmoke)).any (fun k =>
+        xhAt shapeSmoke k == XHAT_PER_PROOF * XHAT_PREVS
+        && xScal shapeSmoke tPrev.sp k == prevW shapeSmoke tPrev.sp PREV_MSG_NEXT_STEP) = true := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚑ **THE MSM READS THE STATEMENT, AND THE TIE IS A σ IDENTITY RATHER THAN A ROW.**
+`wrap_main.ml:404-411` passes `pack_statement … prev_statement` straight into
+`incrementally_verify_proof`, so entry `i`'s scalar and its packed word are ONE `Cvar` and cost no
+constraint. `xScal` is that: every non-split entry's scalar cell IS `prevW (xhatWordOf i)`, and only
+the two `split_field` halves keep cells of their own. Emitting `Field.Assert.equal` rows instead
+would have been stricter than `wrap_main` and would have had to be declared in §13's list. -/
+theorem prev_msm_scalars_are_the_statement_words :
+    (List.range (xhN shapeSmoke)).all (fun k =>
+      let i := xhAt shapeSmoke k
+      if xhatIsSplitHi i || xhatIsSplitLo i then
+        xScal shapeSmoke tPrev.sp k
+          == (PVar.external (baseXh shapeSmoke tPrev.sp + XH_STRIDE * k + 4))
+      else xScal shapeSmoke tPrev.sp k == prevW shapeSmoke tPrev.sp (xhatWordOf i)) = true
+    ∧ ((List.range (xhN shapeSmoke)).filter (fun k =>
+        xScal shapeSmoke tPrev.sp k
+          == prevW shapeSmoke tPrev.sp (xhatWordOf (xhAt shapeSmoke k)))).length = 3 := by
+  refine ⟨rfl, rfl⟩
+
+/-- ⚑ **AND `w7_split`'s `x` IS THAT SAME WORD** — the sentence §16's header had been carrying as a
+promise since `w7_split` landed. The `cSplit 1` half now names three cells the circuit uses
+elsewhere: the statement word, and the two MSM entry scalars its halves feed. -/
+theorem split_x_is_the_statement_word :
+    (List.range (splitPairs shapeSmoke).length).all (fun a =>
+      xSplitW shapeSmoke tPrev.sp a
+        == prevW shapeSmoke tPrev.sp
+             (xhatWordOf (xhAt shapeSmoke ((splitPairs shapeSmoke).getD a (0, 0)).1))) = true
+    ∧ (splitPairs shapeSmoke).length = 1
+    ∧ hasHalf (splitRows tPrev true)
+        [some (xSplitW shapeSmoke tPrev.sp 0),
+         some (xScal shapeSmoke tPrev.sp ((splitPairs shapeSmoke).getD 0 (0, 0)).1),
+         some (xScal shapeSmoke tPrev.sp ((splitPairs shapeSmoke).getD 0 (0, 0)).2)]
+        (cSplit 1) = true := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- The `w9_prev` rung is a strict superset of `w8_ftcomm`, its length is the sum of its parts, and
+the WIRED and UNWIRED emissions differ ONLY in the probe rows' permutation columns. -/
+theorem prev_rung_extends_ftcomm :
+    (rungRows tPrev .prev true).length
+      = (rungRows tPrev .ftcomm true).length + (prevRows tPrev true).length
+    ∧ (rungRows tPrev .ftcomm true).length < (rungRows tPrev .prev true).length
+    ∧ (((rungRows tPrev .prev true).zip (rungRows tPrev .prev false)).filter
+        (fun p => p.1.perm != p.2.perm)).length
+        = ((rungRows tPrev .prev true).filter (fun r => r.probe)).length := by
+  refine ⟨rfl, by decide, rfl⟩
+
+/-- `placeChecked` ACCEPTS the `w9_prev` rung at its LARGER public size and no public word is inert
+— including the new one. ⚑ And the rung below it is refused at that size: `w8_ftcomm`'s gates read
+no cell for slot `pubWords`, so `inertPublicWord` fires. That is the leg that makes the reservation
+a gate rather than a comment. -/
+theorem prev_rung_places_and_the_rung_below_it_does_not :
+    refusalOf shapeSmoke (rungPub shapeSmoke .prev) (wrapGates (rungRows tPrev .prev true)) = none
+    ∧ inertPublicWords (rungPub shapeSmoke .prev)
+        (wrapGates (rungRows tPrev .prev true)) = []
+    ∧ inertPublicWords (rungPub shapeSmoke .prev)
+        (wrapGates (rungRows tPrev .ftcomm true)) = [shapeSmoke.pubWords] := by
+  refine ⟨rfl, rfl, rfl⟩
+
+/-- ⚠ ⚑ **THE CENSUS DID NOT MOVE, AND THE ENTRY IS REWRITTEN RATHER THAN DELETED.** W-PREV names
+the MSM's scalars and constrains three of the 67 — one to a public word, two to bits. The other 64
+are free witnesses, HERE and UPSTREAM, so an MSM over them still spans the group and the prover's
+reach into the transcript is unchanged in size. `sg_old` likewise: it is on-curve now and still
+consumed by nothing, because its consumer is `Split_commitments.combine`'s `~init` (W-COMBINE).
+Striking either entry on the strength of "a sub-circuit now reads it" is the metric-gaming this
+census exists to refuse. The count stays **8**. -/
+theorem prev_does_not_move_the_unconsumed_census :
+    WRAP_UNCONSUMED.length = 8
+    ∧ WRAP_UNCONSUMED.getD 1 ""
+        = "x_hat — MSM EMITTED at w6_xhat (§15); its 67 SCALARS are W-PREV's packed statement words, \
+           and 64 of them are still free"
+    ∧ WRAP_UNCONSUMED.getD 0 ""
+        = "sg_old — ON-CURVE at w9_prev (§18); its consumer is W-COMBINE's ~init" := by
+  refine ⟨rfl, ?_, ?_⟩ <;> decide
+
 /-! ## §13 — ⚑ WHAT IS LEFT, BY SUB-CIRCUIT.
 
 Named, not estimated; each entry is a row emitter this file does not have, and each carries the
@@ -3292,14 +3710,35 @@ measurement that sizes it. None of them is a value this file fakes and calls der
      unchanged would be wrong in both directions. This is the biggest remaining piece and it is
      what wrap public words 0–4 and 9 need.
   8. **W-WRAPHACK** `wrap_hack.ml:118-141`, `wrap_main.ml:340-355,421-429` — the two
-     `hash_messages_for_next_wrap_proof` sponges; wrap public words 11 and 12. ⚑ Absorption order
+     `hash_messages_for_next_wrap_proof` sponges. ⚠ **Public word 12 is NO LONGER ITS**: `w9_prev`
+     closed it (§10, §18), and what is left here is word 11 plus packed statement words 55 and 56 —
+     the PREVIOUS statement's own `messages_for_next_wrap_proof` digests, which is what consumes
+     `old_bp_chals`. ⚑ Word 11 needs W-FINALIZE too: `wrap_main.ml:421-429` hashes
+     `openings_proof.challenge_polynomial_commitment` with `new_bulletproof_challenges`, and the
+     latter is `finalize_other_proof`'s output. ⚑ Absorption order
      is **all old bulletproof challenges first, flattened, THEN the commitment as `[x; y]`**
      (`composition_types.ml:411-418`) — the opposite of the step side's interleaving — and the
      padding is at the FRONT via a PRECOMPUTED sponge-state table indexed by
      `2 − max_proofs_verified` (`wrap_hack.ml:99-109,124-137`), not by absorbing dummies in circuit.
-  9. **W-PREV** `wrap_main.ml:201-256` — the witnessed previous proof state, including
-     `~assert_16_bits:(assert_n_bits ~n:16)`, a `to_field_checked` at a width this file does not
-     emit (only 128), and `old_bp_chals` at `Backend.Tock.Rounds.n = 15` per proof.
+  9. ✅ **W-PREV — LANDED at `w9_prev`** (§18). ⚠ **AND THE SIZING NOTE THIS ENTRY CARRIED WAS
+     WRONG AT SOURCE, IN THE DIRECTION THAT MADE THE WORK LOOK BIGGER THAN IT IS.** It said the typ
+     carried "`~assert_16_bits:(assert_n_bits ~n:16)`, a `to_field_checked` at a width this file
+     does not emit (only 128)". Read at source: `spec.ml:414-429` consumes `~assert_16_bits` in
+     exactly ONE arm — `Branch_data` — and `Per_proof.In_circuit.spec`
+     (`composition_types.ml:1268-1276`) has no such node, so the argument is passed and NEVER FIRES.
+     `Limb_vector.Challenge.typ` is `Typ.field` with a transport (`limb_vector/make.ml:14-19`) and
+     emits **no range check at all**, which `Scalar_challenge.typ` and `Bulletproof_challenge.typ`
+     inherit; `Digest.typ` is likewise a bare transport. The whole 57-word `exists` costs **two
+     `Boolean.typ` checks** — the two `should_finalize` words — and that is the entire typ.
+     What it DOES cost is `Inner_curve.typ`'s `assert_on_curve` on the two `prev_step_accs`
+     (`snarky_curve.ml:211-228`, three R1CS rows each at Vesta's `a = 0`, `b = 5`), and one
+     `Field.Assert.equal` at `:350-351`. MEASURED: **5 `Generic` rows + 1 probe** at the smoke shape.
+     ⚑ The rung's value is not its rows — it is that `xScal`/`xSplitW` make the 67 MSM scalars the
+     packed image of 57 statement words, so `w7_split`'s `x` is a cell the circuit consumes rather
+     than a cell derived downward from its own outputs.
+     ⚠ **`old_bp_chals` is DELIBERATELY NOT EMITTED**: its only consumer is
+     `hash_messages_for_next_wrap_proof` (`wrap_main.ml:341-348`), which is item 8, and 30 cells with
+     no consumer are decoration. It stays with W-WRAPHACK.
  10. **W-CLOSE**'s curve-side assert `wrap_main.ml:419-420` — `Boolean.Assert.is_true
      bulletproof_success`, which is W-BULLET's output.
 

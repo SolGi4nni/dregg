@@ -294,10 +294,16 @@ def xhatChunkPrefix (n : Nat) : Nat := ((List.range n).map xhatChunksAt).foldl (
 which is what the committed wrap shape uses and what `wrap_verifier.ml:539-609` does. Below it, the
 selection is a NAMED spread — not a prefix — because a prefix of fewer than twelve never reaches a
 128-bit entry, and a smoke shape that cannot reach one cannot exercise the three-bit top-zero
-assert. It covers both partitions and all three widths. -/
+assert. It covers both partitions and all three widths.
+
+⚑ **ENTRY 64 MOVED TO POSITION 3 AT `w9_prev`, AND THAT IS A GATE AND NOT A PREFERENCE.** Entry 64
+is packed word `PREV_MSG_NEXT_STEP`, the one `wrap_main.ml:350-351` ties to a PUBLIC word. A smoke
+shape that exposes that word while its MSM never reads the variable would be a public word tied to a
+cell no other row constrains — defect class 5 wearing a public vector, in the very rung that adds
+it. So the smoke shape selects it. -/
 def xhatSel (n : Nat) : List Nat :=
   if n ≥ XHAT_TERMS_FULL then List.range XHAT_TERMS_FULL
-  else ([0, 1, 11, 31, 10, 12, 2, 64] : List Nat).take n
+  else ([0, 1, 11, 64, 31, 10, 12, 2] : List Nat).take n
 
 /-! ## §15b — the BASES, and where they come from.
 
@@ -324,36 +330,129 @@ def XHAT_H : Nat × Nat :=
   (Dregg2.Circuit.Emit.MinaStepSrsLagrange.URS_H_XY.getD 0 0,
    Dregg2.Circuit.Emit.MinaStepSrsLagrange.URS_H_XY.getD 1 0)
 
-/-! ## §15c — the SCALARS, and the fact that they are FIXTURES here.
+/-! ## §15c — the SCALARS, and where they come from AFTER `w9_prev`.
 
-⚠ ⚑ **THE SCALARS ARE NOT DERIVED AT THIS RUNG AND SAYING OTHERWISE WOULD BE THE WHOLE DEFECT.**
-Entry `i`'s scalar is packed word `i` of `prev_statement`, which `wrap_main.ml:201-256` obtains as
+⚠ ⚑ **THE SCALARS ARE STILL FREE WITNESSES, AND SAYING OTHERWISE WOULD BE THE WHOLE DEFECT.**
+Entry `i`'s scalar is a packed word of `prev_statement`, which `wrap_main.ml:201-256` obtains as
 `exists ~request:Req.Proof_state` — a witnessed previous STEP proof state. It is free UPSTREAM too;
 what ties it there is W-FINALIZE (`finalize_other_proof` consumes the deferred values), W-WRAPHACK
-(`messages_for_next_step_proof`) and `assert_eq_plonk`, none of which this file assembles.
+(the two `hash_messages_for_next_wrap_proof` digests) and `assert_eq_plonk`.
 
-So `x_hat` does not leave `WRAP_UNCONSUMED` at this rung. What changes is narrower and real: before
-W-XHAT, `x_hat` was a fixture pair the prover handed the sponge; after it, `x_hat` is the image of
-67 scalars under an MSM over bases the circuit PINS, with `acc₀`, `n₀` and both `lowest_128_bits`
-halves closed inside each ladder. That is a different object with the same name, and the census says
-so rather than dropping the entry.
+So `x_hat` does NOT leave `WRAP_UNCONSUMED`, at `w6_xhat` or at `w9_prev`. What changed at
+`w6_xhat`: `x_hat` stopped being a fixture pair the prover handed the sponge and became the image of
+67 scalars under an MSM over bases the circuit PINS. What changes at `w9_prev` is narrower and also
+real, and it is a change to THIS file:
 
-The filler is `wrapFixtureQ`, deliberately the same affine mixer `KimchiWrapMain.wrapFixture` uses
-for `lr`/`delta`, reduced to entry `i`'s own width so that `scale_fast2`'s top-bit asserts have
-something honest to assert. -/
+  * the 67 scalars stop being 67 INDEPENDENT draws and become the packed image of **57** statement
+    words under `Spec.pack` + `split_field` — `xhatWordOf` is that map, and it is many-to-one exactly
+    where `wrap_verifier.ml:542-548` expands a `` `Field `` into a (value, parity) pair;
+  * so `split_field`'s recomposition `2·hi + is_odd = x` is an IDENTITY on the witness rather than a
+    definition of `x` — `w7_split`'s `x` was a downward-derived cell and is now the statement word
+    itself (`split_field_recomposes_the_statement_word`);
+  * and word 54 (`messages_for_next_step_proof`) is `Field.Assert.equal`-tied to a PUBLIC word
+    (`wrap_main.ml:350-351`), which is `w9_prev`'s 23rd.
+
+Sixty-six of the 67 are still the prover's, so an MSM over them still spans the group. The census
+says so rather than dropping the entry.
+
+⚑ **THE 57 WORDS' VALUES ARE A NAMED FIXTURE AND UPSTREAM'S ARE A FREE WITNESS** — those are the
+same thing, and this is the one place in the chain where a fixture is the FAITHFUL choice rather
+than a stand-in for a derivation. What is NOT free is the SHAPE: each word is reduced to the width
+`spec.ml:374-392` packs it at, so `scale_fast2`'s top-bit asserts have something honest to assert,
+and the derived split halves land inside their own widths by construction. -/
 
 /-- The named filler. Same shape as `KimchiWrapMain.wrapFixture`, defined here because §2's schedule
 needs `x_hat` and `x_hat` needs the scalars. -/
 def wrapFixtureQ (tag i : Nat) : Nat := (11 + 1000003 * (17 * tag + i)) % qN
 
-/-- Entry `i`'s scalar, reduced to `xhatBits i` bits. ⚠ A FIXTURE (§15c).
+/-! ### §15c′ — ⚑ **THE PACKED PREVIOUS STEP STATEMENT** (W-PREV, `wrap_main.ml:201-256`).
 
-⚑ The `/ 7` is not decoration. `wrapFixtureQ 21 i = 11 + 1000003·(357 + i)` has parity `i mod 2`,
-and EVERY one-bit entry sits at an odd `i` (the five split parities at `j = 1,3,5,7,9` and
-`should_finalize` at `j = 31`), so the raw mixer gives all twelve `Cond_add` entries the scalar 1
-and the mux's `~else_` branch is never taken by any honest witness. That is a fixture that quietly
-halves what the rung exercises. `xhat_cond_add_takes_both_branches` is the pin that keeps it fixed. -/
-def xhatScalar (i : Nat) : Nat := wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i
+`Types.Step.Statement.spec 2 15` (`composition_types.ml:1453-1459`) is
+`Struct [Vector (per_proof, 2); B Digest; Vector (B Digest, 2)]` and `per_proof`
+(`:1268-1276`) is 27 words: 5 `B Field`, 1 `B Digest`, 2 `B Challenge`, 3 `Scalar Challenge`,
+15 `B Bulletproof_challenge` (`bp_log2 = Backend.Tock.Rounds.n = 15`, HARDCODED at `:1358`), 1
+`B Bool`. So the statement is `2·27 + 1 + 2 = 57` words, and `wrap_verifier.ml:542-548` expands the
+ten `` `Field `` ones into pairs to reach §15a's 67 entries.
+
+⚠ ⚑ **AND `~assert_16_bits` IS PASSED AND NEVER FIRES.** `wrap_main.ml:208` hands
+`Types.Step.Proof_state.typ` an `~assert_16_bits:(Wrap_verifier.assert_n_bits ~n:16)`, and
+`spec.ml:414-429` consumes that argument in exactly ONE arm — `Branch_data` — which the STEP
+per-proof spec does not contain (`Branch_data` is the WRAP statement's, `wrap_main.ml:189-199`).
+Every other basic is check-free at source: `Field` is `Shifted_value.Type2.typ Field.typ`,
+`Digest.typ` is a `Typ.transport Field.typ` (`digest.ml:79-83`), and — the one worth naming —
+**`Limb_vector.Challenge.typ` is `Typ.field` with a transport and NO range check at all**
+(`limb_vector/make.ml:14-19`), which `Scalar_challenge.typ` and `Bulletproof_challenge.typ`
+(`bulletproof_challenge.ml:18-22`) inherit. So W-PREV's `exists` costs, in the whole 57-word
+statement, **two `Boolean.typ` checks** and nothing else. §13 item 9 said this typ carried "a
+`to_field_checked` at a width this file does not emit"; it does not, and that is corrected here. -/
+
+/-- `Per_proof.In_circuit.spec`'s word count: 5 + 1 + 2 + 3 + 15 + 1. -/
+def PREV_PER_PROOF_WORDS : Nat := 27
+/-- **57** — `Statement.spec 2 15`'s packed words, before `:542-548`'s expansion. -/
+def PREV_WORDS : Nat := PREV_PER_PROOF_WORDS * XHAT_PREVS + 1 + XHAT_PREVS
+/-- Word 54 — `messages_for_next_step_proof`, the one `wrap_main.ml:350-351` ties to the wrap
+statement. -/
+def PREV_MSG_NEXT_STEP : Nat := PREV_PER_PROOF_WORDS * XHAT_PREVS
+/-- Word 26 of a block — `should_finalize`, the one `B Bool` and the only word whose `typ` emits a
+constraint. -/
+def PREV_SHOULD_FINALIZE : Nat := PREV_PER_PROOF_WORDS - 1
+
+/-- ⚑ Entry `i` is the VALUE half of a `split_field` pair — the five `B Field` words of each
+`per_proof` block, whose successor entry carries the parity. The `j = 10` digest and the three
+trailing `B Digest`s are `WQ_FIELD` too and are NOT splits: they arrive as `` `Packed_bits ``, never
+through `wrap_main.ml:409`. -/
+def xhatIsSplitHi (i : Nat) : Bool :=
+  i < XHAT_PER_PROOF * XHAT_PREVS && i % XHAT_PER_PROOF < 10 && i % XHAT_PER_PROOF % 2 == 0
+/-- …and `i` is the PARITY half — `split_field`'s `is_odd`, at the odd position. -/
+def xhatIsSplitLo (i : Nat) : Bool :=
+  i < XHAT_PER_PROOF * XHAT_PREVS && i % XHAT_PER_PROOF < 10 && i % XHAT_PER_PROOF % 2 == 1
+
+/-- ⚑ **WHICH PACKED WORD ENTRY `i` CAME OUT OF.** The inverse of `wrap_verifier.ml:542-548`: a
+`` `Packed_bits `` word gives one entry, a `` `Field `` word gives two, so the map is many-to-one on
+exactly the split pairs and injective everywhere else. -/
+def xhatWordOf (i : Nat) : Nat :=
+  if i ≥ XHAT_PER_PROOF * XHAT_PREVS then
+    PREV_PER_PROOF_WORDS * XHAT_PREVS + (i - XHAT_PER_PROOF * XHAT_PREVS)
+  else
+    let b := i / XHAT_PER_PROOF
+    let j := i % XHAT_PER_PROOF
+    PREV_PER_PROOF_WORDS * b + (if j < 10 then j / 2 else j - 5)
+
+/-- Word `w`'s width under `pack_basic` (`spec.ml:374-392`). ⚑ `WQ_FIELD` on a `B Field` word is
+`Field.size_in_bits` and is not a bound: `qN < 2^255`, so reducing an Fq element mod `2^255` is the
+identity. It is a bound on the twenty challenge words and on the `B Bool`. -/
+def prevWordWidth (w : Nat) : Nat :=
+  if w ≥ PREV_PER_PROOF_WORDS * XHAT_PREVS then WQ_FIELD
+  else
+    let j := w % PREV_PER_PROOF_WORDS
+    if j < 6 then WQ_FIELD else if j < PREV_SHOULD_FINALIZE then WQ_CHAL else WQ_BOOL
+
+/-- ⚑ Word `w`'s WITNESSED VALUE — a named fixture, exactly as `exists ~request:Req.Proof_state` is a
+free witness upstream.
+
+⚑ **THE NINTH POWER IS NOT DECORATION, AND THE OLD `/ 7` WAS THE SAME LESSON, MEASURED AGAIN.**
+`wrapFixtureQ 34 w = 11 + 1000003·(578 + w)` never wraps `qN`, so it is a ~29-bit integer whose
+parity is `w mod 2` — and every one-bit entry sits at an odd `i`, so the raw mixer gives all twelve
+`Cond_add` entries the same bit, the mux's `~else_` branch has no honest witness at all, and half of
+what `w6_xhat` exercises is quietly dead. A `/ 7` was the previous patch for the previous shape of
+this bug. `a^9` is the smallest odd power of a 29-bit value that WRAPS `qN` (`9 × 29 > 255`), so it
+is four `qMul`s — cheap enough for the kernel, where a `qInv` here cost 57 × 260 recursion levels and
+blew `maxRecDepth` outright — and a 254-bit `B Digest` is what a digest actually looks like.
+⚠ Reduction to `prevWordWidth` happens AFTER, so the twenty challenge words are 128-bit and the two
+`B Bool`s are bits. `xhat_cond_add_takes_both_branches` and `xhat_smoke_selection_covers_every_path`
+are the pins that keep it fixed; both go red under the raw mixer. -/
+def prevWordVal (w : Nat) : Nat :=
+  let a := wrapFixtureQ 34 w
+  let a2 := qMul a a
+  let a4 := qMul a2 a2
+  qMul (qMul a4 a4) a % 2 ^ prevWordWidth w
+
+/-- ⚑ **ENTRY `i`'s SCALAR — the packed image of a statement word, not a draw of its own.**
+`split_field` (`wrap_main.ml:69-81`) is `y = (x − is_odd)/2`, `is_odd = x mod 2`; every other entry
+IS its word. -/
+def xhatScalar (i : Nat) : Nat :=
+  let v := prevWordVal (xhatWordOf i)
+  if xhatIsSplitHi i then v / 2 else if xhatIsSplitLo i then v % 2 else v
 
 /-- `scale_fast2'`'s `s_div_2` (`plonk_curve_ops.ml:271-283`). -/
 def xhatSDiv2 (i : Nat) : Nat := xhatScalar i / 2
@@ -361,10 +460,16 @@ def xhatSDiv2 (i : Nat) : Nat := xhatScalar i / 2
 def xhatSOdd (i : Nat) : Nat := xhatScalar i % 2
 
 /-- The `actual_bits_used` bits of `s_div_2`, MSB-first — what `scale_fast_unpack` unpacks
-(`plonk_curve_ops.ml:151-156`). -/
+(`plonk_curve_ops.ml:151-156`).
+
+⚠ ⚑ **`v` IS HOISTED, AND THAT IS THE MODULE'S OWN PERF LESSON APPLIED AGAIN.** `xhatSDiv2 i` inside
+the `map`'s lambda is re-evaluated once per BIT — 255 times per 255-bit entry, 130 per 128-bit one,
+14 550 times over the wrap shape's 55 ladders. That was free while the scalar was `wrapFixtureQ 21 i
+/ 7`; at `w9_prev` the scalar is four `qMul`s deep, and Lean does not sink a `let` into a lambda. -/
 def xhatBitsOf (i : Nat) : List Nat :=
   let n := xhatActualBits i
-  (List.range n).map (fun k => xhatSDiv2 i / 2 ^ (n - 1 - k) % 2)
+  let v := xhatSDiv2 i
+  (List.range n).map (fun k => v / 2 ^ (n - 1 - k) % 2)
 
 /-! ## §15d — the MSM as a VALUE.
 
@@ -402,18 +507,34 @@ def xhatInit (sel : List Nat) : Nat × Nat :=
   | [] => (0, 0)
   | c :: rest => rest.foldl addAQ c
 
-/-- The fold's accumulator after the first `k` selected entries (`wrap_verifier.ml:598-609`).
-`` `Cond_add `` is `Inner_curve.if_ b ~then_:(add_fast g acc) ~else_:acc`;
-`` `Add_with_correction `` is `Ops.add_fast acc (scale_fast2' … )`, in that argument order. -/
-def xhatFoldAt (sel : List Nat) (k : Nat) : Nat × Nat :=
-  (sel.take k).foldl
+/-- ⚑ **THE WHOLE FOLD, AS A PREFIX LIST** (`wrap_verifier.ml:598-609`) — entry `k`'s incoming
+accumulator is index `k` and its outgoing one is `k + 1`, so `xhatFolds sel` has `sel.length + 1`
+elements. `` `Cond_add `` is `Inner_curve.if_ b ~then_:(add_fast g acc) ~else_:acc`;
+`` `Add_with_correction `` is `Ops.add_fast acc (scale_fast2' … )`, in that argument order.
+
+⚠ ⚑ **THIS REPLACES A QUADRATIC `xhatFoldAt sel k`, AND THE COST WAS NOT THEORETICAL.** The old
+form re-ran `(sel.take k).foldl` from `~init` for EVERY `k`, and each `Add_with_correction` step in
+that fold calls `xhatScaled`, which runs a whole `scale_fast2` ladder — 255 `stepVbmQ`s at three
+`qInv` apiece. `xhatRows` and `xhatEnv` each index it once per entry, wired and unwired, so the
+emitter ran Θ(n²) ladders: **2 278 at the committed 67-entry shape where 67 are needed**, under
+`lean --run`'s interpreter. Same emitted values, same order — `foldl` over the whole list produces
+exactly the prefixes the per-`k` folds did. -/
+def xhatFolds (sel : List Nat) : List (Nat × Nat) :=
+  sel.foldl
     (fun acc i =>
-      if xhatChunksAt i == 0 then (if xhatScalar i == 1 then addAQ (xhatBase i) acc else acc)
-      else addAQ acc (xhatScaled i))
-    (xhatInit sel)
+      let cur := acc.getLastD (0, 0)
+      acc ++ [ if xhatChunksAt i == 0 then
+                 (if xhatScalar i == 1 then addAQ (xhatBase i) cur else cur)
+               else addAQ cur (xhatScaled i) ])
+    [xhatInit sel]
+
+/-- Entry `k`'s incoming accumulator. ⚠ Callers that need MORE THAN ONE `k` must bind `xhatFolds sel`
+themselves and index it — this convenience form rebuilds the whole fold per call, which is the
+quadratic shape it exists to make visible rather than to reintroduce. -/
+def xhatFoldAt (sel : List Nat) (k : Nat) : Nat × Nat := (xhatFolds sel).getD k (0, 0)
 
 /-- `x_hat` before blinding — `|> Inner_curve.negate` (`wrap_verifier.ml:610`). -/
-def xhatNegated (sel : List Nat) : Nat × Nat := negAQ (xhatFoldAt sel sel.length)
+def xhatNegated (sel : List Nat) : Nat × Nat := negAQ ((xhatFolds sel).getLastD (0, 0))
 
 /-- ⚑ **`x_hat`** — `Ops.add_fast x_hat (Inner_curve.constant Generators.h)`
 (`wrap_verifier.ml:612-616`). This is the pair `wrap_verifier.ml:617` absorbs. -/
@@ -528,16 +649,99 @@ theorem xhat_cond_add_takes_both_branches :
       (· == 1) = true := by decide
 
 /-- ⚑ The smoke selection reaches all three widths and both partitions, so the pins that run on it
-are not exercising one code path five times. -/
+are not exercising one code path five times — AND it reaches entry 64, the packed word `w9_prev`
+exposes as a public one. -/
 theorem xhat_smoke_selection_covers_every_path :
-    ((xhatSel 5).map xhatBits) = [255, 1, 128, 1, 255]
+    ((xhatSel 5).map xhatBits) = [255, 1, 128, 255, 1]
   ∧ ((xhatSel 5).filter (fun i => xhatChunksAt i == 0)).length = 2
-  ∧ (((xhatSel 5).filter (fun i => xhatChunksAt i == 0)).map xhatScalar) = [0, 1] := by decide
+  ∧ (((xhatSel 5).filter (fun i => xhatChunksAt i == 0)).map xhatScalar) = [1, 0]
+  ∧ (xhatSel 5).contains (XHAT_PER_PROOF * XHAT_PREVS) = true := by decide
 
 /-- …and at the committed count the selection is the identity, i.e. the wrap shape emits
 `wrap_verifier.ml:539-609`'s own entry list in its own order. -/
 theorem xhat_full_selection_is_every_entry :
     xhatSel XHAT_TERMS_FULL = List.range XHAT_TERMS_FULL := by decide
+
+/-! ### §15c″ — ⚑ **W-PREV'S PINS ON THE VALUE LAYER** (`wrap_main.ml:201-256`). -/
+
+/-- The statement's own word count, from its own spec: `2 × 27 + 1 + 2`. ⚑ And it is `bp_log2`
+that decides it — at `Tick`'s 16 instead of `Tock`'s 15 the per-proof block is 28 words and the
+statement is 59, which the entry census would have missed by two `Bulletproof_challenge`s. -/
+theorem prev_statement_is_fifty_seven_words :
+    PREV_WORDS = 57 ∧ PREV_PER_PROOF_WORDS = 5 + 1 + 2 + 3 + 15 + 1
+  ∧ PREV_PER_PROOF_WORDS * XHAT_PREVS + 1 + XHAT_PREVS ≠ (PREV_PER_PROOF_WORDS + 1) * XHAT_PREVS + 1 + XHAT_PREVS := by
+  decide
+
+/-- ⚑ **`xhatWordOf` IS `wrap_verifier.ml:542-548`'s EXPANSION, INVERTED.** It hits every one of the
+57 words, it is two-to-one exactly on the ten `split_field` pairs and injective on the other 47
+entries, and each pair's two entries share ONE word — which is the whole content of the tie. -/
+theorem prev_word_map_is_the_packed_expansion :
+    (List.range PREV_WORDS).all (fun w =>
+      ((List.range XHAT_TERMS_FULL).filter (fun i => xhatWordOf i == w)).length
+        == (if w < PREV_PER_PROOF_WORDS * XHAT_PREVS && w % PREV_PER_PROOF_WORDS < 5 then 2 else 1))
+      = true
+  ∧ ((List.range XHAT_TERMS_FULL).map xhatWordOf).all (fun w => decide (w < PREV_WORDS)) = true
+  ∧ ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).length = 10
+  ∧ ((List.range XHAT_TERMS_FULL).filter xhatIsSplitLo).length = 10
+  ∧ ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).all (fun i => xhatWordOf i == xhatWordOf (i + 1))
+      = true := by
+  decide
+
+/-- ⚑ **THE PACKED WIDTH AND THE ENTRY WIDTH ARE THE SAME NUMBER** on every entry that is not a
+`split_field` half, and on a split pair they are `(Field.size_in_bits, 1)` against a `B Field` word.
+A word/entry map off by one anywhere makes a 128-bit challenge into a 255-bit entry, which
+`scale_fast2` would range-check at the wrong width and still accept. -/
+theorem prev_word_widths_are_the_entry_widths :
+    (List.range XHAT_TERMS_FULL).all (fun i =>
+      if xhatIsSplitHi i then decide (xhatBits i = WQ_FIELD && prevWordWidth (xhatWordOf i) == WQ_FIELD)
+      else if xhatIsSplitLo i then decide (xhatBits i = WQ_BOOL && prevWordWidth (xhatWordOf i) == WQ_FIELD)
+      else decide (xhatBits i = prevWordWidth (xhatWordOf i))) = true := by
+  decide
+
+/-- ⚑ **`split_field`'s RECOMPOSITION IS AN IDENTITY ON THE WITNESS.** `wrap_main.ml:80` asserts
+`2·y + is_odd = x`; before `w9_prev` this file DEFINED `x` as `2·y + is_odd` from two independent
+draws, so the assert could not fail and `w7_split` pinned nothing. Now `x` is the statement word and
+the two halves are its image, so the equation is a fact about the packed statement — over ℕ, not
+merely mod `qN`, because `prevWordVal < qN < 2^255`. -/
+theorem split_field_recomposes_the_statement_word :
+    ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).all (fun i =>
+      decide (2 * xhatScalar i + xhatScalar (i + 1) = prevWordVal (xhatWordOf i))) = true := by
+  decide
+
+/-- …and the halves are `split_field`'s own, not some other decomposition: the parity is the low bit
+and the value is the floor-half. -/
+theorem split_field_halves_are_the_gadgets_own :
+    ((List.range XHAT_TERMS_FULL).filter xhatIsSplitLo).all (fun i =>
+      decide (xhatScalar i = prevWordVal (xhatWordOf i) % 2)) = true
+  ∧ ((List.range XHAT_TERMS_FULL).filter xhatIsSplitHi).all (fun i =>
+      decide (xhatScalar i = prevWordVal (xhatWordOf i) / 2)) = true := by
+  decide
+
+/-- ⚑ **THE SCALARS MOVED.** The red control for `w9_prev`, kept for the same reason
+`xhat_derived_is_not_the_old_fixture` keeps `RC_XHAT`: the value the MSM used to consume, exhibited
+rather than merely asserted to be gone. `wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i` was §15c's filler.
+
+⚠ **THE HONEST COUNT IS 63 OF 67, NOT 67 OF 67**, and the residue is not a hole: a one-bit entry has
+two possible values, so four of the twelve `Cond_add` scalars coincide with the old filler by
+arithmetic and not by inheritance. Every entry the MSM runs a LADDER over — all **55** — moved.
+Quoting 67 here would be the flattering number of a pair. -/
+theorem xhat_scalars_are_not_the_old_per_entry_fixture :
+    ((List.range XHAT_TERMS_FULL).filter (fun i =>
+      xhatScalar i != wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 63
+  ∧ ((List.range XHAT_TERMS_FULL).filter (fun i =>
+      xhatChunksAt i != 0 && xhatScalar i == wrapFixtureQ 21 i / 7 % 2 ^ xhatBits i)).length = 0 := by
+  decide
+
+/-- ⚑ …and each `should_finalize` is a REAL bit of the statement, which is what makes `Boolean.typ`'s
+check (`spec.ml:419-420`) satisfiable and non-trivial: there are exactly two such words in the
+57-word statement, they are the ONLY words whose `typ` emits a constraint at all, and they carry
+DIFFERENT bits — so the check is exercised on both a 0 and a 1. -/
+theorem prev_should_finalize_words_are_bits :
+    prevWordVal PREV_SHOULD_FINALIZE < 2
+  ∧ prevWordVal (PREV_PER_PROOF_WORDS + PREV_SHOULD_FINALIZE) < 2
+  ∧ prevWordVal PREV_SHOULD_FINALIZE ≠ prevWordVal (PREV_PER_PROOF_WORDS + PREV_SHOULD_FINALIZE)
+  ∧ ((List.range PREV_WORDS).filter (fun w => prevWordWidth w == WQ_BOOL)).length = XHAT_PREVS := by
+  decide
 
 #assert_namespace_axioms Dregg2.Circuit.Emit.KimchiWrapMainField
 
