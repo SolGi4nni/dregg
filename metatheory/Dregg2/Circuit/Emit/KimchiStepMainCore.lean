@@ -1978,27 +1978,56 @@ row COUNT is unchanged by that — `absorbs` absorb rows, `blocks` permutations,
 plus one at the last absorb — but every squeeze's POSITION moves, so every challenge value moves and
 with it every ladder the challenges drive. -/
 
+/-- ⚑ **THE GENERAL FACT, NOT THE ONE INSTANCE.** Building a trajectory newest-first with `headD`
+and reversing once is the forward `acc ++ [f (acc.getLastD d)]` fold, for EVERY step function, EVERY
+default and EVERY index list — the `range 55` in `permStates` is one instance of it.
+
+⚠ This was `:= rfl` until 2026-08-03 and **`rfl` does not typecheck**: whnf must reduce 55 nested
+`++ [·]`s, each re-walking the accumulator through `getLastD` and indexing `rcsN`, so the declaration
+died on `(deterministic) timeout at whnf, maximum number of heartbeats (200000)` — i.e. the module
+was RED at `95ed4f2ec` and the claim "general … by `rfl`" was never checked by anything. The
+induction is O(1) heartbeats and is genuinely general, which `rfl` at `range 55` was not. -/
+theorem foldl_cons_reverse_is_the_append_fold {α : Type} (f : Nat → α → α) (d : α) :
+    ∀ (l : List Nat) (acc : List α),
+      (l.foldl (fun a i => f i (a.headD d) :: a) acc).reverse
+        = l.foldl (fun a i => a ++ [f i (a.getLastD d)]) acc.reverse := by
+  intro l
+  induction l with
+  | nil => intro acc; simp
+  | cons i t ih =>
+    intro acc
+    simp only [List.foldl_cons]
+    rw [ih]
+    congr 1
+    simp
+
 /-- The 56 states of one permutation, `s(0) = st` through `s(55)`, ONE round per step.
 
 ⚑ The trajectory is built NEWEST-FIRST and reversed once, so a round costs one cons and an O(1)
 `headD` instead of `acc ++ [x]`'s copy of everything already there plus `acc.getLastD`'s walk to the
 end. That was 2·Σ₅₅ ≈ 3 000 list cells per permutation, and the assembly runs a few hundred
 permutations per `mkStep` — the same defect `spStep` carried in §1c′, in the inner loop. The FINAL
-value is unchanged, and `permStates_is_the_forward_fold` states that generally, by `rfl`. -/
+value is unchanged, and `permStates_is_the_forward_fold` states that generally, by INDUCTION on the
+fold's index list (`foldl_cons_reverse_is_the_append_fold`) — not by `rfl`. -/
 def permStates (st : List Nat) : List (List Nat) :=
   ((List.range 55).foldl
     (fun acc i =>
       Dregg2.Circuit.Emit.PastaPoseidon.Ref.round (rcsN.getD i []) (acc.headD st) :: acc)
     [st]).reverse
 
-/-- ⚑ **THE HOIST IS THE THING IT HOISTS** — general over every input state, by `rfl`, so the
-reversed accumulator cannot drift from the forward fold it replaces. -/
+/-- ⚑ **THE HOIST IS THE THING IT HOISTS** — general over every input state, so the reversed
+accumulator cannot drift from the forward fold it replaces. An instance of
+`foldl_cons_reverse_is_the_append_fold` at `range 55`. -/
 theorem permStates_is_the_forward_fold (st : List Nat) :
     permStates st
       = (List.range 55).foldl
           (fun acc i =>
             acc ++ [Dregg2.Circuit.Emit.PastaPoseidon.Ref.round (rcsN.getD i []) (acc.getLastD st)])
-          [st] := rfl
+          [st] := by
+  simpa [permStates] using
+    foldl_cons_reverse_is_the_append_fold
+      (fun i s => Dregg2.Circuit.Emit.PastaPoseidon.Ref.round (rcsN.getD i []) s) st
+      (List.range 55) [st]
 
 /-- Lane `j` of round state `k`. -/
 def stLane (ss : List (List Nat)) (k j : Nat) : Int := ((ss.getD k []).getD j 0 : Int)
