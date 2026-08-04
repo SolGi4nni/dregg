@@ -199,11 +199,20 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     // The same verified lifecycle serves an exact browser-authenticated X post.
     // X mounts alongside the matching article/card target, never by rewriting
     // its page-owned prose, and leaving the status route removes it SPA-safely.
-    await page.evaluate((id) => window.__poaSetXPostHeld(id), videos.X_POST);
+    // Actual pushState: no synthetic popstate and no DOM mutation. The bounded
+    // URL watcher removes the prior panel before the held X lookup can answer.
+    await page.evaluate((id) => window.__poaPushXPostHeld(id), videos.X_POST);
     await page.waitForFunction(() => window.__poaDeferredCount() > 0);
     assert.equal(await page.evaluate(() => document.querySelectorAll("dregg-poa").length), 0,
       "the prior YouTube panel is removed while the X SPA lookup is in flight");
-    await page.evaluate(() => window.__poaReleaseDeferredAndFlush());
+
+    // replaceState away from A in the same task that releases A's delayed
+    // response. The post-await live-context check rejects A before any mount,
+    // even before the watcher/navigation event gets another turn.
+    assert.equal(await page.evaluate(() => window.__poaReplaceNoContextAndRelease()), 0,
+      "delayed X response cannot mount after a silent same-document route change");
+
+    await page.evaluate((id) => window.__poaPushXPost(id), videos.X_POST);
     await page.waitForFunction((id) => document.querySelector(`dregg-poa[post-id="${id}"][verified]`), videos.X_POST);
     await page.waitForFunction(() => {
       const poa = document.querySelector('dregg-poa[platform="x"]');
@@ -228,7 +237,9 @@ test("dregg-poa: opt-in + signed context + closed shadow + engine route + SPA re
     assert.equal(await page.evaluate(() => window.__poaLookupCount()), beforeXRemount,
       "X card teardown remounts the accepted signed model without a second lookup");
 
-    await page.evaluate(() => window.__poaClearContext());
+    // Actual replaceState with no DOM mutation/popstate removes the accepted X
+    // panel through same-document URL observation.
+    await page.evaluate(() => window.__poaReplaceNoContext());
     await page.waitForFunction(() => document.querySelectorAll("dregg-poa").length === 0);
 
     assert.deepEqual(errors, [], `no page errors: ${errors.join("; ")}`);

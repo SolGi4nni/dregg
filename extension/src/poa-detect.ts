@@ -26,6 +26,7 @@ import {
 const UPGRADE_ORIGINS_KEY = "dregg_upgrade_origins";
 const MOUNT_ATTR = "data-dregg-poa-companion";
 const DEFAULT_REFRESH_MS = 5 * 60 * 1000;
+const URL_WATCH_MS = 100;
 
 export type DetectedPoAContext = PoAResolvedContext & { href: string };
 
@@ -186,6 +187,9 @@ export async function startPoACompanionDetector(options: PoADetectorOptions = {}
       ? `signed:${response.model.manifestDigest}`
       : `local:${response.model.contextId}`;
 
+  const sameContext = (left: DetectedPoAContext, right: DetectedPoAContext): boolean =>
+    left.href === right.href && left.platform === right.platform && poaContextId(left) === poaContextId(right);
+
   const clearRefresh = (): void => {
     if (refreshTimer !== null) clearTimeout(refreshTimer);
     refreshTimer = null;
@@ -264,6 +268,17 @@ export async function startPoACompanionDetector(options: PoADetectorOptions = {}
       response = { ok: false, recognized: false, verified: false, tier: "none", error: "companion lookup failed" };
     }
     if (disposed || mine !== generation) return;
+
+    // The tab may have completed an X pushState/replaceState transition while
+    // the background was resolving the old route. Re-read the live context;
+    // never accept or mount against the captured pre-request URL.
+    const liveContext = getContext();
+    if (!liveContext || !sameContext(liveContext, context)) {
+      accepted = null;
+      clearRefresh();
+      removeMounted(root);
+      return;
+    }
     // The response must bind the same browser-authenticated media identity. A stale SPA response
     // is discarded even if it was otherwise valid.
     if (!response.ok || !response.recognized || response.model.platform !== context.platform ||
@@ -324,18 +339,30 @@ export async function startPoACompanionDetector(options: PoADetectorOptions = {}
 
   const observer = new MutationObserver(() => schedule());
   observer.observe(root, { childList: true, subtree: true });
+  let observedHref = location.href;
   const navigation = (): void => {
+    observedHref = location.href;
     accepted = null;
     clearRefresh();
     generation += 1;
+    // Route identity is authority: remove the old panel before the debounced
+    // lookup for the new route begins.
+    removeMounted(root);
     schedule();
   };
+  const watchUrl = (): void => {
+    if (location.href === observedHref) return;
+    navigation();
+  };
+  const urlWatchTimer = setInterval(watchUrl, URL_WATCH_MS);
+  const navigationApi = (window as Window & { navigation?: EventTarget }).navigation;
   const refreshOnFocus = (): void => schedule(true);
   const refreshOnVisible = (): void => {
     if (document.visibilityState === "visible") schedule(true);
   };
   window.addEventListener("popstate", navigation);
   window.addEventListener("yt-navigate-finish", navigation as EventListener);
+  navigationApi?.addEventListener("navigatesuccess", navigation);
   window.addEventListener("focus", refreshOnFocus);
   document.addEventListener("visibilitychange", refreshOnVisible);
   await sync();
@@ -344,10 +371,12 @@ export async function startPoACompanionDetector(options: PoADetectorOptions = {}
     disposed = true;
     generation += 1;
     if (debounceTimer !== null) clearTimeout(debounceTimer);
+    clearInterval(urlWatchTimer);
     clearRefresh();
     observer.disconnect();
     window.removeEventListener("popstate", navigation);
     window.removeEventListener("yt-navigate-finish", navigation as EventListener);
+    navigationApi?.removeEventListener("navigatesuccess", navigation);
     window.removeEventListener("focus", refreshOnFocus);
     document.removeEventListener("visibilitychange", refreshOnVisible);
     removeMounted(root);

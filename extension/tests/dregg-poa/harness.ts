@@ -118,6 +118,7 @@ const state = {
     videoId: VIDEO_A,
     channelHint: "UC_PathOfAngels_Test_Channel",
   };
+  let contextFromHistory = false;
   let currentTime = NOW;
   let servedA: SignedPoAManifestV1 | null = signedA;
   let deferResponses = false;
@@ -185,7 +186,16 @@ const state = {
   }));
   registerDescentElement();
 
-  const getContext = (): DetectedPoAContext | null => currentContext;
+  const getContext = (): DetectedPoAContext | null => {
+    if (!contextFromHistory) return currentContext;
+    const match = location.pathname.match(/^\/__poa_x\/status\/([1-9][0-9]{0,19})$/);
+    if (!match) return null;
+    return {
+      href: `https://x.com/sentyr/status/${match[1]}`,
+      platform: "x",
+      postId: match[1],
+    };
+  };
   const getTarget = (context: DetectedPoAContext) => context.platform === "x"
     ? findPoAXPostTarget(context.postId)
     : document.querySelector("[data-dregg-poa-anchor]");
@@ -205,6 +215,7 @@ const state = {
   });
 
   window.__poaSetVideo = (videoId: string) => {
+    contextFromHistory = false;
     currentContext = {
       href: `https://www.youtube.com/watch?v=${videoId}`,
       platform: "youtube",
@@ -214,13 +225,24 @@ const state = {
     window.dispatchEvent(new Event("yt-navigate-finish"));
   };
   window.__poaSetXPost = (postId: string) => {
+    contextFromHistory = false;
     currentContext = { href: `https://x.com/sentyr/status/${postId}`, platform: "x", postId };
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
   window.__poaSetXPostHeld = (postId: string) => {
+    contextFromHistory = false;
     deferResponses = true;
     currentContext = { href: `https://x.com/sentyr/status/${postId}`, platform: "x", postId };
     window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  window.__poaPushXPostHeld = (postId: string) => {
+    deferResponses = true;
+    contextFromHistory = true;
+    history.pushState({}, "", `/__poa_x/status/${postId}`);
+  };
+  window.__poaPushXPost = (postId: string) => {
+    contextFromHistory = true;
+    history.pushState({}, "", `/__poa_x/status/${postId}`);
   };
   window.__poaClearContext = () => {
     currentContext = null;
@@ -265,6 +287,13 @@ const state = {
     // mounted on arrival, even for a single task.
     for (let i = 0; i < 12; i += 1) await Promise.resolve();
     return document.querySelectorAll("dregg-poa").length;
+  };
+  window.__poaReplaceNoContextAndRelease = async () => {
+    history.replaceState({}, "", "/__poa_x/home");
+    return window.__poaReleaseDeferredAndFlush();
+  };
+  window.__poaReplaceNoContext = () => {
+    history.replaceState({}, "", "/__poa_x/home");
   };
   window.__poaResetClock = () => {
     currentTime = NOW;
